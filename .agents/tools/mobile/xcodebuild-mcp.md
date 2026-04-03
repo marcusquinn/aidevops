@@ -35,20 +35,20 @@ tools:
 
 Only simulator tools enabled by default. Use `manage-workflows` to enable other groups.
 
-| Group | Key Tools | Notes |
-|-------|-----------|-------|
-| **simulator** | `build_sim`, `build_run_sim`, `test_sim`, `launch_app_sim` | |
-| **device** | `build_device`, `test_device`, `install_app_device`, `launch_app_device` | Requires code signing in Xcode |
-| **macos** | `build_macos`, `build_run_macos`, `test_macos`, `launch_mac_app` | |
-| **swift-package** | `swift_package_build`, `swift_package_test`, `swift_package_run` | Swift Macros validation skipped automatically |
-| **debugging** | `debug_attach_sim`, `debug_breakpoint_add`, `debug_variables`, `debug_stack` | |
-| **ui-automation** | `tap`, `swipe`, `type_text`, `screenshot`, `snapshot_ui` | |
-| **simulator-management** | `boot_sim`, `list_sims`, `set_sim_location`, `erase_sims` | |
-| **logging** | `start_sim_log_cap`, `stop_sim_log_cap` | |
-| **project-discovery** | `discover_projs`, `list_schemes`, `show_build_settings` | |
-| **project-scaffolding** | `scaffold_ios_project`, `scaffold_macos_project` | |
-| **session-management** | `session_set_defaults`, `sync_xcode_defaults` | Persists scheme/simulator/device across calls |
-| **doctor** | `doctor` | Environment diagnostics |
+| Group | Key Tools |
+|-------|-----------|
+| **simulator** | `build_sim`, `build_run_sim`, `test_sim`, `launch_app_sim` |
+| **device** | `build_device`, `test_device`, `install_app_device`, `launch_app_device` — requires code signing |
+| **macos** | `build_macos`, `build_run_macos`, `test_macos`, `launch_mac_app` |
+| **swift-package** | `swift_package_build`, `swift_package_test`, `swift_package_run` — Swift Macros validation skipped |
+| **debugging** | `debug_attach_sim`, `debug_breakpoint_add`, `debug_variables`, `debug_stack` |
+| **ui-automation** | `tap`, `swipe`, `type_text`, `screenshot`, `snapshot_ui` |
+| **simulator-management** | `boot_sim`, `list_sims`, `set_sim_location`, `erase_sims` |
+| **logging** | `start_sim_log_cap`, `stop_sim_log_cap` |
+| **project-discovery** | `discover_projs`, `list_schemes`, `show_build_settings` |
+| **project-scaffolding** | `scaffold_ios_project`, `scaffold_macos_project` |
+| **session-management** | `session_set_defaults`, `sync_xcode_defaults` — persists scheme/simulator/device across calls |
+| **doctor** | `doctor` — environment diagnostics |
 
 ## MCP Configuration
 
