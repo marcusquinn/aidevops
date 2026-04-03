@@ -29,7 +29,7 @@ tools:
 
 ## Core Commands
 
-Standard `docker` and `docker compose` commands work unchanged. Use `orb` for OrbStack-specific management:
+`docker` and `docker compose` commands work unchanged. Use `orb` for OrbStack-specific management:
 
 ```bash
 orb list                          # List containers and VMs
@@ -50,35 +50,11 @@ orb stop / orb start my-ubuntu    # Stop / start VM
 orb delete my-ubuntu              # Delete VM
 ```
 
-## OpenClaw Workflows
-
-```bash
-# Setup
-git clone https://github.com/openclaw/openclaw.git && cd openclaw
-./docker-setup.sh                 # Build image, run onboarding, start gateway
-open http://127.0.0.1:18789/      # Access Control UI
-
-# Routine management
-docker compose ps                                     # Status
-docker compose logs -f openclaw-gateway               # Logs
-docker compose restart openclaw-gateway               # Restart gateway
-docker compose run --rm openclaw-cli doctor           # Health check
-docker compose run --rm openclaw-cli security audit   # Security audit
-docker compose run --rm openclaw-cli channels login   # Channel setup
-```
-
-Persistent host data: `~/.openclaw/{openclaw.json,workspace,credentials/,agents/<agentId>/sessions/}`
-
 ## Common Use Cases
 
 ```bash
 # Isolated dev database (postgres.orb.local or localhost:5432)
 docker run -d --name postgres -p 5432:5432 -e POSTGRES_PASSWORD=dev postgres:16
-
-# OpenClaw sandbox images for agent-tool isolation
-scripts/sandbox-setup.sh           # Base sandbox
-scripts/sandbox-common-setup.sh    # Adds build tools
-scripts/sandbox-browser-setup.sh   # Adds Chromium
 ```
 
 ## Troubleshooting
