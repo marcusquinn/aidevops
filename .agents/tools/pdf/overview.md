@@ -19,9 +19,11 @@ tools:
 ## Quick Reference
 
 - **Purpose**: PDF processing - parsing, modification, form filling, signing
-- **Primary Tool**: LibPDF (`@libpdf/core`) - TypeScript-native, full-featured
+- **Primary Tool**: LibPDF (`@libpdf/core`) - TypeScript-native; only library with incremental saves that preserve signatures
 - **Install**: `npm install @libpdf/core` | `bun add @libpdf/core` | `pnpm add @libpdf/core`
 - **Docs**: https://libpdf.dev
+- **Why not pdf-lib**: no incremental saves, no signatures, poor malformed-PDF handling
+- **Why not pdf.js**: read-only (no modify/generate/sign)
 
 **Tool Selection**:
 
@@ -46,28 +48,9 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Why LibPDF Over Alternatives
-
-| Feature | LibPDF | pdf-lib | pdf.js |
-|---------|--------|---------|--------|
-| Parse existing PDFs | Yes | Limited | Yes |
-| Modify existing PDFs | Yes | Yes | No |
-| Generate new PDFs | Yes | Yes | No |
-| Incremental saves | Yes | No | No |
-| Digital signatures | Yes | No | No |
-| Encrypted PDFs | Yes | No | Yes |
-| Form filling | Yes | Yes | No |
-| Text extraction | Yes | No | Yes |
-| Render to image | No | No | Yes |
-| Malformed PDF handling | Excellent | Poor | Excellent |
-
-LibPDF is preferred because it combines pdf-lib's API with pdf.js's parsing, is the only library with incremental saves that preserve signatures, and is TypeScript-native with minimal dependencies (Node.js, Bun, browsers).
-
 ## Related
 
-- `libpdf.md` - Detailed LibPDF usage guide with code examples
 - `../document/document-creation.md` - Unified document format conversion and creation
-- `../conversion/mineru.md` - PDF to markdown/JSON (layout-aware, OCR)
 - `../ocr/overview.md` - OCR tool selection guide (PaddleOCR, GLM-OCR, MinerU)
 - `../ocr/paddleocr.md` - PaddleOCR scene text OCR for scanned PDFs and images
 - `../conversion/pandoc.md` - General document format conversion
