@@ -4,24 +4,24 @@ agent: Build+
 mode: subagent
 ---
 
-Check email authentication, deliverability, and content quality.
-
 Arguments: `$ARGUMENTS`
 
-## Workflow
+## Dispatch
 
-Select and run the helper based on arguments:
+Parse `$ARGUMENTS` and call the appropriate helper:
 
-- `example.com` → infrastructure: `email-health-check-helper.sh check "$DOMAIN"`
-- `newsletter.html` → content: `email-health-check-helper.sh content-check "$FILE"`
-- `example.com newsletter.html` → combined: `email-health-check-helper.sh precheck "$DOMAIN" "$FILE"`
-- Extra selector/check arg (`example.com spf`, `newsletter.html check-links`) → targeted check
+| Argument pattern | Command |
+|-----------------|---------|
+| `example.com` | `email-health-check-helper.sh check "$DOMAIN"` |
+| `newsletter.html` | `email-health-check-helper.sh content-check "$FILE"` |
+| `example.com newsletter.html` | `email-health-check-helper.sh precheck "$DOMAIN" "$FILE"` |
+| `example.com spf` / `newsletter.html check-links` | targeted check (extra arg passed through) |
 
-Format the report from helper output:
+## Report Format
 
-- Infrastructure: score out of 15 for SPF, DKIM, DMARC, MX, blacklist
-- Content: score out of 10 for subject, preheader, accessibility, links, images, spam words
-- Combined: score out of 25 with a letter grade
+- Infrastructure: score out of 15 (SPF, DKIM, DMARC, MX, blacklist)
+- Content: score out of 10 (subject, preheader, accessibility, links, images, spam words)
+- Combined: score out of 25 with letter grade
 - Keep helper findings verbatim; end with actionable recommendations
 
 ## Options
@@ -35,29 +35,12 @@ Format the report from helper output:
 | `/email-health-check example.com dkim google` | DKIM with selector |
 | `/email-health-check newsletter.html check-links` | Link validation only |
 | `/email-health-check newsletter.html check-subject` | Subject line check only |
-| `/email-health-check accessibility newsletter.html` | Email accessibility audit |
-
-## Example
-
-```text
-User: /email-health-check example.com
-AI:
-    Email Health Check: example.com
-    SPF: OK - v=spf1 include:_spf.google.com ~all
-    DKIM: OK - Found: google, selector1
-    DMARC: WARN - p=none (monitoring only)
-    MX: OK - 2 records (redundant)
-    Blacklist: OK - Not listed
-    Score: 12/15 (80%) - Grade: B
-    Recommendations:
-    1. Upgrade DMARC policy from p=none to p=quarantine
-    2. Consider adding rua= for DMARC reports
-```
+| `/email-health-check accessibility newsletter.html` | Accessibility audit |
 
 ## Related
 
-- `services/email/email-health-check.md` - Full documentation
-- `services/email/email-testing.md` - Design rendering and delivery testing
-- `content/distribution-email.md` - Email content strategy
-- `services/email/ses.md` - Amazon SES integration
-- `tools/accessibility/accessibility.md` - WCAG accessibility reference
+- `services/email/email-health-check.md` — full documentation
+- `services/email/email-testing.md` — design rendering and delivery testing
+- `content/distribution-email.md` — email content strategy
+- `services/email/ses.md` — Amazon SES integration
+- `tools/accessibility/accessibility.md` — WCAG accessibility reference
