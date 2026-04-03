@@ -21,17 +21,13 @@ async onConnect(conn: Connection, ctx: ConnectionContext) {
 - Always `setState()` — direct `this.state` mutation skips sync to clients and persistence.
 - Keep state serializable and small; move large data to SQL storage.
 - Don't store functions, class instances, or circular references in state.
+- `conn.setState()` — per-connection metadata (userId, session token); lost on disconnect.
+- `this.setState()` — shared agent state; persisted and broadcast to all connections.
 
 ```ts
 // ❌ this.state.count++
 // ✅ this.setState({ ...this.state, count: this.state.count + 1 })
 ```
-
-### Connection state vs agent state
-
-- `conn.setState()` — per-connection metadata (userId, session token); lost on disconnect.
-- `this.setState()` — shared agent state; persisted and broadcast to all connections.
-- Don't put user-specific data in agent state or shared data in connection state.
 
 ## SQL
 
@@ -45,7 +41,7 @@ async onConnect(conn: Connection, ctx: ConnectionContext) {
 
 ## Routing and entry point
 
-- `routeAgentRequest()` in the Worker `fetch` handler is required to route requests to agent DOs. Missing it = "Agent not found" errors.
+- `routeAgentRequest()` in the Worker `fetch` handler is required — missing it = "Agent not found".
 
 ```ts
 // ❌ export default { fetch(req, env) { return new Response("ok"); } }
@@ -61,8 +57,8 @@ async onConnect(conn: Connection, ctx: ConnectionContext) {
 ## Scheduling
 
 - 1 alarm per DO — `setAlarm()` overwrites any existing alarm.
-- Alarm handlers have a 15-minute wall-clock limit; retries use exponential backoff (max 6 attempts).
-- Use `schedule()` for cron-like patterns; use `setAlarm()` for one-shot delayed work.
+- Alarm handlers: 15-minute wall-clock limit; retries use exponential backoff (max 6 attempts).
+- Use `schedule()` for cron-like patterns; `setAlarm()` for one-shot delayed work.
 
 ## AI and performance
 
@@ -96,15 +92,6 @@ catch { return { error: "Unavailable" }; }
 tag = "v1"
 new_sqlite_classes = ["MyAgent"]
 ```
-
-## Common failures
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| "Agent not found" | Missing DO binding or `routeAgentRequest()` | Check `wrangler.toml` bindings and Worker entry point |
-| State not syncing | Direct `this.state` mutation | Use `setState()` |
-| Connect timeout | Delayed `conn.accept()` | Call `conn.accept()` immediately in `onConnect` |
-| SQL errors on start | Missing `onStart()` schema init | Create tables in `onStart()` |
 
 ## Debugging
 
