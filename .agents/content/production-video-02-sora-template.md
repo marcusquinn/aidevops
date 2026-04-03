@@ -1,6 +1,6 @@
 # Sora 2 Pro Master Template
 
-6-section master template for UGC-style authentic content.
+Master template for UGC-style authentic content: Header → Shot-by-Shot → Timestamped Actions → Dialogue → Background Sound → Technical Specs.
 
 ```text
 [1. HEADER]
