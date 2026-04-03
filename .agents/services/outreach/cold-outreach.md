@@ -3,13 +3,9 @@ description: Cold outreach strategy playbook - warmup, compliance, infrastructur
 mode: subagent
 tools:
   read: true
-  bash: true
-  grep: true
 ---
 
 # Cold Outreach Strategy
-
-<!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
@@ -38,10 +34,7 @@ tools:
 
 Scale above 20/day only after 7+ days of stable inbox health. Plan: `target_daily_volume / 100 = minimum active mailboxes`. Add 20-30% headroom for pauses and deliverability degradation.
 
-**Multi-mailbox rotation:**
-1. Group by reputation tier (new, warming, stable); route high-priority accounts through stable first
-2. Distribute sequence steps evenly — no mailbox peaks at one hour/daypart
-3. Pause on anomaly signals (bounce spike, spam-folder drift, complaints); rebalance to healthy mailboxes
+**Multi-mailbox rotation:** Group by reputation tier (new, warming, stable); route high-priority accounts through stable first. Distribute sequence steps evenly — no mailbox peaks at one hour/daypart. Pause on anomaly signals (bounce spike, spam-folder drift, complaints); rebalance to healthy mailboxes.
 
 ## Platform Selection
 
@@ -62,7 +55,11 @@ Scale above 20/day only after 7+ days of stable inbox health. Plan: `target_dail
 
 ## Messaging Quality
 
-Avoid mass-templated openings ("just circling back," "quick question," "hope this finds you well"). Use context-grounded observations tied to recipient's role, timing, or initiative. Trigger from verifiable business signals (hiring, launch, stack changes, expansion). One problem hypothesis + one clear CTA per email. One relevant case/metric matching the prospect segment. Vary openings and CTAs to reduce template fingerprinting.
+- No mass-templated openings ("just circling back," "quick question," "hope this finds you well")
+- Use context-grounded observations tied to recipient's role, timing, or initiative
+- Trigger from verifiable business signals (hiring, launch, stack changes, expansion)
+- One problem hypothesis + one clear CTA per email; one relevant case/metric per prospect segment
+- Vary openings and CTAs to reduce template fingerprinting
 
 ## Reply Detection and Handoff
 
@@ -71,5 +68,3 @@ Avoid mass-templated openings ("just circling back," "quick question," "hope thi
 3. Route positive/high-intent neutral replies to human owner with SLA
 4. Track handoff latency and outcome in CRM for loop closure
 5. Feed objection patterns back into copy and segmentation weekly
-
-<!-- AI-CONTEXT-END -->
