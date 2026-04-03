@@ -29,30 +29,14 @@ model: sonnet
 | **Supporting** | 800–1,500 words | Long-tail keywords, link to pillar | Title → Intro (50–100 words) → 3–5 H2 sections → Internal link to pillar → CTA |
 | **Listicle** | 1,000–2,000 words | "best", "top", "how to" keywords | Number + keyword + year title → Selection criteria → Numbered H2 items → Comparison table → Verdict |
 
-**Example pillar outline** (from story "Why 95% of AI influencers fail"):
-
-```text
-Title: Why 95% of AI Influencers Fail (And How to Be in the 5%)
-H2: The AI Content Gold Rush
-H2: 5 Mistakes That Kill AI Influencer Careers
-  H3: Mistake 1 - Chasing Tools Instead of Problems
-  H3: Mistake 2 - Publishing Unedited AI Content
-  H3: Mistake 3 - Ignoring Audience Research
-  H3: Mistake 4 - No Testing or Optimization
-  H3: Mistake 5 - One-Off Posts Instead of Systems
-H2: What the Top 5% Do Differently
-H2: Building Your AI Content System
-H2: Key Takeaways / FAQ
-```
-
 ## SEO Workflow
 
 ### Keyword Research
 
 ```bash
-keyword-research-helper.sh volume "AI video generation tools"
-keyword-research-helper.sh related "AI video generation"
-keyword-research-helper.sh difficulty "AI video generation tools"
+keyword-research-helper.sh volume "<keyword>"
+keyword-research-helper.sh related "<keyword>"
+keyword-research-helper.sh difficulty "<keyword>"
 ```
 
 | Factor | Target |
@@ -86,9 +70,9 @@ keyword-research-helper.sh difficulty "AI video generation tools"
 ### Content Analysis
 
 ```bash
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze article.md --keyword "target keyword"
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze article.md --keyword "<keyword>"
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py readability article.md
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md --keyword "keyword"
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md --keyword "<keyword>"
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md
 ```
 
