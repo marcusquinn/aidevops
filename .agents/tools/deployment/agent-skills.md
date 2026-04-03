@@ -30,21 +30,9 @@ tools:
 
 ```text
 skill-name/
-  SKILL.md       # Instructions for the agent (required)
-  scripts/       # Helper scripts for automation (optional)
-  references/    # Supporting documentation (optional)
-```
-
-Minimal frontmatter:
-
-```yaml
----
-name: skill-name
-description: One sentence describing when to use this skill
-metadata:
-  author: author-name
-  version: "1.0.0"
----
+  SKILL.md       # Agent instructions (required); frontmatter: name, description, metadata.author, metadata.version
+  scripts/       # Helper scripts (optional)
+  references/    # Supporting docs (optional)
 ```
 
 ## Install
