@@ -14,9 +14,9 @@ tools:
 
 # Cross-Channel Conversation Continuity
 
-Maintain one relationship history per person across email, Matrix, SimpleX, Slack, CLI, and similar channels without leaking private context between unrelated identities.
+One relationship history per person across email, Matrix, SimpleX, Slack, CLI, and similar channels — no private context leaks between unrelated identities.
 
-Use the entity ID in `memory.db` as the continuity key:
+Continuity key: entity ID in `memory.db`.
 
 - Layer 2 identity: `entities` + `entity_channels`
 - Layer 1 threads: `conversations`
@@ -24,38 +24,29 @@ Use the entity ID in `memory.db` as the continuity key:
 
 ## Core Rule
 
-Resolve identity first, then continue the conversation. Never infer continuity from display name alone — require explicit channel mapping and an explicit confidence level.
+Resolve identity first, then continue the conversation. Never infer continuity from display name alone — require explicit channel mapping and explicit confidence level.
 
 ## Workflow
 
-1. Resolve the incoming sender and channel to an entity.
+1. Resolve incoming sender and channel to an entity.
 2. If unresolved, suggest candidates and require confirmation.
-3. Reuse an existing conversation when topic and participants still align; start a new one when topic or audience changed.
-4. Log the interaction to Layer 0 with channel metadata.
-5. Load context from the same entity before replying.
+3. Reuse existing conversation when topic and participants still align; start new when topic or audience changed.
+4. Log interaction to Layer 0 with channel metadata.
+5. Load context from same entity before replying.
 
 ## Email Identity Rules
 
-Use `entity-helper.sh` email normalization for stable matching: trim whitespace, lowercase, strip plus aliases from the local part.
+Use `entity-helper.sh` email normalization: trim whitespace, lowercase, strip plus aliases from local part.
 
 Example: ` User+alerts@Example.COM ` → `user@example.com`
 
-## Command Pattern
+## Commands
 
 ```bash
-# Resolve sender to known entity
 entity-helper.sh resolve --channel email --channel-id "sender@example.com"
-
-# If unresolved, check suggestions
 entity-helper.sh suggest email "sender@example.com"
-
-# Confirm link once validated
 entity-helper.sh link <entity_id> --channel email --channel-id "sender@example.com" --verified
-
-# Log message on the resolved entity
 entity-helper.sh log-interaction <entity_id> --channel email --channel-id "sender@example.com" --content "..."
-
-# Load continuity context before replying
 entity-helper.sh context <entity_id> --channel email --limit 20 --privacy-filter
 ```
 
@@ -66,18 +57,18 @@ entity-helper.sh context <entity_id> --channel email --limit 20 --privacy-filter
 - Use `--privacy-filter` when rendering context to shared or lower-trust channels.
 - Keep irreversible decisions (identity merges, external sends) human-verifiable.
 
-## Threading Guide
+## Threading
 
 | Condition | Action |
 |-----------|--------|
 | Same topic, recent history (≤30 days), stable recipients | Reply in existing thread |
 | New topic, dormant thread, or audience changed | Start new thread |
 
-When starting a new thread, reference the old thread in the first line for continuity.
+When starting a new thread, reference the old thread in the first line.
 
-## Verification Checklist
+## Verification
 
-- `entity-helper.sh resolve` returns the expected entity for known email aliases.
+- `entity-helper.sh resolve` returns expected entity for known email aliases.
 - `entity-helper.sh suggest email` proposes known candidates for partial matches.
-- Context output includes relevant multi-channel interactions for the same entity.
-- No unverified identity assumptions are introduced automatically.
+- Context output includes relevant multi-channel interactions for same entity.
+- No unverified identity assumptions introduced automatically.
