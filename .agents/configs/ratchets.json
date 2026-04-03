@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "updated": "2026-04-04T00:00:00Z",
+  "description": "Ratchet baselines for code quality regression prevention. Counts can only stay the same or decrease — never increase. Run linters-local.sh --update-baseline to lock in improvements.",
+  "ratchets": {
+    "bare_positional_params": {
+      "count": 4687,
+      "description": "$1/$2 etc. used directly in function bodies (should use local var=\"$1\")",
+      "pattern": "\\$[1-9]",
+      "exclude": "local.*=.*\\$[1-9]"
+    },
+    "hardcoded_aidevops_path": {
+      "count": 309,
+      "description": "Literal ~/.aidevops or /Users/ instead of ${HOME}/.aidevops or variable",
+      "pattern": "~/.aidevops|/Users/"
+    },
+    "broad_catch_or_true": {
+      "count": 2233,
+      "description": "|| true used to suppress errors without specific handling",
+      "pattern": "\\|\\| true"
+    },
+    "silent_errors": {
+      "count": 5589,
+      "description": "2>/dev/null used to silently discard errors without handling",
+      "pattern": "2>/dev/null"
+    },
+    "missing_return_files": {
+      "count": 2,
+      "description": "Files containing functions without explicit return 0 or return 1",
+      "pattern": "functions_without_return"
+    }
+  }
+}
