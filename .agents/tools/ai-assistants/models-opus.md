@@ -22,8 +22,6 @@ tools:
 
 # Opus Tier Model
 
-Highest-capability tier for tasks where stronger reasoning materially changes the outcome.
-
 ## When to Use
 
 - Architecture and system design decisions
@@ -32,8 +30,7 @@ Highest-capability tier for tasks where stronger reasoning materially changes th
 - Multi-step plans with hard dependencies
 - Trade-off analysis across many variables
 - Evaluating other models' outputs
-
-Do not use for routine implementation — route to sonnet. For large-context tasks (100K+ tokens), route to pro.
+- Do not use for routine implementation — route to sonnet; large-context (100K+ tokens) → pro
 
 ## Model Details
 
