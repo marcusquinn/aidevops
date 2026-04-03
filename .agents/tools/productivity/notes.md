@@ -26,19 +26,6 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Field Coverage
-
-| Field | macOS | Linux/Windows | Notes |
-|---|---|---|---|
-| Title | osascript | nb | core |
-| Body/content | osascript (HTML) | nb (Markdown) | core |
-| Folder/notebook | osascript | nb notebooks | core |
-| Search (title+body) | osascript | nb search | core |
-| Modification date | osascript | filesystem | core |
-| Tags | not available | nb `--tags` | Linux only |
-| Attachments | not available | nb `--content` file | limited |
-| Sync | iCloud (automatic) | git remote (manual) | platform-specific |
-
 ## When to Create Notes
 
 Create when:
@@ -67,14 +54,9 @@ Ask user if unclear. Common mappings:
 ### Create
 
 ```bash
-# Simple note
 notes-helper.sh add "Project ideas" --body "Feature X, integration Y"
-
-# With folder
 notes-helper.sh add "Sprint retrospective" --body "What went well: ..." --folder Work
-
-# Title only (empty body)
-notes-helper.sh add "Read later: distributed systems paper"
+notes-helper.sh add "Read later: distributed systems paper"   # title only
 ```
 
 ### View and search
@@ -91,46 +73,28 @@ notes-helper.sh search "API" --folder Work       # Search within folder
 ### Manage
 
 ```bash
-notes-helper.sh delete "Old draft"               # Delete a note
-notes-helper.sh sync                             # Sync (nb only; macOS is automatic)
+notes-helper.sh delete "Old draft"
+notes-helper.sh sync                             # nb only; macOS is automatic
 ```
 
-## Setup
-
-### macOS (one-time)
-
-```bash
-notes-helper.sh setup
-# No install needed. May need: System Settings > Privacy & Security > Automation
-```
-
-All accounts from System Settings > Internet Accounts appear as folders automatically.
-
-### Linux/Windows (one-time)
-
-```bash
-notes-helper.sh setup
-# Requires: nb (brew install nb)
-# Optional: configure git remote for sync (nb remote set <url>)
-```
-
-## Integration
-
-Agents call helper directly:
+### Agent integration
 
 ```bash
 ~/.aidevops/agents/scripts/notes-helper.sh add "Research: ${topic}" \
   --body "${summary}" --folder Work
 ```
 
+## Setup
+
+**macOS** (no install needed): `notes-helper.sh setup` — may need System Settings > Privacy & Security > Automation. All Internet Accounts appear as folders automatically.
+
+**Linux/Windows**: `notes-helper.sh setup` — requires `nb` (`brew install nb`). Optional: `nb remote set <url>` for git sync.
+
 ## Cross-tool Workflow
 
 ```bash
-# 1. Save research findings as a note
 notes-helper.sh add "API comparison" --body "${findings}" --folder Work
-# 2. Create a reminder to follow up
 reminders-helper.sh add "Review API comparison note" --due "next Monday" --list Work
-# 3. Block time to discuss
 calendar-helper.sh add "API review meeting" --start "2026-04-07 14:00" --end "2026-04-07 15:00"
 ```
 
@@ -144,8 +108,5 @@ calendar-helper.sh add "API review meeting" --start "2026-04-07 14:00" --end "20
 | Encryption | per-note lock | not built-in |
 | CLI install | none needed | `brew install nb` |
 | Search speed | slower (AppleScript) | fast (ripgrep) |
-
-## Accounts
-
-- **macOS**: All Internet Accounts (iCloud, Google, etc.) appear as separate folders.
-- **Linux/Windows**: Notebooks are directories. Use `nb notebooks add <name>` to create. Optional git remote for sync.
+| Tags | not available | `--tags` flag |
+| Attachments | not available | `--content` file (limited) |
