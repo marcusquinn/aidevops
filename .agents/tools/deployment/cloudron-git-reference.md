@@ -1,6 +1,6 @@
 ---
 description: Reference guide for using git.cloudron.io to study Cloudron app packaging patterns
-mode: subagent
+mode: reference
 tools:
   read: true
   bash: true
@@ -9,7 +9,7 @@ tools:
 
 # Using git.cloudron.io as Reference
 
-https://git.cloudron.io/ — authoritative source for real-world Cloudron packaging patterns (200+ official app packages).
+https://git.cloudron.io/ — 200+ official Cloudron app packages; authoritative source for real-world packaging patterns.
 
 ## Recommended Reference Apps
 
@@ -53,12 +53,7 @@ In any reference package:
 
 All topics: https://git.cloudron.io/explore/projects/topics
 
-**Common patterns to search for**:
-- `gosu cloudron:cloudron` — privilege dropping
-- `ln -sfn /app/data` — symlink patterns for writable paths
-- `CLOUDRON_POSTGRESQL_` — database configuration
-- `supervisord.conf` — multi-process setup
-- `envsubst` — template-based config injection
+**Common patterns**: `gosu cloudron:cloudron` (privilege drop) · `ln -sfn /app/data` (writable symlinks) · `CLOUDRON_POSTGRESQL_` (DB config) · `supervisord.conf` (multi-process) · `envsubst` (config templating)
 
 ## Repository Groups
 
@@ -85,25 +80,19 @@ git sparse-checkout set start.sh Dockerfile CloudronManifest.json
 ## GitLab API
 
 ```bash
-# List all packages group projects
+# List all packages
 curl -s "https://git.cloudron.io/api/v4/groups/packages/projects?per_page=100"
 
-# Search projects by topic
+# Filter by topic
 curl -s "https://git.cloudron.io/api/v4/projects?topic=php&per_page=20"
-
-# Find apps using supervisord
 curl -s "https://git.cloudron.io/api/v4/projects?topic=supervisor"
-
-# Find apps with proxyAuth (Cloudron handles auth)
 curl -s "https://git.cloudron.io/api/v4/projects?topic=proxyAuth"
 
-# Get repository file tree
+# File tree and raw content
 curl -s "https://git.cloudron.io/api/v4/projects/packages%2Fghost-app/repository/tree"
-
-# Get raw file content
 curl -s "https://git.cloudron.io/api/v4/projects/packages%2Fghost-app/repository/files/start.sh/raw?ref=master"
 
-# Search for code patterns across repos (requires auth for some endpoints)
+# Code search within a repo (auth required for some endpoints)
 curl -s "https://git.cloudron.io/api/v4/projects/packages%2Fghost-app/search?scope=blobs&search=supervisord"
 
 # Browse recently updated: https://git.cloudron.io/explore/projects?sort=latest_activity_desc
