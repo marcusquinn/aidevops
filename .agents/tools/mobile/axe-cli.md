@@ -9,43 +9,39 @@ tools:
 # AXe - iOS Simulator Automation CLI
 
 - **Install**: `brew install cameroncooke/axe/axe`
-- **Requirements**: macOS with Xcode and iOS Simulator
+- **Requirements**: macOS + Xcode + iOS Simulator
 - **GitHub**: https://github.com/cameroncooke/AXe (MIT, by XcodeBuildMCP author)
 - **vs idb**: Single binary (no daemon), complete HID coverage, gesture presets, timing controls
-- All commands require `--udid SIMULATOR_UDID`. Get UDIDs: `axe list-simulators`.
+- All commands require `--udid $UDID`. Get UDIDs: `axe list-simulators`.
 
 ## Commands
 
-### Touch, Gestures, and Input
-
 ```bash
+# Touch & gestures
 axe tap -x 100 -y 200 --udid $UDID                # coordinates
 axe tap --id "Safari" --udid $UDID                  # accessibility ID
 axe tap --label "Submit" --udid $UDID               # label
+axe tap -x 100 -y 200 --pre-delay 1.0 --post-delay 0.5 --udid $UDID  # timing on any touch/gesture
 axe swipe --start-x 100 --start-y 300 --end-x 300 --end-y 100 --udid $UDID
 axe gesture scroll-down --udid $UDID               # presets: scroll-up/down/left/right, swipe-from-{left,right,top,bottom}-edge
 axe type 'Hello World!' --udid $UDID               # direct text; echo "text" | axe type --stdin --udid $UDID
-axe tap -x 100 -y 200 --pre-delay 1.0 --post-delay 0.5 --udid $UDID  # timing on any touch/gesture
-```
 
-### Keyboard, Buttons, and Media
-
-```bash
-axe key 40 --udid $UDID                                        # HID keycode (40=Enter, 42=Backspace)
-axe key 42 --duration 1.0 --udid $UDID
+# Keyboard & buttons
+axe key 40 --udid $UDID                            # HID keycode (40=Enter, 42=Backspace); --duration N for hold
 axe key-sequence --keycodes 11,8,15,15,18 --udid $UDID         # type "hello" by keycodes
 axe key-combo --modifiers 227 --key 4 --udid $UDID             # Cmd+A (227=Cmd, 225=Shift)
 axe key-combo --modifiers 227,225 --key 4 --udid $UDID         # Cmd+Shift+A
-axe button home --udid $UDID                                   # hardware: home, lock, side-button, siri, apple-pay
-axe button lock --duration 2.0 --udid $UDID
+axe button home --udid $UDID                       # hardware: home, lock, side-button, siri, apple-pay; --duration N
+
+# Media & UI inspection
 axe screenshot --output ~/Desktop/capture.png --udid $UDID
 axe record-video --udid $UDID --fps 15 --output recording.mp4  # H.264 MP4; flags: --fps, --quality, --scale
 axe stream-video --udid $UDID --fps 30 --format ffmpeg | \     # stream formats: mjpeg, ffmpeg, raw, bgra
   ffmpeg -f image2pipe -framerate 30 -i - -c:v libx264 output.mp4
-axe describe-ui --udid $UDID                                   # accessibility tree (full screen or --point 100,200)
+axe describe-ui --udid $UDID                       # accessibility tree (full screen or --point 100,200)
 ```
 
-### Common Patterns
+## Common Patterns
 
 ```bash
 # Accessibility audit: dump UI tree + screenshot
