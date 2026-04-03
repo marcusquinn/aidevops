@@ -13,10 +13,7 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
-
-- **Purpose**: Google Search results (web, images, news, places, shopping, scholar)
-- **API**: `https://google.serper.dev`
+- **API**: `https://google.serper.dev` — web, images, news, places, shopping, scholar, autocomplete
 - **Auth**: `SERPER_API_KEY` in `~/.config/aidevops/credentials.sh`
 - **Dashboard**: https://serper.dev/
 - **No MCP required** — uses curl directly
@@ -28,18 +25,9 @@ SERPER_CURL=(-s -X POST -H "X-API-KEY: $SERPER_API_KEY" -H "Content-Type: applic
 
 <!-- AI-CONTEXT-END -->
 
-## Parameters
-
-| Param | Values | Notes |
-|-------|--------|-------|
-| `q` | string | Search query |
-| `gl` | `"us"`, `"gb"`, `"de"` | Country code |
-| `hl` | `"en"`, `"de"`, `"fr"` | Language |
-| `num` | `10`, `20`, `100` | Results count |
-| `tbs` | `"qdr:h/d/w/m"` | Time filter (hour/day/week/month) |
-| `page` | `1`, `2`, `3` | Page number |
-
 ## Endpoints
+
+Common params: `gl` (country: `"us"`,`"gb"`,`"de"`), `hl` (lang: `"en"`), `num` (results: 10–100), `tbs` (time: `"qdr:h/d/w/m"`), `page`.
 
 ```bash
 # Web
