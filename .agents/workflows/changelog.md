@@ -6,10 +6,6 @@ tools: { read: true, write: true, edit: true, bash: true, glob: true, grep: true
 
 # Changelog Workflow
 
-<!-- AI-CONTEXT-START -->
-
-## Quick Reference
-
 - **Format**: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - **Sections**: Added, Changed, Fixed, Removed, Security, Deprecated
 - **Trigger**: Called by @versioning before version bump completes
@@ -20,8 +16,6 @@ tools: { read: true, write: true, edit: true, bash: true, glob: true, grep: true
 .agents/scripts/version-manager.sh changelog-check      # validate changelog matches VERSION
 .agents/scripts/version-manager.sh release [major|minor|patch]  # full release (includes validation)
 ```
-
-<!-- AI-CONTEXT-END -->
 
 ## Format
 
