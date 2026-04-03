@@ -23,7 +23,7 @@ Extracted from publicly visible CSS values of real websites. Source: [VoltAgent/
 
 **AI & Machine Learning**: claude, cohere, elevenlabs, minimax, mistral.ai, ollama, opencode.ai, replicate, runwayml, together.ai, voltagent, x.ai
 
-**Developer Tools**: cursor, expo, linear.app, lovable, mintlify, posthog, raycast, resend, sentry, supabase, superhuman, vercel, warp, zapier
+**Developer Tools**: cursor, expo, linear, lovable, mintlify, posthog, raycast, resend, sentry, supabase, superhuman, vercel, warp, zapier
 
 **Infrastructure & Cloud**: clickhouse, composio, hashicorp, mongodb, sanity, stripe
 
