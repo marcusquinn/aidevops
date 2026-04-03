@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.747] - 2026-04-03
+
+### Changed
+
+- Tighten voice-ai-models.md — convert GPU Planning prose to scannable table, clarify VRAM/RAM column header (GH#15102)
+- Tighten distribution-blog.md agent doc (GH#15909)
+- Tighten axe-cli.md (82→80 lines) — remove redundant Quick Reference header (GH#15414)
+- Tighten git.md OpenCode section (GH#15389)
+- Restructure r2-patterns.md into chapter files (GH#15908)
+
 ## [3.5.694] - 2026-04-02
 
 ### Changed
