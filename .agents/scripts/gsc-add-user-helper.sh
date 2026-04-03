@@ -75,6 +75,122 @@ ensure_playwright() {
 	return 0
 }
 
+# Write JS constants and browser launch preamble for the add script
+_write_add_js_header() {
+	local service_account="$1"
+	local excludes="$2"
+	local dry_run="$3"
+	local single_domain="$4"
+	local chrome_profile="$5"
+
+	cat >>"${GSC_SCRIPT}" <<SCRIPT
+import { chromium } from 'playwright';
+
+const SERVICE_ACCOUNT = "${service_account}";
+const EXCLUDES = new Set([${excludes}]);
+const DRY_RUN = ${dry_run};
+const SINGLE_DOMAIN = "${single_domain}";
+
+async function main() {
+    console.log("Launching Chrome with user profile...");
+
+    const browser = await chromium.launchPersistentContext(
+        '${chrome_profile}',
+        { headless: false, channel: 'chrome' }
+    );
+
+    const page = await browser.newPage();
+    await page.goto("https://search.google.com/search-console", { waitUntil: 'networkidle' });
+    await page.waitForTimeout(2000);
+
+    let domains = [];
+
+    if (SINGLE_DOMAIN) {
+        domains = [SINGLE_DOMAIN];
+    } else {
+        const html = await page.content();
+        const domainRegex = /sc-domain:([a-z0-9.-]+)/g;
+        const matches = [...html.matchAll(domainRegex)];
+        domains = [...new Set(matches.map(m => m[1]))].filter(d => !EXCLUDES.has(d));
+    }
+
+    console.log(\`Found \${domains.length} properties to process\`);
+
+    const results = { success: [], skipped: [], failed: [] };
+SCRIPT
+	return 0
+}
+
+# Write the per-domain processing loop body for the add script
+_write_add_js_domain_loop() {
+	cat >>"${GSC_SCRIPT}" <<'SCRIPT'
+
+    for (const domain of domains) {
+        console.log(`\n=== ${domain} ===`);
+
+        try {
+            await page.goto(`https://search.google.com/search-console/users?resource_id=sc-domain:${domain}`,
+                { waitUntil: 'networkidle' });
+            await page.waitForTimeout(400);
+
+            const content = await page.content();
+
+            if (content.includes("don't have access")) {
+                console.log("  ⏭ No access to property");
+                results.failed.push(domain + " (no access)");
+                continue;
+            }
+
+            if (content.includes(SERVICE_ACCOUNT)) {
+                console.log("  ⏭ Already has service account");
+                results.skipped.push(domain);
+                continue;
+            }
+
+            if (DRY_RUN) {
+                console.log("  🔍 Would add service account (dry-run)");
+                results.success.push(domain + " (dry-run)");
+                continue;
+            }
+
+            await page.click('text=ADD USER');
+            await page.waitForTimeout(400);
+            await page.keyboard.type(SERVICE_ACCOUNT, { delay: 5 });
+            await page.keyboard.press('Enter');
+            await page.waitForTimeout(1000);
+
+            console.log("  ✓ Added service account");
+            results.success.push(domain);
+
+        } catch (error) {
+            console.error(`  ✗ Error: ${error.message}`);
+            results.failed.push(domain);
+        }
+    }
+SCRIPT
+	return 0
+}
+
+# Write the summary output and browser close for the add script
+_write_add_js_summary() {
+	cat >>"${GSC_SCRIPT}" <<'SCRIPT'
+
+    console.log("\n========== SUMMARY ==========");
+    console.log(`Added: ${results.success.length}`);
+    results.success.forEach(d => console.log(`  ✓ ${d}`));
+    console.log(`Skipped: ${results.skipped.length}`);
+    results.skipped.forEach(d => console.log(`  ⏭ ${d}`));
+    console.log(`Failed: ${results.failed.length}`);
+    results.failed.forEach(d => console.log(`  ✗ ${d}`));
+
+    await browser.close();
+}
+
+main().catch(console.error);
+SCRIPT
+	return 0
+}
+
 create_add_script() {
 	local service_account="$1"
 	local excludes="$2"
@@ -85,94 +201,39 @@ create_add_script() {
 	chrome_profile="$(get_chrome_profile_path)"
 
 	mkdir -p "${WORK_DIR}"
+	: >"${GSC_SCRIPT}"
 
-	cat >"${GSC_SCRIPT}" <<SCRIPT
+	_write_add_js_header "$service_account" "$excludes" "$dry_run" "$single_domain" "$chrome_profile"
+	_write_add_js_domain_loop
+	_write_add_js_summary
+	return 0
+}
+
+# Write the JS body for the list script
+_write_list_js_script() {
+	local chrome_profile="$1"
+
+	cat >>"${GSC_SCRIPT}" <<SCRIPT
 import { chromium } from 'playwright';
 
-const SERVICE_ACCOUNT = "${service_account}";
-const EXCLUDES = new Set([${excludes}]);
-const DRY_RUN = ${dry_run};
-const SINGLE_DOMAIN = "${single_domain}";
-
 async function main() {
-    console.log("Launching Chrome with user profile...");
-    
     const browser = await chromium.launchPersistentContext(
         '${chrome_profile}',
         { headless: false, channel: 'chrome' }
     );
-    
+
     const page = await browser.newPage();
     await page.goto("https://search.google.com/search-console", { waitUntil: 'networkidle' });
     await page.waitForTimeout(2000);
-    
-    let domains = [];
-    
-    if (SINGLE_DOMAIN) {
-        domains = [SINGLE_DOMAIN];
-    } else {
-        // Extract all domains from page
-        const html = await page.content();
-        const domainRegex = /sc-domain:([a-z0-9.-]+)/g;
-        const matches = [...html.matchAll(domainRegex)];
-        domains = [...new Set(matches.map(m => m[1]))].filter(d => !EXCLUDES.has(d));
-    }
-    
-    console.log(\`Found \${domains.length} properties to process\`);
-    
-    const results = { success: [], skipped: [], failed: [] };
-    
-    for (const domain of domains) {
-        console.log(\`\\n=== \${domain} ===\`);
-        
-        try {
-            await page.goto(\`https://search.google.com/search-console/users?resource_id=sc-domain:\${domain}\`, 
-                { waitUntil: 'networkidle' });
-            await page.waitForTimeout(400);
-            
-            const content = await page.content();
-            
-            if (content.includes("don't have access")) {
-                console.log("  ⏭ No access to property");
-                results.failed.push(domain + " (no access)");
-                continue;
-            }
-            
-            if (content.includes(SERVICE_ACCOUNT)) {
-                console.log("  ⏭ Already has service account");
-                results.skipped.push(domain);
-                continue;
-            }
-            
-            if (DRY_RUN) {
-                console.log("  🔍 Would add service account (dry-run)");
-                results.success.push(domain + " (dry-run)");
-                continue;
-            }
-            
-            await page.click('text=ADD USER');
-            await page.waitForTimeout(400);
-            await page.keyboard.type(SERVICE_ACCOUNT, { delay: 5 });
-            await page.keyboard.press('Enter');
-            await page.waitForTimeout(1000);
-            
-            console.log("  ✓ Added service account");
-            results.success.push(domain);
-            
-        } catch (error) {
-            console.error(\`  ✗ Error: \${error.message}\`);
-            results.failed.push(domain);
-        }
-    }
-    
-    console.log("\\n========== SUMMARY ==========");
-    console.log(\`Added: \${results.success.length}\`);
-    results.success.forEach(d => console.log(\`  ✓ \${d}\`));
-    console.log(\`Skipped: \${results.skipped.length}\`);
-    results.skipped.forEach(d => console.log(\`  ⏭ \${d}\`));
-    console.log(\`Failed: \${results.failed.length}\`);
-    results.failed.forEach(d => console.log(\`  ✗ \${d}\`));
-    
+
+    const html = await page.content();
+    const domainRegex = /sc-domain:([a-z0-9.-]+)/g;
+    const matches = [...html.matchAll(domainRegex)];
+    const domains = [...new Set(matches.map(m => m[1]))].sort();
+
+    console.log(\`\\nFound \${domains.length} GSC properties:\\n\`);
+    domains.forEach((d, i) => console.log(\`  \${(i+1).toString().padStart(2)}. \${d}\`));
+
     await browser.close();
 }
 
@@ -186,33 +247,9 @@ create_list_script() {
 	chrome_profile="$(get_chrome_profile_path)"
 
 	mkdir -p "${WORK_DIR}"
+	: >"${GSC_SCRIPT}"
 
-	cat >"${GSC_SCRIPT}" <<SCRIPT
-import { chromium } from 'playwright';
-
-async function main() {
-    const browser = await chromium.launchPersistentContext(
-        '${chrome_profile}',
-        { headless: false, channel: 'chrome' }
-    );
-    
-    const page = await browser.newPage();
-    await page.goto("https://search.google.com/search-console", { waitUntil: 'networkidle' });
-    await page.waitForTimeout(2000);
-    
-    const html = await page.content();
-    const domainRegex = /sc-domain:([a-z0-9.-]+)/g;
-    const matches = [...html.matchAll(domainRegex)];
-    const domains = [...new Set(matches.map(m => m[1]))].sort();
-    
-    console.log(\`\\nFound \${domains.length} GSC properties:\\n\`);
-    domains.forEach((d, i) => console.log(\`  \${(i+1).toString().padStart(2)}. \${d}\`));
-    
-    await browser.close();
-}
-
-main().catch(console.error);
-SCRIPT
+	_write_list_js_script "$chrome_profile"
 	return 0
 }
 
