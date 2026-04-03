@@ -4993,12 +4993,9 @@
     "lines_after": 72,
     "status": "simplified"
   },
-  ".agents/aidevops/service-links.md": {
-    "hash": "1b4d0cbc25fd53ad0a3de4ad3f1b3b8f1b8ab31d",
-    "issue": "GH#14974",
-    "pr": "pending",
-    "passes": 1,
-    "at": "2026-04-03T00:00:00Z",
+  ".agents/services/hosting/cloudflare-platform-skill/pages-functions-gotchas.md": {
+    "hash": "1253c92066cfa913e522251a5dc37bd66b8a581483d712f7f3556afbdc2c03cd",
+    "issue": "GH#15840",
     "status": "simplified"
   }
 }

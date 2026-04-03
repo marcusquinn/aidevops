@@ -75,9 +75,9 @@ As of 2026-03-20 — [Cloudflare Pages Functions limits](https://developers.clou
 
 ## Best Practices
 
-Performance: Minimize deps for cold starts · KV for infrequent reads, D1 for relational, R2 for large files · set `Cache-Control` headers · use prepared statements and batch operations
+**Performance:** Minimize deps for cold starts · KV for infrequent reads, D1 for relational, R2 for large files · set `Cache-Control` headers · use prepared statements and batch operations
 
-Security: Never commit secrets · use secrets (encrypted) not vars for sensitive data · validate and sanitize all input · implement auth middleware · set CORS headers · rate limit per-IP
+**Security:** Never commit secrets · use secrets (encrypted) not vars for sensitive data · validate and sanitize all input · implement auth middleware · set CORS headers · rate limit per-IP
 
 ## Migration
 
