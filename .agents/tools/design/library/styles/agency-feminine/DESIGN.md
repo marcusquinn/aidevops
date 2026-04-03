@@ -22,6 +22,7 @@ Surfaces are soft with generous border-radius (12px standard), thin borders, and
 ## 2. Colour Palette & Roles
 
 ### Primary
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Primary | `#d4a5a5` | CTAs, active accents, key links |
@@ -30,6 +31,7 @@ Surfaces are soft with generous border-radius (12px standard), thin borders, and
 | Primary Muted | `#f5ebe7` | Tinted section backgrounds |
 
 ### Accent
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Accent | `#9caf88` | Secondary actions, tags, nature/wellness cues |
@@ -38,6 +40,7 @@ Surfaces are soft with generous border-radius (12px standard), thin borders, and
 | Tertiary | `#c8a87e` | Gold/honey — sparingly for premium callouts |
 
 ### Text
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Text Primary | `#3d3530` | Headings, body — warm near-black |
@@ -47,6 +50,7 @@ Surfaces are soft with generous border-radius (12px standard), thin borders, and
 | Text Link | `#b07878` | Link colour, rose-toned |
 
 ### Surface
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Background | `#fdf6ee` | Page background, warm cream |
@@ -58,6 +62,7 @@ Surfaces are soft with generous border-radius (12px standard), thin borders, and
 | Border Focus | `#d4a5a5` | Focus rings, active borders |
 
 ### Semantic
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Success | `#9caf88` | Confirmations, completed states (uses accent) |
@@ -70,6 +75,7 @@ Surfaces are soft with generous border-radius (12px standard), thin borders, and
 | Info Background | `#f0f5fa` | Info message backgrounds |
 
 ### Shadows
+
 | Role | Value | Usage |
 |------|-------|-------|
 | Soft | `0 2px 12px rgba(61, 53, 48, 0.06)` | Cards, slight lift |
@@ -79,6 +85,7 @@ Surfaces are soft with generous border-radius (12px standard), thin borders, and
 ## 3. Typography Rules
 
 ### Font Families
+
 | Role | Stack |
 |------|-------|
 | Serif | `'Cormorant Garamond', 'Cormorant', 'Playfair Display', Georgia, serif` |
@@ -101,6 +108,7 @@ Surfaces are soft with generous border-radius (12px standard), thin borders, and
 | Quote | Serif Italic | 24px | 400 italic | 1.5 | 0 | Testimonials, pull quotes |
 
 ### Typography Principles
+
 - Serif (Cormorant) for all headings and display text — its light weights convey elegance
 - Use italic Cormorant for testimonials, pull quotes, and hero emphasis
 - Sans (Lato) at light weight (300) for body text creates an airy, approachable feel
@@ -113,7 +121,8 @@ Surfaces are soft with generous border-radius (12px standard), thin borders, and
 ### Buttons
 
 **Primary Button**
-```
+
+```css
 background: #d4a5a5
 color: #ffffff
 font: 14px/1 Lato, 500
@@ -130,7 +139,8 @@ transition: all 400ms ease-in-out
 ```
 
 **Secondary Button**
-```
+
+```css
 background: transparent
 color: #3d3530
 font: 14px/1 Lato, 500
@@ -146,7 +156,8 @@ letter-spacing: 0.04em
 ```
 
 **Ghost Button**
-```
+
+```css
 background: transparent
 color: #7a6e65
 font: 14px/1 Lato, 400
@@ -159,7 +170,8 @@ border-radius: 999px
 ```
 
 ### Inputs
-```
+
+```css
 background: #ffffff
 color: #3d3530
 font: 15px Lato, 300
@@ -176,7 +188,8 @@ transition: all 300ms ease
 ```
 
 ### Links
-```
+
+```css
 color: #b07878
 text-decoration: none
 font-weight: 400
@@ -187,7 +200,8 @@ transition: color 300ms ease
 ```
 
 ### Cards
-```
+
+```css
 background: #ffffff
 border: 1px solid #e8ddd0
 border-radius: 16px
@@ -199,7 +213,8 @@ transition: all 400ms ease-in-out
 ```
 
 ### Navigation
-```
+
+```css
 Background: #fdf6ee (or transparent with blur on scroll: backdrop-filter: blur(12px))
 Height: 72px
 Border bottom: 1px solid #e8ddd0
@@ -213,6 +228,7 @@ CTA in nav: small pill button with #d4a5a5 background
 ## 5. Layout Principles
 
 ### Spacing Scale (8px base unit)
+
 | Token | Value | Usage |
 |-------|-------|-------|
 | space-1 | 4px | Micro adjustments |
@@ -227,12 +243,14 @@ CTA in nav: small pill button with #d4a5a5 background
 | space-16 | 120px | Hero section padding |
 
 ### Grid
+
 - 12-column grid
 - Gutter: 16px (mobile), 24px (tablet), 32px (desktop)
 - Max container: 1200px — narrower than typical for a more intimate, editorial feel
 - Centre-weighted layouts preferred — content clusters toward the middle
 
 ### Breakpoints
+
 | Name | Width | Columns | Gutter |
 |------|-------|---------|--------|
 | Mobile | 0–767px | 4 | 16px |
@@ -241,9 +259,11 @@ CTA in nav: small pill button with #d4a5a5 background
 | Wide | 1200px+ | 12 | 32px |
 
 ### Whitespace Philosophy
+
 Space is elegance. Generous margins, ample padding, and open sections give content room to be appreciated. The design should feel like a beautifully typeset magazine — content is curated, not crammed. When in doubt, add more space.
 
 ### Border Radius Scale
+
 | Token | Value | Usage |
 |-------|-------|-------|
 | radius-sm | 8px | Small badges, tags, inputs |
@@ -273,6 +293,7 @@ Space is elegance. Generous margins, ample padding, and open sections give conte
 ## 7. Do's and Don'ts
 
 ### Do's
+
 1. **Do** use Cormorant italic for testimonials, quotes, and hero emphasis — it's the system's signature flourish
 2. **Do** maintain generous whitespace — every section should feel like it has room to breathe
 3. **Do** use warm, natural photography: soft focus, natural light, organic textures
@@ -282,6 +303,7 @@ Space is elegance. Generous margins, ample padding, and open sections give conte
 7. **Do** test body text readability — light weights (300) on cream backgrounds need careful contrast checking
 
 ### Don'ts
+
 1. **Don't** use bold/black font weights on serif headings — the elegance is in lightness
 2. **Don't** use saturated, electric colours — all colour should feel dusty, muted, natural
 3. **Don't** use sharp corners (< 8px radius) — the system is soft by nature
@@ -293,6 +315,7 @@ Space is elegance. Generous margins, ample padding, and open sections give conte
 ## 8. Responsive Behaviour
 
 ### Breakpoint Behaviour
+
 | Breakpoint | Layout Changes |
 |------------|---------------|
 | Mobile (< 768px) | Single column. Display type scales to 36px serif. Navigation collapses to hamburger with slide-in drawer. Cards stack full-width with reduced padding (24px). Images become full-bleed. |
@@ -301,12 +324,14 @@ Space is elegance. Generous margins, ample padding, and open sections give conte
 | Wide (1200px+) | Content maxes at 1200px container. Extra space is margin. |
 
 ### Touch Targets
+
 - Minimum: 48px × 48px tap area
 - CTA buttons: 52px minimum height on mobile
 - Spacing between tappable elements: 12px minimum
 - Form inputs: 52px height on mobile to prevent zoom
 
 ### Mobile-Specific Rules
+
 - Serif display type minimum 28px on smallest screens to maintain readability
 - Body text increases to 17px on mobile for comfortable reading
 - Card padding reduces from 32px to 24px
@@ -318,6 +343,7 @@ Space is elegance. Generous margins, ample padding, and open sections give conte
 ## 9. Agent Prompt Guide
 
 ### Quick Colour Reference
+
 | CSS Variable | Hex | Role |
 |-------------|-----|------|
 | `--color-primary` | `#d4a5a5` | Dusty rose — primary accent |

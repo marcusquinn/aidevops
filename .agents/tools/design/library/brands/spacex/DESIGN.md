@@ -21,20 +21,24 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Space Black** (`#000000`): Page background, the void of space — at 50% opacity for overlay gradient
 - **Spectral White** (`#f0f0fa`): Text color — not pure white, a slight blue-violet tint that mimics starlight
 
 ### Interactive
+
 - **Ghost Surface** (`rgba(240, 240, 250, 0.1)`): Button background — nearly invisible, 10% opacity
 - **Ghost Border** (`rgba(240, 240, 250, 0.35)`): Button border — spectral, 35% opacity
 - **Hover White** (`var(--white-100)`): Link hover state — full spectral white
 
 ### Gradient
+
 - **Dark Overlay** (`rgba(0, 0, 0, 0.5)`): Gradient overlay on photographs to ensure text legibility
 
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Display**: `D-DIN-Bold` — bold industrial geometric
 - **Body / UI**: `D-DIN`, fallbacks: `Arial, Verdana`
 
@@ -51,6 +55,7 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 | Micro | D-DIN | 10px (0.63rem) | 400 | 0.94 (tight) | 1px | `text-transform: uppercase` |
 
 ### Principles
+
 - **Universal uppercase**: Nearly every text element uses `text-transform: uppercase`. This creates a systematic military/aerospace voice where all communication feels like official documentation.
 - **Positive letter-spacing as identity**: 0.96px on display, 1.17px on nav — the wide tracking creates the stenciled, industrial feel that connects to DIN's heritage as a German engineering standard.
 - **Two weights, strict hierarchy**: D-DIN-Bold (700) for headlines and nav emphasis, D-DIN (400) for body. No medium or semibold weights exist in the system.
@@ -70,12 +75,15 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 - Use: The only button variant — "LEARN MORE" CTAs on photography
 
 ### Cards & Containers
+
 - **None.** SpaceX does not use cards, panels, or containers. All content is text directly on full-viewport photographs. The absence of containers IS the design.
 
 ### Inputs & Forms
+
 - Not present on the homepage. The site is purely presentational.
 
 ### Navigation
+
 - Transparent overlay nav on photography
 - D-DIN 13px weight 700, uppercase, 1.17px tracking
 - Spectral white text on dark imagery
@@ -83,6 +91,7 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 - Mobile: hamburger collapse
 
 ### Image Treatment
+
 - Full-viewport (100vh) photography sections
 - Professional aerospace photography: rockets, Mars, space
 - Dark gradient overlays (`rgba(0,0,0,0.5)`) for text legibility
@@ -92,21 +101,25 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 3px, 5px, 12px, 15px, 18px, 20px, 24px, 30px
 - Minimal scale — spacing is not the organizing principle; photography is
 
 ### Grid & Container
+
 - No traditional grid — each section is a full-viewport cinematic frame
 - Text is positioned absolutely or with generous padding over imagery
 - Left-aligned text blocks on photography backgrounds
 - No max-width container — content bleeds to viewport edges
 
 ### Whitespace Philosophy
+
 - **Photography IS the whitespace**: Empty space in the design is never empty — it's filled with the dark expanse of space, the curve of a planet, or the flame of a rocket engine. Traditional whitespace concepts don't apply.
 - **Vertical pacing through viewport**: Each section is exactly one viewport tall, creating a rhythmic scroll where each "page" reveals a new scene.
 
 ### Border Radius Scale
+
 - Sharp (4px): Small dividers, utility elements
 - Button (32px): Ghost buttons — the only rounded element
 
@@ -124,6 +137,7 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use full-viewport photography as the primary design element — every section is a scene
 - Apply uppercase + positive letter-spacing to ALL text — the aerospace stencil voice
 - Use D-DIN exclusively — no other fonts exist in the system
@@ -133,6 +147,7 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 - Let photography carry the emotional weight — the type system is functional, not expressive
 
 ### Don't
+
 - Don't add cards, panels, or containers — text sits directly on photography
 - Don't use shadows — they have no meaning in a photographic context
 - Don't introduce colors — the palette is strictly achromatic with spectral tint
@@ -144,6 +159,7 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | <600px | Stacked, reduced padding, smaller type |
@@ -154,10 +170,12 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 | Ultra-wide | >1500px | Maximum viewport |
 
 ### Touch Targets
+
 - Ghost buttons: 18px padding provides adequate touch area
 - Navigation links: uppercase with generous letter-spacing aids readability
 
 ### Collapsing Strategy
+
 - Photography: maintains full-viewport at all sizes, content reposition
 - Hero text: 48px → scales down proportionally
 - Navigation: horizontal → hamburger
@@ -165,6 +183,7 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 - Full-viewport sections maintained on mobile
 
 ### Image Behavior
+
 - Edge-to-edge photography at all viewport sizes
 - Background-size: cover with center focus
 - Dark overlay gradients adapt to content position
@@ -173,6 +192,7 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Background: Space Black (`#000000`)
 - Text: Spectral White (`#f0f0fa`)
 - Button background: Ghost (`rgba(240, 240, 250, 0.1)`)
@@ -180,12 +200,14 @@ What makes SpaceX distinctive is its radical minimalism: no shadows, no borders 
 - Overlay: `rgba(0, 0, 0, 0.5)`
 
 ### Example Component Prompts
+
 - "Create a full-viewport hero: background-image covering 100vh, dark gradient overlay rgba(0,0,0,0.5). Headline at 48px D-DIN-Bold, uppercase, letter-spacing 0.96px, spectral white (#f0f0fa) text. Ghost CTA button: rgba(240,240,250,0.1) bg, 1px solid rgba(240,240,250,0.35) border, 32px radius, 18px padding."
 - "Design a navigation: transparent over photography. D-DIN 13px weight 700, uppercase, letter-spacing 1.17px, spectral white text. SpaceX wordmark left-aligned."
 - "Build a content section: full-viewport height, background photography with dark overlay. Left-aligned text block with 48px D-DIN-Bold uppercase heading, 16px D-DIN body text, and ghost button below."
 - "Create a micro label: D-DIN 10px, uppercase, letter-spacing 1px, spectral white, line-height 0.94."
 
 ### Iteration Guide
+
 1. Start with photography — the image IS the design
 2. All text is uppercase with positive letter-spacing — no exceptions
 3. Only two colors: black and spectral white (#f0f0fa)

@@ -22,14 +22,17 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Zapier Black** (`#201515`): Primary text, headings, dark button backgrounds. A warm near-black with reddish undertones -- never cold.
 - **Cream White** (`#fffefb`): Page background, card surfaces, light button fills. Not pure white; the yellowish warmth is intentional.
 - **Off-White** (`#fffdf9`): Secondary background surface, subtle alternate tint. Nearly indistinguishable from cream white but creates depth.
 
 ### Brand Accent
+
 - **Zapier Orange** (`#ff4f00`): Primary CTA buttons, active underline indicators, accent borders. The signature color -- vivid and warm.
 
 ### Neutral Scale
+
 - **Dark Charcoal** (`#36342e`): Secondary text, footer text, border color for strong dividers. A warm dark gray-brown with 70% opacity variant.
 - **Warm Gray** (`#939084`): Tertiary text, muted labels, timestamp-style content. Mid-range with greenish-warm undertone.
 - **Sand** (`#c5c0b1`): Primary border color, hover state backgrounds, divider lines. The backbone of Zapier's structural elements.
@@ -37,6 +40,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - **Mid Warm** (`#b5b2aa`): Alternate border tone, used on specific span elements.
 
 ### Interactive
+
 - **Orange CTA** (`#ff4f00`): Primary action buttons and active tab underlines.
 - **Dark CTA** (`#201515`): Secondary dark buttons with sand hover state.
 - **Light CTA** (`#eceae3`): Tertiary/ghost buttons with sand hover.
@@ -44,16 +48,19 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - **Hover Underline**: Links remove `text-decoration: underline` on hover (inverse pattern).
 
 ### Overlay & Surface
+
 - **Semi-transparent Dark** (`rgba(45, 45, 46, 0.5)`): Overlay button variant, backdrop-like elements.
 - **Pill Surface** (`#fffefb`): White pill buttons with sand borders.
 
 ### Shadows & Depth
+
 - **Inset Underline** (`rgb(255, 79, 0) 0px -4px 0px 0px inset`): Active tab indicator -- orange underline using inset box-shadow.
 - **Hover Underline** (`rgb(197, 192, 177) 0px -4px 0px 0px inset`): Inactive tab hover -- sand-colored underline.
 
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Display**: `Degular Display` -- wide geometric display face for hero headlines
 - **Primary**: `Inter`, with fallbacks: `Helvetica, Arial`
 - **Editorial**: `GT Alpina` -- thin-weight serif for editorial moments
@@ -86,6 +93,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 | Micro SM | Inter | 13px (0.81rem) | 500 | 1.00-1.54 | normal | Small metadata text |
 
 ### Principles
+
 - **Three-font system, clear roles**: Degular Display commands attention at hero scale only. Inter handles everything functional. GT Alpina adds editorial warmth sparingly.
 - **Compressed display**: Degular at 0.90 line-height creates vertically compressed headline blocks that feel modern and architectural.
 - **Weight as hierarchy signal**: Inter uses 400 (reading), 500 (navigation/emphasis), 600 (headings/CTAs). Degular uses 500 (display) and 600 (buttons).
@@ -146,6 +154,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - Use: Horizontal tab navigation
 
 ### Cards & Containers
+
 - Background: `#fffefb`
 - Border: `1px solid #c5c0b1` (warm sand border)
 - Radius: 5px (standard), 8px (featured)
@@ -153,6 +162,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - Hover: subtle border color intensification
 
 ### Inputs & Forms
+
 - Background: `#fffefb`
 - Text: `#201515`
 - Border: `1px solid #c5c0b1`
@@ -161,6 +171,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - Placeholder: `#939084`
 
 ### Navigation
+
 - Clean horizontal nav on cream background
 - Zapier logotype left-aligned, 104x28px
 - Links: Inter 16px weight 500, `#201515` text
@@ -169,6 +180,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - Mobile: hamburger collapse
 
 ### Image Treatment
+
 - Product screenshots with `1px solid #c5c0b1` border
 - Rounded corners: 5-8px
 - Dashboard/workflow screenshots prominent in feature sections
@@ -195,12 +207,14 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 1px, 4px, 6px, 8px, 10px, 12px, 16px, 20px, 24px, 32px, 40px, 48px, 56px, 64px, 72px
 - CTA buttons use generous padding: 20px 24px for large, 8px 16px for standard
 - Section padding: 64px-80px vertical
 
 ### Grid & Container
+
 - Max content width: approximately 1200px
 - Hero: centered single-column with large top padding
 - Feature sections: 2-3 column grids for integration cards
@@ -208,11 +222,13 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - Footer: multi-column dark background (`#201515`)
 
 ### Whitespace Philosophy
+
 - **Warm breathing room**: Generous vertical spacing between sections (64px-80px), but content areas are relatively dense -- Zapier packs information efficiently within its cream canvas.
 - **Architectural compression**: Degular Display headlines at 0.90 line-height compress vertically, contrasting with the open spacing around them.
 - **Section rhythm**: Cream background throughout, with sections separated by sand-colored borders rather than background color changes.
 
 ### Border Radius Scale
+
 - Tight (3px): Small inline spans
 - Standard (4px): Buttons (orange CTA), tags, small elements
 - Content (5px): Cards, links, general containers
@@ -234,6 +250,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 **Shadow Philosophy**: Zapier deliberately avoids traditional shadow-based elevation. Structure is defined almost entirely through borders -- warm sand (`#c5c0b1`) borders for standard containment, dark charcoal (`#36342e`) borders for emphasis. The only shadow-like technique is the inset box-shadow used for tab underlines, where a `0px -4px 0px 0px inset` shadow creates a bottom-bar indicator. This border-first approach keeps the design grounded and tangible rather than floating.
 
 ### Decorative Depth
+
 - Orange inset underline on active tabs creates visual "weight" at the bottom of elements
 - Sand hover underlines provide preview states without layout shifts
 - No background gradients in main content -- the cream canvas is consistent
@@ -242,6 +259,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use Degular Display exclusively for hero-scale headlines (40px+) with 0.90 line-height for compressed impact
 - Use Inter for all functional UI -- navigation, body text, buttons, labels
 - Apply warm cream (`#fffefb`) as the background, never pure white
@@ -253,6 +271,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - Apply uppercase with 0.5px letter-spacing for section labels and micro-categorization
 
 ### Don't
+
 - Don't use Degular Display for body text or UI elements -- it's display-only
 - Don't use pure white (`#ffffff`) or pure black (`#000000`) -- Zapier's palette is warm-shifted
 - Don't apply box-shadow elevation to cards -- use borders instead
@@ -266,6 +285,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile Small | <450px | Tight single column, reduced hero text |
@@ -279,6 +299,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 | Large Desktop | >1280px | Centered with generous margins |
 
 ### Touch Targets
+
 - Large CTA buttons: 20px 24px padding (comfortable 60px+ height)
 - Standard buttons: 8px 16px padding
 - Navigation links: 16px weight 500 with adequate spacing
@@ -286,6 +307,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - Tab items: 12px 16px padding
 
 ### Collapsing Strategy
+
 - Hero: Degular 80px display scales to 40-56px on smaller screens
 - Navigation: horizontal links + CTA collapse to hamburger menu
 - Feature cards: 3-column grid to 2-column to single-column stacked
@@ -294,6 +316,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - Section spacing: 64-80px reduces to 40-48px on mobile
 
 ### Image Behavior
+
 - Product screenshots maintain sand border treatment at all sizes
 - Integration app icons maintain fixed sizes within responsive containers
 - Hero illustrations scale proportionally
@@ -302,6 +325,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Primary CTA: Zapier Orange (`#ff4f00`)
 - Background: Cream White (`#fffefb`)
 - Heading text: Zapier Black (`#201515`)
@@ -311,6 +335,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - Muted text: Warm Gray (`#939084`)
 
 ### Example Component Prompts
+
 - "Create a hero section on cream background (`#fffefb`). Headline at 56px Degular Display weight 500, line-height 0.90, color `#201515`. Subtitle at 20px Inter weight 400, line-height 1.20, color `#36342e`. Orange CTA button (`#ff4f00`, 4px radius, 8px 16px padding, white text) and dark button (`#201515`, 8px radius, 20px 24px padding, white text)."
 - "Design a card: cream background (`#fffefb`), `1px solid #c5c0b1` border, 5px radius. Title at 24px Inter weight 600, letter-spacing -0.48px, `#201515`. Body at 16px weight 400, `#36342e`. No box-shadow."
 - "Build a tab navigation: transparent background. Inter 16px weight 500, `#201515` text. Active tab: `box-shadow: rgb(255, 79, 0) 0px -4px 0px 0px inset`. Hover: `box-shadow: rgb(197, 192, 177) 0px -4px 0px 0px inset`. Padding 12px 16px."
@@ -318,6 +343,7 @@ The brand's signature orange (`#ff4f00`) is unmistakable -- a vivid, saturated r
 - "Design a footer with dark background (`#201515`). Text `#fffefb`. Links in `#c5c0b1` with hover to `#fffefb`. Multi-column layout. Social icons as 14px-radius circles with sand borders."
 
 ### Iteration Guide
+
 1. Always use warm cream (`#fffefb`) background, never pure white -- the warmth defines Zapier
 2. Borders (`1px solid #c5c0b1`) are the structural backbone -- avoid shadow elevation
 3. Zapier Orange (`#ff4f00`) is the only accent color; everything else is warm neutrals

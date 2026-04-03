@@ -20,21 +20,25 @@ The overall design philosophy is restraint through warmth. Minimal color (almost
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Warm Parchment** (`#faf9f6`): Primary text color — a barely-cream off-white that softens every surface
 - **Earth Gray** (`#353534`): Button backgrounds, dark interactive surfaces — warm, not cold
 - **Deep Void** (near-black, page background): The warm dark canvas derived from the body background
 
 ### Secondary & Accent
+
 - **Stone Gray** (`#868584`): Secondary text, muted descriptions — warm mid-gray
 - **Ash Gray** (`#afaeac`): Body text, button text — the workhorse reading color
 - **Purple-Tint Gray** (`#666469`): Link text with subtle purple undertone — underlined links in content
 
 ### Surface & Background
+
 - **Frosted Veil** (`rgba(255, 255, 255, 0.04)`): Ultra-subtle white overlay for surface differentiation
 - **Mist Border** (`rgba(226, 226, 226, 0.35)` / `rgba(227, 227, 227, 0.337)`): Semi-transparent borders for card containment
 - **Translucent Parchment** (`rgba(250, 249, 246, 0.9)`): Slightly transparent primary surface, allowing depth
 
 ### Neutrals & Text
+
 - **Warm Parchment** (`#faf9f6`): Headlines, high-emphasis text
 - **Ash Gray** (`#afaeac`): Body paragraphs, descriptions
 - **Stone Gray** (`#868584`): Secondary labels, subdued information
@@ -42,17 +46,20 @@ The overall design philosophy is restraint through warmth. Minimal color (almost
 - **Dark Charcoal** (`#454545` / `#353534`): Borders, button backgrounds
 
 ### Semantic & Accent
+
 - Warp operates as an almost monochromatic system — no bold accent colors
 - Interactive states are communicated through opacity changes and underline decorations rather than color shifts
 - Any accent color would break the warm, restrained palette
 
 ### Gradient System
+
 - No explicit gradients on the marketing site
 - Depth is created through layered semi-transparent surfaces and photography rather than color gradients
 
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Display & Body**: `Matter Regular` — geometric sans-serif with soft character. Fallbacks: `Matter Regular Placeholder`, system sans-serif
 - **Medium**: `Matter Medium` — weight 500 variant for emphasis. Fallbacks: `Matter Medium Placeholder`
 - **Square**: `Matter SQ Regular` — squared variant for select display contexts. Fallbacks: `Matter SQ Regular Placeholder`
@@ -85,6 +92,7 @@ The overall design philosophy is restraint through warmth. Minimal color (almost
 | UI Supplement | Inter | 16px | 500 | 1.00 | -0.2px | Specific UI elements |
 
 ### Principles
+
 - **Regular weight dominance**: Nearly all text uses weight 400 (Regular) — even headlines. Matter Medium (500) appears only for emphasis moments like card titles and buttons. This creates a remarkably even, calm typographic texture
 - **Uppercase as editorial signal**: Small labels and categories use uppercase transform with wide letter-spacing (1.4px–2.4px), creating a magazine-editorial categorization system
 - **Warm legibility**: The combination of Matter's geometric softness + warm text colors (#faf9f6) + controlled negative tracking creates text that reads as effortlessly human on dark surfaces
@@ -93,23 +101,27 @@ The overall design philosophy is restraint through warmth. Minimal color (almost
 ## 4. Component Stylings
 
 ### Buttons
+
 - **Dark Pill**: `#353534` background, Ash Gray (`#afaeac`) text, pill shape (50px radius), `10px` padding. The primary CTA — warm, muted, understated
 - **Frosted Tag**: `rgba(255, 255, 255, 0.16)` background, black text (`rgb(0, 0, 0)`), rectangular (6px radius), `1px 6px` padding. Small inline tag-like buttons
 - **Ghost**: No visible background, text-only with underline decoration on hover
 - **Hover**: Subtle opacity or brightness shift — no dramatic color changes
 
 ### Cards & Containers
+
 - **Photography Cards**: Full-bleed nature imagery with overlay text, 8px–12px border-radius
 - **Terminal Screenshot Cards**: Product UI embedded in dark containers with rounded corners (8px–12px)
 - **Bordered Cards**: Semi-transparent border (`rgba(226, 226, 226, 0.35)`) for containment, 12px–14px radius
 - **Hover**: Minimal — content cards don't dramatically change on hover, maintaining the calm aesthetic
 
 ### Inputs & Forms
+
 - Minimal form presence on the marketing site
 - Dark background inputs with warm gray text
 - Focus: Border brightness increase, no colored rings (consistent with the monochromatic palette)
 
 ### Navigation
+
 - **Top nav**: Dark background, warm parchment brand text, Matter Regular at 16px for links
 - **Link color**: Stone Gray (`#868584`) for muted nav, Warm Parchment for active/hover
 - **CTA button**: Dark pill (#353534) at nav end — restrained, not attention-grabbing
@@ -117,6 +129,7 @@ The overall design philosophy is restraint through warmth. Minimal color (almost
 - **Sticky**: Nav stays fixed on scroll
 
 ### Image Treatment
+
 - **Nature photography**: Landscapes, forests, golden-hour scenes — completely unique for a developer tool
 - **Terminal screenshots**: Product UI shown in realistic terminal window frames
 - **Mixed composition**: Nature images and terminal screenshots are interleaved, creating a lifestyle-meets-tool narrative
@@ -124,12 +137,14 @@ The overall design philosophy is restraint through warmth. Minimal color (almost
 - **Video**: Video elements present with 10px border-radius
 
 ### Testimonial Section
+
 - Social proof area ("Don't take our word for it") with quotes
 - Muted styling consistent with overall restraint
 
 ## 5. Layout Principles
 
 ### Spacing System
+
 - **Base unit**: 8px
 - **Scale**: 1px, 4px, 5px, 8px, 10px, 12px, 14px, 15px, 16px, 18px, 24px, 26px, 30px, 32px, 36px
 - **Section padding**: 80px–120px vertical between major sections
@@ -137,16 +152,19 @@ The overall design philosophy is restraint through warmth. Minimal color (almost
 - **Component gaps**: 8px–16px between related elements
 
 ### Grid & Container
+
 - **Max width**: ~1500px container (breakpoint at 1500px), centered
 - **Column patterns**: Full-width hero, 2-column feature sections with photography, single-column testimonials
 - **Cinematic layout**: Wide containers that let photography breathe
 
 ### Whitespace Philosophy
+
 - **Vast and warm**: Generous spacing between sections — the dark background creates a warm void that feels contemplative rather than empty
 - **Photography as whitespace**: Nature images serve as visual breathing room between dense product information
 - **Editorial pacing**: The layout reads like a magazine — each section is a deliberate page-turn moment
 
 ### Border Radius Scale
+
 - **4px**: Small interactive elements — buttons, tags
 - **5px–6px**: Standard components — links, small containers
 - **8px**: Images, video containers, standard cards
@@ -167,6 +185,7 @@ The overall design philosophy is restraint through warmth. Minimal color (almost
 | Level 3 (Ambient) | `rgba(0, 0, 0, 0.2) 0px 5px 15px` (inferred from design) | Image containers, floating elements |
 
 ### Shadow Philosophy
+
 Warp's elevation system is remarkably flat — almost zero shadow usage on the marketing site. Depth is communicated through:
 - **Semi-transparent borders** instead of shadows — borders at 35% opacity create a ghostly containment
 - **Photography layering** — images create natural depth without artificial shadows
@@ -174,6 +193,7 @@ Warp's elevation system is remarkably flat — almost zero shadow usage on the m
 - The effect is calm and grounded — nothing floats, everything rests
 
 ### Decorative Depth
+
 - **Photography as depth**: Nature images create atmospheric depth that shadows cannot
 - **No glass or blur effects**: The design avoids trendy glassmorphism entirely
 - **Warm ambient**: Any glow comes from the photography's natural lighting, not artificial CSS
@@ -181,6 +201,7 @@ Warp's elevation system is remarkably flat — almost zero shadow usage on the m
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use warm off-white (`#faf9f6`) for text instead of pure white — the cream undertone is essential
 - Keep buttons restrained and muted — dark fill (#353534) with muted text (#afaeac), no bright CTAs
 - Apply Matter Regular (weight 400) for nearly everything — even headlines. Reserve Medium (500) for emphasis only
@@ -191,6 +212,7 @@ Warp's elevation system is remarkably flat — almost zero shadow usage on the m
 - Keep negative letter-spacing on headlines (-0.4px to -2.4px) for Matter's compressed display treatment
 
 ### Don't
+
 - Use pure white (#ffffff) for text — it's always warm parchment (#faf9f6)
 - Add bold accent colors (blue, red, green) — the system is deliberately monochromatic warm grays
 - Apply bold weight (700+) to any text — Warp never goes above Medium (500)
@@ -203,6 +225,7 @@ Warp's elevation system is remarkably flat — almost zero shadow usage on the m
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | <810px | Single column, stacked sections, hero text reduces to ~48px, hamburger nav |
@@ -210,11 +233,13 @@ Warp's elevation system is remarkably flat — almost zero shadow usage on the m
 | Desktop | >1500px | Full cinematic layout, 80px hero display, side-by-side photography + text |
 
 ### Touch Targets
+
 - Pill buttons: 50px radius with 10px padding — comfortable touch targets
 - Nav links: 16px text with surrounding padding for accessibility
 - Mobile CTAs: Full-width pills on mobile for easy thumb reach
 
 ### Collapsing Strategy
+
 - **Navigation**: Full horizontal nav → simplified mobile navigation
 - **Hero text**: 80px display → 56px → 48px across breakpoints
 - **Feature sections**: Side-by-side photography + text → stacked vertically
@@ -222,6 +247,7 @@ Warp's elevation system is remarkably flat — almost zero shadow usage on the m
 - **Section spacing**: Reduces proportionally — generous desktop → compact mobile
 
 ### Image Behavior
+
 - Nature photography scales responsively, maintaining wide cinematic ratios
 - Terminal screenshots maintain aspect ratios within responsive containers
 - Video elements scale with 10px radius maintained
@@ -230,6 +256,7 @@ Warp's elevation system is remarkably flat — almost zero shadow usage on the m
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Primary Text: Warm Parchment (`#faf9f6`)
 - Secondary Text: Ash Gray (`#afaeac`)
 - Tertiary Text: Stone Gray (`#868584`)
@@ -238,6 +265,7 @@ Warp's elevation system is remarkably flat — almost zero shadow usage on the m
 - Background: Deep warm near-black (page background)
 
 ### Example Component Prompts
+
 - "Create a hero section on warm dark background with 80px Matter Regular heading in warm parchment (#faf9f6), line-height 1.0, letter-spacing -2.4px, and a dark pill button (#353534, 50px radius, #afaeac text)"
 - "Design a feature card with semi-transparent border (rgba(226,226,226,0.35)), 12px radius, warm dark background, Matter Regular heading at 24px, and ash gray (#afaeac) body text at 18px"
 - "Build a category label using Matter Regular at 12px, uppercase transform, letter-spacing 2.4px, stone gray (#868584) color — editorial magazine style"
@@ -245,6 +273,7 @@ Warp's elevation system is remarkably flat — almost zero shadow usage on the m
 - "Design a navigation bar with warm dark background, Matter Regular links at 16px in stone gray (#868584), hover to warm parchment (#faf9f6), and a dark pill CTA button (#353534) at the right"
 
 ### Iteration Guide
+
 When refining existing screens generated with this design system:
 1. Verify text color is warm parchment (#faf9f6) not pure white — the warmth is subtle but essential
 2. Ensure all buttons use the restrained dark palette (#353534) — no bright or colorful CTAs

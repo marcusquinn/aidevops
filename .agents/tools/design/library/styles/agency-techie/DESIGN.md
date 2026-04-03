@@ -22,6 +22,7 @@ Layouts are tight and information-dense. Whitespace is intentional but never was
 ## 2. Colour Palette & Roles
 
 ### Primary
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Primary | `#22d3ee` | CTAs, active states, focus rings, key links |
@@ -30,6 +31,7 @@ Layouts are tight and information-dense. Whitespace is intentional but never was
 | Primary Ghost | `rgba(34, 211, 238, 0.08)` | Subtle tints on hover for ghost buttons |
 
 ### Accent
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Accent | `#a78bfa` | Secondary actions, tags, decorative highlights |
@@ -37,6 +39,7 @@ Layouts are tight and information-dense. Whitespace is intentional but never was
 | Accent Muted | `#2e1065` | Backgrounds behind accent elements |
 
 ### Text
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Text Primary | `#e2e8f0` | Headings, body text, primary content |
@@ -46,6 +49,7 @@ Layouts are tight and information-dense. Whitespace is intentional but never was
 | Text Code | `#22d3ee` | Inline code, terminal output, variable names |
 
 ### Surface
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Background | `#0d1117` | Page background, base layer |
@@ -57,6 +61,7 @@ Layouts are tight and information-dense. Whitespace is intentional but never was
 | Border Focus | `#22d3ee` | Focus rings, active input borders |
 
 ### Semantic
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Success | `#4ade80` | Confirmations, passing tests, online status |
@@ -69,6 +74,7 @@ Layouts are tight and information-dense. Whitespace is intentional but never was
 | Info Background | `rgba(96, 165, 250, 0.1)` | Info banners |
 
 ### Shadows
+
 | Role | Value | Usage |
 |------|-------|-------|
 | Glow Primary | `0 0 12px rgba(34, 211, 238, 0.15)` | Focused inputs, active buttons |
@@ -78,6 +84,7 @@ Layouts are tight and information-dense. Whitespace is intentional but never was
 ## 3. Typography Rules
 
 ### Font Families
+
 | Role | Stack |
 |------|-------|
 | Mono | `'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', 'Consolas', monospace` |
@@ -100,6 +107,7 @@ Layouts are tight and information-dense. Whitespace is intentional but never was
 | Data | Mono | 14px | 500 | 1.4 | 0 | Metrics, stats, API values, IDs |
 
 ### Typography Principles
+
 - Use monospace for anything that represents code, data, identifiers, or machine-readable values
 - Sans-serif for all human-readable prose, navigation, and UI labels
 - Never go below 12px — even for tertiary information
@@ -111,7 +119,8 @@ Layouts are tight and information-dense. Whitespace is intentional but never was
 ### Buttons
 
 **Primary Button**
-```
+
+```css
 background: #22d3ee
 color: #0d1117
 font: 14px/1 Inter, 500
@@ -127,7 +136,8 @@ transition: all 150ms ease-out
 ```
 
 **Secondary Button**
-```
+
+```css
 background: transparent
 color: #e2e8f0
 font: 14px/1 Inter, 500
@@ -142,7 +152,8 @@ border-radius: 4px
 ```
 
 **Ghost Button**
-```
+
+```css
 background: transparent
 color: #94a3b8
 font: 14px/1 Inter, 500
@@ -157,7 +168,7 @@ border-radius: 4px
 
 ### Inputs
 
-```
+```css
 background: #161b22
 color: #e2e8f0
 font: 14px JetBrains Mono (for code inputs) or Inter (for text inputs)
@@ -173,7 +184,8 @@ border-radius: 4px
 ```
 
 ### Links
-```
+
+```css
 color: #22d3ee
 text-decoration: none
 transition: color 150ms ease-out
@@ -183,7 +195,8 @@ transition: color 150ms ease-out
 ```
 
 ### Cards
-```
+
+```css
 background: #161b22
 border: 1px solid #1e293b
 border-radius: 6px
@@ -194,7 +207,8 @@ transition: border-color 150ms ease-out
 ```
 
 ### Navigation
-```
+
+```css
 Background: #0d1117
 Border bottom: 1px solid #1e293b
 Height: 56px
@@ -206,6 +220,7 @@ Active item: #e2e8f0, border-bottom: 2px solid #22d3ee
 ## 5. Layout Principles
 
 ### Spacing Scale (4px base unit)
+
 | Token | Value | Usage |
 |-------|-------|-------|
 | space-1 | 4px | Tight gaps, inline icon padding |
@@ -220,11 +235,13 @@ Active item: #e2e8f0, border-bottom: 2px solid #22d3ee
 | space-16 | 64px | Major page sections |
 
 ### Grid
+
 - 12-column grid
 - Gutter: 16px (mobile), 24px (tablet), 32px (desktop)
 - Max container: 1280px, centered
 
 ### Breakpoints
+
 | Name | Width | Columns | Gutter |
 |------|-------|---------|--------|
 | Mobile | 0–639px | 4 | 16px |
@@ -233,9 +250,11 @@ Active item: #e2e8f0, border-bottom: 2px solid #22d3ee
 | Wide | 1280px+ | 12 | 32px |
 
 ### Whitespace Philosophy
+
 Space is structural, not decorative. Use the minimum spacing that maintains clear visual grouping. Dense is good — overwhelming is not. When in doubt, go one step tighter.
 
 ### Border Radius Scale
+
 | Token | Value | Usage |
 |-------|-------|-------|
 | radius-sm | 2px | Badges, small tags |
@@ -262,6 +281,7 @@ Space is structural, not decorative. Use the minimum spacing that maintains clea
 ## 7. Do's and Don'ts
 
 ### Do's
+
 1. **Do** use monospace fonts for data, IDs, timestamps, code, and anything machine-generated
 2. **Do** rely on border colour shifts and background tints for hierarchy over heavy shadows
 3. **Do** keep transitions to 150ms — fast enough to feel instant, slow enough to register
@@ -271,6 +291,7 @@ Space is structural, not decorative. Use the minimum spacing that maintains clea
 7. **Do** test all colour combinations against WCAG AA on the actual background they'll appear on
 
 ### Don'ts
+
 1. **Don't** use gradients — this system is flat by conviction, not by laziness
 2. **Don't** use more than two type weights on a single component (e.g., 400 + 600 is the max)
 3. **Don't** round corners beyond 6px — sharp geometry is core to the identity
@@ -282,6 +303,7 @@ Space is structural, not decorative. Use the minimum spacing that maintains clea
 ## 8. Responsive Behaviour
 
 ### Breakpoint Behaviour
+
 | Breakpoint | Layout Changes |
 |------------|---------------|
 | Mobile (< 640px) | Single column. Navigation collapses to hamburger. Cards stack full-width. Code blocks gain horizontal scroll. Font sizes reduce by 1 step. |
@@ -290,11 +312,13 @@ Space is structural, not decorative. Use the minimum spacing that maintains clea
 | Wide (1280px+) | Content maxes at 1280px container. Extra space becomes margin. |
 
 ### Touch Targets
+
 - Minimum: 44px × 44px tap area (even if visually smaller)
 - Spacing between tappable elements: minimum 8px
 - Mobile nav items: 48px minimum height
 
 ### Mobile-Specific Rules
+
 - Code blocks: horizontal scroll with `-webkit-overflow-scrolling: touch`
 - Tables: horizontal scroll wrapper with shadow fade indicators on edges
 - Reduce card padding from 20px to 16px
@@ -304,6 +328,7 @@ Space is structural, not decorative. Use the minimum spacing that maintains clea
 ## 9. Agent Prompt Guide
 
 ### Quick Colour Reference
+
 | CSS Variable | Hex | Role |
 |-------------|-----|------|
 | `--color-primary` | `#22d3ee` | Primary actions, links, focus |

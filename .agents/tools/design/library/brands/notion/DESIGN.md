@@ -21,21 +21,25 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Notion Black** (`rgba(0,0,0,0.95)` / `#000000f2`): Primary text, headings, body copy. The 95% opacity softens pure black without sacrificing readability.
 - **Pure White** (`#ffffff`): Page background, card surfaces, button text on blue.
 - **Notion Blue** (`#0075de`): Primary CTA, link color, interactive accent -- the only saturated color in the core UI chrome.
 
 ### Brand Secondary
+
 - **Deep Navy** (`#213183`): Secondary brand color, used sparingly for emphasis and dark feature sections.
 - **Active Blue** (`#005bab`): Button active/pressed state -- darker variant of Notion Blue.
 
 ### Warm Neutral Scale
+
 - **Warm White** (`#f6f5f4`): Background surface tint, section alternation, subtle card fill. The yellow undertone is key.
 - **Warm Dark** (`#31302e`): Dark surface background, dark section text. Warmer than standard grays.
 - **Warm Gray 500** (`#615d59`): Secondary text, descriptions, muted labels.
 - **Warm Gray 300** (`#a39e98`): Placeholder text, disabled states, caption text.
 
 ### Semantic Accent Colors
+
 - **Teal** (`#2a9d99`): Success states, positive indicators.
 - **Green** (`#1aae39`): Confirmation, completion badges.
 - **Orange** (`#dd5b00`): Warning states, attention indicators.
@@ -44,6 +48,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 - **Brown** (`#523410`): Earthy accent, warm feature sections.
 
 ### Interactive
+
 - **Link Blue** (`#0075de`): Primary link color with underline-on-hover.
 - **Link Light Blue** (`#62aef0`): Lighter link variant for dark backgrounds.
 - **Focus Blue** (`#097fe8`): Focus ring on interactive elements.
@@ -51,6 +56,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 - **Badge Blue Text** (`#097fe8`): Pill badge text, darker blue for readability.
 
 ### Shadows & Depth
+
 - **Card Shadow** (`rgba(0,0,0,0.04) 0px 4px 18px, rgba(0,0,0,0.027) 0px 2.025px 7.84688px, rgba(0,0,0,0.02) 0px 0.8px 2.925px, rgba(0,0,0,0.01) 0px 0.175px 1.04062px`): Multi-layer card elevation.
 - **Deep Shadow** (`rgba(0,0,0,0.01) 0px 1px 3px, rgba(0,0,0,0.02) 0px 3px 7px, rgba(0,0,0,0.02) 0px 7px 15px, rgba(0,0,0,0.04) 0px 14px 28px, rgba(0,0,0,0.05) 0px 23px 52px`): Five-layer deep elevation for modals and featured content.
 - **Whisper Border** (`1px solid rgba(0,0,0,0.1)`): Standard division border -- cards, dividers, sections.
@@ -58,6 +64,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Primary**: `NotionInter`, with fallbacks: `Inter, -apple-system, system-ui, Segoe UI, Helvetica, Apple Color Emoji, Arial, Segoe UI Emoji, Segoe UI Symbol`
 - **OpenType Features**: `"lnum"` (lining numerals) and `"locl"` (localized forms) enabled on display and heading text.
 
@@ -83,6 +90,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 | Micro Label | NotionInter | 12px (0.75rem) | 400 | 1.33 | 0.125px | Small metadata, timestamps |
 
 ### Principles
+
 - **Compression at scale**: NotionInter at display sizes uses -2.125px letter-spacing at 64px, progressively relaxing to -0.625px at 26px and normal at 16px. The compression creates density at headlines while maintaining readability at body sizes.
 - **Four-weight system**: 400 (body/reading), 500 (UI/interactive), 600 (emphasis/navigation), 700 (headings/display). The broader weight range compared to most systems allows nuanced hierarchy.
 - **Warm scaling**: Line height tightens as size increases -- 1.50 at body (16px), 1.23-1.27 at sub-headings, 1.00-1.04 at display. This creates denser, more impactful headlines.
@@ -127,6 +135,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 - Use: Status badges, feature labels, "New" tags
 
 ### Cards & Containers
+
 - Background: `#ffffff`
 - Border: `1px solid rgba(0,0,0,0.1)` (whisper border)
 - Radius: 12px (standard cards), 16px (featured/hero cards)
@@ -135,6 +144,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 - Image cards: 12px top radius, image fills top half
 
 ### Inputs & Forms
+
 - Background: `#ffffff`
 - Text: `rgba(0,0,0,0.9)`
 - Border: `1px solid #dddddd`
@@ -144,6 +154,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 - Placeholder: warm gray `#a39e98`
 
 ### Navigation
+
 - Clean horizontal nav on white, not sticky
 - Brand logo left-aligned (33x34px icon + wordmark)
 - Links: NotionInter 15px weight 500-600, near-black text
@@ -153,6 +164,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 - Product dropdowns with multi-level categorized menus
 
 ### Image Treatment
+
 - Product screenshots with `1px solid rgba(0,0,0,0.1)` border
 - Top-rounded images: `12px 12px 0px 0px` radius
 - Dashboard/workspace preview screenshots dominate feature sections
@@ -180,11 +192,13 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 2px, 3px, 4px, 5px, 6px, 7px, 8px, 11px, 12px, 14px, 16px, 24px, 32px
 - Non-rigid organic scale with fractional values (5.6px, 6.4px) for micro-adjustments
 
 ### Grid & Container
+
 - Max content width: approximately 1200px
 - Hero: centered single-column with generous top padding (80-120px)
 - Feature sections: 2-3 column grids for cards
@@ -192,11 +206,13 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 - Code/dashboard screenshots as contained with whisper border
 
 ### Whitespace Philosophy
+
 - **Generous vertical rhythm**: 64-120px between major sections. Notion lets content breathe with vast vertical padding.
 - **Warm alternation**: White sections alternate with warm white (`#f6f5f4`) sections, creating gentle visual rhythm without harsh color breaks.
 - **Content-first density**: Body text blocks are compact (line-height 1.50) but surrounded by ample margin, creating islands of readable content in a sea of white space.
 
 ### Border Radius Scale
+
 - Micro (4px): Buttons, inputs, functional interactive elements
 - Subtle (5px): Links, list items, menu items
 - Standard (8px): Small cards, containers, inline elements
@@ -218,6 +234,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 **Shadow Philosophy**: Notion's shadow system uses multiple layers with extremely low individual opacity (0.01 to 0.05) that accumulate into soft, natural-looking elevation. The 4-layer card shadow spans from 1.04px to 18px blur, creating a gradient of depth rather than a single hard shadow. The 5-layer deep shadow extends to 52px blur at 0.05 opacity, producing ambient occlusion that feels like natural light rather than computer-generated depth. This layered approach makes elements feel embedded in the page rather than floating above it.
 
 ### Decorative Depth
+
 - Hero section: decorative character illustrations (playful, hand-drawn style)
 - Section alternation: white to warm white (`#f6f5f4`) background shifts
 - No hard section borders -- separation comes from background color changes and spacing
@@ -225,6 +242,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 ## 7. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile Small | <400px | Tight single column, minimal padding |
@@ -236,12 +254,14 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 | Large Desktop | >1440px | Centered, generous margins |
 
 ### Touch Targets
+
 - Buttons use comfortable padding (8px-16px vertical)
 - Navigation links at 15px with adequate spacing
 - Pill badges have 8px horizontal padding for tap targets
 - Mobile menu toggle uses standard hamburger button
 
 ### Collapsing Strategy
+
 - Hero: 64px display -> scales to 40px -> 26px on mobile, maintains proportional letter-spacing
 - Navigation: horizontal links + blue CTA -> hamburger menu
 - Feature cards: 3-column -> 2-column -> single column stacked
@@ -251,6 +271,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 - Section spacing: 80px+ -> 48px on mobile
 
 ### Image Behavior
+
 - Workspace screenshots maintain whisper border at all sizes
 - Hero illustrations scale proportionally
 - Product screenshots use responsive images with consistent border radius
@@ -259,12 +280,14 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 ## 8. Accessibility & States
 
 ### Focus System
+
 - All interactive elements receive visible focus indicators
 - Focus outline: `2px solid` with focus color + shadow level 200
 - Tab navigation supported throughout all interactive components
 - High contrast text: near-black on white exceeds WCAG AAA (>14:1 ratio)
 
 ### Interactive States
+
 - **Default**: Standard appearance with whisper borders
 - **Hover**: Color shift on text, scale(1.05) on buttons, underline on links
 - **Active/Pressed**: scale(0.9) transform, darker background variant
@@ -272,6 +295,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 - **Disabled**: Warm gray (`#a39e98`) text, reduced opacity
 
 ### Color Contrast
+
 - Primary text (rgba(0,0,0,0.95)) on white: ~18:1 ratio
 - Secondary text (#615d59) on white: ~5.5:1 ratio (WCAG AA)
 - Blue CTA (#0075de) on white: ~4.6:1 ratio (WCAG AA for large text)
@@ -280,6 +304,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Primary CTA: Notion Blue (`#0075de`)
 - Background: Pure White (`#ffffff`)
 - Alt Background: Warm White (`#f6f5f4`)
@@ -292,6 +317,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 - Focus ring: Focus Blue (`#097fe8`)
 
 ### Example Component Prompts
+
 - "Create a hero section on white background. Headline at 64px NotionInter weight 700, line-height 1.00, letter-spacing -2.125px, color rgba(0,0,0,0.95). Subtitle at 20px weight 600, line-height 1.40, color #615d59. Blue CTA button (#0075de, 4px radius, 8px 16px padding, white text) and ghost button (transparent bg, near-black text, underline on hover)."
 - "Design a card: white background, 1px solid rgba(0,0,0,0.1) border, 12px radius. Use shadow stack: rgba(0,0,0,0.04) 0px 4px 18px, rgba(0,0,0,0.027) 0px 2.025px 7.85px, rgba(0,0,0,0.02) 0px 0.8px 2.93px, rgba(0,0,0,0.01) 0px 0.175px 1.04px. Title at 22px NotionInter weight 700, letter-spacing -0.25px. Body at 16px weight 400, color #615d59."
 - "Build a pill badge: #f2f9ff background, #097fe8 text, 9999px radius, 4px 8px padding, 12px NotionInter weight 600, letter-spacing 0.125px."
@@ -299,6 +325,7 @@ What makes Notion's visual language distinctive is its border philosophy. Rather
 - "Design an alternating section layout: white sections alternate with warm white (#f6f5f4) sections. Each section has 64-80px vertical padding, max-width 1200px centered. Section heading at 48px weight 700, line-height 1.00, letter-spacing -1.5px."
 
 ### Iteration Guide
+
 1. Always use warm neutrals -- Notion's grays have yellow-brown undertones (#f6f5f4, #31302e, #615d59, #a39e98), never blue-gray
 2. Letter-spacing scales with font size: -2.125px at 64px, -1.875px at 54px, -0.625px at 26px, normal at 16px
 3. Four weights: 400 (read), 500 (interact), 600 (emphasize), 700 (announce)

@@ -22,6 +22,7 @@ Layout is structured and rhythmic. A clear grid with consistent spacing creates 
 ## 2. Colour Palette & Roles
 
 ### Primary
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Primary | `#4f46e5` | CTAs, primary buttons, active navigation |
@@ -31,6 +32,7 @@ Layout is structured and rhythmic. A clear grid with consistent spacing creates 
 | Primary Ghost | `rgba(79, 70, 229, 0.06)` | Hover backgrounds for ghost elements |
 
 ### Accent
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Accent | `#10b981` | Secondary CTAs, success-adjacent actions, pricing highlights |
@@ -39,6 +41,7 @@ Layout is structured and rhythmic. A clear grid with consistent spacing creates 
 | Accent Light | `#d1fae5` | Accent tinted backgrounds, badges |
 
 ### Text
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Text Primary | `#111827` | Headings, primary body content |
@@ -48,6 +51,7 @@ Layout is structured and rhythmic. A clear grid with consistent spacing creates 
 | Text Link | `#4f46e5` | Inline links |
 
 ### Surface
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Background | `#ffffff` | Page background |
@@ -59,6 +63,7 @@ Layout is structured and rhythmic. A clear grid with consistent spacing creates 
 | Border Focus | `#4f46e5` | Focus rings |
 
 ### Semantic
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Success | `#10b981` | Confirmations, completed (shares accent) |
@@ -71,6 +76,7 @@ Layout is structured and rhythmic. A clear grid with consistent spacing creates 
 | Info Background | `#eff6ff` | Info banners |
 
 ### Shadows
+
 | Role | Value | Usage |
 |------|-------|-------|
 | Subtle | `0 1px 3px rgba(0, 0, 0, 0.06)` | Slight lift, resting cards |
@@ -82,6 +88,7 @@ Layout is structured and rhythmic. A clear grid with consistent spacing creates 
 ## 3. Typography Rules
 
 ### Font Families
+
 | Role | Stack |
 |------|-------|
 | Sans | `'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif` |
@@ -105,6 +112,7 @@ Layout is structured and rhythmic. A clear grid with consistent spacing creates 
 | Code | Mono | 14px | 400 | 1.6 | 0 | Code snippets, technical content |
 
 ### Typography Principles
+
 - Headings are heavy (700–800) to command attention — this is not a delicate system
 - Negative letter-spacing on headings tightens the visual weight as size increases
 - Body text at 400 weight provides clear contrast against bold headings
@@ -116,7 +124,8 @@ Layout is structured and rhythmic. A clear grid with consistent spacing creates 
 ### Buttons
 
 **Primary Button**
-```
+
+```css
 background: #4f46e5
 color: #ffffff
 font: 14px/1 Plus Jakarta Sans, 600
@@ -133,7 +142,8 @@ transition: all 200ms ease-out
 ```
 
 **Secondary Button**
-```
+
+```css
 background: #ffffff
 color: #4f46e5
 font: 14px/1 Plus Jakarta Sans, 600
@@ -148,7 +158,8 @@ border-radius: 12px
 ```
 
 **Ghost Button**
-```
+
+```css
 background: transparent
 color: #6b7280
 font: 14px/1 Plus Jakarta Sans, 500
@@ -161,7 +172,8 @@ border-radius: 12px
 ```
 
 **Accent Button (for secondary CTA — "Start Free", "Try Now")**
-```
+
+```css
 background: #10b981
 color: #ffffff
 font: 14px/1 Plus Jakarta Sans, 600
@@ -174,7 +186,8 @@ border-radius: 12px
 ```
 
 ### Inputs
-```
+
+```css
 background: #f9fafb
 color: #111827
 font: 15px Plus Jakarta Sans
@@ -191,7 +204,8 @@ transition: all 200ms ease
 ```
 
 ### Links
-```
+
+```css
 color: #4f46e5
 font-weight: 500
 text-decoration: none
@@ -202,7 +216,8 @@ transition: color 200ms ease
 ```
 
 ### Cards
-```
+
+```css
 background: #ffffff
 border: 1px solid #e5e7eb
 border-radius: 16px
@@ -214,7 +229,8 @@ transition: all 200ms ease-out
 ```
 
 ### Navigation
-```
+
+```css
 Background: #ffffff
 Border bottom: 1px solid #e5e7eb
 Height: 64px
@@ -228,6 +244,7 @@ CTA in nav: small primary button with #4f46e5 background
 ## 5. Layout Principles
 
 ### Spacing Scale (4px base unit)
+
 | Token | Value | Usage |
 |-------|-------|-------|
 | space-1 | 4px | Micro adjustments, icon padding |
@@ -244,12 +261,14 @@ CTA in nav: small primary button with #4f46e5 background
 | space-24 | 96px | Page section divisions |
 
 ### Grid
+
 - 12-column grid
 - Gutter: 16px (mobile), 24px (tablet), 32px (desktop)
 - Max container: 1280px, centered
 - Content-width variant: 768px for article/text-heavy pages
 
 ### Breakpoints
+
 | Name | Width | Columns | Gutter |
 |------|-------|---------|--------|
 | Mobile | 0–639px | 4 | 16px |
@@ -258,9 +277,11 @@ CTA in nav: small primary button with #4f46e5 background
 | Wide | 1280px+ | 12 | 32px |
 
 ### Whitespace Philosophy
+
 Space creates confidence. Consistent, rhythmic spacing communicates reliability and polish. Every spacing decision should reinforce the grid — no arbitrary values. Tight where elements are related, open where sections need separation.
 
 ### Border Radius Scale
+
 | Token | Value | Usage |
 |-------|-------|-------|
 | radius-sm | 6px | Small badges, chips |
@@ -291,6 +312,7 @@ Space creates confidence. Consistent, rhythmic spacing communicates reliability 
 ## 7. Do's and Don'ts
 
 ### Do's
+
 1. **Do** use bold font weights (600–800) for headings — confidence starts with type
 2. **Do** use the indigo/emerald combination for clear primary/secondary action hierarchy
 3. **Do** use solid-fill buttons for primary CTAs — outlines and ghosts are for secondary actions
@@ -300,6 +322,7 @@ Space creates confidence. Consistent, rhythmic spacing communicates reliability 
 7. **Do** use the accent (emerald) for action-oriented CTAs: "Start Free", "Get Started", "Try Now"
 
 ### Don'ts
+
 1. **Don't** use light font weights (300 or below) — they undermine the bold personality
 2. **Don't** use more than two brand colours in a single section (indigo + emerald is the max)
 3. **Don't** use decorative borders or patterns — the system is clean and structural
@@ -311,6 +334,7 @@ Space creates confidence. Consistent, rhythmic spacing communicates reliability 
 ## 8. Responsive Behaviour
 
 ### Breakpoint Behaviour
+
 | Breakpoint | Layout Changes |
 |------------|---------------|
 | Mobile (< 640px) | Single column. Display type scales to 36px. Hero CTAs stack vertically full-width. Card grid stacks. Navigation collapses to hamburger. Pricing cards stack. Logo grid becomes 2-up. |
@@ -319,12 +343,14 @@ Space creates confidence. Consistent, rhythmic spacing communicates reliability 
 | Wide (1280px+) | Content maxes at 1280px. 4-column feature grids where applicable. |
 
 ### Touch Targets
+
 - Minimum: 44px × 44px tap area
 - CTA buttons: 48px minimum height on mobile
 - Spacing between tappable elements: 8px minimum
 - Form inputs: 48px height on mobile
 
 ### Mobile-Specific Rules
+
 - Hero CTA buttons become full-width and stack vertically
 - Card padding reduces from 28px to 20px
 - Section vertical padding reduces by ~40% (96px → 56px)
@@ -336,6 +362,7 @@ Space creates confidence. Consistent, rhythmic spacing communicates reliability 
 ## 9. Agent Prompt Guide
 
 ### Quick Colour Reference
+
 | CSS Variable | Hex | Role |
 |-------------|-----|------|
 | `--color-primary` | `#4f46e5` | Indigo — primary actions |

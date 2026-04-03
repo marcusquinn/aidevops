@@ -21,37 +21,45 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Uber Black** (`#000000`): The defining brand color -- used for primary buttons, headlines, navigation text, and the footer. Not "near-black" or "off-black," but true, uncompromising black.
 - **Pure White** (`#ffffff`): The primary surface color and inverse text. Used for page backgrounds, card surfaces, and text on black elements.
 
 ### Interactive & Button States
+
 - **Hover Gray** (`#e2e2e2`): White button hover state -- a clean, cool light gray that provides clear feedback without warmth.
 - **Hover Light** (`#f3f3f3`): Subtle hover for elevated white buttons -- barely-there gray for gentle interaction feedback.
 - **Chip Gray** (`#efefef`): Background for secondary/filter buttons and navigation chips -- a neutral, ultra-light gray.
 
 ### Text & Content
+
 - **Body Gray** (`#4b4b4b`): Secondary text and footer links -- a true mid-gray with no warm or cool bias.
 - **Muted Gray** (`#afafaf`): Tertiary text, de-emphasized footer links, and placeholder content.
 
 ### Borders & Separation
+
 - **Border Black** (`#000000`): Thin 1px borders for structural containment -- used sparingly on dividers and form containers.
 
 ### Shadows & Depth
+
 - **Shadow Light** (`rgba(0, 0, 0, 0.12)`): Standard card elevation -- a featherweight lift for content cards.
 - **Shadow Medium** (`rgba(0, 0, 0, 0.16)`): Slightly stronger elevation for floating action buttons and overlays.
 - **Button Press** (`rgba(0, 0, 0, 0.08)`): Inset shadow for active/pressed states on secondary buttons.
 
 ### Link States
+
 - **Default Link Blue** (`#0000ee`): Standard browser blue for text links with underline -- used in body content.
 - **Link White** (`#ffffff`): Links on dark surfaces -- used in footer and dark sections.
 - **Link Black** (`#000000`): Links on light surfaces with underline decoration.
 
 ### Gradient System
+
 - Uber's design is **entirely gradient-free**. The black/white duality and flat color blocks create all visual hierarchy. No gradients appear anywhere in the system -- every surface is a solid color, every transition is a hard edge or a shadow.
 
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Headline / Display**: `UberMove`, with fallbacks: `UberMoveText, system-ui, Helvetica Neue, Helvetica, Arial, sans-serif`
 - **Body / UI**: `UberMoveText`, with fallbacks: `system-ui, Helvetica Neue, Helvetica, Arial, sans-serif`
 
@@ -72,6 +80,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 | Micro | UberMoveText | 12px (0.75rem) | 400 | 1.67 (relaxed) | Fine print, legal text |
 
 ### Principles
+
 - **Bold headlines, medium body**: UberMove headings are exclusively weight 700 (bold) -- every headline hits with billboard force. UberMoveText body and UI text uses 400-500, creating a clear visual hierarchy through weight contrast.
 - **Tight heading line-heights**: All headlines use line-heights between 1.22-1.40 -- compact and punchy, designed for scanning rather than reading.
 - **Functional typography**: There is no decorative type treatment anywhere. No letter-spacing, no text-transform, no ornamental sizing. Every text element serves a direct communication purpose.
@@ -118,6 +127,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 - Map controls, scroll-to-top, floating CTAs
 
 ### Cards & Containers
+
 - Background: Pure White (`#ffffff`) on white pages; no distinct card background differentiation
 - Border: none by default -- cards are defined by shadow, not stroke
 - Radius: 8px for standard content cards; 12px for featured/promoted cards
@@ -126,6 +136,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 - Image-led cards use full-bleed imagery with text overlay or below
 
 ### Inputs & Forms
+
 - Text: Uber Black (`#000000`)
 - Background: Pure White (`#ffffff`)
 - Border: 1px solid Black (`#000000`) -- the only place visible borders appear prominently
@@ -134,6 +145,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 - Focus: no extracted custom focus state -- relies on standard browser focus ring
 
 ### Navigation
+
 - Sticky top navigation with white background
 - Logo: Uber wordmark/icon at 24x24px in black
 - Links: UberMoveText at 14-18px, weight 500, in Uber Black
@@ -142,6 +154,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 - Mobile: hamburger menu pattern
 
 ### Image Treatment
+
 - Warm, hand-illustrated scenes (not photographs for feature sections)
 - Illustration style: slightly stylized people, warm color palette within illustrations, contemporary vibe
 - Hero sections use bold photography or illustration as full-width backgrounds
@@ -168,6 +181,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 4px, 6px, 8px, 10px, 12px, 14px, 16px, 18px, 20px, 24px, 32px
 - Button padding: 10px 12px (compact) or 14px 16px (comfortable)
@@ -175,6 +189,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 - Section vertical spacing: generous but efficient -- approximately 64-96px between major sections
 
 ### Grid & Container
+
 - Max container width: approximately 1136px, centered
 - Hero: split layout with text left, visual right
 - Feature sections: 2-column card grids or full-width single-column
@@ -182,11 +197,13 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 - Full-width sections extending to viewport edges
 
 ### Whitespace Philosophy
+
 - **Efficient, not airy**: Uber's whitespace is functional -- enough to separate, never enough to feel empty. This is transit-system spacing: compact, clear, purpose-driven.
 - **Content-dense cards**: Cards pack information tightly with minimal internal spacing, relying on shadow and radius to define boundaries.
 - **Section breathing room**: Major sections get generous vertical spacing, but within sections, elements are closely grouped.
 
 ### Border Radius Scale
+
 - Sharp (0px): No square corners used in interactive elements
 - Standard (8px): Content cards, input fields, listboxes
 - Comfortable (12px): Featured cards, larger containers, link cards
@@ -209,6 +226,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use true black (`#000000`) and pure white (`#ffffff`) as the primary palette -- the stark contrast IS Uber
 - Use 999px border-radius for all buttons, chips, and pill-shaped navigation elements
 - Keep all headings in UberMove Bold (700) for billboard-level impact
@@ -220,6 +238,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 - Pair black primary buttons with white secondary buttons for dual-action layouts
 
 ### Don't
+
 - Don't introduce color into the UI chrome -- Uber's interface is strictly black, white, and gray
 - Don't use rounded corners less than 999px on buttons -- the full-pill shape is a core identity element
 - Don't apply heavy shadows or drop shadows with high opacity -- depth is whisper-subtle
@@ -233,6 +252,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile Small | 320px | Minimum layout, single column, stacked inputs, compact typography |
@@ -243,12 +263,14 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 | Desktop | 1136px | Full desktop layout, maximum container width, split hero |
 
 ### Touch Targets
+
 - All pill buttons: minimum 44px height (10-14px vertical padding + line-height)
 - Navigation chips: generous 14px 16px padding for comfortable thumb tapping
 - Circular controls (menu, close): 50% radius ensures large, easy-to-hit targets
 - Card surfaces serve as full-area touch targets on mobile
 
 ### Collapsing Strategy
+
 - **Navigation**: Horizontal pill nav collapses to hamburger menu with circular toggle
 - **Hero**: Split layout (text + map/visual) stacks to single column -- text above, visual below
 - **Input fields**: Side-by-side pickup/destination inputs stack vertically
@@ -258,6 +280,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 - **Category pills**: Horizontal scroll with overflow on smaller screens
 
 ### Image Behavior
+
 - Illustrations scale proportionally within their containers
 - Hero imagery maintains aspect ratio, may crop on smaller screens
 - QR code sections hide on mobile (app download shifts to direct store links)
@@ -266,6 +289,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Primary Button: "Uber Black (#000000)"
 - Page Background: "Pure White (#ffffff)"
 - Button Text (on black): "Pure White (#ffffff)"
@@ -278,6 +302,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 - Footer Background: "Uber Black (#000000)"
 
 ### Example Component Prompts
+
 - "Create a hero section on Pure White (#ffffff) with a headline at 52px UberMove Bold (700), line-height 1.23. Use Uber Black (#000000) text. Add a subtitle in Body Gray (#4b4b4b) at 16px UberMoveText weight 400 with 1.50 line-height. Place an Uber Black (#000000) pill CTA button with Pure White text, 999px radius, padding 10px 12px."
 - "Design a category navigation bar with horizontal pill buttons. Each pill: Chip Gray (#efefef) background, Uber Black (#000000) text, 14px 16px padding, 999px border-radius. Active pill inverts to Uber Black background with Pure White text. Use UberMoveText at 14px weight 500."
 - "Build a feature card on Pure White (#ffffff) with 8px border-radius and shadow rgba(0,0,0,0.12) 0px 4px 16px. Title in UberMove at 24px weight 700, description in Body Gray (#4b4b4b) at 16px UberMoveText. Add a black pill CTA button at the bottom."
@@ -285,6 +310,7 @@ What makes Uber's design truly distinctive is its use of full-bleed photography 
 - "Design a floating action button with Pure White (#ffffff) background, 999px radius, 14px padding, and shadow rgba(0,0,0,0.16) 0px 2px 8px. Hover shifts background to #f3f3f3. Use for scroll-to-top or map controls."
 
 ### Iteration Guide
+
 1. Focus on ONE component at a time
 2. Reference the strict black/white palette -- "use Uber Black (#000000)" not "make it dark"
 3. Always specify 999px radius for buttons and pills -- this is non-negotiable for the Uber identity

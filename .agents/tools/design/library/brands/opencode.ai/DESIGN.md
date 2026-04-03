@@ -23,21 +23,25 @@ The color system is deliberately minimal. The primary palette consists of just t
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **OpenCode Dark** (`#201d1d`): Primary background, button fills, link text. A warm near-black with subtle reddish-brown warmth -- rgb(32, 29, 29).
 - **OpenCode Light** (`#fdfcfc`): Primary text on dark surfaces, button text. A barely-warm off-white that avoids clinical pure white.
 - **Mid Gray** (`#9a9898`): Secondary text, muted links. A neutral warm gray that bridges dark and light.
 
 ### Secondary
+
 - **Dark Surface** (`#302c2c`): Slightly lighter than primary dark, used for elevated surfaces and subtle differentiation.
 - **Border Gray** (`#646262`): Stronger borders, outline rings on interactive elements.
 - **Light Surface** (`#f1eeee`): Light mode surface, subtle background variation.
 
 ### Accent
+
 - **Accent Blue** (`#007aff`): Primary accent, links, interactive highlights. Apple system blue.
 - **Accent Blue Hover** (`#0056b3`): Darker blue for hover states.
 - **Accent Blue Active** (`#004085`): Deepest blue for pressed/active states.
 
 ### Semantic
+
 - **Danger Red** (`#ff3b30`): Error states, destructive actions. Apple system red.
 - **Danger Hover** (`#d70015`): Darker red for hover on danger elements.
 - **Danger Active** (`#a50011`): Deepest red for pressed danger states.
@@ -47,10 +51,12 @@ The color system is deliberately minimal. The primary palette consists of just t
 - **Warning Active** (`#995f06`): Deepest orange for pressed warning states.
 
 ### Text Scale
+
 - **Text Muted** (`#6e6e73`): Muted labels, disabled text, placeholder content.
 - **Text Secondary** (`#424245`): Secondary text on light backgrounds, captions.
 
 ### Border
+
 - **Border Warm** (`rgba(15, 0, 0, 0.12)`): Primary border color, warm transparent black with red tint.
 - **Border Tab** (`#9a9898`): Tab underline border, 2px solid bottom.
 - **Border Outline** (`#646262`): 1px solid outline border for containers.
@@ -58,6 +64,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Universal**: `Berkeley Mono`, with fallbacks: `IBM Plex Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace`
 
 ### Hierarchy
@@ -72,6 +79,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 | Caption | 14px (0.88rem) | 400 | 2.00 (relaxed) | Footnotes, metadata, small labels |
 
 ### Principles
+
 - **One font, one voice**: Berkeley Mono is used exclusively. There is no typographic variation between display, body, and code -- everything speaks in the same monospace register. Hierarchy is achieved through size and weight alone.
 - **Weight as hierarchy**: 700 for headings, 500 for interactive/medium emphasis, 400 for body text. Three weight levels create the entire hierarchy.
 - **Generous line-height**: 1.50 as the standard line-height gives text room to breathe within the monospace grid. The relaxed 2.00 line-height on captions creates clear visual separation.
@@ -127,6 +135,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 - Use: Section switching, content filtering
 
 ### Navigation
+
 - Clean horizontal layout with Berkeley Mono throughout
 - Brand logotype left-aligned in monospace
 - Links at 16px weight 500 with underline decoration
@@ -134,6 +143,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 - No backdrop blur or transparency -- solid surfaces only
 
 ### Image Treatment
+
 - Terminal/code screenshots as hero imagery
 - Dark terminal aesthetic with monospace type
 - Minimal borders, content speaks for itself
@@ -161,6 +171,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Fine scale: 1px, 2px, 4px (sub-8px for borders and micro-adjustments)
 - Standard scale: 8px, 12px, 16px, 20px, 24px
@@ -168,6 +179,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 - The system follows a clean 4/8px grid with consistent doubling
 
 ### Grid & Container
+
 - Max content width: approximately 800-900px (narrow, reading-optimized)
 - Single-column layout as the primary pattern
 - Centered content with generous horizontal margins
@@ -176,11 +188,13 @@ The color system is deliberately minimal. The primary palette consists of just t
 - Footer: multi-column link grid
 
 ### Whitespace Philosophy
+
 - **Monospace rhythm**: The fixed-width nature of Berkeley Mono creates a natural vertical grid. Line-heights of 1.50 and 2.00 maintain consistent rhythm.
 - **Narrow and focused**: Content is constrained to a narrow column, creating generous side margins that focus attention on the text.
 - **Sections through spacing**: No decorative dividers. Sections are separated by generous vertical spacing (48-96px) rather than borders or background changes.
 
 ### Border Radius Scale
+
 - Micro (4px): Default for all elements -- buttons, containers, badges
 - Input (6px): Form inputs get slightly more roundness
 - The entire system uses just two radius values, reinforcing the utilitarian aesthetic
@@ -197,6 +211,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 **Shadow Philosophy**: OpenCode's depth system is intentionally flat. There are no box-shadows in the extracted tokens -- zero shadow values were detected. Depth is communicated exclusively through border treatments and background color shifts. This flatness is consistent with the terminal aesthetic: terminals don't have shadows, and neither does OpenCode. The three border levels (transparent warm, tab indicator, solid outline) create sufficient visual hierarchy without any elevation illusion.
 
 ### Decorative Depth
+
 - Background color shifts between `#201d1d` and `#302c2c` create subtle surface differentiation
 - Transparent borders at 12% opacity provide barely-visible structure
 - The warm reddish tint in border colors (`rgba(15, 0, 0, 0.12)`) ties borders to the overall warm dark palette
@@ -205,6 +220,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 ## 7. Interaction & Motion
 
 ### Hover States
+
 - Links: color shift from default to accent blue (`#007aff`) or underline style change
 - Buttons: subtle background lightening or border emphasis
 - Accent blue provides a three-stage hover sequence: `#007aff` → `#0056b3` → `#004085` (default → hover → active)
@@ -212,11 +228,13 @@ The color system is deliberately minimal. The primary palette consists of just t
 - Warning orange: `#ff9f0a` → `#cc7f08` → `#995f06`
 
 ### Focus States
+
 - Border-based focus: increased border opacity or solid border color
 - No shadow-based focus rings -- consistent with the flat, no-shadow aesthetic
 - Keyboard focus likely uses outline or border color shift to accent blue
 
 ### Transitions
+
 - Minimal transitions expected -- terminal-inspired interfaces favor instant state changes
 - Color transitions: 100-150ms for subtle state feedback
 - No scale, rotate, or complex transform animations
@@ -224,6 +242,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | <640px | Single column, reduced padding, heading scales down |
@@ -231,11 +250,13 @@ The color system is deliberately minimal. The primary palette consists of just t
 | Desktop | >1024px | Full content width (~800-900px centered), maximum whitespace |
 
 ### Touch Targets
+
 - Buttons with 4px 20px padding provide adequate horizontal touch area
 - Input fields with 20px padding ensure comfortable mobile typing
 - Tab items at 16px with tight line-height may need mobile adaptation
 
 ### Collapsing Strategy
+
 - Hero heading: 38px → 28px → 24px on smaller screens
 - Navigation: horizontal links → hamburger/drawer on mobile
 - Feature lists: maintain single-column, reduce horizontal padding
@@ -244,6 +265,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 - Section spacing: 96px → 64px → 48px on mobile
 
 ### Image Behavior
+
 - Terminal screenshots maintain aspect ratio and border treatment
 - Full-width elements scale proportionally
 - Monospace type maintains readability at all sizes due to fixed-width nature
@@ -251,6 +273,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Page background: `#201d1d` (warm near-black)
 - Primary text: `#fdfcfc` (warm off-white)
 - Secondary text: `#9a9898` (warm gray)
@@ -264,6 +287,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 - Input bg: `#f8f7f7`, input border: `rgba(15, 0, 0, 0.12)`
 
 ### Example Component Prompts
+
 - "Create a hero section on `#201d1d` warm dark background. Headline at 38px Berkeley Mono weight 700, line-height 1.50, color `#fdfcfc`. Subtitle at 16px weight 400, color `#9a9898`. Primary CTA button (`#201d1d` bg with `1px solid #646262` border, 4px radius, 4px 20px padding, `#fdfcfc` text at weight 500)."
 - "Design a feature list: single-column on `#201d1d` background. Feature name at 16px Berkeley Mono weight 700, color `#fdfcfc`. Description at 16px weight 400, color `#9a9898`. No cards, no borders -- pure text with 16px vertical gap between items."
 - "Build an email capture form: `#f8f7f7` background input, `1px solid rgba(15, 0, 0, 0.12)` border, 6px radius, 20px padding. Adjacent dark button (`#201d1d` bg, `#fdfcfc` text, 4px radius, 4px 20px padding). Berkeley Mono throughout."
@@ -271,6 +295,7 @@ The color system is deliberately minimal. The primary palette consists of just t
 - "Design a footer: `#201d1d` background, multi-column link grid. Links at 16px Berkeley Mono weight 400, color `#9a9898`. Section headers at weight 700. Border-top `1px solid rgba(15, 0, 0, 0.12)` separator."
 
 ### Iteration Guide
+
 1. Berkeley Mono is the only font -- never introduce a second typeface. Size and weight create all hierarchy.
 2. Keep surfaces flat: no shadows, no gradients, no blur effects. Use borders and background shifts only.
 3. The warm undertone matters: use `#201d1d` not `#000000`, use `#fdfcfc` not `#ffffff`. The reddish warmth is subtle but essential.

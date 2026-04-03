@@ -23,35 +23,41 @@ The depth model is deliberately flat. Shadows are minimal and cool-toned, border
 ## 2. Colour Palette & Roles
 
 ### Background Surfaces
+
 - **Base Dark** (`#111827`): Primary page background, the foundation of all surfaces
 - **Surface** (`#1f2937`): Cards, panels, sidebar backgrounds -- one step up from base
 - **Elevated** (`#374151`): Dropdown menus, tooltips, hover states on surfaces
 - **Inset** (`#0d1117`): Code blocks, terminal output, sunken areas
 
 ### Text Colours
+
 - **Primary Text** (`#f9fafb`): Main text on dark backgrounds -- near-white, not pure white
 - **Secondary Text** (`#9ca3af`): Descriptions, labels, metadata, muted content
 - **Tertiary Text** (`#6b7280`): Placeholders, disabled states, timestamps
 - **Code Text** (`#e5e7eb`): Code content in monospace contexts
 
 ### Accent & Interactive
+
 - **Terminal Green** (`#4ade80`): Primary accent -- CTAs, active states, success indicators
 - **Green Hover** (`#22c55e`): Hover state for green interactive elements
 - **Amber** (`#fbbf24`): Secondary accent -- warnings, highlights, secondary actions
 - **Blue** (`#3b82f6`): Info states, links, tertiary interactive elements
 
 ### Semantic
+
 - **Success** (`#4ade80`): Same as accent -- confirms terminal-green convention
 - **Warning** (`#fbbf24`): Amber -- caution states, approaching limits
 - **Error** (`#ef4444`): Red -- failures, destructive actions, validation errors
 - **Info** (`#3b82f6`): Blue -- informational notices, help text
 
 ### Borders & Dividers
+
 - **Border Primary** (`#1f2937`): Main structural borders, card outlines
 - **Border Secondary** (`#374151`): Lighter borders for inner divisions
 - **Border Focus** (`#4ade80`): Focus ring colour for keyboard navigation
 
 ### Shadows
+
 - **Ambient** (`rgba(0, 0, 0, 0.3) 0px 1px 2px`): Minimal ambient shadow
 - **Elevated** (`rgba(0, 0, 0, 0.4) 0px 4px 6px -1px`): Dropdowns, popovers
 - **Overlay** (`rgba(0, 0, 0, 0.6) 0px 10px 15px -3px`): Modals, command palettes
@@ -59,6 +65,7 @@ The depth model is deliberately flat. Shadows are minimal and cool-toned, border
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Display/Heading**: `'JetBrains Mono', 'Fira Code', 'SF Mono', ui-monospace, monospace` -- monospace headings reinforce the developer aesthetic
 - **Body**: `'Inter', -apple-system, system-ui, 'Segoe UI', sans-serif` -- clean sans-serif for readable body text
 - **Code**: `'JetBrains Mono', 'Fira Code', 'SF Mono', ui-monospace, monospace` -- same as heading, with ligatures enabled (`"liga", "calt"`)
@@ -79,6 +86,7 @@ The depth model is deliberately flat. Shadows are minimal and cool-toned, border
 | Terminal | JetBrains Mono | 14px (0.875rem) | 400 | 1.5 | normal | Terminal/CLI output |
 
 ### Principles
+
 - **Monospace-first hierarchy**: Headings and buttons use JetBrains Mono, creating a cohesive terminal feel throughout navigation and structure.
 - **Compact sizing**: Body at 15px (not 16px) and small at 13px reflect the density preference of developer tools.
 - **Tight headings**: Line heights 1.15-1.3 for headings keep the interface compact.
@@ -130,12 +138,14 @@ The depth model is deliberately flat. Shadows are minimal and cool-toned, border
 - Error: border-color `#ef4444`, box-shadow `0 0 0 2px rgba(239, 68, 68, 0.2)`
 
 ### Links
+
 - Default: `#3b82f6`, no underline
 - Hover: `#60a5fa`, underline
 - Active: `#2563eb`
 - Code links: `#4ade80`, hover `#22c55e`
 
 ### Cards & Containers
+
 - Background: `#1f2937`
 - Border: `1px solid #374151`
 - Radius: 4px
@@ -144,6 +154,7 @@ The depth model is deliberately flat. Shadows are minimal and cool-toned, border
 - Hover: border-color `#4b5563`
 
 ### Navigation
+
 - Sticky top bar, background `#111827` with border-bottom `1px solid #1f2937`
 - Nav links: JetBrains Mono 13px, weight 500, `#9ca3af`
 - Active link: `#4ade80`
@@ -153,10 +164,12 @@ The depth model is deliberately flat. Shadows are minimal and cool-toned, border
 ## 5. Layout Principles
 
 ### Spacing Scale
+
 - Base unit: 4px
 - Scale: 2, 4, 6, 8, 12, 16, 20, 24, 32, 40, 48, 64
 
 ### Grid & Container
+
 - Max content width: 1200px
 - Sidebar width: 240px (collapsible)
 - Content area: fluid within container
@@ -173,11 +186,13 @@ The depth model is deliberately flat. Shadows are minimal and cool-toned, border
 | Wide | > 1440px | Max-width contained, centred |
 
 ### Whitespace Philosophy
+
 - **Dense by default**: Small gaps, compact padding, tight line-heights. Developers prefer information density.
 - **Section breathing room**: 32-48px between major sections prevents wall-of-text feel.
 - **Code blocks generous**: Code content gets extra padding (16px) and line-height (1.6) for readability.
 
 ### Border Radius Scale
+
 | Size | Value | Use |
 |------|-------|-----|
 | Default | 4px | Everything -- buttons, cards, inputs, badges |
@@ -232,11 +247,13 @@ The depth model is deliberately flat. Shadows are minimal and cool-toned, border
 | Wide | > 1440px | Content max-width 1200px, centred |
 
 ### Touch Targets
+
 - Minimum: 32x32px (denser than standard 44px, acceptable for developer audience)
 - Preferred: 40x40px for primary actions
 - Mobile override: 44x44px minimum on touch devices
 
 ### Mobile Rules
+
 - Sidebar collapses to hamburger overlay
 - Code blocks gain horizontal scroll, not wrapping
 - Navigation simplifies to icon-only with labels on hover/tap
@@ -263,6 +280,7 @@ The depth model is deliberately flat. Shadows are minimal and cool-toned, border
 | --border-light | #374151 | Secondary borders |
 
 ### Ready-to-Use Prompts
+
 - "Build a dashboard layout": Use `--bg-base` background, `--bg-surface` sidebar and cards, `--accent` for active nav items. JetBrains Mono headings, Inter body text. Dense 4px spacing grid. Sticky top nav with border-bottom.
 - "Build a CLI documentation page": Inset `--bg-inset` code blocks with JetBrains Mono 14px. Body text in Inter 15px on `--bg-base`. Max-width 780px for reading. Green accent for inline code references.
 - "Build a settings panel": `--bg-surface` cards with `--border` outlines. Toggle switches using `--accent` green for on state, `--bg-elevated` for off. Compact 8px padding on form groups. JetBrains Mono labels.

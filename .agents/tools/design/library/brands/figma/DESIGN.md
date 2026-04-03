@@ -21,23 +21,27 @@ What makes Figma distinctive beyond the variable font is its circle-and-pill geo
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Pure Black** (`#000000`): All text, all solid buttons, all borders. The sole "color" of the interface.
 - **Pure White** (`#ffffff`): All backgrounds, white buttons, text on dark surfaces. The other half of the binary.
 
 *Note: Figma's marketing site uses ONLY these two colors for its interface layer. All vibrant colors appear exclusively in product screenshots, hero gradients, and embedded content.*
 
 ### Surface & Background
+
 - **Pure White** (`#ffffff`): Primary page background and card surfaces.
 - **Glass Black** (`rgba(0, 0, 0, 0.08)`): Subtle dark overlay for secondary circular buttons and glass effects.
 - **Glass White** (`rgba(255, 255, 255, 0.16)`): Frosted glass overlay for buttons on dark/colored surfaces.
 
 ### Gradient System
+
 - **Hero Gradient**: A vibrant multi-stop gradient using electric green, bright yellow, deep purple, and hot pink. This gradient is the visual signature of the hero section — it represents the creative possibilities of the tool.
 - **Product Section Gradients**: Individual product areas (Design, Dev Mode, Prototyping) may use distinct color themes in their showcases.
 
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Primary**: `figmaSans`, with fallbacks: `figmaSans Fallback, SF Pro Display, system-ui, helvetica`
 - **Monospace / Labels**: `figmaMono`, with fallbacks: `figmaMono Fallback, SF Mono, menlo`
 
@@ -57,6 +61,7 @@ What makes Figma distinctive beyond the variable font is its circle-and-pill geo
 | Mono Small | figmaMono | 12px (0.75rem) | 400 | 1.00 (tight) | 0.6px | Uppercase tiny tags |
 
 ### Principles
+
 - **Variable font precision**: figmaSans uses weights that most systems never touch — 320, 330, 340, 450, 480, 540. This creates hierarchy through subtle weight differences rather than dramatic jumps. The difference between 330 and 340 is nearly imperceptible but structurally significant.
 - **Light as the base**: Most body text uses 320–340 (lighter than typical 400 "regular"), creating an ethereal, airy reading experience that matches the design-tool aesthetic.
 - **Kern everywhere**: Every text element enables OpenType `"kern"` feature — kerning is not optional, it's structural.
@@ -97,6 +102,7 @@ What makes Figma distinctive beyond the variable font is its circle-and-pill geo
 - Secondary action on dark/colored surfaces
 
 ### Cards & Containers
+
 - Background: Pure White
 - Border: none or minimal
 - Radius: 6px (small containers), 8px (images, cards, dialogs)
@@ -104,6 +110,7 @@ What makes Figma distinctive beyond the variable font is its circle-and-pill geo
 - Product screenshots as card content
 
 ### Navigation
+
 - Clean horizontal nav on white
 - Logo: Figma wordmark in black
 - Product tabs: pill-shaped (50px) tab navigation
@@ -131,10 +138,12 @@ What makes Figma distinctive beyond the variable font is its circle-and-pill geo
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 1px, 2px, 4px, 4.5px, 8px, 10px, 12px, 16px, 18px, 24px, 32px, 40px, 46px, 48px, 50px
 
 ### Grid & Container
+
 - Max container width: up to 1920px
 - Hero: full-width gradient with centered content
 - Product sections: alternating showcases
@@ -142,10 +151,12 @@ What makes Figma distinctive beyond the variable font is its circle-and-pill geo
 - Responsive from 559px to 1920px
 
 ### Whitespace Philosophy
+
 - **Gallery-like pacing**: Generous spacing lets each product section breathe as its own exhibit.
 - **Color sections as visual breathing**: The gradient hero and product showcases provide chromatic relief between the monochrome interface sections.
 
 ### Border Radius Scale
+
 - Minimal (2px): Small link elements
 - Subtle (6px): Small containers, dividers
 - Comfortable (8px): Cards, images, dialogs
@@ -165,6 +176,7 @@ What makes Figma distinctive beyond the variable font is its circle-and-pill geo
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use figmaSans with precise variable weights (320–540) — the granular weight control IS the design
 - Keep the interface strictly black-and-white — color comes from product content only
 - Use pill (50px) and circular (50%) geometry for all interactive elements
@@ -174,6 +186,7 @@ What makes Figma distinctive beyond the variable font is its circle-and-pill geo
 - Apply negative letter-spacing throughout (-0.1px to -1.72px)
 
 ### Don't
+
 - Don't add interface colors — the monochrome palette is absolute
 - Don't use standard font weights (400, 500, 600, 700) — use the variable font's unique stops (320, 330, 340, 450, 480, 540)
 - Don't use sharp corners on buttons — pill and circular geometry only
@@ -184,6 +197,7 @@ What makes Figma distinctive beyond the variable font is its circle-and-pill geo
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Small Mobile | <560px | Compact layout, stacked |
@@ -194,6 +208,7 @@ What makes Figma distinctive beyond the variable font is its circle-and-pill geo
 | Ultra-wide | 1440–1920px | Maximum width |
 
 ### Collapsing Strategy
+
 - Hero text: 86px → 64px → 48px
 - Product tabs: horizontal scroll on mobile
 - Feature sections: stacked single column
@@ -202,17 +217,20 @@ What makes Figma distinctive beyond the variable font is its circle-and-pill geo
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Everything: "Pure Black (#000000)" and "Pure White (#ffffff)"
 - Glass Dark: "rgba(0, 0, 0, 0.08)"
 - Glass Light: "rgba(255, 255, 255, 0.16)"
 
 ### Example Component Prompts
+
 - "Create a hero on a vibrant multi-color gradient (green, yellow, purple, pink). Headline at 86px figmaSans weight 400, line-height 1.0, letter-spacing -1.72px. White text. White pill CTA button (50px radius, 8px 18px padding)."
 - "Design a product tab bar with pill-shaped buttons (50px radius). Active: Black bg, white text. Inactive: transparent, black text. figmaSans at 20px weight 480."
 - "Build a section label: figmaMono 18px, uppercase, letter-spacing 0.54px, black text. Kern enabled."
 - "Create body text at 20px figmaSans weight 330, line-height 1.40, letter-spacing -0.14px. Pure Black on white."
 
 ### Iteration Guide
+
 1. Use variable font weight stops precisely: 320, 330, 340, 450, 480, 540, 700
 2. Interface is always black + white — never add colors to chrome
 3. Dashed focus outlines, not solid

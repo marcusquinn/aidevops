@@ -21,6 +21,7 @@ What distinguishes Intercom is its remarkably sharp geometry — 4px border-radi
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Off Black** (`#111111`): `--color-off-black`, primary text, button backgrounds
 - **Pure White** (`#ffffff`): `--wsc-color-content-primary`, primary surface
 - **Warm Cream** (`#faf9f6`): Button backgrounds, card surfaces
@@ -28,6 +29,7 @@ What distinguishes Intercom is its remarkably sharp geometry — 4px border-radi
 - **Report Orange** (`#fe4c02`): `--color-report-orange`, data visualization
 
 ### Report Palette
+
 - **Report Blue** (`#65b5ff`): `--color-report-blue`
 - **Report Green** (`#0bdf50`): `--color-report-green`
 - **Report Red** (`#c41c1c`): `--color-report-red`
@@ -37,6 +39,7 @@ What distinguishes Intercom is its remarkably sharp geometry — 4px border-radi
 - **Deep Blue** (`#0007cb`): Deep blue accent
 
 ### Neutral Scale (Warm)
+
 - **Black 80** (`#313130`): `--wsc-color-black-80`, dark neutral
 - **Black 60** (`#626260`): `--wsc-color-black-60`, mid neutral
 - **Black 50** (`#7b7b78`): `--wsc-color-black-50`, muted text
@@ -47,6 +50,7 @@ What distinguishes Intercom is its remarkably sharp geometry — 4px border-radi
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Primary**: `Saans`, fallbacks: `Saans Fallback, ui-sans-serif, system-ui`
 - **Serif**: `Serrif`, fallbacks: `Serrif Fallback, ui-serif, Georgia`
 - **Monospace**: `SaansMono`, fallbacks: `SaansMono Fallback, ui-monospace`
@@ -96,12 +100,14 @@ What distinguishes Intercom is its remarkably sharp geometry — 4px border-radi
 - Border: `1px solid oklab(... / 0.1)`
 
 ### Cards & Containers
+
 - Background: `#faf9f6` (warm cream)
 - Border: `1px solid #dedbd6` (warm oat)
 - Radius: 8px
 - No visible shadows
 
 ### Navigation
+
 - Saans 16px for links
 - Off-black text on white
 - Small 4px–6px radius buttons
@@ -110,14 +116,17 @@ What distinguishes Intercom is its remarkably sharp geometry — 4px border-radi
 ## 5. Layout Principles
 
 ### Spacing: 8px, 10px, 12px, 14px, 16px, 20px, 24px, 32px, 40px, 48px, 60px, 64px, 80px, 96px
+
 ### Border Radius: 4px (buttons), 6px (nav items), 8px (cards, containers)
 
 ## 6. Depth & Elevation
+
 Minimal shadows. Depth through warm border colors and surface tints.
 
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use Saans with 1.00 line-height and negative tracking on all headings
 - Apply 4px radius on buttons — sharp geometry is the identity
 - Use Fin Orange (#ff5600) for AI/brand accent only
@@ -125,17 +134,20 @@ Minimal shadows. Depth through warm border colors and surface tints.
 - Use warm neutrals (#faf9f6, #dedbd6)
 
 ### Don't
+
 - Don't round buttons beyond 4px
 - Don't use Fin Orange decoratively
 - Don't use cool gray borders — always warm oat tones
 - Don't skip the negative tracking on headings
 
 ## 8. Responsive Behavior
+
 Breakpoints: 425px, 530px, 600px, 640px, 768px, 896px
 
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Text: Off Black (`#111111`)
 - Background: Warm Cream (`#faf9f6`)
 - Accent: Fin Orange (`#ff5600`)
@@ -143,4 +155,5 @@ Breakpoints: 425px, 530px, 600px, 640px, 768px, 896px
 - Muted: `#7b7b78`
 
 ### Example Component Prompts
+
 - "Create hero: warm cream (#faf9f6) background. Saans 80px weight 400, line-height 1.00, letter-spacing -2.4px, #111111. Dark button (#111111, 4px radius). Hover: scale(1.1), white bg."

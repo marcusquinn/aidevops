@@ -21,11 +21,13 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Cream** (`#f7f4ed`): Page background, card surfaces, button surfaces. The foundation — warm, paper-like, human.
 - **Charcoal** (`#1c1c1c`): Primary text, headings, dark button backgrounds. Not pure black — organic warmth.
 - **Off-White** (`#fcfbf8`): Button text on dark backgrounds, subtle highlight. Barely distinguishable from pure white.
 
 ### Neutral Scale (Opacity-Based)
+
 - **Charcoal 100%** (`#1c1c1c`): Primary text, headings, dark surfaces.
 - **Charcoal 83%** (`rgba(28,28,28,0.83)`): Strong secondary text.
 - **Charcoal 82%** (`rgba(28,28,28,0.82)`): Body copy.
@@ -35,19 +37,23 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 - **Charcoal 3%** (`rgba(28,28,28,0.03)`): Barely-visible overlays, background depth.
 
 ### Surface & Border
+
 - **Light Cream** (`#eceae4`): Card borders, dividers, image outlines. The warm divider line.
 - **Cream Surface** (`#f7f4ed`): Card backgrounds, section fills — same as page background for seamless integration.
 
 ### Interactive
+
 - **Ring Blue** (`#3b82f6` at 50% opacity): `--tw-ring-color`, Tailwind focus ring.
 - **Focus Shadow** (`rgba(0,0,0,0.1) 0px 4px 12px`): Focus and active state shadow — soft, warm, diffused.
 
 ### Inset Shadows
+
 - **Button Inset** (`rgba(255,255,255,0.2) 0px 0.5px 0px 0px inset, rgba(0,0,0,0.2) 0px 0px 0px 0.5px inset, rgba(0,0,0,0.05) 0px 1px 2px 0px`): The signature multi-layer inset shadow on dark buttons.
 
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Primary**: `Camera Plain Variable`, with fallbacks: `ui-sans-serif, system-ui`
 - **Weight range**: 400 (body/reading), 480 (special display), 600 (headings/emphasis)
 - **Feature**: Variable font with continuous weight axis — allows fine-tuned intermediary weights like 480.
@@ -70,6 +76,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 | Caption | Camera Plain Variable | 14px (0.88rem) | 400 | 1.50 | normal | Metadata, small text |
 
 ### Principles
+
 - **Warm humanist voice**: Camera Plain Variable gives Lovable its approachable personality. The slightly rounded terminals and organic curves contrast with the sharp geometric sans-serifs used by most developer tools.
 - **Variable weight as design tool**: The font supports continuous weight values (e.g., 480), enabling nuanced hierarchy beyond standard weight stops. Weight 480 at 60px creates a display style that feels lighter than semibold but stronger than regular.
 - **Compression at scale**: Headlines use negative letter-spacing (-0.9px to -1.5px) for editorial impact. Body text stays at normal tracking for comfortable reading.
@@ -117,6 +124,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 - Use: Additional actions, plan mode toggle, voice recording
 
 ### Cards & Containers
+
 - Background: `#f7f4ed` (matches page)
 - Border: `1px solid #eceae4`
 - Radius: 12px (standard), 16px (featured), 8px (compact)
@@ -124,6 +132,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 - Image cards: `1px solid #eceae4` with 12px radius
 
 ### Inputs & Forms
+
 - Background: `#f7f4ed`
 - Text: `#1c1c1c`
 - Border: `1px solid #eceae4`
@@ -132,6 +141,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 - Placeholder: `#5f5f5d`
 
 ### Navigation
+
 - Clean horizontal nav on cream background, fixed
 - Logo/wordmark left-aligned (128.75 x 22px)
 - Links: Camera Plain 14–16px weight 400, `#1c1c1c` text
@@ -140,12 +150,14 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 - Subtle border or no border on scroll
 
 ### Links
+
 - Color: `#1c1c1c`
 - Decoration: underline (default)
 - Hover: primary accent (via CSS variable `hsl(var(--primary))`)
 - No color change on hover — decoration carries the interactive signal
 
 ### Image Treatment
+
 - Showcase/portfolio images with `1px solid #eceae4` border
 - Consistent 12px border radius on all image containers
 - Soft gradient backgrounds behind hero content (warm multi-color wash)
@@ -173,11 +185,13 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 8px, 10px, 12px, 16px, 24px, 32px, 40px, 56px, 80px, 96px, 128px, 176px, 192px, 208px
 - The scale expands generously at the top end — sections use 80px–208px vertical spacing for editorial breathing room
 
 ### Grid & Container
+
 - Max content width: approximately 1200px (centered)
 - Hero: centered single-column with massive vertical padding (96px+)
 - Feature sections: 2–3 column grids
@@ -185,11 +199,13 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 - Showcase sections with centered card grids
 
 ### Whitespace Philosophy
+
 - **Editorial generosity**: Lovable's spacing is lavish at section boundaries (80px–208px). The warm cream background makes these expanses feel cozy rather than empty.
 - **Content-driven rhythm**: Tight internal spacing within cards (12–24px) contrasts with wide section gaps, creating a reading rhythm that alternates between focused content and visual rest.
 - **Section separation**: Footer uses `1px solid #eceae4` border and 16px radius container. Sections defined by generous spacing rather than border lines.
 
 ### Border Radius Scale
+
 - Micro (4px): Small buttons, interactive elements
 - Standard (6px): Buttons, inputs, navigation menu
 - Comfortable (8px): Compact cards, divs
@@ -210,6 +226,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 **Shadow Philosophy**: Lovable's depth system is intentionally shallow. Instead of floating cards with dramatic drop-shadows, the system relies on warm borders (`#eceae4`) against the cream surface to create gentle containment. The only notable shadow pattern is the inset shadow on dark buttons — a subtle multi-layer technique where a white highlight line sits at the top edge while a dark ring and soft drop handle the bottom. This creates a tactile, pressed-into-surface feeling rather than a hovering-above-surface feeling. The warm focus shadow (`rgba(0,0,0,0.1) 0px 4px 12px`) is deliberately diffused and large, creating a soft glow rather than a sharp outline.
 
 ### Decorative Depth
+
 - Hero: soft, warm multi-color gradient wash (pinks, oranges, blues) behind hero — atmospheric, barely visible
 - Footer: gradient background with warm tones transitioning to the bottom
 - No harsh section dividers — spacing and background warmth handle transitions
@@ -217,6 +234,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use the warm cream background (`#f7f4ed`) as the page foundation — it's the brand's signature warmth
 - Use Camera Plain Variable at display sizes with negative letter-spacing (-0.9px to -1.5px)
 - Derive all grays from `#1c1c1c` at varying opacity levels for tonal unity
@@ -227,6 +245,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 - Apply opacity 0.8 on active states for responsive tactile feedback
 
 ### Don't
+
 - Don't use pure white (`#ffffff`) as a page background — the cream is intentional
 - Don't use heavy box-shadows for cards — borders are the containment mechanism
 - Don't introduce saturated accent colors — the palette is intentionally warm-neutral
@@ -239,6 +258,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile Small | <600px | Tight single column, reduced padding |
@@ -250,12 +270,14 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 | Large Desktop | 1280–1536px | Maximum content width, generous margins |
 
 ### Touch Targets
+
 - Buttons: 8px 16px padding (comfortable touch)
 - Navigation: adequate spacing between items
 - Pill buttons: 9999px radius creates large tap-friendly targets
 - Menu toggle: 6px radius button with adequate sizing
 
 ### Collapsing Strategy
+
 - Hero: 60px → 48px → 36px headline scaling with proportional letter-spacing
 - Navigation: horizontal links → hamburger menu at 768px
 - Feature cards: 3-column → 2-column → single column stacked
@@ -265,6 +287,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 - Section spacing: 128px+ → 64px on mobile
 
 ### Image Behavior
+
 - Template screenshots maintain `1px solid #eceae4` border at all sizes
 - 12px border radius preserved across breakpoints
 - Gallery images responsive with consistent aspect ratios
@@ -273,6 +296,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Primary CTA: Charcoal (`#1c1c1c`)
 - Background: Cream (`#f7f4ed`)
 - Heading text: Charcoal (`#1c1c1c`)
@@ -282,6 +306,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 - Button text on dark: `#fcfbf8`
 
 ### Example Component Prompts
+
 - "Create a hero section on cream background (#f7f4ed). Headline at 60px Camera Plain Variable weight 600, line-height 1.10, letter-spacing -1.5px, color #1c1c1c. Subtitle at 18px weight 400, line-height 1.38, color #5f5f5d. Dark CTA button (#1c1c1c bg, #fcfbf8 text, 6px radius, 8px 16px padding, inset shadow) and ghost button (transparent bg, 1px solid rgba(28,28,28,0.4) border, 6px radius)."
 - "Design a card on cream (#f7f4ed) background. Border: 1px solid #eceae4. Radius 12px. No box-shadow. Title at 20px Camera Plain Variable weight 400, line-height 1.25, color #1c1c1c. Body at 14px weight 400, color #5f5f5d."
 - "Build a template gallery: grid of cards with 12px radius, 1px solid #eceae4 border, cream backgrounds. Each card: image with 12px top radius, title below. Hover: subtle border darkening."
@@ -289,6 +314,7 @@ What makes Lovable's visual system distinctive is its opacity-driven depth model
 - "Design a stats section: large numbers at 48px Camera Plain weight 600, letter-spacing -1.2px, #1c1c1c. Labels below at 16px weight 400, #5f5f5d. Horizontal layout with 32px gap."
 
 ### Iteration Guide
+
 1. Always use cream (`#f7f4ed`) as the base — never pure white
 2. Derive grays from `#1c1c1c` at opacity levels rather than using distinct hex values
 3. Use `#eceae4` borders for containment, not shadows

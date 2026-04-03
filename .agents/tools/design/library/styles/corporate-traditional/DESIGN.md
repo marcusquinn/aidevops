@@ -103,7 +103,8 @@ Visual hierarchy is achieved through typographic scale and weight rather than co
 ### Buttons
 
 **Primary Button:**
-```
+
+```css
 background: #1B365D
 color: #FFFFFF
 padding: 12px 28px
@@ -124,7 +125,8 @@ transition: background 200ms ease
 ```
 
 **Secondary Button:**
-```
+
+```css
 background: transparent
 color: #1B365D
 padding: 12px 28px
@@ -139,7 +141,8 @@ font-weight: 600
 ```
 
 **Ghost Button:**
-```
+
+```css
 background: transparent
 color: #1B365D
 padding: 12px 28px
@@ -156,7 +159,7 @@ text-underline-offset: 3px
 
 ### Inputs
 
-```
+```css
 background: #FFFFFF
 border: 1px solid #D1D5DB
 border-radius: 4px
@@ -177,7 +180,7 @@ transition: border-color 200ms ease
 
 ### Links
 
-```
+```css
 color: #1B365D
 text-decoration: underline
 text-underline-offset: 3px
@@ -192,7 +195,7 @@ Gold accent links (CTAs): `color: #B8860B`, same underline treatment.
 
 ### Cards
 
-```
+```css
 background: #FFFFFF
 border: 1px solid #D1D5DB
 border-radius: 4px
@@ -204,7 +207,7 @@ box-shadow: 0 1px 3px rgba(27, 54, 93, 0.06)
 
 ### Navigation
 
-```
+```css
 Top bar:
   background: #1B365D
   color: #FFFFFF

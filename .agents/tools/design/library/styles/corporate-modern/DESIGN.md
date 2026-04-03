@@ -91,7 +91,8 @@ Typography is uniform — a single sans-serif family (Inter or system-ui) handle
 ### Buttons
 
 **Primary Button:**
-```
+
+```css
 background: #0891b2
 color: #FFFFFF
 padding: 10px 24px
@@ -110,7 +111,8 @@ transition: all 150ms ease-out
 ```
 
 **Secondary Button:**
-```
+
+```css
 background: #FFFFFF
 color: #1a1a2e
 padding: 10px 24px
@@ -125,7 +127,8 @@ font-weight: 600
 ```
 
 **Ghost Button:**
-```
+
+```css
 background: transparent
 color: #0891b2
 padding: 10px 24px
@@ -140,7 +143,7 @@ font-weight: 600
 
 ### Inputs
 
-```
+```css
 background: #FFFFFF
 border: 1px solid #E2E8F0
 border-radius: 8px
@@ -161,7 +164,7 @@ transition: border-color 150ms ease-out, box-shadow 150ms ease-out
 
 ### Links
 
-```
+```css
 color: #0891b2
 text-decoration: none
 font-weight: 500
@@ -173,7 +176,7 @@ transition: color 150ms ease-out
 
 ### Cards
 
-```
+```css
 background: #FFFFFF
 border: 1px solid #E2E8F0
 border-radius: 12px
@@ -186,7 +189,7 @@ Interactive cards:
 
 ### Navigation
 
-```
+```css
 Top bar:
   background: #FFFFFF
   border-bottom: 1px solid #E2E8F0

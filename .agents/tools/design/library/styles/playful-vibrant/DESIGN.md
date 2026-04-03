@@ -102,7 +102,8 @@ Every shape is rounded. Large border-radii (16–20px) soften all hard edges, cr
 ### Buttons
 
 **Primary Button:**
-```
+
+```css
 background: linear-gradient(135deg, #6366f1, #8b5cf6)
 color: #FFFFFF
 padding: 14px 32px
@@ -121,7 +122,8 @@ transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)
 ```
 
 **Secondary Button:**
-```
+
+```css
 background: #FFFFFF
 color: #6366f1
 padding: 14px 32px
@@ -137,7 +139,8 @@ transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)
 ```
 
 **Ghost Button:**
-```
+
+```css
 background: transparent
 color: #6366f1
 padding: 14px 32px
@@ -151,7 +154,8 @@ font-weight: 700
 ```
 
 **Accent Button (urgent/fun CTA):**
-```
+
+```css
 background: linear-gradient(135deg, #f43f5e, #e11d48)
 color: #FFFFFF
 padding: 14px 32px
@@ -166,7 +170,7 @@ box-shadow: 0 4px 14px rgba(244, 63, 94, 0.35)
 
 ### Inputs
 
-```
+```css
 background: #FFFFFF
 border: 2px solid #E5E7EB
 border-radius: 16px
@@ -190,7 +194,7 @@ transition: all 200ms ease
 
 ### Links
 
-```
+```css
 color: #6366f1
 text-decoration: none
 font-weight: 600
@@ -202,7 +206,7 @@ transition: color 200ms ease
 
 ### Cards
 
-```
+```css
 background: #FFFFFF
 border: none
 border-radius: 20px
@@ -219,7 +223,7 @@ Interactive cards:
 
 ### Navigation
 
-```
+```css
 Top bar:
   background: #FFFFFF
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04)
@@ -250,7 +254,7 @@ Mobile nav:
 
 ### Badges & Tags
 
-```
+```css
 Notification badge:
   background: #f43f5e
   color: #FFFFFF

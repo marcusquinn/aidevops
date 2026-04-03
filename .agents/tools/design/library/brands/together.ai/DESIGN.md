@@ -22,33 +22,39 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Brand Magenta** (`#ef2cc1`): The primary brand accent — a vivid pink-magenta used in gradient illustrations and the highest-signal brand moments. Never used as UI chrome.
 - **Brand Orange** (`#fc4c02`): The secondary brand accent — a vivid orange for gradient endpoints and warm accent moments.
 - **Dark Blue** (`#010120`): The primary dark surface — a deep midnight blue-black used for research sections, footer, and dark containers. Not gray, not black — distinctly blue.
 
 ### Secondary & Accent
+
 - **Soft Lavender** (`#bdbbff`): A gentle blue-violet used for subtle accents, secondary indicators, and soft UI highlights.
 - **Black 40** (`#00000066`): Semi-transparent black for de-emphasized overlays and secondary text.
 
 ### Surface & Background
+
 - **Pure White** (`#ffffff`): The primary light-section page background.
 - **Dark Blue** (`#010120`): Dark-section backgrounds — research, footer, technical content.
 - **Glass Light** (`rgba(255, 255, 255, 0.12)`): Frosted glass button backgrounds on dark sections.
 - **Glass Dark** (`rgba(0, 0, 0, 0.08)`): Subtle tinted surfaces on light sections.
 
 ### Neutrals & Text
+
 - **Pure Black** (`#000000`): Primary text on light surfaces.
 - **Pure White** (`#ffffff`): Primary text on dark surfaces.
 - **Black 8%** (`rgba(0, 0, 0, 0.08)`): Borders and subtle containment on light surfaces.
 - **White 12%** (`rgba(255, 255, 255, 0.12)`): Borders and containment on dark surfaces.
 
 ### Gradient System
+
 - **Pastel Cloud Gradient**: Soft pink → lavender → soft blue gradients in hero illustrations. These appear in abstract, painterly forms — clouds, feathers, flowing shapes — that create visual warmth without literal meaning.
 - **Hero Gradient**: The hero background uses soft pastel tints layered over white, creating a dawn-like atmospheric effect.
 
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Primary**: `The Future`, with fallback: `Arial`
 - **Monospace / Labels**: `PP Neue Montreal Mono`, with fallback: `Georgia`
 
@@ -68,6 +74,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 | Mono Micro | PP Neue Montreal Mono | 10px (0.63rem) | 400 | 1.40 | 0.05px | Smallest uppercase labels |
 
 ### Principles
+
 - **Negative tracking everywhere**: Every size of "The Future" uses negative letter-spacing (-0.16px to -1.92px), creating consistently tight, modern text.
 - **Mono for structure**: PP Neue Montreal Mono in uppercase with positive letter-spacing creates technical "label" moments that structure the page without competing with display text.
 - **Weight 500 as emphasis**: The system uses 400 (regular) and 500 (medium) — no bold. Medium weight marks headings and emphasis.
@@ -99,6 +106,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 - Secondary actions on light surfaces
 
 ### Cards & Containers
+
 - Background: Pure White or subtle glass tint
 - Border: `1px solid rgba(0, 0, 0, 0.08)` on light; `1px solid rgba(255, 255, 255, 0.12)` on dark
 - Radius: sharp (4px) for badges and small elements; comfortable (8px) for larger containers
@@ -106,6 +114,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 - Stats cards with large numbers prominently displayed
 
 ### Badges / Tags
+
 - Background: `rgba(0, 0, 0, 0.04)` (light) or `rgba(255, 255, 255, 0.12)` (dark)
 - Text: Black (light) or White (dark)
 - Padding: 2px 8px (compact)
@@ -114,6 +123,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 - PP Neue Montreal Mono, uppercase, 16px
 
 ### Navigation
+
 - Clean horizontal nav on white/transparent
 - Logo: Together AI wordmark
 - Links: The Future at 16px, weight 400
@@ -121,6 +131,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 - Hover: no text-decoration
 
 ### Image Treatment
+
 - Abstract pastel gradient illustrations (cloud/feather forms)
 - Product UI screenshots on dark/light surfaces
 - Team photos in editorial style
@@ -151,6 +162,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 1px, 2px, 4px, 8px, 10px, 12px, 16px, 20px, 24px, 32px, 44px, 48px, 80px, 100px, 120px
 - Button/badge padding: 2px 8px (compact)
@@ -158,6 +170,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 - Section vertical spacing: generous (80–120px)
 
 ### Grid & Container
+
 - Max container width: approximately 1200px, centered
 - Hero: centered with pastel gradient background
 - Feature sections: multi-column card grids
@@ -165,11 +178,13 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 - Research: dark full-width section
 
 ### Whitespace Philosophy
+
 - **Optimistic breathing room**: Generous spacing between sections creates an open, inviting feel that makes enterprise AI infrastructure feel accessible.
 - **Dual atmosphere**: Light sections breathe with whitespace; dark sections are denser with content.
 - **Stats as visual anchors**: Large numbers with small captions create natural focal points.
 
 ### Border Radius Scale
+
 - Sharp (4px): Buttons, badges, tags, small interactive elements — the primary radius
 - Comfortable (8px): Larger containers, feature cards
 
@@ -189,6 +204,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use pastel gradients (pink/blue/lavender) for hero illustrations and decorative backgrounds
 - Use Dark Blue (#010120) for dark sections — never generic gray-black
 - Apply negative letter-spacing on all "The Future" text (scaled by size)
@@ -199,6 +215,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 - Show enterprise stats prominently with large display numbers
 
 ### Don't
+
 - Don't use Brand Magenta (#ef2cc1) or Brand Orange (#fc4c02) as UI colors — they're for illustrations only
 - Don't use pill-shaped or generously rounded corners — the geometry is sharp
 - Don't use generic gray-black for dark sections — always Dark Blue (#010120)
@@ -211,6 +228,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | <479px | Compact layout, stacked everything |
@@ -219,11 +237,13 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 | Desktop | 992px+ | Full multi-column layout |
 
 ### Touch Targets
+
 - Buttons with adequate padding
 - Card surfaces as touch targets
 - Navigation links at comfortable 16px
 
 ### Collapsing Strategy
+
 - **Navigation**: Collapses to hamburger on mobile
 - **Hero text**: 64px → 40px → 28px progressive scaling
 - **Stats bar**: Horizontal → stacked vertical
@@ -231,6 +251,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 - **Research section**: Cards stack vertically
 
 ### Image Behavior
+
 - Pastel illustrations scale proportionally
 - Product screenshots maintain aspect ratio
 - Team photos scale within containers
@@ -238,6 +259,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Primary Text (light): "Pure Black (#000000)"
 - Primary Text (dark): "Pure White (#ffffff)"
 - Page Background: "Pure White (#ffffff)"
@@ -248,6 +270,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 - Border (light): "rgba(0, 0, 0, 0.08)"
 
 ### Example Component Prompts
+
 - "Create a hero section on white with soft pastel gradients (pink → lavender → blue) as background. Headline at 64px 'The Future' weight 500, line-height 1.10, letter-spacing -1.92px. Pure Black text. Include a dark blue CTA button (#010120, 4px radius)."
 - "Design a stats card: large display number (64px, weight 500) with a small caption below (14px). White background, 8px radius, dark-blue-tinted shadow (rgba(1, 1, 32, 0.1) 0px 4px 10px)."
 - "Build a section label: PP Neue Montreal Mono, 11px, weight 500, uppercase, letter-spacing 0.055px. Black text on light, white on dark."
@@ -255,6 +278,7 @@ What makes Together AI distinctive is its type system. "The Future" handles all 
 - "Design a badge: 4px radius, rgba(0, 0, 0, 0.04) background, 1px solid rgba(0, 0, 0, 0.08) border, 'The Future' 16px text. Padding: 2px 8px."
 
 ### Iteration Guide
+
 1. Always specify negative letter-spacing for "The Future" — it's scaled by size
 2. Dark sections use #010120 (midnight blue), never generic black
 3. Shadows are always dark-blue-tinted: rgba(1, 1, 32, 0.1)

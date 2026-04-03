@@ -22,6 +22,7 @@ Layout follows a strict 4px base grid with razor-thin borders (1px, light grey) 
 ## 2. Colour Palette & Roles
 
 ### Primary
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Primary | `#2563eb` | CTAs, links, focus rings, active states |
@@ -31,6 +32,7 @@ Layout follows a strict 4px base grid with razor-thin borders (1px, light grey) 
 | Primary Ghost | `rgba(37, 99, 235, 0.05)` | Subtle hover tints |
 
 ### Text
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Text Primary | `#18181b` | Headings, primary body content |
@@ -40,6 +42,7 @@ Layout follows a strict 4px base grid with razor-thin borders (1px, light grey) 
 | Text Link | `#2563eb` | Inline links (same as primary) |
 
 ### Surface
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Background | `#fafafa` | Page background |
@@ -51,6 +54,7 @@ Layout follows a strict 4px base grid with razor-thin borders (1px, light grey) 
 | Border Strong | `#d4d4d8` | Emphasized borders, active inputs |
 
 ### Semantic
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Success | `#16a34a` | Confirmations, online |
@@ -63,6 +67,7 @@ Layout follows a strict 4px base grid with razor-thin borders (1px, light grey) 
 | Info Background | `#eff6ff` | Info banners |
 
 ### Shadows
+
 | Role | Value | Usage |
 |------|-------|-------|
 | Subtle | `0 1px 2px rgba(0, 0, 0, 0.04)` | Barely-there lift for inputs |
@@ -72,6 +77,7 @@ Layout follows a strict 4px base grid with razor-thin borders (1px, light grey) 
 ## 3. Typography Rules
 
 ### Font Families
+
 | Role | Stack |
 |------|-------|
 | Sans | `'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif` |
@@ -95,6 +101,7 @@ Layout follows a strict 4px base grid with razor-thin borders (1px, light grey) 
 | Code Inline | Mono | 13px | 400 | inherit | 0 | Inline code in body |
 
 ### Typography Principles
+
 - One typeface does everything — Inter (or system font fallback) across all roles
 - Hierarchy is achieved through size and weight, never through font-family switching
 - Headings use 600 weight (semi-bold), not 700/800 — authority without shouting
@@ -107,7 +114,8 @@ Layout follows a strict 4px base grid with razor-thin borders (1px, light grey) 
 ### Buttons
 
 **Primary Button**
-```
+
+```css
 background: #2563eb
 color: #ffffff
 font: 13px/1 Inter, 500
@@ -123,7 +131,8 @@ transition: background 150ms ease
 ```
 
 **Secondary Button**
-```
+
+```css
 background: #ffffff
 color: #18181b
 font: 13px/1 Inter, 500
@@ -138,7 +147,8 @@ border-radius: 6px
 ```
 
 **Ghost Button**
-```
+
+```css
 background: transparent
 color: #71717a
 font: 13px/1 Inter, 500
@@ -151,7 +161,8 @@ border-radius: 6px
 ```
 
 **Danger Button**
-```
+
+```css
 background: #dc2626
 color: #ffffff
 font: 13px/1 Inter, 500
@@ -164,7 +175,8 @@ border-radius: 6px
 ```
 
 ### Inputs
-```
+
+```css
 background: #ffffff
 color: #18181b
 font: 14px Inter
@@ -182,7 +194,8 @@ transition: border-color 150ms ease
 ```
 
 ### Links
-```
+
+```css
 color: #2563eb
 text-decoration: none
 transition: color 150ms ease
@@ -192,7 +205,8 @@ transition: color 150ms ease
 ```
 
 ### Cards
-```
+
+```css
 background: #ffffff
 border: 1px solid #e5e7eb
 border-radius: 8px
@@ -205,7 +219,8 @@ Interactive variant:
 ```
 
 ### Navigation
-```
+
+```css
 Background: #ffffff
 Border bottom: 1px solid #e5e7eb
 Height: 56px
@@ -219,6 +234,7 @@ CTA in nav: small primary button
 ## 5. Layout Principles
 
 ### Spacing Scale (4px base unit)
+
 | Token | Value | Usage |
 |-------|-------|-------|
 | space-0.5 | 2px | Micro adjustments, border offsets |
@@ -235,12 +251,14 @@ CTA in nav: small primary button
 | space-20 | 80px | Hero padding |
 
 ### Grid
+
 - 12-column grid
 - Gutter: 16px (mobile), 20px (tablet), 24px (desktop)
 - Max container: 1200px, centered
 - Narrow container: 680px for text-heavy content (docs, articles, settings)
 
 ### Breakpoints
+
 | Name | Width | Columns | Gutter |
 |------|-------|---------|--------|
 | Mobile | 0–639px | 4 | 16px |
@@ -249,9 +267,11 @@ CTA in nav: small primary button
 | Wide | 1200px+ | 12 | 24px |
 
 ### Whitespace Philosophy
+
 Space is information. Tight grouping signals relationship; open gaps signal separation. The 4px grid is the only source of truth — no arbitrary spacing values. Every margin and padding snaps to the grid. The goal is an interface that feels engineered, not designed.
 
 ### Border Radius Scale
+
 | Token | Value | Usage |
 |-------|-------|-------|
 | radius-sm | 4px | Small badges, pills, inline tags |
@@ -279,6 +299,7 @@ Space is information. Tight grouping signals relationship; open gaps signal sepa
 ## 7. Do's and Don'ts
 
 ### Do's
+
 1. **Do** let borders do the heavy lifting — 1px `#e5e7eb` is the system's workhorse
 2. **Do** use one accent colour (`#2563eb`) consistently — diluting it with secondary colours weakens focus
 3. **Do** snap every spacing value to the 4px grid — zero exceptions
@@ -288,6 +309,7 @@ Space is information. Tight grouping signals relationship; open gaps signal sepa
 7. **Do** test at 1x zoom on a 1080p screen — this is where most users will experience it
 
 ### Don'ts
+
 1. **Don't** use gradients, patterns, or decorative backgrounds — ever
 2. **Don't** use coloured shadows — shadows are `rgba(0,0,0,...)` only
 3. **Don't** introduce a second accent colour — if you need hierarchy, use weight or size
@@ -299,6 +321,7 @@ Space is information. Tight grouping signals relationship; open gaps signal sepa
 ## 8. Responsive Behaviour
 
 ### Breakpoint Behaviour
+
 | Breakpoint | Layout Changes |
 |------------|---------------|
 | Mobile (< 640px) | Single column. Display type drops to 32px. Navigation collapses to icon menu. Cards stack full-width. Inputs go full-width. Table becomes horizontally scrollable. |
@@ -307,12 +330,14 @@ Space is information. Tight grouping signals relationship; open gaps signal sepa
 | Wide (1200px+) | Content caps at 1200px. Centred with auto margins. |
 
 ### Touch Targets
+
 - Minimum: 44px × 44px tap area
 - Buttons: 40px minimum height on mobile (padded to 44px tap area)
 - Spacing between tappable elements: 8px minimum
 - Form inputs: 44px height on mobile
 
 ### Mobile-Specific Rules
+
 - Body text stays at 15px — do not reduce
 - Card padding reduces from 24px to 16px
 - Section padding reduces from 64px to 40px vertical
@@ -324,6 +349,7 @@ Space is information. Tight grouping signals relationship; open gaps signal sepa
 ## 9. Agent Prompt Guide
 
 ### Quick Colour Reference
+
 | CSS Variable | Hex | Role |
 |-------------|-----|------|
 | `--color-primary` | `#2563eb` | Blue — the only accent |

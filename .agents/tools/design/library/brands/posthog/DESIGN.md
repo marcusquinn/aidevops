@@ -21,16 +21,19 @@ The interaction design carries the same spirit: hover states flash PostHog Orang
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Olive Ink** (`#4d4f46`): Primary text color — a distinctive olive-gray that gives all text a warm, earthy tone
 - **Deep Olive** (`#23251d`): Link text and high-emphasis headings — near-black with green undertone
 - **PostHog Orange** (`#F54E00`): Hidden brand accent — appears only on hover states, a vibrant orange that surprises
 
 ### Secondary & Accent
+
 - **Amber Gold** (`#F7A501`): Secondary hover accent on dark buttons — warm gold that pairs with the orange
 - **Gold Border** (`#b17816`): Special button borders — an amber-gold for featured CTAs
 - **Focus Blue** (`#3b82f6`): Focus ring color (Tailwind default) — the only blue in the system, reserved for accessibility
 
 ### Surface & Background
+
 - **Warm Parchment** (`#fdfdf8`): Primary page background — warm near-white with yellow-green undertone
 - **Sage Cream** (`#eeefe9`): Input backgrounds, secondary surfaces — light sage tint
 - **Light Sage** (`#e5e7e0`): Button backgrounds, tertiary surfaces — muted sage-green
@@ -38,6 +41,7 @@ The interaction design carries the same spirit: hover states flash PostHog Orang
 - **Hover White** (`#f4f4f4`): Universal hover background state
 
 ### Neutrals & Text
+
 - **Olive Ink** (`#4d4f46`): Primary body and UI text
 - **Muted Olive** (`#65675e`): Secondary text, button labels on light backgrounds
 - **Sage Placeholder** (`#9ea096`): Placeholder text, disabled states — warm sage-green
@@ -45,18 +49,21 @@ The interaction design carries the same spirit: hover states flash PostHog Orang
 - **Light Border** (`#b6b7af`): Secondary border, toolbar borders — slightly darker sage
 
 ### Semantic & Accent
+
 - **PostHog Orange** (`#F54E00`): Hover text accent — signals interactivity and brand personality
 - **Amber Gold** (`#F7A501`): Dark button hover accent — warmth signal
 - **Focus Blue** (`#3b82f6` at 50% opacity): Keyboard focus rings — accessibility-only color
 - **Dark Text** (`#111827`): High-contrast link text — near-black for important links
 
 ### Gradient System
+
 - No gradients on the marketing site — PostHog's visual language is deliberately flat and warm
 - Depth is achieved through layered surfaces and border containment, not color transitions
 
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Display & Body**: `IBM Plex Sans Variable` — variable font (100–700+ weight range). Fallbacks: `IBM Plex Sans, -apple-system, system-ui, Avenir Next, Avenir, Segoe UI, Helvetica Neue, Helvetica, Ubuntu, Roboto, Noto, Arial`
 - **Monospace**: `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New` — system monospace stack
 - **Code Display**: `Source Code Pro` — with fallbacks: `Menlo, Consolas, Monaco`
@@ -84,6 +91,7 @@ The interaction design carries the same spirit: hover states flash PostHog Orang
 | Code | Source Code Pro | 14px | 500 | 1.43 | 0px | Code snippets and terminal |
 
 ### Principles
+
 - **Bold heading dominance**: Headings use 700–800 weight — PostHog's typography is confident and assertive, not whispery
 - **Generous body line-heights**: Body text at 1.50–1.71 line-height creates extremely comfortable reading — the site is content-heavy and optimized for long sessions
 - **Fractional sizes**: Several sizes (21.4px, 19.3px, 13.7px) suggest a fluid/scaled type system rather than fixed stops — likely computed from Tailwind's rem scale at non-standard base
@@ -93,6 +101,7 @@ The interaction design carries the same spirit: hover states flash PostHog Orang
 ## 4. Component Stylings
 
 ### Buttons
+
 - **Dark Primary**: `#1e1f23` background, white text, 6px radius, `10px 12px` padding. Hover: opacity 0.7 with Amber Gold text. Active: opacity 0.8 with slight scale transform. The main CTA — dark and confident
 - **Sage Light**: `#e5e7e0` background, Olive Ink (`#4d4f46`) text, 4px radius, `4px` padding. Hover: `#f4f4f4` bg with PostHog Orange text. Compact utility button
 - **Warm Tan Featured**: `#d4c9b8` background, black text, no visible radius. Hover: same orange text flash. Featured/premium actions
@@ -101,18 +110,21 @@ The interaction design carries the same spirit: hover states flash PostHog Orang
 - **Hover pattern**: All buttons flash PostHog Orange (`#F54E00`) or Amber Gold (`#F7A501`) text on hover — the brand's signature interaction surprise
 
 ### Cards & Containers
+
 - **Bordered Card**: Warm Parchment (`#fdfdf8`) or white background, 1px `#bfc1b7` border, 4px–6px radius — clean and minimal
 - **Sage Surface Card**: `#eeefe9` background for secondary content containers
 - **Shadow Card**: `0px 25px 50px -12px rgba(0, 0, 0, 0.25)` — a single deep shadow for elevated content (modals, dropdowns)
 - **Hover**: Orange text flash on interactive cards — consistent with button behavior
 
 ### Inputs & Forms
+
 - **Default**: `#eeefe9` background, `#9ea096` placeholder text, 1px `#b6b7af` border, 4px radius, `2px 0px 2px 8px` padding
 - **Focus**: `#3b82f6` ring at 50% opacity (Tailwind blue focus ring)
 - **Text color**: `#374151` for input values — darker than primary text for readability
 - **Border variations**: Multiple border patterns — some inputs use compound borders (top, left, bottom-only)
 
 ### Navigation
+
 - **Top nav**: Warm background, IBM Plex Sans at 15px weight 600
 - **Dropdown menus**: Rich mega-menu structure with product categories
 - **Link color**: Deep Olive (`#23251d`) for nav links, underline on hover
@@ -120,6 +132,7 @@ The interaction design carries the same spirit: hover states flash PostHog Orang
 - **Mobile**: Collapses to hamburger with simplified menu
 
 ### Image Treatment
+
 - **Hand-drawn illustrations**: Hedgehog mascot and quirky illustrations — the signature visual element
 - **Product screenshots**: UI screenshots embedded in device frames or clean containers
 - **Action figures**: Playful product photography of hedgehog figurines — anti-corporate
@@ -127,11 +140,13 @@ The interaction design carries the same spirit: hover states flash PostHog Orang
 - **Aspect ratios**: Mixed — illustrations are irregular, screenshots are 16:9 or widescreen
 
 ### AI Chat Widget
+
 - Floating PostHog AI assistant with speech bubble — an interactive product demo embedded in the marketing site
 
 ## 5. Layout Principles
 
 ### Spacing System
+
 - **Base unit**: 8px
 - **Scale**: 2px, 4px, 6px, 8px, 10px, 12px, 16px, 18px, 24px, 32px, 34px
 - **Section padding**: 32px–48px vertical between sections (compact for a content-heavy site)
@@ -139,16 +154,19 @@ The interaction design carries the same spirit: hover states flash PostHog Orang
 - **Component gaps**: 4px–8px between related elements
 
 ### Grid & Container
+
 - **Max width**: 1536px (largest breakpoint), with content containers likely 1200px–1280px
 - **Column patterns**: Varied — single column for text content, 2-3 column grids for feature cards, asymmetric layouts for product demos
 - **Breakpoints**: 13 defined — 1px, 425px, 482px, 640px, 768px, 767px, 800px, 900px, 1024px, 1076px, 1160px, 1280px, 1536px
 
 ### Whitespace Philosophy
+
 - **Content-dense by design**: PostHog's site is information-rich — whitespace is measured, not lavish
 - **Editorial pacing**: Content sections flow like a magazine with varied layouts keeping the eye moving
 - **Illustrations as breathing room**: Hand-drawn hedgehog art breaks up dense content sections naturally
 
 ### Border Radius Scale
+
 - **2px**: Small inline elements, tags (`span`)
 - **4px**: Primary UI components — buttons, inputs, dropdowns, menu items (`button`, `div`, `combobox`)
 - **6px**: Secondary containers — larger buttons, list items, card variants (`button`, `div`, `li`)
@@ -164,12 +182,14 @@ The interaction design carries the same spirit: hover states flash PostHog Orang
 | Level 3 (Deep Shadow) | `0px 25px 50px -12px rgba(0, 0, 0, 0.25)` | Modals, floating elements, mega-menu dropdowns |
 
 ### Shadow Philosophy
+
 PostHog's elevation system is remarkably minimal — only one shadow definition exists in the entire system. Depth is communicated through:
 - **Border containment**: Sage-tinted borders (`#bfc1b7`) at 1px create gentle warm separation
 - **Surface color shifts**: Moving from `#fdfdf8` to `#eeefe9` to `#e5e7e0` creates layered depth without shadows
 - **The single shadow**: The one defined shadow (`0 25px 50px -12px`) is reserved for floating elements — modals, dropdowns, popovers. It's a deep, dramatic shadow that creates clear separation when needed
 
 ### Decorative Depth
+
 - **Illustration layering**: Hand-drawn hedgehog art creates visual depth naturally
 - **No gradients or glow**: The flat, warm surface system relies entirely on border and surface-color differentiation
 - **No glassmorphism**: Fully opaque surfaces throughout
@@ -177,6 +197,7 @@ PostHog's elevation system is remarkably minimal — only one shadow definition 
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use the olive/sage color family (#4d4f46, #23251d, #bfc1b7) for text and borders — the warm green undertone is essential to the brand
 - Flash PostHog Orange (#F54E00) on hover states — it's the hidden brand signature
 - Use IBM Plex Sans at bold weights (700/800) for headings — the font carries technical credibility
@@ -187,6 +208,7 @@ PostHog's elevation system is remarkably minimal — only one shadow definition 
 - Apply opacity-based hover states (0.7 opacity) on dark buttons rather than color shifts
 
 ### Don't
+
 - Use blue, purple, or typical tech-SaaS colors — PostHog's palette is deliberately olive/sage
 - Add heavy shadows — the system uses one shadow for floating elements only; everything else uses borders
 - Make the design look "polished" or "premium" in a conventional sense — PostHog's charm is its irreverent, scrappy energy
@@ -199,6 +221,7 @@ PostHog's elevation system is remarkably minimal — only one shadow definition 
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile Small | <425px | Single column, compact padding, stacked cards |
@@ -210,12 +233,14 @@ PostHog's elevation system is remarkably minimal — only one shadow definition 
 | Extra Large | >1536px | Centered container at max-width |
 
 ### Touch Targets
+
 - Buttons: 4px–6px radius with `4px–12px` padding — compact but usable
 - Nav links: 15px text at weight 600 with adequate padding
 - Mobile: Hamburger menu with simplified navigation
 - Inputs: Generous vertical padding for thumb-friendly forms
 
 ### Collapsing Strategy
+
 - **Navigation**: Full mega-menu with dropdowns → hamburger menu on mobile
 - **Feature grids**: 3-column → 2-column → single column stacked
 - **Typography**: Display sizes reduce across breakpoints (30px → smaller)
@@ -223,6 +248,7 @@ PostHog's elevation system is remarkably minimal — only one shadow definition 
 - **Section spacing**: Reduces proportionally while maintaining readability
 
 ### Image Behavior
+
 - Illustrations scale responsively within containers
 - Product screenshots maintain aspect ratios
 - Trust logos reflow into multi-row grids on mobile
@@ -231,6 +257,7 @@ PostHog's elevation system is remarkably minimal — only one shadow definition 
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Primary Text: Olive Ink (`#4d4f46`)
 - Dark Text: Deep Olive (`#23251d`)
 - Hover Accent: PostHog Orange (`#F54E00`)
@@ -241,6 +268,7 @@ PostHog's elevation system is remarkably minimal — only one shadow definition 
 - Placeholder: Sage Placeholder (`#9ea096`)
 
 ### Example Component Prompts
+
 - "Create a hero section on warm parchment background (#fdfdf8) with 30px IBM Plex Sans heading at weight 800, line-height 1.20, letter-spacing -0.75px, olive ink text (#4d4f46), and a dark CTA button (#1e1f23, 6px radius, white text, opacity 0.7 on hover)"
 - "Design a feature card with #fdfdf8 background, 1px #bfc1b7 border, 4px radius, IBM Plex Sans heading at 20px weight 700, and 16px body text at weight 400 with 1.50 line-height in olive ink (#4d4f46)"
 - "Build a navigation bar with warm background, IBM Plex Sans links at 15px weight 600 in deep olive (#23251d), underline on hover, and a dark CTA button (#1e1f23) at the right"
@@ -248,6 +276,7 @@ PostHog's elevation system is remarkably minimal — only one shadow definition 
 - "Design an input field with #eeefe9 background, 1px #b6b7af border, 4px radius, #9ea096 placeholder text, focus ring in #3b82f6 at 50% opacity"
 
 ### Iteration Guide
+
 When refining existing screens generated with this design system:
 1. Verify the background is warm parchment (#fdfdf8) not pure white — the sage-cream warmth is essential
 2. Check that all text uses the olive family (#4d4f46, #23251d) not pure black or neutral gray

@@ -21,20 +21,24 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Replicate Dark** (`#202020`): The primary text color and dark surface — a near-black that's the anchor of all text and borders. Slightly warmer than pure #000.
 - **Replicate Red** (`#ea2804`): The core brand color — a vivid, saturated orange-red used in the hero gradient, accent borders, and high-signal moments.
 - **Secondary Red** (`#dd4425`): A slightly warmer variant for button borders and link hover states.
 
 ### Secondary & Accent
+
 - **Status Green** (`#2b9a66`): Badge/pill background for "running" or operational status indicators.
 - **GitHub Dark** (`#24292e`): A blue-tinted dark used for code block backgrounds and developer contexts.
 
 ### Surface & Background
+
 - **Pure White** (`#ffffff`): The primary page body background.
 - **Near White** (`#fcfcfc`): Button text on dark surfaces and the lightest content.
 - **Hero Gradient**: A dramatic orange → red → magenta → pink gradient for the hero section. Transitions from warm (#ea2804 family) through hot pink.
 
 ### Neutrals & Text
+
 - **Medium Gray** (`#646464`): Secondary body text and de-emphasized content.
 - **Warm Gray** (`#4e4e4e`): Emphasized secondary text.
 - **Mid Silver** (`#8d8d8d`): Tertiary text, footnotes.
@@ -42,12 +46,14 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 - **Pure Black** (`#000000`): Maximum-emphasis borders and occasional text.
 
 ### Gradient System
+
 - **Hero Blaze**: A dramatic multi-stop gradient flowing through orange (`#ea2804`) → red → magenta → hot pink. This gradient occupies the full hero section and is the most visually dominant element on the page.
 - **Dark Sections**: Deep dark (#202020) sections with white/near-white text provide contrast against the white body.
 
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Display**: `rb-freigeist-neue`, with fallbacks: `ui-sans-serif, system-ui`
 - **Body / UI**: `basier-square`, with fallbacks: `ui-sans-serif, system-ui`
 - **Code**: `jetbrains-mono`, with fallbacks: `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New`
@@ -70,6 +76,7 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 | Code Small | jetbrains-mono | 11px (0.69rem) | 400 | 1.50 | normal | Tiny code references |
 
 ### Principles
+
 - **Heavy display, light body**: rb-freigeist-neue at 700 weight creates thundering headlines, while basier-square at 400 handles body text with quiet efficiency. The contrast is extreme and intentional.
 - **128px is a real size**: The closing manifesto "Imagine what you can build." uses 128px — bigger than most mobile screens. This is the design equivalent of shouting from a rooftop.
 - **Negative tracking on hero**: -1.8px letter-spacing at 72px creates dense, impactful hero text.
@@ -104,6 +111,7 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 - Used for search/input-like buttons
 
 ### Cards & Containers
+
 - Background: Pure White or subtle gray
 - Border: `1px solid #202020` for prominent containment
 - Radius: pill-shaped (9999px) for badges, labels, images
@@ -112,12 +120,14 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 - Accent border: `1px solid #ea2804` for highlighted/featured items
 
 ### Inputs & Forms
+
 - Background: `rgba(255, 255, 255, 0.1)` (frosted glass)
 - Text: Replicate Dark (`#202020`)
 - Border: transparent with outline
 - Padding: 6px 56px 6px 28px (search-bar style)
 
 ### Navigation
+
 - Clean horizontal nav on white
 - Logo: Replicate wordmark in dark
 - Links: dark text with dotted underline on hover
@@ -125,6 +135,7 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 - GitHub link and sign-in
 
 ### Image Treatment
+
 - AI-generated model output images in a gallery grid
 - Pill-shaped image containers (9999px)
 - Full-width gradient hero section
@@ -158,12 +169,14 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 1px, 2px, 4px, 6px, 8px, 10px, 12px, 16px, 24px, 32px, 48px, 64px, 96px, 160px, 192px
 - Button padding: varies widely (0px 4px to 6px 56px)
 - Section vertical spacing: very generous (96–192px)
 
 ### Grid & Container
+
 - Fluid width with responsive constraints
 - Hero: full-width gradient with centered content
 - Model gallery: multi-column responsive grid
@@ -171,11 +184,13 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 - Code examples: contained dark blocks
 
 ### Whitespace Philosophy
+
 - **Bold and generous**: Massive spacing between sections (up to 192px) creates distinct zones.
 - **Dense within galleries**: Model images are tightly packed in the grid for browsable density.
 - **The gradient IS the whitespace**: The hero gradient section occupies significant vertical space as a colored void.
 
 ### Border Radius Scale
+
 - **Pill (9999px)**: The ONLY radius in the system. Everything interactive, every image, every badge, every label, every container uses 9999px. This is the most extreme pill-radius commitment in any major tech brand.
 
 ## 6. Depth & Elevation
@@ -193,6 +208,7 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use pill-shaped (9999px) radius on EVERYTHING — buttons, images, badges, containers
 - Use rb-freigeist-neue at weight 700 for display text — go big (72px+) or go home
 - Use the orange-red brand gradient for hero sections
@@ -204,6 +220,7 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 - Create a "manifesto" section with 128px type for emotional impact
 
 ### Don't
+
 - Don't use any border-radius other than 9999px — the pill system is absolute
 - Don't use the brand red (#ea2804) as a surface/background color — it's for gradients and accent borders
 - Don't reduce display text below 48px on desktop — the heavy display font needs size to breathe
@@ -217,20 +234,24 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 *No explicit breakpoints detected — likely using fluid/container-query responsive system.*
 
 ### Touch Targets
+
 - Pill buttons with generous padding
 - Gallery images as large touch targets
 - Navigation adequately spaced
 
 ### Collapsing Strategy
+
 - **Hero text**: 128px → 72px → 48px progressive scaling
 - **Model gallery**: Grid reduces columns
 - **Navigation**: Collapses to hamburger
 - **Manifesto**: Scales down but maintains impact
 
 ### Image Behavior
+
 - AI-generated images scale within pill containers
 - Gallery reflows to fewer columns on narrow screens
 - Hero gradient maintained at all sizes
@@ -238,6 +259,7 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Primary Text: "Replicate Dark (#202020)"
 - Page Background: "Pure White (#ffffff)"
 - Brand Accent: "Replicate Red (#ea2804)"
@@ -247,6 +269,7 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 - Dark Surface: "Replicate Dark (#202020)"
 
 ### Example Component Prompts
+
 - "Create a hero section with a vibrant orange-red-magenta gradient background. Headline at 72px rb-freigeist-neue weight 700, white text, -1.8px letter-spacing. Include a dark pill CTA button and a white outlined pill button."
 - "Design a model card with pill-shaped (9999px) image container, model name at 16px basier-square weight 600, run count at 14px in Medium Gray. Border: 1px solid #202020."
 - "Build a status badge: pill-shaped (9999px), Status Green (#2b9a66) background, white text at 14px basier-square."
@@ -254,6 +277,7 @@ What makes Replicate distinctive is its community-powered energy. The model gall
 - "Design a code block: dark background (#24292e), JetBrains Mono at 14px, white text. Pill-shaped container."
 
 ### Iteration Guide
+
 1. Everything is pill-shaped — never specify any other border-radius
 2. Display text is HEAVY — weight 700, sizes 48px+
 3. Links use dotted underline (#bbbbbb) — never solid
