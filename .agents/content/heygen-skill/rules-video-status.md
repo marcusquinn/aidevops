@@ -7,9 +7,9 @@ metadata:
 
 # Video Status and Polling
 
-HeyGen video generation is asynchronous: store the `video_id`, poll until terminal state, then download or hand off to a webhook-driven flow.
+HeyGen video generation is asynchronous: store the `video_id`, poll until terminal state, then download or hand off to a webhook flow.
 
-**Production:** Prefer webhooks over polling to avoid idle connections; see [rules-webhooks.md](rules-webhooks.md). Cache `video_url` values — they expire.
+**Production:** Prefer webhooks over polling; see [rules-webhooks.md](rules-webhooks.md). Cache `video_url` — values expire.
 
 ## Check Status
 
@@ -50,13 +50,13 @@ async function getVideoStatus(videoId: string) {
   "error": "Script too long for selected avatar" } }
 ```
 
-## Timing Guidance
+## Timing
 
-Typical: **5-15 min**. Peak load, long scripts, or 1080p: **20+ min**. Use a timeout of **15-20 min** (`900000-1200000` ms).
+Typical: **5-15 min**. Peak load, long scripts, or 1080p: **20+ min**. Timeout: **15-20 min** (`900000-1200000` ms).
 
 ## Polling Pattern
 
-Poll every few seconds; use exponential backoff for long-running jobs. For UI feedback, add `onProgress?: (status: string, elapsed: number) => void` on each iteration.
+Poll every few seconds with exponential backoff. For UI feedback, add `onProgress?: (status: string, elapsed: number) => void` on each iteration.
 
 ```typescript
 async function waitForVideo(
@@ -77,7 +77,7 @@ async function waitForVideo(
 
 ## Download With Retry
 
-`completed` means metadata is ready; the file URL may still take a moment to serve. Retry with exponential backoff.
+`completed` means metadata is ready; the file URL may still take a moment to serve. Use exponential backoff.
 
 ```typescript
 import fs from "fs";
@@ -99,7 +99,7 @@ async function downloadVideo(videoUrl: string, outputPath: string, maxRetries = 
 
 ## Resumable Workflow
 
-Persist `video_id` and resume later; don't hold an idle process open for long generations.
+Persist `video_id` to disk; don't hold an idle process open for long generations.
 
 ```typescript
 // generate-video.ts — start and exit
