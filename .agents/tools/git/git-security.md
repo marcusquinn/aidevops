@@ -3,12 +3,8 @@ description: Git security practices and secret scanning
 mode: subagent
 tools:
   read: true
-  write: false
-  edit: false
   bash: true
-  glob: true
   grep: true
-  webfetch: false
   task: true
 ---
 
@@ -28,12 +24,10 @@ tools:
 
 ## Preventive Controls
 
-**Auth:** Use CLI auth (tokens in system keyring, not repo files). Fallback: `~/.config/aidevops/credentials.sh` (600 perms). Rotate every 6-12 months or on exposure. Prefer short-lived CI/CD credentials. See `git/authentication.md`.
+**Auth:** CLI auth (tokens in system keyring, not repo files). Fallback: `~/.config/aidevops/credentials.sh` (600 perms). Rotate every 6-12 months or on exposure. Prefer short-lived CI/CD credentials. See `git/authentication.md`.
 
 ```bash
 gh auth login -s workflow   # -s workflow for CI PR support
-glab auth login
-tea login add
 ```
 
 ### Branch Protection
@@ -58,9 +52,9 @@ git config --global commit.gpgsign true
 
 ### Secret Detection
 
-Primary: `secretlint-helper.sh scan`. History: `trufflehog git file://. --only-verified`. `git-secrets` useful for AWS-focused checks.
+Primary: `secretlint-helper.sh scan`. History: `trufflehog git file://. --only-verified`.
 
-Supplementary pre-commit hook (pattern-based, secretlint is primary):
+Pre-commit hook (pattern-based, supplementary to secretlint):
 
 ```bash
 # .git/hooks/pre-commit
@@ -89,7 +83,7 @@ Least privilege. Quarterly review. Remove inactive collaborators. Prefer teams o
 **Secret committed:**
 
 1. **Rotate first** — assume compromise.
-2. Remove from history. Preferred (`git-filter-repo`):
+2. Remove from history (`git-filter-repo` preferred):
 
    ```bash
    git filter-repo --invert-paths --path path/to/secret
