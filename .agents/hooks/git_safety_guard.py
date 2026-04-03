@@ -199,30 +199,67 @@ def _is_linked_worktree(cwd: str) -> bool:
         return False
 
 
-def _is_main_allowlisted(file_path: str) -> bool:
-    """Return True if file_path is in the main-branch write allowlist."""
-    # Normalise: strip leading ./ and any absolute prefix to get repo-relative path
-    normalised = file_path.lstrip("/")
-    # If absolute path, try to extract repo-relative portion
-    # For relative paths, just strip ./
-    if normalised.startswith("./"):
-        normalised = normalised[2:]
-    # Strip leading ./ again after any manipulation
-    normalised = normalised.lstrip("./")
+def _get_repo_root(cwd: str) -> str:
+    """Return the absolute path of the git repository root, or empty string on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=5,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _is_main_allowlisted(file_path: str, repo_root: str) -> bool:
+    """Return True if file_path is in the main-branch write allowlist.
+
+    file_path may be absolute or repo-relative.
+    repo_root must be an absolute path (from git rev-parse --show-toplevel).
+    Rejects path traversal: any path that escapes repo_root is denied.
+    """
+    if not repo_root:
+        return False
+
+    # Resolve to absolute path
+    if os.path.isabs(file_path):
+        abs_path = os.path.normpath(file_path)
+    else:
+        abs_path = os.path.normpath(os.path.join(repo_root, file_path))
+
+    # Reject traversal: path must be inside repo_root
+    norm_root = os.path.normpath(repo_root)
+    try:
+        common = os.path.commonpath([abs_path, norm_root])
+    except ValueError:
+        return False  # Different drives (Windows) or other error
+    if common != norm_root:
+        return False  # Escapes repo root
+
+    # Compute repo-relative path (no leading separator)
+    rel_path = os.path.relpath(abs_path, norm_root)
+
+    # Reject any remaining traversal (e.g. relpath produced "..")
+    if rel_path.startswith(".."):
+        return False
 
     for allowed in MAIN_BRANCH_ALLOWLIST:
         if allowed.endswith("/"):
-            # Prefix match (subtree)
-            if normalised == allowed.rstrip("/") or normalised.startswith(allowed):
+            # Prefix match (subtree): rel_path == "todo" or starts with "todo/"
+            prefix = allowed.rstrip("/")
+            if rel_path == prefix or rel_path.startswith(allowed):
                 return True
         else:
             # Exact match
-            if normalised == allowed:
+            if rel_path == allowed:
                 return True
     return False
 
 
-def _check_main_branch_allowlist(file_path: str) -> dict | None:
+def _check_main_branch_allowlist(file_path: str) -> "dict | None":
     """Check if an Edit/Write to file_path is allowed on the current branch.
 
     Returns a deny dict if the write should be blocked, None if allowed.
@@ -230,22 +267,24 @@ def _check_main_branch_allowlist(file_path: str) -> dict | None:
     if not file_path:
         return None
 
-    # Determine cwd: use the directory of the file if absolute, else cwd
-    if os.path.isabs(file_path):
-        cwd = os.path.dirname(file_path) or "/"
-    else:
-        cwd = os.getcwd()
+    # Always use cwd for git commands — avoids failures for new (not-yet-created) files
+    cwd = os.getcwd()
 
-    branch = _get_current_branch(cwd)
+    # Resolve repo root from cwd (reliable even for new files)
+    repo_root = _get_repo_root(cwd)
+    if not repo_root:
+        return None  # Not in a git repo — allow
+
+    branch = _get_current_branch(repo_root)
     if branch not in ("main", "master"):
         return None  # Not on a protected branch — allow
 
     # On main/master: check if this is a linked worktree (allowed) or main worktree (restricted)
-    if _is_linked_worktree(cwd):
+    if _is_linked_worktree(repo_root):
         return None  # Linked worktrees are always allowed
 
     # Main worktree on main/master: enforce allowlist
-    if _is_main_allowlisted(file_path):
+    if _is_main_allowlisted(file_path, repo_root):
         return None  # Allowlisted path — allow
 
     return {

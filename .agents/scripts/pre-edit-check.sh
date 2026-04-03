@@ -103,9 +103,24 @@ done
 is_main_allowlisted_path() {
 	local file_path="$1"
 
-	# Normalise: strip leading ./ and resolve relative to repo root basename
+	# Normalise: strip leading ./ to get a repo-relative path
 	local normalised
 	normalised=$(echo "$file_path" | sed 's|^\./||')
+
+	# Reject path traversal: any path containing .. segments is not allowlisted.
+	# This prevents todo/../secret.py from matching the todo/ prefix.
+	case "$normalised" in
+	*..*)
+		return 1
+		;;
+	esac
+
+	# Reject absolute paths that escape the repo root
+	case "$normalised" in
+	/*)
+		return 1
+		;;
+	esac
 
 	# Exact matches
 	case "$normalised" in
@@ -375,6 +390,14 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 		fi
 	fi
 
+	# Short-circuit: explicit --file on an allowlisted path is always allowed,
+	# regardless of loop-mode or headless state (t1712).
+	if [[ -n "$TARGET_FILE" ]] && is_main_allowlisted_path "$TARGET_FILE"; then
+		echo -e "${GREEN}OK${NC} - Allowlisted path '$TARGET_FILE' on $current_branch"
+		echo "MAIN_ALLOWLISTED=true"
+		exit 0
+	fi
+
 	# Detect headless mode (GH#4400): workers dispatched without --loop-mode
 	# get the interactive prompt and loop forever trying to edit. Detect
 	# headless by checking if stdin is not a terminal (no TTY = headless).
@@ -384,7 +407,7 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 		echo -e "${RED}BLOCKED${NC}: Canonical repo directory is on protected '$current_branch'; move code edits into a linked worktree."
 		echo "HEADLESS_BLOCKED=true"
 		echo "ACTION_REQUIRED=create_worktree"
-		echo "HINT: Use --loop-mode --task 'description' to auto-create a worktree,"
+		echo "HINT: Use --loop-mode --file 'path' or --loop-mode --task 'description' to auto-create a worktree,"
 		echo "or dispatch with --dir pointing to an existing worktree, not the main repo."
 		exit 2
 	fi

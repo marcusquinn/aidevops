@@ -36,11 +36,12 @@ All other paths require a linked worktree. The `git_safety_guard.py` hook enforc
 | `2` | Loop mode needs worktree | Auto-create worktree |
 | `3` | Feature branch in main repo | Present exit-3 options below |
 
-**Exit 1 prompt:**
+**Exit 1 prompt** (non-allowlisted path on `main`, interactive mode only):
 > On `main`. Suggested branch: `{type}/{suggested-name}`
 > 1. Create worktree (recommended)
 > 2. Use different branch name
-> 3. Stay on `main` (allowlisted path only: README.md, TODO.md, todo/**)
+
+Note: allowlisted paths (`README.md`, `TODO.md`, `todo/**`) short-circuit to exit `0` before this prompt is shown.
 
 **Exit 3 prompt:**
 > On branch: `{branch}` (main repo, not worktree)
