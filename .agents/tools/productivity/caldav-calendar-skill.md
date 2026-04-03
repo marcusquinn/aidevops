@@ -5,11 +5,15 @@ mode: subagent
 ---
 # CalDAV Calendar (vdirsyncer + khal)
 
-vdirsyncer syncs CalDAV calendars to local .ics files. khal reads and writes them.
+**For reminders/tasks** (not events): see `tools/productivity/apple-reminders.md`.
 
-**For reminders/tasks** (not calendar events): see `tools/productivity/apple-reminders.md`.
+**Sync first** — always sync before querying or after changes: `vdirsyncer sync`
 
-**Sync First** — Always sync before querying or after making changes: `vdirsyncer sync`
+## Initial Setup
+
+1. Configure vdirsyncer (`~/.config/vdirsyncer/config`) — supports iCloud, Google, Fastmail, Nextcloud
+2. Configure khal (`~/.config/khal/config`)
+3. Run: `vdirsyncer discover && vdirsyncer sync`
 
 ## View Events
 
@@ -48,9 +52,3 @@ Placeholders: `{title}`, `{description}`, `{start}`, `{end}`, `{start-date}`, `{
 ## Caching
 
 Remove stale cache: `rm ~/.local/share/khal/khal.db`
-
-## Initial Setup
-
-1. Configure vdirsyncer (`~/.config/vdirsyncer/config`) — supports iCloud, Google, Fastmail, Nextcloud
-2. Configure khal (`~/.config/khal/config`)
-3. Run: `vdirsyncer discover && vdirsyncer sync`
