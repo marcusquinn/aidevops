@@ -1,5 +1,7 @@
 # Patterns & Use Cases
 
+Cloudflare Calls SFU — WebRTC session patterns, backend integration, and advanced media controls.
+
 ## Architecture
 
 ```
@@ -9,7 +11,7 @@ Client (WebRTC) <---> CF Edge <---> Backend (HTTP)
                            |
                     Other Edges <---> Other Clients
 
-# Anycast: Last-mile <50ms (95%), no region select, NACK shield, distributed consensus
+# Anycast: last-mile <50ms (95%), no region select, NACK shield, distributed consensus
 # Cascading trees auto-scale to millions:
 
 Publisher -> Edge A -> Edge B -> Sub1
@@ -21,9 +23,9 @@ Publisher -> Edge A -> Edge B -> Sub1
 **1:1:** A creates session+publishes, B creates+subscribes to A+publishes, A subscribes to B
 **N:N:** All create session+publish, backend broadcasts track IDs, all subscribe to others
 **1:N:** Publisher creates+publishes, viewers each create+subscribe (no fan-out limit)
-**Breakout:** Same PeerConnection! Backend closes/adds tracks, no recreation
+**Breakout:** Same PeerConnection — backend closes/adds tracks, no recreation
 
-## Backend
+## Session API
 
 **Express:**
 
@@ -71,7 +73,7 @@ export class Room {
 }
 ```
 
-## Advanced
+## Advanced Patterns
 
 **Bandwidth mgmt:**
 
