@@ -4,25 +4,24 @@
 
 ### Functions Not Invoking
 
-All requests serve static, functions never run.
+All requests serve static; functions never run.
 
-**Fix:** `/functions` at project root · files have `.js`/`.ts` extension · check `pages_build_output_dir` in wrangler.json · `_routes.json` not excluding paths
+**Fix:** `/functions` at project root · `.js`/`.ts` extension · check `pages_build_output_dir` in wrangler.json · `_routes.json` not excluding paths
 
 ### Binding or Env Var Undefined
 
 `context.env.MY_BINDING is undefined` / `context.env.VAR_NAME is undefined`
 
-**Bindings:** Declared in wrangler.json or dashboard · name matches exactly (case-sensitive) · local dev: pass flags or configure wrangler.json · redeploy after changes
+**Bindings:** Declared in wrangler.json or dashboard · name matches exactly (case-sensitive) · local dev: configure wrangler.json · redeploy after changes
 
-**Vars/Secrets:** `vars` in wrangler.json · secrets: `.dev.vars` locally, dashboard/wrangler.json for prod · redeploy after changes
+**Vars/Secrets:** `vars` in wrangler.json · secrets: `.dev.vars` locally, dashboard for prod · redeploy after changes
 
 ### TypeScript Errors
 
-Type errors for `context.env`
+Type errors for `context.env`:
 
 ```typescript
 interface Env { MY_BINDING: KVNamespace; }
-
 export const onRequest: PagesFunction<Env> = async (context) => {
   // context.env.MY_BINDING now typed
 };
@@ -30,9 +29,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
 ### Middleware Not Running
 
-`_middleware.js` not executing
-
-**Fix:** Named exactly `_middleware.js` · in correct directory for route scope · exports `onRequest` or method handler · calls `context.next()` to pass control
+`_middleware.js` not executing — check: named exactly `_middleware.js` · correct directory for route scope · exports `onRequest` or method handler · calls `context.next()`
 
 ## Debugging
 
@@ -75,16 +72,16 @@ As of 2026-03-20 — [Cloudflare Pages Functions limits](https://developers.clou
 
 ## Best Practices
 
-**Performance:** Minimize deps for cold starts · KV for infrequent reads, D1 for relational, R2 for large files · set `Cache-Control` headers · use prepared statements and batch operations
-
-**Security:** Never commit secrets · use secrets (encrypted) not vars for sensitive data · validate and sanitize all input · implement auth middleware · set CORS headers · rate limit per-IP
+| Area | Rules |
+|------|-------|
+| Performance | Minimize deps for cold starts · KV for infrequent reads, D1 for relational, R2 for large files · set `Cache-Control` headers · use prepared statements and batch ops |
+| Security | Never commit secrets · use secrets (encrypted) not vars for sensitive data · validate/sanitize all input · auth middleware · CORS headers · rate limit per-IP |
 
 ## Migration
 
 ### From Workers
 
 ```typescript
-// Worker → Pages Function
 export default { fetch(request, env) { } }        // Worker
 export function onRequest({ request, env }) { }   // Pages Function
 ```
