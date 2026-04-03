@@ -70,7 +70,7 @@ WHERE application_name = 'Cloudflare Hyperdrive';
 - Write-heavy workloads (limited cache benefit)
 - Real-time data requirements (<1s freshness)
 - Single-region apps close to DB
-- Very simple apps (overhead unjustified)
+- Minimal applications (overhead unjustified)
 - DB with strict connection limits already exceeded
 
 Alternatives: D1 (Cloudflare native SQL), Durable Objects (stateful Workers), KV (global key-value), R2 (object storage).
