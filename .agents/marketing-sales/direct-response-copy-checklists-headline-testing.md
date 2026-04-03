@@ -71,9 +71,3 @@
 - [ ] Beats alternatives & matches following offer
 - [ ] Strong enough to stop scrolling
 - [ ] Approved by fresh eyes
-
-## Headline Bank
-
-| Headline | Where Used | CTR/Performance | Notes |
-|----------|------------|-----------------|-------|
-| | | | |
