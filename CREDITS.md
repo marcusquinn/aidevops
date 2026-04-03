@@ -26,6 +26,14 @@ Sources, inspirations, and third-party resources incorporated into or referenced
   - Repository: https://github.com/dominikmartn/nothing-design-skill
   - Adapted as `.agents/tools/ui/nothing-design-skill/`
 
+### Logo & Brand Identity Tools
+
+- **Brandmark** -- AI logo maker that generates logo, typography, and colour schemes from keywords.
+  - Website: https://brandmark.io/
+
+- **Looka** -- AI logo and brand kit generator with business card, social media, and stationery mockups.
+  - Website: https://looka.com/
+
 ### Colour, Typography & Palette Tools
 
 - **Colormind** -- AI-powered colour palette generator using deep learning trained on photographs, film, and art.

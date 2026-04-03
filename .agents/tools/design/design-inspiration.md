@@ -124,6 +124,14 @@ tools:
 | **Checklist Design** | https://checklistdesign.com | UX/UI best practices as checklists for common page types | Free |
 | **Toools.design** | https://toools.design | Directory of 1,500+ design tools and resources | Free |
 
+## Logo & Brand Identity Tools
+
+| Resource | URL | Description | Pricing |
+|----------|-----|-------------|---------|
+| **Brandmark** | https://brandmark.io/ | AI logo maker -- generates logo, typography, and colour schemes from keywords | Freemium |
+| **Looka** | https://looka.com/ | AI logo and brand kit generator with business card, social, and stationery mockups | Freemium |
+| **Huemint** | https://huemint.com/ | AI colour for brand identity, logos, and web mockups | Free |
+
 ## Colour & Typography Tools
 
 Interactive tools for generating palettes and font pairings. See also `tools/design/colour-palette.md` for the full palette workflow and CLI helper.

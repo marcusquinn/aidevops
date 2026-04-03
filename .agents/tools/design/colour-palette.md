@@ -71,6 +71,8 @@ curl -s -X POST http://colormind.io/api/ \
 | Adobe Color | https://color.adobe.com/ | Colour wheel, harmony rules, accessibility tools |
 | Colour Hunt | https://colorhunt.co/ | Curated palette collections by community |
 | Happy Hues | https://www.happyhues.co/ | Palettes shown in realistic UI context |
+| Brandmark | https://brandmark.io/ | AI logo maker -- generates logo, typography, and colour schemes |
+| Looka | https://looka.com/ | AI logo and brand kit generator with mockups |
 
 ## Palette Generation Workflow
 
