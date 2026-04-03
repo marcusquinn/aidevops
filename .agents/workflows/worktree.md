@@ -35,6 +35,11 @@ wt switch -c feature/my-feature   # Create worktree + cd into it
 wt list                           # List worktrees with CI status
 wt merge                          # Squash/rebase/merge + cleanup
 wt remove                         # Remove current worktree
+# Hotfix without leaving feature work — existing worktrees unaffected
+wt switch -c hotfix/security-patch
+# Multiple AI sessions on separate worktrees
+opencode ~/Git/myrepo-feature-auth/    # Session 1
+opencode ~/Git/myrepo-bugfix-login/    # Session 2
 ```
 
 **worktree-helper.sh** (fallback — no cd support):
@@ -50,24 +55,13 @@ worktree-helper.sh clean                            # Batch cleanup merged branc
 
 Full Worktrunk docs: `tools/git/worktrunk.md`.
 
-## Workflow Patterns
-
-```bash
-# Hotfix without leaving feature work
-worktree-helper.sh add hotfix/security-patch  # ~/Git/myrepo-hotfix-security-patch/ — feature worktree unchanged
-
-# Multiple AI sessions on separate worktrees
-opencode ~/Git/myrepo-feature-auth/    # Session 1
-opencode ~/Git/myrepo-bugfix-login/    # Session 2
-```
-
 ## Integration
 
 `pre-edit-check.sh` works in any worktree — main or linked.
 
 **Localdev (t1224.8):** Worktree creation auto-sets branch-specific subdomain routing (`https://feature-auth.myapp.local`) for `localdev add` projects. Removal auto-cleans the route.
 
-**Session recovery:** Use `session-rename_sync_branch` after creating branches. Check `worktree-sessions.sh list` before closing PRs or deleting branches.
+**Session recovery:** Run `session-rename_sync_branch` after creating branches. Check `worktree-sessions.sh list` before closing PRs or deleting branches.
 
 ```bash
 worktree-sessions.sh list   # List worktrees with matching sessions
