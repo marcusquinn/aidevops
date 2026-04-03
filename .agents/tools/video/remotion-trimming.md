@@ -8,7 +8,7 @@ metadata:
 
 ## Trim the beginning
 
-A negative `from` value shifts time backwards — the sequence starts partway through its local timeline:
+A negative `from` value skips that many frames from the start of the animation's local timeline:
 
 ```tsx
 import {Sequence, useVideoConfig} from 'remotion';
@@ -20,8 +20,7 @@ const {fps} = useVideoConfig();
 </Sequence>
 ```
 
-- The animation appears 15 frames into its progress, so the first 15 frames are skipped.
-- Inside `<MyAnimation>`, `useCurrentFrame()` starts at 15 instead of 0.
+Inside `<MyAnimation>`, `useCurrentFrame()` starts at `0.5 * fps` instead of 0.
 
 ## Trim the end
 
@@ -32,8 +31,6 @@ Use `durationInFrames` to unmount content after a fixed duration:
   <MyAnimation />
 </Sequence>
 ```
-
-- The animation plays for 45 frames, then the component unmounts.
 
 ## Trim and delay
 
@@ -47,5 +44,4 @@ Nest sequences to trim the beginning and delay when the result appears:
 </Sequence>
 ```
 
-- The inner sequence trims 15 frames from the start.
-- The outer sequence delays the trimmed result by 30 frames.
+The inner sequence trims 15 frames from the start; the outer delays the result by 30 frames.

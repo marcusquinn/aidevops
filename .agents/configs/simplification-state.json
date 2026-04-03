@@ -5753,6 +5753,13 @@
     },
     ".agents/workflows/pre-edit.md": {
       "hash": "d87135a808a845416e0193a101bef0fd1c0b4a032969d819556ce109c40da4ba"
+    },
+    ".agents/tools/video/remotion-trimming.md": {
+      "hash": "6acbeb3fd83234e7ff428ba8a75bb7578054e80a084ff6a0438ef256e2184026",
+      "at": "2026-04-03T00:00:00Z",
+      "passes": 1,
+      "pr": null,
+      "issue": 16798
     }
   }
 }
