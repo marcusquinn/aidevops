@@ -1,6 +1,6 @@
 # Bot Management Patterns
 
-WAF custom rules, rate limiting, and Workers patterns for Cloudflare Bot Management. Enterprise-only features (granular scores, JA3/JA4) are noted inline.
+WAF custom rules, rate limiting, and Workers patterns. Enterprise-only features (granular scores, JA3/JA4) noted inline.
 
 ## WAF Rule Patterns
 
@@ -49,30 +49,21 @@ Action: Skip (all remaining rules)
 | Authenticated | score < 30 | Standard threshold |
 | Sensitive (checkout, login) | score < 50 | Add JavaScript Detections |
 
-```txt
-1. Bot Management (score-based)
-2. JavaScript Detections (JS-capable clients)
-3. Rate Limiting (fallback)
-4. WAF Managed Rules (OWASP, etc.)
-```
+Enforcement order: Bot Management (score-based) → JavaScript Detections → Rate Limiting → WAF Managed Rules (OWASP).
 
 Zero-trust baseline: deny lower-score traffic first, then allowlist verified bots, mobile apps (JA3/JA4), corporate proxies, and static resources.
 
 ## Rate Limiting
 
 ```txt
-(cf.bot_management.score lt 50)
-Rate: 10 requests per 10 seconds
+# Score-based rate limits
+(cf.bot_management.score lt 50) → 10 req/10s
+(cf.bot_management.score ge 50) → 100 req/10s
 
-(cf.bot_management.score ge 50)
-Rate: 100 requests per 10 seconds
-```
-
-```txt
-Rate limiting > Custom rules
-- Field: lookup_json_string(http.request.jwt.claims["{config_id}"][0], "sub")
-- Matches: user ID claim
-- Additional condition: cf.bot_management.score lt 50
+# Per-user JWT rate limiting (Custom rules > Rate Limiting)
+Field: lookup_json_string(http.request.jwt.claims["{config_id}"][0], "sub")
+Matches: user ID claim
+Additional condition: cf.bot_management.score lt 50
 ```
 
 ## Workers
@@ -105,5 +96,5 @@ export default {
 - **WAF Custom Rules** — primary enforcement point
 - **Rate Limiting Rules** — stricter quotas for lower bot scores
 - **Transform Rules** — forward score to origin in a custom header
-- **Workers** — add programmatic enforcement and custom scoring
+- **Workers** — programmatic enforcement and custom scoring
 - **Configuration Rules** — zone-level or path-specific overrides
