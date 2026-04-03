@@ -1,6 +1,6 @@
 ---
 name: internal-linker
-description: Suggest 3-5 internal links per article — placement, anchor text, SEO rationale
+description: Suggest 3-5 internal links per article — placement, anchor text, SEO rationale. Works with content/seo-writer.md and seo/site-crawler.md.
 mode: subagent
 tools:
   read: true
@@ -38,7 +38,7 @@ tools:
 ## Workflow
 
 1. **Gather context** — `context/internal-links-map.md`, `context/target-keywords.md`, sitemap/crawl data
-2. **Analyse content** — identify topics matching existing pages, find natural anchor opportunities, map user journey
+2. **Analyse content** — identify topics, anchor opportunities, user journey
 3. **Output**:
 
 ```markdown
@@ -56,9 +56,3 @@ tools:
 - Cluster connections: X
 - User journey links: X
 ```
-
-## Integration
-
-- Works with `content/seo-writer.md` during content creation
-- Uses `seo/site-crawler.md` data for existing page discovery
-- References `context/internal-links-map.md` for link targets
