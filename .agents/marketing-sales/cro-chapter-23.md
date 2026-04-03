@@ -26,29 +26,16 @@
 
 ## 23.2 Pricing Page Optimization
 
-### Core structure
-
 - Plan structure: 3-4 plans max; clear differentiation; recommended plan highlighted; annual discount visible
-
-### Pricing psychology
-
-- Decoy pricing — middle plan most popular
-- Anchoring — enterprise price makes other plans look reasonable
-- Charm pricing — $99 vs $100
-- Free trial emphasis
-
-### Interactive pricing tools
-
-- Calculators — ROI, savings estimators, cost comparison
-- Sliders — usage-based pricing, team size, feature toggles
+- Decoy pricing — middle plan most popular; anchoring — enterprise price makes others look reasonable
+- Charm pricing — $99 vs $100; free trial emphasis
+- Calculators — ROI, savings estimators, cost comparison; sliders — usage-based pricing, team size, feature toggles
 
 ## 23.3 Product-Led Growth CRO
 
 - Self-serve onboarding: no sales required; immediate value delivery; in-app education; viral sharing mechanisms
 - Viral loops: team invites, shareable content, public profiles, social proof
 - Freemium optimization: clear upgrade triggers; feature limitations; usage quotas; watermarks/removal
-
-**In-app conversion:**
 
 | Tactic | Examples |
 |--------|---------|
