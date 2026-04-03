@@ -31,9 +31,9 @@ interface TextOverlay {
 
 ## Positioning
 
-**Coordinate system:** Origin top-left (0,0). X increases right, Y increases down. Units: pixels or percentage.
+Origin top-left (0,0). X increases right, Y increases down. Units: pixels or percentage.
 
-### Common Positions (1920×1080)
+**Common positions (1920×1080):**
 
 | Position | X | Y |
 |----------|---|---|
