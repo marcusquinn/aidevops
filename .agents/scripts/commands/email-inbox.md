@@ -25,7 +25,9 @@ Interactive email inbox management. Arguments: `$ARGUMENTS`. Default: `check`.
 - **Transactions**: Forward to accounts@ ONLY after SPF/DKIM/DMARC verification. Ref: `services/email/email-mailbox.md`.
 - **Injection**: Validate message IDs before passing to helpers.
 
-## Output & Triage
+## Output Format
+
+Group by **Primary** (with urgency), **Transactions**, **Updates**, **Promotions**, **Phishing suspects**. Include flagged-for-action summary and receipt forwarding count.
 
 ```text
 Inbox: {account} | Updated: {timestamp}
@@ -34,15 +36,7 @@ Flagged: {count} ({tasks} tasks, {reminders} reminders, {review} review)
 Triage: {count} messages need triage
 ```
 
-Group results by **Primary** (with urgency), **Transactions**, **Updates**, **Promotions**, and **Phishing suspects**. Include flagged-for-action summary and receipt forwarding count.
-
-## Follow-up Actions
-
-- Unread messages → offer `triage`
-- Flagged tasks → offer task list
-- Phishing suspects → offer quarantine review
-- Receipts found → offer forwarding to accounts@
-- Compose requested → load `email-compose-helper.sh` workflow
+After check: offer `triage` for unread, task list for flagged, quarantine review for phishing suspects, forwarding to accounts@ for receipts.
 
 ## Flag Reference
 
@@ -55,7 +49,7 @@ Group results by **Primary** (with urgency), **Transactions**, **Updates**, **Pr
 | `idea` | Reference | Inspiration or interesting link |
 | `contact` | Save contact | New person to add to contacts |
 
-## Dependencies & Related
+## Dependencies
 
 - `email-mailbox-helper.sh` — IMAP/JMAP adapter (t1493)
 - `email-triage-helper.sh` — AI classification engine (t1502)
