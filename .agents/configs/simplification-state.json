@@ -21,6 +21,16 @@
     "issue": "GH#14349",
     "status": "simplified"
   },
+  ".agents/marketing-sales/direct-response-copy-frameworks-email-sequences.md": {
+    "at": "2026-04-03T06:00:00Z",
+    "hash": "877dee3ba82a3cef08c326c5eda70096ee406f81a270b5485ef0a0b324e09d59",
+    "issue": "GH#16238",
+    "lines_before": 119,
+    "lines_after": 113,
+    "passes": 1,
+    "note": "Instruction doc tightened: 119\u2192113 lines. Removed decorative horizontal rules, reordered sections (anatomy+sequences before best-practices), renamed section heading. Zero content loss.",
+    "status": "simplified"
+  },
   ".agents/seo/geo-strategy.md": {
     "at": "2026-04-03T00:00:00Z",
     "hash": "f2c7b8507a0eb39c56689d7ce778518d7e15b27b7da668ef2b2caebdbe5b50df",
@@ -62,6 +72,15 @@
     "lines_after": 238,
     "lines_before": 316,
     "status": "simplified"
+  },
+  ".agents/tools/ui/ui-skills.md": {
+    "at": "2026-04-03T06:08:00Z",
+    "hash": "f75020ffda4b498042577c5888bf9b0aa1efebd4ae355bf4acf33ab10e74137e",
+    "lines": 96,
+    "passes": 1,
+    "pr": 16281,
+    "status": "simplified",
+    "issue": "GH#16179"
   },
   ".agents/tools/video/remotion-get-video-dimensions.md": {
     "at": "2026-04-03T05:33:46Z",
@@ -5093,20 +5112,5 @@
       "passes": 1,
       "pr": 15470
     }
-  },
-  ".agents/tools/ui/ui-skills.md": {
-    "at": "2026-04-03T06:08:00Z",
-    "hash": "f75020ffda4b498042577c5888bf9b0aa1efebd4ae355bf4acf33ab10e74137e",
-    "lines": 96,
-    "passes": 1,
-    "pr": 16281,
-    "status": "simplified",
-    "issue": "GH#16179"
-  },
-  ".agents/tools/productivity/caldav-calendar-skill.md": {
-    "hash": "1c5dfa3f56efc691d015c99e736c248cad1fd65b547302ab20484ba9bc0524c9",
-    "lines": 56,
-    "last_simplified": "2026-04-03",
-    "issue": "GH#14389"
   }
 }
