@@ -1,12 +1,6 @@
 # Cloudflare Terraform Provider
 
-## Core Principles
-
-- **Provider-first**: Use for ALL infrastructure — never mix with wrangler.toml for the same resources
-- **Remote state**: Always use remote state (S3, Terraform Cloud) for team environments
-- **Modular**: Create reusable modules for common patterns (zones, workers, pages)
-- **Version pinning**: Pin provider with `~>` for predictable upgrades
-- **Secrets**: Use variables + env vars — never hardcode API tokens
+**Rules:** Provider-first (never mix with wrangler.toml for same resources) · Remote state always (S3/Terraform Cloud) · Modular (zones, workers, pages) · Pin with `~>` · Secrets via env vars, never hardcoded
 
 ## Provider Setup
 
@@ -26,13 +20,12 @@ provider "cloudflare" {
 }
 ```
 
-### Authentication (priority order)
-
+**Auth (priority order):**
 1. **API Token** (recommended): `api_token` / `CLOUDFLARE_API_TOKEN` — Dashboard → My Profile → API Tokens; scope to specific accounts/zones
 2. **Global API Key** (legacy): `api_key` + `api_email` / `CLOUDFLARE_API_KEY` + `CLOUDFLARE_EMAIL` — less secure
 3. **User Service Key**: `user_service_key` — Origin CA certificates only
 
-### Remote State Backend
+**Remote state backend:**
 
 ```hcl
 terraform {
