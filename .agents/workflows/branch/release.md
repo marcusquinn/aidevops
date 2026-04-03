@@ -6,8 +6,6 @@ tools:
   write: true
   edit: true
   bash: true
-  glob: true
-  grep: true
 ---
 
 # Release Branch
@@ -31,37 +29,30 @@ git checkout -b release/1.2.0
 
 ## When to Create
 
-| Scenario | Branch | vs Hotfix |
-|----------|--------|-----------|
-| Features ready | `release/X.Y.0` (minor) | Planned; full test cycle |
-| Bug fixes accumulated | `release/X.Y.Z` (patch) | Planned; full test cycle |
-| Breaking changes | `release/X+1.0.0` (major) | Planned; full test cycle |
-| Urgent critical fix | Use `hotfix/` instead | Urgent; minimal testing |
-
-## Version Selection
-
-| Change Type | Bump | Example |
-|-------------|------|---------|
-| Bug fixes only | Patch | 1.2.3 → 1.2.4 |
-| New features (backward compatible) | Minor | 1.2.3 → 1.3.0 |
-| Breaking changes | Major | 1.2.3 → 2.0.0 |
+| Scenario | Branch | Bump | vs Hotfix |
+|----------|--------|------|-----------|
+| Bug fixes accumulated | `release/X.Y.Z` | Patch | Planned; full test cycle |
+| New features ready | `release/X.Y.0` | Minor | Planned; full test cycle |
+| Breaking changes | `release/X+1.0.0` | Major | Planned; full test cycle |
+| Urgent critical fix | Use `hotfix/` | — | Urgent; minimal testing |
 
 ## Release Lifecycle
 
-1. Create release branch
-2. `version-manager.sh bump {type}` — update version files
-3. Update `CHANGELOG.md`
-4. `linters-local.sh` — final testing
-5. Create PR to `main`, merge and tag
-6. `gh release create v{VERSION} --generate-notes`
-7. Run postflight
-
 ```bash
-# After PR merged — tag and publish
+# 1. Bump version and update changelog
+version-manager.sh bump {patch|minor|major}
+# Edit CHANGELOG.md
+
+# 2. Run final checks
+linters-local.sh
+
+# 3. PR to main, merge, then tag and publish
 git checkout main && git pull
 git tag -a v{VERSION} -m "Release v{VERSION}"
 git push origin v{VERSION}
 gh release create v{VERSION} --generate-notes
+
+# 4. Run postflight
 ```
 
 ## Related
