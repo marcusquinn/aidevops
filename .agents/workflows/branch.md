@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - Resume existing work first: `git worktree list` or `wt list`
-- Start from the canonical repo on `main`: `wt switch -c {type}/{name}`
+- Start from canonical repo on `main`: `wt switch -c {type}/{name}`
 - Fallback: `worktree-helper.sh add {type}/{name}`
 - Keep `~/Git/{repo}/` on `main`; do task work in the linked worktree path
 
@@ -33,19 +33,18 @@ tools:
 | Spike, POC | `experiment/` | `branch/experiment.md` |
 | Version release | `release/` | `branch/release.md` |
 
-- Branch names: `{type}/{short-description}` — lowercase, hyphenated, ~50 chars max. Example: `feature/user-dashboard`, `bugfix/123-login-timeout`; releases use semver (`release/1.2.0`).
-- Planning tasks: move the task to `## In Progress`, add `started:<ISO>`, then `beads-sync-helper.sh push`.
-- Standard lifecycle: Create → Develop → Preflight → Push → PR → Review → Merge → Cleanup. Releases add Version → Release → Postflight.
+- Branch names: `{type}/{short-description}` — lowercase, hyphenated, ~50 chars max. Examples: `feature/user-dashboard`, `bugfix/123-login-timeout`; releases use semver (`release/1.2.0`).
+- Planning tasks: move to `## In Progress`, add `started:<ISO>`, then `beads-sync-helper.sh push`.
 
 <!-- AI-CONTEXT-END -->
 
-Before creating a branch, read `workflows/git-workflow.md` for issue URL handling, fork detection, commit/PR rules, and repo setup. Read `workflows/worktree.md` for worktree creation and cleanup. Worktree paths are slugified unconditionally by `generate_worktree_path()` (converts `/` to `-`, lowercases). Planning-file-derived task descriptions should be pre-slugified (lowercase, spaces→hyphens, special chars removed) before use as branch names if you want to preserve the exact slug format in the path.
+Before creating a branch, read `workflows/git-workflow.md` (issue URL handling, fork detection, commit/PR rules) and `workflows/worktree.md` (worktree creation and cleanup). Worktree paths are slugified unconditionally by `generate_worktree_path()` (converts `/` to `-`, lowercases). Pre-slugify task descriptions (lowercase, spaces→hyphens, special chars removed) before use as branch names.
 
 ## Branch Lifecycle
 
 | Stage | Command / Agent | Notes |
 |-------|-----------------|-------|
-| Create | `wt switch -c {type}/{desc}` or `worktree-helper.sh add {type}/{desc}` | Create a linked worktree from `main` |
+| Create | `wt switch -c {type}/{desc}` or `worktree-helper.sh add {type}/{desc}` | Linked worktree from `main` |
 | Develop | `branch/{type}.md`, domain agents | Use conventional commits |
 | Preflight | `.agents/scripts/linters-local.sh --fast` → `workflows/preflight.md` | Required before push |
 | Version | `.agents/scripts/version-manager.sh bump [major\|minor\|patch]` → `workflows/version-bump.md` | Releases only |
@@ -59,8 +58,8 @@ Before creating a branch, read `workflows/git-workflow.md` for issue URL handlin
 
 ## Worktree Rules
 
-- Prefer worktrees over `git checkout -b` in the canonical repo; the next session must inherit `main`, not a task branch.
-- Talk about the worktree path (`~/Git/{repo}-{type}-{slug}/`), not "switching the main repo to a branch".
+- Prefer worktrees over `git checkout -b`; the next session must inherit `main`, not a task branch.
+- Reference the worktree path (`~/Git/{repo}-{type}-{slug}/`), not "switching the main repo to a branch".
 - After switching to a worktree, re-read files at the worktree path before editing.
 - Never remove a worktree you did not create unless the user explicitly asked.
 
@@ -69,7 +68,7 @@ Before creating a branch, read `workflows/git-workflow.md` for issue URL handlin
 ```bash
 git fetch origin main
 git merge origin/main
-# Or rebase if the repo workflow requires it; resolve conflicts with tools/git/conflict-resolution.md
+# Rebase if repo workflow requires it; resolve conflicts with tools/git/conflict-resolution.md
 ```
 
 ## Safety: Protecting Uncommitted Work
@@ -86,7 +85,7 @@ git stash pop   # or: git stash show -p to review on conflict
 
 ## Commit Message Standards
 
-Use conventional commits: `feat:` `fix:` `refactor:` `docs:` `chore:` `test:`. Include issue references when the repo workflow requires them.
+Conventional commits: `feat:` `fix:` `refactor:` `docs:` `chore:` `test:`. Include issue references when the repo workflow requires them.
 
 ## Related Workflows
 
