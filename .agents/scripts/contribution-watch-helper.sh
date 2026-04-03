@@ -831,10 +831,12 @@ _scan_print_results() {
 	if [[ "$needs_attention" -gt 0 ]]; then
 		echo -e "${YELLOW}${needs_attention} external contribution(s) need your reply:${NC}"
 		echo -e "$attention_items"
-		# macOS notification (for launchd runs)
-		if [[ ! -t 0 ]] && command -v osascript &>/dev/null; then
-			osascript -e "display notification \"${needs_attention} contribution(s) need reply\" with title \"aidevops\"" 2>/dev/null || true
-		fi
+		# macOS notification disabled — Notification Center alert sounds
+		# cannot be suppressed per-notification; they cause system beeps.
+		# Re-enable: uncomment the osascript line below.
+		# if [[ ! -t 0 ]] && command -v osascript &>/dev/null; then
+		# 	osascript -e "display notification \"${needs_attention} contribution(s) need reply\" with title \"aidevops\"" 2>/dev/null || true
+		# fi
 	else
 		echo -e "${GREEN}All caught up — no external contributions need attention${NC}"
 	fi

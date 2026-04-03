@@ -1299,10 +1299,11 @@ _draft_finalize() {
 
 	_log_info "Draft created: ${draft_id} for ${item_key} (scan: ${scan_result})"
 
-	# macOS notification
-	if command -v osascript &>/dev/null; then
-		osascript -e "display notification \"Draft reply ready for ${item_key}\" with title \"aidevops draft-response\"" 2>/dev/null || true
-	fi
+	# macOS notification disabled — Notification Center alert sounds
+	# cannot be suppressed per-notification; they cause system beeps.
+	# if command -v osascript &>/dev/null; then
+	# 	osascript -e "display notification \"Draft reply ready for ${item_key}\" with title \"aidevops draft-response\"" 2>/dev/null || true
+	# fi
 
 	return 0
 }

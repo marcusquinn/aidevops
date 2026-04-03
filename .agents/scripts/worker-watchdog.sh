@@ -179,9 +179,11 @@ log_msg() {
 notify() {
 	local title="$1"
 	local message="$2"
-	if [[ "$WORKER_WATCHDOG_NOTIFY" == "true" ]] && command -v osascript &>/dev/null; then
-		osascript -e "display notification \"${message}\" with title \"${title}\"" 2>/dev/null || true
-	fi
+	# macOS notification disabled — Notification Center alert sounds
+	# cannot be suppressed per-notification; they cause system beeps.
+	# if [[ "$WORKER_WATCHDOG_NOTIFY" == "true" ]] && command -v osascript &>/dev/null; then
+	# 	osascript -e "display notification \"${message}\" with title \"${title}\"" 2>/dev/null || true
+	# fi
 	return 0
 }
 
