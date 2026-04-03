@@ -51,24 +51,12 @@ tools:
 - `## MCP Integration` / `## AI Assistant Integration` when relevant
 - `## Best Practices`
 
-## Documentation Standards
+## Standards & Maintenance
 
 - Cover core features, working examples, security concerns, troubleshooting, and AI integration patterns
 - Clear technical language, consistent formatting, syntax-highlighted code, cross-references
 - Keep commands accurate, examples sanitized, API details current; version notes when they matter
-
-## Maintenance
-
-- Update on API changes, new features, security advisories
-- Verify commands and examples work; keep structure consistent across guides
-
-## Cross-Service Workflows
-
-**Domain → DNS → Hosting:** Domain purchasing (Spaceship/101domains) → DNS (Cloudflare/Route53) → Hosting (Hetzner/Hostinger)
-
-**Development → Quality → Deployment:** Git platforms (GitHub/GitLab) → Code auditing (CodeRabbit/SonarCloud) → Deployment (Coolify/hosting)
-
-**Security → Credentials → Monitoring:** Vaultwarden (credentials) → Email monitoring (SES) → Security auditing
+- Update on API changes, new features, security advisories; keep structure consistent across guides
 
 ## Navigation
 
