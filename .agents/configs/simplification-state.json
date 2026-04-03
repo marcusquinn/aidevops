@@ -1,4 +1,12 @@
 {
+  ".agents/seo/geo-strategy.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "f2c7b8507a0eb39c56689d7ce778518d7e15b27b7da668ef2b2caebdbe5b50df",
+    "issue": "GH#15895",
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
+  },
   ".agents/aidevops/api-integrations.md": {
     "at": "2026-04-03T00:00:00Z",
     "hash": "1d9ae72e2a62060ee1524f7440825f1a5539f3ce2e64b691d67d66ea36cf0edb",

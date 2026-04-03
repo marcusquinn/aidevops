@@ -59,43 +59,38 @@ Design and evaluate AI search visibility with a retrieval-first approach.
 - Monitor citations directionally, not as the only success metric
 - Re-run criteria extraction monthly or after major model shifts
 
-## Implementation Rules
-
-- First 200-300 words must be highly informative and criteria-dense
-- Use explicit headings for key buyer concerns
-- Align terminology with user query vocabulary and synonyms
-- Single canonical value for every critical fact across the site
-- Prefer additive edits to existing pages before creating net-new pages
-- Ensure key pages remain accessible to major AI/search crawlers
-
-### Domain-scoped retrieval
-
-AI models use `site:yourdomain.com` queries to extract detail from domains already identified as relevant — bypassing traditional SERP ranking:
-
-- Key pages must return relevant results for `site:yourdomain.com [category] features [year]` patterns
-- Each major product, feature, or service needs a dedicated page with a descriptive title containing category terms, not just brand names
-- Page titles, H1s, and section headings should include terms a model would use in a `site:` query: product category, feature type, year, pricing where applicable
-- Avoid consolidating all product info into a single page; domain-scoped search works best with one topic per URL
-- Keep pricing, feature lists, and comparison data in crawlable HTML, not behind JavaScript rendering or gated forms
-
-### Review platform parity
-
-AI models query `site:g2.com`, `site:capterra.com`, and `site:trustradius.com` as a validation stage after extracting brand-site claims:
-
-- Maintain complete, current profiles with the same canonical facts (pricing, features, integrations) as the primary site
-- Consistent product naming and categorization across platforms
-- Respond to reviews — AI models may extract vendor responses as support quality evidence
-- Keep category listings accurate; wrong category = invisible to model queries
-- Track outbound citations from profile links with UTM conventions for attribution
-- Monitor profiles quarterly
-- Consider TrustRadius, PeerSpot, and vertical-specific sites where G2/Capterra coverage is thin
-
 ## Anti-Patterns
 
 - Prompt-rank dashboards without content remediation
 - Large batches of AI-generated pages with weak evidence
 - Generic "best" claims without supporting proof
 - Treating one model's output snapshot as durable ground truth
+
+## Implementation Rules
+
+- First 200-300 words must be criteria-dense and informative
+- Use explicit headings for key buyer concerns; align terminology with user query vocabulary
+- Single canonical value for every critical fact across the site
+- Prefer additive edits to existing pages before creating net-new pages
+- Keep key pages accessible to major AI/search crawlers
+
+### Domain-scoped retrieval
+
+AI models use `site:yourdomain.com` queries to extract detail from domains already identified as relevant:
+
+- Pages must return results for `site:yourdomain.com [category] features [year]` patterns
+- One topic per URL; avoid consolidating all product info into a single page
+- Titles, H1s, and headings must include category terms, feature type, year, and pricing where applicable
+- Keep pricing, feature lists, and comparison data in crawlable HTML — not behind JS rendering or gated forms
+
+### Review platform parity
+
+AI models query G2, Capterra, and TrustRadius as a validation stage after extracting brand-site claims:
+
+- Maintain complete profiles with the same canonical facts (pricing, features, integrations) as the primary site
+- Consistent product naming and categorization across platforms; wrong category = invisible to model queries
+- Respond to reviews — AI models may extract vendor responses as support quality evidence
+- Monitor profiles quarterly; add TrustRadius, PeerSpot, or vertical-specific sites where G2/Capterra coverage is thin
 
 ## Related Subagents
 
