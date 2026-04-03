@@ -35,7 +35,7 @@
 
 ### Clarity problem (file needs improvement)
 
-Plausible but incorrect interpretation — right topic, wrong conclusion; multiple valid readings exist.
+Right topic, wrong conclusion — multiple valid readings exist.
 
 **Expected haiku failures:**
 - `code-simplifier.md`: nuanced "almost never simplify" categories → haiku over-simplifies classification
@@ -43,8 +43,6 @@ Plausible but incorrect interpretation — right topic, wrong conclusion; multip
 - `worker-efficiency-protocol.md`: 6-row model escalation decision matrix → haiku misses edge cases
 
 ### Exceeds model capability (file is fine, model too weak)
-
-Insufficient reasoning capacity; instructions are clear.
 
 **Fast-fail indicators:** refusal, confabulation (hallucinated paths/tools), structural_violation (ignores explicit constraint), disengagement (minimal response).
 
