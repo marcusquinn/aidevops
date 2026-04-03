@@ -64,28 +64,19 @@ return Response.json({user, serverRegion: req.cf?.colo});
 ```
 
 ## Connection Pooling
-Transaction mode: connection acquired per transaction, `RESET` on return.
+Transaction mode: connection acquired per transaction, `RESET` on return. SET statements must stay within a single transaction or compound statement; keep transactions short.
 
-**SET statements** — must stay within a single transaction or statement:
 ```typescript
-// ✅ Within transaction
+// ✅ SET within transaction (RESET after COMMIT)
 await client.query("BEGIN");
 await client.query("SET work_mem = '256MB'");
 await client.query("SELECT * FROM large_table");
-await client.query("COMMIT");  // RESET after
-// ✅ Single compound statement
+await client.query("COMMIT");
+// ✅ Compound statement
 await client.query("SET work_mem = '256MB'; SELECT * FROM large_table");
 // ❌ Across queries — may get different connection
 await client.query("SET work_mem = '256MB'");
 await client.query("SELECT * FROM large_table");  // SET not applied
-```
-
-**Transaction discipline** — keep transactions short; long ones block pooling:
-```typescript
-// ❌ Long transaction holds connection
-await client.query("BEGIN");
-await processThousands();
-await client.query("COMMIT");
 // ✅ Short transaction
 await client.query("BEGIN");
 await client.query("UPDATE users SET status = $1 WHERE id = $2", [status, id]);
@@ -94,6 +85,10 @@ await client.query("COMMIT");
 await client.query("BEGIN");
 await client.query("SET LOCAL work_mem = '256MB'");
 await client.query("SELECT * FROM large_table");
+await client.query("COMMIT");
+// ❌ Long transaction holds connection
+await client.query("BEGIN");
+await processThousands();
 await client.query("COMMIT");
 ```
 
