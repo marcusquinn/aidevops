@@ -28,16 +28,12 @@ export HEYGEN_API_KEY="your-api-key-here"   # shell
 
 ## Request Pattern
 
-Send `X-Api-Key` on every request:
-
-### curl
+Send `X-Api-Key` on every request (curl / TypeScript / Python):
 
 ```bash
 curl -X GET "https://api.heygen.com/v2/avatars" \
   -H "X-Api-Key: $HEYGEN_API_KEY"
 ```
-
-### TypeScript (fetch)
 
 ```typescript
 const response = await fetch("https://api.heygen.com/v2/avatars", {
@@ -45,8 +41,6 @@ const response = await fetch("https://api.heygen.com/v2/avatars", {
 });
 const { data } = await response.json();
 ```
-
-### Python
 
 ```python
 import os, requests
@@ -82,7 +76,6 @@ class HeyGenClient {
   }
 }
 
-// Usage
 const client = new HeyGenClient(process.env.HEYGEN_API_KEY!);
 const avatars = await client.get("/v2/avatars");
 ```
@@ -106,7 +99,7 @@ interface ApiResponse<T> {
 | 403 | Forbidden | Insufficient permissions |
 | 429 | Rate limit exceeded | Too many requests — use exponential backoff |
 
-Rate limits apply per API key; video generation endpoints are stricter. Retry 429 with exponential backoff:
+Video generation endpoints have stricter rate limits. Retry 429 with exponential backoff:
 
 ```typescript
 async function requestWithRetry(fn: () => Promise<Response>, maxRetries = 3): Promise<Response> {
