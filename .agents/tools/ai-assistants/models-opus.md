@@ -24,21 +24,18 @@ tools:
 
 Highest-capability tier for tasks where stronger reasoning materially changes the outcome.
 
-## Use For
+## When to Use
+
+Use opus only when the task genuinely needs extra reasoning depth:
 
 - Architecture and system design decisions
-- Novel problems with no established pattern to follow
-- Security audits that require deep reasoning
+- Novel problems with no established pattern
+- Security audits requiring deep reasoning
 - Multi-step plans with hard dependencies
 - Trade-off analysis across many variables
 - Evaluating other models' outputs
 
-## Routing Rules
-
-- Use opus only when the task genuinely needs the extra reasoning depth.
-- Default most implementation work to sonnet.
-- Use pro when the main constraint is large context, not judgment.
-- Justify the spend: opus costs about 1.7x sonnet ($5/$25 vs $3/$15 per 1M input/output tokens).
+Do not use for routine implementation — route to sonnet. For large-context tasks (100K+ tokens), route to pro.
 
 ## Model Details
 
