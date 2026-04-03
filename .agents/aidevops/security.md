@@ -37,9 +37,10 @@ printf "configs/.*.json\n*.password\n.env\n*.key\n*.pem\n" >> .gitignore
 ## SSH Hardening
 
 ```bash
-# Generate Ed25519 key with passphrase
+# Generate Ed25519 key
 ssh-keygen -t ed25519 -C "your-email@domain.com"
 chmod 600 ~/.ssh/id_ed25519 && chmod 644 ~/.ssh/id_ed25519.pub
+# Change passphrase on existing key
 ssh-keygen -p -f ~/.ssh/id_ed25519
 ```
 
@@ -54,7 +55,7 @@ Host *
     ConnectTimeout 10
 ```
 
-Server: disable root login, non-standard SSH port, fail2ban.
+- Server: disable root login, non-standard SSH port, fail2ban
 
 ## Script Security
 
