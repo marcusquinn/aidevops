@@ -2,6 +2,30 @@
 
 Schedule Workers on Cloudflare's global network. 5-field cron syntax with Quartz extensions (L, W, #). At-least-once delivery — make handlers idempotent.
 
+## Quick Start
+
+**wrangler.jsonc:**
+
+```jsonc
+{
+  "name": "my-cron-worker",
+  "triggers": { "crons": ["*/5 * * * *", "0 2 * * *"] }
+}
+```
+
+**Handler:**
+
+```typescript
+export default {
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    console.log("Cron:", controller.cron, "Time:", new Date(controller.scheduledTime));
+    ctx.waitUntil(asyncTask(env)); // Non-blocking
+  },
+};
+```
+
+**Test locally:** `npx wrangler dev` then `curl "http://localhost:8787/__scheduled?cron=*/5+*+*+*+*"`
+
 ## Cron Syntax
 
 ```text
@@ -14,8 +38,6 @@ Schedule Workers on Cloudflare's global network. 5-field cron syntax with Quartz
  * (any)  , (list)  - (range)  / (step)  L (last)  W (weekday)  # (nth)
 ```
 
-## Common Schedules
-
 ```bash
 */5 * * * *            # Every 5 minutes
 0 * * * *              # Hourly
@@ -27,37 +49,6 @@ Schedule Workers on Cloudflare's global network. 5-field cron syntax with Quartz
 */10 9-17 * * MON-FRI  # Every 10min, 9am-5pm weekdays
 ```
 
-## Quick Start
-
-**wrangler.jsonc:**
-
-```jsonc
-{
-  "name": "my-cron-worker",
-  "triggers": {
-    "crons": ["*/5 * * * *", "0 2 * * *"]
-  }
-}
-```
-
-**Handler:**
-
-```typescript
-export default {
-  async scheduled(
-    controller: ScheduledController,
-    env: Env,
-    ctx: ExecutionContext,
-  ): Promise<void> {
-    console.log("Cron:", controller.cron);
-    console.log("Time:", new Date(controller.scheduledTime));
-    ctx.waitUntil(asyncTask(env)); // Non-blocking
-  },
-};
-```
-
-**Test locally:** `npx wrangler dev` then `curl "http://localhost:8787/__scheduled?cron=*/5+*+*+*+*"`
-
 ## Limits
 
 | Plan | Triggers/worker | CPU |
@@ -66,9 +57,9 @@ export default {
 | Paid | Unlimited | 50ms |
 
 - **Propagation:** 15min global deployment
-- **Timezone:** UTC only
+- **Timezone:** UTC only — see [gotchas.md](./cron-triggers-gotchas.md) for offset calculation
 
 ## See Also
 
-- [patterns.md](./cron-triggers-patterns.md) - Use cases, batch processing, monitoring
-- [gotchas.md](./cron-triggers-gotchas.md) - Timezone issues, debugging, limits
+- [patterns.md](./cron-triggers-patterns.md) — API sync, DB cleanup, batch processing, health checks
+- [gotchas.md](./cron-triggers-gotchas.md) — timezone offsets, duplicate execution, debugging, security
