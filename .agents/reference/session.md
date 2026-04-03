@@ -4,10 +4,7 @@ Loaded on-demand for session management, browser automation, localhost, or quali
 
 ## Terminal Capabilities
 
-Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers).
-
-- Long-running processes: use `&`, `nohup`, or `tmux`.
-- Parallel AI dispatch: `tools/ai-assistants/opencode-server.md`.
+Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers). Long-running processes: use `&`, `nohup`, or `tmux`. Parallel AI dispatch: `tools/ai-assistants/opencode-server.md`.
 
 ## Session Lifecycle
 
@@ -46,17 +43,12 @@ worktree-helper.sh add feature/x  # Fallback
 ## Browser Automation
 
 - Use a browser proactively for dev-server verification, form testing, deployment checks, and frontend debugging.
-- Tool selection: `tools/browser/browser-automation.md`.
-- Quick default: Playwright for dev testing, dev-browser for persistent login.
-- Never use curl or raw HTTP to verify frontend fixes. A server can return 200 while React fails during hydration; browser screenshots are the required proof.
+- Tool selection: `tools/browser/browser-automation.md`. Quick default: Playwright for dev testing, dev-browser for persistent login.
+- Never use curl or raw HTTP to verify frontend fixes — a server can return 200 while React fails during hydration; browser screenshots are the required proof.
 
 ## Localhost Standards
 
 Use `.local` domains with SSL via Traefik + mkcert. Primary doc: `services/hosting/local-hosting.md`. Legacy doc: `services/hosting/localhost.md`.
-
-## Bot Reviewer Feedback
-
-Follow `prompts/build.txt` for AI suggestion verification. Dismiss incorrect suggestions with evidence; address valid ones.
 
 ## Quality Workflow
 
@@ -64,7 +56,7 @@ Follow `prompts/build.txt` for AI suggestion verification. Dismiss incorrect sug
 Development → @code-standards → /code-simplifier → /linters-local → /pr review → /postflight
 ```
 
-Quick commands: `linters-local.sh` (pre-commit), `/pr review` (full), `version-manager.sh release [type]`.
+Quick commands: `linters-local.sh` (pre-commit), `/pr review` (full), `version-manager.sh release [type]`. Bot reviewer feedback: follow `prompts/build.txt` — dismiss incorrect suggestions with evidence; address valid ones.
 
 ## Agents & Subagents
 
