@@ -22,9 +22,9 @@ PUT /zones/{zone_id}/api_gateway/settings/schema_validation
 
 ## Progressive Rollout
 
-1. **Log mode** — Schema + JWT action = Log; observe false positives
-2. **Block subset** — Change critical endpoint actions to Block; monitor firewall events
-3. **Full enforcement** — Default action = Block; handle fallthrough with custom rule
+1. **Log mode** — action = Log; observe false positives
+2. **Block subset** — critical endpoints → Block; monitor firewall events
+3. **Full enforcement** — default action = Block; handle fallthrough with custom rule
 
 ## Fallthrough Detection (Zombie APIs)
 
@@ -70,9 +70,9 @@ PUT /zones/{zone_id}/api_gateway/settings/schema_validation
 
 ## Monitoring
 
-- **Security Events**: Security > Events — filter Action=block, Service=API Shield
-- **Firewall Analytics**: Analytics > Security — filter by `cf.api_gateway.*` fields
-- **Logpush fields**: `APIGatewayAuthIDPresent`, `APIGatewayRequestViolatesSchema`, `APIGatewayFallthroughDetected`, `JWTValidationResult`, `ClientCertFingerprint`
+- **Security Events**: Security > Events — Action=block, Service=API Shield
+- **Firewall Analytics**: Analytics > Security — `cf.api_gateway.*` fields
+- **Logpush**: `APIGatewayAuthIDPresent`, `APIGatewayRequestViolatesSchema`, `APIGatewayFallthroughDetected`, `JWTValidationResult`, `ClientCertFingerprint`
 
 ## Availability
 
