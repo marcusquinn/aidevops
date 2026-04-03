@@ -2,6 +2,15 @@
 
 For basics and handler signatures, see [workers.md](./workers.md).
 
+## Security
+
+```typescript
+const security = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'self'" };
+
+const auth = request.headers.get('Authorization');
+if (!auth?.startsWith('Bearer ')) return new Response('Unauthorized', { status: 401 });
+```
+
 ## Error Handling
 
 ```typescript
@@ -25,6 +34,17 @@ export default {
 };
 ```
 
+## Routing
+
+```typescript
+const router = { 'GET /api/users': handleGetUsers, 'POST /api/users': handleCreateUser };
+
+const handler = router[`${request.method} ${url.pathname}`];
+return handler ? handler(request, env) : new Response('Not Found', { status: 404 });
+```
+
+**Production**: Use Hono, itty-router, or Worktop.
+
 ## CORS
 
 ```typescript
@@ -37,17 +57,6 @@ const corsHeaders = {
 if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 // Spread corsHeaders into final Response headers
 ```
-
-## Routing
-
-```typescript
-const router = { 'GET /api/users': handleGetUsers, 'POST /api/users': handleCreateUser };
-
-const handler = router[`${request.method} ${url.pathname}`];
-return handler ? handler(request, env) : new Response('Not Found', { status: 404 });
-```
-
-**Production**: Use Hono, itty-router, or Worktop.
 
 ## Performance
 
@@ -79,6 +88,26 @@ response.body.pipeThrough(new TextDecoderStream()).pipeThrough(
 ).pipeThrough(new TextEncoderStream());
 ```
 
+## Gradual Rollouts
+
+```typescript
+// Hash-based feature flag — deterministic per user
+const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId));
+const bucket = new Uint8Array(hash)[0] % 100;
+if (bucket < rolloutPercent) return newFeature(request);
+```
+
+## Monitoring
+
+```typescript
+// Track latency and status via Analytics Engine
+const start = Date.now();
+const response = await handleRequest(request, env);
+ctx.waitUntil(env.ANALYTICS.writeDataPoint({
+  doubles: [Date.now() - start], blobs: [request.url, String(response.status)]
+}));
+```
+
 ## Testing
 
 ```typescript
@@ -103,35 +132,6 @@ npx wrangler rollback                                  # revert last deploy
 ```
 
 For `wrangler deploy` and environment-specific deploys, see [workers.md](./workers.md).
-
-## Monitoring
-
-```typescript
-// Track latency and status via Analytics Engine
-const start = Date.now();
-const response = await handleRequest(request, env);
-ctx.waitUntil(env.ANALYTICS.writeDataPoint({
-  doubles: [Date.now() - start], blobs: [request.url, String(response.status)]
-}));
-```
-
-## Security
-
-```typescript
-const security = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'self'" };
-
-const auth = request.headers.get('Authorization');
-if (!auth?.startsWith('Bearer ')) return new Response('Unauthorized', { status: 401 });
-```
-
-## Gradual Rollouts
-
-```typescript
-// Hash-based feature flag — deterministic per user
-const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId));
-const bucket = new Uint8Array(hash)[0] % 100;
-if (bucket < rolloutPercent) return newFeature(request);
-```
 
 ## See Also
 
