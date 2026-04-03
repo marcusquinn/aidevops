@@ -10,18 +10,18 @@ metadata:
 
 Display `Caption[]` data with TikTok-style pages and per-word highlighting.
 
-## Install `@remotion/captions`
+## Install
 
 ```bash
-npx remotion add @remotion/captions # If project uses npm
-bunx remotion add @remotion/captions # If project uses bun
-yarn remotion add @remotion/captions # If project uses yarn
-pnpm exec remotion add @remotion/captions # If project uses pnpm
+npx remotion add @remotion/captions  # npm
+bunx remotion add @remotion/captions  # bun
+yarn remotion add @remotion/captions  # yarn
+pnpm exec remotion add @remotion/captions  # pnpm
 ```
 
 ## 1. Group captions into pages
 
-Use `createTikTokStyleCaptions()` to batch words into timed pages. `combineTokensWithinMilliseconds` (ms) controls page duration — higher = more words per page.
+`createTikTokStyleCaptions()` batches words into timed pages. `combineTokensWithinMilliseconds` controls page duration — higher = more words per page.
 
 ```tsx
 import {useMemo} from 'react';
@@ -42,7 +42,7 @@ const CaptionedContent: React.FC<{captions: Caption[]}> = ({captions}) => {
 
 ## 2. Render each page in a `<Sequence>`
 
-Map over `pages`, derive frame timing from `startMs`, and render each page in a bounded `<Sequence>`.
+Map over `pages`, derive frame timing from `startMs`, render each in a bounded `<Sequence>`.
 
 ```tsx
 import {Sequence, useVideoConfig, AbsoluteFill} from 'remotion';
@@ -94,9 +94,7 @@ const HIGHLIGHT_COLOR = '#39E508';
 const CaptionPage: React.FC<{page: TikTokPage}> = ({page}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
-
-  const currentTimeMs = (frame / fps) * 1000;
-  const absoluteTimeMs = page.startMs + currentTimeMs;
+  const absoluteTimeMs = page.startMs + (frame / fps) * 1000;
 
   return (
     <AbsoluteFill style={{justifyContent: 'center', alignItems: 'center'}}>
