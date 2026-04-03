@@ -15,25 +15,23 @@ tools:
 <!-- AI-CONTEXT-START -->
 
 - **Install**: `npx -y xcodebuildmcp@beta mcp` (MCP server mode)
-- **CLI**: `npm install -g xcodebuildmcp@beta` then `xcodebuildmcp --help`
 - **Requirements**: macOS 14.5+, Xcode 16+, Node.js 18+
-- **GitHub**: https://github.com/cameroncooke/XcodeBuildMCP (4.1k stars, MIT)
-- **Docs**: https://www.xcodebuildmcp.com
+- **GitHub**: https://github.com/cameroncooke/XcodeBuildMCP (MIT) · **Docs**: https://www.xcodebuildmcp.com
 
 <!-- AI-CONTEXT-END -->
 
 ## Typical Workflow
 
-1. `discover_projs` -- scan for .xcodeproj/.xcworkspace
-2. `build_sim --scheme MyApp` -- build for simulator
-3. `test_sim --scheme MyApp` -- run XCTest suite
-4. `build_run_sim --scheme MyApp` -- deploy and launch with logs
-5. `screenshot` / `snapshot_ui` -- verify UI state (returns view hierarchy with coordinates)
-6. `maestro test flows/login.yaml` -- E2E tests on running simulator
+1. `discover_projs` — scan for .xcodeproj/.xcworkspace
+2. `build_sim --scheme MyApp` — build for simulator
+3. `test_sim --scheme MyApp` — run XCTest suite
+4. `build_run_sim --scheme MyApp` — deploy and launch with logs
+5. `screenshot` / `snapshot_ui` — verify UI state (returns view hierarchy with coordinates)
+6. `maestro test flows/login.yaml` — E2E tests on running simulator
 
-## Tool Groups (76 tools, 15 workflow groups)
+## Tool Groups (76 tools, 15 groups)
 
-Only simulator tools enabled by default. Use `manage-workflows` to enable other groups.
+Simulator tools enabled by default. Use `manage-workflows` to enable others.
 
 | Group | Key Tools |
 |-------|-----------|
@@ -62,9 +60,9 @@ Only simulator tools enabled by default. Use `manage-workflows` to enable other 
 
 ## Related
 
-- `tools/mobile/minisim.md` -- Simulator/emulator GUI launcher (MiniSim)
-- `tools/browser/playwright.md` -- Cross-platform testing (web)
-- `services/hosting/localhost.md` -- Local dev environment
-- **Maestro** -- E2E UI test flows; run after `build_run_sim`
-- **iOS Simulator MCP** -- Complementary simulator control
-- **AXe** -- Accessibility testing; use with `snapshot_ui` output
+- `tools/mobile/minisim.md` — Simulator/emulator GUI launcher (MiniSim)
+- `tools/browser/playwright.md` — Cross-platform testing (web)
+- `services/hosting/localhost.md` — Local dev environment
+- **Maestro** — E2E UI test flows; run after `build_run_sim`
+- **iOS Simulator MCP** — Complementary simulator control
+- **AXe** — Accessibility testing; use with `snapshot_ui` output
