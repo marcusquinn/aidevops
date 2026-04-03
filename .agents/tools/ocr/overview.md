@@ -12,11 +12,7 @@ tools:
   task: true
 ---
 
-# OCR Tools Overview
-
 <!-- AI-CONTEXT-START -->
-
-## Quick Reference
 
 | Input | Tool | Strengths | Limits |
 |-------|------|-----------|--------|
@@ -28,7 +24,7 @@ tools:
 | Simple text PDF | **Pandoc** | Fastest text-only conversion | No layout awareness; no OCR → MinerU for complex layouts |
 | Document understanding (VLM) | **PaddleOCR-VL** | Local document/structured understanding | Not plain OCR → PaddleOCR for text extraction |
 
-**Subagents:**
+## Subagents
 
 | File | Purpose |
 |------|---------|
@@ -38,8 +34,6 @@ tools:
 | `tools/conversion/mineru.md` | MinerU — PDF to markdown/JSON |
 | `tools/document/document-extraction.md` | Docling + ExtractThinker — structured extraction |
 | `tools/pdf/overview.md` | LibPDF — PDF manipulation and text extraction |
-
-<!-- AI-CONTEXT-END -->
 
 ## Common Workflows
 
@@ -63,3 +57,5 @@ for img in ./images/*.png; do paddleocr-helper.sh ocr "$img"; done
 #            PDF → Docling → ExtractThinker → structured JSON → QuickFile
 # PaddleOCR and Docling MCP servers plug into Claude Desktop / the agent framework.
 ```
+
+<!-- AI-CONTEXT-END -->
