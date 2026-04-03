@@ -186,45 +186,45 @@ resize_ai_safe() {
 	fi
 }
 
-# Main screenshot command
-cmd_screenshot() {
-	local html_path=""
-	local output_dir=""
-	local format="$DEFAULT_FORMAT"
-	local capture_dark=false
-	local viewport_width="$DEFAULT_VIEWPORT_WIDTH"
-	local full_page=true
-	local ai_safe=true
+# Parse arguments for cmd_screenshot into _ss_* variables (caller scope)
+# Args: all original $@ from cmd_screenshot
+_screenshot_parse_args() {
+	_ss_html_path=""
+	_ss_output_dir=""
+	_ss_format="$DEFAULT_FORMAT"
+	_ss_capture_dark=false
+	_ss_viewport_width="$DEFAULT_VIEWPORT_WIDTH"
+	_ss_full_page=true
+	_ss_ai_safe=true
 
-	# Parse args
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--output-dir)
-			output_dir="$2"
+			_ss_output_dir="$2"
 			shift 2
 			;;
 		--format)
-			format="$2"
+			_ss_format="$2"
 			shift 2
 			;;
 		--dark)
-			capture_dark=true
+			_ss_capture_dark=true
 			shift
 			;;
 		--width)
-			viewport_width="$2"
+			_ss_viewport_width="$2"
 			shift 2
 			;;
 		--full-page)
-			full_page=true
+			_ss_full_page=true
 			shift
 			;;
 		--no-ai-safe)
-			ai_safe=false
+			_ss_ai_safe=false
 			shift
 			;;
 		--ai-safe)
-			ai_safe=true
+			_ss_ai_safe=true
 			shift
 			;;
 		-h | --help)
@@ -237,91 +237,128 @@ cmd_screenshot() {
 			return 1
 			;;
 		*)
-			if [[ -z "$html_path" ]]; then
-				html_path="$1"
+			if [[ -z "$_ss_html_path" ]]; then
+				_ss_html_path="$1"
 			fi
 			shift
 			;;
 		esac
 	done
+	return 0
+}
 
-	if [[ -z "$html_path" ]]; then
+# Validate screenshot inputs; resolve and create output directory
+# Reads _ss_html_path and _ss_output_dir; updates _ss_output_dir if empty
+_screenshot_validate() {
+	if [[ -z "$_ss_html_path" ]]; then
 		print_error "Missing required argument: <preview.html>"
 		usage
 		return 1
 	fi
 
-	if [[ ! -f "$html_path" ]]; then
-		print_error "File not found: $html_path"
+	if [[ ! -f "$_ss_html_path" ]]; then
+		print_error "File not found: $_ss_html_path"
 		return 1
 	fi
 
-	# Default output dir to same as input
-	if [[ -z "$output_dir" ]]; then
-		output_dir="$(dirname "$html_path")"
+	if [[ -z "$_ss_output_dir" ]]; then
+		_ss_output_dir="$(dirname "$_ss_html_path")"
 	fi
-	mkdir -p "$output_dir"
+	mkdir -p "$_ss_output_dir"
 
-	# Check dependencies
 	require_cmd node || return 1
 	require_cmd npx || return 1
 	ensure_playwright || return 1
 
-	local basename
-	basename="$(basename "$html_path" .html)"
+	return 0
+}
 
-	# Capture light mode
-	local light_png="$output_dir/${basename}-light.png"
+# Capture light and optionally dark mode screenshots
+# Reads _ss_* variables; sets _ss_light_png and _ss_dark_png
+_screenshot_capture_modes() {
+	local basename="$1"
+
+	_ss_light_png="$_ss_output_dir/${basename}-light.png"
+	_ss_dark_png=""
+
 	print_info "Capturing light mode screenshot..."
-	if capture_screenshot "$html_path" "$light_png" "$viewport_width" "light" "$full_page"; then
-		print_success "Light mode: $light_png"
+	if capture_screenshot "$_ss_html_path" "$_ss_light_png" "$_ss_viewport_width" "light" "$_ss_full_page"; then
+		print_success "Light mode: $_ss_light_png"
 	else
 		return 1
 	fi
 
-	# Capture dark mode
-	local dark_png=""
-	if [[ "$capture_dark" == "true" ]]; then
-		dark_png="$output_dir/${basename}-dark.png"
+	if [[ "$_ss_capture_dark" == "true" ]]; then
+		_ss_dark_png="$_ss_output_dir/${basename}-dark.png"
 		print_info "Capturing dark mode screenshot..."
-		if capture_screenshot "$html_path" "$dark_png" "$viewport_width" "dark" "$full_page"; then
-			print_success "Dark mode: $dark_png"
+		if capture_screenshot "$_ss_html_path" "$_ss_dark_png" "$_ss_viewport_width" "dark" "$_ss_full_page"; then
+			print_success "Dark mode: $_ss_dark_png"
 		fi
 	fi
 
-	# AI-safe resize
-	if [[ "$ai_safe" == "true" ]]; then
-		local ai_light="$output_dir/${basename}-light-ai.png"
-		resize_ai_safe "$light_png" "$ai_light" "$MAX_AI_REVIEW_PX"
-		print_info "AI-safe copy: $ai_light (max ${MAX_AI_REVIEW_PX}px)"
+	return 0
+}
 
-		if [[ -n "$dark_png" && -f "$dark_png" ]]; then
-			local ai_dark="$output_dir/${basename}-dark-ai.png"
-			resize_ai_safe "$dark_png" "$ai_dark" "$MAX_AI_REVIEW_PX"
-			print_info "AI-safe copy: $ai_dark (max ${MAX_AI_REVIEW_PX}px)"
-		fi
+# Produce AI-safe resized copies of captured screenshots
+# Reads _ss_light_png, _ss_dark_png, _ss_output_dir; uses MAX_AI_REVIEW_PX
+_screenshot_resize_ai_safe_outputs() {
+	local basename="$1"
+
+	local ai_light="$_ss_output_dir/${basename}-light-ai.png"
+	resize_ai_safe "$_ss_light_png" "$ai_light" "$MAX_AI_REVIEW_PX"
+	print_info "AI-safe copy: $ai_light (max ${MAX_AI_REVIEW_PX}px)"
+
+	if [[ -n "$_ss_dark_png" && -f "$_ss_dark_png" ]]; then
+		local ai_dark="$_ss_output_dir/${basename}-dark-ai.png"
+		resize_ai_safe "$_ss_dark_png" "$ai_dark" "$MAX_AI_REVIEW_PX"
+		print_info "AI-safe copy: $ai_dark (max ${MAX_AI_REVIEW_PX}px)"
 	fi
 
-	# Format conversions
-	local all_pngs=("$light_png")
-	[[ -n "$dark_png" && -f "$dark_png" ]] && all_pngs+=("$dark_png")
+	return 0
+}
 
+# Convert captured PNGs to requested additional formats
+# Reads _ss_format, _ss_light_png, _ss_dark_png
+_screenshot_convert_formats() {
+	local all_pngs=("$_ss_light_png")
+	[[ -n "$_ss_dark_png" && -f "$_ss_dark_png" ]] && all_pngs+=("$_ss_dark_png")
+
+	local png base
 	for png in "${all_pngs[@]}"; do
-		local base="${png%.png}"
-		if [[ "$format" == "webp" || "$format" == "all" ]]; then
+		base="${png%.png}"
+		if [[ "$_ss_format" == "webp" || "$_ss_format" == "all" ]]; then
 			if convert_to_webp "$png" "${base}.webp"; then
 				print_success "WebP: ${base}.webp"
 			fi
 		fi
-		if [[ "$format" == "avif" || "$format" == "all" ]]; then
+		if [[ "$_ss_format" == "avif" || "$_ss_format" == "all" ]]; then
 			if convert_to_avif "$png" "${base}.avif"; then
 				print_success "AVIF: ${base}.avif"
 			fi
 		fi
 	done
 
+	return 0
+}
+
+# Main screenshot command — orchestrates focused helper functions
+cmd_screenshot() {
+	_screenshot_parse_args "$@" || return $?
+	_screenshot_validate || return $?
+
+	local basename
+	basename="$(basename "$_ss_html_path" .html)"
+
+	_screenshot_capture_modes "$basename" || return $?
+
+	if [[ "$_ss_ai_safe" == "true" ]]; then
+		_screenshot_resize_ai_safe_outputs "$basename"
+	fi
+
+	_screenshot_convert_formats
+
 	echo ""
-	print_success "Screenshots saved to: $output_dir"
+	print_success "Screenshots saved to: $_ss_output_dir"
 	return 0
 }
 
