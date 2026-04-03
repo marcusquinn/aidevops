@@ -5102,5 +5102,11 @@
     "pr": 16281,
     "status": "simplified",
     "issue": "GH#16179"
+  },
+  ".agents/tools/productivity/caldav-calendar-skill.md": {
+    "hash": "1c5dfa3f56efc691d015c99e736c248cad1fd65b547302ab20484ba9bc0524c9",
+    "lines": 56,
+    "last_simplified": "2026-04-03",
+    "issue": "GH#14389"
   }
 }

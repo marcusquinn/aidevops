@@ -2,9 +2,6 @@
 name: caldav-calendar
 description: "Sync and query CalDAV calendars (iCloud, Google, Fastmail, Nextcloud, etc.) using vdirsyncer + khal"
 mode: subagent
-imported_from: clawdhub
-clawdhub_slug: "caldav-calendar"
-clawdhub_version: "1.0.1"
 ---
 # CalDAV Calendar (vdirsyncer + khal)
 
@@ -42,14 +39,7 @@ khal new 2026-01-15 10:00 11:00 "With notes" :: Description goes here
 
 ## Edit Events
 
-Interactive (requires TTY):
-- `s` — edit summary
-- `d` — description
-- `t` — datetime
-- `l` — location
-- `D` — delete
-- `n` — skip
-- `q` — quit
+`khal edit` — interactive (requires TTY): `s` summary, `d` description, `t` datetime, `l` location, `D` delete, `n` skip, `q` quit
 
 ## Output Formats
 
