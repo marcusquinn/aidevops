@@ -20,7 +20,7 @@ tools:
 
 - **Purpose**: Separate working directories per branch — no branch-switching conflicts
 - **Core principle**: Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`. **Never `git checkout -b` in the main repo** — the next session inherits wrong state.
-- **Preferred tool**: [Worktrunk](https://worktrunk.dev) (`brew install max-sixty/worktrunk/wt`)
+- **Preferred tool**: [Worktrunk](https://worktrunk.dev) (`brew install max-sixty/worktrunk/wt`) — full docs: `tools/git/worktrunk.md`
 - **Fallback**: `~/.aidevops/agents/scripts/worktree-helper.sh`
 - **Paths**: `~/Git/myrepo/` (main) | `~/Git/myrepo-feature-auth/` (linked) | `~/Git/myrepo-bugfix-login/` (linked)
 
@@ -31,15 +31,12 @@ tools:
 **Worktrunk** (preferred — shell cd, hooks, CI status, merge workflow):
 
 ```bash
-wt switch -c feature/my-feature   # Create worktree + cd into it
-wt list                           # List worktrees with CI status
-wt merge                          # Squash/rebase/merge + cleanup
-wt remove                         # Remove current worktree
-# Hotfix without leaving feature work — existing worktrees unaffected
-wt switch -c hotfix/security-patch
-# Multiple AI sessions on separate worktrees
-opencode ~/Git/myrepo-feature-auth/    # Session 1
-opencode ~/Git/myrepo-bugfix-login/    # Session 2
+wt switch -c feature/my-feature        # Create worktree + cd into it
+wt list                                # List worktrees with CI status
+wt merge                               # Squash/rebase/merge + cleanup
+wt remove                              # Remove current worktree
+wt switch -c hotfix/security-patch     # Hotfix without leaving feature work
+opencode ~/Git/myrepo-feature-auth/    # Multiple AI sessions on separate worktrees
 ```
 
 **worktree-helper.sh** (fallback — no cd support):
@@ -52,8 +49,6 @@ worktree-helper.sh status                           # Status overview
 worktree-helper.sh remove feature/auth              # Removes directory, NOT the branch
 worktree-helper.sh clean                            # Batch cleanup merged branches (interactive, runs git fetch --prune)
 ```
-
-Full Worktrunk docs: `tools/git/worktrunk.md`.
 
 ## Integration
 
