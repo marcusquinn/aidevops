@@ -1,4 +1,17 @@
 {
+  ".agents/aidevops/service-links.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "1b4d0cbc25fd53ad0a3de4ad3f1b3b8f1b8ab31d",
+    "issue": "GH#14974",
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
+  },
+  ".agents/content/guidelines.md": {
+    "hash": "63c289794c1db27072ca2c26bce498196800ec91f2d440bb9f25816695f94aab",
+    "issue": "GH#15938",
+    "status": "simplified"
+  },
   ".agents/services/hosting/cloudflare-platform-skill/hyperdrive-gotchas.md": {
     "hash": "289d1ce963a8bfbb69d5199ff47d8368f19a653f67305bafd8940e7a0982c67b",
     "issue": "GH#15925",
@@ -25,6 +38,13 @@
     "lines_after": 132,
     "lines_before": 126,
     "pr": "pending",
+    "status": "simplified"
+  },
+  ".agents/workflows/pre-edit.md": {
+    "hash": "d87135a808a845416e0193a101bef0fd1c0b4a032969d819556ce109c40da4ba",
+    "issue": "GH#15439",
+    "lines_after": 72,
+    "lines_before": 78,
     "status": "simplified"
   },
   "files": {
@@ -202,6 +222,12 @@
       "passes": 2,
       "pr": 14934
     },
+    ".agents/content/distribution-blog.md": {
+      "at": "2026-04-03T04:23:06Z",
+      "hash": "12a91cbbc019545351d2ee5720a6e995448555bf",
+      "passes": 1,
+      "pr": 15909
+    },
     ".agents/content/distribution-email.md": {
       "at": "2026-03-28T16:00:42Z",
       "hash": "d218dc3fdd2a3e501978d431530820ce810b354e",
@@ -280,6 +306,12 @@
       "passes": 1,
       "pr": 13054
     },
+    ".agents/content/heygen-skill/rules-authentication.md": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "6812919264796812f8cb6b375d01f49664c1af40",
+      "passes": 1,
+      "pr": 15871
+    },
     ".agents/content/heygen-skill/rules-avatars.md": {
       "at": "2026-03-29T07:02:16Z",
       "hash": "e600865474071a7973fe0ed89b4fd361065e080a",
@@ -333,6 +365,12 @@
       "hash": "5d9c85b6e42715ec4914982ce21790312207dacf",
       "passes": 1,
       "pr": 12738
+    },
+    ".agents/content/heygen-skill/rules-text-overlays.md": {
+      "at": "2026-04-03T04:23:07Z",
+      "hash": "a513e4698b36be4382684340bb40203de9d5073d",
+      "passes": 1,
+      "pr": 15821
     },
     ".agents/content/heygen-skill/rules-video-agent.md": {
       "at": "2026-03-29T07:31:38Z",
@@ -806,7 +844,7 @@
       "at": "2026-04-02T21:19:54Z",
       "hash": "347272e46c7d04f05dd13a4683cf44bef0dd3da7",
       "issue": "GH#14286",
-      "note": "Reference corpus chapter tightened: 92 → 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
+      "note": "Reference corpus chapter tightened: 92 \u2192 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
       "passes": 2
     },
     ".agents/marketing-sales/cro-chapter-20.md": {
@@ -1153,6 +1191,12 @@
       "passes": 1,
       "pr": 11410
     },
+    ".agents/marketing-sales/meta-ads-creative-frameworks.md": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "246a973d66f4a046b7479124fd2fba2fdcc35d8d",
+      "passes": 1,
+      "pr": 15906
+    },
     ".agents/marketing-sales/meta-ads-creative-hooks.md": {
       "at": "2026-03-27T21:25:06Z",
       "hash": "f7c8e3356361a9ab1941f729337bbf7d0f8447ef",
@@ -1374,6 +1418,18 @@
       "hash": "01d5281e257d4507215400c7311169fd37a39f6e",
       "passes": 1,
       "pr": 15661
+    },
+    ".agents/scripts/browser-qa-helper.sh": {
+      "at": "2026-04-03T03:15:27Z",
+      "hash": "25b515a9f2777842519da29fbd097585ca4577cc",
+      "passes": 1,
+      "pr": 16086
+    },
+    ".agents/scripts/budget-analysis-helper.sh": {
+      "at": "2026-04-03T03:15:27Z",
+      "hash": "349d6023e95be88974de6ac4be3115d3d90b6c14",
+      "passes": 1,
+      "pr": 16085
     },
     ".agents/scripts/commands/budget-analysis.md": {
       "at": "2026-04-01T20:58:50Z",
@@ -1604,6 +1660,30 @@
       "passes": 1,
       "pr": 15946
     },
+    ".agents/scripts/config-helper.sh": {
+      "at": "2026-04-03T03:15:27Z",
+      "hash": "f3835ea3610ca1031ddce938d81d473ed7009710",
+      "passes": 1,
+      "pr": 16084
+    },
+    ".agents/scripts/cron-helper.sh": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "fee68144def6f04b03f8473a0092455cb7056378",
+      "passes": 1,
+      "pr": 15920
+    },
+    ".agents/scripts/dataset-helper.sh": {
+      "at": "2026-04-03T03:15:27Z",
+      "hash": "96a800ed0595fe0b974acf1c19d27a029d1c49fe",
+      "passes": 1,
+      "pr": 16098
+    },
+    ".agents/scripts/email-agent-helper.sh": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "9d3095a732abae2b4fa11914b1bab89f8d6bc8ba",
+      "passes": 1,
+      "pr": 15919
+    },
     ".agents/scripts/foss-handlers/generic.sh": {
       "at": "2026-03-29T03:15:47Z",
       "hash": "45cc10462795e6230b70b2f068bb95b4e53612f2",
@@ -1615,6 +1695,12 @@
       "hash": "64247677d8764e3ba8355385495671181569267a",
       "passes": 2,
       "pr": 12145
+    },
+    ".agents/scripts/generate-runtime-config.sh": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "5fa2222625d83c338a8ae68782a665f2f0ccc35b",
+      "passes": 1,
+      "pr": 15933
     },
     ".agents/scripts/gh-signature-helper.sh": {
       "at": "2026-03-29T16:34:26Z",
@@ -1634,6 +1720,18 @@
       "passes": 1,
       "pr": 15431
     },
+    ".agents/scripts/mission-email-helper.sh": {
+      "at": "2026-04-03T03:15:29Z",
+      "hash": "59ee94eb2742602d86611ae48998e14befd606f0",
+      "passes": 1,
+      "pr": 15752
+    },
+    ".agents/scripts/opencode-github-setup-helper.sh": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "a5a9852d4feb2de34839b8bbe4db6375babe83a6",
+      "passes": 1,
+      "pr": 15918
+    },
     ".agents/scripts/platform-detect.sh": {
       "at": "2026-04-02T04:56:59Z",
       "hash": "a551a07e07c08853c909e7b8141ddddf2de43420",
@@ -1646,6 +1744,24 @@
       "passes": 6,
       "pr": 15086
     },
+    ".agents/scripts/schema-validator-helper.sh": {
+      "at": "2026-04-03T03:15:29Z",
+      "hash": "a1a29c0ed6b6f49f88e0a081d88189ac9cce2d00",
+      "passes": 1,
+      "pr": 15776
+    },
+    ".agents/scripts/session-checkpoint-helper.sh": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "321474cda29aa78eb9bcd25a639a51fd16c62205",
+      "passes": 1,
+      "pr": 15917
+    },
+    ".agents/scripts/settings-helper.sh": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "e8d5d7546c1ccdf728fca2c13ee27fd5a64eb8d1",
+      "passes": 1,
+      "pr": 15916
+    },
     ".agents/scripts/stats-functions.sh": {
       "at": "2026-04-03T01:11:28Z",
       "hash": "3bd327b19cc722f4ddf43fb1f4724958056e11bb",
@@ -1657,6 +1773,24 @@
       "hash": "14e07889b9a874db8e98e44d1c5a8ed1ac3687fb",
       "passes": 2,
       "pr": 12971
+    },
+    ".agents/scripts/tests/test-quality-feedback-main-verification.sh": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "62205e0ccf0e418c5fa92dc447e11e187923ffcf",
+      "passes": 1,
+      "pr": 15931
+    },
+    ".agents/scripts/thumbnail-helper.sh": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "c157536da90b2552920287287e391f75b15ccc94",
+      "passes": 1,
+      "pr": 15905
+    },
+    ".agents/scripts/video-gen-helper.sh": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "79f7fcd2afb40f9bf21367af3cbb24107da2a7ba",
+      "passes": 1,
+      "pr": 15904
     },
     ".agents/scripts/watercrawl-helper.sh": {
       "at": "2026-04-02T22:43:46Z",
@@ -2198,6 +2332,12 @@
       "passes": 1,
       "pr": 13343
     },
+    ".agents/services/email/email-testing.md": {
+      "at": "2026-04-03T04:23:07Z",
+      "hash": "26cce9683b49ebe28109716eebad75ab1470360b",
+      "passes": 1,
+      "pr": 15839
+    },
     ".agents/services/email/email-verification.md": {
       "at": "2026-03-31T09:57:12Z",
       "hash": "b75a2e2fa651e6f7facb266e4d357338c997ced7",
@@ -2372,6 +2512,12 @@
       "passes": 1,
       "pr": 12502
     },
+    ".agents/services/hosting/cloudflare-platform-skill/hyperdrive-gotchas.md": {
+      "at": "2026-04-03T04:23:06Z",
+      "hash": "1c4911a4c8e9ea1e720fdeddd4bcb9c806e35834",
+      "passes": 1,
+      "pr": 15925
+    },
     ".agents/services/hosting/cloudflare-platform-skill/hyperdrive.md": {
       "at": "2026-04-02T04:56:50Z",
       "hash": "1a63158e184bf8c3c6ac2f4b5110e44451c5d837",
@@ -2533,6 +2679,12 @@
       "hash": "c4d5ed8a074df52b72e94f16782306bf95098b3b",
       "passes": 2,
       "pr": 15629
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/r2-patterns.md": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "6db3ad07eef857c00860416a7868a2a42636a888",
+      "passes": 1,
+      "pr": 15908
     },
     ".agents/services/hosting/cloudflare-platform-skill/r2-sql.md": {
       "at": "2026-03-28T16:00:25Z",
@@ -2979,6 +3131,12 @@
       "passes": 2,
       "pr": 13072
     },
+    ".agents/tools/ai-assistants/runners-seo-analyst.md": {
+      "at": "2026-04-03T04:23:06Z",
+      "hash": "77a9db53132c1496c5f33d07f78d7cf7cd2611f1",
+      "passes": 1,
+      "pr": 16010
+    },
     ".agents/tools/ai-generation/comfy-cli.md": {
       "at": "2026-03-27T21:25:22Z",
       "hash": "cec6e1c63f0997e330608cc3610f5a582d7e4d29",
@@ -3159,6 +3317,12 @@
       "passes": 1,
       "pr": 11011
     },
+    ".agents/tools/browser/agent-browser.md": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "52400ec344f64870dd6977c9950c80a22d939df5",
+      "passes": 1,
+      "pr": 15892
+    },
     ".agents/tools/browser/anti-detect-browser.md": {
       "at": "2026-03-27T21:25:25Z",
       "hash": "647081565083b90f27fdce7d25dea9e153fc64a4",
@@ -3332,6 +3496,12 @@
       "hash": "3702284e297e642ee7e2bb0c65470886fc7c0ffb",
       "passes": 1,
       "pr": 12513
+    },
+    ".agents/tools/browser/stealth-patches.md": {
+      "at": "2026-04-03T04:23:06Z",
+      "hash": "4e7009fbb71b64fe2ec9b8b952bb056cdcea3078",
+      "passes": 1,
+      "pr": 15948
     },
     ".agents/tools/browser/sweet-cookie.md": {
       "at": "2026-03-29T22:09:35Z",
@@ -4281,6 +4451,12 @@
       "passes": 1,
       "pr": 13316
     },
+    ".agents/tools/security/tirith.md": {
+      "at": "2026-04-03T04:23:07Z",
+      "hash": "15fcd67ea17b09530a447a2bbff27179a8d063cc",
+      "passes": 1,
+      "pr": 15777
+    },
     ".agents/tools/task-management/beads.md": {
       "at": "2026-03-29T09:39:21Z",
       "hash": "f42ad2e963039fd53ee52d1443827cbe4f6158c0",
@@ -4409,11 +4585,23 @@
       "passes": 1,
       "pr": 12942
     },
+    ".agents/tools/video/remotion-calculate-metadata.md": {
+      "at": "2026-04-03T03:37:02Z",
+      "hash": "4d9fc5e53279ac48361a627f49e9a6559d104b10",
+      "passes": 1,
+      "pr": 16141
+    },
     ".agents/tools/video/remotion-compositions.md": {
       "at": "2026-03-29T23:18:01Z",
       "hash": "6b00afa2299a8d08eaacd114c67804f6d87614b1",
       "passes": 1,
       "pr": 13427
+    },
+    ".agents/tools/video/remotion-extract-frames.md": {
+      "at": "2026-04-03T03:15:28Z",
+      "hash": "cdadd937d6ba36526460ec12feb224e7b3bdc2b8",
+      "passes": 1,
+      "pr": 15907
     },
     ".agents/tools/video/remotion-fonts.md": {
       "at": "2026-04-02T14:42:45Z",
@@ -4643,6 +4831,12 @@
       "passes": 1,
       "pr": 15209
     },
+    ".agents/workflows/browser-qa.md": {
+      "at": "2026-04-03T04:23:07Z",
+      "hash": "e99cc495cd3d86d49201d85f1f3a4c43523afaa9",
+      "passes": 1,
+      "pr": 15835
+    },
     ".agents/workflows/bug-fixing.md": {
       "at": "2026-03-29T16:34:52Z",
       "hash": "40fa82a3220595ff946fdc60ec4a03b193032f58",
@@ -4858,195 +5052,6 @@
       "hash": "c820f0bd721d4d8ff4fb35dff40ff98c6ba3b71f",
       "passes": 1,
       "pr": 15470
-    },
-    ".agents/scripts/dataset-helper.sh": {
-      "hash": "96a800ed0595fe0b974acf1c19d27a029d1c49fe",
-      "at": "2026-04-03T03:15:27Z",
-      "pr": 16098,
-      "passes": 1
-    },
-    ".agents/scripts/browser-qa-helper.sh": {
-      "hash": "25b515a9f2777842519da29fbd097585ca4577cc",
-      "at": "2026-04-03T03:15:27Z",
-      "pr": 16086,
-      "passes": 1
-    },
-    ".agents/scripts/budget-analysis-helper.sh": {
-      "hash": "349d6023e95be88974de6ac4be3115d3d90b6c14",
-      "at": "2026-04-03T03:15:27Z",
-      "pr": 16085,
-      "passes": 1
-    },
-    ".agents/scripts/config-helper.sh": {
-      "hash": "f3835ea3610ca1031ddce938d81d473ed7009710",
-      "at": "2026-04-03T03:15:27Z",
-      "pr": 16084,
-      "passes": 1
-    },
-    ".agents/scripts/generate-runtime-config.sh": {
-      "hash": "5fa2222625d83c338a8ae68782a665f2f0ccc35b",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15933,
-      "passes": 1
-    },
-    ".agents/scripts/tests/test-quality-feedback-main-verification.sh": {
-      "hash": "62205e0ccf0e418c5fa92dc447e11e187923ffcf",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15931,
-      "passes": 1
-    },
-    ".agents/scripts/cron-helper.sh": {
-      "hash": "fee68144def6f04b03f8473a0092455cb7056378",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15920,
-      "passes": 1
-    },
-    ".agents/scripts/email-agent-helper.sh": {
-      "hash": "9d3095a732abae2b4fa11914b1bab89f8d6bc8ba",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15919,
-      "passes": 1
-    },
-    ".agents/scripts/opencode-github-setup-helper.sh": {
-      "hash": "a5a9852d4feb2de34839b8bbe4db6375babe83a6",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15918,
-      "passes": 1
-    },
-    ".agents/scripts/session-checkpoint-helper.sh": {
-      "hash": "321474cda29aa78eb9bcd25a639a51fd16c62205",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15917,
-      "passes": 1
-    },
-    ".agents/scripts/settings-helper.sh": {
-      "hash": "e8d5d7546c1ccdf728fca2c13ee27fd5a64eb8d1",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15916,
-      "passes": 1
-    },
-    ".agents/services/hosting/cloudflare-platform-skill/r2-patterns.md": {
-      "hash": "6db3ad07eef857c00860416a7868a2a42636a888",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15908,
-      "passes": 1
-    },
-    ".agents/tools/video/remotion-extract-frames.md": {
-      "hash": "cdadd937d6ba36526460ec12feb224e7b3bdc2b8",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15907,
-      "passes": 1
-    },
-    ".agents/marketing-sales/meta-ads-creative-frameworks.md": {
-      "hash": "246a973d66f4a046b7479124fd2fba2fdcc35d8d",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15906,
-      "passes": 1
-    },
-    ".agents/scripts/thumbnail-helper.sh": {
-      "hash": "c157536da90b2552920287287e391f75b15ccc94",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15905,
-      "passes": 1
-    },
-    ".agents/scripts/video-gen-helper.sh": {
-      "hash": "79f7fcd2afb40f9bf21367af3cbb24107da2a7ba",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15904,
-      "passes": 1
-    },
-    ".agents/tools/browser/agent-browser.md": {
-      "hash": "52400ec344f64870dd6977c9950c80a22d939df5",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15892,
-      "passes": 1
-    },
-    ".agents/content/heygen-skill/rules-authentication.md": {
-      "hash": "6812919264796812f8cb6b375d01f49664c1af40",
-      "at": "2026-04-03T03:15:28Z",
-      "pr": 15871,
-      "passes": 1
-    },
-    ".agents/scripts/schema-validator-helper.sh": {
-      "hash": "a1a29c0ed6b6f49f88e0a081d88189ac9cce2d00",
-      "at": "2026-04-03T03:15:29Z",
-      "pr": 15776,
-      "passes": 1
-    },
-    ".agents/scripts/mission-email-helper.sh": {
-      "hash": "59ee94eb2742602d86611ae48998e14befd606f0",
-      "at": "2026-04-03T03:15:29Z",
-      "pr": 15752,
-      "passes": 1
-    },
-    ".agents/tools/video/remotion-calculate-metadata.md": {
-      "hash": "4d9fc5e53279ac48361a627f49e9a6559d104b10",
-      "at": "2026-04-03T03:37:02Z",
-      "pr": 16141,
-      "passes": 1
-    },
-    ".agents/tools/ai-assistants/runners-seo-analyst.md": {
-      "hash": "77a9db53132c1496c5f33d07f78d7cf7cd2611f1",
-      "at": "2026-04-03T04:23:06Z",
-      "pr": 16010,
-      "passes": 1
-    },
-    ".agents/tools/browser/stealth-patches.md": {
-      "hash": "4e7009fbb71b64fe2ec9b8b952bb056cdcea3078",
-      "at": "2026-04-03T04:23:06Z",
-      "pr": 15948,
-      "passes": 1
-    },
-    ".agents/services/hosting/cloudflare-platform-skill/hyperdrive-gotchas.md": {
-      "hash": "1c4911a4c8e9ea1e720fdeddd4bcb9c806e35834",
-      "at": "2026-04-03T04:23:06Z",
-      "pr": 15925,
-      "passes": 1
-    },
-    ".agents/content/distribution-blog.md": {
-      "hash": "12a91cbbc019545351d2ee5720a6e995448555bf",
-      "at": "2026-04-03T04:23:06Z",
-      "pr": 15909,
-      "passes": 1
-    },
-    ".agents/services/email/email-testing.md": {
-      "hash": "26cce9683b49ebe28109716eebad75ab1470360b",
-      "at": "2026-04-03T04:23:07Z",
-      "pr": 15839,
-      "passes": 1
-    },
-    ".agents/workflows/browser-qa.md": {
-      "hash": "e99cc495cd3d86d49201d85f1f3a4c43523afaa9",
-      "at": "2026-04-03T04:23:07Z",
-      "pr": 15835,
-      "passes": 1
-    },
-    ".agents/content/heygen-skill/rules-text-overlays.md": {
-      "hash": "a513e4698b36be4382684340bb40203de9d5073d",
-      "at": "2026-04-03T04:23:07Z",
-      "pr": 15821,
-      "passes": 1
-    },
-    ".agents/tools/security/tirith.md": {
-      "hash": "15fcd67ea17b09530a447a2bbff27179a8d063cc",
-      "at": "2026-04-03T04:23:07Z",
-      "pr": 15777,
-      "passes": 1
     }
-  },
-  ".agents/workflows/pre-edit.md": {
-    "hash": "d87135a808a845416e0193a101bef0fd1c0b4a032969d819556ce109c40da4ba",
-    "issue": "GH#15439",
-    "lines_before": 78,
-    "lines_after": 72,
-    "status": "simplified"
-  },
-  ".agents/aidevops/service-links.md": {
-    "hash": "1b4d0cbc25fd53ad0a3de4ad3f1b3b8f1b8ab31d",
-    "issue": "GH#14974",
-    "pr": "pending",
-    "passes": 1,
-    "at": "2026-04-03T00:00:00Z",
-    "status": "simplified"
   }
 }

@@ -32,25 +32,26 @@ tools:
 
 Structural copy rules for website content, especially local-service pages. If a project has `context/brand-identity.toon`, take tone, vocabulary, and personality from that file; this document covers structure only. For brand identity maintenance, see `tools/design/brand-identity.md`.
 
-## Formatting
+## Formatting Examples
 
-- One sentence per paragraph for screen readability, especially on mobile.
-- Use spaced em-dashes (` — `) for emphasis instead of long subordinate clauses.
-  - Good: "We finish them with marine-grade coatings — they resist swelling."
-  - Bad: "We finish them with marine-grade coatings, which means that they are built specifically..."
-- Bold primary keywords naturally: "Hand-crafted here in Jersey, our bespoke **sash windows** are built to last."
-- Use long-tail variations: "Jersey heritage properties", "granite farmhouse windows", "coastal climate".
+Em-dash usage:
+- Good: "We finish them with marine-grade coatings — they resist swelling."
+- Bad: "We finish them with marine-grade coatings, which means that they are built specifically..."
+
+SEO keyword usage: "Hand-crafted here in Jersey, our bespoke **sash windows** are built to last."
+
+Long-tail variations: "Jersey heritage properties", "granite farmhouse windows", "coastal climate".
 
 ## Avoid
 
 - Robotic phrasing: "We pride ourselves on...", "Our commitment to excellence...", "Elevate your home with...".
-- Repeating the brand name at the start of every sentence. Prefer "We make..." over "Trinity Joinery crafts...".
+- Brand name at sentence start — prefer "We make..." over "Trinity Joinery crafts...".
 - Empty trailing blocks: `<!-- wp:paragraph --><p></p><!-- /wp:paragraph -->`.
 - Markdown in HTML content fields.
 
 ## HTML Content Fields
 
-Use HTML tags in WordPress content areas, not Markdown.
+WordPress content areas use HTML, not Markdown:
 
 ```html
 <strong>Bold text</strong>
