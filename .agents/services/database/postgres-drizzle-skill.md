@@ -5,7 +5,7 @@ imported_from: external
 ---
 # PostgreSQL + Drizzle ORM
 
-## Essential Commands
+## Commands
 
 ```bash
 npx drizzle-kit generate   # Generate migration from schema changes
@@ -14,30 +14,28 @@ npx drizzle-kit push       # Push schema directly (dev only!)
 npx drizzle-kit studio     # Open database browser
 ```
 
-## Quick Decision Trees
+## Decision Trees
 
-### "How do I model this relationship?"
-
-```text
-Relationship type?
-├─ One-to-many (user has posts)     → FK on "many" side + relations()
-├─ Many-to-many (posts have tags)   → Junction table + relations()
-├─ One-to-one (user has profile)    → FK with unique constraint
-└─ Self-referential (comments)      → FK to same table
-```
-
-### "Why is my query slow?"
+**Relationship modeling:**
 
 ```text
-Slow query?
-├─ Missing index on WHERE/JOIN columns  → Add index
-├─ N+1 queries in loop                  → Use relational queries API
-├─ Full table scan                      → EXPLAIN ANALYZE, add index
-├─ Large result set                     → Add pagination (limit/offset)
-└─ Connection overhead                  → Enable connection pooling
+One-to-many (user has posts)     → FK on "many" side + relations()
+Many-to-many (posts have tags)   → Junction table + relations()
+One-to-one (user has profile)    → FK with unique constraint
+Self-referential (comments)      → FK to same table
 ```
 
-## Anti-Patterns and Performance
+**Slow query diagnosis:**
+
+```text
+Missing index on WHERE/JOIN columns  → Add index
+N+1 queries in loop                  → Use relational queries API
+Full table scan                      → EXPLAIN ANALYZE, add index
+Large result set                     → Add pagination (limit/offset)
+Connection overhead                  → Enable connection pooling
+```
+
+## Anti-Patterns
 
 | Priority | Issue | Impact | Fix |
 |----------|-------|--------|-----|
@@ -50,7 +48,7 @@ Slow query?
 | MEDIUM | No partial indexes | Oversized indexes | Partial indexes for filtered subsets |
 | MEDIUM | Random UUIDs for PKs | Poor index locality | UUIDv7 (PG18+) |
 
-## Reference Documentation
+## Reference
 
 | File | Purpose |
 |------|---------|
