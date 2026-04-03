@@ -1943,7 +1943,122 @@ SQL
 #        --clarity 8 --adherence 9 --latency 1200 --tokens 500 \
 #        --strengths "Fast, accurate" --weaknesses "Verbose" \
 #        [--model "gpt-4.1" --correctness 8 ...]
-# Parse score arguments and build model entries
+
+# Flush current model state into entries array (nameref).
+# Args: $1=nameref:entries $2=model $3=correct $4=complete $5=quality
+#       $6=clarity $7=adherence $8=latency $9=tokens $10=strengths $11=weaknesses $12=response
+_score_flush_model() {
+	local -n _sf_entries="$1"
+	local model="$2" correct="$3" complete="$4" quality="$5"
+	local clarity="$6" adherence="$7" latency="$8" tokens="$9"
+	local strengths="${10}" weaknesses="${11}" response="${12}"
+	[[ -z "$model" ]] && return 0
+	local overall=$(((correct + complete + quality + clarity + adherence) / 5))
+	_sf_entries+=("${model}|${correct}|${complete}|${quality}|${clarity}|${adherence}|${overall}|${latency}|${tokens}|${strengths}|${weaknesses}|${response}")
+	return 0
+}
+
+# Parse score CLI arguments into named namerefs and entries array.
+# Args: $1...$7 = namerefs (task type eval winner pv pf entries), then remaining argv
+_score_parse_args() {
+	local -n _spa_task="$1"
+	local -n _spa_type="$2"
+	local -n _spa_eval="$3"
+	local -n _spa_winner="$4"
+	local -n _spa_pv="$5"
+	local -n _spa_pf="$6"
+	local -n _spa_entries="$7"
+	shift 7
+
+	local cur_model="" cur_correct=0 cur_complete=0 cur_quality=0
+	local cur_clarity=0 cur_adherence=0 cur_latency=0 cur_tokens=0
+	local cur_strengths="" cur_weaknesses="" cur_response=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--task)
+			_spa_task="$2"
+			shift 2
+			;;
+		--type)
+			_spa_type="$2"
+			shift 2
+			;;
+		--evaluator)
+			_spa_eval="$2"
+			shift 2
+			;;
+		--winner)
+			_spa_winner="$2"
+			shift 2
+			;;
+		--prompt-version)
+			_spa_pv="$2"
+			shift 2
+			;;
+		--prompt-file)
+			_spa_pf="$2"
+			shift 2
+			;;
+		--model)
+			_score_flush_model _spa_entries "$cur_model" "$cur_correct" "$cur_complete" \
+				"$cur_quality" "$cur_clarity" "$cur_adherence" "$cur_latency" "$cur_tokens" \
+				"$cur_strengths" "$cur_weaknesses" "$cur_response"
+			cur_model="$2" cur_correct=0 cur_complete=0 cur_quality=0
+			cur_clarity=0 cur_adherence=0 cur_latency=0 cur_tokens=0
+			cur_strengths="" cur_weaknesses="" cur_response=""
+			shift 2
+			;;
+		--correctness)
+			cur_correct="$2"
+			shift 2
+			;;
+		--completeness)
+			cur_complete="$2"
+			shift 2
+			;;
+		--quality)
+			cur_quality="$2"
+			shift 2
+			;;
+		--clarity)
+			cur_clarity="$2"
+			shift 2
+			;;
+		--adherence)
+			cur_adherence="$2"
+			shift 2
+			;;
+		--latency)
+			cur_latency="$2"
+			shift 2
+			;;
+		--tokens)
+			cur_tokens="$2"
+			shift 2
+			;;
+		--strengths)
+			cur_strengths="$2"
+			shift 2
+			;;
+		--weaknesses)
+			cur_weaknesses="$2"
+			shift 2
+			;;
+		--response)
+			cur_response="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+	_score_flush_model _spa_entries "$cur_model" "$cur_correct" "$cur_complete" \
+		"$cur_quality" "$cur_clarity" "$cur_adherence" "$cur_latency" "$cur_tokens" \
+		"$cur_strengths" "$cur_weaknesses" "$cur_response"
+	return 0
+}
+
+# Parse score arguments and build model entries (orchestrator).
 _score_parse_and_build() {
 	local -n sp_task="$1"
 	local -n sp_type="$2"
@@ -1953,96 +2068,7 @@ _score_parse_and_build() {
 	local -n sp_pf="$6"
 	local -n sp_entries="$7"
 	shift 7
-
-	local current_model="" current_correct=0 current_complete=0 current_quality=0
-	local current_clarity=0 current_adherence=0 current_latency=0 current_tokens=0
-	local current_strengths="" current_weaknesses="" current_response=""
-
-	flush_model() {
-		if [[ -n "$current_model" ]]; then
-			local overall=$(((current_correct + current_complete + current_quality + current_clarity + current_adherence) / 5))
-			sp_entries+=("${current_model}|${current_correct}|${current_complete}|${current_quality}|${current_clarity}|${current_adherence}|${overall}|${current_latency}|${current_tokens}|${current_strengths}|${current_weaknesses}|${current_response}")
-		fi
-		current_model="" current_correct=0 current_complete=0 current_quality=0
-		current_clarity=0 current_adherence=0 current_latency=0 current_tokens=0
-		current_strengths="" current_weaknesses="" current_response=""
-	}
-
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--task)
-			sp_task="$2"
-			shift 2
-			;;
-		--type)
-			sp_type="$2"
-			shift 2
-			;;
-		--evaluator)
-			sp_eval="$2"
-			shift 2
-			;;
-		--winner)
-			sp_winner="$2"
-			shift 2
-			;;
-		--prompt-version)
-			sp_pv="$2"
-			shift 2
-			;;
-		--prompt-file)
-			sp_pf="$2"
-			shift 2
-			;;
-		--model)
-			flush_model
-			current_model="$2"
-			shift 2
-			;;
-		--correctness)
-			current_correct="$2"
-			shift 2
-			;;
-		--completeness)
-			current_complete="$2"
-			shift 2
-			;;
-		--quality)
-			current_quality="$2"
-			shift 2
-			;;
-		--clarity)
-			current_clarity="$2"
-			shift 2
-			;;
-		--adherence)
-			current_adherence="$2"
-			shift 2
-			;;
-		--latency)
-			current_latency="$2"
-			shift 2
-			;;
-		--tokens)
-			current_tokens="$2"
-			shift 2
-			;;
-		--strengths)
-			current_strengths="$2"
-			shift 2
-			;;
-		--weaknesses)
-			current_weaknesses="$2"
-			shift 2
-			;;
-		--response)
-			current_response="$2"
-			shift 2
-			;;
-		*) shift ;;
-		esac
-	done
-	flush_model
+	_score_parse_args sp_task sp_type sp_eval sp_winner sp_pv sp_pf sp_entries "$@"
 	return 0
 }
 
@@ -2560,61 +2586,29 @@ _bench_api_call() {
 	return 0
 }
 
-_bench_call_model() {
-	local model_id="$1"
-	local prompt="$2"
-	local max_tokens="$3"
-	local out_dir="$4"
-
-	local info
-	info=$(_model_provider_info "$model_id")
-	if [[ -z "$info" ]]; then
-		echo "{\"error\":\"unknown model: ${model_id}\"}" >"${out_dir}/${model_id}.json"
-		return 1
-	fi
-
-	local provider key_var actual_id
-	IFS='|' read -r provider key_var actual_id <<<"$info"
-
-	if [[ -z "$key_var" ]]; then
-		echo "{\"error\":\"no API key mapping for provider: ${provider}\"}" >"${out_dir}/${actual_id}.json"
-		return 1
-	fi
-
-	local api_key
-	api_key=$(_resolve_key_value "$key_var") || {
-		echo "{\"error\":\"API key not found: ${key_var}\"}" >"${out_dir}/${actual_id}.json"
-		return 1
-	}
-
-	local api_model
-	api_model=$(_api_model_string "$actual_id")
-
-	# Escape prompt for JSON
-	local escaped_prompt
+# Escape a prompt string for embedding in a JSON payload.
+# Args: $1=prompt text
+# Output: JSON-encoded string (with surrounding quotes)
+_bench_escape_prompt() {
+	local prompt="$1"
 	if command -v python3 &>/dev/null; then
-		escaped_prompt=$(printf '%s' "$prompt" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null)
+		printf '%s' "$prompt" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null
 	else
-		escaped_prompt="\"$(printf '%s' "$prompt" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g; s/\t/\\t/g')\""
+		printf '"%s"' "$(printf '%s' "$prompt" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g; s/\t/\\t/g')"
 	fi
+	return 0
+}
 
-	local start_ms http_code end_ms latency_ms
-	start_ms=$(python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || date +%s000)
+# Parse a raw provider API response into a normalized JSON result file.
+# Args: $1=provider $2=actual_id $3=latency_ms $4=http_code $5=raw_file $6=result_file
+_bench_parse_response() {
+	local provider="$1"
+	local actual_id="$2"
+	local latency_ms="$3"
+	local http_code="$4"
+	local raw_file="$5"
+	local result_file="$6"
 
-	local result_file="${out_dir}/${actual_id}.json"
-	local raw_file="${out_dir}/${actual_id}-raw.json"
-
-	# Make API call
-	http_code=$(_bench_api_call "$provider" "$api_model" "$api_key" "$escaped_prompt" "$max_tokens" "$raw_file")
-	[[ "$http_code" == "000" ]] && {
-		echo "{\"error\":\"unsupported provider: ${provider}\"}" >"$result_file"
-		return 1
-	}
-
-	end_ms=$(python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || date +%s000)
-	latency_ms=$((end_ms - start_ms))
-
-	# Parse response into normalized format using python3
 	if [[ ! -f "$raw_file" ]] || [[ ! -s "$raw_file" ]]; then
 		echo "{\"error\":\"empty response\",\"http_code\":\"${http_code}\",\"latency_ms\":${latency_ms}}" >"$result_file"
 		return 1
@@ -2678,6 +2672,57 @@ json.dump(result, sys.stdout)
 		echo "{\"error\":\"parse failure\",\"latency_ms\":${latency_ms},\"model\":\"${actual_id}\"}" >"$result_file"
 		return 1
 	}
+	return 0
+}
+
+_bench_call_model() {
+	local model_id="$1"
+	local prompt="$2"
+	local max_tokens="$3"
+	local out_dir="$4"
+
+	local info
+	info=$(_model_provider_info "$model_id")
+	if [[ -z "$info" ]]; then
+		echo "{\"error\":\"unknown model: ${model_id}\"}" >"${out_dir}/${model_id}.json"
+		return 1
+	fi
+
+	local provider key_var actual_id
+	IFS='|' read -r provider key_var actual_id <<<"$info"
+
+	if [[ -z "$key_var" ]]; then
+		echo "{\"error\":\"no API key mapping for provider: ${provider}\"}" >"${out_dir}/${actual_id}.json"
+		return 1
+	fi
+
+	local api_key
+	api_key=$(_resolve_key_value "$key_var") || {
+		echo "{\"error\":\"API key not found: ${key_var}\"}" >"${out_dir}/${actual_id}.json"
+		return 1
+	}
+
+	local api_model escaped_prompt
+	api_model=$(_api_model_string "$actual_id")
+	escaped_prompt=$(_bench_escape_prompt "$prompt")
+
+	local start_ms http_code end_ms latency_ms
+	start_ms=$(python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || date +%s000)
+
+	local result_file="${out_dir}/${actual_id}.json"
+	local raw_file="${out_dir}/${actual_id}-raw.json"
+
+	# Make API call
+	http_code=$(_bench_api_call "$provider" "$api_model" "$api_key" "$escaped_prompt" "$max_tokens" "$raw_file")
+	[[ "$http_code" == "000" ]] && {
+		echo "{\"error\":\"unsupported provider: ${provider}\"}" >"$result_file"
+		return 1
+	}
+
+	end_ms=$(python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || date +%s000)
+	latency_ms=$((end_ms - start_ms))
+
+	_bench_parse_response "$provider" "$actual_id" "$latency_ms" "$http_code" "$raw_file" "$result_file" || return 1
 
 	# Clean up raw file
 	rm -f "$raw_file"
