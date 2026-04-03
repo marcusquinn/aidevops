@@ -12,11 +12,10 @@ tools: { read: true, bash: true }
 
 - **Mode**: HTTP endpoint (Google POSTs events) — not WebSocket/polling
 - **Config**: `~/.config/aidevops/google-chat-bot.json` (600 perms)
-- **Data**: `~/.aidevops/.agent-workspace/google-chat-bot/`
 - **Auth**: Service account JWT (outbound); Google-signed bearer (inbound)
 - **Requires**: Google Workspace, GCP project, public HTTPS URL, Node.js >= 18, jq
 - **Setup**: `google-chat-helper.sh setup` (interactive wizard)
-- **Privacy**: No E2E encryption; Google retains messages; Gemini may train on data unless DPA configured. See [Privacy and Security](#privacy-and-security).
+- **Privacy**: No E2E encryption; Google retains messages; Gemini may train on data unless DPA configured
 
 <!-- AI-CONTEXT-END -->
 
@@ -116,24 +115,23 @@ DMs use `defaultRunner`; unconfigured = help message. **ACL order**: token verif
 
 No E2E encryption (TLS in transit only). Google retains all messages; admins have full read access. Retention: Google Vault. **Gemini AI**: workspace data may train AI unless DPA configured — verify Admin Console > Additional Google services > Gemini and [Workspace DPA](https://workspace.google.com/terms/dpa_terms.html) before deploying with sensitive data.
 
-**Bot security**: SA key 600 perms, never commit · `allowedUsers` allowlist in production · Scan inbound (`prompt-guard-helper.sh`) and outbound (credential patterns) · Reverse proxy for TLS · Log events, redact sensitive content · FCM: Google sees push notification metadata.
+**Bot security**: SA key 600 perms, never commit · `allowedUsers` allowlist in production · Scan inbound (`prompt-guard-helper.sh`) and outbound (credential patterns) · Reverse proxy for TLS · Log events, redact sensitive content.
 
-## Limitations and Troubleshooting
+## Troubleshooting
 
-| Issue | Detail |
-|-------|--------|
+| Issue | Fix |
+|-------|-----|
 | 30s response window | Return ack card immediately; full response async |
 | No Matterbridge | Requires custom API bridge or relay bot |
 | Workspace required | Free Gmail accounts unsupported |
 | Card rendering varies | Test across web, Gmail sidebar, mobile |
-| Rate limits | 60 msg/min per space; 50,000 spaces max |
+| Rate limits | 60 msg/min per space; 50,000 spaces max; use exponential backoff |
 | Thread limits | Space-scoped; bot cannot create threads proactively |
 | Not receiving events | Verify public URL reachable; check Chat API config |
 | 401 / token verification | SA key valid? `chat.bot` scope? `verifyGoogleTokens: true`? Clock sync? |
 | Bot not visible | Check Chat app visibility in Cloud Console |
 | Async messages fail | Verify `chat.bot` scope; check space name format |
 | Cards not rendering | Validate Card v2 JSON; check widget types |
-| Rate limited | Reduce frequency; exponential backoff |
 
 ## Related
 
