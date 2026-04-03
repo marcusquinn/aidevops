@@ -5092,6 +5092,11 @@
       "hash": "c820f0bd721d4d8ff4fb35dff40ff98c6ba3b71f",
       "passes": 1,
       "pr": 15470
+    },
+    ".agents/tools/code-review/management.md": {
+      "hash": "9c54376593091811cc3981781814336a892d0e7f11ce5a29b8ada517c22f6237",
+      "status": "simplified",
+      "issue": 16257
     }
   },
   ".agents/tools/ui/ui-skills.md": {

@@ -18,25 +18,17 @@ tools:
 
 ## Quick Reference
 
-- Goal: zero technical debt through systematic resolution
-- Rule: enhance functionality; never delete behavior to silence a warning
-- Priority: S7679 (critical) → S1481 → S1192 → S7682 → ShellCheck
+- **Rule**: enhance functionality; never delete behavior to silence a warning
+- **Priority**: S7679 (critical) → S1481 → S1192 → S7682 → ShellCheck
+- **Automate first**: batch fixes; keep quality gates in the workflow
 - S7679: `printf 'Price: %s50/month\n' '$'`, not `echo "Price: $50/month"`
 - S1481: improve variable usage before deleting; do not remove to silence
 - S1192: lift repeated literals (3+) to top-level `readonly` constants
-- Key scripts: `linters-local.sh`, `quality-fix.sh`, `quality-cli-manager.sh`
+- Scripts: `linters-local.sh`, `quality-fix.sh`, `quality-cli-manager.sh`
 - Baseline: 349 → 42 issues (88% reduction), 100% critical resolved
 - Targets: zero S7679/S1481, <10 S1192, 100% feature retention
 
 <!-- AI-CONTEXT-END -->
-
-> Supplementary to [AGENTS.md](../AGENTS.md). AGENTS.md takes precedence on conflicts.
-
-## Core Rules
-
-1. **Enhance, never delete** — fix violations by adding value, not removing behavior.
-2. **Use the priority order** — resolve S7679 before S1481, then S1192, S7682, ShellCheck.
-3. **Automate first** — batch fixes; keep quality gates in the workflow.
 
 ## Fix Patterns
 
