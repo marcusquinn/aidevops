@@ -3,15 +3,10 @@ description: Refactor branch - code restructure, same behavior
 mode: subagent
 tools:
   read: true
-  write: true
-  edit: true
-  bash: true
   grep: true
 ---
 
 # Refactor Branch
-
-<!-- AI-CONTEXT-START -->
 
 | Aspect | Value |
 |--------|-------|
@@ -25,8 +20,6 @@ git checkout main && git pull origin main
 git checkout -b refactor/{description}
 ```
 
-<!-- AI-CONTEXT-END -->
-
 ## When to Use
 
 - Code restructuring without behavior change
@@ -39,23 +32,23 @@ git checkout -b refactor/{description}
 
 ## Testing & Review
 
-All existing tests must pass before and after. Run before starting and after each change:
+All existing tests must pass before and after:
 
 ```bash
 npm test  # or project-specific test command
 ```
 
-**PR reviewers verify:** no behavior changes (unless documented), tests pass, no performance regression, code is cleaner.
+**PR reviewers verify:** no behavior changes (unless documented), tests pass, no performance regression.
 
 ## Examples
 
 ```bash
+# Branch names
 refactor/extract-auth-service
 refactor/simplify-database-layer
 refactor/consolidate-api-handlers
-```
 
-```bash
+# Commit message
 refactor: extract authentication into dedicated service
 
 - Move auth logic from UserController to AuthService
