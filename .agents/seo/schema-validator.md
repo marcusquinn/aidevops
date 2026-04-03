@@ -32,7 +32,7 @@ schema-validator-helper.sh status                            # check install
 |------|----------|
 | `Article` | Blog posts, news |
 | `Product` | E-commerce |
-| `FAQ` | FAQs |
+| `FAQ` | Frequently asked questions |
 | `HowTo` | Step-by-step guides |
 | `Organization` | Company info |
 | `LocalBusiness` | Local listings |
@@ -41,9 +41,9 @@ schema-validator-helper.sh status                            # check install
 
 ## SEO Audit Integration
 
-Use during **Technical SEO Audit** (`seo-audit-skill.md` → "Tools Referenced > Free Tools > Schema Validator").
+Use during Technical SEO Audit (`seo-audit-skill.md` → "Tools Referenced > Free Tools > Schema Validator").
 
-**Complementary**: `seo/schema-markup.md` (templates, t092) · `seo/seo-audit-skill.md` · Google Rich Results Test (t084)
+Complementary: `seo/schema-markup.md` (templates, t092) · `seo/seo-audit-skill.md` · Google Rich Results Test (t084)
 
 ## Troubleshooting
 
