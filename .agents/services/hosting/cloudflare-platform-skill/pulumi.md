@@ -16,28 +16,14 @@ Programmatic management of Cloudflare resources via `@pulumi/cloudflare` v6.x: W
 
 Three methods (mutually exclusive). Preferred: API Token.
 
-| Method | Env vars |
-|--------|----------|
-| API Token (recommended) | `CLOUDFLARE_API_TOKEN` |
-| API Key (legacy) | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_EMAIL` |
-| API User Service Key | `CLOUDFLARE_API_USER_SERVICE_KEY` |
+| Method | Env vars | Provider property |
+|--------|----------|-------------------|
+| API Token (recommended) | `CLOUDFLARE_API_TOKEN` | `apiToken` |
+| API Key (legacy) | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_EMAIL` | `apiKey` + `email` |
+| API User Service Key | `CLOUDFLARE_API_USER_SERVICE_KEY` | `apiUserServiceKey` |
 
 ```typescript
-// API Token (recommended)
-const provider = new cloudflare.Provider("cf", {
-    apiToken: process.env.CLOUDFLARE_API_TOKEN,
-});
-
-// API Key (legacy)
-const provider = new cloudflare.Provider("cf", {
-    apiKey: process.env.CLOUDFLARE_API_KEY,
-    email: process.env.CLOUDFLARE_EMAIL,
-});
-
-// API User Service Key
-const provider = new cloudflare.Provider("cf", {
-    apiUserServiceKey: process.env.CLOUDFLARE_API_USER_SERVICE_KEY,
-});
+const provider = new cloudflare.Provider("cf", { apiToken: process.env.CLOUDFLARE_API_TOKEN });
 ```
 
 ## Setup
@@ -52,7 +38,7 @@ config:
     value: ${CLOUDFLARE_API_TOKEN}
 ```
 
-**Pulumi.\<stack\>.yaml:**
+**Pulumi.\<stack\>.yaml** — store accountId per stack:
 
 ```yaml
 config:
@@ -71,16 +57,18 @@ const accountId = config.require("accountId");
 
 ## Common Resource Types
 
-- `Provider` - Provider config
-- `WorkerScript` - Worker
-- `WorkersKvNamespace` - KV
-- `R2Bucket` - R2
-- `D1Database` - D1
-- `Queue` - Queue
-- `PagesProject` - Pages
-- `DnsRecord` - DNS
-- `WorkerRoute` - Worker route
-- `WorkersDomain` - Custom domain
+| Resource | Purpose |
+|----------|---------|
+| `Provider` | Provider config |
+| `WorkerScript` | Worker |
+| `WorkersKvNamespace` | KV |
+| `R2Bucket` | R2 |
+| `D1Database` | D1 |
+| `Queue` | Queue |
+| `PagesProject` | Pages |
+| `DnsRecord` | DNS |
+| `WorkerRoute` | Worker route |
+| `WorkersDomain` | Custom domain |
 
 ## Key Properties
 
