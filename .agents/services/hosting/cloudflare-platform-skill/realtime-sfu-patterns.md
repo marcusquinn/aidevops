@@ -75,7 +75,7 @@ export class Room {
 
 ## Advanced Patterns
 
-**Bandwidth mgmt:**
+**Bandwidth:**
 
 ```ts
 const s = pc.getSenders().find(s => s.track?.kind === 'video');
@@ -105,4 +105,4 @@ dc.onmessage = (e) => console.log('RX:', JSON.parse(e.data));
 
 **Integrations:** R2 for recording `env.R2_BUCKET.put(...)`, Queues for analytics
 
-**Perf:** 100-250ms connect, ~50ms latency (95%), 200-400ms glass-to-glass, no participant limit (client: 10-50 tracks)
+**Performance:** connect 100-250ms, latency ~50ms (95th), glass-to-glass 200-400ms, no participant limit (client: 10-50 tracks)
