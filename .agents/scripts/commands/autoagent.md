@@ -37,23 +37,7 @@ else:                                    → Interactive Setup (Q1–Q6)
 
 Ask sequentially; show inferred default as option 1; Enter accepts default.
 
-**Q1 — What to optimize?**
-
-| Signal | Suggestion |
-|--------|-----------|
-| Recent session errors in logs | "self-healing focus — fix recurring failures" |
-| High token usage in agent files | "instruction refinement — reduce tokens, improve pass rate" |
-| Many linter violations | "tool optimization — fix script quality issues" |
-| Default | "general framework improvement" |
-
-Options:
-
-```text
-1. General framework improvement    [default]
-2. Specific agent file              → which file?
-3. Specific tool/script             → which script?
-4. Specific workflow                → which workflow?
-```
+**Q1 — What to optimize?** Suggest based on signals (session errors → self-healing, high token usage → instruction-refinement, linter violations → tool-optimization). Options: `1. General framework improvement [default]` / `2. Specific agent file` / `3. Specific tool/script` / `4. Specific workflow`.
 
 **Q2 — Which hypothesis types?** (multi-select; all default enabled; `--focus` pre-selects one)
 
@@ -79,43 +63,25 @@ Options:
 
 Safety constraints shown alongside defaults. Confirm or override.
 
-**Q4 — Budget?** Defaults: `2h / 30 iterations / 5m per-experiment`
+**Q4–Q6 — Defaults** (Enter to accept each):
 
-```text
-Timeout:          2h     [Enter to accept]
-Max iterations:   30     [Enter to accept]
-Per-experiment:   5m     [Enter to accept]
-```
-
-**Q5 — Models?** Default: `researcher=sonnet`
-
-```text
-Researcher model: sonnet    [Enter to accept]
-```
-
-**Q6 — Multi-trial count?** Default: `2` evaluation trials per hypothesis
-
-```text
-Trials per hypothesis: 2    [Enter to accept]
-```
+| Setting | Default |
+|---------|---------|
+| Timeout | `2h` |
+| Max iterations | `30` |
+| Per-experiment | `5m` |
+| Researcher model | `sonnet` |
+| Trials per hypothesis | `2` |
 
 After setup: writes research program to `todo/research/autoagent-{name}.md`, confirms, dispatches to autoagent subagent.
 
 ## Step 3: Write Research Program
 
-Write to `todo/research/autoagent-{name}.md` from `.agents/templates/autoagent-program-template.md`.
-
-Confirm: "Research program written to `todo/research/autoagent-{name}.md`."
+Write to `todo/research/autoagent-{name}.md` from `.agents/templates/autoagent-program-template.md`. Confirm path to user.
 
 ## Step 4: Dispatch
 
-```text
-1. Begin now (dispatch to autoagent subagent)    [default]
-2. Queue for later (add to TODO.md)
-3. Show program file and exit
-```
-
-Headless: begin now (option 1).
+Options: `1. Begin now [default]` / `2. Queue for later (add to TODO.md)` / `3. Show program file and exit`. Headless: begin now.
 
 **Begin now:** dispatch to `.agents/tools/autoagent/autoagent.md` with `--program todo/research/autoagent-{name}.md`.
 
@@ -127,15 +93,7 @@ Headless: begin now (option 1).
 
 ## Signal Scan Mode (`/autoagent --signal-scan`)
 
-Analysis only — no research program written, no loop started.
-
-1. Mine signals from all available sources:
-   - Session miner logs (`~/.aidevops/.agent-workspace/`)
-   - Comprehension test results (`agent-test-helper.sh`)
-   - Linter output (`markdownlint-cli2`, `shellcheck`)
-   - Git churn (files changed most frequently)
-2. For each signal, identify which hypothesis type would address it
-3. Output summary:
+Analysis only — no research program written, no loop started. Mine signals from: session miner logs (`~/.aidevops/.agent-workspace/`), comprehension test results (`agent-test-helper.sh`), linter output (`markdownlint-cli2`, `shellcheck`), git churn. For each signal, identify hypothesis type. Output:
 
 ```text
 Found N actionable signals. Top 5:
