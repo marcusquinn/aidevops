@@ -23,8 +23,6 @@ tools:
 - **Coverage**: 30 rules across 7 categories
 - **Activation**: Add the shell hook once; every later command is checked automatically
 
-Browsers guard homograph attacks, ANSI injection, and suspicious URLs. Terminals usually don't. Tirith adds that check before command execution.
-
 <!-- AI-CONTEXT-END -->
 
 ## Install and activate
@@ -36,7 +34,7 @@ cargo install tirith               # from source
 mise use -g tirith                 # mise
 ```
 
-Also available via Nix, deb, rpm, AUR, Scoop, and Chocolatey. Add one shell hook to activate:
+Also available via Nix, deb, rpm, AUR, Scoop, and Chocolatey. Add one shell hook:
 
 ```bash
 eval "$(tirith init --shell zsh)"   # ~/.zshrc
@@ -88,16 +86,16 @@ fail_mode: open  # or "closed" for strict environments
 
 Set `allow_bypass: false` to prevent per-command bypass in org environments.
 
-## Bypass
+Bypass (one command only, does not persist):
 
 ```bash
-TIRITH=0 curl -L https://known-safe.example.com | bash  # one command only, does not persist
+TIRITH=0 curl -L https://known-safe.example.com | bash
 ```
 
 ## Integration with aidevops
 
 - **setup.sh**: checks for Tirith and suggests installation if missing
-- **Auto-guard**: once `eval "$(tirith init)"` is in the shell profile, all terminal commands spawned by aidevops scripts are guarded automatically
+- **Auto-guard**: `eval "$(tirith init)"` in shell profile guards all commands spawned by aidevops scripts
 - **Audit log**: `~/.local/share/tirith/log.jsonl` (timestamp, action, rule ID, redacted preview); disable with `TIRITH_LOG=0`
 
 ## Related
