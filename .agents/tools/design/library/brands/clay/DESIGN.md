@@ -21,6 +21,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Clay Black** (`#000000`): Text, headings, pricing card text, `--_theme--pricing-cards---text`
 - **Pure White** (`#ffffff`): Card backgrounds, button backgrounds, inverse text
 - **Warm Cream** (`#faf9f7`): Page background — the warm, paper-like canvas
@@ -54,11 +55,13 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 - **Blueberry 800** (`#01418d`): `--_swatches---color--blueberry-800`, deep navy
 
 ### Neutral Scale (Warm)
+
 - **Warm Silver** (`#9f9b93`): Secondary/muted text, footer links
 - **Warm Charcoal** (`#55534e`): Tertiary text, dark muted links
 - **Dark Charcoal** (`#333333`): Link text on light backgrounds
 
 ### Surface & Border
+
 - **Oat Border** (`#dad4c8`): Primary border — warm, cream-toned structural lines
 - **Oat Light** (`#eee9df`): Secondary lighter border
 - **Cool Border** (`#e6e8ec`): Cool-toned border for contrast sections
@@ -66,17 +69,20 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 - **Light Frost** (`#eff1f3`): Subtle button background (at 0% opacity on hover)
 
 ### Badges
+
 - **Badge Blue Bg** (`#f0f8ff`): Blue-tinted badge surface
 - **Badge Blue Text** (`#3859f9`): Vivid blue badge text
 - **Focus Ring** (`rgb(20, 110, 245) solid 2px`): Accessibility focus indicator
 
 ### Shadows
+
 - **Clay Shadow** (`rgba(0,0,0,0.1) 0px 1px 1px, rgba(0,0,0,0.04) 0px -1px 1px inset, rgba(0,0,0,0.05) 0px -0.5px 1px`): Multi-layer with inset highlight — the signature
 - **Hard Offset** (`rgb(0,0,0) -7px 7px`): Hover state — playful hard shadow
 
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Primary**: `Roobert`, fallback: `Arial`
 - **Monospace**: `Space Mono`
 - **OpenType Features**: `"ss01"`, `"ss03"`, `"ss10"`, `"ss11"`, `"ss12"` on all Roobert text (display uses all 5; body/UI uses `"ss03"`, `"ss10"`, `"ss11"`, `"ss12"`)
@@ -105,6 +111,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 | Badge | Roobert | 9.6px | 600 | — | — | Pill badges |
 
 ### Principles
+
 - **Five stylistic sets as identity**: The combination of `"ss01"`, `"ss03"`, `"ss10"`, `"ss11"`, `"ss12"` on Roobert creates a distinctive typographic personality. `ss01` is reserved for headings and emphasis — body text omits it, creating a subtle hierarchy through glyph variation.
 - **Aggressive display compression**: -3.2px at 80px, -2.4px at 60px — the most compressed display tracking alongside the most generous body spacing (1.60 line-height), creating dramatic contrast.
 - **Weight 600 for headings, 500 for UI, 400 for body**: Clean three-tier system where each weight has a strict role.
@@ -138,6 +145,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 - Hover: dragonfruit swatch color, white text, animated rotation
 
 ### Cards & Containers
+
 - Background: `#ffffff` on cream canvas
 - Border: `1px solid #dad4c8` (warm oat) or `1px dashed #dad4c8`
 - Radius: 12px (standard cards), 24px (feature cards/images), 40px (section containers/footer)
@@ -145,12 +153,14 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 - Colorful section backgrounds using swatch palette (matcha, slushie, ube, lemon)
 
 ### Inputs & Forms
+
 - Text: `#000000`
 - Border: `1px solid #717989`
 - Radius: 4px
 - Focus: `rgb(20, 110, 245) solid 2px` outline
 
 ### Navigation
+
 - Sticky top nav on cream background
 - Roobert 15px weight 500 for nav links
 - Clay logo left-aligned
@@ -159,6 +169,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 - Mobile: hamburger collapse at 767px
 
 ### Image Treatment
+
 - Product screenshots in white cards with oat borders
 - Colorful illustrated sections with swatch background colors
 - 8px–24px radius on images
@@ -185,10 +196,12 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 1px, 2px, 4px, 6.4px, 8px, 12px, 12.8px, 16px, 18px, 20px, 24px
 
 ### Grid & Container
+
 - Max content width centered
 - Feature sections alternate between white cards and colorful swatch backgrounds
 - Card grids: 2–3 columns on desktop
@@ -196,11 +209,13 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 - Footer with generous 40px radius container
 
 ### Whitespace Philosophy
+
 - **Warm, generous breathing**: The cream background provides a warm rest between content blocks. Spacing is generous but not austere — it feels inviting, like a well-set table.
 - **Color as spatial rhythm**: The alternating swatch-colored sections create visual rhythm through hue rather than just whitespace. Each color section is its own "room."
 - **Craft-like density inside cards**: Within cards, content is compact and well-organized, contrasting with the generous outer spacing.
 
 ### Border Radius Scale
+
 - Sharp (4px): Ghost buttons, inputs
 - Standard (8px): Small cards, images, links
 - Badge (11px): Tag badges
@@ -221,6 +236,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 **Shadow Philosophy**: Clay's shadow system is uniquely three-layered: a downward cast (`0px 1px 1px`), an upward inset highlight (`0px -1px 1px inset`), and a subtle edge (`0px -0.5px 1px`). This creates a "pressed into clay" quality where elements feel both raised AND embedded — like a clay tablet where content is stamped into the surface. The hover hard shadow (`-7px 7px`) is deliberately retro-graphic, referencing print-era drop shadows and adding physical playfulness.
 
 ### Decorative Depth
+
 - Full-width swatch-colored sections create dramatic depth through color contrast
 - Dashed borders add visual texture alongside solid borders
 - Product illustrations with warm, organic art style
@@ -228,6 +244,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use warm cream (`#faf9f7`) as the page background — the warmth is the identity
 - Apply all 5 OpenType stylistic sets on Roobert headings: `"ss01", "ss03", "ss10", "ss11", "ss12"`
 - Use the named swatch palette (Matcha, Slushie, Lemon, Ube, Pomegranate, Blueberry) for section backgrounds
@@ -238,6 +255,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 - Use weight 600 exclusively for headings, 500 for UI, 400 for body
 
 ### Don't
+
 - Don't use cool gray backgrounds — the warm cream (`#faf9f7`) is non-negotiable
 - Don't use neutral gray borders (`#ccc`, `#ddd`) — always use the warm oat tones
 - Don't mix more than 2 swatch colors in the same section
@@ -250,6 +268,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile Small | <479px | Single column, tight padding |
@@ -258,11 +277,13 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 | Desktop | 992px+ | Full layout, 3-column grids, expanded sections |
 
 ### Touch Targets
+
 - Buttons: minimum 6.4px + 12.8px padding for adequate touch area
 - Nav links: 15px font with generous spacing
 - Mobile: full-width buttons for easy tapping
 
 ### Collapsing Strategy
+
 - Hero: 80px → 60px → smaller display text
 - Navigation: horizontal → hamburger at 767px
 - Feature sections: multi-column → stacked
@@ -270,6 +291,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 - Card grids: 3-column → 2-column → single column
 
 ### Image Behavior
+
 - Product screenshots scale proportionally
 - Colorful section illustrations adapt to viewport width
 - Rounded corners maintained across breakpoints
@@ -277,6 +299,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Background: Warm Cream (`#faf9f7`)
 - Text: Clay Black (`#000000`)
 - Secondary text: Warm Silver (`#9f9b93`)
@@ -288,6 +311,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 - Pink accent: Pomegranate 400 (`#fc7981`)
 
 ### Example Component Prompts
+
 - "Create a hero on warm cream (#faf9f7) background. Headline at 80px Roobert weight 600, line-height 1.00, letter-spacing -3.2px, OpenType 'ss01 ss03 ss10 ss11 ss12', black text. Subtitle at 20px weight 400, line-height 1.40, #9f9b93 text. Two buttons: white solid pill (12px radius) and ghost outlined (4px radius, 1px solid #717989)."
 - "Design a colorful section with Matcha 800 (#02492a) background. Heading at 44px Roobert weight 600, letter-spacing -1.32px, white text. Body at 18px weight 400, line-height 1.60, #84e7a5 text. White card inset with oat border (#dad4c8), 24px radius."
 - "Build a button with playful hover: default transparent background, black text, 16px Roobert weight 500. On hover: background #434346, text white, transform rotateZ(-8deg) translateY(-80%), hard shadow rgb(0,0,0) -7px 7px."
@@ -295,6 +319,7 @@ What makes Clay truly distinctive is its hover micro-animations: buttons on hove
 - "Design an uppercase label: 12px Roobert weight 600, text-transform uppercase, letter-spacing 1.08px, OpenType 'ss03 ss10 ss11 ss12'."
 
 ### Iteration Guide
+
 1. Start with warm cream (#faf9f7) — never cool white
 2. Swatch colors are for full sections, not small accents — go bold with matcha, slushie, ube
 3. Oat borders (#dad4c8) everywhere — dashed variants for decoration

@@ -22,16 +22,19 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 ## 2. Color Palette & Roles
 
 ### Primary Brand
+
 - **Forest Black** (`#001e2b`): Primary dark background — the deepest teal-black
 - **MongoDB Green** (`#00ed64`): Primary brand accent — neon green for highlights, underlines, gradients
 - **Dark Green** (`#00684a`): Button borders, link text on light — muted green for functional use
 
 ### Interactive
+
 - **Action Blue** (`#006cfa`): Secondary accent — links, interactive highlights
 - **Hover Blue** (`#3860be`): All link hover states transition to this blue
 - **Teal Active** (`#1eaedb`): Button hover background — bright teal
 
 ### Neutral Scale
+
 - **Deep Teal** (`#1c2d38`): Dark button backgrounds, secondary dark surfaces
 - **Teal Gray** (`#3d4f58`): Dark borders on dark surfaces
 - **Dark Slate** (`#21313c`): Dark link text variant
@@ -42,6 +45,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 - **Black** (`#000000`): Text on light surfaces, darkest elements
 
 ### Shadows
+
 - **Forest Shadow** (`rgba(0, 30, 43, 0.12) 0px 26px 44px, rgba(0, 0, 0, 0.13) 0px 7px 13px`): Primary card elevation — teal-tinted
 - **Standard Shadow** (`rgba(0, 0, 0, 0.15) 0px 3px 20px`): General elevation
 - **Subtle Shadow** (`rgba(0, 0, 0, 0.1) 0px 2px 4px`): Light card lift
@@ -49,6 +53,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Display Serif**: `MongoDB Value Serif` — editorial hero headlines
 - **Body / UI**: `Euclid Circular A` — geometric sans-serif workhorse
 - **Code / Labels**: `Source Code Pro` — monospace with uppercase label treatments
@@ -76,6 +81,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 | Code Micro | Source Code Pro | 9px (0.56rem) | 600 | 2.67 (relaxed) | 2.5px | `text-transform: uppercase` |
 
 ### Principles
+
 - **Serif for authority**: MongoDB Value Serif at hero scale creates an editorial presence unusual in tech — it communicates that MongoDB is an institution, not a startup.
 - **Weight 300 as body default**: Euclid Circular A uses light (300) for body text, creating an airy reading experience that contrasts with the dense, dark backgrounds.
 - **Wide-tracked monospace labels**: Source Code Pro uppercase at 1px–3px letter-spacing creates technical signposts that feel like database field labels — systematic, structured, classified.
@@ -109,6 +115,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 - Hover: background tint
 
 ### Cards & Containers
+
 - Light mode: white background with `1px solid #b8c4c2` border
 - Dark mode: `#001e2b` or `#1c2d38` background with `1px solid #3d4f58`
 - Radius: 16px (standard), 24px (medium), 48px (large/hero)
@@ -116,11 +123,13 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 - Image containers: 30px–32px radius
 
 ### Inputs & Forms
+
 - Textarea: text `#e8edeb`, padding 12px 12px 12px 8px
 - Borders: `1px solid #b8c4c2` on light, `1px solid #3d4f58` on dark
 - Input radius: 4px
 
 ### Navigation
+
 - Dark header on forest-black background
 - Euclid Circular A 16px weight 500 for nav links
 - MongoDB logo (leaf icon + wordmark) left-aligned
@@ -128,6 +137,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 - Mega-menu dropdowns with product categories
 
 ### Image Treatment
+
 - Dashboard screenshots on dark backgrounds
 - Green-accented UI elements in screenshots
 - 30px–32px radius on image containers
@@ -148,10 +158,12 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 1px, 4px, 7px, 8px, 10px, 12px, 14px, 15px, 16px, 18px, 20px, 24px, 32px
 
 ### Grid & Container
+
 - Max content width centered
 - Dark hero section with contained content
 - Light content sections below
@@ -159,11 +171,13 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 - Full-width dark footer
 
 ### Whitespace Philosophy
+
 - **Dramatic mode transitions**: The shift from dark teal sections to white content creates built-in visual breathing through contrast, not just space.
 - **Generous dark sections**: Dark hero and feature areas use extra vertical padding (80px+) to let the forest-dark background breathe.
 - **Compact light sections**: White content areas are denser, with tighter card grids and less vertical spacing.
 
 ### Border Radius Scale
+
 - Minimal (1px–2px): Small spans, badges
 - Subtle (4px): Inputs, small buttons
 - Standard (8px): Cards, links
@@ -190,6 +204,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use `#001e2b` (forest-black) for dark sections — not pure black
 - Apply MongoDB Green (`#00ed64`) sparingly for maximum electric impact
 - Use MongoDB Value Serif ONLY for hero/display headings — Euclid Circular A for everything else
@@ -200,6 +215,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 - Apply pill radius (100px) to primary action buttons
 
 ### Don't
+
 - Don't use pure black (`#000000`) for dark backgrounds — always use teal-black (`#001e2b`)
 - Don't use MongoDB Green (`#00ed64`) on backgrounds — it's an accent for text, underlines, and small highlights
 - Don't use standard gray shadows — always use teal-tinted (`rgba(0,30,43,...)`)
@@ -212,6 +228,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile Small | <425px | Tight single column |
@@ -222,11 +239,13 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 | Ultra-wide | >1440px | Maximum width, generous margins |
 
 ### Touch Targets
+
 - Pill buttons with generous padding
 - Navigation links at 16px with adequate spacing
 - Card surfaces as full-area touch targets
 
 ### Collapsing Strategy
+
 - Hero: MongoDB Value Serif 96px → 64px → scales further
 - Navigation: horizontal mega-menu → hamburger
 - Feature cards: multi-column → stacked
@@ -234,6 +253,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 - Source Code Pro labels maintain uppercase treatment
 
 ### Image Behavior
+
 - Dashboard screenshots scale proportionally
 - Dark section backgrounds maintained full-width
 - Image radius maintained across breakpoints
@@ -241,6 +261,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Dark background: Forest Black (`#001e2b`)
 - Brand accent: MongoDB Green (`#00ed64`)
 - Functional green: Dark Green (`#00684a`)
@@ -251,6 +272,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 - Border dark: Teal Gray (`#3d4f58`)
 
 ### Example Component Prompts
+
 - "Create a hero on forest-black (#001e2b) background. Headline at 96px MongoDB Value Serif weight 400, line-height 1.20, white text with 'potential' highlighted in MongoDB Green (#00ed64). Subtitle at 18px Euclid Circular A weight 400. Green pill CTA (#00684a, 100px radius). Neon green gradient glow behind product screenshot."
 - "Design a card on white background: 1px solid #b8c4c2 border, 16px radius, shadow rgba(0,30,43,0.12) 0px 26px 44px. Title at 24px Euclid Circular A weight 500. Body at 16px weight 300. Source Code Pro 14px uppercase label above title with 2px letter-spacing."
 - "Build a dark section: #001e2b background, 1px solid #3d4f58 border on cards. White text. MongoDB Green (#00ed64) accent underlines on headings using bottom-border 2px solid."
@@ -258,6 +280,7 @@ What makes MongoDB distinctive is its dual-mode design: a dark hero/feature sect
 - "Design a pill button: #1c2d38 background, 1px solid #3d4f58 border, 100px radius, #5c6c75 text. Hover: #1eaedb background, white text, translateX(5px)."
 
 ### Iteration Guide
+
 1. Start with the mode decision: dark (#001e2b) for hero/features, white for content
 2. MongoDB Green (#00ed64) is electric — use once per section for maximum impact
 3. Serif headlines (MongoDB Value Serif) create the editorial authority — never use for body

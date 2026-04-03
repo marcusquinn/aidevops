@@ -24,11 +24,13 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 ## 2. Color Palette & Roles
 
 ### Brand Primary
+
 - **Black** (`#000000`): Primary brand color, text on light surfaces, `--mds-color-hcp-brand`
 - **Dark Charcoal** (`#15181e`): Dark mode backgrounds, hero sections
 - **Near Black** (`#0d0e12`): Deepest dark mode surface, form inputs on dark
 
 ### Neutral Scale
+
 - **Light Gray** (`#f1f2f3`): Light backgrounds, subtle surfaces
 - **Mid Gray** (`#d5d7db`): Borders, button text on dark
 - **Cool Gray** (`#b2b6bd`): Border accents (at 0.1–0.4 opacity)
@@ -37,6 +39,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 - **Near White** (`#efeff1`): Primary text on dark surfaces
 
 ### Product Brand Colors
+
 - **Terraform Purple** (`#7b42bc`): `--mds-color-terraform-button-background`
 - **Vault Yellow** (`#ffcf25`): `--mds-color-vault-button-background`
 - **Waypoint Teal** (`#14c6cb`): `--mds-color-waypoint-button-background-focus`
@@ -46,6 +49,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 - **Visited Purple** (`#a737ff`): `--mds-color-foreground-action-visited`
 
 ### Semantic Colors
+
 - **Action Blue** (`#1060ff`): Primary action links on dark
 - **Link Blue** (`#2264d6`): Primary links on light
 - **Bright Blue** (`#2b89ff`): Active links, hover accent
@@ -57,12 +61,14 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 - **Navy** (`#101a59`): `--mds-color-unified-core-blue-7`
 
 ### Shadows
+
 - **Micro Shadow** (`rgba(97, 104, 117, 0.05) 0px 1px 1px, rgba(97, 104, 117, 0.05) 0px 2px 2px`): Default card/button elevation
 - **Focus Outline**: `3px solid var(--mds-color-focus-action-external)` — systematic focus ring
 
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Primary Brand**: `__hashicorpSans_96f0ca` (HashiCorp Sans), with fallback: `__hashicorpSans_Fallback_96f0ca`
 - **System UI**: `system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial`
 
@@ -85,6 +91,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 | Uppercase Label | HashiCorp Sans | 13px (0.81rem) | 600 | 1.69 (relaxed) | 1.3px | `text-transform: uppercase` |
 
 ### Principles
+
 - **Brand/System split**: HashiCorp Sans for headings and brand-critical text; system-ui for body, navigation, and functional text. The brand font carries the weight, system-ui carries the words.
 - **Kern always on**: All HashiCorp Sans text enables OpenType `"kern"` — letterfitting is non-negotiable.
 - **Tight headings**: Every heading uses 1.17–1.21 line-height, creating dense, stacked text blocks that feel infrastructural — solid, load-bearing.
@@ -121,6 +128,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 - Each product button follows the same structural pattern but uses its brand color
 
 ### Badges / Pills
+
 - Background: `#42225b` (deep purple)
 - Text: `#efeff1`
 - Padding: 3px 7px
@@ -144,6 +152,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 - Radius: 3px
 
 ### Links
+
 - **Action Blue on Light**: `#2264d6`, hover → blue-600 variable, underline on hover
 - **Action Blue on Dark**: `#1060ff` or `#2b89ff`, underline on hover
 - **White on Dark**: `#ffffff`, transparent underline → visible underline on hover
@@ -152,12 +161,14 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 - All links use `var(--wpl-blue-600)` as hover color
 
 ### Cards & Containers
+
 - Light mode: white background, micro-shadow elevation
 - Dark mode: `#15181e` or darker surfaces
 - Radius: 8px for cards and containers
 - Product showcase cards with gradient borders or accent lighting
 
 ### Navigation
+
 - Clean horizontal nav with mega-menu dropdowns
 - HashiCorp logo left-aligned
 - system-ui 15px weight 500 for links
@@ -168,16 +179,19 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 2px, 3px, 4px, 6px, 7px, 8px, 9px, 11px, 12px, 16px, 20px, 24px, 32px, 40px, 48px
 
 ### Grid & Container
+
 - Max content width: ~1150px (xl breakpoint)
 - Full-width dark hero sections with contained content
 - Card grids: 2–3 column layouts
 - Generous horizontal padding at desktop scale
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile Small | <375px | Tight single column |
@@ -190,11 +204,13 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 | Ultra-wide | >1440px | Centered, generous margins |
 
 ### Whitespace Philosophy
+
 - **Enterprise breathing room**: Generous vertical spacing between sections (48px–80px+) communicates stability and seriousness.
 - **Dense headings, spacious body**: Tight line-height headings sit above relaxed body text, creating visual "weight at the top" of each section.
 - **Dark as canvas**: Dark hero sections use extra vertical padding to let 3D illustrations and gradients breathe.
 
 ### Border Radius Scale
+
 - Minimal (2px): Links, small inline elements
 - Subtle (3px): Checkboxes, small inputs
 - Standard (4px): Secondary buttons
@@ -214,6 +230,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use HashiCorp Sans for headings and brand text, system-ui for body and UI text
 - Enable `"kern"` on all HashiCorp Sans text
 - Use product brand colors ONLY for their respective products (Terraform = purple, Vault = yellow, etc.)
@@ -224,6 +241,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 - Use `3px solid` focus outlines for accessibility
 
 ### Don't
+
 - Don't use product brand colors outside their product context (no Terraform purple on Vault content)
 - Don't increase shadow opacity above 0.1 — the whisper level is intentional
 - Don't use pill-shaped buttons (>8px radius) — the sharp, minimal radius is structural
@@ -236,6 +254,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | <768px | Single column, hamburger nav, stacked CTAs |
@@ -244,6 +263,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 | Large | >1150px | Max-width centered, generous margins |
 
 ### Collapsing Strategy
+
 - Hero: 82px → 52px → 42px heading sizes
 - Navigation: mega-menu → hamburger
 - Product cards: 3-column → 2-column → stacked
@@ -253,6 +273,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Light bg: `#ffffff`, `#f1f2f3`
 - Dark bg: `#15181e`, `#0d0e12`
 - Text light: `#000000`, `#3b3d45`
@@ -263,6 +284,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 - Focus: `3px solid` product-appropriate color
 
 ### Example Component Prompts
+
 - "Create a hero on dark background (#15181e). Headline at 82px HashiCorp Sans weight 600, line-height 1.17, kern enabled, white text. Sub-text at 20px system-ui weight 400, line-height 1.50, #d5d7db text. Two buttons: primary dark (#15181e, 5px radius, 9px 15px padding) and secondary white (#ffffff, 4px radius, 8px 12px padding)."
 - "Design a product card: white background, 8px radius, dual-layer shadow at rgba(97,104,117,0.05). Title at 26px HashiCorp Sans weight 700, body at 16px system-ui weight 400 line-height 1.63."
 - "Build an uppercase section label: 13px HashiCorp Sans weight 600, line-height 1.69, letter-spacing 1.3px, text-transform uppercase, #656a76 color."
@@ -270,6 +292,7 @@ The component system uses the `mds` (Markdown Design System) prefix, indicating 
 - "Design a dark form: #0d0e12 input background, #efeff1 text, 1px solid rgb(97,104,117) border, 5px radius, 11px padding. Focus: 3px solid accent-color outline."
 
 ### Iteration Guide
+
 1. Always start with the mode decision: light (white) for informational, dark (#15181e) for hero/product
 2. HashiCorp Sans for headings only (17px+), system-ui for everything else
 3. Shadows are at whisper level (0.05 opacity) — if visible, reduce

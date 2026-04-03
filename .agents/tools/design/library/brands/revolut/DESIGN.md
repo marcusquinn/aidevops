@@ -20,16 +20,19 @@ What distinguishes Revolut is its pill-everything button system. Every button us
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Revolut Dark** (`#191c1f`): Primary dark surface, button background, near-black text
 - **Pure White** (`#ffffff`): `--rui-color-action-label`, primary light surface
 - **Light Surface** (`#f4f4f4`): Secondary button background, subtle surface
 
 ### Brand / Interactive
+
 - **Revolut Blue** (`#494fdf`): `--rui-color-blue`, primary brand blue
 - **Action Blue** (`#4f55f1`): `--rui-color-action-photo-header-text`, header accent
 - **Blue Text** (`#376cd5`): `--website-color-blue-text`, link blue
 
 ### Semantic
+
 - **Danger Red** (`#e23b4a`): `--rui-color-danger`, error/destructive
 - **Deep Pink** (`#e61e49`): `--rui-color-deep-pink`, critical accent
 - **Warning Orange** (`#ec7e00`): `--rui-color-warning`, warning states
@@ -42,6 +45,7 @@ What distinguishes Revolut is its pill-everything button system. Every button us
 - **Red Text** (`#8b0000`): `--website-color-red-text`, dark red text
 
 ### Neutral Scale
+
 - **Mid Slate** (`#505a63`): Secondary text
 - **Cool Gray** (`#8d969e`): Muted text, tertiary
 - **Gray Tone** (`#c9c9cd`): `--rui-color-grey-tone-20`, borders/dividers
@@ -49,6 +53,7 @@ What distinguishes Revolut is its pill-everything button system. Every button us
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Display**: `Aeonik Pro` — geometric grotesque, no detected fallbacks
 - **Body / UI**: `Inter` — standard system sans
 - **Fallback**: `Arial` for specific button contexts
@@ -70,6 +75,7 @@ What distinguishes Revolut is its pill-everything button system. Every button us
 | Body Bold Link | Inter | 16px (1.00rem) | 700 | 1.50 | 0.24px | Bold links |
 
 ### Principles
+
 - **Weight 500 as display default**: Aeonik Pro uses medium (500) for ALL headings — no bold. This creates authority through size and tracking, not weight.
 - **Billboard tracking**: -2.72px at 136px is extremely compressed — text designed to be read at a glance, like airport signage.
 - **Positive tracking on body**: Inter uses +0.16px to +0.24px, creating airy, well-spaced reading text that contrasts with the compressed headings.
@@ -108,11 +114,13 @@ What distinguishes Revolut is its pill-everything button system. Every button us
 - Radius: 9999px
 
 ### Cards & Containers
+
 - Radius: 12px (small), 20px (cards)
 - No shadows — flat surfaces with color contrast
 - Dark and light section alternation
 
 ### Navigation
+
 - Aeonik Pro 20px weight 500
 - Clean header, hamburger toggle at 12px radius
 - Pill CTAs right-aligned
@@ -120,11 +128,13 @@ What distinguishes Revolut is its pill-everything button system. Every button us
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 4px, 6px, 8px, 14px, 16px, 20px, 24px, 32px, 40px, 48px, 80px, 88px, 120px
 - Large section spacing: 80px–120px
 
 ### Border Radius Scale
+
 - Standard (12px): Navigation, small buttons
 - Card (20px): Feature cards
 - Pill (9999px): All buttons
@@ -141,6 +151,7 @@ What distinguishes Revolut is its pill-everything button system. Every button us
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use Aeonik Pro weight 500 for all display headings
 - Apply 9999px radius to all buttons — pill shape is universal
 - Use generous button padding (14px 32px)
@@ -148,6 +159,7 @@ What distinguishes Revolut is its pill-everything button system. Every button us
 - Apply positive letter-spacing on Inter body text
 
 ### Don't
+
 - Don't use shadows — Revolut is flat by design
 - Don't use bold (700) for Aeonik Pro headings — 500 is the weight
 - Don't use small buttons — the generous padding is intentional
@@ -156,6 +168,7 @@ What distinguishes Revolut is its pill-everything button system. Every button us
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile Small | <400px | Compact, single column |
@@ -167,6 +180,7 @@ What distinguishes Revolut is its pill-everything button system. Every button us
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Dark: Revolut Dark (`#191c1f`)
 - Light: White (`#ffffff`)
 - Surface: Light (`#f4f4f4`)
@@ -175,10 +189,12 @@ What distinguishes Revolut is its pill-everything button system. Every button us
 - Success: Teal (`#00a87e`)
 
 ### Example Component Prompts
+
 - "Create a hero: white background. Headline at 136px Aeonik Pro weight 500, line-height 1.00, letter-spacing -2.72px, #191c1f text. Dark pill CTA (#191c1f, 9999px, 14px 32px). Outlined pill secondary (transparent, 2px solid #191c1f)."
 - "Build a pill button: #191c1f background, white text, 9999px radius, 14px 32px padding, 20px Aeonik Pro weight 500. Hover: opacity 0.85."
 
 ### Iteration Guide
+
 1. Aeonik Pro 500 for headings — never bold
 2. All buttons are pills (9999px) with generous padding
 3. Zero shadows — flat is the Revolut identity

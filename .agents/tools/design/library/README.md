@@ -4,7 +4,7 @@ AI-readable design system examples for inspiration and reference. Each `DESIGN.m
 
 ## Structure
 
-```
+```text
 library/
 ├── _template/                 -- Base templates for generating new DESIGN.md + previews
 │   ├── DESIGN.md.template     -- Skeleton with section placeholders

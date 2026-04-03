@@ -94,7 +94,8 @@ Typography is the star of this system. A refined serif for headings establishes 
 ### Buttons
 
 **Primary Button:**
-```
+
+```css
 background: #1a1a1a
 color: #FAF8F5
 padding: 12px 32px
@@ -114,7 +115,8 @@ transition: background 150ms ease
 ```
 
 **Secondary Button:**
-```
+
+```css
 background: transparent
 color: #1a1a1a
 padding: 12px 32px
@@ -129,7 +131,8 @@ font-weight: 600
 ```
 
 **Ghost Button (text link style):**
-```
+
+```css
 background: transparent
 color: #4a6fa5
 padding: 8px 0
@@ -146,7 +149,7 @@ text-decoration-thickness: 1px
 
 ### Inputs
 
-```
+```css
 background: #FFFFFF
 border: 1px solid #E8E4DF
 border-radius: 4px
@@ -165,7 +168,7 @@ transition: border-color 150ms ease
 
 ### Links (inline text)
 
-```
+```css
 color: #4a6fa5
 text-decoration: underline
 text-decoration-color: rgba(74, 111, 165, 0.3)
@@ -180,7 +183,7 @@ transition: text-decoration-color 150ms ease
 
 ### Cards (article cards)
 
-```
+```css
 background: transparent
 border: none
 padding: 0
@@ -198,7 +201,7 @@ Article card layout:
 
 ### Navigation
 
-```
+```css
 Top bar:
   background: #FAF8F5
   border-bottom: 1px solid #E8E4DF
@@ -225,7 +228,7 @@ Nav links:
 
 ### Pull Quotes
 
-```
+```css
 font-family: "Playfair Display", serif
 font-size: 28px
 font-style: italic
@@ -239,7 +242,7 @@ margin: 48px 0
 
 ### Code Blocks
 
-```
+```css
 background: #F2EFE9
 border: 1px solid #E8E4DF
 border-radius: 4px

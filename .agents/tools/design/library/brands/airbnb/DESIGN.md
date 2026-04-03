@@ -22,16 +22,19 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 ## 2. Color Palette & Roles
 
 ### Primary Brand
+
 - **Rausch Red** (`#ff385c`): `--palette-bg-primary-core`, primary CTA, brand accent, active states
 - **Deep Rausch** (`#e00b41`): `--palette-bg-tertiary-core`, pressed/dark variant of brand red
 - **Error Red** (`#c13515`): `--palette-text-primary-error`, error text on light
 - **Error Dark** (`#b32505`): `--palette-text-secondary-error-hover`, error hover
 
 ### Premium Tiers
+
 - **Luxe Purple** (`#460479`): `--palette-bg-primary-luxe`, Airbnb Luxe tier branding
 - **Plus Magenta** (`#92174d`): `--palette-bg-primary-plus`, Airbnb Plus tier branding
 
 ### Text Scale
+
 - **Near Black** (`#222222`): `--palette-text-primary`, primary text — warm, not cold
 - **Focused Gray** (`#3f3f3f`): `--palette-text-focused`, focused state text
 - **Secondary Gray** (`#6a6a6a`): Secondary text, descriptions
@@ -39,11 +42,13 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 - **Link Disabled** (`#929292`): `--palette-text-link-disabled`, disabled links
 
 ### Interactive
+
 - **Legal Blue** (`#428bff`): `--palette-text-legal`, legal links, informational
 - **Border Gray** (`#c1c1c1`): Border color for cards and dividers
 - **Light Surface** (`#f2f2f2`): Circular navigation buttons, secondary surfaces
 
 ### Surface & Shadows
+
 - **Pure White** (`#ffffff`): Page background, card surfaces
 - **Card Shadow** (`rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px`): Three-layer warm lift
 - **Hover Shadow** (`rgba(0,0,0,0.08) 0px 4px 12px`): Button hover elevation
@@ -51,6 +56,7 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Primary**: `Airbnb Cereal VF`, fallbacks: `Circular, -apple-system, system-ui, Roboto, Helvetica Neue`
 - **OpenType Features**: `"salt"` (stylistic alternates) on specific caption elements
 
@@ -75,6 +81,7 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 | Micro Uppercase | Airbnb Cereal VF | 8px (0.50rem) | 700 | 1.25 (tight) | 0.32px | `text-transform: uppercase` |
 
 ### Principles
+
 - **Warm weight range**: 500–700 dominate. No weight 300 or 400 for headings — Airbnb's type is always at least medium weight, creating a warm, confident voice.
 - **Negative tracking on headings**: -0.18px to -0.44px letter-spacing on display creates intimate, cozy headings rather than cold, compressed ones.
 - **"salt" OpenType feature**: Stylistic alternates on specific UI elements (badges, captions) create subtle glyph variations that add visual interest.
@@ -101,6 +108,7 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 - Focus: scale(0.92) shrink animation
 
 ### Cards & Containers
+
 - Background: `#ffffff`
 - Radius: 14px (badges), 20px (cards/buttons), 32px (large)
 - Shadow: `rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px` (three-layer)
@@ -108,11 +116,13 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 - Carousel controls: circular 50% buttons
 
 ### Inputs
+
 - Search: `#222222` text
 - Focus: `var(--palette-bg-primary-error)` background tint + `0 0 0 2px` ring
 - Radius: depends on context (search bar uses pill-like rounding)
 
 ### Navigation
+
 - White sticky header with search bar centered
 - Airbnb logo (Rausch Red) left-aligned
 - Category filter pills: horizontal scroll below search
@@ -120,6 +130,7 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 - "Become a Host" text link, avatar/menu right-aligned
 
 ### Image Treatment
+
 - Listing photography fills card top with generous height
 - Image carousel with dot indicators
 - Heart/wishlist icon overlay on images
@@ -128,21 +139,25 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 2px, 3px, 4px, 6px, 8px, 10px, 11px, 12px, 15px, 16px, 22px, 24px, 32px
 
 ### Grid & Container
+
 - Full-width header with centered search
 - Category pill bar: horizontal scrollable row
 - Listing grid: responsive multi-column (3–5 columns on desktop)
 - Full-width footer with link columns
 
 ### Whitespace Philosophy
+
 - **Travel-magazine spacing**: Generous vertical padding between sections creates a leisurely browsing pace — you're meant to scroll slowly, like browsing a magazine.
 - **Photography density**: Listing cards are packed relatively tightly, but each image is large enough to feel immersive.
 - **Search bar prominence**: The search bar gets maximum vertical space in the header — finding your destination is the primary action.
 
 ### Border Radius Scale
+
 - Subtle (4px): Small links
 - Standard (8px): Buttons, tabs, search elements
 - Badge (14px): Status badges, labels
@@ -164,6 +179,7 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use `#222222` (warm near-black) for text — never pure `#000000`
 - Apply Rausch Red (`#ff385c`) only for primary CTAs and brand moments — it's the singular accent
 - Use Airbnb Cereal VF at weight 500–700 — the warm weight range is intentional
@@ -174,6 +190,7 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 - Use circular (50%) buttons for carousel/navigation controls
 
 ### Don't
+
 - Don't use pure black (`#000000`) for text — always `#222222` (warm)
 - Don't apply Rausch Red to backgrounds or large surfaces — it's an accent only
 - Don't use thin font weights (300, 400) for headings — 500 minimum
@@ -185,6 +202,7 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile Small | <375px | Single column, compact search |
@@ -199,12 +217,14 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 *Note: Airbnb has 61 detected breakpoints — one of the most granular responsive systems observed, reflecting their obsession with layout at every possible screen size.*
 
 ### Touch Targets
+
 - Circular nav buttons: adequate 50% radius sizing
 - Listing cards: full-card tap target on mobile
 - Search bar: prominently sized for thumb interaction
 - Category pills: horizontally scrollable with generous padding
 
 ### Collapsing Strategy
+
 - Listing grid: 5 → 4 → 3 → 2 → 1 columns
 - Search: expanded bar → compact bar → overlay
 - Category pills: horizontal scroll at all sizes
@@ -212,6 +232,7 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 - Map: side panel → overlay/toggle
 
 ### Image Behavior
+
 - Listing photos: carousel with swipe on mobile
 - Responsive image sizing with aspect ratio maintained
 - Heart overlay positioned consistently across sizes
@@ -220,6 +241,7 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Background: Pure White (`#ffffff`)
 - Text: Near Black (`#222222`)
 - Brand accent: Rausch Red (`#ff385c`)
@@ -230,6 +252,7 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 - Button surface: `#f2f2f2`
 
 ### Example Component Prompts
+
 - "Create a listing card: white background, 20px radius. Three-layer shadow: rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px. Photo area on top (16:10 ratio), details below: 16px Airbnb Cereal VF weight 600 title, 14px weight 400 description in #6a6a6a."
 - "Design search bar: white background, full card shadow, 32px radius on container. Search text at 14px Cereal VF weight 400. Red search button (#ff385c, 50% radius, white icon)."
 - "Build category pill bar: horizontal scrollable row. Each pill: 14px Cereal VF weight 600, #222222 text, bottom border on active. Circular prev/next arrows (#f2f2f2 bg, 50% radius)."
@@ -237,6 +260,7 @@ What distinguishes Airbnb is its palette-based token system (`--palette-*`) and 
 - "Design a heart/wishlist button: transparent background, 50% radius, white heart icon with dark shadow outline."
 
 ### Iteration Guide
+
 1. Start with white — the photography provides all the color
 2. Rausch Red (#ff385c) is the singular accent — use sparingly for CTAs only
 3. Near-black (#222222) for text — the warmth matters

@@ -20,22 +20,26 @@ Typography leans on the system font stack for headings — achieving maximum ren
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Emerald Signal Green** (`#00d992`): The core brand energy — used for accent borders, glow effects, and the highest-signal interactive moments. This is the "power-on" indicator of the entire interface.
 - **VoltAgent Mint** (`#2fd6a1`): The button-text variant of the brand green — slightly warmer and more readable than pure Signal Green, used specifically for CTA text on dark surfaces.
 - **Tailwind Emerald** (`#10b981`): The ecosystem-standard green used at low opacity (30%) for subtle background tints and link defaults. Bridges VoltAgent's custom palette with Tailwind's utility classes.
 
 ### Secondary & Accent
+
 - **Soft Purple** (`#818cf8`): A cool indigo-violet used sparingly for secondary categorization, code syntax highlights, and visual variety without competing with green.
 - **Cobalt Primary** (`#306cce`): Docusaurus primary dark — used in documentation contexts for links and interactive focus states.
 - **Deep Cobalt** (`#2554a0`): The darkest primary shade, reserved for pressed/active states in documentation UI.
 - **Ring Blue** (`#3b82f6`): Tailwind's ring color at 50% opacity — visible only during keyboard focus for accessibility compliance.
 
 ### Surface & Background
+
 - **Abyss Black** (`#050507`): The landing page canvas — a near-pure black with the faintest warm undertone, darker than most "dark themes" for maximum contrast with green accents.
 - **Carbon Surface** (`#101010`): The primary card and button background — one shade lighter than Abyss, creating a barely perceptible elevation layer. Used across all contained surfaces.
 - **Warm Charcoal Border** (`#3d3a39`): The signature containment color — not a cold gray but a warm, almost brownish dark tone that prevents borders from feeling harsh against the black canvas.
 
 ### Neutrals & Text
+
 - **Snow White** (`#f2f2f2`): The primary text color on dark surfaces — not pure white (`#ffffff`) but a softened, eye-friendly off-white. The most-used color on the site (1008 instances).
 - **Pure White** (`#ffffff`): Reserved for the highest-emphasis moments — ghost button text and maximum-contrast headings. Used at low opacity (5%) for subtle overlay effects.
 - **Warm Parchment** (`#b8b3b0`): Secondary body text — a warm light gray with a slight pinkish undertone that reads as "paper" against the dark canvas.
@@ -45,6 +49,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 - **Near White** (`#eeeeee`): Highest-contrast secondary text, one step below Snow White.
 
 ### Semantic & Accent
+
 - **Success Emerald** (`#008b00`): Deep green for success states and positive confirmations in documentation contexts.
 - **Success Light** (`#80d280`): Soft pastel green for success backgrounds and subtle positive indicators.
 - **Warning Amber** (`#ffba00`): Bright amber for warning alerts and caution states.
@@ -55,6 +60,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 - **Dashed Border Slate** (`#4f5d75` at 40%): A muted blue-gray used exclusively for decorative dashed borders in workflow diagrams.
 
 ### Gradient System
+
 - **Green Signal Glow**: `drop-shadow(0 0 2px #00d992)` animating to `drop-shadow(0 0 8px #00d992)` — creates a pulsing "electric charge" effect on the VoltAgent bolt logo and interactive elements. The glow expands and contracts like a heartbeat.
 - **Warm Ambient Haze**: `rgba(92, 88, 85, 0.2) 0px 0px 15px` — a warm-toned diffused shadow that creates a soft atmospheric glow around elevated cards, visible at the edges without sharp boundaries.
 - **Deep Dramatic Elevation**: `rgba(0, 0, 0, 0.7) 0px 20px 60px` with `rgba(148, 163, 184, 0.1) 0px 0px 0px 1px inset` — a heavy, dramatic downward shadow paired with a faint inset slate ring for the most prominent floating elements.
@@ -62,6 +68,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Primary (Headings)**: `system-ui`, with fallbacks: `-apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji, Segoe UI Symbol`
 - **Secondary (Body/UI)**: `Inter`, with fallbacks inheriting from system-ui stack. OpenType features: `"calt", "rlig"` (contextual alternates and required ligatures)
 - **Monospace (Code)**: `SFMono-Regular`, with fallbacks: `Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace`
@@ -87,6 +94,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 | Code Button | monospace | 13px (0.81rem) | 700 | 1.65 | normal | Copy-to-clipboard button labels |
 
 ### Principles
+
 - **System-native authority**: Display headings use system-ui rather than a custom web font — this means the largest text renders instantly (no FOIT/FOUT) and inherits the operating system's native personality. On macOS it's SF Pro, on Windows it's Segoe UI. The design accepts this variability as a feature, not a bug.
 - **Tight compression creates density**: Hero line-heights are extremely compressed (1.0) with negative letter-spacing (-0.65px to -0.9px), creating text blocks that feel like dense technical specifications rather than airy marketing copy.
 - **Weight gradient, not weight contrast**: The system uses a gentle 300→400→500→600→700 weight progression. Bold (700) is reserved for sub-headings and code-button emphasis. Most body text lives at 400–500, creating subtle rather than dramatic hierarchy.
@@ -125,6 +133,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 - A card-like button treatment for larger interactive surfaces (code copy blocks, feature CTAs)
 
 ### Cards & Containers
+
 - Background: Carbon Surface (`#101010`) — one shade lighter than the page canvas
 - Border: `1px solid #3d3a39` (Warm Charcoal) for standard containment; `2px solid #00d992` for highlighted/active cards
 - Radius: comfortably rounded (8px) for content cards; subtly rounded (4–6px) for smaller inline containers
@@ -134,11 +143,13 @@ Typography leans on the system font stack for headings — achieving maximum ren
 - Dashed variant: `1px dashed rgba(79, 93, 117, 0.4)` for workflow/diagram containers — visually distinct from solid-border content cards
 
 ### Inputs & Forms
+
 - No explicit input token data extracted — the site is landing-page focused with minimal form UI
 - The npm install command (`npm create voltagent-app@latest`) is presented as a code block rather than an input field
 - Inferred style: Carbon Surface background, Warm Charcoal border, VoltAgent Mint focus ring, Snow White text
 
 ### Navigation
+
 - Sticky top nav bar on Abyss Black canvas
 - Logo: VoltAgent bolt icon with animated green glow (`drop-shadow` cycling 2px–8px)
 - Nav structure: Logo → Product dropdown → Use Cases dropdown → Resources dropdown → GitHub stars badge → Docs CTA
@@ -148,6 +159,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 - Mobile: collapses to hamburger menu, single-column vertical layout
 
 ### Image Treatment
+
 - Dark-themed product screenshots and architectural diagrams dominate
 - Code blocks are treated as primary visual content — syntax-highlighted with SFMono-Regular
 - Agent workflow visualizations appear as interactive node graphs with green connection lines
@@ -186,6 +198,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 2px, 4px, 5px, 6px, 6.4px, 8px, 12px, 16px, 20px, 24px, 28px, 32px, 40px, 48px, 64px
 - Button padding: 12px 16px (standard), 20px (container-button)
@@ -194,6 +207,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 - Component gap: 16–24px between sibling cards/elements
 
 ### Grid & Container
+
 - Max container width: approximately 1280–1440px, centered
 - Hero: centered single-column with maximum breathing room
 - Feature sections: alternating asymmetric layouts (code left / text right, then reversed)
@@ -202,12 +216,14 @@ Typography leans on the system font stack for headings — achieving maximum ren
 - Integration grid: responsive multi-column for partner/integration icons
 
 ### Whitespace Philosophy
+
 - **Cinematic breathing room between sections**: Massive vertical gaps create a "scroll-through-chapters" experience — each section feels like a new scene.
 - **Dense within components**: Cards and code blocks are internally compact, with tight line-heights and controlled padding. Information is concentrated, not spread thin.
 - **Border-defined separation**: Rather than relying solely on whitespace, VoltAgent uses the Warm Charcoal border system (`#3d3a39`) to delineate content zones. The border IS the whitespace signal.
 - **Hero-first hierarchy**: The top of the page commands the most space — the "AI Agent Engineering Platform" headline and npm command get maximum vertical runway before the first content section appears.
 
 ### Border Radius Scale
+
 - Nearly squared (4px): Small inline elements, SVG containers, code spans — the sharpest treatment, conveying technical precision
 - Subtly rounded (6px): Buttons, links, clipboard actions — the workhorse radius for interactive elements
 - Code-specific (6.4px): Code blocks, `pre` elements, clipboard copy targets — a deliberate micro-distinction from standard 6px
@@ -228,6 +244,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 **Shadow Philosophy**: VoltAgent communicates depth primarily through **border weight and color**, not shadows. The standard `1px solid #3d3a39` border IS the elevation — adding a `3px` border weight or switching to green (`#00d992`) communicates importance more than adding shadow does. When shadows do appear, they're either warm and diffused (Level 4) or cinematic and dramatic (Level 5) — never medium or generic.
 
 ### Decorative Depth
+
 - **Green Signal Glow**: The VoltAgent bolt logo pulses with a `drop-shadow` animation cycling between 2px and 8px blur radius in Emerald Signal Green. This is the most distinctive decorative element — it makes the logo feel "powered on."
 - **Warm Charcoal Containment Lines**: The warm tone of `#3d3a39` borders creates a subtle visual warmth against the cool black, as if the cards are faintly heated from within.
 - **Dashed Workflow Lines**: `1px dashed rgba(79, 93, 117, 0.4)` creates a blueprint-like aesthetic for architecture diagrams, visually distinct from solid content borders.
@@ -235,6 +252,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use Abyss Black (`#050507`) as the landing page background and Carbon Surface (`#101010`) for all contained elements — the two-shade dark system is essential
 - Reserve Emerald Signal Green (`#00d992`) exclusively for high-signal moments: active borders, glow effects, and the most important interactive accents
 - Use VoltAgent Mint (`#2fd6a1`) for button text on dark surfaces — it's more readable than pure Signal Green
@@ -247,6 +265,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 - Apply `"calt"` and `"rlig"` OpenType features across all text
 
 ### Don't
+
 - Don't use bright or light backgrounds as primary surfaces — the entire identity lives on near-black
 - Don't introduce warm colors (orange, red, yellow) as decorative accents — the palette is strictly green + warm neutrals on black. Warm colors are reserved for semantic states (warning, error) only
 - Don't use Emerald Signal Green (`#00d992`) on large surfaces or as background fills — it's an accent, never a surface
@@ -261,6 +280,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Small Mobile | <420px | Minimum layout, stacked everything, reduced hero text to ~24px |
@@ -272,12 +292,14 @@ Typography leans on the system font stack for headings — achieving maximum ren
 *23 breakpoints detected in total, ranging from 360px to 1992px — indicating a fluid, heavily responsive grid system rather than fixed breakpoint snapping.*
 
 ### Touch Targets
+
 - Buttons use comfortable padding (12px 16px minimum) ensuring adequate touch area
 - Navigation links spaced with sufficient gap for thumb navigation
 - Interactive card surfaces are large enough to serve as full touch targets
 - Minimum recommended touch target: 44x44px
 
 ### Collapsing Strategy
+
 - **Navigation**: Full horizontal nav with dropdowns collapses to hamburger menu on mobile
 - **Feature grids**: 3-column → 2-column → single-column vertical stacking
 - **Hero text**: 60px → 36px → 24px progressive scaling with maintained compression ratios
@@ -287,6 +309,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 - **Cards**: Stack vertically on mobile with full-width treatment and maintained internal padding
 
 ### Image Behavior
+
 - Dark-themed screenshots and diagrams scale proportionally within containers
 - Agent flow diagrams simplify or scroll horizontally on narrow viewports
 - Dot-pattern decorative backgrounds scale with viewport
@@ -296,6 +319,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Brand Accent: "Emerald Signal Green (#00d992)"
 - Button Text: "VoltAgent Mint (#2fd6a1)"
 - Page Background: "Abyss Black (#050507)"
@@ -306,6 +330,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 - Tertiary Text: "Steel Slate (#8b949e)"
 
 ### Example Component Prompts
+
 - "Create a feature card on Carbon Surface (#101010) with a 1px solid Warm Charcoal (#3d3a39) border, comfortably rounded corners (8px). Use Snow White (#f2f2f2) for the title in system-ui at 24px weight 700, and Warm Parchment (#b8b3b0) for the description in Inter at 16px. Add a subtle Warm Ambient shadow (rgba(92, 88, 85, 0.2) 0px 0px 15px)."
 - "Design a ghost button with transparent background, Snow White (#f2f2f2) text in Inter at 16px, a 1px solid Warm Charcoal (#3d3a39) border, and subtly rounded corners (6px). Padding: 12px vertical, 16px horizontal. On hover, background shifts to rgba(0, 0, 0, 0.2)."
 - "Build a hero section on Abyss Black (#050507) with a massive heading at 60px system-ui, line-height 1.0, letter-spacing -0.65px. The word 'Platform' should be colored in Emerald Signal Green (#00d992). Below the heading, place a code block showing 'npm create voltagent-app@latest' in SFMono-Regular at 14px on Carbon Surface (#101010) with a copy button."
@@ -313,6 +338,7 @@ Typography leans on the system font stack for headings — achieving maximum ren
 - "Design a navigation bar on Abyss Black (#050507) with the VoltAgent logo (bolt icon with animated green glow) on the left, nav links in Inter at 14px weight 500 in Snow White, and a green CTA button (Carbon Surface bg, VoltAgent Mint text) on the right. Add a 1px solid Warm Charcoal bottom border."
 
 ### Iteration Guide
+
 When refining existing screens generated with this design system:
 1. Focus on ONE component at a time
 2. Reference specific color names and hex codes — "use Warm Parchment (#b8b3b0)" not "make it lighter"

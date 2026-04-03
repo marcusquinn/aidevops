@@ -22,6 +22,7 @@ Layout philosophy is deliberately asymmetric. Grids are a scaffold, not a cage â
 ## 2. Colour Palette & Roles
 
 ### Primary
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Primary | `#7c3aed` | Buttons, key links, active states |
@@ -30,6 +31,7 @@ Layout philosophy is deliberately asymmetric. Grids are a scaffold, not a cage â
 | Primary Gradient | `linear-gradient(135deg, #7c3aed, #ec4899)` | Hero sections, primary CTAs, feature highlights |
 
 ### Accent
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Accent | `#ec4899` | Secondary actions, highlights, gradient endpoint |
@@ -38,6 +40,7 @@ Layout philosophy is deliberately asymmetric. Grids are a scaffold, not a cage â
 | Tertiary | `#f59e0b` | Occasional warm pop â€” awards, stars, limited use |
 
 ### Text (Dark Mode)
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Text Primary | `#f8fafc` | Headings, primary body |
@@ -46,6 +49,7 @@ Layout philosophy is deliberately asymmetric. Grids are a scaffold, not a cage â
 | Text On Gradient | `#ffffff` | Text over gradient backgrounds |
 
 ### Text (Light Mode)
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Text Primary | `#0f0f0f` | Headings, primary body |
@@ -53,6 +57,7 @@ Layout philosophy is deliberately asymmetric. Grids are a scaffold, not a cage â
 | Text Tertiary | `#a1a1aa` | Placeholders, metadata |
 
 ### Surface (Dark Mode)
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Background | `#0f0f0f` | Page background |
@@ -63,6 +68,7 @@ Layout philosophy is deliberately asymmetric. Grids are a scaffold, not a cage â
 | Border Accent | `#7c3aed` | Active/focused borders |
 
 ### Surface (Light Mode)
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Background | `#ffffff` | Page background |
@@ -71,6 +77,7 @@ Layout philosophy is deliberately asymmetric. Grids are a scaffold, not a cage â
 | Border Default | `#e4e4e7` | Subtle borders |
 
 ### Semantic
+
 | Role | Hex | Usage |
 |------|-----|-------|
 | Success | `#34d399` | Confirmations, sent states |
@@ -79,6 +86,7 @@ Layout philosophy is deliberately asymmetric. Grids are a scaffold, not a cage â
 | Info | `#60a5fa` | Help text, informational |
 
 ### Shadows
+
 | Role | Value | Usage |
 |------|-------|-------|
 | Gradient Glow | `0 8px 32px rgba(124, 58, 237, 0.3)` | Primary CTAs, hero elements |
@@ -89,6 +97,7 @@ Layout philosophy is deliberately asymmetric. Grids are a scaffold, not a cage â
 ## 3. Typography Rules
 
 ### Font Families
+
 | Role | Stack |
 |------|-------|
 | Display | `'Space Grotesk', 'Plus Jakarta Sans', system-ui, sans-serif` |
@@ -113,6 +122,7 @@ Layout philosophy is deliberately asymmetric. Grids are a scaffold, not a cage â
 | Code | Mono | 14px | 400 | 1.6 | 0 | Code snippets, technical details |
 
 ### Typography Principles
+
 - Display type (Space Grotesk) is reserved for headings and hero content â€” never body text
 - Use UPPERCASE overlines sparingly to introduce sections with category context
 - Headings at 64px+ can use the gradient as a text fill (`background-clip: text`) for maximum impact
@@ -124,7 +134,8 @@ Layout philosophy is deliberately asymmetric. Grids are a scaffold, not a cage â
 ### Buttons
 
 **Primary Button (Gradient)**
-```
+
+```css
 background: linear-gradient(135deg, #7c3aed, #ec4899)
 color: #ffffff
 font: 15px/1 Inter, 600
@@ -141,7 +152,8 @@ transition: all 300ms cubic-bezier(0.34, 1.56, 0.64, 1)
 ```
 
 **Secondary Button**
-```
+
+```css
 background: transparent
 color: #f8fafc (dark) / #0f0f0f (light)
 font: 15px/1 Inter, 600
@@ -156,7 +168,8 @@ border-radius: 999px
 ```
 
 **Ghost Button**
-```
+
+```css
 background: transparent
 color: #a1a1aa (dark) / #52525b (light)
 font: 15px/1 Inter, 500
@@ -169,7 +182,8 @@ border-radius: 999px
 ```
 
 ### Inputs
-```
+
+```css
 background: #18181b (dark) / #ffffff (light)
 color: #f8fafc (dark) / #0f0f0f (light)
 font: 15px Inter
@@ -184,7 +198,8 @@ border-radius: 12px
 ```
 
 ### Links
-```
+
+```css
 color: #a78bfa (dark) / #7c3aed (light)
 text-decoration: none
 font-weight: 500
@@ -195,7 +210,8 @@ transition: color 200ms ease
 ```
 
 ### Cards
-```
+
+```css
 background: #18181b (dark) / #ffffff (light)
 border: 1px solid #27272a (dark) / #e4e4e7 (light)
 border-radius: 16px
@@ -206,7 +222,8 @@ transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 300ms 
 ```
 
 ### Navigation
-```
+
+```css
 Background: transparent (scrolled: #0f0f0f/95 with backdrop-blur: 16px)
 Height: 72px
 Logo: bold display wordmark or logomark, left-aligned
@@ -218,6 +235,7 @@ CTA in nav: pill button with gradient
 ## 5. Layout Principles
 
 ### Spacing Scale (8px base unit)
+
 | Token | Value | Usage |
 |-------|-------|-------|
 | space-1 | 4px | Micro adjustments |
@@ -233,12 +251,14 @@ CTA in nav: pill button with gradient
 | space-20 | 160px | Hero vertical padding |
 
 ### Grid
+
 - 12-column fluid grid
 - Gutter: 16px (mobile), 24px (tablet), 40px (desktop)
 - Max container: 1440px (content), full-bleed for hero sections
 - Asymmetric layouts encouraged â€” 5/7, 4/8, or offset columns for visual interest
 
 ### Breakpoints
+
 | Name | Width | Columns | Gutter |
 |------|-------|---------|--------|
 | Mobile | 0â€“767px | 4 | 16px |
@@ -247,9 +267,11 @@ CTA in nav: pill button with gradient
 | Wide | 1440px+ | 12 | 40px |
 
 ### Whitespace Philosophy
+
 Whitespace is a design element. Generous space around large type and hero content creates drama and draws the eye. Use visual weight contrast â€” dense information areas next to open breathing room â€” to create rhythm down the page.
 
 ### Border Radius Scale
+
 | Token | Value | Usage |
 |-------|-------|-------|
 | radius-none | 0px | Editorial image crops, geometric accents |
@@ -279,6 +301,7 @@ Whitespace is a design element. Generous space around large type and hero conten
 ## 7. Do's and Don'ts
 
 ### Do's
+
 1. **Do** use the gradient generously â€” on buttons, text fills, section backgrounds, decorative elements
 2. **Do** break the grid intentionally for hero sections, testimonial layouts, and feature showcases
 3. **Do** animate on scroll â€” fade-ins, slide-ups, and scale reveals give the system its energy
@@ -288,6 +311,7 @@ Whitespace is a design element. Generous space around large type and hero conten
 7. **Do** pair dark sections with light sections to create page rhythm and prevent monotony
 
 ### Don'ts
+
 1. **Don't** use the gradient on body text â€” only headings, buttons, and decorative accents
 2. **Don't** create dense, information-heavy layouts â€” this system breathes
 3. **Don't** use thin, light font weights below 400 â€” the system demands presence
@@ -299,6 +323,7 @@ Whitespace is a design element. Generous space around large type and hero conten
 ## 8. Responsive Behaviour
 
 ### Breakpoint Behaviour
+
 | Breakpoint | Layout Changes |
 |------------|---------------|
 | Mobile (< 768px) | Single column. Display type scales to 40â€“48px. Hero padding reduces to 80px vertical. Card grid stacks. Navigation becomes full-screen overlay. Gradient sections become full-width bands. |
@@ -307,11 +332,13 @@ Whitespace is a design element. Generous space around large type and hero conten
 | Wide (1440px+) | Content caps at 1440px. Full-bleed sections continue edge-to-edge. |
 
 ### Touch Targets
+
 - Minimum: 48px Ã— 48px (larger than standard â€” matches the bold aesthetic)
 - CTA buttons: 52px minimum height on mobile
 - Card tap targets: entire card surface is tappable
 
 ### Mobile-Specific Rules
+
 - Reduce Display XL (80px) to 40px on mobile, maintaining visual weight via bold weight
 - Scroll-triggered animations simplify to basic fade-in (preserve battery, reduce motion)
 - Gradient backgrounds may simplify to solid primary colour for performance
@@ -321,6 +348,7 @@ Whitespace is a design element. Generous space around large type and hero conten
 ## 9. Agent Prompt Guide
 
 ### Quick Colour Reference
+
 | CSS Variable | Hex | Role |
 |-------------|-----|------|
 | `--color-primary` | `#7c3aed` | Primary purple |

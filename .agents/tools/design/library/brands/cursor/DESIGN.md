@@ -22,6 +22,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Cursor Dark** (`#26251e`): Primary text, headings, dark UI surfaces. A warm near-black with distinct yellow-brown undertone -- the defining color of the system.
 - **Cursor Cream** (`#f2f1ed`): Page background, primary surface. Not white but a warm cream that sets the entire warm tone.
 - **Cursor Light** (`#e6e5e0`): Secondary surface, button backgrounds, card fills. A slightly warmer, slightly darker cream.
@@ -29,20 +30,24 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - **True Black** (`#000000`): Minimal use, specific code/console contexts.
 
 ### Accent
+
 - **Cursor Orange** (`#f54e00`): Brand accent, `--color-accent`. A vibrant red-orange used for primary CTAs, active links, and brand moments. Warm and urgent.
 - **Gold** (`#c08532`): Secondary accent, warm gold for premium or highlighted contexts.
 
 ### Semantic
+
 - **Error** (`#cf2d56`): `--color-error`. A warm crimson-rose rather than cold red.
 - **Success** (`#1f8a65`): `--color-success`. A muted teal-green, warm-shifted.
 
 ### Timeline / Feature Colors
+
 - **Thinking** (`#dfa88f`): Warm peach for "thinking" state in AI timeline.
 - **Grep** (`#9fc9a2`): Soft sage green for search/grep operations.
 - **Read** (`#9fbbe0`): Soft blue for file reading operations.
 - **Edit** (`#c0a8dd`): Soft lavender for editing operations.
 
 ### Surface Scale
+
 - **Surface 100** (`#f7f7f4`): Lightest button/card surface, barely tinted.
 - **Surface 200** (`#f2f1ed`): Primary page background.
 - **Surface 300** (`#ebeae5`): Button default background, subtle emphasis.
@@ -50,6 +55,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - **Surface 500** (`#e1e0db`): Tertiary button background, deeper emphasis.
 
 ### Border Colors
+
 - **Border Primary** (`oklab(0.263084 -0.00230259 0.0124794 / 0.1)`): Standard border, 10% warm brown in oklab space.
 - **Border Medium** (`oklab(0.263084 -0.00230259 0.0124794 / 0.2)`): Emphasized border, 20% warm brown.
 - **Border Strong** (`rgba(38, 37, 30, 0.55)`): Strong borders, table rules.
@@ -57,12 +63,14 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - **Border Light** (`#f2f1ed`): Light border matching page background.
 
 ### Shadows & Depth
+
 - **Card Shadow** (`rgba(0,0,0,0.14) 0px 28px 70px, rgba(0,0,0,0.1) 0px 14px 32px, oklab(0.263084 -0.00230259 0.0124794 / 0.1) 0px 0px 0px 1px`): Heavy elevated card with warm oklab border ring.
 - **Ambient Shadow** (`rgba(0,0,0,0.02) 0px 0px 16px, rgba(0,0,0,0.008) 0px 0px 8px`): Subtle ambient glow for floating elements.
 
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Display/Headlines**: `CursorGothic`, with fallbacks: `CursorGothic Fallback, system-ui, Helvetica Neue, Helvetica, Arial`
 - **Body/Editorial**: `jjannon`, with fallbacks: `Iowan Old Style, Palatino Linotype, URW Palladio L, P052, ui-serif, Georgia, Cambria, Times New Roman, Times`
 - **Code/Technical**: `berkeleyMono`, with fallbacks: `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New`
@@ -94,6 +102,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 | Lato Micro | Lato | 12px (0.75rem) | 400-600 | 1.27 (tight) | 0.053px | Lato small labels |
 
 ### Principles
+
 - **Gothic compression for impact**: CursorGothic at display sizes uses -2.16px letter-spacing at 72px, progressively relaxing: -0.72px at 36px, -0.325px at 26px, -0.11px at 22px, normal at 16px and below. The tracking creates a sense of precision engineering.
 - **Serif for soul**: jjannon provides literary warmth. The `"cswh"` feature adds contextual swash alternates that give body text a calligraphic quality.
 - **Three typographic voices**: Gothic (display/UI), serif (editorial/body), mono (code/technical). Each serves a distinct communication purpose.
@@ -140,6 +149,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - Use: Dropdown triggers, subtle interactive elements
 
 ### Cards & Containers
+
 - Background: `#e6e5e0` or `#f2f1ed`
 - Border: `1px solid oklab(0.263 / 0.1)` (warm brown at 10%)
 - Radius: 8px (standard), 4px (compact), 10px (featured)
@@ -147,6 +157,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - Hover: shadow intensification
 
 ### Inputs & Forms
+
 - Background: transparent or surface
 - Text: `#26251e`
 - Padding: 8px 8px 6px (textarea)
@@ -154,6 +165,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - Focus: border shifts to `oklab(0.263 / 0.2)` or accent orange
 
 ### Navigation
+
 - Clean horizontal nav on warm cream background
 - Cursor logotype left-aligned (~96x24px)
 - Links: 14px CursorGothic or system-ui, weight 500
@@ -161,6 +173,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - Tab navigation: bottom border `1px solid oklab(0.263 / 0.1)` with active tab differentiation
 
 ### Image Treatment
+
 - Code editor screenshots with `1px solid oklab(0.263 / 0.1)` border
 - Rounded corners: 8px standard
 - AI chat/timeline screenshots dominate feature sections
@@ -187,6 +200,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Fine scale: 1.5px, 2px, 2.5px, 3px, 4px, 5px, 6px (sub-8px for micro-adjustments)
 - Standard scale: 8px, 10px, 12px, 14px (derived from extraction)
@@ -194,6 +208,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - Notable: fine-grained sub-8px increments for precise icon/text alignment
 
 ### Grid & Container
+
 - Max content width: approximately 1200px
 - Hero: centered single-column with generous top padding (80-120px)
 - Feature sections: 2-3 column grids for cards and features
@@ -201,11 +216,13 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - Sidebar layouts for documentation and settings pages
 
 ### Whitespace Philosophy
+
 - **Warm negative space**: The cream background means whitespace has warmth and texture, unlike cold white minimalism. Large empty areas feel cozy rather than clinical.
 - **Compressed text, open layout**: Aggressive negative letter-spacing on CursorGothic headlines is balanced by generous surrounding margins. Text is dense; space around it breathes.
 - **Section variation**: Alternating surface tones (cream → lighter cream → cream) create subtle section differentiation without harsh boundaries.
 
 ### Border Radius Scale
+
 - Micro (1.5px): Fine detail elements
 - Small (2px): Inline elements, code spans
 - Medium (3px): Small containers, inline badges
@@ -228,6 +245,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 **Shadow Philosophy**: Cursor's depth system is built around two ideas. First, borders use perceptually uniform oklab color space rather than rgba, ensuring warm brown borders look consistent across different background tones. Second, elevation shadows use dramatically large blur values (28px, 70px) with moderate opacity (0.14, 0.1), creating a diffused, atmospheric lift rather than hard-edged drop shadows. Cards don't feel like they float above the page -- they feel like the page has gently opened a space for them.
 
 ### Decorative Depth
+
 - Warm cream surface variations create subtle tonal depth without shadows
 - oklab borders at 10% and 20% create a spectrum of edge definition
 - No harsh divider lines -- section separation through background tone shifts and spacing
@@ -235,16 +253,19 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 ## 7. Interaction & Motion
 
 ### Hover States
+
 - Buttons: text color shifts to `--color-error` (`#cf2d56`) on hover -- a distinctive warm crimson that signals interactivity
 - Links: color shift to accent orange (`#f54e00`) or underline decoration with `rgba(38, 37, 30, 0.4)`
 - Cards: shadow intensification on hover (ambient → elevated)
 
 ### Focus States
+
 - Shadow-based focus: `rgba(0,0,0,0.1) 0px 4px 12px` for depth-based focus indication
 - Border focus: `oklab(0.263 / 0.2)` (20% border) for input/form focus
 - Consistent warm tone in all focus states -- no cold blue focus rings
 
 ### Transitions
+
 - Color transitions: 150ms ease for text/background color changes
 - Shadow transitions: 200ms ease for elevation changes
 - Transform: subtle scale or translate for interactive feedback
@@ -252,6 +273,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | <600px | Single column, reduced padding, stacked navigation |
@@ -261,11 +283,13 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 | Desktop | >1279px | Full layout, maximum content width |
 
 ### Touch Targets
+
 - Buttons use comfortable padding (6px-14px vertical, 8px-14px horizontal)
 - Pill buttons maintain tap-friendly sizing with 3px-10px padding
 - Navigation links at 14px with adequate spacing for touch
 
 ### Collapsing Strategy
+
 - Hero: 72px CursorGothic → 36px → 26px on smaller screens, maintaining proportional letter-spacing
 - Navigation: horizontal links → hamburger menu on mobile
 - Feature cards: 3-column → 2-column → single column stacked
@@ -274,6 +298,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - Section spacing: 80px+ → 48px → 32px on mobile
 
 ### Image Behavior
+
 - Editor screenshots maintain warm border treatment at all sizes
 - AI timeline adapts from horizontal to vertical layout
 - Product screenshots use responsive images with consistent border radius
@@ -282,6 +307,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Primary CTA background: `#ebeae5` (warm cream button)
 - Page background: `#f2f1ed` (warm off-white)
 - Text color: `#26251e` (warm near-black)
@@ -292,6 +318,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - Border: `oklab(0.263084 -0.00230259 0.0124794 / 0.1)` or `rgba(38, 37, 30, 0.1)` as fallback
 
 ### Example Component Prompts
+
 - "Create a hero section on `#f2f1ed` warm cream background. Headline at 72px CursorGothic weight 400, line-height 1.10, letter-spacing -2.16px, color `#26251e`. Subtitle at 17.28px jjannon weight 400, line-height 1.35, color `rgba(38,37,30,0.55)`. Primary CTA button (`#ebeae5` bg, 8px radius, 10px 14px padding) with hover text shift to `#cf2d56`."
 - "Design a card: `#e6e5e0` background, border `1px solid rgba(38,37,30,0.1)`. Radius 8px. Title at 22px CursorGothic weight 400, letter-spacing -0.11px. Body at 17.28px jjannon weight 400, color `rgba(38,37,30,0.55)`. Use `#f54e00` for link accents."
 - "Build a pill tag: `#e6e5e0` background, `rgba(38,37,30,0.6)` text, full-pill radius (9999px), 3px 8px padding, 14px CursorGothic weight 400."
@@ -299,6 +326,7 @@ The border system is particularly distinctive -- Cursor uses `oklab()` color spa
 - "Design an AI timeline showing four steps: Thinking (`#dfa88f`), Grep (`#9fc9a2`), Read (`#9fbbe0`), Edit (`#c0a8dd`). Each step: 14px system-ui label + 16px CursorGothic description + vertical connecting line in `rgba(38,37,30,0.1)`."
 
 ### Iteration Guide
+
 1. Always use warm tones -- `#f2f1ed` background, `#26251e` text, never pure white/black for primary surfaces
 2. Letter-spacing scales with font size for CursorGothic: -2.16px at 72px, -0.72px at 36px, -0.325px at 26px, normal at 16px
 3. Use `rgba(38, 37, 30, alpha)` as a CSS-compatible fallback for oklab borders

@@ -21,6 +21,7 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 ## 2. Color Palette & Roles
 
 ### Primary Brand
+
 - **Near Black** (`#0e0f0c`): Primary text, background for dark sections
 - **Wise Green** (`#9fe870`): Primary CTA button, brand accent
 - **Dark Green** (`#163300`): Button text on green, deep green accent
@@ -28,6 +29,7 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 - **Pastel Green** (`#cdffad`): `--color-interactive-contrast-hover`, hover accent
 
 ### Semantic
+
 - **Positive Green** (`#054d28`): `--color-sentiment-positive-primary`, success
 - **Danger Red** (`#d03238`): `--color-interactive-negative-hover`, error/destructive
 - **Warning Yellow** (`#ffd11a`): `--color-sentiment-warning-hover`, warnings
@@ -35,6 +37,7 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 - **Bright Orange** (`#ffc091`): `--color-bright-orange`, warm accent
 
 ### Neutral
+
 - **Warm Dark** (`#454745`): Secondary text, borders
 - **Gray** (`#868685`): Muted text, tertiary
 - **Light Surface** (`#e8ebe6`): Subtle green-tinted light surface
@@ -42,6 +45,7 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Display**: `Wise Sans`, fallback: `Inter` — OpenType `"calt"` on all text
 - **Body / UI**: `Inter`, fallbacks: `Helvetica, Arial`
 
@@ -63,6 +67,7 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 | Small | Inter | 12px (0.75rem) | 400–600 | 1.00–2.17 | -0.084px to -0.108px | `"calt"` |
 
 ### Principles
+
 - **Weight 900 as identity**: Wise Sans Black (900) is used exclusively for display — the heaviest weight in any analyzed system. It creates text that feels stamped, pressed, physical.
 - **0.85 line-height**: The tightest display line-height analyzed. Letters overlap vertically, creating dense, billboard-like text blocks.
 - **"calt" everywhere**: Contextual alternates enabled on ALL text — both Wise Sans and Inter.
@@ -89,11 +94,13 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 - Same scale hover/active behavior
 
 ### Cards & Containers
+
 - Radius: 16px (small), 30px (medium), 40px (large cards/tables)
 - Border: `1px solid rgba(14,15,12,0.12)` or `1px solid #9fe870` (green accent)
 - Shadow: `rgba(14,15,12,0.12) 0px 0px 0px 1px` (ring shadow)
 
 ### Navigation
+
 - Green-tinted navigation hover: `rgba(211,242,192,0.4)`
 - Clean header with Wise wordmark
 - Pill CTAs right-aligned
@@ -101,10 +108,12 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 1px, 2px, 3px, 4px, 5px, 8px, 10px, 11px, 12px, 16px, 18px, 19px, 20px, 22px, 24px
 
 ### Border Radius Scale
+
 - Minimal (2px): Links, inputs
 - Standard (10px): Comboboxes, inputs
 - Card (16px): Small cards, buttons, radio
@@ -128,6 +137,7 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use Wise Sans weight 900 for display — the extreme boldness IS the brand
 - Apply line-height 0.85 on Wise Sans display — ultra-tight is intentional
 - Use Lime Green (#9fe870) for primary CTAs with Dark Green (#163300) text
@@ -136,6 +146,7 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 - Use Inter weight 600 as the body default
 
 ### Don't
+
 - Don't use light font weights for Wise Sans — only 900
 - Don't relax the 0.85 line-height on display — the density is the identity
 - Don't use the Wise Green as background for large surfaces — it's for buttons and accents
@@ -145,6 +156,7 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | <576px | Single column |
@@ -155,6 +167,7 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Text: Near Black (`#0e0f0c`)
 - Background: White (`#ffffff` / off-white)
 - Accent: Wise Green (`#9fe870`)
@@ -162,10 +175,12 @@ What distinguishes Wise is its green-on-white-on-black material palette. Lime Gr
 - Secondary: Gray (`#868685`)
 
 ### Example Component Prompts
+
 - "Create hero: white background. Headline at 96px Wise Sans weight 900, line-height 0.85, 'calt' enabled, #0e0f0c text. Green pill CTA (#9fe870, 9999px radius, 5px 16px padding, #163300 text). Hover: scale(1.05)."
 - "Build a card: 30px radius, 1px solid rgba(14,15,12,0.12). Title at 22px Inter weight 600, body at 18px weight 400."
 
 ### Iteration Guide
+
 1. Wise Sans 900 at 0.85 line-height — the extreme weight IS the brand
 2. Lime Green for buttons only — dark green text on green background
 3. Scale animations (1.05 hover, 0.95 active) on all interactive elements

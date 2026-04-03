@@ -21,11 +21,13 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Near Black** (`#0d0d0d`): Primary text, headings, dark surfaces. Not pure black — the micro-softness improves reading comfort.
 - **Pure White** (`#ffffff`): Page background, card surfaces, input backgrounds.
 - **Brand Green** (`#18E299`): The signature accent — CTAs, links on hover, focus rings, brand identity.
 
 ### Secondary Accents
+
 - **Brand Green Light** (`#d4fae8`): Tinted green surface for badges, hover states, subtle backgrounds.
 - **Brand Green Deep** (`#0fa76e`): Darker green for text on light-green badges, hover states on brand elements.
 - **Warm Amber** (`#c37d0d`): Warning states, caution badges — `--twoslash-warn-bg`.
@@ -33,6 +35,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 - **Error Red** (`#d45656`): Error states, destructive actions — `--twoslash-error-bg`.
 
 ### Neutral Scale
+
 - **Gray 900** (`#0d0d0d`): Primary heading text, nav links.
 - **Gray 700** (`#333333`): Secondary text, descriptions, body copy.
 - **Gray 500** (`#666666`): Tertiary text, muted labels.
@@ -42,17 +45,20 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 - **Gray 50** (`#fafafa`): Near-white surface tint.
 
 ### Interactive
+
 - **Link Default** (`#0d0d0d`): Links match text color, relying on underline/context.
 - **Link Hover** (`#18E299`): Brand green on hover — `var(--color-brand)`.
 - **Focus Ring** (`#18E299`): Brand green focus outline for inputs and interactive elements.
 
 ### Surface & Overlay
+
 - **Card Background** (`#ffffff`): White cards on white background, separated by borders.
 - **Border Subtle** (`rgba(0,0,0,0.05)`): 5% black opacity borders — the primary separation mechanism.
 - **Border Medium** (`rgba(0,0,0,0.08)`): Slightly stronger borders for interactive elements.
 - **Input Border Focus** (`var(--color-brand)`): Green ring on focused inputs.
 
 ### Shadows & Depth
+
 - **Card Shadow** (`rgba(0,0,0,0.03) 0px 2px 4px`): Barely-there ambient shadow for subtle lift.
 - **Button Shadow** (`rgba(0,0,0,0.06) 0px 1px 2px`): Micro-shadow for button depth.
 - **No heavy shadows**: Mintlify relies on borders, not shadows, for depth.
@@ -60,6 +66,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 ## 3. Typography Rules
 
 ### Font Family
+
 - **Primary**: `Inter`, with fallback: `Inter Fallback, system-ui, -apple-system, sans-serif`
 - **Monospace**: `Geist Mono`, with fallback: `Geist Mono Fallback, ui-monospace, SFMono-Regular, monospace`
 
@@ -85,6 +92,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 | Mono Micro | Geist Mono | 10px (0.63rem) | 500 | 1.50 | normal | `text-transform: uppercase`, tiny labels |
 
 ### Principles
+
 - **Tight tracking at display sizes**: Inter at 40–64px uses -0.8px to -1.28px letter-spacing. This compression creates headlines that feel deliberate and space-efficient — documentation headings, not billboard copy.
 - **Relaxed reading at body sizes**: 16–18px body text uses normal tracking with 150% line-height, creating generous reading lanes. Documentation demands comfort.
 - **Two-font system**: Inter for all human-readable content, Geist Mono exclusively for technical/code contexts. The boundary is strict — no mixing.
@@ -165,6 +173,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 - Placeholder: `#888888`
 
 ### Navigation
+
 - Clean horizontal nav on white, sticky with backdrop blur
 - Brand logotype left-aligned
 - Links: Inter 14–15px weight 500, `#0d0d0d` text
@@ -173,6 +182,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 - Mobile: hamburger menu collapse at 768px
 
 ### Image Treatment
+
 - Product screenshots with subtle 1px borders
 - Rounded containers: 16px–24px radius
 - Atmospheric gradient backgrounds behind hero images
@@ -209,6 +219,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 2px, 4px, 5px, 6px, 7px, 8px, 10px, 12px, 16px, 24px, 32px, 48px, 64px
 - Section padding: 48px–96px vertical
@@ -216,6 +227,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 - Component gaps: 8px–16px
 
 ### Grid & Container
+
 - Max content width: approximately 1200px
 - Hero: centered single-column with generous top padding (96px+)
 - Feature sections: 2–3 column CSS Grid for cards
@@ -223,11 +235,13 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 - Consistent horizontal padding: 24px (mobile) to 32px (desktop)
 
 ### Whitespace Philosophy
+
 - **Documentation-grade breathing room**: Every element has generous surrounding whitespace. Mintlify sells documentation, so the marketing page itself demonstrates reading comfort.
 - **Sections as chapters**: Each feature section is a self-contained unit with 48px–96px vertical padding, creating clear "chapter breaks."
 - **Content density is low**: Unlike developer tools that pack the page, Mintlify uses 1–2 key messages per section with supporting imagery.
 
 ### Border Radius Scale
+
 - Small (4px): Inline code, small tags, tooltips
 - Medium (8px): Nav buttons, transparent buttons, small containers
 - Standard (16px): Cards, content containers, image wrappers
@@ -248,6 +262,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 **Shadow Philosophy**: Mintlify barely uses shadows. The depth system is almost entirely border-driven — ultra-subtle 5% opacity borders create separation without visual weight. When shadows appear, they're atmospheric whispers (`0.03 opacity, 2px blur, 4px spread`) that add the barest sense of lift. This restraint keeps the page feeling flat and paper-like — appropriate for a documentation company whose product is about clarity and readability.
 
 ### Decorative Depth
+
 - Hero gradient: atmospheric green-white cloud gradient behind hero content
 - No background color alternation — white on white throughout
 - Depth comes from border opacity variation (5% → 8%) and whitespace
@@ -255,6 +270,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 ## 7. Dark Mode
 
 ### Color Inversions
+
 - **Background**: `#0d0d0d` (near-black)
 - **Text Primary**: `#ededed` (near-white)
 - **Text Secondary**: `#a0a0a0` (muted gray)
@@ -264,6 +280,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 - **Shadow**: `rgba(0,0,0,0.4) 0px 2px 4px` (stronger shadow for contrast)
 
 ### Key Adjustments
+
 - Buttons invert: white background dark text becomes dark background light text
 - Badge backgrounds shift to deeper tones with lighter text
 - Focus ring remains brand green
@@ -272,6 +289,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | <768px | Single column, stacked layout, hamburger nav |
@@ -279,11 +297,13 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 | Desktop | >1024px | Full layout, 3-column grids, maximum content width |
 
 ### Touch Targets
+
 - Buttons with full-pill shape have comfortable 8px+ vertical padding
 - Navigation links spaced with adequate 16px+ gaps
 - Mobile menu provides full-width tap targets
 
 ### Collapsing Strategy
+
 - Hero: 64px → 40px headline, maintains tight tracking proportionally
 - Navigation: horizontal links + CTA → hamburger menu at 768px
 - Feature cards: 3-column → 2-column → single column stacked
@@ -292,6 +312,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 - Trust bar: grid → horizontal scroll or stacked
 
 ### Image Behavior
+
 - Product screenshots maintain aspect ratio with responsive containers
 - Hero gradient simplifies on mobile
 - Full-width sections maintain edge-to-edge treatment
@@ -299,6 +320,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Primary CTA: Near Black (`#0d0d0d`)
 - Background: Pure White (`#ffffff`)
 - Heading text: Near Black (`#0d0d0d`)
@@ -309,6 +331,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 - Focus ring: Brand Green (`#18E299`)
 
 ### Example Component Prompts
+
 - "Create a hero section on white background with atmospheric green-white gradient wash. Headline at 64px Inter weight 600, line-height 1.15, letter-spacing -1.28px, color #0d0d0d. Subtitle at 18px Inter weight 400, line-height 1.50, color #666666. Dark pill CTA (#0d0d0d, 9999px radius, 8px 24px padding) and ghost pill button (white, 1px solid rgba(0,0,0,0.08), 9999px radius)."
 - "Design a card: white background, 1px solid rgba(0,0,0,0.05) border, 16px radius, 24px padding, shadow rgba(0,0,0,0.03) 0px 2px 4px. Title at 20px Inter weight 600, letter-spacing -0.2px. Body at 14px weight 400, #666666."
 - "Build a pill badge: #d4fae8 background, #0fa76e text, 9999px radius, 4px 12px padding, 13px Inter weight 500, uppercase."
@@ -316,6 +339,7 @@ What distinguishes Mintlify from other documentation platforms is its atmospheri
 - "Design a trust section showing company logos in muted gray. Grid layout with 16px radius containers, 1px border at 5% opacity. Label above: 'Loved by your favorite companies' at 13px Inter weight 500, uppercase, tracking 0.65px."
 
 ### Iteration Guide
+
 1. Always use full-pill radius (9999px) for buttons and inputs — this is Mintlify's signature shape
 2. Keep borders at 5% opacity (`rgba(0,0,0,0.05)`) — stronger borders break the airy feeling
 3. Letter-spacing scales with font size: -1.28px at 64px, -0.8px at 40px, -0.24px at 24px, normal at 16px

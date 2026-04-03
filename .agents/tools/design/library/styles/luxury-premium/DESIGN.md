@@ -101,7 +101,8 @@ Typography is thin, tall, and breathtakingly precise. Headings use an ultra-ligh
 ### Buttons
 
 **Primary Button:**
-```
+
+```css
 background: #c9a96e
 color: #000000
 padding: 16px 48px
@@ -122,7 +123,8 @@ transition: all 400ms ease
 ```
 
 **Secondary Button:**
-```
+
+```css
 background: transparent
 color: #FFFFFF
 padding: 16px 48px
@@ -140,7 +142,8 @@ transition: all 400ms ease
 ```
 
 **Ghost Button (text link):**
-```
+
+```css
 background: transparent
 color: #c9a96e
 padding: 8px 0
@@ -158,7 +161,7 @@ transition: all 400ms ease
 
 ### Inputs
 
-```
+```css
 background: #111111
 border: 1px solid rgba(255, 255, 255, 0.1)
 border-radius: 0px
@@ -181,7 +184,7 @@ transition: border-color 400ms ease
 
 ### Links
 
-```
+```css
 color: #c9a96e
 text-decoration: none
 font-weight: 300
@@ -193,7 +196,8 @@ transition: color 400ms ease
 ```
 
 Navigation links (uppercase):
-```
+
+```css
 color: rgba(255, 255, 255, 0.5)
 font-size: 12px
 letter-spacing: 0.15em
@@ -205,7 +209,7 @@ text-transform: uppercase
 
 ### Cards
 
-```
+```css
 background: #0a0a0a
 border: 1px solid rgba(255, 255, 255, 0.06)
 border-radius: 0px
@@ -222,7 +226,7 @@ Interactive cards:
 
 ### Navigation
 
-```
+```css
 Top bar:
   background: transparent (absolute positioned over hero)
   height: 80px

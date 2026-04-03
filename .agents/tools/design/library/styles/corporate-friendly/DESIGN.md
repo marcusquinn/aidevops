@@ -98,7 +98,8 @@ Typography uses a rounded, open sans-serif that reads clearly at all sizes and f
 ### Buttons
 
 **Primary Button:**
-```
+
+```css
 background: #3b82f6
 color: #FFFFFF
 padding: 12px 28px
@@ -116,7 +117,8 @@ transition: all 200ms ease-in-out
 ```
 
 **Secondary Button:**
-```
+
+```css
 background: #FFFFFF
 color: #3b82f6
 padding: 12px 28px
@@ -131,7 +133,8 @@ font-weight: 600
 ```
 
 **Ghost Button:**
-```
+
+```css
 background: transparent
 color: #3b82f6
 padding: 12px 28px
@@ -145,7 +148,8 @@ font-weight: 600
 ```
 
 **Accent Button (secondary CTA):**
-```
+
+```css
 background: #f97316
 color: #FFFFFF
 padding: 12px 28px
@@ -159,7 +163,7 @@ font-weight: 600
 
 ### Inputs
 
-```
+```css
 background: #FFFFFF
 border: 1.5px solid #E5E7EB
 border-radius: 12px
@@ -181,7 +185,7 @@ transition: all 200ms ease-in-out
 
 ### Links
 
-```
+```css
 color: #3b82f6
 text-decoration: none
 font-weight: 500
@@ -193,7 +197,7 @@ transition: color 200ms ease-in-out
 
 ### Cards
 
-```
+```css
 background: #FFFFFF
 border: 1px solid #E5E7EB
 border-radius: 16px
@@ -208,7 +212,7 @@ Interactive cards:
 
 ### Navigation
 
-```
+```css
 Top bar:
   background: #FFFFFF
   border-bottom: 1px solid #E5E7EB

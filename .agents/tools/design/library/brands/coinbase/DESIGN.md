@@ -18,23 +18,27 @@ The button system uses a distinctive 56px radius for pill-shaped CTAs with hover
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Coinbase Blue** (`#0052ff`): Primary brand, links, CTA borders
 - **Pure White** (`#ffffff`): Primary light surface
 - **Near Black** (`#0a0b0d`): Text, dark section backgrounds
 - **Cool Gray Surface** (`#eef0f3`): Secondary button background
 
 ### Interactive
+
 - **Hover Blue** (`#578bfa`): Button hover background
 - **Link Blue** (`#0667d0`): Secondary link color
 - **Muted Blue** (`#5b616e`): Border color at 20% opacity
 
 ### Surface
+
 - **Dark Card** (`#282b31`): Dark button/card backgrounds
 - **Light Surface** (`rgba(247,247,247,0.88)`): Subtle surface
 
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Display**: `CoinbaseDisplay` — hero headlines
 - **UI / Sans**: `CoinbaseSans` — buttons, headings, nav
 - **Body**: `CoinbaseText` — reading text
@@ -77,16 +81,19 @@ The button system uses a distinctive 56px radius for pill-shaped CTAs with hover
 - Background: transparent
 
 ### Cards & Containers
+
 - Radius: 8px–40px range
 - Borders: `1px solid rgba(91,97,110,0.2)`
 
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base: 8px
 - Scale: 1px, 3px, 4px, 5px, 6px, 8px, 10px, 12px, 15px, 16px, 20px, 24px, 25px, 32px, 48px
 
 ### Border Radius Scale
+
 - Small (4px–8px): Article links, small cards
 - Standard (12px–16px): Cards, menus
 - Large (24px–32px): Feature containers
@@ -101,12 +108,14 @@ Minimal shadow system — depth from color contrast between dark/light sections.
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use Coinbase Blue (#0052ff) for primary interactive elements
 - Apply 56px radius for all CTA buttons
 - Use CoinbaseDisplay for hero headings only
 - Alternate dark (#0a0b0d) and white sections
 
 ### Don't
+
 - Don't use the blue decoratively — it's functional only
 - Don't use sharp corners on CTAs — 56px minimum
 
@@ -117,6 +126,7 @@ Breakpoints: 400px, 576px, 640px, 768px, 896px, 1280px, 1440px, 1600px
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Brand: Coinbase Blue (`#0052ff`)
 - Background: White (`#ffffff`)
 - Dark surface: `#0a0b0d`
@@ -125,5 +135,6 @@ Breakpoints: 400px, 576px, 640px, 768px, 896px, 1280px, 1440px, 1600px
 - Text: `#0a0b0d`
 
 ### Example Component Prompts
+
 - "Create hero: white background. CoinbaseDisplay 80px, line-height 1.00. Pill CTA (#eef0f3, 56px radius). Hover: #578bfa."
 - "Build dark section: #0a0b0d background. CoinbaseDisplay 64px white text. Blue accent link (#0052ff)."

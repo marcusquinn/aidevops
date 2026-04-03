@@ -22,11 +22,13 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 ## 2. Color Palette & Roles
 
 ### Primary Brand
+
 - **Deep Purple** (`#1f1633`): Primary background, the defining color of the brand
 - **Darker Purple** (`#150f23`): Deeper sections, footer, secondary backgrounds
 - **Border Purple** (`#362d59`): Borders, dividers, subtle structural lines
 
 ### Accent Colors
+
 - **Sentry Purple** (`#6a5fc1`): Primary interactive color — links, hover states, focus rings
 - **Muted Purple** (`#79628c`): Button backgrounds, secondary interactive elements
 - **Deep Violet** (`#422082`): Select dropdowns, active states, high-emphasis surfaces
@@ -35,17 +37,20 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 - **Pink** (`#fa7faa`): Focus outlines, decorative accents
 
 ### Text Colors
+
 - **Pure White** (`#ffffff`): Primary text on dark backgrounds
 - **Light Gray** (`#e5e7eb`): Secondary text, muted content
 - **Code Yellow** (`#dcdcaa`): Syntax highlighting, code tokens
 
 ### Surface & Overlay
+
 - **Glass White** (`rgba(255, 255, 255, 0.18)`): Frosted glass button backgrounds
 - **Glass Dark** (`rgba(54, 22, 107, 0.14)`): Hover overlay on glass elements
 - **Input White** (`#ffffff`): Form input backgrounds (light context)
 - **Input Border** (`#cfcfdb`): Form field borders
 
 ### Shadows
+
 - **Ambient Glow** (`rgba(22, 15, 36, 0.9) 0px 4px 4px 9px`): Deep purple ambient shadow
 - **Button Hover** (`rgba(0, 0, 0, 0.18) 0px 0.5rem 1.5rem`): Elevated hover state
 - **Card Shadow** (`rgba(0, 0, 0, 0.1) 0px 10px 15px -3px`): Standard card elevation
@@ -54,6 +59,7 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Display**: `Dammit Sans` — brand personality font for hero headings
 - **Primary UI**: `Rubik`, with fallbacks: `-apple-system, system-ui, Segoe UI, Helvetica, Arial`
 - **Monospace**: `Monaco`, with fallbacks: `Menlo, Ubuntu Mono`
@@ -79,6 +85,7 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 | Code | Monaco | 16px (1.00rem) | 400–700 | 1.50 | normal | Code blocks, technical text |
 
 ### Principles
+
 - **Dual personality**: Dammit Sans brings irreverent brand character at display scale; Rubik provides clean professionalism for everything functional.
 - **Uppercase as system**: Buttons, captions, labels, and micro-text all use `text-transform: uppercase` with subtle letter-spacing (0.2px–0.25px), creating a systematic "technical label" pattern throughout.
 - **Weight stratification**: Rubik uses 400 (body), 500 (emphasis/nav), 600 (titles/strong), 700 (buttons/CTAs) — a clean four-tier weight system.
@@ -131,6 +138,7 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 - Focus: border-color stays `#cfcfdb`, shadow `rgba(0, 0, 0, 0.15) 0px 2px 10px inset`
 
 ### Links
+
 - **Default on dark**: `#ffffff`, underline decoration
 - **Hover**: color transitions to `#6a5fc1` (Sentry Purple)
 - **Purple links**: `#6a5fc1` default, hover underline
@@ -138,12 +146,14 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 - **Dark context links**: `#362d59`, hover to `#ffffff`
 
 ### Cards & Containers
+
 - Background: semi-transparent or dark purple surfaces
 - Radius: 8px–12px
 - Shadow: `rgba(0, 0, 0, 0.1) 0px 10px 15px -3px`
 - Backdrop filter: `blur(18px) saturate(180%)` for glass effects
 
 ### Navigation
+
 - Dark transparent header over hero content
 - Rubik 15px weight 500 for nav links
 - White text, hover to Sentry Purple (`#6a5fc1`)
@@ -153,16 +163,19 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 ## 5. Layout Principles
 
 ### Spacing System
+
 - Base unit: 8px
 - Scale: 1px, 2px, 4px, 5px, 6px, 8px, 12px, 16px, 24px, 32px, 40px, 44px, 45px, 47px
 
 ### Grid & Container
+
 - Max content width: 1152px (XL breakpoint)
 - Responsive padding: 2rem (mobile) → 4rem (tablet+)
 - Content centered within container
 - Full-width dark sections with contained inner content
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | < 576px | Single column, stacked layout |
@@ -173,11 +186,13 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 | Large Desktop | 1152–1440px | Max-width content |
 
 ### Whitespace Philosophy
+
 - **Dark breathing room**: Generous vertical spacing between sections (64px–80px+) lets the dark background serve as a visual rest.
 - **Content islands**: Feature sections are self-contained blocks floating in the dark purple sea, each with its own internal spacing rhythm.
 - **Asymmetric padding**: Buttons use asymmetric padding patterns (12px 16px, 8px 12px) that feel organic rather than rigid.
 
 ### Border Radius Scale
+
 - Minimal (6px): Form inputs, small interactive elements
 - Standard (8px): Buttons, cards, containers
 - Comfortable (10px–12px): Larger containers, glass panels
@@ -200,6 +215,7 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 ## 7. Do's and Don'ts
 
 ### Do
+
 - Use deep purple backgrounds (`#1f1633`, `#150f23`) — never pure black (`#000000`)
 - Apply inset shadows on primary buttons for the tactile pressed effect
 - Use Dammit Sans ONLY for hero/display headings — Rubik for everything else
@@ -210,6 +226,7 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 - Use Rubik's 4-tier weight system: 400 (body), 500 (nav/emphasis), 600 (titles), 700 (CTAs)
 
 ### Don't
+
 - Don't use pure black (`#000000`) for backgrounds — always use the warm purple-blacks
 - Don't apply Dammit Sans to body text or UI elements — it's display-only
 - Don't use standard gray (`#666`, `#999`) for borders — use purple-tinted grays (`#362d59`, `#584674`)
@@ -222,6 +239,7 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 ## 8. Responsive Behavior
 
 ### Breakpoints
+
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | <576px | Single column, hamburger nav, stacked CTAs |
@@ -231,6 +249,7 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 | Large | >1152px | Content max-width maintained, generous margins |
 
 ### Collapsing Strategy
+
 - Hero text: 88px Dammit Sans → 60px → mobile scales
 - Navigation: horizontal → hamburger with slide-out
 - Feature sections: side-by-side → stacked cards
@@ -240,6 +259,7 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
+
 - Background: `#1f1633` (primary), `#150f23` (deeper)
 - Text: `#ffffff` (primary), `#e5e7eb` (secondary)
 - Interactive: `#6a5fc1` (links/hover), `#79628c` (buttons)
@@ -247,6 +267,7 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 - Border: `#362d59` (dark), `#cfcfdb` (light context)
 
 ### Example Component Prompts
+
 - "Create a hero section on deep purple background (#1f1633). Headline at 88px Dammit Sans weight 700, line-height 1.20, white text. Sub-text at 16px Rubik weight 400, line-height 1.50. White solid CTA button (8px radius, 12px 16px padding), hover transitions to #6a5fc1."
 - "Design a navigation bar: transparent over dark background. Rubik 15px weight 500, white text. Uppercase category labels with 0.2px letter-spacing. Hover color #6a5fc1."
 - "Build a primary button: background #79628c, border 1px solid #584674, inset shadow rgba(0,0,0,0.1) 0px 1px 3px, white uppercase text at 14px Rubik weight 700, letter-spacing 0.2px, radius 13px. Hover: shadow rgba(0,0,0,0.18) 0px 0.5rem 1.5rem."
@@ -254,6 +275,7 @@ What makes Sentry distinctive is its embrace of the "dark IDE" aesthetic without
 - "Design a feature section: #150f23 background, 24px Rubik weight 500 heading, 16px Rubik weight 400 body text. 14px uppercase lime-green (#c2ef4e) label above heading."
 
 ### Iteration Guide
+
 1. Always start with the dark purple background — the color palette is built FOR dark mode
 2. Use inset shadows on buttons, ambient purple glows on hero sections
 3. Uppercase + letter-spacing is the systematic pattern for labels, buttons, and captions

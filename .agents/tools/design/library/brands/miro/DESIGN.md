@@ -19,12 +19,14 @@ The typography uses Roobert PRO Medium as the primary display font with OpenType
 ## 2. Color Palette & Roles
 
 ### Primary
+
 - **Near Black** (`#1c1c1e`): Primary text
 - **White** (`#ffffff`): `--tw-color-white`, primary surface
 - **Blue 450** (`#5b76fe`): `--tw-color-blue-450`, primary interactive
 - **Actionable Pressed** (`#2a41b6`): `--tw-color-actionable-pressed`
 
 ### Pastel Accents (Light/Dark pairs)
+
 - **Coral**: Light `#ffc6c6` / Dark `#600000`
 - **Rose**: Light `#ffd8f4` / Dark (implied)
 - **Teal**: Light `#c3faf5` / Dark `#187574`
@@ -36,9 +38,11 @@ The typography uses Roobert PRO Medium as the primary display font with OpenType
 - **Dark Red** (`#e3c5c5`): Muted red
 
 ### Semantic
+
 - **Success** (`#00b473`): `--tw-color-success-accent`
 
 ### Neutral
+
 - **Slate** (`#555a6a`): Secondary text
 - **Input Placeholder** (`#a5a8b5`): `--tw-color-input-placeholder`
 - **Border** (`#c7cad5`): Button borders
@@ -47,6 +51,7 @@ The typography uses Roobert PRO Medium as the primary display font with OpenType
 ## 3. Typography Rules
 
 ### Font Families
+
 - **Display**: `Roobert PRO Medium`, fallback: Placeholder — `"blwf", "cv03", "cv04", "cv09", "cv11"`
 - **Display Variants**: `Roobert PRO SemiBold`, `Roobert PRO SemiBold Italic`, `Roobert PRO`
 - **Body**: `Noto Sans` — `"liga" 0, "ss01", "ss04", "ss05"`
@@ -70,39 +75,52 @@ The typography uses Roobert PRO Medium as the primary display font with OpenType
 ## 4. Component Stylings
 
 ### Buttons
+
 - Outlined: transparent bg, `1px solid #c7cad5`, 8px radius, 7px 12px padding
 - White circle: 50% radius, white bg with shadow
 - Blue primary (implied from interactive color)
 
 ### Cards: 12px–24px radius, pastel backgrounds
+
 ### Inputs: white bg, `1px solid #e9eaef`, 8px radius, 16px padding
 
 ## 5. Layout Principles
+
 - Spacing: 1–24px base scale
 - Radius: 8px (buttons), 10px–12px (cards), 20px–24px (panels), 40px–50px (large containers)
 - Ring shadow: `rgb(224,226,232) 0px 0px 0px 1px`
 
 ## 6. Depth & Elevation
+
 Minimal — ring shadow + pastel surface contrast
 
 ## 7. Do's and Don'ts
+
 ### Do
+
 - Use pastel light/dark pairs for feature sections
 - Apply Roobert PRO with OpenType character variants
 - Use Blue 450 (#5b76fe) for interactive elements
+
 ### Don't
+
 - Don't use heavy shadows
 - Don't mix more than 2 pastel accents per section
 
 ## 8. Responsive Behavior
+
 Breakpoints: 425px, 576px, 768px, 896px, 1024px, 1200px, 1280px, 1366px, 1700px, 1920px
 
 ## 9. Agent Prompt Guide
+
 ### Quick Color Reference
+
 - Text: Near Black (`#1c1c1e`)
 - Background: White (`#ffffff`)
 - Interactive: Blue 450 (`#5b76fe`)
 - Success: `#00b473`
 - Border: `#c7cad5`
+
 ### Example Component Prompts
+
 - "Create hero: white background. Roobert PRO Medium 56px, line-height 1.15, letter-spacing -1.68px. Blue CTA (#5b76fe). Outlined secondary (1px solid #c7cad5, 8px radius)."
