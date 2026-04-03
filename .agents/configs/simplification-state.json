@@ -49,6 +49,14 @@
     "issue": "GH#16350",
     "status": "simplified"
   },
+  ".agents/scripts/commands/add-skill.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "ce5f2025958525f3fc2e2e3224b331b5c9ccdd13a5966ad21d5878ba1a9a2067",
+    "issue": "GH#16379",
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
+  },
   ".agents/seo/geo-strategy.md": {
     "at": "2026-04-03T00:00:00Z",
     "hash": "f2c7b8507a0eb39c56689d7ce778518d7e15b27b7da668ef2b2caebdbe5b50df",

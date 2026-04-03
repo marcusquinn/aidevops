@@ -4,9 +4,7 @@ agent: Build+
 mode: subagent
 ---
 
-Import an external skill, convert to aidevops format, and register for update tracking.
-
-URL/Repo: $ARGUMENTS
+Import an external skill, convert to aidevops format, and register for update tracking. URL/Repo: `$ARGUMENTS`
 
 ## Quick Reference
 
@@ -62,14 +60,12 @@ URL/Repo: $ARGUMENTS
 
 ## Update Tracking
 
-Tracked in `.agents/configs/skill-sources.json` (`name`, `upstream_url`, `upstream_commit`/`upstream_hash`, `local_path`, `format_detected`, `imported_at`, `last_checked`, `merge_strategy`). URL sources use SHA-256 content hashing instead of git commit comparison.
-
-Run `/add-skill check-updates` periodically.
+Tracked in `.agents/configs/skill-sources.json`: `name`, `upstream_url`, `upstream_commit`/`upstream_hash`, `local_path`, `format_detected`, `imported_at`, `last_checked`, `merge_strategy`. URL sources use SHA-256 content hashing instead of git commit comparison. Run `/add-skill check-updates` periodically.
 
 ## Related
 
-- `tools/build-agent/add-skill.md` - Detailed conversion logic and merge strategies
-- `scripts/add-skill-helper.sh` - Main import implementation
-- `scripts/clawdhub-helper.sh` - ClawdHub browser-based fetcher (Playwright)
-- `scripts/skill-update-helper.sh` - Automated update checking
-- `scripts/generate-skills.sh` - SKILL.md stub generation for aidevops agents
+- `tools/build-agent/add-skill.md` — Detailed conversion logic and merge strategies
+- `scripts/add-skill-helper.sh` — Main import implementation
+- `scripts/clawdhub-helper.sh` — ClawdHub browser-based fetcher (Playwright)
+- `scripts/skill-update-helper.sh` — Automated update checking
+- `scripts/generate-skills.sh` — SKILL.md stub generation for aidevops agents
