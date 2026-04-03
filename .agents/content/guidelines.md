@@ -16,30 +16,29 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
+Structural copy rules for website content, especially local-service pages. Tone, vocabulary, and personality come from `context/brand-identity.toon` if present; this doc covers structure only. Brand identity maintenance: `tools/design/brand-identity.md`.
+
 ## Quick Reference
 
 - **Tone**: Authentic, local, professional but approachable, British English
 - **Spelling**: British (`specialise`, `colour`, `moulding`, `draughty`, `centre`)
 - **Paragraphs**: One sentence per paragraph; split at 3+ lines
-- **Sentences**: Short & punchy; use spaced em-dashes ( — ) instead of subordinate clauses
+- **Sentences**: Short & punchy; spaced em-dashes ( — ) instead of subordinate clauses
 - **SEO**: Bold **keywords** naturally; use long-tail variations; never stuff
-- **Avoid**: "We pride ourselves...", "Our commitment to excellence...", repetitive brand names
-- **HTML fields**: Use `<strong>`, `<em>`, `<p>` — not Markdown (`**bold**` won't render)
+- **Avoid**: "We pride ourselves...", "Our commitment to excellence...", repetitive brand names, Markdown in HTML fields
+- **HTML fields**: `<strong>`, `<em>`, `<p>` — not Markdown (`**bold**` won't render)
 - **WP fetch**: `wp post get ID --field=content` (singular `--field`, not `--fields`)
 - **Workflow**: Fetch → Refine → Structure → Update → Verify
 
 <!-- AI-CONTEXT-END -->
 
-Structural copy rules for website content, especially local-service pages. If a project has `context/brand-identity.toon`, take tone, vocabulary, and personality from that file; this document covers structure only. For brand identity maintenance, see `tools/design/brand-identity.md`.
-
 ## Formatting
 
 - One sentence per paragraph for screen readability, especially on mobile.
-- Use spaced em-dashes (` — `) for emphasis instead of long subordinate clauses.
+- Spaced em-dashes (` — `) for emphasis instead of subordinate clauses.
   - Good: "We finish them with marine-grade coatings — they resist swelling."
   - Bad: "We finish them with marine-grade coatings, which means that they are built specifically..."
-- Bold primary keywords naturally: "Hand-crafted here in Jersey, our bespoke **sash windows** are built to last."
-- Use long-tail variations: "Jersey heritage properties", "granite farmhouse windows", "coastal climate".
+- Bold primary keywords naturally; use long-tail variations ("Jersey heritage properties", "granite farmhouse windows").
 
 ## Avoid
 
@@ -49,8 +48,6 @@ Structural copy rules for website content, especially local-service pages. If a 
 - Markdown in HTML content fields.
 
 ## HTML Content Fields
-
-Use HTML tags in WordPress content areas, not Markdown.
 
 ```html
 <strong>Bold text</strong>
