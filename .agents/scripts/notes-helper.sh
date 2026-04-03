@@ -83,70 +83,64 @@ macos_folders() {
 	return 0
 }
 
-macos_show() {
-	local filter="$1"
-	local folder="$2"
+_macos_show_recent() {
+	local folder_filter="$1"
+	local days_back="$2"
+	local empty_msg="$3"
 
-	local folder_filter=""
-	if [[ -n "$folder" ]]; then
-		folder_filter="of folder \"${folder}\""
-	fi
-
-	local script=""
-	case "$filter" in
-	today)
-		script="
+	osascript -e "
+tell application \"Notes\"
 set startDate to current date
 set time of startDate to 0
+set startDate to startDate - ${days_back} * days
 set output to {}
 repeat with n in (every note ${folder_filter})
-	try
-		if modification date of n >= startDate then
-			set end of output to (modification date of n as text) & \" | \" & name of n
-		end if
-	end try
+try
+if modification date of n >= startDate then
+set end of output to (modification date of n as text) & \" | \" & name of n
+end if
+end try
 end repeat
-if (count of output) = 0 then return \"No notes modified today.\"
-return output as text"
-		;;
-	week)
-		script="
-set startDate to current date
-set time of startDate to 0
-set startDate to startDate - 7 * days
-set output to {}
-repeat with n in (every note ${folder_filter})
-	try
-		if modification date of n >= startDate then
-			set end of output to (modification date of n as text) & \" | \" & name of n
-		end if
-	end try
-end repeat
-if (count of output) = 0 then return \"No notes modified this week.\"
-return output as text"
-		;;
-	all | *)
-		script="
+if (count of output) = 0 then return \"${empty_msg}\"
+return output as text
+end tell" 2>&1
+	return 0
+}
+
+_macos_show_all() {
+	local folder_filter="$1"
+
+	osascript -e "
+tell application \"Notes\"
 set output to {}
 set noteList to every note ${folder_filter}
 set noteCount to count of noteList
 set maxNotes to 50
 if noteCount < maxNotes then set maxNotes to noteCount
 repeat with i from 1 to maxNotes
-	set n to item i of noteList
-	try
-		set end of output to (modification date of n as text) & \" | \" & name of n
-	end try
+set n to item i of noteList
+try
+set end of output to (modification date of n as text) & \" | \" & name of n
+end try
 end repeat
 if (count of output) = 0 then return \"No notes found.\"
-return output as text"
-		;;
-	esac
-
-	osascript -e "
-tell application \"Notes\"
-	${script}
+return output as text
 end tell" 2>&1
+	return 0
+}
+
+macos_show() {
+	local filter="$1"
+	local folder="$2"
+
+	local folder_filter=""
+	[[ -n "$folder" ]] && folder_filter="of folder \"${folder}\""
+
+	case "$filter" in
+	today) _macos_show_recent "$folder_filter" 0 "No notes modified today." ;;
+	week) _macos_show_recent "$folder_filter" 7 "No notes modified this week." ;;
+	*) _macos_show_all "$folder_filter" ;;
+	esac
 	return 0
 }
 
@@ -154,22 +148,18 @@ macos_add() {
 	local title="$1" body="$2" folder="$3"
 
 	local folder_clause="folder \"Notes\""
-	if [[ -n "$folder" ]]; then
-		folder_clause="folder \"${folder}\""
-	fi
+	[[ -n "$folder" ]] && folder_clause="folder \"${folder}\""
 
 	# Notes.app body is HTML — wrap plain text in basic HTML
 	local html_body=""
 	if [[ -n "$body" ]]; then
-		# Escape HTML entities and convert newlines to <br>
 		html_body="$(printf '%s' "$body" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' | sed 's/$/<br>/' | tr -d '\n')"
 	fi
 
 	osascript -e "
 tell application \"Notes\"
-	make new note at ${folder_clause} with properties {name:\"${title}\", body:\"<h1>${title}</h1>${html_body}\"}
+make new note at ${folder_clause} with properties {name:\"${title}\", body:\"<h1>${title}</h1>${html_body}\"}
 end tell" 2>&1
-
 	return $?
 }
 
@@ -177,21 +167,21 @@ macos_view() {
 	local name="$1"
 	osascript -e "
 tell application \"Notes\"
-	set matchList to every note whose name is \"${name}\"
-	if (count of matchList) = 0 then
-		set matchList to every note whose name contains \"${name}\"
-	end if
-	if (count of matchList) = 0 then return \"No note found matching: ${name}\"
-	set n to item 1 of matchList
-	set output to {\"Title: \" & name of n}
-	set end of output to \"Modified: \" & (modification date of n as text)
-	set end of output to \"Created: \" & (creation date of n as text)
-	try
-		set end of output to \"Folder: \" & (name of container of n)
-	end try
-	set end of output to \"---\"
-	set end of output to plaintext of n
-	return output as text
+set matchList to every note whose name is \"${name}\"
+if (count of matchList) = 0 then
+set matchList to every note whose name contains \"${name}\"
+end if
+if (count of matchList) = 0 then return \"No note found matching: ${name}\"
+set n to item 1 of matchList
+set output to {\"Title: \" & name of n}
+set end of output to \"Modified: \" & (modification date of n as text)
+set end of output to \"Created: \" & (creation date of n as text)
+try
+set end of output to \"Folder: \" & (name of container of n)
+end try
+set end of output to \"---\"
+set end of output to plaintext of n
+return output as text
 end tell" 2>&1
 	return 0
 }
@@ -201,22 +191,20 @@ macos_search() {
 	local folder="$2"
 
 	local folder_filter=""
-	if [[ -n "$folder" ]]; then
-		folder_filter="of folder \"${folder}\""
-	fi
+	[[ -n "$folder" ]] && folder_filter="of folder \"${folder}\""
 
 	osascript -e "
 tell application \"Notes\"
-	set output to {}
-	repeat with n in (every note ${folder_filter})
-		try
-			if name of n contains \"${query}\" or plaintext of n contains \"${query}\" then
-				set end of output to (modification date of n as text) & \" | \" & name of n
-			end if
-		end try
-	end repeat
-	if (count of output) = 0 then return \"No notes found matching: ${query}\"
-	return output as text
+set output to {}
+repeat with n in (every note ${folder_filter})
+try
+if name of n contains \"${query}\" or plaintext of n contains \"${query}\" then
+set end of output to (modification date of n as text) & \" | \" & name of n
+end if
+end try
+end repeat
+if (count of output) = 0 then return \"No notes found matching: ${query}\"
+return output as text
 end tell" 2>&1
 	return 0
 }
@@ -225,12 +213,12 @@ macos_delete() {
 	local name="$1"
 	osascript -e "
 tell application \"Notes\"
-	set matchList to every note whose name is \"${name}\"
-	if (count of matchList) = 0 then
-		set matchList to every note whose name contains \"${name}\"
-	end if
-	if (count of matchList) = 0 then return \"No note found matching: ${name}\"
-	delete item 1 of matchList
+set matchList to every note whose name is \"${name}\"
+if (count of matchList) = 0 then
+set matchList to every note whose name contains \"${name}\"
+end if
+if (count of matchList) = 0 then return \"No note found matching: ${name}\"
+delete item 1 of matchList
 end tell" 2>&1
 	return $?
 }
