@@ -74,15 +74,12 @@ git push all main
 
 ## OpenCode Integration
 
-GitHub setup and common commands:
-
 ```bash
 ~/.aidevops/agents/scripts/opencode-github-setup-helper.sh check
 opencode github install
 ```
 
-Issue or PR comments:
 - GitHub: `/oc explain this issue`, `/oc fix this bug`, `/opencode review this PR`
-- GitLab: add OpenCode to `.gitlab-ci.yml`, then use `@opencode explain this issue` and `@opencode fix this`
+- GitLab: add OpenCode to `.gitlab-ci.yml`, then `@opencode explain this issue` / `@opencode fix this`
 
-See `git/opencode-github.md`, `git/opencode-gitlab.md`, and `git/opencode-github-security.md` for workflow and hardening details.
+Full workflow and hardening: `git/opencode-github.md`, `git/opencode-gitlab.md`, `git/opencode-github-security.md`.
