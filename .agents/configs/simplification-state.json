@@ -4705,5 +4705,10 @@
     "lines_after": 101,
     "bytes_before": 3340,
     "bytes_after": 3076
+  },
+  ".agents/workflows/error-feedback.md": {
+    "hash": "c49b36728150da346c4370c68501192bad0f5af64ae7d18605b7e549af2407ed",
+    "status": "simplified",
+    "issue": "GH#15970"
   }
 }

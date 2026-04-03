@@ -14,6 +14,16 @@ tools:
 
 # Error Checking and Feedback Loops
 
+## CI Error Resolution Loop
+
+```bash
+gh run list --status failure --limit 1          # identify failure
+gh run view {run_id} --log-failed               # diagnose
+# fix locally, then:
+git add . && git commit -m "fix: CI error description"
+git push origin {branch} && gh run watch {run_id}
+```
+
 ## GitHub Actions Monitoring
 
 ```bash
@@ -22,7 +32,6 @@ gh run list --status failure --limit 5          # failed runs only
 gh run view {run_id} --log-failed               # failure logs
 gh run watch {run_id}                           # watch live
 gh api repos/{owner}/{repo}/actions/runs --jq '.workflow_runs[:5] | .[] | "\(.name): \(.conclusion // .status)"'
-gh api repos/{owner}/{repo}/actions/runs/{run_id}/jobs
 ```
 
 ## Code Quality Tools
@@ -53,30 +62,16 @@ gh api "repos/$REPO/commits/$SHA/check-runs" \
 gh api repos/{owner}/{repo}/check-runs/{check_run_id}/annotations \
   --jq '.[] | {path: .path, line: .start_line, level: .annotation_level, message: .message}'
 
-# Bot-specific: Codacy
+# Bot-specific queries (Codacy / CodeRabbit / SonarCloud)
 gh api "repos/$REPO/commits/$SHA/check-runs" \
   --jq '.check_runs[] | select(.app.slug == "codacy-production") | {conclusion: .conclusion, summary: .output.summary}'
-
-# Bot-specific: CodeRabbit
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq '.[] | select(.user.login | contains("coderabbit")) | {path: .path, line: .line, body: .body}'
-
-# Bot-specific: SonarCloud
 gh api "repos/$REPO/commits/$SHA/check-runs" \
   --jq '.check_runs[] | select(.name | contains("SonarCloud")) | {conclusion: .conclusion, url: .details_url}'
 ```
 
 **Processing feedback:** Collect (`gh pr view {pr_number} --comments --json comments` + `gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews`). Prioritize: Critical (security, breaking) → High (quality) → Medium (style) → Low (docs). Fix critical first; group related.
-
-## CI Error Resolution Loop
-
-```bash
-gh run list --status failure --limit 1          # identify failure
-gh run view {run_id} --log-failed               # diagnose
-# fix locally, then:
-git add . && git commit -m "fix: CI error description"
-git push origin {branch} && gh run watch {run_id} # push and monitor latest run
-```
 
 ## Escalation to Humans
 
