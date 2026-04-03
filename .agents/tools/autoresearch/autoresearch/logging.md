@@ -2,8 +2,6 @@
 
 Sub-doc for `autoresearch.md`. Loaded on demand.
 
----
-
 ## Results Logging
 
 Append to `todo/research/{name}-results.tsv`:
@@ -36,8 +34,6 @@ iteration	commit	metric_name	metric_value	baseline	delta	status	hypothesis	times
 2	-	build_time_s	12.8	12.4	0.4	discard	switch to esbuild (breaks API)	2026-04-01T10:24:00Z	3100	-	-
 ```
 
----
-
 ## Memory Storage
 
 After each **keep** or **discard** (medium confidence):
@@ -63,8 +59,6 @@ aidevops-memory store \
   "autoresearch {PROGRAM_NAME} session complete: {ITERATION_COUNT} iterations, best {METRIC_NAME}={BEST_METRIC} (baseline={BASELINE}, improvement={improvement_pct:.1f}%), total_tokens={TOTAL_TOKENS}" \
   --confidence high
 ```
-
----
 
 ## Mailbox Discovery Integration
 
