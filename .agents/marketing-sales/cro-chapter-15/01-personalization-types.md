@@ -6,11 +6,7 @@ Dynamic content adapts per visitor based on attributes, behavior, or context —
 
 Customize by visitor location (country, state, city): shipping messaging, currency display, local store/event references, language auto-detection.
 
-**Implementation**:
-- **Client-side**: IP geolocation API (ipapi.co, MaxMind GeoIP) → JS conditional rendering
-- **Server-side** (better for SEO): detect IP on server, render appropriate content
-- **Edge**: Cloudflare Workers for zero-latency personalization
-- **Platforms**: AB Tasty, Optimizely, VWO (with geo-targeting)
+**Implementation**: Client-side IP geolocation (ipapi.co, MaxMind GeoIP) → JS conditional rendering. Server-side (better for SEO): detect IP, render appropriate content. Edge: Cloudflare Workers for zero-latency. Platforms: AB Tasty, Optimizely, VWO.
 
 **Benchmark**: Booking.com — 20-30% higher conversion from local currency + nearby properties + local payment methods.
 
