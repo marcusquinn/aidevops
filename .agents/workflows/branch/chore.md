@@ -12,21 +12,18 @@ tools:
 
 # Chore Branch
 
-<!-- AI-CONTEXT-START -->
-
 | Aspect | Value |
 |--------|-------|
 | **Prefix** | `chore/` |
 | **Commit** | `chore:`, `docs:`, `ci:`, or `build:` |
-| **Version** | Usually none |
+| **Version** | None |
 | **Create from** | `main` |
+| **Examples** | `chore/update-dependencies`, `chore/fix-github-actions`, `chore/configure-eslint` |
 
 ```bash
 git checkout main && git pull origin main
 git checkout -b chore/{description}
 ```
-
-<!-- AI-CONTEXT-END -->
 
 ## When to Use
 
@@ -38,19 +35,9 @@ git checkout -b chore/{description}
 
 ## Commit Prefixes
 
-Pick the narrowest prefix for the change:
-
 | Prefix | Use for | Example |
 |--------|---------|---------|
 | `chore:` | General maintenance | `chore: update dependencies` |
 | `docs:` | Documentation | `docs: improve installation instructions` |
 | `ci:` | CI/CD changes | `ci: add dependency caching` |
 | `build:` | Build system | `build: switch bundler to esbuild` |
-
-## Branch Examples
-
-```
-chore/update-dependencies
-chore/fix-github-actions
-chore/configure-eslint
-```
