@@ -22,9 +22,10 @@ tools:
 
 ## Compliance Baseline
 
-**CAN-SPAM (US):** Non-deceptive sender identity and subject lines; valid postal address; one-click unsubscribe (RFC 8058); honor opt-outs promptly.
-
-**GDPR Legitimate Interest (EU/UK):** Document balancing test outcomes; minimize personal data to outreach-essential attributes; clear objection/deletion pathways in first contact and footer; maintain processing records and suppression logs.
+| Regulation | Requirements |
+|---|---|
+| CAN-SPAM (US) | Non-deceptive sender/subject; valid postal address; one-click unsubscribe (RFC 8058); honor opt-outs promptly |
+| GDPR Legitimate Interest (EU/UK) | Document balancing test; minimize personal data; objection/deletion pathways in first contact and footer; maintain processing records and suppression logs |
 
 ## Warmup and Volume
 
@@ -38,7 +39,7 @@ tools:
 Scale above 20/day only after 7+ days of stable inbox health. Plan: `target_daily_volume / 100 = minimum active mailboxes`. Add 20-30% headroom for pauses and deliverability degradation.
 
 **Multi-mailbox rotation:**
-1. Group mailboxes by reputation tier (new, warming, stable); route high-priority accounts through stable first
+1. Group by reputation tier (new, warming, stable); route high-priority accounts through stable first
 2. Distribute sequence steps evenly — no mailbox peaks at one hour/daypart
 3. Pause on anomaly signals (bounce spike, spam-folder drift, complaints); rebalance to healthy mailboxes
 
@@ -57,14 +58,11 @@ Scale above 20/day only after 7+ days of stable inbox health. Plan: `target_dail
 | Infraforge | Private/dedicated | Tighter infrastructure control needed |
 | Mailforge | Shared | Speed and lower complexity for standard outbound |
 | Primeforge | Google Workspace / M365 | Enterprise mailbox stack alignment |
-
-**FluentCRM:** Use when outreach is tightly coupled to WordPress funnels and owned contact data. Sync list governance with outbound tools to avoid re-contacting unsubscribed leads.
+| FluentCRM | WordPress-native | Outreach tightly coupled to WordPress funnels and owned contact data; sync list governance to avoid re-contacting unsubscribed leads |
 
 ## Messaging Quality
 
-Avoid mass-templated openings ("just circling back," "quick question," "hope this finds you well"). Use context-grounded observations tied to recipient's role, timing, or initiative.
-
-**B2B personalization:** Trigger from verifiable business signals (hiring, launch, stack changes, expansion). One problem hypothesis + one clear CTA per email. One relevant case/metric matching the prospect segment. Vary openings and CTAs to reduce template fingerprinting.
+Avoid mass-templated openings ("just circling back," "quick question," "hope this finds you well"). Use context-grounded observations tied to recipient's role, timing, or initiative. Trigger from verifiable business signals (hiring, launch, stack changes, expansion). One problem hypothesis + one clear CTA per email. One relevant case/metric matching the prospect segment. Vary openings and CTAs to reduce template fingerprinting.
 
 ## Reply Detection and Handoff
 
