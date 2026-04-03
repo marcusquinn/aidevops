@@ -86,6 +86,52 @@ trials: 1              # optional: evaluations per hypothesis (default: 1, use 2
 
 Multi-trial evaluation reduces noise from stochastic metrics (e.g., LLM-scored tests). Each trial re-runs the full metric command. The median result is used for keep/discard. Set to 2-3 for LLM-based metrics, 1 for deterministic metrics (build time, file size).
 
+## Concurrency
+
+```text
+mode: sequential          # sequential | population | multi-dimension
+population_size: 4        # population mode: N hypotheses per iteration (ignored otherwise)
+convoy_id: null           # auto-generated campaign ID for mailbox grouping (null = auto)
+```
+
+Modes:
+
+- `sequential` — one hypothesis at a time (default, lowest cost)
+- `population` — N hypotheses per iteration; all measured in parallel, best kept. Set `population_size` to control N.
+- `multi-dimension` — separate agent sessions per dimension, coordinated via mailbox. Requires `## Dimensions` section.
+
+`convoy_id` is auto-generated at dispatch time as `autoresearch-{name}-{date}`. Set manually to group related campaigns.
+
+## Dimensions
+
+Only used when `concurrency.mode = multi-dimension`. Each dimension gets its own worktree and agent session.
+File targets MUST NOT overlap between dimensions — enforced at dispatch time, not parse time.
+Dimensions inherit the parent `## Constraints`, `## Models`, and `## Budget` sections unless overridden per-dimension.
+
+```text
+# dimensions:
+#   - name: build-perf
+#     files: webpack.config.js, src/utils/**
+#     metric:
+#       command: npm run build 2>&1 | grep 'Time:' | awk '{print $2}'
+#       name: build_time_s
+#       direction: lower
+#   - name: test-speed
+#     files: jest.config.ts, tests/**
+#     metric:
+#       command: npm test 2>&1 | grep 'Time:' | awk '{print $2}'
+#       name: test_time_s
+#       direction: lower
+#   - name: bundle-size
+#     files: rollup.config.js, src/index.ts
+#     metric:
+#       command: du -sb dist/bundle.js | cut -f1
+#       name: bundle_bytes
+#       direction: lower
+```
+
+Uncomment and populate when using `multi-dimension` mode. Leave commented for `sequential` or `population` modes.
+
 ## Hints
 
 Optional human guidance for the researcher model's hypothesis generation.
@@ -220,57 +266,90 @@ per_experiment: 300
 
 ---
 
-### Example 3: Standalone ML Experiment (cross-repo)
+### Example 3: Multi-Dimension Frontend Optimization
+
+Three independent dimensions (build speed, test speed, bundle size) optimized in parallel.
+Each dimension targets non-overlapping files and runs in its own worktree.
 
 ```markdown
 ---
-name: prompt-compression-study
-mode: standalone
-target_repo: ~/Git/autoresearch-prompt-compression
+name: optimize-frontend-multi
+mode: in-repo
+target_repo: .
 ---
 
-# Research: Prompt compression techniques for code generation
+# Research: Optimize frontend build, test, and bundle size in parallel
 
 ## Target
 
 \`\`\`
-files: programs/compress.py, prompts/*.txt
-branch: experiment/prompt-compression
+files: webpack.config.js, jest.config.ts, rollup.config.js, src/**
+branch: experiment/optimize-frontend-multi
 \`\`\`
 
 ## Metric
 
 \`\`\`
-command: python programs/compress.py --eval | grep 'score:' | awk '{print $2}'
-name: compression_score
-direction: higher
+command: npm run build 2>&1 | grep 'Time:' | awk '{print $2}'
+name: build_time_seconds
+direction: lower
 baseline: null
-goal: "> 0.85"
 \`\`\`
 
 ## Constraints
 
-- Eval suite passes: `python programs/compress.py --eval --strict`
-- No hallucinations: `python programs/compress.py --eval | grep 'hallucinations: 0'`
+- Tests must pass: `npm test`
+- No new dependencies: `git diff HEAD -- package.json | grep -c '^+' | awk '{exit ($1 > 2)}'`
 
 ## Models
 
 \`\`\`
-researcher: opus
-evaluator: sonnet
+researcher: sonnet
 \`\`\`
 
 ## Budget
 
 \`\`\`
-timeout: 28800
-max_iterations: 200
-per_experiment: 900
+timeout: 14400
+max_iterations: 60
+per_experiment: 300
+\`\`\`
+
+## Concurrency
+
+\`\`\`
+mode: multi-dimension
+population_size: 1
+convoy_id: null
+\`\`\`
+
+## Dimensions
+
+\`\`\`
+dimensions:
+  - name: build-perf
+    files: webpack.config.js, tsconfig.json, src/utils/**
+    metric:
+      command: npm run build 2>&1 | grep 'Time:' | awk '{print $2}'
+      name: build_time_s
+      direction: lower
+  - name: test-speed
+    files: jest.config.ts, tests/**
+    metric:
+      command: npm test 2>&1 | grep 'Time:' | awk '{print $2}'
+      name: test_time_s
+      direction: lower
+  - name: bundle-size
+    files: rollup.config.js, src/index.ts
+    metric:
+      command: du -sb dist/bundle.js | cut -f1
+      name: bundle_bytes
+      direction: lower
 \`\`\`
 
 ## Hints
 
-- Semantic compression (remove redundancy) outperforms syntactic compression (abbreviations)
-- Code examples are high-value; compress prose around them, not the examples themselves
-- Chain-of-thought prompts compress poorly — test with and without CoT
+- build-perf: tree-shaking in utils/, barrel exports may block dead-code elimination
+- test-speed: jest worker count, transform cache, test isolation overhead
+- bundle-size: dynamic imports, externals, minification settings
 ```

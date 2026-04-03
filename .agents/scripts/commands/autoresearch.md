@@ -28,9 +28,26 @@ Arguments: $ARGUMENTS
 ```text
 if $ARGUMENTS starts with "init ":      → Init Mode
 elif $ARGUMENTS contains "--program ":  → extract program path, skip to Step 3
+elif $ARGUMENTS contains "--population" or "--dimensions" or "--concurrent":
+                                        → extract flags, merge with one-liner or bare mode
 elif $ARGUMENTS is non-empty:           → One-Liner Mode (infer all fields, show summary)
-else:                                   → Interactive Setup (Q1–Q7 below)
+else:                                   → Interactive Setup (Q1–Q8 below)
 ```
+
+### Concurrency CLI Flags
+
+| Flag | Example | Behaviour |
+|------|---------|-----------|
+| `--population N` | `/autoresearch --population 4` | Population-based mode: N hypotheses per iteration, keep best |
+| `--dimensions "d1,d2,d3"` | `/autoresearch --dimensions "build-perf,test-speed,bundle-size"` | Multi-dimension mode: separate agent per dimension |
+| `--concurrent N` | `/autoresearch --concurrent 3` | Shorthand: N sequential agents on different repos |
+
+**Multi-dimension dispatch** (when `--dimensions` is provided):
+
+1. Validate file targets don't overlap between dimensions — error if they do
+2. Generate a shared convoy ID: `autoresearch-{name}-$(date +%Y%m%d-%H%M%S)`
+3. Dispatch each dimension as a separate subagent session with its own worktree
+4. Show a summary when all dimensions complete
 
 **One-Liner summary format** (headless: skip confirmation):
 
@@ -46,7 +63,7 @@ Research program: optimize-build-time
 [Enter] confirm  [e] edit  [q] quit
 ```
 
-## Step 2: Interactive Setup (Q1–Q7)
+## Step 2: Interactive Setup (Q1–Q8)
 
 Ask sequentially; show inferred default as option 1; Enter accepts default.
 
@@ -107,6 +124,22 @@ Ask sequentially; show inferred default as option 1; Enter accepts default.
 
 **Q7 — Models?** Defaults: `researcher=sonnet, evaluator=haiku`. Ask about Target model only if Q1 mentions "agent" or "instruction" (`target=sonnet`).
 
+**Q8 — Concurrency?**
+
+```text
+1. Sequential [default] — one hypothesis at a time, lowest cost
+2. Population-based — N hypotheses per iteration, keep best (ask: how many? default: 4)
+3. Multi-dimension — parallel agents on independent file sets (ask: which dimensions?)
+```
+
+| Signal | Suggestion |
+|--------|-----------|
+| User mentions "fast" or "overnight" | Suggest population-based (N=4) |
+| Multiple independent metrics detected | Suggest multi-dimension |
+| Single metric, single file set | Sequential (default) |
+
+If multi-dimension selected: ask "Which independent dimensions? Suggest splitting by file area." Validate that proposed file targets don't overlap. Generate convoy ID automatically.
+
 ## Step 3: Write Research Program
 
 Write to `todo/research/{name}.md` from `.agents/templates/research-program-template.md`:
@@ -115,6 +148,8 @@ Write to `todo/research/{name}.md` from `.agents/templates/research-program-temp
 - `## Target`: `files:`, `branch:`
 - `## Metric`: `command:`, `name:`, `direction:`, `baseline: null`
 - `## Constraints`, `## Models`, `## Budget`
+- `## Concurrency`: `mode:`, `population_size:` (if population), `convoy_id: null`
+- `## Dimensions`: populated if multi-dimension, commented out otherwise
 
 Confirm: "Research program written to `todo/research/{name}.md`."
 
