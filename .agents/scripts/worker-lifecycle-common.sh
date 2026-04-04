@@ -900,6 +900,84 @@ list_active_worker_processes() {
 }
 
 #######################################
+# Escalate issue model tier after repeated worker failures.
+#
+# After ESCALATION_FAILURE_THRESHOLD (default 2) failures at the current
+# tier, adds tier:thinking label to route the next dispatch to opus.
+# If already at tier:thinking, no further escalation — the issue stays
+# for the fast-fail skip/needs-human path.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+#   $3 - failure count (current fast-fail count AFTER increment)
+#   $4 - kill/failure reason (for the comment)
+# Returns: 0 always (best-effort, never fatal)
+#######################################
+ESCALATION_FAILURE_THRESHOLD="${ESCALATION_FAILURE_THRESHOLD:-2}"
+
+escalate_issue_tier() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local failure_count="$3"
+	local reason="${4:-repeated_failure}"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+
+	# Validate threshold
+	local threshold="$ESCALATION_FAILURE_THRESHOLD"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=2
+	[[ "$threshold" -ge 1 ]] || threshold=2
+
+	# Only escalate at the threshold boundary (not on every subsequent failure)
+	if [[ "$failure_count" -ne "$threshold" ]]; then
+		return 0
+	fi
+
+	# Check current labels — skip if already at tier:thinking
+	local current_labels
+	current_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
+
+	case ",$current_labels," in
+	*,tier:thinking,*)
+		# Already at highest auto-escalation tier
+		return 0
+		;;
+	esac
+
+	# Add tier:thinking label (creates label if needed)
+	gh label create "tier:thinking" \
+		--repo "$repo_slug" \
+		--description "Route to opus-tier model for dispatch" \
+		--color "7057FF" \
+		--force 2>/dev/null || true
+
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "tier:thinking" \
+		--remove-label "tier:simple" 2>/dev/null || {
+		return 0
+	}
+
+	# Post escalation comment
+	local comment_body="## Model Tier Escalation
+
+**Trigger:** ${failure_count} consecutive worker failures (threshold: ${threshold})
+**Action:** Added \`tier:thinking\` label — next dispatch will use opus-tier model.
+**Reason:** ${reason}
+
+Previous attempts at the default model tier failed to produce a PR. Escalating to a more capable model.
+
+_Automated by \`escalate_issue_tier()\` in worker-lifecycle-common.sh_"
+
+	gh issue comment "$issue_number" --repo "$repo_slug" \
+		--body "$comment_body" 2>/dev/null || true
+
+	return 0
+}
+
+#######################################
 # Count active worker processes
 # Returns: count via stdout
 #######################################

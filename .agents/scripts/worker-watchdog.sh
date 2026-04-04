@@ -963,6 +963,89 @@ post_kill_github_update() {
 		"$duration" "$evidence_summary" \
 		"$destination_status" "$destination_text"
 
+	# Record failure in the fast-fail counter and escalate tier if threshold reached.
+	# The fast-fail state file is shared with pulse-wrapper.sh — both use the same
+	# JSON file so pulse can skip issues that the watchdog has flagged. (GH#2076)
+	_watchdog_record_failure_and_escalate "$issue_number" "$repo_slug" "$reason" || true
+
+	return 0
+}
+
+#######################################
+# Record a watchdog kill in the shared fast-fail counter and trigger
+# tier escalation when threshold is reached.
+#
+# Uses the same state file as pulse-wrapper.sh's fast_fail_record() so
+# both systems share a single failure count per issue. This closes the
+# gap where workers launched successfully (resetting the pulse's counter)
+# but died during execution without producing a PR. (GH#2076, GH#17378)
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+#   $3 - kill reason
+#######################################
+_watchdog_record_failure_and_escalate() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local reason="$3"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+
+	local state_file="${HOME}/.aidevops/.agent-workspace/supervisor/fast-fail-counter.json"
+	local state_dir
+	state_dir=$(dirname "$state_file")
+	mkdir -p "$state_dir" 2>/dev/null || true
+
+	local key now state existing_ts existing_count new_count
+	key="${repo_slug}/${issue_number}"
+	now=$(date +%s)
+
+	# Load state (same format as pulse-wrapper.sh)
+	if [[ -f "$state_file" ]]; then
+		state=$(cat "$state_file" 2>/dev/null) || state="{}"
+		printf '%s' "$state" | jq empty 2>/dev/null || state="{}"
+	else
+		state="{}"
+	fi
+
+	# Read current count, reset if expired (4h default, matches pulse FAST_FAIL_EXPIRY_SECS)
+	local expiry_secs="${FAST_FAIL_EXPIRY_SECS:-14400}"
+	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
+	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
+	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
+	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
+
+	local age=$((now - existing_ts))
+	if [[ "$age" -ge "$expiry_secs" ]]; then
+		existing_count=0
+	fi
+
+	new_count=$((existing_count + 1))
+
+	# Write updated state atomically
+	local updated_state
+	updated_state=$(printf '%s' "$state" | jq \
+		--arg k "$key" \
+		--argjson count "$new_count" \
+		--argjson ts "$now" \
+		--arg reason "$reason" \
+		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason}' 2>/dev/null) || return 0
+
+	local tmp_file
+	tmp_file=$(mktemp "${state_dir}/.fast-fail-counter.XXXXXX" 2>/dev/null) || return 0
+	if printf '%s\n' "$updated_state" >"$tmp_file"; then
+		mv "$tmp_file" "$state_file" || rm -f "$tmp_file"
+	else
+		rm -f "$tmp_file"
+	fi
+
+	log_msg "Fast-fail recorded: #${issue_number} (${repo_slug}) count=${new_count} reason=${reason}"
+
+	# Trigger tier escalation (from worker-lifecycle-common.sh)
+	escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason"
+
 	return 0
 }
 
