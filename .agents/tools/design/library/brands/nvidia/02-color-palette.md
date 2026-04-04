@@ -60,6 +60,4 @@
 
 ## Shadows & Depth
 
-| Token | Value | Role |
-|-------|-------|------|
-| Card Shadow | `rgba(0,0,0,0.3) 0px 0px 5px 0px` | Subtle ambient shadow for elevated cards. |
+- **Card Shadow** (`rgba(0,0,0,0.3) 0px 0px 5px 0px`): Subtle ambient shadow for elevated cards.
