@@ -16,18 +16,16 @@ tools:
 
 ## Quick Reference
 
-- Platforms: CodeRabbit (AI PR review), CodeFactor (grade/trends), Codacy (quality/security), SonarCloud (quality gate)
-- Setup time: ~5 min per platform via GitHub OAuth
-- Config files: `.codacy.yml`, `sonar-project.properties`
-- Targets: CodeFactor A+, Codacy A, SonarCloud passed gate, CodeRabbit useful PR feedback
-- Deep dives: `coderabbit.md`, `codacy.md`, `tools.md`, `.agents/scripts/sonarcloud-cli.sh`
+Setup time: ~5 min per platform via GitHub OAuth. Targets: CodeFactor A+, Codacy A, SonarCloud passed gate, CodeRabbit useful PR feedback.
 
-| Platform | Setup | Coverage |
-|---|---|---|
-| CodeRabbit | <https://coderabbit.ai/> → add repo → enable automatic PR reviews | AI review, security, best practices, performance |
-| CodeFactor | <https://www.codefactor.io/> → add repo → enable GitHub Checks | A-F grade, cyclomatic complexity, technical debt, trends |
-| Codacy | <https://app.codacy.com/> → import repo; uses `.codacy.yml` | Security scanning, quality metrics, test coverage, standards |
-| SonarCloud | <https://sonarcloud.io/> → create org → import project → add `SONAR_TOKEN` GitHub secret | Security hotspots, bugs, code smells, duplication, quality gate |
+| Platform | Setup | Coverage | Config |
+|---|---|---|---|
+| CodeRabbit | <https://coderabbit.ai/> → add repo → enable automatic PR reviews | AI review, security, best practices, performance | — |
+| CodeFactor | <https://www.codefactor.io/> → add repo → enable GitHub Checks | A-F grade, cyclomatic complexity, technical debt, trends | — |
+| Codacy | <https://app.codacy.com/> → import repo | Security scanning, quality metrics, test coverage, standards | `.codacy.yml` |
+| SonarCloud | <https://sonarcloud.io/> → create org → import project → add `SONAR_TOKEN` GitHub secret | Security hotspots, bugs, code smells, duplication, quality gate | `sonar-project.properties` |
+
+Deep dives: `coderabbit.md`, `codacy.md`, `tools.md`, `.agents/scripts/sonarcloud-cli.sh`
 
 <!-- AI-CONTEXT-END -->
 
