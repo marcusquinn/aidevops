@@ -919,8 +919,8 @@ _setup_post_setup_steps() {
 	print_success "Setup complete!"
 
 	# Cache client request format constants if CLI is installed (~50ms)
-	if command -v claude &>/dev/null && [[ -x "${AGENTS_DIR}/scripts/cch-extract.sh" ]]; then
-		"${AGENTS_DIR}/scripts/cch-extract.sh" --cache >/dev/null 2>&1 || true
+	if command -v claude &>/dev/null && [[ -x "${INSTALL_DIR}/.agents/scripts/cch-extract.sh" ]]; then
+		"${INSTALL_DIR}/.agents/scripts/cch-extract.sh" --cache >/dev/null 2>&1 || true
 	else
 		echo ""
 		echo -e "${YELLOW}[TIP]${NC} Install Claude CLI for automatic request format alignment:"
