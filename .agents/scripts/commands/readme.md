@@ -22,7 +22,7 @@ Use `--sections` for targeted updates (adding a feature, changing install/config
 1. **Load guidance** — read `workflows/readme-create-update.md`
 2. **Explore codebase** — detect project type, deployment platform, existing README, key info
 3. **Generate/update** — follow workflow section order; preserve structure for partial updates
-4. **Confirm changes** — present diff and ask before writing
+4. **Confirm changes** — present diff and ask before writing (interactive only)
 
 ## Section Mapping
 
