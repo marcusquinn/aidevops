@@ -202,13 +202,42 @@ GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                         
 FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                                               # Timeout for FOSS contribution scan prefetch (t1702)
 FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                                            # Max FOSS contribution workers per pulse cycle (t1702)
 
-# Per-issue fast-fail counter (t1888, GH#2076)
-# Tracks consecutive worker failures (launch AND execution) per issue.
-# After FAST_FAIL_SKIP_THRESHOLD consecutive failures the issue is skipped
-# for FAST_FAIL_EXPIRY_SECS seconds. At ESCALATION_FAILURE_THRESHOLD (default 2)
-# the issue is auto-escalated to tier:thinking (opus) for the next dispatch.
-FAST_FAIL_SKIP_THRESHOLD="${FAST_FAIL_SKIP_THRESHOLD:-3}" # Skip after N consecutive failures
-FAST_FAIL_EXPIRY_SECS="${FAST_FAIL_EXPIRY_SECS:-14400}"   # 4h expiry on skip state
+# Per-issue retry state (t1888, GH#2076, GH#17384)
+#
+# Cause-aware retry backoff per issue. Different failure types get
+# different retry strategies:
+#
+#   RATE LIMIT (reason starts with "rate_limit"):
+#     1. Query oauth pool — are other accounts available for this provider?
+#     2. YES → retry_after = now (immediate retry on next pulse with rotated account)
+#              Do NOT increment the failure counter.
+#     3. NO  → retry_after = earliest account recovery time from pool cooldowns.
+#              Increment counter (all accounts exhausted = genuine capacity failure).
+#
+#   NON-RATE-LIMIT (crash, context overflow, local_error, etc.):
+#     1. Exponential backoff: FAST_FAIL_INITIAL_BACKOFF_SECS doubled each failure.
+#     2. Cap at FAST_FAIL_MAX_BACKOFF_SECS (7 days).
+#     3. retry_after = now + backoff_seconds.
+#     4. Counter increments. At ESCALATION_FAILURE_THRESHOLD → tier:thinking (opus).
+#
+# State file format:
+#   { "slug/number": {
+#       "count": N,           # consecutive non-rate-limit failures
+#       "ts": epoch,          # last update timestamp
+#       "reason": "...",      # last failure reason
+#       "retry_after": epoch, # earliest next dispatch time (0 = immediate)
+#       "backoff_secs": N     # current backoff interval (doubles each failure)
+#   }}
+#
+# The dispatch check (fast_fail_is_skipped) returns "skip" when:
+#   - retry_after is in the future, OR
+#   - count >= FAST_FAIL_SKIP_THRESHOLD (hard stop regardless of retry_after)
+#
+# All functions are best-effort — failures are logged but never fatal.
+FAST_FAIL_SKIP_THRESHOLD="${FAST_FAIL_SKIP_THRESHOLD:-5}"               # Hard stop after N non-rate-limit failures
+FAST_FAIL_EXPIRY_SECS="${FAST_FAIL_EXPIRY_SECS:-604800}"                # 7-day expiry (matches max backoff)
+FAST_FAIL_INITIAL_BACKOFF_SECS="${FAST_FAIL_INITIAL_BACKOFF_SECS:-600}" # 10 min initial backoff
+FAST_FAIL_MAX_BACKOFF_SECS="${FAST_FAIL_MAX_BACKOFF_SECS:-604800}"      # 7-day max backoff
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
@@ -350,8 +379,10 @@ COMPLEXITY_LLM_SWEEP_INTERVAL=$(_validate_int COMPLEXITY_LLM_SWEEP_INTERVAL "$CO
 COMPLEXITY_FUNC_LINE_THRESHOLD=$(_validate_int COMPLEXITY_FUNC_LINE_THRESHOLD "$COMPLEXITY_FUNC_LINE_THRESHOLD" 100 50)
 COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_THRESHOLD "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" 1 1)
 COMPLEXITY_MD_MIN_LINES=$(_validate_int COMPLEXITY_MD_MIN_LINES "$COMPLEXITY_MD_MIN_LINES" 50 10)
-FAST_FAIL_SKIP_THRESHOLD=$(_validate_int FAST_FAIL_SKIP_THRESHOLD "$FAST_FAIL_SKIP_THRESHOLD" 3 1)
-FAST_FAIL_EXPIRY_SECS=$(_validate_int FAST_FAIL_EXPIRY_SECS "$FAST_FAIL_EXPIRY_SECS" 14400 60)
+FAST_FAIL_SKIP_THRESHOLD=$(_validate_int FAST_FAIL_SKIP_THRESHOLD "$FAST_FAIL_SKIP_THRESHOLD" 5 1)
+FAST_FAIL_EXPIRY_SECS=$(_validate_int FAST_FAIL_EXPIRY_SECS "$FAST_FAIL_EXPIRY_SECS" 604800 60)
+FAST_FAIL_INITIAL_BACKOFF_SECS=$(_validate_int FAST_FAIL_INITIAL_BACKOFF_SECS "$FAST_FAIL_INITIAL_BACKOFF_SECS" 600 60)
+FAST_FAIL_MAX_BACKOFF_SECS=$(_validate_int FAST_FAIL_MAX_BACKOFF_SECS "$FAST_FAIL_MAX_BACKOFF_SECS" 604800 600)
 
 # Validate log sharding configuration (t1886)
 PULSE_LOG_HOT_MAX_BYTES=$(_validate_int PULSE_LOG_HOT_MAX_BYTES "$PULSE_LOG_HOT_MAX_BYTES" 52428800 1048576)
@@ -7056,15 +7087,22 @@ recover_failed_launch_state() {
 }
 
 #######################################
-# Per-issue fast-fail counter (t1888)
+# Per-issue retry state (t1888, GH#2076, GH#17384)
 #
-# Tracks consecutive worker failures (launch AND execution) per issue.
-# After FAST_FAIL_SKIP_THRESHOLD consecutive failures the issue is skipped
-# for FAST_FAIL_EXPIRY_SECS seconds. At ESCALATION_FAILURE_THRESHOLD (default 2)
-# failures, the issue is auto-escalated to tier:thinking (opus). (GH#2076)
+# Cause-aware retry backoff. See config block at line ~205 for the full
+# decision tree. Key invariant: rate-limit failures with available accounts
+# do NOT increment the counter or delay retry — they rotate immediately.
+# Only exhaustion of all accounts or non-rate-limit failures trigger backoff.
 #
-# State file: FAST_FAIL_STATE_FILE (JSON, < 1KB per entry)
-# Format: { "slug/number": { "count": N, "ts": epoch, "reason": "..." } }
+# State file: FAST_FAIL_STATE_FILE (JSON, ~200 bytes per entry)
+# Format: { "slug/number": { "count": N, "ts": epoch, "reason": "...",
+#            "retry_after": epoch, "backoff_secs": N } }
+#
+# Integration points:
+#   - pulse-wrapper.sh: fast_fail_record() on launch failure (recover_failed_launch_state)
+#   - worker-watchdog.sh: _watchdog_record_failure_and_escalate() on worker kill
+#   - pulse-wrapper.sh: fast_fail_reset() on PR merge / issue close
+#   - pulse-wrapper.sh: fast_fail_is_skipped() in deterministic dispatch loop
 #
 # All functions are best-effort — failures are logged but never fatal.
 #######################################
@@ -7097,6 +7135,62 @@ _ff_load() {
 		return 0
 	fi
 	printf '%s' "$content"
+	return 0
+}
+
+#######################################
+# Query the OAuth account pool to determine retry strategy for rate limits.
+#
+# Checks whether any non-rate-limited accounts are available for the given
+# provider. If yes, returns 0 (immediate retry with rotation). If all
+# accounts are exhausted, returns the number of seconds until the earliest
+# account recovers via stdout.
+#
+# Uses the same logic as parse_retry_after_seconds() in headless-runtime-helper.sh
+# but is self-contained so the pulse can query without launching a subprocess.
+#
+# Arguments:
+#   $1 - provider (anthropic, openai, cursor, google)
+# Stdout: seconds until earliest recovery (0 = accounts available now)
+# Returns: 0 always (best-effort)
+#######################################
+_ff_query_pool_retry_seconds() {
+	local provider="${1:-anthropic}"
+	local pool_file="${HOME}/.aidevops/oauth-pool.json"
+
+	# No pool file = no pool management = use default backoff
+	if [[ ! -f "$pool_file" ]]; then
+		echo "0"
+		return 0
+	fi
+
+	local result
+	result=$(POOL_FILE="$pool_file" PROVIDER="$provider" python3 -c "
+import json, os, time, sys
+try:
+    pool = json.load(open(os.environ['POOL_FILE']))
+    now_ms = int(time.time() * 1000)
+    accounts = pool.get(os.environ['PROVIDER'], [])
+    if not accounts:
+        # No accounts configured for this provider — can't determine availability
+        print(-1); sys.exit(0)
+    min_remaining = None
+    for a in accounts:
+        cd = a.get('cooldownUntil')
+        if cd and int(cd) > now_ms and a.get('status') == 'rate-limited':
+            remaining_s = max(1, (int(cd) - now_ms) // 1000)
+            min_remaining = min(min_remaining, remaining_s) if min_remaining else remaining_s
+        else:
+            # At least one account is available — immediate retry
+            print(0); sys.exit(0)
+    # All accounts rate-limited — return shortest wait
+    print(min_remaining or 0)
+except Exception:
+    print(-1)
+" 2>/dev/null) || result="-1"
+
+	[[ "$result" =~ ^-?[0-9]+$ ]] || result="-1"
+	echo "$result"
 	return 0
 }
 
@@ -7151,10 +7245,20 @@ _ff_save() {
 }
 
 #######################################
-# Increment the fast-fail counter for an issue.
+# Record a worker failure for an issue with cause-aware retry strategy.
+#
+# Rate-limit failures query the account pool before deciding on backoff.
+# Non-rate-limit failures use exponential backoff (10m → 20m → ... → 7d).
+#
 # Acquires a file lock to prevent lost updates from concurrent
-# pulse-wrapper and worker-watchdog writes. (GH#2076)
-# Arguments: $1 issue_number, $2 repo_slug, $3 reason
+# pulse-wrapper and worker-watchdog writes. (GH#2076, GH#17384)
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug
+#   $3 - reason (rate_limit, backoff, stall, idle, thrash, runtime,
+#                no_worker_process, cli_usage_output, local_error, etc.)
+#   $4 - provider (optional, for rate-limit pool queries; default: anthropic)
 #######################################
 fast_fail_record() {
 	_ff_with_lock _fast_fail_record_locked "$@" || return 0
@@ -7165,41 +7269,93 @@ _fast_fail_record_locked() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local reason="${3:-launch_failure}"
+	local provider="${4:-anthropic}"
 
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
 
-	local key now state updated_state new_count
+	local key now state
 	key=$(_ff_key "$issue_number" "$repo_slug")
 	now=$(date +%s)
 	state=$(_ff_load)
 
-	# Get current count (reset if expired)
-	local existing_ts existing_count
+	# Read existing entry (reset all fields if expired)
+	local existing_ts existing_count existing_backoff
 	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
 	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
+	existing_backoff=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].backoff_secs // 0' 2>/dev/null) || existing_backoff=0
 	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
 	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
+	[[ "$existing_backoff" =~ ^[0-9]+$ ]] || existing_backoff=0
 
 	local age=$((now - existing_ts))
 	if [[ "$age" -ge "$FAST_FAIL_EXPIRY_SECS" ]]; then
 		existing_count=0
+		existing_backoff=0
 	fi
 
-	new_count=$((existing_count + 1))
+	# ── Decide retry strategy based on failure cause ──
+	local new_count="$existing_count"
+	local new_backoff="$existing_backoff"
+	local retry_after=0
+	local log_action=""
 
+	case "$reason" in
+	rate_limit | backoff)
+		# Rate-limit: check if other accounts are available
+		local pool_wait
+		pool_wait=$(_ff_query_pool_retry_seconds "$provider")
+
+		if [[ "$pool_wait" == "0" ]]; then
+			# Other accounts available — immediate retry, no counter increment.
+			# The next dispatch will rotate to a different account automatically.
+			retry_after=0
+			log_action="rate_limit_rotate (accounts available, immediate retry)"
+		elif [[ "$pool_wait" == "-1" ]]; then
+			# No pool configured or query failed — use exponential backoff
+			new_count=$((existing_count + 1))
+			new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : FAST_FAIL_INITIAL_BACKOFF_SECS))
+			[[ "$new_backoff" -gt "$FAST_FAIL_MAX_BACKOFF_SECS" ]] && new_backoff="$FAST_FAIL_MAX_BACKOFF_SECS"
+			retry_after=$((now + new_backoff))
+			log_action="rate_limit_no_pool (no pool data, backoff=${new_backoff}s)"
+		else
+			# All accounts exhausted — wait for earliest recovery
+			new_count=$((existing_count + 1))
+			retry_after=$((now + pool_wait))
+			new_backoff="$pool_wait"
+			log_action="rate_limit_exhausted (all accounts rate-limited, wait=${pool_wait}s)"
+		fi
+		;;
+
+	*)
+		# Non-rate-limit failure: exponential backoff
+		new_count=$((existing_count + 1))
+		new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : FAST_FAIL_INITIAL_BACKOFF_SECS))
+		[[ "$new_backoff" -gt "$FAST_FAIL_MAX_BACKOFF_SECS" ]] && new_backoff="$FAST_FAIL_MAX_BACKOFF_SECS"
+		retry_after=$((now + new_backoff))
+		log_action="failure_backoff (count=${new_count}, backoff=${new_backoff}s)"
+		;;
+	esac
+
+	# Write updated state
+	local updated_state
 	updated_state=$(printf '%s' "$state" | jq \
 		--arg k "$key" \
 		--argjson count "$new_count" \
 		--argjson ts "$now" \
 		--arg reason "$reason" \
-		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason}' 2>/dev/null) || return 0
+		--argjson retry_after "$retry_after" \
+		--argjson backoff_secs "$new_backoff" \
+		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' 2>/dev/null) || return 0
 
 	_ff_save "$updated_state"
-	echo "[pulse-wrapper] fast_fail_record: #${issue_number} (${repo_slug}) count=${new_count} reason=${reason}" >>"$LOGFILE"
+	echo "[pulse-wrapper] fast_fail_record: #${issue_number} (${repo_slug}) ${log_action} reason=${reason}" >>"$LOGFILE"
 
-	# Trigger tier escalation when failure count reaches threshold (GH#2076)
-	escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason" || true
+	# Trigger tier escalation on non-rate-limit failures (GH#2076)
+	# Rate-limit rotations don't count toward escalation — the model isn't the problem.
+	if [[ "$new_count" -gt "$existing_count" ]]; then
+		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason" || true
+	fi
 
 	return 0
 }
@@ -7244,9 +7400,18 @@ _fast_fail_reset_locked() {
 }
 
 #######################################
-# Check if an issue is fast-fail skipped.
+# Check if an issue should be skipped due to retry backoff.
+#
+# An issue is skipped when EITHER condition is true:
+#   1. retry_after is in the future (backoff timer hasn't expired)
+#   2. count >= FAST_FAIL_SKIP_THRESHOLD (hard stop — too many failures)
+#
+# The distinction matters for diagnostics:
+#   - Condition 1: "waiting for backoff/rate-limit to clear"
+#   - Condition 2: "this issue is fundamentally broken, needs human"
+#
 # Exit codes:
-#   0 - issue is skipped (threshold reached, not expired)
+#   0 - issue is skipped (do NOT dispatch)
 #   1 - issue is not skipped (safe to dispatch)
 # Arguments: $1 issue_number, $2 repo_slug
 #######################################
@@ -7257,30 +7422,45 @@ fast_fail_is_skipped() {
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
 	[[ -n "$repo_slug" ]] || return 1
 
-	local key now state existing_ts existing_count
+	local key now state existing_ts existing_count existing_retry_after
 	key=$(_ff_key "$issue_number" "$repo_slug")
 	now=$(date +%s)
 	state=$(_ff_load)
 
 	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
 	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
+	existing_retry_after=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].retry_after // 0' 2>/dev/null) || existing_retry_after=0
 	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
 	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
+	[[ "$existing_retry_after" =~ ^[0-9]+$ ]] || existing_retry_after=0
 
+	# Check overall expiry (entire entry is stale)
 	local age=$((now - existing_ts))
 	if [[ "$age" -ge "$FAST_FAIL_EXPIRY_SECS" ]]; then
 		return 1 # Expired — not skipped
 	fi
 
+	# Hard stop: too many non-rate-limit failures
 	if [[ "$existing_count" -ge "$FAST_FAIL_SKIP_THRESHOLD" ]]; then
+		echo "[pulse-wrapper] fast_fail_is_skipped: #${issue_number} (${repo_slug}) HARD STOP count=${existing_count}>=${FAST_FAIL_SKIP_THRESHOLD}" >>"$LOGFILE"
 		return 0 # Skipped
 	fi
 
-	return 1 # Below threshold — not skipped
+	# Backoff timer: retry_after is in the future
+	if [[ "$existing_retry_after" -gt "$now" ]]; then
+		local wait_remaining=$((existing_retry_after - now))
+		echo "[pulse-wrapper] fast_fail_is_skipped: #${issue_number} (${repo_slug}) BACKOFF wait=${wait_remaining}s retry_after=$(date -r "$existing_retry_after" '+%H:%M:%S' 2>/dev/null || echo "$existing_retry_after")" >>"$LOGFILE"
+		return 0 # Skipped — backoff timer active
+	fi
+
+	return 1 # Safe to dispatch
 }
 
 #######################################
 # Prune expired entries from the fast-fail state file.
+# An entry is expired when its ts is older than FAST_FAIL_EXPIRY_SECS
+# AND its retry_after has passed (we don't prune entries that still
+# have an active backoff timer, even if they're old).
 # Called periodically to keep the file small.
 #######################################
 fast_fail_prune_expired() {
@@ -7291,7 +7471,10 @@ fast_fail_prune_expired() {
 	pruned=$(printf '%s' "$state" | jq \
 		--argjson now "$now" \
 		--argjson expiry "$FAST_FAIL_EXPIRY_SECS" \
-		'with_entries(select(($now - (.value.ts // 0)) < $expiry))' 2>/dev/null) || return 0
+		'with_entries(select(
+			(($now - (.value.ts // 0)) < $expiry) or
+			((.value.retry_after // 0) > $now)
+		))' 2>/dev/null) || return 0
 
 	local before_count after_count
 	before_count=$(printf '%s' "$state" | jq 'length' 2>/dev/null) || before_count=0

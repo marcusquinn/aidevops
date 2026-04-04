@@ -972,18 +972,21 @@ post_kill_github_update() {
 }
 
 #######################################
-# Record a watchdog kill in the shared fast-fail counter and trigger
+# Record a watchdog kill in the shared fast-fail state and trigger
 # tier escalation when threshold is reached.
 #
-# Uses the same state file as pulse-wrapper.sh's fast_fail_record() so
-# both systems share a single failure count per issue. This closes the
-# gap where workers launched successfully (resetting the pulse's counter)
-# but died during execution without producing a PR. (GH#2076, GH#17378)
+# Uses the same state file and locking as pulse-wrapper.sh's
+# fast_fail_record(). The watchdog writes cause-aware entries with
+# the same format: { count, ts, reason, retry_after, backoff_secs }.
+#
+# Rate-limit kills (reason=backoff) query the account pool to decide
+# whether to back off or allow immediate retry with a rotated account.
+# Non-rate-limit kills use exponential backoff. (GH#2076, GH#17378)
 #
 # Arguments:
 #   $1 - issue number
 #   $2 - repo slug
-#   $3 - kill reason
+#   $3 - kill reason (idle, stall, thrash, runtime, backoff, etc.)
 #######################################
 _watchdog_record_failure_and_escalate() {
 	local issue_number="$1"
@@ -1010,11 +1013,11 @@ _watchdog_record_failure_and_escalate() {
 		sleep 0.1
 	done
 
-	local key now state existing_ts existing_count new_count
+	local key now state
 	key="${repo_slug}/${issue_number}"
 	now=$(date +%s)
 
-	# Load state (same format as pulse-wrapper.sh)
+	# Load state
 	if [[ -f "$state_file" ]]; then
 		state=$(cat "$state_file" 2>/dev/null) || state="{}"
 		printf '%s' "$state" | jq empty 2>/dev/null || state="{}"
@@ -1022,28 +1025,93 @@ _watchdog_record_failure_and_escalate() {
 		state="{}"
 	fi
 
-	# Read current count, reset if expired (4h default, matches pulse FAST_FAIL_EXPIRY_SECS)
-	local expiry_secs="${FAST_FAIL_EXPIRY_SECS:-14400}"
+	local expiry_secs="${FAST_FAIL_EXPIRY_SECS:-604800}"
+	local initial_backoff="${FAST_FAIL_INITIAL_BACKOFF_SECS:-600}"
+	local max_backoff="${FAST_FAIL_MAX_BACKOFF_SECS:-604800}"
+
+	# Read existing entry
+	local existing_ts existing_count existing_backoff
 	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
 	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
+	existing_backoff=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].backoff_secs // 0' 2>/dev/null) || existing_backoff=0
 	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
 	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
+	[[ "$existing_backoff" =~ ^[0-9]+$ ]] || existing_backoff=0
 
 	local age=$((now - existing_ts))
 	if [[ "$age" -ge "$expiry_secs" ]]; then
 		existing_count=0
+		existing_backoff=0
 	fi
 
-	new_count=$((existing_count + 1))
+	# Cause-aware backoff (mirrors pulse-wrapper.sh logic)
+	local new_count="$existing_count"
+	local new_backoff="$existing_backoff"
+	local retry_after=0
+	local log_action=""
 
-	# Write updated state atomically
+	case "$reason" in
+	backoff | rate_limit)
+		# Rate-limit kill: check account pool
+		local pool_file="${HOME}/.aidevops/oauth-pool.json"
+		local pool_wait="-1"
+		if [[ -f "$pool_file" ]]; then
+			pool_wait=$(POOL_FILE="$pool_file" PROVIDER="anthropic" python3 -c "
+import json, os, time, sys
+try:
+    pool = json.load(open(os.environ['POOL_FILE']))
+    now_ms = int(time.time() * 1000)
+    accounts = pool.get(os.environ['PROVIDER'], [])
+    if not accounts: print(-1); sys.exit(0)
+    min_remaining = None
+    for a in accounts:
+        cd = a.get('cooldownUntil')
+        if cd and int(cd) > now_ms and a.get('status') == 'rate-limited':
+            remaining_s = max(1, (int(cd) - now_ms) // 1000)
+            min_remaining = min(min_remaining, remaining_s) if min_remaining else remaining_s
+        else:
+            print(0); sys.exit(0)
+    print(min_remaining or 0)
+except Exception: print(-1)
+" 2>/dev/null) || pool_wait="-1"
+		fi
+		[[ "$pool_wait" =~ ^-?[0-9]+$ ]] || pool_wait="-1"
+
+		if [[ "$pool_wait" == "0" ]]; then
+			retry_after=0
+			log_action="rate_limit_rotate (accounts available)"
+		elif [[ "$pool_wait" == "-1" ]]; then
+			new_count=$((existing_count + 1))
+			new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : initial_backoff))
+			[[ "$new_backoff" -gt "$max_backoff" ]] && new_backoff="$max_backoff"
+			retry_after=$((now + new_backoff))
+			log_action="rate_limit_no_pool (backoff=${new_backoff}s)"
+		else
+			new_count=$((existing_count + 1))
+			retry_after=$((now + pool_wait))
+			new_backoff="$pool_wait"
+			log_action="rate_limit_exhausted (wait=${pool_wait}s)"
+		fi
+		;;
+	*)
+		new_count=$((existing_count + 1))
+		new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : initial_backoff))
+		[[ "$new_backoff" -gt "$max_backoff" ]] && new_backoff="$max_backoff"
+		retry_after=$((now + new_backoff))
+		log_action="failure_backoff (count=${new_count}, backoff=${new_backoff}s)"
+		;;
+	esac
+
+	# Write updated state
 	local updated_state
 	updated_state=$(printf '%s' "$state" | jq \
 		--arg k "$key" \
 		--argjson count "$new_count" \
 		--argjson ts "$now" \
 		--arg reason "$reason" \
-		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason}' 2>/dev/null) || {
+		--argjson retry_after "$retry_after" \
+		--argjson backoff_secs "$new_backoff" \
+		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' 2>/dev/null) || {
 		rmdir "$lock_dir" 2>/dev/null || true
 		return 0
 	}
@@ -1062,10 +1130,12 @@ _watchdog_record_failure_and_escalate() {
 	# Release lock
 	rmdir "$lock_dir" 2>/dev/null || true
 
-	log_msg "Fast-fail recorded: #${issue_number} (${repo_slug}) count=${new_count} reason=${reason}"
+	log_msg "Fast-fail: #${issue_number} (${repo_slug}) ${log_action} reason=${reason}"
 
-	# Trigger tier escalation (from worker-lifecycle-common.sh)
-	escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason"
+	# Trigger tier escalation on non-rate-limit failures
+	if [[ "$new_count" -gt "$existing_count" ]]; then
+		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason"
+	fi
 
 	return 0
 }
