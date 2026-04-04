@@ -8441,10 +8441,11 @@ rotate_pulse_log() {
 	local total_cold=0
 	local archive_file archive_size
 	# Build sorted list (oldest first via lexicographic sort on timestamp-named files)
+	# find -maxdepth 1 avoids recursion; sort gives chronological order
 	local -a archive_files=()
 	while IFS= read -r archive_file; do
 		archive_files+=("$archive_file")
-	done < <(ls -1 "${PULSE_LOG_ARCHIVE_DIR}"/pulse-*.log.gz 2>/dev/null | sort)
+	done < <(find "${PULSE_LOG_ARCHIVE_DIR}" -maxdepth 1 -name 'pulse-*.log.gz' -type f 2>/dev/null | sort)
 
 	for archive_file in "${archive_files[@]}"; do
 		archive_size=$(stat -f %z "$archive_file" 2>/dev/null || wc -c <"$archive_file" 2>/dev/null || echo "0")
@@ -8538,11 +8539,15 @@ append_cycle_index() {
 			return 0
 		}
 		# Keep only the last PULSE_CYCLE_INDEX_MAX_LINES lines
-		tail -n "$PULSE_CYCLE_INDEX_MAX_LINES" "$PULSE_CYCLE_INDEX_FILE" >"$tmp_index" 2>/dev/null &&
+		if tail -n "$PULSE_CYCLE_INDEX_MAX_LINES" "$PULSE_CYCLE_INDEX_FILE" >"$tmp_index" 2>/dev/null; then
 			mv "$tmp_index" "$PULSE_CYCLE_INDEX_FILE" 2>/dev/null || {
+				rm -f "$tmp_index"
+				echo "[pulse-wrapper] append_cycle_index: prune mv failed (excess=${excess})" >>"$WRAPPER_LOGFILE"
+			}
+		else
 			rm -f "$tmp_index"
-			echo "[pulse-wrapper] append_cycle_index: prune failed (excess=${excess})" >>"$WRAPPER_LOGFILE"
-		}
+			echo "[pulse-wrapper] append_cycle_index: prune tail failed (excess=${excess})" >>"$WRAPPER_LOGFILE"
+		fi
 	fi
 
 	return 0
