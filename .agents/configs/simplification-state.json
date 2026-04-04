@@ -6490,5 +6490,17 @@
     "simplified_at": "2026-04-04T00:00:00Z",
     "issue": "GH#17255",
     "action": "added CSS variables quick-reference section"
+  },
+  ".agents/tools/design/library/brands/claude/04-components.md": {
+    "hash": "9eb6ea4ffeea8ec04d546c77c3cac26f47f6a829ac1e512a5347b65c10d589a8",
+    "lines": 47,
+    "status": "simplified",
+    "issue": "GH#17241"
+  },
+  ".agents/tools/design/library/brands/linear/02-colour-palette.md": {
+    "hash": "13573ea17cdd090fbed89523845d463c0803e4d0",
+    "lines": 66,
+    "status": "simplified",
+    "issue": "GH#17279"
   }
 }
