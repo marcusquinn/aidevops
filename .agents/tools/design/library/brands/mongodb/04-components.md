@@ -52,9 +52,7 @@
 
 ## Image Treatment
 
-- Dashboard screenshots on dark backgrounds
-- Green-accented UI elements in screenshots
-- 30px–32px radius on image containers
+- Dashboard screenshots on dark backgrounds with green-accented UI elements
 - Full-width dark sections for product showcases
 
 ## Distinctive Components
