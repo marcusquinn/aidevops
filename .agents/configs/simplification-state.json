@@ -6466,5 +6466,11 @@
     "hash": "5c631b0685456a768ee6eb1b424fae8551e315862ab8e7c14f310d9de19114f0",
     "status": "simplified",
     "issue": "GH#17207"
+  },
+  ".agents/tools/design/library/brands/claude/04-components.md": {
+    "hash": "9eb6ea4ffeea8ec04d546c77c3cac26f47f6a829ac1e512a5347b65c10d589a8",
+    "lines": 47,
+    "status": "simplified",
+    "issue": "GH#17241"
   }
 }
