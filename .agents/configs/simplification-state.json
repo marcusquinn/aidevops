@@ -6413,6 +6413,12 @@
       "at": "2026-04-04T09:20:00Z",
       "passes": 1,
       "pr": 17267
+    },
+    ".agents/tools/design/library/styles/agency-feminine/02-colours.md": {
+      "hash": "be82e405e45430e53f12a26dbfab5547407c58e2",
+      "at": "2026-04-04T09:40:00Z",
+      "passes": 1,
+      "pr": 0
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
@@ -6473,10 +6479,10 @@
     "status": "simplified",
     "issue": "GH#17207"
   },
-  ".agents/tools/design/library/brands/claude/04-components.md": {
-    "hash": "9eb6ea4ffeea8ec04d546c77c3cac26f47f6a829ac1e512a5347b65c10d589a8",
-    "lines": 47,
-    "status": "simplified",
-    "issue": "GH#17241"
+  ".agents/tools/design/library/styles/agency-feminine/02-colours.md": {
+    "hash": "a5a882ed5c947e5745b0f212138c772ec74268d8061d39f6551f8c13a7e3b9fd",
+    "simplified_at": "2026-04-04T00:00:00Z",
+    "issue": "GH#17255",
+    "action": "added CSS variables quick-reference section"
   }
 }
