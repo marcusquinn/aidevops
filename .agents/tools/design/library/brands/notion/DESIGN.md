@@ -2,6 +2,9 @@
 
 Warm-neutral minimalism. Blank-canvas philosophy. NotionInter font, whisper borders, multi-layer shadows.
 
+> **Index only.** This file is a navigation index. All design content lives in the chapter files below.
+> When copying or referencing this design system, include all chapter files (`01-visual-theme.md` through `09-agent-prompts.md`) alongside this index — DESIGN.md alone contains no design specs.
+
 ## Chapters
 
 | # | File | Contents |

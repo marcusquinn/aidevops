@@ -17,7 +17,7 @@
 ### Secondary / Tertiary
 
 - Background: `rgba(0,0,0,0.05)` (translucent warm gray)
-- Text: `#000000` (near-black)
+- Text: `rgba(0,0,0,0.95)` (near-black)
 - Padding: 8px 16px
 - Radius: 4px
 - Hover: text color shifts, scale(1.05)
