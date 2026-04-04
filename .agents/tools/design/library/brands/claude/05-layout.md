@@ -21,9 +21,9 @@
 
 ## Whitespace Philosophy
 
-- **Editorial pacing**: Each section breathes like a magazine spread — generous top/bottom margins create natural reading pauses.
-- **Serif-driven rhythm**: The serif headings establish a literary cadence that demands more whitespace than sans-serif designs.
-- **Content island approach**: Sections alternate between light and dark environments, creating distinct "rooms" for each message.
+- **Editorial pacing**: Generous top/bottom margins create natural reading pauses between sections.
+- **Serif-driven rhythm**: Serif headings demand more whitespace than sans-serif designs.
+- **Content island approach**: Sections alternate light/dark environments, creating distinct visual rooms.
 
 ## Border Radius Scale
 
@@ -49,10 +49,10 @@
 
 ### Touch Targets
 
-- Buttons use generous padding (8–16px vertical minimum)
-- Navigation links adequately spaced for thumb navigation
-- Card surfaces serve as large touch targets
-- Minimum recommended: 44x44px
+- Buttons: 8–16px vertical padding minimum
+- Navigation links: spaced for thumb navigation
+- Card surfaces: large touch targets
+- Minimum: 44x44px
 
 ### Collapsing Strategy
 
