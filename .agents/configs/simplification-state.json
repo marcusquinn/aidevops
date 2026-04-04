@@ -6422,5 +6422,13 @@
     "lines": 30,
     "status": "simplified",
     "issue": "GH#17125"
+  },
+  ".agents/tools/design/library/brands/ibm/04-components.md": {
+    "hash": "b402836b6b2f4ba9d95da181a22d3ce596d62b74",
+    "at": "2026-04-04T08:10:00Z",
+    "passes": 1,
+    "lines": 67,
+    "status": "simplified",
+    "issue": "GH#17202"
   }
 }

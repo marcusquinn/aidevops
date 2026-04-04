@@ -21,8 +21,8 @@
 
 ## Cards & Containers
 
-- Background: `#ffffff` (white theme) or `#f4f4f4` Gray 10 (elevated)
-- Hover (clickable): background → `#e8e8e8` Gray 10 Hover
+- Background: `#ffffff` (white) or `#f4f4f4` Gray 10 (elevated)
+- Hover: background → `#e8e8e8` Gray 10 Hover
 - Content padding: 16px; separation via background layering (white → gray 10 → white)
 
 ## Inputs & Forms
@@ -53,15 +53,15 @@
 
 **Content Block (Hero/Feature)**
 - Full-width alternating white/gray-10 bands; headline left-aligned 60px or 48px display type
-- CTA: blue primary button with arrow icon; image right-aligned or below on mobile
+- CTA: blue primary button + arrow icon; image right-aligned or below on mobile
 
 **Tile (Clickable Card)**
-- Background: `#f4f4f4` or `#ffffff`; hover: bottom-border or background-shift
-- Arrow icon bottom-right on hover; no shadow
+- Background: `#f4f4f4` or `#ffffff`; hover: bottom-border or background-shift; no shadow
+- Arrow icon bottom-right on hover
 
 **Tag / Label**
 - Background: contextual color 10% opacity (Blue 10, Red 10); text: 60-grade color
 - Padding: 4px 8px; border-radius: 24px (pill); font: 12px weight 400
 
 **Notification Banner**
-- Full-width bar, Blue 60 or Gray 100 background; white text 14px; close icon right-aligned
+- Full-width bar; Blue 60 or Gray 100 background; white text 14px; close icon right-aligned
