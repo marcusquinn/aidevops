@@ -84,6 +84,15 @@ jobs:
         source .agents/scripts/lint-file-discovery.sh
         lint_shell_files
 
+        # Read threshold from config file (GH#17371 — ratchetable like other checks)
+        THRESHOLD=69
+        if [ -f ".agents/configs/complexity-thresholds.conf" ]; then
+          val=$(grep '^BASH32_COMPAT_THRESHOLD=' .agents/configs/complexity-thresholds.conf | cut -d= -f2 || true)
+          if [ -n "$val" ] && [ "$val" -eq "$val" ] 2>/dev/null; then
+            THRESHOLD=$val
+          fi
+        fi
+
         violations=0
         # Self-skip: linters-local.sh grep patterns contain the forbidden strings
         # as search targets, not as bash code.
@@ -123,20 +132,23 @@ jobs:
             | grep -vE '^[0-9]+:[[:space:]]*#' || true)
           if [ -n "$nameref" ]; then
             while IFS= read -r line; do
-              echo "FAIL $file:$line [nameref — bash 4.3+]"
+              echo "FAIL $file:$line [nameref -- bash 4.3+]"
               violations=$((violations + 1))
             done <<< "$nameref"
           fi
         done <<< "$LINT_SH_FILES"
 
         echo ""
-        if [ "$violations" -gt 0 ]; then
-          echo "::error::Bash 3.2 compatibility: $violations violation(s) found"
+        echo "Bash 3.2 compatibility violations: $violations"
+        # Threshold from .agents/configs/complexity-thresholds.conf (GH#17371).
+        # Reduce after each batch of bash32-compat cleanup PRs merges.
+        if [ "$violations" -gt "$THRESHOLD" ]; then
+          echo "::error::Bash 3.2 compatibility regression: $violations violations (threshold: $THRESHOLD)"
           echo "macOS ships bash 3.2 — these constructs will break on macOS."
           echo "See .agents/reference/bash-compat.md for alternatives."
           exit 1
         fi
-        echo "All shell scripts pass Bash 3.2 compatibility check"
+        echo "Within threshold ($THRESHOLD)"
 
   framework-validation:
     name: Framework Validation
