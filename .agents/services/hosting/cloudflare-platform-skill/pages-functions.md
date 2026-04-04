@@ -22,22 +22,18 @@ Serverless functions on Cloudflare Pages using Workers runtime. File-based routi
 
 ## Dynamic Routes
 
-**Single segment** `[param]` → string:
+`[param]` → single segment (string) · `[[param]]` → multi-segment (array):
 
 ```js
+// /users/[user].js — context.params.user = "nevi"
 export function onRequest(context) {
   return new Response(`Hello ${context.params.user}`);
 }
-// Matches: /users/nevi
-```
 
-**Multi-segment** `[[param]]` → array:
-
-```js
+// /users/[[catchall]].js — context.params.catchall = ["nevi", "foobar"]
 export function onRequest(context) {
   return new Response(JSON.stringify(context.params.catchall));
 }
-// Matches: /users/nevi/foobar → ["nevi", "foobar"]
 ```
 
 ## Key Features
