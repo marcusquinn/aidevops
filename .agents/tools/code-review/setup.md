@@ -33,12 +33,14 @@ tools:
 
 ## README Badges
 
+Replace `{owner}/{repo}` with your repository slug.
+
 | Platform | Badge |
 |---|---|
 | CodeRabbit | `[![CodeRabbit](https://img.shields.io/badge/CodeRabbit-AI%20Reviews-blue)](https://coderabbit.ai)` |
-| CodeFactor | `[![CodeFactor](https://www.codefactor.io/repository/github/marcusquinn/aidevops/badge)](https://www.codefactor.io/repository/github/marcusquinn/aidevops)` |
-| Codacy | `[![Codacy Badge](https://app.codacy.com/project/badge/Grade/[PROJECT_ID])](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard)` |
-| SonarCloud | `[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=marcusquinn_aidevops&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=marcusquinn_aidevops)` |
+| CodeFactor | `[![CodeFactor](https://www.codefactor.io/repository/github/{owner}/{repo}/badge)](https://www.codefactor.io/repository/github/{owner}/{repo})` |
+| Codacy | `[![Codacy Badge](https://app.codacy.com/project/badge/Grade/[PROJECT_ID])](https://app.codacy.com/gh/{owner}/{repo}/dashboard)` |
+| SonarCloud | `[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project={owner}_{repo}&metric=alert_status)](https://sonarcloud.io/summary/new_code?id={owner}_{repo})` |
 
 ## Troubleshooting
 
