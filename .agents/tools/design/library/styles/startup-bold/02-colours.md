@@ -3,6 +3,8 @@
 
 # Startup Bold — Colour Palette & Roles
 
+Design tokens for the Startup Bold style. Six groups: Primary, Accent, Text, Surface, Semantic, Shadows.
+
 ## Primary
 
 | Role | Hex | Usage |
