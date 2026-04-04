@@ -1,38 +1,24 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-## Common Use Cases
+# AutoRAG AI Search Patterns
 
-1. **Enterprise search**: Natural language search over company docs
-2. **Customer support**: AI-powered chat with product documentation
-3. **Knowledge bases**: Semantic search over technical content
-4. **Multitenancy SaaS**: Per-tenant data isolation with folder filters
-5. **Content discovery**: Finding relevant content across large datasets
+Use cases: enterprise search, customer support chat, knowledge bases, multitenancy SaaS (folder filters), content discovery.
 
 ## Workers Binding (Recommended)
 
-### Configuration
-
-**wrangler.toml:**
+**wrangler.toml** or **wrangler.jsonc:**
 
 ```toml
 [ai]
 binding = "AI"
 ```
 
-**wrangler.jsonc:**
-
 ```jsonc
-{
-  "ai": {
-    "binding": "AI"
-  }
-}
+{ "ai": { "binding": "AI" } }
 ```
 
-### Code Patterns
-
-#### AI Search with Generation
+### AI Search with Generation
 
 ```typescript
 const answer = await env.AI.autorag("my-autorag").aiSearch({
@@ -40,18 +26,13 @@ const answer = await env.AI.autorag("my-autorag").aiSearch({
   model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
   rewrite_query: true,
   max_num_results: 10,
-  ranking_options: {
-    score_threshold: 0.3
-  },
-  reranking: {
-    enabled: true,
-    model: "@cf/baai/bge-reranker-base"
-  },
+  ranking_options: { score_threshold: 0.3 },
+  reranking: { enabled: true, model: "@cf/baai/bge-reranker-base" },
   stream: true
 });
 ```
 
-#### Search Only (no generation)
+### Search Only (no generation)
 
 ```typescript
 const results = await env.AI.autorag("my-autorag").search({
@@ -63,7 +44,7 @@ const results = await env.AI.autorag("my-autorag").search({
 // results.data[].content, results.data[].filename, results.data[].score
 ```
 
-#### Folder Filter (multitenancy)
+### Folder Filter (multitenancy)
 
 ```typescript
 const answer = await env.AI.autorag("my-autorag").aiSearch({
@@ -96,4 +77,4 @@ const response = await fetch(
 const { result } = await response.json();
 ```
 
-**Token permissions required:** `AI Search - Read` (search/aiSearch), `AI Search Edit` (index management).
+**Token permissions:** `AI Search - Read` (search/aiSearch), `AI Search Edit` (index management).
