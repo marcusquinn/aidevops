@@ -10,7 +10,7 @@
 | Ghost (default) | `rgba(255,255,255,0.02)` | `#e2e4e7` | comfortable | 6px | `1px solid rgb(36,40,44)` | Focus shadow: `rgba(0,0,0,0.1) 0px 4px 12px`; standard actions, secondary CTAs |
 | Subtle | `rgba(255,255,255,0.04)` | `#d0d6e0` | `0px 6px` | 6px | — | Toolbar actions, contextual buttons |
 | Primary Brand | `#5e6ad2` | `#ffffff` | `8px 16px` | 6px | — | Hover: `#828fff`; primary CTAs |
-| Icon (circle) | `rgba(255,255,255,0.03)` / `rgba(255,255,255,0.05)` | `#f7f8f8` | — | 50% | `1px solid rgba(255,255,255,0.08)` | Close, menu toggle, icon-only; resting/hover states |
+| Icon (circle) | `rgba(255,255,255,0.03)` (resting) · `rgba(255,255,255,0.05)` (hover) | `#f7f8f8` | — | 50% | `1px solid rgba(255,255,255,0.08)` | Close, menu toggle, icon-only actions |
 | Pill | transparent | `#d0d6e0` | `0px 10px 0px 5px` | 9999px | `1px solid rgb(35,37,42)` | Filter chips, tags, status indicators |
 | Small Toolbar | `rgba(255,255,255,0.05)` | `#62666d` | — | 2px | `1px solid rgba(255,255,255,0.05)` | Shadow: `rgba(0,0,0,0.03) 0px 1.2px 0px 0px`; 12px weight 510; compact toolbar actions, editor controls |
 
