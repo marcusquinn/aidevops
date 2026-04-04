@@ -10,7 +10,7 @@ tools:
 
 # CCH Reverse Engineering Agent
 
-Extracts request signing constants from the Claude CLI binary/source and detects protocol changes. Based on a10k.co research (February 2026), automated and repeatable.
+Extracts request signing constants from the Claude CLI binary/source and detects protocol changes.
 
 ## When to Use
 
@@ -96,26 +96,8 @@ x-app: cli
 
 | Form | Detection | Extraction |
 |------|-----------|------------|
-| **Node.js npm** | `file $(which claude)` → "script text" | Source directly readable (`cli.js`) |
-| **Bun binary** | `file $(which claude)` → "Mach-O" / "ELF" | Extract embedded JS via `strings` |
-
-**Node.js:**
-
-```bash
-readlink -f $(which claude)
-# → /opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js
-# Key functions: GG8() builds billing header, KA7() computes version suffix (SHA-256), rlK() calls KA7
-```
-
-**Bun binary:**
-
-```bash
-strings /path/to/claude | python3 -c "
-import sys; content = sys.stdin.read()
-start = content.find('function')  # Bun embeds JS as single blob
-"
-# Or: bun build --dump /path/to/claude
-```
+| **Node.js npm** | `file $(which claude)` → "script text" | `readlink -f $(which claude)` → `cli.js` (readable). Key functions: `GG8()` billing header, `KA7()` version suffix (SHA-256), `rlK()` calls `KA7` |
+| **Bun binary** | `file $(which claude)` → "Mach-O" / "ELF" | `strings /path/to/claude \| python3 -c "import sys; c=sys.stdin.read(); print(c[c.find('function'):])"` or `bun build --dump /path/to/claude` |
 
 ### Phase 2: Constant Identification
 
@@ -152,7 +134,12 @@ cch-traffic-monitor.sh capture --output current-vX.Y.Z.json
 cch-traffic-monitor.sh diff baseline-v2.1.92.json current-vX.Y.Z.json
 ```
 
-Changes to watch for: new headers, changed `anthropic-beta` values, new billing header fields, different `cch` format (length/charset), new body fields (`research_preview_*`, `context_management`), changed JSON key ordering (affects body hash if xxHash active).
+Changes to watch for:
+
+- New/changed headers or `anthropic-beta` values
+- New billing header fields or different `cch` format (length/charset)
+- New body fields (`research_preview_*`, `context_management`)
+- Changed JSON key ordering (affects body hash if xxHash active)
 
 ## References
 
