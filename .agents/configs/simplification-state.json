@@ -6431,6 +6431,12 @@
       "simplified_at": "2026-04-04T09:17:13Z",
       "issue": "GH#17250",
       "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)"
+    },
+    ".agents/tools/ui/nothing-design-skill/tokens/02-color.md": {
+      "hash": "c8765e9bc3b5994ef76050aa2dc4dd83f99636143806678c19c2564ad43b00c6",
+      "at": "2026-04-04T10:15:00Z",
+      "passes": 1,
+      "pr": null
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
