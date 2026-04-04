@@ -15,30 +15,24 @@ description: Get audio file duration in seconds using Mediabunny's Input.compute
 
 ```tsx
 import { Input, ALL_FORMATS, UrlSource } from "mediabunny";
+import { staticFile } from "remotion";
 
 export const getAudioDuration = async (src: string) => {
   const input = new Input({
     formats: ALL_FORMATS,
-    source: new UrlSource(src, {
-      getRetryDelay: () => null,
-    }),
+    source: new UrlSource(src, { getRetryDelay: () => null }),
   });
-
-  const durationInSeconds = await input.computeDuration();
-  return durationInSeconds;
+  return input.computeDuration();
 };
-```
 
-```tsx
-import { staticFile } from "remotion";
-
+// Remote URL or Remotion staticFile()
 const remoteDuration = await getAudioDuration("https://remotion.media/audio.mp3");
 const staticDuration = await getAudioDuration(staticFile("audio.mp3"));
 ```
 
-## Local files
+## Local files (`FileSource`)
 
-Use `FileSource` for browser uploads or drag-and-drop:
+Browser uploads or drag-and-drop:
 
 ```tsx
 import { Input, ALL_FORMATS, FileSource } from "mediabunny";
@@ -47,6 +41,5 @@ const input = new Input({
   formats: ALL_FORMATS,
   source: new FileSource(file), // File object from input or drag-drop
 });
-
 const durationInSeconds = await input.computeDuration();
 ```
