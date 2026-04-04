@@ -5936,11 +5936,13 @@
       "passes": 1,
       "pr": 16893
     },
-    ".agents/tools/design/library/brands/cursor/DESIGN.md": {
-      "hash": "ccceee3cb41ed9e2ecdc782afbc834836b3db867",
-      "at": "2026-04-04T00:00:00Z",
-      "passes": 1,
-      "pr": 0
+    ".agents/tools/design/library/brands/vercel/DESIGN.md": {
+      "hash": "2adb79eee3af31e3f589cd34f1e1007da5525db2",
+      "at": "2026-04-04T01:35:11Z",
+      "status": "restructured",
+      "issue": 16956,
+      "pr": 16947,
+      "passes": 1
     }
   }
 }
