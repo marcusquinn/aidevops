@@ -5,9 +5,11 @@
 
 ## Buttons
 
-Shared base: `font: 14px/1 Inter, 500` · `padding: 10px 20px` · `border-radius: 4px` · `:focus → outline: 2px solid #22d3ee; outline-offset: 2px`
-
 ```css
+/* Shared base */
+font: 14px/1 Inter, 500; padding: 10px 20px; border-radius: 4px
+:focus → outline: 2px solid #22d3ee; outline-offset: 2px
+
 /* Primary */
 background: #22d3ee; color: #0d1117; border: none
 transition: all 150ms ease-out
