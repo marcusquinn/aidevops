@@ -3,48 +3,44 @@
 
 ## Common Anti-Patterns
 
-### ❌ Hardcoding Credentials
+### Hardcoding Credentials
 
 ```typescript
-// DON'T
 const apiKey = 'sk_live_abc123';
 ```
 
-**✅ Use secrets:**
+Use secrets instead:
 
 ```bash
 npx wrangler secret put API_KEY
 ```
 
-### ❌ Using REST API from Worker
+### Using REST API from Worker
 
 ```typescript
-// DON'T
 await fetch('https://api.cloudflare.com/client/v4/accounts/.../kv/...');
 ```
 
-**✅ Use bindings:**
+Use bindings instead:
 
 ```typescript
 await env.MY_KV.get('key');
 ```
 
-### ❌ Polling KV/D1 for Changes
+### Polling KV/D1 for Changes
 
 ```typescript
-// DON'T
 setInterval(() => {
   const config = await env.KV.get('config');
 }, 1000);
 ```
 
-**✅ Use Durable Objects for real-time state**
+Use Durable Objects for real-time state instead.
 
-### ❌ Storing Large Data in env.vars
+### Storing Large Data in env.vars
 
 ```typescript
-// DON'T
 { "vars": { "HUGE_CONFIG": "..." } } // Max 5KB per var
 ```
 
-**✅ Use KV/R2 for large data**
+Use KV/R2 for large data instead.
