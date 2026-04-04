@@ -65,6 +65,7 @@ Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 4. **Runtime testing gate (t1660.7):** risk-appropriate verification (see below).
 5. **Commit+PR gate (GH#5317 — MANDATORY):** Commit all changes, push, ensure PR exists. Do NOT emit `TASK_COMPLETE` with uncommitted changes or no PR.
 6. **Signature footer gate (GH#12805 — MANDATORY):** PR body and issue closing comment MUST contain `aidevops.sh` signature footer.
+7. **Pre-close verification gate (GH#17372 — MANDATORY):** NEVER close an issue citing an existing PR unless: (a) the PR was created by this session as part of the fix, OR (b) `verify-issue-close-helper.sh check <issue> <pr> <slug>` returns exit 0. Workers MUST NOT close issues against PRs they did not create without this verification. If verification fails, leave the issue open and comment with your analysis.
 
 ### Runtime Testing Gate (t1660.7 — MANDATORY)
 
@@ -111,7 +112,7 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.6 Auto-Release (aidevops only):** `version-manager.sh bump patch`, tag, push, `gh release create`, `setup.sh --non-interactive`.
 
-**4.7 Closing Comments (MANDATORY):** post structured closing comment on **both** issue AND PR: What done, Testing Evidence, Key decisions, Files changed, Blockers, Follow-up, Released in. PR comment: `Closes #NNN`. Issue comment: `PR #NNN`.
+**4.7 Closing Comments (MANDATORY):** post structured closing comment on **both** issue AND PR: What done, Testing Evidence, Key decisions, Files changed, Blockers, Follow-up, Released in. PR comment: `Closes #NNN`. Issue comment: `PR #NNN`. **Pre-close verification (GH#17372):** Only close an issue if your session created the fixing PR. Never close citing someone else's PR without running `verify-issue-close-helper.sh check`.
 
 **4.8 Postflight + Deploy:** verify release health; `setup.sh --non-interactive`. Emit: `<promise>FULL_LOOP_COMPLETE</promise>`.
 

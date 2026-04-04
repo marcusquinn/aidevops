@@ -3777,6 +3777,8 @@ close_issues_with_merged_prs() {
 	local dedup_helper="${HOME}/.aidevops/agents/scripts/dispatch-dedup-helper.sh"
 	[[ -x "$dedup_helper" ]] || return 0
 
+	local verify_helper="${HOME}/.aidevops/agents/scripts/verify-issue-close-helper.sh"
+
 	local total_closed=0
 
 	while IFS= read -r slug; do
@@ -3812,6 +3814,18 @@ close_issues_with_merged_prs() {
 				# has-open-pr returns 0 when merged PR evidence found (confusing name but correct)
 				local pr_ref
 				pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
+				local pr_num
+				pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
+
+				# GH#17372: Verify PR diff actually touches files from the issue.
+				# A merged PR with "closes #NNN" may reference the issue without
+				# fixing it (e.g., mentioned in a comment, not the actual fix).
+				if [[ -n "$pr_num" ]] && [[ -x "$verify_helper" ]]; then
+					if ! "$verify_helper" check "$issue_num" "$pr_num" "$slug" >/dev/null 2>&1; then
+						echo "[pulse-wrapper] Skipped auto-close #${issue_num} in ${slug} — PR #${pr_num} does not touch files from issue (GH#17372 guard)" >>"$LOGFILE"
+						continue
+					fi
+				fi
 
 				gh issue close "$issue_num" --repo "$slug" \
 					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup helper)"}. Issue was open but dedup guard was blocking re-dispatch." \
@@ -3849,6 +3863,8 @@ reconcile_stale_done_issues() {
 	local dedup_helper="${HOME}/.aidevops/agents/scripts/dispatch-dedup-helper.sh"
 	[[ -x "$dedup_helper" ]] || return 0
 
+	local verify_helper="${HOME}/.aidevops/agents/scripts/verify-issue-close-helper.sh"
+
 	local total_closed=0
 	local total_reset=0
 
@@ -3876,9 +3892,24 @@ reconcile_stale_done_issues() {
 			# Check if a merged PR exists for this issue
 			local dedup_output=""
 			if dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null); then
-				# Merged PR found — close the issue
+				# Merged PR found — verify diff overlap before closing (GH#17372)
 				local pr_ref
 				pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
+				local pr_num
+				pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
+
+				if [[ -n "$pr_num" ]] && [[ -x "$verify_helper" ]]; then
+					if ! "$verify_helper" check "$issue_num" "$pr_num" "$slug" >/dev/null 2>&1; then
+						echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} does not touch issue files (GH#17372 guard)" >>"$LOGFILE"
+						# Reset to available for re-evaluation instead of closing
+						gh issue edit "$issue_num" --repo "$slug" \
+							--remove-label "status:done" \
+							--add-label "status:available" >/dev/null 2>&1 || continue
+						total_reset=$((total_reset + 1))
+						continue
+					fi
+				fi
+
 				gh issue close "$issue_num" --repo "$slug" \
 					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup)"}." \
 					>/dev/null 2>&1 || continue
