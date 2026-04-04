@@ -5956,6 +5956,216 @@
       "issue": 16952,
       "passes": 1,
       "pr": 16966
+    },
+    ".agents/tools/design/library/brands/cal/DESIGN.md": {
+      "hash": "3caa8aef6703ecfc0d4453759607b1da517ee1f0",
+      "at": "2026-04-04T02:13:59Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/mistral.ai/DESIGN.md": {
+      "hash": "cca8faa75aefb66464cc7c5b061bae451146dc48",
+      "at": "2026-04-04T02:13:59Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/replicate/DESIGN.md": {
+      "hash": "728e218e4f2032e8a03ca0fdd588d6ca7107e9d7",
+      "at": "2026-04-04T02:13:59Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/posthog/DESIGN.md": {
+      "hash": "6b3597e9289910c802167ca340f4cb441de631be",
+      "at": "2026-04-04T02:13:59Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/sentry/DESIGN.md": {
+      "hash": "b8a6bd870f1536ca51d8c8ead48af05335a442e3",
+      "at": "2026-04-04T02:13:59Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/ollama/DESIGN.md": {
+      "hash": "e83648721d16aa0ea68bfb6ee081875b299115cd",
+      "at": "2026-04-04T02:13:59Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/cohere/DESIGN.md": {
+      "hash": "c49738d432d8b97cdc379d3da12330524fe8ad49",
+      "at": "2026-04-04T02:13:59Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/mongodb/DESIGN.md": {
+      "hash": "810d3bec530d81197c8ddb7df35465220ca29339",
+      "at": "2026-04-04T02:13:59Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/elevenlabs/DESIGN.md": {
+      "hash": "0598f69c15ae3e6c59582bb4285692ff438cedec",
+      "at": "2026-04-04T02:13:59Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/together.ai/DESIGN.md": {
+      "hash": "1d8d60ba3b2d18f447fa54bd79769428c2812e17",
+      "at": "2026-04-04T02:13:59Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/styles/developer-dark/DESIGN.md": {
+      "hash": "70ac6c4ff1ccf218d8922eeca06850e88b9686ba",
+      "at": "2026-04-04T02:13:59Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/airbnb/DESIGN.md": {
+      "hash": "453c7f6c386d0eafc8abec8374858bd91aa4c808",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/airtable/DESIGN.md": {
+      "hash": "62036f7edd94d31214d7c228c4d5094384791c6b",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/bmw/DESIGN.md": {
+      "hash": "7d89545e4b3b598fb6a1284ffa4e030b1a5b4543",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
+      "hash": "8430f693f2ad4c2e11007ce2065088c68a9391b0",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/coinbase/DESIGN.md": {
+      "hash": "c9e36c8fe5bde1eed222c836dbcab3e0c6d6477a",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/figma/DESIGN.md": {
+      "hash": "ea9680732163ead656149f6bae42168fa7081905",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/framer/DESIGN.md": {
+      "hash": "58a66e133829fa938df296ffb8b184f07b2a263b",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/intercom/DESIGN.md": {
+      "hash": "3a62b0530e49e022d1e8d8c37c183ad1588e1558",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/kraken/DESIGN.md": {
+      "hash": "effe165d2db305075129f41d995121cbd7f3264b",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/minimax/DESIGN.md": {
+      "hash": "add581d25c3ea5208c09e94239308e7d58afea68",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/miro/DESIGN.md": {
+      "hash": "a0918d592bf944b445afc20ba80289f4ec8adb79",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/nvidia/DESIGN.md": {
+      "hash": "49d8a2a4422de525309d45597e95939653c01a06",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/pinterest/DESIGN.md": {
+      "hash": "e2556c8f1a81351b59cee5ca7dfc9a924c443b48",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/revolut/DESIGN.md": {
+      "hash": "18784d1276348b8ec9459b780b7d244bb861a44c",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/runwayml/DESIGN.md": {
+      "hash": "fc88a90c54e9661217431bdb5211cf9251fb2161",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/spacex/DESIGN.md": {
+      "hash": "6c900bde1f0a301f0d4902b09ac72caeabb29cfa",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/spotify/DESIGN.md": {
+      "hash": "bd26e806663eb27715826c2e75522e2d0ff0c3a3",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/supabase/DESIGN.md": {
+      "hash": "10685decba59a014a64bd1e79241c70b47b7c003",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/superhuman/DESIGN.md": {
+      "hash": "41f57551177ee4301f8a7eea3e53372afd3d244b",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/voltagent/DESIGN.md": {
+      "hash": "8c7c130cbeb9db56cea8306dabfa8085f2ee85cb",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/warp/DESIGN.md": {
+      "hash": "437fcb553d894be587d750b33d05f3b707f28ac5",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/webflow/DESIGN.md": {
+      "hash": "81fbd1c112b128f41579ed23122e24c077075056",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/wise/DESIGN.md": {
+      "hash": "a04f4685e17f4075afdbb67f5283a8689153b217",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
+    },
+    ".agents/tools/design/library/brands/x.ai/DESIGN.md": {
+      "hash": "dab262e066d47f7b69db7fbd23470fe7ee02f764",
+      "at": "2026-04-04T02:14:32Z",
+      "passes": 3,
+      "pr": 0
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
