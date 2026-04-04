@@ -1063,7 +1063,8 @@ _watchdog_record_failure_and_escalate() {
 			pool_wait=$(POOL_FILE="$pool_file" PROVIDER="$provider" python3 -c "
 import json, os, time, sys
 try:
-    pool = json.load(open(os.environ['POOL_FILE']))
+    with open(os.environ['POOL_FILE']) as f:
+        pool = json.load(f)
     now_ms = int(time.time() * 1000)
     accounts = pool.get(os.environ['PROVIDER'], [])
     if not accounts: print(-1); sys.exit(0)

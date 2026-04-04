@@ -7353,9 +7353,14 @@ _fast_fail_record_locked() {
 	_ff_save "$updated_state"
 	echo "[pulse-wrapper] fast_fail_record: #${issue_number} (${repo_slug}) ${log_action} reason=${reason}" >>"$LOGFILE"
 
-	# Trigger tier escalation on non-rate-limit failures (GH#2076)
-	# Rate-limit rotations don't count toward escalation — the model isn't the problem.
-	if [[ "$new_count" -gt "$existing_count" ]]; then
+	# Trigger tier escalation on non-rate-limit failures only (GH#2076).
+	# Rate-limit paths (rate_limit*, backoff) don't escalate — the model isn't
+	# the problem, it's provider capacity. Escalating would waste a higher tier.
+	local is_rate_limit=false
+	case "$reason" in
+	rate_limit* | backoff) is_rate_limit=true ;;
+	esac
+	if [[ "$is_rate_limit" == "false" && "$new_count" -gt "$existing_count" ]]; then
 		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason" || true
 	fi
 
@@ -7436,9 +7441,12 @@ fast_fail_is_skipped() {
 	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
 	[[ "$existing_retry_after" =~ ^[0-9]+$ ]] || existing_retry_after=0
 
-	# Check overall expiry (entire entry is stale)
+	# Check overall expiry (entire entry is stale).
+	# Mirror fast_fail_prune_expired(): only expire when BOTH the ts is old
+	# AND the retry_after window has passed. This prevents discarding entries
+	# that still have an active backoff timer (e.g., rate-limit waits).
 	local age=$((now - existing_ts))
-	if [[ "$age" -ge "$FAST_FAIL_EXPIRY_SECS" ]]; then
+	if [[ "$age" -ge "$FAST_FAIL_EXPIRY_SECS" && "$existing_retry_after" -le "$now" ]]; then
 		return 1 # Expired — not skipped
 	fi
 
@@ -7466,6 +7474,11 @@ fast_fail_is_skipped() {
 # Called periodically to keep the file small.
 #######################################
 fast_fail_prune_expired() {
+	_ff_with_lock _fast_fail_prune_expired_locked || return 0
+	return 0
+}
+
+_fast_fail_prune_expired_locked() {
 	local now state pruned
 	now=$(date +%s)
 	state=$(_ff_load)
