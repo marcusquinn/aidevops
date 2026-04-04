@@ -21,42 +21,25 @@
 | Accent Dark | `#be185d` | Active variant |
 | Tertiary | `#f59e0b` | Occasional warm pop — awards, stars, limited use |
 
-## Text (Dark Mode)
+## Text
 
-| Role | Hex | Usage |
-|------|-----|-------|
-| Text Primary | `#f8fafc` | Headings, primary body |
-| Text Secondary | `#a1a1aa` | Descriptions, captions |
-| Text Tertiary | `#52525b` | Placeholders, metadata |
-| Text On Gradient | `#ffffff` | Text over gradient backgrounds |
+| Role | Dark | Light | Usage |
+|------|------|-------|-------|
+| Text Primary | `#f8fafc` | `#0f0f0f` | Headings, primary body |
+| Text Secondary | `#a1a1aa` | `#52525b` | Descriptions, captions |
+| Text Tertiary | `#52525b` | `#a1a1aa` | Placeholders, metadata |
+| Text On Gradient | `#ffffff` | — | Text over gradient backgrounds |
 
-## Text (Light Mode)
+## Surface
 
-| Role | Hex | Usage |
-|------|-----|-------|
-| Text Primary | `#0f0f0f` | Headings, primary body |
-| Text Secondary | `#52525b` | Descriptions, captions |
-| Text Tertiary | `#a1a1aa` | Placeholders, metadata |
-
-## Surface (Dark Mode)
-
-| Role | Hex | Usage |
-|------|-----|-------|
-| Background | `#0f0f0f` | Page background |
-| Surface 1 | `#18181b` | Cards, sections |
-| Surface 2 | `#27272a` | Elevated cards, dropdowns |
-| Surface 3 | `#3f3f46` | Active states, hover backgrounds |
-| Border Default | `#27272a` | Subtle borders where needed |
-| Border Accent | `#7c3aed` | Active/focused borders |
-
-## Surface (Light Mode)
-
-| Role | Hex | Usage |
-|------|-----|-------|
-| Background | `#ffffff` | Page background |
-| Surface 1 | `#fafafa` | Cards, sections |
-| Surface 2 | `#f4f4f5` | Elevated elements |
-| Border Default | `#e4e4e7` | Subtle borders |
+| Role | Dark | Light | Usage |
+|------|------|-------|-------|
+| Background | `#0f0f0f` | `#ffffff` | Page background |
+| Surface 1 | `#18181b` | `#fafafa` | Cards, sections |
+| Surface 2 | `#27272a` | `#f4f4f5` | Elevated cards, dropdowns |
+| Surface 3 | `#3f3f46` | — | Active states, hover backgrounds |
+| Border Default | `#27272a` | `#e4e4e7` | Subtle borders |
+| Border Accent | `#7c3aed` | — | Active/focused borders |
 
 ## Semantic
 
