@@ -3,7 +3,7 @@
 #
 # Tests for model-availability-helper.sh (t132.3)
 # Validates: syntax, help output, DB init, cache logic, tier resolution,
-# and integration with supervisor resolve_model/check_model_health.
+# local/ollama probe tests, and integration with supervisor resolve_model/check_model_health.
 #
 # Usage: bash tests/test-model-availability.sh [--verbose]
 #
@@ -154,8 +154,8 @@ fi
 # ============================================================
 section "Tier Resolution"
 
-# Test that resolve returns a model spec for known tiers
-for tier in haiku flash sonnet pro opus health eval coding; do
+# Test that resolve returns a model spec for known tiers (including local)
+for tier in local haiku flash sonnet pro opus health eval coding; do
 	resolve_output=$(run_with_timeout 15 bash "$HELPER" resolve "$tier" --quiet 2>&1) || true
 	# Even without API keys, resolve should return the primary model
 	# (it falls through to the primary when no probe is possible)
@@ -213,6 +213,17 @@ for provider in anthropic openai google opencode; do
 	2) pass "check $provider: rate limited" ;;
 	3) pass "check $provider: no key (expected in CI)" ;;
 	*) fail "check $provider: unexpected exit code $check_exit" ;;
+	esac
+done
+
+# local and ollama are no-key providers — graceful failure when server not running
+for provider in local ollama; do
+	check_exit=0
+	run_with_timeout 10 bash "$HELPER" check "$provider" --quiet >/dev/null 2>&1 || check_exit=$?
+	case "$check_exit" in
+	0) pass "check $provider: healthy (server running)" ;;
+	1) pass "check $provider: unhealthy (server not running — expected in CI)" ;;
+	*) fail "check $provider: unexpected exit code $check_exit (expected 0 or 1)" ;;
 	esac
 done
 
@@ -395,6 +406,75 @@ if echo "$json_resolve" | grep -q "tier" 2>/dev/null; then
 	pass "resolve --json produces JSON with tier field"
 else
 	skip "resolve --json (provider may be unavailable)"
+fi
+
+# ============================================================
+# SECTION 10: Local / Ollama Probe Tests
+# ============================================================
+section "Local / Ollama Probe Tests"
+
+# local provider: probe endpoint is http://localhost:8080/v1/models
+# Graceful failure expected when no local inference server is running.
+local_probe_exit=0
+run_with_timeout 10 bash "$HELPER" probe local --quiet >/dev/null 2>&1 || local_probe_exit=$?
+case "$local_probe_exit" in
+0) pass "probe local: server running and healthy" ;;
+1) pass "probe local: server not running (graceful failure — expected in CI)" ;;
+*) fail "probe local: unexpected exit code $local_probe_exit (expected 0 or 1)" ;;
+esac
+
+# ollama provider: probe endpoint is http://localhost:11434/api/tags
+# Graceful failure expected when Ollama is not running.
+ollama_probe_exit=0
+run_with_timeout 10 bash "$HELPER" probe ollama --quiet >/dev/null 2>&1 || ollama_probe_exit=$?
+case "$ollama_probe_exit" in
+0) pass "probe ollama: server running and healthy" ;;
+1) pass "probe ollama: server not running (graceful failure — expected in CI)" ;;
+*) fail "probe ollama: unexpected exit code $ollama_probe_exit (expected 0 or 1)" ;;
+esac
+
+# Verify local tier is in the tier resolution table (grep source directly)
+# The helper calls main "$@" at the bottom so sourcing it is not safe;
+# instead, grep the get_tier_models case statement for the local) entry.
+if grep -q "^[[:space:]]*local)" "$HELPER"; then
+	pass "local tier present in get_tier_models case statement"
+else
+	fail "local tier missing from get_tier_models case statement"
+fi
+
+# Verify local tier primary model uses local/ prefix (grep source for get_tier_models)
+# get_tier_models has: local) echo "local/llama.cpp|..." ;;
+# We look for the echo line that contains local/ in the get_tier_models case block.
+local_tier_echo=$(grep -A1 "^[[:space:]]*local)" "$HELPER" | grep 'echo.*local/' | head -1) || local_tier_echo=""
+if [[ -n "$local_tier_echo" ]]; then
+	pass "local tier primary model uses local/ prefix"
+else
+	# Fallback: check if any local) case has local/ in the same line
+	if grep "^[[:space:]]*local)" "$HELPER" | grep -q 'local/'; then
+		pass "local tier primary model uses local/ prefix (inline)"
+	else
+		fail "local tier primary model should use local/ prefix" \
+			"No 'local/' found in local) case of get_tier_models"
+	fi
+fi
+
+# Verify ollama is a known provider in the helper
+if bash "$HELPER" help 2>&1 | grep -q "ollama"; then
+	pass "help mentions ollama provider"
+else
+	# Check KNOWN_PROVIDERS in source
+	if grep -q "ollama" "$HELPER"; then
+		pass "ollama present in model-availability-helper.sh source"
+	else
+		fail "ollama not found in model-availability-helper.sh"
+	fi
+fi
+
+# Verify local is a known provider in the helper
+if grep -q '"local"' "$HELPER" || grep -q "local)" "$HELPER"; then
+	pass "local provider present in model-availability-helper.sh source"
+else
+	fail "local provider not found in model-availability-helper.sh"
 fi
 
 # ============================================================
