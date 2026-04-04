@@ -25,7 +25,6 @@ Serverless functions on Cloudflare Pages using Workers runtime. File-based routi
 **Single segment** `[param]` → string:
 
 ```js
-// /functions/users/[user].js
 export function onRequest(context) {
   return new Response(`Hello ${context.params.user}`);
 }
@@ -35,7 +34,6 @@ export function onRequest(context) {
 **Multi-segment** `[[param]]` → array:
 
 ```js
-// /functions/users/[[catchall]].js
 export function onRequest(context) {
   return new Response(JSON.stringify(context.params.catchall));
 }
