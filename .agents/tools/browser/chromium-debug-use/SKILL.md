@@ -13,13 +13,12 @@ Read `tools/browser/chromium-debug-use.md` first.
 
 ## Use This Skill When
 
-- The user wants help with something already open in Chrome, Brave, Edge, Vivaldi, Chromium, or a compatible Chromium build.
-- The goal is to inspect current browser state before choosing a heavier automation tool.
+The user wants to inspect or lightly interact with something already open in a Chromium-family browser (Chrome, Brave, Edge, Vivaldi, Chromium) before committing to a heavier automation tool.
 
 ## Workflow
 
-1. Confirm this is an explicit, user-approved live-session investigation.
-2. Have the user launch the browser with the debug flag from `tools/browser/chromium-debug-use.md` if not already available.
+1. Confirm explicit, user-approved live-session investigation.
+2. If the debug port is not yet open, have the user launch with the flag from `tools/browser/chromium-debug-use.md`.
 3. Use `.agents/scripts/chromium-debug-use-helper.sh version` and `list` to confirm access.
 4. Prefer `snapshot`, `html`, and `eval` to understand the page before using `click`, `type`, `navigate`, or `screenshot`.
 5. Once the flow is understood, hand off to the best-fit longer-term tool:
@@ -28,13 +27,13 @@ Read `tools/browser/chromium-debug-use.md` first.
    - `tools/browser/playwriter.md` — per-tab extension consent in the user's normal browser
    - `tools/browser/chrome-devtools.md` — performance, network, and console inspection
 
-## Safety Rules
+## Safety
 
 - Local-only and temporary; the user must have enabled the debug path for this investigation.
 - Prefer loopback endpoints and temporary profiles.
 - Do not use this path for unrelated tabs or long-lived background control.
 
-## Helper Commands
+## Commands
 
 ```bash
 .agents/scripts/chromium-debug-use-helper.sh version
