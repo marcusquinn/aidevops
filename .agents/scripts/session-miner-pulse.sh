@@ -162,37 +162,39 @@ run_compression() {
 	return $?
 }
 
-generate_summary() {
+# _summary_print_header prints the pulse summary header with steerage and error counts.
+_summary_print_header() {
 	local compressed_file="$1"
-
-	if [[ ! -f "${compressed_file}" ]]; then
-		log_error "Compressed signals file not found"
-		return 1
-	fi
-
-	# Extract key metrics using python for JSON parsing
 	python3 -c "
-import json, sys
+import json
 from pathlib import Path
-
 data = json.loads(Path('${compressed_file}').read_text())
-
 steerage = data.get('steerage', {})
 errors = data.get('errors', {}).get('patterns', [])
 total_steerage = sum(len(v) for v in steerage.values())
-
-# Top error patterns (>10 occurrences)
 top_errors = [p for p in errors if p['count'] > 10]
-top_errors.sort(key=lambda x: -x['count'])
-
-# Steerage category counts
-cat_counts = {k: len(v) for k, v in steerage.items()}
-
 print('## Session Miner Pulse Summary')
 print()
 print(f'Unique steerage signals: {total_steerage}')
 print(f'Error patterns (>10 occurrences): {len(top_errors)}')
 print()
+" 2>/dev/null
+	return $?
+}
+
+# _summary_print_error_patterns prints top error patterns and steerage categories,
+# plus suggested harness improvements for uncovered high-frequency errors.
+_summary_print_error_patterns() {
+	local compressed_file="$1"
+	python3 -c "
+import json
+from pathlib import Path
+data = json.loads(Path('${compressed_file}').read_text())
+steerage = data.get('steerage', {})
+errors = data.get('errors', {}).get('patterns', [])
+top_errors = [p for p in errors if p['count'] > 10]
+top_errors.sort(key=lambda x: -x['count'])
+cat_counts = {k: len(v) for k, v in steerage.items()}
 
 if top_errors:
     print('### Top Error Patterns')
@@ -208,7 +210,6 @@ if cat_counts:
         print(f'  {cat}: {count}')
     print()
 
-# Flag high-frequency errors not yet in harness
 harness_covered = {'edit_stale_read', 'not_read_first', 'edit_mismatch'}
 uncovered = [p for p in top_errors if p['error_category'] not in harness_covered]
 if uncovered:
@@ -216,65 +217,102 @@ if uncovered:
     for p in uncovered[:5]:
         print(f'  - {p[\"tool\"]}:{p[\"error_category\"]} ({p[\"count\"]}x) — consider adding prevention rule')
     print()
-
-# Git correlation / productivity analysis
-git_data = data.get('git_correlation', {})
-git_summary = git_data.get('summary', {})
-if git_summary:
-    total_s = git_summary.get('total_sessions', 0)
-    productive_s = git_summary.get('productive_sessions', 0)
-    rate = git_summary.get('productivity_rate', 0)
-    total_commits = git_summary.get('total_commits', 0)
-    avg_cpm = git_summary.get('avg_commits_per_message', 0)
-    print('### Git Productivity')
-    print(f'  Sessions with git data: {total_s}')
-    print(f'  Productive sessions (>=1 commit): {productive_s} ({rate:.0%})')
-    print(f'  Total commits: {total_commits}')
-    print(f'  Avg commits/message (productive): {avg_cpm:.3f}')
-    print()
-
-    # Per-project breakdown
-    project_stats = git_data.get('project_stats', {})
-    if project_stats:
-        print('### Productivity by Project')
-        for project, ps in sorted(project_stats.items(), key=lambda x: -x[1].get('total_commits', 0))[:10]:
-            print(f'  {project}: {ps[\"productive_sessions\"]}/{ps[\"sessions\"]} productive, '
-                  f'{ps[\"total_commits\"]} commits, {ps[\"total_lines_changed\"]} lines')
-        print()
-
-    # Top productive sessions
-    top_sessions = git_data.get('top_productive_sessions', [])
-    if top_sessions:
-        print('### Most Productive Sessions')
-        for s in top_sessions[:5]:
-            print(f'  {s[\"title\"][:60]} — {s[\"commits\"]} commits/{s[\"messages\"]} msgs '
-                  f'(ratio: {s[\"ratio\"]:.2f}, {s[\"duration_min\"]:.0f}min)')
-        print()
-
-# Instruction candidates
-instruction_candidates = data.get('instruction_candidates', {})
-total_candidates = sum(len(v) for v in instruction_candidates.values())
-if total_candidates > 0:
-    print('### Instruction Candidates')
-    print(f'  Total: {total_candidates} candidate(s) detected across sessions')
-    print()
-    for target_file, candidates in sorted(instruction_candidates.items()):
-        if not candidates:
-            continue
-        print(f'  Target: {target_file} ({len(candidates)} candidate(s))')
-        for c in candidates[:5]:
-            conf = c.get('confidence', 0)
-            cat = c.get('category', 'general')
-            text = c.get('text', '')[:120].replace('\n', ' ')
-            session = c.get('session_title', '')[:40]
-            print(f'    [{conf:.0%} {cat}] \"{text}\"')
-            if session:
-                print(f'      (from: {session})')
-        if len(candidates) > 5:
-            print(f'    ... and {len(candidates) - 5} more')
-        print()
 " 2>/dev/null
 	return $?
+}
+
+# _summary_print_git_productivity prints git correlation and per-project productivity stats.
+_summary_print_git_productivity() {
+	local compressed_file="$1"
+	python3 -c "
+import json
+from pathlib import Path
+data = json.loads(Path('${compressed_file}').read_text())
+git_data = data.get('git_correlation', {})
+git_summary = git_data.get('summary', {})
+if not git_summary:
+    raise SystemExit(0)
+
+total_s = git_summary.get('total_sessions', 0)
+productive_s = git_summary.get('productive_sessions', 0)
+rate = git_summary.get('productivity_rate', 0)
+total_commits = git_summary.get('total_commits', 0)
+avg_cpm = git_summary.get('avg_commits_per_message', 0)
+print('### Git Productivity')
+print(f'  Sessions with git data: {total_s}')
+print(f'  Productive sessions (>=1 commit): {productive_s} ({rate:.0%})')
+print(f'  Total commits: {total_commits}')
+print(f'  Avg commits/message (productive): {avg_cpm:.3f}')
+print()
+
+project_stats = git_data.get('project_stats', {})
+if project_stats:
+    print('### Productivity by Project')
+    for project, ps in sorted(project_stats.items(), key=lambda x: -x[1].get('total_commits', 0))[:10]:
+        print(f'  {project}: {ps[\"productive_sessions\"]}/{ps[\"sessions\"]} productive, '
+              f'{ps[\"total_commits\"]} commits, {ps[\"total_lines_changed\"]} lines')
+    print()
+
+top_sessions = git_data.get('top_productive_sessions', [])
+if top_sessions:
+    print('### Most Productive Sessions')
+    for s in top_sessions[:5]:
+        print(f'  {s[\"title\"][:60]} — {s[\"commits\"]} commits/{s[\"messages\"]} msgs '
+              f'(ratio: {s[\"ratio\"]:.2f}, {s[\"duration_min\"]:.0f}min)')
+    print()
+" 2>/dev/null
+	return $?
+}
+
+# _summary_print_instruction_candidates prints detected instruction candidates per target file.
+_summary_print_instruction_candidates() {
+	local compressed_file="$1"
+	python3 -c "
+import json
+from pathlib import Path
+data = json.loads(Path('${compressed_file}').read_text())
+instruction_candidates = data.get('instruction_candidates', {})
+total_candidates = sum(len(v) for v in instruction_candidates.values())
+if total_candidates == 0:
+    raise SystemExit(0)
+
+print('### Instruction Candidates')
+print(f'  Total: {total_candidates} candidate(s) detected across sessions')
+print()
+for target_file, candidates in sorted(instruction_candidates.items()):
+    if not candidates:
+        continue
+    print(f'  Target: {target_file} ({len(candidates)} candidate(s))')
+    for c in candidates[:5]:
+        conf = c.get('confidence', 0)
+        cat = c.get('category', 'general')
+        text = c.get('text', '')[:120].replace('\n', ' ')
+        session = c.get('session_title', '')[:40]
+        print(f'    [{conf:.0%} {cat}] \"{text}\"')
+        if session:
+            print(f'      (from: {session})')
+    if len(candidates) > 5:
+        print(f'    ... and {len(candidates) - 5} more')
+    print()
+" 2>/dev/null
+	return $?
+}
+
+# generate_summary prints a human-readable pulse summary from a compressed signals file.
+# Delegates to focused helpers: header, error patterns, git productivity, instruction candidates.
+generate_summary() {
+	local compressed_file="$1"
+
+	if [[ ! -f "${compressed_file}" ]]; then
+		log_error "Compressed signals file not found"
+		return 1
+	fi
+
+	_summary_print_header "${compressed_file}" || return 1
+	_summary_print_error_patterns "${compressed_file}" || return 1
+	_summary_print_git_productivity "${compressed_file}" || true
+	_summary_print_instruction_candidates "${compressed_file}" || true
+	return 0
 }
 
 generate_feedback_actions() {
