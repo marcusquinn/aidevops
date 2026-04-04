@@ -21,7 +21,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Persistent memory files that instruct AI CLI tools to read `~/AGENTS.md`
-- **Config script**: `.agents/scripts/ai-cli-config.sh`
+- **Config script**: `.agents/scripts/ai-cli-config.sh` — `configure_qwen_cli()`, `create_ai_memory_files()`, `create_project_memory_files()`
 - **Setup**: `setup.sh` auto-creates all memory files (detects installed tools, preserves existing)
 - **Warp AI / Amp Code**: Use project context only (no memory files)
 
@@ -39,13 +39,3 @@ All files contain: `At the beginning of each session, read ~/AGENTS.md to get ad
 | Cursor AI | `~/.cursorrules` | `.cursorrules` |
 | GitHub Copilot | `~/.github/copilot-instructions.md` | -- |
 | Factory.ai Droid | `~/.factory/DROID.md` | -- |
-
-## Setup Integration
-
-`ai-cli-config.sh` functions:
-
-- `configure_qwen_cli()` -- QWEN.md creation/verification
-- `create_ai_memory_files()` -- all home directory memory files
-- `create_project_memory_files()` -- all project-level memory files
-
-Detection is automatic: checks for installed tools, creates appropriate files, preserves existing content.
