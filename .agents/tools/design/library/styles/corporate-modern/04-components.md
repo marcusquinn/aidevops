@@ -2,16 +2,14 @@
 
 ## Buttons
 
-**Primary Button:**
+Shared base: `padding: 10px 24px`, `border-radius: 8px`, `font-size: 15px`, `font-weight: 600`
+
+**Primary:**
 
 ```css
 background: #0891b2
 color: #FFFFFF
-padding: 10px 24px
 border: none
-border-radius: 8px
-font-size: 15px
-font-weight: 600
 line-height: 1.4
 cursor: pointer
 transition: all 150ms ease-out
@@ -22,35 +20,27 @@ transition: all 150ms ease-out
 :disabled → background: #E2E8F0; color: #94a3b8; cursor: not-allowed
 ```
 
-**Secondary Button:**
+**Secondary:**
 
 ```css
 background: #FFFFFF
 color: #1a1a2e
-padding: 10px 24px
 border: 1px solid #E2E8F0
-border-radius: 8px
-font-size: 15px
-font-weight: 600
 
 :hover    → border-color: #CBD5E1; background: #F8FAFC
 :active   → background: #E2E8F0
 :disabled → color: #94a3b8; border-color: #E2E8F0
 ```
 
-**Ghost Button:**
+**Ghost:**
 
 ```css
 background: transparent
 color: #0891b2
-padding: 10px 24px
 border: none
-border-radius: 8px
-font-size: 15px
-font-weight: 600
 
-:hover    → background: #ecfeff
-:active   → background: #cffafe
+:hover  → background: #ecfeff
+:active → background: #cffafe
 ```
 
 ## Inputs
