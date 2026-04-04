@@ -5,28 +5,28 @@
 
 ## Background Surfaces
 
-- **Marketing Black** (`#010102` / `#08090a`): The deepest background — the canvas for hero sections and marketing pages. Near-pure black with an imperceptible blue-cool undertone.
-- **Panel Dark** (`#0f1011`): Sidebar and panel backgrounds. One step up from the marketing black.
-- **Level 3 Surface** (`#191a1b`): Elevated surface areas, card backgrounds, dropdowns.
-- **Secondary Surface** (`#28282c`): The lightest dark surface — used for hover states and slightly elevated components.
+- **Marketing Black** (`#010102` / `#08090a`): Hero sections and marketing pages. Near-pure black with a blue-cool undertone.
+- **Panel Dark** (`#0f1011`): Sidebar and panel backgrounds.
+- **Level 3 Surface** (`#191a1b`): Elevated surfaces, card backgrounds, dropdowns.
+- **Secondary Surface** (`#28282c`): Hover states and slightly elevated components.
 
 ## Text & Content
 
-- **Primary Text** (`#f7f8f8`): Near-white with a barely-warm cast. The default text color — not pure white, preventing eye strain on dark backgrounds.
-- **Secondary Text** (`#d0d6e0`): Cool silver-gray for body text, descriptions, and secondary content.
-- **Tertiary Text** (`#8a8f98`): Muted gray for placeholders, metadata, and de-emphasized content.
-- **Quaternary Text** (`#62666d`): The most subdued text — timestamps, disabled states, subtle labels.
+- **Primary Text** (`#f7f8f8`): Default text. Near-white, not pure white — reduces eye strain on dark backgrounds.
+- **Secondary Text** (`#d0d6e0`): Body text, descriptions, secondary content.
+- **Tertiary Text** (`#8a8f98`): Placeholders, metadata, de-emphasized content.
+- **Quaternary Text** (`#62666d`): Timestamps, disabled states, subtle labels.
 
 ## Brand & Accent
 
-- **Brand Indigo** (`#5e6ad2`): Primary brand color — used for CTA button backgrounds, brand marks, and key interactive surfaces.
-- **Accent Violet** (`#7170ff`): Brighter variant for interactive elements — links, active states, selected items.
-- **Accent Hover** (`#828fff`): Lighter, more saturated variant for hover states on accent elements.
-- **Security Lavender** (`#7a7fad`): Muted indigo used specifically for security-related UI elements.
+- **Brand Indigo** (`#5e6ad2`): CTA button backgrounds, brand marks, key interactive surfaces.
+- **Accent Violet** (`#7170ff`): Links, active states, selected items.
+- **Accent Hover** (`#828fff`): Hover states on accent elements.
+- **Security Lavender** (`#7a7fad`): Security-related UI elements only.
 
 ## Status Colors
 
-- **Green** (`#27a644`): Primary success/active status. Used for "in progress" indicators.
+- **Green** (`#27a644`): Primary success/active status. "In progress" indicators.
 - **Emerald** (`#10b981`): Secondary success — pill badges, completion states.
 
 ## Border & Divider
@@ -35,11 +35,11 @@
 - **Border Secondary** (`#34343a`): Slightly lighter solid border.
 - **Border Tertiary** (`#3e3e44`): Lightest solid border variant.
 - **Border Subtle** (`rgba(255,255,255,0.05)`): Ultra-subtle semi-transparent border — the default.
-- **Border Standard** (`rgba(255,255,255,0.08)`): Standard semi-transparent border for cards, inputs, code blocks.
+- **Border Standard** (`rgba(255,255,255,0.08)`): Cards, inputs, code blocks.
 - **Line Tint** (`#141516`): Nearly invisible line for the subtlest divisions.
 - **Line Tertiary** (`#18191a`): Slightly more visible divider line.
 
-## Light Mode Neutrals (for light theme contexts)
+## Light Mode Neutrals
 
 - **Light Background** (`#f7f8f8`): Page background in light mode.
 - **Light Surface** (`#f3f4f5` / `#f5f6f7`): Subtle surface tinting.
