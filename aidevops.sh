@@ -657,6 +657,22 @@ cmd_status() {
 	print_header "SSH Configuration"
 	check_file "$HOME/.ssh/id_ed25519" && print_success "Ed25519 SSH key" || print_warning "Ed25519 SSH key - not found"
 	echo ""
+	print_header "Commit Signing"
+	local signing_format signing_key signing_enabled
+	signing_format=$(git config --global gpg.format 2>/dev/null || echo "")
+	signing_key=$(git config --global user.signingkey 2>/dev/null || echo "")
+	signing_enabled=$(git config --global commit.gpgsign 2>/dev/null || echo "")
+	if [[ "$signing_format" == "ssh" && -n "$signing_key" && "$signing_enabled" == "true" ]]; then
+		print_success "SSH commit signing enabled"
+		if check_file "$HOME/.ssh/allowed_signers"; then
+			print_success "Allowed signers file configured"
+		else
+			print_warning "No allowed_signers file — run: aidevops signing setup"
+		fi
+	else
+		print_warning "Commit signing not configured — run: aidevops signing setup"
+	fi
+	echo ""
 }
 
 # Update helpers (extracted for complexity reduction)
@@ -840,6 +856,43 @@ _update_check_homebrew() {
 	return 0
 }
 
+# Verify supply chain signature after pulling framework updates.
+# Checks that the HEAD commit is signed by the trusted maintainer key.
+# Non-blocking: warns on failure, does not abort the update.
+_update_verify_signature() {
+	local signing_helper="$AGENTS_DIR/scripts/signing-setup.sh"
+
+	# Cannot verify if the helper script is not yet deployed
+	if [[ ! -f "$signing_helper" ]]; then
+		return 0
+	fi
+
+	local result
+	result=$(bash "$signing_helper" verify-update "$INSTALL_DIR" 2>/dev/null || echo "UNKNOWN")
+
+	case "$result" in
+	VERIFIED)
+		print_success "Supply chain verified: HEAD commit is signed by trusted maintainer"
+		;;
+	UNSIGNED)
+		print_warning "HEAD commit is not signed — cannot verify supply chain integrity"
+		print_info "This is expected for older releases. Signed commits start from v3.6.21+"
+		;;
+	UNTRUSTED)
+		print_warning "HEAD commit is signed but by an untrusted key"
+		print_info "Run 'aidevops signing setup' to configure signature verification"
+		;;
+	BAD_SIGNATURE)
+		print_error "HEAD commit has a BAD signature — update may be compromised"
+		print_info "Verify manually: cd $INSTALL_DIR && git log --show-signature -1"
+		;;
+	UNVERIFIABLE)
+		# Signing not configured yet — silent, do not nag
+		;;
+	esac
+	return 0
+}
+
 # Update/upgrade command
 cmd_update() {
 	local skip_project_sync=false
@@ -908,6 +961,9 @@ cmd_update() {
 					[[ "$total_commits" -gt 20 ]] && echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
 				fi
 			fi
+			echo ""
+			# Verify supply chain integrity before applying changes
+			_update_verify_signature
 			echo ""
 			print_info "Running setup to apply changes..."
 			local setup_exit=0
@@ -3655,6 +3711,7 @@ main() {
 		;;
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
 	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
+	signing) _dispatch_helper "signing-setup.sh" "signing-setup.sh" "$@" ;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;
 	config | configure) _dispatch_config "$@" ;;
