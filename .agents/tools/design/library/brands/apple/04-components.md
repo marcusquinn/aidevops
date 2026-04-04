@@ -3,95 +3,45 @@
 
 # Design System: Apple — Component Stylings
 
+> **Apple signature:** Translucent glass nav, pill CTAs, borderless cards, SF Pro typography. Minimal chrome — products dominate.
+
 ## Buttons
 
-**Primary Blue (CTA)**
-- Background: `#0071e3` (Apple Blue)
-- Text: `#ffffff`
-- Padding: 8px 15px
-- Radius: 8px
-- Border: 1px solid transparent
-- Font: SF Pro Text, 17px, weight 400
-- Hover: background brightens slightly
-- Active: `#ededf2` background shift
-- Focus: `2px solid var(--sk-focus-color, #0071E3)` outline
-- Use: Primary call-to-action ("Buy", "Shop iPhone")
+Shared defaults: Font SF Pro Text 17px weight 400; Focus `2px solid var(--sk-focus-color, #0071E3)` outline.
 
-**Primary Dark**
-- Background: `#1d1d1f`
-- Text: `#ffffff`
-- Padding: 8px 15px
-- Radius: 8px
-- Font: SF Pro Text, 17px, weight 400
-- Use: Secondary CTA, dark variant
-
-**Pill Link (Learn More / Shop)**
-- Background: transparent
-- Text: `#0066cc` (light bg) or `#2997ff` (dark bg)
-- Radius: 980px (full pill)
-- Border: 1px solid `#0066cc`
-- Font: SF Pro Text, 14px-17px
-- Hover: underline decoration
-- Use: "Learn more" and "Shop" links — the signature Apple inline CTA
-
-**Filter / Search Button**
-- Background: `#fafafc`
-- Text: `rgba(0, 0, 0, 0.8)`
-- Padding: 0px 14px
-- Radius: 11px
-- Border: 3px solid `rgba(0, 0, 0, 0.04)`
-- Focus: `2px solid var(--sk-focus-color, #0071E3)` outline
-- Use: Search bars, filter controls
-
-**Media Control**
-- Background: `rgba(210, 210, 215, 0.64)`
-- Text: `rgba(0, 0, 0, 0.48)`
-- Radius: 50% (circular)
-- Active: scale(0.9), background shifts
-- Focus: `2px solid var(--sk-focus-color, #0071e3)` outline, white bg, black text
-- Use: Play/pause, carousel arrows
+| Variant | Background | Text | Radius | Notes |
+|---------|-----------|------|--------|-------|
+| Primary Blue (CTA) | `#0071e3` | `#ffffff` | 8px | Padding 8px 15px; hover brightens; active `#ededf2`; Use: "Buy", "Shop iPhone" |
+| Primary Dark | `#1d1d1f` | `#ffffff` | 8px | Padding 8px 15px; Use: secondary CTA, dark variant |
+| Pill Link | transparent | `#0066cc` (light) / `#2997ff` (dark) | 980px | Border `1px solid #0066cc`; font 14-17px; hover underline; Use: "Learn more", "Shop" |
+| Filter / Search | `#fafafc` | `rgba(0,0,0,0.8)` | 11px | Padding 0 14px; border `3px solid rgba(0,0,0,0.04)`; Use: search bars, filters |
+| Media Control | `rgba(210,210,215,0.64)` | `rgba(0,0,0,0.48)` | 50% | Active scale(0.9); focus: white bg, black text; Use: play/pause, carousel arrows |
 
 ## Cards & Containers
 
-- Background: `#f5f5f7` (light) or `#272729`-`#2a2a2d` (dark)
-- Border: none (borders are rare in Apple's system)
-- Radius: 5px-8px
-- Shadow: `rgba(0, 0, 0, 0.22) 3px 5px 30px 0px` for elevated product cards
-- Content: centered, generous padding
-- Hover: no standard hover state — cards are static, links within them are interactive
+- Background: `#f5f5f7` (light) or `#272729`–`#2a2a2d` (dark)
+- Border: none; Radius: 5px–8px
+- Shadow: `rgba(0,0,0,0.22) 3px 5px 30px 0px` for elevated product cards
+- Hover: none — cards are static; links within are interactive
 
 ## Navigation
 
-- Background: `rgba(0, 0, 0, 0.8)` (translucent dark) with `backdrop-filter: saturate(180%) blur(20px)`
-- Height: 48px (compact)
-- Text: `#ffffff` at 12px, weight 400
-- Active: underline on hover
-- Logo: Apple logomark (SVG) centered or left-aligned, 17x48px viewport
-- Mobile: collapses to hamburger with full-screen overlay menu
-- The nav floats above content, maintaining its dark translucent glass regardless of section background
+- Background: `rgba(0,0,0,0.8)` + `backdrop-filter: saturate(180%) blur(20px)`
+- Height: 48px; Text: `#ffffff` 12px weight 400; active: underline on hover
+- Logo: Apple SVG logomark, 17×48px, centered or left-aligned
+- Mobile: hamburger → full-screen overlay menu
 
 ## Image Treatment
 
-- Products on solid-color fields (black or white) — no backgrounds, no context, just the object
-- Full-bleed section images that span the entire viewport width
-- Product photography at extremely high resolution with subtle shadows
-- Lifestyle images confined to rounded-corner containers (12px+ radius)
+- Products on solid fields (black or white) — no backgrounds, no context
+- Full-bleed section images spanning full viewport width
+- Product photography at high resolution with subtle shadows
+- Lifestyle images in rounded containers (12px+ radius)
 
 ## Distinctive Components
 
-**Product Hero Module**
-- Full-viewport-width section with solid background (black or `#f5f5f7`)
-- Product name as the primary headline (SF Pro Display, 56px, weight 600)
-- One-line descriptor below in lighter weight
-- Two pill CTAs side by side: "Learn more" (outline) and "Buy" / "Shop" (filled)
+**Product Hero Module** — full-viewport section, solid bg (black or `#f5f5f7`); SF Pro Display 56px weight 600 headline; one-line descriptor; two pill CTAs ("Learn more" outline + "Buy"/"Shop" filled).
 
-**Product Grid Tile**
-- Square or near-square card on contrasting background
-- Product image dominating 60-70% of the tile
-- Product name + one-line description below
-- "Learn more" and "Shop" link pair at bottom
+**Product Grid Tile** — square card; product image 60–70% of tile; name + one-line description; "Learn more" / "Shop" pair at bottom.
 
-**Feature Comparison Strip**
-- Horizontal scroll of product variants
-- Each variant as a vertical card with image, name, and key specs
-- Minimal chrome — the products speak for themselves
+**Feature Comparison Strip** — horizontal scroll of product variants; each as vertical card with image, name, key specs; minimal chrome.
