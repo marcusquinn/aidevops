@@ -5944,5 +5944,12 @@
       "pr": 16947,
       "passes": 1
     }
+  },
+  ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
+    "hash": "9717274b7c2b1cd74aadb4acb865a7ee75667056ad74427552aa817e61aa6ed8",
+    "status": "restructured",
+    "action": "split-into-chapters",
+    "chapters": 9,
+    "issue": "GH#16973"
   }
 }

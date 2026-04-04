@@ -1,5 +1,44 @@
 # Design System: ClickHouse
 
+High-performance cockpit aesthetic. Neon yellow-green (`#faff69`) on pure black (`#000000`) — maximum contrast, terminal-grade, extreme typographic weight.
+
+## Chapters
+
+| # | File | Contents |
+|---|------|----------|
+| 1 | [01-visual-theme.md](01-visual-theme.md) | Visual theme, atmosphere, key characteristics |
+| 2 | [02-color-palette.md](02-color-palette.md) | Full color palette, roles, gradient system |
+| 3 | [03-typography.md](03-typography.md) | Font families, hierarchy table, principles |
+| 4 | [04-components.md](04-components.md) | Buttons, cards, nav, distinctive components |
+| 5 | [05-layout.md](05-layout.md) | Spacing system, grid, whitespace, border radius scale |
+| 6 | [06-depth-elevation.md](06-depth-elevation.md) | Elevation levels, shadow philosophy |
+| 7 | [07-dos-donts.md](07-dos-donts.md) | Do's and Don'ts reference |
+| 8 | [08-responsive.md](08-responsive.md) | Breakpoints, touch targets, collapsing strategy |
+| 9 | [09-agent-prompts.md](09-agent-prompts.md) | Quick color reference, example prompts, iteration guide |
+
+## Quick Reference
+
+**Palette essentials:**
+- Background: `#000000` (Pure Black)
+- Brand Accent: `#faff69` (Neon Volt) — sole chromatic accent, CTAs, borders, link hovers
+- CTA Green: `#166534` (Forest Green) — primary conversion buttons
+- Card Border: `rgba(65,65,65,0.8)` (Charcoal)
+- Primary Text: `#ffffff` (Pure White)
+- Secondary Text: `#a0a0a0` (Silver)
+- Active State: `#f4f692` (Pale Yellow)
+- Button Surface: `#141414` (Near Black)
+
+**Typography essentials:**
+- Display: Inter weight 900 at 96px — extreme weight IS the personality
+- Feature headings: Basier weight 600 at 36px
+- Code: Inconsolata weight 600
+- Section labels: uppercase, 1.4px letter-spacing
+
+**Signature patterns:**
+- Inset shadow on active states: `rgba(0,0,0,0.14) 0px 4px 25px inset` — "pressed into the surface"
+- Neon Volt border highlight for featured/selected cards
+- All link hovers shift to Neon Volt — unified interactive signal
+
 ## 1. Visual Theme & Atmosphere
 
 ClickHouse's interface is a high-performance cockpit rendered in acid yellow-green on obsidian black — a design that screams "speed" before you read a single word. The entire experience lives in darkness: pure black backgrounds (`#000000`) with dark charcoal cards (`#414141` borders) creating a terminal-grade aesthetic where the only chromatic interruption is the signature neon yellow-green (`#faff69`) that slashes across CTAs, borders, and highlighted moments like a highlighter pen on a dark console.
