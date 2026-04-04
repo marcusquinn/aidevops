@@ -435,16 +435,16 @@ _install_pulse_systemd() {
 	_configured_headless_models=$(_resolve_headless_models_override)
 	_configured_pulse_model=$(_resolve_pulse_model_override)
 	if [[ -n "$_configured_headless_models" ]]; then
-		_env_lines+="Environment=AIDEVOPS_HEADLESS_MODELS=${_configured_headless_models}\n"
+		_env_lines+="Environment=AIDEVOPS_HEADLESS_MODELS=${_configured_headless_models}"$'\n'
 	fi
 	if [[ -n "$_configured_pulse_model" ]]; then
-		_env_lines+="Environment=PULSE_MODEL=${_configured_pulse_model}\n"
+		_env_lines+="Environment=PULSE_MODEL=${_configured_pulse_model}"$'\n'
 	fi
 	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
-		_env_lines+="Environment=AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST}\n"
+		_env_lines+="Environment=AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST}"$'\n'
 	fi
-	_env_lines+="Environment=PULSE_DIR=${HOME}/.aidevops/.agent-workspace\n"
-	_env_lines+="Environment=HOME=${HOME}\n"
+	_env_lines+="Environment=PULSE_DIR=${HOME}/.aidevops/.agent-workspace"$'\n'
+	_env_lines+="Environment=HOME=${HOME}"$'\n'
 
 	# Write the service unit
 	printf '%s' "[Unit]

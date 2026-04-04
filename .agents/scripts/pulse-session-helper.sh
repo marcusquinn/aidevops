@@ -151,14 +151,22 @@ get_pulse_repo_count() {
 
 #######################################
 # Get OS-appropriate scheduler name
-# Returns: "launchd" on macOS, "cron" on Linux
+# Returns: "launchd" on macOS, "systemd" or "cron" on Linux
 #######################################
 get_scheduler_name() {
 	local os_type
 	os_type=$(uname -s)
 	case "$os_type" in
 	Darwin) echo "launchd" ;;
-	*) echo "cron" ;;
+	*)
+		# Detect systemd user services (GH#17369)
+		if command -v systemctl >/dev/null 2>&1 &&
+			systemctl --user status >/dev/null 2>&1; then
+			echo "systemd"
+		else
+			echo "cron"
+		fi
+		;;
 	esac
 	return 0
 }
@@ -184,7 +192,12 @@ is_scheduler_installed() {
 		return 1
 		;;
 	*)
-		# Check for cron entry
+		# Check for systemd user timer first (GH#17369)
+		if command -v systemctl >/dev/null 2>&1 &&
+			systemctl --user is-enabled aidevops-supervisor-pulse.timer >/dev/null 2>&1; then
+			return 0
+		fi
+		# Fall back to cron entry check
 		if crontab -l 2>/dev/null | grep -qF "aidevops-supervisor-pulse"; then
 			return 0
 		fi
