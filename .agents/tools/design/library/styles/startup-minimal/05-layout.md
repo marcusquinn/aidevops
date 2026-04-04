@@ -22,10 +22,11 @@
 
 ## Grid
 
-- 12-column grid
-- Gutter: 16px (mobile), 20px (tablet), 24px (desktop)
-- Max container: 1200px, centered
-- Narrow container: 680px for text-heavy content (docs, articles, settings)
+| Property | Value |
+|----------|-------|
+| Columns | 12 |
+| Max container | 1200px, centered |
+| Narrow container | 680px (docs, articles, settings) |
 
 ## Breakpoints
 
@@ -38,7 +39,7 @@
 
 ## Whitespace Philosophy
 
-Space is information. Tight grouping signals relationship; open gaps signal separation. The 4px grid is the only source of truth — no arbitrary spacing values. Every margin and padding snaps to the grid. The goal is an interface that feels engineered, not designed.
+Space is information. Tight grouping signals relationship; open gaps signal separation. The 4px grid is the only source of truth — no arbitrary values. Every margin and padding snaps to the grid.
 
 ## Border Radius Scale
 
