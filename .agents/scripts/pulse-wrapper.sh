@@ -6107,23 +6107,19 @@ dispatch_with_dedup() {
 		fi
 	fi
 
-	if [[ -z "$selected_model" ]]; then
-		echo "[dispatch_with_dedup] No models configured — skipping dispatch for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--remove-assignee "$self_login" --remove-label "status:queued" 2>/dev/null || true
-		# GH#16978 Bug C: clean up claim comment on this early-return path
-		_cleanup_claim_comment
-		return 1
-	fi
-
-	# Launch worker with the pre-validated model
+	# Launch worker — headless-runtime-helper.sh handles model fallback
+	# when no model is specified (uses DEFAULT_HEADLESS_MODELS internally).
+	# Do NOT early-return on empty selected_model; the helper's
+	# get_configured_models() has the authoritative fallback chain (GH#17369).
 	local -a worker_cmd=("$HEADLESS_RUNTIME_HELPER" run
 		--role worker
 		--session-key "$session_key"
 		--dir "$repo_path"
 		--title "$dispatch_title"
-		--prompt "$prompt"
-		--model "$selected_model")
+		--prompt "$prompt")
+	if [[ -n "$selected_model" ]]; then
+		worker_cmd+=(--model "$selected_model")
+	fi
 	"${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
 	local worker_pid="$!"
 	sleep 2
