@@ -6334,6 +6334,12 @@
       "at": "2026-04-04T04:52:51Z",
       "pr": "17061",
       "passes": 1
+    },
+    ".agents/tools/design/library/brands/expo/04-components.md": {
+      "hash": "69b5856bf958e6587dd25a9bca62ba877ff7714df446912582046d4903abd6f9",
+      "at": "2026-04-04T05:30:00Z",
+      "lines": 82,
+      "issue": "GH#17088"
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
