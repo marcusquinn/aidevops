@@ -7321,11 +7321,15 @@ _fast_fail_record_locked() {
 			retry_after=$((now + new_backoff))
 			log_action="rate_limit_no_pool (no pool data, backoff=${new_backoff}s)"
 		else
-			# All accounts exhausted — wait for earliest recovery
+			# All accounts exhausted — wait for earliest recovery.
+			# Use pool_wait for retry_after but keep backoff_secs on the
+			# exponential ladder so a subsequent failure doesn't reset to
+			# a short pool cooldown value.
 			new_count=$((existing_count + 1))
 			retry_after=$((now + pool_wait))
-			new_backoff="$pool_wait"
-			log_action="rate_limit_exhausted (all accounts rate-limited, wait=${pool_wait}s)"
+			new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : FAST_FAIL_INITIAL_BACKOFF_SECS))
+			[[ "$new_backoff" -gt "$FAST_FAIL_MAX_BACKOFF_SECS" ]] && new_backoff="$FAST_FAIL_MAX_BACKOFF_SECS"
+			log_action="rate_limit_exhausted (all accounts rate-limited, wait=${pool_wait}s, backoff_stage=${new_backoff}s)"
 		fi
 		;;
 

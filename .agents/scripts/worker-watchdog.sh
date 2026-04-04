@@ -1092,10 +1092,13 @@ except Exception: print(-1)
 			retry_after=$((now + new_backoff))
 			log_action="rate_limit_no_pool (backoff=${new_backoff}s)"
 		else
+			# All accounts exhausted — wait for earliest recovery.
+			# Keep backoff_secs on the exponential ladder (not pool_wait).
 			new_count=$((existing_count + 1))
 			retry_after=$((now + pool_wait))
-			new_backoff="$pool_wait"
-			log_action="rate_limit_exhausted (wait=${pool_wait}s)"
+			new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : initial_backoff))
+			[[ "$new_backoff" -gt "$max_backoff" ]] && new_backoff="$max_backoff"
+			log_action="rate_limit_exhausted (wait=${pool_wait}s, backoff_stage=${new_backoff}s)"
 		fi
 		;;
 	*)
