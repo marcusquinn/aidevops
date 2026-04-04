@@ -60,9 +60,8 @@ for await (const zone of client.zones.list()) {
 
 // Manual pagination
 let page = await client.zones.list({ per_page: 50 });
-while (page.result.length > 0) {
+while (page != null && typeof page === "object") {
   // process page.result
-  if (!page.result_info?.next_page) break;
   page = await page.getNextPage();
 }
 ```
