@@ -703,14 +703,14 @@ phase_opportunities() {
 		opportunities=$((opportunities + sub_count))
 		while IFS= read -r detail_line; do
 			[[ "$detail_line" == detail:* ]] || continue
-			opportunity_details+="${detail_line#detail:}\n"
+			opportunity_details+="${detail_line#detail:}"$'\n'
 		done <<<"$sub_output"
 	done
 
 	[[ "$quiet" != "true" ]] && {
 		if [[ "$opportunities" -gt 0 ]]; then
 			log_warn "Found $opportunities improvement opportunities:"
-			echo -e "$opportunity_details" >&2
+			printf '%s' "$opportunity_details" >&2
 		else
 			log_success "No improvement opportunities found"
 		fi
@@ -748,27 +748,27 @@ phase_report() {
 
 	# Build report
 	local report=""
-	report+="Memory Audit Pulse Report\n"
-	report+="========================\n"
-	report+="Timestamp: $timestamp\n"
+	report+="Memory Audit Pulse Report"$'\n'
+	report+="========================"$'\n'
+	report+="Timestamp: $timestamp"$'\n'
 	local mode_label="LIVE"
 	[[ "$dry_run" == "true" ]] && mode_label="DRY RUN"
-	report+="Mode: $mode_label\n"
-	report+="\n"
-	report+="Actions:\n"
-	report+="  Duplicates removed: $dedup_count\n"
-	report+="  Stale entries pruned: $prune_count\n"
-	report+="  Memories graduated: $graduate_count\n"
-	report+="  Consolidations generated: $consolidate_count\n"
-	report+="  Opportunities found: $opportunity_count\n"
-	report+="\n"
-	report+="Database:\n"
-	report+="  Total memories: $total_memories\n"
-	report+="  Database size: $db_size\n"
+	report+="Mode: $mode_label"$'\n'
+	report+=$'\n'
+	report+="Actions:"$'\n'
+	report+="  Duplicates removed: $dedup_count"$'\n'
+	report+="  Stale entries pruned: $prune_count"$'\n'
+	report+="  Memories graduated: $graduate_count"$'\n'
+	report+="  Consolidations generated: $consolidate_count"$'\n'
+	report+="  Opportunities found: $opportunity_count"$'\n'
+	report+=$'\n'
+	report+="Database:"$'\n'
+	report+="  Total memories: $total_memories"$'\n'
+	report+="  Database size: $db_size"$'\n'
 
 	[[ "$quiet" != "true" ]] && {
 		echo ""
-		echo -e "$report"
+		printf '%s' "$report"
 	}
 
 	# Save report to audit log
