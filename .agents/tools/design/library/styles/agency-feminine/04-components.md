@@ -14,7 +14,6 @@ Shared base: `font: 14px/1 Lato, 500 · padding: 14px 32px · border-radius: 999
 :focus    → outline: 2px solid #d4a5a5; outline-offset: 3px
 :disabled → background: #e8cece; color: #b0a59c; cursor: not-allowed
 ```
-
 **Secondary** `background: transparent · color: #3d3530 · border: 1.5px solid #d4a5a5`
 ```
 :hover    → background: #f5ebe7; border-color: #c79393
@@ -22,7 +21,6 @@ Shared base: `font: 14px/1 Lato, 500 · padding: 14px 32px · border-radius: 999
 :focus    → outline: 2px solid #d4a5a5; outline-offset: 3px
 :disabled → color: #b0a59c; border-color: #e8ddd0
 ```
-
 **Ghost** `background: transparent · color: #7a6e65 · font-weight: 400 · border: none`
 ```
 :hover  → color: #3d3530; background: rgba(212, 165, 165, 0.08)
