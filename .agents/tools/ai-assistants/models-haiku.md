@@ -53,7 +53,7 @@ Lowest-cost tier for fast, simple tasks where reasoning depth is not required.
 | Model | claude-haiku-4-5 |
 | Context | 200K tokens |
 | Max output | 64K tokens |
-| Training cutoff | July 2025 |
+| Training cutoff | July 2025 ([Anthropic models overview](https://docs.anthropic.com/en/docs/about-claude/models)) |
 | Input cost | $1.00/1M tokens |
 | Output cost | $5.00/1M tokens |
 | Tier | haiku (lowest cost) |
