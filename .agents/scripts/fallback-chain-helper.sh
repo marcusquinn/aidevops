@@ -90,6 +90,7 @@ is_model_available() {
 	anthropic) key_var="ANTHROPIC_API_KEY" ;;
 	openai) key_var="OPENAI_API_KEY" ;;
 	google) key_var="GOOGLE_API_KEY" ;;
+	openrouter) key_var="OPENROUTER_API_KEY" ;;
 	*) key_var="" ;;
 	esac
 

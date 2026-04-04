@@ -4,7 +4,7 @@
 
   "tiers": {
     "local":  { "models": ["local/llama.cpp"], "fallback": "haiku", "cost": 0 },
-    "haiku":  { "models": ["anthropic/claude-haiku-4-5", "google/gemini-2.5-flash-preview-05-20", "openrouter/anthropic/claude-haiku-4-5"] },
+    "haiku":  { "models": ["anthropic/claude-haiku-4-5-20251001", "google/gemini-2.5-flash-preview-05-20", "openrouter/anthropic/claude-haiku-4-5"] },
     "flash":  { "models": ["anthropic/claude-haiku-4-5"] },
     "sonnet": { "models": ["anthropic/claude-sonnet-4-6"] },
     "pro":    { "models": ["anthropic/claude-sonnet-4-6"] },
@@ -43,6 +43,13 @@
       "probe_path": "/v1/models",
       "probe_timeout_seconds": 10,
       "_comment": "API key OR OpenCode OAuth subscription (includes Codex). Auth checked via OPENAI_API_KEY env var or opencode auth.json."
+    },
+    "openrouter": {
+      "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+      "key_env": "OPENROUTER_API_KEY",
+      "probe_path": "/api/v1/models",
+      "probe_timeout_seconds": 10,
+      "_comment": "OpenRouter aggregator — routes to multiple providers. Use openrouter/provider/model-id format."
     },
     "ollama": {
       "endpoint": "http://localhost:11434/v1/chat/completions",
