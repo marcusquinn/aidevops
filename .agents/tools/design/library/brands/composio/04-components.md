@@ -5,40 +5,28 @@
 
 ## Buttons
 
+Defaults (unless overridden): Text: Near Black (`oklch(0.145 0 0)`), Radius: 4px
+
 **Primary CTA (White Fill)**
 - Background: Pure White (`#ffffff`)
-- Text: Near Black (`oklch(0.145 0 0)`)
 - Padding: 8px 24px
 - Border: none
-- Radius: 4px
 - Hover: subtle opacity reduction or slight gray shift
 
 **Cyan Accent CTA**
 - Background: Electric Cyan at 12% opacity (`rgba(0,255,255,0.12)`)
-- Text: Near Black (`oklch(0.145 0 0)`)
 - Padding: 8px 24px
 - Border: `1px solid rgb(0,150,255)` (Ocean Blue)
-- Radius: 4px
 - "Glowing from within" effect on dark backgrounds
 
-**Ghost / Outline (Signal Blue)**
-- Background: transparent
-- Text: Near Black (`oklch(0.145 0 0)`)
-- Padding: 10px
-- Border: `1px solid rgb(0,137,255)` (Signal Blue)
-- Hover: fill or border color shift
-
-**Ghost / Outline (Charcoal)**
-- Background: transparent
-- Text: Near Black (`oklch(0.145 0 0)`)
-- Padding: 10px
-- Border: `1px solid rgb(44,44,44)` (Charcoal)
-- Secondary/tertiary actions on dark surfaces
+**Ghost / Outline** — Background: transparent, Padding: 10px
+- Signal Blue: Border `1px solid rgb(0,137,255)`; Hover: fill or border color shift
+- Charcoal: Border `1px solid rgb(44,44,44)`; secondary/tertiary actions on dark surfaces
 
 **Phantom Button**
 - Background: `rgba(255,255,255,0.2)` (Phantom White)
 - Text: `rgba(255,255,255,0.5)` (Whisper White)
-- No border — deeply de-emphasized actions
+- No border — de-emphasized actions
 
 ## Cards & Containers
 
