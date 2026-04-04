@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# VoltAgent Design System: Component Stylings
+# Component Stylings
 
 ## Buttons
 
@@ -41,7 +41,7 @@
 
 ## Inputs & Forms
 
-Minimal form UI (landing-page focused). Inferred style: Carbon Surface background, Warm Charcoal border, VoltAgent Mint focus ring, Snow White text. The install command (`npm create voltagent-app@latest`) is a styled code block, not an input.
+Minimal form UI (landing-page focused): Carbon Surface background, Warm Charcoal border, VoltAgent Mint focus ring, Snow White text. The install command (`npm create voltagent-app@latest`) is a styled code block, not an input.
 
 ## Navigation
 
