@@ -6359,5 +6359,11 @@
     "at": "2026-04-04T04:17:32Z",
     "passes": 1,
     "pr": 17052
+  },
+  ".agents/tools/design/library/brands/resend/04-components.md": {
+    "hash": "3a892bf3ecbfeae70118a269688f23838a595081c9d8449d6143222bf7351bc7",
+    "lines": 54,
+    "status": "simplified",
+    "issue": "GH#17090"
   }
 }
