@@ -636,7 +636,7 @@ attribution-detection-helper.sh — Monitor GitHub for aidevops framework copies
 
 Usage:
   attribution-detection-helper.sh scan [--dry-run]
-      Search GitHub Code Search for all registered canary patterns.
+      Search GitHub Code Search with all registered canary patterns.
       --dry-run: show what would be searched without making API calls.
       Exit 0 = no unattributed detections. Exit 1 = unattributed found.
 
@@ -650,14 +650,14 @@ Usage:
       List all registered canary patterns.
 
   attribution-detection-helper.sh canary add <name> <pattern> [description]
-      Register a new canary pattern to search for.
+      Register a new canary pattern. Searches GitHub Code Search.
       Example: canary add my-func "my_unique_function_name" "Custom function"
 
   attribution-detection-helper.sh canary remove <name>
       Remove a canary pattern by name.
 
   attribution-detection-helper.sh setup-private-repo
-      Print step-by-step guide for creating a private detection repo.
+      Print setup guide: private detection repo creation steps.
 
   attribution-detection-helper.sh install
       Install as a weekly scheduled job (launchd on macOS, cron on Linux).
@@ -675,6 +675,32 @@ State files (local, not committed to public repo):
 
 See also: .agents/reference/attribution-monitoring.md
 EOF
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Canary dispatch (extracted to reduce nesting depth in main)
+# ---------------------------------------------------------------------------
+
+cmd_canary_dispatch() {
+	local sub="${1:-list}"
+	shift || true
+	case "$sub" in
+	list)
+		cmd_canary_list
+		;;
+	add)
+		cmd_canary_add "${@}"
+		;;
+	remove)
+		cmd_canary_remove "${@}"
+		;;
+	*)
+		print_error "Unknown canary subcommand: ${sub}"
+		printf 'Valid subcommands: list, add, remove\n' >&2
+		return 1
+		;;
+	esac
 	return 0
 }
 
@@ -697,24 +723,7 @@ main() {
 		cmd_status
 		;;
 	canary)
-		local sub="${1:-list}"
-		shift || true
-		case "$sub" in
-		list)
-			cmd_canary_list
-			;;
-		add)
-			cmd_canary_add "${@}"
-			;;
-		remove)
-			cmd_canary_remove "${@}"
-			;;
-		*)
-			print_error "Unknown canary subcommand: ${sub}"
-			printf 'Valid subcommands: list, add, remove\n' >&2
-			return 1
-			;;
-		esac
+		cmd_canary_dispatch "${@}"
 		;;
 	setup-private-repo)
 		cmd_setup_private_repo
