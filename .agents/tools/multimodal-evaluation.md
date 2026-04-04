@@ -19,7 +19,7 @@
 | Link | Purpose |
 |------|---------|
 | `speech-to-speech.md` → `tools/video/remotion.md` | Video narration |
-| `voice-models.md` → `heygen-skill/rules-voices.md` | AI voice cloning |
+| `voice-ai-models.md` → `heygen-skill/rules-voices.md` | AI voice cloning |
 | `heygen-skill.md` → voice selection | Avatar video voices |
 | `peekaboo.md` → `tools/ocr/glm-ocr.md` | Screen capture + OCR |
 | `glm-ocr.md` → Peekaboo | OCR workflows |
@@ -40,7 +40,7 @@
 
 1. **Expand `voice-ai-models.md` S2S section** with "Multimodal Model Landscape" heading mapping which models span which modalities (voice is most common entry point).
 2. **Add `--multimodal` filter to `compare-models.md`** to surface voice+vision+text models (capability filter on existing data).
-3. **Add AGENTS.md routing note**: `| Multimodal | See Voice (S2S models), Video (HeyGen, Higgsfield), Browser (Peekaboo vision) |`
+3. **Add lightweight AGENTS.md pointer** to this document for multimodal routing details, keeping root AGENTS.md broadly applicable (see "Multimodal Models" section above for routing guidance).
 
 ## Revisit Condition
 
