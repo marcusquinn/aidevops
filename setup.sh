@@ -916,6 +916,15 @@ _setup_post_setup_steps() {
 	echo ""
 	print_success "Setup complete!"
 
+	# Cache client request format constants if CLI is installed (~50ms)
+	if command -v claude &>/dev/null && [[ -x "${AGENTS_DIR}/scripts/cch-extract.sh" ]]; then
+		"${AGENTS_DIR}/scripts/cch-extract.sh" --cache >/dev/null 2>&1 || true
+	else
+		echo ""
+		echo -e "${YELLOW}[TIP]${NC} Install Claude CLI for automatic request format alignment:"
+		echo "      npm install -g @anthropic-ai/claude-code"
+	fi
+
 	# Non-interactive mode: deploy + migrations only — skip schedulers,
 	# services, and optional post-setup work (CI/agent shells don't need them).
 	# Tabby profile sync runs in both modes (has its own non-interactive path).
