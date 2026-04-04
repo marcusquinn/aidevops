@@ -44,8 +44,6 @@ All files contain: `At the beginning of each session, read ~/AGENTS.md to get ad
 
 `ai-cli-config.sh` functions:
 
-- `configure_qwen_cli()` -- QWEN.md creation/verification
-- `create_ai_memory_files()` -- all home directory memory files
-- `create_project_memory_files()` -- all project-level memory files
-
-Detection is automatic: checks for installed tools, creates appropriate files, preserves existing content.
+- `configure_qwen_cli()` — QWEN.md creation/verification
+- `create_ai_memory_files()` — all home directory memory files
+- `create_project_memory_files()` — all project-level memory files
