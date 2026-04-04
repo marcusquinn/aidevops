@@ -52,24 +52,30 @@
 | Surface Amber | `#fffbeb` | Achievement/reward sections |
 | Border | `#E5E7EB` | Subtle borders (used sparingly) |
 
-## CSS Variables Quick Reference
+## CSS Variables
 
-| CSS Variable | Hex | Role |
-|-------------|-----|------|
-| `--color-primary` | `#6366f1` | Indigo — buttons, links, active states |
-| `--color-primary-light` | `#818cf8` | Hover highlights |
-| `--color-primary-dark` | `#4f46e5` | Active/pressed |
-| `--color-primary-subtle` | `#eef2ff` | Tinted backgrounds |
-| `--color-accent` | `#f43f5e` | Rose — notifications, hearts, urgent CTAs |
-| `--color-accent-light` | `#fb7185` | Accent hover |
-| `--color-accent-subtle` | `#fff1f2` | Accent backgrounds |
-| `--color-amber` | `#f59e0b` | Stars, ratings, achievements |
-| `--color-emerald` | `#10b981` | Success, online, completions |
-| `--color-cyan` | `#06b6d4` | Info, tips |
-| `--color-purple` | `#8b5cf6` | Premium, gradients |
-| `--color-text` | `#1e1b4b` | Headings (deep indigo-black) |
-| `--color-text-body` | `#374151` | Body text |
-| `--color-text-secondary` | `#6b7280` | Captions, metadata |
-| `--color-surface` | `#FAFAFA` | Page background |
-| `--color-surface-white` | `#FFFFFF` | Cards |
-| `--color-border` | `#E5E7EB` | Subtle borders (rarely used) |
+| CSS Variable | Hex |
+|-------------|-----|
+| `--color-primary` | `#6366f1` |
+| `--color-primary-light` | `#818cf8` |
+| `--color-primary-dark` | `#4f46e5` |
+| `--color-primary-subtle` | `#eef2ff` |
+| `--color-accent` | `#f43f5e` |
+| `--color-accent-light` | `#fb7185` |
+| `--color-accent-dark` | `#e11d48` |
+| `--color-accent-subtle` | `#fff1f2` |
+| `--color-amber` | `#f59e0b` |
+| `--color-emerald` | `#10b981` |
+| `--color-cyan` | `#06b6d4` |
+| `--color-purple` | `#8b5cf6` |
+| `--color-text` | `#1e1b4b` |
+| `--color-text-body` | `#374151` |
+| `--color-text-secondary` | `#6b7280` |
+| `--color-text-tertiary` | `#9ca3af` |
+| `--color-text-inverse` | `#FFFFFF` |
+| `--color-surface` | `#FAFAFA` |
+| `--color-surface-white` | `#FFFFFF` |
+| `--color-surface-indigo` | `#eef2ff` |
+| `--color-surface-rose` | `#fff1f2` |
+| `--color-surface-amber` | `#fffbeb` |
+| `--color-border` | `#E5E7EB` |
