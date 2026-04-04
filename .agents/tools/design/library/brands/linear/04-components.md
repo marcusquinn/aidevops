@@ -16,11 +16,12 @@
 
 ## Cards & Containers
 
-- Background: `rgba(255,255,255,0.02)` to `rgba(255,255,255,0.05)` — never solid, always translucent
-- Border: `1px solid rgba(255,255,255,0.08)` (standard) · `1px solid rgba(255,255,255,0.05)` (subtle)
-- Radius: 8px (standard) · 12px (featured) · 22px (large panels)
-- Shadow: `rgba(0,0,0,0.2) 0px 0px 0px 1px` or layered multi-shadow stacks
-- Hover: subtle background opacity increase
+| Property | Standard | Subtle/Variant |
+|----------|----------|----------------|
+| Background | `rgba(255,255,255,0.02)`–`rgba(255,255,255,0.05)` — never solid | opacity increase on hover |
+| Border | `1px solid rgba(255,255,255,0.08)` | `1px solid rgba(255,255,255,0.05)` |
+| Radius | 8px (standard) · 12px (featured) · 22px (large panels) | — |
+| Shadow | `rgba(0,0,0,0.2) 0px 0px 0px 1px` or layered multi-shadow stacks | — |
 
 ## Inputs & Forms
 
