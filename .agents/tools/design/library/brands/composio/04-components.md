@@ -19,7 +19,9 @@ Defaults (unless overridden): Text: Near Black (`oklch(0.145 0 0)`), Radius: 4px
 - Border: `1px solid rgb(0,150,255)` (Ocean Blue)
 - "Glowing from within" effect on dark backgrounds
 
-**Ghost / Outline** — Background: transparent, Padding: 10px
+**Ghost / Outline**
+- Background: transparent
+- Padding: 10px
 - Signal Blue: Border `1px solid rgb(0,137,255)`; Hover: fill or border color shift
 - Charcoal: Border `1px solid rgb(44,44,44)`; secondary/tertiary actions on dark surfaces
 
