@@ -187,6 +187,9 @@ PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                       
 PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                                           # Open issue sample size for runnable-candidate counting
 PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                                                 # Queued/in-progress scan window per repo
 UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}"                               # Run worker recycler when underfill reaches this threshold
+UNDERFILL_RECYCLE_THROTTLE_SECS="${UNDERFILL_RECYCLE_THROTTLE_SECS:-300}"                                  # Min seconds between recycler runs when candidates are scarce (t1885)
+UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD="${UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD:-3}"                # Candidate count at or below which throttle applies (t1885)
+UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT="${UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT:-75}"                         # Deficit % at or above which throttle is bypassed (t1885)
 PULSE_PR_BACKLOG_HEAVY_THRESHOLD="${PULSE_PR_BACKLOG_HEAVY_THRESHOLD:-100}"                                # Stronger PR-first mode when open backlog reaches this size
 PULSE_PR_BACKLOG_CRITICAL_THRESHOLD="${PULSE_PR_BACKLOG_CRITICAL_THRESHOLD:-175}"                          # Merge-first mode when open backlog becomes severe
 PULSE_READY_PR_MERGE_HEAVY_THRESHOLD="${PULSE_READY_PR_MERGE_HEAVY_THRESHOLD:-10}"                         # Merge-first when enough PRs are ready immediately
@@ -242,6 +245,12 @@ PULSE_QUEUED_SCAN_LIMIT=$(_validate_int PULSE_QUEUED_SCAN_LIMIT "$PULSE_QUEUED_S
 UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=$(_validate_int UNDERFILL_RECYCLE_DEFICIT_MIN_PCT "$UNDERFILL_RECYCLE_DEFICIT_MIN_PCT" 25 1)
 if [[ "$UNDERFILL_RECYCLE_DEFICIT_MIN_PCT" -gt 100 ]]; then
 	UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=100
+fi
+UNDERFILL_RECYCLE_THROTTLE_SECS=$(_validate_int UNDERFILL_RECYCLE_THROTTLE_SECS "$UNDERFILL_RECYCLE_THROTTLE_SECS" 300 0)
+UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD=$(_validate_int UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD "$UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD" 3 0)
+UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT=$(_validate_int UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT "$UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT" 75 1)
+if [[ "$UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT" -gt 100 ]]; then
+	UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT=100
 fi
 PULSE_PR_BACKLOG_HEAVY_THRESHOLD=$(_validate_int PULSE_PR_BACKLOG_HEAVY_THRESHOLD "$PULSE_PR_BACKLOG_HEAVY_THRESHOLD" 100 1)
 PULSE_PR_BACKLOG_CRITICAL_THRESHOLD=$(_validate_int PULSE_PR_BACKLOG_CRITICAL_THRESHOLD "$PULSE_PR_BACKLOG_CRITICAL_THRESHOLD" 175 1)
@@ -7946,6 +7955,13 @@ enforce_utilization_invariants() {
 # no mergeable progress. Run worker-watchdog with stricter thresholds so
 # stale workers are recycled before the next pulse dispatch attempt.
 #
+# Throttle (t1885): when runnable+queued candidates are scarce
+# (<= UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD) and underfill is not severe
+# (< UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT), skip the watchdog run if it was
+# called within UNDERFILL_RECYCLE_THROTTLE_SECS (default 5 min). This avoids
+# repeated no-op watchdog scans when there is little work to dispatch.
+# Severe underfill (>= 75% deficit) always bypasses the throttle.
+#
 # Arguments:
 #   $1 - max workers
 #   $2 - active workers
@@ -7982,6 +7998,29 @@ run_underfill_worker_recycler() {
 		return 0
 	fi
 
+	# Time-based throttle (t1885): when runnable candidates are scarce and underfill
+	# is not severe, avoid hammering worker-watchdog on every pulse cycle. Running
+	# watchdog with few candidates produces no kills but still pays the process-scan
+	# cost and generates noisy log entries. Bypass throttle for severe underfill
+	# (>= UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT) so critical slot recovery is never delayed.
+	local recycle_throttle_file="${HOME}/.aidevops/logs/underfill-recycle-last-run"
+	local total_candidates=$((runnable_count + queued_without_worker))
+	if [[ "$total_candidates" -le "$UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD" &&
+		"$deficit_pct" -lt "$UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT" ]]; then
+		local now_epoch
+		now_epoch=$(date +%s)
+		local last_run_epoch=0
+		if [[ -f "$recycle_throttle_file" ]]; then
+			last_run_epoch=$(cat "$recycle_throttle_file" 2>/dev/null || echo "0")
+			[[ "$last_run_epoch" =~ ^[0-9]+$ ]] || last_run_epoch=0
+		fi
+		local secs_since_last=$((now_epoch - last_run_epoch))
+		if [[ "$secs_since_last" -lt "$UNDERFILL_RECYCLE_THROTTLE_SECS" ]]; then
+			echo "[pulse-wrapper] Underfill recycler throttled: candidates=${total_candidates} (threshold=${UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD}), deficit=${deficit_pct}% (<${UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT}% severe), last_run=${secs_since_last}s ago (throttle=${UNDERFILL_RECYCLE_THROTTLE_SECS}s)" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
 	local thrash_elapsed_threshold
 	local thrash_message_threshold
 	local progress_timeout
@@ -8010,6 +8049,9 @@ run_underfill_worker_recycler() {
 	else
 		echo "[pulse-wrapper] Underfill recycler warning: worker-watchdog returned non-zero" >>"$LOGFILE"
 	fi
+
+	# Update throttle timestamp after each run (t1885)
+	date +%s >"$recycle_throttle_file" 2>/dev/null || true
 
 	return 0
 }
