@@ -5,8 +5,8 @@
 
 ## Primary
 
-- **Stripe Purple** (`#533afd`): Primary brand color, CTA backgrounds, link text, interactive highlights.
-- **Deep Navy** (`#061b31`): `--hds-color-heading-solid`. Primary heading color.
+- **Stripe Purple** (`#533afd`): Primary brand color, CTA backgrounds, link text, interactive highlights, active states, selected elements.
+- **Deep Navy** (`#061b31`): `--hds-color-heading-solid`. Primary headings, nav text, strong labels.
 - **Pure White** (`#ffffff`): Page background, card surfaces, button text on dark backgrounds.
 
 ## Brand & Dark
@@ -20,19 +20,20 @@
 - **Magenta** (`#f96bee`): `--hds-color-accentColorMode-magenta-icon-gradientMiddle`. Gradients and decorative highlights.
 - **Magenta Light** (`#ffd7ef`): `--hds-color-util-accent-magenta-100`. Magenta-themed cards and badges.
 
-## Interactive
+## Interactive (Purple Scale)
 
-- **Primary Purple** (`#533afd`): Primary link color, active states, selected elements.
 - **Purple Hover** (`#4434d4`): Hover states on primary elements.
+- **Purple Mid** (`#665efd`): `--hds-color-input-selector-text-range`. Range selector and input highlight.
 - **Purple Deep** (`#2e2b8c`): `--hds-color-button-ui-iconHover`. Icon hover states.
 - **Purple Light** (`#b9b9f9`): `--hds-color-action-bg-subduedHover`. Subdued hover backgrounds.
-- **Purple Mid** (`#665efd`): `--hds-color-input-selector-text-range`. Range selector and input highlight.
 
-## Neutral Scale
+## Text Scale
 
-- **Heading** (`#061b31`): Primary headings, nav text, strong labels.
 - **Label** (`#273951`): `--hds-color-input-text-label`. Form labels, secondary headings.
 - **Body** (`#64748d`): Secondary text, descriptions, captions.
+
+## Status
+
 - **Success Green** (`#15be53`): Status badges, success indicators (0.2–0.4 alpha for backgrounds/borders).
 - **Success Text** (`#108c3d`): Success badge text.
 - **Lemon** (`#9b6829`): `--hds-color-core-lemon-500`. Warning and highlight accent.
