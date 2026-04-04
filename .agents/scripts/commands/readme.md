@@ -7,10 +7,7 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Create or update README.md for the current project.
-
-- **`--sections`**: adding a feature, changing install/config, fixing a common issue, or preserving custom content
-- **Full `/readme`**: new projects, significantly outdated docs, major restructuring, or explicit user request
+Use `--sections` for targeted updates (adding a feature, changing install/config, preserving custom content). Omit for full regeneration (new projects, major restructuring, explicit request).
 
 ## Usage
 
@@ -22,11 +19,10 @@ Create or update README.md for the current project.
 
 ## Workflow
 
-1. **Parse arguments** — check for `--sections` flag
-2. **Load guidance** — read `workflows/readme-create-update.md`
-3. **Explore codebase** — detect project type, deployment platform, existing README, key info
-4. **Generate/update** — follow workflow section order; preserve structure for partial updates
-5. **Confirm changes** — present diff and ask before writing
+1. **Load guidance** — read `workflows/readme-create-update.md`
+2. **Explore codebase** — detect project type, deployment platform, existing README, key info
+3. **Generate/update** — follow workflow section order; preserve structure for partial updates
+4. **Confirm changes** — present diff and ask before writing
 
 ## Section Mapping
 
@@ -41,13 +37,11 @@ Create or update README.md for the current project.
 | `badges` | Badge section only |
 | `all` | Full regeneration (same as no flag) |
 
-## Dynamic Counts (aidevops repo)
-
-Use `~/.aidevops/agents/scripts/readme-helper.sh check|update|update --apply` to manage stale counts.
+**Dynamic counts (aidevops repo):** `readme-helper.sh check|update|update --apply`
 
 ## Related
 
-- `workflows/readme-create-update.md` - Full workflow guidance
-- `workflows/changelog.md` - Changelog updates
-- `workflows/wiki-update.md` - Wiki documentation
-- `scripts/readme-helper.sh` - Dynamic count management
+- `workflows/readme-create-update.md` — full workflow
+- `workflows/changelog.md` — changelog updates
+- `workflows/wiki-update.md` — wiki documentation
+- `scripts/readme-helper.sh` — dynamic count management
