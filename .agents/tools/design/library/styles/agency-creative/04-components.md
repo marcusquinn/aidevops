@@ -96,10 +96,10 @@ transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 300ms 
 ## Navigation
 
 ```css
-Background: transparent (scrolled: #0f0f0f/95 with backdrop-blur: 16px)
-Height: 72px
-Logo: bold display wordmark or logomark, left-aligned
-Nav items: 15px Inter, 500, #a1a1aa
-Active item: #f8fafc with gradient underline
-CTA in nav: pill button with gradient
+background: transparent (scrolled: #0f0f0f/95 with backdrop-blur: 16px)
+height: 72px
+logo: bold display wordmark or logomark, left-aligned
+nav-items: 15px Inter, 500, #a1a1aa
+active-item: #f8fafc with gradient underline
+cta: pill button with gradient
 ```
