@@ -66,3 +66,4 @@
 - 14px uppercase Source Code Pro with 1px–2px letter-spacing
 - Used as section category markers above headings
 - Creates a "database field label" aesthetic
+
