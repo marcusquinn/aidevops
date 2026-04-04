@@ -6395,5 +6395,13 @@
     "simplified_at": "2026-04-04T06:22:35Z",
     "issue": "GH#17122",
     "action": "added CSS variables quick-reference section"
+  },
+  ".agents/tools/design/library/styles/startup-bold/09-agent-prompts.md": {
+    "hash": "1b9cf446793ee167529b914a5438353e97c92f4a",
+    "at": "2026-04-04T07:30:00Z",
+    "passes": 1,
+    "lines": 30,
+    "status": "simplified",
+    "issue": "GH#17125"
   }
 }

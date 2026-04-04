@@ -3,30 +3,7 @@
 
 # Startup Bold — Agent Prompt Guide
 
-## Quick Colour Reference
-
-| CSS Variable | Hex | Role |
-|-------------|-----|------|
-| `--color-primary` | `#4f46e5` | Indigo — primary actions |
-| `--color-primary-hover` | `#4338ca` | Primary hover |
-| `--color-primary-light` | `#e0e7ff` | Primary tinted backgrounds |
-| `--color-accent` | `#10b981` | Emerald — secondary CTA |
-| `--color-accent-hover` | `#059669` | Accent hover |
-| `--color-accent-light` | `#d1fae5` | Accent tinted backgrounds |
-| `--color-bg` | `#ffffff` | Page background |
-| `--color-surface-1` | `#f9fafb` | Alternating section bg |
-| `--color-surface-2` | `#f3f4f6` | Input backgrounds |
-| `--color-text` | `#111827` | Primary text |
-| `--color-text-secondary` | `#6b7280` | Secondary text |
-| `--color-text-tertiary` | `#9ca3af` | Placeholder text |
-| `--color-border` | `#e5e7eb` | Default borders |
-| `--color-success` | `#10b981` | Success |
-| `--color-warning` | `#f59e0b` | Warning |
-| `--color-error` | `#ef4444` | Error |
-| `--font-sans` | `'Plus Jakarta Sans', 'Inter', sans-serif` | All text |
-| `--font-mono` | `'JetBrains Mono', monospace` | Code |
-| `--radius-default` | `12px` | Standard radius |
-| `--radius-card` | `16px` | Card radius |
+Colour tokens: see `02-colours.md`.
 
 ## Ready-to-Use Prompts
 
