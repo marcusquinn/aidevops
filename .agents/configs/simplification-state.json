@@ -6365,5 +6365,11 @@
     "lines": 54,
     "status": "simplified",
     "issue": "GH#17090"
+  },
+  ".agents/tools/design/library/brands/voltagent/04-components.md": {
+    "hash": "fe3af64883455ece011eabb2ba7c1793f6cd1f16fe2e58db268a92f1d803a3a2",
+    "lines": 82,
+    "status": "simplified",
+    "issue": "GH#17080"
   }
 }
