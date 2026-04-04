@@ -5941,6 +5941,12 @@
       "at": "2026-04-04T00:00:00Z",
       "passes": 1,
       "pr": 0
+    },
+    ".agents/tools/design/library/brands/clay/DESIGN.md": {
+      "hash": "eadbe571bc5a54f1e12c65f5048668fd514f5e87",
+      "at": "2026-04-04T00:46:49Z",
+      "passes": 1,
+      "pr": null
     }
   }
 }
