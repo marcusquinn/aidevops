@@ -47,4 +47,4 @@
 
 ## Badges & Tags
 
-- **Neutral badge**: `#1b1c1e` background, white text, 6px radius, 14px/500 font, `0px 6px` padding — compact pill for categorization
+- **Neutral badge**: `#1b1c1e` background, white text, 6px radius, 14px weight 500, `0px 6px` padding — compact pill for categorization
