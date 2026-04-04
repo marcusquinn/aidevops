@@ -28,17 +28,20 @@ Target: $ARGUMENTS (file path + optional keyword)
 
 4. **Re-analyze and report**: Verify improvements, summarize changes and final scores.
 
-## Quick Commands
+## Commands
 
 ```bash
-# SEO quality check
+# Full analysis
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze "$FILE" --keyword "$KW"
+
+# Quality check
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md \
   --keyword "keyword" --meta-title "Title" --meta-desc "Description"
 
-# Readability check
+# Readability
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py readability article.md
 
-# Keyword analysis
+# Keyword density
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md \
   --keyword "keyword" --secondary "kw1,kw2"
 ```
