@@ -17,26 +17,18 @@
 
 ## Touch Targets
 
-- Buttons: 11px 13px padding
-- Nav links: 14px uppercase, adequate spacing
+- Buttons: 11px 13px padding; nav links: 14px uppercase, adequate spacing
 - Green-bordered buttons: high-contrast on dark backgrounds
 - Mobile: hamburger menu with full-screen overlay
 
 ## Collapsing Strategy
 
-- Hero heading: 36px → proportional scale-down
+- Hero heading: 36px → proportional scale-down; images maintain aspect ratio, scale to container
 - Nav: horizontal → hamburger at ~1024px
-- Product cards: 3-col → 2-col → single-col
-- Footer: multi-col → single stacked column
+- Product cards: 3-col → 2-col → single-col; GPU/product renders high resolution at all sizes
+- Hero images: scale proportionally with viewport; card images consistent aspect ratios
+- Footer: multi-col → single stacked column; full-bleed dark sections edge-to-edge
 - Section spacing: 64–80px → 32–48px on mobile
-- Images: maintain aspect ratio, scale to container width
-
-## Image Behavior
-
-- GPU/product renders: high resolution at all sizes
-- Hero images: scale proportionally with viewport
-- Card images: consistent aspect ratios
-- Full-bleed dark sections: edge-to-edge treatment
 
 ## Typography Scaling
 
