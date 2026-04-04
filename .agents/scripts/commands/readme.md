@@ -9,7 +9,8 @@ mode: subagent
 
 Create or update README.md for the current project.
 
-**Use `--sections`** when adding a feature, changing install process, discovering a common issue, or when a full update would lose custom content. **Use full `/readme`** for new projects, significantly outdated docs, major restructuring, or explicit user request.
+- **`--sections`**: adding a feature, changing install/config, fixing a common issue, or preserving custom content
+- **Full `/readme`**: new projects, significantly outdated docs, major restructuring, or explicit user request
 
 ## Usage
 
@@ -29,16 +30,16 @@ Create or update README.md for the current project.
 
 ## Section Mapping
 
-| Argument | Sections Updated | Use when |
-|----------|-----------------|----------|
-| `installation` | Installation, Prerequisites, Quick Start | Added Docker support, changed setup steps |
-| `usage` | Usage, Commands, Examples, API | Added CLI commands, new endpoints |
-| `config` | Configuration, Environment Variables | Changed env vars, new config options |
-| `architecture` | Architecture, Project Structure | Restructured codebase |
-| `troubleshooting` | Troubleshooting | Fixed common issue |
-| `deployment` | Deployment, Production Setup | Added deployment target |
-| `badges` | Badge section only | CI status changed |
-| `all` | Full regeneration | Same as no flag |
+| Argument | Sections Updated |
+|----------|-----------------|
+| `installation` | Installation, Prerequisites, Quick Start |
+| `usage` | Usage, Commands, Examples, API |
+| `config` | Configuration, Environment Variables |
+| `architecture` | Architecture, Project Structure |
+| `troubleshooting` | Troubleshooting |
+| `deployment` | Deployment, Production Setup |
+| `badges` | Badge section only |
+| `all` | Full regeneration (same as no flag) |
 
 ## Dynamic Counts (aidevops repo)
 
