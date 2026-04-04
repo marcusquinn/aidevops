@@ -303,94 +303,80 @@ search_github_code() {
 }
 
 # ---------------------------------------------------------------------------
-# Scan command
+# Scan command — helpers
 # ---------------------------------------------------------------------------
 
-cmd_scan() {
-	local dry_run="false"
-	if [[ "${1:-}" == "--dry-run" ]]; then
-		dry_run="true"
-	fi
-
+# Validate prerequisites for a scan run.
+# Args: dry_run (true/false)
+# Returns: 0 on success, 2 on infrastructure error
+_scan_validate() {
+	local dry_run="$1"
 	check_deps || return 2
 	if [[ "$dry_run" == "false" ]]; then
 		check_gh_auth || return 2
 	fi
 	ensure_state_files
+	return 0
+}
 
-	local canary_count
-	canary_count=$(jq 'length' "$CANARIES_FILE")
-	print_info "Starting attribution scan (${canary_count} canary patterns)..."
-	if [[ "$dry_run" == "true" ]]; then
-		print_info "DRY-RUN mode — no actual API calls"
+# Process a single canary: search GitHub, annotate matches, report unattributed.
+# Args: name, dry_run, all_results_ref, total_detections_ref, unattributed_count_ref
+# Outputs updated values via nameref variables (bash 4.3+) or prints to stdout.
+# Uses globals: CANARIES_FILE, RATE_LIMIT_SLEEP
+# Prints annotated JSON to stdout for the caller to merge.
+_scan_process_canary() {
+	local name="$1"
+	local dry_run="$2"
+
+	local canary_json pattern attributed_json
+	canary_json=$(jq --arg name "$name" '.[] | select(.name == $name)' "$CANARIES_FILE")
+	pattern=$(printf '%s\n' "$canary_json" | jq -r '.pattern')
+	attributed_json=$(printf '%s\n' "$canary_json" | jq -r '.attributed_repos')
+
+	print_info "Scanning for canary '${name}': ${pattern}"
+
+	local matches match_count
+	matches=$(search_github_code "$pattern" "$dry_run")
+	match_count=$(printf '%s\n' "$matches" | jq 'length')
+
+	if [[ "$match_count" -eq 0 ]]; then
+		print_info "  No matches found"
+		printf '[]\n'
+		return 0
 	fi
 
-	local scan_time
-	scan_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	print_info "  Found ${match_count} match(es)"
 
-	local all_results='[]'
-	local total_detections=0
-	local unattributed_count=0
+	# Annotate each match with attribution status
+	local annotated_matches
+	annotated_matches=$(printf '%s\n' "$matches" | jq \
+		--arg canary_name "$name" \
+		--argjson attributed "$attributed_json" \
+		'[.[] | . + {
+			canary: $canary_name,
+			attributed: ((.repo as $r | $attributed | map(select(. == $r)) | length > 0))
+		}]')
 
-	# Read canaries and iterate
-	local canary_names
-	canary_names=$(jq -r '.[].name' "$CANARIES_FILE")
+	# Report unattributed matches immediately
+	local unattributed_in_batch
+	unattributed_in_batch=$(printf '%s\n' "$annotated_matches" | jq '[.[] | select(.attributed == false)] | length')
+	if [[ "$unattributed_in_batch" -gt 0 ]]; then
+		print_warning "  ${unattributed_in_batch} unattributed match(es) found!"
+		printf '%s\n' "$annotated_matches" | jq -r '.[] | select(.attributed == false) | "    UNATTRIBUTED: \(.repo) — \(.url)"' >&2
+	fi
 
-	local name
-	while IFS= read -r name; do
-		local canary_json
-		canary_json=$(jq --arg name "$name" '.[] | select(.name == $name)' "$CANARIES_FILE")
+	printf '%s\n' "$annotated_matches"
+	return 0
+}
 
-		local pattern attributed_json
-		pattern=$(printf '%s\n' "$canary_json" | jq -r '.pattern')
-		attributed_json=$(printf '%s\n' "$canary_json" | jq -r '.attributed_repos')
+# Write final scan results to the detections file.
+# Args: scan_time, total_detections, unattributed_count, all_results_json
+_scan_write_results() {
+	local scan_time="$1"
+	local total_detections="$2"
+	local unattributed_count="$3"
+	local all_results="$4"
 
-		print_info "Scanning for canary '${name}': ${pattern}"
-
-		local matches
-		matches=$(search_github_code "$pattern" "$dry_run")
-
-		local match_count
-		match_count=$(printf '%s\n' "$matches" | jq 'length')
-
-		if [[ "$match_count" -gt 0 ]]; then
-			print_info "  Found ${match_count} match(es)"
-
-			# Annotate each match with attribution status
-			local annotated_matches
-			annotated_matches=$(printf '%s\n' "$matches" | jq \
-				--arg canary_name "$name" \
-				--argjson attributed "$attributed_json" \
-				'[.[] | . + {
-					canary: $canary_name,
-					attributed: ((.repo as $r | $attributed | map(select(. == $r)) | length > 0))
-				}]')
-
-			# Count unattributed
-			local unattributed_in_batch
-			unattributed_in_batch=$(printf '%s\n' "$annotated_matches" | jq '[.[] | select(.attributed == false)] | length')
-
-			total_detections=$((total_detections + match_count))
-			unattributed_count=$((unattributed_count + unattributed_in_batch))
-
-			if [[ "$unattributed_in_batch" -gt 0 ]]; then
-				print_warning "  ${unattributed_in_batch} unattributed match(es) found!"
-				printf '%s\n' "$annotated_matches" | jq -r '.[] | select(.attributed == false) | "    UNATTRIBUTED: \(.repo) — \(.url)"' >&2
-			fi
-
-			# Merge into all_results
-			all_results=$(printf '%s\n%s\n' "$all_results" "$annotated_matches" | jq -s 'add')
-		else
-			print_info "  No matches found"
-		fi
-
-		# Rate limit: sleep between API calls
-		if [[ "$dry_run" == "false" ]]; then
-			sleep "$RATE_LIMIT_SLEEP"
-		fi
-	done <<<"$canary_names"
-
-	# Write updated detections file
 	local tmp_file
 	tmp_file=$(mktemp)
 	jq -n \
@@ -405,14 +391,54 @@ cmd_scan() {
 			results: $results
 		}' >"$tmp_file"
 	mv "$tmp_file" "$DETECTIONS_FILE"
+	return 0
+}
 
+# ---------------------------------------------------------------------------
+# Scan command
+# ---------------------------------------------------------------------------
+
+cmd_scan() {
+	local dry_run="false"
+	if [[ "${1:-}" == "--dry-run" ]]; then
+		dry_run="true"
+	fi
+
+	_scan_validate "$dry_run" || return 2
+
+	local canary_count
+	canary_count=$(jq 'length' "$CANARIES_FILE")
+	print_info "Starting attribution scan (${canary_count} canary patterns)..."
+	[[ "$dry_run" == "true" ]] && print_info "DRY-RUN mode — no actual API calls"
+
+	local scan_time
+	scan_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+	local all_results='[]'
+	local total_detections=0
+	local unattributed_count=0
+
+	local canary_names name
+	canary_names=$(jq -r '.[].name' "$CANARIES_FILE")
+
+	while IFS= read -r name; do
+		local batch_results match_count unattributed_in_batch
+		batch_results=$(_scan_process_canary "$name" "$dry_run")
+		match_count=$(printf '%s\n' "$batch_results" | jq 'length')
+		unattributed_in_batch=$(printf '%s\n' "$batch_results" | jq '[.[] | select(.attributed == false)] | length')
+
+		total_detections=$((total_detections + match_count))
+		unattributed_count=$((unattributed_count + unattributed_in_batch))
+		all_results=$(printf '%s\n%s\n' "$all_results" "$batch_results" | jq -s 'add')
+
+		[[ "$dry_run" == "false" ]] && sleep "$RATE_LIMIT_SLEEP"
+	done <<<"$canary_names"
+
+	_scan_write_results "$scan_time" "$total_detections" "$unattributed_count" "$all_results"
 	log_to_file "scan_complete total=${total_detections} unattributed=${unattributed_count} dry_run=${dry_run}"
-
 	print_success "Scan complete: ${total_detections} total detections, ${unattributed_count} unattributed"
 
-	if [[ "$unattributed_count" -gt 0 ]]; then
-		return 1
-	fi
+	[[ "$unattributed_count" -gt 0 ]] && return 1
 	return 0
 }
 
