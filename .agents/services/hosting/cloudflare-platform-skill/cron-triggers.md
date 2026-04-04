@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Cron Triggers
 
 Schedule Workers on Cloudflare's global network. 5-field cron syntax with Quartz extensions (L, W, #). At-least-once delivery — make handlers idempotent.

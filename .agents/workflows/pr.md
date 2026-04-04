@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # PR Workflow - Unified Review Orchestrator
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Social Proof and CTA Templates
 
 ## Social Proof Bar Templates

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Thumb Zone Design
 
 - **Bottom third (natural rest):** Primary CTAs — Buy Now, Add to Cart, Submit

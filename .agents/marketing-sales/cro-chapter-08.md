@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 8: Form Optimization and Field Reduction
 
 Each field added costs ~4-7% conversion rate.

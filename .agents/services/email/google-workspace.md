@@ -12,6 +12,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Google Workspace — gws CLI Integration
 
 <!-- AI-CONTEXT-START -->

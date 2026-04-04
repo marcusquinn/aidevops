@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # task-decompose-helper.sh - LLM-powered task classification and decomposition
 # Part of the recursive task decomposition system (t1408 / p041).
 #

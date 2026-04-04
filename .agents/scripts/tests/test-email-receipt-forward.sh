@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Tests for email-receipt-forward-helper.sh
 # Tests: transaction detection, phishing detection, DNS verification, forwarding logic

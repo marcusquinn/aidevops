@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Test dispatch-dedup-helper.sh is-assigned (GH#10521)
 #
 # Verifies that is_assigned() distinguishes between:

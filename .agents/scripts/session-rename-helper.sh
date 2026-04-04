@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # session-rename-helper.sh - Rename OpenCode sessions via SQLite database
 # Part of aidevops framework: https://aidevops.sh
 #

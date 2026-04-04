@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # 4. Morning Brew — Story-Driven Value
 
 **Subject:** The $1.4B mistake airlines keep making

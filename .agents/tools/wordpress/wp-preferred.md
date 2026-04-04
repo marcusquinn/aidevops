@@ -4,6 +4,9 @@ mode: subagent
 tools: { read: true, write: false, edit: false, bash: false, glob: true, grep: true, webfetch: true, task: true }
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # WordPress Preferred Plugins & Theme
 
 <!-- AI-CONTEXT-START -->

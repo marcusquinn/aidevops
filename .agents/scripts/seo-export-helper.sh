@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC2034,SC2086
 
 # SEO Data Export Helper Script

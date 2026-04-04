@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # App Assets - Icons, Graphics, and Preview Media
 
 <!-- AI-CONTEXT-START -->

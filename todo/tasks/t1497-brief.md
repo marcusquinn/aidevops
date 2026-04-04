@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1497: Email mailbox agent doc — operations, shared mailboxes, organization
 
 ## Origin

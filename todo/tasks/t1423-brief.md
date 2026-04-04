@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1423: Priority-class worker reservations for per-repo concurrency fairness
 
 ## Session Origin

@@ -11,6 +11,9 @@ tools:
 note: Uses repomix CLI directly (not MCP) for better control and reliability
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Context Builder Agent
 
 Generates token-efficient repository context using Repomix CLI with Tree-sitter compression (~80% token reduction).

@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Character Production
 
 AI-powered character design and consistency management using facial engineering, character bibles, and cross-platform character reuse.

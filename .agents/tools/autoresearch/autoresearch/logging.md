@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Autoresearch — Logging, Memory & Mailbox
 
 Sub-doc for `autoresearch.md`. Loaded on demand.

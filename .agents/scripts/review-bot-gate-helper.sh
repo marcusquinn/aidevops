@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # review-bot-gate-helper.sh — Check if AI review bots have posted on a PR
 #
 # Usage:

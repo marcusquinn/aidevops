@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1744: Autoresearch Subagent — Autonomous Experiment Loop Runner
 
 ## Origin

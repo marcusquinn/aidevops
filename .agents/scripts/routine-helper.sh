@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # routine-helper.sh - Plan and install scheduled non-code routine runs
 
 set -euo pipefail

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Auto-summary generation for converted email markdown files (t1053.7).
 
 Generates 1-2 sentence summaries for email bodies, stored in the frontmatter

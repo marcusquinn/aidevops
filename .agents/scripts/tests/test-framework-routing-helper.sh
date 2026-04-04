@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-framework-routing-helper.sh - Tests for framework-routing-helper.sh
 #
 # Tests the is-framework detection logic with known framework and project

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # dev-browser Benchmark Scripts
 
 Same tests as Playwright, adapted for persistent Chrome via CDP: `connect("http://localhost:9222")` instead of `chromium.launch()`, `waitForPageLoad(page)` after every `goto()`, `client.disconnect()` for cleanup, no per-run `page.close()`, multiStep omits title assertion.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Budget Tracker Helper - Append-only cost log (t1337.3)
 # Appends spend events to a TSV file. AI reads the log to decide model routing.
 # Commands: record, status, burn-rate, tail, help

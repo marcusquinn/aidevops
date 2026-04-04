@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 3: Platform-Specific Creative Strategies
 
 Each platform has distinct formats, algorithmic preferences, and creative expectations. This chapter covers six platforms — specs, algorithm factors, winning patterns, and cross-platform adaptation.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # 5. James Clear — Value First
 
 **Subject:** 3-2-1: On focus, curiosity, and improving every day

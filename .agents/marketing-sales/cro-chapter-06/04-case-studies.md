@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Case Studies
 
 **Best for:** B2B, high-consideration purchases, complex solutions, enterprise sales.

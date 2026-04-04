@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare AI Gateway
 
 Universal gateway for AI model providers with analytics, caching, rate limiting, and routing.

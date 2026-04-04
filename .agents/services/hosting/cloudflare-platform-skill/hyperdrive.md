@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Hyperdrive
 
 Connect Workers to PostgreSQL/MySQL with connection pooling and edge setup. Reuses origin connections to remove ~7 round-trips.

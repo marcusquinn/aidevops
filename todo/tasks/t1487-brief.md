@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1487: Split email-to-markdown.py into focused modules (Qlty file-complexity 223)
 
 ## Origin

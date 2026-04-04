@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # daytona-helper.sh — Daytona sandbox lifecycle management
 # Usage: daytona-helper.sh <command> [args]
 # Commands: create, start, stop, destroy, list, exec, snapshot, status, archive

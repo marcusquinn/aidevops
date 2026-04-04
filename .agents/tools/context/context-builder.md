@@ -13,6 +13,9 @@ tools:
 note: Uses repomix CLI directly (not MCP) for better control and reliability
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Context Builder - Token-Efficient AI Context Generation
 
 <!-- AI-CONTEXT-START -->

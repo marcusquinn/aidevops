@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Email Sequences Framework
 
 Email converts 2-5x vs social, ~$36 ROI per $1. Works for acquisition, nurturing, retention. **Templates**: [Email Sequence Templates](direct-response-copy-templates-email-sequences.md)

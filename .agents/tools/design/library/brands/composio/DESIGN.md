@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Composio
 
 Developer-focused dark UI system. Nocturnal command-center aesthetic with electric cyan accents on near-black canvas.

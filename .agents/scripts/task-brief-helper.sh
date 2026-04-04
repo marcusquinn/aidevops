@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # task-brief-helper.sh — Generate a task brief from OpenCode session history
 #
 # Usage: task-brief-helper.sh <task_id> [project_root]

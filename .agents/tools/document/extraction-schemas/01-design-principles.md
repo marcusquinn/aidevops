@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Schema Design Principles
 
 1. **Field names match document terminology** - `vendor_name` not `SupplierID`

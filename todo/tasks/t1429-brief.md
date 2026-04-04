@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1429: Separate stats from pulse — prevent rate-limit blocking
 
 ## Origin

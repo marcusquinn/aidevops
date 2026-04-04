@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1426: Cache person_stats hourly to eliminate Search API rate limit exhaustion
 
 ## Origin

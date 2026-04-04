@@ -10,6 +10,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Image SEO Enhancement
 
 Coordinates `seo/moondream.md` (vision) + `seo/upscale.md` (quality). Input: image URL, local path, or base64. Output: filename, alt text, tags, optional upscale.

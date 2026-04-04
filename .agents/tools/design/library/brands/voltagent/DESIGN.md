@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: VoltAgent
 
 Deep-space command terminal aesthetic for an AI agent engineering platform. Carbon-black canvas, single emerald-green accent, developer-terminal typography.

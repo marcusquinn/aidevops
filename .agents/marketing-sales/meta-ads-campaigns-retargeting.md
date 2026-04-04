@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Retargeting Campaign
 
 > Most efficient spend — but most limited pool and lowest incrementality. Don't over-invest.

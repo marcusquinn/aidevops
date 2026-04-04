@@ -4,6 +4,9 @@ description: This subagent should only be called manually by the user.
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Beads - Task Graph Visualization
 
 Task dependency tracking and graph visualization for TODO.md and PLANS.md.

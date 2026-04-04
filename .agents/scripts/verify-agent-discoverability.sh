@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # verify-agent-discoverability.sh — t1680.5
 # Verify agent discoverability is not degraded after AGENTS.md progressive-load refactor.
 #

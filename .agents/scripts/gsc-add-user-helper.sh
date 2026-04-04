@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC2329
 # Google Search Console - Add Service Account to All Properties
 # Uses Playwright to automate adding a service account to all GSC properties

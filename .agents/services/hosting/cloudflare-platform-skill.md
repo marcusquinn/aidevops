@@ -5,6 +5,9 @@ mode: subagent
 imported_from: external
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Platform Skill
 
 > **Not for API operations**: To manage/configure Cloudflare resources (DNS, zones, deployments) use the Cloudflare Code Mode MCP — see `../../tools/api/cloudflare-mcp.md`.

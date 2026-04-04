@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Shared utilities for email processing scripts (t1863).
 
 Provides common functions used by email-summary.py and entity-extraction.py:

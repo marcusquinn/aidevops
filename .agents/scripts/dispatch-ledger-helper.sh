@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # dispatch-ledger-helper.sh — In-flight dispatch tracking ledger (GH#6696)
 #
 # Tracks workers between dispatch and PR creation to prevent duplicate

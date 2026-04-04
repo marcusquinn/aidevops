@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI DevOps Framework - Context Instructions
 
 This codebase is the **aidevops framework** - a collection of AI agent instructions

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1439: Fix pulse status last-pulse reporting and honor configured max worker cap
 
 ## Origin

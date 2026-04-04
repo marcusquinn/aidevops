@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # simplex-helper.sh — SimpleX Chat CLI helper for aidevops
 # Wraps common SimpleX CLI operations: install, init, bot management,
 # message sending, connection management, group operations, and status.

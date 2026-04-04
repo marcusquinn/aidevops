@@ -13,6 +13,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Log an issue with the aidevops framework to GitHub.
 
 **Arguments**: Optional title hint, e.g., `/log-issue-aidevops "Update check not working"`

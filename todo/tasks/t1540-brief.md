@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1540: fix: gh auth token missing workflow scope blocks CI workflow PRs
 
 ## Session Origin

@@ -4,6 +4,9 @@ agent: SEO
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Analyze exported SEO data for ranking opportunities, cannibalization, and optimization targets.
 
 Target: `$ARGUMENTS` — parse for domain and optional analysis type, run the helper, return report with concrete recommendations.

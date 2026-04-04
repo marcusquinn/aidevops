@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Ad Creative Mastery
 
 **Reading path:** New → Core Principles below, then `platform-meta.md` and `copywriting.md` | Experienced → `testing-optimization.md`, `ai-tools-reference.md` | Team leads → `campaign-management.md`, CHAPTER-08. See [CHAPTERS.md](CHAPTERS.md) for deep-dive chapter index.

@@ -12,6 +12,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cross-Channel Conversation Continuity
 
 One relationship history per person across email, Matrix, SimpleX, Slack, CLI, and similar channels — no private context leaks between unrelated identities. Resolve identity first, then continue the conversation. Never infer continuity from display name alone — require explicit channel mapping and explicit confidence level.

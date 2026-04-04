@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Landing Page Templates
 
 Copy-paste frameworks for different landing page types. Common Sections appear once — reference from any template.

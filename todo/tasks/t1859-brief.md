@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1859: simplification: reduce function complexity in normalise-markdown.py
 
 ## Origin

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Conversion Rate Optimization (CRO)
 
 Data-driven methodologies for increasing website conversion rates.

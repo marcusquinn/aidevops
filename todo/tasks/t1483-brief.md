@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1483: Fix model ID handling — revert Codex removal and enforce latest-alias convention
 
 ## Origin

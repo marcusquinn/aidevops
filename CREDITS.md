@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Credits & Acknowledgements
 
 Sources, inspirations, and third-party resources incorporated into or referenced by the AI DevOps framework.

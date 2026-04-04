@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Vector Search for Multi-Tenant SaaS
 
 <!-- AI-CONTEXT-START -->

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-cloudflare-mcp-e2e.sh
 #
 # End-to-end tests for Cloudflare Code Mode MCP integration.

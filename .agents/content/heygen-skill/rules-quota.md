@@ -5,6 +5,9 @@ metadata:
   tags: quota, credits, limits, usage, billing
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # HeyGen Quota and Credits
 
 HeyGen uses a credit-based system. Check quota before generating to prevent failed requests.

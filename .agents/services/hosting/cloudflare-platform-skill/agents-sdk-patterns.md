@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Patterns & Use Cases
 
 Patterns: [Chat](#chat) · [AI with Tools](#ai-with-tools) · [Streaming](#streaming) · [Cron / Scheduled](#cron--scheduled) · [Email with AI](#email-with-ai) · [Game](#game)

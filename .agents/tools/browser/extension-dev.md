@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Browser Extension Dev - Full-Lifecycle Extension Development
 
 <!-- AI-CONTEXT-START -->

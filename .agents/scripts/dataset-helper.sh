@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Dataset Helper — Standardised JSONL dataset management for LLM evaluations (t1395)
 #
 # Provides a convention for storing, validating, and managing evaluation test cases

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # terminal-title-helper.sh - Terminal tab/window title integration for aidevops
 # Part of aidevops framework: https://aidevops.sh
 #

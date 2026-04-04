@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC2034,SC2089,SC2090
 
 # Shared Constants for AI DevOps Framework Provider Scripts

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Attribution & Measurement
 
 > What Meta reports and what actually happened can be very different. Understanding attribution is critical for making good decisions.

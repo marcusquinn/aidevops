@@ -14,6 +14,9 @@ mcp:
   unstract: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Unstract - Document Processing
 
 <!-- AI-CONTEXT-START -->

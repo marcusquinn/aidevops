@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Generate retention-optimized YouTube scripts. Read `content/distribution-youtube-script-writer.md` for hook formulas, storytelling frameworks, retention checks, pacing, and output format.
 
 Arguments: $ARGUMENTS

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Worktree Cleanup After Merge
 
 After a PR is merged, clean up the linked worktree and return the canonical repo to a clean state.

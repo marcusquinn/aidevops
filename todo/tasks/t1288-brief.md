@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1288: Add OpenAPI Search MCP integration — janwilmake/openapi-mcp-server (875 stars, MIT) lets LLMs search/explore OpenAPI specs via 3-step process (find API, get summary, drill into endpoints). Use remote MCP at `https://openapi-mcp.openapisearch.com/mcp` (zero install, Cloudflare Worker). Create subagent, config templates, wire into agent generation. Follow `add-new-mcp-to-aidevops.md` checklist. Links: https://openapisearch.com/ https://github.com/janwilmake/openapi-mcp-server
 
 ## Origin

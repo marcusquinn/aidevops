@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Raycast
 
 Dark, macOS-native precision tool aesthetic. Near-black blue-tinted background (`#07080a`), multi-layer inset shadows, Raycast Red (`#FF6363`) as punctuation accent, Inter with positive letter-spacing.

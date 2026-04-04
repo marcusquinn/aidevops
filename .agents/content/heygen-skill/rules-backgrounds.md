@@ -5,6 +5,9 @@ metadata:
   tags: backgrounds, color, image, video, customization
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Video Backgrounds
 
 ## Background Types

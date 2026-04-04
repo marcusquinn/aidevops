@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # AI CLI Configuration Script
 # Configures MCP integrations for all detected AI assistants
 #

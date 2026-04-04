@@ -12,6 +12,9 @@ tools:
   google_analytics_mcp_*: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Google Analytics MCP Integration
 
 <!-- AI-CONTEXT-START -->

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # sandbox-exec-helper.sh — Lightweight execution sandbox for tool/command isolation
 # Commands: run | audit | config | help
 #

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Measurement
 
 **Engagement:** Time on page, scroll depth, case study click-through, video play/completion rate. **Conversion:** Rate with/without social proof, by type, revenue per visitor, add-to-cart rate, form completion.

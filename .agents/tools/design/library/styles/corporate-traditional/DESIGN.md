@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Corporate Traditional
 
 Institutional authority, trustworthiness, and time-tested professionalism. Navy blue `#1B365D` + gold `#B8860B` on white. Conservative, structured, serif headings, minimal animation.

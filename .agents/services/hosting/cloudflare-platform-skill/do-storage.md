@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Durable Objects Storage
 
 Persistent storage for Durable Objects — SQLite (recommended, with 30-day PITR) or KV (legacy), automatic concurrency gates. Suited for counters, sessions, rate limiters, real-time collaboration.

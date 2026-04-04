@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Gitea CLI Helper Script
 # Comprehensive Gitea management using tea (Gitea CLI) and API

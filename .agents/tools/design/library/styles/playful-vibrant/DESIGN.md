@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Playful Vibrant
 
 Energetic, joyful design system for children's education apps, gaming platforms, social communities, and creative tools. Bold indigo primary (`#6366f1`), rose accent (`#f43f5e`), rounded shapes (16–20px radii), bouncy spring animations.

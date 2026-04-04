@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 24: CRO Mastery and Future Trends
 
 ## 24.1 Building a CRO Culture

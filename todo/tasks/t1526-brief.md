@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1526: Microsoft Graph API adapter for Outlook/365 shared mailboxes
 
 ## Origin

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Function Composition and Higher-Order Functions
 
 Currying, partial application, pipe, compose, point-free style, memoization with TTL and LRU, Maybe monad, Result monad, transducers, debounce, throttle, once.

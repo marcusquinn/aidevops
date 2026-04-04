@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Agent deployment functions: deploy_aidevops_agents, deploy_ai_templates, inject_agents_reference, safety-hooks, beads
 # Part of aidevops setup.sh modularization (t316.3)
 

@@ -10,6 +10,9 @@ tools:
   bash: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Run an autonomous experiment loop that modifies code, measures a metric, and keeps only improvements.
 
 Arguments: $ARGUMENTS

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Browser Benchmark Scripts
 
 Reference scripts for `browser-benchmark.md`. All implement the same four tests (navigate, formFill, extract, multiStep) against `https://the-internet.herokuapp.com` — 3 runs each, median reported.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Sales Invoice Schema (Issued by You)
 
 Use for invoices you have issued to clients (existing schema, enhanced).

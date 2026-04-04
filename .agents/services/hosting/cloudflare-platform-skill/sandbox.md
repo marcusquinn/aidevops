@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Sandbox SDK
 
 Run isolated containers on Cloudflare's edge. Each sandbox pairs a Durable Object with a container, reuses state when IDs match. Use cases: AI code execution, dev environments, CI/CD, data analysis, multi-tenant runners.

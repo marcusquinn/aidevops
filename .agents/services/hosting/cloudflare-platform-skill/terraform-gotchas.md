@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Terraform Troubleshooting & Best Practices
 
 Common issues, security considerations, and best practices for the Cloudflare Terraform provider.

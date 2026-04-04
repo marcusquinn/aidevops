@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Stripe
 
 Stripe — fintech gold standard: technical + luxurious, precise + warm. White canvas, deep navy headings, signature purple CTA, sohne-var weight 300 headlines, blue-tinted multi-layer shadows.

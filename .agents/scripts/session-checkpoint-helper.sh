@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # session-checkpoint-helper.sh - Persist session state to survive context compaction
 # Part of aidevops framework: https://aidevops.sh
 #

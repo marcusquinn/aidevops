@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Startup Bold — Visual Theme & Atmosphere
 
 Startup Bold is an energetic, high-confidence design system built for products that need to capture attention fast and convert. It channels the urgency of launch-day energy, the optimism of well-funded startups, and the visual clarity of products that know exactly what they are. Colour is strong, type is big, and every element competes for the user's next click.

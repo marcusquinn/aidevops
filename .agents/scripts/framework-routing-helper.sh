@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # framework-routing-helper.sh - Detect and route framework-level tasks to the aidevops repo
 #
 # Solves: GH#5149 — workers create framework tasks in project repos instead of

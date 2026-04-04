@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Final Notice Reminder - last reminder before escalation or alternative action (Level 3 of 3)
 <!-- Use: when two prior reminders have gone unanswered and you need to take action. -->
 <!-- Tone: formal, clear consequences. Not hostile, but unambiguous. -->

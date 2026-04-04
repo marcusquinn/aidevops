@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ## Common Use Cases
 
 1. **LCP triage** — open Core Web Vitals → LCP → Debug View, inspect the reported selector, then optimize that element.

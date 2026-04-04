@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Types of Personalization
 
 Dynamic content adapts per visitor based on attributes, behavior, or context — increasing relevance and conversion.

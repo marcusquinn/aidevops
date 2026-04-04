@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # GEO Patterns
 
 Content patterns optimised for AI assistant citation (ChatGPT, Claude, Perplexity, Gemini).

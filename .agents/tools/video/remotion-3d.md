@@ -6,6 +6,9 @@ metadata:
   tags: 3d, three, threejs
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Follow normal React Three Fiber / Three.js practices, plus these Remotion-specific rules.
 
 ## Install `@remotion/three`

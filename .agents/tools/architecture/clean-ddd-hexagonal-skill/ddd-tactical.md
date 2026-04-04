@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # DDD Tactical Patterns
 
 > Sources: [Blue Book](https://www.domainlanguage.com/ddd/blue-book/) (Evans 2003) · [IDDD](https://openlibrary.org/works/OL17392277W) (Vernon 2013) · [Effective Aggregate Design](https://www.dddcommunity.org/library/vernon_2011/) · [Repository Pattern](https://martinfowler.com/eaaCatalog/repository.html) (Fowler)

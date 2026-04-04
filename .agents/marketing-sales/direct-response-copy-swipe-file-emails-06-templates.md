@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Email Templates to Swipe
 
 Fill-in-the-blank templates. Use Quick Value for tips/insights, Story for narrative-driven engagement, Social Proof for conversion.

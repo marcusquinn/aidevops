@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-worker-sandbox-helper.sh — sandbox lifecycle + auditability checks (t1412)
 
 set -euo pipefail

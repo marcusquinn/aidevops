@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Corporate Modern
 
 Contemporary enterprise aesthetic — confident, clean, forward-looking. Targets modern SaaS platforms, fintech, and tech-forward professional services. Competence through clarity, not ornamentation.

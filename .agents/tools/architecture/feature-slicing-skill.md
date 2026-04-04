@@ -3,6 +3,9 @@ description: Feature-Sliced Design Architecture — layer hierarchy, import rule
 mode: subagent
 imported_from: external
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # Feature-Sliced Design Architecture
 
 Frontend architecture methodology organizing code by **business domain** rather than technical role, with strict layer hierarchy and import rules.

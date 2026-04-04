@@ -6,6 +6,9 @@ metadata:
   tags: animations, transitions, frames, useCurrentFrame
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 All animations MUST be driven by the `useCurrentFrame()` hook.  
 Write animations in seconds and multiply them by the `fps` value from `useVideoConfig()`.
 

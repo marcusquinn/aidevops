@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Tests for _migrate_mcp_npx_to_binary() regression hardening (GH#14220)
 
 set -euo pipefail

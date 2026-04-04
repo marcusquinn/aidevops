@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Thank You - Post Meeting - follow up after a meeting with appreciation and next steps
 <!-- Use: within 24 hours of a meeting to reinforce key points and maintain momentum. -->
 <!-- Tone: appreciative, action-oriented. Summarise outcomes, not the entire discussion. -->

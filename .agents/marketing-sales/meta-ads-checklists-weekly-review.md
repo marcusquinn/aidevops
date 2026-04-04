@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Weekly Review Checklist
 
 > Every week (Monday), run through this checklist to keep campaigns healthy. ~30-60 min.

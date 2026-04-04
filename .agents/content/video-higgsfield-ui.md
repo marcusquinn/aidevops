@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Higgsfield UI Automator
 
 Browser-based Higgsfield AI automation via Playwright. Uses **subscription credits** (UI-only, no API). Capabilities: image (10 models), video (5 models), lipsync (11 models), cinema studio, motion control, edit/inpaint (5 models), upscale, apps (38+), asset library, mixed media (32 presets), motion/VFX (150+ presets), vibe motion, storyboard, AI influencer, character profiles, pipeline + Remotion, seed bracketing. **27 CLI commands.**

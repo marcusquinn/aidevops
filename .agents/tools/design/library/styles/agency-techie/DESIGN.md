@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Agency Techie
 
 Dark-mode-first design system for developer tooling and technical products. Terminal-inspired aesthetic with near-black surfaces, bright cyan primary (`#22d3ee`), monospace accents, and sharp geometry.

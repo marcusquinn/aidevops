@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ai-research-helper.sh — Lightweight Anthropic API wrapper for AI judgments
 # Provides cheap haiku-tier AI calls (~$0.001 each) for threshold decisions,
 # classification, and short-form reasoning tasks.

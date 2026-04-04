@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # matterbridge-helper.sh — Manage Matterbridge multi-platform chat bridge
 # Usage: matterbridge-helper.sh [setup|start|stop|status|logs|validate|update]
 set -euo pipefail

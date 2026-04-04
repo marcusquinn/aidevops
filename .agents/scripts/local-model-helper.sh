@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Local Model Helper - llama.cpp inference management for aidevops
 # Hardware-aware setup, HuggingFace GGUF model management, usage tracking,

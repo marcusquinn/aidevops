@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # x-helper.sh - Fetch X/Twitter posts via fxtwitter API (no auth required)
 # Part of aidevops framework: https://aidevops.sh
 #

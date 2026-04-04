@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # MuAPI Helper - REST API client for MuAPI (muapi.ai)
 # Part of AI DevOps Framework

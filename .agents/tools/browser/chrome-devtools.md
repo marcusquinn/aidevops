@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chrome DevTools MCP - Debugging & Inspection Companion
 
 <!-- AI-CONTEXT-START -->

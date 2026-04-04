@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Coolify CLI Helper Script
 # Comprehensive Coolify self-hosted deployment and management using Coolify CLI

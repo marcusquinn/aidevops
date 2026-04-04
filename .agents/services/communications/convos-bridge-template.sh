@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Convos AI bridge template — connects agent serve to an AI backend via named pipes.
 # Replace `your-ai-dispatch` with your backend. For aidevops:
 #   claude run --session-id "$SESSION_ID" --message "..."

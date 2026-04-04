@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI Code Execution
 
 Handler-body-only example — uses the Worker boilerplate from `sandbox.md` Quick Start.

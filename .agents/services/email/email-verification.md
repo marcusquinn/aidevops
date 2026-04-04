@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Email Address Verification
 
 Local email address verifier with SMTP RCPT TO probing, disposable domain detection, and catch-all detection.

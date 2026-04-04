@@ -5,6 +5,9 @@ model: sonnet
 tools: [bash, read, write]
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chrome Web Store Release Automation
 
 ## Quick Start

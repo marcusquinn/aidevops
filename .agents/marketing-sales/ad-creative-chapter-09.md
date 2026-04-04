@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 9: Advanced Performance Creative Strategies
 
 ## 9.1 AI-Powered Creative Optimization

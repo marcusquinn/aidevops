@@ -4,6 +4,9 @@ mode: subagent
 tools: { read: true, write: true, edit: true, bash: true, glob: true, grep: true, webfetch: false, task: true }
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Changelog Workflow
 
 - **Format**: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)

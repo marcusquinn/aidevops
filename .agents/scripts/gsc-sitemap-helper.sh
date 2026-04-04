@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Google Search Console - Sitemap Submission Helper
 # Uses Playwright to automate sitemap submissions to GSC
 # Part of AI DevOps Framework

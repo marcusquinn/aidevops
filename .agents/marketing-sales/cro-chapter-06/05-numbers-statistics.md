@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Numbers and Statistics
 
 **Customer counts:** Active users, companies served, geographic reach, tenure ("Trusted 20+ years"), growth rate, category ranking. Make relatable: comparisons, breakdowns ("100 new customers/hour"), animated count-up (CountUp.js), growth charts.

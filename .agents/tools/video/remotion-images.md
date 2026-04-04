@@ -6,6 +6,9 @@ metadata:
   tags: images, img, staticFile, png, jpg, svg, webp
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Using images in Remotion
 
 ## The `<Img>` component

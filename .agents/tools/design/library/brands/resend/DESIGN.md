@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Resend
 
 Resend — cinematic dark canvas: pure black void, near-white text, icy frost borders (`rgba(214,235,253,0.19)`), three-font editorial hierarchy (Domaine Display hero, ABC Favorit sections, Inter body), pill CTAs, multi-color accent scales.

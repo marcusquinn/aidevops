@@ -8,6 +8,9 @@ tools:
   bash: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Lumen - AI Git Companion
 
 <!-- AI-CONTEXT-START -->

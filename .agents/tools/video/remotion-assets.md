@@ -6,6 +6,9 @@ metadata:
   tags: assets, staticFile, images, fonts, public
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Importing assets in Remotion
 
 ## Local assets: `public/` + `staticFile()`

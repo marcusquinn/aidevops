@@ -2,6 +2,9 @@
 description: Canonical routing taxonomy — domain labels and model tier labels for task creation and dispatch
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Task Taxonomy: Domain and Model Tier Classification
 
 Canonical source for `/new-task`, `/save-todo`, `/define`, and `/pulse`. When a domain or tier changes, update **only this file** — command docs point here, not duplicate the tables.

@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # yt-dlp - YouTube Downloader
 
 Feature-rich command-line audio/video downloader supporting YouTube and thousands of other sites. Downloads to `~/Downloads/` in organized, named folders.

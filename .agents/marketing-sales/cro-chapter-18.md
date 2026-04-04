@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 18: CRO Case Studies and Implementation Playbook
 
 Real-world implementations across e-commerce, SaaS, and B2B. Builds on [Chapter 1](./cro-chapter-01.md)–[Chapter 12](./cro-chapter-12.md).

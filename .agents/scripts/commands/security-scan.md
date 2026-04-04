@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Fast security check before commits. Target: $ARGUMENTS
 
 Run every check below and report findings with severity and location.

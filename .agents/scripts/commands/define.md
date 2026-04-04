@@ -9,6 +9,9 @@ tools:
   bash: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Interview the user to define a task with full context, then generate a complete brief from `templates/brief-template.md`. Surface implicit requirements before code is written — most task failures come from unstated assumptions, not implementation bugs.
 
 Topic: $ARGUMENTS

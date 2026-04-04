@@ -11,6 +11,9 @@ tools:
   webfetch: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # API Wrapper Pattern - REST API to MCP
 
 <!-- AI-CONTEXT-START -->

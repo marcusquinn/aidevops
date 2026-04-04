@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Nothing Design System — Motion & Interaction
 
 - **Duration:** 150-250ms micro, 300-400ms transitions

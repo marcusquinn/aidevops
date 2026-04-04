@@ -7,6 +7,9 @@ upstream_url: https://github.com/remotion-dev/skills
 context7_id: /remotion-dev/remotion
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Remotion
 
 Programmatic video creation using React with frame-by-frame control.

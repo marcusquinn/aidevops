@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Scheduler setup functions: supervisor pulse, stats wrapper, process guard,
 # memory pressure monitor, screen time snapshot, contribution watch,
 # profile README, OAuth token refresh.

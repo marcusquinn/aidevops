@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudron App Packaging (Official Skill)
 
 Cloudron apps are Docker images plus `CloudronManifest.json`, with a readonly root filesystem, addon-managed services, and managed backup/restore.

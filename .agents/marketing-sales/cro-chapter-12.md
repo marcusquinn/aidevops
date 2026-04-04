@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 12: Copy Testing Frameworks
 
 Copy changes produce 20-100%+ conversion lifts. Three frameworks (PAS, AIDA, BAB), headline formulas, button copy, and microcopy optimization.

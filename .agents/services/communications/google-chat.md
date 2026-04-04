@@ -4,6 +4,9 @@ mode: subagent
 tools: { read: true, bash: true }
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Google Chat Bot Integration
 
 <!-- AI-CONTEXT-START -->

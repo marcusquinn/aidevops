@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1417: Add pulse hygiene layer — stash cleanup, orphan worktree detection, stale PR triage
 
 ## Origin

@@ -3,6 +3,9 @@ description: Example runner templates for parallel agent dispatch
 mode: reference
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Runner Templates
 
 Ready-to-use AGENTS.md templates for common runner types. Copy and customize.

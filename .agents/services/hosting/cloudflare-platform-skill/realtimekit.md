@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare RealtimeKit
 
 SDK suite built on Realtime SFU — abstracts WebRTC complexity with pre-built UI components, global performance (300+ cities), and production features (recording, transcription, chat, polls).

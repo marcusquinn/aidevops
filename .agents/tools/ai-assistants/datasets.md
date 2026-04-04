@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Evaluation Datasets
 
 JSONL format and storage for LLM evaluation cases. Used by bench and evaluator workflows.

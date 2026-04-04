@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Microsoft Graph API Adapter — Outlook/365 Shared Mailboxes
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Agency Creative — Depth & Elevation
 
 | Level | Name | Shadow Value (Dark) | Shadow Value (Light) | Usage |

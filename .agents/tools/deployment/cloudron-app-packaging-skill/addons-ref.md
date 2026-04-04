@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Addons Reference
 
 Declare in `CloudronManifest.json` under `addons`. Read env vars at runtime — values can change across restarts.

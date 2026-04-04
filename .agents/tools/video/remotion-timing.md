@@ -6,6 +6,9 @@ metadata:
   tags: spring, bounce, easing, interpolation
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Use `interpolate()` for direct frame-to-value mapping and `spring()` for physics-driven 0→1 progress.
 
 ## interpolate()

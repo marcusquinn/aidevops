@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Queues Gotchas
 
 See [queues.md](./queues.md), [queues-patterns.md](./queues-patterns.md).

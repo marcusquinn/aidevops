@@ -3,6 +3,9 @@ description: Probing questions for refactor tasks — surfaces behaviour preserv
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Refactor Probes
 
 Use 2 probes from this file during `/define` for tasks classified as **refactor**.

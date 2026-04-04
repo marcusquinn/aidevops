@@ -8,6 +8,9 @@ tools:
   bash: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Product
 
 Product strategy and management agent. Covers the full product lifecycle from idea validation through growth, applicable to any app type (SaaS, mobile, extensions, CLI tools).

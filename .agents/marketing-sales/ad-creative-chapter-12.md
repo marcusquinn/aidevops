@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 12: Creative Testing and Experimentation Framework
 
 ## 12.1 The Scientific Method for Creative

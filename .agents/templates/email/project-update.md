@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Project Update - notify stakeholders of project status
 <!-- Use: periodic status updates to clients, team members, or stakeholders. -->
 <!-- Tone: informative, structured. Adapt frequency (weekly, milestone-based) to the audience. -->

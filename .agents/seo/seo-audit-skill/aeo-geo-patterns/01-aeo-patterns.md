@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AEO Patterns
 
 Templates for featured snippets, answer boxes, and spoken-result queries.

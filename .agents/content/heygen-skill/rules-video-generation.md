@@ -5,6 +5,9 @@ metadata:
   tags: video, generation, v2, scenes, workflow
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Video Generation
 
 The `/v2/video/generate` endpoint creates AI avatar videos with HeyGen.

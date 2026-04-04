@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Objection Handling Framework
 
 > "Every sale has five basic obstacles: no need, no money, no hurry, no desire, no trust." — Zig Ziglar

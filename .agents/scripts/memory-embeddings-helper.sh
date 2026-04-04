@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # memory-embeddings-helper.sh - Semantic memory search using vector embeddings
 # Opt-in enhancement for memory-helper.sh (FTS5 remains the default)
 #

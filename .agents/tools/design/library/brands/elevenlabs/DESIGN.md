@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: ElevenLabs
 
 Near-white canvas with warm undertones, Waldenburg weight 300 (light) for display headings, Inter with positive letter-spacing for body, multi-layered shadow stacks at sub-0.1 opacity, and pill buttons with warm stone-tinted backgrounds.

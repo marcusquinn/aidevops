@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1346: Investigate webfetch 46.8% error rate — add retry guidance or fallback
 
 ## Origin

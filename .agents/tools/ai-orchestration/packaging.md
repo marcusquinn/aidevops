@@ -4,6 +4,9 @@ mode: subagent
 tools: { read: true, write: true, edit: true, bash: true, glob: true, grep: true, webfetch: true }
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Packaging AI Automations for Deployment
 
 **Purpose**: Turn AI orchestration workflows into deployable services. Zero lock-in, standard Python deps, exportable.

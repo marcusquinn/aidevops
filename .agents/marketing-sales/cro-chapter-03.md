@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 3: CRO Frameworks and Prioritization
 
 With limited resources and countless potential optimizations, frameworks help systematically evaluate and prioritize testing opportunities.

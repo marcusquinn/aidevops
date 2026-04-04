@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # agent-browser Benchmark Scripts
 
 CLI-based. Uses `_time` helper to avoid repeating timing boilerplate per test.

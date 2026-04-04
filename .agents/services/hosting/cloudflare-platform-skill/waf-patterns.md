@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ### Common Issues & Solutions
 
 **Issue**: False positives blocking legitimate traffic

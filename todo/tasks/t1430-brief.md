@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1430: Research rtk-ai/rtk CLI Proxy for Token Reduction Integration
 
 ## Origin

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Workflows Guide
 
 The `.agents/workflows/` directory contains process guides for common development tasks. These workflows help AI assistants (and humans) follow consistent, high-quality practices.

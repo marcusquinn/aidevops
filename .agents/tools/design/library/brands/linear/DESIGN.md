@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Linear
 
 Dark-mode-native product design system. Near-black canvas (`#08090a`), Inter Variable with OpenType features, single brand accent (indigo-violet), semi-transparent white borders throughout.

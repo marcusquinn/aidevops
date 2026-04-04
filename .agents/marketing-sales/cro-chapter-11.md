@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 11: Mobile CRO
 
 60%+ of web traffic is mobile, yet mobile converts 1-3% vs desktop 3-5%.

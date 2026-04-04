@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Test script for t253: Verify orphan cleanup when worker dies
 # This simulates a worker process with children and tests cleanup on various signals
 

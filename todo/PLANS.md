@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Execution Plans
 
 Complex, multi-session work requiring research, design decisions, and detailed tracking.

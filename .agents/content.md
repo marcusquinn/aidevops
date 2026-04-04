@@ -41,6 +41,9 @@ subagents:
   - explore
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Content - Multi-Media Multi-Channel Production Pipeline
 
 <!-- AI-CONTEXT-START -->

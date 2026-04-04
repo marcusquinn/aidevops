@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Corporate Traditional — Visual Theme & Atmosphere
 
 This design system embodies institutional authority, trustworthiness, and time-tested professionalism. It draws from the visual language of established organisations — law firms, financial institutions, government agencies, and universities — where credibility is communicated through restraint, structure, and classical typographic choices.

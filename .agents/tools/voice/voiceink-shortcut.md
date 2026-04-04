@@ -6,6 +6,9 @@ tools:
   bash: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # VoiceInk to OpenCode via macOS Shortcut
 
 <!-- AI-CONTEXT-START -->

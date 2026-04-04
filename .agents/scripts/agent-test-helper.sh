@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # agent-test-helper.sh - Agent testing framework with isolated AI sessions
 #
 # Test agent changes by running prompts through isolated AI sessions and

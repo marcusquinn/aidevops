@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-dispatch-ledger-helper.sh — Tests for dispatch-ledger-helper.sh (GH#6696)
 
 set -euo pipefail

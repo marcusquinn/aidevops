@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Monitor and iterate on a PR until it is approved or merged. Arguments: $ARGUMENTS
 
 ## Usage

@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Configure YouTube channel settings, competitor tracking, and niche definition for ongoing research.
 
 Arguments: $ARGUMENTS

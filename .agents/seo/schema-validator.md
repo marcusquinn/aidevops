@@ -11,6 +11,9 @@ tools:
   webfetch: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Schema Validator
 
 - **Helper**: `schema-validator-helper.sh`

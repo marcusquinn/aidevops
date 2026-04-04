@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI Hallucination Defense
 
 Prevent misinformation by fixing contradictions and weakly-supported claims in source content.

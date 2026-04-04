@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # framework-issue-helper.sh - Route self-improvement issues to the aidevops repo
 # Part of aidevops framework: https://aidevops.sh
 #

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # 1. Visual Theme & Atmosphere
 
 This design system is built for reading. Every decision — colour, spacing, typography, layout — serves a single purpose: to make long-form content a pleasure to consume. It draws from the best traditions of print editorial design and modern digital reading platforms, where the content is the interface and the chrome dissolves into the background.

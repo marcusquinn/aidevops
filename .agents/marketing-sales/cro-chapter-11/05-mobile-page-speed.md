@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Mobile Page Speed
 
 Bounce probability: 32% at 1-3s → 90% at 1-5s.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI Search KPI Scorecard Template
 
 Use one scorecard per AI-search cycle. Record baseline, current, delta,

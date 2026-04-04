@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC2001,SC2016,SC2129,SC2155
 # Universal Quality Fix Script
 # Automatically resolves common quality issues across all platforms

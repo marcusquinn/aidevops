@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Longform Talking-Head Pipeline (30s+)
 
 Audio-driven: voice controls lip movement and timing. `Image → Script → Voice → Video → Post`

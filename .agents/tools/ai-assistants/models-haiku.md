@@ -15,6 +15,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Haiku Tier Model
 
 You are a lightweight, fast AI assistant optimized for simple tasks.

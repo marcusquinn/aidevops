@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ## Video Ad Hooks: The Critical First 3 Seconds
 
 Hook decision in <1 second. Every hook needs: visual pattern interrupt, immediate relevance, curiosity gap, emotional trigger, clear value promise. **Target:** 3-second view rate >50%. **Test variables:** Hook type (question/statement/visual), specificity, emotion (fear/desire/curiosity), length (1s vs 3s), visual (with/without person).

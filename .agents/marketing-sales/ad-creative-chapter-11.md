@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 11: Platform-Specific Creative Excellence
 
 ## 11.1 Meta (Facebook/Instagram)

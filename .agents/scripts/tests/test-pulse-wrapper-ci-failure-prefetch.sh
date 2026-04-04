@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-pulse-wrapper-ci-failure-prefetch.sh
 #
 # Smoke tests for the prefetch_ci_failures() function in pulse-wrapper.sh.

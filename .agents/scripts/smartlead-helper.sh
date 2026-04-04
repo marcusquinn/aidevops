@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # smartlead-helper.sh — Smartlead cold outreach API integration
 # Manages campaigns, leads, sequences, email accounts, warmup, analytics,
 # webhooks, and block lists via the Smartlead REST API.

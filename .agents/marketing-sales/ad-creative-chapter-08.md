@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # CHAPTER 8: Creative Operations and Team Management
 
 ## Creative Production Pipeline

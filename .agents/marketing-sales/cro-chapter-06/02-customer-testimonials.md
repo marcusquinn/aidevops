@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Customer Testimonials
 
 **Effective traits:** Specific (metrics, not vague praise), Credible (full name, photo, title, company, logo, timestamp), Relevant (segmented by industry/use case), Outcome-focused (Problem → Solution → Result), Emotional, Objection-busting ("Too expensive" → "Paid for itself in month 1").

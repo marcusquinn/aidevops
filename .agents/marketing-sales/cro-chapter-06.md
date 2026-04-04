@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 6: Social Proof and Trust Signals
 
 This chapter explores the various forms of social proof and trust signals that can be used to build credibility and increase conversion rates, from customer testimonials and reviews to case studies and trust badges.

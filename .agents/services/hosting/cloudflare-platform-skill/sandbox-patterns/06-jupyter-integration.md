@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Jupyter Integration
 
 Handler-body-only examples — all use the Worker boilerplate from `sandbox.md` Quick Start.

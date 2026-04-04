@@ -6,6 +6,9 @@ metadata:
   tags: sequence, trim, clip, cut, offset
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ## Trim the beginning
 
 A negative `from` value skips that many frames from the start of the animation's local timeline:

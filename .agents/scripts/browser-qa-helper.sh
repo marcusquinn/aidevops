@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Browser QA Helper — Playwright-based visual testing for milestone validation (t1359)
 # Commands: run | screenshot | links | a11y | smoke | help
 # Integrates with mission milestone validation pipeline.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Comprehension Benchmark
 
 Tests whether agent files are comprehensible at each model tier (haiku, sonnet,

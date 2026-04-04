@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # session-time-helper.sh - Analyse Claude Code session active time
 # Part of aidevops framework: https://aidevops.sh
 #

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # External Repo Issue/PR Submission (t1407)
 
 When filing issues or PRs on repos we don't maintain, template compliance bots

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # memory-pressure-monitor.sh — Process-focused memory pressure monitor
 #
 # Monitors aidevops process health: individual RSS, process runtime, process count.

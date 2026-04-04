@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1752: recheck: simplification: tighten agent doc Gotchas & Best Practices (.agents/services/hosting/cloudflare-platform-skill/agents-sdk-gotchas.md)
 
 ## Origin

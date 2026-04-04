@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1491: fix: Bash 3.2 bad substitution in config_get indirect expansion
 
 ## Session Origin

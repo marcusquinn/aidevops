@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # post-merge-review-scanner.sh — Scan merged PRs for unactioned review bot feedback
 #
 # Finds actionable suggestions from AI review bots (CodeRabbit, Gemini Code

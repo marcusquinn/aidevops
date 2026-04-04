@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Future Trends
 
 - **AI hyper-personalization**: ML models predicting optimal headline, pricing tier, testimonial, and popup timing per user. Modern platforms (AB Tasty, Optimizely, VWO) already auto-allocate traffic to winning variants.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # 2-Track Production Workflow
 
 **Track 1 (Objects & Environments)**: Midjourney → Veo 3.1

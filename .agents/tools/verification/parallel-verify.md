@@ -14,6 +14,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cross-Provider Verification Agent
 
 <!-- AI-CONTEXT-START -->

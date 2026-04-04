@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # browser-qa-worker.sh - Playwright-based visual QA for milestone validation
 # Part of aidevops framework: https://aidevops.sh
 #

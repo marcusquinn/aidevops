@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Google Search Ad Templates
 
 Format: H1/H2/H3 = Headlines 1–3, D = Description.

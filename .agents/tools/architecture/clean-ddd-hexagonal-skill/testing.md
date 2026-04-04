@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Testing Patterns
 
 > Sources: [Clean Architecture](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html) · [Hexagonal Architecture](https://alistair.cockburn.us/hexagonal-architecture/) · [Test Pyramid](https://martinfowler.com/bliki/TestPyramid.html)

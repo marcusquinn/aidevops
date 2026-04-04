@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
 # AI DevOps Framework - Full Dependency Lock File
 # Generated with pip freeze to ensure reproducible builds with exact versions
 # Contains all dependencies including transitive ones for DSPy integration

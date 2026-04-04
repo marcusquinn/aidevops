@@ -8,6 +8,9 @@ tags: [efficiency, tools]
 enabled: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Prefer faster file discovery methods over Glob:
 
 - Use `git ls-files '<pattern>'` for git-tracked files (instant)

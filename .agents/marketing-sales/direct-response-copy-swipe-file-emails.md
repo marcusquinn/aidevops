@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Email Swipe File
 
 High-converting email examples with analysis. 10 real-world examples + subject line formulas + fill-in templates.

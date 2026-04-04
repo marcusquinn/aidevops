@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # content-classifier-helper.sh — Intelligence-layer prompt injection classifier (t1412.7)
 #
 # Haiku-tier LLM call to classify content from non-collaborators before it

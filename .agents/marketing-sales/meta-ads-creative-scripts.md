@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # UGC & Video Scripts
 
 Ready-to-use script templates. Fill in the blanks, shoot, profit.

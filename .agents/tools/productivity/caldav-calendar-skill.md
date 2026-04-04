@@ -3,6 +3,9 @@ name: caldav-calendar
 description: "Sync and query CalDAV calendars (iCloud, Google, Fastmail, Nextcloud, etc.) using vdirsyncer + khal"
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # CalDAV Calendar (vdirsyncer + khal)
 
 **For reminders/tasks** (not events): see `tools/productivity/apple-reminders.md`.

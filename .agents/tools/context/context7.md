@@ -15,6 +15,9 @@ mcp:
   - context7
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Context7 MCP Setup Guide
 
 <!-- AI-CONTEXT-START -->

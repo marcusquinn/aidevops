@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Create or update README.md for the current project.
 
 **Use `--sections`** when adding a feature, changing install process, discovering a common issue, or when a full update would lose custom content. **Use full `/readme`** for new projects, significantly outdated docs, major restructuring, or explicit user request.

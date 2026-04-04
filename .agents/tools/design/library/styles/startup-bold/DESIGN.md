@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Startup Bold
 
 Energetic, high-confidence design system for products that need to capture attention fast and convert. Indigo primary (`#4f46e5`) + emerald accent (`#10b981`), bold rounded components, structured grid.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1709: Integrate chromium-debug-use into browser routing and automation planning workflow
 
 ## Origin

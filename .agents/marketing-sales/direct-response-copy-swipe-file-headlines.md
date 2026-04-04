@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Headline Swipe File
 
 50+ proven headlines with analysis. Format: **Headline** — Source | Why it works | Template.

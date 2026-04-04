@@ -6,6 +6,9 @@ metadata:
   tags: composition, still, folder, props, metadata
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 `<Composition>` defines component, dimensions, fps and duration for a renderable video. Place in `src/Root.tsx`.
 
 ```tsx

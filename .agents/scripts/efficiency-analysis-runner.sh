@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # efficiency-analysis-runner.sh — Two-phase orchestration efficiency analysis runner
 # (GH#15316)
 #

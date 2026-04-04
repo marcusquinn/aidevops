@@ -15,6 +15,9 @@ mcp:
   - socket
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Security Audit - External Repository Methodology
 
 <!-- AI-CONTEXT-START -->

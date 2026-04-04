@@ -13,6 +13,9 @@ mcp:
   docstrange: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # DocStrange - Document Conversion & Extraction
 
 <!-- AI-CONTEXT-START -->

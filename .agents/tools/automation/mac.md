@@ -12,6 +12,9 @@ tools:
   macos-automator_*: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # @mac - macOS Automation
 
 Use `@mac` for local macOS automation via AppleScript, JXA, and Accessibility APIs.

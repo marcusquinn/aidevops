@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Pages
 
 JAMstack platform for full-stack apps on Cloudflare's global network. Git-based deploys, preview URLs per branch/PR, Pages Functions (Workers runtime), smart asset caching + edge compute. Frameworks: Next.js, SvelteKit, Remix, Astro, Nuxt, Qwik.

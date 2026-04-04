@@ -4,6 +4,9 @@ mode: subagent
 tools: [read, write, edit, bash, glob, grep, webfetch, task, context7_*]
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Expo Development - Cross-Platform Mobile Apps
 
 ## Quick Reference

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Pending Response Follow-up (Casual) - informal check-in on an unanswered message
 <!-- Use: for colleagues, familiar contacts, or internal team communication. -->
 <!-- See also: follow-up-pending.md (standard), follow-up-pending-formal.md (external/legal). -->

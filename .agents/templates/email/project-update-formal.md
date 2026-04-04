@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Project Update (Formal) - structured status report for executive or external stakeholders
 <!-- Use: for board members, investors, external clients, or contractual reporting obligations. -->
 <!-- See also: project-update.md (standard), project-update-casual.md (internal team). -->

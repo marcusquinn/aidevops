@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # session-review-helper.sh - Gather session context for AI review
 # Part of aidevops framework: https://aidevops.sh
 #

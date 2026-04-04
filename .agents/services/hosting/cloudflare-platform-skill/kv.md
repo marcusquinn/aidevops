@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Workers KV
 
 Globally distributed, eventually consistent key-value store for read-heavy, low-latency access.

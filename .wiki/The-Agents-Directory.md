@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # The .agents Directory
 
 Everything AI assistants need lives in `.agents/`. This page explains the structure and how to use it.

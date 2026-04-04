@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ## Website Elements That Impact Conversions
 
 - **High-impact**: value proposition, headlines, CTAs, forms, product images, social proof, pricing display, navigation, page speed, mobile experience

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Task: Create Rich Results Test subagent (t084)
 
 - [x] t084 Create Rich Results Test subagent #seo #tools #schema ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06

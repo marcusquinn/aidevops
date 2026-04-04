@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 2: AI-Powered Creative Production
 
 > Deep-dive supplement. For tool-specific details see [ai-tools-reference.md](ad-creative-ai-tools-reference.md). For copywriting frameworks see [copywriting.md](ad-creative-copywriting.md). For testing methodology see [testing-optimization.md](ad-creative-testing-optimization.md).

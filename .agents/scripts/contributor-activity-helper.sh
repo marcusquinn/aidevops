@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # contributor-activity-helper.sh - Compute contributor activity from git history
 #
 # Sources activity data exclusively from immutable git commit history to prevent

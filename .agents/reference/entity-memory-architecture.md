@@ -12,6 +12,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Entity Memory Architecture
 
 **Plan:** p035 | **Tasks:** t1363.1–t1363.7 | **Database:** `memory.db`

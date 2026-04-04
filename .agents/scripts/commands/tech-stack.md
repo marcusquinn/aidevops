@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Detect the full tech stack of a URL or find sites using specific technologies. Orchestrates Wappalyzer, httpx, nuclei, and optional BuiltWith API.
 
 Arguments: $ARGUMENTS

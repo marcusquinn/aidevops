@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Understanding AGENTS.md
 
 `AGENTS.md` is the **single source of truth** for AI assistant behavior in this framework. This page explains how it works and why it's designed this way.

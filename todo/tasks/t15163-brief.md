@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Task Brief - t15163: Tighten agent doc Cloudflare Workers Smart Placement
 
 ## Context

@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Interactive email inbox management. Arguments: `$ARGUMENTS`. Default: `check`.
 
 | Command | Helper call | Purpose |

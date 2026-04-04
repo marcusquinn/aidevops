@@ -12,6 +12,9 @@ tools:
   macos-automator_*: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # macOS Automator MCP
 
 <!-- AI-CONTEXT-START -->

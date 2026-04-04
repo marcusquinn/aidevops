@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # show-plan-helper.sh - Display detailed plan information
 # Part of aidevops framework: https://aidevops.sh
 #

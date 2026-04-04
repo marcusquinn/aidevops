@@ -11,6 +11,9 @@ tools:
   webfetch: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Letter Post Bridge (Placeholder)
 
 Discovery-only reference for future physical post workflows bridged through email. No provider is selected yet.

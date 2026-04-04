@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # list-verify-helper.sh - List verification queue entries with filtering
 # Part of aidevops framework: https://aidevops.sh
 #

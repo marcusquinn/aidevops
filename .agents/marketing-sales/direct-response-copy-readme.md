@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Direct Response Copywriting Skill
 
 Write high-converting copy for landing pages, emails, ads, and VSLs using proven direct response frameworks.

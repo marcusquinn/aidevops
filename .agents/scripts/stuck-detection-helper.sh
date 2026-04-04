@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # stuck-detection-helper.sh - Advisory stuck detection for long-running workers (t1332)
 #
 # Deterministic utility for milestone tracking and GitHub label management.

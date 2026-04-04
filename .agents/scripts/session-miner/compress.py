@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
 Session Miner — Phase 2: Compress extracted chunks into analysis-ready summaries.
 

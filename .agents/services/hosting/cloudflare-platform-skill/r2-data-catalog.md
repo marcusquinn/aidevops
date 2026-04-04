@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare R2 Data Catalog Skill Reference
 
 Expert guidance for Cloudflare R2 Data Catalog - Apache Iceberg catalog built into R2 buckets.

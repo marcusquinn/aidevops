@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Uber Design: Visual Theme & Atmosphere
 
 Uber's design language is confident minimalism — a black-and-white universe where every pixel serves a purpose. The entire experience is built on stark duality: jet black (`#000000`) and pure white (`#ffffff`), with virtually no mid-tone grays diluting the message. This isn't sterile minimalism — it's the deliberate restraint of a brand so established it can afford to whisper.

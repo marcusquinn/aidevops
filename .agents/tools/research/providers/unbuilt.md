@@ -12,6 +12,9 @@ tools:
   webfetch: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Unbuilt.app Provider
 
 <!-- AI-CONTEXT-START -->

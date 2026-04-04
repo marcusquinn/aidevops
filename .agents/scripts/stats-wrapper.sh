@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # stats-wrapper.sh - Separate process for statistics and health updates
 #
 # Runs quality sweep, health issue updates, and person-stats independently

@@ -2,6 +2,9 @@
 description: Clean Architecture + DDD + Hexagonal patterns for maintainable backend systems
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # Clean Architecture + DDD + Hexagonal
 
 DDD tactical patterns, Clean Architecture dependency rules, and Hexagonal ports/adapters. **Start simple. Evolve complexity only when needed.** Decision trees (when-to-use, code placement, entity vs value object): [cheatsheet.md](clean-ddd-hexagonal-skill/cheatsheet.md).

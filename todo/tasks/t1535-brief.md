@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1535: Fix aidevops pulse start silently succeeds on Linux without scheduler installed
 
 ## Origin

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Sequence Diagrams
 
 Sequence diagrams show interactions between participants over time. Ideal for API flows, protocols, and service communication.

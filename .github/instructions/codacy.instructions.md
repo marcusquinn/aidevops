@@ -3,6 +3,9 @@ description: Configuration for AI behavior when interacting with Codacy's MCP Se
 applyTo: '**'
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Codacy Rules
 
 Configuration for AI behavior when interacting with Codacy's MCP Server

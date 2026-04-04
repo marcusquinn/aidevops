@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # mission-skill-learner.sh — Auto-capture reusable patterns from completed missions
 #
 # Scans mission directories for agents, scripts, and patterns that proved useful.

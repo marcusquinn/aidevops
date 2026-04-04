@@ -20,6 +20,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Sonnet Tier Model (Default)
 
 Default tier for most development work: balanced capability, cost, and speed.

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Tests for email-summary.py auto-summary generation (t1053.7).
 
 Tests the heuristic summariser with various email lengths and formats.

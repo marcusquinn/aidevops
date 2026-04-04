@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # auto-update-helper.sh - Automatic update polling daemon for aidevops
 #
 # Lightweight cron job that checks for new aidevops releases every 10 minutes

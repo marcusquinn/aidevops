@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC1072,SC1073,SC2086
 # =============================================================================
 # Parallel Quality Helper - Run quality checks concurrently (~3.75x speedup)

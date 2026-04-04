@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Convert actionable findings from an audit/review report into tracked TODO tasks and linked GitHub issues.
 
 Input file: `$ARGUMENTS`

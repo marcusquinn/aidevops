@@ -17,6 +17,9 @@ mcp:
   - augment-context-engine
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Augment Context Engine MCP Setup
 
 <!-- AI-CONTEXT-START -->

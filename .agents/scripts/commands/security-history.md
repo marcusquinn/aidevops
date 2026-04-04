@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Scan git history for vulnerabilities introduced in past commits (audit, compliance, incident investigation).
 
 Target: $ARGUMENTS

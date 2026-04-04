@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Shell environment setup functions: oh-my-zsh, shell-compat, aliases, terminal-title
 # Part of aidevops setup.sh modularization (t316.3)
 

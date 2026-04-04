@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare TURN Service
 
 Managed TURN relay for WebRTC on Cloudflare's global anycast network (310+ cities). Free with Cloudflare Calls SFU; otherwise $0.05/GB outbound.

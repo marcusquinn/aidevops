@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # PaddleOCR Helper - Scene text / screenshot OCR for aidevops
 # Manages PaddleOCR installation, image-to-text extraction, and MCP server lifecycle.

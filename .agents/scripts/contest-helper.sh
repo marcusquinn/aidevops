@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # contest-helper.sh — Model contest mode for supervisor (t1011)
 #
 # When model selection is uncertain, dispatches the same task to top-3 models

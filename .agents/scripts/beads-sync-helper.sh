@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # beads-sync-helper.sh - Bi-directional sync between aidevops TODO.md and Beads
 # Part of aidevops framework: https://aidevops.sh
 #

@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # SEO Content Writer
 
 Writes long-form, SEO-optimized content that ranks well and serves the target audience.

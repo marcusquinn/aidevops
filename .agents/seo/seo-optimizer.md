@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # SEO Optimizer
 
 On-page SEO audits and concrete content fixes. Script: `seo-content-analyzer.py quality`

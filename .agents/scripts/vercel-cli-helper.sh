@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Vercel CLI Helper Script
 # Comprehensive Vercel deployment and project management using Vercel CLI

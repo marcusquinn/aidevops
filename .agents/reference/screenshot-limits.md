@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Screenshot Size Limits (CRITICAL — session-crashing)
 
 Anthropic hard-rejects images >8000px on any dimension. This crashes the session

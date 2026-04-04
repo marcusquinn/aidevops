@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Queues
 
 Flexible message queuing for async task processing with at-least-once delivery. Supports push-based (Worker) and pull-based (HTTP) consumers, configurable batching/retries, Dead Letter Queues (DLQ), and delays up to 12 hours.

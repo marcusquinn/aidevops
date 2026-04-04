@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Shell environment functions for setup.sh
 
 # Detect the current running shell (not $SHELL which is the login default)

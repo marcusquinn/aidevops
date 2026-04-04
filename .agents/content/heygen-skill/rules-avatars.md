@@ -5,6 +5,9 @@ metadata:
   tags: avatars, avatar-id, styles, listing, selection
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # HeyGen Avatars
 
 Avatars are AI-generated presenters. Use public or custom avatars.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Introduction / Referral - introduce two parties who should connect
 <!-- Use: when connecting two people who would benefit from knowing each other. -->
 <!-- Tone: warm, brief. Give each party enough context to continue the conversation without you. -->

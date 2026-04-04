@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # session-miner-pulse.sh — Daily self-improvement pulse
 #
 # Extracts learning signals from coding assistant session data,

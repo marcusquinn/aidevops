@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 1: Video Ad Creative Mastery
 
 > Hooks, UGC, testing, and AI tools are covered in dedicated sub-docs. This chapter focuses on **formats, storytelling, visual psychology, advanced strategies, and production systems** — topics unique to this chapter.

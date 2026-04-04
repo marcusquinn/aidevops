@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Hashline Edit Format
 
 Content-addressed line reference system (`LINE#HASH`) for coding agents. Prevents silent file corruption by failing loudly on stale reads with actionable recovery.

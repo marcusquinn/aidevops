@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Task Brief: Simplify Screaming Frog SEO Spider agent (t1852)
 
 ## Summary

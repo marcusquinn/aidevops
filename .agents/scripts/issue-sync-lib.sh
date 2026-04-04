@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Using /bin/bash directly (not #!/usr/bin/env bash) for compatibility with
 # headless environments where a stripped PATH can prevent env from finding bash.
 # See issue #2610. This is an intentional exception to the repo's env-bash standard (t135.14).

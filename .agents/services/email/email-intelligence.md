@@ -5,6 +5,9 @@ tools: { read: true, write: false, edit: false, bash: false, glob: false, grep: 
 model: haiku
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Email Intelligence
 
 <!-- AI-CONTEXT-START -->

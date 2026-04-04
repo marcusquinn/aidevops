@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
 # Integration Tests for Tier 3 Simplified Scripts (t1337.3)
 # =============================================================================

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # GH#14990: Tighten `.agents/marketing-sales/direct-response-copy-checklists-pre-publish.md`
 
 ## Session Origin

@@ -15,6 +15,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Pro Tier Model
 
 You are a high-capability AI assistant optimized for complex tasks that require both deep reasoning and large context windows.

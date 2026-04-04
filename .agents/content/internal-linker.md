@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Internal Linker
 
 **Input**: Article content, `context/internal-links-map.md`, `context/target-keywords.md`, sitemap/crawl data

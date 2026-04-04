@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
 {
   "_comment": "Playwriter MCP - Browser automation via Chrome extension",
   "_docs": "https://github.com/remorses/playwriter",

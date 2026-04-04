@@ -40,6 +40,9 @@ subagents:
   - explore
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI DevOps - Framework Operations Subagent
 
 ## Quick Reference

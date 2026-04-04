@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Workers Smart Placement
 
 Runs Workers closer to backend infrastructure instead of end users — reduces latency when backend round-trips dominate over user-to-edge distance.

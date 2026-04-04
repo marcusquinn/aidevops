@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 16: Advanced CRO Analytics and Attribution
 
 ## 10.1 Multi-Touch Attribution Models

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # runner-helper.sh - Named headless AI agent instances with persistent identity
 #
 # Runners are named, persistent agent instances that can be dispatched headlessly.

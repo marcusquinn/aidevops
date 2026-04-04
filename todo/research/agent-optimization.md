@@ -4,6 +4,9 @@ mode: in-repo
 target_repo: .
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Research: Agent Instruction Optimization
 
 Optimize agent instruction files to reduce token usage while maintaining test pass rate.

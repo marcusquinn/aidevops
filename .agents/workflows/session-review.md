@@ -11,6 +11,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Session Review - Completeness and Best Practices Audit
 
 <!-- AI-CONTEXT-START -->

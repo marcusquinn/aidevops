@@ -5,6 +5,9 @@ mode: subagent
 model: haiku
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Recommend the optimal model tier for the task.
 
 Task: $ARGUMENTS

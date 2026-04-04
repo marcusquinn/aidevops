@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Comprehension Benchmark Pilot Results
 
 **Date:** 2026-04-02 | **Files:** 15 | **Scenarios:** 38 (2-3/file) | **Method:** Structural pre-filter + predicted tier assignment

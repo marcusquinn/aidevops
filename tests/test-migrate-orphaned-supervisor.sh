@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Tests for migrate_orphaned_supervisor() (GH#5147)
 # Verifies cleanup of orphaned supervisor-helper.sh and supervisor/ modules
 

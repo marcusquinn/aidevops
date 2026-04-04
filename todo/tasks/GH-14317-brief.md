@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # GH#14317: Tighten `.agents/tools/git/github-actions.md`
 
 ## Session Origin

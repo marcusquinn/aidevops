@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # SaaS Trial (7 Emails)
 
 ## E1 — Welcome + Quick Start (Day 0)

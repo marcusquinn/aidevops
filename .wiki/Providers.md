@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Provider Scripts Reference
 
 Complete documentation for all 22 provider helper scripts in the AI DevOps Framework.

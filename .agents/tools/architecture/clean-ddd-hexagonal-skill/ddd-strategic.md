@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # DDD Strategic Patterns
 
 > Sources: [Blue Book](https://www.domainlanguage.com/ddd/blue-book/) — Evans (2003) · [Bounded Context](https://martinfowler.com/bliki/BoundedContext.html) · [Anti-Corruption Layer](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/acl.html) · [Domain Analysis for Microservices](https://learn.microsoft.com/en-us/azure/architecture/microservices/model/domain-analysis)

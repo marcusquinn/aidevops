@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Task Brief: GH#15363 - Tighten agent doc Nothing-Inspired UI/UX Design System
 
 ## Session Origin

@@ -4,6 +4,9 @@ agent: SEO
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Export SEO ranking data from configured platforms to a common TOON format for analysis.
 
 Target: $ARGUMENTS

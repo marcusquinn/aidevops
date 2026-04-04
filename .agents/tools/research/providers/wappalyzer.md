@@ -4,6 +4,9 @@ model: sonnet
 tools: [bash, read, write]
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Wappalyzer OSS Provider
 
 Local/offline technology stack detection via `@ryntab/wappalyzer-node`. Identifies 2000+ technologies (CMS, frameworks, analytics, CDN, JS libraries, UI frameworks). No API key or browser required.

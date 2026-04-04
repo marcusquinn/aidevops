@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Vectorize
 
 Expert guidance for Cloudflare Vectorize - globally distributed vector database for AI applications.

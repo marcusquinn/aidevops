@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Modern JavaScript Cheatsheet
 
 Syntax-only quick reference (ES6-ES2025). For decision trees and migration patterns, see `modern-javascript-skill.md`.

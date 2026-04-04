@@ -4,6 +4,9 @@ agent: Sales
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Execute this request with the Sales primary agent.
 
 Request: $ARGUMENTS

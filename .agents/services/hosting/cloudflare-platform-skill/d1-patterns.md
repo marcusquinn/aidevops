@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # D1 Patterns & Best Practices
 
 Common patterns for Cloudflare D1 (SQLite-compatible serverless database). All queries use parameterised bindings — never string-interpolate user input.

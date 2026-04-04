@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Query OpenCode session DB and classify the session tail.
 
 Extracted from the inline heredoc in worker-lifecycle-common.sh

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Wappalyzer OSS Provider Helper
 # Local/offline technology stack detection using Wappalyzer's detection engine

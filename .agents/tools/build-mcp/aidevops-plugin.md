@@ -11,6 +11,9 @@ tools:
   webfetch: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # aidevops-opencode Plugin Architecture
 
 - **Status**: Implemented (`t008.1` PR #1138, `t008.2` PR #1149, `t008.3` PR #1150)

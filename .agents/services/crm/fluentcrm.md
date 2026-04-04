@@ -12,6 +12,9 @@ tools:
   fluentcrm_*: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # FluentCRM MCP Integration
 
 <!-- AI-CONTEXT-START -->

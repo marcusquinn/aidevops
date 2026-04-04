@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Agency Creative — Visual Theme & Atmosphere
 
 Agency Creative is a bold, expressive design system for teams that lead with visual storytelling. It takes cues from high-end editorial design, motion graphics, and the unapologetic confidence of studios that win awards. Colour is not decoration — it's the message. Typography is not just readable — it commands the room.

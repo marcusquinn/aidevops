@@ -3,6 +3,9 @@ description: "Best practices for Remotion - Video creation in React"
 mode: subagent
 imported_from: external
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # remotion-best-practices
 
 ## When to use

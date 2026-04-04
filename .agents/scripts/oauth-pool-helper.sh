@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # oauth-pool-helper.sh — Shell-based OAuth pool account management
 #
 # Provides add/check/list/remove/rotate/status/assign-pending for OAuth pool

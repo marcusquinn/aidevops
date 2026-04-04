@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Meeting Confirmation - confirm agreed meeting details
 <!-- Use: after a meeting time has been agreed upon, to confirm all details in writing. -->
 <!-- Tone: concise, confirmatory. Include all logistics so the recipient has everything in one email. -->

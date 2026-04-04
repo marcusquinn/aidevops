@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1372: Create UI/UX inspiration skill entry point + brand identity interview workflow
 
 ## Origin

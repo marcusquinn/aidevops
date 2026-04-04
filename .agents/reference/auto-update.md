@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Auto-Update
 
 Polls GitHub every 10 min; runs `aidevops update` on new version. Safe during active sessions.

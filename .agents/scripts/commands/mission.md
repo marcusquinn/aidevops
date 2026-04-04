@@ -11,6 +11,9 @@ tools:
   webfetch: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Scope, plan, and launch a mission — autonomous multi-day project from idea to delivery. Reuses `/define` probe techniques at project scope.
 
 Topic: $ARGUMENTS

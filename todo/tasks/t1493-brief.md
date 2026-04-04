@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1493: Email mailbox helper — IMAP/JMAP adapter and mailbox operations
 
 ## Origin

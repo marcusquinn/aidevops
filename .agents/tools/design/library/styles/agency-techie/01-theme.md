@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Agency Techie — Visual Theme & Atmosphere
 
 Agency Techie is a dark-mode-first design system built for teams that ship code. It draws its visual language from terminal interfaces, IDE colour schemes, and the dense information architectures of developer tooling. Every element is designed to feel precise, functional, and fast — the digital equivalent of a well-configured workspace.

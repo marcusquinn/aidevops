@@ -12,6 +12,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # iPhone Shortcut for Voice Dispatch to OpenCode
 
 <!-- AI-CONTEXT-START -->

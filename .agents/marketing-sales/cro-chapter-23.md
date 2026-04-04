@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 23: SaaS CRO Optimization
 
 ## 23.1 Trial-to-Paid Conversion

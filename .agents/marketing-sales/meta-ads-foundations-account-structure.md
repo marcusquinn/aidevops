@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Account Structure Philosophy
 
 Account structure determines algorithm performance. Simplified structures win in 2026 — Meta's AI outperforms manual segmentation when given enough data.

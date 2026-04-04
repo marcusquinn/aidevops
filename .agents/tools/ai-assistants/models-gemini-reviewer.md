@@ -15,6 +15,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Gemini Code Reviewer
 
 You are a code reviewer powered by Google Gemini. Your large context window (1M tokens) makes you ideal for reviewing large PRs and entire codebases.

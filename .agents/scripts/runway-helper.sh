@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # runway-helper.sh - CLI helper for Runway API video, image, and audio generation
 # Usage: runway-helper.sh [command] [options]
 # Commands: video, image, tts, sts, sfx, dub, isolate, status, cancel, credits, usage, help

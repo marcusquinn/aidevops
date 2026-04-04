@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # circuit-breaker-helper.sh - Supervisor circuit breaker (t1331)
 #
 # Standalone circuit breaker for the AI pulse supervisor. Tracks consecutive

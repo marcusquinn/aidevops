@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI Agent Discovery
 
 Verify agents can find, interpret, and trust key business information. Outputs: discoverability report, gap classification, remediation backlog.

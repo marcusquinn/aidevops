@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Receipt Acknowledgement - confirm receipt of a message and set expectations for a full response
 <!-- Use: when you receive an email that needs a substantive reply but you cannot respond immediately. -->
 <!-- Tone: professional, reassuring. Use the formal variant for external/new contacts. -->

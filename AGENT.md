@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI DevOps Framework - Agent Redirect
 
 **See [AGENTS.md](AGENTS.md) for the authoritative AI assistant guidance.**

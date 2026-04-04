@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # API Shield — Patterns & Use Cases
 
 Practical patterns for securing APIs with Cloudflare API Shield. See `api-shield.md` for concepts and `api-shield-gotchas.md` for known issues.

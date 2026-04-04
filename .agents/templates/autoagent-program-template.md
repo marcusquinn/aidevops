@@ -4,6 +4,9 @@ mode: in-repo
 target_repo: .
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Autoagent: {Title}
 
 <!-- AI-CONTEXT-START -->

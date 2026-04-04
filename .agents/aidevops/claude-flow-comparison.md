@@ -11,6 +11,9 @@ tools:
 model: haiku
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Claude-Flow vs aidevops Comparison
 
 Selective feature adoption from [ruvnet/claude-flow](https://github.com/ruvnet/claude-flow) v3.

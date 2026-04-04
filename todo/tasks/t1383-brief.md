@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1383: Review Gemini Code Assist Value Across PRs and Extract Improvements for Cloudron App
 
 **Session origin:** Interactive session, 2026-03-02

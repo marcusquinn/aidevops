@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Task Brief - t15078: recheck: simplification: tighten agent doc Hexagonal Architecture
 
 ## Session Origin

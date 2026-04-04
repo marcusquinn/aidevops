@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # upstream-watch-helper.sh — Track external repos for release monitoring (t1426)
 #
 # Maintains a watchlist of external repos we've borrowed ideas/code from.

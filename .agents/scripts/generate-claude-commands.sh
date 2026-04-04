@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC2016,SC2317
 # SC2016: $ARGUMENTS is a Claude Code template placeholder written literally to .md files
 # SC2317: Functions defined after arg-parsing case (which contains exit 0 in --help)

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 5: Value Proposition and Messaging
 
 The value proposition is the primary reason a visitor should choose your product over alternatives, including doing nothing.

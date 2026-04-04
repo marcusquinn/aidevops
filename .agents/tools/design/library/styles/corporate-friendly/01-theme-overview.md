@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Corporate Friendly — Theme Overview
 
 This design system balances professionalism with warmth and approachability. It serves organisations that need to feel trustworthy yet welcoming — healthcare portals, educational platforms, community-oriented SaaS, and customer-facing services where the user may feel uncertain or vulnerable. The design should reassure, not intimidate.

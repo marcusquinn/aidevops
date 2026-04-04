@@ -12,6 +12,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 <!-- AI-CONTEXT-START -->
 
 - **Install**: `npx -y xcodebuildmcp@beta mcp` (MCP server mode)

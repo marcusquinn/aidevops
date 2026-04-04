@@ -5,6 +5,9 @@ mode: subagent
 imported_from: external
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # SEO Audit
 
 **Before auditing:** Read `.claude/product-marketing-context.md` if it exists. Clarify: site type (SaaS, e-commerce, blog), primary goal, priority keywords, known issues, traffic baseline, recent changes/migrations, scope (full site vs. specific pages), Search Console access.

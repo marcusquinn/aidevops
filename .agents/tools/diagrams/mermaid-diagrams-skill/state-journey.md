@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # State & User Journey Diagrams
 
 State diagrams model state machines and lifecycles. User journey diagrams map user experiences across tasks.

@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # GEO Strategy
 
 Increase citation likelihood in AI search by matching decision criteria with verifiable page content on pages that already rank. Ranking is prerequisite — unranked pages cannot be consistently cited. Optimize for deterministic retrieval signals, not daily answer volatility.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI DevOps Framework
 
 Welcome to the **AI DevOps Framework** - a comprehensive infrastructure management toolkit designed for AI-assisted development across 30+ services.

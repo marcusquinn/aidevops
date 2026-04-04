@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Durable Objects
 
 Globally-unique compute + storage: single-threaded, strongly-consistent, co-located with state. Spawns near first request.

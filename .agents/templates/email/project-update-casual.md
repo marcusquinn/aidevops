@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Project Update (Casual) - quick status update for internal team or familiar contacts
 <!-- Use: for team standups, internal Slack-to-email summaries, or informal check-ins. -->
 <!-- See also: project-update.md (standard), project-update-formal.md (executive/external). -->

@@ -6,6 +6,9 @@ date_sent: "2026-01-15T10:30:00+0000"
 subject: "Q1 Property Valuation Report"
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Dear Jane,
 
 I wanted to follow up on our meeting at the London office on 15 January 2026.

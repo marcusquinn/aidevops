@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # dispatch-dedup-helper.sh - Normalize and deduplicate worker dispatch titles (t2310)
 #
 # Prevents duplicate worker dispatch by extracting canonical dedup keys from

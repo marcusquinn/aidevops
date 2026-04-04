@@ -6,6 +6,9 @@ metadata:
   tags: frames, extract, video, thumbnail, filmstrip, canvas
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Extracting frames from videos
 
 Use [Mediabunny](https://mediabunny.dev) to extract frames at specific timestamps for thumbnails, filmstrips, and per-frame processing.

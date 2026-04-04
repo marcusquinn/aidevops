@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1665: Runtime Abstraction Layer — Decouple Framework from Specific AI CLI Runtimes
 
 ## Origin

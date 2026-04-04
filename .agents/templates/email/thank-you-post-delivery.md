@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Thank You - Post Delivery - express appreciation after receiving work or a deliverable
 <!-- Use: when someone has completed work for you, delivered a product, or provided a service. -->
 <!-- Tone: genuine, specific. Mention what was delivered and its impact. -->

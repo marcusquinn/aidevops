@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Conversational Memory Lookup
 
 When the user references past work — "remember when we...", "that thing we built",

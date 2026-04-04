@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Receipt Acknowledgement (Formal) - confirm receipt with formal/legal-adjacent tone
 <!-- Use: for external contacts, new business relationships, legal or contractual correspondence. -->
 <!-- See also: receipt-acknowledgement.md (standard), receipt-acknowledgement-casual.md (internal/familiar). -->

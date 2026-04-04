@@ -6,6 +6,9 @@ metadata:
   tags: typography, text, typewriter, highlighter ken
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ## Text animations
 
 Based on `useCurrentFrame()`, reduce the string character by character to create a typewriter effect.

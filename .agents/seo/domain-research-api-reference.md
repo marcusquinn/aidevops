@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Domain Research - API Reference
 
 Detailed endpoint documentation for THC and Reconeer APIs. Parent: `seo/domain-research.md`.

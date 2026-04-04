@@ -7,6 +7,9 @@ tools:
   webfetch: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI Coding Tools - Supported by aidevops
 
 <!-- AI-CONTEXT-START -->

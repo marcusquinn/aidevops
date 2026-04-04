@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # CHAPTER 7: Brand Building Through Performance Creative
 
 Combines brand storytelling (emotional, long-term) with performance mechanics (testable, optimized, attributed). Creative formats and platforms now allow brand stories to be tested and scaled like direct response.

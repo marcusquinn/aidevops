@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Domain-Specific Authority Signals and Attribution
 
 ## Domain-Specific Authority Signals

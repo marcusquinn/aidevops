@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Containers Skill Reference
 
 **APPLIES TO: Cloudflare Containers ONLY - NOT general Cloudflare Workers**

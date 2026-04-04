@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Multi-Repository Workspace Guidelines
 
 Core principle: **scope every operation to the current repository**. Never assume features, dependencies, or patterns from one repo exist in another.

@@ -15,6 +15,9 @@ mcp:
   - gemini-cli-security
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Security Analysis - AI-Powered Vulnerability Detection
 
 <!-- AI-CONTEXT-START -->

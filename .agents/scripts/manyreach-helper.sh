@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # manyreach-helper.sh - ManyReach API v2 integration for cold outreach automation
 # Manages campaigns, leads, and sequences via the ManyReach REST API.
 #

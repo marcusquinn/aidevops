@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # CRO Skill - Chapter Index
 
 25 chapters across 7 parts. Each links to its chapter file.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-session-review-helper.sh — Regression tests for security summary helpers (GH#4149)
 
 set -euo pipefail

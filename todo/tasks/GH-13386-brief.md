@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # GH#13386: Tighten .agents/scripts/commands/readme.md
 
 ## Session Origin

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # MCP setup functions: install_mcp_packages, resolve_mcp_binary, localwp, augment, seo, analytics, quickfile, browser-tools, opencode-plugins
 # Part of aidevops setup.sh modularization (t316.3)
 

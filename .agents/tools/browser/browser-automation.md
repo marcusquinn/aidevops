@@ -8,6 +8,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Browser Automation - Tool Selection Guide
 
 <!-- AI-CONTEXT-START -->

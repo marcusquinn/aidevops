@@ -9,6 +9,9 @@ tools:
   grep: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Self-Improving Agent System
 
 <!-- AI-CONTEXT-START -->

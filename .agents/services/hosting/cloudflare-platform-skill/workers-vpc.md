@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Workers VPC Skill
 
 Connect Workers to private networks (AWS/Azure/GCP/on-prem) via TCP Sockets, Cloudflare Tunnel, Hyperdrive, and Smart Placement.

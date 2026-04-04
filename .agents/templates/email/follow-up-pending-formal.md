@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Pending Response Follow-up (Formal) - formal follow-up on an unanswered message
 <!-- Use: for external contacts, vendors, or official correspondence where formality is expected. -->
 <!-- See also: follow-up-pending.md (standard), follow-up-pending-casual.md (internal/familiar). -->

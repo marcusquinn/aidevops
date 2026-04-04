@@ -13,6 +13,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Multi-Org Data Isolation
 
 <!-- AI-CONTEXT-START -->

@@ -4,6 +4,9 @@ description: Agent design and composition - creating efficient, token-optimized 
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Build-Agent - Composing Efficient AI Agents
 
 <!-- AI-CONTEXT-START -->

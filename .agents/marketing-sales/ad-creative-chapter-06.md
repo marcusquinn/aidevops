@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # CHAPTER 6: Direct Response Creative for E-Commerce
 
 Direct response e-commerce creative lives and dies by immediate conversions. Every element either moves the needle or wastes budget.

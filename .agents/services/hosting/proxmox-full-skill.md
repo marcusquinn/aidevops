@@ -7,6 +7,9 @@ clawdhub_slug: "proxmox-full"
 clawdhub_version: "1.0.0"
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Proxmox VE - Full Management
 
 ## Setup

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Targeting Strategies
 
 > In 2026, targeting is less about finding people and more about giving Meta's AI the right signals.

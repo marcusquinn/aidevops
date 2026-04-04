@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-headless-runtime-helper.sh - Coverage for /full-loop headless contract injection
 
 set -euo pipefail

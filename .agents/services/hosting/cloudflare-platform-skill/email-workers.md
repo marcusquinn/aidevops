@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Email Workers Skill
 
 Process incoming emails programmatically (routing, filtering, auto-responders, ticket systems). **Use ES modules format — Service Worker format is deprecated.**

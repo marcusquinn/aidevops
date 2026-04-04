@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC2329
 # terminal-title-setup.sh - Install shell integration for terminal title sync
 # Part of aidevops framework: https://aidevops.sh

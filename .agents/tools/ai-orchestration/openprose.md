@@ -4,6 +4,9 @@ mode: subagent
 tools: [read, write, edit, bash, glob, grep, task]
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # OpenProse - Multi-Agent Orchestration DSL
 
 Use for repeatable workflows, parallel session spawning, and AI-evaluated conditions. Use aidevops scripts for single-agent DevOps tasks and deterministic logic. **Repo**: <https://github.com/openprose/prose> · **Telemetry**: disabled by default (`"OPENPROSE_TELEMETRY": "disabled"` in `.prose/state.json` or `--no-telemetry`)

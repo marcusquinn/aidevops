@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 2: CRO Fundamentals and Core Concepts
 
 This chapter covers the foundational principles of Conversion Rate Optimization, from basic formulas and benchmarks to the psychological drivers of user behavior and the data foundations required for effective testing.

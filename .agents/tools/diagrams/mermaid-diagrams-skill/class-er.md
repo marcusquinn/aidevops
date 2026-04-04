@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Class & Entity Relationship Diagrams
 
 Class diagrams model object-oriented structures. ER diagrams model database schemas and data relationships.

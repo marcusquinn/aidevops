@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC2329
 # SC2329: Library functions (e.g. generate_conversation_id) are exported for
 #         callers that source this script; not all are invoked internally

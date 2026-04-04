@@ -5,6 +5,9 @@ mode: subagent
 subagents: [setup, troubleshooting, api-key-setup, list-keys, mcp-integrations, services, service-links, general, explore]
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Onboarding Wizard
 
 <!-- AI-CONTEXT-START -->

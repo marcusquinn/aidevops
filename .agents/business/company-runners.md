@@ -8,6 +8,9 @@ tools:
   bash: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Company Function Runners
 
 Example AGENTS.md templates for company function runners. Each runner is created

@@ -15,6 +15,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Flash Tier Model
 
 You are a fast, large-context AI assistant optimized for processing large amounts of text efficiently.

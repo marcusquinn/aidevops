@@ -9,6 +9,9 @@ tools:
   grep: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # NeuronWriter - Content Optimization API
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare API Shield Reference
 
 Expert guidance for API Shield - comprehensive API security suite for discovery, protection, and monitoring.

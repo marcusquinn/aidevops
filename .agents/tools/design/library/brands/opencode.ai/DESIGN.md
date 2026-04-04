@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: OpenCode
 
 Terminal-native, monospace-first design system. Warm near-black (`#201d1d`) background, Berkeley Mono as the sole typeface, flat depth with border-only elevation, Apple HIG semantic colors.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Corporate Modern — Visual Theme & Atmosphere
 
 This design system represents the contemporary enterprise — confident, clean, and forward-looking without sacrificing professionalism. It targets the visual tier occupied by modern SaaS platforms, fintech companies, and tech-forward professional services. The aesthetic communicates competence through clarity rather than ornamentation.

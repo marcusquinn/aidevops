@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Bash 3.2 Compatibility (macOS default shell)
 
 macOS ships bash 3.2.57. All shell scripts MUST work on this version.

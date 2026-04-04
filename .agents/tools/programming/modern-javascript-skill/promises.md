@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Promises and Async/Await
 
 Reference index for Promise fundamentals, `async`/`await`, combinators, and common traps.

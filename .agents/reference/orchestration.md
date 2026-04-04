@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Orchestration & Model Routing — Detail Reference
 
 Core pointers: `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md`.

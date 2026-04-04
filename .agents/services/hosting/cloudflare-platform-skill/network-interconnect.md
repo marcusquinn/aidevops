@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Network Interconnect (CNI)
 
 Private, high-performance connectivity to Cloudflare's network. **Enterprise-only** and **not SLA-backed** — keep backup Internet connectivity. Typical lead time: **2-4 weeks**.

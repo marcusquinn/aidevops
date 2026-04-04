@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Reviews and Ratings
 
 **Platforms:** E-commerce: Yotpo, Bazaarvoice, Trustpilot, Judge.me. SaaS: G2, Capterra, TrustRadius. General: Google, Yelp, Facebook, BBB.

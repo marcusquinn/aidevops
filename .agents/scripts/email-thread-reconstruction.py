@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
 email-thread-reconstruction.py - Reconstruct email conversation threads from message-id chains
 Part of aidevops framework: https://aidevops.sh

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
 email_normaliser.py - Email section normalisation, thread reconstruction, and frontmatter building.
 

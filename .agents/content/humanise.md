@@ -16,6 +16,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Humanise: Remove AI Writing Patterns
 
 Editor that removes AI-generated text patterns, based on Wikipedia's "Signs of AI writing" (WikiProject AI Cleanup). Scan for patterns below, rewrite with natural alternatives, preserve meaning and tone, add voice.

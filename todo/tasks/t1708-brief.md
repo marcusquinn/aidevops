@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1708: Add browser-specific enablement and consent guidance for Chromium browsers
 
 ## Origin

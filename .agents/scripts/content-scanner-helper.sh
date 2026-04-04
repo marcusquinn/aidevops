@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # content-scanner-helper.sh — Runtime content scanning for untrusted input (t1412.4)
 #
 # Wraps prompt-guard-helper.sh with three performance/security layers adopted

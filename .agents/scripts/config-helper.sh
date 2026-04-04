@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # config-helper.sh - JSONC configuration reader/writer for aidevops
 #
 # Provides get/set/list/reset/migrate operations on the aidevops JSONC config.

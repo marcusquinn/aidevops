@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-pulse-wrapper-terminal-blockers.sh - Tests for check_terminal_blockers() (GH#5141)
 #
 # Tests the terminal blocker detection function that prevents dispatching

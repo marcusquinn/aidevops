@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # SEO Content Analyzer
 
 Full content audit via `seo-content-analyzer.py` (readability, keywords, intent, length, quality).

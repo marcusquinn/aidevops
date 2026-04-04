@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # mcp-audit-helper.sh — MCP tool description runtime scanning for prompt injection (t1428.2)
 #
 # Fetches all configured MCP server tool descriptions via mcporter, runs

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Services & Integrations — Detail Reference
 
 Core pointers in `AGENTS.md`. Load on-demand for memory, mailbox, MCP, skills, auto-update, or repo-sync.

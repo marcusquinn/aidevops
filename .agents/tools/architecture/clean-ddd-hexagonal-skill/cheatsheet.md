@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Quick Reference Cheatsheet
 
 > See [clean-ddd-hexagonal-skill.md](../clean-ddd-hexagonal-skill.md#sources) for full source list.

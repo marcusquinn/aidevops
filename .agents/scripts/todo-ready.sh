@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # todo-ready.sh - Show tasks with no open blockers (ready to work on)
 # Part of aidevops framework: https://aidevops.sh
 #

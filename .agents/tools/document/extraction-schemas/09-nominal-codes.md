@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Nominal Code Auto-Categorisation
 
 When `nominal_code` is not extracted from the document, infer from context:

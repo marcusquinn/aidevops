@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Corporate Friendly
 
 Warm, approachable, professional. Blue `#3b82f6` primary, orange `#f97316` accent. Light-mode-first. Rounded corners, generous whitespace, gentle animations.

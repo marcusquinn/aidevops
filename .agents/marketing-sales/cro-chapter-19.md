@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 19: Advanced CRO Tactics
 
 ## 19.1 Behavioral Economics in CRO

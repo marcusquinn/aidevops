@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-smoke-help.sh
 #
 # Smoke tests: bash -n syntax check for ALL scripts, plus help command

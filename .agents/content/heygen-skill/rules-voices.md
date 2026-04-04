@@ -5,6 +5,9 @@ metadata:
   tags: voices, voice-id, locales, languages, tts, speech
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # HeyGen Voices
 
 ## Listing Voices

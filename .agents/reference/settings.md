@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # aidevops Settings Reference
 
 **File**: `~/.config/aidevops/settings.json` — created by `setup.sh` or `settings-helper.sh init`

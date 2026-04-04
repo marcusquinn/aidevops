@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Autoagent — Safety Constraints
 
 Sub-doc for `autoagent.md`. Loaded during Step 1 (Setup) before any modifications.

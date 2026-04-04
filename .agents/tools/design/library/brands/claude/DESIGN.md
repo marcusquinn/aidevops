@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Claude (Anthropic)
 
 Reference corpus for Claude's visual identity. Each chapter is a self-contained reference file.

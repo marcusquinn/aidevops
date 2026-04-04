@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
 {
   "_description": "Email Provider Configuration Templates",
   "_docs": "See .agents/services/email/email-providers.md for usage and decision guidance",

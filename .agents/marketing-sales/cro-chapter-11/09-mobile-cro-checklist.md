@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Mobile CRO Checklist
 
 **Performance:** Load <3s on 3G | Images optimized (WebP, lazy) | Critical CSS inlined | JS deferred | CDN enabled

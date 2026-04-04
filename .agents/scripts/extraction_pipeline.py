@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """OCR Extraction Pipeline for AI DevOps Framework (t012.3).
 
 Implements the full extraction pipeline:

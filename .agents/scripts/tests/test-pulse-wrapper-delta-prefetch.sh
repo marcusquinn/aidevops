@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-pulse-wrapper-delta-prefetch.sh
 #
 # Smoke tests for the delta prefetch cache helpers (GH#15286).

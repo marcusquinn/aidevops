@@ -12,6 +12,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Matterbridge — Multi-Platform Chat Bridge
 
 <!-- AI-CONTEXT-START -->

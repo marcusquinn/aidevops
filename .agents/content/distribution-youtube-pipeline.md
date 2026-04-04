@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # YouTube Automated Pipeline
 
 Cron-driven autonomous pipeline for YouTube competitor research and content generation. Each phase runs as an isolated worker with fresh context, storing results in memory — solves context overflow by decomposing research into independent tasks.

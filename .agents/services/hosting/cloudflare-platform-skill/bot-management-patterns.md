@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Bot Management Patterns
 
 WAF custom rules, rate limiting, and Workers patterns. Enterprise-only features (granular scores, JA3/JA4) noted inline.

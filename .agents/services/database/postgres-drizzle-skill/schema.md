@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Drizzle Schema Definition
 
 Comprehensive reference for defining PostgreSQL schemas with Drizzle ORM.

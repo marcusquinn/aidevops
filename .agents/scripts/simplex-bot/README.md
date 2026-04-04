@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # aidevops SimpleX Bot
 
 Channel-agnostic gateway with SimpleX Chat as the first adapter.

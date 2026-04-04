@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # contribution-watch-helper.sh — Monitor external issues/PRs for new activity (t1419)
 #
 # Auto-discovers and monitors external GitHub issues/PRs where the

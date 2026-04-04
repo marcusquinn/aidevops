@@ -28,6 +28,9 @@ preferences:
   coding_style: ""  # reference to code-standards or project conventions
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # {Mission Title}
 
 > {One-line goal statement — what does "done" look like?}

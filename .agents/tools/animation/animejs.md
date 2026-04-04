@@ -5,6 +5,9 @@ mode: subagent
 upstream_url: https://github.com/juliangarnier/anime
 docs_url: https://animejs.com/documentation
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # Anime.js
 
 ## Quick Reference

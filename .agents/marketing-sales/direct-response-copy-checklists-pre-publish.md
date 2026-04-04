@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Pre-Publish Checklist
 
 Run the six-point gate first. If any answer is "no," fix that before polishing the page.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Session & Environment — Detail Reference
 
 Loaded on-demand for session management, browser automation, localhost, or quality workflows. Core rules: `AGENTS.md`.

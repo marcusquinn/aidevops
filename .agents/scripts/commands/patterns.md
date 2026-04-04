@@ -5,6 +5,9 @@ mode: subagent
 model: haiku
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Query cross-session patterns from memory, filter to `$ARGUMENTS` if provided, and present:
 
 - **What works:** approaches with repeated success in similar tasks

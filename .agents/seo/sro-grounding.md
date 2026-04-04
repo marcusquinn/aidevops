@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # SRO Grounding
 
 SRO (Selection Rate Optimization): whether a source gets selected into grounded context, not only whether it ranks. AI retrieval uses fixed context budgets — higher-relevance sources get larger share; key facts buried deep in long pages have low survival rates. `site:brand.com` probes require page metadata to match category/feature terms.

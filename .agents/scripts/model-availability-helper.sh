@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Model Availability Helper - Probe before dispatch
 # Lightweight provider health checks using direct HTTP API calls.

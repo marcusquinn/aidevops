@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 7: Call-to-Action (CTA) Optimization
 
 The CTA is where browsing becomes conversion. Small improvements yield outsized gains.

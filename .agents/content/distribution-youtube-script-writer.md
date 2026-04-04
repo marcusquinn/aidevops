@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # YouTube Script Writer
 
 Generate YouTube video scripts optimized for audience retention. Supports structured outlines, full scripts with pattern interrupts, hook generation, and remix mode (transform competitor videos into unique content).

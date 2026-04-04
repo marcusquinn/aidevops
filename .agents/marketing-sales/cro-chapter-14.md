@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 14: Landing Page Teardowns
 
 Actionable teardowns of real landing pages. Each examines what works, what fails, and specific fixes.

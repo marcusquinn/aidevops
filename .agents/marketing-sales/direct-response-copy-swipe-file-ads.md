@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Ad Copy Swipe File
 
 High-converting ad examples for Facebook, Google, LinkedIn, and Twitter/X. Each example includes the abstract template pattern for adaptation.

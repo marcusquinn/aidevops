@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1335: Archive Tier 1 redundant orchestration scripts — pulse-duplicated decision-makers
 
 ## Origin

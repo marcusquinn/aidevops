@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # draft-response-helper.sh — Notification-driven approval flow for contribution
 # watch replies (t1555). Stores draft replies as markdown files locally;
 # user approves or rejects via CLI before anything is posted to GitHub.

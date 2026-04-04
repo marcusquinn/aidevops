@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # verify-operation-helper.sh — Cross-provider verification for high-stakes operations (t1364.2)
 # Commands: verify | check | config | help
 # Docs: tools/verification/parallel-verify.md

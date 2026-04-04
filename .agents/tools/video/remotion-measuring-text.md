@@ -6,6 +6,9 @@ metadata:
   tags: measure, text, layout, dimensions, fitText, fillTextBox
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Measuring text in Remotion
 
 ## Prerequisites

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: MongoDB
 
 Forest-dark teal-black (`#001e2b`) + neon green (`#00ed64`) + dual-mode (dark hero / light content). LeafyGreen component system. Three-font hierarchy: MongoDB Value Serif (hero) → Euclid Circular A (body/UI) → Source Code Pro (code/labels).

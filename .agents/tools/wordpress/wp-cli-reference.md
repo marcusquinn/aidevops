@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # WP-CLI Command Reference
 
 Quick-reference for common WP-CLI commands, organized by domain. For site configuration, access patterns, and workflows, see `wp-admin.md`.

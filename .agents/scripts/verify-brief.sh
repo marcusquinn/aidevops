@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # verify-brief.sh - Extract and execute verify: blocks from task briefs
 # Part of aidevops framework: https://aidevops.sh
 #

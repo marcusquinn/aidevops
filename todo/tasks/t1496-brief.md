@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1496: Email template library — FAQs, holding patterns, follow-ups, notifications
 
 ## Origin

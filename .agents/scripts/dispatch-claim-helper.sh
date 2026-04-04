@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # dispatch-claim-helper.sh — Cross-machine dispatch claim via GitHub comments (t1686)
 #
 # Implements optimistic locking for dispatch dedup across multiple runners.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1513: ManyReach helper — campaigns, leads, sequences (v2 API)
 
 ## Origin

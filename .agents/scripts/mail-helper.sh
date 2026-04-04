@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # mail-helper.sh - SQLite-backed inter-agent mailbox system
 # Enables asynchronous communication between parallel agent sessions
 # Supports transport adapters for cross-machine communication (SimpleX, Matrix)

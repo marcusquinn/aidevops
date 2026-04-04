@@ -4,6 +4,9 @@ description: WordPress ecosystem management - local development, fleet managemen
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # WordPress - Orchestrator
 
 <!-- AI-CONTEXT-START -->

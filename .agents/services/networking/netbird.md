@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # NetBird - Self-Hosted Mesh VPN & Zero-Trust Networking
 
 <!-- AI-CONTEXT-START -->

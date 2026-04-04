@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # YouTube Optimizer
 
 Generate and optimize YouTube video metadata: titles, tags, descriptions, hooks, and thumbnail briefs. Uses CTR signals, keyword data, and competitor analysis to maximize discoverability and click-through rate.

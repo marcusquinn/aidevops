@@ -5,6 +5,9 @@ mode: subagent
 model: sonnet
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Content Editor
 
 Transform technically accurate content into human-sounding, engaging articles. Complements `content/humanise.md` with deeper editorial analysis. Adapted from [TheCraigHewitt/seomachine](https://github.com/TheCraigHewitt/seomachine) (MIT License).

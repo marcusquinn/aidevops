@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # detect-app-type.sh — Infer app_type from repo root marker files (t1698)
 #
 # Scans a repository directory for well-known marker files and returns the

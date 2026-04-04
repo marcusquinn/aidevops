@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Pending Response Follow-up - check in on a message that has not received a reply
 <!-- Use: when you sent a message and have not heard back within a reasonable timeframe. -->
 <!-- Tone: polite, assumes good intent (they may have missed it). -->

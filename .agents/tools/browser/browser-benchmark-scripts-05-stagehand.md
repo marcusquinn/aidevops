@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Stagehand Benchmark Scripts
 
 AI-driven `act()`/`extract()`. New `Stagehand` per run (cold-start). Tests use `sh`; page: `sh.ctx.pages()[0]`.

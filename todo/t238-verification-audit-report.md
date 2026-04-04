@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t238: Retroactive Verification Audit Report
 
 **Generated**: 2026-02-10T18:24:38Z

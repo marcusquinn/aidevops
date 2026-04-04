@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Upcoming JavaScript Features
 
 Temporal API, Decorators, Decorator Metadata — all TC39 Stage 3.

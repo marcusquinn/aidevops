@@ -4,6 +4,9 @@ description: Attach to a user's already-open Chromium-family browser for live in
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chromium Debug Use
 
 Read `tools/browser/chromium-debug-use.md` first.

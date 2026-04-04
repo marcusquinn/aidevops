@@ -6,6 +6,9 @@ metadata:
   tags: captions, transcribe, whisper, audio, speech-to-text
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Transcribing audio
 
 Remotion provides several built-in options for transcribing audio to generate captions:

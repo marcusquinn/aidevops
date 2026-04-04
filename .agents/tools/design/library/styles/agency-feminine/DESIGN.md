@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Agency Feminine
 
 Soft, elegant design system for brands communicating warmth, refinement, and understated beauty. Cream background (`#fdf6ee`), dusty rose primary (`#d4a5a5`), sage green accent (`#9caf88`), Cormorant serif headings, generous whitespace.

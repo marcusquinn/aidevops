@@ -3,6 +3,9 @@ description: Structured code review issue categories with examples, exceptions, 
 mode: reference
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Code Review Categories
 
 <!-- AI-CONTEXT-START -->

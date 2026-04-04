@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-pr-task-check.sh — Local test harness for PR task ID CI check (t318.5)
 #
 # Validates the logic from the pr-task-check job in code-quality.yml

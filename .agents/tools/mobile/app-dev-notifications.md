@@ -13,6 +13,9 @@ tools:
   context7_*: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # App Notifications - Engagement Without Annoyance
 
 <!-- AI-CONTEXT-START -->

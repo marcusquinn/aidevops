@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
 # DEPRECATED: Use generate-runtime-config.sh instead (t1665.4)
 # This script is kept for one release cycle as a fallback.

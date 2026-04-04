@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 5: Emotional Triggers and Persuasion Psychology in Advertising
 
 ## Section 1: Cialdini's Principles of Influence

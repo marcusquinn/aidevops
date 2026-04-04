@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 10: Creative Analytics and Optimization
 
 ## 10.1 Creative Performance Metrics Framework

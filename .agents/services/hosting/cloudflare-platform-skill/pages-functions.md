@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Pages Functions
 
 Serverless functions on Cloudflare Pages using Workers runtime. File-based routing for full-stack dev.

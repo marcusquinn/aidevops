@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Mobile Form Optimization
 
 1. **Minimize fields** — target <5 (each feels 3x harder on mobile)

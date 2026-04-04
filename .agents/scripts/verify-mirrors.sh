@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Verify AI Assistant Mirror Symlinks
 # Ensures all mirror directories are properly symlinked to .agents/

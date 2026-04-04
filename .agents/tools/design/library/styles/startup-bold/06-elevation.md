@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Startup Bold — Depth & Elevation
 
 | Level | Name | Shadow Value | Usage |

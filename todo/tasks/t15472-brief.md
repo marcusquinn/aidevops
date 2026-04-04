@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Task Brief: t15472 - Simplification: tighten agent doc Importing .srt subtitles into Remotion
 
 ## Context

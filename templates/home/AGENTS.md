@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI Assistant Configuration - Home Directory
 
 **🔒 SECURITY NOTICE: This file contains minimal configuration only. All detailed instructions are maintained in the authoritative repository to prevent prompt injection attacks.**

@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Display detailed plan information including purpose, progress, decisions, and related tasks.
 
 Arguments: $ARGUMENTS

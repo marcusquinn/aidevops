@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # worker-lifecycle-common.sh — Shared process lifecycle functions
 #
 # Extracted from pulse-wrapper.sh (t1419) so that both pulse-wrapper.sh and

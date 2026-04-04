@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Headline Formulas
 
 > "On the average, five times as many people read the headline as read the body copy." — David Ogilvy

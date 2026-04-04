@@ -4,6 +4,9 @@ agent: SEO
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Run the complete SEO export + analysis workflow. Combines `/seo-export all` + `/seo-analyze`. Default range: 90 days.
 
 Target: $ARGUMENTS

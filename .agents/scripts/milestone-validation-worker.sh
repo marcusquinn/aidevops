@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # milestone-validation-worker.sh - Milestone validation for mission system
 # Part of aidevops framework: https://aidevops.sh
 #

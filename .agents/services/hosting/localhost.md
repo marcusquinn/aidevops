@@ -3,6 +3,9 @@ description: "Redirect: see local-hosting.md for all local development hosting"
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Localhost — Redirected
 
 This file has been merged into [`local-hosting.md`](local-hosting.md), which covers both the current `localdev-helper.sh` system and the legacy `localhost-helper.sh` commands.

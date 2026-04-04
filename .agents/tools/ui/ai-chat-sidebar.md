@@ -4,6 +4,9 @@ mode: subagent
 tools: [read, write, edit, bash, glob, grep, task]
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI Chat Sidebar — Component Architecture
 
 - **Stack**: React 19 + TypeScript + Tailwind CSS + Elysia (API)

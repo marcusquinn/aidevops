@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1311: Swarm DAG Patterns for Supervisor Dispatch — Research Report
 
 **Date:** 2026-02-24

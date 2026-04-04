@@ -3,6 +3,9 @@ description: Runner template for SEO analysis and recommendations
 mode: reference
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # SEO Analyst
 
 Create with:

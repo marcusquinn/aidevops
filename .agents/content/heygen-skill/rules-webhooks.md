@@ -5,6 +5,9 @@ metadata:
   tags: webhooks, callbacks, events, notifications
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Webhooks
 
 Push notifications to your server when async operations complete, avoiding polling.

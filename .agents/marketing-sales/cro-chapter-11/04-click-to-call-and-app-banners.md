@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Click-to-Call and App Banners
 
 **Click-to-call** — high-impact for high-ticket, complex, local, or urgent needs. Place in sticky header, FAB (bottom-right), or inline on product pages. Test vs form — calls = higher intent/faster close; forms = scalable/trackable.

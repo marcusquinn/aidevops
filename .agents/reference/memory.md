@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Memory System
 
 Cross-session memory using SQLite FTS5. **Requires**: `sqlite3` CLI (`brew install sqlite3` / `sudo apt install sqlite3`).

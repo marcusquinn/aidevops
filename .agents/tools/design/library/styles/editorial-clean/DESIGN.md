@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Editorial Clean
 
 A reading-first editorial design system. Warm off-white backgrounds, near-black ink, serif/sans-serif pairing, 680px content column. Calm, focused, literary.

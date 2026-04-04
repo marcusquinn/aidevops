@@ -13,6 +13,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Autoresearch Subagent
 
 Runs setup → hypothesis → modify → constrain → measure → keep/discard → log → repeat until budget exhausted or goal reached.

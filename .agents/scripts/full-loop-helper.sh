@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Full Development Loop Orchestrator — state management for AI-driven dev workflow.
 # Phases: task -> preflight -> pr-create -> pr-review -> postflight -> deploy
 # Decision logic lives in full-loop.md; this script handles state + background exec.

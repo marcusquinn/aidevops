@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Playful Vibrant — Agent Prompt Guide
 
 ## Ready-to-Use Prompts

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # conversation-helper.sh - Conversation lifecycle management for aidevops
 # Manages conversation lifecycle (create/resume/archive), context loading
 # (Layer 1 summary + recent Layer 0 messages), AI-judged idle detection,

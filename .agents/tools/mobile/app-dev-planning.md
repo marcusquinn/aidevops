@@ -3,6 +3,9 @@ description: "MOVED: See product/validation.md for universal product validation"
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Product Validation
 
 This file has moved to `product/validation.md` as part of the shared product concerns refactor.

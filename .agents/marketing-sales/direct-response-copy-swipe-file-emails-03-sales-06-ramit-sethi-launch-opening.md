@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # 6. Ramit Sethi — Launch (Opening)
 
 **Subject:** Zero to Launch is NOW OPEN (spots limited)

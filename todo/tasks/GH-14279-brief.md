@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # GH#14279: Tighten `.agents/scripts/commands/email-inbox.md`
 
 ## Session Origin

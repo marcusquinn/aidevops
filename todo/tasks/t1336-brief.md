@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1336: Archive Tier 2 redundant orchestration scripts — over-engineered loops and quality pipelines
 
 ## Origin

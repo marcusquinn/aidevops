@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # claim-task-id.sh - Atomic task ID allocation via .task-counter file
 # Part of aidevops framework: https://aidevops.sh
 #

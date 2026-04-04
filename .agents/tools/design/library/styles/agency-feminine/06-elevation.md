@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Agency Feminine — Depth & Elevation
 
 | Level | Name | Shadow Value | Usage |

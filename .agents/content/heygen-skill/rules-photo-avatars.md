@@ -5,6 +5,9 @@ metadata:
   tags: photo-avatar, talking-photo, avatar-iv, image-to-video
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Photo Avatars (Talking Photos)
 
 Photo avatars animate a static photo to speak. Three tiers of quality:

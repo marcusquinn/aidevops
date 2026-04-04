@@ -55,6 +55,9 @@ subagents:
   - explore
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Build+ - Unified Coding Agent
 
 <!-- Runtime injects model-specific base prompt. This file contains Build+ enhancements only. -->

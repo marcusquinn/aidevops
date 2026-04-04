@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Patterns & Use Cases
 
 Cloudflare Calls SFU — WebRTC session patterns, backend integration, and advanced media controls.

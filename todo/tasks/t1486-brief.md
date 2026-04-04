@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1486: Split opencode-aidevops/index.mjs into focused modules (Qlty file-complexity 316)
 
 ## Origin

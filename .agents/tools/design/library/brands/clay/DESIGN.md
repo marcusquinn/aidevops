@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Clay
 
 Warm, playful B2B design system built on cream canvas, named swatch colors, Roobert typography, and signature hover animations.

@@ -5,6 +5,9 @@ metadata:
   tags: video, status, polling, download, webhook
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Video Status and Polling
 
 HeyGen video generation is asynchronous: store the `video_id`, poll until terminal state, then download or hand off to a webhook flow.

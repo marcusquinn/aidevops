@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1527: Letter post bridge — print/send APIs, scan/receive services (placeholder)
 
 ## Origin

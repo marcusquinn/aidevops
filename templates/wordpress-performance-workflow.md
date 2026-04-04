@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # WordPress Performance Optimization Workflow
 
 This template provides a comprehensive workflow for optimizing WordPress website performance using the AI DevOps framework.

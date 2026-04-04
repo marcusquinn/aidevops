@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Crawl4AI Benchmark Scripts
 
 Crawl4AI benchmark scripts. Target: `https://the-internet.herokuapp.com`. Tests: `navigate`, `extract` only (no form/multi-step) — 3 runs each. See [`browser-benchmark-scripts.md`](browser-benchmark-scripts.md) for the full suite index.

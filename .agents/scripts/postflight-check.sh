@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC2034,SC2155
 # Postflight Verification Script
 # Verifies release health after tag creation and GitHub release publication

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Pulumi Provider
 
 Programmatic management of Cloudflare resources via `@pulumi/cloudflare` v6.x: Workers, Pages, D1, KV, R2, DNS, Queues, etc.

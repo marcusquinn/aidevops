@@ -3,6 +3,9 @@ description: "|"
 mode: subagent
 imported_from: external
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # Modern JavaScript (ES6-ES2025)
 
 Use this file as the reference index: quick decision trees up front, then chapter links for the full corpus. The detailed material lives in `modern-javascript-skill/*.md`.

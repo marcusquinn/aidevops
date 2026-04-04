@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Playwright Benchmark Scripts
 
 Sequential and parallel Playwright benchmark scripts. Target: `https://the-internet.herokuapp.com`. See [`browser-benchmark-scripts.md`](browser-benchmark-scripts.md) for the full suite index.

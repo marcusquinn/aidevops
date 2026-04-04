@@ -7,6 +7,9 @@ tags: [workflow, planning]
 enabled: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 STOP: Workers must NOT edit TODO.md, todo/PLANS.md, or todo/tasks/*.
 
 - The supervisor owns all TODO.md updates

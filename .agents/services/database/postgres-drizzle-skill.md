@@ -3,6 +3,9 @@ description: PostgreSQL + Drizzle ORM — type-safe database applications
 mode: subagent
 imported_from: external
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # PostgreSQL + Drizzle ORM
 
 ## Commands

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # PASTOR Framework for VSL Scripts
 
 The PASTOR framework structures a Video Sales Letter into six phases, each with a specific goal and timing.

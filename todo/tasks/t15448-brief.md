@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Task Brief: t15448 - Simplification: tighten agent doc Crawl4AI Integration Guide
 
 ## Context

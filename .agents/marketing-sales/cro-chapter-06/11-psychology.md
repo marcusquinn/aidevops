@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Psychology
 
 - **Bystander effect:** Too much social proof reduces urgency. Mitigate with exclusivity, urgency, personalization.

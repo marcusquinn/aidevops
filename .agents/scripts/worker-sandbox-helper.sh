@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # worker-sandbox-helper.sh — Create isolated HOME directories for headless workers (t1412.1)
 #
 # Workers dispatched by the supervisor/pulse inherit the user's full HOME directory,

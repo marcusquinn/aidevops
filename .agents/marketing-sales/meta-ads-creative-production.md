@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Creative Production System
 
 Reference corpus for Meta creative operations. This file is now a slim index; detailed guidance lives in focused chapter files.

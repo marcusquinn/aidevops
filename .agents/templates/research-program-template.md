@@ -4,6 +4,9 @@ mode: in-repo          # in-repo | cross-repo | standalone
 target_repo: .         # path or "." for current repo
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Research: {Title}
 
 <!-- AI-CONTEXT-START -->

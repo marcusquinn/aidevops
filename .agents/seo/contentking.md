@@ -9,6 +9,9 @@ tools:
   grep: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # ContentKing / Conductor Monitoring - Real-time SEO Monitoring API
 
 <!-- AI-CONTEXT-START -->

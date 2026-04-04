@@ -4,6 +4,9 @@ mode: subagent
 tools: { read: true, write: false, edit: false, bash: false, glob: false, grep: false, webfetch: false }
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Graduated Learnings
 
 Validated patterns promoted from local memory (3+ accesses or high confidence).

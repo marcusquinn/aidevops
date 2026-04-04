@@ -4,6 +4,9 @@ mode: subagent
 description: Get audio file duration in seconds using Mediabunny's Input.computeDuration()
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Getting audio duration with Mediabunny
 
 `Input.computeDuration()` returns audio length in seconds. Works in browser, Node.js, and Bun.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 <!-- Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities. -->
 
 ## aidevops Framework Status

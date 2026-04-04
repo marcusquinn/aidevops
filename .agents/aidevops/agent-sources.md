@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Agent Sources (Private Repos)
 
 Use agent sources when agents should stay in a private Git repo but remain available framework-wide.

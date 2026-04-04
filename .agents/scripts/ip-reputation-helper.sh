@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ip-reputation-helper.sh — IP reputation checker using multiple providers
 # Queries multiple IP reputation databases in parallel and merges results
 # into a unified risk report. Use case: vet VPS/server/proxy IPs before

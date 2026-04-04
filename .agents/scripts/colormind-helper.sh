@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # colormind-helper.sh — Colour palette generation via Colormind AI API
 #
 # Usage:

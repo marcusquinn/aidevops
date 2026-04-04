@@ -5,6 +5,9 @@ mode: subagent
 model: sonnet
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Email - Newsletter and Sequence Distribution
 
 <!-- AI-CONTEXT-START -->

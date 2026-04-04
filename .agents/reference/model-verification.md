@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Parallel Model Verification (t1364)
 
 High-stakes operations are verified by a second model before execution.

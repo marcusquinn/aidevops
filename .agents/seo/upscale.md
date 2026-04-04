@@ -9,6 +9,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Image Upscaling
 
 **Decision**: Real-ESRGAN (bulk/privacy) → Replicate (best quality) → Cloudflare (CDN resize only) → Sharp (format conversion only).

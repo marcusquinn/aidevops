@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Run email deliverability testing — spam content analysis, provider-specific checks, and inbox placement guidance.
 
 Arguments: $ARGUMENTS

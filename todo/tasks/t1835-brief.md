@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1835: Fix pool mark-failure to use server Retry-After header
 
 **Session origin**: Headless worker dispatch

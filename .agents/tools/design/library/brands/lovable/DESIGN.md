@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Lovable
 
 Lovable — warm humanist developer tool: parchment cream canvas, Camera Plain Variable typeface, opacity-driven gray scale, inset-shadow dark buttons, border-only card containment.

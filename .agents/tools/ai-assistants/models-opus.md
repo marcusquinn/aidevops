@@ -20,6 +20,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Opus Tier Model
 
 Highest-capability tier for tasks where stronger reasoning materially changes the outcome.

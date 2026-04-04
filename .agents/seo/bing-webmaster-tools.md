@@ -10,6 +10,9 @@ tools:
   grep: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ## Quick Reference
 
 - **API Base**: `https://ssl.bing.com/webmaster/api.svc/json/`

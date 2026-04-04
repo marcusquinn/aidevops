@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # venv-health-check-helper.sh — Lightweight Python venv smoke tests for managed projects
 #
 # Discovers .venv/ directories in repos registered in repos.json and runs

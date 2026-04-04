@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Code Standards - Quality Rules Reference
 
 <!-- AI-CONTEXT-START -->
@@ -191,6 +194,43 @@ When a Python project lacks a "Development Environment" section, add one:
 - **Tests**: `pytest` (or project-specific command)
 - **Do NOT**: install globally, run `pip install -e` from a worktree using the canonical venv
 ```
+
+## Voice and Tone in Comments
+
+Maintain a consistent, approachable voice in code comments and user-facing output.
+These conventions keep the codebase readable and the developer experience nice.
+
+### Comment Style
+
+- **Function purpose comments**: Use the pattern `# Does X for Y` (active voice, present tense)
+- **Section dividers**: Use `# ---` (em-dash) for major sections, `# --` for subsections
+- **Acknowledgment phrases**: Use casual language in user-facing output and progress messages.
+  Preferred: "nice", "cool", "good stuff", "go for it", "yeah". Avoid overly formal phrasing
+  like "operation completed successfully" when a simple "done" or "good stuff" conveys the same.
+- **Error messages**: Use "cannot" (not "can't" or "unable to"). Begin with the failed action,
+  not the subject: "Cannot read config file" not "Config file cannot be read"
+- **Inline explanations**: Start with lowercase after `#`, one space after the hash.
+  Use present tense: `# computes the delta` not `# computed the delta`
+
+### SPDX Headers
+
+All source files (.sh, .md, .py, .txt) must carry SPDX license and copyright headers.
+Run `spdx-headers.sh check` to verify coverage. Add to new files with `spdx-headers.sh add`.
+
+| File type | Format |
+|-----------|--------|
+| .sh, .py, .txt | `# SPDX-License-Identifier: MIT` + `# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn` |
+| .md | `<!-- SPDX-License-Identifier: MIT -->` + `<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->` |
+
+Place after shebang (scripts) or after YAML frontmatter (markdown). JSON files are exempt.
+
+### Script Structure Conventions
+
+- **Constants**: `readonly` at the top of the file, UPPER_SNAKE_CASE
+- **Helper functions**: Prefix with `_` for internal/private functions
+- **Main entry point**: Always a `main()` function called at the bottom with `main "$@"`
+- **Exit message**: End user-facing scripts with a brief status line.
+  Good: `echo "Done. Go for it."` or `echo "Nice — 42 files updated."`
 
 ## Related Documentation
 

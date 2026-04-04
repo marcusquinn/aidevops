@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Sora 2 Pro Master Template
 
 Master template for UGC-style authentic content: Header → Shot-by-Shot → Timestamped Actions → Dialogue → Background Sound → Technical Specs.

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
 email_md_summary.py - Summary generation for email-to-markdown pipeline.
 

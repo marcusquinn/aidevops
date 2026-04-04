@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare R2 SQL
 
 Serverless distributed query engine for Apache Iceberg tables in R2 Data Catalog. Zero egress fees, open beta (free beyond standard R2 storage costs).

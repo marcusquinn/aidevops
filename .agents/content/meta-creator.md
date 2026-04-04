@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Meta Creator
 
 Generates 5 title + 5 description variations with SERP preview for A/B testing. Input: article content, primary keyword, target audience.

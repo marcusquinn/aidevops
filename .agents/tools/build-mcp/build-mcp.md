@@ -4,6 +4,9 @@ description: MCP server development - building Model Context Protocol servers an
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Build-MCP - MCP Server Development Agent
 
 <!-- AI-CONTEXT-START -->

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
 email-to-markdown.py - Convert .eml/.msg files to markdown with attachment extraction
 Part of aidevops framework: https://aidevops.sh

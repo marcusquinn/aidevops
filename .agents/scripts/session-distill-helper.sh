@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
 # Session Distill Helper - Extract learnings from session for memory storage
 # =============================================================================

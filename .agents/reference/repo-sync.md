@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Repo Sync
 
 Daily `git pull --ff-only` for repos in configured parent dirs. Fast-forwards clean, default-branch checkouts only. Skips dirty trees, non-default branches, no-remote repos, worktrees.

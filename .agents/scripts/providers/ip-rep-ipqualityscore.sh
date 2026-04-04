@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ip-rep-ipqualityscore.sh — IPQualityScore provider for ip-reputation-helper.sh
 # Interface: check <ip> [--api-key <key>] → JSON result on stdout
 # Free tier: 5000 checks/month with API key

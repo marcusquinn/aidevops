@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Cursor
 
 Reference corpus for Cursor's design language. Each chapter is a self-contained reference file.

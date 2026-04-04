@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Email Sequence Templates
 
 Copy-paste templates for common sequences. Strategy/planning: [Email Sequences Framework](direct-response-copy-frameworks-email-sequences.md).

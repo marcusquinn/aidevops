@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
 Local Browser Automation for AI DevOps Framework
 Privacy-first browser automation using LOCAL browsers only (no cloud services)

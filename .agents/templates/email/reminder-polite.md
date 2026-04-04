@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Polite Reminder - first reminder for an outstanding request (Level 1 of 3)
 <!-- Use: first follow-up when a deadline has passed or a response is overdue. -->
 <!-- Tone: friendly, assumes the recipient is busy. No pressure. -->

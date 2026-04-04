@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ## Conversion Friction
 
 Friction is anything that prevents, slows, or irritates users on the path to conversion.

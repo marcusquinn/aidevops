@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1431: Refactor — extract stats functions from pulse-wrapper into stats-wrapper
 
 ## Origin

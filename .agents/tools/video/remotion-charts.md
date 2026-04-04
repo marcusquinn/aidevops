@@ -4,6 +4,9 @@ mode: subagent
 description: Chart and data visualization patterns for Remotion. Use when creating bar charts, pie charts, histograms, progress bars, or any data-driven animations.
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Charts in Remotion
 
 Use regular React, HTML, SVG, or D3. Disable third-party animation systems — they flicker during render. Drive all chart motion from `useCurrentFrame()`.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Notion
 
 Approachable minimalism on warm neutrals. Blank-canvas philosophy: quality paper, not sterile glass. NotionInter font, whisper-weight borders, multi-layer sub-0.05 shadows, single saturated accent (Notion Blue `#0075de`).

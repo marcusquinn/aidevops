@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AEO and GEO Content Patterns
 
 Reference corpus for answer engines, AI Overviews, voice search, and AI citation.

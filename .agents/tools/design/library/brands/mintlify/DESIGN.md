@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Mintlify
 
 White, airy, documentation-as-product aesthetic. Brand accent: `#18E299` (green). Fonts: Inter (all text) + Geist Mono (code/technical). Signature shape: full-pill (9999px) buttons and inputs.

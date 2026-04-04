@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # batch-strategy-helper.sh - Batch execution strategies for task decomposition dispatch
 #
 # Implements depth-first and breadth-first batch ordering for dispatching

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ip-rep-blocklistde.sh — Blocklist.de provider for ip-reputation-helper.sh
 # Interface: check <ip> → JSON result on stdout
 # Free tier: No key required, open API

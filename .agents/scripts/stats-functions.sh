@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # stats-functions.sh - Statistics and health dashboard functions
 #
 # Extracted from pulse-wrapper.sh (t1431) to separate stats concerns.

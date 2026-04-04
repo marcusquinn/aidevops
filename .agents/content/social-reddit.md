@@ -9,6 +9,9 @@ tools:
   webfetch: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Reddit CLI/API Integration
 
 - **Install**: `pip install praw`

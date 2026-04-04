@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Mission Progress Dashboard — CLI + optional browser view (t1362)
 # Commands: status | summary | browser | json | help
 # Data sources: mission state files, observability-helper.sh, budget-tracker-helper.sh, ps, gh

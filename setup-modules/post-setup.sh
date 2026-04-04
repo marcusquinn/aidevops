@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Post-setup functions: auto-update enablement, final instructions, onboarding prompt.
 # Part of aidevops setup.sh modularization (GH#5793)
 

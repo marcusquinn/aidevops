@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # command-logger-helper.sh - Log worker shell commands and flag anomalous patterns
 # Part of t1412.5: Command pattern baseline
 #

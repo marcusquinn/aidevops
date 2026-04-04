@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ## Google Ads Creative
 
 Google Ads matches intent (the search query), not interruption. Meta stops the scroll; Google answers the question.

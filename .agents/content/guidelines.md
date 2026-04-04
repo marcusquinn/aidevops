@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Content Guidelines for AI Copywriting
 
 Structural copy rules for website content, especially local-service pages. Tone, vocabulary, and personality come from `context/brand-identity.toon` if present; this doc covers structure only. Brand identity maintenance: `tools/design/brand-identity.md`.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # memory/recall.sh - Memory recall/search functions
 # Sourced by memory-helper.sh; do not execute directly.
 #

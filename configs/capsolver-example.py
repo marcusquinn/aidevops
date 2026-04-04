@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
 CapSolver + Crawl4AI Integration Example
 Demonstrates CAPTCHA solving with various types

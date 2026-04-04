@@ -10,6 +10,9 @@ tools:
   bash: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Run an autonomous self-improvement loop that modifies framework files, measures composite quality, and keeps only improvements.
 
 Arguments: $ARGUMENTS

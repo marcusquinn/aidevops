@@ -6,6 +6,9 @@ date_sent: "2026-03-01T12:00:00+0000"
 subject: "Various date formats"
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Here are the key dates for the project:
 
 - Kickoff: 15/01/2026

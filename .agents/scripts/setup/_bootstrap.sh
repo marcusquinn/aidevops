@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Bootstrap and entry point functions for setup.sh
 
 # Bootstrap: Clone or update repo if running remotely (via curl)

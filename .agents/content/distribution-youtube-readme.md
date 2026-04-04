@@ -11,6 +11,9 @@ subagents:
   - pipeline
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # YouTube Distribution
 
 <!-- AI-CONTEXT-START -->

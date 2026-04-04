@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # {{PLUGIN_NAME}} Plugin
 
 > This is an [aidevops](https://aidevops.sh) plugin. Install with:

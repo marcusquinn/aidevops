@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Wiki Update Workflow
 
 Update `.wiki/` to reflect the latest codebase state. Changes pushed to `main` auto-sync via `.github/workflows/sync-wiki.yml`.

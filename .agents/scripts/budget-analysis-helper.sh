@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Budget Analysis & Recommendation Engine (t1357.7)
 # Analyses likely outcomes for a requested budget (time/money/tokens).
 # Recommends budget scales with tiered outcome descriptions.

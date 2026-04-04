@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # matrix-dispatch-helper.sh - Matrix bot for dispatching messages to AI runners
 #
 # Bridges Matrix chat rooms to aidevops runners via OpenCode server.

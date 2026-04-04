@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1441: Unblock patch releases by reducing repo-wide preflight blocker debt
 
 ## Origin

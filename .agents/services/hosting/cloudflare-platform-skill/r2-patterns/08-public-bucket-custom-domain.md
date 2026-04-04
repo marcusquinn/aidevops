@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # R2 Pattern: Public Bucket with Custom Domain
 
 Extends the streaming pattern with CORS and long-lived cache headers:

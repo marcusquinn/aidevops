@@ -5,6 +5,9 @@ mode: subagent
 model: opus
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Analyse code for simplification opportunities. This is analysis-only -- produce suggestions for human review, never apply changes directly.
 
 Target: $ARGUMENTS

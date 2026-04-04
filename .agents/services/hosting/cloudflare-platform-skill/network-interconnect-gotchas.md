@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # CNI Gotchas & Troubleshooting
 
 See [network-interconnect.md](./network-interconnect.md) for overview.

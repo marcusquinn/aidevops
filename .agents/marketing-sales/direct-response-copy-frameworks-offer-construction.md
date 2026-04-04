@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Offer Construction Framework
 
 > "You can have the best copy in the world, but if the offer stinks, it won't convert." — Dan Kennedy

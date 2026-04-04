@@ -10,6 +10,9 @@ subagents:
   - providers/wappalyzer
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Tech Stack Lookup - Technology Discovery Orchestrator
 
 <!-- AI-CONTEXT-START -->

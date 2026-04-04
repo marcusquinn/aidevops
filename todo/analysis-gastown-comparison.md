@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Gastown vs AI DevOps — Comparative Analysis
 
 **Date**: 2026-03-16

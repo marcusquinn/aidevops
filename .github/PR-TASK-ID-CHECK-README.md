@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # PR Task ID Check - Implementation Notes
 
 ## File: .github/workflows/pr-task-id-check.yml

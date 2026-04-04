@@ -3,6 +3,9 @@ mode: subagent
 tools:
   bash: true
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # Pre-Edit Git Check
 
 Run before any file edits:

@@ -7,6 +7,9 @@ tags: [git, safety]
 enabled: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 STOP: You are about to modify files on the main/master branch. This violates the git workflow.
 
 - Run `~/.aidevops/agents/scripts/pre-edit-check.sh` before any file modifications

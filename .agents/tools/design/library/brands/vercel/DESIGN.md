@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Vercel
 
 Gallery-like minimalism as engineering principle. Near-pure white canvas (`#ffffff`) with near-black (`#171717`) text. Geist font family with aggressive negative letter-spacing at display sizes. Shadow-as-border philosophy replaces traditional CSS borders throughout. Workflow accent colors (Ship Red, Preview Pink, Develop Blue) mark pipeline stages only.

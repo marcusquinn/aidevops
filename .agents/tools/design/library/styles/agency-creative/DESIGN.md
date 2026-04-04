@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Agency Creative
 
 Bold, expressive design system built around a purple-to-pink gradient axis. Editorial aesthetic, asymmetric layouts, motion as a core element.

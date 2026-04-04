@@ -5,6 +5,9 @@ metadata:
   tags: video-agent, prompt, ai, automated, one-shot
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Video Agent API
 
 Generates complete videos from a single text prompt. Automatically handles script writing, avatar selection, visuals, voiceover, pacing, and captions.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Terraform Provider
 
 **Rules:** Provider-first (never mix with wrangler.toml for same resources) · Remote state always (S3/Terraform Cloud) · Modular (zones, workers, pages) · Pin with `~>` · Secrets via env vars, never hardcoded

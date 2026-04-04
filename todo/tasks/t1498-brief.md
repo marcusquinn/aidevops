@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1498: Email security agent doc — prompt injection, phishing, executables, secretlint, PrivateBin
 
 ## Origin

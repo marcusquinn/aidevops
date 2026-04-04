@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # FAQ Answer - templated response to a frequently asked question
 <!-- Use: when responding to a question you have answered before. Copy this template, -->
 <!-- replace the placeholders, and save as a named FAQ (e.g., faq-pricing.md, faq-onboarding.md). -->

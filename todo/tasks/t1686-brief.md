@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1686: GitHub comment-based optimistic locking for cross-machine dispatch dedup
 
 **Session origin:** User reported multiple aidevops runners dispatching workers for the same issue

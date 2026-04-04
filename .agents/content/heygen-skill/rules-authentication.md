@@ -5,6 +5,9 @@ metadata:
   tags: authentication, api-key, headers, security
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # HeyGen Authentication
 
 All requests require an API key in the `X-Api-Key` header. Keep it server-side, load it from an environment variable, never expose it in client code.

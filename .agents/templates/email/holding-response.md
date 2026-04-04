@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Holding Response - manage expectations when a full answer is not yet available
 <!-- Use: when you need more time, information, or input from others before you can give a complete answer. -->
 <!-- Tone: transparent, professional. Explains the reason for the delay without over-apologising. -->

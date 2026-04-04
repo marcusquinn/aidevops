@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # headless-runtime-helper.sh - Model-aware OpenCode wrapper for pulse/workers
 #

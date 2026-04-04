@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # memory/maintenance.sh - Memory maintenance functions
 # Sourced by memory-helper.sh; do not execute directly.
 #

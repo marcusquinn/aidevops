@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Sanity
 
 Nocturnal command-center aesthetic. Near-black canvas (`#0b0b0b`), achromatic gray scale, vivid accent punctuation (coral-red CTA, electric blue hover, neon green success). waldenburgNormal with extreme negative tracking at display sizes; IBM Plex Mono for technical labels.

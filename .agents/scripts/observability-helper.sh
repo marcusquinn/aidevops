@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Observability Helper — LLM request tracking via JSONL log (t1307, t1337.5)
 # Commands: ingest | record | rate-limits | help
 # Storage: ~/.aidevops/.agent-workspace/observability/metrics.jsonl

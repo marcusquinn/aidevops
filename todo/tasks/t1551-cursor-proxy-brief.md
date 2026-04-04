@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1551: Cursor models in OpenCode via pool-based proxy
 
 **Session origin**: feature/dynamic-oauth-user-agent session (2026-03-21)

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # pdf-helper.sh - PDF operations helper using LibPDF
 # Usage: pdf-helper.sh [command] [options]
 #

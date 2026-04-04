@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1707: Create chromium-debug-use skill doc and local CDP helper wrapper
 
 ## Origin

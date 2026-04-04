@@ -11,5 +11,8 @@ entities:
     - "Old Location"
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Email from Anna Williams <anna.williams@testcorp.com> about the
 Birmingham property inspection on 22 April 2026.

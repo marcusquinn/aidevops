@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Node.js Helper Script Patterns
 
 Reference for common patterns used in Node.js-based helper scripts.

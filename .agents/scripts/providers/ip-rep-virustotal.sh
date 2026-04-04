@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ip-rep-virustotal.sh — VirusTotal provider for ip-reputation-helper.sh
 # Interface: check <ip> [--api-key <key>] → JSON result on stdout
 # Free tier: 4 requests/minute, 500/day, 15.5K/month with API key

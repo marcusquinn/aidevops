@@ -6,6 +6,9 @@ metadata:
   tags: audio, media, trim, volume, speed, loop, pitch, mute, sound, sfx
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Using audio in Remotion
 
 ## Prerequisites

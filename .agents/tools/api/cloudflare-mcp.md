@@ -12,6 +12,9 @@ tools:
   cloudflare-api_*: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Code Mode MCP
 
 <!-- AI-CONTEXT-START -->

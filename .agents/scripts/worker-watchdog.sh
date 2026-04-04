@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # worker-watchdog.sh — Detect and kill hung/idle headless AI workers (t1419)
 #
 # Solves: Headless workers dispatched manually (outside the pulse supervisor)

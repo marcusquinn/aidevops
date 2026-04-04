@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # audit-log-helper.sh — Tamper-evident audit logging with hash chaining (t1412.8)
 # Commands: log | verify | tail | status | rotate | help
 # Docs: tools/security/tamper-evident-audit.md

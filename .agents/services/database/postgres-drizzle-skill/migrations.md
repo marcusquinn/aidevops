@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Drizzle Migrations
 
 Reference for managing database migrations with drizzle-kit. For base config and commands, see [cheatsheet-config.md](cheatsheet-config.md).

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 9: Pricing Page Psychology
 
 Pricing pages are the most scrutinized pages on any site. Presentation psychology often impacts conversion more than any other element.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # backfill-closure-labels.sh — Apply closure reason labels to existing closed issues
 #
 # Usage: bash backfill-closure-labels.sh [--repo owner/repo] [--dry-run] [--limit N]

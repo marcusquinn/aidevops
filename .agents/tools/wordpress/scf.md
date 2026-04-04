@@ -15,6 +15,9 @@ tools:
   context7_*: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Secure Custom Fields (SCF) / ACF Subagent
 
 <!-- AI-CONTEXT-START -->

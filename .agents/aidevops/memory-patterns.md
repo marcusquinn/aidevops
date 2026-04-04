@@ -11,6 +11,9 @@ tools:
   webfetch: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI Memory Files System
 
 <!-- AI-CONTEXT-START -->

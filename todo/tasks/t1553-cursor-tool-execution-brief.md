@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1553: Implement tool execution for Cursor models in OpenCode
 
 **Session origin**: Interactive session 2026-03-22, continuation of t1551 (Cursor proxy)

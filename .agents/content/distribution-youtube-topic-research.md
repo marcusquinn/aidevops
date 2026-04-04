@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # YouTube Topic Research
 
 Find video topics with proven demand but low competition. Combines YouTube search data, competitor analysis, keyword research, and trend detection.

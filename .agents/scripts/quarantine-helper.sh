@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # quarantine-helper.sh — Unified quarantine queue for ambiguous security items (t1428.4)
 # Commands: add | list | digest | learn | stats | purge | help
 #

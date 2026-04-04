@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Manifest Reference
 
 `CloudronManifest.json` field reference. See the [Cloudron docs](https://docs.cloudron.io/packaging/manifest/) for examples.

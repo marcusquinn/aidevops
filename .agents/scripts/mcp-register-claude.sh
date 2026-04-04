@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # MCP Registration Script for Claude Code
 # Reads configs/mcp-templates/*.json and registers MCP servers via `claude mcp add-json`.

@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # llm-tldr - Semantic Code Analysis
 
 TLDR extracts code structure and semantics, saving ~95% tokens vs raw code. Install: `pip install llm-tldr`. Source: [parcadei/llm-tldr](https://github.com/parcadei/llm-tldr). MCP config template: `configs/mcp-templates/llm-tldr.json`.

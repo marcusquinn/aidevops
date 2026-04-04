@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ip-rep-abuseipdb.sh — AbuseIPDB provider for ip-reputation-helper.sh
 # Interface: check <ip> [--api-key <key>] → JSON result on stdout
 # Free tier: 1000 checks/day with API key (key optional for basic check)

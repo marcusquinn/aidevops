@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-supervisor-globals.sh
 #
 # Verify all supervisor modules can be sourced without unbound variable errors.

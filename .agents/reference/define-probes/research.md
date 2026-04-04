@@ -3,6 +3,9 @@ description: Probing questions for research/spike tasks — surfaces time-box, d
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Research Probes
 
 Use 2 probes during `/define` for tasks classified as **research**. Defaults: time-boxed, written recommendation (not code), compare ≥2 options with cost/effort estimates.

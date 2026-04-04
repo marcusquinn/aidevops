@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 10: Checkout Flow Optimization - Deep Dive
 
 Average cart abandonment is ~70%. Every friction point costs real revenue.

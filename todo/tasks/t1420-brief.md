@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1420: Add maintainer field to repos.json for code-simplifier assignment fallback
 
 ## Session Origin

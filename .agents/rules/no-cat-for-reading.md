@@ -7,6 +7,9 @@ tags: [efficiency, tools]
 enabled: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Use the Read tool instead of cat/head/tail for reading files. The Read tool:
 
 - Supports line offsets and limits natively

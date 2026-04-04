@@ -3,6 +3,9 @@ description: "|"
 mode: subagent
 imported_from: external
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # mermaid-diagrams
 
 # Mermaid Diagrams

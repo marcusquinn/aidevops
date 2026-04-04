@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Purchase Invoice Schema (Supplier Invoice)
 
 Use for formal invoices received from suppliers with an invoice number.

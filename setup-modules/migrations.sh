@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Migration functions: migrate_* and cleanup_* functions
 # Part of aidevops setup.sh modularization (t316.3)
 

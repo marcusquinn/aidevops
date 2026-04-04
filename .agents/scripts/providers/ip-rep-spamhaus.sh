@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ip-rep-spamhaus.sh — Spamhaus DNSBL provider for ip-reputation-helper.sh
 # Interface: check <ip> → JSON result on stdout
 # Free tier: DNS-based lookups, no key required (non-commercial use)

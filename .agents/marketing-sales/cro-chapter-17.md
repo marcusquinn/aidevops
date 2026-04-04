@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 17: B2B Lead Generation, ABM, and Lead Scoring
 
 B2B CRO: extended sales cycles, 6-10 decision-makers, $100K-$1M+ contracts. Buyers complete 57-70% of research independently (Gartner); only 17% of evaluation time with suppliers.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Nothing Design System — Craft Rules
 
 ## 1. Visual Hierarchy: The Three-Layer Rule

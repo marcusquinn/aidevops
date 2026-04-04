@@ -7,6 +7,9 @@ tools:
   webfetch: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # OpenCode Anthropic Auth Plugin
 
 > **v1.2.30+**: The built-in `anthropic-auth` plugin was removed. Use the **aidevops OAuth pool** — run `opencode auth login` and select **"Anthropic Pool"**.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ip-rep-proxycheck.sh — ProxyCheck.io provider for ip-reputation-helper.sh
 # Interface: check <ip> [--api-key <key>] → JSON result on stdout
 # Free tier: 1000 req/day without key, 100/day with free key (more with paid)

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Decision Trees — When to Use What
 
 > Visual decision frameworks for the most common Meta Ads questions.

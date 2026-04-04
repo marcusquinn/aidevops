@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Chapter 15: Personalization and Dynamic Content
 
 Dynamic content adapts per visitor based on attributes, behavior, or context — increasing relevance and conversion.

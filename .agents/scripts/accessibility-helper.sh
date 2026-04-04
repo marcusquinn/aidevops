@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Accessibility & Contrast Testing Helper Script
 # WCAG compliance auditing for websites and HTML emails

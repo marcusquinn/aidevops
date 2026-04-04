@@ -11,6 +11,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Ralph Loop v2 - Iterative AI Development
 
 Implementation of the [Ralph Wiggum technique](https://ghuntley.com/ralph/) for iterative AI development loops, enhanced with [flow-next architecture](https://github.com/gmickel/gmickel-claude-marketplace/tree/main/plugins/flow-next) for fresh context per iteration.

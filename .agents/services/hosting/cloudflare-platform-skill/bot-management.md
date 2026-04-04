@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Bot Management
 
 Multi-tier bot detection using ML/heuristics, bot scores, JavaScript detections, and verified bot handling.

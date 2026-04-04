@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # CQRS & Domain Events
 
 > [CQRS](https://martinfowler.com/bliki/CQRS.html) | [Event Sourcing](https://martinfowler.com/eaaDev/EventSourcing.html) | [CQRS Pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs) | [Transactional Outbox](https://microservices.io/patterns/data/transactional-outbox.html) | [Domain Events](https://udidahan.com/2009/06/14/domain-events-salvation/) | [Domain Events: Design & Implementation](https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/domain-events-design-implementation)

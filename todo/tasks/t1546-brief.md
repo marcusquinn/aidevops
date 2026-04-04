@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1546: Setup/update: guide users to configure OAuth pool when built-in anthropic-auth is removed in OpenCode v1.2.30
 
 ## Session Origin

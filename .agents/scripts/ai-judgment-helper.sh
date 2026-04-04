@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ai-judgment-helper.sh - Intelligent threshold replacement for aidevops
 # Replaces hardcoded thresholds with AI judgment calls (haiku-tier, ~$0.001 each).
 #

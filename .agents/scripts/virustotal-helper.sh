@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # virustotal-helper.sh - VirusTotal API v3 integration for skill security scanning
 # Scans skill files, URLs, and domains against VirusTotal's 70+ AV engines
 #

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Planning & Tasks — Detail Reference
 
 Loaded on-demand when working with tasks, TODO.md, or the supervisor dispatch system.

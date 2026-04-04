@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC2034
 # Tests for mission-email-helper.sh
 # Tests: template rendering, code extraction, thread management, email parsing, DB operations

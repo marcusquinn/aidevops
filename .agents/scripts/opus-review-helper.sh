@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # opus-review-helper.sh — Cadence control for opus strategic review (t1340)
 #
 # The supervisor pulse runs every 2 minutes at sonnet tier for mechanical

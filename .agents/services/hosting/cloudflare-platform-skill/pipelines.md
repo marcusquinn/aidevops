@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Pipelines
 
 ETL streaming: ingest events → SQL transforms → R2 as Apache Iceberg or Parquet/JSON. Open beta, Workers Paid plan required, no charge beyond R2 storage/operations.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-migrations-jq-null-safety.sh
 #
 # Regression test for GH#14220: _migrate_mcp_npx_to_binary must not fail

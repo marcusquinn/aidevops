@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Agent deployment functions for setup.sh
 
 # Deploy aidevops agents to ~/.aidevops/agents/

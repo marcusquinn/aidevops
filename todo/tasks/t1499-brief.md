@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1499: Update subagent-index.toon and AGENTS.md domain index for email system
 
 ## Origin

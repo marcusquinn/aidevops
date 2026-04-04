@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # prompt-guard-helper.sh — Prompt injection defense for untrusted content (t1327.8, t1375)
 #
 # Multi-layer pattern detection for injection attempts in chat messages,

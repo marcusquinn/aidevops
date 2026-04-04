@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Dispatch one or more workers. Route by work type:
 
 - **Code changes** (repo edits, tests, PRs) -> `/full-loop`

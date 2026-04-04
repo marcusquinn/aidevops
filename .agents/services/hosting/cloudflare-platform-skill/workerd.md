@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Workerd Runtime
 
 V8-based JS/Wasm runtime for Cloudflare Workers. It exposes web-standard APIs (Fetch, Web Crypto, Streams, WebSocket), uses capability-based bindings to limit resource access and SSRF risk, and supports nanoservice-style local service bindings. Workerd version sets the newest supported compatibility date.

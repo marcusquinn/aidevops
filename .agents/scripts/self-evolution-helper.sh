@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # self-evolution-helper.sh - Self-evolution loop for aidevops
 # Detects capability gaps from entity interaction patterns, creates TODO tasks
 # with evidence trails, tracks gap frequency, and manages resolution lifecycle.

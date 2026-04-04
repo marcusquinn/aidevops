@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Mobile App Dev - Full-Lifecycle Mobile Application Development
 
 <!-- AI-CONTEXT-START -->

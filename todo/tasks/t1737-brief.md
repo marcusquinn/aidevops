@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1737: simplification: tighten agent doc CRO Fundamentals and Core Concepts
 
 ## Session Origin

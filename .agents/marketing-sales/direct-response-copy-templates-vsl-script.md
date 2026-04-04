@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # VSL Script Template
 
 A complete Video Sales Letter script framework. Replace `[BRACKETS]` with your content.

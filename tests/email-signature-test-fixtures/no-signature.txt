@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
 Hey, just wanted to check in on the status of the deployment.
 
 Can you send me an update when you get a chance?

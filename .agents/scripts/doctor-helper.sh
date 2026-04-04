@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # doctor-helper.sh — Detect and consolidate duplicate aidevops/opencode installs
 #
 # Finds all install locations for both `aidevops` and `opencode` binaries,

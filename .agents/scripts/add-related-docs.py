@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
 add-related-docs.py - Add related_docs frontmatter and navigation links to markdown files
 Part of aidevops framework: https://aidevops.sh

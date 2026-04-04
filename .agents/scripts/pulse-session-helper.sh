@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # pulse-session-helper.sh - Pulse consent and session control
 #
 # Controls the supervisor pulse via a layered consent model:

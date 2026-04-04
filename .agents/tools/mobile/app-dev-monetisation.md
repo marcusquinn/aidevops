@@ -3,6 +3,9 @@ description: "MOVED: See product/monetisation.md for universal product monetisat
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Product Monetisation
 
 This file has moved to `product/monetisation.md` as part of the shared product concerns refactor.

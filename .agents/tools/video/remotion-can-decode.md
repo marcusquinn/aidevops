@@ -6,6 +6,9 @@ metadata:
   tags: decode, video, audio, mediabunny, canDecode, browser, compatibility
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Checking if a video can be decoded
 
 Use `canDecode()` from Mediabunny to check browser decode support before playback.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1701: Make dispatch dedup guard atomic — single function wrapping dedup+assign+launch
 
 **Session origin:** User reported duplicate workers on GH#12141 — both pulses skipped `check_dispatch_dedup` entirely

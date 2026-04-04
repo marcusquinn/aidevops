@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # feature-toggle-helper.sh - Backward-compatible wrapper for aidevops config
 #
 # DEPRECATED: This script delegates to config-helper.sh (JSONC config system).

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: IBM
 
 IBM Carbon Design System — enterprise authority, monochromatic + blue, 8px grid, flat depth via background-color layering.

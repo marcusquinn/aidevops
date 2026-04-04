@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # First-Party Data Strategies
 
 Third-party data is unreliable (iOS 14+ ATT 80%+ opt-out, cookie deprecation, GDPR consent, browser tracking prevention). Your own data is the competitive advantage.

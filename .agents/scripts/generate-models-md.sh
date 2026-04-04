@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # generate-models-md.sh - Generate MODELS.md and/or MODELS-PERFORMANCE.md
 # Part of t1012 (leaderboard), t1133 (global/per-repo split)
 #

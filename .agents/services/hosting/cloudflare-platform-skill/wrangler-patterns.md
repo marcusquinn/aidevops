@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Wrangler Development Patterns
 
 Workflows for Cloudflare Workers. Commands: [wrangler.md](./wrangler.md). Pitfalls: [wrangler-gotchas.md](./wrangler-gotchas.md).

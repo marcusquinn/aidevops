@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Veo 3.1 Production Workflow
 
 Veo 3.1 excels at cinematic, character-consistent content. **CRITICAL**: Always use ingredients-to-video, NEVER frame-to-video.

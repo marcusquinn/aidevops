@@ -11,6 +11,9 @@ tools:
   webfetch: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Security Best Practices
 
 Core security rules (never expose credentials, gopass/credentials.sh storage, secret-handling): `prompts/build.txt`.

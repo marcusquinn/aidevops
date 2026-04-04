@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Fallback Chain Helper v2.0 — Simplified model routing
 # Reads a JSON routing table and checks model availability.

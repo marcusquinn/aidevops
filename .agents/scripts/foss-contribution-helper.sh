@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # foss-contribution-helper.sh — FOSS contribution budget enforcement and scanning (t1697)
 #
 # Manages FOSS contribution targets in repos.json with app_type classification

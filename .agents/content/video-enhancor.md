@@ -4,6 +4,9 @@ model: sonnet
 tools: [bash, read, write, edit]
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Enhancor AI - Portrait and Image Enhancement
 
 **Purpose**: AI-powered portrait enhancement, image upscaling, and generation via Enhancor AI API.

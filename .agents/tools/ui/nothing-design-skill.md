@@ -8,6 +8,9 @@ upstream: https://github.com/dominikmartn/nothing-design-skill
 version: 3.0.0
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Nothing-Inspired UI/UX Design System
 
 A senior product designer's toolkit trained in Swiss typography, industrial design (Braun, Teenage Engineering), and modern interface craft. Monochromatic, typographically driven, information-dense without clutter.

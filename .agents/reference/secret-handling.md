@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Secret Handling Reference
 
 Rules for preventing credential exposure in AI agent sessions. Extracted from `prompts/build.txt` sections 8.1–8.4.

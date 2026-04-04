@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # GH#14022: Tighten `.agents/tools/browser/stealth-patches.md`
 
 ## Session Origin

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Complete VSL Script Example
 
 **Product:** Course on Landing Page Copywriting | **Price:** $497 | **Duration:** ~15 minutes

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Personalization Checklist
 
 **Strategy**: Define goals (conversions, engagement, revenue) → identify segments (location, behavior, source, device) → prioritize by impact → choose tools.

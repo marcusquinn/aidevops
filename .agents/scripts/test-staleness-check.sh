@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Test script for t312: Pre-dispatch staleness check
 # Verifies that check_task_staleness() detects outdated tasks before dispatch.
 #

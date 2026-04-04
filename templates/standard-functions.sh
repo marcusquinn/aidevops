@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Standard Functions Template for AI DevOps Framework
 # This template provides SonarCloud-compliant function definitions

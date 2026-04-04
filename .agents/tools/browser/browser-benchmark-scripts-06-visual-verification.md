@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Visual Verification Benchmark Scripts
 
 Screenshot + ARIA snapshot workflow timing. WARNING: Do NOT use `fullPage: true` — can exceed 8000px and crash the session. Workflow: navigate → viewport screenshot → ARIA snapshot → AI analyses both → decide next action. Key metrics: screenshot file size (token cost), ARIA node count, time to screenshot-ready.

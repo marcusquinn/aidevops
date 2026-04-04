@@ -5,6 +5,9 @@ mode: subagent
 model: haiku
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Content Context Templates
 
 Optional project-level `context/*.md` files for SEO content creation. Adapted from [TheCraigHewitt/seomachine](https://github.com/TheCraigHewitt/seomachine) (MIT License). Setup: `mkdir -p context`, copy the templates you need — auto-detected by `seo-writer.md`, `editor.md`, and `internal-linker.md`.

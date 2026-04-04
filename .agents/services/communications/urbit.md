@@ -4,6 +4,9 @@ mode: subagent
 tools: { read: true, write: false, edit: false, bash: true, glob: false, grep: false, webfetch: false, task: false }
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Urbit Bot Integration
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Workers AI
 
 Serverless AI inference on Cloudflare's edge network. Covers bindings, model invocation, REST API, Wrangler setup, pricing/neurons, RAG, streaming, function calling, AI Gateway, model selection, and TypeScript patterns.

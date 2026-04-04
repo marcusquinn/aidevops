@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Task Brief - t1727: Simplification: tighten agent doc Ahrefs SEO Integration
 
 ## Session Origin

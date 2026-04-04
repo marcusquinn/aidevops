@@ -6,6 +6,9 @@ metadata:
   tags: duration, video, length, time, seconds
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Getting video duration with Mediabunny
 
 Use `Input.computeDuration()` to get duration in seconds. Works in browser, Node.js, and Bun.

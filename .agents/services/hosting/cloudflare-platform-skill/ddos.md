@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare DDoS Protection
 
 Autonomous, always-on protection against DDoS attacks across L3/4 and L7.

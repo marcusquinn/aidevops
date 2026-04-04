@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Ad Copy Templates
 
 Ready-to-use templates for Facebook, Google, LinkedIn, and social ads. Replace `[BRACKETS]` with your specific content.

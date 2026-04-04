@@ -2,6 +2,9 @@
 description: TTSR rule directory — soft correction rules for AI agent output
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # TTSR Rules
 
 Soft TTSR (Think-Then-Self-Reflect) rules that detect patterns in AI output and inject correction instructions.

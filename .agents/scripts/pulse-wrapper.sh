@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # pulse-wrapper.sh - Wrapper for supervisor pulse with dedup and lifecycle management
 #
 # Solves: opencode run enters idle state after completing the pulse prompt

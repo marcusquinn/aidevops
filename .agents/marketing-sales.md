@@ -24,6 +24,9 @@ subagents:
   - explore
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Marketing - Main Agent
 
 <!-- AI-CONTEXT-START -->

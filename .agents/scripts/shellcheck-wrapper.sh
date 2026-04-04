@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Safe ShellCheck wrapper for language servers (shellcheck-wrapper.sh)
 #
 # The bash language server hardcodes --external-sources in every ShellCheck

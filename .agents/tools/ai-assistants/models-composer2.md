@@ -19,6 +19,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Composer 2 Tier Model (Frontier Coding)
 
 Cursor Composer 2 for complex coding tasks where implementation quality matters more than cost.

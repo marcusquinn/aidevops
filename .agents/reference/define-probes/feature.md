@@ -3,6 +3,9 @@ description: Probing questions for feature tasks — surfaces latent requirement
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Feature Probes
 
 Use 2 probes from this file during `/define` for tasks classified as **feature**.

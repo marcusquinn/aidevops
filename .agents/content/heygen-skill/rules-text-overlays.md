@@ -5,6 +5,9 @@ metadata:
   tags: text, overlays, fonts, positioning, graphics
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Text Overlays
 
 ## Text Overlay Interface

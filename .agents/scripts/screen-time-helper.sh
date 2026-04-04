@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # screen-time-helper.sh — Query screen time and maintain persistent history
 #
 # Cross-platform: macOS and Linux

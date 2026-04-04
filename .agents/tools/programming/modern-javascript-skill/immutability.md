@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Immutability and Pure Functions
 
 Copy instead of mutating. Keep transforms pure, push I/O to the edge.

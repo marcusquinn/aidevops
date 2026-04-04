@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Nothing Design System — Iconography
 
 - Monoline, 1.5px stroke, no fill. 24x24 base, 20x20 live area. Round caps/joins.

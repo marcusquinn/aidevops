@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Meeting - Propose Times - suggest available slots for a meeting
 <!-- Use: when initiating a meeting request and offering time options. -->
 <!-- Tone: accommodating, efficient. Offer 2-3 options to reduce back-and-forth. -->

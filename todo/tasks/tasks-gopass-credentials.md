@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # Tasks: gopass Integration & Credentials Rename
 
 Based on [ai-dev-tasks](https://github.com/snarktank/ai-dev-tasks) task format, with time tracking.

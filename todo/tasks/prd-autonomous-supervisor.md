@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Product Requirements Document: Autonomous Supervisor
 
 <!--TOON:prd{id,feature,author,status,est,est_ai,est_test,est_read,logged}:

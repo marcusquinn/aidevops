@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Meta Ads Mastery
 
 Comprehensive Meta (Facebook/Instagram) advertising knowledge base. Covers algorithm fundamentals through advanced scaling strategies.

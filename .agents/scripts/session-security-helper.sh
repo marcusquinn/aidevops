@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # session-security-helper.sh — Session-scoped composite security scoring (t1428.3)
 #
 # Provides session-scoped security context that accumulates signals across

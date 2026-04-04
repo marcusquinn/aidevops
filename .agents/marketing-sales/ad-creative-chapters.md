@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Ad Creative Skill - Chapter Breakdown
 
 ## Chapter 1: Video Ad Creative Mastery

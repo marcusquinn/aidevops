@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Skill Security Scan Results
 
 Automated output from [Cisco AI Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner). Updated by `aidevops skill scan`, `aidevops update`, and skill import.

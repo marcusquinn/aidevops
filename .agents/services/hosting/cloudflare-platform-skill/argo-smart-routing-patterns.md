@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ## Integration with Tiered Cache
 
 Combine Argo Smart Routing with Tiered Cache for maximum performance:

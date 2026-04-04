@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1687: Add interactive claim-on-create option to /new-task to prevent pulse dispatch races
 
 ## Origin

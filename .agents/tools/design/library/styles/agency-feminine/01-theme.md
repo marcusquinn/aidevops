@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Agency Feminine — Visual Theme & Atmosphere
 
 Agency Feminine is a soft, elegant design system built for brands that communicate through warmth, refinement, and understated beauty. It draws from editorial fashion, boutique hospitality, and curated lifestyle aesthetics — spaces where texture and tone matter more than volume. Every element is designed to feel intentional, considered, and quietly luxurious.

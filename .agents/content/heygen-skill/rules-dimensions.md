@@ -5,6 +5,9 @@ metadata:
   tags: dimensions, resolution, aspect-ratio, 720p, 1080p, portrait, landscape
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Video Dimensions and Resolution
 
 ## Supported Resolutions

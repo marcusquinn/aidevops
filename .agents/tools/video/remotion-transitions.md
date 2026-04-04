@@ -6,6 +6,9 @@ metadata:
   tags: transitions, fade, slide, wipe, scenes
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ## Fullscreen transitions
 
 Use `<TransitionSeries>` for fullscreen scene changes; children are absolutely positioned and transitions overlap adjacent scenes.

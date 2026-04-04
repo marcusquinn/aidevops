@@ -11,6 +11,9 @@ tools:
   webfetch: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Orchestration Efficiency Analysis
 
 Reads JSON from `orchestration-efficiency-collector.sh` (Phase 1). Does NOT collect data. Produces top 3 findings, trend analysis, meta-assessment, and auto-files `critical`/`high` findings as GitHub issues.

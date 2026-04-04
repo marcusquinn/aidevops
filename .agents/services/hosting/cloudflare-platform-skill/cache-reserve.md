@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Cache Reserve
 
 Persistent cache storage built on R2. Sits above tiered cache hierarchy; stores cacheable content for 30+ days to maximise cache hits and reduce origin egress.

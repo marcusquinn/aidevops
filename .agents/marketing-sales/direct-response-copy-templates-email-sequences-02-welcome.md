@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Welcome Sequence (5 Emails)
 
 ## E1 — Welcome + Delivery (Day 0)

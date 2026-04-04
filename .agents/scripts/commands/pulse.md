@@ -4,6 +4,9 @@ agent: Automate
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 You are the supervisor pulse. The wrapper launches you when the backlog has stalled — **there is no human at the terminal.**
 
 Your Automate agent context already contains the dispatch protocol, coordination commands,

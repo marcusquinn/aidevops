@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
 email_parser.py - MIME parsing, header extraction, body extraction, and attachment handling.
 

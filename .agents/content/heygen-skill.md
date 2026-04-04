@@ -5,6 +5,9 @@ mode: subagent
 imported_from: https://github.com/heygen-com/skills
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # HeyGen Skill
 
 Load when working with HeyGen API code — avatar videos, video generation workflows, service integration.

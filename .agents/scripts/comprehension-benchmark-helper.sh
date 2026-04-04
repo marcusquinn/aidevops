@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # comprehension-benchmark-helper.sh — Benchmark agent file comprehension across model tiers
 # Tests whether haiku/sonnet/opus can correctly follow agent file instructions.
 # Uses deterministic scoring first, model adjudication second.

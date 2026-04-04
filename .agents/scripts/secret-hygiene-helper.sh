@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # secret-hygiene-helper.sh — Scan for plaintext secrets and supply chain IoCs
 #
 # Scans common locations where credentials are stored in plaintext on macOS/Linux,

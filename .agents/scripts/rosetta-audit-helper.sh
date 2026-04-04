@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
 # Rosetta Audit Helper - Detect x86 Homebrew binaries on Apple Silicon
 # =============================================================================

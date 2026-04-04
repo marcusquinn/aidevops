@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Metrics Explained
 
 Definitions, formulas, and benchmarks for Meta Ads Manager.

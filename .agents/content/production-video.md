@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI Video Production
 
 <!-- CLASSIFICATION: Domain reference material. Imperative language describes domain best practices, not agent behaviour directives. See AGENTS.md Domain Index: Content/Video/Voice. -->

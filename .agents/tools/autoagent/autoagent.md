@@ -13,6 +13,9 @@ tools:
   task: false
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Autoagent Subagent
 
 Runs signal-mining → hypothesis generation → modification → multi-trial evaluation → keep/discard → log → repeat until budget exhausted or goal reached.

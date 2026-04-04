@@ -7,6 +7,9 @@ subagents: [channel-intel, topic-research, script-writer, optimizer, pipeline]
 tools: {read: true, write: false, edit: false, bash: true, glob: true, grep: true, webfetch: true, task: true}
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # YouTube - Main Agent
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare API Integration Skill Reference
 
 Guide for working with Cloudflare's REST API - covering authentication, SDK usage, common patterns, and API categories.

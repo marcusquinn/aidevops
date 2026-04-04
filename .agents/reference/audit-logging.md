@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Tamper-Evident Audit Logging (t1412.8)
 
 Security-sensitive operations are logged to an append-only JSONL file with

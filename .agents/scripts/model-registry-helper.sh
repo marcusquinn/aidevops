@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # Model Registry Helper - Provider/Model Registry with Periodic Sync
 # Maintains a SQLite registry of AI models from configured providers,

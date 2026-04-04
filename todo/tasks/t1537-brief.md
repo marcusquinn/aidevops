@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1537: Refactor shared product concerns from mobile-app-dev to product/
 
 ## Session Origin

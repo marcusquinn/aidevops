@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # /security-review
 
 Review quarantined security items and apply learn actions to update the security config. Run after headless worker batches or when `quarantine-helper.sh stats` shows pending items.

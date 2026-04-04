@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC2317,SC2329
 # SC2317: Commands inside subshell test functions appear unreachable to ShellCheck
 # SC2329: Helper functions (sup, test_db, get_status, get_field, create_eval_task)

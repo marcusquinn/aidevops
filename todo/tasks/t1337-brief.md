@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1337: Simplify Tier 3 scripts — reduce over-engineered infrastructure to AI-readable config
 
 ## Origin

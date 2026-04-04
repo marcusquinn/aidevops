@@ -8,6 +8,9 @@ tools:
   bash: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Stealth Patches (Chromium/Playwright)
 
 Remove Playwright/Chromium automation signals. Primary: `rebrowser-patches` (MIT). Lightweight fallback: `playwright-stealth`.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Troubleshooting & Best Practices
 
 Reference index for Cloudflare + Pulumi troubleshooting. Detailed sections moved into chapter files so the entry doc stays short and scannable.

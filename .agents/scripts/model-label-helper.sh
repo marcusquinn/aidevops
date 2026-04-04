@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # model-label-helper.sh - Track model usage per task via GitHub issue labels
 # Part of t1025: Model usage tracking for data-driven model selection
 #

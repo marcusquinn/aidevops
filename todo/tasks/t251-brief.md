@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t251: Higgsfield API credit investigation — top up a small amount of API credits ($5-10) on cloud.higgsfield.ai/credits and test whether unlimited subscription models work via API. If they do, API becomes the preferred path (faster, no browser overhead). If not, document the separate credit pools clearly.
 
 ## Origin

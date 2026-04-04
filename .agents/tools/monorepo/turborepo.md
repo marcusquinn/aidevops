@@ -4,6 +4,9 @@ mode: subagent
 tools: [read, write, edit, bash, glob, grep, webfetch, task, context7_*]
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Turborepo - Monorepo Build System
 
 High-performance build system for JS/TS monorepos. Package managers: pnpm (recommended), npm, yarn. Docs: [turbo.build/repo/docs](https://turbo.build/repo/docs) (Context7 MCP).

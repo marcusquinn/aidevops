@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1485: Split playwright-automator.mjs into focused modules (Qlty file-complexity 1272)
 
 ## Origin

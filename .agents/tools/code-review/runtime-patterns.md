@@ -3,6 +3,9 @@ description: Runtime behaviour patterns — state machines, polling, backoff, qu
 mode: reference
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Runtime Behaviour Patterns
 
 Patterns that cause silent failures, infinite loops, and race conditions at runtime. Static analysis cannot catch them.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # settings-helper.sh - Canonical settings file manager for aidevops
 #
 # Manages ~/.config/aidevops/settings.json as the single source of truth

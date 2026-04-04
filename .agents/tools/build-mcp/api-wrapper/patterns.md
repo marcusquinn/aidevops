@@ -3,6 +3,9 @@ description: Common API patterns for MCP tool implementations
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Common API Patterns
 
 Reference patterns for `api-wrapper.md`. All examples assume `apiRequest` and `toolResult`/`toolError` helpers from the main template.

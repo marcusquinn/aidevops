@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Review Bot Gate (t1382, GH#3827)
 
 Before merging any PR, wait for AI code review bots (CodeRabbit, Gemini Code Assist,

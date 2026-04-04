@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: ClickHouse
 
 High-performance cockpit aesthetic. Neon yellow-green (`#faff69`) on pure black (`#000000`) — maximum contrast, terminal-grade, extreme typographic weight.

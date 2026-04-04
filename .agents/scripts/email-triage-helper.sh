@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # email-triage-helper.sh - Inbox triage engine for category, urgency, phishing, and action routing
 
 set -euo pipefail

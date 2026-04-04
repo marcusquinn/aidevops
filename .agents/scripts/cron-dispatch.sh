@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # cron-dispatch.sh - Execute a cron job by dispatching to OpenCode server
 #
 # Usage: cron-dispatch.sh <job-id>

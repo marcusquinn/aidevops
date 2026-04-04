@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Conversion Rate Optimization (CRO) - AI Agent Skill
 
 **Reading path:** New to CRO → Chapters 1-3 (foundations), then Chapter 4 (landing pages) | Experienced → Chapter 9 (pricing psychology), Chapter 16 (analytics) | Team leads → Chapter 20 (enterprise), Chapter 21 (testing masterclass).

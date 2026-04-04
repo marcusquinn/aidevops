@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Contribution Watch
 
 Monitors external issues/PRs via GitHub Notifications API. Managed repos (`pulse: true`) excluded.

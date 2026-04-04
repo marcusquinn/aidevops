@@ -14,6 +14,9 @@ mcp:
   - playwriter
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Playwriter - Browser Extension MCP
 
 <!-- AI-CONTEXT-START -->

@@ -7,6 +7,9 @@ tools:
   grep: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Smartlead Integration
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # High-Stakes Operations Taxonomy
 
 Defines which operations trigger parallel model verification before execution (plan p035, t1364.1). Agent contextual judgment takes precedence over pattern matching in `configs/verification-triggers.json`.

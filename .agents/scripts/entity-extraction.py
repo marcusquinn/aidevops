@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Entity extraction from markdown email bodies (t1044.6).
 
 Extracts people, organisations, properties, locations, and dates from

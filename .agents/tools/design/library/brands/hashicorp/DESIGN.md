@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: HashiCorp
 
 Enterprise infrastructure design system. Dual light/dark mode with multi-product color system — each product (Terraform, Vault, Waypoint, Vagrant) owns exactly one brand color.

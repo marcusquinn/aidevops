@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
 email_jmap_adapter.py - JMAP adapter for mailbox operations (RFC 8620/8621).
 

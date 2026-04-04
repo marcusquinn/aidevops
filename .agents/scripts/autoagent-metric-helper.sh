@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # autoagent-metric-helper.sh - Composite fitness scorer for framework self-improvement
 #
 # Computes a composite fitness score for framework changes. Used by the autoagent

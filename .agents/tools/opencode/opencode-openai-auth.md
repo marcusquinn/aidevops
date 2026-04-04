@@ -6,6 +6,9 @@ tools:
   bash: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # OpenCode OpenAI Auth Pool (t1548)
 
 Multi-account OAuth pool for ChatGPT Plus/Pro accounts in OpenCode. Same token injection architecture as the Anthropic pool.

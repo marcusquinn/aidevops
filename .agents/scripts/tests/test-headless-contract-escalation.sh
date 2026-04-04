@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-headless-contract-escalation.sh — Regression tests for GH#14964
 #
 # Verifies that:

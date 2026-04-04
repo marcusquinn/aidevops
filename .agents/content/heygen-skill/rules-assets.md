@@ -5,6 +5,9 @@ metadata:
   tags: assets, upload, images, audio, video, s3
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Asset Upload and Management
 
 Two-step flow: (1) get a presigned upload URL, (2) PUT the file to that URL.

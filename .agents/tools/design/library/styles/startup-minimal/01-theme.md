@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Startup Minimal — Visual Theme & Atmosphere
 
 Startup Minimal is a clean, focused design system that strips away everything non-essential. It is the design equivalent of a well-written function: no dead code, no unnecessary abstractions, just the work. Inspired by developer tools, productivity software, and platforms that let content speak, this system earns trust through restraint rather than decoration.

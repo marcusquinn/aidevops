@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # security-audit-sweep.sh — One-time security audit sweep across managed repos
 #
 # Runs security-posture-helper.sh against each pulse-enabled repo in repos.json,

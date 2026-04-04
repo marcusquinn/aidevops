@@ -15,6 +15,9 @@ mcp:
   - shadcn
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # shadcn/ui MCP Server
 
 <!-- AI-CONTEXT-START -->

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # complexity-scan-helper.sh — Deterministic complexity scan (GH#15285)
 #
 # Replaces per-file LLM complexity analysis with shell-based heuristics:

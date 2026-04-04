@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 set -euo pipefail
 
 # Code Review Monitoring and Auto-Fix Script (Enhanced Version)

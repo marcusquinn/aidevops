@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # MCP Connection Failure Diagnostics
 # Usage: mcp-diagnose.sh <mcp-name>
 #        mcp-diagnose.sh check-all

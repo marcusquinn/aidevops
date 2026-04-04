@@ -7,6 +7,9 @@ tools:
   webfetch: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Using git.cloudron.io as Reference
 
 https://git.cloudron.io/ — 200+ official Cloudron app packages; authoritative source for real-world packaging patterns.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # security-helper.sh - AI-powered security vulnerability analysis
 # Supports: code analysis, dependency scanning, git history, AI CLI configs
 set -euo pipefail

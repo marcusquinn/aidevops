@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Receipt Acknowledgement (Casual) - quick confirmation for colleagues or familiar contacts
 <!-- Use: for internal team members, long-standing contacts, or informal communication. -->
 <!-- See also: receipt-acknowledgement.md (standard), receipt-acknowledgement-formal.md (external/legal). -->

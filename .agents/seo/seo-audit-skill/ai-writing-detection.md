@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # AI Writing Detection
 
 Words, phrases, and punctuation patterns associated with AI-generated text. Avoid these.

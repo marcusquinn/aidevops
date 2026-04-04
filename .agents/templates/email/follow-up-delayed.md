@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Delayed Response Follow-up - apologise for a late reply and provide the answer
 <!-- Use: when you are replying to a message later than expected or promised. -->
 <!-- Tone: apologetic but brief, then move straight to substance. -->

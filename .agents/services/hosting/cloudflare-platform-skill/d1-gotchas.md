@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # D1 Gotchas & Troubleshooting
 
 ## Critical: Bind Parameters, Never Interpolate

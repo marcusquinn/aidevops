@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Import an external skill, convert to aidevops format, and register for update tracking. URL/Repo: `$ARGUMENTS`
 
 ## Quick Reference

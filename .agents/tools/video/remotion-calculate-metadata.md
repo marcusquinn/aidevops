@@ -6,6 +6,9 @@ metadata:
   tags: calculateMetadata, duration, dimensions, props, dynamic
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 `calculateMetadata` runs before render and overrides placeholder `<Composition>` values for duration, dimensions, fps, props, and output defaults. Pass it as the `calculateMetadata` prop on `<Composition>`.
 
 ## Set duration from one video

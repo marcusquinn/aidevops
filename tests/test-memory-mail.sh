@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-memory-mail.sh
 #
 # Unit tests for memory-helper.sh and mail-helper.sh:

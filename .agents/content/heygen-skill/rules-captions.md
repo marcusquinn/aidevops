@@ -5,6 +5,9 @@ metadata:
   tags: captions, subtitles, accessibility, srt
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Video Captions
 
 HeyGen auto-generates captions (subtitles) for videos, improving accessibility and engagement.

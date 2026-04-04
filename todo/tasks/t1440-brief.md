@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1440: Fix `aidevops update` failures when Homebrew is unavailable or token refresh returns 500
 
 ## Origin

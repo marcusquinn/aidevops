@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # prompt-injection-adapter.sh — Deploy system prompts via each runtime's native mechanism
 #
 # Part of the runtime abstraction layer (t1665). Replaces scattered prompt

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # FSD Public API Patterns
 
 > **Source:** [Public API Reference](https://feature-sliced.design/docs/reference/public-api)

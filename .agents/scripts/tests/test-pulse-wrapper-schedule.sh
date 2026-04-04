@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-pulse-wrapper-schedule.sh — Tests for check_repo_pulse_schedule() (GH#6510)
 #
 # Tests:

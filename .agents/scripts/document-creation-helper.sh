@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # document-creation-helper.sh - Unified document format conversion and creation
 # Part of aidevops framework: https://aidevops.sh
 #

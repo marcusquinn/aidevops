@@ -5,6 +5,9 @@ metadata:
   tags: scripts, writing, pauses, breaks, pacing, speech
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Writing Scripts for HeyGen Videos
 
 Pacing, pauses, and pronunciation must be explicit — AI avatars don't improvise.

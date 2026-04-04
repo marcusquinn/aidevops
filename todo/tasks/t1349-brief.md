@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1349: fix: webfetch 404 errors — add guidance to prevent raw GitHub URL fetching
 
 ## Origin

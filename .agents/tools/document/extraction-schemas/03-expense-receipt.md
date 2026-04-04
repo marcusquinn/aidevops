@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Expense Receipt Schema (Till/Shop Receipt)
 
 Use for informal receipts from shops, restaurants, fuel stations, etc.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # SaaS Landing Page Examples
 
 Annotated breakdowns of high-converting SaaS landing pages. Swipe the structure, not the specific claims.

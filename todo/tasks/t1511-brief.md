@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1511: Smartlead helper — campaigns, leads, sequences, warmup, analytics
 
 ## Origin

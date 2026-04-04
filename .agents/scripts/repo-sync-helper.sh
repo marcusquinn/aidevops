@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # repo-sync-helper.sh - Daily git pull for repos in configured parent directories
 #
 # Scans configured parent directories for git repos cloned from a remote and

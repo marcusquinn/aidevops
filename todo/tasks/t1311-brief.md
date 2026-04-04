@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1311: Supervisor AI-first migration — replace deterministic decision logic with AI pipeline
 
 ## Origin

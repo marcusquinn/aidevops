@@ -6,6 +6,9 @@ metadata:
   tags: captions, subtitles, srt, import, parse
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Importing .srt subtitles into Remotion
 
 Use `parseSrt()` from `@remotion/captions` to import `.srt` files.

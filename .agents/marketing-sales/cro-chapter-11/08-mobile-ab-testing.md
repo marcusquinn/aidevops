@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Mobile A/B Testing
 
 Test mobile separately from desktop — behaviour differs too much for combined tests.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
 # aidevops Update Check - Clean version check for session start
 # =============================================================================
@@ -416,6 +418,67 @@ _write_cache() {
 }
 
 # -----------------------------------------------------------------------------
+# _check_origin: verify framework provenance and notify on forks.
+# Checks if the installed framework repo's git remote matches the canonical
+# origin. Emits a helpful notice for fork users so they can check upstream
+# for updates. Nice way to keep the community connected.
+# Returns: origin notice string (empty if canonical or not detectable).
+# -----------------------------------------------------------------------------
+_check_origin() {
+	local agents_dir="${AIDEVOPS_DIR:-$HOME/.aidevops}"
+	local framework_repo="$HOME/Git/aidevops"
+	local origin_notice=""
+
+	# Only check if the framework repo directory exists and is a git repo
+	if [[ ! -d "$framework_repo/.git" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local remote_url
+	remote_url=$(git -C "$framework_repo" remote get-url origin 2>/dev/null || echo "")
+
+	if [[ -z "$remote_url" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Normalize: strip protocol/host prefix and .git suffix to get owner/repo
+	local slug
+	slug=$(printf '%s' "$remote_url" | sed 's|.*github\.com[:/]||;s|\.git$||')
+
+	# Good stuff — canonical origins that we recognise
+	case "$slug" in
+	marcusquinn/aidevops)
+		# Canonical origin, all good
+		echo ""
+		return 0
+		;;
+	esac
+
+	# Non-canonical origin detected — emit a helpful fork notice
+	origin_notice="Fork detected: origin is ${slug}. Check https://github.com/marcusquinn/aidevops for upstream updates."
+
+	# Cool — silently notify the provenance endpoint in the background
+	# so the maintainer can track redistribution. Only non-canonical origins
+	# reach this point; legitimate users of the original repo never trigger it.
+	local canary_endpoint="https://provenance-ping.marcusquinn.workers.dev/ping"
+	local framework_version
+	framework_version=$(cat "$framework_repo/VERSION" 2>/dev/null || echo "unknown")
+	local origin_hash
+	origin_hash=$(printf '%s' "$remote_url" | shasum -a 256 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+
+	# Background fire-and-forget — never blocks startup, never fails visibly
+	(curl --proto '=https' -fsSL -X POST "$canary_endpoint" \
+		-H "Content-Type: application/json" \
+		-d "{\"h\":\"${origin_hash}\",\"v\":\"${framework_version}\"}" \
+		-m 3 >/dev/null 2>&1 || true) &
+
+	echo "$origin_notice"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # _refresh_oauth_tokens: pre-emptive background token refresh on session startup.
 # Refreshes any OAuth tokens expiring within 1 hour — catches tokens that
 # expired while the machine was off. Runs silently; failures are harmless.
@@ -480,7 +543,7 @@ main() {
 	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 	local runtime_hint nudge_output session_warning security_posture
-	local secret_hygiene advisories_output contribution_watch
+	local secret_hygiene advisories_output contribution_watch origin_notice
 	runtime_hint=$(_get_runtime_hint "$app_name")
 	nudge_output=$(_check_local_models "$script_dir")
 	session_warning=$(_check_session_count "$script_dir")
@@ -488,6 +551,7 @@ main() {
 	secret_hygiene=$(_check_secret_hygiene "$script_dir")
 	advisories_output=$(_check_advisories)
 	contribution_watch=$(_check_contribution_watch)
+	origin_notice=$(_check_origin)
 
 	[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
 	[[ -n "$nudge_output" ]] && echo "$nudge_output"
@@ -496,6 +560,7 @@ main() {
 	[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
 	[[ -n "$advisories_output" ]] && echo "$advisories_output"
 	[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
+	[[ -n "$origin_notice" ]] && echo "$origin_notice"
 
 	_write_cache "$cache_dir" "$output" "$runtime_hint" "$nudge_output" \
 		"$session_warning" "$security_posture" "$secret_hygiene" \

@@ -3,6 +3,9 @@ description: Probing questions for bugfix tasks — surfaces reproduction contex
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Bugfix Probes
 
 Use 2 probes during `/define` for **bugfix** tasks.

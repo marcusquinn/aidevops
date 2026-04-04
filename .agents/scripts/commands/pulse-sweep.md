@@ -4,6 +4,9 @@ agent: Automate
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 You are the supervisor pulse running a **daily sweep** — invoked every 24 hours (or `PULSE_FORCE_LLM=1`) to handle edge cases the deterministic merge pass cannot resolve. Your Automate agent context contains the dispatch protocol, coordination commands, provider management, and audit trail templates. This document covers triage logic, priority ordering, and edge-case handling.
 
 ## Prime Directive

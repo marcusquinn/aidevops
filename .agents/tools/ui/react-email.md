@@ -13,6 +13,9 @@ tools:
   context7_*: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # React Email - Email Templates with React
 
 - **Docs**: Use Context7 MCP for latest React Email documentation

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # remote-dispatch-helper.sh - Remote container dispatch via SSH/Tailscale
 #
 # Dispatches AI workers to containers on remote hosts with credential

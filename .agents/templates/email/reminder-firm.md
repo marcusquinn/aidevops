@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Firm Reminder - second reminder with increased urgency (Level 2 of 3)
 <!-- Use: when the polite reminder received no response and the matter is becoming time-sensitive. -->
 <!-- Tone: direct, professional. States the impact of further delay. -->

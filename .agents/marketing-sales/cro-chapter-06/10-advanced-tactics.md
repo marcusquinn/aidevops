@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Advanced Tactics
 
 **Real-time notifications:** "[Name] from [City] just purchased [Product]" / "[X] people viewing now" / "Only [X] left." Tools: Proof Pulse, FOMO, TrustPulse, UseProof. Rules: real data only, limit frequency, dismissible, A/B test. **Personalization:** Match social proof to visitor attributes (industry, company size, use case, geography) via IP geo-targeting, URL parameters, cookie/session data, CRM integration.

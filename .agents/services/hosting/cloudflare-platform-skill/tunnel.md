@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Tunnel
 
 Outbound-only connectivity from origin to Cloudflare — no inbound ports, no firewall exposure, no public IP required.

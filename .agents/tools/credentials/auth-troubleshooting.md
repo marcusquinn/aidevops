@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Auth Troubleshooting
 
 Use when a user reports "Key Missing", auth errors, or the model has stopped responding.

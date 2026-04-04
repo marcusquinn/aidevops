@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Workers
 
 Cloudflare Workers run request-driven code on a global V8 isolate runtime. Prefer web platform APIs (`fetch`, `URL`, `Headers`, `Request`, `Response`) for portability.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1434: Fix `gh` mutation commands failing with `/bin/zsh` `posix_spawn` error
 
 ## Origin

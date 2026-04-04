@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Plugin functions: deploy_plugins, sanitize_plugin_namespace, generate_agent_skills, create_skill_symlinks, check_skill_updates, scan_imported_skills, multi-tenant
 # Part of aidevops setup.sh modularization (t316.3)
 

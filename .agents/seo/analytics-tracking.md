@@ -10,6 +10,9 @@ tools:
   webfetch: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Analytics Tracking - Implementation Guide
 
 **Scope**: Implement and audit analytics tracking (GA4, GTM, events, conversions, UTM, attribution). For *reading* analytics data, use `services/analytics/google-analytics.md`. Docs: [GA4](https://developers.google.com/analytics/devguides/collection/ga4) · [GTM](https://developers.google.com/tag-platform/tag-manager) · [Measurement Protocol](https://developers.google.com/analytics/devguides/collection/protocol/ga4)

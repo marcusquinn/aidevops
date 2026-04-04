@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Cross-document linking for email markdown collections (t1049.11).
 
 Adds `related_docs:` frontmatter field with references to:

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # orchestration-efficiency-collector.sh — Phase 1 deterministic data collector
 # for the daily orchestration efficiency analysis routine (GH#15316).
 #

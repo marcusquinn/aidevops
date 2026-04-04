@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Scaling Campaign (CBO)
 
 **Why CBO?** ABO requires manual budget allocation; CBO auto-allocates to best performers 24/7.

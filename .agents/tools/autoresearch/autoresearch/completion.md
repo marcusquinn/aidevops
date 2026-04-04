@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Autoresearch — Completion, Crash Recovery & Budget
 
 Sub-doc for `autoresearch.md`. Loaded on demand during Step 3.

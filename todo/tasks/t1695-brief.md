@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1695: FOSS Contribution Pipeline — Core Orchestrator + Handler Framework
 
 ## Session Origin

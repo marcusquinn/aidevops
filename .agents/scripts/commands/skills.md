@@ -4,6 +4,9 @@ agent: Build+
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Interactive skill discovery and management. Search, browse, describe, and get recommendations for installed skills, native subagents, and imported community skills.
 
 Arguments: $ARGUMENTS

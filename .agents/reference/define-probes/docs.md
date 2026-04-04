@@ -3,6 +3,9 @@ description: Probing questions for documentation tasks — surfaces audience, ac
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Docs Probes
 
 Use for `/define` tasks classified as **docs**: ask the 2 required questions, then select 2 probes.

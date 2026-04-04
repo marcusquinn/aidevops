@@ -13,6 +13,9 @@ tools:
   quickfile_*: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Receipt/Invoice OCR Pipeline
 
 <!-- AI-CONTEXT-START -->

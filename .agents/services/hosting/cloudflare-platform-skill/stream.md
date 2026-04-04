@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Cloudflare Stream
 
 Hosted VOD and live video — upload, encode, store, deliver, and stream without running your own transcoding stack. Supports TUS/API/URL uploads, direct creator uploads, iframe/HLS/DASH playback, RTMPS/SRT live ingest, `requireSignedURLs`, `allowedOrigins`, webhooks, GraphQL analytics, captions, and watermarks.

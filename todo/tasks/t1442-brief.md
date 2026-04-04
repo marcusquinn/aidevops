@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1442: Add missing `[Unreleased]` changelog entries needed to unblock the current patch release
 
 ## Origin

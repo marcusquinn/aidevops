@@ -6,6 +6,9 @@ metadata:
   tags: video, media, trim, volume, speed, loop, pitch
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Using videos in Remotion
 
 ## Setup

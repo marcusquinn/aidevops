@@ -7,6 +7,9 @@ tags: [security]
 enabled: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 STOP: You are about to hardcode a secret value. This violates security rules.
 
 - Never expose credentials in output, logs, or code

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # R2 Patterns & Best Practices
 
 Reference corpus for R2 storage code examples. Content moved into chapter files to keep the entry point short while preserving every example.

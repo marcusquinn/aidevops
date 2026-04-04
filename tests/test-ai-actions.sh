@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # shellcheck disable=SC2034,SC1090,SC2317,SC2329
 # SC2034: Variables set for sourced scripts (BLUE, SUPERVISOR_DB, etc.)
 # SC1090: Non-constant source paths (test harness pattern)

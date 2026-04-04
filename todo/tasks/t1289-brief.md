@@ -1,6 +1,9 @@
 ---
 mode: subagent
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # t1289: Integrate Cloudflare Code Mode MCP + trim superseded API reference docs — Cloudflare's new Code Mode MCP server (`mcp.cloudflare.com/mcp`) provides full Cloudflare API coverage (2,500+ endpoints) via just 2 tools (`search()` + `execute()`) in
 
 ## Origin

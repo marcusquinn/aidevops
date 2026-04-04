@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: NVIDIA
 
 Precision engineering aesthetic. High-contrast black/white foundation with NVIDIA Green (`#76b900`) as a pure signal accent — borders, underlines, highlights only, never fills.

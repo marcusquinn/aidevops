@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # leadsforge-helper.sh — LeadsForge B2B lead search and enrichment CLI
 # Wraps the LeadsForge REST API (api.leadsforge.ai/public/) for lead search,
 # enrichment, and export from the command line.

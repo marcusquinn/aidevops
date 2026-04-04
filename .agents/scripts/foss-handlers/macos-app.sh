@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # foss-handlers/macos-app.sh — macOS app handler stub for FOSS contributions (t1698)
 #
 # Implements the standard handler interface for macOS applications built with

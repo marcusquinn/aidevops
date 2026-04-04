@@ -12,6 +12,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Local Open-Weight TTS Models
 
 Reference for local TTS models available for standalone inference. For Qwen3-TTS (recommended for quality + multilingual), see `tools/voice/qwen3-tts.md`. For voice bridge engines (EdgeTTS, macOS Say, FacebookMMS), see `tools/voice/voice-models.md`.

@@ -11,6 +11,9 @@ tools:
   webfetch: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Service Links Directory
 
 **Sections:** [Infrastructure](#infrastructure--hosting) · [DNS](#domain--dns) · [Dev & Git](#development--git) · [Browser Automation](#browser-automation) · [Security & Quality](#security--quality) · [Monitoring](#performance--monitoring) · [AI Tools](#ai-tools) · [MCP](#mcp-integrations) · [Framework](#framework-documentation)

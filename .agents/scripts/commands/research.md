@@ -4,6 +4,9 @@ agent: Research
 mode: subagent
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 Execute this request with the Research primary agent.
 
 Request: $ARGUMENTS

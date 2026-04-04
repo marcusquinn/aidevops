@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Ad Creative Mastery
 
 High-converting advertising creative for Meta, Google, TikTok, and beyond.

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Zapier
 
 Warm, approachable professionalism. Cream canvas (`#fffefb`), near-black with reddish warmth (`#201515`), vivid orange accent (`#ff4f00`). Three-font system: Degular Display (hero, 0.90 line-height), Inter (all UI), GT Alpina (editorial accents). Border-first structure -- no shadow elevation.

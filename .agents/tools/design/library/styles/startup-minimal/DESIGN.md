@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Startup Minimal
 
 Clean, focused, engineered. Single blue accent (`#2563eb`), near-white backgrounds, razor-thin borders, 4px grid. No gradients, no decorative elements — hierarchy through typography and spacing.

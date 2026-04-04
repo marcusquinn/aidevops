@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # t1451: Add Context7 CLI subagent and hybrid MCP fallback docs
 
 ## Origin

@@ -8,6 +8,9 @@ tools:
   grep: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # MCP Troubleshooting Quick Reference
 
 <!-- AI-CONTEXT-START -->

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # tabby-helper.sh — Generate and sync Tabby terminal profiles from repos.json
 #
 # Creates a Tabby profile for each repo in repos.json with:

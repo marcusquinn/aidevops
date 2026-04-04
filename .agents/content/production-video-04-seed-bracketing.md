@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Seed Bracketing Method
 
 Increases success rate from 15% to 70%+ by systematically testing seed ranges.

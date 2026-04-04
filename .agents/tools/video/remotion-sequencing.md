@@ -6,6 +6,9 @@ metadata:
   tags: sequence, series, timing, delay, trim
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 ## Sequence
 
 Delays when an element appears in the timeline. Wraps children in an absolute fill by default — use `layout="none"` to disable.

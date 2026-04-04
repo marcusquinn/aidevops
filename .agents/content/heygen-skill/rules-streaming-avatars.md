@@ -3,6 +3,9 @@ name: streaming-avatars
 description: Real-time interactive avatar sessions via WebRTC — live customer service, virtual assistants
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Streaming Avatars
 
 ## Create Session

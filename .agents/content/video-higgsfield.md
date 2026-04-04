@@ -13,6 +13,9 @@ tools:
   task: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Higgsfield AI API
 
 Unified access to 100+ generative media models (images, videos, voice, audio) through a single API with automatic infrastructure scaling.

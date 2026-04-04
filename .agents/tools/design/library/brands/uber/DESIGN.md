@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Uber
 
 Uber — confident minimalism: true black/white duality, pill-shaped everything (999px radius), UberMove Bold headlines, whisper-soft shadows, warm human illustrations contrasting stark monochrome.

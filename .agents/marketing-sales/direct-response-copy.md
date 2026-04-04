@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Direct Response Copywriting Skill
 
 Copy that drives **immediate, measurable action**: landing pages, email sequences, ad copy, sales pages/VSLs, cold outreach, pricing pages, trial/demo flows, onboarding sequences. **Not for:** brand awareness, content marketing, PR, or general visibility goals.

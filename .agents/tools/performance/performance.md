@@ -14,6 +14,9 @@ mcp:
   - chrome-devtools-mcp
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Web Performance Analysis
 
 <!-- AI-CONTEXT-START -->

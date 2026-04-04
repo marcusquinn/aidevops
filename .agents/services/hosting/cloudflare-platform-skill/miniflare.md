@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Miniflare
 
 Local simulator for Cloudflare Workers. Runs Workers in workerd sandbox with full runtime API support — no internet required.

@@ -5,6 +5,9 @@ metadata:
   tags: templates, variables, personalization, batch
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Video Templates
 
 Reusable video structures with variable placeholders for personalized generation at scale.

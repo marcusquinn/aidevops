@@ -12,6 +12,9 @@ tools:
   context7_*: true
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Hono - Lightweight Web Framework
 
 **Purpose**: TypeScript-first lightweight API framework. Runs on Edge/Node.js/Bun/Deno/Cloudflare Workers. Full type inference, built-in middleware (CORS, auth, validation), type-safe RPC client.

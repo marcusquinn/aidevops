@@ -5,6 +5,9 @@ mode: subagent
 model: haiku
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Platform Persona Adaptations
 
 Base voice: `content/guidelines.md` or `context/brand-voice.md`. If `context/brand-identity.toon` exists, read it first (tone, vocabulary, imagery, personality). See `tools/design/brand-identity.md`.
