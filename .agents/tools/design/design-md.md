@@ -21,7 +21,7 @@ model: sonnet
 
 ## Quick Reference
 
-- **What**: A plain-text markdown file that captures a complete visual design system for AI agents
+- **What**: Plain-text markdown capturing a complete visual design system for AI agents
 - **Origin**: Google Stitch (https://stitch.withgoogle.com/docs/design-md/overview)
 - **Location**: `DESIGN.md` in project root (alongside `AGENTS.md`)
 - **Template**: `templates/DESIGN.md.template` (skeleton for `aidevops init`)
@@ -30,21 +30,21 @@ model: sonnet
 - **Palette tools**: `tools/design/colour-palette.md` (generation, spinning, narrowing)
 - **CLI scripts**: `scripts/colormind-helper.sh` (palette API), `scripts/design-preview-helper.sh` (screenshot capture)
 
-**Relationship to other design agents:**
+**Related agents:**
 
-| Agent | Role | Relationship to DESIGN.md |
-|-------|------|---------------------------|
-| `tools/design/brand-identity.md` | Strategic brand profile (8 dimensions) | **Upstream** -- brand decisions feed DESIGN.md generation |
-| `tools/design/ui-ux-inspiration.md` | URL study + interview workflow | **Producer** -- extracts tokens that populate DESIGN.md |
-| `tools/design/design-inspiration.md` | 60+ curated gallery resources | **Discovery** -- where to look for references |
-| `tools/design/colour-palette.md` | Palette generation and spinning | **Tool** -- generates colour sections for DESIGN.md |
+| Agent | Role | Relationship |
+|-------|------|--------------|
+| `tools/design/brand-identity.md` | Strategic brand profile (8 dimensions) | **Upstream** -- feeds DESIGN.md generation |
+| `tools/design/ui-ux-inspiration.md` | URL study + interview workflow | **Producer** -- extracts tokens |
+| `tools/design/design-inspiration.md` | 60+ curated gallery resources | **Discovery** -- where to look |
+| `tools/design/colour-palette.md` | Palette generation and spinning | **Tool** -- generates colour sections |
 | `tools/design/library/` | Example DESIGN.md files | **Reference** -- inspiration and starting points |
-| `product/ui-design.md` | Product design standards | **Constraint** -- accessibility/platform rules DESIGN.md must satisfy |
-| `tools/ui/ui-skills.md` | Opinionated UI build rules | **Implementation** -- how to build what DESIGN.md specifies |
-| `tools/ui/nothing-design-skill/` | Nothing-style design system | **Example** -- a complete design system in agent format |
-| `tools/design/ui-ux-catalogue.toon` | 36+ UI style patterns | **Data** -- style presets that inform DESIGN.md choices |
+| `product/ui-design.md` | Product design standards | **Constraint** -- accessibility/platform rules |
+| `tools/ui/ui-skills.md` | Opinionated UI build rules | **Implementation** -- how to build |
+| `tools/ui/nothing-design-skill/` | Nothing-style design system | **Example** -- complete design system |
+| `tools/design/ui-ux-catalogue.toon` | 36+ UI style patterns | **Data** -- style presets |
 
-**Workflow overview** (apply in order):
+**Workflow** (apply in order):
 
 1. **Check** -- does `DESIGN.md` exist in project root? If yes, use it. If no, create one.
 2. **Create** -- from scratch (interview), from URL (extraction), or from library example.
@@ -56,41 +56,29 @@ model: sonnet
 
 ## The DESIGN.md Format
 
-### Purpose
-
-DESIGN.md is to visual design what AGENTS.md is to code behaviour. It's a plain-text document that AI coding agents read to generate consistent, on-brand UI. No Figma exports, no JSON schemas, no special tooling -- just markdown that LLMs read natively.
+DESIGN.md is to visual design what AGENTS.md is to code behaviour: plain-text that AI coding agents read to generate consistent, on-brand UI. No Figma exports, no JSON schemas -- just markdown LLMs read natively.
 
 ### The 9 Sections
 
-Every DESIGN.md follows this structure. All sections are required for a complete system; partial files work but produce less consistent output.
+All sections required for a complete system; partial files work but produce less consistent output.
 
 | # | Section | What it captures | Why agents need it |
 |---|---------|------------------|--------------------|
-| 1 | Visual Theme & Atmosphere | Mood, density, design philosophy, key characteristics | Sets the overall direction before any specifics |
+| 1 | Visual Theme & Atmosphere | Mood, density, design philosophy, key characteristics | Sets overall direction before any specifics |
 | 2 | Colour Palette & Roles | Semantic name + hex + functional role for every colour | Agents need exact values, not "use a blue" |
-| 3 | Typography Rules | Font families, full hierarchy table (size, weight, line-height, spacing) | Consistent type scale across all generated components |
+| 3 | Typography Rules | Font families, full hierarchy table (size, weight, line-height, spacing) | Consistent type scale across all components |
 | 4 | Component Stylings | Buttons, cards, inputs, navigation with all states (hover, focus, active, disabled) | Agents build components -- they need the specs |
 | 5 | Layout Principles | Spacing scale, grid system, container widths, whitespace philosophy | Consistent spatial rhythm |
 | 6 | Depth & Elevation | Shadow system, surface hierarchy, layering rules | Visual depth without guessing |
-| 7 | Do's and Don'ts | Design guardrails and anti-patterns | Prevents agents from making off-brand choices |
+| 7 | Do's and Don'ts | Design guardrails and anti-patterns | Prevents off-brand choices |
 | 8 | Responsive Behaviour | Breakpoints, touch targets, collapsing strategy | Multi-device consistency |
-| 9 | Agent Prompt Guide | Quick colour reference, ready-to-use prompts | Fast-path for agents that just need the essentials |
+| 9 | Agent Prompt Guide | Quick colour reference, ready-to-use prompts | Fast-path for agents needing essentials |
 
-### Section Detail
+### Section Formats
 
-#### 1. Visual Theme & Atmosphere
+**Section 1** -- Prose (2-4 paragraphs): mood, what makes it distinctive, key characteristics as bullet list with exact values. Example: _"A dark-mode-first developer tool interface rooted in deep purple-black backgrounds (#1f1633)..."_
 
-Prose description (2-4 paragraphs) covering:
-
-- Overall mood and aesthetic direction
-- What makes this design system distinctive
-- Key characteristics as a bullet list with exact values
-
-Example opening: _"A dark-mode-first developer tool interface rooted in deep purple-black backgrounds (#1f1633) that evoke late-night debugging sessions..."_
-
-#### 2. Colour Palette & Roles
-
-Grouped by function. Every colour has semantic name, hex, and usage description.
+**Section 2** -- Grouped by function; every colour has semantic name, hex, usage:
 
 ```markdown
 ### Primary Brand
@@ -106,11 +94,7 @@ Grouped by function. Every colour has semantic name, hex, and usage description.
 - **Glass White** (`rgba(255, 255, 255, 0.18)`): Frosted glass button backgrounds
 ```
 
-#### 3. Typography Rules
-
-Three parts: font families, hierarchy table, principles.
-
-The hierarchy table is the core -- a complete mapping from role to exact values:
+**Section 3** -- Font families, hierarchy table (the core), principles:
 
 ```markdown
 | Role | Font | Size | Weight | Line Height | Letter Spacing | Notes |
@@ -120,9 +104,7 @@ The hierarchy table is the core -- a complete mapping from role to exact values:
 | Button Text | Rubik | 14px | 500-700 | 1.14 | 0.2px | uppercase |
 ```
 
-#### 4. Component Stylings
-
-Each component variant needs: background, text colour, border, radius, padding, shadow, and all interactive states.
+**Section 4** -- Each component variant: background, text colour, border, radius, padding, shadow, all interactive states:
 
 ```markdown
 ### Buttons
@@ -136,13 +118,9 @@ Each component variant needs: background, text colour, border, radius, padding, 
 - Focus: outline `rgb(106, 95, 193) solid 0.125rem`
 ```
 
-#### 5. Layout Principles
+**Section 5** -- Spacing scale, grid system, container widths, breakpoint table, whitespace philosophy.
 
-Spacing scale, grid system, container widths, breakpoint table, whitespace philosophy.
-
-#### 6. Depth & Elevation
-
-Table of elevation levels with shadow values and usage:
+**Section 6** -- Elevation table with shadow values and usage:
 
 ```markdown
 | Level | Treatment | Use |
@@ -152,9 +130,7 @@ Table of elevation levels with shadow values and usage:
 | Elevated (2) | `0px 10px 15px -3px` | Cards, panels |
 ```
 
-#### 7. Do's and Don'ts
-
-Explicit guardrails:
+**Section 7** -- Explicit guardrails:
 
 ```markdown
 **Do:**
@@ -166,13 +142,9 @@ Explicit guardrails:
 - Never mix font families within a single component
 ```
 
-#### 8. Responsive Behaviour
+**Section 8** -- Breakpoint table, mobile-specific rules, touch target sizes.
 
-Breakpoint table, mobile-specific rules, touch target sizes.
-
-#### 9. Agent Prompt Guide
-
-Quick-reference colour table and ready-to-use prompts for common tasks:
+**Section 9** -- Quick-reference colour table and ready-to-use prompts:
 
 ```markdown
 ### Quick Colour Reference
@@ -186,10 +158,7 @@ Quick-reference colour table and ready-to-use prompts for common tasks:
 
 ## Creating a DESIGN.md
 
-### Method 1: From Scratch (Interview)
-
-Best when starting a new project with no existing design.
-
+**Method 1: From Scratch (Interview)** -- new project, no existing design.
 1. Run brand identity interview (`tools/design/brand-identity.md`)
 2. User selects UI style from `tools/design/ui-ux-catalogue.toon`
 3. Generate colour palette (`tools/design/colour-palette.md`)
@@ -197,29 +166,20 @@ Best when starting a new project with no existing design.
 5. Synthesise into DESIGN.md using the template (`templates/DESIGN.md.template`)
 6. Generate preview, iterate with user
 
-### Method 2: From URL (Extraction)
-
-Best when matching an existing website's look.
-
+**Method 2: From URL (Extraction)** -- matching an existing website's look.
 1. Run URL study workflow (`tools/design/ui-ux-inspiration.md` > URL Study Workflow)
 2. Extract computed styles: colours, typography, spacing, components, shadows
 3. Map extracted values into DESIGN.md sections
-4. Fill gaps (the URL study won't capture do's/don'ts or responsive rules -- infer from patterns)
+4. Fill gaps (URL study won't capture do's/don'ts or responsive rules -- infer from patterns)
 5. Generate preview, validate against source URL
 
-### Method 3: From Library Example
-
-Best when a known brand/style is close to what's needed.
-
+**Method 3: From Library Example** -- known brand/style close to what's needed.
 1. Browse `tools/design/library/brands/` (55 real brand examples) or `tools/design/library/styles/` (archetype templates)
 2. Copy the closest DESIGN.md into project root
-3. Customise: swap colours (use `tools/design/colour-palette.md`), adjust typography, update do's/don'ts
+3. Customise: swap colours (`tools/design/colour-palette.md`), adjust typography, update do's/don'ts
 4. Generate preview, iterate
 
-### Method 4: From Brand Identity
-
-Best when `brand-identity.toon` already exists in the project.
-
+**Method 4: From Brand Identity** -- `brand-identity.toon` already exists in the project.
 1. Read existing `context/brand-identity.toon`
 2. Map brand identity dimensions to DESIGN.md sections:
    - `visual_style` + `buttons_and_forms` -> sections 1, 4, 5, 6
@@ -233,39 +193,16 @@ Best when `brand-identity.toon` already exists in the project.
 
 ## Using a DESIGN.md
 
-### For Coding Agents
+**For Coding Agents** -- drop `DESIGN.md` in project root, tell the agent: `"Build a landing page following DESIGN.md"`. The agent uses exact hex values, font specs, spacing, and component styles. No ambiguity, reproducible output.
 
-Drop `DESIGN.md` in your project root. Tell the agent:
+**For Design Review** -- generate `preview.html` from DESIGN.md to produce a visual catalogue: colour swatches, typography scale, button variants, card/input examples, spacing scale, light/dark modes. Use `tools/design/library/_template/preview.html.template`.
 
-> "Build a landing page following DESIGN.md"
-
-The agent reads the file and uses exact hex values, font specs, spacing, and component styles. No ambiguity, no "make it look nice" -- specific, reproducible output.
-
-### For Design Review
-
-Generate `preview.html` from the DESIGN.md to produce a visual catalogue showing:
-
-- Colour swatches with hex values
-- Typography scale samples
-- Button variants with states
-- Card and input examples
-- Spacing scale visualisation
-- Light and dark mode versions
-
-Use `tools/design/library/_template/preview.html.template` to generate previews.
-
-### For Screenshots
-
-Use Playwright to render `preview.html` and capture optimised screenshots:
-
-```text
-1. Open preview.html in Playwright (1440px viewport)
-2. Wait for fonts to load (networkidle)
-3. Capture full-page screenshot as PNG
-4. Convert to WebP (quality 90) and AVIF (quality 80) for size optimisation
-5. Repeat with dark mode variant
-6. Respect screenshot size limits (max 1568px longest side for AI review)
-```
+**For Screenshots** -- use Playwright to render `preview.html`:
+1. Open `preview.html` in Playwright (1440px viewport), wait for `networkidle`
+2. Capture full-page screenshot as PNG
+3. Convert to WebP (quality 90) and AVIF (quality 80)
+4. Repeat with dark mode variant
+5. Respect screenshot size limits (max 1568px longest side for AI review)
 
 ## Library Structure
 
@@ -275,12 +212,8 @@ tools/design/library/
 ├── _template/
 │   ├── DESIGN.md.template     -- Section skeleton with placeholders
 │   └── preview.html.template  -- Parameterised HTML/CSS for visual preview
-├── brands/                    -- Real brand examples (educational use)
-│   ├── airbnb/DESIGN.md
-│   ├── apple/DESIGN.md
-│   ├── ...                    -- 55 brands total
-│   └── zapier/DESIGN.md
-└── styles/                    -- Archetype style templates
+├── brands/                    -- Real brand examples (educational use, 55 brands)
+└── styles/                    -- Archetype style templates (12 types)
     ├── corporate-traditional/DESIGN.md
     ├── corporate-modern/DESIGN.md
     ├── corporate-friendly/DESIGN.md
@@ -295,10 +228,8 @@ tools/design/library/
     └── playful-vibrant/DESIGN.md
 ```
 
-### Brands vs Styles
-
-- **Brands** (`library/brands/`): Extracted from real websites. Educational reference. Shows how top companies implement their design systems. Useful for "I want something like Stripe" or "make it feel like Linear".
-- **Styles** (`library/styles/`): Original archetype templates. Not tied to any brand. Generic starting points for common project types. Useful for "I need a corporate site" or "build me a developer tool dashboard".
+- **Brands** (`library/brands/`): Extracted from real websites. Educational reference. Use for "I want something like Stripe" or "make it feel like Linear".
+- **Styles** (`library/styles/`): Original archetype templates, not tied to any brand. Use for "I need a corporate site" or "build me a developer tool dashboard".
 
 ## Browser Automation: DESIGN.md from URL
 
