@@ -13,8 +13,6 @@ Use regular React, HTML, SVG, or D3. Disable third-party animation systems — t
 
 ## Bar charts — staggered bars
 
-Animate each bar height with a per-bar delay:
-
 ```tsx
 const STAGGER_DELAY = 5;
 const frame = useCurrentFrame();
@@ -32,9 +30,7 @@ const bars = data.map((item, i) => {
 });
 ```
 
-## Pie charts
-
-Animate segments with `strokeDashoffset` and rotate the circle so drawing starts at 12 o'clock.
+## Pie charts — `strokeDashoffset`, rotated to 12 o'clock
 
 ```tsx
 const frame = useCurrentFrame();
