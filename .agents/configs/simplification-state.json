@@ -6376,10 +6376,12 @@
       "passes": 1,
       "pr": 17142
     },
-    ".agents/tools/design/library/styles/corporate-friendly/02-colour-palette.md": {
-      "hash": "33a9f74635ab29c5caa753bacc8543849b495dab49314ad48e4164143ecbcdbd",
-      "at": "2026-04-04T07:25:29Z",
-      "passes": 1
+    ".agents/tools/design/library/styles/editorial-clean/05-layout.md": {
+      "hash": "3806e2b37ace69e5222528808a340d7b9a2f21a1695a62cb856713429581ceaa",
+      "at": "2026-04-04T07:15:00Z",
+      "passes": 1,
+      "pr": 17183,
+      "status": "converged"
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
@@ -6390,10 +6392,10 @@
     "issue": "GH#16973"
   },
   ".agents/tools/credentials/cch-reverse-engineering.md": {
-    "hash": "fa97f0947ec611ee1658f5e9c08ff6ebae029e90",
-    "at": "2026-04-04T07:30:00Z",
-    "passes": 2,
-    "pr": 17170
+    "hash": "6c57da6128787628b2d18755062d669275b3c3e7",
+    "at": "2026-04-04T04:17:32Z",
+    "passes": 1,
+    "pr": 17052
   },
   ".agents/tools/design/library/brands/resend/04-components.md": {
     "hash": "3a892bf3ecbfeae70118a269688f23838a595081c9d8449d6143222bf7351bc7",
@@ -6420,10 +6422,5 @@
     "lines": 30,
     "status": "simplified",
     "issue": "GH#17125"
-  },
-  ".agents/tools/design/library/brands/vercel/02-color-palette.md": {
-    "hash": "fff9407e385c159cda7e8381b09bb8a3503ffff2855189216f25bafef834fe78",
-    "status": "simplified",
-    "issue": 17171
   }
 }

@@ -37,9 +37,11 @@
 
 ## Whitespace Philosophy
 
-Whitespace is the defining characteristic of this system. Every element has room to breathe. Paragraphs are spaced generously. Section breaks are visually clear. The reading experience is never cluttered, never cramped. When in doubt, add more whitespace — it always improves readability.
+Whitespace defines this system. Every element breathes. When in doubt, add more — it always improves readability.
 
 ## Border-Radius Scale
+
+Minimal rounding — editorial aesthetic favours clean, near-square edges.
 
 | Token | Value | Usage |
 |-------|-------|-------|
@@ -47,5 +49,3 @@ Whitespace is the defining characteristic of this system. Every element has room
 | `--radius-md` | 4px | Buttons, inputs, code blocks |
 | `--radius-lg` | 8px | Newsletter signup cards |
 | `--radius-full` | 9999px | Author avatars |
-
-Minimal rounding throughout — the editorial aesthetic favours clean, near-square edges.
