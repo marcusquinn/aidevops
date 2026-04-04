@@ -145,12 +145,14 @@ jobs:
         done < <(git ls-files '*.json')
 
         # Also validate .json.txt template files
+        # These files may contain SPDX license header comments (lines starting with #)
+        # which are stripped before JSON validation.
         while IFS= read -r file; do
-          if python3 -m json.tool "$file" > /dev/null 2>&1; then
+          if grep -v '^#' "$file" | python3 -m json.tool > /dev/null 2>&1; then
             echo "✅ $file"
           else
             echo "❌ $file - invalid JSON"
-            python3 -m json.tool "$file" 2>&1 | head -5
+            grep -v '^#' "$file" | python3 -m json.tool 2>&1 | head -5
             errors=$((errors + 1))
           fi
         done < <(git ls-files '*.json.txt')
