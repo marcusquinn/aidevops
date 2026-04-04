@@ -36,8 +36,6 @@ Four required sections — keep under 500 words (runners get the full prompt on 
 
 ## Evolving Runners into Shared Agents
 
-When a runner proves valuable across multiple projects:
-
 1. **Draft** — save to `~/.aidevops/agents/draft/` with `status: draft` in frontmatter
 2. **Custom** — move to `~/.aidevops/agents/custom/` for permanent private use
 3. **Shared** — refine to framework standards and submit a PR to `.agents/` in the aidevops repo
@@ -45,7 +43,4 @@ When a runner proves valuable across multiple projects:
 Log a TODO when a runner has reuse potential: `- [ ] tXXX Review runner {name} for promotion #agent-review`
 
 See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers" for the full promotion workflow.
-
-## Parallel vs Sequential
-
-See the [decision guide](headless-dispatch.md#parallel-vs-sequential) in headless-dispatch.md.
+Parallel vs sequential dispatch: [decision guide](headless-dispatch.md#parallel-vs-sequential).
