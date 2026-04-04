@@ -2,65 +2,60 @@
 
 ## Buttons
 
-**Primary Button**
+Shared base (all variants):
+
+```css
+font: 13px/1 Inter, 500
+padding: 8px 16px
+border-radius: 6px
+:focus → outline: 2px solid #2563eb; outline-offset: 1px
+```
+
+### Primary
 
 ```css
 background: #2563eb
 color: #ffffff
-font: 13px/1 Inter, 500
-padding: 8px 16px
 border: none
-border-radius: 6px
 transition: background 150ms ease
 
 :hover    → background: #1d4ed8
 :active   → background: #1e40af
-:focus    → outline: 2px solid #2563eb; outline-offset: 1px
 :disabled → background: #93c5fd; cursor: not-allowed
 ```
 
-**Secondary Button**
+### Secondary
 
 ```css
 background: #ffffff
 color: #18181b
-font: 13px/1 Inter, 500
-padding: 8px 16px
 border: 1px solid #e5e7eb
-border-radius: 6px
 
 :hover    → background: #fafafa; border-color: #d4d4d8
 :active   → background: #f4f4f5
-:focus    → outline: 2px solid #2563eb; outline-offset: 1px
 :disabled → color: #a1a1aa; background: #fafafa
 ```
 
-**Ghost Button**
+### Ghost
 
 ```css
 background: transparent
 color: #71717a
-font: 13px/1 Inter, 500
-padding: 8px 16px
 border: none
-border-radius: 6px
 
-:hover    → color: #18181b; background: rgba(0, 0, 0, 0.04)
-:active   → background: rgba(0, 0, 0, 0.06)
+:hover  → color: #18181b; background: rgba(0, 0, 0, 0.04)
+:active → background: rgba(0, 0, 0, 0.06)
 ```
 
-**Danger Button**
+### Danger
 
 ```css
 background: #dc2626
 color: #ffffff
-font: 13px/1 Inter, 500
-padding: 8px 16px
 border: none
-border-radius: 6px
 
-:hover    → background: #b91c1c
-:active   → background: #991b1b
+:hover  → background: #b91c1c
+:active → background: #991b1b
 ```
 
 ## Inputs
@@ -110,12 +105,12 @@ Interactive variant:
 ## Navigation
 
 ```css
-Background: #ffffff
-Border bottom: 1px solid #e5e7eb
-Height: 56px
-Logo: 18px Inter 600 #18181b (text wordmark) or small logomark
-Nav items: 14px Inter, 500, #71717a
-Active item: #18181b, font-weight: 500
-Hover item: #18181b
-CTA in nav: small primary button
+background: #ffffff
+border-bottom: 1px solid #e5e7eb
+height: 56px
+logo: 18px Inter 600 #18181b (text wordmark) or small logomark
+nav-items: 14px Inter, 500, #71717a
+active-item: #18181b, font-weight: 500
+hover-item: #18181b
+cta: small primary button
 ```
