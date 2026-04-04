@@ -10,7 +10,7 @@
 | Warm Sand (Secondary) | `#e8e6dc` | `#4d4c48` | `0px 12px 0px 8px` | `8px` | Asymmetric — icon-first; shadow: `#e8e6dc 0px 0px 0px 0px, #d1cfc5 0px 0px 0px 1px` |
 | White Surface | `#ffffff` | `#141413` | `8px 16px 8px 12px` | `12px` | Hover: shifts to secondary bg |
 | Dark Charcoal | `#30302e` | `#faf9f5` | `0px 12px 0px 8px` | `8px` | Shadow: `#30302e 0px 0px 0px 0px, ring 0px 0px 0px 1px` |
-| Brand Terracotta | `#c96442` | `#faf9f5` | — | `8–12px` | Primary CTA; only chromatic button; shadow: `#c96442 0px 0px 0px 0px, #c96442 0px 0px 0px 1px` |
+| Brand Terracotta | `#c96442` | `#faf9f5` | `0px 12px 0px 8px` | `8–12px` | Primary CTA; only chromatic button; shadow: `#c96442 0px 0px 0px 0px, #c96442 0px 0px 0px 1px` |
 | Dark Primary | `#141413` | `#b0aea5` | `9.6px 16.8px` | `12px` | Border: `1px solid #30302e` (dark theme surfaces) |
 
 ## Cards & Containers
