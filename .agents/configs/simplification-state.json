@@ -1748,9 +1748,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "hash": "3692bd2e510581d7a14d4ab2450df626655c0e6d",
-      "at": "2026-04-03T03:15:11Z",
-      "passes": 3,
+      "hash": "66158f8e86e2db18008b332fd4ec1a6d2113eea7",
+      "at": "2026-04-04T03:30:30Z",
+      "passes": 4,
       "pr": 15086
     },
     ".agents/scripts/issue-sync-lib.sh": {
@@ -1784,9 +1784,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "7c08ba6628415931884a23cbef7ebf464e82f858",
-      "at": "2026-04-03T22:25:14Z",
-      "passes": 12,
+      "hash": "5bdbb4cc53626df305728b3d41cb61626891b328",
+      "at": "2026-04-04T03:30:31Z",
+      "passes": 13,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -3757,9 +3757,9 @@
       "passes": 5
     },
     ".agents/tools/code-review/code-standards.md": {
-      "hash": "78c184b646271df0633b67b7f3bda3090a1915b9",
-      "at": "2026-03-28T15:30:22Z",
-      "passes": 1,
+      "hash": "9b1170909ea6121b1f294bd5346d832a06779205",
+      "at": "2026-04-04T03:31:00Z",
+      "passes": 2,
       "pr": 11944
     },
     ".agents/tools/code-review/coderabbit.md": {
@@ -5261,15 +5261,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "61f09a885c38631e6e784cb009c3175821e851cb",
-      "at": "2026-04-03T22:57:30Z",
-      "passes": 29,
+      "hash": "72682345263169a10d1a3bb63a111a28a5398db6",
+      "at": "2026-04-04T03:31:27Z",
+      "passes": 30,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "fb9a89f9f971cea4ffe9dcef7a906f885c98ee42",
-      "at": "2026-04-03T22:57:31Z",
-      "passes": 28,
+      "hash": "737d647ccaf6c797164573f4beb05eb3f545fe3c",
+      "at": "2026-04-04T03:31:27Z",
+      "passes": 29,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -6166,6 +6166,162 @@
       "at": "2026-04-04T02:14:32Z",
       "passes": 3,
       "pr": 0
+    },
+    ".agents/scripts/linters-local.sh": {
+      "hash": "ea54e5360b9a781b8750abf72cee8b131cf511e7",
+      "at": "2026-04-04T03:31:28Z",
+      "pr": 17036,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/startup-bold/04-components.md": {
+      "hash": "1bbe4ae1ba55faad4da3db040ac2a07107b23b30",
+      "at": "2026-04-04T03:31:28Z",
+      "pr": 17021,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/startup-minimal/04-components.md": {
+      "hash": "3c267f5c0b0ce06a90dcc751d3b59adf2889e13a",
+      "at": "2026-04-04T03:31:28Z",
+      "pr": 17020,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/corporate-modern/04-components.md": {
+      "hash": "0d27460862c59aaa1af2cf42f99418e179a7f396",
+      "at": "2026-04-04T03:31:28Z",
+      "pr": 17019,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/corporate-traditional/04-components.md": {
+      "hash": "3d52e7732effbedfb5f2cfe12e3ff0956793e803",
+      "at": "2026-04-04T03:31:28Z",
+      "pr": 17016,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/corporate-friendly/04-components.md": {
+      "hash": "7e5d7b58f18d0edc7353b324264f3567795020bd",
+      "at": "2026-04-04T03:31:28Z",
+      "pr": 17015,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/editorial-clean/04-components.md": {
+      "hash": "5524379ea81c5fad972fef3866222696daf89a09",
+      "at": "2026-04-04T03:31:28Z",
+      "pr": 17014,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/playful-vibrant/04-components.md": {
+      "hash": "64ad55ddd8886c16fef7b021049ce32cd067a07a",
+      "at": "2026-04-04T03:31:29Z",
+      "pr": 17013,
+      "passes": 1
+    },
+    ".agents/tools/design/colour-palette.md": {
+      "hash": "dc89ad0ba62b65a9e4c2456f496e30182777754a",
+      "at": "2026-04-04T03:31:29Z",
+      "pr": 17012,
+      "passes": 1
+    },
+    ".agents/tools/code-review/review-categories.md": {
+      "hash": "90c3b475500548147e736db43a54aa6aec466561",
+      "at": "2026-04-04T03:31:30Z",
+      "pr": 16977,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/raycast/DESIGN.md": {
+      "hash": "3b3e7278569d67af46d911ff210cc1ee605a2243",
+      "at": "2026-04-04T03:31:30Z",
+      "pr": 16975,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/hashicorp/DESIGN.md": {
+      "hash": "ac7c8e37a0a70bc23e49a7c76113e0c9168a8554",
+      "at": "2026-04-04T03:31:30Z",
+      "pr": 16974,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/expo/DESIGN.md": {
+      "hash": "9ee9e2d9a995347973d7caf44e828f08aa1139ed",
+      "at": "2026-04-04T03:31:30Z",
+      "pr": 16960,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/opencode.ai/DESIGN.md": {
+      "hash": "5b1caeaf558eb80580b9ee11b135c5bd1ad1e7cb",
+      "at": "2026-04-04T03:31:30Z",
+      "pr": 16959,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/uber/DESIGN.md": {
+      "hash": "16a22b18bb94629076166fb94f9295baf03daa96",
+      "at": "2026-04-04T03:31:30Z",
+      "pr": 16957,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/lovable/DESIGN.md": {
+      "hash": "52d048d030d625aea29bc383e09f7fa50c389ed7",
+      "at": "2026-04-04T03:31:30Z",
+      "pr": 16955,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/clay/DESIGN.md": {
+      "hash": "f8e6eaba04542bc4c2fceb6da793b9a83713ea5d",
+      "at": "2026-04-04T03:31:31Z",
+      "pr": 16954,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/resend/DESIGN.md": {
+      "hash": "0aa0041bab83ab6b79b39f6c0f3ad5a2f4c55755",
+      "at": "2026-04-04T03:31:31Z",
+      "pr": 16953,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/composio/DESIGN.md": {
+      "hash": "dc7159b2ad198b911677cf16f313432aeadd0012",
+      "at": "2026-04-04T03:31:31Z",
+      "pr": 16951,
+      "passes": 1
+    },
+    ".agents/scripts/session-miner-pulse.sh": {
+      "hash": "e55d480c7fc8f9379264c3c4c46c1d4a9b5d4198",
+      "at": "2026-04-04T03:31:31Z",
+      "pr": 16950,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/notion/DESIGN.md": {
+      "hash": "d1d2796c5063493ff760008a732c0b1f51a63a6c",
+      "at": "2026-04-04T03:31:32Z",
+      "pr": 16938,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/apple/DESIGN.md": {
+      "hash": "3a05d16ee4ac4f6e7ce5563014e60d0a58942c36",
+      "at": "2026-04-04T03:31:32Z",
+      "pr": 16935,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/claude/DESIGN.md": {
+      "hash": "0ddd5acd4ddb0c16133b3f50c7d785fa66a7686e",
+      "at": "2026-04-04T03:31:32Z",
+      "pr": 16934,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/mintlify/04-components.md": {
+      "hash": "c8585dbde8cab57d60045a86e66166b14f78d3e2",
+      "at": "2026-04-04T04:00:00Z",
+      "pr": 17022,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/mintlify/DESIGN.md": {
+      "hash": "4696cd2a55691cc59382d332230b1769f55c9723",
+      "at": "2026-04-04T03:31:32Z",
+      "pr": 16929,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/stripe/DESIGN.md": {
+      "hash": "0f154e30eedab5741aea05a5becf96f783fe0fd1",
+      "at": "2026-04-04T03:31:33Z",
+      "pr": 16928,
+      "passes": 1
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
