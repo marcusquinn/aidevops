@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: MIT
-# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-
 {
   "_comment": "Rate limit configuration per provider (t1330). Copy to ~/.config/aidevops/rate-limits.json and adjust for your plan.",
   "_note": "Values are per-minute limits. Set to 0 to disable tracking for that metric.",
