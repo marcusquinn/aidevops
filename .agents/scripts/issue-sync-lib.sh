@@ -1190,3 +1190,66 @@ add_pr_ref_to_todo() {
 	log_verbose "Added pr:#$pr_number to $task_id (t280: backfill proof-log)"
 	return 0
 }
+
+# =============================================================================
+# Relationships — GitHub Issue Relationships (t1889)
+# =============================================================================
+# Syncs TODO.md dependency metadata (blocked-by:, blocks:, subtask hierarchy)
+# to GitHub's native issue relationships via GraphQL mutations:
+#   - addBlockedBy / removeBlockedBy — dependency tracking
+#   - addSubIssue / removeSubIssue — parent-child hierarchy
+#
+# These mutations are NOT idempotent — duplicates return validation errors.
+# All functions suppress "already taken" / "duplicate sub-issues" errors.
+
+# Resolve a task ID to its GitHub issue number from TODO.md.
+# Looks up the ref:GH#NNN field for the given task ID.
+# Arguments:
+#   $1 - task_id (e.g. t1873.1)
+#   $2 - todo_file path
+# Returns: issue number on stdout, or empty string if not found
+resolve_task_gh_number() {
+	local task_id="$1"
+	local todo_file="$2"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+
+	local ref
+	ref=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 |
+		grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+	echo "$ref"
+	return 0
+}
+
+# Resolve a GitHub issue number to its GraphQL node ID.
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo slug (owner/repo)
+# Returns: node ID on stdout, or empty string on failure
+resolve_gh_node_id() {
+	local issue_number="$1"
+	local repo="$2"
+	local owner="${repo%%/*}"
+	local name="${repo##*/}"
+
+	local node_id
+	node_id=$(gh api graphql \
+		-f query='query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){issue(number:$num){id}}}' \
+		-f owner="$owner" -f name="$name" -F num="$issue_number" \
+		--jq '.data.repository.issue.id' 2>/dev/null || echo "")
+	echo "$node_id"
+	return 0
+}
+
+# Detect the parent task ID from a subtask ID.
+# t1873.2 → t1873, t1873.2.1 → t1873.2, t1873 → "" (no parent)
+# Arguments:
+#   $1 - task_id
+# Returns: parent task ID on stdout, or empty string if top-level
+detect_parent_task_id() {
+	local task_id="$1"
+	if [[ "$task_id" == *"."* ]]; then
+		echo "${task_id%.*}"
+	fi
+	return 0
+}

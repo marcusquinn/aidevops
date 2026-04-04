@@ -1236,3 +1236,105 @@ migrate_orphaned_supervisor() {
 
 	return 0
 }
+
+# Backfill GitHub issue relationships from TODO.md metadata (t1889)
+# One-time migration: reads blocked-by:/blocks: and subtask hierarchy from
+# TODO.md in each pulse-enabled repo, and sets the corresponding GitHub
+# issue relationships (blocked-by, sub-issues) via the GraphQL API.
+#
+# Uses marker file to ensure it runs only once per install.
+# Safe to re-run — the GraphQL mutations are idempotent (duplicates are skipped).
+backfill_issue_relationships() {
+	local marker_file="$HOME/.aidevops/.migrations/t1889-relationships-backfill"
+	local marker_dir
+	marker_dir=$(dirname "$marker_file")
+
+	# Skip if already done
+	if [[ -f "$marker_file" ]]; then
+		return 0
+	fi
+
+	# Require gh CLI and authentication
+	if ! command -v gh &>/dev/null; then
+		print_warning "gh CLI not installed — skipping issue relationships backfill"
+		return 0
+	fi
+	if ! gh auth status &>/dev/null 2>&1; then
+		print_warning "gh CLI not authenticated — skipping issue relationships backfill"
+		return 0
+	fi
+
+	# Require jq for repos.json parsing
+	if ! command -v jq &>/dev/null; then
+		print_warning "jq not installed — skipping issue relationships backfill"
+		return 0
+	fi
+
+	local repos_file="$HOME/.config/aidevops/repos.json"
+	if [[ ! -f "$repos_file" ]]; then
+		print_info "No repos.json — skipping issue relationships backfill"
+		mkdir -p "$marker_dir"
+		touch "$marker_file"
+		return 0
+	fi
+
+	local sync_script="$HOME/.aidevops/agents/scripts/issue-sync-helper.sh"
+	if [[ ! -x "$sync_script" ]]; then
+		print_warning "issue-sync-helper.sh not found — skipping relationships backfill"
+		return 0
+	fi
+
+	print_info "Backfilling GitHub issue relationships (blocked-by, sub-issues) from TODO.md..."
+
+	local total_repos=0 total_rels=0 failed_repos=0
+	local repo_path repo_slug local_only
+
+	while IFS=$'\t' read -r repo_path repo_slug local_only; do
+		[[ -z "$repo_path" ]] && continue
+		local expanded_path="${repo_path/#\~/$HOME}"
+
+		# Skip local-only repos (no GitHub remote)
+		[[ "$local_only" == "true" ]] && continue
+
+		# Skip repos without TODO.md
+		[[ ! -f "$expanded_path/TODO.md" ]] && continue
+
+		# Skip repos with no ref:GH# entries
+		if ! grep -qE 'ref:GH#[0-9]+' "$expanded_path/TODO.md" 2>/dev/null; then
+			continue
+		fi
+
+		# Skip repos with no blocked-by:/blocks: or subtask entries
+		local has_deps=false
+		grep -qE 'blocked-by:|blocks:' "$expanded_path/TODO.md" 2>/dev/null && has_deps=true
+		grep -qE '^\s+- \[.\] t[0-9]+\.[0-9]+.*ref:GH#' "$expanded_path/TODO.md" 2>/dev/null && has_deps=true
+		[[ "$has_deps" == "false" ]] && continue
+
+		total_repos=$((total_repos + 1))
+		local repo_arg=""
+		[[ -n "$repo_slug" ]] && repo_arg="--repo $repo_slug"
+
+		print_info "  $(basename "$expanded_path"): syncing relationships..."
+		# shellcheck disable=SC2086
+		if (cd "$expanded_path" && bash "$sync_script" relationships $repo_arg --verbose 2>&1 | tail -3); then
+			true
+		else
+			print_warning "  $(basename "$expanded_path"): relationships sync had errors"
+			failed_repos=$((failed_repos + 1))
+		fi
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true) | [.path, .slug, (.local_only // false | tostring)] | @tsv' "$repos_file" 2>/dev/null)
+
+	# Create marker directory and file
+	mkdir -p "$marker_dir"
+	date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_file"
+
+	if [[ $total_repos -eq 0 ]]; then
+		print_info "No repos with relationship data to backfill"
+	elif [[ $failed_repos -eq 0 ]]; then
+		print_success "Issue relationships backfilled for $total_repos repo(s)"
+	else
+		print_warning "Backfilled $total_repos repo(s), $failed_repos had errors"
+	fi
+
+	return 0
+}

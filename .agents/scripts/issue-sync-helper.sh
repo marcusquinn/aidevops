@@ -445,6 +445,8 @@ _push_process_task() {
 	if [[ $rc -eq 0 && -n "$_PUSH_CREATED_NUM" ]]; then
 		print_success "Created #${_PUSH_CREATED_NUM}: $title"
 		add_gh_ref_to_todo "$task_id" "$_PUSH_CREATED_NUM" "$todo_file"
+		# Sync relationships (blocked-by, sub-issues) after creation (t1889)
+		sync_relationships_for_task "$task_id" "$todo_file" "$repo"
 		echo "CREATED"
 	elif [[ $rc -eq 1 ]]; then
 		echo "SKIPPED"
@@ -558,6 +560,8 @@ cmd_enrich() {
 		}
 		if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
 			print_success "Enriched #$num ($task_id)"
+			# Sync relationships (blocked-by, sub-issues) after enrichment (t1889)
+			sync_relationships_for_task "$task_id" "$todo_file" "$repo"
 			enriched=$((enriched + 1))
 		else print_error "Failed to enrich #$num ($task_id)"; fi
 	done
@@ -940,11 +944,353 @@ cmd_reopen() {
 	return 0
 }
 
+# =============================================================================
+# Relationships — GitHub Issue Dependencies & Hierarchy (t1889)
+# =============================================================================
+# Syncs TODO.md blocked-by:/blocks: and subtask hierarchy to GitHub's native
+# issue relationships via GraphQL mutations.
+
+# Node ID cache: avoids repeated API calls for the same issue number.
+# Uses a temp file (bash 3.2 compatible — no associative arrays).
+# Format: one "number=node_id" per line. Populated by _cached_node_id().
+_NODE_ID_CACHE_FILE=""
+
+_init_node_id_cache() {
+	if [[ -z "$_NODE_ID_CACHE_FILE" ]]; then
+		_NODE_ID_CACHE_FILE=$(mktemp /tmp/aidevops-node-cache.XXXXXX)
+		# shellcheck disable=SC2064
+		trap "rm -f '$_NODE_ID_CACHE_FILE'" EXIT
+	fi
+	return 0
+}
+
+_cached_node_id() {
+	local num="$1" repo="$2"
+	[[ -z "$num" ]] && return 0
+	_init_node_id_cache
+
+	# Check cache file
+	local cached
+	cached=$(grep -m1 "^${num}=" "$_NODE_ID_CACHE_FILE" 2>/dev/null | cut -d= -f2- || echo "")
+	if [[ -n "$cached" ]]; then
+		echo "$cached"
+		return 0
+	fi
+
+	local nid
+	nid=$(resolve_gh_node_id "$num" "$repo")
+	if [[ -n "$nid" ]]; then
+		echo "${num}=${nid}" >>"$_NODE_ID_CACHE_FILE"
+		echo "$nid"
+	fi
+	return 0
+}
+
+# Add a blocked-by relationship between two issues.
+# issueId = the blocked issue, blockingIssueId = the blocker.
+# Suppresses "already taken" errors (idempotent semantics).
+# Arguments:
+#   $1 - blocked_node_id (the issue that IS blocked)
+#   $2 - blocking_node_id (the issue that BLOCKS)
+# Returns: 0=success/already-exists, 1=error
+_gh_add_blocked_by() {
+	local blocked_id="$1" blocking_id="$2"
+	local result
+	result=$(gh api graphql -f query='
+mutation($blocked:ID!,$blocking:ID!) {
+  addBlockedBy(input: {issueId:$blocked, blockingIssueId:$blocking}) {
+    issue { number }
+  }
+}' -f blocked="$blocked_id" -f blocking="$blocking_id" 2>&1)
+
+	# Success or already-exists are both fine
+	if echo "$result" | grep -q '"number"'; then
+		return 0
+	fi
+	if echo "$result" | grep -qi 'already been taken'; then
+		log_verbose "  blocked-by relationship already exists"
+		return 0
+	fi
+	log_verbose "  addBlockedBy error: ${result:0:200}"
+	return 1
+}
+
+# Add a sub-issue (parent-child) relationship.
+# Suppresses "duplicate sub-issues" and "only have one parent" errors.
+# Arguments:
+#   $1 - parent_node_id
+#   $2 - child_node_id
+# Returns: 0=success/already-exists, 1=error
+_gh_add_sub_issue() {
+	local parent_id="$1" child_id="$2"
+	local result
+	result=$(gh api graphql -f query='
+mutation($parent:ID!,$child:ID!) {
+  addSubIssue(input: {issueId:$parent, subIssueId:$child}) {
+    issue { number }
+  }
+}' -f parent="$parent_id" -f child="$child_id" 2>&1)
+
+	if echo "$result" | grep -q '"number"'; then
+		return 0
+	fi
+	if echo "$result" | grep -qi 'duplicate sub-issues\|only have one parent'; then
+		log_verbose "  sub-issue relationship already exists"
+		return 0
+	fi
+	log_verbose "  addSubIssue error: ${result:0:200}"
+	return 1
+}
+
+# Sync blocked-by and blocks relationships for a single task.
+# Parses the task line for blocked-by: and blocks: fields, resolves each
+# referenced task to a GitHub node ID, and creates the relationship.
+# Arguments:
+#   $1 - task_id
+#   $2 - todo_file path
+#   $3 - repo slug
+# Returns: number of relationships set (via stdout "RELS:N")
+_sync_blocked_by_for_task() {
+	local task_id="$1" todo_file="$2" repo="$3"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+	local task_line
+	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
+	[[ -z "$task_line" ]] && return 0
+
+	local parsed
+	parsed=$(parse_task_line "$task_line")
+	local blocked_by="" blocks=""
+	while IFS='=' read -r key value; do
+		case "$key" in
+		blocked_by) blocked_by="$value" ;;
+		blocks) blocks="$value" ;;
+		esac
+	done <<<"$parsed"
+
+	[[ -z "$blocked_by" && -z "$blocks" ]] && return 0
+
+	# Resolve this task's node ID
+	local this_gh_num
+	this_gh_num=$(resolve_task_gh_number "$task_id" "$todo_file")
+	[[ -z "$this_gh_num" ]] && {
+		log_verbose "$task_id: no ref:GH# — skipping relationships"
+		return 0
+	}
+	local this_node_id
+	this_node_id=$(_cached_node_id "$this_gh_num" "$repo")
+	[[ -z "$this_node_id" ]] && {
+		log_verbose "$task_id: could not resolve node ID for #$this_gh_num"
+		return 0
+	}
+
+	local rels_set=0
+
+	# Process blocked-by: this task IS blocked BY each listed task
+	if [[ -n "$blocked_by" ]]; then
+		local _saved_ifs="$IFS"
+		IFS=','
+		for dep_task_id in $blocked_by; do
+			dep_task_id="${dep_task_id// /}"
+			[[ -z "$dep_task_id" ]] && continue
+			local dep_gh_num
+			dep_gh_num=$(resolve_task_gh_number "$dep_task_id" "$todo_file")
+			[[ -z "$dep_gh_num" ]] && {
+				log_verbose "$task_id: blocked-by $dep_task_id has no ref:GH#"
+				continue
+			}
+			local dep_node_id
+			dep_node_id=$(_cached_node_id "$dep_gh_num" "$repo")
+			[[ -z "$dep_node_id" ]] && continue
+
+			if [[ "$DRY_RUN" == "true" ]]; then
+				print_info "[DRY-RUN] Would set #$this_gh_num blocked-by #$dep_gh_num ($task_id <- $dep_task_id)"
+				rels_set=$((rels_set + 1))
+			elif _gh_add_blocked_by "$this_node_id" "$dep_node_id"; then
+				log_verbose "$task_id (#$this_gh_num) blocked-by $dep_task_id (#$dep_gh_num) ✓"
+				rels_set=$((rels_set + 1))
+			fi
+		done
+		IFS="$_saved_ifs"
+	fi
+
+	# Process blocks: this task BLOCKS each listed task
+	# Inverse of blocked-by: call addBlockedBy with roles swapped
+	if [[ -n "$blocks" ]]; then
+		local _saved_ifs="$IFS"
+		IFS=','
+		for dep_task_id in $blocks; do
+			dep_task_id="${dep_task_id// /}"
+			[[ -z "$dep_task_id" ]] && continue
+			local dep_gh_num
+			dep_gh_num=$(resolve_task_gh_number "$dep_task_id" "$todo_file")
+			[[ -z "$dep_gh_num" ]] && {
+				log_verbose "$task_id: blocks $dep_task_id has no ref:GH#"
+				continue
+			}
+			local dep_node_id
+			dep_node_id=$(_cached_node_id "$dep_gh_num" "$repo")
+			[[ -z "$dep_node_id" ]] && continue
+
+			if [[ "$DRY_RUN" == "true" ]]; then
+				print_info "[DRY-RUN] Would set #$dep_gh_num blocked-by #$this_gh_num ($dep_task_id <- $task_id)"
+				rels_set=$((rels_set + 1))
+			elif _gh_add_blocked_by "$dep_node_id" "$this_node_id"; then
+				log_verbose "$dep_task_id (#$dep_gh_num) blocked-by $task_id (#$this_gh_num) ✓"
+				rels_set=$((rels_set + 1))
+			fi
+		done
+		IFS="$_saved_ifs"
+	fi
+
+	echo "RELS:$rels_set"
+	return 0
+}
+
+# Sync parent-child (sub-issue) relationship for a subtask.
+# Detects if task_id has a dot (e.g., t1873.2) and sets the parent relationship.
+# Arguments:
+#   $1 - task_id
+#   $2 - todo_file path
+#   $3 - repo slug
+# Returns: "RELS:1" if set, "RELS:0" if skipped
+_sync_subtask_hierarchy_for_task() {
+	local task_id="$1" todo_file="$2" repo="$3"
+
+	local parent_id
+	parent_id=$(detect_parent_task_id "$task_id")
+	[[ -z "$parent_id" ]] && return 0
+
+	# Resolve both task IDs to GitHub issue numbers
+	local child_gh_num
+	child_gh_num=$(resolve_task_gh_number "$task_id" "$todo_file")
+	[[ -z "$child_gh_num" ]] && {
+		log_verbose "$task_id: no ref:GH# — skipping sub-issue"
+		return 0
+	}
+	local parent_gh_num
+	parent_gh_num=$(resolve_task_gh_number "$parent_id" "$todo_file")
+	[[ -z "$parent_gh_num" ]] && {
+		log_verbose "$task_id: parent $parent_id has no ref:GH# — skipping sub-issue"
+		return 0
+	}
+
+	# Resolve to node IDs
+	local child_node_id
+	child_node_id=$(_cached_node_id "$child_gh_num" "$repo")
+	[[ -z "$child_node_id" ]] && return 0
+	local parent_node_id
+	parent_node_id=$(_cached_node_id "$parent_gh_num" "$repo")
+	[[ -z "$parent_node_id" ]] && return 0
+
+	if [[ "$DRY_RUN" == "true" ]]; then
+		print_info "[DRY-RUN] Would set #$child_gh_num as sub-issue of #$parent_gh_num ($task_id -> $parent_id)"
+		echo "RELS:1"
+		return 0
+	fi
+
+	if _gh_add_sub_issue "$parent_node_id" "$child_node_id"; then
+		log_verbose "$task_id (#$child_gh_num) sub-issue of $parent_id (#$parent_gh_num) ✓"
+		echo "RELS:1"
+	else
+		echo "RELS:0"
+	fi
+	return 0
+}
+
+# Sync all relationships for a single task (blocked-by + subtask hierarchy).
+# Convenience wrapper called after push/enrich operations.
+# Arguments:
+#   $1 - task_id
+#   $2 - todo_file path
+#   $3 - repo slug
+sync_relationships_for_task() {
+	local task_id="$1" todo_file="$2" repo="$3"
+	_sync_blocked_by_for_task "$task_id" "$todo_file" "$repo" >/dev/null 2>&1 || true
+	_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" >/dev/null 2>&1 || true
+	return 0
+}
+
+# Bulk relationship sync command.
+# Scans TODO.md for all tasks with blocked-by:/blocks: or subtask patterns,
+# resolves to GitHub node IDs, and sets relationships via GraphQL.
+# Arguments:
+#   $1 - optional target task_id (if empty, processes all)
+cmd_relationships() {
+	local target_task="${1:-}"
+	_init_cmd || return 1
+	local repo="$_CMD_REPO" todo_file="$_CMD_TODO"
+
+	local tasks=()
+	if [[ -n "$target_task" ]]; then
+		tasks=("$target_task")
+	else
+		# Collect tasks with blocked-by:, blocks:, or subtask IDs (contain a dot)
+		while IFS= read -r line; do
+			local tid
+			tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+			[[ -z "$tid" ]] && continue
+			# Include if it has dependencies or is a subtask
+			local dominated=false
+			echo "$line" | grep -qE 'blocked-by:|blocks:' && dominated=true
+			[[ "$tid" == *"."* ]] && dominated=true
+			[[ "$dominated" == "true" ]] && tasks+=("$tid")
+		done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[.\] t[0-9]+.*ref:GH#[0-9]+' || true)
+	fi
+
+	[[ ${#tasks[@]} -eq 0 ]] && {
+		print_info "No tasks with relationships to sync"
+		return 0
+	}
+
+	# Deduplicate (bash 3.2 compatible — no associative arrays)
+	local seen_list=""
+	local unique_tasks=()
+	local t
+	for t in "${tasks[@]}"; do
+		if ! echo "$seen_list" | grep -qx "$t"; then
+			unique_tasks+=("$t")
+			seen_list="${seen_list}${t}"$'\n'
+		fi
+	done
+
+	local total="${#unique_tasks[@]}"
+	print_info "Syncing relationships for $total task(s) in $repo"
+
+	local blocked_set=0 sub_set=0 processed=0
+	for task_id in "${unique_tasks[@]}"; do
+		processed=$((processed + 1))
+		# Progress indicator every 25 tasks
+		if [[ $((processed % 25)) -eq 0 || $processed -eq $total ]]; then
+			printf "\r  Progress: %d/%d tasks..." "$processed" "$total" >&2
+		fi
+
+		local result
+
+		# Blocked-by / blocks
+		result=$(_sync_blocked_by_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "RELS:0")
+		local n
+		n=$(echo "$result" | grep -oE 'RELS:[0-9]+' | head -1 | sed 's/RELS://' || echo "0")
+		blocked_set=$((blocked_set + n))
+
+		# Sub-issue hierarchy
+		result=$(_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "RELS:0")
+		n=$(echo "$result" | grep -oE 'RELS:[0-9]+' | head -1 | sed 's/RELS://' || echo "0")
+		sub_set=$((sub_set + n))
+	done
+	[[ $total -gt 25 ]] && printf "\n" >&2
+
+	printf "\n=== Relationships Sync ===\nBlocked-by: %d | Sub-issues: %d | Tasks processed: %d\n" \
+		"$blocked_set" "$sub_set" "${#unique_tasks[@]}"
+	return 0
+}
+
 cmd_help() {
 	cat <<'EOF'
 Issue Sync Helper — stateless TODO.md <-> GitHub Issues sync via gh CLI.
 Usage: issue-sync-helper.sh [command] [options]
-Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reopen | reconcile | status | help
+Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reopen
+          reconcile | relationships [tNNN] | status | help
 Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close)
          --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
 
@@ -955,6 +1301,12 @@ Drift detection:
   reopen    — reopens closed issues whose TODO entry is still [ ] (open).
               Only reopens issues closed as COMPLETED, not NOT_PLANNED.
               Safe for automated use in the pulse.
+
+Relationships (t1889):
+  relationships [tNNN] — sync blocked-by/blocks and subtask hierarchy to GitHub
+                         issue relationships. Without tNNN, processes all tasks
+                         that have ref:GH# plus blocked-by:/blocks: or subtask IDs.
+                         Use --dry-run to preview. Idempotent (skips existing).
 
 Note: Bulk push (no task ID) is CI-only by default to prevent duplicate issues.
       Use 'push <task_id>' for single tasks, or --force-push to override.
@@ -999,7 +1351,8 @@ main() {
 	case "$command" in
 	push) cmd_push "${positional_args[1]:-}" ;; enrich) cmd_enrich "${positional_args[1]:-}" ;;
 	pull) cmd_pull ;; close) cmd_close "${positional_args[1]:-}" ;; reopen) cmd_reopen ;;
-	reconcile) cmd_reconcile ;; status) cmd_status ;; help) cmd_help ;;
+	reconcile) cmd_reconcile ;; relationships) cmd_relationships "${positional_args[1]:-}" ;;
+	status) cmd_status ;; help) cmd_help ;;
 	*)
 		print_error "Unknown command: $command"
 		cmd_help
