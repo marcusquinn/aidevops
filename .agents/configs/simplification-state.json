@@ -1754,9 +1754,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "hash": "66158f8e86e2db18008b332fd4ec1a6d2113eea7",
-      "at": "2026-04-04T03:30:30Z",
-      "passes": 4,
+      "hash": "1639be365d1d5f9d8a33773767a61639fbe5b566",
+      "at": "2026-04-04T14:53:01Z",
+      "passes": 5,
       "pr": 15086
     },
     ".agents/scripts/issue-sync-lib.sh": {
@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "5bdbb4cc53626df305728b3d41cb61626891b328",
-      "at": "2026-04-04T03:30:31Z",
-      "passes": 13,
+      "hash": "4afd3e69fd40221a1065e3bae76054b705389b78",
+      "at": "2026-04-04T15:34:26Z",
+      "passes": 15,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -1826,9 +1826,9 @@
       "pr": 15916
     },
     ".agents/scripts/stats-functions.sh": {
-      "hash": "72de5d5e0f7769513405066e46423029fd98223a",
-      "at": "2026-04-03T01:11:28Z",
-      "passes": 4,
+      "hash": "347536b6f1b096fa5e82603b419e725a56f6e5c3",
+      "at": "2026-04-04T14:53:02Z",
+      "passes": 5,
       "pr": 11273
     },
     ".agents/scripts/tests/test-gh-signature-helper.sh": {
@@ -2531,9 +2531,9 @@
       "pr": 13253
     },
     ".agents/services/hosting/cloudflare-platform-skill/cache-reserve-patterns.md": {
-      "hash": "c25367146587de395fe600beb450451ce35904e2",
-      "at": "2026-03-29T08:49:23Z",
-      "passes": 1,
+      "hash": "4e0caf46c1a87978a862ac8231323ac26a22ccb9",
+      "at": "2026-04-04T14:53:11Z",
+      "passes": 2,
       "pr": 12779
     },
     ".agents/services/hosting/cloudflare-platform-skill/cron-triggers-gotchas.md": {
@@ -5261,21 +5261,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "hash": "88b4cc7b02fe73da7b7558eee6d2801a1b1662f3",
-      "at": "2026-04-03T22:57:30Z",
-      "passes": 10,
+      "hash": "a3c014be7b1b9f796f9912d39fca8988ebbed932",
+      "at": "2026-04-04T14:54:06Z",
+      "passes": 11,
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "72682345263169a10d1a3bb63a111a28a5398db6",
-      "at": "2026-04-04T03:31:27Z",
-      "passes": 30,
+      "hash": "872a6e632e8ce8a2bb7d9c10c42059fdd053f430",
+      "at": "2026-04-04T15:34:55Z",
+      "passes": 32,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "737d647ccaf6c797164573f4beb05eb3f545fe3c",
-      "at": "2026-04-04T03:31:27Z",
-      "passes": 29,
+      "hash": "8cc2dd82ee81109f66d24fd4e38514b60cf836a5",
+      "at": "2026-04-04T15:34:56Z",
+      "passes": 31,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -6024,9 +6024,9 @@
       "pr": 0
     },
     ".agents/tools/design/library/styles/developer-dark/DESIGN.md": {
-      "hash": "ca01cc0685591fec34a8817bb11937825645b04d",
-      "at": "2026-04-04T02:13:59Z",
-      "passes": 3,
+      "hash": "219549468a3add04b6431c9945c9aebe563fe425",
+      "at": "2026-04-04T14:53:40Z",
+      "passes": 4,
       "pr": 0
     },
     ".agents/tools/design/library/brands/airbnb/DESIGN.md": {
@@ -6246,9 +6246,9 @@
       "passes": 1
     },
     ".agents/tools/design/library/brands/hashicorp/04-components.md": {
-      "hash": "fc7e3be596420d55542af6313db61fbc6e0dbef2942a4e8caf3085e14fbe2d0e",
-      "at": "2026-04-04T00:00:00Z",
-      "passes": 1
+      "hash": "3fd463f6862b32fb06907f77eb9f4b9d67defd53",
+      "at": "2026-04-04T14:53:35Z",
+      "passes": 2
     },
     ".agents/tools/design/library/brands/expo/DESIGN.md": {
       "hash": "9ee9e2d9a995347973d7caf44e828f08aa1139ed",
@@ -6317,10 +6317,10 @@
       "passes": 1
     },
     ".agents/tools/design/library/brands/mintlify/04-components.md": {
-      "hash": "c8585dbde8cab57d60045a86e66166b14f78d3e2",
-      "at": "2026-04-04T04:00:00Z",
+      "hash": "a841d19a09e3cb6e80b676ce8a479db679cfe892",
+      "at": "2026-04-04T14:53:36Z",
       "pr": 17022,
-      "passes": 1
+      "passes": 2
     },
     ".agents/tools/design/library/brands/mintlify/DESIGN.md": {
       "hash": "4696cd2a55691cc59382d332230b1769f55c9723",
@@ -6335,9 +6335,9 @@
       "passes": 1
     },
     ".agents/tools/design/library/styles/agency-creative/04-components.md": {
-      "hash": "17fea752c3c85469d7643348e7d7fe82f9706870",
-      "at": "2026-04-04T04:00:00Z",
-      "passes": 1,
+      "hash": "b130d4a6d1824660f12a91abf4cf3234a81e52c2",
+      "at": "2026-04-04T14:53:39Z",
+      "passes": 2,
       "issue": 17040
     },
     ".agents/tools/design/library/brands/apple/04-components.md": {
@@ -6347,21 +6347,22 @@
       "passes": 1
     },
     ".agents/tools/design/library/brands/expo/04-components.md": {
-      "hash": "69b5856bf958e6587dd25a9bca62ba877ff7714df446912582046d4903abd6f9",
-      "at": "2026-04-04T05:30:00Z",
+      "hash": "f63874cc01ae8e6248a0ca8c870ad58a18503a82",
+      "at": "2026-04-04T14:53:35Z",
       "lines": 82,
-      "issue": "GH#17088"
+      "issue": "GH#17088",
+      "passes": 1
     },
     ".agents/tools/design/library/styles/startup-minimal/02-colours.md": {
-      "hash": "885ec9ad79069e537f48619a23e870eb856f862a63fbb029acd1433de461825d",
-      "at": "2026-04-04T06:10:00Z",
-      "passes": 1,
+      "hash": "e60ac8a79bbeff247b7bb88c2514f06b1a03e037",
+      "at": "2026-04-04T14:53:43Z",
+      "passes": 2,
       "pr": 0
     },
     ".agents/tools/design/library/styles/startup-bold/02-colours.md": {
-      "hash": "e4c5926cee4fea5695a2a9d909f71f09f1f95162",
-      "at": "2026-04-04T00:00:00Z",
-      "passes": 1,
+      "hash": "abed90de8c87b3704b45ef5aaa6241d3872e73c5",
+      "at": "2026-04-04T14:53:43Z",
+      "passes": 2,
       "pr": 0
     },
     ".agents/tools/design/library/styles/agency-techie/02-colours.md": {
@@ -6383,16 +6384,16 @@
       "pr": 17142
     },
     ".agents/tools/design/library/styles/editorial-clean/05-layout.md": {
-      "hash": "3806e2b37ace69e5222528808a340d7b9a2f21a1695a62cb856713429581ceaa",
-      "at": "2026-04-04T07:15:00Z",
-      "passes": 1,
+      "hash": "6e4433cec2956492e21fe47e6212ee26d6d09bfd",
+      "at": "2026-04-04T14:53:42Z",
+      "passes": 2,
       "pr": 17183,
       "status": "converged"
     },
     ".agents/tools/design/library/styles/startup-minimal/05-layout.md": {
-      "hash": "ad20660b747cefd1a2db38dbcc9cd6f50c126d3beb4355f45f84f299c1d09acb",
-      "at": "2026-04-04T08:00:00Z",
-      "passes": 1,
+      "hash": "04aaeb71fcd0393a6446aac9d0f009eba9fec19c",
+      "at": "2026-04-04T14:53:44Z",
+      "passes": 2,
       "status": "converged"
     },
     ".agents/tools/design/library/brands/raycast/02-color-palette.md": {
@@ -6402,22 +6403,23 @@
       "passes": 1
     },
     ".agents/tools/design/library/brands/clickhouse/04-components.md": {
-      "hash": "821ffd3ebe003a2439f12f371de578542abeba013b43e5057496bba880d59255",
-      "at": "2026-04-04T08:38:02Z",
+      "hash": "e4d0797834ea9ca4d5fbbad24fbee6030f51c094",
+      "at": "2026-04-04T14:53:34Z",
       "issue": "GH#17237",
       "lines_before": 89,
-      "lines_after": 57
-    },
-    ".agents/tools/design/library/brands/resend/04-components.md": {
-      "hash": "f9d663e6391eca761ec93a0ca733269313d02d1f",
-      "at": "2026-04-04T09:30:00Z",
-      "pr": 0,
+      "lines_after": 57,
       "passes": 1
     },
+    ".agents/tools/design/library/brands/resend/04-components.md": {
+      "hash": "2cec7a92b5b678822b2fb66cef29d22e4a863c5f",
+      "at": "2026-04-04T14:53:38Z",
+      "pr": 0,
+      "passes": 2
+    },
     ".agents/tools/design/library/brands/clay/04-components.md": {
-      "hash": "3318a6f67225b0283a146bba148a8541ce146057",
-      "at": "2026-04-04T09:20:00Z",
-      "passes": 1,
+      "hash": "61aad30e636ccaa3c9ac886b17e8cf8e2ab1ab6c",
+      "at": "2026-04-04T14:53:34Z",
+      "passes": 2,
       "pr": 17267
     },
     ".agents/tools/design/library/styles/agency-feminine/02-colours.md": {
@@ -6427,28 +6429,294 @@
       "pr": 0
     },
     ".agents/tools/design/library/styles/corporate-traditional/02-colours.md": {
-      "hash": "81b7218f66e89d210394785fcb422116ad69fbab1332339321046d97cdbea863",
+      "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "simplified_at": "2026-04-04T09:17:13Z",
       "issue": "GH#17250",
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)"
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
+      "at": "2026-04-04T14:53:40Z",
+      "passes": 1
     },
     ".agents/tools/ui/nothing-design-skill/tokens/02-color.md": {
-      "hash": "c8765e9bc3b5994ef76050aa2dc4dd83f99636143806678c19c2564ad43b00c6",
-      "at": "2026-04-04T10:15:00Z",
-      "passes": 1,
+      "hash": "1c7e2fd573d7671682df3587ac932f0f3f089390",
+      "at": "2026-04-04T14:53:57Z",
+      "passes": 2,
       "pr": null
     },
     ".agents/scripts/attribution-detection-helper.sh": {
-      "hash": "4037b27a1ca451750e419a0d4c46c64511691ab2e5f82df87730fe3fa7066f1a",
-      "at": "2026-04-04T13:41:00Z",
-      "passes": 1,
+      "hash": "d2d2a7091e771c7ba9bd73ae6d5f740138905c38",
+      "at": "2026-04-04T14:52:56Z",
+      "passes": 2,
       "pr": 0
     },
     ".agents/tools/video/remotion-charts.md": {
-      "hash": "4e0b0ad31abf1be3fbe31516d4dc386120dec1a1",
-      "at": "2026-04-04T00:00:00Z",
-      "passes": 1,
+      "hash": "08ae4026fa5517f2f86b8c66f8128e9906b8f716",
+      "at": "2026-04-04T14:53:58Z",
+      "passes": 2,
       "pr": 0
+    },
+    ".agents/tools/design/library/brands/voltagent/02-color-palette.md": {
+      "hash": "40ae0c8eec93283421615932a8ffd9caa72301f6",
+      "at": "2026-04-04T14:54:08Z",
+      "pr": 17342,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/ibm/04-components.md": {
+      "hash": "2ea28505b2fd0a5fd905570cc9911cd6e8f8cdfc",
+      "at": "2026-04-04T14:54:08Z",
+      "pr": 17332,
+      "passes": 1
+    },
+    ".agents/reference/attribution-monitoring.md": {
+      "hash": "bf262309ae04f51cc53f5ffaf44fb65b9ee5f60e",
+      "at": "2026-04-04T14:54:09Z",
+      "pr": 17331,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/playful-vibrant/05-layout.md": {
+      "hash": "e43fd8c8ee2db2961e134fe365c20121f64eecb8",
+      "at": "2026-04-04T14:54:09Z",
+      "pr": 17321,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/agency-techie/04-components.md": {
+      "hash": "dd244e9d27c0ef7c55976cf7387e65a45bc7ea08",
+      "at": "2026-04-04T14:54:09Z",
+      "pr": 17319,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/lovable/04-components.md": {
+      "hash": "7d5356d99a15fa19ad48c85f1d0dfef5d0f0567b",
+      "at": "2026-04-04T14:54:09Z",
+      "pr": 17318,
+      "passes": 1
+    },
+    ".agents/marketing-sales/cro-chapter-24.md": {
+      "hash": "408af22ccf4cf16d851c70a31d946b7cd014b330",
+      "at": "2026-04-04T14:54:10Z",
+      "pr": 17313,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/developer-dark/04-components.md": {
+      "hash": "8fb82a7b1163431a819d14f5d1903618825b7bdc",
+      "at": "2026-04-04T14:54:10Z",
+      "pr": 17312,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/cache-reserve.md": {
+      "hash": "3fe0b9baeb496344edd2cae2361ea302bcb7add9",
+      "at": "2026-04-04T14:54:10Z",
+      "pr": 17307,
+      "passes": 1
+    },
+    ".agents/scripts/commands/seo-optimize.md": {
+      "hash": "d4781587585025ddaf8cd43af9117ab3d94f7152",
+      "at": "2026-04-04T14:54:10Z",
+      "pr": 17306,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/ai-search-patterns.md": {
+      "hash": "fad7c34adae6b1e75cf375aa6cf179aae4e71421",
+      "at": "2026-04-04T14:54:10Z",
+      "pr": 17305,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/raycast/04-components.md": {
+      "hash": "85c7855f640acea135d7da05dff11e1c68a91501",
+      "at": "2026-04-04T14:54:11Z",
+      "pr": 17300,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/vercel/02-color-palette.md": {
+      "hash": "43bfb525bb16396e8b453a5e92926c34919dc094",
+      "at": "2026-04-04T14:54:11Z",
+      "pr": 17299,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/startup-bold/05-layout.md": {
+      "hash": "b6ca30e0a3b04bc92f1141517fe39f8f4f30fe6c",
+      "at": "2026-04-04T14:54:11Z",
+      "pr": 17298,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/linear/04-components.md": {
+      "hash": "fa506cfae29a0ffc90af44e498d4e3bbbf6ac4c1",
+      "at": "2026-04-04T14:54:11Z",
+      "pr": 17297,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/nvidia/02-color-palette.md": {
+      "hash": "3b5ff6b20e796af78ef3d2ddb3e0442148a59be6",
+      "at": "2026-04-04T14:54:12Z",
+      "pr": 17296,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/corporate-friendly/02-colour-palette.md": {
+      "hash": "5d6d4238a9f4801fc21d5abc5d9caf57ce0901f3",
+      "at": "2026-04-04T14:54:12Z",
+      "pr": 17295,
+      "passes": 1
+    },
+    ".agents/tools/credentials/cch-reverse-engineering.md": {
+      "hash": "03a4f9ff57e6d4201e6a2bd2cd0a13c50dffd733",
+      "at": "2026-04-04T14:54:12Z",
+      "pr": 17294,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/pages-functions.md": {
+      "hash": "4dbb56cad0d43f81be292f70d1a0986262a9b087",
+      "at": "2026-04-04T14:54:12Z",
+      "pr": 17281,
+      "passes": 1
+    },
+    ".agents/tools/browser/chromium-debug-use/SKILL.md": {
+      "hash": "4c95ad2b5c1fd7e7deed50ff5d128f2af631adce",
+      "at": "2026-04-04T14:54:12Z",
+      "pr": 17280,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/linear/02-colour-palette.md": {
+      "hash": "899a584bd0b79aaa333c96504a162f457638eda5",
+      "at": "2026-04-04T14:54:13Z",
+      "pr": 17279,
+      "passes": 1
+    },
+    ".agents/scripts/commands/readme.md": {
+      "hash": "649a3483e9e073b8f1f1d2cffbe07b8575f79a92",
+      "at": "2026-04-04T14:54:13Z",
+      "pr": 17278,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/ai-search-gotchas.md": {
+      "hash": "2c7d77810b23fc6ed30a09a74e72a27273282311",
+      "at": "2026-04-04T14:54:13Z",
+      "pr": 17263,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/stripe/02-color-palette.md": {
+      "hash": "33f19762a6d943289c75a2395c91af6646d0e381",
+      "at": "2026-04-04T14:54:14Z",
+      "pr": 17260,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/resend/02-color-palette.md": {
+      "hash": "510e71a96285289e17ee81a6b84623e2f5fc5b69",
+      "at": "2026-04-04T14:54:14Z",
+      "pr": 17258,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/opencode.ai/04-components.md": {
+      "hash": "d37acef0834027b351417bb9cc6fdaaead2399a6",
+      "at": "2026-04-04T14:54:14Z",
+      "pr": 17257,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/agency-creative/02-colours.md": {
+      "hash": "ff44198fa17972cfd740258291dc507f8505004b",
+      "at": "2026-04-04T14:54:14Z",
+      "pr": 17256,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/mongodb/04-components.md": {
+      "hash": "313a10856fb179b870a63e63b645b324990711a2",
+      "at": "2026-04-04T14:54:14Z",
+      "pr": 17254,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/nvidia/04-components.md": {
+      "hash": "b387cc195bceb43163a9230e6efd4e67dcab755a",
+      "at": "2026-04-04T14:54:15Z",
+      "pr": 17253,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/clay/02-color-palette.md": {
+      "hash": "e1dd3a054cbfc5c78d9c4ee208413787b46330ed",
+      "at": "2026-04-04T14:54:15Z",
+      "pr": 17252,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/claude/05-layout.md": {
+      "hash": "2ee2025b7d167573809f27095b93cd2bf2bc1937",
+      "at": "2026-04-04T14:54:15Z",
+      "pr": 17251,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/vercel/04-components.md": {
+      "hash": "1012934f5582c4f4118ddd2ebdaee4c4e6380630",
+      "at": "2026-04-04T14:54:15Z",
+      "pr": 17242,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/claude/04-components.md": {
+      "hash": "af40eeaf62adcd487b783d345ae02cbf61805789",
+      "at": "2026-04-04T14:54:16Z",
+      "pr": 17241,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/playful-vibrant/02-colour-palette.md": {
+      "hash": "c3934e0177fbe5118d2b5b6c77144293a467ed7d",
+      "at": "2026-04-04T14:54:16Z",
+      "pr": 17240,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/voltagent/04-components.md": {
+      "hash": "455d06dbc2ad5ac0899103635d546b337a341af3",
+      "at": "2026-04-04T14:54:16Z",
+      "pr": 17239,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/api-patterns.md": {
+      "hash": "2d22fd57bd06f00a7615b4632189fcae857e3496",
+      "at": "2026-04-04T14:54:16Z",
+      "pr": 17221,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/argo-smart-routing-patterns.md": {
+      "hash": "9aba0a2f627415119bc06f15b8d5b174483c2267",
+      "at": "2026-04-04T14:54:17Z",
+      "pr": 17220,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/bindings-patterns.md": {
+      "hash": "f119c69a039a7367b648aa287aa44fda708a497f",
+      "at": "2026-04-04T14:54:17Z",
+      "pr": 17219,
+      "passes": 1
+    },
+    ".agents/tools/ai-assistants/models-haiku.md": {
+      "hash": "1ba2e3fdd5b02b400124c08b7aa14d93d8070c41",
+      "at": "2026-04-04T14:54:17Z",
+      "pr": 17218,
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/agency-feminine/04-components.md": {
+      "hash": "4215e964e04628bfedaf3f4be1a2de3051c1cfe6",
+      "at": "2026-04-04T14:54:17Z",
+      "pr": 17217,
+      "passes": 1
+    },
+    ".agents/scripts/worker-lifecycle-common.sh": {
+      "hash": "9abd55497e41f57c43657471b694bc2cc030e39c",
+      "at": "2026-04-04T15:34:57Z",
+      "pr": 17353,
+      "passes": 1
+    },
+    ".agents/tools/code-review/setup.md": {
+      "hash": "fb0d5288be7a808f9dc232d229f4dca354745323",
+      "at": "2026-04-04T15:34:57Z",
+      "pr": 17343,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/composio/04-components.md": {
+      "hash": "0c5045bca1d19159413918d402960e4735ae7cca",
+      "at": "2026-04-04T15:34:57Z",
+      "pr": 17341,
+      "passes": 1
+    },
+    ".agents/tools/design/library/brands/uber/04-components.md": {
+      "hash": "4ec6802a7a92580fb74e4b230ec84fe570cb89ff",
+      "at": "2026-04-04T15:34:57Z",
+      "pr": 17340,
+      "passes": 1
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
