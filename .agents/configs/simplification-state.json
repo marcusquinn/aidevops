@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "872a6e632e8ce8a2bb7d9c10c42059fdd053f430",
-      "at": "2026-04-04T15:34:55Z",
-      "passes": 32,
+      "hash": "0a5b2c45deaa27c606ccd8418d8aa7ed697aabab",
+      "at": "2026-04-04T16:53:01Z",
+      "passes": 33,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "8cc2dd82ee81109f66d24fd4e38514b60cf836a5",
-      "at": "2026-04-04T15:34:56Z",
-      "passes": 31,
+      "hash": "41c42a995a2a59436b95eeaad43bf4f1e0ce3dc9",
+      "at": "2026-04-04T16:53:01Z",
+      "passes": 32,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -6671,10 +6671,10 @@
       "passes": 1
     },
     ".agents/services/hosting/cloudflare-platform-skill/argo-smart-routing-patterns.md": {
-      "hash": "9aba0a2f627415119bc06f15b8d5b174483c2267",
-      "at": "2026-04-04T14:54:17Z",
+      "hash": "a870e621cfc06b222513a0bc271789431937b860",
+      "at": "2026-04-04T16:52:36Z",
       "pr": 17220,
-      "passes": 1
+      "passes": 2
     },
     ".agents/services/hosting/cloudflare-platform-skill/bindings-patterns.md": {
       "hash": "f119c69a039a7367b648aa287aa44fda708a497f",
@@ -6683,16 +6683,16 @@
       "passes": 1
     },
     ".agents/tools/ai-assistants/models-haiku.md": {
-      "hash": "1ba2e3fdd5b02b400124c08b7aa14d93d8070c41",
-      "at": "2026-04-04T14:54:17Z",
+      "hash": "e19a01fb3e479ce82ed89c2e0111bc8e72606c09",
+      "at": "2026-04-04T16:52:41Z",
       "pr": 17218,
-      "passes": 1
+      "passes": 2
     },
     ".agents/tools/design/library/styles/agency-feminine/04-components.md": {
-      "hash": "4215e964e04628bfedaf3f4be1a2de3051c1cfe6",
-      "at": "2026-04-04T14:54:17Z",
+      "hash": "5f1bd3b67c5520a45522414e833317cb18ee4f10",
+      "at": "2026-04-04T16:52:50Z",
       "pr": 17217,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/worker-lifecycle-common.sh": {
       "hash": "9abd55497e41f57c43657471b694bc2cc030e39c",
