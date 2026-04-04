@@ -2,8 +2,8 @@
 
 ## Spacing System
 
-- Base unit: 8px
-- Scale: 1px, 2px, 3px, 4px, 5px, 6px, 7px, 8px, 9px, 10px, 11px, 12px, 13px, 15px
+- Base grid unit: 8px
+- Allowed spacing tokens (including fine-grain exceptions): 1px, 2px, 3px, 4px, 5px, 6px, 7px, 8px, 9px, 10px, 11px, 12px, 13px, 15px
 - Primary padding values: 8px, 11px, 13px, 16px, 24px, 32px
 - Section spacing: 48-80px vertical padding
 

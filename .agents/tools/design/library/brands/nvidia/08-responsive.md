@@ -4,13 +4,13 @@
 
 | Name | Width | Key Changes |
 |------|-------|-------------|
-| Mobile Small | <375px | Compact single column, reduced padding |
+| Mobile Small | &lt;375px | Compact single-column, reduced padding |
 | Mobile | 375-425px | Standard mobile layout |
 | Mobile Large | 425-600px | Wider mobile, some 2-col hints |
 | Tablet Small | 600-768px | 2-column grids begin |
 | Tablet | 768-1024px | Full card grids, expanded nav |
 | Desktop | 1024-1350px | Standard desktop layout |
-| Large Desktop | >1350px | Maximum content width, generous margins |
+| Large Desktop | &gt;1350px | Maximum content width, generous margins |
 
 ## Touch Targets
 

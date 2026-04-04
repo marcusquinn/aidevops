@@ -5,7 +5,7 @@
 ### Primary (Green Border)
 
 - Background: `transparent`
-- Text: `#000000`
+- Text: `#ffffff` on dark surfaces, `#000000` on light surfaces
 - Padding: 11px 13px
 - Border: `2px solid #76b900`
 - Radius: 2px

@@ -41,7 +41,7 @@
 - **Link Hover** (`#3860be`): Blue shift on hover across all link variants.
 - **Button Hover** (`#1eaedb`): Teal highlight for button hover states.
 - **Button Active** (`#007fff`): Bright blue for active/pressed button states.
-- **Focus Ring** (`#000000 solid 2px`): Black outline for keyboard focus.
+- **Focus Ring** (`2px solid #000000`): Black outline for keyboard focus.
 
 ## Shadows & Depth
 
