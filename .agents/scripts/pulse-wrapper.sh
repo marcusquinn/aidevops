@@ -303,6 +303,28 @@ WORKER_WATCHDOG_HELPER="${SCRIPT_DIR}/worker-watchdog.sh"
 PULSE_HEALTH_FILE="${HOME}/.aidevops/logs/pulse-health.json"
 FAST_FAIL_STATE_FILE="${HOME}/.aidevops/.agent-workspace/supervisor/fast-fail-counter.json"
 
+# Log sharding: hot/cold split + append-only cycle index (t1886)
+#
+# Hot log (pulse.log): active writes, capped at PULSE_LOG_HOT_MAX_BYTES.
+#   When the hot log exceeds the cap, it is gzip-compressed and moved to
+#   the cold archive directory before the next cycle begins. This keeps
+#   the hot log small for fast tail/grep operations.
+#
+# Cold archive (pulse-archive/): compressed rotated logs, total size capped
+#   at PULSE_LOG_COLD_MAX_BYTES. Oldest archives are pruned when the cap is
+#   exceeded. Archives are named pulse-YYYYMMDD-HHMMSS.log.gz.
+#
+# Cycle index (pulse-cycle-index.jsonl): append-only JSONL file. One record
+#   per cycle with timestamp, duration, dispatch/merge/kill counters, and
+#   worker utilisation. Enables fast cycle-level analytics without parsing
+#   the full log. Capped at PULSE_CYCLE_INDEX_MAX_LINES lines; oldest lines
+#   are pruned when the cap is exceeded.
+PULSE_LOG_HOT_MAX_BYTES="${PULSE_LOG_HOT_MAX_BYTES:-52428800}"     # 50 MB hot log cap
+PULSE_LOG_COLD_MAX_BYTES="${PULSE_LOG_COLD_MAX_BYTES:-1073741824}" # 1 GB cold archive cap
+PULSE_LOG_ARCHIVE_DIR="${PULSE_LOG_ARCHIVE_DIR:-${HOME}/.aidevops/logs/pulse-archive}"
+PULSE_CYCLE_INDEX_FILE="${PULSE_CYCLE_INDEX_FILE:-${HOME}/.aidevops/logs/pulse-cycle-index.jsonl}"
+PULSE_CYCLE_INDEX_MAX_LINES="${PULSE_CYCLE_INDEX_MAX_LINES:-10000}" # ~10k cycles ≈ ~14 days at 2-min intervals
+
 # Per-cycle health counters — incremented by merge/cleanup/dispatch functions
 # and flushed to PULSE_HEALTH_FILE by write_pulse_health_file() at cycle end.
 _PULSE_HEALTH_PRS_MERGED=0
@@ -318,6 +340,11 @@ COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_TH
 COMPLEXITY_MD_MIN_LINES=$(_validate_int COMPLEXITY_MD_MIN_LINES "$COMPLEXITY_MD_MIN_LINES" 50 10)
 FAST_FAIL_SKIP_THRESHOLD=$(_validate_int FAST_FAIL_SKIP_THRESHOLD "$FAST_FAIL_SKIP_THRESHOLD" 3 1)
 FAST_FAIL_EXPIRY_SECS=$(_validate_int FAST_FAIL_EXPIRY_SECS "$FAST_FAIL_EXPIRY_SECS" 14400 60)
+
+# Validate log sharding configuration (t1886)
+PULSE_LOG_HOT_MAX_BYTES=$(_validate_int PULSE_LOG_HOT_MAX_BYTES "$PULSE_LOG_HOT_MAX_BYTES" 52428800 1048576)
+PULSE_LOG_COLD_MAX_BYTES=$(_validate_int PULSE_LOG_COLD_MAX_BYTES "$PULSE_LOG_COLD_MAX_BYTES" 1073741824 10485760)
+PULSE_CYCLE_INDEX_MAX_LINES=$(_validate_int PULSE_CYCLE_INDEX_MAX_LINES "$PULSE_CYCLE_INDEX_MAX_LINES" 10000 100)
 
 if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 	printf '[pulse-wrapper] ERROR: headless runtime helper is missing or not executable: %s (SCRIPT_DIR=%s)\n' "$HEADLESS_RUNTIME_HELPER" "$SCRIPT_DIR" >&2
@@ -8348,6 +8375,179 @@ _run_early_exit_recycle_loop() {
 	return 0
 }
 
+#######################################
+# rotate_pulse_log — hot/cold log sharding (t1886)
+#
+# Called once per cycle, before any log writes. If pulse.log exceeds
+# PULSE_LOG_HOT_MAX_BYTES, it is gzip-compressed and moved to the cold
+# archive directory. The cold archive is then pruned to stay within
+# PULSE_LOG_COLD_MAX_BYTES by removing the oldest archives first.
+#
+# Design constraints:
+#   - Atomic: uses a tmp file + mv to avoid partial archives.
+#   - Non-fatal: any failure is logged to WRAPPER_LOGFILE and silently
+#     ignored so the pulse cycle is never blocked by log housekeeping.
+#   - macOS compatible: uses stat -f %z (BSD stat) with fallback to wc -c.
+#   - No external deps beyond gzip (standard on macOS and Linux).
+#######################################
+rotate_pulse_log() {
+	# Ensure archive directory exists
+	mkdir -p "$PULSE_LOG_ARCHIVE_DIR" 2>/dev/null || {
+		echo "[pulse-wrapper] rotate_pulse_log: cannot create archive dir ${PULSE_LOG_ARCHIVE_DIR}" >>"$WRAPPER_LOGFILE"
+		return 0
+	}
+
+	# Check hot log size — skip if under cap or log doesn't exist
+	local hot_size=0
+	if [[ -f "$LOGFILE" ]]; then
+		hot_size=$(stat -f %z "$LOGFILE" 2>/dev/null || wc -c <"$LOGFILE" 2>/dev/null || echo "0")
+		hot_size="${hot_size//[[:space:]]/}"
+		[[ "$hot_size" =~ ^[0-9]+$ ]] || hot_size=0
+	fi
+
+	if [[ "$hot_size" -lt "$PULSE_LOG_HOT_MAX_BYTES" ]]; then
+		return 0
+	fi
+
+	# Rotate: compress hot log to archive
+	local ts
+	ts=$(date -u +%Y%m%d-%H%M%S)
+	local archive_name="pulse-${ts}.log.gz"
+	local archive_path="${PULSE_LOG_ARCHIVE_DIR}/${archive_name}"
+	local tmp_archive
+	tmp_archive=$(mktemp "${PULSE_LOG_ARCHIVE_DIR}/.pulse-archive-XXXXXX.gz") || {
+		echo "[pulse-wrapper] rotate_pulse_log: mktemp failed for archive" >>"$WRAPPER_LOGFILE"
+		return 0
+	}
+
+	if gzip -c "$LOGFILE" >"$tmp_archive" 2>/dev/null; then
+		mv "$tmp_archive" "$archive_path" 2>/dev/null || {
+			rm -f "$tmp_archive"
+			echo "[pulse-wrapper] rotate_pulse_log: mv failed for ${archive_name}" >>"$WRAPPER_LOGFILE"
+			return 0
+		}
+		# Truncate hot log (not delete — preserves file descriptor for any
+		# concurrent writers that still have it open)
+		: >"$LOGFILE" 2>/dev/null || true
+		echo "[pulse-wrapper] rotate_pulse_log: rotated ${hot_size}B → ${archive_name}" >>"$WRAPPER_LOGFILE"
+	else
+		rm -f "$tmp_archive"
+		echo "[pulse-wrapper] rotate_pulse_log: gzip failed for ${LOGFILE}" >>"$WRAPPER_LOGFILE"
+		return 0
+	fi
+
+	# Prune cold archive to stay within PULSE_LOG_COLD_MAX_BYTES
+	# Sum archive sizes; remove oldest (lexicographic = chronological) until under cap.
+	local total_cold=0
+	local archive_file archive_size
+	# Build sorted list (oldest first via lexicographic sort on timestamp-named files)
+	local -a archive_files=()
+	while IFS= read -r archive_file; do
+		archive_files+=("$archive_file")
+	done < <(ls -1 "${PULSE_LOG_ARCHIVE_DIR}"/pulse-*.log.gz 2>/dev/null | sort)
+
+	for archive_file in "${archive_files[@]}"; do
+		archive_size=$(stat -f %z "$archive_file" 2>/dev/null || wc -c <"$archive_file" 2>/dev/null || echo "0")
+		archive_size="${archive_size//[[:space:]]/}"
+		[[ "$archive_size" =~ ^[0-9]+$ ]] || archive_size=0
+		total_cold=$((total_cold + archive_size))
+	done
+
+	if [[ "$total_cold" -gt "$PULSE_LOG_COLD_MAX_BYTES" ]]; then
+		for archive_file in "${archive_files[@]}"; do
+			[[ "$total_cold" -le "$PULSE_LOG_COLD_MAX_BYTES" ]] && break
+			archive_size=$(stat -f %z "$archive_file" 2>/dev/null || wc -c <"$archive_file" 2>/dev/null || echo "0")
+			archive_size="${archive_size//[[:space:]]/}"
+			[[ "$archive_size" =~ ^[0-9]+$ ]] || archive_size=0
+			rm -f "$archive_file" && {
+				total_cold=$((total_cold - archive_size))
+				echo "[pulse-wrapper] rotate_pulse_log: pruned cold archive $(basename "$archive_file") (${archive_size}B)" >>"$WRAPPER_LOGFILE"
+			}
+		done
+	fi
+
+	return 0
+}
+
+#######################################
+# append_cycle_index — write one JSONL record to the cycle index (t1886)
+#
+# Called once per cycle after write_pulse_health_file(). Captures the
+# per-cycle counters already computed by the health file writer plus
+# timing and utilisation data. The index is append-only and capped at
+# PULSE_CYCLE_INDEX_MAX_LINES lines; oldest lines are pruned in-place
+# using a tmp-file swap when the cap is exceeded.
+#
+# Fields written per cycle:
+#   ts          — ISO-8601 UTC timestamp
+#   duration_s  — cycle wall-clock duration in seconds (0 if unknown)
+#   workers     — "active/max" string
+#   dispatched  — issues dispatched this cycle
+#   merged      — PRs merged this cycle
+#   closed      — conflicting PRs closed this cycle
+#   killed      — stalled workers killed this cycle
+#   prefetch_errors — prefetch failures this cycle
+#######################################
+append_cycle_index() {
+	local duration_s="${1:-0}"
+
+	local ts
+	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+	local workers_active workers_max
+	workers_active=$(count_active_workers 2>/dev/null || echo "0")
+	[[ "$workers_active" =~ ^[0-9]+$ ]] || workers_active=0
+	workers_max=$(get_max_workers_target 2>/dev/null || echo "1")
+	[[ "$workers_max" =~ ^[0-9]+$ ]] || workers_max=1
+
+	local issues_dispatched=0
+	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	if [[ -x "$_ledger_helper" ]]; then
+		local _ledger_count
+		_ledger_count=$("$_ledger_helper" count 2>/dev/null || echo "0")
+		[[ "$_ledger_count" =~ ^[0-9]+$ ]] && issues_dispatched="$_ledger_count"
+	fi
+
+	# Append record — use printf for portability (no echo -e needed)
+	printf '{"ts":"%s","duration_s":%s,"workers":"%s/%s","dispatched":%s,"merged":%s,"closed":%s,"killed":%s,"prefetch_errors":%s}\n' \
+		"$ts" \
+		"$duration_s" \
+		"$workers_active" \
+		"$workers_max" \
+		"$issues_dispatched" \
+		"$_PULSE_HEALTH_PRS_MERGED" \
+		"$_PULSE_HEALTH_PRS_CLOSED_CONFLICTING" \
+		"$_PULSE_HEALTH_STALLED_KILLED" \
+		"$_PULSE_HEALTH_PREFETCH_ERRORS" \
+		>>"$PULSE_CYCLE_INDEX_FILE" 2>/dev/null || {
+		echo "[pulse-wrapper] append_cycle_index: write failed to ${PULSE_CYCLE_INDEX_FILE}" >>"$WRAPPER_LOGFILE"
+		return 0
+	}
+
+	# Prune index to PULSE_CYCLE_INDEX_MAX_LINES lines when exceeded
+	local line_count
+	line_count=$(wc -l <"$PULSE_CYCLE_INDEX_FILE" 2>/dev/null || echo "0")
+	line_count="${line_count//[[:space:]]/}"
+	[[ "$line_count" =~ ^[0-9]+$ ]] || line_count=0
+
+	if [[ "$line_count" -gt "$PULSE_CYCLE_INDEX_MAX_LINES" ]]; then
+		local excess=$((line_count - PULSE_CYCLE_INDEX_MAX_LINES))
+		local tmp_index
+		tmp_index=$(mktemp "${HOME}/.aidevops/logs/.pulse-cycle-index-XXXXXX.jsonl") || {
+			echo "[pulse-wrapper] append_cycle_index: mktemp failed for index prune" >>"$WRAPPER_LOGFILE"
+			return 0
+		}
+		# Keep only the last PULSE_CYCLE_INDEX_MAX_LINES lines
+		tail -n "$PULSE_CYCLE_INDEX_MAX_LINES" "$PULSE_CYCLE_INDEX_FILE" >"$tmp_index" 2>/dev/null &&
+			mv "$tmp_index" "$PULSE_CYCLE_INDEX_FILE" 2>/dev/null || {
+			rm -f "$tmp_index"
+			echo "[pulse-wrapper] append_cycle_index: prune failed (excess=${excess})" >>"$WRAPPER_LOGFILE"
+		}
+	fi
+
+	return 0
+}
+
 main() {
 	# GH#4513: Acquire exclusive instance lock FIRST — before any other
 	# check. Uses mkdir atomicity as the primary primitive (POSIX-guaranteed,
@@ -8372,6 +8572,14 @@ main() {
 	if ! check_dedup; then
 		return 0
 	fi
+
+	# Rotate hot log to cold archive if over cap (t1886)
+	# Run before any log writes so the new cycle starts with a fresh hot log.
+	rotate_pulse_log || true
+
+	# Record cycle start for append_cycle_index duration tracking (t1886)
+	local _cycle_start_epoch
+	_cycle_start_epoch=$(date +%s)
 
 	# Run pre-flight stages (cleanup, prefetch, normalization)
 	if ! _run_preflight_stages; then
@@ -8404,6 +8612,12 @@ main() {
 
 	# Write structured health snapshot for instant diagnosis (GH#15107)
 	write_pulse_health_file || true
+
+	# Append one JSONL record to the cycle index (t1886)
+	local _cycle_end_epoch
+	_cycle_end_epoch=$(date +%s)
+	local _cycle_duration=$((_cycle_end_epoch - _cycle_start_epoch))
+	append_cycle_index "$_cycle_duration" || true
 
 	# Release the instance lock BEFORE the LLM session so the next 2-min
 	# cycle can run deterministic ops (merge pass + fill floor) concurrently.
