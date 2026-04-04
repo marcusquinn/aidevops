@@ -175,7 +175,8 @@ if [[ -z "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
 	fi
 fi
 PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"                                            # Additional pulse passes when below utilization target (t1453)
-PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-35}"                                             # Grace window for worker process to appear after dispatch (t1453) — raised from 20s to 35s: sandbox-exec + opencode cold-start takes ~25-30s
+PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-35}"                                             # Max grace window for worker process to appear after dispatch (t1453) — raised from 20s to 35s: sandbox-exec + opencode cold-start takes ~25-30s
+PULSE_LAUNCH_SETTLE_BATCH_MAX="${PULSE_LAUNCH_SETTLE_BATCH_MAX:-5}"                                        # Dispatch count at which the full PULSE_LAUNCH_GRACE_SECONDS wait applies (t1887)
 PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                                                      # 10 min cap per pre-run stage (cleanup/prefetch)
 PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                                                  # Open PR list window per repo for pre-fetched state
 PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"                                            # Open issue list window for pulse prompt payload (keep compact)
@@ -223,6 +224,7 @@ if [[ "$QUALITY_DEBT_CAP_PCT" -gt 100 ]]; then
 fi
 PULSE_BACKFILL_MAX_ATTEMPTS=$(_validate_int PULSE_BACKFILL_MAX_ATTEMPTS "$PULSE_BACKFILL_MAX_ATTEMPTS" 3 0)
 PULSE_LAUNCH_GRACE_SECONDS=$(_validate_int PULSE_LAUNCH_GRACE_SECONDS "$PULSE_LAUNCH_GRACE_SECONDS" 35 5)
+PULSE_LAUNCH_SETTLE_BATCH_MAX=$(_validate_int PULSE_LAUNCH_SETTLE_BATCH_MAX "$PULSE_LAUNCH_SETTLE_BATCH_MAX" 5 1)
 PRE_RUN_STAGE_TIMEOUT=$(_validate_int PRE_RUN_STAGE_TIMEOUT "$PRE_RUN_STAGE_TIMEOUT" 600 30)
 PULSE_PREFETCH_PR_LIMIT=$(_validate_int PULSE_PREFETCH_PR_LIMIT "$PULSE_PREFETCH_PR_LIMIT" 200 1)
 PULSE_PREFETCH_ISSUE_LIMIT=$(_validate_int PULSE_PREFETCH_ISSUE_LIMIT "$PULSE_PREFETCH_ISSUE_LIMIT" 200 1)
@@ -7625,23 +7627,75 @@ _update_backlog_snapshot() {
 	return 0
 }
 
-#
-# Waits the normal launch grace period first so workers launched by the LLM
-# can appear in process lists before deterministic backfill runs.
 #######################################
-apply_deterministic_fill_floor() {
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor skipped before grace wait: stop flag present" >>"$LOGFILE"
+# Compute and apply an adaptive launch-settle wait (t1887).
+#
+# Scales the wait from 0s (0 dispatches) to PULSE_LAUNCH_GRACE_SECONDS
+# (PULSE_LAUNCH_SETTLE_BATCH_MAX or more dispatches) using linear
+# interpolation. This avoids the static 35s wait when no workers were
+# launched, saving ~35s per idle cycle.
+#
+# Formula: wait = ceil(dispatched / batch_max * grace_max)
+# Examples (grace_max=35, batch_max=5):
+#   0 dispatches → 0s
+#   1 dispatch   → 7s
+#   2 dispatches → 14s
+#   3 dispatches → 21s
+#   4 dispatches → 28s
+#   5+ dispatches → 35s
+#
+# Arguments:
+#   $1 - dispatched_count (integer, number of workers just launched)
+#   $2 - context label for log (e.g. "fill floor", "recycle loop")
+#######################################
+_adaptive_launch_settle_wait() {
+	local dispatched_count="${1:-0}"
+	local context_label="${2:-dispatch}"
+
+	[[ "$dispatched_count" =~ ^[0-9]+$ ]] || dispatched_count=0
+	if [[ "$dispatched_count" -eq 0 ]]; then
+		echo "[pulse-wrapper] Adaptive settle wait (${context_label}): 0 dispatches — skipping wait" >>"$LOGFILE"
 		return 0
 	fi
 
-	local grace_wait="$PULSE_LAUNCH_GRACE_SECONDS"
-	[[ "$grace_wait" =~ ^[0-9]+$ ]] || grace_wait=20
-	if [[ "$grace_wait" -gt 0 ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: waiting ${grace_wait}s for worker launches to settle" >>"$LOGFILE"
-		sleep "$grace_wait"
+	local grace_max="$PULSE_LAUNCH_GRACE_SECONDS"
+	local batch_max="$PULSE_LAUNCH_SETTLE_BATCH_MAX"
+	[[ "$grace_max" =~ ^[0-9]+$ ]] || grace_max=35
+	[[ "$batch_max" =~ ^[0-9]+$ ]] || batch_max=5
+	[[ "$batch_max" -lt 1 ]] && batch_max=1
+
+	# Clamp dispatched_count to batch_max ceiling
+	local clamped="$dispatched_count"
+	if [[ "$clamped" -gt "$batch_max" ]]; then
+		clamped="$batch_max"
 	fi
-	dispatch_deterministic_fill_floor >/dev/null || true
+
+	# Linear interpolation: ceil(clamped / batch_max * grace_max)
+	# Integer arithmetic: (clamped * grace_max + batch_max - 1) / batch_max
+	local wait_seconds=$(((clamped * grace_max + batch_max - 1) / batch_max))
+	[[ "$wait_seconds" -gt "$grace_max" ]] && wait_seconds="$grace_max"
+
+	echo "[pulse-wrapper] Adaptive settle wait (${context_label}): ${dispatched_count} dispatch(es) → waiting ${wait_seconds}s (max ${grace_max}s at ${batch_max}+ dispatches)" >>"$LOGFILE"
+	sleep "$wait_seconds"
+	return 0
+}
+
+#
+# Dispatches deterministic fill floor, then waits adaptively based on
+# how many workers were launched so they can appear in process lists
+# before the next worker count.
+#######################################
+apply_deterministic_fill_floor() {
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor skipped: stop flag present" >>"$LOGFILE"
+		return 0
+	fi
+
+	local fill_dispatched
+	fill_dispatched=$(dispatch_deterministic_fill_floor) || fill_dispatched=0
+	[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
+
+	_adaptive_launch_settle_wait "$fill_dispatched" "fill floor"
 	return 0
 }
 
@@ -7987,12 +8041,14 @@ _run_early_exit_recycle_loop() {
 		fi
 
 		# GH#6453: Wait for newly-dispatched workers to appear in the process list
-		# before re-counting. Workers dispatched by the LLM pulse take
+		# before re-counting. Workers dispatched by the LLM pulse take up to
 		# PULSE_LAUNCH_GRACE_SECONDS to start (sandbox-exec + opencode startup).
 		# Counting immediately after the LLM exits produces a false-negative
 		# (workers running but not yet visible) that triggers duplicate dispatch.
+		# t1887: LLM dispatch count is unknown here — use full grace to preserve
+		# the GH#6453 safety guarantee.
 		local grace_wait="$PULSE_LAUNCH_GRACE_SECONDS"
-		[[ "$grace_wait" =~ ^[0-9]+$ ]] || grace_wait=20
+		[[ "$grace_wait" =~ ^[0-9]+$ ]] || grace_wait=35
 		if [[ "$grace_wait" -gt 0 ]]; then
 			echo "[pulse-wrapper] Early-exit recycle: waiting ${grace_wait}s for dispatched workers to appear (GH#6453)" >>"$LOGFILE"
 			sleep "$grace_wait"
