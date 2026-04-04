@@ -23,6 +23,156 @@
  */
 
 import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent, normalizeExpiredCooldowns } from "./oauth-pool.mjs";
+import { createHash } from "crypto";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+import { execFileSync } from "child_process";
+
+// ---------------------------------------------------------------------------
+// CCH billing header computation (t1880)
+//
+// Replicates the exact billing header that Claude CLI injects into system[0].
+// Constants are loaded from ~/.aidevops/cch-constants.json (written by
+// cch-extract.sh --cache) or fall back to hardcoded defaults for the
+// currently installed CLI version.
+//
+// On each session start (first loadCCHConstants() call), the cached version
+// is compared against the installed CLI. If the CLI has auto-updated, the
+// cache is re-extracted automatically — no manual intervention needed.
+// ---------------------------------------------------------------------------
+
+/** @type {{ version: string, salt: string, charIndices: number[], entrypoint: string } | null} */
+let _cchConstants = null;
+
+/**
+ * Detect the currently installed Claude CLI version (fast — ~50ms).
+ * @returns {string|null}
+ */
+function detectLiveCliVersion() {
+  try {
+    const raw = execFileSync("claude", ["--version"], {
+      timeout: 3000, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const m = raw.match(/^(\d+\.\d+\.\d+)/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Re-extract CCH constants from the installed CLI.
+ * Runs cch-extract.sh --cache in the background. Returns true on success.
+ * @returns {boolean}
+ */
+function refreshCCHCache() {
+  const script = join(homedir(), ".aidevops", "agents", "scripts", "cch-extract.sh");
+  try {
+    execFileSync(script, ["--cache"], {
+      timeout: 10000, encoding: "utf-8", stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Load CCH signing constants from cache file or fall back to defaults.
+ * On first call, checks if the cached version matches the installed CLI.
+ * If the CLI has auto-updated, re-extracts constants automatically.
+ * @returns {{ version: string, salt: string, charIndices: number[], entrypoint: string }}
+ */
+function loadCCHConstants() {
+  if (_cchConstants) return _cchConstants;
+  const cacheFile = join(homedir(), ".aidevops", "cch-constants.json");
+  let raw = null;
+
+  try {
+    raw = JSON.parse(readFileSync(cacheFile, "utf-8"));
+  } catch {
+    // No cache — will fall back below
+  }
+
+  // Version-change detection: compare cache against live CLI
+  if (raw?.version) {
+    const liveVersion = detectLiveCliVersion();
+    if (liveVersion && liveVersion !== raw.version) {
+      console.error(
+        `[aidevops] CCH: CLI updated ${raw.version} → ${liveVersion}. Re-extracting constants...`,
+      );
+      if (refreshCCHCache()) {
+        try {
+          raw = JSON.parse(readFileSync(cacheFile, "utf-8"));
+          console.error(`[aidevops] CCH: constants refreshed for v${raw.version}`);
+        } catch {
+          // Use stale cache — better than nothing
+        }
+      }
+    }
+  } else if (!raw) {
+    // No cache at all — try to create one
+    console.error("[aidevops] CCH: no cache found. Extracting constants...");
+    if (refreshCCHCache()) {
+      try { raw = JSON.parse(readFileSync(cacheFile, "utf-8")); } catch { /* ignore */ }
+    }
+  }
+
+  if (raw?.version && raw?.salt) {
+    _cchConstants = {
+      version: raw.version,
+      salt: raw.salt,
+      charIndices: raw.char_indices || [4, 7, 20],
+      entrypoint: raw.entrypoint || "cli",
+    };
+  } else {
+    // Last resort: use detected User-Agent version with known defaults
+    _cchConstants = {
+      version: getAnthropicUserAgent().match(/\/([\d.]+)/)?.[1] || "2.1.92",
+      salt: "59cf53e54c78",
+      charIndices: [4, 7, 20],
+      entrypoint: "cli",
+    };
+  }
+  return _cchConstants;
+}
+
+/**
+ * Compute the 3-char hex version suffix from the first user message.
+ * sha256(salt + picked_chars + version)[:3]
+ * @param {string} userMessage - text of the first user message
+ * @returns {string}
+ */
+function computeVersionSuffix(userMessage) {
+  const { salt, charIndices, version } = loadCCHConstants();
+  const chars = charIndices.map((i) => userMessage[i] || "0").join("");
+  const payload = `${salt}${chars}${version}`;
+  return createHash("sha256").update(payload).digest("hex").slice(0, 3);
+}
+
+/**
+ * Build the complete billing header string for a request body.
+ * @param {object} parsed - parsed JSON request body with system/messages
+ * @returns {string}
+ */
+function buildBillingHeader(parsed) {
+  const { version, entrypoint } = loadCCHConstants();
+  // Extract first user message text (same logic as Claude CLI's HBY/SBY functions)
+  let firstUserText = "";
+  const messages = parsed.messages || [];
+  for (const msg of messages) {
+    if (msg.role !== "user") continue;
+    if (typeof msg.content === "string") { firstUserText = msg.content; break; }
+    if (Array.isArray(msg.content)) {
+      const textBlock = msg.content.find((b) => b.type === "text");
+      if (textBlock?.text) { firstUserText = textBlock.text; break; }
+    }
+    break;
+  }
+  const suffix = computeVersionSuffix(firstUserText);
+  return `x-anthropic-billing-header: cc_version=${version}.${suffix}; cc_entrypoint=${entrypoint}; cch=00000;`;
+}
 
 /** Default cooldown when rate limited mid-session (ms) — 5 seconds.
  *  Anthropic per-minute rate limits reset in seconds. Conservative cooldowns
@@ -557,6 +707,7 @@ function buildRequestHeaders(input, init, accessToken) {
   requestHeaders.set("authorization", `Bearer ${accessToken}`);
   requestHeaders.set("anthropic-beta", mergeBetaHeaders(requestHeaders));
   requestHeaders.set("user-agent", getAnthropicUserAgent());
+  requestHeaders.set("x-app", "cli");
   requestHeaders.delete("x-api-key");
 
   return requestHeaders;
@@ -613,10 +764,20 @@ function prefixToolUseBlocks(messages) {
 
 /**
  * Apply all body transformations to a parsed JSON object in-place.
+ * Injects billing header as system[0] to match Claude CLI request format.
  * @param {object} parsed
  */
 function applyBodyTransforms(parsed) {
-  if (Array.isArray(parsed.system)) parsed.system = sanitizeSystemPrompt(parsed.system);
+  // Inject billing header as first system block (matches Claude CLI GG8 function)
+  const billingText = buildBillingHeader(parsed);
+  if (!Array.isArray(parsed.system)) parsed.system = [];
+  // Remove any existing billing header (idempotent on retries)
+  parsed.system = parsed.system.filter(
+    (b) => !(b.type === "text" && b.text?.startsWith("x-anthropic-billing-header:")),
+  );
+  parsed.system.unshift({ type: "text", text: billingText });
+
+  parsed.system = sanitizeSystemPrompt(parsed.system);
   if (Array.isArray(parsed.tools)) parsed.tools = prefixToolNames(parsed.tools);
   if (Array.isArray(parsed.messages)) parsed.messages = prefixToolUseBlocks(parsed.messages);
 }

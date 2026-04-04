@@ -3307,6 +3307,7 @@ _help_commands() {
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
 	echo "  model-accounts-pool OAuth account pool (list/check/add/rotate/reset-cooldowns)"
+	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
 	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
 	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
@@ -3360,6 +3361,18 @@ _help_detailed_sections() {
 	echo "    aidevops model-accounts-pool rotate anthropic# 3. Switch account if rate-limited"
 	echo "    aidevops model-accounts-pool reset-cooldowns # 4. Clear cooldowns if all stuck"
 	echo "    aidevops model-accounts-pool add anthropic   # 5. Re-add if pool empty"
+	echo ""
+	echo "Client Format:"
+	echo "  aidevops client-format               # Show status + cached constants"
+	echo "  aidevops client-format extract        # Re-extract constants from installed CLI"
+	echo "  aidevops client-format check          # Verify cache matches installed CLI version"
+	echo "  aidevops client-format canary         # Run drift check against real CLI (uses tokens)"
+	echo "  aidevops client-format monitor [cmd]  # Traffic capture + diff (requires mitmproxy)"
+	echo "  aidevops client-format install-canary # Install daily drift check (launchd)"
+	echo ""
+	echo "  If requests stop working after a CLI update:"
+	echo "    aidevops client-format extract      # 1. Re-extract constants"
+	echo "    aidevops client-format canary       # 2. Verify against real CLI"
 	echo ""
 	echo "Secrets:"
 	echo "  aidevops secret set NAME     # Store a secret (hidden input)"
@@ -3598,6 +3611,46 @@ main() {
 	detect | scan) cmd_detect ;;
 	ip-check | ip_check) _dispatch_helper "ip-reputation-helper.sh" "ip-reputation-helper.sh" "$@" ;;
 	model-accounts-pool | map) _dispatch_helper "oauth-pool-helper.sh" "oauth-pool-helper.sh" "$@" ;;
+	client-format)
+		case "${1:-status}" in
+		extract | refresh)
+			_dispatch_helper "cch-extract.sh" "cch-extract.sh" --cache
+			;;
+		check | verify)
+			_dispatch_helper "cch-extract.sh" "cch-extract.sh" --verify
+			;;
+		canary | test)
+			shift || true
+			_dispatch_helper "cch-canary.sh" "cch-canary.sh" --verbose "$@"
+			;;
+		monitor)
+			shift || true
+			_dispatch_helper "cch-traffic-monitor.sh" "cch-traffic-monitor.sh" "$@"
+			;;
+		install-canary)
+			_dispatch_helper "cch-canary.sh" "cch-canary.sh" --install
+			;;
+		status | "")
+			echo ""
+			echo "Client request format alignment"
+			echo "==============================="
+			echo ""
+			_dispatch_helper "cch-extract.sh" "cch-extract.sh" --verify 2>&1 || true
+			echo ""
+			if [[ -f "$HOME/.aidevops/cch-constants.json" ]]; then
+				echo "Cached constants:"
+				cat "$HOME/.aidevops/cch-constants.json"
+			else
+				echo "No cached constants. Run: aidevops client-format extract"
+			fi
+			;;
+		*)
+			print_error "Unknown subcommand: $1"
+			echo "Usage: aidevops client-format [extract|check|canary|monitor|install-canary|status]"
+			exit 1
+			;;
+		esac
+		;;
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
 	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;

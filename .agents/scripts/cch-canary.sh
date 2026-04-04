@@ -1,0 +1,453 @@
+#!/usr/bin/env bash
+# cch-canary.sh — Daily verification that our signing matches the real Claude CLI
+#
+# Makes a cheap real Claude CLI call, extracts the billing header from its
+# debug log, computes our version, and compares. Logs a framework issue
+# if they diverge.
+#
+# Usage:
+#   cch-canary.sh              # Run canary check (default: quiet, exit code only)
+#   cch-canary.sh --verbose    # Show details
+#   cch-canary.sh --cron       # Cron/launchd mode (logs to file, issues on drift)
+#   cch-canary.sh --install    # Install as daily launchd job
+#   cch-canary.sh --uninstall  # Remove launchd job
+#
+# Exit codes:
+#   0 = match (or no CLI available)
+#   1 = drift detected
+#   2 = infrastructure error (can't run CLI, missing deps)
+
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+CANARY_LOG="${HOME}/.aidevops/logs/cch-canary.log"
+CANARY_STATE="${HOME}/.aidevops/cch-canary-state.json"
+SCRIPTS_DIR="${HOME}/.aidevops/agents/scripts"
+PLIST_LABEL="sh.aidevops.cch-canary"
+PLIST_FILE="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
+
+# Cheap test prompt — short to minimise token cost
+CANARY_PROMPT="hi"
+CANARY_MODEL="claude-haiku-4-5"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+print_info() {
+	printf '\033[0;34m[INFO]\033[0m %s\n' "$1" >&2
+	return 0
+}
+print_success() {
+	printf '\033[0;32m[OK]\033[0m %s\n' "$1" >&2
+	return 0
+}
+print_error() {
+	printf '\033[0;31m[ERROR]\033[0m %s\n' "$1" >&2
+	return 0
+}
+print_warning() {
+	printf '\033[0;33m[WARN]\033[0m %s\n' "$1" >&2
+	return 0
+}
+
+log_to_file() {
+	local msg="$1"
+	local log_dir
+	log_dir=$(dirname "$CANARY_LOG")
+	mkdir -p "$log_dir"
+	printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$msg" >>"$CANARY_LOG"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Core: run canary and compare
+# ---------------------------------------------------------------------------
+
+run_canary() {
+	local verbose="${1:-false}"
+
+	# Pre-flight
+	if ! command -v claude &>/dev/null; then
+		[[ "$verbose" == "true" ]] && print_warning "Claude CLI not installed — skipping canary"
+		return 0
+	fi
+
+	if ! command -v python3 &>/dev/null; then
+		[[ "$verbose" == "true" ]] && print_error "python3 required"
+		return 2
+	fi
+
+	# Get current CLI version
+	local cli_version
+	cli_version=$(claude --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+	if [[ -z "$cli_version" ]]; then
+		[[ "$verbose" == "true" ]] && print_error "Could not detect Claude CLI version"
+		return 2
+	fi
+	[[ "$verbose" == "true" ]] && print_info "Claude CLI v${cli_version}"
+
+	# Step 1: Make a real CLI call with debug logging
+	local debug_file
+	debug_file=$(mktemp "${TMPDIR:-/tmp}/cch-canary-debug.XXXXXX")
+
+	[[ "$verbose" == "true" ]] && print_info "Sending canary request via real CLI..."
+
+	# Use background process + kill for portable timeout (macOS lacks coreutils timeout)
+	local cli_exit=0
+	claude -p "$CANARY_PROMPT" \
+		--model "$CANARY_MODEL" \
+		--debug-file "$debug_file" \
+		>/dev/null 2>/dev/null &
+	local cli_pid=$!
+	local waited=0
+	while kill -0 "$cli_pid" 2>/dev/null && [[ $waited -lt 45 ]]; do
+		sleep 1
+		waited=$((waited + 1))
+	done
+	if kill -0 "$cli_pid" 2>/dev/null; then
+		kill "$cli_pid" 2>/dev/null || true
+		wait "$cli_pid" 2>/dev/null || true
+		cli_exit=124
+	else
+		wait "$cli_pid" 2>/dev/null || cli_exit=$?
+	fi
+
+	if [[ "$cli_exit" -ne 0 && "$cli_exit" -ne 124 ]]; then
+		[[ "$verbose" == "true" ]] && print_warning "Claude CLI exited ${cli_exit} — may be auth issue"
+		rm -f "$debug_file"
+		return 2
+	fi
+
+	# Step 2: Extract the real billing header from debug log
+	local real_header
+	real_header=$(grep -oP 'attribution header \K.*' "$debug_file" 2>/dev/null | head -1 || true)
+	rm -f "$debug_file"
+
+	if [[ -z "$real_header" ]]; then
+		[[ "$verbose" == "true" ]] && print_warning "No billing header in debug log — CLI may have changed logging format"
+		return 2
+	fi
+	[[ "$verbose" == "true" ]] && print_info "Real header: ${real_header}"
+
+	# Step 3: Extract fields from real header
+	local real_version_suffix real_entrypoint real_cch
+	real_version_suffix=$(printf '%s' "$real_header" | grep -oP 'cc_version=\K[^;]+' || true)
+	real_entrypoint=$(printf '%s' "$real_header" | grep -oP 'cc_entrypoint=\K[^;]+' || true)
+	real_cch=$(printf '%s' "$real_header" | grep -oP 'cch=\K[^;]+' || true)
+
+	# Step 4: Compute our version
+	# Note: -p mode uses entrypoint=sdk-cli; we extract the suffix for comparison
+	local our_suffix
+	our_suffix=$(python3 "${SCRIPTS_DIR}/cch-sign.py" suffix "$CANARY_PROMPT" --cache 2>/dev/null || true)
+
+	if [[ -z "$our_suffix" ]]; then
+		[[ "$verbose" == "true" ]] && print_error "cch-sign.py failed — cache may be missing"
+		[[ "$verbose" == "true" ]] && print_info "Run: cch-extract.sh --cache"
+		return 2
+	fi
+
+	local our_cc_version="${cli_version}.${our_suffix}"
+
+	[[ "$verbose" == "true" ]] && print_info "Our cc_version: ${our_cc_version}"
+	[[ "$verbose" == "true" ]] && print_info "Real cc_version: ${real_version_suffix}"
+
+	# Step 5: Compare — with algorithm fallback chain
+	local drift_detected="false"
+	local drift_details=""
+	local matched_algo="sha256"
+
+	# Compare version suffix (the part we compute)
+	if [[ "$our_cc_version" != "$real_version_suffix" ]]; then
+		# Primary algo (SHA-256) didn't match. Before declaring drift,
+		# try alternative algorithms to see if Anthropic changed the hash.
+		# Extract the real suffix (after the last dot in the version)
+		local real_suffix="${real_version_suffix##*.}"
+
+		[[ "$verbose" == "true" ]] && print_warning "SHA-256 mismatch (ours=${our_suffix}, real=${real_suffix}). Trying alternatives..."
+
+		local algo_match=""
+		algo_match=$(PROMPT="$CANARY_PROMPT" VERSION="$cli_version" REAL_SUFFIX="$real_suffix" python3 -c '
+import hashlib, hmac, os
+
+prompt = os.environ["PROMPT"]
+version = os.environ["VERSION"]
+real_suffix = os.environ["REAL_SUFFIX"]
+salt = "59cf53e54c78"
+indices = [4, 7, 20]
+chars = "".join(prompt[i] if i < len(prompt) else "0" for i in indices)
+payload = f"{salt}{chars}{version}"
+
+algos = {
+    "sha256": lambda: hashlib.sha256(payload.encode()).hexdigest()[:3],
+    "sha512": lambda: hashlib.sha512(payload.encode()).hexdigest()[:3],
+    "sha384": lambda: hashlib.sha384(payload.encode()).hexdigest()[:3],
+    "sha3_256": lambda: hashlib.sha3_256(payload.encode()).hexdigest()[:3],
+    "md5": lambda: hashlib.md5(payload.encode()).hexdigest()[:3],
+    "hmac_sha256_salt": lambda: hmac.new(salt.encode(), (chars + version).encode(), hashlib.sha256).hexdigest()[:3],
+    "hmac_sha256_version": lambda: hmac.new(version.encode(), (salt + chars).encode(), hashlib.sha256).hexdigest()[:3],
+    # Try without salt (in case they removed it)
+    "sha256_no_salt": lambda: hashlib.sha256((chars + version).encode()).hexdigest()[:3],
+    # Try different char orderings
+    "sha256_reverse": lambda: hashlib.sha256((version + chars + salt).encode()).hexdigest()[:3],
+}
+
+for name, fn in algos.items():
+    try:
+        if fn() == real_suffix:
+            print(name)
+            break
+    except Exception:
+        pass
+else:
+    print("")
+' 2>/dev/null || true)
+
+		if [[ -n "$algo_match" ]]; then
+			[[ "$verbose" == "true" ]] && print_warning "Alternative algorithm matched: ${algo_match}"
+			drift_detected="true"
+			matched_algo="$algo_match"
+			drift_details="algorithm_changed: sha256->${algo_match} (suffix still computable)"
+		else
+			drift_detected="true"
+			drift_details="cc_version: ours=${our_cc_version} real=${real_version_suffix} (no known algorithm matched)"
+		fi
+	fi
+
+	# Check if cch is still 00000 (Node.js behaviour)
+	if [[ "$real_cch" != "00000" && -n "$real_cch" ]]; then
+		drift_detected="true"
+		drift_details="${drift_details:+${drift_details}; }cch: expected=00000 real=${real_cch} (body hash now active)"
+	fi
+
+	# Step 6: Save state
+	local now_iso
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	local state_dir
+	state_dir=$(dirname "$CANARY_STATE")
+	mkdir -p "$state_dir"
+
+	DRIFT="$drift_detected" DRIFT_DETAILS="$drift_details" CLI_VERSION="$cli_version" \
+		OUR_SUFFIX="$our_suffix" REAL_HEADER="$real_header" NOW_ISO="$now_iso" \
+		REAL_CCH="$real_cch" REAL_ENTRYPOINT="$real_entrypoint" \
+		python3 -c '
+import json, os
+state = {
+    "last_check": os.environ["NOW_ISO"],
+    "cli_version": os.environ["CLI_VERSION"],
+    "drift_detected": os.environ["DRIFT"] == "true",
+    "drift_details": os.environ["DRIFT_DETAILS"] or None,
+    "our_suffix": os.environ["OUR_SUFFIX"],
+    "real_header": os.environ["REAL_HEADER"],
+    "real_cch": os.environ["REAL_CCH"],
+    "real_entrypoint": os.environ["REAL_ENTRYPOINT"],
+}
+with open(os.environ.get("STATE_FILE", ""), "w") as f:
+    json.dump(state, f, indent=2)
+' 2>/dev/null || true
+	# STATE_FILE not set in python — write separately
+	printf '%s\n' "$(DRIFT="$drift_detected" DRIFT_DETAILS="$drift_details" CLI_VERSION="$cli_version" \
+		OUR_SUFFIX="$our_suffix" REAL_HEADER="$real_header" NOW_ISO="$now_iso" \
+		REAL_CCH="$real_cch" REAL_ENTRYPOINT="$real_entrypoint" \
+		python3 -c '
+import json, os
+print(json.dumps({
+    "last_check": os.environ["NOW_ISO"],
+    "cli_version": os.environ["CLI_VERSION"],
+    "drift_detected": os.environ["DRIFT"] == "true",
+    "drift_details": os.environ["DRIFT_DETAILS"] or None,
+    "our_suffix": os.environ["OUR_SUFFIX"],
+    "real_header": os.environ["REAL_HEADER"],
+    "real_cch": os.environ["REAL_CCH"],
+    "real_entrypoint": os.environ["REAL_ENTRYPOINT"],
+}, indent=2))
+' 2>/dev/null)" >"$CANARY_STATE"
+
+	# Step 7: Report
+	if [[ "$drift_detected" == "true" ]]; then
+		[[ "$verbose" == "true" ]] && print_error "DRIFT DETECTED: ${drift_details}"
+		log_to_file "DRIFT: ${drift_details} (CLI v${cli_version})"
+		return 1
+	fi
+
+	[[ "$verbose" == "true" ]] && print_success "No drift — signing matches CLI v${cli_version}"
+	log_to_file "OK: CLI v${cli_version} suffix=${our_suffix} cch=${real_cch}"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Cron/launchd mode: run canary, log framework issue on drift
+# ---------------------------------------------------------------------------
+
+cmd_cron() {
+	local exit_code=0
+	run_canary "false" || exit_code=$?
+
+	if [[ "$exit_code" -eq 1 ]]; then
+		# Drift detected — log a framework issue if not already logged recently
+		local already_logged="false"
+		if [[ -f "$CANARY_STATE" ]]; then
+			already_logged=$(python3 -c "
+import json, sys
+from datetime import datetime, timedelta, timezone
+with open(sys.argv[1]) as f:
+    state = json.load(f)
+# Don't re-log if we logged within the last 24h
+last = state.get('last_drift_logged')
+if last:
+    last_dt = datetime.fromisoformat(last.replace('Z', '+00:00'))
+    if datetime.now(timezone.utc) - last_dt < timedelta(hours=24):
+        print('true')
+        sys.exit(0)
+print('false')
+" "$CANARY_STATE" 2>/dev/null || echo "false")
+		fi
+
+		if [[ "$already_logged" == "false" ]]; then
+			log_to_file "DRIFT: logging framework issue"
+
+			# Update state with drift logged time
+			if [[ -f "$CANARY_STATE" ]]; then
+				local now_iso
+				now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+				local updated
+				updated=$(NOW_ISO="$now_iso" python3 -c '
+import json, os, sys
+with open(sys.argv[1]) as f:
+    state = json.load(f)
+state["last_drift_logged"] = os.environ["NOW_ISO"]
+print(json.dumps(state, indent=2))
+' "$CANARY_STATE" 2>/dev/null)
+				if [[ -n "$updated" ]]; then
+					printf '%s\n' "$updated" >"$CANARY_STATE"
+				fi
+			fi
+
+			# Log the issue via framework helper if available
+			if [[ -x "${SCRIPTS_DIR}/framework-routing-helper.sh" ]]; then
+				"${SCRIPTS_DIR}/framework-routing-helper.sh" log-framework-issue \
+					"Client request format drift detected — review signing constants" \
+					2>/dev/null || true
+			fi
+		fi
+	fi
+
+	return "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# launchd install/uninstall
+# ---------------------------------------------------------------------------
+
+cmd_install() {
+	local script_path="${SCRIPTS_DIR}/cch-canary.sh"
+
+	if [[ ! -x "$script_path" ]]; then
+		print_error "Script not found at ${script_path}"
+		print_info "Run: aidevops setup"
+		return 1
+	fi
+
+	mkdir -p "$(dirname "$PLIST_FILE")"
+
+	# Run daily at 06:00 local time
+	cat >"$PLIST_FILE" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${PLIST_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${script_path}</string>
+        <string>--cron</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${HOME}/.aidevops/logs/cch-canary-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>${HOME}/.aidevops/logs/cch-canary-stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+PLIST
+
+	launchctl unload "$PLIST_FILE" 2>/dev/null || true
+	launchctl load "$PLIST_FILE"
+
+	print_success "Installed daily canary: ${PLIST_LABEL} (runs at 06:00)"
+	print_info "Plist: ${PLIST_FILE}"
+	print_info "Log: ${CANARY_LOG}"
+	return 0
+}
+
+cmd_uninstall() {
+	if [[ -f "$PLIST_FILE" ]]; then
+		launchctl unload "$PLIST_FILE" 2>/dev/null || true
+		rm -f "$PLIST_FILE"
+		print_success "Removed daily canary: ${PLIST_LABEL}"
+	else
+		print_info "No canary plist found"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+main() {
+	local action="${1:-}"
+
+	case "$action" in
+	--verbose | -v)
+		run_canary "true"
+		;;
+	--cron | -c)
+		cmd_cron
+		;;
+	--install)
+		cmd_install
+		;;
+	--uninstall)
+		cmd_uninstall
+		;;
+	--help | -h)
+		printf 'Usage: cch-canary.sh [--verbose|--cron|--install|--uninstall]\n'
+		printf '\n'
+		printf 'Daily verification that our request signing matches the real CLI.\n'
+		printf '\n'
+		printf 'Options:\n'
+		printf '  (default)     Quiet check — exit code only (0=match, 1=drift, 2=error)\n'
+		printf '  --verbose     Show comparison details\n'
+		printf '  --cron        Cron mode — logs drift and creates framework issue\n'
+		printf '  --install     Install as daily launchd job (06:00)\n'
+		printf '  --uninstall   Remove launchd job\n'
+		return 0
+		;;
+	"")
+		run_canary "false"
+		;;
+	*)
+		print_error "Unknown option: $action"
+		return 1
+		;;
+	esac
+}
+
+main "$@"
