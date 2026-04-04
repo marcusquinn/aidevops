@@ -47,5 +47,5 @@ curl -I https://example.com/asset.jpg | grep -i cache
 
 ## See Also
 
-- [Patterns](./patterns.md) - Best practices and architecture patterns
-- [Gotchas](./gotchas.md) - Common issues, troubleshooting, limits
+- [Patterns](./cache-reserve-patterns.md) - Best practices and architecture patterns
+- [Gotchas](./cache-reserve-gotchas.md) - Common issues, troubleshooting, limits
