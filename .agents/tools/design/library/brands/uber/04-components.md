@@ -64,7 +64,7 @@
 - Sticky top, white background
 - Logo: Uber wordmark/icon at 24x24px in black
 - Links: UberMoveText 14-18px, weight 500, Uber Black
-- Pill-shaped nav chips: Chip Gray (`#efefef`) background ("Ride", "Drive", "Business", "Uber Eats")
+- Pill-shaped nav chips: Chip Gray (`#efefef`) background — see [Category Pill Navigation](#distinctive-components)
 - Menu toggle: circular button, 50% border-radius
 - Mobile: hamburger menu
 

@@ -6436,5 +6436,11 @@
     "lines": 67,
     "status": "simplified",
     "issue": "GH#17202"
+  },
+  ".agents/tools/design/library/brands/uber/04-components.md": {
+    "hash": "4147e5ab87509d6727816c032f7148b2408c5b8b305e041a853ba1e80cbd0344",
+    "status": "simplified",
+    "action": "tighten-cross-reference",
+    "issue": "GH#17205"
   }
 }
