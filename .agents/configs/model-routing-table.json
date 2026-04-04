@@ -35,6 +35,14 @@
       "probe_path": "/v1/models",
       "probe_timeout_seconds": 10,
       "_comment": "API key OR OpenCode OAuth subscription (includes Codex). Auth checked via OPENAI_API_KEY env var or opencode auth.json."
+    },
+    "ollama": {
+      "endpoint": "http://localhost:11434/v1/chat/completions",
+      "key_env": null,
+      "probe_path": "/api/tags",
+      "probe_timeout_seconds": 3,
+      "min_context_length": 16384,
+      "_comment": "Ollama local model server. No API key needed. OpenAI-compatible API at /v1/. Use local-model-helper.sh status to check."
     }
   },
 
