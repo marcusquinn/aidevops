@@ -5943,6 +5943,18 @@
       "issue": 16956,
       "pr": 16947,
       "passes": 1
+    },
+    ".agents/tools/design/library/brands/cursor/DESIGN.md": {
+      "hash": "ccceee3cb41ed9e2ecdc782afbc834836b3db867",
+      "at": "2026-04-04T00:00:00Z",
+      "passes": 1,
+      "pr": 0
+    },
+    ".agents/tools/design/design-md.md": {
+      "hash": "6b1cf3ac2a6d60918f740ef6bc8631179fa5449e3011730d5bf061b6afb90b7c",
+      "at": "2026-04-04T00:43:06Z",
+      "lines": 158,
+      "issue": 16952
     }
   }
 }
