@@ -5,29 +5,26 @@
 
 ## Buttons
 
-Shared base: `font: 14px/1 Lato, 500 · padding: 14px 32px · border-radius: 999px · letter-spacing: 0.04em`
-
-**Primary** `background: #d4a5a5 · color: #ffffff · border: none · transition: all 400ms ease-in-out`
-
 ```css
+/* Shared base */
+font: 14px/1 Lato, 500; padding: 14px 32px; border-radius: 999px; letter-spacing: 0.04em
+
+/* Primary */
+background: #d4a5a5; color: #ffffff; border: none; transition: all 400ms ease-in-out
 :hover    → background: #c79393; box-shadow: 0 4px 16px rgba(212, 165, 165, 0.25)
 :active   → background: #b88282; transform: scale(0.98)
 :focus    → outline: 2px solid #d4a5a5; outline-offset: 3px
 :disabled → background: #e8cece; color: #b0a59c; cursor: not-allowed
-```
 
-**Secondary** `background: transparent · color: #3d3530 · border: 1.5px solid #d4a5a5`
-
-```css
+/* Secondary */
+background: transparent; color: #3d3530; border: 1.5px solid #d4a5a5
 :hover    → background: #f5ebe7; border-color: #c79393
 :active   → background: #f0e6d8
 :focus    → outline: 2px solid #d4a5a5; outline-offset: 3px
 :disabled → color: #b0a59c; border-color: #e8ddd0
-```
 
-**Ghost** `background: transparent · color: #7a6e65 · font-weight: 400 · border: none`
-
-```css
+/* Ghost */
+background: transparent; color: #7a6e65; font-weight: 400; border: none
 :hover  → color: #3d3530; background: rgba(212, 165, 165, 0.08)
 :active → background: rgba(212, 165, 165, 0.12)
 ```
