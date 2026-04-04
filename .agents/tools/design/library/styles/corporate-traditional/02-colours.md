@@ -53,3 +53,42 @@
 |------|-------|-------|
 | Shadow colour | `rgba(27, 54, 93, 0.08)` | All shadow definitions |
 | Shadow strong | `rgba(27, 54, 93, 0.15)` | Elevated elements |
+
+## CSS Variables
+
+```css
+:root {
+  /* Primary */
+  --color-primary: #1B365D;
+  --color-primary-light: #2A4A7F;
+  --color-primary-dark: #0F2341;
+
+  /* Accent */
+  --color-gold: #B8860B;
+  --color-gold-light: #D4A843;
+  --color-gold-muted: #C9B97A;
+
+  /* Text */
+  --color-text-heading: #1B365D;
+  --color-text-body: #333333;
+  --color-text-secondary: #6B7280;
+  --color-text-inverse: #FFFFFF;
+
+  /* Surface */
+  --color-bg: #FFFFFF;
+  --color-surface-alt: #F5F5F0;
+  --color-surface-accent: #EEF0F4;
+  --color-border: #D1D5DB;
+  --color-border-strong: #9CA3AF;
+
+  /* Semantic */
+  --color-success: #166534;
+  --color-warning: #92400E;
+  --color-error: #991B1B;
+  --color-info: #1E40AF;
+
+  /* Shadows */
+  --shadow-color: rgba(27, 54, 93, 0.08);
+  --shadow-color-strong: rgba(27, 54, 93, 0.15);
+}
+```

@@ -6377,5 +6377,11 @@
     "lines": 82,
     "status": "simplified",
     "issue": "GH#17080"
+  },
+  ".agents/tools/design/library/styles/corporate-traditional/02-colours.md": {
+    "hash": "83084b6d85338c961b19752ae5c0e7842d88b14fe7be78121b6d049f2fbf4c3c",
+    "simplified_at": "2026-04-04T06:22:35Z",
+    "issue": "GH#17122",
+    "action": "added CSS variables quick-reference section"
   }
 }
