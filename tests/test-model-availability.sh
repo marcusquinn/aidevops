@@ -444,30 +444,25 @@ fi
 
 # Verify local tier primary model uses local/ prefix (grep source for get_tier_models)
 # get_tier_models has: local) echo "local/llama.cpp|..." ;;
-# We look for the echo line that contains local/ in the get_tier_models case block.
-local_tier_echo=$(grep -A1 "^[[:space:]]*local)" "$HELPER" | grep 'echo.*local/' | head -1) || local_tier_echo=""
-if [[ -n "$local_tier_echo" ]]; then
+# Check both the echo-on-next-line and inline-echo patterns.
+local_tier_has_prefix=0
+grep -A1 "^[[:space:]]*local)" "$HELPER" | grep -q 'echo.*local/' && local_tier_has_prefix=1
+grep "^[[:space:]]*local)" "$HELPER" | grep -q 'local/' && local_tier_has_prefix=1
+if [[ "$local_tier_has_prefix" -eq 1 ]]; then
 	pass "local tier primary model uses local/ prefix"
 else
-	# Fallback: check if any local) case has local/ in the same line
-	if grep "^[[:space:]]*local)" "$HELPER" | grep -q 'local/'; then
-		pass "local tier primary model uses local/ prefix (inline)"
-	else
-		fail "local tier primary model should use local/ prefix" \
-			"No 'local/' found in local) case of get_tier_models"
-	fi
+	fail "local tier primary model should use local/ prefix" \
+		"No 'local/' found in local) case of get_tier_models"
 fi
 
-# Verify ollama is a known provider in the helper
-if bash "$HELPER" help 2>&1 | grep -q "ollama"; then
-	pass "help mentions ollama provider"
+# Verify ollama is a known provider in the helper (check help output or source)
+ollama_in_help=0
+bash "$HELPER" help 2>&1 | grep -q "ollama" && ollama_in_help=1
+grep -q "ollama" "$HELPER" && ollama_in_help=1
+if [[ "$ollama_in_help" -eq 1 ]]; then
+	pass "ollama present in model-availability-helper.sh"
 else
-	# Check KNOWN_PROVIDERS in source
-	if grep -q "ollama" "$HELPER"; then
-		pass "ollama present in model-availability-helper.sh source"
-	else
-		fail "ollama not found in model-availability-helper.sh"
-	fi
+	fail "ollama not found in model-availability-helper.sh"
 fi
 
 # Verify local is a known provider in the helper
