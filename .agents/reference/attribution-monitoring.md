@@ -5,36 +5,23 @@
 
 > t1883 — GitHub Code Search + canary dashboard for detecting framework copies
 
-## Overview
-
-The aidevops framework is MIT-licensed. Copying is legal, but attribution is expected. This system detects when distinctive framework patterns appear in public GitHub repositories, enabling:
-
-- Adoption visibility (how widely is the framework being used?)
-- Fork discovery (are there derivatives that could benefit from upstream contributions?)
-- Attribution awareness (who is using the framework without credit?)
+MIT-licensed copying is legal; attribution is expected. This system detects distinctive framework patterns in public GitHub repos for adoption visibility, fork discovery, and attribution awareness.
 
 **Tool:** `attribution-detection-helper.sh` — see `scripts/attribution-detection-helper.sh`
 
 ## Quick Start
 
 ```bash
-# List registered canary patterns
-attribution-detection-helper.sh canary list
-
-# Run a scan (dry-run first to verify)
-attribution-detection-helper.sh scan --dry-run
-attribution-detection-helper.sh scan
-
-# View results
-attribution-detection-helper.sh dashboard
-
-# Schedule weekly scans
-attribution-detection-helper.sh install
+attribution-detection-helper.sh canary list        # List registered canary patterns
+attribution-detection-helper.sh scan --dry-run     # Verify before scanning
+attribution-detection-helper.sh scan               # Run scan
+attribution-detection-helper.sh dashboard          # View results
+attribution-detection-helper.sh install            # Schedule weekly scans
 ```
 
 ## Canary Token Strategy
 
-Canary tokens are distinctive strings embedded in framework files that are unlikely to appear in unrelated code. When these strings appear in other public repos, it indicates the framework (or a copy of it) is present.
+Distinctive strings embedded in framework files — when found in other public repos, the framework (or a copy) is present.
 
 ### Default canaries
 
@@ -49,10 +36,7 @@ Canary tokens are distinctive strings embedded in framework files that are unlik
 ### Adding custom canaries
 
 ```bash
-# Add a canary for a distinctive function name
 attribution-detection-helper.sh canary add my-func "my_unique_function_name" "Custom function"
-
-# Add a canary for a unique comment string
 attribution-detection-helper.sh canary add my-comment "# aidevops: my-unique-comment" "Custom comment"
 ```
 
@@ -65,24 +49,13 @@ attribution-detection-helper.sh canary add my-comment "# aidevops: my-unique-com
 
 ## Private Detection Repo
 
-For more comprehensive monitoring (including Cloudflare KV canary pings and
-a full attribution manifest), set up a private detection repo. The private
-repo stores detection methodology that should not be public.
+For comprehensive monitoring (Cloudflare KV canary pings, full attribution manifest), set up a private detection repo. Keep methodology private: custom canary patterns reveal what you consider distinctive, results may contain sensitive repo names, and exposure lets bad actors avoid detection.
 
 ```bash
-# Get setup instructions
 attribution-detection-helper.sh setup-private-repo
 ```
 
-### Why private?
-
-- Custom canary patterns reveal what you consider distinctive
-- Detection results may contain sensitive repo names
-- Methodology exposure lets bad actors avoid detection
-
 ## Interpreting Results
-
-### Attribution status
 
 | Status | Meaning | Action |
 |--------|---------|--------|
@@ -91,7 +64,7 @@ attribution-detection-helper.sh setup-private-repo
 
 ### When you find an unattributed detection
 
-1. **Check the repo** — is it a legitimate fork/derivative? A tutorial? A copy?
+1. **Check the repo** — fork/derivative? Tutorial? Copy?
 2. **Assess intent** — accidental omission vs deliberate copying
 3. **Decide action:**
    - **Fork/derivative**: Open a friendly issue suggesting attribution
@@ -102,7 +75,6 @@ attribution-detection-helper.sh setup-private-repo
 ### Adding a repo to the attributed list
 
 ```bash
-# Edit the canaries file directly
 jq '(.[] | select(.name == "spdx-header") | .attributed_repos) += ["owner/repo"]' \
   ~/.aidevops/cache/attribution-canaries.json > /tmp/canaries.json
 mv /tmp/canaries.json ~/.aidevops/cache/attribution-canaries.json
@@ -115,22 +87,18 @@ mv /tmp/canaries.json ~/.aidevops/cache/attribution-canaries.json
 | Authenticated | 30 req/min | Requires `gh auth login` |
 | Unauthenticated | 10 req/min | Not recommended |
 
-The script sleeps 3 seconds between requests (20 req/min) to stay within limits.
-
-GitHub code search only indexes **public** repositories. Private repos are not searchable.
+Script sleeps 3 seconds between requests (20 req/min). Only **public** repos are indexed.
 
 ## Scheduling
 
-Weekly scans are recommended. The script installs a launchd job (macOS) or cron job (Linux):
-
 ```bash
-attribution-detection-helper.sh install    # Install weekly Monday 03:00
+attribution-detection-helper.sh install    # Install weekly Monday 03:00 (launchd/cron)
 attribution-detection-helper.sh uninstall  # Remove
 ```
 
 ## State Files
 
-All state is stored locally in `~/.aidevops/cache/` — not committed to the public repo.
+All state in `~/.aidevops/cache/` — not committed to the public repo.
 
 | File | Purpose |
 |------|---------|
@@ -138,12 +106,11 @@ All state is stored locally in `~/.aidevops/cache/` — not committed to the pub
 | `~/.aidevops/cache/attribution-detections.json` | Latest scan results |
 | `~/.aidevops/logs/attribution-detection.log` | Operation log |
 
-## Privacy Considerations
+## Privacy
 
-- **Search queries are visible to GitHub** — avoid canaries that reveal sensitive internal details
-- **Results may contain private repo names** — store in private detection repo, not public commits
-- **Rate limit headers** — GitHub can see your search patterns; this is normal and expected
-- **False positives** — common strings will match many repos; tune canaries to be distinctive
+- Search queries are visible to GitHub — avoid canaries that reveal sensitive internal details
+- Results may contain private repo names — store in private detection repo, not public commits
+- False positives — common strings match many repos; tune canaries to be distinctive
 
 ## Related
 
