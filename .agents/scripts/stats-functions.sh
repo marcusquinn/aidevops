@@ -67,31 +67,9 @@ _validate_repo_slug() {
 	return 1
 }
 
-#######################################
-# Count interactive AI sessions (duplicate of pulse-wrapper's check_session_count)
-#
-# Duplicated here (17 lines) rather than cross-sourcing pulse-wrapper.sh,
-# which would defeat the purpose of the extraction. See t1431 brief.
-#
-# Returns: session count via stdout
-#######################################
-check_session_count() {
-	local interactive_count=0
-
-	# Count opencode processes with a real TTY (interactive sessions).
-	# Filter both '?' (Linux) and '??' (macOS headless TTY entries.
-	interactive_count=$(ps axo tty,command | awk '
-		/(\.(opencode|claude)|opencode-ai|claude-ai)/ && !/awk/ && $1 != "?" && $1 != "??" { count++ }
-		END { print count + 0 }
-	') || interactive_count=0
-
-	if [[ "$interactive_count" -gt "$SESSION_COUNT_WARN" ]]; then
-		echo "[stats] Session warning: $interactive_count interactive sessions open (threshold: $SESSION_COUNT_WARN)" >>"$LOGFILE"
-	fi
-
-	echo "$interactive_count"
-	return 0
-}
+# check_session_count: now provided by worker-lifecycle-common.sh (sourced by caller).
+# Previously duplicated here (17 lines) — see t1431. Consolidated to eliminate
+# divergence risk and ensure single source of truth.
 
 #######################################
 # Determine runner role for a repo: supervisor or contributor
@@ -354,43 +332,46 @@ _resolve_health_issue_number() {
 #######################################
 # Scan active headless worker processes for a repo.
 #
+# Uses the shared list_active_worker_processes (worker-lifecycle-common.sh)
+# as the single source of truth for worker discovery, then filters by
+# repo path and formats as markdown for the health issue body.
+#
 # Arguments:
 #   $1 - repo path (used to filter workers by --dir)
-# Output: "workers_md|worker_count" (newline-delimited fields)
+# Output: NUL-delimited "workers_md\0worker_count\0"
 #######################################
 _scan_active_workers() {
 	local repo_path="$1"
 
 	local workers_md=""
 	local worker_count=0
+
+	# Get deduplicated, zombie-filtered worker list from shared function
 	local worker_lines
-	worker_lines=$(ps axo pid,tty,etime,command | grep '[.]opencode' | grep -v 'bash-language-server' || true)
+	worker_lines=$(list_active_worker_processes || true)
 
 	if [[ -n "$worker_lines" ]]; then
 		local worker_table=""
 		while IFS= read -r line; do
-			local w_pid w_tty w_etime w_cmd
-			read -r w_pid w_tty w_etime w_cmd <<<"$line"
+			[[ -z "$line" ]] && continue
+			local w_pid w_etime w_cmd
+			read -r w_pid w_etime w_cmd <<<"$line"
 
-			# Only count headless workers (no TTY).
-			# Exclude both '?' (Linux headless) and '??' (macOS headless).
-			[[ "$w_tty" != "?" && "$w_tty" != "??" ]] && continue
-
-			# Extract title if present (--title "...")
-			local w_title="headless"
-			if [[ "$w_cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]] || [[ "$w_cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
-				w_title="${BASH_REMATCH[1]}"
-			fi
-
-			# Extract dir if present
+			# Extract dir if present — filter to this repo only
 			local w_dir=""
 			if [[ "$w_cmd" =~ --dir[[:space:]]+([^[:space:]]+) ]]; then
 				w_dir="${BASH_REMATCH[1]}"
 			fi
 
 			# Only include workers for this repo (or all if dir not detectable)
-			if [[ -n "$w_dir" && "$w_dir" != "$repo_path"* ]]; then
+			if [[ -n "$w_dir" && -n "$repo_path" && "$w_dir" != "$repo_path"* ]]; then
 				continue
+			fi
+
+			# Extract title if present (--title "...")
+			local w_title="headless"
+			if [[ "$w_cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]] || [[ "$w_cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
+				w_title="${BASH_REMATCH[1]}"
 			fi
 
 			local w_title_short="${w_title:0:60}"
@@ -411,7 +392,8 @@ ${worker_table}"
 		workers_md="_No active workers_"
 	fi
 
-	printf '%s\n%s\n' "$workers_md" "$worker_count"
+	# NUL-delimited output preserves multiline workers_md markdown
+	printf '%s\0%s\0' "$workers_md" "$worker_count"
 	return 0
 }
 
@@ -504,27 +486,38 @@ _gather_health_stats() {
 	local repo_path="$2"
 	local runner_user="$3"
 
-	# Open PRs
+	# Open PRs — limit 100 for accurate count + table display.
+	# Previously --limit 20 capped the count at 20 for repos with more open PRs.
 	local pr_json
 	pr_json=$(gh pr list --repo "$repo_slug" --state open \
 		--json number,title,headRefName,updatedAt,reviewDecision,statusCheckRollup \
-		--limit 20 2>/dev/null) || pr_json="[]"
+		--limit 100 2>/dev/null) || pr_json="[]"
 	local pr_count
 	pr_count=$(echo "$pr_json" | jq 'length')
 
-	# Open issues — assigned to this runner (actionable) vs total
+	# Open issues — assigned to this runner (actionable) vs total.
+	# --limit 500: gh defaults to 30, which undercounts for active repos.
 	local assigned_issue_count
 	assigned_issue_count=$(gh issue list --repo "$repo_slug" --state open \
-		--assignee "$runner_user" --json number --jq 'length' 2>/dev/null || echo "0")
+		--assignee "$runner_user" --limit 500 \
+		--json number --jq 'length' 2>/dev/null || echo "0")
 	local total_issue_count
 	total_issue_count=$(gh issue list --repo "$repo_slug" --state open \
+		--limit 500 \
 		--json number,labels --jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review")) | not)] | length' 2>/dev/null || echo "0")
 
-	# Active headless workers
-	local worker_raw workers_md worker_count
-	worker_raw=$(_scan_active_workers "$repo_path")
-	workers_md=$(printf '%s\n' "$worker_raw" | head -1)
-	worker_count=$(printf '%s\n' "$worker_raw" | tail -1)
+	# Active headless workers — parse NUL-delimited output from _scan_active_workers.
+	# Previously used head -1 / tail -1 on newline-delimited output, which truncated
+	# the multiline workers_md markdown table to just its header row.
+	local workers_md="" worker_count=0
+	{
+		local _worker_fields=()
+		while IFS= read -r -d '' _wf; do
+			_worker_fields+=("$_wf")
+		done < <(_scan_active_workers "$repo_path")
+		workers_md="${_worker_fields[0]:-_No active workers_}"
+		worker_count="${_worker_fields[1]:-0}"
+	}
 
 	# System resources
 	local sys_raw sys_load_ratio sys_cpu_cores sys_load_1m sys_load_5m sys_memory sys_procs
@@ -537,19 +530,23 @@ _gather_health_stats() {
 		wt_count=$(git -C "$repo_path" worktree list 2>/dev/null | wc -l | tr -d ' ')
 	fi
 
-	# Max workers
+	# Max workers — validate as integer (matches pulse-wrapper's get_max_workers_target).
+	# Previously read raw file content without validation, risking garbage display.
 	local max_workers="?"
 	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
 	if [[ -f "$max_workers_file" ]]; then
 		max_workers=$(cat "$max_workers_file" 2>/dev/null || echo "?")
+		[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers="?"
 	fi
 
-	# Interactive session count (t1398)
+	# Interactive session count (t1398) — uses shared check_session_count
+	# from worker-lifecycle-common.sh
 	local session_count
 	session_count=$(check_session_count)
 	local session_warning=""
 	if [[ "$session_count" -gt "$SESSION_COUNT_WARN" ]]; then
 		session_warning=" **WARNING: exceeds threshold of ${SESSION_COUNT_WARN}**"
+		echo "[stats] Session warning: $session_count interactive sessions open (threshold: $SESSION_COUNT_WARN)" >>"$LOGFILE"
 	fi
 
 	# PRs table
@@ -1063,8 +1060,12 @@ _update_health_issue_for_repo() {
 		guard_assigned_count=$(gh issue list --repo "$repo_slug" \
 			--assignee "$runner_user" --state open \
 			--json number --jq 'length' 2>/dev/null || echo "0")
-		guard_worker_output=$(_scan_active_workers "${repo_path:-}")
-		guard_worker_count="${guard_worker_output##*$'\n'}"
+		# Parse NUL-delimited output: workers_md\0worker_count\0
+		local _guard_fields=()
+		while IFS= read -r -d '' _gf; do
+			_guard_fields+=("$_gf")
+		done < <(_scan_active_workers "${repo_path:-}")
+		local guard_worker_count="${_guard_fields[1]:-0}"
 
 		if [[ "${guard_pr_count:-0}" -eq 0 && "${guard_assigned_count:-0}" -eq 0 && "${guard_worker_count:-0}" -eq 0 ]]; then
 			echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, issues, or workers" \
