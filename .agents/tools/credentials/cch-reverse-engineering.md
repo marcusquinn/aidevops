@@ -10,27 +10,19 @@ tools:
 
 # CCH Reverse Engineering Agent
 
-Extracts request signing constants from the Claude CLI binary/source and detects protocol changes.
-
-## When to Use
-
-- After every Claude CLI update (`claude --version` changed)
-- When OAuth pool requests start failing unexpectedly
-- When `cch-extract.sh --verify` reports cache staleness
-- When mitmproxy traffic shows new/changed headers or body fields
-- Weekly proactive check (via pulse)
+Extracts request signing constants from the Claude CLI binary/source and detects protocol changes. Run after every CLI update, on OAuth pool failures, or weekly via pulse.
 
 ## Quick Reference
 
 ```bash
-cch-extract.sh --cache                                        # Extract + cache constants
+cch-extract.sh --cache                                        # Extract + cache constants (run after every CLI update)
 cch-extract.sh --verify                                       # Verify cache vs installed version
 cch-traffic-monitor.sh capture --duration 60                  # Capture API traffic
 cch-traffic-monitor.sh diff <baseline.json> <current.json>    # Diff two captures
 cch-traffic-monitor.sh analyse                                # Full analysis pipeline
 ```
 
-`cch-extract.sh` automates Phases 1–3. `cch-traffic-monitor.sh` automates Phase 4. Run `cch-extract.sh --cache` after every CLI update.
+`cch-extract.sh` automates Phases 1–3. `cch-traffic-monitor.sh` automates Phase 4.
 
 ## Files
 
@@ -134,12 +126,7 @@ cch-traffic-monitor.sh capture --output current-vX.Y.Z.json
 cch-traffic-monitor.sh diff baseline-v2.1.92.json current-vX.Y.Z.json
 ```
 
-Changes to watch for:
-
-- New/changed headers or `anthropic-beta` values
-- New billing header fields or different `cch` format (length/charset)
-- New body fields (`research_preview_*`, `context_management`)
-- Changed JSON key ordering (affects body hash if xxHash active)
+Watch for: new/changed headers or `anthropic-beta` values; new billing header fields or different `cch` format; new body fields (`research_preview_*`, `context_management`); changed JSON key ordering (affects body hash if xxHash active).
 
 ## References
 
