@@ -21,7 +21,7 @@ Pill padding (shared): `5px 12px`
 
 ## Cards & Containers
 
-- Background: transparent or very subtle dark tint; Radius: 16px (cards), 24px (panels)
+- Background: transparent or very subtle dark tint; Radius: 16px (cards), 24px (panels) — see [05-layout.md](05-layout.md) border radius scale
 - Border: frost border; Shadow: `rgba(176, 199, 217, 0.145) 0px 0px 0px 1px` (ring)
 - Content: dark product screenshots, code demos; No box-shadow elevation
 
@@ -33,7 +33,7 @@ Pill padding (shared): `5px 12px`
 ## Navigation
 
 - Sticky dark header; border-bottom: frost border; "Resend" wordmark left-aligned
-- Nav links: ABC Favorit 14px weight 500 +0.35px tracking; Pill CTAs right-aligned
+- Nav links: ABC Favorit 14px weight 500 +0.35px tracking (see [03-typography.md](03-typography.md)); Pill CTAs right-aligned
 - Mobile: hamburger collapse
 
 ## Image Treatment
