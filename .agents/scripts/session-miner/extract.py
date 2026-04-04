@@ -2,10 +2,12 @@
 """
 Session Miner — Phase 1: Extract high-signal data from coding assistant sessions.
 
-Extracts three categories of learning signal from local session databases:
+Extracts four categories of learning signal from local session databases:
 1. User steerage: corrections, preferences, guidance, workflow patterns
 2. Model errors: tool failures with surrounding context (what failed, what fixed it)
 3. Git correlation: cross-references sessions with git commit outcomes
+4. Instruction candidates: persistent guidance/corrections that should be saved to
+   instruction files (AGENTS.md, build.txt, style guides)
 
 Output format is tool-agnostic — works with OpenCode now, adaptable to
 Claude Code, Cursor, or any tool that stores session data.
@@ -99,6 +101,198 @@ ERROR_CATEGORIES = {
     "exit_code": re.compile(r"(exit code|exited with|ShellError)", re.IGNORECASE),
     "not_read_first": re.compile(r"must.*read.*before|without.*prior.*read", re.IGNORECASE),
 }
+
+
+# --- Instruction candidate detection ---
+#
+# Design: high precision over recall. Better to miss a candidate than to flood
+# with false positives. Only flag generalizable patterns, not task-specific
+# directions that reference particular files, PRs, or one-off commands.
+
+# Patterns that signal persistent/generalizable guidance
+INSTRUCTION_SIGNAL_PATTERNS = [
+    # Explicit save-to-instructions requests
+    r"\badd\s+(this|that)\s+to\s+(AGENTS\.md|build\.txt|the\s+style\s+guide|the\s+instructions?|the\s+rules?)\b",
+    r"\bupdate\s+(AGENTS\.md|build\.txt|the\s+style\s+guide|the\s+instructions?|the\s+rules?)\b",
+    r"\bremember\s+(this|that)\s+(rule|convention|preference|pattern|going\s+forward)\b",
+    # Persistent directive language
+    r"\bfrom\s+now\s+on\b",
+    r"\bgoing\s+forward\b",
+    r"\bin\s+future\s+sessions?\b",
+    r"\balways\s+(?:use|do|check|run|make|prefer|ensure|include|add|put|write|format|start|end|begin|avoid|skip|omit)\b",
+    r"\bnever\s+(?:use|do|create|make|add|commit|include|put|write|format|start|end|begin|guess|assume|hardcode)\b",
+    r"\bdon'?t\s+ever\s+\w+\b",
+    # Convention/rule declarations
+    r"\bthe\s+(?:rule|convention|standard|pattern|policy|practice)\s+is\b",
+    r"\bour\s+(?:rule|convention|standard|pattern|policy|practice)\s+is\b",
+    r"\bwe\s+(?:always|never|prefer|use|avoid)\b",
+    r"\bprefer\s+\w+\s+over\b",
+    r"\buse\s+\w+\s+instead\s+of\b",
+]
+
+# Patterns that indicate task-specific (non-generalizable) directions — these
+# are strong disqualifiers. If any match, the candidate is suppressed.
+TASK_SPECIFIC_DISQUALIFIERS = [
+    # References to specific files by path
+    r"(?:fix|edit|update|change|revert|delete|remove)\s+(?:the\s+)?(?:file\s+)?['\"]?[\w./\-]+\.\w{1,6}['\"]?",
+    # References to specific PRs, issues, commits
+    r"\b(?:PR|pull\s+request|issue|commit|branch)\s+#?\d+\b",
+    r"\bGH#\d+\b",
+    r"\bt\d{3,}\b",  # task IDs like t1876
+    # Undo/revert commands (one-off, not persistent)
+    r"\b(?:undo|revert|rollback|reset)\s+(?:that|this|the\s+last)\b",
+    # References to "this" specific instance without generalizing
+    r"\bthis\s+(?:specific|particular|one)\b",
+    # Imperative commands about the current task only
+    r"\bfor\s+(?:this|the\s+current)\s+(?:task|issue|PR|commit|session)\b",
+]
+
+# Compiled versions
+_INSTRUCTION_COMPILED = [re.compile(p, re.IGNORECASE) for p in INSTRUCTION_SIGNAL_PATTERNS]
+_DISQUALIFIER_COMPILED = [re.compile(p, re.IGNORECASE) for p in TASK_SPECIFIC_DISQUALIFIERS]
+
+# Target file heuristics — map content keywords to likely instruction files
+_TARGET_FILE_RULES: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"\b(?:shell|bash|script|\.sh|shellcheck|function|local\s+var)\b", re.IGNORECASE),
+     ".agents/prompts/build.txt", "code_style"),
+    (re.compile(r"\b(?:AGENTS\.md|agent|subagent|prompt|instruction|build\.txt)\b", re.IGNORECASE),
+     ".agents/prompts/build.txt", "agent_instructions"),
+    (re.compile(r"\b(?:git|commit|branch|PR|worktree|merge|push|pull)\b", re.IGNORECASE),
+     ".agents/prompts/build.txt", "git_workflow"),
+    (re.compile(r"\b(?:style|format|markdown|emoji|tone|concise|verbose)\b", re.IGNORECASE),
+     ".agents/prompts/build.txt", "style"),
+    (re.compile(r"\b(?:security|secret|credential|token|key|password)\b", re.IGNORECASE),
+     ".agents/prompts/build.txt", "security"),
+    (re.compile(r"\b(?:test|lint|quality|verify|check|validate)\b", re.IGNORECASE),
+     ".agents/prompts/build.txt", "quality"),
+    (re.compile(r"\b(?:AGENTS\.md|workflow|process|lifecycle|routine)\b", re.IGNORECASE),
+     ".agents/AGENTS.md", "workflow"),
+]
+_TARGET_FILE_DEFAULT = (".agents/prompts/build.txt", "general")
+
+
+def _infer_target_file(text: str) -> tuple[str, str]:
+    """Infer the most likely instruction file and category for a candidate."""
+    for pattern, target_file, category in _TARGET_FILE_RULES:
+        if pattern.search(text):
+            return target_file, category
+    return _TARGET_FILE_DEFAULT
+
+
+def _score_instruction_candidate(text: str) -> float:
+    """Score a text for instruction-candidate confidence (0.0–1.0).
+
+    Higher score = more likely to be a generalizable persistent instruction.
+    Returns 0.0 if any disqualifier matches (task-specific direction).
+    """
+    # Hard disqualifiers — task-specific, not generalizable
+    for pattern in _DISQUALIFIER_COMPILED:
+        if pattern.search(text):
+            return 0.0
+
+    # Count signal pattern matches
+    signal_count = sum(1 for p in _INSTRUCTION_COMPILED if p.search(text))
+    if signal_count == 0:
+        return 0.0
+
+    # Boost for explicit save-to-instructions requests (first 2 patterns)
+    explicit_save = any(p.search(text) for p in _INSTRUCTION_COMPILED[:2])
+    base_score = min(0.5 + (signal_count * 0.15), 0.95)
+    if explicit_save:
+        base_score = min(base_score + 0.2, 0.99)
+
+    return round(base_score, 2)
+
+
+def classify_instruction_candidate(text: str) -> Optional[dict[str, Any]]:
+    """Classify user text as a potential instruction candidate.
+
+    Returns a dict with confidence and target_file, or None if not a candidate.
+    Conservative: only returns results with confidence >= 0.5.
+    """
+    if not text or len(text) < 20:
+        return None
+
+    confidence = _score_instruction_candidate(text)
+    if confidence < 0.5:
+        return None
+
+    target_file, category = _infer_target_file(text)
+    return {
+        "confidence": confidence,
+        "target_file": target_file,
+        "category": category,
+    }
+
+
+def extract_instruction_candidates(
+    conn: sqlite3.Connection, limit: Optional[int] = None,
+) -> list[dict]:
+    """Extract instruction candidate signals from user messages.
+
+    Identifies user utterances that appear to be persistent rules or conventions
+    that should be captured in instruction files (AGENTS.md, build.txt, etc.).
+
+    Conservative detection: high precision over recall. Task-specific directions
+    (referencing particular files, PRs, or one-off commands) are filtered out.
+
+    Returns:
+        List of instruction candidate records with text, confidence, target_file,
+        session context, and category.
+    """
+    print("Extracting instruction candidates...", file=sys.stderr)
+
+    query = """
+    SELECT
+        s.id as session_id,
+        s.title as session_title,
+        s.directory as session_dir,
+        m.id as message_id,
+        m.time_created as msg_time,
+        json_extract(m.data, '$.role') as role
+    FROM message m
+    JOIN session s ON m.session_id = s.id
+    WHERE json_extract(m.data, '$.role') = 'user'
+    ORDER BY m.time_created ASC
+    """
+    if limit:
+        query += f" LIMIT {int(limit) * 10}"
+
+    candidates: list[dict] = []
+    seen_texts: set[int] = set()
+
+    for row in conn.execute(query):
+        for text in _fetch_text_parts(conn, row["message_id"]):
+            if _is_automated_or_short(text):
+                continue
+
+            text_hash = hash(text[:200])
+            if text_hash in seen_texts:
+                continue
+            seen_texts.add(text_hash)
+
+            classification = classify_instruction_candidate(text)
+            if classification is None:
+                continue
+
+            candidates.append({
+                "type": "instruction_candidate",
+                "session_id": row["session_id"],
+                "session_title": row["session_title"] or "",
+                "session_dir": _sanitize_path(row["session_dir"] or ""),
+                "timestamp": row["msg_time"],
+                "text": text[:2000],
+                "confidence": classification["confidence"],
+                "target_file": classification["target_file"],
+                "category": classification["category"],
+            })
+
+            if limit and len(candidates) >= limit:
+                candidates = candidates[:limit]
+                break
+
+    print(f"  Found {len(candidates)} instruction candidates", file=sys.stderr)
+    return candidates
 
 
 def connect_db(db_path: Path) -> sqlite3.Connection:
@@ -829,6 +1023,7 @@ def _build_git_summary_chunk(git_correlations: list[dict]) -> dict:
 
 def build_chunks(steerage: list[dict], errors: list[dict], stats: dict,
                  git_correlations: Optional[list[dict]] = None,
+                 instruction_candidates: Optional[list[dict]] = None,
                  max_chunk_bytes: int = 80_000) -> list[dict]:
     """Build analysis-ready chunks that fit within model context.
 
@@ -872,6 +1067,16 @@ def build_chunks(steerage: list[dict], errors: list[dict], stats: dict,
 
         for batch_name, batch in [("productive", productive), ("unproductive", unproductive)]:
             _chunk_records(batch, "git", batch_name, chunks, max_chunk_bytes)
+
+    # Chunk instruction candidates by target file
+    if instruction_candidates:
+        by_target: dict[str, list[dict]] = defaultdict(list)
+        for record in instruction_candidates:
+            by_target[record["target_file"]].append(record)
+        for target, records in by_target.items():
+            # Use a safe key: replace path separators with underscores
+            safe_key = target.replace("/", "_").replace(".", "_")
+            _chunk_records(records, "instruction_candidate", safe_key, chunks, max_chunk_bytes)
 
     return chunks
 
@@ -952,14 +1157,18 @@ def main():
         if not args.no_git:
             git_correlations = extract_git_correlation(conn, limit=args.limit)
 
+        # Phase 1e: Extract instruction candidates
+        instruction_candidates = extract_instruction_candidates(conn, limit=args.limit)
+
         # Phase 2: Build chunks for model analysis
         if args.format == "chunks":
-            chunks = build_chunks(steerage, errors, stats, git_correlations)
+            chunks = build_chunks(steerage, errors, stats, git_correlations, instruction_candidates)
             out_path = write_output(chunks, args.output, fmt="chunks")
             print(f"\nOutput: {out_path}/", file=sys.stderr)
             print(f"  {len(chunks)} chunks written", file=sys.stderr)
             print(f"  {len(steerage)} steerage signals", file=sys.stderr)
             print(f"  {len(errors)} error sequences", file=sys.stderr)
+            print(f"  {len(instruction_candidates)} instruction candidates", file=sys.stderr)
             if git_correlations is not None:
                 productive = sum(1 for c in git_correlations if c["commits_count"] > 0)
                 print(f"  {len(git_correlations)} git correlations ({productive} productive)", file=sys.stderr)
@@ -967,14 +1176,16 @@ def main():
             all_records = [{"type": "stats", **stats}] + steerage + errors
             if git_correlations:
                 all_records.extend(git_correlations)
+            all_records.extend(instruction_candidates)
             out_path = write_output(all_records, args.output, fmt="jsonl")
             print(f"\nOutput: {out_path}", file=sys.stderr)
-            print(f"  {len(steerage)} steerage + {len(errors)} errors", file=sys.stderr)
+            print(f"  {len(steerage)} steerage + {len(errors)} errors + {len(instruction_candidates)} instruction candidates", file=sys.stderr)
 
         # Print summary to stdout
         summary = {
             "steerage_count": len(steerage),
             "error_count": len(errors),
+            "instruction_candidates_count": len(instruction_candidates),
             "steerage_categories": dict(
                 sorted(
                     defaultdict(int, {
@@ -995,6 +1206,20 @@ def main():
                 "total_commits": sum(c["commits_count"] for c in git_correlations),
                 "avg_commits_per_message": round(
                     sum(c["commits_per_message"] for c in productive) / max(len(productive), 1), 3,
+                ),
+            }
+        if instruction_candidates:
+            by_target: dict[str, int] = defaultdict(int)
+            by_category: dict[str, int] = defaultdict(int)
+            for c in instruction_candidates:
+                by_target[c["target_file"]] += 1
+                by_category[c["category"]] += 1
+            summary["instruction_candidates"] = {
+                "count": len(instruction_candidates),
+                "by_target_file": dict(sorted(by_target.items(), key=lambda x: -x[1])),
+                "by_category": dict(sorted(by_category.items(), key=lambda x: -x[1])),
+                "avg_confidence": round(
+                    sum(c["confidence"] for c in instruction_candidates) / len(instruction_candidates), 2,
                 ),
             }
         print(json.dumps(summary, indent=2))

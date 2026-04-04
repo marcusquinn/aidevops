@@ -11,6 +11,7 @@ Compression strategy:
 3. Strip file contents / diffs that were pasted (keep only the user's words)
 4. Group by category with frequency counts
 5. For errors: extract only the pattern (tool + error_category + recovery)
+6. For instruction candidates: deduplicate, group by target file, rank by confidence
 
 Target: <100KB total output that captures all unique signals.
 """
@@ -291,12 +292,57 @@ def compress_git_correlation(chunks_dir: Path) -> dict:
     }
 
 
+def compress_instruction_candidates(chunks_dir: Path) -> dict:
+    """Compress instruction candidate chunks into deduplicated, ranked summaries.
+
+    Groups by target file, deduplicates near-identical texts, and ranks by
+    confidence score. Returns a dict keyed by target file with candidate lists.
+    """
+    by_target: dict[str, list[dict]] = defaultdict(list)
+    seen: set[int] = set()
+
+    for chunk_file in sorted(chunks_dir.glob("instruction_candidate_*.json")):
+        try:
+            chunk = json.loads(chunk_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        for record in chunk.get("records", []):
+            raw_text = record.get("text", "")
+            if not raw_text or len(raw_text) < 20:
+                continue
+
+            # Deduplicate by normalized text
+            norm = re.sub(r"\s+", " ", raw_text.lower().strip())[:200]
+            norm_hash = hash(norm)
+            if norm_hash in seen:
+                continue
+            seen.add(norm_hash)
+
+            target_file = record.get("target_file", ".agents/prompts/build.txt")
+            by_target[target_file].append({
+                "text": raw_text[:800],
+                "confidence": record.get("confidence", 0.5),
+                "category": record.get("category", "general"),
+                "session_title": record.get("session_title", "")[:80],
+            })
+
+    # Sort each target's candidates by confidence descending
+    result: dict[str, list[dict]] = {}
+    for target_file, candidates in sorted(by_target.items()):
+        candidates.sort(key=lambda x: -x["confidence"])
+        result[target_file] = candidates
+
+    return result
+
+
 def main():
     print(f"Compressing chunks from {CHUNKS_DIR}", file=sys.stderr)
 
     steerage = compress_steerage(CHUNKS_DIR)
     errors = compress_errors(CHUNKS_DIR)
     git_correlation = compress_git_correlation(CHUNKS_DIR)
+    instruction_candidates = compress_instruction_candidates(CHUNKS_DIR)
 
     # Load stats
     stats_file = CHUNKS_DIR / "stats.json"
@@ -313,6 +359,8 @@ def main():
         "errors": errors,
         "stats": stats,
         "git_correlation": git_correlation,
+        "instruction_candidates": instruction_candidates,
+        "instruction_candidates_counts": {k: len(v) for k, v in instruction_candidates.items()},
     }
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
@@ -320,16 +368,23 @@ def main():
 
     total_steerage = sum(len(v) for v in steerage.values())
     total_errors = len(errors.get("patterns", []))
+    total_candidates = sum(len(v) for v in instruction_candidates.values())
     file_size = OUTPUT.stat().st_size
 
     print(f"Output: {OUTPUT}", file=sys.stderr)
     print(f"  {total_steerage} unique steerage signals", file=sys.stderr)
     print(f"  {total_errors} error patterns", file=sys.stderr)
+    print(f"  {total_candidates} instruction candidates", file=sys.stderr)
     print(f"  {file_size / 1024:.1f} KB", file=sys.stderr)
 
     # Print category breakdown
     for cat, signals in sorted(steerage.items(), key=lambda x: -len(x[1])):
         print(f"  steerage/{cat}: {len(signals)} unique signals", file=sys.stderr)
+
+    # Print instruction candidates breakdown
+    if instruction_candidates:
+        for target_file, candidates in sorted(instruction_candidates.items()):
+            print(f"  instruction_candidates/{target_file}: {len(candidates)} candidates", file=sys.stderr)
 
     # Print git correlation summary
     git_summary = git_correlation.get("summary", {})

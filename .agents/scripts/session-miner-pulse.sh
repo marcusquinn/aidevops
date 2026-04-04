@@ -250,6 +250,29 @@ if git_summary:
             print(f'  {s[\"title\"][:60]} — {s[\"commits\"]} commits/{s[\"messages\"]} msgs '
                   f'(ratio: {s[\"ratio\"]:.2f}, {s[\"duration_min\"]:.0f}min)')
         print()
+
+# Instruction candidates
+instruction_candidates = data.get('instruction_candidates', {})
+total_candidates = sum(len(v) for v in instruction_candidates.values())
+if total_candidates > 0:
+    print('### Instruction Candidates')
+    print(f'  Total: {total_candidates} candidate(s) detected across sessions')
+    print()
+    for target_file, candidates in sorted(instruction_candidates.items()):
+        if not candidates:
+            continue
+        print(f'  Target: {target_file} ({len(candidates)} candidate(s))')
+        for c in candidates[:5]:
+            conf = c.get('confidence', 0)
+            cat = c.get('category', 'general')
+            text = c.get('text', '')[:120].replace('\n', ' ')
+            session = c.get('session_title', '')[:40]
+            print(f'    [{conf:.0%} {cat}] \"{text}\"')
+            if session:
+                print(f'      (from: {session})')
+        if len(candidates) > 5:
+            print(f'    ... and {len(candidates) - 5} more')
+        print()
 " 2>/dev/null
 	return $?
 }
@@ -432,6 +455,31 @@ if delta_lines:
     lines.extend(delta_lines)
 else:
     lines.append("- No count changes detected from previous pulse")
+
+# Instruction candidates section
+instruction_candidates = data.get("instruction_candidates", {})
+total_candidates = sum(len(v) for v in instruction_candidates.values())
+lines.extend(["", "## Instruction Candidates"])
+if total_candidates > 0:
+    lines.append(f"Total: {total_candidates} candidate(s) detected — review and add to instruction files as appropriate.")
+    lines.append("")
+    for target_file, candidates in sorted(instruction_candidates.items()):
+        if not candidates:
+            continue
+        lines.append(f"### {target_file} ({len(candidates)} candidate(s))")
+        for c in candidates[:10]:
+            conf = c.get("confidence", 0)
+            cat = c.get("category", "general")
+            text = c.get("text", "")[:200].replace("\n", " ")
+            session = c.get("session_title", "")[:60]
+            lines.append(f"- [{conf:.0%} / {cat}] {text}")
+            if session:
+                lines.append(f"  _(from session: {session})_")
+        if len(candidates) > 10:
+            lines.append(f"- ... and {len(candidates) - 10} more (see compressed_signals.json)")
+        lines.append("")
+else:
+    lines.append("- No instruction candidates detected in this pulse")
 
 report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 print(f"Generated {len(actions)} action candidates")

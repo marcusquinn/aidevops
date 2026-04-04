@@ -93,6 +93,54 @@ markdownlint-cli2 ~/.aidevops/agents/**/*.md 2>&1 | \
   grep -v "^$" | head -30
 ```
 
+### 7. Instruction Candidates (instruction-to-save)
+
+Detects user utterances from session history that appear to be persistent rules or
+conventions that should be captured in instruction files (AGENTS.md, build.txt, etc.).
+
+Sourced from the session miner pipeline — available in `compressed_signals.json` after
+a pulse run, and surfaced in the pulse summary under "Instruction Candidates".
+
+```bash
+# Read instruction candidates from latest compressed signals
+COMPRESSED=$(ls -t ~/.aidevops/.agent-workspace/work/session-miner/pulse_*/compressed_signals.json 2>/dev/null | head -1)
+[[ -n "$COMPRESSED" ]] && python3 -c "
+import json, sys
+from pathlib import Path
+data = json.loads(Path('$COMPRESSED').read_text())
+candidates = data.get('instruction_candidates', {})
+for target, items in candidates.items():
+    for c in items[:5]:
+        print(f'{target} [{c[\"confidence\"]:.0%}] {c[\"text\"][:120]}')
+" 2>/dev/null
+
+# Or read from the feedback report
+cat ~/.aidevops/.agent-workspace/work/session-miner/feedback_actions.md 2>/dev/null | \
+  awk '/## Instruction Candidates/,0'
+```
+
+**Detection criteria (conservative — high precision over recall):**
+
+- Explicit save requests: "add this to AGENTS.md", "update build.txt"
+- Persistent directive language: "from now on", "going forward", "always use X", "never do Y"
+- Convention declarations: "the rule is", "we always", "prefer X over Y"
+- Filtered out: task-specific directions referencing particular files, PRs, commits, or one-off commands
+
+**Finding format for instruction candidates:**
+
+```json
+{
+  "file": ".agents/prompts/build.txt",
+  "issue": "instruction-to-save: 'always use local var=\"$1\" in shell functions' (confidence: 90%)",
+  "source": "instruction-to-save",
+  "priority": "medium",
+  "frequency": 1
+}
+```
+
+Candidates are surfaced as suggestions only — never auto-applied. A human or the
+autoagent hypothesis loop decides whether to act on them.
+
 ## Finding Format
 
 Each source produces findings in this shape:
@@ -105,6 +153,7 @@ Each source produces findings in this shape:
 | Comprehension Tests | `.agents/path/to/agent.md` | test failure description | `comprehension-tests` |
 | Git Churn | `.agents/path/to/file.md` | high churn — N changes in 30 days | `git-churn` |
 | Linter | `.agents/scripts/helper.sh` | shellcheck SC2086: double-quote variable | `linter` |
+| Instruction Candidates | `.agents/prompts/build.txt` | instruction-to-save: user guidance text (confidence: N%) | `instruction-to-save` |
 
 ## Finding Aggregation
 
@@ -117,7 +166,8 @@ SIGNAL_FINDINGS = deduplicate_and_rank([
     error_feedback_findings,
     comprehension_test_findings,
     git_churn_findings,
-    linter_findings
+    linter_findings,
+    instruction_to_save_findings
 ])
 ```
 
@@ -141,6 +191,7 @@ When `SIGNAL_SOURCES` is set in the research program, only run the listed source
 | `comprehension-tests` | Comprehension test results |
 | `git-churn` | Git churn analysis |
 | `linter` | Linter violations |
+| `instruction-to-save` | Instruction candidates from session history |
 | `all` | All sources (default) |
 
 Example: `signal_sources: session-miner,git-churn` runs only those two sources.
