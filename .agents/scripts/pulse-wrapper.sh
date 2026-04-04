@@ -19,6 +19,7 @@
 #   7. Self-watchdog: idle detection kills pulse when CPU drops to zero (t1398.3)
 #   8. Progress-based watchdog: kills if log output stalls for PULSE_PROGRESS_TIMEOUT (GH#2958)
 #   9. Provider-aware pulse sessions via headless-runtime-helper.sh
+#  10. Per-issue fast-fail counter skips issues with repeated launch deaths (t1888)
 #
 # Lifecycle: launchd fires every 120s. If a pulse is still running, the
 # dedup check skips. run_pulse() has an internal watchdog that polls every
@@ -196,6 +197,13 @@ GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                         
 FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                                               # Timeout for FOSS contribution scan prefetch (t1702)
 FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                                            # Max FOSS contribution workers per pulse cycle (t1702)
 
+# Per-issue fast-fail counter (t1888)
+# Tracks consecutive launch deaths per issue. After FAST_FAIL_SKIP_THRESHOLD
+# consecutive failures the issue is skipped for FAST_FAIL_EXPIRY_SECS seconds.
+# Only affects deterministic dispatch — LLM pulse is unaffected.
+FAST_FAIL_SKIP_THRESHOLD="${FAST_FAIL_SKIP_THRESHOLD:-3}" # Skip after N consecutive failures
+FAST_FAIL_EXPIRY_SECS="${FAST_FAIL_EXPIRY_SECS:-14400}"   # 4h expiry on skip state
+
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
 CHILD_RUNTIME_LIMIT="${CHILD_RUNTIME_LIMIT:-1800}"            # 30 min default — raised from 10 min (GH#2958, quality scans need time)
@@ -291,6 +299,7 @@ COMPLEXITY_FILE_VIOLATION_THRESHOLD="${COMPLEXITY_FILE_VIOLATION_THRESHOLD:-1}" 
 COMPLEXITY_MD_MIN_LINES="${COMPLEXITY_MD_MIN_LINES:-50}"                        # Agent docs shorter than this are not actionable for simplification
 WORKER_WATCHDOG_HELPER="${SCRIPT_DIR}/worker-watchdog.sh"
 PULSE_HEALTH_FILE="${HOME}/.aidevops/logs/pulse-health.json"
+FAST_FAIL_STATE_FILE="${HOME}/.aidevops/.agent-workspace/supervisor/fast-fail-counter.json"
 
 # Per-cycle health counters — incremented by merge/cleanup/dispatch functions
 # and flushed to PULSE_HEALTH_FILE by write_pulse_health_file() at cycle end.
@@ -305,6 +314,8 @@ COMPLEXITY_LLM_SWEEP_INTERVAL=$(_validate_int COMPLEXITY_LLM_SWEEP_INTERVAL "$CO
 COMPLEXITY_FUNC_LINE_THRESHOLD=$(_validate_int COMPLEXITY_FUNC_LINE_THRESHOLD "$COMPLEXITY_FUNC_LINE_THRESHOLD" 100 50)
 COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_THRESHOLD "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" 1 1)
 COMPLEXITY_MD_MIN_LINES=$(_validate_int COMPLEXITY_MD_MIN_LINES "$COMPLEXITY_MD_MIN_LINES" 50 10)
+FAST_FAIL_SKIP_THRESHOLD=$(_validate_int FAST_FAIL_SKIP_THRESHOLD "$FAST_FAIL_SKIP_THRESHOLD" 3 1)
+FAST_FAIL_EXPIRY_SECS=$(_validate_int FAST_FAIL_EXPIRY_SECS "$FAST_FAIL_EXPIRY_SECS" 14400 60)
 
 if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 	printf '[pulse-wrapper] ERROR: headless runtime helper is missing or not executable: %s (SCRIPT_DIR=%s)\n' "$HEADLESS_RUNTIME_HELPER" "$SCRIPT_DIR" >&2
@@ -6946,7 +6957,209 @@ recover_failed_launch_state() {
 				--remove-assignee "$self_login" --remove-label "status:queued" >/dev/null 2>&1 || true
 	fi
 
+	# Record the launch failure in the fast-fail counter (t1888)
+	fast_fail_record "$issue_number" "$repo_slug" "$failure_reason" || true
+
 	echo "[pulse-wrapper] Launch recovery reset #${issue_number} (${repo_slug}) after ${failure_reason}: removed self assignee + status:queued" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Per-issue fast-fail counter (t1888)
+#
+# Tracks consecutive launch deaths per issue. After FAST_FAIL_SKIP_THRESHOLD
+# consecutive failures the issue is skipped by the deterministic fill floor
+# for FAST_FAIL_EXPIRY_SECS seconds. The LLM pulse is unaffected.
+#
+# State file: FAST_FAIL_STATE_FILE (JSON, < 1KB per entry)
+# Format: { "slug/number": { "count": N, "ts": epoch, "reason": "..." } }
+#
+# All functions are best-effort — failures are logged but never fatal.
+#######################################
+
+#######################################
+# Return the fast-fail state key for an issue.
+# Arguments: $1 issue_number, $2 repo_slug
+#######################################
+_ff_key() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	printf '%s/%s' "$repo_slug" "$issue_number"
+	return 0
+}
+
+#######################################
+# Load the fast-fail state file as JSON.
+# Outputs "{}" on missing or corrupt file.
+#######################################
+_ff_load() {
+	if [[ ! -f "$FAST_FAIL_STATE_FILE" ]]; then
+		printf '{}'
+		return 0
+	fi
+	local content
+	content=$(cat "$FAST_FAIL_STATE_FILE" 2>/dev/null) || content="{}"
+	# Validate JSON; reset if corrupt
+	if ! printf '%s' "$content" | jq empty 2>/dev/null; then
+		printf '{}'
+		return 0
+	fi
+	printf '%s' "$content"
+	return 0
+}
+
+#######################################
+# Write updated state atomically (tmp + mv).
+# Arguments: $1 JSON string
+#######################################
+_ff_save() {
+	local json="$1"
+	local state_dir
+	state_dir=$(dirname "$FAST_FAIL_STATE_FILE")
+	mkdir -p "$state_dir" 2>/dev/null || true
+	local tmp_file
+	tmp_file=$(mktemp "${state_dir}/.fast-fail-counter.XXXXXX" 2>/dev/null) || return 0
+	if printf '%s\n' "$json" >"$tmp_file"; then
+		mv "$tmp_file" "$FAST_FAIL_STATE_FILE" || {
+			rm -f "$tmp_file"
+			echo "[pulse-wrapper] _ff_save: failed to move fast-fail state" >>"$LOGFILE"
+		}
+	else
+		rm -f "$tmp_file"
+		echo "[pulse-wrapper] _ff_save: failed to write fast-fail state" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Increment the fast-fail counter for an issue.
+# Arguments: $1 issue_number, $2 repo_slug, $3 reason
+#######################################
+fast_fail_record() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local reason="${3:-launch_failure}"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+
+	local key now state updated_state new_count
+	key=$(_ff_key "$issue_number" "$repo_slug")
+	now=$(date +%s)
+	state=$(_ff_load)
+
+	# Get current count (reset if expired)
+	local existing_ts existing_count
+	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
+	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
+	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
+	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
+
+	local age=$((now - existing_ts))
+	if [[ "$age" -ge "$FAST_FAIL_EXPIRY_SECS" ]]; then
+		existing_count=0
+	fi
+
+	new_count=$((existing_count + 1))
+
+	updated_state=$(printf '%s' "$state" | jq \
+		--arg k "$key" \
+		--argjson count "$new_count" \
+		--argjson ts "$now" \
+		--arg reason "$reason" \
+		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason}' 2>/dev/null) || return 0
+
+	_ff_save "$updated_state"
+	echo "[pulse-wrapper] fast_fail_record: #${issue_number} (${repo_slug}) count=${new_count} reason=${reason}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Reset the fast-fail counter for an issue (on successful launch).
+# Arguments: $1 issue_number, $2 repo_slug
+#######################################
+fast_fail_reset() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+
+	local key state updated_state
+	key=$(_ff_key "$issue_number" "$repo_slug")
+	state=$(_ff_load)
+
+	# Only write if the key exists (avoid unnecessary writes)
+	local existing
+	existing=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k] // null' 2>/dev/null)
+	if [[ "$existing" == "null" || -z "$existing" ]]; then
+		return 0
+	fi
+
+	updated_state=$(printf '%s' "$state" | jq --arg k "$key" 'del(.[$k])' 2>/dev/null) || return 0
+	_ff_save "$updated_state"
+	echo "[pulse-wrapper] fast_fail_reset: #${issue_number} (${repo_slug}) counter cleared on successful launch" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Check if an issue is fast-fail skipped.
+# Exit codes:
+#   0 - issue is skipped (threshold reached, not expired)
+#   1 - issue is not skipped (safe to dispatch)
+# Arguments: $1 issue_number, $2 repo_slug
+#######################################
+fast_fail_is_skipped() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
+	[[ -n "$repo_slug" ]] || return 1
+
+	local key now state existing_ts existing_count
+	key=$(_ff_key "$issue_number" "$repo_slug")
+	now=$(date +%s)
+	state=$(_ff_load)
+
+	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
+	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
+	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
+	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
+
+	local age=$((now - existing_ts))
+	if [[ "$age" -ge "$FAST_FAIL_EXPIRY_SECS" ]]; then
+		return 1 # Expired — not skipped
+	fi
+
+	if [[ "$existing_count" -ge "$FAST_FAIL_SKIP_THRESHOLD" ]]; then
+		return 0 # Skipped
+	fi
+
+	return 1 # Below threshold — not skipped
+}
+
+#######################################
+# Prune expired entries from the fast-fail state file.
+# Called periodically to keep the file small.
+#######################################
+fast_fail_prune_expired() {
+	local now state pruned
+	now=$(date +%s)
+	state=$(_ff_load)
+
+	pruned=$(printf '%s' "$state" | jq \
+		--argjson now "$now" \
+		--argjson expiry "$FAST_FAIL_EXPIRY_SECS" \
+		'with_entries(select(($now - (.value.ts // 0)) < $expiry))' 2>/dev/null) || return 0
+
+	local before_count after_count
+	before_count=$(printf '%s' "$state" | jq 'length' 2>/dev/null) || before_count=0
+	after_count=$(printf '%s' "$pruned" | jq 'length' 2>/dev/null) || after_count=0
+
+	if [[ "$before_count" -ne "$after_count" ]]; then
+		_ff_save "$pruned"
+		echo "[pulse-wrapper] fast_fail_prune_expired: pruned $((before_count - after_count)) expired entries" >>"$LOGFILE"
+	fi
 	return 0
 }
 
@@ -6995,6 +7208,8 @@ check_worker_launch() {
 					return 1
 				fi
 			done
+			# Successful launch — reset fast-fail counter (t1888)
+			fast_fail_reset "$issue_number" "$repo_slug" || true
 			return 0
 		fi
 		sleep "$poll_seconds"
@@ -7149,6 +7364,12 @@ dispatch_deterministic_fill_floor() {
 		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
 
 		if check_terminal_blockers "$issue_number" "$repo_slug" >/dev/null 2>&1; then
+			continue
+		fi
+
+		# Skip issues with repeated launch deaths (t1888)
+		if fast_fail_is_skipped "$issue_number" "$repo_slug"; then
+			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — fast-fail threshold reached" >>"$LOGFILE"
 			continue
 		fi
 
@@ -7876,6 +8097,10 @@ _run_preflight_stages() {
 	# Runs after complexity scan so any new duplicates from this cycle are caught.
 	# Non-fatal — pulse proceeds even if cleanup fails.
 	run_stage_with_timeout "dedup_cleanup" "$PRE_RUN_STAGE_TIMEOUT" run_simplification_dedup_cleanup || true
+
+	# Prune expired fast-fail counter entries (t1888).
+	# Lightweight — just reads and rewrites a small JSON file.
+	fast_fail_prune_expired || true
 
 	# Contribution watch: lightweight scan of external issues/PRs (t1419).
 	prefetch_contribution_watch
