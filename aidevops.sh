@@ -504,17 +504,26 @@ check_protected_branch() {
 	repo_name=$(basename "$project_root")
 	local suggested_branch="$branch_type/$branch_suffix"
 
-	echo ""
-	print_warning "On protected branch '$current_branch'"
-	echo ""
-	echo "Options:"
-	echo "  1. Create worktree: $suggested_branch (recommended)"
-	echo "  2. Continue on $current_branch (commits directly to main)"
-	echo "  3. Cancel"
-	echo ""
 	local choice
-	read -r -p "Choice [1]: " choice
-	choice="${choice:-1}"
+	# In non-interactive (non-TTY) contexts, auto-select option 1 (create worktree)
+	# without prompting. This prevents read from blocking or getting EOF in CI/AI
+	# assistant environments, which could cause silent script termination with set -e.
+	if [[ -t 0 ]]; then
+		echo ""
+		print_warning "On protected branch '$current_branch'"
+		echo ""
+		echo "Options:"
+		echo "  1. Create worktree: $suggested_branch (recommended)"
+		echo "  2. Continue on $current_branch (commits directly to main)"
+		echo "  3. Cancel"
+		echo ""
+		read -r -p "Choice [1]: " choice
+		choice="${choice:-1}"
+	else
+		# Non-interactive: auto-create worktree (safest default)
+		choice="1"
+		print_info "Non-interactive mode: auto-selecting worktree creation for '$suggested_branch'"
+	fi
 
 	case "$choice" in
 	1)
@@ -524,34 +533,33 @@ check_protected_branch() {
 
 		print_info "Creating worktree at $worktree_dir..."
 
+		local worktree_created=false
 		if [[ -f "$AGENTS_DIR/scripts/worktree-helper.sh" ]]; then
-			if bash "$AGENTS_DIR/scripts/worktree-helper.sh" add "$suggested_branch" 2>/dev/null; then
-				export WORKTREE_PATH="$worktree_dir"
-				echo ""
-				print_success "Worktree created!"
-				print_info "Switching to: $worktree_dir"
-				echo ""
-				# Change to worktree directory
-				cd "$worktree_dir" || return 1
-				return 0
+			if bash "$AGENTS_DIR/scripts/worktree-helper.sh" add "$suggested_branch"; then
+				worktree_created=true
 			else
-				print_error "Failed to create worktree"
+				print_error "Failed to create worktree via worktree-helper.sh"
 				return 1
 			fi
 		else
 			# Fallback without helper script
-			if git worktree add -b "$suggested_branch" "$worktree_dir" 2>/dev/null; then
-				export WORKTREE_PATH="$worktree_dir"
-				echo ""
-				print_success "Worktree created!"
-				print_info "Switching to: $worktree_dir"
-				echo ""
-				cd "$worktree_dir" || return 1
-				return 0
+			if git worktree add -b "$suggested_branch" "$worktree_dir"; then
+				worktree_created=true
 			else
 				print_error "Failed to create worktree"
 				return 1
 			fi
+		fi
+
+		if [[ "$worktree_created" == "true" ]]; then
+			export WORKTREE_PATH="$worktree_dir"
+			echo ""
+			print_success "Worktree created at: $worktree_dir"
+			print_info "Switching to: $worktree_dir"
+			echo ""
+			# Change to worktree directory for the remainder of this process
+			cd "$worktree_dir" || return 1
+			return 0
 		fi
 		;;
 	2)
@@ -2079,8 +2087,21 @@ GITATTRSEOF
 	[[ "$enable_security" == "true" ]] && features_list="${features_list}security,"
 	features_list="${features_list%,}" # Remove trailing comma
 
-	# Register repo in repos.json
-	register_repo "$project_root" "$aidevops_version" "$features_list"
+	# Register the *main* repo path (not the worktree path) in repos.json.
+	# When check_protected_branch creates a worktree and cd's into it,
+	# $project_root (resolved via git rev-parse --show-toplevel) points to the
+	# worktree directory. We must register the canonical main worktree path so
+	# that pulse and cleanup processes don't treat the worktree as a standalone repo.
+	local register_path="$project_root"
+	if [[ -n "${WORKTREE_PATH:-}" ]]; then
+		# We're inside a worktree — resolve the main worktree path from git metadata
+		local main_wt_path
+		main_wt_path=$(git -C "$project_root" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2; exit}')
+		if [[ -n "$main_wt_path" ]] && [[ "$main_wt_path" != "$project_root" ]]; then
+			register_path="$main_wt_path"
+		fi
+	fi
+	register_repo "$register_path" "$aidevops_version" "$features_list"
 
 	# Auto-commit initialized files so they don't linger as mystery unstaged
 	# changes (#2570 bug 2). Collect all files that cmd_init creates/modifies.
@@ -2135,6 +2156,22 @@ GITATTRSEOF
 	[[ "$enable_security" == "true" ]] && echo "  ✓ Security (per-repo posture assessment)"
 	[[ -f "$project_root/MODELS.md" ]] && echo "  ✓ MODELS.md (per-repo model performance leaderboard)"
 	echo ""
+	# When init ran inside a worktree (check_protected_branch created one),
+	# print explicit instructions so the user knows where to find their work.
+	# Without this, the user's shell is back in the main repo after aidevops exits
+	# and the worktree appears to have "disappeared".
+	if [[ -n "${WORKTREE_PATH:-}" ]]; then
+		local worktree_branch
+		worktree_branch=$(git branch --show-current 2>/dev/null || echo "chore/aidevops-init")
+		echo "Worktree location:"
+		echo "  $WORKTREE_PATH"
+		echo ""
+		echo "Your init commit is in the worktree above. To continue:"
+		echo "  cd $WORKTREE_PATH"
+		echo "  git push -u origin ${worktree_branch}"
+		echo "  gh pr create --fill"
+		echo ""
+	fi
 	echo "Next steps:"
 	local step=1
 	if [[ "$committed" != "true" ]]; then
