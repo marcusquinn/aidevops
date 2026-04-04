@@ -38,7 +38,7 @@
 
 ## Whitespace Philosophy
 
-Consistent, rhythmic spacing communicates reliability. Reinforce the grid — no arbitrary values. Tight where elements are related; open where sections need separation.
+Consistent, rhythmic spacing communicates reliability. Reinforce the grid — no arbitrary values. Tight where elements are related, open where sections need separation.
 
 ## Border Radius Scale
 
