@@ -28,16 +28,11 @@
 
 ## Breakpoints
 
-| Name | Width | Columns | Gutter |
-|------|-------|---------|--------|
-| Mobile | 0–767px | 4 | 16px |
-| Tablet | 768–1023px | 8 | 24px |
-| Desktop | 1024–1439px | 12 | 40px |
-| Wide | 1440px+ | 12 | 40px |
+See `08-responsive.md` for breakpoint definitions and layout behaviour per viewport.
 
 ## Whitespace Philosophy
 
-Whitespace is a design element. Generous space around large type and hero content creates drama and draws the eye. Use visual weight contrast — dense information areas next to open breathing room — to create rhythm down the page.
+Whitespace is a design element. Use generous space around large type and hero content for drama. Contrast dense information areas with open breathing room to create page rhythm.
 
 ## Border Radius Scale
 
