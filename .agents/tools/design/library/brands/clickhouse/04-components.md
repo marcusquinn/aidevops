@@ -63,7 +63,7 @@
 
 - Dark nav on black background
 - Logo: ClickHouse wordmark + icon in yellow/neon
-- Links: white text, hover to Neon Volt (#faff69)
+- Links: white text, hover to Neon Volt (`#faff69`)
 - CTA: Neon Volt button or Forest Green button
 - Uppercase labels for categories
 
@@ -76,9 +76,7 @@
 - The primary visual proof of performance claims
 
 ### Neon-Highlighted Card
-- Standard dark card with neon yellow-green border highlight
-- Creates "selected" or "featured" treatment
-- The accent border makes the card pop against the dark canvas
+- Standard dark card with neon yellow-green border highlight — "selected" or "featured" treatment
 
 ### Code Blocks
 - Dark surface with Inconsolata at weight 600
