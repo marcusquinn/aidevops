@@ -1,14 +1,14 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Agency Feminine — Colour Palette
+# Agency Feminine — Colour Palette & Roles
 
 ## Primary
 
 | Role | Hex | Usage |
 |------|-----|-------|
 | Primary | `#d4a5a5` | CTAs, active accents, key links |
-| Primary Hover | `#c79393` | Darker rose for hover states |
+| Primary Hover | `#c79393` | Hover state |
 | Primary Light | `#e8cece` | Soft backgrounds, badges, tag fills |
 | Primary Muted | `#f5ebe7` | Tinted section backgrounds |
 
@@ -17,7 +17,7 @@
 | Role | Hex | Usage |
 |------|-----|-------|
 | Accent | `#9caf88` | Secondary actions, tags, nature/wellness cues |
-| Accent Hover | `#8a9d76` | Darker sage for hover |
+| Accent Hover | `#8a9d76` | Hover state |
 | Accent Light | `#c5d4b8` | Soft accent backgrounds |
 | Tertiary | `#c8a87e` | Gold/honey — sparingly for premium callouts |
 
@@ -47,13 +47,13 @@
 
 | Role | Hex | Usage |
 |------|-----|-------|
-| Success | `#9caf88` | Confirmations, completed states (uses accent) |
+| Success | `#9caf88` | Confirmations, completed (uses accent) |
 | Success Background | `#f0f5ec` | Success message backgrounds |
 | Warning | `#d4a56a` | Gentle warnings, attention needed |
 | Warning Background | `#faf3e8` | Warning message backgrounds |
-| Error | `#c97070` | Errors, required fields (softened red) |
+| Error | `#c97070` | Errors, required fields |
 | Error Background | `#faf0f0` | Error message backgrounds |
-| Info | `#8aacc8` | Informational, help text (soft blue) |
+| Info | `#8aacc8` | Informational, help text |
 | Info Background | `#f0f5fa` | Info message backgrounds |
 
 ## Shadows
