@@ -11,35 +11,35 @@
 
 ## Swatch Palette — Named Colors
 
-**Matcha (Green)**
+### Matcha (Green)
 
 - **Matcha 300** (`#84e7a5`): `--_swatches---color--matcha-300`, light green accent
 - **Matcha 600** (`#078a52`): `--_swatches---color--matcha-600`, mid green
 - **Matcha 800** (`#02492a`): `--_swatches---color--matcha-800`, deep green for dark sections
 
-**Slushie (Cyan)**
+### Slushie (Cyan)
 
 - **Slushie 500** (`#3bd3fd`): `--_swatches---color--slushie-500`, bright cyan accent
 - **Slushie 800** (`#0089ad`): `--_swatches---color--slushie-800`, deep teal
 
-**Lemon (Gold)**
+### Lemon (Gold)
 
 - **Lemon 400** (`#f8cc65`): `--_swatches---color--lemon-400`, warm pale gold
 - **Lemon 500** (`#fbbd41`): `--_swatches---color--lemon-500`, primary gold
 - **Lemon 700** (`#d08a11`): `--_swatches---color--lemon-700`, deep amber
 - **Lemon 800** (`#9d6a09`): `--_swatches---color--lemon-800`, dark amber
 
-**Ube (Purple)**
+### Ube (Purple)
 
 - **Ube 300** (`#c1b0ff`): `--_swatches---color--ube-300`, soft lavender
 - **Ube 800** (`#43089f`): `--_swatches---color--ube-800`, deep purple
 - **Ube 900** (`#32037d`): `--_swatches---color--ube-900`, darkest purple
 
-**Pomegranate (Pink/Red)**
+### Pomegranate (Pink/Red)
 
 - **Pomegranate 400** (`#fc7981`): `--_swatches---color--pomegranate-400`, warm coral-pink
 
-**Blueberry (Navy Blue)**
+### Blueberry (Navy Blue)
 
 - **Blueberry 800** (`#01418d`): `--_swatches---color--blueberry-800`, deep navy
 
