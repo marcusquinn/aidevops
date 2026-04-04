@@ -110,12 +110,12 @@ transition: all 200ms ease-out
 ## Navigation
 
 ```css
-Background: #ffffff
-Border bottom: 1px solid #e5e7eb
-Height: 64px
-Logo: Plus Jakarta Sans 700 wordmark, 20px, #111827
-Nav items: 15px Plus Jakarta Sans, 500, #6b7280
-Active item: #111827, font-weight: 600
-Hover item: #111827
-CTA in nav: small primary button with #4f46e5 background
+background: #ffffff
+border-bottom: 1px solid #e5e7eb
+height: 64px
+logo: Plus Jakarta Sans 700 wordmark, 20px, #111827
+nav-items: 15px Plus Jakarta Sans, 500, #6b7280
+active-item: #111827, font-weight: 600
+hover-item: #111827
+cta-in-nav: small primary button with #4f46e5 background
 ```
