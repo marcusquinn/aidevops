@@ -6239,6 +6239,11 @@
       "pr": 16974,
       "passes": 1
     },
+    ".agents/tools/design/library/brands/hashicorp/04-components.md": {
+      "hash": "fc7e3be596420d55542af6313db61fbc6e0dbef2942a4e8caf3085e14fbe2d0e",
+      "at": "2026-04-04T00:00:00Z",
+      "passes": 1
+    },
     ".agents/tools/design/library/brands/expo/DESIGN.md": {
       "hash": "9ee9e2d9a995347973d7caf44e828f08aa1139ed",
       "at": "2026-04-04T03:31:30Z",
