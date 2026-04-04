@@ -21,19 +21,21 @@
 
 ## Whitespace Philosophy
 
-- **Editorial pacing**: Generous top/bottom margins create natural reading pauses between sections.
-- **Serif-driven rhythm**: Serif headings demand more whitespace than sans-serif designs.
-- **Content island approach**: Sections alternate light/dark environments, creating distinct visual rooms.
+- **Editorial pacing**: Generous top/bottom margins create natural reading pauses between sections
+- **Serif-driven rhythm**: Serif headings demand more whitespace than sans-serif designs
+- **Content island approach**: Sections alternate light/dark environments, creating distinct visual rooms
 
 ## Border Radius Scale
 
-- Sharp (4px): Minimal inline elements
-- Subtly rounded (6–7.5px): Small buttons, secondary interactive elements
-- Comfortably rounded (8–8.5px): Standard buttons, cards, containers
-- Generously rounded (12px): Primary buttons, input fields, nav elements
-- Very rounded (16px): Featured containers, video players, tab lists
-- Highly rounded (24px): Tag-like elements, highlighted containers
-- Maximum rounded (32px): Hero containers, embedded media, large cards
+| Name | Value | Usage |
+|------|-------|-------|
+| Sharp | 4px | Minimal inline elements |
+| Subtly rounded | 6–7.5px | Small buttons, secondary interactive elements |
+| Comfortably rounded | 8–8.5px | Standard buttons, cards, containers |
+| Generously rounded | 12px | Primary buttons, input fields, nav elements |
+| Very rounded | 16px | Featured containers, video players, tab lists |
+| Highly rounded | 24px | Tag-like elements, highlighted containers |
+| Maximum rounded | 32px | Hero containers, embedded media, large cards |
 
 ## Responsive Behavior
 
@@ -49,10 +51,9 @@
 
 ### Touch Targets
 
-- Buttons: 8–16px vertical padding minimum
+- Buttons: 8–16px vertical padding minimum (44×44px overall minimum)
 - Navigation links: spaced for thumb navigation
 - Card surfaces: large touch targets
-- Minimum: 44x44px
 
 ### Collapsing Strategy
 
