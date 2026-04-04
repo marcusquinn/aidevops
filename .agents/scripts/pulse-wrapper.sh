@@ -3832,6 +3832,9 @@ close_issues_with_merged_prs() {
 					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup helper)"}. Issue was open but dedup guard was blocking re-dispatch." \
 					>/dev/null 2>&1 || continue
 
+				# Reset fast-fail counter now that the issue is confirmed resolved (GH#17384)
+				fast_fail_reset "$issue_num" "$slug" || true
+
 				echo "[pulse-wrapper] Auto-closed #${issue_num} in ${slug} — merged PR evidence: ${dedup_output:-"found"}" >>"$LOGFILE"
 				total_closed=$((total_closed + 1))
 			fi
@@ -3914,6 +3917,10 @@ reconcile_stale_done_issues() {
 				gh issue close "$issue_num" --repo "$slug" \
 					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup)"}." \
 					>/dev/null 2>&1 || continue
+
+				# Reset fast-fail counter now that the issue is confirmed resolved (GH#17384)
+				fast_fail_reset "$issue_num" "$slug" || true
+
 				echo "[pulse-wrapper] Reconcile done: closed #${issue_num} in ${slug} — merged PR: ${dedup_output:-"found"}" >>"$LOGFILE"
 				total_closed=$((total_closed + 1))
 			else
