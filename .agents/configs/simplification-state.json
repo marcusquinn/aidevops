@@ -6448,5 +6448,10 @@
     "status": "simplified",
     "action": "tighten-cross-reference",
     "issue": "GH#17205"
+  },
+  ".agents/tools/design/library/brands/voltagent/02-color-palette.md": {
+    "hash": "5c631b0685456a768ee6eb1b424fae8551e315862ab8e7c14f310d9de19114f0",
+    "status": "simplified",
+    "issue": "GH#17207"
   }
 }
