@@ -5,7 +5,7 @@
 
 ## Buttons
 
-Shared across all button variants: Padding 8px 16px · Radius 6px · Active opacity 0.8 · Focus `rgba(0,0,0,0.1) 0px 4px 12px` shadow
+All variants: Padding 8px 16px · Radius 6px · Active opacity 0.8 · Focus `rgba(0,0,0,0.1) 0px 4px 12px` shadow
 
 **Primary Dark (Inset Shadow)**
 - Background: `#1c1c1c` · Text: `#fcfbf8`
@@ -13,8 +13,7 @@ Shared across all button variants: Padding 8px 16px · Radius 6px · Active opac
 - Use: Primary CTA ("Start Building", "Get Started")
 
 **Ghost / Outline**
-- Background: transparent · Text: `#1c1c1c`
-- Border: `1px solid rgba(28,28,28,0.4)`
+- Background: transparent · Text: `#1c1c1c` · Border: `1px solid rgba(28,28,28,0.4)`
 - Use: Secondary actions ("Log In", "Documentation")
 
 **Cream Surface**
@@ -22,9 +21,8 @@ Shared across all button variants: Padding 8px 16px · Radius 6px · Active opac
 - Use: Tertiary actions, toolbar buttons
 
 **Pill / Icon Button**
-- Background: `#f7f4ed` · Text: `#1c1c1c` · Radius: 9999px (full pill)
+- Background: `#f7f4ed` · Text: `#1c1c1c` · Radius: 9999px (full pill) · Opacity: 0.5 (default), 0.8 (active)
 - Shadow: same inset pattern as Primary Dark
-- Opacity: 0.5 (default), 0.8 (active)
 - Use: Additional actions, plan mode toggle, voice recording
 
 ## Cards & Containers
