@@ -5,21 +5,20 @@
 
 ## Primary
 
-- **Near-Black Blue** (`#07080a`): Primary page background — the foundational void with a subtle blue-cold undertone
+- **Near-Black Blue** (`#07080a`): Primary page background — foundational void with subtle blue-cold undertone
 - **Pure White** (`#ffffff`): Primary heading text, high-emphasis elements
-- **Raycast Red** (`#FF6363` / `hsl(0, 100%, 69%)`): Brand accent — hero stripes, danger states, critical highlights
+- **Raycast Red** (`#FF6363` / `hsl(0, 100%, 69%)`): Brand accent — hero stripes, danger/error states, critical highlights
 
 ## Secondary & Accent
 
-- **Raycast Blue** (`hsl(202, 100%, 67%)` / ~`#55b3ff`): Interactive accent — links, focus states, selected items
+- **Raycast Blue** (`hsl(202, 100%, 67%)` / ~`#55b3ff`): Interactive accent — links, focus states, selected items, info highlights
 - **Raycast Green** (`hsl(151, 59%, 59%)` / ~`#5fc992`): Success states, positive indicators
-- **Raycast Yellow** (`hsl(43, 100%, 60%)` / ~`#ffbc33`): Warning accents, highlights
+- **Raycast Yellow** (`hsl(43, 100%, 60%)` / ~`#ffbc33`): Warning accents, attention-needed states
 - **Blue Transparent** (`hsla(202, 100%, 67%, 0.15)`): Blue tint overlay for interactive surfaces
 - **Red Transparent** (`hsla(0, 100%, 69%, 0.15)`): Red tint overlay for danger/error surfaces
 
 ## Surface & Background
 
-- **Deep Background** (`#07080a`): Page canvas, the darkest surface
 - **Surface 100** (`#101111`): Elevated surface, card backgrounds
 - **Key Start** (`#121212`): Keyboard key gradient start
 - **Key End** (`#0d0d0d`): Keyboard key gradient end
@@ -36,13 +35,6 @@
 - **Dark Gray** (`#434345`): Muted borders, inactive navigation links
 - **Border** (`hsl(195, 5%, 15%)` / ~`#252829`): Standard border color for cards and dividers
 - **Dark Border** (`#2f3031`): Separator lines, table borders
-
-## Semantic & Accent
-
-- **Error Red** (`hsl(0, 100%, 69%)`): Error states, destructive actions
-- **Success Green** (`hsl(151, 59%, 59%)`): Success confirmations, positive states
-- **Warning Yellow** (`hsl(43, 100%, 60%)`): Warnings, attention-needed states
-- **Info Blue** (`hsl(202, 100%, 67%)`): Informational highlights, links
 
 ## Gradient System
 
