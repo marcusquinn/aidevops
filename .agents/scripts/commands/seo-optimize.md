@@ -11,22 +11,14 @@ Target: $ARGUMENTS (file path + optional keyword)
 
 ## Workflow
 
-1. **Analyze**:
-
-   ```bash
-   python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze "$FILE" \
-     --keyword "$KEYWORD" --secondary "$SECONDARY"
-   ```
-
-2. **Review results** — SEO quality score (target 80+), readability grade, keyword density, critical issues, warnings, suggestions.
-
+1. **Analyze** — run `analyze` command (see Commands below). Target score: 80+.
+2. **Review results** — SEO quality score, readability grade, keyword density, critical issues, warnings, suggestions.
 3. **Apply fixes** in priority order:
    - Critical: Missing H1 keyword, no meta elements, content too short
    - High: Low keyword density, missing internal links
    - Medium: Reading level, paragraph length
    - Low: External links, transition words
-
-4. **Re-analyze and report**: Verify improvements, summarize changes and final scores.
+4. **Re-analyze and report** — verify improvements, summarize changes and final scores.
 
 ## Commands
 
