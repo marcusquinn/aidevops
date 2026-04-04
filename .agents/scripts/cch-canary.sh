@@ -65,13 +65,14 @@ log_to_file() {
 }
 
 # ---------------------------------------------------------------------------
-# Core: run canary and compare
+# Core helpers (decomposed from run_canary)
 # ---------------------------------------------------------------------------
 
-run_canary() {
-	local verbose="${1:-false}"
+# _canary_preflight: verify deps and detect CLI version.
+# Outputs cli_version to stdout. Returns 0=ok, 2=infra error.
+_canary_preflight() {
+	local verbose="$1"
 
-	# Pre-flight
 	if ! command -v claude &>/dev/null; then
 		[[ "$verbose" == "true" ]] && print_warning "Claude CLI not installed — skipping canary"
 		return 0
@@ -82,16 +83,22 @@ run_canary() {
 		return 2
 	fi
 
-	# Get current CLI version
 	local cli_version
 	cli_version=$(claude --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 	if [[ -z "$cli_version" ]]; then
 		[[ "$verbose" == "true" ]] && print_error "Could not detect Claude CLI version"
 		return 2
 	fi
-	[[ "$verbose" == "true" ]] && print_info "Claude CLI v${cli_version}"
 
-	# Step 1: Make a real CLI call with debug logging
+	[[ "$verbose" == "true" ]] && print_info "Claude CLI v${cli_version}"
+	printf '%s' "$cli_version"
+	return 0
+}
+
+# _canary_invoke_cli: run the CLI with a timeout and capture debug output.
+# Outputs the debug file path to stdout. Returns 0=ok, 2=infra error.
+_canary_invoke_cli() {
+	local verbose="$1"
 	local debug_file
 	debug_file=$(mktemp "${TMPDIR:-/tmp}/cch-canary-debug.XXXXXX")
 
@@ -123,7 +130,16 @@ run_canary() {
 		return 2
 	fi
 
-	# Step 2: Extract the real billing header from debug log
+	printf '%s' "$debug_file"
+	return 0
+}
+
+# _canary_extract_header: pull the billing header from the debug log file.
+# Outputs the header string to stdout. Returns 0=ok, 2=not found.
+_canary_extract_header() {
+	local verbose="$1"
+	local debug_file="$2"
+
 	local real_header
 	real_header=$(grep -oP 'attribution header \K.*' "$debug_file" 2>/dev/null | head -1 || true)
 	rm -f "$debug_file"
@@ -132,42 +148,33 @@ run_canary() {
 		[[ "$verbose" == "true" ]] && print_warning "No billing header in debug log — CLI may have changed logging format"
 		return 2
 	fi
+
 	[[ "$verbose" == "true" ]] && print_info "Real header: ${real_header}"
+	printf '%s' "$real_header"
+	return 0
+}
 
-	# Step 3: Extract fields from real header
-	local real_version_suffix real_entrypoint real_cch
-	real_version_suffix=$(printf '%s' "$real_header" | grep -oP 'cc_version=\K[^;]+' || true)
-	real_entrypoint=$(printf '%s' "$real_header" | grep -oP 'cc_entrypoint=\K[^;]+' || true)
-	real_cch=$(printf '%s' "$real_header" | grep -oP 'cch=\K[^;]+' || true)
+# _canary_compare_versions: compare our computed suffix against the real one.
+# Sets DRIFT_DETECTED and DRIFT_DETAILS in the caller's scope via stdout lines:
+#   drift_detected=<true|false>
+#   drift_details=<string>
+# Returns 0 always (drift state is communicated via output).
+_canary_compare_versions() {
+	local verbose="$1"
+	local cli_version="$2"
+	local our_suffix="$3"
+	local real_version_suffix="$4"
+	local real_cch="$5"
 
-	# Step 4: Compute our version
-	# Note: -p mode uses entrypoint=sdk-cli; we extract the suffix for comparison
-	local our_suffix
-	our_suffix=$(python3 "${SCRIPTS_DIR}/cch-sign.py" suffix "$CANARY_PROMPT" --cache 2>/dev/null || true)
-
-	if [[ -z "$our_suffix" ]]; then
-		[[ "$verbose" == "true" ]] && print_error "cch-sign.py failed — cache may be missing"
-		[[ "$verbose" == "true" ]] && print_info "Run: cch-extract.sh --cache"
-		return 2
-	fi
-
+	local drift_detected="false"
+	local drift_details=""
 	local our_cc_version="${cli_version}.${our_suffix}"
 
 	[[ "$verbose" == "true" ]] && print_info "Our cc_version: ${our_cc_version}"
 	[[ "$verbose" == "true" ]] && print_info "Real cc_version: ${real_version_suffix}"
 
-	# Step 5: Compare — with algorithm fallback chain
-	local drift_detected="false"
-	local drift_details=""
-	local matched_algo="sha256"
-
-	# Compare version suffix (the part we compute)
 	if [[ "$our_cc_version" != "$real_version_suffix" ]]; then
-		# Primary algo (SHA-256) didn't match. Before declaring drift,
-		# try alternative algorithms to see if Anthropic changed the hash.
-		# Extract the real suffix (after the last dot in the version)
 		local real_suffix="${real_version_suffix##*.}"
-
 		[[ "$verbose" == "true" ]] && print_warning "SHA-256 mismatch (ours=${our_suffix}, real=${real_suffix}). Trying alternatives..."
 
 		local algo_match=""
@@ -190,9 +197,7 @@ algos = {
     "md5": lambda: hashlib.md5(payload.encode()).hexdigest()[:3],
     "hmac_sha256_salt": lambda: hmac.new(salt.encode(), (chars + version).encode(), hashlib.sha256).hexdigest()[:3],
     "hmac_sha256_version": lambda: hmac.new(version.encode(), (salt + chars).encode(), hashlib.sha256).hexdigest()[:3],
-    # Try without salt (in case they removed it)
     "sha256_no_salt": lambda: hashlib.sha256((chars + version).encode()).hexdigest()[:3],
-    # Try different char orderings
     "sha256_reverse": lambda: hashlib.sha256((version + chars + salt).encode()).hexdigest()[:3],
 }
 
@@ -210,7 +215,6 @@ else:
 		if [[ -n "$algo_match" ]]; then
 			[[ "$verbose" == "true" ]] && print_warning "Alternative algorithm matched: ${algo_match}"
 			drift_detected="true"
-			matched_algo="$algo_match"
 			drift_details="algorithm_changed: sha256->${algo_match} (suffix still computable)"
 		else
 			drift_detected="true"
@@ -224,33 +228,28 @@ else:
 		drift_details="${drift_details:+${drift_details}; }cch: expected=00000 real=${real_cch} (body hash now active)"
 	fi
 
-	# Step 6: Save state
+	printf 'drift_detected=%s\ndrift_details=%s\n' "$drift_detected" "$drift_details"
+	return 0
+}
+
+# _canary_save_state: persist check results to the state JSON file.
+_canary_save_state() {
+	local drift_detected="$1"
+	local drift_details="$2"
+	local cli_version="$3"
+	local our_suffix="$4"
+	local real_header="$5"
+	local real_cch="$6"
+	local real_entrypoint="$7"
+
 	local now_iso
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 	local state_dir
 	state_dir=$(dirname "$CANARY_STATE")
 	mkdir -p "$state_dir"
 
-	DRIFT="$drift_detected" DRIFT_DETAILS="$drift_details" CLI_VERSION="$cli_version" \
-		OUR_SUFFIX="$our_suffix" REAL_HEADER="$real_header" NOW_ISO="$now_iso" \
-		REAL_CCH="$real_cch" REAL_ENTRYPOINT="$real_entrypoint" \
-		python3 -c '
-import json, os
-state = {
-    "last_check": os.environ["NOW_ISO"],
-    "cli_version": os.environ["CLI_VERSION"],
-    "drift_detected": os.environ["DRIFT"] == "true",
-    "drift_details": os.environ["DRIFT_DETAILS"] or None,
-    "our_suffix": os.environ["OUR_SUFFIX"],
-    "real_header": os.environ["REAL_HEADER"],
-    "real_cch": os.environ["REAL_CCH"],
-    "real_entrypoint": os.environ["REAL_ENTRYPOINT"],
-}
-with open(os.environ.get("STATE_FILE", ""), "w") as f:
-    json.dump(state, f, indent=2)
-' 2>/dev/null || true
-	# STATE_FILE not set in python — write separately
-	printf '%s\n' "$(DRIFT="$drift_detected" DRIFT_DETAILS="$drift_details" CLI_VERSION="$cli_version" \
+	local state_json
+	state_json=$(DRIFT="$drift_detected" DRIFT_DETAILS="$drift_details" CLI_VERSION="$cli_version" \
 		OUR_SUFFIX="$our_suffix" REAL_HEADER="$real_header" NOW_ISO="$now_iso" \
 		REAL_CCH="$real_cch" REAL_ENTRYPOINT="$real_entrypoint" \
 		python3 -c '
@@ -265,9 +264,62 @@ print(json.dumps({
     "real_cch": os.environ["REAL_CCH"],
     "real_entrypoint": os.environ["REAL_ENTRYPOINT"],
 }, indent=2))
-' 2>/dev/null)" >"$CANARY_STATE"
+' 2>/dev/null || true)
 
-	# Step 7: Report
+	if [[ -n "$state_json" ]]; then
+		printf '%s\n' "$state_json" >"$CANARY_STATE"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Core: run canary and compare (orchestrator)
+# ---------------------------------------------------------------------------
+
+run_canary() {
+	local verbose="${1:-false}"
+
+	# Pre-flight: check deps and get CLI version
+	local cli_version
+	cli_version=$(_canary_preflight "$verbose") || return $?
+	# Empty output means Claude CLI not installed — skip gracefully
+	[[ -z "$cli_version" ]] && return 0
+
+	# Invoke CLI and capture debug log
+	local debug_file
+	debug_file=$(_canary_invoke_cli "$verbose") || return $?
+
+	# Extract billing header from debug log
+	local real_header
+	real_header=$(_canary_extract_header "$verbose" "$debug_file") || return $?
+
+	# Parse header fields
+	local real_version_suffix real_entrypoint real_cch
+	real_version_suffix=$(printf '%s' "$real_header" | grep -oP 'cc_version=\K[^;]+' || true)
+	real_entrypoint=$(printf '%s' "$real_header" | grep -oP 'cc_entrypoint=\K[^;]+' || true)
+	real_cch=$(printf '%s' "$real_header" | grep -oP 'cch=\K[^;]+' || true)
+
+	# Compute our version suffix
+	local our_suffix
+	our_suffix=$(python3 "${SCRIPTS_DIR}/cch-sign.py" suffix "$CANARY_PROMPT" --cache 2>/dev/null || true)
+	if [[ -z "$our_suffix" ]]; then
+		[[ "$verbose" == "true" ]] && print_error "cch-sign.py failed — cache may be missing"
+		[[ "$verbose" == "true" ]] && print_info "Run: cch-extract.sh --cache"
+		return 2
+	fi
+
+	# Compare versions and detect drift
+	local compare_out drift_detected drift_details
+	compare_out=$(_canary_compare_versions "$verbose" "$cli_version" "$our_suffix" \
+		"$real_version_suffix" "$real_cch")
+	drift_detected=$(printf '%s' "$compare_out" | grep '^drift_detected=' | cut -d= -f2-)
+	drift_details=$(printf '%s' "$compare_out" | grep '^drift_details=' | cut -d= -f2-)
+
+	# Persist state
+	_canary_save_state "$drift_detected" "$drift_details" "$cli_version" \
+		"$our_suffix" "$real_header" "$real_cch" "$real_entrypoint"
+
+	# Report
 	if [[ "$drift_detected" == "true" ]]; then
 		[[ "$verbose" == "true" ]] && print_error "DRIFT DETECTED: ${drift_details}"
 		log_to_file "DRIFT: ${drift_details} (CLI v${cli_version})"

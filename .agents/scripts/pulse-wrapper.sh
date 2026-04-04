@@ -2050,107 +2050,12 @@ This PR modifies \`.github/workflows/\` files but the GitHub OAuth token used by
 #
 # Output: worker summary to stdout (appended to STATE_FILE by caller)
 #######################################
-list_active_worker_processes() {
-	# t5072: Count logical workers (one per session/issue), not OS process tree nodes.
-	# A single opencode worker spawns a 3-process chain:
-	#   bash sandbox-exec-helper.sh run ... -- opencode run ...  (top-level launcher)
-	#   node /opt/homebrew/bin/opencode run ...                  (node child)
-	#   /path/to/.opencode run ...                               (binary grandchild)
-	# All three contain /full-loop (or /review-issue-pr) and opencode in their command line.
-	#
-	# GH#12361 / GH#14944: Workers may appear either as direct opencode
-	# processes or as headless-runtime-helper.sh wrappers around sandbox +
-	# opencode children. Counting must treat the whole wrapper/process tree as
-	# one logical worker. New approach:
-	#   1. Match worker processes launched via opencode OR
-	#      headless-runtime-helper.sh run --role worker.
-	#   2. Deduplicate by issue+dir key: when multiple processes share the
-	#      same issue AND --dir path, prefer the outermost launcher
-	#      (headless-runtime-helper.sh wrapper > sandbox launcher > child).
-	#      Different --dir paths = different logical workers even with the
-	#      same issue number.
-	#
-	# GH#6413: Process state filtering — exclude zombie (Z) and stopped (T)
-	# processes. These are dead/stuck processes that hold no useful work but
-	# appear as "active" in worker counts, inflating struggle ratios and
-	# preventing the pulse from dispatching replacements. The stat column is
-	# used for filtering only; output format remains pid,etime,command for
-	# backward compatibility with all consumers.
-	ps axo pid,stat,etime,command | awk '
-		{
-			is_headless_wrapper = ($0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/ && $0 ~ /(^|[[:space:]])run([[:space:]]|$)/ && $0 ~ /--role[[:space:]]+worker/)
-			has_worker_prompt = ($0 ~ /\/full-loop/ || $0 ~ /\/review-issue-pr/)
-			has_worker_binary = ($0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ || $0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/)
-
-			if (!(has_worker_prompt || is_headless_wrapper)) next
-			if ($0 ~ /(^|[[:space:]])\/pulse([[:space:]]|$)/) next
-			if ($0 ~ /Supervisor Pulse/) next
-			if (!has_worker_binary) next
-
-			# $2 is the stat column (e.g., S, SN, Ss, Z, Zs, T, TN)
-			stat = $2
-			# Exclude zombies (Z*) and stopped processes (T*)
-			if (stat ~ /^[ZT]/) next
-			# Build output line: pid, etime, command (skip stat)
-			line = $1 " " $3
-			for (i = 4; i <= NF; i++) line = line " " $i
-			# Extract issue number for dedup (matches "Issue #NNN" or "issue-NNN")
-			issue = ""
-			if (match($0, /[Ii]ssue[[:space:]]*#([0-9]+)/) || match($0, /issue-([0-9]+)/)) {
-				rest = substr($0, RSTART, RLENGTH)
-				gsub(/[^0-9]/, "", rest)
-				issue = rest
-			}
-			# Fallback: extract from --session-key issue-NNN when no Issue #/issue- marker
-			if (issue == "" && match($0, /--session-key[[:space:]]+issue-([0-9]+)/)) {
-				rest = substr($0, RSTART, RLENGTH)
-				gsub(/[^0-9]/, "", rest)
-				issue = rest
-			}
-			# Extract --dir path for dedup key (same issue in different repos
-			# = different logical workers)
-			dir = ""
-			if (match($0, /--dir[[:space:]]+[^[:space:]]+/)) {
-				dir = substr($0, RSTART, RLENGTH)
-				sub(/--dir[[:space:]]+/, "", dir)
-			}
-			dedup_key = issue "|" dir
-			# Prefer outer launchers over child processes for same issue+dir.
-			launcher_rank = 0
-			if ($0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/ && $0 ~ /--role[[:space:]]+worker/) {
-				launcher_rank = 2
-			} else if ($0 ~ /sandbox-exec-helper\.sh/) {
-				launcher_rank = 1
-			}
-			if (issue != "" && dedup_key in seen) {
-				# Already have a line for this issue+dir
-				if (launcher_rank > seen_launcher_rank[dedup_key]) {
-					# Replace inner child with outer launcher
-					seen_lines[dedup_key] = line
-					seen_launcher_rank[dedup_key] = launcher_rank
-				}
-				# Otherwise skip (lower-rank child of existing launcher, or duplicate)
-			} else if (issue != "") {
-				seen[dedup_key] = 1
-				seen_lines[dedup_key] = line
-				seen_launcher_rank[dedup_key] = launcher_rank
-				key_order[++key_count] = dedup_key
-			} else {
-				# No issue number found — print directly (edge case)
-				no_issue_lines[++no_issue_count] = line
-			}
-		}
-		END {
-			for (i = 1; i <= key_count; i++) {
-				print seen_lines[key_order[i]]
-			}
-			for (i = 1; i <= no_issue_count; i++) {
-				print no_issue_lines[i]
-			}
-		}
-	'
-	return 0
-}
+# list_active_worker_processes: now provided by worker-lifecycle-common.sh (sourced above).
+# Removed from pulse-wrapper.sh to eliminate divergence with stats-functions.sh.
+# See worker-lifecycle-common.sh for the canonical implementation with:
+#   - process chain deduplication (t5072)
+#   - headless-runtime-helper.sh wrapper support (GH#12361, GH#14944)
+#   - zombie/stopped process filtering (GH#6413)
 
 prefetch_active_workers() {
 	local worker_lines
@@ -2594,32 +2499,9 @@ guard_child_processes() {
 	return 0
 }
 
-#######################################
-# Check concurrent session count and warn (t1398)
-#
-# Counts running opencode/claude interactive sessions (those with a TTY).
-# If count exceeds SESSION_COUNT_WARN, logs a warning. This is informational
-# — the pulse doesn't kill user sessions, but the health issue will show it.
-#
-# Returns: session count via stdout
-#######################################
-check_session_count() {
-	local interactive_count=0
-
-	# Count opencode processes with a real TTY (interactive sessions).
-	# Filter both '?' (Linux) and '??' (macOS) headless TTY entries.
-	interactive_count=$(ps axo tty,command | awk '
-		/(\.(opencode|claude)|opencode-ai|claude-ai)/ && !/awk/ && $1 != "?" && $1 != "??" { count++ }
-		END { print count + 0 }
-	') || interactive_count=0
-
-	if [[ "$interactive_count" -gt "$SESSION_COUNT_WARN" ]]; then
-		echo "[pulse-wrapper] Session warning: $interactive_count interactive sessions open (threshold: $SESSION_COUNT_WARN). Each consumes 100-440MB + language servers. Consider closing unused tabs." >>"$LOGFILE"
-	fi
-
-	echo "$interactive_count"
-	return 0
-}
+# check_session_count: now provided by worker-lifecycle-common.sh (sourced above).
+# Removed from pulse-wrapper.sh to eliminate the duplicate. The shared version
+# returns the count; callers handle warning logs independently.
 
 #######################################
 # Run a command with a per-call timeout (t1482)
@@ -5634,16 +5516,8 @@ reap_zombie_workers() {
 	return 0
 }
 
-#######################################
-# Count active worker processes
-# Returns: count via stdout
-#######################################
-count_active_workers() {
-	local count
-	count=$(list_active_worker_processes | wc -l | tr -d ' ') || count=0
-	echo "$count"
-	return 0
-}
+# count_active_workers: now provided by worker-lifecycle-common.sh (sourced above).
+# Removed from pulse-wrapper.sh to eliminate divergence with stats-functions.sh.
 
 #######################################
 # Resolve managed repo path from slug
@@ -7975,7 +7849,11 @@ _run_preflight_stages() {
 
 	calculate_max_workers
 	calculate_priority_allocations
-	check_session_count >/dev/null
+	local _session_ct
+	_session_ct=$(check_session_count)
+	if [[ "${_session_ct:-0}" -gt "$SESSION_COUNT_WARN" ]]; then
+		echo "[pulse-wrapper] Session warning: $_session_ct interactive sessions open (threshold: $SESSION_COUNT_WARN). Each consumes 100-440MB + language servers. Consider closing unused tabs." >>"$LOGFILE"
+	fi
 
 	# Daily complexity scan (GH#5628): creates simplification-debt issues
 	# for .sh files with complex functions and .md agent docs exceeding size
