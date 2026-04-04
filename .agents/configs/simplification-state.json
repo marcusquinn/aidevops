@@ -6420,5 +6420,10 @@
     "lines": 30,
     "status": "simplified",
     "issue": "GH#17125"
+  },
+  ".agents/tools/design/library/brands/vercel/02-color-palette.md": {
+    "hash": "fff9407e385c159cda7e8381b09bb8a3503ffff2855189216f25bafef834fe78",
+    "status": "simplified",
+    "issue": 17171
   }
 }

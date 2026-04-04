@@ -45,7 +45,6 @@
 
 ## Shadows & Depth
 
-- **Border Shadow** (`rgba(0, 0, 0, 0.08) 0px 0px 0px 1px`): The signature — replaces traditional borders.
-- **Subtle Elevation** (`rgba(0, 0, 0, 0.04) 0px 2px 2px`): Minimal lift for cards.
-- **Card Stack** (`rgba(0,0,0,0.08) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 2px, rgba(0,0,0,0.04) 0px 8px 8px -8px, #fafafa 0px 0px 0px 1px`): Full multi-layer card shadow.
-- **Ring Border** (`rgb(235, 235, 235) 0px 0px 0px 1px`): Light gray ring-border for tabs and images.
+See [`06-depth-elevation.md`](06-depth-elevation.md) for the full shadow system and philosophy.
+
+Legacy token → level mapping: Border Shadow = Ring (Level 1), Subtle Elevation = Subtle Card (Level 2), Card Stack = Full Card (Level 3), Ring Border = Light Ring (Level 1b).
