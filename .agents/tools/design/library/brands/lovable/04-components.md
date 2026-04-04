@@ -9,7 +9,7 @@ All variants: Padding 8px 16px · Radius 6px · Active opacity 0.8 · Focus `rgb
 
 **Primary Dark (Inset Shadow)**
 - Background: `#1c1c1c` · Text: `#fcfbf8`
-- Shadow: `rgba(0,0,0,0) 0px 0px 0px 0px, rgba(0,0,0,0) 0px 0px 0px 0px, rgba(255,255,255,0.2) 0px 0.5px 0px 0px inset, rgba(0,0,0,0.2) 0px 0px 0px 0.5px inset, rgba(0,0,0,0.05) 0px 1px 2px 0px`
+- Shadow: see `02-color-palette.md` "Button Inset"
 - Use: Primary CTA ("Start Building", "Get Started")
 
 **Ghost / Outline**
