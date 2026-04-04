@@ -6394,6 +6394,13 @@
       "at": "2026-04-04T08:33:25Z",
       "pr": "17227",
       "passes": 1
+    },
+    ".agents/tools/design/library/brands/clickhouse/04-components.md": {
+      "hash": "821ffd3ebe003a2439f12f371de578542abeba013b43e5057496bba880d59255",
+      "at": "2026-04-04T08:38:02Z",
+      "issue": "GH#17237",
+      "lines_before": 89,
+      "lines_after": 57
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
