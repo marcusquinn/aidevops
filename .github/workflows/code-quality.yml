@@ -66,6 +66,78 @@ jobs:
         bash .agents/scripts/platform-detect.sh
         echo "Platform detection: OK"
 
+  # Bash 3.2 compatibility: catches "\n"/"\t" in double-quoted strings and other
+  # bash 4+ constructs that break on macOS default bash (GH#17371)
+  bash32-compat:
+    name: Bash 3.2 Compatibility
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+    - name: Bash 3.2 compatibility check
+      run: |
+        echo "Checking Bash 3.2 compatibility across all shell scripts..."
+
+        # Source shared file-discovery helper (single source of truth for exclusions)
+        source .agents/scripts/lint-file-discovery.sh
+        lint_shell_files
+
+        violations=0
+        # Self-skip: linters-local.sh grep patterns contain the forbidden strings
+        # as search targets, not as bash code.
+        self_skip="linters-local.sh"
+
+        while IFS= read -r file; do
+          [ -n "$file" ] || continue
+          basename_file=$(basename "$file")
+          [ "$basename_file" = "$self_skip" ] && continue
+          [ -f "$file" ] || continue
+
+          # "\t" or "\n" in string concatenation (likely wants $'\t' or $'\n')
+          # Only flag += or = assignments, not awk/sed/printf/echo -e/python contexts
+          matches=$(grep -nE '\+="\\[tn]|="\\[tn]' "$file" 2>/dev/null \
+            | grep -vE '^[0-9]+:[[:space:]]*#' \
+            | grep -vE 'awk|sed|printf|echo.*-e|python|f\.write|gsub|join|split|print |replace|coords|excerpt|delimiter|regex|pattern' \
+            || true)
+          if [ -n "$matches" ]; then
+            while IFS= read -r line; do
+              echo "FAIL $file:$line [\"\\t\"/\"\\n\" — use \$'\\t' or \$'\\n' for actual whitespace]"
+              violations=$((violations + 1))
+            done <<< "$matches"
+          fi
+
+          # Associative arrays (bash 4.0+)
+          assoc=$(grep -nE '^[[:space:]]*(declare|local|typeset)[[:space:]]+-A[[:space:]]' "$file" 2>/dev/null \
+            | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+          if [ -n "$assoc" ]; then
+            while IFS= read -r line; do
+              echo "FAIL $file:$line [associative array — bash 4.0+]"
+              violations=$((violations + 1))
+            done <<< "$assoc"
+          fi
+
+          # Namerefs (bash 4.3+)
+          nameref=$(grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-n[[:space:]]' "$file" 2>/dev/null \
+            | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+          if [ -n "$nameref" ]; then
+            while IFS= read -r line; do
+              echo "FAIL $file:$line [nameref — bash 4.3+]"
+              violations=$((violations + 1))
+            done <<< "$nameref"
+          fi
+        done <<< "$LINT_SH_FILES"
+
+        echo ""
+        if [ "$violations" -gt 0 ]; then
+          echo "::error::Bash 3.2 compatibility: $violations violation(s) found"
+          echo "macOS ships bash 3.2 — these constructs will break on macOS."
+          echo "See .agents/reference/bash-compat.md for alternatives."
+          exit 1
+        fi
+        echo "All shell scripts pass Bash 3.2 compatibility check"
+
   framework-validation:
     name: Framework Validation
     runs-on: ubuntu-latest
