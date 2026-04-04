@@ -19,6 +19,9 @@
 #   _sanitize_log_field()     Strip control characters from log fields
 #   _sanitize_markdown()      Strip @ mentions and backticks from markdown
 #   _validate_int()           Validate and sanitize integer config values
+#   _count_worker_commits()   Count commits in a worktree since elapsed seconds ago
+#   _count_worker_messages()  Count session DB messages for a worker
+#   _determine_struggle_flag() Determine struggle flag from ratio/commit/elapsed metrics
 #   _compute_struggle_ratio() Compute messages/commits ratio for a worker
 #   _format_duration()        Format seconds into human-readable duration
 #
@@ -601,6 +604,108 @@ _validate_int() {
 }
 
 #######################################
+# Count commits in a worktree since a given number of seconds ago (GH#17078)
+# Arguments:
+#   $1 - worktree directory path
+#   $2 - elapsed seconds (time window for git log)
+# Returns: integer commit count via stdout
+#######################################
+_count_worker_commits() {
+	local worktree_dir="$1"
+	local elapsed_seconds="$2"
+	local commits=0
+
+	if [[ -d "${worktree_dir}/.git" || -f "${worktree_dir}/.git" ]]; then
+		# Use (cmd || true) pattern for set -e safety — ensures the pipeline
+		# always succeeds and stderr remains visible for debugging (GH#4010)
+		commits=$( (git -C "$worktree_dir" log --oneline --since="${elapsed_seconds} seconds ago" || true) | wc -l | tr -d ' ')
+	fi
+
+	echo "$commits"
+	return 0
+}
+
+#######################################
+# Count session messages from the OpenCode DB for a worker (GH#17078)
+# Arguments:
+#   $1 - worker command line
+#   $2 - elapsed seconds (time window for message query)
+# Output: "available|<count>" or "unavailable|0"
+#   "available" means the DB was found and queried
+#   "unavailable" means no DB — caller must return n/a (GH#11278)
+#######################################
+_count_worker_messages() {
+	local cmd="$1"
+	local elapsed_seconds="$2"
+	local db_path="${HOME}/.local/share/opencode/opencode.db"
+
+	# When neither DB is available, return unavailable — NEVER fabricate message
+	# counts from elapsed time. The old heuristic (messages = elapsed_minutes × 2)
+	# produced false positives: a 19-minute worker could be reported as "17h
+	# with struggle_ratio: 48" when the process age was inherited from a
+	# long-lived parent or stale worktree. See GH#11278.
+	if [[ ! -f "$db_path" ]]; then
+		echo "unavailable|0"
+		return 0
+	fi
+
+	local session_id messages=0
+	session_id=$(_resolve_session_id_from_cmd "$cmd")
+
+	if [[ -n "$session_id" ]]; then
+		messages=$(
+			DB_PATH="$db_path" SID="$session_id" ELAPSED="$elapsed_seconds" python3 - <<'PY'
+import os, sqlite3
+conn = sqlite3.connect(os.environ["DB_PATH"])
+conn.execute("PRAGMA busy_timeout=5000")
+cur = conn.cursor()
+cur.execute(
+    "SELECT COUNT(*) FROM message m"
+    " WHERE m.session_id = ?"
+    " AND (CASE WHEN m.time_created > 20000000000 THEN m.time_created / 1000 ELSE m.time_created END)"
+    " > strftime('%s', 'now') - ?",
+    (os.environ["SID"], int(os.environ["ELAPSED"])),
+)
+print(cur.fetchone()[0] or 0)
+PY
+		) 2>/dev/null || messages=0
+	fi
+
+	echo "available|${messages}"
+	return 0
+}
+
+#######################################
+# Determine the struggle flag from ratio/commit/elapsed metrics (GH#17078)
+# Arguments:
+#   $1 - ratio (messages / max(1, commits))
+#   $2 - commits count
+#   $3 - elapsed seconds
+#   $4 - min elapsed seconds threshold
+#   $5 - ratio threshold for "struggling"
+# Returns: flag string ("", "struggling", or "thrashing") via stdout
+#######################################
+_determine_struggle_flag() {
+	local ratio="$1"
+	local commits="$2"
+	local elapsed_seconds="$3"
+	local min_elapsed_seconds="$4"
+	local threshold="$5"
+	local flag=""
+
+	if [[ "$elapsed_seconds" -ge "$min_elapsed_seconds" ]]; then
+		if [[ "$ratio" -gt 50 && "$elapsed_seconds" -ge 3600 ]]; then
+			flag="thrashing"
+		elif [[ "$ratio" -gt "$threshold" && "$commits" -eq 0 ]]; then
+			flag="struggling"
+		fi
+	fi
+
+	echo "$flag"
+	return 0
+}
+
+#######################################
 # Compute struggle ratio for a single worker (t1367)
 #
 # struggle_ratio = messages / max(1, commits)
@@ -638,76 +743,29 @@ _compute_struggle_ratio() {
 		return 0
 	fi
 
-	# Count commits since worker start.
-	# Use process age (elapsed_seconds) as the time window for git log.
-	# This is the most reliable anchor — it measures how long the worker
-	# process has been alive, which is what we want for commit counting.
-	local commits=0
-	if [[ -d "${worktree_dir}/.git" || -f "${worktree_dir}/.git" ]]; then
-		local since_seconds_ago="${elapsed_seconds}"
-		# Use (cmd || true) pattern for set -e safety — ensures the pipeline
-		# always succeeds and stderr remains visible for debugging (GH#4010)
-		commits=$( (git -C "$worktree_dir" log --oneline --since="${since_seconds_ago} seconds ago" || true) | wc -l | tr -d ' ')
-	fi
+	# Count commits since worker start (elapsed_seconds is the time window).
+	local commits
+	commits=$(_count_worker_commits "$worktree_dir" "$elapsed_seconds")
 
 	# Count messages from the session DB (runtime-aware).
-	# Supports both OpenCode (opencode.db) and Claude Code (~/.claude/projects/).
-	# When neither DB is available, return n/a — NEVER fabricate message counts
-	# from elapsed time. The old heuristic (messages = elapsed_minutes × 2)
-	# produced false positives: a 19-minute worker could be reported as "17h
-	# with struggle_ratio: 48" when the process age was inherited from a
-	# long-lived parent or stale worktree. See GH#11278.
-	local messages=0
-	local db_available=false
-	local db_path="${HOME}/.local/share/opencode/opencode.db"
-
-	if [[ -f "$db_path" ]]; then
-		db_available=true
-		local session_id
-		session_id=$(_resolve_session_id_from_cmd "$cmd")
-
-		if [[ -n "$session_id" ]]; then
-			messages=$(
-				DB_PATH="$db_path" SID="$session_id" ELAPSED="$elapsed_seconds" python3 - <<'PY'
-import os, sqlite3
-conn = sqlite3.connect(os.environ["DB_PATH"])
-conn.execute("PRAGMA busy_timeout=5000")
-cur = conn.cursor()
-cur.execute(
-    "SELECT COUNT(*) FROM message m"
-    " WHERE m.session_id = ?"
-    " AND (CASE WHEN m.time_created > 20000000000 THEN m.time_created / 1000 ELSE m.time_created END)"
-    " > strftime('%s', 'now') - ?",
-    (os.environ["SID"], int(os.environ["ELAPSED"])),
-)
-print(cur.fetchone()[0] or 0)
-PY
-			) 2>/dev/null || messages=0
-		fi
-	fi
+	# Supports OpenCode (opencode.db). Returns "unavailable|0" when no DB found.
+	local msg_result db_status messages
+	msg_result=$(_count_worker_messages "$cmd" "$elapsed_seconds")
+	db_status="${msg_result%%|*}"
+	messages="${msg_result#*|}"
 
 	# If no session DB is available (e.g., Claude Code runtime without
-	# OpenCode DB), return n/a. Do NOT fabricate message counts from
-	# elapsed time — that heuristic is the root cause of false struggle
-	# ratio reports (GH#11278).
-	if [[ "$db_available" == "false" ]]; then
+	# OpenCode DB), return n/a — do NOT fabricate counts (GH#11278).
+	if [[ "$db_status" == "unavailable" ]]; then
 		echo "n/a|${commits}|0|"
 		return 0
 	fi
 
-	# Compute ratio
+	# Compute ratio and flag
 	local denominator=$((commits > 0 ? commits : 1))
 	local ratio=$((messages / denominator))
-
-	# Determine flag
-	local flag=""
-	if [[ "$elapsed_seconds" -ge "$min_elapsed_seconds" ]]; then
-		if [[ "$ratio" -gt 50 && "$elapsed_seconds" -ge 3600 ]]; then
-			flag="thrashing"
-		elif [[ "$ratio" -gt "$threshold" && "$commits" -eq 0 ]]; then
-			flag="struggling"
-		fi
-	fi
+	local flag
+	flag=$(_determine_struggle_flag "$ratio" "$commits" "$elapsed_seconds" "$min_elapsed_seconds" "$threshold")
 
 	echo "${ratio}|${commits}|${messages}|${flag}"
 	return 0
