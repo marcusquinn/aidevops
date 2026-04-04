@@ -3,7 +3,7 @@
 
 # Startup Bold — Agent Prompt Guide
 
-Colour tokens: see `02-colours.md`.
+Design tokens: see `02-colours.md`, `03-typography.md`, `05-layout.md`.
 
 ## Ready-to-Use Prompts
 
