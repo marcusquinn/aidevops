@@ -2,54 +2,22 @@
 
 ## Buttons
 
-**Primary Button**
+All buttons: `font: Lato, 500` · `padding: 14px 32px` · `border-radius: 999px` · `letter-spacing: 0.04em`
 
-```css
-background: #d4a5a5
-color: #ffffff
-font: 14px/1 Lato, 500
-padding: 14px 32px
-border: none
-border-radius: 999px
-letter-spacing: 0.04em
-transition: all 400ms ease-in-out
+| Variant | Background | Color | Border | Transition |
+|---------|-----------|-------|--------|------------|
+| Primary | `#d4a5a5` | `#ffffff` | none | `all 400ms ease-in-out` |
+| Secondary | transparent | `#3d3530` | `1.5px solid #d4a5a5` | — |
+| Ghost | transparent | `#7a6e65` | none | — |
 
-:hover    → background: #c79393; box-shadow: 0 4px 16px rgba(212, 165, 165, 0.25)
-:active   → background: #b88282; transform: scale(0.98)
-:focus    → outline: 2px solid #d4a5a5; outline-offset: 3px
-:disabled → background: #e8cece; color: #b0a59c; cursor: not-allowed
-```
+**States:**
 
-**Secondary Button**
-
-```css
-background: transparent
-color: #3d3530
-font: 14px/1 Lato, 500
-padding: 14px 32px
-border: 1.5px solid #d4a5a5
-border-radius: 999px
-letter-spacing: 0.04em
-
-:hover    → background: #f5ebe7; border-color: #c79393
-:active   → background: #f0e6d8
-:focus    → outline: 2px solid #d4a5a5; outline-offset: 3px
-:disabled → color: #b0a59c; border-color: #e8ddd0
-```
-
-**Ghost Button**
-
-```css
-background: transparent
-color: #7a6e65
-font: 14px/1 Lato, 400
-padding: 14px 32px
-border: none
-border-radius: 999px
-
-:hover    → color: #3d3530; background: rgba(212, 165, 165, 0.08)
-:active   → background: rgba(212, 165, 165, 0.12)
-```
+| State | Primary | Secondary | Ghost |
+|-------|---------|-----------|-------|
+| `:hover` | bg `#c79393`; shadow `0 4px 16px rgba(212,165,165,0.25)` | bg `#f5ebe7`; border `#c79393` | color `#3d3530`; bg `rgba(212,165,165,0.08)` |
+| `:active` | bg `#b88282`; scale `0.98` | bg `#f0e6d8` | bg `rgba(212,165,165,0.12)` |
+| `:focus` | outline `2px solid #d4a5a5`; offset `3px` | outline `2px solid #d4a5a5`; offset `3px` | — |
+| `:disabled` | bg `#e8cece`; color `#b0a59c`; cursor not-allowed | color `#b0a59c`; border `#e8ddd0` | — |
 
 ## Inputs
 
