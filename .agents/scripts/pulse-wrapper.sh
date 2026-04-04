@@ -7151,16 +7151,18 @@ _ff_load() {
 #
 # Arguments:
 #   $1 - provider (anthropic, openai, cursor, google)
-# Stdout: seconds until earliest recovery (0 = accounts available now)
+# Stdout: seconds until earliest recovery (0 = accounts available now,
+#         -1 = no pool configured / query failed)
 # Returns: 0 always (best-effort)
 #######################################
 _ff_query_pool_retry_seconds() {
 	local provider="${1:-anthropic}"
 	local pool_file="${HOME}/.aidevops/oauth-pool.json"
 
-	# No pool file = no pool management = use default backoff
+	# No pool file = no pool management = signal "no pool configured" so caller
+	# falls through to exponential backoff instead of treating it as "available now".
 	if [[ ! -f "$pool_file" ]]; then
-		echo "0"
+		echo "-1"
 		return 0
 	fi
 
@@ -7301,7 +7303,7 @@ _fast_fail_record_locked() {
 	local log_action=""
 
 	case "$reason" in
-	rate_limit | backoff)
+	rate_limit* | backoff)
 		# Rate-limit: check if other accounts are available
 		local pool_wait
 		pool_wait=$(_ff_query_pool_retry_seconds "$provider")

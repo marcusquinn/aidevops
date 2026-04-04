@@ -966,7 +966,9 @@ post_kill_github_update() {
 	# Record failure in the fast-fail counter and escalate tier if threshold reached.
 	# The fast-fail state file is shared with pulse-wrapper.sh — both use the same
 	# JSON file so pulse can skip issues that the watchdog has flagged. (GH#2076)
-	_watchdog_record_failure_and_escalate "$issue_number" "$repo_slug" "$reason" || true
+	local provider
+	provider=$(extract_provider_from_cmd "$cmd")
+	_watchdog_record_failure_and_escalate "$issue_number" "$repo_slug" "$reason" "$provider" || true
 
 	return 0
 }
@@ -987,11 +989,13 @@ post_kill_github_update() {
 #   $1 - issue number
 #   $2 - repo slug
 #   $3 - kill reason (idle, stall, thrash, runtime, backoff, etc.)
+#   $4 - provider (anthropic, openai, cursor, google; default: anthropic)
 #######################################
 _watchdog_record_failure_and_escalate() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local reason="$3"
+	local provider="${4:-anthropic}"
 
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
@@ -1051,12 +1055,12 @@ _watchdog_record_failure_and_escalate() {
 	local log_action=""
 
 	case "$reason" in
-	backoff | rate_limit)
+	backoff | rate_limit*)
 		# Rate-limit kill: check account pool
 		local pool_file="${HOME}/.aidevops/oauth-pool.json"
 		local pool_wait="-1"
 		if [[ -f "$pool_file" ]]; then
-			pool_wait=$(POOL_FILE="$pool_file" PROVIDER="anthropic" python3 -c "
+			pool_wait=$(POOL_FILE="$pool_file" PROVIDER="$provider" python3 -c "
 import json, os, time, sys
 try:
     pool = json.load(open(os.environ['POOL_FILE']))
