@@ -6407,6 +6407,12 @@
       "at": "2026-04-04T09:30:00Z",
       "pr": 0,
       "passes": 1
+    },
+    ".agents/tools/design/library/brands/clay/04-components.md": {
+      "hash": "3318a6f67225b0283a146bba148a8541ce146057",
+      "at": "2026-04-04T09:20:00Z",
+      "passes": 1,
+      "pr": 17267
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
