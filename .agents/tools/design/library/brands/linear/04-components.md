@@ -1,29 +1,34 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
 # Design System: Linear — Component Stylings
 
 ## Buttons
 
 **Ghost Button (Default)**
 - Background: `rgba(255,255,255,0.02)`
-- Text: `#e2e4e7`
+- Text: `#e2e4e7` (near-white)
+- Padding: comfortable
 - Radius: 6px
 - Border: `1px solid rgb(36, 40, 44)`
+- Outline: none
 - Focus shadow: `rgba(0,0,0,0.1) 0px 4px 12px`
 - Use: Standard actions, secondary CTAs
 
 **Subtle Button**
 - Background: `rgba(255,255,255,0.04)`
-- Text: `#d0d6e0`
+- Text: `#d0d6e0` (silver-gray)
 - Padding: 0px 6px
 - Radius: 6px
 - Use: Toolbar actions, contextual buttons
 
-**Primary Brand Button**
-- Background: `#5e6ad2`
+**Primary Brand Button (Inferred)**
+- Background: `#5e6ad2` (brand indigo)
 - Text: `#ffffff`
 - Padding: 8px 16px
 - Radius: 6px
-- Hover: `#828fff`
-- Use: Primary CTAs
+- Hover: `#828fff` shift
+- Use: Primary CTAs ("Start building", "Sign up")
 
 **Icon Button (Circle)**
 - Background: `rgba(255,255,255,0.03)` or `rgba(255,255,255,0.05)`
@@ -42,11 +47,12 @@
 
 **Small Toolbar Button**
 - Background: `rgba(255,255,255,0.05)`
-- Text: `#62666d`
+- Text: `#62666d` (muted)
 - Radius: 2px
 - Border: `1px solid rgba(255,255,255,0.05)`
 - Shadow: `rgba(0,0,0,0.03) 0px 1.2px 0px 0px`
 - Font: 12px weight 510
+- Use: Toolbar actions, quick-access controls
 
 ## Cards & Containers
 
@@ -81,7 +87,7 @@
 **Success Pill**
 - Background: `#10b981`
 - Text: `#f7f8f8`
-- Radius: 50%
+- Radius: 50% (circular)
 - Font: 10px weight 510
 - Use: Status dots, completion indicators
 
@@ -107,7 +113,7 @@
 
 - Dark sticky header on near-black background
 - Linear logomark left-aligned (SVG icon)
-- Links: Inter Variable 13–14px weight 510, `#d0d6e0`
+- Links: Inter Variable 13–14px weight 510, `#d0d6e0` text
 - Active/hover: text lightens to `#f7f8f8`
 - CTA: Brand indigo button or ghost button
 - Mobile: hamburger collapse
