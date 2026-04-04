@@ -49,3 +49,34 @@
 | Warning | `#eab308` | `#fefce8` | Caution, pending review |
 | Error | `#ef4444` | `#fef2f2` | Validation errors, destructive actions |
 | Info | `#3b82f6` | `#eff6ff` | Tips, informational messages |
+
+## CSS Variables
+
+| CSS Variable | Hex |
+|-------------|-----|
+| `--color-primary` | `#3b82f6` |
+| `--color-primary-light` | `#60a5fa` |
+| `--color-primary-dark` | `#2563eb` |
+| `--color-primary-subtle` | `#eff6ff` |
+| `--color-accent` | `#f97316` |
+| `--color-accent-light` | `#fb923c` |
+| `--color-accent-dark` | `#ea580c` |
+| `--color-accent-subtle` | `#fff7ed` |
+| `--color-text` | `#111827` |
+| `--color-text-body` | `#374151` |
+| `--color-text-secondary` | `#6b7280` |
+| `--color-text-tertiary` | `#9ca3af` |
+| `--color-text-inverse` | `#FFFFFF` |
+| `--color-surface` | `#FFFFFF` |
+| `--color-surface-alt` | `#F9FAFB` |
+| `--color-surface-warm` | `#FFFBF5` |
+| `--color-border` | `#E5E7EB` |
+| `--color-border-strong` | `#D1D5DB` |
+| `--color-success` | `#16a34a` |
+| `--color-success-bg` | `#f0fdf4` |
+| `--color-warning` | `#eab308` |
+| `--color-warning-bg` | `#fefce8` |
+| `--color-error` | `#ef4444` |
+| `--color-error-bg` | `#fef2f2` |
+| `--color-info` | `#3b82f6` |
+| `--color-info-bg` | `#eff6ff` |

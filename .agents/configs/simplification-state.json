@@ -6375,6 +6375,11 @@
       "at": "2026-04-04T06:18:00Z",
       "passes": 1,
       "pr": 17142
+    },
+    ".agents/tools/design/library/styles/corporate-friendly/02-colour-palette.md": {
+      "hash": "33a9f74635ab29c5caa753bacc8543849b495dab49314ad48e4164143ecbcdbd",
+      "at": "2026-04-04T07:25:29Z",
+      "passes": 1
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
