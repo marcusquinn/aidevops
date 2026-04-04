@@ -47,4 +47,9 @@
 
 See [`06-depth-elevation.md`](06-depth-elevation.md) for the full shadow system and philosophy.
 
-Legacy token → level mapping: Border Shadow = Ring (Level 1), Subtle Elevation = Subtle Card (Level 2), Card Stack = Full Card (Level 3), Ring Border = Light Ring (Level 1b).
+| Legacy Token | Level Name | Level |
+|---|---|---|
+| Border Shadow | Ring | Level 1 |
+| Subtle Elevation | Subtle Card | Level 2 |
+| Card Stack | Full Card | Level 3 |
+| Ring Border | Light Ring | Level 1b |
