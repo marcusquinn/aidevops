@@ -140,6 +140,7 @@ PULSE_ACTIVE_REFILL_INTERVAL="${PULSE_ACTIVE_REFILL_INTERVAL:-120}"             
 PULSE_ACTIVE_REFILL_IDLE_MIN="${PULSE_ACTIVE_REFILL_IDLE_MIN:-60}"                          # Idle seconds before wrapper-side refill may intervene during monitoring sleep
 PULSE_ACTIVE_REFILL_STALL_MIN="${PULSE_ACTIVE_REFILL_STALL_MIN:-120}"                       # Progress stall seconds before wrapper-side refill may intervene during an active pulse
 ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                                                    # 2 hours — kill orphans older than this
+ORPHAN_WORKTREE_GRACE_SECS="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"                            # 30 min grace for 0-commit worktrees with no open PR (t1884)
 RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-512}"                                               # 512 MB per worker (opencode headless is lightweight)
 RAM_RESERVE_MB="${RAM_RESERVE_MB:-6144}"                                                    # 6 GB reserved for OS + user apps
 # Compute sensible default cap from total RAM (not free RAM — that's volatile).
@@ -221,6 +222,7 @@ PULSE_COLD_START_TIMEOUT=$(_validate_int PULSE_COLD_START_TIMEOUT "$PULSE_COLD_S
 PULSE_COLD_START_TIMEOUT_UNDERFILLED=$(_validate_int PULSE_COLD_START_TIMEOUT_UNDERFILLED "$PULSE_COLD_START_TIMEOUT_UNDERFILLED" 600 120)
 PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT=$(_validate_int PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT "$PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT" 900 300)
 ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
+ORPHAN_WORKTREE_GRACE_SECS=$(_validate_int ORPHAN_WORKTREE_GRACE_SECS "$ORPHAN_WORKTREE_GRACE_SECS" 1800 60)
 RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 512 1)
 RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 6144)
 MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" "${_default_cap:-8}")
@@ -2990,14 +2992,16 @@ cleanup_worktrees() {
 		fi
 	fi
 
-	# --- Age-based orphan cleanup (GH#16830) ---
+	# --- Age-based orphan cleanup (GH#16830, t1884) ---
 	# Workers that crash leave worktrees with 0 commits / no PR. The
 	# --force-merged pass above won't touch them. Clean based on age:
-	#   0 commits, 0 dirty, >3h  → empty, safe to remove
-	#   0 commits, dirty,  >6h  → worker died mid-edit, no process
-	#   any commits, no PR, >24h → abandoned, issue will be re-dispatched
+	#   0 commits, no open PR, >30m → crashed worker, safe to remove fast (t1884)
+	#   0 commits, 0 dirty,   >3h  → empty, safe to remove
+	#   0 commits, dirty,     >6h  → worker died mid-edit, no process
+	#   any commits, no PR,   >24h → abandoned, issue will be re-dispatched
 	local now_epoch
 	now_epoch=$(date +%s)
+	local age_grace="$ORPHAN_WORKTREE_GRACE_SECS"
 	local age_3h=$((3 * 3600))
 	local age_6h=$((6 * 3600))
 	local age_24h=$((24 * 3600))
@@ -3058,7 +3062,21 @@ cleanup_worktrees() {
 				local should_remove=false
 				local reason=""
 
-				if [[ "$commits_ahead" -eq 0 && "$dirty_count" -eq 0 && "$wt_age_secs" -ge "$age_3h" ]]; then
+				# Fast-path: 0 commits + no open PR + past grace period → crashed worker (t1884)
+				# Check this before the 3h/6h thresholds — no PR means no risk of losing work.
+				# Only check GitHub if we have a slug and branch name; skip if either is missing.
+				if [[ "$commits_ahead" -eq 0 && "$wt_age_secs" -ge "$age_grace" ]]; then
+					local has_open_pr=false
+					if [[ -n "$repo_slug_age" && -n "$wt_branch_age" ]]; then
+						local open_pr_count
+						open_pr_count=$(gh pr list --repo "$repo_slug_age" --head "$wt_branch_age" --state open --limit 1 2>/dev/null | wc -l | tr -d ' ') || open_pr_count=0
+						[[ "$open_pr_count" -gt 0 ]] && has_open_pr=true
+					fi
+					if [[ "$has_open_pr" == "false" ]]; then
+						should_remove=true
+						reason="0 commits, no open PR, age $((wt_age_secs / 60))m (crashed worker)"
+					fi
+				elif [[ "$commits_ahead" -eq 0 && "$dirty_count" -eq 0 && "$wt_age_secs" -ge "$age_3h" ]]; then
 					should_remove=true
 					reason="0 commits, clean, age $((wt_age_secs / 3600))h"
 				elif [[ "$commits_ahead" -eq 0 && "$dirty_count" -gt 0 && "$wt_age_secs" -ge "$age_6h" ]]; then
