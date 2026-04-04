@@ -5,28 +5,22 @@
 
 ## Buttons
 
-**Primary (Transparent with Hover Animation)**
+**Primary (Transparent)**
 
-- Background: transparent (`rgba(239, 241, 243, 0)`)
-- Text: `#000000`
-- Padding: 6.4px 12.8px
+- Background: transparent (`rgba(239, 241, 243, 0)`); Text: `#000000`; Padding: 6.4px 12.8px
 - Border: none (or `1px solid #717989` for outlined variant)
 - Hover: background → swatch color (e.g., `#434346`), text → white, `rotateZ(-8deg)`, `translateY(-80%)`, hard shadow `rgb(0,0,0) -7px 7px`
 - Focus: `rgb(20, 110, 245) solid 2px` outline
 
-**White Solid**
+**White Solid** — Primary CTA on colored sections
 
 - Background: `#ffffff`; Text: `#000000`; Padding: 6.4px
-- Hover: oat-200 swatch color, animated rotation + shadow
-- Use: Primary CTA on colored sections
+- Hover: oat-200 swatch, animated rotation + shadow
 
 **Ghost Outlined**
 
-- Background: transparent; Text: `#000000`; Padding: 8px
-- Border: `1px solid #717989`; Radius: 4px
-- Hover: dragonfruit swatch color, white text, animated rotation
-
-> **Hover pattern:** Rotate -8deg + translate upward, hard offset shadow (`-7px 7px`) instead of soft blur, background → contrasting swatch. Creates a physical, toy-like interaction quality.
+- Background: transparent; Text: `#000000`; Padding: 8px; Border: `1px solid #717989`; Radius: 4px
+- Hover: dragonfruit swatch, white text, animated rotation
 
 ## Cards & Containers
 
