@@ -3,12 +3,7 @@
 
 # Cloudflare Workers KV
 
-Globally distributed, eventually consistent key-value store for read-heavy, low-latency access.
-
-## Best Fit
-
-- Use for config storage, user sessions, feature flags, caching, and A/B testing.
-- Choose D1 or Durable Objects when you need strong consistency.
+Globally distributed, eventually consistent key-value store for read-heavy, low-latency access. Use for config storage, user sessions, feature flags, caching, and A/B testing. Choose D1 or Durable Objects when you need strong consistency.
 
 ## Core Properties
 
