@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: MIT
-# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-
 {
   "langflow_config": {
     "description": "Langflow configuration for AI DevOps Framework",

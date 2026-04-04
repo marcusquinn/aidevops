@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: MIT
-# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-
 {
   "_comment": "Context Builder Configuration Template",
   "_instructions": "Copy to context-builder-config.json and customize",

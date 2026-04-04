@@ -479,6 +479,36 @@ _check_origin() {
 }
 
 # -----------------------------------------------------------------------------
+# _check_signing: nudge if commit signing is not configured.
+# Cool — one-liner reminder that does not repeat after dismissal.
+# -----------------------------------------------------------------------------
+_check_signing() {
+	local dismissed_file="$HOME/.aidevops/cache/signing-nudge-dismissed"
+
+	# Already dismissed — do not nag
+	if [[ -f "$dismissed_file" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local signing_format
+	signing_format=$(git config --global gpg.format 2>/dev/null || echo "")
+	local signing_enabled
+	signing_enabled=$(git config --global commit.gpgsign 2>/dev/null || echo "")
+
+	if [[ "$signing_format" != "ssh" || "$signing_enabled" != "true" ]]; then
+		echo "Commit signing not configured. Run: aidevops signing setup"
+		return 0
+	fi
+
+	# Configured — dismiss permanently so we do not check again
+	mkdir -p "$(dirname "$dismissed_file")"
+	touch "$dismissed_file"
+	echo ""
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # _refresh_oauth_tokens: pre-emptive background token refresh on session startup.
 # Refreshes any OAuth tokens expiring within 1 hour — catches tokens that
 # expired while the machine was off. Runs silently; failures are harmless.
@@ -544,6 +574,7 @@ main() {
 
 	local runtime_hint nudge_output session_warning security_posture
 	local secret_hygiene advisories_output contribution_watch origin_notice
+	local signing_nudge
 	runtime_hint=$(_get_runtime_hint "$app_name")
 	nudge_output=$(_check_local_models "$script_dir")
 	session_warning=$(_check_session_count "$script_dir")
@@ -552,6 +583,7 @@ main() {
 	advisories_output=$(_check_advisories)
 	contribution_watch=$(_check_contribution_watch)
 	origin_notice=$(_check_origin)
+	signing_nudge=$(_check_signing)
 
 	[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
 	[[ -n "$nudge_output" ]] && echo "$nudge_output"
@@ -561,6 +593,7 @@ main() {
 	[[ -n "$advisories_output" ]] && echo "$advisories_output"
 	[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
 	[[ -n "$origin_notice" ]] && echo "$origin_notice"
+	[[ -n "$signing_nudge" ]] && echo "$signing_nudge"
 
 	_write_cache "$cache_dir" "$output" "$runtime_hint" "$nudge_output" \
 		"$session_warning" "$security_posture" "$secret_hygiene" \
