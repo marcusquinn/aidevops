@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.89] - 2026-04-04
+
+### Fixed
+
+- `aidevops update` now regenerates existing systemd service files in non-interactive mode — fixes broken service files from GH#17369 not reaching users via `aidevops update` (#17382)
+
 ## [3.5.840] - 2026-04-03
 
 ### Changed
