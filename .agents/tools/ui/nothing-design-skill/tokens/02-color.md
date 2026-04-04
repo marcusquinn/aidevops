@@ -29,9 +29,7 @@
 | `--info` | `#999999` | Uses secondary text color |
 | `--interactive` | `#007AFF` / `#5B9BF6` | Tappable text: links, picker values. Not for buttons. |
 
-### Data Status Rules
-
-`--success` = good, `--warning` = attention, `--accent` = bad/over limit, `--text-primary` = neutral. Apply color to **value**, not label or background. Labels stay `--text-secondary`. Trend arrows inherit value color.
+**Data status:** `--success` = good, `--warning` = attention, `--accent` = bad/over limit, `--text-primary` = neutral. Apply to **value** only — not label or background. Labels stay `--text-secondary`. Trend arrows inherit value color.
 
 ## Dark / Light Mode
 
@@ -48,8 +46,4 @@
 | `--text-display` | `#FFFFFF` | `#000000` |
 | `--interactive` | `#5B9BF6` | `#007AFF` |
 
-### Mode Philosophy
-
-Identical across modes: accent red, status colors, ALL CAPS labels, fonts, type scale, spacing, component shapes.
-
-Dark: OLED black, white data glowing (instrument panel). Light: off-white paper (`#F5F5F5`), black ink; cards `#FFFFFF` = subtle elevation without shadows.
+**Identical across modes:** accent red, status colors, ALL CAPS labels, fonts, type scale, spacing, component shapes. Dark: OLED black, white data glowing (instrument panel). Light: off-white paper (`#F5F5F5`), black ink; cards `#FFFFFF` = subtle elevation without shadows.
