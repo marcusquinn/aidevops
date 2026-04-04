@@ -6058,6 +6058,19 @@ dispatch_with_dedup() {
 	# SIGTERM-ing all active workers.
 	local _claim_comment_id=""
 
+	# GH#16978 Bug C: Helper to clean up the DISPATCH_CLAIM comment on any
+	# early-return path after the claim succeeds. Previously the cleanup only
+	# ran on successful dispatch (line 6192), so any failure between claim and
+	# worker launch left a stale claim comment that accumulated over pulse cycles.
+	_cleanup_claim_comment() {
+		if [[ -n "$_claim_comment_id" ]]; then
+			gh api "repos/${repo_slug}/issues/comments/${_claim_comment_id}" \
+				--method DELETE >/dev/null 2>>"$LOGFILE" || true
+			_claim_comment_id=""
+		fi
+		return 0
+	}
+
 	# Hard stop for supervisor/telemetry issues (t1702 pulse guard).
 	# The pulse prompt should already avoid these, but this deterministic
 	# gate prevents dispatch when prompt fallback logic is too permissive.
@@ -6144,6 +6157,8 @@ dispatch_with_dedup() {
 		echo "[dispatch_with_dedup] No models configured — skipping dispatch for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--remove-assignee "$self_login" --remove-label "status:queued" 2>/dev/null || true
+		# GH#16978 Bug C: clean up claim comment on this early-return path
+		_cleanup_claim_comment
 		return 1
 	fi
 
@@ -6189,10 +6204,8 @@ dispatch_with_dedup() {
 	# dispatch comment is posted. The claim served its purpose (optimistic lock
 	# during the 8s consensus window). Leaving it pollutes the issue timeline —
 	# awardsapp #2051 had 29 stale claim comments.
-	if [[ -n "$_claim_comment_id" ]]; then
-		gh api "repos/${repo_slug}/issues/comments/${_claim_comment_id}" \
-			--method DELETE >/dev/null 2>>"$LOGFILE" || true
-	fi
+	# GH#16978: Use _cleanup_claim_comment helper (also called on early-return paths).
+	_cleanup_claim_comment
 
 	echo "[dispatch_with_dedup] Dispatched worker PID ${worker_pid} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 	return 0

@@ -1407,9 +1407,10 @@ _build_claude_cmd() {
 
 	# claude -p runs headless and prints output. --output-format stream-json
 	# gives structured output compatible with our result parsing.
+	# GH#16978: Claude CLI uses --cwd, not --directory (--directory is not a valid flag).
 	printf '%s\0' "claude" "-p" "$prompt" "--output-format" "stream-json" "--verbose"
 	if [[ -n "$work_dir" ]]; then
-		printf '%s\0' "--directory" "$work_dir"
+		printf '%s\0' "--cwd" "$work_dir"
 	fi
 	if [[ -n "$agent_name" ]]; then
 		printf '%s\0' "--agent" "$agent_name"
@@ -1621,6 +1622,38 @@ _execute_run_attempt() {
 		rm -f "${exit_code_file}.watchdog_killed"
 	fi
 	rm -f "$exit_code_file"
+
+	# GH#16978 Bug B: Stale session ID causes "Session not found" on OpenCode.
+	# When a persisted session ID is stale (e.g., from a previous OpenCode version
+	# or a different machine), OpenCode exits non-zero with "Session not found"
+	# instead of creating a new session. Detect this, clear the stale ID, and
+	# retry once without --session so a fresh session is created.
+	if [[ "$exit_code" -ne 0 && "$runtime" != "claude" && -n "$persisted_session" ]]; then
+		local output_text=""
+		output_text=$(cat "$output_file" 2>/dev/null || true)
+		if [[ "$output_text" == *"Session not found"* ]]; then
+			print_warning "Stale session ID detected for ${session_key} — clearing and retrying without --session (GH#16978)"
+			clear_session_id "$provider" "$session_key"
+			persisted_session=""
+			rm -f "$output_file"
+			output_file=$(mktemp)
+			exit_code_file=$(mktemp)
+			exit_code=0
+			# Rebuild command without the stale --session flag
+			cmd=()
+			while IFS= read -r -d '' arg; do
+				cmd+=("$arg")
+			done < <(_build_run_cmd "$selected_model" "$work_dir" "$prompt" "$title" \
+				"$agent_name" "" "${extra_args[@]+"${extra_args[@]}"}")
+			_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
+			exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
+			if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
+				exit_code=124
+				rm -f "${exit_code_file}.watchdog_killed"
+			fi
+			rm -f "$exit_code_file"
+		fi
+	fi
 
 	local handle_exit=0
 	if _handle_run_result "$exit_code" "$output_file" "$role" "$provider" "$session_key" "$selected_model"; then
