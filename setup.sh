@@ -235,8 +235,11 @@ _launchd_install_if_changed() {
 	return 0
 }
 
-# Detect whether a scheduler is already installed via launchd or cron.
+# Detect whether a scheduler is already installed via launchd, cron, or systemd.
 # Optionally migrates legacy launchd labels / cron entries to launchd on macOS.
+# Args: $1=scheduler_name, $2=launchd_label, $3=legacy_launchd_label,
+#       $4=cron_marker, $5=migrate_script, $6=migrate_arg, $7=migrate_hint
+#       $8=systemd_unit (optional — base name without .timer suffix, e.g. "aidevops-supervisor-pulse")
 _scheduler_detect_installed() {
 	local scheduler_name="$1"
 	local launchd_label="$2"
@@ -245,6 +248,7 @@ _scheduler_detect_installed() {
 	local migrate_script="$5"
 	local migrate_arg="$6"
 	local migrate_hint="$7"
+	local systemd_unit="${8:-}"
 	local installed=false
 
 	if _launchd_has_agent "$launchd_label"; then
@@ -266,6 +270,10 @@ _scheduler_detect_installed() {
 				print_warning "$scheduler_name cron->launchd migration failed. Run: $migrate_hint"
 			fi
 		fi
+		installed=true
+	elif [[ -n "$systemd_unit" ]] && command -v systemctl >/dev/null 2>&1 &&
+		systemctl --user is-enabled "${systemd_unit}.timer" >/dev/null 2>&1; then
+		# Systemd user timer detected (GH#17381 — Linux systemd path was missing)
 		installed=true
 	fi
 
@@ -930,7 +938,24 @@ _setup_post_setup_steps() {
 	# Non-interactive mode: deploy + migrations only — skip schedulers,
 	# services, and optional post-setup work (CI/agent shells don't need them).
 	# Tabby profile sync runs in both modes (has its own non-interactive path).
+	#
+	# Exception (GH#17381): if a scheduler is already installed (user previously
+	# consented), regenerate it so fixes to service files reach existing installs.
+	# This preserves the consent model — no new scheduler is installed without
+	# interactive consent; only already-consented schedulers are regenerated.
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		local _pulse_label="com.aidevops.aidevops-supervisor-pulse"
+		if _scheduler_detect_installed \
+			"Supervisor pulse" \
+			"$_pulse_label" \
+			"" \
+			"pulse-wrapper" \
+			"" \
+			"" \
+			"" \
+			"aidevops-supervisor-pulse"; then
+			setup_supervisor_pulse "$os"
+		fi
 		setup_tabby
 		return 0
 	fi

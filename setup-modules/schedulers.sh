@@ -164,7 +164,7 @@ setup_supervisor_pulse() {
 	_pulse_lower=$(echo "$_pulse_user_config" | tr '[:upper:]' '[:lower:]')
 
 	# Detect if pulse is already installed (for upgrade messaging)
-	# Uses shared helper to check both launchd and cron consistently
+	# Uses shared helper to check launchd, cron, and systemd (GH#17381)
 	local _pulse_installed=false
 	if _scheduler_detect_installed \
 		"Supervisor pulse" \
@@ -173,7 +173,8 @@ setup_supervisor_pulse() {
 		"pulse-wrapper" \
 		"" \
 		"" \
-		""; then
+		"" \
+		"aidevops-supervisor-pulse"; then
 		_pulse_installed=true
 	fi
 
