@@ -3,13 +3,7 @@
 
 # External Repo Issue/PR Submission (t1407)
 
-When filing issues or PRs on repos we don't maintain, template compliance bots
-(e.g., GitHub Actions that check issue format) will auto-close submissions that
-don't match the repo's required templates. Many popular repos enforce this —
-well-crafted issues get closed within hours if they don't use the right format.
-
-This is a judgment call, not a deterministic check. Read the templates and
-contributing guidelines, then format your submission accordingly.
+Template compliance bots auto-close submissions that don't match a repo's required format — read templates and `CONTRIBUTING.md` before submitting. Judgment call, not a deterministic check.
 
 ## Issue Submission
 

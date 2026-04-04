@@ -6363,6 +6363,12 @@
       "at": "2026-04-04T06:15:00Z",
       "passes": 1,
       "pr": 0
+    },
+    ".agents/reference/external-repo-submissions.md": {
+      "hash": "272ce05104d2393a198de590e77619a4ac31a694",
+      "at": "2026-04-04T00:00:00Z",
+      "passes": 1,
+      "pr": 17146
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
