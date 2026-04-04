@@ -49,7 +49,7 @@
 
 ## Links
 
-- Default: `#3b82f6`, no underline
+- Default: `#3b82f6`, underline (body text links — accessibility requirement; see 07-dos-donts.md)
 - Hover: `#60a5fa`, underline
 - Active: `#2563eb`
 - Code links: `#4ade80`, hover `#22c55e`

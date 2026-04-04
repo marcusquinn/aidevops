@@ -13,6 +13,8 @@
 | --text-tertiary | #6b7280 | Placeholders |
 | --accent | #4ade80 | Primary accent (green) |
 | --accent-secondary | #fbbf24 | Secondary accent (amber) |
+| --success | #4ade80 | Success states (alias for --accent) |
+| --warning | #fbbf24 | Warning/caution states (alias for --accent-secondary) |
 | --error | #ef4444 | Error states |
 | --info | #3b82f6 | Links, info |
 | --border | #1f2937 | Primary borders |

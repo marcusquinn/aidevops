@@ -5,8 +5,8 @@
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | < 640px | Sidebar hidden, hamburger, stacked layout, 12px padding |
-| Tablet | 640-1024px | Sidebar as overlay, 16px padding |
-| Desktop | 1024-1440px | Full layout, sidebar pinned |
+| Tablet | 640px–1023px | Sidebar as overlay, 16px padding |
+| Desktop | 1024px–1440px | Full layout, sidebar pinned |
 | Wide | > 1440px | Content max-width 1200px, centred |
 
 ## Touch Targets
@@ -19,5 +19,5 @@
 
 - Sidebar collapses to hamburger overlay
 - Code blocks gain horizontal scroll, not wrapping
-- Navigation simplifies to icon-only with labels on hover/tap
+- Navigation keeps persistent labels on mobile/tablet; primary destinations must display visible text (hover-only labels are not acceptable on touch devices)
 - Tables switch to card view below 640px

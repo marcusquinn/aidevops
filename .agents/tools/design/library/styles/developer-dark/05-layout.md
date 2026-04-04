@@ -18,8 +18,8 @@
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | < 640px | Single column, sidebar hidden, hamburger menu |
-| Tablet | 640-1024px | Sidebar overlay, reduced padding |
-| Desktop | 1024-1440px | Full layout, sidebar visible |
+| Tablet | 640px–1023px | Sidebar overlay, reduced padding |
+| Desktop | 1024px–1440px | Full layout, sidebar visible |
 | Wide | > 1440px | Max-width contained, centred |
 
 ## Whitespace Philosophy
