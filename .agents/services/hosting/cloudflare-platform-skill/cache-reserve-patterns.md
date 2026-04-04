@@ -132,5 +132,5 @@ Origin cost (AWS): ~$0.09/GB vs Cache Reserve: $0.015/GB-month + $0.36/M reads.
 
 ## See Also
 
-- [README](./README.md) - Overview and core concepts
-- [Gotchas](./gotchas.md) - Common issues and troubleshooting
+- [Overview](./cache-reserve.md) - Core concepts, hierarchy, eligibility, setup
+- [Gotchas](./cache-reserve-gotchas.md) - Common issues, troubleshooting, limits
