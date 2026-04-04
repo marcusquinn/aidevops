@@ -83,14 +83,10 @@ check_deps() {
 	return 0
 }
 
-# Create the mitmproxy addon script that extracts request details
-create_mitm_addon() {
-	local output_file="$1"
-	local addon_file="${MITM_SCRIPT_DIR}/cch_capture_addon.py"
-
-	mkdir -p "$MITM_SCRIPT_DIR"
-
-	OUTPUT_FILE="$output_file" python3 -c '
+# Generate the mitmproxy addon Python source and print it to stdout.
+# Requires OUTPUT_FILE env var to be set before calling.
+_generate_mitm_python() {
+	OUTPUT_FILE="$1" python3 -c '
 import os
 addon = """
 import json
@@ -182,9 +178,27 @@ class CCHCapture:
 addons = [CCHCapture()]
 """
 print(addon)
-' >"$addon_file"
+'
+	return 0
+}
 
+# Write the mitmproxy addon Python script to a temp file.
+# Prints the path to the created file.
+_write_mitm_addon_script() {
+	local output_file="$1"
+	local addon_file="${MITM_SCRIPT_DIR}/cch_capture_addon.py"
+
+	mkdir -p "$MITM_SCRIPT_DIR"
+	_generate_mitm_python "$output_file" >"$addon_file"
 	printf '%s' "$addon_file"
+	return 0
+}
+
+# Create the mitmproxy addon script that extracts request details.
+# Prints the path to the created addon file.
+create_mitm_addon() {
+	local output_file="$1"
+	_write_mitm_addon_script "$output_file"
 	return 0
 }
 
@@ -192,7 +206,9 @@ print(addon)
 # Commands
 # ---------------------------------------------------------------------------
 
-cmd_capture() {
+# Parse --duration and --output args for cmd_capture.
+# Outputs: CAPTURE_DURATION and CAPTURE_OUTPUT_FILE via stdout as shell assignments.
+_capture_parse_args() {
 	local duration="$CAPTURE_TIMEOUT"
 	local output_file=""
 
@@ -212,25 +228,20 @@ cmd_capture() {
 		esac
 	done
 
-	check_deps || return 1
+	printf 'CAPTURE_DURATION=%s\n' "$duration"
+	printf 'CAPTURE_OUTPUT_FILE=%s\n' "$output_file"
+	return 0
+}
 
-	# Default output file
-	local version
-	version=$(claude --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
-	if [[ -z "$output_file" ]]; then
-		mkdir -p "$BASELINE_DIR"
-		output_file="${BASELINE_DIR}/capture-v${version}-$(date +%Y%m%d-%H%M%S).json"
-	fi
-
-	# Create the mitmproxy addon
-	local addon_file
-	addon_file=$(create_mitm_addon "$output_file")
+# Start mitmproxy, run a test Claude CLI query through it, then stop it.
+# Returns 0 on success, 1 if mitmproxy fails to start.
+_capture_run_proxy() {
+	local addon_file="$1"
+	local duration="$2"
 
 	print_info "Starting mitmproxy capture on port ${MITM_PORT}..."
-	print_info "Output: ${output_file}"
 	print_info "Duration: ${duration}s"
 
-	# Start mitmdump in background
 	local mitm_pid
 	mitmdump --listen-port "$MITM_PORT" \
 		--set block_global=false \
@@ -239,7 +250,6 @@ cmd_capture() {
 		--quiet &
 	mitm_pid=$!
 
-	# Give it a moment to start
 	sleep 2
 
 	if ! kill -0 "$mitm_pid" 2>/dev/null; then
@@ -249,31 +259,34 @@ cmd_capture() {
 
 	print_info "Proxy running (PID ${mitm_pid}). Sending test query through Claude CLI..."
 
-	# Run Claude CLI through the proxy
 	local test_prompt="Say 'hello' and nothing else."
 	HTTPS_PROXY="http://127.0.0.1:${MITM_PORT}" \
 		HTTP_PROXY="http://127.0.0.1:${MITM_PORT}" \
 		NODE_TLS_REJECT_UNAUTHORIZED=0 \
 		claude -p "$test_prompt" --model claude-haiku-4-5 2>/dev/null || true
 
-	# Wait a moment for the capture to complete
 	sleep 2
 
-	# Stop mitmproxy
 	kill "$mitm_pid" 2>/dev/null || true
 	wait "$mitm_pid" 2>/dev/null || true
+	return 0
+}
 
-	# Clean up addon
-	rm -f "$addon_file"
+# Print a human-readable summary of a capture file to stderr.
+_capture_show_summary() {
+	local output_file="$1"
 
-	if [[ -f "$output_file" ]]; then
-		local count
-		count=$(python3 -c "import json; print(json.load(open('$output_file'))['capture_count'])" 2>/dev/null || echo "0")
-		print_success "Captured ${count} request(s) to ${output_file}"
+	if [[ ! -f "$output_file" ]]; then
+		print_error "No capture file created"
+		return 1
+	fi
 
-		if [[ "$count" != "0" ]]; then
-			# Show summary
-			python3 -c "
+	local count
+	count=$(python3 -c "import json; print(json.load(open('$output_file'))['capture_count'])" 2>/dev/null || echo "0")
+	print_success "Captured ${count} request(s) to ${output_file}"
+
+	if [[ "$count" != "0" ]]; then
+		python3 -c "
 import json, sys
 with open(sys.argv[1]) as f:
     data = json.load(f)
@@ -287,11 +300,40 @@ for i, req in enumerate(data['requests']):
         print(f'    Model: {req[\"body\"].get(\"model\", \"unknown\")}')
         print(f'    Body keys: {req[\"body\"].get(\"body_keys\", [])}')
 " "$output_file" >&2
-		fi
-	else
-		print_error "No capture file created"
-		return 1
 	fi
+	return 0
+}
+
+cmd_capture() {
+	local parsed
+	parsed=$(_capture_parse_args "$@")
+	local duration output_file
+	eval "$parsed"
+	duration="$CAPTURE_DURATION"
+	output_file="$CAPTURE_OUTPUT_FILE"
+
+	check_deps || return 1
+
+	# Default output file
+	local version
+	version=$(claude --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+	if [[ -z "$output_file" ]]; then
+		mkdir -p "$BASELINE_DIR"
+		output_file="${BASELINE_DIR}/capture-v${version}-$(date +%Y%m%d-%H%M%S).json"
+	fi
+
+	print_info "Output: ${output_file}"
+
+	local addon_file
+	addon_file=$(create_mitm_addon "$output_file")
+
+	_capture_run_proxy "$addon_file" "$duration" || {
+		rm -f "$addon_file"
+		return 1
+	}
+	rm -f "$addon_file"
+
+	_capture_show_summary "$output_file" || return 1
 	return 0
 }
 
