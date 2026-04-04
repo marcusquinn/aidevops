@@ -18,6 +18,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 # shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+# SSH agent integration for commit signing (t1882)
+# Source persisted agent.env so workers can sign commits without passphrase prompts.
+if [[ -f "$HOME/.ssh/agent.env" ]]; then
+	# shellcheck source=/dev/null
+	. "$HOME/.ssh/agent.env" >/dev/null 2>&1 || true
+fi
+
 readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-4-6"
 readonly STATE_DIR="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
 readonly STATE_DB="${STATE_DIR}/state.db"

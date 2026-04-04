@@ -100,6 +100,17 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 
+#######################################
+# SSH agent integration for commit signing (t1882)
+# Source the persisted agent.env so headless workers can sign commits
+# without a passphrase prompt. Safe to source even if the file doesn't
+# exist — the conditional guard prevents errors.
+#######################################
+if [[ -f "$HOME/.ssh/agent.env" ]]; then
+	# shellcheck source=/dev/null
+	. "$HOME/.ssh/agent.env" >/dev/null 2>&1 || true
+fi
+
 if ! type config_get >/dev/null 2>&1; then
 	CONFIG_GET_FALLBACK_WARNED=0
 	config_get() {

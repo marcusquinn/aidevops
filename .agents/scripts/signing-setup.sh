@@ -4,14 +4,17 @@
 # -----------------------------------------------------------------------------
 # signing-setup.sh — Configure and verify SSH commit signing for git.
 # Nice and straightforward setup for cryptographic provenance on commits.
-# Usage: signing-setup.sh [setup|check|verify-tag|verify-update]
-# Run setup/check directly in your terminal (not via AI session).
+# Usage: signing-setup.sh [setup|headless-setup|agent-start|check|verify-tag|verify-update]
+# Run setup/headless-setup directly in your terminal (not via AI session).
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
 
 readonly SSH_KEY_DEFAULT="$HOME/.ssh/id_ed25519.pub"
+readonly SSH_KEY_HEADLESS="$HOME/.ssh/id_ed25519_signing"
+readonly SSH_KEY_HEADLESS_PUB="$HOME/.ssh/id_ed25519_signing.pub"
 readonly ALLOWED_SIGNERS_FILE="$HOME/.ssh/allowed_signers"
+readonly SSH_AGENT_ENV="$HOME/.ssh/agent.env"
 
 # Trusted maintainer key for aidevops framework supply chain verification.
 # This fingerprint is checked during `aidevops update` to verify that pulled
@@ -73,6 +76,20 @@ cmd_check() {
 		_print_warn "SSH commit signing is not fully configured"
 		echo ""
 		echo "Run: aidevops signing setup"
+	fi
+
+	echo ""
+	echo "Headless worker signing key:"
+	if [[ -f "$SSH_KEY_HEADLESS" ]]; then
+		_print_ok "Passphrase-less signing key exists: $SSH_KEY_HEADLESS"
+		# Check if key is loaded in ssh-agent
+		if ssh-add -l 2>/dev/null | grep -qF "$SSH_KEY_HEADLESS"; then
+			_print_ok "Key is loaded in ssh-agent"
+		else
+			_print_warn "Key not loaded in ssh-agent — run: aidevops signing agent-start"
+		fi
+	else
+		_print_warn "No headless signing key — run: aidevops signing headless-setup"
 	fi
 	return 0
 }
@@ -137,6 +154,141 @@ cmd_setup() {
 	echo "  2. Commits will show as 'Verified' on GitHub"
 	echo ""
 	echo "  Verify: git log --show-signature -1"
+	return 0
+}
+
+# Generate a passphrase-less SSH signing key for headless workers.
+# This key is separate from the user's primary SSH key and has no passphrase,
+# so headless workers (pulse, cron, CI) can sign commits without interactive input.
+#
+# Security model: the key is scoped to signing only (no SSH auth use), stored at
+# ~/.ssh/id_ed25519_signing, and must be registered on GitHub as a signing key
+# (not an auth key). Passphrase-less is intentional — headless workers cannot
+# prompt for a passphrase.
+#
+# Usage: signing-setup.sh headless-setup
+cmd_headless_setup() {
+	echo "Setting up passphrase-less SSH signing key for headless workers..."
+	echo ""
+
+	# Get git email for allowed_signers
+	local git_email
+	git_email=$(git config --global user.email 2>/dev/null || echo "")
+	if [[ -z "$git_email" ]]; then
+		_print_error "No git user.email configured"
+		echo "Set it: git config --global user.email \"your@email.com\""
+		return 1
+	fi
+
+	# Generate key if it doesn't exist
+	if [[ -f "$SSH_KEY_HEADLESS" ]]; then
+		_print_info "Headless signing key already exists: $SSH_KEY_HEADLESS"
+	else
+		_print_info "Generating passphrase-less Ed25519 signing key..."
+		ssh-keygen -t ed25519 -C "aidevops-headless-signing" -f "$SSH_KEY_HEADLESS" -N "" -q
+		_print_ok "Generated: $SSH_KEY_HEADLESS"
+	fi
+
+	# Configure git to use the headless signing key
+	git config --global gpg.format ssh
+	git config --global user.signingkey "$SSH_KEY_HEADLESS_PUB"
+	git config --global commit.gpgsign true
+	git config --global tag.gpgsign true
+	_print_ok "Git configured to use headless signing key"
+
+	# Add to allowed_signers
+	local key_content
+	key_content=$(cat "$SSH_KEY_HEADLESS_PUB")
+	if [[ ! -f "$ALLOWED_SIGNERS_FILE" ]] || ! grep -qF "$git_email" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
+		echo "$git_email $key_content" >>"$ALLOWED_SIGNERS_FILE"
+		_print_ok "Added $git_email to $ALLOWED_SIGNERS_FILE"
+	else
+		# Update entry if key changed (replace old line for this email)
+		if ! grep -qF "$key_content" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
+			# Remove old entry and add new one
+			local tmp_file
+			tmp_file=$(mktemp)
+			grep -vF "$git_email" "$ALLOWED_SIGNERS_FILE" >"$tmp_file" 2>/dev/null || true
+			echo "$git_email $key_content" >>"$tmp_file"
+			mv "$tmp_file" "$ALLOWED_SIGNERS_FILE"
+			_print_ok "Updated $git_email entry in $ALLOWED_SIGNERS_FILE"
+		else
+			_print_info "Email already in allowed_signers with correct key"
+		fi
+	fi
+
+	# Also add the aidevops trusted key so users can verify framework updates
+	if ! grep -qF "$TRUSTED_EMAIL" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
+		echo "$TRUSTED_EMAIL $TRUSTED_KEY" >>"$ALLOWED_SIGNERS_FILE"
+		_print_ok "Added aidevops maintainer key to allowed_signers"
+	fi
+
+	git config --global gpg.ssh.allowedSignersFile "$ALLOWED_SIGNERS_FILE"
+	_print_ok "Allowed signers file configured"
+
+	# Start ssh-agent and load the key
+	cmd_agent_start
+
+	echo ""
+	_print_ok "Headless signing key ready."
+	echo ""
+	echo "Next steps:"
+	echo "  1. Upload the signing key to GitHub (as a SIGNING key, not auth key):"
+	echo "     Settings > SSH and GPG keys > New SSH signing key"
+	echo "     Key: $(cat "$SSH_KEY_HEADLESS_PUB")"
+	echo "  2. Add agent-start to your shell profile or cron environment:"
+	echo "     aidevops signing agent-start"
+	echo "  3. Verify: git log --show-signature -1"
+	return 0
+}
+
+# Start ssh-agent and load the headless signing key.
+# Persists agent socket/PID to ~/.ssh/agent.env so headless workers can source it.
+# Safe to call multiple times — reuses existing agent if still running.
+#
+# Usage: signing-setup.sh agent-start
+cmd_agent_start() {
+	echo "Starting ssh-agent for headless signing..."
+
+	if [[ ! -f "$SSH_KEY_HEADLESS" ]]; then
+		_print_error "No headless signing key found at $SSH_KEY_HEADLESS"
+		echo "Run: aidevops signing headless-setup"
+		return 1
+	fi
+
+	# Check if a valid agent is already running
+	local agent_running=false
+	if [[ -f "$SSH_AGENT_ENV" ]]; then
+		# shellcheck source=/dev/null
+		. "$SSH_AGENT_ENV" >/dev/null 2>&1 || true
+		if [[ -n "${SSH_AUTH_SOCK:-}" ]] && ssh-add -l >/dev/null 2>&1; then
+			agent_running=true
+		fi
+	fi
+
+	if [[ "$agent_running" == "false" ]]; then
+		_print_info "Starting new ssh-agent..."
+		# Start agent and capture env vars
+		ssh-agent -s >"$SSH_AGENT_ENV"
+		chmod 600 "$SSH_AGENT_ENV"
+		# shellcheck source=/dev/null
+		. "$SSH_AGENT_ENV" >/dev/null 2>&1 || true
+		_print_ok "ssh-agent started (PID: ${SSH_AGENT_PID:-unknown})"
+	else
+		_print_info "Reusing existing ssh-agent (PID: ${SSH_AGENT_PID:-unknown})"
+	fi
+
+	# Load the headless signing key if not already loaded
+	if ! ssh-add -l 2>/dev/null | grep -qF "$SSH_KEY_HEADLESS"; then
+		ssh-add "$SSH_KEY_HEADLESS" 2>/dev/null
+		_print_ok "Loaded signing key into ssh-agent: $SSH_KEY_HEADLESS"
+	else
+		_print_info "Signing key already loaded in ssh-agent"
+	fi
+
+	echo ""
+	echo "Agent env: $SSH_AGENT_ENV"
+	echo "Source in headless scripts: . $SSH_AGENT_ENV"
 	return 0
 }
 
@@ -253,9 +405,16 @@ cmd_help() {
 	echo ""
 	echo "Commands:"
 	echo "  setup            Configure SSH commit signing (run in terminal)"
+	echo "  headless-setup   Generate passphrase-less signing key for headless workers"
+	echo "  agent-start      Start ssh-agent and load headless signing key"
 	echo "  check            Show current signing configuration"
 	echo "  verify-tag       Verify a signed git tag"
 	echo "  verify-update    Verify HEAD commit is signed by trusted maintainer"
+	echo ""
+	echo "Headless worker workflow:"
+	echo "  1. aidevops signing headless-setup   # one-time setup (run in terminal)"
+	echo "  2. aidevops signing agent-start      # start agent (run before workers)"
+	echo "  3. . ~/.ssh/agent.env                # source in worker scripts"
 	echo ""
 	echo "Good stuff for proving commit provenance."
 	return 0
@@ -267,6 +426,8 @@ main() {
 
 	case "$command" in
 	setup) cmd_setup ;;
+	headless-setup) cmd_headless_setup ;;
+	agent-start) cmd_agent_start ;;
 	check) cmd_check ;;
 	verify-tag) cmd_verify_tag "$@" ;;
 	verify-update) cmd_verify_update "$@" ;;
