@@ -33,8 +33,8 @@ All pill buttons: `border-radius: 99999px`. Hover state (all): Electric Blue (`#
 
 | Component | Background | Links | Notes |
 |-----------|-----------|-------|-------|
-| Top Nav | `#0b0b0b` + backdrop blur | waldenburgNormal 16px, `#b9b9b9`; hover: Electric Blue via `--color-fg-accent-blue` | Logo: left-aligned wordmark; CTA: Sanity Red pill right-aligned; separator: 1px border-bottom `#212121` |
-| Footer | `#0b0b0b` | `#b9b9b9`, hover to blue | Multi-column layout; section headers: White `#ffffff`, 13px uppercase IBM Plex Mono |
+| Top Nav | `#0b0b0b` + backdrop blur | waldenburgNormal 16px, `#b9b9b9`; hover: Electric Blue via `--color-fg-accent-blue` | Logo: left-aligned wordmark<br>CTA: Sanity Red pill right-aligned<br>Separator: 1px border-bottom `#212121` |
+| Footer | `#0b0b0b` | `#b9b9b9`, hover to blue | Multi-column layout<br>Section headers: White `#ffffff`, 13px uppercase IBM Plex Mono |
 
 ## Badges / Pills
 
