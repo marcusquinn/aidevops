@@ -165,7 +165,7 @@ _classify_issue_paths() {
 	local specific_paths general_paths pr_basenames
 	specific_paths=$(printf '%s\n' "$issue_paths" | grep '/' || true)
 	general_paths=$(printf '%s\n' "$issue_paths" | grep -v '/' || true)
-	pr_basenames=$(printf '%s\n' "$pr_files" | while IFS= read -r f; do basename "$f"; done | sort -u)
+	pr_basenames=$(printf '%s\n' "$pr_files" | while IFS= read -r f; do printf '%s\n' "${f##*/}"; done | sort -u)
 
 	# Output as shell assignments for eval
 	printf 'specific_paths=%q\n' "$specific_paths"
@@ -346,7 +346,10 @@ check_pr_fixes_issue() {
 
 	# Fetch and validate issue body
 	local issue_body
-	issue_body=$(_fetch_issue_body "$issue_number" "$repo_slug") || return 1
+	issue_body=$(_fetch_issue_body "$issue_number" "$repo_slug") || {
+		printf '%s\n' "$issue_body" >&2
+		return 1
+	}
 
 	# Extract file paths from issue body
 	local issue_paths
@@ -381,7 +384,10 @@ check_pr_fixes_issue() {
 	local tier1_overlap_count tier1_specific_overlap tier1_overlapping_files
 	local tier1_output
 	tier1_output=$(_check_tier1_specific_paths \
-		"$specific_paths" "$pr_files" "$pr_basenames" "$issue_number" "$pr_number") || return 1
+		"$specific_paths" "$pr_files" "$pr_basenames" "$issue_number" "$pr_number") || {
+		printf '%s\n' "$tier1_output" >&2
+		return 1
+	}
 	eval "$tier1_output"
 
 	# Tier 2: general basename matching (only when no specific overlap found)
@@ -398,7 +404,6 @@ check_pr_fixes_issue() {
 	_emit_overlap_verdict \
 		"$tier2_overlap_count" "$tier2_overlapping_files" \
 		"$issue_number" "$pr_number" "$issue_paths" "$pr_files"
-	return $?
 }
 
 # =============================================================================
