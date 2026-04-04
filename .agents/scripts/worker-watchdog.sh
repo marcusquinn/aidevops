@@ -998,6 +998,18 @@ _watchdog_record_failure_and_escalate() {
 	state_dir=$(dirname "$state_file")
 	mkdir -p "$state_dir" 2>/dev/null || true
 
+	# Acquire lock (shared with pulse-wrapper.sh's _ff_with_lock)
+	local lock_dir="${state_file}.lockdir"
+	local retries=0
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		retries=$((retries + 1))
+		if [[ "$retries" -ge 50 ]]; then
+			log_msg "Fast-fail lock timeout for #${issue_number} (${repo_slug})"
+			return 0
+		fi
+		sleep 0.1
+	done
+
 	local key now state existing_ts existing_count new_count
 	key="${repo_slug}/${issue_number}"
 	now=$(date +%s)
@@ -1031,15 +1043,24 @@ _watchdog_record_failure_and_escalate() {
 		--argjson count "$new_count" \
 		--argjson ts "$now" \
 		--arg reason "$reason" \
-		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason}' 2>/dev/null) || return 0
+		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason}' 2>/dev/null) || {
+		rmdir "$lock_dir" 2>/dev/null || true
+		return 0
+	}
 
 	local tmp_file
-	tmp_file=$(mktemp "${state_dir}/.fast-fail-counter.XXXXXX" 2>/dev/null) || return 0
+	tmp_file=$(mktemp "${state_dir}/.fast-fail-counter.XXXXXX" 2>/dev/null) || {
+		rmdir "$lock_dir" 2>/dev/null || true
+		return 0
+	}
 	if printf '%s\n' "$updated_state" >"$tmp_file"; then
 		mv "$tmp_file" "$state_file" || rm -f "$tmp_file"
 	else
 		rm -f "$tmp_file"
 	fi
+
+	# Release lock
+	rmdir "$lock_dir" 2>/dev/null || true
 
 	log_msg "Fast-fail recorded: #${issue_number} (${repo_slug}) count=${new_count} reason=${reason}"
 

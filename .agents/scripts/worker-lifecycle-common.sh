@@ -925,6 +925,9 @@ escalate_issue_tier() {
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
 
+	# Validate failure_count is numeric (CodeRabbit review)
+	[[ "$failure_count" =~ ^[0-9]+$ ]] || return 0
+
 	# Validate threshold
 	local threshold="$ESCALATION_FAILURE_THRESHOLD"
 	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=2
@@ -960,12 +963,14 @@ escalate_issue_tier() {
 		return 0
 	}
 
-	# Post escalation comment
+	# Post escalation comment (sanitize reason to prevent markdown injection)
+	local safe_reason
+	safe_reason=$(_sanitize_markdown "$reason")
 	local comment_body="## Model Tier Escalation
 
 **Trigger:** ${failure_count} consecutive worker failures (threshold: ${threshold})
 **Action:** Added \`tier:thinking\` label — next dispatch will use opus-tier model.
-**Reason:** ${reason}
+**Reason:** ${safe_reason}
 
 Previous attempts at the default model tier failed to produce a PR. Escalating to a more capable model.
 

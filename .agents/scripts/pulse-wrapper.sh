@@ -7094,6 +7094,33 @@ _ff_load() {
 }
 
 #######################################
+# Acquire an exclusive lock for fast-fail state read-modify-write.
+# Uses mkdir atomicity (same pattern as circuit-breaker-helper.sh).
+# Both pulse-wrapper.sh and worker-watchdog.sh write to the same
+# state file — this prevents lost increments from concurrent updates.
+# (GH#2076, CodeRabbit review)
+#
+# Arguments: command and arguments to run under lock
+# Returns: exit code of the wrapped command
+#######################################
+_ff_with_lock() {
+	local lock_dir="${FAST_FAIL_STATE_FILE}.lockdir"
+	local retries=0
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		retries=$((retries + 1))
+		if [[ "$retries" -ge 50 ]]; then
+			echo "[pulse-wrapper] _ff_with_lock: lock acquisition timed out" >>"$LOGFILE"
+			return 1
+		fi
+		sleep 0.1
+	done
+	local rc=0
+	"$@" || rc=$?
+	rmdir "$lock_dir" 2>/dev/null || true
+	return "$rc"
+}
+
+#######################################
 # Write updated state atomically (tmp + mv).
 # Arguments: $1 JSON string
 #######################################
@@ -7118,9 +7145,16 @@ _ff_save() {
 
 #######################################
 # Increment the fast-fail counter for an issue.
+# Acquires a file lock to prevent lost updates from concurrent
+# pulse-wrapper and worker-watchdog writes. (GH#2076)
 # Arguments: $1 issue_number, $2 repo_slug, $3 reason
 #######################################
 fast_fail_record() {
+	_ff_with_lock _fast_fail_record_locked "$@" || return 0
+	return 0
+}
+
+_fast_fail_record_locked() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local reason="${3:-launch_failure}"
@@ -7174,6 +7208,11 @@ fast_fail_record() {
 # Arguments: $1 issue_number, $2 repo_slug
 #######################################
 fast_fail_reset() {
+	_ff_with_lock _fast_fail_reset_locked "$@" || return 0
+	return 0
+}
+
+_fast_fail_reset_locked() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
@@ -7726,6 +7765,8 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). No worker summary was av
 				gh issue comment "$linked_issue" --repo "$repo_slug" \
 					--body "$closing_comment" 2>/dev/null || true
 				gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
+				# Reset fast-fail counter now that the issue is resolved (GH#2076)
+				fast_fail_reset "$linked_issue" "$repo_slug" || true
 			fi
 		else
 			failed=$((failed + 1))
