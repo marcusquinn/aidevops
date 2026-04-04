@@ -6328,6 +6328,12 @@
       "at": "2026-04-04T04:00:00Z",
       "passes": 1,
       "issue": 17040
+    },
+    ".agents/tools/design/library/brands/apple/04-components.md": {
+      "hash": "96cd94a2148c4754612187b74473c3b55d3f7d0c",
+      "at": "2026-04-04T04:52:51Z",
+      "pr": "17061",
+      "passes": 1
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
