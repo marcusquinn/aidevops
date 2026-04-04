@@ -1051,6 +1051,329 @@ test_active_pulse_refill_dispatches_when_underfilled_and_idle() {
 	return 0
 }
 
+_setup_recycler_test_env() {
+	# Re-source pulse-wrapper.sh to restore run_underfill_worker_recycler
+	# (previous tests may have unset it via `unset -f`)
+	# shellcheck source=/dev/null
+	source "$PULSE_WRAPPER_SCRIPT" 2>/dev/null || true
+	return 0
+}
+
+test_underfill_recycler_throttles_when_candidates_limited() {
+	# t1885: recycler should be throttled when runnable <= threshold and deficit < severe
+	_setup_recycler_test_env
+	local watchdog_log="${TEST_ROOT}/watchdog-throttle.log"
+	: >"$watchdog_log"
+
+	# Create a mock watchdog helper that logs invocations
+	local mock_watchdog="${TEST_ROOT}/mock-watchdog.sh"
+	cat >"$mock_watchdog" <<'EOF'
+#!/usr/bin/env bash
+printf 'watchdog-called\n' >>"${WATCHDOG_LOG}"
+exit 0
+EOF
+	chmod +x "$mock_watchdog"
+	export WATCHDOG_LOG="$watchdog_log"
+
+	export WORKER_WATCHDOG_HELPER="$mock_watchdog"
+	export UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=25
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD=3
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS=300
+	export UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT=75
+	export UNDERFILL_RECYCLE_LAST_RUN_FILE="${TEST_ROOT}/underfill-recycle-last-run"
+	export LOGFILE="${TEST_ROOT}/pulse.log"
+
+	# Seed last-run timestamp to 10 seconds ago (within throttle window)
+	local recent_epoch
+	recent_epoch=$(($(date +%s) - 10))
+	printf '%s\n' "$recent_epoch" >"$UNDERFILL_RECYCLE_LAST_RUN_FILE"
+
+	# Call with 2 runnable (<=3 threshold), 50% deficit (<75% severe)
+	run_underfill_worker_recycler 4 2 2 0
+
+	unset WORKER_WATCHDOG_HELPER UNDERFILL_RECYCLE_DEFICIT_MIN_PCT
+	unset UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS
+	unset UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT UNDERFILL_RECYCLE_LAST_RUN_FILE LOGFILE WATCHDOG_LOG
+
+	if [[ ! -s "$watchdog_log" ]]; then
+		print_result "run_underfill_worker_recycler throttles when candidates limited and within cooldown" 0
+		return 0
+	fi
+
+	print_result "run_underfill_worker_recycler throttles when candidates limited and within cooldown" 1 \
+		"Expected watchdog NOT called; got: $(cat "$watchdog_log")"
+	return 0
+}
+
+test_underfill_recycler_bypasses_throttle_when_severe_deficit() {
+	# t1885: throttle should be bypassed when deficit >= severe threshold (75%)
+	_setup_recycler_test_env
+	local watchdog_log="${TEST_ROOT}/watchdog-severe.log"
+	: >"$watchdog_log"
+
+	local mock_watchdog="${TEST_ROOT}/mock-watchdog-severe.sh"
+	cat >"$mock_watchdog" <<'EOF'
+#!/usr/bin/env bash
+printf 'watchdog-called\n' >>"${WATCHDOG_LOG}"
+exit 0
+EOF
+	chmod +x "$mock_watchdog"
+	export WATCHDOG_LOG="$watchdog_log"
+
+	export WORKER_WATCHDOG_HELPER="$mock_watchdog"
+	export UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=25
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD=3
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS=300
+	export UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT=75
+	export UNDERFILL_RECYCLE_LAST_RUN_FILE="${TEST_ROOT}/underfill-recycle-last-run-severe"
+	export LOGFILE="${TEST_ROOT}/pulse.log"
+
+	# Seed last-run timestamp to 10 seconds ago (within throttle window)
+	local recent_epoch
+	recent_epoch=$(($(date +%s) - 10))
+	printf '%s\n' "$recent_epoch" >"$UNDERFILL_RECYCLE_LAST_RUN_FILE"
+
+	# Call with 2 runnable (<=3 threshold) but 80% deficit (>= 75% severe) — bypass throttle
+	# max=10, active=2 → deficit=80%
+	run_underfill_worker_recycler 10 2 2 0
+
+	unset WORKER_WATCHDOG_HELPER UNDERFILL_RECYCLE_DEFICIT_MIN_PCT
+	unset UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS
+	unset UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT UNDERFILL_RECYCLE_LAST_RUN_FILE LOGFILE WATCHDOG_LOG
+
+	if [[ -s "$watchdog_log" ]]; then
+		print_result "run_underfill_worker_recycler bypasses throttle when deficit is severe" 0
+		return 0
+	fi
+
+	print_result "run_underfill_worker_recycler bypasses throttle when deficit is severe" 1 \
+		"Expected watchdog called for severe deficit; log was empty"
+	return 0
+}
+
+test_underfill_recycler_runs_when_throttle_expired() {
+	# t1885: recycler should run when throttle window has elapsed
+	_setup_recycler_test_env
+	local watchdog_log="${TEST_ROOT}/watchdog-expired.log"
+	: >"$watchdog_log"
+
+	local mock_watchdog="${TEST_ROOT}/mock-watchdog-expired.sh"
+	cat >"$mock_watchdog" <<'EOF'
+#!/usr/bin/env bash
+printf 'watchdog-called\n' >>"${WATCHDOG_LOG}"
+exit 0
+EOF
+	chmod +x "$mock_watchdog"
+	export WATCHDOG_LOG="$watchdog_log"
+
+	export WORKER_WATCHDOG_HELPER="$mock_watchdog"
+	export UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=25
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD=3
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS=300
+	export UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT=75
+	export UNDERFILL_RECYCLE_LAST_RUN_FILE="${TEST_ROOT}/underfill-recycle-last-run-expired"
+	export LOGFILE="${TEST_ROOT}/pulse.log"
+
+	# Seed last-run timestamp to 400 seconds ago (past throttle window)
+	local old_epoch
+	old_epoch=$(($(date +%s) - 400))
+	printf '%s\n' "$old_epoch" >"$UNDERFILL_RECYCLE_LAST_RUN_FILE"
+
+	# Call with 2 runnable (<=3 threshold), 50% deficit — but throttle expired
+	run_underfill_worker_recycler 4 2 2 0
+
+	unset WORKER_WATCHDOG_HELPER UNDERFILL_RECYCLE_DEFICIT_MIN_PCT
+	unset UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS
+	unset UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT UNDERFILL_RECYCLE_LAST_RUN_FILE LOGFILE WATCHDOG_LOG
+
+	if [[ -s "$watchdog_log" ]]; then
+		print_result "run_underfill_worker_recycler runs when throttle window has elapsed" 0
+		return 0
+	fi
+
+	print_result "run_underfill_worker_recycler runs when throttle window has elapsed" 1 \
+		"Expected watchdog called after throttle expiry; log was empty"
+	return 0
+}
+
+test_underfill_recycler_runs_when_candidates_above_threshold() {
+	# t1885: throttle should not apply when candidates > threshold
+	_setup_recycler_test_env
+	local watchdog_log="${TEST_ROOT}/watchdog-above.log"
+	: >"$watchdog_log"
+
+	local mock_watchdog="${TEST_ROOT}/mock-watchdog-above.sh"
+	cat >"$mock_watchdog" <<'EOF'
+#!/usr/bin/env bash
+printf 'watchdog-called\n' >>"${WATCHDOG_LOG}"
+exit 0
+EOF
+	chmod +x "$mock_watchdog"
+	export WATCHDOG_LOG="$watchdog_log"
+
+	export WORKER_WATCHDOG_HELPER="$mock_watchdog"
+	export UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=25
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD=3
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS=300
+	export UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT=75
+	export UNDERFILL_RECYCLE_LAST_RUN_FILE="${TEST_ROOT}/underfill-recycle-last-run-above"
+	export LOGFILE="${TEST_ROOT}/pulse.log"
+
+	# Seed last-run timestamp to 10 seconds ago (within throttle window)
+	local recent_epoch
+	recent_epoch=$(($(date +%s) - 10))
+	printf '%s\n' "$recent_epoch" >"$UNDERFILL_RECYCLE_LAST_RUN_FILE"
+
+	# Call with 5 runnable (> 3 threshold), 50% deficit — throttle should not apply
+	run_underfill_worker_recycler 4 2 5 0
+
+	unset WORKER_WATCHDOG_HELPER UNDERFILL_RECYCLE_DEFICIT_MIN_PCT
+	unset UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS
+	unset UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT UNDERFILL_RECYCLE_LAST_RUN_FILE LOGFILE WATCHDOG_LOG
+
+	if [[ -s "$watchdog_log" ]]; then
+		print_result "run_underfill_worker_recycler runs when candidates above threshold" 0
+		return 0
+	fi
+
+	print_result "run_underfill_worker_recycler runs when candidates above threshold" 1 \
+		"Expected watchdog called when candidates > threshold; log was empty"
+	return 0
+}
+
+test_underfill_recycler_bypasses_throttle_when_severe_deficit() {
+	# t1885: throttle should be bypassed when deficit >= severe threshold (75%)
+	local watchdog_log="${TEST_ROOT}/watchdog-severe.log"
+	: >"$watchdog_log"
+
+	local mock_watchdog="${TEST_ROOT}/mock-watchdog-severe.sh"
+	cat >"$mock_watchdog" <<'EOF'
+#!/usr/bin/env bash
+printf 'watchdog-called\n' >>"${WATCHDOG_LOG}"
+exit 0
+EOF
+	chmod +x "$mock_watchdog"
+	export WATCHDOG_LOG="$watchdog_log"
+
+	export WORKER_WATCHDOG_HELPER="$mock_watchdog"
+	export UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=25
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD=3
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS=300
+	export UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT=75
+	export UNDERFILL_RECYCLE_LAST_RUN_FILE="${TEST_ROOT}/underfill-recycle-last-run-severe"
+	export LOGFILE="${TEST_ROOT}/pulse.log"
+
+	# Seed last-run timestamp to 10 seconds ago (within throttle window)
+	local recent_epoch
+	recent_epoch=$(($(date +%s) - 10))
+	printf '%s\n' "$recent_epoch" >"$UNDERFILL_RECYCLE_LAST_RUN_FILE"
+
+	# Call with 2 runnable (<=3 threshold) but 80% deficit (>= 75% severe) — bypass throttle
+	# max=10, active=2 → deficit=80%
+	run_underfill_worker_recycler 10 2 2 0
+
+	unset WORKER_WATCHDOG_HELPER UNDERFILL_RECYCLE_DEFICIT_MIN_PCT
+	unset UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS
+	unset UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT UNDERFILL_RECYCLE_LAST_RUN_FILE LOGFILE WATCHDOG_LOG
+
+	if [[ -s "$watchdog_log" ]]; then
+		print_result "run_underfill_worker_recycler bypasses throttle when deficit is severe" 0
+		return 0
+	fi
+
+	print_result "run_underfill_worker_recycler bypasses throttle when deficit is severe" 1 \
+		"Expected watchdog called for severe deficit; log was empty"
+	return 0
+}
+
+test_underfill_recycler_runs_when_throttle_expired() {
+	# t1885: recycler should run when throttle window has elapsed
+	local watchdog_log="${TEST_ROOT}/watchdog-expired.log"
+	: >"$watchdog_log"
+
+	local mock_watchdog="${TEST_ROOT}/mock-watchdog-expired.sh"
+	cat >"$mock_watchdog" <<'EOF'
+#!/usr/bin/env bash
+printf 'watchdog-called\n' >>"${WATCHDOG_LOG}"
+exit 0
+EOF
+	chmod +x "$mock_watchdog"
+	export WATCHDOG_LOG="$watchdog_log"
+
+	export WORKER_WATCHDOG_HELPER="$mock_watchdog"
+	export UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=25
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD=3
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS=300
+	export UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT=75
+	export UNDERFILL_RECYCLE_LAST_RUN_FILE="${TEST_ROOT}/underfill-recycle-last-run-expired"
+	export LOGFILE="${TEST_ROOT}/pulse.log"
+
+	# Seed last-run timestamp to 400 seconds ago (past throttle window)
+	local old_epoch
+	old_epoch=$(($(date +%s) - 400))
+	printf '%s\n' "$old_epoch" >"$UNDERFILL_RECYCLE_LAST_RUN_FILE"
+
+	# Call with 2 runnable (<=3 threshold), 50% deficit — but throttle expired
+	run_underfill_worker_recycler 4 2 2 0
+
+	unset WORKER_WATCHDOG_HELPER UNDERFILL_RECYCLE_DEFICIT_MIN_PCT
+	unset UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS
+	unset UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT UNDERFILL_RECYCLE_LAST_RUN_FILE LOGFILE WATCHDOG_LOG
+
+	if [[ -s "$watchdog_log" ]]; then
+		print_result "run_underfill_worker_recycler runs when throttle window has elapsed" 0
+		return 0
+	fi
+
+	print_result "run_underfill_worker_recycler runs when throttle window has elapsed" 1 \
+		"Expected watchdog called after throttle expiry; log was empty"
+	return 0
+}
+
+test_underfill_recycler_runs_when_candidates_above_threshold() {
+	# t1885: throttle should not apply when candidates > threshold
+	local watchdog_log="${TEST_ROOT}/watchdog-above.log"
+	: >"$watchdog_log"
+
+	local mock_watchdog="${TEST_ROOT}/mock-watchdog-above.sh"
+	cat >"$mock_watchdog" <<'EOF'
+#!/usr/bin/env bash
+printf 'watchdog-called\n' >>"${WATCHDOG_LOG}"
+exit 0
+EOF
+	chmod +x "$mock_watchdog"
+	export WATCHDOG_LOG="$watchdog_log"
+
+	export WORKER_WATCHDOG_HELPER="$mock_watchdog"
+	export UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=25
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD=3
+	export UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS=300
+	export UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT=75
+	export UNDERFILL_RECYCLE_LAST_RUN_FILE="${TEST_ROOT}/underfill-recycle-last-run-above"
+	export LOGFILE="${TEST_ROOT}/pulse.log"
+
+	# Seed last-run timestamp to 10 seconds ago (within throttle window)
+	local recent_epoch
+	recent_epoch=$(($(date +%s) - 10))
+	printf '%s\n' "$recent_epoch" >"$UNDERFILL_RECYCLE_LAST_RUN_FILE"
+
+	# Call with 5 runnable (> 3 threshold), 50% deficit — throttle should not apply
+	run_underfill_worker_recycler 4 2 5 0
+
+	unset WORKER_WATCHDOG_HELPER UNDERFILL_RECYCLE_DEFICIT_MIN_PCT
+	unset UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD UNDERFILL_RECYCLE_LOW_CANDIDATE_THROTTLE_SECS
+	unset UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT UNDERFILL_RECYCLE_LAST_RUN_FILE LOGFILE WATCHDOG_LOG
+
+	if [[ -s "$watchdog_log" ]]; then
+		print_result "run_underfill_worker_recycler runs when candidates above threshold" 0
+		return 0
+	fi
+
+	print_result "run_underfill_worker_recycler runs when candidates above threshold" 1 \
+		"Expected watchdog called when candidates > threshold; log was empty"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -1080,6 +1403,10 @@ main() {
 	test_dispatch_deterministic_fill_floor_ignores_noisy_count_output
 	test_active_pulse_refill_skips_without_idle_or_stall_signal
 	test_active_pulse_refill_dispatches_when_underfilled_and_idle
+	test_underfill_recycler_throttles_when_candidates_limited
+	test_underfill_recycler_bypasses_throttle_when_severe_deficit
+	test_underfill_recycler_runs_when_throttle_expired
+	test_underfill_recycler_runs_when_candidates_above_threshold
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
