@@ -17,32 +17,24 @@ All pill buttons: `border-radius: 99999px`. Hover state (all): Electric Blue (`#
 
 ## Cards
 
-**Dark Content Card**
-- Background: `#212121` · Border: 1px solid `#353535` or `#212121` · Border Radius: 6px · Padding: 24px
-- Text: White `#ffffff` titles, Silver `#b9b9b9` body · Hover: subtle border shift or elevation
-
-**Feature Card (Full-bleed)**
-- Background: `#0b0b0b` or full-bleed image/gradient · Border: none or 1px solid `#212121` · Border Radius: 12px · Padding: 32–48px
-- Contains large imagery with overlaid text
+| Variant | Background | Border | Radius | Padding | Notes |
+|---------|-----------|--------|--------|---------|-------|
+| Dark Content | `#212121` | 1px solid `#353535` or `#212121` | 6px | 24px | White `#ffffff` titles, Silver `#b9b9b9` body; hover: subtle border shift or elevation |
+| Feature (Full-bleed) | `#0b0b0b` or full-bleed image/gradient | none or 1px solid `#212121` | 12px | 32–48px | Large imagery with overlaid text |
 
 ## Inputs
 
-**Text Input / Textarea**
-- Background: `#0b0b0b` · Text: `#b9b9b9` · Border: 1px solid `#212121` · Padding: 8px 12px · Border Radius: 3px
-- Focus: 2px solid `var(--focus-ring-color)` (blue) · Focus background: deep cyan `#072227`
-
-**Search Input**
-- Background: `#0b0b0b` · Text: `#b9b9b9` · Padding: 0px 12px · Border Radius: 3px · Placeholder: `#797979`
+| Variant | Background | Text | Border | Padding | Radius | Notes |
+|---------|-----------|------|--------|---------|--------|-------|
+| Text / Textarea | `#0b0b0b` | `#b9b9b9` | 1px solid `#212121` | 8px 12px | 3px | Focus: 2px solid `var(--focus-ring-color)` (blue); focus bg: deep cyan `#072227` |
+| Search | `#0b0b0b` | `#b9b9b9` | — | 0px 12px | 3px | Placeholder: `#797979` |
 
 ## Navigation
 
-**Top Navigation**
-- Background: `#0b0b0b` with backdrop blur · Logo: left-aligned Sanity wordmark · CTA: Sanity Red pill button right-aligned
-- Links: waldenburgNormal 16px, `#b9b9b9` · Link Hover: Electric Blue via `--color-fg-accent-blue` · Separator: 1px border-bottom `#212121`
-
-**Footer**
-- Background: `#0b0b0b` · Multi-column link layout
-- Links: `#b9b9b9`, hover to blue · Section headers: White `#ffffff`, 13px uppercase IBM Plex Mono
+| Component | Background | Links | Notes |
+|-----------|-----------|-------|-------|
+| Top Nav | `#0b0b0b` + backdrop blur | waldenburgNormal 16px, `#b9b9b9`; hover: Electric Blue via `--color-fg-accent-blue` | Logo: left-aligned wordmark; CTA: Sanity Red pill right-aligned; separator: 1px border-bottom `#212121` |
+| Footer | `#0b0b0b` | `#b9b9b9`, hover to blue | Multi-column layout; section headers: White `#ffffff`, 13px uppercase IBM Plex Mono |
 
 ## Badges / Pills
 
