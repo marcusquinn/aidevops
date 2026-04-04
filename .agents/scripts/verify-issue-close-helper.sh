@@ -118,6 +118,209 @@ get_pr_changed_files() {
 }
 
 #######################################
+# Fetch and validate an issue body.
+#
+# Args: $1 = issue_number, $2 = repo_slug
+# Outputs: issue body text on stdout
+# Returns: 0 on success, 1 on failure (empty body or fetch error)
+#######################################
+_fetch_issue_body() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local issue_body
+	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body -q '.body // ""' 2>/dev/null) || {
+		log_error "Failed to fetch issue #${issue_number} body"
+		printf 'FAIL: could not fetch issue #%s body\n' "$issue_number"
+		return 1
+	}
+
+	if [[ -z "$issue_body" ]]; then
+		log_warn "Issue #${issue_number} has empty body — cannot verify"
+		printf 'FAIL: issue #%s has empty body — cannot verify file overlap\n' "$issue_number"
+		return 1
+	fi
+
+	printf '%s' "$issue_body"
+	return 0
+}
+
+#######################################
+# Classify issue paths into specific (with /) and general (basename only),
+# and build a deduplicated list of PR basenames.
+#
+# Args: $1 = issue_paths (newline-separated), $2 = pr_files (newline-separated)
+# Outputs: three lines of output separated by NUL-delimited sections:
+#   specific_paths, general_paths, pr_basenames — each printed to named vars
+#   via stdout in the format "KEY=VALUE\n" (eval-safe, no subshell needed).
+# Returns: 0 always
+#
+# Callers use this as:
+#   eval "$(_classify_issue_paths "$issue_paths" "$pr_files")"
+#######################################
+_classify_issue_paths() {
+	local issue_paths="$1"
+	local pr_files="$2"
+
+	local specific_paths general_paths pr_basenames
+	specific_paths=$(printf '%s\n' "$issue_paths" | grep '/' || true)
+	general_paths=$(printf '%s\n' "$issue_paths" | grep -v '/' || true)
+	pr_basenames=$(printf '%s\n' "$pr_files" | while IFS= read -r f; do basename "$f"; done | sort -u)
+
+	# Output as shell assignments for eval
+	printf 'specific_paths=%q\n' "$specific_paths"
+	printf 'general_paths=%q\n' "$general_paths"
+	printf 'pr_basenames=%q\n' "$pr_basenames"
+	return 0
+}
+
+#######################################
+# Tier 1: Match specific paths (paths containing /) from the issue against PR files.
+#
+# Requires at least MIN_FILE_OVERLAP specific-path matches (not just basename).
+# Basename-only matches are counted but insufficient on their own — GH#17372.
+#
+# Args:
+#   $1 = specific_paths (newline-separated paths with /)
+#   $2 = pr_files (newline-separated)
+#   $3 = pr_basenames (newline-separated)
+#   $4 = issue_number (for output messages)
+#   $5 = pr_number (for output messages)
+# Outputs: overlap_count and overlapping_files via stdout (eval-safe assignments)
+# Returns: 0 = tier1 passed or skipped, 1 = tier1 rejected
+#######################################
+_check_tier1_specific_paths() {
+	local specific_paths="$1"
+	local pr_files="$2"
+	local pr_basenames="$3"
+	local issue_number="$4"
+	local pr_number="$5"
+
+	local overlap_count=0
+	local overlapping_files=""
+	local specific_overlap=0
+
+	if [[ -z "$specific_paths" ]]; then
+		printf 'tier1_overlap_count=%d\n' "$overlap_count"
+		printf 'tier1_specific_overlap=%d\n' "$specific_overlap"
+		printf 'tier1_overlapping_files=%q\n' "$overlapping_files"
+		return 0
+	fi
+
+	while IFS= read -r issue_file; do
+		[[ -z "$issue_file" ]] && continue
+		local issue_basename
+		issue_basename=$(basename "$issue_file")
+
+		# Full path substring match (issue says "setup-modules/schedulers.sh",
+		# PR has ".agents/setup-modules/schedulers.sh" or exact match)
+		if printf '%s\n' "$pr_files" | grep -qF "$issue_file"; then
+			overlap_count=$((overlap_count + 1))
+			specific_overlap=$((specific_overlap + 1))
+			overlapping_files="${overlapping_files}  ${issue_file} (specific path match)"$'\n'
+			continue
+		fi
+
+		# Basename match for specific paths (weaker — PR touches same filename
+		# but possibly in a different directory)
+		if printf '%s\n' "$pr_basenames" | grep -qxF "$issue_basename"; then
+			overlap_count=$((overlap_count + 1))
+			overlapping_files="${overlapping_files}  ${issue_file} (basename match only — weaker signal)"$'\n'
+			continue
+		fi
+	done <<<"$specific_paths"
+
+	# When specific paths exist, require at least one specific match.
+	# Basename-only matches on contextual files (like pulse-wrapper.sh
+	# appearing as environment info) create false positives — GH#17372.
+	if [[ "$specific_overlap" -lt "$MIN_FILE_OVERLAP" ]]; then
+		printf 'REJECTED: PR #%s does NOT touch any specific file paths from issue #%s\n' \
+			"$pr_number" "$issue_number"
+		printf 'Issue specifies: %s\n' "$(printf '%s' "$specific_paths" | tr '\n' ', ' | sed 's/,$//')"
+		printf 'PR changes: %s\n' "$(printf '%s' "$pr_files" | tr '\n' ', ' | sed 's/,$//')"
+		if [[ "$overlap_count" -gt 0 ]]; then
+			printf 'Note: %d basename-only match(es) found but insufficient — specific path overlap required\n' "$overlap_count"
+		fi
+		log_warn "Rejected: PR #${pr_number} has 0 specific-path overlap with issue #${issue_number} (${overlap_count} basename matches)"
+		return 1
+	fi
+
+	printf 'tier1_overlap_count=%d\n' "$overlap_count"
+	printf 'tier1_specific_overlap=%d\n' "$specific_overlap"
+	printf 'tier1_overlapping_files=%q\n' "$overlapping_files"
+	return 0
+}
+
+#######################################
+# Tier 2: Match general paths (bare filenames, no /) against PR basenames.
+#
+# Only applied when no specific paths exist (specific_overlap == 0).
+#
+# Args:
+#   $1 = general_paths (newline-separated bare filenames)
+#   $2 = pr_basenames (newline-separated)
+#   $3 = initial overlap_count (from tier 1)
+#   $4 = initial overlapping_files (from tier 1)
+# Outputs: updated overlap_count and overlapping_files via stdout (eval-safe)
+# Returns: 0 always
+#######################################
+_check_tier2_general_paths() {
+	local general_paths="$1"
+	local pr_basenames="$2"
+	local overlap_count="$3"
+	local overlapping_files="$4"
+
+	if [[ -n "$general_paths" ]]; then
+		while IFS= read -r issue_file; do
+			[[ -z "$issue_file" ]] && continue
+			if printf '%s\n' "$pr_basenames" | grep -qxF "$issue_file"; then
+				overlap_count=$((overlap_count + 1))
+				overlapping_files="${overlapping_files}  ${issue_file} (basename match)"$'\n'
+			fi
+		done <<<"$general_paths"
+	fi
+
+	printf 'tier2_overlap_count=%d\n' "$overlap_count"
+	printf 'tier2_overlapping_files=%q\n' "$overlapping_files"
+	return 0
+}
+
+#######################################
+# Emit the final VERIFIED or REJECTED verdict.
+#
+# Args:
+#   $1 = overlap_count
+#   $2 = overlapping_files (formatted string)
+#   $3 = issue_number
+#   $4 = pr_number
+#   $5 = issue_paths (for rejection output)
+#   $6 = pr_files (for rejection output)
+# Returns: 0 = verified, 1 = rejected
+#######################################
+_emit_overlap_verdict() {
+	local overlap_count="$1"
+	local overlapping_files="$2"
+	local issue_number="$3"
+	local pr_number="$4"
+	local issue_paths="$5"
+	local pr_files="$6"
+
+	if [[ "$overlap_count" -ge "$MIN_FILE_OVERLAP" ]]; then
+		printf 'VERIFIED: PR #%s touches %d file(s) mentioned in issue #%s:\n%s' \
+			"$pr_number" "$overlap_count" "$issue_number" "$overlapping_files"
+		log_info "Verified: PR #${pr_number} touches ${overlap_count} file(s) from issue #${issue_number}"
+		return 0
+	else
+		printf 'REJECTED: PR #%s does NOT touch any files mentioned in issue #%s\n' \
+			"$pr_number" "$issue_number"
+		printf 'Issue mentions: %s\n' "$(printf '%s' "$issue_paths" | tr '\n' ', ' | sed 's/,$//')"
+		printf 'PR changes: %s\n' "$(printf '%s' "$pr_files" | tr '\n' ', ' | sed 's/,$//')"
+		log_warn "Rejected: PR #${pr_number} has 0 file overlap with issue #${issue_number}"
+		return 1
+	fi
+}
+
+#######################################
 # Check if a PR's changed files overlap with files mentioned in an issue.
 #
 # Uses a two-tier strategy to avoid false positives from contextual mentions:
@@ -141,19 +344,9 @@ check_pr_fixes_issue() {
 	local pr_number="$2"
 	local repo_slug="$3"
 
-	# Fetch issue body
+	# Fetch and validate issue body
 	local issue_body
-	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body -q '.body // ""' 2>/dev/null) || {
-		log_error "Failed to fetch issue #${issue_number} body"
-		printf 'FAIL: could not fetch issue #%s body\n' "$issue_number"
-		return 1
-	}
-
-	if [[ -z "$issue_body" ]]; then
-		log_warn "Issue #${issue_number} has empty body — cannot verify"
-		printf 'FAIL: issue #%s has empty body — cannot verify file overlap\n' "$issue_number"
-		return 1
-	fi
+	issue_body=$(_fetch_issue_body "$issue_number" "$repo_slug") || return 1
 
 	# Extract file paths from issue body
 	local issue_paths
@@ -180,85 +373,32 @@ check_pr_fixes_issue() {
 		return 1
 	fi
 
-	# Separate issue paths into specific (with /) and general (basename only)
-	local specific_paths general_paths
-	specific_paths=$(printf '%s\n' "$issue_paths" | grep '/' || true)
-	general_paths=$(printf '%s\n' "$issue_paths" | grep -v '/' || true)
+	# Classify paths and build PR basenames
+	local specific_paths general_paths pr_basenames
+	eval "$(_classify_issue_paths "$issue_paths" "$pr_files")"
 
-	# Build PR basenames list once (avoid repeated xargs)
-	local pr_basenames
-	pr_basenames=$(printf '%s\n' "$pr_files" | while IFS= read -r f; do basename "$f"; done | sort -u)
+	# Tier 1: specific path matching (paths with directory separators)
+	local tier1_overlap_count tier1_specific_overlap tier1_overlapping_files
+	local tier1_output
+	tier1_output=$(_check_tier1_specific_paths \
+		"$specific_paths" "$pr_files" "$pr_basenames" "$issue_number" "$pr_number") || return 1
+	eval "$tier1_output"
 
-	local overlap_count=0
-	local overlapping_files=""
-	local specific_overlap=0
-
-	# Tier 1: Check specific paths (paths with directory separators)
-	if [[ -n "$specific_paths" ]]; then
-		while IFS= read -r issue_file; do
-			[[ -z "$issue_file" ]] && continue
-			local issue_basename
-			issue_basename=$(basename "$issue_file")
-
-			# Full path substring match (issue says "setup-modules/schedulers.sh",
-			# PR has ".agents/setup-modules/schedulers.sh" or exact match)
-			if printf '%s\n' "$pr_files" | grep -qF "$issue_file"; then
-				overlap_count=$((overlap_count + 1))
-				specific_overlap=$((specific_overlap + 1))
-				overlapping_files="${overlapping_files}  ${issue_file} (specific path match)"$'\n'
-				continue
-			fi
-
-			# Basename match for specific paths (weaker — PR touches same filename
-			# but possibly in a different directory)
-			if printf '%s\n' "$pr_basenames" | grep -qxF "$issue_basename"; then
-				overlap_count=$((overlap_count + 1))
-				overlapping_files="${overlapping_files}  ${issue_file} (basename match only — weaker signal)"$'\n'
-				continue
-			fi
-		done <<<"$specific_paths"
-
-		# When specific paths exist, require at least one specific match.
-		# Basename-only matches on contextual files (like pulse-wrapper.sh
-		# appearing as environment info) create false positives — GH#17372.
-		if [[ "$specific_overlap" -lt "$MIN_FILE_OVERLAP" ]]; then
-			printf 'REJECTED: PR #%s does NOT touch any specific file paths from issue #%s\n' \
-				"$pr_number" "$issue_number"
-			printf 'Issue specifies: %s\n' "$(printf '%s' "$specific_paths" | tr '\n' ', ' | sed 's/,$//')"
-			printf 'PR changes: %s\n' "$(printf '%s' "$pr_files" | tr '\n' ', ' | sed 's/,$//')"
-			if [[ "$overlap_count" -gt 0 ]]; then
-				printf 'Note: %d basename-only match(es) found but insufficient — specific path overlap required\n' "$overlap_count"
-			fi
-			log_warn "Rejected: PR #${pr_number} has 0 specific-path overlap with issue #${issue_number} (${overlap_count} basename matches)"
-			return 1
-		fi
-	fi
-
-	# Tier 2: Check general paths (bare filenames, no directory separator)
-	# Only used when no specific paths exist, or to supplement specific matches.
-	if [[ -n "$general_paths" && "$specific_overlap" -eq 0 ]]; then
-		while IFS= read -r issue_file; do
-			[[ -z "$issue_file" ]] && continue
-			if printf '%s\n' "$pr_basenames" | grep -qxF "$issue_file"; then
-				overlap_count=$((overlap_count + 1))
-				overlapping_files="${overlapping_files}  ${issue_file} (basename match)"$'\n'
-			fi
-		done <<<"$general_paths"
-	fi
-
-	if [[ "$overlap_count" -ge "$MIN_FILE_OVERLAP" ]]; then
-		printf 'VERIFIED: PR #%s touches %d file(s) mentioned in issue #%s:\n%s' \
-			"$pr_number" "$overlap_count" "$issue_number" "$overlapping_files"
-		log_info "Verified: PR #${pr_number} touches ${overlap_count} file(s) from issue #${issue_number}"
-		return 0
+	# Tier 2: general basename matching (only when no specific overlap found)
+	local tier2_overlap_count tier2_overlapping_files
+	if [[ "$tier1_specific_overlap" -eq 0 ]]; then
+		eval "$(_check_tier2_general_paths \
+			"$general_paths" "$pr_basenames" "$tier1_overlap_count" "$tier1_overlapping_files")"
 	else
-		printf 'REJECTED: PR #%s does NOT touch any files mentioned in issue #%s\n' \
-			"$pr_number" "$issue_number"
-		printf 'Issue mentions: %s\n' "$(printf '%s' "$issue_paths" | tr '\n' ', ' | sed 's/,$//')"
-		printf 'PR changes: %s\n' "$(printf '%s' "$pr_files" | tr '\n' ', ' | sed 's/,$//')"
-		log_warn "Rejected: PR #${pr_number} has 0 file overlap with issue #${issue_number}"
-		return 1
+		tier2_overlap_count="$tier1_overlap_count"
+		tier2_overlapping_files="$tier1_overlapping_files"
 	fi
+
+	# Emit final verdict
+	_emit_overlap_verdict \
+		"$tier2_overlap_count" "$tier2_overlapping_files" \
+		"$issue_number" "$pr_number" "$issue_paths" "$pr_files"
+	return $?
 }
 
 # =============================================================================
