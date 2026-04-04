@@ -142,6 +142,13 @@ else
 	fail "--help alias produces output" "No output"
 fi
 
+help_short_output=$(run_with_timeout 5 bash "$HELPER" -h 2>&1) || true
+if [[ -n "$help_short_output" ]]; then
+	pass "-h alias produces output"
+else
+	fail "-h alias produces output" "No output"
+fi
+
 # ============================================================
 # SECTION 3: Subcommand Dispatch (no server required)
 # ============================================================
@@ -218,9 +225,9 @@ fi
 # ============================================================
 section "Server-Dependent Tests"
 
-# Detect if Ollama is running
+# Detect if Ollama is running (--max-time 2 to fail fast in CI)
 ollama_running=false
-if curl -sf "http://localhost:11434/api/tags" >/dev/null 2>&1; then
+if curl -sf --max-time 2 "http://localhost:11434/api/tags" >/dev/null 2>&1; then
 	ollama_running=true
 fi
 
