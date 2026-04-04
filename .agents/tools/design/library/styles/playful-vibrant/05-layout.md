@@ -36,7 +36,7 @@
 
 ## Whitespace Philosophy
 
-Whitespace prevents visual overload in a colourful system — bold colours and rounded shapes become chaotic without it. Sections need 48–64px breathing room; cards need 24px internal padding. Organisation earns trust: every element needs enough space to be understood independently.
+Bold colours and rounded shapes become chaotic without space. Sections: 48–64px breathing room; cards: 24px internal padding. Every element needs space to be understood independently.
 
 ## Border-Radius Scale
 
