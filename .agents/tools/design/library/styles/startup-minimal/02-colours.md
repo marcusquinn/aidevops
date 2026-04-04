@@ -50,8 +50,4 @@
 
 ## Shadows
 
-| Role | Value | Usage |
-|------|-------|-------|
-| Subtle | `0 1px 2px rgba(0, 0, 0, 0.04)` | Barely-there lift for inputs |
-| Medium | `0 2px 8px rgba(0, 0, 0, 0.06)` | Dropdowns, popovers |
-| Overlay | `0 4px 16px rgba(0, 0, 0, 0.08)` | Modals, command palette |
+See [06-elevation.md](06-elevation.md) — shadow values are defined there alongside elevation principles.
