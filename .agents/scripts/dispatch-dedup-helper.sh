@@ -740,6 +740,16 @@ has_open_pr() {
 		if [[ "$pr_count" -gt 0 ]]; then
 			pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
 			if [[ -n "$pr_number" ]]; then
+				# Verify the PR body contains an exact close reference for this issue.
+				# GitHub search is full-text: a PR with "Closes #621" and "v3.5.670"
+				# would falsely match issue #670. Post-filter with exact regex.
+				local pr_body
+				pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || pr_body=""
+				# Match: keyword + optional whitespace + #NNN or owner/repo#NNN at word boundary
+				local close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^0-9]|$)"
+				if ! printf '%s' "$pr_body" | grep -iqE "$close_pattern"; then
+					continue
+				fi
 				printf 'merged PR #%s references issue #%s via "%s" keyword\n' "$pr_number" "$issue_number" "$keyword"
 			else
 				printf 'merged PR references issue #%s via "%s" keyword\n' "$issue_number" "$keyword"
