@@ -135,8 +135,23 @@ _is_protected_label() {
 	return 1
 }
 
+# _is_tag_derived_label: returns 0 if a label is in the tag-derived domain.
+# Tag-derived labels are simple words (no ':' separator). All system/workflow
+# labels use ':' namespacing (status:*, origin:*, tier:*, source:*, etc.).
+# This prevents reconciliation from removing manually-added or system labels
+# that happen to not be in the protected prefix list.
+# Arguments:
+#   $1 - label name
+_is_tag_derived_label() {
+	local lbl="$1"
+	# Labels with ':' are namespace-scoped — not tag-derived
+	[[ "$lbl" == *:* ]] && return 1
+	return 0
+}
+
 # _reconcile_labels: remove tag-derived labels from a GitHub issue that are no
-# longer present in the desired label set. Protected labels are never removed.
+# longer present in the desired label set. Only labels in the tag-derived domain
+# (no ':' separator, not protected) are candidates for removal.
 # Arguments:
 #   $1 - repo slug (owner/repo)
 #   $2 - issue number
@@ -155,6 +170,8 @@ _reconcile_labels() {
 		[[ -z "$lbl" ]] && continue
 		# Skip protected labels — they are not in the tag-derived domain
 		_is_protected_label "$lbl" && continue
+		# Skip labels outside the tag-derived domain (namespaced labels with ':')
+		_is_tag_derived_label "$lbl" || continue
 		# Check if this label is in the desired set
 		local found=false
 		for desired in $desired_labels; do
@@ -167,7 +184,17 @@ _reconcile_labels() {
 	done
 	IFS="$_saved_ifs"
 
-	[[ -n "$to_remove" ]] && _gh_edit_labels "remove" "$repo" "$num" "$to_remove"
+	if [[ -n "$to_remove" ]]; then
+		local -a rm_args=()
+		local _saved_ifs_rm="$IFS"
+		IFS=','
+		for _lbl in $to_remove; do [[ -n "$_lbl" ]] && rm_args+=("--remove-label" "$_lbl"); done
+		IFS="$_saved_ifs_rm"
+		if [[ ${#rm_args[@]} -gt 0 ]]; then
+			gh issue edit "$num" --repo "$repo" "${rm_args[@]}" 2>/dev/null ||
+				print_warning "label reconcile: failed to remove stale labels ($to_remove) from #$num in $repo"
+		fi
+	fi
 	return 0
 }
 
