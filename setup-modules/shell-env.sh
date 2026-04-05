@@ -26,13 +26,16 @@ detect_running_shell() {
 # Detect the user's default login shell from the system (not $SHELL env var,
 # which reflects the current shell, not the system default).
 detect_default_shell() {
-	local shell_path
+	local user_name shell_path
+	user_name="$(id -un 2>/dev/null || whoami)"
 	shell_path=""
 
 	if [[ "$(uname)" == "Darwin" ]]; then
-		shell_path=$(dscl . -read "/Users/$(whoami)" UserShell 2>/dev/null | awk 'NR==1 {print $2}' || true)
+		shell_path="$(dscl . -read "/Users/$user_name" UserShell 2>/dev/null | awk 'NR==1 {print $2}' || true)"
 	else
-		shell_path=$(getent passwd "$(whoami)" 2>/dev/null | cut -d: -f7 || true)
+		if command -v getent >/dev/null 2>&1; then
+			shell_path="$(getent passwd "$user_name" 2>/dev/null | cut -d: -f7 || true)"
+		fi
 	fi
 
 	# Fallback to $SHELL if system query returned empty
