@@ -945,6 +945,11 @@ _setup_post_setup_steps() {
 	# consented), regenerate it so fixes to service files reach existing installs.
 	# This preserves the consent model — no new scheduler is installed without
 	# interactive consent; only already-consented schedulers are regenerated.
+	#
+	# Exception (GH#17403): if the scheduler is NOT installed but the user has
+	# explicitly set orchestration.supervisor_pulse=true in config, install it.
+	# The interactive prompt exists to capture consent — if the user has already
+	# set the config value, that consent is already recorded. No prompt needed.
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
 		local _pulse_label="com.aidevops.aidevops-supervisor-pulse"
 		if _scheduler_detect_installed \
@@ -956,6 +961,11 @@ _setup_post_setup_steps() {
 			"" \
 			"" \
 			"aidevops-supervisor-pulse"; then
+			setup_supervisor_pulse "$os"
+		elif [[ "$(_resolve_pulse_consent | tr '[:upper:]' '[:lower:]')" == "true" ]]; then
+			# Explicit config consent — user already gave permission via
+			# `aidevops config set orchestration.supervisor_pulse true`.
+			# No interactive prompt needed; install the scheduler now.
 			setup_supervisor_pulse "$os"
 		fi
 		setup_tabby
