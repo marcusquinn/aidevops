@@ -10234,24 +10234,121 @@ dispatch_triage_reviews() {
 		[[ -n "$issue_num" && -n "$repo_slug" ]] || continue
 		[[ "$available" -gt 0 && "$triage_count" -lt "$triage_max" ]] || break
 
-		if [[ -n "$resolved_model" ]]; then
-			~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
-				--role worker \
-				--session-key "triage-review-${issue_num}" \
-				--dir "$repo_path" \
-				--model "$resolved_model" \
-				--title "Triage review: Issue #${issue_num}" \
-				--prompt "/review-issue-pr ${issue_num}" </dev/null >>"/tmp/pulse-triage-${issue_num}.log" 2>&1 &
-		else
-			~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
-				--role worker \
-				--session-key "triage-review-${issue_num}" \
-				--dir "$repo_path" \
-				--title "Triage review: Issue #${issue_num}" \
-				--prompt "/review-issue-pr ${issue_num}" </dev/null >>"/tmp/pulse-triage-${issue_num}.log" 2>&1 &
-		fi
-		sleep 2
+		# ── t1894: Sandboxed triage — pre-fetch all GitHub data deterministically ──
+		local prefetch_file=""
+		prefetch_file=$(mktemp)
 
+		local issue_json=""
+		issue_json=$(gh issue view "$issue_num" --repo "$repo_slug" \
+			--json number,title,body,author,labels,createdAt,updatedAt 2>/dev/null) || issue_json="{}"
+
+		local issue_comments=""
+		issue_comments=$(gh api "repos/${repo_slug}/issues/${issue_num}/comments" \
+			--jq '[.[] | {author: .user.login, body: .body, created: .created_at}]' 2>/dev/null) || issue_comments="[]"
+
+		# Check if this is a PR
+		local pr_diff="" pr_files="" is_pr=""
+		is_pr=$(gh pr view "$issue_num" --repo "$repo_slug" --json number --jq '.number' 2>/dev/null) || is_pr=""
+		if [[ -n "$is_pr" ]]; then
+			pr_diff=$(gh pr diff "$issue_num" --repo "$repo_slug" 2>/dev/null | head -500) || pr_diff=""
+			pr_files=$(gh pr view "$issue_num" --repo "$repo_slug" --json files --jq '[.files[].path]' 2>/dev/null) || pr_files="[]"
+		fi
+
+		# Recent closed issues for duplicate detection
+		local recent_closed=""
+		recent_closed=$(gh issue list --repo "$repo_slug" --state closed \
+			--json number,title --limit 30 --jq '.[].title' 2>/dev/null) || recent_closed=""
+
+		# Git log for affected files (if PR)
+		local git_log_context=""
+		if [[ -n "$is_pr" && -n "$repo_path" && -d "$repo_path" ]]; then
+			git_log_context=$(git -C "$repo_path" log --oneline -10 2>/dev/null) || git_log_context=""
+		fi
+
+		# Build the prompt with all pre-fetched data
+		local issue_body=""
+		issue_body=$(echo "$issue_json" | jq -r '.body // "No body"' 2>/dev/null) || issue_body="No body"
+
+		cat >"$prefetch_file" <<PREFETCH_EOF
+You are reviewing issue/PR #${issue_num} in ${repo_slug}.
+
+## ISSUE_METADATA
+${issue_json}
+
+## ISSUE_BODY
+${issue_body}
+
+## ISSUE_COMMENTS
+${issue_comments}
+
+## PR_DIFF
+${pr_diff:-Not a PR or no diff available}
+
+## PR_FILES
+${pr_files:-[]}
+
+## RECENT_CLOSED
+${recent_closed:-No recent closed issues}
+
+## GIT_LOG
+${git_log_context:-No git log available}
+
+---
+
+Now read the triage-review.md agent instructions and produce your review.
+PREFETCH_EOF
+
+		# ── Launch sandboxed agent (no Bash, no gh, no network) ──
+		# NOTE: headless-runtime-helper.sh does not yet support --allowed-tools.
+		# Tool restriction is enforced by the triage-review.md agent file frontmatter
+		# in runtimes that respect YAML tool declarations (Claude Code, OpenCode).
+		local review_output_file=""
+		review_output_file=$(mktemp)
+
+		local model_flag=""
+		if [[ -n "$resolved_model" ]]; then
+			model_flag="--model $resolved_model"
+		fi
+
+		# t1894: Lock external contributor issues during triage
+		lock_issue_for_worker "$issue_num" "$repo_slug"
+
+		# Run agent with triage-review prompt — agent file restricts to Read/Glob/Grep
+		# shellcheck disable=SC2086
+		"$HEADLESS_RUNTIME_HELPER" run \
+			--role worker \
+			--session-key "triage-review-${issue_num}" \
+			--dir "$repo_path" \
+			$model_flag \
+			--title "Sandboxed triage review: Issue #${issue_num}" \
+			--prompt-file "$prefetch_file" </dev/null >"$review_output_file" 2>&1
+
+		rm -f "$prefetch_file"
+
+		# ── Post-process: post the review comment (deterministic) ──
+		local review_text=""
+		review_text=$(cat "$review_output_file")
+		rm -f "$review_output_file"
+
+		if [[ -n "$review_text" && ${#review_text} -gt 50 ]]; then
+			# Extract just the review portion (starts with ## Review:)
+			local clean_review=""
+			clean_review=$(echo "$review_text" | sed -n '/^## Review:/,$ p')
+			if [[ -z "$clean_review" ]]; then
+				clean_review="$review_text"
+			fi
+
+			gh issue comment "$issue_num" --repo "$repo_slug" \
+				--body "$clean_review" >/dev/null 2>&1 || true
+			echo "[pulse-wrapper] Posted sandboxed triage review for #${issue_num} in ${repo_slug}" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Triage review for #${issue_num} produced no usable output (${#review_text} chars)" >>"$LOGFILE"
+		fi
+
+		# Unlock issue after triage
+		unlock_issue_after_worker "$issue_num" "$repo_slug"
+
+		sleep 2
 		triage_count=$((triage_count + 1))
 		available=$((available - 1))
 	done <<<"$candidates"

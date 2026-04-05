@@ -123,6 +123,8 @@ Heading MUST contain `## Review:` or `## Issue/PR Review:` — pulse idempotency
 
 ## Headless / Pulse-Driven Mode
 
+> **Note (t1894):** Pulse-dispatched triage reviews now use the sandboxed `triage-review.md` agent which has NO Bash/network access. This file (`review-issue-pr.md`) is only used for interactive `/review-issue-pr` sessions where the user is present. The sandboxed agent receives all GitHub data pre-fetched by deterministic code.
+
 When invoked by pulse (via `/review-issue-pr <number>`):
 
 1. Fetch issue/PR: `gh issue view` or `gh pr view`
