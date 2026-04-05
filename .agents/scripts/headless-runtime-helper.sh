@@ -2019,7 +2019,7 @@ cmd_run() {
 	# When a worker exits prematurely (activity but no completion signal),
 	# resume the session with a "continue" prompt instead of starting fresh.
 	# This catches the GPT-5.4 failure mode of stopping after investigation/setup.
-	local max_continuation_retries="${HEADLESS_CONTINUATION_MAX_RETRIES:-3}"
+	local max_continuation_retries="${HEADLESS_CONTINUATION_MAX_RETRIES:-10}"
 	local continuation_count=0
 	local original_prompt="$prompt"
 
