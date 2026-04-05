@@ -28,7 +28,7 @@ deploy_ai_templates() {
 }
 
 extract_opencode_prompts() {
-	local extract_script=".agents/scripts/extract-opencode-prompts.sh"
+	local extract_script="${INSTALL_DIR:-.}/.agents/scripts/extract-opencode-prompts.sh"
 	if [[ -f "$extract_script" ]]; then
 		if bash "$extract_script"; then
 			print_success "OpenCode prompts extracted"
@@ -40,7 +40,7 @@ extract_opencode_prompts() {
 }
 
 check_opencode_prompt_drift() {
-	local drift_script=".agents/scripts/opencode-prompt-drift-check.sh"
+	local drift_script="${INSTALL_DIR:-.}/.agents/scripts/opencode-prompt-drift-check.sh"
 	if [[ -f "$drift_script" ]]; then
 		local output exit_code=0
 		# 2>/dev/null is intentional: --quiet mode suppresses expected output; all exit
@@ -114,7 +114,7 @@ _deploy_agents_copy() {
 		for pns in "$@"; do
 			rsync_excludes+=("--exclude=${pns}/")
 		done
-		if rsync -a "${rsync_excludes[@]}" "$source_dir/" "$target_dir/"; then
+		if rsync -a --update "${rsync_excludes[@]}" "$source_dir/" "$target_dir/"; then
 			deploy_ok=true
 		fi
 	else
@@ -250,9 +250,8 @@ _deploy_agents_post_copy() {
 
 # _warn_deployed_script_drift source_dir target_dir
 # Compares deployed scripts against canonical source and warns if any differ.
-# This catches the case where someone edited ~/.aidevops/agents/scripts/ directly
-# (those edits are overwritten by every deploy). Emits a warning listing drifted
-# files and the canonical source path to edit instead.
+# Local edits in ~/.aidevops/agents/scripts/ are PRESERVED on next deploy (GH#17414).
+# This warning is informational only — deployment proceeds regardless.
 # Non-fatal: always returns 0 so deployment proceeds.
 _warn_deployed_script_drift() {
 	local source_dir="$1"
@@ -280,12 +279,12 @@ _warn_deployed_script_drift() {
 	done
 
 	if [[ ${#drifted[@]} -gt 0 ]]; then
-		print_warning "Deployed scripts differ from canonical source (local edits will be overwritten):"
+		print_warning "Deployed scripts differ from canonical source (local edits are preserved on next deploy):"
 		for bn in "${drifted[@]}"; do
 			print_warning "  $target_scripts/$bn"
 			print_warning "    → canonical: $source_scripts/$bn"
 		done
-		print_warning "To preserve changes: edit the canonical source and re-run setup.sh --non-interactive"
+		print_warning "Local edits survive auto-update. To push edits upstream: PR to canonical source."
 	fi
 	return 0
 }
@@ -377,6 +376,13 @@ deploy_aidevops_agents() {
 			cp -a "$target_dir/$pdir" "$staging_dir/$pdir" 2>/dev/null || true
 		fi
 	done
+
+	# Restore local script edits: only copy scripts where the old target's version
+	# is NEWER (user edited them). This preserves user changes while allowing
+	# canonical updates to propagate when the source is newer. (GH#17414)
+	if [[ -d "$target_dir/scripts" && -d "$staging_dir/scripts" ]]; then
+		rsync -a --update "$target_dir/scripts/" "$staging_dir/scripts/" 2>/dev/null || true
+	fi
 
 	# Atomic swap: mv is atomic on the same filesystem (POSIX rename())
 	if [[ -d "$target_dir" ]]; then
