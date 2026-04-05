@@ -974,6 +974,174 @@ post_kill_github_update() {
 }
 
 #######################################
+# Load fast-fail state file and extract existing entry for a key.
+#
+# Arguments:
+#   $1 - state_file path
+#   $2 - key (repo_slug/issue_number)
+#   $3 - expiry_secs
+#   $4 - now (epoch seconds)
+# Output: "state|existing_count|existing_backoff" (pipe-separated)
+#######################################
+_ff_load_state_entry() {
+	local state_file="$1"
+	local key="$2"
+	local expiry_secs="$3"
+	local now="$4"
+
+	local state="{}"
+	if [[ -f "$state_file" ]]; then
+		state=$(cat "$state_file" 2>/dev/null) || state="{}"
+		printf '%s' "$state" | jq empty 2>/dev/null || state="{}"
+	fi
+
+	local existing_ts existing_count existing_backoff
+	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
+	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
+	existing_backoff=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].backoff_secs // 0' 2>/dev/null) || existing_backoff=0
+	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
+	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
+	[[ "$existing_backoff" =~ ^[0-9]+$ ]] || existing_backoff=0
+
+	local age=$((now - existing_ts))
+	if [[ "$age" -ge "$expiry_secs" ]]; then
+		existing_count=0
+		existing_backoff=0
+	fi
+
+	printf '%s|%s|%s' "$state" "$existing_count" "$existing_backoff"
+	return 0
+}
+
+#######################################
+# Compute backoff for rate-limit kills by querying the account pool.
+#
+# Arguments:
+#   $1 - provider (e.g., "anthropic")
+#   $2 - existing_count
+#   $3 - existing_backoff
+#   $4 - now (epoch seconds)
+#   $5 - initial_backoff
+#   $6 - max_backoff
+# Output: "new_count|new_backoff|retry_after|log_action" (pipe-separated)
+#######################################
+_ff_compute_backoff_rate_limit() {
+	local provider="$1"
+	local existing_count="$2"
+	local existing_backoff="$3"
+	local now="$4"
+	local initial_backoff="$5"
+	local max_backoff="$6"
+
+	local pool_file="${HOME}/.aidevops/oauth-pool.json"
+	local pool_wait="-1"
+	if [[ -f "$pool_file" ]]; then
+		pool_wait=$(POOL_FILE="$pool_file" PROVIDER="$provider" python3 -c "
+import json, os, time, sys
+try:
+    with open(os.environ['POOL_FILE']) as f:
+        pool = json.load(f)
+    now_ms = int(time.time() * 1000)
+    accounts = pool.get(os.environ['PROVIDER'], [])
+    if not accounts: print(-1); sys.exit(0)
+    min_remaining = None
+    for a in accounts:
+        cd = a.get('cooldownUntil')
+        if cd and int(cd) > now_ms and a.get('status') == 'rate-limited':
+            remaining_s = max(1, (int(cd) - now_ms) // 1000)
+            min_remaining = min(min_remaining, remaining_s) if min_remaining else remaining_s
+        else:
+            print(0); sys.exit(0)
+    print(min_remaining or 0)
+except Exception: print(-1)
+" 2>/dev/null) || pool_wait="-1"
+	fi
+	[[ "$pool_wait" =~ ^-?[0-9]+$ ]] || pool_wait="-1"
+
+	local new_count="$existing_count"
+	local new_backoff="$existing_backoff"
+	local retry_after=0
+	local log_action=""
+
+	if [[ "$pool_wait" == "0" ]]; then
+		retry_after=0
+		log_action="rate_limit_rotate (accounts available)"
+	elif [[ "$pool_wait" == "-1" ]]; then
+		new_count=$((existing_count + 1))
+		new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : initial_backoff))
+		[[ "$new_backoff" -gt "$max_backoff" ]] && new_backoff="$max_backoff"
+		retry_after=$((now + new_backoff))
+		log_action="rate_limit_no_pool (backoff=${new_backoff}s)"
+	else
+		# All accounts exhausted — wait for earliest recovery.
+		# Keep backoff_secs on the exponential ladder (not pool_wait).
+		new_count=$((existing_count + 1))
+		retry_after=$((now + pool_wait))
+		new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : initial_backoff))
+		[[ "$new_backoff" -gt "$max_backoff" ]] && new_backoff="$max_backoff"
+		log_action="rate_limit_exhausted (wait=${pool_wait}s, backoff_stage=${new_backoff}s)"
+	fi
+
+	printf '%s|%s|%s|%s' "$new_count" "$new_backoff" "$retry_after" "$log_action"
+	return 0
+}
+
+#######################################
+# Write updated fast-fail state atomically (tmp + mv).
+#
+# Arguments:
+#   $1 - state (current JSON string)
+#   $2 - state_file path
+#   $3 - state_dir path
+#   $4 - lock_dir path
+#   $5 - key
+#   $6 - new_count
+#   $7 - now
+#   $8 - reason
+#   $9 - retry_after
+#   $10 - new_backoff
+# Returns: 0 on success, releases lock on failure
+#######################################
+_ff_write_state_entry() {
+	local state="$1"
+	local state_file="$2"
+	local state_dir="$3"
+	local lock_dir="$4"
+	local key="$5"
+	local new_count="$6"
+	local now="$7"
+	local reason="$8"
+	local retry_after="$9"
+	local new_backoff="${10}"
+
+	local updated_state
+	updated_state=$(printf '%s' "$state" | jq \
+		--arg k "$key" \
+		--argjson count "$new_count" \
+		--argjson ts "$now" \
+		--arg reason "$reason" \
+		--argjson retry_after "$retry_after" \
+		--argjson backoff_secs "$new_backoff" \
+		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' 2>/dev/null) || {
+		rmdir "$lock_dir" 2>/dev/null || true
+		return 0
+	}
+
+	local tmp_file
+	tmp_file=$(mktemp "${state_dir}/.fast-fail-counter.XXXXXX" 2>/dev/null) || {
+		rmdir "$lock_dir" 2>/dev/null || true
+		return 0
+	}
+	if printf '%s\n' "$updated_state" >"$tmp_file"; then
+		mv "$tmp_file" "$state_file" || rm -f "$tmp_file"
+	else
+		rm -f "$tmp_file"
+	fi
+
+	return 0
+}
+
+#######################################
 # Record a watchdog kill in the shared fast-fail state and trigger
 # tier escalation when threshold is reached.
 #
@@ -1017,89 +1185,34 @@ _watchdog_record_failure_and_escalate() {
 		sleep 0.1
 	done
 
-	local key now state
+	local key now
 	key="${repo_slug}/${issue_number}"
 	now=$(date +%s)
-
-	# Load state
-	if [[ -f "$state_file" ]]; then
-		state=$(cat "$state_file" 2>/dev/null) || state="{}"
-		printf '%s' "$state" | jq empty 2>/dev/null || state="{}"
-	else
-		state="{}"
-	fi
 
 	local expiry_secs="${FAST_FAIL_EXPIRY_SECS:-604800}"
 	local initial_backoff="${FAST_FAIL_INITIAL_BACKOFF_SECS:-600}"
 	local max_backoff="${FAST_FAIL_MAX_BACKOFF_SECS:-604800}"
 
-	# Read existing entry
-	local existing_ts existing_count existing_backoff
-	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
-	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
-	existing_backoff=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].backoff_secs // 0' 2>/dev/null) || existing_backoff=0
-	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
-	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
-	[[ "$existing_backoff" =~ ^[0-9]+$ ]] || existing_backoff=0
-
-	local age=$((now - existing_ts))
-	if [[ "$age" -ge "$expiry_secs" ]]; then
-		existing_count=0
-		existing_backoff=0
-	fi
+	# Load state and existing entry
+	local load_result state existing_count existing_backoff
+	load_result=$(_ff_load_state_entry "$state_file" "$key" "$expiry_secs" "$now")
+	state="${load_result%%|*}"
+	local load_rest="${load_result#*|}"
+	existing_count="${load_rest%%|*}"
+	existing_backoff="${load_rest##*|}"
 
 	# Cause-aware backoff (mirrors pulse-wrapper.sh logic)
-	local new_count="$existing_count"
-	local new_backoff="$existing_backoff"
-	local retry_after=0
-	local log_action=""
-
+	local new_count new_backoff retry_after log_action
 	case "$reason" in
 	backoff | rate_limit*)
-		# Rate-limit kill: check account pool
-		local pool_file="${HOME}/.aidevops/oauth-pool.json"
-		local pool_wait="-1"
-		if [[ -f "$pool_file" ]]; then
-			pool_wait=$(POOL_FILE="$pool_file" PROVIDER="$provider" python3 -c "
-import json, os, time, sys
-try:
-    with open(os.environ['POOL_FILE']) as f:
-        pool = json.load(f)
-    now_ms = int(time.time() * 1000)
-    accounts = pool.get(os.environ['PROVIDER'], [])
-    if not accounts: print(-1); sys.exit(0)
-    min_remaining = None
-    for a in accounts:
-        cd = a.get('cooldownUntil')
-        if cd and int(cd) > now_ms and a.get('status') == 'rate-limited':
-            remaining_s = max(1, (int(cd) - now_ms) // 1000)
-            min_remaining = min(min_remaining, remaining_s) if min_remaining else remaining_s
-        else:
-            print(0); sys.exit(0)
-    print(min_remaining or 0)
-except Exception: print(-1)
-" 2>/dev/null) || pool_wait="-1"
-		fi
-		[[ "$pool_wait" =~ ^-?[0-9]+$ ]] || pool_wait="-1"
-
-		if [[ "$pool_wait" == "0" ]]; then
-			retry_after=0
-			log_action="rate_limit_rotate (accounts available)"
-		elif [[ "$pool_wait" == "-1" ]]; then
-			new_count=$((existing_count + 1))
-			new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : initial_backoff))
-			[[ "$new_backoff" -gt "$max_backoff" ]] && new_backoff="$max_backoff"
-			retry_after=$((now + new_backoff))
-			log_action="rate_limit_no_pool (backoff=${new_backoff}s)"
-		else
-			# All accounts exhausted — wait for earliest recovery.
-			# Keep backoff_secs on the exponential ladder (not pool_wait).
-			new_count=$((existing_count + 1))
-			retry_after=$((now + pool_wait))
-			new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : initial_backoff))
-			[[ "$new_backoff" -gt "$max_backoff" ]] && new_backoff="$max_backoff"
-			log_action="rate_limit_exhausted (wait=${pool_wait}s, backoff_stage=${new_backoff}s)"
-		fi
+		local rl_result
+		rl_result=$(_ff_compute_backoff_rate_limit "$provider" "$existing_count" "$existing_backoff" "$now" "$initial_backoff" "$max_backoff")
+		new_count="${rl_result%%|*}"
+		local rl_rest="${rl_result#*|}"
+		new_backoff="${rl_rest%%|*}"
+		local rl_rest2="${rl_rest#*|}"
+		retry_after="${rl_rest2%%|*}"
+		log_action="${rl_rest2#*|}"
 		;;
 	*)
 		new_count=$((existing_count + 1))
@@ -1110,32 +1223,9 @@ except Exception: print(-1)
 		;;
 	esac
 
-	# Write updated state
-	local updated_state
-	updated_state=$(printf '%s' "$state" | jq \
-		--arg k "$key" \
-		--argjson count "$new_count" \
-		--argjson ts "$now" \
-		--arg reason "$reason" \
-		--argjson retry_after "$retry_after" \
-		--argjson backoff_secs "$new_backoff" \
-		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' 2>/dev/null) || {
-		rmdir "$lock_dir" 2>/dev/null || true
-		return 0
-	}
-
-	local tmp_file
-	tmp_file=$(mktemp "${state_dir}/.fast-fail-counter.XXXXXX" 2>/dev/null) || {
-		rmdir "$lock_dir" 2>/dev/null || true
-		return 0
-	}
-	if printf '%s\n' "$updated_state" >"$tmp_file"; then
-		mv "$tmp_file" "$state_file" || rm -f "$tmp_file"
-	else
-		rm -f "$tmp_file"
-	fi
-
-	# Release lock
+	# Write updated state and release lock
+	_ff_write_state_entry "$state" "$state_file" "$state_dir" "$lock_dir" \
+		"$key" "$new_count" "$now" "$reason" "$retry_after" "$new_backoff"
 	rmdir "$lock_dir" 2>/dev/null || true
 
 	log_msg "Fast-fail: #${issue_number} (${repo_slug}) ${log_action} reason=${reason}"
