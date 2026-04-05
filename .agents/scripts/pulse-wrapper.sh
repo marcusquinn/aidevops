@@ -6132,13 +6132,14 @@ has_worker_for_repo_issue() {
 #######################################
 # Check if dispatching a worker would be a duplicate (GH#4400, GH#5210, GH#6696, GH#11086)
 #
-# Six-layer dedup:
+# Seven-layer dedup:
 #   1. dispatch-ledger-helper.sh check-issue — in-flight ledger (GH#6696)
 #   2. has_worker_for_repo_issue() — exact repo+issue process match
 #   3. dispatch-dedup-helper.sh is-duplicate — normalized title key match
 #   4. dispatch-dedup-helper.sh has-open-pr — merged PR evidence for issue/task
-#   5. dispatch-dedup-helper.sh is-assigned — cross-machine assignee guard (GH#6891)
-#   6. dispatch-dedup-helper.sh claim — cross-machine optimistic lock (GH#11086)
+#   5. dispatch-dedup-helper.sh has-dispatch-comment — cross-machine dispatch comment (GH#11141)
+#   6. dispatch-dedup-helper.sh is-assigned — cross-machine assignee guard (GH#6891)
+#   7. dispatch-dedup-helper.sh claim — cross-machine optimistic lock (GH#11086)
 #
 # Layer 1 (ledger) is checked first because it's the fastest (local file
 # read, no process scanning or GitHub API calls) and catches the primary
@@ -6500,12 +6501,29 @@ dispatch_with_dedup() {
 		echo "[dispatch_with_dedup] Warning: failed to post deterministic dispatch comment for #${issue_number}" >>"$LOGFILE"
 	}
 
-	# GH#15317: Clean up the DISPATCH_CLAIM comment now that the persistent
-	# dispatch comment is posted. The claim served its purpose (optimistic lock
-	# during the 8s consensus window). Leaving it pollutes the issue timeline —
-	# awardsapp #2051 had 29 stale claim comments.
-	# GH#16978: Use _cleanup_claim_comment helper (also called on early-return paths).
-	_cleanup_claim_comment
+	# GH#17497: Defer claim comment cleanup to prevent TOCTOU race condition.
+	# Previously (GH#15317/GH#16978), the claim was deleted synchronously here.
+	# Race: Runner A wins claim → deletes it → Runner B (still inside 8s consensus
+	# window) sees only its own claim → incorrectly "wins" → duplicate dispatch.
+	# Evidence: #17497 — alex-solovyev and marcusquinn both dispatched 7s apart.
+	#
+	# Fix: defer deletion by one consensus window after the dispatch comment is
+	# posted. This keeps the claim visible long enough for any concurrent claimant
+	# to see it during their consensus check. The background subshell avoids
+	# blocking dispatch throughput. Early-return paths still use synchronous
+	# _cleanup_claim_comment (no race — dispatch was blocked, no concurrent claim
+	# to protect against).
+	if [[ -n "$_claim_comment_id" ]]; then
+		local __deferred_cid="$_claim_comment_id" __deferred_slug="$repo_slug"
+		local __deferred_issue="$issue_number" __deferred_logfile="$LOGFILE"
+		(
+			sleep "${DISPATCH_CLAIM_WINDOW:-8}"
+			gh api "repos/${__deferred_slug}/issues/comments/${__deferred_cid}" \
+				--method DELETE >/dev/null 2>&1 || true
+			echo "[dispatch_with_dedup] Deferred claim cleanup: deleted comment ${__deferred_cid} for #${__deferred_issue}" >>"$__deferred_logfile"
+		) &
+		_claim_comment_id=""
+	fi
 
 	echo "[dispatch_with_dedup] Dispatched worker PID ${worker_pid} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 	return 0
