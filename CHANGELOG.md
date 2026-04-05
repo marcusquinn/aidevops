@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.94] - 2026-04-05
+
+### Fixed
+
+- `_install_pulse_systemd` missing PATH env var causes workers to exit 127 on Linux; add `Environment=PATH=...` to service unit matching launchd plist behaviour (GH#17405)
+- `_install_pulse_systemd` timer stalls on mid-session install due to missing `OnActiveSec`; add `OnActiveSec=10s` to bootstrap first service run (GH#17405)
+
 ## [3.6.89] - 2026-04-04
 
 ### Fixed
