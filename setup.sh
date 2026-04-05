@@ -283,6 +283,29 @@ _scheduler_detect_installed() {
 
 	return 1
 }
+
+_should_setup_noninteractive_supervisor_pulse() {
+	local pulse_label="com.aidevops.aidevops-supervisor-pulse"
+
+	if _scheduler_detect_installed \
+		"Supervisor pulse" \
+		"$pulse_label" \
+		"" \
+		"pulse-wrapper" \
+		"" \
+		"" \
+		"" \
+		"aidevops-supervisor-pulse"; then
+		return 0
+	fi
+
+	if type config_enabled &>/dev/null && config_enabled "orchestration.supervisor_pulse"; then
+		return 0
+	fi
+
+	return 1
+}
+
 # Spinner for long-running operations
 # Usage: run_with_spinner "Installing package..." command arg1 arg2
 run_with_spinner() {
@@ -941,21 +964,10 @@ _setup_post_setup_steps() {
 	# services, and optional post-setup work (CI/agent shells don't need them).
 	# Tabby profile sync runs in both modes (has its own non-interactive path).
 	#
-	# Exception (GH#17381): if a scheduler is already installed (user previously
-	# consented), regenerate it so fixes to service files reach existing installs.
-	# This preserves the consent model — no new scheduler is installed without
-	# interactive consent; only already-consented schedulers are regenerated.
+	# Exceptions: regenerate existing schedulers (GH#17381) and allow first-time
+	# install when config consent is explicitly true (GH#17403).
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
-		local _pulse_label="com.aidevops.aidevops-supervisor-pulse"
-		if _scheduler_detect_installed \
-			"Supervisor pulse" \
-			"$_pulse_label" \
-			"" \
-			"pulse-wrapper" \
-			"" \
-			"" \
-			"" \
-			"aidevops-supervisor-pulse"; then
+		if _should_setup_noninteractive_supervisor_pulse; then
 			setup_supervisor_pulse "$os"
 		fi
 		setup_tabby
