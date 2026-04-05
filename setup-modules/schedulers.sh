@@ -1387,45 +1387,42 @@ setup_draft_responses() {
 # Setup profile README — auto-create repo and seed README if not already set up.
 # Requires gh CLI authenticated. Creates username/username repo, seeds README
 # with stat markers, registers in repos.json with priority: "profile".
-setup_profile_readme() {
-	local pr_script="$HOME/.aidevops/agents/scripts/profile-readme-helper.sh"
-	local pr_label="sh.aidevops.profile-readme-update"
-	if ! [[ -x "$pr_script" ]] || ! command -v gh &>/dev/null || ! gh auth status &>/dev/null; then
-		return 0
+_profile_readme_ready() {
+	local pr_script="$1"
+	if ! [[ -x "$pr_script" ]]; then
+		return 1
 	fi
+	if ! command -v gh &>/dev/null; then
+		return 1
+	fi
+	if ! gh auth status &>/dev/null; then
+		return 1
+	fi
+	return 0
+}
 
-	# Initialize profile repo if not already set up.
-	# Always run init — it's idempotent and handles:
-	#   - Fresh installs (no profile repo)
-	#   - Missing markers (injects them into existing README)
-	#   - Diverged history (repo deleted and recreated on GitHub)
-	#   - Already-initialized repos (returns early with no changes)
+_run_profile_readme_init() {
+	local pr_script="$1"
 	print_info "Checking GitHub profile README..."
 	if bash "$pr_script" init; then
 		print_info "Profile README ready."
 	else
 		print_warning "Profile README setup failed (non-fatal, skipping)"
 	fi
+	return 0
+}
 
-	# Profile README auto-update scheduled job.
-	# Installed whenever gh CLI is available — the update script self-heals
-	# (discovers/creates the profile repo on first run via _resolve_profile_repo).
-	# macOS: launchd plist (hourly) | Linux: systemd timer or cron (hourly)
-	local pr_systemd="aidevops-profile-readme-update"
-	local pr_log="$HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log"
-	mkdir -p "$HOME/.aidevops/.agent-workspace/logs"
+_install_profile_readme_launchd() {
+	local pr_label="$1"
+	local pr_script="$2"
+	local pr_plist="$HOME/Library/LaunchAgents/${pr_label}.plist"
+	local _xml_pr_script _xml_pr_home
+	_xml_pr_script=$(_xml_escape "$pr_script")
+	_xml_pr_home=$(_xml_escape "$HOME")
 
-	if [[ "$(uname -s)" == "Darwin" ]]; then
-		local pr_plist="$HOME/Library/LaunchAgents/${pr_label}.plist"
-
-		# XML-escape paths for safe plist embedding
-		local _xml_pr_script _xml_pr_home
-		_xml_pr_script=$(_xml_escape "$pr_script")
-		_xml_pr_home=$(_xml_escape "$HOME")
-
-		local pr_plist_content
-		pr_plist_content=$(
-			cat <<PR_PLIST
+	local pr_plist_content
+	pr_plist_content=$(
+		cat <<PR_PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1464,30 +1461,68 @@ setup_profile_readme() {
 </dict>
 </plist>
 PR_PLIST
-		)
+	)
 
-		if _launchd_install_if_changed "$pr_label" "$pr_plist" "$pr_plist_content"; then
-			print_info "Profile README update enabled (launchd, hourly)"
-		else
-			print_warning "Failed to load profile README update LaunchAgent"
-		fi
+	if _launchd_install_if_changed "$pr_label" "$pr_plist" "$pr_plist_content"; then
+		print_info "Profile README update enabled (launchd, hourly)"
 	else
-		# Linux: systemd timer (hourly) or cron fallback
-		local _cron_pr_script
-		_cron_pr_script=$(_cron_escape "$pr_script")
-		_install_scheduler_linux \
-			"$pr_systemd" \
-			"aidevops: profile-readme-update" \
-			"0 * * * *" \
-			"/bin/bash ${_cron_pr_script} update >> \"\$HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log\" 2>&1" \
-			"$pr_script" \
-			"update" \
-			"3600" \
-			"$pr_log" \
-			"" \
-			"Profile README update enabled (hourly)" \
-			"Failed to install profile README update scheduler"
+		print_warning "Failed to load profile README update LaunchAgent"
 	fi
+	return 0
+}
+
+_install_profile_readme_scheduler() {
+	local pr_label="$1"
+	local pr_systemd="$2"
+	local pr_script="$3"
+	local pr_log="$4"
+
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		_install_profile_readme_launchd "$pr_label" "$pr_script"
+		return 0
+	fi
+
+	local _cron_pr_script
+	_cron_pr_script=$(_cron_escape "$pr_script")
+	_install_scheduler_linux \
+		"$pr_systemd" \
+		"aidevops: profile-readme-update" \
+		"0 * * * *" \
+		"/bin/bash ${_cron_pr_script} update >> \"\$HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log\" 2>&1" \
+		"$pr_script" \
+		"update" \
+		"3600" \
+		"$pr_log" \
+		"" \
+		"Profile README update enabled (hourly)" \
+		"Failed to install profile README update scheduler"
+	return 0
+}
+
+setup_profile_readme() {
+	local pr_script="$HOME/.aidevops/agents/scripts/profile-readme-helper.sh"
+	local pr_label="sh.aidevops.profile-readme-update"
+	if ! _profile_readme_ready "$pr_script"; then
+		return 0
+	fi
+
+	# Initialize profile repo if not already set up.
+	# Always run init — it's idempotent and handles:
+	#   - Fresh installs (no profile repo)
+	#   - Missing markers (injects them into existing README)
+	#   - Diverged history (repo deleted and recreated on GitHub)
+	#   - Already-initialized repos (returns early with no changes)
+	_run_profile_readme_init "$pr_script"
+
+	# Profile README auto-update scheduled job.
+	# Installed whenever gh CLI is available — the update script self-heals
+	# (discovers/creates the profile repo on first run via _resolve_profile_repo).
+	# macOS: launchd plist (hourly) | Linux: systemd timer or cron (hourly)
+	local pr_systemd="aidevops-profile-readme-update"
+	local pr_log="$HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log"
+	mkdir -p "$HOME/.aidevops/.agent-workspace/logs"
+
+	_install_profile_readme_scheduler "$pr_label" "$pr_systemd" "$pr_script" "$pr_log"
 	return 0
 }
 
@@ -1633,26 +1668,28 @@ WantedBy=timers.target
 # "invalid x-api-key". Also runs at load to catch tokens that expired
 # while the machine was off.
 # macOS: launchd plist | Linux/WSL: systemd timer or cron | Windows Git Bash: schtasks
-setup_oauth_token_refresh() {
-	local tr_script="$HOME/.aidevops/agents/scripts/oauth-pool-helper.sh"
-	local tr_label="sh.aidevops.token-refresh"
-	if ! [[ -x "$tr_script" ]] || ! [[ -f "$HOME/.aidevops/oauth-pool.json" ]]; then
-		return 0
+_oauth_token_refresh_ready() {
+	local tr_script="$1"
+	if ! [[ -x "$tr_script" ]]; then
+		return 1
 	fi
+	if ! [[ -f "$HOME/.aidevops/oauth-pool.json" ]]; then
+		return 1
+	fi
+	return 0
+}
 
-	local tr_log_dir="$HOME/.aidevops/.agent-workspace/logs"
-	mkdir -p "$tr_log_dir"
+_install_token_refresh_launchd() {
+	local tr_label="$1"
+	local tr_script="$2"
+	local tr_plist="$HOME/Library/LaunchAgents/${tr_label}.plist"
+	local _xml_tr_script _xml_tr_home
+	_xml_tr_script=$(_xml_escape "$tr_script")
+	_xml_tr_home=$(_xml_escape "$HOME")
 
-	if [[ "$(uname -s)" == "Darwin" ]]; then
-		local tr_plist="$HOME/Library/LaunchAgents/${tr_label}.plist"
-
-		local _xml_tr_script _xml_tr_home
-		_xml_tr_script=$(_xml_escape "$tr_script")
-		_xml_tr_home=$(_xml_escape "$HOME")
-
-		local tr_plist_content
-		tr_plist_content=$(
-			cat <<TR_PLIST
+	local tr_plist_content
+	tr_plist_content=$(
+		cat <<TR_PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1691,13 +1728,46 @@ setup_oauth_token_refresh() {
 </dict>
 </plist>
 TR_PLIST
-		)
+	)
 
-		if _launchd_install_if_changed "$tr_label" "$tr_plist" "$tr_plist_content"; then
-			print_info "OAuth token refresh enabled (launchd, every 30 min)"
-		else
-			print_warning "Failed to load token refresh LaunchAgent"
-		fi
+	if _launchd_install_if_changed "$tr_label" "$tr_plist" "$tr_plist_content"; then
+		print_info "OAuth token refresh enabled (launchd, every 30 min)"
+	else
+		print_warning "Failed to load token refresh LaunchAgent"
+	fi
+	return 0
+}
+
+_install_token_refresh_cron() {
+	local tr_script="$1"
+	local success_message="$2"
+	local failure_message="$3"
+	local _cron_tr_script
+	_cron_tr_script=$(_cron_escape "$tr_script")
+	(
+		crontab -l 2>/dev/null | grep -v 'aidevops: token-refresh' || true
+		echo "*/30 * * * * /bin/bash ${_cron_tr_script} refresh anthropic >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1; /bin/bash ${_cron_tr_script} refresh openai >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1 # aidevops: token-refresh"
+	) | crontab - 2>/dev/null || true
+	if crontab -l 2>/dev/null | grep -qF "aidevops: token-refresh" 2>/dev/null; then
+		print_info "$success_message"
+	else
+		print_warning "$failure_message"
+	fi
+	return 0
+}
+
+setup_oauth_token_refresh() {
+	local tr_script="$HOME/.aidevops/agents/scripts/oauth-pool-helper.sh"
+	local tr_label="sh.aidevops.token-refresh"
+	if ! _oauth_token_refresh_ready "$tr_script"; then
+		return 0
+	fi
+
+	local tr_log_dir="$HOME/.aidevops/.agent-workspace/logs"
+	mkdir -p "$tr_log_dir"
+
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		_install_token_refresh_launchd "$tr_label" "$tr_script"
 	elif _is_windows; then
 		# Windows Git Bash / MINGW64 / MSYS2: use Task Scheduler (schtasks)
 		_install_token_refresh_schtasks "$tr_script" "$tr_log_dir"
@@ -1707,31 +1777,17 @@ TR_PLIST
 			print_info "OAuth token refresh enabled (systemd user timer, every 30 min)"
 		else
 			print_warning "systemd enable failed for token-refresh — falling back to cron"
-			local _cron_tr_script
-			_cron_tr_script=$(_cron_escape "$tr_script")
-			(
-				crontab -l 2>/dev/null | grep -v 'aidevops: token-refresh' || true
-				echo "*/30 * * * * /bin/bash ${_cron_tr_script} refresh anthropic >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1; /bin/bash ${_cron_tr_script} refresh openai >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1 # aidevops: token-refresh"
-			) | crontab - 2>/dev/null || true
-			if crontab -l 2>/dev/null | grep -qF "aidevops: token-refresh" 2>/dev/null; then
-				print_info "OAuth token refresh enabled (cron fallback, every 30 min)"
-			else
-				print_warning "Failed to install token refresh scheduler"
-			fi
+			_install_token_refresh_cron \
+				"$tr_script" \
+				"OAuth token refresh enabled (cron fallback, every 30 min)" \
+				"Failed to install token refresh scheduler"
 		fi
 	else
 		# Linux / WSL without systemd: cron entry (every 30 min)
-		local _cron_tr_script
-		_cron_tr_script=$(_cron_escape "$tr_script")
-		(
-			crontab -l 2>/dev/null | grep -v 'aidevops: token-refresh' || true
-			echo "*/30 * * * * /bin/bash ${_cron_tr_script} refresh anthropic >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1; /bin/bash ${_cron_tr_script} refresh openai >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1 # aidevops: token-refresh"
-		) | crontab - 2>/dev/null || true
-		if crontab -l 2>/dev/null | grep -qF "aidevops: token-refresh" 2>/dev/null; then
-			print_info "OAuth token refresh enabled (cron, every 30 min)"
-		else
-			print_warning "Failed to install token refresh cron entry"
-		fi
+		_install_token_refresh_cron \
+			"$tr_script" \
+			"OAuth token refresh enabled (cron, every 30 min)" \
+			"Failed to install token refresh cron entry"
 	fi
 	return 0
 }
