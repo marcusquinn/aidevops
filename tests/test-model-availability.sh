@@ -504,7 +504,7 @@ fi
 # Build a mock curl response: headers + blank line + JSON body + http_code.
 # Use plain \n (no \r) to match how the production sed patterns work.
 mock_response=$(printf 'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{"data":[{"id":"model-1"}]}\n200')
-mock_http_code=$(echo "$mock_response" | tail -1)
+mock_http_code=$(printf '%s\n' "$mock_response" | tail -1)
 if [[ "$mock_http_code" == "200" ]]; then
 	pass "mock: tail -1 extracts http_code correctly (got 200)"
 else
@@ -512,7 +512,7 @@ else
 fi
 
 # Verify body extraction with the new awk pattern
-mock_body=$(echo "$mock_response" | sed '1,/^$/d' | awk 'NR>1{print prev} {prev=$0}')
+mock_body=$(printf '%s\n' "$mock_response" | sed '1,/^$/d' | awk 'NR>1{print prev} {prev=$0}')
 if echo "$mock_body" | grep -q '"data"'; then
 	pass "mock: body extraction preserves JSON content"
 else
@@ -521,7 +521,7 @@ fi
 
 # Verify the old bug scenario: if time_total were still present, tail -1 would get it
 mock_old_response=$(printf 'HTTP/1.1 200 OK\n\n{"data":[]}\n200\n0.209059')
-mock_old_code=$(echo "$mock_old_response" | tail -1)
+mock_old_code=$(printf '%s\n' "$mock_old_response" | tail -1)
 if [[ "$mock_old_code" == "0.209059" ]]; then
 	pass "mock: confirms old format would read time_total as http_code (bug scenario)"
 else
