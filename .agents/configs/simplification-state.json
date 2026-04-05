@@ -1558,15 +1558,15 @@
       "pr": 15682
     },
     ".agents/scripts/commands/pulse-sweep.md": {
-      "hash": "4f10a1ce591f6cb3d671201aca5d1864919f3361",
-      "at": "2026-04-03T11:54:14Z",
-      "passes": 1,
+      "hash": "277a7951dd7e395402f1d5297df56404d7cfba6f",
+      "at": "2026-04-05T17:38:47Z",
+      "passes": 2,
       "pr": 16472
     },
     ".agents/scripts/commands/pulse.md": {
-      "hash": "a1eb5dd3229c4836a376615cf128495dc4b7f128",
-      "at": "2026-04-02T14:41:03Z",
-      "passes": 3,
+      "hash": "ddece24744950882e52b3e5178f28ee49f971a8c",
+      "at": "2026-04-05T17:38:47Z",
+      "passes": 4,
       "pr": 13117
     },
     ".agents/scripts/commands/recall.md": {
@@ -1706,9 +1706,9 @@
       "pr": 15946
     },
     ".agents/scripts/config-helper.sh": {
-      "hash": "b1f8979f676eeac54c3da0111548b29126142ab3",
-      "at": "2026-04-03T03:15:27Z",
-      "passes": 1,
+      "hash": "70402cc86c1b496b234626f86d3ce6277086beb6",
+      "at": "2026-04-05T17:38:48Z",
+      "passes": 2,
       "pr": 16084
     },
     ".agents/scripts/cron-helper.sh": {
@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "3cfa1ef5c9ade88cf9df265bd1dc33d84ae1a261",
-      "at": "2026-04-05T17:14:49Z",
-      "passes": 17,
+      "hash": "e84081a7babfe90fb8db90e9af518329a618439e",
+      "at": "2026-04-05T17:38:49Z",
+      "passes": 18,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "0674f41a4ba93fb07e5abc68ca6964d5fdc84339",
-      "at": "2026-04-05T17:15:17Z",
-      "passes": 35,
+      "hash": "8cd02aa9f2c3a45cb17ea0c8de82bb9b08b5e39d",
+      "at": "2026-04-05T17:39:12Z",
+      "passes": 36,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "af7bb41566173ae4167a84ec500aaae04294cff4",
-      "at": "2026-04-05T17:15:17Z",
-      "passes": 34,
+      "hash": "f70fc39c16bdf93e93f98d509de536a18d4ba89b",
+      "at": "2026-04-05T17:39:12Z",
+      "passes": 35,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
