@@ -1075,7 +1075,7 @@ _prefetch_repo_issues() {
 
 	# Remove issues with supervisor, contributor, persistent, or quality-review labels
 	local filtered_json
-	filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review")) | not)]')
+	filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("needs-maintainer-review")) | not)]')
 
 	# GH#10308: Split issues into dispatchable vs quality-sweep-tracked.
 	# The sweep (stats-functions.sh) creates quality-debt and simplification-debt
@@ -3977,6 +3977,67 @@ reconcile_stale_done_issues() {
 }
 
 #######################################
+# Check if an issue was ever labeled needs-maintainer-review (t1894).
+# Uses the immutable GitHub timeline API — label removal does not erase
+# the history. This is the provenance gate: once an issue is tagged NMR,
+# it requires cryptographic approval forever, regardless of current labels.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+# Returns: 0 if the issue was ever NMR-labeled, 1 otherwise
+#######################################
+issue_was_ever_nmr() {
+	local issue_num="$1"
+	local slug="$2"
+
+	[[ -n "$issue_num" && -n "$slug" ]] || return 1
+
+	local ever_count
+	ever_count=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate \
+		--jq '[.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")] | length' \
+		2>/dev/null) || ever_count=0
+	[[ "$ever_count" =~ ^[0-9]+$ ]] || ever_count=0
+
+	if [[ "$ever_count" -gt 0 ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Check if an issue requires cryptographic approval and has it (t1894).
+# Combines the "ever-NMR" provenance check with signature verification.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+# Returns: 0 if the issue is approved (or never needed approval), 1 if blocked
+#######################################
+issue_has_required_approval() {
+	local issue_num="$1"
+	local slug="$2"
+
+	# If it was never NMR-labeled, no approval needed
+	if ! issue_was_ever_nmr "$issue_num" "$slug"; then
+		return 0
+	fi
+
+	# It was NMR-labeled at some point — check for cryptographic approval
+	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
+	if [[ -f "$approval_helper" ]]; then
+		local verify_result
+		verify_result=$(bash "$approval_helper" verify "$issue_num" "$slug" 2>/dev/null) || verify_result=""
+		if [[ "$verify_result" == "VERIFIED" ]]; then
+			return 0
+		fi
+	fi
+
+	# Was ever NMR, no signed approval found — blocked
+	return 1
+}
+
+#######################################
 # Auto-approve needs-maintainer-review issues using cryptographic
 # signature verification (t1894, replaces GH#16842 comment-based check).
 #
@@ -6135,6 +6196,13 @@ dispatch_with_dedup() {
 
 	if echo "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review"))' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
+		return 1
+	fi
+
+	# t1894: Cryptographic approval gate — block dispatch for issues that were
+	# ever labeled needs-maintainer-review without a signed approval.
+	if ! issue_has_required_approval "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] dispatch_with_dedup: BLOCKED #${issue_number} in ${repo_slug} — requires cryptographic approval (ever-NMR)" >>"$LOGFILE"
 		return 1
 	fi
 

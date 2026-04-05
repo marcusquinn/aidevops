@@ -292,7 +292,7 @@ jobs:
       issues: write
 
     steps:
-      - name: Re-apply label if removed by non-maintainer
+      - name: Re-apply label if no signed approval exists (t1894)
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
@@ -303,31 +303,27 @@ jobs:
         run: |
           echo "Label 'needs-maintainer-review' removed from issue #$ISSUE_NUMBER by $ACTOR"
 
-          # Get the actor's association with the repo
-          # The event's author_association is for the issue author, not the actor
-          # who removed the label. We need to check the actor's permissions.
-          ACTOR_PERMS=$(gh api "repos/${REPO}/collaborators/${ACTOR}/permission" \
-            --jq '.permission' 2>/dev/null || echo "none")
-
-          echo "Actor $ACTOR has permission level: $ACTOR_PERMS"
-
-          # Allow maintainers and collaborators with write permission to remove triage labels
-          # write = standard collaborator level (e.g., alex-solovyev) — sufficient
-          # admin/maintain = maintainer level
-          case "$ACTOR_PERMS" in
-            admin|maintain|write)
-              echo "ALLOWED: $ACTOR has $ACTOR_PERMS permission — label removal accepted"
-              exit 0
-              ;;
-          esac
-
-          # Also allow bots (github-actions)
+          # Always allow the bot — the approval-helper.sh removes labels after
+          # posting a signed approval comment, so this is the legitimate path.
           if [[ "$ACTOR" == "github-actions[bot]" ]] || [[ "$ACTOR" == "github-actions" ]]; then
             echo "ALLOWED: GitHub Actions bot — label removal accepted"
             exit 0
           fi
 
-          echo "DENIED: $ACTOR ($ACTOR_PERMS) is not a maintainer — re-applying label"
+          # t1894: Check for a cryptographic signed approval comment.
+          # Even admin/maintainer actors must use the approval command —
+          # manual label removal alone is insufficient because it leaves
+          # no auditable cryptographic proof of approval.
+          SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            --jq '[.[] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
+            2>/dev/null || echo "0")
+
+          if [[ "$SIGNED_APPROVAL" -gt 0 ]]; then
+            echo "ALLOWED: Signed approval comment found — label removal accepted"
+            exit 0
+          fi
+
+          echo "DENIED: No signed approval found — re-applying label (actor: $ACTOR)"
 
           # Re-apply the label
           gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "needs-maintainer-review"
@@ -340,12 +336,13 @@ jobs:
             gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "<!-- label-protection-notice -->
           The \`needs-maintainer-review\` label was re-applied automatically.
 
-          Only repository collaborators with write access or higher (write/maintain/admin permission) can remove triage labels from external issues. This prevents the development pipeline from picking up unreviewed external contributions.
+          Removing this label requires a cryptographic approval — even for maintainers. This ensures every approval is auditable and cannot be forged by automation.
 
-          If you believe this issue is ready for development, ask a maintainer to approve it:
+          To approve this issue, run from your terminal:
           \`\`\`
           sudo aidevops approve issue $ISSUE_NUMBER
-          \`\`\`"
+          \`\`\`
+          This signs the approval with a root-protected key and posts a verifiable comment."
           fi
 
   # =========================================================================

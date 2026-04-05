@@ -103,7 +103,7 @@ jobs:
                 `Thanks for the report, @${author}.`,
                 '',
                 'This issue has been queued for maintainer review. A maintainer will review it and either:',
-                '- **Approve** it for the development pipeline (`status:available`)',
+                '- **Approve** it using: `sudo aidevops approve issue ' + issue.number + '`',
                 '- **Ask for more information** if the report needs clarification',
                 '- **Close** it if it\'s a duplicate or out of scope',
                 '',
