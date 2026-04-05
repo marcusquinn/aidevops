@@ -33,6 +33,8 @@
 #   memory-pressure-monitor.sh              # Single check (for launchd)
 #   memory-pressure-monitor.sh --status     # Print current process + memory state
 #   memory-pressure-monitor.sh --daemon     # Continuous monitoring (60s interval)
+#   memory-pressure-monitor.sh --stop       # Stop a running daemon
+#   memory-pressure-monitor.sh --restart    # Stop existing daemon and start a new one
 #   memory-pressure-monitor.sh --install    # Install launchd plist
 #   memory-pressure-monitor.sh --uninstall  # Remove launchd plist and state files
 #   memory-pressure-monitor.sh --help       # Show usage
@@ -821,6 +823,22 @@ _status_print_os_and_config() {
 	echo "  Notifications:            ${NOTIFY_ENABLED}"
 
 	echo ""
+	echo "--- Daemon ---"
+	echo ""
+	local pid_file="${STATE_DIR}/memory-pressure-monitor.pid"
+	if [[ -f "${pid_file}" ]]; then
+		local daemon_pid
+		daemon_pid=$(cat "${pid_file}" 2>/dev/null || echo "")
+		if [[ -n "$daemon_pid" ]] && [[ "$daemon_pid" =~ ^[0-9]+$ ]] && kill -0 "$daemon_pid" 2>/dev/null; then
+			echo "  Daemon: running (PID ${daemon_pid})"
+		else
+			echo "  Daemon: not running (stale PID file)"
+		fi
+	else
+		echo "  Daemon: not running"
+	fi
+
+	echo ""
 	echo "--- Launchd ---"
 	echo ""
 	if [[ -f "${PLIST_PATH}" ]]; then
@@ -851,8 +869,31 @@ cmd_status() {
 }
 
 # Run continuous monitoring loop with adaptive polling (faster when shellcheck detected)
+# Prevents multiple concurrent daemon instances via a PID file (GH#17408).
 cmd_daemon() {
-	echo "[${SCRIPT_NAME}] Starting daemon mode (interval: ${DAEMON_INTERVAL}s, fast: 10s when shellcheck detected)"
+	ensure_dirs
+	local pid_file="${STATE_DIR}/memory-pressure-monitor.pid"
+
+	# Guard: prevent multiple daemon instances
+	if [[ -f "${pid_file}" ]]; then
+		local old_pid
+		old_pid=$(cat "${pid_file}" 2>/dev/null || echo "")
+		if [[ -n "$old_pid" ]] && [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
+			echo "[${SCRIPT_NAME}] Daemon already running (PID ${old_pid}). Use --stop or --restart to control it." >&2
+			return 1
+		else
+			# Stale PID file — remove it and continue
+			rm -f "${pid_file}"
+		fi
+	fi
+
+	# Write our PID before entering the loop
+	echo $$ >"${pid_file}"
+
+	# Remove PID file on exit (Ctrl+C, SIGTERM, or normal exit)
+	trap 'rm -f "${pid_file}"; trap - EXIT INT TERM' EXIT INT TERM
+
+	echo "[${SCRIPT_NAME}] Starting daemon mode (PID $$, interval: ${DAEMON_INTERVAL}s, fast: 10s when shellcheck detected)"
 	echo "[${SCRIPT_NAME}] Press Ctrl+C to stop"
 
 	while true; do
@@ -869,6 +910,59 @@ cmd_daemon() {
 
 		sleep "$interval"
 	done
+}
+
+# Stop a running daemon by sending SIGTERM to the PID in the PID file.
+cmd_stop() {
+	ensure_dirs
+	local pid_file="${STATE_DIR}/memory-pressure-monitor.pid"
+
+	if [[ ! -f "${pid_file}" ]]; then
+		echo "[${SCRIPT_NAME}] No PID file found. Is the daemon running?" >&2
+		return 1
+	fi
+
+	local pid
+	pid=$(cat "${pid_file}" 2>/dev/null || echo "")
+	if [[ -z "$pid" ]] || ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+		echo "[${SCRIPT_NAME}] PID file is invalid. Removing stale file." >&2
+		rm -f "${pid_file}"
+		return 1
+	fi
+
+	if ! kill -0 "$pid" 2>/dev/null; then
+		echo "[${SCRIPT_NAME}] No running daemon found (PID ${pid} is gone). Removing stale PID file."
+		rm -f "${pid_file}"
+		return 0
+	fi
+
+	echo "[${SCRIPT_NAME}] Stopping daemon (PID ${pid})..."
+	kill -TERM "$pid" 2>/dev/null || true
+
+	# Wait up to 5 seconds for the process to exit
+	local waited=0
+	while kill -0 "$pid" 2>/dev/null && [[ "$waited" -lt 5 ]]; do
+		sleep 1
+		waited=$((waited + 1))
+	done
+
+	if kill -0 "$pid" 2>/dev/null; then
+		echo "[${SCRIPT_NAME}] Daemon did not stop after SIGTERM, sending SIGKILL..."
+		kill -KILL "$pid" 2>/dev/null || true
+	fi
+
+	rm -f "${pid_file}"
+	echo "[${SCRIPT_NAME}] Daemon stopped."
+	return 0
+}
+
+# Stop any running daemon and start a fresh one.
+cmd_restart() {
+	local stop_rc=0
+	cmd_stop 2>/dev/null || stop_rc=$?
+	# stop_rc=1 is acceptable (no daemon was running)
+	cmd_daemon
+	return $?
 }
 
 # Install launchd plist for periodic monitoring (every 30 seconds)
@@ -948,8 +1042,15 @@ cmd_uninstall() {
 		echo "Not installed"
 	fi
 
+	# Stop any running daemon before cleaning up
+	local pid_file="${STATE_DIR}/memory-pressure-monitor.pid"
+	if [[ -f "${pid_file}" ]]; then
+		cmd_stop 2>/dev/null || true
+	fi
+
 	# Clean up state files
 	rm -f "${STATE_DIR}"/memory-pressure-*.cooldown
+	rm -f "${pid_file}"
 	echo "Cleaned up state files"
 	return 0
 }
@@ -963,6 +1064,8 @@ Commands:
   --check, -c       Single check (default, for launchd)
   --status, -s      Print current process + memory state
   --daemon, -d      Continuous monitoring (${DAEMON_INTERVAL}s interval)
+  --stop            Stop a running daemon (via PID file)
+  --restart         Stop existing daemon and start a new one
   --install, -i     Install launchd plist (runs every 60s)
   --uninstall, -u   Remove launchd plist and state files
   --help, -h        Show this help
@@ -1011,6 +1114,12 @@ main() {
 		;;
 	--daemon | -d | daemon)
 		cmd_daemon
+		;;
+	--stop | stop)
+		cmd_stop
+		;;
+	--restart | restart)
+		cmd_restart
 		;;
 	--install | -i | install)
 		cmd_install
