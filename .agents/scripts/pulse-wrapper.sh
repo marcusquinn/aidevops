@@ -6403,30 +6403,23 @@ dispatch_with_dedup() {
 	# If a model_override is requested (e.g., tier:thinking → opus), we
 	# validate it against backoff first and fall back to auto-selection if
 	# it's currently backed off.
-	# Model selection: use the first available model from AIDEVOPS_HEADLESS_MODELS.
-	# The headless-runtime-helper.sh handles backoff checks and model rotation
-	# internally when it launches the worker — we don't need to pre-validate
-	# here. The previous approach of calling `select` as a subprocess failed
-	# because the subprocess couldn't resolve provider auth in the launchd context
-	# (reported "No direct provider models configured" despite correct env vars).
+	# GH#17436: Model selection — let headless-runtime-helper.sh round-robin.
+	# Previously this always took cut -d',' -f1 (first model), bypassing the
+	# runtime helper's round-robin rotation. This caused every worker to use
+	# the same model (openai/gpt-5.4 via OpenCode default) instead of rotating
+	# between anthropic and openai.
 	#
-	# Simply pass the model to the worker launcher and let it handle selection.
+	# Now: only pass --model when there's an explicit override (e.g., tier:thinking).
+	# When no override, omit --model entirely so choose_model() in the runtime
+	# helper picks the next available model via round-robin with backoff awareness.
 	local selected_model=""
 	if [[ -n "$model_override" ]]; then
 		selected_model="$model_override"
-	else
-		# Use the first model from the configured list
-		selected_model=$(printf '%s' "${AIDEVOPS_HEADLESS_MODELS:-}" | cut -d',' -f1 | tr -d ' ')
-		# Fallback to config if env not set
-		if [[ -z "$selected_model" ]] && type config_get >/dev/null 2>&1; then
-			selected_model=$(config_get "orchestration.headless_models" "" | cut -d',' -f1 | tr -d ' ')
-		fi
 	fi
 
-	# Launch worker — headless-runtime-helper.sh handles model fallback
-	# when no model is specified (uses DEFAULT_HEADLESS_MODELS internally).
-	# Do NOT early-return on empty selected_model; the helper's
-	# get_configured_models() has the authoritative fallback chain (GH#17369).
+	# Launch worker — headless-runtime-helper.sh handles model selection
+	# via round-robin when no --model is specified. Its choose_model() reads
+	# AIDEVOPS_HEADLESS_MODELS, checks backoff/auth, and rotates providers.
 	local -a worker_cmd=("$HEADLESS_RUNTIME_HELPER" run
 		--role worker
 		--session-key "$session_key"

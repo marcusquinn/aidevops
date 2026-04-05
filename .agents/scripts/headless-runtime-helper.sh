@@ -1197,12 +1197,12 @@ Mandatory behavior:
 5. If merge/close cannot complete, exit only with a clear BLOCKED outcome and evidence (failing check, missing permission, unresolved conflict, or explicit policy gate).
 6. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, attempt model escalation — retry with the next tier (sonnet -> opus via --model anthropic/claude-opus-4-6). Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own.
 
-Pre-exit self-check (MANDATORY):
+Pre-exit self-check -- MANDATORY:
 Before ending your session, verify ALL of these:
-  a) At least one commit with implementation changes exists on your branch.
-  b) A PR exists: `gh pr list --head "$(git rev-parse --abbrev-ref HEAD)"` returns a result.
-  c) If either (a) or (b) is missing, you are NOT done — continue working.
-  d) The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.
+  - At least one commit with implementation changes exists on your branch.
+  - A PR exists for your branch: run gh pr list --head YOUR_BRANCH_NAME
+  - If either check fails, you are NOT done -- continue working.
+  - The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.
 EOF
 	)
 
