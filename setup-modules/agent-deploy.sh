@@ -250,8 +250,9 @@ _deploy_agents_post_copy() {
 
 # _warn_deployed_script_drift source_dir target_dir
 # Compares deployed scripts against canonical source and warns if any differ.
-# Local edits in ~/.aidevops/agents/scripts/ are PRESERVED on next deploy (GH#17414).
-# This warning is informational only — deployment proceeds regardless.
+# This catches the case where someone edited ~/.aidevops/agents/scripts/ directly
+# (those edits are overwritten by every deploy). Emits a warning listing drifted
+# files and the canonical source path to edit instead.
 # Non-fatal: always returns 0 so deployment proceeds.
 _warn_deployed_script_drift() {
 	local source_dir="$1"
@@ -279,12 +280,12 @@ _warn_deployed_script_drift() {
 	done
 
 	if [[ ${#drifted[@]} -gt 0 ]]; then
-		print_warning "Deployed scripts differ from canonical source (local edits are preserved on next deploy):"
+		print_warning "Deployed scripts differ from canonical source (local edits will be overwritten):"
 		for bn in "${drifted[@]}"; do
 			print_warning "  $target_scripts/$bn"
 			print_warning "    → canonical: $source_scripts/$bn"
 		done
-		print_warning "Local edits survive auto-update. To push edits upstream: PR to canonical source."
+		print_warning "To preserve changes: edit the canonical source and re-run setup.sh --non-interactive"
 	fi
 	return 0
 }
@@ -376,16 +377,6 @@ deploy_aidevops_agents() {
 			cp -a "$target_dir/$pdir" "$staging_dir/$pdir" 2>/dev/null || true
 		fi
 	done
-
-	# Restore local script edits: only copy scripts where the old target's version
-	# is NEWER (user edited them) AND the script still exists in the canonical
-	# source (--existing prevents resurrecting deleted scripts). Skip entirely
-	# in clean mode — the user explicitly wants a fresh deployment. (GH#17414)
-	if [[ "${CLEAN_MODE:-false}" != "true" && -d "$target_dir/scripts" && -d "$staging_dir/scripts" ]]; then
-		if command -v rsync &>/dev/null; then
-			rsync -a --update --existing "$target_dir/scripts/" "$staging_dir/scripts/" 2>/dev/null || true
-		fi
-	fi
 
 	# Atomic swap: mv is atomic on the same filesystem (POSIX rename())
 	if [[ -d "$target_dir" ]]; then
