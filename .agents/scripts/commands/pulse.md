@@ -90,16 +90,9 @@ gh pr merge NUMBER --repo SLUG --squash
 `CHANGES_REQUESTED` → dispatch fix worker. `APPROVED` → merge directly.
 Check external contributor gate before ANY approve/merge (see Pre-merge checks below).
 
-### 3.5. Dispatch triage reviews for needs-maintainer-review issues
+### 3.5. Triage reviews for needs-maintainer-review issues (DETERMINISTIC — handled by shell)
 
-**Before implementation workers.** External contributor issues deserve fast feedback —
-dispatch opus-tier triage reviews first so the community isn't left waiting. Max 2 per cycle.
-Uses pre-fetched triage status.
-
-```bash
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-AVAILABLE=$(dispatch_triage_reviews "$AVAILABLE")
-```
+Triage review dispatch is handled deterministically by `dispatch_triage_reviews()` BEFORE the LLM session. NMR issues are NOT in the LLM state file (t1894 security gate). The LLM MUST NOT list, fetch, comment on, relabel, or dispatch workers for NMR issues. Approval requires `sudo aidevops approve issue <number>` — a cryptographic gate that workers cannot bypass.
 
 Skip when: all slots occupied, issue created <5 min ago, or maintainer already commented.
 
@@ -264,8 +257,7 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 - **`status:needs-info`** → check pre-fetched reply status (step 4.5).
 - **`status:available` or no status** → dispatch implementation worker.
 
-NEVER dispatch a worker for an issue with `needs-maintainer-review`. Maintainer must remove it
-and add `auto-dispatch` before the issue is dispatchable.
+NEVER dispatch a worker for an issue with `needs-maintainer-review`. NEVER attempt to remove this label, comment on these issues, or bypass the gate. Approval is cryptographic (t1894) — only `sudo aidevops approve issue <number>` can unlock it. NMR issues are excluded from the LLM state file; if you encounter one, skip it.
 
 ## Worker Management
 

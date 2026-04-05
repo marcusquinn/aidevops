@@ -1321,13 +1321,17 @@ _append_prefetch_sub_helpers() {
 	cat "$ghfail_tmp" >>"$STATE_FILE"
 	rm -f "$ghfail_tmp"
 
-	# Append needs-maintainer-review triage status for automated review dispatch
+	# Write needs-maintainer-review triage status to a SEPARATE file (t1894).
+	# This data is used only by the deterministic dispatch_triage_reviews()
+	# function — it must NOT appear in the LLM's STATE_FILE. NMR issues are
+	# a security gate; the LLM should never see or act on them.
 	local triage_tmp
 	triage_tmp=$(mktemp)
 	run_cmd_with_timeout 30 prefetch_triage_review_status "$repo_entries" >"$triage_tmp" 2>/dev/null || {
 		echo "[pulse-wrapper] prefetch_triage_review_status timed out after 30s (non-fatal)" >>"$LOGFILE"
 	}
-	cat "$triage_tmp" >>"$STATE_FILE"
+	TRIAGE_STATE_FILE="${STATE_FILE%.txt}-triage.txt"
+	cat "$triage_tmp" >"$TRIAGE_STATE_FILE"
 	rm -f "$triage_tmp"
 
 	# Append status:needs-info contributor reply status
@@ -9909,13 +9913,15 @@ dispatch_triage_reviews() {
 		return 0
 	}
 
-	# Parse needs-review items from pre-fetched state
-	local state_file="${STATE_FILE:-}"
-	[[ -f "$state_file" ]] || {
-		echo "[pulse-wrapper] dispatch_triage_reviews: no state file" >>"$LOGFILE"
+	# Parse needs-review items from the dedicated triage state file (t1894).
+	# NMR data is written to a separate file, not the LLM's STATE_FILE.
+	local triage_file="${TRIAGE_STATE_FILE:-${STATE_FILE%.txt}-triage.txt}"
+	[[ -f "$triage_file" ]] || {
+		echo "[pulse-wrapper] dispatch_triage_reviews: no triage state file" >>"$LOGFILE"
 		printf '%d\n' "$available"
 		return 0
 	}
+	local state_file="$triage_file"
 
 	# Resolve model: prefer opus, fall back to sonnet, then omit --model
 	# (lets headless-runtime-helper pick its default, same as implementation workers)

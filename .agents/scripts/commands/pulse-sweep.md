@@ -58,16 +58,9 @@ gh pr merge NUMBER --repo SLUG --squash
 
 **Merge criteria:** CI all PASS (or NONE/PENDING) + collaborator → approve and merge. `CHANGES_REQUESTED` → dispatch fix worker. `APPROVED` → merge directly. Check external contributor gate before ANY approve/merge.
 
-### 3.5. Dispatch triage reviews for needs-maintainer-review issues
+### 3.5. Triage reviews for needs-maintainer-review issues (DETERMINISTIC — handled by shell)
 
-Before implementation workers. Max 2 per cycle. Uses pre-fetched triage status.
-
-```bash
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-AVAILABLE=$(dispatch_triage_reviews "$AVAILABLE")
-```
-
-Skip when: all slots occupied, issue created <5 min ago, or maintainer already commented.
+Triage review dispatch is handled deterministically by `dispatch_triage_reviews()` in `pulse-wrapper.sh` BEFORE the LLM session starts. NMR issues are NOT included in the LLM state file (t1894 security gate). The LLM MUST NOT attempt to list, fetch, comment on, relabel, or dispatch workers for NMR issues. Approval is cryptographic — only `sudo aidevops approve issue <number>` can unlock the gate.
 
 ### 4. Dispatch workers for open issues
 
@@ -214,17 +207,13 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 - **`status:needs-info`** → check pre-fetched reply status (step 4.5).
 - **`status:available` or no status** → dispatch implementation worker.
 
-### Maintainer review gate (t1545)
+### Maintainer review gate (t1545, t1894)
 
-NEVER dispatch a worker for an issue with `needs-maintainer-review`. Applied by `issue-triage-gate.yml` to all non-collaborator issues. Maintainer must remove it and add `auto-dispatch` before the issue is dispatchable.
+NEVER dispatch a worker for an issue with `needs-maintainer-review`. Applied by `issue-triage-gate.yml` to all non-collaborator issues.
 
-**Comment-based approval:** Each cycle, check maintainer's most recent comment on `needs-maintainer-review` items:
+**Cryptographic approval required (t1894):** Approval uses SSH-signed comments posted via `sudo aidevops approve issue <number>`. The deterministic `auto_approve_maintainer_issues()` in `pulse-wrapper.sh` verifies the signature each cycle — do NOT attempt to approve issues by commenting, removing labels, or calling `gh issue edit`. Only the cryptographic approval command (which requires sudo + interactive TTY + root-protected signing key) can unlock the gate. Workers CANNOT and MUST NOT attempt to forge or bypass this gate.
 
-- **"approved"** → remove `needs-maintainer-review`, add `auto-dispatch` (issues) or allow merge (PRs)
-- **"declined"** → close with the maintainer's reason
-- **Further direction** → dispatch a follow-up triage review incorporating the feedback
-
-Only process comments from the repo maintainer (from `repos.json` or slug owner).
+The only exception: maintainer-authored issues are auto-approved (the maintainer wouldn't gate their own issues).
 
 ## Worker Management
 
