@@ -78,6 +78,306 @@ _print_error() {
 	return 0
 }
 
+_require_number_arg() {
+	local value="${1:-}"
+	local noun="$2"
+	local usage="$3"
+
+	if [[ -z "$value" ]]; then
+		_print_error "$usage"
+		return 1
+	fi
+
+	if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+		_print_error "$noun number must be numeric: $value"
+		return 1
+	fi
+
+	return 0
+}
+
+_require_interactive_root() {
+	local usage="$1"
+
+	if [[ ! -t 0 ]]; then
+		_print_error "This command requires an interactive terminal (cannot run headless)"
+		return 1
+	fi
+
+	if [[ "$(id -u)" -ne 0 ]]; then
+		_print_error "This command must be run with sudo"
+		echo "$usage"
+		return 1
+	fi
+
+	return 0
+}
+
+_approval_real_user() {
+	printf '%s' "${SUDO_USER:-$(whoami)}"
+	return 0
+}
+
+_approval_real_home() {
+	local real_user
+	real_user=$(_approval_real_user)
+	eval echo "~$real_user"
+	return 0
+}
+
+_approval_private_key_path() {
+	local real_home
+	real_home=$(_approval_real_home)
+	printf '%s' "$real_home/.aidevops/approval-keys/private/approval.key"
+	return 0
+}
+
+_require_approval_key() {
+	local actual_key="$1"
+
+	if [[ ! -f "$actual_key" ]]; then
+		_print_error "No approval key found. Run: sudo aidevops approve setup"
+		return 1
+	fi
+
+	return 0
+}
+
+_resolve_slug_or_fail() {
+	local slug="${1:-}"
+	local usage="$2"
+
+	if [[ -z "$slug" ]]; then
+		slug=$(_detect_slug)
+	fi
+
+	if [[ -z "$slug" || "$slug" != *"/"* ]]; then
+		_print_error "$usage"
+		return 1
+	fi
+
+	printf '%s' "$slug"
+	return 0
+}
+
+_fetch_target_title() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+
+	if [[ "$target_type" == "issue" ]]; then
+		gh issue view "$target_number" --repo "$slug" --json title --jq '.title' 2>/dev/null || printf '%s' "(could not fetch title)"
+		return 0
+	fi
+
+	gh pr view "$target_number" --repo "$slug" --json title --jq '.title' 2>/dev/null || printf '%s' "(could not fetch title)"
+	return 0
+}
+
+_confirm_approval() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local title="$4"
+	local label="Issue"
+
+	if [[ "$target_type" == "pr" ]]; then
+		label="PR"
+		echo ""
+		echo "Approving PR for merge:"
+	else
+		echo ""
+		echo "Approving issue for development:"
+	fi
+
+	echo "  ${label}:  #$target_number"
+	echo "  Repo:   $slug"
+	echo "  Title:  $title"
+	echo ""
+	printf "Type APPROVE to confirm: "
+
+	local confirmation
+	read -r confirmation
+	if [[ "$confirmation" != "APPROVE" ]]; then
+		_print_error "Approval cancelled"
+		return 1
+	fi
+
+	return 0
+}
+
+_sign_approval_payload() {
+	local payload="$1"
+	local actual_key="$2"
+	local sig_file="$3"
+
+	printf '%s' "$payload" | ssh-keygen -Y sign \
+		-f "$actual_key" \
+		-n "$APPROVAL_NAMESPACE" \
+		-q - >"$sig_file" 2>/dev/null
+
+	if [[ ! -s "$sig_file" ]]; then
+		_print_error "Signing failed"
+		return 1
+	fi
+
+	return 0
+}
+
+_build_signed_comment() {
+	local payload="$1"
+	local sig_file="$2"
+	local signature
+	signature=$(<"$sig_file")
+
+	cat <<EOF
+${APPROVAL_MARKER}
+## Maintainer Approval (cryptographically signed)
+
+\`\`\`
+${payload}
+\`\`\`
+
+\`\`\`
+${signature}
+\`\`\`
+
+This approval was signed with a root-protected SSH key. It cannot be forged by automation.
+EOF
+	return 0
+}
+
+_post_issue_approval_updates() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+
+	if [[ "$target_type" != "issue" ]]; then
+		return 0
+	fi
+
+	gh issue edit "$target_number" --repo "$slug" \
+		--remove-label "needs-maintainer-review" \
+		--add-label "auto-dispatch" >/dev/null 2>&1 || true
+	_print_info "Labels updated: removed needs-maintainer-review, added auto-dispatch"
+	return 0
+}
+
+_approve_target() {
+	local target_type="$1"
+	local target_number="${2:-}"
+	local slug="${3:-}"
+	local usage="Usage: sudo aidevops approve ${target_type} <number> [owner/repo]"
+	local slug_error="Could not detect repo slug. Provide it: sudo aidevops approve ${target_type} ${target_number} owner/repo"
+
+	_require_number_arg "$target_number" "$target_type" "$usage" || return 1
+	_require_interactive_root "$usage" || return 1
+
+	local actual_key
+	actual_key=$(_approval_private_key_path)
+	_require_approval_key "$actual_key" || return 1
+
+	slug=$(_resolve_slug_or_fail "$slug" "$slug_error") || return 1
+
+	local title
+	title=$(_fetch_target_title "$target_type" "$target_number" "$slug")
+	_confirm_approval "$target_type" "$target_number" "$slug" "$title" || return 1
+
+	local timestamp payload sig_file comment_body
+	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	payload="APPROVE:${target_type}:${slug}:${target_number}:${timestamp}"
+	sig_file=$(mktemp)
+
+	if ! _sign_approval_payload "$payload" "$actual_key" "$sig_file"; then
+		rm -f "$sig_file"
+		return 1
+	fi
+
+	comment_body=$(_build_signed_comment "$payload" "$sig_file")
+	rm -f "$sig_file"
+
+	if [[ "$target_type" == "issue" ]]; then
+		gh issue comment "$target_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1
+	else
+		gh pr comment "$target_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1
+	fi
+
+	_post_issue_approval_updates "$target_type" "$target_number" "$slug"
+	_print_ok "${target_type^} #$target_number approved and signed"
+	echo ""
+	return 0
+}
+
+_extract_fenced_block() {
+	local body="$1"
+	local target_block="$2"
+
+	printf '%s\n' "$body" | awk -v target="$target_block" '
+		/^```$/ {
+			block++
+			if (block == target) {
+				capture = 1
+				next
+			}
+			if (capture) {
+				exit
+			}
+		}
+		capture { print }
+	'
+	return 0
+}
+
+_create_allowed_signers_file() {
+	local pub_key="$1"
+	local allowed_signers_file="$2"
+	local key_content
+	key_content=$(<"$pub_key")
+	printf 'approval@aidevops.sh namespaces="%s" %s\n' "$APPROVAL_NAMESPACE" "$key_content" >"$allowed_signers_file"
+	return 0
+}
+
+_verify_comment_signature() {
+	local issue_number="$1"
+	local body="$2"
+	local pub_key="$3"
+	local payload signature payload_file sig_file allowed_signers_file
+
+	payload=$(_extract_fenced_block "$body" 1)
+	if [[ -z "$payload" ]]; then
+		return 1
+	fi
+
+	if [[ ! "$payload" =~ ^APPROVE:(issue|pr):.*:[0-9]+: ]]; then
+		return 1
+	fi
+
+	signature=$(_extract_fenced_block "$body" 2)
+	if [[ -z "$signature" ]]; then
+		return 1
+	fi
+
+	payload_file=$(mktemp)
+	sig_file=$(mktemp)
+	allowed_signers_file=$(mktemp)
+	printf '%s' "$payload" >"$payload_file"
+	printf '%s\n' "$signature" >"$sig_file"
+	_create_allowed_signers_file "$pub_key" "$allowed_signers_file"
+
+	if ssh-keygen -Y verify \
+		-f "$allowed_signers_file" \
+		-I "approval@aidevops.sh" \
+		-n "$APPROVAL_NAMESPACE" \
+		-s "$sig_file" <"$payload_file" >/dev/null 2>&1 &&
+		[[ "$payload" == *":${issue_number}:"* ]]; then
+		rm -f "$payload_file" "$sig_file" "$allowed_signers_file"
+		return 0
+	fi
+
+	rm -f "$payload_file" "$sig_file" "$allowed_signers_file"
+	return 1
+}
+
 # ── Setup ────────────────────────────────────────────────────────────────────
 
 cmd_setup() {
@@ -156,118 +456,8 @@ cmd_setup() {
 cmd_issue_approved() {
 	local issue_number="${1:-}"
 	local slug="${2:-}"
-
-	if [[ -z "$issue_number" ]]; then
-		_print_error "Usage: sudo aidevops approve issue <number> [owner/repo]"
-		return 1
-	fi
-
-	# Validate number
-	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
-		_print_error "Issue number must be numeric: $issue_number"
-		return 1
-	fi
-
-	# Must be interactive TTY (rejects headless workers)
-	if [[ ! -t 0 ]]; then
-		_print_error "This command requires an interactive terminal (cannot run headless)"
-		return 1
-	fi
-
-	# Must be run as root (via sudo)
-	if [[ "$(id -u)" -ne 0 ]]; then
-		_print_error "This command must be run with sudo"
-		echo "Usage: sudo aidevops approve issue $issue_number"
-		return 1
-	fi
-
-	# Resolve paths for the real user
-	local real_user="${SUDO_USER:-$(whoami)}"
-	local real_home
-	real_home=$(eval echo "~$real_user")
-	local actual_key="$real_home/.aidevops/approval-keys/private/approval.key"
-
-	if [[ ! -f "$actual_key" ]]; then
-		_print_error "No approval key found. Run: sudo aidevops approve setup"
-		return 1
-	fi
-
-	# Auto-detect slug if not provided
-	if [[ -z "$slug" ]]; then
-		slug=$(_detect_slug)
-	fi
-	if [[ -z "$slug" || "$slug" != *"/"* ]]; then
-		_print_error "Could not detect repo slug. Provide it: sudo aidevops approve issue $issue_number owner/repo"
-		return 1
-	fi
-
-	# Fetch issue title for confirmation
-	local issue_title
-	issue_title=$(gh issue view "$issue_number" --repo "$slug" --json title --jq '.title' 2>/dev/null || echo "(could not fetch title)")
-
-	echo ""
-	echo "Approving issue for development:"
-	echo "  Issue:  #$issue_number"
-	echo "  Repo:   $slug"
-	echo "  Title:  $issue_title"
-	echo ""
-
-	# Interactive confirmation
-	printf "Type APPROVE to confirm: "
-	local confirmation
-	read -r confirmation
-	if [[ "$confirmation" != "APPROVE" ]]; then
-		_print_error "Approval cancelled"
-		return 1
-	fi
-
-	# Sign the approval
-	local timestamp
-	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	local payload="APPROVE:issue:${slug}:${issue_number}:${timestamp}"
-
-	local sig_file
-	sig_file=$(mktemp)
-	trap 'rm -f "$sig_file"' EXIT
-
-	printf '%s' "$payload" | ssh-keygen -Y sign \
-		-f "$actual_key" \
-		-n "$APPROVAL_NAMESPACE" \
-		-q - >"$sig_file" 2>/dev/null
-
-	if [[ ! -s "$sig_file" ]]; then
-		_print_error "Signing failed"
-		return 1
-	fi
-
-	local signature
-	signature=$(cat "$sig_file")
-
-	# Build the comment
-	local comment_body
-	comment_body="${APPROVAL_MARKER}
-## Maintainer Approval (cryptographically signed)
-
-\`\`\`
-${payload}
-\`\`\`
-
-\`\`\`
-${signature}
-\`\`\`
-
-This approval was signed with a root-protected SSH key. It cannot be forged by automation."
-
-	# Post comment and update labels
-	gh issue comment "$issue_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1
-	gh issue edit "$issue_number" --repo "$slug" \
-		--remove-label "needs-maintainer-review" \
-		--add-label "auto-dispatch" >/dev/null 2>&1 || true
-
-	_print_ok "Issue #$issue_number approved and signed"
-	_print_info "Labels updated: removed needs-maintainer-review, added auto-dispatch"
-	echo ""
-	return 0
+	_approve_target "issue" "$issue_number" "$slug"
+	return $?
 }
 
 # ── Approve PR ───────────────────────────────────────────────────────────────
@@ -275,104 +465,8 @@ This approval was signed with a root-protected SSH key. It cannot be forged by a
 cmd_pr_approved() {
 	local pr_number="${1:-}"
 	local slug="${2:-}"
-
-	if [[ -z "$pr_number" ]]; then
-		_print_error "Usage: sudo aidevops approve pr <number> [owner/repo]"
-		return 1
-	fi
-
-	if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
-		_print_error "PR number must be numeric: $pr_number"
-		return 1
-	fi
-
-	if [[ ! -t 0 ]]; then
-		_print_error "This command requires an interactive terminal (cannot run headless)"
-		return 1
-	fi
-
-	if [[ "$(id -u)" -ne 0 ]]; then
-		_print_error "This command must be run with sudo"
-		echo "Usage: sudo aidevops approve pr $pr_number"
-		return 1
-	fi
-
-	local real_user="${SUDO_USER:-$(whoami)}"
-	local real_home
-	real_home=$(eval echo "~$real_user")
-	local actual_key="$real_home/.aidevops/approval-keys/private/approval.key"
-
-	if [[ ! -f "$actual_key" ]]; then
-		_print_error "No approval key found. Run: sudo aidevops approve setup"
-		return 1
-	fi
-
-	if [[ -z "$slug" ]]; then
-		slug=$(_detect_slug)
-	fi
-	if [[ -z "$slug" || "$slug" != *"/"* ]]; then
-		_print_error "Could not detect repo slug. Provide it: sudo aidevops approve pr $pr_number owner/repo"
-		return 1
-	fi
-
-	local pr_title
-	pr_title=$(gh pr view "$pr_number" --repo "$slug" --json title --jq '.title' 2>/dev/null || echo "(could not fetch title)")
-
-	echo ""
-	echo "Approving PR for merge:"
-	echo "  PR:     #$pr_number"
-	echo "  Repo:   $slug"
-	echo "  Title:  $pr_title"
-	echo ""
-
-	printf "Type APPROVE to confirm: "
-	local confirmation
-	read -r confirmation
-	if [[ "$confirmation" != "APPROVE" ]]; then
-		_print_error "Approval cancelled"
-		return 1
-	fi
-
-	local timestamp
-	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	local payload="APPROVE:pr:${slug}:${pr_number}:${timestamp}"
-
-	local sig_file
-	sig_file=$(mktemp)
-	trap 'rm -f "$sig_file"' EXIT
-
-	printf '%s' "$payload" | ssh-keygen -Y sign \
-		-f "$actual_key" \
-		-n "$APPROVAL_NAMESPACE" \
-		-q - >"$sig_file" 2>/dev/null
-
-	if [[ ! -s "$sig_file" ]]; then
-		_print_error "Signing failed"
-		return 1
-	fi
-
-	local signature
-	signature=$(cat "$sig_file")
-
-	local comment_body
-	comment_body="${APPROVAL_MARKER}
-## Maintainer Approval (cryptographically signed)
-
-\`\`\`
-${payload}
-\`\`\`
-
-\`\`\`
-${signature}
-\`\`\`
-
-This approval was signed with a root-protected SSH key. It cannot be forged by automation."
-
-	gh pr comment "$pr_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1
-
-	_print_ok "PR #$pr_number approved and signed"
-	echo ""
-	return 0
+	_approve_target "pr" "$pr_number" "$slug"
+	return $?
 }
 
 # ── Verify Approval ──────────────────────────────────────────────────────────
@@ -384,18 +478,8 @@ cmd_verify() {
 	local issue_number="${1:-}"
 	local slug="${2:-}"
 
-	if [[ -z "$issue_number" ]]; then
-		_print_error "Usage: aidevops approve verify <number> [owner/repo]"
-		return 1
-	fi
-
-	if [[ -z "$slug" ]]; then
-		slug=$(_detect_slug)
-	fi
-	if [[ -z "$slug" || "$slug" != *"/"* ]]; then
-		_print_error "Could not detect repo slug"
-		return 1
-	fi
+	_require_number_arg "$issue_number" "Issue" "Usage: aidevops approve verify <number> [owner/repo]" || return 1
+	slug=$(_resolve_slug_or_fail "$slug" "Could not detect repo slug") || return 1
 
 	# Load public key
 	local pub_key="$HOME/.aidevops/approval-keys/approval.pub"
@@ -424,59 +508,10 @@ cmd_verify() {
 		body=$(printf '%s' "$comments_json" | jq -r ".[$i].body" 2>/dev/null || echo "")
 		i=$((i - 1))
 
-		# Extract payload (between first ``` pair)
-		local payload
-		# shellcheck disable=SC2016 # $ is regex end-of-line anchor, not bash variable
-		payload=$(printf '%s' "$body" | sed -n '/^```$/,/^```$/{ /^```$/d; p; }' | head -1)
-
-		if [[ -z "$payload" ]]; then
-			continue
+		if _verify_comment_signature "$issue_number" "$body" "$pub_key"; then
+			echo "VERIFIED"
+			return 0
 		fi
-
-		# Verify payload matches expected format
-		if [[ ! "$payload" =~ ^APPROVE:(issue|pr):.*:[0-9]+: ]]; then
-			continue
-		fi
-
-		# Extract signature (between second ``` pair)
-		local signature
-		signature=$(printf '%s' "$body" | awk '/^```$/{n++} n==3{print} n==4{exit}' | sed '1d')
-
-		if [[ -z "$signature" ]]; then
-			continue
-		fi
-
-		# Create temp files for verification
-		local payload_file sig_file allowed_signers_file
-		payload_file=$(mktemp)
-		sig_file=$(mktemp)
-		allowed_signers_file=$(mktemp)
-		trap 'rm -f "$payload_file" "$sig_file" "$allowed_signers_file"' EXIT
-
-		printf '%s' "$payload" >"$payload_file"
-		printf '%s\n' "$signature" >"$sig_file"
-
-		# Build allowed signers file using the approval public key
-		local key_content
-		key_content=$(cat "$pub_key")
-		echo "approval@aidevops.sh namespaces=\"$APPROVAL_NAMESPACE\" $key_content" >"$allowed_signers_file"
-
-		# Verify signature
-		if ssh-keygen -Y verify \
-			-f "$allowed_signers_file" \
-			-I "approval@aidevops.sh" \
-			-n "$APPROVAL_NAMESPACE" \
-			-s "$sig_file" <"$payload_file" >/dev/null 2>&1; then
-
-			# Check that the payload references the correct issue
-			if printf '%s' "$payload" | grep -q ":${issue_number}:"; then
-				echo "VERIFIED"
-				rm -f "$payload_file" "$sig_file" "$allowed_signers_file"
-				return 0
-			fi
-		fi
-
-		rm -f "$payload_file" "$sig_file" "$allowed_signers_file"
 	done
 
 	echo "UNVERIFIED"
