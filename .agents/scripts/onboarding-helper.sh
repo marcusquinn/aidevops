@@ -640,6 +640,7 @@ check_orchestration() {
 
 	if [[ "$pulse_active" == "true" ]]; then
 		print_service "Supervisor Pulse" "ready" "dispatches workers, merges PRs every 2 min"
+		echo "    Runs 24/7 by default. Use 'aidevops pulse stop' for manual start/stop mode." >&2
 	else
 		print_service "Supervisor Pulse" "needs-setup" "see scripts/commands/runners.md for setup"
 	fi

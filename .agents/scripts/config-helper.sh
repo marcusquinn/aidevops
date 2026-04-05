@@ -815,6 +815,17 @@ cmd_set() {
 	echo "[OK] Set ${dotpath}=${value}" >&2
 	_cmd_set_warn_env_override "$dotpath"
 	echo "  Change takes effect on next setup.sh run or script invocation." >&2
+
+	# Print pulse default-on guidance when supervisor_pulse is first enabled (t1892)
+	if [[ "$dotpath" == "orchestration.supervisor_pulse" ]]; then
+		local lower_val
+		lower_val=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+		if [[ "$lower_val" == "true" ]]; then
+			echo "[INFO] Pulse enabled — runs every ~2 minutes by default (24/7)." >&2
+			echo "[INFO] Run 'aidevops pulse stop' to switch to manual start/stop mode (persistent across reboots)." >&2
+		fi
+	fi
+
 	return 0
 }
 
