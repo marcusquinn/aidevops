@@ -1124,18 +1124,24 @@ _ff_write_state_entry() {
 		--argjson backoff_secs "$new_backoff" \
 		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' 2>/dev/null) || {
 		rmdir "$lock_dir" 2>/dev/null || true
-		return 0
+		return 1
 	}
 
 	local tmp_file
 	tmp_file=$(mktemp "${state_dir}/.fast-fail-counter.XXXXXX" 2>/dev/null) || {
 		rmdir "$lock_dir" 2>/dev/null || true
-		return 0
+		return 1
 	}
 	if printf '%s\n' "$updated_state" >"$tmp_file"; then
-		mv "$tmp_file" "$state_file" || rm -f "$tmp_file"
+		mv "$tmp_file" "$state_file" || {
+			rm -f "$tmp_file"
+			rmdir "$lock_dir" 2>/dev/null || true
+			return 1
+		}
 	else
 		rm -f "$tmp_file"
+		rmdir "$lock_dir" 2>/dev/null || true
+		return 1
 	fi
 
 	return 0
@@ -1224,8 +1230,12 @@ _watchdog_record_failure_and_escalate() {
 	esac
 
 	# Write updated state and release lock
-	_ff_write_state_entry "$state" "$state_file" "$state_dir" "$lock_dir" \
-		"$key" "$new_count" "$now" "$reason" "$retry_after" "$new_backoff"
+	if ! _ff_write_state_entry "$state" "$state_file" "$state_dir" "$lock_dir" \
+		"$key" "$new_count" "$now" "$reason" "$retry_after" "$new_backoff"; then
+		log_msg "Fast-fail write failed for #${issue_number} (${repo_slug}); skipping escalation"
+		rmdir "$lock_dir" 2>/dev/null || true
+		return 0
+	fi
 	rmdir "$lock_dir" 2>/dev/null || true
 
 	log_msg "Fast-fail: #${issue_number} (${repo_slug}) ${log_action} reason=${reason}"
