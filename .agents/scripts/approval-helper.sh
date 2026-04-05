@@ -426,6 +426,7 @@ cmd_verify() {
 
 		# Extract payload (between first ``` pair)
 		local payload
+		# shellcheck disable=SC2016 # $ is regex end-of-line anchor, not bash variable
 		payload=$(printf '%s' "$body" | sed -n '/^```$/,/^```$/{ /^```$/d; p; }' | head -1)
 
 		if [[ -z "$payload" ]]; then
