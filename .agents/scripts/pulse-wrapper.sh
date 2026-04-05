@@ -10332,16 +10332,34 @@ PREFETCH_EOF
 		rm -f "$review_output_file"
 
 		if [[ -n "$review_text" && ${#review_text} -gt 50 ]]; then
+			# ── Safety filter: NEVER post raw sandbox/infrastructure output ──
+			# If the LLM failed (quota, timeout, garbled), the output contains
+			# sandbox startup logs, execution metadata, or internal paths.
+			# These MUST be discarded — posting them leaks sensitive infra data.
+			local has_infra_markers="false"
+			if echo "$review_text" | grep -qE '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper|/opt/homebrew/|opencode run '; then
+				has_infra_markers="true"
+			fi
+
 			# Extract just the review portion (starts with ## Review:)
 			local clean_review=""
 			clean_review=$(echo "$review_text" | sed -n '/^## Review:/,$ p')
-			if [[ -z "$clean_review" ]]; then
-				clean_review="$review_text"
-			fi
 
-			gh issue comment "$issue_num" --repo "$repo_slug" \
-				--body "$clean_review" >/dev/null 2>&1 || true
-			echo "[pulse-wrapper] Posted sandboxed triage review for #${issue_num} in ${repo_slug}" >>"$LOGFILE"
+			if [[ -n "$clean_review" ]]; then
+				# Re-check extracted review for infra leaks (belt-and-suspenders)
+				if echo "$clean_review" | grep -qE '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper'; then
+					echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} contained infrastructure markers after extraction — suppressed" >>"$LOGFILE"
+				else
+					gh issue comment "$issue_num" --repo "$repo_slug" \
+						--body "$clean_review" >/dev/null 2>&1 || true
+					echo "[pulse-wrapper] Posted sandboxed triage review for #${issue_num} in ${repo_slug}" >>"$LOGFILE"
+				fi
+			elif [[ "$has_infra_markers" == "true" ]]; then
+				# No ## Review: header AND infra markers present — raw sandbox output, discard entirely
+				echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} was raw sandbox output — suppressed (${#review_text} chars)" >>"$LOGFILE"
+			else
+				echo "[pulse-wrapper] Triage review for #${issue_num} had no ## Review: header and no infra markers — suppressed to be safe (${#review_text} chars)" >>"$LOGFILE"
+			fi
 		else
 			echo "[pulse-wrapper] Triage review for #${issue_num} produced no usable output (${#review_text} chars)" >>"$LOGFILE"
 		fi
