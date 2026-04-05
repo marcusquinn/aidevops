@@ -461,71 +461,81 @@ else
 fi
 
 # ============================================================
-# SECTION 11: Curl write-out format / http_code extraction (GH#17427)
+# SECTION 11: Curl write-out format / http_code extraction (GH#17427, GH#17464)
 # ============================================================
-section "Curl Write-Out Format (GH#17427)"
+section "Curl Write-Out Format (GH#17427 + GH#17464)"
 
-# Verify _probe_build_request uses only %{http_code} (no %{time_total})
-# The bug was: -w '\n%{http_code}\n%{time_total}' caused tail -1 to read
-# time_total (e.g. 0.209059) as the http_code, making all API probes unhealthy.
-if grep -q 'time_total' "$HELPER"; then
-	fail "curl write-out still contains time_total (GH#17427)" \
-		"_probe_build_request should use -w '\\n%{http_code}' only"
+# GH#17427 fix: removed %{time_total} to fix http_code extraction (tail -1 was reading time_total).
+# GH#17464 fix: restored %{time_total} using a portable two-trailer format:
+#   -w '\n%{http_code}\n%{time_total}'
+# http_code is now extracted with 'tail -2 | head -1' (second-to-last line).
+# time_total is extracted with 'tail -1' (last line).
+# This avoids date +%s%N which is GNU-only and prints literal %N on macOS BSD date.
+
+# Verify _probe_build_request uses %{time_total} for portable macOS timing (GH#17464)
+if grep -q '%{time_total}' "$HELPER"; then
+	pass "curl write-out contains %{time_total} for portable timing (GH#17464)"
 else
-	pass "curl write-out does not contain time_total (GH#17427)"
+	fail "curl write-out missing %{time_total}" \
+		"_probe_build_request should use -w '\\n%{http_code}\\n%{time_total}' for macOS compatibility"
 fi
 
-# Verify the write-out format is exactly '\n%{http_code}' (single value)
-if grep -q "\\\\n%{http_code}'" "$HELPER"; then
-	pass "curl write-out ends with http_code (no trailing values)"
+# Verify date +%s%N is NOT used (GNU-only, breaks on macOS)
+if grep -q 'date +%s%N' "$HELPER"; then
+	fail "date +%s%N still present (GNU-only, breaks on macOS)" \
+		"Should use curl %{time_total} instead"
 else
-	fail "curl write-out format unexpected" \
-		"Expected -w '\\n%{http_code}' in _probe_build_request"
+	pass "date +%s%N not present (macOS compatible)"
 fi
 
-# Verify body extraction drops exactly 1 trailing line (not 2)
-# After removing time_total, only http_code is appended, so body awk
-# should drop 1 line. The old pattern was NR>2 (dropping 2 lines).
-if grep -q 'NR>2{print buf' "$HELPER"; then
-	fail "body extraction still drops 2 trailing lines (GH#17427)" \
-		"Should drop 1 line now that time_total is removed"
+# Verify http_code extraction uses tail -2 | head -1 (second-to-last line)
+if grep -q "tail -2 | head -1" "$HELPER"; then
+	pass "http_code extracted from second-to-last line (tail -2 | head -1)"
 else
-	pass "body extraction does not use old 2-line drop pattern"
+	fail "http_code extraction pattern not found" \
+		"Expected: tail -2 | head -1 to skip time_total trailer"
 fi
 
-if grep -q "NR>1{print prev}" "$HELPER"; then
-	pass "body extraction uses 1-line drop pattern (GH#17427)"
+# Verify body extraction drops 2 trailing lines (http_code + time_total)
+if grep -q "NR>2{print lines" "$HELPER"; then
+	pass "body extraction uses 2-line lag buffer (NR>2) for two trailers"
 else
-	fail "body extraction missing 1-line drop awk pattern" \
-		"Expected: awk 'NR>1{print prev} {prev=\$0}'"
+	fail "body extraction missing 2-line lag buffer" \
+		"Expected: awk 'NR>2{print lines[NR%2]} {lines[NR%2]=\$0}'"
 fi
 
 # Simulate the http_code extraction logic to verify correctness.
-# Build a mock curl response: headers + blank line + JSON body + http_code.
+# Build a mock curl response: headers + blank line + JSON body + http_code + time_total.
 # Use plain \n (no \r) to match how the production sed patterns work.
-mock_response=$(printf 'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{"data":[{"id":"model-1"}]}\n200')
-mock_http_code=$(printf '%s\n' "$mock_response" | tail -1)
+mock_response=$(printf 'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{"data":[{"id":"model-1"}]}\n200\n0.123456')
+mock_http_code=$(printf '%s\n' "$mock_response" | tail -2 | head -1)
 if [[ "$mock_http_code" == "200" ]]; then
-	pass "mock: tail -1 extracts http_code correctly (got 200)"
+	pass "mock: tail -2 | head -1 extracts http_code correctly (got 200)"
 else
-	fail "mock: tail -1 extracts wrong value" "Expected 200, got: $mock_http_code"
+	fail "mock: http_code extraction wrong" "Expected 200, got: $mock_http_code"
 fi
 
-# Verify body extraction with the new awk pattern
-mock_body=$(printf '%s\n' "$mock_response" | sed '1,/^$/d' | awk 'NR>1{print prev} {prev=$0}')
+mock_time_total=$(printf '%s\n' "$mock_response" | tail -1)
+if [[ "$mock_time_total" == "0.123456" ]]; then
+	pass "mock: tail -1 extracts time_total correctly (got 0.123456)"
+else
+	fail "mock: time_total extraction wrong" "Expected 0.123456, got: $mock_time_total"
+fi
+
+# Verify body extraction with the 2-line lag awk pattern
+mock_body=$(printf '%s\n' "$mock_response" | sed '1,/^$/d' | awk 'NR>2{print lines[NR%2]} {lines[NR%2]=$0}')
 if echo "$mock_body" | grep -q '"data"'; then
-	pass "mock: body extraction preserves JSON content"
+	pass "mock: body extraction preserves JSON content (2-line drop)"
 else
 	fail "mock: body extraction lost JSON content" "Got: $mock_body"
 fi
 
-# Verify the old bug scenario: if time_total were still present, tail -1 would get it
-mock_old_response=$(printf 'HTTP/1.1 200 OK\n\n{"data":[]}\n200\n0.209059')
-mock_old_code=$(printf '%s\n' "$mock_old_response" | tail -1)
-if [[ "$mock_old_code" == "0.209059" ]]; then
-	pass "mock: confirms old format would read time_total as http_code (bug scenario)"
+# Verify the GH#17427 bug is NOT reintroduced: http_code must not be time_total
+if [[ "$mock_http_code" != "0.123456" ]]; then
+	pass "mock: http_code is not time_total (GH#17427 regression check)"
 else
-	fail "mock: old format test unexpected" "Got: $mock_old_code"
+	fail "mock: http_code reads time_total — GH#17427 regression" \
+		"tail -2 | head -1 should skip the time_total trailer"
 fi
 
 # ============================================================
