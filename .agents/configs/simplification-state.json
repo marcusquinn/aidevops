@@ -1468,9 +1468,9 @@
       "pr": 16528
     },
     ".agents/scripts/commands/dashboard.md": {
-      "hash": "8066d939658ae5fb4b3ac0ac8b572d1d16313a0b",
-      "at": "2026-03-29T21:43:13Z",
-      "passes": 1,
+      "hash": "5bbcdea5ff2f11645d298870cd6385b131ecd48f",
+      "at": "2026-04-05T17:14:47Z",
+      "passes": 2,
       "pr": 13338
     },
     ".agents/scripts/commands/define.md": {
@@ -1510,9 +1510,9 @@
       "pr": 15514
     },
     ".agents/scripts/commands/log-issue-aidevops.md": {
-      "hash": "9497a07cf563a1e17cf97e5682cccb41b0b67c52",
-      "at": "2026-03-27T21:25:13Z",
-      "passes": 1,
+      "hash": "6db1aad12ec62243dd4b4dc42a01c9df7f9cbfdc",
+      "at": "2026-04-05T17:14:48Z",
+      "passes": 2,
       "pr": 11007
     },
     ".agents/scripts/commands/memory-log.md": {
@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "76a9de018a9c9bbd96a1821f8848f27999b587ce",
-      "at": "2026-04-05T07:50:39Z",
-      "passes": 16,
+      "hash": "3cfa1ef5c9ade88cf9df265bd1dc33d84ae1a261",
+      "at": "2026-04-05T17:14:49Z",
+      "passes": 17,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -1826,9 +1826,9 @@
       "pr": 15916
     },
     ".agents/scripts/stats-functions.sh": {
-      "hash": "347536b6f1b096fa5e82603b419e725a56f6e5c3",
-      "at": "2026-04-04T14:53:02Z",
-      "passes": 5,
+      "hash": "0867a0cf242304187993e5ae67c283216162c872",
+      "at": "2026-04-05T17:14:50Z",
+      "passes": 6,
       "pr": 11273
     },
     ".agents/scripts/tests/test-gh-signature-helper.sh": {
@@ -5261,21 +5261,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "hash": "a3c014be7b1b9f796f9912d39fca8988ebbed932",
-      "at": "2026-04-04T14:54:06Z",
-      "passes": 11,
+      "hash": "79153fdd48d38906939cc2ac45735d79f53747c3",
+      "at": "2026-04-05T17:15:16Z",
+      "passes": 12,
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "ebe1a6c908f3fcda2527ecb7fde443ece70cca61",
-      "at": "2026-04-05T07:51:04Z",
-      "passes": 34,
+      "hash": "0674f41a4ba93fb07e5abc68ca6964d5fdc84339",
+      "at": "2026-04-05T17:15:17Z",
+      "passes": 35,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "8a0efd321310f721346f8f5e2b29c17816d0f9f7",
-      "at": "2026-04-05T07:51:04Z",
-      "passes": 33,
+      "hash": "af7bb41566173ae4167a84ec500aaae04294cff4",
+      "at": "2026-04-05T17:15:17Z",
+      "passes": 34,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -5699,9 +5699,9 @@
       "pr": 16651
     },
     ".agents/scripts/dispatch-dedup-helper.sh": {
-      "hash": "2d0a1b83d543b257b754a6cb9087a04e60ab759f",
-      "at": "2026-04-03T16:35:54Z",
-      "passes": 1,
+      "hash": "30edbf48206c7fc57e80805881410fd2e83ed815",
+      "at": "2026-04-05T17:14:49Z",
+      "passes": 2,
       "pr": 16650
     },
     ".agents/tools/ocr/overview.md": {
