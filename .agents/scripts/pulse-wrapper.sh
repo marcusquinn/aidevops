@@ -4148,6 +4148,13 @@ _complexity_llm_sweep_due() {
 	# Always update the count file
 	printf '%s\n' "$current_count" >"$COMPLEXITY_DEBT_COUNT_FILE"
 
+	# No sweep needed when debt is already zero — nothing to act on (GH#17422)
+	if [[ "$current_count" -eq 0 ]]; then
+		echo "[pulse-wrapper] Complexity LLM sweep: debt is zero, no sweep required" >>"$LOGFILE"
+		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
+		return 1
+	fi
+
 	# Sweep is due if debt count has not decreased (stalled or growing)
 	if [[ -n "$prev_count" && "$prev_count" =~ ^[0-9]+$ ]]; then
 		if [[ "$current_count" -lt "$prev_count" ]]; then
