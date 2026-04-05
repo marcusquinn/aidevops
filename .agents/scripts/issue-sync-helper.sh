@@ -114,6 +114,23 @@ _gh_edit_labels() {
 	[[ ${#args[@]} -gt 0 ]] && gh issue edit "$num" --repo "$repo" "${args[@]}" 2>/dev/null || true
 }
 
+# _is_protected_label — returns 0 (true) if a label is system-managed and must
+# not be removed by the tag-reconciliation logic in cmd_enrich().
+# Protected: prefix patterns status:*, origin:*, tier:*; and a set of exact
+# matches for lifecycle/maintainer workflow labels.
+_is_protected_label() {
+	local lbl="$1"
+	case "$lbl" in
+	status:* | origin:* | tier:*)
+		return 0
+		;;
+	persistent | needs-maintainer-review | not-planned | duplicate | wontfix | already-fixed | "good first issue" | "help wanted")
+		return 0
+		;;
+	esac
+	return 1
+}
+
 gh_create_label() {
 	local repo="$1" name="$2" color="$3" desc="$4"
 	gh label create "$name" --repo "$repo" --color "$color" --description "$desc" --force 2>/dev/null || true
@@ -558,6 +575,35 @@ cmd_enrich() {
 			ensure_labels_exist "$labels" "$repo"
 			_gh_edit_labels "add" "$repo" "$num" "$labels"
 		}
+		# Label reconciliation (GH#17402): remove stale tag-derived labels.
+		# Fetch current labels, skip protected ones, remove any that are no
+		# longer in the desired set derived from TODO.md tags.
+		local current_labels
+		current_labels=$(gh issue view "$num" --repo "$repo" --json labels \
+			--jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+		if [[ -n "$current_labels" ]]; then
+			local stale_labels=""
+			local _saved_ifs="$IFS"
+			IFS=','
+			for cur_lbl in $current_labels; do
+				[[ -z "$cur_lbl" ]] && continue
+				_is_protected_label "$cur_lbl" && continue
+				# Check if cur_lbl is in the desired labels set
+				local found=0
+				for desired_lbl in $labels; do
+					[[ "$cur_lbl" == "$desired_lbl" ]] && {
+						found=1
+						break
+					}
+				done
+				[[ "$found" -eq 0 ]] && stale_labels="${stale_labels:+$stale_labels,}$cur_lbl"
+			done
+			IFS="$_saved_ifs"
+			if [[ -n "$stale_labels" ]]; then
+				print_info "Removing stale labels from #$num: $stale_labels"
+				_gh_edit_labels "remove" "$repo" "$num" "$stale_labels"
+			fi
+		fi
 		if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
 			print_success "Enriched #$num ($task_id)"
 			# Sync relationships (blocked-by, sub-issues) after enrichment (t1889)
