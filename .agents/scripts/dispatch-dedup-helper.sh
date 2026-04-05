@@ -746,7 +746,7 @@ has_open_pr() {
 				local pr_body
 				pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || pr_body=""
 				# Match: keyword + optional whitespace + #NNN or owner/repo#NNN at word boundary
-				local close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^0-9]|$)"
+				local close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}\b"
 				if ! printf '%s' "$pr_body" | grep -iqE "$close_pattern"; then
 					continue
 				fi
