@@ -6275,6 +6275,43 @@ check_dispatch_dedup() {
 }
 
 #######################################
+# Lock an issue to prevent mid-flight prompt injection (t1894).
+# When a worker is dispatched for an external contributor issue,
+# lock the conversation so the attacker cannot add new comments
+# that could influence the worker mid-execution.
+# Non-fatal: locking failure doesn't block dispatch.
+#######################################
+lock_issue_for_worker() {
+	local issue_num="$1"
+	local slug="$2"
+	local reason="${3:-resolved}"
+
+	[[ -n "$issue_num" && -n "$slug" ]] || return 0
+
+	# Only lock issues that were ever NMR-labeled (external contributor issues)
+	if issue_was_ever_nmr "$issue_num" "$slug" 2>/dev/null; then
+		gh issue lock "$issue_num" --repo "$slug" --reason "$reason" >/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Locked #${issue_num} in ${slug} during worker execution" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Unlock an issue after worker completion or failure (t1894).
+# Non-fatal: unlocking failure is logged but doesn't block.
+#######################################
+unlock_issue_after_worker() {
+	local issue_num="$1"
+	local slug="$2"
+
+	[[ -n "$issue_num" && -n "$slug" ]] || return 0
+
+	gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || true
+	echo "[pulse-wrapper] Unlocked #${issue_num} in ${slug} after worker completion" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Atomic dispatch: dedup guard + assign + launch in a single call (GH#12436)
 #
 # Root cause of GH#12141 and GH#12155: the pulse.md instructed the LLM to
@@ -6416,6 +6453,9 @@ dispatch_with_dedup() {
 	if [[ -n "$model_override" ]]; then
 		selected_model="$model_override"
 	fi
+
+	# t1894: Lock external contributor issues during worker execution
+	lock_issue_for_worker "$issue_number" "$repo_slug"
 
 	# Launch worker — headless-runtime-helper.sh handles model selection
 	# via round-robin when no --model is specified. Its choose_model() reads
