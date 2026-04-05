@@ -184,10 +184,10 @@ _confirm_approval() {
 	if [[ "$target_type" == "pr" ]]; then
 		label="PR"
 		echo ""
-		echo "Approving PR for merge:"
+		echo "Approving PR to merge:"
 	else
 		echo ""
-		echo "Approving issue for development:"
+		echo "Approving issue:"
 	fi
 
 	echo "  ${label}:  #$target_number"
@@ -558,12 +558,12 @@ cmd_status() {
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 cmd_help() {
-	echo "approval-helper.sh — Cryptographic approval gate for external issues/PRs"
+	echo "approval-helper.sh — Cryptographic approval gate covering external issues/PRs"
 	echo ""
 	echo "Commands (require sudo):"
 	echo "  setup                      Generate root-protected approval key pair"
-	echo "  issue <number> [slug]      Approve an issue for development"
-	echo "  pr <number> [slug]         Approve a PR for merge"
+	echo "  issue <number> [slug]      Approve an issue"
+	echo "  pr <number> [slug]         Approve a PR"
 	echo ""
 	echo "Commands (no sudo needed):"
 	echo "  verify <number> [slug]     Verify approval signature on an issue"
