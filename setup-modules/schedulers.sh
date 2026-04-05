@@ -480,8 +480,12 @@ _install_scheduler_systemd() {
 	_env_lines+="Environment=HOME=$(_systemd_escape "$HOME")"$'\n'
 	_env_lines+="Environment=PATH=$(_systemd_escape "$PATH")"$'\n'
 
-	# Build ExecStart — script path + optional args
-	local _exec_start="/bin/bash ${script_path}"
+	# Build ExecStart — script path (escaped) + optional args
+	# _systemd_escape wraps the path in quotes, handling spaces and % specifiers.
+	local _escaped_script_path _escaped_log_file
+	_escaped_script_path=$(_systemd_escape "$script_path")
+	_escaped_log_file=$(_systemd_escape "$log_file")
+	local _exec_start="/bin/bash ${_escaped_script_path}"
 	if [[ -n "$script_args" ]]; then
 		_exec_start+=" ${script_args}"
 	fi
@@ -495,8 +499,8 @@ After=network.target
 Type=oneshot
 KillMode=process
 ExecStart=${_exec_start}
-${_env_lines}StandardOutput=append:${log_file}
-StandardError=append:${log_file}
+${_env_lines}StandardOutput=append:${_escaped_log_file}
+StandardError=append:${_escaped_log_file}
 " >"$service_file"
 
 	# Write the timer unit
@@ -560,7 +564,7 @@ _install_scheduler_linux() {
 		else
 			print_warning "systemd enable failed for ${service_name} — falling back to cron"
 			(
-				crontab -l 2>/dev/null | grep -v "${cron_tag}" || true
+				crontab -l 2>/dev/null | grep -vF "${cron_tag}" || true
 				echo "${cron_schedule} ${cron_cmd} # ${cron_tag}"
 			) | crontab - 2>/dev/null || true
 			if crontab -l 2>/dev/null | grep -qF "${cron_tag}" 2>/dev/null; then
@@ -571,7 +575,7 @@ _install_scheduler_linux() {
 		fi
 	else
 		(
-			crontab -l 2>/dev/null | grep -v "${cron_tag}" || true
+			crontab -l 2>/dev/null | grep -vF "${cron_tag}" || true
 			echo "${cron_schedule} ${cron_cmd} # ${cron_tag}"
 		) | crontab - 2>/dev/null || true
 		if crontab -l 2>/dev/null | grep -qF "${cron_tag}" 2>/dev/null; then
@@ -615,7 +619,7 @@ _uninstall_scheduler() {
 		fi
 	else
 		if crontab -l 2>/dev/null | grep -qF "${cron_tag}" 2>/dev/null; then
-			crontab -l 2>/dev/null | grep -v "${cron_tag}" | crontab - 2>/dev/null || true
+			crontab -l 2>/dev/null | grep -vF "${cron_tag}" | crontab - 2>/dev/null || true
 			print_info "${success_msg} (cron entry removed)"
 		fi
 	fi
@@ -1575,11 +1579,14 @@ _install_token_refresh_systemd() {
 
 	mkdir -p "$service_dir"
 
-	local _env_home _env_path
+	local _env_home _env_path _escaped_log
 	_env_home=$(_systemd_escape "$HOME")
 	_env_path=$(_systemd_escape "$PATH")
+	_escaped_log=$(_systemd_escape "${tr_log_dir}/token-refresh.log")
 
-	# Write the service unit — uses shell -c to chain two refresh calls
+	# Write the service unit — uses shell -c to chain two refresh calls.
+	# tr_script is double-quoted inside the single-quoted shell -c string to
+	# handle spaces in the path (e.g. home directories with spaces).
 	printf '%s' "[Unit]
 Description=aidevops OAuth Token Refresh
 After=network.target
@@ -1587,11 +1594,11 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=process
-ExecStart=/bin/bash -c '${tr_script} refresh anthropic; ${tr_script} refresh openai'
+ExecStart=/bin/bash -c '\"${tr_script}\" refresh anthropic; \"${tr_script}\" refresh openai'
 Environment=HOME=${_env_home}
 Environment=PATH=${_env_path}
-StandardOutput=append:${tr_log_dir}/token-refresh.log
-StandardError=append:${tr_log_dir}/token-refresh.log
+StandardOutput=append:${_escaped_log}
+StandardError=append:${_escaped_log}
 " >"$service_file"
 
 	# Write the timer unit (every 30 minutes)
