@@ -56,12 +56,18 @@ CB_REPO="${SUPERVISOR_CIRCUIT_BREAKER_REPO:-}"
 # ============================================================
 # COLOURS (stderr output)
 # ============================================================
+# Colour constants are provided by shared-constants.sh (RED, GREEN, YELLOW,
+# BLUE, NC). Reassigning them here would fail with "readonly variable" when
+# shared-constants.sh has already been sourced (GH#17477). Only declare
+# them when shared-constants.sh was not available (no include guard set).
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]; then
+	RED='\033[0;31m'
+	GREEN='\033[0;32m'
+	YELLOW='\033[1;33m'
+	BLUE='\033[0;34m'
+	NC='\033[0m'
+fi
 
 # ============================================================
 # STATE FILE
