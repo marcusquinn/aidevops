@@ -23,9 +23,20 @@ detect_running_shell() {
 	return 0
 }
 
-# Detect the user's default login shell from $SHELL
+# Detect the user's default login shell from the system (not $SHELL env var,
+# which reflects the current shell, not the system default).
 detect_default_shell() {
-	basename "${SHELL:-/bin/bash}"
+	if [[ "$(uname)" == "Darwin" ]]; then
+		dscl . -read "/Users/$(whoami)" UserShell 2>/dev/null | awk '{print $2}'
+	else
+		getent passwd "$(whoami)" 2>/dev/null | cut -d: -f7
+	fi | while IFS= read -r shell; do
+		[[ -n "$shell" ]] && basename "$shell" && break
+	done
+	# Fallback to $SHELL if system query failed
+	if [[ -z "${shell:-}" ]]; then
+		basename "${SHELL:-/bin/bash}"
+	fi
 	return 0
 }
 
