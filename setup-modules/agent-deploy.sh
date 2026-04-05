@@ -114,7 +114,7 @@ _deploy_agents_copy() {
 		for pns in "$@"; do
 			rsync_excludes+=("--exclude=${pns}/")
 		done
-		if rsync -a --update "${rsync_excludes[@]}" "$source_dir/" "$target_dir/"; then
+		if rsync -a "${rsync_excludes[@]}" "$source_dir/" "$target_dir/"; then
 			deploy_ok=true
 		fi
 	else
@@ -378,10 +378,13 @@ deploy_aidevops_agents() {
 	done
 
 	# Restore local script edits: only copy scripts where the old target's version
-	# is NEWER (user edited them). This preserves user changes while allowing
-	# canonical updates to propagate when the source is newer. (GH#17414)
-	if [[ -d "$target_dir/scripts" && -d "$staging_dir/scripts" ]]; then
-		rsync -a --update "$target_dir/scripts/" "$staging_dir/scripts/" 2>/dev/null || true
+	# is NEWER (user edited them) AND the script still exists in the canonical
+	# source (--existing prevents resurrecting deleted scripts). Skip entirely
+	# in clean mode — the user explicitly wants a fresh deployment. (GH#17414)
+	if [[ "${CLEAN_MODE:-false}" != "true" && -d "$target_dir/scripts" && -d "$staging_dir/scripts" ]]; then
+		if command -v rsync &>/dev/null; then
+			rsync -a --update --existing "$target_dir/scripts/" "$staging_dir/scripts/" 2>/dev/null || true
+		fi
 	fi
 
 	# Atomic swap: mv is atomic on the same filesystem (POSIX rename())
