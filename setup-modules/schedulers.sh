@@ -480,11 +480,13 @@ _install_scheduler_systemd() {
 	_env_lines+="Environment=HOME=$(_systemd_escape "$HOME")"$'\n'
 	_env_lines+="Environment=PATH=$(_systemd_escape "$PATH")"$'\n'
 
-	# Build ExecStart — script path (escaped) + optional args
+	# Build ExecStart — script path (escaped) + optional args.
 	# _systemd_escape wraps the path in quotes, handling spaces and % specifiers.
-	local _escaped_script_path _escaped_log_file
+	# StandardOutput/StandardError: escape the full "append:${log_file}" string
+	# together so systemd parses the directive correctly without literal quotes
+	# appearing in the log filename (Gemini review finding).
+	local _escaped_script_path
 	_escaped_script_path=$(_systemd_escape "$script_path")
-	_escaped_log_file=$(_systemd_escape "$log_file")
 	local _exec_start="/bin/bash ${_escaped_script_path}"
 	if [[ -n "$script_args" ]]; then
 		_exec_start+=" ${script_args}"
@@ -499,8 +501,8 @@ After=network.target
 Type=oneshot
 KillMode=process
 ExecStart=${_exec_start}
-${_env_lines}StandardOutput=append:${_escaped_log_file}
-StandardError=append:${_escaped_log_file}
+${_env_lines}StandardOutput=$(_systemd_escape "append:${log_file}")
+StandardError=$(_systemd_escape "append:${log_file}")
 " >"$service_file"
 
 	# Write the timer unit
@@ -1579,14 +1581,16 @@ _install_token_refresh_systemd() {
 
 	mkdir -p "$service_dir"
 
-	local _env_home _env_path _escaped_log
+	local _env_home _env_path _escaped_cmd
 	_env_home=$(_systemd_escape "$HOME")
 	_env_path=$(_systemd_escape "$PATH")
-	_escaped_log=$(_systemd_escape "${tr_log_dir}/token-refresh.log")
+	# Escape the full shell -c command string so systemd parses it correctly.
+	# Double-quoting tr_script handles spaces in the path.
+	_escaped_cmd=$(_systemd_escape "\"${tr_script}\" refresh anthropic; \"${tr_script}\" refresh openai")
 
 	# Write the service unit — uses shell -c to chain two refresh calls.
-	# tr_script is double-quoted inside the single-quoted shell -c string to
-	# handle spaces in the path (e.g. home directories with spaces).
+	# StandardOutput/StandardError: escape the full "append:${path}" string
+	# together so systemd parses the directive correctly (Gemini review finding).
 	printf '%s' "[Unit]
 Description=aidevops OAuth Token Refresh
 After=network.target
@@ -1594,11 +1598,11 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=process
-ExecStart=/bin/bash -c '\"${tr_script}\" refresh anthropic; \"${tr_script}\" refresh openai'
+ExecStart=/bin/bash -c ${_escaped_cmd}
 Environment=HOME=${_env_home}
 Environment=PATH=${_env_path}
-StandardOutput=append:${_escaped_log}
-StandardError=append:${_escaped_log}
+StandardOutput=$(_systemd_escape "append:${tr_log_dir}/token-refresh.log")
+StandardError=$(_systemd_escape "append:${tr_log_dir}/token-refresh.log")
 " >"$service_file"
 
 	# Write the timer unit (every 30 minutes)
