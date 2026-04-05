@@ -1486,9 +1486,9 @@
       "pr": 15480
     },
     ".agents/scripts/commands/full-loop.md": {
-      "hash": "0f99547574f5afec94a7e40ad5ec938ef52d2085",
-      "at": "2026-04-05T20:58:43Z",
-      "passes": 5,
+      "hash": "fa23e8d0df9449fdabc0f637fbb35507df80b9fd",
+      "at": "2026-04-05T23:42:33Z",
+      "passes": 6,
       "pr": 14590
     },
     ".agents/scripts/commands/ip-check.md": {
@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "f16e157ad2ce2a3effa698c1e8660e12f4b9ba3c",
-      "at": "2026-04-05T23:22:36Z",
-      "passes": 23,
+      "hash": "828752a80725620d0ea3299f8b65c139ab01081d",
+      "at": "2026-04-05T23:42:35Z",
+      "passes": 24,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "8a1ee4e096abe849ec67c4f3d23a7161243029dc",
-      "at": "2026-04-05T22:21:24Z",
-      "passes": 39,
+      "hash": "b2d1c857f4fc6bad43b79b04955b4699b65bc1cf",
+      "at": "2026-04-05T23:43:05Z",
+      "passes": 40,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "886601abc0200e637d393aeef23ff1e40b21a8c8",
-      "at": "2026-04-05T22:21:24Z",
-      "passes": 38,
+      "hash": "8aac5f559061b3d2623d275e341a500caadde63b",
+      "at": "2026-04-05T23:43:05Z",
+      "passes": 39,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
