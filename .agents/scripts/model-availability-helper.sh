@@ -822,7 +822,9 @@ probe_provider() {
 
 	# Split response into headers and body
 	local http_code headers body
-	http_code=$(echo "$response" | tail -1)
+	# _probe_build_request appends two trailer lines: http_code then time_total.
+	# The HTTP status is therefore the penultimate line, not the final one.
+	http_code=$(echo "$response" | tail -2 | head -1)
 	headers=$(echo "$response" | sed '/^$/q' | head -50)
 	# head -n -2 is GNU-only (unsupported on macOS); use awk to drop last 2 lines
 	body=$(echo "$response" | sed '1,/^$/d' | awk 'NR>2{print buf[NR%2]} {buf[NR%2]=$0}')

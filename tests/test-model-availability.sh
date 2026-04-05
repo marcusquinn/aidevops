@@ -475,6 +475,52 @@ else
 fi
 
 # ============================================================
+# SECTION 11: API Probe Parsing Regression (GH#17427)
+# ============================================================
+section "API Probe Parsing Regression (GH#17427)"
+
+# Source a temp copy without the final main "$@" line so helper functions can be
+# called directly while preserving SCRIPT_DIR-relative sourcing.
+probe_helper_copy=$(mktemp "$REPO_DIR/.agents/scripts/model-availability-helper.test.XXXXXX")
+sed '$d' "$HELPER" >"$probe_helper_copy"
+probe_parse_output=$(bash -c '
+	source "$1" 2>/dev/null || exit 1
+	response=$'"'"'HTTP/2 200\ncontent-type: application/json\n\n{"data":[{"id":"m1"},{"id":"m2"}]}\n200\n0.209059'"'"'
+	http_code=$(echo "$response" | tail -2 | head -1)
+	body=$(echo "$response" | sed "1,/^$/d" | awk "NR>2{print buf[NR%2]} {buf[NR%2]=\$0}")
+	parsed=$(_probe_parse_http_response "anthropic" "$http_code" "$body" true)
+	printf "%s\n" "$http_code"
+	printf "%s\n" "$body"
+	printf "%s\n" "$parsed"
+' bash "$probe_helper_copy" 2>/dev/null) || probe_parse_output=""
+rm -f "$probe_helper_copy"
+
+probe_http_code=$(printf '%s\n' "$probe_parse_output" | sed -n '1p')
+probe_body=$(printf '%s\n' "$probe_parse_output" | sed -n '2p')
+probe_status=$(printf '%s\n' "$probe_parse_output" | sed -n '3p')
+probe_models=$(printf '%s\n' "$probe_parse_output" | sed -n '5p')
+probe_exit=$(printf '%s\n' "$probe_parse_output" | sed -n '6p')
+
+if [[ "$probe_http_code" == "200" ]]; then
+	pass "probe_provider parses penultimate line as http_code (GH#17427)"
+else
+	fail "probe_provider parses penultimate line as http_code (GH#17427)" "Got: ${probe_http_code:-<empty>}"
+fi
+
+if [[ "$probe_body" == '{"data":[{"id":"m1"},{"id":"m2"}]}' ]]; then
+	pass "probe_provider body extraction drops curl trailer lines"
+else
+	fail "probe_provider body extraction drops curl trailer lines" "Got: ${probe_body:-<empty>}"
+fi
+
+if [[ "$probe_status" == "healthy" && "$probe_models" == "2" && "$probe_exit" == "0" ]]; then
+	pass "probe_provider parses HTTP 200 API probe as healthy (GH#17427)"
+else
+	fail "probe_provider parses HTTP 200 API probe as healthy (GH#17427)" \
+		"status=${probe_status:-<empty>} models=${probe_models:-<empty>} exit=${probe_exit:-<empty>}"
+fi
+
+# ============================================================
 # SUMMARY
 # ============================================================
 echo ""
