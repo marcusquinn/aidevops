@@ -8199,6 +8199,27 @@ _merge_ready_prs_for_repo() {
 			fi
 		fi
 
+		# ── Review bot gate (GH#17490) ──
+		# The deterministic merge pass uses --admin which bypasses branch
+		# protection (including the review-bot-gate required status check).
+		# Enforce the gate in code so PRs cannot be merged without bot review.
+		local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
+		if [[ -f "$rbg_helper" ]]; then
+			local rbg_result=""
+			rbg_result=$(bash "$rbg_helper" check "$pr_number" "$repo_slug" 2>/dev/null) || rbg_result=""
+			local rbg_status=""
+			rbg_status=$(printf '%s' "$rbg_result" | grep -oE '^(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | head -1)
+			case "$rbg_status" in
+			PASS | SKIP | PASS_RATE_LIMITED)
+				echo "[pulse-wrapper] Review bot gate: ${rbg_status} for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+				;;
+			*)
+				echo "[pulse-wrapper] Review bot gate: ${rbg_status:-UNKNOWN} for PR #${pr_number} in ${repo_slug} — skipping merge" >>"$LOGFILE"
+				continue
+				;;
+			esac
+		fi
+
 		# Approve (satisfies REVIEW_REQUIRED for collaborator PRs)
 		approve_collaborator_pr "$pr_number" "$repo_slug" "$pr_author" 2>/dev/null || true
 
