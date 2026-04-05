@@ -247,6 +247,11 @@ _create_health_issue() {
 		--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
 	gh label create "source:health-dashboard" --repo "$repo_slug" --color "C2E0C6" \
 		--description "Auto-created by stats-functions.sh health dashboard" --force 2>/dev/null || true
+	# t1890: health dashboard issues are management issues that should never be
+	# closed or dispatched. Add the "persistent" label for consistency with the
+	# quality review issue, so the dispatch filter only needs one label check.
+	gh label create "persistent" --repo "$repo_slug" --color "FBCA04" \
+		--description "Persistent issue — do not close" --force 2>/dev/null || true
 
 	local health_body="Live ${runner_role} status for **${runner_user}**. Updated each pulse. Pin this issue for at-a-glance monitoring."
 	local sig_footer=""
@@ -257,7 +262,7 @@ _create_health_issue() {
 	health_issue_number=$(gh_create_issue --repo "$repo_slug" \
 		--title "${runner_prefix} starting..." \
 		--body "$health_body" \
-		--label "$role_label" --label "$runner_user" --label "source:health-dashboard" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+		--label "$role_label" --label "$runner_user" --label "source:health-dashboard" --label "persistent" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
 
 	if [[ -z "$health_issue_number" ]]; then
 		echo "[stats] Health issue: could not create for ${repo_slug}" >>"$LOGFILE"

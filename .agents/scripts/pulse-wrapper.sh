@@ -8160,11 +8160,15 @@ _should_run_llm_supervisor() {
 	[[ "$snap_prs" =~ ^[0-9]+$ ]] || snap_prs=0
 
 	# Get current counts (fast — single API call per repo, cached in prefetch)
+	# t1890: exclude persistent/supervisor/contributor issues from stall detection.
+	# These management issues never close, so including them inflates the count
+	# and makes the backlog appear stalled even when all actionable work is done.
 	local current_issues=0 current_prs=0
 	while IFS='|' read -r slug _; do
 		[[ -n "$slug" ]] || continue
 		local ic pc
-		ic=$(gh issue list --repo "$slug" --state open --json number --jq 'length' --limit 500 2>/dev/null) || ic=0
+		ic=$(gh issue list --repo "$slug" --state open --json number,labels --limit 500 \
+			--jq '[.[] | select(.labels | map(.name) | (index("persistent")) | not)] | length' 2>/dev/null) || ic=0
 		pc=$(gh pr list --repo "$slug" --state open --json number --jq 'length' --limit 200 2>/dev/null) || pc=0
 		[[ "$ic" =~ ^[0-9]+$ ]] || ic=0
 		[[ "$pc" =~ ^[0-9]+$ ]] || pc=0

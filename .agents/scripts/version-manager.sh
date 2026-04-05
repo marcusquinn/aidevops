@@ -692,11 +692,22 @@ _run_shellcheck_on_changed_files() {
 		if ! command -v shellcheck &>/dev/null; then
 			print_warning "shellcheck not installed (install: brew install shellcheck)"
 		else
-			print_info "Running ShellCheck on files changed since $baseline_ref..."
-			if shellcheck --severity=warning "${changed_shell_files[@]}"; then
+			print_info "Running ShellCheck on ${#changed_shell_files[@]} files changed since $baseline_ref..."
+			# Run per-file instead of all-at-once to avoid the RSS
+			# watchdog kill on large scripts (the wrapper caps RSS at
+			# 1 GB per invocation). Per-file runs keep each process
+			# within the limit.
+			local sc_errors=0
+			local sc_file=""
+			for sc_file in "${changed_shell_files[@]}"; do
+				if ! shellcheck --severity=warning "$sc_file"; then
+					sc_errors=$((sc_errors + 1))
+				fi
+			done
+			if [[ "$sc_errors" -eq 0 ]]; then
 				print_success "ShellCheck: changed shell files passed"
 			else
-				print_error "ShellCheck failed on files changed since $baseline_ref"
+				print_error "ShellCheck failed on $sc_errors file(s) changed since $baseline_ref"
 				return 1
 			fi
 		fi
