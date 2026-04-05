@@ -6488,9 +6488,10 @@ dispatch_with_dedup() {
 	# Evidence: awardsapp #2051 accumulated 29 DISPATCH_CLAIM comments over 6 hours
 	# because workers kept dying before posting.
 	local dispatch_comment_body
+	local display_model="${selected_model:-auto-select (round-robin)}"
 	dispatch_comment_body="Dispatching worker (deterministic).
 - **Worker PID**: ${worker_pid}
-- **Model**: ${selected_model}
+- **Model**: ${display_model}
 - **Runner**: ${self_login}
 - **Issue**: #${issue_number}"
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
