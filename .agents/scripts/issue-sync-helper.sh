@@ -123,7 +123,7 @@ _is_protected_label() {
 	local lbl="$1"
 	# Prefix-protected namespaces
 	case "$lbl" in
-	status:* | origin:* | tier:*) return 0 ;;
+	status:* | origin:* | tier:* | source:*) return 0 ;;
 	esac
 	# Exact-match protected labels
 	case "$lbl" in
@@ -611,12 +611,24 @@ cmd_enrich() {
 			enriched=$((enriched + 1))
 			continue
 		fi
-		[[ -n "$labels" ]] && {
+		local add_ok=true
+		if [[ -n "$labels" ]]; then
 			ensure_labels_exist "$labels" "$repo"
-			_gh_edit_labels "add" "$repo" "$num" "$labels"
-		}
-		# Reconcile: remove tag-derived labels no longer in desired set (GH#17402)
-		_reconcile_labels "$repo" "$num" "$labels"
+			# Build add args and check exit status — _gh_edit_labels masks failures via || true,
+			# so we call gh issue edit directly here to gate reconciliation (GH#17402 CR fix).
+			local -a add_args=()
+			local _saved_ifs_add="$IFS"
+			IFS=','
+			for _lbl in $labels; do [[ -n "$_lbl" ]] && add_args+=("--add-label" "$_lbl"); done
+			IFS="$_saved_ifs_add"
+			if [[ ${#add_args[@]} -gt 0 ]]; then
+				gh issue edit "$num" --repo "$repo" "${add_args[@]}" 2>/dev/null || add_ok=false
+			fi
+		fi
+		# Reconcile: remove tag-derived labels no longer in desired set (GH#17402).
+		# Only run when add succeeded (or no labels to add) to avoid destructive removal
+		# after a transient add failure.
+		[[ "$add_ok" == "true" ]] && _reconcile_labels "$repo" "$num" "$labels"
 		if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
 			print_success "Enriched #$num ($task_id)"
 			# Sync relationships (blocked-by, sub-issues) after enrichment (t1889)
