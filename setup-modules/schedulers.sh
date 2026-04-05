@@ -201,10 +201,35 @@ setup_supervisor_pulse() {
 
 		if [[ "$_os" == "Darwin" ]]; then
 			_install_pulse_launchd "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed"
-		elif _systemd_user_available; then
-			_install_pulse_systemd "aidevops-supervisor-pulse" "$wrapper_script"
 		else
-			_install_pulse_cron "$wrapper_script"
+			local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace
+PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
+			local _configured_headless_models _configured_pulse_model
+			_configured_headless_models=$(_resolve_headless_models_override)
+			_configured_pulse_model=$(_resolve_pulse_model_override)
+			if [[ -n "$_configured_headless_models" ]]; then
+				_pulse_env+=$'\n'"AIDEVOPS_HEADLESS_MODELS=${_configured_headless_models}"
+			fi
+			if [[ -n "$_configured_pulse_model" ]]; then
+				_pulse_env+=$'\n'"PULSE_MODEL=${_configured_pulse_model}"
+			fi
+			if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
+				_pulse_env+=$'\n'"AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST}"
+			fi
+			_install_scheduler_linux \
+				"aidevops-supervisor-pulse" \
+				"aidevops: supervisor-pulse" \
+				"*/2 * * * *" \
+				"\"${wrapper_script}\"" \
+				"120" \
+				"$HOME/.aidevops/logs/pulse-wrapper.log" \
+				"$_pulse_env" \
+				"Supervisor pulse enabled (every 2 min)" \
+				"Failed to install supervisor pulse scheduler. See runners.md for manual setup." \
+				"true" \
+				"false" \
+				"" \
+				"120"
 		fi
 	elif [[ "$_pulse_lower" == "false" && "$_pulse_installed" == "true" ]]; then
 		# User explicitly disabled but pulse is still installed — clean up
@@ -371,49 +396,6 @@ _install_pulse_launchd() {
 	return 0
 }
 
-# Install supervisor pulse via cron (Linux)
-_install_pulse_cron() {
-	local wrapper_script="$1"
-	# Shell-escape all interpolated paths to prevent command injection
-	# via $(…) or backticks if paths contain shell metacharacters
-	# PATH is managed globally by _ensure_cron_path() — do NOT set inline
-	# PATH= here, it overrides the global line and breaks nvm/bun/cargo.
-	# OPENCODE_BIN removed — resolved from PATH at runtime via command -v.
-	# See #4099 and #4240 for history.
-	local _cron_pulse_dir _cron_wrapper_script _cron_headless_env=""
-	local _configured_headless_models _configured_pulse_model
-	_configured_headless_models=$(_resolve_headless_models_override)
-	_configured_pulse_model=$(_resolve_pulse_model_override)
-	# Use neutral workspace path for PULSE_DIR (GH#5136)
-	_cron_pulse_dir=$(_cron_escape "${HOME}/.aidevops/.agent-workspace")
-	_cron_wrapper_script=$(_cron_escape "$wrapper_script")
-	if [[ -n "$_configured_headless_models" ]]; then
-		local _cron_headless_models
-		_cron_headless_models=$(_cron_escape "$_configured_headless_models")
-		_cron_headless_env+=" AIDEVOPS_HEADLESS_MODELS=${_cron_headless_models}"
-	fi
-	if [[ -n "$_configured_pulse_model" ]]; then
-		local _cron_pulse_model
-		_cron_pulse_model=$(_cron_escape "$_configured_pulse_model")
-		_cron_headless_env+=" PULSE_MODEL=${_cron_pulse_model}"
-	fi
-	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
-		local _cron_headless_allowlist
-		_cron_headless_allowlist=$(_cron_escape "$AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST")
-		_cron_headless_env+=" AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=${_cron_headless_allowlist}"
-	fi
-	(
-		crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse' || true
-		echo "*/2 * * * * PULSE_DIR=${_cron_pulse_dir} PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}${_cron_headless_env} /bin/bash ${_cron_wrapper_script} >> \"\$HOME/.aidevops/logs/pulse-wrapper.log\" 2>&1 # aidevops: supervisor-pulse"
-	) | crontab - || true
-	if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
-		print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
-	else
-		print_warning "Failed to install supervisor pulse cron entry. See runners.md for manual setup."
-	fi
-	return 0
-}
-
 # Check if systemd user services are available on this Linux system.
 # Returns 0 if systemd --user is functional, 1 otherwise.
 _systemd_user_available() {
@@ -443,59 +425,93 @@ _systemd_escape() {
 	return 0
 }
 
+# Build systemd Environment= lines from newline-separated KEY=VALUE pairs.
+# Always appends HOME and PATH for parity with launchd and cron execution.
+_scheduler_systemd_env_lines() {
+	local env_vars="$1"
+	local _env_lines=""
+
+	if [[ -n "$env_vars" ]]; then
+		while IFS= read -r _kv; do
+			[[ -z "$_kv" ]] && continue
+			local _key="${_kv%%=*}"
+			local _raw_val="${_kv#*=}"
+			local _escaped_val
+			_escaped_val=$(_systemd_escape "$_raw_val")
+			_env_lines+="Environment=${_key}=${_escaped_val}"$'\n'
+		done <<<"$env_vars"
+	fi
+
+	_env_lines+="Environment=HOME=$(_systemd_escape "$HOME")"$'\n'
+	_env_lines+="Environment=PATH=$(_systemd_escape "$PATH")"$'\n'
+	printf '%s' "$_env_lines"
+	return 0
+}
+
+# Build inline cron environment assignments from newline-separated KEY=VALUE pairs.
+_scheduler_cron_env_prefix() {
+	local env_vars="$1"
+	local _env_prefix=""
+
+	if [[ -n "$env_vars" ]]; then
+		while IFS= read -r _kv; do
+			[[ -z "$_kv" ]] && continue
+			local _key="${_kv%%=*}"
+			local _raw_val="${_kv#*=}"
+			local _escaped_val
+			_escaped_val=$(_cron_escape "$_raw_val")
+			_env_prefix+="${_key}=${_escaped_val} "
+		done <<<"$env_vars"
+	fi
+
+	printf '%s' "$_env_prefix"
+	return 0
+}
+
 # Install a generic scheduler via systemd user timer (Linux with systemd).
 # Args:
-#   $1 = service_name  (e.g. "aidevops-stats-wrapper")
-#   $2 = script_path   (absolute path to the script to run)
-#   $3 = script_args   (space-separated args string, may be empty)
-#   $4 = interval_sec  (OnUnitActiveSec interval in seconds)
-#   $5 = log_file      (absolute path to log file)
-#   $6 = env_vars      (newline-separated "KEY=VALUE" pairs, may be empty)
-#   $7 = on_active_sec (optional OnActiveSec bootstrap delay, default "10s")
+#   $1 = service_name    (e.g. "aidevops-stats-wrapper")
+#   $2 = exec_command    (shell command run via /bin/bash -lc)
+#   $3 = interval_sec    (OnUnitActiveSec interval in seconds; may be empty for calendar-only)
+#   $4 = log_file        (absolute path to log file)
+#   $5 = env_vars        (newline-separated KEY=VALUE pairs, may be empty)
+#   $6 = run_at_load     ("true" or "false")
+#   $7 = low_priority    ("true" or "false")
+#   $8 = on_calendar     (optional systemd OnCalendar spec)
+#   $9 = timeout_sec     (optional TimeoutStartSec; defaults to interval_sec)
 # Returns 0 on success, 1 if systemd enable fails (caller should fall back to cron).
 _install_scheduler_systemd() {
 	local service_name="$1"
-	local script_path="$2"
-	local script_args="$3"
-	local interval_sec="$4"
-	local log_file="$5"
-	local env_vars="$6"
-	local on_active_sec="${7:-10s}"
+	local exec_command="$2"
+	local interval_sec="$3"
+	local log_file="$4"
+	local env_vars="$5"
+	local run_at_load="$6"
+	local low_priority="$7"
+	local on_calendar="$8"
+	local timeout_sec="$9"
 	local service_dir="$HOME/.config/systemd/user"
 	local service_file="${service_dir}/${service_name}.service"
 	local timer_file="${service_dir}/${service_name}.timer"
 
 	mkdir -p "$service_dir"
 
-	# Build Environment= lines from env_vars (newline-separated KEY=VALUE pairs)
-	local _env_lines=""
-	if [[ -n "$env_vars" ]]; then
-		while IFS= read -r _kv; do
-			[[ -z "$_kv" ]] && continue
-			local _key _raw_val _escaped_val
-			_key="${_kv%%=*}"
-			_raw_val="${_kv#*=}"
-			_escaped_val=$(_systemd_escape "$_raw_val")
-			_env_lines+="Environment=${_key}=${_escaped_val}"$'\n'
-		done <<<"$env_vars"
-	fi
-	# Always inject HOME and PATH
-	_env_lines+="Environment=HOME=$(_systemd_escape "$HOME")"$'\n'
-	_env_lines+="Environment=PATH=$(_systemd_escape "$PATH")"$'\n'
+	local _env_lines
+	_env_lines=$(_scheduler_systemd_env_lines "$env_vars")
 
-	# Build ExecStart — script path (escaped) + optional args.
-	# _systemd_escape wraps the path in quotes, handling spaces and % specifiers.
-	# StandardOutput/StandardError: escape the full "append:${log_file}" string
-	# together so systemd parses the directive correctly without literal quotes
-	# appearing in the log filename (Gemini review finding).
-	local _escaped_script_path
-	_escaped_script_path=$(_systemd_escape "$script_path")
-	local _exec_start="/bin/bash ${_escaped_script_path}"
-	if [[ -n "$script_args" ]]; then
-		_exec_start+=" ${script_args}"
+	if [[ -z "$timeout_sec" ]]; then
+		timeout_sec="$interval_sec"
+	fi
+	if [[ -z "$timeout_sec" ]]; then
+		timeout_sec="3600"
 	fi
 
-	# Write the service unit
+	local _service_extra=""
+	if [[ "$low_priority" == "true" ]]; then
+		_service_extra+="Nice=10"$'\n'
+		_service_extra+="IOSchedulingClass=idle"$'\n'
+	fi
+
 	printf '%s' "[Unit]
 Description=aidevops ${service_name}
 After=network.target
@@ -503,20 +519,29 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=process
-ExecStart=${_exec_start}
-${_env_lines}StandardOutput=$(_systemd_escape "append:${log_file}")
+ExecStart=/bin/bash -lc $(_systemd_escape "$exec_command")
+TimeoutStartSec=${timeout_sec}
+${_service_extra}${_env_lines}StandardOutput=$(_systemd_escape "append:${log_file}")
 StandardError=$(_systemd_escape "append:${log_file}")
 " >"$service_file"
 
-	# Write the timer unit
+	local _timer_lines=""
+	if [[ "$run_at_load" == "true" ]]; then
+		_timer_lines+="OnActiveSec=10s"$'\n'
+	fi
+	if [[ -n "$interval_sec" ]]; then
+		_timer_lines+="OnBootSec=${interval_sec}"$'\n'
+		_timer_lines+="OnUnitActiveSec=${interval_sec}"$'\n'
+	fi
+	if [[ -n "$on_calendar" ]]; then
+		_timer_lines+="OnCalendar=${on_calendar}"$'\n'
+	fi
+
 	printf '%s' "[Unit]
 Description=aidevops ${service_name} Timer
 
 [Timer]
-OnActiveSec=${on_active_sec}
-OnBootSec=${interval_sec}
-OnUnitActiveSec=${interval_sec}
-Persistent=true
+${_timer_lines}Persistent=true
 
 [Install]
 WantedBy=timers.target
@@ -525,9 +550,31 @@ WantedBy=timers.target
 	systemctl --user daemon-reload 2>/dev/null || true
 	if systemctl --user enable --now "${service_name}.timer" 2>/dev/null; then
 		return 0
-	else
-		return 1
 	fi
+	return 1
+}
+
+# Install a generic cron entry.
+# Args: $1=cron_tag, $2=cron_schedule, $3=exec_command, $4=log_file, $5=env_vars
+_install_scheduler_cron() {
+	local cron_tag="$1"
+	local cron_schedule="$2"
+	local exec_command="$3"
+	local log_file="$4"
+	local env_vars="$5"
+	local _cron_exec
+	local _cron_log
+	local _env_prefix
+
+	_env_prefix=$(_scheduler_cron_env_prefix "$env_vars")
+	_cron_exec=$(_cron_escape "$exec_command")
+	_cron_log=$(_cron_escape "$log_file")
+
+	(
+		crontab -l 2>/dev/null | grep -vF "${cron_tag}" || true
+		echo "${cron_schedule} ${_env_prefix}/bin/bash -lc ${_cron_exec} >> ${_cron_log} 2>&1 # ${cron_tag}"
+	) | crontab - 2>/dev/null || true
+	return 0
 }
 
 # Dispatcher: install a scheduler on Linux, preferring systemd over cron.
@@ -535,43 +582,47 @@ WantedBy=timers.target
 #   $1 = service_name   (systemd service name, e.g. "aidevops-stats-wrapper")
 #   $2 = cron_tag       (comment tag for cron line, e.g. "aidevops: stats-wrapper")
 #   $3 = cron_schedule  (cron schedule expression, e.g. "*/15 * * * *")
-#   $4 = cron_cmd       (full cron command string, already escaped)
-#   $5 = script_path    (absolute path to the script)
-#   $6 = script_args    (space-separated args string, may be empty)
-#   $7 = interval_sec   (systemd OnUnitActiveSec in seconds)
-#   $8 = log_file       (absolute path to log file)
-#   $9 = env_vars       (newline-separated KEY=VALUE pairs for systemd, may be empty)
-#   $10 = success_msg   (message to print on success)
-#   $11 = fail_msg      (message to print on failure)
+#   $4 = exec_command   (shell command run via /bin/bash -lc)
+#   $5 = interval_sec   (systemd OnUnitActiveSec in seconds; may be empty for calendar-only)
+#   $6 = log_file       (absolute path to log file)
+#   $7 = env_vars       (newline-separated KEY=VALUE pairs for systemd/cron, may be empty)
+#   $8 = success_msg    (message to print on success)
+#   $9 = fail_msg       (message to print on failure)
+#   $10 = run_at_load   ("true" or "false")
+#   $11 = low_priority  ("true" or "false")
+#   $12 = on_calendar   (optional systemd OnCalendar spec)
+#   $13 = timeout_sec   (optional TimeoutStartSec)
 # Returns 0 always (failures are warnings, not fatal).
 _install_scheduler_linux() {
 	local service_name="$1"
 	local cron_tag="$2"
 	local cron_schedule="$3"
-	local cron_cmd="$4"
-	local script_path="$5"
-	local script_args="$6"
-	local interval_sec="$7"
-	local log_file="$8"
-	local env_vars="$9"
-	local success_msg="${10}"
-	local fail_msg="${11}"
+	local exec_command="$4"
+	local interval_sec="$5"
+	local log_file="$6"
+	local env_vars="$7"
+	local success_msg="$8"
+	local fail_msg="$9"
+	local run_at_load="${10}"
+	local low_priority="${11}"
+	local on_calendar="${12}"
+	local timeout_sec="${13}"
 
 	if _systemd_user_available; then
 		if _install_scheduler_systemd \
 			"$service_name" \
-			"$script_path" \
-			"$script_args" \
+			"$exec_command" \
 			"$interval_sec" \
 			"$log_file" \
-			"$env_vars"; then
+			"$env_vars" \
+			"$run_at_load" \
+			"$low_priority" \
+			"$on_calendar" \
+			"$timeout_sec"; then
 			print_info "${success_msg} (systemd user timer)"
 		else
 			print_warning "systemd enable failed for ${service_name} — falling back to cron"
-			(
-				crontab -l 2>/dev/null | grep -vF "${cron_tag}" || true
-				echo "${cron_schedule} ${cron_cmd} # ${cron_tag}"
-			) | crontab - 2>/dev/null || true
+			_install_scheduler_cron "$cron_tag" "$cron_schedule" "$exec_command" "$log_file" "$env_vars"
 			if crontab -l 2>/dev/null | grep -qF "${cron_tag}" 2>/dev/null; then
 				print_info "${success_msg} (cron fallback)"
 			else
@@ -579,10 +630,7 @@ _install_scheduler_linux() {
 			fi
 		fi
 	else
-		(
-			crontab -l 2>/dev/null | grep -vF "${cron_tag}" || true
-			echo "${cron_schedule} ${cron_cmd} # ${cron_tag}"
-		) | crontab - 2>/dev/null || true
+		_install_scheduler_cron "$cron_tag" "$cron_schedule" "$exec_command" "$log_file" "$env_vars"
 		if crontab -l 2>/dev/null | grep -qF "${cron_tag}" 2>/dev/null; then
 			print_info "${success_msg} (cron)"
 		else
@@ -627,85 +675,6 @@ _uninstall_scheduler() {
 			crontab -l 2>/dev/null | grep -vF "${cron_tag}" | crontab - 2>/dev/null || true
 			print_info "${success_msg} (cron entry removed)"
 		fi
-	fi
-	return 0
-}
-
-# Install supervisor pulse via systemd user service (Linux with systemd)
-# Args: $1=service_name (e.g. "aidevops-supervisor-pulse"), $2=wrapper_script
-_install_pulse_systemd() {
-	local service_name="$1"
-	local wrapper_script="$2"
-	local service_dir="$HOME/.config/systemd/user"
-	local service_file="${service_dir}/${service_name}.service"
-	local timer_file="${service_dir}/${service_name}.timer"
-
-	mkdir -p "$service_dir"
-
-	# Build environment overrides for the service.
-	# All values are escaped via _systemd_escape() to prevent % specifier
-	# expansion and handle spaces/special characters (GH#17441).
-	local _env_lines=""
-	local _configured_headless_models _configured_pulse_model
-	_configured_headless_models=$(_resolve_headless_models_override)
-	_configured_pulse_model=$(_resolve_pulse_model_override)
-	if [[ -n "$_configured_headless_models" ]]; then
-		_env_lines+="Environment=AIDEVOPS_HEADLESS_MODELS=$(_systemd_escape "$_configured_headless_models")"$'\n'
-	fi
-	if [[ -n "$_configured_pulse_model" ]]; then
-		_env_lines+="Environment=PULSE_MODEL=$(_systemd_escape "$_configured_pulse_model")"$'\n'
-	fi
-	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
-		_env_lines+="Environment=AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=$(_systemd_escape "$AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST")"$'\n'
-	fi
-	_env_lines+="Environment=PULSE_DIR=$(_systemd_escape "${HOME}/.aidevops/.agent-workspace")"$'\n'
-	# Match the shared pulse threshold so opus-tier dispatches are not killed early.
-	_env_lines+="Environment=PULSE_STALE_THRESHOLD=$(_systemd_escape "${PULSE_STALE_THRESHOLD_SECONDS}")"$'\n'
-	_env_lines+="Environment=HOME=$(_systemd_escape "$HOME")"$'\n'
-	# Capture setup-time PATH so systemd workers find user-installed binaries
-	# (e.g. ~/.npm-global/bin/opencode, ~/.local/bin/claude). Systemd user
-	# services inherit only a minimal default PATH; without this, headless
-	# runtime binaries are not found and workers exit 127. Matches launchd
-	# plist behaviour (GH#17405).
-	_env_lines+="Environment=PATH=$(_systemd_escape "$PATH")"$'\n'
-
-	# Write the service unit
-	printf '%s' "[Unit]
-Description=aidevops Supervisor Pulse
-After=network.target
-
-[Service]
-Type=oneshot
-KillMode=process
-ExecStart=/bin/bash ${wrapper_script}
-${_env_lines}StandardOutput=append:${HOME}/.aidevops/logs/pulse-wrapper.log
-StandardError=append:${HOME}/.aidevops/logs/pulse-wrapper.log
-" >"$service_file"
-
-	# Write the timer unit (every 2 minutes)
-	# OnActiveSec=10s fires 10 seconds after the timer is enabled, bootstrapping
-	# the first service run on mid-session installs where OnBootSec has already
-	# elapsed and OnUnitActiveSec has no prior activation to anchor to (GH#17405).
-	printf '%s' "[Unit]
-Description=aidevops Supervisor Pulse Timer
-
-[Timer]
-OnActiveSec=10s
-OnBootSec=2min
-OnUnitActiveSec=2min
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-" >"$timer_file"
-
-	systemctl --user daemon-reload 2>/dev/null || true
-	if systemctl --user enable --now "${service_name}.timer" 2>/dev/null; then
-		print_info "Supervisor pulse enabled (systemd user timer, every 2 min)"
-		print_info "Disable: systemctl --user disable --now ${service_name}.timer"
-	else
-		print_warning "Failed to enable systemd timer — falling back to cron"
-		_install_pulse_cron "$wrapper_script"
 	fi
 	return 0
 }
@@ -803,20 +772,18 @@ PLIST
 				print_warning "Failed to load stats wrapper LaunchAgent"
 			fi
 		else
-			local _cron_stats_script
-			_cron_stats_script=$(_cron_escape "$stats_script")
 			_install_scheduler_linux \
 				"$stats_systemd" \
 				"aidevops: stats-wrapper" \
 				"*/15 * * * *" \
-				"/bin/bash ${_cron_stats_script} >> \"\$HOME/.aidevops/logs/stats.log\" 2>&1" \
-				"$stats_script" \
-				"" \
+				"\"${stats_script}\"" \
 				"900" \
 				"$stats_log" \
 				"" \
 				"Stats wrapper enabled (every 15 min)" \
-				"Failed to install stats wrapper scheduler"
+				"Failed to install stats wrapper scheduler" \
+				"true" \
+				"false"
 		fi
 	elif [[ "$_pulse_effective" == "false" ]]; then
 		# Remove stats scheduler if pulse is disabled
@@ -918,20 +885,19 @@ MINER_PLIST
 			print_warning "Failed to load failure miner LaunchAgent"
 		fi
 	else
-		local _cron_miner_script
-		_cron_miner_script=$(_cron_escape "$miner_script")
 		_install_scheduler_linux \
 			"$miner_systemd" \
 			"aidevops: gh-failure-miner" \
 			"15 * * * *" \
-			"/bin/bash ${_cron_miner_script} create-issues --since-hours 24 --pulse-repos --systemic-threshold 2 --max-issues 3 --label auto-dispatch >> \"\$HOME/.aidevops/logs/routine-gh-failure-miner.log\" 2>&1" \
-			"$miner_script" \
-			"create-issues --since-hours 24 --pulse-repos --systemic-threshold 2 --max-issues 3 --label auto-dispatch" \
+			"\"${miner_script}\" create-issues --since-hours 24 --pulse-repos --systemic-threshold 2 --max-issues 3 --label auto-dispatch" \
 			"3600" \
 			"$miner_log" \
 			"" \
 			"Failure miner enabled (hourly at :15)" \
-			"Failed to install failure miner scheduler"
+			"Failed to install failure miner scheduler" \
+			"false" \
+			"false" \
+			"*-*-* *:15:00"
 	fi
 	return 0
 }
@@ -1013,15 +979,11 @@ GUARD_PLIST
 		fi
 	else
 		# Linux: systemd timer (30s) or cron fallback (every minute — cron minimum granularity)
-		local _cron_guard_script
-		_cron_guard_script=$(_cron_escape "$guard_script")
 		_install_scheduler_linux \
 			"$guard_systemd" \
 			"aidevops: process-guard" \
 			"* * * * *" \
-			"SHELLCHECK_RSS_LIMIT_KB=524288 SHELLCHECK_RUNTIME_LIMIT=120 CHILD_RSS_LIMIT_KB=8388608 CHILD_RUNTIME_LIMIT=7200 /bin/bash ${_cron_guard_script} kill-runaways >> \"\$HOME/.aidevops/logs/process-guard.log\" 2>&1" \
-			"$guard_script" \
-			"kill-runaways" \
+			"\"${guard_script}\" kill-runaways" \
 			"30" \
 			"$guard_log" \
 			"SHELLCHECK_RSS_LIMIT_KB=524288
@@ -1029,7 +991,9 @@ SHELLCHECK_RUNTIME_LIMIT=120
 CHILD_RSS_LIMIT_KB=8388608
 CHILD_RUNTIME_LIMIT=7200" \
 			"Process guard enabled (every 30s)" \
-			"Failed to install process guard scheduler"
+			"Failed to install process guard scheduler" \
+			"true" \
+			"false"
 	fi
 	return 0
 }
@@ -1107,20 +1071,18 @@ MONITOR_PLIST
 		fi
 	else
 		# Linux: systemd timer (60s) or cron fallback (every minute — cron minimum granularity)
-		local _cron_monitor_script
-		_cron_monitor_script=$(_cron_escape "$monitor_script")
 		_install_scheduler_linux \
 			"$monitor_systemd" \
 			"aidevops: memory-pressure-monitor" \
 			"* * * * *" \
-			"/bin/bash ${_cron_monitor_script} >> \"\$HOME/.aidevops/logs/memory-pressure-launchd.log\" 2>&1" \
-			"$monitor_script" \
-			"" \
+			"\"${monitor_script}\"" \
 			"60" \
 			"$monitor_log" \
 			"" \
 			"Memory pressure monitor enabled (every 60s)" \
-			"Failed to install memory pressure monitor scheduler"
+			"Failed to install memory pressure monitor scheduler" \
+			"true" \
+			"true"
 	fi
 	return 0
 }
@@ -1198,20 +1160,18 @@ ST_PLIST
 		fi
 	else
 		# Linux: systemd timer (every 6h) or cron fallback
-		local _cron_st_script
-		_cron_st_script=$(_cron_escape "$st_script")
 		_install_scheduler_linux \
 			"$st_systemd" \
 			"aidevops: screen-time-snapshot" \
 			"0 */6 * * *" \
-			"/bin/bash ${_cron_st_script} snapshot >> \"\$HOME/.aidevops/.agent-workspace/logs/screen-time-snapshot.log\" 2>&1" \
-			"$st_script" \
-			"snapshot" \
+			"\"${st_script}\" snapshot" \
 			"21600" \
 			"$st_log" \
 			"" \
 			"Screen time snapshot enabled (every 6h)" \
-			"Failed to install screen time snapshot scheduler"
+			"Failed to install screen time snapshot scheduler" \
+			"true" \
+			"true"
 	fi
 	return 0
 }
@@ -1312,21 +1272,18 @@ _install_cw_linux() {
 	local cw_script="$1"
 	local _cw_log_dir="$2"
 	local cw_systemd="aidevops-contribution-watch"
-	local _cron_cw_script _cron_cw_log_dir
-	_cron_cw_script=$(_cron_escape "$cw_script")
-	_cron_cw_log_dir=$(_cron_escape "$_cw_log_dir")
 	_install_scheduler_linux \
 		"$cw_systemd" \
 		"aidevops: contribution-watch" \
 		"0 * * * *" \
-		"/bin/bash ${_cron_cw_script} scan >> \"${_cron_cw_log_dir}/contribution-watch.log\" 2>&1" \
-		"$cw_script" \
-		"scan" \
+		"\"${cw_script}\" scan" \
 		"3600" \
 		"${_cw_log_dir}/contribution-watch.log" \
 		"" \
 		"Contribution watch enabled (hourly scan)" \
-		"Failed to install contribution watch scheduler"
+		"Failed to install contribution watch scheduler" \
+		"false" \
+		"true"
 	return 0
 }
 
@@ -1482,20 +1439,18 @@ _install_profile_readme_scheduler() {
 		return 0
 	fi
 
-	local _cron_pr_script
-	_cron_pr_script=$(_cron_escape "$pr_script")
 	_install_scheduler_linux \
 		"$pr_systemd" \
 		"aidevops: profile-readme-update" \
 		"0 * * * *" \
-		"/bin/bash ${_cron_pr_script} update >> \"\$HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log\" 2>&1" \
-		"$pr_script" \
-		"update" \
+		"\"${pr_script}\" update" \
 		"3600" \
 		"$pr_log" \
 		"" \
 		"Profile README update enabled (hourly)" \
-		"Failed to install profile README update scheduler"
+		"Failed to install profile README update scheduler" \
+		"false" \
+		"true"
 	return 0
 }
 
@@ -1604,65 +1559,6 @@ _uninstall_token_refresh_schtasks() {
 	return 0
 }
 
-# Install OAuth token refresh via systemd user timer (Linux with systemd).
-# Runs two sequential refresh commands (anthropic + openai) via shell -c.
-# Args: $1=tr_script, $2=tr_log_dir
-_install_token_refresh_systemd() {
-	local tr_script="$1"
-	local tr_log_dir="$2"
-	local service_name="aidevops-token-refresh"
-	local service_dir="$HOME/.config/systemd/user"
-	local service_file="${service_dir}/${service_name}.service"
-	local timer_file="${service_dir}/${service_name}.timer"
-
-	mkdir -p "$service_dir"
-
-	local _env_home _env_path _escaped_cmd
-	_env_home=$(_systemd_escape "$HOME")
-	_env_path=$(_systemd_escape "$PATH")
-	# Escape the full shell -c command string so systemd parses it correctly.
-	# Double-quoting tr_script handles spaces in the path.
-	_escaped_cmd=$(_systemd_escape "\"${tr_script}\" refresh anthropic; \"${tr_script}\" refresh openai")
-
-	# Write the service unit — uses shell -c to chain two refresh calls.
-	# StandardOutput/StandardError: escape the full "append:${path}" string
-	# together so systemd parses the directive correctly (Gemini review finding).
-	printf '%s' "[Unit]
-Description=aidevops OAuth Token Refresh
-After=network.target
-
-[Service]
-Type=oneshot
-KillMode=process
-ExecStart=/bin/bash -c ${_escaped_cmd}
-Environment=HOME=${_env_home}
-Environment=PATH=${_env_path}
-StandardOutput=$(_systemd_escape "append:${tr_log_dir}/token-refresh.log")
-StandardError=$(_systemd_escape "append:${tr_log_dir}/token-refresh.log")
-" >"$service_file"
-
-	# Write the timer unit (every 30 minutes)
-	printf '%s' "[Unit]
-Description=aidevops OAuth Token Refresh Timer
-
-[Timer]
-OnActiveSec=10s
-OnBootSec=30min
-OnUnitActiveSec=30min
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-" >"$timer_file"
-
-	systemctl --user daemon-reload 2>/dev/null || true
-	if systemctl --user enable --now "${service_name}.timer" 2>/dev/null; then
-		return 0
-	else
-		return 1
-	fi
-}
-
 # Setup OAuth token refresh scheduled job.
 # Refreshes expired/expiring tokens every 30 min so sessions never hit
 # "invalid x-api-key". Also runs at load to catch tokens that expired
@@ -1738,24 +1634,6 @@ TR_PLIST
 	return 0
 }
 
-_install_token_refresh_cron() {
-	local tr_script="$1"
-	local success_message="$2"
-	local failure_message="$3"
-	local _cron_tr_script
-	_cron_tr_script=$(_cron_escape "$tr_script")
-	(
-		crontab -l 2>/dev/null | grep -v 'aidevops: token-refresh' || true
-		echo "*/30 * * * * /bin/bash ${_cron_tr_script} refresh anthropic >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1; /bin/bash ${_cron_tr_script} refresh openai >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1 # aidevops: token-refresh"
-	) | crontab - 2>/dev/null || true
-	if crontab -l 2>/dev/null | grep -qF "aidevops: token-refresh" 2>/dev/null; then
-		print_info "$success_message"
-	else
-		print_warning "$failure_message"
-	fi
-	return 0
-}
-
 setup_oauth_token_refresh() {
 	local tr_script="$HOME/.aidevops/agents/scripts/oauth-pool-helper.sh"
 	local tr_label="sh.aidevops.token-refresh"
@@ -1771,23 +1649,20 @@ setup_oauth_token_refresh() {
 	elif _is_windows; then
 		# Windows Git Bash / MINGW64 / MSYS2: use Task Scheduler (schtasks)
 		_install_token_refresh_schtasks "$tr_script" "$tr_log_dir"
-	elif _systemd_user_available; then
-		# Linux with systemd: use systemd user timer
-		if _install_token_refresh_systemd "$tr_script" "$tr_log_dir"; then
-			print_info "OAuth token refresh enabled (systemd user timer, every 30 min)"
-		else
-			print_warning "systemd enable failed for token-refresh — falling back to cron"
-			_install_token_refresh_cron \
-				"$tr_script" \
-				"OAuth token refresh enabled (cron fallback, every 30 min)" \
-				"Failed to install token refresh scheduler"
-		fi
 	else
-		# Linux / WSL without systemd: cron entry (every 30 min)
-		_install_token_refresh_cron \
-			"$tr_script" \
-			"OAuth token refresh enabled (cron, every 30 min)" \
-			"Failed to install token refresh cron entry"
+		# Linux / WSL without systemd: systemd timer or cron fallback
+		_install_scheduler_linux \
+			"aidevops-token-refresh" \
+			"aidevops: token-refresh" \
+			"*/30 * * * *" \
+			"\"${tr_script}\" refresh anthropic; \"${tr_script}\" refresh openai" \
+			"1800" \
+			"${tr_log_dir}/token-refresh.log" \
+			"" \
+			"OAuth token refresh enabled (every 30 min)" \
+			"Failed to install token refresh scheduler" \
+			"true" \
+			"true"
 	fi
 	return 0
 }
