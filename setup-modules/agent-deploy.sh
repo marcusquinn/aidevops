@@ -280,13 +280,13 @@ _warn_deployed_script_drift() {
 	done
 
 	if [[ ${#drifted[@]} -gt 0 ]]; then
-		print_warning "Deployed scripts differ from canonical source (local edits will be overwritten):"
+		print_warning "Deployed scripts differ from canonical source (local edits will be overwritten; backup will be created):"
 		for bn in "${drifted[@]}"; do
 			print_warning "  $target_scripts/$bn"
 			print_warning "    → canonical: $source_scripts/$bn"
 		done
-		print_warning "To keep personal scripts: use ~/.aidevops/agents/custom/scripts/"
-		print_warning "To fix the canonical source: edit ~/Git/aidevops/.agents/scripts/ and re-run setup.sh"
+		print_warning "To keep personal scripts: use $target_dir/custom/scripts/"
+		print_warning "To fix the canonical source: edit $source_scripts/ and re-run setup.sh"
 	fi
 	return 0
 }
