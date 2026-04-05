@@ -49,7 +49,21 @@ gh issue list -R marcusquinn/aidevops --state all --search "KEYWORDS" --limit 10
 
 If duplicates found, present them and ask: add comment to existing / create new / review first.
 
-### Step 3.5: Architectural Alignment (enhancements only)
+### Step 3.5: Customization Routing
+
+Before filing, check whether this is a customization need rather than a framework issue:
+
+| User says | Likely route |
+|-----------|-------------|
+| "My script edits get overwritten" | Customization — use `~/.aidevops/agents/custom/scripts/` |
+| "I want X to behave differently" | Customization — create a wrapper in `custom/` |
+| "I added an agent but it disappeared" | Customization — use `custom/` or `draft/` (root agents are overwritten) |
+| "This script is broken for everyone" | Bug — file an issue |
+| "The framework should support X" | Enhancement — file an issue (maintainers assess fit) |
+
+If the need is customization, explain the `custom/` directory and link to `reference/customization.md`. Do not file an issue.
+
+### Step 3.6: Architectural Alignment (enhancements only)
 
 Skip for bugs with clear reproduction steps — bugs are observed failures and belong in the tracker.
 

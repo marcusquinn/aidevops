@@ -96,7 +96,7 @@ Rules: `prompts/build.txt`.
 
 - **CLI**: `aidevops [init|update|status|repos|skills|features]`
 - **Scripts**: `~/.aidevops/agents/scripts/[service]-helper.sh [command] [account] [target]`
-- **Scripts (editing)**: `~/.aidevops/agents/scripts/` is a **deployed copy** — edits there are overwritten by `aidevops update` (every ~10 min). Edit the canonical source at `~/Git/aidevops/.agents/scripts/<name>.sh`, then run `cd ~/Git/aidevops && bash setup.sh --non-interactive` to deploy.
+- **Scripts (editing)**: `~/.aidevops/agents/scripts/` is a **deployed copy** — edits there are overwritten by `aidevops update` (every ~10 min). For personal scripts, use `~/.aidevops/agents/custom/scripts/` (survives updates). To fix framework scripts, edit `~/Git/aidevops/.agents/scripts/<name>.sh` and run `setup.sh --non-interactive`. See `reference/customization.md`.
 - **Secrets**: `aidevops secret` (gopass preferred) or `~/.config/aidevops/credentials.sh` (600 perms)
 - **Subagent Index**: `subagent-index.toon`
 - **Domain Index**: `reference/domain-index.md` (30+ domain-to-subagent mappings; read on demand)
@@ -240,9 +240,11 @@ Rules: `prompts/build.txt`. Secrets: `gopass` preferred; `credentials.sh` plaint
 ## Working Directories
 
 Tree: `prompts/build.txt`. Agent tiers:
-- `custom/` — user's permanent private agents (survives updates)
+- `custom/` — user's permanent private agents and scripts (survives updates)
 - `draft/` — R&D, experimental (survives updates)
 - root — shared agents (overwritten on update)
+
+**Do not edit deployed scripts or agents directly** — use `custom/` for personal tooling. Full guide: `reference/customization.md`.
 
 Lifecycle: `tools/build-agent/build-agent.md`.
 

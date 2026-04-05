@@ -285,7 +285,8 @@ _warn_deployed_script_drift() {
 			print_warning "  $target_scripts/$bn"
 			print_warning "    → canonical: $source_scripts/$bn"
 		done
-		print_warning "To preserve changes: edit the canonical source and re-run setup.sh --non-interactive"
+		print_warning "To keep personal scripts: use ~/.aidevops/agents/custom/scripts/"
+		print_warning "To fix the canonical source: edit ~/Git/aidevops/.agents/scripts/ and re-run setup.sh"
 	fi
 	return 0
 }
