@@ -3172,6 +3172,21 @@ cleanup_worktrees() {
 					local repo_name_age
 					repo_name_age=$(basename "$rp_age")
 					echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): removing ${wt_branch_age:-detached} — $reason" >>"$LOGFILE"
+
+					# GH#17436: Record fast-fail for crashed worker worktrees so the
+					# escalation threshold (tier:thinking at count=2) can trigger.
+					# Extract issue number from branch name (pattern: gh-NNN or ghNNNNN).
+					if [[ "$reason" == *"crashed worker"* && -n "$wt_branch_age" && -n "$repo_slug_age" ]]; then
+						local orphan_issue_num=""
+						if [[ "$wt_branch_age" =~ gh[-]?([0-9]+) ]]; then
+							orphan_issue_num="${BASH_REMATCH[1]}"
+						fi
+						if [[ -n "$orphan_issue_num" ]]; then
+							recover_failed_launch_state "$orphan_issue_num" "$repo_slug_age" "premature_exit"
+							echo "[pulse-wrapper] Orphan cleanup: recorded premature_exit for #${orphan_issue_num} (${repo_slug_age}) — triggers fast-fail escalation" >>"$LOGFILE"
+						fi
+					fi
+
 					git -C "$rp_age" worktree remove --force "$wt_path_age" 2>/dev/null || rm -rf "$wt_path_age"
 					if [[ -n "$wt_branch_age" ]]; then
 						git -C "$rp_age" branch -D "$wt_branch_age" 2>/dev/null || true

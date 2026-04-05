@@ -87,6 +87,16 @@ headless-runtime-helper.sh run --role worker --session-key "$SESSION_KEY" \
 | Architectural decision needed | EXIT BLOCKED (genuine blocker) |
 | Failing CI check | Fix the check, do not stop |
 
+## Headless session awareness (GH#17436 — CRITICAL)
+
+This is a headless session. No user is present. No user input will arrive.
+
+- **Never** ask for confirmation, approval, or "should I proceed?" — no one will answer.
+- Reading the issue, reading docs, and creating a worktree are **setup** — not completion.
+- You **must** continue through implementation, commit, push, and PR creation after setup.
+- If you stop after setup without code changes, the session is wasted and will be retried.
+- The runtime will send a "continue" prompt if you exit prematurely. After 3 continuation attempts, the issue is escalated to a higher-tier model.
+
 ## Completion self-check
 
 Before `FULL_LOOP_COMPLETE`, verify:

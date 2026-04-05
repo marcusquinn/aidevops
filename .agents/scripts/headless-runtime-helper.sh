@@ -1177,7 +1177,7 @@ append_worker_headless_contract() {
 		return 0
 	fi
 
-	if [[ "$prompt_text" == *"HEADLESS_CONTINUATION_CONTRACT_V1"* ]]; then
+	if [[ "$prompt_text" == *"HEADLESS_CONTINUATION_CONTRACT_V"* ]]; then
 		printf '%s' "$prompt_text"
 		return 0
 	fi
@@ -1185,16 +1185,24 @@ append_worker_headless_contract() {
 	local contract
 	contract=$(
 		cat <<'EOF'
-[HEADLESS_CONTINUATION_CONTRACT_V1]
-This worker run is unattended.
+[HEADLESS_CONTINUATION_CONTRACT_V2]
+This is a HEADLESS worker session. No user is present. No user input is available.
+You must drive autonomously to completion or an evidence-backed BLOCKED outcome.
 
 Mandatory behavior:
-1. Never ask for user confirmation or next steps.
-2. Do not stop at "PR opened" or "in review" states.
-3. Continue through review polling, merge readiness checks, merge, and required closing comments.
-4. If merge/close cannot complete, exit only with a clear BLOCKED outcome and evidence (failing check, missing permission, unresolved conflict, or explicit policy gate).
-5. Do not emit user-directed language like "If you want, I can...".
-6. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, attempt model escalation — retry with the next tier (sonnet -> opus via --model anthropic/claude-opus-4-6). Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own. A genuine blocker requires evidence that persists after escalation.
+1. Never ask for user confirmation, approval, or next steps. No user will respond.
+2. Never emit user-directed language ("If you want...", "Let me know...", "Should I...").
+3. Reading the issue, reading docs, and creating a worktree are SETUP — not completion. You MUST continue through implementation, commit, push, and PR creation after setup.
+4. Do not stop at "PR opened" or "in review" states. Continue through review polling, merge readiness checks, merge, and required closing comments.
+5. If merge/close cannot complete, exit only with a clear BLOCKED outcome and evidence (failing check, missing permission, unresolved conflict, or explicit policy gate).
+6. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, attempt model escalation — retry with the next tier (sonnet -> opus via --model anthropic/claude-opus-4-6). Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own.
+
+Pre-exit self-check (MANDATORY):
+Before ending your session, verify ALL of these:
+  a) At least one commit with implementation changes exists on your branch.
+  b) A PR exists: `gh pr list --head "$(git rev-parse --abbrev-ref HEAD)"` returns a result.
+  c) If either (a) or (b) is missing, you are NOT done — continue working.
+  d) The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.
 EOF
 	)
 
@@ -1478,10 +1486,48 @@ _invoke_claude() {
 	return 0
 }
 
+# output_has_completion_signal: check if a worker run produced a meaningful
+# completion signal (FULL_LOOP_COMPLETE, BLOCKED, or PR creation).
+# Workers that produce tool calls but exit without these signals stopped
+# prematurely — typically after investigation/setup but before implementation.
+#
+# Args: $1 = output file path
+# Returns: 0 if completion signal found, 1 if premature exit
+output_has_completion_signal() {
+	local file_path="$1"
+	[[ -f "$file_path" ]] || return 1
+	python3 - "$file_path" <<'PY'
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(errors="ignore")
+
+# Explicit completion/blocked signals
+for marker in ("FULL_LOOP_COMPLETE", "BLOCKED", "TASK_COMPLETE"):
+    if marker in text:
+        sys.exit(0)
+
+# PR creation evidence (gh pr create in a tool call output)
+if "gh pr create" in text and ("pull/" in text or "Created pull request" in text.lower()):
+    sys.exit(0)
+
+# PR merge evidence
+if "gh pr merge" in text and ("Merged" in text or "merged" in text):
+    sys.exit(0)
+
+# git push evidence (at least the worker pushed code)
+if "git push" in text and ("-> " in text or "branch " in text):
+    sys.exit(0)
+
+sys.exit(1)
+PY
+	return $?
+}
+
 # _handle_run_result: process output_file after opencode exits.
 # Args: exit_code output_file role provider session_key selected_model
 # Sets caller variable _run_failure_reason on failure.
-# Returns: 0 success, 75 no-activity backoff, non-zero on failure.
+# Returns: 0 success, 75 no-activity backoff, 77 premature exit, non-zero on failure.
 _handle_run_result() {
 	local exit_code="$1"
 	local output_file="$2"
@@ -1509,10 +1555,29 @@ _handle_run_result() {
 			print_warning "$selected_model returned exit 0 without any model activity (no backoff recorded — may be local issue)"
 			return 75
 		fi
-		_run_result_label="success"
+		# Store session ID for potential continuation (before deleting output)
 		if [[ "$role" != "pulse" && -n "$discovered_session" ]]; then
 			store_session_id "$provider" "$session_key" "$discovered_session" "$selected_model"
 		fi
+
+		# GH#17436: Check for premature exit — worker produced activity (tool
+		# calls) but stopped without completing (no PR, no FULL_LOOP_COMPLETE,
+		# no BLOCKED). This is the #1 GPT-5.4 failure mode: reads issue, creates
+		# worktree, then exits without writing code. Previously classified as
+		# "success" which prevented fast-fail escalation from ever triggering.
+		#
+		# Only check implementation workers (session_key=issue-*), not pulse
+		# or triage sessions which don't produce PR completion signals.
+		if [[ "$role" == "worker" && "$session_key" == issue-* ]]; then
+			if ! output_has_completion_signal "$output_file"; then
+				_run_result_label="premature_exit"
+				rm -f "$output_file"
+				print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
+				return 77
+			fi
+		fi
+
+		_run_result_label="success"
 		rm -f "$output_file"
 		return 0
 	fi
@@ -1950,6 +2015,14 @@ cmd_run() {
 		return "$choose_exit"
 	}
 
+	# GH#17436: Continuation retry configuration.
+	# When a worker exits prematurely (activity but no completion signal),
+	# resume the session with a "continue" prompt instead of starting fresh.
+	# This catches the GPT-5.4 failure mode of stopping after investigation/setup.
+	local max_continuation_retries="${HEADLESS_CONTINUATION_MAX_RETRIES:-3}"
+	local continuation_count=0
+	local original_prompt="$prompt"
+
 	local attempt=1
 	local max_attempts=3
 	local cmd_run_action="retry"
@@ -1976,6 +2049,33 @@ cmd_run() {
 		if [[ "$attempt_exit" -eq 0 ]]; then
 			_cmd_run_finish "$session_key" "complete"
 			return 0
+		fi
+
+		# GH#17436: Handle premature exit (exit 77) — worker had activity but
+		# no completion signal. Resume the session with a continuation prompt
+		# instead of recording a provider failure and rotating.
+		if [[ "$attempt_exit" -eq 77 && "$continuation_count" -lt "$max_continuation_retries" ]]; then
+			continuation_count=$((continuation_count + 1))
+			print_warning "Premature exit detected — sending continuation prompt (attempt ${continuation_count}/${max_continuation_retries})"
+
+			# Swap to a continuation prompt that reinforces headless completion.
+			# The session ID is already stored; _execute_run_attempt will use
+			# --session <id> --continue to resume the existing conversation.
+			prompt="Continue through to completion. This is a headless session — no user is present and no user input is available to assist. You have set up the environment but have not yet completed the task. Check your todo list, implement the required code changes, commit, push, and create a PR. Do not stop until the outcome is FULL_LOOP_COMPLETE or BLOCKED with evidence."
+
+			# Continuation retries don't consume provider-rotation attempts
+			# since the provider isn't at fault — the model stopped early.
+			continue
+		fi
+
+		# If we exhausted continuation retries, classify as a real failure
+		# so the fast-fail counter increments and tier escalation can trigger.
+		if [[ "$attempt_exit" -eq 77 ]]; then
+			_run_failure_reason="premature_exit"
+			_run_result_label="premature_exit"
+			print_warning "Exhausted ${max_continuation_retries} continuation retries — recording as premature_exit failure"
+			_cmd_run_finish "$session_key" "fail"
+			return 1
 		fi
 
 		_cmd_run_prepare_retry \
