@@ -55,7 +55,7 @@ done
 Output: tab-separated (number, title, labels, assignees, ISO timestamp). The agent groups by repo, converts timestamps to relative times, and aligns columns at display time.
 
 Actions for each item:
-- **Approve:** `gh issue edit <N> --repo <slug> --remove-label needs-maintainer-review --add-label auto-dispatch`
+- **Approve:** `sudo aidevops approve issue <N>` (cryptographically signed approval)
 - **Decline:** `gh issue close <N> --repo <slug> -c "Declined: <reason>"`
 
 ## Browser View

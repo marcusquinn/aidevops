@@ -3404,6 +3404,7 @@ _help_commands() {
 	echo "  model-accounts-pool OAuth account pool (list/check/add/rotate/reset-cooldowns)"
 	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
 	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
+	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
 	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
@@ -3748,6 +3749,7 @@ main() {
 		;;
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
 	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
+	approve) _dispatch_helper "approval-helper.sh" "approval-helper.sh" "$@" ;;
 	signing) _dispatch_helper "signing-setup.sh" "signing-setup.sh" "$@" ;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;

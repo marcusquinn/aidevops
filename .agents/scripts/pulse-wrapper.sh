@@ -3973,19 +3973,25 @@ reconcile_stale_done_issues() {
 }
 
 #######################################
-# Auto-approve needs-maintainer-review issues where the maintainer
-# created the issue or has already commented (GH#16842).
+# Auto-approve needs-maintainer-review issues using cryptographic
+# signature verification (t1894, replaces GH#16842 comment-based check).
 #
-# The review gate exists for external contributions. When the
-# maintainer is the author or has engaged, the gate is redundant —
-# remove the label and add auto-dispatch so the fill floor can
-# dispatch workers immediately.
+# The review gate exists for external contributions. Approval requires
+# a cryptographically signed comment posted via `sudo aidevops approve
+# issue <number>`. This ensures only a human with the system password
+# (and root access to the approval signing key) can approve issues.
+#
+# Fallback: maintainer-authored issues are still auto-approved (the
+# maintainer wouldn't gate their own issues). Comment-based approval
+# is removed — workers share the same GitHub account so any comment
+# from the account is indistinguishable from a human comment.
 #######################################
 auto_approve_maintainer_issues() {
 	local repos_json="$REPOS_JSON"
 	[[ -f "$repos_json" ]] || return 0
 
 	local total_approved=0
+	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
 
 	while IFS='|' read -r slug maintainer; do
 		[[ -n "$slug" && -n "$maintainer" ]] || continue
@@ -4009,20 +4015,21 @@ auto_approve_maintainer_issues() {
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
 			local should_approve=false
+			local approval_reason=""
 
-			# Case 1: maintainer created the issue
+			# Case 1: maintainer created the issue — auto-approve
 			if [[ "$issue_author" == "$maintainer" ]]; then
 				should_approve=true
+				approval_reason="maintainer is author"
 			fi
 
-			# Case 2: maintainer commented on the issue
-			if [[ "$should_approve" == "false" ]]; then
-				local maintainer_commented
-				maintainer_commented=$(gh api "repos/${slug}/issues/${issue_num}/comments" \
-					--jq "[.[] | select(.user.login == \"${maintainer}\")] | length" 2>/dev/null) || maintainer_commented=0
-				[[ "$maintainer_commented" =~ ^[0-9]+$ ]] || maintainer_commented=0
-				if [[ "$maintainer_commented" -gt 0 ]]; then
+			# Case 2: cryptographic approval signature found
+			if [[ "$should_approve" == "false" && -f "$approval_helper" ]]; then
+				local verify_result
+				verify_result=$(bash "$approval_helper" verify "$issue_num" "$slug" 2>/dev/null) || verify_result=""
+				if [[ "$verify_result" == "VERIFIED" ]]; then
 					should_approve=true
+					approval_reason="cryptographic approval verified"
 				fi
 			fi
 
@@ -4030,7 +4037,7 @@ auto_approve_maintainer_issues() {
 				gh issue edit "$issue_num" --repo "$slug" \
 					--remove-label "needs-maintainer-review" \
 					--add-label "auto-dispatch" >/dev/null 2>&1 || true
-				echo "[pulse-wrapper] Auto-approved #${issue_num} in ${slug} — maintainer ($maintainer) is author or commenter" >>"$LOGFILE"
+				echo "[pulse-wrapper] Auto-approved #${issue_num} in ${slug} — ${approval_reason}" >>"$LOGFILE"
 				total_approved=$((total_approved + 1))
 			fi
 		done

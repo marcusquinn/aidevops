@@ -251,7 +251,11 @@ jobs:
 
           ${REASONS}
           **What to do:**
-          1. A maintainer must review the linked issue(s) and remove the \`needs-maintainer-review\` label
+          1. A maintainer must review the linked issue(s) and approve them using the cryptographic approval command:
+             \`\`\`
+             sudo aidevops approve issue <issue_number>
+             \`\`\`
+             This requires your system password and signs the approval with a root-protected key that automation cannot forge.
           2. The issue(s) must have an assignee before work begins
           3. This check re-runs automatically when the issue is updated
 
@@ -338,7 +342,10 @@ jobs:
 
           Only repository collaborators with write access or higher (write/maintain/admin permission) can remove triage labels from external issues. This prevents the development pipeline from picking up unreviewed external contributions.
 
-          If you believe this issue is ready for development, please ask a maintainer to review and approve it."
+          If you believe this issue is ready for development, ask a maintainer to approve it:
+          \`\`\`
+          sudo aidevops approve issue $ISSUE_NUMBER
+          \`\`\`"
           fi
 
   # =========================================================================
