@@ -446,6 +446,12 @@ _install_pulse_systemd() {
 	fi
 	_env_lines+="Environment=PULSE_DIR=${HOME}/.aidevops/.agent-workspace"$'\n'
 	_env_lines+="Environment=HOME=${HOME}"$'\n'
+	# Capture setup-time PATH so systemd workers find user-installed binaries
+	# (e.g. ~/.npm-global/bin/opencode, ~/.local/bin/claude). Systemd user
+	# services inherit only a minimal default PATH; without this, headless
+	# runtime binaries are not found and workers exit 127. Matches launchd
+	# plist behaviour (GH#17405).
+	_env_lines+="Environment=PATH=${PATH}"$'\n'
 
 	# Write the service unit
 	printf '%s' "[Unit]
@@ -460,10 +466,14 @@ StandardError=append:${HOME}/.aidevops/logs/pulse-wrapper.log
 " >"$service_file"
 
 	# Write the timer unit (every 2 minutes)
+	# OnActiveSec=10s fires 10 seconds after the timer is enabled, bootstrapping
+	# the first service run on mid-session installs where OnBootSec has already
+	# elapsed and OnUnitActiveSec has no prior activation to anchor to (GH#17405).
 	printf '%s' "[Unit]
 Description=aidevops Supervisor Pulse Timer
 
 [Timer]
+OnActiveSec=10s
 OnBootSec=2min
 OnUnitActiveSec=2min
 Persistent=true
