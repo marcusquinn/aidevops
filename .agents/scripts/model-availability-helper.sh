@@ -641,7 +641,9 @@ _probe_build_request() {
 		return 1
 	fi
 
-	local curl_args="-s -w '\n%{http_code}' --max-time $PROBE_TIMEOUT -D -"
+	# %{time_total} is a portable curl write-out field (macOS + Linux).
+	# Using it avoids date +%s%N which is a GNU extension not available on BSD/macOS.
+	local curl_args="-s -w '\n%{time_total}\n%{http_code}' --max-time $PROBE_TIMEOUT -D -"
 	case "$provider" in
 	anthropic)
 		curl_args="$curl_args -H 'x-api-key: ${api_key}' -H 'anthropic-version: 2023-06-01'"
@@ -811,22 +813,29 @@ probe_provider() {
 	curl_extra=$(echo "$request_info" | tail -1)
 
 	# Execute probe (eval is safe: curl_extra is built from controlled provider strings)
-	local start_ms response end_ms duration_ms=0
-	start_ms=$(date +%s%N 2>/dev/null || echo "0")
+	# _probe_build_request appends two trailer lines via -w: time_total (float s) then http_code.
+	# %{time_total} is portable across macOS (BSD curl) and Linux (GNU curl).
+	# date +%s%N was previously used here but %N is a GNU extension that prints literal
+	# "%N" on macOS, causing arithmetic failures (GH#17464).
+	local response duration_ms=0
 	# shellcheck disable=SC2086
 	response=$(eval curl $curl_extra "$endpoint" 2>/dev/null) || true
-	end_ms=$(date +%s%N 2>/dev/null || echo "0")
-	if [[ "$start_ms" != "0" && "$end_ms" != "0" ]]; then
-		duration_ms=$(((end_ms - start_ms) / 1000000))
-	fi
 
-	# Split response into headers and body
-	local http_code headers body
-	# _probe_build_request appends one trailer line: http_code.
-	http_code=$(echo "$response" | tail -1)
-	headers=$(echo "$response" | sed '/^$/q' | head -50)
-	# Drop the last line (http_code) from the body after the blank-line header separator
-	body=$(echo "$response" | sed '1,/^$/d' | awk 'NR>1{print prev} {prev=$0}')
+	# Split response into headers, body, time_total, and http_code.
+	# Trailer format (two lines appended by -w '\n%{time_total}\n%{http_code}'): time_total then http_code.
+	local http_code time_total_s headers body
+	http_code=$(printf '%s\n' "$response" | tail -1)
+	time_total_s=$(printf '%s\n' "$response" | tail -2 | head -1)
+	headers=$(printf '%s\n' "$response" | sed '/^$/q' | head -50)
+	# Drop headers (up to and including blank separator line) and the two trailer lines.
+	# awk sliding-window approach drops the last N lines portably (head -n -2 is GNU-only).
+	body=$(printf '%s\n' "$response" | sed '1,/^$/d' | awk 'NR>2{print lines[NR%2]} {lines[NR%2]=$0}')
+
+	# Convert time_total (float seconds, e.g. "0.123456") to integer milliseconds.
+	# Use awk for portable float arithmetic — bash arithmetic only handles integers.
+	if [[ -n "$time_total_s" && "$time_total_s" =~ ^[0-9] ]]; then
+		duration_ms=$(awk "BEGIN { printf \"%d\", $time_total_s * 1000 }" 2>/dev/null || echo "0")
+	fi
 
 	_parse_rate_limits "$provider" "$headers"
 
