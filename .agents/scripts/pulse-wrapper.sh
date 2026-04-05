@@ -238,6 +238,8 @@ FAST_FAIL_SKIP_THRESHOLD="${FAST_FAIL_SKIP_THRESHOLD:-5}"               # Hard s
 FAST_FAIL_EXPIRY_SECS="${FAST_FAIL_EXPIRY_SECS:-604800}"                # 7-day expiry (matches max backoff)
 FAST_FAIL_INITIAL_BACKOFF_SECS="${FAST_FAIL_INITIAL_BACKOFF_SECS:-600}" # 10 min initial backoff
 FAST_FAIL_MAX_BACKOFF_SECS="${FAST_FAIL_MAX_BACKOFF_SECS:-604800}"      # 7-day max backoff
+EVER_NMR_CACHE_FILE="${EVER_NMR_CACHE_FILE:-${HOME}/.aidevops/.agent-workspace/supervisor/ever-nmr-cache.json}"
+EVER_NMR_NEGATIVE_CACHE_TTL_SECS="${EVER_NMR_NEGATIVE_CACHE_TTL_SECS:-300}" # Recheck negative results after 5 min
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
@@ -303,6 +305,7 @@ CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 1
 SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
 SHELLCHECK_RUNTIME_LIMIT=$(_validate_int SHELLCHECK_RUNTIME_LIMIT "$SHELLCHECK_RUNTIME_LIMIT" 300 1)
 SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 5 1)
+EVER_NMR_NEGATIVE_CACHE_TTL_SECS=$(_validate_int EVER_NMR_NEGATIVE_CACHE_TTL_SECS "$EVER_NMR_NEGATIVE_CACHE_TTL_SECS" 300 0)
 
 # _sanitize_markdown and _sanitize_log_field provided by worker-lifecycle-common.sh
 
@@ -3992,6 +3995,116 @@ reconcile_stale_done_issues() {
 }
 
 #######################################
+# Cached ever-NMR provenance helpers (GH#17458)
+#
+# Positive results are immutable and can be cached indefinitely.
+# Negative results are cached for a short TTL to avoid a timeline API call
+# on every dispatch candidate while still noticing new NMR labels promptly.
+#######################################
+_ever_nmr_cache_key() {
+	local issue_num="$1"
+	local slug="$2"
+	printf '%s\n' "${slug}#${issue_num}"
+	return 0
+}
+
+_ever_nmr_cache_load() {
+	if [[ ! -f "$EVER_NMR_CACHE_FILE" ]]; then
+		printf '{}\n'
+		return 0
+	fi
+
+	local content
+	content=$(cat "$EVER_NMR_CACHE_FILE" 2>/dev/null) || content="{}"
+	if ! printf '%s' "$content" | jq empty >/dev/null 2>&1; then
+		content="{}"
+	fi
+
+	printf '%s\n' "$content"
+	return 0
+}
+
+_ever_nmr_cache_with_lock() {
+	local lock_dir="${EVER_NMR_CACHE_FILE}.lockdir"
+	local retries=0
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		retries=$((retries + 1))
+		if [[ "$retries" -ge 50 ]]; then
+			echo "[pulse-wrapper] _ever_nmr_cache_with_lock: lock acquisition timed out" >>"$LOGFILE"
+			return 1
+		fi
+		sleep 0.1
+	done
+
+	local rc=0
+	"$@" || rc=$?
+	rmdir "$lock_dir" 2>/dev/null || true
+	return "$rc"
+}
+
+_ever_nmr_cache_get() {
+	local issue_num="$1"
+	local slug="$2"
+	local key now_epoch cache_json cache_value checked_at age
+
+	key=$(_ever_nmr_cache_key "$issue_num" "$slug")
+	now_epoch=$(date +%s)
+	cache_json=$(_ever_nmr_cache_load)
+	cache_value=$(printf '%s' "$cache_json" | jq -r --arg key "$key" 'if .[$key] == null then "unknown" elif .[$key].ever_nmr == true then "true" elif .[$key].ever_nmr == false then "false" else "unknown" end' 2>/dev/null) || cache_value="unknown"
+	checked_at=$(printf '%s' "$cache_json" | jq -r --arg key "$key" '.[$key].checked_at // 0' 2>/dev/null) || checked_at=0
+	[[ "$checked_at" =~ ^[0-9]+$ ]] || checked_at=0
+
+	if [[ "$cache_value" == "true" ]]; then
+		printf 'true\n'
+		return 0
+	fi
+
+	if [[ "$cache_value" == "false" ]]; then
+		age=$((now_epoch - checked_at))
+		if [[ "$age" -lt "$EVER_NMR_NEGATIVE_CACHE_TTL_SECS" ]]; then
+			printf 'false\n'
+			return 0
+		fi
+	fi
+
+	printf 'unknown\n'
+	return 0
+}
+
+_ever_nmr_cache_set_locked() {
+	local issue_num="$1"
+	local slug="$2"
+	local cache_value="$3"
+	local state_dir cache_json key now_epoch tmp_file
+
+	[[ "$cache_value" == "true" || "$cache_value" == "false" ]] || return 1
+
+	state_dir=$(dirname "$EVER_NMR_CACHE_FILE")
+	mkdir -p "$state_dir" 2>/dev/null || true
+	cache_json=$(_ever_nmr_cache_load)
+	key=$(_ever_nmr_cache_key "$issue_num" "$slug")
+	now_epoch=$(date +%s)
+	tmp_file=$(mktemp "${state_dir}/.ever-nmr-cache.XXXXXX" 2>/dev/null) || return 0
+
+	if printf '%s' "$cache_json" | jq --arg key "$key" --argjson checked_at "$now_epoch" --argjson ever_nmr "$cache_value" '.[$key] = {ever_nmr: $ever_nmr, checked_at: $checked_at}' >"$tmp_file" 2>/dev/null; then
+		mv "$tmp_file" "$EVER_NMR_CACHE_FILE" || {
+			rm -f "$tmp_file"
+			echo "[pulse-wrapper] _ever_nmr_cache_set_locked: failed to move cache file" >>"$LOGFILE"
+		}
+	else
+		rm -f "$tmp_file"
+		echo "[pulse-wrapper] _ever_nmr_cache_set_locked: failed to write cache entry" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+_ever_nmr_cache_set() {
+	_ever_nmr_cache_with_lock _ever_nmr_cache_set_locked "$@" || return 0
+	return 0
+}
+
+#######################################
 # Check if an issue was ever labeled needs-maintainer-review (t1894).
 # Uses the immutable GitHub timeline API — label removal does not erase
 # the history. This is the provenance gate: once an issue is tagged NMR,
@@ -4000,13 +4113,35 @@ reconcile_stale_done_issues() {
 # Arguments:
 #   $1 - issue number
 #   $2 - repo slug (owner/repo)
+#   $3 - optional precomputed status: true|false|unknown
 # Returns: 0 if the issue was ever NMR-labeled, 1 otherwise
 #######################################
 issue_was_ever_nmr() {
 	local issue_num="$1"
 	local slug="$2"
+	local known_status="${3:-unknown}"
 
 	[[ -n "$issue_num" && -n "$slug" ]] || return 1
+
+	case "$known_status" in
+	true)
+		return 0
+		;;
+	false)
+		return 1
+		;;
+	esac
+
+	local cache_status
+	cache_status=$(_ever_nmr_cache_get "$issue_num" "$slug")
+	case "$cache_status" in
+	true)
+		return 0
+		;;
+	false)
+		return 1
+		;;
+	esac
 
 	local ever_count
 	ever_count=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate \
@@ -4015,8 +4150,11 @@ issue_was_ever_nmr() {
 	[[ "$ever_count" =~ ^[0-9]+$ ]] || ever_count=0
 
 	if [[ "$ever_count" -gt 0 ]]; then
+		_ever_nmr_cache_set "$issue_num" "$slug" "true"
 		return 0
 	fi
+
+	_ever_nmr_cache_set "$issue_num" "$slug" "false"
 	return 1
 }
 
@@ -4027,14 +4165,16 @@ issue_was_ever_nmr() {
 # Arguments:
 #   $1 - issue number
 #   $2 - repo slug (owner/repo)
+#   $3 - optional precomputed status: true|false|unknown
 # Returns: 0 if the issue is approved (or never needed approval), 1 if blocked
 #######################################
 issue_has_required_approval() {
 	local issue_num="$1"
 	local slug="$2"
+	local known_status="${3:-unknown}"
 
 	# If it was never NMR-labeled, no approval needed
-	if ! issue_was_ever_nmr "$issue_num" "$slug"; then
+	if ! issue_was_ever_nmr "$issue_num" "$slug" "$known_status"; then
 		return 0
 	fi
 
@@ -6214,9 +6354,14 @@ dispatch_with_dedup() {
 		return 1
 	fi
 
+	local known_ever_nmr="unknown"
+	if echo "$issue_meta_json" | jq -e '.labels | map(.name) | index("needs-maintainer-review")' >/dev/null 2>&1; then
+		known_ever_nmr="true"
+	fi
+
 	# t1894: Cryptographic approval gate — block dispatch for issues that were
 	# ever labeled needs-maintainer-review without a signed approval.
-	if ! issue_has_required_approval "$issue_number" "$repo_slug"; then
+	if ! issue_has_required_approval "$issue_number" "$repo_slug" "$known_ever_nmr"; then
 		echo "[pulse-wrapper] dispatch_with_dedup: BLOCKED #${issue_number} in ${repo_slug} — requires cryptographic approval (ever-NMR)" >>"$LOGFILE"
 		return 1
 	fi
