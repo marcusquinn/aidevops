@@ -419,6 +419,209 @@ _systemd_user_available() {
 	return 0
 }
 
+# Escape a value for safe embedding in a systemd unit Environment= directive.
+# systemd interprets % as specifiers (%h, %n, %t, etc.) and spaces as
+# key-value separators. This helper:
+#   1. Escapes \ → \\ (must be first to avoid double-escaping)
+#   2. Doubles % → %% (escape specifiers)
+#   3. Escapes embedded " → \"
+#   4. Wraps the result in "..." (handles spaces and other shell metacharacters)
+# Usage: escaped=$(_systemd_escape "$value")
+_systemd_escape() {
+	local _val="$1"
+	# Step 1: escape backslashes
+	_val="${_val//\\/\\\\}"
+	# Step 2: escape % specifiers
+	_val="${_val//%/%%}"
+	# Step 3: escape embedded double-quotes
+	_val="${_val//\"/\\\"}"
+	# Step 4: wrap in double-quotes
+	printf '"%s"' "$_val"
+	return 0
+}
+
+# Install a generic scheduler via systemd user timer (Linux with systemd).
+# Args:
+#   $1 = service_name  (e.g. "aidevops-stats-wrapper")
+#   $2 = script_path   (absolute path to the script to run)
+#   $3 = script_args   (space-separated args string, may be empty)
+#   $4 = interval_sec  (OnUnitActiveSec interval in seconds)
+#   $5 = log_file      (absolute path to log file)
+#   $6 = env_vars      (newline-separated "KEY=VALUE" pairs, may be empty)
+#   $7 = on_active_sec (optional OnActiveSec bootstrap delay, default "10s")
+# Returns 0 on success, 1 if systemd enable fails (caller should fall back to cron).
+_install_scheduler_systemd() {
+	local service_name="$1"
+	local script_path="$2"
+	local script_args="$3"
+	local interval_sec="$4"
+	local log_file="$5"
+	local env_vars="$6"
+	local on_active_sec="${7:-10s}"
+	local service_dir="$HOME/.config/systemd/user"
+	local service_file="${service_dir}/${service_name}.service"
+	local timer_file="${service_dir}/${service_name}.timer"
+
+	mkdir -p "$service_dir"
+
+	# Build Environment= lines from env_vars (newline-separated KEY=VALUE pairs)
+	local _env_lines=""
+	if [[ -n "$env_vars" ]]; then
+		while IFS= read -r _kv; do
+			[[ -z "$_kv" ]] && continue
+			local _key _raw_val _escaped_val
+			_key="${_kv%%=*}"
+			_raw_val="${_kv#*=}"
+			_escaped_val=$(_systemd_escape "$_raw_val")
+			_env_lines+="Environment=${_key}=${_escaped_val}"$'\n'
+		done <<<"$env_vars"
+	fi
+	# Always inject HOME and PATH
+	_env_lines+="Environment=HOME=$(_systemd_escape "$HOME")"$'\n'
+	_env_lines+="Environment=PATH=$(_systemd_escape "$PATH")"$'\n'
+
+	# Build ExecStart — script path + optional args
+	local _exec_start="/bin/bash ${script_path}"
+	if [[ -n "$script_args" ]]; then
+		_exec_start+=" ${script_args}"
+	fi
+
+	# Write the service unit
+	printf '%s' "[Unit]
+Description=aidevops ${service_name}
+After=network.target
+
+[Service]
+Type=oneshot
+KillMode=process
+ExecStart=${_exec_start}
+${_env_lines}StandardOutput=append:${log_file}
+StandardError=append:${log_file}
+" >"$service_file"
+
+	# Write the timer unit
+	printf '%s' "[Unit]
+Description=aidevops ${service_name} Timer
+
+[Timer]
+OnActiveSec=${on_active_sec}
+OnBootSec=${interval_sec}
+OnUnitActiveSec=${interval_sec}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+" >"$timer_file"
+
+	systemctl --user daemon-reload 2>/dev/null || true
+	if systemctl --user enable --now "${service_name}.timer" 2>/dev/null; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+# Dispatcher: install a scheduler on Linux, preferring systemd over cron.
+# Args:
+#   $1 = service_name   (systemd service name, e.g. "aidevops-stats-wrapper")
+#   $2 = cron_tag       (comment tag for cron line, e.g. "aidevops: stats-wrapper")
+#   $3 = cron_schedule  (cron schedule expression, e.g. "*/15 * * * *")
+#   $4 = cron_cmd       (full cron command string, already escaped)
+#   $5 = script_path    (absolute path to the script)
+#   $6 = script_args    (space-separated args string, may be empty)
+#   $7 = interval_sec   (systemd OnUnitActiveSec in seconds)
+#   $8 = log_file       (absolute path to log file)
+#   $9 = env_vars       (newline-separated KEY=VALUE pairs for systemd, may be empty)
+#   $10 = success_msg   (message to print on success)
+#   $11 = fail_msg      (message to print on failure)
+# Returns 0 always (failures are warnings, not fatal).
+_install_scheduler_linux() {
+	local service_name="$1"
+	local cron_tag="$2"
+	local cron_schedule="$3"
+	local cron_cmd="$4"
+	local script_path="$5"
+	local script_args="$6"
+	local interval_sec="$7"
+	local log_file="$8"
+	local env_vars="$9"
+	local success_msg="${10}"
+	local fail_msg="${11}"
+
+	if _systemd_user_available; then
+		if _install_scheduler_systemd \
+			"$service_name" \
+			"$script_path" \
+			"$script_args" \
+			"$interval_sec" \
+			"$log_file" \
+			"$env_vars"; then
+			print_info "${success_msg} (systemd user timer)"
+		else
+			print_warning "systemd enable failed for ${service_name} — falling back to cron"
+			(
+				crontab -l 2>/dev/null | grep -v "${cron_tag}" || true
+				echo "${cron_schedule} ${cron_cmd} # ${cron_tag}"
+			) | crontab - 2>/dev/null || true
+			if crontab -l 2>/dev/null | grep -qF "${cron_tag}" 2>/dev/null; then
+				print_info "${success_msg} (cron fallback)"
+			else
+				print_warning "${fail_msg}"
+			fi
+		fi
+	else
+		(
+			crontab -l 2>/dev/null | grep -v "${cron_tag}" || true
+			echo "${cron_schedule} ${cron_cmd} # ${cron_tag}"
+		) | crontab - 2>/dev/null || true
+		if crontab -l 2>/dev/null | grep -qF "${cron_tag}" 2>/dev/null; then
+			print_info "${success_msg} (cron)"
+		else
+			print_warning "${fail_msg}"
+		fi
+	fi
+	return 0
+}
+
+# Uninstall a scheduler across all backends (launchd/systemd/cron).
+# Args:
+#   $1 = os            (output of uname -s)
+#   $2 = launchd_label (e.g. "sh.aidevops.stats-wrapper")
+#   $3 = systemd_name  (e.g. "aidevops-stats-wrapper")
+#   $4 = cron_tag      (grep pattern for cron line, e.g. "aidevops: stats-wrapper")
+#   $5 = success_msg   (message to print on removal)
+# Returns 0 always.
+_uninstall_scheduler() {
+	local _os="$1"
+	local launchd_label="$2"
+	local systemd_name="$3"
+	local cron_tag="$4"
+	local success_msg="$5"
+
+	if [[ "$_os" == "Darwin" ]]; then
+		local _plist="$HOME/Library/LaunchAgents/${launchd_label}.plist"
+		if _launchd_has_agent "$launchd_label"; then
+			launchctl unload "$_plist" 2>/dev/null || true
+			rm -f "$_plist"
+			print_info "${success_msg} (launchd agent removed)"
+		fi
+	elif _systemd_user_available; then
+		if systemctl --user is-enabled "${systemd_name}.timer" >/dev/null 2>&1; then
+			systemctl --user disable --now "${systemd_name}.timer" 2>/dev/null || true
+			rm -f "$HOME/.config/systemd/user/${systemd_name}.service"
+			rm -f "$HOME/.config/systemd/user/${systemd_name}.timer"
+			systemctl --user daemon-reload 2>/dev/null || true
+			print_info "${success_msg} (systemd timer removed)"
+		fi
+	else
+		if crontab -l 2>/dev/null | grep -qF "${cron_tag}" 2>/dev/null; then
+			crontab -l 2>/dev/null | grep -v "${cron_tag}" | crontab - 2>/dev/null || true
+			print_info "${success_msg} (cron entry removed)"
+		fi
+	fi
+	return 0
+}
+
 # Install supervisor pulse via systemd user service (Linux with systemd)
 # Args: $1=service_name (e.g. "aidevops-supervisor-pulse"), $2=wrapper_script
 _install_pulse_systemd() {
@@ -430,28 +633,30 @@ _install_pulse_systemd() {
 
 	mkdir -p "$service_dir"
 
-	# Build environment overrides for the service
+	# Build environment overrides for the service.
+	# All values are escaped via _systemd_escape() to prevent % specifier
+	# expansion and handle spaces/special characters (GH#17441).
 	local _env_lines=""
 	local _configured_headless_models _configured_pulse_model
 	_configured_headless_models=$(_resolve_headless_models_override)
 	_configured_pulse_model=$(_resolve_pulse_model_override)
 	if [[ -n "$_configured_headless_models" ]]; then
-		_env_lines+="Environment=AIDEVOPS_HEADLESS_MODELS=${_configured_headless_models}"$'\n'
+		_env_lines+="Environment=AIDEVOPS_HEADLESS_MODELS=$(_systemd_escape "$_configured_headless_models")"$'\n'
 	fi
 	if [[ -n "$_configured_pulse_model" ]]; then
-		_env_lines+="Environment=PULSE_MODEL=${_configured_pulse_model}"$'\n'
+		_env_lines+="Environment=PULSE_MODEL=$(_systemd_escape "$_configured_pulse_model")"$'\n'
 	fi
 	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
-		_env_lines+="Environment=AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST}"$'\n'
+		_env_lines+="Environment=AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=$(_systemd_escape "$AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST")"$'\n'
 	fi
-	_env_lines+="Environment=PULSE_DIR=${HOME}/.aidevops/.agent-workspace"$'\n'
-	_env_lines+="Environment=HOME=${HOME}"$'\n'
+	_env_lines+="Environment=PULSE_DIR=$(_systemd_escape "${HOME}/.aidevops/.agent-workspace")"$'\n'
+	_env_lines+="Environment=HOME=$(_systemd_escape "$HOME")"$'\n'
 	# Capture setup-time PATH so systemd workers find user-installed binaries
 	# (e.g. ~/.npm-global/bin/opencode, ~/.local/bin/claude). Systemd user
 	# services inherit only a minimal default PATH; without this, headless
 	# runtime binaries are not found and workers exit 127. Matches launchd
 	# plist behaviour (GH#17405).
-	_env_lines+="Environment=PATH=${PATH}"$'\n'
+	_env_lines+="Environment=PATH=$(_systemd_escape "$PATH")"$'\n'
 
 	# Write the service unit
 	printf '%s' "[Unit]
@@ -527,6 +732,7 @@ _uninstall_pulse() {
 # Setup stats-wrapper scheduler — runs quality sweep and health issue updates
 # separately from the pulse (t1429). Only installed when the supervisor
 # pulse is enabled (stats are useless without it).
+# macOS: launchd plist (every 15 min) | Linux: systemd timer or cron (every 15 min)
 setup_stats_wrapper() {
 	local _pulse_lower="$1"
 	# Use effective pulse state (PULSE_ENABLED) if available; fall back to consent string.
@@ -534,6 +740,8 @@ setup_stats_wrapper() {
 	local _pulse_effective="${PULSE_ENABLED:-$_pulse_lower}"
 	local stats_script="$HOME/.aidevops/agents/scripts/stats-wrapper.sh"
 	local stats_label="com.aidevops.aidevops-stats-wrapper"
+	local stats_systemd="aidevops-stats-wrapper"
+	local stats_log="$HOME/.aidevops/logs/stats.log"
 	if [[ -x "$stats_script" ]] && [[ "$_pulse_effective" == "true" ]]; then
 		# Always regenerate to pick up config/format changes (matches pulse behavior)
 		if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -586,29 +794,27 @@ PLIST
 		else
 			local _cron_stats_script
 			_cron_stats_script=$(_cron_escape "$stats_script")
-			(
-				crontab -l 2>/dev/null | grep -v 'aidevops: stats-wrapper' || true
-				echo "*/15 * * * * /bin/bash ${_cron_stats_script} >> \"\$HOME/.aidevops/logs/stats.log\" 2>&1 # aidevops: stats-wrapper"
-			) | crontab - || true
-			if crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
-				print_info "Stats wrapper enabled (cron, every 15 min)"
-			fi
+			_install_scheduler_linux \
+				"$stats_systemd" \
+				"aidevops: stats-wrapper" \
+				"*/15 * * * *" \
+				"/bin/bash ${_cron_stats_script} >> \"\$HOME/.aidevops/logs/stats.log\" 2>&1" \
+				"$stats_script" \
+				"" \
+				"900" \
+				"$stats_log" \
+				"" \
+				"Stats wrapper enabled (every 15 min)" \
+				"Failed to install stats wrapper scheduler"
 		fi
 	elif [[ "$_pulse_effective" == "false" ]]; then
 		# Remove stats scheduler if pulse is disabled
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			local stats_plist="$HOME/Library/LaunchAgents/${stats_label}.plist"
-			if _launchd_has_agent "$stats_label"; then
-				launchctl unload "$stats_plist" || true
-				rm -f "$stats_plist"
-				print_info "Stats wrapper disabled (launchd agent removed — pulse is off)"
-			fi
-		else
-			if crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
-				crontab -l 2>/dev/null | grep -v 'aidevops: stats-wrapper' | crontab - || true
-				print_info "Stats wrapper disabled (cron entry removed — pulse is off)"
-			fi
-		fi
+		_uninstall_scheduler \
+			"$(uname -s)" \
+			"$stats_label" \
+			"$stats_systemd" \
+			"aidevops: stats-wrapper" \
+			"Stats wrapper disabled (pulse is off)"
 	fi
 	return 0
 }
@@ -616,27 +822,22 @@ PLIST
 # Setup failure miner — mines GitHub CI failure notifications for systemic patterns
 # and auto-files root-cause issues. Runs as a pure bash script (no LLM needed).
 # Installed when pulse is enabled and the helper script exists.
-# macOS: launchd plist (hourly at :15) | Linux: cron (hourly at :15)
+# macOS: launchd plist (hourly at :15) | Linux: systemd timer or cron (hourly at :15)
 setup_failure_miner() {
 	local _pulse_lower="$1"
 	local _pulse_effective="${PULSE_ENABLED:-$_pulse_lower}"
 	local miner_script="$HOME/.aidevops/agents/scripts/gh-failure-miner-helper.sh"
 	local miner_label="sh.aidevops.routine-gh-failure-miner"
+	local miner_systemd="aidevops-gh-failure-miner"
+	local miner_log="$HOME/.aidevops/logs/routine-gh-failure-miner.log"
 	if [[ ! -x "$miner_script" ]] || [[ "$_pulse_effective" != "true" ]]; then
 		# Remove scheduler if pulse is disabled or script missing
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			local miner_plist="$HOME/Library/LaunchAgents/${miner_label}.plist"
-			if _launchd_has_agent "$miner_label"; then
-				launchctl unload "$miner_plist" 2>/dev/null || true
-				rm -f "$miner_plist"
-				print_info "Failure miner disabled (pulse is off or script missing)"
-			fi
-		else
-			if crontab -l 2>/dev/null | grep -qF "aidevops: gh-failure-miner"; then
-				crontab -l 2>/dev/null | grep -v 'aidevops: gh-failure-miner' | crontab - || true
-				print_info "Failure miner disabled (cron entry removed)"
-			fi
-		fi
+		_uninstall_scheduler \
+			"$(uname -s)" \
+			"$miner_label" \
+			"$miner_systemd" \
+			"aidevops: gh-failure-miner" \
+			"Failure miner disabled (pulse is off or script missing)"
 		return 0
 	fi
 
@@ -649,7 +850,7 @@ setup_failure_miner() {
 		_xml_miner_script=$(_xml_escape "$miner_script")
 		_xml_miner_home=$(_xml_escape "$HOME")
 		_xml_miner_path=$(_xml_escape "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}")
-		_xml_miner_log=$(_xml_escape "${HOME}/.aidevops/logs/routine-gh-failure-miner.log")
+		_xml_miner_log=$(_xml_escape "$miner_log")
 
 		local miner_plist_content
 		miner_plist_content=$(
@@ -708,13 +909,18 @@ MINER_PLIST
 	else
 		local _cron_miner_script
 		_cron_miner_script=$(_cron_escape "$miner_script")
-		(
-			crontab -l 2>/dev/null | grep -v 'aidevops: gh-failure-miner' || true
-			echo "15 * * * * /bin/bash ${_cron_miner_script} create-issues --since-hours 24 --pulse-repos --systemic-threshold 2 --max-issues 3 --label auto-dispatch >> \"\$HOME/.aidevops/logs/routine-gh-failure-miner.log\" 2>&1 # aidevops: gh-failure-miner"
-		) | crontab - || true
-		if crontab -l 2>/dev/null | grep -qF "aidevops: gh-failure-miner"; then
-			print_info "Failure miner enabled (cron, hourly at :15)"
-		fi
+		_install_scheduler_linux \
+			"$miner_systemd" \
+			"aidevops: gh-failure-miner" \
+			"15 * * * *" \
+			"/bin/bash ${_cron_miner_script} create-issues --since-hours 24 --pulse-repos --systemic-threshold 2 --max-issues 3 --label auto-dispatch >> \"\$HOME/.aidevops/logs/routine-gh-failure-miner.log\" 2>&1" \
+			"$miner_script" \
+			"create-issues --since-hours 24 --pulse-repos --systemic-threshold 2 --max-issues 3 --label auto-dispatch" \
+			"3600" \
+			"$miner_log" \
+			"" \
+			"Failure miner enabled (hourly at :15)" \
+			"Failed to install failure miner scheduler"
 	fi
 	return 0
 }
@@ -722,10 +928,12 @@ MINER_PLIST
 # Setup process guard — kills runaway AI processes (ShellCheck bloat, stuck workers)
 # before they exhaust memory and cause kernel panics. Always installed when the
 # script exists; no consent needed (safety net, not autonomous action).
-# macOS: launchd plist (30s interval, RunAtLoad=true) | Linux: cron (every minute)
+# macOS: launchd plist (30s interval, RunAtLoad=true) | Linux: systemd timer or cron (every minute)
 setup_process_guard() {
 	local guard_script="$HOME/.aidevops/agents/scripts/process-guard-helper.sh"
 	local guard_label="sh.aidevops.process-guard"
+	local guard_systemd="aidevops-process-guard"
+	local guard_log="$HOME/.aidevops/logs/process-guard.log"
 	if [[ ! -x "$guard_script" ]]; then
 		return 0
 	fi
@@ -793,20 +1001,24 @@ GUARD_PLIST
 			print_warning "Failed to load process guard LaunchAgent"
 		fi
 	else
-		# Linux: cron entry (every minute — cron minimum granularity)
-		# Always regenerate to pick up config changes (matches macOS behavior)
-		# Shell-escape path to prevent command injection via metacharacters
+		# Linux: systemd timer (30s) or cron fallback (every minute — cron minimum granularity)
 		local _cron_guard_script
 		_cron_guard_script=$(_cron_escape "$guard_script")
-		(
-			crontab -l 2>/dev/null | grep -v 'aidevops: process-guard' || true
-			echo "* * * * * SHELLCHECK_RSS_LIMIT_KB=524288 SHELLCHECK_RUNTIME_LIMIT=120 CHILD_RSS_LIMIT_KB=8388608 CHILD_RUNTIME_LIMIT=7200 /bin/bash ${_cron_guard_script} kill-runaways >> \"\$HOME/.aidevops/logs/process-guard.log\" 2>&1 # aidevops: process-guard"
-		) | crontab - || true
-		if crontab -l 2>/dev/null | grep -qF "aidevops: process-guard"; then
-			print_info "Process guard enabled (cron, every minute)"
-		else
-			print_warning "Failed to install process guard cron entry"
-		fi
+		_install_scheduler_linux \
+			"$guard_systemd" \
+			"aidevops: process-guard" \
+			"* * * * *" \
+			"SHELLCHECK_RSS_LIMIT_KB=524288 SHELLCHECK_RUNTIME_LIMIT=120 CHILD_RSS_LIMIT_KB=8388608 CHILD_RUNTIME_LIMIT=7200 /bin/bash ${_cron_guard_script} kill-runaways >> \"\$HOME/.aidevops/logs/process-guard.log\" 2>&1" \
+			"$guard_script" \
+			"kill-runaways" \
+			"30" \
+			"$guard_log" \
+			"SHELLCHECK_RSS_LIMIT_KB=524288
+SHELLCHECK_RUNTIME_LIMIT=120
+CHILD_RSS_LIMIT_KB=8388608
+CHILD_RUNTIME_LIMIT=7200" \
+			"Process guard enabled (every 30s)" \
+			"Failed to install process guard scheduler"
 	fi
 	return 0
 }
@@ -815,10 +1027,12 @@ GUARD_PLIST
 # Monitors individual process RSS, runtime, session count, and aggregate memory.
 # Auto-kills runaway ShellCheck (language server respawns them). Always installed
 # when the script exists; no consent needed (safety net, not autonomous action).
-# macOS: launchd plist (60s interval, RunAtLoad=true) | Linux: cron (every minute)
+# macOS: launchd plist (60s interval, RunAtLoad=true) | Linux: systemd timer or cron (every minute)
 setup_memory_pressure_monitor() {
 	local monitor_script="$HOME/.aidevops/agents/scripts/memory-pressure-monitor.sh"
 	local monitor_label="sh.aidevops.memory-pressure-monitor"
+	local monitor_systemd="aidevops-memory-pressure-monitor"
+	local monitor_log="$HOME/.aidevops/logs/memory-pressure-launchd.log"
 	if [[ ! -x "$monitor_script" ]]; then
 		return 0
 	fi
@@ -881,16 +1095,21 @@ MONITOR_PLIST
 			print_warning "Failed to load memory pressure monitor LaunchAgent"
 		fi
 	else
-		# Linux: cron entry (every minute — cron minimum granularity)
-		(
-			crontab -l 2>/dev/null | grep -v 'aidevops: memory-pressure-monitor' || true
-			echo "* * * * * /bin/bash \"${monitor_script}\" >> \"\$HOME/.aidevops/logs/memory-pressure-launchd.log\" 2>&1 # aidevops: memory-pressure-monitor"
-		) | crontab - 2>/dev/null || true
-		if crontab -l 2>/dev/null | grep -qF "aidevops: memory-pressure-monitor" 2>/dev/null; then
-			print_info "Memory pressure monitor enabled (cron, every minute)"
-		else
-			print_warning "Failed to install memory pressure monitor cron entry"
-		fi
+		# Linux: systemd timer (60s) or cron fallback (every minute — cron minimum granularity)
+		local _cron_monitor_script
+		_cron_monitor_script=$(_cron_escape "$monitor_script")
+		_install_scheduler_linux \
+			"$monitor_systemd" \
+			"aidevops: memory-pressure-monitor" \
+			"* * * * *" \
+			"/bin/bash ${_cron_monitor_script} >> \"\$HOME/.aidevops/logs/memory-pressure-launchd.log\" 2>&1" \
+			"$monitor_script" \
+			"" \
+			"60" \
+			"$monitor_log" \
+			"" \
+			"Memory pressure monitor enabled (every 60s)" \
+			"Failed to install memory pressure monitor scheduler"
 	fi
 	return 0
 }
@@ -898,10 +1117,12 @@ MONITOR_PLIST
 # Setup screen time snapshot — captures daily screen time for contributor stats.
 # Accumulates data in screen-time.jsonl (macOS Knowledge DB retains only ~28 days).
 # Always installed when the script exists; no consent needed (data collection only).
-# macOS: launchd plist (every 6h, RunAtLoad=true) | Linux: cron (every 6h)
+# macOS: launchd plist (every 6h, RunAtLoad=true) | Linux: systemd timer or cron (every 6h)
 setup_screen_time_snapshot() {
 	local st_script="$HOME/.aidevops/agents/scripts/screen-time-helper.sh"
 	local st_label="sh.aidevops.screen-time-snapshot"
+	local st_systemd="aidevops-screen-time-snapshot"
+	local st_log="$HOME/.aidevops/.agent-workspace/logs/screen-time-snapshot.log"
 	if [[ ! -x "$st_script" ]]; then
 		return 0
 	fi
@@ -965,18 +1186,21 @@ ST_PLIST
 			print_warning "Failed to load screen time snapshot LaunchAgent"
 		fi
 	else
-		# Linux: cron entry (every 6 hours)
+		# Linux: systemd timer (every 6h) or cron fallback
 		local _cron_st_script
 		_cron_st_script=$(_cron_escape "$st_script")
-		(
-			crontab -l 2>/dev/null | grep -v 'aidevops: screen-time-snapshot' || true
-			echo "0 */6 * * * /bin/bash ${_cron_st_script} snapshot >> \"\$HOME/.aidevops/.agent-workspace/logs/screen-time-snapshot.log\" 2>&1 # aidevops: screen-time-snapshot"
-		) | crontab - 2>/dev/null || true
-		if crontab -l 2>/dev/null | grep -qF "aidevops: screen-time-snapshot" 2>/dev/null; then
-			print_info "Screen time snapshot enabled (cron, every 6h)"
-		else
-			print_warning "Failed to install screen time snapshot cron entry"
-		fi
+		_install_scheduler_linux \
+			"$st_systemd" \
+			"aidevops: screen-time-snapshot" \
+			"0 */6 * * *" \
+			"/bin/bash ${_cron_st_script} snapshot >> \"\$HOME/.aidevops/.agent-workspace/logs/screen-time-snapshot.log\" 2>&1" \
+			"$st_script" \
+			"snapshot" \
+			"21600" \
+			"$st_log" \
+			"" \
+			"Screen time snapshot enabled (every 6h)" \
+			"Failed to install screen time snapshot scheduler"
 	fi
 	return 0
 }
@@ -1071,29 +1295,33 @@ CW_PLIST
 	return 0
 }
 
-# Install contribution watch via cron (Linux).
+# Install contribution watch via systemd or cron (Linux).
 # Args: $1=script path, $2=log dir
-_install_cw_cron() {
+_install_cw_linux() {
 	local cw_script="$1"
 	local _cw_log_dir="$2"
+	local cw_systemd="aidevops-contribution-watch"
 	local _cron_cw_script _cron_cw_log_dir
 	_cron_cw_script=$(_cron_escape "$cw_script")
 	_cron_cw_log_dir=$(_cron_escape "$_cw_log_dir")
-	(
-		crontab -l 2>/dev/null | grep -v 'aidevops: contribution-watch' || true
-		echo "0 * * * * /bin/bash ${_cron_cw_script} scan >> \"${_cron_cw_log_dir}/contribution-watch.log\" 2>&1 # aidevops: contribution-watch"
-	) | crontab - 2>/dev/null || true
-	if crontab -l 2>/dev/null | grep -qF "aidevops: contribution-watch" 2>/dev/null; then
-		print_info "Contribution watch enabled (cron, hourly scan)"
-	else
-		print_warning "Failed to install contribution watch cron entry"
-	fi
+	_install_scheduler_linux \
+		"$cw_systemd" \
+		"aidevops: contribution-watch" \
+		"0 * * * *" \
+		"/bin/bash ${_cron_cw_script} scan >> \"${_cron_cw_log_dir}/contribution-watch.log\" 2>&1" \
+		"$cw_script" \
+		"scan" \
+		"3600" \
+		"${_cw_log_dir}/contribution-watch.log" \
+		"" \
+		"Contribution watch enabled (hourly scan)" \
+		"Failed to install contribution watch scheduler"
 	return 0
 }
 
 # Setup contribution watch — monitors external issues/PRs for new activity (t1554).
 # Auto-seeds on first run (discovers authored/commented issues/PRs), then installs
-# a launchd/cron job to scan periodically. Requires gh CLI authenticated.
+# a launchd/systemd/cron job to scan periodically. Requires gh CLI authenticated.
 # No consent needed — this is passive monitoring (read-only notifications API),
 # not autonomous action. Comment bodies are never processed by LLM in automated context.
 # Respects config: aidevops config set orchestration.contribution_watch false
@@ -1124,7 +1352,7 @@ setup_contribution_watch() {
 	if [[ "$(uname -s)" == "Darwin" ]]; then
 		_install_cw_launchd "$cw_label" "$cw_script" "$_cw_log_dir"
 	else
-		_install_cw_cron "$cw_script" "$_cw_log_dir"
+		_install_cw_linux "$cw_script" "$_cw_log_dir"
 	fi
 	return 0
 }
@@ -1171,7 +1399,9 @@ setup_profile_readme() {
 	# Profile README auto-update scheduled job.
 	# Installed whenever gh CLI is available — the update script self-heals
 	# (discovers/creates the profile repo on first run via _resolve_profile_repo).
-	# macOS: launchd plist (hourly) | Linux: cron (hourly)
+	# macOS: launchd plist (hourly) | Linux: systemd timer or cron (hourly)
+	local pr_systemd="aidevops-profile-readme-update"
+	local pr_log="$HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log"
 	mkdir -p "$HOME/.aidevops/.agent-workspace/logs"
 
 	if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -1231,18 +1461,21 @@ PR_PLIST
 			print_warning "Failed to load profile README update LaunchAgent"
 		fi
 	else
-		# Linux: cron entry (hourly)
+		# Linux: systemd timer (hourly) or cron fallback
 		local _cron_pr_script
 		_cron_pr_script=$(_cron_escape "$pr_script")
-		(
-			crontab -l 2>/dev/null | grep -v 'aidevops: profile-readme-update' || true
-			echo "0 * * * * /bin/bash ${_cron_pr_script} update >> \"\$HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log\" 2>&1 # aidevops: profile-readme-update"
-		) | crontab - 2>/dev/null || true
-		if crontab -l 2>/dev/null | grep -qF "aidevops: profile-readme-update" 2>/dev/null; then
-			print_info "Profile README update enabled (cron, hourly)"
-		else
-			print_warning "Failed to install profile README update cron entry"
-		fi
+		_install_scheduler_linux \
+			"$pr_systemd" \
+			"aidevops: profile-readme-update" \
+			"0 * * * *" \
+			"/bin/bash ${_cron_pr_script} update >> \"\$HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log\" 2>&1" \
+			"$pr_script" \
+			"update" \
+			"3600" \
+			"$pr_log" \
+			"" \
+			"Profile README update enabled (hourly)" \
+			"Failed to install profile README update scheduler"
 	fi
 	return 0
 }
@@ -1325,11 +1558,65 @@ _uninstall_token_refresh_schtasks() {
 	return 0
 }
 
+# Install OAuth token refresh via systemd user timer (Linux with systemd).
+# Runs two sequential refresh commands (anthropic + openai) via shell -c.
+# Args: $1=tr_script, $2=tr_log_dir
+_install_token_refresh_systemd() {
+	local tr_script="$1"
+	local tr_log_dir="$2"
+	local service_name="aidevops-token-refresh"
+	local service_dir="$HOME/.config/systemd/user"
+	local service_file="${service_dir}/${service_name}.service"
+	local timer_file="${service_dir}/${service_name}.timer"
+
+	mkdir -p "$service_dir"
+
+	local _env_home _env_path
+	_env_home=$(_systemd_escape "$HOME")
+	_env_path=$(_systemd_escape "$PATH")
+
+	# Write the service unit — uses shell -c to chain two refresh calls
+	printf '%s' "[Unit]
+Description=aidevops OAuth Token Refresh
+After=network.target
+
+[Service]
+Type=oneshot
+KillMode=process
+ExecStart=/bin/bash -c '${tr_script} refresh anthropic; ${tr_script} refresh openai'
+Environment=HOME=${_env_home}
+Environment=PATH=${_env_path}
+StandardOutput=append:${tr_log_dir}/token-refresh.log
+StandardError=append:${tr_log_dir}/token-refresh.log
+" >"$service_file"
+
+	# Write the timer unit (every 30 minutes)
+	printf '%s' "[Unit]
+Description=aidevops OAuth Token Refresh Timer
+
+[Timer]
+OnActiveSec=10s
+OnBootSec=30min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+" >"$timer_file"
+
+	systemctl --user daemon-reload 2>/dev/null || true
+	if systemctl --user enable --now "${service_name}.timer" 2>/dev/null; then
+		return 0
+	else
+		return 1
+	fi
+}
+
 # Setup OAuth token refresh scheduled job.
 # Refreshes expired/expiring tokens every 30 min so sessions never hit
 # "invalid x-api-key". Also runs at load to catch tokens that expired
 # while the machine was off.
-# macOS: launchd plist | Linux/WSL: cron | Windows Git Bash: schtasks
+# macOS: launchd plist | Linux/WSL: systemd timer or cron | Windows Git Bash: schtasks
 setup_oauth_token_refresh() {
 	local tr_script="$HOME/.aidevops/agents/scripts/oauth-pool-helper.sh"
 	local tr_label="sh.aidevops.token-refresh"
@@ -1398,8 +1685,26 @@ TR_PLIST
 	elif _is_windows; then
 		# Windows Git Bash / MINGW64 / MSYS2: use Task Scheduler (schtasks)
 		_install_token_refresh_schtasks "$tr_script" "$tr_log_dir"
+	elif _systemd_user_available; then
+		# Linux with systemd: use systemd user timer
+		if _install_token_refresh_systemd "$tr_script" "$tr_log_dir"; then
+			print_info "OAuth token refresh enabled (systemd user timer, every 30 min)"
+		else
+			print_warning "systemd enable failed for token-refresh — falling back to cron"
+			local _cron_tr_script
+			_cron_tr_script=$(_cron_escape "$tr_script")
+			(
+				crontab -l 2>/dev/null | grep -v 'aidevops: token-refresh' || true
+				echo "*/30 * * * * /bin/bash ${_cron_tr_script} refresh anthropic >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1; /bin/bash ${_cron_tr_script} refresh openai >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1 # aidevops: token-refresh"
+			) | crontab - 2>/dev/null || true
+			if crontab -l 2>/dev/null | grep -qF "aidevops: token-refresh" 2>/dev/null; then
+				print_info "OAuth token refresh enabled (cron fallback, every 30 min)"
+			else
+				print_warning "Failed to install token refresh scheduler"
+			fi
+		fi
 	else
-		# Linux / WSL: cron entry (every 30 min)
+		# Linux / WSL without systemd: cron entry (every 30 min)
 		local _cron_tr_script
 		_cron_tr_script=$(_cron_escape "$tr_script")
 		(
