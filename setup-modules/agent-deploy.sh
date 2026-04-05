@@ -248,6 +248,48 @@ _deploy_agents_post_copy() {
 	return 0
 }
 
+# _warn_deployed_script_drift source_dir target_dir
+# Compares deployed scripts against canonical source and warns if any differ.
+# This catches the case where someone edited ~/.aidevops/agents/scripts/ directly
+# (those edits are overwritten by every deploy). Emits a warning listing drifted
+# files and the canonical source path to edit instead.
+# Non-fatal: always returns 0 so deployment proceeds.
+_warn_deployed_script_drift() {
+	local source_dir="$1"
+	local target_dir="$2"
+	local source_scripts="$source_dir/scripts"
+	local target_scripts="$target_dir/scripts"
+
+	# Only check if both directories exist and diff is available
+	if [[ ! -d "$source_scripts" || ! -d "$target_scripts" ]]; then
+		return 0
+	fi
+	if ! command -v diff &>/dev/null; then
+		return 0
+	fi
+
+	local -a drifted=()
+	local f bn
+	for f in "$target_scripts"/*.sh; do
+		[[ -f "$f" ]] || continue
+		bn=$(basename "$f")
+		local src="$source_scripts/$bn"
+		if [[ -f "$src" ]] && ! diff -q "$src" "$f" &>/dev/null; then
+			drifted+=("$bn")
+		fi
+	done
+
+	if [[ ${#drifted[@]} -gt 0 ]]; then
+		print_warning "Deployed scripts differ from canonical source (local edits will be overwritten):"
+		for bn in "${drifted[@]}"; do
+			print_warning "  $target_scripts/$bn"
+			print_warning "    → canonical: $source_scripts/$bn"
+		done
+		print_warning "To preserve changes: edit the canonical source and re-run setup.sh --non-interactive"
+	fi
+	return 0
+}
+
 deploy_aidevops_agents() {
 	print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
 
@@ -278,6 +320,12 @@ deploy_aidevops_agents() {
 				plugin_namespaces+=("$safe_ns")
 			fi
 		done < <(jq -r '.plugins[].namespace // empty' "$plugins_file" 2>/dev/null)
+	fi
+
+	# Warn if deployed scripts have been locally modified (GH#17414).
+	# These edits will be overwritten — users must edit the canonical source.
+	if [[ -d "$target_dir" ]]; then
+		_warn_deployed_script_drift "$source_dir" "$target_dir"
 	fi
 
 	# Create backup if target exists (with rotation)

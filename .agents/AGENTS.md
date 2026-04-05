@@ -96,6 +96,7 @@ Rules: `prompts/build.txt`.
 
 - **CLI**: `aidevops [init|update|status|repos|skills|features]`
 - **Scripts**: `~/.aidevops/agents/scripts/[service]-helper.sh [command] [account] [target]`
+- **Scripts (editing)**: `~/.aidevops/agents/scripts/` is a **deployed copy** — edits there are overwritten by `aidevops update` (every ~10 min). Edit the canonical source at `~/Git/aidevops/.agents/scripts/<name>.sh`, then run `cd ~/Git/aidevops && bash setup.sh --non-interactive` to deploy.
 - **Secrets**: `aidevops secret` (gopass preferred) or `~/.config/aidevops/credentials.sh` (600 perms)
 - **Subagent Index**: `subagent-index.toon`
 - **Domain Index**: `reference/domain-index.md` (30+ domain-to-subagent mappings; read on demand)
