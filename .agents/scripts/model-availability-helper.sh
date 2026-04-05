@@ -641,7 +641,7 @@ _probe_build_request() {
 		return 1
 	fi
 
-	local curl_args="-s -w '\n%{http_code}\n%{time_total}' --max-time $PROBE_TIMEOUT -D -"
+	local curl_args="-s -w '\n%{http_code}' --max-time $PROBE_TIMEOUT -D -"
 	case "$provider" in
 	anthropic)
 		curl_args="$curl_args -H 'x-api-key: ${api_key}' -H 'anthropic-version: 2023-06-01'"
@@ -824,8 +824,8 @@ probe_provider() {
 	local http_code headers body
 	http_code=$(echo "$response" | tail -1)
 	headers=$(echo "$response" | sed '/^$/q' | head -50)
-	# head -n -2 is GNU-only (unsupported on macOS); use awk to drop last 2 lines
-	body=$(echo "$response" | sed '1,/^$/d' | awk 'NR>2{print buf[NR%2]} {buf[NR%2]=$0}')
+	# Drop the last line (http_code) from the body after the blank-line header separator
+	body=$(echo "$response" | sed '1,/^$/d' | awk 'NR>1{print prev} {prev=$0}')
 
 	_parse_rate_limits "$provider" "$headers"
 
