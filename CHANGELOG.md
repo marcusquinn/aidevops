@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.97] - 2026-04-05
+
+### Fixed
+
+- `_complexity_llm_sweep_due` in `pulse-wrapper.sh` missing zero-debt guard; when debt is zero, `0 < 0 = false` falls through to "sweep due" triggering false-positive stall issues (GH#17422)
+
 ## [3.6.94] - 2026-04-05
 
 ### Fixed
