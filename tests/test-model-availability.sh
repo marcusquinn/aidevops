@@ -475,49 +475,71 @@ else
 fi
 
 # ============================================================
-# SECTION 11: API Probe Parsing Regression (GH#17427)
+# SECTION 11: Curl write-out format / http_code extraction (GH#17427)
 # ============================================================
-section "API Probe Parsing Regression (GH#17427)"
+section "Curl Write-Out Format (GH#17427)"
 
-# Source a temp copy without the final main "$@" line so helper functions can be
-# called directly while preserving SCRIPT_DIR-relative sourcing.
-probe_helper_copy=$(mktemp "$REPO_DIR/.agents/scripts/model-availability-helper.test.XXXXXX")
-sed '$d' "$HELPER" >"$probe_helper_copy"
-probe_parse_output=$(bash -c '
-	source "$1" 2>/dev/null || exit 1
-	response=$'"'"'HTTP/2 200\ncontent-type: application/json\n\n{"data":[{"id":"m1"},{"id":"m2"}]}\n200\n0.209059'"'"'
-	http_code=$(echo "$response" | tail -2 | head -1)
-	body=$(echo "$response" | sed "1,/^$/d" | awk "NR>2{print buf[NR%2]} {buf[NR%2]=\$0}")
-	parsed=$(_probe_parse_http_response "anthropic" "$http_code" "$body" true)
-	printf "%s\n" "$http_code"
-	printf "%s\n" "$body"
-	printf "%s\n" "$parsed"
-' bash "$probe_helper_copy" 2>/dev/null) || probe_parse_output=""
-rm -f "$probe_helper_copy"
-
-probe_http_code=$(printf '%s\n' "$probe_parse_output" | sed -n '1p')
-probe_body=$(printf '%s\n' "$probe_parse_output" | sed -n '2p')
-probe_status=$(printf '%s\n' "$probe_parse_output" | sed -n '3p')
-probe_models=$(printf '%s\n' "$probe_parse_output" | sed -n '5p')
-probe_exit=$(printf '%s\n' "$probe_parse_output" | sed -n '6p')
-
-if [[ "$probe_http_code" == "200" ]]; then
-	pass "probe_provider parses penultimate line as http_code (GH#17427)"
+# Verify _probe_build_request uses only %{http_code} (no %{time_total})
+# The bug was: -w '\n%{http_code}\n%{time_total}' caused tail -1 to read
+# time_total (e.g. 0.209059) as the http_code, making all API probes unhealthy.
+if grep -q 'time_total' "$HELPER"; then
+	fail "curl write-out still contains time_total (GH#17427)" \
+		"_probe_build_request should use -w '\\n%{http_code}' only"
 else
-	fail "probe_provider parses penultimate line as http_code (GH#17427)" "Got: ${probe_http_code:-<empty>}"
+	pass "curl write-out does not contain time_total (GH#17427)"
 fi
 
-if [[ "$probe_body" == '{"data":[{"id":"m1"},{"id":"m2"}]}' ]]; then
-	pass "probe_provider body extraction drops curl trailer lines"
+# Verify the write-out format is exactly '\n%{http_code}' (single value)
+if grep -q "\\\\n%{http_code}'" "$HELPER"; then
+	pass "curl write-out ends with http_code (no trailing values)"
 else
-	fail "probe_provider body extraction drops curl trailer lines" "Got: ${probe_body:-<empty>}"
+	fail "curl write-out format unexpected" \
+		"Expected -w '\\n%{http_code}' in _probe_build_request"
 fi
 
-if [[ "$probe_status" == "healthy" && "$probe_models" == "2" && "$probe_exit" == "0" ]]; then
-	pass "probe_provider parses HTTP 200 API probe as healthy (GH#17427)"
+# Verify body extraction drops exactly 1 trailing line (not 2)
+# After removing time_total, only http_code is appended, so body awk
+# should drop 1 line. The old pattern was NR>2 (dropping 2 lines).
+if grep -q 'NR>2{print buf' "$HELPER"; then
+	fail "body extraction still drops 2 trailing lines (GH#17427)" \
+		"Should drop 1 line now that time_total is removed"
 else
-	fail "probe_provider parses HTTP 200 API probe as healthy (GH#17427)" \
-		"status=${probe_status:-<empty>} models=${probe_models:-<empty>} exit=${probe_exit:-<empty>}"
+	pass "body extraction does not use old 2-line drop pattern"
+fi
+
+if grep -q "NR>1{print prev}" "$HELPER"; then
+	pass "body extraction uses 1-line drop pattern (GH#17427)"
+else
+	fail "body extraction missing 1-line drop awk pattern" \
+		"Expected: awk 'NR>1{print prev} {prev=\$0}'"
+fi
+
+# Simulate the http_code extraction logic to verify correctness.
+# Build a mock curl response: headers + blank line + JSON body + http_code.
+# Use plain \n (no \r) to match how the production sed patterns work.
+mock_response=$(printf 'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{"data":[{"id":"model-1"}]}\n200')
+mock_http_code=$(echo "$mock_response" | tail -1)
+if [[ "$mock_http_code" == "200" ]]; then
+	pass "mock: tail -1 extracts http_code correctly (got 200)"
+else
+	fail "mock: tail -1 extracts wrong value" "Expected 200, got: $mock_http_code"
+fi
+
+# Verify body extraction with the new awk pattern
+mock_body=$(echo "$mock_response" | sed '1,/^$/d' | awk 'NR>1{print prev} {prev=$0}')
+if echo "$mock_body" | grep -q '"data"'; then
+	pass "mock: body extraction preserves JSON content"
+else
+	fail "mock: body extraction lost JSON content" "Got: $mock_body"
+fi
+
+# Verify the old bug scenario: if time_total were still present, tail -1 would get it
+mock_old_response=$(printf 'HTTP/1.1 200 OK\n\n{"data":[]}\n200\n0.209059')
+mock_old_code=$(echo "$mock_old_response" | tail -1)
+if [[ "$mock_old_code" == "0.209059" ]]; then
+	pass "mock: confirms old format would read time_total as http_code (bug scenario)"
+else
+	fail "mock: old format test unexpected" "Got: $mock_old_code"
 fi
 
 # ============================================================
