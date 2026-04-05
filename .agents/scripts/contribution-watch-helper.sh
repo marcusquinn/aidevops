@@ -20,6 +20,8 @@
 #   contribution-watch-helper.sh scan [--auto-draft]       Also create draft replies for items needing attention
 #                                                         Drafts stored in ~/.aidevops/.agent-workspace/draft-responses/
 #                                                         Use draft-response-helper.sh to review and approve (t1555)
+#   contribution-watch-helper.sh stop                      Stop a running scan (via PID file)
+#   contribution-watch-helper.sh restart                   Stop existing scan and start a new one
 #   contribution-watch-helper.sh status                    Show watched items and their state
 #   contribution-watch-helper.sh install                   Install launchd plist
 #   contribution-watch-helper.sh uninstall                 Remove launchd plist
@@ -53,6 +55,7 @@ source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 STATE_FILE="${HOME}/.aidevops/cache/contribution-watch.json"
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 LOGFILE="${HOME}/.aidevops/logs/contribution-watch.log"
+PID_FILE="${HOME}/.aidevops/.pid/contribution-watch.pid"
 PLIST_LABEL="sh.aidevops.contribution-watch"
 PLIST_PATH="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
 
@@ -144,12 +147,31 @@ _ensure_state_file() {
 	local state_dir
 	state_dir=$(dirname "$STATE_FILE")
 	mkdir -p "$state_dir" 2>/dev/null || true
+	mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
 
 	if [[ ! -f "$STATE_FILE" ]]; then
 		echo '{"last_scan":"","items":{}}' >"$STATE_FILE"
 		_log_info "Created new state file: $STATE_FILE"
 	fi
 	return 0
+}
+
+# Check whether a scan is already running via the PID file.
+# Returns 0 if a scan is running, 1 if not (stale PID file is cleaned up).
+_is_scan_running() {
+	if [[ ! -f "$PID_FILE" ]]; then
+		return 1
+	fi
+
+	local old_pid
+	old_pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
+	if [[ -n "$old_pid" ]] && [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
+		return 0
+	fi
+
+	# Stale PID file — remove it
+	rm -f "$PID_FILE"
+	return 1
 }
 
 _read_state() {
@@ -956,12 +978,29 @@ _scan_maybe_auto_backfill() {
 cmd_scan() {
 	_scan_parse_args "$@"
 
+	_ensure_state_file
+
+	# Guard: prevent multiple concurrent scan instances (GH#17415).
+	# Check before prerequisites so the "already running" message is always shown.
+	if _is_scan_running; then
+		local running_pid
+		running_pid=$(cat "$PID_FILE" 2>/dev/null || echo "unknown")
+		echo -e "${YELLOW}[contribution-watch] Scan already running (PID ${running_pid}). Use 'stop' or 'restart' to control it.${NC}" >&2
+		_log_warn "Scan skipped — already running (PID ${running_pid})"
+		return 1
+	fi
+
 	_check_prerequisites || return 1
 
 	local username
 	username=$(_get_username) || return 1
 
-	_ensure_state_file
+	# Write our PID before starting work
+	echo $$ >"$PID_FILE"
+
+	# Remove PID file on exit (normal, Ctrl+C, or SIGTERM)
+	trap 'rm -f "$PID_FILE"; trap - EXIT INT TERM' EXIT INT TERM
+
 	_scan_init_globals
 
 	local last_scan
@@ -989,6 +1028,64 @@ cmd_scan() {
 	_scan_post_actions "$_SCAN_ARG_AUTO_DRAFT" "$_SCAN_ARG_BACKFILL" "$_SCAN_ARG_AUTO_BACKFILL"
 
 	return 0
+}
+
+# =============================================================================
+# Stop: stop a running scan via PID file
+# =============================================================================
+
+cmd_stop() {
+	mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
+
+	if [[ ! -f "$PID_FILE" ]]; then
+		echo "[contribution-watch] No PID file found. Is a scan running?" >&2
+		return 1
+	fi
+
+	local pid
+	pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
+	if [[ -z "$pid" ]] || ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+		echo "[contribution-watch] PID file is invalid. Removing stale file." >&2
+		rm -f "$PID_FILE"
+		return 1
+	fi
+
+	if ! kill -0 "$pid" 2>/dev/null; then
+		echo "[contribution-watch] No running scan found (PID ${pid} is gone). Removing stale PID file."
+		rm -f "$PID_FILE"
+		return 0
+	fi
+
+	echo "[contribution-watch] Stopping scan (PID ${pid})..."
+	kill -TERM "$pid" 2>/dev/null || true
+
+	# Wait up to 5 seconds for the process to exit
+	local waited=0
+	while kill -0 "$pid" 2>/dev/null && [[ "$waited" -lt 5 ]]; do
+		sleep 1
+		waited=$((waited + 1))
+	done
+
+	if kill -0 "$pid" 2>/dev/null; then
+		echo "[contribution-watch] Scan did not stop after SIGTERM, sending SIGKILL..."
+		kill -KILL "$pid" 2>/dev/null || true
+	fi
+
+	rm -f "$PID_FILE"
+	echo "[contribution-watch] Scan stopped."
+	return 0
+}
+
+# =============================================================================
+# Restart: stop any running scan and start a new one
+# =============================================================================
+
+cmd_restart() {
+	local stop_rc=0
+	cmd_stop 2>/dev/null || stop_rc=$?
+	# stop_rc=1 is acceptable (no scan was running)
+	cmd_scan "$@"
+	return $?
 }
 
 # Classify a single status item into activity tiers and check if it needs reply.
@@ -1212,6 +1309,13 @@ cmd_uninstall() {
 	else
 		echo "No plist found at ${PLIST_PATH}"
 	fi
+
+	# Stop any running scan and clean up PID file
+	if [[ -f "$PID_FILE" ]]; then
+		cmd_stop 2>/dev/null || true
+		rm -f "$PID_FILE"
+	fi
+
 	return 0
 }
 
@@ -1229,6 +1333,8 @@ cmd_help() {
 	echo "  contribution-watch-helper.sh scan [--auto-draft]           Also create draft replies for items needing attention"
 	echo "                                                             Drafts stored in ~/.aidevops/.agent-workspace/draft-responses/"
 	echo "                                                             Use draft-response-helper.sh to review and approve"
+	echo "  contribution-watch-helper.sh stop                          Stop a running scan (via PID file)"
+	echo "  contribution-watch-helper.sh restart                       Stop existing scan and start a new one"
 	echo "  contribution-watch-helper.sh status                        Show watched items and their state"
 	echo "  contribution-watch-helper.sh install                       Install launchd plist"
 	echo "  contribution-watch-helper.sh uninstall                     Remove launchd plist"
@@ -1269,6 +1375,8 @@ main() {
 	case "$cmd" in
 	seed) cmd_seed "$@" ;;
 	scan) cmd_scan "$@" ;;
+	stop) cmd_stop "$@" ;;
+	restart) cmd_restart "$@" ;;
 	status) cmd_status "$@" ;;
 	install) cmd_install "$@" ;;
 	uninstall) cmd_uninstall "$@" ;;
