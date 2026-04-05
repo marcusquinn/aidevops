@@ -515,6 +515,12 @@ cmd_sweep_check() {
 		local snapshot_age=$((now_epoch - snapshot_epoch))
 
 		if [[ "$snapshot_age" -ge "$stall_seconds" ]]; then
+			# No sweep needed when debt is already zero — nothing to act on (GH#17396)
+			if [[ "$current_debt" -eq 0 ]]; then
+				echo "${now_epoch}|0" >"$SWEEP_DEBT_SNAPSHOT"
+				echo "not-needed|debt is zero, no sweep required"
+				return 1
+			fi
 			if [[ "$current_debt" -ge "$snapshot_count" ]]; then
 				# Debt hasn't decreased — sweep needed
 				echo "needed|debt stalled at ${current_debt} for ${stall_hours}h+ (was ${snapshot_count})"
@@ -533,8 +539,12 @@ cmd_sweep_check() {
 		fi
 	fi
 
-	# No snapshot exists — create one, sweep needed for initial baseline
+	# No snapshot exists — create one. Skip sweep if debt is already zero (GH#17396).
 	echo "${now_epoch}|${current_debt}" >"$SWEEP_DEBT_SNAPSHOT"
+	if [[ "$current_debt" -eq 0 ]]; then
+		echo "not-needed|initial snapshot created, debt is zero"
+		return 1
+	fi
 	echo "needed|initial sweep (no prior snapshot, current debt: ${current_debt})"
 	return 0
 }
