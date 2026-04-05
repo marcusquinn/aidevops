@@ -312,18 +312,23 @@ _extract_fenced_block() {
 	local body="$1"
 	local target_block="$2"
 
+	# Fenced code blocks have OPENING and CLOSING fence lines (``` pairs).
+	# Count pairs (not individual fence lines) to identify block N.
+	# Block 1 = content between fence pair 1, block 2 = content between pair 2, etc.
 	printf '%s\n' "$body" | awk -v target="$target_block" '
-		/^```$/ {
-			block++
-			if (block == target) {
-				capture = 1
+		/^```/ {
+			if (inside) {
+				inside = 0
+				if (capture) { exit }
+			} else {
+				pair++
+				inside = 1
+				if (pair == target) { capture = 1 }
 				next
 			}
-			if (capture) {
-				exit
-			}
+			next
 		}
-		capture { print }
+		capture && inside { print }
 	'
 	return 0
 }
