@@ -107,7 +107,7 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.3 Label `status:in-review` (t1343):** check issue is `OPEN` first.
 
-**4.4 Review Bot Gate (t1382):** `review-bot-gate-helper.sh check "$PR_NUMBER" "$REPO"`. Poll 60s up to 10 min.
+**4.4 Review Bot Gate (t1382):** `review-bot-gate-helper.sh wait "$PR_NUMBER" "$REPO"`. Polls every 60s, up to 10 min timeout. Do NOT use `check` with ad-hoc polling — `wait` handles the retry loop.
 
 **4.5 Merge:** `gh pr merge --squash` (no `--delete-branch` from inside worktree).
 
