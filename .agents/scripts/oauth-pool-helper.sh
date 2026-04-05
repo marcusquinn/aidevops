@@ -2027,39 +2027,59 @@ try:
             raise
 
         # Also update auth.json if the currently-active account was refreshed
+        # OR if auth.json has empty/missing tokens for this provider (self-heal).
+        # GH#17487: Previously, only expired tokens triggered the write-back.
+        # When auth.json was wiped (empty access token, expires=0), the condition
+        # "auth_expires and auth_expires now_ms" short-circuited on the falsy 0,
+        # and the refresh job NEVER repopulated auth.json — creating a permanent
+        # failure loop that required manual "oauth-pool-helper.sh rotate" to fix.
         if os.path.exists(auth_path):
             with open(auth_path) as f:
                 auth = json.load(f)
             current_access = auth.get(provider, {}).get('access', '')
-            for acct in accounts:
-                if acct.get('email') in refreshed:
-                    # Check if this was the active account by old token match
-                    # (the old token is gone now, so match by email in refreshed list
-                    # and check if auth still has the expired token)
-                    auth_expires = auth.get(provider, {}).get('expires', 0)
-                    if auth_expires and auth_expires <= now_ms:
-                        auth_entry = {
-                            'type': 'oauth',
-                            'refresh': acct.get('refresh', ''),
-                            'access': acct.get('access', ''),
-                            'expires': acct.get('expires', 0),
-                        }
-                        if provider == 'openai':
-                            account_id = acct.get('accountId', auth.get(provider, {}).get('accountId', ''))
-                            if account_id:
-                                auth_entry['accountId'] = account_id
-                        auth[provider] = auth_entry
-                        auth_dir = os.path.dirname(auth_path)
-                        fd2, tmp2 = tempfile.mkstemp(dir=auth_dir, prefix='.auth-', suffix='.tmp')
-                        try:
-                            with os.fdopen(fd2, 'w') as f:
-                                json.dump(auth, f, indent=2)
-                            os.chmod(tmp2, 0o600)
-                            os.replace(tmp2, auth_path)
-                        except BaseException:
-                            try: os.unlink(tmp2)
-                            except OSError: pass
+            auth_expires = auth.get(provider, {}).get('expires', 0)
+            # Self-heal: detect empty/missing/expired tokens
+            needs_heal = (
+                not current_access                    # empty or missing access token
+                or (auth_expires and auth_expires <= now_ms)  # expired
+                or not auth_expires                    # expires=0 (wiped state)
+            )
+            if needs_heal:
+                # Pick the most recently refreshed account to write
+                heal_acct = None
+                for acct in accounts:
+                    if acct.get('email') in refreshed:
+                        heal_acct = acct
                         break
+                # Fallback: any account with a valid access token
+                if not heal_acct:
+                    for acct in accounts:
+                        if acct.get('access') and acct.get('expires', 0) > now_ms:
+                            heal_acct = acct
+                            break
+                if heal_acct:
+                    auth_entry = {
+                        'type': 'oauth',
+                        'refresh': heal_acct.get('refresh', ''),
+                        'access': heal_acct.get('access', ''),
+                        'expires': heal_acct.get('expires', 0),
+                    }
+                    if provider == 'openai':
+                        account_id = heal_acct.get('accountId', auth.get(provider, {}).get('accountId', ''))
+                        if account_id:
+                            auth_entry['accountId'] = account_id
+                    auth[provider] = auth_entry
+                    auth_dir = os.path.dirname(auth_path)
+                    fd2, tmp2 = tempfile.mkstemp(dir=auth_dir, prefix='.auth-', suffix='.tmp')
+                    try:
+                        with os.fdopen(fd2, 'w') as f:
+                            json.dump(auth, f, indent=2)
+                        os.chmod(tmp2, 0o600)
+                        os.replace(tmp2, auth_path)
+                        print(f'HEALED_AUTH:{provider}:{heal_acct.get("email","")}', file=sys.stderr)
+                    except BaseException:
+                        try: os.unlink(tmp2)
+                        except OSError: pass
 
 finally:
     _release_lock(lock_fd)
@@ -2071,7 +2091,7 @@ for e in failed:
     print(f'FAILED:{e}')
 if not refreshed and not failed:
     print('NONE')
-" 2>/dev/null) || {
+" <= 2>/dev/null) || {
 		print_error "Refresh failed — python3 error"
 		return 1
 	}
