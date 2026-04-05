@@ -6,6 +6,9 @@
 # profile README, OAuth token refresh.
 # Part of aidevops setup.sh modularization (GH#5793)
 
+# Keep pulse workers alive long enough for opus-tier dispatches.
+PULSE_STALE_THRESHOLD_SECONDS=1800
+
 # Shell safety baseline
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -330,7 +333,7 @@ _generate_pulse_plist_content() {
 		<key>PULSE_DIR</key>
 		<string>${_xml_pulse_dir}</string>
 		<key>PULSE_STALE_THRESHOLD</key>
-		<string>1800</string>
+		<string>${PULSE_STALE_THRESHOLD_SECONDS}</string>
 		${_headless_xml_env}
 	</dict>
 	<key>RunAtLoad</key>
@@ -401,7 +404,7 @@ _install_pulse_cron() {
 	fi
 	(
 		crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse' || true
-		echo "*/2 * * * * PULSE_DIR=${_cron_pulse_dir} PULSE_STALE_THRESHOLD=1800${_cron_headless_env} /bin/bash ${_cron_wrapper_script} >> \"\$HOME/.aidevops/logs/pulse-wrapper.log\" 2>&1 # aidevops: supervisor-pulse"
+		echo "*/2 * * * * PULSE_DIR=${_cron_pulse_dir} PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}${_cron_headless_env} /bin/bash ${_cron_wrapper_script} >> \"\$HOME/.aidevops/logs/pulse-wrapper.log\" 2>&1 # aidevops: supervisor-pulse"
 	) | crontab - || true
 	if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
 		print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
@@ -656,10 +659,8 @@ _install_pulse_systemd() {
 		_env_lines+="Environment=AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=$(_systemd_escape "$AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST")"$'\n'
 	fi
 	_env_lines+="Environment=PULSE_DIR=$(_systemd_escape "${HOME}/.aidevops/.agent-workspace")"$'\n'
-	# Match launchd plist threshold (GH#17443): without this, systemd workers
-	# default to 900s (15 min) while macOS gets 1800s (30 min), silently killing
-	# legitimate opus-tier dispatches that need 20+ minutes.
-	_env_lines+="Environment=PULSE_STALE_THRESHOLD=$(_systemd_escape "1800")"$'\n'
+	# Match the shared pulse threshold so opus-tier dispatches are not killed early.
+	_env_lines+="Environment=PULSE_STALE_THRESHOLD=$(_systemd_escape "${PULSE_STALE_THRESHOLD_SECONDS}")"$'\n'
 	_env_lines+="Environment=HOME=$(_systemd_escape "$HOME")"$'\n'
 	# Capture setup-time PATH so systemd workers find user-installed binaries
 	# (e.g. ~/.npm-global/bin/opencode, ~/.local/bin/claude). Systemd user
