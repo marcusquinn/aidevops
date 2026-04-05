@@ -114,6 +114,63 @@ _gh_edit_labels() {
 	[[ ${#args[@]} -gt 0 ]] && gh issue edit "$num" --repo "$repo" "${args[@]}" 2>/dev/null || true
 }
 
+# _is_protected_label: returns 0 if the label must NOT be removed by enrich reconciliation.
+# Protected labels are managed by other workflows (lifecycle, closure hygiene, PR labeler)
+# and must not be touched by tag-derived label reconciliation.
+# Arguments:
+#   $1 - label name
+_is_protected_label() {
+	local lbl="$1"
+	# Prefix-protected namespaces
+	case "$lbl" in
+	status:* | origin:* | tier:*) return 0 ;;
+	esac
+	# Exact-match protected labels
+	case "$lbl" in
+	persistent | needs-maintainer-review | not-planned | duplicate | wontfix | \
+		already-fixed | "good first issue" | "help wanted")
+		return 0
+		;;
+	esac
+	return 1
+}
+
+# _reconcile_labels: remove tag-derived labels from a GitHub issue that are no
+# longer present in the desired label set. Protected labels are never removed.
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - issue number
+#   $3 - desired labels (comma-separated, already mapped via map_tags_to_labels)
+_reconcile_labels() {
+	local repo="$1" num="$2" desired_labels="$3"
+	local current_labels
+	current_labels=$(gh issue view "$num" --repo "$repo" --json labels \
+		--jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+	[[ -z "$current_labels" ]] && return 0
+
+	local to_remove=""
+	local _saved_ifs="$IFS"
+	IFS=','
+	for lbl in $current_labels; do
+		[[ -z "$lbl" ]] && continue
+		# Skip protected labels — they are not in the tag-derived domain
+		_is_protected_label "$lbl" && continue
+		# Check if this label is in the desired set
+		local found=false
+		for desired in $desired_labels; do
+			[[ "$lbl" == "$desired" ]] && {
+				found=true
+				break
+			}
+		done
+		[[ "$found" == "false" ]] && to_remove="${to_remove:+$to_remove,}$lbl"
+	done
+	IFS="$_saved_ifs"
+
+	[[ -n "$to_remove" ]] && _gh_edit_labels "remove" "$repo" "$num" "$to_remove"
+	return 0
+}
+
 gh_create_label() {
 	local repo="$1" name="$2" color="$3" desc="$4"
 	gh label create "$name" --repo "$repo" --color "$color" --description "$desc" --force 2>/dev/null || true
@@ -550,7 +607,7 @@ cmd_enrich() {
 		body=$(compose_issue_body "$task_id" "$project_root")
 
 		if [[ "$DRY_RUN" == "true" ]]; then
-			print_info "[DRY-RUN] Would enrich #$num ($task_id)"
+			print_info "[DRY-RUN] Would enrich #$num ($task_id) labels=$labels"
 			enriched=$((enriched + 1))
 			continue
 		fi
@@ -558,6 +615,8 @@ cmd_enrich() {
 			ensure_labels_exist "$labels" "$repo"
 			_gh_edit_labels "add" "$repo" "$num" "$labels"
 		}
+		# Reconcile: remove tag-derived labels no longer in desired set (GH#17402)
+		_reconcile_labels "$repo" "$num" "$labels"
 		if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
 			print_success "Enriched #$num ($task_id)"
 			# Sync relationships (blocked-by, sub-issues) after enrichment (t1889)
