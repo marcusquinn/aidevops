@@ -30,6 +30,9 @@ IFS=$'\n\t'
 POOL_FILE="${HOME}/.aidevops/oauth-pool.json"
 OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 
+# Companion Python library for complex operations (extracted to reduce nesting depth)
+POOL_OPS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oauth-pool-lib/pool_ops.py"
+
 # Anthropic OAuth
 # Alignment notes (vs Claude CLI codebase, for troubleshooting):
 #   CLIENT_ID        — identical to Claude CLI (public, same for all clients)
@@ -136,33 +139,7 @@ get_now_ms() {
 # Prints JSON object: {"updated": <count>, "pool": <updated_pool>}
 normalize_expired_cooldowns() {
 	local provider="${1:-all}"
-	local now_ms
-	now_ms=$(get_now_ms)
-	NOW_MS="$now_ms" PROVIDER="$provider" python3 -c "
-import sys, json, os
-
-pool = json.load(sys.stdin)
-target = os.environ['PROVIDER']
-now = int(os.environ['NOW_MS'])
-providers = ['anthropic', 'openai', 'cursor', 'google'] if target == 'all' else [target]
-updated = 0
-
-for prov in providers:
-    for account in pool.get(prov, []):
-        if account.get('status') != 'rate-limited':
-            continue
-        cooldown_until = account.get('cooldownUntil')
-        try:
-            cooldown_ms = int(cooldown_until)
-        except (TypeError, ValueError):
-            continue
-        if cooldown_ms > 0 and cooldown_ms <= now:
-            account['status'] = 'idle'
-            account['cooldownUntil'] = 0
-            updated += 1
-
-json.dump({'updated': updated, 'pool': pool}, sys.stdout, separators=(',', ':'))
-" 2>/dev/null
+	PROVIDER="$provider" python3 "$POOL_OPS" normalize-cooldowns 2>/dev/null
 	return 0
 }
 
@@ -187,86 +164,7 @@ auto_clear_expired_cooldowns() {
 	fi
 	local result py_stderr_file
 	py_stderr_file=$(mktemp "${TMPDIR:-/tmp}/oauth-autoclear-err.XXXXXX")
-	if ! result=$(POOL_FILE_PATH="$POOL_FILE" python3 -c "
-import sys, json, os, time, tempfile
-
-pool_path = os.environ['POOL_FILE_PATH']
-
-def _acquire_lock(lock_fd):
-    if sys.platform == 'win32':
-        import msvcrt
-        deadline = time.time() + 30
-        while True:
-            try:
-                lock_fd.seek(0)
-                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-                return
-            except OSError:
-                if time.time() >= deadline:
-                    raise
-                time.sleep(0.1)
-    else:
-        import fcntl
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-
-def _release_lock(lock_fd):
-    if sys.platform == 'win32':
-        import msvcrt
-        try:
-            lock_fd.seek(0)
-            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
-        except OSError:
-            pass
-    else:
-        import fcntl
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-
-def _atomic_write_json(path, data):
-    d = os.path.dirname(path)
-    fd, tmp = tempfile.mkstemp(dir=d, prefix='.tmp-', suffix='.tmp')
-    try:
-        with os.fdopen(fd, 'w') as f:
-            json.dump(data, f, indent=2)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-lock_path = pool_path + '.lock'
-lock_fd = open(lock_path, 'w')
-try:
-    _acquire_lock(lock_fd)
-    with open(pool_path) as f:
-        pool = json.load(f)
-
-    now = int(time.time() * 1000)
-    changed = False
-    for provider in list(pool.keys()):
-        if provider.startswith('_'):
-            continue
-        accounts = pool.get(provider, [])
-        if not isinstance(accounts, list):
-            continue
-        for acct in accounts:
-            cd = acct.get('cooldownUntil')
-            if cd and isinstance(cd, (int, float)) and cd > 0 and cd <= now:
-                if acct.get('status') == 'rate-limited':
-                    acct['status'] = 'idle'
-                acct['cooldownUntil'] = 0
-                changed = True
-    if changed:
-        _atomic_write_json(pool_path, pool)
-        print('CHANGED')
-    else:
-        print('UNCHANGED')
-finally:
-    _release_lock(lock_fd)
-    lock_fd.close()
-" 2>"$py_stderr_file"); then
+	if ! result=$(POOL_FILE_PATH="$POOL_FILE" python3 "$POOL_OPS" auto-clear 2>"$py_stderr_file"); then
 		local py_err
 		py_err=$(cat "$py_stderr_file" 2>/dev/null)
 		rm -f "$py_stderr_file"
@@ -324,51 +222,7 @@ pool_upsert_account() {
 	PROVIDER="$provider" EMAIL="$email" \
 		ACCESS="$access_token" REFRESH="$refresh_token" \
 		EXPIRES="$expires_ms" NOW_ISO="$now_iso" ACCOUNT_ID="$account_id" \
-		python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-email = os.environ['EMAIL']
-access = os.environ['ACCESS']
-refresh = os.environ['REFRESH']
-expires = int(os.environ['EXPIRES'])
-now_iso = os.environ['NOW_ISO']
-account_id = os.environ.get('ACCOUNT_ID', '')
-
-if provider not in pool:
-    pool[provider] = []
-
-found = False
-for account in pool[provider]:
-    if account.get('email') == email:
-        account['access'] = access
-        account['refresh'] = refresh
-        account['expires'] = expires
-        account['lastUsed'] = now_iso
-        account['status'] = 'active'
-        account['cooldownUntil'] = None
-        if account_id:
-            account['accountId'] = account_id
-        found = True
-        break
-
-if not found:
-    entry = {
-        'email': email,
-        'access': access,
-        'refresh': refresh,
-        'expires': expires,
-        'added': now_iso,
-        'lastUsed': now_iso,
-        'status': 'active',
-        'cooldownUntil': None,
-    }
-    if account_id:
-        entry['accountId'] = account_id
-    pool[provider].append(entry)
-
-json.dump(pool, sys.stdout, indent=2)
-"
+		python3 "$POOL_OPS" upsert
 	return 0
 }
 
@@ -386,18 +240,7 @@ parse_curl_response() {
 # Extract a JSON error message from a token endpoint response body (stdin).
 # Prints a human-readable error string (never a token value).
 extract_token_error() {
-	python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    parts = []
-    for k in ('type', 'error', 'message', 'error_description'):
-        if k in d and d[k]:
-            parts.append(str(d[k]))
-    print(': '.join(parts) if parts else 'unknown')
-except Exception:
-    print('unknown')
-" 2>/dev/null || echo "unknown"
+	python3 "$POOL_OPS" extract-token-error 2>/dev/null || echo "unknown"
 	return 0
 }
 
@@ -430,13 +273,7 @@ _oauth_exchange_code() {
 #   d.get('account', {})           — account uuid + email
 #   d.get('organization', {})      — org uuid (for team/enterprise)
 _extract_token_fields() {
-	python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-print(d.get('access_token', ''))
-print(d.get('refresh_token', ''))
-print(d.get('expires_in', 3600))
-" 2>/dev/null
+	python3 "$POOL_OPS" extract-token-fields 2>/dev/null
 	return 0
 }
 
@@ -528,25 +365,7 @@ _openai_read_opencode_auth_fields() {
 		print_error "OpenCode auth file not found: ${auth_path}"
 		return 1
 	fi
-	python3 -c "
-import json, sys
-path = sys.argv[1]
-try:
-    with open(path) as f:
-        auth = json.load(f)
-except Exception:
-    print('')
-    print('')
-    print('')
-    print('')
-    sys.exit(0)
-
-entry = auth.get('openai', {}) if isinstance(auth, dict) else {}
-print(entry.get('access', ''))
-print(entry.get('refresh', ''))
-print(entry.get('expires', ''))
-print(entry.get('accountId', ''))
-" "$auth_path" 2>/dev/null
+	AUTH_PATH="$auth_path" python3 "$POOL_OPS" openai-read-auth 2>/dev/null
 	return 0
 }
 
@@ -898,28 +717,7 @@ _cursor_get_platform_paths() {
 # Prints two lines: access_token, refresh_token (may be empty).
 _cursor_read_auth_json() {
 	local cursor_auth_json="$1"
-	local _at _rt _line _count
-	_count=0
-	while IFS= read -r _line; do
-		_count=$((_count + 1))
-		if [[ $_count -eq 1 ]]; then
-			_at="$_line"
-		elif [[ $_count -eq 2 ]]; then
-			_rt="$_line"
-		fi
-	done < <(python3 -c "
-import json, sys
-try:
-    with open(sys.argv[1]) as f:
-        d = json.load(f)
-    print(d.get('accessToken', ''))
-    print(d.get('refreshToken', ''))
-except Exception:
-    print('')
-    print('')
-" "$cursor_auth_json" 2>/dev/null)
-	printf '%s\n' "${_at:-}"
-	printf '%s\n' "${_rt:-}"
+	AUTH_PATH="$cursor_auth_json" python3 "$POOL_OPS" cursor-read-auth 2>/dev/null
 	return 0
 }
 
@@ -945,34 +743,7 @@ _cursor_read_state_db() {
 # Prints two lines: email, exp (unix seconds, 0 if unavailable).
 _cursor_decode_jwt_fields() {
 	local access_token="$1"
-	local _je _jx _jline _jcount
-	_jcount=0
-	while IFS= read -r _jline; do
-		_jcount=$((_jcount + 1))
-		if [[ $_jcount -eq 1 ]]; then
-			_je="$_jline"
-		elif [[ $_jcount -eq 2 ]]; then
-			_jx="$_jline"
-		fi
-	done < <(ACCESS="$access_token" python3 -c "
-import os, json, base64
-token = os.environ['ACCESS']
-parts = token.split('.')
-if len(parts) >= 2:
-    payload = parts[1] + '=' * (4 - len(parts[1]) % 4)
-    try:
-        data = json.loads(base64.urlsafe_b64decode(payload))
-        print(data.get('email', ''))
-        print(data.get('exp', 0))
-    except Exception:
-        print('')
-        print(0)
-else:
-    print('')
-    print(0)
-" 2>/dev/null)
-	printf '%s\n' "${_je:-}"
-	printf '%s\n' "${_jx:-0}"
+	ACCESS="$access_token" python3 "$POOL_OPS" cursor-decode-jwt 2>/dev/null
 	return 0
 }
 
@@ -1129,24 +900,7 @@ _google_report_health() {
 _google_validate_token() {
 	local access_token="$1"
 	local health_check_url="$2"
-	ACCESS="$access_token" HEALTH_URL="$health_check_url" python3 -c "
-import os
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
-token = os.environ['ACCESS']
-url = os.environ['HEALTH_URL']
-try:
-    req = Request(url, method='GET')
-    req.add_header('Authorization', 'Bearer ' + token)
-    urlopen(req, timeout=10)
-    print('OK')
-except HTTPError as e:
-    print('HTTP_' + str(e.code))
-except (URLError, OSError):
-    print('NETWORK_ERROR')
-except Exception:
-    print('ERROR')
-" 2>/dev/null
+	ACCESS="$access_token" HEALTH_URL="$health_check_url" python3 "$POOL_OPS" google-validate 2>/dev/null
 	return 0
 }
 
@@ -1244,19 +998,7 @@ cmd_add_google() {
 # Args: expires_in (ms, may be negative)
 _check_print_token_expiry() {
 	local expires_in="$1"
-	python3 -c "
-import sys
-expires_in = int(sys.argv[1])
-if expires_in <= 0:
-    print('    Token: EXPIRED')
-else:
-    mins = expires_in // 60000
-    hours = mins // 60
-    if hours > 0:
-        print(f'    Token: expires in {hours}h {mins % 60}m')
-    else:
-        print(f'    Token: expires in {mins}m')
-" "$expires_in"
+	EXPIRES_IN="$expires_in" python3 "$POOL_OPS" check-expiry
 	return 0
 }
 
@@ -1264,31 +1006,7 @@ else:
 # Reads account JSON from stdin; NOW_MS env var required.
 _check_print_account_meta() {
 	local now_ms="$1"
-	NOW_MS="$now_ms" python3 -c "
-import sys, json, os
-from datetime import datetime
-a = json.load(sys.stdin)
-now = int(os.environ['NOW_MS'])
-print(f\"    Status: {a.get('status', 'unknown')}\")
-cd = a.get('cooldownUntil')
-if cd and cd > now:
-    cd_mins = (cd - now + 59999) // 60000
-    print(f'    Cooldown: {cd_mins}m remaining')
-lu = a.get('lastUsed')
-if lu:
-    try:
-        lu_ts = datetime.fromisoformat(lu.replace('Z','+00:00')).timestamp() * 1000
-        ago = now - lu_ts
-        ago_mins = int(ago // 60000)
-        ago_hours = ago_mins // 60
-        if ago_hours > 0:
-            print(f'    Last used: {ago_hours}h {ago_mins % 60}m ago')
-        else:
-            print(f'    Last used: {ago_mins}m ago')
-    except Exception:
-        print(f'    Last used: {lu}')
-print(f\"    Refresh token: {'present' if a.get('refresh') else 'MISSING'}\")
-"
+	NOW_MS="$now_ms" python3 "$POOL_OPS" check-meta
 	return 0
 }
 
@@ -1299,50 +1017,8 @@ _check_validate_token() {
 	local expires_in="$2"
 	local token="$3"
 	local ua="$4"
-	PROV="$prov" EXPIRES_IN="$expires_in" TOKEN="$token" UA="$ua" python3 -c "
-import os
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
-prov      = os.environ['PROV']
-expires_in = int(os.environ['EXPIRES_IN'])
-token     = os.environ['TOKEN']
-ua        = os.environ['UA']
-if prov not in ('anthropic', 'google'):
-    raise SystemExit(0)
-if not token:
-    print('    Validity: no access token')
-    raise SystemExit(0)
-if expires_in <= 0:
-    print('    Validity: EXPIRED - will auto-refresh on next use')
-    raise SystemExit(0)
-if prov == 'anthropic':
-    req = Request('https://api.anthropic.com/v1/models', method='GET')
-    req.add_header('Authorization', f'Bearer {token}')
-    req.add_header('User-Agent', ua)
-    req.add_header('anthropic-version', '2023-06-01')
-    # Claude CLI sends this beta header on profile/API requests.
-    # We include it on health checks for parity. If this endpoint
-    # ever rejects the header, remove it — it is not required for
-    # the /v1/models listing, only for OAuth-specific endpoints.
-    req.add_header('anthropic-beta', 'oauth-2025-04-20')
-else:
-    req = Request('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', method='GET')
-    req.add_header('Authorization', f'Bearer {token}')
-try:
-    urlopen(req, timeout=10)
-    print('    Validity: OK')
-except HTTPError as e:
-    if e.code == 401:
-        print('    Validity: INVALID (401 - needs refresh)')
-    elif prov == 'google' and e.code == 403:
-        print('    Validity: OK (403 - token valid, check AI Pro/Ultra subscription)')
-    else:
-        print(f'    Validity: HTTP {e.code}')
-except (URLError, OSError):
-    print('    Validity: ERROR (network)')
-except Exception:
-    print('    Validity: ERROR')
-" 2>/dev/null
+	PROV="$prov" EXPIRES_IN="$expires_in" TOKEN="$token" UA="$ua" \
+		python3 "$POOL_OPS" check-validate 2>/dev/null
 	return 0
 }
 
@@ -1355,16 +1031,7 @@ _check_print_provider_accounts() {
 	local tmp_records
 	tmp_records=$(mktemp)
 	# Emit one JSON record per account (newline-delimited) to a temp file.
-	NOW_MS="$now_ms" PROV="$prov" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-prov = os.environ['PROV']
-now  = int(os.environ['NOW_MS'])
-for a in pool.get(prov, []):
-    expires_in = a.get('expires', 0) - now
-    print(json.dumps({'email': a['email'], 'expires_in': expires_in,
-                      'account': a}))
-" 2>/dev/null >"$tmp_records"
+	NOW_MS="$now_ms" PROV="$prov" python3 "$POOL_OPS" check-accounts 2>/dev/null >"$tmp_records"
 	while IFS= read -r record; do
 		local email expires_in acc_json token
 		email=$(printf '%s' "$record" | python3 -c "import sys,json; print(json.load(sys.stdin)['email'])" 2>/dev/null)
@@ -1492,17 +1159,7 @@ cmd_list() {
 		fi
 
 		printf '%s (%s account%s):\n' "$prov" "$count" "$([ "$count" = "1" ] && echo "" || echo "s")"
-		printf '%s' "$pool" | PROVIDER="$prov" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-prov = os.environ['PROVIDER']
-for i, a in enumerate(pool.get(prov, []), 1):
-    status = a.get('status', 'unknown')
-    email = a.get('email', 'unknown')
-    priority = a.get('priority')
-    priority_str = f' priority:{priority}' if priority is not None else ''
-    print(f'  {i}. {email} [{status}]{priority_str}')
-"
+		printf '%s' "$pool" | PROVIDER="$prov" python3 "$POOL_OPS" list-accounts
 	done
 	return 0
 }
@@ -1524,26 +1181,8 @@ cmd_remove() {
 	pool=$(load_pool)
 
 	local new_pool
-	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-email = os.environ['EMAIL']
-
-if provider not in pool:
-    print(json.dumps(pool, indent=2))
-    sys.exit(1)
-
-original_count = len(pool[provider])
-pool[provider] = [a for a in pool[provider] if a.get('email') != email]
-new_count = len(pool[provider])
-
-if original_count == new_count:
-    print(json.dumps(pool, indent=2))
-    sys.exit(1)
-
-json.dump(pool, sys.stdout, indent=2)
-") || {
+	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" \
+		python3 "$POOL_OPS" remove-account) || {
 		print_error "Account ${email} not found in ${provider} pool"
 		return 1
 	}
@@ -1565,202 +1204,8 @@ json.dump(pool, sys.stdout, indent=2)
 _rotate_execute() {
 	local provider="$1"
 	POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
-		PROVIDER="$provider" python3 -c "
-import sys, json, os, tempfile, time, urllib.request, urllib.error
-from datetime import datetime, timezone
-
-pool_path = os.environ['POOL_FILE_PATH']
-auth_path = os.environ['AUTH_FILE_PATH']
-provider = os.environ['PROVIDER']
-
-TOKEN_URLS = {
-    'anthropic': 'https://platform.claude.com/v1/oauth/token',
-    'openai':    'https://auth.openai.com/oauth/token',
-    'google':    'https://oauth2.googleapis.com/token',
-}
-CLIENT_IDS = {
-    'anthropic': '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
-    'openai':    'app_EMoamEEZ73f0CkXaXp7hrann',
-    'google':    '681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com',
-}
-
-# ---------------------------------------------------------------------------
-# Cross-platform exclusive file lock (stdlib only, no pip dependencies).
-# Unix:    fcntl.flock  — POSIX advisory lock, inherited across fork.
-# Windows: msvcrt.locking — NT byte-range lock on byte 0 of the lock file.
-#          Retries up to ~30 s with 100 ms sleep between attempts.
-# ---------------------------------------------------------------------------
-def _acquire_lock(lock_fd):
-    if sys.platform == 'win32':
-        import msvcrt
-        deadline = time.time() + 30
-        while True:
-            try:
-                lock_fd.seek(0)
-                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-                return
-            except OSError:
-                if time.time() >= deadline:
-                    raise
-                time.sleep(0.1)
-    else:
-        import fcntl
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-
-def _release_lock(lock_fd):
-    if sys.platform == 'win32':
-        import msvcrt
-        try:
-            lock_fd.seek(0)
-            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
-        except OSError:
-            pass
-    else:
-        import fcntl
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-
-def _atomic_write_json(path, data):
-    d = os.path.dirname(path)
-    fd, tmp = tempfile.mkstemp(dir=d, prefix='.tmp-', suffix='.tmp')
-    try:
-        with os.fdopen(fd, 'w') as f:
-            json.dump(data, f, indent=2)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-    except BaseException:
-        try: os.unlink(tmp)
-        except OSError: pass
-        raise
-
-def _try_refresh(account, provider, now_ms):
-    refresh_tok = account.get('refresh', '')
-    token_url = TOKEN_URLS.get(provider, '')
-    client_id = CLIENT_IDS.get(provider, '')
-    if not (refresh_tok and token_url and client_id):
-        return
-    # Alignment note: Claude CLI sends 'scope' on refresh requests (the full
-    # CLAUDE_AI_OAUTH_SCOPES set). The backend allows scope expansion beyond
-    # what the initial authorize granted. We omit it — the server returns the
-    # originally granted scopes, which is sufficient for our use.
-    # FALLBACK: if refresh starts returning fewer scopes than expected, add:
-    #   'scope': 'user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload'
-    body = json.dumps({
-        'grant_type': 'refresh_token',
-        'refresh_token': refresh_tok,
-        'client_id': client_id,
-    }).encode('utf-8')
-    req = urllib.request.Request(
-        token_url, data=body,
-        headers={'Content-Type': 'application/json',
-                 'User-Agent': os.environ.get('UA_HEADER', 'aidevops/1.0')},
-        method='POST',
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            rdata = json.loads(resp.read().decode('utf-8'))
-        new_access = rdata.get('access_token', '')
-        if new_access:
-            account['access']  = new_access
-            account['refresh'] = rdata.get('refresh_token', refresh_tok)
-            account['expires'] = now_ms + int(rdata.get('expires_in', 3600)) * 1000
-            account['status']  = 'active'
-            print('REFRESHED', file=sys.stderr)
-    except (urllib.error.URLError, urllib.error.HTTPError) as e:
-        print(f'REFRESH_FAILED:{e}', file=sys.stderr)
-
-lock_path = pool_path + '.lock'
-lock_fd = open(lock_path, 'w')
-try:
-    _acquire_lock(lock_fd)
-
-    with open(pool_path) as f:
-        pool = json.load(f)
-    accounts = pool.get(provider, [])
-    if len(accounts) < 2:
-        print('ERROR:need_accounts')
-        sys.exit(0)
-
-    with open(auth_path) as f:
-        auth = json.load(f)
-    current_auth   = auth.get(provider, {})
-    current_access = current_auth.get('access', '')
-
-    current_email = None
-    for a in accounts:
-        if a.get('access', '') == current_access and current_access:
-            current_email = a.get('email', 'unknown')
-            break
-    if current_email is None:
-        sorted_by_used = sorted(accounts, key=lambda a: a.get('lastUsed', ''), reverse=True)
-        current_email = sorted_by_used[0].get('email', 'unknown')
-
-    now_ms = int(time.time() * 1000)
-    # Tier 1: non-current accounts that are available right now
-    candidates = [
-        a for a in accounts
-        if a.get('email') != current_email
-        and a.get('status', 'active') in ('active', 'idle')
-        and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now_ms)
-    ]
-    all_rate_limited = False
-    if not candidates:
-        # Tier 2: ALL accounts (including current) sorted by shortest
-        # remaining cooldown — maximise concurrency by using whichever
-        # account recovers soonest rather than hard-failing.
-        candidates = sorted(
-            accounts,
-            key=lambda a: a.get('cooldownUntil') or 0,
-        )
-        all_rate_limited = True
-    if not candidates:
-        print('ERROR:no_alternate')
-        sys.exit(0)
-
-    if not all_rate_limited:
-        # Normal path: prefer high-priority, least-recently-used
-        candidates.sort(key=lambda a: (-(a.get('priority') or 0), a.get('lastUsed', '')))
-    # else: already sorted by shortest cooldown — first entry recovers soonest
-
-    next_account = candidates[0]
-    next_email   = next_account.get('email', 'unknown')
-
-    # Auto-refresh if expired and refresh token available
-    if next_account.get('expires', 0) <= now_ms and next_account.get('refresh'):
-        _try_refresh(next_account, provider, now_ms)
-
-    auth_entry = {
-        'type':    current_auth.get('type', 'oauth'),
-        'refresh': next_account.get('refresh', ''),
-        'access':  next_account.get('access', ''),
-        'expires': next_account.get('expires', 0),
-    }
-    if provider == 'openai':
-        account_id = next_account.get('accountId', current_auth.get('accountId', ''))
-        if account_id:
-            auth_entry['accountId'] = account_id
-    auth[provider] = auth_entry
-    _atomic_write_json(auth_path, auth)
-
-    now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    for a in pool[provider]:
-        if a.get('email') == next_email:
-            a['lastUsed'] = now_iso
-            break
-    _atomic_write_json(pool_path, pool)
-
-finally:
-    _release_lock(lock_fd)
-    lock_fd.close()
-
-if all_rate_limited:
-    cd = next_account.get('cooldownUntil') or 0
-    wait_mins = max(0, (cd - now_ms + 59999) // 60000) if cd > now_ms else 0
-    print(f'OK_COOLDOWN:{wait_mins}')
-else:
-    print('OK')
-print(current_email)
-print(next_email)
-"
+		PROVIDER="$provider" UA_HEADER="$USER_AGENT" \
+		python3 "$POOL_OPS" rotate
 	return 0
 }
 
@@ -1889,209 +1334,7 @@ cmd_refresh() {
 	local result
 	result=$(POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
 		PROVIDER="$provider" TARGET_EMAIL="$target_email" \
-		UA_HEADER="$USER_AGENT" python3 -c "
-import sys, json, os, tempfile, urllib.request, urllib.error, time
-
-pool_path = os.environ['POOL_FILE_PATH']
-auth_path = os.environ['AUTH_FILE_PATH']
-provider = os.environ['PROVIDER']
-target_email = os.environ['TARGET_EMAIL']
-ua_header = os.environ.get('UA_HEADER', 'aidevops/1.0')
-
-token_urls = {
-    'anthropic': 'https://platform.claude.com/v1/oauth/token',
-    'openai': 'https://auth.openai.com/oauth/token',
-    'google': 'https://oauth2.googleapis.com/token',
-}
-client_ids = {
-    'anthropic': '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
-    'openai': 'app_EMoamEEZ73f0CkXaXp7hrann',
-    'google': '681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com',
-}
-
-token_url = token_urls.get(provider, '')
-client_id = client_ids.get(provider, '')
-if not token_url or not client_id:
-    print('ERROR:no_endpoint')
-    sys.exit(0)
-
-# ---------------------------------------------------------------------------
-# Cross-platform exclusive file lock (stdlib only, no pip dependencies).
-# Unix:    fcntl.flock  — POSIX advisory lock, inherited across fork.
-# Windows: msvcrt.locking — NT byte-range lock on byte 0 of the lock file.
-#          Retries up to ~30 s with 100 ms sleep between attempts.
-# ---------------------------------------------------------------------------
-def _acquire_lock(lock_fd):
-    if sys.platform == 'win32':
-        import msvcrt
-        deadline = time.time() + 30
-        while True:
-            try:
-                lock_fd.seek(0)
-                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-                return
-            except OSError:
-                if time.time() >= deadline:
-                    raise
-                time.sleep(0.1)
-    else:
-        import fcntl
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-
-def _release_lock(lock_fd):
-    if sys.platform == 'win32':
-        import msvcrt
-        try:
-            lock_fd.seek(0)
-            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
-        except OSError:
-            pass
-    else:
-        import fcntl
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-
-lock_path = pool_path + '.lock'
-lock_fd = open(lock_path, 'w')
-try:
-    _acquire_lock(lock_fd)
-
-    with open(pool_path) as f:
-        pool = json.load(f)
-
-    accounts = pool.get(provider, [])
-    now_ms = int(time.time() * 1000)
-    refreshed = []
-    failed = []
-
-    for acct in accounts:
-        email = acct.get('email', 'unknown')
-        if target_email != 'all' and email != target_email:
-            continue
-
-        refresh_tok = acct.get('refresh', '')
-        expires = acct.get('expires', 0)
-
-        if not refresh_tok:
-            continue
-
-        # Only refresh if expired or expiring within 1 hour (3600000ms)
-        if expires and expires > now_ms + 3600000:
-            continue
-
-        # Alignment: Claude CLI sends 'scope' on refresh (see _try_refresh note).
-        # FALLBACK: add 'scope' key if refresh returns insufficient scopes.
-        body = json.dumps({
-            'grant_type': 'refresh_token',
-            'refresh_token': refresh_tok,
-            'client_id': client_id,
-        }).encode('utf-8')
-
-        req = urllib.request.Request(
-            token_url,
-            data=body,
-            headers={
-                'Content-Type': 'application/json',
-                'User-Agent': ua_header,
-            },
-            method='POST',
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                rdata = json.loads(resp.read().decode('utf-8'))
-            new_access = rdata.get('access_token', '')
-            new_refresh = rdata.get('refresh_token', refresh_tok)
-            new_expires_in = int(rdata.get('expires_in', 3600))
-            if new_access:
-                acct['access'] = new_access
-                acct['refresh'] = new_refresh
-                acct['expires'] = now_ms + new_expires_in * 1000
-                acct['status'] = 'active'
-                refreshed.append(email)
-            else:
-                failed.append(email)
-        except (urllib.error.URLError, urllib.error.HTTPError) as e:
-            failed.append(f'{email}({e})')
-
-    # Write updated pool
-    if refreshed:
-        pool_dir = os.path.dirname(pool_path)
-        fd, tmp = tempfile.mkstemp(dir=pool_dir, prefix='.pool-', suffix='.tmp')
-        try:
-            with os.fdopen(fd, 'w') as f:
-                json.dump(pool, f, indent=2)
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, pool_path)
-        except BaseException:
-            try: os.unlink(tmp)
-            except OSError: pass
-            raise
-
-        # Also update auth.json if the currently-active account was refreshed
-        # OR if auth.json has empty/missing tokens for this provider (self-heal).
-        # GH#17487: Previously, only expired tokens triggered the write-back.
-        # When auth.json was wiped (empty access token, expires=0), the condition
-        # "auth_expires and auth_expires now_ms" short-circuited on the falsy 0,
-        # and the refresh job NEVER repopulated auth.json — creating a permanent
-        # failure loop that required manual "oauth-pool-helper.sh rotate" to fix.
-        if os.path.exists(auth_path):
-            with open(auth_path) as f:
-                auth = json.load(f)
-            current_access = auth.get(provider, {}).get('access', '')
-            auth_expires = auth.get(provider, {}).get('expires', 0)
-            # Self-heal: detect empty/missing/expired tokens
-            needs_heal = (
-                not current_access                    # empty or missing access token
-                or (auth_expires and auth_expires <= now_ms)  # expired
-                or not auth_expires                    # expires=0 (wiped state)
-            )
-            if needs_heal:
-                # Pick the most recently refreshed account to write
-                heal_acct = None
-                for acct in accounts:
-                    if acct.get('email') in refreshed:
-                        heal_acct = acct
-                        break
-                # Fallback: any account with a valid access token
-                if not heal_acct:
-                    for acct in accounts:
-                        if acct.get('access') and acct.get('expires', 0) > now_ms:
-                            heal_acct = acct
-                            break
-                if heal_acct:
-                    auth_entry = {
-                        'type': 'oauth',
-                        'refresh': heal_acct.get('refresh', ''),
-                        'access': heal_acct.get('access', ''),
-                        'expires': heal_acct.get('expires', 0),
-                    }
-                    if provider == 'openai':
-                        account_id = heal_acct.get('accountId', auth.get(provider, {}).get('accountId', ''))
-                        if account_id:
-                            auth_entry['accountId'] = account_id
-                    auth[provider] = auth_entry
-                    auth_dir = os.path.dirname(auth_path)
-                    fd2, tmp2 = tempfile.mkstemp(dir=auth_dir, prefix='.auth-', suffix='.tmp')
-                    try:
-                        with os.fdopen(fd2, 'w') as f:
-                            json.dump(auth, f, indent=2)
-                        os.chmod(tmp2, 0o600)
-                        os.replace(tmp2, auth_path)
-                        print(f'HEALED_AUTH:{provider}:{heal_acct.get("email","")}', file=sys.stderr)
-                    except BaseException:
-                        try: os.unlink(tmp2)
-                        except OSError: pass
-
-finally:
-    _release_lock(lock_fd)
-    lock_fd.close()
-
-for e in refreshed:
-    print(f'REFRESHED:{e}')
-for e in failed:
-    print(f'FAILED:{e}')
-if not refreshed and not failed:
-    print('NONE')
-" <= 2>/dev/null) || {
+		UA_HEADER="$USER_AGENT" python3 "$POOL_OPS" refresh 2>/dev/null) || {
 		print_error "Refresh failed — python3 error"
 		return 1
 	}
@@ -2150,20 +1393,7 @@ cmd_reset_cooldowns() {
 	pool=$(load_pool)
 
 	local result
-	result=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-target = os.environ['PROVIDER']
-providers = list(pool.keys()) if target == 'all' else [target]
-cleared = 0
-for prov in providers:
-    for a in pool.get(prov, []):
-        if a.get('cooldownUntil') or a.get('status') in ('rate-limited', 'auth-error'):
-            a['cooldownUntil'] = None
-            a['status'] = 'idle'
-            cleared += 1
-json.dump({'cleared': cleared, 'pool': pool}, sys.stdout, indent=2)
-")
+	result=$(printf '%s' "$pool" | PROVIDER="$provider" python3 "$POOL_OPS" reset-cooldowns)
 
 	local cleared new_pool
 	cleared=$(printf '%s' "$result" | jq -r '.cleared')
@@ -2213,25 +1443,8 @@ cmd_set_priority() {
 	pool=$(load_pool)
 
 	local new_pool
-	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" PRIORITY="$priority" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-email = os.environ['EMAIL']
-priority = int(os.environ['PRIORITY'])
-
-accounts = pool.get(provider, [])
-idx = next((i for i, a in enumerate(accounts) if a.get('email') == email), -1)
-if idx < 0:
-    print('ERROR:not_found')
-    sys.exit(0)
-
-if priority == 0:
-    accounts[idx].pop('priority', None)
-else:
-    accounts[idx]['priority'] = priority
-json.dump(pool, sys.stdout, indent=2)
-" 2>/dev/null)
+	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" PRIORITY="$priority" \
+		python3 "$POOL_OPS" set-priority 2>/dev/null)
 
 	case "$new_pool" in
 	ERROR:not_found)
@@ -2288,125 +1501,8 @@ cmd_mark_failure() {
 
 	local mark_result
 	mark_result=$(POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
-		PROVIDER="$provider" REASON="$reason" RETRY_SECONDS="$retry_seconds" python3 -c "
-import json, os, sys, tempfile, time
-from datetime import datetime, timezone
-
-pool_path = os.environ['POOL_FILE_PATH']
-auth_path = os.environ['AUTH_FILE_PATH']
-provider = os.environ['PROVIDER']
-reason = os.environ['REASON']
-retry_seconds = int(os.environ['RETRY_SECONDS'])
-
-def _acquire_lock(lock_fd):
-    if sys.platform == 'win32':
-        import msvcrt
-        deadline = time.time() + 30
-        while True:
-            try:
-                lock_fd.seek(0)
-                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-                return
-            except OSError:
-                if time.time() >= deadline:
-                    raise
-                time.sleep(0.1)
-    else:
-        import fcntl
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-
-def _release_lock(lock_fd):
-    if sys.platform == 'win32':
-        import msvcrt
-        try:
-            lock_fd.seek(0)
-            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
-        except OSError:
-            pass
-    else:
-        import fcntl
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-
-def _atomic_write_json(path, data):
-    d = os.path.dirname(path)
-    fd, tmp = tempfile.mkstemp(dir=d, prefix='.tmp-', suffix='.tmp')
-    try:
-        with os.fdopen(fd, 'w') as f:
-            json.dump(data, f, indent=2)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-status_map = {
-    'rate_limit': 'rate-limited',
-    'auth_error': 'auth-error',
-    'provider_error': 'rate-limited',
-}
-target_status = status_map.get(reason, 'rate-limited')
-
-lock_path = pool_path + '.lock'
-lock_fd = open(lock_path, 'w')
-try:
-    _acquire_lock(lock_fd)
-    with open(pool_path) as f:
-        pool = json.load(f)
-    with open(auth_path) as f:
-        auth = json.load(f)
-
-    accounts = pool.get(provider, [])
-    if not accounts:
-        print('SKIP:no_accounts')
-        sys.exit(0)
-
-    current_auth = auth.get(provider, {}) if isinstance(auth, dict) else {}
-    current_access = current_auth.get('access', '')
-    current_account_id = current_auth.get('accountId', '')
-
-    idx = -1
-    if current_access:
-        for i, acct in enumerate(accounts):
-            if acct.get('access', '') == current_access:
-                idx = i
-                break
-
-    if idx < 0 and provider == 'openai' and current_account_id:
-        for i, acct in enumerate(accounts):
-            if acct.get('accountId', '') == current_account_id:
-                idx = i
-                break
-
-    if idx < 0:
-        best_i = 0
-        best_last = ''
-        for i, acct in enumerate(accounts):
-            last = acct.get('lastUsed', '')
-            if last >= best_last:
-                best_last = last
-                best_i = i
-        idx = best_i
-
-    now_ms = int(time.time() * 1000)
-    cooldown_until = now_ms + retry_seconds * 1000
-    now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-
-    target = accounts[idx]
-    target['status'] = target_status
-    target['cooldownUntil'] = cooldown_until
-    target['lastUsed'] = now_iso
-    pool[provider] = accounts
-
-    _atomic_write_json(pool_path, pool)
-    email = target.get('email', 'unknown')
-    print(f'OK:{email}:{target_status}:{cooldown_until}')
-finally:
-    _release_lock(lock_fd)
-    lock_fd.close()
-" 2>/dev/null) || {
+		PROVIDER="$provider" REASON="$reason" RETRY_SECONDS="$retry_seconds" \
+		python3 "$POOL_OPS" mark-failure 2>/dev/null) || {
 		print_warning "Failed to mark account failure state for ${provider}"
 		return 1
 	}
@@ -2475,28 +1571,7 @@ cmd_status() {
 		[[ "$count" == "0" ]] && continue
 		found_any="true"
 
-		printf '%s' "$pool" | NOW_MS="$now_ms" PROV="$prov" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-now = int(os.environ['NOW_MS'])
-prov = os.environ['PROV']
-accounts = pool.get(prov, [])
-
-total      = len(accounts)
-available  = sum(1 for a in accounts if not a.get('cooldownUntil') or a['cooldownUntil'] <= now)
-active     = sum(1 for a in accounts if a.get('status') in ('active', 'idle'))
-rate_lim   = sum(1 for a in accounts if a.get('status') == 'rate-limited' and a.get('cooldownUntil', 0) > now)
-auth_err   = sum(1 for a in accounts if a.get('status') == 'auth-error')
-
-print(f'{prov} pool:')
-print(f'  Total accounts : {total}')
-print(f'  Available now  : {available}')
-print(f'  Active/idle    : {active}')
-print(f'  Rate limited   : {rate_lim}')
-print(f'  Auth errors    : {auth_err}')
-if available == 0 and total > 0:
-    print(f'  WARNING: no accounts available — run reset-cooldowns or add an account')
-" 2>/dev/null
+		printf '%s' "$pool" | NOW_MS="$now_ms" PROV="$prov" python3 "$POOL_OPS" status-stats 2>/dev/null
 	done
 
 	if [[ "$found_any" == "false" ]]; then
@@ -2535,16 +1610,7 @@ cmd_assign_pending() {
 
 	# Check whether a pending token exists for this provider
 	local pending_info
-	pending_info=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-pending = pool.get('_pending_' + provider)
-if pending:
-    print('FOUND:' + pending.get('added', 'unknown'))
-else:
-    print('NONE')
-" 2>/dev/null)
+	pending_info=$(printf '%s' "$pool" | PROVIDER="$provider" python3 "$POOL_OPS" check-pending 2>/dev/null)
 
 	if [[ "$pending_info" == "NONE" ]]; then
 		print_info "No pending token for ${provider}."
@@ -2560,45 +1626,15 @@ else:
 	if [[ -z "$email" ]]; then
 		print_info "Pending ${provider} token found (added: ${pending_added})"
 		print_info "Existing accounts to assign to:"
-		printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-for i, a in enumerate(pool.get(provider, []), 1):
-    print(f'  {i}. {a[\"email\"]}')
-" 2>/dev/null
+		printf '%s' "$pool" | PROVIDER="$provider" python3 "$POOL_OPS" list-pending 2>/dev/null
 		echo ""
 		echo "Usage: aidevops model-accounts-pool assign-pending ${provider} <email>"
 		return 0
 	fi
 
 	local new_pool
-	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-email = os.environ['EMAIL']
-pending_key = '_pending_' + provider
-pending = pool.get(pending_key)
-
-if not pending:
-    print('ERROR:no_pending')
-    sys.exit(0)
-
-accounts = pool.get(provider, [])
-idx = next((i for i, a in enumerate(accounts) if a.get('email') == email), -1)
-if idx < 0:
-    print('ERROR:not_found')
-    sys.exit(0)
-
-accounts[idx]['refresh']      = pending.get('refresh', accounts[idx].get('refresh', ''))
-accounts[idx]['access']       = pending.get('access',  accounts[idx].get('access', ''))
-accounts[idx]['expires']      = pending.get('expires',  accounts[idx].get('expires', 0))
-accounts[idx]['status']       = 'active'
-accounts[idx]['cooldownUntil'] = None
-del pool[pending_key]
-json.dump(pool, sys.stdout, indent=2)
-" 2>/dev/null)
+	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" \
+		python3 "$POOL_OPS" assign-pending 2>/dev/null)
 
 	case "$new_pool" in
 	ERROR:no_pending)
@@ -2679,16 +1715,7 @@ cmd_import() {
 	local pool
 	pool=$(load_pool)
 	local already_exists
-	already_exists=$(printf '%s' "$pool" | EMAIL="$email" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-email = os.environ['EMAIL']
-for acc in pool.get('anthropic', []):
-    if acc.get('email') == email:
-        print('yes')
-        sys.exit(0)
-print('no')
-" 2>/dev/null)
+	already_exists=$(printf '%s' "$pool" | EMAIL="$email" python3 "$POOL_OPS" import-check 2>/dev/null)
 
 	if [[ "$already_exists" == "yes" ]]; then
 		print_info "Account ${email} already exists in the Anthropic pool"
