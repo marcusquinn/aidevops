@@ -86,13 +86,14 @@ create_command() {
 }
 
 # =============================================================================
-# COMMAND DEFINITIONS
+# COMMAND DEFINITIONS — grouped by category to limit nesting depth
 # =============================================================================
 
-# --- Agent Review ---
-create_command "agent-review" \
-	"Systematic review and improvement of agent instructions" \
-	"$AGENT_BUILD" "true" <<'BODY'
+# --- Quality & Review Commands ---
+define_quality_commands() {
+	create_command "agent-review" \
+		"Systematic review and improvement of agent instructions" \
+		"$AGENT_BUILD" "true" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/build-agent/agent-review.md and follow its instructions.
 
 Review the agent file(s) specified: $ARGUMENTS
@@ -107,10 +108,9 @@ If no specific file is provided, review the agents used in this session and prop
 Follow the improvement proposal format from the agent-review instructions.
 BODY
 
-# --- Preflight ---
-create_command "preflight" \
-	"Run quality checks before version bump and release" \
-	"$AGENT_BUILD" "true" <<'BODY'
+	create_command "preflight" \
+		"Run quality checks before version bump and release" \
+		"$AGENT_BUILD" "true" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/preflight.md and follow its instructions.
 
 Run preflight checks for: $ARGUMENTS
@@ -122,10 +122,9 @@ This includes:
 4. Git status check (clean working tree)
 BODY
 
-# --- Postflight ---
-create_command "postflight" \
-	"Check code audit feedback on latest push (branch or PR)" \
-	"$AGENT_BUILD" "true" <<'BODY'
+	create_command "postflight" \
+		"Check code audit feedback on latest push (branch or PR)" \
+		"$AGENT_BUILD" "true" <<'BODY'
 Check code audit tool feedback on the latest push.
 
 Target: $ARGUMENTS
@@ -151,10 +150,9 @@ Target: $ARGUMENTS
 Report findings and recommend next actions (fix issues, merge, etc.)
 BODY
 
-# --- Review Issue/PR ---
-create_command "review-issue-pr" \
-	"Review external issue or PR - validate problem and evaluate solution" \
-	"$AGENT_BUILD" "true" <<'BODY'
+	create_command "review-issue-pr" \
+		"Review external issue or PR - validate problem and evaluate solution" \
+		"$AGENT_BUILD" "true" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/review-issue-pr.md and follow its instructions.
 
 Review this issue or PR: $ARGUMENTS
@@ -170,10 +168,82 @@ Review this issue or PR: $ARGUMENTS
 3. Is the scope appropriate? (minimal changes, no scope creep)
 BODY
 
-# --- Release ---
-create_command "release" \
-	"Full release workflow with version bump, tag, and GitHub release" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "linters-local" \
+		"Run local linting tools (ShellCheck, secretlint, pattern checks)" \
+		"$AGENT_BUILD" "" <<'BODY'
+Run the local linters script:
+
+!`${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/linters-local.sh $ARGUMENTS`
+
+This runs fast, offline checks:
+1. ShellCheck for shell scripts
+2. Secretlint for exposed secrets
+3. Pattern validation (return statements, positional parameters)
+4. Markdown formatting checks
+
+For remote auditing (CodeRabbit, Codacy, SonarCloud), use /code-audit-remote
+BODY
+
+	create_command "code-audit-remote" \
+		"Run remote code auditing (CodeRabbit, Codacy, SonarCloud)" \
+		"$AGENT_BUILD" "true" <<'BODY'
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/code-audit-remote.md and follow its instructions.
+
+Audit target: $ARGUMENTS
+
+This calls external quality services:
+1. CodeRabbit - AI-powered code review
+2. Codacy - Code quality analysis
+3. SonarCloud - Security and maintainability
+
+For local linting (fast, offline), use /linters-local first
+BODY
+
+	create_command "code-standards" \
+		"Check code against documented quality standards" \
+		"$AGENT_BUILD" "true" <<'BODY'
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/code-review/code-standards.md and follow its instructions.
+
+Check target: $ARGUMENTS
+
+This validates against our documented standards:
+- S7682: Explicit return statements
+- S7679: Positional parameters assigned to locals
+- S1192: Constants for repeated strings
+- S1481: No unused variables
+- ShellCheck: Zero violations
+BODY
+
+	create_command "code-simplifier" \
+		"Simplify and refine code for clarity, consistency, and maintainability" \
+		"$AGENT_BUILD" "" <<'BODY'
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/code-review/code-simplifier.md and follow its instructions.
+
+Target: $ARGUMENTS
+
+**Usage:**
+```bash
+/code-simplifier              # Simplify recently modified code
+/code-simplifier src/         # Simplify code in specific directory
+/code-simplifier --all        # Review entire codebase (use sparingly)
+```
+
+**Key Principles:**
+- Preserve exact functionality
+- Clarity over brevity
+- Avoid nested ternaries
+- Remove obvious comments
+- Apply project standards
+BODY
+
+	return 0
+}
+
+# --- Git & Release Commands ---
+define_git_commands() {
+	create_command "release" \
+		"Full release workflow with version bump, tag, and GitHub release" \
+		"$AGENT_BUILD" "" <<'BODY'
 Execute a release for the current repository.
 
 Release type: $ARGUMENTS (valid: major, minor, patch)
@@ -193,10 +263,9 @@ Release type: $ARGUMENTS (valid: major, minor, patch)
 **CRITICAL**: Use only the single command above - it handles everything atomically.
 BODY
 
-# --- Version Bump ---
-create_command "version-bump" \
-	"Bump project version (major, minor, or patch)" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "version-bump" \
+		"Bump project version (major, minor, or patch)" \
+		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/version-bump.md and follow its instructions.
 
 Bump type: $ARGUMENTS
@@ -209,10 +278,9 @@ This updates:
 3. Other version references as configured
 BODY
 
-# --- Changelog ---
-create_command "changelog" \
-	"Update CHANGELOG.md following Keep a Changelog format" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "changelog" \
+		"Update CHANGELOG.md following Keep a Changelog format" \
+		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/changelog.md and follow its instructions.
 
 Action: $ARGUMENTS
@@ -223,59 +291,9 @@ This maintains CHANGELOG.md with:
 - Categories: Added, Changed, Deprecated, Removed, Fixed, Security
 BODY
 
-# --- Linters Local ---
-create_command "linters-local" \
-	"Run local linting tools (ShellCheck, secretlint, pattern checks)" \
-	"$AGENT_BUILD" "" <<'BODY'
-Run the local linters script:
-
-!`${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/linters-local.sh $ARGUMENTS`
-
-This runs fast, offline checks:
-1. ShellCheck for shell scripts
-2. Secretlint for exposed secrets
-3. Pattern validation (return statements, positional parameters)
-4. Markdown formatting checks
-
-For remote auditing (CodeRabbit, Codacy, SonarCloud), use /code-audit-remote
-BODY
-
-# --- Code Audit Remote ---
-create_command "code-audit-remote" \
-	"Run remote code auditing (CodeRabbit, Codacy, SonarCloud)" \
-	"$AGENT_BUILD" "true" <<'BODY'
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/code-audit-remote.md and follow its instructions.
-
-Audit target: $ARGUMENTS
-
-This calls external quality services:
-1. CodeRabbit - AI-powered code review
-2. Codacy - Code quality analysis
-3. SonarCloud - Security and maintainability
-
-For local linting (fast, offline), use /linters-local first
-BODY
-
-# --- Code Standards ---
-create_command "code-standards" \
-	"Check code against documented quality standards" \
-	"$AGENT_BUILD" "true" <<'BODY'
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/code-review/code-standards.md and follow its instructions.
-
-Check target: $ARGUMENTS
-
-This validates against our documented standards:
-- S7682: Explicit return statements
-- S7679: Positional parameters assigned to locals
-- S1192: Constants for repeated strings
-- S1481: No unused variables
-- ShellCheck: Zero violations
-BODY
-
-# --- Feature Branch ---
-create_command "feature" \
-	"Create and develop a feature branch" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "feature" \
+		"Create and develop a feature branch" \
+		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/branch/feature.md and follow its instructions.
 
 Feature: $ARGUMENTS
@@ -286,10 +304,9 @@ This will:
 3. Guide feature implementation
 BODY
 
-# --- Bugfix Branch ---
-create_command "bugfix" \
-	"Create and resolve a bugfix branch" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "bugfix" \
+		"Create and resolve a bugfix branch" \
+		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/branch/bugfix.md and follow its instructions.
 
 Bug: $ARGUMENTS
@@ -300,10 +317,9 @@ This will:
 3. Implement and test fix
 BODY
 
-# --- Hotfix Branch ---
-create_command "hotfix" \
-	"Urgent hotfix for critical production issues" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "hotfix" \
+		"Urgent hotfix for critical production issues" \
+		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/branch/hotfix.md and follow its instructions.
 
 Issue: $ARGUMENTS
@@ -314,97 +330,9 @@ This will:
 3. Fast-track to release
 BODY
 
-# --- List Keys ---
-create_command "list-keys" \
-	"List all API keys available in session with their storage locations" \
-	"$AGENT_BUILD" "" <<'BODY'
-Run the list-keys helper script and format the output as a markdown table:
-
-!`${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/list-keys-helper.sh --json $ARGUMENTS`
-
-Parse the JSON output and present as markdown tables grouped by source.
-
-Format with padded columns for readability:
-
-```
-### ~/.config/aidevops/credentials.sh
-
-| Key                        | Status        |
-|----------------------------|---------------|
-| OPENAI_API_KEY             | ✓ loaded      |
-| ANTHROPIC_API_KEY          | ✓ loaded      |
-| TEST_KEY                   | ⚠ placeholder |
-```
-
-Status icons:
-- ✓ loaded
-- ⚠ placeholder (needs real value)
-- ✗ not loaded
-- ℹ configured
-
-Pad key names to align columns. End with total count.
-
-Security: Key values are NEVER displayed.
-BODY
-
-# --- Log Time Spent ---
-create_command "log-time-spent" \
-	"Log time spent on a task in TODO.md" \
-	"$AGENT_BUILD" "" <<'BODY'
-Log time spent on a task.
-
-Arguments: $ARGUMENTS
-
-**Format:** `/log-time-spent [task-id-or-description] [duration]`
-
-**Examples:**
-- `/log-time-spent "Add user dashboard" 2h30m`
-- `/log-time-spent t001 45m`
-- `/log-time-spent` (prompts for task and duration)
-
-**Workflow:**
-1. If no arguments, show in-progress tasks from TODO.md and ask which one
-2. Parse duration (supports: 2h, 30m, 2h30m, 1.5h)
-3. Update the task's `logged:` field with current timestamp
-4. If task has `started:` but no `actual:`, calculate running total
-5. Show updated task with time summary
-
-**Duration formats:**
-- `2h` - 2 hours
-- `30m` - 30 minutes
-- `2h30m` - 2 hours 30 minutes
-- `1.5h` - 1.5 hours (converted to 1h30m)
-
-**Task update:**
-```markdown
-# Before
-- [ ] Add user dashboard #feature ~4h started:2025-01-15T10:30Z
-
-# After (adds logged: with cumulative time)
-- [ ] Add user dashboard #feature ~4h started:2025-01-15T10:30Z logged:2h30m
-```
-
-When task is completed, the `actual:` field is calculated from all logged time.
-BODY
-
-# --- Context Builder ---
-create_command "context" \
-	"Build token-efficient AI context for complex tasks" \
-	"$AGENT_BUILD" "true" <<'BODY'
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/context/context-builder.md and follow its instructions.
-
-Context request: $ARGUMENTS
-
-This generates optimized context for AI assistants including:
-1. Relevant code snippets
-2. Architecture overview
-3. Dependencies and relationships
-BODY
-
-# --- Create PR ---
-create_command "create-pr" \
-	"Create PR from current branch with title and description" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "create-pr" \
+		"Create PR from current branch with title and description" \
+		"$AGENT_BUILD" "" <<'BODY'
 Create a pull request from the current branch.
 
 Additional context: $ARGUMENTS
@@ -427,10 +355,9 @@ Additional context: $ARGUMENTS
 - `/create-pr fixes authentication bug` -> Adds context to description
 BODY
 
-# --- PR Alias ---
-create_command "pr" \
-	"Alias for /create-pr - Create PR from current branch" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "pr" \
+		"Alias for /create-pr - Create PR from current branch" \
+		"$AGENT_BUILD" "" <<'BODY'
 This is an alias for /create-pr. Creating PR from current branch.
 
 Context: $ARGUMENTS
@@ -438,10 +365,14 @@ Context: $ARGUMENTS
 Run /create-pr with the same arguments.
 BODY
 
-# --- Create PRD ---
-create_command "create-prd" \
-	"Generate a Product Requirements Document for a feature" \
-	"$AGENT_BUILD" "" <<'BODY'
+	return 0
+}
+
+# --- Planning & Task Commands ---
+define_planning_commands() {
+	create_command "create-prd" \
+		"Generate a Product Requirements Document for a feature" \
+		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/plans.md and follow its PRD generation instructions.
 
 Feature to document: $ARGUMENTS
@@ -467,10 +398,9 @@ Feature to document: $ARGUMENTS
 User can reply with "1A, 2B" or provide details.
 BODY
 
-# --- Generate Tasks ---
-create_command "generate-tasks" \
-	"Generate implementation tasks from a PRD" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "generate-tasks" \
+		"Generate implementation tasks from a PRD" \
+		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/plans.md and follow its task generation instructions.
 
 PRD or feature: $ARGUMENTS
@@ -498,10 +428,9 @@ PRD or feature: $ARGUMENTS
 Mark tasks complete by changing `- [ ]` to `- [x]` as work progresses.
 BODY
 
-# --- List Todo ---
-create_command "list-todo" \
-	"List tasks and plans with sorting, filtering, and grouping" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "list-todo" \
+		"List tasks and plans with sorting, filtering, and grouping" \
+		"$AGENT_BUILD" "" <<'BODY'
 Read TODO.md and todo/PLANS.md and display tasks based on arguments.
 
 Arguments: $ARGUMENTS
@@ -577,10 +506,9 @@ After displaying, offer:
 3. Done browsing
 BODY
 
-# --- Save Todo ---
-create_command "save-todo" \
-	"Save current discussion as task or plan (auto-detects complexity)" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "save-todo" \
+		"Save current discussion as task or plan (auto-detects complexity)" \
+		"$AGENT_BUILD" "" <<'BODY'
 Analyze the current conversation and save appropriately based on complexity.
 
 Topic/context: $ARGUMENTS
@@ -634,10 +562,9 @@ Capture from conversation:
 This goes into PLANS.md "Context from Discussion" section.
 BODY
 
-# --- Plan Status ---
-create_command "plan-status" \
-	"Show active plans and TODO.md status" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "plan-status" \
+		"Show active plans and TODO.md status" \
+		"$AGENT_BUILD" "" <<'BODY'
 Read TODO.md and todo/PLANS.md to show current planning status.
 
 Filter: $ARGUMENTS (optional: "in-progress", "backlog", plan name)
@@ -668,10 +595,14 @@ Offer options:
 3. Create new execution plan
 BODY
 
-# --- Keyword Research ---
-create_command "keyword-research" \
-	"Keyword research with seed keyword expansion" \
-	"$AGENT_SEO" "" <<'BODY'
+	return 0
+}
+
+# --- SEO Commands ---
+define_seo_commands() {
+	create_command "keyword-research" \
+		"Keyword research with seed keyword expansion" \
+		"$AGENT_SEO" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/keyword-research.md and follow its instructions.
 
 Keywords to research: $ARGUMENTS
@@ -701,10 +632,9 @@ Keywords to research: $ARGUMENTS
 Wildcards supported: "best * for dogs" expands to variations.
 BODY
 
-# --- Autocomplete Research ---
-create_command "autocomplete-research" \
-	"Google autocomplete long-tail keyword expansion" \
-	"$AGENT_SEO" "" <<'BODY'
+	create_command "autocomplete-research" \
+		"Google autocomplete long-tail keyword expansion" \
+		"$AGENT_SEO" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/keyword-research.md and follow its instructions.
 
 Seed keyword for autocomplete: $ARGUMENTS
@@ -731,10 +661,9 @@ Seed keyword for autocomplete: $ARGUMENTS
 This is ideal for discovering question-based and long-tail keywords.
 BODY
 
-# --- Keyword Research Extended ---
-create_command "keyword-research-extended" \
-	"Full SERP analysis with weakness detection and KeywordScore" \
-	"$AGENT_SEO" "true" <<'BODY'
+	create_command "keyword-research-extended" \
+		"Full SERP analysis with weakness detection and KeywordScore" \
+		"$AGENT_SEO" "true" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/keyword-research.md and follow its instructions.
 
 Research target: $ARGUMENTS
@@ -783,10 +712,9 @@ Content: Old Content, Title Mismatch, No Keyword in Headings, No Headings, Unmat
 SERP: UGC-Heavy Results
 BODY
 
-# --- Webmaster Keywords ---
-create_command "webmaster-keywords" \
-	"Keywords from GSC + Bing for your verified sites" \
-	"$AGENT_SEO" "" <<'BODY'
+	create_command "webmaster-keywords" \
+		"Keywords from GSC + Bing for your verified sites" \
+		"$AGENT_SEO" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/keyword-research.md and follow its instructions.
 
 Site URL: $ARGUMENTS
@@ -832,10 +760,14 @@ keyword-research-helper.sh webmaster https://example.com --days 90 --no-enrich
 4. Compare Google vs Bing performance
 BODY
 
-# --- SEO Fan-Out ---
-create_command "seo-fanout" \
-	"Run thematic query fan-out research for AI search coverage" \
-	"$AGENT_SEO" "" <<'BODY'
+	return 0
+}
+
+# --- SEO AI Commands ---
+define_seo_ai_commands() {
+	create_command "seo-fanout" \
+		"Run thematic query fan-out research for AI search coverage" \
+		"$AGENT_SEO" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/query-fanout-research.md and follow its instructions.
 
 Target: $ARGUMENTS
@@ -847,10 +779,9 @@ Produce:
 4. Remediation backlog for partial/missing high-priority branches
 BODY
 
-# --- SEO GEO ---
-create_command "seo-geo" \
-	"Run GEO strategy workflow for AI search visibility" \
-	"$AGENT_SEO" "" <<'BODY'
+	create_command "seo-geo" \
+		"Run GEO strategy workflow for AI search visibility" \
+		"$AGENT_SEO" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/geo-strategy.md and follow its instructions.
 
 Target: $ARGUMENTS
@@ -861,10 +792,9 @@ Deliverables:
 3. Prioritized retrieval-first implementation plan
 BODY
 
-# --- SEO SRO ---
-create_command "seo-sro" \
-	"Run Selection Rate Optimization workflow for grounding snippets" \
-	"$AGENT_SEO" "" <<'BODY'
+	create_command "seo-sro" \
+		"Run Selection Rate Optimization workflow for grounding snippets" \
+		"$AGENT_SEO" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/sro-grounding.md and follow its instructions.
 
 Target: $ARGUMENTS
@@ -875,10 +805,9 @@ Deliverables:
 3. Controlled re-test plan with expected deltas
 BODY
 
-# --- SEO Hallucination Defense ---
-create_command "seo-hallucination-defense" \
-	"Audit and reduce AI brand hallucination risk" \
-	"$AGENT_SEO" "" <<'BODY'
+	create_command "seo-hallucination-defense" \
+		"Audit and reduce AI brand hallucination risk" \
+		"$AGENT_SEO" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/ai-hallucination-defense.md and follow its instructions.
 
 Target: $ARGUMENTS
@@ -889,10 +818,9 @@ Deliverables:
 3. Claim-evidence matrix and remediation priorities
 BODY
 
-# --- SEO Agent Discovery ---
-create_command "seo-agent-discovery" \
-	"Test AI agent discoverability across multi-turn tasks" \
-	"$AGENT_SEO" "" <<'BODY'
+	create_command "seo-agent-discovery" \
+		"Test AI agent discoverability across multi-turn tasks" \
+		"$AGENT_SEO" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/ai-agent-discovery.md and follow its instructions.
 
 Target: $ARGUMENTS
@@ -903,10 +831,9 @@ Deliverables:
 3. Prioritized remediation and re-test scorecard
 BODY
 
-# --- SEO AI Readiness ---
-create_command "seo-ai-readiness" \
-	"Run end-to-end AI search readiness workflow" \
-	"$AGENT_SEO" "" <<'BODY'
+	create_command "seo-ai-readiness" \
+		"Run end-to-end AI search readiness workflow" \
+		"$AGENT_SEO" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/ai-search-readiness.md and follow its instructions.
 
 Target: $ARGUMENTS
@@ -921,10 +848,9 @@ Run chained phases:
 Return one prioritized backlog with readiness scorecard deltas.
 BODY
 
-# --- SEO AI Baseline ---
-create_command "seo-ai-baseline" \
-	"Capture AI-search baseline metrics and output KPI scorecard" \
-	"$AGENT_SEO" "" <<'BODY'
+	create_command "seo-ai-baseline" \
+		"Capture AI-search baseline metrics and output KPI scorecard" \
+		"$AGENT_SEO" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/ai-search-readiness.md and follow its instructions.
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/ai-search-kpi-template.md and follow its format.
 
@@ -938,19 +864,22 @@ Return:
 3. Re-test schedule recommendation
 BODY
 
-# --- Onboarding ---
-create_command "onboarding" \
-	"Interactive onboarding wizard - discover services, configure integrations" \
-	"" "" <<'BODY'
+	return 0
+}
+
+# --- Utility Commands ---
+define_utility_commands() {
+	create_command "onboarding" \
+		"Interactive onboarding wizard - discover services, configure integrations" \
+		"" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/aidevops/onboarding.md and follow its Welcome Flow instructions to guide the user through setup. Do NOT repeat these instructions -- go straight to the Welcome Flow conversation.
 
 Arguments: $ARGUMENTS
 BODY
 
-# --- Setup aidevops ---
-create_command "setup-aidevops" \
-	"Deploy latest aidevops agent changes locally" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "setup-aidevops" \
+		"Deploy latest aidevops agent changes locally" \
+		"$AGENT_BUILD" "" <<'BODY'
 Run the aidevops setup script to deploy the latest changes.
 
 **Command:**
@@ -979,10 +908,162 @@ cd "$AIDEVOPS_REPO" && ./setup.sh || exit
 Arguments: $ARGUMENTS
 BODY
 
-# --- Ralph Loop ---
-create_command "ralph-loop" \
-	"Start iterative AI development loop (Ralph Wiggum technique)" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "list-keys" \
+		"List all API keys available in session with their storage locations" \
+		"$AGENT_BUILD" "" <<'BODY'
+Run the list-keys helper script and format the output as a markdown table:
+
+!`${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/list-keys-helper.sh --json $ARGUMENTS`
+
+Parse the JSON output and present as markdown tables grouped by source.
+
+Format with padded columns for readability:
+
+```
+### ~/.config/aidevops/credentials.sh
+
+| Key                        | Status        |
+|----------------------------|---------------|
+| OPENAI_API_KEY             | ✓ loaded      |
+| ANTHROPIC_API_KEY          | ✓ loaded      |
+| TEST_KEY                   | ⚠ placeholder |
+```
+
+Status icons:
+- ✓ loaded
+- ⚠ placeholder (needs real value)
+- ✗ not loaded
+- ℹ configured
+
+Pad key names to align columns. End with total count.
+
+Security: Key values are NEVER displayed.
+BODY
+
+	create_command "log-time-spent" \
+		"Log time spent on a task in TODO.md" \
+		"$AGENT_BUILD" "" <<'BODY'
+Log time spent on a task.
+
+Arguments: $ARGUMENTS
+
+**Format:** `/log-time-spent [task-id-or-description] [duration]`
+
+**Examples:**
+- `/log-time-spent "Add user dashboard" 2h30m`
+- `/log-time-spent t001 45m`
+- `/log-time-spent` (prompts for task and duration)
+
+**Workflow:**
+1. If no arguments, show in-progress tasks from TODO.md and ask which one
+2. Parse duration (supports: 2h, 30m, 2h30m, 1.5h)
+3. Update the task's `logged:` field with current timestamp
+4. If task has `started:` but no `actual:`, calculate running total
+5. Show updated task with time summary
+
+**Duration formats:**
+- `2h` - 2 hours
+- `30m` - 30 minutes
+- `2h30m` - 2 hours 30 minutes
+- `1.5h` - 1.5 hours (converted to 1h30m)
+
+**Task update:**
+```markdown
+# Before
+- [ ] Add user dashboard #feature ~4h started:2025-01-15T10:30Z
+
+# After (adds logged: with cumulative time)
+- [ ] Add user dashboard #feature ~4h started:2025-01-15T10:30Z logged:2h30m
+```
+
+When task is completed, the `actual:` field is calculated from all logged time.
+BODY
+
+	create_command "context" \
+		"Build token-efficient AI context for complex tasks" \
+		"$AGENT_BUILD" "true" <<'BODY'
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/context/context-builder.md and follow its instructions.
+
+Context request: $ARGUMENTS
+
+This generates optimized context for AI assistants including:
+1. Relevant code snippets
+2. Architecture overview
+3. Dependencies and relationships
+BODY
+
+	create_command "session-review" \
+		"Review session for completeness before ending" \
+		"$AGENT_BUILD" "" <<'BODY'
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/session-review.md and follow its instructions.
+
+Review the current session for: $ARGUMENTS
+
+**Checks performed:**
+1. All objectives completed
+2. Workflow best practices followed
+3. Knowledge captured for future sessions
+4. Clear next steps identified
+
+**Usage:**
+```bash
+/session-review               # Review current session
+/session-review --capture     # Also capture learnings to memory
+```
+BODY
+
+	create_command "remember" \
+		"Store a memory for cross-session recall" \
+		"$AGENT_BUILD" "" <<'BODY'
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/remember.md and follow its instructions.
+
+Remember: $ARGUMENTS
+
+**Usage:**
+```bash
+/remember "User prefers worktrees over checkout"
+/remember "The auth module uses JWT with 24h expiry"
+/remember --type WORKING_SOLUTION "Fixed by adding explicit return"
+```
+
+**Memory types:**
+- WORKING_SOLUTION - Solutions that worked
+- FAILED_APPROACH - Approaches that didn't work
+- CODEBASE_PATTERN - Patterns in this codebase
+- USER_PREFERENCE - User preferences
+- TOOL_CONFIG - Tool configurations
+- DECISION - Decisions made
+- CONTEXT - General context
+
+**Storage:** ${AIDEVOPS_DIR:-$HOME/.aidevops}/.agent-workspace/memory/memory.db
+BODY
+
+	create_command "recall" \
+		"Search memories from previous sessions" \
+		"$AGENT_BUILD" "" <<'BODY'
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/recall.md and follow its instructions.
+
+Search for: $ARGUMENTS
+
+**Usage:**
+```bash
+/recall authentication        # Search for auth-related memories
+/recall --recent              # Show 10 most recent memories
+/recall --stats               # Show memory statistics
+/recall --type WORKING_SOLUTION  # Filter by type
+```
+
+**Storage:** ${AIDEVOPS_DIR:-$HOME/.aidevops}/.agent-workspace/memory/memory.db
+BODY
+
+	return 0
+}
+
+# --- Automation (Ralph Loop) Commands ---
+define_automation_commands() {
+	create_command "ralph-loop" \
+		"Start iterative AI development loop (Ralph Wiggum technique)" \
+		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/ralph-loop.md and follow its instructions.
 
 Start a Ralph loop for iterative development.
@@ -1019,10 +1100,9 @@ The promise must be TRUE - do not output false promises to escape.
 ```
 BODY
 
-# --- Cancel Ralph ---
-create_command "cancel-ralph" \
-	"Cancel active Ralph Wiggum loop" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "cancel-ralph" \
+		"Cancel active Ralph Wiggum loop" \
+		"$AGENT_BUILD" "" <<'BODY'
 Cancel the active Ralph loop.
 
 Remove the state file to stop the loop:
@@ -1034,10 +1114,9 @@ rm -f .agents/loop-state/ralph-loop.local.md .agents/loop-state/ralph-loop.local
 If no loop state file exists, no loop is active.
 BODY
 
-# --- Ralph Status ---
-create_command "ralph-status" \
-	"Show current Ralph loop status" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "ralph-status" \
+		"Show current Ralph loop status" \
+		"$AGENT_BUILD" "" <<'BODY'
 Show the current Ralph loop status.
 
 **Check status:**
@@ -1054,10 +1133,9 @@ This shows:
 - When the loop started
 BODY
 
-# --- Preflight Loop ---
-create_command "preflight-loop" \
-	"Run preflight checks in a loop until all pass (Ralph pattern)" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "preflight-loop" \
+		"Run preflight checks in a loop until all pass (Ralph pattern)" \
+		"$AGENT_BUILD" "" <<'BODY'
 Run preflight checks iteratively until all pass or max iterations reached.
 
 Arguments: $ARGUMENTS
@@ -1092,10 +1170,9 @@ This applies the Ralph Wiggum technique to quality checks:
 ```
 BODY
 
-# --- PR Loop ---
-create_command "pr-loop" \
-	"Monitor PR until approved or merged (Ralph pattern)" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "pr-loop" \
+		"Monitor PR until approved or merged (Ralph pattern)" \
+		"$AGENT_BUILD" "" <<'BODY'
 Monitor a PR iteratively until approved, merged, or max iterations reached.
 
 Arguments: $ARGUMENTS
@@ -1130,10 +1207,9 @@ Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/pr-loop.md and fol
 ```
 BODY
 
-# --- Postflight Loop ---
-create_command "postflight-loop" \
-	"Monitor release health after deployment (Ralph pattern)" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "postflight-loop" \
+		"Monitor release health after deployment (Ralph pattern)" \
+		"$AGENT_BUILD" "" <<'BODY'
 Monitor release health for a specified duration.
 
 Arguments: $ARGUMENTS
@@ -1163,10 +1239,9 @@ Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/postflight-loop.md
 ```
 BODY
 
-# --- Ralph Task ---
-create_command "ralph-task" \
-	"Run Ralph loop for a task from TODO.md by ID" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "ralph-task" \
+		"Run Ralph loop for a task from TODO.md by ID" \
+		"$AGENT_BUILD" "" <<'BODY'
 Run a Ralph loop for a specific task from TODO.md.
 
 Task ID: $ARGUMENTS
@@ -1206,10 +1281,9 @@ This will:
 - Task should have completion criteria defined
 BODY
 
-# --- Full Loop ---
-create_command "full-loop" \
-	"Start end-to-end development loop (task -> preflight -> PR -> postflight -> deploy)" \
-	"$AGENT_BUILD" "" <<'BODY'
+	create_command "full-loop" \
+		"Start end-to-end development loop (task -> preflight -> PR -> postflight -> deploy)" \
+		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/full-loop.md and follow its instructions.
 
 Start a full development loop for: $ARGUMENTS
@@ -1235,95 +1309,20 @@ Task Development -> Preflight -> PR Create -> PR Review -> Postflight -> Deploy
 **Completion promise:** `<promise>FULL_LOOP_COMPLETE</promise>`
 BODY
 
-# --- Code Simplifier ---
-create_command "code-simplifier" \
-	"Simplify and refine code for clarity, consistency, and maintainability" \
-	"$AGENT_BUILD" "" <<'BODY'
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/code-review/code-simplifier.md and follow its instructions.
+	return 0
+}
 
-Target: $ARGUMENTS
+# =============================================================================
+# EXECUTE ALL COMMAND GROUPS
+# =============================================================================
 
-**Usage:**
-```bash
-/code-simplifier              # Simplify recently modified code
-/code-simplifier src/         # Simplify code in specific directory
-/code-simplifier --all        # Review entire codebase (use sparingly)
-```
-
-**Key Principles:**
-- Preserve exact functionality
-- Clarity over brevity
-- Avoid nested ternaries
-- Remove obvious comments
-- Apply project standards
-BODY
-
-# --- Session Review ---
-create_command "session-review" \
-	"Review session for completeness before ending" \
-	"$AGENT_BUILD" "" <<'BODY'
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/session-review.md and follow its instructions.
-
-Review the current session for: $ARGUMENTS
-
-**Checks performed:**
-1. All objectives completed
-2. Workflow best practices followed
-3. Knowledge captured for future sessions
-4. Clear next steps identified
-
-**Usage:**
-```bash
-/session-review               # Review current session
-/session-review --capture     # Also capture learnings to memory
-```
-BODY
-
-# --- Remember ---
-create_command "remember" \
-	"Store a memory for cross-session recall" \
-	"$AGENT_BUILD" "" <<'BODY'
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/remember.md and follow its instructions.
-
-Remember: $ARGUMENTS
-
-**Usage:**
-```bash
-/remember "User prefers worktrees over checkout"
-/remember "The auth module uses JWT with 24h expiry"
-/remember --type WORKING_SOLUTION "Fixed by adding explicit return"
-```
-
-**Memory types:**
-- WORKING_SOLUTION - Solutions that worked
-- FAILED_APPROACH - Approaches that didn't work
-- CODEBASE_PATTERN - Patterns in this codebase
-- USER_PREFERENCE - User preferences
-- TOOL_CONFIG - Tool configurations
-- DECISION - Decisions made
-- CONTEXT - General context
-
-**Storage:** ${AIDEVOPS_DIR:-$HOME/.aidevops}/.agent-workspace/memory/memory.db
-BODY
-
-# --- Recall ---
-create_command "recall" \
-	"Search memories from previous sessions" \
-	"$AGENT_BUILD" "" <<'BODY'
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/recall.md and follow its instructions.
-
-Search for: $ARGUMENTS
-
-**Usage:**
-```bash
-/recall authentication        # Search for auth-related memories
-/recall --recent              # Show 10 most recent memories
-/recall --stats               # Show memory statistics
-/recall --type WORKING_SOLUTION  # Filter by type
-```
-
-**Storage:** ${AIDEVOPS_DIR:-$HOME/.aidevops}/.agent-workspace/memory/memory.db
-BODY
+define_quality_commands
+define_git_commands
+define_planning_commands
+define_seo_commands
+define_seo_ai_commands
+define_utility_commands
+define_automation_commands
 
 # =============================================================================
 # AUTO-DISCOVERED COMMANDS FROM scripts/commands/
@@ -1332,10 +1331,13 @@ BODY
 # Each file should have frontmatter with description and agent
 # This prevents needing to manually add new commands to this script
 
-COMMANDS_DIR="${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands"
+discover_commands() {
+	local commands_dir="${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands"
 
-if [[ -d "$COMMANDS_DIR" ]]; then
-	for cmd_file in "$COMMANDS_DIR"/*.md; do
+	[[ -d "$commands_dir" ]] || return 0
+
+	local cmd_file cmd_name
+	for cmd_file in "$commands_dir"/*.md; do
 		[[ -f "$cmd_file" ]] || continue
 
 		cmd_name=$(basename "$cmd_file" .md)
@@ -1344,106 +1346,112 @@ if [[ -d "$COMMANDS_DIR" ]]; then
 		[[ "$cmd_name" == "SKILL" ]] && continue
 
 		# Skip if already manually defined (avoid duplicates)
-		if [[ -f "$OPENCODE_COMMAND_DIR/$cmd_name.md" ]]; then
-			continue
-		fi
+		[[ -f "$OPENCODE_COMMAND_DIR/$cmd_name.md" ]] && continue
 
 		# Copy command file directly (it already has proper frontmatter)
 		if cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"; then
 			((++command_count))
 			echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
+		elif [[ ! -f "$cmd_file" ]]; then
+			echo -e "  ${YELLOW}!${NC} Skipped /$cmd_name command (source missing: $cmd_file)" >&2
 		else
-			if [[ ! -f "$cmd_file" ]]; then
-				echo -e "  ${YELLOW}!${NC} Skipped /$cmd_name command (source missing: $cmd_file)" >&2
-				continue
-			fi
 			echo -e "  ${RED}✗${NC} Failed to copy /$cmd_name command" >&2
 			exit 1
 		fi
 	done
-fi
+
+	return 0
+}
+
+discover_commands
 
 # =============================================================================
 # SUMMARY
 # =============================================================================
 
-echo ""
-echo -e "${GREEN}Done!${NC}"
-echo "  Commands created: $command_count"
-echo "  Location: $OPENCODE_COMMAND_DIR"
-echo ""
-echo "Available commands:"
-echo ""
-echo "  Planning:"
-echo "    /list-todo        - List tasks with sorting, filtering, grouping"
-echo "    /save-todo        - Save discussion as task/plan (auto-detects complexity)"
-echo "    /plan-status      - Show active plans and TODO.md status"
-echo "    /create-prd       - Generate Product Requirements Document"
-echo "    /generate-tasks   - Generate implementation tasks from PRD"
-echo ""
-echo "  Quality:"
-echo "    /preflight        - Quality checks before commit"
-echo "    /postflight       - Check code audit feedback on latest push"
-echo "    /review-issue-pr  - Review external issue/PR (validate problem, evaluate solution)"
-echo "    /linters-local    - Run local linting (ShellCheck, secretlint)"
-echo "    /code-audit-remote - Run remote auditing (CodeRabbit, Codacy, SonarCloud)"
-echo "    /code-standards   - Check against documented standards"
-echo "    /code-simplifier  - Simplify code for clarity and maintainability"
-echo ""
-echo "  Git & Release:"
-echo "    /feature          - Create feature branch"
-echo "    /bugfix           - Create bugfix branch"
-echo "    /hotfix           - Create hotfix branch"
-echo "    /create-pr        - Create PR from current branch"
-echo "    /release          - Full release workflow"
-echo "    /version-bump     - Bump project version"
-echo "    /changelog        - Update CHANGELOG.md"
-echo ""
-echo "  SEO:"
-echo "    /keyword-research - Seed keyword expansion"
-echo "    /autocomplete-research - Google autocomplete long-tails"
-echo "    /keyword-research-extended - Full SERP analysis with weakness detection"
-echo "    /webmaster-keywords - Keywords from GSC + Bing for your sites"
-echo "    /seo-fanout                - Thematic sub-query fan-out planning"
-echo "    /seo-geo                   - GEO criteria and coverage strategy"
-echo "    /seo-sro                   - SRO grounding snippet optimization"
-echo "    /seo-hallucination-defense - Fact consistency and claim-evidence audit"
-echo "    /seo-agent-discovery       - Multi-turn AI discoverability diagnostics"
-echo "    /seo-ai-readiness          - End-to-end AI search readiness workflow"
-echo "    /seo-ai-baseline           - Baseline KPI scorecard generation"
-echo ""
-echo "  Utilities:"
-echo "    /onboarding       - Interactive setup wizard (START HERE for new users)"
-echo "    /setup-aidevops   - Deploy latest agent changes locally"
-echo "    /agent-review     - Review and improve agent instructions"
-echo "    /session-review   - Review session for completeness before ending"
-echo "    /context          - Build AI context"
-echo "    /list-keys        - List API keys with storage locations"
-echo "    /log-time-spent   - Log time spent on a task"
-echo ""
-echo "  Memory:"
-echo "    /remember         - Store a memory for cross-session recall"
-echo "    /recall           - Search memories from previous sessions"
-echo ""
-echo "  Automation (Ralph Loops):"
-echo "    /ralph-loop       - Start iterative AI development loop"
-echo "    /ralph-task       - Run Ralph loop for a TODO.md task by ID"
-echo "    /full-loop        - End-to-end: task -> preflight -> PR -> postflight"
-echo "    /cancel-ralph     - Cancel active Ralph loop"
-echo "    /ralph-status     - Show Ralph loop status"
-echo "    /preflight-loop   - Iterative preflight until all pass"
-echo "    /pr-loop          - Monitor PR until approved/merged"
-echo "    /postflight-loop  - Monitor release health"
-echo ""
-echo "New users: Start with /onboarding to configure your services"
-echo ""
-echo "Planning workflow: /list-todo -> pick task -> /feature -> implement -> /create-pr"
-echo "New work: discuss -> /save-todo -> later: /list-todo -> pick -> implement"
-echo "Quality workflow: /preflight-loop -> /create-pr -> /pr-loop -> /postflight-loop"
-echo "Ralph workflow: tag task #ralph -> /ralph-task t042 -> autonomous completion"
-echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended"
-echo "AI-baseline workflow: /seo-ai-baseline -> /seo-ai-readiness"
-echo "AI-search workflow: /seo-fanout -> /seo-geo -> /seo-sro ->"
-echo "                      /seo-hallucination-defense -> /seo-agent-discovery"
-echo ""
-echo "Restart OpenCode to load new commands."
+print_summary() {
+	echo ""
+	echo -e "${GREEN}Done!${NC}"
+	echo "  Commands created: $command_count"
+	echo "  Location: $OPENCODE_COMMAND_DIR"
+	echo ""
+	echo "Available commands:"
+	echo ""
+	echo "  Planning:"
+	echo "    /list-todo        - List tasks with sorting, filtering, grouping"
+	echo "    /save-todo        - Save discussion as task/plan (auto-detects complexity)"
+	echo "    /plan-status      - Show active plans and TODO.md status"
+	echo "    /create-prd       - Generate Product Requirements Document"
+	echo "    /generate-tasks   - Generate implementation tasks from PRD"
+	echo ""
+	echo "  Quality:"
+	echo "    /preflight        - Quality checks before commit"
+	echo "    /postflight       - Check code audit feedback on latest push"
+	echo "    /review-issue-pr  - Review external issue/PR (validate problem, evaluate solution)"
+	echo "    /linters-local    - Run local linting (ShellCheck, secretlint)"
+	echo "    /code-audit-remote - Run remote auditing (CodeRabbit, Codacy, SonarCloud)"
+	echo "    /code-standards   - Check against documented standards"
+	echo "    /code-simplifier  - Simplify code for clarity and maintainability"
+	echo ""
+	echo "  Git & Release:"
+	echo "    /feature          - Create feature branch"
+	echo "    /bugfix           - Create bugfix branch"
+	echo "    /hotfix           - Create hotfix branch"
+	echo "    /create-pr        - Create PR from current branch"
+	echo "    /release          - Full release workflow"
+	echo "    /version-bump     - Bump project version"
+	echo "    /changelog        - Update CHANGELOG.md"
+	echo ""
+	echo "  SEO:"
+	echo "    /keyword-research - Seed keyword expansion"
+	echo "    /autocomplete-research - Google autocomplete long-tails"
+	echo "    /keyword-research-extended - Full SERP analysis with weakness detection"
+	echo "    /webmaster-keywords - Keywords from GSC + Bing for your sites"
+	echo "    /seo-fanout                - Thematic sub-query fan-out planning"
+	echo "    /seo-geo                   - GEO criteria and coverage strategy"
+	echo "    /seo-sro                   - SRO grounding snippet optimization"
+	echo "    /seo-hallucination-defense - Fact consistency and claim-evidence audit"
+	echo "    /seo-agent-discovery       - Multi-turn AI discoverability diagnostics"
+	echo "    /seo-ai-readiness          - End-to-end AI search readiness workflow"
+	echo "    /seo-ai-baseline           - Baseline KPI scorecard generation"
+	echo ""
+	echo "  Utilities:"
+	echo "    /onboarding       - Interactive setup wizard (START HERE for new users)"
+	echo "    /setup-aidevops   - Deploy latest agent changes locally"
+	echo "    /agent-review     - Review and improve agent instructions"
+	echo "    /session-review   - Review session for completeness before ending"
+	echo "    /context          - Build AI context"
+	echo "    /list-keys        - List API keys with storage locations"
+	echo "    /log-time-spent   - Log time spent on a task"
+	echo ""
+	echo "  Memory:"
+	echo "    /remember         - Store a memory for cross-session recall"
+	echo "    /recall           - Search memories from previous sessions"
+	echo ""
+	echo "  Automation (Ralph Loops):"
+	echo "    /ralph-loop       - Start iterative AI development loop"
+	echo "    /ralph-task       - Run Ralph loop for a TODO.md task by ID"
+	echo "    /full-loop        - End-to-end: task -> preflight -> PR -> postflight"
+	echo "    /cancel-ralph     - Cancel active Ralph loop"
+	echo "    /ralph-status     - Show Ralph loop status"
+	echo "    /preflight-loop   - Iterative preflight until all pass"
+	echo "    /pr-loop          - Monitor PR until approved/merged"
+	echo "    /postflight-loop  - Monitor release health"
+	echo ""
+	echo "New users: Start with /onboarding to configure your services"
+	echo ""
+	echo "Planning workflow: /list-todo -> pick task -> /feature -> implement -> /create-pr"
+	echo "New work: discuss -> /save-todo -> later: /list-todo -> pick -> implement"
+	echo "Quality workflow: /preflight-loop -> /create-pr -> /pr-loop -> /postflight-loop"
+	echo "Ralph workflow: tag task #ralph -> /ralph-task t042 -> autonomous completion"
+	echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended"
+	echo "AI-baseline workflow: /seo-ai-baseline -> /seo-ai-readiness"
+	echo "AI-search workflow: /seo-fanout -> /seo-geo -> /seo-sro ->"
+	echo "                      /seo-hallucination-defense -> /seo-agent-discovery"
+	echo ""
+	echo "Restart OpenCode to load new commands."
+
+	return 0
+}
+
+print_summary
