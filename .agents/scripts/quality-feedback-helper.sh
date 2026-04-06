@@ -1048,6 +1048,55 @@ _resolve_scan_state_file() {
 	return 0
 }
 
+# _validate_scan_batch_size: ensure --batch is a positive integer.
+# Arguments: $1=batch_size
+_validate_scan_batch_size() {
+	local batch_size="$1"
+
+	if ! [[ "$batch_size" =~ ^[0-9]+$ ]] || [[ "$batch_size" -eq 0 ]]; then
+		echo "Error: --batch must be a positive integer, got: ${batch_size}" >&2
+		return 1
+	fi
+	return 0
+}
+
+# _print_scan_mode_header: emit the human-readable scan banner.
+# Arguments: $1=json_output $2=total_to_scan $3=repo_slug $4=dry_run $5=backfill $6=batch_size
+_print_scan_mode_header() {
+	local json_output="$1"
+	local total_to_scan="$2"
+	local repo_slug="$3"
+	local dry_run="$4"
+	local backfill="$5"
+	local batch_size="$6"
+
+	if [[ "$json_output" != "true" ]]; then
+		echo -e "${BLUE:-}=== Scanning ${total_to_scan} merged PRs for unactioned review feedback ===${NC:-}"
+		echo "Repository: ${repo_slug}"
+		[[ "$dry_run" == true ]] &&
+			echo "Mode: dry-run (no issues will be created, PRs will not be marked scanned)"
+		[[ "$backfill" == true && "$dry_run" != true ]] &&
+			echo "Mode: backfill (processing in batches of ${batch_size} with rate limiting)"
+		echo ""
+	fi
+	return 0
+}
+
+# _consume_scan_findings_tmp: read and remove the temporary findings cache.
+# Arguments: $1=state_file
+_consume_scan_findings_tmp() {
+	local state_file="$1"
+
+	if [[ -f "${state_file}.findings_tmp" ]]; then
+		cat "${state_file}.findings_tmp"
+		rm -f "${state_file}.findings_tmp"
+		return 0
+	fi
+
+	echo "[]"
+	return 0
+}
+
 cmd_scan_merged() {
 	# Parse flags via helper (keeps flag parsing isolated)
 	local parsed_flags
@@ -1069,11 +1118,7 @@ cmd_scan_merged() {
 		esac
 	done <<<"$parsed_flags"
 
-	# Validate batch_size is a positive integer (prevents command injection via arithmetic)
-	if ! [[ "$batch_size" =~ ^[0-9]+$ ]] || [[ "$batch_size" -eq 0 ]]; then
-		echo "Error: --batch must be a positive integer, got: ${batch_size}" >&2
-		return 1
-	fi
+	_validate_scan_batch_size "$batch_size" || return 1
 
 	# Auto-detect repo if not specified
 	[[ -z "$repo_slug" ]] && { repo_slug=$(get_repo) || return 1; }
@@ -1121,15 +1166,7 @@ cmd_scan_merged() {
 	fi
 
 	local total_to_scan=${#prs_to_scan[@]}
-	if [[ "$json_output" != "true" ]]; then
-		echo -e "${BLUE:-}=== Scanning ${total_to_scan} merged PRs for unactioned review feedback ===${NC:-}"
-		echo "Repository: ${repo_slug}"
-		[[ "$dry_run" == true ]] &&
-			echo "Mode: dry-run (no issues will be created, PRs will not be marked scanned)"
-		[[ "$backfill" == true && "$dry_run" != true ]] &&
-			echo "Mode: backfill (processing in batches of ${batch_size} with rate limiting)"
-		echo ""
-	fi
+	_print_scan_mode_header "$json_output" "$total_to_scan" "$repo_slug" "$dry_run" "$backfill" "$batch_size"
 
 	local loop_result
 	loop_result=$(_process_pr_scan_loop \
@@ -1141,11 +1178,8 @@ cmd_scan_merged() {
 	local total_findings total_issues_created batch_count
 	read -r total_findings total_issues_created batch_count <<<"$loop_result"
 
-	local all_findings_json="[]"
-	if [[ -f "${state_file}.findings_tmp" ]]; then
-		all_findings_json=$(cat "${state_file}.findings_tmp")
-		rm -f "${state_file}.findings_tmp"
-	fi
+	local all_findings_json
+	all_findings_json=$(_consume_scan_findings_tmp "$state_file")
 
 	[[ "$tag_actioned" == true ]] && _tag_actioned_prs "$repo_slug" "$state_file"
 
