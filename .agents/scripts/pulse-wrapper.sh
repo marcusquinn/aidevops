@@ -8990,6 +8990,14 @@ _run_preflight_stages() {
 	run_stage_with_timeout "cleanup_worktrees" "$PRE_RUN_STAGE_TIMEOUT" cleanup_worktrees || true
 	run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
 
+	# GH#17549: Archive old OpenCode sessions to keep the active DB small.
+	# Concurrent workers hit SQLITE_BUSY on a bloated DB (busy_timeout=0).
+	# Runs daily with a 30s budget — catches up over multiple pulse cycles.
+	local _archive_helper="${SCRIPT_DIR}/opencode-db-archive.sh"
+	if [[ -x "$_archive_helper" ]]; then
+		"$_archive_helper" archive --max-duration-seconds 30 >>"$LOGFILE" 2>&1 || true
+	fi
+
 	# t1751: Reap zombie workers whose PRs have been merged by the deterministic merge pass.
 	# Runs before worker counting so count_active_workers sees accurate slot availability.
 	run_stage_with_timeout "reap_zombie_workers" "$PRE_RUN_STAGE_TIMEOUT" reap_zombie_workers || true
