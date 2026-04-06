@@ -308,10 +308,100 @@ fi
 rm -rf "$tmp_home"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 15: help command exits cleanly
+# Test 15: explicit --subagent-tokens adds to total and shows breakdown
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "Test 15: help command"
+echo "Test 15: explicit --subagent-tokens"
+result=$("$HELPER" generate --cli "Test" --model "m" --tokens 1000 --subagent-tokens 500)
+assert_contains "combined total" "1,500 tokens" "$result"
+assert_contains "subagent breakdown" "(incl. 500 subagent)" "$result"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 16: --subagent-tokens 0 does not show breakdown
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 16: --subagent-tokens 0 omits breakdown"
+result=$("$HELPER" generate --cli "Test" --model "m" --tokens 1000 --subagent-tokens 0)
+assert_contains "tokens present" "1,000 tokens" "$result"
+assert_not_contains "no subagent breakdown" "subagent" "$result"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 17: subagent tokens with comma formatting
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 17: subagent tokens comma formatting"
+result=$("$HELPER" generate --cli "Test" --model "m" --tokens 10000 --subagent-tokens 5000)
+assert_contains "combined total formatted" "15,000 tokens" "$result"
+assert_contains "subagent formatted" "(incl. 5,000 subagent)" "$result"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 18: token-ledger-helper.sh record and sum
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 18: token-ledger-helper.sh record and sum"
+LEDGER_HELPER="${SCRIPT_DIR}/../token-ledger-helper.sh"
+if [[ -x "$LEDGER_HELPER" ]]; then
+	tmp_ledger_dir=$(mktemp -d 2>/dev/null || mktemp -d -t ledgertest)
+
+	# Record some entries
+	AIDEVOPS_LEDGER_DIR="$tmp_ledger_dir" AIDEVOPS_SESSION_ID="test-session-1" \
+		"$LEDGER_HELPER" record --agent explore --tokens 500 --model haiku
+	AIDEVOPS_LEDGER_DIR="$tmp_ledger_dir" AIDEVOPS_SESSION_ID="test-session-1" \
+		"$LEDGER_HELPER" record --agent pr --tokens 2000 --model sonnet
+	AIDEVOPS_LEDGER_DIR="$tmp_ledger_dir" AIDEVOPS_SESSION_ID="test-session-1" \
+		"$LEDGER_HELPER" record --agent general --tokens 300
+
+	# Sum should be 2800
+	sum_result=$(AIDEVOPS_LEDGER_DIR="$tmp_ledger_dir" AIDEVOPS_SESSION_ID="test-session-1" \
+		"$LEDGER_HELPER" sum)
+	assert_eq "ledger sum is 2800" "2800" "$sum_result"
+
+	# Different session should be 0
+	sum_other=$(AIDEVOPS_LEDGER_DIR="$tmp_ledger_dir" AIDEVOPS_SESSION_ID="test-session-2" \
+		"$LEDGER_HELPER" sum)
+	assert_eq "different session sum is 0" "0" "$sum_other"
+
+	# Reset should clear
+	AIDEVOPS_LEDGER_DIR="$tmp_ledger_dir" AIDEVOPS_SESSION_ID="test-session-1" \
+		"$LEDGER_HELPER" reset >/dev/null
+	sum_after_reset=$(AIDEVOPS_LEDGER_DIR="$tmp_ledger_dir" AIDEVOPS_SESSION_ID="test-session-1" \
+		"$LEDGER_HELPER" sum)
+	assert_eq "sum after reset is 0" "0" "$sum_after_reset"
+
+	rm -rf "$tmp_ledger_dir"
+else
+	echo "  SKIP: token-ledger-helper.sh not found"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 19: auto-detect subagent tokens from ledger
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 19: auto-detect subagent tokens from ledger"
+if [[ -x "$LEDGER_HELPER" ]]; then
+	tmp_ledger_dir=$(mktemp -d 2>/dev/null || mktemp -d -t ledgertest2)
+	test_session_id="sig-test-$$"
+
+	# Record subagent tokens
+	AIDEVOPS_LEDGER_DIR="$tmp_ledger_dir" AIDEVOPS_SESSION_ID="$test_session_id" \
+		"$LEDGER_HELPER" record --agent explore --tokens 750
+
+	# Generate signature with ledger auto-detection
+	result=$(AIDEVOPS_LEDGER_DIR="$tmp_ledger_dir" AIDEVOPS_SESSION_ID="$test_session_id" \
+		"$HELPER" generate --cli "Test" --model "m" --tokens 1000)
+	assert_contains "auto-detected subagent tokens in total" "1,750 tokens" "$result"
+	assert_contains "auto-detected subagent breakdown" "(incl. 750 subagent)" "$result"
+
+	rm -rf "$tmp_ledger_dir"
+else
+	echo "  SKIP: token-ledger-helper.sh not found"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 20: help command exits cleanly
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 20: help command"
 result=$("$HELPER" help 2>&1)
 assert_contains "help shows usage" "Usage:" "$result"
 assert_contains "help shows examples" "Examples:" "$result"

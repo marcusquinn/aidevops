@@ -12,8 +12,8 @@
 #   [OpenCode CLI](https://opencode.ai) v1.3.3, [aidevops.sh](https://aidevops.sh) v3.5.6, anthropic/opus-4-6, 1,234 tokens
 #
 # Usage:
-#   gh-signature-helper.sh generate [--model MODEL] [--tokens N] [--cli NAME] [--cli-version VER]
-#   gh-signature-helper.sh footer   [--model MODEL] [--tokens N] [--cli NAME] [--cli-version VER]
+#   gh-signature-helper.sh generate [--model MODEL] [--tokens N] [--subagent-tokens N] [--cli NAME] [--cli-version VER]
+#   gh-signature-helper.sh footer   [--model MODEL] [--tokens N] [--subagent-tokens N] [--cli NAME] [--cli-version VER]
 #   gh-signature-helper.sh help
 #
 # The "generate" command outputs just the signature line (no leading ---).
@@ -25,7 +25,8 @@
 #   AIDEVOPS_SIG_MODEL        Model ID (e.g., "anthropic/opus-4-6")
 #   AIDEVOPS_SIG_TOKENS       Token count (e.g., "1234")
 #
-# Dependencies: lib/version.sh (aidevops version), aidevops-update-check.sh (CLI detection)
+# Dependencies: lib/version.sh (aidevops version), aidevops-update-check.sh (CLI detection),
+#   token-ledger-helper.sh (subagent token counts, optional)
 
 set -euo pipefail
 
@@ -525,6 +526,35 @@ _detect_issue_scoped_tokens() {
 }
 
 # =============================================================================
+# Detect subagent tokens from the runtime-agnostic token ledger
+# =============================================================================
+# Reads the token-ledger-helper.sh JSONL ledger for the current session and
+# returns the total subagent token count. Returns empty string if no ledger
+# exists or no entries are found.
+#
+# The ledger is written by subagents via token-ledger-helper.sh record.
+# This function is the read-side integration for signature footers.
+
+_detect_subagent_tokens() {
+	local ledger_helper="${SCRIPT_DIR}/token-ledger-helper.sh"
+
+	if [[ ! -x "$ledger_helper" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local total
+	total=$("$ledger_helper" sum 2>/dev/null || echo "")
+
+	if [[ -n "$total" ]] && [[ "$total" =~ ^[0-9]+$ ]] && [[ "$total" -gt 0 ]]; then
+		echo "$total"
+	else
+		echo ""
+	fi
+	return 0
+}
+
+# =============================================================================
 # Detect model from runtime DB
 # =============================================================================
 # Queries the OpenCode session DB for the model used in the current session.
@@ -826,7 +856,7 @@ _format_number() {
 # =============================================================================
 # _parse_generate_args — parse CLI args for cmd_generate
 # =============================================================================
-# Outputs pipe-separated: model|tokens|cli_name|cli_version|issue_ref|issue_created|solved|no_session|session_type_override|time_secs
+# Outputs pipe-separated: model|tokens|cli_name|cli_version|issue_ref|issue_created|solved|no_session|session_type_override|time_secs|subagent_tokens
 
 _parse_generate_args() {
 	local model="${AIDEVOPS_SIG_MODEL:-}"
@@ -834,7 +864,7 @@ _parse_generate_args() {
 	local cli_name="${AIDEVOPS_SIG_CLI:-}"
 	local cli_version="${AIDEVOPS_SIG_CLI_VERSION:-}"
 	local issue_ref="" issue_created="" solved="false" no_session="false"
-	local session_type_override="" time_secs=""
+	local session_type_override="" time_secs="" subagent_tokens=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -878,14 +908,18 @@ _parse_generate_args() {
 			time_secs="$2"
 			shift 2
 			;;
+		--subagent-tokens)
+			subagent_tokens="$2"
+			shift 2
+			;;
 		*) shift ;;
 		esac
 	done
 
-	printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+	printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
 		"$model" "$tokens" "$cli_name" "$cli_version" \
 		"$issue_ref" "$issue_created" "$solved" "$no_session" \
-		"$session_type_override" "$time_secs"
+		"$session_type_override" "$time_secs" "$subagent_tokens"
 	return 0
 }
 
@@ -948,7 +982,7 @@ _collect_time_metrics() {
 # =============================================================================
 # _build_signature — assemble the natural-language signature string
 # =============================================================================
-# Args: model cli_name cli_version tokens session_time_str total_time_str solved issue_total_tokens session_type
+# Args: model cli_name cli_version tokens session_time_str total_time_str solved issue_total_tokens session_type subagent_tokens
 
 _build_signature() {
 	local model="$1"
@@ -960,6 +994,7 @@ _build_signature() {
 	local solved="$7"
 	local issue_total_tokens="${8:-}"
 	local session_type="${9:-}"
+	local subagent_tokens="${10:-}"
 
 	local aidevops_version
 	aidevops_version=$(aidevops_find_version)
@@ -992,10 +1027,11 @@ _build_signature() {
 		sig="${sig} with ${display_model}"
 	fi
 
-	# "spent Xm and N tokens on this." — time first, tokens second
-	local has_time="" has_tokens=""
+	# "spent Xm and N tokens (incl. M subagent) on this." — time first, tokens second
+	local has_time="" has_tokens="" has_subagent_tokens=""
 	if [[ -n "$session_time_str" ]]; then has_time="true"; fi
 	if [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; then has_tokens="true"; fi
+	if [[ -n "$subagent_tokens" ]] && [[ "$subagent_tokens" != "0" ]]; then has_subagent_tokens="true"; fi
 
 	if [[ -n "$has_time" ]] || [[ -n "$has_tokens" ]]; then
 		sig="${sig} spent"
@@ -1009,6 +1045,12 @@ _build_signature() {
 			local formatted
 			formatted=$(_format_number "$tokens")
 			sig="${sig} ${formatted} tokens"
+			# Append subagent breakdown when subagent tokens are present
+			if [[ -n "$has_subagent_tokens" ]]; then
+				local formatted_subagent
+				formatted_subagent=$(_format_number "$subagent_tokens")
+				sig="${sig} (incl. ${formatted_subagent} subagent)"
+			fi
 		fi
 		if [[ "$session_type" == "interactive" ]]; then
 			sig="${sig} on this with the user in an interactive session."
@@ -1061,9 +1103,9 @@ cmd_generate() {
 	local parsed
 	parsed=$(_parse_generate_args "$@")
 	local model tokens cli_name cli_version issue_ref issue_created solved no_session
-	local session_type_override time_secs
+	local session_type_override time_secs subagent_tokens
 	IFS='|' read -r model tokens cli_name cli_version issue_ref issue_created solved no_session \
-		session_type_override time_secs <<<"$parsed"
+		session_type_override time_secs subagent_tokens <<<"$parsed"
 
 	# Auto-detect CLI name/version
 	local cli_resolved
@@ -1092,6 +1134,22 @@ cmd_generate() {
 			if [[ -z "$tokens" ]]; then
 				tokens=$(_detect_session_tokens)
 			fi
+		fi
+
+		# Auto-detect subagent tokens from the runtime-agnostic ledger (GH#17507).
+		# Only auto-detect if not explicitly provided via --subagent-tokens.
+		if [[ -z "$subagent_tokens" ]]; then
+			subagent_tokens=$(_detect_subagent_tokens)
+		fi
+
+		# Add subagent tokens to the main token total so the signature shows
+		# the combined count. The original subagent_tokens value is preserved
+		# for the breakdown annotation.
+		if [[ -n "$subagent_tokens" ]] && [[ "$subagent_tokens" =~ ^[0-9]+$ ]] && [[ "$subagent_tokens" -gt 0 ]]; then
+			local main_tokens="${tokens:-0}"
+			main_tokens=$(printf '%s' "$main_tokens" | tr -cd '0-9')
+			main_tokens="${main_tokens:-0}"
+			tokens=$((main_tokens + subagent_tokens))
 		fi
 
 		# Collect time metrics
@@ -1128,7 +1186,8 @@ cmd_generate() {
 	# Build and emit the signature
 	_build_signature \
 		"$model" "$cli_name" "$cli_version" "$tokens" \
-		"$session_time_str" "$total_time_str" "$solved" "$issue_total_tokens" "$session_type"
+		"$session_time_str" "$total_time_str" "$solved" "$issue_total_tokens" "$session_type" \
+		"$subagent_tokens"
 	return 0
 }
 
@@ -1185,6 +1244,7 @@ Commands:
 Options:
   --model MODEL             Model ID (e.g., anthropic/claude-opus-4-6)
   --tokens N                Token count (auto-detected from OpenCode DB if omitted)
+  --subagent-tokens N       Subagent token count (auto-detected from ledger if omitted)
   --cli NAME                CLI name override (e.g., "OpenCode CLI")
   --cli-version VER         CLI version override (e.g., "1.3.3")
   --issue OWNER/REPO#NUM    GitHub issue ref for total time and token summing
@@ -1194,6 +1254,7 @@ Options:
 Auto-detected fields (OpenCode sessions):
   - CLI name and version
   - Token count (input+output from session DB)
+  - Subagent token count (from token-ledger-helper.sh JSONL ledger)
   - Session time (duration since session start)
   - Issue total tokens (sum of all signature footers by the authenticated
     GitHub user on the issue's comments, plus current session tokens).
