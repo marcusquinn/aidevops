@@ -1,0 +1,304 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# URL Allowlist Check (t1895)
+#
+# Extracts hostnames from PR diff and compares against .agents/configs/allowed-urls.txt.
+# PRs adding unknown hostnames fail the check and receive a comment listing them.
+#
+# Maintainer-authored PRs (OWNER, MEMBER, COLLABORATOR) are flagged informational
+# only — the check reports findings but does not block merge.
+#
+# Security: uses pull_request_target for write access to post comments.
+# NEVER checks out or executes code from the PR head branch.
+# All logic operates on event metadata and the base branch allowlist only.
+#
+# Maintenance:
+#   - Add a hostname: append to .agents/configs/allowed-urls.txt
+#   - Regenerate baseline: .agents/scripts/extract-urls.sh
+#   - Approve via CLI: aidevops approve url <hostname>
+
+name: URL Allowlist Check
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  check-urls:
+    name: URL Allowlist Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: url-allowlist-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      pull-requests: write
+      contents: read
+      statuses: write
+
+    steps:
+      # Security: checkout the BASE branch only (never the PR head).
+      # We need the allowlist file from the trusted base branch.
+      - name: Checkout base branch (trusted)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: |
+            .agents/configs/allowed-urls.txt
+          sparse-checkout-cone-mode: false
+
+      - name: Write URL extractor script
+        run: |
+          cat > /tmp/check_urls.py << 'PYEOF'
+          import re
+          import sys
+
+          added_lines_file = sys.argv[1]
+          allowlist_file = sys.argv[2]
+
+          with open(added_lines_file, "r", errors="ignore") as f:
+              added_lines = f.read()
+
+          url_pattern = re.compile(r"https?://[^\s\"')\]>`]+")
+
+          EXCLUDED_RE = re.compile(
+              r"(\$\{|\$\(|\$[a-zA-Z_]"
+              r"|<[a-zA-Z]"
+              r"|%[sd0-9]"
+              r"|\\[nt]"
+              r"|\.\.\."
+              r"|example\.com|example\.org|example\.net"
+              r"|localhost"
+              r"|127\.0\.0\.1"
+              r"|0\.0\.0\.0"
+              r"|192\.168\."
+              r"|^10\.\d+\.\d+\."
+              r"|\.local$)"
+          )
+
+          def is_valid_hostname(hostname):
+              if not hostname or len(hostname) < 4:
+                  return False
+              if "." not in hostname:
+                  return False
+              if re.search(r"[^a-zA-Z0-9.\-_]", hostname):
+                  return False
+              if hostname[0] in (".", "-") or hostname[-1] in (".", "-"):
+                  return False
+              tld = hostname.rsplit(".", 1)[-1]
+              if not tld.isalpha() or len(tld) < 2:
+                  return False
+              if EXCLUDED_RE.search(hostname):
+                  return False
+              return True
+
+          allowlist = set()
+          try:
+              with open(allowlist_file, "r") as f:
+                  for line in f:
+                      line = line.strip()
+                      if line and not line.startswith("#"):
+                          allowlist.add(line.lower())
+          except FileNotFoundError:
+              pass
+
+          new_hosts = set()
+          for url in url_pattern.findall(added_lines):
+              url = url.rstrip(".,;:")
+              try:
+                  after_scheme = url.split("://", 1)[1]
+                  raw_host = after_scheme.split("/")[0].split("?")[0].split("#")[0]
+                  raw_host = raw_host.split(":")[0]
+                  if "@" in raw_host:
+                      raw_host = raw_host.split("@")[1]
+                  hostname = raw_host.lower().strip()
+                  if is_valid_hostname(hostname):
+                      new_hosts.add(hostname)
+              except (IndexError, ValueError):
+                  pass
+
+          unknown = sorted(new_hosts - allowlist)
+          for h in unknown:
+              print(h)
+          PYEOF
+
+      - name: Extract and check URLs from PR diff
+        id: check
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          ALLOWLIST=".agents/configs/allowed-urls.txt"
+
+          # Verify allowlist exists on base branch
+          if [[ ! -f "$ALLOWLIST" ]]; then
+            echo "::warning::Allowlist not found at $ALLOWLIST — skipping URL check"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="url-allowlist" \
+              -f description="Allowlist not found — check skipped" \
+              2>/dev/null || true
+            exit 0
+          fi
+
+          # Fetch the PR diff via GitHub API (safe — no code execution from PR)
+          echo "Fetching PR diff for #${PR_NUMBER}..."
+          PR_DIFF=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" \
+            -H "Accept: application/vnd.github.v3.diff" 2>&1) || {
+            echo "::warning::Could not fetch PR diff — skipping URL check"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="url-allowlist" \
+              -f description="Could not fetch diff — check skipped" \
+              2>/dev/null || true
+            exit 0
+          }
+
+          # Extract added lines only (lines starting with +, excluding diff headers)
+          ADDED_LINES=$(echo "$PR_DIFF" | grep '^+' | grep -v '^+++' || true)
+
+          if [[ -z "$ADDED_LINES" ]]; then
+            echo "No added lines in diff — nothing to check"
+            echo "unknown_count=0" >> "$GITHUB_OUTPUT"
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="url-allowlist" \
+              -f description="No new URLs added" \
+              2>/dev/null || true
+            exit 0
+          fi
+
+          # Write added lines to a temp file for Python to read
+          TMPFILE=$(mktemp)
+          echo "$ADDED_LINES" > "$TMPFILE"
+
+          # Run URL extractor (script written in previous step)
+          UNKNOWN_HOSTS=$(python3 /tmp/check_urls.py "$TMPFILE" "$ALLOWLIST") || {
+            rm -f "$TMPFILE"
+            echo "::error::Python URL extraction failed"
+            exit 1
+          }
+          rm -f "$TMPFILE"
+
+          UNKNOWN_COUNT=$(echo "$UNKNOWN_HOSTS" | grep -c '^[^[:space:]]' || echo "0")
+          echo "unknown_count=${UNKNOWN_COUNT}" >> "$GITHUB_OUTPUT"
+
+          if [[ "$UNKNOWN_COUNT" -eq 0 ]]; then
+            echo "All URLs are in the allowlist — check passes"
+            echo "blocked=false" >> "$GITHUB_OUTPUT"
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="url-allowlist" \
+              -f description="All URLs are in the allowlist" \
+              2>/dev/null || true
+            exit 0
+          fi
+
+          echo "Found ${UNKNOWN_COUNT} unknown hostname(s):"
+          echo "$UNKNOWN_HOSTS"
+
+          # Determine if this is a maintainer PR (informational only, not blocked)
+          TRUSTED_ROLES="OWNER MEMBER COLLABORATOR"
+          IS_MAINTAINER=false
+          for role in $TRUSTED_ROLES; do
+            if [[ "$AUTHOR_ASSOCIATION" == "$role" ]]; then
+              IS_MAINTAINER=true
+              break
+            fi
+          done
+
+          echo "is_maintainer=${IS_MAINTAINER}" >> "$GITHUB_OUTPUT"
+          echo "unknown_hosts<<HOSTS_EOF" >> "$GITHUB_OUTPUT"
+          echo "$UNKNOWN_HOSTS" >> "$GITHUB_OUTPUT"
+          echo "HOSTS_EOF" >> "$GITHUB_OUTPUT"
+
+          if [[ "$IS_MAINTAINER" == "true" ]]; then
+            echo "blocked=false" >> "$GITHUB_OUTPUT"
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="url-allowlist" \
+              -f description="Maintainer PR: ${UNKNOWN_COUNT} new URL(s) — informational" \
+              2>/dev/null || true
+          else
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=failure \
+              -f context="url-allowlist" \
+              -f description="${UNKNOWN_COUNT} unknown URL(s) require maintainer approval" \
+              2>/dev/null || true
+          fi
+
+      - name: Post or update allowlist comment
+        if: steps.check.outputs.unknown_count != '0' && steps.check.outputs.skipped != 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UNKNOWN_HOSTS: ${{ steps.check.outputs.unknown_hosts }}
+          UNKNOWN_COUNT: ${{ steps.check.outputs.unknown_count }}
+          IS_MAINTAINER: ${{ steps.check.outputs.is_maintainer }}
+        run: |
+          set -euo pipefail
+
+          # Format the unknown hosts as a markdown list
+          HOST_LIST=$(echo "$UNKNOWN_HOSTS" | awk '{print "- `" $0 "`"}')
+
+          if [[ "$IS_MAINTAINER" == "true" ]]; then
+            STATUS_TITLE="URL Allowlist: New URLs Detected (Informational)"
+            STATUS_NOTE="As a maintainer, this check is informational only — your PR is not blocked. If these URLs are intentional, add them to \`.agents/configs/allowed-urls.txt\` to keep the allowlist current."
+          else
+            STATUS_TITLE="URL Allowlist: BLOCKED"
+            STATUS_NOTE="This PR cannot be merged until a maintainer approves the new URLs. A maintainer can approve by adding the hostnames to \`.agents/configs/allowed-urls.txt\` or running \`aidevops approve url <hostname>\`."
+          fi
+
+          BODY="<!-- url-allowlist-check -->
+          **${STATUS_TITLE}**
+
+          This PR introduces **${UNKNOWN_COUNT}** hostname(s) not in the [URL allowlist](.agents/configs/allowed-urls.txt):
+
+          ${HOST_LIST}
+
+          ${STATUS_NOTE}
+
+          **Why this check exists:** Unknown URLs in PRs can introduce dependency hijacks, exfiltration endpoints, or phishing redirects. The allowlist ensures every external domain is explicitly reviewed.
+
+          _Automated check by [url-allowlist-check.yml](/.github/workflows/url-allowlist-check.yml). See [t1895](https://github.com/${REPO}/issues/17487) for context._"
+
+          # Check if we already posted a comment
+          EXISTING=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments \
+            --jq '[.comments[] | select(.body | contains("url-allowlist-check"))] | length' 2>/dev/null || echo "0")
+
+          if [[ "$EXISTING" == "0" ]]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$BODY" 2>/dev/null || true
+          else
+            # Update existing comment via API
+            COMMENT_ID=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments \
+              --jq '[.comments[] | select(.body | contains("url-allowlist-check"))] | .[0].id' 2>/dev/null || echo "")
+            if [[ -n "$COMMENT_ID" ]]; then
+              gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" \
+                --method PATCH \
+                -f body="$BODY" 2>/dev/null || true
+            fi
+          fi
+
+      - name: Fail check for non-maintainer PRs with unknown URLs
+        if: steps.check.outputs.blocked == 'true'
+        run: |
+          echo "::error::PR introduces unknown URLs not in the allowlist. See PR comment for details."
+          echo "Unknown hostnames:"
+          echo "${{ steps.check.outputs.unknown_hosts }}"
+          exit 1
