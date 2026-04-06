@@ -22,11 +22,29 @@ mode: subagent
 
 {Problem being solved, user need, business value, or dependency chain that requires this. Why now? What breaks or stalls without it?}
 
+## Tier
+
+<!-- Recommended model tier. Determines cascade dispatch starting point.
+     See reference/task-taxonomy.md for criteria and cascade model. -->
+
+`tier:simple` | `tier:standard` | `tier:reasoning`
+
+**Tier rationale:** {Why this tier — e.g., "Single-file edit with exact code block provided → tier:simple"
+or "Multi-file refactor requiring judgment about which pattern to follow → tier:standard"}
+
 ## How (Approach)
 
 <!-- Worker-ready implementation context (t1900): every section below is required
      for auto-dispatch issues. Vague "How" sections waste worker tokens on exploration.
-     If files/patterns cannot be determined, state that explicitly. -->
+     If files/patterns cannot be determined, state that explicitly.
+
+     TIER-AWARE DETAIL LEVEL:
+     - tier:simple: Code blocks must be COMPLETE — exact oldString/newString for edits,
+       full file content for new files. The worker copies and verifies, not invents.
+     - tier:standard: Code skeletons with function signatures and inline comments.
+       The worker fills in logic following the specified pattern.
+     - tier:reasoning: Approach description with constraints and trade-offs.
+       The worker designs the solution. -->
 
 ### Files to Modify
 

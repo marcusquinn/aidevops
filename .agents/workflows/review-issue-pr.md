@@ -115,7 +115,7 @@ Heading MUST contain `## Review:` or `## Issue/PR Review:` — pulse idempotency
 ### Scope & Recommendation
 
 - Scope creep: Low/Medium/High
-- Complexity: Low (`tier:simple`) / Medium (sonnet) / High (`tier:thinking`)
+- Complexity: Low (`tier:simple`) / Medium (`tier:standard`) / High (`tier:reasoning`)
 - **Decision**: APPROVE / REQUEST CHANGES / DECLINE
 - **Labels**: [e.g., `tier:simple`, `bug`, `status:available`]
 - **Implementation guidance**: [key steps, test cases to add]

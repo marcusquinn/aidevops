@@ -70,7 +70,7 @@ Supervisor resolves automatically. Interactive: `compare-models-helper.sh discov
 ## Headless Dispatch
 
 - **Pulse**: Anthropic sonnet only — OpenAI models exit without activity (proven). `PULSE_MODEL=anthropic/claude-sonnet-4-6`.
-- **Workers**: Any provider. `AIDEVOPS_HEADLESS_MODELS` is rotation with backoff, not escalation. Tier escalation: `tier:thinking` labels.
+- **Workers**: Any provider. `AIDEVOPS_HEADLESS_MODELS` is rotation with backoff, not escalation. Tier escalation: `tier:reasoning` labels (cascade: `tier:simple` → `tier:standard` → `tier:reasoning`).
 
 ## CLI Tools
 
