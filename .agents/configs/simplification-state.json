@@ -1754,9 +1754,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "hash": "1bf3c7a035f3e648e4242a94081aa987ee2d2480",
-      "at": "2026-04-06T18:23:26Z",
-      "passes": 12,
+      "hash": "b106b5b9cbbe825bb5f79722df7cdae95f5d8ad3",
+      "at": "2026-04-06T20:05:49Z",
+      "passes": 14,
       "pr": 15086
     },
     ".agents/scripts/issue-sync-lib.sh": {
@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "3ec4ebb1c56c4dc1987fc6bb96304f0fdcce3389",
-      "at": "2026-04-06T18:23:51Z",
-      "passes": 45,
+      "hash": "f3e05524dc72aa5aaf6a3328a30798e04de55efb",
+      "at": "2026-04-06T20:06:14Z",
+      "passes": 47,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "9b5866e7416406ddf94a54d5bf07d233c4ef277b",
-      "at": "2026-04-06T18:23:51Z",
-      "passes": 44,
+      "hash": "1aa0ec5a1068e218fecdcf38a1608de117201938",
+      "at": "2026-04-06T20:06:14Z",
+      "passes": 46,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -5699,9 +5699,9 @@
       "pr": 16651
     },
     ".agents/scripts/dispatch-dedup-helper.sh": {
-      "hash": "3251942729a14cea7ddcf935de92f36e24bafb78",
-      "at": "2026-04-06T18:23:26Z",
-      "passes": 6,
+      "hash": "421d2effd226e03e522d8f40909c93ea1f600241",
+      "at": "2026-04-06T19:20:31Z",
+      "passes": 7,
       "pr": 16650
     },
     ".agents/tools/ocr/overview.md": {
@@ -6773,10 +6773,10 @@
       "passes": 2
     },
     ".agents/scripts/generate-claude-commands.sh": {
-      "hash": "119848d7b7317316d6f18e71381bdbd62f53530c",
-      "at": "2026-04-06T17:00:18Z",
+      "hash": "381bfb2fc3b1be6b0cc3232498691b0a078d7f72",
+      "at": "2026-04-06T19:20:31Z",
       "pr": 17571,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/generate-opencode-commands.sh": {
       "hash": "19ac53376024c9ffaf4cd651816b2c5c889eca53",
@@ -6785,16 +6785,16 @@
       "passes": 2
     },
     ".agents/scripts/profile-readme-helper.sh": {
-      "hash": "adbc7800f616350d3413505963c0a031c1d4318e",
-      "at": "2026-04-06T18:23:52Z",
+      "hash": "2bc11796eb2d8656da860f9d8cd75abce6224528",
+      "at": "2026-04-06T19:20:31Z",
       "pr": 17590,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/opencode-db-archive.sh": {
-      "hash": "3ae89fe5710c8842a57d268e28e6243ee714a8c9",
-      "at": "2026-04-06T19:04:58Z",
+      "hash": "fea9cabedaa7a9e580ece120051e7675f818aa6e",
+      "at": "2026-04-06T19:20:31Z",
       "pr": 17584,
-      "passes": 1
+      "passes": 2
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {

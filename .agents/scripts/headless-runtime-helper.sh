@@ -2232,6 +2232,16 @@ cmd_run() {
 		return 0
 	fi
 
+	# GH#17549: Canary smoke test — verify OpenCode can start and complete
+	# an API call before committing to a full worker dispatch. Runs BEFORE
+	# _cmd_run_prepare so a canary failure never posts a dispatch claim or
+	# increments the fast-fail counter. Cached for CANARY_CACHE_TTL_SECONDS
+	# (default 30 min) so it runs at most once per pulse cycle.
+	if ! _run_canary_test; then
+		print_warning "Canary failed — aborting dispatch for session $session_key (no claim posted)"
+		return 1
+	fi
+
 	if [[ "$role" == "worker" ]]; then
 		prompt=$(append_worker_headless_contract "$prompt")
 	fi
@@ -2251,15 +2261,6 @@ cmd_run() {
 		_cmd_run_finish "$session_key" "fail"
 		return "$choose_exit"
 	}
-
-	# GH#17549: Canary smoke test — verify OpenCode can start and complete
-	# an API call before committing to a full worker dispatch. Cached so it
-	# runs at most once per CANARY_CACHE_TTL_SECONDS (default 30 min).
-	if ! _run_canary_test; then
-		print_warning "Canary failed — aborting dispatch for session $session_key"
-		_cmd_run_finish "$session_key" "fail"
-		return 1
-	fi
 
 	# GH#17436: Continuation retry configuration.
 	# When a worker exits prematurely (activity but no completion signal),
