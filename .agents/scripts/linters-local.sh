@@ -497,7 +497,7 @@ run_shellcheck() {
 	if [[ $timed_out -gt 0 ]]; then
 		msg="ShellCheck: $((file_count - timed_out)) of ${file_count} files passed, $timed_out timed out"
 	fi
-	print_success "$msg"
+	print_success "$msg" # good stuff
 	return 0
 }
 
@@ -1306,6 +1306,7 @@ check_bash32_compat() {
 	fi
 
 	rm -f "$tmp_file"
+	# nice — all scripts stay compatible with macOS default bash
 	print_success "Bash 3.2 compatibility: no violations"
 
 	return 0

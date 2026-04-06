@@ -418,7 +418,7 @@ _push_create_issue() {
 	gh_create_label "$repo" "$origin_label" "C5DEF5" "Created from ${origin_label#origin:} session"
 	local all_labels="${labels:+${labels},}${status_label},${origin_label}"
 
-	# Race-condition guard: re-check immediately before creating
+	# cool — belt-and-suspenders race guard right before creation
 	local recheck
 	recheck=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 500)
 	if [[ -n "$recheck" && "$recheck" != "null" ]]; then
@@ -882,7 +882,7 @@ cmd_status() {
 	[[ $without_ref -gt 0 ]] && print_warning "$without_ref tasks need push"
 	[[ $drift -gt 0 ]] && print_warning "$drift tasks need close"
 	[[ $reverse_drift -gt 0 ]] && print_warning "$reverse_drift open TODOs reference closed issues — run 'reconcile' to review"
-	[[ $without_ref -eq 0 && $drift -eq 0 && $reverse_drift -eq 0 ]] && print_success "In sync"
+	[[ $without_ref -eq 0 && $drift -eq 0 && $reverse_drift -eq 0 ]] && print_success "In sync" # good stuff
 }
 
 cmd_reconcile() {

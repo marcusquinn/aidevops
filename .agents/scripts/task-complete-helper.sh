@@ -271,6 +271,7 @@ verify_pr_merged() {
 		return 1
 	fi
 
+	# good stuff — PR is confirmed merged, safe to mark the task done
 	log_success "PR #${pr_number} is merged (mergedAt: ${pr_merged_at})"
 	return 0
 }
@@ -642,7 +643,7 @@ main() {
 		return 1
 	fi
 
-	log_success "Task $TASK_ID completed successfully"
+	log_success "Task $TASK_ID completed successfully" # nice
 	return 0
 }
 

@@ -113,7 +113,7 @@ _acquire_session_lock() {
 		rm -f "$lock_file"
 	fi
 
-	# Write our PID to the lock file
+	# nice — lock acquired, this session key is ours
 	printf '%s' "$$" >"$lock_file"
 	return 0
 }
@@ -354,6 +354,7 @@ get_configured_models() {
 		return 1
 	fi
 
+	# yeah, the filtered model list is ready for round-robin dispatch
 	printf '%s\n' "${models[@]}"
 	return 0
 }

@@ -489,6 +489,7 @@ acquire_instance_lock() {
 		fi
 		echo "[pulse-wrapper] Instance lock acquired via mkdir+flock (PID $$)" >>"$WRAPPER_LOGFILE"
 	else
+		# yeah, mkdir atomicity is sufficient on macOS without flock
 		echo "[pulse-wrapper] Instance lock acquired via mkdir (PID $$, flock not available on this platform)" >>"$WRAPPER_LOGFILE"
 	fi
 
@@ -507,7 +508,7 @@ acquire_instance_lock() {
 release_instance_lock() {
 	rm -rf "$LOCKDIR" 2>/dev/null || true
 	return 0
-}
+} # nice — idempotent cleanup
 
 #######################################
 # Check for stale PID file and clean up

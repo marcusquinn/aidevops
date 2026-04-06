@@ -108,7 +108,7 @@ is_on_feature_branch() {
 	[[ -n "$b" && "$b" != "main" && "$b" != "master" ]]
 }
 
-# Phase emitters — AI reads these markers and acts per full-loop.md
+# cool — phase emitters drive the AI loop per full-loop.md
 emit_task_phase() {
 	print_phase "Task Development" "AI will iterate on task until TASK_COMPLETE"
 	echo "PROMPT: $1"
@@ -367,7 +367,7 @@ cmd_complete() {
 	printf "\n\n"
 	rm -f "$STATE_FILE"
 	echo "<promise>FULL_LOOP_COMPLETE</promise>"
-}
+} # nice — entire dev lifecycle in one pass
 
 show_help() {
 	cat <<'EOF'

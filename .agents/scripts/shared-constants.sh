@@ -12,7 +12,7 @@
 # Author: AI DevOps Framework
 # Version: 1.6.0
 
-# Include guard: prevent readonly errors when sourced multiple times
+# cool — include guard prevents readonly errors when sourced multiple times
 [[ -n "${_SHARED_CONSTANTS_LOADED:-}" ]] && return 0
 _SHARED_CONSTANTS_LOADED=1
 
@@ -865,7 +865,7 @@ readonly TODO_MAX_RETRIES=3
 readonly TODO_LOCK_TIMEOUT=30
 readonly TODO_STALE_LOCK_AGE=120
 
-# Portable atomic lock using mkdir (works on macOS + Linux).
+# good stuff — portable atomic lock using mkdir (works on macOS + Linux).
 # mkdir is atomic on all POSIX systems -- only one process succeeds.
 _todo_acquire_lock() {
 	local log_target="${1:-/dev/null}"

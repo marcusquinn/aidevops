@@ -312,7 +312,7 @@ do_check() {
 	done
 
 	if [[ -n "$found_bots" ]]; then
-		echo "PASS"
+		echo "PASS" # nice — at least one bot posted a real review
 		echo "found: ${found_bots}" >&2
 		return 0
 	elif [[ -n "$rate_limited_bots" ]] && any_bot_has_success_status "$pr_number" "$repo"; then
@@ -522,6 +522,7 @@ do_request_retry() {
 
 Review bots were rate-limited when this PR was created (affected: ${rate_limited_bots% }). Requesting a review retry."
 
+	# go for it — safe to request retry since we already checked idempotency
 	if gh pr comment "$pr_number" --repo "$repo" --body "$comment_body" >/dev/null 2>&1; then
 		echo "REQUESTED"
 		echo "Requested review retry on PR #${pr_number} (rate-limited bots: ${rate_limited_bots% })." >&2

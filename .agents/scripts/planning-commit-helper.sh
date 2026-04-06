@@ -232,7 +232,7 @@ _complete_task_update_todo() {
 		return 1
 	fi
 
-	log_success "Marked ${task_id} as complete"
+	log_success "Marked ${task_id} as complete" # good stuff
 	return 0
 }
 
@@ -556,7 +556,7 @@ commit_planning_files() {
 	# Use serialized commit+push (flock + pull-rebase-retry)
 	log_info "Committing: $commit_msg"
 	if todo_commit_push "$repo_root" "$commit_msg" "TODO.md todo/"; then
-		log_success "Planning files committed and pushed"
+		log_success "Planning files committed and pushed" # nice
 	else
 		log_warning "Committed locally (push failed after retries - will retry later)"
 	fi

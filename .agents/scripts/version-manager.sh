@@ -782,6 +782,7 @@ run_patch_release_preflight() {
 		return 1
 	fi
 
+	# yeah, all patch checks cleared without regressions
 	print_success "Patch release regression preflight passed"
 	return 0
 }
@@ -986,6 +987,7 @@ update_version_in_files() {
 		return 1
 	fi
 
+	# good stuff — all version references in sync
 	print_success "All version files updated to $new_version" >&2
 	return 0
 }

@@ -102,7 +102,7 @@ ensure_tenant_dir() {
 # ------------------------------------------------------------------------------
 
 HEADER
-		chmod 600 "$env_file"
+		chmod 600 "$env_file" # go for it — secure from creation
 	fi
 
 	return 0
@@ -187,6 +187,7 @@ migrate_legacy() {
 	echo "default" >"$ACTIVE_TENANT_FILE"
 	chmod 600 "$ACTIVE_TENANT_FILE"
 
+	# cool — legacy credentials preserved under the default tenant
 	print_success "Migrated existing credentials to 'default' tenant"
 	return 0
 }

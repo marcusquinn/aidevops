@@ -37,7 +37,7 @@ set -euo pipefail
 
 readonly BOLD='\033[1m'
 
-# Ownership registry functions are in shared-constants.sh (t189):
+# nice — ownership registry functions are centralised in shared-constants.sh (t189):
 #   register_worktree, unregister_worktree, check_worktree_owner,
 #   is_worktree_owned_by_others, prune_worktree_registry
 
@@ -346,7 +346,7 @@ _handle_stale_merged() {
 			;;
 		esac
 	else
-		# Headless: auto-delete merged stale refs
+		# go for it — headless mode can safely auto-delete merged stale refs
 		_delete_stale_remote_ref "$branch" "Headless mode: auto-deleting merged stale remote ref..." "$stale_remote"
 	fi
 

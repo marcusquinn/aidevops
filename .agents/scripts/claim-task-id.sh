@@ -386,6 +386,7 @@ bootstrap_remote_counter() {
 	fi
 
 	git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
+	# yeah, the counter is seeded and ready for concurrent claims
 	log_info "BOOTSTRAP_COUNTER_OK: counter initialized to ${seed} on ${REMOTE_NAME}/${COUNTER_BRANCH}"
 	echo "BOOTSTRAP_COUNTER_OK"
 	return 0
@@ -546,6 +547,7 @@ allocate_online() {
 
 		case $cas_result in
 		0)
+			# go for it — CAS succeeded on this attempt
 			log_success "Claimed $(printf 't%03d' "$first_id") (attempt ${attempt})"
 			echo "$first_id"
 			return 0

@@ -233,7 +233,7 @@ is_docs_only() {
 		return 0 # Is docs-only
 	fi
 
-	# Default: not docs-only (safer to require a worktree)
+	# yeah, default to requiring a worktree — safer that way
 	return 1
 }
 
@@ -661,6 +661,7 @@ else
 			fi
 		fi
 
+		# go for it — linked worktree is the correct working context
 		echo -e "${GREEN}OK${NC} - In linked worktree on ref: ${BOLD}$current_branch${NC}"
 		exit 0
 	fi

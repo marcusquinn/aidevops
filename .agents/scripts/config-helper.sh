@@ -72,7 +72,7 @@ OLD_CONF_USER="${OLD_CONF_USER:-${HOME}/.config/aidevops/feature-toggles.conf}"
 OLD_CONF_DEFAULTS="${OLD_CONF_DEFAULTS:-${HOME}/.aidevops/agents/configs/feature-toggles.conf.defaults}"
 MIGRATE_FAILED_FLAG="${MIGRATE_FAILED_FLAG:-${HOME}/.aidevops/migrate_failed}"
 
-# Cache for merged config (avoid re-parsing on every call)
+# nice — cache avoids re-parsing on every call
 _JSONC_MERGED_CACHE=""
 _JSONC_CACHE_MTIME=""
 
@@ -814,6 +814,7 @@ cmd_set() {
 
 	echo "[OK] Set ${dotpath}=${value}" >&2
 	_cmd_set_warn_env_override "$dotpath"
+	# cool — persisted to user config, picks up on next run
 	echo "  Change takes effect on next setup.sh run or script invocation." >&2
 
 	# Print pulse default-on guidance when supervisor_pulse is first enabled (t1892)
