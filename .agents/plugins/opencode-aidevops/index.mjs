@@ -790,9 +790,11 @@ async function toolExecuteBefore(input, output) {
       // Direct footer text or helper invocation in the command
       const hasDirectFooter =
         cmd.includes("aidevops.sh") || cmd.includes("gh-signature-helper");
-      // Footer stored in a shell variable from a prior command (unexpanded at hook time)
+      // Footer stored in a shell variable from a prior command (unexpanded at hook time).
+      // Match any variable containing "footer" or "signature" as a substring to cover
+      // all naming conventions: sig_footer, SIG_FOOTER, _merge_sig_footer, sig_footer2, etc.
       const hasFooterVar =
-        /\$\{?(?:SIG_FOOTER|FOOTER|footer|sig_footer|SIGNATURE|signature)\}?/.test(cmd);
+        /\$\{?\w*(?:footer|FOOTER|signature|SIGNATURE)\w*\}?/i.test(cmd);
 
       if (!isMachineProtocol && !hasDirectFooter && !hasFooterVar) {
         console.error(
