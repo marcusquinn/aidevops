@@ -1185,7 +1185,7 @@ append_worker_headless_contract() {
 	local contract
 	contract=$(
 		cat <<'EOF'
-[HEADLESS_CONTINUATION_CONTRACT_V2]
+[HEADLESS_CONTINUATION_CONTRACT_V3]
 This is a HEADLESS worker session. No user is present. No user input is available.
 You must drive autonomously to completion or an evidence-backed BLOCKED outcome.
 
@@ -1201,7 +1201,8 @@ Pre-exit self-check -- MANDATORY:
 Before ending your session, verify ALL of these:
   - At least one commit with implementation changes exists on your branch.
   - A PR exists for your branch: run gh pr list --head YOUR_BRANCH_NAME
-  - If either check fails, you are NOT done -- continue working.
+  - A MERGE_SUMMARY comment exists on the PR (full-loop step 4.2.1). Verify: gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("MERGE_SUMMARY"))] | length' returns 1. If 0, post it now — the merge pass uses it for closing comments.
+  - If any check fails, you are NOT done -- continue working.
   - The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.
 EOF
 	)
@@ -2063,7 +2064,7 @@ cmd_run() {
 			# Swap to a continuation prompt that reinforces headless completion.
 			# The session ID is already stored; _execute_run_attempt will use
 			# --session <id> --continue to resume the existing conversation.
-			prompt="Continue through to completion. This is a headless session — no user is present and no user input is available to assist. You have set up the environment but have not yet completed the task. Check your todo list, implement the required code changes, commit, push, and create a PR. Do not stop until the outcome is FULL_LOOP_COMPLETE or BLOCKED with evidence."
+			prompt="Continue through to completion. This is a headless session — no user is present and no user input is available to assist. You have set up the environment but have not yet completed the task. Check your todo list, implement the required code changes, commit, push, and create a PR. After PR creation, you MUST post the MERGE_SUMMARY comment (full-loop step 4.2.1) — the merge pass needs it for closing comments. Then continue through review, merge, and closing comments. Do not stop until the outcome is FULL_LOOP_COMPLETE or BLOCKED with evidence."
 
 			# Continuation retries don't consume provider-rotation attempts
 			# since the provider isn't at fault — the model stopped early.

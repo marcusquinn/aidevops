@@ -103,7 +103,20 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **Signature footer (GH#12805 — MANDATORY):** append `gh-signature-helper.sh footer` output. Verify: `gh pr view --json body | jq -e '.body | (contains("aidevops.sh") and (contains("spent") or contains("Overall,")))'`.
 
-**4.2.1 Merge Summary Comment (MANDATORY):** post immediately after PR creation. Must contain `<!-- MERGE_SUMMARY -->` on first line. Include: What, Issue, Files changed, Testing, Key decisions.
+**4.2.1 Merge Summary Comment (MANDATORY):** post immediately after PR creation. The deterministic merge pass (`pulse-wrapper.sh`) reads this comment to build closing comments on the linked issue. Without it, issues get a generic "no worker summary" message. Run this exact command:
+
+```bash
+gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- MERGE_SUMMARY -->
+## Completion Summary
+
+- **What**: <1-line description of what was done>
+- **Issue**: #<issue_number>
+- **Files changed**: <comma-separated list of key files>
+- **Testing**: <what was verified — linter, build, manual, etc.>
+- **Key decisions**: <any notable trade-offs or choices made>"
+```
+
+Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("MERGE_SUMMARY"))] | length'` must return `1`.
 
 **4.3 Label `status:in-review` (t1343):** check issue is `OPEN` first.
 
