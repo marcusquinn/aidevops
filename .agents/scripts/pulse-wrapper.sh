@@ -6403,7 +6403,7 @@ check_dispatch_dedup() {
 		# cluttering the issue. The pre-check is cheap (read-only) and
 		# catches the common case where another runner already claimed.
 		local _precheck_output="" _precheck_exit=0
-		_precheck_output=$("$dedup_helper" check-claim "$issue_number" "$repo_slug" 2>>"$LOGFILE") || _precheck_exit=$?
+		_precheck_output=$("$dedup_helper" check-claim "$issue_number" "$repo_slug") || _precheck_exit=$?
 		if [[ "$_precheck_exit" -eq 0 ]]; then
 			# Active claim exists from another runner — skip claim entirely
 			echo "[pulse-wrapper] Dedup: pre-check found active claim on #${issue_number} in ${repo_slug} — skipping (${_precheck_output})" >>"$LOGFILE"
