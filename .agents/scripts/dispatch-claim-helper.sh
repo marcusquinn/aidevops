@@ -41,7 +41,9 @@ DISPATCH_CLAIM_WINDOW="${DISPATCH_CLAIM_WINDOW:-8}"
 
 # Maximum age (seconds) of a claim comment to consider it active.
 # Claims older than this are stale and ignored by the lock check.
-DISPATCH_CLAIM_MAX_AGE="${DISPATCH_CLAIM_MAX_AGE:-120}"
+# GH#17503: Increased from 120s to 1800s (30 min) — claim comments are never
+# deleted (audit trail), so the TTL must cover a full worker lifecycle.
+DISPATCH_CLAIM_MAX_AGE="${DISPATCH_CLAIM_MAX_AGE:-1800}"
 
 # GH#15317: Self-reclaim removed. Previously, same-runner stale claims were
 # "reclaimed" after this threshold, creating dispatch loops. Now stale self-
@@ -312,39 +314,22 @@ cmd_claim() {
 		return 0
 	fi
 
-	# GH#15317: Self-reclaim removed. Previously, if the oldest claim belonged to
-	# the same runner and was >30s old, the runner would "reclaim" — allowing
-	# re-dispatch. This created same-runner dispatch loops: claim → dispatch →
-	# worker dies → 30s passes → self-reclaim → dispatch again. Evidence:
-	# awardsapp #2051 had 25 claims from alex-solovyev over 6 hours.
+	# GH#17503: Claim comments are NEVER deleted — they form the audit trail
+	# of every dispatch attempt. The claim TTL (DISPATCH_CLAIM_MAX_AGE=1800s)
+	# controls how long a claim blocks re-dispatch; after expiry the comment
+	# stays but no longer locks the issue.
 	#
-	# The dispatch_with_dedup() caller now posts a deterministic "Dispatching
-	# worker" comment and cleans up claim comments after dispatch. If a worker
-	# needs to be re-dispatched, the pulse must first post a kill/failure comment
-	# and remove the dispatch comment — making the re-dispatch explicit, not
-	# an implicit side effect of stale claims.
-	#
-	# If the oldest claim is from the same runner, treat as a lost claim (stale
-	# from a previous cycle that wasn't cleaned up). Delete both claims.
+	# Same-runner stale claim: another claim from this runner already exists.
+	# The existing claim is still blocking (within TTL), so back off.
 	if [[ "$oldest_runner" == "$runner" && "$oldest_nonce" != "$nonce" ]]; then
-		printf 'CLAIM_STALE_SELF: runner=%s found own stale claim on issue #%s (stale_age_s=%s) — cleaning up\n' \
+		printf 'CLAIM_STALE_SELF: runner=%s found own prior claim on issue #%s (age=%ss) — backing off (claim retained for audit)\n' \
 			"$runner" "$issue_number" "$oldest_age_seconds"
-		# Delete both the stale claim and the fresh one we just posted
-		local stale_comment_id
-		stale_comment_id=$(printf '%s' "$claims" | jq -r '.[0].id // ""' 2>/dev/null) || stale_comment_id=""
-		if [[ -n "$stale_comment_id" ]]; then
-			_delete_comment "$repo_slug" "$stale_comment_id" 2>/dev/null || true
-		fi
-		_delete_comment "$repo_slug" "$comment_id" 2>/dev/null || true
 		return 1
 	fi
 
 	# Step 5: We lost — another runner's claim is older
-	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off\n' \
+	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off (both claims retained for audit)\n' \
 		"$runner" "$oldest_runner" "$issue_number"
-
-	# Clean up our losing claim
-	_delete_comment "$repo_slug" "$comment_id" 2>/dev/null || true
 
 	return 1
 }
@@ -420,10 +405,7 @@ Usage:
 
 Environment:
   DISPATCH_CLAIM_WINDOW    Consensus window in seconds (default: 8)
-  DISPATCH_CLAIM_MAX_AGE   Max age of claim comments in seconds (default: 120)
-  DISPATCH_CLAIM_SELF_RECLAIM_AGE
-                           Same-runner stale-claim reclaim threshold in
-                           seconds (default: 30)
+  DISPATCH_CLAIM_MAX_AGE   Max age of claim comments in seconds (default: 1800 = 30 min)
 
 Protocol:
   1. Runner posts plain-text claim comment with unique nonce
@@ -431,8 +413,8 @@ Protocol:
   2. Waits DISPATCH_CLAIM_WINDOW seconds for other runners
   3. Fetches all claim comments on the issue
   4. Oldest active claim wins (claims older than DISPATCH_CLAIM_MAX_AGE are ignored)
-     — others back off and delete their claims
-  5. Winner proceeds with dispatch; claim comment persists as audit trail
+     — others back off; ALL claim comments are retained as audit trail (GH#17503)
+  5. Winner proceeds with dispatch; claim blocks re-dispatch for TTL duration
 
 Examples:
   # Claim before dispatching (in pulse dedup guard)
