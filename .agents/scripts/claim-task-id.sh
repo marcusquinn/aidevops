@@ -634,13 +634,13 @@ _try_issue_sync_delegation() {
 	local task_id
 	task_id=$(printf '%s' "$title" | grep -oE '^t[0-9]+' || echo "")
 
-	local issue_sync_helper="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/issue-sync-helper.sh"
+	local issue_sync_helper="${SCRIPT_DIR}/issue-sync-helper.sh"
 	if [[ -z "$task_id" || ! -x "$issue_sync_helper" || ! -f "$repo_path/TODO.md" ]]; then
 		return 1
 	fi
 
 	local push_output
-	push_output=$("$issue_sync_helper" push "$task_id" 2>/dev/null || echo "")
+	push_output=$("$issue_sync_helper" push "$task_id" 2>&1 || echo "")
 
 	local issue_num
 	issue_num=$(printf '%s' "$push_output" | grep -oE 'Created #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
@@ -676,7 +676,8 @@ _check_duplicate_issue() {
 	# Extract the descriptive part of the title (after any "tNNN: " or "prefix: " pattern)
 	local search_terms
 	search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
-	if [[ -z "$search_terms" ]]; then
+	# Avoid overly broad matches with short/generic terms
+	if [[ -z "$search_terms" || ${#search_terms} -lt 10 ]]; then
 		return 1
 	fi
 
@@ -714,7 +715,7 @@ _compose_issue_body() {
 	fi
 
 	# t1899: Append provenance signature footer (build.txt rule #8)
-	local sig_helper="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/gh-signature-helper.sh"
+	local sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
 	if [[ -x "$sig_helper" ]]; then
 		local sig_footer
 		sig_footer=$("$sig_helper" footer --body "$body" 2>/dev/null || echo "")
