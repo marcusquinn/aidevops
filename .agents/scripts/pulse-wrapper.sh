@@ -6431,20 +6431,26 @@ dispatch_with_dedup() {
 	: >"$worker_log"
 	ln -s "$worker_log" "$worker_log_fallback" 2>/dev/null || true
 
-	# Pre-dispatch model selection: check provider backoff BEFORE launching.
-	# Previously, the wrapper dispatched blindly with whatever model was
-	# configured, wasting an assign/claim/launch cycle when the provider was
-	# rate-limited. Now we ask headless-runtime-helper.sh to select the best
-	# available model (respects backoff DB, auth availability, round-robin).
-	# If a model_override is requested (e.g., tier:thinking → opus), we
-	# validate it against backoff first and fall back to auto-selection if
-	# it's currently backed off.
-	# GH#17503: Resolve the actual model name BEFORE dispatch so the comment
-	# shows which model the worker will use (e.g., "anthropic/claude-sonnet-4-6")
-	# instead of "auto-select (round-robin)". The runtime helper's `select`
-	# command runs choose_model() with round-robin, backoff, and auth checks —
-	# the same logic that cmd_run uses — so the model in the comment matches
-	# what the worker actually gets.
+	# ROUND-ROBIN MODEL SELECTION (owned by this function, NOT the caller).
+	#
+	# When model_override (param 9) is EMPTY, this function calls
+	# headless-runtime-helper.sh select --role worker, which runs the
+	# round-robin across AIDEVOPS_HEADLESS_MODELS (respects backoff DB,
+	# auth availability, and provider rotation). The resolved model name
+	# is shown in the dispatch comment so the audit trail records exactly
+	# which provider/model the worker used.
+	#
+	# IMPORTANT: Callers (including the pulse AI) MUST NOT pass a model
+	# override for default dispatches. Only pass model_override when a
+	# specific tier is required (e.g., tier:thinking → opus escalation,
+	# tier:simple → haiku). Passing an arbitrary model here bypasses the
+	# round-robin and causes provider imbalance — e.g., all workers end
+	# up on a single provider instead of alternating between anthropic
+	# and openai as configured.
+	#
+	# History: GH#17503 moved model resolution here (from the worker) so
+	# the dispatch comment shows the actual model. Prior to that fix, the
+	# comment showed "auto-select (round-robin)" which was unhelpful.
 	local selected_model=""
 	if [[ -n "$model_override" ]]; then
 		selected_model="$model_override"

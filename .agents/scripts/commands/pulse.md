@@ -102,7 +102,12 @@ Skip when: all slots occupied, issue created <5 min ago, or maintainer already c
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 list_dispatchable_issue_candidates SLUG 100
 
-# Atomic dispatch — runs all 7 dedup layers, assigns, launches, records ledger
+# Atomic dispatch — runs all 7 dedup layers, assigns, launches, records ledger.
+# DO NOT pass a 9th parameter (model override) here. dispatch_with_dedup owns
+# the round-robin: it calls headless-runtime-helper.sh select --role worker to
+# rotate between configured providers (e.g., anthropic ↔ openai) and records
+# the resolved model in the dispatch comment. Passing your own model bypasses
+# the round-robin and causes all workers to land on a single provider.
 dispatch_with_dedup NUMBER SLUG "Issue #NUMBER: TITLE" "TASK_ID: TITLE" "$RUNNER_USER" PATH \
   "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION" || continue
 ```
@@ -277,13 +282,22 @@ workers attempted.
 
 ### Model tier selection
 
+`dispatch_with_dedup` handles model selection automatically via round-robin across
+configured providers (AIDEVOPS_HEADLESS_MODELS). The resolved model is recorded in
+the dispatch comment. **Do NOT pass a model override (9th parameter) for default
+dispatches** — this bypasses the round-robin and causes provider imbalance.
+
+Only pass a model override when tier escalation is needed:
+
 ```bash
+# ONLY for tier-labeled issues or failure escalation — NOT for default dispatches
 RESOLVED_MODEL=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve <tier>)
-# Pass: --model "$RESOLVED_MODEL"
+dispatch_with_dedup NUMBER SLUG ... "$RESOLVED_MODEL"
 ```
 
 Precedence: (1) failure escalation (2+ failures → opus) > (2) issue labels (`tier:thinking`
-→ opus, `tier:simple` → haiku) > (3) bundle defaults > (4) omit (default round-robin).
+→ opus, `tier:simple` → haiku) > (3) **omit the 9th parameter** (round-robin selects from
+configured providers and records the model in the dispatch comment).
 
 ### Agent routing from labels
 
