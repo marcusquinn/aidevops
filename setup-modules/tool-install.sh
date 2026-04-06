@@ -1489,7 +1489,10 @@ setup_opencode_cli() {
 
 	# Need either bun or npm to install
 	local installer=""
-	local install_pkg="opencode-ai@latest"
+	# Respect OPENCODE_PINNED_VERSION from shared-constants.sh if sourced,
+	# otherwise fall back to latest.
+	local pin_ver="${OPENCODE_PINNED_VERSION:-latest}"
+	local install_pkg="opencode-ai@${pin_ver}"
 
 	if command -v bun >/dev/null 2>&1; then
 		installer="bun"

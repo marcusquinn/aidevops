@@ -17,6 +17,17 @@
 _SHARED_CONSTANTS_LOADED=1
 
 # =============================================================================
+# Tool Version Pins
+# =============================================================================
+# Pin a tool to a specific version to prevent auto-upgrade to a broken release.
+# Set to "latest" to resume tracking upstream. Grep for the variable name to
+# find all consumers that need updating when unpinning.
+
+# OpenCode pinned to 1.3.15: v1.3.17 hangs on API calls in headless mode.
+# Upstream: https://github.com/anomalyco/opencode/issues/21215
+readonly OPENCODE_PINNED_VERSION="1.3.15"
+
+# =============================================================================
 # HTTP and API Constants
 # =============================================================================
 
