@@ -5532,6 +5532,16 @@ _complexity_scan_create_issues() {
 		[[ -n "$file_path" ]] || continue
 		[[ "$issues_created" -ge "$max_issues_per_run" ]] && break
 
+		# Skip nesting-only violations (GH#17632): files flagged solely for max_nesting
+		# exceeding the threshold have violation_count=0 (no long functions). The current
+		# issue template is function-length-specific; creating a "0 functions >100 lines"
+		# issue is misleading and produces false-positive dispatch work.
+		if [[ "${violation_count:-0}" -eq 0 ]]; then
+			echo "[pulse-wrapper] Complexity scan: skipping ${file_path} — nesting-only violation (0 long functions)" >>"$LOGFILE"
+			issues_skipped=$((issues_skipped + 1))
+			continue
+		fi
+
 		# Dedup via server-side title search — accurate across all issues (GH#5630)
 		if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
 			echo "[pulse-wrapper] Complexity scan: skipping ${file_path} — existing open issue" >>"$LOGFILE"
