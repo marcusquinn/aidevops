@@ -615,7 +615,7 @@ _handle_main_worktree_off_main() {
 		# For non-allowlisted paths / code tasks, warn but continue so the caller can relocate into a worktree.
 		echo -e "${YELLOW}LOOP-AUTO${NC}: Main repo directory is off main (not ideal - relocate to a linked worktree)"
 		echo "LOOP_DECISION=continue_warning"
-		exit 0
+		exit 3
 	fi
 
 	# Interactive mode: show warning with options
@@ -708,18 +708,16 @@ handle_feature_branch() {
 			fi
 			_handle_ownership_conflict "$worktree_path" "$owner_pid" "$owner_session" "$owner_created"
 		fi
-	fi
-
-	# Sync terminal tab title with repo/branch (silent, non-blocking)
-	# Runs after ownership claim succeeds to avoid side effects on blocked contexts.
-	if [[ -x "$script_dir/terminal-title-helper.sh" ]]; then
-		"$script_dir/terminal-title-helper.sh" sync 2>/dev/null || true
-	fi
-
-	# Sync OpenCode session title with current branch (silent, non-blocking).
-	# Only runs inside OpenCode sessions; helper resolves target session by cwd.
-	if [[ "${OPENCODE:-}" == "1" ]] && [[ -x "$script_dir/session-rename-helper.sh" ]]; then
-		"$script_dir/session-rename-helper.sh" sync-branch >/dev/null 2>&1 || true
+		# Sync terminal tab title with repo/branch (silent, non-blocking).
+		# Only runs after a successful ownership claim to avoid side effects on blocked contexts.
+		if [[ -x "$script_dir/terminal-title-helper.sh" ]]; then
+			"$script_dir/terminal-title-helper.sh" sync 2>/dev/null || true
+		fi
+		# Sync OpenCode session title with current branch (silent, non-blocking).
+		# Only runs inside OpenCode sessions; helper resolves target session by cwd.
+		if [[ "${OPENCODE:-}" == "1" ]] && [[ -x "$script_dir/session-rename-helper.sh" ]]; then
+			"$script_dir/session-rename-helper.sh" sync-branch >/dev/null 2>&1 || true
+		fi
 	fi
 
 	if [[ "$is_main_worktree" == "true" ]]; then
