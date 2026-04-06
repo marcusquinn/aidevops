@@ -90,7 +90,9 @@ create_command() {
 # =============================================================================
 
 # --- Quality & Review Commands ---
-define_quality_commands() {
+# Split into review-focused and check-focused sub-groups for readability.
+
+define_review_commands() {
 	create_command "agent-review" \
 		"Systematic review and improvement of agent instructions" \
 		"$AGENT_BUILD" "true" <<'BODY'
@@ -106,48 +108,6 @@ If no specific file is provided, review the agents used in this session and prop
 5. Duplicate detection across agents
 
 Follow the improvement proposal format from the agent-review instructions.
-BODY
-
-	create_command "preflight" \
-		"Run quality checks before version bump and release" \
-		"$AGENT_BUILD" "true" <<'BODY'
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/preflight.md and follow its instructions.
-
-Run preflight checks for: $ARGUMENTS
-
-This includes:
-1. Code quality checks (ShellCheck, SonarCloud, secrets scan)
-2. Markdown formatting validation
-3. Version consistency verification
-4. Git status check (clean working tree)
-BODY
-
-	create_command "postflight" \
-		"Check code audit feedback on latest push (branch or PR)" \
-		"$AGENT_BUILD" "true" <<'BODY'
-Check code audit tool feedback on the latest push.
-
-Target: $ARGUMENTS
-
-**Auto-detection:**
-1. If on a feature branch with open PR -> check that PR's feedback
-2. If on a feature branch without PR -> check branch CI status
-3. If on main -> check latest commit's CI/audit status
-4. If no git context or ambiguous -> ask user which branch/PR to check
-
-**Checks performed:**
-1. GitHub Actions workflow status (pass/fail/pending)
-2. CodeRabbit comments and suggestions
-3. Codacy analysis results
-4. SonarCloud quality gate status
-5. Any blocking issues that need resolution
-
-**Commands used:**
-- `gh pr view --json reviews,comments` (if PR exists)
-- `gh run list --branch=<branch>` (CI status)
-- `gh api repos/{owner}/{repo}/commits/{sha}/check-runs` (detailed checks)
-
-Report findings and recommend next actions (fix issues, merge, etc.)
 BODY
 
 	create_command "review-issue-pr" \
@@ -166,37 +126,6 @@ Review this issue or PR: $ARGUMENTS
 1. Is the issue real? (reproducible, not duplicate, actually a bug)
 2. Is this the best solution? (simplest approach, fixes root cause)
 3. Is the scope appropriate? (minimal changes, no scope creep)
-BODY
-
-	create_command "linters-local" \
-		"Run local linting tools (ShellCheck, secretlint, pattern checks)" \
-		"$AGENT_BUILD" "" <<'BODY'
-Run the local linters script:
-
-!`${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/linters-local.sh $ARGUMENTS`
-
-This runs fast, offline checks:
-1. ShellCheck for shell scripts
-2. Secretlint for exposed secrets
-3. Pattern validation (return statements, positional parameters)
-4. Markdown formatting checks
-
-For remote auditing (CodeRabbit, Codacy, SonarCloud), use /code-audit-remote
-BODY
-
-	create_command "code-audit-remote" \
-		"Run remote code auditing (CodeRabbit, Codacy, SonarCloud)" \
-		"$AGENT_BUILD" "true" <<'BODY'
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/code-audit-remote.md and follow its instructions.
-
-Audit target: $ARGUMENTS
-
-This calls external quality services:
-1. CodeRabbit - AI-powered code review
-2. Codacy - Code quality analysis
-3. SonarCloud - Security and maintainability
-
-For local linting (fast, offline), use /linters-local first
 BODY
 
 	create_command "code-standards" \
@@ -239,8 +168,93 @@ BODY
 	return 0
 }
 
+define_check_commands() {
+	create_command "preflight" \
+		"Run quality checks before version bump and release" \
+		"$AGENT_BUILD" "true" <<'BODY'
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/preflight.md and follow its instructions.
+
+Run preflight checks for: $ARGUMENTS
+
+This includes:
+1. Code quality checks (ShellCheck, SonarCloud, secrets scan)
+2. Markdown formatting validation
+3. Version consistency verification
+4. Git status check (clean working tree)
+BODY
+
+	create_command "postflight" \
+		"Check code audit feedback on latest push (branch or PR)" \
+		"$AGENT_BUILD" "true" <<'BODY'
+Check code audit tool feedback on the latest push.
+
+Target: $ARGUMENTS
+
+**Auto-detection:**
+1. If on a feature branch with open PR -> check that PR's feedback
+2. If on a feature branch without PR -> check branch CI status
+3. If on main -> check latest commit's CI/audit status
+4. If no git context or ambiguous -> ask user which branch/PR to check
+
+**Checks performed:**
+1. GitHub Actions workflow status (pass/fail/pending)
+2. CodeRabbit comments and suggestions
+3. Codacy analysis results
+4. SonarCloud quality gate status
+5. Any blocking issues that need resolution
+
+**Commands used:**
+- `gh pr view --json reviews,comments` (if PR exists)
+- `gh run list --branch=<branch>` (CI status)
+- `gh api repos/{owner}/{repo}/commits/{sha}/check-runs` (detailed checks)
+
+Report findings and recommend next actions (fix issues, merge, etc.)
+BODY
+
+	create_command "linters-local" \
+		"Run local linting tools (ShellCheck, secretlint, pattern checks)" \
+		"$AGENT_BUILD" "" <<'BODY'
+Run the local linters script:
+
+!`${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/linters-local.sh $ARGUMENTS`
+
+This runs fast, offline checks:
+1. ShellCheck for shell scripts
+2. Secretlint for exposed secrets
+3. Pattern validation (return statements, positional parameters)
+4. Markdown formatting checks
+
+For remote auditing (CodeRabbit, Codacy, SonarCloud), use /code-audit-remote
+BODY
+
+	create_command "code-audit-remote" \
+		"Run remote code auditing (CodeRabbit, Codacy, SonarCloud)" \
+		"$AGENT_BUILD" "true" <<'BODY'
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/code-audit-remote.md and follow its instructions.
+
+Audit target: $ARGUMENTS
+
+This calls external quality services:
+1. CodeRabbit - AI-powered code review
+2. Codacy - Code quality analysis
+3. SonarCloud - Security and maintainability
+
+For local linting (fast, offline), use /linters-local first
+BODY
+
+	return 0
+}
+
+define_quality_commands() {
+	define_review_commands
+	define_check_commands
+	return 0
+}
+
 # --- Git & Release Commands ---
-define_git_commands() {
+# Split into release, branch, and PR sub-groups.
+
+define_release_commands() {
 	create_command "release" \
 		"Full release workflow with version bump, tag, and GitHub release" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -291,6 +305,10 @@ This maintains CHANGELOG.md with:
 - Categories: Added, Changed, Deprecated, Removed, Fixed, Security
 BODY
 
+	return 0
+}
+
+define_branch_commands() {
 	create_command "feature" \
 		"Create and develop a feature branch" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -330,6 +348,10 @@ This will:
 3. Fast-track to release
 BODY
 
+	return 0
+}
+
+define_pr_commands() {
 	create_command "create-pr" \
 		"Create PR from current branch with title and description" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -368,8 +390,17 @@ BODY
 	return 0
 }
 
+define_git_commands() {
+	define_release_commands
+	define_branch_commands
+	define_pr_commands
+	return 0
+}
+
 # --- Planning & Task Commands ---
-define_planning_commands() {
+# Split into PRD generation and task list management sub-groups.
+
+define_prd_commands() {
 	create_command "create-prd" \
 		"Generate a Product Requirements Document for a feature" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -428,6 +459,10 @@ PRD or feature: $ARGUMENTS
 Mark tasks complete by changing `- [ ]` to `- [x]` as work progresses.
 BODY
 
+	return 0
+}
+
+cmd_list_todo() {
 	create_command "list-todo" \
 		"List tasks and plans with sorting, filtering, and grouping" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -506,6 +541,10 @@ After displaying, offer:
 3. Done browsing
 BODY
 
+	return 0
+}
+
+cmd_save_todo() {
 	create_command "save-todo" \
 		"Save current discussion as task or plan (auto-detects complexity)" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -562,6 +601,10 @@ Capture from conversation:
 This goes into PLANS.md "Context from Discussion" section.
 BODY
 
+	return 0
+}
+
+cmd_plan_status() {
 	create_command "plan-status" \
 		"Show active plans and TODO.md status" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -598,8 +641,23 @@ BODY
 	return 0
 }
 
+define_task_list_commands() {
+	cmd_list_todo
+	cmd_save_todo
+	cmd_plan_status
+	return 0
+}
+
+define_planning_commands() {
+	define_prd_commands
+	define_task_list_commands
+	return 0
+}
+
 # --- SEO Commands ---
-define_seo_commands() {
+# Split into basic keyword research and advanced analysis sub-groups.
+
+define_keyword_research_commands() {
 	create_command "keyword-research" \
 		"Keyword research with seed keyword expansion" \
 		"$AGENT_SEO" "" <<'BODY'
@@ -661,6 +719,10 @@ Seed keyword for autocomplete: $ARGUMENTS
 This is ideal for discovering question-based and long-tail keywords.
 BODY
 
+	return 0
+}
+
+cmd_keyword_research_extended() {
 	create_command "keyword-research-extended" \
 		"Full SERP analysis with weakness detection and KeywordScore" \
 		"$AGENT_SEO" "true" <<'BODY'
@@ -712,6 +774,10 @@ Content: Old Content, Title Mismatch, No Keyword in Headings, No Headings, Unmat
 SERP: UGC-Heavy Results
 BODY
 
+	return 0
+}
+
+cmd_webmaster_keywords() {
 	create_command "webmaster-keywords" \
 		"Keywords from GSC + Bing for your verified sites" \
 		"$AGENT_SEO" "" <<'BODY'
@@ -763,8 +829,22 @@ BODY
 	return 0
 }
 
+define_keyword_analysis_commands() {
+	cmd_keyword_research_extended
+	cmd_webmaster_keywords
+	return 0
+}
+
+define_seo_commands() {
+	define_keyword_research_commands
+	define_keyword_analysis_commands
+	return 0
+}
+
 # --- SEO AI Commands ---
-define_seo_ai_commands() {
+# Split into optimization workflows and integrity/readiness sub-groups.
+
+define_seo_optimization_commands() {
 	create_command "seo-fanout" \
 		"Run thematic query fan-out research for AI search coverage" \
 		"$AGENT_SEO" "" <<'BODY'
@@ -805,6 +885,10 @@ Deliverables:
 3. Controlled re-test plan with expected deltas
 BODY
 
+	return 0
+}
+
+define_seo_integrity_commands() {
 	create_command "seo-hallucination-defense" \
 		"Audit and reduce AI brand hallucination risk" \
 		"$AGENT_SEO" "" <<'BODY'
@@ -867,8 +951,16 @@ BODY
 	return 0
 }
 
+define_seo_ai_commands() {
+	define_seo_optimization_commands
+	define_seo_integrity_commands
+	return 0
+}
+
 # --- Utility Commands ---
-define_utility_commands() {
+# Split into setup, session, and memory sub-groups.
+
+define_setup_commands() {
 	create_command "onboarding" \
 		"Interactive onboarding wizard - discover services, configure integrations" \
 		"" "" <<'BODY'
@@ -940,6 +1032,10 @@ Pad key names to align columns. End with total count.
 Security: Key values are NEVER displayed.
 BODY
 
+	return 0
+}
+
+define_session_commands() {
 	create_command "log-time-spent" \
 		"Log time spent on a task in TODO.md" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -1012,6 +1108,10 @@ Review the current session for: $ARGUMENTS
 ```
 BODY
 
+	return 0
+}
+
+define_memory_commands() {
 	create_command "remember" \
 		"Store a memory for cross-session recall" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -1059,8 +1159,17 @@ BODY
 	return 0
 }
 
+define_utility_commands() {
+	define_setup_commands
+	define_session_commands
+	define_memory_commands
+	return 0
+}
+
 # --- Automation (Ralph Loop) Commands ---
-define_automation_commands() {
+# Split into core Ralph loop management and loop monitor sub-groups.
+
+cmd_ralph_loop() {
 	create_command "ralph-loop" \
 		"Start iterative AI development loop (Ralph Wiggum technique)" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -1100,6 +1209,10 @@ The promise must be TRUE - do not output false promises to escape.
 ```
 BODY
 
+	return 0
+}
+
+define_ralph_management_commands() {
 	create_command "cancel-ralph" \
 		"Cancel active Ralph Wiggum loop" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -1131,112 +1244,6 @@ This shows:
 - Max iterations setting
 - Completion promise (if set)
 - When the loop started
-BODY
-
-	create_command "preflight-loop" \
-		"Run preflight checks in a loop until all pass (Ralph pattern)" \
-		"$AGENT_BUILD" "" <<'BODY'
-Run preflight checks iteratively until all pass or max iterations reached.
-
-Arguments: $ARGUMENTS
-
-**Usage:**
-```bash
-/preflight-loop [--auto-fix] [--max-iterations N]
-```
-
-**Options:**
-- `--auto-fix` - Attempt to automatically fix issues
-- `--max-iterations N` - Max iterations (default: 10)
-
-**Run the checks:**
-
-```bash
-${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/linters-local.sh
-```
-
-**Completion promise:** `<promise>PREFLIGHT_PASS</promise>`
-
-This applies the Ralph Wiggum technique to quality checks:
-1. Run all preflight checks (linters-local.sh, shellcheck, markdown lint)
-2. If failures and --auto-fix: attempt fixes
-3. Re-run checks
-4. Repeat until all pass or max iterations
-
-**Examples:**
-```bash
-/preflight-loop --auto-fix --max-iterations 5
-/preflight-loop  # Manual fixes between iterations
-```
-BODY
-
-	create_command "pr-loop" \
-		"Monitor PR until approved or merged (Ralph pattern)" \
-		"$AGENT_BUILD" "" <<'BODY'
-Monitor a PR iteratively until approved, merged, or max iterations reached.
-
-Arguments: $ARGUMENTS
-
-**Usage:**
-```bash
-/pr-loop [--pr NUMBER] [--wait-for-ci] [--max-iterations N]
-```
-
-**Options:**
-- `--pr NUMBER` - PR number (auto-detected if not provided)
-- `--wait-for-ci` - Wait for CI checks to complete
-- `--max-iterations N` - Max iterations (default: 10)
-
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/pr-loop.md and follow its instructions.
-
-**Completion promises:**
-- `<promise>PR_APPROVED</promise>` - PR approved and ready to merge
-- `<promise>PR_MERGED</promise>` - PR has been merged
-
-**Workflow:**
-1. Check PR status (CI, reviews, mergeable)
-2. If changes requested: get feedback, apply fixes, push
-3. If CI failed: get annotations, fix issues, push
-4. If pending: wait and re-check
-5. Repeat until approved/merged or max iterations
-
-**Examples:**
-```bash
-/pr-loop --wait-for-ci
-/pr-loop --pr 123 --max-iterations 20
-```
-BODY
-
-	create_command "postflight-loop" \
-		"Monitor release health after deployment (Ralph pattern)" \
-		"$AGENT_BUILD" "" <<'BODY'
-Monitor release health for a specified duration.
-
-Arguments: $ARGUMENTS
-
-**Usage:**
-```bash
-/postflight-loop [--monitor-duration Nm] [--max-iterations N]
-```
-
-**Options:**
-- `--monitor-duration Nm` - How long to monitor (e.g., 5m, 10m, 1h)
-- `--max-iterations N` - Max checks during monitoring (default: 5)
-
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/postflight-loop.md and follow its instructions.
-
-**Completion promise:** `<promise>RELEASE_HEALTHY</promise>`
-
-**Checks performed:**
-1. Latest CI workflow status
-2. Release tag exists
-3. Version consistency (VERSION file matches release)
-
-**Examples:**
-```bash
-/postflight-loop --monitor-duration 10m
-/postflight-loop --monitor-duration 1h --max-iterations 10
-```
 BODY
 
 	create_command "ralph-task" \
@@ -1281,6 +1288,141 @@ This will:
 - Task should have completion criteria defined
 BODY
 
+	return 0
+}
+
+define_ralph_core_commands() {
+	cmd_ralph_loop
+	define_ralph_management_commands
+	return 0
+}
+
+cmd_preflight_loop() {
+	create_command "preflight-loop" \
+		"Run preflight checks in a loop until all pass (Ralph pattern)" \
+		"$AGENT_BUILD" "" <<'BODY'
+Run preflight checks iteratively until all pass or max iterations reached.
+
+Arguments: $ARGUMENTS
+
+**Usage:**
+```bash
+/preflight-loop [--auto-fix] [--max-iterations N]
+```
+
+**Options:**
+- `--auto-fix` - Attempt to automatically fix issues
+- `--max-iterations N` - Max iterations (default: 10)
+
+**Run the checks:**
+
+```bash
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/linters-local.sh
+```
+
+**Completion promise:** `<promise>PREFLIGHT_PASS</promise>`
+
+This applies the Ralph Wiggum technique to quality checks:
+1. Run all preflight checks (linters-local.sh, shellcheck, markdown lint)
+2. If failures and --auto-fix: attempt fixes
+3. Re-run checks
+4. Repeat until all pass or max iterations
+
+**Examples:**
+```bash
+/preflight-loop --auto-fix --max-iterations 5
+/preflight-loop  # Manual fixes between iterations
+```
+BODY
+
+	return 0
+}
+
+cmd_pr_loop() {
+	create_command "pr-loop" \
+		"Monitor PR until approved or merged (Ralph pattern)" \
+		"$AGENT_BUILD" "" <<'BODY'
+Monitor a PR iteratively until approved, merged, or max iterations reached.
+
+Arguments: $ARGUMENTS
+
+**Usage:**
+```bash
+/pr-loop [--pr NUMBER] [--wait-for-ci] [--max-iterations N]
+```
+
+**Options:**
+- `--pr NUMBER` - PR number (auto-detected if not provided)
+- `--wait-for-ci` - Wait for CI checks to complete
+- `--max-iterations N` - Max iterations (default: 10)
+
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/pr-loop.md and follow its instructions.
+
+**Completion promises:**
+- `<promise>PR_APPROVED</promise>` - PR approved and ready to merge
+- `<promise>PR_MERGED</promise>` - PR has been merged
+
+**Workflow:**
+1. Check PR status (CI, reviews, mergeable)
+2. If changes requested: get feedback, apply fixes, push
+3. If CI failed: get annotations, fix issues, push
+4. If pending: wait and re-check
+5. Repeat until approved/merged or max iterations
+
+**Examples:**
+```bash
+/pr-loop --wait-for-ci
+/pr-loop --pr 123 --max-iterations 20
+```
+BODY
+
+	return 0
+}
+
+cmd_postflight_loop() {
+	create_command "postflight-loop" \
+		"Monitor release health after deployment (Ralph pattern)" \
+		"$AGENT_BUILD" "" <<'BODY'
+Monitor release health for a specified duration.
+
+Arguments: $ARGUMENTS
+
+**Usage:**
+```bash
+/postflight-loop [--monitor-duration Nm] [--max-iterations N]
+```
+
+**Options:**
+- `--monitor-duration Nm` - How long to monitor (e.g., 5m, 10m, 1h)
+- `--max-iterations N` - Max checks during monitoring (default: 5)
+
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/postflight-loop.md and follow its instructions.
+
+**Completion promise:** `<promise>RELEASE_HEALTHY</promise>`
+
+**Checks performed:**
+1. Latest CI workflow status
+2. Release tag exists
+3. Version consistency (VERSION file matches release)
+
+**Examples:**
+```bash
+/postflight-loop --monitor-duration 10m
+/postflight-loop --monitor-duration 1h --max-iterations 10
+```
+BODY
+
+	return 0
+}
+
+define_ci_loop_commands() {
+	cmd_preflight_loop
+	cmd_pr_loop
+	cmd_postflight_loop
+	return 0
+}
+
+cmd_full_loop() {
 	create_command "full-loop" \
 		"Start end-to-end development loop (task -> preflight -> PR -> postflight -> deploy)" \
 		"$AGENT_BUILD" "" <<'BODY'
@@ -1309,6 +1451,18 @@ Task Development -> Preflight -> PR Create -> PR Review -> Postflight -> Deploy
 **Completion promise:** `<promise>FULL_LOOP_COMPLETE</promise>`
 BODY
 
+	return 0
+}
+
+define_loop_monitor_commands() {
+	define_ci_loop_commands
+	cmd_full_loop
+	return 0
+}
+
+define_automation_commands() {
+	define_ralph_core_commands
+	define_loop_monitor_commands
 	return 0
 }
 
