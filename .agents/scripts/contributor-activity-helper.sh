@@ -701,8 +701,8 @@ _session_time_query_db() {
 	# produces empty safe_path, so the :+ expansion yields nothing.
 	# shellcheck disable=SC2016,SC1003 # Single quotes are SQL delimiters, not bash
 	dir_clause="${safe_path:+AND (s.directory = '${safe_path}'
-			       OR s.directory LIKE '${like_path}.%' ESCAPE '\\\\'
-			       OR s.directory LIKE '${like_path}-%' ESCAPE '\\\\')}"
+			       OR s.directory LIKE '${like_path}.%' ESCAPE '\\'
+			       OR s.directory LIKE '${like_path}-%' ESCAPE '\\')}"
 
 	# Query per-session human vs machine time using window functions.
 	# LAG() compares each message with the previous one in the same session:
