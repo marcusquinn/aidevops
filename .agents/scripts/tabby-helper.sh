@@ -141,18 +141,17 @@ ZSHRC_BLOCK
 	return 0
 }
 
-cmd_fix_shell() {
+_fix_shell_check_prereqs() {
 	# macOS only: after OS updates, Tabby may fall back to /bin/bash when
 	# profileDefaults.local.options.command is unset. This ensures the default
 	# local profile uses /bin/zsh (the macOS default shell since Catalina).
-	# Uses targeted text insertion (not full YAML rewrite) to preserve formatting.
 	if [[ "$(uname -s)" != "Darwin" ]]; then
 		_info "fix-shell is macOS-only (zsh is the default shell since Catalina)"
-		return 0
+		return 1
 	fi
 
 	if [[ ! -f "$TABBY_CONFIG" ]]; then
-		return 0
+		return 1
 	fi
 
 	if ! command -v python3 >/dev/null 2>&1; then
@@ -160,9 +159,18 @@ cmd_fix_shell() {
 		return 1
 	fi
 
+	return 0
+}
+
+_fix_shell_patch_config() {
+	# Runs a Python script that reads the Tabby YAML config and inserts
+	# /bin/zsh as the default shell via targeted text insertion (preserves
+	# formatting). Prints a single status token: OK, FIXED, SKIP:<shell>,
+	# WARN, or INVALID:<error>.
+	local config_path="$1"
 	local result
 	result=$(
-		python3 - "$TABBY_CONFIG" <<'PYEOF'
+		python3 - "$config_path" <<'PYEOF'
 import sys
 import yaml
 
@@ -238,6 +246,14 @@ print("FIXED")
 sys.exit(0)
 PYEOF
 	) 2>&1
+	echo "$result"
+	return 0
+}
+
+_fix_shell_report_result() {
+	# Interprets the status token from _fix_shell_patch_config and prints
+	# a user-friendly message.
+	local result="$1"
 
 	case "$result" in
 	OK)
@@ -260,6 +276,20 @@ PYEOF
 		_warn "Unexpected result from fix-shell: $result"
 		;;
 	esac
+
+	return 0
+}
+
+cmd_fix_shell() {
+	# Orchestrator: check prereqs, patch config, report result.
+	# Uses targeted text insertion (not full YAML rewrite) to preserve formatting.
+	if ! _fix_shell_check_prereqs; then
+		return 0
+	fi
+
+	local result
+	result=$(_fix_shell_patch_config "$TABBY_CONFIG")
+	_fix_shell_report_result "$result"
 
 	return 0
 }
