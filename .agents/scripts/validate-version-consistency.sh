@@ -27,6 +27,17 @@ get_current_version() {
 	return 0
 }
 
+compute_sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256
+	else
+		return 1
+	fi
+	return 0
+}
+
 # Check VERSION file consistency
 # Arguments: expected_version
 # Outputs: increments _vc_errors on mismatch
@@ -144,15 +155,40 @@ _check_config_files() {
 		_vc_warnings=$((_vc_warnings + 1))
 	fi
 
-	# Check homebrew/aidevops.rb (version URL only - SHA256 is updated by CI)
+	# Check homebrew/aidevops.rb against the referenced released tag, not VERSION.
+	# The source-repo formula intentionally stays on the latest released tarball
+	# until publish-packages.yml updates it after release publication.
 	if [[ -f "$repo_root/homebrew/aidevops.rb" ]]; then
-		if grep -q "v${expected_version}.tar.gz" "$repo_root/homebrew/aidevops.rb"; then
-			print_success "homebrew/aidevops.rb: v$expected_version"
-		else
-			local current_formula_version
-			current_formula_version=$(grep -o 'v[0-9]\+\.[0-9]\+\.[0-9]\+\.tar\.gz' "$repo_root/homebrew/aidevops.rb" | head -1 || echo "not found")
-			print_error "homebrew/aidevops.rb shows '$current_formula_version', expected 'v${expected_version}.tar.gz'"
+		local formula_version
+		local formula_tag
+		local formula_sha
+		formula_version=$(grep -o 'v[0-9]\+\.[0-9]\+\.[0-9]\+\.tar\.gz' "$repo_root/homebrew/aidevops.rb" | head -1 | sed 's/^v//; s/\.tar\.gz$//' || echo "")
+		formula_sha=$(grep -o 'sha256 "[^"]\+"' "$repo_root/homebrew/aidevops.rb" | head -1 | cut -d'"' -f2 || echo "")
+
+		if [[ -z "$formula_version" ]]; then
+			print_error "homebrew/aidevops.rb version URL not found"
 			_vc_errors=$((_vc_errors + 1))
+		elif [[ -z "$formula_sha" ]]; then
+			print_error "homebrew/aidevops.rb sha256 not found"
+			_vc_errors=$((_vc_errors + 1))
+		else
+			formula_tag="v${formula_version}"
+			if git rev-parse -q --verify "refs/tags/${formula_tag}" >/dev/null 2>&1 || git ls-remote -q --exit-code --tags origin "refs/tags/${formula_tag}" >/dev/null 2>&1; then
+				local release_sha
+				release_sha=$(curl -fsSL "https://github.com/marcusquinn/aidevops/archive/refs/tags/${formula_tag}.tar.gz" | compute_sha256 | cut -d' ' -f1)
+				if [[ -z "$release_sha" ]]; then
+					print_error "homebrew/aidevops.rb checksum lookup failed for ${formula_tag}"
+					_vc_errors=$((_vc_errors + 1))
+				elif [[ "$formula_sha" == "$release_sha" ]]; then
+					print_success "homebrew/aidevops.rb: ${formula_tag} checksum verified"
+				else
+					print_error "homebrew/aidevops.rb checksum mismatch for ${formula_tag}"
+					_vc_errors=$((_vc_errors + 1))
+				fi
+			else
+				print_error "homebrew/aidevops.rb references unreleased tag ${formula_tag}; leave formula pinned to the latest published release"
+				_vc_errors=$((_vc_errors + 1))
+			fi
 		fi
 	fi
 

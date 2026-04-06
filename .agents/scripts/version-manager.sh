@@ -861,25 +861,21 @@ _update_readme_version_badge() {
 	return 0
 }
 
-# Update the Homebrew formula URL to the new version.
-# SHA256 is updated separately by CI publish-packages.yml.
+# Keep the source-repo Homebrew formula pinned to the last released tag.
+# The release workflow updates both the version and SHA256 after the tag exists,
+# then syncs the corrected formula back into the repo and tap.
 # All output goes to stderr. Returns 0 on success, 1 on failure.
 _update_homebrew_formula() {
 	local new_version="$1"
-	local formula_file="$REPO_ROOT/homebrew/aidevops.rb"
 
-	if [[ ! -f "$formula_file" ]]; then
-		return 0
+	# The GitHub-generated release tarball checksum cannot be known until the tag
+	# exists remotely. Do not rewrite the formula during the pre-release bump or
+	# we leave the repo with a broken URL/SHA pair that review bots correctly flag.
+	# The publish-packages workflow performs the post-release formula update.
+	if [[ -n "$new_version" ]]; then
+		print_info "Leaving homebrew/aidevops.rb unchanged until release tarball exists" >&2
 	fi
-
-	sed_inplace "s|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.tar\.gz\"|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v${new_version}.tar.gz\"|" "$formula_file"
-
-	if grep -q "v${new_version}.tar.gz" "$formula_file"; then
-		print_success "Updated homebrew/aidevops.rb version URL" >&2
-	else
-		print_error "Failed to update homebrew/aidevops.rb"
-		return 1
-	fi
+	unset new_version
 	return 0
 }
 
