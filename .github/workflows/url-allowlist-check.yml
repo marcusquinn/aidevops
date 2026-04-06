@@ -103,7 +103,7 @@ jobs:
           }
           rm -f "$TMPFILE"
 
-          UNKNOWN_COUNT=$(echo "$UNKNOWN_HOSTS" | grep -c '^[^[:space:]]' || echo "0")
+          UNKNOWN_COUNT=$(echo "$UNKNOWN_HOSTS" | grep -c '^[^[:space:]]' || true)
           echo "unknown_count=${UNKNOWN_COUNT}" >> "$GITHUB_OUTPUT"
 
           if [[ "$UNKNOWN_COUNT" -eq 0 ]]; then
