@@ -42,7 +42,7 @@ Per finding: `### [file:line_range] Category: Brief description` with sections *
 | File type | Minimum verification |
 |-----------|---------------------|
 | Shell scripts (`.sh`) | `bash -n` + `shellcheck` + existing tests |
-| Agent docs (`.md`) | All code blocks, URLs, task ID refs (`tNNN`, `GH#NNN`), command examples present before and after |
+| Agent docs (`.md`) | All code blocks, URLs, task ID refs (`tNNN`, `GH#NNN`), command examples present before and after. **Executable templates** (code blocks containing commands workers must run — `gh`, helper scripts, verification commands) must remain as code blocks; compressing them to inline prose is a functional regression (GH#17503). |
 | TypeScript/JavaScript | `tsc --noEmit` + existing tests |
 | Configuration files | Schema validation or dry-run the consuming tool |
 
@@ -66,7 +66,7 @@ Split into chapter files with slim index (~100-200 lines). Verify: `wc -l` total
 
 ### Almost never simplify
 
-Comments with task IDs/incident numbers/error data (`t1345`, `GH#2928`, `46.8% failure rate`), `DISABLED:` blocks with bug/PR references, agent prompt rules encoding observed failure patterns, shell quality standards (`local var="$1"`, explicit `return 0`), intentional repetition across docs serving different audiences, error-prevention rules with supporting data.
+Comments with task IDs/incident numbers/error data (`t1345`, `GH#2928`, `46.8% failure rate`), `DISABLED:` blocks with bug/PR references, agent prompt rules encoding observed failure patterns, shell quality standards (`local var="$1"`, explicit `return 0`), intentional repetition across docs serving different audiences, error-prevention rules with supporting data, executable template code blocks in agent docs — code blocks that workers copy-paste to run commands (e.g., `gh pr comment`, verification one-liners). Prose surrounding the block can be tightened; the block itself must survive verbatim (GH#17503).
 
 ## Core Principles
 
