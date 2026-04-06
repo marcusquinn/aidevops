@@ -364,11 +364,48 @@ jobs:
         violations=0
         while IFS= read -r file; do
           [ -n "$file" ] || continue
+          # Improved depth checker (refactor/nesting-checker):
+          #   - Resets depth at function boundaries (prevents cross-function accumulation)
+          #   - Skips heredoc content (prevents counting keywords in embedded languages)
+          #   - Uses word-level matching (prevents matching "if" inside "elif", strings, etc.)
           max_depth=$(awk '
-            BEGIN { depth=0; max_depth=0 }
+            BEGIN { depth=0; max_depth=0; in_heredoc=0; heredoc_end="" }
+            in_heredoc {
+              if ($0 ~ ("^[[:space:]]*" heredoc_end "[[:space:]]*$")) { in_heredoc=0 }
+              next
+            }
             /^[[:space:]]*#/ { next }
-            /[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if(depth>max_depth) max_depth=depth }
-            /[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
+            /<<[^<]/ || /<<$/ {
+              line = $0
+              idx = index(line, "<<")
+              if (idx > 0) {
+                rest = substr(line, idx + 2)
+                sub(/^-/, "", rest)
+                sub(/^[[:space:]]*\\?/, "", rest)
+                sub(/^['"'"'\"]+/, "", rest)
+                if (match(rest, /^[A-Za-z_][A-Za-z0-9_]*/)) {
+                  heredoc_end = substr(rest, RSTART, RLENGTH)
+                  in_heredoc = 1
+                }
+              }
+            }
+            /^[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(\)/ || /^function[[:space:]]+[a-zA-Z_]/ {
+              depth = 0
+            }
+            !in_heredoc {
+              n = split($0, words)
+              for (i = 1; i <= n; i++) {
+                w = words[i]
+                gsub(/[;,(){}|&>]/, "", w)
+                if (w == "if" || w == "for" || w == "while" || w == "until" || w == "case") {
+                  depth++
+                  if (depth > max_depth) max_depth = depth
+                }
+                if (w == "fi" || w == "done" || w == "esac") {
+                  if (depth > 0) depth--
+                }
+              }
+            }
             END { print max_depth }
           ' "$file")
           if [ "$max_depth" -gt 8 ]; then
