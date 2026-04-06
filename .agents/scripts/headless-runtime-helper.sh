@@ -1532,16 +1532,31 @@ for line in raw.splitlines():
         obj = json.loads(line)
     except (json.JSONDecodeError, ValueError):
         continue
-    # OpenCode text events contain the model's own output
-    if obj.get("type") == "text":
+    # OpenCode text events contain the model's own output.
+    # GH#17596 (MEDIUM): consolidate extraction into a single pass checking
+    # multiple common paths for text and tool input fields.
+    event_type = obj.get("type", "")
+    if event_type == "text":
         part = obj.get("part", {})
-        model_text_parts.append(part.get("text", ""))
+        text = (
+            obj.get("text")
+            or part.get("text")
+            or ""
+        )
+        if text:
+            model_text_parts.append(text)
     # Also check tool calls where the MODEL invoked gh pr create/merge
     # (the input field shows what the model requested, not file contents)
-    elif obj.get("type") == "tool_use":
+    elif event_type == "tool_use":
         part = obj.get("part", {})
         state = part.get("state", {})
-        inp = state.get("input", {})
+        # GH#17596 (MEDIUM): check multiple common input paths
+        inp = (
+            obj.get("input")
+            or part.get("input")
+            or state.get("input")
+            or {}
+        )
         if isinstance(inp, dict):
             cmd = inp.get("command", "")
             if cmd:
@@ -1554,11 +1569,15 @@ if model_text.strip():
     for marker in ("FULL_LOOP_COMPLETE", "BLOCKED", "TASK_COMPLETE"):
         if marker in model_text:
             sys.exit(0)
-    if "gh pr create" in model_text:
+    # GH#17596 (HIGH): verify both model intent AND actual success signal in raw.
+    # Checking model_text alone may match commands the model merely mentioned
+    # or invoked but that failed. Requiring a success signal in raw (same as
+    # the fallback block) prevents false-positive completion classification.
+    if "gh pr create" in model_text and ("pull/" in raw or "created pull request" in raw.lower()):
         sys.exit(0)
-    if "gh pr merge" in model_text:
+    if "gh pr merge" in model_text and "merged" in raw.lower():
         sys.exit(0)
-    if "git push" in model_text:
+    if "git push" in model_text and ("-> " in raw or "branch " in raw):
         sys.exit(0)
     sys.exit(1)
 
