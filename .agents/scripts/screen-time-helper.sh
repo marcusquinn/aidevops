@@ -358,23 +358,40 @@ _linux_logind_hours() {
 	current_user=$(whoami)
 
 	# Extract timestamped session events for the current user
+	# Track sessions by ID to avoid matching username in hostname (GH#17551)
 	local events_file
 	events_file=$(mktemp)
+	local tracked_sessions_file
+	tracked_sessions_file=$(mktemp)
 
 	journalctl --since "$since_date" -u systemd-logind.service --no-pager -o short-iso 2>/dev/null |
 		grep -iE "(New session|Removed session|Session .* logged out|Lid closed|Lid opened)" |
-		grep -i "$current_user" |
 		while IFS= read -r line; do
 			local ts
-			local event_type
 			ts=$(echo "$line" | awk '{print $1}')
-			if echo "$line" | grep -qi "New session\|Lid opened"; then
-				event_type="ON"
-			else
-				event_type="OFF"
+			local sid=""
+
+			# Lid events apply globally — no session ID filtering needed
+			if echo "$line" | grep -qi "Lid opened"; then
+				echo "${ts} ON"
+			elif echo "$line" | grep -qi "Lid closed"; then
+				echo "${ts} OFF"
+			# Match "New session <ID> of user <current_user>" exactly
+			elif echo "$line" | grep -qiE "New session [a-z0-9]+ of user ${current_user}([^a-zA-Z0-9]|$)"; then
+				sid=$(echo "$line" | sed -nE 's/.*[Nn]ew session ([a-zA-Z0-9]+) of user .*/\1/p')
+				[[ -n "$sid" ]] && echo "$sid" >>"$tracked_sessions_file" && echo "${ts} ON"
+			# Match "Removed session <ID>" only if ID was tracked
+			elif echo "$line" | grep -qiE "Removed session [a-z0-9]+"; then
+				sid=$(echo "$line" | sed -nE 's/.*[Rr]emoved session ([a-zA-Z0-9]+).*/\1/p')
+				[[ -n "$sid" ]] && grep -qxF "$sid" "$tracked_sessions_file" 2>/dev/null && echo "${ts} OFF"
+			# Match "Session <ID> logged out" only if ID was tracked
+			elif echo "$line" | grep -qiE "Session [a-z0-9]+ logged out"; then
+				sid=$(echo "$line" | sed -nE 's/.*[Ss]ession ([a-zA-Z0-9]+) logged out.*/\1/p')
+				[[ -n "$sid" ]] && grep -qxF "$sid" "$tracked_sessions_file" 2>/dev/null && echo "${ts} OFF"
 			fi
-			echo "${ts} ${event_type}"
 		done >"$events_file" 2>/dev/null
+
+	rm -f "$tracked_sessions_file"
 
 	local total_seconds=0
 
