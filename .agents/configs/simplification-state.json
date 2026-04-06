@@ -6432,7 +6432,7 @@
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "simplified_at": "2026-04-04T09:17:13Z",
       "issue": "GH#17250",
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
       "at": "2026-04-04T14:53:40Z",
       "passes": 1
     },
@@ -6795,6 +6795,13 @@
       "at": "2026-04-06T19:20:31Z",
       "pr": 17584,
       "passes": 2
+    },
+    ".agents/scripts/colormind-helper.sh": {
+      "hash": "fca3090dfe5b07e572ecf605cd270baa54981bbf",
+      "at": "2026-04-07T00:00:00Z",
+      "passes": 1,
+      "pr": 16888,
+      "note": "depth reduced from 16 to 4 in PR #16888; issue #17562 created after fix was already merged"
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
