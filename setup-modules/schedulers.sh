@@ -134,6 +134,99 @@ _resolve_pulse_model_override() {
 	return 0
 }
 
+_is_pulse_installed() {
+	local pulse_label="$1"
+
+	if _scheduler_detect_installed \
+		"Supervisor pulse" \
+		"$pulse_label" \
+		"" \
+		"pulse-wrapper" \
+		"" \
+		"" \
+		"" \
+		"aidevops-supervisor-pulse"; then
+		return 0
+	fi
+
+	return 1
+}
+
+_resolve_pulse_runtime_binary() {
+	local opencode_bin=""
+
+	if type rt_list_headless &>/dev/null; then
+		local _sched_rt_id=""
+		local _sched_bin=""
+		while IFS= read -r _sched_rt_id; do
+			_sched_bin=$(rt_binary "$_sched_rt_id") || continue
+			if [[ -n "$_sched_bin" ]] && command -v "$_sched_bin" &>/dev/null; then
+				opencode_bin=$(command -v "$_sched_bin")
+				break
+			fi
+		done < <(rt_list_headless)
+	fi
+
+	printf '%s' "${opencode_bin:-$(command -v opencode 2>/dev/null || printf '/opt/homebrew/bin/opencode')}"
+	return 0
+}
+
+_build_pulse_linux_env() {
+	local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace
+PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
+	local _configured_headless_models=""
+	local _configured_pulse_model=""
+
+	_configured_headless_models=$(_resolve_headless_models_override)
+	_configured_pulse_model=$(_resolve_pulse_model_override)
+	if [[ -n "$_configured_headless_models" ]]; then
+		_pulse_env+=$'\n'"AIDEVOPS_HEADLESS_MODELS=${_configured_headless_models}"
+	fi
+	if [[ -n "$_configured_pulse_model" ]]; then
+		_pulse_env+=$'\n'"PULSE_MODEL=${_configured_pulse_model}"
+	fi
+	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
+		_pulse_env+=$'\n'"AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST}"
+	fi
+
+	printf '%s' "$_pulse_env"
+	return 0
+}
+
+_install_supervisor_pulse() {
+	local _os="$1"
+	local pulse_label="$2"
+	local wrapper_script="$3"
+	local opencode_bin="$4"
+	local _pulse_installed="$5"
+
+	mkdir -p "$HOME/.aidevops/logs"
+
+	if [[ "$_os" == "Darwin" ]]; then
+		_install_pulse_launchd "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed"
+		return 0
+	fi
+
+	local _pulse_timeout_sec=$((PULSE_STALE_THRESHOLD_SECONDS + 60))
+	local _pulse_env=""
+	_pulse_env=$(_build_pulse_linux_env)
+	_install_scheduler_linux \
+		"aidevops-supervisor-pulse" \
+		"aidevops: supervisor-pulse" \
+		"*/2 * * * *" \
+		"\"${wrapper_script}\"" \
+		"120" \
+		"$HOME/.aidevops/logs/pulse-wrapper.log" \
+		"$_pulse_env" \
+		"Supervisor pulse enabled (every 2 min)" \
+		"Failed to install supervisor pulse scheduler. See runners.md for manual setup." \
+		"true" \
+		"false" \
+		"" \
+		"${_pulse_timeout_sec}"
+	return 0
+}
+
 # Setup the supervisor pulse scheduler (consent-gated autonomous orchestration).
 # Uses pulse-wrapper.sh which handles dedup, orphan cleanup, and RAM-based concurrency.
 # macOS: launchd plist invoking wrapper | Linux: cron entry invoking wrapper
@@ -169,71 +262,16 @@ setup_supervisor_pulse() {
 	# Detect if pulse is already installed (for upgrade messaging)
 	# Uses shared helper to check launchd, cron, and systemd (GH#17381)
 	local _pulse_installed=false
-	if _scheduler_detect_installed \
-		"Supervisor pulse" \
-		"$pulse_label" \
-		"" \
-		"pulse-wrapper" \
-		"" \
-		"" \
-		"" \
-		"aidevops-supervisor-pulse"; then
+	if _is_pulse_installed "$pulse_label"; then
 		_pulse_installed=true
 	fi
 
 	# Detect dispatch backend binary location (t1665.5 — registry-driven)
-	local opencode_bin
-	if type rt_list_headless &>/dev/null; then
-		local _sched_rt_id _sched_bin
-		while IFS= read -r _sched_rt_id; do
-			_sched_bin=$(rt_binary "$_sched_rt_id") || continue
-			if [[ -n "$_sched_bin" ]] && command -v "$_sched_bin" &>/dev/null; then
-				opencode_bin=$(command -v "$_sched_bin")
-				break
-			fi
-		done < <(rt_list_headless)
-	fi
-	# Fallback if registry not loaded or no runtime found
-	opencode_bin="${opencode_bin:-$(command -v opencode 2>/dev/null || echo "/opt/homebrew/bin/opencode")}"
+	local opencode_bin=""
+	opencode_bin=$(_resolve_pulse_runtime_binary)
 
 	if [[ "$_do_install" == "true" ]]; then
-		mkdir -p "$HOME/.aidevops/logs"
-
-		if [[ "$_os" == "Darwin" ]]; then
-			_install_pulse_launchd "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed"
-		else
-			# Keep systemd as a hard-stop fallback above the wrapper watchdog.
-			# Timeout must exceed PULSE_STALE_THRESHOLD to avoid racing it.
-			local _pulse_timeout_sec=$((PULSE_STALE_THRESHOLD_SECONDS + 60))
-			local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace
-PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
-			local _configured_headless_models _configured_pulse_model
-			_configured_headless_models=$(_resolve_headless_models_override)
-			_configured_pulse_model=$(_resolve_pulse_model_override)
-			if [[ -n "$_configured_headless_models" ]]; then
-				_pulse_env+=$'\n'"AIDEVOPS_HEADLESS_MODELS=${_configured_headless_models}"
-			fi
-			if [[ -n "$_configured_pulse_model" ]]; then
-				_pulse_env+=$'\n'"PULSE_MODEL=${_configured_pulse_model}"
-			fi
-			if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
-				_pulse_env+=$'\n'"AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST}"
-			fi
-			_install_scheduler_linux \
-				"aidevops-supervisor-pulse" \
-				"aidevops: supervisor-pulse" \
-				"*/2 * * * *" \
-				"\"${wrapper_script}\"" \
-				"120" \
-				"$HOME/.aidevops/logs/pulse-wrapper.log" \
-				"$_pulse_env" \
-				"Supervisor pulse enabled (every 2 min)" \
-				"Failed to install supervisor pulse scheduler. See runners.md for manual setup." \
-				"true" \
-				"false" \
-				"" \
-				"${_pulse_timeout_sec}"
-		fi
+		_install_supervisor_pulse "$_os" "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed"
 	elif [[ "$_pulse_lower" == "false" && "$_pulse_installed" == "true" ]]; then
 		# User explicitly disabled but pulse is still installed — clean up
 		_uninstall_pulse "$_os" "$pulse_label"
