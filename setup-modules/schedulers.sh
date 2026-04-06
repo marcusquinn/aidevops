@@ -202,6 +202,9 @@ setup_supervisor_pulse() {
 		if [[ "$_os" == "Darwin" ]]; then
 			_install_pulse_launchd "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed"
 		else
+			# Keep systemd as a hard-stop fallback above the wrapper watchdog.
+			# Timeout must exceed PULSE_STALE_THRESHOLD to avoid racing it.
+			local _pulse_timeout_sec=$((PULSE_STALE_THRESHOLD_SECONDS + 60))
 			local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace
 PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
 			local _configured_headless_models _configured_pulse_model
@@ -229,7 +232,7 @@ PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
 				"true" \
 				"false" \
 				"" \
-				"${PULSE_STALE_THRESHOLD_SECONDS}"
+				"${_pulse_timeout_sec}"
 		fi
 	elif [[ "$_pulse_lower" == "false" && "$_pulse_installed" == "true" ]]; then
 		# User explicitly disabled but pulse is still installed — clean up
