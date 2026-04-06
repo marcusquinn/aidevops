@@ -172,22 +172,11 @@ _resolve_pulse_runtime_binary() {
 }
 
 _build_pulse_linux_env() {
+	# GH#17546: Model config (AIDEVOPS_HEADLESS_MODELS, PULSE_MODEL,
+	# AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST) no longer embedded in cron/systemd env.
+	# pulse-wrapper.sh sources credentials.sh at runtime for current values.
 	local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace
 PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
-	local _configured_headless_models=""
-	local _configured_pulse_model=""
-
-	_configured_headless_models=$(_resolve_headless_models_override)
-	_configured_pulse_model=$(_resolve_pulse_model_override)
-	if [[ -n "$_configured_headless_models" ]]; then
-		_pulse_env+=$'\n'"AIDEVOPS_HEADLESS_MODELS=${_configured_headless_models}"
-	fi
-	if [[ -n "$_configured_pulse_model" ]]; then
-		_pulse_env+=$'\n'"PULSE_MODEL=${_configured_pulse_model}"
-	fi
-	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
-		_pulse_env+=$'\n'"AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST}"
-	fi
 
 	printf '%s' "$_pulse_env"
 	return 0
@@ -311,40 +300,15 @@ _cleanup_old_pulse_plists() {
 }
 
 # Build XML environment variable fragment for headless model overrides.
-# Reads configured overrides and emits XML key/string pairs for plist embedding.
-# Prints the XML fragment to stdout (may be empty if no overrides configured).
+# GH#17546: Model config (AIDEVOPS_HEADLESS_MODELS, PULSE_MODEL,
+# AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST) is NO LONGER embedded in the plist.
+# Baking these at setup time caused drift: credentials.sh gets updated but
+# the loaded launchd agent keeps using whatever was baked at last setup.
+# The pulse-wrapper now sources credentials.sh at startup, which is the
+# single source of truth for model routing config.
 _build_pulse_headless_env_xml() {
-	local _headless_xml_env=""
-	local _configured_headless_models _configured_pulse_model
-	_configured_headless_models=$(_resolve_headless_models_override)
-	_configured_pulse_model=$(_resolve_pulse_model_override)
-
-	if [[ -n "$_configured_headless_models" ]]; then
-		local _xml_headless_models
-		_xml_headless_models=$(_xml_escape "$_configured_headless_models")
-		_headless_xml_env+=$'\n'
-		_headless_xml_env+=$'\t\t<key>AIDEVOPS_HEADLESS_MODELS</key>'
-		_headless_xml_env+=$'\n'
-		_headless_xml_env+=$'\t\t'"<string>${_xml_headless_models}</string>"
-	fi
-	if [[ -n "$_configured_pulse_model" ]]; then
-		local _xml_pulse_model
-		_xml_pulse_model=$(_xml_escape "$_configured_pulse_model")
-		_headless_xml_env+=$'\n'
-		_headless_xml_env+=$'\t\t<key>PULSE_MODEL</key>'
-		_headless_xml_env+=$'\n'
-		_headless_xml_env+=$'\t\t'"<string>${_xml_pulse_model}</string>"
-	fi
-	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
-		local _xml_headless_allowlist
-		_xml_headless_allowlist=$(_xml_escape "$AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST")
-		_headless_xml_env+=$'\n'
-		_headless_xml_env+=$'\t\t<key>AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST</key>'
-		_headless_xml_env+=$'\n'
-		_headless_xml_env+=$'\t\t'"<string>${_xml_headless_allowlist}</string>"
-	fi
-
-	printf '%s' "$_headless_xml_env"
+	# Intentionally empty — model config read from credentials.sh at runtime.
+	printf '%s' ""
 	return 0
 }
 

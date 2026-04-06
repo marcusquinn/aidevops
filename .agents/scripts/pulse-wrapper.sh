@@ -112,6 +112,18 @@ if [[ -f "$HOME/.ssh/agent.env" ]]; then
 	. "$HOME/.ssh/agent.env" >/dev/null 2>&1 || true
 fi
 
+#######################################
+# Source credentials.sh for model config and API keys (GH#17546)
+# Launchd plists bake env vars at setup time — they go stale when
+# credentials.sh is later updated. Sourcing at runtime ensures the
+# pulse always uses the current AIDEVOPS_HEADLESS_MODELS, PULSE_MODEL,
+# and provider API keys, regardless of what the plist embedded.
+#######################################
+if [[ -f "${HOME}/.config/aidevops/credentials.sh" ]]; then
+	# shellcheck source=/dev/null
+	. "${HOME}/.config/aidevops/credentials.sh" 2>/dev/null || true
+fi
+
 if ! type config_get >/dev/null 2>&1; then
 	CONFIG_GET_FALLBACK_WARNED=0
 	config_get() {
