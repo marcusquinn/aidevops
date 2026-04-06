@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.131] - 2026-04-06
+
+### Added
+
+- merge worker session DB back to shared DB after completion
+
+### Changed
+
+- fix full-loop-helper.sh review feedback from PR #17547 (#17625)
+
 ## [3.6.130] - 2026-04-06
 
 ### Fixed
