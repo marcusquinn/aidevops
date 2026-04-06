@@ -8240,10 +8240,10 @@ _merge_ready_prs_for_repo() {
 		# Approve (satisfies REVIEW_REQUIRED for collaborator PRs)
 		approve_collaborator_pr "$pr_number" "$repo_slug" "$pr_author" 2>/dev/null || true
 
-		# Extract worker's merge summary comment (if any) for closing comments.
-		# Workers write a <!-- MERGE_SUMMARY --> tagged comment on the PR at
-		# creation time (full-loop.md step 4.2.1). This contains context that
-		# the deterministic merge pass can't know: what changed, why, testing.
+		# Extract merge summary for closing comments. Tries (in order):
+		# 1. Worker's <!-- MERGE_SUMMARY --> tagged comment (richest, ~35% hit rate)
+		# 2. PR body text (always present, created atomically with gh pr create)
+		# Fallback to generic only if both are empty (should be near-zero).
 		local merge_summary
 		merge_summary=$(_extract_merge_summary "$pr_number" "$repo_slug")
 
@@ -8265,7 +8265,7 @@ _Merged by deterministic merge pass (pulse-wrapper.sh)._"
 			else
 				closing_comment="Completed via PR #${pr_number}, merged to main.
 
-_Merged by deterministic merge pass (pulse-wrapper.sh). No worker summary was available — the worker either crashed before writing one or this PR predates the merge summary convention._"
+_Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY comment nor PR body text was available._"
 			fi
 
 			# Append signature footer to closing comment (GH#15486).
@@ -8373,23 +8373,47 @@ _extract_merge_summary() {
 	local pr_number="$1"
 	local repo_slug="$2"
 
-	# Fetch PR comments and find the last one containing the MERGE_SUMMARY tag
+	# Strategy 1: Look for explicit MERGE_SUMMARY tagged comment (richest content)
 	local summary
 	summary=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments" \
 		--jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | last | .body // empty' \
 		2>/dev/null) || summary=""
 
-	if [[ -z "$summary" ]]; then
+	if [[ -n "$summary" ]]; then
+		# Strip the HTML marker tag
+		summary=$(printf '%s' "$summary" | sed 's/<!-- MERGE_SUMMARY -->//')
+		# Strip the worker's "written at PR creation time" note if present
+		summary=$(printf '%s' "$summary" | sed '/written by the worker at PR creation time/d')
+		printf '%s' "$summary"
 		return 0
 	fi
 
-	# Strip the HTML marker tag
-	summary=$(printf '%s' "$summary" | sed 's/<!-- MERGE_SUMMARY -->//')
+	# Strategy 2: Extract from PR body (always present, created atomically with PR).
+	# Workers skip the MERGE_SUMMARY comment ~65% of the time, but the PR body
+	# always contains a useful description of what was done (GH#17503).
+	local pr_body
+	pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json body --jq '.body // empty' 2>/dev/null) || pr_body=""
 
-	# Strip the worker's "written at PR creation time" note if present
-	summary=$(printf '%s' "$summary" | sed '/written by the worker at PR creation time/d')
+	if [[ -z "$pr_body" ]]; then
+		return 0
+	fi
 
-	printf '%s' "$summary"
+	# Strip auto-generated bot content (CodeRabbit, SonarCloud, Codacy, etc.)
+	# These start with <!-- This is an auto-generated comment or similar markers
+	pr_body=$(printf '%s\n' "$pr_body" | sed '/<!-- This is an auto-generated comment/,$d')
+
+	# Strip Closes/Fixes/Resolves #NNN (the closing comment adds its own PR reference)
+	pr_body=$(printf '%s\n' "$pr_body" | sed -E 's/(Closes|Fixes|Resolves) #[0-9]+[[:space:]]*//')
+
+	# Trim leading/trailing blank lines (BSD sed compatible)
+	pr_body=$(printf '%s\n' "$pr_body" | sed '/./,$!d' | sed -E '/^[[:space:]]*$/{ N; }' | sed -E '/^[[:space:]]*$/d')
+
+	# Only use if there's meaningful content left (more than just whitespace)
+	if [[ -n "$pr_body" ]] && [[ "$(printf '%s' "$pr_body" | tr -d '[:space:]')" != "" ]]; then
+		printf '%s' "$pr_body"
+	fi
+
 	return 0
 }
 
