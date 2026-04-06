@@ -684,14 +684,34 @@ create_github_issue() {
 		fi
 	fi
 
-	# Fallback: bare issue creation (no labels, minimal body)
+	# Fallback: bare issue creation with structured body
 	local gh_args=(issue create --title "$title")
 
+	# t1899: Compose a structured body from available context when no
+	# --description was provided, instead of an opaque placeholder string.
+	# Also warn at claim time so callers notice the gap.
+	local body=""
 	if [[ -n "$description" ]]; then
-		gh_args+=(--body "$description")
+		body="$description"
 	else
-		gh_args+=(--body "Task created via claim-task-id.sh")
+		log_warn "No --description provided — issue body will lack detail. Pass --description for rich issue content."
+		local desc_part
+		desc_part=$(printf '%s' "$title" | sed 's/^t[0-9]*: *//')
+		body="## Task"
+		body="$body"$'\n\n'"$desc_part"
+		body="$body"$'\n\n'"---"
+		body="$body"$'\n'"*Created by claim-task-id.sh (no description provided — enrich before dispatch)*"
 	fi
+
+	# t1899: Append provenance signature footer (build.txt rule #8)
+	local sig_helper="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/gh-signature-helper.sh"
+	if [[ -x "$sig_helper" ]]; then
+		local sig_footer
+		sig_footer=$("$sig_helper" footer --body "$body" 2>/dev/null || echo "")
+		[[ -n "$sig_footer" ]] && body="$body"$'\n'"$sig_footer"
+	fi
+
+	gh_args+=(--body "$body")
 
 	# Append session origin label (origin:worker or origin:interactive)
 	local origin_label

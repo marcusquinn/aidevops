@@ -907,6 +907,16 @@ _compose_issue_html_notes_and_footer() {
 	[[ -n "$html_comments" ]] && body="$body"$'\n\n'"## Implementation Notes"$'\n\n'"$html_comments"
 
 	body="$body"$'\n\n'"---"$'\n'"*Synced from TODO.md by issue-sync-helper.sh*"
+
+	# t1899: Append provenance signature footer (build.txt rule #8)
+	local sig_helper
+	sig_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-signature-helper.sh"
+	if [[ -x "$sig_helper" ]]; then
+		local sig_footer
+		sig_footer=$("$sig_helper" footer --body "$body" 2>/dev/null || echo "")
+		[[ -n "$sig_footer" ]] && body="$body"$'\n'"$sig_footer"
+	fi
+
 	echo "$body"
 	return 0
 }

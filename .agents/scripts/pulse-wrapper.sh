@@ -8002,6 +8002,16 @@ dispatch_deterministic_fill_floor() {
 			continue
 		fi
 
+		# t1899: Skip issues with placeholder/empty bodies — dispatching a
+		# worker to an undescribed issue wastes a session. The body check is
+		# a single API call cached for the candidate loop iteration.
+		local issue_body
+		issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body -q '.body' 2>/dev/null || echo "")
+		if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" || "$issue_body" == "null" ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"
+			continue
+		fi
+
 		dispatch_title="Issue #${issue_number}"
 		prompt="/full-loop Implement issue #${issue_number}"
 		if [[ -n "$issue_url" ]]; then
