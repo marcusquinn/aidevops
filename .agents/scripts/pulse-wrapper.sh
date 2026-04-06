@@ -6450,9 +6450,16 @@ dispatch_with_dedup() {
 	# Now: only pass --model when there's an explicit override (e.g., tier:thinking).
 	# When no override, omit --model entirely so choose_model() in the runtime
 	# helper picks the next available model via round-robin with backoff awareness.
+	#
+	# t1896: Pre-resolve the round-robin model so we can display it in the dispatch
+	# comment AND pass it to the worker (ensuring comment matches reality).
 	local selected_model=""
 	if [[ -n "$model_override" ]]; then
 		selected_model="$model_override"
+	else
+		# Pre-resolve the round-robin model using the same logic as the worker.
+		# This gives us the specific model name for the dispatch comment.
+		selected_model=$(HEADLESS_RUNTIME_HELPER="$HEADLESS_RUNTIME_HELPER" "$HEADLESS_RUNTIME_HELPER" select --role worker 2>/dev/null) || selected_model=""
 	fi
 
 	# t1894: Lock external contributor issues during worker execution
@@ -6488,8 +6495,11 @@ dispatch_with_dedup() {
 	# nothing to find, and the issue would be re-dispatched every pulse cycle.
 	# Evidence: awardsapp #2051 accumulated 29 DISPATCH_CLAIM comments over 6 hours
 	# because workers kept dying before posting.
+	#
+	# t1896: selected_model is now always resolved (either from override or pre-selection).
+	# Only falls back if select failed (all models backed off).
 	local dispatch_comment_body
-	local display_model="${selected_model:-auto-select (round-robin)}"
+	local display_model="${selected_model:-all models backed off}"
 	dispatch_comment_body="Dispatching worker (deterministic).
 - **Worker PID**: ${worker_pid}
 - **Model**: ${display_model}
