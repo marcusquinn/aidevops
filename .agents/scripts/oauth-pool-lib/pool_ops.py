@@ -41,6 +41,22 @@ import os
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+
+
+TOKEN_URLS = {
+    'anthropic': 'https://platform.claude.com/v1/oauth/token',
+    'openai': 'https://auth.openai.com/oauth/token',
+    'google': 'https://oauth2.googleapis.com/token',
+}
+
+CLIENT_IDS = {
+    'anthropic': '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+    'openai': 'app_EMoamEEZ73f0CkXaXp7hrann',
+    'google': '681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com',
+}
 
 
 # ---------------------------------------------------------------------------
@@ -218,24 +234,9 @@ def cmd_normalize_cooldowns():
 # ---------------------------------------------------------------------------
 
 def cmd_rotate():
-    import urllib.request
-    import urllib.error
-    from datetime import datetime, timezone
-
     pool_path = os.environ['POOL_FILE_PATH']
     auth_path = os.environ['AUTH_FILE_PATH']
     provider = os.environ['PROVIDER']
-
-    TOKEN_URLS = {
-        'anthropic': 'https://platform.claude.com/v1/oauth/token',
-        'openai':    'https://auth.openai.com/oauth/token',
-        'google':    'https://oauth2.googleapis.com/token',
-    }
-    CLIENT_IDS = {
-        'anthropic': '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
-        'openai':    'app_EMoamEEZ73f0CkXaXp7hrann',
-        'google':    '681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com',
-    }
 
     def _try_refresh(account, prov, now_ms):
         refresh_tok = account.get('refresh', '')
@@ -363,28 +364,14 @@ def cmd_rotate():
 # ---------------------------------------------------------------------------
 
 def cmd_refresh():
-    import urllib.request
-    import urllib.error
-
     pool_path = os.environ['POOL_FILE_PATH']
     auth_path = os.environ['AUTH_FILE_PATH']
     provider = os.environ['PROVIDER']
     target_email = os.environ['TARGET_EMAIL']
     ua_header = os.environ.get('UA_HEADER', 'aidevops/1.0')
 
-    token_urls = {
-        'anthropic': 'https://platform.claude.com/v1/oauth/token',
-        'openai': 'https://auth.openai.com/oauth/token',
-        'google': 'https://oauth2.googleapis.com/token',
-    }
-    client_ids = {
-        'anthropic': '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
-        'openai': 'app_EMoamEEZ73f0CkXaXp7hrann',
-        'google': '681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com',
-    }
-
-    token_url = token_urls.get(provider, '')
-    client_id = client_ids.get(provider, '')
+    token_url = TOKEN_URLS.get(provider, '')
+    client_id = CLIENT_IDS.get(provider, '')
     if not token_url or not client_id:
         print('ERROR:no_endpoint')
         sys.exit(0)
