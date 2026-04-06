@@ -18,9 +18,9 @@ Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NO
 | # | Step | Signal |
 |---|------|--------|
 | 0 | Commit+PR gate — all changes committed, PR exists | `TASK_COMPLETE` |
-| 1 | Review bot gate — wait for bots (poll ≤10 min) | |
+| 1 | Review bot gate — code-enforced via `full-loop-helper.sh merge` (GH#17541) | |
 | 2 | Address critical bot review findings | |
-| 3 | Merge — `gh pr merge --squash` (no `--delete-branch` in worktrees) | |
+| 3 | Merge — `full-loop-helper.sh merge` (enforces gate + squash, no `--delete-branch`) | |
 | 4 | Auto-release — bump patch + GitHub release (aidevops repo only) | |
 | 5 | Issue closing comment — structured comment on every linked issue | |
 | 6 | Postflight + deploy — verify release health, run setup.sh | `FULL_LOOP_COMPLETE` |
@@ -122,9 +122,17 @@ Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[
 
 **4.3 Label `status:in-review` (t1343):** check issue is `OPEN` first.
 
-**4.4 Review Bot Gate (t1382):** `review-bot-gate-helper.sh wait "$PR_NUMBER" "$REPO"`. Polls every 60s, up to 10 min timeout. Do NOT use `check` with ad-hoc polling — `wait` handles the retry loop.
+**4.4 Review Bot Gate (t1382 + GH#17541 — CODE-ENFORCED):** The gate is enforced in code, not just prompt instructions. Use the merge wrapper which runs the gate automatically:
 
-**4.5 Merge:** `gh pr merge --squash` (no `--delete-branch` from inside worktree).
+```bash
+full-loop-helper.sh merge "$PR_NUMBER" "$REPO"
+```
+
+This calls `review-bot-gate-helper.sh wait` (polls every 60s, up to 10 min) then `gh pr merge --squash`. If the gate fails, merge is blocked. Do NOT call `gh pr merge` directly — the wrapper is the only sanctioned merge path for workers.
+
+If you need to check the gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$REPO"`.
+
+**4.5 Merge (via wrapper only):** Workers MUST use `full-loop-helper.sh merge` (step 4.4 above). Direct `gh pr merge --squash` bypasses the review bot gate and is a bug (GH#17541). The wrapper enforces: (1) review-bot-gate wait, (2) squash merge, (3) no `--delete-branch` from inside worktree.
 
 **4.6 Auto-Release (aidevops only):** `version-manager.sh bump patch`, tag, push, `gh release create`, `setup.sh --non-interactive`.
 

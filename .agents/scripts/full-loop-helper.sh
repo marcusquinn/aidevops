@@ -359,6 +359,115 @@ cmd_logs() {
 	tail -n "$lines" "$log_file"
 }
 
+# Pre-merge gate (GH#17541) — deterministic enforcement of review-bot-gate
+# before any PR merge. Workers MUST call this before `gh pr merge`.
+# Models the pulse-wrapper.sh pattern (line 8243-8262) for the worker merge path.
+#
+# Usage: full-loop-helper.sh pre-merge-gate <PR_NUMBER> [REPO]
+# Exit codes: 0 = safe to merge, 1 = gate failed (do NOT merge)
+cmd_pre_merge_gate() {
+	local pr_number="${1:-}"
+	local repo="${2:-}"
+
+	if [[ -z "$pr_number" ]]; then
+		print_error "Usage: full-loop-helper.sh pre-merge-gate <PR_NUMBER> [REPO]"
+		return 1
+	fi
+
+	# Auto-detect repo from git remote if not provided
+	if [[ -z "$repo" ]]; then
+		repo=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
+		if [[ -z "$repo" ]]; then
+			print_error "Cannot detect repo. Pass REPO as second argument."
+			return 1
+		fi
+	fi
+
+	local rbg_helper="${SCRIPT_DIR}/review-bot-gate-helper.sh"
+	if [[ ! -f "$rbg_helper" ]]; then
+		# Fallback to deployed location
+		rbg_helper="${HOME}/.aidevops/agents/scripts/review-bot-gate-helper.sh"
+	fi
+
+	if [[ ! -f "$rbg_helper" ]]; then
+		print_warning "review-bot-gate-helper.sh not found — skipping gate (degraded mode)"
+		return 0
+	fi
+
+	print_info "Running review bot gate for PR #${pr_number} in ${repo}..."
+
+	# Use 'wait' mode (polls up to 600s) — same as full-loop.md step 4.4 instructs,
+	# but now enforced in code rather than relying on prompt compliance.
+	local rbg_result=""
+	rbg_result=$(bash "$rbg_helper" wait "$pr_number" "$repo" 2>&1) || true
+
+	local rbg_status=""
+	rbg_status=$(printf '%s' "$rbg_result" | grep -oE '^(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | head -1)
+
+	case "$rbg_status" in
+	PASS | SKIP | PASS_RATE_LIMITED)
+		print_success "Review bot gate: ${rbg_status} — safe to merge PR #${pr_number}"
+		return 0
+		;;
+	*)
+		print_error "Review bot gate: ${rbg_status:-FAILED} — do NOT merge PR #${pr_number}"
+		printf '%s\n' "$rbg_result" | tail -5
+		return 1
+		;;
+	esac
+}
+
+# Merge wrapper (GH#17541) — enforces review-bot-gate then merges.
+# Single command that replaces the multi-step protocol (wait + merge).
+# Workers call this instead of bare `gh pr merge`.
+#
+# Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase]
+# Exit codes: 0 = merged, 1 = gate failed or merge failed
+cmd_merge() {
+	local pr_number="${1:-}"
+	local repo="${2:-}"
+	local merge_method="--squash"
+
+	if [[ -z "$pr_number" ]]; then
+		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase]"
+		return 1
+	fi
+
+	# Parse optional repo and merge method
+	if [[ "${repo:-}" == --* ]]; then
+		merge_method="$repo"
+		repo=""
+	fi
+	if [[ -n "${3:-}" && "${3:-}" == --* ]]; then
+		merge_method="$3"
+	fi
+
+	# Auto-detect repo from git remote if not provided
+	if [[ -z "$repo" ]]; then
+		repo=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
+		if [[ -z "$repo" ]]; then
+			print_error "Cannot detect repo. Pass REPO as second argument."
+			return 1
+		fi
+	fi
+
+	# Gate: enforce review-bot-gate before merge
+	cmd_pre_merge_gate "$pr_number" "$repo" || {
+		print_error "Merge blocked by review bot gate. Address bot findings or wait for reviews."
+		return 1
+	}
+
+	# Merge (no --delete-branch from inside worktree, per full-loop.md step 4.5)
+	print_info "Merging PR #${pr_number} in ${repo} (${merge_method})..."
+	if gh pr merge "$pr_number" --repo "$repo" "$merge_method" 2>&1; then
+		print_success "PR #${pr_number} merged successfully"
+		return 0
+	else
+		print_error "Merge failed for PR #${pr_number}"
+		return 1
+	fi
+}
+
 cmd_complete() {
 	load_state 2>/dev/null || true
 	printf "\n${BOLD}${GREEN}=== FULL DEVELOPMENT LOOP - COMPLETE ===${NC}\n"
@@ -373,7 +482,15 @@ show_help() {
 	cat <<'EOF'
 Full Development Loop Orchestrator
 Usage: full-loop-helper.sh <command> [options]
-Commands: start "<prompt>" | resume | status | cancel | logs [N] | help
+Commands:
+  start "<prompt>"              Start a new development loop
+  resume                        Resume from last phase
+  status                        Show current loop state
+  cancel                        Cancel active loop
+  logs [N]                      Show last N log lines (default: 50)
+  pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
+  merge <PR> [REPO] [--squash]  Gate-enforced merge (runs pre-merge-gate first)
+  help                          Show this help
 Options: --max-task-iterations N (50) | --max-preflight-iterations N (5)
   --max-pr-iterations N (20) | --skip-preflight | --skip-postflight
   --skip-runtime-testing | --no-auto-pr | --no-auto-deploy
@@ -399,6 +516,8 @@ main() {
 	case "$command" in
 	start) cmd_start "$@" ;; resume) cmd_resume ;; status) cmd_status ;;
 	cancel) cmd_cancel ;; logs) cmd_logs "$@" ;; _run_foreground) _run_foreground "$@" ;;
+	pre-merge-gate) cmd_pre_merge_gate "$@" ;;
+	merge) cmd_merge "$@" ;;
 	help | --help | -h) show_help ;;
 	*)
 		print_error "Unknown command: $command"
