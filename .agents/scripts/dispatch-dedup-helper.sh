@@ -434,7 +434,7 @@ _get_repo_maintainer() {
 #   exit 0 = stale assignment recovered (safe to dispatch)
 #   exit 1 = assignment is NOT stale (genuine active claim, block dispatch)
 #######################################
-STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-1800}" # 30 min (GH#17549: aligned with DISPATCH_COMMENT_MAX_AGE to close dead zone)
+STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-${DISPATCH_COMMENT_MAX_AGE:-1800}}" # 30 min (GH#17549: aligned with DISPATCH_COMMENT_MAX_AGE to close dead zone)
 
 _is_stale_assignment() {
 	local issue_number="$1"
