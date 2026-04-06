@@ -79,7 +79,14 @@ check_active_db() {
 
 # Get the current epoch in milliseconds
 now_ms() {
-	# macOS date doesn't support %N; use python or perl
+	local ms
+	# Try GNU date first (Linux/coreutils); macOS date does not support %3N
+	ms=$(date +%s%3N 2>/dev/null)
+	if [[ "$ms" =~ ^[0-9]{13,}$ ]]; then
+		echo "$ms"
+		return 0
+	fi
+	# Fall back to python3 or perl for sub-second precision on macOS
 	python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null ||
 		perl -MTime::HiRes=time -e 'printf "%d\n", time()*1000' 2>/dev/null ||
 		echo "$(($(date +%s) * 1000))"
@@ -138,6 +145,17 @@ file_size_bytes() {
 		return 0
 	fi
 	stat -f '%z' "$filepath" 2>/dev/null || stat -c '%s' "$filepath" 2>/dev/null || echo "0"
+	return 0
+}
+
+# Checkpoint the archive WAL — called on normal exit and via trap on early return.
+# Uses a global flag to prevent double-run when the fast-path calls it explicitly.
+_ARCHIVE_CHECKPOINT_DONE=0
+_checkpoint_archive_db() {
+	local archive_db="$1"
+	if ((_ARCHIVE_CHECKPOINT_DONE)); then return 0; fi
+	_ARCHIVE_CHECKPOINT_DONE=1
+	sqlite3 "$archive_db" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || true
 	return 0
 }
 
@@ -336,6 +354,13 @@ cmd_archive() {
 	local size_before
 	size_before=$(file_size_bytes "$ACTIVE_DB")
 
+	# Cleanup scope: checkpoint the archive WAL on any exit path (normal or signal).
+	# _checkpoint_archive_db uses a global flag to prevent double-run; the trap
+	# ensures it runs on early return between batches, and the fast-path call below
+	# (before vacuum) runs it explicitly on normal completion.
+	_ARCHIVE_CHECKPOINT_DONE=0
+	trap '_checkpoint_archive_db "$ARCHIVE_DB"' RETURN
+
 	local start_time
 	start_time=$(date +%s)
 	local archived_total=0
@@ -375,8 +400,11 @@ cmd_archive() {
 			in_clause="${in_clause}${in_clause:+,}'${sid}'"
 		done <<<"$session_ids"
 
-		# Single transaction: copy to archive then delete from active
-		# Note: FK enforcement is OFF in opencode.db, so we must delete child rows manually
+		# Single transaction: copy to archive then delete from active.
+		# ATTACH and DETACH are within the same sqlite3 invocation — the attachment
+		# is released automatically when the process exits. The trap above ensures
+		# the archive WAL is checkpointed on any exit path between batches.
+		# Note: FK enforcement is OFF in opencode.db, so we must delete child rows manually.
 		sqlite3 "$ACTIVE_DB" <<BATCH_SQL
 ATTACH DATABASE '$ARCHIVE_DB' AS archive;
 
@@ -441,6 +469,10 @@ BATCH_SQL
 
 		print_info "Archived $archived_total/$total_eligible sessions [batch $batch_num] ($(format_bytes "$freed") freed)"
 	done
+
+	# Fast-path explicit cleanup: checkpoint archive WAL before vacuum.
+	# Marks done so the RETURN trap does not double-run.
+	_checkpoint_archive_db "$ARCHIVE_DB"
 
 	# Reclaim space
 	print_info "Running incremental vacuum on active DB..."
