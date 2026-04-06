@@ -1362,8 +1362,8 @@ _run_activity_watchdog() {
 	local output_file="$1"
 	local worker_pid="$2"
 	local exit_code_file="$3"
-	local timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-90}"
-	[[ "$timeout" =~ ^[0-9]+$ ]] || timeout=90
+	local timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-300}"
+	[[ "$timeout" =~ ^[0-9]+$ ]] || timeout=300
 
 	local elapsed=0
 	local poll_interval=5
