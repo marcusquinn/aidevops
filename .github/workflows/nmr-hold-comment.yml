@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# NMR Hold Guidance Comment
+#
+# When the needs-maintainer-review label is added to any issue, this workflow
+# posts a comment explaining the hold and providing the approve command.
+#
+# Covers two scenarios:
+# 1. Collaborator self-applying NMR as a "hold" to prevent pulse dispatch
+# 2. Fallback for external issues where issue-triage-gate didn't post guidance
+#
+# Deduplicates against comments already posted by:
+# - issue-triage-gate.yml (on issue opened for non-collaborators)
+# - maintainer-gate.yml (on label removal + re-apply)
+#
+# See also:
+# - issue-triage-gate.yml — auto-applies NMR on issue open for non-collaborators
+# - maintainer-gate.yml — blocks PRs referencing NMR issues, protects label removal
+
+name: NMR Hold Guidance
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+
+jobs:
+  post-hold-guidance:
+    name: Post Hold Guidance
+    if: github.event.label.name == 'needs-maintainer-review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    concurrency:
+      group: nmr-hold-${{ github.event.issue.number }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Post approve command guidance
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const issueNumber = issue.number;
+            const actor = context.actor;
+
+            // Dedup: check for existing comments with the approve command.
+            // Covers prior posts from issue-triage-gate, maintainer-gate
+            // label protection, or a previous run of this workflow.
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100
+            });
+
+            const approvePattern = `sudo aidevops approve issue ${issueNumber}`;
+            const hasApproveComment = comments.data.some(c =>
+              c.body.includes(approvePattern) ||
+              c.body.includes('<!-- nmr-hold-guidance -->')
+            );
+
+            if (hasApproveComment) {
+              console.log(`Approve guidance already posted on #${issueNumber} — skipping`);
+              return;
+            }
+
+            // Determine context: collaborator holding their own issue vs external triage
+            const association = issue.author_association;
+            const trustedRoles = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+            const isCollaboratorIssue = trustedRoles.includes(association);
+
+            let body;
+            if (isCollaboratorIssue) {
+              body = [
+                '<!-- nmr-hold-guidance -->',
+                '**Issue held from dispatch.** The `needs-maintainer-review` label prevents the pulse supervisor from dispatching workers for this issue.',
+                '',
+                'When ready to release it for work:',
+                '```',
+                `sudo aidevops approve issue ${issueNumber}`,
+                '```',
+                '',
+                'This posts a cryptographic approval comment and removes the label, allowing the pipeline to process the issue on the next pulse cycle.'
+              ].join('\n');
+            } else {
+              // Non-collaborator issue where triage gate somehow missed posting.
+              // Provides the same guidance as a fallback.
+              body = [
+                '<!-- nmr-hold-guidance -->',
+                'This issue requires maintainer review before it can be processed by the pipeline.',
+                '',
+                'A maintainer can approve it using:',
+                '```',
+                `sudo aidevops approve issue ${issueNumber}`,
+                '```',
+                '',
+                'This posts a cryptographic approval comment and removes the label, allowing the pipeline to process the issue on the next pulse cycle.'
+              ].join('\n');
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: body
+            });
+
+            console.log(`Posted hold guidance comment on #${issueNumber} (collaborator=${isCollaboratorIssue}, actor=${actor})`);
