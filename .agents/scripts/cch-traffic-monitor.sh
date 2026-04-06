@@ -30,6 +30,7 @@ IFS=$'\n\t'
 # Constants
 # ---------------------------------------------------------------------------
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 BASELINE_DIR="${HOME}/.aidevops/cch-baselines"
 MITM_PORT=8180
 MITM_SCRIPT_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
@@ -83,122 +84,18 @@ check_deps() {
 	return 0
 }
 
-# Generate the mitmproxy addon Python source and print it to stdout.
-# Requires OUTPUT_FILE env var to be set before calling.
-_generate_mitm_python() {
-	OUTPUT_FILE="$1" python3 -c '
-import os
-addon = """
-import json
-import mitmproxy.http
-
-OUTPUT_FILE = """ + repr(os.environ["OUTPUT_FILE"]) + """
-
-class CCHCapture:
-    def __init__(self):
-        self.requests = []
-
-    def request(self, flow: mitmproxy.http.HTTPFlow):
-        # Only capture Anthropic API requests
-        if "api.anthropic.com" not in flow.request.pretty_host:
-            if "claude.ai" not in flow.request.pretty_host:
-                return
-
-        if "/v1/messages" not in flow.request.path:
-            return
-
-        entry = {
-            "url": flow.request.pretty_url,
-            "method": flow.request.method,
-            "path": flow.request.path,
-            "headers": dict(flow.request.headers),
-            "body": None,
-            "billing_header": None,
-            "system_blocks": None,
-        }
-
-        # Parse body
-        if flow.request.content:
-            try:
-                body = json.loads(flow.request.content)
-                # Extract signing-relevant fields (never log tokens)
-                entry["body"] = {
-                    "model": body.get("model"),
-                    "thinking": body.get("thinking"),
-                    "speed": body.get("speed"),
-                    "research_preview_2026_02": body.get("research_preview_2026_02"),
-                    "context_management": body.get("context_management"),
-                    "has_tools": "tools" in body,
-                    "tool_count": len(body.get("tools", [])),
-                    "message_count": len(body.get("messages", [])),
-                    "has_metadata": "metadata" in body,
-                    "betas": body.get("betas"),
-                    "body_keys": sorted(body.keys()),
-                }
-
-                # Extract system blocks (billing header is first)
-                system = body.get("system", [])
-                if isinstance(system, list):
-                    entry["system_blocks"] = []
-                    for i, block in enumerate(system):
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            text = block.get("text", "")
-                            if "billing-header" in text or "x-anthropic" in text:
-                                entry["billing_header"] = text
-                            entry["system_blocks"].append({
-                                "index": i,
-                                "type": block.get("type"),
-                                "has_cache_control": "cache_control" in block,
-                                "text_preview": text[:120] + "..." if len(text) > 120 else text,
-                            })
-            except json.JSONDecodeError:
-                entry["body"] = {"error": "not JSON"}
-
-        # Sanitise headers (remove auth tokens)
-        safe_headers = {}
-        for k, v in entry["headers"].items():
-            kl = k.lower()
-            if kl == "authorization":
-                safe_headers[k] = "Bearer <REDACTED>"
-            elif kl == "cookie":
-                safe_headers[k] = "<REDACTED>"
-            else:
-                safe_headers[k] = v
-        entry["headers"] = safe_headers
-
-        self.requests.append(entry)
-
-    def done(self):
-        with open(OUTPUT_FILE, "w") as f:
-            json.dump({
-                "capture_count": len(self.requests),
-                "requests": self.requests,
-            }, f, indent=2)
-
-addons = [CCHCapture()]
-"""
-print(addon)
-'
-	return 0
-}
-
-# Write the mitmproxy addon Python script to a temp file.
-# Prints the path to the created file.
-_write_mitm_addon_script() {
-	local output_file="$1"
-	local addon_file="${MITM_SCRIPT_DIR}/cch_capture_addon.py"
-
-	mkdir -p "$MITM_SCRIPT_DIR"
-	_generate_mitm_python "$output_file" >"$addon_file"
-	printf '%s' "$addon_file"
-	return 0
-}
-
 # Create the mitmproxy addon script that extracts request details.
+# Copies the external Python addon and sets OUTPUT_FILE for the capture session.
 # Prints the path to the created addon file.
 create_mitm_addon() {
 	local output_file="$1"
-	_write_mitm_addon_script "$output_file"
+	local addon_src="${SCRIPT_DIR}/cch-mitm-addon.py"
+	local addon_file="${MITM_SCRIPT_DIR}/cch_capture_addon.py"
+
+	mkdir -p "$MITM_SCRIPT_DIR"
+	cp "$addon_src" "$addon_file"
+	# Inject the output path — the addon reads OUTPUT_FILE from env at import time
+	printf '%s' "$addon_file"
 	return 0
 }
 
@@ -238,12 +135,14 @@ _capture_parse_args() {
 _capture_run_proxy() {
 	local addon_file="$1"
 	local duration="$2"
+	local capture_output="$3"
 
 	print_info "Starting mitmproxy capture on port ${MITM_PORT}..."
 	print_info "Duration: ${duration}s"
 
 	local mitm_pid
-	mitmdump --listen-port "$MITM_PORT" \
+	OUTPUT_FILE="$capture_output" \
+		mitmdump --listen-port "$MITM_PORT" \
 		--set block_global=false \
 		--mode regular \
 		-s "$addon_file" \
@@ -286,20 +185,7 @@ _capture_show_summary() {
 	print_success "Captured ${count} request(s) to ${output_file}"
 
 	if [[ "$count" != "0" ]]; then
-		python3 -c "
-import json, sys
-with open(sys.argv[1]) as f:
-    data = json.load(f)
-for i, req in enumerate(data['requests']):
-    print(f'  Request {i+1}:')
-    print(f'    Path: {req[\"path\"]}')
-    print(f'    User-Agent: {req[\"headers\"].get(\"user-agent\", \"unknown\")}')
-    if req.get('billing_header'):
-        print(f'    Billing: {req[\"billing_header\"][:80]}...')
-    if req.get('body'):
-        print(f'    Model: {req[\"body\"].get(\"model\", \"unknown\")}')
-        print(f'    Body keys: {req[\"body\"].get(\"body_keys\", [])}')
-" "$output_file" >&2
+		python3 "${SCRIPT_DIR}/cch-traffic-summary.py" "$output_file" >&2
 	fi
 	return 0
 }
@@ -327,7 +213,7 @@ cmd_capture() {
 	local addon_file
 	addon_file=$(create_mitm_addon "$output_file")
 
-	_capture_run_proxy "$addon_file" "$duration" || {
+	_capture_run_proxy "$addon_file" "$duration" "$output_file" || {
 		rm -f "$addon_file"
 		return 1
 	}
@@ -350,83 +236,29 @@ cmd_diff() {
 		return 1
 	fi
 
-	BASELINE="$baseline" CURRENT="$current" python3 -c '
-import json, os, sys
-
-with open(os.environ["BASELINE"]) as f:
-    base = json.load(f)
-with open(os.environ["CURRENT"]) as f:
-    curr = json.load(f)
-
-base_req = base["requests"][0] if base["requests"] else {}
-curr_req = curr["requests"][0] if curr["requests"] else {}
-
-changes = []
-
-# Compare headers
-base_headers = set(base_req.get("headers", {}).keys())
-curr_headers = set(curr_req.get("headers", {}).keys())
-new_headers = curr_headers - base_headers
-removed_headers = base_headers - curr_headers
-if new_headers:
-    changes.append(f"NEW HEADERS: {sorted(new_headers)}")
-if removed_headers:
-    changes.append(f"REMOVED HEADERS: {sorted(removed_headers)}")
-
-for h in base_headers & curr_headers:
-    bv = base_req["headers"].get(h, "")
-    cv = curr_req["headers"].get(h, "")
-    if h.lower() == "authorization":
-        continue  # always redacted
-    if bv != cv:
-        changes.append(f"CHANGED HEADER {h}: {bv!r} -> {cv!r}")
-
-# Compare billing header
-bb = base_req.get("billing_header", "")
-cb = curr_req.get("billing_header", "")
-if bb != cb:
-    changes.append(f"BILLING HEADER CHANGED:")
-    changes.append(f"  OLD: {bb}")
-    changes.append(f"  NEW: {cb}")
-
-# Compare body structure
-base_body = base_req.get("body", {}) or {}
-curr_body = curr_req.get("body", {}) or {}
-base_keys = set(base_body.get("body_keys", []))
-curr_keys = set(curr_body.get("body_keys", []))
-new_keys = curr_keys - base_keys
-removed_keys = base_keys - curr_keys
-if new_keys:
-    changes.append(f"NEW BODY KEYS: {sorted(new_keys)}")
-if removed_keys:
-    changes.append(f"REMOVED BODY KEYS: {sorted(removed_keys)}")
-
-# Compare betas
-base_betas = set(base_body.get("betas") or [])
-curr_betas = set(curr_body.get("betas") or [])
-new_betas = curr_betas - base_betas
-removed_betas = base_betas - curr_betas
-if new_betas:
-    changes.append(f"NEW BETAS: {sorted(new_betas)}")
-if removed_betas:
-    changes.append(f"REMOVED BETAS: {sorted(removed_betas)}")
-
-# Compare system blocks
-base_sys = base_req.get("system_blocks", []) or []
-curr_sys = curr_req.get("system_blocks", []) or []
-if len(base_sys) != len(curr_sys):
-    changes.append(f"SYSTEM BLOCK COUNT: {len(base_sys)} -> {len(curr_sys)}")
-
-if changes:
-    print("## Protocol Changes Detected\n")
-    for c in changes:
-        print(f"- {c}")
-    sys.exit(1)
-else:
-    print("No protocol changes detected.")
-    sys.exit(0)
-'
+	python3 "${SCRIPT_DIR}/cch-traffic-diff.py" "$baseline" "$current"
 	return $?
+}
+
+# Verify or create the CCH constants cache.
+_analyse_verify_cache() {
+	local cache_file="${HOME}/.aidevops/cch-constants.json"
+	local extract_cmd="${HOME}/.aidevops/agents/scripts/cch-extract.sh"
+
+	if [[ ! -f "$cache_file" ]]; then
+		print_info "No cache found — creating..."
+		"$extract_cmd" --cache 2>/dev/null
+		return 0
+	fi
+
+	if "$extract_cmd" --verify 2>/dev/null; then
+		print_success "Cache is current"
+		return 0
+	fi
+
+	print_warning "Cache is stale — updating..."
+	"$extract_cmd" --cache 2>/dev/null
+	return 0
 }
 
 cmd_analyse() {
@@ -456,17 +288,7 @@ cmd_analyse() {
 	printf '%s\n' "$constants_json" >&2
 
 	# Step 2: Verify against cache
-	if [[ -f "${HOME}/.aidevops/cch-constants.json" ]]; then
-		if ~/.aidevops/agents/scripts/cch-extract.sh --verify 2>/dev/null; then
-			print_success "Cache is current"
-		else
-			print_warning "Cache is stale — updating..."
-			~/.aidevops/agents/scripts/cch-extract.sh --cache 2>/dev/null
-		fi
-	else
-		print_info "No cache found — creating..."
-		~/.aidevops/agents/scripts/cch-extract.sh --cache 2>/dev/null
-	fi
+	_analyse_verify_cache
 
 	# Step 3: Generate a test header and verify computation
 	local test_msg="Say hello and nothing else."
