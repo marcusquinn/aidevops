@@ -1508,26 +1508,69 @@ output_has_completion_signal() {
 	local file_path="$1"
 	[[ -f "$file_path" ]] || return 1
 	python3 - "$file_path" <<'PY'
-import sys
+import sys, json
 from pathlib import Path
 
-text = Path(sys.argv[1]).read_text(errors="ignore")
+# GH#17549: Only check the MODEL'S OWN text output, not tool call results.
+# The tee output includes file contents the model read (tool_use events).
+# full-loop.md contains "FULL_LOOP_COMPLETE" as documentation — grepping
+# the raw output matches that and falsely classifies the run as complete,
+# preventing the continuation retry from ever firing.
+#
+# Strategy: parse JSON lines for "type":"text" events (model output) and
+# check only those. Fall back to raw grep for non-JSON output (claude CLI).
 
-# Explicit completion/blocked signals
-for marker in ("FULL_LOOP_COMPLETE", "BLOCKED", "TASK_COMPLETE"):
-    if marker in text:
+raw = Path(sys.argv[1]).read_text(errors="ignore")
+
+# Extract model text from JSON stream (OpenCode format)
+model_text_parts = []
+for line in raw.splitlines():
+    line = line.strip()
+    if not line.startswith("{"):
+        continue
+    try:
+        obj = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        continue
+    # OpenCode text events contain the model's own output
+    if obj.get("type") == "text":
+        part = obj.get("part", {})
+        model_text_parts.append(part.get("text", ""))
+    # Also check tool calls where the MODEL invoked gh pr create/merge
+    # (the input field shows what the model requested, not file contents)
+    elif obj.get("type") == "tool_use":
+        part = obj.get("part", {})
+        state = part.get("state", {})
+        inp = state.get("input", {})
+        if isinstance(inp, dict):
+            cmd = inp.get("command", "")
+            if cmd:
+                model_text_parts.append(cmd)
+
+model_text = "\n".join(model_text_parts)
+
+# If we extracted model text, use it exclusively
+if model_text.strip():
+    for marker in ("FULL_LOOP_COMPLETE", "BLOCKED", "TASK_COMPLETE"):
+        if marker in model_text:
+            sys.exit(0)
+    if "gh pr create" in model_text:
         sys.exit(0)
+    if "gh pr merge" in model_text:
+        sys.exit(0)
+    if "git push" in model_text:
+        sys.exit(0)
+    sys.exit(1)
 
-# PR creation evidence (gh pr create in a tool call output)
-if "gh pr create" in text and ("pull/" in text or "Created pull request" in text.lower()):
+# Fallback for non-JSON output (claude CLI, plain text)
+for marker in ("FULL_LOOP_COMPLETE", "BLOCKED", "TASK_COMPLETE"):
+    if marker in raw:
+        sys.exit(0)
+if "gh pr create" in raw and ("pull/" in raw or "Created pull request" in raw.lower()):
     sys.exit(0)
-
-# PR merge evidence
-if "gh pr merge" in text and ("Merged" in text or "merged" in text):
+if "gh pr merge" in raw and ("Merged" in raw or "merged" in raw):
     sys.exit(0)
-
-# git push evidence (at least the worker pushed code)
-if "git push" in text and ("-> " in text or "branch " in text):
+if "git push" in raw and ("-> " in raw or "branch " in raw):
     sys.exit(0)
 
 sys.exit(1)
