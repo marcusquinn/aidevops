@@ -613,6 +613,80 @@ _detect_session_type() {
 }
 
 # =============================================================================
+# Child-token ledger — runtime-agnostic subagent token tracking (t1897)
+# =============================================================================
+# When a parent session spawns subagents via the Task tool, each subagent runs
+# as a separate session whose tokens are NOT included in the parent's count.
+# The ledger bridges this gap: after each Task call completes, `record-child`
+# writes the child's token count to a TSV file keyed by parent session ID.
+# At signature-generation time, `_sum_child_tokens` reads the ledger and adds
+# child tokens to the parent total.
+#
+# Ledger format (TSV): child_session_id \t tokens \t epoch
+# File path: ~/.aidevops/.agent-workspace/tmp/{parent_session_id}.children.tsv
+#
+# Runtime adapters:
+#   OpenCode: task_id from Task tool IS the session ID in SQLite — query directly
+#   Claude Code: task_id may map to JSONL transcripts — pass --tokens explicitly
+#   Other: pass --tokens explicitly; graceful degradation (0 tokens recorded)
+
+_child_token_ledger_dir() {
+	printf '%s' "${HOME}/.aidevops/.agent-workspace/tmp"
+	return 0
+}
+
+_child_token_ledger_path() {
+	local parent_session_id="$1"
+	printf '%s/%s.children.tsv' "$(_child_token_ledger_dir)" "$parent_session_id"
+	return 0
+}
+
+# Sum all child subagent tokens from the ledger for a given parent session.
+# Args: $1 - parent session ID (optional; auto-detected if empty)
+# Output: integer token count, or empty string if no ledger/no children
+_sum_child_tokens() {
+	local parent_session_id="${1:-}"
+
+	# Auto-detect parent session if not provided
+	if [[ -z "$parent_session_id" ]]; then
+		local db_path
+		db_path=$(_opencode_db_path)
+		if [[ -r "$db_path" ]] && command -v sqlite3 &>/dev/null; then
+			parent_session_id=$(_find_session_id "$db_path")
+		fi
+	fi
+
+	if [[ -z "$parent_session_id" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local ledger_path
+	ledger_path=$(_child_token_ledger_path "$parent_session_id")
+
+	if [[ ! -r "$ledger_path" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local total=0
+	local child_id child_tokens epoch
+	while IFS=$'\t' read -r child_id child_tokens epoch; do
+		# Skip empty lines and malformed entries
+		if [[ -n "$child_tokens" ]] && [[ "$child_tokens" =~ ^[0-9]+$ ]]; then
+			total=$((total + child_tokens))
+		fi
+	done <"$ledger_path"
+
+	if [[ "$total" -gt 0 ]]; then
+		echo "$total"
+	else
+		echo ""
+	fi
+	return 0
+}
+
+# =============================================================================
 # Detect session time from runtime DB
 # =============================================================================
 # Returns session duration in seconds (now - session.time_created), or empty.
@@ -1094,6 +1168,18 @@ cmd_generate() {
 			fi
 		fi
 
+		# Add child subagent tokens from ledger (t1897).
+		# The ledger is populated by `record-child` calls after each Task tool
+		# completion. This is runtime-agnostic — the ledger is a plain TSV file.
+		local child_tokens_sum
+		child_tokens_sum=$(_sum_child_tokens "")
+		if [[ -n "$child_tokens_sum" ]] && [[ "$child_tokens_sum" -gt 0 ]] 2>/dev/null; then
+			local parent_tokens="${tokens:-0}"
+			parent_tokens=$(printf '%s' "$parent_tokens" | tr -cd '0-9')
+			parent_tokens="${parent_tokens:-0}"
+			tokens=$((parent_tokens + child_tokens_sum))
+		fi
+
 		# Collect time metrics
 		local time_metrics
 		time_metrics=$(_collect_time_metrics "$issue_ref" "$issue_created")
@@ -1165,6 +1251,91 @@ cmd_footer() {
 }
 
 # =============================================================================
+# record-child — log a subagent's token usage to the parent session's ledger
+# =============================================================================
+# Called after a Task tool call completes. The task_id returned by the Task tool
+# IS the child's session ID (verified for OpenCode; other runtimes pass --tokens).
+#
+# Usage:
+#   gh-signature-helper.sh record-child --child SESSION_ID [--parent SESSION_ID] [--tokens N]
+#
+# If --parent is omitted, auto-detected from the runtime session DB.
+# If --tokens is omitted, queried from the runtime DB using the child session ID.
+# Idempotent: recording the same child twice is a no-op.
+
+cmd_record_child() {
+	local parent_session_id="" child_session_id="" child_tokens=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--parent)
+			parent_session_id="$2"
+			shift 2
+			;;
+		--child)
+			child_session_id="$2"
+			shift 2
+			;;
+		--tokens)
+			child_tokens="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$child_session_id" ]]; then
+		echo "Error: --child SESSION_ID is required" >&2
+		return 1
+	fi
+
+	# Auto-detect parent session from runtime DB
+	if [[ -z "$parent_session_id" ]]; then
+		local db_path
+		db_path=$(_opencode_db_path)
+		if [[ -r "$db_path" ]] && command -v sqlite3 &>/dev/null; then
+			parent_session_id=$(_find_session_id "$db_path")
+		fi
+	fi
+
+	if [[ -z "$parent_session_id" ]]; then
+		echo "Error: could not determine parent session ID (pass --parent explicitly)" >&2
+		return 1
+	fi
+
+	# Auto-detect child tokens from runtime DB if not provided
+	if [[ -z "$child_tokens" ]]; then
+		local db_path
+		db_path=$(_opencode_db_path)
+		if [[ -r "$db_path" ]] && command -v sqlite3 &>/dev/null; then
+			child_tokens=$(_sum_session_tokens_for_session "$db_path" "$child_session_id" "")
+		fi
+	fi
+
+	# Default to 0 if detection failed (graceful degradation for non-OpenCode runtimes)
+	if [[ -z "$child_tokens" ]] || ! [[ "$child_tokens" =~ ^[0-9]+$ ]]; then
+		child_tokens="0"
+	fi
+
+	# Ensure ledger directory exists
+	local ledger_dir
+	ledger_dir=$(_child_token_ledger_dir)
+	mkdir -p "$ledger_dir"
+
+	local ledger_path
+	ledger_path=$(_child_token_ledger_path "$parent_session_id")
+
+	# Idempotent: skip if child already recorded
+	if [[ -r "$ledger_path" ]] && grep -q "^${child_session_id}	" "$ledger_path" 2>/dev/null; then
+		return 0
+	fi
+
+	# Append to ledger
+	printf '%s\t%s\t%s\n' "$child_session_id" "$child_tokens" "$(date +%s)" >>"$ledger_path"
+	return 0
+}
+
+# =============================================================================
 # help
 # =============================================================================
 
@@ -1173,16 +1344,18 @@ show_help() {
 gh-signature-helper.sh — Generate signature footer for GitHub comments
 
 Usage:
-  gh-signature-helper.sh generate [OPTIONS]
-  gh-signature-helper.sh footer   [OPTIONS]
+  gh-signature-helper.sh generate      [OPTIONS]
+  gh-signature-helper.sh footer        [OPTIONS]
+  gh-signature-helper.sh record-child  --child SESSION_ID [--parent ID] [--tokens N]
   gh-signature-helper.sh help
 
 Commands:
-  generate    Output the signature line (no leading ---)
-  footer      Output the full footer block (--- + newline + signature)
-  help        Show this help
+  generate      Output the signature line (no leading ---)
+  footer        Output the full footer block (--- + newline + signature)
+  record-child  Log a subagent's token usage to the parent session's ledger
+  help          Show this help
 
-Options:
+Options (generate/footer):
   --model MODEL             Model ID (e.g., anthropic/claude-opus-4-6)
   --tokens N                Token count (auto-detected from OpenCode DB if omitted)
   --cli NAME                CLI name override (e.g., "OpenCode CLI")
@@ -1191,9 +1364,15 @@ Options:
   --issue-created ISO       Issue creation timestamp for total time
   --solved                  Use "Solved in Xm." instead of "Xm since this issue was created."
 
+Options (record-child):
+  --child SESSION_ID        Child session ID (task_id from Task tool) — required
+  --parent SESSION_ID       Parent session ID (auto-detected if omitted)
+  --tokens N                Child token count (auto-detected from DB if omitted)
+
 Auto-detected fields (OpenCode sessions):
   - CLI name and version
-  - Token count (input+output from session DB)
+  - Token count (input+output from session DB, plus child subagent tokens)
+  - Child subagent tokens (from ledger written by record-child)
   - Session time (duration since session start)
   - Issue total tokens (sum of all signature footers by the authenticated
     GitHub user on the issue's comments, plus current session tokens).
@@ -1208,6 +1387,12 @@ Environment variables (override auto-detection):
 Examples:
   # Auto-detect everything, just specify model
   gh-signature-helper.sh generate --model anthropic/claude-opus-4-6
+
+  # Record a subagent's tokens after Task tool returns task_id
+  gh-signature-helper.sh record-child --child ses_abc123
+
+  # With explicit tokens (non-OpenCode runtimes)
+  gh-signature-helper.sh record-child --child ses_abc123 --tokens 1500
 
   # With issue ref for total time (queries GitHub API)
   gh-signature-helper.sh footer --model anthropic/claude-sonnet-4-6 --issue owner/repo#42
@@ -1230,6 +1415,7 @@ main() {
 	case "$command" in
 	generate) cmd_generate "$@" ;;
 	footer) cmd_footer "$@" ;;
+	record-child) cmd_record_child "$@" ;;
 	help | --help | -h) show_help ;;
 	*)
 		echo "Error: Unknown command: $command" >&2

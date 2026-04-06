@@ -315,6 +315,126 @@ echo "Test 15: help command"
 result=$("$HELPER" help 2>&1)
 assert_contains "help shows usage" "Usage:" "$result"
 assert_contains "help shows examples" "Examples:" "$result"
+assert_contains "help shows record-child" "record-child" "$result"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 16: record-child writes to ledger and generate aggregates (t1897)
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 16: child-token ledger (record-child + generate aggregation)"
+tmp_home_16=$(mktemp -d 2>/dev/null || mktemp -d -t sighelper16)
+mkdir -p "${tmp_home_16}/.local/share/opencode"
+mkdir -p "${tmp_home_16}/.aidevops/.agent-workspace/tmp"
+db_path_16="${tmp_home_16}/.local/share/opencode/opencode.db"
+
+now_epoch_16=$(date +%s)
+parent_created_ms_16=$(((now_epoch_16 - 600) * 1000))
+child_created_ms_16=$(((now_epoch_16 - 300) * 1000))
+
+cwd_sql_16=$(pwd)
+cwd_sql_16=${cwd_sql_16//\'/\'\'}
+
+if command -v sqlite3 &>/dev/null; then
+	sqlite3 "$db_path_16" "
+CREATE TABLE session (
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  directory TEXT NOT NULL,
+  time_created INTEGER NOT NULL
+);
+CREATE TABLE message (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  time_created INTEGER NOT NULL,
+  time_updated INTEGER NOT NULL,
+  data TEXT NOT NULL
+);
+-- Parent session with 500 tokens
+INSERT INTO session (id,title,directory,time_created)
+VALUES ('ses_parent_test','parent session','${cwd_sql_16}',${parent_created_ms_16});
+INSERT INTO message (id,session_id,time_created,time_updated,data)
+VALUES ('msg_p1','ses_parent_test',${parent_created_ms_16},${parent_created_ms_16},
+  '{\"tokens\":{\"input\":400,\"output\":100,\"cache\":{\"read\":0,\"write\":0}},\"role\":\"assistant\"}');
+
+-- Child session with 200 tokens
+INSERT INTO session (id,title,directory,time_created)
+VALUES ('ses_child_test','child subagent (@general subagent)','${cwd_sql_16}',${child_created_ms_16});
+INSERT INTO message (id,session_id,time_created,time_updated,data)
+VALUES ('msg_c1','ses_child_test',${child_created_ms_16},${child_created_ms_16},
+  '{\"tokens\":{\"input\":150,\"output\":50,\"cache\":{\"read\":0,\"write\":0}},\"role\":\"assistant\"}');
+"
+
+	# Test 16a: record-child without --tokens (auto-detect from DB)
+	HOME="$tmp_home_16" "$HELPER" record-child --child ses_child_test --parent ses_parent_test
+	ledger_file="${tmp_home_16}/.aidevops/.agent-workspace/tmp/ses_parent_test.children.tsv"
+	if [[ -r "$ledger_file" ]]; then
+		ledger_content=$(cat "$ledger_file")
+		assert_contains "ledger contains child ID" "ses_child_test" "$ledger_content"
+		assert_contains "ledger contains auto-detected tokens" "200" "$ledger_content"
+	else
+		echo "  FAIL: ledger file not created"
+		FAIL=$((FAIL + 1))
+	fi
+
+	# Test 16b: idempotent — recording same child again is a no-op
+	HOME="$tmp_home_16" "$HELPER" record-child --child ses_child_test --parent ses_parent_test
+	line_count=$(wc -l <"$ledger_file" | tr -d ' ')
+	assert_eq "idempotent record-child" "1" "$line_count"
+
+	# Test 16c: generate includes child tokens (parent 500 + child 200 = 700)
+	result=$(HOME="$tmp_home_16" "$HELPER" generate --cli "OpenCode" --model "m")
+	assert_contains "aggregated tokens (parent + child)" "700 tokens" "$result"
+
+	# Test 16d: record-child with explicit --tokens (non-OpenCode runtime path)
+	HOME="$tmp_home_16" "$HELPER" record-child --child ses_other_child --parent ses_parent_test --tokens 300
+	result=$(HOME="$tmp_home_16" "$HELPER" generate --cli "OpenCode" --model "m")
+	assert_contains "aggregated with explicit child (500+200+300)" "1,000 tokens" "$result"
+else
+	echo "  SKIP: sqlite3 not available"
+fi
+
+rm -rf "$tmp_home_16"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 17: record-child fails without --child
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 17: record-child requires --child"
+result=$("$HELPER" record-child 2>&1) && rc=$? || rc=$?
+assert_eq "record-child exits non-zero without --child" "1" "$rc"
+assert_contains "error message mentions --child" "--child" "$result"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 18: generate with no ledger file (no children) — unchanged behavior
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 18: no ledger = no child tokens added"
+tmp_home_18=$(mktemp -d 2>/dev/null || mktemp -d -t sighelper18)
+mkdir -p "${tmp_home_18}/.local/share/opencode"
+db_path_18="${tmp_home_18}/.local/share/opencode/opencode.db"
+
+now_epoch_18=$(date +%s)
+session_created_ms_18=$(((now_epoch_18 - 120) * 1000))
+cwd_sql_18=$(pwd)
+cwd_sql_18=${cwd_sql_18//\'/\'\'}
+
+if command -v sqlite3 &>/dev/null; then
+	sqlite3 "$db_path_18" "
+CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT NOT NULL, time_created INTEGER NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+INSERT INTO session (id,title,directory,time_created)
+VALUES ('ses_solo','solo session','${cwd_sql_18}',${session_created_ms_18});
+INSERT INTO message (id,session_id,time_created,time_updated,data)
+VALUES ('msg_s1','ses_solo',${session_created_ms_18},${session_created_ms_18},
+  '{\"tokens\":{\"input\":800,\"output\":200,\"cache\":{\"read\":0,\"write\":0}},\"role\":\"assistant\"}');
+"
+	result=$(HOME="$tmp_home_18" "$HELPER" generate --cli "OpenCode" --model "m")
+	assert_contains "solo session shows own tokens only" "1,000 tokens" "$result"
+else
+	echo "  SKIP: sqlite3 not available"
+fi
+
+rm -rf "$tmp_home_18"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary
