@@ -1374,8 +1374,17 @@ _run_activity_watchdog() {
 	local timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-300}"
 	[[ "$timeout" =~ ^[0-9]+$ ]] || timeout=300
 
+	# GH#17549: Two-phase watchdog.
+	# Phase 1 (fast): any output at all within PHASE1_TIMEOUT. Zero bytes =
+	#   dead runtime (startup crash, provider init hang). Kill immediately.
+	# Phase 2 (slow): LLM activity events within full timeout. Catches rate
+	#   limiting, API hang, model not responding after startup completes.
+	local phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-30}"
+	[[ "$phase1_timeout" =~ ^[0-9]+$ ]] || phase1_timeout=30
+
 	local elapsed=0
 	local poll_interval=5
+	local phase1_passed=0
 
 	while [[ "$elapsed" -lt "$timeout" ]]; do
 		# Check if worker already exited (success or failure — watchdog not needed)
@@ -1383,42 +1392,74 @@ _run_activity_watchdog() {
 			return 0
 		fi
 
-		# Check for LLM activity in the output file
-		# Activity indicators: JSON events from opencode (text, tool, reasoning, etc.)
 		if [[ -f "$output_file" ]]; then
-			# output_has_activity is defined earlier — checks for JSON events
-			# But we can't call it from a background process easily.
-			# Instead, check for common activity markers directly.
+			# Phase 1 gate: any output at all (startup banner, plugin logs, etc.)
+			if [[ "$phase1_passed" -eq 0 ]]; then
+				local file_size
+				file_size=$(wc -c <"$output_file" 2>/dev/null || echo "0")
+				file_size="${file_size##* }" # strip leading whitespace (macOS wc)
+				if [[ "$file_size" -gt 0 ]]; then
+					phase1_passed=1
+				fi
+			fi
+
+			# Phase 2: check for LLM activity (JSON events from opencode)
 			if grep -qE '"type"\s*:\s*"(text|tool|tool-invocation|tool-result|step_start|step_finish|reasoning)"' "$output_file" 2>/dev/null; then
 				# Real LLM activity detected — worker is alive
 				return 0
 			fi
 		fi
 
+		# Phase 1 timeout: no output bytes at all → dead runtime
+		if [[ "$phase1_passed" -eq 0 && "$elapsed" -ge "$phase1_timeout" ]]; then
+			_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
+				"phase1: zero output in ${phase1_timeout}s — runtime failed to start"
+			return 0
+		fi
+
 		sleep "$poll_interval"
 		elapsed=$((elapsed + poll_interval))
 	done
 
-	# Timeout reached with no activity — kill the stalled worker and all its
-	# children (opencode, tee, etc.). Sending only to $worker_pid leaves
-	# pipeline children as orphans consuming CPU+memory (GH#15180 bug #2).
+	# Phase 2 timeout: output produced but no LLM activity
 	if kill -0 "$worker_pid" 2>/dev/null; then
-		print_warning "Activity watchdog: no LLM activity in ${timeout}s — killing stalled worker (PID $worker_pid)"
-		# Write the marker BEFORE killing — the dying subshell may overwrite
-		# exit_code_file with its own exit code (race condition). The marker
-		# file survives because only the watchdog writes to it.
-		touch "${exit_code_file}.watchdog_killed"
-		# Kill child processes first (pipeline members: opencode, tee), then
-		# the subshell itself. pkill -P walks the process tree by PPID.
-		pkill -P "$worker_pid" 2>/dev/null || true
-		kill "$worker_pid" 2>/dev/null || true
-		sleep 2
-		pkill -9 -P "$worker_pid" 2>/dev/null || true
-		kill -9 "$worker_pid" 2>/dev/null || true
-		printf '124' >"$exit_code_file"
-		printf '\n[WATCHDOG_KILL] timestamp=%s worker_pid=%s timeout=%ss\n' \
-			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$worker_pid" "$timeout" >>"$output_file" 2>/dev/null || true
+		_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
+			"phase2: no LLM activity in ${timeout}s — provider stalled"
 	fi
+	return 0
+}
+
+#######################################
+# Kill a stalled worker and all its children.
+# Extracted from _run_activity_watchdog for reuse by both phases.
+#
+# Args:
+#   $1 - worker PID
+#   $2 - exit code file
+#   $3 - output file
+#   $4 - reason string (logged)
+#######################################
+_watchdog_kill() {
+	local worker_pid="$1"
+	local exit_code_file="$2"
+	local output_file="$3"
+	local reason="$4"
+
+	print_warning "Activity watchdog: ${reason} — killing worker (PID $worker_pid)"
+	# Write the marker BEFORE killing — the dying subshell may overwrite
+	# exit_code_file with its own exit code (race condition). The marker
+	# file survives because only the watchdog writes to it.
+	touch "${exit_code_file}.watchdog_killed"
+	# Kill child processes first (pipeline members: opencode, tee), then
+	# the subshell itself. pkill -P walks the process tree by PPID.
+	pkill -P "$worker_pid" 2>/dev/null || true
+	kill "$worker_pid" 2>/dev/null || true
+	sleep 2
+	pkill -9 -P "$worker_pid" 2>/dev/null || true
+	kill -9 "$worker_pid" 2>/dev/null || true
+	printf '124' >"$exit_code_file"
+	printf '\n[WATCHDOG_KILL] timestamp=%s worker_pid=%s reason="%s"\n' \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$worker_pid" "$reason" >>"$output_file" 2>/dev/null || true
 	return 0
 }
 
@@ -2022,6 +2063,69 @@ _cmd_run_finish() {
 	return 0
 }
 
+#######################################
+# Canary smoke test — verify OpenCode can start and complete an API call.
+#
+# Runs a trivial headless prompt with a tight timeout. Catches runtime
+# regressions (broken builds, provider init hangs) before wasting a full
+# worker dispatch. Results are cached for CANARY_CACHE_TTL_SECONDS to
+# avoid redundant tests within the same pulse cycle.
+#
+# GH#17549: introduced after v1.3.17 shipped a Cloudflare provider init
+# change that caused unconditional dep.auth() to hang in headless mode.
+#
+# Args: none (uses OPENCODE_BIN_DEFAULT)
+# Returns: 0 = healthy, 1 = failed
+#######################################
+CANARY_CACHE_TTL_SECONDS="${CANARY_CACHE_TTL_SECONDS:-1800}"
+CANARY_TIMEOUT_SECONDS="${CANARY_TIMEOUT_SECONDS:-20}"
+
+_run_canary_test() {
+	local cache_file="${STATE_DIR}/canary-last-pass"
+
+	# Check cache — skip if last canary passed recently
+	if [[ -f "$cache_file" ]]; then
+		local last_pass
+		last_pass=$(cat "$cache_file" 2>/dev/null || echo "0")
+		local now
+		now=$(date +%s)
+		local age=$((now - last_pass))
+		if [[ "$age" -lt "$CANARY_CACHE_TTL_SECONDS" ]]; then
+			return 0
+		fi
+	fi
+
+	local canary_output
+	canary_output=$(mktemp "${TMPDIR:-/tmp}/aidevops-canary.XXXXXX")
+
+	# Use --pure to skip external plugins — we're testing the OpenCode core.
+	# Use the cheapest model available. The prompt is trivial.
+	local canary_model="anthropic/claude-haiku-4-20250414"
+	local canary_exit=0
+
+	# perl alarm is the most portable macOS timeout mechanism
+	perl -e "alarm $CANARY_TIMEOUT_SECONDS; exec @ARGV" -- \
+		"$OPENCODE_BIN_DEFAULT" run "Reply with exactly: CANARY_OK" \
+		--pure -m "$canary_model" --dir "${HOME}" \
+		>"$canary_output" 2>&1 || canary_exit=$?
+
+	if [[ "$canary_exit" -eq 0 ]] && grep -q "CANARY_OK" "$canary_output" 2>/dev/null; then
+		# Cache the pass timestamp
+		mkdir -p "${STATE_DIR}" 2>/dev/null || true
+		date +%s >"$cache_file"
+		rm -f "$canary_output"
+		return 0
+	fi
+
+	# Canary failed — log diagnostics
+	local oc_version
+	oc_version=$("$OPENCODE_BIN_DEFAULT" --version 2>/dev/null || echo "unknown")
+	print_warning "Canary test FAILED (exit=$canary_exit, opencode=$oc_version, timeout=${CANARY_TIMEOUT_SECONDS}s)"
+	print_warning "Output: $(head -5 "$canary_output" 2>/dev/null || echo '<empty>')"
+	rm -f "$canary_output"
+	return 1
+}
+
 _cmd_run_prepare() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -2146,6 +2250,15 @@ cmd_run() {
 		_cmd_run_finish "$session_key" "fail"
 		return "$choose_exit"
 	}
+
+	# GH#17549: Canary smoke test — verify OpenCode can start and complete
+	# an API call before committing to a full worker dispatch. Cached so it
+	# runs at most once per CANARY_CACHE_TTL_SECONDS (default 30 min).
+	if ! _run_canary_test; then
+		print_warning "Canary failed — aborting dispatch for session $session_key"
+		_cmd_run_finish "$session_key" "fail"
+		return 1
+	fi
 
 	# GH#17436: Continuation retry configuration.
 	# When a worker exits prematurely (activity but no completion signal),
