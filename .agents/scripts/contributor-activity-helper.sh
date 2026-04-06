@@ -623,13 +623,10 @@ _session_time_all_periods() {
 	local format="$2"
 	local db_path="$3"
 
-	# Detect --all-dirs passthrough: when repo_path is literally "--all-dirs",
-	# pass the flag through to session_time instead of a repo path.
-	local all_dirs_flag=""
-	if [[ "$repo_path" == "--all-dirs" ]]; then
-		all_dirs_flag="--all-dirs"
-		repo_path=""
-	fi
+	# Build base args before the loop. repo_path may be "--all-dirs" (flag),
+	# a real path, or empty. session_time() handles all three cases.
+	local -a base_args=("$repo_path")
+	[[ -n "$db_path" ]] && base_args+=(--db-path "$db_path")
 
 	local all_periods=("day" "week" "month" "quarter" "year")
 	local combined_json="["
@@ -637,17 +634,7 @@ _session_time_all_periods() {
 	local p
 	for p in "${all_periods[@]}"; do
 		local p_json
-		local -a session_args=()
-		if [[ -n "$all_dirs_flag" ]]; then
-			session_args+=("--all-dirs")
-		elif [[ -n "$repo_path" ]]; then
-			session_args+=("$repo_path")
-		fi
-		session_args+=(--period "$p" --format json)
-		if [[ -n "$db_path" ]]; then
-			session_args+=(--db-path "$db_path")
-		fi
-		p_json=$(session_time "${session_args[@]}") || p_json="{}"
+		p_json=$(session_time "${base_args[@]}" --period "$p" --format json) || p_json="{}"
 		if [[ "$first_period" == "true" ]]; then
 			first_period=false
 		else
@@ -703,21 +690,19 @@ _session_time_query_db() {
 	local since_ms="$3"
 
 	# Build directory filter clause.
-	# When abs_repo_path is empty (--all-dirs), skip directory filtering
+	# When abs_repo_path is empty (--all-dirs), dir_clause stays empty
 	# to aggregate sessions across all repos (profile-level stats).
+	# Uses parameter expansion to avoid an if/fi block (nesting budget).
 	local dir_clause=""
-	if [[ -n "$abs_repo_path" ]]; then
-		# Escape path for safe SQL embedding:
-		# - Single quotes doubled per SQL standard (prevents injection)
-		# - % and _ escaped for LIKE patterns (prevents wildcard matching)
-		# since_ms is always numeric (computed by Python above), no injection risk.
-		local safe_path="${abs_repo_path//\'/\'\'}"
-		local like_path="${safe_path//%/\\%}"
-		like_path="${like_path//_/\\_}"
-		dir_clause="AND (s.directory = '${safe_path}'
-			       OR s.directory LIKE '${like_path}.%' ESCAPE '\\'
-			       OR s.directory LIKE '${like_path}-%' ESCAPE '\\')"
-	fi
+	local safe_path="${abs_repo_path//\'/\'\'}"
+	local like_path="${safe_path//%/\\%}"
+	like_path="${like_path//_/\\_}"
+	# Only set dir_clause when a path was provided; empty abs_repo_path
+	# produces empty safe_path, so the :+ expansion yields nothing.
+	# shellcheck disable=SC2016,SC1003 # Single quotes are SQL delimiters, not bash
+	dir_clause="${safe_path:+AND (s.directory = '${safe_path}'
+			       OR s.directory LIKE '${like_path}.%' ESCAPE '\\\\'
+			       OR s.directory LIKE '${like_path}-%' ESCAPE '\\\\')}"
 
 	# Query per-session human vs machine time using window functions.
 	# LAG() compares each message with the previous one in the same session:
@@ -1008,11 +993,11 @@ session_time() {
 
 	# Handle --period all: collect JSON for each period and output combined table
 	if [[ "$period" == "all" ]]; then
-		local -a all_args=("$repo_path" "$format" "$db_path")
-		if [[ "$all_dirs" == "true" ]]; then
-			all_args=("--all-dirs" "$format" "$db_path")
-		fi
-		_session_time_all_periods "${all_args[@]}"
+		# Pass "--all-dirs" as repo_path when aggregating all directories;
+		# _session_time_all_periods passes it through to session_time().
+		local all_repo_arg="$repo_path"
+		[[ "$all_dirs" == "true" ]] && all_repo_arg="--all-dirs"
+		_session_time_all_periods "$all_repo_arg" "$format" "$db_path"
 		return 0
 	fi
 
