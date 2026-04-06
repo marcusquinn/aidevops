@@ -225,11 +225,15 @@ discover_commands() {
 # These commands are defined inline and don't have corresponding files in
 # scripts/commands/. We generate them here for Claude Code parity.
 # Each call to maybe_write_command skips if already created in Phase 1.
+#
+# Decomposed into domain-specific helpers to keep each function under 100 lines.
 # =============================================================================
 
-generate_hardcoded_commands() {
-	echo -e "${BLUE}Phase 2: Generating additional commands for Claude Code parity...${NC}"
-
+# -----------------------------------------------------------------------------
+# Workflow commands: agent-review, preflight, postflight, review-issue-pr,
+#                    release, version-bump, changelog
+# -----------------------------------------------------------------------------
+_generate_workflow_commands() {
 	maybe_write_command "agent-review" \
 		"Systematic review and improvement of agent instructions" \
 		'Read ~/.aidevops/agents/tools/build-agent/agent-review.md and follow its instructions.
@@ -338,6 +342,14 @@ This maintains CHANGELOG.md with:
 - Version sections with dates
 - Categories: Added, Changed, Deprecated, Removed, Fixed, Security'
 
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Code quality commands: linters-local, code-audit-remote, code-standards,
+#                        code-simplifier
+# -----------------------------------------------------------------------------
+_generate_quality_commands() {
 	maybe_write_command "linters-local" \
 		"Run local linting tools (ShellCheck, secretlint, pattern checks)" \
 		'Run the local linters script:
@@ -380,6 +392,29 @@ This validates against our documented standards:
 - S1481: No unused variables
 - ShellCheck: Zero violations'
 
+	maybe_write_command "code-simplifier" \
+		"Simplify and refine code for clarity, consistency, and maintainability" \
+		'Read ~/.aidevops/agents/tools/code-review/code-simplifier.md and follow its instructions.
+
+Target: $ARGUMENTS
+
+**Usage:**
+- `/code-simplifier` — Simplify recently modified code
+- `/code-simplifier src/` — Simplify code in specific directory
+- `/code-simplifier --all` — Review entire codebase (use sparingly)
+
+**Key Principles:**
+- Preserve exact functionality
+- Clarity over brevity
+- Apply project standards'
+
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Branch commands: feature, bugfix, hotfix
+# -----------------------------------------------------------------------------
+_generate_branch_commands() {
 	maybe_write_command "feature" \
 		"Create and develop a feature branch" \
 		'Read ~/.aidevops/agents/workflows/branch/feature.md and follow its instructions.
@@ -413,6 +448,13 @@ This will:
 2. Implement minimal fix
 3. Fast-track to release'
 
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Utility commands: list-keys, log-time-spent, context, create-pr, pr
+# -----------------------------------------------------------------------------
+_generate_utility_commands() {
 	maybe_write_command "list-keys" \
 		"List all API keys available in session with their storage locations" \
 		'Run the list-keys helper script and format the output as a markdown table:
@@ -473,6 +515,13 @@ Context: $ARGUMENTS
 
 Run /create-pr with the same arguments.'
 
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Planning commands: create-prd, generate-tasks, plan-status
+# -----------------------------------------------------------------------------
+_generate_planning_commands() {
 	maybe_write_command "create-prd" \
 		"Generate a Product Requirements Document for a feature" \
 		'Read ~/.aidevops/agents/workflows/plans.md and follow its PRD generation instructions.
@@ -511,6 +560,16 @@ Show:
 3. Active plans with progress
 4. Offer to work on a specific task'
 
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# SEO commands: keyword-research, autocomplete-research,
+#               keyword-research-extended, webmaster-keywords, seo-fanout,
+#               seo-geo, seo-sro, seo-hallucination-defense,
+#               seo-agent-discovery, seo-ai-readiness, seo-ai-baseline
+# -----------------------------------------------------------------------------
+_generate_seo_commands() {
 	maybe_write_command "keyword-research" \
 		"Keyword research with seed keyword expansion" \
 		'Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
@@ -610,6 +669,15 @@ Target: $ARGUMENTS
 
 Return a completed KPI baseline scorecard plus top remediation priorities and re-test cadence.'
 
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# System & session commands: onboarding, setup-aidevops, ralph-loop,
+#                            cancel-ralph, ralph-status, ralph-task,
+#                            session-review
+# -----------------------------------------------------------------------------
+_generate_system_commands() {
 	maybe_write_command "onboarding" \
 		"Interactive onboarding wizard - discover services, configure integrations" \
 		'Read ${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/onboarding.md and follow its Welcome Flow instructions to guide the user through setup. Do NOT repeat these instructions — go straight to the Welcome Flow conversation.
@@ -699,22 +767,6 @@ Task ID: $ARGUMENTS
 
 **Usage:** `/ralph-task t042`'
 
-	maybe_write_command "code-simplifier" \
-		"Simplify and refine code for clarity, consistency, and maintainability" \
-		'Read ~/.aidevops/agents/tools/code-review/code-simplifier.md and follow its instructions.
-
-Target: $ARGUMENTS
-
-**Usage:**
-- `/code-simplifier` — Simplify recently modified code
-- `/code-simplifier src/` — Simplify code in specific directory
-- `/code-simplifier --all` — Review entire codebase (use sparingly)
-
-**Key Principles:**
-- Preserve exact functionality
-- Clarity over brevity
-- Apply project standards'
-
 	maybe_write_command "session-review" \
 		"Review session for completeness before ending" \
 		'Read ~/.aidevops/agents/scripts/commands/session-review.md and follow its instructions.
@@ -726,6 +778,23 @@ Review the current session for: $ARGUMENTS
 2. Workflow best practices followed
 3. Knowledge captured for future sessions
 4. Clear next steps identified'
+
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Orchestrator: calls all domain-specific generators
+# -----------------------------------------------------------------------------
+generate_hardcoded_commands() {
+	echo -e "${BLUE}Phase 2: Generating additional commands for Claude Code parity...${NC}"
+
+	_generate_workflow_commands
+	_generate_quality_commands
+	_generate_branch_commands
+	_generate_utility_commands
+	_generate_planning_commands
+	_generate_seo_commands
+	_generate_system_commands
 
 	return 0
 }
