@@ -37,8 +37,21 @@ mode: subagent
 
 ### Implementation Steps
 
-1. {Concrete step with file reference — e.g., "Copy `hooks/git_safety_guard.py` structure, filter for tool_name == mcp_task"}
-2. {Next step — e.g., "Add registration entry in `install-hooks-helper.sh:register_hooks()`"}
+<!-- For each file above, read the reference pattern and include a code skeleton
+     or diff as a fenced code block. New files: complete skeleton with imports,
+     function signatures, and inline comments marking where logic goes.
+     Edits: exact code block to insert with surrounding context.
+     The implementing worker should copy and fill in, not invent structure. -->
+
+1. {Concrete step with code skeleton:}
+
+```{language}
+{Code skeleton for new file — or exact diff block for edits.
+ Include imports, function signatures, inline comments for logic.
+ The worker copies this and fills in implementation details.}
+```
+
+2. {Next step with code skeleton if applicable}
 3. {Final step — e.g., "Run `shellcheck` on new file, verify hook fires with test harness"}
 
 ### Verification

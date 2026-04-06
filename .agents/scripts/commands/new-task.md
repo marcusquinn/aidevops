@@ -75,7 +75,7 @@ fi
 | **Origin** | Created date, session ID, author (human/ai-supervisor/ai-interactive), parent task |
 | **What** | Clear deliverable — what it must produce, not just "implement X" |
 | **Why** | Problem, user need, business value, or dependency |
-| **How** | Files to Modify (`NEW:`/`EDIT:` with paths), Implementation Steps (numbered, concrete), Verification (commands to confirm). See `templates/brief-template.md` for structured format. A brief without file paths produces vague issues that waste worker tokens — search the codebase (`git ls-files`, `rg`) to find them if unknown. |
+| **How** | Files to Modify (`NEW:`/`EDIT:` with paths), Implementation Steps (numbered, concrete), Verification (commands to confirm). See `templates/brief-template.md` for structured format. A brief without file paths produces vague issues that waste worker tokens — search the codebase (`git ls-files`, `rg`) to find them if unknown. **Code scaffolding (t1901):** For each file in Files to Modify, read the reference pattern and draft a code skeleton or diff. New files: complete skeleton with imports, function signatures, and inline comments. Edits: exact code block to insert with surrounding context. The worker should copy and fill in, not invent structure. |
 | **Acceptance** | Specific testable criteria + "Tests pass" + "Lint clean" |
 | **Context** | Key decisions, constraints, things ruled out |
 

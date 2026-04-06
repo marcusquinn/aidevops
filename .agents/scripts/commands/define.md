@@ -78,6 +78,8 @@ Read `templates/brief-template.md` and populate from interview answers:
 | Pre-mortem / negative space | **Acceptance Criteria** (negative criteria) |
 | Files mentioned | **Relevant Files** |
 
+**Code scaffolding (t1901 — MANDATORY for code tasks):** For each file listed in Files to Modify, read the reference pattern file and draft a code skeleton or diff showing the structure of the change. Include these in the Implementation Steps as fenced code blocks. The goal is that the implementing worker can copy the skeleton and fill in details, not invent structure from scratch. For new files: provide a complete skeleton with imports, function signatures, and inline comments marking where logic goes. For edits: provide the exact code block to insert and the surrounding context showing where it goes.
+
 ### Step 6: Present and Confirm
 
 Show the generated brief in full, then offer:
