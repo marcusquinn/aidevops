@@ -1178,7 +1178,7 @@ append_worker_headless_contract() {
 		return 0
 	fi
 
-	if [[ "$prompt_text" == *"HEADLESS_CONTINUATION_CONTRACT_V"* ]]; then
+	if [[ "$prompt_text" == *"HEADLESS_CONTINUATION_CONTRACT_V5"* ]]; then
 		printf '%s' "$prompt_text"
 		return 0
 	fi
@@ -1186,7 +1186,7 @@ append_worker_headless_contract() {
 	local contract
 	contract=$(
 		cat <<'EOF'
-[HEADLESS_CONTINUATION_CONTRACT_V4]
+[HEADLESS_CONTINUATION_CONTRACT_V5]
 This is a HEADLESS worker session. No user is present. No user input is available.
 You must drive autonomously to completion or an evidence-backed BLOCKED outcome.
 
@@ -1202,6 +1202,15 @@ Mandatory behavior:
 7. Do not stop at "PR opened" or "in review" states. Continue through review polling, merge readiness checks, merge, and required closing comments.
 8. If merge/close cannot complete, exit only with a clear BLOCKED outcome and evidence (failing check, missing permission, unresolved conflict, or explicit policy gate).
 9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, attempt model escalation — retry with the next tier (sonnet -> opus via --model anthropic/claude-opus-4-6). Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own.
+
+Activity watchdog constraint -- CRITICAL:
+A continuous watchdog monitors your output. If you produce no tool calls or text
+output for 300 seconds, you will be killed. Therefore:
+  - NEVER use sleep/wait/poll longer than 240 seconds.
+  - For review-bot-gate polling, use the --timeout flag (max 240s per poll cycle).
+  - If a CI check or merge is slow, emit a status message between waits to keep
+    the watchdog alive. Any tool call or text output resets the 300s timer.
+  - Prefer short poll intervals (30-60s) with status output between iterations.
 
 Pre-exit self-check -- MANDATORY:
 Before ending your session, verify ALL of these:
