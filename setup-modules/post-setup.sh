@@ -164,6 +164,10 @@ setup_tabby() {
 
 	print_info "Tabby terminal detected"
 
+	# Ensure default local profile uses /bin/zsh (macOS).
+	# After macOS updates, Tabby can fall back to bash when this is unset.
+	bash "$tabby_helper" fix-shell || true
+
 	# Install zshrc hook (idempotent)
 	if ! bash "$tabby_helper" zshrc; then
 		print_warning "Failed to install Tabby zshrc hook — run manually: aidevops tabby zshrc"

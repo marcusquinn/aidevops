@@ -13,6 +13,7 @@
 #   tabby-helper.sh sync          # Sync profiles from repos.json (default)
 #   tabby-helper.sh status        # Show current profile status
 #   tabby-helper.sh zshrc         # Install TABBY_AUTORUN hook in .zshrc
+#   tabby-helper.sh fix-shell     # Ensure default local profile uses /bin/zsh (macOS)
 #   tabby-helper.sh help          # Show usage
 #
 # Requires: python3 (ships with macOS), repos.json
@@ -140,14 +141,138 @@ ZSHRC_BLOCK
 	return 0
 }
 
+cmd_fix_shell() {
+	# macOS only: after OS updates, Tabby may fall back to /bin/bash when
+	# profileDefaults.local.options.command is unset. This ensures the default
+	# local profile uses /bin/zsh (the macOS default shell since Catalina).
+	# Uses targeted text insertion (not full YAML rewrite) to preserve formatting.
+	if [[ "$(uname -s)" != "Darwin" ]]; then
+		_info "fix-shell is macOS-only (zsh is the default shell since Catalina)"
+		return 0
+	fi
+
+	if [[ ! -f "$TABBY_CONFIG" ]]; then
+		return 0
+	fi
+
+	if ! command -v python3 >/dev/null 2>&1; then
+		_warn "python3 required for fix-shell — skipping"
+		return 1
+	fi
+
+	local result
+	result=$(
+		python3 - "$TABBY_CONFIG" <<'PYEOF'
+import sys
+import yaml
+
+config_path = sys.argv[1]
+
+with open(config_path) as f:
+    raw = f.read()
+
+data = yaml.safe_load(raw)
+
+# Navigate to profileDefaults.local.options
+pd = data.get("profileDefaults") or {}
+local_conf = pd.get("local") or {}
+options = local_conf.get("options") or {}
+current_cmd = options.get("command", "")
+
+if current_cmd == "/bin/zsh":
+    print("OK")
+    sys.exit(0)
+
+if current_cmd and current_cmd != "/bin/zsh":
+    # User has explicitly set a different shell — respect that
+    print("SKIP:" + current_cmd)
+    sys.exit(0)
+
+# command is missing — insert via targeted text edit to preserve formatting
+lines = raw.split("\n")
+state = "seek_pd"
+result_lines = []
+fixed = False
+
+for line in lines:
+    stripped = line.lstrip()
+    indent = len(line) - len(stripped)
+
+    if state == "seek_pd" and stripped == "profileDefaults:":
+        state = "seek_local"
+        result_lines.append(line)
+        continue
+
+    if state == "seek_local" and stripped.startswith("local:"):
+        state = "seek_options"
+        result_lines.append(line)
+        continue
+
+    if state == "seek_options" and stripped.startswith("options:"):
+        state = "done"
+        child_indent = " " * (indent + 2)
+        result_lines.append(line)
+        result_lines.append(child_indent + "command: /bin/zsh")
+        result_lines.append(child_indent + "args:")
+        result_lines.append(child_indent + "  - '-l'")
+        fixed = True
+        continue
+
+    result_lines.append(line)
+
+if not fixed:
+    print("WARN")
+    sys.exit(1)
+
+# Validate before writing
+new_text = "\n".join(result_lines)
+try:
+    yaml.safe_load(new_text)
+except yaml.YAMLError as e:
+    print("INVALID:" + str(e))
+    sys.exit(1)
+
+with open(config_path, "w") as f:
+    f.write(new_text)
+print("FIXED")
+sys.exit(0)
+PYEOF
+	) 2>&1
+
+	case "$result" in
+	OK)
+		_success "Tabby default profile already uses /bin/zsh"
+		;;
+	FIXED)
+		_success "Set Tabby default profile shell to /bin/zsh (restart Tabby to apply)"
+		;;
+	SKIP:*)
+		local other_shell="${result#SKIP:}"
+		_info "Tabby default profile uses $other_shell — not overriding"
+		;;
+	WARN)
+		_warn "Could not find profileDefaults.local.options in Tabby config"
+		;;
+	INVALID:*)
+		_error "Generated invalid YAML — config not modified"
+		;;
+	*)
+		_warn "Unexpected result from fix-shell: $result"
+		;;
+	esac
+
+	return 0
+}
+
 cmd_help() {
 	echo "tabby-helper.sh — Generate Tabby profiles from repos.json"
 	echo ""
 	echo "Usage:"
-	echo "  tabby-helper.sh sync     Sync profiles from repos.json (create new, skip existing)"
-	echo "  tabby-helper.sh status   Show profile status (which repos have profiles)"
-	echo "  tabby-helper.sh zshrc    Install TABBY_AUTORUN hook in .zshrc"
-	echo "  tabby-helper.sh help     Show this help"
+	echo "  tabby-helper.sh sync       Sync profiles from repos.json (create new, skip existing)"
+	echo "  tabby-helper.sh status     Show profile status (which repos have profiles)"
+	echo "  tabby-helper.sh zshrc      Install TABBY_AUTORUN hook in .zshrc"
+	echo "  tabby-helper.sh fix-shell  Ensure default local profile uses /bin/zsh (macOS)"
+	echo "  tabby-helper.sh help       Show this help"
 	echo ""
 	echo "Profiles are created with:"
 	echo "  - Random bright tab colour (dark-mode friendly, HSL L:50-70%, S:60-90%)"
@@ -167,6 +292,7 @@ main() {
 	sync) cmd_sync ;;
 	status) cmd_status ;;
 	zshrc) cmd_zshrc ;;
+	fix-shell) cmd_fix_shell ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		_error "Unknown command: $cmd"
