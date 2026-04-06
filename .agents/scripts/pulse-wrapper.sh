@@ -6466,6 +6466,95 @@ unlock_issue_after_worker() {
 }
 
 #######################################
+# GH#17574: Check if a task has already been committed directly to main.
+#
+# Workers that bypass the PR flow (direct commits to main) complete the
+# work invisibly — the issue stays open until the pulse's mark-complete
+# pass runs, which happens AFTER dispatch decisions for the next cycle.
+# This caused 3× token waste in the observed incident (t153–t160).
+#
+# Strategy: Extract task ID patterns from the issue title (tNNN, GH#NNN)
+# and search recent commits on origin/main since the issue was created.
+# A match means the work is already done — skip dispatch.
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#   $3 - issue_title (e.g., "t153: add dark mode toggle")
+#   $4 - repo_path (local path to the repo)
+#
+# Exit codes:
+#   0 - task IS committed to main (do NOT dispatch)
+#   1 - task is NOT committed to main (safe to dispatch)
+#######################################
+_is_task_committed_to_main() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_title="$3"
+	local repo_path="$4"
+
+	[[ -n "$issue_number" && -n "$repo_slug" && -n "$repo_path" ]] || return 1
+
+	# Extract task ID patterns from the issue title.
+	# Matches: "t153:", "t153 ", "GH#17574:", "GH#17574 "
+	# Also matches the issue number itself: "#17574" in commit messages.
+	local -a search_patterns=()
+
+	# Pattern 1: tNNN task ID from title (e.g., "t153: add dark mode")
+	local task_id_match
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+' | head -1) || task_id_match=""
+	if [[ -n "$task_id_match" ]]; then
+		search_patterns+=("$task_id_match")
+	fi
+
+	# Pattern 2: GH#NNN from title (e.g., "GH#17574: fix pulse dispatch")
+	local gh_id_match
+	gh_id_match=$(printf '%s' "$issue_title" | grep -oE '^GH#[0-9]+' | head -1) || gh_id_match=""
+	if [[ -n "$gh_id_match" ]]; then
+		search_patterns+=("$gh_id_match")
+	fi
+
+	# Pattern 3: Always search for the issue number itself
+	search_patterns+=("#${issue_number}")
+
+	# No patterns to search — cannot determine if committed
+	if [[ ${#search_patterns[@]} -eq 0 ]]; then
+		return 1
+	fi
+
+	# Get the issue creation date for --since filtering
+	local created_at
+	created_at=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json createdAt -q '.createdAt' 2>/dev/null) || created_at=""
+	if [[ -z "$created_at" ]]; then
+		return 1
+	fi
+
+	# Ensure we have the latest remote refs (the dispatch loop already
+	# does git pull, but fetch is cheaper and sufficient for log queries)
+	if [[ -d "$repo_path/.git" ]] || git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+		git -C "$repo_path" fetch origin main --quiet 2>/dev/null || true
+	else
+		return 1
+	fi
+
+	# Search recent commits on origin/main for any matching pattern
+	local pattern
+	for pattern in "${search_patterns[@]}"; do
+		local match_count
+		match_count=$(git -C "$repo_path" log origin/main --since="$created_at" \
+			--oneline --grep="$pattern" -i 2>/dev/null | wc -l) || match_count=0
+		match_count=$(printf '%s' "$match_count" | tr -d '[:space:]')
+		if [[ "$match_count" -gt 0 ]]; then
+			echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+#######################################
 # Atomic dispatch: dedup guard + assign + launch in a single call (GH#12436)
 #
 # Root cause of GH#12141 and GH#12155: the pulse.md instructed the LLM to
@@ -6556,6 +6645,21 @@ dispatch_with_dedup() {
 
 	if [[ "$target_title" == \[Supervisor:* ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: supervisor telemetry title" >>"$LOGFILE"
+		return 1
+	fi
+
+	# GH#17574: Skip dispatch if the task has already been committed directly
+	# to main. Workers that bypass the PR flow (direct commits) complete the
+	# work invisibly — the issue stays open until the pulse's mark-complete
+	# pass runs, which happens AFTER dispatch decisions. Without this check,
+	# the pulse dispatches redundant workers for already-completed work.
+	if _is_task_committed_to_main "$issue_number" "$repo_slug" "$target_title" "$repo_path"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: task already committed to main (GH#17574)" >>"$LOGFILE"
+		# Auto-close the issue since the work is done
+		gh issue close "$issue_number" --repo "$repo_slug" \
+			--comment "Closing — work for this issue has already been committed directly to main. Detected by pre-dispatch main-commit check (GH#17574).
+
+_Closed by pulse-wrapper.sh deterministic dispatch guard._" 2>/dev/null || true
 		return 1
 	fi
 
@@ -8595,6 +8699,14 @@ _extract_merge_summary() {
 
 #######################################
 # Close a conflicting PR with audit comment.
+#
+# GH#17574: Before saying "remains open for re-attempt", check if the
+# work has already landed on main (via the linked issue's task ID in
+# recent commits). If yes, close the linked issue too and say so —
+# the misleading "remains open for re-attempt" comment was itself a
+# dispatch trigger that caused a third redundant worker in the
+# observed incident.
+#
 # Args: $1=PR number, $2=repo slug, $3=PR title
 #######################################
 _close_conflicting_pr() {
@@ -8602,12 +8714,59 @@ _close_conflicting_pr() {
 	local repo_slug="$2"
 	local pr_title="$3"
 
-	gh pr close "$pr_number" --repo "$repo_slug" \
-		--comment "Closing — this PR has merge conflicts with the base branch. The linked issue (if any) remains open for a worker to re-attempt with a fresh branch.
+	# GH#17574: Check if the work is already on the default branch.
+	# Extract task ID from PR title (e.g., "t153: add dark mode" → "t153")
+	# and search recent commits on the default branch.
+	local work_on_main="false"
+	local task_id_from_pr
+	task_id_from_pr=$(printf '%s' "$pr_title" | grep -oE '^(t[0-9]+|GH#[0-9]+)' | head -1) || task_id_from_pr=""
+
+	if [[ -n "$task_id_from_pr" ]]; then
+		# Search commits on the default branch via GitHub API
+		local commit_match
+		commit_match=$(gh api "repos/${repo_slug}/commits" \
+			--method GET -f sha=main -f per_page=50 \
+			--jq "[.[] | select(.commit.message | test(\"(?i)${task_id_from_pr}\"))] | length" \
+			2>/dev/null) || commit_match="0"
+		if [[ "$commit_match" =~ ^[0-9]+$ ]] && [[ "$commit_match" -gt 0 ]]; then
+			work_on_main="true"
+		fi
+	fi
+
+	if [[ "$work_on_main" == "true" ]]; then
+		# Work is already on main — close PR with accurate message
+		gh pr close "$pr_number" --repo "$repo_slug" \
+			--comment "Closing — this PR has merge conflicts with the base branch. The work for this task (\`${task_id_from_pr}\`) has already been committed directly to main, so no re-attempt is needed.
+
+_Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null || true
+
+		# Also close the linked issue if it's still open
+		local linked_issue
+		linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
+		if [[ -n "$linked_issue" ]]; then
+			local issue_state
+			issue_state=$(gh issue view "$linked_issue" --repo "$repo_slug" \
+				--json state -q '.state' 2>/dev/null) || issue_state=""
+			if [[ "$issue_state" == "OPEN" ]]; then
+				gh issue close "$linked_issue" --repo "$repo_slug" \
+					--comment "Closing — work has already been committed directly to main. Detected when closing conflicting PR #${pr_number} (GH#17574).
+
+_Closed by pulse-wrapper.sh deterministic merge pass._" 2>/dev/null || true
+				echo "[pulse-wrapper] Deterministic merge: closed linked issue #${linked_issue} — work already on main (GH#17574)" >>"$LOGFILE"
+			fi
+		fi
+
+		echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title} (work already on main)" >>"$LOGFILE"
+	else
+		# Work NOT on main — use standard message but without the misleading
+		# "remains open for re-attempt" phrasing (GH#17574)
+		gh pr close "$pr_number" --repo "$repo_slug" \
+			--comment "Closing — this PR has merge conflicts with the base branch. If the linked issue is still open, a worker will be dispatched to re-attempt with a fresh branch.
 
 _Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
 
-	echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title}" >>"$LOGFILE"
+	fi
 	return 0
 }
 
