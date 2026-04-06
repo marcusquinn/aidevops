@@ -623,75 +623,83 @@ _auto_assign_issue() {
 	return 0
 }
 
-# Create GitHub issue (post-allocation, non-blocking)
-# t1324: Delegates to issue-sync-helper.sh push when available for rich
-# issue bodies, proper labels (including auto-dispatch), and duplicate
-# detection. Falls back to bare gh issue create if helper not found.
-create_github_issue() {
+# Try delegating issue creation to issue-sync-helper.sh for rich bodies,
+# proper labels (including auto-dispatch), and duplicate detection (t1324).
+# Echoes the issue number on success, returns 1 if delegation unavailable/failed.
+_try_issue_sync_delegation() {
 	local title="$1"
-	local description="$2"
-	local labels="$3"
-	local repo_path="$4"
-
-	cd "$repo_path" || return 1
+	local repo_path="$2"
 
 	# Extract task ID from title (format: "tNNN: description")
 	local task_id
 	task_id=$(printf '%s' "$title" | grep -oE '^t[0-9]+' || echo "")
 
-	# t1324: Delegate to issue-sync-helper.sh for rich issue creation
-	# This ensures proper labels, body composition, and duplicate detection
 	local issue_sync_helper="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/issue-sync-helper.sh"
-	if [[ -n "$task_id" && -x "$issue_sync_helper" && -f "$repo_path/TODO.md" ]]; then
-		local push_output
-		push_output=$("$issue_sync_helper" push "$task_id" 2>/dev/null || echo "")
-
-		local issue_num
-		issue_num=$(printf '%s' "$push_output" | grep -oE 'Created #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
-
-		# Also check if it found an existing issue (already has ref)
-		if [[ -z "$issue_num" ]]; then
-			issue_num=$(printf '%s' "$push_output" | grep -oE 'already has issue #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
-		fi
-
-		if [[ -n "$issue_num" ]]; then
-			log_info "Issue created via issue-sync-helper.sh: #$issue_num"
-			# Auto-assign to current user to prevent duplicate dispatch
-			_auto_assign_issue "$issue_num" "$repo_path"
-			echo "$issue_num"
-			return 0
-		fi
-		log_warn "issue-sync-helper.sh push returned no issue number, falling back to bare creation"
+	if [[ -z "$task_id" || ! -x "$issue_sync_helper" || ! -f "$repo_path/TODO.md" ]]; then
+		return 1
 	fi
 
-	# t1446: Broader dedup check before bare issue creation
-	# GitHub search matches across the full title (not just prefix), catching
-	# duplicates with different title formats (e.g., "t1344:" vs "coderabbit:")
+	local push_output
+	push_output=$("$issue_sync_helper" push "$task_id" 2>/dev/null || echo "")
+
+	local issue_num
+	issue_num=$(printf '%s' "$push_output" | grep -oE 'Created #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
+
+	# Also check if it found an existing issue (already has ref)
+	if [[ -z "$issue_num" ]]; then
+		issue_num=$(printf '%s' "$push_output" | grep -oE 'already has issue #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
+	fi
+
+	if [[ -n "$issue_num" ]]; then
+		log_info "Issue created via issue-sync-helper.sh: #$issue_num"
+		echo "$issue_num"
+		return 0
+	fi
+
+	log_warn "issue-sync-helper.sh push returned no issue number, falling back to bare creation"
+	return 1
+}
+
+# t1446: Broader dedup check before bare issue creation.
+# GitHub search matches across the full title (not just prefix), catching
+# duplicates with different title formats (e.g., "t1344:" vs "coderabbit:").
+# Echoes the existing issue number if found, returns 1 if no duplicate.
+_check_duplicate_issue() {
+	local title="$1"
+
 	local repo_slug
 	repo_slug=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
-	if [[ -n "$repo_slug" ]]; then
-		# Extract the descriptive part of the title (after any "tNNN: " or "prefix: " pattern)
-		local search_terms
-		search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
-		if [[ -n "$search_terms" ]]; then
-			local existing_issue
-			existing_issue=$(gh issue list --repo "$repo_slug" \
-				--state all --search "$search_terms" \
-				--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
-			if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
-				log_info "Found existing issue #$existing_issue matching title, skipping duplicate creation"
-				echo "$existing_issue"
-				return 0
-			fi
-		fi
+	if [[ -z "$repo_slug" ]]; then
+		return 1
 	fi
 
-	# Fallback: bare issue creation with structured body
-	local gh_args=(issue create --title "$title")
+	# Extract the descriptive part of the title (after any "tNNN: " or "prefix: " pattern)
+	local search_terms
+	search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
+	if [[ -z "$search_terms" ]]; then
+		return 1
+	fi
 
-	# t1899: Compose a structured body from available context when no
-	# --description was provided, instead of an opaque placeholder string.
-	# Also warn at claim time so callers notice the gap.
+	local existing_issue
+	existing_issue=$(gh issue list --repo "$repo_slug" \
+		--state all --search "$search_terms" \
+		--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
+	if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
+		log_info "Found existing issue #$existing_issue matching title, skipping duplicate creation"
+		echo "$existing_issue"
+		return 0
+	fi
+
+	return 1
+}
+
+# Compose a structured issue body from title and description (t1899).
+# Appends provenance signature footer when gh-signature-helper.sh is available.
+# Echoes the composed body text.
+_compose_issue_body() {
+	local title="$1"
+	local description="$2"
+
 	local body=""
 	if [[ -n "$description" ]]; then
 		body="$description"
@@ -713,6 +721,41 @@ create_github_issue() {
 		[[ -n "$sig_footer" ]] && body="$body"$'\n'"$sig_footer"
 	fi
 
+	echo "$body"
+	return 0
+}
+
+# Create GitHub issue (post-allocation, non-blocking)
+# t1324: Delegates to issue-sync-helper.sh push when available for rich
+# issue bodies, proper labels (including auto-dispatch), and duplicate
+# detection. Falls back to bare gh issue create if helper not found.
+create_github_issue() {
+	local title="$1"
+	local description="$2"
+	local labels="$3"
+	local repo_path="$4"
+
+	cd "$repo_path" || return 1
+
+	# Try rich delegation first (t1324)
+	local issue_num
+	if issue_num=$(_try_issue_sync_delegation "$title" "$repo_path"); then
+		_auto_assign_issue "$issue_num" "$repo_path"
+		echo "$issue_num"
+		return 0
+	fi
+
+	# Dedup check before bare creation (t1446)
+	if issue_num=$(_check_duplicate_issue "$title"); then
+		echo "$issue_num"
+		return 0
+	fi
+
+	# Fallback: bare issue creation with structured body
+	local gh_args=(issue create --title "$title")
+
+	local body
+	body=$(_compose_issue_body "$title" "$description")
 	gh_args+=(--body "$body")
 
 	# Append session origin label (origin:worker or origin:interactive)
@@ -730,7 +773,6 @@ create_github_issue() {
 		return 1
 	fi
 
-	local issue_num
 	issue_num=$(echo "$issue_url" | grep -oE '[0-9]+$')
 
 	if [[ -z "$issue_num" ]]; then
