@@ -6621,7 +6621,12 @@ dispatch_with_dedup() {
 	if [[ -n "$selected_model" ]]; then
 		worker_cmd+=(--model "$selected_model")
 	fi
-	"${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
+	# GH#17549: Detach worker from the pulse-wrapper's SIGHUP.
+	# launchd runs pulse-wrapper with StartInterval=120s. When the wrapper
+	# exits after its dispatch cycle, bash sends SIGHUP to background jobs.
+	# nohup makes the worker immune to SIGHUP so it survives the parent's
+	# exit. The EXIT trap only releases the instance lock (no child killing).
+	nohup "${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
 	local worker_pid="$!"
 
 	# GH#17549: Stagger delay between worker launches to reduce SQLite
