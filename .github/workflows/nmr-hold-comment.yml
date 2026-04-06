@@ -49,15 +49,16 @@ jobs:
             // Dedup: check for existing comments with the approve command.
             // Covers prior posts from issue-triage-gate, maintainer-gate
             // label protection, or a previous run of this workflow.
-            const comments = await github.rest.issues.listComments({
+            // Use paginate to fetch ALL comments — listComments caps at 100
+            // and would miss older comments on high-traffic issues.
+            const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: issueNumber,
-              per_page: 100
+              issue_number: issueNumber
             });
 
             const approvePattern = `sudo aidevops approve issue ${issueNumber}`;
-            const hasApproveComment = comments.data.some(c =>
+            const hasApproveComment = comments.some(c =>
               c.body.includes(approvePattern) ||
               c.body.includes('<!-- nmr-hold-guidance -->')
             );
