@@ -426,85 +426,119 @@ _get_model_usage() {
 	return 0
 }
 
-# --- Get total token stats for footer ---
-# Usage: _get_token_totals [period]
-#   period: "30d" (default) or "all" (no date filter)
-_get_token_totals() {
-	local period="${1:-30d}"
+# --- Token totals: shared jq expression for computing total_all and cache_hit_pct ---
+_token_totals_jq_expr() {
+	echo '. + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
+		| . + {cache_hit_pct: (if .total_all > 0 then ((.total_cache_read / .total_all * 1000 | round) / 10) else 0 end)}'
+	return 0
+}
 
-	local jq_totals='
-		. + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
-		| . + {cache_hit_pct: (if .total_all > 0 then ((.total_cache_read / .total_all * 1000 | round) / 10) else 0 end)}
-	'
+# --- Token totals: apply jq enrichment and emit JSON, with fallback ---
+# Usage: _token_totals_enrich <raw_json>
+_token_totals_enrich() {
+	local raw_json="$1"
+	local jq_totals
+	jq_totals=$(_token_totals_jq_expr)
 
-	# For "all" period, use OpenCode session DB (full history).
-	# GH#17549: Query both active and archive DBs for complete totals.
-	if [[ "$period" == "all" ]] && command -v sqlite3 &>/dev/null && [[ -f "$OPENCODE_DB_FILE" ]]; then
-		local oc_totals _totals_attach="" _totals_union=""
-		if [[ -f "$OPENCODE_ARCHIVE_DB_FILE" ]]; then
-			_totals_attach="ATTACH DATABASE '${OPENCODE_ARCHIVE_DB_FILE}' AS archive;"
-			_totals_union="UNION ALL
-				SELECT json_extract(data, '\$.tokens.input'),
-					json_extract(data, '\$.tokens.output'),
-					json_extract(data, '\$.tokens.cache.read'),
-					json_extract(data, '\$.tokens.cache.write')
-				FROM archive.message
-				WHERE json_extract(data, '\$.role') = 'assistant'"
-		fi
-		oc_totals=$(sqlite3 "$OPENCODE_DB_FILE" "
-			${_totals_attach}
-			SELECT json_object(
-				'total_input', COALESCE(SUM(ti), 0),
-				'total_output', COALESCE(SUM(to2), 0),
-				'total_cache_read', COALESCE(SUM(cr), 0),
-				'total_cache_write', COALESCE(SUM(cw), 0)
-			)
-			FROM (
-				SELECT json_extract(data, '\$.tokens.input') AS ti,
-					json_extract(data, '\$.tokens.output') AS to2,
-					json_extract(data, '\$.tokens.cache.read') AS cr,
-					json_extract(data, '\$.tokens.cache.write') AS cw
-				FROM message
-				WHERE json_extract(data, '\$.role') = 'assistant'
-				${_totals_union}
-			);
-		" 2>/dev/null || true)
+	if [[ -n "$raw_json" ]]; then
+		echo "$raw_json" | jq -c "$jq_totals" 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
+	else
+		echo '{"total_all":0,"cache_hit_pct":0}'
+	fi
+	return 0
+}
 
-		if [[ -n "$oc_totals" ]]; then
-			echo "$oc_totals" | jq -c "$jq_totals" 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
-			return 0
-		fi
+# --- Token totals: query OpenCode session DB (all-time only) ---
+# GH#17549: Query both active and archive DBs for complete totals.
+# Returns: JSON string on stdout, or empty string if unavailable.
+_token_totals_from_opencode_db() {
+	if ! command -v sqlite3 &>/dev/null || [[ ! -f "$OPENCODE_DB_FILE" ]]; then
+		return 1
 	fi
 
-	# For 30d or fallback: use observability DB.
+	local _totals_attach="" _totals_union=""
+	if [[ -f "$OPENCODE_ARCHIVE_DB_FILE" ]]; then
+		_totals_attach="ATTACH DATABASE '${OPENCODE_ARCHIVE_DB_FILE}' AS archive;"
+		_totals_union="UNION ALL
+			SELECT json_extract(data, '\$.tokens.input'),
+				json_extract(data, '\$.tokens.output'),
+				json_extract(data, '\$.tokens.cache.read'),
+				json_extract(data, '\$.tokens.cache.write')
+			FROM archive.message
+			WHERE json_extract(data, '\$.role') = 'assistant'"
+	fi
+
+	local oc_totals
+	oc_totals=$(sqlite3 "$OPENCODE_DB_FILE" "
+		${_totals_attach}
+		SELECT json_object(
+			'total_input', COALESCE(SUM(ti), 0),
+			'total_output', COALESCE(SUM(to2), 0),
+			'total_cache_read', COALESCE(SUM(cr), 0),
+			'total_cache_write', COALESCE(SUM(cw), 0)
+		)
+		FROM (
+			SELECT json_extract(data, '\$.tokens.input') AS ti,
+				json_extract(data, '\$.tokens.output') AS to2,
+				json_extract(data, '\$.tokens.cache.read') AS cr,
+				json_extract(data, '\$.tokens.cache.write') AS cw
+			FROM message
+			WHERE json_extract(data, '\$.role') = 'assistant'
+			${_totals_union}
+		);
+	" 2>/dev/null || true)
+
+	if [[ -n "$oc_totals" ]]; then
+		echo "$oc_totals"
+		return 0
+	fi
+	return 1
+}
+
+# --- Token totals: query observability DB ---
+# Usage: _token_totals_from_obs_db [period]
+#   period: "30d" (default) or "all" (no date filter)
+# Returns: JSON string on stdout, or empty string if unavailable.
+_token_totals_from_obs_db() {
+	local period="${1:-30d}"
+
+	if ! command -v sqlite3 &>/dev/null || [[ ! -f "$OBS_DB_FILE" ]]; then
+		return 1
+	fi
+
 	local date_filter=""
 	if [[ "$period" != "all" ]]; then
 		date_filter="WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
 	fi
 
-	if command -v sqlite3 &>/dev/null && [[ -f "$OBS_DB_FILE" ]]; then
-		local sqlite_totals
-		sqlite_totals=$(sqlite3 "$OBS_DB_FILE" "
-			SELECT json_object(
-				'total_input', COALESCE(SUM(tokens_input), 0),
-				'total_output', COALESCE(SUM(tokens_output), 0),
-				'total_cache_read', COALESCE(SUM(tokens_cache_read), 0),
-				'total_cache_write', COALESCE(SUM(tokens_cache_write), 0)
-			)
-			FROM llm_requests
-			${date_filter};
-		" 2>/dev/null || true)
+	local sqlite_totals
+	sqlite_totals=$(sqlite3 "$OBS_DB_FILE" "
+		SELECT json_object(
+			'total_input', COALESCE(SUM(tokens_input), 0),
+			'total_output', COALESCE(SUM(tokens_output), 0),
+			'total_cache_read', COALESCE(SUM(tokens_cache_read), 0),
+			'total_cache_write', COALESCE(SUM(tokens_cache_write), 0)
+		)
+		FROM llm_requests
+		${date_filter};
+	" 2>/dev/null || true)
 
-		if [[ -n "$sqlite_totals" ]]; then
-			echo "$sqlite_totals" | jq -c "$jq_totals" 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
-			return 0
-		fi
-	fi
-
-	# Legacy fallback: JSONL metrics file.
-	if [[ ! -f "$METRICS_FILE" ]]; then
-		echo '{"total_all":0,"cache_hit_pct":0}'
+	if [[ -n "$sqlite_totals" ]]; then
+		echo "$sqlite_totals"
 		return 0
+	fi
+	return 1
+}
+
+# --- Token totals: legacy JSONL metrics fallback ---
+# Usage: _token_totals_from_jsonl [period]
+#   period: "30d" (default) or "all" (no date filter)
+# Returns: JSON string on stdout, or empty string if unavailable.
+_token_totals_from_jsonl() {
+	local period="${1:-30d}"
+
+	if [[ ! -f "$METRICS_FILE" ]]; then
+		return 1
 	fi
 
 	if [[ "$period" == "all" ]]; then
@@ -515,9 +549,7 @@ _get_token_totals() {
 				total_cache_read: ([.[].cache_read_tokens // 0] | add),
 				total_cache_write: ([.[].cache_write_tokens // 0] | add)
 			}
-			| . + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
-			| . + {cache_hit_pct: (if .total_all > 0 then ((.total_cache_read / .total_all * 1000 | round) / 10) else 0 end)}
-		' "$METRICS_FILE" 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
+		' "$METRICS_FILE" 2>/dev/null || { return 1; }
 	else
 		local cutoff
 		cutoff=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d 2>/dev/null || echo "1970-01-01")
@@ -530,11 +562,43 @@ _get_token_totals() {
 				total_cache_read: ([.[].cache_read_tokens // 0] | add),
 				total_cache_write: ([.[].cache_write_tokens // 0] | add)
 			}
-			| . + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
-			| . + {cache_hit_pct: (if .total_all > 0 then ((.total_cache_read / .total_all * 1000 | round) / 10) else 0 end)}
-		' "$METRICS_FILE" 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
+		' "$METRICS_FILE" 2>/dev/null || { return 1; }
+	fi
+	return 0
+}
+
+# --- Get total token stats for footer ---
+# Usage: _get_token_totals [period]
+#   period: "30d" (default) or "all" (no date filter)
+# Queries data sources in priority order: OpenCode DB → Observability DB → JSONL.
+# Each source helper returns raw totals; enrichment (total_all, cache_hit_pct) is
+# applied once by _token_totals_enrich.
+_get_token_totals() {
+	local period="${1:-30d}"
+	local raw_totals=""
+
+	# Source 1: OpenCode session DB (all-time only)
+	if [[ "$period" == "all" ]]; then
+		raw_totals=$(_token_totals_from_opencode_db) && {
+			_token_totals_enrich "$raw_totals"
+			return 0
+		}
 	fi
 
+	# Source 2: Observability DB
+	raw_totals=$(_token_totals_from_obs_db "$period") && {
+		_token_totals_enrich "$raw_totals"
+		return 0
+	}
+
+	# Source 3: Legacy JSONL metrics
+	raw_totals=$(_token_totals_from_jsonl "$period") && {
+		_token_totals_enrich "$raw_totals"
+		return 0
+	}
+
+	# No data source available
+	echo '{"total_all":0,"cache_hit_pct":0}'
 	return 0
 }
 
