@@ -154,99 +154,161 @@ _fix_shell_check_prereqs() {
 		return 1
 	fi
 
-	if ! command -v python3 >/dev/null 2>&1; then
-		_warn "python3 required for fix-shell — skipping"
-		return 1
-	fi
-
 	return 0
 }
 
 _fix_shell_patch_config() {
-	# Runs a Python script that reads the Tabby YAML config and inserts
-	# /bin/zsh as the default shell via targeted text insertion (preserves
-	# formatting). Prints a single status token: OK, FIXED, SKIP:<shell>,
-	# WARN, or INVALID:<error>.
+	# Parses the Tabby YAML with a targeted state machine and inserts
+	# /bin/zsh as the default shell while preserving the existing file shape.
+	# Prints a single status token: OK, FIXED, SKIP:<shell>, WARN, or INVALID.
 	local config_path="$1"
-	local result
-	result=$(
-		python3 - "$config_path" <<'PYEOF'
-import sys
-import yaml
+	local current_cmd=""
+	current_cmd=$(awk '
+		function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+		function key_is(str, key) { return str ~ ("^" key ":[[:space:]]*($|#)") }
+		BEGIN { state="seek_pd"; found_options=0; found_command=0 }
+		{
+			line=$0
+			stripped=line
+			sub(/^[[:space:]]+/, "", stripped)
+			indent=length(line)-length(stripped)
 
-config_path = sys.argv[1]
+			if (state=="seek_pd" && key_is(stripped, "profileDefaults")) { state="seek_local"; next }
+			if (state=="seek_local" && key_is(stripped, "local")) { state="seek_options"; next }
+			if (state=="seek_options" && key_is(stripped, "options")) {
+				state="in_options"
+				found_options=1
+				options_indent=indent
+				next
+			}
 
-with open(config_path) as f:
-    raw = f.read()
+			if (state=="in_options") {
+				if (stripped !~ /^($|#)/ && indent <= options_indent) {
+					state="done"
+				}
+				if (state=="in_options" && indent == options_indent + 2 && stripped ~ /^command:[[:space:]]*/) {
+					value = stripped
+					sub(/^command:[[:space:]]*/, "", value)
+					sub(/[[:space:]]+#.*$/, "", value)
+					value = trim(value)
+					if ((value ~ /^\047.*\047$/) || (value ~ /^\".*\"$/)) {
+						value = substr(value, 2, length(value)-2)
+					}
+					print value
+					found_command=1
+					exit
+				}
+			}
+		}
+		END {
+			if (found_command==1) {
+				exit 0
+			}
+			if (found_options==1) {
+				print "__MISSING__"
+			} else {
+				print "__WARN__"
+			}
+		}
+	' "$config_path" 2>/dev/null || printf '%s\n' "__WARN__")
 
-data = yaml.safe_load(raw)
+	case "$current_cmd" in
+	"__WARN__")
+		echo "WARN"
+		return 0
+		;;
+	"/bin/zsh")
+		echo "OK"
+		return 0
+		;;
+	"" | "__MISSING__" | "null" | "~" | "''" | '""') ;;
+	*)
+		echo "SKIP:$current_cmd"
+		return 0
+		;;
+	esac
 
-# Navigate to profileDefaults.local.options
-pd = data.get("profileDefaults") or {}
-local_conf = pd.get("local") or {}
-options = local_conf.get("options") or {}
-current_cmd = options.get("command", "")
+	local tmp_file="${config_path}.tmp.$$"
+	if ! awk '
+		function key_is(str, key) { return str ~ ("^" key ":[[:space:]]*($|#)") }
+		BEGIN {
+			state="seek_pd"
+			inserted=0
+			skip_args=0
+		}
+		{
+			line=$0
+			stripped=line
+			sub(/^[[:space:]]+/, "", stripped)
+			indent=length(line)-length(stripped)
 
-if current_cmd == "/bin/zsh":
-    print("OK")
-    sys.exit(0)
+			if (skip_args==1) {
+				if (stripped ~ /^($|#)/ || indent > args_indent) {
+					next
+				}
+				skip_args=0
+			}
 
-if current_cmd and current_cmd != "/bin/zsh":
-    # User has explicitly set a different shell — respect that
-    print("SKIP:" + current_cmd)
-    sys.exit(0)
+			if (state=="seek_pd" && key_is(stripped, "profileDefaults")) {
+				state="seek_local"
+				print line
+				next
+			}
 
-# command is missing — insert via targeted text edit to preserve formatting
-lines = raw.split("\n")
-state = "seek_pd"
-result_lines = []
-fixed = False
+			if (state=="seek_local" && key_is(stripped, "local")) {
+				state="seek_options"
+				print line
+				next
+			}
 
-for line in lines:
-    stripped = line.lstrip()
-    indent = len(line) - len(stripped)
+			if (state=="seek_options" && key_is(stripped, "options")) {
+				state="in_options"
+				options_indent=indent
+				child_indent=sprintf("%*s", indent + 2, "")
+				print line
+				print child_indent "command: /bin/zsh"
+				print child_indent "args:"
+				print child_indent "  - '\''-l'\''"
+				inserted=1
+				next
+			}
 
-    if state == "seek_pd" and stripped == "profileDefaults:":
-        state = "seek_local"
-        result_lines.append(line)
-        continue
+			if (state=="in_options") {
+				if (stripped !~ /^($|#)/ && indent <= options_indent) {
+					state="done"
+					print line
+					next
+				}
+				if (indent == options_indent + 2 && stripped ~ /^command:[[:space:]]*/) {
+					next
+				}
+				if (indent == options_indent + 2 && key_is(stripped, "args")) {
+					skip_args=1
+					args_indent=indent
+					next
+				}
+			}
 
-    if state == "seek_local" and stripped.startswith("local:"):
-        state = "seek_options"
-        result_lines.append(line)
-        continue
+			print line
+		}
+		END {
+			if (inserted != 1) {
+				exit 2
+			}
+		}
+	' "$config_path" >"$tmp_file"; then
+		rm -f "$tmp_file"
+		echo "WARN"
+		return 0
+	fi
 
-    if state == "seek_options" and stripped.startswith("options:"):
-        state = "done"
-        child_indent = " " * (indent + 2)
-        result_lines.append(line)
-        result_lines.append(child_indent + "command: /bin/zsh")
-        result_lines.append(child_indent + "args:")
-        result_lines.append(child_indent + "  - '-l'")
-        fixed = True
-        continue
+	if ! mv "$tmp_file" "$config_path"; then
+		rm -f "$tmp_file"
+		echo "INVALID:write-failed"
+		return 0
+	fi
 
-    result_lines.append(line)
-
-if not fixed:
-    print("WARN")
-    sys.exit(1)
-
-# Validate before writing
-new_text = "\n".join(result_lines)
-try:
-    yaml.safe_load(new_text)
-except yaml.YAMLError as e:
-    print("INVALID:" + str(e))
-    sys.exit(1)
-
-with open(config_path, "w") as f:
-    f.write(new_text)
-print("FIXED")
-sys.exit(0)
-PYEOF
-	) 2>&1
-	echo "$result"
+	echo "FIXED"
 	return 0
 }
 
