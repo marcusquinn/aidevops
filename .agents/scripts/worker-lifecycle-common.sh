@@ -26,8 +26,12 @@
 #   _format_duration()        Format seconds into human-readable duration
 #
 # Companion files:
-#   session_tail_query.py     Extracted Python logic for session tail
-#                             classification (GH#6428)
+#   session_tail_query.py              Session tail classification (GH#6428)
+#   worker_lifecycle_extract_title.py  Extract --title from CLI args (GH#17561)
+#   worker_lifecycle_stall_evidence.py Classify worker log tail (GH#17561)
+#   worker_lifecycle_resolve_session.py Resolve session ID from title (GH#17561)
+#   worker_lifecycle_count_messages.py Count session DB messages (GH#17561)
+#   list_active_workers.awk            Deduplicate active worker processes (GH#17561)
 #
 # Usage: source worker-lifecycle-common.sh
 #
@@ -52,39 +56,19 @@ _opencode_db_path() {
 # Arguments:
 #   $1 - command line string
 # Returns: session title or empty string via stdout
+#
+# Logic extracted to worker_lifecycle_extract_title.py (GH#17561).
 #######################################
 _extract_session_title() {
 	local cmd="$1"
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	local py_script="${script_dir}/worker_lifecycle_extract_title.py"
 	local session_title=""
 
-	session_title=$(
-		SESSION_CMD="$cmd" python3 - <<'PY'
-import os
-import shlex
-
-cmd = os.environ.get("SESSION_CMD", "")
-title = ""
-
-try:
-    tokens = shlex.split(cmd)
-except Exception:
-    tokens = cmd.split()
-
-for idx, token in enumerate(tokens):
-    if token == "--title" and idx + 1 < len(tokens):
-        collected = []
-        for next_token in tokens[idx + 1 :]:
-            if next_token.startswith("--"):
-                break
-            if next_token == "/full-loop":
-                break
-            collected.append(next_token)
-        title = " ".join(collected).strip()
-        break
-
-print(title)
-PY
-	)
+	if [[ -f "$py_script" ]]; then
+		session_title=$(SESSION_CMD="$cmd" python3 "$py_script" 2>/dev/null) || session_title=""
+	fi
 
 	printf '%s' "${session_title:-}"
 	return 0
@@ -390,21 +374,12 @@ _resolve_session_id_from_cmd() {
 		return 0
 	}
 
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	# Logic extracted to worker_lifecycle_resolve_session.py (GH#17561)
 	session_id=$(
-		DB_PATH="$db_path" TITLE="$session_title" python3 - <<'PY'
-import os, sqlite3
-db = os.environ["DB_PATH"]
-title = os.environ["TITLE"]
-conn = sqlite3.connect(db)
-conn.execute("PRAGMA busy_timeout=5000")
-cur = conn.cursor()
-cur.execute("SELECT id FROM session WHERE title = ? ORDER BY time_created DESC LIMIT 1", (title,))
-row = cur.fetchone()
-if not row:
-    cur.execute("SELECT id FROM session WHERE title LIKE ? ORDER BY time_created DESC LIMIT 1", (f"%{title}%",))
-    row = cur.fetchone()
-print(row[0] if row else "")
-PY
+		DB_PATH="$db_path" TITLE="$session_title" \
+			python3 "${script_dir}/worker_lifecycle_resolve_session.py"
 	) 2>/dev/null || session_id=""
 
 	printf '%s' "$session_id"
@@ -434,22 +409,13 @@ _count_recent_opencode_messages() {
 		return 0
 	fi
 
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	local recent_count
+	# Logic extracted to worker_lifecycle_count_messages.py (GH#17561)
 	recent_count=$(
-		DB_PATH="$db_path" MATCH="$session_match" WINDOW="$recent_window" python3 - <<'PY'
-import os, sqlite3
-conn = sqlite3.connect(os.environ["DB_PATH"])
-conn.execute("PRAGMA busy_timeout=5000")
-cur = conn.cursor()
-cur.execute(
-    "SELECT COUNT(*) FROM message m JOIN session s ON m.session_id = s.id"
-    " WHERE s.title LIKE ?"
-    " AND (CASE WHEN m.time_created > 20000000000 THEN m.time_created / 1000 ELSE m.time_created END)"
-    " >= strftime('%s', 'now') - ?",
-    (f"%{os.environ['MATCH']}%", int(os.environ["WINDOW"])),
-)
-print(cur.fetchone()[0] or 0)
-PY
+		DB_PATH="$db_path" MODE="recent" MATCH="$session_match" WINDOW="$recent_window" \
+			python3 "${script_dir}/worker_lifecycle_count_messages.py"
 	) 2>/dev/null || recent_count=0
 	[[ "$recent_count" =~ ^[0-9]+$ ]] || recent_count=0
 
@@ -475,65 +441,13 @@ _collect_worker_stall_evidence() {
 	recent_count=$(_count_recent_opencode_messages "$session_match" "$recent_window")
 	[[ "$tail_lines" =~ ^[0-9]+$ ]] || tail_lines=8
 
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	local py_script="${script_dir}/worker_lifecycle_stall_evidence.py"
+
 	local evidence
-	evidence=$(
-		python3 - "$log_file" "$tail_lines" <<'PY'
-import json
-import re
-import sys
-from collections import deque
-from pathlib import Path
-
-log_file = sys.argv[1]
-tail_lines = int(sys.argv[2])
-
-classification = "no_log"
-excerpt = ""
-
-if log_file and Path(log_file).is_file():
-    classification = "no_signal"
-    collected = deque(maxlen=max(tail_lines, 1))
-    for raw_line in Path(log_file).read_text(errors="ignore").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.startswith("{"):
-            try:
-                obj = json.loads(line)
-            except Exception:
-                pass
-            else:
-                event_type = obj.get("type") or obj.get("role") or obj.get("finish") or obj.get("event")
-                summary = obj.get("summary") or {}
-                title = summary.get("title") or obj.get("title") or ""
-                tool_name = ""
-                for key in ("tool", "toolName", "name"):
-                    value = obj.get(key)
-                    if isinstance(value, str) and value:
-                        tool_name = value
-                        break
-                line = " ".join(part for part in [event_type, title, tool_name] if part)
-                line = line.strip() or raw_line.strip()
-        collected.append(line)
-
-    excerpt = " || ".join(collected)
-    excerpt = re.sub(r"\s+", " ", excerpt).strip()
-    excerpt = excerpt[:240]
-    lowered = excerpt.lower()
-    if not excerpt:
-        classification = "empty_log"
-    elif any(token in lowered for token in ["rate limit", "too many requests", "429", "retry after"]):
-        classification = "rate_limited"
-    elif any(token in lowered for token in ["full_loop_complete", "pr_url", "worker_done", "exit:0"]):
-        classification = "completion_signal"
-    elif any(token in lowered for token in ["tool", "reasoning", "step", "assistant", "apply_patch", "bash"]):
-        classification = "activity_signal"
-
-excerpt = excerpt.replace("\t", " ").replace("|", "/")
-
-print(f"{classification}\t{excerpt}")
-PY
-	)
+	# Logic extracted to worker_lifecycle_stall_evidence.py (GH#17561)
+	evidence=$(python3 "$py_script" "$log_file" "$tail_lines" 2>/dev/null) || evidence=""
 
 	local classification excerpt
 	IFS=$'\t' read -r classification excerpt <<<"${evidence:-no_log$'\t'}"
@@ -653,21 +567,12 @@ _count_worker_messages() {
 	session_id=$(_resolve_session_id_from_cmd "$cmd")
 
 	if [[ -n "$session_id" ]]; then
+		local script_dir
+		script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+		# Logic extracted to worker_lifecycle_count_messages.py (GH#17561)
 		messages=$(
-			DB_PATH="$db_path" SID="$session_id" ELAPSED="$elapsed_seconds" python3 - <<'PY'
-import os, sqlite3
-conn = sqlite3.connect(os.environ["DB_PATH"])
-conn.execute("PRAGMA busy_timeout=5000")
-cur = conn.cursor()
-cur.execute(
-    "SELECT COUNT(*) FROM message m"
-    " WHERE m.session_id = ?"
-    " AND (CASE WHEN m.time_created > 20000000000 THEN m.time_created / 1000 ELSE m.time_created END)"
-    " > strftime('%s', 'now') - ?",
-    (os.environ["SID"], int(os.environ["ELAPSED"])),
-)
-print(cur.fetchone()[0] or 0)
-PY
+			DB_PATH="$db_path" MODE="session" MATCH="$session_id" WINDOW="$elapsed_seconds" \
+				python3 "${script_dir}/worker_lifecycle_count_messages.py"
 		) 2>/dev/null || messages=0
 	fi
 
@@ -823,80 +728,57 @@ _format_duration() {
 # Output: one line per logical worker: "pid etime command..."
 #######################################
 list_active_worker_processes() {
-	ps axo pid,stat,etime,command | awk '
-		{
-			is_headless_wrapper = ($0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/ && $0 ~ /(^|[[:space:]])run([[:space:]]|$)/ && $0 ~ /--role[[:space:]]+worker/)
-			has_worker_prompt = ($0 ~ /\/full-loop/ || $0 ~ /\/review-issue-pr/)
-			has_worker_binary = ($0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ || $0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/)
-
-			if (!(has_worker_prompt || is_headless_wrapper)) next
-			if ($0 ~ /(^|[[:space:]])\/pulse([[:space:]]|$)/) next
-			if ($0 ~ /Supervisor Pulse/) next
-			if (!has_worker_binary) next
-
-			# $2 is the stat column (e.g., S, SN, Ss, Z, Zs, T, TN)
-			stat = $2
-			# Exclude zombies (Z*) and stopped processes (T*)
-			if (stat ~ /^[ZT]/) next
-			# Build output line: pid, etime, command (skip stat)
-			line = $1 " " $3
-			for (i = 4; i <= NF; i++) line = line " " $i
-			# Extract issue number for dedup (matches "Issue #NNN" or "issue-NNN")
-			issue = ""
-			if (match($0, /[Ii]ssue[[:space:]]*#([0-9]+)/) || match($0, /issue-([0-9]+)/)) {
-				rest = substr($0, RSTART, RLENGTH)
-				gsub(/[^0-9]/, "", rest)
-				issue = rest
-			}
-			# Fallback: extract from --session-key issue-NNN when no Issue #/issue- marker
-			if (issue == "" && match($0, /--session-key[[:space:]]+issue-([0-9]+)/)) {
-				rest = substr($0, RSTART, RLENGTH)
-				gsub(/[^0-9]/, "", rest)
-				issue = rest
-			}
-			# Extract --dir path for dedup key (same issue in different repos
-			# = different logical workers)
-			dir = ""
-			if (match($0, /--dir[[:space:]]+[^[:space:]]+/)) {
-				dir = substr($0, RSTART, RLENGTH)
-				sub(/--dir[[:space:]]+/, "", dir)
-			}
-			dedup_key = issue "|" dir
-			# Prefer outer launchers over child processes for same issue+dir.
-			launcher_rank = 0
-			if ($0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/ && $0 ~ /--role[[:space:]]+worker/) {
-				launcher_rank = 2
-			} else if ($0 ~ /sandbox-exec-helper\.sh/) {
-				launcher_rank = 1
-			}
-			if (issue != "" && dedup_key in seen) {
-				# Already have a line for this issue+dir
-				if (launcher_rank > seen_launcher_rank[dedup_key]) {
-					# Replace inner child with outer launcher
-					seen_lines[dedup_key] = line
-					seen_launcher_rank[dedup_key] = launcher_rank
-				}
-				# Otherwise skip (lower-rank child of existing launcher, or duplicate)
-			} else if (issue != "") {
-				seen[dedup_key] = 1
-				seen_lines[dedup_key] = line
-				seen_launcher_rank[dedup_key] = launcher_rank
-				key_order[++key_count] = dedup_key
-			} else {
-				# No issue number found — print directly (edge case)
-				no_issue_lines[++no_issue_count] = line
-			}
-		}
-		END {
-			for (i = 1; i <= key_count; i++) {
-				print seen_lines[key_order[i]]
-			}
-			for (i = 1; i <= no_issue_count; i++) {
-				print no_issue_lines[i]
-			}
-		}
-	'
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	local awk_script="${script_dir}/list_active_workers.awk"
+	# Awk logic extracted to list_active_workers.awk (GH#17561)
+	ps axo pid,stat,etime,command | awk -f "$awk_script"
 	return 0
+}
+
+#######################################
+# Body quality gate for escalate_issue_tier (GH#17561)
+# Returns 0 if escalation should proceed, 1 if blocked (posts diagnostic comment).
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+#   $3 - failure count
+#   $4 - threshold
+#   $5 - issue body text
+#######################################
+_escalate_body_quality_gate() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local failure_count="$3"
+	local threshold="$4"
+	local issue_body="$5"
+
+	# Empty body — no context to check, allow escalation
+	[[ -n "$issue_body" ]] || return 0
+
+	# Check for file path indicators: paths with extensions, EDIT:/NEW: prefixes,
+	# backtick-quoted paths, or "Files to Modify" section headers
+	if echo "$issue_body" | grep -qE '(EDIT:|NEW:|`[a-zA-Z0-9_./-]+\.[a-z]+`|Files to Modify|## How|\.sh:|\.py:|\.ts:|\.js:|\.md:)'; then
+		return 0
+	fi
+
+	# Body lacks implementation context — post diagnostic instead of escalating
+	local diag_body="## Escalation Blocked: Missing Implementation Context
+
+**Trigger:** ${failure_count} consecutive worker failures (threshold: ${threshold})
+**Action:** Escalation to \`tier:thinking\` **skipped** — issue body lacks file paths and implementation steps.
+
+Workers fail when they must explore the entire codebase to find what to change. Adding explicit file paths, reference patterns, and verification commands to the issue body is more effective than escalating to a more expensive model.
+
+**Required:** Update the issue body with a \`## How\` section containing:
+- Files to modify (with paths and line ranges)
+- Reference pattern (\`model on <existing-file>\`)
+- Verification command
+
+_Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-lifecycle-common.sh_"
+	gh issue comment "$issue_number" --repo "$repo_slug" \
+		--body "$diag_body" 2>/dev/null || true
+	return 1
 }
 
 #######################################
@@ -957,33 +839,8 @@ escalate_issue_tier() {
 	local issue_body
 	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json body --jq '.body // ""' 2>/dev/null) || issue_body=""
-	if [[ -n "$issue_body" ]]; then
-		# Check for file path indicators: paths with extensions, EDIT:/NEW: prefixes,
-		# backtick-quoted paths, or "Files to Modify" section headers
-		local has_file_context=false
-		if echo "$issue_body" | grep -qE '(EDIT:|NEW:|`[a-zA-Z0-9_./-]+\.[a-z]+`|Files to Modify|## How|\.sh:|\.py:|\.ts:|\.js:|\.md:)'; then
-			has_file_context=true
-		fi
-		if [[ "$has_file_context" != "true" ]]; then
-			# Body lacks implementation context — post diagnostic instead of escalating
-			local diag_body="## Escalation Blocked: Missing Implementation Context
-
-**Trigger:** ${failure_count} consecutive worker failures (threshold: ${threshold})
-**Action:** Escalation to \`tier:thinking\` **skipped** — issue body lacks file paths and implementation steps.
-
-Workers fail when they must explore the entire codebase to find what to change. Adding explicit file paths, reference patterns, and verification commands to the issue body is more effective than escalating to a more expensive model.
-
-**Required:** Update the issue body with a \`## How\` section containing:
-- Files to modify (with paths and line ranges)
-- Reference pattern (\`model on <existing-file>\`)
-- Verification command
-
-_Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-lifecycle-common.sh_"
-			gh issue comment "$issue_number" --repo "$repo_slug" \
-				--body "$diag_body" 2>/dev/null || true
-			return 0
-		fi
-	fi
+	_escalate_body_quality_gate "$issue_number" "$repo_slug" \
+		"$failure_count" "$threshold" "$issue_body" || return 0
 
 	# Add tier:thinking label (creates label if needed)
 	gh label create "tier:thinking" \
