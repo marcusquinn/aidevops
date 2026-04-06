@@ -24,9 +24,28 @@ mode: subagent
 
 ## How (Approach)
 
-{Technical approach, key files to modify, patterns to follow, libraries to use.}
-{Reference existing code: `path/to/file.ts:45` — what pattern to follow}
-{Reference existing tests: `path/to/file.test.ts` — test patterns to match}
+<!-- Worker-ready implementation context (t1900): every section below is required
+     for auto-dispatch issues. Vague "How" sections waste worker tokens on exploration.
+     If files/patterns cannot be determined, state that explicitly. -->
+
+### Files to Modify
+
+<!-- Prefix NEW: for new files, EDIT: for existing. Include line ranges where relevant. -->
+
+- `NEW: path/to/new-file.ts` — {purpose, model on `path/to/reference-file.ts`}
+- `EDIT: path/to/existing.ts:45-60` — {what to change and why}
+
+### Implementation Steps
+
+1. {Concrete step with file reference — e.g., "Copy `hooks/git_safety_guard.py` structure, filter for tool_name == mcp_task"}
+2. {Next step — e.g., "Add registration entry in `install-hooks-helper.sh:register_hooks()`"}
+3. {Final step — e.g., "Run `shellcheck` on new file, verify hook fires with test harness"}
+
+### Verification
+
+```bash
+{Command(s) to confirm the implementation works — e.g., shellcheck, grep, test run}
+```
 
 ## Acceptance Criteria
 
