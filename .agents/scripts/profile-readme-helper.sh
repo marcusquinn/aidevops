@@ -24,6 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 METRICS_FILE="${HOME}/.aidevops/.agent-workspace/observability/metrics.jsonl"
 OBS_DB_FILE="${HOME}/.aidevops/.agent-workspace/observability/llm-requests.db"
 OPENCODE_DB_FILE="${HOME}/.local/share/opencode/opencode.db"
+OPENCODE_ARCHIVE_DB_FILE="${HOME}/.local/share/opencode/opencode-archive.db"
 
 # --- Resolve profile repo path from repos.json ---
 _resolve_profile_repo() {
@@ -218,7 +219,28 @@ _get_model_usage_from_opencode() {
 	fi
 
 	local raw_json
+	# GH#17549: Query both active and archive DBs for all-time stats.
+	# The archive DB contains sessions >14 days old, moved by opencode-db-archive.sh.
+	local attach_clause=""
+	local union_clause=""
+	if [[ -f "$OPENCODE_ARCHIVE_DB_FILE" ]]; then
+		attach_clause="ATTACH DATABASE '${OPENCODE_ARCHIVE_DB_FILE}' AS archive;"
+		union_clause="UNION ALL
+			SELECT
+				json_extract(data, '\$.modelID') AS model,
+				COUNT(*) AS requests,
+				COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0) AS input_tokens,
+				COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0) AS output_tokens,
+				COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0) AS cache_read_tokens,
+				COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0) AS cache_write_tokens
+			FROM archive.message
+			WHERE json_extract(data, '\$.role') = 'assistant'
+			  AND json_extract(data, '\$.modelID') IS NOT NULL
+			  AND json_extract(data, '\$.modelID') != ''
+			GROUP BY model"
+	fi
 	raw_json=$(sqlite3 "$OPENCODE_DB_FILE" "
+		${attach_clause}
 		SELECT COALESCE(
 			json_group_array(
 				json_object(
@@ -233,17 +255,24 @@ _get_model_usage_from_opencode() {
 			'[]'
 		)
 		FROM (
-			SELECT
-				json_extract(data, '\$.modelID') AS model,
-				COUNT(*) AS requests,
-				COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0) AS input_tokens,
-				COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0) AS output_tokens,
-				COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0) AS cache_read_tokens,
-				COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0) AS cache_write_tokens
-			FROM message
-			WHERE json_extract(data, '\$.role') = 'assistant'
-			  AND json_extract(data, '\$.modelID') IS NOT NULL
-			  AND json_extract(data, '\$.modelID') != ''
+			SELECT model, SUM(requests) AS requests,
+				SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens
+			FROM (
+				SELECT
+					json_extract(data, '\$.modelID') AS model,
+					COUNT(*) AS requests,
+					COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0) AS input_tokens,
+					COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0) AS output_tokens,
+					COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0) AS cache_read_tokens,
+					COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0) AS cache_write_tokens
+				FROM message
+				WHERE json_extract(data, '\$.role') = 'assistant'
+				  AND json_extract(data, '\$.modelID') IS NOT NULL
+				  AND json_extract(data, '\$.modelID') != ''
+				GROUP BY model
+				${union_clause}
+			)
 			GROUP BY model
 		);
 	" 2>/dev/null || true)
@@ -409,17 +438,36 @@ _get_token_totals() {
 	'
 
 	# For "all" period, use OpenCode session DB (full history).
+	# GH#17549: Query both active and archive DBs for complete totals.
 	if [[ "$period" == "all" ]] && command -v sqlite3 &>/dev/null && [[ -f "$OPENCODE_DB_FILE" ]]; then
-		local oc_totals
+		local oc_totals _totals_attach="" _totals_union=""
+		if [[ -f "$OPENCODE_ARCHIVE_DB_FILE" ]]; then
+			_totals_attach="ATTACH DATABASE '${OPENCODE_ARCHIVE_DB_FILE}' AS archive;"
+			_totals_union="UNION ALL
+				SELECT json_extract(data, '\$.tokens.input'),
+					json_extract(data, '\$.tokens.output'),
+					json_extract(data, '\$.tokens.cache.read'),
+					json_extract(data, '\$.tokens.cache.write')
+				FROM archive.message
+				WHERE json_extract(data, '\$.role') = 'assistant'"
+		fi
 		oc_totals=$(sqlite3 "$OPENCODE_DB_FILE" "
+			${_totals_attach}
 			SELECT json_object(
-				'total_input', COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0),
-				'total_output', COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0),
-				'total_cache_read', COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0),
-				'total_cache_write', COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0)
+				'total_input', COALESCE(SUM(ti), 0),
+				'total_output', COALESCE(SUM(to2), 0),
+				'total_cache_read', COALESCE(SUM(cr), 0),
+				'total_cache_write', COALESCE(SUM(cw), 0)
 			)
-			FROM message
-			WHERE json_extract(data, '\$.role') = 'assistant';
+			FROM (
+				SELECT json_extract(data, '\$.tokens.input') AS ti,
+					json_extract(data, '\$.tokens.output') AS to2,
+					json_extract(data, '\$.tokens.cache.read') AS cr,
+					json_extract(data, '\$.tokens.cache.write') AS cw
+				FROM message
+				WHERE json_extract(data, '\$.role') = 'assistant'
+				${_totals_union}
+			);
 		" 2>/dev/null || true)
 
 		if [[ -n "$oc_totals" ]]; then
