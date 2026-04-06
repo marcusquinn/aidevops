@@ -418,9 +418,13 @@ _get_repo_maintainer() {
 # the dedup guard permanently blocks all dispatch (0 workers, 100%
 # failure rate observed in production — 370 issues, 159 PRs stuck).
 #
-# The 1-hour threshold is conservative: any legitimate worker would
-# have produced at least one comment or commit within an hour. Workers
-# that crash or exit without cleanup leave the assignment orphaned.
+# The 30-minute threshold matches DISPATCH_COMMENT_MAX_AGE (Layer 5).
+# GH#17549: Previously 1 hour, creating a 30-minute dead zone (30-60 min)
+# where Layer 5 passed (dispatch comment expired) but Layer 6 blocked
+# (assignment still "active"). This forced the LLM to bypass
+# dispatch_with_dedup() to re-dispatch dead workers, skipping all
+# dedup guards including the claim protocol. Any legitimate worker
+# should produce at least one comment or commit within 30 minutes.
 #
 # Args:
 #   $1 = issue number
@@ -430,7 +434,7 @@ _get_repo_maintainer() {
 #   exit 0 = stale assignment recovered (safe to dispatch)
 #   exit 1 = assignment is NOT stale (genuine active claim, block dispatch)
 #######################################
-STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-3600}" # 1 hour
+STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-1800}" # 30 min (GH#17549: aligned with DISPATCH_COMMENT_MAX_AGE to close dead zone)
 
 _is_stale_assignment() {
 	local issue_number="$1"
