@@ -1857,7 +1857,17 @@ sudo aidevops approve issue ${new_issue}
 
 **To decline:** comment \`declined: <reason>\` to close this issue.
 
-Approval requires cryptographic signing via the maintainer's root-protected key. Without approval, this issue will not enter the dispatch pipeline." >/dev/null 2>&1 || true
+Approval requires cryptographic signing via the maintainer's root-protected key. Without approval, this issue will not enter the dispatch pipeline.
+
+<details>
+<summary>First-time setup</summary>
+
+If you haven't set up approval signing yet, run the one-time key generation first:
+\`\`\`
+sudo aidevops approve setup
+\`\`\`
+This creates a root-protected ED25519 signing key. Check status anytime with \`aidevops approve status\`.
+</details>" >/dev/null 2>&1 || true
 		echo "  Created issue #${new_issue}: ${issue_title}" >&2
 		echo "1"
 		return 0
