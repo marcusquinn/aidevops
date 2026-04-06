@@ -11,7 +11,10 @@ import json
 import os
 import mitmproxy.http
 
-OUTPUT_FILE = os.environ["OUTPUT_FILE"]
+try:
+    OUTPUT_FILE = os.environ["OUTPUT_FILE"]
+except KeyError:
+    raise SystemExit("ERROR: OUTPUT_FILE environment variable must be set")
 
 
 class CCHCapture:
@@ -28,7 +31,7 @@ class CCHCapture:
         self.requests.append(entry)
 
     def done(self):
-        with open(OUTPUT_FILE, "w") as f:
+        with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
             json.dump({
                 "capture_count": len(self.requests),
                 "requests": self.requests,

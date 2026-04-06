@@ -94,7 +94,7 @@ create_mitm_addon() {
 
 	mkdir -p "$MITM_SCRIPT_DIR"
 	cp "$addon_src" "$addon_file"
-	# Inject the output path — the addon reads OUTPUT_FILE from env at import time
+	# The addon reads OUTPUT_FILE from the environment at import time
 	printf '%s' "$addon_file"
 	return 0
 }
@@ -243,7 +243,7 @@ cmd_diff() {
 # Verify or create the CCH constants cache.
 _analyse_verify_cache() {
 	local cache_file="${HOME}/.aidevops/cch-constants.json"
-	local extract_cmd="${HOME}/.aidevops/agents/scripts/cch-extract.sh"
+	local extract_cmd="${SCRIPT_DIR}/cch-extract.sh"
 
 	if [[ ! -f "$cache_file" ]]; then
 		print_info "No cache found — creating..."
@@ -280,7 +280,7 @@ cmd_analyse() {
 
 	# Step 1: Extract constants
 	local constants_json
-	constants_json=$(~/.aidevops/agents/scripts/cch-extract.sh --extract 2>/dev/null) || {
+	constants_json=$("${SCRIPT_DIR}/cch-extract.sh" --extract 2>/dev/null) || {
 		print_error "Failed to extract constants"
 		return 1
 	}
@@ -293,7 +293,7 @@ cmd_analyse() {
 	# Step 3: Generate a test header and verify computation
 	local test_msg="Say hello and nothing else."
 	local our_header
-	our_header=$(python3 ~/.aidevops/agents/scripts/cch-sign.py header "$test_msg" --cache 2>/dev/null)
+	our_header=$(python3 "${SCRIPT_DIR}/cch-sign.py" header "$test_msg" --cache 2>/dev/null)
 	print_info "Our computed header: ${our_header}"
 
 	# Step 4: If mitmproxy available, capture real traffic

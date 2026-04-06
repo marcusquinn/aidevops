@@ -14,7 +14,7 @@ import sys
 
 def load_first_request(path):
     """Load the first request from a capture file."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     return data["requests"][0] if data["requests"] else {}
 
@@ -33,7 +33,7 @@ def compare_headers(base_req, curr_req):
         changes.append(f"REMOVED HEADERS: {sorted(removed_headers)}")
 
     for h in base_headers & curr_headers:
-        if h.lower() == "authorization":
+        if h.lower() in ("authorization", "cookie"):
             continue  # always redacted
         bv = base_req["headers"].get(h, "")
         cv = curr_req["headers"].get(h, "")

@@ -13,18 +13,25 @@ import sys
 
 def print_summary(path):
     """Print summary of captured requests."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
-    for i, req in enumerate(data["requests"]):
+    requests = data.get("requests", [])
+    if not isinstance(requests, list):
+        requests = []
+
+    for i, req in enumerate(requests):
         print(f"  Request {i+1}:")
-        print(f"    Path: {req['path']}")
-        print(f"    User-Agent: {req['headers'].get('user-agent', 'unknown')}")
-        if req.get("billing_header"):
-            print(f"    Billing: {req['billing_header'][:80]}...")
-        if req.get("body"):
-            print(f"    Model: {req['body'].get('model', 'unknown')}")
-            print(f"    Body keys: {req['body'].get('body_keys', [])}")
+        print(f"    Path: {req.get('path', 'unknown')}")
+        headers = req.get("headers", {})
+        print(f"    User-Agent: {headers.get('user-agent', 'unknown')}")
+        billing = req.get("billing_header")
+        if isinstance(billing, str) and billing:
+            print(f"    Billing: {billing[:80]}...")
+        body = req.get("body")
+        if isinstance(body, dict):
+            print(f"    Model: {body.get('model', 'unknown')}")
+            print(f"    Body keys: {body.get('body_keys', [])}")
 
 
 if __name__ == "__main__":
