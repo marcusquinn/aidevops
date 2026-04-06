@@ -788,13 +788,13 @@ Review the current session for: $ARGUMENTS
 generate_hardcoded_commands() {
 	echo -e "${BLUE}Phase 2: Generating additional commands for Claude Code parity...${NC}"
 
-	_generate_workflow_commands
-	_generate_quality_commands
-	_generate_branch_commands
-	_generate_utility_commands
-	_generate_planning_commands
-	_generate_seo_commands
-	_generate_system_commands
+	_generate_workflow_commands || return 1
+	_generate_quality_commands || return 1
+	_generate_branch_commands || return 1
+	_generate_utility_commands || return 1
+	_generate_planning_commands || return 1
+	_generate_seo_commands || return 1
+	_generate_system_commands || return 1
 
 	return 0
 }
