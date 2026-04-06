@@ -229,7 +229,7 @@ PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
 				"true" \
 				"false" \
 				"" \
-				"120"
+				"${PULSE_STALE_THRESHOLD_SECONDS}"
 		fi
 	elif [[ "$_pulse_lower" == "false" && "$_pulse_installed" == "true" ]]; then
 		# User explicitly disabled but pulse is still installed — clean up
