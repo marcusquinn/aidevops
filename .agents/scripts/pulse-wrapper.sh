@@ -6396,6 +6396,20 @@ check_dispatch_dedup() {
 	# dynamic scoping — do NOT declare local here or the value is lost on return.
 	_claim_comment_id=""
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		# GH#17590: Pre-check for existing claims BEFORE posting our own.
+		# Without this, two runners both post claims within seconds, then
+		# the consensus window resolves the race — but the losing claim
+		# comment is left on the issue, wasting a GitHub API call and
+		# cluttering the issue. The pre-check is cheap (read-only) and
+		# catches the common case where another runner already claimed.
+		local _precheck_output="" _precheck_exit=0
+		_precheck_output=$("$dedup_helper" check-claim "$issue_number" "$repo_slug" 2>>"$LOGFILE") || _precheck_exit=$?
+		if [[ "$_precheck_exit" -eq 0 ]]; then
+			# Active claim exists from another runner — skip claim entirely
+			echo "[pulse-wrapper] Dedup: pre-check found active claim on #${issue_number} in ${repo_slug} — skipping (${_precheck_output})" >>"$LOGFILE"
+			return 0
+		fi
+		# No active claim found (exit 1) or error (exit 2, fail-open) — proceed to claim
 		local claim_exit=0 claim_output=""
 		claim_output=$("$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
 		echo "$claim_output" >>"$LOGFILE"

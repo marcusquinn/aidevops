@@ -1100,6 +1100,18 @@ main() {
 		fi
 		"$CLAIM_HELPER" claim "$1" "$2" "${3:-}"
 		;;
+	check-claim)
+		# GH#17590: Pre-check for active claims (read-only, no comment posted).
+		[[ $# -lt 2 ]] && {
+			echo "Error: check-claim requires <issue-number> <repo-slug>" >&2
+			return 1
+		}
+		if [[ ! -x "$CLAIM_HELPER" ]]; then
+			echo "Error: dispatch-claim-helper.sh not found at ${CLAIM_HELPER}" >&2
+			return 2
+		fi
+		"$CLAIM_HELPER" check "$1" "$2"
+		;;
 	list-running-keys)
 		list_running_keys
 		;;
