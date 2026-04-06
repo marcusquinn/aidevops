@@ -225,6 +225,12 @@ repomix-output.*
 mlx_models/
 __pycache__/
 
+# Research corpus data (generated, large, contains PR diffs)
+todo/research/tier-corpus/
+todo/research/*-results.tsv
+
 # Accidentally committed binaries
 bv
 .agents
+# Re-negate .agents/ directory (the binary ignore above overrides the earlier !.agents/)
+!.agents/

@@ -51,7 +51,7 @@ Analyze issue/PR using provided context and local codebase access. Produce struc
 2. **Duplicate Check**: Compare against RECENT_CLOSED issues.
 3. **Root Cause**: Use Read/Grep to assess likely root cause.
 4. **Scope Assessment**: In scope for project?
-5. **Complexity**: Estimate `tier:simple` (haiku), default (sonnet), or `tier:thinking` (opus).
+5. **Complexity**: Estimate `tier:simple` (haiku), `tier:standard` (sonnet), or `tier:reasoning` (opus).
 
 ### PRs (all above, plus)
 
@@ -90,7 +90,7 @@ Output ONLY the review comment in this exact format. Heading MUST contain `## Re
 ### Scope & Recommendation
 
 - Scope creep: Low/Medium/High
-- Complexity: `tier:simple` / default / `tier:thinking`
+- Complexity: `tier:simple` / `tier:standard` / `tier:reasoning`
 - **Decision**: APPROVE / REQUEST CHANGES / DECLINE
 - **Recommended labels**: [e.g., `tier:simple`, `bug`]
 - **Implementation guidance**: [key points for the worker who implements this]

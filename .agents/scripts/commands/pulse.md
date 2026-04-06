@@ -295,9 +295,9 @@ RESOLVED_MODEL=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve
 dispatch_with_dedup NUMBER SLUG ... "$RESOLVED_MODEL"
 ```
 
-Precedence: (1) failure escalation (2+ failures → opus) > (2) issue labels (`tier:thinking`
-→ opus, `tier:simple` → haiku) > (3) **omit the 9th parameter** (round-robin selects from
-configured providers and records the model in the dispatch comment).
+Precedence: (1) failure escalation (cascade: `tier:simple` → `tier:standard` → `tier:reasoning`) > (2) issue labels (`tier:reasoning`
+→ opus, `tier:standard` → sonnet, `tier:simple` → haiku) > (3) **omit the 9th parameter** (round-robin selects from
+configured providers and records the model in the dispatch comment). Backward compat: `tier:thinking` is accepted as alias for `tier:reasoning`.
 
 ### Agent routing from labels
 

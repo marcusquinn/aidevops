@@ -116,9 +116,10 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 - **Interactive workflow**: Add `assignee:` before pushing if working interactively.
 
 **Model tiers**: Use GitHub labels to set the model tier. The pulse reads these labels for tier routing, not `model:` in `TODO.md`. See `reference/task-taxonomy.md`.
-- `tier:thinking`: For opus-tier tasks.
-- `tier:simple`: For haiku-tier tasks.
-- **Default (no label)**: sonnet.
+- `tier:simple`: Haiku — prescriptive briefs with code blocks, single-file edits, config tweaks.
+- `tier:standard`: Sonnet — standard implementation, bug fixes, refactors. Use when uncertain.
+- `tier:reasoning`: Opus — architecture, novel design, deep reasoning, security audits.
+- **Cascade dispatch**: The pulse may start at `tier:simple` and escalate through tiers if the worker fails, accumulating context at each level. See `reference/task-taxonomy.md` "Cascade Dispatch Model".
 
 **Session origin labels**: Issues and PRs are automatically tagged with `origin:worker` (headless/pulse dispatch) or `origin:interactive` (user session). Applied by `claim-task-id.sh`, `issue-sync-helper.sh`, and `pulse-wrapper.sh`. In TODO.md, use `#worker` or `#interactive` tags to set origin explicitly; these map to the corresponding labels on push.
 

@@ -801,10 +801,21 @@ test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity() {
 	: >"$dispatch_log"
 
 	resolve_dispatch_model_for_labels() {
-		if [[ "$1" == *"tier:simple"* ]]; then
+		# Tier label resolution — tier:thinking is backward-compat alias for tier:reasoning
+		case ",${1}," in
+		*,tier:reasoning,* | *,tier:thinking,*)
+			echo "anthropic/claude-opus-4-6"
+			return 0
+			;;
+		*,tier:standard,*)
+			echo "anthropic/claude-sonnet-4-6"
+			return 0
+			;;
+		*,tier:simple,*)
 			echo "anthropic/claude-haiku-4-5"
 			return 0
-		fi
+			;;
+		esac
 		echo ""
 		return 0
 	}

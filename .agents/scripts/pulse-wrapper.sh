@@ -230,7 +230,8 @@ FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                 
 #     1. Exponential backoff: FAST_FAIL_INITIAL_BACKOFF_SECS doubled each failure.
 #     2. Cap at FAST_FAIL_MAX_BACKOFF_SECS (7 days).
 #     3. retry_after = now + backoff_seconds.
-#     4. Counter increments. At ESCALATION_FAILURE_THRESHOLD → tier:thinking (opus).
+#     4. Counter increments. At ESCALATION_FAILURE_THRESHOLD → cascade escalation
+#        (tier:simple → tier:standard → tier:reasoning).
 #
 # State file format:
 #   { "slug/number": {
@@ -414,8 +415,10 @@ resolve_dispatch_model_for_labels() {
 	local tier=""
 	local resolved_model=""
 
+	# Tier label resolution — tier:thinking is backward-compat alias for tier:reasoning
 	case ",${labels_csv}," in
-	*,tier:thinking,*) tier="opus" ;;
+	*,tier:reasoning,* | *,tier:thinking,*) tier="opus" ;;
+	*,tier:standard,*) tier="sonnet" ;;
 	*,tier:simple,*) tier="haiku" ;;
 	esac
 
@@ -3294,7 +3297,7 @@ cleanup_worktrees() {
 					echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): removing ${wt_branch_age:-detached} — $reason" >>"$LOGFILE"
 
 					# GH#17436: Record fast-fail for crashed worker worktrees so the
-					# escalation threshold (tier:thinking at count=2) can trigger.
+					# escalation threshold (cascade tier escalation at count=2) can trigger.
 					# Extract issue number from branch name (pattern: gh-NNN or ghNNNNN).
 					if [[ "$reason" == *"crashed worker"* && -n "$wt_branch_age" && -n "$repo_slug_age" ]]; then
 						local orphan_issue_num=""
@@ -4578,7 +4581,7 @@ The simplification debt count has not decreased in the last $((COMPLEXITY_LLM_SW
 ### Suggested actions
 
 - Review the oldest 10 open simplification-debt issues and close any that are no longer relevant.
-- Check if \`tier:simple\` issues are being dispatched — if not, verify the pulse is routing them correctly.
+- Check if \`tier:simple\` and \`tier:standard\` issues are being dispatched — if not, verify the pulse is routing them correctly.
 - If debt is growing, consider lowering \`COMPLEXITY_MD_MIN_LINES\` or \`COMPLEXITY_FILE_VIOLATION_THRESHOLD\` to catch more candidates.
 
 ### Confidence: low
@@ -4604,7 +4607,7 @@ This is an automated stall-detection sweep. The LLM should review the actual iss
 	# shellcheck disable=SC2086
 	if gh_create_issue --repo "$aidevops_slug" \
 		--title "perf: simplification debt stalled — LLM sweep needed ($(date -u +%Y-%m-%d))" \
-		--label "simplification-debt" $sweep_review_label --label "tier:thinking" \
+		--label "simplification-debt" $sweep_review_label --label "tier:reasoning" \
 		--assignee "$maintainer" \
 		--body "$sweep_body" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] Complexity LLM sweep: created stall-review issue" >>"$LOGFILE"
@@ -5455,7 +5458,7 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 
 # Create GitHub issues for agent docs flagged for simplification review.
 # Default these to tier:simple so short doc-tightening work routes to a
-# cheaper worker by default; maintainers can raise to tier:thinking when the
+# cheaper worker by default; maintainers can raise to tier:standard or tier:reasoning when the
 # issue requires architectural reasoning, security trade-offs, or novel design.
 # Arguments: $1 - scan_results (pipe-delimited: file_path|line_count), $2 - repos_json, $3 - aidevops_slug
 _complexity_scan_create_md_issues() {
@@ -5632,7 +5635,7 @@ This is an automated scan. The function lengths are factual, but the best decomp
 # Results processed longest-first. .md issues get tier:simple by default.
 #
 # Daily LLM sweep (GH#15285): if simplification debt hasn't decreased in 6h,
-# creates a tier:thinking issue for LLM-powered deep review of stalled debt.
+# creates a tier:reasoning issue for LLM-powered deep review of stalled debt.
 #
 # Runs at most once per COMPLEXITY_SCAN_INTERVAL (default 15 min).
 # Creates up to 5 issues per run; open cap (500) prevents backlog flooding.
@@ -5903,7 +5906,7 @@ run_weekly_complexity_scan() {
 				sweep_reason=$(echo "$sweep_result" | cut -d'|' -f2)
 				gh_create_issue --repo "$aidevops_slug" \
 					--title "LLM complexity sweep: review stalled simplification debt" \
-					--label "simplification-debt" --label "auto-dispatch" --label "tier:thinking" \
+					--label "simplification-debt" --label "auto-dispatch" --label "tier:reasoning" \
 					--body "## Daily LLM sweep (automated, GH#15285)
 
 **Trigger:** ${sweep_reason}
@@ -6698,7 +6701,7 @@ _Closed by pulse-wrapper.sh deterministic dispatch guard._" 2>/dev/null || true
 	#
 	# IMPORTANT: Callers (including the pulse AI) MUST NOT pass a model
 	# override for default dispatches. Only pass model_override when a
-	# specific tier is required (e.g., tier:thinking → opus escalation,
+	# specific tier is required (e.g., tier:reasoning → opus escalation,
 	# tier:simple → haiku). Passing an arbitrary model here bypasses the
 	# round-robin and causes provider imbalance — e.g., all workers end
 	# up on a single provider instead of alternating between anthropic
