@@ -90,21 +90,30 @@ list_servers() {
 delegate_to_provider() {
 	local auth_type="$1"
 	local command="$2"
-	local args="$3"
+	shift 2
+	local command_args=("$@")
 
-	local helper_script="./.agents/scripts/${auth_type}-helper.sh"
+	local helper_suffix="helper"
+	if [[ "$auth_type" == "github" || "$auth_type" == "gitlab" || "$auth_type" == "gitea" ]]; then
+		helper_suffix="cli-helper"
+	fi
+
+	local helper_script="${SCRIPT_DIR}/${auth_type}-${helper_suffix}.sh"
+	local list_command="list"
+	if [[ "$auth_type" == "github" || "$auth_type" == "gitlab" || "$auth_type" == "gitea" ]]; then
+		list_command="list-accounts"
+	fi
 
 	case "$command" in
 	"connect" | "ssh" | "")
 		local desc
 		desc=$(get_provider_connect_message "$auth_type")
 		print_info "$desc"
-		"$helper_script" list
+		"$helper_script" "$list_command"
 		;;
 	*)
 		print_info "Delegating to provider-specific helper..."
-		# shellcheck disable=SC2086
-		"$helper_script" "$command" $args
+		"$helper_script" "$command" "${command_args[@]}"
 		;;
 	esac
 	return 0
@@ -122,6 +131,9 @@ get_provider_connect_message() {
 	"dns") echo "Use DNS helper for domain management..." ;;
 	"localhost") echo "Use Localhost helper for local development..." ;;
 	"aws") echo "Use AWS helper for instance management..." ;;
+	"github") echo "Use GitHub CLI helper for repository management..." ;;
+	"gitlab") echo "Use GitLab CLI helper for project management..." ;;
+	"gitea") echo "Use Gitea CLI helper for repository management..." ;;
 	*) echo "Use ${auth_type} helper for management..." ;;
 	esac
 	return 0
@@ -135,7 +147,7 @@ run_ssh_command() {
 	local remote_cmd="$*"
 
 	local port_args=()
-	if [[ -n "$port" && "$port" != "22" ]]; then
+	if [[ -n "$port" && "$port" != "22" && "$port" != "none" ]]; then
 		port_args=(-p "$port")
 	fi
 
@@ -188,7 +200,7 @@ is_provider_server() {
 	local server="$1"
 
 	case "$server" in
-	"hostinger" | "hetzner" | "closte" | "cloudron" | "dns" | "localhost" | "aws")
+	"hostinger" | "hetzner" | "closte" | "cloudron" | "dns" | "localhost" | "aws" | "github" | "gitlab" | "gitea")
 		return 0
 		;;
 	*)
@@ -272,7 +284,7 @@ read -r host port auth_type <<<"$config"
 
 # Route to provider helper or SSH handler
 if is_provider_server "$server"; then
-	delegate_to_provider "$auth_type" "$command" "$args"
+	delegate_to_provider "$auth_type" "$command" "$@"
 else
 	handle_ssh_server "$host" "$port" "$command" "$args"
 fi
