@@ -6599,6 +6599,16 @@ dispatch_with_dedup() {
 	# t1894: Lock external contributor issues during worker execution
 	lock_issue_for_worker "$issue_number" "$repo_slug"
 
+	# GH#17584: Ensure the repo is on the latest remote commit before
+	# launching the worker. Without this, workers on stale checkouts
+	# close issues as "Invalid — file does not exist" when the target
+	# file was added in a recent commit they haven't pulled.
+	if git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 || {
+			echo "[dispatch_with_dedup] Warning: git pull failed for ${repo_path} — proceeding with current checkout" >>"$LOGFILE"
+		}
+	fi
+
 	# Launch worker — headless-runtime-helper.sh handles model selection
 	# via round-robin when no --model is specified. Its choose_model() reads
 	# AIDEVOPS_HEADLESS_MODELS, checks backoff/auth, and rotates providers.
