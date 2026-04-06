@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.135] - 2026-04-07
+
+### Fixed
+
+- reduce review-bot grace period from 4h to 30min — rate-limited bot blocked entire merge pipeline
+- eliminate signature gate false positives from TUI flash (#17631)
+
 ## [3.6.134] - 2026-04-06
 
 ### Added
