@@ -1300,11 +1300,11 @@ _invoke_opencode() {
 			cp "$OPENCODE_AUTH_FILE" "${isolated_data_dir}/opencode/auth.json" 2>/dev/null || true
 			chmod 600 "${isolated_data_dir}/opencode/auth.json" 2>/dev/null || true
 		fi
-		# Preserve the shared session DB path before redirecting XDG_DATA_HOME.
-		# OPENCODE_DB tells opencode to use the shared DB for session/message
-		# persistence even when XDG_DATA_HOME points to an isolated temp dir.
-		local real_data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
-		export OPENCODE_DB="${real_data_home}/opencode/opencode.db"
+		# GH#17549: Each worker gets its OWN SQLite DB (no shared OPENCODE_DB).
+		# Previously we set OPENCODE_DB back to the shared DB for session stats,
+		# but concurrent workers with busy_timeout=0 cause SQLITE_BUSY which
+		# silently kills streaming connections — workers stall at step_start
+		# with zero API errors. Session stats are sacrificed for reliability.
 		export XDG_DATA_HOME="$isolated_data_dir"
 	fi
 
