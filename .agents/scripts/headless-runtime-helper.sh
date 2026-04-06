@@ -1416,6 +1416,8 @@ _run_activity_watchdog() {
 		pkill -9 -P "$worker_pid" 2>/dev/null || true
 		kill -9 "$worker_pid" 2>/dev/null || true
 		printf '124' >"$exit_code_file"
+		printf '\n[WATCHDOG_KILL] timestamp=%s worker_pid=%s timeout=%ss\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$worker_pid" "$timeout" >>"$output_file" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -1683,6 +1685,36 @@ _execute_run_attempt() {
 		;;
 	esac
 
+	# GH#17549: Claim guard — verify a DISPATCH_CLAIM exists for this runner
+	# before launching a worker for an issue. This prevents pulse LLMs from
+	# bypassing dispatch_with_dedup() by calling headless-runtime-helper directly.
+	# Only enforced for issue workers (session_key=issue-*), not pulse/triage.
+	if [[ "$role" == "worker" && "$session_key" == issue-* ]]; then
+		local _claim_issue_number="${session_key#issue-}"
+		local _claim_repo_slug=""
+		# Extract repo slug from work_dir path (~/Git/<repo>/ pattern)
+		_claim_repo_slug=$(git -C "$work_dir" remote get-url origin 2>/dev/null | sed -E 's|.*github\.com[:/]||; s|\.git$||' || true)
+		if [[ -n "$_claim_repo_slug" && -n "$_claim_issue_number" ]]; then
+			local _claim_helper="${SCRIPT_DIR}/dispatch-claim-helper.sh"
+			if [[ -x "$_claim_helper" ]]; then
+				if "$_claim_helper" check "$_claim_issue_number" "$_claim_repo_slug" >/dev/null 2>&1; then
+					# exit 0 = active claim exists — proceed
+					: # claim exists, safe to continue
+				else
+					local _claim_check_exit=$?
+					if [[ "$_claim_check_exit" -eq 1 ]]; then
+						# exit 1 = NO active claim — block the launch
+						print_warning "Claim guard: no active DISPATCH_CLAIM for issue #${_claim_issue_number} on ${_claim_repo_slug} — refusing to launch worker (GH#17549). Use dispatch_with_dedup() to dispatch workers."
+						_run_failure_reason="no_dispatch_claim"
+						return 1
+					fi
+					# exit 2 = error — fail open (proceed)
+					print_warning "Claim guard: dispatch-claim-helper check returned error (exit ${_claim_check_exit}) — proceeding (fail-open)"
+				fi
+			fi
+		fi
+	fi
+
 	local output_file exit_code_file exit_code
 	local start_ms end_ms duration_ms
 	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
@@ -1737,6 +1769,35 @@ _execute_run_attempt() {
 			rm -f "$exit_code_file"
 		fi
 	fi
+
+	# GH#17549: Post-exit worker diagnostics — log exit code, signal, and
+	# session state to the output file so the worker log captures it.
+	# OpenCode exits silently on API errors; this is our only visibility.
+	# Extract session ID BEFORE the append block to avoid SC2094 (read+write same file).
+	local _diag_session_id="" _diag_incomplete_msgs="0"
+	if [[ "$exit_code" -eq 0 && -f "$output_file" ]]; then
+		_diag_session_id=$(grep -oP '"sessionID":"[^"]*"' "$output_file" 2>/dev/null | tail -1 | grep -oP '"[^"]*"$' | tr -d '"' || true)
+		if [[ -n "$_diag_session_id" ]]; then
+			_diag_incomplete_msgs=$(sqlite3 ~/.local/share/opencode/opencode.db \
+				"SELECT count(*) FROM message WHERE session_id='${_diag_session_id}' AND json_extract(data, '$.role')='assistant' AND json_extract(data, '$.time.completed') IS NULL" 2>/dev/null || echo "0")
+		fi
+	fi
+	{
+		printf '\n[WORKER_EXIT_DIAGNOSTICS] exit_code=%s model=%s role=%s session_key=%s\n' \
+			"$exit_code" "$selected_model" "$role" "$session_key"
+		if [[ "$exit_code" -eq 124 ]]; then
+			printf '[WORKER_EXIT_DIAGNOSTICS] cause=watchdog_kill (no LLM activity within timeout)\n'
+		elif [[ "$exit_code" -eq 137 ]]; then
+			printf '[WORKER_EXIT_DIAGNOSTICS] cause=SIGKILL (OOM or external kill)\n'
+		elif [[ "$exit_code" -eq 143 ]]; then
+			printf '[WORKER_EXIT_DIAGNOSTICS] cause=SIGTERM (graceful termination)\n'
+		elif [[ "$exit_code" -eq 0 && "$_diag_incomplete_msgs" -gt 0 ]]; then
+			printf '[WORKER_EXIT_DIAGNOSTICS] cause=mid_turn_death (session %s has %s incomplete assistant messages — API likely dropped)\n' \
+				"$_diag_session_id" "$_diag_incomplete_msgs"
+		elif [[ "$exit_code" -ne 0 ]]; then
+			printf '[WORKER_EXIT_DIAGNOSTICS] cause=unknown (exit_code=%s)\n' "$exit_code"
+		fi
+	} >>"$output_file" 2>/dev/null || true
 
 	local handle_exit=0
 	if _handle_run_result "$exit_code" "$output_file" "$role" "$provider" "$session_key" "$selected_model"; then
