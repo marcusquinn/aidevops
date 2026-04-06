@@ -814,6 +814,134 @@ _prefetch_needs_full_sweep() {
 #   $4 - output variable name for updated prs JSON (nameref not available in bash 3.2;
 #        caller reads PREFETCH_UPDATED_PRS after return)
 #######################################
+#######################################
+# Attempt delta PR fetch and merge into cached list (GH#15286).
+# Sets PREFETCH_PR_SWEEP_MODE="full" on failure (caller falls through).
+# Sets PREFETCH_PR_RESULT on success.
+# Arguments: $1=slug, $2=cache_entry, $3=pr_err_file
+#######################################
+_prefetch_prs_try_delta() {
+	local slug="$1"
+	local cache_entry="$2"
+	local pr_err="$3"
+
+	local last_prefetch
+	last_prefetch=$(echo "$cache_entry" | jq -r '.last_prefetch // ""' 2>/dev/null) || last_prefetch=""
+
+	# No usable timestamp — fall back to full
+	if [[ -z "$last_prefetch" || "$last_prefetch" == "null" ]]; then
+		echo "[pulse-wrapper] _prefetch_repo_prs: delta fetch failed for ${slug} (falling back to full): no timestamp or fetch error" >>"$LOGFILE"
+		PREFETCH_PR_SWEEP_MODE="full"
+		return 0
+	fi
+
+	local delta_json=""
+	delta_json=$(gh pr list --repo "$slug" --state open \
+		--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
+		--search "updated:>=${last_prefetch}" \
+		--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || delta_json=""
+
+	if [[ -z "$delta_json" || "$delta_json" == "null" ]]; then
+		local _delta_err_msg
+		_delta_err_msg=$(cat "$pr_err" 2>/dev/null || echo "no timestamp or fetch error")
+		echo "[pulse-wrapper] _prefetch_repo_prs: delta fetch failed for ${slug} (falling back to full): ${_delta_err_msg}" >>"$LOGFILE"
+		PREFETCH_PR_SWEEP_MODE="full"
+		return 0
+	fi
+
+	# Merge delta into cached full list: replace matching numbers, append new ones
+	local cached_prs
+	cached_prs=$(echo "$cache_entry" | jq '.prs // []' 2>/dev/null) || cached_prs="[]"
+	local merged
+	merged=$(echo "$cached_prs" | jq --argjson delta "$delta_json" '
+		($delta | map(.number) | map(tostring) | map({(.) : true}) | add // {}) as $delta_nums |
+		[.[] | select((.number | tostring) as $n | $delta_nums[$n] | not)] +
+		$delta
+	' 2>/dev/null) || merged=""
+
+	if [[ -z "$merged" || "$merged" == "null" ]]; then
+		echo "[pulse-wrapper] _prefetch_repo_prs: delta merge failed for ${slug} (falling back to full)" >>"$LOGFILE"
+		PREFETCH_PR_SWEEP_MODE="full"
+		return 0
+	fi
+
+	local delta_count
+	delta_count=$(echo "$delta_json" | jq 'length' 2>/dev/null) || delta_count=0
+	echo "[pulse-wrapper] _prefetch_repo_prs: delta for ${slug}: ${delta_count} changed PRs merged into cache" >>"$LOGFILE"
+	PREFETCH_PR_RESULT="$merged"
+	return 0
+}
+
+#######################################
+# Fetch statusCheckRollup enrichment for open PRs (GH#15060).
+# Non-fatal: returns empty string on failure.
+# Arguments: $1=slug, $2=checks_limit
+# Output: JSON array to stdout (or empty string)
+#######################################
+_prefetch_prs_enrich_checks() {
+	local slug="$1"
+	local checks_limit="$2"
+
+	local checks_err
+	checks_err=$(mktemp)
+	local checks_json=""
+	checks_json=$(gh pr list --repo "$slug" --state open \
+		--json number,statusCheckRollup \
+		--limit "$checks_limit" 2>"$checks_err") || checks_json=""
+
+	if [[ -z "$checks_json" || "$checks_json" == "null" ]]; then
+		local _checks_err_msg
+		_checks_err_msg=$(cat "$checks_err" 2>/dev/null || echo "unknown error")
+		echo "[pulse-wrapper] _prefetch_repo_prs: statusCheckRollup enrichment FAILED for ${slug} (non-fatal, PRs shown without check status): ${_checks_err_msg}" >>"$LOGFILE"
+		checks_json=""
+	fi
+	rm -f "$checks_err"
+
+	printf '%s' "$checks_json"
+	return 0
+}
+
+#######################################
+# Format PR list as markdown with optional check status enrichment.
+# Arguments: $1=pr_json, $2=pr_count, $3=checks_json
+# Output: markdown to stdout
+#######################################
+_prefetch_prs_format_output() {
+	local pr_json="$1"
+	local pr_count="$2"
+	local checks_json="$3"
+
+	if [[ "$pr_count" -le 0 ]]; then
+		echo "### Open PRs (0)"
+		echo "- None"
+		return 0
+	fi
+
+	echo "### Open PRs ($pr_count)"
+	if [[ -n "$checks_json" && "$checks_json" != "[]" ]]; then
+		echo "$pr_json" | jq -r --argjson checks "${checks_json:-[]}" '
+			($checks | map({(.number | tostring): .statusCheckRollup}) | add // {}) as $check_map |
+			.[] |
+			(.number | tostring) as $num |
+			($check_map[$num] // null) as $rolls |
+			"- PR #\(.number): \(.title) [checks: \(
+				if $rolls == null or ($rolls | length) == 0 then "none"
+				elif ($rolls | all((.conclusion // .state) == "SUCCESS")) then "PASS"
+				elif ($rolls | any((.conclusion // .state) == "FAILURE")) then "FAIL"
+				else "PENDING"
+				end
+			)] [review: \(
+				if .reviewDecision == null or .reviewDecision == "" then "NONE"
+				else .reviewDecision
+				end
+			)] [author: \(.author.login // "unknown")] [branch: \(.headRefName)] [updated: \(.updatedAt)]"
+		'
+	else
+		echo "$pr_json" | jq -r '.[] | "- PR #\(.number): \(.title) [checks: unknown] [review: \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [author: \(.author.login // "unknown")] [branch: \(.headRefName)] [updated: \(.updatedAt)]"'
+	fi
+	return 0
+}
+
 _prefetch_repo_prs() {
 	local slug="$1"
 	local cache_entry="${2:-{}}"
@@ -833,56 +961,24 @@ _prefetch_repo_prs() {
 	#
 	# GH#15286: Delta mode — fetch only PRs updated since last_prefetch, then
 	# merge into cached full list. Full sweep replaces the cache entirely.
-	local pr_json pr_err
+	local pr_json="" pr_err
 	pr_err=$(mktemp)
 
+	# Delta fetch: try merging recent changes into cache (GH#15286)
+	PREFETCH_PR_SWEEP_MODE="$sweep_mode"
+	PREFETCH_PR_RESULT=""
 	if [[ "$sweep_mode" == "delta" ]]; then
-		# Delta: fetch only recently-updated PRs
-		local last_prefetch
-		last_prefetch=$(echo "$cache_entry" | jq -r '.last_prefetch // ""' 2>/dev/null) || last_prefetch=""
-		local delta_json=""
-		if [[ -n "$last_prefetch" && "$last_prefetch" != "null" ]]; then
-			delta_json=$(gh pr list --repo "$slug" --state open \
-				--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
-				--search "updated:>=${last_prefetch}" \
-				--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || delta_json=""
-		fi
-
-		if [[ -z "$delta_json" || "$delta_json" == "null" ]]; then
-			# Delta failed or no timestamp — fall back to full fetch
-			local _delta_err_msg
-			_delta_err_msg=$(cat "$pr_err" 2>/dev/null || echo "no timestamp or fetch error")
-			echo "[pulse-wrapper] _prefetch_repo_prs: delta fetch failed for ${slug} (falling back to full): ${_delta_err_msg}" >>"$LOGFILE"
-			sweep_mode="full"
-		else
-			# Merge delta into cached full list: replace matching numbers, append new ones
-			local cached_prs
-			cached_prs=$(echo "$cache_entry" | jq '.prs // []' 2>/dev/null) || cached_prs="[]"
-			pr_json=$(echo "$cached_prs" | jq --argjson delta "$delta_json" '
-				# Build lookup of delta PR numbers
-				($delta | map(.number) | map(tostring) | map({(.) : true}) | add // {}) as $delta_nums |
-				# Remove cached entries that appear in delta (they will be replaced)
-				[.[] | select((.number | tostring) as $n | $delta_nums[$n] | not)] +
-				# Append all delta entries (updated + new)
-				$delta
-			' 2>/dev/null) || pr_json=""
-			if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
-				echo "[pulse-wrapper] _prefetch_repo_prs: delta merge failed for ${slug} (falling back to full)" >>"$LOGFILE"
-				sweep_mode="full"
-			else
-				local delta_count
-				delta_count=$(echo "$delta_json" | jq 'length' 2>/dev/null) || delta_count=0
-				echo "[pulse-wrapper] _prefetch_repo_prs: delta for ${slug}: ${delta_count} changed PRs merged into cache" >>"$LOGFILE"
-			fi
-		fi
+		_prefetch_prs_try_delta "$slug" "$cache_entry" "$pr_err"
+		sweep_mode="$PREFETCH_PR_SWEEP_MODE"
+		pr_json="$PREFETCH_PR_RESULT"
 	fi
 
+	# Full fetch: either requested directly or delta fell back
 	if [[ "$sweep_mode" == "full" ]]; then
 		pr_json=$(gh pr list --repo "$slug" --state open \
 			--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
 			--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || pr_json=""
 
-		# Log errors instead of swallowing them silently
 		if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 			local err_msg
 			err_msg=$(cat "$pr_err" 2>/dev/null || echo "unknown error")
@@ -899,58 +995,13 @@ _prefetch_repo_prs() {
 	pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 
-	# Enrichment: fetch statusCheckRollup separately with a smaller batch.
-	# This is the expensive field — do it only if we have PRs, and cap the
-	# batch to avoid GraphQL timeouts on repos with large PR backlogs.
-	# Non-fatal: if this fails, the pulse still sees the PR list without check status.
+	# Enrichment: fetch statusCheckRollup separately (GH#15060)
 	local checks_json=""
-	local checks_limit=50
 	if [[ "$pr_count" -gt 0 ]]; then
-		local checks_err
-		checks_err=$(mktemp)
-		checks_json=$(gh pr list --repo "$slug" --state open \
-			--json number,statusCheckRollup \
-			--limit "$checks_limit" 2>"$checks_err") || checks_json=""
-		if [[ -z "$checks_json" || "$checks_json" == "null" ]]; then
-			local _checks_err_msg
-			_checks_err_msg=$(cat "$checks_err" 2>/dev/null || echo "unknown error")
-			echo "[pulse-wrapper] _prefetch_repo_prs: statusCheckRollup enrichment FAILED for ${slug} (non-fatal, PRs shown without check status): ${_checks_err_msg}" >>"$LOGFILE"
-			checks_json=""
-		fi
-		rm -f "$checks_err"
+		checks_json=$(_prefetch_prs_enrich_checks "$slug" 50)
 	fi
 
-	if [[ "$pr_count" -gt 0 ]]; then
-		echo "### Open PRs ($pr_count)"
-		# Merge check status into the PR list where available
-		if [[ -n "$checks_json" && "$checks_json" != "[]" ]]; then
-			# Build a lookup map: number -> check summary
-			echo "$pr_json" | jq -r --argjson checks "${checks_json:-[]}" '
-				# Build check lookup indexed by PR number
-				($checks | map({(.number | tostring): .statusCheckRollup}) | add // {}) as $check_map |
-				.[] |
-				(.number | tostring) as $num |
-				($check_map[$num] // null) as $rolls |
-				"- PR #\(.number): \(.title) [checks: \(
-					if $rolls == null or ($rolls | length) == 0 then "none"
-					elif ($rolls | all((.conclusion // .state) == "SUCCESS")) then "PASS"
-					elif ($rolls | any((.conclusion // .state) == "FAILURE")) then "FAIL"
-					else "PENDING"
-					end
-				)] [review: \(
-					if .reviewDecision == null or .reviewDecision == "" then "NONE"
-					else .reviewDecision
-					end
-				)] [author: \(.author.login // "unknown")] [branch: \(.headRefName)] [updated: \(.updatedAt)]"
-			'
-		else
-			# No check data available — show PRs without check status
-			echo "$pr_json" | jq -r '.[] | "- PR #\(.number): \(.title) [checks: unknown] [review: \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [author: \(.author.login // "unknown")] [branch: \(.headRefName)] [updated: \(.updatedAt)]"'
-		fi
-	else
-		echo "### Open PRs (0)"
-		echo "- None"
-	fi
+	_prefetch_prs_format_output "$pr_json" "$pr_count" "$checks_json"
 
 	echo ""
 	return 0
@@ -1021,6 +1072,64 @@ _prefetch_repo_daily_cap() {
 #   $2 - cache entry JSON (from _prefetch_cache_get)
 #   $3 - "full" for full sweep, "delta" for delta fetch
 #######################################
+#######################################
+# Attempt delta issue fetch and merge into cached list (GH#15286).
+# Sets PREFETCH_ISSUE_SWEEP_MODE="full" on failure (caller falls through).
+# Sets PREFETCH_ISSUE_RESULT on success.
+# Arguments: $1=slug, $2=cache_entry, $3=issue_err_file
+#######################################
+_prefetch_issues_try_delta() {
+	local slug="$1"
+	local cache_entry="$2"
+	local issue_err="$3"
+
+	local last_prefetch
+	last_prefetch=$(echo "$cache_entry" | jq -r '.last_prefetch // ""' 2>/dev/null) || last_prefetch=""
+
+	# No usable timestamp — fall back to full
+	if [[ -z "$last_prefetch" || "$last_prefetch" == "null" ]]; then
+		echo "[pulse-wrapper] _prefetch_repo_issues: delta fetch failed for ${slug} (falling back to full): no timestamp or fetch error" >>"$LOGFILE"
+		PREFETCH_ISSUE_SWEEP_MODE="full"
+		return 0
+	fi
+
+	local delta_json=""
+	delta_json=$(gh issue list --repo "$slug" --state open \
+		--json number,title,labels,updatedAt,assignees \
+		--search "updated:>=${last_prefetch}" \
+		--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || delta_json=""
+
+	if [[ -z "$delta_json" || "$delta_json" == "null" ]]; then
+		local _delta_issue_err
+		_delta_issue_err=$(cat "$issue_err" 2>/dev/null || echo "no timestamp or fetch error")
+		echo "[pulse-wrapper] _prefetch_repo_issues: delta fetch failed for ${slug} (falling back to full): ${_delta_issue_err}" >>"$LOGFILE"
+		PREFETCH_ISSUE_SWEEP_MODE="full"
+		return 0
+	fi
+
+	# Merge delta into cached full list
+	local cached_issues
+	cached_issues=$(echo "$cache_entry" | jq '.issues // []' 2>/dev/null) || cached_issues="[]"
+	local merged
+	merged=$(echo "$cached_issues" | jq --argjson delta "$delta_json" '
+		($delta | map(.number) | map(tostring) | map({(.) : true}) | add // {}) as $delta_nums |
+		[.[] | select((.number | tostring) as $n | $delta_nums[$n] | not)] +
+		$delta
+	' 2>/dev/null) || merged=""
+
+	if [[ -z "$merged" || "$merged" == "null" ]]; then
+		echo "[pulse-wrapper] _prefetch_repo_issues: delta merge failed for ${slug} (falling back to full)" >>"$LOGFILE"
+		PREFETCH_ISSUE_SWEEP_MODE="full"
+		return 0
+	fi
+
+	local delta_count
+	delta_count=$(echo "$delta_json" | jq 'length' 2>/dev/null) || delta_count=0
+	echo "[pulse-wrapper] _prefetch_repo_issues: delta for ${slug}: ${delta_count} changed issues merged into cache" >>"$LOGFILE"
+	PREFETCH_ISSUE_RESULT="$merged"
+	return 0
+}
+
 _prefetch_repo_issues() {
 	local slug="$1"
 	local cache_entry="${2:-{}}"
@@ -1033,45 +1142,19 @@ _prefetch_repo_issues() {
 	# close them as "stale", creating churn (wrapper recreates on next cycle).
 	# GH#15060: Log errors instead of silently swallowing them with 2>/dev/null.
 	# GH#15286: Delta mode — fetch only recently-updated issues, merge into cache.
-	local issue_json issue_err
+	local issue_json="" issue_err
 	issue_err=$(mktemp)
 
+	# Delta fetch: try merging recent changes into cache (GH#15286)
+	PREFETCH_ISSUE_SWEEP_MODE="$sweep_mode"
+	PREFETCH_ISSUE_RESULT=""
 	if [[ "$sweep_mode" == "delta" ]]; then
-		local last_prefetch
-		last_prefetch=$(echo "$cache_entry" | jq -r '.last_prefetch // ""' 2>/dev/null) || last_prefetch=""
-		local delta_json=""
-		if [[ -n "$last_prefetch" && "$last_prefetch" != "null" ]]; then
-			delta_json=$(gh issue list --repo "$slug" --state open \
-				--json number,title,labels,updatedAt,assignees \
-				--search "updated:>=${last_prefetch}" \
-				--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || delta_json=""
-		fi
-
-		if [[ -z "$delta_json" || "$delta_json" == "null" ]]; then
-			local _delta_issue_err
-			_delta_issue_err=$(cat "$issue_err" 2>/dev/null || echo "no timestamp or fetch error")
-			echo "[pulse-wrapper] _prefetch_repo_issues: delta fetch failed for ${slug} (falling back to full): ${_delta_issue_err}" >>"$LOGFILE"
-			sweep_mode="full"
-		else
-			# Merge delta into cached full list
-			local cached_issues
-			cached_issues=$(echo "$cache_entry" | jq '.issues // []' 2>/dev/null) || cached_issues="[]"
-			issue_json=$(echo "$cached_issues" | jq --argjson delta "$delta_json" '
-				($delta | map(.number) | map(tostring) | map({(.) : true}) | add // {}) as $delta_nums |
-				[.[] | select((.number | tostring) as $n | $delta_nums[$n] | not)] +
-				$delta
-			' 2>/dev/null) || issue_json=""
-			if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
-				echo "[pulse-wrapper] _prefetch_repo_issues: delta merge failed for ${slug} (falling back to full)" >>"$LOGFILE"
-				sweep_mode="full"
-			else
-				local delta_count
-				delta_count=$(echo "$delta_json" | jq 'length' 2>/dev/null) || delta_count=0
-				echo "[pulse-wrapper] _prefetch_repo_issues: delta for ${slug}: ${delta_count} changed issues merged into cache" >>"$LOGFILE"
-			fi
-		fi
+		_prefetch_issues_try_delta "$slug" "$cache_entry" "$issue_err"
+		sweep_mode="$PREFETCH_ISSUE_SWEEP_MODE"
+		issue_json="$PREFETCH_ISSUE_RESULT"
 	fi
 
+	# Full fetch: either requested directly or delta fell back
 	if [[ "$sweep_mode" == "full" ]]; then
 		issue_json=$(gh issue list --repo "$slug" --state open \
 			--json number,title,labels,updatedAt,assignees \
@@ -1094,10 +1177,6 @@ _prefetch_repo_issues() {
 	filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("needs-maintainer-review")) | not)]')
 
 	# GH#10308: Split issues into dispatchable vs quality-sweep-tracked.
-	# The sweep (stats-functions.sh) creates quality-debt and simplification-debt
-	# issues with source:quality-sweep labels. Showing these separately prevents
-	# the pulse LLM from independently creating duplicate issues for the same
-	# findings it reads from the quality dashboard comments.
 	local dispatchable_json sweep_tracked_json
 	dispatchable_json=$(echo "$filtered_json" | jq '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")) | not)]')
 	sweep_tracked_json=$(echo "$filtered_json" | jq '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")))]')
@@ -1287,6 +1366,31 @@ _assemble_state_file() {
 # Arguments:
 #   $1 - repo_entries (slug|path pairs, one per line)
 #######################################
+#######################################
+# Run a prefetch sub-command with timeout and append output to a target file.
+# Encapsulates the repeated pattern: mktemp → run_cmd_with_timeout → cat → rm.
+# Arguments:
+#   $1 - timeout in seconds
+#   $2 - target file to append output to
+#   $3 - label for log messages
+#   $4..N - command and arguments to run
+#######################################
+_run_prefetch_step() {
+	local timeout="$1"
+	local target_file="$2"
+	local label="$3"
+	shift 3
+
+	local tmp_file
+	tmp_file=$(mktemp)
+	run_cmd_with_timeout "$timeout" "$@" >"$tmp_file" 2>/dev/null || {
+		echo "[pulse-wrapper] ${label} timed out after ${timeout}s (non-fatal)" >>"$LOGFILE"
+	}
+	cat "$tmp_file" >>"$target_file"
+	rm -f "$tmp_file"
+	return 0
+}
+
 _append_prefetch_sub_helpers() {
 	local repo_entries="$1"
 
@@ -1297,27 +1401,12 @@ _append_prefetch_sub_helpers() {
 	prefetch_active_workers >>"$STATE_FILE"
 
 	# Append repo hygiene data for LLM triage (t1417)
-	# This includes pr-salvage-helper.sh which iterates all repos sequentially
-	# and can hang on gh API calls. 30s timeout — if it can't finish fast,
-	# the pulse proceeds without hygiene data (degraded but functional).
 	# Total prefetch budget: 60s (parallel) + 30s + 30s + 30s = 150s max,
 	# well within the 600s stage timeout.
-	local hygiene_tmp
-	hygiene_tmp=$(mktemp)
-	run_cmd_with_timeout 30 prefetch_hygiene >"$hygiene_tmp" 2>/dev/null || {
-		echo "[pulse-wrapper] prefetch_hygiene timed out after 30s (non-fatal)" >>"$LOGFILE"
-	}
-	cat "$hygiene_tmp" >>"$STATE_FILE"
-	rm -f "$hygiene_tmp"
+	_run_prefetch_step 30 "$STATE_FILE" "prefetch_hygiene" prefetch_hygiene
 
 	# Append CI failure patterns from notification mining (GH#4480)
-	local ci_tmp
-	ci_tmp=$(mktemp)
-	run_cmd_with_timeout 30 prefetch_ci_failures >"$ci_tmp" 2>/dev/null || {
-		echo "[pulse-wrapper] prefetch_ci_failures timed out after 30s (non-fatal)" >>"$LOGFILE"
-	}
-	cat "$ci_tmp" >>"$STATE_FILE"
-	rm -f "$ci_tmp"
+	_run_prefetch_step 30 "$STATE_FILE" "prefetch_ci_failures" prefetch_ci_failures
 
 	# Append priority-class worker allocations (t1423, reads local file — fast)
 	_append_priority_allocations >>"$STATE_FILE"
@@ -1329,44 +1418,27 @@ _append_prefetch_sub_helpers() {
 	prefetch_contribution_watch >>"$STATE_FILE"
 
 	# Append failed-notification systemic summary (t3960)
-	local ghfail_tmp
-	ghfail_tmp=$(mktemp)
-	run_cmd_with_timeout 30 prefetch_gh_failure_notifications >"$ghfail_tmp" 2>/dev/null || {
-		echo "[pulse-wrapper] prefetch_gh_failure_notifications timed out after 30s (non-fatal)" >>"$LOGFILE"
-	}
-	cat "$ghfail_tmp" >>"$STATE_FILE"
-	rm -f "$ghfail_tmp"
+	_run_prefetch_step 30 "$STATE_FILE" "prefetch_gh_failure_notifications" prefetch_gh_failure_notifications
 
 	# Write needs-maintainer-review triage status to a SEPARATE file (t1894).
 	# This data is used only by the deterministic dispatch_triage_reviews()
 	# function — it must NOT appear in the LLM's STATE_FILE. NMR issues are
 	# a security gate; the LLM should never see or act on them.
+	# Uses overwrite (>) not append (>>) — triage file is written once per cycle.
+	TRIAGE_STATE_FILE="${STATE_FILE%.txt}-triage.txt"
 	local triage_tmp
 	triage_tmp=$(mktemp)
 	run_cmd_with_timeout 30 prefetch_triage_review_status "$repo_entries" >"$triage_tmp" 2>/dev/null || {
 		echo "[pulse-wrapper] prefetch_triage_review_status timed out after 30s (non-fatal)" >>"$LOGFILE"
 	}
-	TRIAGE_STATE_FILE="${STATE_FILE%.txt}-triage.txt"
 	cat "$triage_tmp" >"$TRIAGE_STATE_FILE"
 	rm -f "$triage_tmp"
 
 	# Append status:needs-info contributor reply status
-	local needs_info_tmp
-	needs_info_tmp=$(mktemp)
-	run_cmd_with_timeout 30 prefetch_needs_info_replies "$repo_entries" >"$needs_info_tmp" 2>/dev/null || {
-		echo "[pulse-wrapper] prefetch_needs_info_replies timed out after 30s (non-fatal)" >>"$LOGFILE"
-	}
-	cat "$needs_info_tmp" >>"$STATE_FILE"
-	rm -f "$needs_info_tmp"
+	_run_prefetch_step 30 "$STATE_FILE" "prefetch_needs_info_replies" prefetch_needs_info_replies "$repo_entries"
 
 	# Append FOSS contribution scan results (t1702)
-	local foss_tmp
-	foss_tmp=$(mktemp)
-	run_cmd_with_timeout "$FOSS_SCAN_TIMEOUT" prefetch_foss_scan >"$foss_tmp" 2>/dev/null || {
-		echo "[pulse-wrapper] prefetch_foss_scan timed out after ${FOSS_SCAN_TIMEOUT}s (non-fatal)" >>"$LOGFILE"
-	}
-	cat "$foss_tmp" >>"$STATE_FILE"
-	rm -f "$foss_tmp"
+	_run_prefetch_step "$FOSS_SCAN_TIMEOUT" "$STATE_FILE" "prefetch_foss_scan" prefetch_foss_scan
 
 	return 0
 }
@@ -2779,6 +2851,84 @@ run_stage_with_timeout() {
 #   Line 4: updated has_seen_progress
 #   Line 5: updated idle_seconds
 #######################################
+#######################################
+# Check log progress and detect stalls (GH#2958).
+# Updates WD_LAST_LOG_SIZE, WD_PROGRESS_STALL_SECONDS,
+# WD_HAS_SEEN_PROGRESS, WD_KILL_REASON via dynamic scoping.
+# Arguments: $1=effective_cold_start_timeout
+#######################################
+_watchdog_check_progress() {
+	local effective_cold_start_timeout="$1"
+
+	local current_log_size=0
+	if [[ -f "$LOGFILE" ]]; then
+		current_log_size=$(wc -c <"$LOGFILE" 2>/dev/null || echo "0")
+		current_log_size="${current_log_size// /}"
+	fi
+	[[ "$current_log_size" =~ ^[0-9]+$ ]] || current_log_size=0
+
+	# Log grew — process is making progress
+	if [[ "$current_log_size" -gt "$WD_LAST_LOG_SIZE" ]]; then
+		WD_HAS_SEEN_PROGRESS=true
+		if [[ "$WD_PROGRESS_STALL_SECONDS" -gt 0 ]]; then
+			echo "[pulse-wrapper] Progress resumed after ${WD_PROGRESS_STALL_SECONDS}s stall (log grew by $((current_log_size - WD_LAST_LOG_SIZE)) bytes)" >>"$LOGFILE"
+		fi
+		WD_LAST_LOG_SIZE="$current_log_size"
+		WD_PROGRESS_STALL_SECONDS=0
+		return 0
+	fi
+
+	# Log hasn't grown — increment stall counter
+	WD_PROGRESS_STALL_SECONDS=$((WD_PROGRESS_STALL_SECONDS + 60))
+	local progress_timeout="$PULSE_PROGRESS_TIMEOUT"
+	if [[ "$WD_HAS_SEEN_PROGRESS" == false ]]; then
+		progress_timeout="$effective_cold_start_timeout"
+	fi
+
+	if [[ "$WD_PROGRESS_STALL_SECONDS" -lt "$progress_timeout" ]]; then
+		return 0
+	fi
+
+	if [[ "$WD_HAS_SEEN_PROGRESS" == false ]]; then
+		WD_KILL_REASON="Pulse cold-start stalled for ${WD_PROGRESS_STALL_SECONDS}s — no first output (log size: ${current_log_size} bytes, threshold: ${effective_cold_start_timeout}s)"
+	else
+		WD_KILL_REASON="Pulse stalled for ${WD_PROGRESS_STALL_SECONDS}s — no log output (log size: ${current_log_size} bytes, threshold: ${PULSE_PROGRESS_TIMEOUT}s) (GH#2958)"
+	fi
+	return 0
+}
+
+#######################################
+# Check CPU idle detection (t1398.3).
+# Updates WD_IDLE_SECONDS, WD_KILL_REASON via dynamic scoping.
+# Arguments: $1=opencode_pid
+#######################################
+_watchdog_check_idle() {
+	local opencode_pid="$1"
+
+	if [[ "$WD_HAS_SEEN_PROGRESS" != true ]]; then
+		WD_IDLE_SECONDS=0
+		return 0
+	fi
+
+	local tree_cpu
+	tree_cpu=$(_get_process_tree_cpu "$opencode_pid")
+
+	# Process is active — reset idle counter
+	if [[ "$tree_cpu" -ge "$PULSE_IDLE_CPU_THRESHOLD" ]]; then
+		if [[ "$WD_IDLE_SECONDS" -gt 0 ]]; then
+			echo "[pulse-wrapper] Pulse active again (CPU ${tree_cpu}%) after ${WD_IDLE_SECONDS}s idle — resetting idle counter" >>"$LOGFILE"
+		fi
+		WD_IDLE_SECONDS=0
+		return 0
+	fi
+
+	WD_IDLE_SECONDS=$((WD_IDLE_SECONDS + 60))
+	if [[ "$WD_IDLE_SECONDS" -ge "$PULSE_IDLE_TIMEOUT" ]]; then
+		WD_KILL_REASON="Pulse idle for ${WD_IDLE_SECONDS}s (CPU ${tree_cpu}% < ${PULSE_IDLE_CPU_THRESHOLD}%, threshold ${PULSE_IDLE_TIMEOUT}s) (t1398.3)"
+	fi
+	return 0
+}
+
 _check_watchdog_conditions() {
 	local opencode_pid="$1"
 	local start_epoch="$2"
@@ -2792,79 +2942,33 @@ _check_watchdog_conditions() {
 	now=$(date +%s)
 	local elapsed=$((now - start_epoch))
 
-	local kill_reason=""
+	# Use WD_ prefixed vars for dynamic scoping with sub-helpers
+	WD_KILL_REASON=""
+	WD_LAST_LOG_SIZE="$last_log_size"
+	WD_PROGRESS_STALL_SECONDS="$progress_stall_seconds"
+	WD_HAS_SEEN_PROGRESS="$has_seen_progress"
+	WD_IDLE_SECONDS="$idle_seconds"
 
 	# Check 0: Stop flag — user ran `aidevops pulse stop` during this cycle (t2943)
 	if [[ -f "$STOP_FLAG" ]]; then
-		kill_reason="Stop flag detected during active pulse — user requested stop"
+		WD_KILL_REASON="Stop flag detected during active pulse — user requested stop"
 	# Check 1: Wall-clock stale threshold (hard ceiling)
 	elif [[ "$elapsed" -gt "$PULSE_STALE_THRESHOLD" ]]; then
-		kill_reason="Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s)"
+		WD_KILL_REASON="Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s)"
 	# Skip checks 2 and 3 during the first 3 minutes to allow startup/init.
 	elif [[ "$elapsed" -ge 180 ]]; then
-		# Check 2: Progress detection — is the log file growing? (GH#2958)
-		if [[ -z "$kill_reason" ]]; then
-			local current_log_size=0
-			if [[ -f "$LOGFILE" ]]; then
-				current_log_size=$(wc -c <"$LOGFILE" 2>/dev/null || echo "0")
-				current_log_size="${current_log_size// /}"
-			fi
-			[[ "$current_log_size" =~ ^[0-9]+$ ]] || current_log_size=0
-
-			if [[ "$current_log_size" -gt "$last_log_size" ]]; then
-				# Log grew — process is making progress
-				has_seen_progress=true
-				if [[ "$progress_stall_seconds" -gt 0 ]]; then
-					echo "[pulse-wrapper] Progress resumed after ${progress_stall_seconds}s stall (log grew by $((current_log_size - last_log_size)) bytes)" >>"$LOGFILE"
-				fi
-				last_log_size="$current_log_size"
-				progress_stall_seconds=0
-			else
-				# Log hasn't grown — increment stall counter
-				progress_stall_seconds=$((progress_stall_seconds + 60))
-				local progress_timeout="$PULSE_PROGRESS_TIMEOUT"
-				if [[ "$has_seen_progress" == false ]]; then
-					progress_timeout="$effective_cold_start_timeout"
-				fi
-				if [[ "$progress_stall_seconds" -ge "$progress_timeout" ]]; then
-					if [[ "$has_seen_progress" == false ]]; then
-						kill_reason="Pulse cold-start stalled for ${progress_stall_seconds}s — no first output (log size: ${current_log_size} bytes, threshold: ${effective_cold_start_timeout}s)"
-					else
-						kill_reason="Pulse stalled for ${progress_stall_seconds}s — no log output (log size: ${current_log_size} bytes, threshold: ${PULSE_PROGRESS_TIMEOUT}s) (GH#2958)"
-					fi
-				fi
-			fi
-		fi
-
-		# Check 3: Idle detection — CPU usage of the process tree (t1398.3)
-		if [[ -z "$kill_reason" ]]; then
-			if [[ "$has_seen_progress" == true ]]; then
-				local tree_cpu
-				tree_cpu=$(_get_process_tree_cpu "$opencode_pid")
-				if [[ "$tree_cpu" -lt "$PULSE_IDLE_CPU_THRESHOLD" ]]; then
-					idle_seconds=$((idle_seconds + 60))
-					if [[ "$idle_seconds" -ge "$PULSE_IDLE_TIMEOUT" ]]; then
-						kill_reason="Pulse idle for ${idle_seconds}s (CPU ${tree_cpu}% < ${PULSE_IDLE_CPU_THRESHOLD}%, threshold ${PULSE_IDLE_TIMEOUT}s) (t1398.3)"
-					fi
-				else
-					# Process is active — reset idle counter
-					if [[ "$idle_seconds" -gt 0 ]]; then
-						echo "[pulse-wrapper] Pulse active again (CPU ${tree_cpu}%) after ${idle_seconds}s idle — resetting idle counter" >>"$LOGFILE"
-					fi
-					idle_seconds=0
-				fi
-			else
-				idle_seconds=0
-			fi
+		_watchdog_check_progress "$effective_cold_start_timeout"
+		if [[ -z "$WD_KILL_REASON" ]]; then
+			_watchdog_check_idle "$opencode_pid"
 		fi
 	fi
 
 	# Output updated state (one value per line for caller to read)
-	echo "$kill_reason"
-	echo "$last_log_size"
-	echo "$progress_stall_seconds"
-	echo "$has_seen_progress"
-	echo "$idle_seconds"
+	echo "$WD_KILL_REASON"
+	echo "$WD_LAST_LOG_SIZE"
+	echo "$WD_PROGRESS_STALL_SECONDS"
+	echo "$WD_HAS_SEEN_PROGRESS"
+	echo "$WD_IDLE_SECONDS"
 	return 0
 }
 
