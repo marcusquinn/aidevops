@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, execFile } from "child_process";
 import {
   readFileSync,
   existsSync,
@@ -909,6 +909,19 @@ async function toolExecuteAfter(input, output) {
 
   // Phase 5: LLM observability — record tool calls with intent (t1308, t1309)
   recordToolCall(input, output, intent);
+
+  // GH#17511: auto-record child subagent tokens after Task tool calls
+  if (toolName === "mcp_task" || toolName === "task") {
+    const taskId = output?.metadata?.task_id || "";
+    if (taskId) {
+      const helper = join(SCRIPTS_DIR, "gh-signature-helper.sh");
+      if (existsSync(helper)) {
+        execFile(helper, ["record-child", "--child", taskId], (err) => {
+          if (err) qualityLog("WARN", `record-child failed: ${err.message}`);
+        });
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

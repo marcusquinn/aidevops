@@ -27,8 +27,10 @@ NC='\033[0m'
 
 HOOKS_DIR="$HOME/.aidevops/hooks"
 HOOK_SCRIPT="$HOOKS_DIR/git_safety_guard.py"
+POST_HOOK_SCRIPT="$HOOKS_DIR/mcp_task_post_hook.py"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 HOOK_COMMAND="\$HOME/.aidevops/hooks/git_safety_guard.py"
+POST_HOOK_COMMAND="\$HOME/.aidevops/hooks/mcp_task_post_hook.py"
 
 print_info() { printf "${BLUE}[INFO]${NC} %s\n" "$1"; }
 print_success() { printf "${GREEN}[OK]${NC} %s\n" "$1"; }
@@ -37,10 +39,11 @@ print_error() { printf "${RED}[ERROR]${NC} %s\n" "$1"; }
 
 # Find the source hook script (repo .agents/hooks/ or deployed ~/.aidevops/agents/hooks/)
 find_source_hook() {
+	local hook_name="${1:-git_safety_guard.py}"
 	local script_dir
 	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-	local repo_hook="$script_dir/../hooks/git_safety_guard.py"
-	local deployed_hook="$HOME/.aidevops/agents/hooks/git_safety_guard.py"
+	local repo_hook="$script_dir/../hooks/$hook_name"
+	local deployed_hook="$HOME/.aidevops/agents/hooks/$hook_name"
 
 	if [[ -f "$repo_hook" ]]; then
 		echo "$repo_hook"
@@ -49,7 +52,7 @@ find_source_hook() {
 		echo "$deployed_hook"
 		return 0
 	else
-		print_error "Source hook not found in repo or deployed agents"
+		print_error "Source hook '$hook_name' not found in repo or deployed agents"
 		return 1
 	fi
 }
@@ -66,6 +69,8 @@ install_hook() {
 	# Find source hook
 	local source_hook
 	source_hook=$(find_source_hook) || return 1
+	local source_post_hook
+	source_post_hook=$(find_source_hook "mcp_task_post_hook.py") || return 1
 
 	# Create hooks directory
 	mkdir -p "$HOOKS_DIR"
@@ -74,6 +79,9 @@ install_hook() {
 	cp "$source_hook" "$HOOK_SCRIPT"
 	chmod +x "$HOOK_SCRIPT"
 	print_success "Installed $HOOK_SCRIPT"
+	cp "$source_post_hook" "$POST_HOOK_SCRIPT"
+	chmod +x "$POST_HOOK_SCRIPT"
+	print_success "Installed $POST_HOOK_SCRIPT"
 
 	# Configure Claude Code settings.json
 	configure_claude_settings || return 1
@@ -113,6 +121,17 @@ settings = {
                     }
                 ]
             }
+        ],
+        'PostToolUse': [
+            {
+                'matcher': 'Task',
+                'hooks': [
+                    {
+                        'type': 'command',
+                        'command': '$POST_HOOK_COMMAND'
+                    }
+                ]
+            }
         ]
     }
 }
@@ -137,11 +156,21 @@ os.rename(tmp, path)
 import json, sys
 with open('$CLAUDE_SETTINGS') as f:
     d = json.load(f)
-hooks = d.get('hooks', {}).get('PreToolUse', [])
-for h in hooks:
+hooks = d.get('hooks', {})
+has_pre = False
+for h in hooks.get('PreToolUse', []):
     for sub in h.get('hooks', []):
         if 'git_safety_guard' in sub.get('command', ''):
-            sys.exit(0)
+            has_pre = True
+
+has_post = False
+for h in hooks.get('PostToolUse', []):
+    for sub in h.get('hooks', []):
+        if 'mcp_task_post_hook' in sub.get('command', ''):
+            has_post = True
+
+if has_pre and has_post:
+    sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
 		print_info "Hook already configured in $CLAUDE_SETTINGS"
@@ -158,6 +187,13 @@ with open('$CLAUDE_SETTINGS') as f:
 if 'hooks' not in settings:
     settings['hooks'] = {}
 
+def has_hook(entries, needle):
+    for entry in entries:
+        for sub in entry.get('hooks', []):
+            if needle in sub.get('command', ''):
+                return True
+    return False
+
 hook_entry = {
     'matcher': 'Bash',
     'hooks': [
@@ -168,10 +204,25 @@ hook_entry = {
     ]
 }
 
+post_hook_entry = {
+    'matcher': 'Task',
+    'hooks': [
+        {
+            'type': 'command',
+            'command': '$POST_HOOK_COMMAND'
+        }
+    ]
+}
+
 if 'PreToolUse' not in settings['hooks']:
     settings['hooks']['PreToolUse'] = [hook_entry]
-else:
+elif not has_hook(settings['hooks']['PreToolUse'], 'git_safety_guard'):
     settings['hooks']['PreToolUse'].append(hook_entry)
+
+if 'PostToolUse' not in settings['hooks']:
+    settings['hooks']['PostToolUse'] = [post_hook_entry]
+elif not has_hook(settings['hooks']['PostToolUse'], 'mcp_task_post_hook'):
+    settings['hooks']['PostToolUse'].append(post_hook_entry)
 
 path = '$CLAUDE_SETTINGS'
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
@@ -199,6 +250,12 @@ uninstall_hook() {
 	else
 		print_info "Hook script not found (already removed)"
 	fi
+	if [[ -f "$POST_HOOK_SCRIPT" ]]; then
+		rm "$POST_HOOK_SCRIPT"
+		print_success "Removed $POST_HOOK_SCRIPT"
+	else
+		print_info "Post hook script not found (already removed)"
+	fi
 
 	# Remove from Claude settings
 	if [[ -f "$CLAUDE_SETTINGS" ]]; then
@@ -221,8 +278,23 @@ if filtered:
     settings['hooks']['PreToolUse'] = filtered
 elif 'PreToolUse' in settings.get('hooks', {}):
     del settings['hooks']['PreToolUse']
-    if not settings['hooks']:
-        del settings['hooks']
+
+post_hooks = settings.get('hooks', {}).get('PostToolUse', [])
+post_filtered = []
+for h in post_hooks:
+    sub_hooks = h.get('hooks', [])
+    sub_filtered = [s for s in sub_hooks if 'mcp_task_post_hook' not in s.get('command', '')]
+    if sub_filtered:
+        h['hooks'] = sub_filtered
+        post_filtered.append(h)
+
+if post_filtered:
+    settings['hooks']['PostToolUse'] = post_filtered
+elif 'PostToolUse' in settings.get('hooks', {}):
+    del settings['hooks']['PostToolUse']
+
+if 'hooks' in settings and not settings['hooks']:
+    del settings['hooks']
 
 path = '$CLAUDE_SETTINGS'
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
