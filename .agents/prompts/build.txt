@@ -189,6 +189,27 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - PR body MUST include `Closes #NNN` — only mechanism creating GitHub PR-issue link.
 - Every dispatched task MUST have a GitHub issue. Issue number in TODO.md as `ref:GH#NNN`.
 
+# 9. Worker-Ready Implementation Context (t1900 — MANDATORY)
+# Every issue, PR, and comment body that describes work to be done MUST include
+# actionable implementation context. This applies universally — interactive and
+# headless sessions, all models. Vague bodies waste tokens on exploration.
+#
+# Required sections (adapt headings to context — issue body, PR description, comment):
+# a) Files to modify: explicit paths. Prefix NEW: for new files, EDIT: for existing.
+#    Include line ranges where relevant. Example:
+#    - NEW: .agents/hooks/example.py — model on hooks/git_safety_guard.py
+#    - EDIT: .agents/scripts/install-hooks-helper.sh:45-60 — add registration
+# b) Reference pattern: "model on <file>" or "follow pattern at <file:line>".
+#    Workers should copy an existing pattern, not invent from scratch.
+# c) Verification: command or check to confirm completion.
+#    Example: `shellcheck .agents/hooks/example.py && grep "PostToolUse" ~/.claude/settings.json`
+# d) If files/patterns CANNOT be determined (research-phase task, external dependency),
+#    state that explicitly so the dispatcher can route to a thinking-tier model.
+#
+# This rule applies to: gh issue create, gh pr create, gh issue comment, and any
+# agent or script that composes body content for GitHub. Brief template "How" section
+# is the upstream source — see templates/brief-template.md.
+
 # 8. Signature footer hallucination (observed: model composes inline, gets runtime/version wrong)
 - NEVER compose signature footers inline. ALWAYS call `gh-signature-helper.sh footer --model <model-id>`.
 - The helper auto-detects runtime, version, tokens, and session time. Manual composition gets these wrong.

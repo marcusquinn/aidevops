@@ -953,7 +953,51 @@ _compose_issue_sections() {
 	fi
 
 	body=$(_compose_issue_related_files "$body" "$task_id" "$project_root")
+	body=$(_compose_issue_worker_guidance "$body" "$project_root/todo/tasks/${task_id}-brief.md")
 	body=$(_compose_issue_brief "$body" "$project_root/todo/tasks/${task_id}-brief.md")
+
+	echo "$body"
+	return 0
+}
+
+# Extract worker guidance from the brief's "How" section (t1900).
+# Promotes "Files to Modify", "Implementation Steps", and "Verification"
+# into a top-level "Worker Guidance" section in the issue body so workers
+# see actionable context immediately without reading the full brief.
+# Arguments:
+#   $1 - current body text
+#   $2 - brief_file path
+_compose_issue_worker_guidance() {
+	local body="$1"
+	local brief_file="$2"
+
+	if [[ ! -f "$brief_file" ]]; then
+		echo "$body"
+		return 0
+	fi
+
+	# Extract the "How" section content between "## How" and the next "##" heading
+	local how_section
+	how_section=$(awk '
+		/^## How/ { capture=1; next }
+		/^## / && capture { exit }
+		capture { print }
+	' "$brief_file")
+
+	if [[ -z "$how_section" ]]; then
+		echo "$body"
+		return 0
+	fi
+
+	# Check if the How section has structured subsections (Files to Modify, Steps, Verification)
+	local has_files has_steps has_verify
+	has_files=$(echo "$how_section" | grep -c '### Files to Modify\|EDIT:\|NEW:' || true)
+	has_steps=$(echo "$how_section" | grep -c '### Implementation Steps' || true)
+	has_verify=$(echo "$how_section" | grep -c '### Verification' || true)
+
+	if [[ "$has_files" -gt 0 || "$has_steps" -gt 0 ]]; then
+		body="$body"$'\n\n'"## Worker Guidance"$'\n\n'"$how_section"
+	fi
 
 	echo "$body"
 	return 0

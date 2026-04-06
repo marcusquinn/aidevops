@@ -950,6 +950,41 @@ escalate_issue_tier() {
 		;;
 	esac
 
+	# Body quality gate (t1900): check if the issue body has implementation
+	# context before escalating. If the body lacks file paths, the root cause
+	# is a vague issue — not model capability. Escalating wastes a more
+	# expensive model on the same exploration problem.
+	local issue_body
+	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json body --jq '.body // ""' 2>/dev/null) || issue_body=""
+	if [[ -n "$issue_body" ]]; then
+		# Check for file path indicators: paths with extensions, EDIT:/NEW: prefixes,
+		# backtick-quoted paths, or "Files to Modify" section headers
+		local has_file_context=false
+		if echo "$issue_body" | grep -qE '(EDIT:|NEW:|`[a-zA-Z0-9_./-]+\.[a-z]+`|Files to Modify|## How|\.sh:|\.py:|\.ts:|\.js:|\.md:)'; then
+			has_file_context=true
+		fi
+		if [[ "$has_file_context" != "true" ]]; then
+			# Body lacks implementation context — post diagnostic instead of escalating
+			local diag_body="## Escalation Blocked: Missing Implementation Context
+
+**Trigger:** ${failure_count} consecutive worker failures (threshold: ${threshold})
+**Action:** Escalation to \`tier:thinking\` **skipped** — issue body lacks file paths and implementation steps.
+
+Workers fail when they must explore the entire codebase to find what to change. Adding explicit file paths, reference patterns, and verification commands to the issue body is more effective than escalating to a more expensive model.
+
+**Required:** Update the issue body with a \`## How\` section containing:
+- Files to modify (with paths and line ranges)
+- Reference pattern (\`model on <existing-file>\`)
+- Verification command
+
+_Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-lifecycle-common.sh_"
+			gh issue comment "$issue_number" --repo "$repo_slug" \
+				--body "$diag_body" 2>/dev/null || true
+			return 0
+		fi
+	fi
+
 	# Add tier:thinking label (creates label if needed)
 	gh label create "tier:thinking" \
 		--repo "$repo_slug" \

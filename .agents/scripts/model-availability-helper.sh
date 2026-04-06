@@ -122,13 +122,13 @@ get_tier_models() {
 
 	case "$tier" in
 	local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
-	haiku) echo "anthropic/claude-haiku-4-5|google/gemini-2.5-flash" ;;
-	flash) echo "google/gemini-2.5-flash|openai/gpt-4.1-mini" ;;
+	haiku) echo "anthropic/claude-haiku-4-5|openai/gpt-5.4-mini" ;;
+	flash) echo "openai/gpt-5.4-mini|openai/gpt-4.1-mini" ;;
 	sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-5.3-codex" ;;
 	pro) echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-6" ;;
 	opus) echo "anthropic/claude-opus-4-6|openai/gpt-5.4" ;;
-	health) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
-	eval) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
+	health) echo "anthropic/claude-sonnet-4-6|openai/gpt-5.4-mini" ;;
+	eval) echo "anthropic/claude-sonnet-4-6|openai/gpt-5.4-mini" ;;
 	coding) echo "anthropic/claude-opus-4-6|openai/gpt-5.4" ;;
 	*) return 1 ;;
 	esac
