@@ -69,13 +69,23 @@ require_pattern() {
 }
 
 check_generator_rules() {
+	# The deny/allow rules live in the Python settings updater.
+	# Check the extracted file first (GH#17559), fall back to the
+	# legacy inline heredoc in generate-claude-agents.sh.
+	local settings_py="${SCRIPT_DIR}/update-claude-settings.py"
 	local generator_file="${SCRIPT_DIR}/generate-claude-agents.sh"
-	if [[ ! -f "$generator_file" ]]; then
-		echo "FAIL: generator file missing: $generator_file" >&2
+	local target_file=""
+
+	if [[ -f "$settings_py" ]]; then
+		target_file="$settings_py"
+	elif [[ -f "$generator_file" ]]; then
+		target_file="$generator_file"
+	else
+		echo "FAIL: neither update-claude-settings.py nor generate-claude-agents.sh found" >&2
 		return 1
 	fi
 
-	python3 - "$generator_file" <<'PY'
+	python3 - "$target_file" <<'PY'
 import re
 import sys
 from pathlib import Path
