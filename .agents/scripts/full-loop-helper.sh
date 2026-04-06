@@ -402,7 +402,7 @@ cmd_pre_merge_gate() {
 	rbg_result=$(bash "$rbg_helper" wait "$pr_number" "$repo" 2>&1) || true
 
 	local rbg_status=""
-	rbg_status=$(printf '%s' "$rbg_result" | grep -oE '^(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | head -1)
+	rbg_status=$(printf '%s' "$rbg_result" | grep -oE '(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | tail -1)
 
 	case "$rbg_status" in
 	PASS | SKIP | PASS_RATE_LIMITED)
@@ -425,22 +425,31 @@ cmd_pre_merge_gate() {
 # Exit codes: 0 = merged, 1 = gate failed or merge failed
 cmd_merge() {
 	local pr_number="${1:-}"
-	local repo="${2:-}"
+	local repo=""
 	local merge_method="--squash"
 
 	if [[ -z "$pr_number" ]]; then
 		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase]"
 		return 1
 	fi
+	shift
 
-	# Parse optional repo and merge method
-	if [[ "${repo:-}" == --* ]]; then
-		merge_method="$repo"
-		repo=""
-	fi
-	if [[ -n "${3:-}" && "${3:-}" == --* ]]; then
-		merge_method="$3"
-	fi
+	# Parse optional repo and merge method from remaining arguments
+	for arg in "$@"; do
+		case "$arg" in
+		--squash | --merge | --rebase)
+			merge_method="$arg"
+			;;
+		*)
+			if [[ -z "$repo" ]]; then
+				repo="$arg"
+			else
+				print_error "Unknown argument: $arg"
+				return 1
+			fi
+			;;
+		esac
+	done
 
 	# Auto-detect repo from git remote if not provided
 	if [[ -z "$repo" ]]; then
