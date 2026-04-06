@@ -1354,8 +1354,10 @@ create_git_tag() {
 	fi
 
 	# Also check remote tags to catch tags pushed by a concurrent run
-	git ls-remote -q --exit-code --tags origin "refs/tags/$tag_name" >/dev/null 2>&1
-	local remote_tag_exit=$?
+	# Note: --exit-code returns 2 when ref not found; capture exit code to
+	# prevent set -e from aborting the script on a "not found" result.
+	local remote_tag_exit=0
+	git ls-remote -q --exit-code --tags origin "refs/tags/$tag_name" >/dev/null 2>&1 || remote_tag_exit=$?
 	if [ $remote_tag_exit -eq 0 ]; then
 		print_error "Tag $tag_name already exists on remote origin"
 		print_info "A concurrent release run may have pushed this tag. Diagnose with:"
@@ -1585,8 +1587,10 @@ _release_execute() {
 	# Guard: detect partial release state before making any changes.
 	# A tag without a matching GitHub release indicates a prior failed run.
 	# Abort early with clear diagnostics rather than creating a duplicate tag.
-	git ls-remote -q --exit-code --tags origin "refs/tags/$tag_name" >/dev/null 2>&1
-	local preflight_remote_exit=$?
+	# Note: --exit-code returns 2 when ref not found; capture exit code to
+	# prevent set -e from aborting the script on a "not found" result.
+	local preflight_remote_exit=0
+	git ls-remote -q --exit-code --tags origin "refs/tags/$tag_name" >/dev/null 2>&1 || preflight_remote_exit=$?
 	if git show-ref --tags "$tag_name" &>/dev/null || [ $preflight_remote_exit -eq 0 ]; then
 		print_error "PARTIAL RELEASE STATE DETECTED: tag $tag_name already exists"
 		print_info ""
@@ -1632,8 +1636,10 @@ _release_execute() {
 		if ! push_changes; then
 			# --atomic push failed: tag was NOT pushed to remote.
 			# Check whether a concurrent run already pushed the tag before rolling back.
-			git ls-remote -q --exit-code --tags origin "refs/tags/v$new_version" >/dev/null 2>&1
-			local push_fail_remote_exit=$?
+			# Note: --exit-code returns 2 when ref not found; capture exit code to
+			# prevent set -e from aborting the script on a "not found" result.
+			local push_fail_remote_exit=0
+			git ls-remote -q --exit-code --tags origin "refs/tags/v$new_version" >/dev/null 2>&1 || push_fail_remote_exit=$?
 			if [ $push_fail_remote_exit -eq 0 ]; then
 				print_warning "Push failed but tag v$new_version already exists on remote (concurrent release?)"
 				print_info "Deleting local tag to avoid divergence. Check remote state:"
