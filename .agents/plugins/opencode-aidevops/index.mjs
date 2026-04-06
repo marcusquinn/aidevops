@@ -781,9 +781,23 @@ async function toolExecuteBefore(input, output) {
   // Systemic enforcement — prompt instructions alone are insufficient.
   // t1755: Reduce false positives — accept footer variable references and exclude
   // machine protocol comments (DISPATCH_CLAIM, KILL_WORKER, etc.).
+  // GH#17594: Per-line matching to avoid false positives from bash comments,
+  // git commit messages, and other non-command text in multi-line scripts.
+  // Word boundary on `comment` prevents matching `comments` (a read command).
   if (isBashTool(input.tool)) {
     const cmd = output.args?.command || "";
-    if (/gh\s+(pr\s+create|issue\s+(create|comment))/.test(cmd)) {
+    // Check per-line: only match actual gh command invocations, not comments or strings
+    const ghWritePattern = /\bgh\s+(pr\s+create|issue\s+(create|comment))\b/;
+    const hasGhWriteCommand = cmd.split("\n").some((line) => {
+      const trimmed = line.trim();
+      // Skip bash comments (frequent false positive in multi-line scripts)
+      if (trimmed.startsWith("#")) return false;
+      // Skip git commit messages that mention gh commands as text
+      if (/\bgit\s+commit\b/.test(trimmed)) return false;
+      return ghWritePattern.test(trimmed);
+    });
+
+    if (hasGhWriteCommand) {
       // Machine protocol comments are internal signals, not user-facing content
       const isMachineProtocol =
         /DISPATCH_CLAIM|KILL_WORKER|DISPATCH_ACK|<!-- MERGE_SUMMARY -->/.test(cmd);
@@ -797,11 +811,9 @@ async function toolExecuteBefore(input, output) {
         /\$\{?\w*(?:footer|FOOTER|signature|SIGNATURE)\w*\}?/i.test(cmd);
 
       if (!isMachineProtocol && !hasDirectFooter && !hasFooterVar) {
-        console.error(
-          "[aidevops] SIGNATURE GATE: gh pr/issue command missing aidevops.sh signature footer. " +
-            "Generate with: gh-signature-helper.sh footer --model <model-id>",
-        );
-        qualityLog("WARN", `Signature footer missing in: ${cmd.substring(0, 120)}`);
+        // Log to quality log only — TUI console.error flash is disruptive for
+        // a WARN-level finding. Genuine missing footers are caught at PR review.
+        qualityLog("WARN", `Signature footer missing in: ${cmd.substring(0, 200)}`);
       }
     }
   }
