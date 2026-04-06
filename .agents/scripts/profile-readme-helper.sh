@@ -468,28 +468,34 @@ _token_totals_from_opencode_db() {
 			WHERE json_extract(data, '\$.role') = 'assistant'"
 	fi
 
-	local oc_totals
-	oc_totals=$(sqlite3 "$OPENCODE_DB_FILE" "
+	local oc_stats total_input total_output total_cache_read total_cache_write
+	oc_stats=$(sqlite3 "$OPENCODE_DB_FILE" "
 		${_totals_attach}
-		SELECT json_object(
-			'total_input', COALESCE(SUM(ti), 0),
-			'total_output', COALESCE(SUM(to2), 0),
-			'total_cache_read', COALESCE(SUM(cr), 0),
-			'total_cache_write', COALESCE(SUM(cw), 0)
-		)
+		SELECT
+			COALESCE(SUM(tokens_input), 0) || '|' ||
+			COALESCE(SUM(tokens_output), 0) || '|' ||
+			COALESCE(SUM(cache_read), 0) || '|' ||
+			COALESCE(SUM(cache_write), 0)
 		FROM (
-			SELECT json_extract(data, '\$.tokens.input') AS ti,
-				json_extract(data, '\$.tokens.output') AS to2,
-				json_extract(data, '\$.tokens.cache.read') AS cr,
-				json_extract(data, '\$.tokens.cache.write') AS cw
+			SELECT json_extract(data, '\$.tokens.input') AS tokens_input,
+				json_extract(data, '\$.tokens.output') AS tokens_output,
+				json_extract(data, '\$.tokens.cache.read') AS cache_read,
+				json_extract(data, '\$.tokens.cache.write') AS cache_write
 			FROM message
 			WHERE json_extract(data, '\$.role') = 'assistant'
 			${_totals_union}
 		);
 	" 2>/dev/null || true)
 
-	if [[ -n "$oc_totals" ]]; then
-		echo "$oc_totals"
+	if [[ -n "$oc_stats" ]]; then
+		local IFS='|'
+		read -r total_input total_output total_cache_read total_cache_write <<<"$oc_stats"
+		total_input="${total_input:-0}"
+		total_output="${total_output:-0}"
+		total_cache_read="${total_cache_read:-0}"
+		total_cache_write="${total_cache_write:-0}"
+		printf '{"total_input":%s,"total_output":%s,"total_cache_read":%s,"total_cache_write":%s}\n' \
+			"$total_input" "$total_output" "$total_cache_read" "$total_cache_write"
 		return 0
 	fi
 	return 1
