@@ -265,17 +265,10 @@ _resolve_triggers_config() {
 	local script_dir
 	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-	# Dev repo layout: .agents/scripts/ -> .agents/configs/
-	local dev_path="${script_dir}/../configs/verification-triggers.json"
-	if [[ -f "$dev_path" ]]; then
-		echo "$dev_path"
-		return 0
-	fi
-
-	# Deployed layout: ~/.aidevops/agents/scripts/ -> ~/.aidevops/agents/configs/
-	local deployed_path="${script_dir}/../configs/verification-triggers.json"
-	if [[ -f "$deployed_path" ]]; then
-		echo "$deployed_path"
+	# Both dev and deployed layouts use the same relative path
+	local config_path="${script_dir}/../configs/verification-triggers.json"
+	if [[ -f "$config_path" ]]; then
+		echo "$config_path"
 		return 0
 	fi
 
@@ -419,48 +412,55 @@ run_operation_verification() {
 	return 0
 }
 
-# Check if we're in a git repository
-if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-	echo -e "${YELLOW}Not in a git repository - no worktree check needed${NC}"
-	exit 0
-fi
+# =============================================================================
+# Emit loop-auto decision message (reduces repeated TARGET_FILE branching)
+# =============================================================================
+# Arguments:
+#   $1 - message suffix for allowlisted path (e.g. "staying on main")
+#   $2 - message suffix for docs-only task (e.g. "staying on main")
+#   $3 - current branch name
+_emit_loop_allowed_message() {
+	local path_msg="$1"
+	local docs_msg="$2"
+	local branch="$3"
+	if [[ -n "$TARGET_FILE" ]]; then
+		echo -e "${YELLOW}LOOP-AUTO${NC}: Allowlisted path '$TARGET_FILE' ${path_msg}"
+	else
+		echo -e "${YELLOW}LOOP-AUTO${NC}: ${docs_msg}"
+	fi
+	return 0
+}
 
-# Get current ref name
-current_branch=$(git branch --show-current 2>/dev/null || echo "")
+# =============================================================================
+# Handle main/master branch (protected branch logic)
+# =============================================================================
+# Encapsulates all logic for when the current branch is main or master.
+# Uses early returns and guard clauses to keep nesting shallow.
+handle_main_branch() {
+	local branch="$1"
 
-if [[ -z "$current_branch" ]]; then
-	echo -e "${YELLOW}Detached HEAD state - prefer creating a dedicated worktree before editing${NC}"
-	exit 0
-fi
-
-# Check if on main or master
-if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 	# Loop mode: auto-decide based on file path (preferred) or task description
 	if [[ "$LOOP_MODE" == "true" ]]; then
 		if is_main_write_allowed; then
-			if [[ -n "$TARGET_FILE" ]]; then
-				echo -e "${YELLOW}LOOP-AUTO${NC}: Allowlisted path '$TARGET_FILE', staying on $current_branch"
-			else
-				echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task detected, staying on $current_branch"
-			fi
+			_emit_loop_allowed_message "staying on $branch" \
+				"Docs-only task detected, staying on $branch" "$branch"
 			echo "LOOP_DECISION=stay"
 			exit 0
-		else
-			# Auto-create worktree for non-allowlisted paths / code changes
-			if [[ -n "$TARGET_FILE" ]]; then
-				echo -e "${YELLOW}LOOP-AUTO${NC}: Non-allowlisted path '$TARGET_FILE', worktree required"
-			else
-				echo -e "${YELLOW}LOOP-AUTO${NC}: Code task detected, worktree required"
-			fi
-			echo "LOOP_DECISION=worktree"
-			exit 2 # Special exit code for "create worktree"
 		fi
+		# Auto-create worktree for non-allowlisted paths / code changes
+		if [[ -n "$TARGET_FILE" ]]; then
+			echo -e "${YELLOW}LOOP-AUTO${NC}: Non-allowlisted path '$TARGET_FILE', worktree required"
+		else
+			echo -e "${YELLOW}LOOP-AUTO${NC}: Code task detected, worktree required"
+		fi
+		echo "LOOP_DECISION=worktree"
+		exit 2 # Special exit code for "create worktree"
 	fi
 
 	# Short-circuit: explicit --file on an allowlisted path is always allowed,
 	# regardless of loop-mode or headless state (t1712).
 	if [[ -n "$TARGET_FILE" ]] && is_main_allowlisted_path "$TARGET_FILE"; then
-		echo -e "${GREEN}OK${NC} - Allowlisted path '$TARGET_FILE' on $current_branch"
+		echo -e "${GREEN}OK${NC} - Allowlisted path '$TARGET_FILE' on $branch"
 		echo "MAIN_ALLOWLISTED=true"
 		exit 0
 	fi
@@ -471,7 +471,7 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 	# In headless mode, output a concise machine-readable error and exit 2
 	# (worktree needed) instead of the verbose interactive prompt.
 	if [[ ! -t 0 ]] || [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
-		echo -e "${RED}BLOCKED${NC}: Canonical repo directory is on protected '$current_branch'; move code edits into a linked worktree."
+		echo -e "${RED}BLOCKED${NC}: Canonical repo directory is on protected '$branch'; move code edits into a linked worktree."
 		echo "HEADLESS_BLOCKED=true"
 		echo "ACTION_REQUIRED=create_worktree"
 		echo "HINT: Use --loop-mode --file 'path' or --loop-mode --task 'description' to auto-create a worktree,"
@@ -480,9 +480,16 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 	fi
 
 	# Interactive mode: show warning and exit
+	_show_main_branch_warning "$branch"
+	exit 1
+}
+
+# Display the interactive main-branch protection warning.
+_show_main_branch_warning() {
+	local branch="$1"
 	echo ""
 	echo -e "${RED}${BOLD}======================================================${NC}"
-	echo -e "${RED}${BOLD}  STOP - ON PROTECTED MAIN WORKTREE: $current_branch${NC}"
+	echo -e "${RED}${BOLD}  STOP - ON PROTECTED MAIN WORKTREE: $branch${NC}"
 	echo -e "${RED}${BOLD}======================================================${NC}"
 	echo ""
 	echo -e "${YELLOW}Leave the canonical repo on 'main' and create a linked worktree before making code changes here.${NC}"
@@ -506,163 +513,240 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 	echo ""
 	echo -e "${RED}DO NOT proceed with edits until you are inside a linked worktree.${NC}"
 	echo ""
+	return 0
+}
+
+# =============================================================================
+# Worktree ownership conflict handling (GH#14413)
+# =============================================================================
+# Emits ownership conflict details for headless or interactive mode.
+# Arguments:
+#   $1 - worktree_path
+#   $2 - owner_pid
+#   $3 - owner_session (may be empty)
+#   $4 - owner_created (may be empty)
+_handle_ownership_conflict() {
+	local wt_path="$1"
+	local o_pid="$2"
+	local o_session="$3"
+	local o_created="$4"
+
+	# Headless / loop mode: machine-readable output
+	if [[ ! -t 0 ]] || [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]] || [[ "$LOOP_MODE" == "true" ]]; then
+		echo -e "${RED}BLOCKED${NC}: linked worktree is owned by another active session/process"
+		echo "WORKTREE_OWNERSHIP_CONFLICT=true"
+		echo "ACTION_REQUIRED=create_worktree"
+		echo "WORKTREE_PATH=$wt_path"
+		echo "WORKTREE_OWNER_PID=$o_pid"
+		[[ -n "$o_session" ]] && echo "WORKTREE_OWNER_SESSION=$o_session"
+		[[ -n "$o_created" ]] && echo "WORKTREE_OWNER_SINCE=$o_created"
+		echo "HINT: create a dedicated worktree for this session/task and retry"
+		exit 2
+	fi
+
+	# Interactive mode: verbose warning
+	echo ""
+	echo -e "${RED}${BOLD}======================================================${NC}"
+	echo -e "${RED}${BOLD}  STOP - WORKTREE OWNED BY ANOTHER ACTIVE SESSION${NC}"
+	echo -e "${RED}${BOLD}======================================================${NC}"
+	echo ""
+	echo "Worktree: $wt_path"
+	echo "Owner PID: $o_pid"
+	[[ -n "$o_session" ]] && echo "Owner session: $o_session"
+	[[ -n "$o_created" ]] && echo "Owned since: $o_created"
+	echo ""
+	echo -e "${YELLOW}Use a dedicated linked worktree for this session/task to avoid cross-session edits.${NC}"
+	echo ""
 	exit 1
-else
+}
+
+# =============================================================================
+# Check task assignee from TODO.md (t165)
+# =============================================================================
+# Warns if the current branch's task is claimed by a different assignee.
+_check_task_assignee() {
+	local branch="$1"
+
+	local task_id
+	task_id=$(echo "$branch" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || true)
+	if [[ -z "$task_id" ]]; then
+		return 0
+	fi
+
+	local project_root
+	project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+	local todo_file="$project_root/TODO.md"
+	if [[ ! -f "$todo_file" ]]; then
+		return 0
+	fi
+
+	local task_line
+	task_line=$(grep -E "^\- \[.\] ${task_id} " "$todo_file" | head -1 || true)
+	local task_assignee
+	task_assignee=$(echo "$task_line" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || true)
+	if [[ -z "$task_assignee" ]]; then
+		return 0
+	fi
+
+	# Must match get_aidevops_identity() in pulse-session-helper.sh
+	local my_identity
+	my_identity="${AIDEVOPS_IDENTITY:-$(whoami 2>/dev/null || echo unknown)@$(hostname -s 2>/dev/null || echo local)}"
+	if [[ "$task_assignee" != "$my_identity" ]]; then
+		echo -e "${YELLOW}WARNING${NC}: Task $task_id is claimed by assignee:$task_assignee"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Handle canonical repo directory that is off main (not a linked worktree)
+# =============================================================================
+_handle_main_worktree_off_main() {
+	local branch="$1"
+
+	# Loop mode: auto-decide for canonical repo directory off main
+	if [[ "$LOOP_MODE" == "true" ]]; then
+		if is_main_write_allowed; then
+			_emit_loop_allowed_message "in main repo directory, continuing" \
+				"Docs-only task in main repo directory, continuing" "$branch"
+			echo "LOOP_DECISION=continue"
+			exit 0
+		fi
+		# For non-allowlisted paths / code tasks, warn but continue so the caller can relocate into a worktree.
+		echo -e "${YELLOW}LOOP-AUTO${NC}: Main repo directory is off main (not ideal - relocate to a linked worktree)"
+		echo "LOOP_DECISION=continue_warning"
+		exit 0
+	fi
+
+	# Interactive mode: show warning with options
+	echo ""
+	echo -e "${YELLOW}${BOLD}======================================================${NC}"
+	echo -e "${YELLOW}${BOLD}  WARNING - MAIN REPO DIRECTORY IS OFF MAIN${NC}"
+	echo -e "${YELLOW}${BOLD}======================================================${NC}"
+	echo ""
+	echo -e "Current ref: ${BOLD}$branch${NC}"
+	echo ""
+	echo -e "${YELLOW}The canonical repo directory should stay on 'main' for parallel safety.${NC}"
+	echo -e "${YELLOW}Move code work into a linked worktree path, not this canonical repo directory.${NC}"
+	echo ""
+	echo "Options:"
+	echo "  1. Create worktree for this task (recommended)"
+	echo "  2. Switch the canonical repo directory back to main"
+	echo "  3. Continue here temporarily (not recommended for code)"
+	echo ""
+	echo "MAIN_REPO_OFF_MAIN_WARNING=$branch"
+	exit 3
+}
+
+# =============================================================================
+# Handle linked worktree (the happy path)
+# =============================================================================
+_handle_linked_worktree() {
+	local branch="$1"
+	local script_dir="$2"
+
+	_check_task_assignee "$branch"
+
+	# Operation verification gate (t1364.3)
+	if [[ -n "$VERIFY_OP" ]]; then
+		run_operation_verification "$VERIFY_OP"
+	fi
+
+	# Session count warning (t1398.4) — non-blocking, informational only
+	if [[ -x "$script_dir/session-count-helper.sh" ]]; then
+		local session_warning
+		session_warning=$("$script_dir/session-count-helper.sh" check || true)
+		if [[ -n "$session_warning" ]]; then
+			echo -e "${YELLOW}${session_warning}${NC}"
+		fi
+	fi
+
+	# go for it — linked worktree is the correct working context
+	echo -e "${GREEN}OK${NC} - In linked worktree on ref: ${BOLD}$branch${NC}"
+	exit 0
+}
+
+# =============================================================================
+# Handle non-main branch (feature branch logic)
+# =============================================================================
+# Encapsulates all logic for when the current branch is NOT main/master.
+# Determines whether we're in the canonical repo dir or a linked worktree,
+# runs ownership checks, and delegates to the appropriate handler.
+handle_feature_branch() {
+	local branch="$1"
+
 	# Check if this is the main repo directory (not a linked worktree) on a non-main ref
-	# This is a warning - the main repo should stay on main
+	local git_common_dir git_dir
 	git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
 	git_dir=$(git rev-parse --git-dir 2>/dev/null)
 
 	# If git-dir equals git-common-dir, this is the main worktree (not a linked worktree)
-	is_main_worktree=false
+	local is_main_worktree=false
 	if [[ "$git_dir" == "$git_common_dir" ]] || [[ "$git_dir" == ".git" ]]; then
 		is_main_worktree=true
 	fi
 
 	# Sync terminal tab title with repo/branch (silent, non-blocking)
-	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 	# shellcheck source=/dev/null
-	source "${SCRIPT_DIR}/shared-constants.sh"
+	source "${script_dir}/shared-constants.sh"
 
-	if [[ -x "$SCRIPT_DIR/terminal-title-helper.sh" ]]; then
-		"$SCRIPT_DIR/terminal-title-helper.sh" sync 2>/dev/null || true
+	if [[ -x "$script_dir/terminal-title-helper.sh" ]]; then
+		"$script_dir/terminal-title-helper.sh" sync 2>/dev/null || true
 	fi
 
 	# Sync OpenCode session title with current branch (silent, non-blocking).
 	# Only runs inside OpenCode sessions; helper resolves target session by cwd.
-	if [[ "${OPENCODE:-}" == "1" ]] && [[ -x "$SCRIPT_DIR/session-rename-helper.sh" ]]; then
-		"$SCRIPT_DIR/session-rename-helper.sh" sync-branch >/dev/null 2>&1 || true
+	if [[ "${OPENCODE:-}" == "1" ]] && [[ -x "$script_dir/session-rename-helper.sh" ]]; then
+		"$script_dir/session-rename-helper.sh" sync-branch >/dev/null 2>&1 || true
 	fi
 
 	# Linked worktree ownership gate (GH#14413 hardening):
 	# exactly one active session/process may hold a writable worktree at a time.
-	worktree_path=""
+	local worktree_path
 	worktree_path=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-	worktree_owner_pid="${OPENCODE_PID:-${PRE_EDIT_OWNER_PID:-${PPID:-$$}}}"
-	worktree_owner_session="${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+	local worktree_owner_pid="${OPENCODE_PID:-${PRE_EDIT_OWNER_PID:-${PPID:-$$}}}"
+	local worktree_owner_session="${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
 
 	if declare -f claim_worktree_ownership >/dev/null 2>&1; then
-		if ! claim_worktree_ownership "$worktree_path" "$current_branch" --owner-pid "$worktree_owner_pid" --session "$worktree_owner_session"; then
-			owner_info=""
+		if ! claim_worktree_ownership "$worktree_path" "$branch" --owner-pid "$worktree_owner_pid" --session "$worktree_owner_session"; then
+			local owner_info owner_pid="unknown" owner_session="" owner_created=""
 			owner_info=$(check_worktree_owner "$worktree_path" 2>/dev/null || true)
-			owner_pid="unknown"
-			owner_session=""
-			owner_created=""
 			if [[ -n "$owner_info" ]]; then
 				IFS='|' read -r owner_pid owner_session _ _ owner_created <<<"$owner_info"
 			fi
-
-			if [[ ! -t 0 ]] || [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]] || [[ "$LOOP_MODE" == "true" ]]; then
-				echo -e "${RED}BLOCKED${NC}: linked worktree is owned by another active session/process"
-				echo "WORKTREE_OWNERSHIP_CONFLICT=true"
-				echo "ACTION_REQUIRED=create_worktree"
-				echo "WORKTREE_PATH=$worktree_path"
-				echo "WORKTREE_OWNER_PID=$owner_pid"
-				if [[ -n "$owner_session" ]]; then
-					echo "WORKTREE_OWNER_SESSION=$owner_session"
-				fi
-				if [[ -n "$owner_created" ]]; then
-					echo "WORKTREE_OWNER_SINCE=$owner_created"
-				fi
-				echo "HINT: create a dedicated worktree for this session/task and retry"
-				exit 2
-			fi
-
-			echo ""
-			echo -e "${RED}${BOLD}======================================================${NC}"
-			echo -e "${RED}${BOLD}  STOP - WORKTREE OWNED BY ANOTHER ACTIVE SESSION${NC}"
-			echo -e "${RED}${BOLD}======================================================${NC}"
-			echo ""
-			echo "Worktree: $worktree_path"
-			echo "Owner PID: $owner_pid"
-			if [[ -n "$owner_session" ]]; then
-				echo "Owner session: $owner_session"
-			fi
-			if [[ -n "$owner_created" ]]; then
-				echo "Owned since: $owner_created"
-			fi
-			echo ""
-			echo -e "${YELLOW}Use a dedicated linked worktree for this session/task to avoid cross-session edits.${NC}"
-			echo ""
-			exit 1
+			_handle_ownership_conflict "$worktree_path" "$owner_pid" "$owner_session" "$owner_created"
 		fi
 	fi
 
 	if [[ "$is_main_worktree" == "true" ]]; then
-		# Loop mode: auto-decide for canonical repo directory off main
-		if [[ "$LOOP_MODE" == "true" ]]; then
-			if is_main_write_allowed; then
-				if [[ -n "$TARGET_FILE" ]]; then
-					echo -e "${YELLOW}LOOP-AUTO${NC}: Allowlisted path '$TARGET_FILE' in main repo directory, continuing"
-				else
-					echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task in main repo directory, continuing"
-				fi
-				echo "LOOP_DECISION=continue"
-				exit 0
-			else
-				# For non-allowlisted paths / code tasks, warn but continue so the caller can relocate into a worktree.
-				echo -e "${YELLOW}LOOP-AUTO${NC}: Main repo directory is off main (not ideal - relocate to a linked worktree)"
-				echo "LOOP_DECISION=continue_warning"
-				exit 0
-			fi
-		fi
-
-		# Interactive mode: show warning with options
-		echo ""
-		echo -e "${YELLOW}${BOLD}======================================================${NC}"
-		echo -e "${YELLOW}${BOLD}  WARNING - MAIN REPO DIRECTORY IS OFF MAIN${NC}"
-		echo -e "${YELLOW}${BOLD}======================================================${NC}"
-		echo ""
-		echo -e "Current ref: ${BOLD}$current_branch${NC}"
-		echo ""
-		echo -e "${YELLOW}The canonical repo directory should stay on 'main' for parallel safety.${NC}"
-		echo -e "${YELLOW}Move code work into a linked worktree path, not this canonical repo directory.${NC}"
-		echo ""
-		echo "Options:"
-		echo "  1. Create worktree for this task (recommended)"
-		echo "  2. Switch the canonical repo directory back to main"
-		echo "  3. Continue here temporarily (not recommended for code)"
-		echo ""
-		echo "MAIN_REPO_OFF_MAIN_WARNING=$current_branch"
-		exit 3
-	else
-		# Check if task is claimed by someone else via TODO.md assignee: field (t165)
-		# Note: no 'local' — this runs at script top-level, not inside a function
-		task_id_from_branch=""
-		task_id_from_branch=$(echo "$current_branch" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || true)
-		if [[ -n "$task_id_from_branch" ]]; then
-			project_root=""
-			project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
-			todo_file="$project_root/TODO.md"
-			if [[ -f "$todo_file" ]]; then
-				task_line=""
-				task_line=$(grep -E "^\- \[.\] ${task_id_from_branch} " "$todo_file" | head -1 || true)
-				task_assignee=""
-				task_assignee=$(echo "$task_line" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || true)
-				if [[ -n "$task_assignee" ]]; then
-					# Must match get_aidevops_identity() in pulse-session-helper.sh
-					my_identity="${AIDEVOPS_IDENTITY:-$(whoami 2>/dev/null || echo unknown)@$(hostname -s 2>/dev/null || echo local)}"
-					if [[ "$task_assignee" != "$my_identity" ]]; then
-						echo -e "${YELLOW}WARNING${NC}: Task $task_id_from_branch is claimed by assignee:$task_assignee"
-					fi
-				fi
-			fi
-		fi
-		# Operation verification gate (t1364.3)
-		if [[ -n "$VERIFY_OP" ]]; then
-			run_operation_verification "$VERIFY_OP"
-		fi
-
-		# Session count warning (t1398.4) — non-blocking, informational only
-		if [[ -x "$SCRIPT_DIR/session-count-helper.sh" ]]; then
-			session_warning=$("$SCRIPT_DIR/session-count-helper.sh" check || true)
-			if [[ -n "$session_warning" ]]; then
-				echo -e "${YELLOW}${session_warning}${NC}"
-			fi
-		fi
-
-		# go for it — linked worktree is the correct working context
-		echo -e "${GREEN}OK${NC} - In linked worktree on ref: ${BOLD}$current_branch${NC}"
-		exit 0
+		_handle_main_worktree_off_main "$branch"
 	fi
+
+	_handle_linked_worktree "$branch" "$script_dir"
+}
+
+# =============================================================================
+# Main flow — guard clauses for early exits, then delegate to handlers
+# =============================================================================
+
+# Check if we're in a git repository
+if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+	echo -e "${YELLOW}Not in a git repository - no worktree check needed${NC}"
+	exit 0
 fi
+
+# Get current ref name
+current_branch=$(git branch --show-current 2>/dev/null || echo "")
+
+if [[ -z "$current_branch" ]]; then
+	echo -e "${YELLOW}Detached HEAD state - prefer creating a dedicated worktree before editing${NC}"
+	exit 0
+fi
+
+# Delegate to the appropriate handler based on branch
+if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
+	handle_main_branch "$current_branch"
+fi
+
+handle_feature_branch "$current_branch"
