@@ -169,9 +169,11 @@ _get_screen_time() {
 _get_session_time() {
 	local period="$1"
 	local session_json
-	# Use a single repo path (aidevops) as the DB is global, not per-repo
+	# GH#17550: Use --all-dirs to aggregate sessions across all repos/directories.
+	# The profile README is a user-level summary — not per-repo.
+	# The DB is global; filtering by a single repo path missed 99%+ of sessions.
 	session_json=$("${SCRIPT_DIR}/contributor-activity-helper.sh" session-time \
-		"${HOME}/Git/aidevops" --period "$period" --format json 2>/dev/null) || session_json="{}"
+		--all-dirs --period "$period" --format json 2>/dev/null) || session_json="{}"
 	echo "$session_json"
 	return 0
 }
