@@ -6441,18 +6441,17 @@ dispatch_with_dedup() {
 	# If a model_override is requested (e.g., tier:thinking → opus), we
 	# validate it against backoff first and fall back to auto-selection if
 	# it's currently backed off.
-	# GH#17436: Model selection — let headless-runtime-helper.sh round-robin.
-	# Previously this always took cut -d',' -f1 (first model), bypassing the
-	# runtime helper's round-robin rotation. This caused every worker to use
-	# the same model (openai/gpt-5.4 via OpenCode default) instead of rotating
-	# between anthropic and openai.
-	#
-	# Now: only pass --model when there's an explicit override (e.g., tier:thinking).
-	# When no override, omit --model entirely so choose_model() in the runtime
-	# helper picks the next available model via round-robin with backoff awareness.
+	# GH#17503: Resolve the actual model name BEFORE dispatch so the comment
+	# shows which model the worker will use (e.g., "anthropic/claude-sonnet-4-6")
+	# instead of "auto-select (round-robin)". The runtime helper's `select`
+	# command runs choose_model() with round-robin, backoff, and auth checks —
+	# the same logic that cmd_run uses — so the model in the comment matches
+	# what the worker actually gets.
 	local selected_model=""
 	if [[ -n "$model_override" ]]; then
 		selected_model="$model_override"
+	else
+		selected_model=$("$HEADLESS_RUNTIME_HELPER" select --role worker 2>/dev/null) || selected_model=""
 	fi
 
 	# t1894: Lock external contributor issues during worker execution
