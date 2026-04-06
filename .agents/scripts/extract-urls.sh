@@ -16,6 +16,8 @@
 #
 # The GitHub Action (url-allowlist-check.yml) uses the allowlist to block
 # PRs that introduce unknown hostnames.
+#
+# Python implementation: .agents/scripts/extract-urls.py
 
 set -euo pipefail
 
@@ -26,6 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || pwd)}"
 OUTPUT_FILE="${OUTPUT_FILE:-${REPO_ROOT}/.agents/configs/allowed-urls.txt}"
 VERBOSE="${VERBOSE:-false}"
+PYTHON_SCRIPT="${SCRIPT_DIR}/extract-urls.py"
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -63,107 +66,17 @@ log() {
 }
 
 # ---------------------------------------------------------------------------
-# URL extraction via Python (portable, handles encoding edge cases)
-# Write Python script to a temp file to avoid shell quoting issues
+# Validate dependencies
 # ---------------------------------------------------------------------------
-TMPDIR_WORK="$(mktemp -d)"
-PYTHON_SCRIPT="${TMPDIR_WORK}/extract_urls.py"
+if [[ ! -f "$PYTHON_SCRIPT" ]]; then
+	echo "Python extractor not found: $PYTHON_SCRIPT" >&2
+	exit 1
+fi
 
-cleanup() {
-	rm -rf "$TMPDIR_WORK"
-	return 0
-}
-trap cleanup EXIT
-
-cat >"$PYTHON_SCRIPT" <<'PYEOF'
-import re
-import subprocess
-import sys
-import os
-
-repo_root = sys.argv[1]
-verbose = sys.argv[2] == "true"
-
-# Get all tracked files
-result = subprocess.run(
-    ["git", "-C", repo_root, "ls-files"],
-    capture_output=True, text=True
-)
-files = [f for f in result.stdout.strip().split("\n") if f]
-
-url_pattern = re.compile(r"https?://[^\s\"')\]>`]+")
-
-# Patterns that indicate a non-real hostname
-EXCLUDED_RE = re.compile(
-    r"(\$\{|\$\(|\$[a-zA-Z_]|"   # shell/template variables
-    r"<[a-zA-Z]|"                  # HTML/placeholder tags
-    r"%[sd0-9]|"                   # printf format strings
-    r"\\[nt]|"                     # escape sequences
-    r"\.\.\.|"                     # ellipsis
-    r"example\.com|example\.org|example\.net|"  # RFC 2606 examples
-    r"localhost|"
-    r"127\.0\.0\.1|"
-    r"0\.0\.0\.0|"
-    r"192\.168\.|"
-    r"^10\.\d+\.\d+\.|"
-    r"\.local$)"
-)
-
-def is_valid_hostname(hostname):
-    """Return True if hostname looks like a real, non-placeholder domain."""
-    if not hostname or len(hostname) < 4:
-        return False
-    # Must contain a dot
-    if "." not in hostname:
-        return False
-    # Only valid hostname chars
-    if re.search(r"[^a-zA-Z0-9.\-_]", hostname):
-        return False
-    # Must not start or end with dot/hyphen
-    if hostname[0] in (".", "-") or hostname[-1] in (".", "-"):
-        return False
-    # TLD must be alpha only
-    tld = hostname.rsplit(".", 1)[-1]
-    if not tld.isalpha() or len(tld) < 2:
-        return False
-    # Apply exclusion patterns
-    if EXCLUDED_RE.search(hostname):
-        return False
-    return True
-
-hostnames = set()
-skipped_files = 0
-
-for rel_path in files:
-    abs_path = os.path.join(repo_root, rel_path)
-    try:
-        with open(abs_path, "r", errors="ignore") as fh:
-            content = fh.read()
-        for url in url_pattern.findall(content):
-            url = url.rstrip(".,;:")
-            try:
-                after_scheme = url.split("://", 1)[1]
-                raw_host = after_scheme.split("/")[0].split("?")[0].split("#")[0]
-                # Strip port
-                raw_host = raw_host.split(":")[0]
-                # Strip auth info
-                if "@" in raw_host:
-                    raw_host = raw_host.split("@")[1]
-                hostname = raw_host.lower().strip()
-                if is_valid_hostname(hostname):
-                    hostnames.add(hostname)
-            except (IndexError, ValueError):
-                pass
-    except (OSError, PermissionError):
-        skipped_files += 1
-
-if verbose:
-    print(f"Scanned {len(files)} files, skipped {skipped_files}", file=sys.stderr)
-    print(f"Found {len(hostnames)} unique valid hostnames", file=sys.stderr)
-
-for h in sorted(hostnames):
-    print(h)
-PYEOF
+if ! command -v python3 >/dev/null 2>&1; then
+	echo "python3 is required but not installed" >&2
+	exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Run extraction
@@ -171,7 +84,12 @@ PYEOF
 log "Extracting URLs from: $REPO_ROOT"
 log "Output file: $OUTPUT_FILE"
 
-HOSTNAMES=$(python3 "$PYTHON_SCRIPT" "$REPO_ROOT" "$VERBOSE")
+VERBOSE_FLAG=""
+if [[ "$VERBOSE" == "true" ]]; then
+	VERBOSE_FLAG="--verbose"
+fi
+
+HOSTNAMES=$(python3 "$PYTHON_SCRIPT" --repo-root "$REPO_ROOT" ${VERBOSE_FLAG:+"$VERBOSE_FLAG"})
 
 # ---------------------------------------------------------------------------
 # Write output

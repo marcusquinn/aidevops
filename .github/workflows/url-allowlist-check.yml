@@ -39,89 +39,15 @@ jobs:
 
     steps:
       # Security: checkout the BASE branch only (never the PR head).
-      # We need the allowlist file from the trusted base branch.
+      # We need the allowlist file and extractor script from the trusted base branch.
       - name: Checkout base branch (trusted)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           sparse-checkout: |
             .agents/configs/allowed-urls.txt
+            .agents/scripts/extract-urls.py
           sparse-checkout-cone-mode: false
-
-      - name: Write URL extractor script
-        run: |
-          cat > /tmp/check_urls.py << 'PYEOF'
-          import re
-          import sys
-
-          added_lines_file = sys.argv[1]
-          allowlist_file = sys.argv[2]
-
-          with open(added_lines_file, "r", errors="ignore") as f:
-              added_lines = f.read()
-
-          url_pattern = re.compile(r"https?://[^\s\"')\]>`]+")
-
-          EXCLUDED_RE = re.compile(
-              r"(\$\{|\$\(|\$[a-zA-Z_]"
-              r"|<[a-zA-Z]"
-              r"|%[sd0-9]"
-              r"|\\[nt]"
-              r"|\.\.\."
-              r"|example\.com|example\.org|example\.net"
-              r"|localhost"
-              r"|127\.0\.0\.1"
-              r"|0\.0\.0\.0"
-              r"|192\.168\."
-              r"|^10\.\d+\.\d+\."
-              r"|\.local$)"
-          )
-
-          def is_valid_hostname(hostname):
-              if not hostname or len(hostname) < 4:
-                  return False
-              if "." not in hostname:
-                  return False
-              if re.search(r"[^a-zA-Z0-9.\-_]", hostname):
-                  return False
-              if hostname[0] in (".", "-") or hostname[-1] in (".", "-"):
-                  return False
-              tld = hostname.rsplit(".", 1)[-1]
-              if not tld.isalpha() or len(tld) < 2:
-                  return False
-              if EXCLUDED_RE.search(hostname):
-                  return False
-              return True
-
-          allowlist = set()
-          try:
-              with open(allowlist_file, "r") as f:
-                  for line in f:
-                      line = line.strip()
-                      if line and not line.startswith("#"):
-                          allowlist.add(line.lower())
-          except FileNotFoundError:
-              pass
-
-          new_hosts = set()
-          for url in url_pattern.findall(added_lines):
-              url = url.rstrip(".,;:")
-              try:
-                  after_scheme = url.split("://", 1)[1]
-                  raw_host = after_scheme.split("/")[0].split("?")[0].split("#")[0]
-                  raw_host = raw_host.split(":")[0]
-                  if "@" in raw_host:
-                      raw_host = raw_host.split("@")[1]
-                  hostname = raw_host.lower().strip()
-                  if is_valid_hostname(hostname):
-                      new_hosts.add(hostname)
-              except (IndexError, ValueError):
-                  pass
-
-          unknown = sorted(new_hosts - allowlist)
-          for h in unknown:
-              print(h)
-          PYEOF
 
       - name: Extract and check URLs from PR diff
         id: check
@@ -135,6 +61,7 @@ jobs:
           set -euo pipefail
 
           ALLOWLIST=".agents/configs/allowed-urls.txt"
+          EXTRACTOR=".agents/scripts/extract-urls.py"
 
           # Verify allowlist exists on base branch
           if [[ ! -f "$ALLOWLIST" ]]; then
@@ -164,27 +91,12 @@ jobs:
             exit 0
           }
 
-          # Extract added lines only (lines starting with +, excluding diff headers)
-          ADDED_LINES=$(echo "$PR_DIFF" | grep '^+' | grep -v '^+++' || true)
-
-          if [[ -z "$ADDED_LINES" ]]; then
-            echo "No added lines in diff — nothing to check"
-            echo "unknown_count=0" >> "$GITHUB_OUTPUT"
-            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-              --method POST \
-              -f state=success \
-              -f context="url-allowlist" \
-              -f description="No new URLs added" \
-              2>/dev/null || true
-            exit 0
-          fi
-
-          # Write added lines to a temp file for Python to read
+          # Write diff to temp file for Python to read
           TMPFILE=$(mktemp)
-          echo "$ADDED_LINES" > "$TMPFILE"
+          echo "$PR_DIFF" > "$TMPFILE"
 
-          # Run URL extractor (script written in previous step)
-          UNKNOWN_HOSTS=$(python3 /tmp/check_urls.py "$TMPFILE" "$ALLOWLIST") || {
+          # Run URL extractor from base branch (trusted code)
+          UNKNOWN_HOSTS=$(python3 "$EXTRACTOR" --diff-file "$TMPFILE" --allowlist "$ALLOWLIST") || {
             rm -f "$TMPFILE"
             echo "::error::Python URL extraction failed"
             exit 1

@@ -2,7 +2,7 @@
 # One hostname per line. Add new entries here to allow them in PRs.
 # Regenerate baseline: .agents/scripts/extract-urls.sh
 # Approve a single URL: aidevops approve url <hostname>
-# Last generated: 2026-04-06T00:50:57Z
+# Last generated: 2026-04-06T01:02:32Z
 #
 8080-sandbox-abc123def456.yourdomain.com
 abrahamjuliot.github.io
