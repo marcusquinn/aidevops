@@ -6509,7 +6509,14 @@ dispatch_with_dedup() {
 	fi
 	"${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
 	local worker_pid="$!"
-	sleep 2
+
+	# GH#17549: Stagger delay between worker launches to reduce SQLite
+	# write contention on opencode.db (busy_timeout=0). Without this,
+	# batches of 8+ workers all hit the DB simultaneously, causing
+	# SQLITE_BUSY → silent mid-turn death. The stagger gives each worker
+	# time to complete its initial DB writes before the next one starts.
+	local stagger_delay="${PULSE_DISPATCH_STAGGER_SECONDS:-8}"
+	sleep "$stagger_delay"
 
 	# Record in dispatch ledger
 	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
