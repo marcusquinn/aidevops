@@ -745,8 +745,8 @@ has_open_pr() {
 				# would falsely match issue #670. Post-filter with exact regex.
 				local pr_body
 				pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || pr_body=""
-				# Match: keyword + optional whitespace + #NNN or owner/repo#NNN at word boundary
-				local close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}\b"
+				# Match: keyword + optional whitespace + #NNN or owner/repo#NNN followed by a non-word char or end
+				local close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
 				if ! printf '%s' "$pr_body" | grep -iqE "$close_pattern"; then
 					continue
 				fi
