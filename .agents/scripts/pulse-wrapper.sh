@@ -6354,16 +6354,13 @@ dispatch_with_dedup() {
 	# SIGTERM-ing all active workers.
 	local _claim_comment_id=""
 
-	# GH#16978 Bug C: Helper to clean up the DISPATCH_CLAIM comment on any
-	# early-return path after the claim succeeds. Previously the cleanup only
-	# ran on successful dispatch (line 6192), so any failure between claim and
-	# worker launch left a stale claim comment that accumulated over pulse cycles.
+	# GH#17503: Claim comments are NEVER deleted — they form the audit trail.
+	# The _cleanup_claim_comment function is retained as a no-op for backward
+	# compatibility (callers may still reference it on early-return paths).
 	_cleanup_claim_comment() {
-		if [[ -n "$_claim_comment_id" ]]; then
-			gh api "repos/${repo_slug}/issues/comments/${_claim_comment_id}" \
-				--method DELETE >/dev/null 2>>"$LOGFILE" || true
-			_claim_comment_id=""
-		fi
+		# No-op: claim comments are persistent audit trail (GH#17503).
+		# Previously deleted DISPATCH_CLAIM comments, which destroyed both
+		# the lock and the audit trail — causing duplicate dispatches.
 		return 0
 	}
 
@@ -6500,27 +6497,15 @@ dispatch_with_dedup() {
 		echo "[dispatch_with_dedup] Warning: failed to post deterministic dispatch comment for #${issue_number}" >>"$LOGFILE"
 	}
 
-	# GH#17497: Defer claim comment cleanup to prevent TOCTOU race condition.
-	# Previously (GH#15317/GH#16978), the claim was deleted synchronously here.
-	# Race: Runner A wins claim → deletes it → Runner B (still inside 8s consensus
-	# window) sees only its own claim → incorrectly "wins" → duplicate dispatch.
-	# Evidence: #17497 — alex-solovyev and marcusquinn both dispatched 7s apart.
-	#
-	# Fix: defer deletion by one consensus window after the dispatch comment is
-	# posted. This keeps the claim visible long enough for any concurrent claimant
-	# to see it during their consensus check. The background subshell avoids
-	# blocking dispatch throughput. Early-return paths still use synchronous
-	# _cleanup_claim_comment (no race — dispatch was blocked, no concurrent claim
-	# to protect against).
+	# GH#17503: Claim comments are NEVER deleted — they form the persistent
+	# audit trail and are respected as the primary dedup lock for 30 minutes.
+	# The deferred deletion that previously ran here (GH#17497) was the root
+	# cause of duplicate dispatches: deleting the claim removed the lock,
+	# allowing subsequent pulse cycles and other runners to re-dispatch.
+	# Evidence: GH#17503 — 6 dispatches from marcusquinn + 1 from alex-solovyev,
+	# producing 2 duplicate PRs (#17512, #17513).
 	if [[ -n "$_claim_comment_id" ]]; then
-		local __deferred_cid="$_claim_comment_id" __deferred_slug="$repo_slug"
-		local __deferred_issue="$issue_number" __deferred_logfile="$LOGFILE"
-		(
-			sleep "${DISPATCH_CLAIM_WINDOW:-8}"
-			gh api "repos/${__deferred_slug}/issues/comments/${__deferred_cid}" \
-				--method DELETE >/dev/null 2>&1 || true
-			echo "[dispatch_with_dedup] Deferred claim cleanup: deleted comment ${__deferred_cid} for #${__deferred_issue}" >>"$__deferred_logfile"
-		) &
+		echo "[dispatch_with_dedup] Claim comment ${_claim_comment_id} retained for audit trail on #${issue_number} (GH#17503)" >>"$LOGFILE"
 		_claim_comment_id=""
 	fi
 
