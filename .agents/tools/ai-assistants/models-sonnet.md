@@ -3,10 +3,10 @@ description: Balanced model for code implementation, review, and most developmen
 mode: subagent
 model: anthropic/claude-sonnet-4-6
 model-tier: sonnet
-model-fallback: openai/gpt-5.3-codex
+model-fallback: openai/gpt-5.4
 fallback-chain:
   - anthropic/claude-sonnet-4-6
-  - openai/gpt-5.3-codex
+  - openai/gpt-5.4
   - google/gemini-2.5-pro
   - openrouter/anthropic/claude-sonnet-4-6
 tools:

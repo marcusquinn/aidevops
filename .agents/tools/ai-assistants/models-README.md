@@ -35,10 +35,12 @@ Tiers define fallback chains for provider failures (API error, timeout, rate lim
 ```yaml
 fallback-chain:
   - anthropic/claude-sonnet-4-6
-  - openai/gpt-5.3-codex
+  - openai/gpt-5.4
   - google/gemini-2.5-pro
   - openrouter/anthropic/claude-sonnet-4-6
 ```
+
+> **Note:** codex/code-completion models (gpt-5.3-codex, gpt-5.4-codex) are NOT agentic and must never appear in fallback chains. See `configs/model-routing-table.json` for the canonical tier→model mappings.
 
 - **Per-tier override:** Add `fallback-chain:` to model subagent frontmatter.
 - **Global defaults:** `configs/fallback-chain-config.json`.

@@ -113,9 +113,11 @@ launchctl bootout gui/$(id -u)/sh.aidevops.<name> && \
 
 **Round-robin:** Helper alternates providers in `AIDEVOPS_HEADLESS_MODELS`. Pulse requires Anthropic (sonnet) — OpenAI models exit immediately without activity, wasting every other cycle. Pin pulse with `PULSE_MODEL`; workers can use any provider.
 
+**CRITICAL:** Only use agentic-capable models in the round-robin. Codex/code-completion models (gpt-5.3-codex, gpt-5.4-codex) cannot make tool calls and will fail silently as headless workers (GH#17669). Model tiers are defined in `configs/model-routing-table.json` — the single source of truth.
+
 ```bash
 export PULSE_MODEL="anthropic/claude-sonnet-4-6"
-export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"
+export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.4"
 ```
 
 **Backoff:** `headless-runtime-helper.sh backoff status` / `backoff clear PROVIDER`. Exit code 75 = all providers backed off.

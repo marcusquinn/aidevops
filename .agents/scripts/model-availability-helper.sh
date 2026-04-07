@@ -120,13 +120,26 @@ is_known_provider() {
 get_tier_models() {
 	local tier="$1"
 
+	# Read from model-routing-table.json (single source of truth).
+	# Falls back to hardcoded defaults only if the JSON file is missing.
+	local routing_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
+	if [[ -f "$routing_table" ]]; then
+		local models_json
+		models_json=$(jq -r --arg t "$tier" \
+			'.tiers[$t].models // empty | join("|")' \
+			"$routing_table" 2>/dev/null) || models_json=""
+		if [[ -n "$models_json" ]]; then
+			echo "$models_json"
+			return 0
+		fi
+	fi
+
+	# Hardcoded fallback — kept in sync with model-routing-table.json.
+	# If you're editing these, update the JSON file instead.
 	case "$tier" in
 	local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
 	haiku) echo "anthropic/claude-haiku-4-5|openai/gpt-5.4-mini" ;;
 	flash) echo "openai/gpt-5.4-mini|openai/gpt-4.1-mini" ;;
-	# GH#17669: codex models are code-completion, not agentic — zero tool calls
-	# observed when dispatched as headless workers. Use general-purpose gpt-5.4
-	# variants as fallbacks instead.
 	sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-5.4" ;;
 	pro) echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-6" ;;
 	opus) echo "anthropic/claude-opus-4-6|openai/gpt-5.4-pro" ;;
