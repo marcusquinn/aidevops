@@ -766,7 +766,7 @@ _escalate_body_quality_gate() {
 	local diag_body="## Escalation Blocked: Missing Implementation Context
 
 **Trigger:** ${failure_count} consecutive worker failures (threshold: ${threshold})
-**Action:** Escalation to \`tier:thinking\` **skipped** — issue body lacks file paths and implementation steps.
+**Action:** Escalation **skipped** — issue body lacks file paths and implementation steps.
 
 Workers fail when they must explore the entire codebase to find what to change. Adding explicit file paths, reference patterns, and verification commands to the issue body is more effective than escalating to a more expensive model.
 
@@ -784,10 +784,13 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 #######################################
 # Escalate issue model tier after repeated worker failures.
 #
+# Cascade escalation: tier:simple → tier:standard → tier:reasoning.
 # After ESCALATION_FAILURE_THRESHOLD (default 2) failures at the current
-# tier, adds tier:thinking label to route the next dispatch to opus.
-# If already at tier:thinking, no further escalation — the issue stays
-# for the fast-fail skip/needs-human path.
+# tier, escalates to the next tier. If already at tier:reasoning, no
+# further escalation — the issue stays for the needs-human path.
+#
+# Each escalation posts a structured report to the issue so the next
+# tier starts with accumulated context, not from zero.
 #
 # Arguments:
 #   $1 - issue number
@@ -820,15 +823,40 @@ escalate_issue_tier() {
 		return 0
 	fi
 
-	# Check current labels — skip if already at tier:thinking
+	# Determine current tier and next tier in cascade
 	local current_labels
 	current_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
 
+	local current_tier="standard"
+	local next_tier=""
+	local next_label=""
+	local remove_label=""
+
+	# Determine current tier — tier:thinking is backward-compat alias for tier:reasoning
 	case ",$current_labels," in
-	*,tier:thinking,*)
+	*,tier:reasoning,* | *,tier:thinking,*)
 		# Already at highest auto-escalation tier
 		return 0
+		;;
+	*,tier:standard,*)
+		current_tier="standard"
+		next_tier="reasoning"
+		next_label="tier:reasoning"
+		remove_label="tier:standard"
+		;;
+	*,tier:simple,*)
+		current_tier="simple"
+		next_tier="standard"
+		next_label="tier:standard"
+		remove_label="tier:simple"
+		;;
+	*)
+		# No tier label — treat as standard, escalate to reasoning
+		current_tier="standard"
+		next_tier="reasoning"
+		next_label="tier:reasoning"
+		remove_label=""
 		;;
 	esac
 
@@ -842,31 +870,55 @@ escalate_issue_tier() {
 	_escalate_body_quality_gate "$issue_number" "$repo_slug" \
 		"$failure_count" "$threshold" "$issue_body" || return 0
 
-	# Add tier:thinking label (creates label if needed)
-	gh label create "tier:thinking" \
+	# Create next tier label (creates label if needed)
+	local label_desc=""
+	local label_color=""
+	case "$next_label" in
+	tier:reasoning)
+		label_desc="Route to opus-tier model for dispatch"
+		label_color="7057FF"
+		;;
+	tier:standard)
+		label_desc="Route to sonnet-tier model for dispatch"
+		label_color="0E8A16"
+		;;
+	esac
+
+	gh label create "$next_label" \
 		--repo "$repo_slug" \
-		--description "Route to opus-tier model for dispatch" \
-		--color "7057FF" \
+		--description "$label_desc" \
+		--color "$label_color" \
 		--force 2>/dev/null || true
 
+	# Swap tier labels
+	local edit_args="--add-label $next_label"
+	if [[ -n "$remove_label" ]]; then
+		edit_args="$edit_args --remove-label $remove_label"
+	fi
+	# Also remove backward-compat tier:thinking if present
+	if [[ ",$current_labels," == *",tier:thinking,"* ]]; then
+		edit_args="$edit_args --remove-label tier:thinking"
+	fi
+	# shellcheck disable=SC2086
 	gh issue edit "$issue_number" --repo "$repo_slug" \
-		--add-label "tier:thinking" \
-		--remove-label "tier:simple" 2>/dev/null || {
+		$edit_args 2>/dev/null || {
 		return 0
 	}
 
 	# Post escalation comment (sanitize reason to prevent markdown injection)
 	local safe_reason
 	safe_reason=$(_sanitize_markdown "$reason")
-	local comment_body="## Model Tier Escalation
+	local comment_body="## Cascade Tier Escalation: tier:${current_tier} → tier:${next_tier}
 
-**Trigger:** ${failure_count} consecutive worker failures (threshold: ${threshold})
-**Action:** Added \`tier:thinking\` label — next dispatch will use opus-tier model.
+**Trigger:** ${failure_count} consecutive worker failures at \`tier:${current_tier}\` (threshold: ${threshold})
+**Action:** Added \`${next_label}\` label — next dispatch will use ${next_tier}-tier model.
 **Reason:** ${safe_reason}
 
-Previous attempts at the default model tier failed to produce a PR. Escalating to a more capable model.
+Previous attempts at \`tier:${current_tier}\` failed to produce a PR. Escalating to a more capable model with accumulated context from prior attempts.
 
-_Automated by \`escalate_issue_tier()\` in worker-lifecycle-common.sh_"
+The next worker should review prior attempt comments on this issue for context on what was tried and where it got stuck.
+
+_Automated by \`escalate_issue_tier()\` cascade dispatch in worker-lifecycle-common.sh_"
 
 	gh issue comment "$issue_number" --repo "$repo_slug" \
 		--body "$comment_body" 2>/dev/null || true

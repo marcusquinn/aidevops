@@ -30,6 +30,13 @@ Topic: $ARGUMENTS
 
 Also classify **agent domain** and **model tier** using `reference/task-taxonomy.md`. Include domain tag (e.g., `#seo`) in TODO.md entry and as GitHub label. Omit for code tasks.
 
+**Tier classification (cascade dispatch):** Assess the task against the empirical tier criteria:
+- `tier:simple` — single-file, under 100 lines changed, pattern-following (review feedback, config tweaks, style fixes). Brief MUST provide verbatim oldString/newString for every edit.
+- `tier:standard` — multi-file coordination, structural refactoring, changes over 100 lines, tasks where the approach depends on reading current codebase state.
+- `tier:reasoning` — architecture decisions, novel design with no existing patterns, complex multi-system trade-offs, security audits.
+
+**Default to `tier:simple` for review feedback and single-file fixes.** Research shows Haiku achieves 100% success rate when briefs provide exact code blocks. Only escalate when the task genuinely requires judgment.
+
 If ambiguous, ask with numbered options (1–5 matching table above), recommend based on description.
 
 ### Step 2: Structured Interview (3–5 questions)
@@ -66,7 +73,7 @@ Before generating: "Do I know enough to predict what a code review would reject?
 
 ### Step 5: Generate Brief
 
-Read `templates/brief-template.md` and populate from interview answers:
+Read `templates/brief-template.md` and format using `workflows/brief.md` for the classified tier. Populate from interview answers:
 
 | Interview Data | Brief Section |
 |---------------|---------------|

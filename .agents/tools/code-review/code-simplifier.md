@@ -37,6 +37,34 @@ tools:
 
 Per finding: `### [file:line_range] Category: Brief description` with sections **Current** | **Proposed** | **Preserved** | **Risk** | **Verification** | **Confidence** (high/medium/low). Low-confidence findings: create issues with `simplification-debt` label (+ `needs-maintainer-review` only when the authenticated user is NOT the repo maintainer), grouped by file.
 
+### Prescriptive format for tier:simple dispatch (MANDATORY for issue creation)
+
+Format findings using `workflows/brief.md` prescriptive format. Research finding: Haiku achieves 100% success rate when issues provide verbatim oldString/newString. Simplification issues are inherently single-file, pattern-following, exact-code-known — the ideal `tier:simple` candidates. Every finding MUST include explicit Edit tool parameters:
+
+```markdown
+### [path/to/file.sh:45-52] Safe: Remove decorative emoji from log message
+
+**Edit:**
+- **File:** `path/to/file.sh`
+- **oldString:**
+\`\`\`bash
+echo "🚀 Starting deployment process..."
+log_info "🔧 Configuring environment..."
+\`\`\`
+- **newString:**
+\`\`\`bash
+echo "Starting deployment process..."
+log_info "Configuring environment..."
+\`\`\`
+
+**Preserved:** Log messages, function calls, string structure
+**Risk:** None — decorative only
+**Verification:** `shellcheck path/to/file.sh && grep -c '🚀\|🔧' path/to/file.sh | grep -q '^0$' && echo PASS`
+**Confidence:** high
+```
+
+This format enables direct dispatch at `tier:simple` — Haiku copies the oldString/newString into an Edit tool call and runs verification. No codebase exploration needed.
+
 ## Regression Verification
 
 | File type | Minimum verification |
@@ -130,7 +158,7 @@ When the authenticated user IS the maintainer, issues skip the review gate and g
 
 **Post-merge backfill (t1855):** Each scan cycle calls `_simplification_state_backfill_closed()` which queries recently closed `simplification-debt` issues, extracts file paths from titles, and records their current hashes in state. This ensures all collaborator instances see completed work even when the worker that did the simplification didn't update the state file. The state JSON uses a single canonical format: `{ "files": { "<path>": { "hash", "at", "pr", "passes" } } }`.
 
-**Daily LLM sweep:** Reserved for stall detection only. When simplification debt count hasn't decreased in 6h (`SWEEP_STALL_HOURS`), creates a `tier:thinking` issue for LLM-powered deep review. Dedup checks both title patterns to prevent duplicates (t1855). Managed by `complexity-scan-helper.sh sweep-check`.
+**Daily LLM sweep:** Reserved for stall detection only. When simplification debt count hasn't decreased in 6h (`SWEEP_STALL_HOURS`), creates a `tier:reasoning` issue for LLM-powered deep review. Dedup checks both title patterns to prevent duplicates (t1855). Managed by `complexity-scan-helper.sh sweep-check`.
 
 **CI ratchet:** `.agents/configs/complexity-thresholds.conf` (`FUNCTION_COMPLEXITY_THRESHOLD`, `NESTING_DEPTH_THRESHOLD`, `FILE_SIZE_THRESHOLD`). Lower after simplification PRs merge.
 
