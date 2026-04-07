@@ -78,7 +78,7 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 ### Briefs, Tiers, and Dispatchability
 
-**Task briefs are MANDATORY.** Every task must have `todo/tasks/{task_id}-brief.md` capturing: session origin, what, why, how, acceptance criteria, and conversation context. Use `/define` for interactive brief generation with latent criteria probing, or `/new-task` for quick creation from `templates/brief-template.md`. A task without a brief is undevelopable — the brief captures conversation context that would otherwise be lost between sessions. See `workflows/plans.md` and `scripts/commands/new-task.md`.
+- **Task briefs:** Every task must have `todo/tasks/{task_id}-brief.md` (via `/define` or `/new-task`). A task without a brief is undevelopable because it loses the implementation context needed for autonomous execution. See `workflows/plans.md` and `scripts/commands/new-task.md`.
 
 **Brief composition**: All GitHub-written content (issue bodies, PR descriptions, comments, escalation reports) follows `workflows/brief.md` — the centralised formatting workflow.
 
