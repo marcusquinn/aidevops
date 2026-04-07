@@ -3,11 +3,11 @@
 
 # Brief Composition Templates
 
-Reference templates for GitHub-written content.
+Reference templates for GitHub-written content. Use `workflows/brief.md` for the shared formatting rules; this file only defines the outer shells.
 
 ## Issue Body Template
 
-When creating issues via `gh issue create`, format the body using the appropriate tier template, wrapped in standard issue structure:
+When creating issues via `gh issue create`, wrap the appropriate tier content in this structure:
 
 ```markdown
 ## Description
@@ -25,13 +25,13 @@ When creating issues via `gh issue create`, format the body using the appropriat
 - [ ] No unrelated changes
 ```
 
-Always include tier label: `--label "tier:simple"` / `--label "tier:standard"` / `--label "tier:reasoning"`.
+Always include a tier label: `tier:simple`, `tier:standard`, or `tier:reasoning`.
 
 ## Comment Templates
 
 ### Dispatch comment (pulse → worker)
 
-Posted by the pulse when dispatching a worker. Gives the worker enough context to skip re-reading the issue body for orientation:
+Use when the pulse dispatches a worker. Include enough context to avoid re-reading the full issue:
 
 ```markdown
 ## Dispatching: {issue_title}
@@ -51,7 +51,7 @@ _Dispatched by pulse at {timestamp}_
 
 ### Kill/timeout comment (watchdog → issue)
 
-Posted when a worker is killed. Must mentor the next worker — not just state "timed out":
+Use when a worker is killed. Explain what happened and what the next worker should do differently:
 
 ```markdown
 ## Worker killed: {reason}
@@ -73,15 +73,15 @@ _Killed by watchdog at {timestamp}_
 
 ### Escalation comment (cascade dispatch)
 
-See `templates/escalation-report-template.md` for the full structured format. Must include:
+See `templates/escalation-report-template.md`. Include:
 1. What was attempted (files read, code tried)
-2. Structured reason code (see template for taxonomy)
+2. Structured reason code (see the template taxonomy)
 3. Discoveries reusable by the next tier
 4. Brief gaps (what was missing or unclear)
 
 ## PR Description Template
 
-Workers creating PRs use this structure. The description serves two audiences: the review bot (needs structured sections) and the human reviewer (needs motivation and evidence).
+Workers creating PRs use this structure. It serves the review bot and the human reviewer.
 
 ```markdown
 ## Summary
@@ -90,12 +90,10 @@ Workers creating PRs use this structure. The description serves two audiences: t
 
 ## Changes
 
-{For each file changed:}
 - `{file_path}` — {what changed in this file}
 
 ## Verification
 
-{Evidence that the change works:}
 - {Test output, lint results, or manual verification}
 
 ## Linked Issue
