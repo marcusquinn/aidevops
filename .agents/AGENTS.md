@@ -84,6 +84,10 @@ Every agent session should improve the system, not just complete its task. Full 
 
 Not every task is code. Full routing table, rules, and dispatch examples: `reference/agent-routing.md`.
 
+## Worker Diagnostics
+
+When headless workers fail to complete tasks, stall mid-session, or get stuck in dispatch loops: `reference/worker-diagnostics.md`. Covers the worker lifecycle (version guard → canary → dispatch → DB isolation → watchdog → recovery), architecture decisions (why workers need isolated SQLite DBs, why the watchdog must be a standalone process), and a diagnostic quick reference for common failure modes.
+
 ---
 
 ## File Discovery
