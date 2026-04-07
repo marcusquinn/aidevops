@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "bf4bd4aa941359267b555cdbf1b006c47f09dd0e",
-      "at": "2026-04-07T22:02:49Z",
-      "passes": 69,
+      "hash": "0dfda2deb169400c7f3a65d33476f76f788e31ed",
+      "at": "2026-04-07T22:19:57Z",
+      "passes": 70,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "3166f1553e98a590b099c7c4ae8a458563108504",
-      "at": "2026-04-07T22:02:49Z",
-      "passes": 69,
+      "hash": "2860cd6cfba6195eccc4d1cb3c4aef088ff6aba0",
+      "at": "2026-04-07T22:19:57Z",
+      "passes": 70,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -5375,9 +5375,9 @@
       "pr": 16583
     },
     ".agents/tools/credentials/auth-troubleshooting.md": {
-      "hash": "a811887495fc945051124a86c92f8ea80a456c79",
-      "at": "2026-04-03T13:35:13Z",
-      "passes": 1,
+      "hash": "d1dcacfa938afdbf4ce81c8da0c444354b2576f1",
+      "at": "2026-04-07T22:19:42Z",
+      "passes": 2,
       "pr": 16582
     },
     ".agents/content/heygen-skill/rules-streaming-avatars.md": {
