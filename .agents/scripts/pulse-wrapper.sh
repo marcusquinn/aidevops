@@ -6690,11 +6690,15 @@ _is_task_committed_to_main() {
 
 	# Search recent commits on origin/main for any matching pattern.
 	# Use -E for extended regex (Closes/Fixes patterns).
+	# GH#17707: Filter out planning-only commits (claim, plan, docs prefixes)
+	# that mention task IDs but don't contain implementation work.
 	local pattern
 	for pattern in "${search_patterns[@]}"; do
 		local match_count
 		match_count=$(git -C "$repo_path" log origin/main --since="$created_at" \
-			--oneline -E --grep="$pattern" 2>/dev/null | wc -l) || match_count=0
+			--oneline -E --grep="$pattern" 2>/dev/null |
+			grep -vE '^[0-9a-f]+ (chore: claim|plan:|docs:)' |
+			wc -l) || match_count=0
 		match_count=$(printf '%s' "$match_count" | tr -d '[:space:]')
 		if [[ "$match_count" -gt 0 ]]; then
 			echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
