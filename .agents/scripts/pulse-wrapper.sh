@@ -6617,8 +6617,17 @@ _is_task_committed_to_main() {
 		search_patterns+=("$gh_id_match")
 	fi
 
-	# Pattern 3: Always search for the issue number itself
-	search_patterns+=("#${issue_number}")
+	# Pattern 3: GitHub squash-merge suffix "(#NNN)" — only matches commit
+	# titles, not body references. The bare "#NNN" pattern previously caused
+	# false positives: any commit that MENTIONED an issue (e.g., "Relabeled
+	# #17659 and #17660") would match, closing issues whose work hadn't been
+	# done. Restrict to the "(#NNN)" suffix that GitHub adds to squash merges.
+	search_patterns+=("(#${issue_number})")
+
+	# Pattern 4: "Closes #NNN" / "Fixes #NNN" in commit messages — these
+	# are the conventional patterns for commits that resolve an issue.
+	search_patterns+=("[Cc]loses #${issue_number}")
+	search_patterns+=("[Ff]ixes #${issue_number}")
 
 	# No patterns to search — cannot determine if committed
 	if [[ ${#search_patterns[@]} -eq 0 ]]; then
@@ -6641,12 +6650,13 @@ _is_task_committed_to_main() {
 		return 1
 	fi
 
-	# Search recent commits on origin/main for any matching pattern
+	# Search recent commits on origin/main for any matching pattern.
+	# Use -E for extended regex (Closes/Fixes patterns).
 	local pattern
 	for pattern in "${search_patterns[@]}"; do
 		local match_count
 		match_count=$(git -C "$repo_path" log origin/main --since="$created_at" \
-			--oneline --grep="$pattern" -i 2>/dev/null | wc -l) || match_count=0
+			--oneline -E --grep="$pattern" 2>/dev/null | wc -l) || match_count=0
 		match_count=$(printf '%s' "$match_count" | tr -d '[:space:]')
 		if [[ "$match_count" -gt 0 ]]; then
 			echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
