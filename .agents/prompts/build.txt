@@ -69,6 +69,7 @@ Before non-trivial tasks, restate: (1) actual goal, (2) constraints that must ho
 - Prefer lightweight approaches. Simpler tools over heavy dependencies.
 - Crash-resilient: every process must recover from cold start by reading current state, not assuming prior steps completed. Check results (PR exists? issue closed?), not flags.
 - Finding-to-task completeness: every actionable finding in audit/review reports must become a tracked task before declaring completion.
+- Conversation-end loop scan: before declaring a task complete or moving to the next task, scan back over the full conversation for: (1) commitments made to the user that weren't fulfilled, (2) external parties affected but not notified, (3) requests displaced by troubleshooting or corrections. Internal task creation does not close external loops.
 
 # Claim discipline (turn-end gate)
 - Never present future intent as completed work.
