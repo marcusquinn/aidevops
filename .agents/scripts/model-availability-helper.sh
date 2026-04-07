@@ -293,7 +293,9 @@ sql_escape() {
 # 1. Environment variables
 # 2. gopass encrypted secrets
 # 3. credentials.sh plaintext fallback
-# SECURITY: Never prints key values. Returns 0 if found, 1 if not.
+# SECURITY: Echoes the key value directly to stdout. Callers MUST capture the
+# value in a local variable (api_key=$(resolve_api_key "$provider")) and MUST
+# NOT log or print the value. Returns 0 if found, 1 if not.
 
 resolve_api_key() {
 	local provider="$1"
@@ -310,7 +312,7 @@ resolve_api_key() {
 	for var_name in "${var_names[@]}"; do
 		# Source 1: Environment variable
 		if [[ -n "${!var_name:-}" ]]; then
-			echo "$var_name"
+			echo "${!var_name}"
 			return 0
 		fi
 	done
@@ -320,12 +322,10 @@ resolve_api_key() {
 		for var_name in "${var_names[@]}"; do
 			local gopass_path="aidevops/${var_name}"
 			if gopass show "$gopass_path" &>/dev/null; then
-				# Export the key into the environment for this session
 				local key_val
 				key_val=$(gopass show "$gopass_path" 2>/dev/null)
 				if [[ -n "$key_val" ]]; then
-					export "${var_name}=${key_val}"
-					echo "$var_name"
+					echo "$key_val"
 					return 0
 				fi
 			fi
@@ -340,7 +340,7 @@ resolve_api_key() {
 		source "$creds_file"
 		for var_name in "${var_names[@]}"; do
 			if [[ -n "${!var_name:-}" ]]; then
-				echo "$var_name"
+				echo "${!var_name}"
 				return 0
 			fi
 		done
@@ -349,28 +349,12 @@ resolve_api_key() {
 	return 1
 }
 
-# Get the actual key value (internal use only, never printed to output)
+# _get_key_value: deprecated shim — resolve_api_key now echoes the value directly.
+# Kept for any external callers; delegates to resolve_api_key.
 _get_key_value() {
 	local provider="$1"
-	local key_vars
-	key_vars=$(get_provider_key_vars "$provider" 2>/dev/null) || return 1
-
-	if [[ -z "$key_vars" ]]; then
-		return 1
-	fi
-
-	local -a var_names
-	IFS=',' read -ra var_names <<<"$key_vars"
-
-	# Try env vars first (may have been populated by resolve_api_key)
-	for var_name in "${var_names[@]}"; do
-		if [[ -n "${!var_name:-}" ]]; then
-			echo "${!var_name}"
-			return 0
-		fi
-	done
-
-	return 1
+	resolve_api_key "$provider"
+	return $?
 }
 
 # =============================================================================
@@ -804,18 +788,17 @@ probe_provider() {
 		return $?
 	fi
 
-	# Resolve API key
-	local key_var
-	if ! key_var=$(resolve_api_key "$provider"); then
+	# Resolve API key — resolve_api_key echoes the value directly (subshell-safe)
+	local api_key
+	if ! api_key=$(resolve_api_key "$provider"); then
 		[[ "$quiet" != "true" ]] && print_warning "$provider: no API key configured"
 		_record_health "$provider" "no_key" 0 0 "No API key found" 0
 		return 3
 	fi
 
-	local api_key
-	if ! api_key=$(_get_key_value "$provider"); then
-		[[ "$quiet" != "true" ]] && print_warning "$provider: could not resolve API key value"
-		_record_health "$provider" "no_key" 0 0 "Key var $key_var found but empty" 0
+	if [[ -z "$api_key" ]]; then
+		[[ "$quiet" != "true" ]] && print_warning "$provider: API key resolved but empty"
+		_record_health "$provider" "no_key" 0 0 "API key resolved but empty" 0
 		return 3
 	fi
 
