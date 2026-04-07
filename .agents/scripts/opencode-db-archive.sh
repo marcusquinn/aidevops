@@ -144,7 +144,7 @@ file_size_bytes() {
 		echo "0"
 		return 0
 	fi
-	if [[ "$(uname)" == "Darwin" ]]; then
+	if [[ "$OSTYPE" == "darwin"* ]]; then
 		stat -f '%z' "$filepath" 2>/dev/null || echo "0"
 	else
 		stat -c '%s' "$filepath" 2>/dev/null || echo "0"
