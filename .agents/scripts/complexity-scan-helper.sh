@@ -144,11 +144,16 @@ compute_file_metrics() {
 		long_func_count=$(echo "$awk_result" | cut -d'|' -f2)
 		max_nesting=$(echo "$awk_result" | cut -d'|' -f3)
 	elif [[ "$file_type" == "javascript" ]]; then
-		# Count function/method declarations, measure brace nesting depth
+		# Count explicit JS/TS function declarations and assignments,
+		# measure brace nesting depth.
+		# Avoid broad regexes that match ordinary function calls.
 		local awk_result
 		awk_result=$(awk '
 			BEGIN { fc=0; lfc=0; global_max_nest=0; cur_nest=0; in_func=0; func_start=0; func_max_nest=0 }
-			/function[[:space:]]+[a-zA-Z_]/ || /[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(/ && /\{[[:space:]]*$/ || /=>[[:space:]]*\{/ || /^[[:space:]]*(export[[:space:]]+)?(async[[:space:]]+)?function/ {
+			/^[[:space:]]*(export[[:space:]]+)?(default[[:space:]]+)?(async[[:space:]]+)?function([[:space:]]+\*?[A-Za-z_$][A-Za-z0-9_$]*)?[[:space:]]*\([^)]*\)[[:space:]]*\{/ ||
+			/^[[:space:]]*(const|let|var)[[:space:]]+[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*=[[:space:]]*(async[[:space:]]+)?function[[:space:]]*\([^)]*\)[[:space:]]*\{/ ||
+			/^[[:space:]]*(const|let|var)[[:space:]]+[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*=[[:space:]]*(async[[:space:]]+)?\([^)]*\)[[:space:]]*=>[[:space:]]*\{/ ||
+			/^[[:space:]]*[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*:[[:space:]]*(async[[:space:]]+)?function[[:space:]]*\([^)]*\)[[:space:]]*\{/ {
 				if (in_func && cur_nest == 0) {
 					lines = NR - func_start
 					if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
@@ -456,8 +461,9 @@ _scan_js_files() {
 	local state_file="$2"
 
 	local all_results=""
+	local -a js_patterns=("*.js" "*.mjs" "*.ts")
 	local ext
-	for ext in '*.js' '*.mjs' '*.ts'; do
+	for ext in "${js_patterns[@]}"; do
 		local check_results
 		check_results=$(batch_hash_check "$repo_path" "$state_file" "$ext") || check_results=""
 		[[ -z "$check_results" ]] && continue
