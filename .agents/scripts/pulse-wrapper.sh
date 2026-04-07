@@ -6791,7 +6791,7 @@ _is_task_committed_to_main() {
 			while IFS= read -r touched_path; do
 				[[ -z "$touched_path" ]] && continue
 				case "$touched_path" in
-				TODO.md | todo/* | AGENTS.md | .agents/AGENTS.md) ;;
+				TODO.md | todo/* | AGENTS.md | .agents/AGENTS.md | */docs/* | docs/*) ;;
 				*)
 					is_planning_only=false
 					break
@@ -6803,7 +6803,7 @@ _is_task_committed_to_main() {
 			fi
 		done < <(git -C "$repo_path" log origin/main --since="$created_at" \
 			-E --grep="$pattern" --format='%H %s' |
-			grep -vE '^[0-9a-f]+ (chore: claim|plan:)' |
+			grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
 			cut -d' ' -f1 || true)
 		if [[ "$match_count" -gt 0 ]]; then
 			echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
