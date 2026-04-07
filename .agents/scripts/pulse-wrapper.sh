@@ -6597,6 +6597,9 @@ lock_issue_for_worker() {
 
 #######################################
 # Unlock an issue after worker completion or failure (t1894).
+# Symmetric with lock_issue_for_worker: only unlocks NMR issues
+# that were actually locked. Prevents spurious unlock API calls
+# and timeline pollution on non-NMR issues (GH#17746).
 # Non-fatal: unlocking failure is logged but doesn't block.
 #######################################
 unlock_issue_after_worker() {
@@ -6605,8 +6608,81 @@ unlock_issue_after_worker() {
 
 	[[ -n "$issue_num" && -n "$slug" ]] || return 0
 
-	gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || true
-	echo "[pulse-wrapper] Unlocked #${issue_num} in ${slug} after worker completion" >>"$LOGFILE"
+	# Only unlock issues that were ever NMR-labeled (symmetric with lock guard)
+	if issue_was_ever_nmr "$issue_num" "$slug" 2>/dev/null; then
+		gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Unlocked #${issue_num} in ${slug} after worker completion" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Triage content-hash dedup (GH#17746).
+#
+# Without dedup, NMR issues are re-triaged every pulse cycle:
+# lock → agent → no output → unlock → repeat. This wastes tokens,
+# API calls, and pollutes the issue timeline with lock/unlock events.
+#
+# Strategy: hash the issue body + human comments (excluding bot and
+# review comments). Cache the hash. Skip triage when content is
+# unchanged. Re-triage when the author edits the body or adds a
+# new comment.
+#######################################
+TRIAGE_CACHE_DIR="${TRIAGE_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/tmp/triage-cache}"
+
+# Compute a content hash from issue body + human comments.
+# Excludes github-actions[bot] comments and our own triage reviews
+# (## Review: prefix) so that only author/contributor changes trigger
+# a re-triage.
+#
+# Args: $1=issue_num, $2=repo_slug, $3=body (pre-fetched), $4=comments_json (pre-fetched)
+# Outputs: sha256 hash to stdout
+_triage_content_hash() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local body="$3"
+	local comments_json="$4"
+
+	# Filter to human comments: exclude github-actions[bot] and triage reviews
+	local human_comments=""
+	human_comments=$(printf '%s' "$comments_json" | jq -r \
+		'[.[] | select(.author != "github-actions[bot]" and .author != "github-actions") | select(.body | test("^## Review:") | not) | .body] | join("\n---\n")' \
+		2>/dev/null) || human_comments=""
+
+	printf '%s\n%s' "$body" "$human_comments" | shasum -a 256 | cut -d' ' -f1
+	return 0
+}
+
+# Check if triage content hash matches the cached value.
+# Returns 0 if content is unchanged (skip triage), 1 if changed or uncached.
+#
+# Args: $1=issue_num, $2=repo_slug, $3=current_hash
+_triage_is_cached() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local current_hash="$3"
+	local slug_safe="${repo_slug//\//_}"
+	local cache_file="${TRIAGE_CACHE_DIR}/${slug_safe}-${issue_num}.hash"
+
+	[[ -f "$cache_file" ]] || return 1
+
+	local cached_hash=""
+	cached_hash=$(cat "$cache_file" 2>/dev/null) || return 1
+	[[ "$cached_hash" == "$current_hash" ]] && return 0
+	return 1
+}
+
+# Update the triage content hash cache after a triage attempt.
+#
+# Args: $1=issue_num, $2=repo_slug, $3=content_hash
+_triage_update_cache() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local content_hash="$3"
+	local slug_safe="${repo_slug//\//_}"
+
+	mkdir -p "$TRIAGE_CACHE_DIR" 2>/dev/null || true
+	printf '%s' "$content_hash" >"${TRIAGE_CACHE_DIR}/${slug_safe}-${issue_num}.hash" 2>/dev/null || true
 	return 0
 }
 
@@ -11090,10 +11166,11 @@ dispatch_triage_reviews() {
 		# enforced on implementation dispatch (dispatch_with_dedup), not here.
 		# Previously blocked by GH#17490 (t1894), restored in GH#17705 (t1916).
 
-		# ── t1894: Sandboxed triage — pre-fetch all GitHub data deterministically ──
-		local prefetch_file=""
-		prefetch_file=$(mktemp)
-
+		# ── GH#17746: Content-hash dedup — fetch body+comments first ──
+		# Fetch issue metadata and comments early: needed for both the dedup
+		# check AND the prefetch prompt. If content is unchanged since the
+		# last triage attempt, skip entirely (saves agent launch, lock/unlock,
+		# and remaining API calls).
 		local issue_json=""
 		issue_json=$(gh issue view "$issue_num" --repo "$repo_slug" \
 			--json number,title,body,author,labels,createdAt,updatedAt 2>/dev/null) || issue_json="{}"
@@ -11101,6 +11178,20 @@ dispatch_triage_reviews() {
 		local issue_comments=""
 		issue_comments=$(gh api "repos/${repo_slug}/issues/${issue_num}/comments" \
 			--jq '[.[] | {author: .user.login, body: .body, created: .created_at}]' 2>/dev/null) || issue_comments="[]"
+
+		local issue_body=""
+		issue_body=$(echo "$issue_json" | jq -r '.body // "No body"' 2>/dev/null) || issue_body="No body"
+
+		# Compute content hash and check cache
+		local content_hash=""
+		content_hash=$(_triage_content_hash "$issue_num" "$repo_slug" "$issue_body" "$issue_comments")
+
+		if _triage_is_cached "$issue_num" "$repo_slug" "$content_hash"; then
+			echo "[pulse-wrapper] triage dedup: skipping #${issue_num} in ${repo_slug} — content unchanged since last triage" >>"$LOGFILE"
+			continue
+		fi
+
+		# ── Content is new or changed — proceed with full prefetch ──
 
 		# Check if this is a PR
 		local pr_diff="" pr_files="" is_pr=""
@@ -11122,8 +11213,8 @@ dispatch_triage_reviews() {
 		fi
 
 		# Build the prompt with all pre-fetched data
-		local issue_body=""
-		issue_body=$(echo "$issue_json" | jq -r '.body // "No body"' 2>/dev/null) || issue_body="No body"
+		local prefetch_file=""
+		prefetch_file=$(mktemp)
 
 		cat >"$prefetch_file" <<PREFETCH_EOF
 You are reviewing issue/PR #${issue_num} in ${repo_slug}.
@@ -11221,6 +11312,13 @@ PREFETCH_EOF
 
 		# Unlock issue after triage
 		unlock_issue_after_worker "$issue_num" "$repo_slug"
+
+		# GH#17746: Cache content hash after triage attempt (success or failure).
+		# On success: prevents re-triage of unchanged content.
+		# On failure: prevents burning tokens retrying the same failing content.
+		# Cache is invalidated when content_hash changes (author edits body or
+		# adds new comments), triggering a fresh triage attempt.
+		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
 
 		sleep 2
 		triage_count=$((triage_count + 1))
