@@ -8579,9 +8579,7 @@ merge_ready_prs_all_repos() {
 		fi
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$REPOS_JSON" 2>/dev/null)
 
-	if [[ $((total_merged + total_closed)) -gt 0 ]]; then
-		echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}" >>"$LOGFILE"
-	fi
+	echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}" >>"$LOGFILE"
 	# Accumulate into per-cycle health counters (GH#15107)
 	_PULSE_HEALTH_PRS_MERGED=$((_PULSE_HEALTH_PRS_MERGED + total_merged))
 	_PULSE_HEALTH_PRS_CLOSED_CONFLICTING=$((_PULSE_HEALTH_PRS_CLOSED_CONFLICTING + total_closed))
@@ -8656,24 +8654,42 @@ _merge_ready_prs_for_repo() {
 			continue
 		fi
 
-		# Skip non-mergeable
+		# Skip non-mergeable — retry UNKNOWN once (GitHub race: mergeability
+		# not yet computed for recently-pushed PRs, resolves in seconds).
+		if [[ "$pr_mergeable" == "UNKNOWN" ]]; then
+			sleep 5
+			local _retry_mergeable
+			_retry_mergeable=$(gh pr view "$pr_number" --repo "$repo_slug" \
+				--json mergeable --jq '.mergeable' 2>/dev/null) || _retry_mergeable="UNKNOWN"
+			if [[ "$_retry_mergeable" == "MERGEABLE" ]]; then
+				pr_mergeable="MERGEABLE"
+				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — mergeable resolved to MERGEABLE after retry" >>"$LOGFILE"
+			else
+				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — mergeable=${_retry_mergeable} (was UNKNOWN, still not MERGEABLE after retry)" >>"$LOGFILE"
+				continue
+			fi
+		fi
 		if [[ "$pr_mergeable" != "MERGEABLE" ]]; then
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — mergeable=${pr_mergeable}" >>"$LOGFILE"
 			continue
 		fi
 
 		# Skip CHANGES_REQUESTED — needs a fix worker, not a merge
 		if [[ "$pr_review" == "CHANGES_REQUESTED" ]]; then
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision=CHANGES_REQUESTED" >>"$LOGFILE"
 			continue
 		fi
 
 		# Skip external contributor PRs (non-collaborator)
 		if ! _is_collaborator_author "$pr_author" "$repo_slug"; then
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator" >>"$LOGFILE"
 			continue
 		fi
 
 		# Skip PRs modifying workflow files when we lack the scope
 		if check_pr_modifies_workflows "$pr_number" "$repo_slug" 2>/dev/null; then
 			if ! check_gh_workflow_scope 2>/dev/null; then
+				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — modifies workflow files but token lacks workflow scope" >>"$LOGFILE"
 				continue
 			fi
 		fi
@@ -8686,6 +8702,7 @@ _merge_ready_prs_for_repo() {
 			issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
 				--jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
 			if [[ "$issue_labels" == *"needs-maintainer-review"* ]]; then
+				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} has needs-maintainer-review" >>"$LOGFILE"
 				continue
 			fi
 		fi
