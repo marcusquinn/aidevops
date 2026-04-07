@@ -37,6 +37,34 @@ tools:
 
 Per finding: `### [file:line_range] Category: Brief description` with sections **Current** | **Proposed** | **Preserved** | **Risk** | **Verification** | **Confidence** (high/medium/low). Low-confidence findings: create issues with `simplification-debt` label (+ `needs-maintainer-review` only when the authenticated user is NOT the repo maintainer), grouped by file.
 
+### Prescriptive format for tier:simple dispatch (MANDATORY for issue creation)
+
+Format findings using `tools/brief/brief.md` prescriptive format. Research finding: Haiku achieves 100% success rate when issues provide verbatim oldString/newString. Simplification issues are inherently single-file, pattern-following, exact-code-known — the ideal `tier:simple` candidates. Every finding MUST include explicit Edit tool parameters:
+
+```markdown
+### [path/to/file.sh:45-52] Safe: Remove decorative emoji from log message
+
+**Edit:**
+- **File:** `path/to/file.sh`
+- **oldString:**
+\`\`\`bash
+echo "🚀 Starting deployment process..."
+log_info "🔧 Configuring environment..."
+\`\`\`
+- **newString:**
+\`\`\`bash
+echo "Starting deployment process..."
+log_info "Configuring environment..."
+\`\`\`
+
+**Preserved:** Log messages, function calls, string structure
+**Risk:** None — decorative only
+**Verification:** `shellcheck path/to/file.sh && grep -c '🚀\|🔧' path/to/file.sh | grep -q '^0$' && echo PASS`
+**Confidence:** high
+```
+
+This format enables direct dispatch at `tier:simple` — Haiku copies the oldString/newString into an Edit tool call and runs verification. No codebase exploration needed.
+
 ## Regression Verification
 
 | File type | Minimum verification |

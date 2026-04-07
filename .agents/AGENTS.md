@@ -60,6 +60,8 @@ Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `RE
 
 **Task brief rule**: A task without a brief is undevelopable. The brief captures conversation context that would otherwise be lost between sessions. See `workflows/plans.md` and `scripts/commands/new-task.md`.
 
+**Brief composition**: All GitHub-written content (issue bodies, PR descriptions, comments, escalation reports) follows `tools/brief/brief.md` — the centralised formatting agent. Brief quality determines which model tier can execute: verbatim code blocks enable `tier:simple` (Haiku), narrative descriptions require `tier:standard` minimum.
+
 ---
 
 ## Operational Routines (Non-Code Work)

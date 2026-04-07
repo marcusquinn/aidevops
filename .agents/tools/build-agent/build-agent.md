@@ -107,13 +107,30 @@ External skills retain `-skill` suffix (provenance marker for `skill-update-help
 
 ## Model Tier Selection
 
-Record outcomes: `/remember "SUCCESS/FAILURE: agent with model — reason"`. Frontmatter: `model: sonnet  # 87% success, 14 samples`. Full docs: `tools/context/model-routing.md`.
+Record outcomes: `/remember "SUCCESS/FAILURE: agent with model — reason"`. Frontmatter: `model: sonnet  # 87% success, 14 samples`. Full docs: `tools/context/model-routing.md`, `reference/task-taxonomy.md`.
+
+| Tier | Model | Agent use |
+|------|-------|-----------|
+| `tier:simple` | Haiku | Execution of prescriptive briefs with exact code blocks. 100% success when oldString/newString provided verbatim. |
+| `tier:standard` | Sonnet | Standard implementation, judgment, error recovery, multi-file coordination. Default for code tasks. |
+| `tier:reasoning` | Opus | Architecture decisions, novel design, security audits, analysis that creates work for lower tiers. |
 
 | Situation | Action |
 |-----------|--------|
 | >75% success, 3+ samples | Use pattern data (overrides static rule) |
 | Insufficient data | Use routing rules, record outcomes |
 | Contradicts routing rules | Note conflict in agent docs |
+
+### Designing tier-aware output
+
+Agents that *create work* (issues, briefs, review findings) should format output so the implementing worker can be dispatched at `tier:simple`:
+
+- **Provide verbatim code**: `Current` / `Proposed` blocks should be exact oldString/newString, not paraphrased descriptions. Research: Haiku achieves 100% success with exact code, 0% with "change X to Y" descriptions.
+- **Include file paths with line ranges**: `path/to/file.ts:45-60`, not "the auth module".
+- **One finding = one edit**: Don't bundle multiple changes into a single narrative finding. Each discrete edit should be a separate, mechanically executable step.
+- **Add verification**: A bash one-liner the worker runs after applying the edit.
+
+This applies to: code-simplifier findings, quality-feedback issues, review-feedback issues, and any agent that creates `auto-dispatch` work items.
 
 ## Quality Checking
 
