@@ -118,17 +118,28 @@ BACKOFF_RETRY_AFTER=""
 readonly LAUNCHD_LABEL="sh.aidevops.worker-watchdog"
 readonly PLIST_PATH="${HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
 readonly CRON_MARKER="# aidevops: worker-watchdog"
+readonly SYSTEMD_SERVICE_NAME="aidevops-worker-watchdog"
+readonly SYSTEMD_SERVICE_DIR="${HOME}/.config/systemd/user"
 
 #######################################
 # Detect scheduler backend for this OS
-# Output: "launchd", "cron", or "unsupported"
+# Output: "launchd", "systemd", "cron", or "unsupported"
+# Matches pulse-session-helper.sh:get_scheduler_name() (GH#17691)
 #######################################
 _get_scheduler_backend() {
 	case "$(uname -s)" in
 	Darwin) echo "launchd" ;;
-	Linux) echo "cron" ;;
-	*) echo "unsupported" ;;
+	*)
+		# Prefer systemd user services when available (GH#17369, GH#17691)
+		if command -v systemctl >/dev/null 2>&1 &&
+			systemctl --user status >/dev/null 2>&1; then
+			echo "systemd"
+		else
+			echo "cron"
+		fi
+		;;
 	esac
+	return 0
 }
 
 #######################################
@@ -1522,7 +1533,7 @@ _status_print_worker() {
 # Print the scheduler section of --status
 #
 # Arguments:
-#   $1 - backend ("launchd", "cron", or "unsupported")
+#   $1 - backend ("launchd", "systemd", "cron", or "unsupported")
 #######################################
 _status_print_scheduler() {
 	local backend="$1"
@@ -1542,8 +1553,28 @@ _status_print_scheduler() {
 		else
 			echo "  Status: not installed (run --install)"
 		fi
+	elif [[ "$backend" == "systemd" ]]; then
+		local timer_state
+		timer_state=$(systemctl --user is-active "${SYSTEMD_SERVICE_NAME}.timer" 2>/dev/null) || true
+		local timer_enabled
+		timer_enabled=$(systemctl --user is-enabled "${SYSTEMD_SERVICE_NAME}.timer" 2>/dev/null) || true
+		if [[ "$timer_state" == "active" ]]; then
+			echo "  Status: installed and active"
+			echo "  Timer:  ${SYSTEMD_SERVICE_NAME}.timer (${timer_enabled})"
+			local next_trigger
+			next_trigger=$(systemctl --user show "${SYSTEMD_SERVICE_NAME}.timer" --property=NextElapseUSecRealtime --value 2>/dev/null) || true
+			if [[ -n "$next_trigger" && "$next_trigger" != "n/a" ]]; then
+				echo "  Next:   ${next_trigger}"
+			fi
+		elif [[ "$timer_enabled" == "enabled" ]]; then
+			echo "  Status: enabled but NOT active"
+		elif [[ -f "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_SERVICE_NAME}.timer" ]]; then
+			echo "  Status: unit files exist but timer is not enabled"
+		else
+			echo "  Status: not installed (run --install)"
+		fi
 	elif [[ "$backend" == "cron" ]]; then
-		# Linux: check cron (single crontab -l call)
+		# Linux without systemd: check cron (single crontab -l call)
 		if ! _has_crontab; then
 			echo "  Status: crontab unavailable"
 		else
@@ -1601,7 +1632,7 @@ cmd_status() {
 }
 
 #######################################
-# Install scheduler (launchd on macOS, cron on Linux)
+# Install scheduler (launchd on macOS, systemd/cron on Linux)
 #######################################
 cmd_install() {
 	local script_path
@@ -1617,12 +1648,14 @@ cmd_install() {
 	backend="$(_get_scheduler_backend)"
 
 	if [[ "$backend" == "unsupported" ]]; then
-		echo "Unsupported OS: $(uname -s). Supported backends: macOS (launchd), Linux (cron)." >&2
+		echo "Unsupported OS: $(uname -s). Supported backends: macOS (launchd), Linux (systemd/cron)." >&2
 		return 1
 	fi
 
 	if [[ "$backend" == "launchd" ]]; then
 		_install_launchd "$script_path"
+	elif [[ "$backend" == "systemd" ]]; then
+		_install_systemd "$script_path"
 	else
 		_install_cron "$script_path"
 	fi
@@ -1717,14 +1750,72 @@ _install_cron() {
 }
 
 #######################################
-# Uninstall scheduler (launchd on macOS, cron on Linux)
+# Install systemd user timer (Linux with systemd)
+# Arguments:
+#   $1 - script path
+# Modelled on setup-modules/schedulers.sh:_install_scheduler_systemd()
+#######################################
+_install_systemd() {
+	local script_path="$1"
+	local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_SERVICE_NAME}.service"
+	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_SERVICE_NAME}.timer"
+
+	mkdir -p "${SYSTEMD_SERVICE_DIR}"
+
+	printf '%s' "[Unit]
+Description=aidevops worker-watchdog
+After=network.target
+
+[Service]
+Type=oneshot
+KillMode=process
+ExecStart=/bin/bash -lc '${script_path} --check'
+TimeoutStartSec=120
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=append:${LOG_FILE}
+StandardError=append:${LOG_FILE}
+" >"$service_file"
+
+	printf '%s' "[Unit]
+Description=aidevops worker-watchdog Timer
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+" >"$timer_file"
+
+	systemctl --user daemon-reload 2>/dev/null || true
+	if ! systemctl --user enable --now "${SYSTEMD_SERVICE_NAME}.timer" 2>/dev/null; then
+		echo "Failed to enable systemd timer. Falling back to cron." >&2
+		_install_cron "$script_path"
+		return 0
+	fi
+
+	echo "Installed systemd user timer: ${SYSTEMD_SERVICE_NAME}.timer"
+	echo "Service: ${service_file}"
+	echo "Timer: ${timer_file}"
+	echo "Interval: 120 seconds"
+	echo "Log: ${LOG_FILE}"
+	echo ""
+	echo "  Status: systemctl --user status ${SYSTEMD_SERVICE_NAME}.timer"
+	echo "  Uninstall with: ${SCRIPT_NAME}.sh --uninstall"
+	return 0
+}
+
+#######################################
+# Uninstall scheduler (launchd on macOS, systemd/cron on Linux)
 #######################################
 cmd_uninstall() {
 	local backend
 	backend="$(_get_scheduler_backend)"
 
 	if [[ "$backend" == "unsupported" ]]; then
-		echo "Unsupported OS: $(uname -s). Supported backends: macOS (launchd), Linux (cron)." >&2
+		echo "Unsupported OS: $(uname -s). Supported backends: macOS (launchd), Linux (systemd/cron)." >&2
 		return 1
 	fi
 
@@ -1736,8 +1827,30 @@ cmd_uninstall() {
 		else
 			echo "Not installed (launchd)"
 		fi
+	elif [[ "$backend" == "systemd" ]]; then
+		local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_SERVICE_NAME}.service"
+		local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_SERVICE_NAME}.timer"
+		if systemctl --user is-enabled "${SYSTEMD_SERVICE_NAME}.timer" >/dev/null 2>&1 ||
+			[[ -f "$timer_file" ]]; then
+			systemctl --user stop "${SYSTEMD_SERVICE_NAME}.timer" 2>/dev/null || true
+			systemctl --user disable "${SYSTEMD_SERVICE_NAME}.timer" 2>/dev/null || true
+			rm -f "$service_file" "$timer_file"
+			systemctl --user daemon-reload 2>/dev/null || true
+			echo "Uninstalled systemd timer: ${SYSTEMD_SERVICE_NAME}.timer"
+		else
+			echo "Not installed (systemd)"
+		fi
+		# Also clean up any leftover cron entry from before systemd migration
+		if command -v crontab >/dev/null 2>&1; then
+			local current_crontab
+			current_crontab=$(crontab -l 2>/dev/null) || true
+			if echo "$current_crontab" | grep -qF "$CRON_MARKER"; then
+				echo "$current_crontab" | grep -vF "$CRON_MARKER" | crontab -
+				echo "Also removed leftover cron entry"
+			fi
+		fi
 	else
-		# Linux: remove cron entry (single crontab -l call)
+		# Linux without systemd: remove cron entry (single crontab -l call)
 		_require_crontab || return 1
 		local current_crontab
 		current_crontab=$(crontab -l 2>/dev/null) || true
@@ -1765,7 +1878,7 @@ Usage: ${SCRIPT_NAME}.sh [COMMAND]
 Commands:
   --check, -c       Single check (default, for scheduler)
   --status, -s      Show current worker state
-  --install, -i     Install scheduler (launchd on macOS, cron on Linux)
+  --install, -i     Install scheduler (launchd on macOS, systemd/cron on Linux)
   --uninstall, -u   Remove scheduler entry and state files
   --help, -h        Show this help
 
