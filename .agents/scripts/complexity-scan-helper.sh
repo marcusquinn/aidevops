@@ -12,7 +12,7 @@
 # simplification debt count hasn't reduced in 6h.
 #
 # Usage:
-#   complexity-scan-helper.sh scan <repo_path> [--state-file <path>] [--format json|pipe]
+#   complexity-scan-helper.sh scan <repo_path> [--state-file <path>] [--format json|pipe] [--type sh|md|py|js|all]
 #   complexity-scan-helper.sh sweep-check <repo_slug> [--stall-hours 6]
 #   complexity-scan-helper.sh metrics <file_path>
 #   complexity-scan-helper.sh help
@@ -64,7 +64,7 @@ compute_file_metrics() {
 	sh | bash) file_type="shell" ;;
 	md) file_type="markdown" ;;
 	py) file_type="python" ;;
-	ts | js) file_type="javascript" ;;
+	ts | js | mjs) file_type="javascript" ;;
 	*) file_type="other" ;;
 	esac
 
@@ -100,6 +100,79 @@ compute_file_metrics() {
 				if (/^\}/ || /\bfi\b/ || /\bdone\b/ || /\besac\b/) { if (cur_nest > 0) cur_nest-- }
 			}
 			END { printf "%d|%d|%d", fc, lfc, global_max_nest }
+		' "$file_path" 2>/dev/null) || awk_result="0|0|0"
+
+		func_count=$(echo "$awk_result" | cut -d'|' -f1)
+		long_func_count=$(echo "$awk_result" | cut -d'|' -f2)
+		max_nesting=$(echo "$awk_result" | cut -d'|' -f3)
+	elif [[ "$file_type" == "python" ]]; then
+		# Count def/class as functions, measure nesting via indentation depth
+		local awk_result
+		awk_result=$(awk '
+			BEGIN { fc=0; lfc=0; global_max_nest=0; in_func=0; func_start=0; func_indent=0 }
+			/^[[:space:]]*def [a-zA-Z_]/ || /^[[:space:]]*async def [a-zA-Z_]/ {
+				if (in_func) {
+					lines = NR - func_start
+					if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
+				}
+				fc++; func_start=NR; in_func=1
+				# Measure indent of the def line itself
+				match($0, /^[[:space:]]*/)
+				func_indent = RLENGTH
+				next
+			}
+			in_func {
+				# Track nesting depth via indentation (4-space or tab units)
+				if (/^[[:space:]]*$/) next  # skip blank lines
+				match($0, /^[[:space:]]*/)
+				indent = RLENGTH
+				# Nesting relative to function def indent
+				nest = int((indent - func_indent) / 4)
+				if (nest < 0) { in_func=0; next }
+				if (nest > global_max_nest) global_max_nest = nest
+			}
+			END {
+				if (in_func) {
+					lines = NR - func_start
+					if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
+				}
+				printf "%d|%d|%d", fc, lfc, global_max_nest
+			}
+		' "$file_path" 2>/dev/null) || awk_result="0|0|0"
+
+		func_count=$(echo "$awk_result" | cut -d'|' -f1)
+		long_func_count=$(echo "$awk_result" | cut -d'|' -f2)
+		max_nesting=$(echo "$awk_result" | cut -d'|' -f3)
+	elif [[ "$file_type" == "javascript" ]]; then
+		# Count function/method declarations, measure brace nesting depth
+		local awk_result
+		awk_result=$(awk '
+			BEGIN { fc=0; lfc=0; global_max_nest=0; cur_nest=0; in_func=0; func_start=0; func_max_nest=0 }
+			/function[[:space:]]+[a-zA-Z_]/ || /[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(/ && /\{[[:space:]]*$/ || /=>[[:space:]]*\{/ || /^[[:space:]]*(export[[:space:]]+)?(async[[:space:]]+)?function/ {
+				if (in_func && cur_nest == 0) {
+					lines = NR - func_start
+					if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
+				}
+				fc++; func_start=NR; in_func=1; func_max_nest=0; cur_nest=1; next
+			}
+			in_func {
+				gsub(/"[^"]*"/, ""); gsub(/'\''[^'\'']*'\''/, ""); gsub(/`[^`]*`/, "")
+				n = gsub(/\{/, "{"); cur_nest += n
+				m = gsub(/\}/, "}"); cur_nest -= m
+				if (cur_nest > func_max_nest) func_max_nest = cur_nest
+				if (cur_nest <= 0) {
+					lines = NR - func_start
+					if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
+					if (func_max_nest > global_max_nest) global_max_nest = func_max_nest
+					in_func=0; cur_nest=0
+				}
+			}
+			END {
+				if (in_func) {
+					if (func_max_nest > global_max_nest) global_max_nest = func_max_nest
+				}
+				printf "%d|%d|%d", fc, lfc, global_max_nest
+			}
 		' "$file_path" 2>/dev/null) || awk_result="0|0|0"
 
 		func_count=$(echo "$awk_result" | cut -d'|' -f1)
@@ -340,6 +413,80 @@ _scan_md_files() {
 }
 
 #######################################
+# Scan Python files for complexity violations.
+# Arguments: $1 - repo_path, $2 - state_file
+# Output: pipe-delimited results to stdout (one line per violation)
+#######################################
+_scan_python_files() {
+	local repo_path="$1"
+	local state_file="$2"
+
+	local check_results
+	check_results=$(batch_hash_check "$repo_path" "$state_file" '*.py') || check_results=""
+	[[ -z "$check_results" ]] && return 0
+
+	while IFS='|' read -r status file_path; do
+		[[ -n "$file_path" ]] || continue
+		echo "$file_path" | grep -qE "$_EXCLUDED_DIRS" && continue
+		[[ "$status" == "unchanged" ]] && continue
+
+		local full_path="${repo_path}/${file_path}"
+		local metrics
+		metrics=$(compute_file_metrics "$full_path") || metrics="0|0|0|0|python"
+
+		local line_count func_count long_func_count max_nesting file_type
+		IFS='|' read -r line_count func_count long_func_count max_nesting file_type <<<"$metrics"
+
+		if [[ "$long_func_count" -ge "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" ]] ||
+			[[ "$max_nesting" -gt "$COMPLEXITY_NESTING_DEPTH_THRESHOLD" ]]; then
+			printf '%s|%s|%s|%s|%s|%s|%s\n' "$status" "$file_path" "$line_count" "$func_count" "$long_func_count" "$max_nesting" "$file_type"
+		fi
+	done <<<"$check_results"
+	return 0
+}
+
+#######################################
+# Scan JavaScript/TypeScript files for complexity violations.
+# Handles .js, .mjs, and .ts extensions.
+# Arguments: $1 - repo_path, $2 - state_file
+# Output: pipe-delimited results to stdout (one line per violation)
+#######################################
+_scan_js_files() {
+	local repo_path="$1"
+	local state_file="$2"
+
+	local all_results=""
+	local ext
+	for ext in '*.js' '*.mjs' '*.ts'; do
+		local check_results
+		check_results=$(batch_hash_check "$repo_path" "$state_file" "$ext") || check_results=""
+		[[ -z "$check_results" ]] && continue
+		all_results="${all_results}${all_results:+$'\n'}${check_results}"
+	done
+
+	[[ -z "$all_results" ]] && return 0
+
+	while IFS='|' read -r status file_path; do
+		[[ -n "$file_path" ]] || continue
+		echo "$file_path" | grep -qE "$_EXCLUDED_DIRS" && continue
+		[[ "$status" == "unchanged" ]] && continue
+
+		local full_path="${repo_path}/${file_path}"
+		local metrics
+		metrics=$(compute_file_metrics "$full_path") || metrics="0|0|0|0|javascript"
+
+		local line_count func_count long_func_count max_nesting file_type
+		IFS='|' read -r line_count func_count long_func_count max_nesting file_type <<<"$metrics"
+
+		if [[ "$long_func_count" -ge "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" ]] ||
+			[[ "$max_nesting" -gt "$COMPLEXITY_NESTING_DEPTH_THRESHOLD" ]]; then
+			printf '%s|%s|%s|%s|%s|%s|%s\n' "$status" "$file_path" "$line_count" "$func_count" "$long_func_count" "$max_nesting" "$file_type"
+		fi
+	done <<<"$all_results"
+	return 0
+}
+
+#######################################
 # Format scan results as JSON array.
 # Arguments: reads from stdin (pipe-delimited lines)
 #######################################
@@ -367,7 +514,7 @@ _format_results_json() {
 # metrics for changed/new files. Outputs results in pipe or JSON format.
 #
 # Arguments: $1 - repo_path
-# Options: --state-file <path>, --format json|pipe, --type sh|md|all
+# Options: --state-file <path>, --format json|pipe, --type sh|md|py|js|all
 #######################################
 cmd_scan() {
 	local repo_path=""
@@ -416,6 +563,14 @@ cmd_scan() {
 
 	if [[ "$scan_type" == "all" || "$scan_type" == "md" ]]; then
 		_scan_md_files "$repo_path" "$state_file" >>"$results_tmp"
+	fi
+
+	if [[ "$scan_type" == "all" || "$scan_type" == "py" ]]; then
+		_scan_python_files "$repo_path" "$state_file" >>"$results_tmp"
+	fi
+
+	if [[ "$scan_type" == "all" || "$scan_type" == "js" ]]; then
+		_scan_js_files "$repo_path" "$state_file" >>"$results_tmp"
 	fi
 
 	local results
@@ -601,7 +756,8 @@ COMMANDS
   scan <repo_path> [options]    Fast deterministic scan using shell heuristics
     --state-file <path>         Path to simplification-state.json
     --format json|pipe          Output format (default: pipe)
-    --type sh|md|all            File types to scan (default: all)
+    --type sh|md|py|js|all      File types to scan (default: all)
+                                  py = .py files, js = .js/.mjs/.ts files
 
   sweep-check <repo_slug>      Check if daily LLM sweep is needed
     --stall-hours N             Hours of stall before sweep (default: 6)
