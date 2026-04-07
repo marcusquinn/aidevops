@@ -738,28 +738,34 @@ has_open_pr() {
 		return 1
 	fi
 
-	# ── Check 1: Open PRs targeting this issue ──
-	# If an open PR references "Closes #NNN" or has GH#NNN / #NNN in its
-	# title, a worker already produced output — don't dispatch another.
-	# This was the missing dedup layer: has_open_pr previously only checked
-	# --state merged, so open PRs were invisible and caused duplicate dispatch.
+	# ── Check 1: Open PRs with commits that reference this issue ──
+	# The source of truth for "this PR solves this issue" is the commit
+	# messages, not the PR body. PR bodies are written at creation time
+	# (often from templates) and may mention issues for context without
+	# solving them. Commit messages are attached to actual code changes.
+	#
+	# GitHub auto-close works from commit messages on merge to default
+	# branch, so moving closing keywords from PR body to commits changes
+	# nothing for auto-close but eliminates false-positive dedup blocks.
 	local open_pr_json open_pr_count
 	open_pr_json=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,title,body --limit 10 2>/dev/null) || open_pr_json="[]"
+		--json number,title,commits --limit 10 2>/dev/null) || open_pr_json="[]"
 	open_pr_count=$(printf '%s' "$open_pr_json" | jq 'length' 2>/dev/null) || open_pr_count=0
 	[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
 
 	if [[ "$open_pr_count" -gt 0 ]]; then
+		# Match: closing keyword + #NNN in commit messages, or GH#NNN/#NNN in PR title
 		local close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
 		local title_pattern="(GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
+
 		local match_pr
 		match_pr=$(printf '%s' "$open_pr_json" | jq -r --arg cp "$close_pattern" --arg tp "$title_pattern" \
 			'[.[] | select(
-				(.body // "" | test($cp; "i")) or
-				(.title // "" | test($tp))
+				(.title // "" | test($tp)) or
+				((.commits // [])[] | .messageHeadline // "" | test($cp; "i"))
 			)] | .[0].number // empty' 2>/dev/null) || match_pr=""
 		if [[ -n "$match_pr" ]]; then
-			printf 'open PR #%s targets issue #%s — worker already produced output\n' "$match_pr" "$issue_number"
+			printf 'open PR #%s has commits targeting issue #%s\n' "$match_pr" "$issue_number"
 			return 0
 		fi
 	fi

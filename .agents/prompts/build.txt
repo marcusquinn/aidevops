@@ -196,10 +196,12 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 
 **Traceability (MANDATORY):**
 - PR title MUST have task ID (`{task-id}: {description}`). No exceptions.
-- PR body MUST include exactly ONE `Closes #NNN` for the issue the PR **directly solves**.
-  GitHub auto-closes issues when PRs with `Closes/Fixes/Resolves #NNN` merge.
-  NEVER use `Closes` for context references — use `Related: #NNN` or `See #NNN` instead.
-  Evidence: GH#17584 was auto-closed twice by PRs that referenced it for context, not as the target.
+- Closing keywords (`Closes #NNN`, `Fixes #NNN`) go in **commit messages**, not PR bodies.
+  Commits are the source of truth — they represent actual code changes. PR bodies are
+  written upfront and may mention issues for context without solving them.
+  GitHub auto-closes issues from commit messages when merged to the default branch.
+  PR bodies should use `For #NNN` or `Implements #NNN` for context — never `Closes`.
+  The dedup system checks commit messages to determine if work is already in progress.
 - Every dispatched task MUST have a GitHub issue. Issue number in TODO.md as `ref:GH#NNN`.
 
 # 9. Worker-Ready Implementation Context (t1900 — MANDATORY)
