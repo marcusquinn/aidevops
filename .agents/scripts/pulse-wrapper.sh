@@ -4317,6 +4317,37 @@ issue_has_required_approval() {
 }
 
 #######################################
+# Check if the needs-maintainer-review label was most recently applied
+# by the maintainer themselves (indicating a manual hold).
+#
+# Arguments:
+#   $1 - issue_num  : GitHub issue number
+#   $2 - slug       : repo slug (owner/repo)
+#   $3 - maintainer : maintainer GitHub login
+#
+# Returns 0 if the maintainer applied NMR (manual hold — do NOT auto-approve).
+# Returns 1 if NMR was applied by automation or the actor is unknown.
+#######################################
+_nmr_applied_by_maintainer() {
+	local issue_num="$1"
+	local slug="$2"
+	local maintainer="$3"
+
+	[[ -n "$issue_num" && -n "$slug" && -n "$maintainer" ]] || return 1
+
+	local nmr_actor
+	nmr_actor=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate \
+		--jq '[.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")] | last | .actor.login // empty' \
+		2>/dev/null) || nmr_actor=""
+
+	if [[ "$nmr_actor" == "$maintainer" ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Auto-approve needs-maintainer-review issues using cryptographic
 # signature verification (t1894, replaces GH#16842 comment-based check).
 #
@@ -4326,9 +4357,11 @@ issue_has_required_approval() {
 # (and root access to the approval signing key) can approve issues.
 #
 # Fallback: maintainer-authored issues are still auto-approved (the
-# maintainer wouldn't gate their own issues). Comment-based approval
-# is removed — workers share the same GitHub account so any comment
-# from the account is indistinguishable from a human comment.
+# maintainer wouldn't gate their own issues), UNLESS the maintainer
+# manually applied NMR themselves — that signals an intentional hold
+# and must be preserved. Comment-based approval is removed — workers
+# share the same GitHub account so any comment from the account is
+# indistinguishable from a human comment.
 #######################################
 auto_approve_maintainer_issues() {
 	local repos_json="$REPOS_JSON"
@@ -4361,10 +4394,15 @@ auto_approve_maintainer_issues() {
 			local should_approve=false
 			local approval_reason=""
 
-			# Case 1: maintainer created the issue — auto-approve
+			# Case 1: maintainer created the issue — auto-approve unless NMR
+			# was manually applied by the maintainer (intentional hold).
 			if [[ "$issue_author" == "$maintainer" ]]; then
-				should_approve=true
-				approval_reason="maintainer is author"
+				if _nmr_applied_by_maintainer "$issue_num" "$slug" "$maintainer"; then
+					echo "[pulse-wrapper] Skipping auto-approve for #${issue_num} in ${slug} — NMR manually applied by maintainer" >>"$LOGFILE"
+				else
+					should_approve=true
+					approval_reason="maintainer is author, NMR applied by automation"
+				fi
 			fi
 
 			# Case 2: cryptographic approval signature found
