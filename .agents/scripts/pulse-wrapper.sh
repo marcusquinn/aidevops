@@ -6690,12 +6690,41 @@ _is_task_committed_to_main() {
 
 	# Search recent commits on origin/main for any matching pattern.
 	# Use -E for extended regex (Closes/Fixes patterns).
+	# GH#17707: Filter out planning-only commits that mention task IDs but
+	# don't contain implementation work. Two-stage filter:
+	#   1. Subject-line filter: drop obvious planning prefixes (chore: claim, plan:)
+	#   2. Path-based filter: for remaining commits, check if ALL touched paths
+	#      are planning-only files (TODO.md, todo/*, AGENTS.md). If so, exclude.
+	# This preserves real docs: commits while filtering true planning-only commits.
 	local pattern
 	for pattern in "${search_patterns[@]}"; do
-		local match_count
-		match_count=$(git -C "$repo_path" log origin/main --since="$created_at" \
-			--oneline -E --grep="$pattern" 2>/dev/null | wc -l) || match_count=0
-		match_count=$(printf '%s' "$match_count" | tr -d '[:space:]')
+		local match_count=0
+		local commit_hash
+		# Stage 1: get matching commits, exclude obvious planning subjects
+		while IFS= read -r commit_hash; do
+			[[ -z "$commit_hash" ]] && continue
+			# Stage 2: path-based planning detection — check if ALL touched
+			# paths are planning-only files. Real implementation commits touch
+			# code files beyond TODO.md/todo/*/AGENTS.md.
+			local is_planning_only=true
+			local touched_path
+			while IFS= read -r touched_path; do
+				[[ -z "$touched_path" ]] && continue
+				case "$touched_path" in
+				TODO.md | todo/* | AGENTS.md | .agents/AGENTS.md) ;;
+				*)
+					is_planning_only=false
+					break
+					;;
+				esac
+			done < <(git -C "$repo_path" diff-tree --no-commit-id --name-only -r "$commit_hash" 2>/dev/null)
+			if [[ "$is_planning_only" == "false" ]]; then
+				match_count=$((match_count + 1))
+			fi
+		done < <(git -C "$repo_path" log origin/main --since="$created_at" \
+			--oneline -E --grep="$pattern" |
+			grep -vE '^[0-9a-f]+ (chore: claim|plan:)' |
+			cut -d' ' -f1 || true)
 		if [[ "$match_count" -gt 0 ]]; then
 			echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 			return 0
