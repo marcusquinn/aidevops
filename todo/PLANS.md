@@ -7590,6 +7590,51 @@ Note: Additional tools (Tor, YubiKey, Whonix, Tails, etc.) assessed and added as
 
 ---
 
+### [2026-04-07] Qlty Maintainability A-Grade Recovery
+
+**Goal:** Recover the Qlty maintainability badge from C to A and keep it there permanently through process tightening.
+
+**Status:** Active — tasks created, dependency-ordered dispatch.
+
+**Root Cause Analysis (2026-04-07):**
+- 224 smell findings across 45 files (Python/JS/TS/MJS)
+- Top contributor: `oauth-pool.mjs` (complexity 440, t1860 — never completed despite being marked closed)
+- 15 of 45 files in `.agents/plugins/opencode-aidevops/` (~1,300 combined complexity)
+- Completed tasks (t1858, t1861) didn't fully resolve — Qlty still flags them
+- `complexity-scan-helper.sh` only scans `.sh`/`.md` — blind to Qlty-scored file types
+- No CI gate prevents new smells from landing
+- `complexity-thresholds.conf` bumped UP 11 times, never ratcheted down
+
+**Tasks (dependency order):**
+
+| Task | Title | Tier | Blocked by | GH# |
+|------|-------|------|------------|-----|
+| t1860 | Reduce oauth-pool.mjs complexity (440→120) | reasoning | — | #440 |
+| t1915 | Add Qlty verification to simplification templates | simple | — | #17704 |
+| t1910 | Extend scanner to .py/.mjs/.js/.ts | standard | — | #17699 |
+| t1911 | Add Qlty smells CI gate (diff mode) | standard | — | #17700 |
+| t1913 | Automate ratchet-down | standard | — | #17702 |
+| t1912 | Post-merge re-queue for persistent smells | standard | t1910 | #17701 |
+| t1914 | Plugin directory decomposition | reasoning | t1860 | #17703 |
+
+**Scope/Direction:**
+- t1860 + t1914 address the smell backlog (cure)
+- t1911 + t1912 prevent regression (gate)
+- t1910 + t1913 + t1915 close process gaps (infrastructure)
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-04-07 | Scanner must cover Qlty-scored types | Scanner was blind to 100% of badge-relevant files |
+| 2026-04-07 | CI gate in diff mode, not --all | --all would fail every PR (224 pre-existing smells) |
+| 2026-04-07 | Re-queue with pass limit (3) then escalate | Prevents infinite re-simplification loops |
+| 2026-04-07 | Plugin decomposition at tier:reasoning | Architectural work requiring dependency graph analysis |
+| 2026-04-07 | Ratchet-down proposed at actual+2 buffer | Prevents flapping from concurrent PRs |
+| 2026-04-07 | GH#440 was never completed (PR#13932 was wrong file) | Worker closed with wrong evidence — re-opened |
+
+---
+
 ## Completed Plans
 
 ### [2025-12-21] Beads Integration for aidevops Tasks & Plans ✓
