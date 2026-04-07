@@ -25,6 +25,7 @@
 #   AIDEVOPS_SIG_MODEL        Model ID (e.g., "anthropic/opus-4-6")
 #   AIDEVOPS_SIG_TOKENS       Token count (e.g., "1234")
 #
+# Runtime-aware: OpenCode DB queries gated behind _is_opencode_runtime() (GH#17689).
 # Dependencies: lib/version.sh (aidevops version), aidevops-update-check.sh (CLI detection)
 
 set -euo pipefail
@@ -132,21 +133,58 @@ _detect_opencode_version() {
 }
 
 # =============================================================================
+# Runtime detection — is this an OpenCode session? (GH#17689)
+# =============================================================================
+# Returns 0 if running inside OpenCode, 1 otherwise. Gates OpenCode DB queries.
+
+_is_opencode_runtime() {
+	# Fast path: env var set by OpenCode
+	if [[ "${OPENCODE:-}" == "1" ]]; then
+		return 0
+	fi
+
+	# Fallback: check parent process chain for "opencode"
+	local walk_pid="${PPID:-0}"
+	local walk_depth=0
+	while [[ "$walk_pid" -gt 1 ]] && [[ "$walk_depth" -lt 10 ]] 2>/dev/null; do
+		local walk_comm walk_args walk_lower
+		walk_comm=$(ps -o comm= -p "$walk_pid" 2>/dev/null || echo "")
+		walk_args=$(ps -o args= -p "$walk_pid" 2>/dev/null || echo "")
+		walk_lower=$(printf '%s %s' "$walk_comm" "$walk_args" | tr '[:upper:]' '[:lower:]')
+		if [[ "$walk_lower" == *opencode* ]]; then
+			return 0
+		fi
+		walk_pid=$(ps -o ppid= -p "$walk_pid" 2>/dev/null | tr -d ' ' || echo "0")
+		walk_depth=$((walk_depth + 1))
+	done
+
+	return 1
+}
+
+# =============================================================================
+# Claude Code model detection (GH#17689)
+# =============================================================================
+# Returns model from ANTHROPIC_MODEL or CLAUDE_MODEL env vars, or empty string.
+
+_detect_claude_code_model() {
+	if [[ -n "${ANTHROPIC_MODEL:-}" ]]; then
+		echo "$ANTHROPIC_MODEL"
+		return 0
+	fi
+	if [[ -n "${CLAUDE_MODEL:-}" ]]; then
+		echo "$CLAUDE_MODEL"
+		return 0
+	fi
+
+	echo ""
+	return 0
+}
+
+# =============================================================================
 # CLI detection (reuses aidevops-update-check.sh logic)
 # =============================================================================
 
 _detect_cli() {
-	local update_check="${SCRIPT_DIR}/aidevops-update-check.sh"
-	if [[ -x "$update_check" ]]; then
-		# detect_app() outputs "Name|version" or "Name"
-		local result
-		result=$("$update_check" 2>/dev/null <<<"" | head -1 || echo "")
-		# The script's main() runs on execution; we need just detect_app.
-		# Safer: source the function directly isn't possible (it runs main).
-		# Use the env-var detection inline instead.
-		:
-	fi
-
 	# Inline detection (mirrors aidevops-update-check.sh detect_app)
 	local app_name="" app_version=""
 
@@ -428,12 +466,16 @@ _sum_session_tokens_for_session() {
 
 _detect_session_tokens_with_since() {
 	local since_epoch="${1:-}"
+
+	# Guard: only query OpenCode DB in OpenCode runtime (GH#17689)
+	if ! _is_opencode_runtime; then
+		echo ""
+		return 0
+	fi
+
 	local db_path
 	db_path=$(_opencode_db_path)
 
-	# If the OpenCode DB exists, try it — don't gate on process detection.
-	# The old PPID-only check failed on Linux where the immediate parent is
-	# "node" or "bun" rather than "opencode" (GH#13012).
 	if [[ ! -r "$db_path" ]] || ! command -v sqlite3 &>/dev/null; then
 		echo ""
 		return 0
@@ -525,13 +567,21 @@ _detect_issue_scoped_tokens() {
 }
 
 # =============================================================================
-# Detect model from runtime DB
+# Detect model from runtime DB or environment (GH#17689)
 # =============================================================================
-# Queries the OpenCode session DB for the model used in the current session.
+# Queries the OpenCode session DB for the model used in the current session,
+# but ONLY when running in OpenCode. For Claude Code and other runtimes, falls
+# back to environment variables (ANTHROPIC_MODEL, CLAUDE_MODEL).
 # Returns "provider/model" (e.g., "anthropic/claude-sonnet-4-6") or empty.
 # This eliminates the need for callers to pass --model explicitly (GH#12965).
 
 _detect_session_model() {
+	# Guard: only query OpenCode DB in OpenCode runtime (GH#17689)
+	if ! _is_opencode_runtime; then
+		_detect_claude_code_model
+		return 0
+	fi
+
 	local db_path
 	db_path=$(_opencode_db_path)
 
@@ -581,6 +631,19 @@ _detect_session_model() {
 # =============================================================================
 
 _detect_session_type() {
+	# Guard: only query OpenCode DB in OpenCode runtime (GH#17689)
+	if ! _is_opencode_runtime; then
+		# Claude Code: infer session type from environment
+		if [[ "${FULL_LOOP_HEADLESS:-}" == "true" ]] || [[ -n "${AIDEVOPS_HEADLESS:-}" ]]; then
+			echo "worker"
+		elif [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+			echo "interactive"
+		else
+			echo ""
+		fi
+		return 0
+	fi
+
 	local db_path
 	db_path=$(_opencode_db_path)
 
@@ -647,8 +710,8 @@ _child_token_ledger_path() {
 _sum_child_tokens() {
 	local parent_session_id="${1:-}"
 
-	# Auto-detect parent session if not provided
-	if [[ -z "$parent_session_id" ]]; then
+	# Auto-detect parent session if not provided (OpenCode only — GH#17689)
+	if [[ -z "$parent_session_id" ]] && _is_opencode_runtime; then
 		local db_path
 		db_path=$(_opencode_db_path)
 		if [[ -r "$db_path" ]] && command -v sqlite3 &>/dev/null; then
@@ -692,12 +755,15 @@ _sum_child_tokens() {
 # Returns session duration in seconds (now - session.time_created), or empty.
 
 _detect_session_time() {
+	# Guard: only query OpenCode DB in OpenCode runtime (GH#17689)
+	if ! _is_opencode_runtime; then
+		echo ""
+		return 0
+	fi
+
 	local db_path
 	db_path=$(_opencode_db_path)
 
-	# If the OpenCode DB exists, try it — don't gate on process detection.
-	# The old PPID-only check failed on Linux where the immediate parent is
-	# "node" or "bun" rather than "opencode" (GH#13012).
 	if [[ ! -r "$db_path" ]] || ! command -v sqlite3 &>/dev/null; then
 		echo ""
 		return 0
@@ -1289,8 +1355,8 @@ cmd_record_child() {
 		return 1
 	fi
 
-	# Auto-detect parent session from runtime DB
-	if [[ -z "$parent_session_id" ]]; then
+	# Auto-detect parent session from runtime DB (OpenCode only — GH#17689)
+	if [[ -z "$parent_session_id" ]] && _is_opencode_runtime; then
 		local db_path
 		db_path=$(_opencode_db_path)
 		if [[ -r "$db_path" ]] && command -v sqlite3 &>/dev/null; then
@@ -1303,8 +1369,8 @@ cmd_record_child() {
 		return 1
 	fi
 
-	# Auto-detect child tokens from runtime DB if not provided
-	if [[ -z "$child_tokens" ]]; then
+	# Auto-detect child tokens from runtime DB if not provided (OpenCode only — GH#17689)
+	if [[ -z "$child_tokens" ]] && _is_opencode_runtime; then
 		local db_path
 		db_path=$(_opencode_db_path)
 		if [[ -r "$db_path" ]] && command -v sqlite3 &>/dev/null; then
@@ -1377,6 +1443,11 @@ Auto-detected fields (OpenCode sessions):
   - Issue total tokens (sum of all signature footers by the authenticated
     GitHub user on the issue's comments, plus current session tokens).
     Lower bound — workers killed before commenting are not counted.
+
+Auto-detected fields (Claude Code sessions — GH#17689):
+  - Model (from ANTHROPIC_MODEL or CLAUDE_MODEL env vars)
+  - Session type (worker if FULL_LOOP_HEADLESS=true, interactive otherwise)
+  - Note: OpenCode DB is NOT queried in non-OpenCode runtimes.
 
 Environment variables (override auto-detection):
   AIDEVOPS_SIG_CLI          CLI name
