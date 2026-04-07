@@ -21,23 +21,23 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Hierarchical tree-index RAG — uses LLM reasoning to navigate document structure instead of vector similarity search
-- **Install**: `pip3 install --upgrade -r requirements.txt` (clone repo first)
-- **Key commands**: `python3 run_pageindex.py --pdf_path <file>` | `--md_path <file>`
-- **LLM support**: Multi-provider via LiteLLM (OpenAI, Anthropic, etc.) — set `OPENAI_API_KEY` in `.env`
+- **Purpose**: Hierarchical tree-index RAG — LLM reasoning navigates document structure instead of vector similarity
+- **Install**: `git clone https://github.com/VectifyAI/PageIndex.git && cd PageIndex && pip3 install --upgrade -r requirements.txt`
+- **Run**: `python3 run_pageindex.py --pdf_path <file>` | `--md_path <file>`
+- **LLM support**: Multi-provider via LiteLLM — set `OPENAI_API_KEY` in `.env`
+- **Benchmark**: 98.7% accuracy on FinanceBench (SOTA for financial document QA)
 - **Repo**: <https://github.com/VectifyAI/PageIndex> (MIT, Python)
-- **Docs**: <https://docs.pageindex.ai>
-- **MCP/API**: <https://pageindex.ai/developer>
+- **Docs**: <https://docs.pageindex.ai> | **MCP/API**: <https://pageindex.ai/developer>
 
-**Use when**: Documents exceed LLM context limits — financial reports, regulatory filings, academic textbooks, legal/technical manuals. Need explainable retrieval with page/section references. Want human-like document navigation without vector DB infrastructure.
+**Use when**: Documents exceed context limits — financial reports, regulatory filings, academic textbooks, legal/technical manuals. Need explainable retrieval with page/section references. No vector DB infrastructure wanted.
 
-**Do NOT use**: Short documents that fit in context window. Keyword/exact-match search (use rg/grep). Codebase semantic search (use [Augment Context Engine](augment-context-engine.md)). Real-time streaming ingestion. Already have a vector pipeline that works (see [vector-search](../database/vector-search.md)).
+**Do NOT use**: Short documents fitting in context. Keyword search (use rg/grep). Codebase search (use [Augment Context Engine](augment-context-engine.md)). Real-time streaming. Existing vector pipeline (see [vector-search](../database/vector-search.md)).
 
 <!-- AI-CONTEXT-END -->
 
 ## How It Works
 
-Inspired by AlphaGo's tree search. PageIndex builds a hierarchical tree from document structure (headings, sections, ToC), then uses LLM reasoning to navigate the tree top-down — selecting relevant branches at each level until reaching the target content.
+Builds a hierarchical tree from document structure (headings, sections, ToC), then uses LLM reasoning to navigate top-down — selecting relevant branches at each level until reaching target content. Inspired by AlphaGo's tree search.
 
 ```text
 Document
@@ -48,51 +48,20 @@ Document
 │   └── ...
 ```
 
-**Key differences from vector RAG**:
-
-| Aspect | Vector RAG | PageIndex |
-|--------|-----------|-----------|
-| Retrieval | Embedding similarity | LLM reasoning over tree |
-| Chunking | Fixed-size or sliding window | Natural document sections |
-| Explainability | Cosine score | Reasoning trace with page refs |
-| Infrastructure | Vector DB required | No DB — JSON tree + LLM |
+**vs Vector RAG**: Vector uses embedding similarity + fixed-size chunks + cosine scores + requires vector DB. PageIndex uses LLM reasoning over natural sections + reasoning traces with page refs + no DB (JSON tree + LLM).
 
 ## Gotchas
 
-1. **LLM cost per query** — every retrieval invokes LLM reasoning (multiple calls to navigate the tree). Cost scales with tree depth. Budget accordingly.
-2. **Index build time** — tree generation requires LLM calls per section. Large documents (500+ pages) take minutes, not seconds.
-3. **PDF quality matters** — scanned PDFs without OCR produce poor trees. Pre-process with OCR if needed.
-4. **Model dependency** — retrieval quality depends heavily on the LLM used. GPT-4o recommended; smaller models may miss nuanced navigation decisions.
-5. **No incremental updates** — changing the document requires full re-indexing. Not suited for frequently updated content.
-6. **Single-document focus** — designed for deep retrieval within one document, not cross-corpus search.
-
-## Installation
-
-```bash
-git clone https://github.com/VectifyAI/PageIndex.git
-cd PageIndex
-pip3 install --upgrade -r requirements.txt
-```
-
-Set API key in `.env`:
-
-```bash
-OPENAI_API_KEY=your_key_here
-```
+1. **LLM cost per query** — multiple LLM calls to navigate tree. Cost scales with depth.
+2. **Index build time** — LLM calls per section. 500+ page docs take minutes.
+3. **PDF quality** — scanned PDFs without OCR produce poor trees. Pre-process with OCR.
+4. **Model dependency** — GPT-4o recommended; smaller models miss nuanced navigation.
+5. **No incremental updates** — document changes require full re-index.
+6. **Single-document focus** — deep retrieval within one document, not cross-corpus.
 
 ## Usage
 
-### Generate Tree Index
-
-```bash
-# From PDF
-python3 run_pageindex.py --pdf_path /path/to/document.pdf
-
-# From Markdown
-python3 run_pageindex.py --md_path /path/to/document.md
-```
-
-### Optional Parameters
+### Parameters
 
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
@@ -110,18 +79,9 @@ python3 run_pageindex.py --md_path /path/to/document.md
 {
   "title": "Financial Stability",
   "node_id": "0006",
-  "start_index": 21,
-  "end_index": 22,
+  "start_index": 21, "end_index": 22,
   "summary": "The Federal Reserve ...",
-  "nodes": [
-    {
-      "title": "Monitoring Financial Vulnerabilities",
-      "node_id": "0007",
-      "start_index": 22,
-      "end_index": 28,
-      "summary": "The Federal Reserve's monitoring ..."
-    }
-  ]
+  "nodes": [{ "title": "Monitoring Financial Vulnerabilities", "node_id": "0007", "start_index": 22, "end_index": 28 }]
 }
 ```
 
@@ -134,16 +94,10 @@ python3 examples/agentic_vectorless_rag_demo.py
 
 ## Deployment Options
 
-| Option | Description |
-|--------|-------------|
-| **Self-hosted** | Clone repo, run locally (open source, MIT) |
-| **Cloud chat** | <https://chat.pageindex.ai> — hosted document QA |
-| **MCP server** | Integrate with AI coding tools via MCP protocol |
-| **REST API** | Programmatic access via <https://pageindex.ai/developer> |
-
-## Benchmark
-
-98.7% accuracy on FinanceBench (state-of-the-art for financial document QA).
+- **Self-hosted**: Clone repo, run locally (MIT)
+- **Cloud chat**: <https://chat.pageindex.ai> — hosted document QA
+- **MCP server**: Integrate with AI coding tools via MCP protocol
+- **REST API**: <https://pageindex.ai/developer>
 
 ## Related
 
