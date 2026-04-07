@@ -199,16 +199,21 @@ _now_iso() {
 	return 0
 }
 
+# Parse an ISO 8601 UTC timestamp to epoch seconds on macOS.
+# TZ=UTC is required: macOS date -j -f interprets the input as local time without it (GH#17699).
+_parse_iso_macos_utc() {
+	local iso_date="$1"
+	local clean_date
+	clean_date="${iso_date%Z}"
+	clean_date="${clean_date%+00:00}"
+	TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$clean_date" "+%s" 2>/dev/null || echo "0"
+	return 0
+}
+
 _epoch_from_iso() {
 	local iso_date="$1"
-	# macOS date -j -f for parsing ISO 8601
 	if [[ "$(uname)" == "Darwin" ]]; then
-		# Handle both Z and +00:00 suffixes
-		local clean_date
-		clean_date="${iso_date%Z}"
-		clean_date="${clean_date%+00:00}"
-		# GH#17699: TZ=UTC required — macOS date interprets input as local time
-		TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$clean_date" "+%s" 2>/dev/null || echo "0"
+		_parse_iso_macos_utc "$iso_date"
 	else
 		date -d "$iso_date" "+%s" 2>/dev/null || echo "0"
 	fi
