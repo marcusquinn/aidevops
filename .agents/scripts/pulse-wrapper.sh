@@ -10800,17 +10800,11 @@ dispatch_triage_reviews() {
 		[[ -n "$issue_num" && -n "$repo_slug" ]] || continue
 		[[ "$available" -gt 0 && "$triage_count" -lt "$triage_max" ]] || break
 
-		# ── Cryptographic approval gate (GH#17490) ──
-		# Triage reviews are sandboxed but their OUTPUT is posted as a GitHub
-		# comment under the maintainer's account. Without this gate, any
-		# external non-contributor issue triggers automated actions (worker
-		# dispatch, comment posting, resource consumption). The same approval
-		# gate enforced by dispatch_with_dedup() must also apply here —
-		# no automated processing of unapproved external issues.
-		if ! issue_has_required_approval "$issue_num" "$repo_slug" "unknown"; then
-			echo "[pulse-wrapper] dispatch_triage_reviews: BLOCKED #${issue_num} in ${repo_slug} — requires cryptographic approval before triage" >>"$LOGFILE"
-			continue
-		fi
+		# ── t1916: Triage is exempt from the cryptographic approval gate ──
+		# Triage is read + comment — it helps the maintainer decide whether to
+		# approve the issue for implementation dispatch. The approval gate is
+		# enforced on implementation dispatch (dispatch_with_dedup), not here.
+		# Previously blocked by GH#17490 (t1894), restored in GH#17705 (t1916).
 
 		# ── t1894: Sandboxed triage — pre-fetch all GitHub data deterministically ──
 		local prefetch_file=""
