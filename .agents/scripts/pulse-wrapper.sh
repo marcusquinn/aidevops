@@ -5519,14 +5519,14 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" $review_label --label "tier:simple" --label "recheck-simplicity" \
+			--label "simplification-debt" $review_label --label "tier:standard" --label "recheck-simplicity" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	else
 		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" $review_label --label "tier:simple" \
+			--label "simplification-debt" $review_label --label "tier:standard" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	fi
@@ -5545,9 +5545,11 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 }
 
 # Create GitHub issues for agent docs flagged for simplification review.
-# Default these to tier:simple so short doc-tightening work routes to a
-# cheaper worker by default; maintainers can raise to tier:standard or tier:reasoning when the
-# issue requires architectural reasoning, security trade-offs, or novel design.
+# Default to tier:standard — simplification requires reading the file, understanding
+# its structure, deciding what to extract vs compress, and preserving institutional
+# knowledge. Haiku-tier models lack the judgment for this; they over-compress,
+# lose task IDs, or restructure without understanding the reasoning behind the
+# original layout. Maintainers can raise to tier:reasoning for architectural docs.
 # Arguments: $1 - scan_results (pipe-delimited: file_path|line_count), $2 - repos_json, $3 - aidevops_slug
 _complexity_scan_create_md_issues() {
 	local scan_results="$1"
@@ -5730,7 +5732,7 @@ This is an automated scan. The function lengths are factual, but the best decomp
 # - .md files: all agent docs (no size gate — classification determines action, t1679)
 #
 # Protected files (build.txt, AGENTS.md, pulse.md, pulse-sweep.md) are excluded.
-# Results processed longest-first. .md issues get tier:simple by default.
+# Results processed longest-first. .md issues get tier:standard by default.
 #
 # Daily LLM sweep (GH#15285): if simplification debt hasn't decreased in 6h,
 # creates a tier:reasoning issue for LLM-powered deep review of stalled debt.
