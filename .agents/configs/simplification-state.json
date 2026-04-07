@@ -1790,8 +1790,8 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "fd82f98d22bbf638119d4d8ffc5220a88668384a",
-      "at": "2026-04-07T18:28:36Z",
+      "hash": "c24bf836931cd7a1d6ddb103ae65c01dca87be8a",
+      "at": "2026-04-07T18:20:38Z",
       "passes": 45,
       "pr": 15086
     },
