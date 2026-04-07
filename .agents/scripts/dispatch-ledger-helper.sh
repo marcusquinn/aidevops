@@ -149,6 +149,8 @@ cmd_register() {
 	local issue_number=""
 	local repo_slug=""
 	local dispatch_pid="$$"
+	local dispatch_tier=""
+	local dispatch_model=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -166,6 +168,14 @@ cmd_register() {
 			;;
 		--pid)
 			dispatch_pid="${2:-$$}"
+			shift 2
+			;;
+		--tier)
+			dispatch_tier="${2:-}"
+			shift 2
+			;;
+		--model)
+			dispatch_model="${2:-}"
 			shift 2
 			;;
 		*)
@@ -204,8 +214,21 @@ cmd_register() {
 		--arg slug "$repo_slug" \
 		--argjson pid "$dispatch_pid" \
 		--arg ts "$now" \
-		'{session_key: $sk, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: $ts, status: "in-flight", updated_at: $ts}' \
+		--arg tier "$dispatch_tier" \
+		--arg model "$dispatch_model" \
+		'{session_key: $sk, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: $ts, status: "in-flight", updated_at: $ts, tier: $tier, model: $model}' \
 		>>"$LEDGER_FILE"
+
+	# Append to tier telemetry log (append-only, never pruned)
+	local telemetry_file="${LEDGER_DIR}/tier-telemetry.jsonl"
+	jq -cn \
+		--arg inum "$issue_number" \
+		--arg slug "$repo_slug" \
+		--arg tier "$dispatch_tier" \
+		--arg model "$dispatch_model" \
+		--arg ts "$now" \
+		'{issue: $inum, repo: $slug, tier: $tier, model: $model, dispatched_at: $ts, outcome: "pending"}' \
+		>>"$telemetry_file" 2>/dev/null || true
 
 	_release_lock
 	return 0
@@ -413,6 +436,129 @@ cmd_fail() {
 	fi
 
 	_update_status "$session_key" "failed"
+	return 0
+}
+
+#######################################
+# Record dispatch outcome in the tier telemetry log
+#
+# Appends outcome to the append-only tier-telemetry.jsonl.
+# Called by workers on completion or by the escalation function on failure.
+#
+# Args:
+#   --issue NUM          issue number
+#   --repo SLUG          repo slug
+#   --outcome OUTCOME    "success" | "escalated" | "failed" | "timeout"
+#   --reason REASON      escalation reason code (optional)
+#   --tokens NUM         tokens used (optional)
+#   --tier TIER          tier at dispatch time (optional, for context)
+#
+# Exit codes: 0 always (best-effort, never fatal)
+#######################################
+cmd_record_outcome() {
+	local issue_number=""
+	local repo_slug=""
+	local outcome=""
+	local reason=""
+	local tokens="0"
+	local tier=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--issue)
+			issue_number="${2:-}"
+			shift 2
+			;;
+		--repo)
+			repo_slug="${2:-}"
+			shift 2
+			;;
+		--outcome)
+			outcome="${2:-}"
+			shift 2
+			;;
+		--reason)
+			reason="${2:-}"
+			shift 2
+			;;
+		--tokens)
+			tokens="${2:-0}"
+			shift 2
+			;;
+		--tier)
+			tier="${2:-}"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	[[ -n "$outcome" ]] || return 0
+
+	local telemetry_file="${LEDGER_DIR}/tier-telemetry.jsonl"
+	local now
+	now=$(_now_utc)
+
+	jq -cn \
+		--arg inum "$issue_number" \
+		--arg slug "$repo_slug" \
+		--arg tier "$tier" \
+		--arg outcome "$outcome" \
+		--arg reason "$reason" \
+		--argjson tokens "${tokens:-0}" \
+		--arg ts "$now" \
+		'{issue: $inum, repo: $slug, tier: $tier, outcome: $outcome, reason: $reason, tokens: $tokens, completed_at: $ts}' \
+		>>"$telemetry_file" 2>/dev/null || true
+
+	return 0
+}
+
+#######################################
+# Report tier telemetry summary
+#
+# Reads tier-telemetry.jsonl and outputs aggregate stats.
+# Used by the pulse sweep and /optimize-tiers command.
+#
+# Exit codes: 0 always
+#######################################
+cmd_tier_report() {
+	local telemetry_file="${LEDGER_DIR}/tier-telemetry.jsonl"
+
+	if [[ ! -s "$telemetry_file" ]]; then
+		echo "No tier telemetry data yet."
+		return 0
+	fi
+
+	local total success escalated failed
+	total=$(wc -l <"$telemetry_file" | tr -d ' ')
+	success=$(grep -c '"outcome":"success"' "$telemetry_file" 2>/dev/null) || success=0
+	escalated=$(grep -c '"outcome":"escalated"' "$telemetry_file" 2>/dev/null) || escalated=0
+	failed=$(grep -c '"outcome":"failed"' "$telemetry_file" 2>/dev/null) || failed=0
+
+	echo "=== Tier Dispatch Telemetry ==="
+	echo "Total dispatches: $total"
+	echo "Success: $success"
+	echo "Escalated: $escalated"
+	echo "Failed: $failed"
+	echo ""
+	echo "By tier:"
+	jq -r '.tier' "$telemetry_file" 2>/dev/null | sort | uniq -c | sort -rn
+	echo ""
+	echo "Escalation reasons:"
+	jq -r 'select(.reason != "" and .reason != null) | .reason' "$telemetry_file" 2>/dev/null | sort | uniq -c | sort -rn
+	echo ""
+	echo "Pass rate by tier:"
+	for t in simple standard reasoning; do
+		local t_total t_success
+		t_total=$(grep -c "\"tier\":\"$t\"" "$telemetry_file" 2>/dev/null) || t_total=0
+		t_success=$(jq -r "select(.tier == \"$t\" and .outcome == \"success\") | .tier" "$telemetry_file" 2>/dev/null | wc -l | tr -d ' ') || t_success=0
+		if [[ "$t_total" -gt 0 ]]; then
+			local pct
+			pct=$(awk "BEGIN {printf \"%.1f\", ${t_success}/${t_total}*100}")
+			echo "  tier:$t — $t_success/$t_total ($pct%)"
+		fi
+	done
+
 	return 0
 }
 
@@ -779,6 +925,12 @@ main() {
 		;;
 	fail)
 		cmd_fail "$@"
+		;;
+	record-outcome)
+		cmd_record_outcome "$@"
+		;;
+	tier-report)
+		cmd_tier_report
 		;;
 	expire)
 		cmd_expire "$@"

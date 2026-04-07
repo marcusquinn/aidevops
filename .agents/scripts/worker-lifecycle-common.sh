@@ -923,6 +923,15 @@ _Automated by \`escalate_issue_tier()\` cascade dispatch in worker-lifecycle-com
 	gh issue comment "$issue_number" --repo "$repo_slug" \
 		--body "$comment_body" 2>/dev/null || true
 
+	# Record escalation in tier telemetry
+	local ledger_helper="${HOME}/.aidevops/agents/scripts/dispatch-ledger-helper.sh"
+	if [[ -x "$ledger_helper" ]]; then
+		"$ledger_helper" record-outcome \
+			--issue "$issue_number" --repo "$repo_slug" \
+			--outcome "escalated" --tier "$current_tier" \
+			--reason "$safe_reason" 2>/dev/null || true
+	fi
+
 	return 0
 }
 

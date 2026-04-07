@@ -6856,11 +6856,23 @@ _Closed by pulse-wrapper.sh deterministic dispatch guard._" 2>/dev/null || true
 	local stagger_delay="${PULSE_DISPATCH_STAGGER_SECONDS:-8}"
 	sleep "$stagger_delay"
 
-	# Record in dispatch ledger
+	# Determine dispatch tier from issue labels for telemetry
+	local dispatch_tier="standard"
+	local issue_labels_csv
+	issue_labels_csv=$(echo "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
+	case ",$issue_labels_csv," in
+	*,tier:reasoning,* | *,tier:thinking,*) dispatch_tier="reasoning" ;;
+	*,tier:standard,*) dispatch_tier="standard" ;;
+	*,tier:simple,*) dispatch_tier="simple" ;;
+	esac
+
+	# Record in dispatch ledger (with tier telemetry)
 	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 	if [[ -x "$ledger_helper" ]]; then
-		"$ledger_helper" record --issue "$issue_number" --repo "$repo_slug" \
-			--pid "$worker_pid" --title "$dispatch_title" 2>/dev/null || true
+		"$ledger_helper" register --session-key "$session_key" \
+			--issue "$issue_number" --repo "$repo_slug" \
+			--pid "$worker_pid" --tier "$dispatch_tier" \
+			--model "$selected_model" 2>/dev/null || true
 	fi
 
 	# GH#15317: Post deterministic "Dispatching worker" comment from the dispatcher,
@@ -6875,6 +6887,7 @@ _Closed by pulse-wrapper.sh deterministic dispatch guard._" 2>/dev/null || true
 	dispatch_comment_body="Dispatching worker (deterministic).
 - **Worker PID**: ${worker_pid}
 - **Model**: ${display_model}
+- **Tier**: ${dispatch_tier}
 - **Runner**: ${self_login}
 - **Issue**: #${issue_number}"
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
