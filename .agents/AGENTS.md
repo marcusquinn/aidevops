@@ -48,54 +48,6 @@ Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `RE
 
 ---
 
-## Development Lifecycle
-
-1. Define the task: `/define` (interactive interview) or `/new-task` (quick creation)
-2. Brief file at `todo/tasks/{task_id}-brief.md` is MANDATORY (see `templates/brief-template.md`)
-3. Brief must include: session origin, what, why, how, acceptance criteria, context
-4. Ask user: implement now or queue for runner?
-5. Full-loop: keep canonical repo on `main` → create/use linked worktree → implement → test → verify → commit/PR
-6. Queue: add to TODO.md for supervisor dispatch
-7. Never skip testing. Never declare "done" without verification.
-
-**Task brief rule**: A task without a brief is undevelopable. The brief captures conversation context that would otherwise be lost between sessions. See `workflows/plans.md` and `scripts/commands/new-task.md`.
-
-**Brief composition**: All GitHub-written content (issue bodies, PR descriptions, comments, escalation reports) follows `workflows/brief.md` — the centralised formatting workflow. Brief quality determines which model tier can execute: verbatim code blocks enable `tier:simple` (Haiku), narrative descriptions require `tier:standard` minimum.
-
----
-
-## Operational Routines (Non-Code Work)
-
-Not every autonomous task should use `/full-loop`. Use this decision rule:
-- **Code change needed** (repo files, tests, PRs) → `/full-loop`
-- **Operational execution** (reports, audits, monitoring, outreach, client ops) → run a domain agent/command directly, with no worktree/PR ceremony
-
-For setup workflow, safety gates, and scheduling patterns, use `/routine` or read `.agents/scripts/commands/routine.md`.
-
----
-
-## Self-Improvement
-
-Every agent session should improve the system, not just complete its task. Full guidance: `reference/self-improvement.md`.
-
----
-
-## Agent Routing
-
-Not every task is code. Full routing table, rules, and dispatch examples: `reference/agent-routing.md`.
-
-## Worker Diagnostics
-
-When headless workers fail to complete tasks, stall mid-session, or get stuck in dispatch loops: `reference/worker-diagnostics.md`. Covers the worker lifecycle (version guard → canary → dispatch → DB isolation → watchdog → recovery), architecture decisions (why workers need isolated SQLite DBs, why the watchdog must be a standalone process), and a diagnostic quick reference for common failure modes.
-
----
-
-## File Discovery
-
-Rules: `prompts/build.txt`.
-
----
-
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -108,24 +60,43 @@ Rules: `prompts/build.txt`.
 - **Domain Index**: `reference/domain-index.md` (30+ domain-to-subagent mappings; read on demand)
 - **Rules**: `prompts/build.txt` (file ops, security, discovery, quality). MD031: blank lines around code blocks.
 
-## Planning & Tasks
+## Task Lifecycle
+
+### Task Creation
+
+1. Define the task: `/define` (interactive interview) or `/new-task` (quick creation)
+2. Brief file at `todo/tasks/{task_id}-brief.md` is MANDATORY (see `templates/brief-template.md`)
+3. Brief must include: session origin, what, why, how, acceptance criteria, context
+4. Ask user: implement now or queue for runner?
+5. Full-loop: keep canonical repo on `main` → create/use linked worktree → implement → test → verify → commit/PR
+6. Queue: add to TODO.md for supervisor dispatch
+7. Never skip testing. Never declare "done" without verification.
 
 Format: `- [ ] t001 Description @owner #tag ~4h started:ISO blocked-by:t002`
 
 Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
-**Task briefs are MANDATORY.** Every task must have `todo/tasks/{task_id}-brief.md` capturing: session origin, what, why, how, acceptance criteria, and conversation context. Use `/define` for interactive brief generation with latent criteria probing, or `/new-task` for quick creation from `templates/brief-template.md`. A task without a brief loses the knowledge that created it.
+### Briefs, Tiers, and Dispatchability
+
+**Task briefs are MANDATORY.** Every task must have `todo/tasks/{task_id}-brief.md` capturing: session origin, what, why, how, acceptance criteria, and conversation context. Use `/define` for interactive brief generation with latent criteria probing, or `/new-task` for quick creation from `templates/brief-template.md`. A task without a brief is undevelopable — the brief captures conversation context that would otherwise be lost between sessions. See `workflows/plans.md` and `scripts/commands/new-task.md`.
+
+**Brief composition**: All GitHub-written content (issue bodies, PR descriptions, comments, escalation reports) follows `workflows/brief.md` — the centralised formatting workflow.
+
+**Model tiers**: Use GitHub labels to set the model tier. The pulse reads these labels for tier routing, not `model:` in `TODO.md`. See `reference/task-taxonomy.md`. **Brief quality determines which model tier can execute** — never assign a tier without verifying the brief meets that tier's prerequisites:
+
+- `tier:simple`: Haiku — requires a brief with verbatim code blocks, explicit file paths, and copy-pasteable implementation. Single-file edits, config tweaks. **Never assign without verifying code blocks exist in the brief.**
+- `tier:standard`: Sonnet — standard implementation, bug fixes, refactors. Narrative briefs with file references are sufficient. Use when uncertain.
+- `tier:reasoning`: Opus — architecture, novel design, deep reasoning, security audits.
+- **Cascade dispatch**: The pulse may start at `tier:simple` and escalate through tiers if the worker fails, accumulating context at each level. See `reference/task-taxonomy.md` "Cascade Dispatch Model".
+
+**Dispatchability gate**: Before recommending a tier (in reviews, triage, task creation), verify: (1) brief exists, (2) brief quality matches the tier's prerequisites, (3) TODO entry exists with `ref:GH#NNN`, (4) task ID claimed via `claim-task-id.sh`. A task missing any of these is not dispatchable — flag what's missing rather than assigning a tier the task can't satisfy.
+
+### Auto-Dispatch and Completion
 
 **Auto-dispatch default**: Always add `#auto-dispatch` unless an exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging".
 - **Exclusions**: Needs credentials, decomposition, or user preference.
 - **Quality gate**: 2+ acceptance criteria, file references in How section, clear deliverable in What section.
 - **Interactive workflow**: Add `assignee:` before pushing if working interactively.
-
-**Model tiers**: Use GitHub labels to set the model tier. The pulse reads these labels for tier routing, not `model:` in `TODO.md`. See `reference/task-taxonomy.md`.
-- `tier:simple`: Haiku — prescriptive briefs with code blocks, single-file edits, config tweaks.
-- `tier:standard`: Sonnet — standard implementation, bug fixes, refactors. Use when uncertain.
-- `tier:reasoning`: Opus — architecture, novel design, deep reasoning, security audits.
-- **Cascade dispatch**: The pulse may start at `tier:simple` and escalate through tiers if the worker fails, accumulating context at each level. See `reference/task-taxonomy.md` "Cascade Dispatch Model".
 
 **Session origin labels**: Issues and PRs are automatically tagged with `origin:worker` (headless/pulse dispatch) or `origin:interactive` (user session). Applied by `claim-task-id.sh`, `issue-sync-helper.sh`, and `pulse-wrapper.sh`. In TODO.md, use `#worker` or `#interactive` tags to set origin explicitly; these map to the corresponding labels on push.
 
@@ -136,6 +107,8 @@ Planning files go direct to main. Code changes need worktree + PR. Workers NEVER
 **Main-branch planning exception:** `TODO.md` and `todo/*` are the explicit exception to the PR-only flow — planning-only edits may be committed and pushed directly to `main`.
 
 **Simplification state policy:** Keep all changes to `.agents/configs/simplification-state.json`. It is the shared hash registry used by the simplification routine to detect unchanged vs changed files and decide when recheck/re-processing is needed.
+
+### Cross-Repo Task Management
 
 **Cross-repo awareness**: The supervisor manages tasks across all repos in `~/.config/aidevops/repos.json` where `pulse: true`. Each repo entry has a `slug` field (`owner/repo`) — ALWAYS use this for `gh` commands, never guess org names. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each pulse-enabled repo to get the full picture. Repos with `"local_only": true` have no GitHub remote — skip `gh` operations on them. Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`), not just `~/Git/<name>`.
 
@@ -195,6 +168,36 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 **Cryptographic issue/PR approval (human-only gate):** `sudo aidevops approve issue <number>` — SSH-signed approval comment; workers cannot forge it (private key is root-only). Setup once with `sudo aidevops approve setup`. Verify: `aidevops approve verify <number>`. This is distinct from the `ai-approved` label (which is a simple collaborator gate, not cryptographic).
 
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
+
+---
+
+## Operational Routines (Non-Code Work)
+
+Not every autonomous task should use `/full-loop`. Use this decision rule:
+- **Code change needed** (repo files, tests, PRs) → `/full-loop`
+- **Operational execution** (reports, audits, monitoring, outreach, client ops) → run a domain agent/command directly, with no worktree/PR ceremony
+
+For setup workflow, safety gates, and scheduling patterns, use `/routine` or read `.agents/scripts/commands/routine.md`.
+
+---
+
+## Agent Routing
+
+Not every task is code. Full routing table, rules, and dispatch examples: `reference/agent-routing.md`.
+
+## Worker Diagnostics
+
+When headless workers fail to complete tasks, stall mid-session, or get stuck in dispatch loops: `reference/worker-diagnostics.md`. Covers the worker lifecycle (version guard → canary → dispatch → DB isolation → watchdog → recovery), architecture decisions (why workers need isolated SQLite DBs, why the watchdog must be a standalone process), and a diagnostic quick reference for common failure modes.
+
+## Self-Improvement
+
+Every agent session should improve the system, not just complete its task. Full guidance: `reference/self-improvement.md`.
+
+## File Discovery
+
+Rules: `prompts/build.txt`.
+
+---
 
 ## Token-Optimized CLI Output (t1430)
 

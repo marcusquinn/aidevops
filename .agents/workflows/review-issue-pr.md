@@ -119,7 +119,21 @@ Heading MUST contain `## Review:` or `## Issue/PR Review:` — pulse idempotency
 - **Decision**: APPROVE / REQUEST CHANGES / DECLINE
 - **Labels**: [e.g., `tier:simple`, `bug`, `status:available`]
 - **Implementation guidance**: [key steps, test cases to add]
+
+### Dispatchability Assessment
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| Brief exists | Yes/No | `todo/tasks/{id}-brief.md` |
+| Brief has code blocks | Yes/No | Required for `tier:simple` |
+| TODO entry with ref | Yes/No | `ref:GH#NNN` in TODO.md |
+| Task ID claimed | Yes/No | via `claim-task-id.sh` |
+
+**Tier prerequisite met**: Yes/No — [does brief quality match the recommended tier? See AGENTS.md "Briefs, Tiers, and Dispatchability"]
+**What's needed to dispatch**: [list missing prerequisites, or "Ready for dispatch"]
 ```
+
+**Why this section exists**: Tier recommendations without brief verification led to issues being labelled `tier:simple` when no brief with code blocks existed — making them undispatchable at that tier. This section forces the reviewer to check prerequisites before recommending a tier, whether invoked via `/review-issue-pr` or encountered mid-session. See AGENTS.md "Briefs, Tiers, and Dispatchability" for the full prerequisite chain.
 
 ## Closing the Loop with the Reporter
 
