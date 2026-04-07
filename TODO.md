@@ -182,6 +182,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t1902 feat: compressed context notation for chat app memory — token-budgeted tiered context injection for conversation-helper.sh and entity-helper.sh, reducing per-message context from ~400-800 to ~180-260 tokens #enhancement #memory #chat-integrations #auto-dispatch ~6h ref:GH#17672 logged:2026-04-07
+
 - [x] t1856 fix: observability plugin replace per-query execSync with persistent sqlite3 process to prevent ETIMEDOUT cascade #bugfix #observability ~3h ref:GH#15957 logged:2026-04-03 pr:#15978 completed:2026-04-03
 - [x] t1750 fix: restore time and token counts in worker PR footers and merge pass comments — worker footers show time but no tokens (XDG_DATA_HOME isolation hides session DB), merge pass closing comments have no footer at all. Fix: capture tokens from isolated DB before cleanup, write sidecar file, merge pass reads it. #bugfix #pulse #diagnostics #auto-dispatch ~3h ref:GH#15486 logged:2026-04-02 completed:2026-04-03
 - [x] t1701 fix: make dispatch dedup guard atomic — wrap dedup+assign+launch in single dispatch_with_dedup() function so LLM cannot skip dedup layers. Root cause of GH#12141 duplicate dispatch: both pulses skipped check_dispatch_dedup entirely (no DISPATCH_CLAIM comments posted). Move from LLM-instructed bash to single atomic function call. #bugfix #pulse #dispatch #auto-dispatch ~3h ref:GH#12436 logged:2026-03-29 completed:2026-04-03
