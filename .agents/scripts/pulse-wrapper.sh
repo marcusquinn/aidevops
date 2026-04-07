@@ -6768,11 +6768,11 @@ dispatch_with_dedup() {
 	# the pulse dispatches redundant workers for already-completed work.
 	if _is_task_committed_to_main "$issue_number" "$repo_slug" "$target_title" "$repo_path"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: task already committed to main (GH#17574)" >>"$LOGFILE"
-		# Auto-close the issue since the work is done
-		gh issue close "$issue_number" --repo "$repo_slug" \
-			--comment "Closing — work for this issue has already been committed directly to main. Detected by pre-dispatch main-commit check (GH#17574).
-
-_Closed by pulse-wrapper.sh deterministic dispatch guard._" 2>/dev/null || true
+		# GH#17642: Do NOT auto-close the issue. The main-commit check has a
+		# high false-positive rate (casual mentions, multi-runner deployment
+		# gaps, stale patterns). A false skip is harmless (next cycle retries),
+		# a false close is destructive (needs manual reopen, re-dispatch, and
+		# loses worker context). Let the verified merge-pass or human close it.
 		return 1
 	fi
 
@@ -8866,21 +8866,12 @@ _close_conflicting_pr() {
 
 _Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null || true
 
-		# Also close the linked issue if it's still open
-		local linked_issue
-		linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
-		if [[ -n "$linked_issue" ]]; then
-			local issue_state
-			issue_state=$(gh issue view "$linked_issue" --repo "$repo_slug" \
-				--json state -q '.state' 2>/dev/null) || issue_state=""
-			if [[ "$issue_state" == "OPEN" ]]; then
-				gh issue close "$linked_issue" --repo "$repo_slug" \
-					--comment "Closing — work has already been committed directly to main. Detected when closing conflicting PR #${pr_number} (GH#17574).
-
-_Closed by pulse-wrapper.sh deterministic merge pass._" 2>/dev/null || true
-				echo "[pulse-wrapper] Deterministic merge: closed linked issue #${linked_issue} — work already on main (GH#17574)" >>"$LOGFILE"
-			fi
-		fi
+		# GH#17642: Do NOT auto-close the linked issue. Closing a conflicting
+		# PR is safe (PRs are cheap), but closing the ISSUE based on a commit
+		# search has too many false positives. The issue stays open for
+		# re-dispatch with a fresh branch. Only the verified merge-pass
+		# (which checks for an actually-merged PR) should close issues.
+		echo "[pulse-wrapper] Deterministic merge: conflicting PR #${pr_number} closed, linked issue left open for re-dispatch (GH#17642)" >>"$LOGFILE"
 
 		echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title} (work already on main)" >>"$LOGFILE"
 	else
