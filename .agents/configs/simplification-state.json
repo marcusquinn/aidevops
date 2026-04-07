@@ -1754,9 +1754,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "hash": "b0bc47c3970ca503bb1d9bcd1e4316f0242105ab",
-      "at": "2026-04-07T00:28:18Z",
-      "passes": 20,
+      "hash": "ef7d697745258569f4cab2203b90547db17c868c",
+      "at": "2026-04-07T01:14:53Z",
+      "passes": 21,
       "pr": 15086
     },
     ".agents/scripts/issue-sync-lib.sh": {
@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "0aac0074da80d4e0a2d7b4b2143a370dd0189867",
-      "at": "2026-04-07T00:50:56Z",
-      "passes": 56,
+      "hash": "8baa3a74bedc31a6fc91e3884b5849fbb14d0b24",
+      "at": "2026-04-07T01:15:06Z",
+      "passes": 57,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "54f7dbf8ca26ae334531c5fcaebd354f20b9c980",
-      "at": "2026-04-07T00:50:56Z",
-      "passes": 55,
+      "hash": "ab324037197510f31067fcaa18a4626d17eb0198",
+      "at": "2026-04-07T01:15:06Z",
+      "passes": 56,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -6802,6 +6802,12 @@
       "passes": 1,
       "pr": 16888,
       "note": "depth reduced from 16 to 4 in PR #16888; issue #17562 created after fix was already merged"
+    },
+    ".agents/scripts/brief-tier-test-helper.sh": {
+      "hash": "e856d04a2fead9fcf07c4e5ca80ab1ce792e6348",
+      "at": "2026-04-07T01:15:06Z",
+      "pr": 17646,
+      "passes": 1
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
