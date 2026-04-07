@@ -1372,15 +1372,48 @@ _invoke_opencode() {
 	# If no activity appears within the timeout, the provider is likely
 	# rate-limited and the worker will hang indefinitely. Kill it so the
 	# retry loop in cmd_run can rotate to the next provider.
-	_run_activity_watchdog "$output_file" "$worker_pid" "$exit_code_file" "$_invoke_session_key" &
-	local watchdog_pid=$!
+	#
+	# GH#17648: Launch as a STANDALONE process via nohup, not a backgrounded
+	# function. The previous `_run_activity_watchdog ... &` died silently when
+	# nohup changed the subshell's process group — stalled workers sat forever.
+	# The standalone script has its own process lifecycle, independent of the
+	# worker subshell.
+	local _watchdog_script="${SCRIPT_DIR}/worker-activity-watchdog.sh"
+	local watchdog_pid=""
+	local _stall_timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-300}"
+	[[ "$_stall_timeout" =~ ^[0-9]+$ ]] || _stall_timeout=300
+	local _phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-30}"
+	[[ "$_phase1_timeout" =~ ^[0-9]+$ ]] || _phase1_timeout=30
+
+	if [[ -x "$_watchdog_script" ]]; then
+		nohup "$_watchdog_script" \
+			--output-file "$output_file" \
+			--worker-pid "$worker_pid" \
+			--exit-code-file "$exit_code_file" \
+			--session-key "${_invoke_session_key:-}" \
+			--repo-slug "${DISPATCH_REPO_SLUG:-}" \
+			--stall-timeout "$_stall_timeout" \
+			--phase1-timeout "$_phase1_timeout" \
+			</dev/null >/dev/null 2>&1 &
+		watchdog_pid=$!
+		print_info "[lifecycle] activity_watchdog_started pid=$watchdog_pid worker=$worker_pid stall_timeout=${_stall_timeout}s"
+	else
+		# Fallback: use inline function if standalone script is missing
+		# (should not happen in normal deployment)
+		print_warning "[lifecycle] standalone watchdog not found at $_watchdog_script — falling back to inline"
+		_run_activity_watchdog "$output_file" "$worker_pid" "$exit_code_file" "$_invoke_session_key" &
+		watchdog_pid=$!
+	fi
 
 	# Wait for the worker to finish (watchdog will kill it if stalled)
 	wait "$worker_pid" 2>/dev/null || true
 
-	# Clean up the watchdog
-	kill "$watchdog_pid" 2>/dev/null || true
-	wait "$watchdog_pid" 2>/dev/null || true
+	# Clean up the watchdog — it should exit on its own when it detects
+	# the worker PID is gone, but kill it explicitly to be safe.
+	if [[ -n "$watchdog_pid" ]]; then
+		kill "$watchdog_pid" 2>/dev/null || true
+		wait "$watchdog_pid" 2>/dev/null || true
+	fi
 
 	# Merge worker session data back to shared DB, then clean up.
 	# Worker is done — no contention, single-writer merge is safe.
