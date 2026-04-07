@@ -17,11 +17,12 @@
 #   wordpress/wp-dev.md → wordpress/wp-dev/SKILL.md (generated)
 #
 # Usage:
-#   ./generate-skills.sh [--dry-run] [--clean]
+#   ./generate-skills.sh [--dry-run] [--clean] [--verbose]
 #
 # Options:
 #   --dry-run  Show what would be generated without writing files
 #   --clean    Remove all generated SKILL.md files
+#   --verbose  Show per-file output (suppressed by default in normal mode)
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -33,6 +34,7 @@ set -euo pipefail
 AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 DRY_RUN=false
 CLEAN=false
+VERBOSE=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -43,6 +45,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--clean)
 		CLEAN=true
+		shift
+		;;
+	--verbose | -v)
+		VERBOSE=true
 		shift
 		;;
 	*)
@@ -73,6 +79,14 @@ log_warning() {
 
 log_error() {
 	echo -e "${RED}✗${NC} $1"
+	return 0
+}
+
+# Log per-file success only in verbose or dry-run mode
+log_file_success() {
+	if [[ "$VERBOSE" == true || "$DRY_RUN" == true ]]; then
+		echo -e "${GREEN}✓${NC} $1"
+	fi
 	return 0
 }
 
@@ -215,7 +229,7 @@ if [[ "$CLEAN" == true ]]; then
 			log_warning "Would remove: $skill_file"
 		else
 			rm -f "$skill_file"
-			log_success "Removed: $skill_file"
+			log_file_success "Removed: $skill_file"
 		fi
 		((++count))
 	done < <(find "$AGENTS_DIR" -name "SKILL.md" -type f 2>/dev/null)
@@ -244,8 +258,10 @@ skipped=0
 
 # Pattern 1: Folders with matching parent .md files
 # e.g., wordpress.md + wordpress/ → wordpress/SKILL.md
-log_info ""
-log_info "Pattern 1: Folders with parent .md files"
+if [[ "$VERBOSE" == true || "$DRY_RUN" == true ]]; then
+	log_info ""
+	log_info "Pattern 1: Folders with parent .md files"
+fi
 
 while IFS= read -r folder; do
 	folder_name=$(basename "$folder")
@@ -259,11 +275,11 @@ while IFS= read -r folder; do
 
 	if [[ -f "$parent_md" ]]; then
 		if [[ "$DRY_RUN" == true ]]; then
-			log_success "Would generate: $skill_file (from $parent_md)"
+			log_file_success "Would generate: $skill_file (from $parent_md)"
 		else
 			mkdir -p "$folder"
 			generate_folder_skill "$folder" "$parent_md" >"$skill_file"
-			log_success "Generated: $skill_file"
+			log_file_success "Generated: $skill_file"
 		fi
 		((++generated))
 	fi
@@ -271,8 +287,10 @@ done < <(find "$AGENTS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
 
 # Pattern 2: Nested folders without parent .md but with children
 # e.g., tools/browser/ with playwright.md, etc.
-log_info ""
-log_info "Pattern 2: Nested folders with child .md files"
+if [[ "$VERBOSE" == true || "$DRY_RUN" == true ]]; then
+	log_info ""
+	log_info "Pattern 2: Nested folders with child .md files"
+fi
 
 while IFS= read -r folder; do
 	folder_name=$(basename "$folder")
@@ -289,7 +307,7 @@ while IFS= read -r folder; do
 		local_name=$(to_skill_name "$folder_name")
 
 		if [[ "$DRY_RUN" == true ]]; then
-			log_success "Would generate: $skill_file (folder index)"
+			log_file_success "Would generate: $skill_file (folder index)"
 		else
 			# Pure pointer — no inlined subskill lists
 			title=$(capitalize "$folder_name")
@@ -303,7 +321,7 @@ while IFS= read -r folder; do
 				echo ""
 				echo "Browse the .md files in this directory for full instructions."
 			} >"$skill_file"
-			log_success "Generated: $skill_file"
+			log_file_success "Generated: $skill_file"
 		fi
 		((++generated))
 	fi
@@ -312,8 +330,10 @@ done < <(find "$AGENTS_DIR" -mindepth 2 -type d 2>/dev/null | sort)
 # Pattern 3: Standalone .md files in nested dirs without matching folders
 # e.g., services/hosting/local-hosting.md with no local-hosting/ folder
 # These were previously missed, causing discovery gaps.
-log_info ""
-log_info "Pattern 3: Standalone .md files without matching folders"
+if [[ "$VERBOSE" == true || "$DRY_RUN" == true ]]; then
+	log_info ""
+	log_info "Pattern 3: Standalone .md files without matching folders"
+fi
 
 while IFS= read -r md_file; do
 	filename=$(basename "$md_file" .md)
@@ -344,11 +364,11 @@ while IFS= read -r md_file; do
 	fi
 
 	if [[ "$DRY_RUN" == true ]]; then
-		log_success "Would generate: $skill_file (standalone)"
+		log_file_success "Would generate: $skill_file (standalone)"
 	else
 		mkdir -p "$target_dir"
 		generate_leaf_skill "$md_file" >"$skill_file"
-		log_success "Generated: $skill_file"
+		log_file_success "Generated: $skill_file"
 	fi
 	((++generated))
 done < <(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -not -name "SKILL.md" -not -name "AGENTS.md" -not -name "README.md" -type f 2>/dev/null | sort)
