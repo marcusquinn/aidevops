@@ -738,6 +738,33 @@ has_open_pr() {
 		return 1
 	fi
 
+	# ── Check 1: Open PRs targeting this issue ──
+	# If an open PR references "Closes #NNN" or has GH#NNN / #NNN in its
+	# title, a worker already produced output — don't dispatch another.
+	# This was the missing dedup layer: has_open_pr previously only checked
+	# --state merged, so open PRs were invisible and caused duplicate dispatch.
+	local open_pr_json open_pr_count
+	open_pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--json number,title,body --limit 10 2>/dev/null) || open_pr_json="[]"
+	open_pr_count=$(printf '%s' "$open_pr_json" | jq 'length' 2>/dev/null) || open_pr_count=0
+	[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
+
+	if [[ "$open_pr_count" -gt 0 ]]; then
+		local close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
+		local title_pattern="(GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
+		local match_pr
+		match_pr=$(printf '%s' "$open_pr_json" | jq -r --arg cp "$close_pattern" --arg tp "$title_pattern" \
+			'[.[] | select(
+				(.body // "" | test($cp; "i")) or
+				(.title // "" | test($tp))
+			)] | .[0].number // empty' 2>/dev/null) || match_pr=""
+		if [[ -n "$match_pr" ]]; then
+			printf 'open PR #%s targets issue #%s — worker already produced output\n' "$match_pr" "$issue_number"
+			return 0
+		fi
+	fi
+
+	# ── Check 2: Merged PRs (existing logic) ──
 	local query pr_json pr_count pr_number
 	for keyword in close closes closed fix fixes fixed resolve resolves resolved; do
 		query="${keyword} #${issue_number} in:body"
@@ -753,8 +780,8 @@ has_open_pr() {
 				local pr_body
 				pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || pr_body=""
 				# Match: keyword + optional whitespace + #NNN or owner/repo#NNN followed by a non-word char or end
-				local close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
-				if ! printf '%s' "$pr_body" | grep -iqE "$close_pattern"; then
+				local close_pattern_merged="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
+				if ! printf '%s' "$pr_body" | grep -iqE "$close_pattern_merged"; then
 					continue
 				fi
 				printf 'merged PR #%s references issue #%s via "%s" keyword\n' "$pr_number" "$issue_number" "$keyword"
@@ -765,6 +792,7 @@ has_open_pr() {
 		fi
 	done
 
+	# ── Check 3: Task-ID title match (merged PRs) ──
 	local task_id
 	task_id=$(printf '%s' "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || true)
 	if [[ -z "$task_id" ]]; then
