@@ -146,7 +146,7 @@ _is_opencode_runtime() {
 	# Fallback: check parent process chain for "opencode"
 	local walk_pid="${PPID:-0}"
 	local walk_depth=0
-	while [[ "$walk_pid" -gt 1 ]] && [[ "$walk_depth" -lt 10 ]] 2>/dev/null; do
+	while [[ "$walk_pid" -ge 1 ]] && [[ "$walk_depth" -lt 10 ]] 2>/dev/null; do
 		local walk_comm walk_args walk_lower
 		walk_comm=$(ps -o comm= -p "$walk_pid" 2>/dev/null || echo "")
 		walk_args=$(ps -o args= -p "$walk_pid" 2>/dev/null || echo "")
