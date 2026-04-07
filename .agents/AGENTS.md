@@ -84,10 +84,11 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 **Model tiers**: Use GitHub labels to set the model tier. The pulse reads these labels for tier routing, not `model:` in `TODO.md`. See `reference/task-taxonomy.md`. **Brief quality determines which model tier can execute** — never assign a tier without verifying the brief meets that tier's prerequisites:
 
-- `tier:simple`: Haiku — requires a brief with verbatim code blocks, explicit file paths, and copy-pasteable implementation. Single-file edits, config tweaks. **Never assign without verifying code blocks exist in the brief.**
-- `tier:standard`: Sonnet — standard implementation, bug fixes, refactors. Narrative briefs with file references are sufficient. Use when uncertain.
-- `tier:reasoning`: Opus — architecture, novel design, deep reasoning, security audits.
+- `tier:simple`: Haiku — requires a brief with verbatim code blocks, explicit file paths, and copy-pasteable implementation. **Hard disqualifiers:** >2 files, skeleton code blocks, error/fallback logic to design, estimate >1h, >4 acceptance criteria, judgment keywords (see `reference/task-taxonomy.md` "Tier Assignment Validation"). Never assign without checking the disqualifier list.
+- `tier:standard`: Sonnet — standard implementation, bug fixes, refactors. Narrative briefs with file references are sufficient. Use when uncertain. This is the default tier.
+- `tier:reasoning`: Opus — architecture, novel design with no existing pattern to follow, deep reasoning, security audits.
 - **Cascade dispatch**: The pulse may start at `tier:simple` and escalate through tiers if the worker fails, accumulating context at each level. See `reference/task-taxonomy.md` "Cascade Dispatch Model".
+- **Tier checklist**: The brief template (`templates/brief-template.md`) includes a mandatory tier checklist. Complete it before assigning a tier — it catches obvious mis-classifications that waste dispatch cycles.
 
 **Dispatchability gate**: Before recommending a tier (in reviews, triage, task creation), verify: (1) brief exists, (2) brief quality matches the tier's prerequisites, (3) TODO entry exists with `ref:GH#NNN`, (4) task ID claimed via `claim-task-id.sh`. A task missing any of these is not dispatchable — flag what's missing rather than assigning a tier the task can't satisfy.
 
