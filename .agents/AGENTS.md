@@ -166,7 +166,7 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Review Bot Gate (t1382):** Before merging: `review-bot-gate-helper.sh check <PR_NUMBER>`. Read bot reviews before merging. Full workflow: `reference/review-bot-gate.md`.
 
-**Cryptographic issue/PR approval (human-only gate):** `sudo aidevops approve issue <number>` — SSH-signed approval comment; workers cannot forge it (private key is root-only). Setup once with `sudo aidevops approve setup`. Verify: `aidevops approve verify <number>`. This is distinct from the `ai-approved` label (which is a simple collaborator gate, not cryptographic).
+**Cryptographic issue/PR approval (human-only gate):** `sudo aidevops approve issue <number> [owner/repo]` — SSH-signed approval comment; workers cannot forge it (private key is root-only). Setup once with `sudo aidevops approve setup`. Verify: `aidevops approve verify <number>`. This is distinct from the `ai-approved` label (which is a simple collaborator gate, not cryptographic).
 
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 

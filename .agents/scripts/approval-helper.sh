@@ -78,6 +78,15 @@ _print_error() {
 	return 0
 }
 
+_require_gh_auth() {
+	if ! gh auth status >/dev/null 2>&1; then
+		_print_error "gh authentication failed (common under sudo on Linux — gnome-keyring is inaccessible)"
+		_print_info "Workaround: export GH_TOKEN before sudo, or run: sudo GH_TOKEN=\$(gh auth token) aidevops approve ..."
+		return 1
+	fi
+	return 0
+}
+
 _require_number_arg() {
 	local value="${1:-}"
 	local noun="$2"
@@ -276,6 +285,7 @@ _approve_target() {
 	local actual_key
 	actual_key=$(_approval_private_key_path)
 	_require_approval_key "$actual_key" || return 1
+	_require_gh_auth || return 1
 
 	slug=$(_resolve_slug_or_fail "$slug" "$slug_error") || return 1
 
@@ -297,9 +307,15 @@ _approve_target() {
 	rm -f "$sig_file"
 
 	if [[ "$target_type" == "issue" ]]; then
-		gh issue comment "$target_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1
+		if ! gh issue comment "$target_number" --repo "$slug" --body "$comment_body"; then
+			_print_error "Failed to post approval comment on issue #$target_number"
+			return 1
+		fi
 	else
-		gh pr comment "$target_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1
+		if ! gh pr comment "$target_number" --repo "$slug" --body "$comment_body"; then
+			_print_error "Failed to post approval comment on PR #$target_number"
+			return 1
+		fi
 	fi
 
 	_post_issue_approval_updates "$target_type" "$target_number" "$slug"
