@@ -110,7 +110,8 @@ _prefetch_needs_full_sweep() {
 		return 0
 	fi
 	local last_epoch now_epoch
-	last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_full_sweep" "+%s" 2>/dev/null) || last_epoch=0
+	# GH#17699: TZ=UTC required — macOS date interprets input as local time
+	last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_full_sweep" "+%s" 2>/dev/null) || last_epoch=0
 	now_epoch=$(date -u +%s)
 	local age=$((now_epoch - last_epoch))
 	if [[ "$age" -ge "$PULSE_PREFETCH_FULL_SWEEP_INTERVAL" ]]; then

@@ -207,8 +207,8 @@ _epoch_from_iso() {
 		local clean_date
 		clean_date="${iso_date%Z}"
 		clean_date="${clean_date%+00:00}"
-		# Try multiple formats
-		date -j -f "%Y-%m-%dT%H:%M:%S" "$clean_date" "+%s" 2>/dev/null || echo "0"
+		# GH#17699: TZ=UTC required — macOS date interprets input as local time
+		TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$clean_date" "+%s" 2>/dev/null || echo "0"
 	else
 		date -d "$iso_date" "+%s" 2>/dev/null || echo "0"
 	fi
