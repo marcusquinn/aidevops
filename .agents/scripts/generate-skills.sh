@@ -82,9 +82,17 @@ log_error() {
 	return 0
 }
 
+is_verbose_output() {
+	if [[ "$VERBOSE" == true || "$DRY_RUN" == true ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
 # Log per-file success only in verbose or dry-run mode
 log_file_success() {
-	if [[ "$VERBOSE" == true || "$DRY_RUN" == true ]]; then
+	if is_verbose_output; then
 		echo -e "${GREEN}✓${NC} $1"
 	fi
 	return 0
@@ -258,7 +266,7 @@ skipped=0
 
 # Pattern 1: Folders with matching parent .md files
 # e.g., wordpress.md + wordpress/ → wordpress/SKILL.md
-if [[ "$VERBOSE" == true || "$DRY_RUN" == true ]]; then
+if is_verbose_output; then
 	log_info ""
 	log_info "Pattern 1: Folders with parent .md files"
 fi
@@ -287,7 +295,7 @@ done < <(find "$AGENTS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
 
 # Pattern 2: Nested folders without parent .md but with children
 # e.g., tools/browser/ with playwright.md, etc.
-if [[ "$VERBOSE" == true || "$DRY_RUN" == true ]]; then
+if is_verbose_output; then
 	log_info ""
 	log_info "Pattern 2: Nested folders with child .md files"
 fi
@@ -330,7 +338,7 @@ done < <(find "$AGENTS_DIR" -mindepth 2 -type d 2>/dev/null | sort)
 # Pattern 3: Standalone .md files in nested dirs without matching folders
 # e.g., services/hosting/local-hosting.md with no local-hosting/ folder
 # These were previously missed, causing discovery gaps.
-if [[ "$VERBOSE" == true || "$DRY_RUN" == true ]]; then
+if is_verbose_output; then
 	log_info ""
 	log_info "Pattern 3: Standalone .md files without matching folders"
 fi
