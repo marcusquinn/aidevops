@@ -350,8 +350,11 @@ COMPLEXITY_LLM_SWEEP_LAST_RUN="${HOME}/.aidevops/logs/complexity-llm-sweep-last-
 COMPLEXITY_LLM_SWEEP_INTERVAL="${COMPLEXITY_LLM_SWEEP_INTERVAL:-21600}"   # 6h — daily LLM sweep when debt is stalled
 COMPLEXITY_DEBT_COUNT_FILE="${HOME}/.aidevops/logs/complexity-debt-count" # tracks open simplification-debt count for stall detection
 DEDUP_CLEANUP_LAST_RUN="${HOME}/.aidevops/logs/dedup-cleanup-last-run"
-DEDUP_CLEANUP_INTERVAL="${DEDUP_CLEANUP_INTERVAL:-86400}"                       # 1 day in seconds
-DEDUP_CLEANUP_BATCH_SIZE="${DEDUP_CLEANUP_BATCH_SIZE:-50}"                      # Max issues to close per run
+DEDUP_CLEANUP_INTERVAL="${DEDUP_CLEANUP_INTERVAL:-86400}"  # 1 day in seconds
+DEDUP_CLEANUP_BATCH_SIZE="${DEDUP_CLEANUP_BATCH_SIZE:-50}" # Max issues to close per run
+CODERABBIT_REVIEW_LAST_RUN="${HOME}/.aidevops/logs/coderabbit-review-last-run"
+CODERABBIT_REVIEW_INTERVAL="${CODERABBIT_REVIEW_INTERVAL:-86400}"               # 1 day in seconds
+CODERABBIT_REVIEW_ISSUE="2632"                                                  # Issue where CodeRabbit full reviews are requested
 COMPLEXITY_FUNC_LINE_THRESHOLD="${COMPLEXITY_FUNC_LINE_THRESHOLD:-100}"         # Functions longer than this are violations
 COMPLEXITY_FILE_VIOLATION_THRESHOLD="${COMPLEXITY_FILE_VIOLATION_THRESHOLD:-1}" # Files with >= this many violations get an issue (was 5)
 COMPLEXITY_MD_MIN_LINES="${COMPLEXITY_MD_MIN_LINES:-50}"                        # Agent docs shorter than this are not actionable for simplification
@@ -394,6 +397,7 @@ COMPLEXITY_LLM_SWEEP_INTERVAL=$(_validate_int COMPLEXITY_LLM_SWEEP_INTERVAL "$CO
 COMPLEXITY_FUNC_LINE_THRESHOLD=$(_validate_int COMPLEXITY_FUNC_LINE_THRESHOLD "$COMPLEXITY_FUNC_LINE_THRESHOLD" 100 50)
 COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_THRESHOLD "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" 1 1)
 COMPLEXITY_MD_MIN_LINES=$(_validate_int COMPLEXITY_MD_MIN_LINES "$COMPLEXITY_MD_MIN_LINES" 50 10)
+CODERABBIT_REVIEW_INTERVAL=$(_validate_int CODERABBIT_REVIEW_INTERVAL "$CODERABBIT_REVIEW_INTERVAL" 86400 3600)
 FAST_FAIL_SKIP_THRESHOLD=$(_validate_int FAST_FAIL_SKIP_THRESHOLD "$FAST_FAIL_SKIP_THRESHOLD" 5 1)
 FAST_FAIL_EXPIRY_SECS=$(_validate_int FAST_FAIL_EXPIRY_SECS "$FAST_FAIL_EXPIRY_SECS" 604800 60)
 FAST_FAIL_INITIAL_BACKOFF_SECS=$(_validate_int FAST_FAIL_INITIAL_BACKOFF_SECS "$FAST_FAIL_INITIAL_BACKOFF_SECS" 600 60)
@@ -4408,6 +4412,90 @@ _complexity_scan_check_interval() {
 		echo "[pulse-wrapper] Complexity scan not due yet (${remaining}h remaining)" >>"$LOGFILE"
 		return 1
 	fi
+	return 0
+}
+
+# Check if the daily CodeRabbit codebase review interval has elapsed.
+# Models on _complexity_scan_check_interval which has never regressed (GH#17640).
+# Arguments: $1 - now_epoch (current epoch seconds)
+# Returns: 0 if review is due, 1 if not yet due
+_coderabbit_review_check_interval() {
+	local now_epoch="$1"
+	if [[ ! -f "$CODERABBIT_REVIEW_LAST_RUN" ]]; then
+		return 0
+	fi
+	local last_run
+	last_run=$(cat "$CODERABBIT_REVIEW_LAST_RUN" 2>/dev/null || echo "0")
+	[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
+	local elapsed=$((now_epoch - last_run))
+	if [[ "$elapsed" -lt "$CODERABBIT_REVIEW_INTERVAL" ]]; then
+		local remaining=$(((CODERABBIT_REVIEW_INTERVAL - elapsed) / 3600))
+		echo "[pulse-wrapper] CodeRabbit codebase review not due yet (${remaining}h remaining)" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Daily full codebase review via CodeRabbit (GH#17640).
+#
+# Posts "@coderabbitai Please run a full codebase review" on issue #2632
+# once per 24h. Uses a simple timestamp file gate (same pattern as
+# _complexity_scan_check_interval) to avoid duplicate posts.
+#
+# Previous implementations regressed because they checked complex quality
+# gate status instead of a plain time-based interval. This version uses
+# the same pattern as the complexity scan which has never regressed.
+#
+# Actionable findings from the review are routed through
+# quality-feedback-helper.sh to create tracked issues.
+#######################################
+run_daily_codebase_review() {
+	local aidevops_slug="marcusquinn/aidevops"
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	# Time gate: skip if last review was <24h ago
+	_coderabbit_review_check_interval "$now_epoch" || return 0
+
+	# Permission gate: only collaborators with write+ may trigger reviews
+	local current_user
+	current_user=$(gh api user --jq '.login' 2>/dev/null) || current_user=""
+	if [[ -z "$current_user" ]]; then
+		echo "[pulse-wrapper] CodeRabbit review: skipped — cannot determine current user" >>"$LOGFILE"
+		return 0
+	fi
+	local perm_level
+	perm_level=$(gh api "repos/${aidevops_slug}/collaborators/${current_user}/permission" \
+		--jq '.permission' 2>/dev/null) || perm_level=""
+	case "$perm_level" in
+	admin | maintain | write) ;; # allowed
+	*)
+		echo "[pulse-wrapper] CodeRabbit review: skipped — user '$current_user' has '$perm_level' permission on $aidevops_slug (need write+)" >>"$LOGFILE"
+		return 0
+		;;
+	esac
+
+	echo "[pulse-wrapper] Posting daily CodeRabbit full codebase review request on #${CODERABBIT_REVIEW_ISSUE} (GH#17640)..." >>"$LOGFILE"
+
+	# Post the review trigger comment
+	if gh issue comment "$CODERABBIT_REVIEW_ISSUE" \
+		--repo "$aidevops_slug" \
+		--body "@coderabbitai Please run a full codebase review" 2>>"$LOGFILE"; then
+		# Update timestamp only on successful post
+		printf '%s\n' "$now_epoch" >"$CODERABBIT_REVIEW_LAST_RUN"
+		echo "[pulse-wrapper] CodeRabbit review: posted successfully, next review in ~24h" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] CodeRabbit review: failed to post comment on #${CODERABBIT_REVIEW_ISSUE}" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Route actionable findings through quality-feedback-helper if available
+	local qfh="${SCRIPT_DIR}/quality-feedback-helper.sh"
+	if [[ -x "$qfh" ]]; then
+		echo "[pulse-wrapper] CodeRabbit review: findings will be processed by quality-feedback-helper.sh on next cycle" >>"$LOGFILE"
+	fi
+
 	return 0
 }
 
@@ -9225,6 +9313,11 @@ _run_preflight_stages() {
 	# threshold. Longest files first. Runs at most once per day.
 	# Non-fatal — pulse proceeds even if the scan fails.
 	run_stage_with_timeout "complexity_scan" "$PRE_RUN_STAGE_TIMEOUT" run_weekly_complexity_scan || true
+
+	# Daily full codebase review via CodeRabbit (GH#17640): posts a review
+	# trigger on issue #2632 once per 24h. Uses simple timestamp gate.
+	# Non-fatal — pulse proceeds even if the review request fails.
+	run_stage_with_timeout "coderabbit_review" "$PRE_RUN_STAGE_TIMEOUT" run_daily_codebase_review || true
 
 	# Daily dedup cleanup: close duplicate simplification-debt issues.
 	# Runs after complexity scan so any new duplicates from this cycle are caught.
