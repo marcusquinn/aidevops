@@ -196,9 +196,11 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 
 **Traceability (MANDATORY):**
 - PR title MUST have task ID (`{task-id}: {description}`). No exceptions.
-- Closing keywords (`Closes #NNN`, `Fixes #NNN`) go in **commit messages**, not PR bodies.
-  Commits are the source of truth — they represent actual code changes. PR bodies are
-  written upfront and may mention issues for context without solving them.
+- Closing keywords (`Closes #NNN`, `Fixes #NNN`) go in **code fix commit messages only**.
+  NEVER in planning-only commits (TODO entries, briefs, docs). Planning commits that
+  touch TODO.md or todo/* must use `For #NNN` or `Ref #NNN` — these reference the issue
+  without triggering GitHub's auto-close. Reserve `Closes`/`Fixes` for the commit that
+  contains the actual implementation code.
   GitHub auto-closes issues from commit messages when merged to the default branch.
   PR bodies should use `For #NNN` or `Implements #NNN` for context — never `Closes`.
   The dedup system checks commit messages to determine if work is already in progress.
