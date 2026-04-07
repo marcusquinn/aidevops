@@ -8657,11 +8657,20 @@ _merge_ready_prs_for_repo() {
 
 		# Skip non-mergeable — retry UNKNOWN once (GitHub race: mergeability
 		# not yet computed for recently-pushed PRs, resolves in seconds).
+		# sleep removed: blocking sleep inside the loop stalls all subsequent
+		# PRs; a single immediate retry is sufficient for the GitHub race.
 		if [[ "$pr_mergeable" == "UNKNOWN" ]]; then
-			sleep 5
 			local _retry_mergeable
-			_retry_mergeable=$(gh pr view "$pr_number" --repo "$repo_slug" \
-				--json mergeable --jq '.mergeable' 2>/dev/null) || _retry_mergeable="UNKNOWN"
+			local _retry_output
+			# Separate local declaration from assignment to preserve exit code (SC2181).
+			_retry_output=$(gh pr view "$pr_number" --repo "$repo_slug" \
+				--json mergeable --jq '.mergeable' 2>/dev/null)
+			local _retry_exit=$?
+			if [[ $_retry_exit -eq 0 && -n "$_retry_output" ]]; then
+				_retry_mergeable="$_retry_output"
+			else
+				_retry_mergeable="UNKNOWN"
+			fi
 			if [[ "$_retry_mergeable" == "MERGEABLE" ]]; then
 				pr_mergeable="MERGEABLE"
 				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — mergeable resolved to MERGEABLE after retry" >>"$LOGFILE"
