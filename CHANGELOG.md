@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.152] - 2026-04-07
+
+### Changed
+
+- fix remaining TZ=UTC-missing date calls across 3 scripts (#17716)
+- Maintenance: update simplification state registry
+
 ## [3.6.151] - 2026-04-07
 
 ### Changed
