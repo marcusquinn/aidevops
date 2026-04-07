@@ -625,6 +625,16 @@ _install_scheduler_linux() {
 			"$on_calendar" \
 			"$timeout_sec"; then
 			print_info "${success_msg} (systemd user timer)"
+			# After systemd install succeeds, remove any pre-existing cron entry
+			# to prevent dual-execution (GH#17695 Finding A)
+			if command -v crontab >/dev/null 2>&1; then
+				local current_cron
+				current_cron=$(crontab -l 2>/dev/null) || current_cron=""
+				if [[ -n "$current_cron" ]] && echo "$current_cron" | grep -qF "$cron_tag"; then
+					echo "$current_cron" | grep -vF "$cron_tag" | crontab -
+					echo "[schedulers] Removed pre-existing cron entry for $cron_tag (migrated to systemd)"
+				fi
+			fi
 		else
 			print_warning "systemd enable failed for ${service_name} — falling back to cron"
 			_install_scheduler_cron "$cron_tag" "$cron_schedule" "$exec_command" "$log_file" "$env_vars"
@@ -667,18 +677,24 @@ _uninstall_scheduler() {
 			rm -f "$_plist"
 			print_info "${success_msg} (launchd agent removed)"
 		fi
-	elif _systemd_user_available; then
-		if systemctl --user is-enabled "${systemd_name}.timer" >/dev/null 2>&1; then
+	else
+		# Check and remove from ALL backends sequentially, not just the first
+		# match. Prevents orphan entries when migrating between systemd and cron
+		# (GH#17695 Finding A).
+		if _systemd_user_available && systemctl --user is-enabled "${systemd_name}.timer" >/dev/null 2>&1; then
 			systemctl --user disable --now "${systemd_name}.timer" 2>/dev/null || true
 			rm -f "$HOME/.config/systemd/user/${systemd_name}.service"
 			rm -f "$HOME/.config/systemd/user/${systemd_name}.timer"
 			systemctl --user daemon-reload 2>/dev/null || true
 			print_info "${success_msg} (systemd timer removed)"
 		fi
-	else
-		if crontab -l 2>/dev/null | grep -qF "${cron_tag}" 2>/dev/null; then
-			crontab -l 2>/dev/null | grep -vF "${cron_tag}" | crontab - 2>/dev/null || true
-			print_info "${success_msg} (cron entry removed)"
+		if command -v crontab >/dev/null 2>&1; then
+			local current_cron
+			current_cron=$(crontab -l 2>/dev/null) || current_cron=""
+			if [[ -n "$current_cron" ]] && echo "$current_cron" | grep -qF "${cron_tag}"; then
+				echo "$current_cron" | grep -vF "${cron_tag}" | crontab - 2>/dev/null || true
+				print_info "${success_msg} (cron entry removed)"
+			fi
 		fi
 	fi
 	return 0

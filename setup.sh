@@ -306,6 +306,31 @@ _should_setup_noninteractive_supervisor_pulse() {
 	return 1
 }
 
+# Generic non-interactive scheduler detection (GH#17695 Finding B).
+# Returns 0 if the named scheduler is already installed on any backend,
+# meaning it should be regenerated during non-interactive setup.
+# Args: $1=name $2=launchd_label $3=cron_marker $4=systemd_unit
+_should_setup_noninteractive_scheduler() {
+	local name="$1"
+	local launchd_label="$2"
+	local cron_marker="$3"
+	local systemd_unit="${4:-}"
+
+	if _scheduler_detect_installed \
+		"$name" \
+		"$launchd_label" \
+		"" \
+		"$cron_marker" \
+		"" \
+		"" \
+		"" \
+		"$systemd_unit"; then
+		return 0
+	fi
+
+	return 1
+}
+
 # Spinner for long-running operations
 # Usage: run_with_spinner "Installing package..." command arg1 arg2
 run_with_spinner() {
@@ -964,12 +989,43 @@ _setup_post_setup_steps() {
 	# services, and optional post-setup work (CI/agent shells don't need them).
 	# Tabby profile sync runs in both modes (has its own non-interactive path).
 	#
-	# Exceptions: regenerate existing schedulers (GH#17381) and allow first-time
-	# install when config consent is explicitly true (GH#17403).
+	# Exceptions: regenerate existing schedulers (GH#17381, GH#17695 Finding B)
+	# and allow first-time install when config consent is explicitly true (GH#17403).
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		# Auto-update handles non-interactive internally
+		setup_auto_update
 		if _should_setup_noninteractive_supervisor_pulse; then
 			setup_supervisor_pulse "$os"
 		fi
+		# Regenerate other schedulers if already installed (GH#17695 Finding B)
+		if _should_setup_noninteractive_scheduler "Stats wrapper" "com.aidevops.aidevops-stats-wrapper" "aidevops: stats-wrapper" "aidevops-stats-wrapper"; then
+			setup_stats_wrapper "${PULSE_ENABLED:-}"
+		fi
+		if _should_setup_noninteractive_scheduler "Failure miner" "sh.aidevops.routine-gh-failure-miner" "aidevops: gh-failure-miner" "aidevops-gh-failure-miner"; then
+			setup_failure_miner "${PULSE_ENABLED:-}"
+		fi
+		if _should_setup_noninteractive_scheduler "Process guard" "sh.aidevops.process-guard" "aidevops: process-guard" "aidevops-process-guard"; then
+			setup_process_guard
+		fi
+		if _should_setup_noninteractive_scheduler "Memory pressure" "sh.aidevops.memory-pressure-monitor" "aidevops: memory-pressure-monitor" "aidevops-memory-pressure-monitor"; then
+			setup_memory_pressure_monitor
+		fi
+		if _should_setup_noninteractive_scheduler "Screen time" "sh.aidevops.screen-time-snapshot" "aidevops: screen-time-snapshot" "aidevops-screen-time-snapshot"; then
+			setup_screen_time_snapshot
+		fi
+		if _should_setup_noninteractive_scheduler "Contribution watch" "sh.aidevops.contribution-watch" "aidevops: contribution-watch" "aidevops-contribution-watch"; then
+			setup_contribution_watch
+		fi
+		# Repo sync handles non-interactive mode internally
+		setup_repo_sync
+		if _should_setup_noninteractive_scheduler "Profile README" "sh.aidevops.profile-readme-update" "aidevops: profile-readme-update" "aidevops-profile-readme-update"; then
+			setup_profile_readme
+		fi
+		if _should_setup_noninteractive_scheduler "OAuth token refresh" "sh.aidevops.token-refresh" "aidevops: token-refresh" "aidevops-token-refresh"; then
+			setup_oauth_token_refresh
+		fi
+		# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
+		migrate_cron_to_systemd
 		setup_tabby
 		return 0
 	fi
@@ -987,6 +1043,8 @@ _setup_post_setup_steps() {
 	setup_draft_responses
 	setup_profile_readme
 	setup_oauth_token_refresh
+	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
+	migrate_cron_to_systemd
 	setup_tabby
 	print_final_instructions
 

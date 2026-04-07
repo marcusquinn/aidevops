@@ -1339,3 +1339,82 @@ backfill_issue_relationships() {
 
 	return 0
 }
+
+# Migrate aidevops cron entries to systemd user timers (GH#17695 Finding D).
+# On Linux systems with systemd, scans cron for aidevops markers and removes
+# entries that have a corresponding systemd timer already installed. This
+# prevents dual-execution for existing installations that were set up before
+# the systemd preference was added.
+# Safe to run on macOS (no-op) and on Linux without systemd (no-op).
+# Idempotent: uses a marker file to run only once.
+migrate_cron_to_systemd() {
+	# Only run on Linux with systemd available
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		return 0
+	fi
+	if ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user status >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# One-time migration marker
+	local marker_dir="$HOME/.aidevops/cache/migrations"
+	local marker_file="$marker_dir/cron-to-systemd-done"
+	if [[ -f "$marker_file" ]]; then
+		return 0
+	fi
+
+	# Parallel arrays: cron markers and their corresponding systemd timer names.
+	# Bash 3.2 compatible (no associative arrays).
+	local cron_markers="aidevops: stats-wrapper
+aidevops: gh-failure-miner
+aidevops: process-guard
+aidevops: memory-pressure-monitor
+aidevops: screen-time-snapshot
+aidevops: contribution-watch
+aidevops: profile-readme-update
+aidevops: token-refresh"
+
+	local systemd_timers="aidevops-stats-wrapper
+aidevops-gh-failure-miner
+aidevops-process-guard
+aidevops-memory-pressure-monitor
+aidevops-screen-time-snapshot
+aidevops-contribution-watch
+aidevops-profile-readme-update
+aidevops-token-refresh"
+
+	local current_cron
+	current_cron=$(crontab -l 2>/dev/null) || current_cron=""
+	if [[ -z "$current_cron" ]]; then
+		mkdir -p "$marker_dir"
+		date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_file"
+		return 0
+	fi
+
+	local migrated=0
+	local new_cron="$current_cron"
+	local i=0
+
+	while IFS= read -r marker; do
+		local timer_name
+		timer_name=$(echo "$systemd_timers" | sed -n "$((i + 1))p")
+		i=$((i + 1))
+		# Only remove cron entry if the corresponding systemd timer is active
+		if echo "$new_cron" | grep -qF "$marker" &&
+			systemctl --user is-enabled "${timer_name}.timer" >/dev/null 2>&1; then
+			new_cron=$(echo "$new_cron" | grep -vF "$marker")
+			migrated=$((migrated + 1))
+			print_info "Migrated $marker from cron to systemd (${timer_name}.timer)"
+		fi
+	done <<<"$cron_markers"
+
+	if [[ $migrated -gt 0 ]]; then
+		echo "$new_cron" | crontab -
+		print_success "Cron-to-systemd migration: $migrated scheduler(s) migrated"
+	fi
+
+	# Write marker regardless of whether anything was migrated
+	mkdir -p "$marker_dir"
+	date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_file"
+	return 0
+}

@@ -548,7 +548,17 @@ cmd_install() {
 	local script_path
 	script_path="$(realpath "${BASH_SOURCE[0]}")"
 
-	if [[ "$(uname -s)" == "Darwin" ]]; then
+	# Source platform-detect.sh for accurate scheduler backend detection (GH#17695 Finding C)
+	if [[ -z "${AIDEVOPS_SCHEDULER:-}" ]]; then
+		local _pd_path
+		_pd_path="$(dirname "${BASH_SOURCE[0]}")/platform-detect.sh"
+		if [[ -f "$_pd_path" ]]; then
+			# shellcheck source=platform-detect.sh
+			source "$_pd_path"
+		fi
+	fi
+
+	if [[ "${AIDEVOPS_SCHEDULER:-}" == "launchd" ]] || [[ "$(uname -s)" == "Darwin" ]]; then
 		_install_launchd "$script_path"
 	else
 		_install_cron "$script_path"
@@ -628,7 +638,17 @@ _install_cron() {
 }
 
 cmd_uninstall() {
-	if [[ "$(uname -s)" == "Darwin" ]]; then
+	# Source platform-detect.sh for accurate scheduler backend detection (GH#17695 Finding C)
+	if [[ -z "${AIDEVOPS_SCHEDULER:-}" ]]; then
+		local _pd_path
+		_pd_path="$(dirname "${BASH_SOURCE[0]}")/platform-detect.sh"
+		if [[ -f "$_pd_path" ]]; then
+			# shellcheck source=platform-detect.sh
+			source "$_pd_path"
+		fi
+	fi
+
+	if [[ "${AIDEVOPS_SCHEDULER:-}" == "launchd" ]] || [[ "$(uname -s)" == "Darwin" ]]; then
 		if [[ -f "$PLIST_FILE" ]]; then
 			launchctl unload "$PLIST_FILE" 2>/dev/null || true
 			rm -f "$PLIST_FILE"

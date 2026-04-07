@@ -122,10 +122,23 @@ ensure_dirs() {
 
 #######################################
 # Detect scheduler backend for current platform
-# Returns: "launchd" on macOS, "cron" on Linux/other
+# Sources platform-detect.sh for accurate detection (GH#17695 Finding C).
+# Returns: "launchd" on macOS, "systemd" or "cron" on Linux
 #######################################
 _get_scheduler_backend() {
-	if [[ "$(uname)" == "Darwin" ]]; then
+	# Source platform-detect.sh if AIDEVOPS_SCHEDULER is not already set
+	if [[ -z "${AIDEVOPS_SCHEDULER:-}" ]]; then
+		local _pd_path
+		_pd_path="$(dirname "${BASH_SOURCE[0]}")/platform-detect.sh"
+		if [[ -f "$_pd_path" ]]; then
+			# shellcheck source=platform-detect.sh
+			source "$_pd_path"
+		fi
+	fi
+	# Fall back to simple uname check if platform-detect.sh unavailable
+	if [[ -n "${AIDEVOPS_SCHEDULER:-}" ]]; then
+		echo "$AIDEVOPS_SCHEDULER"
+	elif [[ "$(uname)" == "Darwin" ]]; then
 		echo "launchd"
 	else
 		echo "cron"
