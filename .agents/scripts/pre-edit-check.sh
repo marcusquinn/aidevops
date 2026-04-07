@@ -438,14 +438,71 @@ _handle_loop_mode_on_protected() {
 		exit 0
 	fi
 
-	# Auto-create worktree for non-allowlisted paths / code changes
+	# Auto-create worktree for non-allowlisted paths / code changes.
+	# Previously this just signalled "worktree required" (exit 2) and left
+	# creation to the LLM. Many models (gpt-5.4, haiku) didn't know how to
+	# interpret exit 2 and stopped dead. Now we create the worktree
+	# deterministically and return the path so the model can continue.
 	if [[ -n "$TARGET_FILE" ]]; then
 		echo -e "${YELLOW}LOOP-AUTO${NC}: Non-allowlisted path '$TARGET_FILE', worktree required"
 	else
 		echo -e "${YELLOW}LOOP-AUTO${NC}: Code task detected, worktree required"
 	fi
-	echo "LOOP_DECISION=worktree"
-	exit 2 # Special exit code for "create worktree"
+
+	# Derive branch name from --task description or fall back to generic
+	local _wt_branch_name=""
+	local _wt_task_desc="${TASK_DESCRIPTION:-}"
+	if [[ -n "$_wt_task_desc" ]]; then
+		# Extract issue number if present (e.g., "Implement issue #17642")
+		local _wt_issue_num=""
+		_wt_issue_num=$(printf '%s' "$_wt_task_desc" | grep -oE '#[0-9]+|issue[/ ]*([0-9]+)' | grep -oE '[0-9]+' | head -1) || _wt_issue_num=""
+		if [[ -n "$_wt_issue_num" ]]; then
+			# Slugify the task title for the branch name
+			local _wt_slug=""
+			_wt_slug=$(printf '%s' "$_wt_task_desc" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//' | cut -c1-40) || _wt_slug="task"
+			_wt_branch_name="bugfix/gh${_wt_issue_num}-${_wt_slug}"
+		fi
+	fi
+	# Fallback: timestamp-based branch name
+	if [[ -z "$_wt_branch_name" ]]; then
+		_wt_branch_name="feature/auto-$(date +%Y%m%d-%H%M%S)"
+	fi
+
+	# Try to create the worktree using the helper
+	local _wt_helper="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/worktree-helper.sh"
+	local _wt_path=""
+	if [[ -x "$_wt_helper" ]]; then
+		local _wt_output=""
+		_wt_output=$("$_wt_helper" add "$_wt_branch_name" 2>&1) || true
+		# Extract the worktree path from helper output
+		_wt_path=$(printf '%s' "$_wt_output" | grep -oE '/[^ ]*Git/[^ ]*' | head -1) || _wt_path=""
+		if [[ -z "$_wt_path" ]]; then
+			# Fallback: construct expected path from repo name + branch
+			local _wt_repo_name=""
+			_wt_repo_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+			local _wt_safe_branch=""
+			_wt_safe_branch=$(printf '%s' "$_wt_branch_name" | tr '/' '-')
+			_wt_path="$(dirname "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")/${_wt_repo_name}-${_wt_safe_branch}"
+		fi
+	fi
+
+	if [[ -n "$_wt_path" && -d "$_wt_path" ]]; then
+		echo "LOOP_DECISION=worktree_created"
+		echo "WORKTREE_PATH=$_wt_path"
+		echo "WORKTREE_BRANCH=$_wt_branch_name"
+		echo -e "${GREEN}LOOP-AUTO${NC}: Worktree created at $_wt_path"
+		echo ""
+		echo "NEXT_STEP: cd to the worktree path and continue implementation there."
+		echo "All file reads and edits must use the worktree path, not the main repo."
+		exit 0
+	else
+		# Worktree creation failed — fall back to signalling exit 2
+		echo -e "${RED}LOOP-AUTO${NC}: Failed to auto-create worktree '$_wt_branch_name'"
+		echo "LOOP_DECISION=worktree"
+		echo "WORKTREE_BRANCH=$_wt_branch_name"
+		echo "NEXT_STEP: Run worktree-helper.sh add '$_wt_branch_name' manually, then cd to the new path."
+		exit 2 # Special exit code for "create worktree"
+	fi
 }
 
 # Show interactive warning when on a protected branch (main/master).

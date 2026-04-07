@@ -834,6 +834,74 @@ PY
 	return 0
 }
 
+#######################################
+# _log_empty_result_gaps: scan worker output for empty tool results that
+# preceded the model stopping. Each is a gap (wrong path, missing prefix)
+# that can be closed with better hints or fallback patterns.
+# Logs to ~/.aidevops/logs/worker-empty-results.log for pattern analysis.
+# Args: $1=output_file $2=model $3=session_key
+#######################################
+_log_empty_result_gaps() {
+	local output_file="$1"
+	local model="$2"
+	local session_key="$3"
+
+	[[ -f "$output_file" ]] || return 0
+
+	local diag_log="${HOME}/.aidevops/logs/worker-empty-results.log"
+	mkdir -p "$(dirname "$diag_log")" 2>/dev/null || true
+
+	local _py_script
+	_py_script=$(mktemp "${TMPDIR:-/tmp}/aidevops-empty-gaps.XXXXXX.py") || return 0
+	cat >"$_py_script" <<'EMPTYPY'
+import json, sys, os, datetime
+from pathlib import Path
+of = os.environ.get("ER_OUTPUT_FILE", "")
+md = os.environ.get("ER_MODEL", "")
+sk = os.environ.get("ER_SESSION_KEY", "")
+dl = os.environ.get("ER_DIAG_LOG", "")
+if not of or not dl:
+    sys.exit(0)
+lines = Path(of).read_text(errors="ignore").splitlines()
+gaps, tc = [], 0
+for ln in lines:
+    ln = ln.strip()
+    if not ln.startswith("{"):
+        continue
+    try:
+        o = json.loads(ln)
+    except Exception:
+        continue
+    if o.get("type") == "tool_use":
+        tc += 1
+        st = o.get("part", {}).get("state", {})
+        ip = st.get("input", {})
+        out = (st.get("output", "") or "").strip()
+        empty = (out == "" or out == "0" or out == "\n"
+                 or ("grep" == o["part"].get("tool", "") and "Found 0 matches" in out))
+        if empty:
+            det = ((ip.get("command", "") or "")[:120]
+                   or (ip.get("pattern", "") or "")[:80]
+                   or (ip.get("filePath", "") or "")[:120]
+                   or (ip.get("description", "") or "")[:80])
+            gaps.append({"t": o["part"].get("tool", ""), "d": det, "i": tc})
+if not gaps:
+    sys.exit(0)
+ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+with open(dl, "a") as f:
+    f.write("\n[%s] model=%s session=%s tools=%d empty=%d\n" % (ts, md, sk, tc, len(gaps)))
+    for g in gaps:
+        f.write("  #%d/%d %s -> EMPTY: %s\n" % (g["i"], tc, g["t"], g["d"]))
+print("[empty-result-gaps] %d empty in %d tool calls:" % (len(gaps), tc))
+for g in gaps:
+    print("  [%d/%d] %s -> EMPTY: %s" % (g["i"], tc, g["t"], g["d"][:100]))
+EMPTYPY
+	ER_OUTPUT_FILE="$output_file" ER_MODEL="$model" ER_SESSION_KEY="$session_key" ER_DIAG_LOG="$diag_log" \
+		python3 "$_py_script" 2>/dev/null || true
+	rm -f "$_py_script" 2>/dev/null || true
+	return 0
+}
+
 # _choose_model_explicit: validate and return an explicitly-requested model.
 # Returns 0 on success (prints model), 1 on bad format, 75 if backed off.
 _choose_model_explicit() {
@@ -1192,10 +1260,20 @@ append_worker_headless_contract() {
 This is a HEADLESS worker session. No user is present. No user input is available.
 You must drive autonomously to completion or an evidence-backed BLOCKED outcome.
 
+Key file paths (use these directly, do NOT search for them):
+- Full-loop workflow: .agents/scripts/commands/full-loop.md
+- Pre-edit check: .agents/scripts/pre-edit-check.sh
+- Worktree helper: .agents/scripts/worktree-helper.sh
+- Agents config: .agents/AGENTS.md
+- All agent scripts live under .agents/scripts/ (not scripts/ at root)
+
 Implementation approach:
 1. Read the issue body FIRST. Look for a "Worker Guidance" or "How" section — it contains the files to modify, reference patterns, and verification commands. Follow these directly instead of exploring the codebase broadly.
 2. Budget discipline: spend at most 25% of your effort on reading/exploring. After reading the issue body + 2-3 reference files mentioned in it, start writing code. Do not read entire helper scripts — read only the sections you will modify.
 3. If the issue body lacks file paths and implementation steps, exit BLOCKED with reason "missing implementation context" so the dispatcher can enrich the body. Do NOT explore broadly to compensate for a vague issue.
+
+Empty tool results:
+If a tool call returns empty output, it usually means the path or pattern was wrong, not that the resource is missing. Common causes: missing .agents/ prefix on paths, wrong glob pattern, file moved/renamed. Retry with corrected paths before giving up. If retries also fail, log what you tried and continue with the next step. Do NOT stop the session over one empty result.
 
 Mandatory behavior:
 4. Never ask for user confirmation, approval, or next steps. No user will respond.
@@ -1787,6 +1865,10 @@ _handle_run_result() {
 		# or triage sessions which don't produce PR completion signals.
 		if [[ "$role" == "worker" && "$session_key" == issue-* ]]; then
 			if ! output_has_completion_signal "$output_file"; then
+				# Diagnose empty tool results that may have caused the model to stop.
+				# Each is a closeable gap (wrong path, missing prefix, moved file).
+				_log_empty_result_gaps "$output_file" "$selected_model" "$session_key"
+
 				_run_result_label="premature_exit"
 				rm -f "$output_file"
 				print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
