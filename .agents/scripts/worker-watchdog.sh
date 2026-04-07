@@ -131,8 +131,9 @@ _get_scheduler_backend() {
 	Darwin) echo "launchd" ;;
 	*)
 		# Prefer systemd user services when available (GH#17369, GH#17691)
+		# Use show-environment instead of status to avoid hangs when systemd user manager is unresponsive (GH#17724)
 		if command -v systemctl >/dev/null 2>&1 &&
-			systemctl --user status >/dev/null 2>&1; then
+			systemctl --user show-environment >/dev/null 2>&1; then
 			echo "systemd"
 		else
 			echo "cron"
