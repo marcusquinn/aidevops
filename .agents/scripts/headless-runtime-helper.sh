@@ -337,6 +337,22 @@ get_configured_models() {
 		[[ -z "$item" ]] && continue
 		provider=$(extract_provider "$item" 2>/dev/null || printf '%s' "")
 		[[ -z "$provider" ]] && continue
+
+		# GH#17669: Filter out non-agentic models. Codex/code-completion
+		# models can't make tool calls and die silently as headless workers.
+		# This self-heals stale AIDEVOPS_HEADLESS_MODELS configs without
+		# requiring manual credentials.sh edits.
+		if _is_non_agentic_model "$item"; then
+			local replacement=""
+			replacement=$(_get_agentic_replacement "$item")
+			if [[ -n "$replacement" ]]; then
+				item="$replacement"
+				provider=$(extract_provider "$item" 2>/dev/null || printf '%s' "")
+			else
+				continue
+			fi
+		fi
+
 		if [[ ${#allowlist[@]} -gt 0 ]]; then
 			local allowed=false
 			local allowed_provider
@@ -356,8 +372,44 @@ get_configured_models() {
 		return 1
 	fi
 
-	# yeah, the filtered model list is ready for round-robin dispatch
 	printf '%s\n' "${models[@]}"
+	return 0
+}
+
+# Check if a model ID is non-agentic (code-completion only, no tool calls).
+# These models silently fail as headless workers — zero tool calls observed.
+_is_non_agentic_model() {
+	local model="$1"
+	case "$model" in
+	*codex* | *code-completion*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# Get the agentic replacement for a non-agentic model.
+# Reads from model-routing-table.json sonnet tier for the same provider.
+_get_agentic_replacement() {
+	local model="$1"
+	local provider=""
+	provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
+
+	local routing_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
+	if [[ -f "$routing_table" ]]; then
+		local replacement=""
+		replacement=$(jq -r --arg p "$provider" \
+			'.tiers.sonnet.models[] | select(startswith($p + "/"))' \
+			"$routing_table" 2>/dev/null | head -1) || replacement=""
+		if [[ -n "$replacement" ]]; then
+			printf '%s' "$replacement"
+			return 0
+		fi
+	fi
+
+	# Hardcoded fallback for known non-agentic → agentic mappings
+	case "$model" in
+	openai/gpt-5.3-codex | openai/gpt-5.4-codex) printf 'openai/gpt-5.4' ;;
+	*) return 1 ;;
+	esac
 	return 0
 }
 
