@@ -73,7 +73,7 @@ Before generating: "Do I know enough to predict what a code review would reject?
 
 ### Step 5: Generate Brief
 
-Read `templates/brief-template.md` and format using `tools/brief/brief.md` for the classified tier. Populate from interview answers:
+Read `templates/brief-template.md` and format using `workflows/brief.md` for the classified tier. Populate from interview answers:
 
 | Interview Data | Brief Section |
 |---------------|---------------|

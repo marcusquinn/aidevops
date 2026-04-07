@@ -313,7 +313,7 @@ A dispatch comment that says "implement issue #42" teaches nothing. One that say
 Agents that write GitHub content should include a pointer rather than duplicating formatting rules:
 
 ```markdown
-Format the {finding/brief/issue body/comment/PR description} using `tools/brief/brief.md`
+Format the {finding/brief/issue body/comment/PR description} using `workflows/brief.md`
 for the classified tier. Load on demand — do not inline the format rules.
 ```
 

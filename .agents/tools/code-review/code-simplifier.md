@@ -39,7 +39,7 @@ Per finding: `### [file:line_range] Category: Brief description` with sections *
 
 ### Prescriptive format for tier:simple dispatch (MANDATORY for issue creation)
 
-Format findings using `tools/brief/brief.md` prescriptive format. Research finding: Haiku achieves 100% success rate when issues provide verbatim oldString/newString. Simplification issues are inherently single-file, pattern-following, exact-code-known — the ideal `tier:simple` candidates. Every finding MUST include explicit Edit tool parameters:
+Format findings using `workflows/brief.md` prescriptive format. Research finding: Haiku achieves 100% success rate when issues provide verbatim oldString/newString. Simplification issues are inherently single-file, pattern-following, exact-code-known — the ideal `tier:simple` candidates. Every finding MUST include explicit Edit tool parameters:
 
 ```markdown
 ### [path/to/file.sh:45-52] Safe: Remove decorative emoji from log message

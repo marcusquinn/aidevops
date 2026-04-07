@@ -68,7 +68,7 @@ fi
 
 ### Step 3: Create Task Brief (MANDATORY)
 
-**Every task MUST have a brief** at `todo/tasks/{task_id}-brief.md`. Use `templates/brief-template.md`, formatted per `tools/brief/brief.md` for the classified tier. Required sections:
+**Every task MUST have a brief** at `todo/tasks/{task_id}-brief.md`. Use `templates/brief-template.md`, formatted per `workflows/brief.md` for the classified tier. Required sections:
 
 | Section | Content |
 |---------|---------|
