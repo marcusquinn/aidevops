@@ -44,6 +44,47 @@ Tiers route tasks to models with appropriate capability. The pulse resolves labe
 - **Cascade dispatch:** The pulse may start at `tier:simple` and escalate through `tier:standard` → `tier:reasoning` if the worker fails. Each tier's attempt produces a structured escalation report (see `templates/escalation-report-template.md`) that gives the next tier pre-digested context.
 - **Backward compatibility:** `tier:thinking` is accepted as an alias for `tier:reasoning` during transition. Scripts match both labels.
 
+## Tier Assignment Validation
+
+The cascade model tolerates initial mis-classification, but obvious mis-tiers waste compute on guaranteed failures. A 6-file task tagged `tier:simple` will fail at every simple-tier attempt before escalating — burning dispatches for no value. Apply these hard rules at task creation time.
+
+### tier:simple Disqualifiers
+
+If **any** of the following are true, the task is **not** `tier:simple`. Use `tier:standard` or higher.
+
+| # | Disqualifier | Rationale |
+|---|-------------|-----------|
+| 1 | >2 files to modify | Simple-tier models cannot coordinate multi-file changes reliably |
+| 2 | Code blocks are skeletons, not complete | `tier:simple` requires exact oldString/newString or full file content; if the worker must invent logic, it needs judgment |
+| 3 | Conditional logic or branching to design | "if enabled, do X; if gateway fails, fall back to Y" requires reasoning about states |
+| 4 | Error handling, retry, or fallback logic | Designing resilience patterns is not copy-paste work |
+| 5 | Estimate >1h | Simple tasks are mechanical; longer estimates signal reasoning work |
+| 6 | >4 acceptance criteria | Many criteria = many things to coordinate and verify |
+| 7 | Keywords in brief: "graceful degradation", "fallback", "retry", "conditional", "coordinate", "design" | These signal judgment, not transcription |
+| 8 | Cross-package changes (multiple `packages/` dirs, multiple apps) | Cross-boundary reasoning exceeds simple-tier capability |
+
+### tier:standard vs tier:reasoning Signals
+
+| Signal | tier:standard | tier:reasoning |
+|--------|--------------|----------------|
+| Files | 2-8, within one package/module | Many, cross-cutting, or unknown at brief time |
+| Pattern | Follow existing patterns with adaptation | No existing pattern; must design from scratch |
+| Decisions | Implementation choices (which API, which pattern) | Architectural choices (what abstraction, what trade-offs) |
+| Error modes | Known error modes with documented recovery | Novel failure modes requiring analysis |
+| Brief detail | Code skeletons with function signatures | Approach description with constraints |
+
+### Quick-Check at Creation Time
+
+Before assigning a tier, verify these in order. Stop at the first failure:
+
+1. **Count files in "Files to Modify"** — >2 files disqualifies `tier:simple`
+2. **Check code blocks** — skeletons or pseudocode disqualifies `tier:simple`; must be exact, copy-pasteable edits
+3. **Scan for judgment keywords** — fallback, retry, graceful, conditional, coordinate, design in the brief disqualifies `tier:simple`
+4. **Check estimate** — >1h disqualifies `tier:simple`
+5. **When uncertain** — `tier:standard` (the default exists for this reason)
+
+See `templates/brief-template.md` "Tier checklist" for the structured version used during task creation.
+
 ## Cascade Dispatch Model
 
 Instead of classifying tasks to the "correct" tier upfront, the cascade model starts cheap and escalates with knowledge:

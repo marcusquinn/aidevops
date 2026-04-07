@@ -25,12 +25,28 @@ mode: subagent
 ## Tier
 
 <!-- Recommended model tier. Determines cascade dispatch starting point.
-     See reference/task-taxonomy.md for criteria and cascade model. -->
+     See reference/task-taxonomy.md for full criteria, disqualifiers, and cascade model.
+     The checklist below is MANDATORY — it prevents mis-tagging that wastes
+     compute on guaranteed-to-fail dispatches (see t1921). -->
 
-`tier:simple` | `tier:standard` | `tier:reasoning`
+### Tier checklist (verify before assigning)
 
-**Tier rationale:** {Why this tier — e.g., "Single-file edit with exact code block provided → tier:simple"
-or "Multi-file refactor requiring judgment about which pattern to follow → tier:standard"}
+Answer each question for `tier:simple`. If **any** answer is "no", use `tier:standard` or higher.
+
+- [ ] **2 or fewer files to modify?** (count the Files to Modify section below)
+- [ ] **Complete code blocks for every edit?** (exact oldString/newString, not skeletons)
+- [ ] **No judgment or design decisions?** (no "choose between", "design", "coordinate")
+- [ ] **No error handling or fallback logic to design?** (no "graceful", "retry", "fallback")
+- [ ] **Estimate 1h or less?**
+- [ ] **4 or fewer acceptance criteria?**
+
+All checked = `tier:simple`. Any unchecked = `tier:standard` (default) or `tier:reasoning` (no existing pattern to follow).
+
+**Selected tier:** `tier:simple` | `tier:standard` | `tier:reasoning`
+
+**Tier rationale:** {1-2 sentences justifying the tier choice, referencing which checklist items
+drove the decision. e.g., "6 files across 3 packages, fallback retry logic needed -> tier:standard"
+or "Single-file config edit with exact code block provided -> tier:simple"}
 
 ## How (Approach)
 
