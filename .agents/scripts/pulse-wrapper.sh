@@ -795,7 +795,8 @@ _prefetch_needs_full_sweep() {
 
 	# Convert ISO timestamp to epoch (macOS date -j -f)
 	local last_epoch now_epoch
-	last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_full_sweep" "+%s" 2>/dev/null) || last_epoch=0
+	# GH#17699: TZ=UTC required — macOS date interprets input as local time
+	last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_full_sweep" "+%s" 2>/dev/null) || last_epoch=0
 	now_epoch=$(date -u +%s)
 	local age=$((now_epoch - last_epoch))
 	if [[ "$age" -ge "$PULSE_PREFETCH_FULL_SWEEP_INTERVAL" ]]; then
@@ -10693,7 +10694,8 @@ close_stale_quality_debt_prs() {
 		local pr_num pr_updated_at pr_epoch
 		pr_num=$(printf '%s' "$pr_json" | jq -r ".[$i].number" 2>/dev/null) || continue
 		pr_updated_at=$(printf '%s' "$pr_json" | jq -r ".[$i].updatedAt" 2>/dev/null) || continue
-		pr_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pr_updated_at" +%s 2>/dev/null ||
+		# GH#17699: TZ=UTC required — macOS date interprets input as local time
+		pr_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pr_updated_at" +%s 2>/dev/null ||
 			date -d "$pr_updated_at" +%s 2>/dev/null || echo 0)
 
 		if [[ "$pr_epoch" -lt "$cutoff_epoch" ]]; then
