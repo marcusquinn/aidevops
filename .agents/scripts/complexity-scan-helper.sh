@@ -50,6 +50,148 @@ _log() {
 # Output: pipe-delimited metrics to stdout
 #   line_count|func_count|long_func_count|max_nesting|file_type
 #######################################
+#######################################
+# Compute shell-specific function/nesting metrics.
+# Nesting depth is measured per-function (resets at each function boundary)
+# to avoid false positives from accumulated depth across the whole file
+# (GH#15356). Global accumulation inflates depth for files with many
+# short functions defined at the same level (e.g., test suites).
+# Arguments: $1 - file_path
+# Output: "func_count|long_func_count|max_nesting"
+#######################################
+_compute_shell_metrics() {
+	local file_path="$1"
+	local awk_result
+	awk_result=$(awk '
+		BEGIN { fc=0; lfc=0; global_max_nest=0; cur_nest=0; in_func=0; func_max_nest=0 }
+		/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ {
+			fc++; fname=$1; sub(/\(\)/, "", fname); start=NR
+			in_func=1; func_max_nest=0; cur_nest=1; next
+		}
+		in_func && /^\}$/ {
+			lines=NR-start
+			if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
+			if (func_max_nest > global_max_nest) global_max_nest = func_max_nest
+			in_func=0; cur_nest=0; fname=""; next
+		}
+		in_func {
+			if (/\{[[:space:]]*$/ || /\bthen\b/ || /\bdo\b/) { cur_nest++; if (cur_nest > func_max_nest) func_max_nest = cur_nest }
+			if (/^\}/ || /\bfi\b/ || /\bdone\b/ || /\besac\b/) { if (cur_nest > 0) cur_nest-- }
+		}
+		END { printf "%d|%d|%d", fc, lfc, global_max_nest }
+	' "$file_path" 2>/dev/null) || awk_result="0|0|0"
+	printf '%s' "$awk_result"
+	return 0
+}
+
+#######################################
+# Compute Python-specific function/nesting metrics.
+# Counts def/async def as functions; measures nesting via indentation depth.
+# Arguments: $1 - file_path
+# Output: "func_count|long_func_count|max_nesting"
+#######################################
+_compute_python_metrics() {
+	local file_path="$1"
+	local awk_result
+	awk_result=$(awk '
+		BEGIN { fc=0; lfc=0; global_max_nest=0; in_func=0; func_start=0; func_indent=0 }
+		/^[[:space:]]*def [a-zA-Z_]/ || /^[[:space:]]*async def [a-zA-Z_]/ {
+			if (in_func) {
+				lines = NR - func_start
+				if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
+			}
+			fc++; func_start=NR; in_func=1
+			match($0, /^[[:space:]]*/)
+			func_indent = RLENGTH
+			next
+		}
+		in_func {
+			if (/^[[:space:]]*$/) next
+			match($0, /^[[:space:]]*/)
+			indent = RLENGTH
+			nest = int((indent - func_indent) / 4)
+			if (nest < 0) { in_func=0; next }
+			if (nest > global_max_nest) global_max_nest = nest
+		}
+		END {
+			if (in_func) {
+				lines = NR - func_start
+				if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
+			}
+			printf "%d|%d|%d", fc, lfc, global_max_nest
+		}
+	' "$file_path" 2>/dev/null) || awk_result="0|0|0"
+	printf '%s' "$awk_result"
+	return 0
+}
+
+#######################################
+# Compute JavaScript/TypeScript-specific function/nesting metrics.
+# Counts explicit function declarations and assignments; measures brace nesting.
+# Avoids broad regexes that match ordinary function calls.
+# Arguments: $1 - file_path
+# Output: "func_count|long_func_count|max_nesting"
+#######################################
+_compute_js_metrics() {
+	local file_path="$1"
+	local awk_result
+	awk_result=$(awk '
+		BEGIN { fc=0; lfc=0; global_max_nest=0; cur_nest=0; in_func=0; func_start=0; func_max_nest=0 }
+		/^[[:space:]]*(export[[:space:]]+)?(default[[:space:]]+)?(async[[:space:]]+)?function([[:space:]]+\*?[A-Za-z_$][A-Za-z0-9_$]*)?[[:space:]]*\([^)]*\)[[:space:]]*\{/ ||
+		/^[[:space:]]*(const|let|var)[[:space:]]+[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*=[[:space:]]*(async[[:space:]]+)?function[[:space:]]*\([^)]*\)[[:space:]]*\{/ ||
+		/^[[:space:]]*(const|let|var)[[:space:]]+[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*=[[:space:]]*(async[[:space:]]+)?\([^)]*\)[[:space:]]*=>[[:space:]]*\{/ ||
+		/^[[:space:]]*[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*:[[:space:]]*(async[[:space:]]+)?function[[:space:]]*\([^)]*\)[[:space:]]*\{/ {
+			if (in_func && cur_nest == 0) {
+				lines = NR - func_start
+				if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
+			}
+			fc++; func_start=NR; in_func=1; func_max_nest=0; cur_nest=1; next
+		}
+		in_func {
+			gsub(/"[^"]*"/, ""); gsub(/'\''[^'\'']*'\''/, ""); gsub(/`[^`]*`/, "")
+			n = gsub(/\{/, "{"); cur_nest += n
+			m = gsub(/\}/, "}"); cur_nest -= m
+			if (cur_nest > func_max_nest) func_max_nest = cur_nest
+			if (cur_nest <= 0) {
+				lines = NR - func_start
+				if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
+				if (func_max_nest > global_max_nest) global_max_nest = func_max_nest
+				in_func=0; cur_nest=0
+			}
+		}
+		END {
+			if (in_func) {
+				if (func_max_nest > global_max_nest) global_max_nest = func_max_nest
+			}
+			printf "%d|%d|%d", fc, lfc, global_max_nest
+		}
+	' "$file_path" 2>/dev/null) || awk_result="0|0|0"
+	printf '%s' "$awk_result"
+	return 0
+}
+
+#######################################
+# Compute markdown-specific heading/nesting metrics.
+# Counts headings as "functions"; nesting = heading depth.
+# Arguments: $1 - file_path
+# Output: "func_count|long_func_count|max_nesting"
+#######################################
+_compute_markdown_metrics() {
+	local file_path="$1"
+	local func_count max_nesting
+	func_count=$(grep -c '^#' "$file_path" 2>/dev/null || echo "0")
+	max_nesting=$(awk '/^#{1,6} / { n=0; for(i=1;i<=length($1);i++) if(substr($1,i,1)=="#") n++; if(n>max) max=n } END { print max+0 }' "$file_path" 2>/dev/null) || max_nesting=0
+	printf '%s|0|%s' "$func_count" "$max_nesting"
+	return 0
+}
+
+#######################################
+# Compute shell-based heuristics for a single file.
+# Dispatches to language-specific helpers based on file extension.
+# Arguments: $1 - file_path (absolute)
+# Output: pipe-delimited metrics to stdout
+#   line_count|func_count|long_func_count|max_nesting|file_type
+#######################################
 compute_file_metrics() {
 	local file_path="$1"
 
@@ -71,123 +213,18 @@ compute_file_metrics() {
 	local line_count=0
 	line_count=$(wc -l <"$file_path" 2>/dev/null | tr -d ' ') || line_count=0
 
-	local func_count=0
-	local long_func_count=0
-	local max_nesting=0
+	local lang_metrics="0|0|0"
+	case "$file_type" in
+	shell) lang_metrics=$(_compute_shell_metrics "$file_path") ;;
+	python) lang_metrics=$(_compute_python_metrics "$file_path") ;;
+	javascript) lang_metrics=$(_compute_js_metrics "$file_path") ;;
+	markdown) lang_metrics=$(_compute_markdown_metrics "$file_path") ;;
+	esac
 
-	if [[ "$file_type" == "shell" ]]; then
-		# Count functions and identify long ones using awk.
-		# Nesting depth is measured per-function (resets at each function boundary)
-		# to avoid false positives from accumulated depth across the whole file
-		# (GH#15356). Global accumulation inflates depth for files with many
-		# short functions defined at the same level (e.g., test suites).
-		local awk_result
-		awk_result=$(awk '
-			BEGIN { fc=0; lfc=0; global_max_nest=0; cur_nest=0; in_func=0; func_max_nest=0 }
-			/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ {
-				fc++; fname=$1; sub(/\(\)/, "", fname); start=NR
-				in_func=1; func_max_nest=0; cur_nest=1; next
-			}
-			in_func && /^\}$/ {
-				lines=NR-start
-				if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
-				if (func_max_nest > global_max_nest) global_max_nest = func_max_nest
-				in_func=0; cur_nest=0; fname=""; next
-			}
-			in_func {
-				# Nesting depth tracking within function body only
-				if (/\{[[:space:]]*$/ || /\bthen\b/ || /\bdo\b/) { cur_nest++; if (cur_nest > func_max_nest) func_max_nest = cur_nest }
-				if (/^\}/ || /\bfi\b/ || /\bdone\b/ || /\besac\b/) { if (cur_nest > 0) cur_nest-- }
-			}
-			END { printf "%d|%d|%d", fc, lfc, global_max_nest }
-		' "$file_path" 2>/dev/null) || awk_result="0|0|0"
-
-		func_count=$(echo "$awk_result" | cut -d'|' -f1)
-		long_func_count=$(echo "$awk_result" | cut -d'|' -f2)
-		max_nesting=$(echo "$awk_result" | cut -d'|' -f3)
-	elif [[ "$file_type" == "python" ]]; then
-		# Count def/class as functions, measure nesting via indentation depth
-		local awk_result
-		awk_result=$(awk '
-			BEGIN { fc=0; lfc=0; global_max_nest=0; in_func=0; func_start=0; func_indent=0 }
-			/^[[:space:]]*def [a-zA-Z_]/ || /^[[:space:]]*async def [a-zA-Z_]/ {
-				if (in_func) {
-					lines = NR - func_start
-					if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
-				}
-				fc++; func_start=NR; in_func=1
-				# Measure indent of the def line itself
-				match($0, /^[[:space:]]*/)
-				func_indent = RLENGTH
-				next
-			}
-			in_func {
-				# Track nesting depth via indentation (4-space or tab units)
-				if (/^[[:space:]]*$/) next  # skip blank lines
-				match($0, /^[[:space:]]*/)
-				indent = RLENGTH
-				# Nesting relative to function def indent
-				nest = int((indent - func_indent) / 4)
-				if (nest < 0) { in_func=0; next }
-				if (nest > global_max_nest) global_max_nest = nest
-			}
-			END {
-				if (in_func) {
-					lines = NR - func_start
-					if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
-				}
-				printf "%d|%d|%d", fc, lfc, global_max_nest
-			}
-		' "$file_path" 2>/dev/null) || awk_result="0|0|0"
-
-		func_count=$(echo "$awk_result" | cut -d'|' -f1)
-		long_func_count=$(echo "$awk_result" | cut -d'|' -f2)
-		max_nesting=$(echo "$awk_result" | cut -d'|' -f3)
-	elif [[ "$file_type" == "javascript" ]]; then
-		# Count explicit JS/TS function declarations and assignments,
-		# measure brace nesting depth.
-		# Avoid broad regexes that match ordinary function calls.
-		local awk_result
-		awk_result=$(awk '
-			BEGIN { fc=0; lfc=0; global_max_nest=0; cur_nest=0; in_func=0; func_start=0; func_max_nest=0 }
-			/^[[:space:]]*(export[[:space:]]+)?(default[[:space:]]+)?(async[[:space:]]+)?function([[:space:]]+\*?[A-Za-z_$][A-Za-z0-9_$]*)?[[:space:]]*\([^)]*\)[[:space:]]*\{/ ||
-			/^[[:space:]]*(const|let|var)[[:space:]]+[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*=[[:space:]]*(async[[:space:]]+)?function[[:space:]]*\([^)]*\)[[:space:]]*\{/ ||
-			/^[[:space:]]*(const|let|var)[[:space:]]+[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*=[[:space:]]*(async[[:space:]]+)?\([^)]*\)[[:space:]]*=>[[:space:]]*\{/ ||
-			/^[[:space:]]*[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*:[[:space:]]*(async[[:space:]]+)?function[[:space:]]*\([^)]*\)[[:space:]]*\{/ {
-				if (in_func && cur_nest == 0) {
-					lines = NR - func_start
-					if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
-				}
-				fc++; func_start=NR; in_func=1; func_max_nest=0; cur_nest=1; next
-			}
-			in_func {
-				gsub(/"[^"]*"/, ""); gsub(/'\''[^'\'']*'\''/, ""); gsub(/`[^`]*`/, "")
-				n = gsub(/\{/, "{"); cur_nest += n
-				m = gsub(/\}/, "}"); cur_nest -= m
-				if (cur_nest > func_max_nest) func_max_nest = cur_nest
-				if (cur_nest <= 0) {
-					lines = NR - func_start
-					if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
-					if (func_max_nest > global_max_nest) global_max_nest = func_max_nest
-					in_func=0; cur_nest=0
-				}
-			}
-			END {
-				if (in_func) {
-					if (func_max_nest > global_max_nest) global_max_nest = func_max_nest
-				}
-				printf "%d|%d|%d", fc, lfc, global_max_nest
-			}
-		' "$file_path" 2>/dev/null) || awk_result="0|0|0"
-
-		func_count=$(echo "$awk_result" | cut -d'|' -f1)
-		long_func_count=$(echo "$awk_result" | cut -d'|' -f2)
-		max_nesting=$(echo "$awk_result" | cut -d'|' -f3)
-	elif [[ "$file_type" == "markdown" ]]; then
-		# For markdown: count headings as "functions", nesting = heading depth
-		func_count=$(grep -c '^#' "$file_path" 2>/dev/null || echo "0")
-		max_nesting=$(awk '/^#{1,6} / { n=0; for(i=1;i<=length($1);i++) if(substr($1,i,1)=="#") n++; if(n>max) max=n } END { print max+0 }' "$file_path" 2>/dev/null) || max_nesting=0
-	fi
+	local func_count long_func_count max_nesting
+	func_count=$(printf '%s' "$lang_metrics" | cut -d'|' -f1)
+	long_func_count=$(printf '%s' "$lang_metrics" | cut -d'|' -f2)
+	max_nesting=$(printf '%s' "$lang_metrics" | cut -d'|' -f3)
 
 	printf '%s|%s|%s|%s|%s' "$line_count" "$func_count" "$long_func_count" "$max_nesting" "$file_type"
 	return 0
