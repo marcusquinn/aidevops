@@ -1798,14 +1798,32 @@ _handle_run_result() {
 	fi
 
 	local failure_reason
-	# Exit code 124 = activity watchdog timeout. The worker produced no LLM
-	# activity, which almost always means the provider is rate-limited or
-	# unreachable. Classify as rate_limit to trigger pool rotation — the
-	# output file won't contain explicit rate limit text since the API never
-	# responded at all.
+	# Exit code 124 = activity watchdog timeout (stall or dead runtime).
+	#
+	# GH#17648: Distinguish "stall with prior activity" from "dead on arrival".
+	# A mid-session stall (stream drop after the model was working) should try
+	# continuation — the model may have created a worktree, written files, etc.
+	# Killing and starting fresh wastes all that context.
+	#
+	# - 124 + activity → return 78 (watchdog_stall_continue) so the retry loop
+	#   can resume the session with a continuation prompt before giving up.
+	# - 124 + no activity → rate_limit as before (provider never responded).
 	if [[ "$exit_code" -eq 124 ]]; then
+		if [[ "$activity_detected" == "1" ]]; then
+			# Worker was making progress, then stalled (stream drop, hung connection).
+			# Store session ID for continuation before deleting output.
+			local discovered_session_for_continue
+			discovered_session_for_continue=$(extract_session_id_from_output "$output_file")
+			if [[ "$role" != "pulse" && -n "$discovered_session_for_continue" ]]; then
+				store_session_id "$provider" "$session_key" "$discovered_session_for_continue" "$selected_model"
+			fi
+			_run_result_label="watchdog_stall_continue"
+			rm -f "$output_file"
+			print_warning "$selected_model watchdog stall with prior activity — will attempt session continuation"
+			return 78
+		fi
 		failure_reason="rate_limit"
-		print_warning "$selected_model activity watchdog timeout — classifying as rate_limit for rotation"
+		print_warning "$selected_model activity watchdog timeout (no activity) — classifying as rate_limit for rotation"
 	else
 		failure_reason=$(classify_failure_reason "$output_file")
 	fi
@@ -2446,6 +2464,14 @@ cmd_run() {
 	local continuation_count=0
 	local original_prompt="$prompt"
 
+	# GH#17648: Watchdog stall continuation configuration.
+	# When the watchdog kills a worker that was making progress (stream drop,
+	# hung connection), try resuming the session before giving up. This
+	# preserves all work done so far (worktree, files, partial implementation)
+	# instead of starting fresh with a different provider.
+	local max_watchdog_continue_retries="${HEADLESS_WATCHDOG_CONTINUE_MAX_RETRIES:-2}"
+	local watchdog_continue_count=0
+
 	local attempt=1
 	local max_attempts=3
 	local cmd_run_action="retry"
@@ -2499,6 +2525,29 @@ cmd_run() {
 			print_warning "Exhausted ${max_continuation_retries} continuation retries — recording as premature_exit failure"
 			_cmd_run_finish "$session_key" "fail"
 			return 1
+		fi
+
+		# GH#17648: Handle watchdog stall with activity (exit 78) — the worker
+		# was making progress but the connection/stream dropped. Resume the
+		# session to preserve context (worktree, files, partial implementation).
+		# Try up to 2 continuations before falling through to provider rotation.
+		if [[ "$attempt_exit" -eq 78 && "$watchdog_continue_count" -lt "$max_watchdog_continue_retries" ]]; then
+			watchdog_continue_count=$((watchdog_continue_count + 1))
+			print_warning "Watchdog stall with activity — resuming session (attempt ${watchdog_continue_count}/${max_watchdog_continue_retries})"
+
+			# Resume with a prompt that explains the connection drop.
+			# Session ID was stored by _handle_run_result before returning 78.
+			prompt="Your previous connection dropped mid-session and the process was restarted. All your prior work (worktree, file changes, commits) is still on disk. Resume where you left off — check git status, your todo list, and continue through to completion. Do not restart from scratch. Do not stop until the outcome is FULL_LOOP_COMPLETE or BLOCKED with evidence."
+
+			# Watchdog continuations don't consume provider-rotation attempts.
+			continue
+		fi
+
+		# Exhausted watchdog continuations — fall through to provider rotation.
+		if [[ "$attempt_exit" -eq 78 ]]; then
+			print_warning "Exhausted ${max_watchdog_continue_retries} watchdog continuation retries — falling through to provider rotation"
+			# Don't return — let it fall through to _cmd_run_prepare_retry
+			# which will rotate to a different provider/model.
 		fi
 
 		_cmd_run_prepare_retry \
