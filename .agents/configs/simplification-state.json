@@ -1748,9 +1748,9 @@
       "pr": 15933
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "af29c64d604abe4a0afaf132648261377e2c7bbe",
-      "at": "2026-04-06T00:41:47Z",
-      "passes": 3,
+      "hash": "467e8eb417926046eb18bf797ebb5a866f0d682d",
+      "at": "2026-04-07T15:08:27Z",
+      "passes": 4,
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
@@ -5213,9 +5213,9 @@
       "pr": 13318
     },
     ".agents/workflows/review-issue-pr.md": {
-      "hash": "675c78c98b90bdb7440b5a233c556dd953f98d86",
-      "at": "2026-04-07T13:39:49Z",
-      "passes": 4,
+      "hash": "34292ce63bbb8d49f12b10e3cfecbabe5f1fcd09",
+      "at": "2026-04-07T15:08:40Z",
+      "passes": 5,
       "pr": 12308
     },
     ".agents/workflows/session-manager.md": {
@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "4506f607ecc1e58328ed74ff3437832f8fc37c44",
-      "at": "2026-04-07T14:32:04Z",
-      "passes": 64,
+      "hash": "f24cec99bfefcd39d555799220455d6f0dade4b4",
+      "at": "2026-04-07T15:08:41Z",
+      "passes": 65,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "ffe9872bd481ab4af09ade6b3b95a9bd36441ef0",
-      "at": "2026-04-07T14:32:04Z",
-      "passes": 63,
+      "hash": "28d2cf8ce62d1a6cc54a7d836aefcd645f6bf1df",
+      "at": "2026-04-07T15:08:41Z",
+      "passes": 64,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
