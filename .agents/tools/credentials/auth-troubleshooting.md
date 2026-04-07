@@ -8,10 +8,20 @@ All recovery commands work from any terminal — no working model session requir
 
 > **Anthropic uses OAuth only** (Claude Pro/Max). `opencode auth login` prompts for an API key — do not use it for OAuth. Use `aidevops model-accounts-pool add anthropic` (opens browser) or OpenCode TUI: `Ctrl+A` → Anthropic → Login with Claude.ai.
 
-## Recovery flow (run in order)
+## Start here: diagnose
 
 ```bash
 aidevops update                                   # ensure latest version first
+aidevops model-accounts-pool diagnose             # full pipeline check — covers everything below
+```
+
+`diagnose` checks the entire auth pipeline in one command: pool file, auth.json, plugin
+files, OpenCode version, CCH billing constants, live token validity, and recent errors.
+Share its output when reporting auth issues.
+
+## Recovery flow (run after diagnose identifies the issue)
+
+```bash
 aidevops model-accounts-pool status               # 1. pool health at a glance
 aidevops model-accounts-pool check                # 2. live token validity per account
 aidevops model-accounts-pool rotate anthropic     # 3. switch account if rate-limited
@@ -23,11 +33,13 @@ aidevops model-accounts-pool add anthropic        # 5. re-add account if pool em
 
 | Symptom | Command |
 |---------|---------|
+| Any auth issue (start here) | `diagnose` |
 | `rate-limited` in status | `rotate anthropic` |
 | All accounts in cooldown | `reset-cooldowns` |
 | `auth-error` in status | `add anthropic` (re-auth via browser) |
 | Pool empty (no accounts) | `add anthropic` or `import claude-cli` |
 | Re-authed but still broken | `assign-pending anthropic` |
+| "invalid request data" | `diagnose` (checks CCH, plugin, full pipeline) |
 | Error affects all providers | `reset-cooldowns all` then `check` |
 | Google Gemini CLI rate-limited | `rotate google` |
 | Google token expired | `refresh google` or `add google` |
@@ -36,6 +48,7 @@ aidevops model-accounts-pool add anthropic        # 5. re-add account if pool em
 
 | Command | Description |
 |---------|-------------|
+| `diagnose` | Full pipeline check (pool, plugin, CCH, runtime, recent errors) |
 | `status` | Aggregate counts per provider |
 | `list` | Per-account detail + expiry |
 | `check [provider]` | Live API validity test |

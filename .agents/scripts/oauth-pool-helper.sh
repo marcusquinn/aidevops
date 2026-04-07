@@ -1750,6 +1750,7 @@ Preferred CLI (same commands, no path needed):
 Commands:
   add [anthropic|openai|cursor|google]            Add an account (OAuth; OpenAI defaults to device flow)
   check [anthropic|openai|cursor|google|all]      Health check: token expiry + live validity
+  diagnose [anthropic]                            Full pipeline diagnostics (pool, plugin, CCH, runtime)
   list [anthropic|openai|cursor|google|all]       List accounts with per-account status
   status [anthropic|openai|cursor|google|all]     Pool aggregate stats (counts, availability)
   refresh [anthropic|openai|google] [email|all]   Refresh expired tokens without re-auth (uses refresh_token)
@@ -1761,7 +1762,8 @@ Commands:
   remove <provider> <email>                       Remove an account from the pool
   import [claude-cli]                             Import account from Claude CLI auth
 
-Quickstart (if you see "Key Missing" or auth errors):
+Quickstart (if you see "Key Missing", "invalid request data", or auth errors):
+  aidevops model-accounts-pool diagnose          # 0. Full pipeline check (start here)
   aidevops model-accounts-pool status            # 1. See pool health at a glance
   aidevops model-accounts-pool check             # 2. Test token validity live
   aidevops model-accounts-pool rotate anthropic  # 3. Switch to next account if rate-limited
@@ -1803,6 +1805,266 @@ HELP
 }
 
 # ---------------------------------------------------------------------------
+# Diagnose — full auth pipeline health check (GH#17746)
+# ---------------------------------------------------------------------------
+# Goes beyond `check` (which only validates tokens): tests the entire
+# request pipeline that provider-auth.mjs uses, including plugin load
+# detection, CCH billing header, auth.json state, and a real API probe.
+
+# Print the result of a single diagnostic check.
+# Usage: _diag_print "Check name" "PASS|WARN|FAIL|SKIP" "detail message"
+_diag_print() {
+	local name="$1" result="$2" detail="$3"
+	case "$result" in
+	PASS) printf '  \033[1m%-40s\033[0m \033[0;32mPASS\033[0m  %s\n' "$name" "$detail" ;;
+	WARN) printf '  \033[1m%-40s\033[0m \033[1;33mWARN\033[0m  %s\n' "$name" "$detail" ;;
+	FAIL) printf '  \033[1m%-40s\033[0m \033[0;31mFAIL\033[0m  %s\n' "$name" "$detail" ;;
+	SKIP) printf '  \033[1m%-40s\033[0m \033[0;36mSKIP\033[0m  %s\n' "$name" "$detail" ;;
+	esac
+	return 0
+}
+
+# Check 1: Pool file exists and has accounts.
+_diag_check_pool() {
+	if [[ ! -f "$POOL_FILE" ]]; then
+		_diag_print "Pool file" "FAIL" "Missing: $POOL_FILE — run 'aidevops model-accounts-pool add anthropic'"
+		return 1
+	fi
+	local perms
+	perms=$(stat -f '%Lp' "$POOL_FILE" 2>/dev/null || stat -c '%a' "$POOL_FILE" 2>/dev/null || echo "unknown")
+	if [[ "$perms" != "600" ]]; then
+		_diag_print "Pool file permissions" "WARN" "$perms (expected 600)"
+	else
+		_diag_print "Pool file permissions" "PASS" "600"
+	fi
+	local count
+	count=$(jq '[.anthropic // [] | length] | add' "$POOL_FILE" 2>/dev/null || echo "0")
+	if [[ "$count" == "0" ]]; then
+		_diag_print "Anthropic accounts" "FAIL" "No accounts in pool — run 'aidevops model-accounts-pool add anthropic'"
+		return 1
+	fi
+	_diag_print "Anthropic accounts" "PASS" "$count account(s)"
+	return 0
+}
+
+# Check 2: OpenCode auth.json exists and has OAuth type.
+_diag_check_auth_json() {
+	if [[ ! -f "$OPENCODE_AUTH_FILE" ]]; then
+		_diag_print "OpenCode auth.json" "WARN" "Missing: $OPENCODE_AUTH_FILE — plugin may create it on first run"
+		return 0
+	fi
+	local auth_type
+	auth_type=$(jq -r '.anthropic.type // "missing"' "$OPENCODE_AUTH_FILE" 2>/dev/null || echo "error")
+	if [[ "$auth_type" == "oauth" ]]; then
+		_diag_print "OpenCode auth.json" "PASS" "type=oauth"
+	elif [[ "$auth_type" == "missing" ]]; then
+		_diag_print "OpenCode auth.json" "WARN" "No anthropic entry — plugin hasn't injected yet"
+	else
+		_diag_print "OpenCode auth.json" "WARN" "type=$auth_type (expected oauth)"
+	fi
+	return 0
+}
+
+# Check 3: Plugin directory exists and has key files.
+_diag_check_plugin() {
+	local plugin_dir="$HOME/.aidevops/agents/plugins/opencode-aidevops"
+	if [[ ! -d "$plugin_dir" ]]; then
+		_diag_print "Plugin directory" "FAIL" "Missing: $plugin_dir — run 'aidevops update'"
+		return 1
+	fi
+	local missing=""
+	local -a key_files=(index.mjs provider-auth.mjs oauth-pool.mjs)
+	local f
+	for f in "${key_files[@]}"; do
+		if [[ ! -f "$plugin_dir/$f" ]]; then
+			missing="$missing $f"
+		fi
+	done
+	if [[ -n "$missing" ]]; then
+		_diag_print "Plugin files" "FAIL" "Missing:$missing"
+		return 1
+	fi
+	_diag_print "Plugin files" "PASS" "index.mjs, provider-auth.mjs, oauth-pool.mjs"
+	return 0
+}
+
+# Check 4: OpenCode config references the plugin.
+_diag_check_plugin_registered() {
+	local opencode_config="$HOME/.config/opencode/config.json"
+	if [[ ! -f "$opencode_config" ]]; then
+		# Try alternate locations
+		opencode_config="$HOME/.config/opencode/opencode.json"
+	fi
+	if [[ ! -f "$opencode_config" ]]; then
+		_diag_print "Plugin registration" "SKIP" "No OpenCode config found — may use in-memory config"
+		return 0
+	fi
+	if grep -q "opencode-aidevops" "$opencode_config" 2>/dev/null; then
+		_diag_print "Plugin registration" "PASS" "Found in $opencode_config"
+	else
+		_diag_print "Plugin registration" "WARN" "Not found in $opencode_config — plugin registers via config hook at runtime"
+	fi
+	return 0
+}
+
+# Check 5: CCH constants cache.
+_diag_check_cch() {
+	local cch_file="$HOME/.aidevops/cch-constants.json"
+	if [[ ! -f "$cch_file" ]]; then
+		_diag_print "CCH constants cache" "WARN" "Missing — billing header will use fallback defaults"
+		return 0
+	fi
+	local cached_ver
+	cached_ver=$(jq -r '.version // "unknown"' "$cch_file" 2>/dev/null || echo "error")
+	_diag_print "CCH constants cache" "PASS" "version=$cached_ver"
+
+	# Check if claude CLI is installed and if versions match
+	if command -v claude &>/dev/null; then
+		local live_ver
+		live_ver=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+		if [[ -n "$live_ver" ]]; then
+			if [[ "$cached_ver" == "$live_ver" ]]; then
+				_diag_print "CCH version match" "PASS" "cache=$cached_ver, cli=$live_ver"
+			else
+				_diag_print "CCH version match" "WARN" "cache=$cached_ver, cli=$live_ver — run 'aidevops client-format extract'"
+			fi
+		fi
+	else
+		_diag_print "Claude CLI" "WARN" "Not installed — CCH uses fallback constants (may cause 'invalid request data')"
+	fi
+	return 0
+}
+
+# Check 6: OpenCode version.
+_diag_check_opencode_version() {
+	if ! command -v opencode &>/dev/null; then
+		_diag_print "OpenCode" "FAIL" "Not installed"
+		return 1
+	fi
+	local ver
+	ver=$(opencode --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+	if [[ -z "$ver" ]]; then
+		_diag_print "OpenCode version" "WARN" "Could not detect version"
+		return 0
+	fi
+	# Check against tracked version in plugin package.json
+	local tracked_ver=""
+	local pkg_file="$HOME/.aidevops/agents/plugins/opencode-aidevops/package.json"
+	if [[ -f "$pkg_file" ]]; then
+		tracked_ver=$(jq -r '.opencode.tracked_version // ""' "$pkg_file" 2>/dev/null || echo "")
+	fi
+	if [[ -n "$tracked_ver" ]] && [[ "$ver" != "$tracked_ver" ]]; then
+		_diag_print "OpenCode version" "WARN" "running=$ver, plugin tested=$tracked_ver — check changelog"
+	else
+		_diag_print "OpenCode version" "PASS" "$ver"
+	fi
+	return 0
+}
+
+# Check 7: Live token validity (same as cmd_check but single account).
+_diag_check_live_token() {
+	local pool
+	pool=$(load_pool)
+	local accounts
+	accounts=$(printf '%s' "$pool" | jq -c '.anthropic // []' 2>/dev/null)
+	local count
+	count=$(printf '%s' "$accounts" | jq 'length' 2>/dev/null || echo "0")
+	if [[ "$count" == "0" ]]; then
+		_diag_print "Live token test" "SKIP" "No accounts to test"
+		return 0
+	fi
+	# Test the first active/idle account
+	local token email expires
+	token=$(printf '%s' "$accounts" | jq -r '[ .[] | select(.status == "active" or .status == "idle") ] | .[0].access // ""' 2>/dev/null)
+	email=$(printf '%s' "$accounts" | jq -r '[ .[] | select(.status == "active" or .status == "idle") ] | .[0].email // "unknown"' 2>/dev/null)
+	expires=$(printf '%s' "$accounts" | jq -r '[ .[] | select(.status == "active" or .status == "idle") ] | .[0].expires // 0' 2>/dev/null)
+	if [[ -z "$token" || "$token" == "null" ]]; then
+		_diag_print "Live token test" "WARN" "No active/idle account with access token"
+		return 0
+	fi
+	local now_ms
+	now_ms=$(get_now_ms)
+	if [[ "$expires" -le "$now_ms" ]]; then
+		_diag_print "Token expiry ($email)" "WARN" "Expired — will auto-refresh on next use"
+		return 0
+	fi
+	# Probe the models endpoint (same as check-validate)
+	local http_status
+	http_status=$(curl -s -o /dev/null -w '%{http_code}' \
+		-H "Authorization: Bearer $token" \
+		-H "User-Agent: $USER_AGENT" \
+		-H "anthropic-version: 2023-06-01" \
+		-H "anthropic-beta: oauth-2025-04-20" \
+		"https://api.anthropic.com/v1/models" 2>/dev/null || echo "000")
+	case "$http_status" in
+	200) _diag_print "Live token test ($email)" "PASS" "HTTP 200 from /v1/models" ;;
+	401) _diag_print "Live token test ($email)" "FAIL" "HTTP 401 — token invalid or revoked" ;;
+	403) _diag_print "Live token test ($email)" "FAIL" "HTTP 403 — token lacks required scopes" ;;
+	429) _diag_print "Live token test ($email)" "WARN" "HTTP 429 — rate limited (token is valid)" ;;
+	000) _diag_print "Live token test ($email)" "FAIL" "Network error — cannot reach api.anthropic.com" ;;
+	*) _diag_print "Live token test ($email)" "WARN" "HTTP $http_status — unexpected response" ;;
+	esac
+	return 0
+}
+
+# Check 8: Recent auth errors in observability DB.
+_diag_check_recent_errors() {
+	local db_path="$HOME/.aidevops/.agent-workspace/observability/llm-requests.db"
+	if [[ ! -f "$db_path" ]]; then
+		_diag_print "Recent auth errors" "SKIP" "No observability DB"
+		return 0
+	fi
+	local error_count
+	error_count=$(sqlite3 "$db_path" "SELECT COUNT(*) FROM llm_requests WHERE error_type IS NOT NULL AND timestamp > datetime('now', '-1 hour');" 2>/dev/null || echo "0")
+	if [[ "$error_count" -gt 0 ]]; then
+		local last_error
+		last_error=$(sqlite3 "$db_path" "SELECT error_type || ': ' || COALESCE(error_message, '(no message)') FROM llm_requests WHERE error_type IS NOT NULL ORDER BY timestamp DESC LIMIT 1;" 2>/dev/null || echo "unknown")
+		_diag_print "Recent errors (1h)" "WARN" "$error_count error(s), latest: $last_error"
+	else
+		_diag_print "Recent errors (1h)" "PASS" "No errors in last hour"
+	fi
+	return 0
+}
+
+cmd_diagnose() {
+	local provider="${1:-anthropic}"
+	echo ""
+	printf '\033[1m=== OAuth Auth Pipeline Diagnostics ===\033[0m\n\n'
+	printf 'Tests the full auth pipeline, not just token validity.\n'
+	printf 'Share this output when reporting auth issues.\n\n'
+
+	local has_failures=false
+
+	printf '\033[0;36m--- Pool & Tokens ---\033[0m\n'
+	_diag_check_pool || has_failures=true
+	_diag_check_auth_json
+	_diag_check_live_token
+
+	printf '\n\033[0;36m--- Plugin & Runtime ---\033[0m\n'
+	_diag_check_opencode_version
+	_diag_check_plugin || has_failures=true
+	_diag_check_plugin_registered
+
+	printf '\n\033[0;36m--- Request Pipeline ---\033[0m\n'
+	_diag_check_cch
+	_diag_check_recent_errors
+
+	echo ""
+	if [[ "$has_failures" == "true" ]]; then
+		print_error "Diagnostics found issues above. Fix FAIL items first."
+	else
+		print_success "No critical issues found."
+		echo ""
+		echo "If requests still fail, capture stderr logs:"
+		echo "  opencode 2>~/opencode-debug.log"
+		echo "  # Reproduce the error, then search for:"
+		echo "  grep '\\[aidevops\\]' ~/opencode-debug.log"
+	fi
+	echo ""
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1814,6 +2076,7 @@ main() {
 	add) cmd_add "$@" ;;
 	assign-pending | assign_pending) cmd_assign_pending "$@" ;;
 	check | test) cmd_check "$@" ;;
+	diagnose) cmd_diagnose "$@" ;;
 	import) cmd_import "$@" ;;
 	list) cmd_list "$@" ;;
 	mark-failure | mark_failure) cmd_mark_failure "$@" ;;
