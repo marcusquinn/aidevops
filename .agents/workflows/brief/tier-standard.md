@@ -40,3 +40,28 @@ export function handleAuth(req: Request): Response {
 - **Reference patterns**: Point to existing code that demonstrates the pattern
 - **Line ranges**: Use `file:line-line` format for clarity
 - **Judgment required**: Worker decides approach, error handling, edge cases
+- **Done When is mandatory**: Every brief must include a concrete completion signal (see below)
+- **Recovery paths**: For each step, include what to do if the expected file/pattern is not found
+
+## Done When (required section)
+
+Every tier:standard issue body must end with a machine-verifiable completion condition:
+
+```markdown
+### Done When
+
+- `{lint/test command}` exits 0
+- PR exists with `Closes #{issue_number}` and MERGE_SUMMARY comment posted
+- Issue closed with closing comment linking PR
+```
+
+Without this, workers explore indefinitely or stop after reading files without implementing anything.
+
+## Fallback patterns
+
+For each file reference, include a fallback search so the worker doesn't stop on first miss:
+
+```markdown
+- EDIT: `path/to/file.ts:45-60` -- {what to change}
+  - Fallback: `grep -n 'functionName' path/to/file.ts`
+```

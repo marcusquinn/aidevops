@@ -23,9 +23,20 @@ When creating issues via `gh issue create`, wrap the appropriate tier content in
 - [ ] {criterion with verify block if possible}
 - [ ] Lint clean
 - [ ] No unrelated changes
+
+## Done When
+
+{Concrete, machine-verifiable completion signal — the worker does not stop until these are true}
+
+- `{lint/test command}` exits 0
+- PR exists with `Closes #{issue_number}` in body
+- MERGE_SUMMARY comment posted on PR
+- Issue closed with closing comment linking PR
 ```
 
 Always include a tier label: `tier:simple`, `tier:standard`, or `tier:reasoning`.
+
+**Why "Done When" matters:** Workers that lack a concrete completion signal exhibit two failure modes: (1) stop after setup/exploration without implementing anything (observed on #17642, #17643), or (2) stop after PR creation without merging or posting closing comments. "Done When" gives the model a checklist to drive toward instead of an open-ended goal.
 
 ## Comment Templates
 
