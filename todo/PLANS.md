@@ -25,6 +25,43 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-04-07] Pulse Triage Restoration and Linux Scheduler Fixes
+
+**Status:** In Progress (Phase 1/2)
+**Estimate:** ~3.5h across 2 tasks
+**TODOs:** t1916, t1917
+**Logged:** 2026-04-07
+**Trigger:** User noticed pulse stopped posting triage analysis comments on external `needs-maintainer-review` issues. Investigation revealed t1894's cryptographic approval gate was applied too broadly (blocking triage, not just dispatch). Separately, GH#17695 identified real Linux scheduler gaps.
+
+#### Purpose
+
+Two related fixes:
+1. **Pulse triage restoration** (t1916) -- remove the approval gate from triage dispatch so the pulse posts analysis comments on external issues before approval. The comment helps the maintainer decide whether to approve.
+2. **Linux scheduler completion** (t1917) -- fix dual-execution bug and complete systemd migration on Linux. macOS (launchd) is unaffected.
+
+#### Development Environment
+
+| Item | Value |
+|------|-------|
+| Language/runtime | Shell (bash 3.2) |
+| Tests | shellcheck, manual triage verification |
+| Constraints | macOS launchd path must remain unchanged. Approval gate must stay on implementation dispatch. |
+
+#### Progress
+
+- [ ] (2026-04-07) t1916: Remove approval gate from triage dispatch ~25m
+- [ ] (2026-04-07) t1917: Linux scheduler dual-execution fix ~3h
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-04-07 | Triage exempt from approval gate | Triage is read + comment, not code execution. The comment is what helps the maintainer decide whether to approve. Blocking it defeats the purpose. |
+| 2026-04-07 | Accept GH#17695 despite being Linux-only | Valid cross-platform work. macOS uses launchd correctly. Linux scheduler path had real bugs. |
+| 2026-04-07 | t1916 implemented first | Quick fix, enables triage on GH#17695 immediately. t1917 can be dispatched to workers. |
+
+---
+
 ### [2026-04-03] mngr-Inspired Quality and Architecture Improvements
 
 **Status:** Planning
