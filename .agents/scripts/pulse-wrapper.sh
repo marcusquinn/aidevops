@@ -6478,14 +6478,16 @@ check_dispatch_dedup() {
 		fi
 	fi
 
-	# Layer 4: merged PR evidence for this issue/task
+	# Layer 4: open or merged PR evidence for this issue/task — if a worker
+	# already produced a PR (open or merged), don't dispatch another worker.
+	# Previously only checked --state merged, missing open PRs entirely.
 	local dedup_helper_output=""
 	if [[ -x "$dedup_helper" ]]; then
 		if dedup_helper_output=$("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>>"$LOGFILE"); then
 			if [[ -n "$dedup_helper_output" ]]; then
 				echo "[pulse-wrapper] Dedup: ${dedup_helper_output}" >>"$LOGFILE"
 			else
-				echo "[pulse-wrapper] Dedup: merged PR evidence already exists for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+				echo "[pulse-wrapper] Dedup: PR evidence already exists for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 			fi
 			return 0
 		fi
