@@ -6690,14 +6690,62 @@ _is_task_committed_to_main() {
 
 	# Search recent commits on origin/main for any matching pattern.
 	# Use -E for extended regex (Closes/Fixes patterns).
+	# GH#17707: Filter out planning-only commits that match task IDs but
+	# don't contain actual implementation (e.g., "chore: claim t1910..t1915"
+	# or commits that only modify TODO.md/todo/ files).
 	local pattern
 	for pattern in "${search_patterns[@]}"; do
-		local match_count
-		match_count=$(git -C "$repo_path" log origin/main --since="$created_at" \
-			--oneline -E --grep="$pattern" 2>/dev/null | wc -l) || match_count=0
-		match_count=$(printf '%s' "$match_count" | tr -d '[:space:]')
-		if [[ "$match_count" -gt 0 ]]; then
-			echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+		local matching_shas
+		matching_shas=$(git -C "$repo_path" log origin/main --since="$created_at" \
+			--format='%H' -E --grep="$pattern" 2>/dev/null) || matching_shas=""
+
+		if [[ -z "$matching_shas" ]]; then
+			continue
+		fi
+
+		# Filter out planning-only commits
+		local impl_count=0
+		local sha
+		while IFS= read -r sha; do
+			[[ -z "$sha" ]] && continue
+
+			# Check 1: Subject-based exclusion for known planning prefixes
+			local subject
+			subject=$(git -C "$repo_path" log -1 --format='%s' "$sha" 2>/dev/null) || subject=""
+			if printf '%s' "$subject" | grep -qE '^(chore: claim|plan:)'; then
+				echo "[pulse-wrapper] _is_task_committed_to_main: skipping planning commit ${sha:0:10} ('${subject}') for #${issue_number}" >>"$LOGFILE"
+				continue
+			fi
+
+			# Check 2: Path-based detection — if the commit only modifies
+			# planning files (TODO.md, todo/*, AGENTS.md, .agents/AGENTS.md),
+			# it's a planning commit regardless of its subject prefix.
+			local changed_files
+			changed_files=$(git -C "$repo_path" diff-tree --no-commit-id --name-only -r "$sha" 2>/dev/null) || changed_files=""
+			if [[ -n "$changed_files" ]]; then
+				local has_impl_files=false
+				local file
+				while IFS= read -r file; do
+					[[ -z "$file" ]] && continue
+					case "$file" in
+					TODO.md | todo/* | AGENTS.md | .agents/AGENTS.md) ;;
+					*)
+						has_impl_files=true
+						break
+						;;
+					esac
+				done <<<"$changed_files"
+				if [[ "$has_impl_files" == "false" ]]; then
+					echo "[pulse-wrapper] _is_task_committed_to_main: skipping planning-files-only commit ${sha:0:10} ('${subject}') for #${issue_number}" >>"$LOGFILE"
+					continue
+				fi
+			fi
+
+			impl_count=$((impl_count + 1))
+		done <<<"$matching_shas"
+
+		if [[ "$impl_count" -gt 0 ]]; then
+			echo "[pulse-wrapper] _is_task_committed_to_main: found ${impl_count} implementation commit(s) matching '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 			return 0
 		fi
 	done
