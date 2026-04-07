@@ -12,10 +12,13 @@ on:
     branches: [ main ]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Only cancel in-progress runs on PR branches, not main.
-  # Cancelled runs show as "failing" on the badge — rapid main pushes
-  # (e.g. pulse auto-merges) would keep the badge red indefinitely.
+  # Each main push gets a unique group (by SHA) so rapid pushes never cancel
+  # each other's queued runs. GitHub's concurrency queue holds only ONE pending
+  # run per group — cancel-in-progress:false protects in-progress runs but a
+  # third push still replaces the queued second, producing a "cancelled"
+  # conclusion that the badge renders as "failing". Using SHA on main prevents
+  # this entirely. PR pushes share a group per branch (desirable cancellation).
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
