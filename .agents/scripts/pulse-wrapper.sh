@@ -6722,7 +6722,7 @@ _is_task_committed_to_main() {
 				match_count=$((match_count + 1))
 			fi
 		done < <(git -C "$repo_path" log origin/main --since="$created_at" \
-			--oneline -E --grep="$pattern" |
+			-E --grep="$pattern" --format='%H %s' |
 			grep -vE '^[0-9a-f]+ (chore: claim|plan:)' |
 			cut -d' ' -f1 || true)
 		if [[ "$match_count" -gt 0 ]]; then
