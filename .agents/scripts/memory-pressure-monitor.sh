@@ -826,14 +826,19 @@ _status_print_os_and_config() {
 	echo "--- Daemon ---"
 	echo ""
 	local pid_file="${STATE_DIR}/memory-pressure-monitor.pid"
-	if [[ -f "${pid_file}" ]]; then
-		local daemon_pid
-		daemon_pid=$(cat "${pid_file}" 2>/dev/null || echo "")
-		if [[ -n "$daemon_pid" ]] && [[ "$daemon_pid" =~ ^[0-9]+$ ]] && kill -0 "$daemon_pid" 2>/dev/null; then
-			echo "  Daemon: running (PID ${daemon_pid})"
-		else
-			echo "  Daemon: not running (stale PID file)"
-		fi
+	local lock_dir="${TMPDIR:-/tmp}/aidevops-memory-pressure.lockdir"
+	# Check lock dir first (atomic lock), fall back to legacy PID file
+	local daemon_pid=""
+	if [[ -f "${lock_dir}/pid" ]]; then
+		daemon_pid=$(cat "${lock_dir}/pid" 2>/dev/null) || daemon_pid=""
+	fi
+	if [[ -z "$daemon_pid" ]] && [[ -f "${pid_file}" ]]; then
+		daemon_pid=$(cat "${pid_file}" 2>/dev/null) || daemon_pid=""
+	fi
+	if [[ -n "$daemon_pid" ]] && [[ "$daemon_pid" =~ ^[0-9]+$ ]] && kill -0 "$daemon_pid" 2>/dev/null; then
+		echo "  Daemon: running (PID ${daemon_pid})"
+	elif [[ -n "$daemon_pid" ]]; then
+		echo "  Daemon: not running (stale lock)"
 	else
 		echo "  Daemon: not running"
 	fi
@@ -869,29 +874,42 @@ cmd_status() {
 }
 
 # Run continuous monitoring loop with adaptive polling (faster when shellcheck detected)
-# Prevents multiple concurrent daemon instances via a PID file (GH#17408).
+# Prevents multiple concurrent daemon instances via atomic mkdir lock (GH#17408, GH#17674).
 cmd_daemon() {
 	ensure_dirs
-	local pid_file="${STATE_DIR}/memory-pressure-monitor.pid"
 
-	# Guard: prevent multiple daemon instances
-	if [[ -f "${pid_file}" ]]; then
-		local old_pid
-		old_pid=$(cat "${pid_file}" 2>/dev/null || echo "")
-		if [[ -n "$old_pid" ]] && [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
-			echo "[${SCRIPT_NAME}] Daemon already running (PID ${old_pid}). Use --stop or --restart to control it." >&2
+	# Atomic lock using mkdir (atomic on all filesystems, works on macOS bash 3.2)
+	# Replaces the previous PID file check-then-write which had a TOCTOU race (GH#17674).
+	local lock_dir="${TMPDIR:-/tmp}/aidevops-memory-pressure.lockdir"
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		# Lock exists — check if the holding process is still alive
+		local lock_pid=""
+		lock_pid=$(cat "${lock_dir}/pid" 2>/dev/null) || lock_pid=""
+		if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+			echo "[${SCRIPT_NAME}] Daemon already running (PID ${lock_pid}). Use --stop or --restart to control it." >&2
 			return 1
-		else
-			# Stale PID file — remove it and continue
-			rm -f "${pid_file}"
+		fi
+		# Stale lock — remove and retry
+		rm -rf "$lock_dir"
+		if ! mkdir "$lock_dir" 2>/dev/null; then
+			echo "[${SCRIPT_NAME}] Failed to acquire lock after stale removal" >&2
+			return 1
 		fi
 	fi
 
-	# Write our PID before entering the loop
-	echo $$ >"${pid_file}"
+	# Write our PID into the lock dir — surface failures instead of swallowing
+	if ! printf '%s' "$$" >"${lock_dir}/pid"; then
+		echo "[${SCRIPT_NAME}] Failed to write PID to lock dir" >&2
+		rmdir "$lock_dir" 2>/dev/null
+		return 1
+	fi
 
-	# Remove PID file on exit (Ctrl+C, SIGTERM, or normal exit)
-	trap 'rm -f "${pid_file}"; trap - EXIT INT TERM' EXIT INT TERM
+	# Also write legacy PID file for cmd_stop/cmd_status compatibility
+	local pid_file="${STATE_DIR}/memory-pressure-monitor.pid"
+	printf '%s' "$$" >"${pid_file}" || echo "[${SCRIPT_NAME}] Warning: failed to write legacy PID file" >&2
+
+	# Remove lock dir and PID file on exit (Ctrl+C, SIGTERM, or normal exit)
+	trap 'rm -rf "${lock_dir}"; rm -f "${pid_file}"; trap - EXIT INT TERM' EXIT INT TERM
 
 	echo "[${SCRIPT_NAME}] Starting daemon mode (PID $$, interval: ${DAEMON_INTERVAL}s, fast: 10s when shellcheck detected)"
 	echo "[${SCRIPT_NAME}] Press Ctrl+C to stop"
@@ -912,27 +930,34 @@ cmd_daemon() {
 	done
 }
 
-# Stop a running daemon by sending SIGTERM to the PID in the PID file.
+# Stop a running daemon by sending SIGTERM to the PID.
+# Checks both the atomic lock dir and legacy PID file for the daemon PID.
 cmd_stop() {
 	ensure_dirs
 	local pid_file="${STATE_DIR}/memory-pressure-monitor.pid"
+	local lock_dir="${TMPDIR:-/tmp}/aidevops-memory-pressure.lockdir"
 
-	if [[ ! -f "${pid_file}" ]]; then
-		echo "[${SCRIPT_NAME}] No PID file found. Is the daemon running?" >&2
-		return 1
+	# Try lock dir first (new atomic lock), fall back to legacy PID file
+	local pid=""
+	if [[ -f "${lock_dir}/pid" ]]; then
+		pid=$(cat "${lock_dir}/pid" 2>/dev/null) || pid=""
+	fi
+	if [[ -z "$pid" ]] && [[ -f "${pid_file}" ]]; then
+		pid=$(cat "${pid_file}" 2>/dev/null) || pid=""
 	fi
 
-	local pid
-	pid=$(cat "${pid_file}" 2>/dev/null || echo "")
 	if [[ -z "$pid" ]] || ! [[ "$pid" =~ ^[0-9]+$ ]]; then
-		echo "[${SCRIPT_NAME}] PID file is invalid. Removing stale file." >&2
+		echo "[${SCRIPT_NAME}] No valid PID found. Is the daemon running?" >&2
+		# Clean up any stale files
 		rm -f "${pid_file}"
+		rm -rf "${lock_dir}"
 		return 1
 	fi
 
 	if ! kill -0 "$pid" 2>/dev/null; then
-		echo "[${SCRIPT_NAME}] No running daemon found (PID ${pid} is gone). Removing stale PID file."
+		echo "[${SCRIPT_NAME}] No running daemon found (PID ${pid} is gone). Removing stale lock."
 		rm -f "${pid_file}"
+		rm -rf "${lock_dir}"
 		return 0
 	fi
 
@@ -952,6 +977,7 @@ cmd_stop() {
 	fi
 
 	rm -f "${pid_file}"
+	rm -rf "${lock_dir}"
 	echo "[${SCRIPT_NAME}] Daemon stopped."
 	return 0
 }
@@ -965,7 +991,7 @@ cmd_restart() {
 	return $?
 }
 
-# Install launchd plist for periodic monitoring (every 30 seconds)
+# Install launchd plist for periodic monitoring (every 300 seconds / 5 minutes)
 cmd_install() {
 	# Resolve script path — prefer installed location
 	local script_path
@@ -995,7 +1021,7 @@ cmd_install() {
 		<string>${script_path}</string>
 	</array>
 	<key>StartInterval</key>
-	<integer>30</integer>
+	<integer>300</integer>
 	<key>StandardOutPath</key>
 	<string>${home_escaped}/.aidevops/logs/memory-pressure-launchd.log</string>
 	<key>StandardErrorPath</key>
@@ -1028,7 +1054,7 @@ EOF
 	echo "Installed and loaded: ${LAUNCHD_LABEL}"
 	echo "Plist: ${PLIST_PATH}"
 	echo "Log: ${LOG_FILE}"
-	echo "Check interval: 30 seconds"
+	echo "Check interval: 300 seconds"
 	return 0
 }
 
@@ -1043,15 +1069,15 @@ cmd_uninstall() {
 	fi
 
 	# Stop any running daemon before cleaning up
-	local pid_file="${STATE_DIR}/memory-pressure-monitor.pid"
-	if [[ -f "${pid_file}" ]]; then
-		cmd_stop 2>/dev/null || true
-	fi
+	cmd_stop 2>/dev/null || true
 
-	# Clean up state files
+	# Clean up state files and lock directory
+	local pid_file="${STATE_DIR}/memory-pressure-monitor.pid"
+	local lock_dir="${TMPDIR:-/tmp}/aidevops-memory-pressure.lockdir"
 	rm -f "${STATE_DIR}"/memory-pressure-*.cooldown
 	rm -f "${pid_file}"
-	echo "Cleaned up state files"
+	rm -rf "${lock_dir}"
+	echo "Cleaned up state files and lock directory"
 	return 0
 }
 
@@ -1064,9 +1090,9 @@ Commands:
   --check, -c       Single check (default, for launchd)
   --status, -s      Print current process + memory state
   --daemon, -d      Continuous monitoring (${DAEMON_INTERVAL}s interval)
-  --stop            Stop a running daemon (via PID file)
+  --stop            Stop a running daemon (via lock dir)
   --restart         Stop existing daemon and start a new one
-  --install, -i     Install launchd plist (runs every 60s)
+  --install, -i     Install launchd plist (runs every 300s)
   --uninstall, -u   Remove launchd plist and state files
   --help, -h        Show this help
 
