@@ -49,6 +49,148 @@ EOF
 	return 0
 }
 
+# ── extract helpers ──────────────────────────────────────────────
+
+#######################################
+# Fetch merged PR list from GitHub
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - label filter
+#   $3 - max changed files
+#   $4 - PR limit
+# Outputs: JSON array to stdout
+# Returns: 0 on success, 1 on error
+#######################################
+_fetch_pr_list() {
+	local repo="$1"
+	local label="$2"
+	local max_files="$3"
+	local limit="$4"
+
+	gh pr list --repo "$repo" --state merged --limit "$limit" \
+		--label "$label" \
+		--json number,title,labels,additions,deletions,changedFiles,mergedAt,headRefName,body \
+		--jq "[.[] | select(.changedFiles <= ${max_files})]" 2>/dev/null || {
+		echo "Error: failed to query PRs from $repo" >&2
+		return 1
+	}
+	return 0
+}
+
+#######################################
+# Determine complexity category from file count
+#
+# Arguments:
+#   $1 - number of changed files
+# Outputs: complexity string to stdout
+# Returns: 0
+#######################################
+_classify_complexity() {
+	local changed_files="$1"
+
+	if [[ "$changed_files" -gt 3 ]]; then
+		echo "4+-files"
+	elif [[ "$changed_files" -gt 1 ]]; then
+		echo "2-3-files"
+	else
+		echo "1-file"
+	fi
+	return 0
+}
+
+#######################################
+# Extract a single PR into a case directory
+#
+# Fetches diff, linked issue body, and merge commit info,
+# then writes case.json, original-issue.md, original-diff.patch,
+# and verification.sh into the case directory.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - PR number
+#   $3 - PR title
+#   $4 - PR additions
+#   $5 - PR deletions
+#   $6 - PR changed files count
+#   $7 - PR body
+#   $8 - case directory path
+#   $9 - complexity category
+# Returns: 0 on success
+#######################################
+_extract_single_pr() {
+	local repo="$1"
+	local pr_number="$2"
+	local pr_title="$3"
+	local pr_additions="$4"
+	local pr_deletions="$5"
+	local pr_changed_files="$6"
+	local pr_body="$7"
+	local case_dir="$8"
+	local complexity="$9"
+
+	mkdir -p "$case_dir"
+
+	# Get the diff
+	local pr_diff
+	pr_diff=$(gh pr diff "$pr_number" --repo "$repo" 2>/dev/null) || pr_diff=""
+
+	# Get the linked issue body (from PR body "Closes #NNN" pattern)
+	local issue_number=""
+	local issue_body=""
+	if [[ -n "$pr_body" ]]; then
+		issue_number=$(echo "$pr_body" | grep -oE '(Closes|Fixes|Resolves) #[0-9]+' | head -1 | grep -oE '[0-9]+') || issue_number=""
+	fi
+	if [[ -n "$issue_number" ]]; then
+		issue_body=$(gh issue view "$issue_number" --repo "$repo" --json body --jq '.body // ""' 2>/dev/null) || issue_body=""
+	fi
+
+	# Find the merge commit
+	local merge_base=""
+	merge_base=$(gh pr view "$pr_number" --repo "$repo" --json mergeCommit --jq '.mergeCommit.oid' 2>/dev/null) || merge_base=""
+
+	# Write case metadata
+	cat >"${case_dir}/case.json" <<CASE_EOF
+{
+  "pr_number": ${pr_number},
+  "repo": "${repo}",
+  "title": $(echo "$pr_title" | jq -Rs .),
+  "issue_number": ${issue_number:-null},
+  "additions": ${pr_additions},
+  "deletions": ${pr_deletions},
+  "changed_files": ${pr_changed_files},
+  "complexity": "${complexity}",
+  "merge_commit": $(echo "$merge_base" | jq -Rs .),
+  "extracted_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+CASE_EOF
+
+	# Write issue/PR body
+	if [[ -n "$issue_body" ]]; then
+		printf '%s\n' "$issue_body" >"${case_dir}/original-issue.md"
+	elif [[ -n "$pr_body" ]]; then
+		printf '%s\n' "$pr_body" >"${case_dir}/original-issue.md"
+	fi
+
+	# Write diff
+	if [[ -n "$pr_diff" ]]; then
+		printf '%s\n' "$pr_diff" >"${case_dir}/original-diff.patch"
+	fi
+
+	# Write verification placeholder
+	cat >"${case_dir}/verification.sh" <<'VERIFY_EOF'
+#!/usr/bin/env bash
+# Auto-generated verification for test case
+set -euo pipefail
+# Basic: check that the diff is non-empty and applies cleanly
+echo "PASS: verification placeholder — replace with task-specific checks"
+exit 0
+VERIFY_EOF
+	chmod +x "${case_dir}/verification.sh"
+
+	return 0
+}
+
 #######################################
 # Extract merged PRs into test corpus
 #
@@ -109,13 +251,7 @@ cmd_extract() {
 
 	# Get merged PRs with metadata
 	local pr_json
-	pr_json=$(gh pr list --repo "$repo" --state merged --limit "$limit" \
-		--label "$label" \
-		--json number,title,labels,additions,deletions,changedFiles,mergedAt,headRefName,body \
-		--jq "[.[] | select(.changedFiles <= ${max_files})]" 2>/dev/null) || {
-		echo "Error: failed to query PRs from $repo" >&2
-		return 1
-	}
+	pr_json=$(_fetch_pr_list "$repo" "$label" "$max_files" "$limit") || return 1
 
 	local pr_count
 	pr_count=$(echo "$pr_json" | jq 'length') || pr_count=0
@@ -135,94 +271,10 @@ cmd_extract() {
 	if [[ -f "${output}/index.json" ]]; then
 		index_entries=$(jq '.' "${output}/index.json" 2>/dev/null) || index_entries="[]"
 	fi
+
 	local i=0
 	while [[ "$i" -lt "$pr_count" ]]; do
-		local pr_number pr_title pr_additions pr_deletions pr_changed_files pr_body
-		pr_number=$(echo "$pr_json" | jq -r ".[$i].number") || continue
-		pr_title=$(echo "$pr_json" | jq -r ".[$i].title") || continue
-		pr_additions=$(echo "$pr_json" | jq -r ".[$i].additions") || continue
-		pr_deletions=$(echo "$pr_json" | jq -r ".[$i].deletions") || continue
-		pr_changed_files=$(echo "$pr_json" | jq -r ".[$i].changedFiles") || continue
-		pr_body=$(echo "$pr_json" | jq -r ".[$i].body // \"\"") || pr_body=""
-
-		local case_dir="${output}/${repo_short}-${pr_number}"
-		mkdir -p "$case_dir"
-
-		# Determine complexity category
-		local complexity="1-file"
-		if [[ "$pr_changed_files" -gt 3 ]]; then
-			complexity="4+-files"
-		elif [[ "$pr_changed_files" -gt 1 ]]; then
-			complexity="2-3-files"
-		fi
-
-		echo "[extract] PR #${pr_number}: ${pr_title} (${pr_changed_files} files, +${pr_additions}/-${pr_deletions}, ${complexity})"
-
-		# Get the merge commit to find the diff
-		local pr_diff
-		pr_diff=$(gh pr diff "$pr_number" --repo "$repo" 2>/dev/null) || pr_diff=""
-
-		# Get the linked issue body (from PR body "Closes #NNN" pattern)
-		local issue_number=""
-		local issue_body=""
-		if [[ -n "$pr_body" ]]; then
-			issue_number=$(echo "$pr_body" | grep -oE '(Closes|Fixes|Resolves) #[0-9]+' | head -1 | grep -oE '[0-9]+') || issue_number=""
-		fi
-		if [[ -n "$issue_number" ]]; then
-			issue_body=$(gh issue view "$issue_number" --repo "$repo" --json body --jq '.body // ""' 2>/dev/null) || issue_body=""
-		fi
-
-		# Find the merge base commit (the commit before the PR changes)
-		local merge_base=""
-		merge_base=$(gh pr view "$pr_number" --repo "$repo" --json mergeCommit --jq '.mergeCommit.oid' 2>/dev/null) || merge_base=""
-
-		# Write case files
-		cat >"${case_dir}/case.json" <<CASE_EOF
-{
-  "pr_number": ${pr_number},
-  "repo": "${repo}",
-  "title": $(echo "$pr_title" | jq -Rs .),
-  "issue_number": ${issue_number:-null},
-  "additions": ${pr_additions},
-  "deletions": ${pr_deletions},
-  "changed_files": ${pr_changed_files},
-  "complexity": "${complexity}",
-  "merge_commit": $(echo "$merge_base" | jq -Rs .),
-  "extracted_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-}
-CASE_EOF
-
-		if [[ -n "$issue_body" ]]; then
-			printf '%s\n' "$issue_body" >"${case_dir}/original-issue.md"
-		elif [[ -n "$pr_body" ]]; then
-			printf '%s\n' "$pr_body" >"${case_dir}/original-issue.md"
-		fi
-
-		if [[ -n "$pr_diff" ]]; then
-			printf '%s\n' "$pr_diff" >"${case_dir}/original-diff.patch"
-		fi
-
-		# Build verification script from common checks
-		cat >"${case_dir}/verification.sh" <<'VERIFY_EOF'
-#!/usr/bin/env bash
-# Auto-generated verification for test case
-set -euo pipefail
-# Basic: check that the diff is non-empty and applies cleanly
-echo "PASS: verification placeholder — replace with task-specific checks"
-exit 0
-VERIFY_EOF
-		chmod +x "${case_dir}/verification.sh"
-
-		# Add to index
-		index_entries=$(echo "$index_entries" | jq \
-			--arg dir "${repo_short}-${pr_number}" \
-			--argjson pr "$pr_number" \
-			--arg complexity "$complexity" \
-			--argjson files "$pr_changed_files" \
-			--argjson adds "$pr_additions" \
-			--argjson dels "$pr_deletions" \
-			'. + [{"directory": $dir, "pr_number": $pr, "complexity": $complexity, "changed_files": $files, "additions": $adds, "deletions": $dels}]')
-
+		index_entries=$(_process_extract_pr "$pr_json" "$i" "$output" "$repo" "$repo_short" "$index_entries") || true
 		i=$((i + 1))
 	done
 
@@ -232,6 +284,184 @@ VERIFY_EOF
 	echo "[extract] Corpus extracted: ${pr_count} cases in ${output}/"
 	echo "[extract] Complexity distribution:"
 	echo "$index_entries" | jq -r 'group_by(.complexity) | map("\(.[0].complexity): \(length)") | .[]'
+
+	return 0
+}
+
+#######################################
+# Process a single PR from the JSON array and extract it
+#
+# Parses fields from pr_json at index $i, calls _extract_single_pr,
+# and appends to the index. Prints the updated index_entries to stdout.
+#
+# Arguments:
+#   $1 - pr_json (full JSON array)
+#   $2 - loop index
+#   $3 - output directory
+#   $4 - repo slug
+#   $5 - repo short name
+#   $6 - current index_entries JSON
+# Outputs: updated index_entries JSON to stdout
+# Returns: 0 on success
+#######################################
+_process_extract_pr() {
+	local pr_json="$1"
+	local i="$2"
+	local output="$3"
+	local repo="$4"
+	local repo_short="$5"
+	local index_entries="$6"
+
+	local pr_number pr_title pr_additions pr_deletions pr_changed_files pr_body
+	pr_number=$(echo "$pr_json" | jq -r ".[$i].number") || return 1
+	pr_title=$(echo "$pr_json" | jq -r ".[$i].title") || return 1
+	pr_additions=$(echo "$pr_json" | jq -r ".[$i].additions") || return 1
+	pr_deletions=$(echo "$pr_json" | jq -r ".[$i].deletions") || return 1
+	pr_changed_files=$(echo "$pr_json" | jq -r ".[$i].changedFiles") || return 1
+	pr_body=$(echo "$pr_json" | jq -r ".[$i].body // \"\"") || pr_body=""
+
+	local case_dir="${output}/${repo_short}-${pr_number}"
+	local complexity
+	complexity=$(_classify_complexity "$pr_changed_files")
+
+	echo "[extract] PR #${pr_number}: ${pr_title} (${pr_changed_files} files, +${pr_additions}/-${pr_deletions}, ${complexity})" >&2
+
+	_extract_single_pr "$repo" "$pr_number" "$pr_title" "$pr_additions" \
+		"$pr_deletions" "$pr_changed_files" "$pr_body" "$case_dir" "$complexity"
+
+	# Append to index and output
+	echo "$index_entries" | jq \
+		--arg dir "${repo_short}-${pr_number}" \
+		--argjson pr "$pr_number" \
+		--arg complexity "$complexity" \
+		--argjson files "$pr_changed_files" \
+		--argjson adds "$pr_additions" \
+		--argjson dels "$pr_deletions" \
+		'. + [{"directory": $dir, "pr_number": $pr, "complexity": $complexity, "changed_files": $files, "additions": $adds, "deletions": $dels}]'
+
+	return 0
+}
+
+# ── enrich helpers ───────────────────────────────────────────────
+
+#######################################
+# Build the enrichment prompt for a single test case
+#
+# Arguments:
+#   $1 - case metadata JSON string
+#   $2 - issue content (may be empty)
+#   $3 - diff content
+# Outputs: prompt string to stdout
+# Returns: 0
+#######################################
+_build_enrichment_prompt() {
+	local case_meta="$1"
+	local issue_content="$2"
+	local diff_content="$3"
+
+	cat <<PROMPT_EOF
+You are writing a prescriptive brief that will be given to Haiku (a fast but less capable model) to implement a code change. The brief must be specific enough that Haiku can follow it mechanically without needing to explore the codebase or make architectural decisions.
+
+Given the following PR information, write a brief following the template at .agents/templates/brief-template.md with tier:simple level detail:
+
+## PR Metadata
+${case_meta}
+
+## Original Issue Body
+${issue_content:-No issue body available}
+
+## Actual Diff (the known-good solution)
+\`\`\`diff
+${diff_content}
+\`\`\`
+
+Write the brief with:
+1. EXACT file paths and line ranges from the diff
+2. COMPLETE code blocks — not skeletons, but the actual code to insert/replace
+3. Explicit oldString/newString pairs for each edit
+4. Verification commands that test the specific changes
+5. Set tier to tier:simple with rationale
+
+The brief should be detailed enough that a worker can implement it by copying code blocks and running verification, without reading any other files.
+PROMPT_EOF
+	return 0
+}
+
+#######################################
+# Write a placeholder enriched brief for a single case
+#
+# Arguments:
+#   $1 - full path to case directory
+#   $2 - model name
+# Returns: 0
+#######################################
+_write_placeholder_brief() {
+	local full_path="$1"
+	local model="$2"
+
+	cat >"${full_path}/enriched-brief.md" <<BRIEF_EOF
+# Enriched Brief (placeholder)
+
+**Status:** Awaiting generation via ${model}
+**PR:** #$(jq -r '.pr_number' "${full_path}/case.json")
+**Complexity:** $(jq -r '.complexity' "${full_path}/case.json")
+
+## Enrichment Prompt
+
+The enrichment prompt has been prepared. Run the enrich command interactively
+or dispatch via autoresearch to generate the prescriptive brief.
+
+---
+_Generated by brief-tier-test-helper.sh enrich_
+BRIEF_EOF
+	return 0
+}
+
+#######################################
+# Enrich a single test case with a prescriptive brief
+#
+# Arguments:
+#   $1 - case directory name (relative)
+#   $2 - full path to case directory
+#   $3 - model name
+# Outputs: status messages to stdout
+# Returns: 0 on success, 1 to signal skip
+#######################################
+_enrich_single_case() {
+	local case_dir="$1"
+	local full_path="$2"
+	local model="$3"
+
+	if [[ -f "${full_path}/enriched-brief.md" ]]; then
+		echo "[enrich] ${case_dir}: already enriched, skipping"
+		return 1
+	fi
+
+	if [[ ! -f "${full_path}/original-diff.patch" ]]; then
+		echo "[enrich] ${case_dir}: no diff available, skipping"
+		return 1
+	fi
+
+	local issue_content=""
+	if [[ -f "${full_path}/original-issue.md" ]]; then
+		issue_content=$(cat "${full_path}/original-issue.md")
+	fi
+	local diff_content
+	diff_content=$(cat "${full_path}/original-diff.patch")
+	local case_meta
+	case_meta=$(cat "${full_path}/case.json")
+
+	# Build the prompt (used by interactive enrichment or autoresearch)
+	_build_enrichment_prompt "$case_meta" "$issue_content" "$diff_content" >/dev/null
+
+	echo "[enrich] ${case_dir}: generating enriched brief..."
+
+	# Dispatch to ai-research for brief generation
+	if command -v ai-research >/dev/null 2>&1 || [[ -x "${AGENTS_DIR}/scripts/ai-research-helper.sh" ]]; then
+		echo "[enrich] ${case_dir}: would generate via ai-research (model: ${model})"
+		echo "[enrich] ${case_dir}: placeholder brief written — run interactively to generate real briefs"
+		_write_placeholder_brief "$full_path" "$model"
+	fi
 
 	return 0
 }
@@ -287,87 +517,77 @@ cmd_enrich() {
 		case_dir=$(jq -r ".[$i].directory" "${corpus}/index.json")
 		local full_path="${corpus}/${case_dir}"
 
-		if [[ -f "${full_path}/enriched-brief.md" ]]; then
-			echo "[enrich] ${case_dir}: already enriched, skipping"
+		if _enrich_single_case "$case_dir" "$full_path" "$model"; then
+			enriched=$((enriched + 1))
+		else
 			skipped=$((skipped + 1))
-			i=$((i + 1))
-			continue
 		fi
 
-		if [[ ! -f "${full_path}/original-diff.patch" ]]; then
-			echo "[enrich] ${case_dir}: no diff available, skipping"
-			skipped=$((skipped + 1))
-			i=$((i + 1))
-			continue
-		fi
-
-		local issue_content=""
-		if [[ -f "${full_path}/original-issue.md" ]]; then
-			issue_content=$(cat "${full_path}/original-issue.md")
-		fi
-		local diff_content
-		diff_content=$(cat "${full_path}/original-diff.patch")
-		local case_meta
-		case_meta=$(cat "${full_path}/case.json")
-
-		# Use ai-research to generate the enriched brief
-		local enrichment_prompt
-		enrichment_prompt="You are writing a prescriptive brief that will be given to Haiku (a fast but less capable model) to implement a code change. The brief must be specific enough that Haiku can follow it mechanically without needing to explore the codebase or make architectural decisions.
-
-Given the following PR information, write a brief following the template at .agents/templates/brief-template.md with tier:simple level detail:
-
-## PR Metadata
-${case_meta}
-
-## Original Issue Body
-${issue_content:-No issue body available}
-
-## Actual Diff (the known-good solution)
-\`\`\`diff
-${diff_content}
-\`\`\`
-
-Write the brief with:
-1. EXACT file paths and line ranges from the diff
-2. COMPLETE code blocks — not skeletons, but the actual code to insert/replace
-3. Explicit oldString/newString pairs for each edit
-4. Verification commands that test the specific changes
-5. Set tier to tier:simple with rationale
-
-The brief should be detailed enough that a worker can implement it by copying code blocks and running verification, without reading any other files."
-
-		echo "[enrich] ${case_dir}: generating enriched brief..."
-
-		# Dispatch to ai-research for brief generation
-		if command -v ai-research >/dev/null 2>&1 || [[ -x "${AGENTS_DIR}/scripts/ai-research-helper.sh" ]]; then
-			# Use ai-research MCP if available, otherwise fall back to placeholder
-			echo "[enrich] ${case_dir}: would generate via ai-research (model: ${model})"
-			echo "[enrich] ${case_dir}: placeholder brief written — run interactively to generate real briefs"
-
-			# Write placeholder for now — real enrichment requires interactive model dispatch
-			cat >"${full_path}/enriched-brief.md" <<BRIEF_EOF
-# Enriched Brief (placeholder)
-
-**Status:** Awaiting generation via ${model}
-**PR:** #$(jq -r '.pr_number' "${full_path}/case.json")
-**Complexity:** $(jq -r '.complexity' "${full_path}/case.json")
-
-## Enrichment Prompt
-
-The enrichment prompt has been prepared. Run the enrich command interactively
-or dispatch via autoresearch to generate the prescriptive brief.
-
----
-_Generated by brief-tier-test-helper.sh enrich_
-BRIEF_EOF
-		fi
-
-		enriched=$((enriched + 1))
 		i=$((i + 1))
 	done
 
 	echo "[enrich] Done: ${enriched} enriched, ${skipped} skipped"
 	return 0
+}
+
+# ── test helpers ─────────────────────────────────────────────────
+
+#######################################
+# Run a single test case against the model
+#
+# Dispatches the model with the enriched brief and records
+# the result. Currently writes placeholder results pending
+# full model dispatch implementation.
+#
+# Arguments:
+#   $1 - case directory name (relative)
+#   $2 - full path to case directory
+#   $3 - PR number
+#   $4 - repo slug
+#   $5 - complexity category
+#   $6 - model name
+#   $7 - results TSV file path
+# Returns: 0 if passed, 1 if failed or skipped
+#######################################
+_test_single_case() {
+	local case_dir="$1"
+	local full_path="$2"
+	local pr_number="$3"
+	local repo="$4"
+	local complexity="$5"
+	local model="$6"
+	local results="$7"
+
+	if [[ ! -f "${full_path}/enriched-brief.md" ]]; then
+		echo "[test] ${case_dir}: no enriched brief, skipping"
+		return 1
+	fi
+
+	echo "[test] ${case_dir}: testing ${model} against PR #${pr_number}..."
+
+	# TODO: Implement actual model dispatch in test worktree
+	# Real implementation will:
+	# 1. Create test worktree at pre-PR commit
+	# 2. Dispatch model with enriched brief
+	# 3. Capture output diff
+	# 4. Compare against original-diff.patch
+	# 5. Run verification.sh
+	# 6. Score and record
+
+	local pass="false"
+	local diff_sim="0.0"
+	local tokens="0"
+	local escalation_reason="NOT_RUN"
+
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$case_dir" "$pr_number" "$repo" "$complexity" "$model" \
+		"$pass" "$diff_sim" "$tokens" "$escalation_reason" \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$results"
+
+	if [[ "$pass" == "true" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 #######################################
@@ -447,35 +667,8 @@ cmd_test() {
 		local complexity
 		complexity=$(jq -r ".[$i].complexity" "${corpus}/index.json")
 
-		if [[ ! -f "${full_path}/enriched-brief.md" ]]; then
-			echo "[test] ${case_dir}: no enriched brief, skipping"
-			i=$((i + 1))
-			continue
-		fi
-
-		echo "[test] ${case_dir}: testing ${model} against PR #${pr_number}..."
-
-		# TODO: Implement actual model dispatch in test worktree
-		# For now, record placeholder results
-		# Real implementation will:
-		# 1. Create test worktree at pre-PR commit
-		# 2. Dispatch model with enriched brief
-		# 3. Capture output diff
-		# 4. Compare against original-diff.patch
-		# 5. Run verification.sh
-		# 6. Score and record
-
-		local pass="false"
-		local diff_sim="0.0"
-		local tokens="0"
-		local escalation_reason="NOT_RUN"
-
-		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-			"$case_dir" "$pr_number" "$repo" "$complexity" "$model" \
-			"$pass" "$diff_sim" "$tokens" "$escalation_reason" \
-			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$results"
-
-		if [[ "$pass" == "true" ]]; then
+		if _test_single_case "$case_dir" "$full_path" "$pr_number" "$repo" \
+			"$complexity" "$model" "$results"; then
 			passed=$((passed + 1))
 		else
 			failed=$((failed + 1))
