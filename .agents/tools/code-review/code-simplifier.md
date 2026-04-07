@@ -39,7 +39,7 @@ Per finding: `### [file:line_range] Category: Brief description` with sections *
 
 ### Prescriptive format for tier:simple dispatch (MANDATORY for issue creation)
 
-Format findings using `workflows/brief.md` prescriptive format. Research finding: Haiku achieves 100% success rate when issues provide verbatim oldString/newString. Simplification issues are inherently single-file, pattern-following, exact-code-known — the ideal `tier:simple` candidates. Every finding MUST include explicit Edit tool parameters:
+Format findings using `workflows/brief.md` prescriptive format. Research finding: Haiku achieves 100% success rate when issues provide verbatim oldString/newString. Simplification issues are inherently single-file, pattern-following, exact-code-known — the ideal `tier:simple` candidates. Every finding MUST include explicit Edit tool parameters, and verification MUST include a Qlty smells check for simplification targets rather than relying on shellcheck or grep alone:
 
 ```markdown
 ### [path/to/file.sh:45-52] Safe: Remove decorative emoji from log message
@@ -73,6 +73,7 @@ This format enables direct dispatch at `tier:simple` — Haiku copies the oldStr
 | Agent docs (`.md`) | All code blocks, URLs, task ID refs (`tNNN`, `GH#NNN`), command examples present before and after. **Executable templates** (code blocks containing commands workers must run — `gh`, helper scripts, verification commands) must remain as code blocks; compressing them to inline prose is a functional regression (GH#17503). |
 | TypeScript/JavaScript | `tsc --noEmit` + existing tests |
 | Configuration files | Schema validation or dry-run the consuming tool |
+| All `#simplification` targets | `~/.qlty/bin/qlty smells --all \| grep <file>` returns zero results — partial reduction is not completion |
 
 ## Classification
 
