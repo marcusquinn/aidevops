@@ -707,23 +707,8 @@ _read_brief_what_section() {
 	fi
 
 	# Extract text between "## What" and the next "##" heading (or EOF)
-	local in_what=false
-	local what_content=""
-	while IFS= read -r line; do
-		if [[ "$line" =~ ^##[[:space:]]+[Ww]hat ]]; then
-			in_what=true
-			continue
-		fi
-		if [[ "$in_what" == "true" ]]; then
-			if [[ "$line" =~ ^## ]]; then
-				break
-			fi
-			what_content="${what_content}${line}"$'\n'
-		fi
-	done <"$brief_file"
-
-	# Trim leading/trailing whitespace
-	what_content=$(printf '%s' "$what_content" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+	local what_content
+	what_content=$(awk '/^##[[:space:]]+[Ww]hat/ {f=1; next} /^##/ {f=0} f' "$brief_file" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
 	if [[ -z "$what_content" ]]; then
 		return 1
