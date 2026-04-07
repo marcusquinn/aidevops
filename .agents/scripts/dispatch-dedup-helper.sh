@@ -527,7 +527,10 @@ _ts_to_epoch() {
 		# Strip trailing Z or timezone offset for macOS date parsing
 		local clean_ts="${ts%%Z*}"
 		clean_ts="${clean_ts%%+*}"
-		date -j -f "%Y-%m-%dT%H:%M:%S" "$clean_ts" "+%s" 2>/dev/null || echo "0"
+		# GH#17699: TZ=UTC is critical — without it, macOS date interprets
+		# the input as local time, making UTC timestamps appear TZ-offset
+		# seconds older than they are (e.g. BST/UTC+1 = 3600s too old).
+		TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$clean_ts" "+%s" 2>/dev/null || echo "0"
 	else
 		date -d "$ts" "+%s" 2>/dev/null || echo "0"
 	fi
