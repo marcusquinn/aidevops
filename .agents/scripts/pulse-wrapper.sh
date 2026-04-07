@@ -5431,6 +5431,7 @@ Tighten and restructure this agent doc. Follow \`tools/build-agent/build-agent.m
 - Content preservation: all code blocks, URLs, task ID references (\`tNNN\`, \`GH#NNN\`), and command examples must be present before and after
 - No broken internal links or references
 - Agent behaviour unchanged (test with a representative query if possible)
+- Qlty smells resolved for the target file: \`~/.qlty/bin/qlty smells --all 2>&1 | grep '${file_path}' | grep -c . | grep -q '^0$'\` (report \`SKIP\` if Qlty is unavailable, not \`FAIL\`)
 - For reference corpora: \`wc -l\` total of chapter files >= original line count minus index overhead
 
 ### Confidence: medium
