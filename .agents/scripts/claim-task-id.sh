@@ -694,7 +694,47 @@ _check_duplicate_issue() {
 	return 1
 }
 
+# Read the "What" section from a task brief file (t1906).
+# Extracts content between "## What" and the next "##" heading.
+# Returns 0 and echoes the content if found, returns 1 if not.
+_read_brief_what_section() {
+	local task_id="$1"
+	local repo_path="$2"
+
+	local brief_file="${repo_path}/todo/tasks/${task_id}-brief.md"
+	if [[ ! -f "$brief_file" ]]; then
+		return 1
+	fi
+
+	# Extract text between "## What" and the next "##" heading (or EOF)
+	local in_what=false
+	local what_content=""
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^##[[:space:]]+[Ww]hat ]]; then
+			in_what=true
+			continue
+		fi
+		if [[ "$in_what" == "true" ]]; then
+			if [[ "$line" =~ ^## ]]; then
+				break
+			fi
+			what_content="${what_content}${line}"$'\n'
+		fi
+	done <"$brief_file"
+
+	# Trim leading/trailing whitespace
+	what_content=$(printf '%s' "$what_content" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+	if [[ -z "$what_content" ]]; then
+		return 1
+	fi
+
+	echo "$what_content"
+	return 0
+}
+
 # Compose a structured issue body from title and description (t1899).
+# Falls back to brief file's What section when no description provided (t1906).
 # Appends provenance signature footer when gh-signature-helper.sh is available.
 # Echoes the composed body text.
 _compose_issue_body() {
@@ -705,13 +745,27 @@ _compose_issue_body() {
 	if [[ -n "$description" ]]; then
 		body="$description"
 	else
-		log_warn "No --description provided — issue body will lack detail. Pass --description for rich issue content."
-		local desc_part
-		desc_part=$(printf '%s' "$title" | sed 's/^t[0-9]*: *//')
-		body="## Task"
-		body="$body"$'\n\n'"$desc_part"
-		body="$body"$'\n\n'"---"
-		body="$body"$'\n'"*Created by claim-task-id.sh (no description provided — enrich before dispatch)*"
+		# t1906: Try reading the brief file's What section before falling back to stub
+		local task_id
+		task_id=$(printf '%s' "$title" | grep -oE '^t[0-9]+' || echo "")
+		local brief_what=""
+		if [[ -n "$task_id" ]]; then
+			brief_what=$(_read_brief_what_section "$task_id" "$REPO_PATH") || true
+		fi
+
+		if [[ -n "$brief_what" ]]; then
+			log_info "Auto-read description from brief file: todo/tasks/${task_id}-brief.md"
+			body="## Task"
+			body="$body"$'\n\n'"$brief_what"
+		else
+			log_warn "No --description provided and no brief file found — issue body will lack detail. Pass --description for rich issue content."
+			local desc_part
+			desc_part=$(printf '%s' "$title" | sed 's/^t[0-9]*: *//')
+			body="## Task"
+			body="$body"$'\n\n'"$desc_part"
+			body="$body"$'\n\n'"---"
+			body="$body"$'\n'"*Created by claim-task-id.sh (no description provided — enrich before dispatch)*"
+		fi
 	fi
 
 	# t1899: Append provenance signature footer (build.txt rule #8)
