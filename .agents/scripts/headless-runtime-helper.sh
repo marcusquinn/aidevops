@@ -17,6 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=./worker-lifecycle-common.sh
+source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 
 # SSH agent integration for commit signing (t1882)
 # Source persisted agent.env so workers can sign commits without passphrase prompts.
@@ -2203,6 +2205,135 @@ _release_dispatch_claim() {
 	return 0
 }
 
+#######################################
+# Report worker failure to the shared fast-fail counter and trigger
+# tier escalation when threshold is reached.
+#
+# Previously, only the pulse (recover_failed_launch_state) and launchd
+# watchdog wrote to the counter — both asynchronous, discovering failures
+# 10-30 minutes after the worker died. This function lets the worker
+# self-report immediately on exit, so escalation fires within seconds
+# instead of 60-90+ minutes. The pulse path remains as a backup for
+# workers that crash hard before reaching this function.
+#
+# Uses the same state file and locking as pulse-wrapper.sh and
+# worker-watchdog.sh (fast-fail-counter.json + mkdir lock).
+#
+# Args:
+#   $1 - session_key (e.g., "issue-marcusquinn-aidevops-17642")
+#   $2 - failure reason (premature_exit, rate_limit, etc.)
+#######################################
+_report_failure_to_fast_fail() {
+	local session_key="$1"
+	local reason="${2:-worker_failed}"
+
+	# Extract issue number from session key (last numeric segment)
+	local issue_number=""
+	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+
+	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+		return 0
+	fi
+
+	# Only report for worker role (not pulse/triage sessions)
+	if [[ "$session_key" != issue-* ]]; then
+		return 0
+	fi
+
+	local state_file="${HOME}/.aidevops/.agent-workspace/supervisor/fast-fail-counter.json"
+	local state_dir
+	state_dir=$(dirname "$state_file")
+	mkdir -p "$state_dir" 2>/dev/null || true
+
+	# Acquire lock (shared with pulse-wrapper.sh and worker-watchdog.sh)
+	local lock_dir="${state_file}.lockdir"
+	local retries=0
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		retries=$((retries + 1))
+		if [[ "$retries" -ge 50 ]]; then
+			print_warning "[fast-fail] lock timeout for #${issue_number} (${repo_slug})"
+			return 0
+		fi
+		sleep 0.1
+	done
+
+	local key now
+	key="${repo_slug}/${issue_number}"
+	now=$(date +%s)
+
+	local initial_backoff="${FAST_FAIL_INITIAL_BACKOFF_SECS:-600}"
+	local max_backoff="${FAST_FAIL_MAX_BACKOFF_SECS:-604800}"
+	local expiry_secs="${FAST_FAIL_EXPIRY_SECS:-604800}"
+
+	# Read current state — reuse watchdog's helper if available, else inline
+	local existing_count=0
+	local existing_backoff=0
+	if [[ -f "$state_file" ]]; then
+		local entry=""
+		entry=$(jq -r --arg k "$key" '.[$k] // empty' "$state_file" 2>/dev/null) || entry=""
+		if [[ -n "$entry" ]]; then
+			local entry_ts=""
+			entry_ts=$(printf '%s' "$entry" | jq -r '.ts // 0' 2>/dev/null) || entry_ts=0
+			# Expire stale entries
+			if [[ $((now - entry_ts)) -lt "$expiry_secs" ]]; then
+				existing_count=$(printf '%s' "$entry" | jq -r '.count // 0' 2>/dev/null) || existing_count=0
+				existing_backoff=$(printf '%s' "$entry" | jq -r '.backoff_secs // 0' 2>/dev/null) || existing_backoff=0
+			fi
+		fi
+	fi
+
+	# Non-rate-limit failures: increment + exponential backoff
+	local new_count=$((existing_count + 1))
+	local new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : initial_backoff))
+	[[ "$new_backoff" -gt "$max_backoff" ]] && new_backoff="$max_backoff"
+	local retry_after=$((now + new_backoff))
+
+	# Write updated state atomically (tmp + mv)
+	local updated_state=""
+	if [[ -f "$state_file" ]]; then
+		updated_state=$(jq --arg k "$key" \
+			--argjson count "$new_count" \
+			--argjson ts "$now" \
+			--arg reason "$reason" \
+			--argjson retry_after "$retry_after" \
+			--argjson backoff_secs "$new_backoff" \
+			'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' \
+			"$state_file" 2>/dev/null) || updated_state=""
+	else
+		updated_state=$(printf '{}' | jq --arg k "$key" \
+			--argjson count "$new_count" \
+			--argjson ts "$now" \
+			--arg reason "$reason" \
+			--argjson retry_after "$retry_after" \
+			--argjson backoff_secs "$new_backoff" \
+			'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' \
+			2>/dev/null) || updated_state=""
+	fi
+
+	if [[ -n "$updated_state" ]]; then
+		local tmp_file=""
+		tmp_file=$(mktemp "${state_dir}/.fast-fail-counter.XXXXXX" 2>/dev/null) || tmp_file=""
+		if [[ -n "$tmp_file" ]]; then
+			printf '%s\n' "$updated_state" >"$tmp_file" 2>/dev/null &&
+				mv "$tmp_file" "$state_file" 2>/dev/null || rm -f "$tmp_file" 2>/dev/null
+		fi
+	fi
+
+	# Release lock
+	rmdir "$lock_dir" 2>/dev/null || true
+
+	print_info "[fast-fail] #${issue_number} (${repo_slug}) count=${new_count} backoff=${new_backoff}s reason=${reason}"
+
+	# Trigger tier escalation (escalate_issue_tier from worker-lifecycle-common.sh)
+	# Only fires when new_count == threshold (default 2) — not on every failure.
+	if [[ "$new_count" -gt "$existing_count" ]]; then
+		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason" || true
+	fi
+
+	return 0
+}
+
 _cmd_run_finish() {
 	local session_key="$1"
 	local ledger_status="$2"
@@ -2212,6 +2343,12 @@ _cmd_run_finish() {
 	# waiting for the 30-min TTL to expire.
 	if [[ "$ledger_status" == "fail" ]]; then
 		_release_dispatch_claim "$session_key" "worker_failed"
+
+		# Self-report to the fast-fail counter so tier escalation fires
+		# immediately instead of waiting 30+ min for the pulse to discover
+		# the orphaned assignment. Uses the failure reason from the retry
+		# loop if available, otherwise defaults to "worker_failed".
+		_report_failure_to_fast_fail "$session_key" "${_run_failure_reason:-worker_failed}"
 	fi
 
 	_update_dispatch_ledger "$session_key" "$ledger_status"
