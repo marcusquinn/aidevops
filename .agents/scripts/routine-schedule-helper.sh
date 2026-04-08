@@ -384,6 +384,99 @@ cmd_is_due() {
 #
 # Output: ISO timestamp of next scheduled run
 #######################################
+_next_run_daily() {
+	local parsed="$1"
+	local now_epoch="$2"
+	local sched_hour sched_minute
+	sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
+	sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
+
+	local today_date
+	today_date=$(date -u +%Y-%m-%d)
+	local sched_iso
+	sched_iso="${today_date}T$(printf '%02d:%02d:00Z' "$sched_hour" "$sched_minute")"
+	local sched_epoch
+	sched_epoch=$(_iso_to_epoch "$sched_iso") || return 2
+
+	if [[ "$now_epoch" -lt "$sched_epoch" ]]; then
+		_epoch_to_iso "$sched_epoch"
+	else
+		_epoch_to_iso $((sched_epoch + 86400))
+	fi
+	printf '\n'
+	return 0
+}
+
+_next_run_weekly() {
+	local parsed="$1"
+	local now_epoch="$2"
+	local sched_hour sched_minute sched_dow
+	sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
+	sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
+	sched_dow=$(printf '%s' "$parsed" | awk '{print $4}')
+	local now_dow
+	now_dow=$(_current_dow)
+
+	local days_ahead=$(((sched_dow - now_dow + 7) % 7))
+	if [[ "$days_ahead" -eq 0 ]]; then
+		local now_hour now_minute
+		read -r now_hour now_minute <<<"$(_current_hm)"
+		if [[ "$now_hour" -gt "$sched_hour" ]] ||
+			{ [[ "$now_hour" -eq "$sched_hour" ]] && [[ "$now_minute" -ge "$sched_minute" ]]; }; then
+			days_ahead=7
+		fi
+	fi
+
+	local next_epoch=$((now_epoch + days_ahead * 86400))
+	local next_date
+	next_date=$(_epoch_to_iso "$next_epoch") || return 2
+	next_date="${next_date%%T*}"
+	local next_iso
+	next_iso="${next_date}T$(printf '%02d:%02d:00Z' "$sched_hour" "$sched_minute")"
+	printf '%s\n' "$next_iso"
+	return 0
+}
+
+_next_run_monthly() {
+	local parsed="$1"
+	local sched_hour sched_minute sched_dom
+	sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
+	sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
+	sched_dom=$(printf '%s' "$parsed" | awk '{print $4}')
+
+	local now_dom
+	now_dom=$(_current_dom)
+	local now_year now_month_num
+	now_year=$(date -u +%Y)
+	now_month_num=$(date -u +%m)
+	now_month_num=$((10#$now_month_num))
+
+	local target_year="$now_year"
+	local target_month="$now_month_num"
+
+	if [[ "$now_dom" -gt "$sched_dom" ]]; then
+		target_month=$((target_month + 1))
+		if [[ "$target_month" -gt 12 ]]; then
+			target_month=1
+			target_year=$((target_year + 1))
+		fi
+	elif [[ "$now_dom" -eq "$sched_dom" ]]; then
+		local now_hour now_minute
+		read -r now_hour now_minute <<<"$(_current_hm)"
+		if [[ "$now_hour" -gt "$sched_hour" ]] ||
+			{ [[ "$now_hour" -eq "$sched_hour" ]] && [[ "$now_minute" -ge "$sched_minute" ]]; }; then
+			target_month=$((target_month + 1))
+			if [[ "$target_month" -gt 12 ]]; then
+				target_month=1
+				target_year=$((target_year + 1))
+			fi
+		fi
+	fi
+
+	printf '%04d-%02d-%02dT%02d:%02d:00Z\n' "$target_year" "$target_month" "$sched_dom" "$sched_hour" "$sched_minute"
+	return 0
+}
+
 cmd_next_run() {
 	local expression="$1"
 
@@ -397,113 +490,21 @@ cmd_next_run() {
 	now_epoch=$(_now_epoch)
 
 	case "$sched_type" in
-	daily)
-		local sched_hour sched_minute
-		sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
-		sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
-		local now_hour now_minute
-		read -r now_hour now_minute <<<"$(_current_hm)"
-
-		# Calculate today's scheduled epoch
-		local today_date
-		today_date=$(date -u +%Y-%m-%d)
-		local sched_iso
-		sched_iso="${today_date}T$(printf '%02d:%02d:00Z' "$sched_hour" "$sched_minute")"
-		local sched_epoch
-		sched_epoch=$(_iso_to_epoch "$sched_iso") || return 2
-
-		if [[ "$now_epoch" -lt "$sched_epoch" ]]; then
-			# Today's run hasn't happened yet
-			_epoch_to_iso "$sched_epoch"
-		else
-			# Next run is tomorrow
-			_epoch_to_iso $((sched_epoch + 86400))
-		fi
-		printf '\n'
-		return 0
-		;;
-	weekly)
-		local sched_hour sched_minute sched_dow
-		sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
-		sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
-		sched_dow=$(printf '%s' "$parsed" | awk '{print $4}')
-		local now_dow
-		now_dow=$(_current_dow)
-
-		# Days until target day of week
-		local days_ahead=$(((sched_dow - now_dow + 7) % 7))
-		if [[ "$days_ahead" -eq 0 ]]; then
-			# Same day — check if time has passed
-			local now_hour now_minute
-			read -r now_hour now_minute <<<"$(_current_hm)"
-			if [[ "$now_hour" -gt "$sched_hour" ]] ||
-				{ [[ "$now_hour" -eq "$sched_hour" ]] && [[ "$now_minute" -ge "$sched_minute" ]]; }; then
-				days_ahead=7
-			fi
-		fi
-
-		local next_epoch=$((now_epoch + days_ahead * 86400))
-		# Adjust to exact time
-		local next_date
-		next_date=$(_epoch_to_iso "$next_epoch") || return 2
-		next_date="${next_date%%T*}"
-		local next_iso
-		next_iso="${next_date}T$(printf '%02d:%02d:00Z' "$sched_hour" "$sched_minute")"
-		printf '%s\n' "$next_iso"
-		return 0
-		;;
-	monthly)
-		local sched_hour sched_minute sched_dom
-		sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
-		sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
-		sched_dom=$(printf '%s' "$parsed" | awk '{print $4}')
-
-		local now_dom
-		now_dom=$(_current_dom)
-		local now_year now_month_num
-		now_year=$(date -u +%Y)
-		now_month_num=$(date -u +%m)
-		now_month_num=$((10#$now_month_num))
-
-		local target_year="$now_year"
-		local target_month="$now_month_num"
-
-		if [[ "$now_dom" -gt "$sched_dom" ]]; then
-			# This month's run has passed, next month
-			target_month=$((target_month + 1))
-			if [[ "$target_month" -gt 12 ]]; then
-				target_month=1
-				target_year=$((target_year + 1))
-			fi
-		elif [[ "$now_dom" -eq "$sched_dom" ]]; then
-			local now_hour now_minute
-			read -r now_hour now_minute <<<"$(_current_hm)"
-			if [[ "$now_hour" -gt "$sched_hour" ]] ||
-				{ [[ "$now_hour" -eq "$sched_hour" ]] && [[ "$now_minute" -ge "$sched_minute" ]]; }; then
-				target_month=$((target_month + 1))
-				if [[ "$target_month" -gt 12 ]]; then
-					target_month=1
-					target_year=$((target_year + 1))
-				fi
-			fi
-		fi
-
-		printf '%04d-%02d-%02dT%02d:%02d:00Z\n' "$target_year" "$target_month" "$sched_dom" "$sched_hour" "$sched_minute"
-		return 0
-		;;
+	daily) _next_run_daily "$parsed" "$now_epoch" ;;
+	weekly) _next_run_weekly "$parsed" "$now_epoch" ;;
+	monthly) _next_run_monthly "$parsed" ;;
 	cron)
-		# For cron, just report "next minute" as approximation
-		# Full cron next-run calculation is complex; this is sufficient for debugging
+		# For cron, report "next minute" as approximation
 		local next_epoch=$((now_epoch + 60 - (now_epoch % 60)))
 		_epoch_to_iso "$next_epoch"
 		printf '\n'
-		return 0
 		;;
 	*)
 		printf '%s\n' "ERROR: unknown schedule type '$sched_type'" >&2
 		return 2
 		;;
 	esac
+	return 0
 }
 
 #######################################
