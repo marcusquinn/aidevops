@@ -6048,8 +6048,11 @@ run_weekly_complexity_scan() {
 	# Fail-closed: if pull fails, skip this scan cycle rather than proceeding
 	# with stale data (which would reintroduce the exact problem we're fixing).
 	# Do NOT update COMPLEXITY_SCAN_LAST_RUN on skip — the next cycle retries.
+	# GIT_TERMINAL_PROMPT=0 prevents credential prompts from hanging the pulse.
+	# timeout 30 prevents network hangs from blocking the pulse cycle.
 	if git -C "$aidevops_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		if ! git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1; then
+		if ! GIT_TERMINAL_PROMPT=0 timeout 30 \
+			git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1; then
 			echo "[pulse-wrapper] Complexity scan: git pull failed for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
 			return 0
 		fi
