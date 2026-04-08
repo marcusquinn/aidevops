@@ -6214,6 +6214,57 @@ Review all open \`simplification-debt\` issues and the current \`simplification-
 				"$scan_helper" sweep-done 2>>"$LOGFILE" || true
 			fi
 		fi
+
+		# Phase 5: Ratchet-check — lower thresholds when simplification wins accumulate (t1913)
+		# Runs after backfill so closed issues are reflected in violation counts.
+		# Creates a chore/ratchet-down PR when gap >= 5 (default).
+		local ratchet_output
+		ratchet_output=$("$scan_helper" ratchet-check "$aidevops_path" 2>>"$LOGFILE") || true
+		if [[ -n "$ratchet_output" ]]; then
+			echo "[pulse-wrapper] ratchet-check: proposals available" >>"$LOGFILE"
+			echo "$ratchet_output" >>"$LOGFILE"
+			# Check if a ratchet-down PR already exists to avoid duplicates
+			local ratchet_pr_exists
+			ratchet_pr_exists=$(gh pr list --repo "$aidevops_slug" \
+				--state open \
+				--search "in:title \"chore: ratchet-down complexity thresholds\"" \
+				--json number --jq 'length' 2>/dev/null) || ratchet_pr_exists="0"
+			if [[ "${ratchet_pr_exists:-0}" -eq 0 ]]; then
+				echo "[pulse-wrapper] ratchet-check: creating ratchet-down issue (t1913)" >>"$LOGFILE"
+				gh_create_issue --repo "$aidevops_slug" \
+					--title "chore: ratchet-down complexity thresholds" \
+					--label "code-quality" --label "auto-dispatch" --label "tier:standard" \
+					--body "## Automated ratchet-down (t1913)
+
+Simplification wins have accumulated. The following thresholds can be lowered:
+
+\`\`\`
+${ratchet_output}
+\`\`\`
+
+### Worker Guidance
+
+**Files to Modify:**
+- \`EDIT: .agents/configs/complexity-thresholds.conf\` — lower the thresholds listed above
+
+**Implementation Steps:**
+1. For each proposed threshold, update the value in \`complexity-thresholds.conf\`
+2. Add a ratchet-down comment above the updated value documenting the change (e.g., \`# Ratcheted down to NNN (GH#NNNN): actual violations NNN + 2 buffer\`)
+3. Do NOT remove existing bump history comments — they are the audit trail
+
+**Verification:**
+\`\`\`bash
+# Confirm thresholds updated
+grep -E 'FUNCTION_COMPLEXITY_THRESHOLD|NESTING_DEPTH_THRESHOLD|FILE_SIZE_THRESHOLD|BASH32_COMPAT_THRESHOLD' .agents/configs/complexity-thresholds.conf
+# Confirm CI would pass with new values
+.agents/scripts/complexity-scan-helper.sh ratchet-check . 5
+\`\`\`" >/dev/null 2>&1 || true
+			else
+				echo "[pulse-wrapper] ratchet-check: ratchet-down PR already open, skipping issue creation" >>"$LOGFILE"
+			fi
+		else
+			echo "[pulse-wrapper] ratchet-check: no ratchet-down available (thresholds already tight)" >>"$LOGFILE"
+		fi
 	else
 		# Fallback to inline scan if helper not available
 		echo "[pulse-wrapper] complexity-scan-helper.sh not found, using inline scan" >>"$LOGFILE"

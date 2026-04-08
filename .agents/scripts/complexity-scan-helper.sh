@@ -15,6 +15,7 @@
 #   complexity-scan-helper.sh scan <repo_path> [--state-file <path>] [--format json|pipe] [--type sh|md|py|js|all]
 #   complexity-scan-helper.sh sweep-check <repo_slug> [--stall-hours 6]
 #   complexity-scan-helper.sh metrics <file_path>
+#   complexity-scan-helper.sh ratchet-check [repo_path] [gap]
 #   complexity-scan-helper.sh help
 #
 # Exit codes: 0 = success, 1 = error, 2 = no changes detected
@@ -789,6 +790,188 @@ cmd_metrics() {
 }
 
 #######################################
+# Ratchet check — compare actual violation counts against thresholds.
+# When actual count is below threshold by more than gap, outputs proposed
+# new thresholds (actual + 2 buffer). Returns 0 if ratchet-down is possible.
+#
+# Arguments: $1 - repo_path (default: .)
+#            $2 - gap (default: 5)
+# Output: proposed threshold lines to stdout when ratchet-down is available
+# Exit: 0 = ratchet-down possible, 1 = thresholds already tight or error
+#######################################
+cmd_ratchet_check() {
+	local repo_path="${1:-.}"
+	local gap="${2:-5}"
+	local conf_file="${repo_path}/.agents/configs/complexity-thresholds.conf"
+
+	if [[ ! -f "$conf_file" ]]; then
+		_log "ERROR" "Config not found: $conf_file"
+		return 1
+	fi
+
+	# Read current thresholds from config
+	local func_threshold nest_threshold size_threshold bash32_threshold
+	func_threshold=$(grep '^FUNCTION_COMPLEXITY_THRESHOLD=' "$conf_file" | cut -d= -f2)
+	nest_threshold=$(grep '^NESTING_DEPTH_THRESHOLD=' "$conf_file" | cut -d= -f2)
+	size_threshold=$(grep '^FILE_SIZE_THRESHOLD=' "$conf_file" | cut -d= -f2)
+	bash32_threshold=$(grep '^BASH32_COMPAT_THRESHOLD=' "$conf_file" | cut -d= -f2)
+
+	# Validate thresholds are numeric
+	for val in "$func_threshold" "$nest_threshold" "$size_threshold" "$bash32_threshold"; do
+		if [[ ! "$val" =~ ^[0-9]+$ ]]; then
+			_log "ERROR" "Non-numeric threshold value: $val"
+			return 1
+		fi
+	done
+
+	# Discover shell files using same logic as CI (git ls-files)
+	local sh_files
+	sh_files=$(git -C "$repo_path" ls-files '*.sh' 2>/dev/null |
+		grep -Ev 'archived/|\.archive/|vendor/|node_modules/' || true)
+
+	if [[ -z "$sh_files" ]]; then
+		_log "ERROR" "No shell files found in $repo_path"
+		return 1
+	fi
+
+	# Count function complexity violations (>100 lines per function)
+	local actual_func=0
+	while IFS= read -r file; do
+		[[ -n "$file" ]] || continue
+		local full_path="${repo_path}/${file}"
+		[[ -f "$full_path" ]] || continue
+		local result
+		result=$(awk '
+			/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
+			fname && /^\}$/ { lines=NR-start; if(lines>100) print "BLOCK"; fname="" }
+		' "$full_path" 2>/dev/null) || result=""
+		if [[ -n "$result" ]]; then
+			local count
+			count=$(printf '%s\n' "$result" | grep -c '.' || echo "0")
+			actual_func=$((actual_func + count))
+		fi
+	done <<<"$sh_files"
+
+	# Count nesting depth violations (>8 levels per file)
+	local actual_nest=0
+	while IFS= read -r file; do
+		[[ -n "$file" ]] || continue
+		local full_path="${repo_path}/${file}"
+		[[ -f "$full_path" ]] || continue
+		local max_depth
+		max_depth=$(awk '
+			BEGIN { depth=0; max_depth=0 }
+			/^[[:space:]]*#/ { next }
+			/[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if(depth>max_depth) max_depth=depth }
+			/[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
+			END { print max_depth }
+		' "$full_path" 2>/dev/null) || max_depth=0
+		if [[ "$max_depth" -gt 8 ]]; then
+			actual_nest=$((actual_nest + 1))
+		fi
+	done <<<"$sh_files"
+
+	# Count file size violations (>1500 lines)
+	local actual_size=0
+	while IFS= read -r file; do
+		[[ -n "$file" ]] || continue
+		local full_path="${repo_path}/${file}"
+		[[ -f "$full_path" ]] || continue
+		local lc
+		lc=$(wc -l <"$full_path" 2>/dev/null) || lc=0
+		if [[ "$lc" -gt 1500 ]]; then
+			actual_size=$((actual_size + 1))
+		fi
+	done <<<"$sh_files"
+
+	# Count Bash 3.2 compatibility violations
+	local actual_bash32=0
+	local self_skip="linters-local.sh"
+	while IFS= read -r file; do
+		[[ -n "$file" ]] || continue
+		local full_path="${repo_path}/${file}"
+		[[ -f "$full_path" ]] || continue
+		local basename_file
+		basename_file=$(basename "$file")
+		[[ "$basename_file" = "$self_skip" ]] && continue
+
+		# "\t" or "\n" in string assignments
+		local matches
+		matches=$(grep -nE '\+="\\[tn]|="\\[tn]' "$full_path" 2>/dev/null |
+			grep -vE '^[0-9]+:[[:space:]]*#' |
+			grep -vE 'awk|sed|printf|echo.*-e|python|f\.write|gsub|join|split|print |replace|coords|excerpt|delimiter|regex|pattern' ||
+			true)
+		if [[ -n "$matches" ]]; then
+			local cnt
+			cnt=$(printf '%s\n' "$matches" | grep -c '.' || echo "0")
+			actual_bash32=$((actual_bash32 + cnt))
+		fi
+
+		# Associative arrays (bash 4.0+)
+		local assoc
+		assoc=$(grep -nE '^[[:space:]]*(declare|local|typeset)[[:space:]]+-A[[:space:]]' "$full_path" 2>/dev/null |
+			grep -vE '^[0-9]+:[[:space:]]*#' || true)
+		if [[ -n "$assoc" ]]; then
+			local cnt2
+			cnt2=$(printf '%s\n' "$assoc" | grep -c '.' || echo "0")
+			actual_bash32=$((actual_bash32 + cnt2))
+		fi
+
+		# Namerefs (bash 4.3+)
+		local nameref
+		nameref=$(grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-n[[:space:]]' "$full_path" 2>/dev/null |
+			grep -vE '^[0-9]+:[[:space:]]*#' || true)
+		if [[ -n "$nameref" ]]; then
+			local cnt3
+			cnt3=$(printf '%s\n' "$nameref" | grep -c '.' || echo "0")
+			actual_bash32=$((actual_bash32 + cnt3))
+		fi
+	done <<<"$sh_files"
+
+	_log "INFO" "Actual violations — func:${actual_func} nest:${actual_nest} size:${actual_size} bash32:${actual_bash32}"
+	_log "INFO" "Current thresholds — func:${func_threshold} nest:${nest_threshold} size:${size_threshold} bash32:${bash32_threshold}"
+
+	# Compare and output proposals (buffer of +2 above actual to prevent flapping)
+	local proposed=0
+
+	if [[ $((func_threshold - actual_func)) -ge "$gap" ]]; then
+		local new_func=$((actual_func + 2))
+		printf 'FUNCTION_COMPLEXITY_THRESHOLD: %d → %d (actual: %d, gap: %d)\n' \
+			"$func_threshold" "$new_func" "$actual_func" "$((func_threshold - actual_func))"
+		proposed=$((proposed + 1))
+	fi
+
+	if [[ $((nest_threshold - actual_nest)) -ge "$gap" ]]; then
+		local new_nest=$((actual_nest + 2))
+		printf 'NESTING_DEPTH_THRESHOLD: %d → %d (actual: %d, gap: %d)\n' \
+			"$nest_threshold" "$new_nest" "$actual_nest" "$((nest_threshold - actual_nest))"
+		proposed=$((proposed + 1))
+	fi
+
+	if [[ $((size_threshold - actual_size)) -ge "$gap" ]]; then
+		local new_size=$((actual_size + 2))
+		printf 'FILE_SIZE_THRESHOLD: %d → %d (actual: %d, gap: %d)\n' \
+			"$size_threshold" "$new_size" "$actual_size" "$((size_threshold - actual_size))"
+		proposed=$((proposed + 1))
+	fi
+
+	if [[ $((bash32_threshold - actual_bash32)) -ge "$gap" ]]; then
+		local new_bash32=$((actual_bash32 + 2))
+		printf 'BASH32_COMPAT_THRESHOLD: %d → %d (actual: %d, gap: %d)\n' \
+			"$bash32_threshold" "$new_bash32" "$actual_bash32" "$((bash32_threshold - actual_bash32))"
+		proposed=$((proposed + 1))
+	fi
+
+	if [[ "$proposed" -gt 0 ]]; then
+		_log "INFO" "Ratchet-down available: $proposed threshold(s) can be lowered"
+		return 0
+	fi
+
+	_log "INFO" "No ratchet-down available: all thresholds within gap of $gap"
+	return 1
+}
+
+#######################################
 # Help
 #######################################
 cmd_help() {
@@ -808,6 +991,13 @@ COMMANDS
   sweep-done                    Record that LLM sweep was performed
 
   metrics <file_path>           Compute metrics for a single file
+
+  ratchet-check [repo_path] [gap]
+                                Compare actual violation counts against thresholds.
+                                Outputs proposed new thresholds when gap >= minimum.
+                                repo_path: path to repo root (default: .)
+                                gap: minimum gap to trigger proposal (default: 5)
+                                Exit 0: ratchet-down available, Exit 1: thresholds tight
 
   help                          Show this help
 
@@ -839,6 +1029,7 @@ main() {
 	sweep-check) cmd_sweep_check "$@" ;;
 	sweep-done) cmd_sweep_done ;;
 	metrics) cmd_metrics "$@" ;;
+	ratchet-check) cmd_ratchet_check "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		_log "ERROR" "Unknown command: $cmd"
