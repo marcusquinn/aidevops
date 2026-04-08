@@ -418,13 +418,13 @@ _get_repo_maintainer() {
 # the dedup guard permanently blocks all dispatch (0 workers, 100%
 # failure rate observed in production — 370 issues, 159 PRs stuck).
 #
-# The 30-minute threshold matches DISPATCH_COMMENT_MAX_AGE (Layer 5).
-# GH#17549: Previously 1 hour, creating a 30-minute dead zone (30-60 min)
-# where Layer 5 passed (dispatch comment expired) but Layer 6 blocked
-# (assignment still "active"). This forced the LLM to bypass
-# dispatch_with_dedup() to re-dispatch dead workers, skipping all
-# dedup guards including the claim protocol. Any legitimate worker
-# should produce at least one comment or commit within 30 minutes.
+# The 10-minute threshold matches DISPATCH_COMMENT_MAX_AGE (Layer 5).
+# GH#17549: Previously 1 hour, creating a dead zone where Layer 5 passed
+# (dispatch comment expired) but Layer 6 blocked (assignment still "active").
+# Reduced from 30 min to 10 min: workers either succeed in ~10 min or crash
+# in ~2 min. The 30-min TTL wasted 28 min of dispatch capacity per crash
+# (880 dedup blocks vs 622 dispatches observed). Any legitimate worker
+# should produce at least one comment or commit within 10 minutes.
 #
 # Args:
 #   $1 = issue number
@@ -434,7 +434,7 @@ _get_repo_maintainer() {
 #   exit 0 = stale assignment recovered (safe to dispatch)
 #   exit 1 = assignment is NOT stale (genuine active claim, block dispatch)
 #######################################
-STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-${DISPATCH_COMMENT_MAX_AGE:-1800}}" # 30 min (GH#17549: aligned with DISPATCH_COMMENT_MAX_AGE to close dead zone)
+STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-${DISPATCH_COMMENT_MAX_AGE:-600}}" # 10 min (GH#17549: aligned with DISPATCH_COMMENT_MAX_AGE; reduced from 30 min — crash recovery was too slow)
 
 _is_stale_assignment() {
 	local issue_number="$1"
@@ -910,15 +910,16 @@ _is_dispatch_comment_active() {
 #
 # GH#17503: This is now the PRIMARY dedup guard. Dispatch comments are
 # never deleted (audit trail). A dispatch comment blocks re-dispatch for
-# DISPATCH_COMMENT_MAX_AGE seconds (default 1800 = 30 min). After that,
+# DISPATCH_COMMENT_MAX_AGE seconds (default 600 = 10 min). After that,
 # the comment stays for audit but no longer blocks — allowing a fresh
 # dispatch attempt.
 #
 # A completion or failure comment posted AFTER the dispatch comment
 # cancels the lock early — the worker is done, re-dispatch is safe.
 # Recognised completion signals: "TASK_COMPLETE", "FULL_LOOP_COMPLETE",
-# "Worker failed", "BLOCKED", "Stale assignment recovered",
-# "Kill signal sent", "gh pr merge", "Closes #".
+# "Worker failed", "Worker Watchdog Kill", "BLOCKED",
+# "Stale assignment recovered", "Kill signal sent", "gh pr merge",
+# "Closes #", "MERGE_SUMMARY", "CLAIM_RELEASED".
 #
 # No active-claim-state gate (removed GH#17503) — the dispatch comment
 # itself IS the claim. Labels and assignees are secondary signals.
@@ -947,7 +948,7 @@ has_dispatch_comment() {
 	# status:queued/in-progress. That gate allowed stale recovery to destroy the
 	# claim state and bypass this check entirely.
 
-	local max_age="${DISPATCH_COMMENT_MAX_AGE:-1800}" # 30 min (GH#17503, was 3600)
+	local max_age="${DISPATCH_COMMENT_MAX_AGE:-600}" # 10 min (was 30 min/1800s — reduced to match worker lifecycle; crash recovery was wasting 28 min per crash)
 	local now_epoch
 	now_epoch=$(date -u '+%s')
 
@@ -995,6 +996,7 @@ has_dispatch_comment() {
 				(.body_start | test("TASK_COMPLETE"; "i")) or
 				(.body_start | test("FULL_LOOP_COMPLETE"; "i")) or
 				(.body_start | test("Worker failed"; "i")) or
+				(.body_start | test("Worker Watchdog Kill"; "i")) or
 				(.body_start | test("BLOCKED"; "i")) or
 				(.body_start | test("Kill signal sent"; "i")) or
 				(.body_start | test("Closes #"; "i")) or

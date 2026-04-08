@@ -3337,6 +3337,15 @@ cleanup_worktrees() {
 
 							recover_failed_launch_state "$orphan_issue_num" "$repo_slug_age" "premature_exit" "$orphan_crash_type"
 							echo "[pulse-wrapper] Orphan cleanup: recorded premature_exit for #${orphan_issue_num} (${repo_slug_age}) crash_type=${orphan_crash_type} — triggers fast-fail escalation" >>"$LOGFILE"
+
+							# Post failure comment to clear dedup guard immediately.
+							# Without this, the dispatch comment blocks re-dispatch
+							# for the full TTL even though the worker is dead.
+							# "Worker failed" is a recognised completion signal in
+							# dispatch-dedup-helper.sh has_dispatch_comment().
+							gh issue comment "$orphan_issue_num" --repo "$repo_slug_age" \
+								--body "Worker failed: orphan worktree detected (crash_type=${orphan_crash_type}, 0 commits). Cleared for re-dispatch." \
+								>/dev/null 2>&1 || true
 						fi
 					fi
 
@@ -10329,6 +10338,19 @@ _run_preflight_stages() {
 	_session_ct=$(check_session_count)
 	if [[ "${_session_ct:-0}" -gt "$SESSION_COUNT_WARN" ]]; then
 		echo "[pulse-wrapper] Session warning: $_session_ct interactive sessions open (threshold: $SESSION_COUNT_WARN). Each consumes 100-440MB + language servers. Consider closing unused tabs." >>"$LOGFILE"
+	fi
+
+	# Early dispatch pass: fill available worker slots BEFORE heavy housekeeping.
+	# Workers take 25-30s to cold-start (sandbox-exec + opencode), so dispatching
+	# here lets them boot in parallel with the remaining housekeeping stages
+	# (close_issues_with_merged_prs ~260s, prefetch_state ~130s, etc.).
+	# The main fill floor at the end of the cycle catches any slots freed by
+	# housekeeping. Without this, workers sit idle for ~7 minutes of cleanup.
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag present — skipping early fill floor" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] Early fill floor: dispatching workers before housekeeping" >>"$LOGFILE"
+		apply_deterministic_fill_floor
 	fi
 
 	# Daily complexity scan (GH#5628): creates simplification-debt issues

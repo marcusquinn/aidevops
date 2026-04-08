@@ -2512,7 +2512,7 @@ _cmd_run_finish() {
 
 	# Release the dispatch claim on failure so the issue is immediately
 	# available for re-dispatch (next 2-min pulse cycle) instead of
-	# waiting for the 30-min TTL to expire.
+	# waiting for the 10-min TTL to expire.
 	if [[ "$ledger_status" == "fail" ]]; then
 		_release_dispatch_claim "$session_key" "worker_failed"
 
