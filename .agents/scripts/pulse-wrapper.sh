@@ -6751,7 +6751,10 @@ _is_task_committed_to_main() {
 	# false positives: any commit that MENTIONED an issue (e.g., "Relabeled
 	# #17659 and #17660") would match, closing issues whose work hadn't been
 	# done. Restrict to the "(#NNN)" suffix that GitHub adds to squash merges.
-	search_patterns+=("(#${issue_number})")
+	# t1927: Escape parens for -E regex — unescaped parens are capture groups
+	# that match bare "#NNN" in commit bodies (evidence tables, PR descriptions).
+	# With \( \) the pattern only matches the literal "(#NNN)" suffix.
+	search_patterns+=("\\(#${issue_number}\\)")
 
 	# Pattern 4: "Closes #NNN" / "Fixes #NNN" in commit messages — these
 	# are the conventional patterns for commits that resolve an issue.
@@ -8399,18 +8402,19 @@ _fast_fail_prune_expired_locked() {
 #
 # Safety valve that prevents unlimited dispatch loops. Counts total
 # DISPATCH_CLAIM comments on an issue. If the count exceeds
-# DISPATCH_COUNT_CAP (default 8), the issue is blocked from dispatch
-# and labeled "stuck" for human review.
+# DISPATCH_COUNT_CAP (default 8), the issue is either:
+#   1. Escalated to the next tier (if not yet at tier:reasoning)
+#   2. Labeled "stuck" for human review (if already at tier:reasoning)
 #
-# Root cause: stale recovery + fast-fail gaps created infinite loops
-# where issues were dispatched 10+ times with 0 PRs. This function
-# is the ultimate safety net independent of the fast-fail counter.
+# This ensures every issue gets tried at the highest model tier before
+# being blocked. Labeling "stuck" on standard-tier issues wastes the
+# opportunity for a reasoning model to solve it.
 #
 # Args:
 #   $1 - issue number
 #   $2 - repo slug (owner/repo)
 # Returns:
-#   exit 0 = dispatch count exceeded (do NOT dispatch)
+#   exit 0 = dispatch count exceeded (do NOT dispatch this cycle)
 #   exit 1 = within limit (safe to dispatch)
 #######################################
 dispatch_count_exceeded() {
@@ -8432,28 +8436,45 @@ dispatch_count_exceeded() {
 	[[ "$dispatch_count" =~ ^[0-9]+$ ]] || dispatch_count=0
 
 	if [[ "$dispatch_count" -ge "$cap" ]]; then
-		echo "[pulse-wrapper] dispatch_count_exceeded: #${issue_number} (${repo_slug}) has ${dispatch_count} dispatches (cap=${cap}) — BLOCKED (t1927)" >>"$LOGFILE"
-		# Label as stuck for human review
-		gh label create "stuck" --repo "$repo_slug" \
-			--description "Issue exceeded dispatch count cap — needs human review" \
-			--color "B60205" --force 2>/dev/null || true
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "stuck" --remove-label "status:available" \
-			--remove-label "status:queued" 2>/dev/null || true
-		gh issue comment "$issue_number" --repo "$repo_slug" \
-			--body "## Dispatch Loop Detected (t1927)
+		# Check current tier — escalate before blocking
+		local current_labels
+		current_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
 
-This issue has been dispatched **${dispatch_count} times** (cap: ${cap}) without producing a merged PR. Marking as \`stuck\` to prevent further resource waste.
+		# If NOT at tier:reasoning, escalate instead of blocking
+		case ",$current_labels," in
+		*,tier:reasoning,* | *,tier:thinking,*)
+			# Already at highest tier — label stuck
+			echo "[pulse-wrapper] dispatch_count_exceeded: #${issue_number} (${repo_slug}) has ${dispatch_count} dispatches (cap=${cap}) at tier:reasoning — STUCK (t1927)" >>"$LOGFILE"
+			gh label create "stuck" --repo "$repo_slug" \
+				--description "Issue exceeded dispatch count cap at highest tier — needs human review" \
+				--color "B60205" --force 2>/dev/null || true
+			gh issue edit "$issue_number" --repo "$repo_slug" \
+				--add-label "stuck" --remove-label "status:available" \
+				--remove-label "status:queued" 2>/dev/null || true
+			gh issue comment "$issue_number" --repo "$repo_slug" \
+				--body "## Dispatch Loop Detected (t1927)
+
+This issue has been dispatched **${dispatch_count} times** (cap: ${cap}) at \`tier:reasoning\` without producing a merged PR. Marking as \`stuck\` to prevent further resource waste.
 
 **Likely causes:**
 - Workers are timing out without producing output
 - The issue body lacks sufficient implementation context
 - A dependency (\`blocked-by\`) is unresolved
-- The task exceeds the capability of the assigned model tier
+- The task exceeds what headless workers can achieve autonomously
 
-**Action needed:** Review issue body quality, check for blockers, consider manual implementation or decomposition. Remove the \`stuck\` label and reset the fast-fail counter (\`fast_fail_reset\`) to re-enable dispatch.
+**Action needed:** Review issue body quality, check for blockers, consider manual implementation or decomposition. Remove the \`stuck\` label and reset the fast-fail counter to re-enable dispatch.
 
 _Automated by dispatch_count_exceeded() safety valve (t1927)_" 2>/dev/null || true
+			;;
+		*)
+			# Not at reasoning tier — escalate and reset counter
+			echo "[pulse-wrapper] dispatch_count_exceeded: #${issue_number} (${repo_slug}) has ${dispatch_count} dispatches (cap=${cap}) — escalating tier before stuck (t1927)" >>"$LOGFILE"
+			escalate_issue_tier "$issue_number" "$repo_slug" "$dispatch_count" "dispatch_count_cap" || true
+			# Reset fast-fail counter so the escalated tier gets fresh attempts
+			fast_fail_reset "$issue_number" "$repo_slug" || true
+			;;
+		esac
 		return 0
 	fi
 
