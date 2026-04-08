@@ -1,0 +1,18 @@
+# Known bot accounts with token-efficiency skip rules (build.txt #8c)
+# One login per line. Lines starting with # are comments.
+# Shared by: unknown-bot-alert.yml, bot-noise-monitor-helper.sh
+# When adding a bot here, also add skip guidance to build.txt rule #8c.
+coderabbitai[bot]
+sonarqubecloud[bot]
+codacy-production[bot]
+github-actions[bot]
+gemini-code-assist[bot]
+codefactor-io[bot]
+socket-security[bot]
+qltybot[bot]
+dependabot[bot]
+renovate[bot]
+mergify[bot]
+allcontributors[bot]
+codecov[bot]
+stale[bot]

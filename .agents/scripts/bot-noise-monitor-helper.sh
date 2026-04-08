@@ -15,24 +15,24 @@
 
 set -euo pipefail
 
-# Known bot accounts with existing skip rules (build.txt #8c)
-# Keep in sync with .github/workflows/unknown-bot-alert.yml KNOWN_BOTS
-KNOWN_BOTS=(
-	"coderabbitai[bot]"
-	"sonarqubecloud[bot]"
-	"codacy-production[bot]"
-	"github-actions[bot]"
-	"gemini-code-assist[bot]"
-	"codefactor-io[bot]"
-	"socket-security[bot]"
-	"qltybot[bot]"
-	"dependabot[bot]"
-	"renovate[bot]"
-	"mergify[bot]"
-	"allcontributors[bot]"
-	"codecov[bot]"
-	"stale[bot]"
-)
+# Load known bots from central config (single source of truth).
+# Falls back to inline list if config file not found.
+_KNOWN_BOTS_FILE="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}/configs/known-bots.txt"
+KNOWN_BOTS=()
+if [[ -f "$_KNOWN_BOTS_FILE" ]]; then
+	while IFS= read -r line; do
+		[[ -z "$line" || "$line" == \#* ]] && continue
+		KNOWN_BOTS+=("$line")
+	done <"$_KNOWN_BOTS_FILE"
+else
+	# Fallback if deployed config not available
+	KNOWN_BOTS=(
+		"coderabbitai[bot]" "sonarqubecloud[bot]" "codacy-production[bot]"
+		"github-actions[bot]" "gemini-code-assist[bot]" "codefactor-io[bot]"
+		"socket-security[bot]" "qltybot[bot]" "dependabot[bot]" "renovate[bot]"
+		"mergify[bot]" "allcontributors[bot]" "codecov[bot]" "stale[bot]"
+	)
+fi
 
 _is_known_bot() {
 	local login="$1"

@@ -34,23 +34,19 @@ jobs:
           BOT_LOGIN: ${{ github.event.comment.user.login }}
           COMMENT_LEN: ${{ github.event.comment.body && '1' || '0' }}
         run: |
-          # Known bots with skip rules in build.txt #8c
-          KNOWN_BOTS=(
-            "coderabbitai[bot]"
-            "sonarqubecloud[bot]"
-            "codacy-production[bot]"
-            "github-actions[bot]"
-            "gemini-code-assist[bot]"
-            "codefactor-io[bot]"
-            "socket-security[bot]"
-            "qltybot[bot]"
-            "dependabot[bot]"
-            "renovate[bot]"
-            "mergify[bot]"
-            "allcontributors[bot]"
-            "codecov[bot]"
-            "stale[bot]"
-          )
+          # Fetch known bots list from aidevops repo (single source of truth).
+          # Falls back to a minimal hardcoded list if fetch fails.
+          KNOWN_BOTS=()
+          BOTS_URL="https://raw.githubusercontent.com/marcusquinn/aidevops/main/.agents/configs/known-bots.txt"
+          if BOTS_FILE=$(curl -fsSL "$BOTS_URL" 2>/dev/null); then
+            while IFS= read -r line; do
+              [[ -z "$line" || "$line" == \#* ]] && continue
+              KNOWN_BOTS+=("$line")
+            done <<< "$BOTS_FILE"
+          else
+            # Fallback: minimal list to avoid false alerts on common bots
+            KNOWN_BOTS=("github-actions[bot]" "dependabot[bot]" "renovate[bot]")
+          fi
 
           is_known=false
           for bot in "${KNOWN_BOTS[@]}"; do
@@ -123,9 +119,8 @@ jobs:
           - What percentage of its output is actionable vs noise?
 
           ### Files to update
-          - EDIT: .agents/prompts/build.txt — add to rule #8c known bot patterns
-          - EDIT: .agents/scripts/bot-noise-monitor-helper.sh — add to KNOWN_BOTS array
-          - EDIT: .github/workflows/unknown-bot-alert.yml — add to KNOWN_BOTS array'
+          - EDIT: .agents/configs/known-bots.txt — add bot login (single source of truth, auto-propagates to monitor script and workflow)
+          - EDIT: .agents/prompts/build.txt — add skip guidance to rule #8c if the bot has unique noise patterns'
              \`\`\`
           3. **Until skip rules are added**, workers will process this bot's full output on every issue/PR thread read
 
