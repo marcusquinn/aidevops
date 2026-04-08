@@ -7558,7 +7558,7 @@ _issue_needs_consolidation() {
 			and (.body | test("CLAIM_RELEASED reason=") | not)
 			and (.body | test("^(Worker failed:|## Worker Watchdog Kill)") | not)
 			and (.body | test("^(\\*\\*)?Stale assignment recovered") | not)
-			and (.body | test("^## (Triage Review|Completion Summary)") | not)
+			and (.body | test("^## (Triage Review|Completion Summary|Large File Simplification Gate|Issue Consolidation Needed)") | not)
 			and (.body | test("<!-- MERGE_SUMMARY -->") | not)
 			and (.body | test("^Closing:") | not)
 			and (.body | test("^Worker failed: orphan worktree") | not)
