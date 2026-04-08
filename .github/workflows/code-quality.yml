@@ -487,9 +487,7 @@ jobs:
         fetch-depth: 0
 
     - name: Install Qlty CLI
-      run: |
-        curl -sSL https://qlty.sh/install | bash
-        echo "$HOME/.qlty/bin" >> "$GITHUB_PATH"
+      uses: qltysh/qlty-action/install@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0
 
     - name: Qlty smells check (diff mode)
       run: |
