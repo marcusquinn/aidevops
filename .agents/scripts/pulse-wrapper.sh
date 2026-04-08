@@ -7912,12 +7912,14 @@ dispatch_with_dedup() {
 	# because workers kept dying before posting.
 	local dispatch_comment_body
 	local display_model="${selected_model:-auto-select (round-robin)}"
-	dispatch_comment_body="Dispatching worker (deterministic).
+	dispatch_comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+Dispatching worker (deterministic).
 - **Worker PID**: ${worker_pid}
 - **Model**: ${display_model}
 - **Tier**: ${dispatch_tier}
 - **Runner**: ${self_login}
-- **Issue**: #${issue_number}"
+- **Issue**: #${issue_number}
+<!-- ops:end -->"
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--method POST --field body="$dispatch_comment_body" \
 		>/dev/null 2>>"$LOGFILE" || {
