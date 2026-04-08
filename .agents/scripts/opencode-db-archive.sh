@@ -472,9 +472,15 @@ BATCH_SQL
 	# Marks done so the RETURN trap does not double-run.
 	_checkpoint_archive_db "$ARCHIVE_DB"
 
-	# Reclaim space
-	print_info "Running incremental vacuum on active DB..."
-	sqlite3 "$ACTIVE_DB" "PRAGMA incremental_vacuum;"
+	# Reclaim space — VACUUM works regardless of auto_vacuum setting.
+	# PRAGMA incremental_vacuum is a no-op when auto_vacuum=0 (the SQLite default
+	# used by OpenCode), so VACUUM is required here. VACUUM needs exclusive access;
+	# if another connection holds the DB (interactive session), skip gracefully and
+	# retry on the next archive cycle.
+	print_info "Running VACUUM on active DB..."
+	if ! sqlite3 "$ACTIVE_DB" "VACUUM;" 2>/dev/null; then
+		print_warning "VACUUM skipped — database is in use by another process. Will retry next cycle."
+	fi
 
 	local size_after
 	size_after=$(file_size_bytes "$ACTIVE_DB")
