@@ -1754,9 +1754,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "hash": "9296ae8d055c9758c6c9daef842f2bad2740ce0c",
-      "at": "2026-04-08T15:33:00Z",
-      "passes": 28,
+      "hash": "18550a39ffb073e8a16d7322d868d15f14aa22e1",
+      "at": "2026-04-08T17:58:41Z",
+      "passes": 29,
       "pr": 15086
     },
     ".agents/scripts/issue-sync-lib.sh": {
@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "cf03fb5ef1f06ba69440a7d0c0db36ee0d1ed7bd",
-      "at": "2026-04-08T15:33:00Z",
-      "passes": 59,
+      "hash": "684c0bb489800ca863d98b7ab6b1fbbc9f23b1ef",
+      "at": "2026-04-08T17:58:41Z",
+      "passes": 60,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "99263a6681e05b218d87b86ccbae2e1a1d565694",
-      "at": "2026-04-08T15:33:13Z",
-      "passes": 86,
+      "hash": "8494a4477031db3e6aa983c41caf60752f659351",
+      "at": "2026-04-08T17:58:58Z",
+      "passes": 87,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "63bd30a3e87905a9bd0b68b591e029ad9298de34",
-      "at": "2026-04-08T15:33:13Z",
-      "passes": 84,
+      "hash": "81f88e552ced561281d052a36dc1e011ef510ba0",
+      "at": "2026-04-08T17:58:58Z",
+      "passes": 85,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -6731,10 +6731,10 @@
       "passes": 1
     },
     ".agents/scripts/approval-helper.sh": {
-      "hash": "1487b15bc146be40aaefa29e020ba693fe2f7ef2",
-      "at": "2026-04-07T23:52:04Z",
+      "hash": "c58f45b4de8e534f75cf797106db9ae7d9d2d3ab",
+      "at": "2026-04-08T17:58:40Z",
       "pr": 17454,
-      "passes": 3
+      "passes": 4
     },
     ".agents/reference/customization.md": {
       "hash": "f0eacffbaf909a5f1849f7bf5668c92a81ba252d",
@@ -6791,10 +6791,10 @@
       "passes": 2
     },
     ".agents/scripts/opencode-db-archive.sh": {
-      "hash": "6e0d4a91eb51f9d9a718f0dd92d62c85555a2dbf",
-      "at": "2026-04-08T10:00:29Z",
+      "hash": "d70b8431719f9de873d119eb81b297d4da471f25",
+      "at": "2026-04-08T17:58:41Z",
       "pr": 17584,
-      "passes": 5
+      "passes": 6
     },
     ".agents/scripts/colormind-helper.sh": {
       "hash": "fca3090dfe5b07e572ecf605cd270baa54981bbf",
