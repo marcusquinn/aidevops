@@ -68,6 +68,12 @@ gh() {
 		_mock_gh_issue "$@"
 		return $?
 		;;
+	pr)
+		# GH#17916: _create_quality_debt_issues calls `gh pr view` to get the
+		# PR author. Return empty JSON so is_maintainer_pr defaults to false.
+		echo "{}"
+		return 0
+		;;
 	esac
 
 	echo "unexpected gh call: ${command}" >&2
