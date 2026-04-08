@@ -167,6 +167,17 @@ extract_failure_signature() {
 	local logs
 	logs=$(gh run view "$run_id" --repo "$repo_slug" --log-failed 2>/dev/null || true)
 	if [[ -z "$logs" ]]; then
+		# Fallback: --log-failed returned empty (logs expired, rate-limited, or run still
+		# in progress). Try the jobs API to get the first failed job's logs directly.
+		# This avoids the "no_failed_log_output" signature which produces unhelpful clusters.
+		local failed_job_id
+		failed_job_id=$(gh api "repos/${repo_slug}/actions/runs/${run_id}/jobs" \
+			--jq '[.jobs[] | select(.conclusion == "failure")] | first | .id // empty' 2>/dev/null || true)
+		if [[ -n "$failed_job_id" ]]; then
+			logs=$(gh api "repos/${repo_slug}/actions/jobs/${failed_job_id}/logs" 2>/dev/null || true)
+		fi
+	fi
+	if [[ -z "$logs" ]]; then
 		printf '%s' "no_failed_log_output"
 		return 0
 	fi
