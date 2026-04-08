@@ -1754,9 +1754,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "hash": "e296d8b5991af304b86dddc9088cee43b64b6848",
-      "at": "2026-04-08T02:39:29Z",
-      "passes": 26,
+      "hash": "9ad7ad779192ec16d43021b71ca1da104a0684fa",
+      "at": "2026-04-08T05:28:52Z",
+      "passes": 27,
       "pr": 15086
     },
     ".agents/scripts/issue-sync-lib.sh": {
@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "6acacb9eab7aa51d0d259ce5889bb133cb118ff4",
-      "at": "2026-04-08T04:51:04Z",
-      "passes": 56,
+      "hash": "1f97cd9546bc3887803876f60b43b60c3644840d",
+      "at": "2026-04-08T05:28:52Z",
+      "passes": 57,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -5267,9 +5267,9 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "b87d73e24891209a6993c57bd2938b2bc36e24e6",
-      "at": "2026-04-08T04:51:27Z",
-      "passes": 80,
+      "hash": "e2cc493eb82dcc50422d004716aa9e6c8a5be3c0",
+      "at": "2026-04-08T05:29:06Z",
+      "passes": 81,
       "pr": 15470
     },
     "setup.sh": {
