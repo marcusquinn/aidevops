@@ -136,16 +136,18 @@ get_tier_models() {
 
 	# Hardcoded fallback — kept in sync with model-routing-table.json.
 	# If you're editing these, update the JSON file instead.
+	# Claude models are primary for all tiers (t1927). Non-Anthropic
+	# providers are opt-in fallbacks configured in model-routing-table.json.
 	case "$tier" in
 	local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
 	haiku) echo "anthropic/claude-haiku-4-5|openai/gpt-5.4-mini" ;;
 	flash) echo "openai/gpt-5.4-mini|openai/gpt-4.1-mini" ;;
 	sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-5.4" ;;
-	pro) echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-6" ;;
-	opus) echo "anthropic/claude-opus-4-6|openai/gpt-5.4-pro" ;;
+	pro) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-pro" ;;
+	opus) echo "anthropic/claude-opus-4-6|openai/gpt-5.4" ;;
 	health) echo "anthropic/claude-sonnet-4-6|openai/gpt-5.4-mini" ;;
 	eval) echo "anthropic/claude-sonnet-4-6|openai/gpt-5.4-mini" ;;
-	coding) echo "anthropic/claude-opus-4-6|openai/gpt-5.4-pro" ;;
+	coding) echo "anthropic/claude-opus-4-6|openai/gpt-5.4" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -289,10 +291,18 @@ sql_escape() {
 # =============================================================================
 # API Key Resolution
 # =============================================================================
-# Resolves API keys from three sources (in priority order):
-# 1. Environment variables
+# Resolves API keys/tokens from four sources (in priority order):
+# 1. Environment variables (e.g., ANTHROPIC_API_KEY, OPENAI_API_KEY)
 # 2. gopass encrypted secrets
 # 3. credentials.sh plaintext fallback
+# 4. OpenCode OAuth auth.json (~/.local/share/opencode/auth.json)
+#
+# Source 4 is critical for headless dispatch: the OpenCode runtime authenticates
+# via OAuth tokens stored in auth.json, NOT env vars. Without this source, the
+# probe reports "no-key" for providers like Anthropic even when valid OAuth
+# tokens exist — causing the availability helper to skip the provider and
+# preventing dispatch to Claude models (t1927).
+#
 # SECURITY: Echoes the key value directly to stdout. Callers MUST capture the
 # value in a local variable (api_key=$(resolve_api_key "$provider")) and MUST
 # NOT log or print the value. Returns 0 if found, 1 if not.
@@ -300,50 +310,90 @@ sql_escape() {
 resolve_api_key() {
 	local provider="$1"
 	local key_vars
-	key_vars=$(get_provider_key_vars "$provider" 2>/dev/null) || return 1
+	key_vars=$(get_provider_key_vars "$provider" 2>/dev/null) || key_vars=""
 
-	if [[ -z "$key_vars" ]]; then
-		return 1
-	fi
+	# Sources 1-3 require key_vars to be non-empty (env var name to look up).
+	# Source 4 (OAuth auth.json) works even without key_vars — it looks up
+	# the provider name directly in the auth file.
 
-	# Check each possible env var name
-	local -a var_names
-	IFS=',' read -ra var_names <<<"$key_vars"
-	for var_name in "${var_names[@]}"; do
-		# Source 1: Environment variable
-		if [[ -n "${!var_name:-}" ]]; then
-			echo "${!var_name}"
-			return 0
-		fi
-	done
-
-	# Source 2: gopass (if available)
-	if command -v gopass &>/dev/null; then
+	if [[ -n "$key_vars" ]]; then
+		# Check each possible env var name
+		local -a var_names
+		IFS=',' read -ra var_names <<<"$key_vars"
 		for var_name in "${var_names[@]}"; do
-			local gopass_path="aidevops/${var_name}"
-			if gopass show "$gopass_path" &>/dev/null; then
-				local key_val
-				key_val=$(gopass show "$gopass_path" 2>/dev/null)
-				if [[ -n "$key_val" ]]; then
-					echo "$key_val"
-					return 0
-				fi
-			fi
-		done
-	fi
-
-	# Source 3: credentials.sh (plaintext fallback)
-	local creds_file="${HOME}/.config/aidevops/credentials.sh"
-	if [[ -f "$creds_file" ]]; then
-		# Source the file to get variables (safe: we control this file)
-		# shellcheck disable=SC1090
-		source "$creds_file"
-		for var_name in "${var_names[@]}"; do
+			# Source 1: Environment variable
 			if [[ -n "${!var_name:-}" ]]; then
 				echo "${!var_name}"
 				return 0
 			fi
 		done
+
+		# Source 2: gopass (if available)
+		if command -v gopass &>/dev/null; then
+			for var_name in "${var_names[@]}"; do
+				local gopass_path="aidevops/${var_name}"
+				if gopass show "$gopass_path" &>/dev/null; then
+					local key_val
+					key_val=$(gopass show "$gopass_path" 2>/dev/null)
+					if [[ -n "$key_val" ]]; then
+						echo "$key_val"
+						return 0
+					fi
+				fi
+			done
+		fi
+
+		# Source 3: credentials.sh (plaintext fallback)
+		local creds_file="${HOME}/.config/aidevops/credentials.sh"
+		if [[ -f "$creds_file" ]]; then
+			# Source the file to get variables (safe: we control this file)
+			# shellcheck disable=SC1090
+			source "$creds_file"
+			for var_name in "${var_names[@]}"; do
+				if [[ -n "${!var_name:-}" ]]; then
+					echo "${!var_name}"
+					return 0
+				fi
+			done
+		fi
+	fi
+
+	# Source 4: OpenCode OAuth auth.json (t1927)
+	# The headless runtime authenticates via OAuth tokens in auth.json, not
+	# env vars. Check for a non-empty, non-expired access token for this
+	# provider. This is a read-only check — we don't refresh tokens here.
+	local auth_file="${HOME}/.local/share/opencode/auth.json"
+	if [[ -f "$auth_file" ]]; then
+		local access_token expires_at now_ms
+		access_token=$(jq -r --arg p "$provider" '.[$p].access // empty' "$auth_file" 2>/dev/null) || access_token=""
+		if [[ -n "$access_token" ]]; then
+			# Check expiry (milliseconds since epoch)
+			expires_at=$(jq -r --arg p "$provider" '.[$p].expires // 0' "$auth_file" 2>/dev/null) || expires_at=0
+			now_ms=$(date +%s)000 # approximate — good enough for probe
+			if [[ "$expires_at" -gt "$now_ms" ]] 2>/dev/null; then
+				echo "$access_token"
+				return 0
+			fi
+			# Token expired but refresh token may exist — the OpenCode
+			# runtime handles refresh at session start. For probe purposes,
+			# if a refresh token exists, report the provider as available.
+			local refresh_token
+			refresh_token=$(jq -r --arg p "$provider" '.[$p].refresh // empty' "$auth_file" 2>/dev/null) || refresh_token=""
+			if [[ -n "$refresh_token" ]]; then
+				# Return a synthetic marker so the probe knows auth exists
+				# but the actual token will be refreshed by the runtime.
+				# The probe can't refresh — it's a read-only check.
+				echo "oauth-refresh-available"
+				return 0
+			fi
+		fi
+		# Also check for API key type entries (e.g., opencode provider)
+		local api_key_entry
+		api_key_entry=$(jq -r --arg p "$provider" '.[$p].key // empty' "$auth_file" 2>/dev/null) || api_key_entry=""
+		if [[ -n "$api_key_entry" ]]; then
+			echo "$api_key_entry"
+			return 0
+		fi
 	fi
 
 	return 1
@@ -788,7 +838,8 @@ probe_provider() {
 		return $?
 	fi
 
-	# Resolve API key — resolve_api_key echoes the value directly (subshell-safe)
+	# Resolve API key or OAuth token — resolve_api_key checks env vars,
+	# gopass, credentials.sh, and OpenCode auth.json (in that order).
 	local api_key
 	if ! api_key=$(resolve_api_key "$provider"); then
 		[[ "$quiet" != "true" ]] && print_warning "$provider: no API key configured"
@@ -800,6 +851,16 @@ probe_provider() {
 		[[ "$quiet" != "true" ]] && print_warning "$provider: API key resolved but empty"
 		_record_health "$provider" "no_key" 0 0 "API key resolved but empty" 0
 		return 3
+	fi
+
+	# t1927: OAuth refresh-only tokens — the access token is expired but a
+	# refresh token exists. The OpenCode runtime refreshes at session start,
+	# so the provider IS available even though we can't probe with the expired
+	# token. Record as healthy and skip the HTTP probe.
+	if [[ "$api_key" == "oauth-refresh-available" ]]; then
+		[[ "$quiet" != "true" ]] && print_success "$provider: OAuth refresh token available (runtime will refresh at session start)"
+		_record_health "$provider" "healthy" 0 0 "OAuth refresh available" 0
+		return 0
 	fi
 
 	# Build request parameters
