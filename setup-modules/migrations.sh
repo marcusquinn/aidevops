@@ -335,7 +335,13 @@ cleanup_stale_health_issue_caches() {
 			local supervisor_cache="${cache_dir}/health-issue-${fname%-contributor-*}-supervisor-${slug_safe}"
 			# Only close if there IS a supervisor counterpart (confirms it's a duplicate)
 			if [[ -f "$supervisor_cache" ]]; then
-				gh issue close "$stale_num" --repo "$(echo "$slug_safe" | sed 's/-/\//' | head -1)" \
+				local repo_slug_derived
+				repo_slug_derived=$(echo "$slug_safe" | sed 's/-/\//' | head -1)
+				# Remove "persistent" label first — a GitHub Actions workflow
+				# auto-reopens issues with this label (health issues get it on creation).
+				gh issue edit "$stale_num" --repo "$repo_slug_derived" \
+					--remove-label persistent 2>/dev/null || true
+				gh issue close "$stale_num" --repo "$repo_slug_derived" \
 					--comment "Closing duplicate contributor health issue (t1929 migration)." 2>/dev/null || true
 			fi
 		fi
