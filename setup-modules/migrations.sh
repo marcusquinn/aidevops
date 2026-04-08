@@ -1433,15 +1433,14 @@ migrate_cron_to_systemd() {
 		return 0
 	fi
 
-	# One-time migration marker
+	# Versioned marker — bump when entries added; v2 adds auto-update + repo-sync (GH#17861)
 	local marker_dir="$HOME/.aidevops/cache/migrations"
-	local marker_file="$marker_dir/cron-to-systemd-done"
+	local marker_file="$marker_dir/cron-to-systemd-v2-done"
 	if [[ -f "$marker_file" ]]; then
 		return 0
 	fi
 
-	# Parallel arrays: cron markers and their corresponding systemd timer names.
-	# Bash 3.2 compatible (no associative arrays).
+	# Parallel arrays: cron markers and systemd timer names (Bash 3.2 compatible).
 	local cron_markers="aidevops: stats-wrapper
 aidevops: gh-failure-miner
 aidevops: process-guard
@@ -1449,7 +1448,9 @@ aidevops: memory-pressure-monitor
 aidevops: screen-time-snapshot
 aidevops: contribution-watch
 aidevops: profile-readme-update
-aidevops: token-refresh"
+aidevops: token-refresh
+aidevops-auto-update
+aidevops-repo-sync"
 
 	local systemd_timers="aidevops-stats-wrapper
 aidevops-gh-failure-miner
@@ -1458,7 +1459,9 @@ aidevops-memory-pressure-monitor
 aidevops-screen-time-snapshot
 aidevops-contribution-watch
 aidevops-profile-readme-update
-aidevops-token-refresh"
+aidevops-token-refresh
+aidevops-auto-update
+aidevops-repo-sync"
 
 	local current_cron
 	current_cron=$(crontab -l 2>/dev/null) || current_cron=""
@@ -1490,7 +1493,7 @@ aidevops-token-refresh"
 		print_success "Cron-to-systemd migration: $migrated scheduler(s) migrated"
 	fi
 
-	# Write marker regardless of whether anything was migrated
+	# Write versioned marker
 	mkdir -p "$marker_dir"
 	date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_file"
 	return 0
