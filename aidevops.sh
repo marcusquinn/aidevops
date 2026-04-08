@@ -2265,7 +2265,9 @@ _upgrade_todo() {
 	print_info "Upgrading TODO.md..."
 	local existing_tasks=""
 	if [[ -f "$todo_file" ]]; then
-		existing_tasks=$(grep -E "^[[:space:]]*- \[([ x-])\]" "$todo_file" 2>/dev/null || echo "")
+		# Extract everything under ## Backlog (tasks AND ### subsection headers)
+		# until the next ## header or EOF — preserves semantic grouping
+		existing_tasks=$(awk '/^## Backlog/{found=1; next} found && /^## /{exit} found' "$todo_file" 2>/dev/null || echo "")
 		[[ "$backup" == "true" ]] && {
 			cp "$todo_file" "${todo_file}.bak"
 			print_success "Backup created: TODO.md.bak"
