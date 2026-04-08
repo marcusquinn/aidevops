@@ -326,10 +326,12 @@ _screenshot_convert_formats() {
 	local png base
 	for png in "${all_pngs[@]}"; do
 		base="${png%.png}"
-		[[ "$_ss_format" != "webp" && "$_ss_format" != "all" ]] ||
+		if [[ "$_ss_format" == "webp" || "$_ss_format" == "all" ]]; then
 			convert_to_webp "$png" "${base}.webp" && print_success "WebP: ${base}.webp" || true
-		[[ "$_ss_format" != "avif" && "$_ss_format" != "all" ]] ||
+		fi
+		if [[ "$_ss_format" == "avif" || "$_ss_format" == "all" ]]; then
 			convert_to_avif "$png" "${base}.avif" && print_success "AVIF: ${base}.avif" || true
+		fi
 	done
 
 	return 0
