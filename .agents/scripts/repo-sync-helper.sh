@@ -650,12 +650,12 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=process
-ExecStart=/bin/bash -lc '${script_path} check'
+ExecStart=/bin/bash -lc '\"${script_path}\" check'
 TimeoutStartSec=300
 Nice=10
 IOSchedulingClass=idle
-StandardOutput=append:${LOG_FILE}
-StandardError=append:${LOG_FILE}
+StandardOutput=\"append:${LOG_FILE}\"
+StandardError=\"append:${LOG_FILE}\"
 " >"$service_file"
 
 	printf '%s' "[Unit]
