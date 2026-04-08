@@ -980,13 +980,17 @@ async function seedPoolAuthEntry(client, providerId) {
   try { await client.auth.set({ path: { id: providerId }, body }); } catch { /* already exists or no auth API */ }
 }
 
-const POOL_PROVIDERS = ["anthropic-pool", "openai-pool", "cursor-pool", "google-pool"];
-const INJECT_FNS = [injectPoolToken, injectOpenAIPoolToken, injectCursorPoolToken, injectGooglePoolToken];
+const POOL_PROVIDER_IDS = ["anthropic-pool", "openai-pool", "cursor-pool", "google-pool"];
 
 export async function initPoolAuth(client) {
-  for (const id of POOL_PROVIDERS) await seedPoolAuthEntry(client, id);
-  for (const fn of INJECT_FNS) {
-    try { await fn(client); } catch (err) { console.error(`[aidevops] OAuth pool: injection failed (isolated): ${err.message}`); }
+  for (const id of POOL_PROVIDER_IDS) await seedPoolAuthEntry(client, id);
+  // Anthropic/OpenAI/Cursor: errors propagate (as before refactoring)
+  await injectPoolToken(client);
+  await injectOpenAIPoolToken(client);
+  await injectCursorPoolToken(client);
+  // Google: isolated — failure does not affect other providers
+  try { await injectGooglePoolToken(client); } catch (err) {
+    console.error(`[aidevops] OAuth pool: Google token injection failed (isolated): ${err.message}`);
   }
 }
 
