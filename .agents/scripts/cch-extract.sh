@@ -22,7 +22,9 @@ IFS=$'\n\t'
 # ---------------------------------------------------------------------------
 
 CACHE_FILE="${HOME}/.aidevops/cch-constants.json"
-CLAUDE_BIN=""
+CLAUDE_BIN=""         # Path to the file used for extraction (may be a strings temp file)
+CLAUDE_BIN_REAL=""    # Real path to the claude binary (recorded in JSON output)
+CLAUDE_BIN_TMPFILE="" # Set when a Bun binary is strings-extracted to a temp file
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,6 +42,15 @@ print_error() {
 	printf '\033[0;31m[ERROR]\033[0m %s\n' "$1" >&2
 	return 0
 }
+
+# Clean up any temp files created during extraction
+cleanup_tmpfiles() {
+	if [[ -n "$CLAUDE_BIN_TMPFILE" && -f "$CLAUDE_BIN_TMPFILE" ]]; then
+		rm -f "$CLAUDE_BIN_TMPFILE"
+	fi
+	return 0
+}
+trap cleanup_tmpfiles EXIT
 
 # Locate the Claude CLI source file (follows symlinks for npm global installs)
 find_claude_source() {
@@ -64,14 +75,29 @@ find_claude_source() {
 	if [[ "$file_type" == *"script"* || "$file_type" == *"text"* ]]; then
 		# Node.js script — the source IS the CLI file
 		CLAUDE_BIN="$resolved"
+		CLAUDE_BIN_REAL="$resolved"
 	elif [[ "$file_type" == *"Mach-O"* || "$file_type" == *"ELF"* ]]; then
-		# Bun binary — would need extraction (not supported in Node.js era)
-		print_error "Bun binary detected. This script supports Node.js Claude CLI only."
-		print_error "Binary path: $resolved"
-		return 1
+		# Bun-compiled binary (the default "native" install since Claude Code ~1.0).
+		# Extract printable strings to a temp file so the existing Python regex
+		# extractors can run on it unchanged.
+		if ! command -v strings >/dev/null 2>&1; then
+			print_error "Bun binary detected but 'strings' utility not found."
+			print_error "Install binutils (Linux) or Xcode Command Line Tools (macOS) and retry."
+			return 1
+		fi
+		print_info "Bun binary detected — extracting strings for analysis: $resolved"
+		CLAUDE_BIN_TMPFILE=$(mktemp /tmp/cch-extract-strings.XXXXXX)
+		if ! strings "$resolved" >"$CLAUDE_BIN_TMPFILE" 2>/dev/null; then
+			rm -f "$CLAUDE_BIN_TMPFILE"
+			print_error "Failed to extract strings from binary: $resolved"
+			return 1
+		fi
+		CLAUDE_BIN="$CLAUDE_BIN_TMPFILE"
+		CLAUDE_BIN_REAL="$resolved"
 	else
 		# Try it as a JS file anyway (some systems report odd file types)
 		CLAUDE_BIN="$resolved"
+		CLAUDE_BIN_REAL="$resolved"
 	fi
 
 	return 0
@@ -135,15 +161,28 @@ extract_salt() {
 import re, sys
 with open(sys.argv[1], 'r', errors='replace') as f:
     content = f.read()
-# Find the salt: a 12-char hex constant near the version suffix function
-# Pattern: it's defined right before the function that does sha256
-# Look for: var <name>=\"<12hex>\"; where the name is used in a sha256 context
-# More robust: find the sha256 hash function that concatenates salt+chars+version
+# Find the salt: a 12-char hex constant near the version suffix function.
+# Node.js source: var <name>=\"<12hex>\";
+# Bun strings output: lines like  u21=\"59cf53e54c78\"  (no 'var' prefix, one per line)
+# Strategy: collect all 12-char lowercase hex strings, exclude known non-salt values,
+# and return the first match. Known non-salts: all-zeros, all-4s, all-3s.
+NON_SALT = {'000000000000', '444444444444', '333333333333'}
+# Try full-source pattern first (Node.js)
 m = re.search(r'var\s+\w+=\"([0-9a-f]{12})\";', content)
-if m:
+if m and m.group(1) not in NON_SALT:
     print(m.group(1))
-else:
-    print('')
+    sys.exit(0)
+# Bun strings output: bare assignment pattern  <name>=\"<12hex>\"
+m = re.search(r'\w+=\"([0-9a-f]{12})\"', content)
+if m and m.group(1) not in NON_SALT:
+    print(m.group(1))
+    sys.exit(0)
+# Last resort: find any 12-char hex string in quotes, skip known non-salts
+for candidate in re.findall(r'\"([0-9a-f]{12})\"', content):
+    if candidate not in NON_SALT:
+        print(candidate)
+        sys.exit(0)
+print('')
 " "$source_file" 2>/dev/null)
 
 	if [[ -z "$salt" ]]; then
@@ -239,8 +278,11 @@ else:
 }
 
 # Build the complete JSON output
+# $1 = source_file (may be a strings-extracted temp file for Bun binaries)
+# $2 = real_bin_path (the actual claude binary path, for recording in JSON)
 build_json() {
 	local source_file="$1"
+	local real_bin_path="${2:-$1}"
 
 	local version salt char_indices has_cch has_xxhash entrypoint build_time
 	version=$(extract_version "$source_file") || return 1
@@ -269,7 +311,7 @@ else:
 	VERSION="$version" SALT="$salt" CHAR_INDICES="$char_indices" \
 		HAS_CCH="$has_cch" HAS_XXHASH="$has_xxhash" \
 		ENTRYPOINT="$entrypoint" BUILD_TIME="$build_time" \
-		SOURCE_FILE="$source_file" NOW_ISO="$now_iso" \
+		SOURCE_FILE="$real_bin_path" NOW_ISO="$now_iso" \
 		python3 -c "
 import json, os
 print(json.dumps({
@@ -298,16 +340,16 @@ print(json.dumps({
 
 cmd_extract() {
 	find_claude_source || return 1
-	print_info "Claude CLI source: ${CLAUDE_BIN}" >&2
-	build_json "$CLAUDE_BIN"
+	print_info "Claude CLI source: ${CLAUDE_BIN_REAL}" >&2
+	build_json "$CLAUDE_BIN" "$CLAUDE_BIN_REAL"
 	return 0
 }
 
 cmd_cache() {
 	find_claude_source || return 1
-	print_info "Claude CLI source: ${CLAUDE_BIN}" >&2
+	print_info "Claude CLI source: ${CLAUDE_BIN_REAL}" >&2
 	local json
-	json=$(build_json "$CLAUDE_BIN") || return 1
+	json=$(build_json "$CLAUDE_BIN" "$CLAUDE_BIN_REAL") || return 1
 
 	local cache_dir
 	cache_dir=$(dirname "$CACHE_FILE")
@@ -330,7 +372,7 @@ cmd_verify() {
 
 	find_claude_source || return 1
 	local current_json cached_version current_version
-	current_json=$(build_json "$CLAUDE_BIN") || return 1
+	current_json=$(build_json "$CLAUDE_BIN" "$CLAUDE_BIN_REAL") || return 1
 
 	cached_version=$(python3 -c "import sys,json; print(json.load(open(sys.argv[1]))['version'])" "$CACHE_FILE" 2>/dev/null)
 	current_version=$(printf '%s' "$current_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])" 2>/dev/null)
