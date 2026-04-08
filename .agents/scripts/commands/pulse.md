@@ -135,6 +135,22 @@ AVAILABLE=$(dispatch_foss_workers "$AVAILABLE")
 
 Skip when: managed-repo slots occupied, daily budget exhausted, or no eligible FOSS repos.
 
+### 4.7. Routine evaluation (t1925 — DETERMINISTIC, handled by shell)
+
+Routine evaluation runs deterministically in `pulse-wrapper.sh` before the LLM session.
+The wrapper reads `TODO.md` from each pulse-enabled repo, extracts enabled routines
+(`[x]` lines with `repeat:` fields), checks if due via `routine-schedule-helper.sh`,
+and dispatches:
+
+- **`run:` routines** → execute script directly (zero LLM tokens)
+- **`agent:` routines** → dispatch via `headless-runtime-helper.sh`
+- **No `run:` or `agent:`** → check `custom/scripts/{routine-id}.sh`, else dispatch Build+
+
+State tracked in `~/.aidevops/.agent-workspace/routine-state.json`. Schedule expressions:
+`daily(@HH:MM)`, `weekly(day@HH:MM)`, `monthly(N@HH:MM)`, `cron(5-field-expr)`.
+
+The LLM session does NOT need to evaluate routines — this is fully deterministic.
+
 ### 5. Record initial dispatch success
 
 ```bash
