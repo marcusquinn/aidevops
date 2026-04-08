@@ -6972,10 +6972,12 @@ _triage_content_hash() {
 	local body="$3"
 	local comments_json="$4"
 
-	# Filter to human comments: exclude github-actions[bot] and triage reviews
+	# Filter to human comments: exclude github-actions[bot] and triage reviews.
+	# GH#17873: Match broader review header pattern (## *Review*) to exclude
+	# reviews posted with variant headers, consistent with the extraction regex.
 	local human_comments=""
 	human_comments=$(printf '%s' "$comments_json" | jq -r \
-		'[.[] | select(.author != "github-actions[bot]" and .author != "github-actions") | select(.body | test("^## Review:") | not) | .body] | join("\n---\n")' \
+		'[.[] | select(.author != "github-actions[bot]" and .author != "github-actions") | select(.body | test("^## .*[Rr]eview") | not) | .body] | join("\n---\n")' \
 		2>/dev/null) || human_comments=""
 
 	printf '%s\n%s' "$body" "$human_comments" | shasum -a 256 | cut -d' ' -f1
@@ -12026,9 +12028,12 @@ PREFETCH_EOF
 				has_infra_markers="true"
 			fi
 
-			# Extract just the review portion (starts with ## Review:)
+			# Extract just the review portion (starts with ## Review variants).
+			# GH#17873: Workers sometimes produce slightly different headers
+			# (e.g., "## Review", "## Triage Review:", "## Review Summary:").
+			# Match any "## " line containing "Review" (case-insensitive).
 			local clean_review=""
-			clean_review=$(echo "$review_text" | sed -n '/^## Review:/,$ p')
+			clean_review=$(echo "$review_text" | sed -n '/^## .*[Rr]eview/,$ p')
 
 			if [[ -n "$clean_review" ]]; then
 				# Re-check extracted review for infra leaks (belt-and-suspenders)
@@ -12041,10 +12046,10 @@ PREFETCH_EOF
 					triage_posted="true"
 				fi
 			elif [[ "$has_infra_markers" == "true" ]]; then
-				# No ## Review: header AND infra markers present — raw sandbox output, discard entirely
+				# No review header AND infra markers present — raw sandbox output, discard entirely
 				echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} was raw sandbox output — suppressed (${#review_text} chars)" >>"$LOGFILE"
 			else
-				echo "[pulse-wrapper] Triage review for #${issue_num} had no ## Review: header and no infra markers — suppressed to be safe (${#review_text} chars)" >>"$LOGFILE"
+				echo "[pulse-wrapper] Triage review for #${issue_num} had no review header (## *Review*) and no infra markers — suppressed to be safe (${#review_text} chars)" >>"$LOGFILE"
 			fi
 		else
 			echo "[pulse-wrapper] Triage review for #${issue_num} produced no usable output (${#review_text} chars)" >>"$LOGFILE"
@@ -12067,12 +12072,20 @@ PREFETCH_EOF
 		# Unlock issue after triage
 		unlock_issue_after_worker "$issue_num" "$repo_slug"
 
-		# GH#17746: Cache content hash after triage attempt (success or failure).
-		# On success: prevents re-triage of unchanged content.
-		# On failure: prevents burning tokens retrying the same failing content.
-		# Cache is invalidated when content_hash changes (author edits body or
-		# adds new comments), triggering a fresh triage attempt.
-		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
+		# GH#17873: Only cache content hash on successful post.
+		# Previously (GH#17746) the cache was written unconditionally,
+		# which created a dead-letter state: if the safety filter suppressed
+		# the review (e.g., missing ## Review: header), the content hash was
+		# still cached, and subsequent pulse cycles would skip the issue
+		# forever ("content unchanged since last triage") even though no
+		# review was ever posted. Now we only cache on success — failed
+		# attempts are retried on the next pulse cycle, allowing transient
+		# worker formatting issues to self-heal.
+		if [[ "$triage_posted" == "true" ]]; then
+			_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
+		else
+			echo "[pulse-wrapper] Skipping triage cache for #${issue_num} — review not posted, will retry on next cycle" >>"$LOGFILE"
+		fi
 
 		sleep 2
 		triage_count=$((triage_count + 1))
