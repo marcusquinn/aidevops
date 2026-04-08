@@ -9,7 +9,8 @@
 #
 # Options:
 #   --title "Task title"       Task title for GitHub/GitLab issue (required unless --batch)
-#   --description "Details"    Task description (optional)
+#   --description "Details"    Task description (required for issue creation unless
+#                              a brief file exists at todo/tasks/{task_id}-brief.md)
 #   --labels "label1,label2"   Comma-separated labels (optional)
 #   --count N                  Allocate N consecutive IDs (default: 1)
 #                              Creates one GitHub/GitLab issue per ID using
@@ -743,13 +744,16 @@ _compose_issue_body() {
 			body="## Task"
 			body="$body"$'\n\n'"$brief_what"
 		else
-			log_warn "No --description provided and no brief file found — issue body will lack detail. Pass --description for rich issue content."
-			local desc_part
-			desc_part=$(printf '%s' "$title" | sed 's/^t[0-9]*: *//')
-			body="## Task"
-			body="$body"$'\n\n'"$desc_part"
-			body="$body"$'\n\n'"---"
-			body="$body"$'\n'"*Created by claim-task-id.sh (no description provided — enrich before dispatch)*"
+			# t1937: No description and no brief file — refuse to create a stub issue.
+			# The task ID is already secured; the issue should be created later when
+			# the brief is written (via issue-sync-helper.sh push or manually).
+			# Returning empty body signals create_github_issue() to skip creation.
+			log_error "No --description provided and no brief file found at todo/tasks/${task_id}-brief.md"
+			log_error "Issue creation skipped — create the issue after writing the brief:"
+			log_error "  issue-sync-helper.sh push ${task_id}"
+			log_error "  OR: gh issue create --title \"${title}\" --body \"<description>\""
+			echo ""
+			return 1
 		fi
 	fi
 
@@ -794,8 +798,15 @@ create_github_issue() {
 	# Fallback: bare issue creation with structured body
 	local gh_args=(issue create --title "$title")
 
-	local body
-	body=$(_compose_issue_body "$title" "$description")
+	local body=""
+	local compose_rc=0
+	body=$(_compose_issue_body "$title" "$description") || compose_rc=$?
+	# t1937: If body composition failed (no description + no brief), skip issue creation.
+	# The task ID is already secured — issue can be created later with proper content.
+	if [[ $compose_rc -ne 0 || -z "$body" ]]; then
+		log_warn "Skipping issue creation — no description available. Task ID is secured."
+		return 1
+	fi
 	gh_args+=(--body "$body")
 
 	# Append session origin label (origin:worker or origin:interactive)

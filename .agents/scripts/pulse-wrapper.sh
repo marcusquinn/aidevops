@@ -9843,13 +9843,21 @@ dispatch_deterministic_fill_floor() {
 			continue
 		fi
 
-		# t1899: Skip issues with placeholder/empty bodies — dispatching a
+		# t1899/t1937: Skip issues with placeholder/empty bodies — dispatching a
 		# worker to an undescribed issue wastes a session. The body check is
 		# a single API call cached for the candidate loop iteration.
+		# Detects both the legacy GitLab stub and the current claim-task-id.sh
+		# stub marker ("no description provided — enrich before dispatch").
 		local issue_body
 		issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body -q '.body' 2>/dev/null || echo "")
 		if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" || "$issue_body" == "null" ]]; then
 			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"
+			continue
+		fi
+		# t1937: Detect the current claim-task-id.sh stub marker embedded in
+		# structured bodies (## Task\n\n<title>\n\n---\n*Created by claim-task-id.sh ...*)
+		if [[ "$issue_body" == *"no description provided — enrich before dispatch"* ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — claim-task-id.sh stub body, needs enrichment before dispatch" >>"$LOGFILE"
 			continue
 		fi
 
