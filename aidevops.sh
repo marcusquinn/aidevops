@@ -3387,6 +3387,7 @@ cmd_skills() {
 _help_commands() {
 	echo "Commands:"
 	echo "  init [features]    Initialize aidevops in current project"
+	echo "  init-routines      Scaffold private routines repo (--org <name> | --local)"
 	echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
 	echo "  features           List available features for init"
 	echo "  skill <cmd>        Manage agent skills (add/list/check/update/remove)"
@@ -3755,6 +3756,7 @@ main() {
 	signing) _dispatch_helper "signing-setup.sh" "signing-setup.sh" "$@" ;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;
+	init-routines) _dispatch_helper "init-routines-helper.sh" "init-routines-helper.sh" "$@" ;;
 	config | configure) _dispatch_config "$@" ;;
 	uninstall | remove) cmd_uninstall ;;
 	version | v | -v | --version) cmd_version ;;
