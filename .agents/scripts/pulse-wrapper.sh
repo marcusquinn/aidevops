@@ -5199,6 +5199,92 @@ _simplification_state_push() {
 	return 0
 }
 
+# Create a follow-up simplification-debt issue when Qlty smells persist after
+# a simplification PR merges (t1912). Each re-queue creates a NEW issue (not a
+# reopen) for a clean audit trail of each pass.
+#
+# Arguments:
+#   $1 - aidevops_slug (owner/repo)
+#   $2 - file_path (repo-relative)
+#   $3 - remaining_smells (integer count)
+#   $4 - pass_count (current pass number, already incremented)
+#   $5 - prev_issue_num (the issue that just closed)
+# Returns: 0 on success, 1 on failure. Outputs created issue number to stdout.
+_create_requeue_issue() {
+	local aidevops_slug="$1"
+	local file_path="$2"
+	local remaining_smells="$3"
+	local pass_count="$4"
+	local prev_issue_num="$5"
+	local max_passes="${SIMPLIFICATION_MAX_PASSES:-3}"
+
+	# Determine tier based on pass count — escalate to reasoning after max passes
+	local tier_label="tier:standard"
+	local escalation_note=""
+	if [[ "$pass_count" -ge "$max_passes" ]]; then
+		tier_label="tier:reasoning"
+		escalation_note="
+
+### Escalation note
+
+This file has been through ${pass_count} simplification passes but ${remaining_smells} Qlty smells remain. Previous passes achieved partial reduction but the remaining complexity likely requires **architectural decomposition** (extracting modules, splitting concerns) rather than incremental tightening. Consider a different approach than the previous passes took."
+	fi
+
+	local issue_title="simplification: re-queue ${file_path} (pass ${pass_count}, ${remaining_smells} smells remaining)"
+
+	local issue_body
+	issue_body=$(
+		cat <<REQUEUE_BODY_EOF
+## Post-merge smell verification (automated — t1912)
+
+**File:** \`${file_path}\`
+**Qlty smells remaining:** ${remaining_smells}
+**Pass:** ${pass_count} of ${max_passes} max
+**Previous issue:** #${prev_issue_num}
+
+The previous simplification pass (issue #${prev_issue_num}) merged successfully but Qlty still reports ${remaining_smells} smell(s) on this file. This follow-up issue was created automatically by the post-merge verification step.
+
+### Context from previous pass
+
+Review issue #${prev_issue_num} for what the previous attempt accomplished and what trade-offs were made. Build on that work rather than starting from scratch.
+
+### Proposed action
+
+1. Run \`~/.qlty/bin/qlty smells --all "${file_path}"\` to identify the specific remaining smells
+2. Address the flagged complexity — reduce function length, extract helpers, simplify control flow
+3. Verify: \`~/.qlty/bin/qlty smells --all 2>&1 | grep '${file_path}' | grep -c . | grep -q '^0$'\` (report \`SKIP\` if Qlty unavailable)${escalation_note}
+
+### Verification
+
+- Qlty smells resolved or reduced for the target file
+- Content preservation: all task IDs, URLs, code blocks present before and after
+- ShellCheck clean (for .sh files)
+REQUEUE_BODY_EOF
+	)
+
+	# Append signature footer
+	local sig_footer="" _pulse_elapsed=""
+	_pulse_elapsed=$(($(date +%s) - PULSE_START_EPOCH))
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
+		--body "$issue_body" --cli "Claude Code" --no-session \
+		--tokens 0 --time "$_pulse_elapsed" --session-type routine 2>/dev/null || true)
+	issue_body="${issue_body}${sig_footer}"
+
+	local created_number=""
+	# shellcheck disable=SC2086
+	created_number=$(gh_create_issue --repo "$aidevops_slug" \
+		--title "$issue_title" \
+		--label "simplification-debt" --label "$tier_label" --label "auto-dispatch" \
+		--body "$issue_body" 2>/dev/null | grep -oE '[0-9]+$') || {
+		echo "[pulse-wrapper] _create_requeue_issue: failed to create re-queue issue for ${file_path}" >>"$LOGFILE"
+		return 1
+	}
+
+	echo "[pulse-wrapper] _create_requeue_issue: created #${created_number} for ${file_path} (pass ${pass_count}, ${remaining_smells} smells, ${tier_label})" >>"$LOGFILE"
+	echo "$created_number"
+	return 0
+}
+
 # Backfill simplification state for recently closed issues (t1855).
 #
 # The critical bug: _simplification_state_record() was defined but never called.
@@ -5274,6 +5360,38 @@ _simplification_state_backfill_closed() {
 			continue
 		}
 		added=$((added + 1))
+
+		# Post-merge smell verification (t1912): check if Qlty still flags this file.
+		# If smells persist after the simplification PR merged, create a follow-up
+		# issue so the file gets another pass. Qlty CLI is optional — if not
+		# installed, this step is skipped silently and the function behaves as before.
+		local full_path="${repo_path}/${file_path}"
+		local qlty_cmd=""
+		if command -v qlty >/dev/null 2>&1; then
+			qlty_cmd="qlty"
+		elif [[ -x "${HOME}/.qlty/bin/qlty" ]]; then
+			qlty_cmd="${HOME}/.qlty/bin/qlty"
+		fi
+
+		if [[ -n "$qlty_cmd" ]]; then
+			local remaining_smells
+			remaining_smells=$("$qlty_cmd" smells --all "$full_path" 2>/dev/null | grep -c '^[^ ]' || echo "0")
+
+			if [[ "$remaining_smells" -gt 0 ]]; then
+				# Check for existing open re-queue issue before creating a new one
+				if ! _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
+					local requeue_result=""
+					requeue_result=$(_create_requeue_issue "$aidevops_slug" "$file_path" "$remaining_smells" "$new_passes" "$issue_num") || true
+					if [[ -n "$requeue_result" ]]; then
+						echo "[pulse-wrapper] backfill: re-queued ${file_path} → #${requeue_result} (${remaining_smells} smells remain after #${issue_num})" >>"$LOGFILE"
+					fi
+				else
+					echo "[pulse-wrapper] backfill: ${file_path} has ${remaining_smells} smells after #${issue_num} but open issue already exists — skipping re-queue" >>"$LOGFILE"
+				fi
+			else
+				echo "[pulse-wrapper] backfill: ${file_path} — Qlty clean after #${issue_num} (pass ${new_passes})" >>"$LOGFILE"
+			fi
+		fi
 	done < <(echo "$closed_issues" | jq -c '.[]')
 
 	if [[ "$added" -gt 0 ]]; then
