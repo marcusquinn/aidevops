@@ -71,74 +71,71 @@ fix_return_statements() {
 	local files_fixed=0
 
 	while IFS= read -r -d '' file; do
-		if [[ -f "$file" ]]; then
-			# Find functions that don't end with return statement
-			local temp_file
-			temp_file=$(mktemp)
-			local file_mode=""
-			file_mode=$(stat -f "%Lp" "$file" 2>/dev/null || stat -c "%a" "$file" 2>/dev/null || true)
-			local in_function=false
-			local function_name=""
-			local brace_count=0
-			local fixed_functions=0
+		[[ -f "$file" ]] || continue
+		# Find functions that don't end with return statement
+		local temp_file
+		temp_file=$(mktemp)
+		local file_mode=""
+		file_mode=$(stat -f "%Lp" "$file" 2>/dev/null || stat -c "%a" "$file" 2>/dev/null || true)
+		local in_function=false
+		local function_name=""
+		local brace_count=0
+		local fixed_functions=0
 
-			while IFS= read -r line; do
-				echo "$line" >>"$temp_file"
+		while IFS= read -r line; do
+			echo "$line" >>"$temp_file"
 
-				# Detect function start
-				if [[ $line =~ ^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{ ]]; then
-					in_function=true
-					function_name=$(echo "$line" | sed 's/().*//')
-					brace_count=1
-				elif [[ $in_function == true ]]; then
-					# Count braces to track function scope
-					local open_braces
-					open_braces=$(echo "$line" | grep -o '{' | wc -l 2>/dev/null || echo "0")
-					local close_braces
-					close_braces=$(echo "$line" | grep -o '}' | wc -l 2>/dev/null || echo "0")
+			# Detect function start
+			if [[ $line =~ ^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{ ]]; then
+				in_function=true
+				function_name=$(echo "$line" | sed 's/().*//')
+				brace_count=1
+			elif [[ $in_function == true ]]; then
+				# Count braces to track function scope
+				local open_braces
+				open_braces=$(echo "$line" | grep -o '{' | wc -l 2>/dev/null || echo "0")
+				local close_braces
+				close_braces=$(echo "$line" | grep -o '}' | wc -l 2>/dev/null || echo "0")
 
-					# Ensure variables are numeric
-					open_braces=${open_braces//[^0-9]/}
-					close_braces=${close_braces//[^0-9]/}
-					open_braces=${open_braces:-0}
-					close_braces=${close_braces:-0}
+				# Ensure variables are numeric
+				open_braces=${open_braces//[^0-9]/}
+				close_braces=${close_braces//[^0-9]/}
+				open_braces=${open_braces:-0}
+				close_braces=${close_braces:-0}
 
-					# Fix arithmetic expansion
-					local diff
-					diff=$((open_braces - close_braces))
-					brace_count=$((brace_count + diff))
+				# Fix arithmetic expansion
+				local diff
+				diff=$((open_braces - close_braces))
+				brace_count=$((brace_count + diff))
 
-					# Check if function is ending
-					if [[ $brace_count -eq 0 && $line == "}" ]]; then
-						# Check if previous line has return statement
-						local last_line
-						last_line=$(tail -2 "$temp_file" | head -1)
+				# Check if function is ending
+				if [[ $brace_count -eq 0 && $line == "}" ]]; then
+					# Check if previous line has return statement
+					local last_line
+					last_line=$(tail -2 "$temp_file" | head -1)
 
-						if [[ ! $last_line =~ return[[:space:]]+[01] ]]; then
-							# Remove the closing brace and add return statement
-							sed_inplace '$ d' "$temp_file"
-							echo "    return 0" >>"$temp_file"
-							echo "}" >>"$temp_file"
-							((++fixed_functions))
-							print_info "Fixed function: $function_name"
-						fi
-
-						in_function=false
-						function_name=""
+					if [[ ! $last_line =~ return[[:space:]]+[01] ]]; then
+						# Remove the closing brace and add return statement
+						sed_inplace '$ d' "$temp_file"
+						echo "    return 0" >>"$temp_file"
+						echo "}" >>"$temp_file"
+						((++fixed_functions))
+						print_info "Fixed function: $function_name"
 					fi
-				fi
-			done <"$file"
 
-			if [[ $fixed_functions -gt 0 ]]; then
-				mv "$temp_file" "$file"
-				if [[ -n "$file_mode" ]]; then
-					chmod "$file_mode" "$file"
+					in_function=false
+					function_name=""
 				fi
-				((++files_fixed))
-				print_success "Fixed $fixed_functions functions in $file"
-			else
-				rm -f "$temp_file"
 			fi
+		done <"$file"
+
+		if [[ $fixed_functions -gt 0 ]]; then
+			mv "$temp_file" "$file"
+			[[ -n "$file_mode" ]] && chmod "$file_mode" "$file"
+			((++files_fixed))
+			print_success "Fixed $fixed_functions functions in $file"
+		else
+			rm -f "$temp_file"
 		fi
 	done < <(find .agents/scripts -name "*.sh" -not -path "*/_archive/*" -print0 2>/dev/null)
 
@@ -152,32 +149,31 @@ fix_positional_parameters() {
 	local files_fixed=0
 
 	while IFS= read -r -d '' file; do
-		if [[ -f "$file" ]]; then
-			local temp_file
-			temp_file=$(mktemp)
+		[[ -f "$file" ]] || continue
+		local temp_file
+		temp_file=$(mktemp)
 
-			# Process main() functions specifically
-			if grep -q "^main() {" "$file"; then
-				# Add local variable assignments to main function
-				sed '/^main() {/,/^}$/ {
-                    /^main() {/a\
+		# Process main() functions specifically
+		if grep -q "^main() {" "$file"; then
+			# Add local variable assignments to main function
+			sed '/^main() {/,/^}$/ {
+                /^main() {/a\
     # Assign positional parameters to local variables\
     local command="${1:-help}"\
     local account_name="$2"\
     local target="$3"\
     local options="$4"
-                }' "$file" >"$temp_file"
+            }' "$file" >"$temp_file"
 
-				# Replace direct positional parameter usage in case statements
-				sed_inplace 's/\$_arg1/\${command}/g; s/\$2/\${account_name}/g; s/\$3/\${target}/g; s/\$4/\${options}/g' "$temp_file"
+			# Replace direct positional parameter usage in case statements
+			sed_inplace 's/\$_arg1/\${command}/g; s/\$2/\${account_name}/g; s/\$3/\${target}/g; s/\$4/\${options}/g' "$temp_file"
 
-				if ! diff -q "$file" "$temp_file" >/dev/null; then
-					mv "$temp_file" "$file"
-					((++files_fixed))
-					print_success "Fixed positional parameters in main() function of $file"
-				else
-					rm -f "$temp_file"
-				fi
+			if ! diff -q "$file" "$temp_file" >/dev/null; then
+				mv "$temp_file" "$file"
+				((++files_fixed))
+				print_success "Fixed positional parameters in main() function of $file"
+			else
+				rm -f "$temp_file"
 			fi
 		fi
 	done < <(find .agents/scripts -name "*.sh" -not -path "*/_archive/*" -print0 2>/dev/null)
@@ -193,23 +189,20 @@ analyze_string_literals() {
 	constants_file=$(mktemp)
 
 	while IFS= read -r -d '' file; do
-		if [[ -f "$file" ]]; then
-			echo "=== $file ===" >>"$constants_file"
+		[[ -f "$file" ]] || continue
+		echo "=== $file ===" >>"$constants_file"
 
-			# Find repeated strings (3+ occurrences)
-			(grep -o '"[^"]*"' "$file" || true) | sort | uniq -c | sort -nr | awk '$_arg1 >= 3 {
-                gsub(/"/, "", $2)
-                constant_name = toupper($2)
-                gsub(/[^A-Z0-9_]/, "_", constant_name)
-                gsub(/_+/, "_", constant_name)
-                gsub(/^_|_$/, "", constant_name)
-                if (length(constant_name) > 0) {
-                    printf "readonly %s=\"%s\"  # Used %d times\n", constant_name, $2, $_arg1
-                }
+		# Find repeated strings (3+ occurrences)
+		(grep -o '"[^"]*"' "$file" || true) | sort | uniq -c | sort -nr | awk '
+            $1 >= 3 {
+                gsub(/"/, "", $2); cn = toupper($2)
+                gsub(/[^A-Z0-9_]/, "_", cn); gsub(/_+/, "_", cn); gsub(/^_|_$/, "", cn)
+            }
+            $1 >= 3 && length(cn) > 0 {
+                printf "readonly %s=\"%s\"  # Used %d times\n", cn, $2, $1
             }' >>"$constants_file"
 
-			echo "" >>"$constants_file"
-		fi
+		echo "" >>"$constants_file"
 	done < <(find .agents/scripts -name "*.sh" -not -path "*/_archive/*" -print0 2>/dev/null)
 
 	if [[ -s "$constants_file" ]]; then
@@ -230,10 +223,10 @@ validate_fixes() {
 	local validation_errors=0
 
 	while IFS= read -r -d '' file; do
-		if [[ -f "$file" ]] && ! shellcheck "$file" >/dev/null 2>&1; then
-			((++validation_errors))
-			print_warning "ShellCheck issues remain in $file"
-		fi
+		[[ -f "$file" ]] || continue
+		shellcheck "$file" >/dev/null 2>&1 && continue
+		((++validation_errors))
+		print_warning "ShellCheck issues remain in $file"
 	done < <(find .agents/scripts -name "*.sh" -not -path "*/_archive/*" -print0 2>/dev/null)
 
 	if [[ $validation_errors -eq 0 ]]; then

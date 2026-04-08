@@ -417,20 +417,12 @@ Protocol:
   5. Winner proceeds with dispatch; claim blocks re-dispatch for TTL duration
 
 Examples:
-  # Claim before dispatching (in pulse dedup guard)
-  RUNNER=$(gh api user --jq '.login')
-  if dispatch-claim-helper.sh claim 42 owner/repo "$RUNNER"; then
-    # Won the claim — dispatch worker
-    headless-runtime-helper.sh run --session-key "issue-42" ...
-  else
-    exit_code=$?
-    if [[ $exit_code -eq 1 ]]; then
-      echo "Lost claim — another runner is dispatching"
-    else
-      echo "Claim error — proceeding (fail-open)"
-      # dispatch anyway
-    fi
-  fi
+  # Claim before dispatching (in pulse dedup guard):
+  #   RUNNER=\$(gh api user --jq '.login')
+  #   dispatch-claim-helper.sh claim 42 owner/repo "\$RUNNER"
+  #   Exit 0 → won claim, proceed with dispatch
+  #   Exit 1 → lost claim, back off
+  #   Exit 2 → error, proceed (fail-open)
 HELP
 	return 0
 }

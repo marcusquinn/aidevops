@@ -236,21 +236,28 @@ cmd_add() {
 	return 0
 }
 
+_is_spdx_exempt() {
+	local file="$1"
+	local bn
+	bn=$(basename "$file")
+	# Exempt: VERSION, log files, csv files, json.txt files
+	[[ "$bn" == "VERSION" || "$bn" == *.log || "$bn" == *.csv ]] && return 0
+	[[ "$file" == *.json.txt ]] && return 0
+	return 1
+}
+
 cmd_check() {
 	echo "Checking SPDX header coverage..."
 	local missing=0 total=0
+	local ext
 	for ext in sh md py txt; do
 		while IFS= read -r file; do
 			[[ -z "$file" ]] && continue
 			total=$((total + 1))
-			local bn
-			bn=$(basename "$file")
-			case "$bn" in VERSION | *.log | *.csv) continue ;; esac
-			case "$file" in *.json.txt) continue ;; esac
-			if ! _has_spdx "$file"; then
-				echo "  missing: $file"
-				missing=$((missing + 1))
-			fi
+			_is_spdx_exempt "$file" && continue
+			_has_spdx "$file" && continue
+			echo "  missing: $file"
+			missing=$((missing + 1))
 		done < <(git ls-files "*.${ext}" 2>/dev/null)
 	done
 	echo ""
@@ -274,13 +281,19 @@ cmd_help() {
 	return 0
 }
 
+_parse_options() {
+	local arg
+	for arg in "$@"; do
+		[[ "$arg" == "--dry-run" ]] && DRY_RUN=true
+		[[ "$arg" == "--verbose" ]] && VERBOSE=true
+	done
+	return 0
+}
+
 main() {
 	local command="${1:-help}"
 	shift 2>/dev/null || true
-	local arg
-	for arg in "$@"; do
-		case "$arg" in --dry-run) DRY_RUN=true ;; --verbose) VERBOSE=true ;; esac
-	done
+	_parse_options "$@"
 	case "$command" in
 	add) cmd_add ;;
 	check) cmd_check ;;
