@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "e637946e7f3a27ae5bcbca853d2c44b00e9c35dd",
-      "at": "2026-04-08T09:22:57Z",
-      "passes": 83,
+      "hash": "a8ac5d559fb543f3ab73013e877f1f4f49f9e724",
+      "at": "2026-04-08T12:43:12Z",
+      "passes": 84,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "eb510873d7a45058109e5161db46f1dd7f6f91aa",
-      "at": "2026-04-08T08:10:57Z",
-      "passes": 81,
+      "hash": "06549ffb8ea8443249029e341f4ca2bec358a25a",
+      "at": "2026-04-08T12:43:12Z",
+      "passes": 82,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -6861,6 +6861,12 @@
       "hash": "3bb3703f09649692c0be7473b2882097bb5083fc",
       "at": "2026-04-08T10:00:43Z",
       "pr": 17819,
+      "passes": 1
+    },
+    ".agents/scripts/model-availability-helper.sh": {
+      "hash": "f6c317d405d9e0132c0f8027910d39fdf62b20a3",
+      "at": "2026-04-08T12:43:13Z",
+      "pr": 17797,
       "passes": 1
     }
   },

@@ -442,6 +442,92 @@ _batch_get_process_ages() {
 	return 0
 }
 
+# Check if a process command matches a monitoring pattern.
+# Simple patterns match against the command basename only (case-insensitive).
+# Regex patterns (containing ".*") match against the full command line.
+# Arguments: $1=pattern, $2=cmd_name (basename), $3=full_cmd
+# Returns: 0 if match, 1 if no match
+_matches_monitor_pattern() {
+	local pattern="$1"
+	local cmd_name="$2"
+	local full_cmd="$3"
+
+	if [[ "$pattern" == *".*"* ]]; then
+		# Regex pattern — match against full command line
+		if echo "$full_cmd" | grep -iqE "$pattern"; then
+			return 0
+		fi
+	else
+		# Simple pattern — match against basename only
+		# Use bash 4+ ${var,,} lowercasing to avoid tr subprocess forks
+		local cmd_lower="${cmd_name,,}"
+		local pattern_lower="${pattern,,}"
+		if [[ "$cmd_lower" == *"$pattern_lower"* ]]; then
+			return 0
+		fi
+	fi
+	return 1
+}
+
+# Check if a process should be excluded from monitoring results.
+# Excludes grep processes, this script itself, and already-seen PIDs.
+# Arguments: $1=pid, $2=cmd_name, $3=full_cmd
+# Uses caller-scope: seen_pids[] (read-only check)
+# Returns: 0 if should be skipped, 1 if should be included
+_should_skip_process() {
+	local pid="$1"
+	local cmd_name="$2"
+	local full_cmd="$3"
+
+	# Skip grep and this script
+	if [[ "$cmd_name" == "grep" ]] || [[ "$full_cmd" == *"${SCRIPT_NAME}"* ]]; then
+		return 0
+	fi
+
+	# Skip already-seen PIDs (dedup across overlapping patterns)
+	local seen_pid
+	for seen_pid in "${seen_pids[@]+"${seen_pids[@]}"}"; do
+		if [[ "$seen_pid" == "$pid" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Batch-fetch process ages and emit final pipe-delimited rows sorted by RSS.
+# Arguments: matched_rows[] and seen_pids[] from caller scope
+# Output: PID|RSS_MB|RUNTIME_SECS|COMMAND_NAME|FULL_COMMAND (sorted by RSS desc)
+_resolve_ages_and_emit() {
+	# No matches — nothing to emit
+	if [[ "${#matched_rows[@]}" -eq 0 ]]; then
+		return 0
+	fi
+
+	# Batch-fetch process ages for all matched PIDs in a single ps call
+	local -A age_map
+	local age_line age_pid age_secs
+	while IFS= read -r age_line; do
+		[[ -z "$age_line" ]] && continue
+		read -r age_pid age_secs <<<"$age_line"
+		[[ "$age_pid" =~ ^[0-9]+$ ]] || continue
+		age_map["$age_pid"]="${age_secs:-0}"
+	done < <(_batch_get_process_ages "${seen_pids[@]}")
+
+	# Emit final rows with ages, then sort by RSS descending
+	local row
+	for row in "${matched_rows[@]}"; do
+		local r_pid="${row%%:*}"
+		local rest="${row#*:}"
+		local r_rss="${rest%%:*}"
+		rest="${rest#*:}"
+		local r_cmd_name="${rest%%:*}"
+		local r_cmd="${rest#*:}"
+		local r_age="${age_map[$r_pid]:-0}"
+		printf '%s|%s|%s|%s|%s\n' "$r_pid" "$r_rss" "$r_age" "$r_cmd_name" "$r_cmd"
+	done | sort -t'|' -k2 -rn
+	return 0
+}
+
 # Collect all monitored processes with their RSS and runtime
 # Output: one line per process: PID|RSS_MB|RUNTIME_SECS|COMMAND_NAME|FULL_COMMAND
 #
@@ -478,44 +564,13 @@ _collect_monitored_processes() {
 			local cmd_name="${cmd_path##*/}"
 			[[ -z "$cmd_name" ]] && cmd_name="unknown"
 
-			# Match pattern against the command basename, NOT the full command line.
-			# This prevents false positives like `zsh -l -c "opencode"` matching
-			# the "opencode" pattern — zsh is not an opencode process.
-			# Exception: patterns containing ".*" (regex) are matched against full
-			# command for cases like "node.*language-server".
-			local match=false
-			if [[ "$pattern" == *".*"* ]]; then
-				# Regex pattern — match against full command line
-				if echo "$cmd" | grep -iqE "$pattern"; then
-					match=true
-				fi
-			else
-				# Simple pattern — match against basename only
-				# Use bash 4+ ${var,,} lowercasing to avoid tr subprocess forks
-				local cmd_lower="${cmd_name,,}"
-				local pattern_lower="${pattern,,}"
-				if [[ "$cmd_lower" == *"$pattern_lower"* ]]; then
-					match=true
-				fi
-			fi
-
-			if [[ "$match" != "true" ]]; then
+			# Check pattern match
+			if ! _matches_monitor_pattern "$pattern" "$cmd_name" "$cmd"; then
 				continue
 			fi
 
-			# Skip grep, this script, and already-seen PIDs
-			if [[ "$cmd_name" == "grep" ]] || [[ "$cmd" == *"${SCRIPT_NAME}"* ]]; then
-				continue
-			fi
-			local seen_pid
-			local is_dup=false
-			for seen_pid in "${seen_pids[@]+"${seen_pids[@]}"}"; do
-				if [[ "$seen_pid" == "$pid" ]]; then
-					is_dup=true
-					break
-				fi
-			done
-			if [[ "$is_dup" == "true" ]]; then
+			# Check exclusions and dedup
+			if _should_skip_process "$pid" "$cmd_name" "$cmd"; then
 				continue
 			fi
 			seen_pids+=("$pid")
@@ -526,33 +581,8 @@ _collect_monitored_processes() {
 		done <<<"$ps_output"
 	done
 
-	# No matches — nothing to emit
-	if [[ "${#matched_rows[@]}" -eq 0 ]]; then
-		return 0
-	fi
-
-	# Batch-fetch process ages for all matched PIDs in a single ps call
-	local -A age_map
-	local age_line age_pid age_secs
-	while IFS= read -r age_line; do
-		[[ -z "$age_line" ]] && continue
-		read -r age_pid age_secs <<<"$age_line"
-		[[ "$age_pid" =~ ^[0-9]+$ ]] || continue
-		age_map["$age_pid"]="${age_secs:-0}"
-	done < <(_batch_get_process_ages "${seen_pids[@]}")
-
-	# Emit final rows with ages, then sort by RSS descending
-	local row
-	for row in "${matched_rows[@]}"; do
-		local r_pid="${row%%:*}"
-		local rest="${row#*:}"
-		local r_rss="${rest%%:*}"
-		rest="${rest#*:}"
-		local r_cmd_name="${rest%%:*}"
-		local r_cmd="${rest#*:}"
-		local r_age="${age_map[$r_pid]:-0}"
-		printf '%s|%s|%s|%s|%s\n' "$r_pid" "$r_rss" "$r_age" "$r_cmd_name" "$r_cmd"
-	done | sort -t'|' -k2 -rn
+	# Resolve ages and emit sorted output
+	_resolve_ages_and_emit
 	return 0
 }
 
