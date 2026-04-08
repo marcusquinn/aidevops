@@ -438,24 +438,30 @@ _prompt_org() {
 # ---------------------------------------------------------------------------
 # detect_and_create_all
 # Setup integration: detect username + admin orgs, create all routines repos.
-# In non-interactive mode: only creates personal repo.
+# Non-interactive mode: scaffolds local repo + creates personal GH remote only.
+# Interactive mode: personal repo + prompts for each admin org.
+# Falls back to local-only if gh CLI is unavailable.
 # ---------------------------------------------------------------------------
 detect_and_create_all() {
 	local non_interactive="${1:-false}"
 
+	# If gh is unavailable, fall back to local-only scaffolding so the repo
+	# structure exists even without a GitHub remote.
 	if ! command -v gh &>/dev/null || ! gh auth status &>/dev/null 2>&1; then
-		print_warning "gh CLI not available or not authenticated — skipping routines repo creation"
+		print_warning "gh CLI not available or not authenticated — creating local-only routines repo"
+		init_local
 		return 0
 	fi
 
 	local username
 	username=$(gh api user --jq '.login' 2>/dev/null || echo "")
 	if [[ -z "$username" ]]; then
-		print_warning "Could not detect GitHub username — skipping routines repo creation"
+		print_warning "Could not detect GitHub username — creating local-only routines repo"
+		init_local
 		return 0
 	fi
 
-	# Always create personal repo
+	# Always create personal repo (private GH remote + local clone)
 	init_personal
 
 	if [[ "$non_interactive" == "true" ]]; then

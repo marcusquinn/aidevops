@@ -18,9 +18,10 @@ _load_init_routines_helper() {
 	return 0
 }
 
-# setup_routines — called from setup.sh interactive flow
-# In interactive mode: creates personal repo + prompts for org repos
-# In non-interactive mode: creates personal repo only
+# setup_routines — called from setup.sh in both interactive and non-interactive flows
+# Non-interactive (update): scaffolds local repo + creates personal GH remote only
+# Interactive: creates personal repo + prompts for org repos
+# Falls back to local-only if gh CLI is unavailable (idempotent)
 setup_routines() {
 	print_info "Setting up routines repo..."
 

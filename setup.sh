@@ -905,6 +905,10 @@ _setup_run_non_interactive() {
 	update_codex_config
 	update_cursor_config
 	disable_ondemand_mcps
+	# Scaffold personal routines repo if not already present (idempotent).
+	# Creates local git repo + private GitHub remote for personal repo only.
+	# Org repos require explicit: aidevops init-routines --org <name>
+	setup_routines
 	return 0
 }
 
