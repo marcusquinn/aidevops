@@ -23,10 +23,12 @@ _SHARED_CONSTANTS_LOADED=1
 # Set to "latest" to resume tracking upstream. Grep for the variable name to
 # find all consumers that need updating when unpinning.
 
-# OpenCode unpinned: root cause was SQLite contention (shared DB, busy_timeout=0),
-# not version-specific. Fixed by DB isolation per worker (v3.6.130).
-# Upstream context: https://github.com/anomalyco/opencode/issues/21215
-readonly OPENCODE_PINNED_VERSION="latest"
+# OpenCode pinned to 1.3.16: 1.3.17 ships an `opencode run` regression that
+# fails immediately with "Error: Session not found" (exit 0, no API call made),
+# breaking the headless canary across all repos and blocking every pulse dispatch.
+# Reproduced with `--pure` and a fresh DB — not a plugin or data issue.
+# See: marcusquinn/aidevops#17792
+readonly OPENCODE_PINNED_VERSION="1.3.16"
 
 # =============================================================================
 # HTTP and API Constants
