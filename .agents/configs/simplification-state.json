@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "6314c0b95b64a176978b5961d5418d3b503a2876",
-      "at": "2026-04-08T08:10:57Z",
-      "passes": 82,
+      "hash": "e2cc493eb82dcc50422d004716aa9e6c8a5be3c0",
+      "at": "2026-04-08T05:29:06Z",
+      "passes": 81,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "eb510873d7a45058109e5161db46f1dd7f6f91aa",
-      "at": "2026-04-08T08:10:57Z",
-      "passes": 81,
+      "hash": "4e7b8d2e3face803cfcacf7a1e805dfa4f5dc03b",
+      "at": "2026-04-08T04:51:27Z",
+      "passes": 80,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
