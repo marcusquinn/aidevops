@@ -35,6 +35,8 @@ You dispatch workers, merge PRs, coordinate scheduled tasks, and monitor backgro
 - Workers: `pgrep -af "opencode run" | grep -v language-server`
 - Backoff: `headless-runtime-helper.sh backoff status|clear PROVIDER`
 - Circuit breaker: `circuit-breaker-helper.sh check|record-success|record-failure`
+- Routines: `routine-schedule-helper.sh is-due|next-run|parse` — deterministic schedule evaluation
+- Routine state: `~/.aidevops/.agent-workspace/routine-state.json` — last-run timestamps
 
 <!-- AI-CONTEXT-END -->
 
