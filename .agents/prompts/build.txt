@@ -259,6 +259,23 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - Implementation targets ARE actionable: file paths with line numbers (e.g. `pulse-wrapper.sh:3945`), code blocks with suggestions, and finding descriptions.
 - NEVER read the entire file referenced in a quality-debt issue. Read only the specific line range mentioned (e.g. `:3945` → read lines 3920-3970).
 - Exception: read provenance only when the task is about the quality-feedback system itself.
+#
+# 8c. Bot comment noise skip when reading (token waste prevention)
+# PR threads contain comments from review bots (CodeRabbit, SonarCloud, Codacy,
+# CodeFactor, Qlty, Socket, Gemini, github-actions). Most content is non-actionable:
+# internal state blobs, review-skipped notices, quota warnings, badge images.
+- Skip CodeRabbit internal state: content between `<!-- internal state start -->` and `<!-- internal state end -->` is opaque base64 (often 5-8KB). Never process it.
+- Skip bot status notices: "Review skipped", quota warnings, configuration errors. These are not code findings.
+- Skip badge images and SonarCloud/Codacy summary metrics — use `gh pr checks` for pass/fail status instead.
+- From bot comments, extract ONLY actionable findings: specific file:line issues with descriptions and suggested fixes.
+- Exception: read full bot comments when the task is about CI/review configuration or bot integration.
+#
+# 8d. Operational comment skip when reading (token waste prevention)
+# Issue threads accumulate dispatch/kill/triage comments from the pulse that are
+# audit trail — not implementation context. Marked with `<!-- ops:start/end -->`.
+- Skip content inside `<!-- ops:start/end -->` markers. These are dispatch claims, worker PIDs, kill notifications, and triage labels.
+- Skip approval instruction comments (wrapped in `<!-- provenance:start/end -->`). Workers are dispatched AFTER approval — the instructions are irrelevant.
+- From issue threads, focus on: the issue body (implementation context), and any comments containing code suggestions or error reports.
 
 **Pre-edit rules:**
 - Before ANY file modification: run `pre-edit-check.sh`
