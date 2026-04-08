@@ -272,6 +272,20 @@ _post_issue_approval_updates() {
 		--add-label "auto-dispatch" >/dev/null 2>&1 || true
 	_print_info "Labels updated: removed needs-maintainer-review, added auto-dispatch"
 
+	# t1932: Auto-assign the approving maintainer so the CI maintainer gate
+	# passes without a separate manual command. The crypto approval is already
+	# the strongest signal of maintainer intent — requiring a second command
+	# to set assignee adds friction with zero additional security value.
+	local gh_user
+	gh_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	if [[ -n "$gh_user" ]]; then
+		gh issue edit "$target_number" --repo "$slug" \
+			--add-assignee "$gh_user" >/dev/null 2>&1 || true
+		_print_info "Assigned to $gh_user"
+	else
+		_print_warn "Could not detect GitHub username — set assignee manually"
+	fi
+
 	# t1931: Lock the issue immediately at approval time to close the
 	# prompt-injection window between crypto-approval and worker dispatch.
 	# Previously, the lock only happened at dispatch time (pulse-wrapper.sh
