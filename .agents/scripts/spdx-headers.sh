@@ -256,7 +256,7 @@ _check_ext_files() {
 		total=$((total + 1))
 		_is_spdx_exempt "$file" && continue
 		_has_spdx "$file" && continue
-		echo "  missing: $file"
+		echo "  missing: $file" >&2
 		missing=$((missing + 1))
 	done < <(git ls-files "*.${ext}" 2>/dev/null)
 	echo "$missing $total"
