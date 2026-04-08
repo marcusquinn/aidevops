@@ -1,14 +1,20 @@
 name: Maintainer Gate
 
 # Blocks merge when:
-# 1. PR references an issue with 'needs-maintainer-review' label
-# 2. PR references an issue with no assignee
+# 1. PR itself has 'needs-maintainer-review' label (external contributor PRs)
+# 2. PR references an issue with 'needs-maintainer-review' label
+# 3. PR references an issue with no assignee
 #
 # Also protects labels: re-applies 'needs-maintainer-review' if a
 # non-maintainer removes it from an external issue.
 #
-# This is the hard enforcement layer. The issue-triage-gate.yml applies
-# the label on issue creation; this workflow enforces it at merge time.
+# This is the hard enforcement layer. The issue-triage-gate.yml and
+# pr-triage-gate.yml apply the label on creation; this workflow enforces
+# it at merge time.
+#
+# GH#17671 post-mortem: Previously, external PRs without linked issues
+# passed the gate because only linked-issue labels were checked. Now the
+# gate also checks the PR's own labels, closing the bypass vector.
 
 on:
   pull_request_target:
@@ -40,7 +46,7 @@ jobs:
       # Security: This job uses pull_request_target for fork PR write access.
       # It ONLY reads event metadata (PR title, body, number) — never checks
       # out or executes code from the PR head branch.
-      - name: Check linked issues for maintainer review and assignee
+      - name: Check PR labels and linked issues for maintainer review
         id: check
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -51,6 +57,47 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAINTAINER_GATE_DEBUG: ${{ vars.MAINTAINER_GATE_DEBUG || 'false' }}
         run: |
+          # ---------------------------------------------------------------
+          # Check 0: Does the PR itself carry needs-maintainer-review?
+          # GH#17671 post-mortem: external PRs without linked issues bypassed
+          # the gate because only linked-issue labels were checked. This block
+          # catches that case — the PR's own labels are the primary signal for
+          # external contributor PRs. Requires cryptographic approval on the
+          # PR's comments (same pattern as issue approval).
+          # ---------------------------------------------------------------
+          PR_LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json labels --jq '.labels[].name' 2>/dev/null || true)
+
+          if echo "$PR_LABELS" | grep -q 'needs-maintainer-review'; then
+            # Check for signed approval comment on the PR itself
+            SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              --jq '[.[] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
+              2>/dev/null || echo "0")
+
+            if [[ "$SIGNED_APPROVAL" -gt 0 ]]; then
+              echo "PR #$PR_NUMBER has needs-maintainer-review but signed approval found — continuing"
+            else
+              echo "BLOCKED: PR #$PR_NUMBER has needs-maintainer-review label with no signed approval"
+              echo "blocked=true" >> "$GITHUB_OUTPUT"
+              printf 'PR #%s has \x60needs-maintainer-review\x60 label — a maintainer must cryptographically approve it before merge.\n' "$PR_NUMBER" > /tmp/gate-reasons.txt
+              echo "has_reasons=true" >> "$GITHUB_OUTPUT"
+              gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state=failure \
+                -f context="maintainer-gate" \
+                -f description="PR has needs-maintainer-review — requires cryptographic approval" \
+                2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state=failure \
+                -f context="maintainer-gate" \
+                -f description="PR has needs-maintainer-review — requires cryptographic approval"; } || {
+                echo "::error::Failed to post maintainer-gate commit status after retry"
+                exit 1
+              }
+              exit 0
+            fi
+          fi
+
           # Collect linked issue numbers from PR body
           LINKED_ISSUES=""
           if [[ -n "$PR_BODY" ]]; then
