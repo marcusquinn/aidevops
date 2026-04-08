@@ -251,6 +251,7 @@ FAST_FAIL_SKIP_THRESHOLD="${FAST_FAIL_SKIP_THRESHOLD:-5}"               # Hard s
 FAST_FAIL_EXPIRY_SECS="${FAST_FAIL_EXPIRY_SECS:-604800}"                # 7-day expiry (matches max backoff)
 FAST_FAIL_INITIAL_BACKOFF_SECS="${FAST_FAIL_INITIAL_BACKOFF_SECS:-600}" # 10 min initial backoff
 FAST_FAIL_MAX_BACKOFF_SECS="${FAST_FAIL_MAX_BACKOFF_SECS:-604800}"      # 7-day max backoff
+DISPATCH_COUNT_CAP="${DISPATCH_COUNT_CAP:-8}"                           # Hard stop: max total dispatches per issue (t1927)
 EVER_NMR_CACHE_FILE="${EVER_NMR_CACHE_FILE:-${HOME}/.aidevops/.agent-workspace/supervisor/ever-nmr-cache.json}"
 EVER_NMR_NEGATIVE_CACHE_TTL_SECS="${EVER_NMR_NEGATIVE_CACHE_TTL_SECS:-300}" # Recheck negative results after 5 min
 
@@ -6519,6 +6520,16 @@ check_dispatch_dedup() {
 			echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} already assigned — ${assigned_output}" >>"$LOGFILE"
 			return 0
 		fi
+		# t1927: Stale recovery must record fast-fail. When _is_stale_assignment()
+		# recovers a stale assignment (silent worker timeout), the dedup helper
+		# outputs STALE_RECOVERED on stdout. Without recording this as a failure,
+		# the fast-fail counter stays at 0 and the issue loops through unlimited
+		# dispatch→timeout→stale-recovery cycles. Observed: 8+ dispatches in 6h
+		# with 0 PRs and 0 fast-fail entries (GH#17700, GH#17701, GH#17702).
+		if [[ "$assigned_output" == *STALE_RECOVERED* ]]; then
+			echo "[pulse-wrapper] Dedup: stale recovery detected for #${issue_number} in ${repo_slug} — recording fast-fail (t1927)" >>"$LOGFILE"
+			fast_fail_record "$issue_number" "$repo_slug" "stale_timeout" || true
+		fi
 	fi
 
 	# Layer 7 (GH#11086): cross-machine optimistic claim lock — the final safety
@@ -6920,6 +6931,24 @@ dispatch_with_dedup() {
 		# gaps, stale patterns). A false skip is harmless (next cycle retries),
 		# a false close is destructive (needs manual reopen, re-dispatch, and
 		# loses worker context). Let the verified merge-pass or human close it.
+		return 1
+	fi
+
+	# t1927: Dispatch count cap — hard stop after too many dispatch attempts.
+	# Independent of the fast-fail counter. Counts DISPATCH_CLAIM comments
+	# on the issue. If >= DISPATCH_COUNT_CAP, labels as "stuck" and blocks.
+	if dispatch_count_exceeded "$issue_number" "$repo_slug"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: dispatch count cap exceeded (t1927)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# t1927: Blocked-by enforcement — skip dispatch if a dependency is unresolved.
+	# Fetches issue body and parses for "blocked-by:tNNN" or "Blocked by #NNN".
+	local _dispatch_issue_body
+	_dispatch_issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json body --jq '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
+	if [[ -n "$_dispatch_issue_body" ]] && is_blocked_by_unresolved "$_dispatch_issue_body" "$repo_slug" "$issue_number"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (t1927)" >>"$LOGFILE"
 		return 1
 	fi
 
@@ -8353,6 +8382,140 @@ _fast_fail_prune_expired_locked() {
 		echo "[pulse-wrapper] fast_fail_prune_expired: pruned $((before_count - after_count)) expired entries" >>"$LOGFILE"
 	fi
 	return 0
+}
+
+#######################################
+# Dispatch count cap (t1927)
+#
+# Safety valve that prevents unlimited dispatch loops. Counts total
+# DISPATCH_CLAIM comments on an issue. If the count exceeds
+# DISPATCH_COUNT_CAP (default 8), the issue is blocked from dispatch
+# and labeled "stuck" for human review.
+#
+# Root cause: stale recovery + fast-fail gaps created infinite loops
+# where issues were dispatched 10+ times with 0 PRs. This function
+# is the ultimate safety net independent of the fast-fail counter.
+#
+# Args:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+# Returns:
+#   exit 0 = dispatch count exceeded (do NOT dispatch)
+#   exit 1 = within limit (safe to dispatch)
+#######################################
+dispatch_count_exceeded() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
+	[[ -n "$repo_slug" ]] || return 1
+
+	local cap="$DISPATCH_COUNT_CAP"
+	[[ "$cap" =~ ^[0-9]+$ ]] || cap=8
+	[[ "$cap" -ge 1 ]] || cap=8
+
+	# Count DISPATCH_CLAIM comments on the issue. Use jq to filter
+	# comments starting with "DISPATCH_CLAIM" and count them.
+	local dispatch_count
+	dispatch_count=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --jq '[.[] | select(.body | startswith("DISPATCH_CLAIM"))] | length' 2>/dev/null) || dispatch_count=0
+	[[ "$dispatch_count" =~ ^[0-9]+$ ]] || dispatch_count=0
+
+	if [[ "$dispatch_count" -ge "$cap" ]]; then
+		echo "[pulse-wrapper] dispatch_count_exceeded: #${issue_number} (${repo_slug}) has ${dispatch_count} dispatches (cap=${cap}) — BLOCKED (t1927)" >>"$LOGFILE"
+		# Label as stuck for human review
+		gh label create "stuck" --repo "$repo_slug" \
+			--description "Issue exceeded dispatch count cap — needs human review" \
+			--color "B60205" --force 2>/dev/null || true
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--add-label "stuck" --remove-label "status:available" \
+			--remove-label "status:queued" 2>/dev/null || true
+		gh issue comment "$issue_number" --repo "$repo_slug" \
+			--body "## Dispatch Loop Detected (t1927)
+
+This issue has been dispatched **${dispatch_count} times** (cap: ${cap}) without producing a merged PR. Marking as \`stuck\` to prevent further resource waste.
+
+**Likely causes:**
+- Workers are timing out without producing output
+- The issue body lacks sufficient implementation context
+- A dependency (\`blocked-by\`) is unresolved
+- The task exceeds the capability of the assigned model tier
+
+**Action needed:** Review issue body quality, check for blockers, consider manual implementation or decomposition. Remove the \`stuck\` label and reset the fast-fail counter (\`fast_fail_reset\`) to re-enable dispatch.
+
+_Automated by dispatch_count_exceeded() safety valve (t1927)_" 2>/dev/null || true
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
+# Blocked-by enforcement (t1927)
+#
+# Parses the issue body for blocked-by dependencies and checks whether
+# the blocking task/issue is still open. If the blocker is unresolved,
+# dispatch is skipped.
+#
+# Patterns matched:
+#   - "blocked-by:tNNN" or "blocked-by: tNNN" (TODO.md format)
+#   - "Blocked by tNNN" or "blocked by tNNN" (prose in issue body)
+#   - "blocked-by:#NNN" (GitHub issue reference)
+#
+# Args:
+#   $1 - issue body text
+#   $2 - repo slug (owner/repo)
+#   $3 - issue number (for logging)
+# Returns:
+#   exit 0 = blocker is unresolved (do NOT dispatch)
+#   exit 1 = no blocker or blocker is resolved (safe to dispatch)
+#######################################
+is_blocked_by_unresolved() {
+	local issue_body="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+
+	[[ -n "$issue_body" ]] || return 1
+	[[ -n "$repo_slug" ]] || return 1
+
+	# Extract blocked-by references from the issue body.
+	# Match patterns: blocked-by:tNNN, blocked-by: tNNN, Blocked by tNNN,
+	# blocked-by:#NNN, blocked by #NNN
+	local blocker_task_ids blocker_issue_nums
+	blocker_task_ids=$(printf '%s' "$issue_body" | grep -ioE '[Bb]locked[- ]by[: ]*t([0-9]+)' | grep -oE '[0-9]+' || true)
+	blocker_issue_nums=$(printf '%s' "$issue_body" | grep -ioE '[Bb]locked[- ]by[: ]*#([0-9]+)' | grep -oE '[0-9]+' || true)
+
+	# Check task ID blockers — resolve tNNN to GitHub issue via TODO.md search
+	# or grep recent issues. For simplicity, search issue titles.
+	if [[ -n "$blocker_task_ids" ]]; then
+		while IFS= read -r task_id; do
+			[[ -n "$task_id" ]] || continue
+			# Search for an open issue with this task ID in the title
+			local blocker_state
+			blocker_state=$(gh issue list --repo "$repo_slug" --state open \
+				--search "t${task_id} in:title" --json number,state --jq '.[0].state // ""' 2>/dev/null) || blocker_state=""
+			if [[ "$blocker_state" == "OPEN" ]]; then
+				echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id} (still open) — skipping dispatch (t1927)" >>"$LOGFILE"
+				return 0
+			fi
+		done <<<"$blocker_task_ids"
+	fi
+
+	# Check GitHub issue number blockers
+	if [[ -n "$blocker_issue_nums" ]]; then
+		while IFS= read -r blocker_num; do
+			[[ -n "$blocker_num" ]] || continue
+			local blocker_state
+			blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
+				--json state --jq '.state // ""' 2>/dev/null) || blocker_state=""
+			if [[ "$blocker_state" == "OPEN" ]]; then
+				echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (still open) — skipping dispatch (t1927)" >>"$LOGFILE"
+				return 0
+			fi
+		done <<<"$blocker_issue_nums"
+	fi
+
+	return 1
 }
 
 #######################################
