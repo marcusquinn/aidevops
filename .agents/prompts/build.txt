@@ -196,14 +196,16 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 
 **Traceability (MANDATORY):**
 - PR title MUST have task ID (`{task-id}: {description}`). No exceptions.
-- Closing keywords (`Closes #NNN`, `Fixes #NNN`) go in **code fix commit messages only**.
-  NEVER in planning-only commits (TODO entries, briefs, docs). Planning commits that
-  touch TODO.md or todo/* must use `For #NNN` or `Ref #NNN` — these reference the issue
-  without triggering GitHub's auto-close. Reserve `Closes`/`Fixes` for the commit that
-  contains the actual implementation code.
-  GitHub auto-closes issues from commit messages when merged to the default branch.
-  PR bodies should use `For #NNN` or `Implements #NNN` for context — never `Closes`.
-  The dedup system checks commit messages to determine if work is already in progress.
+- **PR bodies MUST use `Resolves #NNN`** to link the PR to its issue. GitHub only
+  creates the sidebar "Development" link (PR↔issue) when the PR body contains a closing
+  keyword (`Closes`, `Fixes`, `Resolves`). Without it, the audit trail is broken — you
+  can navigate from issue→commit but not issue↔PR. `Resolves` only triggers closure
+  when the PR *merges*, so there is no risk of premature closure.
+- **Planning-only commits** (TODO entries, briefs, docs) must use `For #NNN` or
+  `Ref #NNN` — these reference the issue without triggering GitHub's auto-close.
+  NEVER use `Closes`/`Fixes` in commits that only touch TODO.md or todo/*.
+- **Code fix commit messages** may use `Fixes #NNN` — auto-closes when merged to
+  the default branch. The dedup system checks commit messages to detect in-progress work.
 - Every dispatched task MUST have a GitHub issue. Issue number in TODO.md as `ref:GH#NNN`.
 
 # 9. Worker-Ready Implementation Context (t1900 — MANDATORY)

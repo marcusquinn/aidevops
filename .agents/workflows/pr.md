@@ -54,7 +54,7 @@ tools:
 # GitHub
 git push -u origin HEAD
 gh pr create --fill                                    # Auto-fill from commits
-gh pr create --title "feat: ..." --body "Closes #123"  # Custom title/body
+gh pr create --title "feat: ..." --body "Resolves #123"  # Custom title/body
 gh pr create --fill --draft                            # Draft PR
 gh pr create --fill --reviewer @username,@team         # With reviewers
 # GitLab: glab mr create --fill  |  Gitea: tea pulls create --title "feat: ..."

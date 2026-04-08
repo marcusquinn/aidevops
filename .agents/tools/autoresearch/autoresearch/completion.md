@@ -99,7 +99,7 @@ gh pr create \
   --title "experiment({PROGRAM_NAME}): {improvement_pct:+.1f}% improvement in {METRIC_NAME}" \
   --body "$(generate_completion_summary)
 
-Closes #{issue_number_if_any}"
+Resolves #{issue_number_if_any}"
 ```
 
 **3.6 Store PR memory:**

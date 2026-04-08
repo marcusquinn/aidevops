@@ -101,7 +101,7 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.1 Preflight:** quality checks, auto-fixes.
 
-**4.2 PR Create:** rebase onto `origin/main`, push, create PR. Body MUST include `Closes #NNN`. Add `origin:worker` or `origin:interactive` label.
+**4.2 PR Create:** rebase onto `origin/main`, push, create PR. Body MUST include `Resolves #NNN` (creates GitHub sidebar link between PR and issue; only auto-closes issue when PR merges). Add `origin:worker` or `origin:interactive` label.
 
 **Signature footer (GH#12805 — MANDATORY):** append `gh-signature-helper.sh footer` output. Verify: `gh pr view --json body | jq -e '.body | (contains("aidevops.sh") and (contains("spent") or contains("Overall,")))'`.
 
@@ -136,7 +136,7 @@ If you need to check the gate without merging: `full-loop-helper.sh pre-merge-ga
 
 **4.6 Auto-Release (aidevops only):** `version-manager.sh bump patch`, tag, push, `gh release create`, `setup.sh --non-interactive`.
 
-**4.7 Closing Comments (MANDATORY):** post structured closing comment on **both** issue AND PR: What done, Testing Evidence, Key decisions, Files changed, Blockers, Follow-up, Released in. PR comment: `Closes #NNN`. Issue comment: `PR #NNN`. **Pre-close verification (GH#17372):** Only close an issue if your session created the fixing PR. Never close citing someone else's PR without running `verify-issue-close-helper.sh check`.
+**4.7 Closing Comments (MANDATORY):** post structured closing comment on **both** issue AND PR: What done, Testing Evidence, Key decisions, Files changed, Blockers, Follow-up, Released in. PR comment: `Resolves #NNN`. Issue comment: `PR #NNN`. **Pre-close verification (GH#17372):** Only close an issue if your session created the fixing PR. Never close citing someone else's PR without running `verify-issue-close-helper.sh check`.
 
 **4.8 Postflight + Deploy:** verify release health; `setup.sh --non-interactive`. Emit: `<promise>FULL_LOOP_COMPLETE</promise>`.
 
