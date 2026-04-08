@@ -23,7 +23,6 @@ def atomic_json_write(path, data, indent=2, trailing_newline=False):
             pass
         raise
 
-runtime_id = sys.argv[1]
 output_format = sys.argv[2]
 
 agents_dir = os.path.expanduser("~/.aidevops/agents")
@@ -358,13 +357,12 @@ if output_format == "opencode-json":
     # Playwriter MCP
     if 'playwriter' not in config['mcp']:
         runner = "bun" if bun_path else "npx"
+        command = [runner, "x", "playwriter@latest"] if runner == "bun" else [runner, "playwriter@latest"]
         config['mcp']['playwriter'] = {
             "type": "local",
-            "command": [runner, "x" if runner == "bun" else "", "playwriter@latest"] if runner == "bun" else [runner, "playwriter@latest"],
+            "command": command,
             "enabled": True
         }
-        # Fix: ensure clean command array
-        config['mcp']['playwriter']['command'] = [x for x in config['mcp']['playwriter']['command'] if x]
     config['tools']['playwriter_*'] = True
 
     # Outscraper MCP
