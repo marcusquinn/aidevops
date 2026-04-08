@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.178] - 2026-04-08
+
+### Changed
+
+- remove unauthorized external code, revert unreviewed PRs, harden merge gates (#17868)
+
 ## [3.6.168] - 2026-04-08
 
 ### Changed
