@@ -844,7 +844,7 @@ _probe_resolve_and_validate_key() {
 		return 100
 	fi
 
-	echo "$api_key"
+	printf '%s\n' "$api_key"
 	return 0
 }
 
