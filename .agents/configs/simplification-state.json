@@ -1742,9 +1742,9 @@
       "pr": 12145
     },
     ".agents/scripts/generate-runtime-config.sh": {
-      "hash": "c98636b5fd34430f229e5708bef4317bcdbe2a31",
-      "at": "2026-04-03T16:35:21Z",
-      "passes": 2,
+      "hash": "560fc8924c7d2c2aef4d452a6d0ee20f6ab4fe81",
+      "at": "2026-04-08T18:52:12Z",
+      "passes": 3,
       "pr": 15933
     },
     ".agents/scripts/gh-signature-helper.sh": {
@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "684c0bb489800ca863d98b7ab6b1fbbc9f23b1ef",
-      "at": "2026-04-08T17:58:41Z",
-      "passes": 60,
+      "hash": "2b0ba8d50cfec227fa9180becd775fec4b8dac5d",
+      "at": "2026-04-08T18:52:12Z",
+      "passes": 61,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -5261,21 +5261,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "hash": "aceb6325264886b6abdf9738a8d658fa86ce2957",
-      "at": "2026-04-08T05:08:24Z",
-      "passes": 24,
+      "hash": "924ae4b001a3530714caea746a9b4e2a3167d0f4",
+      "at": "2026-04-08T18:52:25Z",
+      "passes": 25,
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "8494a4477031db3e6aa983c41caf60752f659351",
-      "at": "2026-04-08T17:58:58Z",
-      "passes": 87,
+      "hash": "7adaadc611bdae5fd32f0fd2d5b0cdd8cd5a03ef",
+      "at": "2026-04-08T18:52:25Z",
+      "passes": 88,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "81f88e552ced561281d052a36dc1e011ef510ba0",
-      "at": "2026-04-08T17:58:58Z",
-      "passes": 85,
+      "hash": "e75e239937af64fd255d6fa5d01ebf3ecc62eeb9",
+      "at": "2026-04-08T18:52:25Z",
+      "passes": 86,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -6731,10 +6731,10 @@
       "passes": 1
     },
     ".agents/scripts/approval-helper.sh": {
-      "hash": "c58f45b4de8e534f75cf797106db9ae7d9d2d3ab",
-      "at": "2026-04-08T17:58:40Z",
+      "hash": "54ce9a33142a08dc3e1059cb3817d3c205ce75da",
+      "at": "2026-04-08T18:52:11Z",
       "pr": 17454,
-      "passes": 4
+      "passes": 5
     },
     ".agents/reference/customization.md": {
       "hash": "f0eacffbaf909a5f1849f7bf5668c92a81ba252d",
@@ -6791,10 +6791,10 @@
       "passes": 2
     },
     ".agents/scripts/opencode-db-archive.sh": {
-      "hash": "d70b8431719f9de873d119eb81b297d4da471f25",
-      "at": "2026-04-08T17:58:41Z",
+      "hash": "cb7ae69bdd2f56fb15c166422a119f06e8bafa0a",
+      "at": "2026-04-08T18:52:12Z",
       "pr": 17584,
-      "passes": 6
+      "passes": 7
     },
     ".agents/scripts/colormind-helper.sh": {
       "hash": "fca3090dfe5b07e572ecf605cd270baa54981bbf",
