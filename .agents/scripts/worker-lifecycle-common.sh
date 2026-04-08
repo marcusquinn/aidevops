@@ -785,9 +785,17 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 # Escalate issue model tier after repeated worker failures.
 #
 # Cascade escalation: tier:simple → tier:standard → tier:reasoning.
-# After ESCALATION_FAILURE_THRESHOLD (default 2) failures at the current
-# tier, escalates to the next tier. If already at tier:reasoning, no
-# further escalation — the issue stays for the needs-human path.
+# Crash-type-aware thresholds determine when escalation fires:
+#   - "overwhelmed": model read files, attempted work, but couldn't complete
+#     → escalate immediately (threshold=1). Retrying at the same tier wastes
+#     tokens on the same complexity the model already failed on.
+#   - "no_work": infrastructure failure, setup crash, branch naming failure
+#     → use default threshold (2). Transient issues may resolve on retry.
+#   - "partial" / other: default threshold (2). Model got partway, may
+#     succeed with a continuation or fresh attempt.
+#
+# If already at tier:reasoning, no further escalation — the issue stays
+# for the needs-human path.
 #
 # Each escalation posts a structured report to the issue so the next
 # tier starts with accumulated context, not from zero.
@@ -797,15 +805,18 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 #   $2 - repo slug (owner/repo)
 #   $3 - failure count (current fast-fail count AFTER increment)
 #   $4 - kill/failure reason (for the comment)
+#   $5 - crash type: "overwhelmed" | "no_work" | "partial" | "" (optional)
 # Returns: 0 always (best-effort, never fatal)
 #######################################
 ESCALATION_FAILURE_THRESHOLD="${ESCALATION_FAILURE_THRESHOLD:-2}"
+ESCALATION_OVERWHELMED_THRESHOLD="${ESCALATION_OVERWHELMED_THRESHOLD:-1}"
 
 escalate_issue_tier() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local failure_count="$3"
 	local reason="${4:-repeated_failure}"
+	local crash_type="${5:-}"
 
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
@@ -813,8 +824,15 @@ escalate_issue_tier() {
 	# Validate failure_count is numeric (CodeRabbit review)
 	[[ "$failure_count" =~ ^[0-9]+$ ]] || return 0
 
-	# Validate threshold
+	# Select threshold based on crash type:
+	# - "overwhelmed" = model attempted real work but couldn't complete.
+	#   Immediate escalation (threshold=1) because retrying at the same
+	#   tier reproduces the same failure mode.
+	# - "no_work" / other = transient/infra failures. Use default (2).
 	local threshold="$ESCALATION_FAILURE_THRESHOLD"
+	if [[ "$crash_type" == "overwhelmed" ]]; then
+		threshold="$ESCALATION_OVERWHELMED_THRESHOLD"
+	fi
 	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=2
 	[[ "$threshold" -ge 1 ]] || threshold=2
 
@@ -908,12 +926,25 @@ escalate_issue_tier() {
 	# Post escalation comment (sanitize reason to prevent markdown injection)
 	local safe_reason
 	safe_reason=$(_sanitize_markdown "$reason")
+	local crash_type_label=""
+	case "$crash_type" in
+	overwhelmed)
+		crash_type_label="**Crash type:** \`overwhelmed\` — model read target files and attempted implementation but could not produce commits. Immediate escalation triggered (threshold=1)."
+		;;
+	no_work)
+		crash_type_label="**Crash type:** \`no_work\` — worker exited during setup without reading target files. Likely infrastructure/transient failure."
+		;;
+	partial)
+		crash_type_label="**Crash type:** \`partial\` — worker produced commits but could not complete the PR lifecycle."
+		;;
+	esac
 	local comment_body="## Cascade Tier Escalation: tier:${current_tier} → tier:${next_tier}
 
 **Trigger:** ${failure_count} consecutive worker failures at \`tier:${current_tier}\` (threshold: ${threshold})
 **Action:** Added \`${next_label}\` label — next dispatch will use ${next_tier}-tier model.
 **Reason:** ${safe_reason}
-
+${crash_type_label:+${crash_type_label}
+}
 Previous attempts at \`tier:${current_tier}\` failed to produce a PR. Escalating to a more capable model with accumulated context from prior attempts.
 
 The next worker should review prior attempt comments on this issue for context on what was tried and where it got stuck.

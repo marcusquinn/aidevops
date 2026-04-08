@@ -3304,17 +3304,39 @@ cleanup_worktrees() {
 					repo_name_age=$(basename "$rp_age")
 					echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): removing ${wt_branch_age:-detached} — $reason" >>"$LOGFILE"
 
-					# GH#17436: Record fast-fail for crashed worker worktrees so the
-					# escalation threshold (cascade tier escalation at count=2) can trigger.
-					# Extract issue number from branch name (pattern: gh-NNN or ghNNNNN).
+					# Crash classification for orphaned worktrees.
+					# Classify based on evidence in the worktree to drive
+					# crash-type-aware tier escalation:
+					#   - "overwhelmed": issue-named branch + dirty files or
+					#     evidence of file reads. Model attempted real work
+					#     but couldn't produce commits. Escalate immediately.
+					#   - "no_work": auto-named branch (feature/auto-*) or
+					#     clean worktree with 0 dirty files. Worker never
+					#     got past setup. Transient — retry at same tier.
 					if [[ "$reason" == *"crashed worker"* && -n "$wt_branch_age" && -n "$repo_slug_age" ]]; then
 						local orphan_issue_num=""
 						if [[ "$wt_branch_age" =~ gh[-]?([0-9]+) ]]; then
 							orphan_issue_num="${BASH_REMATCH[1]}"
 						fi
 						if [[ -n "$orphan_issue_num" ]]; then
-							recover_failed_launch_state "$orphan_issue_num" "$repo_slug_age" "premature_exit"
-							echo "[pulse-wrapper] Orphan cleanup: recorded premature_exit for #${orphan_issue_num} (${repo_slug_age}) — triggers fast-fail escalation" >>"$LOGFILE"
+							# Classify crash type from worktree state
+							local orphan_crash_type="no_work"
+							if [[ "$dirty_count" -gt 0 ]]; then
+								# Dirty files = model wrote code but didn't commit
+								orphan_crash_type="overwhelmed"
+							elif [[ "$wt_branch_age" != feature/auto-* ]]; then
+								# Issue-named branch = model parsed the issue and
+								# set up properly, but produced nothing. This is the
+								# "read files, created worktree, couldn't close the
+								# loop" pattern. Overwhelmed by complexity.
+								orphan_crash_type="overwhelmed"
+							fi
+							# Auto-named branches (feature/auto-*) with 0 dirty
+							# files stay as "no_work" — the worker couldn't even
+							# parse the issue metadata, likely an infra failure.
+
+							recover_failed_launch_state "$orphan_issue_num" "$repo_slug_age" "premature_exit" "$orphan_crash_type"
+							echo "[pulse-wrapper] Orphan cleanup: recorded premature_exit for #${orphan_issue_num} (${repo_slug_age}) crash_type=${orphan_crash_type} — triggers fast-fail escalation" >>"$LOGFILE"
 						fi
 					fi
 
@@ -7294,6 +7316,209 @@ _is_task_committed_to_main() {
 #   1 - dedup guard blocked dispatch (duplicate detected)
 #   2 - dispatch failed after passing dedup (assign or launch error)
 #######################################
+
+#######################################
+# Issue consolidation: detect multi-comment issues where substantive
+# comments (not dispatch/approval machinery) have materially changed
+# the issue's scope since the body was written.
+#
+# Threshold: ISSUE_CONSOLIDATION_COMMENT_THRESHOLD (default 2) substantive
+# comments with >500 chars each (excludes dispatch claims, approval sigs,
+# bot comments, and recovery comments).
+#
+# When triggered, adds a "needs-consolidation" label and posts a comment
+# explaining the action. The issue is skipped for dispatch until a
+# consolidation worker merges the comment thread into a clean issue.
+#
+# Arguments: $1 issue_number, $2 repo_slug
+# Returns: 0 if consolidation is needed, 1 if not
+#######################################
+ISSUE_CONSOLIDATION_COMMENT_THRESHOLD="${ISSUE_CONSOLIDATION_COMMENT_THRESHOLD:-2}"
+ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS="${ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS:-500}"
+
+_issue_needs_consolidation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	# Skip if already labeled for consolidation (avoid re-triggering)
+	local issue_labels
+	issue_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	if [[ ",$issue_labels," == *",needs-consolidation,"* ]]; then
+		# Already flagged — still blocked until consolidation runs
+		return 0
+	fi
+	# Skip if consolidation was already done (label removed = consolidated)
+	if [[ ",$issue_labels," == *",consolidated,"* ]]; then
+		return 1
+	fi
+
+	# Count substantive comments (>MIN_CHARS, not from bots or dispatch machinery)
+	local comments_json
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --jq '.' 2>/dev/null) || comments_json="[]"
+
+	local substantive_count=0
+	local min_chars="$ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS"
+	substantive_count=$(printf '%s' "$comments_json" | jq --argjson min "$min_chars" '
+		[.[] | select(
+			(.body | length) >= $min
+			and (.author_association != "NONE" or (.body | test("DISPATCH_CLAIM|SIGNED|aidevops-signed|Dispatching worker|CLAIM_WON|Worker PID") | not))
+			and (.user.type != "Bot")
+			and (.body | test("^<!-- (nmr-hold|aidevops-signed)") | not)
+			and (.body | test("DISPATCH_CLAIM nonce=") | not)
+			and (.body | test("^Dispatching worker") | not)
+		)] | length
+	' 2>/dev/null) || substantive_count=0
+
+	if [[ "$substantive_count" -ge "$ISSUE_CONSOLIDATION_COMMENT_THRESHOLD" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_dispatch_issue_consolidation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+
+	# Add label so we don't re-trigger on next cycle
+	gh label create "needs-consolidation" \
+		--repo "$repo_slug" \
+		--description "Issue needs comment consolidation before dispatch" \
+		--color "FBCA04" \
+		--force 2>/dev/null || true
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "needs-consolidation" 2>/dev/null || true
+
+	# Post comment explaining the hold
+	local comment_body="## Issue Consolidation Needed
+
+This issue has accumulated multiple substantive comments that modify the original scope. To give the implementing worker clean context, a consolidation pass will merge the issue body and comment addenda into a single coherent specification.
+
+**What happens next:**
+1. A consolidation worker reads the body + all substantive comments
+2. Creates a new issue with the merged spec (body-only, no comment archaeology)
+3. Links the new issue back here: \"Supersedes #${issue_number}\"
+4. This issue is closed as superseded
+
+The implementing worker gets a single clean body with all context inline.
+
+_Automated by \`_dispatch_issue_consolidation()\` in pulse-wrapper.sh_"
+
+	gh issue comment "$issue_number" --repo "$repo_slug" \
+		--body "$comment_body" 2>/dev/null || true
+
+	echo "[pulse-wrapper] Issue consolidation: flagged #${issue_number} in ${repo_slug} for comment consolidation" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Large-file simplification gate: check if an issue body references
+# files that exceed a line count threshold, indicating the worker will
+# spend most of its context budget just reading the target file.
+#
+# When a large file is detected, the function:
+#   1. Checks if a simplification task already exists for that file
+#   2. If not, logs the finding for the simplification routine to pick up
+#   3. Adds a label so the issue is held until simplification runs
+#
+# Arguments: $1 issue_number, $2 repo_slug, $3 issue_body, $4 repo_path
+# Returns: 0 if gate triggered (hold dispatch), 1 if clear
+#######################################
+LARGE_FILE_LINE_THRESHOLD="${LARGE_FILE_LINE_THRESHOLD:-2000}"
+
+_issue_targets_large_files() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_body="$3"
+	local repo_path="$4"
+
+	[[ -n "$issue_body" ]] || return 1
+	[[ -d "$repo_path" ]] || return 1
+
+	# Skip if already labeled (avoid re-checking every cycle)
+	local issue_labels
+	issue_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+		return 0
+	fi
+	# Skip if simplification was already done
+	if [[ ",$issue_labels," == *",simplified,"* ]]; then
+		return 1
+	fi
+
+	# Extract file paths from "EDIT:" and "Files to Modify" patterns in body.
+	# Patterns: "EDIT: path/to/file.sh:123-456", "- EDIT: path/to/file"
+	local file_paths
+	file_paths=$(printf '%s' "$issue_body" | grep -oE '(EDIT|NEW|File):?\s+[`"]?\.?agents/scripts/[^`"[:space:],:]+' 2>/dev/null |
+		sed 's/^[A-Z]*:*[[:space:]]*//' | sed 's/^[`"]//' | sed 's/:.*//' | sort -u) || file_paths=""
+
+	# Also check for backtick-quoted filenames that look like script paths
+	local backtick_paths
+	backtick_paths=$(printf '%s' "$issue_body" | grep -oE '`[^`]*\.(sh|py|js|ts)[^`]*`' 2>/dev/null |
+		tr -d '`' | grep -v '^#' | sed 's/:.*//' | sort -u) || backtick_paths=""
+
+	# Combine and deduplicate
+	local all_paths
+	all_paths=$(printf '%s\n%s' "$file_paths" "$backtick_paths" | sort -u | grep -v '^$') || all_paths=""
+
+	[[ -n "$all_paths" ]] || return 1
+
+	local found_large=false
+	local large_files=""
+	while IFS= read -r fpath; do
+		[[ -z "$fpath" ]] && continue
+		# Resolve path relative to repo
+		local full_path=""
+		if [[ -f "${repo_path}/${fpath}" ]]; then
+			full_path="${repo_path}/${fpath}"
+		elif [[ -f "${repo_path}/.agents/${fpath}" ]]; then
+			full_path="${repo_path}/.agents/${fpath}"
+		elif [[ -f "${repo_path}/.${fpath}" ]]; then
+			full_path="${repo_path}/.${fpath}"
+		else
+			continue
+		fi
+
+		local line_count=0
+		line_count=$(wc -l <"$full_path" 2>/dev/null | tr -d ' ') || line_count=0
+		if [[ "$line_count" -ge "$LARGE_FILE_LINE_THRESHOLD" ]]; then
+			found_large=true
+			large_files="${large_files}${fpath} (${line_count} lines), "
+		fi
+	done <<<"$all_paths"
+
+	if [[ "$found_large" == "true" ]]; then
+		# Add label to hold dispatch
+		gh label create "needs-simplification" \
+			--repo "$repo_slug" \
+			--description "Issue targets large file(s) needing simplification first" \
+			--color "D93F0B" \
+			--force 2>/dev/null || true
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--add-label "needs-simplification" 2>/dev/null || true
+
+		large_files="${large_files%, }"
+		gh issue comment "$issue_number" --repo "$repo_slug" \
+			--body "## Large File Simplification Gate
+
+This issue references file(s) exceeding ${LARGE_FILE_LINE_THRESHOLD} lines: ${large_files}.
+
+Workers dispatched against large files spend most of their context budget reading the file, leaving insufficient capacity for implementation. The simplification routine will break these files into smaller modules first.
+
+**Status:** Held from dispatch until simplification completes. The \`needs-simplification\` label will be removed automatically when the target file(s) are below threshold.
+
+_Automated by \`_issue_targets_large_files()\` in pulse-wrapper.sh_" 2>/dev/null || true
+
+		echo "[pulse-wrapper] Large-file gate: #${issue_number} in ${repo_slug} targets ${large_files}" >>"$LOGFILE"
+		return 0
+	fi
+
+	return 1
+}
+
 dispatch_with_dedup() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -7384,6 +7609,26 @@ dispatch_with_dedup() {
 		--json body --jq '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
 	if [[ -n "$_dispatch_issue_body" ]] && is_blocked_by_unresolved "$_dispatch_issue_body" "$repo_slug" "$issue_number"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (t1927)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Pre-dispatch: issue consolidation check. If an issue has accumulated
+	# multiple substantive comments that change scope (not dispatch/approval
+	# machinery), dispatch a consolidation worker first to merge everything
+	# into a clean issue body. This prevents implementing workers from spending
+	# tokens reconstructing scope from comment archaeology.
+	if _issue_needs_consolidation "$issue_number" "$repo_slug"; then
+		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
+		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Pre-dispatch: large-file simplification gate. If the issue body
+	# references files that exceed LARGE_FILE_LINE_THRESHOLD, create a
+	# blocked-by simplification task instead of dispatching. Workers
+	# shouldn't pay the complexity tax of navigating a 12,000-line file.
+	if _issue_targets_large_files "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$repo_path"; then
+		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: targets large file(s), simplification gate" >>"$LOGFILE"
 		return 1
 	fi
 
@@ -8330,6 +8575,7 @@ recover_failed_launch_state() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local failure_reason="${3:-launch_validation_failed}"
+	local crash_type="${4:-}"
 
 	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
 		return 0
@@ -8394,9 +8640,11 @@ recover_failed_launch_state() {
 	fi
 
 	# Record the launch failure in the fast-fail counter (t1888)
-	fast_fail_record "$issue_number" "$repo_slug" "$failure_reason" || true
+	# Pass crash_type through to fast_fail_record → escalate_issue_tier
+	# for crash-type-aware escalation (overwhelmed = immediate, no_work = default)
+	fast_fail_record "$issue_number" "$repo_slug" "$failure_reason" "anthropic" "$crash_type" || true
 
-	echo "[pulse-wrapper] Launch recovery reset #${issue_number} (${repo_slug}) after ${failure_reason}: removed self assignee + status:queued" >>"$LOGFILE"
+	echo "[pulse-wrapper] Launch recovery reset #${issue_number} (${repo_slug}) after ${failure_reason} crash_type=${crash_type:-unclassified}: removed self assignee + status:queued" >>"$LOGFILE"
 	return 0
 }
 
@@ -8575,6 +8823,7 @@ _ff_save() {
 #   $3 - reason (rate_limit, backoff, stall, idle, thrash, runtime,
 #                no_worker_process, cli_usage_output, local_error, etc.)
 #   $4 - provider (optional, for rate-limit pool queries; default: anthropic)
+#   $5 - crash_type (optional: "overwhelmed" | "no_work" | "partial" | "")
 #######################################
 fast_fail_record() {
 	_ff_with_lock _fast_fail_record_locked "$@" || return 0
@@ -8586,6 +8835,7 @@ _fast_fail_record_locked() {
 	local repo_slug="$2"
 	local reason="${3:-launch_failure}"
 	local provider="${4:-anthropic}"
+	local crash_type="${5:-}"
 
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
@@ -8657,7 +8907,7 @@ _fast_fail_record_locked() {
 		;;
 	esac
 
-	# Write updated state
+	# Write updated state (include crash_type for diagnostics)
 	local updated_state
 	updated_state=$(printf '%s' "$state" | jq \
 		--arg k "$key" \
@@ -8666,7 +8916,8 @@ _fast_fail_record_locked() {
 		--arg reason "$reason" \
 		--argjson retry_after "$retry_after" \
 		--argjson backoff_secs "$new_backoff" \
-		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' 2>/dev/null) || return 0
+		--arg crash_type "${crash_type:-}" \
+		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type}' 2>/dev/null) || return 0
 
 	# Flag for enrichment on first non-rate-limit failure: a reasoning worker
 	# will analyze the issue and add implementation guidance before re-dispatch.
@@ -8682,13 +8933,15 @@ _fast_fail_record_locked() {
 	fi
 
 	_ff_save "$updated_state"
-	echo "[pulse-wrapper] fast_fail_record: #${issue_number} (${repo_slug}) ${log_action} reason=${reason}" >>"$LOGFILE"
+	echo "[pulse-wrapper] fast_fail_record: #${issue_number} (${repo_slug}) ${log_action} reason=${reason} crash_type=${crash_type:-unclassified}" >>"$LOGFILE"
 
 	# Trigger tier escalation on non-rate-limit failures only (GH#2076).
 	# Rate-limit paths (rate_limit*, backoff) don't escalate — the model isn't
 	# the problem, it's provider capacity. Escalating would waste a higher tier.
+	# Pass crash_type to escalate_issue_tier for crash-type-aware thresholds:
+	# "overwhelmed" escalates immediately, others use default threshold.
 	if [[ "$is_rate_limit" == "false" && "$new_count" -gt "$existing_count" ]]; then
-		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason" || true
+		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason" "$crash_type" || true
 	fi
 
 	return 0

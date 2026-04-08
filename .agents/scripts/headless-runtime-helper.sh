@@ -2394,6 +2394,7 @@ _release_dispatch_claim() {
 _report_failure_to_fast_fail() {
 	local session_key="$1"
 	local reason="${2:-worker_failed}"
+	local crash_type="${3:-}"
 
 	# Extract issue number from session key (last numeric segment)
 	local issue_number=""
@@ -2475,7 +2476,8 @@ _report_failure_to_fast_fail() {
 			--arg reason "$reason" \
 			--argjson retry_after "$retry_after" \
 			--argjson backoff_secs "$new_backoff" \
-			'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' \
+			--arg crash_type "${crash_type:-}" \
+			'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type}' \
 			2>/dev/null) || updated_state=""
 	fi
 
@@ -2491,12 +2493,14 @@ _report_failure_to_fast_fail() {
 	# Release lock
 	rmdir "$lock_dir" 2>/dev/null || true
 
-	print_info "[fast-fail] #${issue_number} (${repo_slug}) count=${new_count} backoff=${new_backoff}s reason=${reason}"
+	print_info "[fast-fail] #${issue_number} (${repo_slug}) count=${new_count} backoff=${new_backoff}s reason=${reason} crash_type=${crash_type:-unclassified}"
 
 	# Trigger tier escalation (escalate_issue_tier from worker-lifecycle-common.sh)
-	# Only fires when new_count == threshold (default 2) — not on every failure.
+	# Only fires when new_count == threshold — not on every failure.
+	# Pass crash_type so escalation uses crash-type-aware thresholds:
+	# "overwhelmed" escalates immediately (threshold=1).
 	if [[ "$new_count" -gt "$existing_count" ]]; then
-		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason" || true
+		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason" "$crash_type" || true
 	fi
 
 	return 0
@@ -2512,11 +2516,36 @@ _cmd_run_finish() {
 	if [[ "$ledger_status" == "fail" ]]; then
 		_release_dispatch_claim "$session_key" "worker_failed"
 
+		# Classify crash type from worker session state.
+		# _run_result_label is set by _handle_run_result:
+		#   "premature_exit" = model had activity but no completion signal
+		#   "no_activity"    = no LLM output at all
+		#   "watchdog_stall_continue" = stall with prior activity
+		#   other            = provider/infra failures
+		local crash_type=""
+		case "${_run_result_label:-}" in
+		premature_exit | watchdog_stall_continue)
+			# Model attempted real work (read files, created worktree) but
+			# couldn't produce commits/PR. This is "overwhelmed" — the model
+			# tried and failed due to task complexity, not infra issues.
+			crash_type="overwhelmed"
+			;;
+		no_activity)
+			# No LLM output at all — infra/setup failure
+			crash_type="no_work"
+			;;
+		*)
+			# Provider errors, rate limits, auth failures — not a model
+			# capability issue, don't classify for escalation purposes
+			crash_type=""
+			;;
+		esac
+
 		# Self-report to the fast-fail counter so tier escalation fires
 		# immediately instead of waiting 30+ min for the pulse to discover
 		# the orphaned assignment. Uses the failure reason from the retry
 		# loop if available, otherwise defaults to "worker_failed".
-		_report_failure_to_fast_fail "$session_key" "${_run_failure_reason:-worker_failed}"
+		_report_failure_to_fast_fail "$session_key" "${_run_failure_reason:-worker_failed}" "$crash_type"
 	fi
 
 	_update_dispatch_ledger "$session_key" "$ledger_status"
