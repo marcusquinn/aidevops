@@ -157,6 +157,85 @@ emit_deploy_phase() {
 	echo "Run setup.sh per full-loop.md guidance."
 }
 
+# Pre-start maintainer gate check (GH#17810).
+# Extracts the first issue number from the prompt and verifies the linked
+# issue does not have needs-maintainer-review label or missing assignee.
+# Mirrors the logic in .github/workflows/maintainer-gate.yml check-pr job.
+#
+# Returns:
+#   0 — gate passes (safe to start)
+#   1 — gate blocked (do NOT start work)
+#
+# Skips gracefully when:
+#   - No issue number found in prompt (not all tasks have linked issues)
+#   - gh CLI unavailable or API call fails (fail-open to avoid blocking non-issue tasks)
+#   - Issue is closed (already reviewed)
+_check_linked_issue_gate() {
+	local prompt="$1"
+	local repo="${2:-}"
+
+	# Extract first issue number from prompt — look for #NNN or issue/NNN patterns
+	local issue_num
+	issue_num=$(echo "$prompt" | grep -oE '#[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+	if [[ -z "$issue_num" ]]; then
+		# No issue number in prompt — skip gate (not all tasks reference issues)
+		return 0
+	fi
+
+	# Resolve repo from git remote if not provided
+	if [[ -z "$repo" ]]; then
+		repo=$(git remote get-url origin 2>/dev/null | sed -E 's|.*github\.com[:/]||;s|\.git$||' || true)
+	fi
+	if [[ -z "$repo" ]]; then
+		# Cannot determine repo — skip gate (fail-open)
+		return 0
+	fi
+
+	# Fetch issue data — fail-open on API errors (don't block non-issue tasks)
+	local raw_issue
+	raw_issue=$(gh api "repos/${repo}/issues/${issue_num}" 2>/dev/null) || {
+		print_warning "Maintainer gate pre-check: could not fetch issue #${issue_num} — skipping gate"
+		return 0
+	}
+
+	local state labels assignees
+	state=$(echo "$raw_issue" | jq -r '.state' 2>/dev/null || echo "unknown")
+	labels=$(echo "$raw_issue" | jq -r '[.labels[]?.name] | .[]' 2>/dev/null || true)
+	assignees=$(echo "$raw_issue" | jq -r '[.assignees[]?.login] | .[]' 2>/dev/null || true)
+
+	# Skip closed issues — they've already been reviewed
+	if [[ "$state" == "closed" ]]; then
+		return 0
+	fi
+
+	local blocked=false reasons=""
+
+	# Check 1: needs-maintainer-review label
+	if echo "$labels" | grep -q 'needs-maintainer-review'; then
+		blocked=true
+		reasons="${reasons}Issue #${issue_num} has \`needs-maintainer-review\` label — a maintainer must approve before work begins.\n"
+	fi
+
+	# Check 2: no assignee (exempt quality-debt issues per GH#6623)
+	if [[ -z "$assignees" ]]; then
+		if echo "$labels" | grep -q 'quality-debt'; then
+			: # exempt
+		else
+			blocked=true
+			reasons="${reasons}Issue #${issue_num} has no assignee — assign the issue before starting work.\n"
+		fi
+	fi
+
+	if [[ "$blocked" == "true" ]]; then
+		print_error "Maintainer gate pre-check BLOCKED — cannot start work:"
+		printf '%b' "$reasons" >&2
+		printf "To unblock:\n  1. Run: sudo aidevops approve issue %s\n  2. Assign the issue to yourself\n" "$issue_num" >&2
+		return 1
+	fi
+
+	return 0
+}
+
 # Initialize option variables with defaults so set -u doesn't crash on
 # export when flags are not passed.
 _init_start_defaults() {
@@ -264,6 +343,12 @@ cmd_start() {
 		print_error "Must be on a feature branch"
 		return 1
 	}
+
+	# Pre-start maintainer gate check (GH#17810): block if linked issue has
+	# needs-maintainer-review label or no assignee. Mirrors the CI gate in
+	# .github/workflows/maintainer-gate.yml so workers fail fast locally
+	# instead of creating PRs that will always fail CI.
+	_check_linked_issue_gate "$prompt" || return 1
 
 	printf "\n${BOLD}${BLUE}=== FULL DEVELOPMENT LOOP - STARTING ===${NC}\n  Task: %s\n  Branch: %s | Headless: %s\n\n" \
 		"$prompt" "$(get_current_branch)" "$HEADLESS"

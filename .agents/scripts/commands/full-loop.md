@@ -34,6 +34,7 @@ Extract first positional arg; if ` -- ` present, use suffix (t158). Resolve `t\d
 
 **Implementation context (t1901 — read BEFORE exploring):** After resolving the issue, read its body. Look for a "Worker Guidance" or "How" section containing Files to Modify, Implementation Steps, and Verification commands. If present, these are your mentor's instructions — follow them directly. Read only the referenced files, not the entire codebase. If the issue body lacks file paths and implementation steps, exit BLOCKED with reason "missing implementation context" rather than exploring broadly.
 
+- **Maintainer gate pre-check (GH#17810 — MANDATORY):** Before starting work, verify the linked issue does not have `needs-maintainer-review` label and has an assignee. `full-loop-helper.sh start` enforces this automatically — if blocked, exit with reason "linked issue has needs-maintainer-review label" or "linked issue has no assignee". Do NOT create a PR for an issue that will fail the CI maintainer gate.
 - **Decomposition (t1408.2):** Skip if `--no-decompose` or has subtasks. `task-decompose-helper.sh classify "$TASK_DESC"`. Composite headless → auto-decompose, exit `DECOMPOSED: ...`. Max depth 3.
 - **Claim (t1017):** Add `assignee:<identity> started:<ISO>` to TODO.md. Push rejection = claimed → **STOP**.
 - **Issue labels (t1343/#2452):** Guard: state must be `OPEN`. Set `status:in-progress`, remove stale labels. Lifecycle: `available` → `queued` → `in-progress` → `in-review` → `done`. Idempotent (t1687).
