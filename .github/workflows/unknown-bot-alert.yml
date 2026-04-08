@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+name: Unknown Bot Alert
+
+# Detects when a new/unknown bot account posts a comment on an issue or PR.
+# Creates an issue to review the bot's output for token-efficiency skip rules.
+#
+# Context: Workers read all issue/PR comments. Bot comments often contain
+# non-actionable noise (base64 state blocks, badges, quota warnings) that
+# wastes tokens. Known bots have skip rules in build.txt (#8c). This workflow
+# catches new bots before they accumulate waste.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  detect-unknown-bot:
+    runs-on: ubuntu-latest
+    # Only run for bot accounts
+    if: >-
+      contains(github.event.comment.user.login, '[bot]') ||
+      contains(github.event.comment.user.login, '-bot')
+    steps:
+      - name: Check if bot is known
+        id: check
+        env:
+          BOT_LOGIN: ${{ github.event.comment.user.login }}
+          COMMENT_LEN: ${{ github.event.comment.body && '1' || '0' }}
+        run: |
+          # Known bots with skip rules in build.txt #8c
+          KNOWN_BOTS=(
+            "coderabbitai[bot]"
+            "sonarqubecloud[bot]"
+            "codacy-production[bot]"
+            "github-actions[bot]"
+            "gemini-code-assist[bot]"
+            "codefactor-io[bot]"
+            "socket-security[bot]"
+            "qltybot[bot]"
+            "dependabot[bot]"
+            "renovate[bot]"
+            "mergify[bot]"
+            "allcontributors[bot]"
+            "codecov[bot]"
+            "stale[bot]"
+          )
+
+          is_known=false
+          for bot in "${KNOWN_BOTS[@]}"; do
+            if [[ "$BOT_LOGIN" == "$bot" ]]; then
+              is_known=true
+              break
+            fi
+          done
+
+          echo "bot_login=$BOT_LOGIN" >> "$GITHUB_OUTPUT"
+          echo "is_known=$is_known" >> "$GITHUB_OUTPUT"
+
+          # Calculate comment body length for the issue body
+          BODY_LEN=$(echo -n "${{ github.event.comment.body }}" | wc -c | tr -d ' ')
+          echo "body_len=$BODY_LEN" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing alert issue
+        if: steps.check.outputs.is_known == 'false'
+        id: dedup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BOT_LOGIN: ${{ steps.check.outputs.bot_login }}
+        run: |
+          # Don't create duplicate issues for the same bot
+          existing=$(gh issue list --repo "${{ github.repository }}" \
+            --label "unknown-bot" \
+            --search "unknown bot: $BOT_LOGIN" \
+            --state open --json number --jq 'length')
+          echo "exists=$existing" >> "$GITHUB_OUTPUT"
+
+      - name: Create alert issue
+        if: >-
+          steps.check.outputs.is_known == 'false' &&
+          steps.dedup.outputs.exists == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BOT_LOGIN: ${{ steps.check.outputs.bot_login }}
+          BODY_LEN: ${{ steps.check.outputs.body_len }}
+          SOURCE_URL: ${{ github.event.comment.html_url }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh issue create --repo "$REPO" \
+            --title "unknown bot: $BOT_LOGIN detected commenting on this repo" \
+            --label "unknown-bot,quality-debt" \
+            --body "## Unknown Bot Detected
+
+          A new bot account **\`$BOT_LOGIN\`** has started posting comments on this repository.
+
+          - **First seen**: $SOURCE_URL
+          - **Comment size**: $BODY_LEN chars
+          - **Repository**: $REPO
+
+          ### Action Required
+
+          1. **Review the bot's comment** at the link above to assess its output
+          2. **Log an issue on the aidevops repo** to add this bot to the known bots list and create token-efficiency skip rules for its non-actionable output:
+             \`\`\`
+             gh issue create --repo marcusquinn/aidevops \\
+               --title 'Add $BOT_LOGIN to known bots list (build.txt #8c)' \\
+               --label 'quality-debt,priority:medium' \\
+               --body 'New bot \`$BOT_LOGIN\` detected on $REPO. Review its comment output and add appropriate skip rules to build.txt rule #8c and bot-noise-monitor-helper.sh KNOWN_BOTS list.
+
+          First comment: $SOURCE_URL
+          Comment size: $BODY_LEN chars
+
+          ### What to check
+          - Does the bot post internal state blocks (base64, HTML comments)?
+          - Does it post review-skipped or quota-warning notices?
+          - Does it post badges or summary metrics duplicating gh pr checks?
+          - What percentage of its output is actionable vs noise?
+
+          ### Files to update
+          - EDIT: .agents/prompts/build.txt — add to rule #8c known bot patterns
+          - EDIT: .agents/scripts/bot-noise-monitor-helper.sh — add to KNOWN_BOTS array
+          - EDIT: .github/workflows/unknown-bot-alert.yml — add to KNOWN_BOTS array'
+             \`\`\`
+          3. **Until skip rules are added**, workers will process this bot's full output on every issue/PR thread read
+
+          ---
+          <!-- provenance:start -->
+          _Auto-generated by unknown-bot-alert.yml workflow. See build.txt rules #8a-#8d for the token-efficiency context-cleaning framework._
+          <!-- provenance:end -->"
