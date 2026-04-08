@@ -299,9 +299,9 @@ workers attempted.
 ### Model tier selection
 
 `dispatch_with_dedup` handles model selection automatically via round-robin across
-configured providers (AIDEVOPS_HEADLESS_MODELS). The resolved model is recorded in
-the dispatch comment. **Do NOT pass a model override (9th parameter) for default
-dispatches** — this bypasses the round-robin and causes provider imbalance.
+providers derived from the OAuth pool + routing table (GH#17769). The resolved model
+is recorded in the dispatch comment. **Do NOT pass a model override (9th parameter)
+for default dispatches** — this bypasses the round-robin and causes provider imbalance.
 
 Only pass a model override when tier escalation is needed:
 

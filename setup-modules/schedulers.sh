@@ -110,27 +110,16 @@ _determine_pulse_install() {
 	return 0
 }
 
+# GH#17769: These functions are deprecated — model routing is now derived
+# from the OAuth pool + routing table at runtime. Kept as no-ops for one
+# release cycle in case external scripts call them.
 _resolve_headless_models_override() {
-	local configured="${AIDEVOPS_HEADLESS_MODELS:-}"
-	if [[ -z "$configured" ]] && type config_get &>/dev/null; then
-		configured=$(config_get "orchestration.headless_models" "")
-		if [[ "$configured" == "null" ]]; then
-			configured=""
-		fi
-	fi
-	printf '%s' "$configured"
+	printf '%s' ""
 	return 0
 }
 
 _resolve_pulse_model_override() {
-	local configured="${PULSE_MODEL:-}"
-	if [[ -z "$configured" ]] && type config_get &>/dev/null; then
-		configured=$(config_get "orchestration.pulse_model" "")
-		if [[ "$configured" == "null" ]]; then
-			configured=""
-		fi
-	fi
-	printf '%s' "$configured"
+	printf '%s' ""
 	return 0
 }
 
@@ -172,9 +161,8 @@ _resolve_pulse_runtime_binary() {
 }
 
 _build_pulse_linux_env() {
-	# GH#17546: Model config (AIDEVOPS_HEADLESS_MODELS, PULSE_MODEL,
-	# AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST) no longer embedded in cron/systemd env.
-	# pulse-wrapper.sh sources credentials.sh at runtime for current values.
+	# GH#17546/GH#17769: Model config is derived from pool + routing table at
+	# runtime. No model env vars embedded in cron/systemd.
 	local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace
 PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
 
@@ -300,12 +288,9 @@ _cleanup_old_pulse_plists() {
 }
 
 # Build XML environment variable fragment for headless model overrides.
-# GH#17546: Model config (AIDEVOPS_HEADLESS_MODELS, PULSE_MODEL,
-# AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST) is NO LONGER embedded in the plist.
-# Baking these at setup time caused drift: credentials.sh gets updated but
-# the loaded launchd agent keeps using whatever was baked at last setup.
-# The pulse-wrapper now sources credentials.sh at startup, which is the
-# single source of truth for model routing config.
+# GH#17546: Model config was removed from plist embedding.
+# GH#17769: Model routing is now derived from pool + routing table at runtime.
+# No env vars needed — pulse-wrapper.sh reads the routing table directly.
 _build_pulse_headless_env_xml() {
 	# Intentionally empty — model config read from credentials.sh at runtime.
 	printf '%s' ""

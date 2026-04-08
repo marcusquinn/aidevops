@@ -113,14 +113,14 @@ launchctl bootout gui/$(id -u)/sh.aidevops.<name> && \
 
 ## Provider Management
 
-**Round-robin:** Helper alternates providers in `AIDEVOPS_HEADLESS_MODELS`. Pulse requires Anthropic (sonnet) — OpenAI models exit immediately without activity, wasting every other cycle. Pin pulse with `PULSE_MODEL`; workers can use any provider.
+**Automatic model routing (v3.7+, GH#17769):** The headless model list is derived at runtime from two sources — no env var configuration needed:
 
-**CRITICAL:** Only use agentic-capable models in the round-robin. Codex/code-completion models (gpt-5.3-codex, gpt-5.4-codex) cannot make tool calls and will fail silently as headless workers (GH#17669). Model tiers are defined in `configs/model-routing-table.json` — the single source of truth.
+1. **OAuth pool** (`oauth-pool-helper.sh list all`) — which providers the user has accounts for
+2. **Routing table** (`configs/model-routing-table.json`) — which models map to which tiers per provider
 
-```bash
-export PULSE_MODEL="anthropic/claude-sonnet-4-6"
-export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.4"
-```
+The round-robin model list = "for each provider in the pool, get the sonnet-tier model from the routing table." Pulse always uses the Anthropic sonnet model (derived from the routing table). Workers round-robin across all pool providers.
+
+**No manual model configuration required.** The deprecated `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected as overrides for one release cycle, with deprecation warnings logged. Remove them from `credentials.sh` — they will be ignored in a future release.
 
 **Backoff:** `headless-runtime-helper.sh backoff status` / `backoff clear PROVIDER`. Exit code 75 = all providers backed off.
 **Escalation:** After 2+ failed attempts, use `--model anthropic/claude-opus-4-6`. One opus dispatch (~3x cost) is cheaper than 5+ failed sonnet dispatches.

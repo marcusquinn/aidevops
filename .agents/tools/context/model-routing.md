@@ -69,8 +69,16 @@ Supervisor resolves automatically. Interactive: `compare-models-helper.sh discov
 
 ## Headless Dispatch
 
-- **Pulse**: Anthropic sonnet only — OpenAI models exit without activity (proven). `PULSE_MODEL=anthropic/claude-sonnet-4-6`.
-- **Workers**: Any provider. `AIDEVOPS_HEADLESS_MODELS` is rotation with backoff, not escalation. Tier escalation: `tier:reasoning` labels (cascade: `tier:simple` → `tier:standard` → `tier:reasoning`).
+**Automatic model derivation (GH#17769):** The headless model list is derived at runtime — no env var configuration needed:
+
+1. **OAuth pool** (`oauth-pool-helper.sh list all`) → available providers (cheap JSON read, no API calls)
+2. **Routing table** (`configs/model-routing-table.json`) → sonnet-tier model per provider
+3. **Result**: round-robin list of agentic models matching the user's active accounts
+
+- **Pulse**: Always Anthropic sonnet (derived from routing table). OpenAI models exit without activity (proven).
+- **Workers**: Round-robin across all pool providers' sonnet models. Tier escalation: `tier:reasoning` labels (cascade: `tier:simple` → `tier:standard` → `tier:reasoning`).
+- **Fallback**: If pool or routing table unavailable, falls back to `anthropic/claude-sonnet-4-6`.
+- **Deprecated**: `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected as overrides for one release cycle with deprecation warnings. Remove from `credentials.sh`.
 
 ## CLI Tools
 

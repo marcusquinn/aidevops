@@ -127,12 +127,14 @@
         "pulse_model": {
           "type": "string",
           "default": "",
-          "description": "Optional explicit pulse model override. Empty string keeps shared defaults. Env: PULSE_MODEL"
+          "deprecated": true,
+          "description": "DEPRECATED (v3.7+, GH#17769): Model routing is now derived from pool + routing table. This field is ignored. Remove from config."
         },
         "headless_models": {
           "type": "string",
           "default": "",
-          "description": "Optional comma-separated headless worker model override. Empty string keeps shared defaults. Env: AIDEVOPS_HEADLESS_MODELS"
+          "deprecated": true,
+          "description": "DEPRECATED (v3.7+, GH#17769): Model routing is now derived from pool + routing table. This field is ignored. Remove from config."
         },
         "peak_hours_enabled": {
           "type": "boolean",

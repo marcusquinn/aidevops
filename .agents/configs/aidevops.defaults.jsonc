@@ -124,16 +124,9 @@
     // Env override: AIDEVOPS_QUALITY_DEBT_CAP_PCT
     "quality_debt_cap_pct": 30,
 
-    // Optional explicit pulse model override.
-    // Empty string keeps the shared default selection behavior.
-    // Example local opt-in: "openai/gpt-5.4"
-    // Env override: PULSE_MODEL
+    // DEPRECATED (v3.7+, GH#17769): Model routing is now derived from
+    // pool + routing table at runtime. These fields are ignored.
     "pulse_model": "",
-
-    // Optional explicit headless worker model list override (comma-separated).
-    // Empty string keeps the shared round-robin/default behavior.
-    // Example local opt-in: "openai/gpt-5.4"
-    // Env override: AIDEVOPS_HEADLESS_MODELS
     "headless_models": "",
 
     // Seconds of unchanged backlog before triggering an LLM supervisor session.

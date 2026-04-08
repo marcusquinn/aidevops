@@ -46,7 +46,9 @@ export AIDEVOPS_HEADLESS_RUNTIME_DIR="$TEST_TMP_DIR/runtime"
 export STUB_LOG_FILE="$TEST_TMP_DIR/opencode-args.log"
 # Set a known model list so tests are self-contained and don't depend on
 # the user's environment. Includes two providers for rotation/fallback tests.
-export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"
+# GH#17769: AIDEVOPS_HEADLESS_MODELS is deprecated but respected as override
+# for backward compat. Using agentic models only (codex models removed).
+export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.4"
 unset AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST
 # Disable sandbox for tests — the sandbox strips env vars (STUB_*) needed
 # by the opencode stub, causing test failures.
@@ -481,26 +483,18 @@ else
 	pass "sourcing sandbox-exec-helper.sh with watchdog args does not print help text (GH#6617)"
 fi
 
-section "JSONC Config Overrides"
-CONFIG_USER_FILE="$TEST_TMP_DIR/headless-config.jsonc"
-cat >"$CONFIG_USER_FILE" <<'JSONC'
-{
-  "orchestration": {
-    "headless_models": "openai/gpt-5.4"
-  }
-}
-JSONC
+section "Deprecated Env Var Override (GH#17769)"
+# GH#17769: AIDEVOPS_HEADLESS_MODELS is deprecated but respected as override
+# for one release cycle. When set, it should be used directly.
 config_selected=$(
-	AIDEVOPS_HEADLESS_MODELS="" \
-		JSONC_DEFAULTS="$REPO_DIR/.agents/configs/aidevops.defaults.jsonc" \
-		JSONC_USER="$CONFIG_USER_FILE" \
+	AIDEVOPS_HEADLESS_MODELS="openai/gpt-5.4" \
 		OPENAI_API_KEY="test-key-for-provider-auth-check" \
 		bash "$HELPER" select --role worker 2>/dev/null || true
 )
 if [[ "$config_selected" == "openai/gpt-5.4" ]]; then
-	pass "JSONC orchestration.headless_models overrides default selection"
+	pass "Deprecated AIDEVOPS_HEADLESS_MODELS env var override is respected"
 else
-	fail "JSONC orchestration.headless_models overrides default selection" "got: $config_selected"
+	fail "Deprecated AIDEVOPS_HEADLESS_MODELS env var override is respected" "got: $config_selected"
 fi
 
 section "Metrics Review Signals"

@@ -27,6 +27,7 @@ if [[ -f "$HOME/.ssh/agent.env" ]]; then
 	. "$HOME/.ssh/agent.env" >/dev/null 2>&1 || true
 fi
 
+# Absolute fallback when both pool and routing table are unavailable (GH#17769)
 readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-4-6"
 readonly STATE_DIR="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
 readonly STATE_DB="${STATE_DIR}/state.db"
@@ -309,107 +310,89 @@ get_auth_signature() {
 	return 0
 }
 
+# Derive the headless model list from the OAuth pool + routing table (GH#17769).
+# Flow: pool → available providers → routing table sonnet tier → model list.
+# This eliminates AIDEVOPS_HEADLESS_MODELS as a user-configurable env var.
+# The pool is the authority on accounts; the routing table is the authority on models.
 get_configured_models() {
-	local configured="${AIDEVOPS_HEADLESS_MODELS:-}"
 	local allowlist_raw="${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}"
 	local -a allowlist=()
-	local -a raw_models=()
 	local -a models=()
-	local item provider
+	local provider model
 
-	if [[ -z "$configured" ]] && type config_get >/dev/null 2>&1; then
-		configured=$(config_get "orchestration.headless_models" "")
-		if [[ "$configured" == "null" ]]; then
-			configured=""
+	# Backward compatibility: if legacy env var is still set, log deprecation
+	# warning but respect it as an override for one release cycle.
+	if [[ -n "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
+		print_warning "AIDEVOPS_HEADLESS_MODELS is deprecated (v3.7+). Model routing is now automatic via pool + routing table. Remove this export from credentials.sh. Respecting override for this release cycle."
+		local -a raw_models=()
+		IFS=',' read -r -a raw_models <<<"$AIDEVOPS_HEADLESS_MODELS"
+		for item in "${raw_models[@]}"; do
+			item=$(trim_spaces "$item")
+			[[ -z "$item" ]] && continue
+			provider=$(extract_provider "$item" 2>/dev/null || printf '%s' "")
+			[[ -z "$provider" ]] && continue
+			models+=("$item")
+		done
+		if [[ ${#models[@]} -gt 0 ]]; then
+			printf '%s\n' "${models[@]}"
+			return 0
 		fi
-	fi
-	if [[ -z "$configured" ]]; then
-		configured="$DEFAULT_HEADLESS_MODELS"
 	fi
 
 	if [[ -n "$allowlist_raw" ]]; then
 		IFS=',' read -r -a allowlist <<<"$allowlist_raw"
 	fi
 
-	IFS=',' read -r -a raw_models <<<"$configured"
-	for item in "${raw_models[@]}"; do
-		item=$(trim_spaces "$item")
-		[[ -z "$item" ]] && continue
-		provider=$(extract_provider "$item" 2>/dev/null || printf '%s' "")
-		[[ -z "$provider" ]] && continue
+	local routing_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
+	local pool_helper="${SCRIPT_DIR}/oauth-pool-helper.sh"
 
-		# GH#17669: Filter out non-agentic models. Codex/code-completion
-		# models can't make tool calls and die silently as headless workers.
-		# This self-heals stale AIDEVOPS_HEADLESS_MODELS configs without
-		# requiring manual credentials.sh edits.
-		if _is_non_agentic_model "$item"; then
-			local replacement=""
-			replacement=$(_get_agentic_replacement "$item")
-			if [[ -n "$replacement" ]]; then
-				item="$replacement"
-				provider=$(extract_provider "$item" 2>/dev/null || printf '%s' "")
-			else
-				continue
+	# Step 1: Query pool for available providers (cheap — reads JSON file, no API calls)
+	local -a pool_providers=()
+	if [[ -x "$pool_helper" ]]; then
+		local pool_output=""
+		pool_output=$("$pool_helper" list all 2>/dev/null) || pool_output=""
+		# Parse provider names from lines like "anthropic (2 accounts):"
+		while IFS= read -r line; do
+			local prov=""
+			prov=$(printf '%s' "$line" | sed -n 's/^\([a-z]*\) ([0-9]* account.*/\1/p')
+			if [[ -n "$prov" ]]; then
+				pool_providers+=("$prov")
 			fi
-		fi
+		done <<<"$pool_output"
+	fi
 
-		if [[ ${#allowlist[@]} -gt 0 ]]; then
-			local allowed=false
-			local allowed_provider
-			for allowed_provider in "${allowlist[@]}"; do
-				allowed_provider=$(trim_spaces "$allowed_provider")
-				if [[ "$allowed_provider" == "$provider" ]]; then
-					allowed=true
-					break
-				fi
-			done
-			[[ "$allowed" == "true" ]] || continue
-		fi
-		models+=("$item")
-	done
+	# Step 2: For each pool provider, look up the sonnet-tier model from the routing table
+	if [[ ${#pool_providers[@]} -gt 0 ]] && [[ -f "$routing_table" ]] && command -v jq >/dev/null 2>&1; then
+		for provider in "${pool_providers[@]}"; do
+			# Apply allowlist filter if set
+			if [[ ${#allowlist[@]} -gt 0 ]]; then
+				local allowed=false
+				local allowed_provider
+				for allowed_provider in "${allowlist[@]}"; do
+					allowed_provider=$(trim_spaces "$allowed_provider")
+					if [[ "$allowed_provider" == "$provider" ]]; then
+						allowed=true
+						break
+					fi
+				done
+				[[ "$allowed" == "true" ]] || continue
+			fi
 
+			model=$(jq -r --arg p "$provider" \
+				'.tiers.sonnet.models[] | select(startswith($p + "/"))' \
+				"$routing_table" 2>/dev/null | head -1) || model=""
+			if [[ -n "$model" ]]; then
+				models+=("$model")
+			fi
+		done
+	fi
+
+	# Fallback: if pool/routing derivation yielded nothing, use hardcoded default
 	if [[ ${#models[@]} -eq 0 ]]; then
-		return 1
+		models+=("$DEFAULT_HEADLESS_MODELS")
 	fi
 
 	printf '%s\n' "${models[@]}"
-	return 0
-}
-
-# Check if a model ID is non-agentic (code-completion only, no tool calls).
-# These models silently fail as headless workers — zero tool calls observed.
-_is_non_agentic_model() {
-	local model="$1"
-	case "$model" in
-	*codex* | *code-completion*) return 0 ;;
-	*) return 1 ;;
-	esac
-}
-
-# Get the agentic replacement for a non-agentic model.
-# Reads from model-routing-table.json sonnet tier for the same provider.
-_get_agentic_replacement() {
-	local model="$1"
-	local provider=""
-	provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
-
-	local routing_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
-	if [[ -f "$routing_table" ]]; then
-		local replacement=""
-		replacement=$(jq -r --arg p "$provider" \
-			'.tiers.sonnet.models[] | select(startswith($p + "/"))' \
-			"$routing_table" 2>/dev/null | head -1) || replacement=""
-		if [[ -n "$replacement" ]]; then
-			printf '%s' "$replacement"
-			return 0
-		fi
-	fi
-
-	# Hardcoded fallback for known non-agentic → agentic mappings
-	case "$model" in
-	openai/gpt-5.3-codex | openai/gpt-5.4-codex) printf 'openai/gpt-5.4' ;;
-	*) return 1 ;;
-	esac
 	return 0
 }
 
@@ -2864,7 +2847,9 @@ Dedup guard (GH#6538):
   are cleaned up automatically. Lock files: $STATE_DIR/locks/<key>.pid
 
 Defaults:
-  AIDEVOPS_HEADLESS_MODELS defaults to anthropic/claude-sonnet-4-6,openai/gpt-4o
+  Model list is derived from OAuth pool + routing table (GH#17769).
+  Fallback: anthropic/claude-sonnet-4-6 if pool/routing unavailable.
+  AIDEVOPS_HEADLESS_MODELS is deprecated — respected as override for one release cycle.
   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
   AIDEVOPS_HEADLESS_APPEND_CONTRACT=0 disables worker /full-loop contract injection
   NOTE: opencode/* gateway models are NOT used — per-token billing is too expensive.

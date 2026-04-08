@@ -113,11 +113,12 @@ if [[ -f "$HOME/.ssh/agent.env" ]]; then
 fi
 
 #######################################
-# Source credentials.sh for model config and API keys (GH#17546)
+# Source credentials.sh for API keys (GH#17546)
 # Launchd plists bake env vars at setup time — they go stale when
 # credentials.sh is later updated. Sourcing at runtime ensures the
-# pulse always uses the current AIDEVOPS_HEADLESS_MODELS, PULSE_MODEL,
-# and provider API keys, regardless of what the plist embedded.
+# pulse always uses the current provider API keys, regardless of what
+# the plist embedded. Model config is now derived from the pool +
+# routing table (GH#17769), not env vars.
 #######################################
 if [[ -f "${HOME}/.config/aidevops/credentials.sh" ]]; then
 	# shellcheck source=/dev/null
@@ -173,21 +174,22 @@ MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap"
 DAILY_PR_CAP="${DAILY_PR_CAP:-1000}"                                                                    # Max PRs created per repo per day (GH#3821)
 PRODUCT_RESERVATION_PCT="${PRODUCT_RESERVATION_PCT:-60}"                                                # % of worker slots reserved for product repos (t1423)
 QUALITY_DEBT_CAP_PCT="${QUALITY_DEBT_CAP_PCT:-$(config_get "orchestration.quality_debt_cap_pct" "30")}" # % cap for quality-debt dispatch share
-if [[ -z "${PULSE_MODEL:-}" ]]; then
-	PULSE_MODEL=$(config_get "orchestration.pulse_model" "")
-	if [[ "$PULSE_MODEL" == "null" ]]; then
-		PULSE_MODEL=""
-	fi
+# GH#17769: PULSE_MODEL and AIDEVOPS_HEADLESS_MODELS are deprecated.
+# Model routing is now derived from the OAuth pool + routing table at runtime.
+# Backward compat: if legacy env vars are still set, log deprecation warnings.
+if [[ -n "${PULSE_MODEL:-}" ]]; then
+	echo "[pulse-wrapper] WARN: PULSE_MODEL env var is deprecated (v3.7+). Model routing is now automatic via pool + routing table. Remove this export from credentials.sh." >&2
 fi
-if [[ -z "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
-	AIDEVOPS_HEADLESS_MODELS=$(config_get "orchestration.headless_models" "")
-	if [[ "$AIDEVOPS_HEADLESS_MODELS" == "null" ]]; then
-		AIDEVOPS_HEADLESS_MODELS=""
-	fi
-	if [[ -n "$AIDEVOPS_HEADLESS_MODELS" ]]; then
-		export AIDEVOPS_HEADLESS_MODELS
-	fi
+if [[ -n "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
+	echo "[pulse-wrapper] WARN: AIDEVOPS_HEADLESS_MODELS env var is deprecated (v3.7+). Model routing is now automatic via pool + routing table. Remove this export from credentials.sh." >&2
 fi
+# Derive pulse model from routing table — pulse always uses Anthropic sonnet
+ROUTING_TABLE="${SCRIPT_DIR}/../configs/model-routing-table.json"
+if [[ -z "${PULSE_MODEL:-}" ]] && [[ -f "$ROUTING_TABLE" ]] && command -v jq >/dev/null 2>&1; then
+	PULSE_MODEL=$(jq -r '.tiers.sonnet.models[] | select(startswith("anthropic/"))' "$ROUTING_TABLE" 2>/dev/null | head -1) || PULSE_MODEL=""
+fi
+# Absolute fallback
+PULSE_MODEL="${PULSE_MODEL:-anthropic/claude-sonnet-4-6}"
 PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"                                            # Additional pulse passes when below utilization target (t1453)
 PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-35}"                                             # Max grace window for worker process to appear after dispatch (t1453) — raised from 20s to 35s: sandbox-exec + opencode cold-start takes ~25-30s
 PULSE_LAUNCH_SETTLE_BATCH_MAX="${PULSE_LAUNCH_SETTLE_BATCH_MAX:-5}"                                        # Dispatch count at which the full PULSE_LAUNCH_GRACE_SECONDS wait applies (t1887)
@@ -338,7 +340,7 @@ OPENCODE_BIN="${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || echo "opencod
 # to accumulate under that project even when it had pulse:false (GH#5136).
 # Override via env var if a specific directory is needed.
 PULSE_DIR="${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace}"
-PULSE_MODEL="${PULSE_MODEL:-}"
+# PULSE_MODEL is derived from routing table above (GH#17769) — no longer user-configurable
 HEADLESS_RUNTIME_HELPER="${HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runtime-helper.sh}"
 MODEL_AVAILABILITY_HELPER="${MODEL_AVAILABILITY_HELPER:-${SCRIPT_DIR}/model-availability-helper.sh}"
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"

@@ -329,7 +329,8 @@ extract_provider_from_cmd() {
 		model="${BASH_REMATCH[1]}"
 	fi
 
-	# Fall back to AIDEVOPS_HEADLESS_MODELS env var embedded in command
+	# Legacy fallback: AIDEVOPS_HEADLESS_MODELS env var embedded in command
+	# (deprecated GH#17769 — kept for backward compat with in-flight workers)
 	if [[ -z "$model" && "$cmd" =~ AIDEVOPS_HEADLESS_MODELS=([^[:space:]]+) ]]; then
 		model="${BASH_REMATCH[1]}"
 		# Take first model if comma-separated list

@@ -813,6 +813,42 @@ _setup_print_header() {
 	return 0
 }
 
+# GH#17769: Comment out deprecated model env vars from credentials.sh.
+# Runs on every `aidevops update`. Uses sed to comment out (not delete) lines
+# so the user's file history is preserved.
+_cleanup_legacy_model_config() {
+	local creds_file="${HOME}/.config/aidevops/credentials.sh"
+	local deprecated_vars="AIDEVOPS_HEADLESS_MODELS|PULSE_MODEL"
+	local deprecation_note="# DEPRECATED by aidevops v3.7+ — model routing is now automatic (GH#17769)"
+
+	_comment_out_deprecated_in_file() {
+		local file="$1"
+		[[ -f "$file" ]] || return 0
+		# Only process lines that are active exports (not already commented)
+		if grep -qE "^[[:space:]]*export[[:space:]]+(${deprecated_vars})=" "$file" 2>/dev/null; then
+			# Add deprecation note and comment out the export line
+			sed -i.bak -E "s/^([[:space:]]*)(export[[:space:]]+(${deprecated_vars})=.*)$/\1${deprecation_note}\n\1# \2/" "$file"
+			rm -f "${file}.bak"
+			print_info "Commented out deprecated model env vars in $(basename "$file")"
+		fi
+		return 0
+	}
+
+	# Clean up main credentials.sh
+	_comment_out_deprecated_in_file "$creds_file"
+
+	# Clean up tenant credentials files
+	local tenant_dir="${HOME}/.config/aidevops/tenants"
+	if [[ -d "$tenant_dir" ]]; then
+		local tenant_creds=""
+		while IFS= read -r -d '' tenant_creds; do
+			_comment_out_deprecated_in_file "$tenant_creds"
+		done < <(find "$tenant_dir" -name "credentials.sh" -print0 2>/dev/null)
+	fi
+
+	return 0
+}
+
 # Non-interactive path: deploy agents and run safe migrations only (no prompts).
 _setup_run_non_interactive() {
 	print_info "Non-interactive mode: deploying agents and running safe migrations only"
@@ -832,6 +868,7 @@ _setup_run_non_interactive() {
 	backfill_issue_relationships
 	cleanup_deprecated_mcps
 	cleanup_stale_bun_opencode
+	_cleanup_legacy_model_config
 	validate_opencode_config
 	deploy_aidevops_agents
 	sync_agent_sources
@@ -924,6 +961,7 @@ _setup_run_interactive() {
 	confirm_step "Backfill GitHub issue relationships (blocked-by, sub-issues)" && backfill_issue_relationships
 	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
+	_cleanup_legacy_model_config
 	confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
 	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
