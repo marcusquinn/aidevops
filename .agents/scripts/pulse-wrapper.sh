@@ -7166,39 +7166,46 @@ _is_task_committed_to_main() {
 
 	# Search subject_patterns (Patterns 1 & 2): subject-only via --format + grep -w
 	# This prevents body cross-references from triggering false positives.
+	# Bash 3.2 + set -u: "${arr[@]}" on an empty array triggers "unbound variable".
+	# Guard with length check first.
 	local pattern
-	for pattern in "${subject_patterns[@]}"; do
-		local match_count=0
-		# Fetch all commits as "HASH SUBJECT", filter planning subjects, then
-		# grep -w for word-boundary match on the subject portion only.
-		match_count=$(_count_impl_commits "$repo_path" < <(
-			git -C "$repo_path" log origin/main --since="$created_at" \
-				--format='%H %s' |
-				grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
-				grep -wE "$pattern" |
-				cut -d' ' -f1 || true
-		))
-		if [[ "$match_count" -gt 0 ]]; then
-			echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching subject pattern '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
-			return 0
-		fi
-	done
+	if [[ ${#subject_patterns[@]} -gt 0 ]]; then
+		for pattern in "${subject_patterns[@]}"; do
+			local match_count=0
+			# Fetch all commits as "HASH SUBJECT", filter planning subjects, then
+			# grep -w for word-boundary match on the subject portion only.
+			match_count=$(_count_impl_commits "$repo_path" < <(
+				git -C "$repo_path" log origin/main --since="$created_at" \
+					--format='%H %s' |
+					grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
+					grep -wE "$pattern" |
+					cut -d' ' -f1 || true
+			))
+			if [[ "$match_count" -gt 0 ]]; then
+				echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching subject pattern '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+				return 0
+			fi
+		done
+	fi # subject_patterns guard
 
 	# Search message_patterns (Patterns 3-5): full-message via --grep
 	# Closing keywords and squash-merge suffixes legitimately appear in bodies.
-	for pattern in "${message_patterns[@]}"; do
-		local match_count=0
-		match_count=$(_count_impl_commits "$repo_path" < <(
-			git -C "$repo_path" log origin/main --since="$created_at" \
-				-E --grep="$pattern" --format='%H %s' |
-				grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
-				cut -d' ' -f1 || true
-		))
-		if [[ "$match_count" -gt 0 ]]; then
-			echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching message pattern '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
-			return 0
-		fi
-	done
+	# Bash 3.2 + set -u: guard empty array iteration (same as subject_patterns above).
+	if [[ ${#message_patterns[@]} -gt 0 ]]; then
+		for pattern in "${message_patterns[@]}"; do
+			local match_count=0
+			match_count=$(_count_impl_commits "$repo_path" < <(
+				git -C "$repo_path" log origin/main --since="$created_at" \
+					-E --grep="$pattern" --format='%H %s' |
+					grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
+					cut -d' ' -f1 || true
+			))
+			if [[ "$match_count" -gt 0 ]]; then
+				echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching message pattern '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+				return 0
+			fi
+		done
+	fi # message_patterns guard
 
 	return 1
 }
