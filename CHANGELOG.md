@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.168] - 2026-04-08
+
+### Changed
+
+- reduce function complexity in oauth-pool.mjs (#17818)
+- Maintenance: update simplification state registry
+- feat: aidevops init-routines (#17814)
+
+### Fixed
+
+- _is_task_committed_to_main subject-only matching for tNNN/GH#NNN patterns (#17802)
+
 ## [3.6.158] - 2026-04-08
 
 ### Changed
