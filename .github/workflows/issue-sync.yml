@@ -385,8 +385,15 @@ jobs:
               if [[ -n "$TASK_ID" ]]; then
                 TASK_REF=" Task $TASK_ID"
               fi
-              gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
-              echo "Posted closing comment on #$ISSUE_NUM"
+              # Check if issue is locked before attempting to comment (locked issues reject comments with exit 1)
+              IS_LOCKED=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" --jq '.locked' 2>/dev/null || echo "false")
+              if [[ "$IS_LOCKED" == "true" ]]; then
+                echo "Issue #$ISSUE_NUM is locked — skipping closing comment (labels will still be updated)"
+              else
+                gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main." \
+                  || echo "Warning: failed to post closing comment on #$ISSUE_NUM (issue may have been locked concurrently)"
+                echo "Posted closing comment on #$ISSUE_NUM"
+              fi
             else
               echo "Closing comment already exists on #$ISSUE_NUM"
             fi
