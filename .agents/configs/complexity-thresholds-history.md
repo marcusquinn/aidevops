@@ -37,6 +37,13 @@ The main config retains only the last few entries for readability.
 | 31 | GH#17875 | ratcheted down — actual violations 29 + 2 buffer |
 | 36 | GH#17969 | pre-existing regression on main — 34 violations vs threshold 31; 34 violations + 2 buffer = 36 |
 
+## FILE_SIZE_THRESHOLD History
+
+| Value | PR/Issue | Reason |
+|-------|----------|--------|
+| 53 | baseline (2026-03-25) | pre-existing on main |
+| 56 | GH#17969 | pre-existing regression on main — 54 violations vs threshold 53; 54 violations + 2 buffer = 56 |
+
 ## BASH32_COMPAT_THRESHOLD History
 
 | Value | PR/Issue | Reason |
