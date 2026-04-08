@@ -1364,8 +1364,9 @@ _detect_opencode_server() {
 	# Verify the server is actually listening (timeout 2s, silent).
 	# Use /api/session/list as a lightweight endpoint — it returns 401 without
 	# auth but proves the server is up (vs connection refused).
-	if curl -sf --max-time 2 -o /dev/null "${url}/api/session/list" 2>/dev/null ||
-		curl -sf --max-time 2 -o /dev/null -w '%{http_code}' "${url}/api/session/list" 2>/dev/null | grep -q '401'; then
+	local http_code
+	http_code=$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "${url}/api/session/list" 2>/dev/null)
+	if [[ "$http_code" == "200" || "$http_code" == "401" ]]; then
 		printf '%s\n%s\n' "$url" "$password"
 		return 0
 	fi

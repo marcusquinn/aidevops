@@ -199,6 +199,8 @@ _deploy_agents_post_copy() {
 		# Verify critical dependency is available; npm install if not
 		if [[ ! -d "$plugin_dir/node_modules/@bufbuild/protobuf" ]]; then
 			if command -v npm &>/dev/null; then
+				# Remove symlink if present so npm creates a local node_modules
+				[[ -L "$plugin_dir/node_modules" ]] && rm "$plugin_dir/node_modules"
 				npm install --omit=dev --prefix "$plugin_dir" >/dev/null 2>&1 ||
 					print_warning "Failed to install plugin dependencies (non-blocking)"
 			fi
