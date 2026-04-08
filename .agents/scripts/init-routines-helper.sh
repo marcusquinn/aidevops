@@ -33,13 +33,22 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 GIT_PARENT="${HOME}/Git"
 DRY_RUN=false
+# SCRIPT_DIR: resolve from BASH_SOURCE when available, fall back to deployed path
+if [[ -n "${BASH_SOURCE[0]:-}" ]] && [[ "${BASH_SOURCE[0]}" != "$0" || -f "${BASH_SOURCE[0]}" ]]; then
+	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+	SCRIPT_DIR="${HOME}/.aidevops/agents/scripts"
+fi
 
 # ---------------------------------------------------------------------------
 # _write_todo_md <path>
-# Creates TODO.md with Routines section header and format reference.
+# Creates TODO.md with Routines section header, format reference, and
+# seeded core routine entries from core-routines.sh.
 # ---------------------------------------------------------------------------
 _write_todo_md() {
 	local repo_path="$1"
+
+	# Header
 	cat >"${repo_path}/TODO.md" <<'TODOEOF'
 # Routines
 
@@ -51,9 +60,32 @@ Fields:
   agent:  -- LLM agent dispatched via headless-runtime-helper.sh
   [x] enabled, [ ] disabled/paused
 
-## Routines
+## Core Routines (framework-managed)
 
-<!-- Add your routines below. Example:
+<!-- These routines are managed by aidevops setup. They reflect the launchd
+     jobs installed by setup.sh. Edit the enabled/disabled state here;
+     the schedule and script are authoritative in the launchd plist. -->
+
+TODOEOF
+
+	# Seed core routine entries if core-routines.sh is available
+	if [[ -f "${SCRIPT_DIR}/routines/core-routines.sh" ]]; then
+		# shellcheck disable=SC1091  # sourced file path is dynamic but verified above
+		source "${SCRIPT_DIR}/routines/core-routines.sh"
+		local line
+		while IFS='|' read -r rid enabled title schedule estimate script rtype; do
+			[[ -z "$rid" ]] && continue
+			echo "- [${enabled}] ${rid} ${title} ${schedule} ${estimate} run:${script}" >>"${repo_path}/TODO.md"
+		done < <(get_core_routine_entries)
+	fi
+
+	# User routines section + tasks
+	cat >>"${repo_path}/TODO.md" <<'TODOEOF'
+
+## User Routines
+
+<!-- Add your own routines below. Use r001-r899 for user routines.
+     Core routines use r901+ to avoid ID collisions. Example:
 - [x] r001 Weekly SEO rankings export repeat:weekly(mon@09:00) ~30m run:custom/scripts/seo-export.sh
 - [ ] r002 Monthly content calendar review repeat:monthly(1@09:00) ~15m agent:Content
 -->
@@ -62,6 +94,60 @@ Fields:
 
 <!-- Non-recurring tasks go here -->
 TODOEOF
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _seed_routine_descriptions <repo_path>
+# Writes core routine description .md files into routines/core/.
+# Also creates routines/custom/ for user overrides.
+# ---------------------------------------------------------------------------
+_seed_routine_descriptions() {
+	local repo_path="$1"
+
+	if [[ "$DRY_RUN" == "true" ]]; then
+		print_info "[dry-run] Would seed routine descriptions into: ${repo_path}/routines/"
+		return 0
+	fi
+
+	mkdir -p "${repo_path}/routines/core"
+	mkdir -p "${repo_path}/routines/custom"
+
+	# Custom dir README
+	if [[ ! -f "${repo_path}/routines/custom/README.md" ]]; then
+		cat >"${repo_path}/routines/custom/README.md" <<'CUSTOMEOF'
+# Custom Routine Descriptions
+
+Place your own routine description files here as `<routine-id>.md` (e.g., `r001.md`).
+
+Custom descriptions override core descriptions when both exist for the same ID.
+Use the template at `~/.aidevops/agents/templates/routine-description-template.md`
+as a starting point, or copy and modify a core description from `../core/`.
+
+These files survive framework updates — core descriptions may be refreshed,
+but custom descriptions are never overwritten.
+CUSTOMEOF
+	fi
+
+	# Write core descriptions from core-routines.sh describe_* functions
+	if [[ ! -f "${SCRIPT_DIR}/routines/core-routines.sh" ]]; then
+		print_warning "core-routines.sh not found — skipping description seeding"
+		return 0
+	fi
+
+	# shellcheck disable=SC1091  # sourced file path is dynamic but verified above
+	source "${SCRIPT_DIR}/routines/core-routines.sh"
+
+	local rid
+	while IFS='|' read -r rid _ _ _ _ _ _; do
+		[[ -z "$rid" ]] && continue
+		local describe_fn="describe_${rid}"
+		if declare -f "$describe_fn" &>/dev/null; then
+			"$describe_fn" >"${repo_path}/routines/core/${rid}.md"
+		fi
+	done < <(get_core_routine_entries)
+
+	print_success "Seeded routine descriptions into: ${repo_path}/routines/"
 	return 0
 }
 
@@ -121,9 +207,7 @@ scaffold_repo() {
 	mkdir -p "${repo_path}/.github/ISSUE_TEMPLATE"
 
 	_write_todo_md "$repo_path"
-
-	# routines/.gitkeep
-	touch "${repo_path}/routines/.gitkeep"
+	_seed_routine_descriptions "$repo_path"
 
 	# .gitignore
 	cat >"${repo_path}/.gitignore" <<'GITIGNOREEOF'
@@ -296,6 +380,56 @@ _ensure_cloned() {
 }
 
 # ---------------------------------------------------------------------------
+# _create_core_routine_issues <slug>
+# Creates GitHub issues for each core routine using routine-log-helper.sh.
+# Skipped for local-only repos. Idempotent — routine-log-helper checks state.
+# ---------------------------------------------------------------------------
+_create_core_routine_issues() {
+	local slug="$1"
+
+	if [[ "$DRY_RUN" == "true" ]]; then
+		print_info "[dry-run] Would create GitHub issues for core routines in: $slug"
+		return 0
+	fi
+
+	local log_helper="${SCRIPT_DIR}/routine-log-helper.sh"
+	if [[ ! -f "$log_helper" ]]; then
+		print_warning "routine-log-helper.sh not found — skipping issue creation"
+		return 0
+	fi
+
+	if [[ ! -f "${SCRIPT_DIR}/routines/core-routines.sh" ]]; then
+		print_warning "core-routines.sh not found — skipping issue creation"
+		return 0
+	fi
+
+	# Ensure the routines label exists on the repo
+	gh label create "routines" --repo "$slug" --description "Routine tracking" --color "0E8A16" 2>/dev/null || true
+	gh label create "core" --repo "$slug" --description "Framework-managed routine" --color "1D76DB" 2>/dev/null || true
+
+	# shellcheck disable=SC1091  # sourced file path is dynamic but verified above
+	source "${SCRIPT_DIR}/routines/core-routines.sh"
+
+	local rid enabled title schedule estimate script rtype
+	while IFS='|' read -r rid enabled title schedule estimate script rtype; do
+		[[ -z "$rid" ]] && continue
+		# Extract short title (before the em dash if present)
+		local short_title
+		short_title=$(echo "$title" | sed 's/ —.*//')
+
+		print_info "Creating issue for ${rid}: ${short_title}..."
+		bash "$log_helper" create-issue "$rid" \
+			--repo "$slug" \
+			--title "${rid}: ${short_title}" \
+			--schedule "$schedule" \
+			--type "$rtype" 2>&1 || print_warning "Issue creation failed for ${rid} (may already exist)"
+	done < <(get_core_routine_entries)
+
+	print_success "Core routine issues created in: $slug"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # init_personal
 # Creates <username>/aidevops-routines on GitHub (private), clones, scaffolds.
 # ---------------------------------------------------------------------------
@@ -327,6 +461,7 @@ init_personal() {
 	scaffold_repo "$repo_path"
 	register_repo "$repo_path" "$slug"
 	_commit_and_push "$repo_path"
+	_create_core_routine_issues "$slug"
 
 	print_success "Personal routines repo ready: $repo_path"
 	return 0
@@ -359,6 +494,7 @@ init_org() {
 	scaffold_repo "$repo_path"
 	register_repo "$repo_path" "$slug"
 	_commit_and_push "$repo_path"
+	_create_core_routine_issues "$slug"
 
 	print_success "Org routines repo ready: $repo_path"
 	return 0
@@ -505,13 +641,21 @@ Without flags: creates personal <username>/aidevops-routines (always private).
 
 Scaffolded structure:
   ~/Git/aidevops-routines/
-  |- TODO.md              # Routine definitions with repeat: fields
-  |- routines/            # YAML specs
-  |  `- .gitkeep
+  |- TODO.md              # Routine definitions (core + user) with repeat: fields
+  |- routines/
+  |  |- core/             # Framework-managed routine descriptions (r901+)
+  |  |  |- r901.md        # Supervisor pulse
+  |  |  |- r902.md        # Auto-update
+  |  |  `- ...            # 12 core routines total
+  |  `- custom/           # User routine descriptions (r001-r899, survives updates)
+  |     `- README.md
   |- .gitignore
   `- .github/
      `- ISSUE_TEMPLATE/
         `- routine.md
+
+For repos with a GitHub remote, a tracking issue is created for each
+core routine via routine-log-helper.sh (idempotent, skipped if exists).
 
 The repo is registered in ~/.config/aidevops/repos.json with:
   pulse: true, priority: "tooling"
@@ -589,4 +733,7 @@ main() {
 	return 0
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced by _routines.sh
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi
