@@ -555,6 +555,24 @@ cmd_merge() {
 	print_info "Merging PR #${pr_number} in ${repo} (${merge_method})..."
 	if gh pr merge "$pr_number" --repo "$repo" "$merge_method" 2>&1; then
 		print_success "PR #${pr_number} merged successfully"
+
+		# t1934: Unlock PR and linked issue after worker merge.
+		# Issues/PRs are locked at dispatch time to prevent prompt injection.
+		# The worker merge path must unlock them — otherwise they stay locked
+		# permanently (the pulse deterministic merge path has its own unlock,
+		# but workers that self-merge bypass it).
+		gh issue unlock "$pr_number" --repo "$repo" >/dev/null 2>&1 || true
+
+		# Find and unlock the linked issue (from PR body "Resolves #NNN")
+		local _linked_issue
+		_linked_issue=$(gh pr view "$pr_number" --repo "$repo" --json body \
+			--jq '.body' 2>/dev/null |
+			grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
+			grep -oE '[0-9]+' | head -1) || _linked_issue=""
+		if [[ -n "$_linked_issue" && "$_linked_issue" =~ ^[0-9]+$ ]]; then
+			gh issue unlock "$_linked_issue" --repo "$repo" >/dev/null 2>&1 || true
+		fi
+
 		return 0
 	else
 		print_error "Merge failed for PR #${pr_number}"
