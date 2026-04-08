@@ -6040,6 +6040,17 @@ run_weekly_complexity_scan() {
 	local aidevops_path
 	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
 
+	# GH#17848: Pull latest state before scanning to avoid false-positive
+	# proximity warnings from stale local checkouts. The proximity guard and
+	# tree-change check both read working-tree files, so a stale checkout
+	# (e.g., local repo hasn't pulled a threshold-bump PR yet) produces
+	# incorrect violation counts and may create spurious warning issues.
+	if git -C "$aidevops_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 || {
+			echo "[pulse-wrapper] Complexity scan: git pull failed for ${aidevops_path} — proceeding with current checkout" >>"$LOGFILE"
+		}
+	fi
+
 	# Deterministic skip: if no tracked files changed since last scan, skip all
 	# file iteration (O(1) tree hash check vs O(n) per-file awk/wc scan).
 	# GH#15285: this is the primary perf fix — most pulse cycles see no changes.
