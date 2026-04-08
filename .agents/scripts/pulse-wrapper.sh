@@ -9713,6 +9713,10 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 				gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
 				# Reset fast-fail counter now that the issue is resolved (GH#2076)
 				fast_fail_reset "$linked_issue" "$repo_slug" || true
+				# Event-driven forward-unblock: check if closing this issue
+				# unblocks any downstream issues (GH#17871). Uses cached graph
+				# — zero API calls if graph is current.
+				_forward_unblock_downstream "$linked_issue" "$repo_slug" || true
 			fi
 		else
 			failed=$((failed + 1))
@@ -9897,6 +9901,394 @@ _Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
 
 		echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title}" >>"$LOGFILE"
 	fi
+	return 0
+}
+
+#######################################
+# Event-driven forward-unblock: after a blocker issue is closed, check
+# its downstream dependents and transition any that are now fully unblocked.
+#
+# Called immediately after merge_ready_prs_all_repos() closes a linked issue.
+# Uses the cached dependency graph (reverse map) to find downstream issues
+# without additional API calls. Falls back to no-op if cache is missing.
+#
+# Args:
+#   $1 - closed issue number
+#   $2 - repo slug (owner/repo)
+#
+# Side effects:
+#   - Swaps status:blocked → status:available on newly-unblocked issues
+#   - Posts a comment explaining the unblock
+#   - Removes resolved entries from the cached graph
+#######################################
+_forward_unblock_downstream() {
+	local closed_issue="$1"
+	local repo_slug="$2"
+
+	[[ -n "$closed_issue" ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+
+	local graph_file="${PULSE_DIR}/dependency-graph-${repo_slug//\//-}.json"
+	[[ -f "$graph_file" ]] || return 0
+
+	# Read reverse map: which issues are downstream of the closed issue
+	local downstream_json
+	downstream_json=$(jq -r --arg blocker "$closed_issue" \
+		'.reverse[$blocker] // [] | .[]' "$graph_file" 2>/dev/null) || downstream_json=""
+	[[ -n "$downstream_json" ]] || return 0
+
+	# Build open-issue set from prefetch cache (zero API calls)
+	local open_issues_json=""
+	if [[ -f "$PULSE_PREFETCH_CACHE_FILE" ]]; then
+		open_issues_json=$(jq -r --arg slug "$repo_slug" \
+			'.[$slug].issues // [] | [.[].number | tostring] | join(" ")' \
+			"$PULSE_PREFETCH_CACHE_FILE" 2>/dev/null) || open_issues_json=""
+	fi
+
+	local unblocked_count=0
+	while IFS= read -r downstream_num; do
+		[[ -n "$downstream_num" ]] || continue
+
+		# Get all blockers for this downstream issue from the forward map
+		local blockers_json
+		blockers_json=$(jq -r --arg issue "$downstream_num" \
+			'.forward[$issue] // [] | .[]' "$graph_file" 2>/dev/null) || blockers_json=""
+		[[ -n "$blockers_json" ]] || continue
+
+		# Check if ALL blockers are closed (not in open-issue set)
+		local all_resolved=true
+		while IFS= read -r blocker_num; do
+			[[ -n "$blocker_num" ]] || continue
+			# Check open-issue set first (zero API calls)
+			if [[ -n "$open_issues_json" ]] && printf '%s' " $open_issues_json " | grep -qF " $blocker_num "; then
+				all_resolved=false
+				break
+			fi
+			# Fallback: direct API check if prefetch cache is stale/missing
+			if [[ -z "$open_issues_json" ]]; then
+				local blocker_state
+				blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
+					--json state --jq '.state // ""' 2>/dev/null) || blocker_state=""
+				if [[ "$blocker_state" == "OPEN" ]]; then
+					all_resolved=false
+					break
+				fi
+			fi
+		done <<<"$blockers_json"
+
+		if [[ "$all_resolved" == "true" ]]; then
+			# Verify the downstream issue is still open and has status:blocked
+			local downstream_labels
+			downstream_labels=$(gh issue view "$downstream_num" --repo "$repo_slug" \
+				--json labels,state \
+				--jq 'if .state == "OPEN" then [.labels[].name] | join(",") else "" end' \
+				2>/dev/null) || downstream_labels=""
+			[[ -n "$downstream_labels" ]] || continue
+			[[ "$downstream_labels" == *"status:blocked"* ]] || continue
+
+			# Swap labels: status:blocked → status:available
+			gh issue edit "$downstream_num" --repo "$repo_slug" \
+				--remove-label "status:blocked" \
+				--add-label "status:available" 2>/dev/null || true
+
+			gh issue comment "$downstream_num" --repo "$repo_slug" \
+				--body "Blockers resolved (#${closed_issue} closed). Unblocked for dispatch.
+
+_Unblocked by deterministic forward-unblock pass (pulse-wrapper.sh, GH#17871)._" \
+				2>/dev/null || true
+
+			echo "[pulse-wrapper] forward-unblock: #${downstream_num} in ${repo_slug} unblocked (blocker #${closed_issue} closed)" >>"$LOGFILE"
+			unblocked_count=$((unblocked_count + 1))
+
+			# Remove resolved entry from forward map to avoid re-processing
+			local tmp_graph
+			tmp_graph=$(mktemp)
+			jq --arg issue "$downstream_num" 'del(.forward[$issue])' \
+				"$graph_file" >"$tmp_graph" 2>/dev/null && mv "$tmp_graph" "$graph_file" || rm -f "$tmp_graph"
+		fi
+	done <<<"$downstream_json"
+
+	# Remove the closed issue from the reverse map
+	if [[ "$unblocked_count" -gt 0 ]] || true; then
+		local tmp_graph
+		tmp_graph=$(mktemp)
+		jq --arg blocker "$closed_issue" 'del(.reverse[$blocker])' \
+			"$graph_file" >"$tmp_graph" 2>/dev/null && mv "$tmp_graph" "$graph_file" || rm -f "$tmp_graph"
+	fi
+
+	return 0
+}
+
+#######################################
+# Build or rebuild the blocked-by dependency graph for a repo.
+#
+# Fetches all status:blocked issue bodies, parses blocked-by references,
+# and writes a forward + reverse map to disk. Called:
+#   1. On cold start (no cache) — O(B) API calls where B = blocked issues
+#   2. On LLM supervisor runs — full rebuild as a consistency backstop
+#   3. On standalone 1-hour cadence — via file-based timestamp gate
+#
+# Cache location: ${PULSE_DIR}/dependency-graph-{repo-slug}.json
+# Cache format:
+#   {
+#     "built_at": <epoch>,
+#     "repo_slug": "owner/repo",
+#     "forward": { "issue_num": [blocker_nums...] },
+#     "reverse": { "blocker_num": [downstream_nums...] }
+#   }
+#
+# Args:
+#   $1 - repo slug (owner/repo)
+#
+# Returns: 0 always (non-fatal)
+#######################################
+rebuild_dependency_graph() {
+	local repo_slug="$1"
+	[[ -n "$repo_slug" ]] || return 0
+
+	local graph_file="${PULSE_DIR}/dependency-graph-${repo_slug//\//-}.json"
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	echo "[pulse-wrapper] rebuild_dependency_graph: building for ${repo_slug}" >>"$LOGFILE"
+
+	# Fetch all status:blocked issues (number + body)
+	local blocked_json
+	blocked_json=$(gh issue list --repo "$repo_slug" \
+		--label "status:blocked" \
+		--state open \
+		--json number,body \
+		--limit 500 2>/dev/null) || blocked_json="[]"
+
+	local blocked_count
+	blocked_count=$(printf '%s' "$blocked_json" | jq 'length' 2>/dev/null) || blocked_count=0
+	[[ "$blocked_count" =~ ^[0-9]+$ ]] || blocked_count=0
+
+	if [[ "$blocked_count" -eq 0 ]]; then
+		# No blocked issues — write empty graph
+		printf '{"built_at":%s,"repo_slug":"%s","forward":{},"reverse":{}}\n' \
+			"$now_epoch" "$repo_slug" >"$graph_file"
+		echo "[pulse-wrapper] rebuild_dependency_graph: no blocked issues in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Build forward and reverse maps using jq
+	# forward[issue] = [blocker1, blocker2, ...]
+	# reverse[blocker] = [downstream1, downstream2, ...]
+	local graph_json
+	graph_json=$(printf '%s' "$blocked_json" | jq --arg now "$now_epoch" --arg slug "$repo_slug" '
+		# Parse blocked-by references from issue body
+		def parse_blockers(body):
+			# Match: blocked-by:#NNN, blocked by #NNN, Blocked-by: #NNN
+			[body | scan("(?i)blocked[- ]by[: ]*#([0-9]+)") | .[0]];
+
+		# Build forward map: issue -> [blockers]
+		reduce .[] as $issue (
+			{"built_at": ($now | tonumber), "repo_slug": $slug, "forward": {}, "reverse": {}};
+			($issue.number | tostring) as $num |
+			(parse_blockers($issue.body // "")) as $blockers |
+			if ($blockers | length) > 0 then
+				.forward[$num] = ($blockers | map(tonumber | tostring)) |
+				# Build reverse map: blocker -> [downstreams]
+				reduce $blockers[] as $blocker (
+					.;
+					($blocker | tostring) as $b |
+					.reverse[$b] = ((.reverse[$b] // []) + [$num] | unique)
+				)
+			else . end
+		)
+	' 2>/dev/null) || graph_json=""
+
+	if [[ -z "$graph_json" ]]; then
+		echo "[pulse-wrapper] rebuild_dependency_graph: jq parse failed for ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Atomic write via temp+rename
+	local tmp_graph
+	tmp_graph=$(mktemp)
+	printf '%s\n' "$graph_json" >"$tmp_graph" && mv "$tmp_graph" "$graph_file" || rm -f "$tmp_graph"
+
+	local forward_count reverse_count
+	forward_count=$(printf '%s' "$graph_json" | jq '.forward | length' 2>/dev/null) || forward_count=0
+	reverse_count=$(printf '%s' "$graph_json" | jq '.reverse | length' 2>/dev/null) || reverse_count=0
+	echo "[pulse-wrapper] rebuild_dependency_graph: built graph for ${repo_slug}: ${forward_count} blocked, ${reverse_count} unique blockers" >>"$LOGFILE"
+
+	return 0
+}
+
+#######################################
+# Periodic graph-based blocked-by resolution (GH#17871).
+#
+# Runs every 2-min cycle. Uses the cached dependency graph and the
+# prefetch open-issue set to detect newly-unblocked issues without
+# additional API calls. Only fires label swaps when something changes.
+#
+# Integration: called between merge_ready_prs_all_repos() and
+# apply_deterministic_fill_floor() in main().
+#
+# Rebuild cadence: rebuilds the graph if cache is missing or >1h old.
+# The LLM supervisor also triggers a rebuild as a consistency backstop.
+#
+# Returns: 0 always (non-fatal)
+#######################################
+PULSE_DEP_GRAPH_REBUILD_INTERVAL="${PULSE_DEP_GRAPH_REBUILD_INTERVAL:-3600}" # 1h
+
+resolve_blocked_by_graph() {
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] resolve_blocked_by_graph: stop flag present — skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	if [[ ! -f "$REPOS_JSON" ]]; then
+		return 0
+	fi
+
+	while IFS='|' read -r repo_slug _; do
+		[[ -n "$repo_slug" ]] || continue
+		_resolve_blocked_by_graph_for_repo "$repo_slug" || true
+		if [[ -f "$STOP_FLAG" ]]; then
+			break
+		fi
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$REPOS_JSON" 2>/dev/null)
+
+	return 0
+}
+
+#######################################
+# Resolve blocked-by graph for a single repo.
+# Args: $1 - repo slug
+#######################################
+_resolve_blocked_by_graph_for_repo() {
+	local repo_slug="$1"
+	[[ -n "$repo_slug" ]] || return 0
+
+	local graph_file="${PULSE_DIR}/dependency-graph-${repo_slug//\//-}.json"
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	# Rebuild if cache is missing or stale (>1h)
+	local needs_rebuild=false
+	if [[ ! -f "$graph_file" ]]; then
+		needs_rebuild=true
+	else
+		local built_at
+		built_at=$(jq -r '.built_at // 0' "$graph_file" 2>/dev/null) || built_at=0
+		[[ "$built_at" =~ ^[0-9]+$ ]] || built_at=0
+		local cache_age=$((now_epoch - built_at))
+		if [[ "$cache_age" -ge "$PULSE_DEP_GRAPH_REBUILD_INTERVAL" ]]; then
+			needs_rebuild=true
+		fi
+	fi
+
+	if [[ "$needs_rebuild" == "true" ]]; then
+		rebuild_dependency_graph "$repo_slug" || return 0
+	fi
+
+	# Read forward map
+	local forward_count
+	forward_count=$(jq '.forward | length' "$graph_file" 2>/dev/null) || forward_count=0
+	[[ "$forward_count" =~ ^[0-9]+$ ]] || forward_count=0
+	if [[ "$forward_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	# Build open-issue set from prefetch cache (zero API calls)
+	local open_issue_set=""
+	if [[ -f "$PULSE_PREFETCH_CACHE_FILE" ]]; then
+		open_issue_set=$(jq -r --arg slug "$repo_slug" \
+			'.[$slug].issues // [] | [.[].number | tostring] | join(" ")' \
+			"$PULSE_PREFETCH_CACHE_FILE" 2>/dev/null) || open_issue_set=""
+	fi
+
+	# If prefetch cache is unavailable, fetch open issues directly (fallback)
+	if [[ -z "$open_issue_set" ]]; then
+		open_issue_set=$(gh issue list --repo "$repo_slug" \
+			--state open --json number --limit 500 \
+			--jq '[.[].number | tostring] | join(" ")' 2>/dev/null) || open_issue_set=""
+	fi
+
+	# For each blocked issue in the forward map, check if all blockers are closed
+	local resolved_issues=()
+	local forward_keys
+	forward_keys=$(jq -r '.forward | keys[]' "$graph_file" 2>/dev/null) || forward_keys=""
+	[[ -n "$forward_keys" ]] || return 0
+
+	while IFS= read -r issue_num; do
+		[[ -n "$issue_num" ]] || continue
+
+		# Skip if the blocked issue itself is no longer open
+		if [[ -n "$open_issue_set" ]] && ! printf '%s' " $open_issue_set " | grep -qF " $issue_num "; then
+			# Issue is closed — remove from graph
+			resolved_issues+=("$issue_num")
+			continue
+		fi
+
+		# Get blockers for this issue
+		local blockers
+		blockers=$(jq -r --arg issue "$issue_num" '.forward[$issue] // [] | .[]' \
+			"$graph_file" 2>/dev/null) || blockers=""
+		[[ -n "$blockers" ]] || continue
+
+		# Check if ALL blockers are closed
+		local all_resolved=true
+		while IFS= read -r blocker_num; do
+			[[ -n "$blocker_num" ]] || continue
+			if printf '%s' " $open_issue_set " | grep -qF " $blocker_num "; then
+				all_resolved=false
+				break
+			fi
+		done <<<"$blockers"
+
+		[[ "$all_resolved" == "true" ]] || continue
+
+		# Verify issue still has status:blocked label before swapping
+		local issue_labels issue_state
+		local issue_data
+		issue_data=$(gh issue view "$issue_num" --repo "$repo_slug" \
+			--json labels,state \
+			--jq '{state: .state, labels: [.labels[].name] | join(",")}' \
+			2>/dev/null) || issue_data=""
+		[[ -n "$issue_data" ]] || continue
+
+		issue_state=$(printf '%s' "$issue_data" | jq -r '.state // ""' 2>/dev/null) || issue_state=""
+		issue_labels=$(printf '%s' "$issue_data" | jq -r '.labels // ""' 2>/dev/null) || issue_labels=""
+
+		[[ "$issue_state" == "OPEN" ]] || continue
+		[[ "$issue_labels" == *"status:blocked"* ]] || continue
+
+		# Swap labels: status:blocked → status:available
+		gh issue edit "$issue_num" --repo "$repo_slug" \
+			--remove-label "status:blocked" \
+			--add-label "status:available" 2>/dev/null || true
+
+		# Build blocker list for comment
+		local blocker_list
+		blocker_list=$(printf '%s' "$blockers" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, #/g')
+		blocker_list="#${blocker_list}"
+
+		gh issue comment "$issue_num" --repo "$repo_slug" \
+			--body "Blockers resolved (${blocker_list} closed). Unblocked for dispatch.
+
+_Unblocked by deterministic graph resolution pass (pulse-wrapper.sh, GH#17871)._" \
+			2>/dev/null || true
+
+		echo "[pulse-wrapper] resolve_blocked_by_graph: #${issue_num} in ${repo_slug} unblocked (blockers: ${blocker_list})" >>"$LOGFILE"
+		resolved_issues+=("$issue_num")
+	done <<<"$forward_keys"
+
+	# Remove resolved entries from the graph (atomic write)
+	if [[ "${#resolved_issues[@]}" -gt 0 ]]; then
+		local tmp_graph
+		tmp_graph=$(mktemp)
+		local jq_filter='. '
+		for issue_num in "${resolved_issues[@]}"; do
+			jq_filter="${jq_filter} | del(.forward[\"${issue_num}\"])"
+		done
+		jq "$jq_filter" "$graph_file" >"$tmp_graph" 2>/dev/null && mv "$tmp_graph" "$graph_file" || rm -f "$tmp_graph"
+		echo "[pulse-wrapper] resolve_blocked_by_graph: removed ${#resolved_issues[@]} resolved entries from graph for ${repo_slug}" >>"$LOGFILE"
+	fi
+
 	return 0
 }
 
@@ -11029,6 +11421,19 @@ main() {
 	run_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
 		merge_ready_prs_all_repos || true
 
+	# Deterministic blocked-by resolution (GH#17871): scan the cached
+	# dependency graph and transition status:blocked → status:available for
+	# issues whose blockers are now closed. Runs every cycle at zero API cost
+	# (uses prefetch open-issue set). Rebuilds graph if cache is missing or
+	# >1h old. This eliminates the 1-hour delay caused by the LLM supervisor
+	# gate suppressing blocked-by resolution when the backlog is "progressing".
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared — skipping blocked-by graph resolution" >>"$LOGFILE"
+	else
+		run_stage_with_timeout "resolve_blocked_by_graph" "$PRE_RUN_STAGE_TIMEOUT" \
+			resolve_blocked_by_graph || true
+	fi
+
 	# Deterministic fill floor runs EVERY cycle — before the LLM session,
 	# not after. This ensures workers are dispatched every 2-min cycle
 	# regardless of whether the LLM supervisor is running.
@@ -11114,6 +11519,16 @@ main() {
 			local pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
 
 			date +%s >"${PULSE_DIR}/last_llm_run_epoch"
+			# Rebuild dependency graph after LLM supervisor run (GH#17871).
+			# The LLM supervisor may have manually transitioned labels or
+			# edited issue bodies — a full rebuild ensures the graph is
+			# consistent with current state. This is the consistency backstop;
+			# the periodic 1-hour rebuild in resolve_blocked_by_graph() handles
+			# the common case without waiting for the LLM supervisor.
+			while IFS='|' read -r _rebuild_slug _; do
+				[[ -n "$_rebuild_slug" ]] || continue
+				rebuild_dependency_graph "$_rebuild_slug" || true
+			done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$REPOS_JSON" 2>/dev/null)
 			_run_early_exit_recycle_loop "$pulse_duration"
 			rm -rf "$llm_lockdir" 2>/dev/null || true
 		else
