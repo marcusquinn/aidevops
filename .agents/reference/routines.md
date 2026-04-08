@@ -41,7 +41,7 @@ Recurring operational jobs live in `TODO.md` under `## Routines`. Git-tracked, `
 1. `run:` present → execute script directly (deterministic-first)
 2. `agent:` present → dispatch via `headless-runtime-helper.sh`
 3. Both present → prefer `run:`
-4. Neither → try `run:custom/scripts/{routine-name}.sh`, else `agent:Build+`
+4. Neither → try `custom/scripts/{routine_id}.sh` (e.g. `r001.sh`), else `agent:Build+`
 
 Use `run:` for scripts, exports, health checks. Use `agent:` when judgment or summarisation is needed.
 
