@@ -7580,6 +7580,50 @@ _issue_needs_consolidation() {
 	return 1
 }
 
+#######################################
+# Re-evaluate all needs-consolidation labeled issues across pulse repos.
+# Issues filtered out by list_dispatchable_issue_candidates_json (needs-*
+# exclusion) never reach dispatch_with_dedup, so the auto-clear logic in
+# _issue_needs_consolidation can't fire. This pass runs them through the
+# current filter and removes the label if they no longer trigger.
+# Lightweight: one gh issue list per repo + one _issue_needs_consolidation
+# call per labeled issue. Runs every cycle before the early fill floor.
+#######################################
+_reevaluate_consolidation_labels() {
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	local total_cleared=0
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		local issues_json
+		issues_json=$(gh issue list --repo "$slug" --state open \
+			--label "needs-consolidation" \
+			--json number --limit 50 2>/dev/null) || issues_json="[]"
+		local count
+		count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || count=0
+		[[ "$count" -gt 0 ]] || continue
+
+		local i=0
+		while [[ "$i" -lt "$count" ]]; do
+			local num
+			num=$(printf '%s' "$issues_json" | jq -r ".[$i].number" 2>/dev/null)
+			i=$((i + 1))
+			[[ "$num" =~ ^[0-9]+$ ]] || continue
+			# _issue_needs_consolidation returns 1 (no consolidation needed)
+			# AND auto-clears the label when was_already_labeled=true
+			if ! _issue_needs_consolidation "$num" "$slug"; then
+				total_cleared=$((total_cleared + 1))
+			fi
+		done
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+
+	if [[ "$total_cleared" -gt 0 ]]; then
+		echo "[pulse-wrapper] Consolidation re-evaluation: cleared ${total_cleared} stale needs-consolidation label(s)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
 _dispatch_issue_consolidation() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -10873,6 +10917,13 @@ _run_preflight_stages() {
 	if [[ "${_session_ct:-0}" -gt "$SESSION_COUNT_WARN" ]]; then
 		echo "[pulse-wrapper] Session warning: $_session_ct interactive sessions open (threshold: $SESSION_COUNT_WARN). Each consumes 100-440MB + language servers. Consider closing unused tabs." >>"$LOGFILE"
 	fi
+
+	# Re-evaluate needs-consolidation labels before dispatch. Issues labeled
+	# by an earlier (less precise) filter may no longer trigger under the
+	# current filter. Auto-clearing here makes them dispatchable immediately
+	# instead of stuck forever behind a label that list_dispatchable_issue_candidates_json
+	# filters out (needs-* exclusion at line 6703).
+	_reevaluate_consolidation_labels
 
 	# Early dispatch pass: fill available worker slots BEFORE heavy housekeeping.
 	# Workers take 25-30s to cold-start (sandbox-exec + opencode), so dispatching
