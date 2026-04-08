@@ -103,8 +103,8 @@ get_active_worker_sessions() {
 	for logfile in /tmp/pulse-*.log; do
 		[[ -f "$logfile" ]] || continue
 		local file_mtime
-		# macOS stat syntax
-		file_mtime=$(stat -f '%m' "$logfile" 2>/dev/null || stat -c '%Y' "$logfile" 2>/dev/null || echo "0")
+		# Linux stat -c first (stat -f '%m' on Linux outputs filesystem info to stdout)
+		file_mtime=$(stat -c '%Y' "$logfile" 2>/dev/null || stat -f '%m' "$logfile" 2>/dev/null || echo "0")
 		if ((file_mtime > one_hour_ago)); then
 			# Extract session IDs from log content (UUIDs)
 			local found
@@ -144,7 +144,8 @@ file_size_bytes() {
 		echo "0"
 		return 0
 	fi
-	stat -f '%z' "$filepath" 2>/dev/null || stat -c '%s' "$filepath" 2>/dev/null || echo "0"
+	# Linux stat -c first (stat -f '%z' on Linux outputs filesystem info to stdout, not file size)
+	stat -c '%s' "$filepath" 2>/dev/null || stat -f '%z' "$filepath" 2>/dev/null || echo "0"
 	return 0
 }
 

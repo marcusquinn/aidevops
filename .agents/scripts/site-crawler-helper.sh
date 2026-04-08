@@ -247,7 +247,8 @@ _smwm_download_images() {
 
 		if curl -sS -L --max-time 10 -o "${page_images_dir}/${img_filename}" "$img_src" 2>/dev/null; then
 			local file_size
-			file_size=$(stat -f%z "${page_images_dir}/${img_filename}" 2>/dev/null || echo "0")
+			# Linux stat -c first (stat -f%z on Linux outputs filesystem info to stdout)
+			file_size=$(stat -c%s "${page_images_dir}/${img_filename}" 2>/dev/null || stat -f%z "${page_images_dir}/${img_filename}" 2>/dev/null || echo "0")
 			if [[ $file_size -gt 1024 ]]; then
 				printf '%s\n' "${img_filename}|${img_src}|${img_alt}" >>"${_out_images}"
 			else

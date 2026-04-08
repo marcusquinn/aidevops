@@ -3242,9 +3242,10 @@ cleanup_worktrees() {
 				fi
 
 				# Get worktree creation time from .git file mtime
+				# Linux stat -c first (stat -f '%m' on Linux outputs filesystem info to stdout)
 				local wt_created=0
 				if [[ -f "$wt_path_age/.git" ]]; then
-					wt_created=$(stat -f '%m' "$wt_path_age/.git" 2>/dev/null) || wt_created=0
+					wt_created=$(stat -c '%Y' "$wt_path_age/.git" 2>/dev/null || stat -f '%m' "$wt_path_age/.git" 2>/dev/null) || wt_created=0
 				fi
 				[[ "$wt_created" -eq 0 ]] && continue
 				local wt_age_secs=$((now_epoch - wt_created))
@@ -4009,7 +4010,8 @@ normalize_active_issue_assignments() {
 			local worker_log="/tmp/pulse-${safe_slug_check}-${stale_num}.log"
 			if [[ -f "$worker_log" ]]; then
 				local log_mtime
-				log_mtime=$(stat -f '%m' "$worker_log" 2>/dev/null) || log_mtime=0
+				# Linux stat -c first (stat -f '%m' on Linux outputs filesystem info to stdout)
+				log_mtime=$(stat -c '%Y' "$worker_log" 2>/dev/null || stat -f '%m' "$worker_log" 2>/dev/null) || log_mtime=0
 				if [[ $((now_epoch - log_mtime)) -lt 600 ]]; then
 					continue
 				fi

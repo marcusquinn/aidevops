@@ -677,7 +677,8 @@ cmd_transport_status() {
 	echo "    Database:  $MAIL_DB"
 	if [[ -f "$MAIL_DB" ]]; then
 		local db_size
-		db_size=$(stat -f%z "$MAIL_DB" 2>/dev/null || stat -c%s "$MAIL_DB" 2>/dev/null || echo "0")
+		# Linux stat -c first (stat -f%z on Linux outputs filesystem info to stdout)
+		db_size=$(stat -c%s "$MAIL_DB" 2>/dev/null || stat -f%z "$MAIL_DB" 2>/dev/null || echo "0")
 		echo "    Size:      $((db_size / 1024))KB"
 	else
 		echo "    Size:      (not initialized)"
@@ -1276,7 +1277,8 @@ prune_execute() {
 	db "$MAIL_DB" "VACUUM;"
 
 	local new_size_bytes
-	new_size_bytes=$(stat -f%z "$MAIL_DB" 2>/dev/null || stat -c%s "$MAIL_DB" 2>/dev/null || echo "0")
+	# Linux stat -c first (stat -f%z on Linux outputs filesystem info to stdout)
+	new_size_bytes=$(stat -c%s "$MAIL_DB" 2>/dev/null || stat -f%z "$MAIL_DB" 2>/dev/null || echo "0")
 	local new_size_kb=$((new_size_bytes / 1024))
 	local saved_kb=$((db_size_kb - new_size_kb))
 
@@ -1326,7 +1328,8 @@ cmd_prune() {
 	ensure_db
 
 	local db_size_bytes
-	db_size_bytes=$(stat -f%z "$MAIL_DB" 2>/dev/null || stat -c%s "$MAIL_DB" 2>/dev/null || echo "0")
+	# Linux stat -c first (stat -f%z on Linux outputs filesystem info to stdout)
+	db_size_bytes=$(stat -c%s "$MAIL_DB" 2>/dev/null || stat -f%z "$MAIL_DB" 2>/dev/null || echo "0")
 	local db_size_kb=$((db_size_bytes / 1024))
 
 	local report_output prunable archivable
