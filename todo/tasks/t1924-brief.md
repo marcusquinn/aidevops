@@ -50,7 +50,9 @@ Routine definitions need to be version-controlled and trackable via issues. The 
 
 - `NEW: .agents/scripts/init-routines-helper.sh` — model on existing init patterns in `init-helper.sh`
 - `NEW: .agents/scripts/commands/init-routines.md` — slash command doc
+- `NEW: .agents/scripts/setup/_routines.sh` — setup module for interactive setup flow
 - `EDIT: .agents/scripts/aidevops-cli.sh` (or equivalent) — add `init-routines` subcommand routing
+- `EDIT: setup.sh` — add `confirm_step "Set up routines repo" && setup_routines` to interactive mode
 
 ### Implementation Steps
 
@@ -60,11 +62,24 @@ Routine definitions need to be version-controlled and trackable via issues. The 
    - `init_local()` — `git init`, scaffold, set `local_only: true`
    - `scaffold_repo(path)` — creates TODO.md (with Routines section header and format reference), routines/.gitkeep, .github/ISSUE_TEMPLATE/routine.md, .gitignore
    - `register_repo(path, slug)` — appends to `repos.json` initialized_repos array with `pulse: true, priority: "tooling"`
+   - `detect_and_create_all()` — for setup integration:
+     - Detect username: `gh api user --jq '.login'`
+     - Check if `<username>/aidevops-routines` exists, create if not
+     - Detect admin orgs: `gh api user/orgs --jq '.[].login'`, filter by admin role
+     - For each admin org, check/create `<org>/aidevops-routines`
+     - Register all in repos.json
    - Privacy enforcement: `--private` flag hardcoded, no override
 
-2. Create slash command doc `init-routines.md`
+2. Create setup module `_routines.sh`:
+   - Sources `init-routines-helper.sh`
+   - Calls `detect_and_create_all()` in interactive mode
+   - In non-interactive mode: only creates personal repo (orgs require confirmation)
 
-3. Register in CLI entrypoint
+3. Create slash command doc `init-routines.md`
+
+4. Wire into setup.sh interactive flow and CLI entrypoint
+
+Note: `aidevops update` does NOT auto-create repos. At most verifies local clone exists and warns if missing.
 
 ### Verification
 
