@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.172] - 2026-04-08
+
+### Added
+
+- custom/configs/model-routing-table.json override for per-user provider preferences
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: bump version to
+- Maintenance: release v3.6.170
+- Maintenance: bump version to
+- reduce function complexity in oauth-pool.mjs (#17818)
+- Maintenance: update simplification state registry
+- feat: aidevops init-routines (#17814)
+
+### Fixed
+
+- add default values for optional params $12 and $13 (#17826)
+- add content-hash cache to generate-skills.sh (56s → 0.2s) (#17824)
+- use repos.json lookup instead of lossy sed for slug derivation (t1929)
+- remove persistent label before closing stale health issues in migration (t1929)
+- _is_task_committed_to_main subject-only matching for tNNN/GH#NNN patterns (#17802)
+
 ## [3.6.168] - 2026-04-08
 
 ### Changed
