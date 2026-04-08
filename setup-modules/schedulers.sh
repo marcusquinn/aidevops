@@ -595,8 +595,8 @@ _install_scheduler_linux() {
 	local fail_msg="$9"
 	local run_at_load="${10}"
 	local low_priority="${11}"
-	local on_calendar="${12}"
-	local timeout_sec="${13}"
+	local on_calendar="${12:-}"
+	local timeout_sec="${13:-}"
 
 	if _systemd_user_available; then
 		if _install_scheduler_systemd \
