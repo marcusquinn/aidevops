@@ -325,14 +325,25 @@ emit_event_json() {
 # 2. action_required — only from GitHub Actions runs. External apps (Codacy, SonarCloud)
 #    use action_required to mean "issues found for developer review", which is informational
 #    not a CI failure. Including these creates false systemic clusters (GH#4696).
+#
+# Policy gate checks are excluded (GH#17831): checks that enforce workflow policy
+# (e.g. maintainer review, assignee requirements) fail by design when policy is not met.
+# Treating these as systemic CI failures creates false noise — they are not tooling defects.
+# The exclusion list uses substring matching so minor name variations are still caught.
 filter_failed_check_runs() {
 	local checks_json="$1"
 	printf '%s\n' "$checks_json" | jq '[.check_runs[] | select(
-		((.conclusion // "" | ascii_downcase) as $c |
-			["failure","cancelled","timed_out","startup_failure"] | index($c))
-		or
-		((.conclusion // "" | ascii_downcase) == "action_required"
-			and (.app.slug // "" | ascii_downcase) == "github-actions")
+		(
+			((.conclusion // "" | ascii_downcase) as $c |
+				["failure","cancelled","timed_out","startup_failure"] | index($c))
+			or
+			((.conclusion // "" | ascii_downcase) == "action_required"
+				and (.app.slug // "" | ascii_downcase) == "github-actions")
+		)
+		and
+		# Exclude policy gate checks — these fail by design when policy is not met,
+		# not because of a tooling defect. (GH#17831)
+		((.name // "") | ascii_downcase | test("maintainer.*review|maintainer.*gate|assignee.*gate") | not)
 	)]'
 	return 0
 }
