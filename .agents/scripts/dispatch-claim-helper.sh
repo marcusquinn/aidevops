@@ -395,7 +395,7 @@ Usage:
     Exit 2 = error (fail-open — proceed with dispatch)
 
   dispatch-claim-helper.sh check <issue-number> <repo-slug>
-    Check if any active claim exists on this issue.
+    Query whether an active claim exists on this issue.
     Exit 0 = active claim exists (do NOT dispatch)
     Exit 1 = no active claim (safe to proceed to claim step)
     Exit 2 = error (fail-open — proceed)
@@ -410,11 +410,11 @@ Environment:
 Protocol:
   1. Runner posts plain-text claim comment with unique nonce
      and max_age_s (active claim window in seconds)
-  2. Waits DISPATCH_CLAIM_WINDOW seconds for other runners
+  2. Waits DISPATCH_CLAIM_WINDOW seconds to allow other runners to post
   3. Fetches all claim comments on the issue
   4. Oldest active claim wins (claims older than DISPATCH_CLAIM_MAX_AGE are ignored)
      — others back off; ALL claim comments are retained as audit trail (GH#17503)
-  5. Winner proceeds with dispatch; claim blocks re-dispatch for TTL duration
+  5. Winner proceeds with dispatch; claim blocks re-dispatch until TTL expires
 
 Examples:
   # Claim before dispatching (in pulse dedup guard):

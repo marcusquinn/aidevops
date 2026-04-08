@@ -61,17 +61,11 @@ attacks_to_score() {
 
 score_to_risk() {
 	local score="$1"
-	if [[ "$score" -ge 75 ]]; then
-		echo "critical"
-	elif [[ "$score" -ge 50 ]]; then
-		echo "high"
-	elif [[ "$score" -ge 25 ]]; then
-		echo "medium"
-	elif [[ "$score" -ge 5 ]]; then
-		echo "low"
-	else
-		echo "clean"
-	fi
+	[[ "$score" -ge 75 ]] && echo "critical" && return 0
+	[[ "$score" -ge 50 ]] && echo "high" && return 0
+	[[ "$score" -ge 25 ]] && echo "medium" && return 0
+	[[ "$score" -ge 5 ]] && echo "low" && return 0
+	echo "clean"
 	return 0
 }
 

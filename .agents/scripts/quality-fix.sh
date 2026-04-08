@@ -229,11 +229,7 @@ validate_fixes() {
 		print_warning "ShellCheck issues remain in $file"
 	done < <(find .agents/scripts -name "*.sh" -not -path "*/_archive/*" -print0 2>/dev/null)
 
-	if [[ $validation_errors -eq 0 ]]; then
-		print_success "All files pass ShellCheck validation"
-	else
-		print_warning "$validation_errors files still have ShellCheck issues"
-	fi
+	[[ $validation_errors -eq 0 ]] && print_success "All files pass ShellCheck validation" || print_warning "$validation_errors files still have ShellCheck issues"
 	return 0
 }
 
@@ -241,10 +237,10 @@ main() {
 	print_header
 
 	# Ensure we're in the right directory
-	if [[ ! -d "providers" ]]; then
+	[[ ! -d "providers" ]] && {
 		print_error "Must be run from the repository root directory"
 		exit 1
-	fi
+	}
 
 	# Create backup before making changes
 	backup_files

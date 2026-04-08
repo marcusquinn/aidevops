@@ -322,7 +322,7 @@ EXAMPLES:
 
 ENVIRONMENT VARIABLES:
     TERMINAL_TITLE_FORMAT
-        Format for auto-generated titles. Options:
+        Auto-generated title format. Options:
         - "repo/branch" (default): "aidevops/feature/xyz"
         - "branch": "feature/xyz"
         - "repo": "aidevops"
@@ -332,7 +332,7 @@ ENVIRONMENT VARIABLES:
         Set to "false" to disable terminal title integration
 
 SHELL INTEGRATION:
-    Add to ~/.bashrc or ~/.zshrc for automatic sync on directory change:
+    To enable automatic sync on directory change, add to ~/.bashrc or ~/.zshrc:
 
     # Bash
     PROMPT_COMMAND='~/.aidevops/agents/scripts/terminal-title-helper.sh sync 2>/dev/null'

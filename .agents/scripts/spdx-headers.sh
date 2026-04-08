@@ -188,18 +188,18 @@ _update_simplification_hashes() {
 		new_hash=$(git hash-object "$file_path" 2>/dev/null || echo "")
 		[[ -z "$new_hash" ]] && continue
 		old_hash=$(jq -r --arg f "$file_path" '.files[$f].hash // empty' "$tmp_file" 2>/dev/null)
-		if [[ -n "$old_hash" && "$old_hash" != "$new_hash" ]]; then
+		[[ -n "$old_hash" && "$old_hash" != "$new_hash" ]] && {
 			jq --arg f "$file_path" --arg h "$new_hash" '.files[$f].hash = $h' "$tmp_file" >"${tmp_file}.2" && mv "${tmp_file}.2" "$tmp_file"
 			updated=$((updated + 1))
-		fi
+		}
 	done < <(jq -r '.files | keys[]' "$state_file" 2>/dev/null)
-	if [[ "$updated" -gt 0 ]]; then
+	[[ "$updated" -gt 0 ]] && {
 		mv "$tmp_file" "$state_file"
 		echo "[OK] Updated $updated hash(es)"
-	else
+	} || {
 		rm -f "$tmp_file"
 		echo "[OK] No updates needed"
-	fi
+	}
 	return 0
 }
 
@@ -207,28 +207,28 @@ cmd_add() {
 	echo "Adding SPDX headers (${LICENSE_ID}, ${COPYRIGHT_YEARS} ${COPYRIGHT_HOLDER})"
 	echo ""
 	echo "--- Shell scripts ---"
-	while IFS= read -r file; do
+	git ls-files '*.sh' 2>/dev/null | while IFS= read -r file; do
 		[[ -z "$file" ]] && continue
 		_add_sh_header "$file"
-	done < <(git ls-files '*.sh' 2>/dev/null)
+	done
 	echo ""
 	echo "--- Markdown files ---"
-	while IFS= read -r file; do
+	git ls-files '*.md' 2>/dev/null | while IFS= read -r file; do
 		[[ -z "$file" ]] && continue
 		_add_md_header "$file"
-	done < <(git ls-files '*.md' 2>/dev/null)
+	done
 	echo ""
 	echo "--- Python files ---"
-	while IFS= read -r file; do
+	git ls-files '*.py' 2>/dev/null | while IFS= read -r file; do
 		[[ -z "$file" ]] && continue
 		_add_py_header "$file"
-	done < <(git ls-files '*.py' 2>/dev/null)
+	done
 	echo ""
 	echo "--- Text files (excluding .json.txt) ---"
-	while IFS= read -r file; do
+	git ls-files '*.txt' 2>/dev/null | while IFS= read -r file; do
 		[[ -z "$file" ]] && continue
 		_add_txt_header "$file"
-	done < <(git ls-files '*.txt' 2>/dev/null)
+	done
 	echo ""
 	[[ "$DRY_RUN" != "true" ]] && _update_simplification_hashes
 	echo ""
@@ -246,23 +246,37 @@ _is_spdx_exempt() {
 	return 1
 }
 
+# Count missing SPDX headers for a single file extension.
+# Outputs "missing_count total_count" to stdout.
+_check_ext_files() {
+	local ext="$1"
+	local missing=0 total=0
+	while IFS= read -r file; do
+		[[ -z "$file" ]] && continue
+		total=$((total + 1))
+		_is_spdx_exempt "$file" && continue
+		_has_spdx "$file" && continue
+		echo "  missing: $file"
+		missing=$((missing + 1))
+	done < <(git ls-files "*.${ext}" 2>/dev/null)
+	echo "$missing $total"
+	return 0
+}
+
 cmd_check() {
 	echo "Checking SPDX header coverage..."
-	local missing=0 total=0
-	local ext
+	local total_missing=0 total_files=0
+	local ext result m t
 	for ext in sh md py txt; do
-		while IFS= read -r file; do
-			[[ -z "$file" ]] && continue
-			total=$((total + 1))
-			_is_spdx_exempt "$file" && continue
-			_has_spdx "$file" && continue
-			echo "  missing: $file"
-			missing=$((missing + 1))
-		done < <(git ls-files "*.${ext}" 2>/dev/null)
+		result=$(_check_ext_files "$ext")
+		m="${result%% *}"
+		t="${result##* }"
+		total_missing=$((total_missing + m))
+		total_files=$((total_files + t))
 	done
 	echo ""
-	echo "Coverage: $((total - missing))/$total files ($missing missing)"
-	[[ "$missing" -eq 0 ]] && return 0 || return 1
+	echo "Coverage: $((total_files - total_missing))/$total_files files ($total_missing missing)"
+	[[ "$total_missing" -eq 0 ]] && return 0 || return 1
 }
 
 cmd_help() {
