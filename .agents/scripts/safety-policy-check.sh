@@ -85,54 +85,7 @@ check_generator_rules() {
 		return 1
 	fi
 
-	python3 - "$target_file" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8", errors="replace")
-
-def extract_block(name: str) -> str:
-    m = re.search(rf"{name}\s*=\s*\[(.*?)\]\n", text, re.S)
-    return m.group(1) if m else ""
-
-allow_block = extract_block("allow_rules")
-deny_block = extract_block("deny_rules")
-
-forbidden_in_allow = [
-    "Bash(gopass show *)",
-    "Bash(pass show *)",
-    "Bash(op read *)",
-    "Bash(cat ~/.config/aidevops/credentials.sh)",
-    "Read(~/.config/aidevops/credentials.sh)",
-]
-
-required_in_deny = [
-    "Bash(gopass show *)",
-    "Bash(pass show *)",
-    "Bash(op read *)",
-    "Bash(cat ~/.config/aidevops/credentials.sh)",
-    "Read(~/.config/aidevops/credentials.sh)",
-]
-
-errors = []
-for rule in forbidden_in_allow:
-    if rule in allow_block:
-        errors.append(f"forbidden rule in allow_rules: {rule}")
-
-for rule in required_in_deny:
-    if rule not in deny_block:
-        errors.append(f"required deny rule missing: {rule}")
-
-if errors:
-    for err in errors:
-        print(f"FAIL: {err}", file=sys.stderr)
-    sys.exit(1)
-
-print("PASS: generator deny/allow secret rules")
-PY
-
+	python3 "${SCRIPT_DIR}/check-generator-rules.py" "$target_file"
 	return $?
 }
 
@@ -167,23 +120,24 @@ check_policy_markers() {
 
 	# Detailed secret handling rules must exist (either inline in build.txt
 	# or in the extracted reference file)
+	local secret_check_target="$build_prompt"
 	if [[ -f "$secret_handling_ref" ]]; then
-		if [[ ! -r "$secret_handling_ref" ]]; then
+		[[ ! -r "$secret_handling_ref" ]] && {
 			echo "FAIL: secret-handling reference not readable: $secret_handling_ref" >&2
 			return 1
-		fi
-		if ! require_pattern "Never paste secret values into AI chat" "$secret_handling_ref" \
-			"mandatory warning guidance missing from secret-handling reference"; then
-			return 1
-		fi
+		}
+		secret_check_target="$secret_handling_ref"
+	fi
+
+	if ! require_pattern "Never paste secret values into AI chat" "$secret_check_target" \
+		"mandatory warning guidance missing from ${secret_check_target##*/}"; then
+		return 1
+	fi
+
+	# Transcript exposure section only required in the dedicated reference file
+	if [[ -f "$secret_handling_ref" ]]; then
 		if ! require_pattern "Session Transcript Exposure" "$secret_handling_ref" \
 			"transcript exposure section missing from secret-handling reference"; then
-			return 1
-		fi
-	else
-		# Fallback: if reference file doesn't exist, check build.txt directly
-		if ! require_pattern "Never paste secret values into AI chat" "$build_prompt" \
-			"mandatory warning guidance missing from build prompt"; then
 			return 1
 		fi
 	fi

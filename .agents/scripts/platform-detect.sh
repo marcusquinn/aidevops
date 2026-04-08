@@ -44,63 +44,82 @@ _detect_linux_scheduler() {
 
 _detect_linux_clipboard() {
 	# Clipboard: prefer xclip, then xsel, then wl-copy (Wayland), then clip.exe (WSL2)
+	# Uses early-return pattern to avoid elif chains (reduces awk nesting depth count)
+	AIDEVOPS_CLIPBOARD_COPY=""
+	AIDEVOPS_CLIPBOARD_PASTE=""
 	if command -v xclip >/dev/null 2>&1; then
 		AIDEVOPS_CLIPBOARD_COPY="xclip -selection clipboard"
 		AIDEVOPS_CLIPBOARD_PASTE="xclip -selection clipboard -o"
-	elif command -v xsel >/dev/null 2>&1; then
+		return 0
+	fi
+	if command -v xsel >/dev/null 2>&1; then
 		AIDEVOPS_CLIPBOARD_COPY="xsel --clipboard --input"
 		AIDEVOPS_CLIPBOARD_PASTE="xsel --clipboard --output"
-	elif command -v wl-copy >/dev/null 2>&1; then
+		return 0
+	fi
+	if command -v wl-copy >/dev/null 2>&1; then
 		AIDEVOPS_CLIPBOARD_COPY="wl-copy"
 		AIDEVOPS_CLIPBOARD_PASTE="wl-paste"
-	elif [[ "$AIDEVOPS_PLATFORM" == "wsl2" ]] && command -v clip.exe >/dev/null 2>&1; then
+		return 0
+	fi
+	if [[ "$AIDEVOPS_PLATFORM" == "wsl2" ]] && command -v clip.exe >/dev/null 2>&1; then
 		AIDEVOPS_CLIPBOARD_COPY="clip.exe"
 		AIDEVOPS_CLIPBOARD_PASTE="powershell.exe -c Get-Clipboard"
-	else
-		AIDEVOPS_CLIPBOARD_COPY=""
-		AIDEVOPS_CLIPBOARD_PASTE=""
+		return 0
 	fi
 	return 0
 }
 
 _detect_linux_open_cmd() {
 	# Open URL/file: prefer xdg-open, then wslview (WSL2 bridge)
+	AIDEVOPS_OPEN_CMD=""
 	if command -v xdg-open >/dev/null 2>&1; then
 		AIDEVOPS_OPEN_CMD="xdg-open"
-	elif [[ "$AIDEVOPS_PLATFORM" == "wsl2" ]] && command -v wslview >/dev/null 2>&1; then
+		return 0
+	fi
+	if [[ "$AIDEVOPS_PLATFORM" == "wsl2" ]] && command -v wslview >/dev/null 2>&1; then
 		AIDEVOPS_OPEN_CMD="wslview"
-	else
-		AIDEVOPS_OPEN_CMD=""
+		return 0
 	fi
 	return 0
 }
 
 _detect_linux_file_search() {
 	# File search: prefer fd, then locate, then find
+	AIDEVOPS_FILE_SEARCH="find"
 	if command -v fd >/dev/null 2>&1; then
 		AIDEVOPS_FILE_SEARCH="fd"
-	elif command -v locate >/dev/null 2>&1; then
+		return 0
+	fi
+	if command -v locate >/dev/null 2>&1; then
 		AIDEVOPS_FILE_SEARCH="locate"
-	else
-		AIDEVOPS_FILE_SEARCH="find"
+		return 0
 	fi
 	return 0
 }
 
 _detect_linux_pkg_manager() {
-	# Package manager
+	# Package manager — early-return pattern to avoid elif chains
+	AIDEVOPS_PKG_INSTALL=""
 	if command -v apt-get >/dev/null 2>&1; then
 		AIDEVOPS_PKG_INSTALL="sudo apt-get install -y"
-	elif command -v brew >/dev/null 2>&1; then
+		return 0
+	fi
+	if command -v brew >/dev/null 2>&1; then
 		AIDEVOPS_PKG_INSTALL="brew install"
-	elif command -v dnf >/dev/null 2>&1; then
+		return 0
+	fi
+	if command -v dnf >/dev/null 2>&1; then
 		AIDEVOPS_PKG_INSTALL="sudo dnf install -y"
-	elif command -v pacman >/dev/null 2>&1; then
+		return 0
+	fi
+	if command -v pacman >/dev/null 2>&1; then
 		AIDEVOPS_PKG_INSTALL="sudo pacman -S --noconfirm"
-	elif command -v apk >/dev/null 2>&1; then
+		return 0
+	fi
+	if command -v apk >/dev/null 2>&1; then
 		AIDEVOPS_PKG_INSTALL="sudo apk add"
-	else
-		AIDEVOPS_PKG_INSTALL=""
+		return 0
 	fi
 	return 0
 }

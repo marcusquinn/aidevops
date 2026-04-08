@@ -125,11 +125,9 @@ cmd_check() {
 		reports=$(echo "$normalized" | grep -oE 'reports:[[:space:]]*[0-9]+' | grep -oE '[0-9]+$' || echo "0")
 		attacks="${attacks:-0}"
 		reports="${reports:-0}"
-		if [[ "$attacks" -gt 0 || "$reports" -gt 0 ]]; then
-			is_listed=true
-		else
-			is_listed=false
-		fi
+		# Determine listing status based on attack/report counts
+		is_listed=false
+		[[ "$attacks" -gt 0 || "$reports" -gt 0 ]] && is_listed=true
 	else
 		# Unexpected response format — treat as error
 		error_json "$ip" "unexpected response format: ${response:0:100}"
