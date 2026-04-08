@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.206] - 2026-04-09
+
+### Fixed
+
+- add consolidation label re-evaluation pass before early fill floor (#17964)
+- bump nesting depth threshold to 256 to resolve CI proximity warning (#17963)
+
 ## [3.6.205] - 2026-04-09
 
 ### Fixed
