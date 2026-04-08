@@ -3881,7 +3881,15 @@ normalize_active_issue_assignments() {
 	# assignees + status:queued/in-progress but no running worker process.
 	# The dedup guard then blocks re-dispatch indefinitely. Reset these so
 	# the deterministic fill floor can re-dispatch them.
+	#
+	# t1933: PID-based checks are local-only. In multi-runner setups, a worker
+	# dispatched by another machine is invisible to pgrep on this machine.
+	# Gate PID checks on runner identity: if the dispatch comment's Worker PID
+	# is not running locally, fall back to WORKER_MAX_RUNTIME time-based expiry
+	# before resetting. This prevents false recovery of cross-runner dispatches.
 	local total_reset=0
+	# Default max runtime for cross-runner time-based expiry (3h, matches worker-watchdog.sh default)
+	local cross_runner_max_runtime="${WORKER_MAX_RUNTIME:-10800}"
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
@@ -3910,10 +3918,60 @@ normalize_active_issue_assignments() {
 		while IFS= read -r stale_num; do
 			[[ "$stale_num" =~ ^[0-9]+$ ]] || continue
 
-			# Check if any worker process references this issue
+			# t1933: Extract Worker PID from the most recent dispatch comment.
+			# If the dispatch comment records a PID that is NOT running locally,
+			# this may be a cross-runner dispatch — use time-based expiry instead
+			# of PID-based recovery to avoid falsely resetting active workers on
+			# other machines.
+			local dispatch_pid=""
+			local dispatch_comment_age=0
+			local dispatch_comments_json
+			dispatch_comments_json=$(gh api "repos/${slug}/issues/${stale_num}/comments" \
+				--jq '[.[] | select(.body | startswith("Dispatching worker"))] | sort_by(.created_at) | reverse | first // empty' \
+				2>/dev/null) || dispatch_comments_json=""
+			if [[ -n "$dispatch_comments_json" && "$dispatch_comments_json" != "null" ]]; then
+				dispatch_pid=$(printf '%s' "$dispatch_comments_json" | jq -r '
+					.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") | .pid // ""
+				' 2>/dev/null) || dispatch_pid=""
+				local dispatch_created_at
+				dispatch_created_at=$(printf '%s' "$dispatch_comments_json" | jq -r '.created_at // ""' 2>/dev/null) || dispatch_created_at=""
+				if [[ -n "$dispatch_created_at" ]]; then
+					local dispatch_epoch
+					dispatch_epoch=$(date -u -d "$dispatch_created_at" '+%s' 2>/dev/null ||
+						TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$dispatch_created_at" '+%s' 2>/dev/null ||
+						echo "0")
+					dispatch_comment_age=$((now_epoch - dispatch_epoch))
+				fi
+			fi
+
+			# Check if any worker process references this issue (local PID check)
+			local local_worker_found=false
 			if pgrep -f "issue.*${stale_num}" >/dev/null 2>&1 || pgrep -f "#${stale_num}" >/dev/null 2>&1; then
+				local_worker_found=true
+			fi
+
+			if [[ "$local_worker_found" == "true" ]]; then
+				# Local worker is running — do not reset
 				continue
 			fi
+
+			# t1933: If dispatch comment has a PID that is not running locally,
+			# determine if this is a cross-runner dispatch by checking whether
+			# the PID exists on this machine. If the PID is absent locally but
+			# the dispatch comment is still within WORKER_MAX_RUNTIME, assume
+			# the worker is running on another machine and skip the reset.
+			if [[ -n "$dispatch_pid" ]] && [[ "$dispatch_pid" =~ ^[0-9]+$ ]]; then
+				if ! ps -p "$dispatch_pid" >/dev/null 2>&1; then
+					# PID not running locally — could be cross-runner dispatch.
+					# Only reset if the dispatch comment has aged beyond WORKER_MAX_RUNTIME.
+					if [[ "$dispatch_comment_age" -lt "$cross_runner_max_runtime" ]]; then
+						echo "[pulse-wrapper] Stale assignment skip (cross-runner guard): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not local, comment age ${dispatch_comment_age}s < max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
+						continue
+					fi
+					echo "[pulse-wrapper] Stale assignment reset (cross-runner expired): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not local, comment age ${dispatch_comment_age}s >= max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
+				fi
+			fi
+
 			# Also check worker log recency — if log was written in last 10 min, worker may still be active
 			local safe_slug_check
 			safe_slug_check=$(printf '%s' "$slug" | tr '/:' '--')
@@ -3926,7 +3984,7 @@ normalize_active_issue_assignments() {
 				fi
 			fi
 
-			# No worker — reset the issue for re-dispatch
+			# No local worker and cross-runner guard passed — reset the issue for re-dispatch
 			echo "[pulse-wrapper] Stale assignment reset: #${stale_num} in ${slug} — assigned to ${runner_user} with active label but no worker process" >>"$LOGFILE"
 			gh issue edit "$stale_num" --repo "$slug" \
 				--remove-assignee "$runner_user" \
