@@ -388,40 +388,42 @@ EOF
 }
 
 # =============================================================================
-# Subcommand: update
+# Subcommand: update — helpers
 # =============================================================================
 
-cmd_update() {
-	local routine_id=""
-	local status=""
-	local duration=""
-	local tokens="0"
-	local cost="0.00"
-
-	# Parse args
+# Parse and validate arguments for the update subcommand.
+# Sets variables in caller scope: routine_id, status, duration, tokens, cost.
+# Returns 1 on invalid input.
+_parse_update_args() {
 	if [[ $# -lt 1 ]]; then
 		_log_error "Usage: routine-log-helper.sh update <routine-id> --status success|failure --duration SECONDS [--tokens N] [--cost AMOUNT]"
 		return 1
 	fi
-	routine_id="$1"
+	# shellcheck disable=SC2034
+	_UPDATE_ROUTINE_ID="$1"
 	shift
+
+	_UPDATE_STATUS=""
+	_UPDATE_DURATION=""
+	_UPDATE_TOKENS="0"
+	_UPDATE_COST="0.00"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--status)
-			status="$2"
+			_UPDATE_STATUS="$2"
 			shift 2
 			;;
 		--duration)
-			duration="$2"
+			_UPDATE_DURATION="$2"
 			shift 2
 			;;
 		--tokens)
-			tokens="$2"
+			_UPDATE_TOKENS="$2"
 			shift 2
 			;;
 		--cost)
-			cost="$2"
+			_UPDATE_COST="$2"
 			shift 2
 			;;
 		*)
@@ -431,20 +433,24 @@ cmd_update() {
 		esac
 	done
 
-	if [[ -z "$status" ]] || [[ -z "$duration" ]]; then
+	if [[ -z "$_UPDATE_STATUS" ]] || [[ -z "$_UPDATE_DURATION" ]]; then
 		_log_error "Both --status and --duration are required"
 		return 1
 	fi
 
-	if [[ "$status" != "success" ]] && [[ "$status" != "failure" ]]; then
+	if [[ "$_UPDATE_STATUS" != "success" ]] && [[ "$_UPDATE_STATUS" != "failure" ]]; then
 		_log_error "Status must be 'success' or 'failure'"
 		return 1
 	fi
 
-	_check_prerequisites || return 1
-	_ensure_state_dir "$routine_id"
+	return 0
+}
 
-	# Read current state
+# Load routine state and extract common fields needed by update.
+# Validates that a tracking issue exists. Outputs JSON state to stdout.
+# Returns 1 if no tracking issue is configured.
+_load_routine_state() {
+	local routine_id="$1"
 	local state
 	state=$(_read_state "$routine_id")
 	local issue_number
@@ -457,6 +463,123 @@ cmd_update() {
 		return 1
 	fi
 
+	echo "$state"
+	return 0
+}
+
+# Update state JSON with latest run metrics and persist to disk.
+# Args: routine_id, state_json, status, duration, cost, schedule
+# Outputs the new total_cost to stdout.
+_update_state_after_run() {
+	local routine_id="$1"
+	local state="$2"
+	local status="$3"
+	local duration="$4"
+	local cost="$5"
+	local schedule="$6"
+
+	local now_ts
+	now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+	# Accumulate total cost
+	local prev_total_cost
+	prev_total_cost=$(echo "$state" | jq -r '.total_cost // "0.00"')
+	local new_total_cost
+	new_total_cost=$(echo "$prev_total_cost $cost" | awk '{printf "%.2f", $1 + $2}')
+
+	# Compute next run
+	local next_run
+	next_run=$(_compute_next_run "$schedule")
+
+	# Save updated state
+	state=$(echo "$state" | jq \
+		--arg lr "$now_ts" \
+		--arg ls "$status" \
+		--argjson ld "$duration" \
+		--arg nr "$next_run" \
+		--arg tc "$new_total_cost" \
+		'.last_run = $lr | .last_status = $ls | .last_duration = $ld | .next_run = $nr | .total_cost = $tc')
+	_write_state "$routine_id" "$state"
+
+	echo "$new_total_cost"
+	return 0
+}
+
+# Build the updated issue body and push it to GitHub.
+# Args: routine_id, issue_number, repo_slug, title, schedule, routine_type,
+#       status_label, now_ts, status, duration, next_run, streak_count,
+#       streak_type, total_cost
+_update_tracking_issue() {
+	local routine_id="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local title="$4"
+	local schedule="$5"
+	local routine_type="$6"
+	local status_label="$7"
+	local now_ts="$8"
+	local status="$9"
+	local duration="${10}"
+	local next_run="${11}"
+	local streak_count="${12}"
+	local streak_type="${13}"
+	local total_cost="${14}"
+
+	# Compute period summary
+	local period_summary
+	period_summary=$(_compute_period_summary "$routine_id")
+
+	# Build new issue body
+	local new_body
+	new_body=$(_build_issue_body \
+		"$routine_id" \
+		"$title" \
+		"$schedule" \
+		"$routine_type" \
+		"$status_label" \
+		"$now_ts" \
+		"$status" \
+		"$duration" \
+		"$next_run" \
+		"$streak_count" \
+		"$streak_type" \
+		"$total_cost" \
+		"$period_summary")
+
+	# Update issue description
+	if gh issue edit "$issue_number" --repo "$repo_slug" --body "$new_body" &>/dev/null; then
+		_log_success "Updated issue #${issue_number} for ${routine_id} (${status}, ${duration}s)"
+	else
+		_log_error "Failed to update issue #${issue_number} for ${routine_id}"
+		return 1
+	fi
+
+	return 0
+}
+
+# =============================================================================
+# Subcommand: update
+# =============================================================================
+
+cmd_update() {
+	_parse_update_args "$@" || return 1
+
+	local routine_id="$_UPDATE_ROUTINE_ID"
+	local status="$_UPDATE_STATUS"
+	local duration="$_UPDATE_DURATION"
+	local tokens="$_UPDATE_TOKENS"
+	local cost="$_UPDATE_COST"
+
+	_check_prerequisites || return 1
+	_ensure_state_dir "$routine_id"
+
+	# Load and validate state
+	local state
+	state=$(_load_routine_state "$routine_id") || return 1
+	local issue_number
+	issue_number=$(echo "$state" | jq -r '.issue_number // empty')
+	local repo_slug
+	repo_slug=$(echo "$state" | jq -r '.repo_slug // empty')
 	local title
 	title=$(echo "$state" | jq -r '.title // "Untitled Routine"')
 	local schedule
@@ -486,58 +609,20 @@ cmd_update() {
 	local streak_type
 	streak_type=$(echo "$state" | jq -r '.streak_type // ""')
 
-	# Update last run info in state
+	# Update state with run metrics
 	local now_ts
 	now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-	# Accumulate total cost
-	local prev_total_cost
-	prev_total_cost=$(echo "$state" | jq -r '.total_cost // "0.00"')
 	local new_total_cost
-	new_total_cost=$(echo "$prev_total_cost $cost" | awk '{printf "%.2f", $1 + $2}')
+	new_total_cost=$(_update_state_after_run "$routine_id" "$state" "$status" "$duration" "$cost" "$schedule")
 
-	# Compute next run
 	local next_run
 	next_run=$(_compute_next_run "$schedule")
 
-	# Save updated state
-	state=$(echo "$state" | jq \
-		--arg lr "$now_ts" \
-		--arg ls "$status" \
-		--argjson ld "$duration" \
-		--arg nr "$next_run" \
-		--arg tc "$new_total_cost" \
-		'.last_run = $lr | .last_status = $ls | .last_duration = $ld | .next_run = $nr | .total_cost = $tc')
-	_write_state "$routine_id" "$state"
-
-	# Compute period summary
-	local period_summary
-	period_summary=$(_compute_period_summary "$routine_id")
-
-	# Build new issue body
-	local new_body
-	new_body=$(_build_issue_body \
-		"$routine_id" \
-		"$title" \
-		"$schedule" \
-		"$routine_type" \
-		"$status_label" \
-		"$now_ts" \
-		"$status" \
-		"$duration" \
-		"$next_run" \
-		"$streak_count" \
-		"$streak_type" \
-		"$new_total_cost" \
-		"$period_summary")
-
-	# Update issue description
-	if gh issue edit "$issue_number" --repo "$repo_slug" --body "$new_body" &>/dev/null; then
-		_log_success "Updated issue #${issue_number} for ${routine_id} (${status}, ${duration}s)"
-	else
-		_log_error "Failed to update issue #${issue_number} for ${routine_id}"
-		return 1
-	fi
+	# Update the tracking issue on GitHub
+	_update_tracking_issue \
+		"$routine_id" "$issue_number" "$repo_slug" "$title" "$schedule" \
+		"$routine_type" "$status_label" "$now_ts" "$status" "$duration" \
+		"$next_run" "$streak_count" "$streak_type" "$new_total_cost" || return 1
 
 	# Post notable event if streak broke
 	if [[ "$streak_broke" == "true" ]]; then
@@ -627,39 +712,41 @@ ${footer}"
 }
 
 # =============================================================================
-# Subcommand: create-issue
+# Subcommand: create-issue — helpers
 # =============================================================================
 
-cmd_create_issue() {
-	local routine_id=""
-	local repo_slug=""
-	local title=""
-	local schedule=""
-	local routine_type=""
-
+# Parse and validate arguments for the create-issue subcommand.
+# Sets _CI_* variables in caller scope.
+# Returns 1 on invalid input.
+_parse_create_issue_args() {
 	if [[ $# -lt 1 ]]; then
 		_log_error "Usage: routine-log-helper.sh create-issue <routine-id> --repo SLUG --title \"rNNN: Title\" [--schedule EXPR] [--type TYPE]"
 		return 1
 	fi
-	routine_id="$1"
+	_CI_ROUTINE_ID="$1"
 	shift
+
+	_CI_REPO_SLUG=""
+	_CI_TITLE=""
+	_CI_SCHEDULE=""
+	_CI_ROUTINE_TYPE=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--repo)
-			repo_slug="$2"
+			_CI_REPO_SLUG="$2"
 			shift 2
 			;;
 		--title)
-			title="$2"
+			_CI_TITLE="$2"
 			shift 2
 			;;
 		--schedule)
-			schedule="$2"
+			_CI_SCHEDULE="$2"
 			shift 2
 			;;
 		--type)
-			routine_type="$2"
+			_CI_ROUTINE_TYPE="$2"
 			shift 2
 			;;
 		*)
@@ -669,10 +756,81 @@ cmd_create_issue() {
 		esac
 	done
 
-	if [[ -z "$repo_slug" ]] || [[ -z "$title" ]]; then
+	if [[ -z "$_CI_REPO_SLUG" ]] || [[ -z "$_CI_TITLE" ]]; then
 		_log_error "--repo and --title are required"
 		return 1
 	fi
+
+	# Set defaults
+	[[ -z "$_CI_SCHEDULE" ]] && _CI_SCHEDULE="unknown"
+	[[ -z "$_CI_ROUTINE_TYPE" ]] && _CI_ROUTINE_TYPE="unknown"
+
+	return 0
+}
+
+# Create a GitHub issue and extract the issue number from the returned URL.
+# Args: repo_slug, title, body
+# Outputs the issue number to stdout. Returns 1 on failure.
+_create_github_issue() {
+	local repo_slug="$1"
+	local title="$2"
+	local body="$3"
+
+	local issue_url
+	if ! issue_url=$(gh issue create --repo "$repo_slug" --title "$title" --body "$body" --label "routines" 2>&1); then
+		_log_error "Failed to create issue: ${issue_url}"
+		return 1
+	fi
+
+	local issue_number
+	issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$')
+
+	if [[ -z "$issue_number" ]]; then
+		_log_error "Could not extract issue number from: ${issue_url}"
+		return 1
+	fi
+
+	echo "$issue_number"
+	return 0
+}
+
+# Persist initial routine state after issue creation.
+# Args: routine_id, issue_number, repo_slug, title, schedule, routine_type
+_save_initial_state() {
+	local routine_id="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local title="$4"
+	local schedule="$5"
+	local routine_type="$6"
+
+	local state
+	state=$(_read_state "$routine_id")
+	state=$(echo "$state" | jq \
+		--arg in "$issue_number" \
+		--arg rs "$repo_slug" \
+		--arg t "$title" \
+		--arg s "$schedule" \
+		--arg rt "$routine_type" \
+		--arg sl "active" \
+		--arg tc "0.00" \
+		'.issue_number = $in | .repo_slug = $rs | .title = $t | .schedule = $s | .routine_type = $rt | .status_label = $sl | .total_cost = $tc')
+	_write_state "$routine_id" "$state"
+	return 0
+}
+
+# =============================================================================
+# Subcommand: create-issue
+# =============================================================================
+
+cmd_create_issue() {
+	_parse_create_issue_args "$@" || return 1
+
+	local routine_id="$_CI_ROUTINE_ID"
+	local repo_slug="$_CI_REPO_SLUG"
+	local title="$_CI_TITLE"
+	local schedule="$_CI_SCHEDULE"
+	local routine_type="$_CI_ROUTINE_TYPE"
 
 	_check_prerequisites || return 1
 	_ensure_state_dir "$routine_id"
@@ -685,10 +843,6 @@ cmd_create_issue() {
 		echo "$existing_issue"
 		return 0
 	fi
-
-	# Set defaults
-	[[ -z "$schedule" ]] && schedule="unknown"
-	[[ -z "$routine_type" ]] && routine_type="unknown"
 
 	# Build initial issue body
 	local initial_body
@@ -707,35 +861,12 @@ cmd_create_issue() {
 		'{"total":0,"successes":0,"failures":0,"total_cost":"0.00","avg_duration":0,"period_start":"—","period_end":"—"}' \
 		"$routine_id")
 
-	# Create the issue
-	local issue_url
-	if ! issue_url=$(gh issue create --repo "$repo_slug" --title "$title" --body "$initial_body" --label "routines" 2>&1); then
-		_log_error "Failed to create issue: ${issue_url}"
-		return 1
-	fi
-
-	# Extract issue number from URL
+	# Create the issue on GitHub
 	local issue_number
-	issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$')
-
-	if [[ -z "$issue_number" ]]; then
-		_log_error "Could not extract issue number from: ${issue_url}"
-		return 1
-	fi
+	issue_number=$(_create_github_issue "$repo_slug" "$title" "$initial_body") || return 1
 
 	# Save state
-	local state
-	state=$(_read_state "$routine_id")
-	state=$(echo "$state" | jq \
-		--arg in "$issue_number" \
-		--arg rs "$repo_slug" \
-		--arg t "$title" \
-		--arg s "$schedule" \
-		--arg rt "$routine_type" \
-		--arg sl "active" \
-		--arg tc "0.00" \
-		'.issue_number = $in | .repo_slug = $rs | .title = $t | .schedule = $s | .routine_type = $rt | .status_label = $sl | .total_cost = $tc')
-	_write_state "$routine_id" "$state"
+	_save_initial_state "$routine_id" "$issue_number" "$repo_slug" "$title" "$schedule" "$routine_type"
 
 	_log_success "Created issue #${issue_number} for ${routine_id} in ${repo_slug}"
 	echo "$issue_number"
