@@ -9,12 +9,15 @@ import re
 import sys
 from pathlib import Path
 
+if len(sys.argv) < 2:
+    print(f"Usage: {sys.argv[0]} <target_file>", file=sys.stderr)
+    sys.exit(1)
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8", errors="replace")
 
 
 def extract_block(name: str) -> str:
-    m = re.search(rf"{name}\s*=\s*\[(.*?)\]\n", text, re.S)
+    m = re.search(rf"{name}\s*=\s*\[(.*?)\]", text, re.S)
     return m.group(1) if m else ""
 
 
