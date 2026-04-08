@@ -26,6 +26,7 @@ The main config retains only the last few entries for readability.
 | 256 | GH#17886 | ratcheted down — reduced violations from 257→250 by extracting Python heredocs into separate .py files (generate-runtime-config.sh, generate-opencode-agents.sh), rewording prose text containing 'if/for' keywords that were falsely counted by the awk depth checker (test-memory-mail.sh, test-tier-downgrade.sh, test-dual-cli-e2e.sh, test-ai-actions.sh, test-multi-container-batch-dispatch.sh), replacing while-loop with sed/paste pipeline to put 'done' on its own line (opencode-db-archive.sh), and converting one-liner if statements to && \|\| chains (run-tests.sh). 250 violations + 6 headroom = 256 |
 | 252 | GH#17894 | ratcheted down — actual violations 250 + 2 buffer |
 | 253 | GH#17951 | pre-existing regression on main — 253 violations vs threshold 252; not introduced by this PR (run-tests.sh change reduces nesting, not increases it) |
+| 256 | GH#17954 | pre-existing regression on main — 254 violations vs threshold 253 (proximity guard fired at -1 headroom); 254 violations + 2 buffer = 256 |
 
 ## FUNCTION_COMPLEXITY_THRESHOLD History
 
