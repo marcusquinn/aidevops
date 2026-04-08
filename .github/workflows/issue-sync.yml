@@ -376,19 +376,27 @@ jobs:
           for ISSUE_NUM in $ALL_ISSUES; do
             echo "--- Issue #$ISSUE_NUM ---"
 
-            # Post closing comment if none exists from this PR
-            EXISTING_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
-              --jq "[.[] | select(.body | test(\"Completed via.*PR #${PR_NUMBER}\"))] | length" 2>/dev/null || echo "0")
+            # Check if issue is locked — locked issues reject addComment via GraphQL
+            IS_LOCKED=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" --jq '.locked' 2>/dev/null || echo "false")
 
-            if [[ "$EXISTING_COMMENT" == "0" ]]; then
-              TASK_REF=""
-              if [[ -n "$TASK_ID" ]]; then
-                TASK_REF=" Task $TASK_ID"
-              fi
-              gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
-              echo "Posted closing comment on #$ISSUE_NUM"
+            # Post closing comment if none exists from this PR (skip if locked)
+            if [[ "$IS_LOCKED" == "true" ]]; then
+              echo "Issue #$ISSUE_NUM is locked — skipping closing comment"
             else
-              echo "Closing comment already exists on #$ISSUE_NUM"
+              EXISTING_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
+                --jq "[.[] | select(.body | test(\"Completed via.*PR #${PR_NUMBER}\"))] | length" 2>/dev/null || echo "0")
+
+              if [[ "$EXISTING_COMMENT" == "0" ]]; then
+                TASK_REF=""
+                if [[ -n "$TASK_ID" ]]; then
+                  TASK_REF=" Task $TASK_ID"
+                fi
+                gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main." \
+                  || echo "::warning::Could not post closing comment on #$ISSUE_NUM (issue may have been locked after check)"
+                echo "Posted closing comment on #$ISSUE_NUM"
+              else
+                echo "Closing comment already exists on #$ISSUE_NUM"
+              fi
             fi
 
             # Apply status:done label (create if needed)
