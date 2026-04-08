@@ -376,11 +376,16 @@ jobs:
           for ISSUE_NUM in $ALL_ISSUES; do
             echo "--- Issue #$ISSUE_NUM ---"
 
+            # Check if issue is locked — locked issues reject comments via GraphQL
+            IS_LOCKED=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" --jq '.locked' 2>/dev/null || echo "false")
+
             # Post closing comment if none exists from this PR
             EXISTING_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
               --jq "[.[] | select(.body | test(\"Completed via.*PR #${PR_NUMBER}\"))] | length" 2>/dev/null || echo "0")
 
-            if [[ "$EXISTING_COMMENT" == "0" ]]; then
+            if [[ "$IS_LOCKED" == "true" ]]; then
+              echo "Issue #$ISSUE_NUM is locked — skipping closing comment"
+            elif [[ "$EXISTING_COMMENT" == "0" ]]; then
               TASK_REF=""
               if [[ -n "$TASK_ID" ]]; then
                 TASK_REF=" Task $TASK_ID"
