@@ -51,3 +51,4 @@ Use `run:` for scripts, exports, health checks. Use `agent:` when judgment or su
 - One-off task entries for routine execution history
 - Running deterministic scripts through an LLM agent
 - Schedule semantics outside version control
+- Collapsing SOP, targets, and schedule into a single prompt — keep them independent

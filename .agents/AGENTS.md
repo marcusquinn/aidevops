@@ -117,7 +117,7 @@ Recurring operational jobs live in `TODO.md` under `## Routines`, not in a separ
 - `run:` points to a deterministic script relative to `~/.aidevops/agents/`
 - `agent:` names the LLM agent to dispatch with `headless-runtime-helper.sh`
 - `[x]` means enabled; `[ ]` means disabled/paused and should be skipped
-- Dispatch rule: prefer `run:` when present; otherwise use `agent:`; if neither is set, default to `run:custom/scripts/{routine-name}.sh` when it exists, else `agent:Build+`
+- Dispatch rule: prefer `run:` when present; otherwise use `agent:`; if neither is set, default to `run:custom/scripts/{routine_id}.sh` (e.g. `r001.sh`) when it exists, else `agent:Build+`
 
 Use `/routine` to design, dry-run, and schedule these definitions. Reference: `.agents/reference/routines.md`.
 
