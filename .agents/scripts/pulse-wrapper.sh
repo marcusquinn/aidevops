@@ -6045,10 +6045,14 @@ run_weekly_complexity_scan() {
 	# tree-change check both read working-tree files, so a stale checkout
 	# (e.g., local repo hasn't pulled a threshold-bump PR yet) produces
 	# incorrect violation counts and may create spurious warning issues.
+	# Fail-closed: if pull fails, skip this scan cycle rather than proceeding
+	# with stale data (which would reintroduce the exact problem we're fixing).
+	# Do NOT update COMPLEXITY_SCAN_LAST_RUN on skip — the next cycle retries.
 	if git -C "$aidevops_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 || {
-			echo "[pulse-wrapper] Complexity scan: git pull failed for ${aidevops_path} — proceeding with current checkout" >>"$LOGFILE"
-		}
+		if ! git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1; then
+			echo "[pulse-wrapper] Complexity scan: git pull failed for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
+			return 0
+		fi
 	fi
 
 	# Deterministic skip: if no tracked files changed since last scan, skip all
