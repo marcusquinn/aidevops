@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.180] - 2026-04-08
+
+### Security
+
+- protect needs-maintainer-review label on PRs (mirror issue protection) (#17877)
+
 ## [3.6.178] - 2026-04-08
 
 ### Changed
