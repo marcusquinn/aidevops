@@ -20,6 +20,9 @@
 #   8. Progress-based watchdog: kills if log output stalls for PULSE_PROGRESS_TIMEOUT (GH#2958)
 #   9. Provider-aware pulse sessions via headless-runtime-helper.sh
 #  10. Per-issue fast-fail counter skips issues with repeated launch deaths (t1888)
+#  11. Per-cycle dispatch cap prevents runaway dispatch loops (t1927)
+#  12. Stale recovery fast-fail records failures for in-flight issues when stale pulse killed (t1927)
+#  13. Blocked-by enforcement skips issues with open blocking dependencies (t1927)
 #
 # Lifecycle: launchd fires every 120s. If a pulse is still running, the
 # dedup check skips. run_pulse() has an internal watchdog that polls every
@@ -188,31 +191,32 @@ if [[ -z "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
 		export AIDEVOPS_HEADLESS_MODELS
 	fi
 fi
-PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"                                            # Additional pulse passes when below utilization target (t1453)
-PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-35}"                                             # Max grace window for worker process to appear after dispatch (t1453) — raised from 20s to 35s: sandbox-exec + opencode cold-start takes ~25-30s
-PULSE_LAUNCH_SETTLE_BATCH_MAX="${PULSE_LAUNCH_SETTLE_BATCH_MAX:-5}"                                        # Dispatch count at which the full PULSE_LAUNCH_GRACE_SECONDS wait applies (t1887)
-PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                                                      # 10 min cap per pre-run stage (cleanup/prefetch)
-PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                                                  # Open PR list window per repo for pre-fetched state
-PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"                                            # Open issue list window for pulse prompt payload (keep compact)
-PULSE_PREFETCH_CACHE_FILE="${PULSE_PREFETCH_CACHE_FILE:-${HOME}/.aidevops/logs/pulse-prefetch-cache.json}" # Delta prefetch state cache (GH#15286)
-PULSE_PREFETCH_FULL_SWEEP_INTERVAL="${PULSE_PREFETCH_FULL_SWEEP_INTERVAL:-86400}"                          # Full sweep interval in seconds (default 24h) (GH#15286)
-PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                                                  # Open PR sample size for runnable-candidate counting
-PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                                           # Open issue sample size for runnable-candidate counting
-PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                                                 # Queued/in-progress scan window per repo
-UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}"                               # Run worker recycler when underfill reaches this threshold
-UNDERFILL_RECYCLE_THROTTLE_SECS="${UNDERFILL_RECYCLE_THROTTLE_SECS:-300}"                                  # Min seconds between recycler runs when candidates are scarce (t1885)
-UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD="${UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD:-3}"                # Candidate count at or below which throttle applies (t1885)
-UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT="${UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT:-75}"                         # Deficit % at or above which throttle is bypassed (t1885)
-PULSE_PR_BACKLOG_HEAVY_THRESHOLD="${PULSE_PR_BACKLOG_HEAVY_THRESHOLD:-100}"                                # Stronger PR-first mode when open backlog reaches this size
-PULSE_PR_BACKLOG_CRITICAL_THRESHOLD="${PULSE_PR_BACKLOG_CRITICAL_THRESHOLD:-175}"                          # Merge-first mode when open backlog becomes severe
-PULSE_READY_PR_MERGE_HEAVY_THRESHOLD="${PULSE_READY_PR_MERGE_HEAVY_THRESHOLD:-10}"                         # Merge-first when enough PRs are ready immediately
-PULSE_FAILING_PR_HEAVY_THRESHOLD="${PULSE_FAILING_PR_HEAVY_THRESHOLD:-25}"                                 # PR-first when failing/review-blocked queue is large
-GH_FAILURE_PREFETCH_HOURS="${GH_FAILURE_PREFETCH_HOURS:-24}"                                               # Window for failed-notification mining summary
-GH_FAILURE_PREFETCH_LIMIT="${GH_FAILURE_PREFETCH_LIMIT:-100}"                                              # Notification page size for failed-notification mining
-GH_FAILURE_SYSTEMIC_THRESHOLD="${GH_FAILURE_SYSTEMIC_THRESHOLD:-3}"                                        # Cluster threshold for systemic-failure flag
-GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                                                    # Max failed workflow runs to sample for signatures per pulse
-FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                                               # Timeout for FOSS contribution scan prefetch (t1702)
-FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                                            # Max FOSS contribution workers per pulse cycle (t1702)
+PULSE_DISPATCH_CAP_PER_CYCLE="${PULSE_DISPATCH_CAP_PER_CYCLE:-$(config_get "orchestration.dispatch_cap_per_cycle" "12")}" # Max new workers dispatched per pulse cycle (t1927 — prevents runaway dispatch loops)
+PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"                                                           # Additional pulse passes when below utilization target (t1453)
+PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-35}"                                                            # Max grace window for worker process to appear after dispatch (t1453) — raised from 20s to 35s: sandbox-exec + opencode cold-start takes ~25-30s
+PULSE_LAUNCH_SETTLE_BATCH_MAX="${PULSE_LAUNCH_SETTLE_BATCH_MAX:-5}"                                                       # Dispatch count at which the full PULSE_LAUNCH_GRACE_SECONDS wait applies (t1887)
+PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                                                                     # 10 min cap per pre-run stage (cleanup/prefetch)
+PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                                                                 # Open PR list window per repo for pre-fetched state
+PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"                                                           # Open issue list window for pulse prompt payload (keep compact)
+PULSE_PREFETCH_CACHE_FILE="${PULSE_PREFETCH_CACHE_FILE:-${HOME}/.aidevops/logs/pulse-prefetch-cache.json}"                # Delta prefetch state cache (GH#15286)
+PULSE_PREFETCH_FULL_SWEEP_INTERVAL="${PULSE_PREFETCH_FULL_SWEEP_INTERVAL:-86400}"                                         # Full sweep interval in seconds (default 24h) (GH#15286)
+PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                                                                 # Open PR sample size for runnable-candidate counting
+PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                                                          # Open issue sample size for runnable-candidate counting
+PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                                                                # Queued/in-progress scan window per repo
+UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}"                                              # Run worker recycler when underfill reaches this threshold
+UNDERFILL_RECYCLE_THROTTLE_SECS="${UNDERFILL_RECYCLE_THROTTLE_SECS:-300}"                                                 # Min seconds between recycler runs when candidates are scarce (t1885)
+UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD="${UNDERFILL_RECYCLE_LOW_CANDIDATE_THRESHOLD:-3}"                               # Candidate count at or below which throttle applies (t1885)
+UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT="${UNDERFILL_RECYCLE_SEVERE_DEFICIT_PCT:-75}"                                        # Deficit % at or above which throttle is bypassed (t1885)
+PULSE_PR_BACKLOG_HEAVY_THRESHOLD="${PULSE_PR_BACKLOG_HEAVY_THRESHOLD:-100}"                                               # Stronger PR-first mode when open backlog reaches this size
+PULSE_PR_BACKLOG_CRITICAL_THRESHOLD="${PULSE_PR_BACKLOG_CRITICAL_THRESHOLD:-175}"                                         # Merge-first mode when open backlog becomes severe
+PULSE_READY_PR_MERGE_HEAVY_THRESHOLD="${PULSE_READY_PR_MERGE_HEAVY_THRESHOLD:-10}"                                        # Merge-first when enough PRs are ready immediately
+PULSE_FAILING_PR_HEAVY_THRESHOLD="${PULSE_FAILING_PR_HEAVY_THRESHOLD:-25}"                                                # PR-first when failing/review-blocked queue is large
+GH_FAILURE_PREFETCH_HOURS="${GH_FAILURE_PREFETCH_HOURS:-24}"                                                              # Window for failed-notification mining summary
+GH_FAILURE_PREFETCH_LIMIT="${GH_FAILURE_PREFETCH_LIMIT:-100}"                                                             # Notification page size for failed-notification mining
+GH_FAILURE_SYSTEMIC_THRESHOLD="${GH_FAILURE_SYSTEMIC_THRESHOLD:-3}"                                                       # Cluster threshold for systemic-failure flag
+GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                                                                   # Max failed workflow runs to sample for signatures per pulse
+FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                                                              # Timeout for FOSS contribution scan prefetch (t1702)
+FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                                                           # Max FOSS contribution workers per pulse cycle (t1702)
 
 # Per-issue retry state (t1888, GH#2076, GH#17384)
 #
@@ -280,6 +284,7 @@ QUALITY_DEBT_CAP_PCT=$(_validate_int QUALITY_DEBT_CAP_PCT "$QUALITY_DEBT_CAP_PCT
 if [[ "$QUALITY_DEBT_CAP_PCT" -gt 100 ]]; then
 	QUALITY_DEBT_CAP_PCT=100
 fi
+PULSE_DISPATCH_CAP_PER_CYCLE=$(_validate_int PULSE_DISPATCH_CAP_PER_CYCLE "$PULSE_DISPATCH_CAP_PER_CYCLE" 12 1)
 PULSE_BACKFILL_MAX_ATTEMPTS=$(_validate_int PULSE_BACKFILL_MAX_ATTEMPTS "$PULSE_BACKFILL_MAX_ATTEMPTS" 3 0)
 PULSE_LAUNCH_GRACE_SECONDS=$(_validate_int PULSE_LAUNCH_GRACE_SECONDS "$PULSE_LAUNCH_GRACE_SECONDS" 35 5)
 PULSE_LAUNCH_SETTLE_BATCH_MAX=$(_validate_int PULSE_LAUNCH_SETTLE_BATCH_MAX "$PULSE_LAUNCH_SETTLE_BATCH_MAX" 5 1)
@@ -599,6 +604,57 @@ _handle_setup_sentinel() {
 }
 
 #######################################
+# Record fast-fail for in-flight issues when a stale pulse is killed (t1927)
+#
+# Queries the dispatch ledger for active entries and records a fast-fail
+# for each. This prevents the next cycle from immediately re-dispatching
+# the same issues that caused the stale pulse, breaking the infinite
+# dispatch→stale→kill→re-dispatch loop.
+#
+# Best-effort: failures are logged but never fatal.
+#######################################
+_record_fast_fail_for_stale_recovery() {
+	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	if [[ ! -x "$ledger_helper" ]]; then
+		return 0
+	fi
+
+	local active_entries
+	active_entries=$("$ledger_helper" list-active 2>/dev/null) || active_entries=""
+	if [[ -z "$active_entries" || "$active_entries" == "[]" ]]; then
+		return 0
+	fi
+
+	local entry_count
+	entry_count=$(printf '%s' "$active_entries" | jq 'length' 2>/dev/null) || entry_count=0
+	[[ "$entry_count" =~ ^[0-9]+$ ]] || entry_count=0
+	if [[ "$entry_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	echo "[pulse-wrapper] Stale recovery: recording fast-fail for ${entry_count} in-flight issue(s)" >>"$LOGFILE"
+
+	local i=0
+	while [[ "$i" -lt "$entry_count" ]]; do
+		local issue_num repo_slug session_key
+		issue_num=$(printf '%s' "$active_entries" | jq -r ".[$i].issue // empty" 2>/dev/null)
+		repo_slug=$(printf '%s' "$active_entries" | jq -r ".[$i].repo // empty" 2>/dev/null)
+		session_key=$(printf '%s' "$active_entries" | jq -r ".[$i].session_key // empty" 2>/dev/null)
+
+		if [[ -n "$issue_num" && -n "$repo_slug" ]]; then
+			fast_fail_record "$issue_num" "$repo_slug" "stale_recovery" || true
+			echo "[pulse-wrapper] Stale recovery: recorded fast-fail for #${issue_num} (${repo_slug})" >>"$LOGFILE"
+		fi
+		# Mark ledger entry as failed
+		if [[ -n "$session_key" ]]; then
+			"$ledger_helper" fail --session-key "$session_key" >/dev/null 2>&1 || true
+		fi
+		i=$((i + 1))
+	done
+	return 0
+}
+
+#######################################
 # Handle a live numeric PID in the PID file (GH#5627, extracted from check_dedup)
 #
 # Checks if the process is stale (exceeds threshold) and kills it,
@@ -629,6 +685,13 @@ _handle_running_pulse_pid() {
 		# Guard kill commands with || true so set -e doesn't abort cleanup
 		# if the target process has already exited between checks.
 		echo "[pulse-wrapper] Killing stale pulse process $old_pid (running ${elapsed_seconds}s, threshold ${PULSE_STALE_THRESHOLD}s)" >>"$LOGFILE"
+
+		# t1927: Record fast-fail for any in-flight issues from the stale
+		# pulse's dispatch ledger. Without this, issues dispatched by the
+		# stale pulse get immediately re-dispatched by the next cycle,
+		# creating an infinite dispatch→stale→kill→re-dispatch loop.
+		_record_fast_fail_for_stale_recovery || true
+
 		_kill_tree "$old_pid" || true
 		sleep 2
 		# Force kill if still alive
@@ -8479,6 +8542,69 @@ build_ranked_dispatch_candidates_json() {
 }
 
 #######################################
+# Check if an issue has open blocked-by dependencies (t1927)
+#
+# Scans the issue body and title for blocked-by patterns:
+#   - "blocked-by: #NNN" / "blocked-by:#NNN"
+#   - "blocked by #NNN"
+#   - "depends on #NNN"
+#   - "blocked-by:tNNN" (TODO task references — skipped, not GitHub-resolvable)
+#
+# For each referenced issue number, checks if it's still OPEN in the
+# same repo. If ANY blocking issue is open, returns 0 (blocked).
+#
+# Arguments:
+#   $1 - issue number (for logging)
+#   $2 - repo slug (owner/repo)
+#   $3 - issue body text
+#   $4 - issue title text
+# Exit codes:
+#   0 - blocked (has open dependencies)
+#   1 - not blocked (no deps or all deps resolved)
+#######################################
+_has_open_blocked_by_deps() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_body="$3"
+	local issue_title="$4"
+
+	# Combine body and title for pattern matching
+	local combined_text="${issue_body} ${issue_title}"
+
+	# Extract issue numbers from blocked-by/depends-on patterns.
+	# Matches: "blocked-by: #123", "blocked-by:#123", "blocked by #123",
+	# "depends on #123". Case-insensitive. Captures the number after #.
+	local blocking_issues
+	blocking_issues=$(printf '%s' "$combined_text" | grep -oiE '(blocked[- ]by[: ]*#|depends on #)[0-9]+' | grep -oE '[0-9]+' | sort -u) || blocking_issues=""
+
+	if [[ -z "$blocking_issues" ]]; then
+		return 1
+	fi
+
+	# Check each blocking issue — if any is still OPEN, this issue is blocked
+	local blocking_num
+	while IFS= read -r blocking_num; do
+		[[ -n "$blocking_num" ]] || continue
+		[[ "$blocking_num" =~ ^[0-9]+$ ]] || continue
+
+		# Don't block on self-references
+		if [[ "$blocking_num" == "$issue_number" ]]; then
+			continue
+		fi
+
+		local blocker_state
+		blocker_state=$(gh issue view "$blocking_num" --repo "$repo_slug" --json state -q '.state' 2>/dev/null) || blocker_state=""
+
+		if [[ "$blocker_state" == "OPEN" ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — blocked by open issue #${blocking_num}" >>"$LOGFILE"
+			return 0
+		fi
+	done <<<"$blocking_issues"
+
+	return 1
+}
+
+#######################################
 # Deterministic fill floor for obvious backlog.
 #
 # This is intentionally narrow: it only materializes already-eligible issues
@@ -8525,7 +8651,18 @@ dispatch_deterministic_fill_floor() {
 		return 0
 	fi
 
-	echo "[pulse-wrapper] Deterministic fill floor: available=${available_slots}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, candidates=${candidate_count}" >>"$LOGFILE"
+	# Per-cycle dispatch cap (t1927): prevent runaway dispatch loops by
+	# limiting total new workers per cycle. The cap applies across all
+	# dispatch types (triage, enrichment, implementation). Without this,
+	# a burst of eligible issues can spawn MAX_WORKERS in a single cycle,
+	# overwhelming the system before watchdog/fast-fail can intervene.
+	local cycle_dispatch_cap="$PULSE_DISPATCH_CAP_PER_CYCLE"
+	if [[ "$available_slots" -gt "$cycle_dispatch_cap" ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: capping available_slots from ${available_slots} to ${cycle_dispatch_cap} (PULSE_DISPATCH_CAP_PER_CYCLE)" >>"$LOGFILE"
+		available_slots="$cycle_dispatch_cap"
+	fi
+
+	echo "[pulse-wrapper] Deterministic fill floor: available=${available_slots}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, candidates=${candidate_count}, cap=${cycle_dispatch_cap}" >>"$LOGFILE"
 
 	# Triage reviews first — community responsiveness before implementation backlog.
 	# dispatch_triage_reviews returns the remaining available count via stdout.
@@ -8588,6 +8725,13 @@ dispatch_deterministic_fill_floor() {
 		issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body -q '.body' 2>/dev/null || echo "")
 		if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" || "$issue_body" == "null" ]]; then
 			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"
+			continue
+		fi
+
+		# t1927: Blocked-by enforcement — skip issues whose blocking
+		# dependencies are still open. Checks issue body and title for
+		# "blocked-by: #NNN", "blocked by #NNN", "depends on #NNN" patterns.
+		if _has_open_blocked_by_deps "$issue_number" "$repo_slug" "$issue_body" "$issue_title"; then
 			continue
 		fi
 
