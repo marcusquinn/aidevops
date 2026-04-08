@@ -236,6 +236,7 @@ _sign_approval_payload() {
 _build_signed_comment() {
 	local payload="$1"
 	local sig_file="$2"
+	local target_type="${3:-issue}"
 	local signature
 	signature=$(<"$sig_file")
 
@@ -253,7 +254,7 @@ ${signature}
 
 This approval was signed with a root-protected SSH key. It cannot be forged by automation.
 
-> **This issue is now locked.** To propose scope changes, open a new issue referencing this one.
+> **This conversation is now locked.** To propose scope changes, open a new issue referencing this one.
 EOF
 	return 0
 }
@@ -263,38 +264,41 @@ _post_issue_approval_updates() {
 	local target_number="$2"
 	local slug="$3"
 
-	if [[ "$target_type" != "issue" ]]; then
-		return 0
-	fi
-
-	gh issue edit "$target_number" --repo "$slug" \
-		--remove-label "needs-maintainer-review" \
-		--add-label "auto-dispatch" >/dev/null 2>&1 || true
-	_print_info "Labels updated: removed needs-maintainer-review, added auto-dispatch"
-
-	# t1932: Auto-assign the approving maintainer so the CI maintainer gate
-	# passes without a separate manual command. The crypto approval is already
-	# the strongest signal of maintainer intent — requiring a second command
-	# to set assignee adds friction with zero additional security value.
-	local gh_user
-	gh_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
-	if [[ -n "$gh_user" ]]; then
+	# Label and assignee updates are issue-specific (PRs don't use these
+	# dispatch labels or the CI maintainer gate).
+	if [[ "$target_type" == "issue" ]]; then
 		gh issue edit "$target_number" --repo "$slug" \
-			--add-assignee "$gh_user" >/dev/null 2>&1 || true
-		_print_info "Assigned to $gh_user"
-	else
-		_print_warn "Could not detect GitHub username — set assignee manually"
+			--remove-label "needs-maintainer-review" \
+			--add-label "auto-dispatch" >/dev/null 2>&1 || true
+		_print_info "Labels updated: removed needs-maintainer-review, added auto-dispatch"
+
+		# t1932: Auto-assign the approving maintainer so the CI maintainer gate
+		# passes without a separate manual command. The crypto approval is already
+		# the strongest signal of maintainer intent — requiring a second command
+		# to set assignee adds friction with zero additional security value.
+		local gh_user
+		gh_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+		if [[ -n "$gh_user" ]]; then
+			gh issue edit "$target_number" --repo "$slug" \
+				--add-assignee "$gh_user" >/dev/null 2>&1 || true
+			_print_info "Assigned to $gh_user"
+		else
+			_print_warn "Could not detect GitHub username — set assignee manually"
+		fi
 	fi
 
-	# t1931: Lock the issue immediately at approval time to close the
+	# GH#17903: Lock both issues AND PRs at approval time to close the
 	# prompt-injection window between crypto-approval and worker dispatch.
-	# Previously, the lock only happened at dispatch time (pulse-wrapper.sh
-	# lock_issue_for_worker), leaving a gap where non-collaborators could
-	# add comments that influence the worker. The pulse's dispatch-time lock
-	# becomes a reinforcing no-op (gh issue lock on an already-locked issue
-	# is idempotent). Unlock still happens after worker completion.
+	# Previously, PRs were excluded by the early return above, leaving them
+	# unlocked and vulnerable to post-approval comment injection.
+	# For issues: the pulse's dispatch-time lock (pulse-wrapper.sh
+	# lock_issue_for_worker) becomes a reinforcing no-op since gh issue lock
+	# on an already-locked item is idempotent. Unlock still happens after
+	# worker completion.
+	# For PRs: gh issue lock works on both issues and PRs (GitHub treats
+	# PRs as a superset of issues for the lock API).
 	gh issue lock "$target_number" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || true
-	_print_info "Issue #$target_number locked (scope finalized, unlocks after worker completion)"
+	_print_info "${target_type^} #$target_number locked (scope finalized, unlocks after worker completion)"
 	return 0
 }
 
@@ -329,7 +333,7 @@ _approve_target() {
 		return 1
 	fi
 
-	comment_body=$(_build_signed_comment "$payload" "$sig_file")
+	comment_body=$(_build_signed_comment "$payload" "$sig_file" "$target_type")
 	rm -f "$sig_file"
 
 	if [[ "$target_type" == "issue" ]]; then
