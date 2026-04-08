@@ -373,6 +373,7 @@ jobs:
 
           echo "Processing issues: $ALL_ISSUES"
 
+          COMMENT_FAILED=0
           for ISSUE_NUM in $ALL_ISSUES; do
             echo "--- Issue #$ISSUE_NUM ---"
 
@@ -389,10 +390,11 @@ jobs:
               IS_LOCKED=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" --jq '.locked' 2>/dev/null || echo "false")
               if [[ "$IS_LOCKED" == "true" ]]; then
                 echo "Issue #$ISSUE_NUM is locked — skipping closing comment (labels will still be updated)"
-              else
-                gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main." \
-                  || echo "Warning: failed to post closing comment on #$ISSUE_NUM (issue may have been locked concurrently)"
+              elif gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."; then
                 echo "Posted closing comment on #$ISSUE_NUM"
+              else
+                echo "Warning: failed to post closing comment on #$ISSUE_NUM (issue may have been locked concurrently)"
+                COMMENT_FAILED=1
               fi
             else
               echo "Closing comment already exists on #$ISSUE_NUM"
@@ -409,6 +411,10 @@ jobs:
 
             echo "Updated labels on #$ISSUE_NUM (added status:done, removed stale)"
           done
+
+          if [[ "$COMMENT_FAILED" -eq 1 ]]; then
+            echo "Warning: one or more closing comments could not be posted (see above). Label updates completed."
+          fi
 
       - name: Checkout repo for TODO.md update
         if: steps.extract.outputs.task_id != ''
