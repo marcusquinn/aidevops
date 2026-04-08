@@ -11,6 +11,8 @@ Create recurring operational routines (reports, audits, monitoring, outreach) wi
 
 Arguments: $ARGUMENTS
 
+Canonical format: define recurring routines in `TODO.md` under `## Routines`. Field reference: `.agents/reference/routines.md`.
+
 ## Route by work type
 
 - Code changes or PR traceability needed → `/full-loop`
@@ -26,7 +28,26 @@ Keep these independent so one can change without rewriting the others:
 
 ## Workflow
 
-### Step 1: Define the SOP command
+### Step 1: Define the routine entry in `TODO.md`
+
+Add or update the routine in the canonical registry first:
+
+```markdown
+## Routines
+
+- [x] r001 Weekly SEO rankings export repeat:weekly(mon@09:00) ~30m run:custom/scripts/seo-export.sh
+- [ ] r002 Monthly content calendar review repeat:monthly(1@09:00) ~15m agent:Content
+```
+
+Use:
+
+- `repeat:` for schedule (`daily(@HH:MM)`, `weekly(day@HH:MM)`, `monthly(N@HH:MM)`, `cron(expr)`)
+- `run:` for deterministic scripts relative to `~/.aidevops/agents/`
+- `agent:` for LLM-backed routines dispatched with `headless-runtime-helper.sh`
+
+If both `run:` and `agent:` exist, prefer `run:`. If neither exists, default to `run:custom/scripts/{routine-name}.sh` when present, else `agent:Build+`.
+
+### Step 2: Define the SOP command
 
 Pick or create a command that runs once for one target. Prefer deterministic helpers/scripts over free-form prompts.
 
@@ -36,7 +57,7 @@ Pick or create a command that runs once for one target. Prefer deterministic hel
 /email-health-check --tenant client-a
 ```
 
-### Step 2: Validate quality and safety
+### Step 3: Validate quality and safety
 
 Run it ad hoc before scheduling:
 
@@ -52,11 +73,11 @@ Before rollout, verify:
 - Retry/timeout behavior acceptable
 - Human review exists for outbound communication
 
-### Step 3: Pilot rollout
+### Step 4: Pilot rollout
 
 Roll out in order: internal/self → single client → small cohort → full target set. Do not skip stages for outbound routines.
 
-### Step 4: Schedule
+### Step 5: Schedule
 
 Use `routine-helper.sh` for launchd/cron when possible:
 
@@ -78,7 +99,7 @@ opencode run --dir ~/Git/<repo> --agent SEO --title "Weekly rankings" \
   "/seo-export --account client-a --format summary"
 ```
 
-Queue-driven development goes through `/pulse`. Fixed-time routines go through scheduler entries.
+Queue-driven development goes through `/pulse`. Fixed-time routines go through scheduler entries. Keep `TODO.md` as the source of truth even when the installed scheduler expands the routine into launchd or cron.
 
 ## Example: GH Failure Miner routine
 
@@ -112,24 +133,22 @@ Schedule via `routine-helper.sh`:
 
 This is operational work (triage + issue filing), so do not use `/full-loop`.
 
-## Routine spec template
+## TODO-based routine template
 
-Store routine definitions in your repo, e.g. `routines/seo-weekly.yaml`:
+Store canonical routine definitions in `TODO.md`, not a separate YAML registry:
 
-```yaml
-name: weekly-seo-rankings
-agent: SEO
-repo_dir: ~/Git/aidev-ops-client-seo-reports
-schedule: "0 9 * * 1"
-targets_cmd: "wp-helper --list-category client --jsonl"
-run_template: "/seo-export --account {{target.account}} --format summary"
+```markdown
+## Routines
+
+- [x] r010 GH Failure Miner repeat:cron(15 */2 * * *) ~10m run:scripts/gh-failure-miner-helper.sh
+- [x] r011 Weekly rankings summary repeat:weekly(mon@09:00) ~30m agent:SEO
 ```
 
-`targets_cmd` emits one JSON object per line for target iteration. `routine-helper.sh` currently schedules a literal `--prompt`; it does not parse `targets_cmd` or `run_template`.
+Use `.agents/reference/routines.md` for the full field specification and dispatch defaults.
 
 ## Anti-patterns
 
-- Repeating TODO items for routine execution
+- Creating a second routine registry outside `TODO.md`
 - Running operational routines through `/full-loop`
 - Skipping pilot stages for outbound content
 - Mixing SOP logic, target selection, and schedule in one monolithic prompt

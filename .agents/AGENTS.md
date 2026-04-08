@@ -109,6 +109,18 @@ Planning files go direct to main. Code changes need worktree + PR. Workers NEVER
 
 **Simplification state policy:** Keep all changes to `.agents/configs/simplification-state.json`. It is the shared hash registry used by the simplification routine to detect unchanged vs changed files and decide when recheck/re-processing is needed.
 
+### Routines
+
+Recurring operational jobs live in `TODO.md` under `## Routines`, not in a separate registry. Use `r`-prefixed IDs (`r001`, `r002`) to distinguish them from `t`-prefixed tasks.
+
+- `repeat:` defines the schedule with `daily(@HH:MM)`, `weekly(day@HH:MM)`, `monthly(N@HH:MM)`, or `cron(expr)`
+- `run:` points to a deterministic script relative to `~/.aidevops/agents/`
+- `agent:` names the LLM agent to dispatch with `headless-runtime-helper.sh`
+- `[x]` means enabled; `[ ]` means disabled/paused and should be skipped
+- Dispatch rule: prefer `run:` when present; otherwise use `agent:`; if neither is set, default to `run:custom/scripts/{routine-name}.sh` when it exists, else `agent:Build+`
+
+Use `/routine` to design, dry-run, and schedule these definitions. Reference: `.agents/reference/routines.md`.
+
 ### Cross-Repo Task Management
 
 **Cross-repo awareness**: The supervisor manages tasks across all repos in `~/.config/aidevops/repos.json` where `pulse: true`. Each repo entry has a `slug` field (`owner/repo`) — ALWAYS use this for `gh` commands, never guess org names. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each pulse-enabled repo to get the full picture. Repos with `"local_only": true` have no GitHub remote — skip `gh` operations on them. Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`), not just `~/Git/<name>`.

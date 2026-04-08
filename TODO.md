@@ -20,11 +20,29 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - [-] tZZZ Declined task
 ```
 
+**Recurring routines:**
+
+```markdown
+## Routines
+
+- [x] r001 Weekly SEO rankings export repeat:weekly(mon@09:00) ~30m run:custom/scripts/seo-export.sh
+- [x] r002 Daily health check repeat:daily(@06:00) ~2m run:custom/scripts/health-check.sh
+- [ ] r003 Monthly content calendar review repeat:monthly(1@09:00) ~15m agent:Content
+- [x] r004 Nightly repo triage repeat:cron(15 2 * * *) ~20m agent:Build+
+```
+
 **Task ID format:**
 
 - `t001` - Top-level task
 - `t001.1` - Subtask of t001
 - `t001.1.1` - Sub-subtask of t001.1
+- IDs are stable and never reused
+
+**Routine ID format:**
+
+- `r001` - Top-level recurring routine definition
+- `r002` - Another recurring routine definition
+- `r`-prefix IDs distinguish routines from `t`-prefix tasks
 - IDs are stable and never reused
 
 **Dependency fields:**
@@ -40,6 +58,16 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - `logged:` - When task was added
 - `started:` - When branch was created (work began)
 - `completed:` - When task was marked done
+
+**Routine fields:**
+
+- `[x]` - Routine enabled; pulse/schedulers may dispatch it
+- `[ ]` - Routine disabled or paused; pulse skips it
+- `repeat:` - Human-readable schedule: `daily(@HH:MM)`, `weekly(day@HH:MM)`, `monthly(N@HH:MM)`, or `cron(expr)`
+- `run:` - Script path relative to `~/.aidevops/agents/` for pure-script routines that should run without LLM tokens
+- `agent:` - Agent name for LLM-backed routines dispatched via `headless-runtime-helper.sh`
+- Dispatch rule: `run:` wins over `agent:` when both are present
+- Default dispatch: if neither field is set, use `run:custom/scripts/{routine-name}.sh` when that script exists, otherwise `agent:Build+`
 
 **Assignment fields:**
 
