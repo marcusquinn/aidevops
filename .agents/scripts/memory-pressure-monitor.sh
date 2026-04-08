@@ -32,7 +32,7 @@
 # Usage:
 #   memory-pressure-monitor.sh              # Single check (for launchd)
 #   memory-pressure-monitor.sh --status     # Print current process + memory state
-#   memory-pressure-monitor.sh --daemon     # Continuous monitoring (60s interval)
+#   memory-pressure-monitor.sh --daemon     # Continuous monitoring (120s interval)
 #   memory-pressure-monitor.sh --stop       # Stop a running daemon
 #   memory-pressure-monitor.sh --restart    # Stop existing daemon and start a new one
 #   memory-pressure-monitor.sh --install    # Install launchd plist
@@ -91,7 +91,7 @@ readonly AUTO_KILL_SHELLCHECK="${AUTO_KILL_SHELLCHECK:-true}"
 # Notification — COOLDOWN_SECS and DAEMON_INTERVAL validated below with _validate_int
 COOLDOWN_SECS="${MEMORY_COOLDOWN_SECS:-300}"
 readonly NOTIFY_ENABLED="${MEMORY_NOTIFY:-false}"
-DAEMON_INTERVAL="${MEMORY_DAEMON_INTERVAL:-60}"
+DAEMON_INTERVAL="${MEMORY_DAEMON_INTERVAL:-120}"
 
 # Paths
 readonly LOG_DIR="${MEMORY_LOG_DIR:-${HOME}/.aidevops/logs}"
@@ -150,7 +150,7 @@ TOOL_RUNTIME_MAX=$(_validate_int TOOL_RUNTIME_MAX "$TOOL_RUNTIME_MAX" 1800 120)
 SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 8 2)
 AGGREGATE_RSS_WARN_MB=$(_validate_int AGGREGATE_RSS_WARN_MB "$AGGREGATE_RSS_WARN_MB" 8192 1024)
 COOLDOWN_SECS=$(_validate_int COOLDOWN_SECS "$COOLDOWN_SECS" 300 30)
-DAEMON_INTERVAL=$(_validate_int DAEMON_INTERVAL "$DAEMON_INTERVAL" 60 10)
+DAEMON_INTERVAL=$(_validate_int DAEMON_INTERVAL "$DAEMON_INTERVAL" 120 10)
 readonly COOLDOWN_SECS DAEMON_INTERVAL
 
 # --- Helpers ------------------------------------------------------------------
@@ -354,6 +354,94 @@ _is_app_process() {
 	printf '%s\n' "${APP_PROCESS_NAMES[@]}" | grep -qixF -- "$cmd_name"
 }
 
+# Batch-fetch process ages for a list of PIDs.
+# On Linux, reads /proc/$pid/stat (no subprocess per PID).
+# On macOS/fallback, issues a single `ps -p pid1,pid2,...` call instead of N calls.
+# Arguments: $@ = PIDs
+# Output: one line per PID: PID SECONDS (space-separated)
+_batch_get_process_ages() {
+	local -a pids=("$@")
+	[[ "${#pids[@]}" -eq 0 ]] && return 0
+
+	# Linux fast path: /proc is available — read each PID's stat without forking
+	if [[ -d "/proc" ]]; then
+		local uptime_secs
+		uptime_secs=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
+		local clk_tck
+		clk_tck=$(getconf CLK_TCK 2>/dev/null || echo 100)
+		[[ "$clk_tck" =~ ^[0-9]+$ ]] || clk_tck=100
+		[[ "$clk_tck" -gt 0 ]] || clk_tck=100
+
+		local pid
+		for pid in "${pids[@]}"; do
+			local start_time
+			start_time=$(awk '{print $22}' "/proc/${pid}/stat" 2>/dev/null || echo "")
+			if [[ -n "$start_time" && "$start_time" =~ ^[0-9]+$ ]]; then
+				local start_secs=$((start_time / clk_tck))
+				echo "$pid $((uptime_secs - start_secs))"
+			else
+				echo "$pid 0"
+			fi
+		done
+		return 0
+	fi
+
+	# macOS/fallback: single ps call for all PIDs at once
+	local pid_csv
+	pid_csv=$(printf '%s,' "${pids[@]}")
+	pid_csv="${pid_csv%,}"
+
+	# ps -p accepts comma-separated PIDs; output: PID ETIME (space-separated)
+	local ps_age_output
+	ps_age_output=$(ps -p "$pid_csv" -o pid=,etime= 2>/dev/null || true)
+
+	# Build a lookup from the ps output
+	local -A etime_map
+	local p_pid p_etime
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		read -r p_pid p_etime <<<"$line"
+		[[ "$p_pid" =~ ^[0-9]+$ ]] || continue
+		etime_map["$p_pid"]="${p_etime:-}"
+	done <<<"$ps_age_output"
+
+	# Convert etime strings to seconds for each requested PID
+	local pid
+	for pid in "${pids[@]}"; do
+		local etime="${etime_map[$pid]:-}"
+		if [[ -z "$etime" ]]; then
+			echo "$pid 0"
+			continue
+		fi
+		# Parse etime: [[DD-]HH:]MM:SS
+		etime=$(printf '%s' "$etime" | tr -d ' ')
+		local days=0 hours=0 minutes=0 seconds=0
+		if [[ "$etime" == *-* ]]; then
+			days="${etime%%-*}"
+			etime="${etime#*-}"
+		fi
+		local colon_count
+		colon_count=$(printf '%s' "$etime" | tr -cd ':' | wc -c | tr -d ' ')
+		if [[ "$colon_count" -eq 2 ]]; then
+			IFS=':' read -r hours minutes seconds <<<"$etime"
+		elif [[ "$colon_count" -eq 1 ]]; then
+			IFS=':' read -r minutes seconds <<<"$etime"
+		else
+			seconds="$etime"
+		fi
+		[[ "$days" =~ ^[0-9]+$ ]] || days=0
+		[[ "$hours" =~ ^[0-9]+$ ]] || hours=0
+		[[ "$minutes" =~ ^[0-9]+$ ]] || minutes=0
+		[[ "$seconds" =~ ^[0-9]+$ ]] || seconds=0
+		days=$((10#${days}))
+		hours=$((10#${hours}))
+		minutes=$((10#${minutes}))
+		seconds=$((10#${seconds}))
+		echo "$pid $((days * 86400 + hours * 3600 + minutes * 60 + seconds))"
+	done
+	return 0
+}
+
 # Collect all monitored processes with their RSS and runtime
 # Output: one line per process: PID|RSS_MB|RUNTIME_SECS|COMMAND_NAME|FULL_COMMAND
 #
@@ -368,6 +456,10 @@ _collect_monitored_processes() {
 	# Track PIDs we've already emitted to avoid duplicates from overlapping patterns
 	local -a seen_pids=()
 
+	# Accumulate matched process data before fetching ages (avoids per-PID ps forks)
+	# Format: PID:RSS_MB:CMD_NAME:FULL_CMD
+	local -a matched_rows=()
+
 	local pattern
 	for pattern in "${MONITORED_PATTERNS[@]}"; do
 		while IFS= read -r line; do
@@ -381,9 +473,10 @@ _collect_monitored_processes() {
 			[[ "$rss_kb" =~ ^[0-9]+$ ]] || rss_kb=0
 
 			# Extract short command name (basename of the executable path)
+			# Use parameter expansion — avoids a subprocess fork per process per pattern
 			local cmd_path="${cmd%% *}"
-			local cmd_name
-			cmd_name=$(basename "$cmd_path" 2>/dev/null || echo "unknown")
+			local cmd_name="${cmd_path##*/}"
+			[[ -z "$cmd_name" ]] && cmd_name="unknown"
 
 			# Match pattern against the command basename, NOT the full command line.
 			# This prevents false positives like `zsh -l -c "opencode"` matching
@@ -398,9 +491,9 @@ _collect_monitored_processes() {
 				fi
 			else
 				# Simple pattern — match against basename only
-				local cmd_lower pattern_lower
-				cmd_lower=$(printf '%s' "$cmd_name" | tr '[:upper:]' '[:lower:]')
-				pattern_lower=$(printf '%s' "$pattern" | tr '[:upper:]' '[:lower:]')
+				# Use bash 4+ ${var,,} lowercasing to avoid tr subprocess forks
+				local cmd_lower="${cmd_name,,}"
+				local pattern_lower="${pattern,,}"
 				if [[ "$cmd_lower" == *"$pattern_lower"* ]]; then
 					match=true
 				fi
@@ -428,11 +521,37 @@ _collect_monitored_processes() {
 			seen_pids+=("$pid")
 
 			local rss_mb=$((rss_kb / 1024))
-			local runtime
-			runtime=$(_get_process_age "$pid")
-
-			printf '%s|%s|%s|%s|%s\n' "$pid" "$rss_mb" "$runtime" "$cmd_name" "$cmd"
+			# Accumulate row — age fetched in batch below
+			matched_rows+=("${pid}:${rss_mb}:${cmd_name}:${cmd}")
 		done <<<"$ps_output"
+	done
+
+	# No matches — nothing to emit
+	if [[ "${#matched_rows[@]}" -eq 0 ]]; then
+		return 0
+	fi
+
+	# Batch-fetch process ages for all matched PIDs in a single ps call
+	local -A age_map
+	local age_line age_pid age_secs
+	while IFS= read -r age_line; do
+		[[ -z "$age_line" ]] && continue
+		read -r age_pid age_secs <<<"$age_line"
+		[[ "$age_pid" =~ ^[0-9]+$ ]] || continue
+		age_map["$age_pid"]="${age_secs:-0}"
+	done < <(_batch_get_process_ages "${seen_pids[@]}")
+
+	# Emit final rows with ages, then sort by RSS descending
+	local row
+	for row in "${matched_rows[@]}"; do
+		local r_pid="${row%%:*}"
+		local rest="${row#*:}"
+		local r_rss="${rest%%:*}"
+		rest="${rest#*:}"
+		local r_cmd_name="${rest%%:*}"
+		local r_cmd="${rest#*:}"
+		local r_age="${age_map[$r_pid]:-0}"
+		printf '%s|%s|%s|%s|%s\n' "$r_pid" "$r_rss" "$r_age" "$r_cmd_name" "$r_cmd"
 	done | sort -t'|' -k2 -rn
 	return 0
 }
@@ -919,7 +1038,7 @@ cmd_daemon() {
 		cmd_check || check_exit=$?
 
 		# Adaptive polling: if shellcheck processes are running, poll every 10s
-		# instead of the normal 60s interval. ShellCheck can grow from 0 to 18 GB
+		# instead of the normal interval. ShellCheck can grow from 0 to 18 GB
 		# in under 60s (observed Mar 7 crash), so the normal interval is too slow.
 		local interval="$DAEMON_INTERVAL"
 		if pgrep -x shellcheck >/dev/null 2>&1; then

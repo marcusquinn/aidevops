@@ -664,6 +664,93 @@ test_restart_no_daemon() {
 test_restart_no_daemon
 
 # ============================================================================
+section "Batch Process Age (_batch_get_process_ages)"
+# ============================================================================
+
+test_batch_age_self() {
+	# Batch-fetch age of current process — should be numeric and >= 0
+	local output
+	output=$(_batch_get_process_ages $$)
+	local got_pid got_age
+	read -r got_pid got_age <<<"$output"
+	if [[ "$got_pid" == "$$" ]] && [[ "$got_age" =~ ^[0-9]+$ ]] && [[ "$got_age" -ge 0 ]]; then
+		pass "_batch_get_process_ages returns numeric age for self (${got_age}s)"
+	else
+		fail "_batch_get_process_ages returns numeric age for self" "Got '$output'"
+	fi
+}
+
+test_batch_age_nonexistent() {
+	# Non-existent PID should return 0
+	local output
+	output=$(_batch_get_process_ages 999999999)
+	local got_pid got_age
+	read -r got_pid got_age <<<"$output"
+	if [[ "$got_pid" == "999999999" ]] && [[ "$got_age" == "0" ]]; then
+		pass "_batch_get_process_ages returns 0 for non-existent PID"
+	else
+		fail "_batch_get_process_ages returns 0 for non-existent PID" "Got '$output'"
+	fi
+}
+
+test_batch_age_multiple() {
+	# Batch-fetch ages for multiple PIDs — should return one line per PID
+	local output
+	output=$(_batch_get_process_ages $$ 1 999999999)
+	local line_count
+	line_count=$(printf '%s\n' "$output" | grep -c '^[0-9]' || true)
+	# Should have at least 2 lines (self + PID 1 if accessible, non-existent always returns)
+	if [[ "$line_count" -ge 2 ]]; then
+		pass "_batch_get_process_ages returns multiple lines for multiple PIDs ($line_count lines)"
+	else
+		fail "_batch_get_process_ages returns multiple lines for multiple PIDs" "Got $line_count lines: '$output'"
+	fi
+}
+
+test_batch_age_empty() {
+	# Empty input should produce no output and exit 0
+	local output
+	output=$(_batch_get_process_ages)
+	if [[ -z "$output" ]]; then
+		pass "_batch_get_process_ages handles empty input"
+	else
+		fail "_batch_get_process_ages handles empty input" "Got '$output'"
+	fi
+}
+
+test_batch_age_self
+test_batch_age_nonexistent
+test_batch_age_multiple
+test_batch_age_empty
+
+# ============================================================================
+section "Collect Monitored Processes Performance"
+# ============================================================================
+
+test_collect_processes_timing() {
+	# _collect_monitored_processes should complete in under 5s on any system
+	# (The brief target is <2s; we use 5s as a conservative CI-safe threshold)
+	local start_ns end_ns elapsed_ms
+	start_ns=$(date +%s%N 2>/dev/null || echo "0")
+	_collect_monitored_processes >/dev/null 2>&1 || true
+	end_ns=$(date +%s%N 2>/dev/null || echo "0")
+
+	if [[ "$start_ns" == "0" ]] || [[ "$end_ns" == "0" ]]; then
+		skip "Timing test skipped: date +%s%N not available on this platform"
+		return 0
+	fi
+
+	elapsed_ms=$(((end_ns - start_ns) / 1000000))
+	if [[ "$elapsed_ms" -lt 5000 ]]; then
+		pass "_collect_monitored_processes completes in <5s (${elapsed_ms}ms)"
+	else
+		fail "_collect_monitored_processes completes in <5s" "Took ${elapsed_ms}ms"
+	fi
+}
+
+test_collect_processes_timing
+
+# ============================================================================
 # Summary
 # ============================================================================
 
