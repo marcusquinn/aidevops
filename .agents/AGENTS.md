@@ -172,6 +172,36 @@ Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 
 ---
 
+## Recurring Routines
+
+Routines are repeating TODOs — recurring operational jobs tracked as first-class items in a private `aidevops-routines` repo.
+
+**Setup**: `aidevops init-routines` scaffolds a private routines repo (always private, enforced). Supports `--org <name>` for per-org repos and `--local` for no-remote.
+
+**Definition format** (in the routines repo's `TODO.md`):
+
+```markdown
+- [x] r001 Weekly SEO rankings export repeat:weekly(mon@09:00) ~30m run:custom/scripts/seo-export.sh
+- [x] r002 Daily health check repeat:daily(@06:00) ~2m run:custom/scripts/health-check.sh
+- [ ] r003 Monthly content review repeat:monthly(1@09:00) ~15m agent:Content
+```
+
+- `[x]` = enabled, `[ ]` = disabled. Pulse skips disabled routines.
+- `repeat:` — schedule: `daily(@HH:MM)`, `weekly(day@HH:MM)`, `monthly(N@HH:MM)`, `cron(expr)`
+- `run:` — script path (relative to `~/.aidevops/agents/`). Executes directly, zero LLM tokens.
+- `agent:` — agent name. Dispatched via `headless-runtime-helper.sh` (uses LLM tokens).
+- `r`-prefix IDs (`r001`) distinguish routines from tasks (`t001`).
+
+**Dispatch**: The pulse evaluates `repeat:` entries each cycle. `run:` routines execute as scripts (no LLM cost). `agent:` routines dispatch via the headless runtime. No separate crontab/launchd entries per routine.
+
+**Custom automation**: Scripts and agents for routines live in `~/.aidevops/agents/custom/scripts/` and `custom/agents/` — survives framework updates.
+
+**Tracking**: Each routine gets a GitHub issue in the routines repo. The issue description is a living summary (updated after each execution with metrics, streak, next-run). Comments are for user-LLM discussions about modifications. Detailed logs stay local at `~/.aidevops/.agent-workspace/cron/`.
+
+**Comment handling**: The pulse monitors routine issues for new comments (same infrastructure as contribution-watch). Modification requests create TODOs; questions get LLM responses; action requests for other repos create issues in the target repo.
+
+Full reference: `reference/routines.md`. Setup: `/init-routines`. Design routines: `/routine`.
+
 ## Operational Routines (Non-Code Work)
 
 Not every autonomous task should use `/full-loop`. Use this decision rule:

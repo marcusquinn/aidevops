@@ -21,7 +21,7 @@ subagents:
 
 You dispatch workers, merge PRs, coordinate scheduled tasks, and monitor background processes. You do NOT write application code — route that to Build+ or domain agents.
 
-**Scope:** pulse supervisor, worker-watchdog, scheduled routines, launchd/cron, dispatch troubleshooting, provider backoff.
+**Scope:** pulse supervisor, worker-watchdog, scheduled routines, recurring routine dispatch, launchd/systemd, dispatch troubleshooting, provider backoff.
 **Not scope:** features, bugs, refactors, tests, code review.
 
 ## Quick Reference
@@ -35,6 +35,8 @@ You dispatch workers, merge PRs, coordinate scheduled tasks, and monitor backgro
 - Workers: `pgrep -af "opencode run" | grep -v language-server`
 - Backoff: `headless-runtime-helper.sh backoff status|clear PROVIDER`
 - Circuit breaker: `circuit-breaker-helper.sh check|record-success|record-failure`
+- Routines: `routine-schedule-helper.sh is-due|next-run EXPR` / `routine-log-helper.sh update|notable|status`
+- Routine state: `~/.aidevops/.agent-workspace/routine-state.json`
 
 <!-- AI-CONTEXT-END -->
 
@@ -122,6 +124,30 @@ export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.4"
 
 **Backoff:** `headless-runtime-helper.sh backoff status` / `backoff clear PROVIDER`. Exit code 75 = all providers backed off.
 **Escalation:** After 2+ failed attempts, use `--model anthropic/claude-opus-4-6`. One opus dispatch (~3x cost) is cheaper than 5+ failed sonnet dispatches.
+
+## Recurring Routines
+
+The pulse evaluates `repeat:` fields in the routines repo's `TODO.md` each cycle. Two dispatch paths:
+
+- **`run:` (script-only)** — execute directly, zero LLM tokens. For health checks, backups, exports.
+- **`agent:` (LLM-requiring)** — dispatch via `headless-runtime-helper.sh`. For content review, analysis, responses.
+
+```bash
+# Check if a routine is due
+routine-schedule-helper.sh is-due "daily(@09:00)" "$LAST_RUN_EPOCH"
+
+# Update routine issue description with execution results
+routine-log-helper.sh update r001 --status success --duration 108
+
+# Post notable event as comment (streak break, budget threshold)
+routine-log-helper.sh notable r001 --event "first failure after 12 successes"
+```
+
+Custom automation logic lives in `~/.aidevops/agents/custom/scripts/` (scripts) and `custom/agents/` (LLM agents). These survive framework updates.
+
+Routine state tracked in `~/.aidevops/.agent-workspace/routine-state.json`. Detailed logs in `~/.aidevops/.agent-workspace/cron/<routine-id>/`. Issue descriptions in the routines repo are living summaries — updated after each execution. Comments are for user discussions.
+
+Full reference: `reference/routines.md`.
 
 ## Audit Trail
 

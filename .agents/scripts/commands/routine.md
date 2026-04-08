@@ -11,6 +11,26 @@ Create recurring operational routines (reports, audits, monitoring, outreach) wi
 
 Arguments: $ARGUMENTS
 
+## Routines repo (primary approach)
+
+Routines are repeating TODOs defined in a private `aidevops-routines` repo. Setup: `aidevops init-routines`.
+
+Define routines in the repo's `TODO.md`:
+
+```markdown
+- [x] r001 Weekly SEO rankings export repeat:weekly(mon@09:00) ~30m run:custom/scripts/seo-export.sh
+- [x] r002 Daily health check repeat:daily(@06:00) ~2m run:custom/scripts/health-check.sh
+- [ ] r003 Monthly content review repeat:monthly(1@09:00) ~15m agent:Content
+```
+
+- `[x]` = enabled, `[ ]` = disabled
+- `run:` = script-only (zero LLM tokens), `agent:` = LLM-requiring
+- Custom scripts in `~/.aidevops/agents/custom/scripts/`, custom agents in `custom/agents/`
+- Each routine gets a tracking issue — description is living summary, comments for discussion
+- The pulse dispatches due routines automatically
+
+Full reference: `reference/routines.md`.
+
 ## Route by work type
 
 - Code changes or PR traceability needed → `/full-loop`

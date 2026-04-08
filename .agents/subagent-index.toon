@@ -1,6 +1,6 @@
 <!--TOON:agents[9]{name,file,purpose,model_tier}:
 Build+,build-plus.md,Enhanced Build with context tools,opus
-Automate,automate.md,Scheduling dispatch monitoring and background orchestration,sonnet
+Automate,automate.md,Scheduling dispatch monitoring recurring routines and background orchestration,sonnet
 Business,business.md,Company orchestration including financial ops invoicing receipts,sonnet
 Content,content.md,All media production and distribution including AI video generation and social media,opus
 Health,health.md,Health and wellness,opus
@@ -232,6 +232,9 @@ agent-test-helper.sh,Agent testing framework (run run-one compare baseline list 
 testing-setup-helper.sh,Per-repo testing infrastructure setup (discover gaps status verify) with bundle-aware defaults
 cron-helper.sh,Cron job management for scheduled AI agent dispatch
 cron-dispatch.sh,Execute cron jobs via OpenCode server API
+routine-schedule-helper.sh,Deterministic schedule parser for recurring routines (is-due next-run parse)
+routine-log-helper.sh,Routine execution tracking via GitHub issue descriptions (update notable create-issue status)
+init-routines-helper.sh,Scaffold private routines repo for recurring automation (personal org local)
 runner-helper.sh,Named headless AI agent instances (create run status list edit logs stop destroy)
 matrix-dispatch-helper.sh,Matrix bot for dispatching messages to AI runners (setup start stop map test)
 schema-validator-helper.sh,Schema.org structured data validation (validate validate-json status install)
