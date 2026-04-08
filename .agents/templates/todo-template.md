@@ -14,13 +14,16 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 
 **Human-readable:**
 
-```markdown
+<!-- GH#17804: Format examples wrapped in HTML comment to prevent parsers
+     from extracting them as real tasks during upgrade-planning migrations.
 - [ ] t001 Task description @owner #tag ~30m risk:low logged:2025-01-15
 - [ ] t002 Dependent task blocked-by:t001 ~15m risk:med
 - [ ] t001.1 Subtask of t001 ~10m
 - [x] t003 Completed task ~30m actual:25m logged:2025-01-10 completed:2025-01-15
 - [-] Declined task
-```
+-->
+
+Format: `- [ ] tNNN Description @owner #tag ~estimate risk:level logged:date`
 
 **Task IDs:**
 - `t001` - Top-level task

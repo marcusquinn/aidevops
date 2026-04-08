@@ -2266,8 +2266,38 @@ _upgrade_todo() {
 	local existing_tasks=""
 	if [[ -f "$todo_file" ]]; then
 		# Extract everything under ## Backlog (tasks AND ### subsection headers)
-		# until the next ## header or EOF — preserves semantic grouping
-		existing_tasks=$(awk '/^## Backlog/{found=1; next} found && /^## /{exit} found' "$todo_file" 2>/dev/null || echo "")
+		# until the next ## header or EOF — preserves semantic grouping.
+		# GH#17804: Skip ## Format section and filter out template placeholder IDs
+		# (tXXX, tYYY, tZZZ) that are documentation examples, not real tasks.
+		existing_tasks=$(awk '
+			# Section-aware: track when inside ## Format to skip its content
+			/^## Format/ { in_format=1; next }
+			in_format && /^## / { in_format=0 }
+			in_format { next }
+			# Also skip content inside markdown code blocks (``` fenced blocks)
+			/^```/ { in_codeblock = !in_codeblock; next }
+			in_codeblock { next }
+			# Extract from ## Backlog to next ## header
+			/^## Backlog/ { found=1; next }
+			found && /^## / { exit }
+			found
+		' "$todo_file" 2>/dev/null || echo "")
+		# GH#17804: Filter out lines with non-numeric task IDs (template placeholders
+		# like tXXX, tYYY, tZZZ). Real task IDs match t<digits> or t<digits>.<digits>.
+		if [[ -n "$existing_tasks" ]]; then
+			existing_tasks=$(printf '%s\n' "$existing_tasks" | awk '
+				# Keep non-task lines (subsection headers, comments, blank lines)
+				!/^- \[[ x-]\] t/ { print; next }
+				# For task lines: extract the ID and validate it is numeric
+				{
+					id = $0
+					sub(/^- \[[ x-]\] /, "", id)
+					sub(/ .*/, "", id)
+					# Valid IDs: t followed by digits, optionally .digits (subtasks)
+					if (id ~ /^t[0-9]+(\.[0-9]+)*$/) print
+				}
+			')
+		fi
 		[[ "$backup" == "true" ]] && {
 			cp "$todo_file" "${todo_file}.bak"
 			print_success "Backup created: TODO.md.bak"
