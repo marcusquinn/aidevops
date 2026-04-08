@@ -1784,15 +1784,15 @@
       "pr": 15918
     },
     ".agents/scripts/platform-detect.sh": {
-      "hash": "52fb85b1fff416c3aba0152848129b0e2b1d6444",
-      "at": "2026-04-02T04:56:59Z",
-      "passes": 1,
+      "hash": "224ea149f5bed21ab2712cfa65c040962826c44b",
+      "at": "2026-04-08T11:24:42Z",
+      "passes": 2,
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "1f97cd9546bc3887803876f60b43b60c3644840d",
-      "at": "2026-04-08T05:28:52Z",
-      "passes": 57,
+      "hash": "5301744e65611db1f5d92c7828e3fe8b8675e8ca",
+      "at": "2026-04-08T11:24:42Z",
+      "passes": 58,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
