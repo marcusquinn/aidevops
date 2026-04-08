@@ -678,7 +678,10 @@ cmd_add() {
 		"$token_endpoint" "$content_type" "$ua_header" || return 1
 
 	print_info "Restart OpenCode to use the new token."
-	print_info "Then switch to the '${provider^}' provider and select a model to start chatting."
+	# Bash 3.2 compat: ${var^} (uppercase first) requires Bash 4+. Use printf + tr.
+	local provider_cap
+	provider_cap="$(printf '%s' "${provider:0:1}" | tr '[:lower:]' '[:upper:]')${provider:1}"
+	print_info "Then switch to the '${provider_cap}' provider and select a model to start chatting."
 	return 0
 }
 
