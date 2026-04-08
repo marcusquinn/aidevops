@@ -5232,9 +5232,11 @@ This file has been through ${pass_count} simplification passes but ${remaining_s
 
 	local issue_title="simplification: re-queue ${file_path} (pass ${pass_count}, ${remaining_smells} smells remaining)"
 
+	# NOTE: Uses IFS read instead of $(cat <<HEREDOC) to avoid Bash 3.2 bug
+	# where literal ) inside a heredoc nested in $() is misinterpreted as
+	# closing the command substitution. macOS ships Bash 3.2 by default.
 	local issue_body
-	issue_body=$(
-		cat <<REQUEUE_BODY_EOF
+	IFS= read -r -d '' issue_body <<REQUEUE_BODY_EOF || true
 ## Post-merge smell verification (automated — t1912)
 
 **File:** \`${file_path}\`
@@ -5260,7 +5262,6 @@ Review issue #${prev_issue_num} for what the previous attempt accomplished and w
 - Content preservation: all task IDs, URLs, code blocks present before and after
 - ShellCheck clean (for .sh files)
 REQUEUE_BODY_EOF
-	)
 
 	# Append signature footer
 	local sig_footer="" _pulse_elapsed=""

@@ -18,7 +18,9 @@ set -euo pipefail
 #######################################
 _day_to_number() {
 	local day="$1"
-	case "${day,,}" in
+	# Bash 3.2 compat: ${var,,} (lowercase) requires Bash 4+. Use tr instead.
+	day=$(printf '%s' "$day" | tr '[:upper:]' '[:lower:]')
+	case "$day" in
 	sun | sunday) printf '0' ;;
 	mon | monday) printf '1' ;;
 	tue | tuesday) printf '2' ;;
