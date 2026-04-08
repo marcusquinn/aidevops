@@ -3960,8 +3960,9 @@ normalize_active_issue_assignments() {
 			local dispatch_pid=""
 			local dispatch_comment_age=0
 			local dispatch_comments_json
+			# Match dispatch comments with or without <!-- ops:start --> marker prefix (GH#17945)
 			dispatch_comments_json=$(gh api "repos/${slug}/issues/${stale_num}/comments" \
-				--jq '[.[] | select(.body | startswith("Dispatching worker"))] | sort_by(.created_at) | reverse | first // empty' \
+				--jq '[.[] | select(.body | test("^(<!-- ops:start[^>]*-->\\s*)?Dispatching worker"))] | sort_by(.created_at) | reverse | first // empty' \
 				2>/dev/null) || dispatch_comments_json=""
 			if [[ -n "$dispatch_comments_json" && "$dispatch_comments_json" != "null" ]]; then
 				dispatch_pid=$(printf '%s' "$dispatch_comments_json" | jq -r '
@@ -7515,7 +7516,7 @@ _issue_needs_consolidation() {
 			and (.user.type != "Bot")
 			and (.body | test("^<!-- (nmr-hold|aidevops-signed)") | not)
 			and (.body | test("DISPATCH_CLAIM nonce=") | not)
-			and (.body | test("^Dispatching worker") | not)
+			and (.body | test("^(<!-- ops:start[^>]*-->\\s*)?Dispatching worker") | not)
 		)] | length
 	' 2>/dev/null) || substantive_count=0
 
