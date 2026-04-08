@@ -287,10 +287,10 @@ main() {
 		case "$arg" in
 		--days)
 			next_arg="${2:-}"
-			{ [[ -n "$next_arg" ]] && [[ "$next_arg" != -* ]]; } || {
+			if [[ -z "$next_arg" ]] || [[ "$next_arg" == -* ]]; then
 				print_error "--days requires a numeric value"
 				return 1
-			}
+			fi
 			days="$next_arg"
 			shift 2
 			;;
