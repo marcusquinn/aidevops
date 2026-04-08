@@ -6882,7 +6882,7 @@ dispatch_with_dedup() {
 	# gate prevents dispatch when prompt fallback logic is too permissive.
 	local issue_meta_json
 	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json number,title,state,labels 2>/dev/null) || issue_meta_json=""
+		--json number,title,state,labels,assignees 2>/dev/null) || issue_meta_json=""
 	if [[ -z "$issue_meta_json" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
 		return 1
@@ -6958,9 +6958,19 @@ dispatch_with_dedup() {
 		return 1
 	fi
 
-	# Assign issue and label as queued + origin:worker (dispatched by pulse)
+	# Replace existing assignees with dispatching runner (GH#17777).
+	# Previous behavior only added self (--add-assignee), leaving the original
+	# assignee (typically the issue creator) co-assigned. This created ambiguity
+	# about ownership and confused dedup layer 6 (is_assigned) when status:queued
+	# made passive owner assignments appear active.
+	local -a _edit_flags=(--add-assignee "$self_login" --add-label "status:queued" --add-label "origin:worker")
+	local _prev_login
+	while IFS= read -r _prev_login; do
+		[[ -n "$_prev_login" && "$_prev_login" != "$self_login" ]] && _edit_flags+=(--remove-assignee "$_prev_login")
+	done < <(printf '%s' "$issue_meta_json" | jq -r '.assignees[].login' 2>/dev/null)
+
 	gh issue edit "$issue_number" --repo "$repo_slug" \
-		--add-assignee "$self_login" --add-label "status:queued" --add-label "origin:worker" 2>/dev/null || true
+		"${_edit_flags[@]}" 2>/dev/null || true
 
 	# Detach worker stdio from the dispatcher (GH#14483).
 	# Without this, background workers inherit the candidate-loop stdin created by
