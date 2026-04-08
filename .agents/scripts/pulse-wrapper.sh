@@ -6993,10 +6993,11 @@ check_dispatch_dedup() {
 }
 
 #######################################
-# Lock an issue to prevent mid-flight prompt injection (t1894).
-# When a worker is dispatched for an external contributor issue,
-# lock the conversation so the attacker cannot add new comments
-# that could influence the worker mid-execution.
+# Lock an issue (and any linked PRs) to prevent mid-flight prompt
+# injection (t1894, t1934). Once a worker is dispatched, the issue
+# state is frozen — any comment arriving after dispatch is either
+# noise or adversarial. Lock the conversation to prevent influence.
+# Also locks open PRs linked to the issue (worker may read PR comments).
 # Non-fatal: locking failure doesn't block dispatch.
 #######################################
 lock_issue_for_worker() {
@@ -7006,19 +7007,46 @@ lock_issue_for_worker() {
 
 	[[ -n "$issue_num" && -n "$slug" ]] || return 0
 
-	# Only lock issues that were ever NMR-labeled (external contributor issues)
-	if issue_was_ever_nmr "$issue_num" "$slug" 2>/dev/null; then
-		gh issue lock "$issue_num" --repo "$slug" --reason "$reason" >/dev/null 2>&1 || true
-		echo "[pulse-wrapper] Locked #${issue_num} in ${slug} during worker execution" >>"$LOGFILE"
-	fi
+	# Lock the issue itself
+	gh issue lock "$issue_num" --repo "$slug" --reason "$reason" >/dev/null 2>&1 || true
+	echo "[pulse-wrapper] Locked #${issue_num} in ${slug} during worker execution (t1934)" >>"$LOGFILE"
+
+	# Lock any open PRs linked to this issue (t1934: PRs have same injection surface)
+	_lock_linked_prs "$issue_num" "$slug" "$reason"
+
 	return 0
 }
 
 #######################################
-# Unlock an issue after worker completion or failure (t1894).
-# Symmetric with lock_issue_for_worker: only unlocks NMR issues
-# that were actually locked. Prevents spurious unlock API calls
-# and timeline pollution on non-NMR issues (GH#17746).
+# Lock open PRs that reference a given issue number (t1934).
+# Finds PRs whose title contains the issue number pattern
+# (e.g., "GH#123" or "#123") and locks their conversations.
+# Non-fatal: best-effort, failures are logged but ignored.
+#######################################
+_lock_linked_prs() {
+	local issue_num="$1"
+	local slug="$2"
+	local reason="${3:-resolved}"
+
+	local pr_numbers
+	pr_numbers=$(gh pr list --repo "$slug" --state open \
+		--json number,title --jq \
+		"[.[] | select(.title | test(\"(GH)?#${issue_num}([^0-9]|$)\"))] | .[].number" \
+		--limit 5 2>/dev/null) || pr_numbers=""
+
+	local pr_num
+	while IFS= read -r pr_num; do
+		[[ -n "$pr_num" && "$pr_num" =~ ^[0-9]+$ ]] || continue
+		gh issue lock "$pr_num" --repo "$slug" --reason "$reason" >/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Locked PR #${pr_num} in ${slug} (linked to issue #${issue_num}) (t1934)" >>"$LOGFILE"
+	done <<<"$pr_numbers"
+
+	return 0
+}
+
+#######################################
+# Unlock an issue (and any linked PRs) after worker completion or
+# failure (t1894, t1934). Symmetric with lock_issue_for_worker.
 # Non-fatal: unlocking failure is logged but doesn't block.
 #######################################
 unlock_issue_after_worker() {
@@ -7027,11 +7055,37 @@ unlock_issue_after_worker() {
 
 	[[ -n "$issue_num" && -n "$slug" ]] || return 0
 
-	# Only unlock issues that were ever NMR-labeled (symmetric with lock guard)
-	if issue_was_ever_nmr "$issue_num" "$slug" 2>/dev/null; then
-		gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || true
-		echo "[pulse-wrapper] Unlocked #${issue_num} in ${slug} after worker completion" >>"$LOGFILE"
-	fi
+	# Unlock the issue itself
+	gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || true
+	echo "[pulse-wrapper] Unlocked #${issue_num} in ${slug} after worker completion (t1934)" >>"$LOGFILE"
+
+	# Unlock any open PRs linked to this issue (symmetric with lock)
+	_unlock_linked_prs "$issue_num" "$slug"
+
+	return 0
+}
+
+#######################################
+# Unlock open PRs that reference a given issue number (t1934).
+# Symmetric with _lock_linked_prs. Non-fatal.
+#######################################
+_unlock_linked_prs() {
+	local issue_num="$1"
+	local slug="$2"
+
+	local pr_numbers
+	pr_numbers=$(gh pr list --repo "$slug" --state open \
+		--json number,title --jq \
+		"[.[] | select(.title | test(\"(GH)?#${issue_num}([^0-9]|$)\"))] | .[].number" \
+		--limit 5 2>/dev/null) || pr_numbers=""
+
+	local pr_num
+	while IFS= read -r pr_num; do
+		[[ -n "$pr_num" && "$pr_num" =~ ^[0-9]+$ ]] || continue
+		gh issue unlock "$pr_num" --repo "$slug" >/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Unlocked PR #${pr_num} in ${slug} (linked to issue #${issue_num}) (t1934)" >>"$LOGFILE"
+	done <<<"$pr_numbers"
+
 	return 0
 }
 
@@ -7702,7 +7756,7 @@ dispatch_with_dedup() {
 		selected_model=$("$HEADLESS_RUNTIME_HELPER" select --role worker 2>/dev/null) || selected_model=""
 	fi
 
-	# t1894: Lock external contributor issues during worker execution
+	# t1894/t1934: Lock issue and linked PRs during worker execution
 	lock_issue_for_worker "$issue_number" "$repo_slug"
 
 	# GH#17584: Ensure the repo is on the latest remote commit before
@@ -8647,6 +8701,9 @@ recover_failed_launch_state() {
 			gh issue edit "$issue_number" --repo "$repo_slug" \
 				--remove-assignee "$self_login" --remove-label "status:queued" >/dev/null 2>&1 || true
 	fi
+
+	# t1934: Unlock issue and linked PRs (locked at dispatch time)
+	unlock_issue_after_worker "$issue_number" "$repo_slug"
 
 	# Record the launch failure in the fast-fail counter (t1888)
 	# Pass crash_type through to fast_fail_record → escalate_issue_tier
@@ -12337,7 +12394,7 @@ PREFETCH_EOF
 			model_flag="--model $resolved_model"
 		fi
 
-		# t1894: Lock external contributor issues during triage
+		# t1894/t1934: Lock issue and linked PRs during triage
 		lock_issue_for_worker "$issue_num" "$repo_slug"
 
 		# Run agent with triage-review prompt — agent file restricts to Read/Glob/Grep
