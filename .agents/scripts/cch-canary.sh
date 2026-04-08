@@ -383,10 +383,10 @@ print('false')
 			log_to_file "DRIFT: logging framework issue"
 			_canary_update_drift_state
 			# Log the issue via framework helper if available
-			[[ ! -x "${SCRIPTS_DIR}/framework-routing-helper.sh" ]] ||
+			[[ -x "${SCRIPTS_DIR}/framework-routing-helper.sh" ]] && {
 				"${SCRIPTS_DIR}/framework-routing-helper.sh" log-framework-issue \
-					"Client request format drift detected — review signing constants" \
-					2>/dev/null || true
+					"Client request format drift detected — review signing constants" || true
+			}
 		fi
 	fi
 
