@@ -1814,9 +1814,9 @@
       "pr": 16536
     },
     ".agents/scripts/session-checkpoint-helper.sh": {
-      "hash": "97853293fc74ebb62428051502cbf0962104a204",
-      "at": "2026-04-03T03:15:28Z",
-      "passes": 1,
+      "hash": "1feda3eaabb02f6475b7d89129c0fafb06605298",
+      "at": "2026-04-08T10:00:30Z",
+      "passes": 2,
       "pr": 15917
     },
     ".agents/scripts/settings-helper.sh": {
@@ -5925,10 +5925,10 @@
       "passes": 1
     },
     ".agents/scripts/design-preview-helper.sh": {
-      "hash": "5bced80b1577bec5acd54ab00c8757d684482897",
-      "at": "2026-04-03T22:57:37Z",
+      "hash": "6b9e3abc59fce088288993aa32023b9d5589558e",
+      "at": "2026-04-08T10:00:29Z",
       "pr": 16879,
-      "passes": 1
+      "passes": 2
     },
     ".agents/tools/design/library/styles/playful-vibrant/DESIGN.md": {
       "hash": "f42502be75dfeee3f716f54b3ea2d8e6697414a6",
@@ -6791,10 +6791,10 @@
       "passes": 2
     },
     ".agents/scripts/opencode-db-archive.sh": {
-      "hash": "a953f036c9b90db133b936a23562c884dcb1e435",
-      "at": "2026-04-07T19:50:54Z",
+      "hash": "6e0d4a91eb51f9d9a718f0dd92d62c85555a2dbf",
+      "at": "2026-04-08T10:00:29Z",
       "pr": 17584,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/colormind-helper.sh": {
       "hash": "fca3090dfe5b07e572ecf605cd270baa54981bbf",
@@ -6855,6 +6855,12 @@
       "hash": "6f759c36018684c1292c2eb47eef885c29cc19ea",
       "at": "2026-04-08T01:53:08Z",
       "pr": 17786,
+      "passes": 1
+    },
+    ".agents/scripts/commands/init-routines.md": {
+      "hash": "3bb3703f09649692c0be7473b2882097bb5083fc",
+      "at": "2026-04-08T10:00:43Z",
+      "pr": 17819,
       "passes": 1
     }
   },
