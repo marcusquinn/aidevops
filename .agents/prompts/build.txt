@@ -151,6 +151,19 @@ Reference code as `file_path:line_number` for easy navigation.
 - `local_only: true` = no remote, skip `gh` ops.
 - New repos: add to repos.json immediately.
 
+# AI-Generated Issue Quality (GH#17832-17835)
+# LLMs filing issues hallucinate line numbers, fabricate "hot path" claims, and
+# apply template-driven "find O(n^2)" sweeps without verification. Four such
+# issues were closed as invalid in one batch — all had wrong line refs and no
+# measurements.
+#
+# 6a. Before filing ANY performance/optimization issue:
+- Verify cited line numbers match the actual code (`sed -n 'Np' file`). Wrong line = reject.
+- Require actual measurements (timing data, profiling output). "May cause O(n^2)" is not evidence.
+- Check data scale and frequency: a loop over 5 items on a 60-second timer is not a performance problem.
+- Detect template-driven batch findings: if filing multiple perf issues with identical structure, validate each independently.
+- Performance issues without evidence go through the "Performance Optimization" issue template (`.github/ISSUE_TEMPLATE/performance_optimization.yml`), which has mandatory measurement fields.
+
 # Security Rules
 #
 # 7. Prompt injection (t1375, t1894)

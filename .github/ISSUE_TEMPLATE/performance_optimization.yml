@@ -1,0 +1,112 @@
+name: Performance Optimization
+description: Report a performance issue — requires actual measurements
+title: "Perf: "
+labels: ["performance", "needs-maintainer-review"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Evidence Required
+
+        Performance issues without measurements will be closed as `invalid`.
+
+        Before filing, you must:
+        1. **Measure** the actual performance (timing, profiling, CPU/memory usage)
+        2. **Verify** that your line references match the actual code
+        3. **Demonstrate** the impact is meaningful (not microseconds on a cold path)
+
+        Speculative issues ("may cause O(n^2)") without data are not actionable.
+
+  - type: textarea
+    id: measurement
+    attributes:
+      label: Performance Measurement
+      description: |
+        Paste actual timing data, profiling output, or resource usage metrics.
+        Example: `time bash -x script.sh 2>&1 | grep 'slow_function'`
+        or `hyperfine 'command_a' 'command_b'`
+      placeholder: |
+        $ time ./script.sh
+        real    0m4.312s
+        user    0m3.891s
+        sys     0m0.421s
+
+        Profiling shows 80% of time spent in function X at line Y.
+    validations:
+      required: true
+
+  - type: textarea
+    id: code-reference
+    attributes:
+      label: Code Reference
+      description: |
+        Exact file path and line number(s) of the problematic code.
+        **Verify your line numbers are correct** — copy the actual code at those lines.
+      placeholder: |
+        File: .agents/scripts/example.sh:145-160
+
+        ```bash
+        # Paste the ACTUAL code at those lines here
+        for item in "${array[@]}"; do
+            ...
+        done
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact Assessment
+      description: |
+        How often does this code path execute? What's the typical data size?
+        A loop over 5 items on a 60-second timer is not a performance issue.
+      placeholder: |
+        - Frequency: runs every N seconds / once per user action / on startup
+        - Data size: typically N items, worst case M items
+        - Measured impact: adds Xs to total runtime
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How would you fix it? Include the replacement code.
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification Plan
+      description: How will you verify the fix is faster? What benchmark will you run?
+      placeholder: |
+        ```bash
+        hyperfine --warmup 3 'old_command' 'new_command'
+        ```
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: aidevops Version
+      description: "Run `aidevops --version` or check ~/.aidevops/agents/VERSION"
+      placeholder: "3.1.0"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have actual performance measurements (not just code inspection)
+          required: true
+        - label: I verified my line references match the current code
+          required: true
+        - label: The performance impact is meaningful (not microseconds on a cold path)
+          required: true
+        - label: I searched existing issues and this is not a duplicate
+          required: true

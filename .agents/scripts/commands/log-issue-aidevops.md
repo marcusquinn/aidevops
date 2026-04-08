@@ -63,7 +63,18 @@ Before filing, check whether this is a customization need rather than a framewor
 
 If the need is customization, explain the `custom/` directory and link to `reference/customization.md`. Do not file an issue.
 
-### Step 3.6: Architectural Alignment (enhancements only)
+### Step 3.6: Performance Issue Validation (MANDATORY for performance/optimization claims)
+
+If the issue involves performance, optimization, O(n^2) claims, or "hot path" assertions:
+
+1. **Verify line references**: Read the cited file at the cited line number. If the code at that line does not match the claim, REJECT the issue. Do not file issues with hallucinated line numbers.
+2. **Require measurements**: "May cause O(n^2)" is not evidence. Require actual timing data (`time`, `hyperfine`, profiling output). No measurements = no issue.
+3. **Verify data scale**: Check how many items the loop actually processes and how often it runs. A loop over 5 items on a 60-second timer is not a performance problem regardless of algorithmic complexity.
+4. **Check for template-driven findings**: If the user or AI is filing multiple performance issues with identical structure ("nested loops", "O(n^2)", "hot path") across different files, this is likely a batch code scan without verification. Validate each independently.
+
+If any check fails, explain why and do not file the issue. Direct the user to the "Performance Optimization" issue template which requires mandatory evidence fields.
+
+### Step 3.7: Architectural Alignment (enhancements only)
 
 Skip for bugs with clear reproduction steps — bugs are observed failures and belong in the tracker.
 

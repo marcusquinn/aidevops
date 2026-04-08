@@ -71,6 +71,7 @@ Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `RE
 5. Full-loop: keep canonical repo on `main` → create/use linked worktree → implement → test → verify → commit/PR
 6. Queue: add to TODO.md for supervisor dispatch
 7. Never skip testing. Never declare "done" without verification.
+8. **Performance/optimization issues require evidence** (GH#17832-17835): actual measurements (timing, profiling), verified line references, and data scale assessment. "May cause O(n^2)" without data is not actionable — use the "Performance Optimization" issue template. See `prompts/build.txt` section 6a.
 
 Format: `- [ ] t001 Description @owner #tag ~4h started:ISO blocked-by:t002`
 
