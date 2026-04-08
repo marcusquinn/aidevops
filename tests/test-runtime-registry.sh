@@ -347,5 +347,7 @@ echo ""
 echo "=== Results ==="
 printf "Total: %d  Passed: %d  Failed: %d\n" "$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT"
 
-[[ $FAIL_COUNT -eq 0 ]] || exit 1
+if [[ $FAIL_COUNT -gt 0 ]]; then
+	exit 1
+fi
 exit 0
