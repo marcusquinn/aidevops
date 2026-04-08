@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "a8ac5d559fb543f3ab73013e877f1f4f49f9e724",
-      "at": "2026-04-08T12:43:12Z",
-      "passes": 84,
+      "hash": "5b9e8ca946c891264348cfd9ad845b2cb861b77b",
+      "at": "2026-04-08T14:27:37Z",
+      "passes": 85,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "06549ffb8ea8443249029e341f4ca2bec358a25a",
-      "at": "2026-04-08T12:43:12Z",
-      "passes": 82,
+      "hash": "a99c60131461354dcbd155f2385731d8c0dbf876",
+      "at": "2026-04-08T14:27:37Z",
+      "passes": 83,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -6432,7 +6432,7 @@
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "simplified_at": "2026-04-04T09:17:13Z",
       "issue": "GH#17250",
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
       "at": "2026-04-04T14:53:40Z",
       "passes": 1
     },
@@ -6876,9 +6876,9 @@
       "passes": 1
     },
     ".agents/reference/routines.md": {
-      "hash": "a652a5b05f55a805d982f0d6798b1ddab27ada41",
-      "at": "2026-04-08T14:00:00Z",
-      "passes": 1,
+      "hash": "9ab2dd18f0d71a8487892e22ba6c26f94bd2eb49",
+      "at": "2026-04-08T14:27:23Z",
+      "passes": 2,
       "pr": 0
     }
   },
