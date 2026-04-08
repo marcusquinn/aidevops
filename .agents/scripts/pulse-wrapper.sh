@@ -7381,6 +7381,83 @@ _is_task_committed_to_main() {
 #######################################
 
 #######################################
+# Idempotent comment posting: race-safe primitive for gate comments.
+#
+# Multiple pulse instances (different maintainers/machines) can race
+# when posting gate comments (consolidation, simplification, blocker).
+# Label-only guards have a TOCTOU window: both pulses read "no label",
+# both post, producing duplicate comments (observed: GH#17898).
+#
+# This function checks existing comments for a marker string before
+# posting. Fails closed on API errors (never posts if it can't confirm
+# the comment is absent).
+#
+# Arguments:
+#   $1 - entity_number (issue or PR number)
+#   $2 - repo_slug (owner/repo)
+#   $3 - marker (unique string to grep for in existing comments)
+#   $4 - comment_body (full comment text to post)
+#   $5 - entity_type ("issue" or "pr", default "issue")
+#
+# Returns:
+#   0 - comment posted successfully OR already existed (idempotent)
+#   1 - API error fetching comments (fail-closed, caller should retry)
+#   2 - missing arguments
+#
+# Usage:
+#   _gh_idempotent_comment "$issue_number" "$repo_slug" \
+#       "## Issue Consolidation Needed" "$comment_body"
+#######################################
+_gh_idempotent_comment() {
+	local entity_number="$1"
+	local repo_slug="$2"
+	local marker="$3"
+	local comment_body="$4"
+	local entity_type="${5:-issue}"
+
+	if [[ -z "$entity_number" || -z "$repo_slug" || -z "$marker" || -z "$comment_body" ]]; then
+		echo "[pulse-wrapper] _gh_idempotent_comment: missing arguments (entity=$entity_number repo=$repo_slug marker_len=${#marker})" >>"$LOGFILE"
+		return 2
+	fi
+
+	# Fetch existing comments and check for marker.
+	# Use the REST API for issues; gh pr view for PRs.
+	local existing_comments=""
+	if [[ "$entity_type" == "pr" ]]; then
+		existing_comments=$(gh pr view "$entity_number" --repo "$repo_slug" \
+			--json comments --jq '.comments[].body' 2>/dev/null)
+	else
+		existing_comments=$(gh api "repos/${repo_slug}/issues/${entity_number}/comments" \
+			--jq '.[].body' 2>/dev/null)
+	fi
+	local api_exit=$?
+
+	if [[ $api_exit -ne 0 ]]; then
+		# API error — fail closed. Never post when we can't confirm absence.
+		echo "[pulse-wrapper] _gh_idempotent_comment: API error (exit=$api_exit) fetching comments for #${entity_number} in ${repo_slug} — skipping (fail closed)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Check if marker already exists in any comment
+	if printf '%s' "$existing_comments" | grep -qF "$marker"; then
+		echo "[pulse-wrapper] _gh_idempotent_comment: marker already present on #${entity_number} in ${repo_slug} — skipping duplicate" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Marker not found — safe to post
+	if [[ "$entity_type" == "pr" ]]; then
+		gh pr comment "$entity_number" --repo "$repo_slug" \
+			--body "$comment_body" 2>/dev/null || true
+	else
+		gh issue comment "$entity_number" --repo "$repo_slug" \
+			--body "$comment_body" 2>/dev/null || true
+	fi
+
+	echo "[pulse-wrapper] _gh_idempotent_comment: posted gate comment on #${entity_number} in ${repo_slug} (marker: ${marker:0:40}...)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Issue consolidation: detect multi-comment issues where substantive
 # comments (not dispatch/approval machinery) have materially changed
 # the issue's scope since the body was written.
@@ -7454,7 +7531,7 @@ _dispatch_issue_consolidation() {
 	gh issue edit "$issue_number" --repo "$repo_slug" \
 		--add-label "needs-consolidation" 2>/dev/null || true
 
-	# Post comment explaining the hold
+	# Post comment explaining the hold (idempotent — safe against concurrent pulses)
 	local comment_body="## Issue Consolidation Needed
 
 This issue has accumulated multiple substantive comments that modify the original scope. To give the implementing worker clean context, a consolidation pass will merge the issue body and comment addenda into a single coherent specification.
@@ -7469,8 +7546,8 @@ The implementing worker gets a single clean body with all context inline.
 
 _Automated by \`_dispatch_issue_consolidation()\` in pulse-wrapper.sh_"
 
-	gh issue comment "$issue_number" --repo "$repo_slug" \
-		--body "$comment_body" 2>/dev/null || true
+	_gh_idempotent_comment "$issue_number" "$repo_slug" \
+		"## Issue Consolidation Needed" "$comment_body"
 
 	echo "[pulse-wrapper] Issue consolidation: flagged #${issue_number} in ${repo_slug} for comment consolidation" >>"$LOGFILE"
 	return 0
@@ -7564,8 +7641,7 @@ _issue_targets_large_files() {
 			--add-label "needs-simplification" 2>/dev/null || true
 
 		large_files="${large_files%, }"
-		gh issue comment "$issue_number" --repo "$repo_slug" \
-			--body "## Large File Simplification Gate
+		local simplification_body="## Large File Simplification Gate
 
 This issue references file(s) exceeding ${LARGE_FILE_LINE_THRESHOLD} lines: ${large_files}.
 
@@ -7573,7 +7649,10 @@ Workers dispatched against large files spend most of their context budget readin
 
 **Status:** Held from dispatch until simplification completes. The \`needs-simplification\` label will be removed automatically when the target file(s) are below threshold.
 
-_Automated by \`_issue_targets_large_files()\` in pulse-wrapper.sh_" 2>/dev/null || true
+_Automated by \`_issue_targets_large_files()\` in pulse-wrapper.sh_"
+
+		_gh_idempotent_comment "$issue_number" "$repo_slug" \
+			"## Large File Simplification Gate" "$simplification_body"
 
 		echo "[pulse-wrapper] Large-file gate: #${issue_number} in ${repo_slug} targets ${large_files}" >>"$LOGFILE"
 		return 0
@@ -7958,12 +8037,6 @@ _apply_terminal_blocker() {
 		already_blocked=true
 	fi
 
-	# Check for existing terminal-blocker comment (idempotent)
-	local has_blocker_comment=false
-	if echo "$all_bodies" | grep -qF 'Terminal blocker detected'; then
-		has_blocker_comment=true
-	fi
-
 	# Add label if not already present
 	if [[ "$already_blocked" == "false" ]]; then
 		gh issue edit "$issue_number" --repo "$repo_slug" \
@@ -7973,18 +8046,18 @@ _apply_terminal_blocker() {
 				--add-label "status:blocked" 2>/dev/null || true
 	fi
 
-	# Post comment if not already posted
-	if [[ "$has_blocker_comment" == "false" ]]; then
-		gh issue comment "$issue_number" --repo "$repo_slug" \
-			--body "**Terminal blocker detected** (GH#5141) — skipping dispatch.
+	# Post comment if not already posted (idempotent — safe against concurrent pulses)
+	local blocker_body="**Terminal blocker detected** (GH#5141) — skipping dispatch.
 
 **Reason:** ${blocker_reason}
 
 **Action required:** ${user_action}
 
 ---
-*This issue will not be dispatched to workers until the blocker is resolved. Once you have completed the required action, remove the \`status:blocked\` label to re-enable dispatch.*" || true
-	fi
+*This issue will not be dispatched to workers until the blocker is resolved. Once you have completed the required action, remove the \`status:blocked\` label to re-enable dispatch.*"
+
+	_gh_idempotent_comment "$issue_number" "$repo_slug" \
+		"Terminal blocker detected" "$blocker_body"
 
 	return 0
 }
