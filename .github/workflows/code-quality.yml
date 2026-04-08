@@ -474,6 +474,36 @@ jobs:
           echo "No Pyflakes issues"
         fi
 
+  qlty-smells:
+    name: Qlty Maintainability Smells
+    runs-on: ubuntu-latest
+    # Only run on PRs — diff mode needs a comparison base
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      with:
+        fetch-depth: 0
+
+    - name: Install Qlty CLI
+      run: |
+        curl -sSL https://qlty.sh/install | bash
+        echo "$HOME/.qlty/bin" >> "$GITHUB_PATH"
+
+    - name: Qlty smells check (diff mode)
+      run: |
+        echo "Checking for new code smells vs origin/main..."
+        if qlty smells 2>&1 | tee /tmp/qlty-smells-output.txt | grep -q '^[^ ]'; then
+          smell_count=$(grep -c '^[^ ]' /tmp/qlty-smells-output.txt || echo "0")
+          echo ""
+          echo "::error::This PR introduces ${smell_count} new code smell(s). Fix before merging."
+          echo "Run 'qlty smells' locally to see details."
+          exit 1
+        else
+          echo "No new code smells introduced"
+        fi
+
   sonarcloud:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
