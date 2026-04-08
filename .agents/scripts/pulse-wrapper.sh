@@ -7521,20 +7521,27 @@ _issue_needs_consolidation() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	# Skip if already labeled for consolidation (avoid re-triggering)
 	local issue_labels
 	issue_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
-	if [[ ",$issue_labels," == *",needs-consolidation,"* ]]; then
-		# Already flagged — still blocked until consolidation runs
-		return 0
-	fi
 	# Skip if consolidation was already done (label removed = consolidated)
 	if [[ ",$issue_labels," == *",consolidated,"* ]]; then
 		return 1
 	fi
+	# If already labeled, re-evaluate with the current (tighter) filter.
+	# If the issue no longer triggers, auto-clear the label so it becomes
+	# dispatchable without manual intervention. This handles the case where
+	# a filter improvement makes previously-flagged issues pass.
+	local was_already_labeled=false
+	if [[ ",$issue_labels," == *",needs-consolidation,"* ]]; then
+		was_already_labeled=true
+	fi
 
-	# Count substantive comments (>MIN_CHARS, not from bots or dispatch machinery)
+	# Count substantive comments (>MIN_CHARS, not from bots or dispatch machinery).
+	# Only human-authored scope-changing comments should count. Operational
+	# comments (dispatch claims, kill notices, crash reports, stale recovery,
+	# triage reviews, provenance metadata) are noise — workers generate dozens
+	# of these on issues that fail repeatedly, falsely triggering consolidation.
 	local comments_json
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--paginate --jq '.' 2>/dev/null) || comments_json="[]"
@@ -7544,16 +7551,31 @@ _issue_needs_consolidation() {
 	substantive_count=$(printf '%s' "$comments_json" | jq --argjson min "$min_chars" '
 		[.[] | select(
 			(.body | length) >= $min
-			and (.author_association != "NONE" or (.body | test("DISPATCH_CLAIM|SIGNED|aidevops-signed|Dispatching worker|CLAIM_WON|Worker PID") | not))
 			and (.user.type != "Bot")
-			and (.body | test("^<!-- (nmr-hold|aidevops-signed)") | not)
 			and (.body | test("DISPATCH_CLAIM nonce=") | not)
 			and (.body | test("^(<!-- ops:start[^>]*-->\\s*)?Dispatching worker") | not)
+			and (.body | test("^<!-- (nmr-hold|aidevops-signed|ops:start|provenance:start)") | not)
+			and (.body | test("CLAIM_RELEASED reason=") | not)
+			and (.body | test("^(Worker failed:|## Worker Watchdog Kill)") | not)
+			and (.body | test("^(\\*\\*)?Stale assignment recovered") | not)
+			and (.body | test("^## (Triage Review|Completion Summary)") | not)
+			and (.body | test("<!-- MERGE_SUMMARY -->") | not)
+			and (.body | test("^Closing:") | not)
+			and (.body | test("^Worker failed: orphan worktree") | not)
 		)] | length
 	' 2>/dev/null) || substantive_count=0
 
 	if [[ "$substantive_count" -ge "$ISSUE_CONSOLIDATION_COMMENT_THRESHOLD" ]]; then
 		return 0
+	fi
+
+	# Auto-clear: if the issue was previously labeled but no longer triggers
+	# (e.g., filter improvement excluded operational comments that were false
+	# positives), remove the label so it becomes dispatchable immediately.
+	if [[ "$was_already_labeled" == "true" ]]; then
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--remove-label "needs-consolidation" >/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Consolidation gate cleared for #${issue_number} (${repo_slug}) — substantive_count=${substantive_count} below threshold=${ISSUE_CONSOLIDATION_COMMENT_THRESHOLD}" >>"$LOGFILE"
 	fi
 	return 1
 }
