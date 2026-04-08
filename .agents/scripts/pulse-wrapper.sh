@@ -7597,6 +7597,25 @@ _issue_targets_large_files() {
 		return 1
 	fi
 
+	# GH#17958: Skip if issue is already dispatched (worker actively running).
+	# A second pulse cycle can re-evaluate the same issue and post a spurious
+	# simplification comment even though the worker is mid-implementation.
+	# The gate should only fire for issues that haven't been claimed yet.
+	if [[ ",$issue_labels," == *",status:queued,"* ]] ||
+		[[ ",$issue_labels," == *",status:in-progress,"* ]]; then
+		return 1
+	fi
+	# Also skip if assigned with origin:worker — worker was dispatched even if
+	# status label hasn't been applied yet (race window between assign and label).
+	if [[ ",$issue_labels," == *",origin:worker,"* ]]; then
+		local assignee_count
+		assignee_count=$(gh issue view "$issue_number" --repo "$repo_slug" \
+			--json assignees --jq '.assignees | length' 2>/dev/null) || assignee_count="0"
+		if [[ "$assignee_count" -gt 0 ]]; then
+			return 1
+		fi
+	fi
+
 	# Extract file paths from "EDIT:" and "Files to Modify" patterns in body.
 	# Patterns: "EDIT: path/to/file.sh:123-456", "- EDIT: path/to/file"
 	local file_paths
