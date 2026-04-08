@@ -253,7 +253,7 @@ FAST_FAIL_SKIP_THRESHOLD="${FAST_FAIL_SKIP_THRESHOLD:-5}"               # Hard s
 FAST_FAIL_EXPIRY_SECS="${FAST_FAIL_EXPIRY_SECS:-604800}"                # 7-day expiry (matches max backoff)
 FAST_FAIL_INITIAL_BACKOFF_SECS="${FAST_FAIL_INITIAL_BACKOFF_SECS:-600}" # 10 min initial backoff
 FAST_FAIL_MAX_BACKOFF_SECS="${FAST_FAIL_MAX_BACKOFF_SECS:-604800}"      # 7-day max backoff
-DISPATCH_COUNT_CAP="${DISPATCH_COUNT_CAP:-8}"                           # Hard stop: max total dispatches per issue (t1927)
+
 EVER_NMR_CACHE_FILE="${EVER_NMR_CACHE_FILE:-${HOME}/.aidevops/.agent-workspace/supervisor/ever-nmr-cache.json}"
 EVER_NMR_NEGATIVE_CACHE_TTL_SECS="${EVER_NMR_NEGATIVE_CACHE_TTL_SECS:-300}" # Recheck negative results after 5 min
 
@@ -6939,14 +6939,6 @@ dispatch_with_dedup() {
 		return 1
 	fi
 
-	# t1927: Dispatch count cap — hard stop after too many dispatch attempts.
-	# Independent of the fast-fail counter. Counts DISPATCH_CLAIM comments
-	# on the issue. If >= DISPATCH_COUNT_CAP, labels as "stuck" and blocks.
-	if dispatch_count_exceeded "$issue_number" "$repo_slug"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: dispatch count cap exceeded (t1927)" >>"$LOGFILE"
-		return 1
-	fi
-
 	# t1927: Blocked-by enforcement — skip dispatch if a dependency is unresolved.
 	# Fetches issue body and parses for "blocked-by:tNNN" or "Blocked by #NNN".
 	local _dispatch_issue_body
@@ -8399,89 +8391,20 @@ _fast_fail_prune_expired_locked() {
 	return 0
 }
 
-#######################################
-# Dispatch count cap (t1927)
+# dispatch_count_exceeded removed (t1927). An arbitrary hard cap on dispatch
+# attempts gives up instead of solving. The correct approach is:
+#   1. fast_fail with exponential backoff (already implemented) — gives the
+#      system breathing room between attempts
+#   2. escalate_issue_tier (already implemented) — moves to higher-capability
+#      models after consecutive failures
+#   3. stale recovery records fast-fail (already implemented) — silent timeouts
+#      count as failures and feed into backoff + escalation
+#   4. blocked-by enforcement (already implemented) — skips genuinely blocked work
 #
-# Safety valve that prevents unlimited dispatch loops. Counts total
-# DISPATCH_CLAIM comments on an issue. If the count exceeds
-# DISPATCH_COUNT_CAP (default 8), the issue is either:
-#   1. Escalated to the next tier (if not yet at tier:reasoning)
-#   2. Labeled "stuck" for human review (if already at tier:reasoning)
-#
-# This ensures every issue gets tried at the highest model tier before
-# being blocked. Labeling "stuck" on standard-tier issues wastes the
-# opportunity for a reasoning model to solve it.
-#
-# Args:
-#   $1 - issue number
-#   $2 - repo slug (owner/repo)
-# Returns:
-#   exit 0 = dispatch count exceeded (do NOT dispatch this cycle)
-#   exit 1 = within limit (safe to dispatch)
-#######################################
-dispatch_count_exceeded() {
-	local issue_number="$1"
-	local repo_slug="$2"
-
-	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
-	[[ -n "$repo_slug" ]] || return 1
-
-	local cap="$DISPATCH_COUNT_CAP"
-	[[ "$cap" =~ ^[0-9]+$ ]] || cap=8
-	[[ "$cap" -ge 1 ]] || cap=8
-
-	# Count DISPATCH_CLAIM comments on the issue. Use jq to filter
-	# comments starting with "DISPATCH_CLAIM" and count them.
-	local dispatch_count
-	dispatch_count=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--paginate --jq '[.[] | select(.body | startswith("DISPATCH_CLAIM"))] | length' 2>/dev/null) || dispatch_count=0
-	[[ "$dispatch_count" =~ ^[0-9]+$ ]] || dispatch_count=0
-
-	if [[ "$dispatch_count" -ge "$cap" ]]; then
-		# Check current tier — escalate before blocking
-		local current_labels
-		current_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
-			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
-
-		# If NOT at tier:reasoning, escalate instead of blocking
-		case ",$current_labels," in
-		*,tier:reasoning,* | *,tier:thinking,*)
-			# Already at highest tier — label stuck
-			echo "[pulse-wrapper] dispatch_count_exceeded: #${issue_number} (${repo_slug}) has ${dispatch_count} dispatches (cap=${cap}) at tier:reasoning — STUCK (t1927)" >>"$LOGFILE"
-			gh label create "stuck" --repo "$repo_slug" \
-				--description "Issue exceeded dispatch count cap at highest tier — needs human review" \
-				--color "B60205" --force 2>/dev/null || true
-			gh issue edit "$issue_number" --repo "$repo_slug" \
-				--add-label "stuck" --remove-label "status:available" \
-				--remove-label "status:queued" 2>/dev/null || true
-			gh issue comment "$issue_number" --repo "$repo_slug" \
-				--body "## Dispatch Loop Detected (t1927)
-
-This issue has been dispatched **${dispatch_count} times** (cap: ${cap}) at \`tier:reasoning\` without producing a merged PR. Marking as \`stuck\` to prevent further resource waste.
-
-**Likely causes:**
-- Workers are timing out without producing output
-- The issue body lacks sufficient implementation context
-- A dependency (\`blocked-by\`) is unresolved
-- The task exceeds what headless workers can achieve autonomously
-
-**Action needed:** Review issue body quality, check for blockers, consider manual implementation or decomposition. Remove the \`stuck\` label and reset the fast-fail counter to re-enable dispatch.
-
-_Automated by dispatch_count_exceeded() safety valve (t1927)_" 2>/dev/null || true
-			;;
-		*)
-			# Not at reasoning tier — escalate and reset counter
-			echo "[pulse-wrapper] dispatch_count_exceeded: #${issue_number} (${repo_slug}) has ${dispatch_count} dispatches (cap=${cap}) — escalating tier before stuck (t1927)" >>"$LOGFILE"
-			escalate_issue_tier "$issue_number" "$repo_slug" "$dispatch_count" "dispatch_count_cap" || true
-			# Reset fast-fail counter so the escalated tier gets fresh attempts
-			fast_fail_reset "$issue_number" "$repo_slug" || true
-			;;
-		esac
-		return 0
-	fi
-
-	return 1
-}
+# Together, these ensure the system keeps trying with progressively more
+# capable models and longer backoff intervals, rather than giving up at an
+# arbitrary number. The measure of success is issues getting solved, not
+# issues getting labeled "stuck".
 
 #######################################
 # Blocked-by enforcement (t1927)
