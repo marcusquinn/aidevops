@@ -454,7 +454,8 @@ _matches_monitor_pattern() {
 
 	if [[ "$pattern" == *".*"* ]]; then
 		# Regex pattern — match against full command line
-		if echo "$full_cmd" | grep -iqE "$pattern"; then
+		# Use here-string to avoid issues with values starting with '-' or containing backslashes
+		if grep -iqE "$pattern" <<<"$full_cmd"; then
 			return 0
 		fi
 	else
@@ -514,14 +515,14 @@ _resolve_ages_and_emit() {
 	done < <(_batch_get_process_ages "${seen_pids[@]}")
 
 	# Emit final rows with ages, then sort by RSS descending
+	# Rows use SOH (\x01) as delimiter — safe against colons in command names/args
 	local row
 	for row in "${matched_rows[@]}"; do
-		local r_pid="${row%%:*}"
-		local rest="${row#*:}"
-		local r_rss="${rest%%:*}"
-		rest="${rest#*:}"
-		local r_cmd_name="${rest%%:*}"
-		local r_cmd="${rest#*:}"
+		local r_pid r_rss r_cmd_name r_cmd
+		IFS=$'\1' read -r r_pid r_rss r_cmd_name r_cmd <<<"$row"
+		# Validate numeric fields after parsing — defense-in-depth against delimiter shifting
+		[[ "$r_pid" =~ ^[0-9]+$ ]] || continue
+		[[ "$r_rss" =~ ^[0-9]+$ ]] || continue
 		local r_age="${age_map[$r_pid]:-0}"
 		printf '%s|%s|%s|%s|%s\n' "$r_pid" "$r_rss" "$r_age" "$r_cmd_name" "$r_cmd"
 	done | sort -t'|' -k2 -rn
@@ -543,7 +544,7 @@ _collect_monitored_processes() {
 	local -a seen_pids=()
 
 	# Accumulate matched process data before fetching ages (avoids per-PID ps forks)
-	# Format: PID:RSS_MB:CMD_NAME:FULL_CMD
+	# Format: PID<SOH>RSS_MB<SOH>CMD_NAME<SOH>FULL_CMD (SOH=\x01, safe delimiter — never appears in cmd)
 	local -a matched_rows=()
 
 	local pattern
@@ -577,7 +578,8 @@ _collect_monitored_processes() {
 
 			local rss_mb=$((rss_kb / 1024))
 			# Accumulate row — age fetched in batch below
-			matched_rows+=("${pid}:${rss_mb}:${cmd_name}:${cmd}")
+			# Use SOH (\x01) as delimiter — safe because it never appears in process names or args
+			matched_rows+=("${pid}"$'\1'"${rss_mb}"$'\1'"${cmd_name}"$'\1'"${cmd}")
 		done <<<"$ps_output"
 	done
 
