@@ -2544,8 +2544,16 @@ _run_canary_test() {
 
 	# Run WITH plugins (not --pure) so our oauth-pool auth is available.
 	# Use sonnet — verified working, and the trivial prompt costs ~100 tokens.
-	# Haiku model names vary across OpenCode versions; sonnet is stable.
-	local canary_model="anthropic/claude-sonnet-4-20250514"
+	# Model ID resolved from model-routing-table.json (single source of truth).
+	local routing_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
+	local canary_model=""
+	if [[ -f "$routing_table" ]] && command -v jq >/dev/null 2>&1; then
+		canary_model=$(jq -r '.tiers.sonnet.models[0] // empty' "$routing_table" 2>/dev/null) || canary_model=""
+	fi
+	# Fallback to the script-level default if routing table unavailable
+	if [[ -z "$canary_model" ]]; then
+		canary_model="$DEFAULT_HEADLESS_MODELS"
+	fi
 	local canary_exit=0
 
 	# perl alarm is the most portable macOS timeout mechanism
@@ -2562,11 +2570,12 @@ _run_canary_test() {
 		return 0
 	fi
 
-	# Canary failed — log diagnostics
+	# Canary failed — log diagnostics (capture enough output to surface API errors,
+	# not just startup hooks which is all head -5 typically showed)
 	local oc_version
 	oc_version=$("$OPENCODE_BIN_DEFAULT" --version 2>/dev/null || echo "unknown")
-	print_warning "Canary test FAILED (exit=$canary_exit, opencode=$oc_version, timeout=${CANARY_TIMEOUT_SECONDS}s)"
-	print_warning "Output: $(head -5 "$canary_output" 2>/dev/null || echo '<empty>')"
+	print_warning "Canary test FAILED (exit=$canary_exit, model=$canary_model, opencode=$oc_version, timeout=${CANARY_TIMEOUT_SECONDS}s)"
+	print_warning "Output (last 20 lines): $(tail -20 "$canary_output" 2>/dev/null || echo '<empty>')"
 	rm -f "$canary_output"
 	return 1
 }
