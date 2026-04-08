@@ -812,40 +812,15 @@ _probe_log_and_prune() {
 	return 0
 }
 
-probe_provider() {
+# Resolve and validate the API key for a provider before probing.
+# Handles: missing key, empty key, and OAuth refresh-only tokens.
+# On success, echoes the API key to stdout and returns 0.
+# On failure, records health status and returns the appropriate exit code.
+# Returns: 0=key-ready, 3=no-key/empty, 100=oauth-refresh (healthy, skip HTTP probe)
+_probe_resolve_and_validate_key() {
 	local provider="$1"
-	local force="${2:-false}"
-	local custom_ttl="${3:-}"
-	local quiet="${4:-false}"
+	local quiet="${2:-false}"
 
-	# Return cached result when still valid (unless forced)
-	if [[ "$force" != "true" ]]; then
-		local cache_exit=0
-		_probe_return_cached "$provider" "$custom_ttl" "$quiet" || cache_exit=$?
-		if [[ "$cache_exit" -ne 99 ]]; then
-			return "$cache_exit"
-		fi
-	fi
-
-	# OpenCode uses its local models cache — no HTTP probe needed
-	if [[ "$provider" == "opencode" ]]; then
-		_probe_opencode "$quiet"
-		return $?
-	fi
-
-	# Local providers use dedicated probes — no API key required
-	if [[ "$provider" == "local" ]]; then
-		_probe_local "$quiet"
-		return $?
-	fi
-
-	if [[ "$provider" == "ollama" ]]; then
-		_probe_ollama "$quiet"
-		return $?
-	fi
-
-	# Resolve API key or OAuth token — resolve_api_key checks env vars,
-	# gopass, credentials.sh, and OpenCode auth.json (in that order).
 	local api_key
 	if ! api_key=$(resolve_api_key "$provider"); then
 		[[ "$quiet" != "true" ]] && print_warning "$provider: no API key configured"
@@ -866,8 +841,21 @@ probe_provider() {
 	if [[ "$api_key" == "oauth-refresh-available" ]]; then
 		[[ "$quiet" != "true" ]] && print_success "$provider: OAuth refresh token available (runtime will refresh at session start)"
 		_record_health "$provider" "healthy" 0 0 "OAuth refresh available" 0
-		return 0
+		return 100
 	fi
+
+	echo "$api_key"
+	return 0
+}
+
+# Execute an HTTP probe against a provider's /models endpoint and record results.
+# Builds the curl request, executes it, parses the response, records health and
+# rate limits, and logs the probe result.
+# Returns: 0=healthy, 1=unhealthy, 2=rate-limited, 3=key-invalid
+_probe_execute_http() {
+	local provider="$1"
+	local api_key="$2"
+	local quiet="${3:-false}"
 
 	# Build request parameters
 	local request_info endpoint curl_extra
@@ -917,6 +905,54 @@ probe_provider() {
 	_probe_log_and_prune "$provider" "$status" "$http_code" "$duration_ms" "$models_count"
 
 	return "$exit_code"
+}
+
+probe_provider() {
+	local provider="$1"
+	local force="${2:-false}"
+	local custom_ttl="${3:-}"
+	local quiet="${4:-false}"
+
+	# Return cached result when still valid (unless forced)
+	if [[ "$force" != "true" ]]; then
+		local cache_exit=0
+		_probe_return_cached "$provider" "$custom_ttl" "$quiet" || cache_exit=$?
+		if [[ "$cache_exit" -ne 99 ]]; then
+			return "$cache_exit"
+		fi
+	fi
+
+	# OpenCode uses its local models cache — no HTTP probe needed
+	if [[ "$provider" == "opencode" ]]; then
+		_probe_opencode "$quiet"
+		return $?
+	fi
+
+	# Local providers use dedicated probes — no API key required
+	if [[ "$provider" == "local" ]]; then
+		_probe_local "$quiet"
+		return $?
+	fi
+
+	if [[ "$provider" == "ollama" ]]; then
+		_probe_ollama "$quiet"
+		return $?
+	fi
+
+	# Resolve API key or OAuth token — resolve_api_key checks env vars,
+	# gopass, credentials.sh, and OpenCode auth.json (in that order).
+	local api_key key_exit=0
+	api_key=$(_probe_resolve_and_validate_key "$provider" "$quiet") || key_exit=$?
+	if [[ "$key_exit" -eq 100 ]]; then
+		# OAuth refresh available — already recorded as healthy
+		return 0
+	elif [[ "$key_exit" -ne 0 ]]; then
+		return "$key_exit"
+	fi
+
+	# Execute HTTP probe against the provider's /models endpoint
+	_probe_execute_http "$provider" "$api_key" "$quiet"
+	return $?
 }
 
 _record_health() {
