@@ -465,47 +465,47 @@ main() {
 	case "$command" in
 	init) cmd_init ;;
 	create)
-		if [[ $# -lt 1 ]]; then
+		[[ $# -ge 1 ]] || {
 			print_error "Usage: multi-org-helper.sh create <slug> [name] [plan]"
 			return 1
-		fi
+		}
 		cmd_create "$@"
 		;;
 	delete)
-		if [[ $# -lt 1 ]]; then
+		[[ $# -ge 1 ]] || {
 			print_error "Usage: multi-org-helper.sh delete <slug>"
 			return 1
-		fi
+		}
 		cmd_delete "$1"
 		;;
 	list) cmd_list ;;
 	switch)
-		if [[ $# -lt 1 ]]; then
+		[[ $# -ge 1 ]] || {
 			print_error "Usage: multi-org-helper.sh switch <slug>"
 			return 1
-		fi
+		}
 		cmd_switch "$1"
 		;;
 	use)
-		if [[ $# -lt 1 ]]; then
+		[[ $# -ge 1 ]] || {
 			print_error "Usage: multi-org-helper.sh use <slug|--clear>"
 			return 1
-		fi
+		}
 		cmd_use "$1"
 		;;
 	status) cmd_status ;;
 	info)
-		if [[ $# -lt 1 ]]; then
+		[[ $# -ge 1 ]] || {
 			print_error "Usage: multi-org-helper.sh info <slug>"
 			return 1
-		fi
+		}
 		cmd_info "$1"
 		;;
 	set-plan)
-		if [[ $# -lt 2 ]]; then
+		[[ $# -ge 2 ]] || {
 			print_error "Usage: multi-org-helper.sh set-plan <slug> <plan>"
 			return 1
-		fi
+		}
 		cmd_set_plan "$1" "$2"
 		;;
 	context) cmd_context ;;

@@ -239,9 +239,7 @@ _screenshot_parse_args() {
 			return 1
 			;;
 		*)
-			if [[ -z "$_ss_html_path" ]]; then
-				_ss_html_path="$1"
-			fi
+			[[ -n "$_ss_html_path" ]] || _ss_html_path="$1"
 			shift
 			;;
 		esac
@@ -328,16 +326,10 @@ _screenshot_convert_formats() {
 	local png base
 	for png in "${all_pngs[@]}"; do
 		base="${png%.png}"
-		if [[ "$_ss_format" == "webp" || "$_ss_format" == "all" ]]; then
-			if convert_to_webp "$png" "${base}.webp"; then
-				print_success "WebP: ${base}.webp"
-			fi
-		fi
-		if [[ "$_ss_format" == "avif" || "$_ss_format" == "all" ]]; then
-			if convert_to_avif "$png" "${base}.avif"; then
-				print_success "AVIF: ${base}.avif"
-			fi
-		fi
+		[[ "$_ss_format" != "webp" && "$_ss_format" != "all" ]] ||
+			convert_to_webp "$png" "${base}.webp" && print_success "WebP: ${base}.webp" || true
+		[[ "$_ss_format" != "avif" && "$_ss_format" != "all" ]] ||
+			convert_to_avif "$png" "${base}.avif" && print_success "AVIF: ${base}.avif" || true
 	done
 
 	return 0

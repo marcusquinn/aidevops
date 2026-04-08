@@ -588,10 +588,9 @@ cmd_auto_save() {
 	if [[ -z "$next_tasks" ]]; then
 		local todo_file
 		for todo_file in "$(pwd)/TODO.md" "${worktree}/TODO.md"; do
-			if [[ -f "$todo_file" ]]; then
-				next_tasks="$(grep -E '^\s*- \[ \] t[0-9]' "$todo_file" 2>/dev/null | head -3 | sed 's/.*\(t[0-9][0-9]*[^ ]*\).*/\1/' | tr '\n' ',' | sed 's/,$//' || echo "")"
-				break
-			fi
+			[[ -f "$todo_file" ]] || continue
+			next_tasks="$(grep -E '^\s*- \[ \] t[0-9]' "$todo_file" 2>/dev/null | head -3 | sed 's/.*\(t[0-9][0-9]*[^ ]*\).*/\1/' | tr '\n' ',' | sed 's/,$//' || echo "")"
+			break
 		done
 	fi
 

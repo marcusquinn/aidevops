@@ -281,11 +281,13 @@ cmd_add() {
 			shift
 			;;
 		*)
-			if [[ -z "$service_account" ]]; then
+			# Assign positional args: first to service_account, second to single_domain
+			[[ -n "$service_account" ]] || {
 				service_account="$1"
-			elif [[ -z "$single_domain" ]]; then
-				single_domain="$1"
-			fi
+				shift
+				continue
+			}
+			[[ -n "$single_domain" ]] || single_domain="$1"
 			shift
 			;;
 		esac

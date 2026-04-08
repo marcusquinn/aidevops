@@ -1057,7 +1057,7 @@ cmd_grant_access() {
 
 	print_info "Granting $role access on $mailbox to $user_upn..."
 	print_info "Note: Mailbox delegation requires Exchange Online admin permissions."
-	print_info "Use Exchange Admin Center or PowerShell for full delegation management:"
+	print_info "Use Exchange Admin Center or PowerShell to manage full delegation:"
 	echo ""
 	echo "  # PowerShell (Exchange Online):"
 	echo "  Add-MailboxPermission -Identity '$mailbox' -User '$user_upn' -AccessRights $role"

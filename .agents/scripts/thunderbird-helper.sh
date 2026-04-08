@@ -628,7 +628,7 @@ AUTOCONFIG XML HOSTING
     2. https://<domain>/.well-known/autoconfig/mail/config-v1.1.xml
     3. https://autoconfig.thunderbird.net/v1.1/<domain>
 
-  Host the generated XML at one of these URLs for zero-config account setup.
+  Host the generated XML at one of these URLs to enable zero-config account setup.
 
 SIEVE DEPLOYMENT
 
@@ -641,7 +641,7 @@ OPENPGP
 
   Thunderbird 78+ has built-in OpenPGP support (no Enigmail needed).
   Keys are stored in Thunderbird's own keyring, separate from system GnuPG.
-  Use "openpgp-guide" for step-by-step import instructions.
+  Use "openpgp-guide" to get step-by-step import instructions.
 
 PROVIDERS
 

@@ -242,11 +242,11 @@ test_contract_injected_for_full_loop() {
 }
 
 main() {
-	if [[ ! -f "$HEADLESS_HELPER" ]]; then
+	[[ -f "$HEADLESS_HELPER" ]] || {
 		printf '%bFAIL%b headless-runtime-helper.sh not found at %s\n' \
 			"$TEST_RED" "$TEST_RESET" "$HEADLESS_HELPER"
 		exit 1
-	fi
+	}
 
 	test_contract_includes_escalation_rule
 	test_contract_includes_escalation_text
@@ -258,9 +258,7 @@ main() {
 	test_contract_injected_for_full_loop
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
-	if [[ "$TESTS_FAILED" -gt 0 ]]; then
-		return 1
-	fi
+	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
 	return 0
 }
 

@@ -634,19 +634,17 @@ cmd_cache_health() {
 		while IFS='|' read -r model reqs cr cw ui pct; do
 			[[ -z "$model" ]] && continue
 			local status="${GREEN}ok${NC}"
-			if [[ -n "$pct" ]] && awk "BEGIN { exit !($pct < $threshold) }"; then
+			# Check cache hit rate against threshold
+			[[ -z "$pct" ]] || ! awk "BEGIN { exit !($pct < $threshold) }" || {
 				status="${YELLOW}DEGRADED${NC}"
 				overall_status="degraded"
 				degraded_models="${degraded_models}${model} (${pct}%), "
-			fi
+			}
 			printf "  %-30s %8s %12s %12s %6s%% %b\n" "$model" "$reqs" "$cr" "$ui" "$pct" "$status"
 		done <<<"$result"
 		echo ""
-		if [[ "$overall_status" == "degraded" ]]; then
+		[[ "$overall_status" != "degraded" ]] && print_success "All models above ${threshold}% cache hit rate" ||
 			print_warning "Cache degradation: ${degraded_models%, }"
-		else
-			print_success "All models above ${threshold}% cache hit rate"
-		fi
 	fi
 
 	[[ "$overall_status" == "ok" ]] && return 0
@@ -661,7 +659,7 @@ Commands: ingest | record (--model X) | rate-limits (--json, --provider, --windo
 
 Record options:
   --model MODEL          Model name (required)
-  --provider PROVIDER    Provider name (auto-detected from model if omitted)
+  --provider PROVIDER    Provider name (auto-detected from model when omitted)
   --input-tokens N       Input token count
   --output-tokens N      Output token count
   --cache-read N         Cache read token count

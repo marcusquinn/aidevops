@@ -315,8 +315,9 @@ section "All Properties for Each Runtime"
 # =============================================================================
 # Verify every runtime has non-empty binary and display name (minimum requirement)
 
-all_ids=$(rt_list_ids)
-while IFS= read -r rid; do
+_check_runtime_properties() {
+	local rid="$1"
+	local bin name
 	bin=$(rt_binary "$rid")
 	if [[ -n "$bin" ]]; then
 		pass "rt_binary $rid is non-empty ($bin)"
@@ -330,6 +331,12 @@ while IFS= read -r rid; do
 	else
 		fail "rt_display_name $rid is empty (every runtime needs a display name)"
 	fi
+	return 0
+}
+
+all_ids=$(rt_list_ids)
+while IFS= read -r rid; do
+	_check_runtime_properties "$rid"
 done <<<"$all_ids"
 
 # =============================================================================
@@ -340,7 +347,5 @@ echo ""
 echo "=== Results ==="
 printf "Total: %d  Passed: %d  Failed: %d\n" "$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT"
 
-if [[ $FAIL_COUNT -gt 0 ]]; then
-	exit 1
-fi
+[[ $FAIL_COUNT -eq 0 ]] || exit 1
 exit 0

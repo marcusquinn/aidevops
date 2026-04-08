@@ -456,11 +456,11 @@ BATCH_SQL
 		if ((first_batch)); then
 			local integrity
 			integrity=$(sqlite3 "$ARCHIVE_DB" "PRAGMA integrity_check;" 2>&1)
-			if [[ "$integrity" != "ok" ]]; then
+			[[ "$integrity" == "ok" ]] || {
 				print_error "Archive integrity check FAILED after first batch: $integrity"
 				print_error "Aborting. Data was already copied — manual review needed."
 				return 1
-			fi
+			}
 			first_batch=0
 		fi
 
@@ -579,13 +579,13 @@ opencode-db-archive.sh — Archive old OpenCode sessions
 
 COMMANDS:
   archive   Move old sessions from active DB to archive DB
-  stats     Show row counts and sizes for both databases
+  stats     Show row counts and sizes (active + archive databases)
   help      Show this help message
 
 ARCHIVE OPTIONS:
   --retention-days N        Sessions older than N days are archived (default: 14)
   --dry-run                 Show what would be archived without doing it
-  --max-duration-seconds N  Stop after N seconds even if not done (default: 60)
+  --max-duration-seconds N  Stop after N seconds even when not done (default: 60)
 
 ENVIRONMENT:
   OPENCODE_DB               Active DB path (default: ~/.local/share/opencode/opencode.db)

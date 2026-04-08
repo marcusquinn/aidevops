@@ -574,12 +574,12 @@ Options for lookalikes:
   --limit N       Max results (default: 25)
   --output FILE   Save JSON output to file
 
-Options for followers:
+Followers options:
   --domain DOMAIN Company domain (required)
   --limit N       Max results (default: 25)
   --output FILE   Save JSON output to file
 
-Options for export:
+Export options:
   --list-id ID    List ID to export (required)
   --format FORMAT csv or json (default: json)
   --output FILE   Save to file

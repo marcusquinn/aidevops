@@ -779,9 +779,9 @@ cmd_pipeline() {
 		echo "Usage: voice-pipeline-helper.sh pipeline <input-file> [voice-id] [output-file] [target-lufs]"
 		echo ""
 		echo "Pipeline stages:"
-		echo "  1. Extract  - Extract audio from video (skipped for audio input)"
+		echo "  1. Extract  - Extract audio from video (skipped when input is audio)"
 		echo "  2. Cleanup  - Noise reduction, normalization, de-essing"
-		echo "  3. Transform - ElevenLabs speech-to-speech (skipped if no voice-id)"
+		echo "  3. Transform - ElevenLabs speech-to-speech (skipped without voice-id)"
 		echo "  4. Normalize - Final LUFS normalization"
 		return 1
 	fi
@@ -895,7 +895,7 @@ cmd_status() {
 		local body
 		body=$(echo "$response" | sed '$d')
 
-		if [[ "$http_code" == "200" ]]; then
+		[[ "$http_code" != "200" ]] && { print_error "API connectivity: HTTP ${http_code}"; } || {
 			local char_count char_limit tier
 			char_count=$(echo "$body" | jq -r '.subscription.character_count // "?"' 2>/dev/null)
 			char_limit=$(echo "$body" | jq -r '.subscription.character_limit // "?"' 2>/dev/null)
@@ -903,9 +903,7 @@ cmd_status() {
 			print_success "API connectivity: OK"
 			echo "  Tier: ${tier}"
 			echo "  Characters used: ${char_count} / ${char_limit}"
-		else
-			print_error "API connectivity: HTTP ${http_code}"
-		fi
+		}
 	else
 		print_warning "API key: not configured"
 		print_info "Set with: aidevops secret set ELEVENLABS_API_KEY"

@@ -332,6 +332,26 @@ run_canary() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: update canary state file with drift-logged timestamp
+# ---------------------------------------------------------------------------
+
+_canary_update_drift_state() {
+	[[ -f "$CANARY_STATE" ]] || return 0
+	local now_iso
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	local updated
+	updated=$(NOW_ISO="$now_iso" python3 -c '
+import json, os, sys
+with open(sys.argv[1]) as f:
+    state = json.load(f)
+state["last_drift_logged"] = os.environ["NOW_ISO"]
+print(json.dumps(state, indent=2))
+' "$CANARY_STATE" 2>/dev/null)
+	[[ -z "$updated" ]] || printf '%s\n' "$updated" >"$CANARY_STATE"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Cron/launchd mode: run canary, log framework issue on drift
 # ---------------------------------------------------------------------------
 
@@ -361,30 +381,12 @@ print('false')
 
 		if [[ "$already_logged" == "false" ]]; then
 			log_to_file "DRIFT: logging framework issue"
-
-			# Update state with drift logged time
-			if [[ -f "$CANARY_STATE" ]]; then
-				local now_iso
-				now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-				local updated
-				updated=$(NOW_ISO="$now_iso" python3 -c '
-import json, os, sys
-with open(sys.argv[1]) as f:
-    state = json.load(f)
-state["last_drift_logged"] = os.environ["NOW_ISO"]
-print(json.dumps(state, indent=2))
-' "$CANARY_STATE" 2>/dev/null)
-				if [[ -n "$updated" ]]; then
-					printf '%s\n' "$updated" >"$CANARY_STATE"
-				fi
-			fi
-
+			_canary_update_drift_state
 			# Log the issue via framework helper if available
-			if [[ -x "${SCRIPTS_DIR}/framework-routing-helper.sh" ]]; then
+			[[ ! -x "${SCRIPTS_DIR}/framework-routing-helper.sh" ]] ||
 				"${SCRIPTS_DIR}/framework-routing-helper.sh" log-framework-issue \
 					"Client request format drift detected — review signing constants" \
 					2>/dev/null || true
-			fi
 		fi
 	fi
 
