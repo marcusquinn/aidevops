@@ -85,6 +85,8 @@ if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	source "$SETUP_MODULES_DIR/_services.sh"
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_bootstrap.sh"
+	# shellcheck disable=SC1091
+	source "$SETUP_MODULES_DIR/_routines.sh"
 fi
 
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -966,6 +968,7 @@ _setup_run_interactive() {
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
 	confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
 	confirm_step "Sync agents from private repositories" && sync_agent_sources
+	confirm_step "Set up routines repo (private repo for recurring operational jobs)" && setup_routines
 	is_feature_enabled safety_hooks 2>/dev/null && confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
 	confirm_step "Initialize settings.json (canonical config file)" && init_settings_json
 	confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials

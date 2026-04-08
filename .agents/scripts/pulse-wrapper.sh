@@ -6700,6 +6700,42 @@ _triage_update_cache() {
 }
 
 #######################################
+# GH#17779: Helper for _is_task_committed_to_main.
+# Reads commit hashes from stdin, applies the two-stage planning filter
+# (subject-line prefix + path-based), and prints the count of real
+# implementation commits to stdout.
+#
+# Args:
+#   $1 - repo_path (local path to the repo)
+# Stdin: one commit hash per line
+#######################################
+_count_impl_commits() {
+	local repo_path_inner="$1"
+	local match_count_inner=0
+	local commit_hash_inner
+	while IFS= read -r commit_hash_inner; do
+		[[ -z "$commit_hash_inner" ]] && continue
+		local is_planning_only_inner=true
+		local touched_path_inner
+		while IFS= read -r touched_path_inner; do
+			[[ -z "$touched_path_inner" ]] && continue
+			case "$touched_path_inner" in
+			TODO.md | todo/* | AGENTS.md | .agents/AGENTS.md | */docs/* | docs/*) ;;
+			*)
+				is_planning_only_inner=false
+				break
+				;;
+			esac
+		done < <(git -C "$repo_path_inner" diff-tree --no-commit-id --name-only -r "$commit_hash_inner" 2>/dev/null)
+		if [[ "$is_planning_only_inner" == "false" ]]; then
+			match_count_inner=$((match_count_inner + 1))
+		fi
+	done
+	echo "$match_count_inner"
+	return 0
+}
+
+#######################################
 # GH#17574: Check if a task has already been committed directly to main.
 #
 # Workers that bypass the PR flow (direct commits to main) complete the
@@ -6732,20 +6768,32 @@ _is_task_committed_to_main() {
 	# Extract task ID patterns from the issue title.
 	# Matches: "t153:", "t153 ", "GH#17574:", "GH#17574 "
 	# Also matches the issue number itself: "#17574" in commit messages.
-	local -a search_patterns=()
+	#
+	# GH#17779: Split patterns into two arrays by match scope:
+	#   subject_patterns — Patterns 1 & 2: task IDs that belong in the commit
+	#     subject line only. git --grep searches subject+body, so body
+	#     cross-references (e.g. "feeds scope-aware extraction (t101)") cause
+	#     false positives. Use --format '%H %s' + grep -w for subject-only match.
+	#   message_patterns — Patterns 3-5: closing keywords / squash-merge suffixes
+	#     that legitimately appear in commit bodies. Keep using --grep.
+	local -a subject_patterns=() # Patterns 1, 2: subject-only matching
+	local -a message_patterns=() # Patterns 3, 4, 5: full-message matching
 
 	# Pattern 1: tNNN task ID from title (e.g., "t153: add dark mode")
+	# Subject-only: body cross-references like "(t101)" must not match.
+	# grep -w enforces word boundaries — prevents t101 matching t1010.
 	local task_id_match
 	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+' | head -1) || task_id_match=""
 	if [[ -n "$task_id_match" ]]; then
-		search_patterns+=("$task_id_match")
+		subject_patterns+=("$task_id_match")
 	fi
 
 	# Pattern 2: GH#NNN from title (e.g., "GH#17574: fix pulse dispatch")
+	# Subject-only: body mentions of other GH# IDs must not match.
 	local gh_id_match
 	gh_id_match=$(printf '%s' "$issue_title" | grep -oE '^GH#[0-9]+' | head -1) || gh_id_match=""
 	if [[ -n "$gh_id_match" ]]; then
-		search_patterns+=("$gh_id_match")
+		subject_patterns+=("$gh_id_match")
 	fi
 
 	# Pattern 3: GitHub squash-merge suffix "(#NNN)" — only matches commit
@@ -6756,15 +6804,16 @@ _is_task_committed_to_main() {
 	# t1927: Escape parens for -E regex — unescaped parens are capture groups
 	# that match bare "#NNN" in commit bodies (evidence tables, PR descriptions).
 	# With \( \) the pattern only matches the literal "(#NNN)" suffix.
-	search_patterns+=("\\(#${issue_number}\\)")
+	message_patterns+=("\\(#${issue_number}\\)")
 
 	# Pattern 4: "Closes #NNN" / "Fixes #NNN" in commit messages — these
 	# are the conventional patterns for commits that resolve an issue.
-	search_patterns+=("[Cc]loses #${issue_number}")
-	search_patterns+=("[Ff]ixes #${issue_number}")
+	# \b word boundary prevents #17779 from matching #177790 (longer IDs).
+	message_patterns+=("[Cc]loses #${issue_number}\\b")
+	message_patterns+=("[Ff]ixes #${issue_number}\\b")
 
 	# No patterns to search — cannot determine if committed
-	if [[ ${#search_patterns[@]} -eq 0 ]]; then
+	if [[ ${#subject_patterns[@]} -eq 0 && ${#message_patterns[@]} -eq 0 ]]; then
 		return 1
 	fi
 
@@ -6785,44 +6834,49 @@ _is_task_committed_to_main() {
 	fi
 
 	# Search recent commits on origin/main for any matching pattern.
-	# Use -E for extended regex (Closes/Fixes patterns).
 	# GH#17707: Filter out planning-only commits that mention task IDs but
 	# don't contain implementation work. Two-stage filter:
 	#   1. Subject-line filter: drop obvious planning prefixes (chore: claim, plan:)
 	#   2. Path-based filter: for remaining commits, check if ALL touched paths
 	#      are planning-only files (TODO.md, todo/*, AGENTS.md). If so, exclude.
 	# This preserves real docs: commits while filtering true planning-only commits.
+	#
+	# GH#17779: subject_patterns use subject-only matching (--format + grep -w)
+	# to avoid false positives from body cross-references. message_patterns keep
+	# using --grep (full message) because closing keywords belong in commit bodies.
+
+	# Search subject_patterns (Patterns 1 & 2): subject-only via --format + grep -w
+	# This prevents body cross-references from triggering false positives.
 	local pattern
-	for pattern in "${search_patterns[@]}"; do
+	for pattern in "${subject_patterns[@]}"; do
 		local match_count=0
-		local commit_hash
-		# Stage 1: get matching commits, exclude obvious planning subjects
-		while IFS= read -r commit_hash; do
-			[[ -z "$commit_hash" ]] && continue
-			# Stage 2: path-based planning detection — check if ALL touched
-			# paths are planning-only files. Real implementation commits touch
-			# code files beyond TODO.md/todo/*/AGENTS.md.
-			local is_planning_only=true
-			local touched_path
-			while IFS= read -r touched_path; do
-				[[ -z "$touched_path" ]] && continue
-				case "$touched_path" in
-				TODO.md | todo/* | AGENTS.md | .agents/AGENTS.md | */docs/* | docs/*) ;;
-				*)
-					is_planning_only=false
-					break
-					;;
-				esac
-			done < <(git -C "$repo_path" diff-tree --no-commit-id --name-only -r "$commit_hash" 2>/dev/null)
-			if [[ "$is_planning_only" == "false" ]]; then
-				match_count=$((match_count + 1))
-			fi
-		done < <(git -C "$repo_path" log origin/main --since="$created_at" \
-			-E --grep="$pattern" --format='%H %s' |
-			grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
-			cut -d' ' -f1 || true)
+		# Fetch all commits as "HASH SUBJECT", filter planning subjects, then
+		# grep -w for word-boundary match on the subject portion only.
+		match_count=$(_count_impl_commits "$repo_path" < <(
+			git -C "$repo_path" log origin/main --since="$created_at" \
+				--format='%H %s' |
+				grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
+				grep -wE "$pattern" |
+				cut -d' ' -f1 || true
+		))
 		if [[ "$match_count" -gt 0 ]]; then
-			echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+			echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching subject pattern '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+			return 0
+		fi
+	done
+
+	# Search message_patterns (Patterns 3-5): full-message via --grep
+	# Closing keywords and squash-merge suffixes legitimately appear in bodies.
+	for pattern in "${message_patterns[@]}"; do
+		local match_count=0
+		match_count=$(_count_impl_commits "$repo_path" < <(
+			git -C "$repo_path" log origin/main --since="$created_at" \
+				-E --grep="$pattern" --format='%H %s' |
+				grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
+				cut -d' ' -f1 || true
+		))
+		if [[ "$match_count" -gt 0 ]]; then
+			echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching message pattern '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 			return 0
 		fi
 	done

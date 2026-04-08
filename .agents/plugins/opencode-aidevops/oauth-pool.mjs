@@ -32,8 +32,6 @@ import {
 } from "fs";
 import { join, dirname } from "path";
 import { homedir, platform } from "os";
-import { createHash, randomBytes } from "crypto";
-import { createServer } from "http";
 import { execSync, execFileSync, spawn } from "child_process";
 
 // ---------------------------------------------------------------------------
@@ -60,45 +58,19 @@ const FALLBACK_OPENCODE_VERSION = "1.2.27";
  * Returns just the version number (e.g. "2.1.80").
  * @returns {string}
  */
-function detectClaudeCliVersion() {
-  try {
-    const raw = execFileSync("claude", ["--version"], {
-      timeout: 3000,
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    // Output is like "2.1.80 (Claude Code)" or just "2.1.80"
-    const match = raw.match(/^(\d+\.\d+\.\d+)/);
-    if (match) return match[1];
-  } catch {
-    // CLI not installed or timed out
-  }
-  return FALLBACK_CLAUDE_VERSION;
-}
-
-/**
- * Detect the installed OpenCode CLI version.
- * Tries "opencode" first, then "oc" as fallback.
- * Uses execFileSync (no shell) for cross-platform safety.
- * Returns just the version number (e.g. "1.2.27").
- * @returns {string}
- */
-function detectOpenCodeVersion() {
-  for (const bin of ["opencode", "oc"]) {
+/** Detect a CLI version by trying binaries. Returns first match or fallback. */
+function detectCliVersion(binaries, fallback) {
+  for (const bin of binaries) {
     try {
-      const raw = execFileSync(bin, ["--version"], {
-        timeout: 3000,
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
+      const raw = execFileSync(bin, ["--version"], { timeout: 3000, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
       const match = raw.match(/^(\d+\.\d+\.\d+)/);
       if (match) return match[1];
-    } catch {
-      // Try next binary
-    }
+    } catch { /* not installed */ }
   }
-  return FALLBACK_OPENCODE_VERSION;
+  return fallback;
 }
+function detectClaudeCliVersion() { return detectCliVersion(["claude"], FALLBACK_CLAUDE_VERSION); }
+function detectOpenCodeVersion() { return detectCliVersion(["opencode", "oc"], FALLBACK_OPENCODE_VERSION); }
 
 // Detect once at module load — cached for process lifetime
 const DETECTED_CLAUDE_VERSION = detectClaudeCliVersion();
@@ -184,47 +156,20 @@ const CURSOR_PROXY_HOST = "127.0.0.1";
 const CURSOR_PROXY_DEFAULT_PORT = 32123;
 const CURSOR_PROXY_BASE_URL = `http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/v1`;
 
-/**
- * Get the path to cursor-agent's auth.json based on platform.
- * @returns {string}
- */
-function getCursorAgentAuthPath() {
+/** Platform-specific path resolution for Cursor directories. */
+const CURSOR_PATHS = (() => {
   const plat = platform();
-  if (plat === "darwin") {
-    return join(HOME, ".cursor", "auth.json");
-  }
-  if (plat === "win32") {
-    const appData = process.env.APPDATA || join(HOME, "AppData", "Roaming");
-    return join(appData, "Cursor", "auth.json");
-  }
-  // Linux and others
-  const configDir = process.env.XDG_CONFIG_HOME || join(HOME, ".config");
-  return join(configDir, "cursor", "auth.json");
-}
-
-/**
- * Get the path to Cursor IDE's state database (for local credential extraction).
- * @returns {string}
- */
-function getCursorStateDbPath() {
-  const plat = platform();
-  if (plat === "darwin") {
-    return join(HOME, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb");
-  }
-  if (plat === "win32") {
-    const appData = process.env.APPDATA || join(HOME, "AppData", "Roaming");
-    return join(appData, "Cursor", "User", "globalStorage", "state.vscdb");
-  }
-  // Linux
-  return join(HOME, ".config", "Cursor", "User", "globalStorage", "state.vscdb");
-}
+  if (plat === "darwin") return { auth: join(HOME, ".cursor", "auth.json"), db: join(HOME, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb") };
+  if (plat === "win32") { const ad = process.env.APPDATA || join(HOME, "AppData", "Roaming"); return { auth: join(ad, "Cursor", "auth.json"), db: join(ad, "Cursor", "User", "globalStorage", "state.vscdb") }; }
+  const cd = process.env.XDG_CONFIG_HOME || join(HOME, ".config");
+  return { auth: join(cd, "cursor", "auth.json"), db: join(cd, "Cursor", "User", "globalStorage", "state.vscdb") };
+})();
+function getCursorAgentAuthPath() { return CURSOR_PATHS.auth; }
+function getCursorStateDbPath() { return CURSOR_PATHS.db; }
 
 // ---------------------------------------------------------------------------
 // Shared cooldown constants
 // ---------------------------------------------------------------------------
-
-/** Default cooldown when rate limited (ms) */
-const RATE_LIMIT_COOLDOWN_MS = 60_000;
 
 /** Default cooldown on auth failure (ms) */
 const AUTH_FAILURE_COOLDOWN_MS = 300_000;
@@ -233,40 +178,12 @@ const AUTH_FAILURE_COOLDOWN_MS = 300_000;
 const TOKEN_ENDPOINT_COOLDOWN_MS = 300_000;
 
 // ---------------------------------------------------------------------------
-// Legacy aliases (kept for backward compatibility — Anthropic was the only
-// provider before t1548, so existing code used bare constant names)
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use ANTHROPIC_CLIENT_ID */
-const CLIENT_ID = ANTHROPIC_CLIENT_ID;
-/** @deprecated Use ANTHROPIC_TOKEN_ENDPOINT */
-const TOKEN_ENDPOINT = ANTHROPIC_TOKEN_ENDPOINT;
-
-// ---------------------------------------------------------------------------
 // Token endpoint helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Format milliseconds as a human-readable time string (e.g. "2h 15m" or "45m").
- * @param {number} ms
- * @returns {string}
- */
-function formatDuration(ms) {
-  const mins = Math.floor(ms / 60000);
-  const hours = Math.floor(mins / 60);
-  return hours > 0 ? `${hours}h ${mins % 60}m` : `${mins}m`;
-}
+// formatDuration → oauth-pool-tool.mjs
 
-/**
- * Format elapsed milliseconds as a human-readable "ago" string.
- * @param {number} ms - elapsed milliseconds
- * @returns {string}
- */
-function formatAgo(ms) {
-  const mins = Math.floor(ms / 60000);
-  const hours = Math.floor(mins / 60);
-  return hours > 0 ? `${hours}h ${mins % 60}m ago` : `${mins}m ago`;
-}
+// formatAgo → oauth-pool-tool.mjs
 
 /**
  * Parse Retry-After header and return a bounded cooldown.
@@ -276,19 +193,9 @@ function formatAgo(ms) {
  */
 function parseRetryAfterCooldown(retryAfter) {
   if (!retryAfter) return TOKEN_ENDPOINT_COOLDOWN_MS;
-
-  const seconds = Number.parseInt(retryAfter, 10);
-  if (Number.isFinite(seconds)) {
-    return Math.max(seconds * 1000, TOKEN_ENDPOINT_COOLDOWN_MS);
-  }
-
-  const retryAt = Date.parse(retryAfter);
-  if (Number.isFinite(retryAt)) {
-    const remainingMs = Math.max(retryAt - Date.now(), 0);
-    return Math.max(remainingMs, TOKEN_ENDPOINT_COOLDOWN_MS);
-  }
-
-  return TOKEN_ENDPOINT_COOLDOWN_MS;
+  const secs = Number.parseInt(retryAfter, 10);
+  const ms = Number.isFinite(secs) ? secs * 1000 : Math.max((Date.parse(retryAfter) || 0) - Date.now(), 0);
+  return Math.max(ms, TOKEN_ENDPOINT_COOLDOWN_MS);
 }
 
 /**
@@ -301,20 +208,7 @@ function parseRetryAfterCooldown(retryAfter) {
  * @param {(until: number) => void} setCooldown - setter for the cooldown variable
  * @returns {number} cooldown duration in ms
  */
-function handleTokenEndpoint429(response, context, providerLabel, setCooldown) {
-  const retryAfter = response.headers.get("retry-after");
-  const cooldownMs = parseRetryAfterCooldown(retryAfter);
-  setCooldown(Date.now() + cooldownMs);
-  const cooldownMinutes = Math.ceil(cooldownMs / 60000);
-  console.error(
-    [
-      `[aidevops] OAuth pool: ${context} failed: rate limited by ${providerLabel}.`,
-      `Cooldown set for ${cooldownMinutes}m — no further token requests until then.`,
-      "Use /model-accounts-pool reset-cooldowns to clear manually.",
-    ].join(" "),
-  );
-  return cooldownMs;
-}
+// handleTokenEndpoint429 inlined into fetchProviderTokenEndpoint
 
 /**
  * Check whether a token endpoint is currently rate-limited (in cooldown).
@@ -326,25 +220,13 @@ function handleTokenEndpoint429(response, context, providerLabel, setCooldown) {
  * @param {string} providerLabel - e.g. "OpenAI", "Google"
  * @returns {{ ok: false, status: 429, statusText: string, headers: object, json(): Promise<any>, text(): Promise<string> } | null}
  */
+/** Synthetic 429 response for cooldown-gated endpoints. */
+const COOLDOWN_RESPONSE = { ok: false, status: 429, statusText: "Rate Limited (cooldown)", headers: { get() { return null; } }, async json() { return { error: "Rate limited (cooldown)" }; }, async text() { return "Rate limited (cooldown)"; } };
+
 function checkCooldownGate(cooldownUntil, context, providerLabel) {
-  const now = Date.now();
-  if (cooldownUntil <= now) return null;
-  const remainingMinutes = Math.ceil((cooldownUntil - now) / 60000);
-  console.error(
-    [
-      `[aidevops] OAuth pool: ${context} skipped — ${providerLabel} token endpoint rate limited,`,
-      `cooldown ${remainingMinutes}m remaining.`,
-      "Use /model-accounts-pool reset-cooldowns to clear manually.",
-    ].join(" "),
-  );
-  return {
-    ok: false,
-    status: 429,
-    statusText: "Rate Limited (cooldown)",
-    headers: { get() { return null; } },
-    async json() { return { error: "Rate limited (cooldown)" }; },
-    async text() { return "Rate limited (cooldown)"; },
-  };
+  if (cooldownUntil <= Date.now()) return null;
+  console.error(`[aidevops] OAuth pool: ${context} skipped — ${providerLabel} rate limited, ${Math.ceil((cooldownUntil - Date.now()) / 60000)}m remaining.`);
+  return COOLDOWN_RESPONSE;
 }
 
 /**
@@ -352,12 +234,8 @@ function checkCooldownGate(cooldownUntil, context, providerLabel) {
  * @param {"anthropic"|"openai"|"cursor"|"google"} provider
  * @returns {Function}
  */
-function resolveInjectFn(provider) {
-  if (provider === "cursor") return injectCursorPoolToken;
-  if (provider === "openai") return injectOpenAIPoolToken;
-  if (provider === "google") return injectGooglePoolToken;
-  return injectPoolToken;
-}
+const INJECT_FN_MAP = { cursor: injectCursorPoolToken, openai: injectOpenAIPoolToken, google: injectGooglePoolToken };
+export function resolveInjectFn(provider) { return INJECT_FN_MAP[provider] || injectPoolToken; }
 
 /**
  * In-memory timestamp of the last 429 from the Anthropic token endpoint.
@@ -400,87 +278,45 @@ let googleTokenEndpointCooldownUntil = 0;
  * @param {string} context - description for logging
  * @returns {{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }}
  */
+// Curl response parsing helpers (extracted for complexity reduction)
+function parseCurlResponse(raw) {
+  const lines = raw.trimEnd().split("\n");
+  const statusCode = parseInt(lines.pop(), 10) || 500;
+  const fullOutput = lines.join("\n");
+  const splitIdx = fullOutput.indexOf("\r\n\r\n");
+  const headers = {};
+  let body = fullOutput;
+  if (splitIdx !== -1) {
+    for (const line of fullOutput.substring(0, splitIdx).split("\r\n")) {
+      const ci = line.indexOf(":");
+      if (ci > 0) headers[line.substring(0, ci).trim().toLowerCase()] = line.substring(ci + 1).trim();
+    }
+    body = fullOutput.substring(splitIdx + 4);
+  }
+  return { statusCode, headers, body };
+}
+const STATUS_TEXT_MAP = { 200: "OK", 400: "Bad Request", 401: "Unauthorized", 429: "Too Many Requests" };
+function statusCodeToText(sc) { return STATUS_TEXT_MAP[sc] || `HTTP ${sc}`; }
+function buildCurlResponseObject(p) {
+  return { ok: p.statusCode >= 200 && p.statusCode < 300, status: p.statusCode, statusText: statusCodeToText(p.statusCode),
+    headers: { get(k) { return p.headers[k.toLowerCase()] ?? null; } }, async json() { return JSON.parse(p.body); }, async text() { return p.body; } };
+}
+function buildCurlErrorResponse(reason) {
+  return { ok: false, status: 500, statusText: "curl failed", headers: { get() { return null; } }, async json() { return { error: reason }; }, async text() { return reason; } };
+}
+
 function curlTokenEndpoint(url, options, context) {
-  const args = [
-    "-sS",                          // silent but show errors
-    "-i",                           // include response headers in output
-    "-w", "\n%{http_code}",         // append HTTP status on last line
-    "-X", "POST",
+  const args = ["-sS", "-i", "-w", "\n%{http_code}", "-X", "POST",
     "-H", `Content-Type: ${options.contentType || "application/json"}`,
     "-H", `User-Agent: ${options.headers["User-Agent"]}`,
-    "--data-binary", "@-",          // read body from stdin (keeps secrets off argv/ps)
-    "--max-time", "15",             // hard timeout
-    url,
-  ];
-
+    "--data-binary", "@-", "--max-time", "15", url];
   try {
-    // Use execFileSync (no shell) to avoid metacharacter issues with
-    // parentheses in User-Agent. Body is passed via stdin to keep
-    // OAuth secrets (refresh_token, authorization_code) off the process
-    // command line where they'd be visible via ps/proc.
-    const raw = execFileSync("curl", args, {
-      encoding: "utf-8",
-      timeout: 20_000,
-      input: options.body,
-    });
-
-    // Output format with -i: headers\r\n\r\nbody\n<http_code>
-    // Last line is the HTTP status code from -w
-    const lines = raw.trimEnd().split("\n");
-    const statusCode = parseInt(lines.pop(), 10) || 500;
-    const fullOutput = lines.join("\n");
-
-    // Split headers from body at the blank line (\r\n\r\n)
-    const headerBodySplit = fullOutput.indexOf("\r\n\r\n");
-    let responseHeaders = {};
-    let responseBody = fullOutput;
-
-    if (headerBodySplit !== -1) {
-      const headerBlock = fullOutput.substring(0, headerBodySplit);
-      responseBody = fullOutput.substring(headerBodySplit + 4);
-
-      // Parse response headers into a case-insensitive map
-      for (const line of headerBlock.split("\r\n")) {
-        const colonIdx = line.indexOf(":");
-        if (colonIdx > 0) {
-          const key = line.substring(0, colonIdx).trim().toLowerCase();
-          const value = line.substring(colonIdx + 1).trim();
-          responseHeaders[key] = value;
-        }
-      }
-    }
-
-    const statusText = statusCode === 200 ? "OK"
-      : statusCode === 429 ? "Too Many Requests"
-      : statusCode === 401 ? "Unauthorized"
-      : statusCode === 400 ? "Bad Request"
-      : `HTTP ${statusCode}`;
-
-    return {
-      ok: statusCode >= 200 && statusCode < 300,
-      status: statusCode,
-      statusText,
-      headers: {
-        get(key) {
-          return responseHeaders[key.toLowerCase()] ?? null;
-        },
-      },
-      async json() { return JSON.parse(responseBody); },
-      async text() { return responseBody; },
-    };
+    const raw = execFileSync("curl", args, { encoding: "utf-8", timeout: 20_000, input: options.body });
+    return buildCurlResponseObject(parseCurlResponse(raw));
   } catch (err) {
-    // Log only the error code/status — never err.message which may
-    // contain the request body with OAuth secrets
     const reason = err?.code || `exit ${err?.status ?? "unknown"}`;
     console.error(`[aidevops] OAuth pool: ${context} curl failed (${reason})`);
-    return {
-      ok: false,
-      status: 500,
-      statusText: "curl failed",
-      headers: { get() { return null; } },
-      async json() { return { error: reason }; },
-      async text() { return reason; },
-    };
+    return buildCurlErrorResponse(reason);
   }
 }
 
@@ -517,7 +353,9 @@ async function fetchProviderTokenEndpoint(opts, context) {
   }, context);
 
   if (response.status === 429) {
-    handleTokenEndpoint429(response, context, opts.providerLabel, opts.setCooldown);
+    const cdMs = parseRetryAfterCooldown(response.headers.get("retry-after"));
+    opts.setCooldown(Date.now() + cdMs);
+    console.error(`[aidevops] OAuth pool: ${context} rate limited by ${opts.providerLabel}. Cooldown ${Math.ceil(cdMs / 60000)}m.`);
   } else if (!response.ok) {
     console.error(`[aidevops] OAuth pool: ${context} failed: HTTP ${response.status}`);
   }
@@ -525,7 +363,7 @@ async function fetchProviderTokenEndpoint(opts, context) {
   return response;
 }
 
-async function fetchTokenEndpoint(body, context) {
+export async function fetchTokenEndpoint(body, context) {
   return fetchProviderTokenEndpoint({
     url: ANTHROPIC_TOKEN_ENDPOINT,
     userAgent: ANTHROPIC_USER_AGENT,
@@ -545,7 +383,7 @@ async function fetchTokenEndpoint(body, context) {
  * @param {string} context - description for logging
  * @returns {Promise<{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }>}
  */
-async function fetchOpenAITokenEndpoint(params, context) {
+export async function fetchOpenAITokenEndpoint(params, context) {
   return fetchProviderTokenEndpoint({
     url: OPENAI_TOKEN_ENDPOINT,
     userAgent: OPENCODE_USER_AGENT,
@@ -567,7 +405,7 @@ async function fetchOpenAITokenEndpoint(params, context) {
  * @param {string} context - description for logging
  * @returns {Promise<{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }>}
  */
-async function fetchGoogleTokenEndpoint(body, context) {
+export async function fetchGoogleTokenEndpoint(body, context) {
   return fetchProviderTokenEndpoint({
     url: GOOGLE_TOKEN_ENDPOINT,
     userAgent: ANTHROPIC_USER_AGENT,
@@ -578,176 +416,9 @@ async function fetchGoogleTokenEndpoint(body, context) {
   }, context);
 }
 
-// ---------------------------------------------------------------------------
-// PKCE helpers (no external dependency — pure crypto)
-// ---------------------------------------------------------------------------
+// PKCE helpers → oauth-pool-auth.mjs
 
-/**
- * Generate a PKCE code verifier and challenge.
- * Uses crypto.randomBytes + SHA-256 — no dependency on @openauthjs/openauth.
- * @returns {{ verifier: string, challenge: string }}
- */
-function generatePKCE() {
-  const verifier = randomBytes(32)
-    .toString("base64url")
-    .replace(/[^a-zA-Z0-9\-._~]/g, "")
-    .slice(0, 128);
-  const challenge = createHash("sha256")
-    .update(verifier)
-    .digest("base64url");
-  return { verifier, challenge };
-}
-
-// ---------------------------------------------------------------------------
-// OAuth callback server (t1548)
-// ---------------------------------------------------------------------------
-
-/** Port for the OpenAI OAuth callback server (matches OpenCode's built-in) */
-const OAUTH_CALLBACK_PORT = 1455;
-
-/** Timeout for the callback server (ms) — auto-closes if no callback received */
-const OAUTH_CALLBACK_TIMEOUT_MS = 300_000; // 5 minutes
-
-/**
- * Start a temporary HTTP server to catch the OpenAI OAuth callback.
- *
- * OpenAI's OAuth redirects to http://localhost:1455/auth/callback?code=XXX.
- * OpenCode's built-in auth spins up a server on that port, but our pool flow
- * runs through the plugin auth hook which doesn't. Without this server, the
- * browser shows "connection refused" and the user can't get the code.
- *
- * The server:
- *   1. Listens on port 1455
- *   2. Catches the /auth/callback redirect
- *   3. Extracts the `code` query parameter
- *   4. Shows a success page telling the user the code was captured
- *   5. Resolves the returned promise with the code
- *   6. Auto-closes after the first request or after timeout
- *
- * @returns {{ promise: Promise<string>, ready: Promise<boolean>, close: () => void }}
- *   - promise: resolves with the authorization code, rejects on timeout/error
- *   - ready: resolves true when listening, false on startup failure
- *   - close: manually close the server (cleanup)
- */
-function startOAuthCallbackServer() {
-  let resolveCode;
-  let rejectCode;
-  let server;
-  let timeoutId;
-  let resolveReady;
-
-  const promise = new Promise((resolve, reject) => {
-    resolveCode = resolve;
-    rejectCode = reject;
-  });
-
-  /** Resolves true when the server is listening, false on startup failure. */
-  const ready = new Promise((resolve) => {
-    resolveReady = resolve;
-  });
-
-  /** Escape HTML special characters to prevent injection in error pages. */
-  const escapeHtml = (unsafe) => unsafe
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-
-  server = createServer((req, res) => {
-    // Parse the URL to extract query parameters
-    let reqUrl;
-    try {
-      reqUrl = new URL(req.url, `http://localhost:${OAUTH_CALLBACK_PORT}`);
-    } catch {
-      res.writeHead(400, { "Content-Type": "text/plain" });
-      res.end("Bad request");
-      return;
-    }
-
-    // Only handle the OAuth callback path — reject everything else
-    if (reqUrl.pathname !== "/auth/callback") {
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("Not found");
-      return;
-    }
-
-    const code = reqUrl.searchParams.get("code");
-    const error = reqUrl.searchParams.get("error");
-
-    if (error) {
-      const safeError = escapeHtml(error);
-      const safeDescription = escapeHtml(reqUrl.searchParams.get("error_description") || "");
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(`<!DOCTYPE html><html><body>
-        <h2>Authorization Failed</h2>
-        <p>Error: ${safeError}</p>
-        <p>${safeDescription}</p>
-        <p>You can close this tab.</p>
-      </body></html>`);
-      cleanup();
-      rejectCode(new Error(`OAuth error: ${error}`));
-      return;
-    }
-
-    if (code) {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(`<!DOCTYPE html><html><body>
-        <h2>Authorization Successful</h2>
-        <p>The authorization code has been captured.</p>
-        <p>Return to OpenCode — the code will be submitted automatically.</p>
-        <p>You can close this tab.</p>
-      </body></html>`);
-      cleanup();
-      resolveCode(code);
-      return;
-    }
-
-    // No code or error on the callback path
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("Waiting for OAuth callback...");
-  });
-
-  function cleanup() {
-    if (timeoutId) clearTimeout(timeoutId);
-    if (server) {
-      try { server.close(); } catch { /* ignore */ }
-    }
-  }
-
-  server.on("error", (err) => {
-    cleanup();
-    if (err.code === "EADDRINUSE") {
-      console.error(
-        [
-          `[aidevops] OAuth pool: port ${OAUTH_CALLBACK_PORT} in use —`,
-          "OpenCode's built-in auth may be running.",
-          "The user will need to copy the code from the browser URL bar manually.",
-        ].join(" "),
-      );
-      resolveReady(false);
-      return;
-    } else {
-      console.error(`[aidevops] OAuth pool: callback server error: ${err.message}`);
-    }
-    resolveReady(false);
-    rejectCode(err);
-  });
-
-  server.listen(OAUTH_CALLBACK_PORT, "127.0.0.1", () => {
-    console.error(`[aidevops] OAuth pool: callback server listening on port ${OAUTH_CALLBACK_PORT}`);
-    resolveReady(true);
-  });
-
-  // Auto-close after timeout
-  timeoutId = setTimeout(() => {
-    console.error(`[aidevops] OAuth pool: callback server timed out after ${OAUTH_CALLBACK_TIMEOUT_MS / 1000}s`);
-    cleanup();
-    rejectCode(new Error("OAuth callback timeout"));
-  }, OAUTH_CALLBACK_TIMEOUT_MS);
-
-  return { promise, ready, close: cleanup };
-}
+// OAuth callback server → oauth-pool-auth.mjs
 
 // ---------------------------------------------------------------------------
 // Pool file I/O
@@ -862,7 +533,7 @@ export function getAccounts(provider) {
  * @param {string} provider
  * @param {PoolAccount} account
  */
-function upsertAccount(provider, account) {
+export function upsertAccount(provider, account) {
   return withPoolLock(() => {
     const pool = loadPool();
     if (!pool[provider]) pool[provider] = [];
@@ -907,7 +578,7 @@ function upsertAccount(provider, account) {
  * @param {string} provider
  * @param {object} tokenData - { refresh, access, expires, added, ... }
  */
-function savePendingToken(provider, tokenData) {
+export function savePendingToken(provider, tokenData) {
   withPoolLock(() => {
     const pool = loadPool();
     const pendingKey = `_pending_${provider}`;
@@ -929,7 +600,7 @@ function savePendingToken(provider, tokenData) {
  * @param {string} provider
  * @returns {object|null}
  */
-function getPendingToken(provider) {
+export function getPendingToken(provider) {
   const pool = loadPool();
   return pool[`_pending_${provider}`] || null;
 }
@@ -941,7 +612,7 @@ function getPendingToken(provider) {
  * @param {string} email
  * @returns {boolean} true if assigned
  */
-function assignPendingToken(provider, email) {
+export function assignPendingToken(provider, email) {
   return withPoolLock(() => {
     const pool = loadPool();
     const pendingKey = `_pending_${provider}`;
@@ -980,7 +651,7 @@ function assignPendingToken(provider, email) {
  * @param {string} email
  * @returns {boolean} true if removed
  */
-function removeAccount(provider, email) {
+export function removeAccount(provider, email) {
   return withPoolLock(() => {
     const pool = loadPool();
     if (!pool[provider]) return false;
@@ -1018,63 +689,31 @@ export function patchAccount(provider, email, patch) {
  * @param {PoolAccount} account
  * @returns {Promise<{access: string, refresh: string, expires: number} | null>}
  */
-async function refreshAccessToken(account) {
+/** Generic OAuth token refresh — shared by Anthropic, OpenAI, and Google. */
+async function refreshProviderToken(account, fetchFn, label) {
   try {
-    const response = await fetchTokenEndpoint(
-      JSON.stringify({
-        grant_type: "refresh_token",
-        refresh_token: account.refresh,
-        client_id: ANTHROPIC_CLIENT_ID,
-      }),
-      `refresh for ${account.email}`,
-    );
-    if (!response.ok) {
-      // fetchTokenEndpoint already logged the error
-      return null;
-    }
+    const response = await fetchFn(account);
+    if (!response.ok) return null;
     const json = await response.json();
-    return {
-      access: json.access_token,
-      refresh: json.refresh_token,
-      expires: Date.now() + json.expires_in * 1000,
-    };
+    return { access: json.access_token, refresh: json.refresh_token || account.refresh, expires: Date.now() + (json.expires_in || 3600) * 1000 };
   } catch (err) {
-    console.error(
-      `[aidevops] OAuth pool: token refresh error for ${account.email}: ${err.message}`,
-    );
+    console.error(`[aidevops] OAuth pool: ${label} token refresh error for ${account.email}: ${err.message}`);
     return null;
   }
 }
 
-/**
- * Refresh an expired OpenAI access token using the refresh token (t1548).
- * OpenAI uses form-encoded bodies, not JSON.
- * @param {PoolAccount} account
- * @returns {Promise<{access: string, refresh: string, expires: number} | null>}
- */
+async function refreshAccessToken(account) {
+  return refreshProviderToken(account, (a) => fetchTokenEndpoint(
+    JSON.stringify({ grant_type: "refresh_token", refresh_token: a.refresh, client_id: ANTHROPIC_CLIENT_ID }),
+    `refresh for ${a.email}`,
+  ), "Anthropic");
+}
+
 async function refreshOpenAIAccessToken(account) {
-  try {
-    const params = new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: account.refresh,
-      client_id: OPENAI_CLIENT_ID,
-    });
-    const response = await fetchOpenAITokenEndpoint(params, `refresh for ${account.email}`);
-    if (!response.ok) {
-      return null;
-    }
-    const json = await response.json();
-    return {
-      access: json.access_token,
-      refresh: json.refresh_token || account.refresh,
-      expires: Date.now() + (json.expires_in || 3600) * 1000,
-    };
-  } catch (err) {
-    console.error(
-      `[aidevops] OAuth pool: OpenAI token refresh error for ${account.email}: ${err.message}`,
-    );
-    return null;
-  }
+  return refreshProviderToken(account, (a) => fetchOpenAITokenEndpoint(
+    new URLSearchParams({ grant_type: "refresh_token", refresh_token: a.refresh, client_id: OPENAI_CLIENT_ID }),
+    `refresh for ${a.email}`,
+  ), "OpenAI");
 }
 
 /**
@@ -1085,119 +724,63 @@ async function refreshOpenAIAccessToken(account) {
  * @param {PoolAccount} account
  * @returns {Promise<{access: string, refresh: string, expires: number} | null>}
  */
+// Cursor credential helpers (shared by refresh + auth hook)
+function isCursorTokenForAccount(tokenEmail, accountEmail) {
+  return !tokenEmail || tokenEmail === accountEmail || accountEmail === "unknown";
+}
+export function readCursorAuthJsonCredentials(accountEmail) {
+  const authPath = getCursorAgentAuthPath();
+  if (!existsSync(authPath)) return null;
+  try {
+    const data = JSON.parse(readFileSync(authPath, "utf-8"));
+    if (!data.accessToken) return null;
+    const ti = decodeCursorJWT(data.accessToken);
+    if (!isCursorTokenForAccount(ti.email, accountEmail)) return null;
+    return { access: data.accessToken, refresh: data.refreshToken, expires: ti.expiresAt || (Date.now() + 3600_000), email: ti.email };
+  } catch { return null; }
+}
+export function readCursorStateDbCredentials(accountEmail) {
+  const dbPath = getCursorStateDbPath();
+  if (!existsSync(dbPath)) return null;
+  const at = readCursorStateDbValue(dbPath, "cursorAuth/accessToken");
+  if (!at) return null;
+  const ti = decodeCursorJWT(at);
+  if (!isCursorTokenForAccount(ti.email, accountEmail)) return null;
+  return { access: at, refresh: readCursorStateDbValue(dbPath, "cursorAuth/refreshToken"), expires: ti.expiresAt || (Date.now() + 3600_000), email: ti.email || readCursorStateDbValue(dbPath, "cursorAuth/cachedEmail") };
+}
+export function isCursorAgentAvailable() {
+  try { execFileSync("cursor-agent", ["--version"], { timeout: 3000, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }); return true; } catch { return false; }
+}
+
 async function refreshCursorAccessToken(account) {
   try {
-    // Try cursor-agent auth.json first
-    const authPath = getCursorAgentAuthPath();
-    if (existsSync(authPath)) {
-      const content = readFileSync(authPath, "utf-8");
-      const data = JSON.parse(content);
-      if (data.accessToken) {
-        const tokenInfo = decodeCursorJWT(data.accessToken);
-        // Only use this token if it matches the account email (or email is unknown)
-        if (!tokenInfo.email || tokenInfo.email === account.email || account.email === "unknown") {
-          return {
-            access: data.accessToken,
-            refresh: data.refreshToken || account.refresh,
-            expires: tokenInfo.expiresAt || (Date.now() + 3600_000),
-          };
-        }
-      }
-    }
-
-    // Fallback: try Cursor IDE's state database (SQLite)
-    const dbPath = getCursorStateDbPath();
-    if (existsSync(dbPath)) {
-      const accessToken = readCursorStateDbValue(dbPath, "cursorAuth/accessToken");
-      if (accessToken) {
-        const refreshToken = readCursorStateDbValue(dbPath, "cursorAuth/refreshToken") || account.refresh;
-        const tokenInfo = decodeCursorJWT(accessToken);
-        if (!tokenInfo.email || tokenInfo.email === account.email || account.email === "unknown") {
-          return {
-            access: accessToken,
-            refresh: refreshToken,
-            expires: tokenInfo.expiresAt || (Date.now() + 3600_000),
-          };
-        }
-      }
-    }
-
-    // Fallback 2: try macOS Keychain (cursor-agent stores tokens here)
+    const creds = readCursorAuthJsonCredentials(account.email) || readCursorStateDbCredentials(account.email);
+    if (creds) return { access: creds.access, refresh: creds.refresh || account.refresh, expires: creds.expires };
+    // Keychain fallback (macOS)
     if (platform() === "darwin") {
       try {
-        const accessToken = execSync(
-          'security find-generic-password -s "cursor-access-token" -a "cursor-user" -w 2>/dev/null',
-          { encoding: "utf-8", timeout: 5000 },
-        ).trim();
-        if (accessToken && accessToken.length > 10) {
-          let refreshToken;
-          try {
-            refreshToken = execSync(
-              'security find-generic-password -s "cursor-refresh-token" -a "cursor-user" -w 2>/dev/null',
-              { encoding: "utf-8", timeout: 5000 },
-            ).trim();
-          } catch {
-            refreshToken = account.refresh;
-          }
-          const tokenInfo = decodeCursorJWT(accessToken);
-          return {
-            access: accessToken,
-            refresh: refreshToken || account.refresh,
-            expires: tokenInfo.expiresAt || (Date.now() + 3600_000),
-          };
+        const at = execSync('security find-generic-password -s "cursor-access-token" -a "cursor-user" -w 2>/dev/null', { encoding: "utf-8", timeout: 5000 }).trim();
+        if (at && at.length > 10) {
+          let rt = account.refresh;
+          try { rt = execSync('security find-generic-password -s "cursor-refresh-token" -a "cursor-user" -w 2>/dev/null', { encoding: "utf-8", timeout: 5000 }).trim(); } catch { /* not found */ }
+          const ti = decodeCursorJWT(at);
+          return { access: at, refresh: rt || account.refresh, expires: ti.expiresAt || (Date.now() + 3600_000) };
         }
-      } catch {
-        // Keychain entry not found or access denied — continue to error
-      }
+      } catch { /* not found */ }
     }
-
-    console.error(
-      [
-        `[aidevops] OAuth pool: Cursor token refresh failed for ${account.email} —`,
-        "no valid token found in cursor-agent auth, Cursor IDE state, or macOS Keychain",
-      ].join(" "),
-    );
+    console.error(`[aidevops] OAuth pool: Cursor token refresh failed for ${account.email}`);
     return null;
   } catch (err) {
-    console.error(
-      `[aidevops] OAuth pool: Cursor token refresh error for ${account.email}: ${err.message}`,
-    );
+    console.error(`[aidevops] OAuth pool: Cursor token refresh error for ${account.email}: ${err.message}`);
     return null;
   }
 }
 
-/**
- * Refresh an expired Google access token using the refresh token (issue #5614).
- * Google uses JSON bodies (same as Anthropic). Isolated from other providers.
- * @param {PoolAccount} account
- * @returns {Promise<{access: string, refresh: string, expires: number} | null>}
- */
 async function refreshGoogleAccessToken(account) {
-  try {
-    const response = await fetchGoogleTokenEndpoint(
-      JSON.stringify({
-        grant_type: "refresh_token",
-        refresh_token: account.refresh,
-        client_id: GOOGLE_CLIENT_ID,
-      }),
-      `Google refresh for ${account.email}`,
-    );
-    if (!response.ok) {
-      return null;
-    }
-    const json = await response.json();
-    return {
-      access: json.access_token,
-      // Google may not return a new refresh_token on refresh — keep existing
-      refresh: json.refresh_token || account.refresh,
-      expires: Date.now() + (json.expires_in || 3600) * 1000,
-    };
-  } catch (err) {
-    console.error(
-      `[aidevops] OAuth pool: Google token refresh error for ${account.email}: ${err.message}`,
-    );
-    return null;
-  }
+  return refreshProviderToken(account, (a) => fetchGoogleTokenEndpoint(
+    JSON.stringify({ grant_type: "refresh_token", refresh_token: a.refresh, client_id: GOOGLE_CLIENT_ID }),
+    `Google refresh for ${a.email}`,
+  ), "Google");
 }
 
 /**
@@ -1289,16 +872,8 @@ export async function ensureValidToken(provider, account) {
     return account.access;
     // }
   }
-  let tokens;
-  if (provider === "cursor") {
-    tokens = await refreshCursorAccessToken(account);
-  } else if (provider === "openai") {
-    tokens = await refreshOpenAIAccessToken(account);
-  } else if (provider === "google") {
-    tokens = await refreshGoogleAccessToken(account);
-  } else {
-    tokens = await refreshAccessToken(account);
-  }
+  const REFRESH_FN = { cursor: refreshCursorAccessToken, openai: refreshOpenAIAccessToken, google: refreshGoogleAccessToken };
+  const tokens = await (REFRESH_FN[provider] || refreshAccessToken)(account);
   if (!tokens) {
     patchAccount(provider, account.email, {
       status: "auth-error",
@@ -1342,39 +917,27 @@ export async function ensureValidToken(provider, account) {
  * @param {PoolAccount[]} accounts - mutable array from getAccounts()
  * @returns {number} count of accounts normalized
  */
+/** Check if an account has an expired cooldown. */
+function hasExpiredCooldown(a, now) {
+  return a.cooldownUntil && a.cooldownUntil <= now && (a.status === "rate-limited" || a.status === "auth-error");
+}
+
 export function normalizeExpiredCooldowns(provider, accounts) {
   const now = Date.now();
   let normalized = 0;
   for (const a of accounts) {
-    if (a.cooldownUntil && a.cooldownUntil <= now &&
-        (a.status === "rate-limited" || a.status === "auth-error")) {
-      a.status = "idle";
-      a.cooldownUntil = null;
-      normalized++;
-    }
+    if (hasExpiredCooldown(a, now)) { a.status = "idle"; a.cooldownUntil = null; normalized++; }
   }
   if (normalized > 0) {
-    // Persist to disk — re-read to avoid overwriting concurrent changes
     withPoolLock(() => {
       const pool = loadPool();
-      const diskAccounts = pool[provider] || [];
-      const diskNow = Date.now();
-      let diskChanged = false;
-      for (const a of diskAccounts) {
-        if (a.cooldownUntil && a.cooldownUntil <= diskNow &&
-            (a.status === "rate-limited" || a.status === "auth-error")) {
-          a.status = "idle";
-          a.cooldownUntil = null;
-          diskChanged = true;
-        }
+      let changed = false;
+      for (const a of pool[provider] || []) {
+        if (hasExpiredCooldown(a, Date.now())) { a.status = "idle"; a.cooldownUntil = null; changed = true; }
       }
-      if (diskChanged) {
-        savePool(pool);
-      }
+      if (changed) savePool(pool);
     });
-    console.error(
-      `[aidevops] OAuth pool: auto-cleared ${normalized} expired cooldown(s) for ${provider}`,
-    );
+    console.error(`[aidevops] OAuth pool: auto-cleared ${normalized} expired cooldown(s) for ${provider}`);
   }
   return normalized;
 }
@@ -1398,141 +961,9 @@ function compareAccountPriority(a, b) {
   return new Date(a.lastUsed || 0).getTime() - new Date(b.lastUsed || 0).getTime();
 }
 
-/**
- * Pick the best available account from the pool.
- * Skips accounts that are in cooldown.
- * Prefers higher-priority accounts; breaks ties by least-recently-used.
- * @param {string} provider
- * @returns {PoolAccount|null}
- */
-function pickAccount(provider) {
-  const accounts = getAccounts(provider);
-  const now = Date.now();
-  const available = accounts.filter(
-    (a) => !a.cooldownUntil || a.cooldownUntil <= now,
-  );
-  if (available.length === 0) return null;
-  available.sort(compareAccountPriority);
-  return available[0];
-}
+// pickAccount and pickNextAccount replaced by selectPoolAccount above
 
-/**
- * Pick the next available account, excluding a specific email.
- * Prefers higher-priority accounts; breaks ties by least-recently-used.
- * @param {string} provider
- * @param {string} excludeEmail
- * @returns {PoolAccount|null}
- */
-function pickNextAccount(provider, excludeEmail) {
-  const accounts = getAccounts(provider);
-  const now = Date.now();
-  const available = accounts.filter(
-    (a) =>
-      a.email !== excludeEmail &&
-      (!a.cooldownUntil || a.cooldownUntil <= now),
-  );
-  if (available.length === 0) return null;
-  available.sort(compareAccountPriority);
-  return available[0];
-}
-
-/**
- * Execute a fetch with one-time pool failover on HTTP 429 or auth errors (401/403).
- *
- * On 429 (rate limit): marks the current account rate-limited, rotates to the
- * next account, then retries once.
- *
- * On 401/403 (auth error — expired/invalid token): first attempts to refresh
- * the current account's token. If refresh succeeds, retries with the same
- * account. If refresh fails, rotates to the next account and retries once.
- *
- * @param {any} client - OpenCode SDK client
- * @param {"anthropic"|"openai"|"cursor"} provider
- * @param {string} currentEmail - current account email to skip on rotation
- * @param {() => Promise<Response>} request
- * @returns {Promise<Response>}
- */
-/**
- * Rotate to the next pool account and retry a request once.
- * Returns the retry response, or the original response if no alternate account exists.
- * @param {{ client: any, provider: string, currentEmail: string, statusLabel: string, request: () => Promise<Response>, originalResponse: Response }} ctx
- * @returns {Promise<Response>}
- */
-async function rotateAndRetry(ctx) {
-  const { client, provider, currentEmail, statusLabel, request, originalResponse } = ctx;
-  const injectFn = resolveInjectFn(provider);
-  const rotated = await injectFn(client, currentEmail);
-  if (!rotated) {
-    console.error(
-      `[aidevops] OAuth pool: ${provider} ${statusLabel} for ${currentEmail}; no alternate account available for failover.`,
-    );
-    return originalResponse;
-  }
-  console.error(
-    `[aidevops] OAuth pool: ${provider} ${statusLabel} for ${currentEmail}; rotated account and retrying once.`,
-  );
-  return request();
-}
-
-export async function fetchWithPoolFailover(client, provider, currentEmail, request) {
-  const response = await request();
-  if (!currentEmail) {
-    return response;
-  }
-
-  // Handle auth errors (401/403) — token expired or invalidated mid-session
-  if (response.status === 401 || response.status === 403) {
-    console.error(
-      `[aidevops] OAuth pool: ${provider} ${response.status} for ${currentEmail}; attempting token refresh...`,
-    );
-
-    // Try refreshing the current account's token first
-    const accounts = getAccounts(provider);
-    const currentAccount = accounts.find((a) => a.email === currentEmail);
-    if (currentAccount) {
-      const refreshedToken = await ensureValidToken(provider, {
-        ...currentAccount,
-        // Force refresh by setting expires to 0
-        expires: 0,
-      });
-      if (refreshedToken) {
-        // Refresh succeeded — update env var and retry with same account
-        if (provider === "anthropic") {
-          process.env.ANTHROPIC_API_KEY = refreshedToken;
-        } else if (provider === "openai") {
-          process.env.OPENAI_API_KEY = refreshedToken;
-        }
-        console.error(
-          `[aidevops] OAuth pool: ${provider} token refreshed for ${currentEmail}; retrying request.`,
-        );
-        return request();
-      }
-    }
-
-    // Refresh failed — mark as auth-error and rotate to next account
-    console.error(
-      `[aidevops] OAuth pool: ${provider} token refresh failed for ${currentEmail}; rotating to next account.`,
-    );
-    patchAccount(provider, currentEmail, {
-      status: "auth-error",
-      cooldownUntil: Date.now() + AUTH_FAILURE_COOLDOWN_MS,
-    });
-
-    return rotateAndRetry({ client, provider, currentEmail, statusLabel: String(response.status), request, originalResponse: response });
-  }
-
-  // Handle rate limits (429) — rotate to next account immediately
-  if (response.status === 429) {
-    patchAccount(provider, currentEmail, {
-      status: "rate-limited",
-      cooldownUntil: Date.now() + RATE_LIMIT_COOLDOWN_MS,
-    });
-
-    return rotateAndRetry({ client, provider, currentEmail, statusLabel: "429", request, originalResponse: response });
-  }
-
-  return response;
-}
+// fetchWithPoolFailover + rotateAndRetry: removed (exported but never imported by external modules)
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -1545,48 +976,20 @@ export async function fetchWithPoolFailover(client, provider, currentEmail, requ
  * @param {string} providerId - e.g. "anthropic-pool" or "openai-pool"
  */
 async function seedPoolAuthEntry(client, providerId) {
-  try {
-    const existing = await client.auth.get({ path: { id: providerId } });
-    if (!existing?.data) {
-      await client.auth.set({
-        path: { id: providerId },
-        body: { type: "pending", refresh: "", access: "", expires: 0 },
-      });
-      console.error(`[aidevops] OAuth pool: seeded auth entry for ${providerId}`);
-    }
-  } catch {
-    try {
-      await client.auth.set({
-        path: { id: providerId },
-        body: { type: "pending", refresh: "", access: "", expires: 0 },
-      });
-      console.error(`[aidevops] OAuth pool: seeded auth entry for ${providerId}`);
-    } catch (err) {
-      console.error(`[aidevops] OAuth pool: failed to seed auth entry for ${providerId}: ${err.message}`);
-    }
-  }
+  const body = { type: "pending", refresh: "", access: "", expires: 0 };
+  try { await client.auth.set({ path: { id: providerId }, body }); } catch { /* already exists or no auth API */ }
 }
 
-/**
- * Inject pool tokens into built-in providers on session start.
- * Seeds auth entries for anthropic-pool, openai-pool, and cursor-pool providers.
- * @param {any} client - OpenCode SDK client
- */
-export async function initPoolAuth(client) {
-  // Seed pool provider entries (for "Add Account" flows)
-  await seedPoolAuthEntry(client, "anthropic-pool");
-  await seedPoolAuthEntry(client, "openai-pool");
-  await seedPoolAuthEntry(client, "cursor-pool");
-  await seedPoolAuthEntry(client, "google-pool");
+const POOL_PROVIDER_IDS = ["anthropic-pool", "openai-pool", "cursor-pool", "google-pool"];
 
-  // Inject pool tokens into built-in providers
+export async function initPoolAuth(client) {
+  for (const id of POOL_PROVIDER_IDS) await seedPoolAuthEntry(client, id);
+  // Anthropic/OpenAI/Cursor: errors propagate (as before refactoring)
   await injectPoolToken(client);
   await injectOpenAIPoolToken(client);
   await injectCursorPoolToken(client);
-  // Google: inject as ADC bearer token (isolated — failure does not affect others)
-  try {
-    await injectGooglePoolToken(client);
-  } catch (err) {
+  // Google: isolated — failure does not affect other providers
+  try { await injectGooglePoolToken(client); } catch (err) {
     console.error(`[aidevops] OAuth pool: Google token injection failed (isolated): ${err.message}`);
   }
 }
@@ -1598,75 +1001,27 @@ export async function initPoolAuth(client) {
  * @param {string} [skipEmail] - email to skip (for rotation on 429)
  * @returns {boolean} true if a token was injected
  */
-export async function injectPoolToken(client, skipEmail) {
-  const accounts = getAccounts("anthropic");
-  if (accounts.length === 0) return false;
-
-  // Auto-clear expired cooldowns so rate-limited accounts become available again
-  normalizeExpiredCooldowns("anthropic", accounts);
-
-  // Pick best account by priority (desc) then LRU, optionally skipping one.
-  // Accept both "active" and "idle" — idle accounts are valid (cooldowns cleared).
+// Generic pool account selection (shared by all inject functions)
+async function selectPoolAccount(provider, skipEmail) {
+  const accounts = getAccounts(provider);
+  if (accounts.length === 0) return null;
+  normalizeExpiredCooldowns(provider, accounts);
   const now = Date.now();
-  let account = null;
-  const sorted = [...accounts]
-    .filter(
-      (a) =>
-        ["active", "idle"].includes(a.status) &&
-        a.email !== skipEmail &&
-        (!a.cooldownUntil || a.cooldownUntil <= now),
-    )
-    .sort(compareAccountPriority);
+  const isAvailable = (a) => ["active", "idle"].includes(a.status) && (!a.cooldownUntil || a.cooldownUntil <= now);
+  const sorted = [...accounts].filter((a) => isAvailable(a) && a.email !== skipEmail).sort(compareAccountPriority);
+  for (const c of sorted) { if (await ensureValidToken(provider, c)) return c; console.error(`[aidevops] OAuth pool: skipping invalid ${provider} token for ${c.email}`); }
+  const fb = accounts.find(isAvailable);
+  if (fb && await ensureValidToken(provider, fb)) return fb;
+  return null;
+}
 
-  if (sorted.length === 0) {
-    // All accounts skipped or in cooldown — try any active/idle account as last resort
-    // Must still respect cooldown to avoid using accounts that should be resting (GH#5552)
-    account = accounts.find(
-      (a) =>
-        ["active", "idle"].includes(a.status) &&
-        (!a.cooldownUntil || a.cooldownUntil <= now),
-    );
-  } else {
-    account = sorted[0];
-  }
-
+export async function injectPoolToken(client, skipEmail) {
+  const account = await selectPoolAccount("anthropic", skipEmail);
   if (!account) return false;
 
-  // Ensure token is valid (refresh if needed)
-  const accessToken = await ensureValidToken("anthropic", account);
-  if (!accessToken) {
-    console.error(`[aidevops] OAuth pool: failed to get valid token for ${account.email}`);
-    return false;
-  }
-
-  // Inject via env var — works on all OpenCode versions including 1.3.0+
-  // where the bundled @ai-sdk/anthropic reads ANTHROPIC_API_KEY directly
-  // and ignores auth.json. OAuth access tokens are accepted in the same
-  // x-api-key header as API keys.
-  process.env.ANTHROPIC_API_KEY = accessToken;
-
-  // Also write to auth.json via client.auth.set — works on OpenCode <=1.2.27
-  // where the provider layer reads auth entries. Harmless on 1.3.0+.
-  try {
-    await client.auth.set({
-      path: { id: "anthropic" },
-      body: {
-        type: "oauth",
-        refresh: account.refresh,
-        access: account.access,
-        expires: account.expires,
-      },
-    });
-  } catch {
-    // Best-effort — env var injection is the primary path
-  }
-
-  // Mark as used
-  patchAccount("anthropic", account.email, {
-    lastUsed: new Date().toISOString(),
-    status: "active",
-  });
-
+  process.env.ANTHROPIC_API_KEY = account.access;
+  try { await client.auth.set({ path: { id: "anthropic" }, body: { type: "oauth", refresh: account.refresh, access: account.access, expires: account.expires } }); } catch { /* best-effort */ }
+  patchAccount("anthropic", account.email, { lastUsed: new Date().toISOString(), status: "active" });
   console.error(`[aidevops] OAuth pool: injected token for ${account.email} into built-in anthropic provider`);
   return true;
 }
@@ -1679,69 +1034,11 @@ export async function injectPoolToken(client, skipEmail) {
  * @returns {boolean} true if a token was injected
  */
 export async function injectOpenAIPoolToken(client, skipEmail) {
-  const accounts = getAccounts("openai");
-  if (accounts.length === 0) return false;
-
-  // Auto-clear expired cooldowns so rate-limited accounts become available again
-  normalizeExpiredCooldowns("openai", accounts);
-
-  const now = Date.now();
-  // Pick best account by priority (desc) then LRU, optionally skipping one.
-  // Retry token validation across all candidates before failing.
-  let account = null;
-  const sorted = [...accounts]
-    .filter(
-      (a) =>
-        ["active", "idle"].includes(a.status) &&
-        a.email !== skipEmail &&
-        (!a.cooldownUntil || a.cooldownUntil <= now),
-    )
-    .sort(compareAccountPriority);
-
-  for (const candidate of sorted) {
-    const accessToken = await ensureValidToken("openai", candidate);
-    if (!accessToken) {
-      console.error(`[aidevops] OAuth pool: skipping invalid OpenAI token for ${candidate.email}`);
-      continue;
-    }
-    account = candidate;
-    break;
-  }
-
+  const account = await selectPoolAccount("openai", skipEmail);
   if (!account) return false;
-
-  // Ensure we have a valid access token
-  const accessToken = await ensureValidToken("openai", account);
-  if (!accessToken) {
-    console.error(`[aidevops] OAuth pool: failed to get valid OpenAI token for ${account.email}`);
-    return false;
-  }
-
-  // Inject via env var — works on all OpenCode versions including 1.3.0+
-  process.env.OPENAI_API_KEY = accessToken;
-
-  // Also write to auth.json via client.auth.set — works on OpenCode <=1.2.27
-  try {
-    await client.auth.set({
-      path: { id: "openai" },
-      body: {
-        type: "oauth",
-        refresh: account.refresh,
-        access: account.access,
-        expires: account.expires,
-        accountId: account.accountId || "",
-      },
-    });
-  } catch {
-    // Best-effort — env var injection is the primary path
-  }
-
-  // Mark as used
-  patchAccount("openai", account.email, {
-    lastUsed: new Date().toISOString(),
-    status: "active",
-  });
-
+  process.env.OPENAI_API_KEY = account.access;
+  try { await client.auth.set({ path: { id: "openai" }, body: { type: "oauth", refresh: account.refresh, access: account.access, expires: account.expires, accountId: account.accountId || "" } }); } catch { /* best-effort */ }
+  patchAccount("openai", account.email, { lastUsed: new Date().toISOString(), status: "active" });
   console.error(`[aidevops] OAuth pool: injected token for ${account.email} into built-in openai provider`);
   return true;
 }
@@ -1839,33 +1136,7 @@ export function stopCursorProxy() {
  * @returns {Promise<boolean>} true if a token was injected
  */
 export async function injectCursorPoolToken(client, skipEmail) {
-  const accounts = getAccounts("cursor");
-  if (accounts.length === 0) return false;
-
-  // Auto-clear expired cooldowns so rate-limited accounts become available again
-  normalizeExpiredCooldowns("cursor", accounts);
-
-  const now = Date.now();
-  let account = null;
-  const sorted = [...accounts]
-    .filter(
-      (a) =>
-        ["active", "idle"].includes(a.status) &&
-        a.email !== skipEmail &&
-        (!a.cooldownUntil || a.cooldownUntil <= now),
-    )
-    .sort(compareAccountPriority);
-
-  for (const candidate of sorted) {
-    const accessToken = await ensureValidToken("cursor", candidate);
-    if (!accessToken) {
-      console.error(`[aidevops] OAuth pool: skipping invalid Cursor token for ${candidate.email}`);
-      continue;
-    }
-    account = candidate;
-    break;
-  }
-
+  const account = await selectPoolAccount("cursor", skipEmail);
   if (!account) return false;
 
   // Ensure the gRPC proxy is running (t1551)
@@ -1913,1317 +1184,37 @@ export async function injectCursorPoolToken(client, skipEmail) {
  * @returns {Promise<boolean>} true if a token was injected
  */
 export async function injectGooglePoolToken(client, skipEmail) {
-  const accounts = getAccounts("google");
-  if (accounts.length === 0) return false;
-
-  // Auto-clear expired cooldowns so rate-limited accounts become available again
-  normalizeExpiredCooldowns("google", accounts);
-
-  const now = Date.now();
-  let account = null;
-  const sorted = [...accounts]
-    .filter(
-      (a) =>
-        ["active", "idle"].includes(a.status) &&
-        a.email !== skipEmail &&
-        (!a.cooldownUntil || a.cooldownUntil <= now),
-    )
-    .sort(compareAccountPriority);
-
-  for (const candidate of sorted) {
-    const accessToken = await ensureValidToken("google", candidate);
-    if (!accessToken) {
-      console.error(`[aidevops] OAuth pool: skipping invalid Google token for ${candidate.email}`);
-      continue;
-    }
-    account = candidate;
-    break;
-  }
-
+  const account = await selectPoolAccount("google", skipEmail);
   if (!account) return false;
-
-  const accessToken = await ensureValidToken("google", account);
-  if (!accessToken) {
-    console.error(`[aidevops] OAuth pool: failed to get valid Google token for ${account.email}`);
-    return false;
-  }
-
-  // Inject as ADC bearer token — Gemini CLI and Vertex AI SDK read this env var
-  process.env.GOOGLE_OAUTH_ACCESS_TOKEN = accessToken;
-
-  // Mark as used
-  patchAccount("google", account.email, {
-    lastUsed: new Date().toISOString(),
-    status: "active",
-  });
-
+  process.env.GOOGLE_OAUTH_ACCESS_TOKEN = account.access;
+  patchAccount("google", account.email, { lastUsed: new Date().toISOString(), status: "active" });
   console.error(`[aidevops] OAuth pool: injected Google token for ${account.email} as GOOGLE_OAUTH_ACCESS_TOKEN`);
   return true;
 }
 
-/**
- * Build the email prompt object for a pool auth hook.
- * All four providers (anthropic, openai, cursor, google) use the same structure.
- * @param {string} provider - pool provider key (e.g. "anthropic")
- * @param {string} [placeholder] - placeholder text (default "you@example.com")
- * @returns {object} prompt definition
- */
-function makeEmailPrompt(provider, placeholder = "you@example.com") {
-  return {
-    type: "text",
-    key: "email",
-    get message() {
-      const accounts = getAccounts(provider);
-      if (accounts.length === 0) {
-        return "Account email (required to match tokens to accounts)";
-      }
-      const emails = accounts.map((a, i) => `  ${i + 1}. ${a.email}`).join("\n");
-      return `Existing accounts:\n${emails}\nEnter email (existing to re-auth, or new to add)`;
-    },
-    placeholder,
-    validate: (value) => {
-      if (!value || !value.includes("@")) {
-        return "Please enter a valid email address";
-      }
-      return undefined;
-    },
+// Auth hooks, handlers, helpers, and registerPoolProvider → oauth-pool-auth.mjs
+// Re-export for backward compatibility
+export { createPoolAuthHook, createOpenAIPoolAuthHook, createCursorPoolAuthHook, createGooglePoolAuthHook, registerPoolProvider } from "./oauth-pool-auth.mjs";
+
+
+// Tool → oauth-pool-tool.mjs
+export { createPoolTool } from "./oauth-pool-tool.mjs";
+
+// Sub-module exports (needed by oauth-pool-auth.mjs and oauth-pool-tool.mjs)
+export { ANTHROPIC_USER_AGENT, OPENCODE_USER_AGENT, GOOGLE_HEALTH_CHECK_URL };
+export { withPoolLock, loadPool, savePool, decodeCursorJWT };
+
+export function getEndpointCooldownValue(prov) {
+  const map = { anthropic: tokenEndpointCooldownUntil, openai: openaiTokenEndpointCooldownUntil, google: googleTokenEndpointCooldownUntil };
+  return map[prov] ?? cursorProxyCooldownUntil;
+}
+export function resetEndpointCooldown(prov) {
+  const setters = {
+    cursor: () => { const g = cursorProxyCooldownUntil > Date.now(); cursorProxyCooldownUntil = 0; return g; },
+    openai: () => { const g = openaiTokenEndpointCooldownUntil > Date.now(); openaiTokenEndpointCooldownUntil = 0; return g; },
+    google: () => { const g = googleTokenEndpointCooldownUntil > Date.now(); googleTokenEndpointCooldownUntil = 0; return g; },
+    anthropic: () => { const g = tokenEndpointCooldownUntil > Date.now(); tokenEndpointCooldownUntil = 0; return g; },
   };
+  return (setters[prov] || setters.anthropic)();
 }
-
-/**
- * Create the auth hook for the anthropic-pool provider.
- * This provider exists solely for the "Add Account to Pool" OAuth flow.
- * It has no models — users select models from the built-in "anthropic" provider,
- * which uses pool tokens injected into auth.json by initPoolAuth/injectPoolToken.
- * @param {any} client - OpenCode SDK client
- * @returns {import('@opencode-ai/plugin').AuthHook}
- */
-export function createPoolAuthHook(client) {
-  return {
-    provider: "anthropic-pool",
-
-    methods: [
-      {
-        get label() {
-          const accounts = getAccounts("anthropic");
-          if (accounts.length === 0) {
-            return "Add Account to Pool (Claude Pro/Max)";
-          }
-          return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
-        },
-        type: "oauth",
-        prompts: [makeEmailPrompt("anthropic")],
-        authorize: async (inputs) => {
-          const email = inputs?.email || "unknown";
-          const pkce = generatePKCE();
-
-          const url = new URL(ANTHROPIC_OAUTH_AUTHORIZE_URL);
-          url.searchParams.set("code", "true");
-          url.searchParams.set("client_id", ANTHROPIC_CLIENT_ID);
-          url.searchParams.set("response_type", "code");
-          url.searchParams.set("redirect_uri", ANTHROPIC_REDIRECT_URI);
-          url.searchParams.set("scope", ANTHROPIC_OAUTH_SCOPES);
-          url.searchParams.set("code_challenge", pkce.challenge);
-          url.searchParams.set("code_challenge_method", "S256");
-          url.searchParams.set("state", pkce.verifier);
-
-          return {
-            url: url.toString(),
-            instructions: `Adding account: ${email}\nPaste the authorization code here: `,
-            method: "code",
-            callback: async (code) => {
-              const hashIdx = code.indexOf("#");
-              const authCode = hashIdx >= 0 ? code.substring(0, hashIdx) : code;
-              const state = hashIdx >= 0 ? code.substring(hashIdx + 1) : undefined;
-
-              const result = await fetchTokenEndpoint(
-                JSON.stringify({
-                  code: authCode,
-                  state,
-                  grant_type: "authorization_code",
-                  client_id: ANTHROPIC_CLIENT_ID,
-                  redirect_uri: ANTHROPIC_REDIRECT_URI,
-                  code_verifier: pkce.verifier,
-                }),
-                "token exchange",
-              );
-
-              if (!result.ok) {
-                return { type: "failed" };
-              }
-
-              const json = await result.json();
-
-              // Resolve account email from user profile if prompts were skipped
-              let resolvedEmail = email;
-              if (resolvedEmail === "unknown" && json.access_token) {
-                const profileEndpoints = [
-                  "https://console.anthropic.com/api/auth/user",
-                  "https://api.anthropic.com/api/auth/user",
-                ];
-                for (const endpoint of profileEndpoints) {
-                  try {
-                    const profileResp = await fetch(endpoint, {
-                      headers: {
-                        "Authorization": `Bearer ${json.access_token}`,
-                        "User-Agent": ANTHROPIC_USER_AGENT,
-                      },
-                      redirect: "follow",
-                    });
-                    if (profileResp.ok) {
-                      const profile = await profileResp.json();
-                      const found = profile.email || profile.email_address
-                        || profile.user?.email || profile.account?.email;
-                      if (found) {
-                        resolvedEmail = found;
-                        console.error(`[aidevops] OAuth pool: resolved email ${found} from ${endpoint}`);
-                        break;
-                      }
-                    }
-                  } catch {
-                    // Try next endpoint
-                  }
-                }
-                if (resolvedEmail === "unknown") {
-                  console.error("[aidevops] OAuth pool: could not resolve email from profile API");
-                }
-              }
-
-              const tokenData = {
-                refresh: json.refresh_token,
-                access: json.access_token,
-                expires: Date.now() + json.expires_in * 1000,
-              };
-
-              const saved = upsertAccount("anthropic", {
-                email: resolvedEmail,
-                ...tokenData,
-                added: new Date().toISOString(),
-                lastUsed: new Date().toISOString(),
-                status: "active",
-                cooldownUntil: null,
-              });
-
-              if (!saved) {
-                // upsertAccount refused — unknown email with named accounts.
-                // Save to pending so the token isn't lost. The user can assign
-                // it to an account via /model-accounts-pool or it will be
-                // offered on next session start.
-                savePendingToken("anthropic", {
-                  ...tokenData,
-                  added: new Date().toISOString(),
-                });
-                // Also inject into the built-in provider for this session
-                if (tokenData.access) process.env.ANTHROPIC_API_KEY = tokenData.access;
-                try {
-                  await client.auth.set({
-                    path: { id: "anthropic" },
-                    body: { type: "oauth", ...tokenData },
-                  });
-                } catch {
-                  // Best-effort — env var injection is the primary path
-                }
-                return { type: "success", ...tokenData };
-              }
-
-              const totalAccounts = getAccounts("anthropic").length;
-              console.error(
-                `[aidevops] OAuth pool: added ${resolvedEmail} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
-              );
-              console.error(
-                `[aidevops] OAuth pool: Account added successfully. Now switch to the "Anthropic" provider and select a model (e.g. claude-sonnet) to start chatting. The "Anthropic Pool" provider is for account management only.`,
-              );
-
-              // Inject the new token into the built-in anthropic provider
-              await injectPoolToken(client);
-
-              return { type: "success", ...tokenData };
-            },
-          };
-        },
-      },
-    ],
-  };
-}
-
-/**
- * Create the auth hook for the openai-pool provider (t1548).
- * This provider exists solely for the "Add Account to Pool" OAuth flow.
- * It has no models — users select models from the built-in "openai" provider,
- * which uses pool tokens injected into auth.json by injectOpenAIPoolToken.
- *
- * OpenAI OAuth uses form-encoded bodies and a local redirect server (port 1455)
- * for its built-in flow. For the pool's add-account flow we use the same
- * redirect URI with a code-paste UX (same as Anthropic pool).
- *
- * @param {any} client - OpenCode SDK client
- * @returns {import('@opencode-ai/plugin').AuthHook}
- */
-export function createOpenAIPoolAuthHook(client) {
-  return {
-    provider: "openai-pool",
-
-    methods: [
-      {
-        get label() {
-          const accounts = getAccounts("openai");
-          if (accounts.length === 0) {
-            return "Add Account to Pool (ChatGPT Plus/Pro)";
-          }
-          return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
-        },
-        type: "oauth",
-        prompts: [makeEmailPrompt("openai")],
-        authorize: async (inputs) => {
-          const email = inputs?.email || "unknown";
-          const pkce = generatePKCE();
-
-          // Start a local callback server to catch the OAuth redirect.
-          // OpenAI redirects to localhost:1455 — without this server the
-          // browser shows "connection refused" and the user can't get the code.
-          let callbackServer = null;
-          let serverCode = null;
-          let autoCaptureReady = false;
-          try {
-            callbackServer = startOAuthCallbackServer();
-            autoCaptureReady = await callbackServer.ready.catch(() => false);
-            if (autoCaptureReady) {
-              // Store the code when the server catches it (non-blocking)
-              callbackServer.promise
-                .then((code) => { serverCode = code; })
-                .catch(() => {
-                  /* timeout or error — user can paste manually */
-                  callbackServer = null;
-                });
-            } else {
-              // Server failed to bind (EADDRINUSE etc.) — fall back to manual paste
-              console.error("[aidevops] OAuth pool: callback server failed to start — manual code paste required");
-              callbackServer = null;
-            }
-          } catch {
-            // Server construction failed — fall back to manual paste
-            console.error("[aidevops] OAuth pool: callback server failed to start — manual code paste required");
-            callbackServer = null;
-          }
-
-          const url = new URL(OPENAI_OAUTH_AUTHORIZE_URL);
-          url.searchParams.set("client_id", OPENAI_CLIENT_ID);
-          url.searchParams.set("response_type", "code");
-          url.searchParams.set("redirect_uri", OPENAI_REDIRECT_URI);
-          url.searchParams.set("scope", OPENAI_OAUTH_SCOPES);
-          url.searchParams.set("code_challenge", pkce.challenge);
-          url.searchParams.set("code_challenge_method", "S256");
-
-          return {
-            url: url.toString(),
-            instructions: [
-              `Adding OpenAI account: ${email}`,
-              `1. A browser window will open to auth.openai.com`,
-              `2. Sign in with your ChatGPT Plus/Pro account`,
-              autoCaptureReady
-                ? `3. After authorizing, the code will be captured automatically`
-                : `3. After authorizing, copy the authorization code from the browser URL`,
-              autoCaptureReady
-                ? `4. Press Enter here to complete (or paste the code manually if needed): `
-                : `4. Paste the authorization code here: `,
-            ].join("\n"),
-            method: "code",
-            callback: async (code) => {
-              // Use server-captured code if available, otherwise use manual input
-              let authCode = code?.trim();
-              if ((!authCode || authCode.length < 5) && serverCode) {
-                authCode = serverCode;
-                console.error("[aidevops] OAuth pool: using auto-captured code from callback server");
-              } else if ((!authCode || authCode.length < 5) && autoCaptureReady && callbackServer) {
-                // Server hasn't caught the code yet — wait briefly
-                try {
-                  authCode = await Promise.race([
-                    callbackServer.promise,
-                    new Promise((_, reject) =>
-                      setTimeout(() => reject(new Error("timeout")), 30_000),
-                    ),
-                  ]);
-                  console.error("[aidevops] OAuth pool: received code from callback server");
-                } catch {
-                  console.error("[aidevops] OAuth pool: no code received — authorization failed");
-                  if (callbackServer) callbackServer.close();
-                  return { type: "failed" };
-                }
-              }
-
-              // Clean up the callback server
-              if (callbackServer) callbackServer.close();
-
-              if (!authCode || authCode.length < 5) {
-                return { type: "failed" };
-              }
-
-              // Strip any URL fragment or extra parameters
-              const cleanCode = authCode.split(/[&#?]/)[0];
-
-              const params = new URLSearchParams({
-                grant_type: "authorization_code",
-                code: cleanCode,
-                redirect_uri: OPENAI_REDIRECT_URI,
-                client_id: OPENAI_CLIENT_ID,
-                code_verifier: pkce.verifier,
-              });
-
-              const result = await fetchOpenAITokenEndpoint(params, "token exchange");
-
-              if (!result.ok) {
-                return { type: "failed" };
-              }
-
-              const json = await result.json();
-
-              // Resolve account email and accountId from JWT claims
-              let resolvedEmail = email;
-              let accountId = "";
-              if (json.access_token) {
-                try {
-                  // Decode JWT payload (base64url, no verification needed here)
-                  const parts = json.access_token.split(".");
-                  if (parts.length >= 2) {
-                    const payload = JSON.parse(
-                      Buffer.from(parts[1], "base64url").toString("utf-8"),
-                    );
-                    // OpenAI JWT claims: chatgpt_account_id or https://api.openai.com/auth.chatgpt_account_id
-                    accountId = payload.chatgpt_account_id
-                      || payload["https://api.openai.com/auth"]?.chatgpt_account_id
-                      || payload.organizations?.[0]?.id
-                      || "";
-                    // Email from standard OIDC claims
-                    if (resolvedEmail === "unknown") {
-                      resolvedEmail = payload.email || payload.sub || "unknown";
-                    }
-                  }
-                } catch {
-                  // JWT decode failed — continue with provided email
-                }
-
-                // Fallback: try OpenAI userinfo endpoint
-                if (resolvedEmail === "unknown") {
-                  try {
-                    const userResp = await fetch(`${OPENAI_ISSUER}/userinfo`, {
-                      headers: {
-                        "Authorization": `Bearer ${json.access_token}`,
-                        "User-Agent": OPENCODE_USER_AGENT,
-                      },
-                    });
-                    if (userResp.ok) {
-                      const userInfo = await userResp.json();
-                      resolvedEmail = userInfo.email || userInfo.sub || "unknown";
-                      console.error(`[aidevops] OAuth pool: resolved OpenAI email ${resolvedEmail} from userinfo`);
-                    }
-                  } catch {
-                    // Userinfo endpoint unavailable
-                  }
-                }
-              }
-
-              const tokenData = {
-                refresh: json.refresh_token || "",
-                access: json.access_token,
-                expires: Date.now() + (json.expires_in || 3600) * 1000,
-              };
-
-              const saved = upsertAccount("openai", {
-                email: resolvedEmail,
-                ...tokenData,
-                added: new Date().toISOString(),
-                lastUsed: new Date().toISOString(),
-                status: "active",
-                cooldownUntil: null,
-                accountId,
-              });
-
-              if (!saved) {
-                // upsertAccount refused — unknown email with named accounts.
-                // Save to pending so the token isn't lost.
-                savePendingToken("openai", {
-                  ...tokenData,
-                  added: new Date().toISOString(),
-                  accountId,
-                });
-                // Also inject into the built-in provider for this session
-                if (tokenData.access) process.env.OPENAI_API_KEY = tokenData.access;
-                try {
-                  await client.auth.set({
-                    path: { id: "openai" },
-                    body: { type: "oauth", ...tokenData, accountId },
-                  });
-                } catch {
-                  // Best-effort — env var injection is the primary path
-                }
-                return { type: "success", ...tokenData };
-              }
-
-              const totalAccounts = getAccounts("openai").length;
-              console.error(
-                `[aidevops] OAuth pool: added OpenAI ${resolvedEmail} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
-              );
-              console.error(
-                `[aidevops] OAuth pool: Account added successfully. Now switch to the "OpenAI" provider and select a model (e.g. gpt-4o) to start chatting. The "OpenAI Pool" provider is for account management only.`,
-              );
-
-              // Inject the new token into the built-in openai provider
-              await injectOpenAIPoolToken(client);
-
-              return { type: "success", ...tokenData };
-            },
-          };
-        },
-      },
-    ],
-  };
-}
-
-/**
- * Create the auth hook for the cursor-pool provider (t1549).
- * This provider exists solely for the "Add Account to Pool" flow.
- * It has no models — users select models from the built-in "cursor" provider,
- * which uses pool tokens injected by injectCursorPoolToken.
- *
- * Cursor authentication works differently from Anthropic/OpenAI:
- *   1. Credentials are extracted from the local Cursor installation
- *      (cursor-agent auth.json or Cursor IDE's state.vscdb)
- *   2. If no local credentials exist, `cursor-agent login` opens a browser
- *   3. The proxy sidecar translates OpenAI-compatible requests to cursor-agent CLI calls
- *
- * @param {any} client - OpenCode SDK client
- * @returns {import('@opencode-ai/plugin').AuthHook}
- */
-export function createCursorPoolAuthHook(client) {
-  return {
-    provider: "cursor-pool",
-
-    methods: [
-      {
-        get label() {
-          const accounts = getAccounts("cursor");
-          if (accounts.length === 0) {
-            return "Add Account to Pool (Cursor Pro)";
-          }
-          return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
-        },
-        type: "api",
-        prompts: [makeEmailPrompt("cursor")],
-        authorize: async (inputs) => {
-          const email = inputs?.email || "unknown";
-
-          // Strategy 1: Extract from cursor-agent auth.json
-          const authPath = getCursorAgentAuthPath();
-          let accessToken = null;
-          let refreshToken = "";
-          let resolvedEmail = email;
-
-          if (existsSync(authPath)) {
-            try {
-              const content = readFileSync(authPath, "utf-8");
-              const data = JSON.parse(content);
-              if (data.accessToken) {
-                accessToken = data.accessToken;
-                refreshToken = data.refreshToken || "";
-                const tokenInfo = decodeCursorJWT(accessToken);
-                if (tokenInfo.email && resolvedEmail === "unknown") {
-                  resolvedEmail = tokenInfo.email;
-                }
-                console.error(`[aidevops] OAuth pool: found Cursor credentials in ${authPath}`);
-              }
-            } catch (err) {
-              console.error(`[aidevops] OAuth pool: failed to read cursor-agent auth: ${err.message}`);
-            }
-          }
-
-          // Strategy 2: Try Cursor IDE's state database
-          if (!accessToken) {
-            const dbPath = getCursorStateDbPath();
-            if (existsSync(dbPath)) {
-              accessToken = readCursorStateDbValue(dbPath, "cursorAuth/accessToken");
-              refreshToken = readCursorStateDbValue(dbPath, "cursorAuth/refreshToken") || "";
-              if (accessToken) {
-                const cachedEmail = readCursorStateDbValue(dbPath, "cursorAuth/cachedEmail");
-                if (cachedEmail && resolvedEmail === "unknown") {
-                  resolvedEmail = cachedEmail;
-                }
-                if (resolvedEmail === "unknown") {
-                  const tokenInfo = decodeCursorJWT(accessToken);
-                  if (tokenInfo.email) resolvedEmail = tokenInfo.email;
-                }
-                console.error(`[aidevops] OAuth pool: found Cursor credentials in state DB`);
-              }
-            }
-          }
-
-          // Strategy 3: Run cursor-agent login (opens browser)
-          if (!accessToken) {
-            if (!isCursorAgentAvailable()) {
-              console.error(
-                `[aidevops] OAuth pool: cursor-agent not found. Install it: curl -fsS https://cursor.com/install | bash`,
-              );
-              return { type: "failed" };
-            }
-
-            console.error("[aidevops] OAuth pool: no local Cursor credentials found, running cursor-agent login...");
-            try {
-              execSync("cursor-agent login", {
-                encoding: "utf-8",
-                timeout: 120_000,
-                stdio: ["inherit", "pipe", "pipe"],
-              });
-              // Re-read auth after login
-              if (existsSync(authPath)) {
-                const content = readFileSync(authPath, "utf-8");
-                const data = JSON.parse(content);
-                if (data.accessToken) {
-                  accessToken = data.accessToken;
-                  refreshToken = data.refreshToken || "";
-                  const tokenInfo = decodeCursorJWT(accessToken);
-                  if (tokenInfo.email && resolvedEmail === "unknown") {
-                    resolvedEmail = tokenInfo.email;
-                  }
-                }
-              }
-            } catch (err) {
-              console.error(`[aidevops] OAuth pool: cursor-agent login failed: ${err.message}`);
-              return { type: "failed" };
-            }
-          }
-
-          if (!accessToken) {
-            console.error("[aidevops] OAuth pool: no Cursor access token obtained");
-            return { type: "failed" };
-          }
-
-          const tokenInfo = decodeCursorJWT(accessToken);
-          const tokenData = {
-            refresh: refreshToken,
-            access: accessToken,
-            expires: tokenInfo.expiresAt || (Date.now() + 3600_000),
-          };
-
-          const saved = upsertAccount("cursor", {
-            email: resolvedEmail,
-            ...tokenData,
-            added: new Date().toISOString(),
-            lastUsed: new Date().toISOString(),
-            status: "active",
-            cooldownUntil: null,
-          });
-
-          if (!saved) {
-            savePendingToken("cursor", {
-              ...tokenData,
-              added: new Date().toISOString(),
-            });
-            return { type: "success", key: "cursor-pool" };
-          }
-
-          const totalAccounts = getAccounts("cursor").length;
-          console.error(
-            `[aidevops] OAuth pool: added Cursor ${resolvedEmail} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
-          );
-          console.error(
-            `[aidevops] OAuth pool: Account added successfully. Now switch to the "Cursor" provider and select a model to start chatting. The "Cursor Pool" provider is for account management only.`,
-          );
-
-          // Inject the new token and start proxy
-          await injectCursorPoolToken(client);
-
-          return { type: "success", key: "cursor-pool" };
-        },
-      },
-    ],
-  };
-}
-
-/**
- * Create the auth hook for the google-pool provider (issue #5614).
- * This provider exists solely for the "Add Account to Pool" OAuth flow.
- * It has no models — Google tokens are injected as GOOGLE_OAUTH_ACCESS_TOKEN
- * (ADC bearer) for Gemini CLI / Vertex AI / generativelanguage.googleapis.com.
- *
- * Google OAuth uses PKCE + OOB redirect (urn:ietf:wg:oauth:2.0:oob) — the
- * authorization code is displayed in the browser for manual paste.
- * access_type=offline + prompt=consent ensures a refresh_token is returned.
- *
- * Isolation: Google auth failures never affect anthropic/openai/cursor providers.
- *
- * @param {any} client - OpenCode SDK client
- * @returns {import('@opencode-ai/plugin').AuthHook}
- */
-export function createGooglePoolAuthHook(client) {
-  return {
-    provider: "google-pool",
-
-    methods: [
-      {
-        get label() {
-          const accounts = getAccounts("google");
-          if (accounts.length === 0) {
-            return "Add Account to Pool (Google AI Pro/Ultra/Workspace)";
-          }
-          return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
-        },
-        type: "oauth",
-        prompts: [makeEmailPrompt("google", "you@gmail.com")],
-        authorize: async (inputs) => {
-          const email = inputs?.email || "unknown";
-          const pkce = generatePKCE();
-
-          const url = new URL(GOOGLE_OAUTH_AUTHORIZE_URL);
-          url.searchParams.set("client_id", GOOGLE_CLIENT_ID);
-          url.searchParams.set("response_type", "code");
-          url.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI);
-          url.searchParams.set("scope", GOOGLE_OAUTH_SCOPES);
-          url.searchParams.set("code_challenge", pkce.challenge);
-          url.searchParams.set("code_challenge_method", "S256");
-          url.searchParams.set("access_type", "offline");
-          url.searchParams.set("prompt", "consent");
-
-          return {
-            url: url.toString(),
-            instructions: [
-              `Adding Google AI account: ${email}`,
-              `1. A browser window will open to accounts.google.com`,
-              `2. Sign in with your Google AI Pro/Ultra or Workspace account`,
-              `3. After authorizing, copy the authorization code shown in the browser`,
-              `4. Paste the authorization code here: `,
-            ].join("\n"),
-            method: "code",
-            callback: async (code) => {
-              const authCode = code?.trim();
-              if (!authCode || authCode.length < 5) {
-                return { type: "failed" };
-              }
-
-              const result = await fetchGoogleTokenEndpoint(
-                JSON.stringify({
-                  code: authCode,
-                  grant_type: "authorization_code",
-                  client_id: GOOGLE_CLIENT_ID,
-                  redirect_uri: GOOGLE_REDIRECT_URI,
-                  code_verifier: pkce.verifier,
-                }),
-                "Google token exchange",
-              );
-
-              if (!result.ok) {
-                return { type: "failed" };
-              }
-
-              const json = await result.json();
-
-              // Resolve email from ID token JWT claims (Google OIDC)
-              let resolvedEmail = email;
-              if (json.id_token && resolvedEmail === "unknown") {
-                try {
-                  const parts = json.id_token.split(".");
-                  if (parts.length >= 2) {
-                    const payload = JSON.parse(
-                      Buffer.from(parts[1], "base64url").toString("utf-8"),
-                    );
-                    resolvedEmail = payload.email || payload.sub || "unknown";
-                    console.error(`[aidevops] OAuth pool: resolved Google email ${resolvedEmail} from ID token`);
-                  }
-                } catch {
-                  // JWT decode failed — continue with provided email
-                }
-              }
-
-              // Fallback: try Google userinfo endpoint
-              if (resolvedEmail === "unknown" && json.access_token) {
-                try {
-                  const userResp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-                    headers: {
-                      "Authorization": `Bearer ${json.access_token}`,
-                    },
-                  });
-                  if (userResp.ok) {
-                    const userInfo = await userResp.json();
-                    resolvedEmail = userInfo.email || userInfo.sub || "unknown";
-                    console.error(`[aidevops] OAuth pool: resolved Google email ${resolvedEmail} from userinfo`);
-                  }
-                } catch {
-                  // Userinfo endpoint unavailable
-                }
-              }
-
-              const tokenData = {
-                refresh: json.refresh_token || "",
-                access: json.access_token,
-                expires: Date.now() + (json.expires_in || 3600) * 1000,
-              };
-
-              const saved = upsertAccount("google", {
-                email: resolvedEmail,
-                ...tokenData,
-                added: new Date().toISOString(),
-                lastUsed: new Date().toISOString(),
-                status: "active",
-                cooldownUntil: null,
-              });
-
-              if (!saved) {
-                // upsertAccount refused — unknown email with named accounts.
-                savePendingToken("google", {
-                  ...tokenData,
-                  added: new Date().toISOString(),
-                });
-                // Inject for this session
-                if (tokenData.access) process.env.GOOGLE_OAUTH_ACCESS_TOKEN = tokenData.access;
-                return { type: "success", ...tokenData };
-              }
-
-              const totalAccounts = getAccounts("google").length;
-              console.error(
-                `[aidevops] OAuth pool: added Google ${resolvedEmail} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
-              );
-              console.error(
-                `[aidevops] OAuth pool: Google account added. Token injected as GOOGLE_OAUTH_ACCESS_TOKEN for Gemini CLI / Vertex AI.`,
-              );
-
-              // Inject the new token
-              await injectGooglePoolToken(client);
-
-              return { type: "success", ...tokenData };
-            },
-          };
-        },
-      },
-    ],
-  };
-}
-
-/**
- * Register the pool provider for the auth dialog display name.
- *
- * The auth hook (provider: "anthropic-pool") automatically appears in the
- * Ctrl+A auth dialog via OpenCode's resolvePluginProviders(). However, the
- * display name comes from config.provider[id].name — without a config entry
- * it shows the raw ID "anthropic-pool".
- *
- * We register a config entry with NO models so it provides the display name
- * but doesn't appear in the model picker. Previous versions had dummy models
- * which caused the provider to show up as a selectable (but broken) model.
- *
- * Models are served by the built-in providers ("anthropic", "openai", "cursor"),
- * which use pool tokens injected into auth.json by initPoolAuth/injectPoolToken/
- * injectOpenAIPoolToken/injectCursorPoolToken.
- *
- * @param {any} config - OpenCode config object
- * @returns {number} number of changes made
- */
-export function registerPoolProvider(config) {
-  if (!config.provider) config.provider = {};
-  let registered = 0;
-
-  // A dummy model is required for the provider to appear in the "Connect a
-  // provider" auth dialog (Ctrl+A). Without at least one model entry, OpenCode
-  // filters the provider out of the dialog entirely. The model uses minimal
-  // limits and zero cost so it doesn't appear as a usable model in the picker.
-  // Register or migrate: create if absent, or update if present but missing
-  // the dummy model (e.g. from a previous version that stored no models).
-  const poolAccountModel = {
-    "pool-account-management": {
-      name: "[Account Setup Only] Use Anthropic provider for models",
-      attachment: false, tool_call: false, temperature: false,
-      modalities: { input: ["text"], output: ["text"] },
-      cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-      limit: { context: 1000, output: 100 },
-      family: "pool",
-    },
-  };
-
-  // Pool provider definitions — model names are always force-updated to fix
-  // stale names from prior versions (the condition previously only wrote when
-  // the provider was absent, leaving old "Add/Manage Accounts" names in place).
-  const poolProviders = [
-    {
-      id: "anthropic-pool",
-      name: "Anthropic Pool (Account Management)",
-      npm: "@ai-sdk/anthropic",
-      api: "https://api.anthropic.com/v1",
-      modelName: "[Account Setup Only] Use Anthropic provider for models",
-    },
-    {
-      id: "openai-pool",
-      name: "OpenAI Pool (Account Management)",
-      npm: "@ai-sdk/openai",
-      api: "https://api.openai.com/v1",
-      modelName: "[Account Setup Only] Use OpenAI provider for models",
-    },
-    {
-      id: "cursor-pool",
-      name: "Cursor Pool (Account Management)",
-      npm: "@ai-sdk/openai-compatible",
-      api: CURSOR_PROXY_BASE_URL,
-      modelName: "[Account Setup Only] Use Cursor provider for models",
-    },
-    {
-      id: "google-pool",
-      name: "Google Pool (Account Management)",
-      npm: "@ai-sdk/google",
-      api: "https://generativelanguage.googleapis.com/v1beta",
-      modelName: "[Account Setup Only] Token injected as GOOGLE_OAUTH_ACCESS_TOKEN",
-    },
-  ];
-
-  for (const def of poolProviders) {
-    const models = {
-      "pool-account-management": {
-        name: def.modelName,
-        attachment: false, tool_call: false, temperature: false,
-        modalities: { input: ["text"], output: ["text"] },
-        cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-        limit: { context: 1000, output: 100 },
-        family: "pool",
-      },
-    };
-
-    if (!config.provider[def.id]) {
-      config.provider[def.id] = {
-        name: def.name,
-        npm: def.npm,
-        api: def.api,
-        models,
-      };
-      registered++;
-    } else {
-      // Compare full provider object — only update+increment when any field differs
-      const existing = config.provider[def.id];
-      const modelsChanged = JSON.stringify(existing.models) !== JSON.stringify(models);
-      if (existing.name !== def.name || existing.npm !== def.npm ||
-          existing.api !== def.api || modelsChanged) {
-        existing.name = def.name;
-        existing.npm = def.npm;
-        existing.api = def.api;
-        existing.models = models;
-        registered++;
-      }
-    }
-  }
-
-  return registered;
-}
-
-// ---------------------------------------------------------------------------
-// Custom tool: /model-accounts-pool
-// ---------------------------------------------------------------------------
-
-/**
- * Get the in-memory token endpoint cooldown for a provider.
- * @param {string} prov
- * @returns {number}
- */
-function getEndpointCooldown(prov) {
-  if (prov === "anthropic") return tokenEndpointCooldownUntil;
-  if (prov === "openai") return openaiTokenEndpointCooldownUntil;
-  if (prov === "google") return googleTokenEndpointCooldownUntil;
-  return cursorProxyCooldownUntil;
-}
-
-/**
- * Interpret an HTTP status from a token validity check into a display string.
- * @param {number} status
- * @param {boolean} okOn403 - treat 403 as OK (Anthropic/Google)
- * @param {string} [on403msg] - custom message for 403 (Google)
- * @returns {string}
- */
-function interpretValidityStatus(status, okOn403, on403msg) {
-  if (status === 401) return "INVALID (401 — needs refresh)";
-  if (status === 403 && okOn403) return on403msg || "OK";
-  if (status >= 200 && status < 300) return "OK";
-  return `HTTP ${status}`;
-}
-
-/**
- * Test token validity for a single account via a lightweight API call.
- * Returns a validity string for display.
- * @param {string} prov
- * @param {PoolAccount} account
- * @returns {Promise<string>}
- */
-async function checkAccountTokenValidity(prov, account) {
-  try {
-    if (prov === "anthropic") {
-      const testResp = await fetch("https://api.anthropic.com/v1/models", {
-        method: "GET",
-        headers: {
-          "Authorization": `Bearer ${account.access}`,
-          "User-Agent": ANTHROPIC_USER_AGENT,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": "oauth-2025-04-20",
-        },
-      });
-      // 403 means token is valid but lacks scope — still proves auth works
-      return interpretValidityStatus(testResp.status, true);
-    }
-    if (prov === "openai") {
-      const testResp = await fetch("https://api.openai.com/v1/models", {
-        headers: {
-          "Authorization": `Bearer ${account.access}`,
-          "User-Agent": OPENCODE_USER_AGENT,
-        },
-      });
-      return interpretValidityStatus(testResp.status, false);
-    }
-    if (prov === "google") {
-      const testResp = await fetch(GOOGLE_HEALTH_CHECK_URL, {
-        headers: { "Authorization": `Bearer ${account.access}` },
-      });
-      return interpretValidityStatus(testResp.status, true, "OK (403 — token valid, check AI Pro/Ultra subscription)");
-    }
-    return `(skipped — ${prov} uses proxy)`;
-  } catch (err) {
-    return `ERROR (${err.code || err.message})`;
-  }
-}
-
-/**
- * Format a single account's health check lines for the "check" action.
- * @param {string} prov
- * @param {PoolAccount} account
- * @param {number} now
- * @returns {Promise<string>}
- */
-async function formatAccountCheckLines(prov, account, now) {
-  const lines = [];
-  lines.push(`  ${account.email}:`);
-
-  const expiresIn = account.expires - now;
-  if (expiresIn <= 0) {
-    lines.push(`    Token: EXPIRED (${new Date(account.expires).toLocaleString()})`);
-  } else {
-    lines.push(`    Token: expires in ${formatDuration(expiresIn)}`);
-  }
-
-  lines.push(`    Status: ${account.status}`);
-  if (account.cooldownUntil && account.cooldownUntil > now) {
-    const cdMins = Math.ceil((account.cooldownUntil - now) / 60000);
-    lines.push(`    Cooldown: ${cdMins}m remaining`);
-  }
-
-  if (account.lastUsed) {
-    const elapsed = now - new Date(account.lastUsed).getTime();
-    lines.push(`    Last used: ${formatAgo(elapsed)}`);
-  }
-
-  lines.push(`    Refresh token: ${account.refresh ? "present" : "MISSING"}`);
-
-  if (account.access && expiresIn > 0) {
-    const validity = await checkAccountTokenValidity(prov, account);
-    lines.push(`    Validity: ${validity}`);
-  } else if (expiresIn <= 0) {
-    lines.push(`    Validity: EXPIRED — will auto-refresh on next use`);
-  } else {
-    lines.push(`    Validity: no access token`);
-  }
-
-  return lines.join("\n");
-}
-
-// ---------------------------------------------------------------------------
-// Pool tool action handlers (extracted to reduce execute() complexity)
-// ---------------------------------------------------------------------------
-
-/**
- * @param {string} provider
- * @param {PoolAccount[]} accounts
- * @param {string} addAccountHint
- * @param {number} now
- * @returns {string}
- */
-function poolActionList(provider, accounts, addAccountHint, now) {
-  if (accounts.length === 0) {
-    return `No accounts in the ${provider} pool.\n\n${addAccountHint}`;
-  }
-  const lines = accounts.map((a, i) => {
-    const cooldown =
-      a.cooldownUntil && a.cooldownUntil > now
-        ? ` (cooldown: ${Math.ceil((a.cooldownUntil - now) / 60000)}m remaining)`
-        : "";
-    const lastUsed = a.lastUsed
-      ? ` | last used: ${new Date(a.lastUsed).toLocaleString()}`
-      : "";
-    const accountIdSuffix = a.accountId ? ` | id: ${a.accountId.slice(0, 8)}...` : "";
-    const prioritySuffix = a.priority ? ` | priority: ${a.priority}` : "";
-    return `${i + 1}. ${a.email} [${a.status}]${cooldown}${lastUsed}${accountIdSuffix}${prioritySuffix}`;
-  });
-  const pending = getPendingToken(provider);
-  const pendingLine = pending
-    ? `\n\nPENDING: Unassigned token (added: ${pending.added}). Use assign-pending <email> to assign it.`
-    : "";
-  return `${provider} pool (${accounts.length} account${accounts.length === 1 ? "" : "s"}):\n\n${lines.join("\n")}${pendingLine}`;
-}
-
-/**
- * @param {string} provider
- * @param {string} email
- * @returns {string}
- */
-function poolActionRemove(provider, email) {
-  if (!email) return "Error: email is required for remove action. Usage: remove <email>";
-  const removed = removeAccount(provider, email);
-  if (removed) {
-    const remaining = getAccounts(provider).length;
-    return `Removed ${email} from ${provider} pool (${remaining} account${remaining === 1 ? "" : "s"} remaining).`;
-  }
-  return `Account ${email} not found in ${provider} pool.`;
-}
-
-/**
- * @param {string} provider
- * @param {PoolAccount[]} accounts
- * @param {string} addAccountHint
- * @param {number} endpointCooldownUntil
- * @param {number} now
- * @returns {string}
- */
-function poolActionStatus(provider, accounts, addAccountHint, endpointCooldownUntil, now) {
-  if (accounts.length === 0) {
-    return `No accounts in the ${provider} pool.\n\n${addAccountHint}`;
-  }
-  const active = accounts.filter((a) => ["active", "idle"].includes(a.status)).length;
-  const rateLimited = accounts.filter(
-    (a) => a.status === "rate-limited" && a.cooldownUntil && a.cooldownUntil > now,
-  ).length;
-  const authError = accounts.filter((a) => a.status === "auth-error").length;
-  const available = accounts.filter((a) => !a.cooldownUntil || a.cooldownUntil <= now).length;
-  const tokenGated = endpointCooldownUntil > now;
-  const tokenGateInfo = tokenGated
-    ? `  TOKEN ENDPOINT: RATE LIMITED (${Math.ceil((endpointCooldownUntil - now) / 60000)}m remaining)`
-    : `  Token endpoint: OK`;
-  return [
-    `${provider} pool status:`,
-    `  Total accounts: ${accounts.length}`,
-    `  Available now:  ${available}`,
-    `  Active/idle:    ${active}`,
-    `  Rate limited:   ${rateLimited}`,
-    `  Auth errors:    ${authError}`,
-    "",
-    tokenGateInfo,
-    `Pool file: ${POOL_FILE}`,
-  ].join("\n");
-}
-
-/**
- * @param {string} provider
- * @returns {string}
- */
-function poolActionResetCooldowns(provider) {
-  let wasGated = false;
-  if (provider === "cursor") {
-    wasGated = cursorProxyCooldownUntil > Date.now();
-    cursorProxyCooldownUntil = 0;
-  } else if (provider === "openai") {
-    wasGated = openaiTokenEndpointCooldownUntil > Date.now();
-    openaiTokenEndpointCooldownUntil = 0;
-  } else if (provider === "google") {
-    wasGated = googleTokenEndpointCooldownUntil > Date.now();
-    googleTokenEndpointCooldownUntil = 0;
-  } else {
-    wasGated = tokenEndpointCooldownUntil > Date.now();
-    tokenEndpointCooldownUntil = 0;
-  }
-  const resetCount = withPoolLock(() => {
-    const pool = loadPool();
-    let count = 0;
-    if (pool[provider]) {
-      for (const account of pool[provider]) {
-        if (account.cooldownUntil) {
-          account.cooldownUntil = null;
-          account.status = "idle";
-          count++;
-        }
-      }
-      savePool(pool);
-    }
-    return count;
-  });
-  const parts = [];
-  if (wasGated) parts.push("token endpoint cooldown cleared");
-  if (resetCount > 0) parts.push(`${resetCount} account cooldown${resetCount === 1 ? "" : "s"} cleared`);
-  if (parts.length === 0) parts.push("no active cooldowns");
-  return `Reset (${provider}): ${parts.join(", ")}. Token endpoint requests will proceed on next attempt.`;
-}
-
-/**
- * @param {any} client
- * @param {string} provider
- * @param {PoolAccount[]} accounts
- * @returns {Promise<string>}
- */
-async function poolActionRotate(client, provider, accounts) {
-  if (accounts.length < 2) {
-    const poolNames = { anthropic: "Anthropic Pool", openai: "OpenAI Pool", cursor: "Cursor Pool", google: "Google Pool" };
-    const poolName = poolNames[provider] || "Pool";
-    return `Cannot rotate: only ${accounts.length} account(s) in pool. Add more accounts via Ctrl+A → ${poolName}.`;
-  }
-  const current = [...accounts].sort(
-    (a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0),
-  )[0];
-  const injected = await resolveInjectFn(provider)(client, current?.email);
-  if (injected) {
-    const nowAccounts = getAccounts(provider);
-    const newest = [...nowAccounts].sort(
-      (a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0),
-    )[0];
-    return `Rotated (${provider}): now using ${newest?.email || "unknown"}. Previous: ${current?.email || "unknown"}.`;
-  }
-  return `Rotation failed (${provider}) — no other active accounts available.`;
-}
-
-/**
- * @param {string} provider
- * @param {PoolAccount[]} accounts
- * @param {string|undefined} email
- * @returns {string}
- */
-function poolActionAssignPending(provider, accounts, email) {
-  const pending = getPendingToken(provider);
-  if (!pending) {
-    return `No pending token for ${provider}. Pending tokens are created when you re-auth via the Pool provider but the email couldn't be identified.`;
-  }
-  if (!email) {
-    const emails = accounts.map((a) => a.email).join(", ");
-    return `Pending ${provider} token found (added: ${pending.added}). Assign it to one of: ${emails}\n\nUsage: assign-pending with email parameter.`;
-  }
-  const assigned = assignPendingToken(provider, email);
-  if (assigned) return `Assigned pending token to ${email} in ${provider} pool. Token is now active.`;
-  return `Failed to assign: account ${email} not found in ${provider} pool. Available: ${accounts.map((a) => a.email).join(", ")}`;
-}
-
-/**
- * Set the priority field on a pool account.
- * Priority 0 (or omitted) means default LRU behaviour.
- * Higher integers are preferred during rotation.
- * @param {string} provider
- * @param {string|undefined} email
- * @param {number|undefined} priority
- * @returns {string}
- */
-function poolActionSetPriority(provider, email, priority) {
-  if (!email) {
-    return "Error: email is required for set-priority action. Usage: set-priority with email and priority parameters.";
-  }
-  if (priority === undefined || priority === null) {
-    return "Error: priority (integer) is required for set-priority action.";
-  }
-  const p = Number(priority);
-  if (!Number.isInteger(p)) {
-    return `Error: priority must be an integer, got: ${priority}`;
-  }
-  return withPoolLock(() => {
-    const pool = loadPool();
-    const accounts = pool[provider] || [];
-    const idx = accounts.findIndex((a) => a.email === email);
-    if (idx < 0) {
-      return `Account ${email} not found in ${provider} pool.`;
-    }
-    if (p === 0) {
-      delete accounts[idx].priority;
-    } else {
-      accounts[idx].priority = p;
-    }
-    savePool(pool);
-    if (p === 0) {
-      return `Cleared priority for ${email} in ${provider} pool (defaults to 0 — LRU order).`;
-    }
-    return `Set priority ${p} for ${email} in ${provider} pool. Higher-priority accounts are preferred during rotation.`;
-  });
-}
-
-/**
- * @param {string|undefined} providerArg
- * @param {number} now
- * @returns {Promise<string>}
- */
-async function poolActionCheck(providerArg, now) {
-  const providersToCheck = providerArg
-    ? [providerArg]
-    : ["anthropic", "openai", "cursor", "google"];
-  const results = [];
-  for (const prov of providersToCheck) {
-    const provAccounts = getAccounts(prov);
-    if (provAccounts.length === 0) continue;
-    results.push(`\n## ${prov} (${provAccounts.length} account${provAccounts.length === 1 ? "" : "s"})`);
-    for (const account of provAccounts) {
-      results.push(await formatAccountCheckLines(prov, account, now));
-    }
-    const epCooldown = getEndpointCooldown(prov);
-    if (epCooldown > now) {
-      results.push(`  Token endpoint: RATE LIMITED (${Math.ceil((epCooldown - now) / 60000)}m remaining)`);
-    } else {
-      results.push(`  Token endpoint: OK`);
-    }
-    const pending = getPendingToken(prov);
-    if (pending) results.push(`  PENDING: Unassigned token (added: ${pending.added})`);
-  }
-  if (results.length === 0) {
-    const poolNames = { anthropic: "Anthropic Pool", openai: "OpenAI Pool", cursor: "Cursor Pool", google: "Google Pool" };
-    return `No accounts in any pool.\n\nTo add an account:\n1. Run \`opencode auth login\` (or Ctrl+A)\n2. Select a pool provider (${Object.values(poolNames).join(", ")})\n3. Enter your account email and complete the OAuth flow\n4. After success, switch to the main provider and select a model`;
-  }
-  return `OAuth Pool Health Check${results.join("\n")}`;
-}
-
-/**
- * Create the model-accounts-pool tool definition.
- * @param {any} client - OpenCode SDK client (for token injection)
- * @returns {import('@opencode-ai/plugin').ToolDefinition}
- */
-export function createPoolTool(client) {
-  return {
-    description: "Manage OAuth account pool for provider credential rotation. Actions: list, rotate, remove, assign-pending, check, status, reset-cooldowns, set-priority. Providers: anthropic, openai, cursor, google. Shell equivalent: oauth-pool-helper.sh.",
-    parameters: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["list", "remove", "status", "reset-cooldowns", "rotate", "assign-pending", "check", "set-priority"],
-          description: "Action to perform",
-        },
-        email: {
-          type: "string",
-          description: "Account email (required for 'remove', 'assign-pending', and 'set-priority' actions)",
-        },
-        provider: {
-          type: "string",
-          enum: ["anthropic", "openai", "cursor", "google"],
-          description: "Provider name: 'anthropic' (default), 'openai', 'cursor', or 'google'",
-        },
-        priority: {
-          type: "integer",
-          description: "Rotation priority for 'set-priority' action (higher = preferred; 0 = default LRU order)",
-        },
-      },
-      required: ["action"],
-    },
-    async execute(args) {
-      const provider = args.provider || "anthropic";
-      const accounts = getAccounts(provider);
-      const now = Date.now();
-      const addAccountHints = {
-        anthropic: `To add an account: run \`opencode auth login\` and select "Anthropic Pool".`,
-        openai: `To add an account: run \`opencode auth login\` and select "OpenAI Pool".`,
-        cursor: `To add an account: run \`opencode auth login\` and select "Cursor Pool". Requires cursor-agent CLI.`,
-        google: `To add an account: run \`opencode auth login\` and select "Google Pool". Requires Google AI Pro/Ultra or Workspace subscription.`,
-      };
-      const addAccountHint = addAccountHints[provider] || addAccountHints.anthropic;
-      const endpointCooldownUntil = getEndpointCooldown(provider);
-
-      switch (args.action) {
-        case "list":         return poolActionList(provider, accounts, addAccountHint, now);
-        case "remove":       return poolActionRemove(provider, args.email);
-        case "status":       return poolActionStatus(provider, accounts, addAccountHint, endpointCooldownUntil, now);
-        case "reset-cooldowns": return poolActionResetCooldowns(provider);
-        case "rotate":       return poolActionRotate(client, provider, accounts);
-        case "assign-pending": return poolActionAssignPending(provider, accounts, args.email);
-        case "check":        return poolActionCheck(args.provider, now);
-        case "set-priority": return poolActionSetPriority(provider, args.email, args.priority);
-        default:             return `Unknown action: ${args.action}. Available: list, rotate, remove, assign-pending, status, reset-cooldowns, check, set-priority`;
-      }
-    },
-  };
-}
+export function getPoolFilePath() { return POOL_FILE; }
