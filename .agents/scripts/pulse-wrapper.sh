@@ -5873,6 +5873,130 @@ run_simplification_dedup_cleanup() {
 	return 0
 }
 
+#######################################
+# Check if nesting depth violation count is approaching the CI threshold.
+# Creates a warning issue when within the buffer to prevent CI regressions
+# before they happen (GH#17808 — regression guard for Complexity Analysis CI).
+#
+# The CI check uses a global awk counter (not per-function) that counts all
+# if/for/while/until/case across the entire file without resetting at function
+# boundaries. This function replicates that logic to detect proximity.
+#
+# Arguments:
+#   $1 - aidevops_path (repo root)
+#   $2 - aidevops_slug (owner/repo)
+#   $3 - maintainer (GitHub login)
+# Returns: 0 always (best-effort)
+#######################################
+_check_ci_nesting_threshold_proximity() {
+	local aidevops_path="$1"
+	local aidevops_slug="$2"
+	local maintainer="$3"
+	local buffer=5
+
+	# Read threshold from config file (same logic as CI check)
+	local threshold=260
+	local conf_file="${aidevops_path}/.agents/configs/complexity-thresholds.conf"
+	if [[ -f "$conf_file" ]]; then
+		local val
+		val=$(grep '^NESTING_DEPTH_THRESHOLD=' "$conf_file" | cut -d= -f2 || true)
+		if [[ -n "$val" ]] && [[ "$val" =~ ^[0-9]+$ ]]; then
+			threshold="$val"
+		fi
+	fi
+
+	# Count violations using same awk logic as CI (global counter, no function resets)
+	local violations=0
+	local lint_files
+	lint_files=$(git -C "$aidevops_path" ls-files '*.sh' 2>/dev/null |
+		grep -v 'node_modules\|vendor\|\.git' |
+		sed "s|^|${aidevops_path}/|" || true)
+	if [[ -z "$lint_files" ]]; then
+		return 0
+	fi
+
+	while IFS= read -r file; do
+		[[ -n "$file" ]] || continue
+		[[ -f "$file" ]] || continue
+		local max_depth
+		max_depth=$(awk '
+			BEGIN { depth=0; max_depth=0 }
+			/^[[:space:]]*#/ { next }
+			/[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if(depth>max_depth) max_depth=depth }
+			/[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
+			END { print max_depth }
+		' "$file" 2>/dev/null) || max_depth=0
+		if [[ "$max_depth" -gt 8 ]]; then
+			violations=$((violations + 1))
+		fi
+	done <<<"$lint_files"
+
+	local warn_at=$((threshold - buffer))
+	if [[ "$violations" -le "$warn_at" ]]; then
+		echo "[pulse-wrapper] CI nesting threshold proximity: ${violations}/${threshold} violations (buffer: ${buffer}) — OK" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-wrapper] CI nesting threshold proximity: ${violations}/${threshold} violations — within ${buffer} of threshold, creating warning issue" >>"$LOGFILE"
+
+	# Check for existing open warning issue to avoid duplicates
+	local existing
+	existing=$(gh issue list --repo "$aidevops_slug" \
+		--state open \
+		--search "in:title \"CI nesting threshold proximity\"" \
+		--json number --jq 'length' 2>/dev/null) || existing="0"
+	if [[ "${existing:-0}" -gt 0 ]]; then
+		echo "[pulse-wrapper] CI nesting threshold proximity: warning issue already exists — skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	local headroom=$((threshold - violations))
+	local issue_body
+	issue_body="## CI Nesting Threshold Proximity Warning
+
+The shell nesting depth violation count is within **${buffer}** of the CI threshold.
+
+- **Current violations**: ${violations}
+- **CI threshold**: ${threshold} (from \`.agents/configs/complexity-thresholds.conf\`)
+- **Headroom remaining**: ${headroom}
+
+### Why this matters
+
+The \`Complexity Analysis\` CI check fails when nesting depth violations exceed the threshold. When PRs add new scripts with deep nesting, they push the count over the threshold and block all open PRs. This happened 6 times in a short window (GH#17808).
+
+### Recommended actions
+
+1. Reduce nesting depth in the highest-depth scripts (run \`complexity-scan-helper.sh scan\` to identify them)
+2. Or bump the threshold in \`.agents/configs/complexity-thresholds.conf\` with a documented rationale
+
+### Files to check
+
+Run locally to see current violators:
+\`\`\`bash
+git ls-files '*.sh' | while read -r f; do
+  d=\$(awk 'BEGIN{d=0;m=0} /^[[:space:]]*#/{next} /[[:space:]]*(if|for|while|until|case)[[:space:]]/{d++;if(d>m)m=d} /[[:space:]]*(fi|done|esac)[[:space:]]*\$||/^[[:space:]]*(fi|done|esac)\$/{if(d>0)d--} END{print m}' \"\$f\")
+  [ \"\$d\" -gt 8 ] && echo \"\$d \$f\"
+done | sort -rn | head -20
+\`\`\`"
+
+	# Append signature footer
+	local sig_footer="" _pulse_elapsed=""
+	_pulse_elapsed=$(($(date +%s) - PULSE_START_EPOCH))
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
+		--body "$issue_body" --cli "OpenCode" --no-session \
+		--tokens 0 --time "$_pulse_elapsed" --session-type routine 2>/dev/null || true)
+	issue_body="${issue_body}${sig_footer}"
+
+	gh_create_issue --repo "$aidevops_slug" \
+		--title "CI nesting threshold proximity: ${violations}/${threshold} violations (${headroom} headroom)" \
+		--label "bug" --label "auto-dispatch" --label "tier:standard" \
+		--assignee "$maintainer" \
+		--body "$issue_body" >/dev/null 2>&1 || true
+
+	echo "[pulse-wrapper] CI nesting threshold proximity: warning issue created (${violations}/${threshold})" >>"$LOGFILE"
+	return 0
+}
+
 run_weekly_complexity_scan() {
 	local repos_json="$REPOS_JSON"
 	local aidevops_slug="marcusquinn/aidevops"
@@ -5936,6 +6060,11 @@ run_weekly_complexity_scan() {
 	if _complexity_llm_sweep_due "$now_epoch" "$aidevops_slug"; then
 		_complexity_run_llm_sweep "$aidevops_slug" "$now_epoch" "$maintainer"
 	fi
+
+	# CI threshold proximity guard (GH#17808): warn before nesting depth
+	# violations reach the CI threshold. Runs independently of tree change
+	# so it catches regressions even when no files changed in this cycle.
+	_check_ci_nesting_threshold_proximity "$aidevops_path" "$aidevops_slug" "$maintainer" || true
 
 	# If tree unchanged, update last-run timestamp and return — no file work needed.
 	if [[ "$tree_changed" == false ]]; then
