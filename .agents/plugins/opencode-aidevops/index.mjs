@@ -34,6 +34,7 @@ import { createQualityHooks } from "./quality-hooks.mjs";
 import { createShellEnvHook } from "./shell-env.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
+import { createPrefillGuardHook } from "./prefill-guard.mjs";
 
 // Existing modules
 import { createTools } from "./tools.mjs";
@@ -182,6 +183,22 @@ export async function AidevopsPlugin({ directory, client }) {
     intentField: INTENT_FIELD,
   });
 
+  // Prefill guard — strips trailing assistant messages before the LLM call
+  // so Claude Opus/Sonnet 4.x don't reject the request with:
+  //   "This model does not support assistant message prefill.
+  //    The conversation must end with a user message."
+  // See prefill-guard.mjs for full rationale.
+  const prefillGuardHook = createPrefillGuardHook({ qualityLog });
+
+  // Compose: TTSR runs first (it scans ALL assistants including trailing
+  // ones for rule violations and may append a synthetic user correction).
+  // The prefill guard runs second so if TTSR did not append a correction
+  // AND the conversation still ends with an assistant, we strip it.
+  const composedMessagesTransformHook = async (input, output) => {
+    await messagesTransformHook(input, output);
+    await prefillGuardHook(input, output);
+  };
+
   return {
     // Config: agent index, MCP registration, OAuth pool injection
     config: async (config) => {
@@ -199,9 +216,9 @@ export async function AidevopsPlugin({ directory, client }) {
     // Shell environment
     "shell.env": shellEnvHook,
 
-    // Soft TTSR — rule enforcement
+    // Soft TTSR — rule enforcement (+ prefill guard composed in)
     "experimental.chat.system.transform": systemTransformHook,
-    "experimental.chat.messages.transform": messagesTransformHook,
+    "experimental.chat.messages.transform": composedMessagesTransformHook,
     "experimental.text.complete": textCompleteHook,
 
     // LLM observability
