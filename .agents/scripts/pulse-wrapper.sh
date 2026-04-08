@@ -4104,6 +4104,8 @@ close_issues_with_merged_prs() {
 
 				# Reset fast-fail counter now that the issue is confirmed resolved (GH#17384)
 				fast_fail_reset "$issue_num" "$slug" || true
+				# t1934: Unlock issue (locked at dispatch time)
+				unlock_issue_after_worker "$issue_num" "$slug"
 
 				echo "[pulse-wrapper] Auto-closed #${issue_num} in ${slug} — merged PR evidence: ${dedup_output:-"found"}" >>"$LOGFILE"
 				total_closed=$((total_closed + 1))
@@ -4190,6 +4192,8 @@ reconcile_stale_done_issues() {
 
 				# Reset fast-fail counter now that the issue is confirmed resolved (GH#17384)
 				fast_fail_reset "$issue_num" "$slug" || true
+				# t1934: Unlock issue (locked at dispatch time)
+				unlock_issue_after_worker "$issue_num" "$slug"
 
 				echo "[pulse-wrapper] Reconcile done: closed #${issue_num} in ${slug} — merged PR: ${dedup_output:-"found"}" >>"$LOGFILE"
 				total_closed=$((total_closed + 1))
@@ -9763,6 +9767,9 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 			gh pr comment "$pr_number" --repo "$repo_slug" \
 				--body "$closing_comment" 2>/dev/null || true
 
+			# t1934: Unlock the merged PR (locked at dispatch time)
+			unlock_issue_after_worker "$pr_number" "$repo_slug"
+
 			# Close linked issue with the same context
 			if [[ -n "$linked_issue" ]]; then
 				gh issue comment "$linked_issue" --repo "$repo_slug" \
@@ -9770,6 +9777,8 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 				gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
 				# Reset fast-fail counter now that the issue is resolved (GH#2076)
 				fast_fail_reset "$linked_issue" "$repo_slug" || true
+				# t1934: Unlock the issue (locked at dispatch time)
+				unlock_issue_after_worker "$linked_issue" "$repo_slug"
 			fi
 		else
 			failed=$((failed + 1))
