@@ -138,12 +138,21 @@ CUSTOMEOF
 	# shellcheck disable=SC1091  # sourced file path is dynamic but verified above
 	source "${SCRIPT_DIR}/routines/core-routines.sh"
 
+	# Detect OS for platform-specific descriptions
+	local detected_os
+	detected_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+	# Normalise: Darwin → darwin, Linux → linux
+	case "$detected_os" in
+	darwin) detected_os="darwin" ;;
+	*) detected_os="linux" ;;
+	esac
+
 	local rid
 	while IFS='|' read -r rid _ _ _ _ _ _; do
 		[[ -z "$rid" ]] && continue
 		local describe_fn="describe_${rid}"
 		if declare -f "$describe_fn" &>/dev/null; then
-			"$describe_fn" >"${repo_path}/routines/core/${rid}.md"
+			"$describe_fn" "$detected_os" >"${repo_path}/routines/core/${rid}.md"
 		fi
 	done < <(get_core_routine_entries)
 

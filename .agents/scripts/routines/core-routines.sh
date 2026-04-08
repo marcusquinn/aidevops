@@ -5,9 +5,9 @@
 # core-routines.sh — Core routine definitions for seeding into routines repos.
 # Sourced by init-routines-helper.sh. Do not execute directly.
 #
-# Each routine is defined as a function that outputs a markdown description
-# to stdout. The TODO entry format and metadata are returned by
-# get_core_routine_entries().
+# Each describe_* function accepts $1 = OS name (darwin|linux) and outputs
+# OS-appropriate markdown to stdout. The TODO entry format and metadata
+# are returned by get_core_routine_entries().
 
 # ---------------------------------------------------------------------------
 # get_core_routine_entries
@@ -33,57 +33,146 @@ ENTRIES
 }
 
 # ---------------------------------------------------------------------------
+# _platform_footnote <os>
+# Outputs a cross-platform reference footnote for the other OS.
+# ---------------------------------------------------------------------------
+_platform_footnote() {
+	local os="$1"
+	if [[ "$os" == "darwin" ]]; then
+		cat <<'FOOT'
+
+---
+
+> **Cross-platform note (Linux):** On Linux, this routine runs as a systemd
+> timer/service unit instead of a launchd plist. Use `systemctl --user status`
+> and `journalctl --user -u` for diagnostics. Timer units are in
+> `~/.config/systemd/user/`. See `setup.sh` for the systemd installation path.
+FOOT
+	else
+		cat <<'FOOT'
+
+---
+
+> **Cross-platform note (macOS):** On macOS, this routine runs as a launchd
+> plist instead of a systemd unit. Use `launchctl list` and check
+> `~/Library/LaunchAgents/` for diagnostics. Plist names follow the
+> `sh.aidevops.*` or `com.aidevops.*` convention.
+FOOT
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _scheduler_row <os> <interval_sec> <plist_label> <systemd_unit>
+# Outputs the Scheduler row for the Schedule table.
+# ---------------------------------------------------------------------------
+_scheduler_row() {
+	local os="$1"
+	local interval_sec="$2"
+	local plist_label="$3"
+	local systemd_unit="$4"
+	if [[ "$os" == "darwin" ]]; then
+		echo "| Scheduler | launchd \`${plist_label}\` (StartInterval: ${interval_sec}) |"
+	else
+		echo "| Scheduler | systemd \`${systemd_unit}.timer\` (OnUnitActiveSec=${interval_sec}s) |"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _scheduler_row_calendar <os> <calendar_desc> <plist_label> <systemd_unit>
+# Outputs the Scheduler row for calendar-based schedules.
+# ---------------------------------------------------------------------------
+_scheduler_row_calendar() {
+	local os="$1"
+	local calendar_desc="$2"
+	local plist_label="$3"
+	local systemd_unit="$4"
+	if [[ "$os" == "darwin" ]]; then
+		echo "| Scheduler | launchd \`${plist_label}\` (${calendar_desc}) |"
+	else
+		echo "| Scheduler | systemd \`${systemd_unit}.timer\` (OnCalendar=${calendar_desc}) |"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _diag_commands <os> <plist_label> <systemd_unit>
+# Outputs OS-specific diagnostic commands.
+# ---------------------------------------------------------------------------
+_diag_commands() {
+	local os="$1"
+	local plist_label="$2"
+	local systemd_unit="$3"
+	if [[ "$os" == "darwin" ]]; then
+		cat <<EOF
+- \`launchctl list | grep ${plist_label##*.}\` — PID and exit status
+- \`log show --predicate 'subsystem == "com.apple.launchd"' --last 5m | grep ${plist_label##*.}\` — recent launches
+EOF
+	else
+		cat <<EOF
+- \`systemctl --user status ${systemd_unit}\` — unit status and recent logs
+- \`journalctl --user -u ${systemd_unit} --since '5 min ago'\` — recent output
+EOF
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Core routine descriptions — one function per routine.
-# Each outputs markdown to stdout.
+# Each accepts $1 = OS (darwin|linux) and outputs markdown to stdout.
 # ---------------------------------------------------------------------------
 
 describe_r901() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	cat <<EOF
 # r901: Supervisor pulse
 
 ## Overview
 
 The heartbeat of aidevops autonomous operations. Every 2 minutes, the pulse
-scans all `pulse: true` repos in `repos.json`, evaluates open tasks and issues,
+scans all \`pulse: true\` repos in \`repos.json\`, evaluates open tasks and issues,
 and dispatches headless workers to implement them.
 
 ## Schedule
 
 | Field | Value |
 |-------|-------|
-| Frequency | Every 2 minutes (`StartInterval: 120`) |
+| Frequency | Every 2 minutes |
 | Type | script |
 | Expected duration | ~1 minute |
-| Script | `scripts/pulse-wrapper.sh` |
-| Plist | `com.aidevops.aidevops-supervisor-pulse` |
+| Script | \`scripts/pulse-wrapper.sh\` |
+$(_scheduler_row "$os" 120 "com.aidevops.aidevops-supervisor-pulse" "sh.aidevops.supervisor-pulse")
 
 ## What it does
 
-1. Reads `repos.json` for pulse-enabled repos (respects `pulse_hours`, `pulse_expires`)
+1. Reads \`repos.json\` for pulse-enabled repos (respects \`pulse_hours\`, \`pulse_expires\`)
 2. For each repo: checks open GitHub issues, TODO.md tasks, and enabled routines
-3. Applies tier routing (`tier:simple` → Haiku, `tier:standard` → Sonnet, `tier:reasoning` → Opus)
-4. Dispatches headless workers via `headless-runtime-helper.sh`
+3. Applies tier routing (\`tier:simple\` → Haiku, \`tier:standard\` → Sonnet, \`tier:reasoning\` → Opus)
+4. Dispatches headless workers via \`headless-runtime-helper.sh\`
 5. Enforces concurrency limits (max workers per repo, global cap)
-6. Evaluates and dispatches due routines from `## Routines` sections
+6. Evaluates and dispatches due routines from \`## Routines\` sections
 
 ## What to check
 
-- `~/.aidevops/.agent-workspace/cron/pulse/` — execution logs
-- `launchctl list | grep supervisor-pulse` — PID and exit status
-- `gh pr list` across pulse repos — PRs being created by workers
-- `routine-log-helper.sh status` — last run metrics
-DESC
+- \`~/.aidevops/.agent-workspace/cron/pulse/\` — execution logs
+$(_diag_commands "$os" "com.aidevops.aidevops-supervisor-pulse" "sh.aidevops.supervisor-pulse")
+- \`gh pr list\` across pulse repos — PRs being created by workers
+- \`routine-log-helper.sh status\` — last run metrics
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
 
 describe_r902() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	cat <<EOF
 # r902: Auto-update
 
 ## Overview
 
 Keeps the aidevops framework current by checking for new versions every
-10 minutes. When an update is available, runs `setup.sh --non-interactive`
+10 minutes. When an update is available, runs \`setup.sh --non-interactive\`
 to deploy new agents, scripts, and configurations without interrupting
 active sessions.
 
@@ -91,31 +180,34 @@ active sessions.
 
 | Field | Value |
 |-------|-------|
-| Frequency | Every 10 minutes (`StartInterval: 600`) |
+| Frequency | Every 10 minutes |
 | Type | script |
 | Expected duration | ~30 seconds (check only), ~2 minutes (when updating) |
-| Script | `bin/aidevops-auto-update check` |
-| Plist | `com.aidevops.aidevops-auto-update` |
+| Script | \`bin/aidevops-auto-update check\` |
+$(_scheduler_row "$os" 600 "com.aidevops.aidevops-auto-update" "sh.aidevops.auto-update")
 
 ## What it does
 
-1. Runs `git fetch` on the aidevops repo
+1. Runs \`git fetch\` on the aidevops repo
 2. Compares local HEAD with remote HEAD
-3. If behind: pulls changes and runs `setup.sh --non-interactive`
-4. Deploys updated agents, scripts, configs to `~/.aidevops/agents/`
+3. If behind: pulls changes and runs \`setup.sh --non-interactive\`
+4. Deploys updated agents, scripts, configs to \`~/.aidevops/agents/\`
 5. Reports update status in the session greeting cache
 
 ## What to check
 
 - Session greeting shows current version
-- `~/.aidevops/agents/VERSION` — deployed version
-- `git -C ~/Git/aidevops log --oneline -3` — recent updates
-DESC
+- \`~/.aidevops/agents/VERSION\` — deployed version
+$(_diag_commands "$os" "com.aidevops.aidevops-auto-update" "sh.aidevops.auto-update")
+- \`git -C ~/Git/aidevops log --oneline -3\` — recent updates
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
 
 describe_r903() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	cat <<EOF
 # r903: Process guard
 
 ## Overview
@@ -128,11 +220,11 @@ terminates them gracefully.
 
 | Field | Value |
 |-------|-------|
-| Frequency | Every 30 seconds (`StartInterval: 30`) |
+| Frequency | Every 30 seconds |
 | Type | script |
 | Expected duration | ~5 seconds |
-| Script | `scripts/process-guard-helper.sh kill-runaways` |
-| Plist | `sh.aidevops.process-guard` |
+| Script | \`scripts/process-guard-helper.sh kill-runaways\` |
+$(_scheduler_row "$os" 30 "sh.aidevops.process-guard" "sh.aidevops.process-guard")
 
 ## What it does
 
@@ -141,19 +233,21 @@ terminates them gracefully.
 3. Checks memory usage against thresholds
 4. Sends SIGTERM to processes exceeding limits (graceful shutdown)
 5. Escalates to SIGKILL if process doesn't exit within grace period
-6. Logs kills to `~/.aidevops/.agent-workspace/cron/process-guard/`
+6. Logs kills to \`~/.aidevops/.agent-workspace/cron/process-guard/\`
 
 ## What to check
 
-- `~/.aidevops/.agent-workspace/cron/process-guard/` — kill logs
-- `ps aux | grep -E 'claude|opencode'` — active processes
-- System Activity Monitor — CPU/memory trends
-DESC
+- \`~/.aidevops/.agent-workspace/cron/process-guard/\` — kill logs
+$(_diag_commands "$os" "sh.aidevops.process-guard" "sh.aidevops.process-guard")
+- \`ps aux | grep -E 'claude|opencode'\` — active processes
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
 
 describe_r904() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	cat <<EOF
 # r904: Worker watchdog
 
 ## Overview
@@ -166,15 +260,15 @@ don't hold worktree locks indefinitely.
 
 | Field | Value |
 |-------|-------|
-| Frequency | Every 2 minutes (`StartInterval: 120`) |
+| Frequency | Every 2 minutes |
 | Type | script |
 | Expected duration | ~10 seconds |
-| Script | `scripts/worker-watchdog.sh --check` |
-| Plist | `sh.aidevops.worker-watchdog` |
+| Script | \`scripts/worker-watchdog.sh --check\` |
+$(_scheduler_row "$os" 120 "sh.aidevops.worker-watchdog" "sh.aidevops.worker-watchdog")
 
 ## What it does
 
-1. Reads active worker state from `~/.aidevops/.agent-workspace/tmp/`
+1. Reads active worker state from \`~/.aidevops/.agent-workspace/tmp/\`
 2. Checks if worker PIDs are still alive
 3. Detects stalled workers (no output for configurable timeout)
 4. Cleans up orphaned worktree locks
@@ -183,15 +277,26 @@ don't hold worktree locks indefinitely.
 
 ## What to check
 
-- `~/.aidevops/.agent-workspace/tmp/session-*` — active worker sessions
+- \`~/.aidevops/.agent-workspace/tmp/session-*\` — active worker sessions
+$(_diag_commands "$os" "sh.aidevops.worker-watchdog" "sh.aidevops.worker-watchdog")
 - GitHub issue comments — kill notifications from watchdog
-- `routine-log-helper.sh status` — watchdog run history
-DESC
+- \`routine-log-helper.sh status\` — watchdog run history
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
 
 describe_r905() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	local mem_check_cmd mem_monitor
+	if [[ "$os" == "darwin" ]]; then
+		mem_check_cmd="\`memory_pressure\` command — current system pressure"
+		mem_monitor="Activity Monitor → Memory tab — pressure graph"
+	else
+		mem_check_cmd="\`free -h\` — current memory usage"
+		mem_monitor="\`htop\` or \`cat /proc/meminfo\` — detailed memory stats"
+	fi
+	cat <<EOF
 # r905: Memory pressure monitor
 
 ## Overview
@@ -204,31 +309,34 @@ when pressure is high.
 
 | Field | Value |
 |-------|-------|
-| Frequency | Every 60 seconds (`StartInterval: 60`) |
+| Frequency | Every 60 seconds |
 | Type | script |
 | Expected duration | ~5 seconds |
-| Script | `scripts/memory-pressure-monitor.sh` |
-| Plist | `sh.aidevops.memory-pressure-monitor` |
+| Script | \`scripts/memory-pressure-monitor.sh\` |
+$(_scheduler_row "$os" 60 "sh.aidevops.memory-pressure-monitor" "sh.aidevops.memory-pressure-monitor")
 
 ## What it does
 
-1. Reads macOS memory pressure level (nominal/warn/critical)
-2. Logs memory statistics (free, active, wired, compressed)
+1. Reads system memory pressure level (nominal/warn/critical)
+2. Logs memory statistics (free, active, wired/cached, compressed/swap)
 3. At warn level: reduces pulse concurrency limits
 4. At critical level: pauses new worker dispatches
 5. Writes pressure state for other routines to read
 
 ## What to check
 
-- `memory_pressure` command — current system pressure
-- Activity Monitor → Memory tab — pressure graph
-- `~/.aidevops/.agent-workspace/cron/memory-pressure/` — pressure logs
-DESC
+- ${mem_check_cmd}
+- ${mem_monitor}
+$(_diag_commands "$os" "sh.aidevops.memory-pressure-monitor" "sh.aidevops.memory-pressure-monitor")
+- \`~/.aidevops/.agent-workspace/cron/memory-pressure/\` — pressure logs
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
 
 describe_r906() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	cat <<EOF
 # r906: Repo sync
 
 ## Overview
@@ -240,31 +348,34 @@ Runs at 19:00 local time to sync before overnight pulse operations.
 
 | Field | Value |
 |-------|-------|
-| Frequency | Daily at 19:00 (`StartCalendarInterval: Hour=19, Minute=0`) |
+| Frequency | Daily at 19:00 |
 | Type | script |
 | Expected duration | ~5 minutes (depends on repo count) |
-| Script | `bin/aidevops-repo-sync check` |
-| Plist | `sh.aidevops.repo-sync` |
+| Script | \`bin/aidevops-repo-sync check\` |
+$(_scheduler_row_calendar "$os" "StartCalendarInterval: Hour=19, Minute=0" "sh.aidevops.repo-sync" "sh.aidevops.repo-sync")
 
 ## What it does
 
-1. Reads all repos from `~/.config/aidevops/repos.json`
-2. For each repo: `git fetch --all --prune`
-3. For repos on default branch: `git pull --ff-only`
+1. Reads all repos from \`~/.config/aidevops/repos.json\`
+2. For each repo: \`git fetch --all --prune\`
+3. For repos on default branch: \`git pull --ff-only\`
 4. Reports repos that have diverged or have conflicts
 5. Skips repos with uncommitted changes (safety)
 
 ## What to check
 
-- `git -C <repo> log --oneline -3` — recent changes pulled
-- `~/.config/aidevops/repos.json` — registered repos
-- Repos with `local_only: true` are still synced locally (no fetch)
-DESC
+$(_diag_commands "$os" "sh.aidevops.repo-sync" "sh.aidevops.repo-sync")
+- \`git -C <repo> log --oneline -3\` — recent changes pulled
+- \`~/.config/aidevops/repos.json\` — registered repos
+- Repos with \`local_only: true\` are still synced locally (no fetch)
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
 
 describe_r907() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	cat <<EOF
 # r907: Contribution watch
 
 ## Overview
@@ -277,31 +388,34 @@ merge notifications.
 
 | Field | Value |
 |-------|-------|
-| Frequency | Every hour (`StartInterval: 3600`) |
+| Frequency | Every hour |
 | Type | script |
 | Expected duration | ~30 seconds |
-| Script | `scripts/contribution-watch-helper.sh scan` |
-| Plist | `sh.aidevops.contribution-watch` |
+| Script | \`scripts/contribution-watch-helper.sh scan\` |
+$(_scheduler_row "$os" 3600 "sh.aidevops.contribution-watch" "sh.aidevops.contribution-watch")
 
 ## What it does
 
-1. Reads repos with `contributed: true` from `repos.json`
+1. Reads repos with \`contributed: true\` from \`repos.json\`
 2. Checks GitHub notifications for those repos
 3. Filters for actionable items (review requests, mentions, replies)
-4. Excludes managed `pulse: true` repos (handled by the pulse)
+4. Excludes managed \`pulse: true\` repos (handled by the pulse)
 5. Reports items needing attention
 
 ## What to check
 
-- `gh notification list` — pending notifications
-- Repos with `contributed: true` in `repos.json`
-- `~/.aidevops/.agent-workspace/cron/contribution-watch/` — scan logs
-DESC
+- \`gh notification list\` — pending notifications
+$(_diag_commands "$os" "sh.aidevops.contribution-watch" "sh.aidevops.contribution-watch")
+- Repos with \`contributed: true\` in \`repos.json\`
+- \`~/.aidevops/.agent-workspace/cron/contribution-watch/\` — scan logs
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
 
 describe_r908() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	cat <<EOF
 # r908: Profile README update
 
 ## Overview
@@ -313,11 +427,11 @@ and project highlights. Runs hourly to reflect latest contributions.
 
 | Field | Value |
 |-------|-------|
-| Frequency | Every hour (`StartInterval: 3600`) |
+| Frequency | Every hour |
 | Type | script |
 | Expected duration | ~30 seconds |
-| Script | `scripts/profile-readme-helper.sh update` |
-| Plist | `sh.aidevops.profile-readme-update` |
+| Script | \`scripts/profile-readme-helper.sh update\` |
+$(_scheduler_row "$os" 3600 "sh.aidevops.profile-readme-update" "sh.aidevops.profile-readme-update")
 
 ## What it does
 
@@ -329,13 +443,22 @@ and project highlights. Runs hourly to reflect latest contributions.
 ## What to check
 
 - GitHub profile page — README content
-- `git -C ~/Git/<username> log --oneline -3` — recent README updates
-DESC
+$(_diag_commands "$os" "sh.aidevops.profile-readme-update" "sh.aidevops.profile-readme-update")
+- \`git -C ~/Git/<username> log --oneline -3\` — recent README updates
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
 
 describe_r909() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	local screen_time_check
+	if [[ "$os" == "darwin" ]]; then
+		screen_time_check="System Settings → Screen Time — raw data"
+	else
+		screen_time_check="\`~/.aidevops/.agent-workspace/cron/screen-time/\` — snapshot data (no native Screen Time on Linux)"
+	fi
+	cat <<EOF
 # r909: Screen time snapshot
 
 ## Overview
@@ -347,29 +470,32 @@ session analytics. Runs every 6 hours.
 
 | Field | Value |
 |-------|-------|
-| Frequency | Every 6 hours (`StartInterval: 21600`) |
+| Frequency | Every 6 hours |
 | Type | script |
 | Expected duration | ~10 seconds |
-| Script | `scripts/screen-time-helper.sh snapshot` |
-| Plist | `sh.aidevops.screen-time-snapshot` |
+| Script | \`scripts/screen-time-helper.sh snapshot\` |
+$(_scheduler_row "$os" 21600 "sh.aidevops.screen-time-snapshot" "sh.aidevops.screen-time-snapshot")
 
 ## What it does
 
-1. Reads macOS Screen Time data (if accessible)
-2. Captures active app usage durations
-3. Logs development tool usage (IDE, terminal, browser)
-4. Stores snapshots for trend analysis
+1. Captures active app usage durations (macOS Screen Time API or process sampling)
+2. Logs development tool usage (IDE, terminal, browser)
+3. Stores snapshots for trend analysis
+4. Data stays local — never uploaded
 
 ## What to check
 
-- System Settings → Screen Time — raw data
-- `~/.aidevops/.agent-workspace/cron/screen-time/` — snapshot logs
-DESC
+- ${screen_time_check}
+$(_diag_commands "$os" "sh.aidevops.screen-time-snapshot" "sh.aidevops.screen-time-snapshot")
+- \`~/.aidevops/.agent-workspace/cron/screen-time/\` — snapshot logs
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
 
 describe_r910() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	cat <<EOF
 # r910: Skills sync
 
 ## Overview
@@ -382,29 +508,32 @@ full setup run.
 
 | Field | Value |
 |-------|-------|
-| Frequency | Every 5 minutes (`StartInterval: 300`) |
+| Frequency | Every 5 minutes |
 | Type | script |
 | Expected duration | ~15 seconds |
-| Script | `bin/aidevops-skills-sync` |
-| Plist | `sh.aidevops.skills-sync` |
+| Script | \`bin/aidevops-skills-sync\` |
+$(_scheduler_row "$os" 300 "sh.aidevops.skills-sync" "sh.aidevops.skills-sync")
 
 ## What it does
 
-1. Checks for new or modified skill definitions in `~/.aidevops/agents/`
+1. Checks for new or modified skill definitions in \`~/.aidevops/agents/\`
 2. Regenerates SKILL.md files if source agents changed
 3. Updates skill symlinks for runtime discovery
 4. Lightweight — only processes changed files
 
 ## What to check
 
-- `~/.config/Claude/skills/` — skill symlinks
-- `ls ~/.aidevops/agents/*/SKILL.md` — generated skill files
-DESC
+$(_diag_commands "$os" "sh.aidevops.skills-sync" "sh.aidevops.skills-sync")
+- \`~/.config/Claude/skills/\` — skill symlinks
+- \`ls ~/.aidevops/agents/*/SKILL.md\` — generated skill files
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
 
 describe_r911() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	cat <<EOF
 # r911: OAuth token refresh
 
 ## Overview
@@ -417,11 +546,11 @@ of token expiry.
 
 | Field | Value |
 |-------|-------|
-| Frequency | Every 30 minutes (`StartInterval: 1800`) |
+| Frequency | Every 30 minutes |
 | Type | script |
 | Expected duration | ~10 seconds |
-| Script | `scripts/oauth-pool-helper.sh refresh` |
-| Plist | `sh.aidevops.token-refresh` |
+| Script | \`scripts/oauth-pool-helper.sh refresh\` |
+$(_scheduler_row "$os" 1800 "sh.aidevops.token-refresh" "sh.aidevops.token-refresh")
 
 ## What it does
 
@@ -433,14 +562,23 @@ of token expiry.
 
 ## What to check
 
-- `oauth-pool-helper.sh status` — account pool health
-- `~/.aidevops/.agent-workspace/cron/token-refresh/` — refresh logs
-DESC
+- \`oauth-pool-helper.sh status\` — account pool health
+$(_diag_commands "$os" "sh.aidevops.token-refresh" "sh.aidevops.token-refresh")
+- \`~/.aidevops/.agent-workspace/cron/token-refresh/\` — refresh logs
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
 
 describe_r912() {
-	cat <<'DESC'
+	local os="${1:-darwin}"
+	local status_cmd
+	if [[ "$os" == "darwin" ]]; then
+		status_cmd="\`launchctl list | grep dashboard\` — process status"
+	else
+		status_cmd="\`systemctl --user status sh.aidevops.dashboard\` — service status"
+	fi
+	cat <<EOF
 # r912: Dashboard server
 
 ## Overview
@@ -455,8 +593,8 @@ repo health, worker status, routine metrics, and task progress.
 | Frequency | Persistent (always running) |
 | Type | service |
 | Expected duration | Continuous |
-| Script | `server/index.ts` |
-| Plist | `com.aidevops.dashboard` |
+| Script | \`server/index.ts\` |
+$(_scheduler_row_calendar "$os" "KeepAlive: true" "com.aidevops.dashboard" "sh.aidevops.dashboard")
 
 ## What it does
 
@@ -468,8 +606,9 @@ repo health, worker status, routine metrics, and task progress.
 
 ## What to check
 
-- Browser: `http://localhost:<port>` — dashboard UI
-- `launchctl list | grep dashboard` — process status
-DESC
+- Browser: \`http://localhost:<port>\` — dashboard UI
+- ${status_cmd}
+$(_platform_footnote "$os")
+EOF
 	return 0
 }
