@@ -6432,7 +6432,7 @@
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "simplified_at": "2026-04-04T09:17:13Z",
       "issue": "GH#17250",
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
       "at": "2026-04-04T14:53:40Z",
       "passes": 1
     },
@@ -6874,6 +6874,12 @@
       "at": "2026-04-08T13:44:41Z",
       "pr": 17843,
       "passes": 1
+    },
+    ".agents/reference/routines.md": {
+      "hash": "a652a5b05f55a805d982f0d6798b1ddab27ada41",
+      "at": "2026-04-08T14:00:00Z",
+      "passes": 1,
+      "pr": 0
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
