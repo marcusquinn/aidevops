@@ -7,7 +7,7 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Scaffold a private git repo for routine definitions. Supports personal repos, per-org repos, and local-only (no remote).
+Scaffold a private git repo for routine definitions. Always private — routine definitions may contain client names, schedules, and sensitive operational details.
 
 Arguments: $ARGUMENTS
 
@@ -15,14 +15,11 @@ Arguments: $ARGUMENTS
 
 ```bash
 aidevops init-routines                  # Personal: <username>/aidevops-routines
-aidevops init-routines --org <name>     # Org: <org>/aidevops-routines
-aidevops init-routines --local          # Local-only (no remote)
+aidevops init-routines --org <name>     # Org: <org>/aidevops-routines (private)
+aidevops init-routines --local          # Local-only, local_only: true in repos.json
 aidevops init-routines --dry-run        # Preview without changes
-```
 
-Or via the helper directly:
-
-```bash
+# Or via the helper directly:
 ~/.aidevops/agents/scripts/init-routines-helper.sh [--org <name>] [--local] [--dry-run]
 ```
 
@@ -39,32 +36,11 @@ Or via the helper directly:
         └── routine.md   # Template for routine tracking issues
 ```
 
-The repo is registered in `~/.config/aidevops/repos.json` with `pulse: true, priority: "tooling"`.
-
-## Privacy
-
-Always private — no flag to make public. Routine definitions may contain client names, internal schedules, and sensitive operational details.
-
-## Flags
-
-| Flag | Description |
-|------|-------------|
-| `--org <name>` | Create `<org>/aidevops-routines` (private) |
-| `--local` | Local-only repo, `local_only: true` in repos.json |
-| `--dry-run` | Preview without making changes |
+Registered in `~/.config/aidevops/repos.json` with `pulse: true, priority: "tooling"`.
 
 ## After setup
 
-Add routines to `~/Git/aidevops-routines/TODO.md` under `## Routines`:
-
-```markdown
-## Routines
-
-- [x] r001 Weekly SEO rankings export repeat:weekly(mon@09:00) ~30m run:custom/scripts/seo-export.sh
-- [ ] r002 Monthly content calendar review repeat:monthly(1@09:00) ~15m agent:Content
-```
-
-See `.agents/reference/routines.md` for the full field specification.
+Add routines to `~/Git/aidevops-routines/TODO.md` under `## Routines`. See `.agents/reference/routines.md` for field specification and examples.
 
 ## Related
 
