@@ -230,6 +230,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t2030 refactor(pulse): replace per-repo prefetch gh calls with org-level `gh search issues` — exhausts GitHub API rate limit with 46+ UM repos. Target ~10x reduction in prefetch calls. Stopgap `pulse_hours:{3,5}` applied to UM repos. #performance #pulse #tooling #auto-dispatch ~4h logged:2026-04-07 tier:reasoning
 - [ ] GH#17804 fix(upgrade-planning): extracts template placeholders (tXXX/tYYY/tZZZ) from ## Format section as real tasks — discovered during awardsapp upgrade 2026-04-08, upgrade reverted. Fix: section-aware parser or numeric-ID filter. #bug #planning #tooling #regression #auto-dispatch ~1h ref:GH#17804 logged:2026-04-08 tier:simple
 - [ ] GH#17806 fix(upgrade-planning): loses ### subsection headers in Backlog — semantic data loss, flattens all groups into one pile. Fix: preserve ### headers verbatim OR make upgrade minimal (only add TOON header, skip body rewrite). #bug #planning #tooling #data-loss #auto-dispatch ~2h ref:GH#17806 logged:2026-04-08 tier:standard
 - [ ] GH#17807 fix(schedulers): `aidevops update` exits 1 due to unbound variable at schedulers.sh line 613 — update succeeds but exit code breaks CI/automation wrappers. Fix: add ${VAR:-default} or fix typo. #bug #tooling #shell #ci #auto-dispatch ~30m ref:GH#17807 logged:2026-04-08 tier:simple
