@@ -4082,11 +4082,26 @@ close_issues_with_merged_prs() {
 			# Ask dedup helper if a merged PR exists for this issue
 			local dedup_output=""
 			if dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null); then
-				# has-open-pr returns 0 when merged PR evidence found (confusing name but correct)
+				# has-open-pr returns 0 when PR evidence found (open OR merged).
+				# For closing, we MUST verify the PR is actually merged — an open
+				# PR means work is in progress, not complete. (GH#17871 fix)
 				local pr_ref
 				pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
 				local pr_num
 				pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
+
+				# GH#17871: Verify PR is actually merged before closing.
+				# The dedup helper's Check 1 matches OPEN PRs by title/commit.
+				# An open PR blocks dispatch (correct) but must NOT trigger
+				# issue closure — the work isn't done yet.
+				if [[ -n "$pr_num" ]]; then
+					local merged_at
+					merged_at=$(gh pr view "$pr_num" --repo "$slug" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || merged_at=""
+					if [[ -z "$merged_at" ]]; then
+						echo "[pulse-wrapper] Skipped auto-close #${issue_num} in ${slug} — PR #${pr_num} exists but is NOT merged (GH#17871 guard)" >>"$LOGFILE"
+						continue
+					fi
+				fi
 
 				# GH#17372: Verify PR diff actually touches files from the issue.
 				# A merged PR with "closes #NNN" may reference the issue without
@@ -4099,7 +4114,7 @@ close_issues_with_merged_prs() {
 				fi
 
 				gh issue close "$issue_num" --repo "$slug" \
-					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup helper)"}. Issue was open but dedup guard was blocking re-dispatch." \
+					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup helper)"} (merged at ${merged_at:-unknown}). Issue was open but dedup guard was blocking re-dispatch." \
 					>/dev/null 2>&1 || continue
 
 				# Reset fast-fail counter now that the issue is confirmed resolved (GH#17384)
@@ -4166,12 +4181,29 @@ reconcile_stale_done_issues() {
 			# Check if a merged PR exists for this issue
 			local dedup_output=""
 			if dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null); then
-				# Merged PR found — verify diff overlap before closing (GH#17372)
+				# Dedup helper returns 0 for open OR merged PRs.
+				# For closing, verify the PR is actually merged (GH#17871).
 				local pr_ref
 				pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
 				local pr_num
 				pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
 
+				# GH#17871: Verify PR is actually merged before closing.
+				local merged_at=""
+				if [[ -n "$pr_num" ]]; then
+					merged_at=$(gh pr view "$pr_num" --repo "$slug" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || merged_at=""
+					if [[ -z "$merged_at" ]]; then
+						echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} is NOT merged (GH#17871 guard)" >>"$LOGFILE"
+						# Reset to available — PR exists but isn't merged yet
+						gh issue edit "$issue_num" --repo "$slug" \
+							--remove-label "status:done" \
+							--add-label "status:available" >/dev/null 2>&1 || continue
+						total_reset=$((total_reset + 1))
+						continue
+					fi
+				fi
+
+				# GH#17372: Verify PR diff touches files from the issue
 				if [[ -n "$pr_num" ]] && [[ -x "$verify_helper" ]]; then
 					if ! "$verify_helper" check "$issue_num" "$pr_num" "$slug" >/dev/null 2>&1; then
 						echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} does not touch issue files (GH#17372 guard)" >>"$LOGFILE"
@@ -4185,7 +4217,7 @@ reconcile_stale_done_issues() {
 				fi
 
 				gh issue close "$issue_num" --repo "$slug" \
-					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup)"}." \
+					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup)"} (merged at ${merged_at:-unknown})." \
 					>/dev/null 2>&1 || continue
 
 				# Reset fast-fail counter now that the issue is confirmed resolved (GH#17384)

@@ -715,19 +715,22 @@ is_assigned() {
 #######################################
 # Check whether an issue already has merged PR evidence.
 #
-# Historical note: command name is `has-open-pr` to match pulse-wrapper
-# dispatch dedup call sites from review feedback, but the underlying behavior
-# checks merged PR evidence to avoid redispatching already-completed issues.
+# IMPORTANT: This function returns exit 0 for BOTH open and merged PRs
+# that reference the issue. This is correct for dispatch dedup (any PR
+# blocks re-dispatch), but callers that close issues MUST independently
+# verify mergedAt before acting — an open PR means work in progress,
+# not work complete. See GH#17871 for the bug this caused.
 #
 # Args:
 #   $1 = issue number
 #   $2 = repo slug (owner/repo)
 #   $3 = issue title (optional; used for task-id fallback)
 # Returns:
-#   exit 0 if merged PR evidence exists (do NOT dispatch)
-#   exit 1 if no merged PR evidence (safe to dispatch)
+#   exit 0 if PR evidence exists — open OR merged (do NOT dispatch)
+#   exit 1 if no PR evidence (safe to dispatch)
 # Outputs:
 #   single-line reason when evidence is found
+# CALLERS: For issue closing, verify mergedAt after this returns 0.
 #######################################
 has_open_pr() {
 	local issue_number="$1"

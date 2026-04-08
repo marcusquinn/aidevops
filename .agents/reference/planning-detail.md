@@ -145,7 +145,9 @@ If ANY source confirms a merged PR (with verified `mergedAt`), treat the task as
 - `no_pr` or `task_only` worker exits: task stays `[ ]` until human or supervisor verifies the deliverable
 - The `issue-sync` GitHub Action auto-closes issues when tasks are marked `[x]` — false completions cascade into closed issues
 - NEVER close GitHub issues manually with `gh issue close` — let issue-sync verify deliverables before closing. Manual closure bypasses the proof-log safety check
+- **Merge state verification (GH#17871)**: Before closing an issue based on a PR, verify `mergedAt` is non-null via `gh pr view <N> --json mergedAt`. An open PR means work is in progress, not complete. The dedup helper returns exit 0 for BOTH open and merged PRs — callers that close issues must independently verify merge state.
 - **Pre-commit enforcement**: warns on `[ ]` → `[x]` without `verified:` or merged PR evidence (warning only — commit proceeds)
+- **Framework function references**: NEVER reference framework functions, automation, or processes that don't exist in the codebase. Workers that invent non-existent processes (e.g., referencing `_dispatch_issue_consolidation()` when no such function exists) create false audit trails. If proposing a new process, clearly label it as a proposal — never present it as existing automation.
 
 ## Planning File Workflow
 
