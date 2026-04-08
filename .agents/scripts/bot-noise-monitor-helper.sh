@@ -16,6 +16,7 @@
 set -euo pipefail
 
 # Known bot accounts with existing skip rules (build.txt #8c)
+# Keep in sync with .github/workflows/unknown-bot-alert.yml KNOWN_BOTS
 KNOWN_BOTS=(
 	"coderabbitai[bot]"
 	"sonarqubecloud[bot]"
@@ -25,6 +26,12 @@ KNOWN_BOTS=(
 	"codefactor-io[bot]"
 	"socket-security[bot]"
 	"qltybot[bot]"
+	"dependabot[bot]"
+	"renovate[bot]"
+	"mergify[bot]"
+	"allcontributors[bot]"
+	"codecov[bot]"
+	"stale[bot]"
 )
 
 _is_known_bot() {
