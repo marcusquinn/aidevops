@@ -117,6 +117,11 @@ jobs:
                 '- **Request changes** if modifications are needed',
                 '- **Close** it if it\'s a duplicate or out of scope',
                 '',
+                '**Requirements for external contributor PRs:**',
+                '- The PR body **must** reference a linked issue using `Closes #NNN`, `Fixes #NNN`, or `Resolves #NNN`',
+                '- If no issue exists for this change, please [create one](https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/issues/new) first',
+                '- PRs without a linked issue will be blocked by the merge gate',
+                '',
                 'The PR cannot be merged until a maintainer provides cryptographic approval.'
               ].join('\n')
             });

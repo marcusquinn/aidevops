@@ -152,6 +152,34 @@ jobs:
           fi
 
           if [[ -z "$LINKED_ISSUES" ]]; then
+            # ---------------------------------------------------------------
+            # Check: external-contributor PRs MUST link an issue.
+            # Internal PRs (no external-contributor label) may pass without
+            # linked issues — they are from collaborators with commit access.
+            # External PRs without a linked issue have no auditable context
+            # for what they claim to fix, and bypass the issue-level NMR gate.
+            # ---------------------------------------------------------------
+            if echo "$PR_LABELS" | grep -q 'external-contributor'; then
+              echo "BLOCKED: external-contributor PR #$PR_NUMBER has no linked issue"
+              echo "blocked=true" >> "$GITHUB_OUTPUT"
+              printf 'External contributor PR #%s has no linked issue. All non-maintainer PRs must reference an issue (Closes #NNN) so the change can be reviewed in context.\n' "$PR_NUMBER" > /tmp/gate-reasons.txt
+              echo "has_reasons=true" >> "$GITHUB_OUTPUT"
+              gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state=failure \
+                -f context="maintainer-gate" \
+                -f description="External PR has no linked issue — requires Closes #NNN in body" \
+                2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state=failure \
+                -f context="maintainer-gate" \
+                -f description="External PR has no linked issue — requires Closes #NNN in body"; } || {
+                echo "::error::Failed to post maintainer-gate commit status after retry"
+                exit 1
+              }
+              exit 0
+            fi
+
             echo "No linked issues found — gate passes (no issues to check)"
             echo "blocked=false" >> "$GITHUB_OUTPUT"
             echo "reason=" >> "$GITHUB_OUTPUT"
@@ -472,8 +500,9 @@ jobs:
               -f description="Re-evaluating after issue #${ISSUE_NUMBER} update" \
               2>/dev/null || true
 
-            # Get PR body to find ALL linked issues (not just the triggering one)
+            # Get PR body and labels to find ALL linked issues (not just the triggering one)
             PR_BODY=$(gh pr view "$PR_NUM" --repo "$REPO" --json body --jq '.body' 2>/dev/null || true)
+            RETRIGGER_PR_LABELS=$(gh pr view "$PR_NUM" --repo "$REPO" --json labels --jq '.labels[].name' 2>/dev/null || true)
             PR_TITLE=$(gh pr view "$PR_NUM" --repo "$REPO" --json title --jq '.title' 2>/dev/null || true)
 
             LINKED_ISSUES=""
@@ -515,6 +544,18 @@ jobs:
             fi
 
             if [[ -z "$LINKED_ISSUES" ]]; then
+              # External-contributor PRs must link an issue (same rule as Job 1)
+              if echo "$RETRIGGER_PR_LABELS" | grep -q 'external-contributor'; then
+                echo "BLOCKED: external-contributor PR #$PR_NUM has no linked issue"
+                gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                  --method POST \
+                  -f state=failure \
+                  -f context="maintainer-gate" \
+                  -f description="External PR has no linked issue — requires Closes #NNN in body" \
+                  2>/dev/null || echo "::warning::Could not post failure status on PR #$PR_NUM"
+                continue
+              fi
+
               echo "No linked issues found for PR #$PR_NUM — gate passes"
               gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
                 --method POST \
