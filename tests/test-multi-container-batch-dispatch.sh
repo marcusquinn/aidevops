@@ -985,7 +985,7 @@ total_state_entries=$(test_db "SELECT count(*) FROM state_log;")
 if [[ "$total_state_entries" -ge 30 ]]; then
 	pass "State log: $total_state_entries entries (comprehensive audit trail)"
 else
-	fail "State log: only $total_state_entries entries (expected >= 30 for 6 tasks)"
+	fail "State log: only $total_state_entries entries (expected >= 30 across 6 tasks)"
 fi
 
 # Verify each task has at least 5 state transitions (queued->dispatched->running->evaluating->complete)

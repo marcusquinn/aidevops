@@ -1263,9 +1263,9 @@ run_in_supervisor_env "
 " &>/dev/null || missing_prompt_rc=$?
 
 if [[ "$missing_prompt_rc" -ne 0 ]]; then
-	pass "Error handling: build_cli_cmd fails without --prompt for run"
+	pass "Error handling: build_cli_cmd fails without --prompt in run mode"
 else
-	fail "Error handling: should fail without --prompt for run"
+	fail "Error handling: should fail without --prompt in run mode"
 fi
 
 # Test: unknown action

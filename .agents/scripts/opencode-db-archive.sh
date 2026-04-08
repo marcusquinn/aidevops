@@ -396,9 +396,7 @@ cmd_archive() {
 
 		# Build the IN clause for this batch
 		local in_clause=""
-		while IFS= read -r sid; do
-			in_clause="${in_clause}${in_clause:+,}'${sid}'"
-		done <<<"$session_ids"
+		in_clause=$(printf '%s\n' "$session_ids" | sed "s/.*/'&'/" | paste -sd,)
 
 		# Single transaction: copy to archive then delete from active.
 		# ATTACH and DETACH are within the same sqlite3 invocation — the attachment

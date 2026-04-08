@@ -114,7 +114,7 @@ fi
 section "Memory: Store and Recall"
 
 # Test: store returns success
-store_output=$(mem store --content "Bash arrays need declare -a for indexed arrays" --type "CODEBASE_PATTERN" --tags "bash,arrays")
+store_output=$(mem store --content "Bash arrays need declare -a with indexed arrays" --type "CODEBASE_PATTERN" --tags "bash,arrays")
 if echo "$store_output" | grep -qi "stored\|ok\|success"; then
 	pass "memory store reports success"
 else

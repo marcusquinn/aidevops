@@ -288,9 +288,9 @@ else
 		2>/dev/null) || true
 
 	if [[ -z "$check_out" ]]; then
-		pass "tier-downgrade-check returns empty for haiku (already cheapest tier)"
+		pass "tier-downgrade-check returns empty on haiku (already cheapest tier)"
 	else
-		fail "tier-downgrade-check returned '$check_out' for haiku (expected empty)"
+		fail "tier-downgrade-check returned '$check_out' on haiku (expected empty)"
 	fi
 fi
 

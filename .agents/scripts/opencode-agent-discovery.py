@@ -1,0 +1,744 @@
+import json
+import os
+import glob
+import re
+import sys
+import tempfile
+
+def atomic_json_write(path, data, indent=2, trailing_newline=False):
+    """Write JSON atomically: tmp file + fsync + rename. Prevents truncation on crash."""
+    dir_name = os.path.dirname(path) or '.'
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp', prefix='.atomic-')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=indent)
+            if trailing_newline:
+                f.write('\n')
+            f.flush()
+            os.fsync(f.fileno())
+        os.rename(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+config_path = os.path.expanduser("~/.config/opencode/opencode.json")
+agents_dir = os.path.expanduser("~/.aidevops/agents")
+
+config_loaded = False
+try:
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    config_loaded = True
+except FileNotFoundError:
+    config = {"$schema": "https://opencode.ai/config.json"}
+    config_loaded = True
+except (OSError, json.JSONDecodeError) as e:
+    print(f"Error: Failed to load {config_path}: {e}", file=sys.stderr)
+    sys.exit(1)
+
+# =============================================================================
+# AUTO-DISCOVER PRIMARY AGENTS from root .md files
+# =============================================================================
+
+# Agent display name mappings (filename -> display name)
+# If not in this map, derive from filename (e.g., build-agent.md -> Build-Agent)
+DISPLAY_NAMES = {
+    "build-plus": "Build+",
+    "seo": "SEO",
+    "social-media": "Social-Media",
+}
+
+# Agent ordering (agents listed here appear first in this order, rest alphabetical)
+# Note: Build+ is now the single unified coding agent (Plan+ and AI-DevOps consolidated)
+# Plan+ removed: planning workflow merged into Build+ with intent detection
+# AI-DevOps removed: framework operations accessible via @aidevops subagent
+AGENT_ORDER = ["Build+", "Automate"]
+
+# Files to skip (not primary agents - includes demoted agents)
+# plan-plus.md and aidevops.md are now subagents, not primary agents
+# browser-extension-dev.md and mobile-app-dev.md are specialist subagents under Build+
+SKIP_PRIMARY_AGENTS = {"plan-plus.md", "aidevops.md", "browser-extension-dev.md", "mobile-app-dev.md"}
+
+# Special tool configurations per agent (by display name)
+# These are MCP tools that specific agents need access to
+#
+# MCP On-Demand Loading Strategy:
+# The following MCPs are DISABLED globally to reduce context token usage:
+#   - playwriter_*: ~3K tokens - enable via @playwriter subagent
+#   - augment-context-engine_*: ~1K tokens - enable via @augment-context-engine subagent
+#   - gh_grep_*: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
+#   - google-analytics-mcp_*: ~800 tokens - enable via @google-analytics subagent
+#   - context7_*: ~800 tokens - enable via @context7 subagent (library docs lookup)
+#   - openapi-search_*: ~500 tokens - enabled for Build+, AI-DevOps, Research only
+#
+# Use @augment-context-engine subagent for semantic codebase search.
+# Use @context7 subagent when you need up-to-date library documentation.
+AGENT_TOOLS = {
+    "Build+": {
+        # Unified coding agent - planning, implementation, and DevOps
+        # Browser automation: use @playwriter subagent (enables playwriter MCP on-demand)
+        # Semantic search: use @augment-context-engine subagent
+        # Library docs: use @context7 subagent when needed
+        # GitHub search: use @github-search subagent (rg/bash, no MCP needed)
+        # OpenAPI search: enabled for API exploration (remote, zero install)
+        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True, "todoread": True, "todowrite": True,
+        "openapi-search_*": True
+    },
+    "Onboarding": {
+        "write": True, "edit": True, "bash": True,
+        "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True
+    },
+    "Accounts": {
+        "write": True, "edit": True, "bash": True,
+        "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True, "quickfile_*": True
+    },
+    "Social-Media": {
+        "write": True, "edit": True, "bash": True,
+        "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True
+    },
+    "SEO": {
+        "write": True, "read": True, "bash": True, "webfetch": True,
+        "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True
+    },
+    "WordPress": {
+        "write": True, "edit": True, "bash": True,
+        "read": True, "glob": True, "grep": True,
+        "localwp_*": True
+    },
+    "Content": {
+        "write": True, "edit": True, "read": True, "webfetch": True
+    },
+    "Research": {
+        "read": True, "webfetch": True, "bash": True,
+        "openapi-search_*": True
+    },
+    "Automate": {
+        # Automation/orchestration agent — dispatch, merge, monitor, schedule
+        # Needs bash for dispatch commands and process management
+        # Needs read/glob/grep for state files and configs
+        # Does NOT need write/edit — dispatches workers who modify code
+        "bash": True, "read": True, "glob": True, "grep": True,
+        "task": True, "todoread": True, "todowrite": True
+    },
+}
+
+# Default tools for agents not in AGENT_TOOLS
+#
+# MCP On-Demand Loading (all disabled globally, use subagents):
+# - playwriter_*: ~3K tokens - @playwriter subagent
+# - augment-context-engine_*: ~1K tokens - @augment-context-engine subagent
+# - gh_grep_*: ~600 tokens - @github-search subagent (uses rg/bash)
+# - google-analytics-mcp_*: ~800 tokens - @google-analytics subagent
+# - context7_*: ~800 tokens - @context7 subagent
+# - claude-code-mcp_*: use @claude-code subagent
+# - openapi-search_*: ~500 tokens - enabled for Build+, AI-DevOps, Research only
+#
+DEFAULT_TOOLS = {
+    "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+    "webfetch": True, "task": True
+}
+
+# Temperature settings (by display name, default 0.2)
+AGENT_TEMPS = {
+    "Build+": 0.2,
+    "Automate": 0.1,
+    "Accounts": 0.1,
+    "Legal": 0.1,
+    "Content": 0.3,
+    "Marketing": 0.3,
+    "Research": 0.3,
+}
+
+# Custom system prompts
+# ALL primary agents use the custom prompt by default to ensure consistent identity
+# and tool preferences (e.g., "use git ls-files" instead of host tool's "use Glob")
+# This prevents identity confusion when running in different host tools (OpenCode vs Claude Code)
+DEFAULT_PROMPT = "~/.aidevops/agents/prompts/build.txt"
+
+# Agents that should NOT use the custom prompt (empty by default - all agents use it)
+SKIP_CUSTOM_PROMPT = set()
+
+# Model routing tiers (from subagent YAML frontmatter 'model:' field)
+# Maps tier names to actual model identifiers
+# Agents declare their tier; the coordinator uses this for cost-effective routing
+MODEL_TIERS = {
+    "haiku": "anthropic/claude-haiku-4-5",  # Triage, routing, simple tasks
+    "sonnet": "anthropic/claude-sonnet-4-6",         # Code, review, implementation
+    "opus": "anthropic/claude-opus-4-6",             # Architecture, complex reasoning
+    "flash": "google/gemini-3-flash-preview", # Fast, cheap, large context
+    "pro": "google/gemini-3-pro-preview",    # Capable, large context
+}
+
+# Default model tier per agent (overridden by frontmatter 'model:' field)
+# Empty by default - agents use whatever model the user has authenticated with.
+# Uncomment entries to pin specific agents to specific models if needed.
+AGENT_MODEL_TIERS = {
+    # "Build+": "sonnet",
+    # "Research": "flash",
+    # "Content": "sonnet",
+
+}
+
+# Files to skip (not primary agents)
+# Includes SKIP_PRIMARY_AGENTS (demoted agents that are now subagents)
+# configs/SKILL-SCAN-RESULTS.md is a generated report, not an agent
+SKIP_FILES = {"AGENTS.md", "README.md", "configs/SKILL-SCAN-RESULTS.md"} | SKIP_PRIMARY_AGENTS
+
+def parse_frontmatter(filepath):
+    """Parse YAML frontmatter from markdown file."""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Check for frontmatter
+        if not content.startswith('---'):
+            return {}
+        
+        # Find end of frontmatter
+        end_idx = content.find('---', 3)
+        if end_idx == -1:
+            return {}
+        
+        frontmatter = content[3:end_idx].strip()
+        
+        # Simple YAML parsing for subagents list
+        result = {}
+        lines = frontmatter.split('\n')
+        current_key = None
+        current_list = []
+        
+        for line in lines:
+            stripped = line.strip()
+            # Ignore comments and empty lines
+            if not stripped or stripped.startswith('#'):
+                continue
+            
+            if stripped.startswith('- ') and current_key:
+                # List item
+                current_list.append(stripped[2:].strip())
+            elif ':' in stripped and not stripped.startswith('-'):
+                # Save previous list if any
+                if current_key and current_list:
+                    result[current_key] = current_list
+                    current_list = []
+                
+                # New key
+                key, value = stripped.split(':', 1)
+                current_key = key.strip()
+                value = value.strip()
+                if value:
+                    result[current_key] = value
+                    current_key = None
+        
+        # Save final list
+        if current_key and current_list:
+            result[current_key] = current_list
+        
+        return result
+    except (IOError, OSError, UnicodeDecodeError) as e:
+        print(f"Warning: Failed to parse frontmatter for {filepath}: {e}", file=sys.stderr)
+        return {}
+
+def filename_to_display(filename):
+    """Convert filename to display name."""
+    name = filename.replace(".md", "")
+    if name in DISPLAY_NAMES:
+        return DISPLAY_NAMES[name]
+    # Convert kebab-case to Title-Case
+    return "-".join(word.capitalize() for word in name.split("-"))
+
+
+def display_to_filename(display_name):
+    """Convert display name back to filename stem."""
+    reverse_map = {value: key for key, value in DISPLAY_NAMES.items()}
+    if display_name in reverse_map:
+        return reverse_map[display_name]
+    return display_name.lower()
+
+def get_agent_config(display_name, filename, subagents=None, model_tier=None):
+    """Generate agent configuration.
+    
+    Args:
+        display_name: Agent display name
+        filename: Agent markdown filename
+        subagents: Optional list of allowed subagent names (from frontmatter)
+        model_tier: Optional model tier from frontmatter (haiku/sonnet/opus/flash/pro)
+    """
+    tools = AGENT_TOOLS.get(display_name, DEFAULT_TOOLS.copy())
+    temp = AGENT_TEMPS.get(display_name, 0.2)
+    
+    config = {
+        "description": f"Read ~/.aidevops/agents/{filename}",
+        "mode": "primary",
+        "temperature": temp,
+        "permission": {},
+        "tools": tools
+    }
+    
+    # Add custom system prompt for ALL primary agents (ensures consistent identity)
+    # This replaces the host tool's default system prompt, preventing identity confusion
+    # when running in different tools (OpenCode vs Claude Code) and enforcing tool preferences
+    if display_name not in SKIP_CUSTOM_PROMPT:
+        prompt_file = os.path.expanduser(DEFAULT_PROMPT)
+        if os.path.exists(prompt_file):
+            config["prompt"] = "{file:" + DEFAULT_PROMPT + "}"
+    
+    # Add model routing (from frontmatter or defaults)
+    # Resolves tier name to actual model identifier
+    effective_tier = model_tier or AGENT_MODEL_TIERS.get(display_name)
+    if effective_tier and effective_tier in MODEL_TIERS:
+        config["model"] = MODEL_TIERS[effective_tier]
+    
+    # All primary agents get external_directory permission
+    # (Plan+ special permissions removed - it's now a subagent)
+    config["permission"] = {"external_directory": "allow"}
+    
+    # Add subagent filtering via permission.task if subagents specified
+    # This generates deny-all + allow-specific rules
+    if subagents and isinstance(subagents, list) and len(subagents) > 0:
+        task_perms = {"*": "deny"}
+        for subagent in subagents:
+            task_perms[subagent] = "allow"
+        config["permission"]["task"] = task_perms
+        print(f"    {display_name}: filtered to {len(subagents)} subagents")
+    
+    return config
+
+# Discover all root-level .md files
+primary_agents = {}
+discovered = []
+subagent_filtered_count = 0
+
+for filepath in glob.glob(os.path.join(agents_dir, "*.md")):
+    filename = os.path.basename(filepath)
+    if filename in SKIP_FILES:
+        continue
+    
+    display_name = filename_to_display(filename)
+    
+    # Parse frontmatter for subagents list and model tier
+    frontmatter = parse_frontmatter(filepath)
+    subagents = frontmatter.get('subagents', None)
+    model_tier = frontmatter.get('model', None)
+    if not isinstance(subagents, (list, type(None))):
+        print(f"  Warning: {display_name} has malformed subagents value (expected list, got {type(subagents).__name__}): {subagents}", file=sys.stderr)
+        subagents = None
+
+    if subagents:
+        subagent_filtered_count += 1
+    
+    primary_agents[display_name] = get_agent_config(display_name, filename, subagents, model_tier)
+    discovered.append(display_name)
+
+# Validate subagent references against actual files
+# Built-in agent types (general, explore) don't have .md files — skip them
+# Discovery must match runtime resolution semantics:
+# - only nested dirs (not root)
+# - only files with frontmatter mode: subagent
+# - skip AGENTS.md/README.md, skip *-skill.md files, skip loop-state dirs
+BUILTIN_SUBAGENTS = {"general", "explore"}
+all_subagent_files = set()
+all_subagent_paths = set()
+for root, _, files in os.walk(agents_dir):
+    rel_root = os.path.relpath(root, agents_dir)
+    if rel_root == "." or "loop-state" in rel_root.split(os.sep):
+        continue
+    for f in files:
+        if not f.endswith(".md"):
+            continue
+        if f in {"AGENTS.md", "README.md"} or f.endswith("-skill.md"):
+            continue
+        full_path = os.path.join(root, f)
+        fm = parse_frontmatter(full_path)
+        if fm.get("mode") != "subagent":
+            continue
+
+        stem = os.path.splitext(f)[0]
+        rel_path = os.path.relpath(full_path, agents_dir)
+        rel_stem = os.path.splitext(rel_path)[0].replace(os.sep, "/")
+        all_subagent_files.add(stem)
+        all_subagent_paths.add(rel_stem)
+
+
+def subagent_ref_exists(agent_name, subagent_ref):
+    # Exact basename match (legacy/global short refs)
+    if subagent_ref in all_subagent_files:
+        return True
+
+    # Exact path from agents root (e.g. workflows/plans)
+    if subagent_ref in all_subagent_paths:
+        return True
+
+    # Agent-local relative path (e.g. content -> production/writing)
+    agent_slug = display_to_filename(agent_name)
+    if f"{agent_slug}/{subagent_ref}" in all_subagent_paths:
+        return True
+
+    # Folder shorthand (e.g. distribution/youtube -> .../distribution/youtube/youtube.md)
+    if "/" in subagent_ref:
+        leaf = subagent_ref.rsplit("/", 1)[1]
+        if f"{agent_slug}/{subagent_ref}/{leaf}" in all_subagent_paths:
+            return True
+        if f"{subagent_ref}/{leaf}" in all_subagent_paths:
+            return True
+
+    return False
+
+missing_refs = []
+for display_name, agent_config in primary_agents.items():
+    task_perms = agent_config.get('permission', {}).get('task', {})
+    if not task_perms:
+        continue
+    for subagent_name in task_perms:
+        if subagent_name == '*':
+            continue
+        if subagent_name in BUILTIN_SUBAGENTS:
+            continue
+        if not subagent_ref_exists(display_name, subagent_name):
+            missing_refs.append((display_name, subagent_name))
+
+if missing_refs:
+    for agent, ref in missing_refs:
+        print(f"  Warning: {agent} references subagent '{ref}' but no {ref}.md found", file=sys.stderr)
+
+# Sort agents: ordered ones first, then alphabetical
+def sort_key(name):
+    if name in AGENT_ORDER:
+        return (0, AGENT_ORDER.index(name))
+    return (1, name.lower())
+
+sorted_agents = dict(sorted(primary_agents.items(), key=lambda x: sort_key(x[0])))
+
+# =============================================================================
+# DISABLE DEFAULT BUILD/PLAN AGENTS AND DEMOTED AGENTS
+# Build+ is now the unified coding agent (Plan+ and AI-DevOps consolidated)
+# =============================================================================
+
+# Guard: skip agent config if no primary agents discovered (avoids fatal OpenCode crash)
+if not primary_agents:
+    print("  WARNING: No primary agents discovered — skipping agent config update", file=sys.stderr)
+    print("  (agents directory may be empty or deploy incomplete)", file=sys.stderr)
+else:
+    sorted_agents["build"] = {"disable": True}
+    sorted_agents["plan"] = {"disable": True}
+    # Disable demoted agents (now subagents accessible via @mention)
+    sorted_agents["Plan+"] = {"disable": True}
+    sorted_agents["AI-DevOps"] = {"disable": True}
+    sorted_agents["Browser-Extension-Dev"] = {"disable": True}
+    sorted_agents["Mobile-App-Dev"] = {"disable": True}
+    print("  Disabled default 'build' and 'plan' agents")
+    print("  Disabled 'Plan+', 'AI-DevOps', 'Browser-Extension-Dev', 'Mobile-App-Dev' (available as @subagents)")
+
+    config['agent'] = sorted_agents
+
+    # Set Build+ as the default agent (first in Tab cycle, auto-selected on startup)
+    config['default_agent'] = "Build+"
+    print("  Set Build+ as default agent")
+
+# =============================================================================
+# INSTRUCTIONS - Auto-load aidevops AGENTS.md for full framework context
+# =============================================================================
+# OpenCode's 'instructions' config auto-includes files in every session.
+# This ensures the full aidevops framework docs are available without
+# relying on the LLM to follow "read this file" instructions.
+# See: https://opencode.ai/docs/rules/#using-opencodejson
+instructions_path = os.path.expanduser("~/.aidevops/agents/AGENTS.md")
+if os.path.exists(instructions_path):
+    config['instructions'] = [instructions_path]
+    print("  Added instructions: ~/.aidevops/agents/AGENTS.md (auto-loaded every session)")
+else:
+    print("  Warning: ~/.aidevops/agents/AGENTS.md not found - run setup.sh first")
+
+print(f"  Auto-discovered {len(sorted_agents)} primary agents from {agents_dir}")
+print(f"  Order: {', '.join(list(sorted_agents.keys())[:5])}...")
+if subagent_filtered_count > 0:
+    print(f"  Subagent filtering: {subagent_filtered_count} agents have permission.task rules")
+
+# Count agents with custom prompts (all agents except those in SKIP_CUSTOM_PROMPT)
+prompt_count = sum(1 for name, cfg in sorted_agents.items() if "prompt" in cfg)
+if prompt_count > 0:
+    print(f"  Custom system prompts: {prompt_count} agents use prompts/build.txt")
+
+# Count agents with model routing
+model_count = sum(1 for name, cfg in sorted_agents.items() if "model" in cfg)
+if model_count > 0:
+    print(f"  Model routing: {model_count} agents have model tier assignments")
+
+# =============================================================================
+# PROVIDER OPTIONS - Prompt caching and performance
+# =============================================================================
+# Enable prompt caching for Anthropic models (setCacheKey: true)
+# This caches the system prompt prefix (AGENTS.md + build.txt + tool definitions)
+# across requests, reducing input token costs by ~90% on cache hits.
+# Cache auto-invalidates when file content changes (content-based hashing).
+# Works on all Anthropic models (min 1024-4096 tokens depending on model).
+# See: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+
+if 'provider' not in config:
+    config['provider'] = {}
+
+if 'anthropic' not in config['provider']:
+    config['provider']['anthropic'] = {}
+
+if 'options' not in config['provider']['anthropic']:
+    config['provider']['anthropic']['options'] = {}
+
+config['provider']['anthropic']['options']['setCacheKey'] = True
+print("  Enabled prompt caching for Anthropic (setCacheKey: true)")
+
+# =============================================================================
+# MCP SERVERS - Ensure required MCP servers are configured
+# =============================================================================
+# Loading strategy:
+#   - enabled: True  = Server starts at OpenCode launch (for MCPs used by all main agents)
+#   - enabled: False = Server starts on-demand when subagent invokes it (lazy loading)
+#
+# MCPs enabled at startup (used by main agents):
+#   - augment-context-engine, context7, playwriter, gh_grep
+#
+# MCPs lazy-loaded (subagent-only):
+#   - claude-code-mcp, outscraper, dataforseo, shadcn, macos-automator, gsc, localwp, etc.
+# =============================================================================
+
+if 'mcp' not in config:
+    config['mcp'] = {}
+
+if 'tools' not in config:
+    config['tools'] = {}
+
+import shutil
+import platform
+import sys
+bun_path = shutil.which('bun')
+npx_path = shutil.which('npx')
+if not npx_path and not bun_path:
+    print("  Warning: Neither bun nor npx found in PATH", file=sys.stderr)
+pkg_runner = f"{bun_path} x" if bun_path else (npx_path or "npx")
+
+# -----------------------------------------------------------------------------
+# MCP LOADING POLICY - Enforce enabled states for all MCPs
+# -----------------------------------------------------------------------------
+# Eager-loaded (enabled: True): Used by all main agents, start at launch
+# No eager MCPs — all lazy-load on demand to save context tokens
+EAGER_MCPS = set()
+
+# Lazy-loaded (enabled: False): Subagent-only, start on-demand
+# sentry/socket: Remote MCPs requiring auth, disable until configured
+# These save ~7K+ tokens on session startup
+LAZY_MCPS = {
+    'MCP_DOCKER',
+    'ahrefs',
+    'amazon-order-history',
+    'augment-context-engine',
+    'chrome-devtools',
+    'claude-code-mcp',
+    'context7',
+    'dataforseo',
+    'gh_grep',
+    'google-analytics-mcp',
+    # Oh-My-OpenCode MCPs - disable globally, use @github-search/@context7 subagents
+    'grep_app',
+    'gsc',
+    'ios-simulator',
+    'localwp',
+    'macos-automator',
+    'openapi-search',
+    'outscraper',
+    'playwriter',
+    'quickfile',
+    'sentry',
+    'shadcn',
+    'socket',
+    'websearch',
+}
+# Note: gh_grep removed from aidevops but may exist from old configs or OmO
+
+# Apply loading policy to existing MCPs and warn about uncategorized ones
+uncategorized = []
+for mcp_name in list(config.get('mcp', {}).keys()):
+    mcp_cfg = config['mcp'].get(mcp_name, {})
+    if not isinstance(mcp_cfg, dict):
+        print(f"  Warning: MCP '{mcp_name}' has non-dict config ({type(mcp_cfg).__name__}), skipping", file=sys.stderr)
+        continue
+
+    if mcp_name in EAGER_MCPS:
+        mcp_cfg['enabled'] = True
+    elif mcp_name in LAZY_MCPS:
+        mcp_cfg['enabled'] = False
+    else:
+        uncategorized.append(mcp_name)
+
+if uncategorized:
+    print(f"  Warning: Uncategorized MCPs (add to EAGER_MCPS or LAZY_MCPS): {uncategorized}", file=sys.stderr)
+
+print(f"  Applied MCP loading policy: {len(EAGER_MCPS)} eager, {len(LAZY_MCPS)} lazy")
+
+# -----------------------------------------------------------------------------
+# EAGER-LOADED MCPs (enabled: True) - Used by all main agents
+# -----------------------------------------------------------------------------
+
+# Remove osgrep if present (deprecated — disproportionate CPU/disk cost)
+if 'osgrep' in config.get('mcp', {}):
+    del config['mcp']['osgrep']
+    print("  Removed deprecated osgrep MCP")
+if 'osgrep_*' in config.get('tools', {}):
+    del config['tools']['osgrep_*']
+
+# Playwriter MCP - browser automation via Chrome extension (used by all main agents)
+# Requires: Chrome extension from https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
+if 'playwriter' not in config['mcp']:
+    if bun_path:
+        config['mcp']['playwriter'] = {
+            "type": "local",
+            "command": ["bun", "x", "playwriter@latest"],
+            "enabled": True
+        }
+    else:
+        config['mcp']['playwriter'] = {
+            "type": "local",
+            "command": ["npx", "playwriter@latest"],
+            "enabled": True
+        }
+    print("  Added playwriter MCP (eager load - used by all agents)")
+
+# playwriter_* enabled globally (used by all main agents)
+config['tools']['playwriter_*'] = True
+
+# gh_grep MCP removed - @github-search subagent uses CLI tools (rg, gh) instead
+# This saves ~600 tokens per session with equivalent functionality
+# See: tools/context/github-search.md
+
+# -----------------------------------------------------------------------------
+# LAZY-LOADED MCPs (enabled: False) - Subagent-only, start on-demand
+# -----------------------------------------------------------------------------
+
+# Outscraper MCP - for business intelligence extraction (subagent only)
+# Note: enabled state is set by MCP loading policy above
+if 'outscraper' not in config['mcp']:
+    config['mcp']['outscraper'] = {
+        "type": "local",
+        "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"],
+        "enabled": False
+    }
+    print("  Added outscraper MCP (lazy load - @outscraper subagent only)")
+
+if 'outscraper_*' not in config['tools']:
+    config['tools']['outscraper_*'] = False
+    print("  Set outscraper_* disabled globally")
+
+# DataForSEO MCP - for comprehensive SEO data (SEO agent and @dataforseo subagent)
+# Note: enabled state is set by MCP loading policy above
+if 'dataforseo' not in config['mcp']:
+    config['mcp']['dataforseo'] = {
+        "type": "local",
+        "command": ["/bin/bash", "-c", f"source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD {pkg_runner} dataforseo-mcp-server"],
+        "enabled": False
+    }
+    print("  Added dataforseo MCP (lazy load - SEO agent/@dataforseo subagent)")
+
+if 'dataforseo_*' not in config['tools']:
+    config['tools']['dataforseo_*'] = False
+    print("  Set dataforseo_* disabled globally")
+
+# shadcn MCP - UI component library (subagent only)
+# Docs: https://ui.shadcn.com/docs/mcp
+# Note: enabled state is set by MCP loading policy above
+if 'shadcn' not in config['mcp']:
+    config['mcp']['shadcn'] = {
+        "type": "local",
+        "command": ["npx", "shadcn@latest", "mcp"],
+        "enabled": False
+    }
+    print("  Added shadcn MCP (lazy load - @shadcn subagent only)")
+
+if 'shadcn_*' not in config['tools']:
+    config['tools']['shadcn_*'] = False
+    print("  Set shadcn_* disabled globally")
+
+# Claude Code MCP - spawn Claude as sub-agent (subagent only)
+# Source: https://github.com/steipete/claude-code-mcp
+# Use @claude-code subagent to invoke this MCP
+# Fork: https://github.com/marcusquinn/claude-code-mcp (until PR #40 merged upstream)
+# Upstream: https://github.com/steipete/claude-code-mcp
+# Note: Always overwrite to ensure correct fork is used
+config['mcp']['claude-code-mcp'] = {
+    "type": "local",
+    "command": ["npx", "-y", "github:marcusquinn/claude-code-mcp"],
+    "enabled": False
+}
+print("  Set claude-code-mcp to lazy load (@claude-code subagent only)")
+
+# Claude Code MCP tools disabled globally
+config['tools']['claude-code-mcp_*'] = False
+print("  Set claude-code-mcp_* disabled globally")
+
+# macOS Automator MCP - AppleScript and JXA automation (macOS only, subagent only)
+# Docs: https://github.com/steipete/macos-automator-mcp
+# Note: enabled state is set by MCP loading policy above
+if platform.system() == 'Darwin':
+    if 'macos-automator' not in config['mcp']:
+        config['mcp']['macos-automator'] = {
+            "type": "local",
+            "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"],
+            "enabled": False
+        }
+        print("  Added macos-automator MCP (lazy load - @mac subagent only)")
+
+    if 'macos-automator_*' not in config['tools']:
+        config['tools']['macos-automator_*'] = False
+        print("  Set macos-automator_* disabled globally")
+
+# iOS Simulator MCP - simulator interaction (macOS only, subagent only)
+# Docs: https://github.com/joshuayoes/ios-simulator-mcp
+# Note: enabled state is set by MCP loading policy above
+if platform.system() == 'Darwin':
+    if 'ios-simulator' not in config['mcp']:
+        config['mcp']['ios-simulator'] = {
+            "type": "local",
+            "command": ["npx", "-y", "ios-simulator-mcp"],
+            "enabled": False
+        }
+        print("  Added ios-simulator MCP (lazy load - @ios-simulator-mcp subagent only)")
+
+    if 'ios-simulator_*' not in config['tools']:
+        config['tools']['ios-simulator_*'] = False
+        print("  Set ios-simulator_* disabled globally")
+
+# OpenAPI Search MCP - remote Cloudflare Worker, zero install (subagent only)
+# Docs: https://github.com/janwilmake/openapi-mcp-server
+# Directory: https://openapisearch.com/search
+# Note: enabled state is set by MCP loading policy above
+if 'openapi-search' not in config['mcp']:
+    config['mcp']['openapi-search'] = {
+        "type": "remote",
+        "url": "https://openapi-mcp.openapisearch.com/mcp",
+        "enabled": False
+    }
+    print("  Added openapi-search MCP (lazy load - @openapi-search subagent only)")
+
+if 'openapi-search_*' not in config['tools']:
+    config['tools']['openapi-search_*'] = False
+    print("  Set openapi-search_* disabled globally")
+
+# Disable Oh-My-OpenCode MCP tools globally
+# OmO installs: grep_app (GitHub search), context7 (docs), websearch (Exa)
+# MCPs are disabled via LAZY_MCPS above, but we also need to disable tools
+omo_tool_patterns = ['grep_app_*', 'websearch_*', 'gh_grep_*']
+for tool_pattern in omo_tool_patterns:
+    if config['tools'].get(tool_pattern) is not False:
+        config['tools'][tool_pattern] = False
+        print(f"  Disabled {tool_pattern} tools globally (use matching subagent/CLI workflow)")
+
+if config_loaded:
+    atomic_json_write(config_path, config)
+    print(f"  Updated {len(primary_agents)} primary agents in opencode.json")
+else:
+    print("Error: config was not loaded successfully, skipping write", file=sys.stderr)
+    sys.exit(1)

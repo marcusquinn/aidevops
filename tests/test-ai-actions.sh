@@ -2205,7 +2205,7 @@ TODOEOF
 		else
 			# Should find t100 as a candidate
 			if ! printf '%s' "$candidates" | grep -q "t100"; then
-				echo "FAIL: t100 should be a candidate for 'Investigate stale evaluating recovery events'"
+				echo "FAIL: t100 should be a candidate matching 'Investigate stale evaluating recovery events'"
 				failures=$((failures + 1))
 			fi
 		fi
