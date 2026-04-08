@@ -252,6 +252,8 @@ ${signature}
 \`\`\`
 
 This approval was signed with a root-protected SSH key. It cannot be forged by automation.
+
+> **This issue is now locked.** To propose scope changes, open a new issue referencing this one.
 EOF
 	return 0
 }
@@ -269,6 +271,16 @@ _post_issue_approval_updates() {
 		--remove-label "needs-maintainer-review" \
 		--add-label "auto-dispatch" >/dev/null 2>&1 || true
 	_print_info "Labels updated: removed needs-maintainer-review, added auto-dispatch"
+
+	# t1931: Lock the issue immediately at approval time to close the
+	# prompt-injection window between crypto-approval and worker dispatch.
+	# Previously, the lock only happened at dispatch time (pulse-wrapper.sh
+	# lock_issue_for_worker), leaving a gap where non-collaborators could
+	# add comments that influence the worker. The pulse's dispatch-time lock
+	# becomes a reinforcing no-op (gh issue lock on an already-locked issue
+	# is idempotent). Unlock still happens after worker completion.
+	gh issue lock "$target_number" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || true
+	_print_info "Issue #$target_number locked (scope finalized, unlocks after worker completion)"
 	return 0
 }
 
