@@ -55,7 +55,7 @@ s="${SCRIPTS_DIR}/setup-local-api-keys.sh"
 # setup-mcp-integrations.sh (requires Node.js - skip if not available)
 s="${SCRIPTS_DIR}/setup-mcp-integrations.sh"
 if command -v node &>/dev/null; then
-	if "$s" help &>/dev/null; then pass "mcp help"; else fail "mcp help"; fi
+	"$s" help &>/dev/null && pass "mcp help" || fail "mcp help"
 else
 	skip "mcp help (requires Node.js)"
 fi
