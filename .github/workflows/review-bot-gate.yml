@@ -104,7 +104,19 @@ jobs:
           # pass the gate with a warning instead of blocking indefinitely.
           # Default: 4 hours (14400s). Prevents systemic rate-limiting from
           # blocking all PRs when many are opened in a short window.
+          #
+          # GH#17671 post-mortem: external-contributor PRs must NOT benefit
+          # from grace — they require a real code review before merge.
           RATE_LIMIT_GRACE_SECONDS=14400
+
+          # Check if this is an external contributor PR
+          IS_EXTERNAL_PR=false
+          PR_LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json labels --jq '.labels[].name' 2>/dev/null || true)
+          if echo "$PR_LABELS" | grep -q 'external-contributor'; then
+            IS_EXTERNAL_PR=true
+            echo "External contributor PR detected — rate-limit grace and skip-review-gate DISABLED"
+          fi
 
           # Get PR creation time
           PR_CREATED=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
@@ -302,10 +314,11 @@ jobs:
             echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
             echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
             echo "status_fallback=true" >> "$GITHUB_OUTPUT"
-          elif [[ -n "$RATE_LIMITED_BOTS" ]] && [[ "$ELAPSED" -ge "$RATE_LIMIT_GRACE_SECONDS" ]]; then
+          elif [[ -n "$RATE_LIMITED_BOTS" ]] && [[ "$ELAPSED" -ge "$RATE_LIMIT_GRACE_SECONDS" ]] && [[ "$IS_EXTERNAL_PR" != "true" ]]; then
             # GH#3827: Rate-limit grace period exceeded. Bots posted rate-limit
             # notices (proving they're configured) but the PR has been open long
             # enough that blocking further provides no value. Pass with a warning.
+            # GH#17671 post-mortem: NEVER apply grace to external-contributor PRs.
             GRACE_HOURS=$((RATE_LIMIT_GRACE_SECONDS / 3600))
             AGE_HOURS=$((ELAPSED / 3600))
             echo ""
@@ -360,7 +373,13 @@ jobs:
           LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
             --json labels -q '.labels[].name' 2>/dev/null || echo "")
 
-          if echo "$LABELS" | grep -q "skip-review-gate"; then
+          # GH#17671 post-mortem: external-contributor PRs cannot skip the
+          # review gate. The skip label is only for internal PRs where bots
+          # are genuinely not configured.
+          if echo "$LABELS" | grep -q "external-contributor"; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "DENY: external-contributor PR cannot use skip-review-gate label."
+          elif echo "$LABELS" | grep -q "skip-review-gate"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "SKIP: 'skip-review-gate' label found — bypassing review bot gate."
           else

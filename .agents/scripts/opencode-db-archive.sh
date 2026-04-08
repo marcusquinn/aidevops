@@ -144,11 +144,7 @@ file_size_bytes() {
 		echo "0"
 		return 0
 	fi
-	if [[ "$OSTYPE" == "darwin"* ]]; then
-		stat -f '%z' "$filepath" 2>/dev/null || echo "0"
-	else
-		stat -c '%s' "$filepath" 2>/dev/null || echo "0"
-	fi
+	stat -f '%z' "$filepath" 2>/dev/null || stat -c '%s' "$filepath" 2>/dev/null || echo "0"
 	return 0
 }
 
@@ -255,8 +251,9 @@ CREATE TABLE IF NOT EXISTS `session_share` (
 	CONSTRAINT `fk_session_share_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
 );
 
+-- WAL mode for the archive too (better read concurrency)
+PRAGMA journal_mode=WAL;
 SCHEMA_SQL
-	sqlite3 "$archive_db" "PRAGMA journal_mode=WAL;" >/dev/null 2>&1 || true
 	return 0
 }
 

@@ -44,8 +44,13 @@ reviews:
     ignore_usernames:
       - "dependabot[bot]"
       - "renovate[bot]"
+    # GH#17671 post-mortem: external-contributor PRs must always be reviewed,
+    # even when rate-limited. The positive "external-contributor" label ensures
+    # CodeRabbit prioritises these PRs. The "!no-review" excludes internal PRs
+    # that are explicitly opted out.
     labels:
       - "!no-review"
+      - "external-contributor"
 
   # Request changes for critical issues — this is the setting that controls
   # whether CodeRabbit submits formal APPROVED/CHANGES_REQUESTED reviews.
