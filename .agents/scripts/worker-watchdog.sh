@@ -979,9 +979,20 @@ post_kill_github_update() {
 	# Record failure in the fast-fail counter and escalate tier if threshold reached.
 	# The fast-fail state file is shared with pulse-wrapper.sh — both use the same
 	# JSON file so pulse can skip issues that the watchdog has flagged. (GH#2076)
+	#
+	# Classify crash type for crash-type-aware tier escalation:
+	#   - "idle" kill = worker produced no LLM output → "no_work"
+	#   - "thrash" kill = worker was active but zero-commit looping → "overwhelmed"
+	#   - "backoff" = provider rate limit → "" (not a model capability issue)
 	local provider
 	provider=$(extract_provider_from_cmd "$cmd")
-	_watchdog_record_failure_and_escalate "$issue_number" "$repo_slug" "$reason" "$provider" || true
+	local watchdog_crash_type=""
+	case "$reason" in
+	idle) watchdog_crash_type="no_work" ;;
+	thrash) watchdog_crash_type="overwhelmed" ;;
+	*) watchdog_crash_type="" ;;
+	esac
+	_watchdog_record_failure_and_escalate "$issue_number" "$repo_slug" "$reason" "$provider" "$watchdog_crash_type" || true
 
 	return 0
 }
@@ -1183,6 +1194,7 @@ _watchdog_record_failure_and_escalate() {
 	local repo_slug="$2"
 	local reason="$3"
 	local provider="${4:-anthropic}"
+	local crash_type="${5:-}"
 
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
@@ -1251,11 +1263,12 @@ _watchdog_record_failure_and_escalate() {
 	fi
 	rmdir "$lock_dir" 2>/dev/null || true
 
-	log_msg "Fast-fail: #${issue_number} (${repo_slug}) ${log_action} reason=${reason}"
+	log_msg "Fast-fail: #${issue_number} (${repo_slug}) ${log_action} reason=${reason} crash_type=${crash_type:-unclassified}"
 
-	# Trigger tier escalation on non-rate-limit failures
+	# Trigger tier escalation on non-rate-limit failures.
+	# Pass crash_type for crash-type-aware thresholds.
 	if [[ "$new_count" -gt "$existing_count" ]]; then
-		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason"
+		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason" "$crash_type"
 	fi
 
 	return 0
