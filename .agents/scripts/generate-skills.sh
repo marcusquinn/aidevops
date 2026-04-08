@@ -251,6 +251,35 @@ if [[ "$CLEAN" == true ]]; then
 fi
 
 # =============================================================================
+# Cache check — skip generation if source .md files haven't changed
+# =============================================================================
+
+CACHE_HASH_FILE="${AGENTS_DIR}/.skills-source-hash"
+
+compute_source_hash() {
+	# Hash the listing of all source .md files with their sizes and mtimes.
+	# This is fast (~10ms for 1600 files) vs regenerating (~56s).
+	find "$AGENTS_DIR" -name "*.md" -not -name "SKILL.md" -not -name "AGENTS.md" \
+		-not -name "README.md" -type f -exec stat -f '%N %z %m' {} + 2>/dev/null |
+		LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
+	return 0
+}
+
+if [[ "$DRY_RUN" == false && "$CLEAN" == false ]]; then
+	current_hash=$(compute_source_hash)
+	if [[ -f "$CACHE_HASH_FILE" ]]; then
+		stored_hash=$(cat "$CACHE_HASH_FILE" 2>/dev/null || echo "")
+		if [[ "$current_hash" == "$stored_hash" ]]; then
+			# Verify at least one SKILL.md exists (handles first run after cache file created manually)
+			if find "$AGENTS_DIR" -name "SKILL.md" -type f -print -quit 2>/dev/null | grep -q .; then
+				log_info "Agent Skills SKILL.md files up to date (source unchanged) — skipping generation"
+				exit 0
+			fi
+		fi
+	fi
+fi
+
+# =============================================================================
 # Generate Mode
 # =============================================================================
 
@@ -393,6 +422,10 @@ log_info "  Skipped: $skipped (already exist or excluded)"
 if [[ "$DRY_RUN" == true ]]; then
 	log_warning ""
 	log_warning "This was a dry run. Run without --dry-run to generate files."
+else
+	# Write cache hash so next run skips if nothing changed
+	new_hash=$(compute_source_hash)
+	echo "$new_hash" >"$CACHE_HASH_FILE"
 fi
 
 exit 0
