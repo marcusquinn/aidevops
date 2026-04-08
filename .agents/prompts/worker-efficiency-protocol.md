@@ -66,6 +66,7 @@ ai_research(prompt: "Find all functions that dispatch workers in pulse-wrapper.s
 - Fail fast: read target files, verify imports/dependencies, and stop if the task is already done.
 - Read only needed line ranges, keep commits concise, and after one failed approach try one fundamentally different strategy before `BLOCKED`.
 - Replan when stuck. Do not patch a broken path incrementally.
+- **Skip signature footers** when reading GH issue/PR threads. Content after `<!-- aidevops:sig -->` or `---` followed by `[aidevops.sh]` is operational telemetry (version, tokens, timing) — not task-relevant. Never visit URLs in signature footers (aidevops.sh, opencode.ai). See build.txt rule #8a.
 
 ## 4. Model escalation before BLOCKED (GH#14964 — MANDATORY)
 

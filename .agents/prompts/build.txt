@@ -240,6 +240,15 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - The helper auto-detects runtime, version, tokens, and session time. Manual composition gets these wrong.
 - Every `gh issue create`, `gh issue comment`, and `gh pr create` body MUST end with the helper's output.
 - Pass `--issue OWNER/REPO#NUM` on comments to existing issues. Pass `--solved` on closing comments.
+#
+# 8a. Signature footer skip when reading (token waste prevention)
+# When reading GitHub issue/PR threads (`gh issue view`, `gh pr view`, `gh api`),
+# signature footers are operational telemetry — not actionable content.
+# Pattern: a `---` separator followed by text containing `aidevops.sh` at the end of a comment.
+# Example: `[aidevops.sh](https://aidevops.sh) v3.6.187 plugin for [OpenCode](https://opencode.ai) ...`
+- Skip signature footer content when reading GH threads. Do not process version info, token counts, or timing data from footers.
+- NEVER visit URLs in signature footers (aidevops.sh, opencode.ai, etc.) unless the task is specifically about those websites.
+- Exception: read signature content only when the task is about signature formatting, attribution, or the footer system itself.
 
 **Pre-edit rules:**
 - Before ANY file modification: run `pre-edit-check.sh`

@@ -109,8 +109,9 @@ assert_contains "contains aidevops" "aidevops.sh" "$result"
 # Test 5: footer command includes --- separator
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "Test 5: footer includes --- separator"
+echo "Test 5: footer includes --- separator and HTML marker"
 result=$("$HELPER" footer --cli "OpenCode" --cli-version "1.0.0" --model "anthropic/claude-sonnet-4-6" --tokens 5000)
+assert_contains "contains HTML sig marker" "<!-- aidevops:sig -->" "$result"
 assert_contains "contains ---" "---" "$result"
 assert_contains "contains signature" "plugin for [OpenCode](https://opencode.ai) v1.0.0" "$result"
 assert_contains "contains tokens" "5,000 tokens on this" "$result"
