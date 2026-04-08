@@ -11845,6 +11845,8 @@ PREFETCH_EOF
 		review_text=$(cat "$review_output_file")
 		rm -f "$review_output_file"
 
+		local triage_posted="false"
+
 		if [[ -n "$review_text" && ${#review_text} -gt 50 ]]; then
 			# ── Safety filter: NEVER post raw sandbox/infrastructure output ──
 			# If the LLM failed (quota, timeout, garbled), the output contains
@@ -11867,6 +11869,7 @@ PREFETCH_EOF
 					gh issue comment "$issue_num" --repo "$repo_slug" \
 						--body "$clean_review" >/dev/null 2>&1 || true
 					echo "[pulse-wrapper] Posted sandboxed triage review for #${issue_num} in ${repo_slug}" >>"$LOGFILE"
+					triage_posted="true"
 				fi
 			elif [[ "$has_infra_markers" == "true" ]]; then
 				# No ## Review: header AND infra markers present — raw sandbox output, discard entirely
@@ -11876,6 +11879,20 @@ PREFETCH_EOF
 			fi
 		else
 			echo "[pulse-wrapper] Triage review for #${issue_num} produced no usable output (${#review_text} chars)" >>"$LOGFILE"
+		fi
+
+		# GH#17829: Surface triage failures visibly. When the triage worker
+		# fails to produce a review, the only evidence is log entries — the
+		# issue timeline shows lock/unlock churn with no visible outcome.
+		# Add a label so maintainers can identify issues needing manual triage.
+		# The label is removed when a successful triage review is posted.
+		if [[ "$triage_posted" == "true" ]]; then
+			gh issue edit "$issue_num" --repo "$repo_slug" \
+				--remove-label "triage-failed" >/dev/null 2>&1 || true
+		else
+			gh issue edit "$issue_num" --repo "$repo_slug" \
+				--add-label "triage-failed" >/dev/null 2>&1 || true
+			echo "[pulse-wrapper] Added triage-failed label to #${issue_num} in ${repo_slug}" >>"$LOGFILE"
 		fi
 
 		# Unlock issue after triage

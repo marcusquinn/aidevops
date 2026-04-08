@@ -1341,6 +1341,46 @@ EOF
 	return 0
 }
 
+# _detect_opencode_server: check if an opencode server is already listening.
+# GH#17829: When `opencode serve` is running, `opencode run` without --attach
+# fails with "Session not found". Detect the running server and return its URL.
+#
+# Detection strategy (does NOT rely on OPENCODE_PID — that's intentionally
+# excluded from worker envs per GH#6668):
+#   1. Check OPENCODE_SERVER_PASSWORD is set (indicates a server context)
+#   2. Verify a server is actually listening on the expected port
+#
+# Outputs two lines to stdout: URL then password (empty if no server found).
+# Returns: 0 if a server is detected, 1 otherwise.
+_detect_opencode_server() {
+	local password="${OPENCODE_SERVER_PASSWORD:-}"
+	if [[ -z "$password" ]]; then
+		return 1
+	fi
+
+	local port="${OPENCODE_PORT:-4096}"
+	local url="http://localhost:${port}"
+
+	# Verify the server is actually listening (timeout 2s, silent).
+	# Use /api/session/list as a lightweight endpoint — it returns 401 without
+	# auth but proves the server is up (vs connection refused).
+	if curl -sf --max-time 2 -o /dev/null "${url}/api/session/list" 2>/dev/null ||
+		curl -sf --max-time 2 -o /dev/null -w '%{http_code}' "${url}/api/session/list" 2>/dev/null | grep -q '401'; then
+		printf '%s\n%s\n' "$url" "$password"
+		return 0
+	fi
+
+	# Fallback: check if anything is listening on the port (no curl endpoint needed)
+	if command -v lsof >/dev/null 2>&1; then
+		if lsof -iTCP:"$port" -sTCP:LISTEN -P -n >/dev/null 2>&1; then
+			printf '%s\n%s\n' "$url" "$password"
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
 # _build_run_cmd: build the opencode command array for a run attempt.
 # Args: selected_model work_dir prompt title agent_name persisted_session
 #       extra_args (remaining positional args)
@@ -1362,6 +1402,16 @@ _build_run_cmd() {
 	fi
 	if [[ -n "$persisted_session" ]]; then
 		printf '%s\0' --session "$persisted_session" --continue
+	fi
+	# GH#17829: Attach to running opencode server if one is detected.
+	# Without this, `opencode run` tries to start an embedded server that
+	# conflicts with the user's `opencode serve`, causing "Session not found".
+	local _server_info=""
+	if _server_info=$(_detect_opencode_server); then
+		local _server_url _server_pass
+		_server_url=$(echo "$_server_info" | head -1)
+		_server_pass=$(echo "$_server_info" | tail -1)
+		printf '%s\0' --attach "$_server_url" --password "$_server_pass"
 	fi
 	# Emit any extra args passed as positional parameters
 	while [[ $# -gt 0 ]]; do
@@ -2556,10 +2606,23 @@ _run_canary_test() {
 	fi
 	local canary_exit=0
 
+	# GH#17829: Detect running opencode server and build attach args.
+	# The canary must test the same mode workers will use — if a server is
+	# running, both canary and workers need --attach to avoid conflicts.
+	local canary_attach_args=()
+	local _canary_server_info=""
+	if _canary_server_info=$(_detect_opencode_server); then
+		local _canary_url _canary_pass
+		_canary_url=$(echo "$_canary_server_info" | head -1)
+		_canary_pass=$(echo "$_canary_server_info" | tail -1)
+		canary_attach_args=(--attach "$_canary_url" --password "$_canary_pass")
+	fi
+
 	# perl alarm is the most portable macOS timeout mechanism
 	perl -e "alarm $CANARY_TIMEOUT_SECONDS; exec @ARGV" -- \
 		"$OPENCODE_BIN_DEFAULT" run "Reply with exactly: CANARY_OK" \
 		-m "$canary_model" --dir "${HOME}" \
+		${canary_attach_args[@]+"${canary_attach_args[@]}"} \
 		>"$canary_output" 2>&1 || canary_exit=$?
 
 	if [[ "$canary_exit" -eq 0 ]] && grep -q "CANARY_OK" "$canary_output" 2>/dev/null; then

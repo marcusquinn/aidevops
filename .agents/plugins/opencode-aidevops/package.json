@@ -18,6 +18,9 @@
   "peerDependencies": {
     "opencode-ai": ">=1.3.0"
   },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.0.0"
+  },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.3.13"
   }

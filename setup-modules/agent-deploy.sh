@@ -186,11 +186,23 @@ _deploy_agents_post_copy() {
 	script_count=$(find "$target_dir/scripts" -name "*.sh" -type f 2>/dev/null | wc -l | tr -d ' ')
 	print_info "Deployed $agent_count agent files and $script_count scripts"
 
-	# Symlink OpenCode's node_modules into the plugin directory (t1551)
+	# Install plugin dependencies (GH#17829: @bufbuild/protobuf was missing)
+	# First try symlinking OpenCode's node_modules (t1551), then verify the
+	# critical dependency exists. If the symlink is broken or the module is
+	# absent, fall back to npm install in the plugin directory.
 	local oc_node_modules="$HOME/.config/opencode/node_modules"
 	local plugin_dir="$target_dir/plugins/opencode-aidevops"
-	if [[ -d "$oc_node_modules" && -d "$plugin_dir" ]]; then
-		ln -sf "$oc_node_modules" "$plugin_dir/node_modules" 2>/dev/null || true
+	if [[ -d "$plugin_dir" ]]; then
+		if [[ -d "$oc_node_modules" ]]; then
+			ln -sf "$oc_node_modules" "$plugin_dir/node_modules" 2>/dev/null || true
+		fi
+		# Verify critical dependency is available; npm install if not
+		if [[ ! -d "$plugin_dir/node_modules/@bufbuild/protobuf" ]]; then
+			if command -v npm &>/dev/null; then
+				npm install --omit=dev --prefix "$plugin_dir" >/dev/null 2>&1 ||
+					print_warning "Failed to install plugin dependencies (non-blocking)"
+			fi
+		fi
 	fi
 
 	# Copy VERSION file from repo root to deployed agents
