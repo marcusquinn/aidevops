@@ -18,7 +18,7 @@ name: Maintainer Gate
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened, edited, unlabeled]
   issues:
     types: [unlabeled, labeled, assigned, unassigned]
 
@@ -630,8 +630,8 @@ jobs:
                   DESCRIPTION="Issue #${ISSUE_NUM} has no assignee"
                   echo "BLOCKED: Issue #$ISSUE_NUM has no assignee"
                 fi
-              fi
-            done
+            fi
+          done
 
             # Post final status
             if [[ "$BLOCKED" == "true" ]]; then
@@ -652,3 +652,85 @@ jobs:
                 2>/dev/null || echo "::warning::Could not post success status on PR #$PR_NUM"
             fi
           done
+
+  # =========================================================================
+  # Job 4: Protect PR labels — re-apply needs-maintainer-review if removed
+  #         from an external-contributor PR without cryptographic approval.
+  #         Mirrors the issue label protection (Job 2) for PRs.
+  #
+  # GH#17671 post-mortem: the issue protection existed but PRs had no
+  # equivalent. An actor could remove the NMR label from a PR and the
+  # maintainer-gate Check 0 would no longer block.
+  # =========================================================================
+  protect-pr-labels:
+    name: Protect PR Triage Labels
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'unlabeled' &&
+      github.event.label.name == 'needs-maintainer-review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Re-apply label if no signed approval exists
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          ACTOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Label 'needs-maintainer-review' removed from PR #$PR_NUMBER by $ACTOR"
+
+          # Always allow the bot — the approval-helper.sh removes labels after
+          # posting a signed approval comment, so this is the legitimate path.
+          if [[ "$ACTOR" == "github-actions[bot]" ]] || [[ "$ACTOR" == "github-actions" ]]; then
+            echo "ALLOWED: GitHub Actions bot — label removal accepted"
+            exit 0
+          fi
+
+          # Only protect PRs that were labelled external-contributor.
+          # Internal PRs (from collaborators) should never have had NMR in
+          # the first place — don't fight a manual correction on those.
+          PR_LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json labels --jq '.labels[].name' 2>/dev/null || true)
+
+          if ! echo "$PR_LABELS" | grep -q 'external-contributor'; then
+            echo "ALLOWED: PR #$PR_NUMBER is not an external-contributor PR — label removal accepted"
+            exit 0
+          fi
+
+          # Check for a cryptographic signed approval comment on the PR.
+          # PRs use the same issues API endpoint for comments.
+          SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
+            2>/dev/null || echo "0")
+
+          if [[ "$SIGNED_APPROVAL" -gt 0 ]]; then
+            echo "ALLOWED: Signed approval comment found — label removal accepted"
+            exit 0
+          fi
+
+          echo "DENIED: No signed approval found — re-applying label (actor: $ACTOR)"
+
+          # Re-apply the label
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-maintainer-review"
+
+          # Post a comment explaining why (only once)
+          EXISTING=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | test(\"pr-label-protection-notice\"))] | length" 2>/dev/null || echo "0")
+
+          if [[ "$EXISTING" == "0" ]]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- pr-label-protection-notice -->
+          The \`needs-maintainer-review\` label was re-applied automatically.
+
+          Removing this label requires a cryptographic approval — even for maintainers. This ensures every approval is auditable and cannot be forged by automation.
+
+          To approve this PR, run from your terminal:
+          \`\`\`
+          sudo aidevops approve pr $PR_NUMBER
+          \`\`\`
+          This signs the approval with a root-protected key and posts a verifiable comment."
+          fi
