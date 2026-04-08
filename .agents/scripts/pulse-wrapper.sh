@@ -6160,7 +6160,7 @@ reap_zombie_workers() {
 
 		# Check if a merged PR exists that closes this issue
 		local merged_pr
-		merged_pr=$(gh pr list --repo "$repo_slug" --state merged --search "closes #${issue_number} OR Closes #${issue_number}" \
+		merged_pr=$(gh pr list --repo "$repo_slug" --state merged --search "closes #${issue_number} OR Closes #${issue_number} OR Resolves #${issue_number} OR resolves #${issue_number}" \
 			--limit 1 --json number --jq '.[0].number' 2>/dev/null) || merged_pr=""
 
 		if [[ -n "$merged_pr" && "$merged_pr" != "null" ]]; then

@@ -22,7 +22,7 @@ gh_issue=$(grep -E '^\s*- \[.\] <task-id> ' TODO.md 2>/dev/null | grep -oE 'ref:
 pr_body='WIP - incremental commits'
 [[ -n "$gh_issue" ]] && pr_body="${pr_body}
 
-Ref #${gh_issue}"
+Resolves #${gh_issue}"
 SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" 2>/dev/null || echo "")
 pr_body="${pr_body}${SIG_FOOTER}"
 gh pr create --draft --title '<task-id>: <description>' --body "$pr_body"
