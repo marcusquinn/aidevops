@@ -45,12 +45,15 @@ reviews:
       - "dependabot[bot]"
       - "renovate[bot]"
     # GH#17671 post-mortem: external-contributor PRs must always be reviewed,
-    # even when rate-limited. The positive "external-contributor" label ensures
-    # CodeRabbit prioritises these PRs. The "!no-review" excludes internal PRs
-    # that are explicitly opted out.
+    # even when rate-limited. The "!no-review" exclusion filter skips PRs that
+    # are explicitly opted out. Positive labels (without "!") act as inclusion
+    # filters — they restrict reviews to only PRs with those labels, which would
+    # disable reviews for all internal PRs. Do NOT add "external-contributor"
+    # here; use path_filters or path_instructions to apply stricter review rules
+    # to external-contributor PRs instead. GH#17904: removed "external-contributor"
+    # positive label that was inadvertently disabling internal PR reviews.
     labels:
       - "!no-review"
-      - "external-contributor"
 
   # Request changes for critical issues — this is the setting that controls
   # whether CodeRabbit submits formal APPROVED/CHANGES_REQUESTED reviews.
