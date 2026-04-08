@@ -1223,26 +1223,34 @@ resolve_tier() {
 	primary="${tier_spec%%|*}"
 	fallback="${tier_spec#*|}"
 
-	# Rate limit check (t1330): if primary provider is at throttle risk,
-	# try fallback first to avoid hitting rate limits
-	local primary_provider
-	primary_provider=$(_extract_provider "$primary")
-	if [[ -n "$primary_provider" ]]; then
-		local rl_risk
-		rl_risk=$(_check_provider_rate_limit_risk "$primary_provider") || true
-		rl_risk="${rl_risk:-ok}"
-		if [[ "$rl_risk" == "warn" || "$rl_risk" == "critical" ]]; then
-			[[ "$quiet" != "true" ]] && print_warning "$primary_provider: rate limit ${rl_risk} — preferring fallback for $tier"
-			# Try fallback first when primary is throttle-risk
-			if [[ -n "$fallback" && "$fallback" != "$primary" ]] && check_model_available "$fallback" "$force" "true"; then
-				echo "$fallback"
-				[[ "$quiet" != "true" ]] && print_success "Resolved $tier -> $fallback (rate-limit routing: $primary_provider at ${rl_risk})"
-				return 0
-			fi
-			# Fallback also unavailable — still try primary (better than nothing)
-			[[ "$quiet" != "true" ]] && print_warning "Fallback also unavailable, trying primary despite rate limit risk"
-		fi
-	fi
+	# Rate-limit routing disabled (t1927). The observability helper's rate-limit
+	# data is unreliable — it reports cumulative session tokens as per-minute API
+	# usage (e.g., 1.4M tokens in a 1-min window, 3682% of limit), which triggers
+	# false "critical" status and routes away from Claude to fallback providers.
+	#
+	# Anthropic's per-request rate limits (requests/min, tokens/min) are NOT the
+	# same as the account's token budget (tokens/day, tokens/week). The user's
+	# account has never hit per-request rate limits in interactive sessions.
+	#
+	# The probe already handles actual HTTP 429 (rate_limited status) — if the API
+	# genuinely rate-limits a request, the probe records it and check_model_available
+	# returns false for that provider. That's the correct gate; the observability
+	# helper's pre-emptive risk check is redundant and broken.
+	#
+	# To re-enable: fix observability-helper.sh rate-limits to use only the API
+	# response headers from the probe (anthropic-ratelimit-* / x-ratelimit-*),
+	# not cumulative session token counts. Then uncomment the block below.
+	#
+	# local primary_provider
+	# primary_provider=$(_extract_provider "$primary")
+	# if [[ -n "$primary_provider" ]]; then
+	#     local rl_risk
+	#     rl_risk=$(_check_provider_rate_limit_risk "$primary_provider") || true
+	#     if [[ "$rl_risk" == "warn" || "$rl_risk" == "critical" ]]; then
+	#         # Try fallback first when primary is genuinely throttled
+	#         ...
+	#     fi
+	# fi
 
 	# Try primary
 	if [[ -n "$primary" ]] && check_model_available "$primary" "$force" "true"; then
