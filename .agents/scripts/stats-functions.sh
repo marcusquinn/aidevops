@@ -206,86 +206,6 @@ _persist_role_cache() {
 }
 
 #######################################
-# Clean up a stale health issue from the opposite role.
-#
-# When the runner is confirmed as "supervisor", any lingering
-# "contributor" health issue (and its cache file) is a duplicate
-# created by a past API failure. Close it and remove the cache.
-# Same logic applies in reverse (contributor → stale supervisor).
-#
-# Called once per repo per health-issue update cycle. Idempotent —
-# does nothing if no opposite-role issue exists.
-#
-# Arguments:
-#   $1 - runner_user
-#   $2 - runner_role (the CORRECT current role)
-#   $3 - repo_slug
-#   $4 - slug_safe (slug with / replaced by -)
-#   $5 - cache_dir
-#######################################
-_cleanup_opposite_role_health_issue() {
-	local runner_user="$1"
-	local runner_role="$2"
-	local repo_slug="$3"
-	local slug_safe="$4"
-	local cache_dir="$5"
-
-	local opposite_role
-	if [[ "$runner_role" == "supervisor" ]]; then
-		opposite_role="contributor"
-	else
-		opposite_role="supervisor"
-	fi
-
-	local opposite_cache="${cache_dir}/health-issue-${runner_user}-${opposite_role}-${slug_safe}"
-	# Also check legacy cache files (without role prefix, from older versions)
-	local legacy_cache="${cache_dir}/health-issue-${runner_user}-${slug_safe}"
-
-	local stale_num=""
-	if [[ -f "$opposite_cache" ]]; then
-		stale_num=$(cat "$opposite_cache" 2>/dev/null || echo "")
-	fi
-
-	if [[ -n "$stale_num" ]]; then
-		local stale_state
-		stale_state=$(gh issue view "$stale_num" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
-		if [[ "$stale_state" == "OPEN" ]]; then
-			# Unpin if it was pinned (supervisor issues get pinned)
-			if [[ "$opposite_role" == "supervisor" ]]; then
-				_unpin_health_issue "$stale_num" "$repo_slug"
-			fi
-			gh issue close "$stale_num" --repo "$repo_slug" \
-				--comment "Closing duplicate ${opposite_role} health issue. Runner role is ${runner_role} — the correct health issue is the [${runner_role^}:${runner_user}] issue. See t1929." 2>/dev/null || true
-			echo "[stats] Closed stale ${opposite_role} health issue #${stale_num} for ${repo_slug} (runner is ${runner_role})" >>"${LOGFILE:-/dev/null}"
-		fi
-		rm -f "$opposite_cache" 2>/dev/null || true
-	fi
-
-	# Clean up legacy cache file (no role prefix) if it exists and differs
-	# from the current role's cache file. These are from before role-aware naming.
-	if [[ -f "$legacy_cache" ]]; then
-		local legacy_num
-		legacy_num=$(cat "$legacy_cache" 2>/dev/null || echo "")
-		# Only remove if the legacy cache points to a different issue than current
-		local current_cache="${cache_dir}/health-issue-${runner_user}-${runner_role}-${slug_safe}"
-		local current_num=""
-		[[ -f "$current_cache" ]] && current_num=$(cat "$current_cache" 2>/dev/null || echo "")
-		if [[ -n "$legacy_num" && "$legacy_num" != "$current_num" ]]; then
-			local legacy_state
-			legacy_state=$(gh issue view "$legacy_num" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
-			if [[ "$legacy_state" == "OPEN" ]]; then
-				gh issue close "$legacy_num" --repo "$repo_slug" \
-					--comment "Closing legacy health issue (pre-role-naming). Superseded by role-specific health issue. See t1929." 2>/dev/null || true
-				echo "[stats] Closed legacy health issue #${legacy_num} for ${repo_slug}" >>"${LOGFILE:-/dev/null}"
-			fi
-		fi
-		rm -f "$legacy_cache" 2>/dev/null || true
-	fi
-
-	return 0
-}
-
-#######################################
 # Find an existing health issue by cache, labels, or title search.
 #
 # Arguments:
@@ -1209,13 +1129,6 @@ _update_health_issue_for_repo() {
 	local cache_dir="${HOME}/.aidevops/logs"
 	local health_issue_file="${cache_dir}/health-issue-${runner_user}-${role_label}-${slug_safe}"
 	mkdir -p "$cache_dir"
-
-	# t1929: Clean up stale opposite-role health issues.
-	# If the runner is "supervisor", close any lingering "contributor" health
-	# issue (and vice versa). These duplicates were caused by transient API
-	# failures in _get_runner_role() defaulting to "contributor".
-	_cleanup_opposite_role_health_issue \
-		"$runner_user" "$runner_role" "$repo_slug" "$slug_safe" "$cache_dir"
 
 	# Guard: skip health issue creation for repos with no activity (GH#15959).
 	# Only applies when no cached issue exists (i.e. this would CREATE a new one).

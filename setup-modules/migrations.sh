@@ -302,6 +302,70 @@ cleanup_stale_bun_opencode() {
 	return 0
 }
 
+# t1929: Remove stale contributor/legacy health issue cache files and close
+# the corresponding GitHub issues. One-time migration — the root cause
+# (API failure in _get_runner_role defaulting to "contributor") is fixed
+# by the 4-layer role resolution in stats-functions.sh.
+#
+# Gated by a flag file so it runs exactly once per install.
+cleanup_stale_health_issue_caches() {
+	local flag_file="${HOME}/.aidevops/logs/.migrated-health-issue-caches-t1929"
+	[[ -f "$flag_file" ]] && return 0
+
+	local cache_dir="${HOME}/.aidevops/logs"
+	[[ -d "$cache_dir" ]] || return 0
+
+	local cleaned=0
+
+	# 1. Remove contributor cache files (the duplicates).
+	#    The correct files are health-issue-{user}-supervisor-{slug}.
+	local contributor_cache
+	for contributor_cache in "${cache_dir}"/health-issue-*-contributor-*; do
+		[[ -f "$contributor_cache" ]] || continue
+		local stale_num
+		stale_num=$(cat "$contributor_cache" 2>/dev/null || echo "")
+		# Extract slug from filename: health-issue-{user}-contributor-{slug}
+		# Best-effort close via gh if available and authenticated
+		if [[ -n "$stale_num" ]] && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+			# Derive repo slug from filename: strip prefix up to "-contributor-", rest is slug-safe
+			local fname
+			fname=$(basename "$contributor_cache")
+			local slug_safe="${fname##*-contributor-}"
+			# Find the matching supervisor cache to get the repo slug
+			local supervisor_cache="${cache_dir}/health-issue-${fname%-contributor-*}-supervisor-${slug_safe}"
+			# Only close if there IS a supervisor counterpart (confirms it's a duplicate)
+			if [[ -f "$supervisor_cache" ]]; then
+				gh issue close "$stale_num" --repo "$(echo "$slug_safe" | sed 's/-/\//' | head -1)" \
+					--comment "Closing duplicate contributor health issue (t1929 migration)." 2>/dev/null || true
+			fi
+		fi
+		rm -f "$contributor_cache"
+		cleaned=$((cleaned + 1))
+	done
+
+	# 2. Remove legacy cache files (no role prefix, pre-role-naming).
+	#    Pattern: health-issue-{user}-{slug} where {slug} has no "supervisor" or "contributor".
+	local legacy_cache
+	for legacy_cache in "${cache_dir}"/health-issue-*; do
+		[[ -f "$legacy_cache" ]] || continue
+		local fname
+		fname=$(basename "$legacy_cache")
+		# Skip files that already have a role prefix (they're the correct format)
+		[[ "$fname" == *-supervisor-* || "$fname" == *-contributor-* ]] && continue
+		rm -f "$legacy_cache"
+		cleaned=$((cleaned + 1))
+	done
+
+	# Write flag file
+	mkdir -p "$(dirname "$flag_file")"
+	date -u +"%Y-%m-%dT%H:%M:%SZ" >"$flag_file"
+
+	if [[ "$cleaned" -gt 0 ]]; then
+		print_info "Cleaned up $cleaned stale health issue cache file(s) (t1929)"
+	fi
+	return 0
+}
+
 # Migrate legacy .agent symlink/directory to .agents in a single repo.
 # Args: $1 = repo_path
 # Prints: info messages for each migration action
