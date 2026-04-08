@@ -57,6 +57,8 @@ readonly DEFAULT_INTERVAL=1440
 readonly LAUNCHD_LABEL="sh.aidevops.repo-sync"
 readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
+readonly SYSTEMD_SERVICE_DIR="$HOME/.config/systemd/user"
+readonly SYSTEMD_UNIT_NAME="aidevops-repo-sync"
 readonly INSTALL_DIR="$HOME/Git/aidevops"
 readonly DEFAULT_PARENT_DIRS=("$HOME/Git")
 
@@ -624,6 +626,115 @@ _enable_launchd() {
 }
 
 #######################################
+# Enable repo-sync via systemd user timer (Linux with systemd)
+# Arguments:
+#   $1 - script_path
+#   $2 - interval (minutes)
+# Returns: 0 on success, falls back to cron on failure
+# Modelled on worker-watchdog.sh:_install_systemd() (GH#17691)
+#######################################
+_enable_systemd() {
+	local script_path="$1"
+	local interval="$2"
+	local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
+	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
+	local interval_sec
+	interval_sec=$((interval * 60))
+
+	mkdir -p "${SYSTEMD_SERVICE_DIR}"
+
+	printf '%s' "[Unit]
+Description=aidevops repo-sync
+After=network.target
+
+[Service]
+Type=oneshot
+KillMode=process
+ExecStart=/bin/bash -lc '${script_path} check'
+TimeoutStartSec=300
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=append:${LOG_FILE}
+StandardError=append:${LOG_FILE}
+" >"$service_file"
+
+	printf '%s' "[Unit]
+Description=aidevops repo-sync Timer
+
+[Timer]
+OnBootSec=${interval_sec}
+OnUnitActiveSec=${interval_sec}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+" >"$timer_file"
+
+	systemctl --user daemon-reload 2>/dev/null || true
+	if ! systemctl --user enable --now "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null; then
+		print_error "Failed to enable systemd timer — falling back to cron" >&2
+		_enable_cron "$script_path" "$interval"
+		return $?
+	fi
+
+	update_state_action "enable" "enabled"
+
+	print_success "Repo sync enabled (every ${interval} minutes)"
+	echo ""
+	echo "  Scheduler: systemd user timer"
+	echo "  Unit:      ${SYSTEMD_UNIT_NAME}.timer"
+	echo "  Service:   ${service_file}"
+	echo "  Timer:     ${timer_file}"
+	echo "  Logs:      ${LOG_FILE}"
+	echo ""
+	echo "  Disable with: aidevops repo-sync disable"
+	return 0
+}
+
+#######################################
+# Disable repo-sync systemd user timer
+# Returns: 0 on success
+#######################################
+_disable_systemd() {
+	local had_entry=false
+
+	if systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" >/dev/null 2>&1; then
+		had_entry=true
+		systemctl --user disable --now "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true
+	fi
+
+	local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
+	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
+	if [[ -f "$timer_file" ]]; then
+		had_entry=true
+		rm -f "$timer_file"
+	fi
+	if [[ -f "$service_file" ]]; then
+		rm -f "$service_file"
+	fi
+	systemctl --user daemon-reload 2>/dev/null || true
+
+	# Also remove any lingering cron entry
+	if crontab -l 2>/dev/null | grep -qF "$CRON_MARKER"; then
+		local temp_cron
+		temp_cron=$(mktemp)
+		crontab -l 2>/dev/null | grep -vF "$CRON_MARKER" >"$temp_cron" || true
+		crontab "$temp_cron"
+		rm -f "$temp_cron"
+		had_entry=true
+	fi
+
+	update_state_action "disable" "disabled"
+
+	if [[ "$had_entry" == "true" ]]; then
+		print_success "Repo sync disabled"
+	else
+		print_info "Repo sync was not enabled"
+	fi
+	return 0
+}
+
+#######################################
 # Enable repo-sync via cron (Linux)
 # Arguments:
 #   $1 - script_path
@@ -700,6 +811,9 @@ cmd_enable() {
 	if [[ "$backend" == "launchd" ]]; then
 		_enable_launchd "$script_path" "$interval"
 		return $?
+	elif [[ "$backend" == "systemd" ]]; then
+		_enable_systemd "$script_path" "$interval"
+		return $?
 	fi
 
 	_enable_cron "$script_path" "$interval"
@@ -758,6 +872,9 @@ cmd_disable() {
 			print_info "Repo sync was not enabled"
 		fi
 		return 0
+	elif [[ "$backend" == "systemd" ]]; then
+		_disable_systemd
+		return $?
 	fi
 
 	# Linux: cron backend

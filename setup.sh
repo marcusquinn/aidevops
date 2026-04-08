@@ -1032,7 +1032,7 @@ _setup_post_setup_steps() {
 	# Exceptions: regenerate existing schedulers (GH#17381, GH#17695 Finding B)
 	# and allow first-time install when config consent is explicitly true (GH#17403).
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
-		# Auto-update handles non-interactive internally
+		# Auto-update handles non-interactive internally (systemd detection fixed in GH#17861)
 		setup_auto_update
 		if _should_setup_noninteractive_supervisor_pulse; then
 			setup_supervisor_pulse "$os"
@@ -1056,7 +1056,7 @@ _setup_post_setup_steps() {
 		if _should_setup_noninteractive_scheduler "Contribution watch" "sh.aidevops.contribution-watch" "aidevops: contribution-watch" "aidevops-contribution-watch"; then
 			setup_contribution_watch
 		fi
-		# Repo sync handles non-interactive mode internally
+		# Repo sync handles non-interactive mode internally (systemd detection fixed in GH#17861)
 		setup_repo_sync
 		if _should_setup_noninteractive_scheduler "Profile README" "sh.aidevops.profile-readme-update" "aidevops: profile-readme-update" "aidevops-profile-readme-update"; then
 			setup_profile_readme

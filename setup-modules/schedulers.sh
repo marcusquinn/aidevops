@@ -1685,7 +1685,12 @@ setup_repo_sync() {
 	local _repo_sync_installed=false
 	if _launchd_has_agent "com.aidevops.aidevops-repo-sync"; then
 		_repo_sync_installed=true
+	elif _launchd_has_agent "sh.aidevops.repo-sync"; then
+		_repo_sync_installed=true
 	elif crontab -l 2>/dev/null | grep -qF "aidevops-repo-sync"; then
+		_repo_sync_installed=true
+	elif command -v systemctl >/dev/null 2>&1 &&
+		systemctl --user is-enabled "aidevops-repo-sync.timer" >/dev/null 2>&1; then
 		_repo_sync_installed=true
 	fi
 	if [[ "$_repo_sync_installed" == "false" ]]; then

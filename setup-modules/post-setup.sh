@@ -28,7 +28,8 @@ setup_auto_update() {
 		"aidevops-auto-update" \
 		"$auto_update_script" \
 		"enable" \
-		"aidevops auto-update enable"; then
+		"aidevops auto-update enable" \
+		"aidevops-auto-update"; then
 		_auto_update_installed=true
 	fi
 	if [[ "$_auto_update_installed" == "false" ]]; then

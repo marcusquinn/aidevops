@@ -86,6 +86,8 @@ readonly DEFAULT_VENV_HEALTH_HOURS=24
 readonly LAUNCHD_LABEL="com.aidevops.aidevops-auto-update"
 readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
+readonly SYSTEMD_SERVICE_DIR="$HOME/.config/systemd/user"
+readonly SYSTEMD_UNIT_NAME="aidevops-auto-update"
 
 #######################################
 # Logging
@@ -1501,6 +1503,114 @@ _cmd_enable_launchd() {
 }
 
 #######################################
+# Install auto-update as a Linux systemd user timer
+# Args: $1 = script_path, $2 = interval (minutes)
+# Returns: 0 on success, falls back to cron on failure
+# Modelled on worker-watchdog.sh:_install_systemd() (GH#17691)
+#######################################
+_cmd_enable_systemd() {
+	local script_path="$1"
+	local interval="$2"
+	local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
+	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
+	local interval_sec
+	interval_sec=$((interval * 60))
+
+	mkdir -p "${SYSTEMD_SERVICE_DIR}"
+
+	printf '%s' "[Unit]
+Description=aidevops auto-update
+After=network.target
+
+[Service]
+Type=oneshot
+KillMode=process
+ExecStart=/bin/bash -lc '${script_path} check'
+TimeoutStartSec=120
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=append:${LOG_FILE}
+StandardError=append:${LOG_FILE}
+" >"$service_file"
+
+	printf '%s' "[Unit]
+Description=aidevops auto-update Timer
+
+[Timer]
+OnBootSec=${interval_sec}
+OnUnitActiveSec=${interval_sec}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+" >"$timer_file"
+
+	systemctl --user daemon-reload 2>/dev/null || true
+	if ! systemctl --user enable --now "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null; then
+		print_error "Failed to enable systemd timer — falling back to cron" >&2
+		_cmd_enable_cron "$script_path" "$interval"
+		return $?
+	fi
+
+	update_state "enable" "$(get_local_version)" "enabled"
+
+	print_success "Auto-update enabled (every ${interval} minutes)"
+	echo ""
+	echo "  Scheduler: systemd user timer"
+	echo "  Unit:      ${SYSTEMD_UNIT_NAME}.timer"
+	echo "  Service:   ${service_file}"
+	echo "  Timer:     ${timer_file}"
+	echo "  Logs:      ${LOG_FILE}"
+	echo ""
+	echo "  Disable with: aidevops auto-update disable"
+	echo "  Check now:    aidevops auto-update check"
+	return 0
+}
+
+#######################################
+# Disable auto-update systemd user timer
+# Returns: 0 on success
+#######################################
+_cmd_disable_systemd() {
+	local had_entry=false
+
+	if systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" >/dev/null 2>&1; then
+		had_entry=true
+		systemctl --user disable --now "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true
+	fi
+
+	local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
+	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
+	if [[ -f "$timer_file" ]]; then
+		had_entry=true
+		rm -f "$timer_file"
+	fi
+	if [[ -f "$service_file" ]]; then
+		rm -f "$service_file"
+	fi
+	systemctl --user daemon-reload 2>/dev/null || true
+
+	# Also remove any lingering cron entry
+	if crontab -l 2>/dev/null | grep -qF "$CRON_MARKER"; then
+		local temp_cron
+		temp_cron=$(mktemp)
+		crontab -l 2>/dev/null | grep -vF "$CRON_MARKER" >"$temp_cron" || true
+		crontab "$temp_cron"
+		rm -f "$temp_cron"
+		had_entry=true
+	fi
+
+	update_state "disable" "$(get_local_version)" "disabled"
+
+	if [[ "$had_entry" == "true" ]]; then
+		print_success "Auto-update disabled"
+	else
+		print_info "Auto-update was not enabled"
+	fi
+	return 0
+}
+
+#######################################
 # Install auto-update as a Linux cron entry
 # Args: $1 = script_path, $2 = interval (minutes)
 # Returns: 0 on success
@@ -1572,6 +1682,9 @@ cmd_enable() {
 	if [[ "$backend" == "launchd" ]]; then
 		_cmd_enable_launchd "$script_path" "$interval"
 		return $?
+	elif [[ "$backend" == "systemd" ]]; then
+		_cmd_enable_systemd "$script_path" "$interval"
+		return $?
 	fi
 
 	_cmd_enable_cron "$script_path" "$interval"
@@ -1581,7 +1694,7 @@ cmd_enable() {
 #######################################
 # Disable auto-update scheduler (platform-aware)
 # On macOS: unloads and removes LaunchAgent plist
-# On Linux: removes crontab entry
+# On Linux: removes crontab entry or systemd timer
 #######################################
 cmd_disable() {
 	local backend
@@ -1618,6 +1731,9 @@ cmd_disable() {
 			print_info "Auto-update was not enabled"
 		fi
 		return 0
+	elif [[ "$backend" == "systemd" ]]; then
+		_cmd_disable_systemd
+		return $?
 	fi
 
 	# Linux: cron backend
