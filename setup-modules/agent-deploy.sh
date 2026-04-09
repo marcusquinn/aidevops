@@ -190,18 +190,24 @@ _deploy_agents_post_copy() {
 	# First try symlinking OpenCode's node_modules (t1551), then verify the
 	# critical dependency exists. If the symlink is broken or the module is
 	# absent, fall back to npm install in the plugin directory.
+	# GH#17891: Only symlink if node_modules doesn't already exist (avoids
+	# destroying a prior npm install on every setup.sh run). Use --omit=peer
+	# to skip the 630MB opencode-ai peer dep (the host app, not needed here).
 	local oc_node_modules="$HOME/.config/opencode/node_modules"
 	local plugin_dir="$target_dir/plugins/opencode-aidevops"
 	if [[ -d "$plugin_dir" ]]; then
-		if [[ -d "$oc_node_modules" ]]; then
-			ln -sf "$oc_node_modules" "$plugin_dir/node_modules" 2>/dev/null || true
+		# Only symlink if node_modules doesn't exist at all (first run)
+		if [[ ! -d "$plugin_dir/node_modules" && ! -L "$plugin_dir/node_modules" ]]; then
+			if [[ -d "$oc_node_modules" ]]; then
+				ln -sf "$oc_node_modules" "$plugin_dir/node_modules" 2>/dev/null || true
+			fi
 		fi
 		# Verify critical dependency is available; npm install if not
 		if [[ ! -d "$plugin_dir/node_modules/@bufbuild/protobuf" ]]; then
 			if command -v npm &>/dev/null; then
 				# Remove symlink if present so npm creates a local node_modules
 				[[ -L "$plugin_dir/node_modules" ]] && rm "$plugin_dir/node_modules"
-				npm install --omit=dev --prefix "$plugin_dir" >/dev/null 2>&1 ||
+				npm install --omit=dev --omit=peer --prefix "$plugin_dir" >/dev/null 2>&1 ||
 					print_warning "Failed to install plugin dependencies (non-blocking)"
 			fi
 		fi
