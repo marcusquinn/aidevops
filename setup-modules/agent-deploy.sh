@@ -197,7 +197,7 @@ _deploy_agents_post_copy() {
 	local plugin_dir="$target_dir/plugins/opencode-aidevops"
 	if [[ -d "$plugin_dir" ]]; then
 		# Only symlink if node_modules doesn't exist at all (first run)
-		if [[ ! -d "$plugin_dir/node_modules" && ! -L "$plugin_dir/node_modules" ]]; then
+		if [[ ! -e "$plugin_dir/node_modules" ]]; then
 			if [[ -d "$oc_node_modules" ]]; then
 				ln -sf "$oc_node_modules" "$plugin_dir/node_modules" 2>/dev/null || true
 			fi
