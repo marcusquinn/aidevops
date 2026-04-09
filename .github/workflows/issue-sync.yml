@@ -374,23 +374,49 @@ jobs:
           echo "Processing issues: $ALL_ISSUES"
 
           COMMENT_FAILED=0
+          REJECTION_LABELS="invalid not-planned wontfix duplicate"
           for ISSUE_NUM in $ALL_ISSUES; do
             echo "--- Issue #$ISSUE_NUM ---"
 
+            # Fetch issue labels to detect rejection state
+            ISSUE_LABELS=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" --jq '[.labels[].name] | join(" ")' 2>/dev/null || echo "")
+            IS_REJECTED=false
+            REJECTION_MATCH=""
+            for RLABEL in $REJECTION_LABELS; do
+              if echo "$ISSUE_LABELS" | grep -qw "$RLABEL"; then
+                IS_REJECTED=true
+                REJECTION_MATCH="$RLABEL"
+                break
+              fi
+            done
+
+            if [[ "$IS_REJECTED" == "true" ]]; then
+              echo "Issue #$ISSUE_NUM has rejection label '$REJECTION_MATCH' — using 'Referenced by' instead of 'Completed via'"
+            fi
+
             # Post closing comment if none exists from this PR
+            # Check for both "Completed via" and "Referenced by" variants to avoid duplicates
             EXISTING_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
-              --jq "[.[] | select(.body | test(\"Completed via.*PR #${PR_NUMBER}\"))] | length" 2>/dev/null || echo "0")
+              --jq "[.[] | select(.body | test(\"(Completed via|Referenced by).*PR #${PR_NUMBER}\"))] | length" 2>/dev/null || echo "0")
 
             if [[ "$EXISTING_COMMENT" == "0" ]]; then
               TASK_REF=""
               if [[ -n "$TASK_ID" ]]; then
                 TASK_REF=" Task $TASK_ID"
               fi
+
+              # Choose comment text based on rejection state
+              if [[ "$IS_REJECTED" == "true" ]]; then
+                COMMENT_BODY="Referenced by [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
+              else
+                COMMENT_BODY="Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
+              fi
+
               # Check if issue is locked before attempting to comment (locked issues reject comments with exit 1)
               IS_LOCKED=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" --jq '.locked' 2>/dev/null || echo "false")
               if [[ "$IS_LOCKED" == "true" ]]; then
                 echo "Issue #$ISSUE_NUM is locked — skipping closing comment (labels will still be updated)"
-              elif gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."; then
+              elif gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "$COMMENT_BODY"; then
                 echo "Posted closing comment on #$ISSUE_NUM"
               else
                 echo "Warning: failed to post closing comment on #$ISSUE_NUM (issue may have been locked concurrently)"
@@ -398,6 +424,13 @@ jobs:
               fi
             else
               echo "Closing comment already exists on #$ISSUE_NUM"
+            fi
+
+            # Skip status:done and stale label cleanup for rejected issues —
+            # they are already in a terminal state and status:done would be misleading
+            if [[ "$IS_REJECTED" == "true" ]]; then
+              echo "Skipping status:done on #$ISSUE_NUM — has rejection label: $REJECTION_MATCH"
+              continue
             fi
 
             # Apply status:done label (create if needed)
