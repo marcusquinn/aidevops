@@ -3970,8 +3970,8 @@ normalize_active_issue_assignments() {
 				IFS= read -r dispatch_pid
 				IFS= read -r dispatch_created_at
 			} < <(gh api "repos/${slug}/issues/${stale_num}/comments" \
-				--jq '[.[] | select(.body | startswith("Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") | .pid // ""), .created_at) else empty end' \
-				-r 2>/dev/null) || true
+				--jq '[.[] | select(.body | test("^(<!-- ops:start[^>]*-->\\s*)?Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") | .pid // ""), .created_at) else empty end' \
+				2>/dev/null) || true
 
 			if [[ -n "$dispatch_created_at" ]]; then
 				local dispatch_epoch
