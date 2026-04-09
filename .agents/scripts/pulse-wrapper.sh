@@ -7199,7 +7199,99 @@ _triage_update_cache() {
 
 	mkdir -p "$TRIAGE_CACHE_DIR" 2>/dev/null || true
 	printf '%s' "$content_hash" >"${TRIAGE_CACHE_DIR}/${slug_safe}-${issue_num}.hash" 2>/dev/null || true
+	# Reset failure counter on successful cache write
+	rm -f "${TRIAGE_CACHE_DIR}/${slug_safe}-${issue_num}.failures" 2>/dev/null || true
 	return 0
+}
+
+#######################################
+# GH#17827: Triage failure retry cap.
+#
+# When triage fails (no review posted), the GH#17873 fix intentionally
+# skips caching the content hash so the next cycle retries. But if the
+# failure is persistent (e.g., model quota, formatting issues), this
+# creates an infinite lock→agent→fail→unlock loop that pollutes the
+# issue timeline with dozens of lock/unlock events.
+#
+# Solution: track failure count per issue+hash. After TRIAGE_MAX_RETRIES
+# failures on the same content hash, cache it anyway to break the loop.
+# The triage-failed label remains so maintainers can identify these.
+# A new human comment changes the hash, resetting the counter.
+#######################################
+TRIAGE_MAX_RETRIES="${TRIAGE_MAX_RETRIES:-3}"
+
+# Increment failure counter and return whether retry cap is reached.
+# Returns 0 if cap reached (should cache anyway), 1 if retries remain.
+#
+# Args: $1=issue_num, $2=repo_slug, $3=content_hash
+_triage_increment_failure() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local content_hash="$3"
+	local slug_safe="${repo_slug//\//_}"
+	local fail_file="${TRIAGE_CACHE_DIR}/${slug_safe}-${issue_num}.failures"
+
+	mkdir -p "$TRIAGE_CACHE_DIR" 2>/dev/null || true
+
+	local current_count=0
+	local stored_hash=""
+	if [[ -f "$fail_file" ]]; then
+		# Format: "hash:count"
+		stored_hash=$(cut -d: -f1 "$fail_file" 2>/dev/null) || stored_hash=""
+		current_count=$(cut -d: -f2 "$fail_file" 2>/dev/null) || current_count=0
+		# Reset counter if hash changed (new content since last failure)
+		if [[ "$stored_hash" != "$content_hash" ]]; then
+			current_count=0
+		fi
+	fi
+
+	current_count=$((current_count + 1))
+	printf '%s:%d' "$content_hash" "$current_count" >"$fail_file" 2>/dev/null || true
+
+	if [[ "$current_count" -ge "$TRIAGE_MAX_RETRIES" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# GH#17827: Check if an NMR issue is awaiting a contributor reply.
+#
+# When the last human comment on an NMR issue is from a repo collaborator
+# (maintainer asking for clarification), the ball is in the contributor's
+# court. Triage adds no value — the issue needs the contributor to respond,
+# not another automated review. Skipping triage here avoids the lock/unlock
+# noise entirely.
+#
+# Args: $1=issue_comments (JSON array from gh api)
+#       $2=repo_slug
+# Returns: 0 if awaiting contributor reply (skip triage), 1 otherwise
+#######################################
+_triage_awaiting_contributor_reply() {
+	local issue_comments="$1"
+	local repo_slug="$2"
+
+	# Get the last human comment (exclude bots and triage reviews)
+	local last_human_author=""
+	last_human_author=$(printf '%s' "$issue_comments" | jq -r \
+		'[.[] | select(.author != "github-actions[bot]" and .author != "github-actions") | select(.body | test("^## .*[Rr]eview") | not)] | last | .author // ""' \
+		2>/dev/null) || last_human_author=""
+
+	[[ -n "$last_human_author" ]] || return 1
+
+	# Check if the last commenter is a repo collaborator (maintainer/member)
+	local perm_level=""
+	perm_level=$(gh api "repos/${repo_slug}/collaborators/${last_human_author}/permission" \
+		--jq '.permission // ""' 2>/dev/null) || perm_level=""
+
+	case "$perm_level" in
+	admin | maintain | write)
+		# Last comment is from a collaborator — awaiting contributor reply
+		return 0
+		;;
+	esac
+
+	return 1
 }
 
 #######################################
@@ -12993,6 +13085,18 @@ dispatch_triage_reviews() {
 			continue
 		fi
 
+		# ── GH#17827: Skip triage if awaiting contributor reply ──
+		# When the last human comment is from a collaborator (maintainer asking
+		# for info), the contributor needs to respond — not another triage cycle.
+		# This eliminates the lock/unlock noise on NMR issues waiting for replies.
+		if _triage_awaiting_contributor_reply "$issue_comments" "$repo_slug"; then
+			echo "[pulse-wrapper] triage skip: #${issue_num} in ${repo_slug} — awaiting contributor reply (last comment from collaborator) (GH#17827)" >>"$LOGFILE"
+			# Cache the hash so we don't re-check every cycle. A new contributor
+			# comment will change the hash and trigger re-evaluation.
+			_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
+			continue
+		fi
+
 		# ── Content is new or changed — proceed with full prefetch ──
 
 		# Check if this is a PR
@@ -13144,7 +13248,15 @@ PREFETCH_EOF
 		# review was ever posted. Now we only cache on success — failed
 		# attempts are retried on the next pulse cycle, allowing transient
 		# worker formatting issues to self-heal.
+		#
+		# GH#17827: BUT if failures are persistent (>= TRIAGE_MAX_RETRIES on
+		# the same content hash), cache anyway to break the infinite
+		# lock→agent→fail→unlock loop. The triage-failed label remains so
+		# maintainers can identify these issues for manual triage.
 		if [[ "$triage_posted" == "true" ]]; then
+			_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
+		elif _triage_increment_failure "$issue_num" "$repo_slug" "$content_hash"; then
+			echo "[pulse-wrapper] Triage retry cap reached for #${issue_num} in ${repo_slug} — caching hash to stop lock/unlock loop (GH#17827)" >>"$LOGFILE"
 			_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
 		else
 			echo "[pulse-wrapper] Skipping triage cache for #${issue_num} — review not posted, will retry on next cycle" >>"$LOGFILE"
