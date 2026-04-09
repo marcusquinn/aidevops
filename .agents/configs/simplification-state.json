@@ -1754,9 +1754,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "hash": "5231596b72819c6a07a6529921530068c6f67bb1",
-      "at": "2026-04-09T07:32:02Z",
-      "passes": 11,
+      "hash": "e1cac82fbb8472ff074eab643c1d095072a5c29f",
+      "at": "2026-04-09T22:13:22Z",
+      "passes": 12,
       "pr": 15086
     },
     ".agents/scripts/issue-sync-lib.sh": {
@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "0b8733892d91916d3f92db72ea80263570d08a30",
-      "at": "2026-04-09T07:32:02Z",
-      "passes": 0,
+      "hash": "97615cc9382c96d3ffcd2566af1318ce197b9bc9",
+      "at": "2026-04-09T22:13:22Z",
+      "passes": 1,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "eaebab3218288e3b98083373c948c65d33dbd82c",
-      "at": "2026-04-09T07:32:14Z",
-      "passes": 44,
+      "hash": "5928586c8770ddc41599eb5fd851c011ddf27092",
+      "at": "2026-04-09T22:13:39Z",
+      "passes": 45,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "054e50a920ce641e85f7fb54deef744f2e86fc11",
-      "at": "2026-04-09T07:32:14Z",
-      "passes": 43,
+      "hash": "797d61ac5aa9a62ef17d462264d4eae93c28a3cd",
+      "at": "2026-04-09T22:13:39Z",
+      "passes": 44,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -5925,10 +5925,10 @@
       "passes": 1
     },
     ".agents/scripts/design-preview-helper.sh": {
-      "hash": "f38a531a6eb1916d7e076c322feabdf0ba48aa1d",
-      "at": "2026-04-09T07:32:01Z",
+      "hash": "62b4ec20acb991421258457048d87fdc20bf7439",
+      "at": "2026-04-09T22:13:22Z",
       "pr": 16879,
-      "passes": 2
+      "passes": 3
     },
     ".agents/tools/design/library/styles/playful-vibrant/DESIGN.md": {
       "hash": "f42502be75dfeee3f716f54b3ea2d8e6697414a6",
@@ -6773,10 +6773,10 @@
       "passes": 2
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "hash": "bed9e1ba71eabd329b31ff882ec6a0aec300cecd",
-      "at": "2026-04-09T07:32:15Z",
+      "hash": "d519704771418341f344b240857205005ed10058",
+      "at": "2026-04-09T22:13:15Z",
       "pr": 17979,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/memory-pressure-monitor.sh": {
       "hash": "d71f3754e56b925114a9b13c4ae3809cfb0c199d",
