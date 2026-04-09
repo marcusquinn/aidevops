@@ -1,7 +1,6 @@
 # Complexity Thresholds — Historical Audit Trail
 
-This file archives the full change history for `.agents/configs/complexity-thresholds.conf`.
-The main config retains only the last few entries for readability.
+Archives the full change history for `.agents/configs/complexity-thresholds.conf` (main config retains only recent entries).
 
 ## NESTING_DEPTH_THRESHOLD History
 
