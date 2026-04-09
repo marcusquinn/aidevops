@@ -7660,6 +7660,8 @@ _issue_needs_consolidation() {
 			and (.body | test("<!-- MERGE_SUMMARY -->") | not)
 			and (.body | test("^Closing:") | not)
 			and (.body | test("^Worker failed: orphan worktree") | not)
+			and (.body | test("sudo aidevops approve") | not)
+			and (.body | test("^_Automated by") | not)
 		)] | length
 	' 2>/dev/null) || substantive_count=0
 
@@ -7865,9 +7867,15 @@ _issue_targets_large_files() {
 	file_paths=$(printf '%s' "$issue_body" | grep -oE '(EDIT|NEW|File):?\s+[`"]?\.?agents/scripts/[^`"[:space:],:]+' 2>/dev/null |
 		sed 's/^[A-Z]*:*[[:space:]]*//' | sed 's/^[`"]//' | sed 's/:.*//' | sort -u) || file_paths=""
 
-	# Also check for backtick-quoted filenames that look like script paths
+	# Also check for backtick-quoted filenames that look like script paths.
+	# GH#17897: Only match backtick paths on lines that look like implementation
+	# targets (list items, "File:" markers), not paths mentioned as evidence in
+	# review feedback prose. Previously, files cited in Gemini review comments
+	# (e.g., "aidevops.sh hashes were updated") triggered the large-file gate
+	# even though they weren't implementation targets.
 	local backtick_paths
-	backtick_paths=$(printf '%s' "$issue_body" | grep -oE '`[^`]*\.(sh|py|js|ts)[^`]*`' 2>/dev/null |
+	backtick_paths=$(printf '%s' "$issue_body" | grep -E '^\s*[-*]\s|^(EDIT|NEW|File):' 2>/dev/null |
+		grep -oE '`[^`]*\.(sh|py|js|ts)[^`]*`' 2>/dev/null |
 		tr -d '`' | grep -v '^#' | sed 's/:.*//' | sort -u) || backtick_paths=""
 
 	# Combine and deduplicate
@@ -7877,9 +7885,12 @@ _issue_targets_large_files() {
 	[[ -n "$all_paths" ]] || return 1
 
 	# Files that are large by nature and can't/shouldn't be "simplified":
-	# lockfiles, generated data, JSON registries, binary-adjacent formats.
+	# lockfiles, generated data, JSON/YAML configs, binary-adjacent formats.
 	# These should never block dispatch — workers don't modify them directly.
-	local _skip_pattern='(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|Cargo\.lock|Gemfile\.lock|poetry\.lock|simplification-state\.json|\.min\.(js|css)$)'
+	# GH#17897: Also skip all .json/.yaml/.yml/.toml/.xml/.csv data files —
+	# these are config/data, not code. The simplification routine doesn't
+	# target them, so gating dispatch on their size is incorrect.
+	local _skip_pattern='(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|Cargo\.lock|Gemfile\.lock|poetry\.lock|simplification-state\.json|\.min\.(js|css)$|\.json$|\.yaml$|\.yml$|\.toml$|\.xml$|\.csv$)'
 
 	local found_large=false
 	local large_files=""
