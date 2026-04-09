@@ -2,7 +2,7 @@
   "_comment": "Model routing table — SINGLE SOURCE OF TRUTH for tier-to-model mappings. All scripts, docs, and configs should reference this file rather than hardcoding model IDs. When a new model generation releases (e.g., gpt-5.5), update ONLY this file.",
   "_docs": "See .agents/tools/context/model-routing.md for routing rules, .agents/tools/ai-assistants/fallback-chains.md for integration.",
   "_agentic_note": "codex/code-completion models (gpt-5.3-codex, gpt-5.4-codex) are NOT agentic — zero tool calls observed (GH#17669). Never use them for headless worker dispatch. Only general-purpose models support agentic workflows.",
-  "_defaults": "Claude models are the default primary for all tiers. Non-Anthropic providers are opt-in fallbacks — edit this file to change the order or add providers. The first model in each tier's array is the primary; subsequent entries are tried in order when the primary is unavailable.",
+  "_defaults": "Claude models are the default primary for all tiers. Non-Anthropic providers are opt-in fallbacks — add them in custom/configs/model-routing-table.json to change the order or enable another provider locally. The first model in each tier's array is the primary; subsequent entries are tried in order when the primary is unavailable.",
 
   "tiers": {
     "local":  { "models": ["anthropic/claude-haiku-4-5"], "cost": 0 },
@@ -23,14 +23,6 @@
       "probe_path": "/v1/models",
       "probe_timeout_seconds": 3,
       "_comment": "llama.cpp or compatible OpenAI-API server. No API key needed. Use local-model-helper.sh status to check."
-    },
-    "ollama": {
-      "endpoint": "http://localhost:11434/v1/chat/completions",
-      "key_env": null,
-      "probe_path": "/api/tags",
-      "probe_timeout_seconds": 3,
-      "min_context_length": 16384,
-      "_comment": "Ollama local model server. No API key needed. Probe /api/tags to check availability. OpenAI-compatible endpoint at /v1/."
     },
     "anthropic": {
       "endpoint": "https://api.anthropic.com/v1/messages",

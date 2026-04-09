@@ -119,6 +119,14 @@ is_known_provider() {
 # provider API keys or subscription accounts.
 get_tier_models() {
 	local tier="$1"
+	local allowlist_raw="${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}"
+	local -a allowlist=()
+	local -a filtered_models=()
+	local current_model current_provider
+
+	if [[ -n "$allowlist_raw" ]]; then
+		IFS=',' read -r -a allowlist <<<"$allowlist_raw"
+	fi
 
 	# User-local override checked first — survives aidevops update.
 	# Copy configs/model-routing-table.json to custom/configs/ and edit.
@@ -129,33 +137,87 @@ get_tier_models() {
 		routing_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
 	fi
 	if [[ -f "$routing_table" ]]; then
-		local models_json
-		models_json=$(jq -r --arg t "$tier" \
-			'.tiers[$t].models // empty | join("|")' \
-			"$routing_table" 2>/dev/null) || models_json=""
-		if [[ -n "$models_json" ]]; then
+		while IFS= read -r current_model; do
+			[[ -z "$current_model" ]] && continue
+			current_provider="${current_model%%/*}"
+			if [[ ${#allowlist[@]} -gt 0 ]]; then
+				local allowed=false
+				local allowed_provider
+				for allowed_provider in "${allowlist[@]}"; do
+					allowed_provider=$(printf '%s' "$allowed_provider" | sed 's/^ *//;s/ *$//')
+					if [[ "$allowed_provider" == "$current_provider" ]]; then
+						allowed=true
+						break
+					fi
+				done
+				[[ "$allowed" == "true" ]] || continue
+			fi
+			filtered_models+=("$current_model")
+		done < <(jq -r --arg t "$tier" '.tiers[$t].models[]? // empty' "$routing_table" 2>/dev/null)
+		if [[ ${#filtered_models[@]} -gt 0 ]]; then
+			local models_json=""
+			models_json=$(
+				IFS='|'
+				printf '%s' "${filtered_models[*]}"
+			)
 			echo "$models_json"
+			return 0
+		fi
+		if [[ ${#allowlist[@]} -gt 0 ]]; then
+			echo ""
 			return 0
 		fi
 	fi
 
 	# Hardcoded fallback — kept in sync with model-routing-table.json.
 	# If you're editing these, update the JSON file instead.
-	# Anthropic-only for all tiers. Other providers excluded — not
-	# producing results in headless workers. Re-add via the JSON
-	# config when provider-specific prompting is tuned.
+	# Claude remains primary. OpenAI is the direct-provider fallback for
+	# headless continuity when Anthropic is unavailable.
 	case "$tier" in
-	local) echo "anthropic/claude-haiku-4-5" ;;
-	haiku) echo "anthropic/claude-haiku-4-5" ;;
-	flash) echo "anthropic/claude-haiku-4-5" ;;
-	sonnet) echo "anthropic/claude-sonnet-4-6" ;;
-	pro) echo "anthropic/claude-sonnet-4-6" ;;
-	opus) echo "anthropic/claude-opus-4-6" ;;
-	health) echo "anthropic/claude-sonnet-4-6" ;;
-	eval) echo "anthropic/claude-sonnet-4-6" ;;
-	coding) echo "anthropic/claude-opus-4-6" ;;
+	local) current_model="anthropic/claude-haiku-4-5" ;;
+	haiku) current_model=$'anthropic/claude-haiku-4-5\nopenai/gpt-5.4' ;;
+	flash) current_model=$'anthropic/claude-haiku-4-5\nopenai/gpt-5.4' ;;
+	sonnet) current_model=$'anthropic/claude-sonnet-4-6\nopenai/gpt-5.4' ;;
+	pro) current_model=$'anthropic/claude-sonnet-4-6\nopenai/gpt-5.4' ;;
+	opus) current_model=$'anthropic/claude-opus-4-6\nopenai/gpt-5.4' ;;
+	health) current_model=$'anthropic/claude-sonnet-4-6\nopenai/gpt-5.4' ;;
+	eval) current_model=$'anthropic/claude-sonnet-4-6\nopenai/gpt-5.4' ;;
+	coding) current_model=$'anthropic/claude-opus-4-6\nopenai/gpt-5.4' ;;
 	*) return 1 ;;
 	esac
+
+	if [[ ${#allowlist[@]} -eq 0 ]]; then
+		echo "$(printf '%s\n' "$current_model" | paste -sd'|' -)"
+		return 0
+	fi
+
+	filtered_models=()
+	while IFS= read -r current_provider; do
+		[[ -z "$current_provider" ]] && continue
+		local provider_name="${current_provider%%/*}"
+		local allowed=false
+		local allowed_provider
+		for allowed_provider in "${allowlist[@]}"; do
+			allowed_provider=$(printf '%s' "$allowed_provider" | sed 's/^ *//;s/ *$//')
+			if [[ "$allowed_provider" == "$provider_name" ]]; then
+				allowed=true
+				break
+			fi
+		done
+		if [[ "$allowed" == "true" ]]; then
+			filtered_models+=("$current_provider")
+		fi
+	done <<<"$current_model"
+
+	if [[ ${#filtered_models[@]} -eq 0 ]]; then
+		echo ""
+		return 0
+	fi
+
+	echo "$(
+		IFS='|'
+		printf '%s' "${filtered_models[*]}"
+	)"
 	return 0
 }
 
@@ -1255,9 +1317,14 @@ resolve_tier() {
 	local quiet="${3:-false}"
 
 	local tier_spec
-	tier_spec=$(get_tier_models "$tier" 2>/dev/null) || true
-	if [[ -z "$tier_spec" ]]; then
+	tier_spec=$(get_tier_models "$tier" 2>/dev/null)
+	local tier_models_rc=$?
+	if [[ "$tier_models_rc" -ne 0 ]]; then
 		[[ "$quiet" != "true" ]] && print_error "Unknown tier: $tier"
+		return 1
+	fi
+	if [[ -z "$tier_spec" ]]; then
+		[[ "$quiet" != "true" ]] && print_error "No models configured for tier: $tier"
 		return 1
 	fi
 

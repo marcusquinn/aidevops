@@ -175,20 +175,21 @@ DAILY_PR_CAP="${DAILY_PR_CAP:-1000}"                                            
 PRODUCT_RESERVATION_PCT="${PRODUCT_RESERVATION_PCT:-60}"                                                # % of worker slots reserved for product repos (t1423)
 QUALITY_DEBT_CAP_PCT="${QUALITY_DEBT_CAP_PCT:-$(config_get "orchestration.quality_debt_cap_pct" "30")}" # % cap for quality-debt dispatch share
 # GH#17769: PULSE_MODEL and AIDEVOPS_HEADLESS_MODELS are deprecated.
-# Model routing is now derived from the OAuth pool + routing table at runtime.
+# Model routing is now derived from the routing table at runtime and resolved
+# through model-availability-helper.sh so pulse follows the same provider
+# fallback logic as workers.
 # Backward compat: if legacy env vars are still set, log deprecation warnings.
+MODEL_AVAILABILITY_HELPER="${MODEL_AVAILABILITY_HELPER:-${SCRIPT_DIR}/model-availability-helper.sh}"
 if [[ -n "${PULSE_MODEL:-}" ]]; then
-	echo "[pulse-wrapper] WARN: PULSE_MODEL env var is deprecated (v3.7+). Model routing is now automatic via pool + routing table. Remove this export from credentials.sh." >&2
+	echo "[pulse-wrapper] WARN: PULSE_MODEL env var is deprecated (v3.7+). Model routing is now automatic via routing table + availability checks. Remove this export from credentials.sh." >&2
 fi
 if [[ -n "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
-	echo "[pulse-wrapper] WARN: AIDEVOPS_HEADLESS_MODELS env var is deprecated (v3.7+). Model routing is now automatic via pool + routing table. Remove this export from credentials.sh." >&2
+	echo "[pulse-wrapper] WARN: AIDEVOPS_HEADLESS_MODELS env var is deprecated (v3.7+). Model routing is now automatic via routing table + availability checks. Remove this export from credentials.sh." >&2
 fi
-# Derive pulse model from routing table — pulse always uses Anthropic sonnet
-ROUTING_TABLE="${SCRIPT_DIR}/../configs/model-routing-table.json"
-if [[ -z "${PULSE_MODEL:-}" ]] && [[ -f "$ROUTING_TABLE" ]] && command -v jq >/dev/null 2>&1; then
-	PULSE_MODEL=$(jq -r '.tiers.sonnet.models[] | select(startswith("anthropic/"))' "$ROUTING_TABLE" 2>/dev/null | head -1) || PULSE_MODEL=""
+if [[ -z "${PULSE_MODEL:-}" ]] && [[ -x "$MODEL_AVAILABILITY_HELPER" ]]; then
+	PULSE_MODEL=$("$MODEL_AVAILABILITY_HELPER" resolve sonnet --quiet 2>/dev/null || true)
 fi
-# Absolute fallback
+# Absolute fallback if routing resolution fails entirely.
 PULSE_MODEL="${PULSE_MODEL:-anthropic/claude-sonnet-4-6}"
 PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"                                            # Additional pulse passes when below utilization target (t1453)
 PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-35}"                                             # Max grace window for worker process to appear after dispatch (t1453) — raised from 20s to 35s: sandbox-exec + opencode cold-start takes ~25-30s
@@ -3099,7 +3100,7 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 	fi
 
 	# Run the provider-aware headless wrapper in background.
-	local -a pulse_cmd=("$HEADLESS_RUNTIME_HELPER" run --role pulse --session-key supervisor-pulse --dir "$PULSE_DIR" --title "Supervisor Pulse" --agent Automate --prompt "$prompt")
+	local -a pulse_cmd=("$HEADLESS_RUNTIME_HELPER" run --role pulse --session-key supervisor-pulse --dir "$PULSE_DIR" --title "Supervisor Pulse" --agent Automate --prompt "$prompt" --tier sonnet)
 	if [[ -n "$PULSE_MODEL" ]]; then
 		pulse_cmd+=(--model "$PULSE_MODEL")
 	fi
@@ -8146,9 +8147,10 @@ dispatch_with_dedup() {
 	# ROUND-ROBIN MODEL SELECTION (owned by this function, NOT the caller).
 	#
 	# When model_override (param 9) is EMPTY, this function calls
-	# headless-runtime-helper.sh select --role worker, which runs the
-	# round-robin across AIDEVOPS_HEADLESS_MODELS (respects backoff DB,
-	# auth availability, and provider rotation). The resolved model name
+	# headless-runtime-helper.sh select --role worker, which resolves the
+	# worker model from the routing table / local override (respecting
+	# backoff DB, auth availability, provider allowlists, and rotation).
+	# The resolved model name
 	# is shown in the dispatch comment so the audit trail records exactly
 	# which provider/model the worker used.
 	#
@@ -8163,11 +8165,30 @@ dispatch_with_dedup() {
 	# History: GH#17503 moved model resolution here (from the worker) so
 	# the dispatch comment shows the actual model. Prior to that fix, the
 	# comment showed "auto-select (round-robin)" which was unhelpful.
+	local dispatch_tier="standard"
+	local dispatch_model_tier="sonnet"
+	local issue_labels_csv
+	issue_labels_csv=$(echo "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
+	case ",$issue_labels_csv," in
+	*,tier:reasoning,* | *,tier:thinking,*)
+		dispatch_tier="reasoning"
+		dispatch_model_tier="opus"
+		;;
+	*,tier:standard,*)
+		dispatch_tier="standard"
+		dispatch_model_tier="sonnet"
+		;;
+	*,tier:simple,*)
+		dispatch_tier="simple"
+		dispatch_model_tier="haiku"
+		;;
+	esac
+
 	local selected_model=""
 	if [[ -n "$model_override" ]]; then
 		selected_model="$model_override"
 	else
-		selected_model=$("$HEADLESS_RUNTIME_HELPER" select --role worker 2>/dev/null) || selected_model=""
+		selected_model=$("$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$dispatch_model_tier" 2>/dev/null) || selected_model=""
 	fi
 
 	# t1894/t1934: Lock issue and linked PRs during worker execution
@@ -8184,12 +8205,13 @@ dispatch_with_dedup() {
 	fi
 
 	# Launch worker — headless-runtime-helper.sh handles model selection
-	# via round-robin when no --model is specified. Its choose_model() reads
-	# AIDEVOPS_HEADLESS_MODELS, checks backoff/auth, and rotates providers.
+	# when no --model is specified. Its choose_model() uses the routing
+	# table/local override, then checks backoff/auth and rotates providers.
 	local -a worker_cmd=("$HEADLESS_RUNTIME_HELPER" run
 		--role worker
 		--session-key "$session_key"
 		--dir "$repo_path"
+		--tier "$dispatch_model_tier"
 		--title "$dispatch_title"
 		--prompt "$prompt")
 	if [[ -n "$selected_model" ]]; then
@@ -8210,16 +8232,6 @@ dispatch_with_dedup() {
 	# time to complete its initial DB writes before the next one starts.
 	local stagger_delay="${PULSE_DISPATCH_STAGGER_SECONDS:-8}"
 	sleep "$stagger_delay"
-
-	# Determine dispatch tier from issue labels for telemetry
-	local dispatch_tier="standard"
-	local issue_labels_csv
-	issue_labels_csv=$(echo "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
-	case ",$issue_labels_csv," in
-	*,tier:reasoning,* | *,tier:thinking,*) dispatch_tier="reasoning" ;;
-	*,tier:standard,*) dispatch_tier="standard" ;;
-	*,tier:simple,*) dispatch_tier="simple" ;;
-	esac
 
 	# Record in dispatch ledger (with tier telemetry)
 	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"

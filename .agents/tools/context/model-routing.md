@@ -69,16 +69,59 @@ Supervisor resolves automatically. Interactive: `compare-models-helper.sh discov
 
 ## Headless Dispatch
 
-**Automatic model derivation (GH#17769):** The headless model list is derived at runtime — no env var configuration needed:
+**Automatic model derivation (GH#17769):** Headless routing is derived at runtime — no model-ID env var configuration needed:
 
-1. **OAuth pool** (`oauth-pool-helper.sh list all`) → available providers (cheap JSON read, no API calls)
-2. **Routing table** (`configs/model-routing-table.json`) → sonnet-tier model per provider
-3. **Result**: round-robin list of agentic models matching the user's active accounts
+1. **Routing table** (`configs/model-routing-table.json`, or local override at `custom/configs/model-routing-table.json`) → ordered models per tier
+2. **Provider filter** (`AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`) → optional local pinning such as `openai`
+3. **Auth + availability checks** (`headless-runtime-helper.sh`, `model-availability-helper.sh`) → providers/models that can actually run now
+4. **Result**: pulse resolves a sonnet-tier model; workers round-robin across the filtered sonnet-tier list
 
-- **Pulse**: Always Anthropic sonnet (derived from routing table). OpenAI models exit without activity (proven).
-- **Workers**: Round-robin across all pool providers' sonnet models. Tier escalation: `tier:reasoning` labels (cascade: `tier:simple` → `tier:standard` → `tier:reasoning`).
-- **Fallback**: If pool or routing table unavailable, falls back to `anthropic/claude-sonnet-4-6`.
+- **Shared default**: The framework routing table remains Anthropic-first. Other providers are opt-in through `custom/configs/model-routing-table.json`, so existing Anthropic users are unchanged after update.
+- **Pulse**: Resolves `sonnet` through `model-availability-helper.sh resolve sonnet`, so it follows routing-table order, health checks, local routing-table overrides, and `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`.
+- **Workers**: Round-robin across the routed `sonnet` models after allowlist filtering and auth checks. Tier escalation still uses `resolve` (`tier:simple` → `haiku`, `tier:standard` → `sonnet`, `tier:reasoning` → `opus`).
+- **Local switch**: Add OpenAI models to `custom/configs/model-routing-table.json`, then set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto OpenAI. If you want OpenAI primary but Anthropic fallback, reorder the custom routing table and omit the allowlist.
+- **Reasoning effort**: OpenCode exposes GPT reasoning variants separately (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`). Headless runs do not default to `xhigh`; if no variant is set, OpenCode sends no explicit effort override and the provider default applies.
+- **Tier-aware effort**: Headless dispatch can now apply variants by resolved tier. `AIDEVOPS_HEADLESS_VARIANT_SONNET=high` and `AIDEVOPS_HEADLESS_VARIANT_OPUS=xhigh` make standard work run at `high` and reasoning-tier work run at `xhigh` even when both tiers use `openai/gpt-5.4`.
+- **Fallback**: If routed resolution fails entirely, pulse falls back to `anthropic/claude-sonnet-4-6`; workers fall back to `DEFAULT_HEADLESS_MODELS` when no allowlist is forcing a subset.
 - **Deprecated**: `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected as overrides for one release cycle with deprecation warnings. Remove from `credentials.sh`.
+
+### Per-user override that survives auto-update
+
+Auto-update overwrites `~/.aidevops/agents/configs/*.json` and `~/.aidevops/agents/scripts/*`, so user-specific routing must live outside those paths.
+
+- Put persistent model-order overrides in `~/.aidevops/agents/custom/configs/model-routing-table.json`
+- Put the provider pin in `~/.config/aidevops/credentials.sh`
+
+Example custom override for OpenAI-capable headless routing:
+
+```json
+{
+  "tiers": {
+    "sonnet": { "models": ["openai/gpt-5.4", "anthropic/claude-sonnet-4-6"] },
+    "opus": { "models": ["openai/gpt-5.4", "anthropic/claude-opus-4-6"] }
+  }
+}
+```
+
+Example hard pin:
+
+```bash
+export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="openai"
+```
+
+Example reasoning effort override:
+
+```bash
+export AIDEVOPS_HEADLESS_VARIANT_SONNET="high"
+export AIDEVOPS_HEADLESS_VARIANT_OPUS="xhigh"
+```
+
+Role-specific overrides still exist when needed:
+
+```bash
+export AIDEVOPS_HEADLESS_PULSE_VARIANT="high"
+export AIDEVOPS_HEADLESS_WORKER_VARIANT="xhigh"
+```
 
 ## CLI Tools
 

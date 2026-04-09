@@ -103,11 +103,12 @@ source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 list_dispatchable_issue_candidates SLUG 100
 
 # Atomic dispatch — runs all 7 dedup layers, assigns, launches, records ledger.
-# DO NOT pass a 9th parameter (model override) here. dispatch_with_dedup owns
-# the round-robin: it calls headless-runtime-helper.sh select --role worker to
-# rotate between configured providers (e.g., anthropic ↔ openai) and records
-# the resolved model in the dispatch comment. Passing your own model bypasses
-# the round-robin and causes all workers to land on a single provider.
+# DO NOT pass a 9th parameter (model override) here. dispatch_with_dedup handles
+# model selection via the runtime resolver: it uses the routing table, optional
+# local overrides (custom/configs/model-routing-table.json), provider allowlist
+# (AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST), and auth/availability checks. The
+# resolved model is recorded in the dispatch comment. Passing your own model
+# bypasses the runtime resolver and causes provider imbalance.
 dispatch_with_dedup NUMBER SLUG "Issue #NUMBER: TITLE" "TASK_ID: TITLE" "$RUNNER_USER" PATH \
   "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION" || continue
 ```
@@ -298,10 +299,12 @@ workers attempted.
 
 ### Model tier selection
 
-`dispatch_with_dedup` handles model selection automatically via round-robin across
-providers derived from the OAuth pool + routing table (GH#17769). The resolved model
-is recorded in the dispatch comment. **Do NOT pass a model override (9th parameter)
-for default dispatches** — this bypasses the round-robin and causes provider imbalance.
+`dispatch_with_dedup` handles model selection automatically via the routing table,
+optional local overrides (`custom/configs/model-routing-table.json`), provider
+allowlist (`AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`), and auth/availability checks.
+The resolved model is recorded in the dispatch comment. **Do NOT pass a model
+override (9th parameter) for default dispatches** — this bypasses the runtime
+resolver and causes provider imbalance.
 
 Only pass a model override when tier escalation is needed:
 
@@ -312,8 +315,8 @@ dispatch_with_dedup NUMBER SLUG ... "$RESOLVED_MODEL"
 ```
 
 Precedence: (1) failure escalation (cascade: `tier:simple` → `tier:standard` → `tier:reasoning`) > (2) issue labels (`tier:reasoning`
-→ opus, `tier:standard` → sonnet, `tier:simple` → haiku) > (3) **omit the 9th parameter** (round-robin selects from
-configured providers and records the model in the dispatch comment). Backward compat: `tier:thinking` is accepted as alias for `tier:reasoning`.
+→ opus, `tier:standard` → sonnet, `tier:simple` → haiku) > (3) **omit the 9th parameter** (runtime resolver selects from
+configured models/providers and records the model in the dispatch comment). Backward compat: `tier:thinking` is accepted as alias for `tier:reasoning`.
 
 ### Agent routing from labels
 
