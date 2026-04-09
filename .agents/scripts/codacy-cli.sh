@@ -357,14 +357,14 @@ show_help() {
     echo "  $0 upload results.sarif abc123"
     echo ""
     echo "Environment Variables:"
-    echo "  CODACY_API_TOKEN     - API token for Codacy"
-    echo "  CODACY_PROJECT_TOKEN - Project token for uploads"
+    echo "  CODACY_API_TOKEN     - API token (Codacy)"
+    echo "  CODACY_PROJECT_TOKEN - Project token (uploads)"
     echo "  CODACY_PROVIDER      - Provider (gh, gl, bb)"
     echo "  CODACY_ORGANIZATION  - Organization name"
     echo "  CODACY_REPOSITORY    - Repository name"
     echo ""
     echo "This script integrates Codacy CLI v2 into the AI DevOps Framework"
-    echo "for comprehensive local code analysis and quality assurance."
+    echo "providing comprehensive local code analysis and quality assurance."
     return 0
 }
 

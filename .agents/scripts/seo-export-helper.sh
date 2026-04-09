@@ -219,7 +219,7 @@ show_help() {
 	cat <<'EOF'
 SEO Data Export Helper
 
-Export SEO data from multiple platforms to TOON format for analysis.
+SEO Data Export - exports data from multiple platforms to TOON format.
 
 Usage:
     seo-export-helper.sh [command] [options]
@@ -231,7 +231,7 @@ Commands:
     dataforseo <domain>    Export from DataForSEO
     all <domain>           Export from all configured platforms
     list                   List available platforms
-    exports <domain>       List exports for a domain
+    exports <domain>       List domain exports
 
 Options:
     --days N               Number of days to export (default: 90)

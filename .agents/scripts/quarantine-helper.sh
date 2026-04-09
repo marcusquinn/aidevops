@@ -979,7 +979,7 @@ Learn actions:
   dismiss                    Mark as false positive, no config change
 
 Learn options:
-  --value <domain|pattern>   Explicit value to learn (auto-extracted from content if omitted)
+  --value <domain|pattern>   Explicit value to learn (auto-extracted when omitted)
 
 Purge options:
   --older-than DAYS          Purge items older than N days (default: 30)
@@ -1020,7 +1020,7 @@ Integration:
   prompt-guard-helper.sh, network-tier-helper.sh, and sandbox-exec-helper.sh
   call 'quarantine-helper.sh add' when they encounter items in the ambiguous
   score range (e.g., MEDIUM severity, Tier 4 unknown domains). The /security-review
-  command presents the digest for human review.
+  command presents the digest to human reviewers.
 HELP
 	return 0
 }

@@ -140,13 +140,13 @@ convert_to_webp() {
 	if command -v cwebp &>/dev/null; then
 		cwebp -q "$quality" "$input" -o "$output" 2>/dev/null
 		return $?
-	elif command -v magick &>/dev/null; then
+	fi
+	if command -v magick &>/dev/null; then
 		magick "$input" -quality "$quality" "$output" 2>/dev/null
 		return $?
-	else
-		print_warning "No WebP converter found (install: brew install webp or imagemagick)"
-		return 1
 	fi
+	print_warning "No WebP converter found (install: brew install webp or imagemagick)"
+	return 1
 }
 
 # Convert PNG to AVIF
@@ -158,13 +158,13 @@ convert_to_avif() {
 	if command -v avifenc &>/dev/null; then
 		avifenc --min 0 --max 63 -a end-usage=q -a cq-level="$((63 - quality * 63 / 100))" "$input" "$output" 2>/dev/null
 		return $?
-	elif command -v magick &>/dev/null; then
+	fi
+	if command -v magick &>/dev/null; then
 		magick "$input" -quality "$quality" "$output" 2>/dev/null
 		return $?
-	else
-		print_warning "No AVIF converter found (install: brew install libavif or imagemagick)"
-		return 1
 	fi
+	print_warning "No AVIF converter found (install: brew install libavif or imagemagick)"
+	return 1
 }
 
 # Resize image to AI-safe dimensions (max 1568px longest side)
@@ -176,16 +176,16 @@ resize_ai_safe() {
 	if command -v magick &>/dev/null; then
 		magick "$input" -resize "${max_px}x${max_px}>" "$output" 2>/dev/null
 		return $?
-	elif command -v sips &>/dev/null; then
+	fi
+	if command -v sips &>/dev/null; then
 		# macOS built-in
 		cp "$input" "$output"
 		sips --resampleLargest "$max_px" "$output" &>/dev/null
 		return $?
-	else
-		print_warning "No image resizer found. AI review may fail with large images."
-		cp "$input" "$output"
-		return 0
 	fi
+	print_warning "No image resizer found. AI review may fail with large images."
+	cp "$input" "$output"
+	return 0
 }
 
 # Parse arguments for cmd_screenshot into _ss_* variables (caller scope)
@@ -323,14 +323,17 @@ _screenshot_convert_formats() {
 	local all_pngs=("$_ss_light_png")
 	[[ -n "$_ss_dark_png" && -f "$_ss_dark_png" ]] && all_pngs+=("$_ss_dark_png")
 
-	local png base
+	local png base out_webp out_avif
 	for png in "${all_pngs[@]}"; do
 		base="${png%.png}"
+		out_webp="${base}.webp"
+		out_avif="${base}.avif"
 		if [[ "$_ss_format" == "webp" || "$_ss_format" == "all" ]]; then
-			convert_to_webp "$png" "${base}.webp" && print_success "WebP: ${base}.webp" || true
+			convert_to_webp "$png" "$out_webp" && print_success "WebP: $out_webp" || true
 		fi
 		if [[ "$_ss_format" == "avif" || "$_ss_format" == "all" ]]; then
-			convert_to_avif "$png" "${base}.avif" && print_success "AVIF: ${base}.avif" || true
+			convert_to_avif \
+				"$png" "$out_avif" && print_success "AVIF: $out_avif" || true
 		fi
 	done
 

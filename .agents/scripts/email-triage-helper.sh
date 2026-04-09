@@ -797,11 +797,11 @@ Commands:
   check-sender  Run SPF/DKIM/DMARC checks for a sender
 
 Output:
-  JSON object suitable for downstream automation
+  JSON object suitable in downstream automation
 
 Notes:
   - Prompt injection scanning is enforced via prompt-guard-helper.sh before AI classification
-  - Model routing uses haiku for bulk and sonnet for ambiguous/suspicious cases
+  - Model routing: haiku (bulk), sonnet (ambiguous/suspicious)
   - Task creation uses claim-task-id.sh when --create-todos is set
 EOF
 	return 0

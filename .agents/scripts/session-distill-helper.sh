@@ -386,8 +386,8 @@ Learning types detected:
 
 Integration:
   - Called by /session-review at end of sessions
-  - Works with memory-helper.sh for persistent storage
-  - Works with session-checkpoint-helper.sh for operational state
+  - Works with memory-helper.sh (persistent storage)
+  - Works with session-checkpoint-helper.sh (operational state)
   - Supports both automatic and AI-assisted distillation
 
 Examples:

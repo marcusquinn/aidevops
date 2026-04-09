@@ -426,11 +426,11 @@ Usage: email-export-helper.sh <command> [options]
 
 Commands:
   export <source_dir> <case_name> [format] [output_dir]
-      Export .eml/.msg messages into legal case structure.
+      Export .eml/.msg messages into legal-matter structure.
       format: pdf (default), text, markdown
 
   archive-folders <account_name> <case_name> [parent_folder]
-      Create IMAP archive folders for a legal case.
+      Create IMAP archive folders (legal case).
       Requires email-mailbox-helper.sh (t1493 dependency).
 
   help

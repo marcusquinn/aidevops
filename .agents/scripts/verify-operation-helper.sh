@@ -787,8 +787,8 @@ verify options:
   --repo SLUG         Repository slug (owner/repo)
   --branch NAME       Branch name
   --details TEXT      Additional context for the verifier
-  --primary-model ID  Model that proposed the operation (for provider detection)
-  --session ID        Session identifier for traceability
+  --primary-model ID  Model that proposed the operation (provider detection)
+  --session ID        Session identifier (traceability)
   --skip REASON       Skip verification with a logged reason
 
 check options:
