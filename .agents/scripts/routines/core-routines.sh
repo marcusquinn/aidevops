@@ -228,18 +228,31 @@ $(_scheduler_row "$os" 30 "sh.aidevops.process-guard" "sh.aidevops.process-guard
 
 ## What it does
 
-1. Scans for AI runtime processes (claude, opencode, node workers)
-2. Checks wall-clock time against configurable limits
-3. Checks memory usage against thresholds
-4. Sends SIGTERM to processes exceeding limits (graceful shutdown)
-5. Escalates to SIGKILL if process doesn't exit within grace period
-6. Logs kills to \`~/.aidevops/.agent-workspace/cron/process-guard/\`
+1. Scans for AI runtime processes (opencode, shellcheck, node workers) using \`pgrep\`
+2. Skips TTY-attached processes (interactive user sessions are never killed)
+3. Checks wall-clock runtime against configurable limits per process type
+4. Checks RSS memory usage against configurable thresholds
+5. Sends SIGTERM to processes exceeding limits (graceful shutdown)
+6. Escalates to SIGKILL after 1 second if process does not exit
+7. Reaps orphan shellcheck processes (ppid=1, alive >120s)
+8. Logs kills to \`~/.aidevops/logs/process-guard.log\`
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| \`CHILD_RSS_LIMIT_KB\` | 8388608 (8GB) | Max RSS per child process |
+| \`CHILD_RUNTIME_LIMIT\` | 7200 (2h) | Max runtime in seconds |
+| \`SHELLCHECK_RSS_LIMIT_KB\` | 524288 (512MB) | ShellCheck-specific RSS limit |
+| \`SHELLCHECK_RUNTIME_LIMIT\` | 120 (2min) | ShellCheck-specific runtime limit |
+| \`SESSION_COUNT_WARN\` | 5 | Warn when interactive session count exceeds this |
 
 ## What to check
 
-- \`~/.aidevops/.agent-workspace/cron/process-guard/\` — kill logs
+- \`~/.aidevops/logs/process-guard.log\` — kill log (stdout + stderr)
 $(_diag_commands "$os" "sh.aidevops.process-guard" "sh.aidevops.process-guard")
-- \`ps aux | grep -E 'claude|opencode'\` — active processes
+- \`process-guard-helper.sh scan\` — one-shot scan showing monitored processes
+- \`process-guard-helper.sh sessions\` — count of interactive sessions
 $(_platform_footnote "$os")
 EOF
 	return 0
@@ -275,10 +288,33 @@ $(_scheduler_row "$os" 120 "sh.aidevops.worker-watchdog" "sh.aidevops.worker-wat
 5. Posts kill/timeout comments on GitHub issues for failed workers
 6. Updates dispatch state so the pulse can retry
 
+## Failure modes detected
+
+| Mode | Signal | Action |
+|------|--------|--------|
+| CPU idle | Tree CPU < threshold for idle timeout (default 5 min) | Kill — worker stuck in file-watcher |
+| Progress stall | No log growth for progress timeout (default 10 min) | Kill — worker stuck on API or rate-limited |
+| Zero-commit thrash | Running >1h with >120 messages but 0 commits | Kill + \`status:blocked\` |
+| Runtime ceiling | Elapsed > max runtime (default 3h) | Kill — prevents infinite loops |
+| Provider backoff | Provider hit auth_error or rate-limit | Kill immediately |
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| \`WORKER_IDLE_TIMEOUT\` | 300 | Seconds of low CPU before idle kill |
+| \`WORKER_IDLE_CPU_THRESHOLD\` | 5 | CPU% below this = idle |
+| \`WORKER_PROGRESS_TIMEOUT\` | 600 | Seconds without log growth = stuck |
+| \`WORKER_THRASH_ELAPSED_THRESHOLD\` | 3600 | Min runtime before zero-commit thrash check |
+| \`WORKER_THRASH_MESSAGE_THRESHOLD\` | 120 | Min messages for thrash check |
+| \`WORKER_MAX_RUNTIME\` | 10800 | Hard ceiling in seconds (3h) |
+| \`WORKER_DRY_RUN\` | false | Log but don't kill (for testing) |
+
 ## What to check
 
 - \`~/.aidevops/.agent-workspace/tmp/session-*\` — active worker sessions
 $(_diag_commands "$os" "sh.aidevops.worker-watchdog" "sh.aidevops.worker-watchdog")
+- \`~/.aidevops/logs/worker-watchdog.log\` — watchdog action log
 - GitHub issue comments — kill notifications from watchdog
 - \`routine-log-helper.sh status\` — watchdog run history
 $(_platform_footnote "$os")

@@ -148,11 +148,21 @@ CUSTOMEOF
 	esac
 
 	local rid
+	local gen_header
+	gen_header="<!-- GENERATED FILE — DO NOT EDIT IN THIS REPO -->
+<!-- Source: marcusquinn/aidevops:.agents/scripts/routines/core-routines.sh -->
+<!-- Overwritten by: aidevops update / init-routines-helper.sh -->
+<!-- To fix: edit describe_rNNN() in core-routines.sh, not this file -->
+
+"
 	while IFS='|' read -r rid _ _ _ _ _ _; do
 		[[ -z "$rid" ]] && continue
 		local describe_fn="describe_${rid}"
 		if declare -f "$describe_fn" &>/dev/null; then
-			"$describe_fn" "$detected_os" >"${repo_path}/routines/core/${rid}.md"
+			{
+				printf '%s' "$gen_header"
+				"$describe_fn" "$detected_os"
+			} >"${repo_path}/routines/core/${rid}.md"
 		fi
 	done < <(get_core_routine_entries)
 
@@ -169,34 +179,159 @@ _write_issue_template() {
 	cat >"${repo_path}/.github/ISSUE_TEMPLATE/routine.md" <<'TEMPLATEEOF'
 ---
 name: Routine tracking
-about: Track a recurring operational routine
+about: Track a recurring operational routine (auto-created by routine-log-helper.sh create-issue)
 title: "r000: <routine name>"
-labels: routine
+labels: routines
 assignees: ''
 ---
 
-## Routine
+## r000: <routine name>
 
-**ID:** r000
-**Schedule:** repeat:weekly(mon@09:00)
-**Script/Agent:** run:custom/scripts/example.sh or agent:Build+
+| Field | Value |
+|-------|-------|
+| Schedule | repeat:weekly(mon@09:00) |
+| Type | script |
+| Status | active |
+| Last run | — |
+| Last result | — |
+| Next run | pending first run |
+| Streak | — |
+| Total cost | $0.00 |
 
-## Description
+### Latest Period (— — —)
+0/0 runs succeeded. Total cost: $0.00. Avg duration: 0s.
 
-What this routine does and why it exists.
+**Detailed logs**: `~/.aidevops/.agent-workspace/cron/r000/`
 
-## SOP
+---
 
-Step-by-step procedure.
-
-## Targets
-
-Who or what this routine applies to.
-
-## Verification
-
-How to confirm the routine ran successfully.
+> This issue is auto-managed by `routine-log-helper.sh`. The body is updated
+> after each run with live metrics. Do not edit the body manually — changes
+> will be overwritten on the next run.
+>
+> To view logs: `routine-log-helper.sh status`
+> To update manually: `routine-log-helper.sh update r000 --status success --duration 30`
 TEMPLATEEOF
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _write_agents_md <path>
+# Creates AGENTS.md with worker routing protection.
+# Prevents workers from editing generated files in the wrong repo.
+# ---------------------------------------------------------------------------
+_write_agents_md() {
+	local repo_path="$1"
+	cat >"${repo_path}/AGENTS.md" <<'AGENTSEOF'
+# aidevops-routines — Worker Instructions
+
+## What this repo is
+
+This repo contains routine **definitions** (TODO.md) and **tracking issues**
+(GitHub issues updated by `routine-log-helper.sh`). It is a downstream
+consumer of the aidevops framework, not the source of truth for routine
+code or descriptions.
+
+## Generated files — DO NOT EDIT HERE
+
+Files in `routines/core/` are **generated** by the aidevops framework
+(`~/.aidevops/agents/scripts/routines/core-routines.sh`). They are
+overwritten on every `aidevops update` or `init-routines-helper.sh` run.
+
+**If you find an error in a core routine description:**
+1. Do NOT edit `routines/core/*.md` in this repo
+2. Fix the source: `describe_rNNN()` function in
+   `marcusquinn/aidevops:.agents/scripts/routines/core-routines.sh`
+3. The fix will propagate here on the next `aidevops update`
+
+**If you find a bug in `routine-log-helper.sh` or other framework scripts:**
+1. These scripts live in `marcusquinn/aidevops:.agents/scripts/`
+2. Do NOT copy them into this repo — fix them at the source
+
+## What CAN be edited here
+
+- `TODO.md` — routine definitions (enable/disable, add user routines r001-r899)
+- `routines/custom/*.md` — user-defined routine descriptions
+- `README.md` — repo documentation
+- `.github/ISSUE_TEMPLATE/` — issue templates
+
+## Issue routing
+
+- Issues #1-#12 (r901-r912) are **execution tracking issues** — their bodies
+  are auto-updated by `routine-log-helper.sh` with run metrics. Do not edit
+  issue bodies manually.
+- Issues about routine **behaviour or bugs** should be filed on the main
+  `marcusquinn/aidevops` repo, not here.
+- Issues about routine **scheduling or enablement** belong here (edit TODO.md).
+AGENTSEOF
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _write_codeowners <path>
+# Creates CODEOWNERS to flag PRs touching generated files.
+# ---------------------------------------------------------------------------
+_write_codeowners() {
+	local repo_path="$1"
+	mkdir -p "${repo_path}/.github"
+	cat >"${repo_path}/.github/CODEOWNERS" <<'COEOF'
+# Generated files — changes here will be overwritten by aidevops update.
+# PRs touching these paths require maintainer review to confirm the fix
+# should be in the source repo (marcusquinn/aidevops) instead.
+/routines/core/ @marcusquinn
+COEOF
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _write_readme <path>
+# Creates README.md with repo overview and structure documentation.
+# ---------------------------------------------------------------------------
+_write_readme() {
+	local repo_path="$1"
+	cat >"${repo_path}/README.md" <<'READMEEOF'
+# aidevops-routines
+
+Recurring operational routines for the [aidevops](https://aidevops.sh) framework.
+
+## Structure
+
+```
+TODO.md                 # Routine definitions (schedule, script, enabled state)
+routines/
+├── core/               # Generated by aidevops framework (DO NOT EDIT — see AGENTS.md)
+│   ├── r901.md         # Supervisor pulse
+│   ├── r902.md         # Auto-update
+│   └── ...             # 12 core routines total
+└── custom/             # User-defined routine descriptions (survives updates)
+    └── README.md
+```
+
+## Core vs custom routines
+
+| Range | Owner | Editable here? |
+|-------|-------|----------------|
+| r901-r999 | Framework (aidevops) | No — generated, fix at source |
+| r001-r899 | User | Yes — add to TODO.md + routines/custom/ |
+
+## Tracking issues
+
+Each routine has a GitHub issue auto-updated after every run with metrics
+(last run, streak, cost). Notable events are posted as comments.
+
+```bash
+routine-log-helper.sh status    # View all routine metrics
+```
+
+## Adding a custom routine
+
+1. Add to `TODO.md` under `## User Routines`:
+   ```
+   - [x] r001 My routine repeat:daily(@09:00) ~5m run:custom/scripts/my-routine.sh
+   ```
+2. Create `routines/custom/r001.md` with a description
+3. Create a tracking issue: `routine-log-helper.sh create-issue r001 --repo <slug> --title "r001: My routine"`
+READMEEOF
 	return 0
 }
 
@@ -217,6 +352,9 @@ scaffold_repo() {
 
 	_write_todo_md "$repo_path"
 	_seed_routine_descriptions "$repo_path"
+	_write_agents_md "$repo_path"
+	_write_codeowners "$repo_path"
+	_write_readme "$repo_path"
 
 	# .gitignore
 	cat >"${repo_path}/.gitignore" <<'GITIGNOREEOF'
