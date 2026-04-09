@@ -3960,22 +3960,25 @@ normalize_active_issue_assignments() {
 			# other machines.
 			local dispatch_pid=""
 			local dispatch_comment_age=0
-			local dispatch_comments_json
-			# Match dispatch comments with or without <!-- ops:start --> marker prefix (GH#17945)
-			dispatch_comments_json=$(gh api "repos/${slug}/issues/${stale_num}/comments" \
-				--jq '[.[] | select(.body | test("^(<!-- ops:start[^>]*-->\\s*)?Dispatching worker"))] | sort_by(.created_at) | reverse | first // empty' \
-				2>/dev/null) || dispatch_comments_json=""
-			if [[ -n "$dispatch_comments_json" && "$dispatch_comments_json" != "null" ]]; then
-				dispatch_pid=$(printf '%s' "$dispatch_comments_json" | jq -r '
-					.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") | .pid // ""
-				' 2>/dev/null) || dispatch_pid=""
-				local dispatch_created_at
-				dispatch_created_at=$(printf '%s' "$dispatch_comments_json" | jq -r '.created_at // ""' 2>/dev/null) || dispatch_created_at=""
-				if [[ -n "$dispatch_created_at" ]]; then
-					local dispatch_epoch
-					dispatch_epoch=$(date -u -d "$dispatch_created_at" '+%s' 2>/dev/null ||
-						TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$dispatch_created_at" '+%s' 2>/dev/null ||
-						echo "0")
+			local dispatch_created_at=""
+
+			# Read PID and creation date from the latest dispatch comment in one go.
+			# This avoids storing the full comment JSON and running multiple jq processes.
+			# The || true on the process substitution prevents set -e from exiting
+			# if gh api returns no comments.
+			{
+				IFS= read -r dispatch_pid
+				IFS= read -r dispatch_created_at
+			} < <(gh api "repos/${slug}/issues/${stale_num}/comments" \
+				--jq '[.[] | select(.body | startswith("Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") | .pid // ""), .created_at) else empty end' \
+				-r 2>/dev/null) || true
+
+			if [[ -n "$dispatch_created_at" ]]; then
+				local dispatch_epoch
+				dispatch_epoch=$(date -u -d "$dispatch_created_at" '+%s' 2>/dev/null ||
+					TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$dispatch_created_at" '+%s' 2>/dev/null ||
+					echo "0")
+				if [[ "$dispatch_epoch" -gt 0 ]]; then
 					dispatch_comment_age=$((now_epoch - dispatch_epoch))
 				fi
 			fi
