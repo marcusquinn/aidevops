@@ -364,7 +364,10 @@ _approve_target() {
 	fi
 
 	_post_issue_approval_updates "$target_type" "$target_number" "$slug"
-	_print_ok "${target_type^} #$target_number approved and signed"
+	# Bash 3.2 compat: ${var^} (uppercase first) requires Bash 4+. Use printf + tr.
+	local target_type_cap
+	target_type_cap="$(printf '%s' "${target_type:0:1}" | tr '[:lower:]' '[:upper:]')${target_type:1}"
+	_print_ok "$target_type_cap #$target_number approved and signed"
 	echo ""
 	return 0
 }

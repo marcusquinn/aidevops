@@ -398,7 +398,10 @@ toggle_domain_lock() {
     local data
     data=$(jq -n --arg domain "$domain" --arg lock "$lock_status" '{domain: $domain, lock: $lock}')
 
-    print_info "${action^}ing domain: $domain"
+    # Bash 3.2 compat: ${var^} requires Bash 4+
+    local action_cap
+    action_cap="$(printf '%s' "${action:0:1}" | tr '[:lower:]' '[:upper:]')${action:1}"
+    print_info "${action_cap}ing domain: $domain"
     local response
     if response=$(api_request "$account_name" "POST" "domain/lock" "$data"); then
         print_success "Domain ${action}ed successfully"
@@ -471,7 +474,10 @@ toggle_domain_privacy() {
     local data
     data=$(jq -n --arg domain "$domain" --arg privacy "$privacy_status" '{domain: $domain, privacy: $privacy}')
 
-    print_info "${action^}ing privacy for domain: $domain"
+    # Bash 3.2 compat: ${var^} requires Bash 4+
+    local action_cap
+    action_cap="$(printf '%s' "${action:0:1}" | tr '[:lower:]' '[:upper:]')${action:1}"
+    print_info "${action_cap}ing privacy for domain: $domain"
     local response
     if response=$(api_request "$account_name" "POST" "domain/privacy" "$data"); then
         print_success "Domain privacy ${action}d successfully"
