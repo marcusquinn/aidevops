@@ -366,7 +366,7 @@ _build_issue_body() {
 	fi
 
 	cat <<EOF
-## ${routine_id}: ${title}
+## ${title}
 
 | Field | Value |
 |-------|-------|
@@ -858,8 +858,8 @@ cmd_create_issue() {
 		"pending first run" \
 		"0" \
 		"" \
-		'{"total":0,"successes":0,"failures":0,"total_cost":"0.00","avg_duration":0,"period_start":"—","period_end":"—"}' \
-		"$routine_id")
+		"0.00" \
+		'{"total":0,"successes":0,"failures":0,"total_cost":"0.00","avg_duration":0,"period_start":"—","period_end":"—"}')
 
 	# Create the issue on GitHub
 	local issue_number
