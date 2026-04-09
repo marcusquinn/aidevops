@@ -222,11 +222,10 @@ else:
 		fi
 	fi
 
-	# Body hash: non-00000 cch is expected (xxHash64 computed by both CLI and our plugin)
-	# Only flag drift if cch format is unexpected (not 5 hex chars)
-	if [[ -n "$real_cch" && ! "$real_cch" =~ ^[0-9a-f]{5}$ ]]; then
+	# Check if cch is still 00000 (Node.js behaviour)
+	if [[ "$real_cch" != "00000" && -n "$real_cch" ]]; then
 		drift_detected="true"
-		drift_details="${drift_details:+${drift_details}; }cch: unexpected format '${real_cch}' (expected 5 hex chars)"
+		drift_details="${drift_details:+${drift_details}; }cch: expected=00000 real=${real_cch} (body hash now active)"
 	fi
 
 	printf 'drift_detected=%s\ndrift_details=%s\n' "$drift_detected" "$drift_details"
