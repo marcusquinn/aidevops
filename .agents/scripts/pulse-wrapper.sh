@@ -3266,6 +3266,18 @@ cleanup_worktrees() {
 					continue
 				fi
 
+				# Check ownership registry before removing (GH#18021).
+				# pgrep only detects processes that expose the worktree path
+				# in their argv. Interactive runtimes (e.g. OpenCode Web, Claude Code)
+				# dispatch MCP tool calls inside the agent runtime — the worktree
+				# path never appears in process arguments. The registry is the
+				# authoritative source for live ownership; skip removal if a live
+				# owner PID is registered.
+				if is_worktree_owned_by_others "$wt_path_age"; then
+					echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch_age:-detached} ($wt_path_age) — registered owner alive in registry" >>"$LOGFILE"
+					continue
+				fi
+
 				local should_remove=false
 				local reason=""
 
