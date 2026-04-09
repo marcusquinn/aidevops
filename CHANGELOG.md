@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.214] - 2026-04-09
+
+### Added
+
+- improve simplification gate — exclude non-code files, create debt issues immediately, auto-clear stale labels (#17980)
+
 ## [3.6.213] - 2026-04-09
 
 ### Added
