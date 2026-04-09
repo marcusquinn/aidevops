@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.222] - 2026-04-09
+
+### Changed
+
+- fix npm install 630MB peer deps on every update (#18019)
+- ratchet down nesting depth threshold (#18017)
+
 ## [3.6.221] - 2026-04-09
 
 ### Changed
