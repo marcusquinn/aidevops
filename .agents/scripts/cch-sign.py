@@ -6,7 +6,7 @@ so OAuth pool requests appear identical to native Claude CLI requests.
 
 Two-part signing:
   Part 1 (version suffix): SHA-256(salt + picked_chars + version)[:3]
-  Part 2 (body hash):      cch=00000 placeholder (Node.js client sends as-is)
+  Part 2 (body hash):      xxHash64(body_utf8, seed) & 0xFFFFF → 5-char hex
 
 Usage:
     # Compute version suffix for a user message
@@ -47,7 +47,7 @@ DEFAULT_SALT = "59cf53e54c78"
 DEFAULT_CHAR_INDICES = [4, 7, 20]
 DEFAULT_ENTRYPOINT = "cli"
 
-# xxHash seed from article (Bun-era; not used by Node.js client)
+# xxHash seed from Bun binary (required for body hash computation)
 XXHASH_SEED = 0x6E52736AC806831E
 
 CACHE_FILE = Path.home() / ".aidevops" / "cch-constants.json"

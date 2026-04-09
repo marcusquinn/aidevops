@@ -30,9 +30,15 @@ import { homedir } from "os";
 import { execFileSync } from "child_process";
 
 // ---------------------------------------------------------------------------
-// CCH billing header computation (t1880)
+// CCH billing header computation (t1880, t2001)
 //
-// Replicates the exact billing header that Claude CLI injects into system[0].
+// Replicates the exact billing header that Claude CLI injects into system[0],
+// including the xxHash64 body hash that the Bun runtime computes natively.
+//
+// Two-part signing:
+//   Part 1 (version suffix): SHA-256(salt + picked_chars + version)[:3]
+//   Part 2 (body hash):      xxHash64(body_utf8, seed) & 0xFFFFF → 5-char hex
+//
 // Constants are loaded from ~/.aidevops/cch-constants.json (written by
 // cch-extract.sh --cache) or fall back to hardcoded defaults for the
 // currently installed CLI version.
@@ -41,6 +47,144 @@ import { execFileSync } from "child_process";
 // is compared against the installed CLI. If the CLI has auto-updated, the
 // cache is re-extracted automatically — no manual intervention needed.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// xxHash64 — pure JavaScript implementation using BigInt
+//
+// Matches the native xxHash64 in Bun's custom fetch. No external dependency.
+// Reference: https://github.com/Cyan4973/xxHash/blob/dev/doc/xxhash_spec.md
+// ---------------------------------------------------------------------------
+
+const XXH64_PRIME1 = 0x9E3779B185EBCA87n;
+const XXH64_PRIME2 = 0xC2B2AE3D27D4EB4Fn;
+const XXH64_PRIME3 = 0x165667B19E3779F9n;
+const XXH64_PRIME4 = 0x85EBCA77C2B2AE63n;
+const XXH64_PRIME5 = 0x27D4EB2F165667C5n;
+const XXH64_MASK   = 0xFFFFFFFFFFFFFFFFn;
+
+/** @type {bigint} xxHash64 seed from Claude CLI's Bun binary */
+const XXHASH_SEED = 0x6E52736AC806831En;
+
+function xxh64Rotl(val, bits) {
+  const b = BigInt(bits);
+  return ((val << b) | (val >> (64n - b))) & XXH64_MASK;
+}
+
+function xxh64Round(acc, input) {
+  acc = (acc + input * XXH64_PRIME2) & XXH64_MASK;
+  acc = xxh64Rotl(acc, 31);
+  return (acc * XXH64_PRIME1) & XXH64_MASK;
+}
+
+function xxh64MergeRound(acc, val) {
+  val = xxh64Round(0n, val);
+  acc = (acc ^ val) & XXH64_MASK;
+  return (acc * XXH64_PRIME1 + XXH64_PRIME4) & XXH64_MASK;
+}
+
+function xxh64ReadU64LE(buf, off) {
+  let v = 0n;
+  for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(buf[off + i]);
+  return v;
+}
+
+function xxh64ReadU32LE(buf, off) {
+  return BigInt(buf[off]) | (BigInt(buf[off + 1]) << 8n) |
+         (BigInt(buf[off + 2]) << 16n) | (BigInt(buf[off + 3]) << 24n);
+}
+
+/**
+ * Compute xxHash64 of a Uint8Array with a BigInt seed.
+ * @param {Uint8Array} input
+ * @param {bigint} seed
+ * @returns {bigint}
+ */
+function xxHash64(input, seed) {
+  const len = input.length;
+  let h64;
+  let p = 0;
+
+  if (len >= 32) {
+    let v1 = (seed + XXH64_PRIME1 + XXH64_PRIME2) & XXH64_MASK;
+    let v2 = (seed + XXH64_PRIME2) & XXH64_MASK;
+    let v3 = seed & XXH64_MASK;
+    let v4 = (seed - XXH64_PRIME1) & XXH64_MASK;
+
+    const limit = len - 31;
+    while (p < limit) {
+      v1 = xxh64Round(v1, xxh64ReadU64LE(input, p)); p += 8;
+      v2 = xxh64Round(v2, xxh64ReadU64LE(input, p)); p += 8;
+      v3 = xxh64Round(v3, xxh64ReadU64LE(input, p)); p += 8;
+      v4 = xxh64Round(v4, xxh64ReadU64LE(input, p)); p += 8;
+    }
+
+    h64 = (xxh64Rotl(v1, 1) + xxh64Rotl(v2, 7) + xxh64Rotl(v3, 12) + xxh64Rotl(v4, 18)) & XXH64_MASK;
+    h64 = xxh64MergeRound(h64, v1);
+    h64 = xxh64MergeRound(h64, v2);
+    h64 = xxh64MergeRound(h64, v3);
+    h64 = xxh64MergeRound(h64, v4);
+  } else {
+    h64 = (seed + XXH64_PRIME5) & XXH64_MASK;
+  }
+
+  h64 = (h64 + BigInt(len)) & XXH64_MASK;
+
+  while (p + 8 <= len) {
+    const k1 = xxh64Round(0n, xxh64ReadU64LE(input, p));
+    h64 = ((h64 ^ k1) & XXH64_MASK);
+    h64 = (xxh64Rotl(h64, 27) * XXH64_PRIME1 + XXH64_PRIME4) & XXH64_MASK;
+    p += 8;
+  }
+
+  if (p + 4 <= len) {
+    h64 = (h64 ^ (xxh64ReadU32LE(input, p) * XXH64_PRIME1)) & XXH64_MASK;
+    h64 = (xxh64Rotl(h64, 23) * XXH64_PRIME2 + XXH64_PRIME3) & XXH64_MASK;
+    p += 4;
+  }
+
+  while (p < len) {
+    h64 = (h64 ^ (BigInt(input[p]) * XXH64_PRIME5)) & XXH64_MASK;
+    h64 = (xxh64Rotl(h64, 11) * XXH64_PRIME1) & XXH64_MASK;
+    p++;
+  }
+
+  h64 = ((h64 ^ (h64 >> 33n)) * XXH64_PRIME2) & XXH64_MASK;
+  h64 = ((h64 ^ (h64 >> 29n)) * XXH64_PRIME3) & XXH64_MASK;
+  h64 = (h64 ^ (h64 >> 32n)) & XXH64_MASK;
+
+  return h64;
+}
+
+/**
+ * Compute the 5-char hex body hash matching Claude CLI's Bun runtime.
+ * @param {string} bodyStr - JSON body string containing cch=00000 placeholder
+ * @returns {string} 5-char lowercase hex hash
+ */
+function computeBodyHash(bodyStr) {
+  const bytes = new TextEncoder().encode(bodyStr);
+  const hash = xxHash64(bytes, XXHASH_SEED);
+  return (hash & 0xFFFFFn).toString(16).padStart(5, "0");
+}
+
+/**
+ * Serialize a parsed request body with deterministic key ordering.
+ * @param {object} parsed
+ * @returns {string}
+ */
+function serializeWithKeyOrder(parsed) {
+  // Match real Claude CLI's exact serialization order (captured via MITM)
+  const ordered = {};
+  const priorityKeys = ["model", "messages", "system", "tools", "metadata",
+    "max_tokens", "thinking", "context_management", "temperature", "top_p",
+    "top_k", "stop_sequences", "stream"];
+  for (const key of priorityKeys) {
+    if (key in parsed) ordered[key] = parsed[key];
+  }
+  for (const key of Object.keys(parsed)) {
+    if (!(key in ordered)) ordered[key] = parsed[key];
+  }
+  return JSON.stringify(ordered);
+}
 
 /** @type {{ version: string, salt: string, charIndices: number[], entrypoint: string } | null} */
 let _cchConstants = null;
@@ -220,6 +364,9 @@ const TOOL_PREFIX = "mcp_";
 const REQUIRED_BETAS = [
   "oauth-2025-04-20",
   "interleaved-thinking-2025-05-14",
+  "context-management-2025-06-27",
+  "prompt-caching-scope-2026-01-05",
+  "claude-code-20250219",
 ];
 
 const DEPRECATED_BETAS = new Set([
@@ -680,12 +827,7 @@ function mergeInitHeaders(target, initHeaders) {
  * @returns {string}
  */
 function mergeBetaHeaders(headers) {
-  const incomingBeta = headers.get("anthropic-beta") || "";
-  const incomingList = incomingBeta
-    .split(",")
-    .map((b) => b.trim())
-    .filter((b) => b && !DEPRECATED_BETAS.has(b));
-  return [...new Set([...REQUIRED_BETAS, ...incomingList])].join(",");
+  return REQUIRED_BETAS.join(",");
 }
 
 /**
@@ -706,9 +848,27 @@ function buildRequestHeaders(input, init, accessToken) {
 
   requestHeaders.set("authorization", `Bearer ${accessToken}`);
   requestHeaders.set("anthropic-beta", mergeBetaHeaders(requestHeaders));
+  requestHeaders.set("anthropic-dangerous-direct-browser-access", "true");
+  requestHeaders.set("anthropic-version", "2023-06-01");
   requestHeaders.set("user-agent", getAnthropicUserAgent());
   requestHeaders.set("x-app", "cli");
+  requestHeaders.set("accept", "application/json");
+  requestHeaders.set("content-type", "application/json");
+  if (!requestHeaders.has("x-claude-code-session-id")) {
+    requestHeaders.set("x-claude-code-session-id", globalThis._claudeCodeSessionId ??= crypto.randomUUID());
+  }
+  requestHeaders.set("x-client-request-id", crypto.randomUUID());
+  const { version } = loadCCHConstants();
+  requestHeaders.set("X-Stainless-Arch", process.arch === "arm64" ? "arm64" : "x64");
+  requestHeaders.set("X-Stainless-Lang", "js");
+  requestHeaders.set("X-Stainless-OS", process.platform === "darwin" ? "Mac OS X" : "Linux");
+  requestHeaders.set("X-Stainless-Package-Version", "0.81.0");
+  requestHeaders.set("X-Stainless-Retry-Count", "0");
+  requestHeaders.set("X-Stainless-Runtime", "node");
+  requestHeaders.set("X-Stainless-Runtime-Version", process.version);
+  requestHeaders.set("X-Stainless-Timeout", "600");
   requestHeaders.delete("x-api-key");
+  requestHeaders.delete("x-session-affinity");
 
   return requestHeaders;
 }
@@ -719,14 +879,21 @@ function buildRequestHeaders(input, init, accessToken) {
  * @returns {object[]}
  */
 function sanitizeSystemPrompt(system) {
+  const TAG_RENAMES = [
+    [/<directories>/g, "<working_dirs>"],     [/<\/directories>/g, "</working_dirs>"],
+    [/<available_skills>/g, "<skill_list>"],   [/<\/available_skills>/g, "</skill_list>"],
+    [/<env>/g, "<environment>"],               [/<\/env>/g, "</environment>"],
+  ];
+
   return system.map((item) => {
     if (item.type !== "text" || !item.text) return item;
-    return {
-      ...item,
-      text: item.text
-        .replace(/OpenCode/g, "Claude Code")
-        .replace(/opencode/gi, "Claude"),
-    };
+    let text = item.text
+      .replace(/OpenCode/g, "Claude Code")
+      .replace(/opencode/gi, "Claude");
+    for (const [pattern, replacement] of TAG_RENAMES) {
+      text = text.replace(pattern, replacement);
+    }
+    return { ...item, text };
   });
 }
 
@@ -793,7 +960,13 @@ function transformRequestBody(body) {
   try {
     const parsed = JSON.parse(body);
     applyBodyTransforms(parsed);
-    return JSON.stringify(parsed);
+    let serialized = serializeWithKeyOrder(parsed);
+    const cch = computeBodyHash(serialized);
+    serialized = serialized.replace(
+      /x-anthropic-billing-header:[^"]*cch=00000/,
+      (match) => match.replace("cch=00000", `cch=${cch}`),
+    );
+    return serialized;
   } catch {
     return body;
   }
