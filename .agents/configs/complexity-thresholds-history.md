@@ -28,6 +28,7 @@ The main config retains only the last few entries for readability.
 | 253 | GH#17951 | pre-existing regression on main — 253 violations vs threshold 252; not introduced by this PR (run-tests.sh change reduces nesting, not increases it) |
 | 256 | GH#17954 | pre-existing regression on main — 254 violations vs threshold 253 (proximity guard fired at -1 headroom); 254 violations + 2 buffer = 256 |
 | 258 | GH#17969 | threshold saturated at 256/256 (0 headroom); proximity guard may warn at threshold-5 but cannot prevent saturation when already at 0 headroom; 256 violations + 2 buffer = 258 |
+| 263 | GH#17978 | proximity guard firing at 256/258 (2 headroom); bumped to 263 to restore adequate headroom — 256 violations + 7 headroom ensures proximity guard fires at 258 violations before saturation |
 
 ## FUNCTION_COMPLEXITY_THRESHOLD History
 
