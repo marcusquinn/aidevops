@@ -7624,6 +7624,52 @@ _reevaluate_consolidation_labels() {
 	return 0
 }
 
+#######################################
+# Re-evaluate needs-simplification labeled issues across pulse repos.
+# Same pattern as _reevaluate_consolidation_labels: issues filtered out
+# by the needs-* exclusion never reach dispatch_with_dedup, so the
+# auto-clear at the end of _issue_targets_large_files can't fire.
+# This pass re-evaluates them and clears the label when the file is
+# now excluded (lockfile, JSON config) or below threshold.
+#######################################
+_reevaluate_simplification_labels() {
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	local total_cleared=0
+	while IFS='|' read -r slug rpath; do
+		[[ -n "$slug" && -n "$rpath" ]] || continue
+		local issues_json
+		issues_json=$(gh issue list --repo "$slug" --state open \
+			--label "needs-simplification" \
+			--json number --limit 50 2>/dev/null) || issues_json="[]"
+		local count
+		count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || count=0
+		[[ "$count" -gt 0 ]] || continue
+
+		local i=0
+		while [[ "$i" -lt "$count" ]]; do
+			local num
+			num=$(printf '%s' "$issues_json" | jq -r ".[$i].number" 2>/dev/null)
+			i=$((i + 1))
+			[[ "$num" =~ ^[0-9]+$ ]] || continue
+			local body
+			body=$(gh issue view "$num" --repo "$slug" \
+				--json body --jq '.body // ""' 2>/dev/null) || body=""
+			# _issue_targets_large_files returns 1 (no large files) AND
+			# auto-clears the label when was_already_labeled
+			if ! _issue_targets_large_files "$num" "$slug" "$body" "$rpath"; then
+				total_cleared=$((total_cleared + 1))
+			fi
+		done
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)
+
+	if [[ "$total_cleared" -gt 0 ]]; then
+		echo "[pulse-wrapper] Simplification re-evaluation: cleared ${total_cleared} stale needs-simplification label(s)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
 _dispatch_issue_consolidation() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -7732,10 +7778,24 @@ _issue_targets_large_files() {
 
 	[[ -n "$all_paths" ]] || return 1
 
+	# Files that are large by nature and can't/shouldn't be "simplified":
+	# lockfiles, generated data, JSON registries, binary-adjacent formats.
+	# These should never block dispatch — workers don't modify them directly.
+	local _skip_pattern='(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|Cargo\.lock|Gemfile\.lock|poetry\.lock|simplification-state\.json|\.min\.(js|css)$)'
+
 	local found_large=false
 	local large_files=""
+	local large_file_paths=""
 	while IFS= read -r fpath; do
 		[[ -z "$fpath" ]] && continue
+
+		# Skip non-simplifiable files (lockfiles, generated data, configs)
+		local basename_fpath
+		basename_fpath=$(basename "$fpath")
+		if printf '%s' "$basename_fpath" | grep -qE "$_skip_pattern" 2>/dev/null; then
+			continue
+		fi
+
 		# Resolve path relative to repo
 		local full_path=""
 		if [[ -f "${repo_path}/${fpath}" ]]; then
@@ -7753,6 +7813,7 @@ _issue_targets_large_files() {
 		if [[ "$line_count" -ge "$LARGE_FILE_LINE_THRESHOLD" ]]; then
 			found_large=true
 			large_files="${large_files}${fpath} (${line_count} lines), "
+			large_file_paths="${large_file_paths}${fpath}\n"
 		fi
 	done <<<"$all_paths"
 
@@ -7767,11 +7828,57 @@ _issue_targets_large_files() {
 			--add-label "needs-simplification" 2>/dev/null || true
 
 		large_files="${large_files%, }"
+
+		# Create simplification-debt issues for each large file immediately
+		# (don't wait for the daily complexity scan). Dedup: skip if an open
+		# simplification-debt issue already mentions this file.
+		local _created_issues=""
+		while IFS= read -r _lf_path; do
+			[[ -z "$_lf_path" ]] && continue
+			local _lf_basename
+			_lf_basename=$(basename "$_lf_path")
+			# Check if a simplification-debt issue already exists for this file
+			local _existing
+			_existing=$(gh issue list --repo "$repo_slug" --state open \
+				--label "simplification-debt" --search "$_lf_basename" \
+				--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _existing=""
+			if [[ -n "$_existing" ]]; then
+				_created_issues="${_created_issues}#${_existing} (existing), "
+				continue
+			fi
+			# Create the simplification-debt issue now
+			local _new_num
+			_new_num=$(gh issue create --repo "$repo_slug" \
+				--title "simplification-debt: ${_lf_path} exceeds ${LARGE_FILE_LINE_THRESHOLD} lines" \
+				--label "simplification-debt,auto-dispatch,origin:worker" \
+				--body "## What
+Simplify \`${_lf_path}\` — currently over ${LARGE_FILE_LINE_THRESHOLD} lines. Break into smaller, focused modules.
+
+## Why
+Issue #${issue_number} is blocked by the large-file gate. Workers dispatched against this file spend most of their context budget reading it, leaving insufficient capacity for implementation.
+
+## How
+- EDIT: \`${_lf_path}\`
+- Extract cohesive function groups into separate files
+- Keep a thin orchestrator in the original file that sources/imports the extracted modules
+- Verify: \`wc -l ${_lf_path}\` should be below ${LARGE_FILE_LINE_THRESHOLD}
+
+_Created by large-file simplification gate (pulse-wrapper.sh)_" \
+				--json number --jq '.number' 2>/dev/null) || _new_num=""
+			if [[ -n "$_new_num" ]]; then
+				_created_issues="${_created_issues}#${_new_num} (new), "
+				echo "[pulse-wrapper] Created simplification-debt issue #${_new_num} for ${_lf_path} (blocking #${issue_number})" >>"$LOGFILE"
+			fi
+		done < <(printf '%b' "$large_file_paths")
+
+		_created_issues="${_created_issues%, }"
 		local simplification_body="## Large File Simplification Gate
 
 This issue references file(s) exceeding ${LARGE_FILE_LINE_THRESHOLD} lines: ${large_files}.
 
-Workers dispatched against large files spend most of their context budget reading the file, leaving insufficient capacity for implementation. The simplification routine will break these files into smaller modules first.
+Workers dispatched against large files spend most of their context budget reading the file, leaving insufficient capacity for implementation.
+
+**Simplification issues:** ${_created_issues:-none created}
 
 **Status:** Held from dispatch until simplification completes. The \`needs-simplification\` label will be removed automatically when the target file(s) are below threshold.
 
@@ -7782,6 +7889,14 @@ _Automated by \`_issue_targets_large_files()\` in pulse-wrapper.sh_"
 
 		echo "[pulse-wrapper] Large-file gate: #${issue_number} in ${repo_slug} targets ${large_files}" >>"$LOGFILE"
 		return 0
+	fi
+
+	# If was_already_labeled but no large files found (e.g., all files now
+	# excluded by skip pattern or simplified below threshold), auto-clear.
+	if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--remove-label "needs-simplification" >/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Simplification gate cleared for #${issue_number} (${repo_slug}) — no large files after exclusion filter" >>"$LOGFILE"
 	fi
 
 	return 1
@@ -10924,6 +11039,7 @@ _run_preflight_stages() {
 	# instead of stuck forever behind a label that list_dispatchable_issue_candidates_json
 	# filters out (needs-* exclusion at line 6703).
 	_reevaluate_consolidation_labels
+	_reevaluate_simplification_labels
 
 	# Early dispatch pass: fill available worker slots BEFORE heavy housekeeping.
 	# Workers take 25-30s to cold-start (sandbox-exec + opencode), so dispatching
