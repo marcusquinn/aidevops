@@ -170,6 +170,56 @@ PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
 	return 0
 }
 
+# Read supervisor.pulse_interval_seconds from settings.json.
+# Falls back to 120 if the file is missing, the key is absent, or jq is unavailable.
+# Clamps to the validated range [30, 3600].
+# GH#18018: previously this was hardcoded as "120" in _install_supervisor_pulse.
+_read_pulse_interval_seconds() {
+	local _settings_file="$HOME/.config/aidevops/settings.json"
+	local _interval=120
+
+	if command -v jq >/dev/null 2>&1 && [[ -f "$_settings_file" ]]; then
+		local _raw
+		_raw=$(jq -r '.supervisor.pulse_interval_seconds // empty' "$_settings_file" 2>/dev/null) || _raw=""
+		if [[ -n "$_raw" ]] && [[ "$_raw" =~ ^[0-9]+$ ]]; then
+			_interval="$_raw"
+		fi
+	fi
+
+	# Clamp to validated range (mirrors settings-helper.sh validation: 30-3600)
+	if [[ "$_interval" -lt 30 ]]; then
+		_interval=30
+	elif [[ "$_interval" -gt 3600 ]]; then
+		_interval=3600
+	fi
+
+	printf '%d' "$_interval"
+	return 0
+}
+
+# Convert an interval in seconds to a cron schedule expression (e.g. "*/2 * * * *").
+# Minimum granularity is 1 minute. Intervals that don't divide evenly into minutes
+# are rounded to the nearest minute with a warning.
+# Args: $1 = interval_seconds
+_seconds_to_cron_schedule() {
+	local _interval_sec="$1"
+	local _minutes=$((_interval_sec / 60))
+	local _remainder=$((_interval_sec % 60))
+
+	# Clamp to at least 1 minute
+	if [[ "$_minutes" -lt 1 ]]; then
+		_minutes=1
+	fi
+
+	# Warn if interval doesn't divide evenly into minutes
+	if [[ "$_remainder" -ne 0 ]]; then
+		echo "[schedulers] Warning: pulse_interval_seconds=${_interval_sec} does not divide evenly into minutes; rounding to ${_minutes}min for cron schedule (systemd uses exact seconds)" >&2
+	fi
+
+	printf '*/%d * * * *' "$_minutes"
+	return 0
+}
+
 _install_supervisor_pulse() {
 	local _os="$1"
 	local pulse_label="$2"
@@ -184,18 +234,25 @@ _install_supervisor_pulse() {
 		return 0
 	fi
 
+	# GH#18018: read user-configured interval instead of hardcoding 120s / */2 cron
+	local _pulse_interval_sec
+	_pulse_interval_sec=$(_read_pulse_interval_seconds)
+	local _pulse_cron_schedule
+	_pulse_cron_schedule=$(_seconds_to_cron_schedule "$_pulse_interval_sec")
+	local _pulse_interval_min=$((_pulse_interval_sec / 60))
+
 	local _pulse_timeout_sec=$((PULSE_STALE_THRESHOLD_SECONDS + 60))
 	local _pulse_env=""
 	_pulse_env=$(_build_pulse_linux_env)
 	_install_scheduler_linux \
 		"aidevops-supervisor-pulse" \
 		"aidevops: supervisor-pulse" \
-		"*/2 * * * *" \
+		"${_pulse_cron_schedule}" \
 		"\"${wrapper_script}\"" \
-		"120" \
+		"${_pulse_interval_sec}" \
 		"$HOME/.aidevops/logs/pulse-wrapper.log" \
 		"$_pulse_env" \
-		"Supervisor pulse enabled (every 2 min)" \
+		"Supervisor pulse enabled (every ${_pulse_interval_min} min)" \
 		"Failed to install supervisor pulse scheduler. See runners.md for manual setup." \
 		"true" \
 		"false" \
