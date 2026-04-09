@@ -606,28 +606,22 @@ _humanise_schedule() {
 }
 
 # ---------------------------------------------------------------------------
-# _post_routine_description_comment <slug> <issue_num> <rid> <title> <schedule> <script> <type>
-# Posts a description + management instructions comment on a routine issue.
-# Idempotent — checks if a description comment already exists.
+# _store_routine_description <rid> <title> <schedule> <script> <type>
+# Stores description and management text in the routine state file so that
+# _build_issue_body includes them in the issue body (not a separate comment).
 # ---------------------------------------------------------------------------
-_post_routine_description_comment() {
-	local slug="$1"
-	local issue_num="$2"
-	local rid="$3"
-	local title="$4"
-	local schedule="$5"
-	local script="$6"
-	local rtype="$7"
+_store_routine_description() {
+	local rid="$1"
+	local title="$2"
+	local schedule="$3"
+	local script="$4"
+	local rtype="$5"
 
-	# Check if we already posted a description comment (idempotent)
-	local existing
-	existing=$(gh api "repos/${slug}/issues/${issue_num}/comments" \
-		--jq '[.[] | select(.body | test("<!-- routine-description -->"))] | length' 2>/dev/null || echo "0")
-	if [[ "$existing" != "0" ]]; then
-		return 0
-	fi
+	local state_dir="${HOME}/.aidevops/.agent-workspace/cron/${rid}"
+	local state_file="${state_dir}/routine-state.json"
+	mkdir -p "$state_dir"
 
-	# Get the full description from the describe function if available
+	# Extract "What it does" from the describe function
 	local description_body=""
 	local describe_fn="describe_${rid}"
 	if declare -f "$describe_fn" &>/dev/null; then
@@ -637,55 +631,49 @@ _post_routine_description_comment() {
 		darwin) detected_os="darwin" ;;
 		*) detected_os="linux" ;;
 		esac
-		# Extract just the "What it does" section from the full description
 		local full_desc
 		full_desc=$("$describe_fn" "$detected_os")
-		description_body=$(echo "$full_desc" | sed -n '/^## What it does/,/^## /{ /^## What it does/d; /^## [^W]/d; p; }')
+		description_body=$(echo "$full_desc" | sed -n '/^## What it does$/,/^## /{
+			/^## What it does$/d
+			/^## /d
+			p
+		}')
 	fi
 
-	local comment_body
-	comment_body="$(
-		cat <<COMMENTEOF
-<!-- routine-description -->
-### About this routine
-
-**${title}** runs on schedule: **${schedule}**
-
-Script: \`${script}\` (relative to \`~/.aidevops/agents/\`)
-Type: ${rtype}
-
-${description_body}
-
----
-
-### How to manage this routine
+	# Build management instructions
+	local management
+	management="### How to manage this routine
 
 #### Via chat (interactive session)
 
 | Action | Command |
 |--------|---------|
-| Pause this routine | \`/routine\` → select ${rid} → disable |
-| Resume this routine | \`/routine\` → select ${rid} → enable |
-| Change schedule | \`/routine\` → select ${rid} → edit schedule |
-| View recent runs | Ask: "show me the last 5 runs of ${rid}" |
-| View logs | Ask: "show me the ${rid} logs" |
+| Pause this routine | \`/routine\` then select ${rid} and disable |
+| Resume this routine | \`/routine\` then select ${rid} and enable |
+| Change schedule | \`/routine\` then select ${rid} and edit schedule |
+| View recent runs | Ask: \"show me the last 5 runs of ${rid}\" |
+| View logs | Ask: \"show me the ${rid} logs\" |
 
 #### Via command line
 
 | Action | Command |
 |--------|---------|
 | Check status | \`routine-log-helper.sh status\` |
-| View logs | \`cat ~/.aidevops/.agent-workspace/cron/${rid}/runs.jsonl \| tail -5\` |
+| View logs | \`cat ~/.aidevops/.agent-workspace/cron/${rid}/runs.jsonl | tail -5\` |
 | Pause (edit TODO.md) | Change \`- [x] ${rid}\` to \`- [ ] ${rid}\` in the routines repo TODO.md |
 | Resume (edit TODO.md) | Change \`- [ ] ${rid}\` to \`- [x] ${rid}\` in the routines repo TODO.md |
 | Force a run now | \`~/.aidevops/agents/${script}\` |
-| Check scheduler status | \`launchctl list \| grep ${rid##r}\` (macOS) or \`systemctl --user status sh.aidevops.${rid##r}\` (Linux) |
 
-> **Note:** This is a tracking issue — its body is auto-updated with execution metrics by \`routine-log-helper.sh\`. Do not edit the issue body manually. Use the comments below for change requests or feature ideas.
-COMMENTEOF
-	)"
+> **Note:** This is a tracking issue. Its body is auto-updated with execution metrics by \`routine-log-helper.sh\`. Use the comments below for change requests or feature ideas."
 
-	gh issue comment "$issue_num" --repo "$slug" --body "$comment_body" 2>/dev/null || true
+	# Write to state file
+	if [[ -f "$state_file" ]]; then
+		local tmp
+		tmp=$(mktemp)
+		jq --arg d "$description_body" --arg m "$management" \
+			'.description = $d | .management = $m' "$state_file" >"$tmp" && mv "$tmp" "$state_file"
+	fi
+
 	return 0
 }
 
@@ -748,8 +736,10 @@ _create_core_routine_issues() {
 		# Add routine-tracking label so the pulse skips these issues
 		if [[ -n "$issue_num" ]] && [[ "$issue_num" =~ ^[0-9]+$ ]]; then
 			gh issue edit "$issue_num" --repo "$slug" --add-label "routine-tracking" 2>/dev/null || true
-			# Post description + management instructions as a pinned comment
-			_post_routine_description_comment "$slug" "$issue_num" "$rid" "$short_title" "$human_schedule" "$script" "$rtype"
+			# Store description in state so _build_issue_body includes it
+			_store_routine_description "$rid" "$short_title" "$human_schedule" "$script" "$rtype"
+			# Trigger a body rebuild to include the description
+			bash "$log_helper" update "$rid" --status success --duration 0 2>/dev/null || true
 		fi
 	done < <(get_core_routine_entries)
 

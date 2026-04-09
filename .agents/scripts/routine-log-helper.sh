@@ -365,6 +365,15 @@ _build_issue_body() {
 		last_run_display="$last_run"
 	fi
 
+	# Read optional description and management sections from state
+	local description=""
+	local management=""
+	local state_dir="${CRON_BASE}/${routine_id}"
+	if [[ -f "${state_dir}/routine-state.json" ]]; then
+		description=$(jq -r '.description // ""' "${state_dir}/routine-state.json" 2>/dev/null || echo "")
+		management=$(jq -r '.management // ""' "${state_dir}/routine-state.json" 2>/dev/null || echo "")
+	fi
+
 	cat <<EOF
 ## ${title}
 
@@ -384,6 +393,29 @@ ${p_successes}/${p_total} runs succeeded. Total cost: \$${p_cost}. Avg duration:
 
 **Detailed logs**: \`~/.aidevops/.agent-workspace/cron/${routine_id}/\`
 EOF
+
+	# Append description if present
+	if [[ -n "$description" ]]; then
+		cat <<EOF
+
+---
+
+### What this routine does
+
+${description}
+EOF
+	fi
+
+	# Append management instructions if present
+	if [[ -n "$management" ]]; then
+		cat <<EOF
+
+---
+
+${management}
+EOF
+	fi
+
 	return 0
 }
 
