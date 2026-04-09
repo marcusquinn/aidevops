@@ -527,9 +527,173 @@ _ensure_cloned() {
 }
 
 # ---------------------------------------------------------------------------
+# _detect_timezone
+# Outputs the local timezone name (e.g., "Europe/London", "America/New_York").
+# Falls back to UTC offset if timezone name unavailable.
+# ---------------------------------------------------------------------------
+_detect_timezone() {
+	# macOS: read from systemsetup or /etc/localtime symlink
+	if [[ -L /etc/localtime ]]; then
+		local tz_link
+		tz_link=$(readlink /etc/localtime 2>/dev/null || echo "")
+		if [[ "$tz_link" == */zoneinfo/* ]]; then
+			echo "${tz_link##*/zoneinfo/}"
+			return 0
+		fi
+	fi
+	# Linux: check timedatectl or TZ env
+	if [[ -n "${TZ:-}" ]]; then
+		echo "$TZ"
+		return 0
+	fi
+	if command -v timedatectl &>/dev/null; then
+		local tz
+		tz=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "")
+		if [[ -n "$tz" ]]; then
+			echo "$tz"
+			return 0
+		fi
+	fi
+	# Fallback: UTC offset
+	date +%Z
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _humanise_schedule <repeat_expr> <timezone>
+# Converts repeat:cron(...) or repeat:daily(...) to plain English with timezone.
+# ---------------------------------------------------------------------------
+_humanise_schedule() {
+	local expr="$1"
+	local tz="$2"
+
+	case "$expr" in
+	repeat:cron\(\*/1\ \*\ \*\ \*\ \*\))
+		echo "Every minute (${tz})"
+		;;
+	repeat:cron\(\*/2\ \*\ \*\ \*\ \*\))
+		echo "Every 2 minutes (${tz})"
+		;;
+	repeat:cron\(\*/5\ \*\ \*\ \*\ \*\))
+		echo "Every 5 minutes (${tz})"
+		;;
+	repeat:cron\(\*/10\ \*\ \*\ \*\ \*\))
+		echo "Every 10 minutes (${tz})"
+		;;
+	repeat:cron\(\*/30\ \*\ \*\ \*\ \*\))
+		echo "Every 30 minutes (${tz})"
+		;;
+	repeat:cron\(0\ \*\ \*\ \*\ \*\))
+		echo "Every hour, on the hour (${tz})"
+		;;
+	repeat:cron\(0\ \*/6\ \*\ \*\ \*\))
+		echo "Every 6 hours (00:00, 06:00, 12:00, 18:00 ${tz})"
+		;;
+	repeat:daily\(@*\))
+		local time_part
+		time_part=$(echo "$expr" | sed 's/repeat:daily(@\(.*\))/\1/')
+		echo "Daily at ${time_part} (${tz})"
+		;;
+	repeat:persistent)
+		echo "Always running (persistent service)"
+		;;
+	*)
+		# Return the raw expression with timezone for anything we don't recognise
+		echo "${expr} (${tz})"
+		;;
+	esac
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _post_routine_description_comment <slug> <issue_num> <rid> <title> <schedule> <script> <type>
+# Posts a description + management instructions comment on a routine issue.
+# Idempotent — checks if a description comment already exists.
+# ---------------------------------------------------------------------------
+_post_routine_description_comment() {
+	local slug="$1"
+	local issue_num="$2"
+	local rid="$3"
+	local title="$4"
+	local schedule="$5"
+	local script="$6"
+	local rtype="$7"
+
+	# Check if we already posted a description comment (idempotent)
+	local existing
+	existing=$(gh api "repos/${slug}/issues/${issue_num}/comments" \
+		--jq '[.[] | select(.body | test("<!-- routine-description -->"))] | length' 2>/dev/null || echo "0")
+	if [[ "$existing" != "0" ]]; then
+		return 0
+	fi
+
+	# Get the full description from the describe function if available
+	local description_body=""
+	local describe_fn="describe_${rid}"
+	if declare -f "$describe_fn" &>/dev/null; then
+		local detected_os
+		detected_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+		case "$detected_os" in
+		darwin) detected_os="darwin" ;;
+		*) detected_os="linux" ;;
+		esac
+		# Extract just the "What it does" section from the full description
+		local full_desc
+		full_desc=$("$describe_fn" "$detected_os")
+		description_body=$(echo "$full_desc" | sed -n '/^## What it does/,/^## /{ /^## What it does/d; /^## [^W]/d; p; }')
+	fi
+
+	local comment_body
+	comment_body="$(
+		cat <<COMMENTEOF
+<!-- routine-description -->
+### About this routine
+
+**${title}** runs on schedule: **${schedule}**
+
+Script: \`${script}\` (relative to \`~/.aidevops/agents/\`)
+Type: ${rtype}
+
+${description_body}
+
+---
+
+### How to manage this routine
+
+#### Via chat (interactive session)
+
+| Action | Command |
+|--------|---------|
+| Pause this routine | \`/routine\` → select ${rid} → disable |
+| Resume this routine | \`/routine\` → select ${rid} → enable |
+| Change schedule | \`/routine\` → select ${rid} → edit schedule |
+| View recent runs | Ask: "show me the last 5 runs of ${rid}" |
+| View logs | Ask: "show me the ${rid} logs" |
+
+#### Via command line
+
+| Action | Command |
+|--------|---------|
+| Check status | \`routine-log-helper.sh status\` |
+| View logs | \`cat ~/.aidevops/.agent-workspace/cron/${rid}/runs.jsonl \| tail -5\` |
+| Pause (edit TODO.md) | Change \`- [x] ${rid}\` to \`- [ ] ${rid}\` in the routines repo TODO.md |
+| Resume (edit TODO.md) | Change \`- [ ] ${rid}\` to \`- [x] ${rid}\` in the routines repo TODO.md |
+| Force a run now | \`~/.aidevops/agents/${script}\` |
+| Check scheduler status | \`launchctl list \| grep ${rid##r}\` (macOS) or \`systemctl --user status sh.aidevops.${rid##r}\` (Linux) |
+
+> **Note:** This is a tracking issue — its body is auto-updated with execution metrics by \`routine-log-helper.sh\`. Do not edit the issue body manually. Use the comments below for change requests or feature ideas.
+COMMENTEOF
+	)"
+
+	gh issue comment "$issue_num" --repo "$slug" --body "$comment_body" 2>/dev/null || true
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # _create_core_routine_issues <slug>
 # Creates GitHub issues for each core routine using routine-log-helper.sh.
 # Skipped for local-only repos. Idempotent — routine-log-helper checks state.
+# Issues are labelled routine-tracking so the pulse skips them.
 # ---------------------------------------------------------------------------
 _create_core_routine_issues() {
 	local slug="$1"
@@ -550,12 +714,17 @@ _create_core_routine_issues() {
 		return 0
 	fi
 
-	# Ensure the routines label exists on the repo
+	# Ensure labels exist on the repo
 	gh label create "routines" --repo "$slug" --description "Routine tracking" --color "0E8A16" 2>/dev/null || true
 	gh label create "core" --repo "$slug" --description "Framework-managed routine" --color "1D76DB" 2>/dev/null || true
+	gh label create "routine-tracking" --repo "$slug" --description "Execution tracking issue — not a task (pulse skips these)" --color "BFDADC" 2>/dev/null || true
 
 	# shellcheck disable=SC1091  # sourced file path is dynamic but verified above
 	source "${SCRIPT_DIR}/routines/core-routines.sh"
+
+	# Detect local timezone for schedule descriptions
+	local tz_name
+	tz_name=$(_detect_timezone)
 
 	local rid enabled title schedule estimate script rtype
 	while IFS='|' read -r rid enabled title schedule estimate script rtype; do
@@ -564,12 +733,24 @@ _create_core_routine_issues() {
 		local short_title
 		short_title=$(echo "$title" | sed 's/ —.*//')
 
+		# Generate human-readable schedule
+		local human_schedule
+		human_schedule=$(_humanise_schedule "$schedule" "$tz_name")
+
 		print_info "Creating issue for ${rid}: ${short_title}..."
-		bash "$log_helper" create-issue "$rid" \
+		local issue_num
+		issue_num=$(bash "$log_helper" create-issue "$rid" \
 			--repo "$slug" \
 			--title "${rid}: ${short_title}" \
-			--schedule "$schedule" \
-			--type "$rtype" 2>&1 || print_warning "Issue creation failed for ${rid} (may already exist)"
+			--schedule "${human_schedule}" \
+			--type "$rtype" 2>&1 | tail -1)
+
+		# Add routine-tracking label so the pulse skips these issues
+		if [[ -n "$issue_num" ]] && [[ "$issue_num" =~ ^[0-9]+$ ]]; then
+			gh issue edit "$issue_num" --repo "$slug" --add-label "routine-tracking" 2>/dev/null || true
+			# Post description + management instructions as a pinned comment
+			_post_routine_description_comment "$slug" "$issue_num" "$rid" "$short_title" "$human_schedule" "$script" "$rtype"
+		fi
 	done < <(get_core_routine_entries)
 
 	print_success "Core routine issues created in: $slug"

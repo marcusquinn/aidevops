@@ -1185,9 +1185,9 @@ _prefetch_repo_issues() {
 	# Export updated issue list for cache update by caller (Bash 3.2: no namerefs)
 	PREFETCH_UPDATED_ISSUES="$issue_json"
 
-	# Remove issues with supervisor, contributor, persistent, or quality-review labels
+	# Remove issues with non-dispatchable labels (supervisor, tracking, review gates)
 	local filtered_json
-	filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("needs-maintainer-review")) | not)]')
+	filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("needs-maintainer-review") or index("routine-tracking")) | not)]')
 
 	# GH#10308: Split issues into dispatchable vs quality-sweep-tracked.
 	local dispatchable_json sweep_tracked_json
