@@ -93,6 +93,10 @@ Verbose code that could be shorter without losing readability, abstractions addi
 
 Split into chapter files with slim index (~100-200 lines). Verify: `wc -l` total of chapters >= original minus index overhead. Issue title: "restructure" not "tighten".
 
+### Audit trails and history files — never simplify (GH#17983)
+
+Files whose primary content is historical records (threshold change logs, changelogs, decision audit trails). Each row is a traceable record — PR/issue number, value, rationale. Compressing or removing rows destroys the audit trail. The scanner excludes these automatically: `*-history.md`, `configs/*.md`, `CHANGELOG.md`.
+
 ### Almost never simplify
 
 Comments with task IDs/incident numbers/error data (`t1345`, `GH#2928`, `46.8% failure rate`), `DISABLED:` blocks with bug/PR references, agent prompt rules encoding observed failure patterns, shell quality standards (`local var="$1"`, explicit `return 0`), intentional repetition across docs serving different audiences, error-prevention rules with supporting data, executable template code blocks in agent docs — code blocks that workers copy-paste to run commands (e.g., `gh pr comment`, verification one-liners). Prose surrounding the block can be tightened; the block itself must survive verbatim (GH#17503).
