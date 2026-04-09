@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "97615cc9382c96d3ffcd2566af1318ce197b9bc9",
-      "at": "2026-04-09T22:13:22Z",
-      "passes": 1,
+      "hash": "caa7d5c519f2d3e5f189b8313cc2147b6bd5c3a7",
+      "at": "2026-04-09T23:08:56Z",
+      "passes": 2,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "5928586c8770ddc41599eb5fd851c011ddf27092",
-      "at": "2026-04-09T22:13:39Z",
-      "passes": 45,
+      "hash": "96c83b6f76e5fba7029fd1683c631fdfc685b12b",
+      "at": "2026-04-09T23:09:13Z",
+      "passes": 46,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "797d61ac5aa9a62ef17d462264d4eae93c28a3cd",
-      "at": "2026-04-09T22:13:39Z",
-      "passes": 44,
+      "hash": "08fa82bd778ebd6940b673f6fd04fe14d66d17a1",
+      "at": "2026-04-09T23:09:13Z",
+      "passes": 45,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -6773,10 +6773,10 @@
       "passes": 2
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "hash": "d519704771418341f344b240857205005ed10058",
-      "at": "2026-04-09T22:13:15Z",
+      "hash": "04529bc634ad1a2267238a6f91f02c7d6963cef0",
+      "at": "2026-04-09T23:08:50Z",
       "pr": 17979,
-      "passes": 2
+      "passes": 3
     },
     ".agents/scripts/memory-pressure-monitor.sh": {
       "hash": "d71f3754e56b925114a9b13c4ae3809cfb0c199d",
