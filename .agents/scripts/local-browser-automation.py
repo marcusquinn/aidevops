@@ -38,6 +38,12 @@ try:
 except ImportError:
     SELENIUM_AVAILABLE = False
 
+try:
+    from lib.browser_automation_utils import playwright_login
+    SHARED_UTILS_AVAILABLE = True
+except ImportError:
+    SHARED_UTILS_AVAILABLE = False
+
 class LocalBrowserAutomation:
     """Local browser automation class with privacy-first approach"""
     
@@ -188,31 +194,7 @@ class LocalBrowserAutomation:
     
     def _playwright_login(self, page: Page, email: str, password: str) -> bool:
         """Login to LinkedIn using LOCAL Playwright"""
-        try:
-            print("🔐 Logging into LinkedIn using LOCAL browser...")
-            page.goto("https://www.linkedin.com/login")
-            
-            # Fill login form
-            page.fill('input[name="session_key"]', email)
-            page.fill('input[name="session_password"]', password)
-            
-            # Click login button
-            page.click('button[type="submit"]')
-            
-            # Wait for navigation
-            page.wait_for_load_state("networkidle")
-            
-            # Check if login was successful
-            if "feed" in page.url or "mynetwork" in page.url:
-                print("✅ Successfully logged into LinkedIn via LOCAL browser")
-                return True
-            else:
-                print("❌ Login failed - check credentials")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Login error: {e}")
-            return False
+        return playwright_login(page, email, password, context_label="LOCAL")
 
     def _playwright_like_posts(self, page: Page, max_likes: int):
         """Like posts on LinkedIn timeline using LOCAL Playwright"""
