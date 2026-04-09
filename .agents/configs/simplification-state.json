@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "1dbd5e9455ded6ed6856e1b37e9833a332ec560a",
-      "at": "2026-04-09T01:25:23Z",
-      "passes": 30,
+      "hash": "771f7c7994f703a11e0dea25482b593a229ae010",
+      "at": "2026-04-09T06:40:20Z",
+      "passes": 31,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -6731,10 +6731,10 @@
       "passes": 1
     },
     ".agents/scripts/approval-helper.sh": {
-      "hash": "dfa7b7bdb020de3065af8e8a78946bdb7bafd4dc",
-      "at": "2026-04-09T01:25:21Z",
+      "hash": "27c8bc923408141ab36ccdd6e75a0884cfeaf6e1",
+      "at": "2026-04-09T06:40:18Z",
       "pr": 17454,
-      "passes": 3
+      "passes": 4
     },
     ".agents/reference/customization.md": {
       "hash": "f0eacffbaf909a5f1849f7bf5668c92a81ba252d",
