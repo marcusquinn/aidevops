@@ -27,6 +27,7 @@ The main config retains only the last few entries for readability.
 | 252 | GH#17894 | ratcheted down — actual violations 250 + 2 buffer |
 | 253 | GH#17951 | pre-existing regression on main — 253 violations vs threshold 252; not introduced by this PR (run-tests.sh change reduces nesting, not increases it) |
 | 256 | GH#17954 | pre-existing regression on main — 254 violations vs threshold 253 (proximity guard fired at -1 headroom); 254 violations + 2 buffer = 256 |
+| 258 | GH#17969 | threshold saturated at 256/256 (0 headroom); proximity guard may warn at threshold-5 but cannot prevent saturation when already at 0 headroom; 256 violations + 2 buffer = 258 |
 
 ## FUNCTION_COMPLEXITY_THRESHOLD History
 
@@ -34,6 +35,14 @@ The main config retains only the last few entries for readability.
 |-------|----------|--------|
 | 404 | baseline (2026-03-24) | initial baseline |
 | 31 | GH#17875 | ratcheted down — actual violations 29 + 2 buffer |
+| 36 | GH#17969 | pre-existing regression on main — 34 violations vs threshold 31; 34 violations + 2 buffer = 36 |
+
+## FILE_SIZE_THRESHOLD History
+
+| Value | PR/Issue | Reason |
+|-------|----------|--------|
+| 53 | baseline (2026-03-25) | pre-existing on main |
+| 56 | GH#17969 | pre-existing regression on main — 54 violations vs threshold 53; 54 violations + 2 buffer = 56 |
 
 ## BASH32_COMPAT_THRESHOLD History
 
