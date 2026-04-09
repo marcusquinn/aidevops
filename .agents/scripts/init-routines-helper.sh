@@ -257,12 +257,33 @@ overwritten on every `aidevops update` or `init-routines-helper.sh` run.
 
 ## Issue routing
 
-- Issues #1-#12 (r901-r912) are **execution tracking issues** — their bodies
-  are auto-updated by `routine-log-helper.sh` with run metrics. Do not edit
-  issue bodies manually.
+- Issues labelled `routine-tracking` (r901-r912) are **execution tracking
+  issues** — their bodies are auto-updated by `routine-log-helper.sh` with
+  run metrics. Do not edit issue bodies manually.
 - Issues about routine **behaviour or bugs** should be filed on the main
   `marcusquinn/aidevops` repo, not here.
 - Issues about routine **scheduling or enablement** belong here (edit TODO.md).
+
+## User comments on tracking issues
+
+Users may comment on tracking issues with questions or change requests.
+These comments are legitimate and should be responded to — they serve as
+an audit trail of routine management decisions.
+
+**If dispatched to respond to a comment on a `routine-tracking` issue:**
+
+1. Read the user's comment carefully
+2. If it's a **question** (e.g., "why did this fail?"): answer using the
+   routine description in the issue body, logs at
+   `~/.aidevops/.agent-workspace/cron/<id>/`, and `routine-log-helper.sh status`
+3. If it's a **change request** (e.g., "change schedule to every 5 minutes"):
+   - Apply the change to `TODO.md` in this repo (edit the `repeat:` field)
+   - Comment back confirming the change with before/after
+   - Do NOT create a PR for TODO.md changes — they go direct to main
+4. If it's a **bug report** about the routine itself: create an issue on the
+   main `marcusquinn/aidevops` repo (the routine code lives there)
+5. **NEVER** try to "implement" or "solve" a tracking issue — they are
+   dashboards, not tasks
 AGENTSEOF
 	return 0
 }

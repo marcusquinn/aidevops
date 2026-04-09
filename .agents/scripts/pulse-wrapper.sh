@@ -6753,6 +6753,7 @@ list_dispatchable_issue_candidates_json() {
 			select(([$labels[] | select(startswith("needs-"))] | length) == 0) |
 			select(($labels | index("supervisor")) == null) |
 			select(($labels | index("persistent")) == null) |
+			select(($labels | index("routine-tracking")) == null) |
 			{
 				number,
 				title,
