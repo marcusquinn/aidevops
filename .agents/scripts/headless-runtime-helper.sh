@@ -2659,6 +2659,7 @@ _enforce_opencode_version_pin() {
 }
 
 _run_canary_test() {
+	local requested_model="${1:-}"
 	local cache_file="${STATE_DIR}/canary-last-pass"
 
 	# Check cache — skip if last canary passed recently
@@ -2677,14 +2678,15 @@ _run_canary_test() {
 	canary_output=$(mktemp "${TMPDIR:-/tmp}/aidevops-canary.XXXXXX")
 
 	# Run WITH plugins (not --pure) so our oauth-pool auth is available.
-	# Use sonnet — verified working, and the trivial prompt costs ~100 tokens.
-	# Model ID resolved from model-routing-table.json (single source of truth).
-	local routing_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
-	local canary_model=""
-	if [[ -f "$routing_table" ]] && command -v jq >/dev/null 2>&1; then
-		canary_model=$(jq -r '.tiers.sonnet.models[0] // empty' "$routing_table" 2>/dev/null) || canary_model=""
+	# The canary must validate the same provider/model the upcoming run will use,
+	# otherwise OpenAI opt-in runs still fail behind an Anthropic-only gate.
+	local canary_model="$requested_model"
+	if [[ -z "$canary_model" ]]; then
+		while IFS= read -r canary_model; do
+			[[ -n "$canary_model" ]] && break
+		done < <(get_configured_models)
 	fi
-	# Fallback to the script-level default if routing table unavailable
+	# Fallback to the script-level default if routing resolution yielded nothing.
 	if [[ -z "$canary_model" ]]; then
 		canary_model="$DEFAULT_HEADLESS_MODELS"
 	fi
@@ -2834,6 +2836,13 @@ cmd_run() {
 		return 0
 	fi
 
+	local selected_model
+	selected_model=$(choose_model "$role" "$model_override") || {
+		local choose_exit=$?
+		_cmd_run_finish "$session_key" "fail"
+		return "$choose_exit"
+	}
+
 	# GH#17549: Version guard — runs on EVERY dispatch (not cached).
 	# Something keeps upgrading opencode to 1.3.17 between canary checks.
 	_enforce_opencode_version_pin
@@ -2843,7 +2852,7 @@ cmd_run() {
 	# _cmd_run_prepare so a canary failure never posts a dispatch claim or
 	# increments the fast-fail counter. Cached for CANARY_CACHE_TTL_SECONDS
 	# (default 30 min) so it runs at most once per pulse cycle.
-	if ! _run_canary_test; then
+	if ! _run_canary_test "$selected_model"; then
 		print_warning "Canary failed — aborting dispatch for session $session_key (no claim posted)"
 		return 1
 	fi
@@ -2860,13 +2869,6 @@ cmd_run() {
 	if [[ "$prepare_exit" -ne 0 ]]; then
 		return "$prepare_exit"
 	fi
-
-	local selected_model
-	selected_model=$(choose_model "$role" "$model_override") || {
-		local choose_exit=$?
-		_cmd_run_finish "$session_key" "fail"
-		return "$choose_exit"
-	}
 
 	if [[ -z "$variant_override" ]]; then
 		variant_override=$(resolve_headless_variant "$role" "$tier_override")
