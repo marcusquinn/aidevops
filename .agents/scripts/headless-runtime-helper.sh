@@ -310,10 +310,11 @@ get_auth_signature() {
 	return 0
 }
 
-# Derive the headless model list from the OAuth pool + routing table (GH#17769).
-# Flow: pool → available providers → routing table sonnet tier → model list.
-# This eliminates AIDEVOPS_HEADLESS_MODELS as a user-configurable env var.
-# The pool is the authority on accounts; the routing table is the authority on models.
+# Derive the headless model list from the routing table (GH#17769).
+# Flow: routing table sonnet tier → optional provider allowlist → providers with
+# usable auth at dispatch time. This eliminates AIDEVOPS_HEADLESS_MODELS as a
+# user-configurable env var while allowing temporary provider pinning via
+# AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST.
 get_configured_models() {
 	local allowlist_raw="${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}"
 	local -a allowlist=()
@@ -343,28 +344,17 @@ get_configured_models() {
 		IFS=',' read -r -a allowlist <<<"$allowlist_raw"
 	fi
 
-	local routing_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
-	local pool_helper="${SCRIPT_DIR}/oauth-pool-helper.sh"
-
-	# Step 1: Query pool for available providers (cheap — reads JSON file, no API calls)
-	local -a pool_providers=()
-	if [[ -x "$pool_helper" ]]; then
-		local pool_output=""
-		pool_output=$("$pool_helper" list all 2>/dev/null) || pool_output=""
-		# Parse provider names from lines like "anthropic (2 accounts):"
-		while IFS= read -r line; do
-			local prov=""
-			prov=$(printf '%s' "$line" | sed -n 's/^\([a-z]*\) ([0-9]* account.*/\1/p')
-			if [[ -n "$prov" ]]; then
-				pool_providers+=("$prov")
-			fi
-		done <<<"$pool_output"
+	local routing_table="${SCRIPT_DIR}/../custom/configs/model-routing-table.json"
+	if [[ ! -f "$routing_table" ]]; then
+		routing_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
 	fi
 
-	# Step 2: For each pool provider, look up the sonnet-tier model from the routing table
-	if [[ ${#pool_providers[@]} -gt 0 ]] && [[ -f "$routing_table" ]] && command -v jq >/dev/null 2>&1; then
-		for provider in "${pool_providers[@]}"; do
-			# Apply allowlist filter if set
+	if [[ -f "$routing_table" ]] && command -v jq >/dev/null 2>&1; then
+		while IFS= read -r model; do
+			[[ -z "$model" ]] && continue
+			provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
+			[[ -z "$provider" ]] && continue
+
 			if [[ ${#allowlist[@]} -gt 0 ]]; then
 				local allowed=false
 				local allowed_provider
@@ -378,18 +368,21 @@ get_configured_models() {
 				[[ "$allowed" == "true" ]] || continue
 			fi
 
-			model=$(jq -r --arg p "$provider" \
-				'.tiers.sonnet.models[] | select(startswith($p + "/"))' \
-				"$routing_table" 2>/dev/null | head -1) || model=""
-			if [[ -n "$model" ]]; then
-				models+=("$model")
+			if ! provider_auth_available "$provider"; then
+				continue
 			fi
-		done
+
+			models+=("$model")
+		done < <(jq -r '.tiers.sonnet.models[]? // empty' "$routing_table" 2>/dev/null)
 	fi
 
-	# Fallback: if pool/routing derivation yielded nothing, use hardcoded default
-	if [[ ${#models[@]} -eq 0 ]]; then
-		models+=("$DEFAULT_HEADLESS_MODELS")
+	# Fallback: if routing derivation yielded nothing and no allowlist is forcing a
+	# provider subset, use the historical default when auth is available.
+	if [[ ${#models[@]} -eq 0 ]] && [[ -z "$allowlist_raw" ]]; then
+		provider=$(extract_provider "$DEFAULT_HEADLESS_MODELS" 2>/dev/null || printf '%s' "")
+		if [[ -n "$provider" ]] && provider_auth_available "$provider"; then
+			models+=("$DEFAULT_HEADLESS_MODELS")
+		fi
 	fi
 
 	printf '%s\n' "${models[@]}"
@@ -1171,7 +1164,7 @@ cmd_session() {
 
 # _parse_run_args: parse cmd_run flags into caller-scoped variables.
 # Caller must declare: role session_key work_dir title prompt prompt_file
-#                      model_override agent_name extra_args
+#                      model_override tier_override variant_override agent_name extra_args
 # Returns 1 on unknown flag.
 _parse_run_args() {
 	while [[ $# -gt 0 ]]; do
@@ -1204,6 +1197,14 @@ _parse_run_args() {
 			model_override="${2:-}"
 			shift 2
 			;;
+		--tier)
+			tier_override="${2:-}"
+			shift 2
+			;;
+		--variant)
+			variant_override="${2:-}"
+			shift 2
+			;;
 		--agent)
 			agent_name="${2:-}"
 			shift 2
@@ -1227,6 +1228,54 @@ _parse_run_args() {
 			;;
 		esac
 	done
+	return 0
+}
+
+resolve_headless_variant() {
+	local role="$1"
+	local tier="${2:-}"
+	local variant="${AIDEVOPS_HEADLESS_VARIANT:-}"
+	local tier_upper=""
+
+	if [[ -n "$tier" ]]; then
+		tier_upper=$(printf '%s' "$tier" | tr '[:lower:]-' '[:upper:]_')
+		case "$tier_upper" in
+		HAIKU | FLASH | SONNET | PRO | OPUS | HEALTH | EVAL | CODING)
+			local tier_env_var="AIDEVOPS_HEADLESS_VARIANT_${tier_upper}"
+			local tier_variant="${!tier_env_var:-}"
+			if [[ -n "$tier_variant" ]]; then
+				variant="$tier_variant"
+			fi
+			;;
+		esac
+	fi
+
+	case "$role" in
+	pulse)
+		if [[ -n "${AIDEVOPS_HEADLESS_PULSE_VARIANT:-}" ]]; then
+			variant="${AIDEVOPS_HEADLESS_PULSE_VARIANT}"
+		fi
+		;;
+	worker)
+		if [[ -n "${AIDEVOPS_HEADLESS_WORKER_VARIANT:-}" ]]; then
+			variant="${AIDEVOPS_HEADLESS_WORKER_VARIANT}"
+		fi
+		;;
+	esac
+
+	if [[ -n "$tier" ]]; then
+		case "$tier_upper" in
+		HAIKU | FLASH | SONNET | PRO | OPUS | HEALTH | EVAL | CODING)
+			local tier_env_var="AIDEVOPS_HEADLESS_VARIANT_${tier_upper}"
+			local tier_variant="${!tier_env_var:-}"
+			if [[ -n "$tier_variant" ]]; then
+				variant="$tier_variant"
+			fi
+			;;
+		esac
+	fi
+
+	printf '%s' "$variant"
 	return 0
 }
 
@@ -1383,7 +1432,7 @@ _detect_opencode_server() {
 }
 
 # _build_run_cmd: build the opencode command array for a run attempt.
-# Args: selected_model work_dir prompt title agent_name persisted_session
+# Args: selected_model work_dir prompt title variant_override agent_name persisted_session
 #       extra_args (remaining positional args)
 # Outputs: space-separated command (caller must eval or use array assignment).
 # Returns: 0 always.
@@ -1392,9 +1441,10 @@ _build_run_cmd() {
 	local work_dir="$2"
 	local prompt="$3"
 	local title="$4"
-	local agent_name="$5"
-	local persisted_session="$6"
-	shift 6
+	local variant_override="$5"
+	local agent_name="$6"
+	local persisted_session="$7"
+	shift 7
 
 	# Emit base command args as null-delimited tokens (bash 3.2 compat: no local -a in subshell)
 	printf '%s\0' "$OPENCODE_BIN_DEFAULT" run "$prompt" --dir "$work_dir" -m "$selected_model" --title "$title" --format json
@@ -1403,6 +1453,9 @@ _build_run_cmd() {
 	fi
 	if [[ -n "$persisted_session" ]]; then
 		printf '%s\0' --session "$persisted_session" --continue
+	fi
+	if [[ -n "$variant_override" ]]; then
+		printf '%s\0' --variant "$variant_override"
 	fi
 	# GH#17829: Attach to running opencode server if one is detected.
 	# Without this, `opencode run` tries to start an embedded server that
@@ -2024,7 +2077,7 @@ _handle_run_result() {
 
 # _execute_run_attempt: run one headless invocation and handle the result.
 # Dispatches to OpenCode (default) or Claude CLI (when --runtime claude specified).
-# Args: role session_key work_dir title prompt selected_model agent_name model_override
+# Args: role session_key work_dir title prompt selected_model variant_override agent_name model_override
 #       extra_args (array passed as remaining positional args after the named ones)
 # Reads caller variable headless_runtime (set by _parse_run_args --runtime flag).
 # Prints the discovered session ID to stdout on success (may be empty).
@@ -2037,9 +2090,10 @@ _execute_run_attempt() {
 	local title="$4"
 	local prompt="$5"
 	local selected_model="$6"
-	local agent_name="$7"
-	local model_override="$8"
-	shift 8
+	local variant_override="$7"
+	local agent_name="$8"
+	local model_override="$9"
+	shift 9
 	local -a extra_args=("$@")
 
 	# Determine which runtime to use. Default is opencode unless explicitly overridden.
@@ -2073,7 +2127,7 @@ _execute_run_attempt() {
 		while IFS= read -r -d '' arg; do
 			cmd+=("$arg")
 		done < <(_build_run_cmd "$selected_model" "$work_dir" "$prompt" "$title" \
-			"$agent_name" "$persisted_session" "${extra_args[@]+"${extra_args[@]}"}")
+			"$variant_override" "$agent_name" "$persisted_session" "${extra_args[@]+"${extra_args[@]}"}")
 		;;
 	esac
 
@@ -2765,6 +2819,8 @@ cmd_run() {
 	local prompt=""
 	local prompt_file=""
 	local model_override=""
+	local tier_override=""
+	local variant_override=""
 	local agent_name=""
 	local headless_runtime=""
 	local detach=0
@@ -2812,6 +2868,10 @@ cmd_run() {
 		return "$choose_exit"
 	}
 
+	if [[ -z "$variant_override" ]]; then
+		variant_override=$(resolve_headless_variant "$role" "$tier_override")
+	fi
+
 	# GH#17436: Continuation retry configuration.
 	# When a worker exits prematurely (activity but no completion signal),
 	# resume the session with a "continue" prompt instead of starting fresh.
@@ -2844,7 +2904,7 @@ cmd_run() {
 		local attempt_exit=0
 		if _execute_run_attempt \
 			"$role" "$session_key" "$work_dir" "$title" "$prompt" \
-			"$selected_model" "$agent_name" "$model_override" \
+			"$selected_model" "$variant_override" "$agent_name" "$model_override" \
 			"${extra_args[@]+"${extra_args[@]}"}"; then
 			attempt_exit=0
 		else
@@ -2927,7 +2987,7 @@ headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Cla
 
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker] [--model provider/model]
-  headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
+  headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model] [--tier haiku|sonnet|opus|...] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
   headless-runtime-helper.sh metrics [--role pulse|worker] [--hours N] [--model SUBSTRING] [--fast-threshold N]
@@ -2949,10 +3009,13 @@ Dedup guard (GH#6538):
   are cleaned up automatically. Lock files: $STATE_DIR/locks/<key>.pid
 
 Defaults:
-  Model list is derived from OAuth pool + routing table (GH#17769).
-  Fallback: anthropic/claude-sonnet-4-6 if pool/routing unavailable.
+  Model list is derived from routing table + auth availability (GH#17769).
+  Fallback: anthropic/claude-sonnet-4-6 if routing resolution fails.
   AIDEVOPS_HEADLESS_MODELS is deprecated — respected as override for one release cycle.
   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
+  AIDEVOPS_HEADLESS_VARIANT_SONNET / AIDEVOPS_HEADLESS_VARIANT_OPUS can set tier defaults.
+  AIDEVOPS_HEADLESS_VARIANT sets an OpenCode model variant (for example: high, xhigh).
+  AIDEVOPS_HEADLESS_PULSE_VARIANT / AIDEVOPS_HEADLESS_WORKER_VARIANT override by role.
   AIDEVOPS_HEADLESS_APPEND_CONTRACT=0 disables worker /full-loop contract injection
   NOTE: opencode/* gateway models are NOT used — per-token billing is too expensive.
 EOF
