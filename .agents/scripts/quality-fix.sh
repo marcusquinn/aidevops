@@ -166,7 +166,7 @@ fix_positional_parameters() {
             }' "$file" >"$temp_file"
 
 			# Replace direct positional parameter usage in case statements
-			sed_inplace 's/\$_arg1/\${command}/g; s/\$2/\${account_name}/g; s/\$3/\${target}/g; s/\$4/\${options}/g' "$temp_file"
+			sed_inplace 's/\$1/\${command}/g; s/\$2/\${account_name}/g; s/\$3/\${target}/g; s/\$4/\${options}/g' "$temp_file"
 
 			if ! diff -q "$file" "$temp_file" >/dev/null; then
 				mv "$temp_file" "$file"
@@ -195,11 +195,14 @@ analyze_string_literals() {
 		# Find repeated strings (3+ occurrences)
 		(grep -o '"[^"]*"' "$file" || true) | sort | uniq -c | sort -nr | awk '
             $1 >= 3 {
-                gsub(/"/, "", $2); cn = toupper($2)
+                count = $1
+                # Strip leading whitespace and count to get the full string literal
+                str = $0; sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "", str)
+                gsub(/"/, "", str); cn = toupper(str)
                 gsub(/[^A-Z0-9_]/, "_", cn); gsub(/_+/, "_", cn); gsub(/^_|_$/, "", cn)
             }
             $1 >= 3 && length(cn) > 0 {
-                printf "readonly %s=\"%s\"  # Used %d times\n", cn, $2, $1
+                printf "readonly %s=\"%s\"  # Used %d times\n", cn, str, count
             }' >>"$constants_file"
 
 		echo "" >>"$constants_file"
