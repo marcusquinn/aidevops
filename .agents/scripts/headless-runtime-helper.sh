@@ -826,11 +826,10 @@ for line in Path(sys.argv[1]).read_text(errors="ignore").splitlines():
         continue
     if obj.get("sessionID"):
         session_id = obj["sessionID"]
-        break
+        continue
     part = obj.get("part") or {}
     if part.get("sessionID"):
         session_id = part["sessionID"]
-        break
 print(session_id)
 PY
 	return 0
@@ -2230,7 +2229,7 @@ _execute_run_attempt() {
 	# Extract session ID BEFORE the append block to avoid SC2094 (read+write same file).
 	local _diag_session_id="" _diag_incomplete_msgs="0"
 	if [[ "$exit_code" -eq 0 && -f "$output_file" ]]; then
-		_diag_session_id=$(grep -oP '"sessionID":"[^"]*"' "$output_file" 2>/dev/null | tail -1 | grep -oP '"[^"]*"$' | tr -d '"' || true)
+		_diag_session_id=$(extract_session_id_from_output "$output_file" 2>/dev/null || true)
 		if [[ -n "$_diag_session_id" ]]; then
 			_diag_incomplete_msgs=$(sqlite3 ~/.local/share/opencode/opencode.db \
 				"SELECT count(*) FROM message WHERE session_id='${_diag_session_id}' AND json_extract(data, '$.role')='assistant' AND json_extract(data, '$.time.completed') IS NULL" 2>/dev/null || echo "0")

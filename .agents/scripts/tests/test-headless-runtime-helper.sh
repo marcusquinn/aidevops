@@ -60,10 +60,10 @@ test_appends_escalation_contract() {
 	local output
 	output=$(append_worker_headless_contract "$prompt")
 
-	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V1'* ]] &&
-		[[ "$output" == *'Treat review-policy metadata alone as non-blocking'* ]] &&
-		[[ "$output" == *'Before exiting BLOCKED or handing work to a human, try at least one stronger-model or alternate-provider path'* ]] &&
-		[[ "$output" == *'Use BLOCKED only for real blockers with evidence after retries/escalation are exhausted'* ]]; then
+	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V5'* ]] &&
+		[[ "$output" == *'Read the issue body FIRST. Look for a "Worker Guidance" or "How" section'* ]] &&
+		[[ "$output" == *'Never ask for user confirmation, approval, or next steps. No user will respond.'* ]] &&
+		[[ "$output" == *'The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.'* ]]; then
 		print_result "appends escalation-before-blocked contract to full-loop prompts" 0
 		return 0
 	fi
@@ -89,7 +89,7 @@ test_non_full_loop_prompt_unchanged() {
 test_does_not_double_append() {
 	local prompt='/full-loop Continue issue #14964
 
-[HEADLESS_CONTINUATION_CONTRACT_V1]
+[HEADLESS_CONTINUATION_CONTRACT_V5]
 This worker run is unattended.'
 	local output
 	output=$(append_worker_headless_contract "$prompt")
@@ -103,11 +103,32 @@ This worker run is unattended.'
 	return 0
 }
 
+test_extract_session_id_from_output_returns_latest_session_id() {
+	local output_file="${TEST_ROOT}/opencode-output.jsonl"
+	cat >"$output_file" <<'EOF'
+not-json
+{"type":"message","sessionID":"ses_early"}
+{"type":"tool_use","part":{"sessionID":"ses_latest"}}
+EOF
+
+	local session_id
+	session_id=$(extract_session_id_from_output "$output_file")
+
+	if [[ "$session_id" == "ses_latest" ]]; then
+		print_result "extract_session_id_from_output returns latest session id" 0
+		return 0
+	fi
+
+	print_result "extract_session_id_from_output returns latest session id" 1 "Expected ses_latest, got ${session_id:-<empty>}"
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
 	test_non_full_loop_prompt_unchanged
 	test_does_not_double_append
+	test_extract_session_id_from_output_returns_latest_session_id
 	teardown_test_env
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
