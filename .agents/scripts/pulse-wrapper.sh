@@ -8188,7 +8188,7 @@ dispatch_with_dedup() {
 	if [[ -n "$model_override" ]]; then
 		selected_model="$model_override"
 	else
-		selected_model=$("$HEADLESS_RUNTIME_HELPER" select --role worker 2>/dev/null) || selected_model=""
+		selected_model=$("$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$dispatch_model_tier" 2>/dev/null) || selected_model=""
 	fi
 
 	# t1894/t1934: Lock issue and linked PRs during worker execution

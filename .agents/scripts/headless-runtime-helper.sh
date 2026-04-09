@@ -1064,6 +1064,7 @@ choose_model() {
 cmd_select() {
 	local role="worker"
 	local model_override=""
+	local tier_override=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--role)
@@ -1074,12 +1075,28 @@ cmd_select() {
 			model_override="${2:-}"
 			shift 2
 			;;
+		--tier)
+			tier_override="${2:-}"
+			shift 2
+			;;
 		*)
 			print_error "Unknown option for select: $1"
 			return 1
 			;;
 		esac
 	done
+
+	# When a tier is specified, resolve the concrete model for that tier and
+	# use it as the explicit model override. This ensures the round-robin
+	# selects from the correct tier's model pool (e.g., haiku for tier:simple,
+	# opus for tier:reasoning) rather than always defaulting to sonnet.
+	if [[ -n "$tier_override" && -z "$model_override" ]]; then
+		local tier_model=""
+		tier_model=$(resolve_model_tier "$tier_override" 2>/dev/null) || tier_model=""
+		if [[ -n "$tier_model" ]]; then
+			model_override="$tier_model"
+		fi
+	fi
 
 	local selected
 	selected=$(choose_model "$role" "$model_override") || return $?
@@ -2077,7 +2094,7 @@ _handle_run_result() {
 
 # _execute_run_attempt: run one headless invocation and handle the result.
 # Dispatches to OpenCode (default) or Claude CLI (when --runtime claude specified).
-# Args: role session_key work_dir title prompt selected_model variant_override agent_name model_override
+# Args: role session_key work_dir title prompt selected_model variant_override agent_name
 #       extra_args (array passed as remaining positional args after the named ones)
 # Reads caller variable headless_runtime (set by _parse_run_args --runtime flag).
 # Prints the discovered session ID to stdout on success (may be empty).
@@ -2092,8 +2109,7 @@ _execute_run_attempt() {
 	local selected_model="$6"
 	local variant_override="$7"
 	local agent_name="$8"
-	local model_override="$9"
-	shift 9
+	shift 8
 	local -a extra_args=("$@")
 
 	# Determine which runtime to use. Default is opencode unless explicitly overridden.
@@ -2906,7 +2922,7 @@ cmd_run() {
 		local attempt_exit=0
 		if _execute_run_attempt \
 			"$role" "$session_key" "$work_dir" "$title" "$prompt" \
-			"$selected_model" "$variant_override" "$agent_name" "$model_override" \
+			"$selected_model" "$variant_override" "$agent_name" \
 			"${extra_args[@]+"${extra_args[@]}"}"; then
 			attempt_exit=0
 		else
