@@ -199,7 +199,7 @@ _read_pulse_interval_seconds() {
 
 # Convert an interval in seconds to a cron schedule expression (e.g. "*/2 * * * *").
 # Minimum granularity is 1 minute. Intervals that don't divide evenly into minutes
-# are rounded to the nearest minute with a warning.
+# are rounded down to whole minutes with a warning.
 # Args: $1 = interval_seconds
 _seconds_to_cron_schedule() {
 	local _interval_sec="$1"
@@ -213,10 +213,16 @@ _seconds_to_cron_schedule() {
 
 	# Warn if interval doesn't divide evenly into minutes
 	if [[ "$_remainder" -ne 0 ]]; then
-		echo "[schedulers] Warning: pulse_interval_seconds=${_interval_sec} does not divide evenly into minutes; rounding to ${_minutes}min for cron schedule (systemd uses exact seconds)" >&2
+		echo "[schedulers] Warning: pulse_interval_seconds=${_interval_sec} does not divide evenly into minutes; rounding down to ${_minutes}min for cron schedule (systemd uses exact seconds)" >&2
 	fi
 
-	printf '*/%d * * * *' "$_minutes"
+	# cron step values must be 1-59; */60 is invalid. Use @hourly for exactly 60 min,
+	# clamp anything above 59 to 59 (the _read_pulse_interval_seconds cap is 3600s=60min).
+	if [[ "$_minutes" -ge 60 ]]; then
+		printf '@hourly'
+	else
+		printf '*/%d * * * *' "$_minutes"
+	fi
 	return 0
 }
 
@@ -239,7 +245,13 @@ _install_supervisor_pulse() {
 	_pulse_interval_sec=$(_read_pulse_interval_seconds)
 	local _pulse_cron_schedule
 	_pulse_cron_schedule=$(_seconds_to_cron_schedule "$_pulse_interval_sec")
-	local _pulse_interval_min=$((_pulse_interval_sec / 60))
+	# Build a human-readable interval label: show seconds when < 60s, minutes otherwise
+	local _pulse_interval_label
+	if [[ "$_pulse_interval_sec" -lt 60 ]]; then
+		_pulse_interval_label="${_pulse_interval_sec}s"
+	else
+		_pulse_interval_label="$((_pulse_interval_sec / 60))min"
+	fi
 
 	local _pulse_timeout_sec=$((PULSE_STALE_THRESHOLD_SECONDS + 60))
 	local _pulse_env=""
@@ -252,7 +264,7 @@ _install_supervisor_pulse() {
 		"${_pulse_interval_sec}" \
 		"$HOME/.aidevops/logs/pulse-wrapper.log" \
 		"$_pulse_env" \
-		"Supervisor pulse enabled (every ${_pulse_interval_min} min)" \
+		"Supervisor pulse enabled (every ${_pulse_interval_label})" \
 		"Failed to install supervisor pulse scheduler. See runners.md for manual setup." \
 		"true" \
 		"false" \
