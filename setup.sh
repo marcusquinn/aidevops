@@ -719,6 +719,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/mcp-setup.sh"
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/agent-deploy.sh"
 # shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/agent-runtime.sh"
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/tool-beads.sh"
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/config.sh"
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/plugins.sh"
