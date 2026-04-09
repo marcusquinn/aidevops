@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.218] - 2026-04-09
+
+### Fixed
+
+- exclude review feedback, tier escalation, and quality-debt auto-gen from consolidation filter (#17988)
+
 ## [3.6.217] - 2026-04-09
 
 ### Fixed
