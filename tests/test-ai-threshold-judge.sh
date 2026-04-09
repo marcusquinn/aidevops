@@ -267,8 +267,8 @@ test_dedup_exact_match() {
 test_dedup_normalized_match() {
 	local result
 	result=$("$THRESHOLD_JUDGE" judge-dedup-similarity \
-		--content-a "Use nginx for CORS headers." \
-		--content-b "Use nginx for CORS headers" 2>/dev/null)
+		--content-a "Configure nginx CORS headers." \
+		--content-b "Configure nginx CORS headers" 2>/dev/null)
 	assert_eq "duplicate" "$result" "normalized match (punctuation) = duplicate"
 	return 0
 }
@@ -285,7 +285,7 @@ test_dedup_very_different_lengths() {
 test_dedup_clearly_different() {
 	local result
 	result=$("$THRESHOLD_JUDGE" judge-dedup-similarity \
-		--content-a "Use nginx for CORS headers" \
+		--content-a "Configure nginx CORS headers" \
 		--content-b "Deploy with Docker Compose on production" 2>/dev/null)
 	assert_eq "distinct" "$result" "clearly different content = distinct"
 	return 0

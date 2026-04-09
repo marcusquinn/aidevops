@@ -1321,7 +1321,7 @@ Lipsync Options:
   --model <name>          Model: sync-lipsync, latentsync, creatify, veed (default: sync-lipsync)
 
 Face Swap Options:
-  --image <url>           Source image URL (required for image mode)
+  --image <url>           Source image URL (image mode, required)
   --video <url>           Source video URL (sets mode to video)
   --face <url>            Face reference image URL (required)
   --mode <image|video>    Swap mode (default: image)
@@ -1381,7 +1381,7 @@ Examples:
   muapi-helper.sh agent-create "I want an agent that creates minimalist brand assets"
 
   # Chat with an agent
-  muapi-helper.sh agent-chat agent_abc123 "Design a logo for Vapor"
+  muapi-helper.sh agent-chat agent_abc123 "Design a Vapor logo"
 
   # Check task status
   muapi-helper.sh status abc123-def456

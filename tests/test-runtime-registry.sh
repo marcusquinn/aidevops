@@ -335,9 +335,9 @@ _check_runtime_properties() {
 }
 
 all_ids=$(rt_list_ids)
-while IFS= read -r rid; do
+printf '%s\n' "$all_ids" | while IFS= read -r rid; do
 	_check_runtime_properties "$rid"
-done <<<"$all_ids"
+done
 
 # =============================================================================
 # Summary
