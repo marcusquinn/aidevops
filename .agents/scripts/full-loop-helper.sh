@@ -660,6 +660,81 @@ ${sig_footer}"
 	return 0
 }
 
+# t1955: Validate that this worker's dispatch claim is still active before
+# creating a PR. Prevents orphan PRs from workers whose assignment was
+# stale-recovered while they were still working.
+#
+# Checks:
+#   1. Issue comments for a WORKER_SUPERSEDED marker naming this runner
+#   2. Issue assignee — if reassigned to another runner, we've been replaced
+#
+# Only runs in headless mode (interactive sessions don't go through dispatch).
+# Non-fatal in interactive mode — always returns 0.
+# In headless mode: returns 0 if claim is valid, 1 if superseded.
+#
+# Arguments: $1 = issue_number, $2 = repo slug
+_validate_worker_claim() {
+	local issue_number="$1"
+	local repo="$2"
+
+	# Skip in interactive mode — no dispatch claim to validate
+	if [[ "${HEADLESS:-false}" != "true" && "${FULL_LOOP_HEADLESS:-}" != "true" ]]; then
+		return 0
+	fi
+
+	# Skip if no issue number (shouldn't happen, but defensive)
+	if [[ -z "$issue_number" || ! "$issue_number" =~ ^[0-9]+$ ]]; then
+		return 0
+	fi
+
+	# Determine this runner's login
+	local self_login=""
+	self_login=$(gh api user --jq '.login' 2>/dev/null) || self_login=""
+	if [[ -z "$self_login" ]]; then
+		# Can't determine identity — proceed (fail-open)
+		print_warning "Cannot determine runner login for claim validation — proceeding"
+		return 0
+	fi
+
+	# Check for WORKER_SUPERSEDED marker in recent comments
+	local comments_json=""
+	comments_json=$(gh api "repos/${repo}/issues/${issue_number}/comments" \
+		--jq '[.[] | select(.body | test("WORKER_SUPERSEDED")) | {body: .body, created_at: .created_at}] | sort_by(.created_at) | reverse | first // empty' \
+		2>/dev/null) || comments_json=""
+
+	if [[ -n "$comments_json" ]]; then
+		local superseded_runners=""
+		superseded_runners=$(printf '%s' "$comments_json" | jq -r '.body' 2>/dev/null |
+			grep -oE 'WORKER_SUPERSEDED runners=[^ ]*' |
+			sed 's/WORKER_SUPERSEDED runners=//' || echo "")
+
+		if [[ -n "$superseded_runners" && ",$superseded_runners," == *",$self_login,"* ]]; then
+			# This runner was explicitly superseded — check if we've been re-assigned since
+			local current_assignees=""
+			current_assignees=$(gh issue view "$issue_number" --repo "$repo" \
+				--json assignees --jq '[.assignees[].login] | join(",")' 2>/dev/null) || current_assignees=""
+
+			if [[ ",$current_assignees," != *",$self_login,"* ]]; then
+				print_warning "Worker claim superseded: this runner (${self_login}) was stale-recovered on #${issue_number} and not re-assigned — aborting PR creation (t1955)"
+				return 1
+			fi
+			# Re-assigned back to us (e.g., re-dispatched) — proceed
+		fi
+	fi
+
+	# Check current assignee — if assigned to someone else, we've been replaced
+	local current_assignees=""
+	current_assignees=$(gh issue view "$issue_number" --repo "$repo" \
+		--json assignees --jq '[.assignees[].login] | join(",")' 2>/dev/null) || current_assignees=""
+
+	if [[ -n "$current_assignees" && ",$current_assignees," != *",$self_login,"* ]]; then
+		print_warning "Worker claim invalid: #${issue_number} is assigned to ${current_assignees}, not ${self_login} — aborting PR creation (t1955)"
+		return 1
+	fi
+
+	return 0
+}
+
 # Create the PR and print the PR number to stdout.
 # Arguments: repo, pr_title, pr_body, origin_label; extra_labels passed as remaining args.
 # Returns 1 on failure.
@@ -766,6 +841,13 @@ cmd_commit_and_pr() {
 
 	local pr_body=""
 	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer")
+
+	# t1955: Validate dispatch claim before creating PR. In headless mode,
+	# abort if this worker was stale-recovered and replaced by another runner.
+	_validate_worker_claim "$issue_number" "$repo" || {
+		print_error "Aborting: dispatch claim no longer valid for #${issue_number} (t1955)"
+		return 1
+	}
 
 	local pr_number=""
 	pr_number=$(_create_pr "$repo" "$pr_title" "$pr_body" "$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || return 1

@@ -567,9 +567,15 @@ _recover_stale_assignment() {
 		--remove-label "status:queued" --remove-label "status:in-progress" \
 		--add-label "status:available" 2>/dev/null || true
 
-	# Post audit comment
+	# Post audit comment with WORKER_SUPERSEDED marker (t1955).
+	# The marker is a structured HTML comment that workers can detect before
+	# creating PRs. If a worker's runner login matches the superseded runner,
+	# it knows its assignment was revoked and should abort or re-claim.
+	local _now_ts
+	_now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	gh issue comment "$issue_number" --repo "$repo_slug" \
-		--body "**Stale assignment recovered** (GH#15060)
+		--body "<!-- WORKER_SUPERSEDED runners=${stale_assignees} ts=${_now_ts} -->
+**Stale assignment recovered** (GH#15060)
 
 Previously assigned to: ${stale_assignees}
 Reason: ${reason}

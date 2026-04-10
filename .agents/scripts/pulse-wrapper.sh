@@ -4881,10 +4881,12 @@ This is an automated stall-detection sweep. The LLM should review the actual iss
 		sweep_review_label="--label needs-maintainer-review"
 	fi
 	# shellcheck disable=SC2086
+	# t1955: Don't self-assign on issue creation — let dispatch_with_dedup handle
+	# assignment. Self-assigning creates a phantom claim that triggers stale recovery
+	# on other runners, producing audit trail gaps.
 	if gh_create_issue --repo "$aidevops_slug" \
 		--title "perf: simplification debt stalled — LLM sweep needed ($(date -u +%Y-%m-%d))" \
 		--label "simplification-debt" $sweep_review_label --label "tier:reasoning" \
-		--assignee "$maintainer" \
 		--body "$sweep_body" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] Complexity LLM sweep: created stall-review issue" >>"$LOGFILE"
 	else
@@ -5823,19 +5825,19 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 	fi
 
 	local create_ok=false
+	# t1955: Don't self-assign on issue creation — let dispatch_with_dedup handle
+	# assignment. Self-assigning creates a phantom claim that triggers stale recovery.
 	if [[ "$needs_recheck" == true ]]; then
 		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
 			--label "simplification-debt" $review_label --label "tier:standard" --label "recheck-simplicity" \
-			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	else
 		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
 			--label "simplification-debt" $review_label --label "tier:standard" \
-			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	fi
 
@@ -6010,11 +6012,11 @@ This is an automated scan. The function lengths are factual, but the best decomp
 		if [[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" != "true" ]]; then
 			review_label_sh="--label needs-maintainer-review"
 		fi
+		# t1955: Don't self-assign — let dispatch_with_dedup handle assignment.
 		# shellcheck disable=SC2086
 		if gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
 			--label "simplification-debt" $review_label_sh \
-			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1; then
 			_complexity_scan_close_duplicate_issues_by_title "$aidevops_slug" "$issue_title"
 			issues_created=$((issues_created + 1))
@@ -6252,10 +6254,10 @@ done | sort -rn | head -20
 		--tokens 0 --time "$_pulse_elapsed" --session-type routine 2>/dev/null || true)
 	issue_body="${issue_body}${sig_footer}"
 
+	# t1955: Don't self-assign — let dispatch_with_dedup handle assignment.
 	gh_create_issue --repo "$aidevops_slug" \
 		--title "CI nesting threshold proximity: ${violations}/${threshold} violations (${headroom} headroom)" \
 		--label "bug" --label "auto-dispatch" --label "tier:standard" \
-		--assignee "$maintainer" \
 		--body "$issue_body" >/dev/null 2>&1 || true
 
 	echo "[pulse-wrapper] CI nesting threshold proximity: warning issue created (${violations}/${threshold})" >>"$LOGFILE"
