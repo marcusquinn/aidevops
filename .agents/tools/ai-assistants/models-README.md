@@ -7,9 +7,10 @@ Orchestrator selects subagents based on frontmatter `model` declaration for cros
 
 ## Core Rules
 
-- **In-session Task calls use the session model.** Runtimes do not switch models mid-session.
-- **Cross-model routing requires headless dispatch.** Supervisor reads subagent frontmatter and passes resolved model ID to CLI.
-- **Tier names are the stable interface.** Target `haiku`, `sonnet`, `pro`, `opus`, etc.; concrete models change behind these aliases.
+- **Runtimes may use `model:` from subagent frontmatter.** OpenCode reads `model:` and switches models for subagent dispatch. Claude Code ignores it (subagents use the session model). Other runtimes: check their docs.
+- **Deploy-time resolution ensures compatibility.** Source files use tier names (`model: sonnet`); `setup.sh` resolves them to fully-qualified IDs (`model: anthropic/claude-sonnet-4-6`) at deploy time via `model-routing-table.json`. This means deployed files work on all runtimes regardless of whether they resolve tiers natively.
+- **Headless dispatch also resolves tiers.** Supervisor reads subagent frontmatter and passes resolved model ID to CLI via `resolve_model_tier()`.
+- **Tier names are the stable interface in source.** Target `haiku`, `sonnet`, `pro`, `opus`, etc. in source `.md` files; concrete models change behind these aliases and are resolved at deploy time.
 
 ## Tier Mapping
 
@@ -24,9 +25,13 @@ Orchestrator selects subagents based on frontmatter `model` declaration for cros
 
 ## Resolution Flow
 
-**In-session:** `Task(subagent_type="general", ...)` — prompt model requests ignored; runs on session model.
+**Deploy-time (all runtimes):** `setup.sh` resolves tier shorthands in `model:` frontmatter to FQIDs using `model-routing-table.json`. Deployed files at `~/.aidevops/agents/` contain fully-qualified IDs that any runtime can consume directly.
 
-**Headless:** `Claude -m "gemini-2.5-pro" -p "..."` — task metadata specifies tier → supervisor reads `models/<tier>.md` frontmatter → runner receives `--model` with resolved ID.
+**In-session (runtime-dependent):**
+- **OpenCode:** reads `model:` from subagent frontmatter and switches models for subagent dispatch. Requires `provider/model-id` format (e.g., `anthropic/claude-sonnet-4-6`). Deploy-time resolution provides this.
+- **Claude Code:** `Task(subagent_type="general", ...)` — ignores `model:` frontmatter; subagents run on the session model.
+
+**Headless:** `opencode run -m "anthropic/claude-sonnet-4-6" -p "..."` — task metadata specifies tier → supervisor reads `models/<tier>.md` frontmatter → runner receives `--model` with resolved ID.
 
 ## Fallback Chains (t132.4)
 
