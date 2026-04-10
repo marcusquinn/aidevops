@@ -231,16 +231,11 @@ _resolve_model_tiers_in_frontmatter() {
 	return 0
 }
 
-# _deploy_agents_post_copy target_dir repo_dir source_dir plugins_file
-# Runs all post-copy steps: permissions, VERSION, advisories, plan-reminder,
-# mailbox migration, stale-file migration, model resolution, and plugin deployment.
-_deploy_agents_post_copy() {
+# _set_script_permissions_and_report target_dir
+# Sets execute permissions on all deployed scripts and reports deployed counts.
+_set_script_permissions_and_report() {
 	local target_dir="$1"
-	local repo_dir="$2"
-	local source_dir="$3"
-	local plugins_file="$4"
 
-	# Set permissions on scripts (top-level and modularised subdirectories)
 	chmod +x "$target_dir/scripts/"*.sh 2>/dev/null || true
 	find "$target_dir/scripts" -mindepth 2 -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
 
@@ -248,35 +243,47 @@ _deploy_agents_post_copy() {
 	agent_count=$(find "$target_dir" -name "*.md" -type f | wc -l | tr -d ' ')
 	script_count=$(find "$target_dir/scripts" -name "*.sh" -type f 2>/dev/null | wc -l | tr -d ' ')
 	print_info "Deployed $agent_count agent files and $script_count scripts"
+	return 0
+}
 
-	# Install plugin dependencies (GH#17829: @bufbuild/protobuf was missing)
-	# First try symlinking OpenCode's node_modules (t1551), then verify the
-	# critical dependency exists. If the symlink is broken or the module is
-	# absent, fall back to npm install in the plugin directory.
-	# GH#17891: Only symlink if node_modules doesn't already exist (avoids
-	# destroying a prior npm install on every setup.sh run). Use --omit=peer
-	# to skip the 630MB opencode-ai peer dep (the host app, not needed here).
+# _install_opencode_plugin_deps target_dir
+# Installs node_modules for the opencode-aidevops plugin.
+# GH#17829: @bufbuild/protobuf was missing; GH#17891: only symlink on first run.
+# Uses --omit=peer to skip the 630MB opencode-ai peer dep (the host app).
+_install_opencode_plugin_deps() {
+	local target_dir="$1"
 	local oc_node_modules="$HOME/.config/opencode/node_modules"
 	local plugin_dir="$target_dir/plugins/opencode-aidevops"
-	if [[ -d "$plugin_dir" ]]; then
-		# Only symlink if node_modules doesn't exist at all (first run)
-		if [[ ! -e "$plugin_dir/node_modules" ]]; then
-			if [[ -d "$oc_node_modules" ]]; then
-				ln -sf "$oc_node_modules" "$plugin_dir/node_modules" 2>/dev/null || true
-			fi
-		fi
-		# Verify critical dependency is available; npm install if not
-		if [[ ! -d "$plugin_dir/node_modules/@bufbuild/protobuf" ]]; then
-			if command -v npm &>/dev/null; then
-				# Remove symlink if present so npm creates a local node_modules
-				[[ -L "$plugin_dir/node_modules" ]] && rm "$plugin_dir/node_modules"
-				npm install --omit=dev --omit=peer --prefix "$plugin_dir" >/dev/null 2>&1 ||
-					print_warning "Failed to install plugin dependencies (non-blocking)"
-			fi
+
+	if [[ ! -d "$plugin_dir" ]]; then
+		return 0
+	fi
+
+	# Only symlink if node_modules doesn't exist at all (first run)
+	if [[ ! -e "$plugin_dir/node_modules" ]]; then
+		if [[ -d "$oc_node_modules" ]]; then
+			ln -sf "$oc_node_modules" "$plugin_dir/node_modules" 2>/dev/null || true
 		fi
 	fi
 
-	# Copy VERSION file from repo root to deployed agents
+	# Verify critical dependency is available; npm install if not
+	if [[ ! -d "$plugin_dir/node_modules/@bufbuild/protobuf" ]]; then
+		if command -v npm &>/dev/null; then
+			# Remove symlink if present so npm creates a local node_modules
+			[[ -L "$plugin_dir/node_modules" ]] && rm "$plugin_dir/node_modules"
+			npm install --omit=dev --omit=peer --prefix "$plugin_dir" >/dev/null 2>&1 ||
+				print_warning "Failed to install plugin dependencies (non-blocking)"
+		fi
+	fi
+	return 0
+}
+
+# _deploy_version_file target_dir repo_dir
+# Copies VERSION file from repo root to the deployed agents directory.
+_deploy_version_file() {
+	local target_dir="$1"
+	local repo_dir="$2"
+
 	if [[ -f "$repo_dir/VERSION" ]]; then
 		if cp "$repo_dir/VERSION" "$target_dir/VERSION"; then
 			print_info "Copied VERSION file to deployed agents"
@@ -286,30 +293,40 @@ _deploy_agents_post_copy() {
 	else
 		print_warning "VERSION file not found in repo root"
 	fi
+	return 0
+}
 
-	# Deploy security advisories (shown in session greeting until dismissed)
+# _deploy_security_advisories_files source_dir
+# Copies *.advisory files to ~/.aidevops/advisories/ (shown in session greeting).
+_deploy_security_advisories_files() {
+	local source_dir="$1"
 	local advisories_source="$source_dir/advisories"
 	local advisories_target="$HOME/.aidevops/advisories"
-	if [[ -d "$advisories_source" ]]; then
-		mkdir -p "$advisories_target"
-		local adv_count=0
-		for adv_file in "$advisories_source"/*.advisory; do
-			[[ -f "$adv_file" ]] || continue
-			cp "$adv_file" "$advisories_target/"
-			adv_count=$((adv_count + 1))
-		done
-		if [[ "$adv_count" -gt 0 ]]; then
-			print_info "Deployed $adv_count security advisory/advisories"
-		fi
+
+	if [[ ! -d "$advisories_source" ]]; then
+		return 0
 	fi
+	mkdir -p "$advisories_target"
+	local adv_count=0
+	for adv_file in "$advisories_source"/*.advisory; do
+		[[ -f "$adv_file" ]] || continue
+		cp "$adv_file" "$advisories_target/"
+		adv_count=$((adv_count + 1))
+	done
+	if [[ "$adv_count" -gt 0 ]]; then
+		print_info "Deployed $adv_count security advisory/advisories"
+	fi
+	return 0
+}
 
-	# Inject extracted OpenCode plan-reminder into Plan+ if available
-	_inject_plan_reminder "$target_dir"
-
-	# Migrate mailbox from TOON files to SQLite (if old files exist)
+# _migrate_mailbox_if_needed target_dir
+# Migrates mailbox from legacy TOON files to SQLite if old files exist.
+_migrate_mailbox_if_needed() {
+	local target_dir="$1"
 	local aidevops_workspace_dir="${AIDEVOPS_WORKSPACE_DIR:-$HOME/.aidevops/.agent-workspace}"
 	local mail_dir="${AIDEVOPS_MAIL_DIR:-${aidevops_workspace_dir}/mail}"
 	local mail_script="$target_dir/scripts/mail-helper.sh"
+
 	if [[ -x "$mail_script" ]] && find "$mail_dir" -name "*.toon" 2>/dev/null | grep -q .; then
 		if "$mail_script" migrate; then
 			print_success "Mailbox migration complete"
@@ -317,22 +334,43 @@ _deploy_agents_post_copy() {
 			print_warning "Mailbox migration had issues (non-critical, old files preserved)"
 		fi
 	fi
+	return 0
+}
 
-	# Migration: wavespeed.md moved from services/ai-generation/ to tools/video/ (v2.111+)
+# _migrate_wavespeed_md target_dir
+# Removes stale wavespeed.md from deprecated services/ai-generation/ path (v2.111+).
+_migrate_wavespeed_md() {
+	local target_dir="$1"
 	local old_wavespeed="$target_dir/services/ai-generation/wavespeed.md"
+
 	if [[ -f "$old_wavespeed" ]]; then
 		rm -f "$old_wavespeed"
 		rmdir "$target_dir/services/ai-generation" 2>/dev/null || true
 		print_info "Migrated wavespeed.md from services/ai-generation/ to tools/video/"
 	fi
+	return 0
+}
 
-	# Resolve model tier shorthands to FQIDs in deployed frontmatter (GH#18043)
+# _deploy_agents_post_copy target_dir repo_dir source_dir plugins_file
+# Orchestrates all post-copy steps: permissions, VERSION, advisories, plan-reminder,
+# mailbox migration, stale-file migration, model resolution, and plugin deployment.
+_deploy_agents_post_copy() {
+	local target_dir="$1"
+	local repo_dir="$2"
+	local source_dir="$3"
+	local plugins_file="$4"
+
+	_set_script_permissions_and_report "$target_dir"
+	_install_opencode_plugin_deps "$target_dir"
+	_deploy_version_file "$target_dir" "$repo_dir"
+	_deploy_security_advisories_files "$source_dir"
+	_inject_plan_reminder "$target_dir"
+	_migrate_mailbox_if_needed "$target_dir"
+	_migrate_wavespeed_md "$target_dir"
 	# Source files keep tier names (sonnet, haiku, opus); deployed files get
 	# fully-qualified IDs (anthropic/claude-sonnet-4-6) that runtimes like
-	# OpenCode can consume directly.
+	# OpenCode can consume directly (GH#18043).
 	_resolve_model_tiers_in_frontmatter "$target_dir"
-
-	# Deploy enabled plugins from plugins.json
 	deploy_plugins "$target_dir" "$plugins_file"
 	return 0
 }
