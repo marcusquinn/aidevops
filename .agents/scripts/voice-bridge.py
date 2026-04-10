@@ -373,17 +373,47 @@ class VoiceBridge:
         self.silence_counter = 0
         self.speech_detected = False
 
+    # ── Audio capture phase ──────────────────────────────────────────────
+
+    def _flush_speech_buffer(self) -> None:
+        """Flush accumulated speech frames to the audio buffer and reset state."""
+        full_audio = np.concatenate(self.speech_frames)
+        duration = len(full_audio) / SAMPLE_RATE
+        if duration >= MIN_SPEECH_DURATION:
+            self.audio_buffer.append(full_audio)
+        self.speech_frames = []
+        self.speech_detected = False
+        self.silence_counter = 0
+
+    def _handle_speech_frame(self, audio) -> None:
+        """Process a single audio frame during active speech detection."""
+        self.silence_counter += 1
+        self.speech_frames.append(audio)
+        silence_seconds = self.silence_counter * BLOCK_SIZE / SAMPLE_RATE
+        if silence_seconds >= SILENCE_DURATION:
+            self._flush_speech_buffer()
+
+    def _check_max_duration(self) -> None:
+        """Force-flush if recording exceeds maximum duration."""
+        if not self.speech_detected:
+            return
+        total_samples = sum(len(f) for f in self.speech_frames)
+        if total_samples / SAMPLE_RATE > MAX_RECORD_DURATION:
+            self._flush_speech_buffer()
+
     def _audio_callback(self, indata, frames, time_info, status):
-        """Called by sounddevice for each audio block."""
+        """Called by sounddevice for each audio block.
+
+        Mute mic during TTS playback to prevent speaker-to-mic feedback.
+        Without acoustic echo cancellation (AEC), TTS audio bleeds into the
+        mic and triggers false speech detection. Barge-in is not supported;
+        implementing it would require hardware AEC or a software AEC library.
+        """
         if status:
             log.debug(f"Audio status: {status}")
 
         audio = np.frombuffer(indata, dtype=np.int16).copy()
 
-        # Mute mic during TTS playback to prevent speaker-to-mic feedback.
-        # Without acoustic echo cancellation (AEC), TTS audio bleeds into the
-        # mic and triggers false speech detection. Barge-in is not supported;
-        # implementing it would require hardware AEC or a software AEC library.
         if self.is_speaking:
             return
 
@@ -392,56 +422,118 @@ class VoiceBridge:
             self.silence_counter = 0
             self.speech_frames.append(audio)
         elif self.speech_detected:
-            self.silence_counter += 1
-            self.speech_frames.append(audio)  # keep trailing silence
+            self._handle_speech_frame(audio)
 
-            silence_seconds = self.silence_counter * BLOCK_SIZE / SAMPLE_RATE
-            if silence_seconds >= SILENCE_DURATION:
-                # Speech ended - process it
-                full_audio = np.concatenate(self.speech_frames)
-                duration = len(full_audio) / SAMPLE_RATE
+        self._check_max_duration()
 
-                if duration >= MIN_SPEECH_DURATION:
-                    self.audio_buffer.append(full_audio)
+    # ── Transcription phase ──────────────────────────────────────────────
 
-                self.speech_frames = []
-                self.speech_detected = False
-                self.silence_counter = 0
+    _EXIT_PHRASES = [
+        "that's all", "thats all", "that is all",
+        "all for now", "i'm done", "im done", "we're done",
+        "end voice", "stop listening", "goodbye", "good bye",
+        "go back", "back to text", "end conversation",
+        "end session", "stop voice", "quit voice",
+        "see you later", "talk to you later",
+    ]
 
-        # Safety: cap recording length
-        if self.speech_detected:
-            total_samples = sum(len(f) for f in self.speech_frames)
-            if total_samples / SAMPLE_RATE > MAX_RECORD_DURATION:
-                full_audio = np.concatenate(self.speech_frames)
-                self.audio_buffer.append(full_audio)
-                self.speech_frames = []
-                self.speech_detected = False
-                self.silence_counter = 0
+    _VOICE_PROMPT = (
+        "IMPORTANT: You are in a voice conversation. "
+        "Keep ALL responses to 1-2 short sentences. "
+        "No markdown, no lists, no code blocks, no bullet points. "
+        "Use plain spoken English suitable for text-to-speech. "
+        "Do not give long explanations unless asked to elaborate. "
+        "The input comes from speech-to-text and may contain transcription "
+        "errors. Sanity-check names, paths, and technical terms before acting. "
+        "For example 'test.txte' is obviously 'test.txt', 'get hub' is 'GitHub'. "
+        "If genuinely ambiguous, ask the user to clarify before proceeding. "
+        "You CAN: edit files, run commands, create PRs, git operations, "
+        "write to TODO files, and any task that uses your tools. "
+        "When asked to do these, execute them and confirm the outcome. "
+        "Acknowledge with 'ok, I can do that' before tasks. "
+        "Confirm with 'that's done, we've...' and a brief summary when finished. "
+        "For ongoing work, say 'I've started [what], what's next?' "
+        "You CANNOT: update the interactive TUI session you were launched from, "
+        "or share context with it. You are a separate headless session. "
+        "If asked something you cannot do, say so honestly. "
+        "The user can say 'that's all' or 'bye' to end the voice session."
+    )
+
+    def _transcribe_audio(self, audio) -> tuple[str, float]:
+        """Run STT on audio. Returns (text, elapsed_seconds)."""
+        start = time.time()
+        text = self.stt.transcribe(audio)
+        return text, time.time() - start
+
+    def _is_exit_phrase(self, text: str) -> bool:
+        """Check if transcribed text contains an exit phrase."""
+        text_lower = text.strip().lower().rstrip(".")
+        return any(phrase in text_lower for phrase in self._EXIT_PHRASES)
+
+    def _build_query(self, text: str, first_query: bool) -> str:
+        """Build LLM query, prepending voice prompt on first query."""
+        if first_query:
+            return f"{self._VOICE_PROMPT}\n\nUser: {text}"
+        return text
+
+    # ── Command dispatch phase ───────────────────────────────────────────
+
+    def _dispatch_to_llm(self, query_text: str) -> tuple[str, float]:
+        """Send query to LLM. Returns (response, elapsed_seconds)."""
+        start = time.time()
+        response = self.llm.query(query_text)
+        return response, time.time() - start
+
+    # ── TTS playback phase ───────────────────────────────────────────────
+
+    def _speak_response(self, response: str) -> float:
+        """Play TTS response with mic muting. Returns elapsed seconds."""
+        self.is_speaking = True
+        start = time.time()
+        try:
+            self.tts.speak(response)
+        except Exception as e:
+            log.error(f"TTS error: {e}")
+        finally:
+            self.is_speaking = False
+        return time.time() - start
+
+    def _process_utterance(self, audio, first_query: bool) -> tuple[bool, bool]:
+        """Process one utterance through STT → LLM → TTS pipeline.
+
+        Returns (should_exit, first_query_used).
+        """
+        duration = len(audio) / SAMPLE_RATE
+        log.info(f"Processing {duration:.1f}s of speech...")
+
+        text, stt_time = self._transcribe_audio(audio)
+        if not text or len(text.strip()) < 2:
+            log.info("STT returned empty/short text, skipping")
+            return False, first_query
+
+        log.info(f"STT ({stt_time:.1f}s): \"{text}\"")
+        self.transcript.append(("user", text))
+
+        if self._is_exit_phrase(text):
+            log.info(f"Exit phrase detected: \"{text}\"")
+            self.tts.speak("Bye for now.")
+            return True, first_query
+
+        query_text = self._build_query(text, first_query)
+        response, llm_time = self._dispatch_to_llm(query_text)
+        log.info(f"LLM ({llm_time:.1f}s): \"{response[:80]}...\"")
+        self.transcript.append(("assistant", response))
+
+        tts_time = self._speak_response(response)
+        total = stt_time + llm_time + tts_time
+        log.info(
+            f"Round-trip: {total:.1f}s "
+            f"(STT:{stt_time:.1f} LLM:{llm_time:.1f} TTS:{tts_time:.1f})"
+        )
+        return False, False
 
     def _process_loop(self):
-        """Background thread: STT → LLM → TTS."""
-        # Prepend voice instruction to first query
-        voice_prompt = (
-            "IMPORTANT: You are in a voice conversation. "
-            "Keep ALL responses to 1-2 short sentences. "
-            "No markdown, no lists, no code blocks, no bullet points. "
-            "Use plain spoken English suitable for text-to-speech. "
-            "Do not give long explanations unless asked to elaborate. "
-            "The input comes from speech-to-text and may contain transcription "
-            "errors. Sanity-check names, paths, and technical terms before acting. "
-            "For example 'test.txte' is obviously 'test.txt', 'get hub' is 'GitHub'. "
-            "If genuinely ambiguous, ask the user to clarify before proceeding. "
-            "You CAN: edit files, run commands, create PRs, git operations, "
-            "write to TODO files, and any task that uses your tools. "
-            "When asked to do these, execute them and confirm the outcome. "
-            "Acknowledge with 'ok, I can do that' before tasks. "
-            "Confirm with 'that's done, we've...' and a brief summary when finished. "
-            "For ongoing work, say 'I've started [what], what's next?' "
-            "You CANNOT: update the interactive TUI session you were launched from, "
-            "or share context with it. You are a separate headless session. "
-            "If asked something you cannot do, say so honestly. "
-            "The user can say 'that's all' or 'bye' to end the voice session."
-        )
+        """Background thread: STT → LLM → TTS pipeline coordinator."""
         first_query = True
 
         while self.running:
@@ -450,67 +542,10 @@ class VoiceBridge:
                 continue
 
             audio = self.audio_buffer.popleft()
-            duration = len(audio) / SAMPLE_RATE
-            log.info(f"Processing {duration:.1f}s of speech...")
-
-            # STT
-            start = time.time()
-            text = self.stt.transcribe(audio)
-            stt_time = time.time() - start
-
-            if not text or len(text.strip()) < 2:
-                log.info("STT returned empty/short text, skipping")
-                continue
-
-            log.info(f"STT ({stt_time:.1f}s): \"{text}\"")
-            self.transcript.append(("user", text))
-
-            # Check for exit phrases (substring match -- natural speech
-            # often wraps exit intent in extra words)
-            text_lower = text.strip().lower().rstrip(".")
-            exit_phrases = [
-                "that's all", "thats all", "that is all",
-                "all for now", "i'm done", "im done", "we're done",
-                "end voice", "stop listening", "goodbye", "good bye",
-                "go back", "back to text", "end conversation",
-                "end session", "stop voice", "quit voice",
-                "see you later", "talk to you later",
-            ]
-            if any(phrase in text_lower for phrase in exit_phrases):
-                log.info(f"Exit phrase detected: \"{text}\"")
-                self.tts.speak("Bye for now.")
+            should_exit, first_query = self._process_utterance(audio, first_query)
+            if should_exit:
                 self.running = False
                 break
-
-            # LLM - prepend voice instruction on first query
-            query_text = text
-            if first_query:
-                query_text = f"{voice_prompt}\n\nUser: {text}"
-                first_query = False
-
-            start = time.time()
-            response = self.llm.query(query_text)
-            llm_time = time.time() - start
-            log.info(f"LLM ({llm_time:.1f}s): \"{response[:80]}...\"")
-            self.transcript.append(("assistant", response))
-
-            # TTS (with barge-in support)
-            # Mute mic during TTS to prevent speaker-to-mic feedback
-            self.is_speaking = True
-            start = time.time()
-            try:
-                self.tts.speak(response)
-            except Exception as e:
-                log.error(f"TTS error: {e}")
-            finally:
-                tts_time = time.time() - start
-                self.is_speaking = False
-
-            total = stt_time + llm_time + tts_time
-            log.info(
-                f"Round-trip: {total:.1f}s "
-                f"(STT:{stt_time:.1f} LLM:{llm_time:.1f} TTS:{tts_time:.1f})"
-            )
 
     def run(self):
         """Start the voice bridge."""
