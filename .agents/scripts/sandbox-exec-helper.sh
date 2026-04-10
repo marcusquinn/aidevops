@@ -607,11 +607,13 @@ _sandbox_exec_with_pgkill() {
 	fi
 
 	# Emit captured stderr to our stderr so callers (headless-runtime-helper)
-	# can see crash errors from the child process. Only emit on non-zero exit
-	# to avoid noise on success. Truncate to 4KB to avoid flooding logs.
-	if [[ "$t_exit_code" -ne 0 && -s "$t_stderr_file" ]]; then
-		log_sandbox "WARN" "Child exited $t_exit_code — captured stderr ($(wc -c <"$t_stderr_file" | tr -d ' ')B):"
-		head -c 4096 "$t_stderr_file" >&2
+	# can see errors from the child process. Always emit for headless workers
+	# (opencode exits 0 even on silent failures). Truncate to 8KB.
+	if [[ -s "$t_stderr_file" ]]; then
+		local _stderr_size
+		_stderr_size=$(wc -c <"$t_stderr_file" | tr -d ' ')
+		log_sandbox "INFO" "Child exited $t_exit_code — captured stderr (${_stderr_size}B):"
+		head -c 8192 "$t_stderr_file" >&2
 		echo >&2
 	fi
 

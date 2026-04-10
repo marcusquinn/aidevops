@@ -1593,6 +1593,24 @@ _invoke_opencode() {
 	# way to separate tee output from the exit code in a single $()).
 	(
 		set +e
+		# Inject --print-logs for headless workers so opencode's internal Go logs
+		# (API errors, model resolution, DB writes) appear in the worker log.
+		# This is critical for diagnosing silent exits — the JSON event stream
+		# shows step_start then nothing, but the Go logs show the actual error.
+		local -a _oc_cmd=("${cmd[@]}")
+		if [[ "${HEADLESS:-}" == "1" ]]; then
+			# Insert --print-logs after the 'run' subcommand
+			local -a _new_cmd=()
+			local _inserted=0
+			for _arg in "${_oc_cmd[@]}"; do
+				_new_cmd+=("$_arg")
+				if [[ "$_arg" == "run" && "$_inserted" -eq 0 ]]; then
+					_new_cmd+=("--print-logs" "--log-level" "WARN")
+					_inserted=1
+				fi
+			done
+			_oc_cmd=("${_new_cmd[@]}")
+		fi
 		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
 			local passthrough_csv
 			passthrough_csv="$(build_sandbox_passthrough_csv)"
@@ -1602,13 +1620,13 @@ _invoke_opencode() {
 			# a temp file and replays it after exit — the watchdog sees nothing
 			# and kills every sandboxed worker at ~93s.
 			if [[ -n "$passthrough_csv" ]]; then
-				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --passthrough "$passthrough_csv" -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 			else
-				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout -- "${cmd[@]}" 2>&1 | tee "$output_file"
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 			fi
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		else
-			timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${cmd[@]}" 2>&1 | tee "$output_file"
+			timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		fi
 	) &
