@@ -132,9 +132,102 @@ _inject_plan_reminder() {
 	return 0
 }
 
+# _resolve_model_tiers_in_frontmatter target_dir
+# Resolves tier shorthands (sonnet, haiku, opus, etc.) in YAML frontmatter
+# `model:` fields to fully-qualified provider/model IDs using model-routing-table.json.
+# This enables runtimes like OpenCode that consume `model:` literally (GH#18043).
+# Source .md files keep tier names; deployed files get FQIDs.
+# Only processes files with YAML frontmatter (--- delimited) where `model:` contains
+# a bare tier name (no `/`). Already-qualified IDs are left unchanged.
+_resolve_model_tiers_in_frontmatter() {
+	local target_dir="$1"
+
+	# Locate routing table: custom override takes precedence
+	local routing_table="$target_dir/custom/configs/model-routing-table.json"
+	if [[ ! -f "$routing_table" ]]; then
+		routing_table="$target_dir/configs/model-routing-table.json"
+	fi
+	if [[ ! -f "$routing_table" ]]; then
+		print_warning "model-routing-table.json not found — skipping frontmatter model resolution"
+		return 0
+	fi
+
+	# Requires jq for JSON parsing
+	if ! command -v jq &>/dev/null; then
+		print_warning "jq not available — skipping frontmatter model resolution"
+		return 0
+	fi
+
+	# Validate routing table has tiers (Bash 3.2 compatible — no associative arrays)
+	local tier_count
+	tier_count=$(jq -r '.tiers | keys | length' "$routing_table" 2>/dev/null) || tier_count=0
+	if [[ "$tier_count" -eq 0 ]]; then
+		print_warning "No tiers found in routing table — skipping frontmatter model resolution"
+		return 0
+	fi
+
+	local resolved_count=0
+	local md_file
+	# Use a simple while-read loop with find for Bash 3.2 compat (no -print0 + read -d '')
+	find "$target_dir" -name "*.md" -type f | while IFS= read -r md_file; do
+		# Quick check: first line must be --- (YAML frontmatter)
+		local first_line
+		first_line=$(head -1 "$md_file" 2>/dev/null) || continue
+		[[ "$first_line" == "---" ]] || continue
+
+		# Scan frontmatter (lines 2..closing ---) for a bare model: line
+		local line_num=0 in_frontmatter=true frontmatter_end=0
+		local model_value="" model_line_num=0 comment_suffix=""
+		while IFS= read -r line; do
+			line_num=$((line_num + 1))
+			[[ "$line_num" -eq 1 ]] && continue # skip opening ---
+			if [[ "$line" == "---" ]]; then
+				frontmatter_end=$line_num
+				break
+			fi
+			# Match: model: <bare-tier>  [# optional comment]
+			# Skip if value contains / (already a FQID)
+			if echo "$line" | grep -qE '^model:[[:space:]]+[^/[:space:]#]+'; then
+				# Extract the tier name (word after "model: ", before whitespace/# )
+				model_value=$(echo "$line" | sed -E 's/^model:[[:space:]]+([^[:space:]#]+).*/\1/')
+				# Extract optional comment suffix
+				if echo "$line" | grep -qF '#'; then
+					comment_suffix=$(echo "$line" | sed -E 's/^[^#]+(#.*)/  \1/')
+				else
+					comment_suffix=""
+				fi
+				model_line_num=$line_num
+			fi
+		done < <(head -20 "$md_file")
+
+		# Skip if no bare model found or frontmatter didn't close
+		[[ -n "$model_value" && "$frontmatter_end" -gt 0 ]] || continue
+
+		# Look up the FQID from routing table
+		local fqid
+		fqid=$(jq -r --arg tier "$model_value" '.tiers[$tier].models[0] // empty' "$routing_table" 2>/dev/null)
+		[[ -n "$fqid" ]] || continue
+
+		# Replace the model line in-place (macOS sed -i '' vs GNU sed -i)
+		if sed -i '' "${model_line_num}s|^model:.*|model: ${fqid}${comment_suffix}|" "$md_file" 2>/dev/null ||
+			sed -i "${model_line_num}s|^model:.*|model: ${fqid}${comment_suffix}|" "$md_file" 2>/dev/null; then
+			resolved_count=$((resolved_count + 1))
+		fi
+	done
+
+	# The while loop runs in a subshell (piped from find), so resolved_count
+	# won't propagate. Re-count by checking deployed files for FQIDs.
+	local actual_count
+	actual_count=$(grep -rl '^model: [a-z]*/[a-z]' "$target_dir" --include='*.md' 2>/dev/null | wc -l | tr -d ' ')
+	if [[ "$actual_count" -gt 0 ]]; then
+		print_success "Resolved model tiers to FQIDs in deployed agent files (via model-routing-table.json)"
+	fi
+	return 0
+}
+
 # _deploy_agents_post_copy target_dir repo_dir source_dir plugins_file
 # Runs all post-copy steps: permissions, VERSION, advisories, plan-reminder,
-# mailbox migration, stale-file migration, and plugin deployment.
+# mailbox migration, stale-file migration, model resolution, and plugin deployment.
 _deploy_agents_post_copy() {
 	local target_dir="$1"
 	local repo_dir="$2"
@@ -226,6 +319,12 @@ _deploy_agents_post_copy() {
 		rmdir "$target_dir/services/ai-generation" 2>/dev/null || true
 		print_info "Migrated wavespeed.md from services/ai-generation/ to tools/video/"
 	fi
+
+	# Resolve model tier shorthands to FQIDs in deployed frontmatter (GH#18043)
+	# Source files keep tier names (sonnet, haiku, opus); deployed files get
+	# fully-qualified IDs (anthropic/claude-sonnet-4-6) that runtimes like
+	# OpenCode can consume directly.
+	_resolve_model_tiers_in_frontmatter "$target_dir"
 
 	# Deploy enabled plugins from plugins.json
 	deploy_plugins "$target_dir" "$plugins_file"
