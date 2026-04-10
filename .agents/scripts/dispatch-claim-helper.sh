@@ -207,20 +207,24 @@ _fetch_claims() {
 		return 0
 	fi
 
-	# Check if the most recent relevant comment is a CLAIM_RELEASED — if so,
-	# all prior claims are invalidated and the issue is free for dispatch.
-	local latest_is_release
-	latest_is_release=$(printf '%s' "$comments_json" | jq -r '
-		sort_by(.created_at) | last | .body | test("CLAIM_RELEASED")
-	' 2>/dev/null) || latest_is_release="false"
-	if [[ "$latest_is_release" == "true" ]]; then
-		printf '[]'
-		return 0
-	fi
+	# Find the most recent CLAIM_RELEASED timestamp. Any DISPATCH_CLAIM older
+	# than this is invalidated (the worker died or completed). Only claims
+	# posted AFTER the latest release are considered active.
+	local latest_release_ts
+	latest_release_ts=$(printf '%s' "$comments_json" | jq -r '
+		[.[] | select(.body | test("CLAIM_RELEASED")) | .created_at] |
+		sort | last // ""
+	' 2>/dev/null) || latest_release_ts=""
 
-	# Filter to only DISPATCH_CLAIM comments (exclude CLAIM_RELEASED from parsing)
+	# Filter to DISPATCH_CLAIM comments posted after the latest release
 	local claims_only
-	claims_only=$(printf '%s' "$comments_json" | jq -c '[.[] | select(.body | test("'"${CLAIM_MARKER}"' nonce="))]' 2>/dev/null) || claims_only="[]"
+	if [[ -n "$latest_release_ts" ]]; then
+		claims_only=$(printf '%s' "$comments_json" | jq -c --arg release_ts "$latest_release_ts" '
+			[.[] | select((.body | test("'"${CLAIM_MARKER}"' nonce=")) and (.created_at > $release_ts))]
+		' 2>/dev/null) || claims_only="[]"
+	else
+		claims_only=$(printf '%s' "$comments_json" | jq -c '[.[] | select(.body | test("'"${CLAIM_MARKER}"' nonce="))]' 2>/dev/null) || claims_only="[]"
+	fi
 
 	if [[ "$claims_only" == "[]" ]]; then
 		printf '[]'
