@@ -104,8 +104,15 @@ function isTabularArray(arr: unknown[]): boolean {
 function formatTabularCell(val: unknown, delimiter: string): string {
   if (val === null) return 'null'
   if (val === undefined) return ''
-  if (typeof val === 'string' && val.includes(delimiter)) return `"${val}"`
-  return String(val)
+  const str = String(val)
+  // CSV-style escaping: quote if the string contains delimiter, quotes, newlines,
+  // or leading/trailing whitespace. Internal quotes are doubled.
+  if (typeof val === 'string' &&
+      (str.includes(delimiter) || str.includes('"') || str.includes('\n') ||
+       str.includes('\r') || str !== str.trim())) {
+    return `"${str.replace(/"/g, '""')}"`
+  }
+  return str
 }
 
 /**
@@ -142,18 +149,18 @@ interface ParseResult {
   consumed: number
 }
 
-const LITERAL_MAP: Record<string, unknown> = {
-  null: null,
-  undefined: undefined,
-  true: true,
-  false: false,
-  '[]': [],
-  '{}': {},
+const LITERAL_FACTORIES: Record<string, () => unknown> = {
+  null: () => null,
+  undefined: () => undefined,
+  true: () => true,
+  false: () => false,
+  '[]': () => [],
+  '{}': () => ({}),
 }
 
 function parseLiteral(line: string): ParseResult | null {
-  if (Object.prototype.hasOwnProperty.call(LITERAL_MAP, line)) {
-    return { value: LITERAL_MAP[line], consumed: 1 }
+  if (Object.prototype.hasOwnProperty.call(LITERAL_FACTORIES, line)) {
+    return { value: LITERAL_FACTORIES[line](), consumed: 1 }
   }
   if (/^-?\d+(\.\d+)?$/.test(line)) return { value: Number(line), consumed: 1 }
   return null
@@ -169,7 +176,7 @@ function parseTabularBlock(lines: string[], startIndex: number, match: RegExpMat
     const values = parseDelimitedRow(rowLine, ',')
     const obj: Record<string, unknown> = {}
     keys.forEach((key, idx) => {
-      obj[key] = parseValue(values[idx] || '')
+      obj[key] = parseValue(values[idx] || '', true)
     })
     result.push(obj)
   }
@@ -222,15 +229,38 @@ function parseDelimitedRow(row: string, delimiter: string): string[] {
   const result: string[] = []
   let current = ''
   let inQuotes = false
+  let i = 0
 
-  for (const char of row) {
-    if (char === '"') {
-      inQuotes = !inQuotes
-    } else if (char === delimiter && !inQuotes) {
-      result.push(current)
-      current = ''
-    } else {
+  while (i < row.length) {
+    const char = row[i]
+    if (inQuotes) {
+      if (char === '"') {
+        // Peek ahead: doubled quote is an escaped literal quote
+        if (i + 1 < row.length && row[i + 1] === '"') {
+          current += '"'
+          i += 2
+          continue
+        }
+        // Single quote ends the quoted field
+        inQuotes = false
+        i++
+        continue
+      }
       current += char
+      i++
+    } else {
+      if (char === '"' && current === '') {
+        // Opening quote at start of field
+        inQuotes = true
+        i++
+      } else if (char === delimiter) {
+        result.push(current)
+        current = ''
+        i++
+      } else {
+        current += char
+        i++
+      }
     }
   }
 
@@ -253,17 +283,24 @@ function detectKnownValue(trimmed: string): { known: true; value: unknown } | { 
   return { known: false }
 }
 
-function parseValue(str: string): unknown {
+/**
+ * Parse a value string into its typed representation.
+ * When fromTabular=true, quotes have already been handled by parseDelimitedRow,
+ * so skip quote-stripping and preserve the exact string (including spaces).
+ */
+function parseValue(str: string, fromTabular = false): unknown {
   const trimmed = str.trim()
 
   const detected = detectKnownValue(trimmed)
   if (detected.known) return detected.value
 
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+  if (!fromTabular && trimmed.startsWith('"') && trimmed.endsWith('"')) {
     return trimmed.slice(1, -1)
   }
 
-  return trimmed
+  // For tabular cells, return the raw string from parseDelimitedRow
+  // (which already handled quote removal and unescaping)
+  return fromTabular ? str : trimmed
 }
 
 /**
