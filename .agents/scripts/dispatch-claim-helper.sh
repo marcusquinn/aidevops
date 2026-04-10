@@ -191,10 +191,12 @@ _fetch_claims() {
 	local now_epoch
 	now_epoch=$(_now_epoch)
 
-	# Fetch last 30 comments (more than enough for claim window)
+	# Fetch last 30 comments — look for both DISPATCH_CLAIM and CLAIM_RELEASED.
+	# A CLAIM_RELEASED comment posted after the most recent DISPATCH_CLAIM
+	# invalidates all prior claims (the worker died or completed).
 	local comments_json
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--jq '[.[] | select(.body | test("'"${CLAIM_MARKER}"' nonce=")) | {id: .id, body: .body, created_at: .created_at}]' \
+		--jq '[.[] | select(.body | test("'"${CLAIM_MARKER}"' nonce=|CLAIM_RELEASED")) | {id: .id, body: .body, created_at: .created_at}]' \
 		2>/dev/null) || {
 		echo "Error: failed to fetch comments for #${issue_number} in ${repo_slug}" >&2
 		return 1
@@ -205,9 +207,29 @@ _fetch_claims() {
 		return 0
 	fi
 
+	# Check if the most recent relevant comment is a CLAIM_RELEASED — if so,
+	# all prior claims are invalidated and the issue is free for dispatch.
+	local latest_is_release
+	latest_is_release=$(printf '%s' "$comments_json" | jq -r '
+		sort_by(.created_at) | last | .body | test("CLAIM_RELEASED")
+	' 2>/dev/null) || latest_is_release="false"
+	if [[ "$latest_is_release" == "true" ]]; then
+		printf '[]'
+		return 0
+	fi
+
+	# Filter to only DISPATCH_CLAIM comments (exclude CLAIM_RELEASED from parsing)
+	local claims_only
+	claims_only=$(printf '%s' "$comments_json" | jq -c '[.[] | select(.body | test("'"${CLAIM_MARKER}"' nonce="))]' 2>/dev/null) || claims_only="[]"
+
+	if [[ "$claims_only" == "[]" ]]; then
+		printf '[]'
+		return 0
+	fi
+
 	# Parse claim fields from comment bodies and filter by max age
 	local parsed
-	parsed=$(printf '%s' "$comments_json" | jq -c --argjson now "$now_epoch" --argjson max_age "$DISPATCH_CLAIM_MAX_AGE" '
+	parsed=$(printf '%s' "$claims_only" | jq -c --argjson now "$now_epoch" --argjson max_age "$DISPATCH_CLAIM_MAX_AGE" '
 		[.[] |
 			(.body | capture("nonce=(?<nonce>[^ ]+) runner=(?<runner>[^ ]+) ts=(?<ts>[^ ]+)")) as $fields |
 			{

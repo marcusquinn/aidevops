@@ -2777,7 +2777,7 @@ _cmd_run_prepare() {
 		return 2
 	fi
 	# shellcheck disable=SC2064
-	trap "_release_session_lock '$session_key'; _update_dispatch_ledger '$session_key' 'fail'" EXIT
+	trap "_release_dispatch_claim '$session_key' 'process_exit'; _release_session_lock '$session_key'; _update_dispatch_ledger '$session_key' 'fail'" EXIT
 
 	# GH#6696: Register this dispatch in the in-flight ledger so the pulse
 	# can detect workers that haven't created PRs yet. The ledger bridges
