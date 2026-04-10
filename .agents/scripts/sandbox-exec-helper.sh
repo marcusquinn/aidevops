@@ -606,6 +606,15 @@ _sandbox_exec_with_pgkill() {
 		rm -f "$t_watchdog_marker" 2>/dev/null || true
 	fi
 
+	# Emit captured stderr to our stderr so callers (headless-runtime-helper)
+	# can see crash errors from the child process. Only emit on non-zero exit
+	# to avoid noise on success. Truncate to 4KB to avoid flooding logs.
+	if [[ "$t_exit_code" -ne 0 && -s "$t_stderr_file" ]]; then
+		log_sandbox "WARN" "Child exited $t_exit_code — captured stderr ($(wc -c <"$t_stderr_file" | tr -d ' ')B):"
+		head -c 4096 "$t_stderr_file" >&2
+		echo >&2
+	fi
+
 	# Explicitly clean up any remaining descendants in the process group.
 	# The EXIT trap is cleared below, so cleanup must be called explicitly
 	# here — the trap does not fire on a normal function return.
