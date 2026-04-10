@@ -513,10 +513,12 @@ cmd_pre_merge_gate() {
 # On push failure: returns 1. Caller should check remote state.
 # On PR creation failure: returns 1. Changes are committed and pushed — caller
 # can create the PR manually.
-cmd_commit_and_pr() {
-	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
-	local -a extra_labels=()
 
+# Parse commit-and-pr arguments into caller-scoped variables.
+# Expects the caller to have declared: issue_number, commit_message, pr_title,
+# summary_what, summary_testing, summary_decisions, extra_labels (array).
+# Returns 1 on unknown argument.
+_parse_commit_and_pr_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--issue)
@@ -553,37 +555,47 @@ cmd_commit_and_pr() {
 			;;
 		esac
 	done
+	return 0
+}
+
+# Validate commit-and-pr inputs: required fields and branch safety.
+# Sets caller-scoped $repo and $branch on success.
+# Returns 1 on validation failure.
+_validate_commit_and_pr_inputs() {
+	local issue_number="$1" commit_message="$2"
 
 	if [[ -z "$issue_number" || -z "$commit_message" ]]; then
 		print_error "Usage: full-loop-helper.sh commit-and-pr --issue <N> --message <msg>"
 		return 1
 	fi
 
-	# Auto-detect repo
-	local repo=""
 	repo=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
 	if [[ -z "$repo" ]]; then
 		print_error "Cannot detect repo from git remote."
 		return 1
 	fi
 
-	local branch=""
 	branch=$(git branch --show-current 2>/dev/null || echo "")
 	if [[ -z "$branch" || "$branch" == "main" || "$branch" == "master" ]]; then
 		print_error "Cannot commit-and-pr from branch '${branch:-detached}'. Must be on a feature branch."
 		return 1
 	fi
+	return 0
+}
 
-	# Step 1: Stage and commit
+# Stage all changes and commit with the given message.
+# Skips commit if nothing staged but commits exist ahead of main.
+# Returns 1 on failure.
+_stage_and_commit() {
+	local commit_message="$1"
+
 	print_info "Staging and committing changes..."
 	if ! git add -A; then
 		print_error "git add failed"
 		return 1
 	fi
 
-	# Check there's something to commit
 	if git diff --cached --quiet 2>/dev/null; then
-		# Nothing staged — check if there are already commits ahead of main
 		local ahead=""
 		ahead=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo "0")
 		if [[ "$ahead" == "0" ]]; then
@@ -597,8 +609,14 @@ cmd_commit_and_pr() {
 			return 1
 		fi
 	fi
+	return 0
+}
 
-	# Step 2: Rebase onto origin/main and push
+# Rebase onto origin/main and force-push the current branch.
+# Returns 1 on rebase conflict or push failure.
+_rebase_and_push() {
+	local branch="$1"
+
 	print_info "Rebasing onto origin/main..."
 	if ! git fetch origin main --quiet 2>/dev/null; then
 		print_warning "git fetch origin main failed — proceeding with current state"
@@ -614,31 +632,16 @@ cmd_commit_and_pr() {
 		print_error "Push failed. Check remote state and retry."
 		return 1
 	fi
+	return 0
+}
 
-	# Step 3: Create PR with Resolves #NNN + signature footer
-	if [[ -z "$pr_title" ]]; then
-		pr_title="GH#${issue_number}: ${commit_message}"
-	fi
+# Build the PR body string and print it to stdout.
+# Arguments: issue_number, summary_what, summary_testing, files_changed, sig_footer
+_build_pr_body() {
+	local issue_number="$1" summary_what="$2" summary_testing="$3"
+	local files_changed="$4" sig_footer="$5"
 
-	# Build PR body
-	local origin_label="origin:interactive"
-	if [[ "${HEADLESS:-}" == "1" || "${FULL_LOOP_HEADLESS:-}" == "true" ]]; then
-		origin_label="origin:worker"
-	fi
-
-	# Get signature footer
-	local sig_footer=""
-	local sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
-	if [[ -x "$sig_helper" ]]; then
-		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
-	fi
-
-	# Get changed files for the body
-	local files_changed=""
-	files_changed=$(git diff --name-only origin/main..HEAD 2>/dev/null | tr '\n' ', ' | sed 's/,$//' || echo "")
-
-	local pr_body
-	pr_body="## Summary
+	printf '%s\n' "## Summary
 
 ${summary_what:-Implementation for issue #${issue_number}.}
 
@@ -654,6 +657,16 @@ ${files_changed:-See diff}
 Resolves #${issue_number}
 
 ${sig_footer}"
+	return 0
+}
+
+# Create the PR and print the PR number to stdout.
+# Arguments: repo, pr_title, pr_body, origin_label; extra_labels passed as remaining args.
+# Returns 1 on failure.
+_create_pr() {
+	local repo="$1" pr_title="$2" pr_body="$3" origin_label="$4"
+	shift 4
+	local -a extra_labels=("$@")
 
 	print_info "Creating PR..."
 	local pr_url=""
@@ -667,7 +680,6 @@ ${sig_footer}"
 		return 1
 	}
 
-	# Extract PR number from URL
 	local pr_number=""
 	pr_number=$(printf '%s' "$pr_url" | grep -oE '[0-9]+$' || echo "")
 	if [[ -z "$pr_number" ]]; then
@@ -676,8 +688,17 @@ ${sig_footer}"
 	fi
 
 	print_success "PR #${pr_number} created: ${pr_url}"
+	printf '%s\n' "$pr_number"
+	return 0
+}
 
-	# Step 4: Post merge summary comment (full-loop step 4.2.1)
+# Post the MERGE_SUMMARY comment on the PR (full-loop step 4.2.1).
+# Arguments: pr_number, repo, issue_number, summary_what, files_changed,
+#            summary_testing, summary_decisions
+_post_merge_summary() {
+	local pr_number="$1" repo="$2" issue_number="$3" summary_what="$4"
+	local files_changed="$5" summary_testing="$6" summary_decisions="$7"
+
 	local merge_summary="<!-- MERGE_SUMMARY -->
 ## Completion Summary
 
@@ -692,13 +713,65 @@ ${sig_footer}"
 	else
 		print_warning "Failed to post merge summary comment — post it manually"
 	fi
+	return 0
+}
 
-	# Step 5: Label issue as in-review
+# Label the linked issue as in-review, removing in-progress/queued labels.
+# Arguments: issue_number, repo
+_label_issue_in_review() {
+	local issue_number="$1" repo="$2"
+
 	local issue_state=""
 	issue_state=$(gh issue view "$issue_number" --repo "$repo" --json state -q '.state' 2>/dev/null || echo "")
 	if [[ "$issue_state" == "OPEN" ]]; then
-		gh issue edit "$issue_number" --repo "$repo" --add-label "status:in-review" --remove-label "status:in-progress" --remove-label "status:queued" >/dev/null 2>&1 || true
+		gh issue edit "$issue_number" --repo "$repo" \
+			--add-label "status:in-review" \
+			--remove-label "status:in-progress" \
+			--remove-label "status:queued" >/dev/null 2>&1 || true
 	fi
+	return 0
+}
+
+cmd_commit_and_pr() {
+	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
+	local -a extra_labels=()
+
+	_parse_commit_and_pr_args "$@" || return 1
+
+	# Validate inputs and detect repo/branch (sets $repo and $branch in this scope)
+	local repo="" branch=""
+	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
+
+	_stage_and_commit "$commit_message" || return 1
+	_rebase_and_push "$branch" || return 1
+
+	# Build PR metadata
+	if [[ -z "$pr_title" ]]; then
+		pr_title="GH#${issue_number}: ${commit_message}"
+	fi
+
+	local origin_label="origin:interactive"
+	if [[ "${HEADLESS:-}" == "1" || "${FULL_LOOP_HEADLESS:-}" == "true" ]]; then
+		origin_label="origin:worker"
+	fi
+
+	local sig_footer=""
+	local sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
+	if [[ -x "$sig_helper" ]]; then
+		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
+	fi
+
+	local files_changed=""
+	files_changed=$(git diff --name-only origin/main..HEAD 2>/dev/null | tr '\n' ', ' | sed 's/,$//' || echo "")
+
+	local pr_body=""
+	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer")
+
+	local pr_number=""
+	pr_number=$(_create_pr "$repo" "$pr_title" "$pr_body" "$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || return 1
+
+	_post_merge_summary "$pr_number" "$repo" "$issue_number" "$summary_what" "$files_changed" "$summary_testing" "$summary_decisions"
+	_label_issue_in_review "$issue_number" "$repo"
 
 	# Output PR number for caller to pass to `merge`
 	printf '%s\n' "$pr_number"
