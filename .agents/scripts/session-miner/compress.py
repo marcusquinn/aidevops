@@ -18,22 +18,63 @@ Compression strategy:
 Target: <100KB total output that captures all unique signals.
 """
 
+import argparse
 import json
 import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import Optional
 
 
-CHUNKS_DIR = Path(sys.argv[1]) if len(sys.argv) > 1 else (
-    Path.home() / ".aidevops/.agent-workspace/work/session-miner"
-)
+DEFAULT_CHUNKS_DIR = Path.home() / ".aidevops/.agent-workspace/work/session-miner"
+DEFAULT_OUTPUT_NAME = "compressed_signals.json"
 
-if not CHUNKS_DIR.exists():
-    print(f"Error: Chunks directory not found at {CHUNKS_DIR}", file=sys.stderr)
-    sys.exit(1)
 
-OUTPUT = CHUNKS_DIR.parent / "compressed_signals.json"
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    """Parse CLI arguments."""
+    parser = argparse.ArgumentParser(
+        description="Compress session-miner chunks into analysis-ready summaries",
+    )
+    parser.add_argument(
+        "chunks_dir",
+        nargs="?",
+        type=Path,
+        default=DEFAULT_CHUNKS_DIR,
+        help=f"Directory containing extracted chunk JSON files (default: {DEFAULT_CHUNKS_DIR})",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Output path for compressed JSON (default: <chunks_dir>/../compressed_signals.json)",
+    )
+    return parser.parse_args(argv)
+
+
+def _load_json(path: Path) -> Optional[dict]:
+    """Load a JSON object from disk, returning None on parse/read failure."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _iter_chunks(chunks_dir: Path, pattern: str, *, skip: Optional[set[str]] = None):
+    """Yield parsed chunk payloads matching a glob pattern."""
+    skipped = skip or set()
+    for chunk_file in sorted(chunks_dir.glob(pattern)):
+        if chunk_file.name in skipped:
+            continue
+        chunk = _load_json(chunk_file)
+        if chunk is not None:
+            yield chunk
+
+
+def _iter_chunk_records(chunks_dir: Path, pattern: str, *, skip: Optional[set[str]] = None):
+    """Yield all records from parsed chunk payloads."""
+    for chunk in _iter_chunks(chunks_dir, pattern, skip=skip):
+        yield from chunk.get("records", [])
 
 
 def strip_file_content(text: str) -> str:
@@ -120,12 +161,7 @@ def compress_steerage(chunks_dir: Path) -> dict:
     categories = defaultdict(list)
     seen = set()
 
-    for chunk_file in sorted(chunks_dir.glob("steerage_*.json")):
-        try:
-            chunk = json.loads(chunk_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-
+    for chunk in _iter_chunks(chunks_dir, "steerage_*.json"):
         category = chunk.get("category", "unknown")
 
         for record in chunk.get("records", []):
@@ -203,56 +239,37 @@ def compress_errors(chunks_dir: Path) -> dict:
     recovery_patterns = defaultdict(list)
     pattern_models = defaultdict(set)
 
-    for chunk_file in sorted(chunks_dir.glob("error_*.json")):
-        try:
-            chunk = json.loads(chunk_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-
-        for record in chunk.get("records", []):
-            _accumulate_error_record(record, pattern_counts, pattern_examples,
-                                     recovery_patterns, pattern_models)
+    for record in _iter_chunk_records(chunks_dir, "error_*.json"):
+        _accumulate_error_record(record, pattern_counts, pattern_examples,
+                                 recovery_patterns, pattern_models)
 
     return {"patterns": _build_error_patterns(pattern_counts, pattern_examples,
-                                               recovery_patterns, pattern_models)}
+                                                recovery_patterns, pattern_models)}
 
 
-def compress_git_correlation(chunks_dir: Path) -> dict:
-    """Compress git correlation chunks into productivity summaries.
+def _load_git_summary(chunks_dir: Path) -> dict:
+    """Load the git summary chunk payload, if present."""
+    chunk = _load_json(chunks_dir / "git_summary.json")
+    if chunk is None:
+        return {}
+    return chunk.get("data", {})
 
-    Groups sessions by project, computes per-project and overall productivity
-    metrics, and identifies the most/least productive session patterns.
-    """
-    # Load summary chunk first
-    summary_file = chunks_dir / "git_summary.json"
-    summary = {}
-    if summary_file.exists():
-        try:
-            chunk = json.loads(summary_file.read_text(encoding="utf-8"))
-            summary = chunk.get("data", {})
-        except (json.JSONDecodeError, OSError):
-            pass
 
-    # Collect all productive session records
+def _collect_git_sessions(chunks_dir: Path):
+    """Collect git-correlation session records grouped by project."""
     by_project = defaultdict(list)
     all_sessions = []
+    for record in _iter_chunk_records(chunks_dir, "git_*.json", skip={"git_summary.json"}):
+        project = record.get("session_dir", "unknown")
+        by_project[project].append(record)
+        all_sessions.append(record)
+    return by_project, all_sessions
 
-    for chunk_file in sorted(chunks_dir.glob("git_*.json")):
-        if chunk_file.name == "git_summary.json":
-            continue
-        try:
-            chunk = json.loads(chunk_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
 
-        for record in chunk.get("records", []):
-            project = record.get("session_dir", "unknown")
-            by_project[project].append(record)
-            all_sessions.append(record)
-
-    # Per-project productivity
+def _build_project_stats(by_project: dict[str, list[dict]]) -> dict[str, dict]:
+    """Build per-project git productivity summaries."""
     project_stats = {}
-    for project, sessions in sorted(by_project.items(), key=lambda x: -len(x[1])):
+    for project, sessions in sorted(by_project.items(), key=lambda item: -len(item[1])):
         productive = [s for s in sessions if s.get("commits_count", 0) > 0]
         total_commits = sum(s.get("commits_count", 0) for s in sessions)
         total_insertions = sum(s.get("insertions", 0) for s in sessions)
@@ -267,30 +284,62 @@ def compress_git_correlation(chunks_dir: Path) -> dict:
                 / max(len(productive), 1), 3,
             ),
         }
+    return project_stats
 
-    # Top productive sessions (by commits_per_message, min 2 commits)
+
+def _build_top_productive_sessions(all_sessions: list[dict]) -> list[dict]:
+    """Return the most productive git-correlation sessions."""
     top_productive = sorted(
         [s for s in all_sessions if s.get("commits_count", 0) >= 2],
-        key=lambda s: s.get("commits_per_message", 0),
+        key=lambda session: session.get("commits_per_message", 0),
         reverse=True,
     )[:10]
-
-    top_sessions = [
+    return [
         {
-            "title": s.get("session_title", "")[:100],
-            "project": s.get("session_dir", ""),
-            "commits": s.get("commits_count", 0),
-            "messages": s.get("user_messages", 0),
-            "ratio": s.get("commits_per_message", 0),
-            "duration_min": s.get("duration_minutes", 0),
+            "title": session.get("session_title", "")[:100],
+            "project": session.get("session_dir", ""),
+            "commits": session.get("commits_count", 0),
+            "messages": session.get("user_messages", 0),
+            "ratio": session.get("commits_per_message", 0),
+            "duration_min": session.get("duration_minutes", 0),
         }
-        for s in top_productive
+        for session in top_productive
     ]
+
+
+def compress_git_correlation(chunks_dir: Path) -> dict:
+    """Compress git correlation chunks into productivity summaries.
+
+    Groups sessions by project, computes per-project and overall productivity
+    metrics, and identifies the most/least productive session patterns.
+    """
+    summary = _load_git_summary(chunks_dir)
+    by_project, all_sessions = _collect_git_sessions(chunks_dir)
 
     return {
         "summary": summary,
-        "project_stats": project_stats,
-        "top_productive_sessions": top_sessions,
+        "project_stats": _build_project_stats(by_project),
+        "top_productive_sessions": _build_top_productive_sessions(all_sessions),
+    }
+
+
+def _extract_instruction_candidate(record: dict, seen: set[str]):
+    """Extract a deduplicated instruction-candidate payload."""
+    raw_text = record.get("text", "")
+    if not raw_text or len(raw_text) < 20:
+        return None
+
+    norm = normalize_for_dedup(raw_text)
+    if norm in seen:
+        return None
+    seen.add(norm)
+
+    target_file = record.get("target_file", ".agents/prompts/build.txt")
+    return target_file, {
+        "text": raw_text[:800],
+        "confidence": record.get("confidence", 0.5),
+        "category": record.get("category", "general"),
+        "session_title": record.get("session_title", "")[:80],
     }
 
 
@@ -301,33 +350,14 @@ def compress_instruction_candidates(chunks_dir: Path) -> dict:
     confidence score. Returns a dict keyed by target file with candidate lists.
     """
     by_target: dict[str, list[dict]] = defaultdict(list)
-    seen: set[int] = set()
+    seen: set[str] = set()
 
-    for chunk_file in sorted(chunks_dir.glob("instruction_candidate_*.json")):
-        try:
-            chunk = json.loads(chunk_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+    for record in _iter_chunk_records(chunks_dir, "instruction_candidate_*.json"):
+        extracted = _extract_instruction_candidate(record, seen)
+        if extracted is None:
             continue
-
-        for record in chunk.get("records", []):
-            raw_text = record.get("text", "")
-            if not raw_text or len(raw_text) < 20:
-                continue
-
-            # Deduplicate by normalized text
-            norm = re.sub(r"\s+", " ", raw_text.lower().strip())[:200]
-            norm_hash = hash(norm)
-            if norm_hash in seen:
-                continue
-            seen.add(norm_hash)
-
-            target_file = record.get("target_file", ".agents/prompts/build.txt")
-            by_target[target_file].append({
-                "text": raw_text[:800],
-                "confidence": record.get("confidence", 0.5),
-                "category": record.get("category", "general"),
-                "session_title": record.get("session_title", "")[:80],
-            })
+        target_file, candidate = extracted
+        by_target[target_file].append(candidate)
 
     # Sort each target's candidates by confidence descending
     result: dict[str, list[dict]] = {}
@@ -338,22 +368,64 @@ def compress_instruction_candidates(chunks_dir: Path) -> dict:
     return result
 
 
-def main():
-    print(f"Compressing chunks from {CHUNKS_DIR}", file=sys.stderr)
+def _load_stats(chunks_dir: Path) -> dict:
+    """Load the extracted stats chunk, if present."""
+    chunk = _load_json(chunks_dir / "stats.json")
+    if chunk is None:
+        return {}
+    return chunk.get("data", {})
 
-    steerage = compress_steerage(CHUNKS_DIR)
-    errors = compress_errors(CHUNKS_DIR)
-    git_correlation = compress_git_correlation(CHUNKS_DIR)
-    instruction_candidates = compress_instruction_candidates(CHUNKS_DIR)
 
-    # Load stats
-    stats_file = CHUNKS_DIR / "stats.json"
-    stats = {}
-    if stats_file.exists():
-        try:
-            stats = json.loads(stats_file.read_text(encoding="utf-8")).get("data", {})
-        except json.JSONDecodeError:
-            print(f"Warning: Could not parse {stats_file}, skipping stats.", file=sys.stderr)
+def _print_output_summary(output_path: Path, output: dict):
+    """Print the compression summary to stderr."""
+    steerage = output["steerage"]
+    errors = output["errors"]
+    instruction_candidates = output["instruction_candidates"]
+    git_summary = output["git_correlation"].get("summary", {})
+
+    total_steerage = sum(len(v) for v in steerage.values())
+    total_errors = len(errors.get("patterns", []))
+    total_candidates = sum(len(v) for v in instruction_candidates.values())
+    file_size = output_path.stat().st_size
+
+    print(f"Output: {output_path}", file=sys.stderr)
+    print(f"  {total_steerage} unique steerage signals", file=sys.stderr)
+    print(f"  {total_errors} error patterns", file=sys.stderr)
+    print(f"  {total_candidates} instruction candidates", file=sys.stderr)
+    print(f"  {file_size / 1024:.1f} KB", file=sys.stderr)
+
+    for cat, signals in sorted(steerage.items(), key=lambda item: -len(item[1])):
+        print(f"  steerage/{cat}: {len(signals)} unique signals", file=sys.stderr)
+
+    for target_file, candidates in sorted(instruction_candidates.items()):
+        print(f"  instruction_candidates/{target_file}: {len(candidates)} candidates", file=sys.stderr)
+
+    if git_summary:
+        print(
+            f"  git: {git_summary.get('productive_sessions', 0)}"
+            f"/{git_summary.get('total_sessions', 0)} productive sessions,"
+            f" {git_summary.get('total_commits', 0)} commits",
+            file=sys.stderr,
+        )
+
+
+def main(argv: Optional[list[str]] = None):
+    args = parse_args(argv)
+    chunks_dir = args.chunks_dir
+    output_path = args.output or (chunks_dir.parent / DEFAULT_OUTPUT_NAME)
+
+    if not chunks_dir.exists():
+        print(f"Error: Chunks directory not found at {chunks_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Compressing chunks from {chunks_dir}", file=sys.stderr)
+
+    steerage = compress_steerage(chunks_dir)
+    errors = compress_errors(chunks_dir)
+    git_correlation = compress_git_correlation(chunks_dir)
+    instruction_candidates = compress_instruction_candidates(chunks_dir)
+
+    stats = _load_stats(chunks_dir)
 
     output = {
         "steerage": steerage,
@@ -365,38 +437,9 @@ def main():
         "instruction_candidates_counts": {k: len(v) for k, v in instruction_candidates.items()},
     }
 
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    total_steerage = sum(len(v) for v in steerage.values())
-    total_errors = len(errors.get("patterns", []))
-    total_candidates = sum(len(v) for v in instruction_candidates.values())
-    file_size = OUTPUT.stat().st_size
-
-    print(f"Output: {OUTPUT}", file=sys.stderr)
-    print(f"  {total_steerage} unique steerage signals", file=sys.stderr)
-    print(f"  {total_errors} error patterns", file=sys.stderr)
-    print(f"  {total_candidates} instruction candidates", file=sys.stderr)
-    print(f"  {file_size / 1024:.1f} KB", file=sys.stderr)
-
-    # Print category breakdown
-    for cat, signals in sorted(steerage.items(), key=lambda x: -len(x[1])):
-        print(f"  steerage/{cat}: {len(signals)} unique signals", file=sys.stderr)
-
-    # Print instruction candidates breakdown
-    if instruction_candidates:
-        for target_file, candidates in sorted(instruction_candidates.items()):
-            print(f"  instruction_candidates/{target_file}: {len(candidates)} candidates", file=sys.stderr)
-
-    # Print git correlation summary
-    git_summary = git_correlation.get("summary", {})
-    if git_summary:
-        print(
-            f"  git: {git_summary.get('productive_sessions', 0)}"
-            f"/{git_summary.get('total_sessions', 0)} productive sessions,"
-            f" {git_summary.get('total_commits', 0)} commits",
-            file=sys.stderr,
-        )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
+    _print_output_summary(output_path, output)
 
 
 if __name__ == "__main__":
