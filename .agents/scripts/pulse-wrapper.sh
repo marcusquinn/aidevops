@@ -7842,10 +7842,26 @@ _issue_targets_large_files() {
 	[[ -n "$issue_body" ]] || return 1
 	[[ -d "$repo_path" ]] || return 1
 
-	# Skip if already labeled (avoid re-checking every cycle)
 	local issue_labels
 	issue_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+
+	# GH#18042: Never gate simplification tasks behind the large-file gate.
+	# Issues tagged "simplification" or "simplification-debt" exist to reduce
+	# the file — blocking them creates a deadlock where the file can never be
+	# simplified because the simplification issue is held by the gate.
+	# If the label was already applied (e.g., before this fix), auto-clear it.
+	if [[ ",$issue_labels," == *",simplification,"* ]] ||
+		[[ ",$issue_labels," == *",simplification-debt,"* ]]; then
+		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+			gh issue edit "$issue_number" --repo "$repo_slug" \
+				--remove-label "needs-simplification" >/dev/null 2>&1 || true
+			echo "[pulse-wrapper] Simplification gate auto-cleared for #${issue_number} (${repo_slug}) — issue is itself a simplification task (GH#18042)" >>"$LOGFILE"
+		fi
+		return 1
+	fi
+
+	# Skip if already labeled (avoid re-checking every cycle)
 	if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
 		return 0
 	fi
