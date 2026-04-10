@@ -158,70 +158,61 @@ _resolve_model_tiers_in_frontmatter() {
 		return 0
 	fi
 
-	# Validate routing table has tiers (Bash 3.2 compatible — no associative arrays)
-	local tier_count
-	tier_count=$(jq -r '.tiers | keys | length' "$routing_table" 2>/dev/null) || tier_count=0
-	if [[ "$tier_count" -eq 0 ]]; then
+	# Build a sed script file from the routing table in ONE jq call.
+	# Each line is a separate sed command for cross-platform compatibility
+	# (macOS sed doesn't support ; as command separator inside {}).
+	# Generates replacements for both plain and commented forms:
+	#   model: sonnet        → model: anthropic/claude-sonnet-4-6
+	#   model: sonnet  # ... → model: anthropic/claude-sonnet-4-6  # ...
+	local sed_file
+	sed_file=$(mktemp "${TMPDIR:-/tmp}/model-resolve-XXXXXX.sed")
+	jq -r '
+		.tiers | to_entries[] |
+		"s|^model: \(.key)$|model: \(.value.models[0])|",
+		"s|^model: \(.key)  #|model: \(.value.models[0])  #|"
+	' "$routing_table" >"$sed_file" 2>/dev/null
+
+	if [[ ! -s "$sed_file" ]]; then
+		rm -f "$sed_file"
 		print_warning "No tiers found in routing table — skipping frontmatter model resolution"
 		return 0
 	fi
 
-	local resolved_count=0
+	# Build a grep pattern to find only files with bare tier names.
+	# This avoids scanning all 3000+ .md files — only ~60 need changes.
+	local tier_names
+	tier_names=$(jq -r '.tiers | keys[]' "$routing_table" 2>/dev/null | paste -sd'|' -)
+	if [[ -z "$tier_names" ]]; then
+		rm -f "$sed_file"
+		return 0
+	fi
+
+	# Find candidate files: have a model: line with a bare tier name (no /)
+	# grep -rl is fast — scans content without loading full files
+	# The || true prevents set -e from exiting when grep finds no matches
 	local md_file
-	# Use a simple while-read loop with find for Bash 3.2 compat (no -print0 + read -d '')
-	find "$target_dir" -name "*.md" -type f | while IFS= read -r md_file; do
-		# Quick check: first line must be --- (YAML frontmatter)
+	{ grep -rlE "^model: ($tier_names)(\$|  #)" "$target_dir" --include='*.md' 2>/dev/null || true; } | while IFS= read -r md_file; do
+		[[ -n "$md_file" ]] || continue
+		# Verify the match is in YAML frontmatter (first line is ---)
 		local first_line
 		first_line=$(head -1 "$md_file" 2>/dev/null) || continue
 		[[ "$first_line" == "---" ]] || continue
 
-		# Scan frontmatter (lines 2..closing ---) for a bare model: line
-		local line_num=0 in_frontmatter=true frontmatter_end=0
-		local model_value="" model_line_num=0 comment_suffix=""
-		while IFS= read -r line; do
-			line_num=$((line_num + 1))
-			[[ "$line_num" -eq 1 ]] && continue # skip opening ---
-			if [[ "$line" == "---" ]]; then
-				frontmatter_end=$line_num
-				break
-			fi
-			# Match: model: <bare-tier>  [# optional comment]
-			# Skip if value contains / (already a FQID)
-			if echo "$line" | grep -qE '^model:[[:space:]]+[^/[:space:]#]+'; then
-				# Extract the tier name (word after "model: ", before whitespace/# )
-				model_value=$(echo "$line" | sed -E 's/^model:[[:space:]]+([^[:space:]#]+).*/\1/')
-				# Extract optional comment suffix
-				if echo "$line" | grep -qF '#'; then
-					comment_suffix=$(echo "$line" | sed -E 's/^[^#]+(#.*)/  \1/')
-				else
-					comment_suffix=""
-				fi
-				model_line_num=$line_num
-			fi
-		done < <(head -20 "$md_file")
-
-		# Skip if no bare model found or frontmatter didn't close
-		[[ -n "$model_value" && "$frontmatter_end" -gt 0 ]] || continue
-
-		# Look up the FQID from routing table
-		local fqid
-		fqid=$(jq -r --arg tier "$model_value" '.tiers[$tier].models[0] // empty' "$routing_table" 2>/dev/null)
-		[[ -n "$fqid" ]] || continue
-
-		# Replace the model line in-place (macOS sed -i '' vs GNU sed -i)
-		if sed -i '' "${model_line_num}s|^model:.*|model: ${fqid}${comment_suffix}|" "$md_file" 2>/dev/null ||
-			sed -i "${model_line_num}s|^model:.*|model: ${fqid}${comment_suffix}|" "$md_file" 2>/dev/null; then
-			resolved_count=$((resolved_count + 1))
-		fi
+		# Apply sed replacements from the script file (macOS sed -i '' vs GNU sed -i)
+		sed -i '' -f "$sed_file" "$md_file" 2>/dev/null ||
+			sed -i -f "$sed_file" "$md_file" 2>/dev/null || true
 	done
 
-	# The while loop runs in a subshell (piped from find), so resolved_count
-	# won't propagate. Re-count by checking deployed files for FQIDs.
-	local actual_count
-	actual_count=$(grep -rl '^model: [a-z]*/[a-z]' "$target_dir" --include='*.md' 2>/dev/null | wc -l | tr -d ' ')
-	if [[ "$actual_count" -gt 0 ]]; then
+	# Count remaining unresolved files
+	local remaining
+	remaining=$({ grep -rlE "^model: ($tier_names)(\$|  #)" "$target_dir" --include='*.md' 2>/dev/null || true; } | wc -l | tr -d ' ')
+	if [[ "$remaining" -eq 0 ]]; then
 		print_success "Resolved model tiers to FQIDs in deployed agent files (via model-routing-table.json)"
+	else
+		print_warning "Some model tiers could not be resolved ($remaining files remaining)"
 	fi
+
+	rm -f "$sed_file"
 	return 0
 }
 
