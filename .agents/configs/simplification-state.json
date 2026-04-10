@@ -1754,9 +1754,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "hash": "a2d2647022c4934ffbf0df258a20b038792e20e5",
-      "at": "2026-04-10T04:09:22Z",
-      "passes": 15,
+      "hash": "857ecf58a20930ebcda3b4ca53646de96fefbe17",
+      "at": "2026-04-10T05:00:42Z",
+      "passes": 16,
       "pr": 15086
     },
     ".agents/scripts/issue-sync-lib.sh": {
@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "637b2042eb0634549e0bc9b716ae9f168d646575",
-      "at": "2026-04-10T04:09:38Z",
-      "passes": 49,
+      "hash": "8808122d8d8c3ca9ab8373f0e3452e5b1219e00a",
+      "at": "2026-04-10T05:00:58Z",
+      "passes": 50,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "e3d4daf0aaf680b742df5ce7075bb05210d0f040",
-      "at": "2026-04-10T04:09:38Z",
-      "passes": 48,
+      "hash": "3e18405f4d2a221cc84b997c7a310b6f5b9293d7",
+      "at": "2026-04-10T05:00:58Z",
+      "passes": 49,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
