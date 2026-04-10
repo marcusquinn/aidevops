@@ -39,19 +39,18 @@ EXCLUDED_RE = re.compile(
 
 def is_valid_hostname(hostname):
     """Return True if hostname looks like a real, non-placeholder domain."""
-    if not hostname or len(hostname) < 4:
-        return False
-    if "." not in hostname:
+    # Validation chain: early exit on any failure
+    if not hostname or len(hostname) < 4 or "." not in hostname:
         return False
     if re.search(r"[^a-zA-Z0-9.\-_]", hostname):
         return False
     if hostname[0] in (".", "-") or hostname[-1] in (".", "-"):
         return False
+    
     tld = hostname.rsplit(".", 1)[-1]
-    if not tld.isalpha() or len(tld) < 2:
+    if not tld.isalpha() or len(tld) < 2 or EXCLUDED_RE.search(hostname):
         return False
-    if EXCLUDED_RE.search(hostname):
-        return False
+    
     return True
 
 

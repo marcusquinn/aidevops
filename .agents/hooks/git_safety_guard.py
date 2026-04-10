@@ -223,6 +223,7 @@ def _is_main_allowlisted(file_path: str, repo_root: str) -> bool:
     repo_root must be an absolute path (from git rev-parse --show-toplevel).
     Rejects path traversal: any path that escapes repo_root is denied.
     """
+    # Validation: invalid inputs
     if not repo_root:
         return False
 
@@ -236,29 +237,33 @@ def _is_main_allowlisted(file_path: str, repo_root: str) -> bool:
     norm_root = os.path.normpath(repo_root)
     try:
         common = os.path.commonpath([abs_path, norm_root])
+        is_valid = common == norm_root
     except ValueError:
-        return False  # Different drives (Windows) or other error
-    if common != norm_root:
-        return False  # Escapes repo root
-
-    # Compute repo-relative path (no leading separator)
-    rel_path = os.path.relpath(abs_path, norm_root)
-
-    # Reject any remaining traversal (e.g. relpath produced "..")
-    if rel_path.startswith(".."):
+        # Different drives (Windows) or other error
+        is_valid = False
+    
+    if not is_valid:
         return False
 
+    # Compute repo-relative path and validate no traversal
+    rel_path = os.path.relpath(abs_path, norm_root)
+    if rel_path.startswith(".."):
+        return False  # Contains traversal
+
+    # Check against allowlist
     for allowed in MAIN_BRANCH_ALLOWLIST:
         if allowed.endswith("/"):
             # Prefix match (subtree): rel_path == "todo" or starts with "todo/"
             prefix = allowed.rstrip("/")
             if rel_path == prefix or rel_path.startswith(allowed):
-                return True
-        else:
+                break
+        elif rel_path == allowed:
             # Exact match
-            if rel_path == allowed:
-                return True
-    return False
+            break
+    else:
+        return False
+    
+    return True
 
 
 def _check_main_branch_allowlist(file_path: str) -> "dict | None":
@@ -266,6 +271,7 @@ def _check_main_branch_allowlist(file_path: str) -> "dict | None":
 
     Returns a deny dict if the write should be blocked, None if allowed.
     """
+    # Early exit: invalid inputs or not on protected branch
     if not file_path:
         return None
 
@@ -282,13 +288,10 @@ def _check_main_branch_allowlist(file_path: str) -> "dict | None":
         return None  # Not on a protected branch — allow
 
     # On main/master: check if this is a linked worktree (allowed) or main worktree (restricted)
-    if _is_linked_worktree(repo_root):
-        return None  # Linked worktrees are always allowed
+    if _is_linked_worktree(repo_root) or _is_main_allowlisted(file_path, repo_root):
+        return None  # Linked worktrees or allowlisted paths are allowed
 
-    # Main worktree on main/master: enforce allowlist
-    if _is_main_allowlisted(file_path, repo_root):
-        return None  # Allowlisted path — allow
-
+    # Deny: not allowlisted
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
