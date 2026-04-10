@@ -1348,7 +1348,7 @@ append_worker_headless_contract() {
 		return 0
 	fi
 
-	if [[ "$prompt_text" == *"HEADLESS_CONTINUATION_CONTRACT_V5"* ]]; then
+	if [[ "$prompt_text" == *"HEADLESS_CONTINUATION_CONTRACT_V"* ]]; then
 		printf '%s' "$prompt_text"
 		return 0
 	fi
@@ -1356,19 +1356,25 @@ append_worker_headless_contract() {
 	local contract
 	contract=$(
 		cat <<'EOF'
-[HEADLESS_CONTINUATION_CONTRACT_V5]
+[HEADLESS_CONTINUATION_CONTRACT_V6]
 This is a HEADLESS worker session. No user is present. No user input is available.
 You must drive autonomously to completion or an evidence-backed BLOCKED outcome.
 
+Setup shortcuts — the dispatcher has already done these for you:
+- Your worktree is pre-created. Check $WORKER_WORKTREE_PATH env var for the path.
+  If set, you are already in the worktree on a feature branch. Do NOT call
+  pre-edit-check.sh, worktree-helper.sh, or session-rename tools.
+  If not set, create a worktree yourself via worktree-helper.sh add.
+- Do NOT call aidevops-update-check.sh — it exits immediately for headless workers.
+- Do NOT call session-rename or session-rename_sync_branch — your session title
+  is already set to the issue title by the dispatcher.
+
 Key file paths (use these directly, do NOT search for them):
 - Full-loop workflow: .agents/scripts/commands/full-loop.md
-- Pre-edit check: .agents/scripts/pre-edit-check.sh
-- Worktree helper: .agents/scripts/worktree-helper.sh
-- Agents config: .agents/AGENTS.md
 - All agent scripts live under .agents/scripts/ (not scripts/ at root)
 
 Implementation approach:
-1. Read the issue body FIRST. Look for a "Worker Guidance" or "How" section — it contains the files to modify, reference patterns, and verification commands. Follow these directly instead of exploring the codebase broadly.
+1. Read the issue body FIRST (gh issue view $WORKER_ISSUE_NUMBER). Look for a "Worker Guidance" or "How" section — it contains the files to modify, reference patterns, and verification commands. Follow these directly instead of exploring the codebase broadly.
 2. Budget discipline: spend at most 25% of your effort on reading/exploring. After reading the issue body + 2-3 reference files mentioned in it, start writing code. Do not read entire helper scripts — read only the sections you will modify.
 3. If the issue body lacks file paths and implementation steps, exit BLOCKED with reason "missing implementation context" so the dispatcher can enrich the body. Do NOT explore broadly to compensate for a vague issue.
 
@@ -1378,7 +1384,7 @@ If a tool call returns empty output, it usually means the path or pattern was wr
 Mandatory behavior:
 4. Never ask for user confirmation, approval, or next steps. No user will respond.
 5. Never emit user-directed language ("If you want...", "Let me know...", "Should I...").
-6. Reading the issue, reading docs, and creating a worktree are SETUP — not completion. You MUST continue through implementation, commit, push, and PR creation after setup.
+6. Reading the issue and reading docs are SETUP — not completion. You MUST continue through implementation, commit, push, and PR creation after setup.
 7. Do not stop at "PR opened" or "in review" states. Continue through review polling, merge readiness checks, merge, and required closing comments.
 8. If merge/close cannot complete, exit only with a clear BLOCKED outcome and evidence (failing check, missing permission, unresolved conflict, or explicit policy gate).
 9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, attempt model escalation — retry with the next tier (sonnet -> opus via --model anthropic/claude-opus-4-6). Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own.

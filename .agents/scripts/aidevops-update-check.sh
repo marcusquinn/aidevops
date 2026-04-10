@@ -8,6 +8,12 @@
 
 set -euo pipefail
 
+# Headless workers never need version checks or security advisories.
+# The dispatch already verified the environment; skip to save tokens.
+if [[ "${HEADLESS:-}" == "1" || "${FULL_LOOP_HEADLESS:-}" == "true" ]]; then
+	exit 0
+fi
+
 # Shared version-finding logic (avoids duplication with log-issue-helper.sh)
 # shellcheck source=lib/version.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"

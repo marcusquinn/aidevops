@@ -8230,16 +8230,56 @@ dispatch_with_dedup() {
 		}
 	fi
 
+	# Pre-create worktree for the worker so it can start coding immediately
+	# instead of spending 5-8 tool calls on worktree setup. The worktree is
+	# idempotent — if a previous worker already created it, add returns the
+	# existing path. On failure, fall back to letting the worker create it.
+	local worker_worktree_path="" worker_worktree_branch=""
+	local _wt_helper="${SCRIPT_DIR}/worktree-helper.sh"
+	if [[ -x "$_wt_helper" ]]; then
+		# Derive branch name from issue number (deterministic, collision-free)
+		worker_worktree_branch="feature/auto-$(date +%Y%m%d-%H%M%S)"
+		local _wt_output=""
+		_wt_output=$("$_wt_helper" add "$worker_worktree_branch" 2>&1) || true
+		worker_worktree_path=$(printf '%s' "$_wt_output" | grep -oE '/[^ ]*Git/[^ ]*' | head -1) || worker_worktree_path=""
+		if [[ -n "$worker_worktree_path" && -d "$worker_worktree_path" ]]; then
+			echo "[dispatch_with_dedup] Pre-created worktree for #${issue_number}: ${worker_worktree_path} (branch: ${worker_worktree_branch})" >>"$LOGFILE"
+		else
+			echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — worker will create its own" >>"$LOGFILE"
+			worker_worktree_path=""
+			worker_worktree_branch=""
+		fi
+	fi
+
+	# Use issue title as session title for searchable history (not generic "Issue #NNN").
+	# Workers no longer need to call session-rename — the title is set at dispatch.
+	local worker_title="${issue_title:-${dispatch_title}}"
+
 	# Launch worker — headless-runtime-helper.sh handles model selection
 	# when no --model is specified. Its choose_model() uses the routing
 	# table/local override, then checks backoff/auth and rotates providers.
-	local -a worker_cmd=("$HEADLESS_RUNTIME_HELPER" run
+	local -a worker_cmd=(
+		env
+		HEADLESS=1
+		FULL_LOOP_HEADLESS=true
+		WORKER_ISSUE_NUMBER="$issue_number"
+	)
+	# Pass worktree env vars only if pre-creation succeeded
+	if [[ -n "$worker_worktree_path" ]]; then
+		worker_cmd+=(
+			WORKER_WORKTREE_PATH="$worker_worktree_path"
+			WORKER_WORKTREE_BRANCH="$worker_worktree_branch"
+		)
+	fi
+	worker_cmd+=(
+		"$HEADLESS_RUNTIME_HELPER" run
 		--role worker
 		--session-key "$session_key"
-		--dir "$repo_path"
+		--dir "${worker_worktree_path:-$repo_path}"
 		--tier "$dispatch_model_tier"
-		--title "$dispatch_title"
-		--prompt "$prompt")
+		--title "$worker_title"
+		--prompt "$prompt"
+	)
 	if [[ -n "$selected_model" ]]; then
 		worker_cmd+=(--model "$selected_model")
 	fi
