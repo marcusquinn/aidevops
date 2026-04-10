@@ -142,12 +142,11 @@ _inject_plan_reminder() {
 _resolve_model_tiers_in_frontmatter() {
 	local target_dir="$1"
 
-	# Locate routing table: custom override takes precedence
-	local routing_table="$target_dir/custom/configs/model-routing-table.json"
-	if [[ ! -f "$routing_table" ]]; then
-		routing_table="$target_dir/configs/model-routing-table.json"
-	fi
-	if [[ ! -f "$routing_table" ]]; then
+	# Locate routing tables: merge custom overrides with default
+	local default_table="$target_dir/configs/model-routing-table.json"
+	local custom_table="$target_dir/custom/configs/model-routing-table.json"
+
+	if [[ ! -f "$default_table" ]]; then
 		print_warning "model-routing-table.json not found — skipping frontmatter model resolution"
 		return 0
 	fi
@@ -158,7 +157,8 @@ _resolve_model_tiers_in_frontmatter() {
 		return 0
 	fi
 
-	# Build a sed script file from the routing table in ONE jq call.
+	# Build a sed script file from the routing table(s) in ONE jq call.
+	# Custom table overrides specific tiers; default fills in the rest.
 	# Each line is a separate sed command for cross-platform compatibility
 	# (macOS sed doesn't support ; as command separator inside {}).
 	# Generates replacements for both plain and commented forms:
@@ -166,11 +166,21 @@ _resolve_model_tiers_in_frontmatter() {
 	#   model: sonnet  # ... → model: anthropic/claude-sonnet-4-6  # ...
 	local sed_file
 	sed_file=$(mktemp "${TMPDIR:-/tmp}/model-resolve-XXXXXX.sed")
-	jq -r '
-		.tiers | to_entries[] |
-		"s|^model: \(.key)$|model: \(.value.models[0])|",
-		"s|^model: \(.key)  #|model: \(.value.models[0])  #|"
-	' "$routing_table" >"$sed_file" 2>/dev/null
+	if [[ -f "$custom_table" ]]; then
+		# Merge: custom tiers override default tiers (jq * operator)
+		jq -r -s '
+			(.[0].tiers // {}) * (.[1].tiers // {}) |
+			to_entries[] |
+			"s|^model: \(.key)$|model: \(.value.models[0])|",
+			"s|^model: \(.key)  #|model: \(.value.models[0])  #|"
+		' "$default_table" "$custom_table" >"$sed_file" 2>/dev/null
+	else
+		jq -r '
+			.tiers | to_entries[] |
+			"s|^model: \(.key)$|model: \(.value.models[0])|",
+			"s|^model: \(.key)  #|model: \(.value.models[0])  #|"
+		' "$default_table" >"$sed_file" 2>/dev/null
+	fi
 
 	if [[ ! -s "$sed_file" ]]; then
 		rm -f "$sed_file"
@@ -180,8 +190,13 @@ _resolve_model_tiers_in_frontmatter() {
 
 	# Build a grep pattern to find only files with bare tier names.
 	# This avoids scanning all 3000+ .md files — only ~60 need changes.
+	# Extract tier names from the sed file (each line has the tier name after "model: ")
 	local tier_names
-	tier_names=$(jq -r '.tiers | keys[]' "$routing_table" 2>/dev/null | paste -sd'|' -)
+	if [[ -f "$custom_table" ]]; then
+		tier_names=$(jq -r -s '(.[0].tiers // {}) * (.[1].tiers // {}) | keys[]' "$default_table" "$custom_table" 2>/dev/null | paste -sd'|' -)
+	else
+		tier_names=$(jq -r '.tiers | keys[]' "$default_table" 2>/dev/null | paste -sd'|' -)
+	fi
 	if [[ -z "$tier_names" ]]; then
 		rm -f "$sed_file"
 		return 0
