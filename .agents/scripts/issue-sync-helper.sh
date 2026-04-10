@@ -513,6 +513,22 @@ _push_process_task() {
 	title=$(_build_title "$task_id" "$description")
 	local labels
 	labels=$(map_tags_to_labels "$tags")
+
+	# Extract and validate tier from brief file
+	local brief_path="$project_root/todo/tasks/${task_id}-brief.md"
+	local tier_label
+	tier_label=$(_extract_tier_from_brief "$brief_path")
+	if [[ -n "$tier_label" ]]; then
+		# Validate tier:simple against checklist
+		tier_label=$(_validate_tier_checklist "$brief_path" "$tier_label")
+		# Add tier label to labels list
+		if [[ -n "$labels" ]]; then
+			labels="${labels},${tier_label}"
+		else
+			labels="$tier_label"
+		fi
+	fi
+
 	local body
 	body=$(compose_issue_body "$task_id" "$project_root")
 
@@ -628,6 +644,22 @@ cmd_enrich() {
 		tags=$(echo "$parsed" | grep '^tags=' | cut -d= -f2-)
 		local labels
 		labels=$(map_tags_to_labels "$tags")
+
+		# Extract and validate tier from brief file
+		local brief_path="$project_root/todo/tasks/${task_id}-brief.md"
+		local tier_label
+		tier_label=$(_extract_tier_from_brief "$brief_path")
+		if [[ -n "$tier_label" ]]; then
+			# Validate tier:simple against checklist
+			tier_label=$(_validate_tier_checklist "$brief_path" "$tier_label")
+			# Add tier label to labels list
+			if [[ -n "$labels" ]]; then
+				labels="${labels},${tier_label}"
+			else
+				labels="$tier_label"
+			fi
+		fi
+
 		local title
 		title=$(_build_title "$task_id" "$desc")
 		local body
