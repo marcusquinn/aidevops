@@ -226,55 +226,68 @@ def _decode_header_value(raw):
     return " ".join(decoded)
 
 
+def _parse_imap_date(date_header) -> str:
+    """Parse an IMAP Date header to ISO 8601 format.
+
+    Returns the ISO string on success, or the raw header string on failure.
+    """
+    if not date_header:
+        return ""
+    try:
+        dt = email.utils.parsedate_to_datetime(str(date_header))
+        return dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+    except (ValueError, TypeError):
+        return str(date_header)
+
+
+def _parse_response_line_fields(response_line) -> tuple:
+    """Extract UID, flags string, and size from an IMAP FETCH response line.
+
+    Returns (uid, flags_str, size) tuple.
+    """
+    uid_match = re.search(rb"UID (\d+)", response_line)
+    uid = int(uid_match.group(1)) if uid_match else 0
+
+    flags_match = re.search(rb"FLAGS \(([^)]*)\)", response_line)
+    flags_str = (
+        flags_match.group(1).decode("utf-8", errors="replace")
+        if flags_match else ""
+    )
+
+    size_match = re.search(rb"RFC822\.SIZE (\d+)", response_line)
+    size = int(size_match.group(1)) if size_match else 0
+
+    return uid, flags_str, size
+
+
+def _parse_header_bytes(header_bytes, uid, flags_str, size) -> dict:
+    """Parse raw header bytes into a message metadata dict."""
+    msg = email.message_from_bytes(header_bytes, policy=email.policy.default)
+    return {
+        "uid": uid,
+        "message_id": str(msg.get("Message-ID", "")),
+        "date": _parse_imap_date(msg.get("Date", "")),
+        "from": str(msg.get("From", "")),
+        "to": str(msg.get("To", "")),
+        "subject": str(msg.get("Subject", "")),
+        "flags": flags_str,
+        "size": size,
+    }
+
+
 def _parse_envelope_from_fetch(fetch_data):
     """Parse headers from an IMAP FETCH response.
 
     Uses BODY.PEEK[HEADER.FIELDS (...)] to avoid marking as read.
     """
     results = []
-    # fetch_data is a list of (response_line, data) tuples
-    idx = 0
-    while idx < len(fetch_data):
-        item = fetch_data[idx]
-        if isinstance(item, tuple) and len(item) == 2:
-            response_line = item[0]
-            header_bytes = item[1]
-
-            # Extract UID from response line
-            uid_match = re.search(rb"UID (\d+)", response_line)
-            uid = int(uid_match.group(1)) if uid_match else 0
-
-            # Extract FLAGS from response line
-            flags_match = re.search(rb"FLAGS \(([^)]*)\)", response_line)
-            flags_str = flags_match.group(1).decode("utf-8", errors="replace") if flags_match else ""
-
-            # Extract RFC822.SIZE from response line
-            size_match = re.search(rb"RFC822\.SIZE (\d+)", response_line)
-            size = int(size_match.group(1)) if size_match else 0
-
-            # Parse headers
-            if isinstance(header_bytes, bytes):
-                msg = email.message_from_bytes(header_bytes, policy=email.policy.default)
-                date_str = ""
-                date_header = msg.get("Date", "")
-                if date_header:
-                    try:
-                        dt = email.utils.parsedate_to_datetime(str(date_header))
-                        date_str = dt.strftime("%Y-%m-%dT%H:%M:%S%z")
-                    except (ValueError, TypeError):
-                        date_str = str(date_header)
-
-                results.append({
-                    "uid": uid,
-                    "message_id": str(msg.get("Message-ID", "")),
-                    "date": date_str,
-                    "from": str(msg.get("From", "")),
-                    "to": str(msg.get("To", "")),
-                    "subject": str(msg.get("Subject", "")),
-                    "flags": flags_str,
-                    "size": size,
-                })
-        idx += 1
+    for item in fetch_data:
+        if not (isinstance(item, tuple) and len(item) == 2):
+            continue
+        response_line, header_bytes = item
+        uid, flags_str, size = _parse_response_line_fields(response_line)
+        if isinstance(header_bytes, bytes):
+            results.append(_parse_header_bytes(header_bytes, uid, flags_str, size))
     return results
 
 
@@ -301,6 +314,15 @@ def cmd_connect(args):
     return 0
 
 
+def _upsert_messages_to_index(account_key, folder, messages):
+    """Persist a list of message metadata dicts to the SQLite index."""
+    db_conn = _init_index_db()
+    for msg in messages:
+        _upsert_message(db_conn, account_key, folder, msg["uid"], msg)
+    db_conn.commit()
+    db_conn.close()
+
+
 def cmd_fetch_headers(args):
     """Fetch message headers from a folder using BODY.PEEK (no read marking)."""
     conn = connect(args.host, args.port, args.user, args.security)
@@ -320,12 +342,10 @@ def cmd_fetch_headers(args):
         conn.logout()
         return 0
 
-    # Calculate range (most recent first)
     end = max(1, total - offset)
     start = max(1, end - limit + 1)
-
-    # Use UID FETCH with BODY.PEEK to avoid marking as read
     fetch_range = f"{start}:{end}"
+
     status, data = conn.fetch(
         fetch_range,
         "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS "
@@ -338,16 +358,9 @@ def cmd_fetch_headers(args):
         return 1
 
     messages = _parse_envelope_from_fetch(data)
-    # Sort by UID descending (most recent first)
     messages.sort(key=lambda m: m["uid"], reverse=True)
 
-    # Update SQLite index
-    account_key = f"{args.user}@{args.host}"
-    db_conn = _init_index_db()
-    for msg in messages:
-        _upsert_message(db_conn, account_key, folder, msg["uid"], msg)
-    db_conn.commit()
-    db_conn.close()
+    _upsert_messages_to_index(f"{args.user}@{args.host}", folder, messages)
 
     result = {
         "folder": folder,
@@ -360,6 +373,66 @@ def cmd_fetch_headers(args):
     print(json.dumps(result, indent=2))
     conn.logout()
     return 0
+
+
+def _decode_part_payload(part) -> str:
+    """Decode a MIME part's payload to a string using its declared charset."""
+    raw_payload = part.get_payload(decode=True)
+    if not isinstance(raw_payload, bytes):
+        return ""
+    charset = part.get_content_charset() or "utf-8"
+    return raw_payload.decode(charset, errors="replace")
+
+
+def _extract_multipart_bodies(msg) -> tuple:
+    """Extract text, html, and attachment metadata from a multipart message.
+
+    Returns (text_body, html_body, attachments).
+    """
+    text_body = ""
+    html_body = ""
+    attachments = []
+
+    for part in msg.walk():
+        content_type = part.get_content_type()
+        disposition = str(part.get("Content-Disposition", ""))
+
+        if "attachment" in disposition:
+            attachments.append({
+                "filename": part.get_filename() or "unnamed",
+                "content_type": content_type,
+                "size": len(part.get_payload(decode=True) or b""),
+            })
+        elif content_type == "text/plain" and not text_body:
+            text_body = _decode_part_payload(part)
+        elif content_type == "text/html" and not html_body:
+            html_body = _decode_part_payload(part)
+
+    return text_body, html_body, attachments
+
+
+def _extract_singlepart_bodies(msg) -> tuple:
+    """Extract text or html body from a non-multipart message.
+
+    Returns (text_body, html_body, attachments=[]).
+    """
+    content_type = msg.get_content_type()
+    decoded = _decode_part_payload(msg)
+    if content_type == "text/plain":
+        return decoded, "", []
+    if content_type == "text/html":
+        return "", decoded, []
+    return "", "", []
+
+
+def _extract_message_bodies(msg) -> tuple:
+    """Dispatch body extraction based on whether message is multipart.
+
+    Returns (text_body, html_body, attachments).
+    """
+    if msg.is_multipart():
+        return _extract_multipart_bodies(msg)
+    return _extract_singlepart_bodies(msg)
 
 
 def cmd_fetch_body(args):
@@ -383,42 +456,7 @@ def cmd_fetch_body(args):
     raw_email = data[0][1] if isinstance(data[0], tuple) else b""
     msg = email.message_from_bytes(raw_email, policy=email.policy.default)
 
-    # Extract text parts
-    text_body = ""
-    html_body = ""
-    attachments = []
-
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            disposition = str(part.get("Content-Disposition", ""))
-
-            if "attachment" in disposition:
-                attachments.append({
-                    "filename": part.get_filename() or "unnamed",
-                    "content_type": content_type,
-                    "size": len(part.get_payload(decode=True) or b""),
-                })
-            elif content_type == "text/plain" and not text_body:
-                raw_payload = part.get_payload(decode=True)
-                if isinstance(raw_payload, bytes):
-                    charset = part.get_content_charset() or "utf-8"
-                    text_body = raw_payload.decode(charset, errors="replace")
-            elif content_type == "text/html" and not html_body:
-                raw_payload = part.get_payload(decode=True)
-                if isinstance(raw_payload, bytes):
-                    charset = part.get_content_charset() or "utf-8"
-                    html_body = raw_payload.decode(charset, errors="replace")
-    else:
-        content_type = msg.get_content_type()
-        raw_payload = msg.get_payload(decode=True)
-        if isinstance(raw_payload, bytes):
-            charset = msg.get_content_charset() or "utf-8"
-            decoded = raw_payload.decode(charset, errors="replace")
-            if content_type == "text/plain":
-                text_body = decoded
-            elif content_type == "text/html":
-                html_body = decoded
+    text_body, html_body, attachments = _extract_message_bodies(msg)
 
     result = {
         "uid": args.uid,
@@ -561,6 +599,31 @@ def cmd_create_folder(args):
     return 0
 
 
+def _copy_and_delete(conn, uid, dest):
+    """Copy a message to dest and mark the original as deleted."""
+    status, data = conn.uid("COPY", uid, f'"{dest}"')
+    if status == "OK":
+        conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
+        conn.expunge()
+    return status, data
+
+
+def _imap_move(conn, uid, dest):
+    """Move a message using MOVE extension or COPY+DELETE fallback.
+
+    Returns (status, data) from the final operation.
+    """
+    try:
+        if b"MOVE" in conn.capabilities or b"move" in conn.capabilities:
+            return conn.uid("MOVE", uid, f'"{dest}"')
+        return _copy_and_delete(conn, uid, dest)
+    except imaplib.IMAP4.error as exc:
+        status, data = _copy_and_delete(conn, uid, dest)
+        if status != "OK":
+            print(f"ERROR: MOVE/COPY failed: {exc}", file=sys.stderr)
+        return status, data
+
+
 def cmd_move_message(args):
     """Move a message to a destination folder by UID."""
     conn = connect(args.host, args.port, args.user, args.security)
@@ -579,27 +642,10 @@ def cmd_move_message(args):
         conn.logout()
         return 1
 
-    # Try MOVE extension first (RFC 6851), fall back to COPY+DELETE
-    try:
-        # Check if server supports MOVE
-        if b"MOVE" in conn.capabilities or b"move" in conn.capabilities:
-            status, data = conn.uid("MOVE", uid, f'"{dest}"')
-        else:
-            # Copy then mark deleted
-            status, data = conn.uid("COPY", uid, f'"{dest}"')
-            if status == "OK":
-                conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
-                conn.expunge()
-    except imaplib.IMAP4.error as exc:
-        # Fallback: COPY + DELETE
-        status, data = conn.uid("COPY", uid, f'"{dest}"')
-        if status == "OK":
-            conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
-            conn.expunge()
-        else:
-            print(f"ERROR: MOVE/COPY failed: {exc}", file=sys.stderr)
-            conn.logout()
-            return 1
+    status, _data = _imap_move(conn, uid, dest)
+    if status != "OK":
+        conn.logout()
+        return 1
 
     result = {
         "status": "moved",
@@ -688,6 +734,28 @@ def cmd_clear_flag(args):
     return 0
 
 
+def _incremental_fetch_range(db_conn, account_key, folder) -> str:
+    """Determine the UID fetch range for an incremental index sync.
+
+    Returns a range string like '1234:*' or '1:*' if no prior index exists.
+    """
+    row = db_conn.execute(
+        "SELECT MAX(uid) FROM messages WHERE account = ? AND folder = ?",
+        (account_key, folder)
+    ).fetchone()
+    last_uid = row[0] if row and row[0] else 0
+    return f"{last_uid + 1}:*" if last_uid > 0 else "1:*"
+
+
+def _sync_messages_to_db(db_conn, account_key, folder, data) -> int:
+    """Parse fetch data and upsert messages into the index. Returns count synced."""
+    messages = _parse_envelope_from_fetch(data)
+    for msg in messages:
+        _upsert_message(db_conn, account_key, folder, msg["uid"], msg)
+    db_conn.commit()
+    return len(messages)
+
+
 def cmd_index_sync(args):
     """Sync folder headers to the local SQLite metadata index."""
     conn = connect(args.host, args.port, args.user, args.security)
@@ -707,21 +775,7 @@ def cmd_index_sync(args):
         return 0
 
     db_conn = _init_index_db()
-
-    if args.full:
-        # Full sync: fetch all headers
-        fetch_range = "1:*"
-    else:
-        # Incremental: find highest UID in index, fetch newer
-        row = db_conn.execute(
-            "SELECT MAX(uid) FROM messages WHERE account = ? AND folder = ?",
-            (account_key, folder)
-        ).fetchone()
-        last_uid = row[0] if row and row[0] else 0
-        if last_uid > 0:
-            fetch_range = f"{last_uid + 1}:*"
-        else:
-            fetch_range = "1:*"
+    fetch_range = "1:*" if args.full else _incremental_fetch_range(db_conn, account_key, folder)
 
     status, data = conn.uid(
         "FETCH", fetch_range,
@@ -729,14 +783,7 @@ def cmd_index_sync(args):
         "(Date From To Subject Message-ID)])"
     )
 
-    synced = 0
-    if status == "OK" and data:
-        messages = _parse_envelope_from_fetch(data)
-        for msg in messages:
-            _upsert_message(db_conn, account_key, folder, msg["uid"], msg)
-            synced += 1
-        db_conn.commit()
-
+    synced = _sync_messages_to_db(db_conn, account_key, folder, data) if (status == "OK" and data) else 0
     db_conn.close()
 
     result = {

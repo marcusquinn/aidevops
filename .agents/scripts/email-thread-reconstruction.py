@@ -25,6 +25,31 @@ from datetime import datetime
 import argparse
 
 
+def _extract_frontmatter_text(content: str):
+    """Extract the raw frontmatter text from markdown content.
+
+    Returns the frontmatter text string, or None if not found.
+    """
+    if not content.startswith("---\n"):
+        return None
+    end_match = re.search(r"\n---\n", content[4:])
+    if not end_match:
+        return None
+    return content[4 : 4 + end_match.start()]
+
+
+def _parse_frontmatter_line(line: str):
+    """Parse a single frontmatter line into (key, value) or None."""
+    if ":" not in line or line.startswith("  "):
+        return None
+    key, _, value = line.partition(":")
+    key = key.strip()
+    value = value.strip()
+    if value.startswith('"') and value.endswith('"'):
+        value = value[1:-1]
+    return key, value
+
+
 def parse_frontmatter(md_file):
     """Extract YAML frontmatter from a markdown file.
 
@@ -33,32 +58,16 @@ def parse_frontmatter(md_file):
     with open(md_file, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # Check for YAML frontmatter delimiters
-    if not content.startswith("---\n"):
+    frontmatter_text = _extract_frontmatter_text(content)
+    if frontmatter_text is None:
         return None
 
-    # Find the closing delimiter
-    end_match = re.search(r"\n---\n", content[4:])
-    if not end_match:
-        return None
-
-    frontmatter_text = content[4 : 4 + end_match.start()]
-
-    # Parse YAML-like frontmatter (simple key: value pairs)
     metadata = {}
     for line in frontmatter_text.split("\n"):
-        if ":" not in line:
-            continue
-        # Handle simple key: value (not nested structures)
-        if line.startswith("  "):
-            continue  # Skip nested items for now
-        key, _, value = line.partition(":")
-        key = key.strip()
-        value = value.strip()
-        # Remove quotes if present
-        if value.startswith('"') and value.endswith('"'):
-            value = value[1:-1]
-        metadata[key] = value
+        parsed = _parse_frontmatter_line(line)
+        if parsed is not None:
+            key, value = parsed
+            metadata[key] = value
 
     return metadata
 
@@ -87,6 +96,34 @@ def _update_existing_field(lines, key, value):
     return False
 
 
+def _split_frontmatter_body(content: str):
+    """Split markdown content into (frontmatter_text, body, frontmatter_end).
+
+    Returns (None, None, None) if no valid frontmatter found.
+    """
+    if not content.startswith("---\n"):
+        return None, None, None
+    end_match = re.search(r"\n---\n", content[4:])
+    if not end_match:
+        return None, None, None
+    frontmatter_end = 4 + end_match.start() + 5  # +5 for '\n---\n'
+    frontmatter_text = content[4 : 4 + end_match.start()]
+    body = content[frontmatter_end:]
+    return frontmatter_text, body, frontmatter_end
+
+
+def _apply_new_fields(lines: list, new_fields: dict) -> list:
+    """Update existing fields and collect new ones for insertion."""
+    new_lines = []
+    for key, value in new_fields.items():
+        if not _update_existing_field(lines, key, value):
+            new_lines.append(_format_field(key, value))
+    if new_lines:
+        insert_idx = _find_insert_point(lines)
+        lines = lines[:insert_idx] + new_lines + lines[insert_idx:]
+    return lines
+
+
 def update_frontmatter(md_file, new_fields):
     """Update frontmatter in a markdown file with new fields.
 
@@ -95,39 +132,72 @@ def update_frontmatter(md_file, new_fields):
     with open(md_file, "r", encoding="utf-8") as f:
         content = f.read()
 
-    if not content.startswith("---\n"):
+    frontmatter_text, body, _ = _split_frontmatter_body(content)
+    if frontmatter_text is None:
         return False
 
-    # Find the closing delimiter
-    end_match = re.search(r"\n---\n", content[4:])
-    if not end_match:
-        return False
-
-    frontmatter_end = 4 + end_match.start() + 5  # +5 for '\n---\n'
-    frontmatter_text = content[4 : 4 + end_match.start()]
-    body = content[frontmatter_end:]
-
-    lines = frontmatter_text.split("\n")
-    insert_idx = _find_insert_point(lines)
-
-    # Update existing fields or collect new ones
-    new_lines = []
-    for key, value in new_fields.items():
-        if not _update_existing_field(lines, key, value):
-            new_lines.append(_format_field(key, value))
-
-    # Insert new lines at the insertion point
-    if new_lines:
-        lines = lines[:insert_idx] + new_lines + lines[insert_idx:]
-
-    # Rebuild frontmatter
-    new_frontmatter = "---\n" + "\n".join(lines) + "\n---\n"
-    new_content = new_frontmatter + body
+    lines = _apply_new_fields(frontmatter_text.split("\n"), new_fields)
+    new_content = "---\n" + "\n".join(lines) + "\n---\n" + body
 
     with open(md_file, "w", encoding="utf-8") as f:
         f.write(new_content)
 
     return True
+
+
+def _build_message_id_index(emails) -> dict:
+    """Build a lookup map from message_id to email dict."""
+    return {
+        email.get("message_id", "").strip(): email
+        for email in emails
+        if email.get("message_id", "").strip()
+    }
+
+
+def _classify_roots_and_children(emails, by_message_id):
+    """Separate emails into root messages and child replies.
+
+    Returns (roots, children) where children maps parent_id -> [child_emails].
+    """
+    children = defaultdict(list)
+    roots = []
+
+    for email in emails:
+        msg_id = email.get("message_id", "").strip()
+        in_reply_to = email.get("in_reply_to", "").strip()
+
+        if not msg_id:
+            roots.append(email)
+            continue
+
+        if not in_reply_to or in_reply_to not in by_message_id:
+            roots.append(email)
+        else:
+            children[in_reply_to].append(email)
+
+    return roots, children
+
+
+def _traverse_thread(email, thread_list, children, position=0):
+    """Recursively traverse thread tree, appending emails in order."""
+    email["thread_position"] = position
+    thread_list.append(email)
+
+    msg_id = email.get("message_id", "")
+    if msg_id in children:
+        sorted_children = sorted(
+            children[msg_id], key=lambda e: e.get("date_sent", "")
+        )
+        for child in sorted_children:
+            _traverse_thread(child, thread_list, children, position + 1)
+
+
+def _annotate_thread(thread_list, thread_id):
+    """Set thread_id and thread_length on all emails in a thread."""
+    length = len(thread_list)
+    for email in thread_list:
+        email["thread_length"] = length
+        email["thread_id"] = thread_id
 
 
 def build_thread_graph(emails):
@@ -139,62 +209,15 @@ def build_thread_graph(emails):
     Returns:
         dict mapping thread_id (root message_id) to list of emails in thread order
     """
-    # Build lookup maps
-    by_message_id = {}
-    for email in emails:
-        msg_id = email.get("message_id", "").strip()
-        if msg_id:
-            by_message_id[msg_id] = email
+    by_message_id = _build_message_id_index(emails)
+    roots, children = _classify_roots_and_children(emails, by_message_id)
 
-    # Build parent-child relationships
-    children = defaultdict(list)
-    roots = []
-
-    for email in emails:
-        msg_id = email.get("message_id", "").strip()
-        in_reply_to = email.get("in_reply_to", "").strip()
-
-        if not msg_id:
-            # No message_id, treat as standalone
-            roots.append(email)
-            continue
-
-        if not in_reply_to or in_reply_to not in by_message_id:
-            # Root message (no parent or parent not in dataset)
-            roots.append(email)
-        else:
-            # Reply to another message
-            children[in_reply_to].append(email)
-
-    # Build threads by traversing from roots
     threads = {}
-
-    def traverse(email, thread_list, position=0):
-        """Recursively traverse thread tree."""
-        email["thread_position"] = position
-        thread_list.append(email)
-
-        msg_id = email.get("message_id", "")
-        if msg_id in children:
-            # Sort children by date
-            sorted_children = sorted(
-                children[msg_id], key=lambda e: e.get("date_sent", "")
-            )
-            for child in sorted_children:
-                traverse(child, thread_list, position + 1)
-
     for root in roots:
         thread_list = []
-        traverse(root, thread_list)
-
-        # Thread ID is the root message_id (or file path if no message_id)
+        _traverse_thread(root, thread_list, children)
         thread_id = root.get("message_id", "") or root["file"]
-
-        # Set thread_length for all emails in thread
-        for email in thread_list:
-            email["thread_length"] = len(thread_list)
-            email["thread_id"] = thread_id
-
+        _annotate_thread(thread_list, thread_id)
         threads[thread_id] = thread_list
 
     return threads
@@ -266,6 +289,49 @@ def generate_thread_index(threads, output_file):
     return output_file
 
 
+def _load_emails_from_dir(dir_path) -> list:
+    """Parse frontmatter from all .md files in dir_path.
+
+    Returns list of metadata dicts with 'file' key added, or empty list.
+    """
+    md_files = list(dir_path.glob("*.md"))
+    if not md_files:
+        print(f"WARNING: No .md files found in {dir_path}", file=sys.stderr)
+        return []
+
+    emails = []
+    for md_file in md_files:
+        metadata = parse_frontmatter(md_file)
+        if metadata:
+            metadata["file"] = str(md_file)
+            emails.append(metadata)
+
+    if not emails:
+        print(
+            f"WARNING: No emails with frontmatter found in {dir_path}",
+            file=sys.stderr,
+        )
+    return emails
+
+
+def _update_thread_frontmatter(threads) -> int:
+    """Write thread_id, thread_position, thread_length into each email's frontmatter.
+
+    Returns count of successfully updated files.
+    """
+    updated_count = 0
+    for _tid, thread_emails in threads.items():
+        for email in thread_emails:
+            new_fields = {
+                "thread_id": email["thread_id"],
+                "thread_position": email["thread_position"],
+                "thread_length": email["thread_length"],
+            }
+            if update_frontmatter(email["file"], new_fields):
+                updated_count += 1
+    return updated_count
+
+
 def reconstruct_threads(directory, output_index=None):
     """Reconstruct email threads from a directory of converted emails.
 
@@ -281,42 +347,13 @@ def reconstruct_threads(directory, output_index=None):
         print(f"ERROR: Directory not found: {directory}", file=sys.stderr)
         sys.exit(1)
 
-    # Find all .md files
-    md_files = list(dir_path.glob("*.md"))
-    if not md_files:
-        print(f"WARNING: No .md files found in {directory}", file=sys.stderr)
-        return {"threads": {}, "updated_count": 0, "index_file": None}
-
-    # Parse frontmatter from all files
-    emails = []
-    for md_file in md_files:
-        metadata = parse_frontmatter(md_file)
-        if metadata:
-            metadata["file"] = str(md_file)
-            emails.append(metadata)
-
+    emails = _load_emails_from_dir(dir_path)
     if not emails:
-        print(
-            f"WARNING: No emails with frontmatter found in {directory}", file=sys.stderr
-        )
         return {"threads": {}, "updated_count": 0, "index_file": None}
 
-    # Build thread graph
     threads = build_thread_graph(emails)
+    updated_count = _update_thread_frontmatter(threads)
 
-    # Update frontmatter in all files
-    updated_count = 0
-    for _tid, thread_emails in threads.items():
-        for email in thread_emails:
-            new_fields = {
-                "thread_id": email["thread_id"],
-                "thread_position": email["thread_position"],
-                "thread_length": email["thread_length"],
-            }
-            if update_frontmatter(email["file"], new_fields):
-                updated_count += 1
-
-    # Generate thread index
     if output_index is None:
         output_index = dir_path / "thread-index.md"
 

@@ -207,9 +207,7 @@ def _build_metadata(pipe, opts):
 
 
 def email_to_markdown(input_file, output_file=None, attachments_dir=None,
-                      extract_entities=False, entity_method='auto',
-                      summary_mode='auto', thread_map=None,
-                      dedup_registry=None, no_normalise=False):
+                      opts=None):
     """Convert email file to markdown with YAML frontmatter and attachment extraction.
 
     Output includes:
@@ -220,7 +218,7 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
     - markdown.new convention fields (title = subject, description = auto-summary)
     - summary_method field indicating how the description was generated
     - tokens_estimate for LLM context budgeting
-    - entities (when extract_entities=True): people, organisations, properties,
+    - entities (when opts.extract_entities=True): people, organisations, properties,
       locations, dates extracted via spaCy/Ollama/regex
     - Body as markdown content
 
@@ -228,23 +226,13 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
         input_file: Path to .eml or .msg file
         output_file: Optional output path for markdown file
         attachments_dir: Optional directory for extracted attachments
-        summary_mode: Summary generation mode ('auto', 'heuristic', 'llm', 'off')
-        thread_map: Optional pre-built thread map for thread reconstruction.
-                   If None, thread fields will be empty.
-        dedup_registry: Optional dict mapping content_hash -> first path.
-                       When provided, duplicate attachments are symlinked instead
-                       of written, and their frontmatter includes a
-                       deduplicated_from field pointing to the canonical copy.
+        opts: ConvertOptions instance. If None, defaults are used.
+              Use ConvertOptions(summary_mode=..., thread_map=..., etc.) to
+              configure entity extraction, summary mode, thread reconstruction,
+              dedup registry, and normalisation.
     """
-    # Pack options internally (public signature unchanged)
-    opts = ConvertOptions(
-        extract_entities=extract_entities,
-        entity_method=entity_method,
-        summary_mode=summary_mode,
-        thread_map=thread_map,
-        dedup_registry=dedup_registry,
-        no_normalise=no_normalise,
-    )
+    if opts is None:
+        opts = ConvertOptions()
 
     input_path = Path(input_file)
     msg = _parse_email_file(input_path)
@@ -356,6 +344,14 @@ def _run_batch(input_path, args, registry):
     thread_map = build_thread_map(input_path)
     print(f"Found {len(thread_map)} emails")
 
+    batch_opts = ConvertOptions(
+        extract_entities=args.extract_entities,
+        entity_method=args.entity_method,
+        summary_mode=args.summary_mode,
+        thread_map=thread_map,
+        dedup_registry=registry,
+        no_normalise=args.no_normalise,
+    )
     processed = 0
     for _message_id, info in thread_map.items():
         email_file = Path(info['file_path'])
@@ -363,12 +359,7 @@ def _run_batch(input_path, args, registry):
             result = email_to_markdown(
                 email_file,
                 output_file=email_file.with_suffix('.md'),
-                extract_entities=args.extract_entities,
-                entity_method=args.entity_method,
-                summary_mode=args.summary_mode,
-                thread_map=thread_map,
-                dedup_registry=registry,
-                no_normalise=args.no_normalise,
+                opts=batch_opts,
             )
             processed += 1
             print(f"Processed: {email_file.name} -> {result['markdown']}")
@@ -401,14 +392,17 @@ def _run_single(input_path, args, registry):
         except Exception:
             pass  # Thread reconstruction is optional
 
-    result = email_to_markdown(
-        args.input, args.output, args.attachments_dir,
+    single_opts = ConvertOptions(
         extract_entities=args.extract_entities,
         entity_method=args.entity_method,
         summary_mode=args.summary_mode,
         thread_map=thread_map,
         dedup_registry=registry,
         no_normalise=args.no_normalise,
+    )
+    result = email_to_markdown(
+        args.input, args.output, args.attachments_dir,
+        opts=single_opts,
     )
 
     print(f"Created: {result['markdown']}")

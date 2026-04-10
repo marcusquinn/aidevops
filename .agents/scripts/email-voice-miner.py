@@ -171,14 +171,8 @@ def _extract_folder_name(decoded: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
-def detect_sent_folder(
-    conn: imaplib.IMAP4_SSL, verbose: bool = False,
-) -> Optional[str]:
-    """Auto-detect the sent mail folder by listing IMAP folders."""
-    status, folders = conn.list()
-    if status != "OK":
-        return None
-
+def _list_imap_folders(folders) -> list:
+    """Extract folder names from raw IMAP LIST response entries."""
     available = []
     for folder_raw in folders:
         if not folder_raw:
@@ -187,11 +181,11 @@ def detect_sent_folder(
         name = _extract_folder_name(decoded)
         if name:
             available.append(name)
+    return available
 
-    if verbose:
-        print(f"  Available folders: {available}", file=sys.stderr)
 
-    # Check for \Sent special-use attribute first
+def _find_sent_by_special_use(folders) -> Optional[str]:
+    """Return the first folder with the \\Sent special-use attribute, or None."""
     for folder_raw in folders:
         if not folder_raw:
             continue
@@ -200,14 +194,68 @@ def detect_sent_folder(
             name = _extract_folder_name(decoded)
             if name:
                 return name
+    return None
 
-    # Fall back to name matching
+
+def _find_sent_by_name(available: list) -> Optional[str]:
+    """Return the first folder matching a known sent-folder name, or None."""
     available_lower = {f.lower(): f for f in available}
     for candidate in SENT_FOLDER_CANDIDATES:
         if candidate.lower() in available_lower:
             return available_lower[candidate.lower()]
-
     return None
+
+
+def detect_sent_folder(
+    conn: imaplib.IMAP4_SSL, verbose: bool = False,
+) -> Optional[str]:
+    """Auto-detect the sent mail folder by listing IMAP folders."""
+    status, folders = conn.list()
+    if status != "OK":
+        return None
+
+    available = _list_imap_folders(folders)
+    if verbose:
+        print(f"  Available folders: {available}", file=sys.stderr)
+
+    return _find_sent_by_special_use(folders) or _find_sent_by_name(available)
+
+
+def _select_imap_folder(conn: imaplib.IMAP4_SSL, folder: str) -> None:
+    """Select an IMAP folder, trying with and without quotes. Exits on failure."""
+    status, _ = conn.select(f'"{folder}"', readonly=True)
+    if status != "OK":
+        status, _ = conn.select(folder, readonly=True)
+        if status != "OK":
+            print(f"ERROR: Cannot select folder '{folder}'", file=sys.stderr)
+            sys.exit(1)
+
+
+def _fetch_message_ids(conn: imaplib.IMAP4_SSL) -> list:
+    """Search for all message IDs in the currently selected folder.
+
+    Returns list of message ID byte strings, or empty list on failure.
+    """
+    status, data = conn.search(None, "ALL")
+    if status != "OK" or not data or not data[0]:
+        print("WARNING: No messages found in sent folder", file=sys.stderr)
+        return []
+    return data[0].split()
+
+
+def _parse_fetched_message(msg_id, msg_data, verbose: bool):
+    """Parse a single fetched RFC822 message. Returns Message or None."""
+    if not msg_data or not msg_data[0]:
+        return None
+    raw = msg_data[0][1]
+    if not isinstance(raw, bytes):
+        return None
+    try:
+        return email.message_from_bytes(raw, policy=email.policy.default)
+    except (ValueError, email.errors.MessageError) as exc:
+        if verbose:
+            print(f"  WARNING: Failed to parse message {msg_id}: {exc}", file=sys.stderr)
+        return None
 
 
 def fetch_sent_emails(
@@ -220,47 +268,28 @@ def fetch_sent_emails(
 
     Returns a list of email.message.Message objects.
     """
-    status, _ = conn.select(f'"{folder}"', readonly=True)
-    if status != "OK":
-        # Try without quotes
-        status, _ = conn.select(folder, readonly=True)
-        if status != "OK":
-            print(f"ERROR: Cannot select folder '{folder}'", file=sys.stderr)
-            sys.exit(1)
+    _select_imap_folder(conn, folder)
 
-    # Search for all messages
-    status, data = conn.search(None, "ALL")
-    if status != "OK" or not data or not data[0]:
-        print("WARNING: No messages found in sent folder", file=sys.stderr)
+    all_ids = _fetch_message_ids(conn)
+    if not all_ids:
         return []
 
-    all_ids = data[0].split()
     total = len(all_ids)
-
     if verbose:
         print(f"  Found {total} messages in '{folder}'", file=sys.stderr)
 
-    # Take the most recent N (last N message IDs)
     sample_ids = all_ids[-sample_size:]
-
     if verbose:
         print(f"  Sampling {len(sample_ids)} most recent messages", file=sys.stderr)
 
     messages = []
     for msg_id in sample_ids:
         status, msg_data = conn.fetch(msg_id, "(RFC822)")
-        if status != "OK" or not msg_data or not msg_data[0]:
+        if status != "OK":
             continue
-        raw = msg_data[0][1]
-        if not isinstance(raw, bytes):
-            continue
-        try:
-            msg = email.message_from_bytes(raw, policy=email.policy.default)
+        msg = _parse_fetched_message(msg_id, msg_data, verbose)
+        if msg is not None:
             messages.append(msg)
-        except (ValueError, email.errors.MessageError) as exc:
-            if verbose:
-                print(f"  WARNING: Failed to parse message {msg_id}: {exc}", file=sys.stderr)
-            continue
 
     return messages
 
@@ -269,23 +298,76 @@ def fetch_sent_emails(
 # Text extraction
 # ---------------------------------------------------------------------------
 
+def _safe_get_content(part) -> str:
+    """Safely extract content from a MIME part, returning '' on decode errors."""
+    try:
+        return part.get_content()
+    except (KeyError, LookupError, UnicodeDecodeError):
+        return ""
+
+
+def _get_plain_from_multipart(msg) -> str:
+    """Find and return the first text/plain part in a multipart message."""
+    for part in msg.walk():
+        if part.get_content_type() == "text/plain":
+            content = _safe_get_content(part)
+            if content:
+                return content
+    return ""
+
+
 def get_plain_body(msg) -> str:
     """Extract plain text body from an email message."""
-    body = ""
     if msg.is_multipart():
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                try:
-                    body = part.get_content()
-                    break
-                except (KeyError, LookupError, UnicodeDecodeError):
-                    continue
-    elif msg.get_content_type() == "text/plain":
-        try:
-            body = msg.get_content()
-        except (KeyError, LookupError, UnicodeDecodeError):
-            body = ""
-    return body or ""
+        return _get_plain_from_multipart(msg)
+    if msg.get_content_type() == "text/plain":
+        return _safe_get_content(msg)
+    return ""
+
+
+_ATTRIBUTION_RE = re.compile(r"^On .+wrote:\s*$", re.DOTALL)
+_ORIGINAL_MSG_RE = re.compile(r"^-{3,}\s*(Original|Forwarded)\s+(Message|message)\s*-{3,}")
+
+
+def _is_quote_start(stripped: str) -> bool:
+    """Return True if the line starts a quoted block."""
+    if stripped.startswith(">"):
+        return True
+    if _ATTRIBUTION_RE.match(stripped):
+        return True
+    if _ORIGINAL_MSG_RE.match(stripped):
+        return True
+    return False
+
+
+class _StripState:
+    """Mutable state for the strip_quoted_content line processor."""
+    __slots__ = ('in_signature', 'in_quoted_block')
+
+    def __init__(self):
+        self.in_signature = False
+        self.in_quoted_block = False
+
+
+def _process_strip_line(line: str, state: _StripState, result: list) -> None:
+    """Process one line through the quote-stripping state machine."""
+    stripped = line.strip()
+
+    if stripped == "--":
+        state.in_signature = True
+        return
+    if state.in_signature:
+        return
+
+    if _is_quote_start(stripped):
+        state.in_quoted_block = True
+        return
+
+    if state.in_quoted_block and stripped:
+        state.in_quoted_block = False
+
+    if not state.in_quoted_block:
+        result.append(line)
 
 
 def strip_quoted_content(text: str) -> str:
@@ -297,43 +379,10 @@ def strip_quoted_content(text: str) -> str:
     - "-----Original Message-----" blocks
     - Signature blocks (after --)
     """
-    lines = text.splitlines()
+    state = _StripState()
     result = []
-    in_signature = False
-    in_quoted_block = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Signature delimiter
-        if stripped == "--":
-            in_signature = True
-            continue
-        if in_signature:
-            continue
-
-        # Standard quote marker
-        if stripped.startswith(">"):
-            in_quoted_block = True
-            continue
-
-        # Attribution line: "On <date>, <name> wrote:"
-        if re.match(r"^On .+wrote:\s*$", stripped, re.DOTALL):
-            in_quoted_block = True
-            continue
-
-        # Original message delimiter
-        if re.match(r"^-{3,}\s*(Original|Forwarded)\s+(Message|message)\s*-{3,}", stripped):
-            in_quoted_block = True
-            continue
-
-        # Exit quoted block on non-empty, non-quoted line
-        if in_quoted_block and stripped:
-            in_quoted_block = False
-
-        if not in_quoted_block:
-            result.append(line)
-
+    for line in text.splitlines():
+        _process_strip_line(line, state, result)
     return "\n".join(result)
 
 
@@ -906,19 +955,14 @@ def _write_profile(
     print(f"Voice profile written to: {output_file}")
 
 
-def main() -> int:
-    """Main entry point. Returns exit code."""
-    args = parse_args()
-    sample_size = min(args.sample_size, MAX_SAMPLE_SIZE)
-    if sample_size < 10:
-        print(
-            "WARNING: Sample size < 10 may produce unreliable patterns",
-            file=sys.stderr,
-        )
+def _fetch_messages(args, sample_size: int):
+    """Connect to IMAP and fetch sent messages. Returns (messages, error_code).
 
+    Returns (None, 1) on connection or folder errors.
+    """
     password = _get_imap_password()
     if not password:
-        return 1
+        return None, 1
 
     _log(args.verbose, f"Connecting to {args.imap_host}:{args.imap_port}...")
     conn = connect_imap(args.imap_host, args.imap_port, args.imap_user, password)
@@ -926,16 +970,19 @@ def main() -> int:
     sent_folder = _resolve_sent_folder(conn, args.sent_folder, args.verbose)
     if not sent_folder:
         conn.logout()
-        return 1
+        return None, 1
 
     _log(args.verbose, f"Fetching up to {sample_size} emails from '{sent_folder}'...")
     messages = fetch_sent_emails(conn, sent_folder, sample_size, verbose=args.verbose)
     conn.logout()
+    return messages, 0
 
-    if not messages:
-        print("ERROR: No emails fetched from sent folder", file=sys.stderr)
-        return 1
 
+def _build_profile(args, messages) -> str:
+    """Analyse messages and synthesise voice profile markdown.
+
+    Returns the profile markdown string, or None on analysis failure.
+    """
     _log(args.verbose, f"Fetched {len(messages)} emails. Analysing...")
     analysis = analyse_emails(messages, verbose=args.verbose)
     if not analysis:
@@ -944,7 +991,7 @@ def main() -> int:
             "(emails may be empty or unreadable)",
             file=sys.stderr,
         )
-        return 1
+        return None
 
     _log(args.verbose, f"Analysis complete. {analysis['total_analysed']} emails processed.")
 
@@ -955,7 +1002,32 @@ def main() -> int:
         if ai_synthesis:
             _log(args.verbose, "AI synthesis complete.")
 
-    profile_md = generate_profile_markdown(analysis, args.account, ai_synthesis)
+    return generate_profile_markdown(analysis, args.account, ai_synthesis), analysis
+
+
+def main() -> int:
+    """Main entry point. Returns exit code."""
+    args = parse_args()
+    sample_size = min(args.sample_size, MAX_SAMPLE_SIZE)
+    if sample_size < 10:
+        print(
+            "WARNING: Sample size < 10 may produce unreliable patterns",
+            file=sys.stderr,
+        )
+
+    messages, err = _fetch_messages(args, sample_size)
+    if err:
+        return err
+
+    if not messages:
+        print("ERROR: No emails fetched from sent folder", file=sys.stderr)
+        return 1
+
+    result = _build_profile(args, messages)
+    if result is None:
+        return 1
+
+    profile_md, analysis = result
 
     if args.dry_run:
         print(profile_md)

@@ -47,6 +47,25 @@ def estimate_tokens(text):
     return int(words * 1.3)
 
 
+_YAML_SPECIAL_CHARS = frozenset(
+    ':#{}[],&*?|-<>=!%@`\n\r"\''
+)
+
+
+def _needs_yaml_quoting(value: str) -> bool:
+    """Return True if the value requires YAML double-quoting."""
+    if value.startswith((' ', '\t')):
+        return True
+    return bool(_YAML_SPECIAL_CHARS.intersection(value))
+
+
+def _yaml_quote(value: str) -> str:
+    """Wrap value in YAML double quotes with proper escaping."""
+    value = value.replace('\\', '\\\\').replace('"', '\\"')
+    value = value.replace('\n', ' ').replace('\r', '')
+    return f'"{value}"'
+
+
 def yaml_escape(value):
     """Escape a string value for safe YAML output.
 
@@ -58,18 +77,8 @@ def yaml_escape(value):
     value = str(value)
     if not value:
         return '""'
-    # Quote if contains YAML-special characters or starts with special chars
-    needs_quoting = any(c in value for c in [
-        ':', '#', '{', '}', '[', ']', ',', '&', '*', '?', '|', '-',
-        '<', '>', '=', '!', '%', '@', '`', '\n', '\r', '"', "'"
-    ])
-    needs_quoting = needs_quoting or value.startswith((' ', '\t'))
-    if needs_quoting:
-        # Escape backslashes and double quotes for YAML double-quoted strings
-        value = value.replace('\\', '\\\\').replace('"', '\\"')
-        # Replace newlines with spaces
-        value = value.replace('\n', ' ').replace('\r', '')
-        return f'"{value}"'
+    if _needs_yaml_quoting(value):
+        return _yaml_quote(value)
     return value
 
 
@@ -259,6 +268,22 @@ def normalise_email_sections(body):
 # Thread reconstruction
 # ---------------------------------------------------------------------------
 
+def _parse_email_thread_headers(email_file: Path) -> dict:
+    """Parse thread-relevant headers from a single email file.
+
+    Returns a dict with message_id, in_reply_to, date_sent, subject,
+    or raises an exception on parse failure.
+    """
+    ext = email_file.suffix.lower()
+    msg = parse_eml(email_file) if ext == '.eml' else parse_msg(email_file)
+    return {
+        'message_id': extract_header_safe(msg, 'Message-ID'),
+        'in_reply_to': extract_header_safe(msg, 'In-Reply-To'),
+        'date_sent': parse_date_safe(extract_header_safe(msg, 'Date')),
+        'subject': extract_header_safe(msg, 'Subject', 'No Subject'),
+    }
+
+
 def build_thread_map(emails_dir: Path) -> Dict[str, Dict]:
     """Build a map of all emails by message-id for thread reconstruction.
 
@@ -266,33 +291,34 @@ def build_thread_map(emails_dir: Path) -> Dict[str, Dict]:
     """
     thread_map = {}
 
-    # Find all .eml and .msg files
     for ext in ['.eml', '.msg']:
         for email_file in emails_dir.glob(f'**/*{ext}'):
             try:
-                # Parse just the headers we need
-                if ext == '.eml':
-                    msg = parse_eml(email_file)
-                else:
-                    msg = parse_msg(email_file)
-
-                message_id = extract_header_safe(msg, 'Message-ID')
-                in_reply_to = extract_header_safe(msg, 'In-Reply-To')
-                date_sent_raw = extract_header_safe(msg, 'Date')
-                subject = extract_header_safe(msg, 'Subject', 'No Subject')
-
-                if message_id:
-                    thread_map[message_id] = {
+                headers = _parse_email_thread_headers(email_file)
+                if headers['message_id']:
+                    thread_map[headers['message_id']] = {
                         'file_path': str(email_file),
-                        'in_reply_to': in_reply_to,
-                        'date_sent': parse_date_safe(date_sent_raw),
-                        'subject': subject
+                        'in_reply_to': headers['in_reply_to'],
+                        'date_sent': headers['date_sent'],
+                        'subject': headers['subject'],
                     }
             except Exception as e:
                 print(f"Warning: Failed to parse {email_file}: {e}", file=sys.stderr)
                 continue
 
     return thread_map
+
+
+def _next_ancestor(current_id: str, thread_map: Dict[str, Dict],
+                    visited: set) -> str:
+    """Return the parent message_id of current_id, or '' if none/cycle."""
+    info = thread_map.get(current_id)
+    if not info:
+        return ''
+    parent = info.get('in_reply_to', '')
+    if not parent or parent not in thread_map or parent in visited:
+        return ''
+    return parent
 
 
 def _walk_ancestor_chain(message_id: str, thread_map: Dict[str, Dict]) -> List[str]:
@@ -305,17 +331,12 @@ def _walk_ancestor_chain(message_id: str, thread_map: Dict[str, Dict]) -> List[s
     visited = {current_id}
 
     while True:
-        current_info = thread_map.get(current_id)
-        if not current_info:
+        parent = _next_ancestor(current_id, thread_map, visited)
+        if not parent:
             break
-        in_reply_to = current_info.get('in_reply_to', '')
-        if not in_reply_to or in_reply_to not in thread_map:
-            break
-        if in_reply_to in visited:
-            break
-        chain.insert(0, in_reply_to)
-        visited.add(in_reply_to)
-        current_id = in_reply_to
+        chain.insert(0, parent)
+        visited.add(parent)
+        current_id = parent
 
     return chain
 
@@ -353,15 +374,12 @@ def reconstruct_thread(message_id: str, thread_map: Dict[str, Dict]) -> Tuple[st
     return (thread_id, thread_position, thread_length)
 
 
-def generate_thread_index(thread_map: Dict[str, Dict], output_dir: Path) -> Dict[str, List[Dict]]:
-    """Generate thread index files grouped by thread_id.
+def _group_emails_by_thread(thread_map: Dict[str, Dict]) -> dict:
+    """Group all emails in thread_map by their thread_id.
 
-    Returns a dict mapping thread_id -> list of email metadata in chronological order.
-    Writes one index file per thread to output_dir/threads/
+    Returns a defaultdict mapping thread_id -> sorted list of email metadata dicts.
     """
-    # Group emails by thread
-    threads = defaultdict(list)
-
+    threads: dict = defaultdict(list)
     for message_id, info in thread_map.items():
         thread_id, position, length = reconstruct_thread(message_id, thread_map)
         if thread_id:
@@ -373,20 +391,17 @@ def generate_thread_index(thread_map: Dict[str, Dict], output_dir: Path) -> Dict
                 'thread_position': position,
                 'thread_length': length
             })
-
-    # Sort each thread by date
     for thread_id in threads:
         threads[thread_id].sort(key=lambda x: x['date_sent'] or '')
+    return threads
 
-    # Write thread index files
-    threads_dir = output_dir / 'threads'
+
+def _write_thread_index_files(threads: dict, threads_dir: Path) -> None:
+    """Write one JSON index file per thread into threads_dir."""
     threads_dir.mkdir(parents=True, exist_ok=True)
-
     for thread_id, emails in threads.items():
-        # Sanitize thread_id for filename (remove angle brackets, slashes)
         safe_thread_id = re.sub(r'[<>:/\\|?*]', '_', thread_id)
         index_file = threads_dir / f'{safe_thread_id}.json'
-
         with open(index_file, 'w', encoding='utf-8') as f:
             json.dump({
                 'thread_id': thread_id,
@@ -394,6 +409,15 @@ def generate_thread_index(thread_map: Dict[str, Dict], output_dir: Path) -> Dict
                 'emails': emails
             }, f, indent=2, ensure_ascii=False)
 
+
+def generate_thread_index(thread_map: Dict[str, Dict], output_dir: Path) -> Dict[str, List[Dict]]:
+    """Generate thread index files grouped by thread_id.
+
+    Returns a dict mapping thread_id -> list of email metadata in chronological order.
+    Writes one index file per thread to output_dir/threads/
+    """
+    threads = _group_emails_by_thread(thread_map)
+    _write_thread_index_files(threads, output_dir / 'threads')
     return dict(threads)
 
 
@@ -436,6 +460,20 @@ def _format_entities_yaml(key, entities):
     return lines
 
 
+def _format_frontmatter_field(key, value) -> list:
+    """Format a single metadata field as YAML line(s).
+
+    Returns a list of strings (may be multiple lines for complex types).
+    """
+    if key == 'attachments' and isinstance(value, list):
+        return _format_attachments_yaml(key, value)
+    if key == 'entities' and isinstance(value, dict):
+        return _format_entities_yaml(key, value)
+    if isinstance(value, (int, float)):
+        return [f'{key}: {value}']
+    return [f'{key}: {yaml_escape(value)}']
+
+
 def build_frontmatter(metadata):
     """Build YAML frontmatter string from metadata dict.
 
@@ -445,13 +483,6 @@ def build_frontmatter(metadata):
     """
     lines = ['---']
     for key, value in metadata.items():
-        if key == 'attachments' and isinstance(value, list):
-            lines.extend(_format_attachments_yaml(key, value))
-        elif key == 'entities' and isinstance(value, dict):
-            lines.extend(_format_entities_yaml(key, value))
-        elif isinstance(value, (int, float)):
-            lines.append(f'{key}: {value}')
-        else:
-            lines.append(f'{key}: {yaml_escape(value)}')
+        lines.extend(_format_frontmatter_field(key, value))
     lines.append('---')
     return '\n'.join(lines)

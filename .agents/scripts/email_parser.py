@@ -39,27 +39,43 @@ def parse_msg(file_path):
     return msg
 
 
-def _extract_mime_parts(msg):
-    """Extract text/plain and text/html parts from an email.message.Message.
+def _collect_multipart_bodies(msg):
+    """Collect text/plain and text/html from a multipart message.
 
     Returns (body_text, body_html) taking the first occurrence of each type.
     """
     body_text = ""
     body_html = ""
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            if content_type == 'text/plain' and not body_text:
-                body_text = part.get_content()
-            elif content_type == 'text/html' and not body_html:
-                body_html = part.get_content()
-    else:
-        content_type = msg.get_content_type()
-        if content_type == 'text/plain':
-            body_text = msg.get_content()
-        elif content_type == 'text/html':
-            body_html = msg.get_content()
+    for part in msg.walk():
+        content_type = part.get_content_type()
+        if content_type == 'text/plain' and not body_text:
+            body_text = part.get_content()
+        elif content_type == 'text/html' and not body_html:
+            body_html = part.get_content()
     return body_text, body_html
+
+
+def _collect_singlepart_bodies(msg):
+    """Collect text/plain or text/html from a non-multipart message.
+
+    Returns (body_text, body_html).
+    """
+    content_type = msg.get_content_type()
+    if content_type == 'text/plain':
+        return msg.get_content(), ""
+    if content_type == 'text/html':
+        return "", msg.get_content()
+    return "", ""
+
+
+def _extract_mime_parts(msg):
+    """Extract text/plain and text/html parts from an email.message.Message.
+
+    Returns (body_text, body_html) taking the first occurrence of each type.
+    """
+    if msg.is_multipart():
+        return _collect_multipart_bodies(msg)
+    return _collect_singlepart_bodies(msg)
 
 
 def _html_to_markdown(html_body):
@@ -115,39 +131,48 @@ def save_dedup_registry(registry, registry_path):
             json.dump(registry, f, indent=2)
 
 
+def _write_file(filepath, data):
+    """Write binary data to filepath."""
+    with open(filepath, 'wb') as f:
+        f.write(data)
+
+
+def _symlink_attachment(filepath, original_path) -> dict:
+    """Create a symlink at filepath pointing to original_path.
+
+    Prefers relative symlinks for portability; falls back to absolute.
+    Returns dedup_info dict with 'deduplicated_from' key.
+    """
+    try:
+        rel_target = os.path.relpath(original_path, os.path.dirname(str(filepath)))
+        os.symlink(rel_target, str(filepath))
+    except OSError:
+        os.symlink(original_path, str(filepath))
+    return {'deduplicated_from': original_path}
+
+
 def _save_attachment(filepath, data, content_hash, dedup_registry):
     """Save an attachment, deduplicating via symlink if hash already seen.
 
     Returns a dict with 'deduplicated_from' set when a duplicate is detected.
     The original file is symlinked rather than copied to save disk space.
     """
-    dedup_info = {}
-
-    if dedup_registry is not None and content_hash in dedup_registry:
-        # Duplicate detected — create symlink to first occurrence
-        original_path = dedup_registry[content_hash]
-        if os.path.exists(original_path):
-            # Use relative symlink for portability
-            try:
-                rel_target = os.path.relpath(original_path, os.path.dirname(str(filepath)))
-                os.symlink(rel_target, str(filepath))
-            except OSError:
-                # Fallback: absolute symlink if relative fails
-                os.symlink(original_path, str(filepath))
-            dedup_info['deduplicated_from'] = original_path
-        else:
-            # Original no longer exists — write normally and become new canonical
-            with open(filepath, 'wb') as f:
-                f.write(data)
-            dedup_registry[content_hash] = str(filepath)
-    else:
+    if dedup_registry is None or content_hash not in dedup_registry:
         # First occurrence — write file and register
-        with open(filepath, 'wb') as f:
-            f.write(data)
+        _write_file(filepath, data)
         if dedup_registry is not None:
             dedup_registry[content_hash] = str(filepath)
+        return {}
 
-    return dedup_info
+    # Duplicate detected — symlink to first occurrence if it still exists
+    original_path = dedup_registry[content_hash]
+    if os.path.exists(original_path):
+        return _symlink_attachment(filepath, original_path)
+
+    # Original no longer exists — write normally and become new canonical
+    _write_file(filepath, data)
+    dedup_registry[content_hash] = str(filepath)
+    return {}
 
 
 def _process_one_attachment(filename, data, output_path, dedup_registry):
