@@ -2009,6 +2009,31 @@ GITATTRSEOF
 			fi
 		fi
 
+		# Add scaffolding files to gitignore (local-only, not committed).
+		# Only AGENTS.md and .agents/ are tracked; everything else is local
+		# scaffolding that should not pollute the project repo.
+		# See goodsalt2 pattern: "AGENTS.md is tracked, everything else is local"
+		local _scaffolding_ignores=(
+			"TODO.md"
+			"todo/"
+			".gitattributes"
+		)
+		# Add database scaffolding if enabled
+		if [[ "$enable_database" == "true" ]]; then
+			_scaffolding_ignores+=("schemas/" "migrations/" "seeds/")
+		fi
+		for _si in "${_scaffolding_ignores[@]}"; do
+			if ! grep -q "^/\?${_si}$" "$gitignore" 2>/dev/null; then
+				# Untrack if already committed by older framework version
+				if git -C "$project_root" ls-files --error-unmatch "$_si" &>/dev/null 2>&1; then
+					git -C "$project_root" rm -r --cached "$_si" &>/dev/null || true
+					print_info "Untracked $_si from git (was committed by older version)"
+				fi
+				ensure_trailing_newline "$gitignore"
+				echo "$_si" >>"$gitignore"
+				gitignore_updated=true
+			fi
+		done
 		if [[ "$gitignore_updated" == "true" ]]; then
 			print_info "Updated .gitignore"
 		fi
@@ -2105,14 +2130,13 @@ GITATTRSEOF
 
 	# Auto-commit initialized files so they don't linger as mystery unstaged
 	# changes (#2570 bug 2). Collect all files that cmd_init creates/modifies.
+	# Only tracked files go here — scaffolding (TODO.md, todo/, schemas/,
+	# migrations/, seeds/, .gitattributes) is gitignored and stays local.
 	local init_files=()
-	[[ -f "$project_root/.gitattributes" ]] && init_files+=(".gitattributes")
 	[[ -f "$project_root/.gitignore" ]] && init_files+=(".gitignore")
 	[[ -d "$project_root/.agents" ]] && init_files+=(".agents/")
 	[[ -f "$project_root/AGENTS.md" ]] && init_files+=("AGENTS.md")
 	[[ -f "$project_root/DESIGN.md" ]] && init_files+=("DESIGN.md")
-	[[ -f "$project_root/TODO.md" ]] && init_files+=("TODO.md")
-	[[ -d "$project_root/todo" ]] && init_files+=("todo/")
 	[[ -f "$project_root/MODELS.md" ]] && init_files+=("MODELS.md")
 	[[ -f "$project_root/LICENCE" ]] && init_files+=("LICENCE")
 	[[ -f "$project_root/CHANGELOG.md" ]] && init_files+=("CHANGELOG.md")
@@ -2122,9 +2146,6 @@ GITATTRSEOF
 	[[ -f "$project_root/.clinerules" ]] && init_files+=(".clinerules")
 	[[ -d "$project_root/.github" ]] && init_files+=(".github/")
 	[[ -f "$project_root/.sops.yaml" ]] && init_files+=(".sops.yaml")
-	[[ -d "$project_root/schemas" ]] && init_files+=("schemas/")
-	[[ -d "$project_root/migrations" ]] && init_files+=("migrations/")
-	[[ -d "$project_root/seeds" ]] && init_files+=("seeds/")
 
 	local committed=false
 	if [[ ${#init_files[@]} -gt 0 ]]; then
