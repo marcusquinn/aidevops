@@ -127,14 +127,46 @@ def estimate_page_from_position(
     return min(page, page_count)
 
 
+class TreeContext:
+    """Shared context for tree-building operations."""
+
+    def __init__(
+        self,
+        total_lines: int,
+        page_count: int,
+        use_ollama: bool,
+        ollama_model: str,
+    ) -> None:
+        self.total_lines = total_lines
+        self.page_count = page_count
+        self.use_ollama = use_ollama
+        self.ollama_model = ollama_model
+
+
+def get_section_summary(section: Dict[str, Any], ctx: TreeContext) -> str:
+    """Generate a summary for a section using Ollama or first-sentence extraction."""
+    summary = ""
+    if ctx.use_ollama and section['content']:
+        summary = get_ollama_summary(section['content'], ctx.ollama_model) or ""
+    if not summary and section['content']:
+        summary = extract_first_sentence(section['content'])
+    return summary
+
+
+def get_section_page(section: Dict[str, Any], ctx: TreeContext) -> Optional[int]:
+    """Estimate the PDF page for a section, or None if page_count is 0."""
+    if ctx.page_count > 0:
+        return estimate_page_from_position(
+            section['line_idx'], ctx.total_lines, ctx.page_count
+        )
+    return None
+
+
 def build_tree_recursive(
     sections_list: List[Dict[str, Any]],
     start_idx: int,
     parent_level: int,
-    total_lines: int,
-    page_count: int,
-    use_ollama: bool,
-    ollama_model: str,
+    ctx: TreeContext,
 ) -> tuple:
     """Recursively build tree from sections starting at start_idx."""
     children = []
@@ -144,40 +176,18 @@ def build_tree_recursive(
         section = sections_list[i]
 
         if section['level'] <= parent_level:
-            # This section is at or above parent level — stop
             break
-
-        # Generate summary
-        summary = ""
-        if use_ollama and section['content']:
-            summary = get_ollama_summary(section['content'], ollama_model) or ""
-        if not summary and section['content']:
-            summary = extract_first_sentence(section['content'])
-
-        # Estimate page reference
-        page_ref = None
-        if page_count > 0:
-            page_ref = estimate_page_from_position(
-                section['line_idx'], total_lines, page_count
-            )
 
         node: Dict[str, Any] = {
             "title": section['title'],
             "level": section['level'],
-            "summary": summary,
-            "page": page_ref,
+            "summary": get_section_summary(section, ctx),
+            "page": get_section_page(section, ctx),
             "children": [],
         }
 
-        # Find children (sections with higher level numbers before next sibling)
         child_children, next_i = build_tree_recursive(
-            sections_list,
-            i + 1,
-            section['level'],
-            total_lines,
-            page_count,
-            use_ollama,
-            ollama_model,
+            sections_list, i + 1, section['level'], ctx
         )
         node['children'] = child_children
 
@@ -185,6 +195,71 @@ def build_tree_recursive(
         i = next_i
 
     return children, i
+
+
+def parse_sections(content_lines: List[str]) -> List[Dict[str, Any]]:
+    """Parse markdown headings into a flat list of section dicts."""
+    sections: List[Dict[str, Any]] = []
+    current_heading: Optional[Dict[str, Any]] = None
+    current_content_lines: List[str] = []
+
+    for i, line in enumerate(content_lines):
+        heading_match = re.match(r'^(#{1,6})\s+(.+)$', line.strip())
+        if heading_match:
+            if current_heading is not None:
+                sections.append({
+                    'level': current_heading['level'],
+                    'title': current_heading['title'],
+                    'line_idx': current_heading['line_idx'],
+                    'content': '\n'.join(current_content_lines).strip(),
+                })
+            current_heading = {
+                'level': len(heading_match.group(1)),
+                'title': heading_match.group(2).strip(),
+                'line_idx': i,
+            }
+            current_content_lines = []
+        else:
+            current_content_lines.append(line)
+
+    if current_heading is not None:
+        sections.append({
+            'level': current_heading['level'],
+            'title': current_heading['title'],
+            'line_idx': current_heading['line_idx'],
+            'content': '\n'.join(current_content_lines).strip(),
+        })
+
+    return sections
+
+
+def build_headingless_result(
+    frontmatter: Dict[str, str],
+    content_lines: List[str],
+    ctx: TreeContext,
+) -> Dict[str, Any]:
+    """Build a single-node result when the document has no headings."""
+    full_content = '\n'.join(content_lines).strip()
+    title = frontmatter.get('title', 'Untitled')
+    summary = ""
+    if ctx.use_ollama and full_content:
+        summary = get_ollama_summary(full_content, ctx.ollama_model) or ""
+    if not summary and full_content:
+        summary = extract_first_sentence(full_content)
+    return {
+        "version": "1.0",
+        "generator": "aidevops/document-creation-helper",
+        "source_file": frontmatter.get('source_file', ''),
+        "content_hash": frontmatter.get('content_hash', ''),
+        "page_count": ctx.page_count,
+        "tree": {
+            "title": title,
+            "level": 1,
+            "summary": summary,
+            "page": 1 if ctx.page_count > 0 else None,
+            "children": [],
+        },
+    }
 
 
 def build_pageindex_tree(
@@ -198,107 +273,33 @@ def build_pageindex_tree(
     frontmatter = extract_frontmatter(lines)
     content_start = get_frontmatter_end(lines)
     content_lines = lines[content_start:]
-    total_lines = len(content_lines)
+    ctx = TreeContext(len(content_lines), page_count, use_ollama, ollama_model)
 
-    # Parse headings and their content
-    sections: List[Dict[str, Any]] = []
-    current_heading: Optional[Dict[str, Any]] = None
-    current_content_lines: List[str] = []
-
-    for i, line in enumerate(content_lines):
-        stripped = line.strip()
-        heading_match = re.match(r'^(#{1,6})\s+(.+)$', stripped)
-
-        if heading_match:
-            # Save previous section
-            if current_heading is not None:
-                sections.append({
-                    'level': current_heading['level'],
-                    'title': current_heading['title'],
-                    'line_idx': current_heading['line_idx'],
-                    'content': '\n'.join(current_content_lines).strip(),
-                })
-
-            level = len(heading_match.group(1))
-            title = heading_match.group(2).strip()
-            current_heading = {
-                'level': level,
-                'title': title,
-                'line_idx': i,
-            }
-            current_content_lines = []
-        else:
-            current_content_lines.append(line)
-
-    # Save last section
-    if current_heading is not None:
-        sections.append({
-            'level': current_heading['level'],
-            'title': current_heading['title'],
-            'line_idx': current_heading['line_idx'],
-            'content': '\n'.join(current_content_lines).strip(),
-        })
+    sections = parse_sections(content_lines)
 
     if not sections:
-        # No headings found — create a single root node from the whole content
-        full_content = '\n'.join(content_lines).strip()
-        title = frontmatter.get('title', 'Untitled')
-        summary = ""
-        if use_ollama and full_content:
-            summary = get_ollama_summary(full_content, ollama_model) or ""
-        if not summary and full_content:
-            summary = extract_first_sentence(full_content)
+        return build_headingless_result(frontmatter, content_lines, ctx)
 
-        return {
-            "version": "1.0",
-            "generator": "aidevops/document-creation-helper",
-            "source_file": frontmatter.get('source_file', ''),
-            "content_hash": frontmatter.get('content_hash', ''),
-            "page_count": page_count,
-            "tree": {
-                "title": title,
-                "level": 1,
-                "summary": summary,
-                "page": 1 if page_count > 0 else None,
-                "children": [],
-            },
-        }
-
-    # Build hierarchical tree from flat section list
     root_section = sections[0]
-    root_summary = ""
-    if use_ollama and root_section['content']:
-        root_summary = get_ollama_summary(root_section['content'], ollama_model) or ""
-    if not root_summary and root_section['content']:
-        root_summary = extract_first_sentence(root_section['content'])
-
-    root_page = 1 if page_count > 0 else None
-
-    root_children, _ = build_tree_recursive(
-        sections, 1, root_section['level'], total_lines, page_count,
-        use_ollama, ollama_model,
-    )
+    root_summary = get_section_summary(root_section, ctx)
+    root_children, _ = build_tree_recursive(sections, 1, root_section['level'], ctx)
 
     tree: Dict[str, Any] = {
         "title": root_section['title'],
         "level": root_section['level'],
         "summary": root_summary,
-        "page": root_page,
+        "page": 1 if page_count > 0 else None,
         "children": root_children,
     }
 
-    # Compute content hash if not in frontmatter
     content_hash = frontmatter.get('content_hash', '')
     if not content_hash:
-        full_text = '\n'.join(lines)
-        content_hash = hashlib.sha256(full_text.encode('utf-8')).hexdigest()
+        content_hash = hashlib.sha256('\n'.join(lines).encode('utf-8')).hexdigest()
 
     return {
         "version": "1.0",
         "generator": "aidevops/document-creation-helper",
-        "source_file": frontmatter.get(
-            'source_file', source_pdf if source_pdf else ''
-        ),
+        "source_file": frontmatter.get('source_file', source_pdf if source_pdf else ''),
         "content_hash": content_hash,
         "page_count": page_count,
         "tree": tree,

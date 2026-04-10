@@ -21,38 +21,51 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 
+def _strip_quotes(value: str) -> str:
+    """Strip surrounding single or double quotes from a YAML value."""
+    if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+        return value[1:-1]
+    return value
+
+
+def _parse_fm_line(line: str, fields: Dict[str, str]) -> None:
+    """Parse a single frontmatter key: value line into fields."""
+    colon_pos = line.find(':')
+    if colon_pos > 0:
+        key = line[:colon_pos].strip()
+        value = _strip_quotes(line[colon_pos + 1:].strip())
+        fields[key] = value
+
+
+def _read_frontmatter_block(md_path: str) -> str:
+    """Read and return the raw frontmatter block from a markdown file, or ''."""
+    try:
+        with open(md_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read(8192)
+    except (OSError, IOError):
+        return ''
+    if not content.startswith('---'):
+        return ''
+    end = content.find('\n---', 3)
+    if end == -1:
+        return ''
+    return content[4:end]
+
+
 def parse_frontmatter(md_path: str) -> Dict[str, str]:
     """Extract YAML frontmatter fields from a markdown file."""
     fields: Dict[str, str] = {}
-    try:
-        with open(md_path, 'r', encoding='utf-8', errors='replace') as f:
-            content = f.read(8192)  # Read enough for frontmatter
-    except (OSError, IOError):
+    fm_block = _read_frontmatter_block(md_path)
+    if not fm_block:
         return fields
 
-    if not content.startswith('---'):
-        return fields
-
-    end = content.find('\n---', 3)
-    if end == -1:
-        return fields
-
-    fm_block = content[4:end]
     for raw_line in fm_block.split('\n'):
-        # Skip indented lines (nested YAML: list items, sub-keys)
-        if raw_line.startswith(' ') or raw_line.startswith('\t'):
+        if raw_line.startswith((' ', '\t')):
             continue
         line = raw_line.strip()
         if not line or line.startswith('#') or line.startswith('- '):
             continue
-        colon_pos = line.find(':')
-        if colon_pos > 0:
-            key = line[:colon_pos].strip()
-            value = line[colon_pos + 1:].strip()
-            # Strip surrounding quotes
-            if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
-                value = value[1:-1]
-            fields[key] = value
+        _parse_fm_line(line, fields)
 
     return fields
 
@@ -143,6 +156,64 @@ def collect_documents(output_dir: str) -> tuple:
     return documents, msg_id_map, thread_map, reply_chains
 
 
+def discover_threads(
+    documents: List[OrderedDict],
+    msg_id_map: Dict[str, int],
+    thread_map: Dict[str, List[int]],
+    reply_chains: Dict[str, str],
+) -> Dict[str, List[int]]:
+    """Populate thread_map from reply chains when thread_id data is absent."""
+    if thread_map:
+        return thread_map
+
+    root_groups: Dict[str, List[int]] = {}
+    for mid, idx in msg_id_map.items():
+        root = find_thread_root(mid, reply_chains)
+        root_groups.setdefault(root, []).append(idx)
+
+    result: Dict[str, List[int]] = {}
+    for root_mid, indices in root_groups.items():
+        if len(indices) > 1:
+            result[root_mid] = sorted(
+                indices,
+                key=lambda i: documents[i].get('date_sent', ''),
+            )
+    return result
+
+
+def collect_thread_participants(thread_docs: List[OrderedDict]) -> set:
+    """Extract unique email addresses from from/to fields of thread documents."""
+    participants: set = set()
+    for d in thread_docs:
+        for addr in (d.get('from', ''), d.get('to', '')):
+            for part in addr.split(','):
+                part = part.strip()
+                if not part:
+                    continue
+                email_match = re.search(r'<([^>]+)>', part)
+                if email_match:
+                    participants.add(email_match.group(1).lower())
+                elif '@' in part:
+                    participants.add(part.lower())
+    return participants
+
+
+def assemble_thread_record(
+    tid: str, indices: List[int], documents: List[OrderedDict]
+) -> OrderedDict:
+    """Build a single thread OrderedDict from its document indices."""
+    thread_docs = [documents[i] for i in indices]
+    participants = collect_thread_participants(thread_docs)
+    thread: OrderedDict = OrderedDict()
+    thread['thread_id'] = tid
+    thread['subject'] = thread_docs[0].get('subject', '') if thread_docs else ''
+    thread['message_count'] = str(len(indices))
+    thread['participants'] = '; '.join(sorted(participants))
+    thread['first_date'] = thread_docs[0].get('date_sent', '') if thread_docs else ''
+    thread['last_date'] = thread_docs[-1].get('date_sent', '') if thread_docs else ''
+    return thread
+
+
 def build_threads(
     documents: List[OrderedDict],
     msg_id_map: Dict[str, int],
@@ -150,47 +221,11 @@ def build_threads(
     reply_chains: Dict[str, str],
 ) -> List[OrderedDict]:
     """Build thread records from document index data."""
-    if not thread_map:
-        # No thread_id data — reconstruct from in_reply_to chains
-        root_groups: Dict[str, List[int]] = {}
-        for mid, idx in msg_id_map.items():
-            root = find_thread_root(mid, reply_chains)
-            root_groups.setdefault(root, []).append(idx)
-        # Only include groups with >1 message as threads
-        for root_mid, indices in root_groups.items():
-            if len(indices) > 1:
-                thread_map[root_mid] = sorted(
-                    indices,
-                    key=lambda i: documents[i].get('date_sent', ''),
-                )
-
-    threads: List[OrderedDict] = []
-    for tid, indices in sorted(thread_map.items(), key=lambda x: x[0]):
-        thread_docs = [documents[i] for i in indices]
-        # Collect unique participants
-        participants = set()
-        for d in thread_docs:
-            for addr in (d.get('from', ''), d.get('to', '')):
-                for part in addr.split(','):
-                    part = part.strip()
-                    if part:
-                        # Extract email from "Name <email>" format
-                        email_match = re.search(r'<([^>]+)>', part)
-                        if email_match:
-                            participants.add(email_match.group(1).lower())
-                        elif '@' in part:
-                            participants.add(part.lower())
-
-        thread: OrderedDict = OrderedDict()
-        thread['thread_id'] = tid
-        thread['subject'] = thread_docs[0].get('subject', '') if thread_docs else ''
-        thread['message_count'] = str(len(indices))
-        thread['participants'] = '; '.join(sorted(participants))
-        thread['first_date'] = thread_docs[0].get('date_sent', '') if thread_docs else ''
-        thread['last_date'] = thread_docs[-1].get('date_sent', '') if thread_docs else ''
-        threads.append(thread)
-
-    return threads
+    resolved_map = discover_threads(documents, msg_id_map, thread_map, reply_chains)
+    return [
+        assemble_thread_record(tid, indices, documents)
+        for tid, indices in sorted(resolved_map.items(), key=lambda x: x[0])
+    ]
 
 
 def collect_contacts(

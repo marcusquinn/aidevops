@@ -521,40 +521,36 @@ def get_repos(repos_json_path: str) -> list[dict]:
     return result
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Sync Tabby profiles from repos.json")
-    parser.add_argument("--repos-json", required=True, help="Path to repos.json")
-    parser.add_argument("--tabby-config", required=True, help="Path to Tabby config.yaml")
-    parser.add_argument("--status-only", action="store_true", help="Show status without modifying")
-    args = parser.parse_args()
+def show_status(repos: list[dict], existing_cwds: set[str]) -> None:
+    """Print status of repos vs existing Tabby profiles."""
+    print(f"Repos in repos.json: {len(repos)}")
+    has_profile = 0
+    needs_profile = 0
+    for repo in repos:
+        if repo["path"] in existing_cwds:
+            has_profile += 1
+            print(f"  [exists] {repo['name']} -> {repo['path']}")
+        else:
+            needs_profile += 1
+            print(f"  [new]    {repo['name']} -> {repo['path']}")
+    print(f"\nExisting: {has_profile}, New: {needs_profile}")
+    if needs_profile > 0:
+        print("Note: existing profiles are never modified — only new ones are created.")
 
-    repos = get_repos(args.repos_json)
-    config_text = load_yaml_simple(args.tabby_config)
-    existing_cwds = extract_existing_cwds(config_text)
 
-    if args.status_only:
-        print(f"Repos in repos.json: {len(repos)}")
-        has_profile = 0
-        needs_profile = 0
-        for repo in repos:
-            if repo["path"] in existing_cwds:
-                has_profile += 1
-                print(f"  [exists] {repo['name']} -> {repo['path']}")
-            else:
-                needs_profile += 1
-                print(f"  [new]    {repo['name']} -> {repo['path']}")
-        print(f"\nExisting: {has_profile}, New: {needs_profile}")
-        if needs_profile > 0:
-            print("Note: existing profiles are never modified — only new ones are created.")
-        return
-
-    # Determine group ID
+def ensure_group(config_text: str) -> tuple[str, str]:
+    """Return (config_text, group_id), creating a Projects group if needed."""
     group_id = extract_group_id(config_text)
     if not group_id:
         group_id = str(uuid.uuid4())
         config_text = ensure_groups_section(config_text, group_id)
+    return config_text, group_id
 
-    # Find new repos that need profiles
+
+def build_new_profiles(
+    repos: list[dict], existing_cwds: set[str], group_id: str
+) -> list[tuple]:
+    """Build profile entries for repos that don't yet have a Tabby profile."""
     new_profiles = []
     for repo in repos:
         if repo["path"] not in existing_cwds:
@@ -568,13 +564,14 @@ def main():
                 group_id=group_id,
             )
             new_profiles.append((repo, profile_yaml, tab_colour, scheme["name"]))
+    return new_profiles
 
-    if not new_profiles:
-        print("All repos already have Tabby profiles. Nothing to do.")
-        return
 
-    # Insert new profiles into the profiles section
-    lines = config_text.split("\n")
+def find_profiles_insert_line(lines: list[str]) -> tuple[bool, int | None]:
+    """Find where to insert new profiles in the YAML lines.
+
+    Returns (has_profiles_key, insert_line).
+    """
     has_profiles_key = False
     in_profiles = False
     insert_line = None
@@ -584,38 +581,73 @@ def main():
             in_profiles = True
             continue
         if in_profiles and re.match(r"^[a-zA-Z]", line):
-            # This is the next top-level key after profiles
             insert_line = i
             break
+    return has_profiles_key, insert_line
 
-    # Build the new profiles block
-    new_block = "\n".join(p[1] for p in new_profiles)
+
+def find_version_insert_at(lines: list[str]) -> int:
+    """Find the line index after the version: line, or 0 if not found."""
+    for i, line in enumerate(lines):
+        if re.match(r"^version:", line):
+            return i + 1
+    return 0
+
+
+def insert_profiles_block(config_text: str, new_block: str) -> str:
+    """Insert new_block into the profiles section of config_text."""
+    lines = config_text.split("\n")
+    has_profiles_key, insert_line = find_profiles_insert_line(lines)
 
     if not has_profiles_key:
-        # No profiles section exists — create one at the top of the file
-        # (after version: line if present, otherwise at the very top)
-        version_line = None
-        for i, line in enumerate(lines):
-            if re.match(r"^version:", line):
-                version_line = i
-                break
-        insert_at = (version_line + 1) if version_line is not None else 0
+        insert_at = find_version_insert_at(lines)
         lines.insert(insert_at, f"profiles:\n{new_block}")
     else:
         if insert_line is None:
-            # Profiles section goes to end of file — insert before EOF
             insert_line = len(lines)
         lines.insert(insert_line, new_block)
 
-    config_text = "\n".join(lines)
+    return "\n".join(lines)
 
-    # Save
+
+def sync_profiles(args: argparse.Namespace) -> None:
+    """Perform the profile sync: discover new repos and insert their profiles."""
+    repos = get_repos(args.repos_json)
+    config_text = load_yaml_simple(args.tabby_config)
+    existing_cwds = extract_existing_cwds(config_text)
+
+    config_text, group_id = ensure_group(config_text)
+    new_profiles = build_new_profiles(repos, existing_cwds, group_id)
+
+    if not new_profiles:
+        print("All repos already have Tabby profiles. Nothing to do.")
+        return
+
+    new_block = "\n".join(p[1] for p in new_profiles)
+    config_text = insert_profiles_block(config_text, new_block)
     save_yaml(args.tabby_config, config_text)
 
-    # Report
     print(f"Created {len(new_profiles)} new Tabby profile(s):")
     for repo, _, colour, scheme_name in new_profiles:
         print(f"  + {repo['name']} (colour: {colour}, scheme: {scheme_name})")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Sync Tabby profiles from repos.json")
+    parser.add_argument("--repos-json", required=True, help="Path to repos.json")
+    parser.add_argument("--tabby-config", required=True, help="Path to Tabby config.yaml")
+    parser.add_argument("--status-only", action="store_true", help="Show status without modifying")
+    args = parser.parse_args()
+
+    repos = get_repos(args.repos_json)
+    config_text = load_yaml_simple(args.tabby_config)
+    existing_cwds = extract_existing_cwds(config_text)
+
+    if args.status_only:
+        show_status(repos, existing_cwds)
+        return
+
+    sync_profiles(args)
 
 
 if __name__ == "__main__":
