@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- refactor: extract shared playwright_login/like_posts to lib/browser_automation_utils.py, eliminating 27-line duplication between linkedin-automation.py and local-browser-automation.py (#18044)
+
 ## [3.6.224] - 2026-04-10
 
 ### Changed
