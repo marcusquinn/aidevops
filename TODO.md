@@ -89,7 +89,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
-- [ ] t1954 fix: enforce tier checklist consistency in issue-sync — reject tier:simple when brief checklist has unchecked boxes, auto-correct to tier:standard. Deterministic validation in issue-sync-lib.sh. #bug #code-quality #auto-dispatch ~30m ref:GH#18052 logged:2026-04-10 -> [todo/tasks/t1954-brief.md]
+- [x] t1954 fix: enforce tier checklist consistency in issue-sync — reject tier:simple when brief checklist has unchecked boxes, auto-correct to tier:standard. Deterministic validation in issue-sync-lib.sh. #bug #code-quality #auto-dispatch ~30m ref:GH#18052 pr:#18054 completed:2026-04-10 logged:2026-04-10 -> [todo/tasks/t1954-brief.md]
 
 - [ ] t1876 feat: add instruction_to_save detection to session miner — enrich existing session-miner-pulse.sh with new signal source that detects when users provide persistent guidance/corrections during conversations that should be captured in instruction files (AGENTS.md, build.txt). Surfaces findings through autoagent pipeline. Inspired by imbue-ai/mngr conversation review categories. #enhancement #auto-dispatch ~4h (ai:3h test:30m read:30m) ref:GH#16896 logged:2026-04-03 -> [todo/tasks/t1876-brief.md]
 
