@@ -1754,9 +1754,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "hash": "875a824701bfc3db90920e162057b5c84d76582b",
-      "at": "2026-04-10T01:33:01Z",
-      "passes": 13,
+      "hash": "5a87a3746bb97f2e3adbe69c631dff0e6c8c2256",
+      "at": "2026-04-10T03:17:43Z",
+      "passes": 14,
       "pr": 15086
     },
     ".agents/scripts/issue-sync-lib.sh": {
@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "73aa7effecc288bee57688ea40cda93e9c4ac181",
-      "at": "2026-04-10T01:33:02Z",
-      "passes": 3,
+      "hash": "efbe58b551915a847c6d779af54cef9df4a74822",
+      "at": "2026-04-10T03:17:43Z",
+      "passes": 4,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -5261,21 +5261,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "hash": "8bf25bb3319b105ff41da5914c18e282da687662",
-      "at": "2026-04-10T01:33:19Z",
-      "passes": 14,
+      "hash": "1c62774f6be8eb337a3cabb81ac477aa8e77d19b",
+      "at": "2026-04-10T03:17:58Z",
+      "passes": 15,
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "97c5dcaa3bd83de71b6cd715aa240c299754e4ee",
-      "at": "2026-04-10T01:33:19Z",
-      "passes": 47,
+      "hash": "65d13e4de4573e791c8bad7e2d9f130f9d243afe",
+      "at": "2026-04-10T03:17:58Z",
+      "passes": 48,
       "pr": 15470
     },
     "setup.sh": {
-      "hash": "47a208417e17997455c7a30e036df176d8924d3a",
-      "at": "2026-04-10T01:33:19Z",
-      "passes": 46,
+      "hash": "8481a0b457501c09499292b440bbbeb1c075ded2",
+      "at": "2026-04-10T03:17:58Z",
+      "passes": 47,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -5699,9 +5699,9 @@
       "pr": 16651
     },
     ".agents/scripts/dispatch-dedup-helper.sh": {
-      "hash": "e1062ec6cbea8ab0d957a21a48f3101c9653b607",
-      "at": "2026-04-09T07:32:01Z",
-      "passes": 5,
+      "hash": "e7c1df0e577b93b74a6a66f5e8fa31e161dc4be1",
+      "at": "2026-04-10T03:17:43Z",
+      "passes": 6,
       "pr": 16650
     },
     ".agents/tools/ocr/overview.md": {
@@ -6881,10 +6881,10 @@
       "passes": 1
     },
     ".agents/scripts/full-loop-helper.sh": {
-      "hash": "1a6498aa870644760f533d57d117ac1f5bc868f2",
-      "at": "2026-04-10T01:33:20Z",
+      "hash": "52d287d7df7ecb61c95e21327b54562e0113f775",
+      "at": "2026-04-10T03:17:43Z",
       "pr": 18058,
-      "passes": 1
+      "passes": 2
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
