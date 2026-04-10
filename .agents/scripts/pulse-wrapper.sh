@@ -7854,10 +7854,15 @@ _issue_targets_large_files() {
 	if [[ ",$issue_labels," == *",simplification,"* ]] ||
 		[[ ",$issue_labels," == *",simplification-debt,"* ]]; then
 		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
-			gh issue edit "$issue_number" --repo "$repo_slug" \
-				--remove-label "needs-simplification" >/dev/null 2>&1 || true
-			echo "[pulse-wrapper] Simplification gate auto-cleared for #${issue_number} (${repo_slug}) — issue is itself a simplification task (GH#18042)" >>"$LOGFILE"
+			if gh issue edit "$issue_number" --repo "$repo_slug" \
+				--remove-label "needs-simplification" >/dev/null 2>&1; then
+				echo "[pulse-wrapper] Simplification gate auto-cleared for #${issue_number} (${repo_slug}) — issue is itself a simplification task (GH#18042)" >>"$LOGFILE"
+			else
+				echo "[pulse-wrapper] WARN: failed to remove needs-simplification label from #${issue_number} (${repo_slug}); will retry next cycle (GH#18042)" >>"$LOGFILE"
+			fi
 		fi
+		# Always return 1 (don't gate) — the issue IS simplification work
+		# regardless of whether the label removal succeeded.
 		return 1
 	fi
 
