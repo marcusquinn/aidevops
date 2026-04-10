@@ -32,6 +32,8 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 | 252 | GH#18013 | proximity guard firing at 245/247 (2 headroom); bumped to 252 to restore adequate headroom — 245 violations + 7 headroom ensures the proximity guard fires at 247 violations before saturation |
 | 247 | GH#18016 | ratcheted down — actual violations 245 + 2 buffer |
 | 252 | GH#18020 | proximity guard firing at 245/247 (2 headroom); bumped to 252 to restore adequate headroom — 245 violations + 7 headroom ensures the proximity guard fires at 247 violations before saturation |
+| 247 | GH#18028 | ratcheted down — actual violations 245 + 2 buffer |
+| 252 | GH#18056 | proximity guard firing at 245/247 (2 headroom); bumped to 252 to restore adequate headroom — 245 violations + 7 headroom ensures the proximity guard fires at 247 violations before saturation |
 
 ## FUNCTION_COMPLEXITY_THRESHOLD History
 
