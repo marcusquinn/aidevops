@@ -1652,7 +1652,10 @@ _invoke_opencode() {
 	fi
 
 	# Wait for the worker to finish (watchdog will kill it if stalled)
-	wait "$worker_pid" 2>/dev/null || true
+	print_info "[lifecycle] waiting_for_worker pid=$worker_pid watchdog=$watchdog_pid"
+	local _wait_status=0
+	wait "$worker_pid" 2>/dev/null || _wait_status=$?
+	print_info "[lifecycle] worker_exited pid=$worker_pid wait_status=$_wait_status"
 
 	# Clean up the watchdog — it should exit on its own when it detects
 	# the worker PID is gone, but kill it explicitly to be safe.
@@ -1660,6 +1663,7 @@ _invoke_opencode() {
 		kill "$watchdog_pid" 2>/dev/null || true
 		wait "$watchdog_pid" 2>/dev/null || true
 	fi
+	print_info "[lifecycle] watchdog_cleaned pid=$watchdog_pid"
 
 	# Merge worker session data back to shared DB, then clean up.
 	# Worker is done — no contention, single-writer merge is safe.
@@ -1674,6 +1678,7 @@ _invoke_opencode() {
 		print_info "[lifecycle] db_cleanup dir=$isolated_data_dir pid=$$"
 	fi
 
+	print_info "[lifecycle] invoke_opencode_returning pid=$$"
 	return 0
 }
 
@@ -2190,7 +2195,9 @@ _execute_run_attempt() {
 	claude) _invoke_claude "$output_file" "$exit_code_file" "${cmd[@]}" ;;
 	*) _invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}" ;;
 	esac
+	print_info "[lifecycle] invoke_returned session=$session_key pid=$$ exit_code_file_exists=$(test -f "$exit_code_file" && echo yes || echo no)"
 	exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
+	print_info "[lifecycle] exit_code_read session=$session_key exit_code=$exit_code"
 
 	# Activity watchdog race fix: the watchdog writes a marker file when it
 	# kills a stalled worker. The dying subshell may overwrite exit_code_file
@@ -2263,12 +2270,14 @@ _execute_run_attempt() {
 		fi
 	} >>"$output_file" 2>/dev/null || true
 
+	print_info "[lifecycle] calling_handle_run_result session=$session_key exit_code=$exit_code output_size=$(wc -c <"$output_file" 2>/dev/null || echo 0)"
 	local handle_exit=0
 	if _handle_run_result "$exit_code" "$output_file" "$role" "$provider" "$session_key" "$selected_model"; then
 		handle_exit=0
 	else
 		handle_exit=$?
 	fi
+	print_info "[lifecycle] handle_run_result_returned session=$session_key handle_exit=$handle_exit result_label=${_run_result_label:-unknown}"
 	end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
 	if [[ "$end_ms" =~ ^[0-9]+$ && "$start_ms" =~ ^[0-9]+$ && "$end_ms" -ge "$start_ms" ]]; then
 		duration_ms=$((end_ms - start_ms))
