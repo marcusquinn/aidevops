@@ -1,28 +1,11 @@
 import json
 import os
 import glob
-import re
 import sys
-import tempfile
 
-def atomic_json_write(path, data, indent=2, trailing_newline=False):
-    """Write JSON atomically: tmp file + fsync + rename. Prevents truncation on crash."""
-    dir_name = os.path.dirname(path) or '.'
-    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp', prefix='.atomic-')
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=indent)
-            if trailing_newline:
-                f.write('\n')
-            f.flush()
-            os.fsync(f.fileno())
-        os.rename(tmp_path, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+# Add lib directory to path for shared utilities
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
+from discovery_utils import atomic_json_write, parse_frontmatter
 
 config_path = os.path.expanduser("~/.config/opencode/opencode.json")
 agents_dir = os.path.expanduser("~/.aidevops/agents")
@@ -191,60 +174,9 @@ AGENT_MODEL_TIERS = {
 # configs/SKILL-SCAN-RESULTS.md is a generated report, not an agent
 SKIP_FILES = {"AGENTS.md", "README.md", "configs/SKILL-SCAN-RESULTS.md"} | SKIP_PRIMARY_AGENTS
 
-def parse_frontmatter(filepath):
-    """Parse YAML frontmatter from markdown file."""
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Check for frontmatter
-        if not content.startswith('---'):
-            return {}
-        
-        # Find end of frontmatter
-        end_idx = content.find('---', 3)
-        if end_idx == -1:
-            return {}
-        
-        frontmatter = content[3:end_idx].strip()
-        
-        # Simple YAML parsing for subagents list
-        result = {}
-        lines = frontmatter.split('\n')
-        current_key = None
-        current_list = []
-        
-        for line in lines:
-            stripped = line.strip()
-            # Ignore comments and empty lines
-            if not stripped or stripped.startswith('#'):
-                continue
-            
-            if stripped.startswith('- ') and current_key:
-                # List item
-                current_list.append(stripped[2:].strip())
-            elif ':' in stripped and not stripped.startswith('-'):
-                # Save previous list if any
-                if current_key and current_list:
-                    result[current_key] = current_list
-                    current_list = []
-                
-                # New key
-                key, value = stripped.split(':', 1)
-                current_key = key.strip()
-                value = value.strip()
-                if value:
-                    result[current_key] = value
-                    current_key = None
-        
-        # Save final list
-        if current_key and current_list:
-            result[current_key] = current_list
-        
-        return result
-    except (IOError, OSError, UnicodeDecodeError) as e:
-        print(f"Warning: Failed to parse frontmatter for {filepath}: {e}", file=sys.stderr)
-        return {}
+# =============================================================================
+# AGENT CONFIGURATION HELPERS
+# =============================================================================
 
 def filename_to_display(filename):
     """Convert filename to display name."""
@@ -264,7 +196,7 @@ def display_to_filename(display_name):
 
 def get_agent_config(display_name, filename, subagents=None, model_tier=None):
     """Generate agent configuration.
-    
+
     Args:
         display_name: Agent display name
         filename: Agent markdown filename
@@ -273,7 +205,7 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
     """
     tools = AGENT_TOOLS.get(display_name, DEFAULT_TOOLS.copy())
     temp = AGENT_TEMPS.get(display_name, 0.2)
-    
+
     config = {
         "description": f"Read ~/.aidevops/agents/{filename}",
         "mode": "primary",
@@ -281,7 +213,7 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
         "permission": {},
         "tools": tools
     }
-    
+
     # Add custom system prompt for ALL primary agents (ensures consistent identity)
     # This replaces the host tool's default system prompt, preventing identity confusion
     # when running in different tools (OpenCode vs Claude Code) and enforcing tool preferences
@@ -289,17 +221,17 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
         prompt_file = os.path.expanduser(DEFAULT_PROMPT)
         if os.path.exists(prompt_file):
             config["prompt"] = "{file:" + DEFAULT_PROMPT + "}"
-    
+
     # Add model routing (from frontmatter or defaults)
     # Resolves tier name to actual model identifier
     effective_tier = model_tier or AGENT_MODEL_TIERS.get(display_name)
     if effective_tier and effective_tier in MODEL_TIERS:
         config["model"] = MODEL_TIERS[effective_tier]
-    
+
     # All primary agents get external_directory permission
     # (Plan+ special permissions removed - it's now a subagent)
     config["permission"] = {"external_directory": "allow"}
-    
+
     # Add subagent filtering via permission.task if subagents specified
     # This generates deny-all + allow-specific rules
     if subagents and isinstance(subagents, list) and len(subagents) > 0:
@@ -308,7 +240,7 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
             task_perms[subagent] = "allow"
         config["permission"]["task"] = task_perms
         print(f"    {display_name}: filtered to {len(subagents)} subagents")
-    
+
     return config
 
 # Discover all root-level .md files
@@ -320,9 +252,9 @@ for filepath in glob.glob(os.path.join(agents_dir, "*.md")):
     filename = os.path.basename(filepath)
     if filename in SKIP_FILES:
         continue
-    
+
     display_name = filename_to_display(filename)
-    
+
     # Parse frontmatter for subagents list and model tier
     frontmatter = parse_frontmatter(filepath)
     subagents = frontmatter.get('subagents', None)
@@ -333,9 +265,13 @@ for filepath in glob.glob(os.path.join(agents_dir, "*.md")):
 
     if subagents:
         subagent_filtered_count += 1
-    
+
     primary_agents[display_name] = get_agent_config(display_name, filename, subagents, model_tier)
     discovered.append(display_name)
+
+# =============================================================================
+# SUBAGENT VALIDATION
+# =============================================================================
 
 # Validate subagent references against actual files
 # Built-in agent types (general, explore) don't have .md files — skip them
@@ -367,29 +303,43 @@ for root, _, files in os.walk(agents_dir):
         all_subagent_paths.add(rel_stem)
 
 
-def subagent_ref_exists(agent_name, subagent_ref):
-    # Exact basename match (legacy/global short refs)
-    if subagent_ref in all_subagent_files:
-        return True
+def _subagent_basename_match(subagent_ref):
+    """Check exact basename match (legacy/global short refs)."""
+    return subagent_ref in all_subagent_files
 
-    # Exact path from agents root (e.g. workflows/plans)
-    if subagent_ref in all_subagent_paths:
-        return True
 
-    # Agent-local relative path (e.g. content -> production/writing)
+def _subagent_path_match(subagent_ref):
+    """Check exact path from agents root (e.g. workflows/plans)."""
+    return subagent_ref in all_subagent_paths
+
+
+def _subagent_agent_local_match(agent_name, subagent_ref):
+    """Check agent-local relative path (e.g. content -> production/writing)."""
     agent_slug = display_to_filename(agent_name)
-    if f"{agent_slug}/{subagent_ref}" in all_subagent_paths:
-        return True
+    return f"{agent_slug}/{subagent_ref}" in all_subagent_paths
 
-    # Folder shorthand (e.g. distribution/youtube -> .../distribution/youtube/youtube.md)
-    if "/" in subagent_ref:
-        leaf = subagent_ref.rsplit("/", 1)[1]
-        if f"{agent_slug}/{subagent_ref}/{leaf}" in all_subagent_paths:
-            return True
-        if f"{subagent_ref}/{leaf}" in all_subagent_paths:
-            return True
 
-    return False
+def _subagent_folder_shorthand_match(agent_name, subagent_ref):
+    """Check folder shorthand (e.g. distribution/youtube -> .../distribution/youtube/youtube.md)."""
+    if "/" not in subagent_ref:
+        return False
+    agent_slug = display_to_filename(agent_name)
+    leaf = subagent_ref.rsplit("/", 1)[1]
+    return (
+        f"{agent_slug}/{subagent_ref}/{leaf}" in all_subagent_paths
+        or f"{subagent_ref}/{leaf}" in all_subagent_paths
+    )
+
+
+def subagent_ref_exists(agent_name, subagent_ref):
+    """Check if a subagent reference resolves to an actual file."""
+    return (
+        _subagent_basename_match(subagent_ref)
+        or _subagent_path_match(subagent_ref)
+        or _subagent_agent_local_match(agent_name, subagent_ref)
+        or _subagent_folder_shorthand_match(agent_name, subagent_ref)
+    )
+
 
 missing_refs = []
 for display_name, agent_config in primary_agents.items():
@@ -515,7 +465,6 @@ if 'tools' not in config:
 
 import shutil
 import platform
-import sys
 bun_path = shutil.which('bun')
 npx_path = shutil.which('npx')
 if not npx_path and not bun_path:

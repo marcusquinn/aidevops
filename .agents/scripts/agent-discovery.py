@@ -2,26 +2,10 @@ import json
 import os
 import glob
 import sys
-import tempfile
 
-def atomic_json_write(path, data, indent=2, trailing_newline=False):
-    """Write JSON atomically: tmp file + fsync + rename. Prevents truncation on crash."""
-    dir_name = os.path.dirname(path) or '.'
-    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp', prefix='.atomic-')
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=indent)
-            if trailing_newline:
-                f.write('\n')
-            f.flush()
-            os.fsync(f.fileno())
-        os.rename(tmp_path, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+# Add lib directory to path for shared utilities
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
+from discovery_utils import atomic_json_write, parse_frontmatter
 
 output_format = sys.argv[2]
 
@@ -138,53 +122,8 @@ LAZY_MCPS = {
 }
 
 # =============================================================================
-# SHARED FUNCTIONS
+# AGENT CONFIGURATION HELPERS
 # =============================================================================
-
-def parse_frontmatter(filepath):
-    """Parse YAML frontmatter from markdown file.
-
-    Minimal parser — no PyYAML dependency. Supports:
-      - Simple key: value pairs (unquoted, single-line)
-      - Dash-prefixed list items (single level)
-    Does NOT support: quoted values containing colons, multi-line blocks,
-    or nested mappings. Agent frontmatter must stay within these constraints.
-    """
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            content = f.read()
-        if not content.startswith('---'):
-            return {}
-        end_idx = content.find('---', 3)
-        if end_idx == -1:
-            return {}
-        frontmatter = content[3:end_idx].strip()
-        result = {}
-        lines = frontmatter.split('\n')
-        current_key = None
-        current_list = []
-        for line in lines:
-            stripped = line.strip()
-            if not stripped or stripped.startswith('#'):
-                continue
-            if stripped.startswith('- ') and current_key:
-                current_list.append(stripped[2:].strip())
-            elif ':' in stripped and not stripped.startswith('-'):
-                if current_key and current_list:
-                    result[current_key] = current_list
-                    current_list = []
-                key, value = stripped.split(':', 1)
-                current_key = key.strip()
-                value = value.strip()
-                if value:
-                    result[current_key] = value
-                    current_key = None
-        if current_key and current_list:
-            result[current_key] = current_list
-        return result
-    except (IOError, OSError, UnicodeDecodeError) as e:
-        print(f"Warning: Failed to parse frontmatter for {filepath}: {e}", file=sys.stderr)
-        return {}
 
 def filename_to_display(filename):
     """Convert filename to display name."""
@@ -254,91 +193,8 @@ sorted_agents = dict(sorted(primary_agents.items(), key=lambda x: sort_key(x[0])
 # OUTPUT — Runtime-specific
 # =============================================================================
 
-if output_format == "opencode-json":
-    # OpenCode: write agent config to opencode.json
-    import shutil
-    import platform
-
-    config_path = os.path.expanduser("~/.config/opencode/opencode.json")
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-    except FileNotFoundError:
-        config = {"$schema": "https://opencode.ai/config.json"}
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"Error: Failed to load {config_path}: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Guard: if no primary agents were discovered, skip writing agent config
-    # to avoid leaving OpenCode with only disabled entries (fatal crash:
-    # "undefined is not an object evaluating agents()[0].name").
-    # This can happen if the deploy step hasn't completed or the agents
-    # directory was cleaned but not yet repopulated.
-    if not primary_agents:
-        print("  WARNING: No primary agents discovered — skipping agent config update", file=sys.stderr)
-        print("  (agents directory may be empty or deploy incomplete)", file=sys.stderr)
-    else:
-        # Disable default and demoted agents
-        sorted_agents["build"] = {"disable": True}
-        sorted_agents["plan"] = {"disable": True}
-        sorted_agents["Plan+"] = {"disable": True}
-        sorted_agents["AI-DevOps"] = {"disable": True}
-        sorted_agents["Browser-Extension-Dev"] = {"disable": True}
-        sorted_agents["Mobile-App-Dev"] = {"disable": True}
-
-        config['agent'] = sorted_agents
-        config['default_agent'] = "Build+"
-
-    # Instructions — merge into existing list to preserve user-added entries
-    instructions_path = os.path.expanduser("~/.aidevops/agents/AGENTS.md")
-    if os.path.exists(instructions_path):
-        existing = config.get('instructions', [])
-        if not isinstance(existing, list):
-            existing = [existing] if existing else []
-        if instructions_path not in existing:
-            existing.append(instructions_path)
-        config['instructions'] = existing
-
-    # Plugin registration — ensure the aidevops plugin is registered.
-    # The plugin provides OAuth Bearer auth, quality hooks, agent loading,
-    # and MCP tool management. Without it, OpenCode falls back to x-api-key
-    # mode which breaks OAuth authentication entirely.
-    # setup.sh (setup-modules/mcp-setup.sh) is the primary registrar, but
-    # if the config was rebuilt (e.g. after truncation recovery), the plugin
-    # key may be lost. This guard re-registers it.
-    aidevops_plugin_url = "file://" + os.path.expanduser(
-        "~/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
-    )
-    plugin_list = config.get('plugin', [])
-    if not isinstance(plugin_list, list):
-        plugin_list = [plugin_list] if plugin_list else []
-    if aidevops_plugin_url not in plugin_list:
-        plugin_list.append(aidevops_plugin_url)
-        config['plugin'] = plugin_list
-        print(f"  Re-registered aidevops plugin (was missing from config)", file=sys.stderr)
-    else:
-        config['plugin'] = plugin_list
-
-    # Provider options — prompt caching
-    if 'provider' not in config:
-        config['provider'] = {}
-    if 'anthropic' not in config['provider']:
-        config['provider']['anthropic'] = {}
-    if 'options' not in config['provider']['anthropic']:
-        config['provider']['anthropic']['options'] = {}
-    config['provider']['anthropic']['options']['setCacheKey'] = True
-
-    # MCP loading policy
-    if 'mcp' not in config:
-        config['mcp'] = {}
-    if 'tools' not in config:
-        config['tools'] = {}
-
-    bun_path = shutil.which('bun')
-    npx_path = shutil.which('npx')
-    pkg_runner = f"{bun_path} x" if bun_path else (npx_path or "npx")
-
-    # Apply loading policy to existing MCPs
+def _apply_mcp_loading_policy(config):
+    """Apply EAGER/LAZY loading policy to existing MCPs in config."""
     for mcp_name in list(config.get('mcp', {}).keys()):
         mcp_cfg = config['mcp'].get(mcp_name, {})
         if not isinstance(mcp_cfg, dict):
@@ -348,21 +204,24 @@ if output_format == "opencode-json":
         elif mcp_name in LAZY_MCPS:
             mcp_cfg['enabled'] = False
 
-    # Remove deprecated MCPs
+
+def _remove_deprecated_mcps(config):
+    """Remove deprecated MCP entries from config."""
     if 'osgrep' in config.get('mcp', {}):
         del config['mcp']['osgrep']
     if 'osgrep_*' in config.get('tools', {}):
         del config['tools']['osgrep_*']
 
+
+def _register_standard_mcps(config, bun_path, pkg_runner):
+    """Register standard MCP servers if not already present."""
+    import platform
+
     # Playwriter MCP
     if 'playwriter' not in config['mcp']:
         runner = "bun" if bun_path else "npx"
         command = [runner, "x", "playwriter@latest"] if runner == "bun" else [runner, "playwriter@latest"]
-        config['mcp']['playwriter'] = {
-            "type": "local",
-            "command": command,
-            "enabled": True
-        }
+        config['mcp']['playwriter'] = {"type": "local", "command": command, "enabled": True}
     config['tools']['playwriter_*'] = True
 
     # Outscraper MCP
@@ -387,11 +246,7 @@ if output_format == "opencode-json":
 
     # shadcn MCP
     if 'shadcn' not in config['mcp']:
-        config['mcp']['shadcn'] = {
-            "type": "local",
-            "command": ["npx", "shadcn@latest", "mcp"],
-            "enabled": False
-        }
+        config['mcp']['shadcn'] = {"type": "local", "command": ["npx", "shadcn@latest", "mcp"], "enabled": False}
     if 'shadcn_*' not in config['tools']:
         config['tools']['shadcn_*'] = False
 
@@ -405,23 +260,7 @@ if output_format == "opencode-json":
 
     # macOS-only MCPs
     if platform.system() == 'Darwin':
-        if 'macos-automator' not in config['mcp']:
-            config['mcp']['macos-automator'] = {
-                "type": "local",
-                "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"],
-                "enabled": False
-            }
-        if 'macos-automator_*' not in config['tools']:
-            config['tools']['macos-automator_*'] = False
-
-        if 'ios-simulator' not in config['mcp']:
-            config['mcp']['ios-simulator'] = {
-                "type": "local",
-                "command": ["npx", "-y", "ios-simulator-mcp"],
-                "enabled": False
-            }
-        if 'ios-simulator_*' not in config['tools']:
-            config['tools']['ios-simulator_*'] = False
+        _register_macos_mcps(config)
 
     # OpenAPI Search MCP
     if 'openapi-search' not in config['mcp']:
@@ -438,6 +277,107 @@ if output_format == "opencode-json":
         if config['tools'].get(tool_pattern) is not False:
             config['tools'][tool_pattern] = False
 
+
+def _register_macos_mcps(config):
+    """Register macOS-only MCP servers."""
+    if 'macos-automator' not in config['mcp']:
+        config['mcp']['macos-automator'] = {
+            "type": "local",
+            "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"],
+            "enabled": False
+        }
+    if 'macos-automator_*' not in config['tools']:
+        config['tools']['macos-automator_*'] = False
+
+    if 'ios-simulator' not in config['mcp']:
+        config['mcp']['ios-simulator'] = {
+            "type": "local",
+            "command": ["npx", "-y", "ios-simulator-mcp"],
+            "enabled": False
+        }
+    if 'ios-simulator_*' not in config['tools']:
+        config['tools']['ios-simulator_*'] = False
+
+
+def _update_opencode_agents(config, sorted_agents_local, primary_agents_local):
+    """Update agent config in opencode.json, guarding against empty discovery."""
+    if not primary_agents_local:
+        print("  WARNING: No primary agents discovered — skipping agent config update", file=sys.stderr)
+        print("  (agents directory may be empty or deploy incomplete)", file=sys.stderr)
+        return
+    sorted_agents_local["build"] = {"disable": True}
+    sorted_agents_local["plan"] = {"disable": True}
+    sorted_agents_local["Plan+"] = {"disable": True}
+    sorted_agents_local["AI-DevOps"] = {"disable": True}
+    sorted_agents_local["Browser-Extension-Dev"] = {"disable": True}
+    sorted_agents_local["Mobile-App-Dev"] = {"disable": True}
+    config['agent'] = sorted_agents_local
+    config['default_agent'] = "Build+"
+
+
+def _merge_instructions(config):
+    """Merge aidevops AGENTS.md into instructions list, preserving user entries."""
+    instructions_path = os.path.expanduser("~/.aidevops/agents/AGENTS.md")
+    if not os.path.exists(instructions_path):
+        return
+    existing = config.get('instructions', [])
+    if not isinstance(existing, list):
+        existing = [existing] if existing else []
+    if instructions_path not in existing:
+        existing.append(instructions_path)
+    config['instructions'] = existing
+
+
+def _ensure_plugin_registered(config):
+    """Ensure the aidevops plugin is registered in opencode config."""
+    aidevops_plugin_url = "file://" + os.path.expanduser(
+        "~/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
+    )
+    plugin_list = config.get('plugin', [])
+    if not isinstance(plugin_list, list):
+        plugin_list = [plugin_list] if plugin_list else []
+    if aidevops_plugin_url not in plugin_list:
+        plugin_list.append(aidevops_plugin_url)
+        print(f"  Re-registered aidevops plugin (was missing from config)", file=sys.stderr)
+    config['plugin'] = plugin_list
+
+
+def _enable_prompt_caching(config):
+    """Enable Anthropic prompt caching in provider config."""
+    config.setdefault('provider', {}).setdefault('anthropic', {}).setdefault('options', {})
+    config['provider']['anthropic']['options']['setCacheKey'] = True
+
+
+def output_opencode_json():
+    """Write agent config to opencode.json."""
+    import shutil
+
+    config_path = os.path.expanduser("~/.config/opencode/opencode.json")
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        config = {"$schema": "https://opencode.ai/config.json"}
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Error: Failed to load {config_path}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    _update_opencode_agents(config, sorted_agents, primary_agents)
+    _merge_instructions(config)
+    _ensure_plugin_registered(config)
+    _enable_prompt_caching(config)
+
+    config.setdefault('mcp', {})
+    config.setdefault('tools', {})
+
+    bun_path = shutil.which('bun')
+    npx_path = shutil.which('npx')
+    pkg_runner = f"{bun_path} x" if bun_path else (npx_path or "npx")
+
+    _apply_mcp_loading_policy(config)
+    _remove_deprecated_mcps(config)
+    _register_standard_mcps(config, bun_path, pkg_runner)
+
     atomic_json_write(config_path, config)
 
     print(f"  Updated {len(primary_agents)} primary agents in opencode.json")
@@ -447,43 +387,33 @@ if output_format == "opencode-json":
     if prompt_count > 0:
         print(f"  Custom system prompts: {prompt_count} agents use prompts/build.txt")
 
-elif output_format == "claude-settings":
-    # Claude Code: update settings.json (hooks, permissions)
-    settings_path = os.path.expanduser("~/.claude/settings.json")
-    try:
-        with open(settings_path, 'r') as f:
-            settings = json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
-        settings = {}
 
-    changed = False
+def _build_hook_entry():
+    """Return the git safety hook entry dict."""
+    return {"type": "command", "command": "$HOME/.aidevops/hooks/git_safety_guard.py"}
 
-    # Safety hooks: PreToolUse for Bash
+
+def _ensure_bash_hook(settings):
+    """Ensure the git safety PreToolUse hook is registered for Bash. Returns changed flag."""
     hook_command = "$HOME/.aidevops/hooks/git_safety_guard.py"
-    hook_entry = {"type": "command", "command": hook_command}
+    hook_entry = _build_hook_entry()
     bash_matcher = {"matcher": "Bash", "hooks": [hook_entry]}
 
-    if "hooks" not in settings:
-        settings["hooks"] = {}
-    if "PreToolUse" not in settings["hooks"]:
-        settings["hooks"]["PreToolUse"] = []
+    settings.setdefault("hooks", {}).setdefault("PreToolUse", [])
 
-    has_bash_hook = False
     for rule in settings["hooks"]["PreToolUse"]:
         if rule.get("matcher") == "Bash":
             existing_commands = [h.get("command", "") for h in rule.get("hooks", [])]
             if hook_command not in existing_commands:
                 rule.setdefault("hooks", []).append(hook_entry)
-                changed = True
-            has_bash_hook = True
-            break
-    if not has_bash_hook:
-        settings["hooks"]["PreToolUse"].append(bash_matcher)
-        changed = True
+                return True
+            return False
+    settings["hooks"]["PreToolUse"].append(bash_matcher)
+    return True
 
-    # Tool permissions
-    permissions = settings.setdefault("permissions", {})
 
+def _build_permission_rules():
+    """Return (allow_rules, deny_rules, ask_rules) for Claude Code settings."""
     allow_rules = [
         "Read(~/.aidevops/**)", "Bash(~/.aidevops/agents/scripts/*)",
         "Bash(git status)", "Bash(git status *)", "Bash(git log *)",
@@ -516,7 +446,6 @@ elif output_format == "claude-settings":
         "Bash(chmod *)", "Bash(echo *)", "Bash(printf *)", "Bash(test *)",
         "Bash([ *)", "Bash(claude *)",
     ]
-
     deny_rules = [
         "Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)",
         "Read(./**/credentials.json)", "Read(./**/.env)", "Read(./**/.env.*)",
@@ -530,42 +459,60 @@ elif output_format == "claude-settings":
         "Bash(gopass show *)", "Bash(pass show *)", "Bash(op read *)",
         "Bash(cat ~/.config/aidevops/credentials.sh)",
     ]
-
     ask_rules = [
         "Bash(rm -rf *)", "Bash(rm -r *)",
         "Bash(curl *)", "Bash(wget *)",
         "Bash(docker *)", "Bash(docker-compose *)", "Bash(orbctl *)",
     ]
+    return allow_rules, deny_rules, ask_rules
 
-    def merge_rules(existing, new_rules):
-        added = False
-        for rule in new_rules:
-            if rule not in existing:
-                existing.append(rule)
-                added = True
-        return added
 
-    # Clean up expanded-path rules from prior versions
+def _merge_rules(existing, new_rules):
+    """Append new_rules not already in existing. Returns True if any added."""
+    added = False
+    for rule in new_rules:
+        if rule not in existing:
+            existing.append(rule)
+            added = True
+    return added
+
+
+def _clean_expanded_path_rules(permissions):
+    """Remove expanded-path allow rules from prior versions. Returns changed flag."""
     home = os.path.expanduser("~")
     existing_allow = permissions.get("allow", [])
-    original_len = len(existing_allow)
-    cleaned_allow = [
-        rule for rule in existing_allow
-        if not (rule.startswith(home + "/") and "(" not in rule)
-    ]
-    if len(cleaned_allow) != original_len:
-        permissions["allow"] = cleaned_allow
+    cleaned = [r for r in existing_allow if not (r.startswith(home + "/") and "(" not in r)]
+    if len(cleaned) != len(existing_allow):
+        permissions["allow"] = cleaned
+        return True
+    return False
+
+
+def output_claude_settings():
+    """Update ~/.claude/settings.json with hooks and permissions."""
+    settings_path = os.path.expanduser("~/.claude/settings.json")
+    try:
+        with open(settings_path, 'r') as f:
+            settings = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        settings = {}
+
+    changed = _ensure_bash_hook(settings)
+
+    permissions = settings.setdefault("permissions", {})
+    if _clean_expanded_path_rules(permissions):
         changed = True
 
+    allow_rules, deny_rules, ask_rules = _build_permission_rules()
     allow_list = permissions.setdefault("allow", [])
     deny_list = permissions.setdefault("deny", [])
     ask_list = permissions.setdefault("ask", [])
 
-    if merge_rules(allow_list, allow_rules):
+    if _merge_rules(allow_list, allow_rules):
         changed = True
-    if merge_rules(deny_list, deny_rules):
+    if _merge_rules(deny_list, deny_rules):
         changed = True
-    if merge_rules(ask_list, ask_rules):
+    if _merge_rules(ask_list, ask_rules):
         changed = True
 
     settings["permissions"] = permissions
@@ -581,9 +528,13 @@ elif output_format == "claude-settings":
     else:
         print(f"  {settings_path} (no changes needed)")
 
-    # Output agent count for the caller
     print(f"  Discovered {len(primary_agents)} primary agents")
 
+
+if output_format == "opencode-json":
+    output_opencode_json()
+elif output_format == "claude-settings":
+    output_claude_settings()
 else:
     print(f"Unknown output format: {output_format}", file=sys.stderr)
     sys.exit(1)
