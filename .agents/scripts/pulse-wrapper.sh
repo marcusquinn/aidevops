@@ -8236,11 +8236,13 @@ dispatch_with_dedup() {
 	# existing path. On failure, fall back to letting the worker create it.
 	local worker_worktree_path="" worker_worktree_branch=""
 	local _wt_helper="${SCRIPT_DIR}/worktree-helper.sh"
-	if [[ -x "$_wt_helper" ]]; then
+	if [[ -x "$_wt_helper" && -d "$repo_path" ]]; then
 		# Derive branch name from issue number (deterministic, collision-free)
 		worker_worktree_branch="feature/auto-$(date +%Y%m%d-%H%M%S)"
 		local _wt_output=""
-		_wt_output=$("$_wt_helper" add "$worker_worktree_branch" 2>&1) || true
+		# Run from repo_path — worktree-helper.sh uses git commands that need
+		# to be inside the repo. The pulse-wrapper's cwd is typically / (launchd).
+		_wt_output=$(cd "$repo_path" && "$_wt_helper" add "$worker_worktree_branch" 2>&1) || true
 		worker_worktree_path=$(printf '%s' "$_wt_output" | grep -oE '/[^ ]*Git/[^ ]*' | head -1) || worker_worktree_path=""
 		if [[ -n "$worker_worktree_path" && -d "$worker_worktree_path" ]]; then
 			echo "[dispatch_with_dedup] Pre-created worktree for #${issue_number}: ${worker_worktree_path} (branch: ${worker_worktree_branch})" >>"$LOGFILE"
