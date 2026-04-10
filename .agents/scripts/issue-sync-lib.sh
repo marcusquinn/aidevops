@@ -1295,6 +1295,62 @@ resolve_gh_node_id() {
 	return 0
 }
 
+# Extract the selected tier from a brief file.
+# Looks for "**Selected tier:** `tier:XXX`" in the brief.
+# Arguments:
+#   $1 - brief file path
+# Returns: tier label on stdout (e.g., "tier:simple"), or empty string if not found
+_extract_tier_from_brief() {
+	local brief_path="$1"
+
+	if [[ ! -f "$brief_path" ]]; then
+		return 0
+	fi
+
+	# Extract tier from "**Selected tier:** `tier:XXX`" line
+	grep -oE 'tier:(simple|standard|reasoning)' "$brief_path" | head -1 || true
+	return 0
+}
+
+# Validate tier:simple briefs have all checklist boxes checked.
+# If any box is unchecked, override to tier:standard and warn.
+# Arguments:
+#   $1 - brief file path
+#   $2 - selected tier label (e.g., "tier:simple")
+# Returns: the validated tier label on stdout
+# Exit: 0 always (validation is advisory, not blocking)
+_validate_tier_checklist() {
+	local brief_path="$1"
+	local selected_tier="$2"
+
+	# Only validate tier:simple — standard and reasoning don't have hard checklist gates
+	if [[ "$selected_tier" != "tier:simple" ]]; then
+		printf '%s' "$selected_tier"
+		return 0
+	fi
+
+	# Check if brief file exists
+	if [[ ! -f "$brief_path" ]]; then
+		printf '%s' "$selected_tier"
+		return 0
+	fi
+
+	# Count unchecked boxes in the tier checklist section
+	# Pattern: lines between "### Tier checklist" and "**Selected tier:**"
+	local unchecked_count
+	unchecked_count=$(sed -n '/^### Tier checklist/,/^\*\*Selected tier/p' "$brief_path" |
+		grep -c '^\- \[ \]' || true)
+
+	if [[ "$unchecked_count" -gt 0 ]]; then
+		echo "[WARN] tier:simple selected but $unchecked_count checklist box(es) unchecked in $brief_path — overriding to tier:standard" >&2
+		printf '%s' "tier:standard"
+		return 0
+	fi
+
+	printf '%s' "$selected_tier"
+	return 0
+}
+
 # Detect the parent task ID from a subtask ID.
 # t1873.2 → t1873, t1873.2.1 → t1873.2, t1873 → "" (no parent)
 # Arguments:
