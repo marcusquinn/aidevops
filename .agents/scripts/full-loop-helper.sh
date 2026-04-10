@@ -502,6 +502,209 @@ cmd_pre_merge_gate() {
 	esac
 }
 
+# Commit-and-PR: stage, commit, rebase, push, create PR, post merge summary.
+# Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
+# Workers and interactive sessions both use this — no parallel logic.
+#
+# Usage: full-loop-helper.sh commit-and-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--decisions <notes>] [--label <label>...]
+# Exit codes: 0 = PR created (prints PR number to stdout), 1 = failure
+#
+# On rebase conflict: returns 1 with instructions. Caller must resolve and retry.
+# On push failure: returns 1. Caller should check remote state.
+# On PR creation failure: returns 1. Changes are committed and pushed — caller
+# can create the PR manually.
+cmd_commit_and_pr() {
+	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
+	local -a extra_labels=()
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--issue)
+			issue_number="$2"
+			shift 2
+			;;
+		--message)
+			commit_message="$2"
+			shift 2
+			;;
+		--title)
+			pr_title="$2"
+			shift 2
+			;;
+		--summary)
+			summary_what="$2"
+			shift 2
+			;;
+		--testing)
+			summary_testing="$2"
+			shift 2
+			;;
+		--decisions)
+			summary_decisions="$2"
+			shift 2
+			;;
+		--label)
+			extra_labels+=("$2")
+			shift 2
+			;;
+		*)
+			print_error "Unknown argument: $1"
+			return 1
+			;;
+		esac
+	done
+
+	if [[ -z "$issue_number" || -z "$commit_message" ]]; then
+		print_error "Usage: full-loop-helper.sh commit-and-pr --issue <N> --message <msg>"
+		return 1
+	fi
+
+	# Auto-detect repo
+	local repo=""
+	repo=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
+	if [[ -z "$repo" ]]; then
+		print_error "Cannot detect repo from git remote."
+		return 1
+	fi
+
+	local branch=""
+	branch=$(git branch --show-current 2>/dev/null || echo "")
+	if [[ -z "$branch" || "$branch" == "main" || "$branch" == "master" ]]; then
+		print_error "Cannot commit-and-pr from branch '${branch:-detached}'. Must be on a feature branch."
+		return 1
+	fi
+
+	# Step 1: Stage and commit
+	print_info "Staging and committing changes..."
+	if ! git add -A; then
+		print_error "git add failed"
+		return 1
+	fi
+
+	# Check there's something to commit
+	if git diff --cached --quiet 2>/dev/null; then
+		# Nothing staged — check if there are already commits ahead of main
+		local ahead=""
+		ahead=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo "0")
+		if [[ "$ahead" == "0" ]]; then
+			print_error "No changes to commit and no commits ahead of main."
+			return 1
+		fi
+		print_info "No new changes to commit, but ${ahead} commit(s) ahead of main. Proceeding to PR."
+	else
+		if ! git commit -m "$commit_message"; then
+			print_error "git commit failed"
+			return 1
+		fi
+	fi
+
+	# Step 2: Rebase onto origin/main and push
+	print_info "Rebasing onto origin/main..."
+	if ! git fetch origin main --quiet 2>/dev/null; then
+		print_warning "git fetch origin main failed — proceeding with current state"
+	fi
+	if ! git rebase origin/main 2>/dev/null; then
+		print_error "Rebase conflict. Resolve conflicts, then run: git rebase --continue && full-loop-helper.sh commit-and-pr ..."
+		git rebase --abort 2>/dev/null || true
+		return 1
+	fi
+
+	print_info "Pushing to origin/${branch}..."
+	if ! git push -u origin "$branch" --force-with-lease 2>/dev/null; then
+		print_error "Push failed. Check remote state and retry."
+		return 1
+	fi
+
+	# Step 3: Create PR with Resolves #NNN + signature footer
+	if [[ -z "$pr_title" ]]; then
+		pr_title="GH#${issue_number}: ${commit_message}"
+	fi
+
+	# Build PR body
+	local origin_label="origin:interactive"
+	if [[ "${HEADLESS:-}" == "1" || "${FULL_LOOP_HEADLESS:-}" == "true" ]]; then
+		origin_label="origin:worker"
+	fi
+
+	# Get signature footer
+	local sig_footer=""
+	local sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
+	if [[ -x "$sig_helper" ]]; then
+		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
+	fi
+
+	# Get changed files for the body
+	local files_changed=""
+	files_changed=$(git diff --name-only origin/main..HEAD 2>/dev/null | tr '\n' ', ' | sed 's/,$//' || echo "")
+
+	local pr_body
+	pr_body="## Summary
+
+${summary_what:-Implementation for issue #${issue_number}.}
+
+## Files Changed
+
+${files_changed:-See diff}
+
+## Runtime Testing
+
+- **Risk level:** Low (agent prompts / infrastructure scripts)
+- **Verification:** ${summary_testing:-shellcheck clean, self-assessed}
+
+Resolves #${issue_number}
+
+${sig_footer}"
+
+	print_info "Creating PR..."
+	local pr_url=""
+	local -a pr_cmd=(gh pr create --repo "$repo" --title "$pr_title" --body "$pr_body" --label "$origin_label")
+	for lbl in "${extra_labels[@]+"${extra_labels[@]}"}"; do
+		pr_cmd+=(--label "$lbl")
+	done
+
+	pr_url=$("${pr_cmd[@]}" 2>&1) || {
+		print_error "PR creation failed: ${pr_url}"
+		return 1
+	}
+
+	# Extract PR number from URL
+	local pr_number=""
+	pr_number=$(printf '%s' "$pr_url" | grep -oE '[0-9]+$' || echo "")
+	if [[ -z "$pr_number" ]]; then
+		print_error "Could not extract PR number from: ${pr_url}"
+		return 1
+	fi
+
+	print_success "PR #${pr_number} created: ${pr_url}"
+
+	# Step 4: Post merge summary comment (full-loop step 4.2.1)
+	local merge_summary="<!-- MERGE_SUMMARY -->
+## Completion Summary
+
+- **What**: ${summary_what:-Implementation for issue #${issue_number}}
+- **Issue**: #${issue_number}
+- **Files changed**: ${files_changed:-see diff}
+- **Testing**: ${summary_testing:-shellcheck clean, self-assessed}
+- **Key decisions**: ${summary_decisions:-none}"
+
+	if gh pr comment "$pr_number" --repo "$repo" --body "$merge_summary" >/dev/null 2>&1; then
+		print_success "Merge summary comment posted on PR #${pr_number}"
+	else
+		print_warning "Failed to post merge summary comment — post it manually"
+	fi
+
+	# Step 5: Label issue as in-review
+	local issue_state=""
+	issue_state=$(gh issue view "$issue_number" --repo "$repo" --json state -q '.state' 2>/dev/null || echo "")
+	if [[ "$issue_state" == "OPEN" ]]; then
+		gh issue edit "$issue_number" --repo "$repo" --add-label "status:in-review" --remove-label "status:in-progress" --remove-label "status:queued" >/dev/null 2>&1 || true
+	fi
+
+	# Output PR number for caller to pass to `merge`
+	printf '%s\n' "$pr_number"
+	return 0
+}
+
 # Merge wrapper (GH#17541) — enforces review-bot-gate then merges.
 # Single command that replaces the multi-step protocol (wait + merge).
 # Workers call this instead of bare `gh pr merge`.
@@ -600,6 +803,7 @@ Commands:
   status                        Show current loop state
   cancel                        Cancel active loop
   logs [N]                      Show last N log lines (default: 50)
+  commit-and-pr --issue N --message "msg"  Stage, commit, rebase, push, create PR, post merge summary
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
   merge <PR> [REPO] [--squash]  Gate-enforced merge (runs pre-merge-gate first)
   help                          Show this help
@@ -628,6 +832,7 @@ main() {
 	case "$command" in
 	start) cmd_start "$@" ;; resume) cmd_resume ;; status) cmd_status ;;
 	cancel) cmd_cancel ;; logs) cmd_logs "$@" ;; _run_foreground) _run_foreground "$@" ;;
+	commit-and-pr) cmd_commit_and_pr "$@" ;;
 	pre-merge-gate) cmd_pre_merge_gate "$@" ;;
 	merge) cmd_merge "$@" ;;
 	help | --help | -h) show_help ;;

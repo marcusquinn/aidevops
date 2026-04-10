@@ -102,11 +102,25 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.1 Preflight:** quality checks, auto-fixes.
 
-**4.2 PR Create:** rebase onto `origin/main`, push, create PR. Body MUST include `Resolves #NNN` (creates GitHub sidebar link between PR and issue; only auto-closes issue when PR merges). Add `origin:worker` or `origin:interactive` label.
+**4.2 Commit, Push, and PR (preferred — single command):** Use `full-loop-helper.sh commit-and-pr` to collapse staging, commit, rebase, push, PR creation, and merge summary into one call:
 
-**Signature footer (GH#12805 — MANDATORY):** append `gh-signature-helper.sh footer` output. Verify: `gh pr view --json body | jq -e '.body | (contains("aidevops.sh") and (contains("spent") or contains("Overall,")))'`.
+```bash
+PR_NUMBER=$(full-loop-helper.sh commit-and-pr \
+  --issue "$ISSUE_NUMBER" \
+  --message "feat: description of changes" \
+  --title "GH#${ISSUE_NUMBER}: description" \
+  --summary "What was implemented" \
+  --testing "shellcheck clean, tests pass" \
+  --decisions "any notable trade-offs")
+```
 
-**4.2.1 Merge Summary Comment (MANDATORY):** post immediately after PR creation. The deterministic merge pass (`pulse-wrapper.sh`) reads this comment to build closing comments on the linked issue. Without it, issues get a generic "no worker summary" message. Run this exact command:
+This handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. On rebase conflict it aborts and returns 1 — resolve and retry.
+
+**Manual alternative (if commit-and-pr doesn't fit):** rebase onto `origin/main`, push, create PR. Body MUST include `Resolves #NNN` (creates GitHub sidebar link between PR and issue; only auto-closes issue when PR merges). Add `origin:worker` or `origin:interactive` label.
+
+**Signature footer (GH#12805 — MANDATORY):** `commit-and-pr` appends this automatically. For manual PRs: append `gh-signature-helper.sh footer` output. Verify: `gh pr view --json body | jq -e '.body | (contains("aidevops.sh") and (contains("spent") or contains("Overall,")))'`.
+
+**4.2.1 Merge Summary Comment (MANDATORY):** `commit-and-pr` posts this automatically. For manual PRs, post immediately after PR creation:
 
 ```bash
 gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- MERGE_SUMMARY -->
@@ -121,7 +135,7 @@ gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- MERGE_SUMMARY -->
 
 Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("MERGE_SUMMARY"))] | length'` must return `1`.
 
-**4.3 Label `status:in-review` (t1343):** check issue is `OPEN` first.
+**4.3 Label `status:in-review` (t1343):** `commit-and-pr` handles this. For manual PRs: check issue is `OPEN` first.
 
 **4.4 Review Bot Gate (t1382 + GH#17541 — CODE-ENFORCED):** The gate is enforced in code, not just prompt instructions. Use the merge wrapper which runs the gate automatically:
 

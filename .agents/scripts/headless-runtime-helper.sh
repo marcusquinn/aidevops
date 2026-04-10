@@ -1381,6 +1381,11 @@ Implementation approach:
 Empty tool results:
 If a tool call returns empty output, it usually means the path or pattern was wrong, not that the resource is missing. Common causes: missing .agents/ prefix on paths, wrong glob pattern, file moved/renamed. Retry with corrected paths before giving up. If retries also fail, log what you tried and continue with the next step. Do NOT stop the session over one empty result.
 
+Commit and PR shortcut:
+After implementing, use full-loop-helper.sh commit-and-pr to collapse commit+push+PR+merge-summary into one call:
+  PR_NUMBER=$(full-loop-helper.sh commit-and-pr --issue $WORKER_ISSUE_NUMBER --message "feat: description" --summary "what was done" --testing "how verified")
+Then merge: full-loop-helper.sh merge "$PR_NUMBER"
+
 Mandatory behavior:
 4. Never ask for user confirmation, approval, or next steps. No user will respond.
 5. Never emit user-directed language ("If you want...", "Let me know...", "Should I...").
