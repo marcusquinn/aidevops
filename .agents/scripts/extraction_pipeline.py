@@ -844,14 +844,15 @@ def _validate_extract_preconditions(args: list[str]) -> Optional[tuple[str, str,
     return input_file, schema, privacy
 
 
-def cmd_extract(args: list[str]) -> int:
-    """Extract structured data from a file (requires Docling + ExtractThinker)."""
-    preconditions = _validate_extract_preconditions(args)
-    if not preconditions:
-        return 1
+def _resolve_doc_type(schema: str, input_file: str) -> DocumentType:
+    """Resolve document type from schema name or by auto-classifying the file."""
+    if schema == "auto":
+        return _auto_classify_file(input_file)
+    return _SCHEMA_TYPE_MAP.get(schema, DocumentType.PURCHASE_INVOICE)
 
-    input_file, schema, privacy = preconditions
 
+def _load_extractor(llm_backend: str) -> Optional[object]:
+    """Load and configure the ExtractThinker extractor. Returns None on import error."""
     try:
         from extract_thinker import Extractor
     except ImportError:
@@ -859,27 +860,46 @@ def cmd_extract(args: list[str]) -> int:
             "ERROR: extract-thinker required. Install: pip install extract-thinker",
             file=sys.stderr,
         )
+        return None
+    extractor = Extractor()
+    extractor.load_document_loader("docling")
+    extractor.load_llm(llm_backend)
+    return extractor
+
+
+def _run_extraction(extractor: object, input_file: str, schema_cls: type) -> Optional[dict]:
+    """Run extraction and return raw data dict, or None on error."""
+    try:
+        result = extractor.extract(input_file, schema_cls)
+        return result.model_dump()
+    except Exception as e:
+        print(f"Extraction error: {e}", file=sys.stderr)
+        return None
+
+
+def cmd_extract(args: list[str]) -> int:
+    """Extract structured data from a file (requires Docling + ExtractThinker)."""
+    preconditions = _validate_extract_preconditions(args)
+    if not preconditions:
         return 1
 
+    input_file, schema, privacy = preconditions
     llm_backend = _PRIVACY_BACKENDS.get(privacy, "ollama/llama3.2")
-    doc_type = _auto_classify_file(input_file) if schema == "auto" else _SCHEMA_TYPE_MAP.get(schema, DocumentType.PURCHASE_INVOICE)
+    doc_type = _resolve_doc_type(schema, input_file)
 
     schema_cls = get_schema_class(doc_type)
     if not schema_cls:
         print(f"No schema available for type: {doc_type.value}", file=sys.stderr)
         return 1
 
+    extractor = _load_extractor(llm_backend)
+    if not extractor:
+        return 1
+
     print(f"Extracting from {input_file} (type={doc_type.value}, llm={llm_backend})...", file=sys.stderr)
 
-    extractor = Extractor()
-    extractor.load_document_loader("docling")
-    extractor.load_llm(llm_backend)
-
-    try:
-        result = extractor.extract(input_file, schema_cls)
-        raw_data = result.model_dump()
-    except Exception as e:
-        print(f"Extraction error: {e}", file=sys.stderr)
+    raw_data = _run_extraction(extractor, input_file, schema_cls)
+    if raw_data is None:
         return 1
 
     output = parse_and_validate(raw_data, doc_type, input_file)

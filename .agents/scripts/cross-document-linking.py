@@ -415,10 +415,11 @@ def update_document(doc: Document, dry_run: bool = False) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Main phases
 # ---------------------------------------------------------------------------
 
-def main():
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
         description="Add cross-document links to email markdown collection"
     )
@@ -438,63 +439,84 @@ def main():
         default=2,
         help="Minimum shared entities to create relationship (default: 2)"
     )
-    
-    args = parser.parse_args()
-    
-    if not args.directory.exists():
-        print(f"ERROR: Directory not found: {args.directory}", file=sys.stderr)
+    return parser
+
+
+def _validate_directory(directory: Path) -> int:
+    """Validate that directory exists and is a directory. Returns 0 on success, 1 on error."""
+    if not directory.exists():
+        print(f"ERROR: Directory not found: {directory}", file=sys.stderr)
         return 1
-    
-    if not args.directory.is_dir():
-        print(f"ERROR: Not a directory: {args.directory}", file=sys.stderr)
+    if not directory.is_dir():
+        print(f"ERROR: Not a directory: {directory}", file=sys.stderr)
         return 1
-    
-    # Find all markdown files (excluding attachment folders)
-    md_files = []
-    for md_file in args.directory.glob("*.md"):
-        # Skip raw headers files
-        if md_file.stem.endswith("-raw-headers"):
-            continue
-        md_files.append(md_file)
-    
-    if not md_files:
-        print(f"No markdown files found in {args.directory}")
-        return 0
-    
-    print(f"Found {len(md_files)} markdown files")
-    
-    # Parse all documents
+    return 0
+
+
+def _discover_markdown_files(directory: Path) -> list[Path]:
+    """Discover markdown files in directory, excluding raw-headers files."""
+    return [
+        md_file for md_file in directory.glob("*.md")
+        if not md_file.stem.endswith("-raw-headers")
+    ]
+
+
+def _parse_documents(md_files: list[Path]) -> list[Document]:
+    """Parse markdown files into Document objects, skipping unparseable files."""
     documents = []
     for md_file in md_files:
         try:
             content = md_file.read_text()
-            fm_dict, fm_text, body = parse_frontmatter(content)
-            doc = Document(md_file, fm_dict, body)
-            documents.append(doc)
+            fm_dict, _fm_text, body = parse_frontmatter(content)
+            documents.append(Document(md_file, fm_dict, body))
         except Exception as e:
             print(f"WARNING: Failed to parse {md_file}: {e}", file=sys.stderr)
-            continue
-    
-    print(f"Parsed {len(documents)} documents")
-    
-    # Build relationships
+    return documents
+
+
+def _build_all_relationships(documents: list[Document], min_shared_entities: int) -> None:
+    """Build all relationship types between documents."""
     print("Building thread relationships...")
     build_thread_relationships(documents)
-    
+
     print("Building attachment relationships...")
     build_attachment_relationships(documents)
-    
-    print(f"Building entity relationships (min shared: {args.min_shared_entities})...")
-    build_entity_relationships(documents, args.min_shared_entities)
-    
-    # Update documents
+
+    print(f"Building entity relationships (min shared: {min_shared_entities})...")
+    build_entity_relationships(documents, min_shared_entities)
+
+
+def _update_all_documents(documents: list[Document], dry_run: bool) -> int:
+    """Update all documents with relationship links. Returns count of updated documents."""
     updated_count = 0
     for doc in documents:
-        if update_document(doc, dry_run=args.dry_run):
+        if update_document(doc, dry_run=dry_run):
             updated_count += 1
-    
+    return updated_count
+
+
+def main() -> int:
+    """Link-discovery, link-validation, and link-insertion pipeline coordinator."""
+    args = _build_arg_parser().parse_args()
+
+    if _validate_directory(args.directory) != 0:
+        return 1
+
+    md_files = _discover_markdown_files(args.directory)
+    if not md_files:
+        print(f"No markdown files found in {args.directory}")
+        return 0
+
+    print(f"Found {len(md_files)} markdown files")
+
+    documents = _parse_documents(md_files)
+    print(f"Parsed {len(documents)} documents")
+
+    _build_all_relationships(documents, args.min_shared_entities)
+
+    updated_count = _update_all_documents(documents, args.dry_run)
     print(f"\n{'Would update' if args.dry_run else 'Updated'} {updated_count} documents")
-    
+
     return 0
 
 
