@@ -532,6 +532,18 @@ _push_process_task() {
 	local body
 	body=$(compose_issue_body "$task_id" "$project_root")
 
+	# GH#18041 (t1957): Collision detection — warn if a merged PR already uses
+	# this task ID. This catches task ID reuse (counter reset, fabricated IDs)
+	# before the issue is created, preventing permanent dispatch blocks.
+	local collision_pr
+	collision_pr=$(gh_find_merged_pr "$repo" "$task_id")
+	if [[ -n "$collision_pr" ]]; then
+		local collision_num collision_url
+		collision_num="${collision_pr%%|*}"
+		collision_url="${collision_pr#*|}"
+		print_warning "TASK ID COLLISION: ${task_id} already used by merged PR #${collision_num} (${collision_url}). This issue will be blocked by the dedup guard. Re-ID the task with claim-task-id.sh."
+	fi
+
 	if [[ "$DRY_RUN" == "true" ]]; then
 		print_info "[DRY-RUN] Would create: $title"
 		echo "CREATED"

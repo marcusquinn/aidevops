@@ -802,6 +802,11 @@ has_open_pr() {
 	done
 
 	# ── Check 3: Task-ID title match (merged PRs) ──
+	# GH#18041 (t1957): When a merged PR matches by task ID, verify it actually
+	# targets the same issue. A task ID collision (counter reset, fabricated ID)
+	# produces a merged PR for a *different* issue — blocking dispatch forever.
+	# Fix: fetch the merged PR body and check if it references our issue_number.
+	# If it references a different issue, it's a collision — warn but don't block.
 	local task_id
 	task_id=$(printf '%s' "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || true)
 	if [[ -z "$task_id" ]]; then
@@ -815,11 +820,29 @@ has_open_pr() {
 	if [[ "$pr_count" -gt 0 ]]; then
 		pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
 		if [[ -n "$pr_number" ]]; then
-			printf 'merged PR #%s found by task id %s in title\n' "$pr_number" "$task_id"
+			# Verify the merged PR actually targets our issue, not a different
+			# one that happened to reuse the same task ID (collision detection).
+			local merged_pr_body
+			merged_pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || merged_pr_body=""
+			local merged_pr_title
+			merged_pr_title=$(gh pr view "$pr_number" --repo "$repo_slug" --json title --jq '.title' 2>/dev/null) || merged_pr_title=""
+
+			# Check if the merged PR references our specific issue number
+			local our_issue_pattern="#${issue_number}([^[:alnum:]_]|$)"
+			if printf '%s\n%s' "$merged_pr_title" "$merged_pr_body" | grep -qE "$our_issue_pattern"; then
+				printf 'merged PR #%s found by task id %s in title\n' "$pr_number" "$task_id"
+				return 0
+			fi
+
+			# The merged PR has the same task ID but targets a different issue.
+			# This is a task ID collision — warn on stderr but don't block dispatch.
+			printf 'COLLISION: merged PR #%s has task id %s but targets a different issue (not #%s) — allowing dispatch\n' \
+				"$pr_number" "$task_id" "$issue_number" >&2
+			return 1
 		else
 			printf 'merged PR found by task id %s in title\n' "$task_id"
+			return 0
 		fi
-		return 0
 	fi
 	return 1
 }
