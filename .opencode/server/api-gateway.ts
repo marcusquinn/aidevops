@@ -230,154 +230,205 @@ function getClientIP(request: Request): string {
     || 'unknown'
 }
 
-// Create the Elysia app
-const app = new Elysia()
-  // CORS middleware
-  .onBeforeHandle(({ request, set }) => {
-    const origin = request.headers.get('origin')
-    
-    if (CONFIG.cors.origins.includes('*') || (origin && CONFIG.cors.origins.includes(origin))) {
-      set.headers['Access-Control-Allow-Origin'] = origin || '*'
-      set.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-      set.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-    }
-    
-    // Handle preflight
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204 })
-    }
-  })
+// ============================================
+// Route Handlers
+// ============================================
 
-  // Rate limiting middleware
-  .onBeforeHandle(({ request, set }) => {
-    const ip = getClientIP(request)
-    const { allowed, remaining, resetAt } = rateLimiter.check(ip)
-    
-    set.headers['X-RateLimit-Limit'] = String(CONFIG.rateLimit.max)
-    set.headers['X-RateLimit-Remaining'] = String(remaining)
-    set.headers['X-RateLimit-Reset'] = String(resetAt)
-    
-    if (!allowed) {
-      set.status = 429
-      return {
-        error: 'Too Many Requests',
-        message: `Rate limit exceeded. Try again after ${new Date(resetAt).toISOString()}`,
-        retryAfter: Math.ceil((resetAt - Date.now()) / 1000),
-      }
-    }
-    
-    requestCount++
-  })
-
-  // Health check
-  .get('/health', () => ({
+function handleHealth() {
+  return {
     status: 'healthy',
     uptime: Math.floor((Date.now() - startTime) / 1000),
     requests: requestCount,
-    cache: {
-      size: cache.size,
-      maxSize: CONFIG.cache.maxSize,
+    cache: { size: cache.size, maxSize: CONFIG.cache.maxSize },
+    rateLimit: { max: CONFIG.rateLimit.max, window: CONFIG.rateLimit.window },
+  }
+}
+
+async function handleSonarIssues(query: { resolved?: string; limit?: string }) {
+  const cacheKey = `sonar:issues:${query.resolved || 'false'}`
+  const cached = cache.get(cacheKey) as SonarResponse | null
+  if (cached) return { ...cached, cached: true }
+
+  const params = new URLSearchParams({
+    componentKeys: CONFIG.sonarcloud.projectKey,
+    resolved: query.resolved || 'false',
+    ps: query.limit || '100',
+    facets: 'rules,severities,types',
+  })
+  const response = await fetch(`${CONFIG.sonarcloud.baseUrl}/issues/search?${params}`)
+  if (!response.ok) throw new Error(`SonarCloud API error: ${response.status}`)
+  const data = await response.json() as SonarResponse
+  cache.set(cacheKey, data, CONFIG.cache.qualityTtl)
+  return { ...data, cached: false }
+}
+
+async function handleSonarStatus() {
+  const cacheKey = 'sonar:status'
+  const cached = cache.get(cacheKey)
+  if (cached) return { ...cached as object, cached: true }
+
+  const response = await fetch(
+    `${CONFIG.sonarcloud.baseUrl}/qualitygates/project_status?projectKey=${CONFIG.sonarcloud.projectKey}`
+  )
+  if (!response.ok) throw new Error(`SonarCloud API error: ${response.status}`)
+  const data = await response.json()
+  cache.set(cacheKey, data, CONFIG.cache.qualityTtl)
+  return { ...data, cached: false }
+}
+
+async function handleSonarMetrics(query: { metrics?: string }) {
+  const metricKeys = query.metrics || 'bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density'
+  const cacheKey = `sonar:metrics:${metricKeys}`
+  const cached = cache.get(cacheKey)
+  if (cached) return { ...cached as object, cached: true }
+
+  const params = new URLSearchParams({ component: CONFIG.sonarcloud.projectKey, metricKeys })
+  const response = await fetch(`${CONFIG.sonarcloud.baseUrl}/measures/component?${params}`)
+  if (!response.ok) throw new Error(`SonarCloud API error: ${response.status}`)
+  const data = await response.json()
+  cache.set(cacheKey, data, CONFIG.cache.qualityTtl)
+  return { ...data, cached: false }
+}
+
+async function handleCrawl4aiHealth() {
+  try {
+    const response = await fetch(`${CONFIG.crawl4ai.baseUrl}/health`)
+    return response.ok
+      ? { status: 'healthy', service: 'crawl4ai' }
+      : { status: 'unhealthy', service: 'crawl4ai' }
+  } catch {
+    return { status: 'unavailable', service: 'crawl4ai' }
+  }
+}
+
+async function handleCrawl4aiCrawl(body: unknown) {
+  const response = await fetch(`${CONFIG.crawl4ai.baseUrl}/crawl`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw new Error(`Crawl4AI error: ${response.status}`)
+  return response.json()
+}
+
+async function handleCrawl4aiExtract(body: { urls: string[]; schema: Record<string, string> }) {
+  const response = await fetch(`${CONFIG.crawl4ai.baseUrl}/crawl`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls: body.urls, extraction_config: body.schema }),
+  })
+  if (!response.ok) throw new Error(`Crawl4AI error: ${response.status}`)
+  return response.json()
+}
+
+async function handleQualitySummary() {
+  const cacheKey = 'quality:summary'
+  const cached = cache.get(cacheKey) as QualityMetrics | null
+  if (cached) return { ...cached, cached: true }
+
+  const [sonarIssues, sonarStatus] = await Promise.all([
+    fetch(`${CONFIG.sonarcloud.baseUrl}/issues/search?componentKeys=${CONFIG.sonarcloud.projectKey}&resolved=false&ps=1`)
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null),
+    fetch(`${CONFIG.sonarcloud.baseUrl}/qualitygates/project_status?projectKey=${CONFIG.sonarcloud.projectKey}`)
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null),
+  ])
+
+  const data: QualityMetrics = { sonarcloud: sonarIssues, timestamp: Date.now(), cached: false }
+  cache.set(cacheKey, data, CONFIG.cache.qualityTtl)
+
+  return {
+    summary: {
+      totalIssues: sonarIssues?.total || 0,
+      qualityGate: sonarStatus?.projectStatus?.status || 'unknown',
     },
-    rateLimit: {
-      max: CONFIG.rateLimit.max,
-      window: CONFIG.rateLimit.window,
-    },
-  }))
+    details: { sonarcloud: sonarIssues, sonarStatus },
+    timestamp: data.timestamp,
+    cached: false,
+  }
+}
+
+function handleCacheDelete(query: { key?: string }) {
+  if (query.key) {
+    cache.delete(query.key)
+    return { cleared: query.key }
+  }
+  cache.clear()
+  return { cleared: 'all' }
+}
+
+function handleCacheStats() {
+  return {
+    size: cache.size,
+    maxSize: CONFIG.cache.maxSize,
+    // Don't expose keys in production - security concern
+    keyCount: cache.keys().length,
+  }
+}
+
+// ============================================
+// Middleware
+// ============================================
+
+function applyCorsHeaders(request: Request, set: { headers: Record<string, string> }): Response | undefined {
+  const origin = request.headers.get('origin')
+  if (CONFIG.cors.origins.includes('*') || (origin && CONFIG.cors.origins.includes(origin))) {
+    set.headers['Access-Control-Allow-Origin'] = origin || '*'
+    set.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    set.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+  }
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204 })
+  }
+  return undefined
+}
+
+function applyRateLimit(
+  request: Request,
+  set: { headers: Record<string, string>; status: number }
+): { error: string; message: string; retryAfter: number } | undefined {
+  const ip = getClientIP(request)
+  const { allowed, remaining, resetAt } = rateLimiter.check(ip)
+  set.headers['X-RateLimit-Limit'] = String(CONFIG.rateLimit.max)
+  set.headers['X-RateLimit-Remaining'] = String(remaining)
+  set.headers['X-RateLimit-Reset'] = String(resetAt)
+  if (!allowed) {
+    set.status = 429
+    return {
+      error: 'Too Many Requests',
+      message: `Rate limit exceeded. Try again after ${new Date(resetAt).toISOString()}`,
+      retryAfter: Math.ceil((resetAt - Date.now()) / 1000),
+    }
+  }
+  requestCount++
+  return undefined
+}
+
+// ============================================
+// App Assembly
+// ============================================
+
+// Create the Elysia app
+const app = new Elysia()
+  .onBeforeHandle(({ request, set }) => applyCorsHeaders(request, set))
+  .onBeforeHandle(({ request, set }) => applyRateLimit(request, set as Parameters<typeof applyRateLimit>[1]))
+
+  .get('/health', () => handleHealth())
 
   // ============================================
   // SonarCloud API Endpoints
   // ============================================
   .group('/api/sonarcloud', (app) =>
     app
-      // Get issues summary
-      .get('/issues', async ({ query }) => {
-        const cacheKey = `sonar:issues:${query.resolved || 'false'}`
-        const cached = cache.get(cacheKey) as SonarResponse | null
-
-        if (cached) {
-          return { ...cached, cached: true }
-        }
-
-        const params = new URLSearchParams({
-          componentKeys: CONFIG.sonarcloud.projectKey,
-          resolved: query.resolved || 'false',
-          ps: query.limit || '100',
-          facets: 'rules,severities,types',
-        })
-
-        const response = await fetch(
-          `${CONFIG.sonarcloud.baseUrl}/issues/search?${params}`
-        )
-
-        if (!response.ok) {
-          throw new Error(`SonarCloud API error: ${response.status}`)
-        }
-
-        const data = await response.json() as SonarResponse
-
-        cache.set(cacheKey, data, CONFIG.cache.qualityTtl)
-
-        return { ...data, cached: false }
-      }, {
+      .get('/issues', ({ query }) => handleSonarIssues(query), {
         query: t.Object({
           resolved: t.Optional(t.String()),
           limit: t.Optional(t.String()),
         }),
       })
-
-      // Get project status
-      .get('/status', async () => {
-        const cacheKey = 'sonar:status'
-        const cached = cache.get(cacheKey)
-
-        if (cached) {
-          return { ...cached as object, cached: true }
-        }
-
-        const response = await fetch(
-          `${CONFIG.sonarcloud.baseUrl}/qualitygates/project_status?projectKey=${CONFIG.sonarcloud.projectKey}`
-        )
-
-        if (!response.ok) {
-          throw new Error(`SonarCloud API error: ${response.status}`)
-        }
-
-        const data = await response.json()
-
-        cache.set(cacheKey, data, CONFIG.cache.qualityTtl)
-
-        return { ...data, cached: false }
-      })
-
-      // Get metrics
-      .get('/metrics', async ({ query }) => {
-        const metricKeys = query.metrics || 'bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density'
-        const cacheKey = `sonar:metrics:${metricKeys}`
-        const cached = cache.get(cacheKey)
-
-        if (cached) {
-          return { ...cached as object, cached: true }
-        }
-
-        const params = new URLSearchParams({
-          component: CONFIG.sonarcloud.projectKey,
-          metricKeys,
-        })
-
-        const response = await fetch(
-          `${CONFIG.sonarcloud.baseUrl}/measures/component?${params}`
-        )
-
-        if (!response.ok) {
-          throw new Error(`SonarCloud API error: ${response.status}`)
-        }
-
-        const data = await response.json()
-
-        cache.set(cacheKey, data, CONFIG.cache.qualityTtl)
-
-        return { ...data, cached: false }
-      }, {
+      .get('/status', () => handleSonarStatus())
+      .get('/metrics', ({ query }) => handleSonarMetrics(query), {
         query: t.Object({
           metrics: t.Optional(t.String()),
         }),
@@ -389,33 +440,8 @@ const app = new Elysia()
   // ============================================
   .group('/api/crawl4ai', (app) =>
     app
-      // Health check for Crawl4AI
-      .get('/health', async () => {
-        try {
-          const response = await fetch(`${CONFIG.crawl4ai.baseUrl}/health`)
-          if (response.ok) {
-            return { status: 'healthy', service: 'crawl4ai' }
-          }
-          return { status: 'unhealthy', service: 'crawl4ai' }
-        } catch {
-          return { status: 'unavailable', service: 'crawl4ai' }
-        }
-      })
-
-      // Crawl URL
-      .post('/crawl', async ({ body }) => {
-        const response = await fetch(`${CONFIG.crawl4ai.baseUrl}/crawl`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-
-        if (!response.ok) {
-          throw new Error(`Crawl4AI error: ${response.status}`)
-        }
-
-        return response.json()
-      }, {
+      .get('/health', () => handleCrawl4aiHealth())
+      .post('/crawl', ({ body }) => handleCrawl4aiCrawl(body), {
         body: t.Object({
           urls: t.Array(t.String()),
           crawler_config: t.Optional(t.Object({
@@ -424,24 +450,7 @@ const app = new Elysia()
           })),
         }),
       })
-
-      // Extract structured data
-      .post('/extract', async ({ body }) => {
-        const response = await fetch(`${CONFIG.crawl4ai.baseUrl}/crawl`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            urls: body.urls,
-            extraction_config: body.schema,
-          }),
-        })
-
-        if (!response.ok) {
-          throw new Error(`Crawl4AI error: ${response.status}`)
-        }
-
-        return response.json()
-      }, {
+      .post('/extract', ({ body }) => handleCrawl4aiExtract(body), {
         body: t.Object({
           urls: t.Array(t.String()),
           schema: t.Record(t.String(), t.String()),
@@ -452,77 +461,22 @@ const app = new Elysia()
   // ============================================
   // Unified Quality Metrics
   // ============================================
-  .get('/api/quality/summary', async () => {
-    const cacheKey = 'quality:summary'
-    const cached = cache.get(cacheKey) as QualityMetrics | null
-
-    if (cached) {
-      return { ...cached, cached: true }
-    }
-
-    // Fetch all quality metrics in parallel
-    const [sonarIssues, sonarStatus] = await Promise.all([
-      fetch(`${CONFIG.sonarcloud.baseUrl}/issues/search?componentKeys=${CONFIG.sonarcloud.projectKey}&resolved=false&ps=1`)
-        .then(r => r.ok ? r.json() : null)
-        .catch(() => null),
-      fetch(`${CONFIG.sonarcloud.baseUrl}/qualitygates/project_status?projectKey=${CONFIG.sonarcloud.projectKey}`)
-        .then(r => r.ok ? r.json() : null)
-        .catch(() => null),
-    ])
-
-    const data: QualityMetrics = {
-      sonarcloud: sonarIssues,
-      timestamp: Date.now(),
-      cached: false,
-    }
-
-    cache.set(cacheKey, data, CONFIG.cache.qualityTtl)
-
-    return {
-      summary: {
-        totalIssues: sonarIssues?.total || 0,
-        qualityGate: sonarStatus?.projectStatus?.status || 'unknown',
-      },
-      details: {
-        sonarcloud: sonarIssues,
-        sonarStatus,
-      },
-      timestamp: data.timestamp,
-      cached: false,
-    }
-  })
+  .get('/api/quality/summary', () => handleQualitySummary())
 
   // ============================================
   // Cache Management
   // ============================================
-  .delete('/api/cache', ({ query }) => {
-    if (query.key) {
-      cache.delete(query.key)
-      return { cleared: query.key }
-    }
-    cache.clear()
-    return { cleared: 'all' }
-  }, {
+  .delete('/api/cache', ({ query }) => handleCacheDelete(query), {
     query: t.Object({
       key: t.Optional(t.String()),
     }),
   })
-
-  .get('/api/cache/stats', () => ({
-    size: cache.size,
-    maxSize: CONFIG.cache.maxSize,
-    // Don't expose keys in production - security concern
-    keyCount: cache.keys().length,
-  }))
+  .get('/api/cache/stats', () => handleCacheStats())
 
   // Error handling
   .onError(({ code, error }) => {
     console.error(`[API Gateway Error] ${code}:`, error.message)
-    return {
-      error: true,
-      code,
-      message: error.message,
-    }
+    return { error: true, code, message: error.message }
   })
 
   .listen(CONFIG.port)

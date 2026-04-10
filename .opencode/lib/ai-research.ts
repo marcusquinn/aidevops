@@ -234,50 +234,50 @@ async function loadFileWithRange(spec: string): Promise<string | null> {
 // System prompt assembly
 // ---------------------------------------------------------------------------
 
+const BASE_INSTRUCTION =
+  "You are a focused research sub-worker. Answer the query concisely " +
+  "using the provided context. Do not explain your reasoning process " +
+  "unless asked. Return actionable information: file paths, line numbers, " +
+  "function names, config values, or brief explanations."
+
+async function buildDomainSection(domain: string): Promise<string[]> {
+  const parts: string[] = []
+  const domainPaths = resolveDomain(domain)
+  for (const p of domainPaths) {
+    const content = await loadAgentFile(p)
+    if (content) parts.push(`--- ${p} ---\n${content}`)
+  }
+  return parts
+}
+
+async function buildAgentsSection(agents: string[]): Promise<string[]> {
+  const parts: string[] = []
+  for (const a of agents) {
+    const content = await loadAgentFile(a)
+    if (content) parts.push(`--- ${a} ---\n${content}`)
+  }
+  return parts
+}
+
+async function buildFilesSection(files: string[]): Promise<string[]> {
+  const parts: string[] = []
+  for (const f of files) {
+    const content = await loadFileWithRange(f)
+    if (content) parts.push(`--- ${f} ---\n${content}`)
+  }
+  return parts
+}
+
 async function buildSystemPrompt(
   agents?: string[],
   domain?: string,
   files?: string[]
 ): Promise<string> {
-  const parts: string[] = []
+  const parts: string[] = [BASE_INSTRUCTION]
 
-  parts.push(
-    "You are a focused research sub-worker. Answer the query concisely " +
-      "using the provided context. Do not explain your reasoning process " +
-      "unless asked. Return actionable information: file paths, line numbers, " +
-      "function names, config values, or brief explanations."
-  )
-
-  // Load domain agents
-  if (domain) {
-    const domainPaths = resolveDomain(domain)
-    for (const p of domainPaths) {
-      const content = await loadAgentFile(p)
-      if (content) {
-        parts.push(`--- ${p} ---\n${content}`)
-      }
-    }
-  }
-
-  // Load explicit agent files
-  if (agents?.length) {
-    for (const a of agents) {
-      const content = await loadAgentFile(a)
-      if (content) {
-        parts.push(`--- ${a} ---\n${content}`)
-      }
-    }
-  }
-
-  // Load file context
-  if (files?.length) {
-    for (const f of files) {
-      const content = await loadFileWithRange(f)
-      if (content) {
-        parts.push(`--- ${f} ---\n${content}`)
-      }
-    }
-  }
+  if (domain) parts.push(...await buildDomainSection(domain))
+  if (agents?.length) parts.push(...await buildAgentsSection(agents))
+  if (files?.length) parts.push(...await buildFilesSection(files))
 
   return parts.join("\n\n")
 }

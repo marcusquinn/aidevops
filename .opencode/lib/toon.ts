@@ -30,13 +30,17 @@ export function jsonToToon(data: unknown, options: ToonOptions = {}): string {
   return convertToToon(data, opts, 0)
 }
 
+const PRIMITIVE_CONVERTERS: Record<string, (data: unknown) => string> = {
+  string: (data) => data as string,
+  number: (data) => String(data),
+  boolean: (data) => String(data),
+}
+
 function convertPrimitive(data: unknown): string | null {
   if (data === null) return 'null'
   if (data === undefined) return 'undefined'
-  if (typeof data === 'string') return data
-  if (typeof data === 'number') return String(data)
-  if (typeof data === 'boolean') return String(data)
-  return null
+  const converter = PRIMITIVE_CONVERTERS[typeof data]
+  return converter ? converter(data) : null
 }
 
 function convertArrayToToon(data: unknown[], opts: ToonOptions, depth: number): string {
@@ -83,22 +87,25 @@ function convertToToon(data: unknown, opts: ToonOptions, depth: number): string 
   return String(data)
 }
 
+function isPlainObject(val: unknown): val is Record<string, unknown> {
+  return typeof val === 'object' && val !== null && !Array.isArray(val)
+}
+
 /**
  * Check if array is tabular (array of objects with same keys)
  */
 function isTabularArray(arr: unknown[]): boolean {
-  if (arr.length < 2) return false
-  if (typeof arr[0] !== 'object' || arr[0] === null) return false
-  if (Array.isArray(arr[0])) return false
+  if (arr.length < 2 || !isPlainObject(arr[0])) return false
 
-  const firstKeys = Object.keys(arr[0] as object).sort().join(',')
-  
-  return arr.every(item => {
-    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
-      return false
-    }
-    return Object.keys(item).sort().join(',') === firstKeys
-  })
+  const firstKeys = Object.keys(arr[0]).sort().join(',')
+  return arr.every(item => isPlainObject(item) && Object.keys(item).sort().join(',') === firstKeys)
+}
+
+function formatTabularCell(val: unknown, delimiter: string): string {
+  if (val === null) return 'null'
+  if (val === undefined) return ''
+  if (typeof val === 'string' && val.includes(delimiter)) return `"${val}"`
+  return String(val)
 }
 
 /**
@@ -117,17 +124,7 @@ function convertTabularArray(
   const delimiter = opts.delimiter!
 
   const header = `[${arr.length}]{${keys.join(',')}}:`
-  const rows = arr.map(obj => {
-    return keys.map(key => {
-      const val = obj[key]
-      if (val === null) return 'null'
-      if (val === undefined) return ''
-      if (typeof val === 'string' && val.includes(delimiter)) {
-        return `"${val}"`
-      }
-      return String(val)
-    }).join(delimiter)
-  })
+  const rows = arr.map(obj => keys.map(key => formatTabularCell(obj[key], delimiter)).join(delimiter))
 
   return `${header}\n${rows.map(r => `${indent}  ${r}`).join('\n')}`
 }
@@ -145,14 +142,20 @@ interface ParseResult {
   consumed: number
 }
 
+const LITERAL_MAP: Record<string, unknown> = {
+  null: null,
+  undefined: undefined,
+  true: true,
+  false: false,
+  '[]': [],
+  '{}': {},
+}
+
 function parseLiteral(line: string): ParseResult | null {
-  if (line === 'null') return { value: null, consumed: 1 }
-  if (line === 'undefined') return { value: undefined, consumed: 1 }
-  if (line === 'true') return { value: true, consumed: 1 }
-  if (line === 'false') return { value: false, consumed: 1 }
+  if (Object.prototype.hasOwnProperty.call(LITERAL_MAP, line)) {
+    return { value: LITERAL_MAP[line], consumed: 1 }
+  }
   if (/^-?\d+(\.\d+)?$/.test(line)) return { value: Number(line), consumed: 1 }
-  if (line === '[]') return { value: [], consumed: 1 }
-  if (line === '{}') return { value: {}, consumed: 1 }
   return null
 }
 
@@ -220,13 +223,9 @@ function parseDelimitedRow(row: string, delimiter: string): string[] {
   let current = ''
   let inQuotes = false
 
-  for (let i = 0; i < row.length; i++) {
-    const char = row[i]
-    
-    if (char === '"' && !inQuotes) {
-      inQuotes = true
-    } else if (char === '"' && inQuotes) {
-      inQuotes = false
+  for (const char of row) {
+    if (char === '"') {
+      inQuotes = !inQuotes
     } else if (char === delimiter && !inQuotes) {
       result.push(current)
       current = ''
@@ -234,16 +233,22 @@ function parseDelimitedRow(row: string, delimiter: string): string[] {
       current += char
     }
   }
-  
+
   result.push(current)
   return result
 }
 
+const KNOWN_VALUES: Record<string, unknown> = {
+  null: null,
+  undefined: undefined,
+  true: true,
+  false: false,
+}
+
 function detectKnownValue(trimmed: string): { known: true; value: unknown } | { known: false } {
-  if (trimmed === 'null') return { known: true, value: null }
-  if (trimmed === 'undefined') return { known: true, value: undefined }
-  if (trimmed === 'true') return { known: true, value: true }
-  if (trimmed === 'false') return { known: true, value: false }
+  if (Object.prototype.hasOwnProperty.call(KNOWN_VALUES, trimmed)) {
+    return { known: true, value: KNOWN_VALUES[trimmed] }
+  }
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) return { known: true, value: Number(trimmed) }
   return { known: false }
 }
@@ -317,6 +322,23 @@ export function compareTokens(data: unknown): {
   }
 }
 
+async function convertJsonToToonFile(content: string, outputPath: string) {
+  const data = JSON.parse(content)
+  await Bun.write(outputPath, jsonToToon(data))
+  return { success: true, stats: compareSizes(data) }
+}
+
+async function convertToonToJsonFile(content: string, outputPath: string) {
+  const json = JSON.stringify(toonToJson(content), null, 2)
+  await Bun.write(outputPath, json)
+  return { success: true, stats: null }
+}
+
+const FILE_CONVERTERS = {
+  toToon: convertJsonToToonFile,
+  toJson: convertToonToJsonFile,
+}
+
 // File operations using Bun
 export async function convertFile(
   inputPath: string,
@@ -324,22 +346,9 @@ export async function convertFile(
   direction: 'toToon' | 'toJson'
 ): Promise<{ success: boolean; stats: ReturnType<typeof compareSizes> | null }> {
   const inputFile = Bun.file(inputPath)
-  
   if (!(await inputFile.exists())) {
     throw new Error(`Input file not found: ${inputPath}`)
   }
-
   const content = await inputFile.text()
-
-  if (direction === 'toToon') {
-    const data = JSON.parse(content)
-    const toon = jsonToToon(data)
-    await Bun.write(outputPath, toon)
-    return { success: true, stats: compareSizes(data) }
-  } else {
-    const data = toonToJson(content)
-    const json = JSON.stringify(data, null, 2)
-    await Bun.write(outputPath, json)
-    return { success: true, stats: null }
-  }
+  return FILE_CONVERTERS[direction](content, outputPath)
 }
