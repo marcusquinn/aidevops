@@ -33,7 +33,18 @@ fi
 
 If `$MISSION_DESC` empty and not headless: ask "What's the mission? Describe the end goal in one sentence."
 
-**Headless defaults** (`--headless` or ` -- ` in args): auto-classify; Full mode unless "poc"/"prototype"/"spike"/"research" in desc; Time 1 week; Cost moderate; Infra existing/local; Deps none. Run decomposition with opus. Output: `MISSION_ID={id} MISSION_DIR={path} MISSION_MODE={poc|full} MISSION_MILESTONES={n} MISSION_FEATURES={n} MISSION_STATUS=planning`
+**Headless defaults** (`--headless` or ` -- ` in args):
+
+| Setting | Default |
+|---------|---------|
+| Classification | auto-detect |
+| Mode | Full (unless "poc"/"prototype"/"spike"/"research" in desc) |
+| Time | 1 week |
+| Cost | moderate |
+| Infra | existing/local |
+| Deps | none |
+
+Run decomposition with opus. Output: `MISSION_ID={id} MISSION_DIR={path} MISSION_MODE={poc|full} MISSION_MILESTONES={n} MISSION_FEATURES={n} MISSION_STATUS=planning`
 
 ## Step 1: Mission Classification
 
@@ -55,8 +66,6 @@ If ambiguous, present numbered options and ask.
 | **Full** | Worktree + PR workflow, task briefs per feature, parallel worker dispatch, preflight/postflight (recommended for greenfield/enhancement) |
 
 ## Step 3: Budget and Constraints Interview
-
-Ask sequentially, one recommended option each:
 
 | Q | Options |
 |---|---------|
