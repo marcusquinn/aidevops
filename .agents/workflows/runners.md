@@ -9,16 +9,14 @@ mode: subagent
 
 Dispatch one or more workers. Route by work type:
 
-- **Code changes** (repo edits, tests, PRs) -> `/full-loop`
-- **Operational work** (reports, audits, monitoring, outreach) -> direct command execution
+- **Code changes** (repo edits, tests, PRs) → `/full-loop`
+- **Operational work** (reports, audits, monitoring, outreach) → direct command execution
 
 Arguments: $ARGUMENTS
 
 ## Scope
 
-**`/runners` is a targeted dispatcher, not a supervisor.** It resolves explicit items, launches one worker per item, shows the dispatch table, and stops. It does NOT run supervisor phases, auto-pickup, stale recovery, or audits. Use `/pulse` for unattended slot-filling (`scripts/commands/pulse.md`).
-
-Workers stay isolated: `/runners` never touches source code, tests, branches, or merge conflicts. If a worker fails, fix the worker prompt or workflow, not the dispatcher.
+Targeted dispatcher: resolves explicit items, launches one worker per item, shows dispatch table, stops. Does NOT run supervisor phases, auto-pickup, stale recovery, or audits — use `/pulse` for those (`scripts/commands/pulse.md`). Workers stay isolated; never touches source code, branches, or merge conflicts. Fix worker prompt or workflow on failure, not the dispatcher.
 
 ## Input Types
 
@@ -32,8 +30,6 @@ Workers stay isolated: `/runners` never touches source code, tests, branches, or
 
 ## Step 1: Resolve Items
 
-Resolve each input to a description:
-
 ```bash
 gh issue view 267 --repo <slug> --json number,title,url
 gh pr view 268 --repo <slug> --json number,title,headRefName,url
@@ -43,9 +39,7 @@ gh issue view 42 --repo user/repo --json number,title,url
 
 ## Step 2: Dispatch Workers
 
-Launch each worker via `headless-runtime-helper.sh run` — the **ONLY** valid dispatch path. It builds the lifecycle prompt, handles provider rotation, preserves sessions, and applies backoff. NEVER use bare `opencode run` or workers may stop after PR creation (GH#5096).
-
-Use the `--detach` flag to self-daemonize the worker and return control to the calling agent immediately. This is the preferred pattern for agent-to-agent dispatch.
+Use `headless-runtime-helper.sh run` — the **ONLY** valid dispatch path (NEVER bare `opencode run`; workers stop after PR creation, GH#5096). Use `--detach` for agent-to-agent dispatch to return control immediately.
 
 ```bash
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
@@ -62,26 +56,14 @@ $HELPER run \
 # Returns immediately with: "Dispatched PID: 12345"
 ```
 
-### Manual Redirection (Legacy)
+**Legacy (no `--detach`):** `$HELPER run ... </dev/null >>/tmp/worker-${session_key}.log 2>&1 &`
 
-If using an older version of `aidevops` without `--detach`, redirect at the caller level to avoid blocking the interactive session:
-
-```bash
-$HELPER run ... </dev/null >>/tmp/worker-${session_key}.log 2>&1 &
-sleep 2
-```
-
-### Dispatch Rules
-
-- `--dir ~/Git/<repo-name>` must match the target repo
-- `--agent <name>` routes to a specialist; omit it for code tasks (Build+ default)
-- `/full-loop` only for tasks needing repo code changes and PR traceability
-- `--detach` is recommended for agent-to-agent dispatch to avoid blocking
-- Do NOT add `--model` unless escalation is required by workflow policy
+**Dispatch rules:**
+- `--dir` must match the target repo
+- `--agent <name>` for specialists; omit for code tasks (Build+ default)
+- `--model` only if escalation is required by workflow policy
 
 ## Step 3: Show Dispatch Table
-
-After dispatch, show what was launched:
 
 ```text
 ## Dispatched Workers
