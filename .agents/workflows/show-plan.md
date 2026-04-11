@@ -7,8 +7,6 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Display detailed plan information including purpose, progress, decisions, and related tasks.
-
 Arguments: $ARGUMENTS
 
 ## Quick Output (Default)
@@ -50,22 +48,23 @@ Display the output directly to the user. The script handles all formatting.
 
 ## Output Format
 
-Script outputs formatted Markdown with: Status, Estimate, Progress phases (checkboxes), Purpose, Context, Decisions (with Rationale + Date), Discoveries (with Evidence + Impact), Related Tasks, and numbered options (1=start, 2=view another, 3=back to `/list-todo`).
+Script outputs formatted Markdown with:
+- Status, Estimate, Progress phases (checkboxes)
+- Purpose, Context
+- Decisions (with Rationale + Date)
+- Discoveries (with Evidence + Impact)
+- Related Tasks
+- Numbered options: 1=start work, 2=view another plan, 3=back to `/list-todo`
 
 ## After Display
 
-Wait for user input:
-
-1. **"1"** - Begin working on the plan → run pre-edit check, create/switch branch, mark first phase in-progress
+1. **"1"** - Begin working on the plan:
+   1. Run `~/.aidevops/agents/scripts/pre-edit-check.sh`
+   2. Create branch if needed: `wt switch -c feature/<plan-slug>`
+   3. Update plan status: `**Status:** Planning` → `**Status:** In Progress (Phase 1/N)`, add `started:` timestamp
+   4. Display first phase description and any blockers
 2. **"2"** - View another plan → prompt for name, run `/show-plan <name>`
 3. **"3"** - Return to task list → run `/list-todo`
-
-## Starting Work on a Plan
-
-1. Run `~/.aidevops/agents/scripts/pre-edit-check.sh`
-2. Create branch if needed: `wt switch -c feature/<plan-slug>`
-3. Update plan status: `**Status:** Planning` → `**Status:** In Progress (Phase 1/N)`, add `started:` timestamp
-4. Display first phase description and any blockers
 
 ## Related Commands
 
