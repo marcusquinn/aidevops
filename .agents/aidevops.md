@@ -69,24 +69,12 @@ configs/[service]-config.json       # Working configs (gitignored)
 
 ## Quality Standards
 
-- SonarCloud: A-grade (zero vulnerabilities, bugs)
-- ShellCheck: Zero violations
-- Pattern: `local var="$1"` not `$1` directly; explicit `return 0/1` in all functions
+SonarCloud A-grade, ShellCheck zero violations. Pattern: `local var="$1"`; explicit `return 0/1`. Full rules: `prompts/build.txt`.
 
 ## Extending the Framework
 
-See `aidevops/extension.md`:
+See `aidevops/extension.md` — helper script → config template → agent doc → service index → test.
 
-1. Create helper script following existing patterns
-2. Add config template
-3. Create agent documentation
-4. Update service index
-5. Test thoroughly
+## Runtime Auth
 
-## OpenCode Plugins
-
-**Anthropic OAuth** (built-in since OpenCode v1.1.36+): Enables Claude Pro/Max authentication.
-
-```bash
-opencode auth login   # Select: Anthropic → Claude Pro/Max
-```
+**OpenCode Anthropic OAuth** (v1.1.36+): `opencode auth login` → select Anthropic → Claude Pro/Max.
