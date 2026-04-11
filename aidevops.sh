@@ -1493,6 +1493,61 @@ EOF
 	return 0
 }
 
+# Scaffold .agents/commands/ and .windsurf/workflows/ symlinks so that clients
+# which read repo-local command directories (Amp reads .agents/commands/ natively;
+# Windsurf reads .windsurf/workflows/) see the aidevops main-agent slash commands.
+#
+# Behavior is idempotent:
+#   - If .agents/commands/ already contains the expected aidevops-*.md symlinks
+#     (this repo IS the aidevops source), do nothing.
+#   - Otherwise link .agents/commands/ → ~/.aidevops/agents/commands/
+#   - Always link .windsurf/workflows/ → ../.agents/commands/ (relative)
+_init_scaffold_commands_symlinks() {
+	local project_root="$1"
+	local source_dir="$HOME/.aidevops/agents/commands"
+	local commands_dir="$project_root/.agents/commands"
+	local windsurf_dir="$project_root/.windsurf"
+	local workflows_link="$windsurf_dir/workflows"
+
+	# If .agents/commands/ already contains main-agent symlinks, this repo
+	# manages them directly (e.g. the aidevops source repo itself) — leave
+	# it alone so we never overwrite authoritative content.
+	if [[ -e "$commands_dir/aidevops-build-plus.md" ]]; then
+		print_info ".agents/commands/ already contains main-agent symlinks — preserving"
+	elif [[ ! -d "$source_dir" ]]; then
+		print_warning "Framework commands dir not found at $source_dir — run setup.sh first to deploy main-agent symlinks"
+	elif [[ -L "$commands_dir" ]]; then
+		# Existing symlink — point at the canonical source
+		local current_target
+		current_target=$(readlink "$commands_dir")
+		if [[ "$current_target" != "$source_dir" ]]; then
+			rm "$commands_dir"
+			ln -s "$source_dir" "$commands_dir"
+			print_success "Re-linked .agents/commands/ → $source_dir"
+		else
+			print_info ".agents/commands/ already linked correctly"
+		fi
+	elif [[ -d "$commands_dir" ]]; then
+		print_warning ".agents/commands/ exists as a real directory — not overwriting"
+	else
+		ln -s "$source_dir" "$commands_dir"
+		print_success "Linked .agents/commands/ → $source_dir (Amp reads this natively)"
+	fi
+
+	# .windsurf/workflows/ → ../.agents/commands/ (relative, so the link
+	# resolves inside the repo regardless of checkout path).
+	mkdir -p "$windsurf_dir"
+	if [[ -L "$workflows_link" ]]; then
+		print_info ".windsurf/workflows/ already linked"
+	elif [[ -d "$workflows_link" ]]; then
+		print_warning ".windsurf/workflows/ exists as a real directory — not overwriting"
+	else
+		(cd "$windsurf_dir" && ln -s "../.agents/commands" workflows)
+		print_success "Linked .windsurf/workflows/ → ../.agents/commands (Windsurf slash commands)"
+	fi
+	return 0
+}
+
 # Init command - initialize aidevops in a project
 cmd_init() {
 	local features="${1:-all}"
@@ -1635,6 +1690,10 @@ EOF
 		mkdir -p "$project_root/.agents"
 		print_success "Created .agents/ directory"
 	fi
+
+	# Link .agents/commands/ and .windsurf/workflows/ so Amp (native) and Windsurf
+	# (symlinked) can see the aidevops main-agent slash commands.
+	_init_scaffold_commands_symlinks "$project_root"
 
 	# Scaffold or update .agents/AGENTS.md (idempotent — creates if missing,
 	# updates Security section if file already exists)
