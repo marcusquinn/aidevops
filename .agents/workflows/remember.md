@@ -29,14 +29,7 @@ Content to remember: $ARGUMENTS
 ## Workflow
 
 1. **Analyze** — extract: content (concise, actionable), type, tags (comma-separated), project (optional)
-2. **Confirm** — present to user:
-
-   ```text
-   Storing memory:
-   Type: {type}  Content: "{content}"  Tags: {tags}  Project: {project or "global"}
-   1. Confirm  2. Change type  3. Edit content  4. Cancel
-   ```
-
+2. **Confirm** — present to user: `Type: {type}  Content: "{content}"  Tags: {tags}  Project: {project or "global"}` — options: 1. Confirm  2. Change type  3. Edit content  4. Cancel
 3. **Store** — after confirmation:
 
    ```bash
@@ -47,7 +40,7 @@ Content to remember: $ARGUMENTS
 
 ## Auto-Remember Triggers (MANDATORY)
 
-Proactively suggest `/remember` when detecting these patterns — do NOT wait for the user to ask:
+Proactively suggest `/remember` on these patterns — do NOT wait for the user to ask. Suggest immediately; don't skip minor learnings; keep suggestions concise and actionable.
 
 | User Says | Memory Type |
 |-----------|-------------|
@@ -58,8 +51,6 @@ Proactively suggest `/remember` when detecting these patterns — do NOT wait fo
 | "architecture", "service boundary", "tech stack", "data flow" | `ARCHITECTURAL_DECISION` |
 | "configure X as", "set X to", "X needs Y" | `TOOL_CONFIG` |
 
-**Response format** — offer immediately on trigger detection:
-
 ```text
 That worked! Want me to remember this for future sessions?
 
@@ -68,10 +59,6 @@ That worked! Want me to remember this for future sessions?
 (Reply 'y' to confirm, or edit the description)
 ```
 
-Rules: suggest immediately; don't skip minor learnings; keep suggestions concise and actionable.
-
 ## Storage
 
-`~/.aidevops/.agent-workspace/memory/memory.db` (SQLite FTS5)
-
-Stats: `~/.aidevops/agents/scripts/memory-helper.sh stats`
+`~/.aidevops/.agent-workspace/memory/memory.db` (SQLite FTS5) — Stats: `memory-helper.sh stats`
