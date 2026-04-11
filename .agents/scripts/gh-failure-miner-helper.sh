@@ -161,18 +161,97 @@ normalize_signature_line() {
 	return 0
 }
 
+select_failed_job_json() {
+	local repo_slug="$1"
+	local run_id="$2"
+	local check_run_id="$3"
+	local jobs_json
+	local selected_job=""
+
+	jobs_json=$(gh api "repos/${repo_slug}/actions/runs/${run_id}/jobs" 2>/dev/null || printf '{}')
+	if [[ -z "$jobs_json" ]] || [[ "$jobs_json" == "{}" ]]; then
+		printf '%s' ""
+		return 0
+	fi
+
+	if [[ -n "$check_run_id" ]]; then
+		selected_job=$(printf '%s\n' "$jobs_json" | jq -c --arg check_run_id "$check_run_id" '[.jobs[]? | select(((.check_run_url // "") | split("/") | last) == $check_run_id)] | first // empty')
+	fi
+
+	if [[ -z "$selected_job" ]]; then
+		selected_job=$(printf '%s\n' "$jobs_json" | jq -c '[.jobs[]? | select((.conclusion // "") == "failure")] | first // empty')
+	fi
+
+	printf '%s' "$selected_job"
+	return 0
+}
+
+job_annotations_indicate_billing_outage() {
+	local repo_slug="$1"
+	local check_run_id="$2"
+	local annotations_json
+
+	if [[ -z "$check_run_id" ]]; then
+		return 1
+	fi
+
+	annotations_json=$(gh api "repos/${repo_slug}/check-runs/${check_run_id}/annotations" 2>/dev/null || printf '[]')
+	if printf '%s\n' "$annotations_json" | jq -e 'any(.[]; ([.message // "", .title // "", .raw_details // ""] | join(" ") | ascii_downcase | test("account payments have failed|spending limit needs to be increased")))' >/dev/null; then
+		return 0
+	fi
+
+	return 1
+}
+
+classify_failed_job_signature() {
+	local repo_slug="$1"
+	local failed_job_json="$2"
+	local step_count
+	local check_run_id
+
+	if [[ -z "$failed_job_json" ]] || [[ "$failed_job_json" == "null" ]]; then
+		printf '%s' ""
+		return 0
+	fi
+
+	step_count=$(printf '%s\n' "$failed_job_json" | jq '(.steps // []) | length')
+	if [[ "$step_count" -ne 0 ]]; then
+		printf '%s' ""
+		return 0
+	fi
+
+	check_run_id=$(printf '%s\n' "$failed_job_json" | jq -r '(.check_run_url // "") | split("/") | last // empty')
+	if job_annotations_indicate_billing_outage "$repo_slug" "$check_run_id"; then
+		printf '%s' "billing_outage"
+		return 0
+	fi
+
+	printf '%s' "job_not_started"
+	return 0
+}
+
 extract_failure_signature() {
 	local repo_slug="$1"
 	local run_id="$2"
+	local check_run_id="$3"
+	local failed_job_json
+	local zero_step_signature
 	local logs
+	local failed_job_id
+
+	failed_job_json=$(select_failed_job_json "$repo_slug" "$run_id" "$check_run_id")
+	zero_step_signature=$(classify_failed_job_signature "$repo_slug" "$failed_job_json")
+	if [[ -n "$zero_step_signature" ]]; then
+		printf '%s' "$zero_step_signature"
+		return 0
+	fi
+
 	logs=$(gh run view "$run_id" --repo "$repo_slug" --log-failed 2>/dev/null || true)
 	if [[ -z "$logs" ]]; then
 		# Fallback: --log-failed returned empty (logs expired, rate-limited, or run still
 		# in progress). Try the jobs API to get the first failed job's logs directly.
 		# This avoids the "no_failed_log_output" signature which produces unhelpful clusters.
-		local failed_job_id
-		failed_job_id=$(gh api "repos/${repo_slug}/actions/runs/${run_id}/jobs" \
-			--jq '[.jobs[] | select(.conclusion == "failure")] | first | .id // empty' 2>/dev/null || true)
+		failed_job_id=$(printf '%s\n' "$failed_job_json" | jq -r '.id // empty')
 		if [[ -n "$failed_job_id" ]]; then
 			logs=$(gh api "repos/${repo_slug}/actions/jobs/${failed_job_id}/logs" 2>/dev/null || true)
 		fi
@@ -276,7 +355,9 @@ resolve_check_signature() {
 	fi
 
 	if [[ "$include_logs" == "true" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]]; then
-		extract_failure_signature "$repo_slug" "$run_id"
+		local check_run_id
+		check_run_id=$(printf '%s\n' "$run_json" | jq -r '.id // empty')
+		extract_failure_signature "$repo_slug" "$run_id" "$check_run_id"
 		return 0
 	fi
 
@@ -708,7 +789,9 @@ create_systemic_issues() {
 
 	local candidate_file
 	candidate_file=$(mktemp)
-	printf '%s\n' "$clusters_json" | jq --argjson min_count "$systemic_threshold" '[.[] | select(.count >= $min_count)]' >"$candidate_file"
+	# Exclude billing-caused zero-step failures — they reflect account state,
+	# not a tooling defect worth clustering into systemic issues. (GH#18089)
+	printf '%s\n' "$clusters_json" | jq --argjson min_count "$systemic_threshold" '[.[] | select(.count >= $min_count and ((.signature // "") as $signature | ["billing_outage","job_not_started"] | index($signature) | not))]' >"$candidate_file"
 
 	# Ensure source label exists on repos that will receive issues
 	if [[ "$dry_run" != "true" ]]; then
