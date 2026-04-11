@@ -1032,80 +1032,104 @@ _todo_commit_push_inner() {
 WORKTREE_REGISTRY_DIR="${WORKTREE_REGISTRY_DIR:-${HOME}/.aidevops/.agent-workspace}"
 WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-${WORKTREE_REGISTRY_DIR}/worktree-registry.db}"
 
-# Walk up the process tree from a given PID to find the nearest long-lived
-# ancestor that is not a transient shell subprocess (bash/sh/dash/zsh).
-# Interactive runtimes (Claude Code, OpenCode) spawn short-lived bash subprocesses
-# to execute tool calls. Registering the bash PPID causes stale registry entries
-# because the bash process exits immediately after the tool call completes.
-# This function finds the actual long-lived runtime process instead.
-#
+# Get the command name (basename) for a given PID.
+# Returns empty string if the PID does not exist or info is unavailable.
 # Arguments:
-#   $1 - starting PID (typically PPID of the script)
-# Returns: long-lived ancestor PID on stdout, or the input PID if none found
-_find_long_lived_ancestor_pid() {
-	local start_pid="${1:-}"
-	[[ -z "$start_pid" ]] && printf '%s' "$$" && return 0
+#   $1 - PID to inspect
+# Returns: command basename on stdout
+_get_proc_comm() {
+	local pid="${1:-}"
+	[[ -z "$pid" ]] && return 0
 
-	local current_pid="$start_pid"
-	local max_depth=10
-	local depth=0
-
-	while [[ $depth -lt $max_depth ]]; do
-		depth=$((depth + 1))
-
-		# Get parent PID and command name for current_pid in a single read
-		local parent_pid=""
-		local comm=""
-		if [[ -r "/proc/$current_pid/status" ]]; then
-			# Linux: read both fields in one awk pass to avoid two subshells
-			local proc_info
-			proc_info=$(awk '/^(PPid|Name):/{print $2}' "/proc/$current_pid/status" 2>/dev/null || true)
-			parent_pid=$(printf '%s\n' "$proc_info" | sed -n '2p')
-			comm=$(printf '%s\n' "$proc_info" | sed -n '1p')
-		else
-			# macOS/BSD: use ps (two fields in one call)
-			local ps_info
-			ps_info=$(ps -o ppid=,comm= -p "$current_pid" 2>/dev/null | tr -s ' ') || ps_info=""
-			parent_pid=$(printf '%s' "$ps_info" | awk '{print $1}' | tr -d ' ')
-			comm=$(printf '%s' "$ps_info" | awk '{print $2}' | tr -d ' ')
-		fi
-
-		# Stop if we can't get parent info or reached init (PID 1)
-		[[ -z "$parent_pid" ]] && break
-		[[ "$parent_pid" -le 1 ]] 2>/dev/null && break
-
-		# If current process is a transient shell, walk up to its parent.
-		# Use ${comm##*/} to handle full paths (e.g. /bin/bash → bash).
-		case "${comm##*/}" in
-		bash | sh | dash | zsh | ksh | fish)
-			current_pid="$parent_pid"
-			continue
-			;;
-		esac
-
-		# Current process is not a shell — it's the long-lived runtime
-		printf '%s' "$current_pid"
-		return 0
-	done
-
-	# Fallback: return the original start_pid
-	printf '%s' "$start_pid"
+	local comm=""
+	if [[ -r "/proc/$pid/status" ]]; then
+		# Linux: read Name field from /proc
+		comm=$(awk '/^Name:/{print $2; exit}' "/proc/$pid/status" 2>/dev/null || true)
+	else
+		# macOS/BSD: use ps
+		comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ') || comm=""
+	fi
+	printf '%s' "${comm##*/}"
 	return 0
+}
+
+# Get the parent PID for a given PID.
+# Returns empty string if the PID does not exist or info is unavailable.
+# Arguments:
+#   $1 - PID to inspect
+# Returns: parent PID on stdout
+_get_proc_ppid() {
+	local pid="${1:-}"
+	[[ -z "$pid" ]] && return 0
+
+	local parent_pid=""
+	if [[ -r "/proc/$pid/status" ]]; then
+		# Linux: read PPid field from /proc
+		parent_pid=$(awk '/^PPid:/{print $2; exit}' "/proc/$pid/status" 2>/dev/null || true)
+	else
+		# macOS/BSD: use ps
+		parent_pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') || parent_pid=""
+	fi
+	printf '%s' "$parent_pid"
+	return 0
+}
+
+# Check if a command name matches a known AI interactive runtime.
+# These are long-lived processes that spawn transient bash subprocesses for tool calls.
+# Arguments:
+#   $1 - command basename (e.g. ".opencode", "claude", "node")
+# Returns: 0 if it is a known AI runtime, 1 otherwise
+_is_ai_runtime_comm() {
+	local comm="${1:-}"
+	case "$comm" in
+	# OpenCode runtime (may appear as ".opencode" on Linux)
+	opencode | .opencode)
+		return 0
+		;;
+	# Claude Code CLI
+	claude | .claude)
+		return 0
+		;;
+	# Node.js-based runtimes (Claude Code, OpenCode web, etc.)
+	# Only match if the parent is not itself a shell — node is too generic
+	# to match unconditionally, but it is the common wrapper for AI runtimes.
+	node | .node)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+# Check if a command name is a transient shell subprocess.
+# Arguments:
+#   $1 - command basename
+# Returns: 0 if it is a shell, 1 otherwise
+_is_shell_comm() {
+	local comm="${1:-}"
+	case "$comm" in
+	bash | sh | dash | zsh | ksh | fish)
+		return 0
+		;;
+	esac
+	return 1
 }
 
 # Resolve the long-lived process ID that should own a worktree lock.
 # Priority:
 #   1) Explicit override (first argument)
 #   2) OpenCode interactive PID (OPENCODE_PID)
-#   3) Claude session PID (CLAUDE_SESSION_ID env not useful; walk process tree)
-#   4) Long-lived ancestor of PPID (skips transient bash subprocesses)
+#   3) If PPID is a transient shell whose parent is a known AI runtime,
+#      return the AI runtime PID (GH#18090 fix)
+#   4) PPID as-is (stable user shell or other long-lived process)
 #   5) Current shell PID ($$)
 # Returns: PID string on stdout
 #
 # GH#18090: Interactive sessions (Claude Code, OpenCode) spawn short-lived bash
 # subprocesses for tool calls. Registering PPID directly causes stale registry
 # entries because the bash process exits immediately after the tool call.
-# We walk up the process tree to find the actual long-lived runtime process.
+# We check one level up: if PPID is a shell AND its parent is a known AI runtime,
+# use the AI runtime PID. This avoids collapsing independent user shell sessions
+# (e.g. multiple tmux panes) under a single parent PID.
 _resolve_worktree_owner_pid() {
 	local explicit_pid="${1:-}"
 	if [[ -n "$explicit_pid" ]]; then
@@ -1119,12 +1143,25 @@ _resolve_worktree_owner_pid() {
 	fi
 
 	if [[ -n "${PPID:-}" ]]; then
-		# Walk up the process tree to find the long-lived ancestor.
-		# This handles interactive runtimes (Claude Code, OpenCode) that
-		# spawn short-lived bash subprocesses for tool calls (GH#18090).
-		local ancestor_pid
-		ancestor_pid=$(_find_long_lived_ancestor_pid "$PPID")
-		printf '%s' "$ancestor_pid"
+		# Check if PPID is a transient shell subprocess of a known AI runtime.
+		# If so, register the AI runtime PID instead of the short-lived shell.
+		local ppid_comm
+		ppid_comm=$(_get_proc_comm "$PPID")
+		if _is_shell_comm "$ppid_comm"; then
+			local grandparent_pid
+			grandparent_pid=$(_get_proc_ppid "$PPID")
+			if [[ -n "$grandparent_pid" ]] && [[ "$grandparent_pid" -gt 1 ]] 2>/dev/null; then
+				local grandparent_comm
+				grandparent_comm=$(_get_proc_comm "$grandparent_pid")
+				if _is_ai_runtime_comm "$grandparent_comm"; then
+					# PPID is a shell spawned by an AI runtime — use the runtime PID
+					printf '%s' "$grandparent_pid"
+					return 0
+				fi
+			fi
+		fi
+		# PPID is not a transient AI-runtime shell — use it as-is
+		printf '%s' "$PPID"
 		return 0
 	fi
 
