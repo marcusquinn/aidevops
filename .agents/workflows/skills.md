@@ -15,6 +15,8 @@ Arguments: $ARGUMENTS
 
 ### Step 1: Determine Operation Mode
 
+All scripts at `~/.aidevops/agents/scripts/`.
+
 | Argument pattern | Action |
 |-----------------|--------|
 | empty / "help" | Show available commands and quick examples |
@@ -32,8 +34,6 @@ Arguments: $ARGUMENTS
 | "update" / "check" | `skill-update-helper.sh check` |
 | "remove" \<name\> | `add-skill-helper.sh remove <name>` |
 
-All scripts at `~/.aidevops/agents/scripts/`.
-
 ### Step 2: Present Results
 
 Format output conversationally:
@@ -48,27 +48,17 @@ Format output conversationally:
 
 ### Step 3: Offer Follow-up Actions
 
-```text
-Next steps:
-1. /skills describe <name>              — Get full details on a skill
-2. /skills browse <category>            — Explore a category
-3. /skills recommend "<task>"           — Get task-specific suggestions
-4. /skills search --registry "<query>"  — Search the public skills.sh registry
-5. /skills install <owner/repo@skill>   — Install from the public registry
-6. aidevops skill add <repo>            — Import a community skill
-```
+After presenting results, suggest relevant next steps from the command table above. Tailor suggestions to context — e.g., after a search, offer `describe` or `install`; after `list`, offer `browse` or `recommend`.
 
 ## Conversational Mode
 
-Interpret natural language and map to the appropriate command:
+Interpret natural language and map to the appropriate command. Examples:
 
-- "What skills do I have for browser automation?" → search "browser automation"
-- "Show me all SEO tools" → browse seo
-- "What does the playwright skill do?" → describe playwright
-- "I need to deploy a Next.js app" → recommend "deploy Next.js app"
-- "How many skills are installed?" → list, report count
-- "Are there any public skills for X?" → search --registry "X"
-- "Install the vercel browser skill" → install vercel-labs/agent-browser@agent-browser
+- "What skills do I have for browser automation?" → `search "browser automation"`
+- "What does the playwright skill do?" → `describe playwright`
+- "I need to deploy a Next.js app" → `recommend "deploy Next.js app"`
+- "Are there any public skills for X?" → `search --registry "X"`
+- "Install the vercel browser skill" → `install vercel-labs/agent-browser@agent-browser`
 
 ## Related
 
