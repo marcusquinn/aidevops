@@ -540,9 +540,9 @@
       "pr": 16526
     },
     ".agents/marketing-sales.md": {
-      "hash": "83f5bd4cfdac9d5d6082d7de8c38e23d140360b2",
-      "at": "2026-03-30T06:03:16Z",
-      "passes": 1,
+      "hash": "f8f0af6b6be25536b600c62fd5c6d73adf2162f7",
+      "at": "2026-04-11T10:00:00Z",
+      "passes": 2,
       "pr": 13839
     },
     ".agents/marketing-sales/ad-creative-ai-tools-reference.md": {

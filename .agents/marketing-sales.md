@@ -63,11 +63,8 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 ## Email Campaigns
 
 **Workflow**: Plan → `fluentcrm_create_email_template` (title, subject, HTML) → `fluentcrm_create_campaign` (title, subject, template_id, list) → test → schedule → monitor.
-
 **Type routing**: Newsletter/Promotional → Email Campaign. Nurture/Transactional/Re-engagement → Automation.
-
 **Template rules**: Subject 40-60 chars (personalized, clear value). Preheader 40-100 chars. Single column, scannable, mobile-first. CTA above fold. Footer: unsubscribe, contact, social.
-
 **Personalization**: `{{contact.first_name}}`, `{{contact.last_name}}`, `{{contact.email}}`, `{{contact.full_name}}`, `{{contact.custom.field_name}}`
 
 ## Automation
@@ -95,11 +92,8 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 ## Content & Lead Generation
 
 **Platform voice**: `content/platform-personas.md`.
-
 **Content → Campaign**: Create (`content.md`) → adapt platforms → SEO (`seo.md`) → email template → campaign (interest tags) → smart link → schedule → monitor.
-
 **Lead magnet**: Create → landing page + form → `fluentcrm_create_list` → delivery automation → nurture. Forms: Fluent Forms, WPForms, Gravity Forms, Contact Form 7, custom API.
-
 **Lead handoff**: Apply `lead-mql` tag → automation notifies sales → sales qualifies/accepts → apply `lead-sql` tag → remove from marketing sequences.
 
 ## Analytics & Testing
@@ -117,7 +111,6 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 ## Deliverability & Compliance
 
 **Deliverability**: SPF/DKIM/DMARC auth. Warm new domains. Double opt-in. Remove hard bounces immediately. Re-engage or remove inactive (90+ days). Honor unsubscribes instantly.
-
 **Compliance**: GDPR (consent, erasure) | CAN-SPAM (unsubscribe, address) | CASL (consent, ID). Frequency: Newsletter weekly/bi-weekly. Promotional 2-4/month. Nurture 2-5 days apart.
 
 ## Troubleshooting
