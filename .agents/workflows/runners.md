@@ -16,9 +16,7 @@ Arguments: $ARGUMENTS
 
 ## Scope
 
-**`/runners` is a targeted dispatcher, not a supervisor.** It resolves explicit items, launches one worker per item, shows the dispatch table, and stops. It does NOT run supervisor phases, auto-pickup, stale recovery, or audits. Use `/pulse` for unattended slot-filling (`scripts/commands/pulse.md`).
-
-Workers stay isolated: `/runners` never touches source code, tests, branches, or merge conflicts. If a worker fails, fix the worker prompt or workflow, not the dispatcher.
+**`/runners` is a targeted dispatcher, not a supervisor.** Resolves explicit items, launches one worker per item, shows the dispatch table, and stops. Does NOT run supervisor phases, auto-pickup, stale recovery, or audits. Use `/pulse` for unattended slot-filling (`scripts/commands/pulse.md`). Workers stay isolated — never touches source code, tests, branches, or merge conflicts. If a worker fails, fix the worker prompt or workflow, not the dispatcher.
 
 ## Input Types
 
@@ -43,9 +41,7 @@ gh issue view 42 --repo user/repo --json number,title,url
 
 ## Step 2: Dispatch Workers
 
-Launch each worker via `headless-runtime-helper.sh run` — the **ONLY** valid dispatch path. It builds the lifecycle prompt, handles provider rotation, preserves sessions, and applies backoff. NEVER use bare `opencode run` or workers may stop after PR creation (GH#5096).
-
-Use the `--detach` flag to self-daemonize the worker and return control to the calling agent immediately. This is the preferred pattern for agent-to-agent dispatch.
+Launch each worker via `headless-runtime-helper.sh run` — the **ONLY** valid dispatch path. It builds the lifecycle prompt, handles provider rotation, preserves sessions, and applies backoff. NEVER use bare `opencode run` or workers may stop after PR creation (GH#5096). Use `--detach` for agent-to-agent dispatch to avoid blocking.
 
 ```bash
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
@@ -62,21 +58,13 @@ $HELPER run \
 # Returns immediately with: "Dispatched PID: 12345"
 ```
 
-### Manual Redirection (Legacy)
-
-If using an older version of `aidevops` without `--detach`, redirect at the caller level to avoid blocking the interactive session:
-
-```bash
-$HELPER run ... </dev/null >>/tmp/worker-${session_key}.log 2>&1 &
-sleep 2
-```
+**Legacy (no `--detach`):** redirect at caller level: `$HELPER run ... </dev/null >>/tmp/worker-${session_key}.log 2>&1 &`
 
 ### Dispatch Rules
 
 - `--dir ~/Git/<repo-name>` must match the target repo
-- `--agent <name>` routes to a specialist; omit it for code tasks (Build+ default)
+- `--agent <name>` routes to a specialist; omit for code tasks (Build+ default)
 - `/full-loop` only for tasks needing repo code changes and PR traceability
-- `--detach` is recommended for agent-to-agent dispatch to avoid blocking
 - Do NOT add `--model` unless escalation is required by workflow policy
 
 ## Step 3: Show Dispatch Table
