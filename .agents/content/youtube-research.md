@@ -24,27 +24,22 @@ Target: $ARGUMENTS
 | `--all` | Full research cycle (all competitors) |
 | No args | Interactive (ask user) |
 
-### Step 2: Load Configuration
+### Step 2: Execute Research
 
-```bash
-~/.aidevops/agents/scripts/memory-helper.sh recall --namespace youtube "channel"
-```
-
-### Step 3: Execute Research
+Load config first: `memory-helper.sh recall --namespace youtube "channel"`
 
 #### Mode A: Competitor Analysis (`@competitor`)
 
-1. Get channel overview and recent videos:
+1. Get channel overview, recent videos, identify outliers (3x+ avg views), get transcripts of top 3:
 
 ```bash
 ~/.aidevops/agents/scripts/youtube-helper.sh channel @competitor
 ~/.aidevops/agents/scripts/youtube-helper.sh videos @competitor 50
+~/.aidevops/agents/scripts/youtube-helper.sh transcript VIDEO_ID
 ```
 
-2. **Identify outliers** — videos with 3x+ channel average views.
-3. Get transcripts of top 3 outliers: `youtube-helper.sh transcript VIDEO_ID`
-4. **Analyze patterns:** topics, title style (length, keywords, hooks), video length, upload frequency.
-5. Store findings:
+2. **Analyze patterns:** topics, title style (length, keywords, hooks), video length, upload frequency.
+3. Store findings:
 
 ```bash
 ~/.aidevops/agents/scripts/memory-helper.sh store \
@@ -54,10 +49,9 @@ Target: $ARGUMENTS
 
 #### Mode B: Trending Topics (`trending`)
 
-1. Search trending videos: `youtube-helper.sh trending "niche topic" 20`
-2. **Cluster by topic:** group by keywords/themes, identify rising topics, note view counts.
-3. **Cross-reference with competitors:** which trending topics haven't they covered? Which are oversaturated?
-4. Store opportunities:
+1. Search and cluster: `youtube-helper.sh trending "niche topic" 20` — group by keywords/themes, identify rising topics, note view counts.
+2. **Cross-reference with competitors:** which trending topics haven't they covered? Which are oversaturated?
+3. Store opportunities:
 
 ```bash
 ~/.aidevops/agents/scripts/memory-helper.sh store \
@@ -76,17 +70,16 @@ Target: $ARGUMENTS
 
 #### Mode D: Video Analysis (`video VIDEO_ID`)
 
-1. Get details and transcript:
+1. Get details, transcript, and analyze structure (hook: first 30s, intro: problem setup, body: solution/content, CTA):
 
 ```bash
 ~/.aidevops/agents/scripts/youtube-helper.sh video VIDEO_ID
 ~/.aidevops/agents/scripts/youtube-helper.sh transcript VIDEO_ID
 ```
 
-2. **Analyze structure:** hook (first 30s), intro (problem setup), body (solution/content), CTA.
-3. **Extract reusable patterns:** title formula, hook formula, content structure, pacing (words/minute).
+2. **Extract reusable patterns:** title formula, hook formula, content structure, pacing (words/minute).
 
-### Step 4: Present Findings
+### Step 3: Present Findings
 
 ```text
 YouTube Research: {target}
