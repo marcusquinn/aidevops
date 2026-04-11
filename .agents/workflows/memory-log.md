@@ -21,16 +21,7 @@ Run `memory-helper.sh log` with optional filters:
 | `--limit N` | Limit to N entries |
 | `--json` | JSON output |
 
-Example output:
-```text
-Auto-Capture Log (last 20):
-1. [WORKING_SOLUTION] Fixed CORS by adding nginx headers | 2 hours ago
-2. [FAILED_APPROACH] setTimeout doesn't work for async | 1 day ago
----
-Total: 15
-```
-
-If empty: "No auto-captured memories yet. Trigger with: `memory-helper.sh store --auto --content \"...\"`"
+Output: `N. [TYPE] Content | time ago` (e.g., `1. [WORKING_SOLUTION] Fixed CORS by adding nginx headers | 2 hours ago`). If empty: trigger with `memory-helper.sh store --auto --content "..."`.
 
 ## Auto-capture triggers
 
