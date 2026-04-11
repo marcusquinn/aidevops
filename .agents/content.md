@@ -134,7 +134,7 @@ content-fanout-helper.sh plan ~/brief.md    # Generate fan-out plan
 content-fanout-helper.sh run <plan-file>    # Execute (also: channels, status, estimate)
 ```
 
-**Channels**: youtube, short-form, social-x, social-linkedin, social-reddit, blog, email, podcast. **Brief fields**: `topic`, `angle`, `audience`, `channels`, `tone`, `cta`, `notes`.
+**Brief fields**: `topic`, `angle`, `audience`, `channels`, `tone`, `cta`, `notes`.
 
 ## Supporting Tools
 
@@ -144,9 +144,9 @@ content-fanout-helper.sh run <plan-file>    # Execute (also: channels, status, e
 | Video | `content/video-higgsfield.md`, `tools/video/video-prompt-design.md`, t200 Veo Meta Framework |
 | Voice | `tools/voice/speech-to-speech.md`, `voice-helper.sh` |
 | SEO/Blog | `seo/`, `content/seo-writer.md`, `content/editor.md`, `content/meta-creator.md`, `content/internal-linker.md` |
-| Email/Social | `marketing-sales.md` (FluentCRM), `content/social-bird.md` (X), `social-linkedin.md`, `social-reddit.md` |
+| Social | `content/social-bird.md` (X), `content/social-linkedin.md`, `content/social-reddit.md` |
+| Email | `content/marketing-sales.md` (FluentCRM), `content/distribution-email.md` |
 | Analysis | `seo-content-analyzer.py analyze article.md --keyword "target keyword"` |
-| Legacy text | `guidelines.md`, `platform-personas.md`, `seo-writer.md`, `meta-creator.md`, `editor.md`, `internal-linker.md`, `context-templates.md` (blog/article workflows) |
 
 ## Related Tasks
 
