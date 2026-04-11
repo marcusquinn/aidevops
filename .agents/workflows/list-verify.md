@@ -17,33 +17,22 @@ Arguments: $ARGUMENTS
 ~/.aidevops/agents/scripts/list-verify-helper.sh $ARGUMENTS
 ```
 
-**Fallback (script unavailable):** Read `todo/VERIFY.md`, parse entries between `<!-- VERIFY-QUEUE-START -->` and `<!-- VERIFY-QUEUE-END -->`, group by status: failed `[!]`, pending `[ ]`, passed `[x]`, format as Markdown tables.
+**Fallback:** Read `todo/VERIFY.md`, parse entries between `<!-- VERIFY-QUEUE-START -->` and `<!-- VERIFY-QUEUE-END -->`, group by status: failed `[!]`, pending `[ ]`, passed `[x]`. Format as Markdown tables.
 
 ## Arguments
 
-- `--pending` / `--passed` / `--failed` — filter by status
-- `-t <id>` / `--task <id>` — filter by task ID (e.g., `t168`)
-- `--compact` — one-line per entry; `--json` — JSON output; `--no-color`
+- `--pending` / `--passed` / `--failed` — filter by status (e.g., `--failed` for needs-attention)
+- `-t <id>` / `--task <id>` — filter by task ID (e.g., `-t t168`)
+- `--compact` — one-line per entry; `--json` — JSON output; `--no-color` — plain text
+- No args — all entries grouped by status
 
-## Examples
+## Output
 
-```bash
-/list-verify           # all entries, grouped by status
-/list-verify --failed  # failed only (needs attention)
-/list-verify -t t168   # specific task
-/list-verify --json    # JSON output
-```
-
-## Output Format
-
-Tables grouped failed → pending → passed. Columns: `# | Verify | Task | Description | PR | Merged | Reason/Checks/Verified` (column varies by section).
-Footer: `N pending | N passed | N failed | N total`.
+Tables grouped failed → pending → passed. Columns: `# | Verify | Task | Description | PR | Merged | Reason/Checks/Verified` (column varies by section). Footer: `N pending | N passed | N failed | N total`.
 
 ## After Display
 
-- **Verify ID** (e.g., `v001`) — run verification checks for that entry
-- **"failed"** — re-filter to failed only
-- **"done"** — end browsing
+Reply with a **Verify ID** (e.g., `v001`) to run checks, `"failed"` to refilter, or `"done"` to finish.
 
 ## Related
 
