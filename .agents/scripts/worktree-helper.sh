@@ -734,7 +734,15 @@ _remove_cleanup_and_execute() {
 	removed_branch="$(git -C "$path_to_remove" branch --show-current 2>/dev/null || echo "")"
 
 	echo -e "${BLUE}Removing worktree: $path_to_remove${NC}"
-	git worktree remove "$path_to_remove"
+	# Move the worktree directory to trash BEFORE git deregisters it.
+	# This makes accidental removal recoverable — the directory survives in trash.
+	# git worktree prune then cleans up the now-missing entry from .git/worktrees/.
+	if ! trash_path "$path_to_remove"; then
+		# trash unavailable or failed — fall back to git worktree remove
+		git worktree remove "$path_to_remove" || return 1
+	else
+		git worktree prune 2>/dev/null || true
+	fi
 
 	# Unregister ownership (t189)
 	unregister_worktree "$path_to_remove"
@@ -1211,18 +1219,23 @@ _clean_remove_merged() {
 					rm -rf "$worktree_path/node_modules" 2>/dev/null || true
 					rm -rf "$worktree_path/.next" 2>/dev/null || true
 					rm -rf "$worktree_path/.turbo" 2>/dev/null || true
-					# Clean up aidevops runtime files (use trash for recoverability)
-					trash_path "$worktree_path/.agents/loop-state" || true
-					trash_path "$worktree_path/.agents/tmp" || true
-					rm -f "$worktree_path/.agents/.DS_Store" 2>/dev/null || true
-					rmdir "$worktree_path/.agent" 2>/dev/null || true
-
-					local remove_flag=""
-					if [[ "$use_force" == "true" ]]; then
-						remove_flag="--force"
+					# Move entire worktree to trash for recoverability, then prune git's registry.
+					# Falls back to git worktree remove if trash is unavailable.
+					local removed=false
+					if trash_path "$worktree_path"; then
+						git worktree prune 2>/dev/null || true
+						removed=true
+					else
+						local remove_flag=""
+						if [[ "$use_force" == "true" ]]; then
+							remove_flag="--force"
+						fi
+						# shellcheck disable=SC2086
+						if git worktree remove $remove_flag "$worktree_path" 2>/dev/null; then
+							removed=true
+						fi
 					fi
-					# shellcheck disable=SC2086
-					if ! git worktree remove $remove_flag "$worktree_path"; then
+					if [[ "$removed" != "true" ]]; then
 						echo -e "${RED}Failed to remove $worktree_branch - may have uncommitted changes${NC}"
 					else
 						# Unregister ownership (t189)
