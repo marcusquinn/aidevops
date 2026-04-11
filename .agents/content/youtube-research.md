@@ -26,13 +26,13 @@ Load config first:
 ~/.aidevops/agents/scripts/memory-helper.sh recall --namespace youtube "channel"
 ```
 
-## Mode A: Competitor Analysis (`@competitor`)
+## Mode A: Competitor Analysis (`@handle`)
 
 1. Get channel overview and recent videos:
 
 ```bash
-~/.aidevops/agents/scripts/youtube-helper.sh channel @competitor
-~/.aidevops/agents/scripts/youtube-helper.sh videos @competitor 50
+~/.aidevops/agents/scripts/youtube-helper.sh channel @handle
+~/.aidevops/agents/scripts/youtube-helper.sh videos @handle 50
 ```
 
 2. **Identify outliers** — videos with 3x+ channel average views.
