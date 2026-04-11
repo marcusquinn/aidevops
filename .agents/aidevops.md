@@ -75,18 +75,8 @@ configs/[service]-config.json       # Working configs (gitignored)
 
 ## Extending the Framework
 
-See `aidevops/extension.md`:
-
-1. Create helper script following existing patterns
-2. Add config template
-3. Create agent documentation
-4. Update service index
-5. Test thoroughly
+See `aidevops/extension.md` for the full guide (helper script → config template → agent doc → service index → test).
 
 ## OpenCode Plugins
 
-**Anthropic OAuth** (built-in since OpenCode v1.1.36+): Enables Claude Pro/Max authentication.
-
-```bash
-opencode auth login   # Select: Anthropic → Claude Pro/Max
-```
+**Anthropic OAuth** (built-in since OpenCode v1.1.36+): `opencode auth login` → select Anthropic → Claude Pro/Max.
