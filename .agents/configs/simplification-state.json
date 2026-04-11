@@ -145,10 +145,10 @@
       "pr": 13101
     },
     ".agents/business.md": {
-      "hash": "dae5291987de357f73ae79460b5e990b125cf143",
-      "at": "2026-03-29T16:34:54Z",
+      "hash": "b78adf9bf3285609dcf66c8797787e8b9e20afca",
+      "at": "2026-04-11T00:00:00Z",
       "passes": 1,
-      "pr": 13055
+      "pr": 18189
     },
     ".agents/business/accounts-receipt-ocr.md": {
       "hash": "85396dc720574178abc734adf590b980ff764355",
@@ -6432,7 +6432,7 @@
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "simplified_at": "2026-04-04T09:17:13Z",
       "issue": "GH#17250",
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
       "at": "2026-04-04T14:53:40Z",
       "passes": 1
     },
@@ -6999,6 +6999,12 @@
       "at": "2026-04-11T10:09:10Z",
       "pr": 18159,
       "passes": 1
+    },
+    ".agents/commands/business.md": {
+      "hash": "b78adf9bf3285609dcf66c8797787e8b9e20afca",
+      "at": "2026-04-11T00:00:00Z",
+      "passes": 1,
+      "pr": 18189
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
