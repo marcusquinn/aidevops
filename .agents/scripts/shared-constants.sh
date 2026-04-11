@@ -1032,13 +1032,74 @@ _todo_commit_push_inner() {
 WORKTREE_REGISTRY_DIR="${WORKTREE_REGISTRY_DIR:-${HOME}/.aidevops/.agent-workspace}"
 WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-${WORKTREE_REGISTRY_DIR}/worktree-registry.db}"
 
+# Walk up the process tree from a given PID to find the nearest long-lived
+# ancestor that is not a transient shell subprocess (bash/sh/dash/zsh).
+# Interactive runtimes (Claude Code, OpenCode) spawn short-lived bash subprocesses
+# to execute tool calls. Registering the bash PPID causes stale registry entries
+# because the bash process exits immediately after the tool call completes.
+# This function finds the actual long-lived runtime process instead.
+#
+# Arguments:
+#   $1 - starting PID (typically PPID of the script)
+# Returns: long-lived ancestor PID on stdout, or the input PID if none found
+_find_long_lived_ancestor_pid() {
+	local start_pid="${1:-}"
+	[[ -z "$start_pid" ]] && printf '%s' "$$" && return 0
+
+	local current_pid="$start_pid"
+	local max_depth=10
+	local depth=0
+
+	while [[ $depth -lt $max_depth ]]; do
+		depth=$((depth + 1))
+
+		# Get parent PID and command name for current_pid
+		local parent_pid=""
+		local comm=""
+		if [[ -r "/proc/$current_pid/status" ]]; then
+			# Linux: read from /proc
+			parent_pid=$(awk '/^PPid:/{print $2}' "/proc/$current_pid/status" 2>/dev/null || echo "")
+			comm=$(awk '/^Name:/{print $2}' "/proc/$current_pid/status" 2>/dev/null || echo "")
+		else
+			# macOS/BSD: use ps
+			parent_pid=$(ps -o ppid= -p "$current_pid" 2>/dev/null | tr -d ' ') || parent_pid=""
+			comm=$(ps -o comm= -p "$current_pid" 2>/dev/null | tr -d ' ') || comm=""
+		fi
+
+		# Stop if we can't get parent info or reached init (PID 1)
+		[[ -z "$parent_pid" || "$parent_pid" -le 1 ]] && break
+
+		# If current process is a transient shell, walk up to its parent
+		case "$comm" in
+		bash | sh | dash | zsh | ksh | fish)
+			current_pid="$parent_pid"
+			continue
+			;;
+		esac
+
+		# Current process is not a shell — it's the long-lived runtime
+		printf '%s' "$current_pid"
+		return 0
+	done
+
+	# Fallback: return the original start_pid
+	printf '%s' "$start_pid"
+	return 0
+}
+
 # Resolve the long-lived process ID that should own a worktree lock.
 # Priority:
 #   1) Explicit override (first argument)
 #   2) OpenCode interactive PID (OPENCODE_PID)
-#   3) Parent process PID (PPID)
-#   4) Current shell PID ($$)
+#   3) Claude session PID (CLAUDE_SESSION_ID env not useful; walk process tree)
+#   4) Long-lived ancestor of PPID (skips transient bash subprocesses)
+#   5) Current shell PID ($$)
 # Returns: PID string on stdout
+#
+# GH#18090: Interactive sessions (Claude Code, OpenCode) spawn short-lived bash
+# subprocesses for tool calls. Registering PPID directly causes stale registry
+# entries because the bash process exits immediately after the tool call.
+# We walk up the process tree to find the actual long-lived runtime process.
 _resolve_worktree_owner_pid() {
 	local explicit_pid="${1:-}"
 	if [[ -n "$explicit_pid" ]]; then
@@ -1052,7 +1113,12 @@ _resolve_worktree_owner_pid() {
 	fi
 
 	if [[ -n "${PPID:-}" ]]; then
-		printf '%s' "$PPID"
+		# Walk up the process tree to find the long-lived ancestor.
+		# This handles interactive runtimes (Claude Code, OpenCode) that
+		# spawn short-lived bash subprocesses for tool calls (GH#18090).
+		local ancestor_pid
+		ancestor_pid=$(_find_long_lived_ancestor_pid "$PPID")
+		printf '%s' "$ancestor_pid"
 		return 0
 	fi
 
