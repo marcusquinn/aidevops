@@ -3,11 +3,13 @@
 
 # Worktree Cleanup After Merge
 
-After a PR is merged, clean up the linked worktree and return the canonical repo to a clean state.
+After a PR merges, clean up the linked worktree and return the canonical repo to a clean state.
+
+**Key constraint:** Never pass `--delete-branch` to `gh pr merge` from inside a worktree — the branch is checked out there, not in the canonical repo.
 
 ## Automated Cleanup (workers — GH#6740)
 
-Workers dispatched via `/full-loop` MUST self-cleanup after successful merge (Step 4.9). The pulse `cleanup_worktrees()` stage acts as a safety net, but workers must not rely on it — self-cleanup prevents accumulation during batch dispatch.
+Workers dispatched via `/full-loop` MUST self-cleanup after successful merge (Step 4.9). The pulse `cleanup_worktrees()` stage is a safety net — workers must not rely on it; self-cleanup prevents accumulation during batch dispatch.
 
 ```bash
 # After gh pr merge --squash succeeds:
@@ -46,11 +48,7 @@ git pull origin main
 wt prune
 ```
 
-## Key Rules
-
-- **Do not use `--delete-branch`** with `gh pr merge` from inside a worktree — the branch is checked out there, not in the canonical repo.
-- `wt prune` removes worktrees whose branches have been merged and deleted on the remote. Run from the canonical repo (on `main`).
-- If `wt prune` is unavailable, use `git worktree prune` then manually delete the worktree directory.
+`wt prune` removes worktrees whose branches have been merged and deleted on the remote. Run from the canonical repo (on `main`). If unavailable: `git worktree prune` then delete the worktree directory manually.
 
 ## See Also
 
