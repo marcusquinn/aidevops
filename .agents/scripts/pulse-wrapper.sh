@@ -11917,6 +11917,13 @@ main() {
 
 	# Open FD 9 for flock supplementary layer (no-op if flock unavailable)
 	exec 9>"$LOCKFILE"
+	# GH#18094: Set O_CLOEXEC on FD 9 so child processes (e.g. bd daemon spawned
+	# by the beads git merge driver) do not inherit the flock across exec().
+	# Without CLOEXEC, any long-lived child holds the flock indefinitely after
+	# the pulse exits, deadlocking every subsequent pulse cycle.
+	# python3 is a hard dependency of the pulse; the || true makes this a no-op
+	# on systems where python3 is unexpectedly absent.
+	python3 -c "import fcntl; fcntl.fcntl(9, fcntl.F_SETFD, fcntl.FD_CLOEXEC)" 2>/dev/null || true
 	if ! acquire_instance_lock; then
 		return 0
 	fi
