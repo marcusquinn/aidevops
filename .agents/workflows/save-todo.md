@@ -15,7 +15,7 @@ Topic/context: $ARGUMENTS
 
 | Signal | Indicates | Action |
 |--------|-----------|--------|
-| Single action item / <2h / "quick" | Simple | TODO.md only |
+| Single action / <2h / "quick" | Simple | TODO.md only |
 | Multiple steps / >2h / multi-session | Complex | PLANS.md + TODO.md |
 | PRD mentioned or needed | Complex | PLANS.md + TODO.md + PRD |
 
@@ -25,14 +25,9 @@ Topic/context: $ARGUMENTS
 - **Estimate**: `~Xh (ai:Xh test:Xh read:Xm)`
 - **Tags**: #feature, #bugfix, #enhancement, #docs, etc.
 - **Context**: Decisions, findings, constraints, open questions, links
-
-## Step 1b: Dispatch Tags (MANDATORY)
-
-**`#auto-dispatch`** — Add when ALL true: clear description with specific files/patterns, ≤2h scope, no credentials/purchases needed, no user-preference design decisions, automatable verification. **Default to `#auto-dispatch`** — omit only when a specific exclusion applies. Full criteria: `workflows/plans.md` "Auto-Dispatch Tagging".
-
-**`#plan`** — Add when decomposition needed before implementation (multi-phase, >2h, research/design).
-
-**Model tier / agent domain tags** — classify via `reference/task-taxonomy.md`. Omit for standard code tasks.
+- **`#auto-dispatch`** — Add when ALL true: clear description with specific files/patterns, ≤2h scope, no credentials/purchases needed, no user-preference design decisions, automatable verification. Default to `#auto-dispatch` — omit only when a specific exclusion applies. Full criteria: `workflows/plans.md` "Auto-Dispatch Tagging".
+- **`#plan`** — Add when decomposition needed before implementation (multi-phase, >2h, research/design).
+- **Model tier / agent domain tags** — classify via `reference/task-taxonomy.md`. Omit for standard code tasks.
 
 ## Step 2: Save
 
@@ -84,35 +79,10 @@ Topic/context: $ARGUMENTS
 
 3. Optionally create PRD/tasks files if scope warrants.
 
-## Confirmation Prompts
+## Confirmation
 
-**Simple:**
+**Simple:** `Saving to TODO.md: "{title}" ~{estimate} — 1. Confirm  2. Add details  3. Create full plan`
 
-```text
-Saving to TODO.md: "{title}" ~{estimate}
-1. Confirm  2. Add more details  3. Create full plan instead
-```
+**Complex:** `Complex work. Title: {title} | ~{estimate} | {count} phases — 1. Confirm  2. Simplify  3. Add context`
 
-**Complex:**
-
-```text
-This looks like complex work. Creating execution plan.
-Title: {title} | Estimate: ~{estimate} | Phases: {count}
-1. Confirm and create plan  2. Simplify to TODO.md  3. Add context
-```
-
-After saving, respond: `Saved: "{title}" — Start anytime with: "Let's work on {title}"`
-
-## Example
-
-```text
-User: We discussed the authentication overhaul with OAuth, session management, and migration
-AI:   Complex work. Title: Authentication Overhaul | ~2w | 4 phases
-      1. Confirm  2. Simplify  3. Add context
-User: 1
-AI:   Saved: "Authentication Overhaul"
-      - Plan: todo/PLANS.md
-      - Reference: TODO.md
-      - PRD: todo/tasks/prd-auth-overhaul.md
-      Start anytime with: "Let's work on auth overhaul"
-```
+After saving: `Saved: "{title}" — Start anytime with: "Let's work on {title}"`
