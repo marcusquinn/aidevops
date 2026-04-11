@@ -36,6 +36,8 @@ subagents:
 
 ## Architecture
 
+Task arrives (issue/TODO/mailbox) → pulse dispatches to runner → worker executes → pulse observes outcomes → files improvement issues if patterns emerge.
+
 ```text
 Pulse supervisor (every 2 min, stateless)
 ├── Fetches GitHub state (issues, PRs)
@@ -51,22 +53,13 @@ Named Runners:
 └── support-triage       — Customer issue classification
 ```
 
-**Flow**: Task arrives (issue/TODO/mailbox) → pulse dispatches to runner → worker executes → pulse observes outcomes → files improvement issues if patterns emerge.
-
 ## Guardrails
 
-Inherited from `/full-loop` and worktree isolation:
-
-- **Scope**: Path/tool whitelists per runner via AGENTS.md
-- **Audit**: Git commits and PR history
-- **Rollback**: Worktree isolation — each runner works in its own worktree
-- **Judgment**: `/full-loop` decides stop/retry/escalate
-
-Finance and legal runners require dedicated worktrees + PR review gates.
+Inherited from `/full-loop` and worktree isolation: scope via path/tool whitelists per runner (AGENTS.md), audit via git commits and PR history, rollback via worktree isolation, judgment via `/full-loop` stop/retry/escalate. Finance and legal runners require dedicated worktrees + PR review gates.
 
 ## Setting Up Runners
 
-Create via `runner-helper.sh`. Each runner gets a personality file at `~/.aidevops/.agent-workspace/runners/<name>/AGENTS.md`. Full templates and bootstrap script: `business/company-runners.md`.
+Create via `runner-helper.sh`. Each runner gets a personality file at `~/.aidevops/.agent-workspace/runners/<name>/AGENTS.md`. Full templates: `business/company-runners.md`.
 
 ```bash
 runner-helper.sh create hiring-coordinator \
@@ -80,11 +73,9 @@ runner-helper.sh list                                          # Show all runner
 runner-helper.sh run hiring-coordinator "Review latest 3 applications"  # Manual dispatch
 ```
 
-Pulse handles dispatch automatically. For manual one-off tasks, use `/full-loop` directly.
-
 ## Cross-Function Workflows
 
-Multi-department tasks use chained GitHub issues. Pulse routes by label:
+Multi-department tasks use chained GitHub issues; pulse routes by label. Sequenced single-department work (e.g., monthly close) uses multiple issues with the same label — pulse processes in order.
 
 ```bash
 # New hire onboarding (3 departments)
@@ -92,8 +83,6 @@ gh issue create --repo <owner/repo> --title "Onboard: Confirm offer" --label "hi
 gh issue create --repo <owner/repo> --title "Onboard: Setup payroll" --label "finance"
 gh issue create --repo <owner/repo> --title "Onboard: Provision accounts" --label "ops"
 ```
-
-Sequenced single-department work (e.g., monthly close) uses multiple issues with the same label — pulse processes in order.
 
 ## Pre-flight Questions
 
