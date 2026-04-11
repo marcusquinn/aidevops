@@ -133,9 +133,9 @@
       "pr": 11982
     },
     ".agents/automate.md": {
-      "hash": "670223caec90f2f4de7ace82bd1534328bdf1238",
-      "at": "2026-04-11T11:00:00Z",
-      "passes": 3,
+      "hash": "b0865c65a1a0e0f579e68be0db05a8b79d46dbe5",
+      "at": "2026-04-11T10:08:47Z",
+      "passes": 4,
       "pr": 15804
     },
     ".agents/build-plus.md": {
@@ -540,9 +540,9 @@
       "pr": 16526
     },
     ".agents/marketing-sales.md": {
-      "hash": "83f5bd4cfdac9d5d6082d7de8c38e23d140360b2",
-      "at": "2026-03-30T06:03:16Z",
-      "passes": 1,
+      "hash": "1f8a5d943028b36f9ae687dd4e3fd871e1b8753d",
+      "at": "2026-04-11T10:08:49Z",
+      "passes": 2,
       "pr": 13839
     },
     ".agents/marketing-sales/ad-creative-ai-tools-reference.md": {
@@ -1534,9 +1534,9 @@
       "pr": 12588
     },
     ".agents/scripts/commands/new-task.md": {
-      "hash": "d6868a1f6f844b8de7ff330f506e1b8867f12d98",
-      "at": "2026-04-09T07:32:01Z",
-      "passes": 3,
+      "hash": "ad58436a86de92c09145c926aa9d2372c9577245",
+      "at": "2026-04-11T10:08:53Z",
+      "passes": 4,
       "pr": 13489
     },
     ".agents/scripts/commands/performance.md": {
@@ -1861,9 +1861,9 @@
       "passes": 1
     },
     ".agents/seo.md": {
-      "hash": "89f87f9e769f800a2574e859d63f19620f8bf900",
-      "at": "2026-03-30T03:34:16Z",
-      "passes": 1,
+      "hash": "5181e08f7fb9475fa9cce94a9359b1ae0c8703ac",
+      "at": "2026-04-11T10:08:55Z",
+      "passes": 2,
       "pr": 13526
     },
     ".agents/seo/ahrefs.md": {
@@ -5261,9 +5261,9 @@
       "pr": 16415
     },
     "TODO.md": {
-      "hash": "a79edcde22f8dcf9e1869d1611ddb714a02d8da7",
-      "at": "2026-04-11T02:41:10Z",
-      "passes": 16,
+      "hash": "e922438f2fe6ab305bf7e63dee07538bfb0cb659",
+      "at": "2026-04-11T10:09:09Z",
+      "passes": 17,
       "pr": 15490
     },
     "aidevops.sh": {
@@ -6974,6 +6974,30 @@
       "hash": "2055f755f4558bb21f4ac9714e6f1011b2745ec4",
       "at": "2026-04-11T07:23:25Z",
       "pr": 18170,
+      "passes": 1
+    },
+    ".agents/commands/seo.md": {
+      "hash": "5181e08f7fb9475fa9cce94a9359b1ae0c8703ac",
+      "at": "2026-04-11T10:09:10Z",
+      "pr": 18172,
+      "passes": 1
+    },
+    ".agents/workflows/new-task.md": {
+      "hash": "ad58436a86de92c09145c926aa9d2372c9577245",
+      "at": "2026-04-11T10:09:10Z",
+      "pr": 18169,
+      "passes": 1
+    },
+    ".agents/commands/automate.md": {
+      "hash": "b0865c65a1a0e0f579e68be0db05a8b79d46dbe5",
+      "at": "2026-04-11T10:09:10Z",
+      "pr": 18160,
+      "passes": 1
+    },
+    ".agents/commands/marketing-sales.md": {
+      "hash": "1f8a5d943028b36f9ae687dd4e3fd871e1b8753d",
+      "at": "2026-04-11T10:09:10Z",
+      "pr": 18159,
       "passes": 1
     }
   },
