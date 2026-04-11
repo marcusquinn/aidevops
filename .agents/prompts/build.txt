@@ -305,6 +305,10 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - WIP commits are squashed/amended before PR — the commit message quality doesn't matter here, survival does.
 - Exception: generated/temp files explicitly gitignored (e.g. `.agents/loop-state/`, `.agents/tmp/`).
 
+**Worktree removal safety:**
+- `worktree-helper.sh remove` and `wt clean` move the worktree directory to system trash before deregistering from git. Accidental removal (e.g. by cleanup routines) is recoverable — restore from trash and `git worktree add` on the same branch.
+- If trash is unavailable, falls back to permanent `git worktree remove`.
+
 # Quality Standards
 - ShellCheck zero violations. `local var="$1"` pattern. Explicit returns.
 
