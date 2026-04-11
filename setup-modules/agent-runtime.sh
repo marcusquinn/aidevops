@@ -215,10 +215,21 @@ deploy_agents_to_runtimes() {
 	local deployed_count=0
 	local runtime_count=0
 
-	local runtime_id agent_dir agent_count display_name
+	local runtime_id agent_dir agent_count display_name feature_flag
 	while IFS= read -r runtime_id; do
 		agent_dir=$(rt_agent_dir "$runtime_id")
 		[[ -z "$agent_dir" ]] && continue
+
+		# Feature flag gate — allow users to disable agent installation per
+		# runtime via AIDEVOPS_FEATURE_AGENTS_<SUFFIX>=no (see runtime-registry).
+		if declare -F rt_feature_agents >/dev/null 2>&1; then
+			feature_flag=$(rt_feature_agents "$runtime_id" 2>/dev/null || echo "yes")
+			if [[ "$feature_flag" != "yes" ]]; then
+				display_name=$(rt_display_name "$runtime_id")
+				print_info "Agent installation disabled for $display_name (feature flag)"
+				continue
+			fi
+		fi
 
 		agent_count=$(_deploy_agents_to_single_runtime "$runtime_id" "$agent_dir" "$agent_list_file")
 		# A count of 0 means runtime not installed (skipped) — don't increment runtime_count
