@@ -1426,10 +1426,10 @@
       "pr": 13637
     },
     ".agents/research.md": {
-      "hash": "e30f6a29668b78be4808c38b12913ffaa49e6562",
-      "at": "2026-04-01T20:59:28Z",
-      "passes": 1,
-      "pr": 14996
+      "hash": "129d8428437322236b63583a1d1f2d9ba18c12dba7e4f4f7fab4b5af2aa31442",
+      "at": "2026-04-11T14:47:37Z",
+      "passes": 2,
+      "pr": 18272
     },
     ".agents/scripts/anti-detect-helper.sh": {
       "hash": "730469e80477587a80574ef900b64911a8cd04f7",
