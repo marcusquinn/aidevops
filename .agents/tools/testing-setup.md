@@ -16,8 +16,6 @@ Configure testing infrastructure for the current project. Detects bundle, discov
 
 Arguments: $ARGUMENTS
 
-## Workflow
-
 ### Step 1: Detect Project Bundle
 
 ```bash
@@ -27,7 +25,7 @@ QUALITY_GATES=$(echo "$BUNDLE" | jq -r '.quality_gates[]')
 SKIP_GATES=$(echo "$BUNDLE" | jq -r '.skip_gates[]' 2>/dev/null)
 ```
 
-Display detected bundle and quality gates. No bundle → fall back to `cli-tool`. Offer override (web-app, cli-tool, library, infrastructure, content-site, agent).
+Display detected bundle and quality gates. No bundle → fall back to `cli-tool`. Offer override: web-app, cli-tool, library, infrastructure, content-site, agent.
 
 ### Step 2: Discover Existing Infrastructure
 
@@ -62,7 +60,7 @@ Group results: Ready, Needs attention, Missing (recommended), Skipped by bundle.
 
 For each gap, offer: (1) install and configure (recommended), (2) skip — handle manually, (3) use alternative already installed.
 
-**Categories:** missing test runner (install dep, create config, sample test, add `test` script), missing coverage (c8/istanbul, 80% threshold default), missing CI integration (add test step to workflow), pre-commit hooks (aidevops hooks or husky/lint-staged).
+**Categories:** missing test runner (install dep, create config, sample test, add `test` script) · missing coverage (c8/istanbul, 80% threshold default) · missing CI integration (add test step to workflow) · pre-commit hooks (aidevops hooks or husky/lint-staged).
 
 > Runner installation is agent-driven (requires judgment for alternatives, conflict handling). The helper provides `discover`, `gaps`, `status`, `verify` — the deterministic parts.
 
@@ -88,12 +86,7 @@ Create all configuration files from collected choices: test runner configs, cove
 testing-setup-helper.sh verify .
 ```
 
-Execute each configured runner — report `[pass]`/`[fail]`/`[skip]` per gate. Then display files created/modified and next steps:
-
-1. Write tests for existing code
-2. Run `testing-setup-helper.sh status` to check test health
-3. Push to trigger CI pipeline test step
-4. Consider `/testing-coverage` to identify untested code paths
+Execute each configured runner — report `[pass]`/`[fail]`/`[skip]` per gate. Display files created/modified and next steps: write tests for existing code, run `testing-setup-helper.sh status`, push to trigger CI, consider `/testing-coverage` for untested paths.
 
 ## Options
 
