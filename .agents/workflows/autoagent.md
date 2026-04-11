@@ -23,17 +23,17 @@ Arguments: $ARGUMENTS
 |---------|---------|-----------|
 | `--program <path>` | `/autoagent --program todo/research/autoagent-self-healing.md` | Skip interview, run directly |
 | `--focus <type>` | `/autoagent --focus self-healing` | Pre-select hypothesis type, short confirmation |
-| `--signal-scan` | `/autoagent --signal-scan` | Analysis only — mine signals, suggest hypotheses, no execution |
+| `--signal-scan` | `/autoagent --signal-scan` | Analysis only — mine signals, no execution |
 | Bare | `/autoagent` | Full interactive setup (Q1–Q6) |
 
 ## Step 1: Resolve Invocation Pattern
 
 ```text
-if $ARGUMENTS contains "--signal-scan":  → Signal Scan Mode
-elif $ARGUMENTS contains "--program ":   → extract program path, skip to Step 3
-elif $ARGUMENTS contains "--focus ":     → extract focus type, pre-fill Q2, show summary
-elif $ARGUMENTS is non-empty:            → One-Liner Mode (infer defaults)
-else:                                    → Interactive Setup (Q1–Q6)
+if --signal-scan  → Signal Scan Mode
+elif --program    → extract path, skip to Step 3
+elif --focus      → extract type, pre-fill Q2, show summary
+elif non-empty    → One-Liner Mode (infer defaults)
+else              → Interactive Setup (Q1–Q6)
 ```
 
 ## Step 2: Interactive Setup (Q1–Q6)
@@ -45,15 +45,15 @@ Ask sequentially; show inferred default as option 1; Enter accepts default.
 **Q2 — Which hypothesis types?** (multi-select; all default enabled; `--focus` pre-selects one)
 
 ```text
-[x] 1. self-healing       — fix recurring errors, improve error recovery
+[x] 1. self-healing           — fix recurring errors, improve error recovery
 [x] 2. instruction-refinement — reduce token usage, improve clarity
-[x] 3. tool-optimization  — improve script reliability and performance
-[x] 4. tool-creation      — add missing automation
-[x] 5. agent-composition  — improve agent routing and orchestration
-[x] 6. workflow-alignment — align workflows with actual usage patterns
+[x] 3. tool-optimization      — improve script reliability and performance
+[x] 4. tool-creation          — add missing automation
+[x] 5. agent-composition      — improve agent routing and orchestration
+[x] 6. workflow-alignment     — align workflows with actual usage patterns
 ```
 
-**Q3 — Edit surface?** (files that may be modified; defaults based on Q1)
+**Q3 — Edit surface?** (defaults based on Q1; safety constraints shown alongside)
 
 | Q1 answer | Default edit surface |
 |-----------|---------------------|
@@ -64,9 +64,7 @@ Ask sequentially; show inferred default as option 1; Enter accepts default.
 | Tool creation | `.agents/scripts/` (new files only) |
 | Agent composition | `.agents/tools/**/*.md, .agents/reference/agent-routing.md` |
 
-Safety constraints shown alongside defaults. Confirm or override.
-
-**Q4–Q6 — Defaults** (Enter to accept each):
+**Q4–Q6 — Defaults** (Enter to accept):
 
 | Setting | Default |
 |---------|---------|
@@ -100,11 +98,11 @@ Analysis only — no research program written, no loop started. Mine signals fro
 
 ```text
 Found N actionable signals. Top 5:
-  1. [self-healing]         recurring error in pulse-wrapper.sh:142 — 7 occurrences
+  1. [self-healing]           recurring error in pulse-wrapper.sh:142 — 7 occurrences
   2. [instruction-refinement] build.txt token count 18k — above 15k threshold
-  3. [tool-optimization]    shellcheck violations in 3 scripts
-  4. [agent-composition]    agent-routing.md missing 4 new agents
-  5. [workflow-alignment]   full-loop.md step 4.6 diverged from actual release flow
+  3. [tool-optimization]      shellcheck violations in 3 scripts
+  4. [agent-composition]      agent-routing.md missing 4 new agents
+  5. [workflow-alignment]     full-loop.md step 4.6 diverged from actual release flow
 
 Run `/autoagent --focus self-healing` to address these, or `/autoagent` for full setup.
 ```
