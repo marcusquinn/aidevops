@@ -1642,9 +1642,9 @@
       "pr": 15477
     },
     ".agents/scripts/commands/show-plan.md": {
-      "hash": "0beb380918e12916d08eedd9bf9784687c587f34",
-      "at": "2026-03-29T20:53:58Z",
-      "passes": 1,
+      "hash": "21346c11078a086da90e08dffcde74c7421c1ab2",
+      "at": "2026-04-11T15:18:08Z",
+      "passes": 2,
       "pr": 13285
     },
     ".agents/scripts/commands/skills.md": {
@@ -7106,6 +7106,12 @@
       "hash": "83444ef9cf1ad2231ed1ad62d1d5c623f3d00333",
       "at": "2026-04-11T13:54:29Z",
       "pr": 18158,
+      "passes": 1
+    },
+    ".agents/workflows/show-plan.md": {
+      "hash": "21346c11078a086da90e08dffcde74c7421c1ab2",
+      "at": "2026-04-11T15:18:24Z",
+      "pr": 18269,
       "passes": 1
     }
   },
