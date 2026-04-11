@@ -7,17 +7,11 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Display the mission progress dashboard with real-time status.
-
 Arguments: $ARGUMENTS
-
-## Quick Output (Default)
 
 ```bash
 ~/.aidevops/agents/scripts/mission-dashboard-helper.sh status $ARGUMENTS
 ```
-
-Display the output directly to the user. The script handles all formatting.
 
 ## Arguments
 
@@ -42,7 +36,7 @@ Display the output directly to the user. The script handles all formatting.
 
 ## Pending Review View
 
-`--pending-review` shows all `needs-maintainer-review` issues across pulse-enabled repos (simplification-debt, feature requests, etc.).
+`--pending-review` lists all `needs-maintainer-review` issues across pulse-enabled repos. Output: tab-separated (number, title, labels, assignees, ISO timestamp), grouped by repo with relative timestamps.
 
 ```bash
 for slug in $(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .slug' ~/.config/aidevops/repos.json); do
@@ -52,22 +46,13 @@ for slug in $(jq -r '.initialized_repos[] | select(.pulse == true and (.local_on
 done
 ```
 
-Output: tab-separated (number, title, labels, assignees, ISO timestamp). The agent groups by repo, converts timestamps to relative times, and aligns columns at display time.
-
-Actions for each item:
-- **Approve:** `sudo aidevops approve issue <N>` (cryptographically signed approval)
+Actions:
+- **Approve:** `sudo aidevops approve issue <N>` (cryptographically signed)
 - **Decline:** `gh issue close <N> --repo <slug> -c "Declined: <reason>"`
 
 ## Browser View
 
 Generates a self-contained HTML file (dark theme, progress bars, status badges, budget cards) at `~/.aidevops/.agent-workspace/tmp/mission-dashboard.html` and opens in the default browser.
-
-## Pulse Integration
-
-```bash
-~/.aidevops/agents/scripts/mission-dashboard-helper.sh json                          # Programmatic
-~/.aidevops/agents/scripts/mission-dashboard-helper.sh browser --mission m-20260227  # HTML snapshot
-```
 
 ## Related
 
