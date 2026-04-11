@@ -1019,8 +1019,32 @@ _aliases_check_configured() {
 	return 1
 }
 
+# Replace the aidevops alias block in a single rc file.
+# Removes the old block (marker line through the next blank line) and appends
+# the new block. Idempotent: safe to call on every setup run.
+_aliases_replace_in_file() {
+	local rc_file="$1"
+	local alias_block="$2"
+	local marker="# AI Assistant Server Access"
+	local tmp_file
+	tmp_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-aliases-XXXXXX") || return 1
+
+	# Strip existing block: from marker line to the next blank line (inclusive)
+	awk -v marker="$marker" '
+		$0 ~ marker { in_block=1; next }
+		in_block && /^[[:space:]]*$/ { in_block=0; next }
+		in_block { next }
+		{ print }
+	' "$rc_file" >"$tmp_file" && mv "$tmp_file" "$rc_file"
+
+	# Append updated block
+	printf '%s\n' "$alias_block" >>"$rc_file"
+	return 0
+}
+
 # Write alias blocks to fish or bash/zsh rc files.
-# Prints the list of files aliases were added to (comma-separated).
+# Always replaces an existing aidevops alias block so updates propagate.
+# Prints the list of files aliases were added/updated in (comma-separated).
 _aliases_write_to_rc_files() {
 	local is_fish="$1"
 	local alias_block_bash="$2"
@@ -1031,10 +1055,13 @@ _aliases_write_to_rc_files() {
 	if [[ "$is_fish" == "true" ]]; then
 		local fish_rc="$HOME/.config/fish/config.fish"
 		mkdir -p "$HOME/.config/fish"
-		echo "$alias_block_fish" >>"$fish_rc"
+		if [[ ! -f "$fish_rc" ]]; then
+			touch "$fish_rc"
+		fi
+		_aliases_replace_in_file "$fish_rc" "$alias_block_fish"
 		added_to="$fish_rc"
 	else
-		# Add to all bash/zsh rc files
+		# Add/update in all bash/zsh rc files
 		local rc_file
 		while IFS= read -r rc_file; do
 			[[ -z "$rc_file" ]] && continue
@@ -1044,12 +1071,7 @@ _aliases_write_to_rc_files() {
 				touch "$rc_file"
 			fi
 
-			# Skip if already has aliases (file created above if it didn't exist)
-			if grep -q "# AI Assistant Server Access" "$rc_file"; then
-				continue
-			fi
-
-			echo "$alias_block_bash" >>"$rc_file"
+			_aliases_replace_in_file "$rc_file" "$alias_block_bash"
 			added_to="${added_to:+$added_to, }$rc_file"
 		done < <(get_all_shell_rcs)
 	fi
@@ -1071,6 +1093,8 @@ alias servers-list='./.agents/scripts/servers-helper.sh list'
 alias hostinger='./.agents/scripts/hostinger-helper.sh'
 alias hetzner='./.agents/scripts/hetzner-helper.sh'
 alias aws-helper='./.agents/scripts/aws-helper.sh'
+# Claude Code: skip interactive permission prompts (safe for personal machines)
+command -v claude >/dev/null 2>&1 && alias claude='claude --dangerously-skip-permissions'
 ALIASES
 	return 0
 }
@@ -1085,6 +1109,8 @@ alias servers-list './.agents/scripts/servers-helper.sh list'
 alias hostinger './.agents/scripts/hostinger-helper.sh'
 alias hetzner './.agents/scripts/hetzner-helper.sh'
 alias aws-helper './.agents/scripts/aws-helper.sh'
+# Claude Code: skip interactive permission prompts (safe for personal machines)
+if command -v claude >/dev/null 2>&1; alias claude 'claude --dangerously-skip-permissions'; end
 ALIASES
 	return 0
 }
@@ -1105,11 +1131,6 @@ setup_aliases() {
 
 	local alias_block_fish
 	alias_block_fish=$(_aliases_build_fish_block)
-
-	if _aliases_check_configured; then
-		print_info "Server Access aliases already configured - Skipping"
-		return 0
-	fi
 
 	print_info "Detected default shell: $default_shell"
 	setup_prompt add_aliases "Add shell aliases? [Y/n]: " "Y"
