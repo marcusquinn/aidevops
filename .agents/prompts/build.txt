@@ -298,6 +298,13 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - Loop mode: `pre-edit-check.sh --loop-mode --task "description"`
 - NEVER revert others' changes without explicit user request
 
+**Post-edit commit rule (data loss prevention):**
+- After EVERY file edit in a worktree: immediately `git add -A && git commit -m "wip: <brief description>"`.
+- Do NOT batch edits across multiple files before committing. One edit = one commit.
+- This ensures work survives session interruption, context compaction, or crash.
+- WIP commits are squashed/amended before PR — the commit message quality doesn't matter here, survival does.
+- Exception: generated/temp files explicitly gitignored (e.g. `.agents/loop-state/`, `.agents/tmp/`).
+
 # Quality Standards
 - ShellCheck zero violations. `local var="$1"` pattern. Explicit returns.
 

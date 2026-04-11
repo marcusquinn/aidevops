@@ -447,6 +447,26 @@ worktree_has_changes() {
 	fi
 }
 
+# Move a path to the system trash instead of permanently deleting it.
+# Prefers: trash (macOS /usr/bin/trash), gio trash (Linux), rm -rf fallback.
+# Args: $1=path to trash
+# Returns 0 on success, 1 on failure.
+trash_path() {
+	local target="$1"
+	[[ -z "$target" ]] && return 1
+	[[ ! -e "$target" ]] && return 0 # Already gone — not an error
+
+	if command -v trash >/dev/null 2>&1; then
+		trash "$target" 2>/dev/null && return 0
+	fi
+	if command -v gio >/dev/null 2>&1; then
+		gio trash "$target" 2>/dev/null && return 0
+	fi
+	# Fallback: permanent delete
+	rm -rf "$target" 2>/dev/null && return 0
+	return 1
+}
+
 # Generate worktree path from branch name
 # Pattern: ~/Git/{repo}-{branch-slug}
 generate_worktree_path() {
@@ -703,8 +723,9 @@ _remove_cleanup_and_execute() {
 	local path_to_remove="$1"
 
 	# Clean up aidevops runtime files before removal (prevents "contains untracked files" error)
-	rm -rf "$path_to_remove/.agents/loop-state" 2>/dev/null || true
-	rm -rf "$path_to_remove/.agents/tmp" 2>/dev/null || true
+	# Use trash_path for recoverable deletion; fall back to rm -rf if trash unavailable.
+	trash_path "$path_to_remove/.agents/loop-state" || true
+	trash_path "$path_to_remove/.agents/tmp" || true
 	rm -f "$path_to_remove/.agents/.DS_Store" 2>/dev/null || true
 	rmdir "$path_to_remove/.agent" 2>/dev/null || true # Only removes if empty
 
@@ -1187,12 +1208,13 @@ _clean_remove_merged() {
 					echo -e "${BLUE}Removing $worktree_branch...${NC}"
 					# Clean up heavy directories first to speed up removal
 					# (node_modules, .next, .turbo can have 100k+ files)
-					rm -rf "$worktree_path/node_modules" 2>/dev/null || true
-					rm -rf "$worktree_path/.next" 2>/dev/null || true
-					rm -rf "$worktree_path/.turbo" 2>/dev/null || true
+					# Use trash_path for recoverable deletion; fall back to rm -rf if trash unavailable.
+					trash_path "$worktree_path/node_modules" || true
+					trash_path "$worktree_path/.next" || true
+					trash_path "$worktree_path/.turbo" || true
 					# Clean up aidevops runtime files
-					rm -rf "$worktree_path/.agents/loop-state" 2>/dev/null || true
-					rm -rf "$worktree_path/.agents/tmp" 2>/dev/null || true
+					trash_path "$worktree_path/.agents/loop-state" || true
+					trash_path "$worktree_path/.agents/tmp" || true
 					rm -f "$worktree_path/.agents/.DS_Store" 2>/dev/null || true
 					rmdir "$worktree_path/.agent" 2>/dev/null || true
 
