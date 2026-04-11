@@ -402,6 +402,15 @@ _PULSE_HEALTH_PRS_CLOSED_CONFLICTING=0
 _PULSE_HEALTH_STALLED_KILLED=0
 _PULSE_HEALTH_PREFETCH_ERRORS=0
 
+# Flock deadlock health state (GH#18141) — set by acquire_instance_lock() when
+# a non-pulse process holds the flock. Persisted to pulse-health.json so the
+# session greeting can warn the user. Cleared on next clean cycle.
+_PULSE_HEALTH_DEADLOCK_DETECTED=false
+_PULSE_HEALTH_DEADLOCK_HOLDER_PID=""
+_PULSE_HEALTH_DEADLOCK_HOLDER_CMD=""
+_PULSE_HEALTH_DEADLOCK_BOUNCES=0
+_PULSE_HEALTH_DEADLOCK_RECOVERED=false
+
 # Validate complexity scan configuration (defined above, validated here)
 COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 900 300)
 COMPLEXITY_LLM_SWEEP_INTERVAL=$(_validate_int COMPLEXITY_LLM_SWEEP_INTERVAL "$COMPLEXITY_LLM_SWEEP_INTERVAL" 21600 3600)
@@ -509,12 +518,64 @@ acquire_instance_lock() {
 	# flock is not available on macOS without util-linux — skip silently.
 	if command -v flock &>/dev/null; then
 		if ! flock -n 9 2>/dev/null; then
-			# flock says another instance holds it — release our mkdir lock
-			# and exit. This handles the edge case where flock and mkdir
-			# disagree (e.g., NFS with broken mkdir atomicity).
-			echo "[pulse-wrapper] flock secondary guard: another instance holds the flock — releasing mkdir lock and exiting" >>"$WRAPPER_LOGFILE"
-			rm -rf "$LOCKDIR" 2>/dev/null || true
-			return 1
+			# flock says another instance holds it — diagnose and attempt recovery
+			# (GH#18141: Layer 1 diagnostic + Layer 2 inode self-recovery)
+			local flock_holder_pid flock_holder_cmd flock_holder_comm
+			local bounce_file bounce_count
+			flock_holder_pid=$(fuser "$LOCKFILE" 2>/dev/null | tr -d ' ')
+			flock_holder_cmd=$(ps -p "$flock_holder_pid" -o args= 2>/dev/null | head -c 120)
+			flock_holder_comm=$(ps -p "$flock_holder_pid" -o comm= 2>/dev/null)
+
+			# Track consecutive bounces in a file so we can detect sustained deadlocks
+			bounce_file="${HOME}/.aidevops/logs/pulse-flock-bounce-count"
+			bounce_count=0
+			[[ -f "$bounce_file" ]] && bounce_count=$(cat "$bounce_file" 2>/dev/null || echo "0")
+			[[ "$bounce_count" =~ ^[0-9]+$ ]] || bounce_count=0
+			bounce_count=$((bounce_count + 1))
+			echo "$bounce_count" >"$bounce_file"
+
+			echo "[pulse-wrapper] flock secondary guard: held by PID ${flock_holder_pid:-unknown} (${flock_holder_cmd:-unknown}), bounce ${bounce_count}" >>"$WRAPPER_LOGFILE"
+
+			# Update deadlock health state for pulse-health.json (GH#18141: Layer 3)
+			_PULSE_HEALTH_DEADLOCK_DETECTED=true
+			_PULSE_HEALTH_DEADLOCK_HOLDER_PID="${flock_holder_pid:-unknown}"
+			_PULSE_HEALTH_DEADLOCK_HOLDER_CMD="${flock_holder_cmd:-unknown}"
+			_PULSE_HEALTH_DEADLOCK_BOUNCES="$bounce_count"
+
+			# GH#18141: Layer 2 — inode recreation self-recovery after 3+ bounces
+			# when the holder is NOT a pulse-wrapper/bash process.
+			# Safety: we hold the mkdir lock (primary guard), so no concurrency hole.
+			# The orphaned child's flock on the old (now unlinked) inode becomes
+			# a lock on nothing — POSIX guarantees unlink+open creates a new inode.
+			if ((bounce_count >= 3)) &&
+				[[ -n "$flock_holder_comm" ]] &&
+				[[ "$flock_holder_comm" != "bash" ]] &&
+				[[ "$flock_holder_comm" != "pulse-wrapper" ]] &&
+				[[ "$flock_holder_comm" != "pulse-wrapper.sh" ]]; then
+				echo "[pulse-wrapper] Deadlock detected: flock held by non-pulse process PID ${flock_holder_pid:-unknown} (${flock_holder_cmd:-unknown}) for ${bounce_count} consecutive bounces — attempting inode recovery" >>"$WRAPPER_LOGFILE"
+				exec 9>&-          # close our FD to the old inode
+				rm -f "$LOCKFILE"  # unlink old inode (orphan keeps its FD)
+				exec 9>"$LOCKFILE" # create new file at same path = new inode
+				if flock -n 9 2>/dev/null; then
+					echo "[pulse-wrapper] Deadlock recovery successful — acquired flock on new inode after ${bounce_count} bounces" >>"$WRAPPER_LOGFILE"
+					echo "0" >"$bounce_file"
+					_PULSE_HEALTH_DEADLOCK_RECOVERED=true
+					# Fall through to success path below
+				else
+					echo "[pulse-wrapper] Deadlock recovery failed — flock still contested after inode recreation, releasing mkdir lock and exiting" >>"$WRAPPER_LOGFILE"
+					rm -rf "$LOCKDIR" 2>/dev/null || true
+					return 1
+				fi
+			else
+				# Holder is a pulse process or bounce threshold not yet met — normal exit
+				rm -rf "$LOCKDIR" 2>/dev/null || true
+				return 1
+			fi
+		else
+			# Successful flock acquisition — reset the bounce counter
+			local bounce_file
+			bounce_file="${HOME}/.aidevops/logs/pulse-flock-bounce-count"
+			[[ -f "$bounce_file" ]] && echo "0" >"$bounce_file"
 		fi
 		echo "[pulse-wrapper] Instance lock acquired via mkdir+flock (PID $$)" >>"$WRAPPER_LOGFILE"
 	else
@@ -12113,7 +12174,7 @@ main() {
 #######################################
 # Write pulse-health.json — structured status snapshot for instant diagnosis.
 #
-# Fields (GH#15107):
+# Fields (GH#15107, GH#18141):
 #   workers_active          — current live worker count
 #   workers_max             — configured max worker slots
 #   prs_merged_this_cycle   — PRs squash-merged by deterministic merge pass
@@ -12122,6 +12183,11 @@ main() {
 #   prefetch_errors         — prefetch_state failures this cycle
 #   stalled_workers_killed  — stalled workers killed by cleanup_stalled_workers
 #   models_backed_off       — active backoff entries in provider_backoff DB
+#   deadlock_detected       — true if flock held by non-pulse process this cycle
+#   deadlock_holder_pid     — PID of the process holding the flock (if deadlock)
+#   deadlock_holder_cmd     — command line of the holder (truncated to 120 chars)
+#   deadlock_bounces        — consecutive flock bounce count at time of detection
+#   deadlock_recovered      — true if inode recreation self-recovery succeeded
 #
 # Atomic write: write to tmp file then mv to avoid partial reads.
 # Non-fatal: any failure is logged and silently ignored.
@@ -12159,6 +12225,15 @@ write_pulse_health_file() {
 		return 0
 	}
 
+	# GH#18141: sanitize deadlock holder cmd for JSON embedding.
+	# Escape backslashes first, then double-quotes.
+	local escaped_holder_cmd
+	escaped_holder_cmd="${_PULSE_HEALTH_DEADLOCK_HOLDER_CMD//\\/\\\\}"
+	escaped_holder_cmd="${escaped_holder_cmd//\"/\\\"}"
+
+	local deadlock_bounces="${_PULSE_HEALTH_DEADLOCK_BOUNCES:-0}"
+	[[ "$deadlock_bounces" =~ ^[0-9]+$ ]] || deadlock_bounces=0
+
 	cat >"$tmp_health" <<EOF
 {
   "timestamp": "${ts}",
@@ -12169,7 +12244,12 @@ write_pulse_health_file() {
   "issues_dispatched": ${issues_dispatched},
   "prefetch_errors": ${_PULSE_HEALTH_PREFETCH_ERRORS},
   "stalled_workers_killed": ${_PULSE_HEALTH_STALLED_KILLED},
-  "models_backed_off": ${models_backed_off}
+  "models_backed_off": ${models_backed_off},
+  "deadlock_detected": ${_PULSE_HEALTH_DEADLOCK_DETECTED},
+  "deadlock_holder_pid": "${_PULSE_HEALTH_DEADLOCK_HOLDER_PID}",
+  "deadlock_holder_cmd": "${escaped_holder_cmd}",
+  "deadlock_bounces": ${deadlock_bounces},
+  "deadlock_recovered": ${_PULSE_HEALTH_DEADLOCK_RECOVERED}
 }
 EOF
 
@@ -12179,7 +12259,7 @@ EOF
 		return 0
 	}
 
-	echo "[pulse-wrapper] pulse-health.json written: workers=${workers_active}/${workers_max} merged=${_PULSE_HEALTH_PRS_MERGED} closed_conflicting=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING} dispatched=${issues_dispatched} stalled_killed=${_PULSE_HEALTH_STALLED_KILLED} backed_off=${models_backed_off}" >>"$LOGFILE"
+	echo "[pulse-wrapper] pulse-health.json written: workers=${workers_active}/${workers_max} merged=${_PULSE_HEALTH_PRS_MERGED} closed_conflicting=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING} dispatched=${issues_dispatched} stalled_killed=${_PULSE_HEALTH_STALLED_KILLED} backed_off=${models_backed_off} deadlock=${_PULSE_HEALTH_DEADLOCK_DETECTED} deadlock_bounces=${deadlock_bounces} deadlock_recovered=${_PULSE_HEALTH_DEADLOCK_RECOVERED}" >>"$LOGFILE"
 	return 0
 }
 
