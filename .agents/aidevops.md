@@ -52,20 +52,13 @@ subagents:
 - **Scripts**: `.agents/scripts/[service]-helper.sh [command] [account] [target]`
 - **Subagents**: `aidevops/setup.md`, `aidevops/troubleshooting.md`, `aidevops/architecture.md`
 - **Agent dev**: `tools/build-agent/` | **MCP dev**: `tools/build-mcp/`
+- **Config**: `configs/[service]-config.json.txt` (templates) · `configs/[service]-config.json` (working, gitignored) · `~/.config/aidevops/credentials.sh`
 
 **Services**: Hostinger, Hetzner, Closte, Cloudron, Coolify, Vercel, WordPress (MainWP/LocalWP), SonarCloud, Codacy, CodeRabbit, Snyk, Secretlint, GitHub/GitLab/Gitea, Cloudflare, Spaceship, 101domains, Route53, Vaultwarden, Amazon SES, Crawl4AI
 
 **MCP ports**: 3001 LocalWP DB · 3002 Vaultwarden · + Chrome DevTools, Playwright, Ahrefs, Context7, GSC
 
 **Testing**: `opencode run "Test query" --agent AI-DevOps` — see `tools/opencode/opencode.md`
-
-## Configuration
-
-```bash
-configs/[service]-config.json.txt   # Templates (committed)
-configs/[service]-config.json       # Working configs (gitignored)
-~/.config/aidevops/credentials.sh   # Credentials
-```
 
 ## Quality Standards
 
@@ -75,18 +68,8 @@ configs/[service]-config.json       # Working configs (gitignored)
 
 ## Extending the Framework
 
-See `aidevops/extension.md`:
-
-1. Create helper script following existing patterns
-2. Add config template
-3. Create agent documentation
-4. Update service index
-5. Test thoroughly
+See `aidevops/extension.md`: create helper script → add config template → create agent doc → update service index → test.
 
 ## OpenCode Plugins
 
-**Anthropic OAuth** (built-in since OpenCode v1.1.36+): Enables Claude Pro/Max authentication.
-
-```bash
-opencode auth login   # Select: Anthropic → Claude Pro/Max
-```
+**Anthropic OAuth** (built-in since OpenCode v1.1.36+): `opencode auth login` → select Anthropic → Claude Pro/Max.
