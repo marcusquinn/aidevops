@@ -2,12 +2,7 @@
 description: Email design testing - local Playwright rendering and Email on Acid API integration
 mode: subagent
 tools:
-  read: true
-  write: false
-  edit: false
   bash: true
-  glob: true
-  grep: true
   webfetch: true
   task: true
 ---
@@ -21,24 +16,21 @@ tools:
 
 ## Quick Reference
 
-- **Local tool**: Playwright (headless Chromium/WebKit) -- free, ~2s per viewport, approximation only
-- **Remote tool**: Email on Acid API v5 -- paid, 30-120s, 90+ real email clients
+- **Local**: Playwright (headless Chromium/WebKit) -- free, ~2s/viewport, approximation only
+- **Remote**: Email on Acid API v5 -- paid, 30-120s, 90+ real clients
 - **Credentials**: `aidevops secret set EOA_API_KEY` + `aidevops secret set EOA_API_PASSWORD`
-- **Related**: `email-testing.md` (HTML/CSS validation), `email-health-check.md` (DNS auth), `ses.md` (SES sending), `tools/browser/playwright.md`
+- **Related**: `email-testing.md` (HTML/CSS), `email-health-check.md` (DNS auth), `ses.md` (sending), `tools/browser/playwright.md`
 
 ```bash
-# Local Playwright rendering (free, instant)
 email-design-test-helper.sh render newsletter.html
 email-design-test-helper.sh render newsletter.html --dark-mode
 email-design-test-helper.sh render newsletter.html --viewports mobile,tablet,desktop
-
-# Email on Acid API (paid, real clients)
 email-design-test-helper.sh eoa-test newsletter.html
 email-design-test-helper.sh eoa-results <test_id>
 email-design-test-helper.sh eoa-clients
 ```
 
-**Workflow:** Playwright locally -> `email-testing.md` validation -> Email on Acid for real-client verification.
+**Workflow:** Playwright locally → `email-testing.md` validation → Email on Acid for real-client verification.
 
 <!-- AI-CONTEXT-END -->
 
@@ -55,24 +47,24 @@ email-design-test-helper.sh eoa-clients
 | `outlook-preview` | 657 | 600 | Chromium | Outlook reading pane |
 | `desktop-wide` | 1200 | 800 | Chromium | Full-width webmail |
 
-Full test suite (all viewports + dark mode + image blocking): `email-design-test-helper.sh render --all`.
+Full suite (all viewports + dark mode + image blocking): `email-design-test-helper.sh render --all`.
 
 ### Rendering Modes
 
 - **Dark mode** (`colorScheme: 'dark'`): catches missing `prefers-color-scheme`, hardcoded white backgrounds, invisible text
-- **Image blocking** (route to `abort()` + `img { visibility: hidden !important; }`): catches missing `alt` text, layout collapse
-- **Limitations**: does **not** replicate Outlook Word engine, Gmail `<style>` stripping, Yahoo/AOL quirks, or real mobile rendering -- use Email on Acid for these
+- **Image blocking** (`abort()` + `img { visibility: hidden !important; }`): catches missing `alt` text, layout collapse
+- **Limitations**: does not replicate Outlook Word engine, Gmail `<style>` stripping, Yahoo/AOL quirks -- use Email on Acid for these
 
 ## Email on Acid API
 
-Base URL: `https://api.emailonacid.com/v5` -- HTTP Basic Auth (`EOA_API_KEY:EOA_API_PASSWORD`). Sandbox (free, no credits): `sandbox:sandbox`.
+Base URL: `https://api.emailonacid.com/v5` -- HTTP Basic Auth (`EOA_API_KEY:EOA_API_PASSWORD`). Sandbox: `sandbox:sandbox`.
 
 ### Endpoints
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/auth` | GET | Test authentication |
-| `/email/clients` | GET | List available clients |
+| `/email/clients` | GET | List available clients (live: `eoa-clients`) |
 | `/email/tests` | POST | Create test (`subject`, `html`, `clients[]`, `image_blocking`) |
 | `/email/tests/<id>` | GET | Poll status (~30-120s, every 5s until `processing` empty) |
 | `/email/tests/<id>/results` | GET | Screenshot URLs (Basic Auth: 90d; presigned: 24h) |
@@ -91,11 +83,9 @@ Base URL: `https://api.emailonacid.com/v5` -- HTTP Basic Auth (`EOA_API_KEY:EOA_
 | `appmail14` | Apple Mail (macOS 14) |
 | `yahoo_chr26_win` | Yahoo (Chrome/Windows) |
 
-Live list: `email-design-test-helper.sh eoa-clients`.
-
 ## CI/CD Integration
 
-Playwright rendering gate -- triggers on `emails/**`, `templates/**`:
+Playwright gate on `emails/**`, `templates/**`:
 
 ```yaml
 # .github/workflows/email-test.yml
