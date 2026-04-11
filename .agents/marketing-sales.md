@@ -60,15 +60,13 @@ Before any campaign or copy work:
 | **Direct Response Copy** | `marketing-sales/direct-response-copy.md` | PAS/AIDA/PASTOR, headlines, swipes |
 | **CRO** | `marketing-sales/cro.md` | Landing pages, A/B testing, checkout |
 
-<!-- AI-CONTEXT-END -->
-
 ## Email Campaigns
 
 **Workflow**: Plan → `fluentcrm_create_email_template` (title, subject, HTML) → `fluentcrm_create_campaign` (title, subject, template_id, list) → test → schedule → monitor.
 
 **Type routing**: Newsletter/Promotional → Email Campaign. Nurture/Transactional/Re-engagement → Automation.
 
-**Template rules**: Subject 40-60 chars (personalized, clear value). Preheader 40-100 chars. Single column, scannable, mobile-first. CTA above fold. Footer: unsubscribe, contact, social.
+**Template rules**: Subject 40-60 chars. Preheader 40-100 chars. Single column, mobile-first. CTA above fold. Footer: unsubscribe, contact, social.
 
 **Personalization**: `{{contact.first_name}}`, `{{contact.last_name}}`, `{{contact.email}}`, `{{contact.full_name}}`, `{{contact.custom.field_name}}`
 
@@ -102,7 +100,7 @@ Before any campaign or copy work:
 
 **Lead magnet**: Create → landing page + form → `fluentcrm_create_list` → delivery automation → nurture. Forms: Fluent Forms, WPForms, Gravity Forms, Contact Form 7, custom API.
 
-**Lead handoff**: Apply `lead-mql` tag → automation notifies sales → sales qualifies/accepts lead → apply `lead-sql` tag → remove from marketing sequences.
+**Lead handoff**: Apply `lead-mql` tag → automation notifies sales → sales qualifies → apply `lead-sql` tag → remove from marketing sequences.
 
 ## Analytics & Testing
 
@@ -134,3 +132,5 @@ Before any campaign or copy work:
 | Accessibility | `tools/accessibility/accessibility-audit.md` |
 
 **Docs**: [FluentCRM](https://fluentcrm.com/docs/) | [REST API](https://rest-api.fluentcrm.com/) | `services/crm/fluentcrm.md`
+
+<!-- AI-CONTEXT-END -->
