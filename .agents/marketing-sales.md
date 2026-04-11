@@ -52,7 +52,11 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 
 ## Pre-flight Validation
 
-Before any campaign or copy: (1) real painful problem, unique vs. alternatives? (2) benefits before features, pricing vs. doing nothing? (3) claims realistic and provable? (4) named personas with real constraints, not demographics? (5) who would say "not for me" — is that the right person to lose?
+1. Real, painful problem? Unique vs. alternatives?
+2. Benefits before features? Pricing vs. alternatives (including doing nothing)?
+3. Claims realistic and provable?
+4. Named personas with real constraints (not demographics)?
+5. Who would say "not for me" — is that the right person to lose?
 
 ## Email Campaigns
 
