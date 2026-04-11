@@ -53,7 +53,6 @@ Never use raw `opencode run` or `claude` CLI — always use the headless runtime
   --prompt "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION" &
 sleep 2  # between dispatches
 # --model only for escalation after 2+ failures: --model anthropic/claude-opus-4-6
-# Helper handles round-robin, backoff, session persistence; validate launch, re-dispatch on failure
 ```
 
 ## Agent Routing
@@ -82,7 +81,6 @@ gh pr checks NUMBER --repo SLUG                  # CI status
 gh api -i "repos/SLUG/collaborators/AUTHOR/permission"
 # 200 + admin/maintain/write = maintainer → safe to merge
 # 200 + read/none, or 404 = external → NEVER auto-merge
-# Other status → fail closed, skip
 
 # --- Issue operations ---
 # Label lifecycle: available -> queued -> in-progress -> in-review -> done
@@ -104,31 +102,30 @@ kill PID  # Then comment on issue: model, branch, reason, diagnosis, next action
 ```bash
 launchctl kickstart gui/$(id -u)/sh.aidevops.<name>                          # Start
 launchctl bootout gui/$(id -u)/sh.aidevops.<name> && \
-  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/sh.aidevops.<name>.plist  # Full restart (env var changes)
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/sh.aidevops.<name>.plist  # Full restart
 ```
 
-**Env vars:** `launchctl setenv` persists across launchd; `launchctl unsetenv` requires `bootout/bootstrap` (not just `kickstart`). Prefer `config.jsonc` — env vars are invisible and hard to audit.
+**Env vars:** `launchctl setenv` persists; `launchctl unsetenv` requires `bootout/bootstrap`. Prefer `config.jsonc` — env vars are invisible and hard to audit.
 
-**Config:** `~/.config/aidevops/config.jsonc` authoritative via `config_get()` / `_get_merged_config()`. Defaults: `~/.aidevops/agents/configs/aidevops.defaults.jsonc`. `settings.json` is legacy/UI-facing — NOT read by `config_get()`. Key: `orchestration.max_workers_cap` (config.jsonc), NOT `max_concurrent_workers` (settings.json).
+**Config:** `~/.config/aidevops/config.jsonc` authoritative via `config_get()`. Defaults: `configs/aidevops.defaults.jsonc`. `settings.json` is legacy/UI-facing — NOT read by `config_get()`. Key: `orchestration.max_workers_cap`.
 
 ## Provider Management
 
-**Automatic model routing (v3.7+, GH#17769):** The headless model list is derived at runtime from two sources — no env var configuration needed:
+**Automatic model routing (v3.7+, GH#17769):** Model list derived at runtime — no env var config needed:
+1. **OAuth pool** (`oauth-pool-helper.sh list all`) — available providers
+2. **Routing table** (`configs/model-routing-table.json`) — tier-to-model mapping per provider
 
-1. **OAuth pool** (`oauth-pool-helper.sh list all`) — which providers the user has accounts for
-2. **Routing table** (`configs/model-routing-table.json`) — which models map to which tiers per provider
+Workers round-robin across pool providers. Pulse always uses Anthropic sonnet.
 
-The round-robin model list = "for each provider in the pool, get the sonnet-tier model from the routing table." Pulse always uses the Anthropic sonnet model (derived from the routing table). Workers round-robin across all pool providers.
+**Deprecated:** `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars — remove from `credentials.sh`.
 
-**No manual model configuration required.** The deprecated `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected as overrides for one release cycle, with deprecation warnings logged. Remove them from `credentials.sh` — they will be ignored in a future release.
-
-**Backoff:** `headless-runtime-helper.sh backoff status` / `backoff clear PROVIDER`. Exit code 75 = all providers backed off.
-**Escalation:** After 2+ failed attempts, use `--model anthropic/claude-opus-4-6`. One opus dispatch (~3x cost) is cheaper than 5+ failed sonnet dispatches.
+**Backoff:** `headless-runtime-helper.sh backoff status` / `backoff clear PROVIDER`. Exit 75 = all providers backed off.
+**Escalation:** After 2+ failures, use `--model anthropic/claude-opus-4-6`. One opus dispatch (~3x cost) beats 5+ failed sonnet dispatches.
 
 ## Audit Trail
 
-Every action must leave a trace in issue/PR comments. Version from `~/.aidevops/agents/VERSION` or `$AIDEVOPS_VERSION`. All templates include `**[aidevops.sh](https://github.com/marcusquinn/aidevops)**: vX.X.X` + `**Model**` + `**Branch**`.
+Every action must leave a trace in issue/PR comments. Version from `~/.aidevops/agents/VERSION` or `$AIDEVOPS_VERSION`.
 
 **Dispatch:** Posted automatically by `dispatch_with_dedup()` (GH#15317). Do NOT post manually.
-**Kill/failure:** `Worker killed after Xh Ym with N commits (struggle_ratio: NN).` + Reason, Diagnosis, Next action (escalate/reassign/decompose).
+**Kill/failure:** `Worker killed after Xh Ym with N commits (struggle_ratio: NN).` + Reason, Diagnosis, Next action.
 **Completion:** `Completed via PR #NNN.` + Attempts, Duration.
