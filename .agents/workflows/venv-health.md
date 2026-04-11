@@ -7,8 +7,6 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Run Python venv smoke tests across managed repos. Arguments: $ARGUMENTS
-
 ```bash
 ~/.aidevops/agents/scripts/venv-health-check-helper.sh scan $ARGUMENTS
 ```
@@ -30,7 +28,7 @@ Run Python venv smoke tests across managed repos. Arguments: $ARGUMENTS
 | Stale editable installs | `.pth` files pointing to deleted paths (e.g., pruned git worktrees) | Error |
 | Missing requirements file | Venvs with no `requirements.txt`, `pyproject.toml`, `setup.py`, `setup.cfg`, or `Pipfile` | Warning |
 
-Discovery: looks for `.venv/pyvenv.cfg` (PEP 405 marker) up to 3 levels deep in each registered repo, deduplicated by realpath.
+> Discovery: looks for `.venv/pyvenv.cfg` (PEP 405 marker) up to 3 levels deep in each registered repo, deduplicated by realpath.
 
 ## Automatic Checks
 
