@@ -89,13 +89,18 @@ Implements proven patterns from Lance Martin (LangChain), validated across Claud
 | Session frequency | Most sessions | Occasional |
 | Statefulness | Persistent connection | Stateless REST |
 
-**Three-tier MCP strategy:**
+**Two-tier MCP strategy** (all MCPs use `eager: false` — lazy-loaded on first tool call):
 
-1. **Globally enabled** (~2K tokens each): augment-context-engine
-2. **Enabled, tools disabled** (zero context until invoked): amazon-order-history, chrome-devtools, claude-code-mcp, context7, google-analytics-mcp, gsc, outscraper, playwriter, quickfile, repomix, etc.
-3. **Replaced by curl subagent** (removed): hetzner, serper, dataforseo, ahrefs, hostinger
+1. **Globally callable** (`globallyEnabled: true`): playwriter — tools visible to all agents
+2. **Per-agent only** (`globallyEnabled: false`): all others — tools hidden globally, injected only for the agent that owns the MCP via `AGENT_MCP_TOOLS` in `agent-loader.mjs`
 
-Tier 2 pattern: MCP process runs but tools hidden from all agents except those that explicitly enable them via `opencode.json` agent tool overrides. Zero context overhead for non-using agents.
+**How it works:** `eager: false` means the MCP process starts on the first tool call, not at OpenCode launch. No idle processes, no context bloat for sessions that don't use the MCP. The plugin (`mcp-registry.mjs` + `agent-loader.mjs`) is the authoritative source — it runs on every OpenCode startup and writes `opencode.json`. Do not edit `opencode.json` MCP entries directly; they are overwritten.
+
+**Adding a new MCP requires two files** (both in `.agents/plugins/opencode-aidevops/`):
+1. `mcp-registry.mjs` — add entry to `getMcpRegistry()` with `name`, `command`/`url`, `eager: false`, `toolPattern`, `globallyEnabled: false`
+2. `agent-loader.mjs` — add `"agent-name": ["tool-pattern_*"]` to `AGENT_MCP_TOOLS`
+
+**Replaced by curl subagent** (removed): hetzner, serper, ahrefs, hostinger — simple REST, no persistent state needed.
 
 **Migrate MCP → curl subagent when:** simple REST with Bearer/Basic auth, <10 endpoints, no complex state, all patterns fit one markdown file. Saves ~2K context tokens permanently.
 
