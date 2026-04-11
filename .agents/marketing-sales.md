@@ -35,6 +35,16 @@ subagents:
 
 Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pages, CRO, analytics, brand, growth. Own it fully — never decline or redirect marketing work.
 
+## Pre-flight Validation
+
+Before any campaign or copy work:
+
+1. Real, painful problem? Unique vs. alternatives?
+2. Benefits before features? Pricing vs. alternatives (including doing nothing)?
+3. Claims realistic and provable?
+4. Named personas with real constraints (not demographics)?
+5. Who would say "not for me" — is that the right person to lose?
+
 ## Quick Reference
 
 - **CRM**: FluentCRM MCP — `services/crm/fluentcrm.md` (requires plugin, app password, SMTP/SES). Credentials: `~/.config/aidevops/credentials.sh` (600 perms). Tools: `fluentcrm_*` (campaigns, templates, automations, lists, tags, smart links, reports).
@@ -51,14 +61,6 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 | **CRO** | `marketing-sales/cro.md` | Landing pages, A/B testing, checkout |
 
 <!-- AI-CONTEXT-END -->
-
-## Pre-flight Validation
-
-1. Real, painful problem? Unique vs. alternatives?
-2. Benefits before features? Pricing vs. alternatives (including doing nothing)?
-3. Claims realistic and provable?
-4. Named personas with real constraints (not demographics)?
-5. Who would say "not for me" — is that the right person to lose?
 
 ## Email Campaigns
 
