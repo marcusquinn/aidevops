@@ -12,7 +12,7 @@ Import an external skill, convert to aidevops format, and register for update tr
 ## Quick Reference
 
 ```bash
-# GitHub shorthand — saved as *-skill.md (imported, upstream-tracked)
+# GitHub shorthand (saved as *-skill.md)
 /add-skill dmmulroy/cloudflare-skill        # → .agents/services/hosting/cloudflare-skill.md
 /add-skill anthropics/skills/pdf            # → .agents/tools/pdf-skill.md
 /add-skill vercel-labs/agent-skills --name vercel-deploy
@@ -21,8 +21,8 @@ Import an external skill, convert to aidevops format, and register for update tr
 /add-skill clawdhub:caldav-calendar         # → .agents/tools/productivity/caldav-calendar-skill.md
 /add-skill https://clawdhub.com/mSarheed/proxmox-full
 
-# Raw URL (category auto-detected)
-/add-skill https://convos.org/skill.md --name convos
+# Raw URL
+/add-skill https://convos.org/skill.md --name convos   # category auto-detected
 
 # Flags
 /add-skill dmmulroy/cloudflare-skill --force    # overwrite existing
@@ -34,7 +34,9 @@ Import an external skill, convert to aidevops format, and register for update tr
 /add-skill remove <name>
 ```
 
-`-skill` suffix marks imported skills: `playwright-skill.md` (imported) vs `playwright.md` (native). `*-skill.md` glob finds all imports; `aidevops skill check` knows which to update.
+## Naming Convention
+
+`-skill` suffix marks imported skills: `playwright-skill.md` (imported, upstream-tracked) vs `playwright.md` (native). No name clashes; `*-skill.md` glob finds all imports; `aidevops skill check` knows which to update.
 
 ## Workflow
 
@@ -44,22 +46,24 @@ Import an external skill, convert to aidevops format, and register for update tr
 4. **Security scan:** [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) if installed — CRITICAL/HIGH blocks import. `--skip-security` bypasses; `--force` only controls file overwrite. Scan also runs on `aidevops skill update`.
 5. **Post-import:** Placed in `.agents/` per conventions → registered in `.agents/configs/skill-sources.json` → run `./setup.sh` to create symlinks.
 
-## Sources & Formats
+## Supported Sources & Formats
 
-| Source | Detection | Fetch |
-|--------|-----------|-------|
+| Source | Detection | Fetch Method |
+|--------|-----------|--------------|
 | GitHub | `owner/repo` or github.com URL | `git clone --depth 1` |
 | ClawdHub | `clawdhub:slug` or clawdhub.com URL | Playwright browser extraction |
-| Raw URL | Any `https://` (not GitHub/ClawdHub) | `curl` + SHA-256 content hash |
+| Raw URL | Any `https://` (not GitHub/ClawdHub) | `curl` with SHA-256 content hash |
 
 | Format | Detection | Conversion |
 |--------|-----------|------------|
 | SKILL.md | OpenSkills/Claude Code/ClawdHub | Frontmatter preserved, content adapted |
-| AGENTS.md | aidevops/Windsurf | Direct copy with `mode: subagent` |
+| AGENTS.md | aidevops/Windsurf | Direct copy with mode: subagent |
 | .cursorrules | Cursor | Wrapped in markdown with frontmatter |
 | README.md | Generic | Copied as-is |
 
-Update tracking in `.agents/configs/skill-sources.json` — fields: `name`, `upstream_url`, `upstream_commit`/`upstream_hash`, `local_path`, `format_detected`, `imported_at`, `last_checked`, `merge_strategy`. URL sources use SHA-256 hashing. Run `/add-skill check-updates` periodically.
+## Update Tracking
+
+Tracked in `.agents/configs/skill-sources.json`: `name`, `upstream_url`, `upstream_commit`/`upstream_hash`, `local_path`, `format_detected`, `imported_at`, `last_checked`, `merge_strategy`. URL sources use SHA-256 content hashing instead of git commit comparison. Run `/add-skill check-updates` periodically.
 
 ## Related
 

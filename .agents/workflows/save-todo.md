@@ -26,15 +26,17 @@ Topic/context: $ARGUMENTS
 - **Tags**: #feature, #bugfix, #enhancement, #docs, etc.
 - **Context**: Decisions, findings, constraints, open questions, links
 
-**Dispatch tags (MANDATORY):**
+## Step 1b: Dispatch Tags (MANDATORY)
 
-- **`#auto-dispatch`** — Default. Add unless: needs credentials/purchases, user-preference design decisions, or decomposition required. Full criteria: `workflows/plans.md` "Auto-Dispatch Tagging".
-- **`#plan`** — Add when decomposition needed before implementation (multi-phase, >2h, research/design).
-- **Model tier / domain tags** — classify via `reference/task-taxonomy.md`. Omit for standard code tasks.
+**`#auto-dispatch`** — Add when ALL true: clear description with specific files/patterns, ≤2h scope, no credentials/purchases needed, no user-preference design decisions, automatable verification. **Default to `#auto-dispatch`** — omit only when a specific exclusion applies. Full criteria: `workflows/plans.md` "Auto-Dispatch Tagging".
+
+**`#plan`** — Add when decomposition needed before implementation (multi-phase, >2h, research/design).
+
+**Model tier / agent domain tags** — classify via `reference/task-taxonomy.md`. Omit for standard code tasks.
 
 ## Step 2: Save
 
-**Simple** → add to TODO.md Backlog:
+**Simple** → add to TODO.md Backlog and confirm:
 
 ```markdown
 - [ ] {title} #{tag} #auto-dispatch ~{estimate} logged:{YYYY-MM-DD}
@@ -84,11 +86,22 @@ Topic/context: $ARGUMENTS
 
 ## Confirmation Prompts
 
-**Simple:** `Saving to TODO.md: "{title}" ~{estimate} — 1. Confirm  2. Add details  3. Create full plan`
+**Simple:**
 
-**Complex:** `Complex work. Title: {title} | ~{estimate} | {count} phases — 1. Confirm  2. Simplify  3. Add context`
+```text
+Saving to TODO.md: "{title}" ~{estimate}
+1. Confirm  2. Add more details  3. Create full plan instead
+```
 
-After saving: `Saved: "{title}" — Start anytime with: "Let's work on {title}"`
+**Complex:**
+
+```text
+This looks like complex work. Creating execution plan.
+Title: {title} | Estimate: ~{estimate} | Phases: {count}
+1. Confirm and create plan  2. Simplify to TODO.md  3. Add context
+```
+
+After saving, respond: `Saved: "{title}" — Start anytime with: "Let's work on {title}"`
 
 ## Example
 
