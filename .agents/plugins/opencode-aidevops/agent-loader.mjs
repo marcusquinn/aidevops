@@ -23,22 +23,39 @@ const SKIP_NAMES = new Set([
  * Agents not listed here get only the globally-enabled tools.
  */
 const AGENT_MCP_TOOLS = {
+  // Browser / automation
+  "chrome-devtools": ["chrome-devtools_*"],
+  playwright: ["playwright_*"],
+  playwriter: ["playwriter_*"],
+  "macos-automator": IS_MACOS ? ["macos-automator_*"] : [],
+  mac: IS_MACOS ? ["macos-automator_*"] : [],
+  "ios-simulator-mcp": IS_MACOS ? ["ios-simulator_*"] : [],
+  // Context / search
+  "augment-context-engine": ["augment-context-engine_*"],
+  context7: ["context7_*"],
+  "openapi-search": ["openapi-search_*"],
+  "github-search": ["gh_grep_*"],
+  // Cloud / API
+  "cloudflare-mcp": ["cloudflare-api_*"],
+  // SEO / analytics
+  "google-search-console": ["gsc_*"],
+  dataforseo: ["dataforseo_*"],
+  "google-analytics": ["google-analytics-mcp_*"],
+  // Monitoring
+  sentry: ["sentry_*"],
+  socket: ["socket_*"],
+  // UI
+  shadcn: ["shadcn_*"],
+  // Data / accounting
   outscraper: ["outscraper_*"],
   mainwp: ["localwp_*"],
   localwp: ["localwp_*"],
   quickfile: ["quickfile_*"],
-  "google-search-console": ["gsc_*"],
-  dataforseo: ["dataforseo_*"],
+  "amazon-order-history": ["amazon-order-history_*"],
+  // AI tooling
   "claude-code": ["claude-code-mcp_*"],
-  playwriter: ["playwriter_*"],
-  shadcn: ["shadcn_*"],
-  "macos-automator": IS_MACOS ? ["macos-automator_*"] : [],
-  mac: IS_MACOS ? ["macos-automator_*"] : [],
-  "ios-simulator-mcp": IS_MACOS ? ["ios-simulator_*"] : [],
-  "augment-context-engine": ["augment-context-engine_*"],
-  context7: ["context7_*"],
-  sentry: ["sentry_*"],
-  socket: ["socket_*"],
+  // Ecommerce
+  shopify: ["shopify-dev-mcp_*"],
 };
 
 /**
