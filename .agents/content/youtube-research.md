@@ -7,13 +7,9 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Analyze YouTube competitors, find trending topics, and identify content gaps in your niche.
-
 Target: $ARGUMENTS
 
-## Workflow
-
-### Step 1: Determine Research Type
+## Research Modes
 
 | Argument | Mode |
 |----------|------|
@@ -24,15 +20,13 @@ Target: $ARGUMENTS
 | `--all` | Full research cycle (all competitors) |
 | No args | Interactive (ask user) |
 
-### Step 2: Load Configuration
+Load config first:
 
 ```bash
 ~/.aidevops/agents/scripts/memory-helper.sh recall --namespace youtube "channel"
 ```
 
-### Step 3: Execute Research
-
-#### Mode A: Competitor Analysis (`@competitor`)
+## Mode A: Competitor Analysis (`@competitor`)
 
 1. Get channel overview and recent videos:
 
@@ -52,7 +46,7 @@ Target: $ARGUMENTS
   "Competitor @handle outliers: [topic1], [topic2], [topic3]. Pattern: [insight]"
 ```
 
-#### Mode B: Trending Topics (`trending`)
+## Mode B: Trending Topics (`trending`)
 
 1. Search trending videos: `youtube-helper.sh trending "niche topic" 20`
 2. **Cluster by topic:** group by keywords/themes, identify rising topics, note view counts.
@@ -65,7 +59,7 @@ Target: $ARGUMENTS
   "Trending opportunity: [topic]. Gap: [competitors haven't covered]. Volume: [estimate]"
 ```
 
-#### Mode C: Content Gap Analysis (`gaps`)
+## Mode C: Content Gap Analysis (`gaps`)
 
 1. Compare your videos vs competitors: topics covered/not covered, unique angles.
 2. **Keyword clustering:** extract common keywords from competitor titles, group into clusters, rank by frequency and avg views.
@@ -74,7 +68,7 @@ Target: $ARGUMENTS
    - High views + high competition = proven topic, need unique angle
    - Low views + low competition = risky, validate demand first
 
-#### Mode D: Video Analysis (`video VIDEO_ID`)
+## Mode D: Video Analysis (`video VIDEO_ID`)
 
 1. Get details and transcript:
 
@@ -86,7 +80,7 @@ Target: $ARGUMENTS
 2. **Analyze structure:** hook (first 30s), intro (problem setup), body (solution/content), CTA.
 3. **Extract reusable patterns:** title formula, hook formula, content structure, pacing (words/minute).
 
-### Step 4: Present Findings
+## Output Format
 
 ```text
 YouTube Research: {target}
@@ -112,7 +106,7 @@ Next Steps:
 
 Offer follow-up: generate script for top opportunity, research another competitor, set up monitoring (`pipeline.md`), or export findings.
 
-## Example: Competitor Analysis
+## Example
 
 ```text
 User: /youtube research @fireship
