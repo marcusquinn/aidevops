@@ -1009,6 +1009,11 @@ _setup_run_interactive() {
 	# Run AFTER Claude Code config so Codex/Cursor get equivalent setup
 	confirm_step "Update Codex configuration (MCPs, instructions)" && update_codex_config
 	confirm_step "Update Cursor configuration (MCPs)" && update_cursor_config
+	# Deploy slash commands to the other installed runtimes (Codex, Cursor,
+	# Droid, Gemini CLI, Continue, Kiro, Kimi, Qwen) via the unified generator.
+	# OpenCode and Claude Code are already handled by their update_*_config
+	# functions above. Closes GH#18106 / t15474.
+	confirm_step "Deploy slash commands to remaining runtimes" && deploy_commands_to_all_runtimes
 	# Run AFTER all MCP setup functions to ensure disabled state persists
 	confirm_step "Disable on-demand MCPs globally" && disable_ondemand_mcps
 	return 0

@@ -395,3 +395,84 @@ PYEOF
 	echo "  Done -- $mcp_count new MCP servers added to Cursor config"
 	return 0
 }
+
+# Deploy slash commands to every installed runtime that supports them.
+#
+# Background: update_opencode_config and update_claude_config already invoke
+# the unified generator (.agents/scripts/generate-runtime-config.sh) for
+# their runtimes. The other per-client update_*_config functions (Codex,
+# Cursor, Droid, etc.) were written before the unified generator existed
+# and only handle MCP registration. This function closes that gap by
+# invoking the generator for every other installed client.
+#
+# Gated on rt_feature_commands so users can disable command installation
+# per-runtime via AIDEVOPS_FEATURE_COMMANDS_<SUFFIX>=no. Clients with no
+# _RT_COMMAND_DIR (windsurf, amp, kilo, aider) are skipped automatically.
+#
+# Fixes GH#18106 / t15474.
+deploy_commands_to_all_runtimes() {
+	local registry_script="${INSTALL_DIR:-.}/.agents/scripts/runtime-registry.sh"
+	local generator_script="${INSTALL_DIR:-.}/.agents/scripts/generate-runtime-config.sh"
+
+	if [[ ! -f "$registry_script" ]]; then
+		print_info "Runtime registry not found — skipping unified command deployment"
+		return 0
+	fi
+	if [[ ! -x "$generator_script" ]]; then
+		print_info "Runtime config generator not executable — skipping unified command deployment"
+		return 0
+	fi
+
+	# Source registry if not already loaded
+	if [[ -z "${_RUNTIME_REGISTRY_LOADED:-}" ]]; then
+		# shellcheck source=/dev/null
+		source "$registry_script"
+	fi
+
+	local runtime_id cmd_dir feature_flag display_name
+	local deployed_count=0 skipped_count=0
+
+	while IFS= read -r runtime_id; do
+		# OpenCode and Claude Code are already handled by their dedicated
+		# update_*_config functions above — skip to avoid double-deploy
+		# and keep the log output clean.
+		case "$runtime_id" in
+		opencode | claude-code) continue ;;
+		esac
+
+		# Skip runtimes with no command directory in the registry (repo-only
+		# clients like Windsurf/Amp, and clients without native slash command
+		# support like Kilo/Aider).
+		cmd_dir=$(rt_command_dir "$runtime_id" 2>/dev/null || echo "")
+		[[ -z "$cmd_dir" ]] && continue
+
+		# Honour the rt_feature_commands flag.
+		feature_flag=$(rt_feature_commands "$runtime_id" 2>/dev/null || echo "yes")
+		if [[ "$feature_flag" != "yes" ]]; then
+			display_name=$(rt_display_name "$runtime_id" 2>/dev/null || echo "$runtime_id")
+			print_info "Commands installation disabled for $display_name (feature flag)"
+			skipped_count=$((skipped_count + 1))
+			continue
+		fi
+
+		# Invoke the unified generator — it prints its own success/failure.
+		# Redirect stdin from /dev/null so the generator cannot accidentally
+		# read from the `while read` loop's process-substitution pipe and
+		# steal the remaining runtime IDs — a classic bash pitfall.
+		if "$generator_script" commands --runtime "$runtime_id" </dev/null; then
+			deployed_count=$((deployed_count + 1))
+		else
+			display_name=$(rt_display_name "$runtime_id" 2>/dev/null || echo "$runtime_id")
+			print_warning "Failed to deploy commands for $display_name"
+		fi
+	done < <(rt_detect_installed 2>/dev/null)
+
+	if [[ $deployed_count -gt 0 ]]; then
+		print_success "Deployed slash commands to $deployed_count additional runtime(s)"
+	elif [[ $skipped_count -gt 0 ]]; then
+		print_info "All remaining runtimes had commands installation disabled via feature flags"
+	else
+		print_info "No additional runtimes needed command deployment"
+	fi
+	return 0
+}
