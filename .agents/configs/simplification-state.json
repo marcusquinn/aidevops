@@ -6432,7 +6432,7 @@
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "simplified_at": "2026-04-04T09:17:13Z",
       "issue": "GH#17250",
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
       "at": "2026-04-04T14:53:40Z",
       "passes": 1
     },
@@ -7052,5 +7052,11 @@
     "lines": 80,
     "status": "simplified",
     "issue": "GH#17305"
+  },
+  ".agents/tools/testing-setup.md": {
+    "hash": "db185c8fc2fbee9e1d5777842fd43540f4fa24d5",
+    "at": "2026-04-11T06:10:00Z",
+    "pr": 18176,
+    "passes": 1
   }
 }
