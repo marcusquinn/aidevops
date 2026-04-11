@@ -347,6 +347,35 @@ function applyMcpToolPermissions(mcp, tools) {
 }
 
 /**
+ * Legacy MCP names to remove from opencode.json on startup.
+ * Add entries here when an MCP is renamed, merged, or replaced.
+ * Also removes the corresponding tools_* entry.
+ */
+const DEPRECATED_MCPS = [
+  // auggie-mcp was a duplicate of augment-context-engine (same binary, same purpose)
+  { name: "auggie-mcp", toolPattern: "auggie-mcp_*" },
+];
+
+/**
+ * Remove deprecated MCP entries from config.
+ * @param {object} config - OpenCode Config object (mutable)
+ * @returns {number} Number of entries removed
+ */
+function removeDeprecatedMcps(config) {
+  let removed = 0;
+  for (const { name, toolPattern } of DEPRECATED_MCPS) {
+    if (config.mcp[name]) {
+      delete config.mcp[name];
+      removed++;
+    }
+    if (toolPattern && config.tools[toolPattern] !== undefined) {
+      delete config.tools[toolPattern];
+    }
+  }
+  return removed;
+}
+
+/**
  * Register MCP servers in the OpenCode config.
  * Complements generate-opencode-agents.sh by ensuring MCPs are always
  * registered even without re-running setup.sh.
@@ -357,6 +386,8 @@ function applyMcpToolPermissions(mcp, tools) {
 export function registerMcpServers(config) {
   if (!config.mcp) config.mcp = {};
   if (!config.tools) config.tools = {};
+
+  removeDeprecatedMcps(config);
 
   const registry = getMcpRegistry();
   let registered = 0;
