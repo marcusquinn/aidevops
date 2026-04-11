@@ -329,6 +329,10 @@ EVER_NMR_NEGATIVE_CACHE_TTL_SECS=$(_validate_int EVER_NMR_NEGATIVE_CACHE_TTL_SEC
 PIDFILE="${HOME}/.aidevops/logs/pulse.pid"
 LOCKFILE="${HOME}/.aidevops/logs/pulse-wrapper.lock"
 LOCKDIR="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
+# GH#18264: tracks whether this process successfully acquired the instance lock.
+# release_instance_lock() checks this flag so it only closes FD 9 and removes
+# LOCKDIR when this process actually owns the lock.
+_LOCK_OWNED=false
 LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 WRAPPER_LOGFILE="${HOME}/.aidevops/logs/pulse-wrapper.log"
 SESSION_FLAG="${HOME}/.aidevops/logs/pulse-session.flag"
@@ -518,6 +522,9 @@ acquire_instance_lock() {
 		echo "[pulse-wrapper] Instance lock acquired via mkdir (PID $$, flock not available on this platform)" >>"$WRAPPER_LOGFILE"
 	fi
 
+	# GH#18264: mark that this process owns the lock so release_instance_lock()
+	# only cleans up when we actually hold it.
+	_LOCK_OWNED=true
 	return 0
 }
 
@@ -531,7 +538,11 @@ acquire_instance_lock() {
 # Safe to call multiple times (idempotent).
 #######################################
 release_instance_lock() {
-	# GH#18264: explicitly release the flock before removing the lock directory.
+	# GH#18264: only release the lock when this process actually acquired it.
+	# _LOCK_OWNED is set to true by acquire_instance_lock() on success.
+	# This prevents the EXIT trap from removing LOCKDIR when the lock was
+	# never acquired (e.g., another instance was already running).
+	[[ "$_LOCK_OWNED" == "true" ]] || return 0
 	# exec 9>&- closes FD 9 in the current (parent) bash process, releasing the
 	# flock so the next pulse cycle can acquire it immediately.
 	exec 9>&- 2>/dev/null || true
