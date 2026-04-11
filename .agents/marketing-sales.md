@@ -100,7 +100,7 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 
 **Lead magnet**: Create → landing page + form → `fluentcrm_create_list` → delivery automation → nurture. Forms: Fluent Forms, WPForms, Gravity Forms, Contact Form 7, custom API.
 
-**Lead handoff**: Apply `lead-mql` tag → automation notifies sales → sales qualifies/accepts lead → apply `lead-sql` tag → remove from marketing sequences.
+**Lead handoff**: Apply `lead-mql` tag → automation notifies sales → sales qualifies/accepts → apply `lead-sql` tag → remove from marketing sequences.
 
 ## Analytics & Testing
 
@@ -112,9 +112,7 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 | Unsubscribe | <0.5% | Targeting, frequency |
 | List Growth | 5-10%/mo | Lead magnets, promo |
 
-**Workflow**: `fluentcrm_dashboard_stats` → review rates by segment → identify top content → document learnings.
-
-**A/B testing**: Variations (subject, send time, from name, CTA, length) → 10-20% test split → 24-48h → send winner to remainder.
+**Workflow**: `fluentcrm_dashboard_stats` → review rates by segment → identify top content → document learnings. **A/B testing**: Variations (subject, send time, from name, CTA, length) → 10-20% test split → 24-48h → send winner to remainder.
 
 ## Deliverability & Compliance
 
