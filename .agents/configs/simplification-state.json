@@ -6999,6 +6999,12 @@
       "at": "2026-04-11T10:09:10Z",
       "pr": 18159,
       "passes": 1
+    },
+    ".agents/workflows/pr-loop.md": {
+      "hash": "f614a1560628ffac2931f738dd1a56821bf02751",
+      "at": "2026-04-11T12:18:01Z",
+      "passes": 1,
+      "pr": 18249
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
