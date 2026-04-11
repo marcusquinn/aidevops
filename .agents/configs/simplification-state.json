@@ -1558,15 +1558,15 @@
       "pr": 15682
     },
     ".agents/scripts/commands/pulse-sweep.md": {
-      "hash": "47015dbeca2b4f5fa6165119f41370c90eae2917",
-      "at": "2026-04-09T07:32:01Z",
-      "passes": 3,
+      "hash": "dcd38ac9f6aaeb0c23d5b7a4435c250ebf66e25b",
+      "at": "2026-04-11T03:27:10Z",
+      "passes": 4,
       "pr": 16472
     },
     ".agents/scripts/commands/pulse.md": {
-      "hash": "7d15b7a3f7d56177b46e96284887d62aa6e7f090",
-      "at": "2026-04-09T07:32:01Z",
-      "passes": 6,
+      "hash": "6420beeeed4b764c123b623f430c6df8ab62c192",
+      "at": "2026-04-11T03:27:10Z",
+      "passes": 7,
       "pr": 13117
     },
     ".agents/scripts/commands/recall.md": {
@@ -2357,9 +2357,9 @@
       "pr": 13837
     },
     ".agents/services/email/email-delivery-test.md": {
-      "hash": "7dc66ba9aac63dc55d8a6344d12fa68d27dd8458",
-      "at": "2026-03-28T16:40:17Z",
-      "passes": 1,
+      "hash": "351ce5d6596112769560bdd68ceab2b955e374d0",
+      "at": "2026-04-11T03:27:14Z",
+      "passes": 2,
       "pr": 12041
     },
     ".agents/services/email/email-design-test.md": {
@@ -5417,9 +5417,9 @@
       "pr": 16570
     },
     ".agents/scripts/commands/autoresearch.md": {
-      "hash": "4836ead87c0b4c2cea8f7a87dcfbcddeef40e77c",
-      "at": "2026-04-03T21:12:00Z",
-      "passes": 2,
+      "hash": "f6c9df3d4d0f41acbccf1714eaa890ea59bcb0b3",
+      "at": "2026-04-11T03:27:09Z",
+      "passes": 3,
       "pr": 16569
     },
     ".agents/tools/productivity/contacts.md": {
@@ -6885,6 +6885,36 @@
       "at": "2026-04-10T03:17:43Z",
       "pr": 18058,
       "passes": 2
+    },
+    ".agents/workflows/autoresearch.md": {
+      "hash": "f6c9df3d4d0f41acbccf1714eaa890ea59bcb0b3",
+      "at": "2026-04-11T03:27:26Z",
+      "pr": 18119,
+      "passes": 1
+    },
+    ".agents/scripts/commands/email-delivery-test.md": {
+      "hash": "351ce5d6596112769560bdd68ceab2b955e374d0",
+      "at": "2026-04-11T03:27:26Z",
+      "pr": 18118,
+      "passes": 1
+    },
+    ".agents/commands/AGENTS.md": {
+      "hash": "b52aab4466b045375bc8b6a8af238997061aa688",
+      "at": "2026-04-11T03:27:26Z",
+      "pr": 18117,
+      "passes": 1
+    },
+    ".agents/workflows/pulse.md": {
+      "hash": "6420beeeed4b764c123b623f430c6df8ab62c192",
+      "at": "2026-04-11T03:27:26Z",
+      "pr": 18116,
+      "passes": 1
+    },
+    ".agents/workflows/pulse-sweep.md": {
+      "hash": "dcd38ac9f6aaeb0c23d5b7a4435c250ebf66e25b",
+      "at": "2026-04-11T03:27:26Z",
+      "pr": 18115,
+      "passes": 1
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
