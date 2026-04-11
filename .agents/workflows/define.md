@@ -31,11 +31,9 @@ Topic: $ARGUMENTS
 Also classify **agent domain** and **model tier** using `reference/task-taxonomy.md`. Include domain tag (e.g., `#seo`) in TODO.md entry and as GitHub label.
 
 **Tier classification (cascade dispatch):**
-- `tier:simple` — single-file, under 100 lines changed, pattern-following. Brief MUST provide verbatim oldString/newString for every edit.
+- `tier:simple` — single-file, under 100 lines changed, pattern-following. Brief MUST provide verbatim oldString/newString for every edit. Default for review feedback and single-file fixes — Haiku achieves 100% success when briefs provide exact code blocks.
 - `tier:standard` — multi-file coordination, structural refactoring, >100 lines, approach depends on reading codebase state.
 - `tier:reasoning` — architecture decisions, novel design with no existing patterns, complex multi-system trade-offs, security audits.
-
-**Default to `tier:simple` for review feedback and single-file fixes.** Haiku achieves 100% success when briefs provide exact code blocks. Only escalate when the task genuinely requires judgment.
 
 If ambiguous, ask with numbered options (1–5 matching table above), recommend based on description.
 
@@ -44,7 +42,6 @@ If ambiguous, ask with numbered options (1–5 matching table above), recommend 
 Ask sequentially. Each question: 2–4 concrete options, one recommended. Adapt to task type.
 
 **Core questions (all types):**
-
 - **Q1 Goal** (always first): "In one sentence, what must this task produce?" — offer inferred goal as option 1
 - **Q2 Scope boundary**: "What is explicitly NOT in scope?" — offer inferred exclusion, "nothing", or custom
 - **Q3 Success criteria**: "How will you know this is done?" — automated tests (recommended for feature/bugfix), manual verification, code review, or custom
@@ -89,29 +86,15 @@ Read `templates/brief-template.md` and format using `workflows/brief.md` for the
 
 ### Step 6: Present and Confirm
 
-Show the generated brief in full, then offer:
-
-1. Save brief and create task (`/new-task`) (recommended)
-2. Edit brief before saving
-3. Save brief only (no TODO.md entry)
-4. Start over with different answers
-
-If user chooses 1, delegate to `/new-task` with brief content pre-populated.
+Show the generated brief in full, then offer: 1) Save brief and create task (`/new-task`) (recommended), 2) Edit brief before saving, 3) Save brief only, 4) Start over. If user chooses 1, delegate to `/new-task` with brief content pre-populated.
 
 ## Headless Mode
 
-When `--headless` or `$ARGUMENTS` contains ` -- ` (supervisor dispatch), skip interview:
+When `--headless` or `$ARGUMENTS` contains ` -- ` (supervisor dispatch), skip interview. Auto-classify, apply default assumptions, generate brief with `Created by: ai-supervisor` in Origin, write to `todo/tasks/{task_id}-brief.md`, add `#worker` tag, save immediately.
 
 ```text
 /define --headless -- Add retry logic to API client with exponential backoff
 ```
-
-1. Auto-classify task type from description
-2. Apply default assumptions for that type
-3. Generate brief with `Created by: ai-supervisor` in Origin
-4. Write to `todo/tasks/{task_id}-brief.md`
-5. Add `#worker` tag to TODO.md entry
-6. No confirmation — save immediately
 
 ## Related
 
