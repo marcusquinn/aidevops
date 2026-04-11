@@ -7,13 +7,15 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Monitor release health after deployment. Arguments: `$ARGUMENTS`
+Monitor release health after deployment. Use after `/release`, a manual release, or CI/CD verification. Arguments: `$ARGUMENTS`
 
 ## Usage
 
 ```bash
 /postflight-loop [--monitor-duration 5m] [--max-iterations 5]
 ```
+
+Options: `--monitor-duration <t>` (window: `5m`, `10m`, `1h`; default `5m`) · `--max-iterations <n>` (default `5`)
 
 ## Core Contract
 
@@ -22,24 +24,12 @@ Monitor release health after deployment. Arguments: `$ARGUMENTS`
 3. Record status, iteration, elapsed time, last check, and per-check results in `.agents/loop-state/quality-loop.local.md`.
 4. Emit `<promise>RELEASE_HEALTHY</promise>` only when every check passes inside the monitoring window.
 
-## Options
-
-| Option | Purpose | Default |
-|--------|---------|---------|
-| `--monitor-duration <t>` | Total monitoring window such as `5m`, `10m`, or `1h` | `5m` |
-| `--max-iterations <n>` | Max monitoring passes | `5` |
-
 ## Examples
 
 ```bash
 /postflight-loop --monitor-duration 10m
 /postflight-loop --monitor-duration 1h --max-iterations 10
-/postflight-loop --monitor-duration 2m --max-iterations 3
 ```
-
-## Use When
-
-- After `/release`, a manual release, or CI/CD verification
 
 ## Related
 
