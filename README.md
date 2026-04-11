@@ -1795,25 +1795,67 @@ Call them in your AI assistant conversation with a simple @mention
 
 ### **Main Agents**
 
-Primary agents as registered in `subagent-index.toon` (13 total). MCPs are loaded on-demand per subagent, not per primary agent:
+Primary agents live at `.agents/<name>.md`. Each is a domain expert with its own system prompt, tool permissions, and subagent roster. MCPs are loaded on-demand per subagent, not per primary agent.
 
 | Name | File | Purpose | Model Tier |
 |------|------|---------|------------|
-| Build+ | `build-plus.md` | Enhanced Build with context tools (default agent) | opus |
+| Build+ | `build-plus.md` | Code: features, bug fixes, refactors, CI, full-loop delivery (default) | opus |
 | Automate | `automate.md` | Scheduling, dispatch, monitoring, background orchestration | sonnet |
-| Accounts | `accounts.md` | Financial operations | opus |
-| Business | `business.md` | Company orchestration via AI runners | sonnet |
-| Content | `content.md` | Content creation workflows | opus |
-| Health | `health.md` | Health and wellness | opus |
-| Legal | `legal.md` | Legal compliance | opus |
-| Marketing | `marketing.md` | Marketing strategy, email campaigns, paid ads, CRO | opus |
-| Research | `research.md` | Research and analysis tasks | gemini/grok |
-| Sales | `sales.md` | Sales operations and CRM pipeline | opus |
-| SEO | `seo.md` | SEO optimization and analysis | opus |
-| Social-Media | `social-media.md` | Social media management | opus |
-| Video | `video.md` | AI video generation and prompt engineering | opus |
+| Aidevops | `aidevops.md` | Framework development — meta-agent for improving aidevops itself | opus |
+| Business | `business.md` | Company orchestration, financial ops, invoicing, strategy | sonnet |
+| Content | `content.md` | Content creation across blog, video, audio, image, social | opus |
+| Health | `health.md` | Health and wellness content, fitness, nutrition | opus |
+| Legal | `legal.md` | Legal compliance, terms, privacy, GDPR | opus |
+| Marketing-Sales | `marketing-sales.md` | Email campaigns, CRM, outreach, paid ads, direct response, CRO | opus |
+| Product | `product.md` | Product management, PRDs, roadmaps, requirements capture | opus |
+| Research | `research.md` | Technical and market research, competitive analysis | gemini/grok |
+| SEO | `seo.md` | SEO audits, keyword research, GSC, schema, technical SEO | opus |
 
-**Specialist subagents** (@plan-plus, @aidevops, @wordpress, Build-Agent, Build-MCP, etc.) live under `tools/` or as `mode: subagent` files and are invoked via @mention when domain expertise is needed. See `subagent-index.toon` for the full listing.
+**Specialist subagents** (e.g. `@wordpress`, `@seo`, Build-Agent, Build-MCP, etc.) live under `.agents/tools/` or as `mode: subagent` files and are invoked via `@mention` when domain expertise is needed. See `subagent-index.toon` for the full roster.
+
+#### How to invoke a main agent
+
+| Client | Invocation |
+|---|---|
+| **OpenCode** | Tab through the agent picker in the UI — Build+ is the default. Main agents are registered as top-level agents in OpenCode's config. |
+| **Claude Code / Codex / Cursor / Droid / Kiro / Continue / Kimi / Qwen / Amp / Windsurf / Gemini CLI** | Slash command, namespaced with the `aidevops-` prefix: `/aidevops-build-plus`, `/aidevops-automate`, `/aidevops-seo`, etc. |
+| **Aider** | No native slash command support — use a shell alias: `alias aider-build='aider --message-file ~/.aidevops/agents/build-plus.md'`. |
+
+The `aidevops-` prefix differentiates framework commands from each client's native slash commands and groups them alphabetically in the command picker. It applies to **every** aidevops slash command — not just main agents — so `/aidevops-preflight`, `/aidevops-release`, `/aidevops-commit` etc. all sort together in your `/` menu.
+
+#### Supported AI clients (14)
+
+The framework installs itself across these clients. Slash commands, agent definitions, and (optionally) session-memory mining are wired up per-client by `setup.sh`, gated on per-client feature flags in `.agents/scripts/runtime-registry.sh`.
+
+| Client | Slash commands | Agent dir | Memory mining | Notes |
+|---|---|---|---|---|
+| OpenCode | ✅ `~/.config/opencode/command/` | config-based | ✅ default | Native tab-through primary agents |
+| Claude Code | ✅ `~/.claude/commands/` | ✅ `~/.claude/agents/` | ✅ default | Full feature parity |
+| Codex CLI | ✅ `~/.codex/prompts/` | — | ✅ default | Invoked as `/prompts:aidevops-<name>` |
+| Cursor | ✅ `~/.cursor/commands/` (≥1.6) | ✅ `~/.cursor/agents/` | ✅ default | Frontmatter stripped (not supported) |
+| Droid (Factory) | ✅ `~/.factory/commands/` | — | opt-in | — |
+| Gemini CLI | ✅ `~/.gemini/commands/` | — | opt-in | TOML transform planned |
+| Kimi CLI | ✅ `~/.kimi/skills/` | ✅ `~/.kimi/agents/` | opt-in | Skills + custom main agents |
+| Qwen Code | ✅ `~/.qwen/commands/` | ✅ `~/.qwen/agents/` | opt-in | Sub-agents + skills |
+| Continue | ✅ `~/.continue/prompts/` | — | opt-in | `.prompt` ext + `invokable: true` |
+| Kiro | ✅ `~/.kiro/steering/` | — | opt-in | `inclusion: manual` for slash access |
+| Kilo Code | custom modes | — | opt-in | Uses modes instead of commands |
+| Windsurf | repo-local `.windsurf/workflows/` | — | ❌ (protobuf) | Symlinked by `aidevops init` |
+| Amp (Sourcegraph) | repo-local `.agents/commands/` | ✅ `~/.amp/agents/` | ❌ (cloud) | Path match is native |
+| Aider | shell alias workaround | — | ❌ (per-repo md) | Native custom commands open upstream |
+
+**Feature flags** per client (`agents` / `commands` / `memory`) live in `runtime-registry.sh` and can be overridden at install time via environment variables:
+
+```bash
+AIDEVOPS_FEATURE_MEMORY_CLAUDE_CODE=no setup.sh
+AIDEVOPS_FEATURE_COMMANDS_CURSOR=no setup.sh
+```
+
+Memory mining defaults are deliberately conservative: only OpenCode, Claude Code, Codex, and Cursor are opted in by default. All other clients default to off — enable them case-by-case after reviewing what the mining job will read.
+
+#### Endgame: progressive disclosure
+
+The long-term direction is to make slash commands and `@mentions` unnecessary altogether. A progressive disclosure layer should load the right domain agents and tools into context based on the nature of the conversation — you should never have to remember agent names or prefix commands. The `aidevops-` slash commands documented above are a stepping stone: they standardise routing across every client we support, and will eventually be auto-invoked by the router rather than typed by hand.
 
 ### **Example Subagents with MCP Integration**
 
