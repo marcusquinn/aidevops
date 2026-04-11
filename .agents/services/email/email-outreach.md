@@ -30,34 +30,23 @@ Arguments: `$ARGUMENTS`
 5. **Return campaign state**: Report ID, status, mailboxes, warmup stage, lead count, sequence status, and risk flags (bounce, complaint, reply handling).
 6. **Offer follow-up actions**: Add leads, adjust volume/warmup, pause unhealthy mailboxes, view replies, or export analytics.
 
-## Options
+## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `/email-outreach smartlead launch "UK SaaS Founders"` | Create and launch campaign in Smartlead |
-| `/email-outreach instantly leads campaign_123 leads.csv` | Import leads into an Instantly campaign |
-| `/email-outreach manyreach warmup campaign_456 20` | Set warmup/daily volume in ManyReach |
-| `/email-outreach smartlead pause campaign_123` | Pause campaign immediately |
-| `/email-outreach instantly analytics campaign_123` | Show campaign analytics snapshot |
+| `/email-outreach smartlead launch "UK SaaS Founders"` | Create and launch campaign |
+| `/email-outreach instantly leads campaign_123 leads.csv` | Import leads |
+| `/email-outreach manyreach warmup campaign_456 20` | Set warmup/daily volume |
+| `/email-outreach smartlead pause campaign_123` | Pause campaign |
+| `/email-outreach instantly status campaign_123` | Running status |
+| `/email-outreach instantly analytics campaign_123` | Analytics snapshot |
 
-## Examples
+**Launch output:** `Launching Smartlead campaign (cmp_98321)... Mailboxes: send1@outreach-domain.com (week 2 warmup, 12/day), send2@outreach-domain.com (week 1 warmup, 8/day). Next: Import leads, compliance check.`
 
-**Launch campaign:**
-
-```text
-User: /email-outreach smartlead launch "US agency owners"
-AI: Launching Smartlead campaign (cmp_98321)... Mailboxes: send1@outreach-domain.com (week 2 warmup, 12/day), send2@outreach-domain.com (week 1 warmup, 8/day). Next: Import leads, compliance check.
-```
-
-**Operational status check:**
-
-```text
-User: /email-outreach instantly status campaign_123
-AI: Campaign campaign_123: Running. Leads: 1,240 (118 today). Replies: 37 (9 pos, 18 neut, 10 obj). Risk: Low (bounce 1.4%). Rec: Keep volume stable for 48h.
-```
+**Status output:** `Campaign campaign_123: Running. Leads: 1,240 (118 today). Replies: 37 (9 pos, 18 neut, 10 obj). Risk: Low (bounce 1.4%). Rec: Keep volume stable for 48h.`
 
 ## Related
 
-- `services/outreach/cold-outreach.md` - Strategy and guardrails
-- `services/email/email-health-check.md` - Authentication and infrastructure
-- `content/distribution-email.md` - Email copy and performance guidance
+- `services/outreach/cold-outreach.md` — Strategy and guardrails
+- `services/email/email-health-check.md` — Authentication and infrastructure
+- `content/distribution-email.md` — Email copy and performance guidance
