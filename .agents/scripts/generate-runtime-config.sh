@@ -454,6 +454,126 @@ _copy_cmd_continue_prompt() {
 	rm -f "$tmp"
 }
 
+# Helper: Gemini CLI TOML files — convert markdown with YAML frontmatter
+# into Gemini's documented TOML format (geminicli.com/docs/cli/custom-commands).
+# Output schema:
+#   description = "<extracted from frontmatter>"
+#   prompt = """
+#   <body after frontmatter>
+#   """
+# Uses basic multi-line strings (`"""`) by default; falls back to literal
+# multi-line strings (`'''`) if the body contains the triple-quote sequence.
+_copy_cmd_gemini_toml() {
+	local src="$1"
+	local dest="$2" # caller already switched extension to .toml
+	local description body delim
+	local warning_line=""
+
+	# Extract `description:` value from the YAML frontmatter block (first
+	# fenced `---` region). Stop at the closing marker.
+	description=$(awk '
+		/^---$/ {
+			if (in_fm) exit
+			in_fm = 1
+			next
+		}
+		in_fm && /^description:[[:space:]]*/ {
+			sub(/^description:[[:space:]]*/, "")
+			sub(/[[:space:]]+$/, "")
+			print
+			exit
+		}
+	' "$src")
+
+	# Extract the body (everything after the closing frontmatter marker).
+	# If the file has no frontmatter, the whole file is the body.
+	body=$(awk '
+		BEGIN { in_fm = 0; past_fm = 0; has_fm = 0 }
+		NR == 1 && /^---$/ { in_fm = 1; has_fm = 1; next }
+		in_fm && /^---$/ { in_fm = 0; past_fm = 1; next }
+		in_fm { next }
+		{ print }
+	' "$src")
+
+	# Pick a multi-line string delimiter the body will not collide with.
+	delim='"""'
+	if printf '%s' "$body" | grep -qF '"""'; then
+		delim="'''"
+		if printf '%s' "$body" | grep -qF "'''"; then
+			warning_line="# WARNING: body contains both \"\"\" and ''' — prompt string may need manual fix-up"
+		fi
+	fi
+
+	# Escape double quotes in the description (TOML basic string rules).
+	local escaped_desc
+	escaped_desc=$(printf '%s' "$description" | sed 's/\\/\\\\/g; s/"/\\"/g')
+
+	{
+		[[ -n "$warning_line" ]] && echo "$warning_line"
+		if [[ -n "$description" ]]; then
+			printf 'description = "%s"\n' "$escaped_desc"
+		fi
+		printf 'prompt = %s\n' "$delim"
+		printf '%s\n' "$body"
+		printf '%s\n' "$delim"
+	} >"$dest"
+	return 0
+}
+
+# Helper: Kimi CLI Skills — Kimi expects a directory-per-skill layout:
+#   ~/.kimi/skills/<name>/SKILL.md
+# where the parent directory name MUST match the `name:` frontmatter field.
+# This helper creates the subdirectory, writes SKILL.md inside it, and
+# injects/corrects the required `name:` and `description:` fields.
+#
+# Arguments:
+#   $1 - source file
+#   $2 - skills root dir (e.g. ~/.kimi/skills)
+#   $3 - skill name (what the directory is called)
+_copy_cmd_kimi_skill() {
+	local src="$1"
+	local skills_root="$2"
+	local name="$3"
+	local skill_dir="${skills_root}/${name}"
+	local dest="${skill_dir}/SKILL.md"
+
+	mkdir -p "$skill_dir"
+
+	# Strip OpenCode-only fields first so other clients' frontmatter doesn't
+	# confuse Kimi's skill loader.
+	local tmp
+	tmp=$(mktemp)
+	_copy_cmd_strip_opencode_fields "$src" "$tmp"
+
+	# Ensure `name:` matches the directory name. If present, replace its
+	# value; if absent, inject it right after the opening `---` marker.
+	local tmp2
+	tmp2=$(mktemp)
+	if grep -q '^name:' "$tmp"; then
+		sed "s|^name:.*|name: ${name}|" "$tmp" >"$tmp2"
+	else
+		awk -v n="$name" '
+			NR == 1 && /^---$/ { print; print "name: " n; next }
+			{ print }
+		' "$tmp" >"$tmp2"
+	fi
+
+	# Ensure `description:` is present. Kimi requires it for auto-invocation;
+	# inject a sensible fallback derived from the skill name if the source
+	# file doesn't carry one.
+	if grep -q '^description:' "$tmp2"; then
+		cp "$tmp2" "$dest"
+	else
+		awk -v n="$name" '
+			NR == 1 && /^---$/ { print; print "description: aidevops primary agent routing command: " n; next }
+			{ print }
+		' "$tmp2" >"$dest"
+	fi
+
+	rm -f "$tmp" "$tmp2"
+	return 0
+}
+
 # Namespace prefix applied to every slash command deployed to clients.
 # Differentiates aidevops commands from native client slash commands and
 # groups them alphabetically in the client's command picker.
@@ -480,7 +600,7 @@ _deploy_one_command() {
 		dest="${cmd_dir}/${name}.md"
 		cp "$src" "$dest" || return 1
 		;;
-	claude-code | codex | droid | amp | qwen | kimi)
+	claude-code | codex | droid | amp | qwen)
 		# Markdown + YAML frontmatter clients: strip opencode-only fields
 		# (agent, subtask, mode) that other clients don't recognise.
 		dest="${cmd_dir}/${name}.md"
@@ -504,11 +624,18 @@ _deploy_one_command() {
 		_copy_cmd_continue_prompt "$src" "$dest" || return 1
 		;;
 	gemini-cli)
-		# TODO: convert markdown to TOML (`prompt = """..."""`) format.
-		# Deferred — for now copy as .md (Gemini CLI's modern format accepts
-		# markdown, though TOML is still the documented primary format).
-		dest="${cmd_dir}/${name}.md"
-		_copy_cmd_strip_opencode_fields "$src" "$dest" || return 1
+		# Convert markdown + YAML frontmatter to Gemini CLI's documented TOML
+		# format: `description = "..."` + `prompt = """..."""`. The helper
+		# handles triple-quote collisions by falling back to literal strings.
+		dest="${cmd_dir}/${name}.toml"
+		_copy_cmd_gemini_toml "$src" "$dest" || return 1
+		;;
+	kimi)
+		# Kimi Skills: directory-per-skill layout. The skill name (= directory
+		# name) must match the `name:` frontmatter field. `cmd_dir` here is
+		# the parent ~/.kimi/skills dir; the helper creates the subdirectory
+		# and writes SKILL.md inside it.
+		_copy_cmd_kimi_skill "$src" "$cmd_dir" "$name" || return 1
 		;;
 	kilo | windsurf | aider)
 		# Kilo uses custom modes (different mechanism); Windsurf uses a
