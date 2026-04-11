@@ -1834,8 +1834,8 @@ The framework installs itself across these clients. Slash commands, agent defini
 | Codex CLI | ✅ `~/.codex/prompts/` | — | ✅ default | Invoked as `/prompts:aidevops-<name>` |
 | Cursor | ✅ `~/.cursor/commands/` (≥1.6) | ✅ `~/.cursor/agents/` | ✅ default | Frontmatter stripped (not supported) |
 | Droid (Factory) | ✅ `~/.factory/commands/` | — | opt-in | — |
-| Gemini CLI | ✅ `~/.gemini/commands/` | — | opt-in | TOML transform planned |
-| Kimi CLI | ✅ `~/.kimi/skills/` | ✅ `~/.kimi/agents/` | opt-in | Skills + custom main agents |
+| Gemini CLI | ✅ `~/.gemini/commands/` | — | opt-in | Converted to TOML (`prompt = """..."""`) |
+| Kimi CLI | ✅ `~/.kimi/skills/<name>/SKILL.md` | ✅ `~/.kimi/agents/` | opt-in | Directory-per-skill + auto `name:` matching |
 | Qwen Code | ✅ `~/.qwen/commands/` | ✅ `~/.qwen/agents/` | opt-in | Sub-agents + skills |
 | Continue | ✅ `~/.continue/prompts/` | — | opt-in | `.prompt` ext + `invokable: true` |
 | Kiro | ✅ `~/.kiro/steering/` | — | opt-in | `inclusion: manual` for slash access |
