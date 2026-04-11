@@ -20,14 +20,14 @@
   "configurations": {
     "claude_code": {
       "method": "cli",
-      "command": "claude mcp add shopify-dev-mcp npx -- -y @shopify/dev-mcp@latest"
+      "command": "claude mcp add shopify-dev-mcp npx -y @shopify/dev-mcp@latest"
     },
     "opencode": {
       "config_location": "~/.config/opencode/opencode.json",
       "mcp_config": {
         "shopify-dev-mcp": {
-          "type": "local",
-          "command": ["npx", "-y", "@shopify/dev-mcp@latest"],
+          "command": "npx",
+          "args": ["-y", "@shopify/dev-mcp@latest"],
           "enabled": false
         }
       },
@@ -58,7 +58,7 @@
   },
   "repo_level_skills": {
     "description": "Per-repo skills from the Shopify AI Toolkit. Install at the repo level, not framework level.",
-    "install_command": "npx skills add Shopify/shopify-ai-toolkit --skill <name>",
+    "install_command": "npx @shopify/shopify-ai-toolkit@latest add <name>",
     "available_skills": [
       "shopify-admin",
       "shopify-admin-execution",
