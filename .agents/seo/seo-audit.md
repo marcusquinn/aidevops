@@ -9,7 +9,12 @@ mode: subagent
 
 Run a comprehensive SEO audit for: $ARGUMENTS
 
-Options: `--scope=full|technical|on-page|content` (default: full) | `--pages=N` (default: 10) | `--gsc` | `--compare=competitor.com` | `--output=report.md`
+Options:
+- `--scope=full|technical|on-page|content` (default: full)
+- `--pages=N` — max pages to analyze (default: 10)
+- `--gsc` — include Search Console data
+- `--compare=competitor.com` — compare against competitor
+- `--output=report.md` — save report to file
 
 ## Workflow
 
@@ -42,21 +47,21 @@ Audit in priority order. Lead with top 3 issues by impact. Separate fixes by pri
 - **Top 3 Priority Issues:** [with impact level]
 
 ### Technical SEO
-| Check | Status | Notes |
-|-------|--------|-------|
-| HTTPS | | |
-| robots.txt | | |
-| Sitemap | | |
-| Core Web Vitals | | |
-| Mobile | | |
+| Issue | Impact | Evidence | Fix | Priority |
+|-------|--------|----------|-----|----------|
+| HTTPS | | | | |
+| robots.txt | | | | |
+| Sitemap | | | | |
+| Core Web Vitals | | | | |
+| Mobile | | | | |
 
 ### On-Page SEO
-| Element | Status | Recommendation |
-|---------|--------|----------------|
-| Title | | |
-| Meta Description | | |
-| H1 | | |
-| Image Alt Text | | |
+| Issue | Impact | Evidence | Fix | Priority |
+|-------|--------|----------|-----|----------|
+| Title | | | | |
+| Meta Description | | | | |
+| H1 | | | | |
+| Image Alt Text | | | | |
 
 ### Content Quality
 - E-E-A-T Score, Content Depth, AI Writing Patterns
