@@ -1053,24 +1053,30 @@ _find_long_lived_ancestor_pid() {
 	while [[ $depth -lt $max_depth ]]; do
 		depth=$((depth + 1))
 
-		# Get parent PID and command name for current_pid
+		# Get parent PID and command name for current_pid in a single read
 		local parent_pid=""
 		local comm=""
 		if [[ -r "/proc/$current_pid/status" ]]; then
-			# Linux: read from /proc
-			parent_pid=$(awk '/^PPid:/{print $2}' "/proc/$current_pid/status" 2>/dev/null || echo "")
-			comm=$(awk '/^Name:/{print $2}' "/proc/$current_pid/status" 2>/dev/null || echo "")
+			# Linux: read both fields in one awk pass to avoid two subshells
+			local proc_info
+			proc_info=$(awk '/^(PPid|Name):/{print $2}' "/proc/$current_pid/status" 2>/dev/null || true)
+			parent_pid=$(printf '%s\n' "$proc_info" | sed -n '2p')
+			comm=$(printf '%s\n' "$proc_info" | sed -n '1p')
 		else
-			# macOS/BSD: use ps
-			parent_pid=$(ps -o ppid= -p "$current_pid" 2>/dev/null | tr -d ' ') || parent_pid=""
-			comm=$(ps -o comm= -p "$current_pid" 2>/dev/null | tr -d ' ') || comm=""
+			# macOS/BSD: use ps (two fields in one call)
+			local ps_info
+			ps_info=$(ps -o ppid=,comm= -p "$current_pid" 2>/dev/null | tr -s ' ') || ps_info=""
+			parent_pid=$(printf '%s' "$ps_info" | awk '{print $1}' | tr -d ' ')
+			comm=$(printf '%s' "$ps_info" | awk '{print $2}' | tr -d ' ')
 		fi
 
 		# Stop if we can't get parent info or reached init (PID 1)
-		[[ -z "$parent_pid" || "$parent_pid" -le 1 ]] && break
+		[[ -z "$parent_pid" ]] && break
+		[[ "$parent_pid" -le 1 ]] 2>/dev/null && break
 
-		# If current process is a transient shell, walk up to its parent
-		case "$comm" in
+		# If current process is a transient shell, walk up to its parent.
+		# Use ${comm##*/} to handle full paths (e.g. /bin/bash → bash).
+		case "${comm##*/}" in
 		bash | sh | dash | zsh | ksh | fish)
 			current_pid="$parent_pid"
 			continue
