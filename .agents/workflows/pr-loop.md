@@ -7,7 +7,7 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Monitor and iterate on a PR until it is approved or merged. Arguments: $ARGUMENTS
+Monitor and iterate on a PR until it is approved or merged.
 
 ## Usage
 
@@ -45,7 +45,7 @@ RESULT=$(~/.aidevops/agents/scripts/review-bot-gate-helper.sh check "$PR_NUMBER"
 | `PASS` | Read bot reviews; address critical/security findings before merge. Non-critical → follow-up. |
 | `SKIP` | PR has `skip-review-gate` label — proceed. |
 
-AI review verification: `Bot Reviewer Feedback` in `.agents/reference/session.md` and `AI Suggestion Verification` in `.agents/prompts/build.txt`.
+AI review verification rules: `reference/session.md` "Bot Reviewer Feedback" and `prompts/build.txt` "AI Suggestion Verification".
 
 ## Completion Promises
 
@@ -65,10 +65,10 @@ AI review verification: `Bot Reviewer Feedback` in `.agents/reference/session.md
 
 ## Recovery
 
-State tracked in `.agents/loop-state/quality-loop.local.state`. Common blockers: CI running (wait), review pending (ping reviewer), failing checks (fix). Resume: `/pr review` (single cycle) or `/pr-loop` (restart).
+State: `.agents/loop-state/quality-loop.local.state`. Blockers: CI running (wait), review pending (ping reviewer), failing checks (fix). Resume: `/pr review` (single cycle) or `/pr-loop` (restart).
 
 ```bash
-gh pr view --json state,reviewDecision,statusCheckRollup  # Check current status
+gh pr view --json state,reviewDecision,statusCheckRollup
 ```
 
 ## Related
