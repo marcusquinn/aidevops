@@ -1188,7 +1188,7 @@ _prefetch_repo_issues() {
 
 	# Remove issues with non-dispatchable labels (supervisor, tracking, review gates)
 	local filtered_json
-	filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("needs-maintainer-review") or index("routine-tracking")) | not)]')
+	filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("needs-maintainer-review") or index("routine-tracking") or index("on hold") or index("blocked")) | not)]')
 
 	# GH#10308: Split issues into dispatchable vs quality-sweep-tracked.
 	local dispatchable_json sweep_tracked_json
@@ -8092,7 +8092,7 @@ dispatch_with_dedup() {
 		return 1
 	fi
 
-	if echo "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review"))' >/dev/null 2>&1; then
+	if echo "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("on hold") or index("blocked"))' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
 		return 1
 	fi
