@@ -45,12 +45,7 @@ else:                                   → Interactive Setup (Q1–Q8 below)
 | `--dimensions "d1,d2,d3"` | `/autoresearch --dimensions "build-perf,test-speed,bundle-size"` | Multi-dimension mode: separate agent per dimension |
 | `--concurrent N` | `/autoresearch --concurrent 3` | Shorthand: N sequential agents on different repos |
 
-**Multi-dimension dispatch** (when `--dimensions` is provided):
-
-1. Validate file targets don't overlap between dimensions — error if they do
-2. Generate a shared convoy ID: `autoresearch-{name}-$(date +%Y%m%d-%H%M%S)`
-3. Dispatch each dimension as a separate subagent session with its own worktree
-4. Show a summary when all dimensions complete
+**Multi-dimension dispatch** (when `--dimensions` is provided): validate targets don't overlap (error if they do); generate shared convoy ID `autoresearch-{name}-$(date +%Y%m%d-%H%M%S)`; dispatch each dimension as a separate subagent session with its own worktree; show summary on completion.
 
 **One-Liner summary format** (headless: skip confirmation):
 
@@ -113,7 +108,7 @@ Ask sequentially; show inferred default as option 1; Enter accepts default.
 | Cargo + "bench" | `cargo bench 2>&1 \| grep 'time:' \| awk '{print $5}'` | `bench_ns` | lower |
 | default | ask user | — | — |
 
-**Q5 — Constraints?** Auto-detect test command and pre-fill:
+**Q5 — Constraints?** Auto-detect test command:
 
 ```text
 1. Tests must pass: <detected command>  [default: include]
@@ -141,7 +136,7 @@ Ask sequentially; show inferred default as option 1; Enter accepts default.
 | Multiple independent metrics detected | Suggest multi-dimension |
 | Single metric, single file set | Sequential (default) |
 
-If multi-dimension selected: ask "Which independent dimensions? Suggest splitting by file area." Validate that proposed file targets don't overlap. Generate convoy ID automatically.
+Multi-dimension selected: prompt for dimensions (suggest splitting by file area), validate no overlap, generate convoy ID automatically.
 
 ## Step 3: Write Research Program
 
@@ -176,7 +171,7 @@ Headless: begin now (option 1).
 
 ## Init Mode (`/autoresearch init "name"`)
 
-Scaffold a standalone research repo at `~/Git/autoresearch-{name}/`. The `autoresearch-` prefix is mandatory for discoverability.
+Scaffold a standalone research repo at `~/Git/autoresearch-{name}/` (`autoresearch-` prefix mandatory for discoverability).
 
 **I1: Validate name** — slugify (lowercase, hyphens). Error if path already exists.
 
@@ -196,9 +191,7 @@ mkdir -p "$REPO_PATH/baseline" "$REPO_PATH/results" "$REPO_PATH/todo/research"
 touch "$REPO_PATH/baseline/.gitkeep" "$REPO_PATH/results/.gitkeep"
 ```
 
-Write `$REPO_PATH/program.md` (README) and `$REPO_PATH/todo/research/program.md` from template (`mode: standalone`, `target_repo: .`, `files: baseline/**/*`).
-
-Write `$REPO_PATH/.gitignore`: `results/`, `*.log`, `.DS_Store`.
+Write `$REPO_PATH/program.md` (README) and `$REPO_PATH/todo/research/program.md` from template (`mode: standalone`, `target_repo: .`, `files: baseline/**/*`). Write `$REPO_PATH/.gitignore`: `results/`, `*.log`, `.DS_Store`.
 
 **I4–I5: Init:**
 
