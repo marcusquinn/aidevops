@@ -299,8 +299,8 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - NEVER revert others' changes without explicit user request
 
 **Post-edit commit rule (data loss prevention):**
-- After EVERY file edit in a worktree: immediately `git add -A && git commit -m "wip: <brief description>"`.
-- Do NOT batch edits across multiple files before committing. One edit = one commit.
+- After each logical change (one tool call or one coherent multi-file edit): `git add -A && git commit -m "wip: <brief description>"`.
+- Commit at the end of each tool call — do not defer across multiple unrelated edits.
 - This ensures work survives session interruption, context compaction, or crash.
 - WIP commits are squashed/amended before PR — the commit message quality doesn't matter here, survival does.
 - Exception: generated/temp files explicitly gitignored (e.g. `.agents/loop-state/`, `.agents/tmp/`).

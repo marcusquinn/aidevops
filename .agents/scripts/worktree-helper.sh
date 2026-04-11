@@ -448,7 +448,7 @@ worktree_has_changes() {
 }
 
 # Move a path to the system trash instead of permanently deleting it.
-# Prefers: trash (macOS /usr/bin/trash), gio trash (Linux), rm -rf fallback.
+# Prefers: trash (CLI utility, e.g. installed via Homebrew), gio trash (Linux), rm -rf fallback.
 # Args: $1=path to trash
 # Returns 0 on success, 1 on failure.
 trash_path() {
@@ -1206,13 +1206,12 @@ _clean_remove_merged() {
 						use_force=true
 					fi
 					echo -e "${BLUE}Removing $worktree_branch...${NC}"
-					# Clean up heavy directories first to speed up removal
-					# (node_modules, .next, .turbo can have 100k+ files)
-					# Use trash_path for recoverable deletion; fall back to rm -rf if trash unavailable.
-					trash_path "$worktree_path/node_modules" || true
-					trash_path "$worktree_path/.next" || true
-					trash_path "$worktree_path/.turbo" || true
-					# Clean up aidevops runtime files
+					# Clean up heavy reproducible directories first to speed up removal
+					# (node_modules, .next, .turbo can have 100k+ files — rm -rf is faster than trash)
+					rm -rf "$worktree_path/node_modules" 2>/dev/null || true
+					rm -rf "$worktree_path/.next" 2>/dev/null || true
+					rm -rf "$worktree_path/.turbo" 2>/dev/null || true
+					# Clean up aidevops runtime files (use trash for recoverability)
 					trash_path "$worktree_path/.agents/loop-state" || true
 					trash_path "$worktree_path/.agents/tmp" || true
 					rm -f "$worktree_path/.agents/.DS_Store" 2>/dev/null || true
