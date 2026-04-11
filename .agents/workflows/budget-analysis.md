@@ -8,41 +8,14 @@ model: haiku
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Input: $ARGUMENTS
-
 ## Modes
 
-### Budget Analysis (USD/time)
+Run `~/.aidevops/agents/scripts/budget-analysis-helper.sh` with:
 
-```bash
-~/.aidevops/agents/scripts/budget-analysis-helper.sh analyse --budget <USD> [--hours <H>] --json
-```
-
-Present comparison table: tokens, tasks, and messages at haiku/sonnet/opus tiers.
-
-### Goal Recommendations
-
-```bash
-~/.aidevops/agents/scripts/budget-analysis-helper.sh recommend --goal "<description>" --json
-```
-
-Present three tiers (MVP, Production-Ready, Polished) with costs, time, and inclusions.
-
-### Task Estimation
-
-```bash
-~/.aidevops/agents/scripts/budget-analysis-helper.sh estimate --task "<description>" [--tier <tier>] --json
-```
-
-Show estimate range (0.5x-2x) and alternative tier costs. Recommend tier if unspecified.
-
-### Spend Forecast
-
-```bash
-~/.aidevops/agents/scripts/budget-analysis-helper.sh forecast --days <N> --json
-```
-
-Present forecast with confidence interval. Warn if <7 days history.
+- `analyse --budget <USD> [--hours <H>] --json` — comparison table: tokens, tasks, and messages at haiku/sonnet/opus tiers
+- `recommend --goal "<description>" --json` — three tiers (MVP, Production-Ready, Polished) with costs, time, and inclusions
+- `estimate --task "<description>" [--tier <tier>] --json` — estimate range (0.5x-2x) and alternative tier costs; recommend tier if unspecified
+- `forecast --days <N> --json` — spend forecast with confidence interval; warn if <7 days history
 
 ## Presentation Guidelines
 
