@@ -10596,8 +10596,21 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 
 			# Close linked issue with the same context
 			if [[ -n "$linked_issue" ]]; then
-				gh issue comment "$linked_issue" --repo "$repo_slug" \
-					--body "$closing_comment" 2>/dev/null || true
+				# Dedup guard: skip closing comment if one for this PR already exists. (GH#18098)
+				# Two concurrent merge pass runners (local + remote collaborator) can both detect
+				# the same merge event and race to post the identical ~9KB closing comment.
+				# The second runner checks for "PR #NNN" in existing comments and skips posting.
+				local _dedup_count
+				_dedup_count=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments" \
+					2>/dev/null | jq --arg prnum "PR #${pr_number}" \
+					'[.[] | select(.body | contains($prnum))] | length' 2>/dev/null) || _dedup_count=0
+				[[ "$_dedup_count" =~ ^[0-9]+$ ]] || _dedup_count=0
+				if [[ "$_dedup_count" -gt 0 ]]; then
+					echo "[pulse-wrapper] Deterministic merge: skipped duplicate closing comment on #${linked_issue} — PR #${pr_number} already referenced in existing comment (GH#18098)" >>"$LOGFILE"
+				else
+					gh issue comment "$linked_issue" --repo "$repo_slug" \
+						--body "$closing_comment" 2>/dev/null || true
+				fi
 				gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
 				# Reset fast-fail counter now that the issue is resolved (GH#2076)
 				fast_fail_reset "$linked_issue" "$repo_slug" || true
@@ -10639,26 +10652,38 @@ _is_collaborator_author() {
 
 #######################################
 # Extract linked issue number from PR title or body.
-# Looks for: "Closes #NNN", "Fixes #NNN", "GH#NNN:" prefix in title.
+# Looks for: GitHub-native close keywords in PR body, "GH#NNN:" prefix in title.
+#
+# Close keyword matching (GH#18098): only GitHub-native keywords trigger auto-close —
+# bare GH#NNN references in "Related" sections do NOT.  GitHub's full keyword list:
+# close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved (case-insensitive).
+# GH#NNN matching is restricted to the PR title to avoid treating informational body
+# references as closing keywords.
+#
 # Args: $1=PR number, $2=repo slug
 # Returns: issue number on stdout, or empty if none found
 #######################################
 _extract_linked_issue() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local pr_data
-	pr_data=$(gh pr view "$pr_number" --repo "$repo_slug" --json title,body --jq '.title + " " + .body' 2>/dev/null) || pr_data=""
+	local pr_title pr_body
+	pr_title=$(gh pr view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || pr_title=""
+	pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || pr_body=""
 
-	# Match: Closes #NNN, Fixes #NNN, Resolves #NNN
+	# Match GitHub-native close keywords in the PR body only (case-insensitive).
+	# Matches: close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved.
+	# Does NOT match bare GH#NNN, "Related #NNN", or other non-closing references. (GH#18098)
 	local issue_num
-	issue_num=$(printf '%s' "$pr_data" | grep -oE '(Closes|Fixes|Resolves)\s+#[0-9]+' | head -1 | grep -oE '[0-9]+')
+	issue_num=$(printf '%s' "$pr_body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+' | head -1 | grep -oE '[0-9]+')
 	if [[ -n "$issue_num" ]]; then
 		printf '%s' "$issue_num"
 		return 0
 	fi
 
-	# Match: GH#NNN: in title
-	issue_num=$(printf '%s' "$pr_data" | grep -oE 'GH#[0-9]+' | head -1 | grep -oE '[0-9]+')
+	# Match: GH#NNN prefix in PR title only (format: "GH#NNN: description").
+	# Title-scoped: bare GH#NNN references anywhere in the PR body are intentionally
+	# excluded to avoid closing unrelated issues mentioned in "Related" sections. (GH#18098)
+	issue_num=$(printf '%s' "$pr_title" | grep -oE 'GH#[0-9]+' | head -1 | grep -oE '[0-9]+')
 	if [[ -n "$issue_num" ]]; then
 		printf '%s' "$issue_num"
 		return 0
