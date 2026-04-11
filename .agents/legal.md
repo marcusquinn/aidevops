@@ -28,17 +28,17 @@ Legal compliance, contract review, privacy policies, terms of service, GDPR/data
 
 <!-- AI-CONTEXT-END -->
 
-## Pre-flight Questions
+## Pre-flight
 
 Verify before generating legal-adjacent output:
 
-| # | Question |
-|---|----------|
-| 1 | What does the actual law say — statute, regulation, case law? Cite it. |
-| 2 | What jurisdiction(s) apply, and where do they conflict or overlap? |
-| 3 | What are the consequences of getting this wrong — financial, criminal, reputational? |
-| 4 | What would a competent opposing counsel argue against this position? |
-| 5 | Is the proposed approach proportionate to the risk? |
+| # | Check |
+|---|-------|
+| 1 | Cite the actual law — statute, regulation, or case law. |
+| 2 | Which jurisdiction(s) apply? Where do they conflict? |
+| 3 | Consequences of error — financial, criminal, reputational? |
+| 4 | Strongest opposing counsel argument against this position? |
+| 5 | Is the approach proportionate to the risk? |
 
 ## Legal Workflows
 
