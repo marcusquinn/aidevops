@@ -10,6 +10,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.241] - 2026-04-11
+
+### Changed
+
+- harden maintainer gate — admin-only simplification, authorship exemption, origin:worker protection
+- fix FD 9 inheritance — replace ineffective python3 fcntl with bash 9>&- (#18309)
+- Documentation: tighten .agents/content/yt-dlp.md slash command doc (75→66 lines) (#18315)
+- tighten postflight-loop.md agent doc (50→40 lines) (#18323)
+- fix: add throughput check to sweep stall detection (GH#18286) (#18325)
+- tighten agent doc budget-analysis.md (52 → 25 lines) (#18320)
+- bump NESTING_DEPTH_THRESHOLD to 254 to restore headroom (#18321)
+- tighten agent doc /security-review (52 → 50 lines) (#18322)
+- tighten list-verify.md (51 → 40 lines) (#18324)
+- tighten agent doc /optimize-tiers (.agents/workflows/optimize-tiers.md, 121 → 100 lines) (#18193)
+- tighten seo-audit.md from 98 to 84 lines (#18228)
+- tighten marketing-sales agent doc (#18235)
+- tighten runners-check.md active workers comment (#18237)
+- tighten .agents/workflows/remember.md (77→64 lines) (#18245)
+- Documentation: tighten dashboard.md workflow doc (78→63 lines) (#18246)
+- Documentation: tighten .agents/workflows/skills.md (80→70 lines) (#18248)
+- Maintenance: tighten aidevops.md agent doc (92→75 lines) (#18252)
+- Documentation: tighten youtube-research.md agent doc (145→138 lines) (#18253)
+- tighten save-todo.md workflow doc (118→105 lines) (#18256)
+- Documentation: tighten agent doc legal.md prose and structure (#18259)
+- Documentation: tighten aidevops-business.md agent doc (#18261)
+- Documentation: tighten automate agent doc prose (#18262)
+- Documentation: tighten log-issue-aidevops.md prose (146→138 lines) (#18263)
+- Documentation: tighten SEO main agent doc prose (#18265)
+- Documentation: tighten autoagent.md workflow doc prose (#18266)
+- tighten add-skill.md workflow doc (74→70 lines) (#18281)
+- tighten research.md agent doc (74→45 lines) (#18312)
+- tighten health.md — merge disclaimer, compress pre-flight, remove duplicate notice (#18305)
+- tighten youtube-setup.md agent doc (101→94 lines) (#18299)
+- tighten cross-review.md — remove redundant parse step, flatten usage block (#18302)
+- Documentation: tighten worktree-cleanup.md — promote --delete-branch warning, inline key rules (#18304)
+- ratchet-down NESTING_DEPTH_THRESHOLD 254 → 249 (#18307)
+- Maintenance: ratchet down NESTING_DEPTH_THRESHOLD 254→249 (GH#18293) (#18308)
+- Documentation: tighten memory-log.md workflow doc (61→52 lines) (#18301)
+- tighten venv-health.md — remove redundant opening sentence, format discovery note as blockquote (#18300)
+- tighten email-inbox.md — reorder security first, merge after-check prose (#18298)
+- tighten email-outreach.md — merge Options+Examples, add status command (#18297)
+- tighten list-todo.md — compress prose, preserve all rules (#18296)
+
 ## [3.6.238] - 2026-04-11
 
 ### Added
