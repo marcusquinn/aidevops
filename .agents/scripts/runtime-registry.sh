@@ -8,7 +8,7 @@
 # =============================================================================
 # Single source of truth for runtime properties: binary names, config paths,
 # config formats, MCP root keys, command directories, prompt mechanisms,
-# session databases, and process patterns.
+# session databases, process patterns, and per-runtime feature flags.
 #
 # Bash 3.2 compatible: uses parallel indexed arrays (no associative arrays).
 #
@@ -21,6 +21,8 @@
 #   rt_list_ids
 #   # Detect which runtimes are installed:
 #   rt_detect_installed
+#   # Check feature flags:
+#   if [[ "$(rt_feature_memory claude-code)" == "yes" ]]; then ...
 #
 # Sourced from shared-constants.sh so all scripts inherit it.
 #
@@ -55,6 +57,8 @@ _RT_IDS=(
 	"kiro"        # 9
 	"aider"       # 10
 	"amp"         # 11
+	"kimi"        # 12
+	"qwen"        # 13
 )
 
 # Total count — used for alignment validation
@@ -80,6 +84,8 @@ _RT_BINARY=(
 	"kiro"     # kiro
 	"aider"    # aider
 	"amp"      # amp
+	"kimi"     # kimi
+	"qwen"     # qwen
 )
 
 # --- Display names (human-readable) ---
@@ -96,6 +102,8 @@ _RT_DISPLAY_NAME=(
 	"Kiro"        # kiro
 	"Aider"       # aider
 	"Amp"         # amp
+	"Kimi CLI"    # kimi
+	"Qwen Code"   # qwen
 )
 
 # --- MCP config file paths (~ expanded at lookup time) ---
@@ -113,6 +121,8 @@ _RT_CONFIG_PATH=(
 	"\$HOME/.kiro/settings/mcp.json"                   # kiro
 	""                                                 # aider (no MCP config)
 	"\$HOME/.amp/settings.json"                        # amp
+	"\$HOME/.kimi/config.toml"                         # kimi
+	"\$HOME/.qwen/settings.json"                       # qwen
 )
 
 # --- Config file formats ---
@@ -129,6 +139,8 @@ _RT_CONFIG_FORMAT=(
 	"json" # kiro
 	""     # aider
 	"json" # amp
+	"toml" # kimi
+	"json" # qwen
 )
 
 # --- MCP root key (the JSON key under which MCP servers are defined) ---
@@ -145,22 +157,29 @@ _RT_MCP_ROOT_KEY=(
 	"mcpServers" # kiro
 	""           # aider
 	"mcpServers" # amp
+	"mcpServers" # kimi
+	"mcpServers" # qwen
 )
 
-# --- Slash command directories (where /command files live) ---
+# --- Slash command / prompt / skill directories ---
+# Where the runtime loads user-defined slash commands or prompts.
+# Empty string = runtime has no global command directory (may still support
+# repo-local commands — handled separately by `aidevops init`).
 _RT_COMMAND_DIR=(
 	"\$HOME/.config/opencode/command" # opencode
 	"\$HOME/.claude/commands"         # claude-code
-	""                                # codex
-	""                                # cursor
-	""                                # droid
-	""                                # gemini-cli
-	""                                # windsurf
-	""                                # continue
-	""                                # kilo
-	""                                # kiro
-	""                                # aider
-	""                                # amp
+	"\$HOME/.codex/prompts"           # codex (invoked as /prompts:name)
+	"\$HOME/.cursor/commands"         # cursor (Cursor 1.6+)
+	"\$HOME/.factory/commands"        # droid (Factory CLI)
+	"\$HOME/.gemini/commands"         # gemini-cli (TOML format)
+	""                                # windsurf (repo-only: .windsurf/workflows/)
+	"\$HOME/.continue/prompts"        # continue (.prompt files, invokable: true)
+	""                                # kilo (uses custom modes, not commands)
+	"\$HOME/.kiro/steering"           # kiro (inclusion: manual frontmatter)
+	""                                # aider (no native support)
+	""                                # amp (repo-only: .agents/commands/)
+	"\$HOME/.kimi/skills"             # kimi (Skills: SKILL.md per subdir)
+	"\$HOME/.qwen/commands"           # qwen (MD with frontmatter or legacy TOML)
 )
 
 # --- Prompt mechanism (how the runtime loads system instructions) ---
@@ -179,40 +198,47 @@ _RT_PROMPT_MECHANISM=(
 	"AGENTS.md"     # kiro
 	"config"        # aider (.aider.conf.yml)
 	"AGENTS.md"     # amp
+	"AGENTS.md"     # kimi
+	"AGENTS.md"     # qwen (QWEN.md)
 )
 
 # --- Session database paths ---
 # Where the runtime stores session/conversation history.
 # Use $HOME; expanded at lookup time.
 _RT_SESSION_DB=(
-	"\$HOME/.local/share/opencode/opencode.db" # opencode (SQLite)
-	"\$HOME/.claude/projects"                  # claude-code (JSONL dir)
-	""                                         # codex
-	"\$HOME/.cursor/state.vscdb"               # cursor (SQLite)
-	""                                         # droid
-	""                                         # gemini-cli
-	""                                         # windsurf
-	""                                         # continue
-	""                                         # kilo
-	""                                         # kiro
-	""                                         # aider
-	""                                         # amp
+	"\$HOME/.local/share/opencode/opencode.db"                                            # opencode (SQLite)
+	"\$HOME/.claude/projects"                                                             # claude-code (JSONL dir)
+	"\$HOME/.codex/sessions"                                                              # codex (JSONL, date-partitioned)
+	"\$HOME/Library/Application Support/Cursor/User/workspaceStorage"                     # cursor (SQLite state.vscdb per workspace)
+	"\$HOME/.factory/sessions"                                                            # droid (JSONL per session)
+	"\$HOME/.gemini/tmp"                                                                  # gemini-cli (JSON per session, per project hash)
+	"\$HOME/.codeium/windsurf/cascade"                                                    # windsurf (protobuf, opaque schema)
+	"\$HOME/.continue/sessions"                                                           # continue (JSON per session)
+	"\$HOME/Library/Application Support/Code/User/globalStorage/kilocode.kilo-code/tasks" # kilo (JSON per task — Anthropic schema)
+	"\$HOME/Library/Application Support/Kiro/User/workspaceStorage"                       # kiro (SQLite state.vscdb)
+	""                                                                                    # aider (per-repo .aider.chat.history.md)
+	""                                                                                    # amp (messages stored server-side)
+	"\$HOME/.kimi/sessions"                                                               # kimi (JSONL: context.jsonl per session dir)
+	"\$HOME/.qwen/tmp"                                                                    # qwen (JSON per session, per project hash)
 )
 
 # --- Session DB format ---
+# Values: sqlite, jsonl-dir, json-dir, jsonl, json, protobuf, markdown, ""
 _RT_SESSION_DB_FORMAT=(
 	"sqlite"    # opencode
 	"jsonl-dir" # claude-code
-	""          # codex
+	"jsonl-dir" # codex
 	"sqlite"    # cursor
-	""          # droid
-	""          # gemini-cli
-	""          # windsurf
-	""          # continue
-	""          # kilo
-	""          # kiro
+	"jsonl-dir" # droid
+	"json-dir"  # gemini-cli
+	"protobuf"  # windsurf
+	"json-dir"  # continue
+	"json-dir"  # kilo
+	"sqlite"    # kiro
 	""          # aider
 	""          # amp
+	"jsonl-dir" # kimi
+	"json-dir"  # qwen
 )
 
 # --- Process patterns (for pgrep/ps detection of running instances) ---
@@ -229,6 +255,8 @@ _RT_PROCESS_PATTERN=(
 	"kiro"     # kiro
 	"aider"    # aider (Python process)
 	"amp"      # amp
+	"kimi"     # kimi
+	"qwen"     # qwen
 )
 
 # --- Agent directories (where the runtime loads agent definitions) ---
@@ -243,10 +271,12 @@ _RT_AGENT_DIR=(
 	""                      # gemini-cli (no agent dir)
 	""                      # windsurf (no agent dir)
 	""                      # continue (no agent dir)
-	""                      # kilo (no agent dir)
+	""                      # kilo (uses custom modes, not agents)
 	""                      # kiro (no agent dir)
 	""                      # aider (no agent dir)
 	"\$HOME/.amp/agents"    # amp
+	"\$HOME/.kimi/agents"   # kimi (custom main agents via --agent-file)
+	"\$HOME/.qwen/agents"   # qwen (sub-agents: name, description, model, tools)
 )
 
 # --- Headless support (can the runtime run without a UI?) ---
@@ -264,12 +294,13 @@ _RT_HEADLESS_SUPPORT=(
 	"no"  # kiro (editor-only)
 	"yes" # aider
 	"yes" # amp
+	"yes" # kimi
+	"yes" # qwen
 )
 
 # --- Headless cmdline patterns (regex to identify headless/worker instances) ---
 # Used by session-count-helper.sh to exclude headless workers from interactive counts.
 # Empty string means "no headless mode" (all instances are interactive).
-# These are grep -E patterns matched against the process command line.
 _RT_HEADLESS_CMDLINE_PATTERN=(
 	"\\.opencode run "         # opencode — headless via "run" subcommand
 	"claude (-p|--print|run) " # claude-code — headless via -p, --print, or run
@@ -283,6 +314,8 @@ _RT_HEADLESS_CMDLINE_PATTERN=(
 	""                         # kiro — no headless mode
 	"aider --yes "             # aider — headless via --yes flag
 	"amp run "                 # amp — headless via "run" subcommand
+	"kimi "                    # kimi — all CLI invocations are headless
+	"qwen "                    # qwen — all CLI invocations are headless
 )
 
 # --- pgrep mode (how to find processes for this runtime) ---
@@ -302,6 +335,8 @@ _RT_PGREP_MODE=(
 	"x" # kiro
 	"f" # aider — Python process, needs -f
 	"x" # amp
+	"x" # kimi
+	"x" # qwen
 )
 
 # --- pgrep search pattern (what to pass to pgrep) ---
@@ -319,6 +354,8 @@ _RT_PGREP_PATTERN=(
 	"kiro"         # kiro
 	"aider"        # aider
 	"amp"          # amp
+	"kimi"         # kimi
+	"qwen"         # qwen
 )
 
 # --- Process exclusion patterns (noise to filter out) ---
@@ -338,6 +375,85 @@ _RT_PROCESS_EXCLUSION=(
 	""                                                                        # kiro
 	""                                                                        # aider
 	""                                                                        # amp
+	""                                                                        # kimi
+	""                                                                        # qwen
+)
+
+# =============================================================================
+# Feature Flags (parallel to _RT_IDS)
+# =============================================================================
+# Per-runtime toggles for which aidevops features are enabled during setup.
+# Values: "yes" / "no".
+#
+# Defaults:
+#   - agents installation:   yes for all runtimes
+#   - commands installation: yes for all runtimes
+#   - memory mining:         yes for opencode/claude-code/codex/cursor only;
+#                            no for all others (opt-in per-runtime)
+#
+# Override at runtime via environment variables:
+#   AIDEVOPS_FEATURE_AGENTS_<SUFFIX>=no
+#   AIDEVOPS_FEATURE_COMMANDS_<SUFFIX>=no
+#   AIDEVOPS_FEATURE_MEMORY_<SUFFIX>=yes
+# where <SUFFIX> is the uppercased runtime ID with hyphens → underscores
+# (e.g. CLAUDE_CODE, GEMINI_CLI).
+
+# --- Agent installation flag ---
+_RT_FEATURE_AGENTS=(
+	"yes" # opencode
+	"yes" # claude-code
+	"yes" # codex
+	"yes" # cursor
+	"yes" # droid
+	"yes" # gemini-cli
+	"yes" # windsurf
+	"yes" # continue
+	"yes" # kilo
+	"yes" # kiro
+	"yes" # aider
+	"yes" # amp
+	"yes" # kimi
+	"yes" # qwen
+)
+
+# --- Commands installation flag ---
+_RT_FEATURE_COMMANDS=(
+	"yes" # opencode
+	"yes" # claude-code
+	"yes" # codex
+	"yes" # cursor
+	"yes" # droid
+	"yes" # gemini-cli
+	"yes" # windsurf (via .windsurf/workflows/ symlink from `aidevops init`)
+	"yes" # continue
+	"yes" # kilo
+	"yes" # kiro
+	"yes" # aider
+	"yes" # amp    (via repo-local .agents/commands/ — path match is native)
+	"yes" # kimi
+	"yes" # qwen
+)
+
+# --- Memory mining flag ---
+# Whether aidevops attempts to mine this runtime's session history for
+# cross-session memory recall. Defaults: Y only for runtimes with trivially
+# mineable, stable, documented session formats that the user explicitly
+# opted in to via this framework's design (opencode, claude-code, codex, cursor).
+_RT_FEATURE_MEMORY=(
+	"yes" # opencode     (SQLite — easy)
+	"yes" # claude-code  (JSONL dir — easy)
+	"yes" # codex        (JSONL dir — easy)
+	"yes" # cursor       (SQLite state.vscdb — moderate but stable)
+	"no"  # droid        (easy but off by default — opt-in)
+	"no"  # gemini-cli   (easy but off by default — opt-in)
+	"no"  # windsurf     (protobuf, schema opaque)
+	"no"  # continue     (easy but off by default — opt-in)
+	"no"  # kilo         (easy but off by default — opt-in)
+	"no"  # kiro         (SQLite, off by default — opt-in)
+	"no"  # aider        (markdown, per-repo, needs splitter)
+	"no"  # amp          (cloud-only, needs API auth)
+	"no"  # kimi         (easy but off by default — opt-in)
+	"no"  # qwen         (easy but off by default — opt-in)
 )
 
 # =============================================================================
@@ -368,6 +484,15 @@ _rt_expand_path() {
 	path="${path//\$HOME/$HOME}"
 	echo "$path"
 	return 0
+}
+
+# Convert a runtime ID into its uppercase env-var suffix form
+# (hyphens → underscores, lowercase → uppercase). e.g. "claude-code" → "CLAUDE_CODE".
+# Uses tr so it works in Bash 3.2 (no ${var^^}).
+_rt_env_suffix() {
+	local id="$1"
+	local suffix="${id//-/_}"
+	echo "$suffix" | tr '[:lower:]' '[:upper:]'
 }
 
 # =============================================================================
@@ -530,6 +655,59 @@ rt_process_exclusion() {
 	return 0
 }
 
+# --- Feature flag lookups ---
+# Each reads the registry default and honours an env-var override:
+#   AIDEVOPS_FEATURE_<FEATURE>_<RUNTIME_SUFFIX>   (value: "yes" | "no")
+# Prints "yes" or "no" (never empty for a known runtime).
+
+rt_feature_agents() {
+	local id="$1"
+	local idx
+	idx=$(_rt_index "$id") || return 1
+	local suffix varname override
+	suffix=$(_rt_env_suffix "$id")
+	varname="AIDEVOPS_FEATURE_AGENTS_${suffix}"
+	override="${!varname:-}"
+	if [[ "$override" == "yes" || "$override" == "no" ]]; then
+		echo "$override"
+		return 0
+	fi
+	echo "${_RT_FEATURE_AGENTS[$idx]}"
+	return 0
+}
+
+rt_feature_commands() {
+	local id="$1"
+	local idx
+	idx=$(_rt_index "$id") || return 1
+	local suffix varname override
+	suffix=$(_rt_env_suffix "$id")
+	varname="AIDEVOPS_FEATURE_COMMANDS_${suffix}"
+	override="${!varname:-}"
+	if [[ "$override" == "yes" || "$override" == "no" ]]; then
+		echo "$override"
+		return 0
+	fi
+	echo "${_RT_FEATURE_COMMANDS[$idx]}"
+	return 0
+}
+
+rt_feature_memory() {
+	local id="$1"
+	local idx
+	idx=$(_rt_index "$id") || return 1
+	local suffix varname override
+	suffix=$(_rt_env_suffix "$id")
+	varname="AIDEVOPS_FEATURE_MEMORY_${suffix}"
+	override="${!varname:-}"
+	if [[ "$override" == "yes" || "$override" == "no" ]]; then
+		echo "$override"
+		return 0
+	fi
+	echo "${_RT_FEATURE_MEMORY[$idx]}"
+	return 0
+}
+
 # =============================================================================
 # Public API: Enumeration and Detection
 # =============================================================================
@@ -686,6 +864,39 @@ rt_list_with_agents() {
 	return 0
 }
 
+# List runtimes where commands installation is enabled.
+rt_list_commands_enabled() {
+	local id
+	for id in $(rt_list_ids); do
+		if [[ "$(rt_feature_commands "$id")" == "yes" ]]; then
+			echo "$id"
+		fi
+	done
+	return 0
+}
+
+# List runtimes where agents installation is enabled.
+rt_list_agents_enabled() {
+	local id
+	for id in $(rt_list_ids); do
+		if [[ "$(rt_feature_agents "$id")" == "yes" ]]; then
+			echo "$id"
+		fi
+	done
+	return 0
+}
+
+# List runtimes where session memory mining is enabled.
+rt_list_memory_enabled() {
+	local id
+	for id in $(rt_list_ids); do
+		if [[ "$(rt_feature_memory "$id")" == "yes" ]]; then
+			echo "$id"
+		fi
+	done
+	return 0
+}
+
 # =============================================================================
 # Validation (called by test suite, safe to call at source time)
 # =============================================================================
@@ -711,6 +922,9 @@ rt_validate_registry() {
 		"_RT_PGREP_MODE"
 		"_RT_PGREP_PATTERN"
 		"_RT_PROCESS_EXCLUSION"
+		"_RT_FEATURE_AGENTS"
+		"_RT_FEATURE_COMMANDS"
+		"_RT_FEATURE_MEMORY"
 	)
 
 	local arr_name
