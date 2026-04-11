@@ -36,12 +36,13 @@ subagents:
 
 ## Architecture
 
+Task arrives (issue/TODO/mailbox) → pulse dispatches to runner → worker executes → pulse observes outcomes → files improvement issues if patterns emerge.
+
 ```text
 Pulse supervisor (every 2 min, stateless)
 ├── Fetches GitHub state (issues, PRs)
 ├── Observes outcomes (stale PRs, failures)
-├── Dispatches to available worker slots
-└── Exits
+└── Dispatches to available worker slots
 
 Named Runners:
 ├── hiring-coordinator   — Recruitment pipeline
@@ -51,22 +52,15 @@ Named Runners:
 └── support-triage       — Customer issue classification
 ```
 
-**Flow**: Task arrives (issue/TODO/mailbox) → pulse dispatches to runner → worker executes → pulse observes outcomes → files improvement issues if patterns emerge.
-
 ## Guardrails
 
-Inherited from `/full-loop` and worktree isolation:
-
-- **Scope**: Path/tool whitelists per runner via AGENTS.md
-- **Audit**: Git commits and PR history
-- **Rollback**: Worktree isolation — each runner works in its own worktree
-- **Judgment**: `/full-loop` decides stop/retry/escalate
+Inherited from `/full-loop` and worktree isolation: path/tool whitelists per runner via AGENTS.md; git commits and PR history as audit trail; worktree isolation per runner for rollback; `/full-loop` decides stop/retry/escalate.
 
 Finance and legal runners require dedicated worktrees + PR review gates.
 
 ## Setting Up Runners
 
-Create via `runner-helper.sh`. Each runner gets a personality file at `~/.aidevops/.agent-workspace/runners/<name>/AGENTS.md`. Full templates and bootstrap script: `business/company-runners.md`.
+Create via `runner-helper.sh`. Each runner gets a personality file at `~/.aidevops/.agent-workspace/runners/<name>/AGENTS.md`. Full templates: `business/company-runners.md`.
 
 ```bash
 runner-helper.sh create hiring-coordinator \
@@ -84,7 +78,7 @@ Pulse handles dispatch automatically. For manual one-off tasks, use `/full-loop`
 
 ## Cross-Function Workflows
 
-Multi-department tasks use chained GitHub issues. Pulse routes by label:
+Multi-department tasks use chained GitHub issues routed by label:
 
 ```bash
 # New hire onboarding (3 departments)
