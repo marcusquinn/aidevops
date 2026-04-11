@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.238] - 2026-04-11
+
+### Added
+
+- claude alias with --dangerously-skip-permissions + idempotent alias block updates (#18114)
+
+### Fixed
+
+- setup.sh deploys slash commands to all installed runtimes (GH#18106) (#18109)
+
 ## [3.6.236] - 2026-04-11
 
 ### Added
