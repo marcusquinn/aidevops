@@ -169,10 +169,10 @@
       "pr": 11812
     },
     ".agents/content.md": {
-      "hash": "ecd4d733423b05bb00afa5052a0b034c0d047e98",
-      "at": "2026-03-28T08:58:04Z",
-      "passes": 1,
-      "pr": 11616
+      "hash": "50cbb04925090b3a319574a7972f9f209f3f30d6",
+      "at": "2026-04-11T06:18:00Z",
+      "passes": 2,
+      "pr": 18151
     },
     ".agents/content/VERIFICATION.md": {
       "hash": "7655c81844c3caf3331276a85900e09e2341a907",
@@ -6920,6 +6920,12 @@
       "hash": "0dac774fd81627ed224b8bd117944ba6ffaa2b14",
       "at": "2026-04-11T04:09:50Z",
       "pr": 18133,
+      "passes": 1
+    },
+    ".agents/commands/content.md": {
+      "hash": "50cbb04925090b3a319574a7972f9f209f3f30d6",
+      "at": "2026-04-11T06:18:00Z",
+      "pr": 18151,
       "passes": 1
     },
     ".agents/workflows/mission.md": {
