@@ -7,26 +7,11 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Display tasks from TODO.md and optionally PLANS.md.
-
-Arguments: $ARGUMENTS
-
-## Default
-
-```bash
-~/.aidevops/agents/scripts/list-todo-helper.sh $ARGUMENTS
-```
-
-Display the helper output directly.
+Run `~/.aidevops/agents/scripts/list-todo-helper.sh $ARGUMENTS` and display the output.
 
 ## Fallback
 
-If the helper is unavailable, parse manually:
-
-1. Read `TODO.md` and `todo/PLANS.md`
-2. Parse tasks by status (In Progress, Backlog, Done)
-3. Apply filters from arguments
-4. Format as Markdown tables
+If unavailable, parse manually: read `TODO.md` and `todo/PLANS.md`, group by status (In Progress, Backlog, Done), apply argument filters, format as Markdown tables.
 
 ## Arguments
 
@@ -48,13 +33,11 @@ If the helper is unavailable, parse manually:
 
 ## Follow-up
 
-Wait for:
-
 1. **Task ID or row number** — start that task (`t014`, `5`)
 2. **Filter command** — rerun with new filters (`-t seo`)
 3. **"done"** — end browsing
 
-If the task has `#plan` or points to `PLANS.md`, suggest `/show-plan <name>`. Otherwise offer to start work after checking branch state and creating one if needed.
+For `#plan` tasks or `PLANS.md` items, suggest `/show-plan <name>`. Otherwise offer to start work on branch.
 
 ## Related
 
