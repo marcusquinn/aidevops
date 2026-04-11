@@ -1997,6 +1997,10 @@ check_external_contributor_pr() {
 		gh pr comment "$pr_number" --repo "$repo_slug" \
 			--body "This PR is from an external contributor (@${pr_author}). Auto-merge is disabled for external PRs — a maintainer must review and approve manually.
 
+External contributor PRs have two requirements before they can merge:
+1. A linked issue (\`Resolves #NNN\` in the PR body, or \`GH#NNN:\` prefix in the title)
+2. Cryptographic approval on that linked issue (\`sudo aidevops approve issue NNN\`)
+
 ---
 **To approve or decline**, comment on this PR:
 - \`approved\` — removes the review gate and allows merge (CI permitting)
@@ -2005,8 +2009,59 @@ check_external_contributor_pr() {
 				-X POST -f 'labels[]=external-contributor' \
 				-f 'labels[]=needs-maintainer-review' || true
 		echo "[pulse-wrapper] check_external_contributor_pr: flagged PR #$pr_number in $repo_slug as external contributor (@$pr_author)" >>"$LOGFILE"
+
+		# Post a second comment if no linked issue found (t1958)
+		local linked_for_check
+		linked_for_check=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_for_check=""
+		if [[ -z "$linked_for_check" ]]; then
+			gh pr comment "$pr_number" --repo "$repo_slug" \
+				--body "**Missing linked issue.** This PR has no linked issue. External contributor PRs require a linked issue before they can be considered for merge. Add \`Resolves #NNN\` to the PR body (or use \`GH#NNN:\` in the title), then ensure that issue has been cryptographically approved by a maintainer (\`sudo aidevops approve issue NNN\`)." || true
+			echo "[pulse-wrapper] check_external_contributor_pr: PR #$pr_number in $repo_slug has no linked issue — posted missing-linked-issue comment" >>"$LOGFILE"
+		fi
 	fi
 	return 1
+}
+
+#######################################
+# Check if an external-contributor PR has a linked issue (t1958).
+#
+# Arguments:
+#   $1 - PR number
+#   $2 - repo slug (owner/repo)
+# Returns: 0 if linked issue found, 1 if not
+#######################################
+_external_pr_has_linked_issue() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked
+	linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked=""
+	[[ -n "$linked" ]]
+	return $?
+}
+
+#######################################
+# Check if an external-contributor PR's linked issue has crypto approval (t1958).
+#
+# Unlike issue_has_required_approval() (which gates on ever-NMR history),
+# this function requires approval unconditionally for all external PRs.
+#
+# Arguments:
+#   $1 - PR number
+#   $2 - repo slug (owner/repo)
+# Returns: 0 if approved, 1 if not approved or no linked issue
+#######################################
+_external_pr_linked_issue_crypto_approved() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked
+	linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked=""
+	[[ -z "$linked" ]] && return 1
+	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
+	[[ ! -f "$approval_helper" ]] && return 1
+	local result
+	result=$(bash "$approval_helper" verify "$linked" "$repo_slug" 2>/dev/null) || result=""
+	[[ "$result" == "VERIFIED" ]]
+	return $?
 }
 
 #######################################
@@ -10593,6 +10648,30 @@ _merge_ready_prs_for_repo() {
 				--jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
 			if [[ "$issue_labels" == *"needs-maintainer-review"* ]]; then
 				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} has needs-maintainer-review" >>"$LOGFILE"
+				continue
+			fi
+		fi
+
+		# ── External contributor gate (t1958) ──
+		# PRs labelled external-contributor require:
+		#   1. A linked issue (Resolves #NNN in body or GH#NNN: in title)
+		#   2. Cryptographic approval on that linked issue
+		# This is defence-in-depth: the _is_collaborator_author check above
+		# already blocks non-collaborator authors. This gate catches the case
+		# where a collaborator re-submits work originally flagged as external,
+		# or where the external-contributor label was applied manually.
+		local pr_labels_for_ext
+		pr_labels_for_ext=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels \
+			--jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels_for_ext=""
+		if [[ "$pr_labels_for_ext" == *"external-contributor"* ]]; then
+			if ! _external_pr_has_linked_issue "$pr_number" "$repo_slug"; then
+				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — external-contributor PR has no linked issue (t1958)" >>"$LOGFILE"
+				continue
+			fi
+			if ! _external_pr_linked_issue_crypto_approved "$pr_number" "$repo_slug"; then
+				local ext_linked_for_log
+				ext_linked_for_log=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || ext_linked_for_log="unknown"
+				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — external-contributor PR linked issue #${ext_linked_for_log} lacks crypto approval (t1958)" >>"$LOGFILE"
 				continue
 			fi
 		fi
