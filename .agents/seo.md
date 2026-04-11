@@ -64,7 +64,7 @@ subagents:
 - **Media/debug**: `image-seo` (alt text, Moondream) | `upscale` | `moondream` | `rich-results` (browser automation) | `debug-opengraph` | `debug-favicon`
 - **Export**: `data-export` (GSC, Bing, Ahrefs, DataForSEO → TOON) | `gsc-sitemaps` (Playwright submission)
 
-**Content analysis** ([SEO Machine](https://github.com/TheCraigHewitt/seomachine)): `python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py {analyze|readability|keywords|quality|intent} <file|query> [--keyword "kw"]`
+**Content analysis** ([SEO Machine](https://github.com/TheCraigHewitt/seomachine)): `seo-content-analyzer.py {analyze|readability|keywords|quality|intent} <file|query> [--keyword "kw"]`
 
 <!-- AI-CONTEXT-END -->
 
