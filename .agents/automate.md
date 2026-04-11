@@ -113,14 +113,9 @@ launchctl bootout gui/$(id -u)/sh.aidevops.<name> && \
 
 ## Provider Management
 
-**Automatic model routing (v3.7+, GH#17769):** The headless model list is derived at runtime from two sources — no env var configuration needed:
+**Automatic model routing (v3.7+, GH#17769):** Model list derived at runtime from OAuth pool (`oauth-pool-helper.sh list all`) + routing table (`configs/model-routing-table.json`). Round-robin = sonnet-tier model per provider. Pulse always uses Anthropic sonnet. No env var config needed.
 
-1. **OAuth pool** (`oauth-pool-helper.sh list all`) — which providers the user has accounts for
-2. **Routing table** (`configs/model-routing-table.json`) — which models map to which tiers per provider
-
-The round-robin model list = "for each provider in the pool, get the sonnet-tier model from the routing table." Pulse always uses the Anthropic sonnet model (derived from the routing table). Workers round-robin across all pool providers.
-
-**No manual model configuration required.** The deprecated `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected as overrides for one release cycle, with deprecation warnings logged. Remove them from `credentials.sh` — they will be ignored in a future release.
+**Deprecated:** `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` respected one release cycle with warnings. Remove from `credentials.sh`.
 
 **Backoff:** `headless-runtime-helper.sh backoff status` / `backoff clear PROVIDER`. Exit code 75 = all providers backed off.
 **Escalation:** After 2+ failed attempts, use `--model anthropic/claude-opus-4-6`. One opus dispatch (~3x cost) is cheaper than 5+ failed sonnet dispatches.
