@@ -2363,9 +2363,9 @@
       "pr": 12041
     },
     ".agents/services/email/email-design-test.md": {
-      "hash": "455d497e3e0a523019c98a74444a73f4e6e89cf0",
-      "at": "2026-03-29T22:09:19Z",
-      "passes": 1,
+      "hash": "2055f755f4558bb21f4ac9714e6f1011b2745ec4",
+      "at": "2026-04-11T07:23:11Z",
+      "passes": 2,
       "pr": 13324
     },
     ".agents/services/email/email-health-check.md": {
@@ -6968,6 +6968,12 @@
       "hash": "a157ac23bc7f9d042eefd0c5418af9fb60d82aff",
       "at": "2026-04-11T05:06:05Z",
       "pr": 18134,
+      "passes": 1
+    },
+    ".agents/scripts/commands/email-design-test.md": {
+      "hash": "2055f755f4558bb21f4ac9714e6f1011b2745ec4",
+      "at": "2026-04-11T07:23:25Z",
+      "pr": 18170,
       "passes": 1
     }
   },

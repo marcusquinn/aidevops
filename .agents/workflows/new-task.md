@@ -68,14 +68,14 @@ fi
 
 ### Step 3: Create Task Brief (MANDATORY)
 
-**Every task MUST have a brief** at `todo/tasks/{task_id}-brief.md`. Use `templates/brief-template.md`, formatted per `workflows/brief.md` for the classified tier. Required sections:
+Every task MUST have a brief at `todo/tasks/{task_id}-brief.md`. Use `templates/brief-template.md`, formatted per `workflows/brief.md`. Required sections:
 
 | Section | Content |
 |---------|---------|
 | **Origin** | Created date, session ID, author (human/ai-supervisor/ai-interactive), parent task |
 | **What** | Clear deliverable — what it must produce, not just "implement X" |
 | **Why** | Problem, user need, business value, or dependency |
-| **How** | Files to Modify (`NEW:`/`EDIT:` with paths), Implementation Steps (numbered, concrete), Verification (commands to confirm). See `templates/brief-template.md` for structured format. A brief without file paths produces vague issues that waste worker tokens — search the codebase (`git ls-files`, `rg`) to find them if unknown. **Code scaffolding (t1901):** For each file in Files to Modify, read the reference pattern and draft a code skeleton or diff. New files: complete skeleton with imports, function signatures, and inline comments. Edits: exact code block to insert with surrounding context. The worker should copy and fill in, not invent structure. |
+| **How** | Files to Modify (`NEW:`/`EDIT:` with paths), Implementation Steps (numbered, concrete), Verification commands. Search codebase (`git ls-files`, `rg`) for file paths if unknown. **Code scaffolding (t1901):** For each file, draft a code skeleton or diff from the reference pattern — workers copy and fill in, not invent structure. |
 | **Acceptance** | Specific testable criteria + "Tests pass" + "Lint clean" |
 | **Context** | Key decisions, constraints, things ruled out |
 
@@ -88,7 +88,7 @@ fi
 Run `task-decompose-helper.sh classify "{title}"` if available. Skip with `--no-decompose` or if helper missing (t1408.1).
 
 - **Atomic (default):** Proceed to Step 4.
-- **Composite:** Present decomposition tree. If approved: allocate `{task_id}.N` IDs via `claim-task-id.sh`, create brief per subtask, add `blocked-by:` edges, mark parent `status:blocked`. **Supervisor rules:** each subtask brief must (1) reference parent, (2) inherit parent context, (3) include supervisor session ID, (4) set `blocked-by:` from `depends_on`. `batch_strategy` (depth-first/breadth-first) informs pulse dispatch ordering.
+- **Composite:** Present decomposition tree. If approved: allocate `{task_id}.N` IDs via `claim-task-id.sh`, create brief per subtask, add `blocked-by:` edges, mark parent `status:blocked`. Each subtask brief must (1) reference parent, (2) inherit parent context, (3) include supervisor session ID, (4) set `blocked-by:` from `depends_on`. `batch_strategy` (depth-first/breadth-first) informs pulse dispatch ordering.
 
 ### Step 4: Add to TODO.md
 
