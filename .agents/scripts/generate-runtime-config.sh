@@ -389,15 +389,170 @@ EOF
 	return 0
 }
 
-# Generate all shared commands for a given runtime
+# Helper: copy a source command file to a destination, stripping only
+# OpenCode-specific frontmatter fields that confuse other runtimes.
+# Safe default for clients that accept YAML frontmatter + markdown body
+# (codex, droid, qwen, kimi, amp, windsurf).
+_copy_cmd_strip_opencode_fields() {
+	local src="$1"
+	local dest="$2"
+	sed -E '/^---$/,/^---$/{/^(agent|subtask|mode):/d;}' "$src" >"$dest"
+}
+
+# Helper: Cursor command files — Cursor Commands (1.6+) do not support
+# YAML frontmatter at all. Strip the entire leading frontmatter block
+# and emit only the markdown body.
+_copy_cmd_strip_all_frontmatter() {
+	local src="$1"
+	local dest="$2"
+	awk '
+		BEGIN { in_fm = 0; past_fm = 0 }
+		NR == 1 && /^---$/ { in_fm = 1; next }
+		in_fm && /^---$/ { in_fm = 0; past_fm = 1; next }
+		in_fm { next }
+		{ print }
+	' "$src" >"$dest"
+}
+
+# Helper: Kiro steering files — copy as-is but ensure the frontmatter
+# contains `inclusion: manual` so the file appears as a user-invocable
+# slash command rather than an always-on steering document.
+_copy_cmd_kiro_steering() {
+	local src="$1"
+	local dest="$2"
+	local tmp
+	tmp=$(mktemp)
+	_copy_cmd_strip_opencode_fields "$src" "$tmp"
+	if grep -q '^inclusion:' "$tmp"; then
+		cp "$tmp" "$dest"
+	else
+		awk '
+			NR == 1 && /^---$/ { print; print "inclusion: manual"; next }
+			{ print }
+		' "$tmp" >"$dest"
+	fi
+	rm -f "$tmp"
+}
+
+# Helper: Continue .prompt files — Continue wants `.prompt` extension
+# plus `invokable: true` in the frontmatter for the prompt to appear
+# as a slash command in Chat/Plan/Agent modes.
+_copy_cmd_continue_prompt() {
+	local src="$1"
+	local dest="$2" # caller already switched extension to .prompt
+	local tmp
+	tmp=$(mktemp)
+	_copy_cmd_strip_opencode_fields "$src" "$tmp"
+	if grep -q '^invokable:' "$tmp"; then
+		cp "$tmp" "$dest"
+	else
+		awk '
+			NR == 1 && /^---$/ { print; print "invokable: true"; next }
+			{ print }
+		' "$tmp" >"$dest"
+	fi
+	rm -f "$tmp"
+}
+
+# Namespace prefix applied to every slash command deployed to clients.
+# Differentiates aidevops commands from native client slash commands and
+# groups them alphabetically in the client's command picker.
+_AIDEVOPS_CMD_PREFIX="aidevops-"
+
+# Deploy one source command file to a runtime's command directory,
+# applying the correct per-runtime format transform.
+# Arguments:
+#   $1 - runtime_id
+#   $2 - source file (full path)
+#   $3 - deployed name (WITHOUT extension — format-specific extension added here)
+#   $4 - destination command dir
+# Returns: 0 on success, 1 on failure.
+_deploy_one_command() {
+	local runtime_id="$1"
+	local src="$2"
+	local name="$3"
+	local cmd_dir="$4"
+	local dest
+
+	case "$runtime_id" in
+	opencode)
+		# OpenCode is the source format — copy as-is.
+		dest="${cmd_dir}/${name}.md"
+		cp "$src" "$dest" || return 1
+		;;
+	claude-code | codex | droid | amp | qwen | kimi)
+		# Markdown + YAML frontmatter clients: strip opencode-only fields
+		# (agent, subtask, mode) that other clients don't recognise.
+		dest="${cmd_dir}/${name}.md"
+		_copy_cmd_strip_opencode_fields "$src" "$dest" || return 1
+		;;
+	cursor)
+		# Cursor Commands (1.6+) do not support YAML frontmatter. Strip it.
+		dest="${cmd_dir}/${name}.md"
+		_copy_cmd_strip_all_frontmatter "$src" "$dest" || return 1
+		;;
+	kiro)
+		# Kiro steering files: add `inclusion: manual` so they appear as
+		# user-invocable slash commands rather than always-on steering docs.
+		dest="${cmd_dir}/${name}.md"
+		_copy_cmd_kiro_steering "$src" "$dest" || return 1
+		;;
+	continue)
+		# Continue: rename extension to .prompt and add `invokable: true`
+		# so the file appears as a slash command in Chat/Plan/Agent modes.
+		dest="${cmd_dir}/${name}.prompt"
+		_copy_cmd_continue_prompt "$src" "$dest" || return 1
+		;;
+	gemini-cli)
+		# TODO: convert markdown to TOML (`prompt = """..."""`) format.
+		# Deferred — for now copy as .md (Gemini CLI's modern format accepts
+		# markdown, though TOML is still the documented primary format).
+		dest="${cmd_dir}/${name}.md"
+		_copy_cmd_strip_opencode_fields "$src" "$dest" || return 1
+		;;
+	kilo | windsurf | aider)
+		# Kilo uses custom modes (different mechanism); Windsurf uses a
+		# repo-local dir created by `aidevops init`; Aider has no native
+		# slash commands. These are handled elsewhere — skip here.
+		return 0
+		;;
+	*)
+		# Unknown runtime: conservative fall-through — copy as-is.
+		dest="${cmd_dir}/${name}.md"
+		cp "$src" "$dest" || return 1
+		;;
+	esac
+	return 0
+}
+
+# Generate all shared commands for a given runtime.
+# Reads from two source directories:
+#   1. ~/.aidevops/agents/commands/        — main-agent symlinks (already
+#                                            prefixed with `aidevops-`)
+#   2. ~/.aidevops/agents/scripts/commands/ — skills/workflows/utilities
+#                                            (prefix is applied at deploy time)
+# Gated on the per-runtime `commands` feature flag.
+#
 # Arguments: $1=runtime_id
 _generate_commands_for_runtime() {
 	local runtime_id="$1"
+	local display_name
+	display_name=$(rt_display_name "$runtime_id") || display_name="$runtime_id"
+
+	# Feature flag gate — user can disable commands installation per runtime
+	# via AIDEVOPS_FEATURE_COMMANDS_<SUFFIX>=no.
+	local feature_enabled
+	feature_enabled=$(rt_feature_commands "$runtime_id" 2>/dev/null || echo "yes")
+	if [[ "$feature_enabled" != "yes" ]]; then
+		print_info "Commands installation disabled for $display_name (feature flag)"
+		return 0
+	fi
+
 	local cmd_dir
 	cmd_dir=$(rt_command_dir "$runtime_id") || cmd_dir=""
 
 	if [[ -z "$cmd_dir" ]]; then
-		print_info "No command directory for $runtime_id — skipping commands"
+		print_info "No command directory for $display_name — skipping commands"
 		return 0
 	fi
 
@@ -405,65 +560,55 @@ _generate_commands_for_runtime() {
 
 	local command_count=0
 	local skipped_count=0
-	local display_name
-	display_name=$(rt_display_name "$runtime_id") || display_name="$runtime_id"
 
 	print_info "Generating $display_name commands..."
 
-	# Auto-discover commands from scripts/commands/*.md
-	local commands_src_dir="$HOME/.aidevops/agents/scripts/commands"
+	# --- Source 1: .agents/commands/ (main-agent symlinks — already prefixed) ---
+	local main_src_dir="$HOME/.aidevops/agents/commands"
+	if [[ -d "$main_src_dir" ]]; then
+		local cmd_file cmd_name
+		for cmd_file in "$main_src_dir"/*.md; do
+			[[ -e "$cmd_file" ]] || continue
+			cmd_name=$(basename "$cmd_file" .md)
 
-	if [[ -d "$commands_src_dir" ]]; then
-		local cmd_file
-		for cmd_file in "$commands_src_dir"/*.md; do
+			# Deploy with name as-is (already carries `aidevops-` prefix).
+			if ! _deploy_one_command "$runtime_id" "$cmd_file" "$cmd_name" "$cmd_dir"; then
+				if [[ ! -e "$cmd_file" ]]; then
+					print_warning "Skipping main-agent command $cmd_name: source disappeared"
+					skipped_count=$((skipped_count + 1))
+					continue
+				fi
+				print_warning "Failed to deploy main-agent command $cmd_name for $display_name"
+				return 1
+			fi
+			command_count=$((command_count + 1))
+		done
+	fi
+
+	# --- Source 2: .agents/scripts/commands/ (skills + workflows) ---
+	# These files are NOT prefixed at the source — prepend `aidevops-` at deploy.
+	local skills_src_dir="$HOME/.aidevops/agents/scripts/commands"
+	if [[ -d "$skills_src_dir" ]]; then
+		local cmd_file cmd_name deployed_name
+		for cmd_file in "$skills_src_dir"/*.md; do
 			[[ -f "$cmd_file" ]] || continue
-
-			local cmd_name
 			cmd_name=$(basename "$cmd_file" .md)
 
 			# Skip non-commands
 			[[ "$cmd_name" == "SKILL" ]] && continue
 
-			case "$runtime_id" in
-			opencode)
-				# Copy as-is (OpenCode format already)
-				if ! cp "$cmd_file" "${cmd_dir}/${cmd_name}.md"; then
-					if [[ ! -f "$cmd_file" ]]; then
-						print_warning "Skipping command ${cmd_name}: source file disappeared (${cmd_file})"
-						skipped_count=$((skipped_count + 1))
-						continue
-					fi
-					print_warning "Failed to copy command ${cmd_name} for ${display_name}"
-					return 1
-				fi
-				;;
-			claude-code)
-				# Strip OpenCode-specific frontmatter fields (agent, subtask, mode)
-				if ! sed -E '/^---$/,/^---$/{/^(agent|subtask|mode):/d;}' "$cmd_file" \
-					>"${cmd_dir}/${cmd_name}.md"; then
-					if [[ ! -f "$cmd_file" ]]; then
-						print_warning "Skipping command ${cmd_name}: source file disappeared (${cmd_file})"
-						skipped_count=$((skipped_count + 1))
-						continue
-					fi
-					print_warning "Failed to render command ${cmd_name} for ${display_name}"
-					return 1
-				fi
-				;;
-			*)
-				# Generic: copy as-is
-				if ! cp "$cmd_file" "${cmd_dir}/${cmd_name}.md"; then
-					if [[ ! -f "$cmd_file" ]]; then
-						print_warning "Skipping command ${cmd_name}: source file disappeared (${cmd_file})"
-						skipped_count=$((skipped_count + 1))
-						continue
-					fi
-					print_warning "Failed to copy command ${cmd_name} for ${display_name}"
-					return 1
-				fi
-				;;
-			esac
+			# Apply namespace prefix.
+			deployed_name="${_AIDEVOPS_CMD_PREFIX}${cmd_name}"
 
+			if ! _deploy_one_command "$runtime_id" "$cmd_file" "$deployed_name" "$cmd_dir"; then
+				if [[ ! -f "$cmd_file" ]]; then
+					print_warning "Skipping command $cmd_name: source disappeared"
+					skipped_count=$((skipped_count + 1))
+					continue
+				fi
+				print_warning "Failed to deploy command $cmd_name for $display_name"
+				return 1
+			fi
 			command_count=$((command_count + 1))
 		done
 	fi
@@ -900,7 +1045,7 @@ Options:
   --help           Show this help
 
 Supported runtimes: opencode, claude-code, codex, cursor, droid, gemini-cli,
-                    windsurf, continue, kilo, kiro, aider, amp
+                    windsurf, continue, kilo, kiro, aider, amp, kimi, qwen
 
 Examples:
   ${script_name}                          # Generate all for all installed runtimes
