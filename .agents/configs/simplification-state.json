@@ -139,9 +139,9 @@
       "pr": 15804
     },
     ".agents/build-plus.md": {
-      "hash": "b64f1174941c3aa3817139087d0617fa7a8bcd6d",
-      "at": "2026-03-29T16:10:49Z",
-      "passes": 1,
+      "hash": "0dac774fd81627ed224b8bd117944ba6ffaa2b14",
+      "at": "2026-04-11T04:09:25Z",
+      "passes": 2,
       "pr": 13101
     },
     ".agents/business.md": {
@@ -1486,9 +1486,9 @@
       "pr": 15480
     },
     ".agents/scripts/commands/full-loop.md": {
-      "hash": "18e23e866a5cfc02fee8fa0de5860a5701171e8e",
-      "at": "2026-04-10T01:33:00Z",
-      "passes": 11,
+      "hash": "7f5d11baa5324a3da964a513d27e5790b0bdea27",
+      "at": "2026-04-11T04:09:31Z",
+      "passes": 12,
       "pr": 14590
     },
     ".agents/scripts/commands/ip-check.md": {
@@ -1522,9 +1522,9 @@
       "pr": 15701
     },
     ".agents/scripts/commands/mission.md": {
-      "hash": "81583f71fe5fd368c0d71015996e06f755eb9a83",
-      "at": "2026-03-29T12:36:32Z",
-      "passes": 1,
+      "hash": "a375e9f6438301448a509e2b5a75c933fbb05c31",
+      "at": "2026-04-11T04:09:31Z",
+      "passes": 2,
       "pr": 12959
     },
     ".agents/scripts/commands/neuronwriter.md": {
@@ -1654,9 +1654,9 @@
       "pr": 12747
     },
     ".agents/scripts/commands/strategic-review.md": {
-      "hash": "b291e5257adedfe7617a08e184119285e20e181e",
-      "at": "2026-03-29T08:10:38Z",
-      "passes": 1,
+      "hash": "43a301d8898d025de92302fabd39fdc8dd63b820",
+      "at": "2026-04-11T04:09:32Z",
+      "passes": 2,
       "pr": 12756
     },
     ".agents/scripts/commands/tech-stack.md": {
@@ -1790,9 +1790,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "9200b0f74d88d721437e0a77a3454efdba5c2101",
-      "at": "2026-04-11T02:40:56Z",
-      "passes": 5,
+      "hash": "2bc9104dc239ae2092970920860c97f1981d9156",
+      "at": "2026-04-11T04:09:33Z",
+      "passes": 6,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -5531,9 +5531,9 @@
       "pr": 16714
     },
     ".agents/reference/task-taxonomy.md": {
-      "hash": "b86ccfe91e73248ff29e510caf7b9554d60bb54b",
-      "at": "2026-04-09T07:32:00Z",
-      "passes": 3,
+      "hash": "2343dce013fbf56d8146273d5b27a05370106dff",
+      "at": "2026-04-11T04:09:30Z",
+      "passes": 4,
       "pr": "pending"
     },
     ".agents/seo/ranking-opportunities.md": {
@@ -6773,10 +6773,10 @@
       "passes": 2
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "hash": "a398398e6a74d5ff458737f0d27c3a5166199e6e",
-      "at": "2026-04-11T02:40:51Z",
+      "hash": "754ffee681cb1011e1f19253c006823aaf4ccab3",
+      "at": "2026-04-11T04:09:26Z",
       "pr": 17979,
-      "passes": 6
+      "passes": 7
     },
     ".agents/scripts/memory-pressure-monitor.sh": {
       "hash": "d71f3754e56b925114a9b13c4ae3809cfb0c199d",
@@ -6914,6 +6914,30 @@
       "hash": "dcd38ac9f6aaeb0c23d5b7a4435c250ebf66e25b",
       "at": "2026-04-11T03:27:26Z",
       "pr": 18115,
+      "passes": 1
+    },
+    ".agents/commands/build-plus.md": {
+      "hash": "0dac774fd81627ed224b8bd117944ba6ffaa2b14",
+      "at": "2026-04-11T04:09:50Z",
+      "pr": 18133,
+      "passes": 1
+    },
+    ".agents/workflows/mission.md": {
+      "hash": "a375e9f6438301448a509e2b5a75c933fbb05c31",
+      "at": "2026-04-11T04:09:50Z",
+      "pr": 18132,
+      "passes": 1
+    },
+    ".agents/workflows/strategic-review.md": {
+      "hash": "43a301d8898d025de92302fabd39fdc8dd63b820",
+      "at": "2026-04-11T04:09:50Z",
+      "pr": 18131,
+      "passes": 1
+    },
+    ".agents/workflows/full-loop.md": {
+      "hash": "7f5d11baa5324a3da964a513d27e5790b0bdea27",
+      "at": "2026-04-11T04:09:50Z",
+      "pr": 18130,
       "passes": 1
     }
   },
