@@ -133,27 +133,22 @@ Use `/routine` to design, dry-run, and schedule these definitions. Reference: `.
 Set fields based on the repo's purpose:
 - `pulse: true` — repos with active development, tasks, and issues (most repos)
 - `pulse: false` — repos that exist but don't need task management (profile READMEs, forks for reference, archived projects)
-- `pulse_hours` — optional object `{"start": N, "end": N}` (24h local time). When set, the pulse only dispatches for this repo during the specified window. Overnight windows are supported (e.g., `{"start": 17, "end": 5}` runs 17:00–05:00). Repos without this field run 24/7 (default). Example: `"pulse_hours": {"start": 17, "end": 5}` to avoid conflicts with daytime work.
-- `pulse_expires` — optional ISO date string `"YYYY-MM-DD"`. When today is past this date, the pulse auto-sets `pulse: false` in repos.json and stops dispatching. Useful for temporary pulse windows (e.g., "help clear the backlog this week"). The field is inert once `pulse: false` is written.
-- `contributed: true` — external repos where we've authored or commented on issues/PRs. No merge/dispatch/TODO powers — only monitors for new activity needing reply. Managed by `contribution-watch-helper.sh` (notification-driven, excludes managed `pulse: true` repos).
-- `foss: true` — mark repo as a FOSS contribution target. Enables `foss-contribution-helper.sh` budget enforcement and issue scanning. Combine with `app_type` and `foss_config`. See `reference/foss-contributions.md`.
-- `app_type` — app type classification for FOSS repos. Values: `wordpress-plugin`, `php-composer`, `node`, `python`, `go`, `macos-app`, `browser-extension`, `cli-tool`, `electron`, `cloudron-package`, `generic`.
-- `foss_config` — per-repo FOSS contribution controls (object):
-  - `max_prs_per_week` (int, default 2) — max PRs to open per week
-  - `token_budget_per_issue` (int, default 10000) — max tokens per contribution attempt; enforced by `foss-contribution-helper.sh check`
-  - `blocklist` (bool, default false) — set `true` if maintainer asked us to stop contributing
-  - `disclosure` (bool, default true) — include AI assistance note in PRs
-  - `labels_filter` (array, default `["help wanted", "good first issue", "bug"]`) — issue labels to scan for
-- `local_only: true` — repos with no remote (skip all `gh` operations)
-- `priority` — `"tooling"` (infrastructure/tools), `"product"` (user-facing), `"profile"` (GitHub profile, docs-only)
-- `maintainer` — GitHub username of the repo maintainer. Used by code-simplifier for issue assignment and other maintainer-gated workflows. Auto-detected from `gh api user` on registration; falls back to slug owner if missing.
+- `pulse_hours` — optional `{"start": N, "end": N}` (24h local time). Limits dispatch to that window; overnight supported (e.g., `{"start": 17, "end": 5}`). Omit for 24/7.
+- `pulse_expires` — optional `"YYYY-MM-DD"`. Past this date, pulse auto-sets `pulse: false`. Useful for temporary windows (e.g., "clear the backlog this week").
+- `contributed: true` — external repos we've authored/commented on. Read-only monitoring for new activity; no merge/dispatch/TODO powers. Managed by `contribution-watch-helper.sh`.
+- `foss: true` — FOSS contribution target. Enables `foss-contribution-helper.sh` budget enforcement and issue scanning. Combine with `app_type` and `foss_config`. See `reference/foss-contributions.md`.
+- `app_type` — FOSS repo type: `wordpress-plugin`, `php-composer`, `node`, `python`, `go`, `macos-app`, `browser-extension`, `cli-tool`, `electron`, `cloudron-package`, `generic`.
+- `foss_config` — per-repo FOSS controls: `max_prs_per_week` (default 2), `token_budget_per_issue` (default 10000, enforced by `foss-contribution-helper.sh check`), `blocklist` (bool, maintainer opt-out), `disclosure` (bool, default true — AI note in PRs), `labels_filter` (default `["help wanted", "good first issue", "bug"]`).
+- `local_only: true` — no remote; skip all `gh` operations.
+- `priority` — `"tooling"` (infrastructure), `"product"` (user-facing), `"profile"` (docs-only).
+- `maintainer` — GitHub username. Used by code-simplifier and maintainer-gated workflows. Auto-detected from `gh api user`; falls back to slug owner.
 
-**Cross-repo task creation**: When a session creates a task in a *different* repo (e.g., adding an aidevops TODO while working in another project), follow the full workflow — not just the TODO edit:
+**Cross-repo task creation**: When creating a task in a *different* repo, follow the full workflow — not just the TODO edit:
 
-1. **Claim the ID atomically**: Run `claim-task-id.sh --repo-path <target-repo> --title "description"`. This allocates the next ID via CAS on the counter branch and optionally creates the GitHub issue. NEVER grep TODO.md to guess the next ID — concurrent sessions will collide.
-2. **Create the GitHub issue BEFORE pushing TODO.md**: Either let `claim-task-id.sh` create it (default), or run `gh issue create` manually. Get the issue number first.
-3. **Add the TODO entry WITH `ref:GH#NNN` and commit+push in a single commit**: The issue-sync workflow triggers on TODO.md pushes and creates issues for entries without `ref:GH#`. If you push a TODO entry without the ref and then add it in a second commit, the workflow will create a duplicate issue in the gap between pushes. Always include the ref in the same commit as the TODO entry.
-4. **Code changes still need a worktree + PR**: The TODO/issue creation above is planning — it goes direct to main. If the task also involves code changes in the *current* repo, those follow the normal worktree + PR flow.
+1. **Claim the ID atomically**: `claim-task-id.sh --repo-path <target-repo> --title "description"` — allocates via CAS. NEVER grep TODO.md for the next ID; concurrent sessions collide.
+2. **Create the GitHub issue BEFORE pushing TODO.md**: Let `claim-task-id.sh` create it (default) or run `gh issue create` manually. Get the issue number first.
+3. **Add the TODO entry WITH `ref:GH#NNN` in a single commit+push**: issue-sync triggers on TODO.md pushes and creates issues for entries missing `ref:GH#`. A second commit creates a duplicate. Always include the ref in the same commit.
+4. **Code changes still need a worktree + PR**: TODO/issue creation is planning (direct to main). Code changes in the current repo follow the normal worktree + PR flow.
 
 Full rules: `reference/planning-detail.md`
 
@@ -201,7 +196,7 @@ Not every task is code. Full routing table, rules, and dispatch examples: `refer
 
 ## Worker Diagnostics
 
-When headless workers fail to complete tasks, stall mid-session, or get stuck in dispatch loops: `reference/worker-diagnostics.md`. Covers the worker lifecycle (version guard → canary → dispatch → DB isolation → watchdog → recovery), architecture decisions (why workers need isolated SQLite DBs, why the watchdog must be a standalone process), and a diagnostic quick reference for common failure modes.
+Headless workers failing, stalling, or stuck in dispatch loops: `reference/worker-diagnostics.md`. Covers lifecycle (version guard → canary → dispatch → DB isolation → watchdog → recovery), architecture rationale, and a diagnostic quick reference.
 
 ## Self-Improvement
 
@@ -238,11 +233,9 @@ When a user invokes a slash command (`/runners`, `/full-loop`, `/routine`, etc.)
 1. `scripts/commands/<command>.md` — standalone command docs (most commands)
 2. `workflows/<command>.md` — workflow-based commands (e.g., `/review-issue-pr`, `/preflight`)
 
-Read the first match before executing. The on-disk doc is the source of truth — do not improvise from memory or inline text. User-provided workflow descriptions may be stale; use them as context but defer to the command doc for the current procedure.
+Read the first match before executing. The on-disk doc is the source of truth — do not improvise from memory. This applies to agent-initiated actions too (e.g., logging a framework issue → `/log-issue-aidevops`); the command doc enforces quality steps that direct helper invocation skips.
 
-This also applies when the agent itself needs to perform an action that has a corresponding command (e.g., logging a framework issue → `/log-issue-aidevops`). Prefer the slash command workflow as the operator interface; the command doc enforces quality steps (diagnostics, duplicate checks, user confirmation) that direct helper invocation may skip.
-
-If unsure which command maps to the user's intent: `ls ~/.aidevops/agents/scripts/commands/ ~/.aidevops/agents/workflows/`.
+If unsure which command maps to the intent: `ls ~/.aidevops/agents/scripts/commands/ ~/.aidevops/agents/workflows/`.
 
 ## Capabilities
 
@@ -252,14 +245,13 @@ Model routing, memory, orchestration, browser, skills, sessions, auth recovery: 
 
 Rules: `prompts/build.txt`. Secrets: `gopass` preferred; `credentials.sh` plaintext fallback (600 perms). Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored). Full docs: `tools/credentials/gopass.md`.
 
-**Unified security command:** `aidevops security` (no args) runs all checks — user posture, plaintext secret hygiene, supply chain IoCs, and active advisories. Subcommands for targeted use:
-- `aidevops security` — run everything (recommended)
-- `aidevops security posture` — interactive security posture setup (gopass, gh auth, SSH, secretlint)
-- `aidevops security scan` — secret hygiene & supply chain scan (plaintext secrets, `.pth` IoCs, unpinned deps, MCP auto-download risks). Never exposes secret values.
-- `aidevops security check` — per-repo posture assessment (workflows, branch protection, review bot gate)
-- `aidevops security dismiss <id>` — dismiss a security advisory after taking action.
-- Security advisories are delivered via `aidevops update` and shown in the session greeting until dismissed. Advisory files: `~/.aidevops/advisories/*.advisory`.
-- All remediation commands must be run in a **separate terminal**, never inside AI chat sessions.
+**Unified security command:** `aidevops security` (no args) runs all checks — posture, secret hygiene, supply chain IoCs, active advisories. Subcommands:
+- `posture` — interactive setup (gopass, gh auth, SSH, secretlint)
+- `scan` — plaintext secrets, `.pth` IoCs, unpinned deps, MCP auto-download risks. Never exposes values.
+- `check` — per-repo posture (workflows, branch protection, review bot gate)
+- `dismiss <id>` — dismiss an advisory after acting on it.
+
+Advisories delivered via `aidevops update`; shown in session greeting until dismissed (`~/.aidevops/advisories/*.advisory`). Run all remediation in a **separate terminal**, never inside AI chat.
 
 **Cross-repo privacy:** NEVER include private repo names in TODO.md task descriptions, issue titles, or comments on public repos. Use generic references like "a managed private repo" or "cross-repo project". The issue-sync-helper.sh has automated sanitization, but prevention at the source is the primary defense.
 
