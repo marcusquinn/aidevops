@@ -39,6 +39,7 @@ const AGENT_MCP_TOOLS = {
   context7: ["context7_*"],
   sentry: ["sentry_*"],
   socket: ["socket_*"],
+  shopify: ["shopify-dev-mcp_*"],
 };
 
 /**

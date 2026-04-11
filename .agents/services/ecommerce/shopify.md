@@ -37,12 +37,14 @@ mcp:
 
 ## Activation
 
-This agent is invoked with `@shopify`. The `shopify-dev-mcp` MCP server is disabled globally
-in `opencode.json` and enabled only for this agent via `tools: shopify-dev-mcp_*: true`.
+This agent is invoked with `@shopify`. The `shopify-dev-mcp` server is lazy-loaded on demand
+(`eager: false` in the plugin registry) — it starts on the first tool call, not at OpenCode
+launch. Tool calls are gated: `shopify-dev-mcp_*: false` globally, `true` only for this agent.
+No context bloat for sessions that don't use Shopify.
 
-**Headless workers**: The MCP must be registered in `opencode.json` before dispatch.
-If `shopify-dev-mcp` tools are absent from the session tool list, exit BLOCKED immediately:
-`BLOCKED: Required MCP shopify-dev-mcp not available in this session. Register it via setup-mcp-integrations.sh shopify-dev-mcp and restart.`
+**Headless workers**: The MCP is registered automatically by the plugin on every OpenCode
+startup. If `shopify-dev-mcp` tools are absent from the session tool list, exit BLOCKED:
+`BLOCKED: Required MCP shopify-dev-mcp not available. Ensure aidevops plugin is loaded and restart OpenCode.`
 
 ## Capabilities
 

@@ -173,6 +173,15 @@ function getMcpRegistry() {
       globallyEnabled: false,
       description: "Dependency security scanning",
     },
+    {
+      name: "shopify-dev-mcp",
+      type: "local",
+      command: [...pkgRunnerParts, "@shopify/dev-mcp@latest"],
+      eager: false,
+      toolPattern: "shopify-dev-mcp_*",
+      globallyEnabled: false,
+      description: "Shopify schema-aware GraphQL, Liquid validation, Admin API",
+    },
   ];
 }
 
