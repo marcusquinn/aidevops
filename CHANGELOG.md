@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.242] - 2026-04-11
+
+### Added
+
+- external PR gate — require linked issue + crypto approval (t1958) (#18339)
+
+### Changed
+
+- complete MCP audit — all installed MCPs in plugin registry, DEPRECATED_MCPS cleanup, fix sentry secret, update docs (#18335)
+- origin:interactive implies maintainer approval — skip auto-close and gate (#18334)
+- add shopify-dev-mcp to plugin registry and AGENT_MCP_TOOLS (#18331)
+- register shopify-dev-mcp in generate-runtime-config.sh so setup/update installs it (#18329)
+- add flock deadlock detection, self-recovery, and health alerting (#18328)
+- chore: ratchet-down NESTING_DEPTH_THRESHOLD 254→249 (GH#18326) (#18327)
+- add shopify-dev-mcp agent, fix MCP audit gaps, add permission-migration TODOs (#18311)
+
 ## [3.6.241] - 2026-04-11
 
 ### Changed
