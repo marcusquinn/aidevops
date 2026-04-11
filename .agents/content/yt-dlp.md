@@ -7,25 +7,19 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Download media from YouTube (or other supported sites) using yt-dlp.
-
 Arguments: $ARGUMENTS
 
-## Workflow
-
-### Step 1: Parse Arguments
-
-Parse `$ARGUMENTS` to determine the mode and URL:
+## Commands
 
 ```text
 /yt-dlp <url>                          → Auto-detect (video/playlist/channel)
 /yt-dlp video <url> [options]          → Download video
-/yt-dlp audio <url> [options]          → Extract audio (mp3 by default; use --format to change)
+/yt-dlp audio <url> [options]          → Extract audio (mp3 by default)
 /yt-dlp playlist <url> [options]       → Download playlist
 /yt-dlp channel <url> [options]        → Download channel
 /yt-dlp transcript <url> [options]     → Download subtitles only
 /yt-dlp info <url>                     → Show video info
-/yt-dlp convert <path> [options]       → Extract audio from a local file or directory of video files
+/yt-dlp convert <path> [options]       → Extract audio from local file(s)
 /yt-dlp install                        → Install yt-dlp + ffmpeg
 /yt-dlp status                         → Check installation
 /yt-dlp config                         → Write default config to ~/.config/yt-dlp/config
@@ -33,19 +27,16 @@ Parse `$ARGUMENTS` to determine the mode and URL:
 
 URL-only auto-detect: `playlist?list=` → `playlist`; `/@`, `/c/`, `/channel/` → `channel`; otherwise → `video`.
 
-### Step 2: Check Dependencies
+## Execution
+
+Check deps, then run:
 
 ```bash
 ~/.aidevops/agents/scripts/yt-dlp-helper.sh status
-```
-
-If missing, offer to install: `~/.aidevops/agents/scripts/yt-dlp-helper.sh install`
-
-### Step 3: Execute
-
-```bash
 ~/.aidevops/agents/scripts/yt-dlp-helper.sh <command> <url> [options]
 ```
+
+If deps missing, offer: `yt-dlp-helper.sh install`
 
 ## Options
 
