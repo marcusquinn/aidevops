@@ -28,14 +28,14 @@ Topic: $ARGUMENTS
 | **docs** | document, readme, guide, explain, describe | Accurate, concise, follows existing doc patterns |
 | **research** | investigate, explore, evaluate, compare, spike | Time-boxed, deliverable is a written recommendation |
 
-Also classify **agent domain** and **model tier** using `reference/task-taxonomy.md`. Include domain tag (e.g., `#seo`) in TODO.md entry and as GitHub label. Omit for code tasks.
+Also classify **agent domain** and **model tier** using `reference/task-taxonomy.md`. Include domain tag (e.g., `#seo`) in TODO.md entry and as GitHub label.
 
-**Tier classification (cascade dispatch):** Assess the task against the empirical tier criteria:
-- `tier:simple` — single-file, under 100 lines changed, pattern-following (review feedback, config tweaks, style fixes). Brief MUST provide verbatim oldString/newString for every edit.
-- `tier:standard` — multi-file coordination, structural refactoring, changes over 100 lines, tasks where the approach depends on reading current codebase state.
+**Tier classification (cascade dispatch):**
+- `tier:simple` — single-file, under 100 lines changed, pattern-following. Brief MUST provide verbatim oldString/newString for every edit.
+- `tier:standard` — multi-file coordination, structural refactoring, >100 lines, approach depends on reading codebase state.
 - `tier:reasoning` — architecture decisions, novel design with no existing patterns, complex multi-system trade-offs, security audits.
 
-**Default to `tier:simple` for review feedback and single-file fixes.** Research shows Haiku achieves 100% success rate when briefs provide exact code blocks. Only escalate when the task genuinely requires judgment.
+**Default to `tier:simple` for review feedback and single-file fixes.** Haiku achieves 100% success when briefs provide exact code blocks. Only escalate when the task genuinely requires judgment.
 
 If ambiguous, ask with numbered options (1–5 matching table above), recommend based on description.
 
@@ -48,7 +48,7 @@ Ask sequentially. Each question: 2–4 concrete options, one recommended. Adapt 
 - **Q1 Goal** (always first): "In one sentence, what must this task produce?" — offer inferred goal as option 1
 - **Q2 Scope boundary**: "What is explicitly NOT in scope?" — offer inferred exclusion, "nothing", or custom
 - **Q3 Success criteria**: "How will you know this is done?" — automated tests (recommended for feature/bugfix), manual verification, code review, or custom
-- **Q4 Implementation anchor** (t1901 — MANDATORY for code tasks): "Which files will need to change, and is there an existing file to model on?" — search the codebase (`git ls-files`, `rg`) to offer concrete file paths as options. If the user doesn't know, search for them. The brief's How section MUST contain at least one file path — a brief without file paths produces vague issues that waste worker tokens on exploration. This question mentors the implementer by transferring knowledge of where to work.
+- **Q4 Implementation anchor** (t1901 — MANDATORY for code tasks): "Which files will need to change, and is there an existing file to model on?" — search the codebase (`git ls-files`, `rg`) to offer concrete file paths as options. The brief's How section MUST contain at least one file path — a brief without file paths produces vague issues that waste worker tokens on exploration.
 
 **Type-specific questions:** Load from `reference/define-probes/${task_type}.md` and ask 1–2 additional questions.
 
@@ -85,7 +85,7 @@ Read `templates/brief-template.md` and format using `workflows/brief.md` for the
 | Pre-mortem / negative space | **Acceptance Criteria** (negative criteria) |
 | Files mentioned | **Relevant Files** |
 
-**Code scaffolding (t1901 — MANDATORY for code tasks):** For each file listed in Files to Modify, read the reference pattern file and draft a code skeleton or diff showing the structure of the change. Include these in the Implementation Steps as fenced code blocks. The goal is that the implementing worker can copy the skeleton and fill in details, not invent structure from scratch. For new files: provide a complete skeleton with imports, function signatures, and inline comments marking where logic goes. For edits: provide the exact code block to insert and the surrounding context showing where it goes.
+**Code scaffolding (t1901 — MANDATORY for code tasks):** For each file in Files to Modify, read the reference pattern file and draft a code skeleton or diff. Include in Implementation Steps as fenced code blocks. For new files: complete skeleton with imports, function signatures, and inline comments. For edits: exact code block with surrounding context showing where it goes.
 
 ### Step 6: Present and Confirm
 
