@@ -7,18 +7,16 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-## Instructions
+## Usage
 
-1. Parse `$ARGUMENTS` — extract `--prompt`, `--models`, `--score`, `--judge`, `--timeout`. Run:
+```bash
+~/.aidevops/agents/scripts/compare-models-helper.sh cross-review \
+  --prompt "your prompt here" \
+  --models "sonnet,opus" \
+  [--score] [--judge sonnet]
+```
 
-   ```bash
-   ~/.aidevops/agents/scripts/compare-models-helper.sh cross-review \
-     --prompt "your prompt here" \
-     --models "sonnet,opus" \
-     [--score] [--judge sonnet]
-   ```
-
-2. Present: each model's response summary, diff (2-model comparisons), judge scores and winner if `--score` used, note failures. Scores recorded in model-comparisons SQLite DB, fed into pattern tracker (`/route`, `/patterns`).
+Present response summaries, diff (2-model), judge scores+winner if `--score` used, note failures. Scores → model-comparisons DB → `/route`, `/patterns`.
 
 ## Options
 
