@@ -76,24 +76,20 @@ subagents:
 
 **SERP/backlinks/technical**: SERP via DataForSEO (comprehensive) or Serper (quick) | Backlinks via DataForSEO or Ahrefs | PageSpeed/CWV: `tools/browser/pagespeed.md` | On-page: DataForSEO | Crawling: `seo/site-crawler.md` | Real-time monitoring: `seo/contentking.md`.
 
-**Site audit**:
+**Site audit** → `~/Downloads/{domain}/{datestamp}/` (CSV/XLSX):
 
 ```bash
 site-crawler-helper.sh {crawl|audit-links|audit-meta|audit-redirects} https://example.com
 ```
 
-Output: `~/Downloads/{domain}/{datestamp}/` (CSV/XLSX).
-
-**E-E-A-T scoring** (7 criteria, 1-10: Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing):
+**E-E-A-T scoring** (7 criteria, 1-10: Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing) → `{domain}-eeat-score-{date}.xlsx`:
 
 ```bash
 eeat-score-helper.sh analyze ~/Downloads/example.com/_latest/crawl-data.json
 eeat-score-helper.sh score https://example.com/article
 ```
 
-Output: `{domain}-eeat-score-{date}.xlsx`.
-
-**Sitemap submission** (Playwright + persistent Chrome; first-time: `gsc-sitemap-helper.sh login`):
+**Sitemap submission** (first-time: `gsc-sitemap-helper.sh login`):
 
 ```bash
 gsc-sitemap-helper.sh submit example.com [example.net ...]  # or --file domains.txt
@@ -104,7 +100,7 @@ gsc-sitemap-helper.sh status example.com
 
 **Image SEO**: AI-powered alt text (WCAG-compliant, Moondream), SEO filenames, keyword tags, upscaling — `seo/image-seo.md`.
 
-**Content**: Integrate with `content.md` (calendar, writing, meta, internal linking). Per-project config: `content/context-templates.md`. Workflow: Plan → Research → Write → Analyze → Optimize (`seo/seo-optimizer.md`) → Edit → Publish.
+**Content**: `content.md` (calendar, writing, meta, internal linking) | config: `content/context-templates.md` | workflow: Plan → Research → Write → Analyze → Optimize (`seo/seo-optimizer.md`) → Edit → Publish.
 
 ## Tool Comparison
 
