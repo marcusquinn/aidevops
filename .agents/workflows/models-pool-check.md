@@ -30,7 +30,7 @@ Run in parallel: `oauth-pool-helper.sh check` (pool state) and `claude auth stat
 
 If `claude auth status --json` shows `loggedIn: true` with `pro` or `max`, say: "You're already logged into Claude CLI with a **{subscriptionType}** account ({email}). Run in a separate terminal: `oauth-pool-helper.sh import claude-cli`"
 
-Otherwise, ask which provider they have and run the matching command in a separate terminal:
+Otherwise, ask which provider they have and run the matching command:
 
 | Provider | Subscription | Command |
 |----------|-------------|---------|
@@ -45,14 +45,14 @@ Anthropic/OpenAI/Google: browser opens → authorize → paste code → restart 
 
 Say: "Everything looks good. Your pool has N account(s) and will auto-rotate if one hits rate limits."
 
-- **One account:** suggest adding a second — `oauth-pool-helper.sh add <provider>` (separate terminal).
-- **CLI account not in pool:** suggest importing — `oauth-pool-helper.sh import claude-cli` (separate terminal).
+- **One account:** suggest adding a second — `oauth-pool-helper.sh add <provider>`.
+- **CLI account not in pool:** suggest importing — `oauth-pool-helper.sh import claude-cli`.
 
 #### Path C — accounts exist but have problems
 
 Give one fix at a time:
 
-- **EXPIRED / INVALID (401) / auth-error**: Re-add — `oauth-pool-helper.sh add <provider>` (separate terminal).
+- **EXPIRED / INVALID (401) / auth-error**: Re-add — `oauth-pool-helper.sh add <provider>`.
   - Cursor exception: expired tokens are normal (IDE re-reads them) — only flag Cursor if status is also `auth-error`.
 - **Missing refresh token**: Remove first (`oauth-pool-helper.sh remove <provider> <email>`), then re-add.
 - **All rate-limited**: Offer to reset: `model-accounts-pool` tool `{"action": "reset-cooldowns"}`.
