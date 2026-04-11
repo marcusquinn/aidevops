@@ -70,26 +70,26 @@ subagents:
 
 ## SEO Workflow
 
-**Keyword research**: `/keyword-research "seed"` | `/autocomplete-research "question"` | `/keyword-research-extended "top keywords"`. Domain/Competitor/Gap modes: `seo/keyword-research.md`. GSC MCP for query performance, CTR, position, index coverage: `seo/google-search-console.md`.
+**Keyword research**: `/keyword-research "seed"` | `/autocomplete-research "question"` | `/keyword-research-extended "top keywords"`. Modes: `seo/keyword-research.md`. GSC for query performance/CTR/position/index: `seo/google-search-console.md`.
 
-**AI search (GEO/SRO)**: baseline → fanout → GEO → SRO → hallucination defense → agent discovery. Focus: deterministic retrieval signals (clarity, structure, consistency, discoverability). Scorecard: `seo/ai-search-readiness.md`.
+**AI search (GEO/SRO)**: baseline → fanout → GEO → SRO → hallucination defense → agent discovery. Focus: deterministic retrieval signals. Scorecard: `seo/ai-search-readiness.md`.
 
-**SERP/backlinks/technical**: SERP via DataForSEO (comprehensive) or Serper (quick) | Backlinks via DataForSEO or Ahrefs | PageSpeed/CWV: `tools/browser/pagespeed.md` | On-page: DataForSEO | Crawling: `seo/site-crawler.md` | Real-time monitoring: `seo/contentking.md`.
+**SERP/backlinks/technical**: DataForSEO (comprehensive) or Serper (quick) | Backlinks: DataForSEO or Ahrefs | PageSpeed/CWV: `tools/browser/pagespeed.md` | On-page: DataForSEO | Crawling: `seo/site-crawler.md` | Monitoring: `seo/contentking.md`.
 
-**Site audit** (output: `~/Downloads/{domain}/{datestamp}/` CSV/XLSX):
+**Site audit** (output: `~/Downloads/{domain}/{datestamp}/`):
 
 ```bash
 site-crawler-helper.sh {crawl|audit-links|audit-meta|audit-redirects} https://example.com
 ```
 
-**E-E-A-T scoring** (7 criteria, 1-10: Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing; output: `{domain}-eeat-score-{date}.xlsx`):
+**E-E-A-T scoring** (7 criteria, 1-10; output: `{domain}-eeat-score-{date}.xlsx`):
 
 ```bash
 eeat-score-helper.sh analyze ~/Downloads/example.com/_latest/crawl-data.json
 eeat-score-helper.sh score https://example.com/article
 ```
 
-**Sitemap submission** (Playwright + persistent Chrome; first-time: `gsc-sitemap-helper.sh login`):
+**Sitemap submission** (Playwright; first-time: `gsc-sitemap-helper.sh login`):
 
 ```bash
 gsc-sitemap-helper.sh submit example.com [example.net ...]  # or --file domains.txt
@@ -98,9 +98,9 @@ gsc-sitemap-helper.sh status example.com
 
 **Opportunities**: Quick Wins (pos 4-20), Striking Distance (pos 11-30), Low CTR, Cannibalization → `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`.
 
-**Image SEO**: AI-powered alt text (WCAG-compliant, Moondream), SEO filenames, keyword tags, upscaling — `seo/image-seo.md`.
+**Image SEO**: AI alt text (WCAG, Moondream), filenames, keyword tags, upscaling — `seo/image-seo.md`.
 
-**Content**: Integrate with `content.md` (calendar, writing, meta, internal linking). Per-project config: `content/context-templates.md`. Workflow: Plan → Research → Write → Analyze → Optimize (`seo/seo-optimizer.md`) → Edit → Publish.
+**Content**: Integrate with `content.md` (calendar, writing, meta, linking). Config: `content/context-templates.md`. Flow: Plan → Research → Write → Analyze → Optimize (`seo/seo-optimizer.md`) → Edit → Publish.
 
 ## Tool Comparison
 
