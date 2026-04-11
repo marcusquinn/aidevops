@@ -7,7 +7,7 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Scaffold a private git repo for routine definitions. Always private — routine definitions may contain client names, schedules, and sensitive operational details.
+Always private — routine definitions may contain client names, schedules, and sensitive operational details.
 
 Arguments: $ARGUMENTS
 
@@ -18,8 +18,6 @@ aidevops init-routines                  # Personal: <username>/aidevops-routines
 aidevops init-routines --org <name>     # Org: <org>/aidevops-routines (private)
 aidevops init-routines --local          # Local-only, local_only: true in repos.json
 aidevops init-routines --dry-run        # Preview without changes
-
-# Or via the helper directly:
 ~/.aidevops/agents/scripts/init-routines-helper.sh [--org <name>] [--local] [--dry-run]
 ```
 
@@ -41,9 +39,7 @@ aidevops init-routines --dry-run        # Preview without changes
         └── routine.md   # Template for routine tracking issues
 ```
 
-For repos with a GitHub remote, a tracking issue is created for each core routine via `routine-log-helper.sh` (idempotent — skipped if already exists).
-
-Registered in `~/.config/aidevops/repos.json` with `pulse: true, priority: "tooling"`.
+Registered in `~/.config/aidevops/repos.json` with `pulse: true, priority: "tooling"`. For repos with a GitHub remote, a tracking issue is created for each core routine via `routine-log-helper.sh` (idempotent).
 
 ## Core routines seeded
 
@@ -62,19 +58,16 @@ Registered in `~/.config/aidevops/repos.json` with `pulse: true, priority: "tool
 | r911 | OAuth token refresh | Every 30 min |
 | r912 | Dashboard server | Persistent |
 
-Each routine has a description file in `routines/core/<id>.md` covering what it does, what to check, and how to verify it's working.
+Each routine has a description file in `routines/core/<id>.md` (what it does, what to check, how to verify).
 
-## Custom routine descriptions
+## Custom routines and next steps
 
-Create `routines/custom/<id>.md` for your own routines. Custom descriptions override core descriptions when both exist for the same ID. Use `~/.aidevops/agents/templates/routine-description-template.md` as a starting point.
+Create `routines/custom/<id>.md` for your own routines (IDs r001-r899; core uses r901+). Custom descriptions override core when both exist for the same ID. Use `~/.aidevops/agents/templates/routine-description-template.md` as a starting point.
 
-## After setup
-
-Add your own routines to `~/Git/aidevops-routines/TODO.md` under `## User Routines`. Use IDs r001-r899 (core routines use r901+). See `.agents/reference/routines.md` for field specification.
+Add your own routines to `~/Git/aidevops-routines/TODO.md` under `## User Routines`. See `.agents/reference/routines.md` for field specification.
 
 ## Related
 
 - `/routine` — design and schedule a recurring routine
 - `.agents/reference/routines.md` — routine field reference
-- `.agents/templates/routine-description-template.md` — description template
 - `~/.config/aidevops/repos.json` — repo registration
