@@ -20,7 +20,7 @@ Log an issue with the aidevops framework to GitHub.
 
 **Arguments**: Optional title hint, e.g., `/log-issue-aidevops "Update check not working"`
 
-Non-collaborator issues are gated behind `needs-maintainer-review`. This command produces higher-quality reports than the web form — it gathers diagnostics, checks duplicates, and validates before submission.
+All issues from non-collaborators are gated behind `needs-maintainer-review` — a maintainer must approve before the pipeline picks them up. This command produces higher-quality reports than the web form because it gathers diagnostics, checks duplicates, and validates before submission.
 
 ## Workflow
 
@@ -34,7 +34,10 @@ Collects: aidevops version (local + latest), AI assistant, OS/shell, repo contex
 
 ### Step 2: Understand the Issue
 
-Ask the user: (1) What happened? (2) What did you expect? (3) Steps to reproduce?
+Ask the user:
+1. What happened?
+2. What did you expect?
+3. Steps to reproduce (if known)?
 
 Use any provided argument as the title starting point. Review session context for commands, errors, and intent.
 
@@ -50,36 +53,37 @@ If duplicates found, present them and ask: add comment to existing / create new 
 
 Before filing, check whether this is a customization need rather than a framework issue:
 
-| User says | Route |
-|-----------|-------|
-| "My script edits get overwritten" | Customization — use `custom/scripts/` |
-| "I want X to behave differently" | Customization — create wrapper in `custom/` |
-| "I added an agent but it disappeared" | Customization — use `custom/` or `draft/` |
+| User says | Likely route |
+|-----------|-------------|
+| "My script edits get overwritten" | Customization — use `~/.aidevops/agents/custom/scripts/` |
+| "I want X to behave differently" | Customization — create a wrapper in `custom/` |
+| "I added an agent but it disappeared" | Customization — use `custom/` or `draft/` (root agents are overwritten) |
 | "This script is broken for everyone" | Bug — file an issue |
-| "The framework should support X" | Enhancement — file an issue |
+| "The framework should support X" | Enhancement — file an issue (maintainers assess fit) |
 
-If customization, explain the `custom/` directory and link to `reference/customization.md`. Do not file an issue.
+If the need is customization, explain the `custom/` directory and link to `reference/customization.md`. Do not file an issue.
 
-### Step 3.6: Performance Issue Validation (MANDATORY)
+### Step 3.6: Performance Issue Validation (MANDATORY for performance/optimization claims)
 
-Applies when the issue involves performance, optimization, O(n^2) claims, or "hot path" assertions (GH#17832-17835):
+If the issue involves performance, optimization, O(n^2) claims, or "hot path" assertions:
 
-1. **Verify line references**: Read the cited file at the cited line. Code mismatch → REJECT.
-2. **Require measurements**: "May cause O(n^2)" is not evidence. Require timing data (`time`, `hyperfine`, profiling output).
-3. **Verify data scale**: A loop over 5 items on a 60-second timer is not a performance problem regardless of complexity.
-4. **Detect template-driven findings**: Multiple perf issues with identical structure across files → likely unverified batch scan. Validate each independently.
+1. **Verify line references**: Read the cited file at the cited line number. If the code at that line does not match the claim, REJECT the issue. Do not file issues with hallucinated line numbers.
+2. **Require measurements**: "May cause O(n^2)" is not evidence. Require actual timing data (`time`, `hyperfine`, profiling output). No measurements = no issue.
+3. **Verify data scale**: Check how many items the loop actually processes and how often it runs. A loop over 5 items on a 60-second timer is not a performance problem regardless of algorithmic complexity.
+4. **Check for template-driven findings**: If the user or AI is filing multiple performance issues with identical structure ("nested loops", "O(n^2)", "hot path") across different files, this is likely a batch code scan without verification. Validate each independently.
 
-If any check fails, explain why and do not file. Direct to the "Performance Optimization" issue template (mandatory evidence fields).
+If any check fails, explain why and do not file the issue. Direct the user to the "Performance Optimization" issue template which requires mandatory evidence fields.
 
 ### Step 3.7: Architectural Alignment (enhancements only)
 
-Skip for bugs with clear reproduction steps.
+Skip for bugs with clear reproduction steps — bugs are observed failures and belong in the tracker.
 
-For enhancements and architectural changes, evaluate:
-- **Observed failure first**: Addressing an actual failure, or preemptive? Preemptive rules are prompt bloat.
-- **Intelligence over determinism**: Adding a deterministic gate where model judgment would work better?
+For enhancements, feature requests, and architectural changes, evaluate against:
+
+- **Observed failure first**: Is this addressing an actual failure, or preemptive? Preemptive rules are prompt bloat.
+- **Intelligence over determinism**: Does this add a deterministic gate where model judgment would work better?
 - **Prompt cost**: Every instruction has a per-turn cost. Is the value worth it?
-- **External pattern adoption**: A "gap" vs another framework may be a deliberate omission.
+- **External pattern adoption**: A "gap" vs another framework may be a deliberate omission in an intelligence-first design.
 
 If the proposal doesn't survive these questions, discuss before filing — it may be better as a memory entry.
 
@@ -102,9 +106,11 @@ If the proposal doesn't survive these questions, discuss before filing — it ma
 {errors, session context}
 ```
 
-### Step 5: Confirm and Submit
+### Step 5: Confirm Before Submitting
 
 Show the user: title, body preview, label. Offer: create / edit title / edit description / cancel.
+
+### Step 6: Create the Issue
 
 ```bash
 gh issue create -R marcusquinn/aidevops \
@@ -116,7 +122,9 @@ EOF
   --label "LABEL"
 ```
 
-Output the issue URL. Note: user can add comments, subscribe, or reference with `Fixes #NNN`.
+### Step 7: Confirm Success
+
+Output the issue URL. Note: user can add comments, subscribe to notifications, or reference with `Fixes #NNN`.
 
 ## Label Selection
 
@@ -130,9 +138,9 @@ Output the issue URL. Note: user can add comments, subscribe, or reference with 
 
 ## Privacy
 
-Diagnostics do NOT include credentials or tokens. File paths included (may reveal username). No file contents uploaded. User reviews everything before submission.
+Diagnostics do NOT include credentials or tokens. File paths are included (may reveal username). No file contents uploaded. User reviews everything before submission.
 
 ## Error Handling
 
-- `gh` not authenticated → prompt `gh auth login`, retry.
-- Network failure → prompt user to check connection, retry.
+- `gh` not authenticated: prompt `gh auth login`, then retry.
+- Network failure: prompt user to check connection and retry.

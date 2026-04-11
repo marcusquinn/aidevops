@@ -6273,9 +6273,10 @@ run_weekly_complexity_scan() {
 
 	_complexity_scan_check_interval "$now_epoch" || return 0
 
-	# Permission gate: only collaborators/maintainers/admins may create
-	# simplification issues. Non-collaborator instances running a pulse with
-	# this repo in their repos.json were filing spurious issues (GH#16786).
+	# Permission gate: only admin users may create simplification issues.
+	# write/maintain collaborators are excluded — they could otherwise use
+	# bot-created simplification-debt issues to bypass the maintainer assignee
+	# gate (GH#16786, GH#18197). On personal repos, admin = repo owner only.
 	local current_user
 	current_user=$(gh api user --jq '.login' 2>/dev/null) || current_user=""
 	if [[ -n "$current_user" ]]; then
@@ -6283,9 +6284,9 @@ run_weekly_complexity_scan() {
 		perm_level=$(gh api "repos/${aidevops_slug}/collaborators/${current_user}/permission" \
 			--jq '.permission' 2>/dev/null) || perm_level=""
 		case "$perm_level" in
-		admin | maintain | write) ;; # allowed
+		admin) ;; # allowed — repo owner/admin only
 		*)
-			echo "[pulse-wrapper] Complexity scan: skipped — user '$current_user' has '$perm_level' permission on $aidevops_slug (need write+)" >>"$LOGFILE"
+			echo "[pulse-wrapper] Complexity scan: skipped — user '$current_user' has '$perm_level' permission on $aidevops_slug (need admin)" >>"$LOGFILE"
 			return 0
 			;;
 		esac
