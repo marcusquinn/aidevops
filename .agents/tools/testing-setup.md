@@ -12,7 +12,7 @@ tools:
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Configure testing infrastructure for the current project. Detects bundle, discovers existing tooling, identifies gaps against bundle quality gates, generates configuration, and verifies end-to-end.
+Detect bundle, discover existing tooling, identify gaps against quality gates, generate configuration, and verify end-to-end.
 
 Arguments: $ARGUMENTS
 
@@ -27,7 +27,7 @@ QUALITY_GATES=$(echo "$BUNDLE" | jq -r '.quality_gates[]')
 SKIP_GATES=$(echo "$BUNDLE" | jq -r '.skip_gates[]' 2>/dev/null)
 ```
 
-Display detected bundle and quality gates. No bundle → fall back to `cli-tool`. Offer override (web-app, cli-tool, library, infrastructure, content-site, agent).
+No bundle → fall back to `cli-tool`. Offer override: web-app, cli-tool, library, infrastructure, content-site, agent.
 
 ### Step 2: Discover Existing Infrastructure
 
@@ -56,7 +56,7 @@ Compare discovered infrastructure against bundle quality gates:
 | **missing + recommended** | Offer to install and configure |
 | **missing + skipped** | Note as intentionally skipped by bundle |
 
-Group results: Ready, Needs attention, Missing (recommended), Skipped by bundle.
+Group results: Ready / Needs attention / Missing (recommended) / Skipped by bundle.
 
 ### Step 4: Interactive Configuration
 
@@ -88,12 +88,7 @@ Create all configuration files from collected choices: test runner configs, cove
 testing-setup-helper.sh verify .
 ```
 
-Execute each configured runner — report `[pass]`/`[fail]`/`[skip]` per gate. Then display files created/modified and next steps:
-
-1. Write tests for existing code
-2. Run `testing-setup-helper.sh status` to check test health
-3. Push to trigger CI pipeline test step
-4. Consider `/testing-coverage` to identify untested code paths
+Report `[pass]`/`[fail]`/`[skip]` per gate. Display files created/modified and next steps: write tests for existing code, run `testing-setup-helper.sh status`, push to trigger CI, consider `/testing-coverage` for untested paths.
 
 ## Options
 
