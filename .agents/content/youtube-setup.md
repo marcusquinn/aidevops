@@ -11,9 +11,9 @@ Configure YouTube channel settings, competitor tracking, and niche definition fo
 
 Arguments: $ARGUMENTS
 
-## Workflow
+## Steps
 
-### Step 1: Test YouTube API Access
+### 1. Test API Access
 
 ```bash
 ~/.aidevops/agents/scripts/youtube-helper.sh auth-test
@@ -21,17 +21,15 @@ Arguments: $ARGUMENTS
 
 If authentication fails, guide the user to set up their service account key.
 
-### Step 2: Gather Channel Information
+### 2. Gather Channel Information
 
-Prompt the user for:
+Collect from $ARGUMENTS or ask interactively:
 
-1. **Your channel handle** (e.g., @myhandle)
+1. **Channel handle** (e.g., @myhandle)
 2. **Niche/topic** (e.g., "AI coding tools", "productivity software")
 3. **Competitor channels** (3-5 handles, e.g., @competitor1 @competitor2)
 
-If the user provides these in $ARGUMENTS, parse them. Otherwise, ask interactively.
-
-### Step 3: Validate Channels
+### 3. Validate Channels
 
 For each channel (yours + competitors):
 
@@ -41,7 +39,7 @@ For each channel (yours + competitors):
 
 Verify the channel exists and display basic stats (subscribers, videos, total views).
 
-### Step 4: Store Configuration in Memory
+### 4. Store Configuration
 
 ```bash
 ~/.aidevops/agents/scripts/memory-helper.sh store \
@@ -50,7 +48,7 @@ Verify the channel exists and display basic stats (subscribers, videos, total vi
   "My channel: @myhandle. Niche: [topic]. Competitors: @comp1, @comp2, @comp3"
 ```
 
-Also store individual competitor profiles:
+Store individual competitor profiles:
 
 ```bash
 ~/.aidevops/agents/scripts/memory-helper.sh store \
@@ -59,29 +57,22 @@ Also store individual competitor profiles:
   "Competitor @handle: [subscribers] subs, [videos] videos, [avg_views] avg views/video"
 ```
 
-### Step 5: Run Initial Competitor Comparison
+### 5. Run Competitor Comparison
 
 ```bash
 ~/.aidevops/agents/scripts/youtube-helper.sh competitors @myhandle @comp1 @comp2 @comp3
 ```
 
-Display the comparison table and highlight key insights:
-- Who has the highest views/video ratio?
-- Who has the best views/subscriber ratio?
-- What's the subscriber gap between you and competitors?
+Highlight: views/video ratio, views/subscriber ratio, subscriber gap.
 
-### Step 6: Offer Next Steps
+### 6. Offer Next Steps
 
-```text
-Setup complete! Next steps:
+Confirm setup complete and suggest:
 
-1. Run /youtube research @competitor to analyze their content strategy
-2. Run /youtube research trending to find trending topics in your niche
-3. Set up automated monitoring with content/distribution-youtube-pipeline.md
-4. Generate your first script with /youtube script "topic"
-
-Your configuration is stored in memory and will persist across sessions.
-```
+1. `/youtube research @competitor` — analyze content strategy
+2. `/youtube research trending` — find trending topics in niche
+3. `content/distribution-youtube-pipeline.md` — set up automated monitoring
+4. `/youtube script "topic"` — generate first script
 
 ## Options
 
