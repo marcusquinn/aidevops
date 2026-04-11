@@ -207,6 +207,14 @@ Reference code as `file_path:line_number` for easy navigation.
 # Git Workflow
 Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 
+**Origin labelling (MANDATORY):**
+- NEVER use raw `gh pr create` or `gh issue create` directly. Always use the wrappers:
+  `gh_create_pr` and `gh_create_issue` (defined in `shared-constants.sh`, sourced via PATH).
+  The wrappers automatically apply `origin:interactive` or `origin:worker` based on the
+  session context. Raw `gh` calls produce unlabelled PRs that the pulse may auto-close.
+- If `gh_create_pr` is unavailable (e.g. not sourced), pass `--label origin:interactive`
+  explicitly when creating PRs in an interactive session.
+
 **Traceability (MANDATORY):**
 - PR title MUST have task ID (`{task-id}: {description}`). No exceptions.
 - **PR bodies MUST use `Resolves #NNN`** to link the PR to its issue. GitHub only

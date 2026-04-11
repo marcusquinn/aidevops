@@ -766,7 +766,24 @@ detect_session_origin() {
 		echo "worker"
 		return 0
 	fi
+	# OpenCode interactive session: sets OPENCODE=1 and OPENCODE_PID in the
+	# shell environment. TTY is not available in OpenCode tool execution context
+	# so the TTY check below would incorrectly classify these as workers.
+	# OPENCODE_HEADLESS (checked above) is set by headless-runtime-helper.sh
+	# for worker dispatch — its absence here means this is a user session.
+	if [[ "${OPENCODE:-}" == "1" ]] || [[ -n "${OPENCODE_PID:-}" ]]; then
+		echo "interactive"
+		return 0
+	fi
+	# Claude Code interactive session: sets CLAUDE_SESSION_ID or CLAUDE_CODE.
+	if [[ -n "${CLAUDE_SESSION_ID:-}" ]] || [[ "${CLAUDE_CODE:-}" == "1" ]]; then
+		echo "interactive"
+		return 0
+	fi
 	# No TTY = non-interactive (headless dispatch, cron, pipe)
+	# NOTE: This fallback is unreliable for AI coding tools (OpenCode, Claude Code)
+	# which run bash tools without a TTY even in interactive sessions.
+	# The runtime-specific checks above must cover all supported runtimes.
 	if [[ ! -t 0 ]] && [[ ! -t 1 ]]; then
 		echo "worker"
 		return 0
