@@ -22,7 +22,6 @@ tools:
 
 - **Purpose**: Test emails against spam filters, verify inbox placement, analyze content deliverability
 - **Scripts**: `email-test-suite-helper.sh check-placement [domain]`, `email-health-check-helper.sh check [domain]`
-- **Focus**: Content-level spam triggers, provider-specific filtering, seed list testing, reputation signals
 - **Complements**: `email-health-check.md` (DNS auth), `email-testing.md` (design rendering + infrastructure)
 
 ```bash
@@ -39,29 +38,22 @@ email-test-suite-helper.sh analyze-headers headers.txt   # Header analysis (spam
 ```bash
 # 1. DNS and authentication
 email-health-check-helper.sh check example.com
-
 # 2. Infrastructure and placement score
 email-test-suite-helper.sh check-placement example.com
-
 # 3. SMTP connectivity
 email-test-suite-helper.sh test-smtp-domain example.com
-
 # 4. Design rendering (if HTML email)
 email-test-suite-helper.sh test-design newsletter.html
-
 # 5. Send to mail-tester.com (manual — send real email, check score)
-
 # 6. Send to seed accounts (manual — check inbox vs spam placement)
-
 # 7. Analyze headers from spam-folder copies
 email-test-suite-helper.sh analyze-headers spam-headers.txt
-
 # 8. Monitor post-send: Google Postmaster Tools, Microsoft SNDS, ESP dashboard
 ```
 
 ## Spam Filter Scoring
 
-Weighted scoring system (SpamAssassin threshold: 5.0):
+SpamAssassin threshold: 5.0. Weighted categories:
 
 | Category | Weight | Examples |
 |----------|--------|----------|
@@ -117,7 +109,7 @@ HTML Structure:
 ### SpamAssassin Testing
 
 ```bash
-brew install spamassassin   # macOS
+brew install spamassassin          # macOS
 sudo apt-get install spamassassin  # Linux
 
 spamassassin -t < test-email.eml
@@ -141,7 +133,7 @@ Include at least 500 characters of visible text alongside images.
 
 ### Seed List Testing
 
-Send from production infrastructure to test accounts on each major provider. Check folder placement:
+Send from production infrastructure to test accounts. Check folder placement:
 
 | Provider | Folders to Check |
 |----------|-----------------|
@@ -176,7 +168,7 @@ Send from production infrastructure to test accounts on each major provider. Che
 | One-click unsubscribe | High | RFC 8058 List-Unsubscribe-Post header required |
 | Spam complaint rate | Very High | Must stay under 0.1% (Google Postmaster Tools) |
 
-**Tabs**: Primary (personal/conversational) · Promotions (marketing — expected for bulk) · Updates (transactional) · Social (social platform notifications). Monitor: postmaster.google.com
+**Tabs**: Primary (personal/conversational) · Promotions (marketing — expected for bulk) · Updates (transactional) · Social. Monitor: postmaster.google.com
 
 ### Outlook / Microsoft 365
 
@@ -243,7 +235,7 @@ Register for complaint notifications and auto-unsubscribe complainers:
 
 ### Email Landing in Promotions (Gmail)
 
-Promotions tab is not spam — emails are delivered. For Primary tab: use plain text, personal tone, avoid marketing language, encourage replies. For bulk marketing, Promotions placement is normal.
+Promotions tab is not spam — emails are delivered. For Primary tab: use plain text, personal tone, avoid marketing language, encourage replies. Promotions placement is normal for bulk marketing.
 
 ### Intermittent Delivery Failures
 
