@@ -1,0 +1,110 @@
+{
+  "provider": "Shopify",
+  "description": "Shopify Dev MCP server — schema-aware GraphQL generation, Liquid template validation, and Admin API execution for Shopify-platform repos",
+  "documentation": "https://shopify.dev/docs/apps/build/ai-toolkit",
+  "toolkit_repo": "https://github.com/Shopify/Shopify-AI-Toolkit",
+  "activation": "Auto-enabled for repos with \"platform\": \"shopify\" in repos.json",
+  "prerequisites": {
+    "node_version": "18+",
+    "shopify_cli": "3.93.0+ (required for shopify store execute)",
+    "install_cli": "npm install -g @shopify/cli@latest",
+    "verify_cli": "shopify version",
+    "auth": "shopify store auth (browser-based OAuth, no stored tokens)"
+  },
+  "mcp_server": {
+    "name": "shopify-dev-mcp",
+    "command": "npx",
+    "args": ["-y", "@shopify/dev-mcp@latest"],
+    "description": "Shopify Dev MCP — validates Liquid templates, searches Shopify API schemas, and supports Admin GraphQL operations"
+  },
+  "configurations": {
+    "claude_code": {
+      "method": "cli",
+      "command": "claude mcp add shopify-dev-mcp npx -- -y @shopify/dev-mcp@latest"
+    },
+    "opencode": {
+      "config_location": "~/.config/opencode/opencode.json",
+      "mcp_config": {
+        "shopify-dev-mcp": {
+          "type": "local",
+          "command": ["npx", "-y", "@shopify/dev-mcp@latest"],
+          "enabled": false
+        }
+      },
+      "notes": "Disabled globally; auto-enabled for repos with platform:shopify in repos.json"
+    },
+    "cursor": {
+      "config_location": "~/.cursor/mcp.json",
+      "mcp_config": {
+        "mcpServers": {
+          "shopify-dev-mcp": {
+            "command": "npx",
+            "args": ["-y", "@shopify/dev-mcp@latest"]
+          }
+        }
+      }
+    },
+    "claude_desktop": {
+      "config_location": "~/Library/Application Support/Claude/claude_desktop_config.json",
+      "mcp_config": {
+        "mcpServers": {
+          "shopify-dev-mcp": {
+            "command": "npx",
+            "args": ["-y", "@shopify/dev-mcp@latest"]
+          }
+        }
+      }
+    }
+  },
+  "repo_level_skills": {
+    "description": "Per-repo skills from the Shopify AI Toolkit. Install at the repo level, not framework level.",
+    "install_command": "npx skills add Shopify/shopify-ai-toolkit --skill <name>",
+    "available_skills": [
+      "shopify-admin",
+      "shopify-admin-execution",
+      "shopify-liquid",
+      "shopify-polaris",
+      "shopify-app-bridge"
+    ],
+    "notes": "Skills contain bundled scripts (e.g. validate.mjs) and are repo-specific. The MCP server is framework-level; skills are repo-level."
+  },
+  "use_cases": [
+    "Validate Liquid templates before deploying theme changes",
+    "Search Shopify Admin GraphQL schema for available fields and mutations",
+    "Execute Admin GraphQL operations against a store via shopify store execute",
+    "Manage blog posts, pages, redirects, SEO metadata, and navigation programmatically",
+    "Generate schema-validated GraphQL queries that catch errors before hitting the API"
+  ],
+  "repos_json_integration": {
+    "description": "Add platform field to repos.json entry to auto-enable this MCP server",
+    "example": {
+      "slug": "owner/my-shopify-store",
+      "path": "~/Git/my-shopify-store",
+      "platform": "shopify",
+      "pulse": true,
+      "priority": "product"
+    }
+  },
+  "security_notes": [
+    "The MCP server is a local dev reference tool — no auth required for schema lookups",
+    "Store execution uses browser-based OAuth via shopify store auth — no stored tokens",
+    "The toolkit auto-updates via npm when installed as a plugin",
+    "Shopify API tokens (if used directly) are detected by secretlint rule-shopify"
+  ],
+  "troubleshooting": {
+    "common_issues": [
+      {
+        "issue": "shopify store execute fails",
+        "solution": "Upgrade Shopify CLI to 3.93.0+: npm install -g @shopify/cli@latest"
+      },
+      {
+        "issue": "MCP server not found",
+        "solution": "Ensure Node 18+ is installed and npx is available: node --version"
+      },
+      {
+        "issue": "OAuth flow not completing",
+        "solution": "Run shopify store auth in a terminal with browser access; headless environments need a forwarded port"
+      }
+    ]
+  }
+}

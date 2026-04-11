@@ -139,6 +139,7 @@ Set fields based on the repo's purpose:
 - `foss: true` — FOSS contribution target. Enables `foss-contribution-helper.sh` budget enforcement and issue scanning. Combine with `app_type` and `foss_config`. See `reference/foss-contributions.md`.
 - `app_type` — FOSS repo type: `wordpress-plugin`, `php-composer`, `node`, `python`, `go`, `macos-app`, `browser-extension`, `cli-tool`, `electron`, `cloudron-package`, `generic`.
 - `foss_config` — per-repo FOSS controls: `max_prs_per_week` (default 2), `token_budget_per_issue` (default 10000, enforced by `foss-contribution-helper.sh check`), `blocklist` (bool, maintainer opt-out), `disclosure` (bool, default true — AI note in PRs), `labels_filter` (default `["help wanted", "good first issue", "bug"]`).
+- `platform` — optional platform tag for repos that target a specific commerce/hosting platform. Currently supported: `"shopify"`. When set to `"shopify"`, enables the `shopify-dev-mcp` MCP server (schema-aware GraphQL, Liquid validation, Admin API execution). Requires Shopify CLI 3.93.0+. Full config: `configs/mcp-templates/shopify-dev-mcp-config.json.txt`.
 - `local_only: true` — no remote; skip all `gh` operations.
 - `priority` — `"tooling"` (infrastructure), `"product"` (user-facing), `"profile"` (docs-only).
 - `maintainer` — GitHub username. Used by code-simplifier and maintainer-gated workflows. Auto-detected from `gh api user`; falls back to slug owner.

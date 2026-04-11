@@ -59,6 +59,12 @@
       "type": "remote",
       "url": "https://mcp.cloudflare.com/mcp",
       "description": "Cloudflare Code Mode MCP — Workers, D1, KV, R2, Pages, AI Gateway (OAuth on first connect)"
+    },
+    "shopify-dev-mcp": {
+      "command": "npx",
+      "args": ["-y", "@shopify/dev-mcp@latest"],
+      "enabled": false,
+      "description": "Shopify Dev MCP — schema-aware GraphQL generation, Liquid template validation, Admin API execution. Auto-enable for repos with platform:shopify in repos.json. Requires Shopify CLI 3.93.0+. Full config: configs/mcp-templates/shopify-dev-mcp-config.json.txt"
     }
   }
 }
