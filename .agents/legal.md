@@ -52,24 +52,22 @@ Verify before generating legal-adjacent output:
 
 ### Case Building and Management
 
-Persistent case memory with citation-level precision. Each case requires a dedicated document store (filings, depositions, correspondence, evidence).
+Persistent case memory; dedicated document store per case (filings, depositions, correspondence, evidence).
 
 | Capability | Detail |
 |------------|--------|
-| **Contradiction detection** | Cross-reference testimony against all prior statements; flag contradictions with exact page/line citations; track phrasing shifts (e.g., "I don't recall" → "I'm not sure") |
-| **Timeline reconstruction** | Chronological event timelines from case documents; identify gaps, inconsistencies, sequences supporting or undermining claims |
+| **Contradiction detection** | Cross-reference testimony; flag contradictions with exact page/line citations; track phrasing shifts |
+| **Timeline reconstruction** | Chronological timelines from case documents; identify gaps and inconsistencies |
 | **Evidence mapping** | Track evidence-to-claim links, flag unsupported assertions, identify discovery gaps |
 | **Citation fidelity** | Hallucinated page numbers are malpractice-grade failures; full-text search with source attribution required |
 
 ### Opposing Counsel Profiling
 
-Maintain separate analysis notebooks per counsel.
-
 | Analysis target | Focus |
 |-----------------|-------|
 | **Argumentation** | Favoured legal theories, patterns across cases |
 | **Weakness mapping** | Where arguments failed, which judges rejected them |
-| **Litigation style** | Bluff on motions to compel? Settle early or push to trial? |
+| **Litigation style** | Bluff on motions? Settle early or push to trial? |
 | **Citation habits** | Outdated/overruled authorities? |
 | **Expert witnesses** | Recurring experts, *Daubert*/*Frye* challenge outcomes |
 
