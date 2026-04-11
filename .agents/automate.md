@@ -56,19 +56,7 @@ sleep 2  # between dispatches
 # Helper handles round-robin, backoff, session persistence; validate launch, re-dispatch on failure
 ```
 
-## Agent Routing
-
-Omit `--agent` for code tasks (defaults to Build+). Pass `--agent NAME` for domain tasks. Check bundle routing: `bundle-helper.sh get agent_routing REPO_PATH`.
-
-| Domain | Agent |
-|--------|-------|
-| Code | Build+ (default) |
-| SEO | SEO |
-| Content | Content |
-| Marketing | Marketing |
-| Business | Business |
-| Accounts | Accounts |
-| Research | Research |
+Omit `--agent` for code tasks (defaults to Build+). Pass `--agent NAME` for domain tasks (SEO, Content, Marketing, Business, Accounts, Research). Check bundle routing: `bundle-helper.sh get agent_routing REPO_PATH`.
 
 ## Coordination Commands
 
@@ -112,14 +100,9 @@ launchctl bootout gui/$(id -u)/sh.aidevops.<name> && \
 
 ## Provider Management
 
-**Automatic model routing (v3.7+, GH#17769):** Model list derived at runtime from two sources — no env var config needed:
+**Automatic model routing (v3.7+, GH#17769):** Model list derived at runtime — no env var config needed. Sources: OAuth pool (`oauth-pool-helper.sh list all`) + routing table (`configs/model-routing-table.json`). Round-robin = sonnet-tier model per pool provider. Pulse always uses Anthropic sonnet.
 
-1. **OAuth pool** (`oauth-pool-helper.sh list all`) — available providers
-2. **Routing table** (`configs/model-routing-table.json`) — models per tier per provider
-
-Round-robin = sonnet-tier model per pool provider. Pulse always uses Anthropic sonnet. Workers round-robin across all pool providers.
-
-**No manual model configuration required.** Deprecated `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected one release cycle with deprecation warnings. Remove from `credentials.sh`.
+**No manual model configuration required.** Deprecated `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars respected one release cycle. Remove from `credentials.sh`.
 
 **Backoff:** `headless-runtime-helper.sh backoff status` / `backoff clear PROVIDER`. Exit code 75 = all providers backed off.
 **Escalation:** After 2+ failures, use `--model anthropic/claude-opus-4-6`. One opus dispatch (~3x cost) is cheaper than 5+ failed sonnet dispatches.
