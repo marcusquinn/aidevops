@@ -531,6 +531,10 @@ acquire_instance_lock() {
 # Safe to call multiple times (idempotent).
 #######################################
 release_instance_lock() {
+	# GH#18264: explicitly release the flock before removing the lock directory.
+	# exec 9>&- closes FD 9 in the current (parent) bash process, releasing the
+	# flock so the next pulse cycle can acquire it immediately.
+	exec 9>&- 2>/dev/null || true
 	rm -rf "$LOCKDIR" 2>/dev/null || true
 	return 0
 } # nice — idempotent cleanup
@@ -1619,7 +1623,7 @@ prefetch_state() {
 	while IFS='|' read -r slug path; do
 		(
 			_prefetch_single_repo "$slug" "$path" "${tmpdir}/${idx}.txt"
-		) &
+		) 9>&- &
 		pids+=($!)
 		idx=$((idx + 1))
 	done <<<"$repo_entries"
@@ -2724,7 +2728,7 @@ run_cmd_with_timeout() {
 	shift
 	[[ "$timeout_secs" =~ ^[0-9]+$ ]] || timeout_secs=60
 
-	"$@" &
+	"$@" 9>&- &
 	local cmd_pid=$!
 
 	local elapsed=0
@@ -2777,7 +2781,7 @@ run_stage_with_timeout() {
 	stage_start=$(date +%s)
 	echo "[pulse-wrapper] Stage start: ${stage_name} (timeout ${timeout_seconds}s)" >>"$LOGFILE"
 
-	"$@" &
+	"$@" 9>&- &
 	local stage_pid=$!
 
 	while kill -0 "$stage_pid" 2>/dev/null; do
@@ -3104,7 +3108,7 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 	if [[ -n "$PULSE_MODEL" ]]; then
 		pulse_cmd+=(--model "$PULSE_MODEL")
 	fi
-	"${pulse_cmd[@]}" >>"$LOGFILE" 2>&1 &
+	"${pulse_cmd[@]}" >>"$LOGFILE" 2>&1 9>&- &
 
 	local opencode_pid=$!
 	echo "$opencode_pid" >"$PIDFILE"
@@ -6319,7 +6323,7 @@ run_weekly_complexity_scan() {
 	# timeout 30 prevents network hangs from blocking the pulse cycle.
 	if git -C "$aidevops_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		if ! GIT_TERMINAL_PROMPT=0 timeout 30 \
-			git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1; then
+			git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 9>&-; then
 			echo "[pulse-wrapper] Complexity scan: git pull failed for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
 			return 0
 		fi
@@ -7442,7 +7446,7 @@ _is_task_committed_to_main() {
 	# Ensure we have the latest remote refs (the dispatch loop already
 	# does git pull, but fetch is cheaper and sufficient for log queries)
 	if [[ -d "$repo_path/.git" ]] || git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
-		git -C "$repo_path" fetch origin main --quiet 2>/dev/null || true
+		git -C "$repo_path" fetch origin main --quiet 2>/dev/null 9>&- || true
 	else
 		return 1
 	fi
@@ -8248,7 +8252,7 @@ dispatch_with_dedup() {
 	# close issues as "Invalid — file does not exist" when the target
 	# file was added in a recent commit they haven't pulled.
 	if git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 || {
+		git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 9>&- || {
 			echo "[dispatch_with_dedup] Warning: git pull failed for ${repo_path} — proceeding with current checkout" >>"$LOGFILE"
 		}
 	fi
@@ -8313,7 +8317,7 @@ dispatch_with_dedup() {
 	# exits after its dispatch cycle, bash sends SIGHUP to background jobs.
 	# nohup makes the worker immune to SIGHUP so it survives the parent's
 	# exit. The EXIT trap only releases the instance lock (no child killing).
-	nohup "${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
+	nohup "${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 9>&- &
 	local worker_pid="$!"
 
 	# GH#17549: Stagger delay between worker launches to reduce SQLite
@@ -11783,7 +11787,7 @@ _routine_execute() {
 			--dir "$dispatch_dir" \
 			--agent "$agent_name" \
 			--title "Routine ${routine_id}: ${description}" \
-			--prompt "Execute routine ${routine_id}: ${description}" &
+			--prompt "Execute routine ${routine_id}: ${description}" 9>&- &
 		# Don't wait — let it run in background like a worker
 	else
 		# Fallback: check for custom script
@@ -11803,7 +11807,7 @@ _routine_execute() {
 				--session-key "routine-${routine_id}" \
 				--dir "${repo_path:-$PULSE_DIR}" \
 				--title "Routine ${routine_id}: ${description}" \
-				--prompt "Execute routine ${routine_id}: ${description}" &
+				--prompt "Execute routine ${routine_id}: ${description}" 9>&- &
 		fi
 	fi
 
@@ -11917,13 +11921,14 @@ main() {
 
 	# Open FD 9 for flock supplementary layer (no-op if flock unavailable)
 	exec 9>"$LOCKFILE"
-	# GH#18094: Set O_CLOEXEC on FD 9 so child processes (e.g. bd daemon spawned
-	# by the beads git merge driver) do not inherit the flock across exec().
-	# Without CLOEXEC, any long-lived child holds the flock indefinitely after
-	# the pulse exits, deadlocking every subsequent pulse cycle.
-	# python3 is a hard dependency of the pulse; the || true makes this a no-op
-	# on systems where python3 is unexpectedly absent.
-	python3 -c "import fcntl; fcntl.fcntl(9, fcntl.F_SETFD, fcntl.FD_CLOEXEC)" 2>/dev/null || true
+	# GH#18264: FD 9 inheritance is prevented by appending 9>&- to every child-
+	# spawning command below (backgrounded workers, git calls, subshells). This
+	# tells bash to close FD 9 in the child before exec — the parent's FD 9 and
+	# flock are unaffected. The previous python3 fcntl(F_SETFD) approach (GH#18094)
+	# was ineffective: fcntl() operates on the calling process's FD table, so
+	# running it in a child python3 process only set CLOEXEC on python's copy of
+	# FD 9, which was discarded when python exited. The parent bash FD 9 was never
+	# modified. Bash has no built-in for fcntl().
 	if ! acquire_instance_lock; then
 		return 0
 	fi
@@ -13549,7 +13554,7 @@ dispatch_foss_workers() {
 			--dir "$foss_path" \
 			--title "FOSS: ${foss_slug} #${foss_issue_num}: ${foss_issue_title}" \
 			--prompt "/full-loop Implement issue #${foss_issue_num} (https://github.com/${foss_slug}/issues/${foss_issue_num}) -- ${foss_issue_title}. This is a FOSS contribution.${disclosure_flag} After completion, run: foss-contribution-helper.sh record ${foss_slug} <tokens_used>" \
-			</dev/null >>"/tmp/pulse-foss-${foss_issue_num}.log" 2>&1 &
+			</dev/null >>"/tmp/pulse-foss-${foss_issue_num}.log" 2>&1 9>&- &
 		sleep 2
 
 		foss_count=$((foss_count + 1))
