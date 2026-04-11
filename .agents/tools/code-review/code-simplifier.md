@@ -163,7 +163,7 @@ When the authenticated user IS the maintainer, issues skip the review gate and g
 
 **Post-merge backfill (t1855):** Each scan cycle calls `_simplification_state_backfill_closed()` which queries recently closed `simplification-debt` issues, extracts file paths from titles, and records their current hashes in state. This ensures all collaborator instances see completed work even when the worker that did the simplification didn't update the state file. The state JSON uses a single canonical format: `{ "files": { "<path>": { "hash", "at", "pr", "passes" } } }`.
 
-**Daily LLM sweep:** Reserved for stall detection only. When simplification debt count hasn't decreased in 6h (`SWEEP_STALL_HOURS`), creates a `tier:reasoning` issue for LLM-powered deep review. Dedup checks both title patterns to prevent duplicates (t1855). Managed by `complexity-scan-helper.sh sweep-check`.
+**Daily LLM sweep:** Reserved for stall detection only. When simplification debt count hasn't decreased in 6h (`SWEEP_STALL_HOURS`) AND zero issues were closed in that window, creates a `tier:reasoning` issue for LLM-powered deep review. Throughput check (GH#18286) prevents false-positive stalls when new issues are created at a similar rate to closures. Dedup checks both title patterns to prevent duplicates (t1855). Managed by `complexity-scan-helper.sh sweep-check`.
 
 **CI ratchet:** `.agents/configs/complexity-thresholds.conf` (`FUNCTION_COMPLEXITY_THRESHOLD`, `NESTING_DEPTH_THRESHOLD`, `FILE_SIZE_THRESHOLD`). Lower after simplification PRs merge.
 

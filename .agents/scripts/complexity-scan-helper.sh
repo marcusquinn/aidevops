@@ -721,8 +721,27 @@ cmd_sweep_check() {
 				return 1
 			fi
 			if [[ "$current_debt" -ge "$snapshot_count" ]]; then
-				# Debt hasn't decreased — sweep needed
-				echo "needed|debt stalled at ${current_debt} for ${stall_hours}h+ (was ${snapshot_count})"
+				# Net count hasn't decreased — but check throughput before declaring stall (GH#18286).
+				# If issues were closed in the stall window, the system is working (new issues
+				# are being created at a similar rate). A true stall means zero closures.
+				local recent_closures=0
+				local since_date
+				since_date=$(date -u -d "@$((now_epoch - stall_seconds))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) ||
+					since_date=$(date -u -r "$((now_epoch - stall_seconds))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) ||
+					since_date=""
+				if [[ -n "$since_date" ]]; then
+					recent_closures=$(gh api graphql -f query="query { search(query:\"repo:${repo_slug} label:simplification-debt is:issue is:closed closed:>${since_date}\", type:ISSUE) { issueCount } }" \
+						--jq '.data.search.issueCount' 2>/dev/null) || recent_closures=0
+					[[ "$recent_closures" =~ ^[0-9]+$ ]] || recent_closures=0
+				fi
+				if [[ "$recent_closures" -gt 0 ]]; then
+					# Active throughput — system is working, not stalled. Update snapshot.
+					echo "${now_epoch}|${current_debt}" >"$SWEEP_DEBT_SNAPSHOT"
+					echo "not-needed|debt at ${current_debt} but ${recent_closures} issues closed in ${stall_hours}h (active throughput)"
+					return 1
+				fi
+				# Zero throughput — genuine stall, sweep needed
+				echo "needed|debt stalled at ${current_debt} for ${stall_hours}h+ (was ${snapshot_count}, 0 closures)"
 				# Update snapshot for next check
 				echo "${now_epoch}|${current_debt}" >"$SWEEP_DEBT_SNAPSHOT"
 				return 0
