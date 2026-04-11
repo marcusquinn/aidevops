@@ -40,23 +40,17 @@ Expand the test corpus with recently merged worker PRs. Run weekly or on-demand.
 ```bash
 CORPUS="${HOME}/.aidevops/.agent-workspace/work/tier-corpus"
 mkdir -p "$CORPUS"
-
-# Extract new PRs from all pulse-enabled repos
 for slug in $(jq -r '.initialized_repos[] | select(.pulse == true) | .slug' ~/.config/aidevops/repos.json); do
   ~/.aidevops/agents/scripts/brief-tier-test-helper.sh extract \
-    --repo "$slug" --label origin:worker --max-files 3 --limit 20 \
-    --output "$CORPUS"
+    --repo "$slug" --label origin:worker --max-files 3 --limit 20 --output "$CORPUS"
 done
-
-# Report corpus size
 echo "Corpus: $(jq 'length' "$CORPUS/index.json") cases"
 ```
 
 After extraction, generate enriched briefs for new cases:
 
 ```bash
-~/.aidevops/agents/scripts/brief-tier-test-helper.sh enrich \
-  --corpus "$CORPUS" --model sonnet
+~/.aidevops/agents/scripts/brief-tier-test-helper.sh enrich --corpus "$CORPUS" --model sonnet
 ```
 
 ### `/optimize-tiers test`
@@ -66,10 +60,7 @@ Run Haiku against the corpus and score results:
 ```bash
 CORPUS="${HOME}/.aidevops/.agent-workspace/work/tier-corpus"
 RESULTS="${HOME}/.aidevops/.agent-workspace/work/tier-results.tsv"
-
-~/.aidevops/agents/scripts/brief-tier-test-helper.sh test \
-  --corpus "$CORPUS" --model haiku --results "$RESULTS"
-
+~/.aidevops/agents/scripts/brief-tier-test-helper.sh test --corpus "$CORPUS" --model haiku --results "$RESULTS"
 ~/.aidevops/agents/scripts/brief-tier-test-helper.sh report --results "$RESULTS"
 ```
 
@@ -93,10 +84,7 @@ Budget: 30 iterations max, 3 trials per hypothesis (Haiku output has variance).
 
 ### Weekly corpus expansion (L2)
 
-Add to pulse routine (runs once per week):
-
 ```bash
-# In pulse-wrapper.sh or as a launchd timer
 LAST_EXPAND="${HOME}/.aidevops/.agent-workspace/tmp/tier-corpus-last-expand"
 if [[ ! -f "$LAST_EXPAND" ]] || [[ $(( $(date +%s) - $(cat "$LAST_EXPAND") )) -gt 604800 ]]; then
   /optimize-tiers expand
@@ -106,7 +94,7 @@ fi
 
 ### Production telemetry (L1, always on)
 
-Tier telemetry is recorded automatically by:
+Recorded automatically by:
 - `dispatch-ledger-helper.sh register` — records tier + model at dispatch time
 - `dispatch-ledger-helper.sh record-outcome` — records outcome + escalation reason
 - Append-only log: `~/.aidevops/.agent-workspace/tmp/tier-telemetry.jsonl`
