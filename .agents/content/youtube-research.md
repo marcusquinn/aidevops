@@ -69,10 +69,7 @@ Target: $ARGUMENTS
 
 1. Compare your videos vs competitors: topics covered/not covered, unique angles.
 2. **Keyword clustering:** extract common keywords from competitor titles, group into clusters, rank by frequency and avg views.
-3. **Opportunity scoring:**
-   - High views + low competition = high opportunity
-   - High views + high competition = proven topic, need unique angle
-   - Low views + low competition = risky, validate demand first
+3. **Opportunity scoring:** High views + low competition = high opportunity. High views + high competition = proven topic, need unique angle. Low views + low competition = risky, validate demand first.
 
 #### Mode D: Video Analysis (`video VIDEO_ID`)
 
@@ -90,49 +87,11 @@ Target: $ARGUMENTS
 
 ```text
 YouTube Research: {target}
-
-Summary:
-- {key insight 1-3}
-
-Outlier Videos (3x+ avg views):
-1. {title} - {views} views ({ratio}x avg)
-
-Common Patterns:
-- Topics: {clusters} | Title style: {pattern}
-- Video length: {avg} | Upload frequency: {freq}
-
-Content Opportunities:
-1. {opportunity} - {reasoning}
-
-Next Steps:
-1. /youtube script "{topic}"
-2. /youtube research @handle
-3. /youtube research video VIDEO_ID
-```
-
-Offer follow-up: generate script for top opportunity, research another competitor, set up monitoring (`pipeline.md`), or export findings.
-
-## Example: Competitor Analysis
-
-```text
-User: /youtube research @fireship
-
-Channel: Fireship | 3.2M subs | 245 videos | Avg: 1.8M views
-
-Outlier Videos (3x+ avg = 5.4M+):
-1. "100+ JavaScript Concepts you Need to Know" - 12.4M (6.8x)
-2. "I built the same app 10 times" - 8.9M (4.8x)
-3. "JavaScript Pro Tips - Code This, NOT That" - 7.2M (3.9x)
-
-Patterns: comparison videos, "X concepts" lists, code quality tips
-Titles: numbers + actionable promise | Length: 8-12 min | Freq: 2-3/week
-Hook: contrarian statement -> immediate value promise
-
-Opportunities:
-1. "100+ Python Concepts you Need to Know" - proven format, untapped niche
-2. "I built the same AI app 10 times" - trending topic + proven format
-
-Next: /youtube script "100+ Python Concepts you Need to Know"
+Summary: {key insight 1-3}
+Outlier Videos (3x+ avg): {title} - {views} ({ratio}x avg)
+Patterns: Topics: {clusters} | Titles: {pattern} | Length: {avg} | Freq: {freq}
+Opportunities: {opportunity} - {reasoning}
+Next: /youtube script "{topic}" | /youtube research @handle | /youtube research video VIDEO_ID
 ```
 
 ## Related
