@@ -732,13 +732,19 @@ files_include_workflow_changes() {
 # Detects whether the current session is a headless worker or interactive user.
 # Used to tag issues, TODOs, and PRs with origin:worker or origin:interactive.
 #
-# Detection signals (checked in priority order):
-#   1. FULL_LOOP_HEADLESS=true — set by supervisor dispatch
-#   2. AIDEVOPS_HEADLESS=true — set by headless-runtime-helper.sh
-#   3. OPENCODE_HEADLESS=true — set by OpenCode headless mode
-#   4. GITHUB_ACTIONS=true — CI environment
-#   5. No TTY (! -t 0 && ! -t 1) — non-interactive shell
-#   6. Default: interactive
+# Design: inverted logic — detect known headless signals, default to interactive.
+# AI coding tools (OpenCode, Claude Code, Cursor, Kiro, Codex, Windsurf, etc.)
+# all run bash tools without a TTY, so TTY presence is not a reliable signal.
+# The headless dispatch infrastructure sets explicit env vars; everything else
+# is a user session.
+#
+# Known headless signals (exhaustive — add new ones here as dispatch infra grows):
+#   FULL_LOOP_HEADLESS=true   — pulse supervisor dispatch
+#   AIDEVOPS_HEADLESS=true    — headless-runtime-helper.sh
+#   OPENCODE_HEADLESS=true    — OpenCode headless mode
+#   GITHUB_ACTIONS=true       — CI environment
+#
+# Default: interactive — covers all AI coding tools without runtime-specific checks.
 #
 # Usage:
 #   local origin; origin=$(detect_session_origin)
@@ -748,7 +754,8 @@ files_include_workflow_changes() {
 #   # Returns: "origin:worker" or "origin:interactive"
 
 detect_session_origin() {
-	# Explicit headless env vars (set by dispatch infrastructure)
+	# Known headless signals — set by dispatch infrastructure only.
+	# If none of these are set, the session is interactive by default.
 	if [[ "${FULL_LOOP_HEADLESS:-}" == "true" ]]; then
 		echo "worker"
 		return 0
@@ -761,33 +768,15 @@ detect_session_origin() {
 		echo "worker"
 		return 0
 	fi
-	# CI environments are always workers
 	if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
 		echo "worker"
 		return 0
 	fi
-	# OpenCode interactive session: sets OPENCODE=1 and OPENCODE_PID in the
-	# shell environment. TTY is not available in OpenCode tool execution context
-	# so the TTY check below would incorrectly classify these as workers.
-	# OPENCODE_HEADLESS (checked above) is set by headless-runtime-helper.sh
-	# for worker dispatch — its absence here means this is a user session.
-	if [[ "${OPENCODE:-}" == "1" ]] || [[ -n "${OPENCODE_PID:-}" ]]; then
-		echo "interactive"
-		return 0
-	fi
-	# Claude Code interactive session: sets CLAUDE_SESSION_ID or CLAUDE_CODE.
-	if [[ -n "${CLAUDE_SESSION_ID:-}" ]] || [[ "${CLAUDE_CODE:-}" == "1" ]]; then
-		echo "interactive"
-		return 0
-	fi
-	# No TTY = non-interactive (headless dispatch, cron, pipe)
-	# NOTE: This fallback is unreliable for AI coding tools (OpenCode, Claude Code)
-	# which run bash tools without a TTY even in interactive sessions.
-	# The runtime-specific checks above must cover all supported runtimes.
-	if [[ ! -t 0 ]] && [[ ! -t 1 ]]; then
-		echo "worker"
-		return 0
-	fi
+	# Default: interactive.
+	# Covers all AI coding tools (OpenCode, Claude Code, Cursor, Kiro, Codex,
+	# Windsurf, Gemini CLI, Kimi CLI, etc.) without needing runtime-specific
+	# env var checks. TTY presence is NOT checked — it is unreliable for all
+	# AI coding tools which run bash tools without a TTY.
 	echo "interactive"
 	return 0
 }
