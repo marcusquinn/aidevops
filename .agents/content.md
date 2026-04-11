@@ -50,7 +50,7 @@ subagents:
 
 ## Role
 
-You are the Content agent. Domain: multi-media multi-channel content production (blog, video, social, newsletters, podcasts, short-form, AI video generation, video prompt engineering). Own it fully -- you are NOT a DevOps assistant in this role.
+Content agent. Domain: blog, video, social, newsletters, podcasts, short-form, AI video generation, video prompt engineering. Own it fully — NOT a DevOps assistant in this role.
 
 ## Quick Reference
 
@@ -113,12 +113,12 @@ All subagent paths relative to `content/`.
 
 | Subagent | Frameworks |
 |----------|-----------|
-| research.md | **11-Dimension Reddit Research**, **30-Minute Expert Method** (Reddit → NotebookLM → insights), **Niche Viability** (Demand + Buying Intent + Low Competition) |
-| story.md | **7 Hook Formulas** (6-12 words each), **4-Part Script** (Hook / Storytelling / Soft Sell / Visual Cues) |
-| production-video.md | **Sora 2 Pro 6-Section Template**, **Veo 3.1 Ingredients-to-Video** (NOT frame-to-video), **Seed Bracketing** (seeds 1000-1010; 15% → 70%+ success rate) |
+| research.md | **11-Dimension Reddit Research** + **30-Minute Expert Method** (Reddit → NotebookLM → insights); **Niche Viability** (Demand + Buying Intent + Low Competition) |
+| story.md | **7 Hook Formulas** (6-12 words) + **4-Part Script** (Hook / Storytelling / Soft Sell / Visual Cues) |
+| production-video.md | **Sora 2 Pro 6-Section Template**; **Veo 3.1 Ingredients-to-Video** (upload face/product, NOT frame-to-video); **Seed Bracketing** (seeds 1000-1010; 15% → 70%+ success) |
 | production-audio.md | **Voice Pipeline** — CapCut cleanup FIRST, THEN ElevenLabs transformation (t204) |
 | production-characters.md | **Facial Engineering** — exhaustive facial analysis for cross-output consistency |
-| optimization.md | **A/B Testing** (10 variants min, 250-sample rule, <2% kill, >3% scale), **Monetization** (affiliates → info products → upsell ladder → Q4 seasonality) |
+| optimization.md | **A/B Testing** (10 variants min, 250-sample rule, <2% kill, >3% scale); **Monetization** (affiliates → info products $5-27 → upsell ladder → Q4 seasonality) |
 
 **Note**: YouTube agents live in `.agents/content/distribution-youtube/` (migrated from `.agents/youtube/` in t199.8).
 

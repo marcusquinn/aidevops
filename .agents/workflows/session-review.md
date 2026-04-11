@@ -70,11 +70,9 @@ Output: practices followed, practices missed with recommendations.
 ~/.aidevops/agents/scripts/session-distill-helper.sh auto
 ```
 
-Analyses commits for patterns (fixes, features, refactors), extracts learnings (ERROR_FIX, WORKING_SOLUTION, etc.), stores to memory.
-
 ### Step 5: Conversation Value Extraction + Knowledge Capture
 
-**MANDATORY**: Re-read the entire conversation. Auto-distill (Step 4) only captures what made it into commits. The conversation contains insights, decisions, and observations not in any artifact.
+**MANDATORY**: Re-read the entire conversation — auto-distill (Step 4) only captures commits; this step surfaces decisions, observations, and insights not in any artifact.
 
 **Signals to capture:**
 
@@ -93,9 +91,7 @@ Analyses commits for patterns (fixes, features, refactors), extracts learnings (
 | Tool discoveries | Unexpected tool behaviour | Relevant subagent |
 | Temporary workarounds | Hacks that need proper fixes | TODO.md, code comments |
 
-**Process**: Scan conversation chronologically. For each finding: already captured in commit, PR, memory, TODO, or doc? If not → capture now. If partial → verify completeness. User corrections reveal framework gaps — prioritize these.
-
-**The goal is zero knowledge loss.** Every insight traceable to at least one artifact.
+**Process**: Scan chronologically; for each insight not yet in commit/PR/memory/TODO/doc → capture now; partial → complete. User corrections reveal framework gaps — prioritize. Goal: zero knowledge loss; every insight traceable to an artifact.
 
 Output: newly captured items with locations, already-captured items, unfinished threads with created TODOs/issues.
 
@@ -120,10 +116,8 @@ Output: status (Continue/End Recommended/End Required), reason, final actions if
 
 ### Security Summary (t1428.5)
 
-Run `/session-review security` or `session-review-helper.sh security` for a unified post-session security summary.
-
 ```bash
-session-review-helper.sh security              # Full summary
+session-review-helper.sh security              # Full summary (/session-review security)
 session-review-helper.sh security --json       # JSON output
 session-review-helper.sh security --session ID # Filter by session
 session-review-helper.sh gather --security     # Include in standard gather
