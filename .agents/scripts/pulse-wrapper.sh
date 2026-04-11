@@ -10845,6 +10845,18 @@ _close_conflicting_pr() {
 	local repo_slug="$2"
 	local pr_title="$3"
 
+	# GH#18285 post-mortem: origin:interactive PRs are created during maintainer
+	# sessions. The task-ID-on-main heuristic produces false positives when
+	# multiple PRs share a task ID (incremental work on the same issue).
+	# Maintainers decide what is redundant — the pulse must not auto-close their work.
+	local pr_labels
+	pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json labels --jq '.labels[].name' 2>/dev/null || true)
+	if printf '%s' "$pr_labels" | grep -q 'origin:interactive'; then
+		echo "[pulse-wrapper] Deterministic merge: skipping auto-close of origin:interactive PR #${pr_number} — maintainer session work is never auto-closed" >>"$LOGFILE"
+		return 0
+	fi
+
 	# GH#17574: Check if the work is already on the default branch.
 	# Extract task ID from PR title (e.g., "t153: add dark mode" → "t153")
 	# and search recent commits on the default branch.

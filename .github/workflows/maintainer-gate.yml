@@ -78,6 +78,27 @@ jobs:
           PR_LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
             --json labels --jq '.labels[].name' 2>/dev/null || true)
 
+          # ---------------------------------------------------------------
+          # Check -1: origin:interactive — implied maintainer approval
+          # GH#18285 post-mortem: PRs created during interactive maintainer
+          # sessions carry origin:interactive. The maintainer was present and
+          # directing the work — no separate cryptographic approval is needed.
+          # This is structurally equivalent to the maintainer opening the PR
+          # themselves. origin:interactive is set by the plugin/claim-task-id
+          # and cannot be applied by workers (origin:worker is protected by
+          # Job 5; interactive is the complementary signal).
+          # ---------------------------------------------------------------
+          if echo "$PR_LABELS" | grep -q 'origin:interactive'; then
+            echo "PASS: PR #$PR_NUMBER has origin:interactive — maintainer session implies approval"
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="maintainer-gate" \
+              -f description="origin:interactive — maintainer session implies approval" \
+              2>/dev/null || true
+            exit 0
+          fi
+
           if echo "$PR_LABELS" | grep -q 'needs-maintainer-review'; then
             # Check for signed approval comment on the PR itself
             SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
