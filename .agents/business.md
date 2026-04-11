@@ -36,37 +36,30 @@ subagents:
 
 ## Architecture
 
-```text
-Pulse supervisor (every 2 min, stateless)
-├── Fetches GitHub state (issues, PRs)
-├── Observes outcomes (stale PRs, failures)
-├── Dispatches to available worker slots
-└── Exits
+Named runners map to company functions. Pulse dispatches tasks by label; each runner operates in its own worktree.
 
-Named Runners:
-├── hiring-coordinator   — Recruitment pipeline
-├── finance-reviewer     — Expense/invoice review
-├── ops-monitor          — Infrastructure monitoring
-├── marketing-scheduler  — Campaign scheduling
-└── support-triage       — Customer issue classification
-```
+| Runner | Function |
+|--------|----------|
+| `hiring-coordinator` | Recruitment pipeline |
+| `finance-reviewer` | Expense/invoice review |
+| `ops-monitor` | Infrastructure monitoring |
+| `marketing-scheduler` | Campaign scheduling |
+| `support-triage` | Customer issue classification |
 
-**Flow**: Task arrives (issue/TODO/mailbox) → pulse dispatches to runner → worker executes → pulse observes outcomes → files improvement issues if patterns emerge.
+**Flow**: Task (issue/TODO/mailbox) → pulse dispatches → runner executes in worktree → pulse observes outcomes → files improvement issues on patterns.
 
 ## Guardrails
 
-Inherited from `/full-loop` and worktree isolation:
+Inherited from `/full-loop` and worktree isolation. Finance and legal runners additionally require PR review gates.
 
 - **Scope**: Path/tool whitelists per runner via AGENTS.md
-- **Audit**: Git commits and PR history
-- **Rollback**: Worktree isolation — each runner works in its own worktree
+- **Audit**: Git commits + PR history
+- **Rollback**: Worktree isolation per runner
 - **Judgment**: `/full-loop` decides stop/retry/escalate
 
-Finance and legal runners require dedicated worktrees + PR review gates.
+## Runner Setup
 
-## Setting Up Runners
-
-Create via `runner-helper.sh`. Each runner gets a personality file at `~/.aidevops/.agent-workspace/runners/<name>/AGENTS.md`. Full templates and bootstrap script: `business/company-runners.md`.
+Create via `runner-helper.sh`. Each runner gets `~/.aidevops/.agent-workspace/runners/<name>/AGENTS.md`. Full templates: `business/company-runners.md`.
 
 ```bash
 runner-helper.sh create hiring-coordinator \
@@ -76,15 +69,15 @@ runner-helper.sh create finance-reviewer \
 runner-helper.sh create ops-monitor \
   --description "Infrastructure - uptime, deploys, incidents" --model haiku
 
-runner-helper.sh list                                          # Show all runners
-runner-helper.sh run hiring-coordinator "Review latest 3 applications"  # Manual dispatch
+runner-helper.sh list                    # Show all runners
+runner-helper.sh run hiring-coordinator "Review latest 3 applications"
 ```
 
-Pulse handles dispatch automatically. For manual one-off tasks, use `/full-loop` directly.
+Pulse handles dispatch automatically. Manual one-off tasks: `/full-loop` directly.
 
 ## Cross-Function Workflows
 
-Multi-department tasks use chained GitHub issues. Pulse routes by label:
+Multi-department tasks use chained GitHub issues routed by label. Single-department sequences (e.g., monthly close) use multiple issues with the same label — pulse processes in order.
 
 ```bash
 # New hire onboarding (3 departments)
@@ -93,12 +86,10 @@ gh issue create --repo <owner/repo> --title "Onboard: Setup payroll" --label "fi
 gh issue create --repo <owner/repo> --title "Onboard: Provision accounts" --label "ops"
 ```
 
-Sequenced single-department work (e.g., monthly close) uses multiple issues with the same label — pulse processes in order.
-
 ## Pre-flight Questions
 
 1. Which functions need autonomous agents vs. human-triggered workflows?
-2. Escalation path when agent encounters out-of-scope work?
+2. Escalation path for out-of-scope work?
 3. Budget and rate limits per function?
 4. Which operations require human approval?
-5. How are cross-function handoffs tracked and audited?
+5. How are cross-function handoffs tracked?
