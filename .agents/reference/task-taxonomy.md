@@ -62,6 +62,7 @@ If **any** of the following are true, the task is **not** `tier:simple`. Use `ti
 | 6 | >4 acceptance criteria | Many criteria = many things to coordinate and verify |
 | 7 | Keywords in brief: "graceful degradation", "fallback", "retry", "conditional", "coordinate", "design" | These signal judgment, not transcription |
 | 8 | Cross-package changes (multiple `packages/` dirs, multiple apps) | Cross-boundary reasoning exceeds simple-tier capability |
+| 9 | Target file is large (>500 lines) and brief lacks verbatim `oldString`/`newString` | Worker must navigate and locate the edit target — that is judgment work, not transcription. Large files with only a description of what to change require `tier:standard` to read context and identify the correct location |
 
 ### tier:standard vs tier:reasoning Signals
 
@@ -81,7 +82,8 @@ Before assigning a tier, verify these in order. Stop at the first failure:
 2. **Check code blocks** — skeletons or pseudocode disqualifies `tier:simple`; must be exact, copy-pasteable edits
 3. **Scan for judgment keywords** — fallback, retry, graceful, conditional, coordinate, design in the brief disqualifies `tier:simple`
 4. **Check estimate** — >1h disqualifies `tier:simple`
-5. **When uncertain** — `tier:standard` (the default exists for this reason)
+5. **Check file size** — if the target file is >500 lines and the brief does not include verbatim `oldString`/`newString`, disqualifies `tier:simple`
+6. **When uncertain** — `tier:standard` (the default exists for this reason)
 
 See `templates/brief-template.md` "Tier checklist" for the structured version used during task creation.
 
