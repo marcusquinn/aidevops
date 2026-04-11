@@ -7,13 +7,9 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Analyze web performance for the specified URL using Chrome DevTools MCP.
+Analyze web performance for `$ARGUMENTS` using Chrome DevTools MCP. Verify: `which npx && npx chrome-devtools-mcp@latest --version || echo "Install: npm i -g chrome-devtools-mcp"`. Read `~/.aidevops/agents/tools/performance/performance.md` for CWV thresholds and fix patterns.
 
-URL/Target: $ARGUMENTS
-
-**Prerequisites:** Verify Chrome DevTools MCP: `which npx && npx chrome-devtools-mcp@latest --version || echo "Install: npm i -g chrome-devtools-mcp"`. Read `~/.aidevops/agents/tools/performance/performance.md` for CWV thresholds, common issues, and fix patterns.
-
-Run in order: Lighthouse audit → Core Web Vitals (FCP, LCP, CLS, FID, TTFB) → Network analysis (third-party scripts, request chains, bundle sizes) → Accessibility (WCAG).
+Run: Lighthouse audit → Core Web Vitals (FCP, LCP, CLS, FID, TTFB) → Network analysis (third-party scripts, request chains, bundle sizes) → Accessibility (WCAG).
 
 ## Options
 
