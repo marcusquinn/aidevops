@@ -20,7 +20,7 @@ Log an issue with the aidevops framework to GitHub.
 
 **Arguments**: Optional title hint, e.g., `/log-issue-aidevops "Update check not working"`
 
-All issues from non-collaborators are gated behind `needs-maintainer-review` — a maintainer must approve before the pipeline picks them up. This command produces higher-quality reports than the web form because it gathers diagnostics, checks duplicates, and validates before submission.
+All issues from non-collaborators are gated behind `needs-maintainer-review`. This command produces higher-quality reports than the web form by gathering diagnostics, checking duplicates, and validating before submission.
 
 ## Workflow
 
@@ -34,60 +34,39 @@ Collects: aidevops version (local + latest), AI assistant, OS/shell, repo contex
 
 ### Step 2: Understand the Issue
 
-Ask the user:
-1. What happened?
-2. What did you expect?
-3. Steps to reproduce (if known)?
+Ask the user: (1) What happened? (2) What did you expect? (3) Steps to reproduce?
 
 Use any provided argument as the title starting point. Review session context for commands, errors, and intent.
 
-### Step 3: Check for Duplicates
+### Step 3: Pre-Filing Checks
+
+**Duplicates:**
 
 ```bash
 gh issue list -R marcusquinn/aidevops --state all --search "KEYWORDS" --limit 10
 ```
 
-If duplicates found, present them and ask: add comment to existing / create new / review first.
+If duplicates found, ask: add comment to existing / create new / review first.
 
-### Step 3.5: Customization Routing
+**Customization routing** — check before filing:
 
-Before filing, check whether this is a customization need rather than a framework issue:
-
-| User says | Likely route |
-|-----------|-------------|
-| "My script edits get overwritten" | Customization — use `~/.aidevops/agents/custom/scripts/` |
-| "I want X to behave differently" | Customization — create a wrapper in `custom/` |
-| "I added an agent but it disappeared" | Customization — use `custom/` or `draft/` (root agents are overwritten) |
+| User says | Route |
+|-----------|-------|
+| "My script edits get overwritten" | `~/.aidevops/agents/custom/scripts/` — see `reference/customization.md` |
+| "I want X to behave differently" | `custom/` wrapper |
+| "I added an agent but it disappeared" | `custom/` or `draft/` |
 | "This script is broken for everyone" | Bug — file an issue |
-| "The framework should support X" | Enhancement — file an issue (maintainers assess fit) |
+| "The framework should support X" | Enhancement — file an issue |
 
-If the need is customization, explain the `custom/` directory and link to `reference/customization.md`. Do not file an issue.
+**Performance claims (MANDATORY):** Verify line references match actual code, require timing measurements (`time`/`hyperfine`), check data scale. No measurements = no issue. Direct to "Performance Optimization" issue template.
 
-### Step 3.6: Performance Issue Validation (MANDATORY for performance/optimization claims)
+**Enhancements only — architectural alignment:**
+- Observed failure first (preemptive rules = prompt bloat)
+- Intelligence over determinism (model judgment vs. deterministic gate)
+- Prompt cost vs. value
+- If proposal doesn't survive these, discuss before filing.
 
-If the issue involves performance, optimization, O(n^2) claims, or "hot path" assertions:
-
-1. **Verify line references**: Read the cited file at the cited line number. If the code at that line does not match the claim, REJECT the issue. Do not file issues with hallucinated line numbers.
-2. **Require measurements**: "May cause O(n^2)" is not evidence. Require actual timing data (`time`, `hyperfine`, profiling output). No measurements = no issue.
-3. **Verify data scale**: Check how many items the loop actually processes and how often it runs. A loop over 5 items on a 60-second timer is not a performance problem regardless of algorithmic complexity.
-4. **Check for template-driven findings**: If the user or AI is filing multiple performance issues with identical structure ("nested loops", "O(n^2)", "hot path") across different files, this is likely a batch code scan without verification. Validate each independently.
-
-If any check fails, explain why and do not file the issue. Direct the user to the "Performance Optimization" issue template which requires mandatory evidence fields.
-
-### Step 3.7: Architectural Alignment (enhancements only)
-
-Skip for bugs with clear reproduction steps — bugs are observed failures and belong in the tracker.
-
-For enhancements, feature requests, and architectural changes, evaluate against:
-
-- **Observed failure first**: Is this addressing an actual failure, or preemptive? Preemptive rules are prompt bloat.
-- **Intelligence over determinism**: Does this add a deterministic gate where model judgment would work better?
-- **Prompt cost**: Every instruction has a per-turn cost. Is the value worth it?
-- **External pattern adoption**: A "gap" vs another framework may be a deliberate omission in an intelligence-first design.
-
-If the proposal doesn't survive these questions, discuss before filing — it may be better as a memory entry.
-
-### Step 4: Compose the Issue
+### Step 4: Compose and Confirm
 
 ```markdown
 ## Description
@@ -106,11 +85,9 @@ If the proposal doesn't survive these questions, discuss before filing — it ma
 {errors, session context}
 ```
 
-### Step 5: Confirm Before Submitting
-
 Show the user: title, body preview, label. Offer: create / edit title / edit description / cancel.
 
-### Step 6: Create the Issue
+### Step 5: Create the Issue
 
 ```bash
 gh issue create -R marcusquinn/aidevops \
@@ -122,25 +99,15 @@ EOF
   --label "LABEL"
 ```
 
-### Step 7: Confirm Success
+Labels: `bug` (broken), `enhancement` (new feature), `question` (help), `documentation`, `performance`.
 
-Output the issue URL. Note: user can add comments, subscribe to notifications, or reference with `Fixes #NNN`.
-
-## Label Selection
-
-| Issue Type | Label |
-|------------|-------|
-| Something broken | `bug` |
-| New feature request | `enhancement` |
-| Question/help needed | `question` |
-| Documentation issue | `documentation` |
-| Performance problem | `performance` |
+Output the issue URL. User can add comments or reference with `Fixes #NNN`.
 
 ## Privacy
 
-Diagnostics do NOT include credentials or tokens. File paths are included (may reveal username). No file contents uploaded. User reviews everything before submission.
+Diagnostics do NOT include credentials or tokens. File paths are included (may reveal username). User reviews everything before submission.
 
 ## Error Handling
 
-- `gh` not authenticated: prompt `gh auth login`, then retry.
-- Network failure: prompt user to check connection and retry.
+- `gh` not authenticated: `gh auth login`, then retry.
+- Network failure: check connection and retry.
