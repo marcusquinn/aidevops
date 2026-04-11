@@ -14,7 +14,7 @@ Arguments: $ARGUMENTS
 ## Steps
 
 ```bash
-# 1. Active workers (grep approximation — pulse deduplicates by issue+dir; use pulse logs for authoritative count)
+# 1. Active workers (grep approximation; pulse logs are authoritative)
 MAX_WORKERS=$(test -r ~/.aidevops/logs/pulse-max-workers && cat ~/.aidevops/logs/pulse-max-workers || echo 4)
 WORKER_COUNT=$(ps axo command | grep '/full-loop' | grep -v grep | wc -l | tr -d ' ')
 AVAILABLE=$((MAX_WORKERS - WORKER_COUNT))
