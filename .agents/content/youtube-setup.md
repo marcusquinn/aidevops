@@ -19,17 +19,15 @@ Arguments: $ARGUMENTS
 ~/.aidevops/agents/scripts/youtube-helper.sh auth-test
 ```
 
-If authentication fails, guide the user to set up their service account key.
+On failure, guide the user to set up their service account key.
 
 ### Step 2: Gather Channel Information
 
-Prompt the user for:
+Collect from $ARGUMENTS or prompt interactively:
 
-1. **Your channel handle** (e.g., @myhandle)
-2. **Niche/topic** (e.g., "AI coding tools", "productivity software")
-3. **Competitor channels** (3-5 handles, e.g., @competitor1 @competitor2)
-
-If the user provides these in $ARGUMENTS, parse them. Otherwise, ask interactively.
+1. **Channel handle** (e.g., @myhandle)
+2. **Niche/topic** (e.g., "AI coding tools")
+3. **Competitor channels** (3-5 handles)
 
 ### Step 3: Validate Channels
 
@@ -39,7 +37,7 @@ For each channel (yours + competitors):
 ~/.aidevops/agents/scripts/youtube-helper.sh channel @handle
 ```
 
-Verify the channel exists and display basic stats (subscribers, videos, total views).
+Verify existence and display basic stats (subscribers, videos, total views).
 
 ### Step 4: Store Configuration in Memory
 
@@ -50,7 +48,7 @@ Verify the channel exists and display basic stats (subscribers, videos, total vi
   "My channel: @myhandle. Niche: [topic]. Competitors: @comp1, @comp2, @comp3"
 ```
 
-Also store individual competitor profiles:
+Store individual competitor profiles:
 
 ```bash
 ~/.aidevops/agents/scripts/memory-helper.sh store \
@@ -65,23 +63,18 @@ Also store individual competitor profiles:
 ~/.aidevops/agents/scripts/youtube-helper.sh competitors @myhandle @comp1 @comp2 @comp3
 ```
 
-Display the comparison table and highlight key insights:
-- Who has the highest views/video ratio?
-- Who has the best views/subscriber ratio?
-- What's the subscriber gap between you and competitors?
+Display the comparison table. Highlight: views/video ratio, views/subscriber ratio, subscriber gap.
 
-### Step 6: Offer Next Steps
+### Step 6: Confirm Next Steps
 
-```text
-Setup complete! Next steps:
+Tell the user setup is complete and suggest:
 
-1. Run /youtube research @competitor to analyze their content strategy
-2. Run /youtube research trending to find trending topics in your niche
-3. Set up automated monitoring with content/distribution-youtube-pipeline.md
-4. Generate your first script with /youtube script "topic"
+- `/youtube research @competitor` — analyze competitor content strategy
+- `/youtube research trending` — find trending topics in their niche
+- `content/distribution-youtube-pipeline.md` — set up automated monitoring
+- `/youtube script "topic"` — generate first script
 
-Your configuration is stored in memory and will persist across sessions.
-```
+Configuration persists across sessions via memory.
 
 ## Options
 
@@ -94,8 +87,8 @@ Your configuration is stored in memory and will persist across sessions.
 
 ## Related
 
-- `content/distribution-youtube.md` - Main YouTube agent
-- `content/distribution-youtube-channel-intel.md` - Competitor analysis
-- `content/distribution-youtube-pipeline.md` - Automated monitoring
-- `youtube-helper.sh` - YouTube Data API wrapper
-- `memory-helper.sh` - Cross-session persistence
+- `content/distribution-youtube.md` — Main YouTube agent
+- `content/distribution-youtube-channel-intel.md` — Competitor analysis
+- `content/distribution-youtube-pipeline.md` — Automated monitoring
+- `youtube-helper.sh` — YouTube Data API wrapper
+- `memory-helper.sh` — Cross-session persistence

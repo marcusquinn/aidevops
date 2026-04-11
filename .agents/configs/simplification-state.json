@@ -6432,7 +6432,7 @@
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "simplified_at": "2026-04-04T09:17:13Z",
       "issue": "GH#17250",
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
       "at": "2026-04-04T14:53:40Z",
       "passes": 1
     },
@@ -7196,5 +7196,10 @@
     "lines": 80,
     "status": "simplified",
     "issue": "GH#17305"
+  },
+  ".agents/content/youtube-setup.md": {
+    "hash": "a73a56209534a71e05ed6485880b63e0439f4d3c0cb0abb93dafb55abe2179f5",
+    "status": "simplified",
+    "lines": 94
   }
 }
