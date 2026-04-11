@@ -2329,6 +2329,40 @@ memory-helper.sh recall "refactor auth middleware" --semantic
 
 **Storage:** `~/.aidevops/.agent-workspace/memory/memory.db` (+ optional `embeddings.db` for semantic search, `namespaces/` for per-runner isolation)
 
+#### Session mining (cross-client)
+
+Beyond explicit `/remember` calls, aidevops can harvest structured session data from each supported AI client's on-disk conversation history. This turns every prior session — regardless of which tool you were using — into searchable context for future sessions.
+
+Per-client storage paths and formats (see `runtime-registry.sh`):
+
+| Client | Storage path | Format | Default |
+|---|---|---|---|
+| OpenCode | `~/.local/share/opencode/opencode.db` | SQLite | ✅ on |
+| Claude Code | `~/.claude/projects/` | JSONL per project | ✅ on |
+| Codex CLI | `~/.codex/sessions/` | JSONL, date-partitioned | ✅ on |
+| Cursor | `~/Library/Application Support/Cursor/User/workspaceStorage/` | SQLite (`state.vscdb`) | ✅ on |
+| Droid | `~/.factory/sessions/` | JSONL per session | opt-in |
+| Gemini CLI | `~/.gemini/tmp/` | JSON per session | opt-in |
+| Continue | `~/.continue/sessions/` | JSON per session | opt-in |
+| Kilo Code | `~/Library/.../kilocode.kilo-code/tasks/` | JSON (Anthropic schema) | opt-in |
+| Kiro | `~/Library/Application Support/Kiro/User/workspaceStorage/` | SQLite | opt-in |
+| Kimi CLI | `~/.kimi/sessions/<id>/context.jsonl` | JSONL | opt-in |
+| Qwen Code | `~/.qwen/tmp/` | JSON per session | opt-in |
+| Windsurf | `~/.codeium/windsurf/cascade/` | protobuf (opaque) | ❌ unsupported |
+| Amp | server-side (cloud) | needs API auth | ❌ unsupported |
+| Aider | `<repo>/.aider.chat.history.md` | markdown transcript | ❌ unsupported |
+
+**Defaults are deliberately conservative.** Only the four tier-1 clients — OpenCode, Claude Code, Codex, and Cursor — have memory mining enabled by default. They have the most mature, stable, documented formats and are the ones most likely to contain the full interactive history you'd want to search.
+
+For every other client, memory mining is **opt-in per runtime**. Enable it with:
+
+```bash
+AIDEVOPS_FEATURE_MEMORY_GEMINI_CLI=yes setup.sh
+AIDEVOPS_FEATURE_MEMORY_CONTINUE=yes setup.sh
+```
+
+**Privacy note.** Session files contain everything you typed — including secrets, credentials, and file contents pasted into prompts. The mining pipeline runs secretlint-style scrubbing at ingestion and defaults to local-only storage. Never sync the memory DB to a shared or cloud location without reviewing what's in it.
+
 See `.agents/memory/README.md` for complete documentation.
 
 ### **Installation**
