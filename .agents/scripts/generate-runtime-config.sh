@@ -993,12 +993,13 @@ _generate_mcp_for_runtime() {
 		'{"url":"https://mcp.cloudflare.com/mcp"}'
 	mcp_count=$((mcp_count + 1))
 
-	# Shopify Dev MCP (disabled by default; enabled per-agent via @shopify)
+	# Shopify Dev MCP — server starts on load (enabled:true); tool calls gated per-agent
+	# via tools: shopify-dev-mcp_*: true in the @shopify agent stub (false globally).
 	# Requires: Node 18+, Shopify CLI 3.93.0+ (npm install -g @shopify/cli@latest)
 	# TODO(permission-migration): when anomalyco/opencode#6892 is resolved, the
 	# per-agent tools: entry can be replaced with permission: shopify-dev-mcp: allow
 	register_mcp_for_runtime "$runtime_id" "shopify-dev-mcp" \
-		'{"command":"npx","args":["-y","@shopify/dev-mcp@latest"]}'
+		'{"command":"npx","args":["-y","@shopify/dev-mcp@latest"],"enabled":true}'
 	mcp_count=$((mcp_count + 1))
 
 	print_success "$display_name: $mcp_count MCP servers processed"

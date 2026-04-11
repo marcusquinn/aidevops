@@ -37,12 +37,13 @@ mcp:
 
 ## Activation
 
-This agent is invoked with `@shopify`. The `shopify-dev-mcp` MCP server is disabled globally
-in `opencode.json` and enabled only for this agent via `tools: shopify-dev-mcp_*: true`.
+This agent is invoked with `@shopify`. The `shopify-dev-mcp` server starts on OpenCode load
+(`enabled: true`). Tool calls are gated: `shopify-dev-mcp_*: false` globally, `true` only for
+this agent — so the tools are available here but not to other agents.
 
 **Headless workers**: The MCP must be registered in `opencode.json` before dispatch.
 If `shopify-dev-mcp` tools are absent from the session tool list, exit BLOCKED immediately:
-`BLOCKED: Required MCP shopify-dev-mcp not available in this session. Register it via setup-mcp-integrations.sh shopify-dev-mcp and restart.`
+`BLOCKED: Required MCP shopify-dev-mcp not available in this session. Run setup-mcp-integrations.sh shopify-dev-mcp and restart OpenCode.`
 
 ## Capabilities
 

@@ -28,10 +28,10 @@
         "shopify-dev-mcp": {
           "command": "npx",
           "args": ["-y", "@shopify/dev-mcp@latest"],
-          "enabled": false
+          "enabled": true
         }
       },
-      "notes": "Disabled globally; enabled per-agent via tools: shopify-dev-mcp_*: true in the @shopify agent. Invoke @shopify to activate. TODO(permission-migration): migrate to permission: shopify-dev-mcp: allow once anomalyco/opencode#6892 is resolved."
+      "notes": "Server starts on load (enabled: true). Tool calls gated: shopify-dev-mcp_*: false globally, true only in the @shopify agent stub. Invoke @shopify to use the tools. TODO(permission-migration): migrate to permission: shopify-dev-mcp: allow once anomalyco/opencode#6892 is resolved."
     },
     "cursor": {
       "config_location": "~/.cursor/mcp.json",
