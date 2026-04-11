@@ -19,29 +19,26 @@ Arguments: $ARGUMENTS
 ~/.aidevops/agents/scripts/youtube-helper.sh auth-test
 ```
 
-If authentication fails, guide the user to set up their service account key.
+On failure, guide user to set up their service account key.
 
 ### Step 2: Gather Channel Information
 
-Prompt the user for:
-
-1. **Your channel handle** (e.g., @myhandle)
-2. **Niche/topic** (e.g., "AI coding tools", "productivity software")
-3. **Competitor channels** (3-5 handles, e.g., @competitor1 @competitor2)
-
-If the user provides these in $ARGUMENTS, parse them. Otherwise, ask interactively.
+Parse from $ARGUMENTS if provided, otherwise prompt interactively for:
+- **Channel handle** (e.g., @myhandle)
+- **Niche/topic** (e.g., "AI coding tools", "productivity software")
+- **Competitor channels** (3-5 handles, e.g., @competitor1 @competitor2)
 
 ### Step 3: Validate Channels
 
-For each channel (yours + competitors):
+For each channel (yours + competitors), verify existence and display stats (subscribers, videos, total views):
 
 ```bash
 ~/.aidevops/agents/scripts/youtube-helper.sh channel @handle
 ```
 
-Verify the channel exists and display basic stats (subscribers, videos, total views).
-
 ### Step 4: Store Configuration in Memory
+
+Store channel config:
 
 ```bash
 ~/.aidevops/agents/scripts/memory-helper.sh store \
@@ -50,7 +47,7 @@ Verify the channel exists and display basic stats (subscribers, videos, total vi
   "My channel: @myhandle. Niche: [topic]. Competitors: @comp1, @comp2, @comp3"
 ```
 
-Also store individual competitor profiles:
+Store each competitor profile:
 
 ```bash
 ~/.aidevops/agents/scripts/memory-helper.sh store \
@@ -65,10 +62,7 @@ Also store individual competitor profiles:
 ~/.aidevops/agents/scripts/youtube-helper.sh competitors @myhandle @comp1 @comp2 @comp3
 ```
 
-Display the comparison table and highlight key insights:
-- Who has the highest views/video ratio?
-- Who has the best views/subscriber ratio?
-- What's the subscriber gap between you and competitors?
+Display comparison table highlighting: views/video ratio, views/subscriber ratio, subscriber gap.
 
 ### Step 6: Offer Next Steps
 
