@@ -11,6 +11,8 @@ tools:
   webfetch: true
   task: true
   playwright_*: true
+  # TODO(permission-migration): Replace with permission: playwright: allow
+  # once anomalyco/opencode#6892 is resolved.
 mcp:
   - playwright
 ---

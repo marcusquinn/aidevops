@@ -170,6 +170,29 @@ generate_subagent_stub() {
 			extra_tools=$'  ios-simulator_*: true'
 		fi
 		;;
+	shopify)
+		extra_tools=$'  shopify-dev-mcp_*: true'
+		# TODO(permission-migration): Replace with permission: shopify-dev-mcp: allow
+		# once anomalyco/opencode#6892 is resolved.
+		;;
+	sentry)
+		extra_tools=$'  sentry_*: true'
+		;;
+	socket)
+		extra_tools=$'  socket_*: true'
+		;;
+	context7 | context7-cli)
+		extra_tools=$'  context7_*: true'
+		;;
+	chrome-devtools)
+		extra_tools=$'  chrome-devtools_*: true'
+		;;
+	cloudflare-mcp)
+		extra_tools=$'  cloudflare-api_*: true'
+		;;
+	playwright)
+		extra_tools=$'  playwright_*: true'
+		;;
 	*) ;; # No extra tools for other agents
 	esac
 

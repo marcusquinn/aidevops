@@ -5,6 +5,10 @@ tools:
   read: true
   bash: true
   claude-code-mcp_*: true
+  # TODO(permission-migration): Replace with permission: claude-code-mcp: allow
+  # once anomalyco/opencode#6892 is resolved.
+mcp:
+  - claude-code-mcp
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

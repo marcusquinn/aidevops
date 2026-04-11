@@ -41,6 +41,7 @@ get_mcp_command() {
 	# serper - REMOVED: Uses curl subagent (.agents/seo/serper.md), no MCP needed
 	"unstract") echo "docker:unstract/mcp-server" ;;
 	"context7") echo "npx -y @upstash/context7-mcp@latest" ;;
+	"shopify-dev-mcp") echo "npx -y @shopify/dev-mcp@latest" ;;
 	*) echo "" ;;
 	esac
 	return 0
@@ -64,6 +65,7 @@ MCP_LIST=(
 	"dataforseo"
 	"unstract"
 	"context7"
+	"shopify-dev-mcp"
 )
 
 is_known_mcp() {
@@ -390,6 +392,36 @@ _install_context7() {
 	return 0
 }
 
+_install_shopify_dev_mcp() {
+	print_info "Setting up Shopify Dev MCP for schema-aware GraphQL, Liquid validation, and Admin API..."
+	print_warning "Prerequisites: Node 18+, Shopify CLI 3.93.0+"
+	print_info "Install Shopify CLI: npm install -g @shopify/cli@latest"
+	print_info "Verify: shopify version"
+	echo ""
+	print_info "Auth: shopify store auth (browser-based OAuth, no stored tokens)"
+	echo ""
+	print_info "The MCP is registered as disabled globally in opencode.json."
+	print_info "Enable it per-session by invoking the @shopify agent."
+	echo ""
+	print_info "OpenCode config (added to ~/.config/opencode/opencode.json):"
+	print_info '  "shopify-dev-mcp": {'
+	print_info '    "type": "local",'
+	print_info '    "command": ["npx", "-y", "@shopify/dev-mcp@latest"],'
+	print_info '    "enabled": false'
+	print_info '  }'
+	echo ""
+	print_info "Global tools entry (added to opencode.json tools section):"
+	print_info '  "shopify-dev-mcp_*": false'
+	echo ""
+	print_info "Per-repo skills (install at repo level, not framework level):"
+	print_info "  npx @shopify/shopify-ai-toolkit@latest add shopify-admin"
+	print_info "  npx @shopify/shopify-ai-toolkit@latest add shopify-liquid"
+	echo ""
+	print_info "Docs: ~/.aidevops/agents/services/ecommerce/shopify.md"
+	print_info "Config template: ~/.aidevops/agents/configs/mcp-templates/shopify-dev-mcp-config.json.txt"
+	return 0
+}
+
 # Install specific MCP integration — thin dispatcher to per-integration helpers
 install_mcp() {
 	local mcp_name="$1"
@@ -422,6 +454,7 @@ install_mcp() {
 	# serper - REMOVED: Uses curl subagent (.agents/seo/serper.md), no MCP needed
 	"unstract") _install_unstract ;;
 	"context7") _install_context7 ;;
+	"shopify-dev-mcp") _install_shopify_dev_mcp ;;
 	*)
 		print_error "Unknown MCP integration: $mcp_name"
 		print_info "Available integrations: ${MCP_LIST[*]}"

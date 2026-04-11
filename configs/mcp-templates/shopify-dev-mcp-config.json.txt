@@ -3,7 +3,7 @@
   "description": "Shopify Dev MCP server — schema-aware GraphQL generation, Liquid template validation, and Admin API execution for Shopify-platform repos",
   "documentation": "https://shopify.dev/docs/apps/build/ai-toolkit",
   "toolkit_repo": "https://github.com/Shopify/Shopify-AI-Toolkit",
-  "activation": "Auto-enabled for repos with \"platform\": \"shopify\" in repos.json",
+  "activation": "Invoke @shopify agent — MCP is disabled globally, enabled per-agent via tools: shopify-dev-mcp_*: true. Tag repos with platform:shopify in repos.json to document intent (dispatch-layer auto-enable is not yet implemented).",
   "prerequisites": {
     "node_version": "18+",
     "shopify_cli": "3.93.0+ (required for shopify store execute)",
@@ -31,7 +31,7 @@
           "enabled": false
         }
       },
-      "notes": "Disabled globally; auto-enabled for repos with platform:shopify in repos.json"
+      "notes": "Disabled globally; enabled per-agent via tools: shopify-dev-mcp_*: true in the @shopify agent. Invoke @shopify to activate. TODO(permission-migration): migrate to permission: shopify-dev-mcp: allow once anomalyco/opencode#6892 is resolved."
     },
     "cursor": {
       "config_location": "~/.cursor/mcp.json",
@@ -76,7 +76,7 @@
     "Generate schema-validated GraphQL queries that catch errors before hitting the API"
   ],
   "repos_json_integration": {
-    "description": "Add platform field to repos.json entry to auto-enable this MCP server",
+    "description": "Add platform field to repos.json entry to document that this repo uses Shopify. Invoke @shopify agent to activate the MCP — dispatch-layer auto-enable is not yet implemented.",
     "example": {
       "slug": "owner/my-shopify-store",
       "path": "~/Git/my-shopify-store",

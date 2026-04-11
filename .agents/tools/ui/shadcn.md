@@ -11,6 +11,8 @@ tools:
   webfetch: true
   task: true
   shadcn_*: true
+  # TODO(permission-migration): Replace with permission: shadcn: allow
+  # once anomalyco/opencode#6892 is resolved.
 mcp:
   - shadcn
 ---

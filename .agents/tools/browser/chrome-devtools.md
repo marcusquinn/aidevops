@@ -10,6 +10,11 @@ tools:
   grep: true
   webfetch: true
   task: true
+  chrome-devtools_*: true
+  # TODO(permission-migration): Replace with permission: chrome-devtools: allow
+  # once anomalyco/opencode#6892 is resolved.
+mcp:
+  - chrome-devtools
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

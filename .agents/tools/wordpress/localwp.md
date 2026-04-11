@@ -6,7 +6,11 @@ tools:
   bash: true
   read: true
   localwp_*: true
+  # TODO(permission-migration): Replace with permission: localwp: allow
+  # once anomalyco/opencode#6892 is resolved.
   task: true
+mcp:
+  - localwp
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

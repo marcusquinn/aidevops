@@ -10,6 +10,9 @@ tools:
   grep: false
   webfetch: true
   task: false
+  socket_*: true
+  # TODO(permission-migration): Replace with permission: socket: allow
+  # once anomalyco/opencode#6892 is resolved.
 mcp:
   - socket
 ---

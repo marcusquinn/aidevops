@@ -11,6 +11,8 @@ tools:
   webfetch: true
   task: true
   context7_*: true
+  # TODO(permission-migration): Replace with permission: context7: allow
+  # once anomalyco/opencode#6892 is resolved.
 mcp:
   - context7
 ---

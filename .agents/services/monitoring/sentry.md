@@ -10,6 +10,9 @@ tools:
   grep: false
   webfetch: true
   task: false
+  sentry_*: true
+  # TODO(permission-migration): Replace with permission: sentry: allow
+  # once anomalyco/opencode#6892 is resolved.
 mcp:
   - sentry
 ---

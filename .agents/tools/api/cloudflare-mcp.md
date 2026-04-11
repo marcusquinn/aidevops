@@ -10,6 +10,10 @@ tools:
   grep: true
   webfetch: true
   cloudflare-api_*: true
+  # TODO(permission-migration): Replace with permission: cloudflare-api: allow
+  # once anomalyco/opencode#6892 is resolved.
+mcp:
+  - cloudflare-api
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
