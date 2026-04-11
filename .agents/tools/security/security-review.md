@@ -3,11 +3,9 @@
 
 # /security-review
 
-Review quarantined security items and apply learn actions to update the security config. Run after headless worker batches or when `quarantine-helper.sh stats` shows pending items.
+Triage quarantined security items. Run after worker batches or when `quarantine-helper.sh stats` shows pending items.
 
-## Sources
-
-Ambiguous items flagged but not auto-blocked:
+## Sources — ambiguous items not auto-blocked
 
 - **prompt-guard-helper.sh** — WARN-level prompt injection detections
 - **network-tier-helper.sh** — Tier 4 unknown domains allowed but flagged
