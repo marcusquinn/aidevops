@@ -261,6 +261,20 @@ extract_failure_signature() {
 		return 0
 	fi
 
+	# Check for known infrastructure error patterns before extracting a generic signature.
+	# These patterns indicate billing/runner issues, not code defects. (GH#18093)
+	local infra_line
+	infra_line=$(printf '%s\n' "$logs" | grep -iE "recent account payments have failed|spending limit needs to be increased" | head -1 || true)
+	if [[ -n "$infra_line" ]]; then
+		printf '%s' "infra:billing_exhausted"
+		return 0
+	fi
+	infra_line=$(printf '%s\n' "$logs" | grep -iE "Runner.*unavailable|no matching runner|runner.*not found" | head -1 || true)
+	if [[ -n "$infra_line" ]]; then
+		printf '%s' "infra:runner_unavailable"
+		return 0
+	fi
+
 	local candidate
 	candidate=$(printf '%s\n' "$logs" | awk 'BEGIN{IGNORECASE=1} /error|exception|traceback|failed|denied|timeout|cannot|invalid|forbidden|unauthorized/ {print; exit}')
 	if [[ -z "$candidate" ]]; then
@@ -344,7 +358,7 @@ resolve_check_signature() {
 
 	# For non-GitHub-Actions check runs (e.g., Codacy, SonarCloud), the details_url
 	# points to the external app, not a GH Actions run — so run_id is empty and logs
-	# can't be extracted. Use the conclusion as the signature instead of "not_collected"
+	# can't be extracted. Use the conclusion as the signature instead of "signature_not_fetched"
 	# to produce meaningful cluster grouping (GH#4696).
 	if [[ -z "$run_id" ]]; then
 		local app_name conclusion
@@ -361,15 +375,30 @@ resolve_check_signature() {
 		return 0
 	fi
 
-	printf '%s' "not_collected"
+	# "signature_not_fetched" is an internal sentinel meaning log fetch was skipped
+	# (budget exhausted). Distinct from GitHub conclusion values to avoid confusion.
+	printf '%s' "signature_not_fetched"
 	return 0
+}
+
+is_all_checks_failed() {
+	local checks_json="$1"
+	local failed_count="$2"
+	local total_count
+	total_count=$(printf '%s\n' "$checks_json" | jq '[.check_runs[] | select((.conclusion // "") != "")] | length')
+	# All-checks-failed: every completed check run failed (no mixed pass/fail).
+	# Requires at least 2 checks to avoid false positives on single-check repos.
+	if [[ "$total_count" -ge 2 ]] && [[ "$failed_count" -eq "$total_count" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 emit_event_json() {
 	local repo_slug="$1" source_kind="$2" source_ref="$3" source_url="$4"
 	local pr_number="$5" commit_sha="$6" check_name="$7" conclusion="$8"
 	local run_id="$9" html_url="${10}" details_url="${11}" completed_at="${12}"
-	local signature="${13}" notification_updated_at="${14}"
+	local signature="${13}" notification_updated_at="${14}" is_infra="${15}"
 
 	local pr_url=""
 	if [[ -n "$pr_number" ]]; then
@@ -392,6 +421,7 @@ emit_event_json() {
 		--arg completed_at "$completed_at" \
 		--arg signature "$signature" \
 		--arg notification_updated_at "$notification_updated_at" \
+		--argjson is_infra "$is_infra" \
 		'{
 			repo: $repo,
 			source_kind: $source_kind,
@@ -407,7 +437,8 @@ emit_event_json() {
 			details_url: (if $details_url == "" then null else $details_url end),
 			completed_at: (if $completed_at == "" then null else $completed_at end),
 			signature: $signature,
-			notification_updated_at: (if $notification_updated_at == "" then null else $notification_updated_at end)
+			notification_updated_at: (if $notification_updated_at == "" then null else $notification_updated_at end),
+			is_infra: $is_infra
 		}'
 	return 0
 }
@@ -445,10 +476,18 @@ process_failed_runs() {
 	local repo_slug="$2" source_kind="$3" source_ref="$4" source_url="$5"
 	local pr_number="$6" commit_sha="$7" notification_updated_at="$8"
 	local include_logs="$9" run_logs_checked="${10}" max_run_logs="${11}"
-	local event_file="${12}"
+	local event_file="${12}" checks_json="${13}"
 
 	local failed_count
 	failed_count=$(printf '%s\n' "$failed_runs_json" | jq "$JQ_COUNT")
+
+	# Detect all-checks-failed correlation: if every completed check failed simultaneously,
+	# flag as likely infrastructure outage rather than a code defect. (GH#18093)
+	local is_infra="false"
+	if is_all_checks_failed "$checks_json" "$failed_count"; then
+		is_infra="true"
+	fi
+
 	local failed_index=0
 	while [[ "$failed_index" -lt "$failed_count" ]]; do
 		local run_json
@@ -468,10 +507,15 @@ process_failed_runs() {
 			run_logs_checked=$((run_logs_checked + 1))
 		fi
 
+		# Promote is_infra=true if signature matches a known infrastructure pattern
+		if [[ "$signature" == infra:* ]]; then
+			is_infra="true"
+		fi
+
 		emit_event_json "$repo_slug" "$source_kind" "$source_ref" "$source_url" \
 			"$pr_number" "$commit_sha" "$check_name" "$conclusion" \
 			"$run_id" "$html_url" "$details_url" "$completed_at" \
-			"$signature" "$notification_updated_at" >>"$event_file"
+			"$signature" "$notification_updated_at" "$is_infra" >>"$event_file"
 
 		failed_index=$((failed_index + 1))
 	done
@@ -549,7 +593,7 @@ extract_failed_events_json() {
 		run_logs_checked=$(process_failed_runs "$failed_runs_json" \
 			"$repo_slug" "$source_kind" "$source_ref" "$source_url" \
 			"$pr_number" "$commit_sha" "$notification_updated_at" \
-			"$include_logs" "$run_logs_checked" "$max_run_logs" "$event_file")
+			"$include_logs" "$run_logs_checked" "$max_run_logs" "$event_file" "$checks_json")
 
 		index=$((index + 1))
 	done
@@ -653,9 +697,33 @@ build_repo_clusters_json() {
 		check_name: .[0].check_name,
 		signature: .[0].signature,
 		count: length,
+		is_infra: (any(.[]; .is_infra == true)),
 		sources: (map(.source_kind + ":" + .source_ref) | unique),
 		examples: (.[0:5] | map({source_kind, source_ref, source_url, run_url, details_url, conclusion}))
 	}] | sort_by(-.count)'
+	return 0
+}
+
+# Build a consolidated infrastructure advisory cluster for a repo.
+# Groups all infra-flagged events into a single advisory per repo per outage window.
+build_infra_advisory_cluster() {
+	local events_json="$1"
+	local repo_slug="$2"
+	printf '%s\n' "$events_json" | jq --arg repo "$repo_slug" '
+		[.[] | select(.repo == $repo and .is_infra == true)] as $infra_events |
+		if ($infra_events | length) == 0 then null
+		else {
+			repo: $repo,
+			check_name: "multiple-checks",
+			check_names: ($infra_events | map(.check_name) | unique),
+			signature: "infra:outage",
+			count: ($infra_events | length),
+			is_infra: true,
+			sources: ($infra_events | map(.source_kind + ":" + .source_ref) | unique),
+			examples: ($infra_events[0:5] | map({source_kind, source_ref, source_url, run_url, details_url, conclusion}))
+		}
+		end
+	'
 	return 0
 }
 
@@ -674,7 +742,12 @@ compute_pattern_id() {
 build_issue_title() {
 	local check_name="$1"
 	local count="$2"
-	printf 'Systemic CI failure: %s (%s events)' "$check_name" "$count"
+	local is_infra="${3:-false}"
+	if [[ "$is_infra" == "true" ]]; then
+		printf 'Infrastructure outage: %s checks affected' "$count"
+	else
+		printf 'Systemic CI failure: %s (%s events)' "$check_name" "$count"
+	fi
 	return 0
 }
 
@@ -682,30 +755,54 @@ build_issue_body() {
 	local cluster_json="$1"
 	local pattern_id="$2"
 	local threshold="$3"
+	local is_infra="${4:-false}"
 
-	printf '%s\n' "$cluster_json" | jq -r '
-		"## Summary\n" +
-		"- Pattern: `" + .check_name + "`\n" +
-		"- Error signature: `" + .signature + "`\n" +
-		"- Scope: this repo\n" +
-		"- Events observed: " + (.count|tostring) + "\n" +
-		"- Systemic threshold: " + ($threshold|tostring) + "\n\n" +
-		"## Why this looks systemic\n" +
-		"- The same check/signature failed repeatedly within the notification window.\n" +
-		"- This suggests a shared workflow/tooling defect rather than a PR-specific code problem.\n\n" +
-		"## Evidence\n" +
-		(.examples | map("- " + .source_kind + ":" + .source_ref + " (" + .conclusion + ")" +
-		  (if .source_url != null then " - " + .source_url else "" end) +
-		  (if .run_url != null then " - " + .run_url else "" end) +
-		  (if .details_url != null then " - " + .details_url else "" end)
-		) | join("\n")) + "\n\n" +
-		"## Root Cause Hypothesis\n" +
-		"- Regression or external dependency/toolchain break in the shared check path.\n\n" +
-		"## Proposed Systemic Fix\n" +
-		"- Fix the workflow/check at the source, then rerun failed checks on affected PRs.\n" +
-		"- Add a regression guard for this signature in pulse routine outputs.\n\n" +
-		"Signal tag: `gh-failure-miner:" + $pattern_id + "`\n"
-	' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
+	if [[ "$is_infra" == "true" ]]; then
+		printf '%s\n' "$cluster_json" | jq -r '
+			"## Summary\n" +
+			"- Affected checks: " + (.check_names | join(", ")) + "\n" +
+			"- Events observed: " + (.count|tostring) + "\n" +
+			"- Sources affected: " + ((.sources | length)|tostring) + "\n\n" +
+			"## Why this looks like an infrastructure outage\n" +
+			"- All checks failed simultaneously across multiple PRs/commits.\n" +
+			"- This pattern indicates a billing or runner infrastructure issue, not a code defect.\n\n" +
+			"## Evidence\n" +
+			(.examples | map("- " + .source_kind + ":" + .source_ref + " (" + .conclusion + ")" +
+			  (if .source_url != null then " - " + .source_url else "" end) +
+			  (if .run_url != null then " - " + .run_url else "" end) +
+			  (if .details_url != null then " - " + .details_url else "" end)
+			) | join("\n")) + "\n\n" +
+			"## Recommended Action\n" +
+			"- Verify billing status and runner availability.\n" +
+			"- Re-run failed workflows after the infrastructure issue is resolved.\n" +
+			"- Do NOT make code changes to fix this — the root cause is external.\n\n" +
+			"Signal tag: `gh-failure-miner:" + $pattern_id + "`\n"
+		' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
+	else
+		printf '%s\n' "$cluster_json" | jq -r '
+			"## Summary\n" +
+			"- Pattern: `" + .check_name + "`\n" +
+			"- Error signature: `" + .signature + "`\n" +
+			"- Scope: this repo\n" +
+			"- Events observed: " + (.count|tostring) + "\n" +
+			"- Systemic threshold: " + ($threshold|tostring) + "\n\n" +
+			"## Why this looks systemic\n" +
+			"- The same check/signature failed repeatedly within the notification window.\n" +
+			"- This suggests a shared workflow/tooling defect rather than a PR-specific code problem.\n\n" +
+			"## Evidence\n" +
+			(.examples | map("- " + .source_kind + ":" + .source_ref + " (" + .conclusion + ")" +
+			  (if .source_url != null then " - " + .source_url else "" end) +
+			  (if .run_url != null then " - " + .run_url else "" end) +
+			  (if .details_url != null then " - " + .details_url else "" end)
+			) | join("\n")) + "\n\n" +
+			"## Root Cause Hypothesis\n" +
+			"- Regression or external dependency/toolchain break in the shared check path.\n\n" +
+			"## Proposed Systemic Fix\n" +
+			"- Fix the workflow/check at the source, then rerun failed checks on affected PRs.\n" +
+			"- Add a regression guard for this signature in pulse routine outputs.\n\n" +
+			"Signal tag: `gh-failure-miner:" + $pattern_id + "`\n"
+		' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
+	fi
 	return 0
 }
 
@@ -719,6 +816,8 @@ ensure_repo_labels() {
 		fi
 		gh label create "source:ci-failure-miner" --repo "$repo_entry" \
 			--description "Auto-created by gh-failure-miner-helper.sh" --color "C2E0C6" --force || true
+		gh label create "infrastructure" --repo "$repo_entry" \
+			--description "Infrastructure/billing/runner issue — not a code defect" --color "E4E669" --force || true
 	done
 	return 0
 }
@@ -736,21 +835,26 @@ create_or_preview_issue() {
 	local pattern_id="$2"
 	local systemic_threshold="$3"
 	local dry_run="$4"
-	shift 4
+	local is_infra="${5:-false}"
+	shift 5
 	local extra_labels=("$@")
 
 	local repo_slug check_name count
 	repo_slug=$(printf '%s\n' "$cluster_json" | jq -r '.repo')
-	check_name=$(printf '%s\n' "$cluster_json" | jq -r '.check_name')
+	check_name=$(printf '%s\n' "$cluster_json" | jq -r '.check_name // "multiple-checks"')
 	count=$(printf '%s\n' "$cluster_json" | jq -r '.count')
 
 	local title
-	title=$(build_issue_title "$check_name" "$count")
+	title=$(build_issue_title "$check_name" "$count" "$is_infra")
 	local body
-	body=$(build_issue_body "$cluster_json" "$pattern_id" "$systemic_threshold")
+	body=$(build_issue_body "$cluster_json" "$pattern_id" "$systemic_threshold" "$is_infra")
 
 	if [[ "$dry_run" == "true" ]]; then
-		echo "DRY RUN: would create issue: ${title}"
+		if [[ "$is_infra" == "true" ]]; then
+			echo "DRY RUN: would create infrastructure advisory: ${title} (no auto-dispatch)"
+		else
+			echo "DRY RUN: would create issue: ${title}"
+		fi
 		return 0
 	fi
 
@@ -764,13 +868,20 @@ create_or_preview_issue() {
 		fi
 	fi
 
-	local create_cmd=(gh_create_issue --repo "$repo_slug" --title "$title" --body "$body" --label bug --label "source:ci-failure-miner")
-	local label
-	for label in ${extra_labels[@]+"${extra_labels[@]}"}; do
-		if [[ -n "$label" ]]; then
-			create_cmd+=(--label "$label")
-		fi
-	done
+	local create_cmd
+	if [[ "$is_infra" == "true" ]]; then
+		# Infrastructure issues: use "infrastructure" label instead of "bug".
+		# Never add auto-dispatch — infrastructure outages self-resolve; code changes are wrong.
+		create_cmd=(gh_create_issue --repo "$repo_slug" --title "$title" --body "$body" --label infrastructure --label "source:ci-failure-miner")
+	else
+		create_cmd=(gh_create_issue --repo "$repo_slug" --title "$title" --body "$body" --label bug --label "source:ci-failure-miner")
+		local label
+		for label in ${extra_labels[@]+"${extra_labels[@]}"}; do
+			if [[ -n "$label" ]]; then
+				create_cmd+=(--label "$label")
+			fi
+		done
+	fi
 	"${create_cmd[@]}" >/dev/null
 	echo "Created issue: ${title}"
 	return 0
@@ -787,26 +898,57 @@ create_systemic_issues() {
 	local clusters_json
 	clusters_json=$(build_repo_clusters_json "$events_json")
 
-	local candidate_file
-	candidate_file=$(mktemp)
-	# Exclude billing-caused zero-step failures — they reflect account state,
-	# not a tooling defect worth clustering into systemic issues. (GH#18089)
-	printf '%s\n' "$clusters_json" | jq --argjson min_count "$systemic_threshold" '[.[] | select(.count >= $min_count and ((.signature // "") as $signature | ["billing_outage","job_not_started"] | index($signature) | not))]' >"$candidate_file"
-
-	# Ensure source label exists on repos that will receive issues
+	# Ensure source/infrastructure labels exist on repos that will receive issues
 	if [[ "$dry_run" != "true" ]]; then
 		ensure_repo_labels "$clusters_json"
 	fi
 
+	# --- Infrastructure advisory pass ---
+	# Consolidate all infra-flagged events into ONE advisory per repo per outage window.
+	# Infrastructure issues self-resolve; code changes are wrong. Never add auto-dispatch.
+	local infra_repos
+	infra_repos=$(printf '%s\n' "$clusters_json" | jq -r '[.[] | select(.is_infra == true) | .repo] | unique | .[]')
+	local created=0
+	while IFS= read -r infra_repo && [[ "$created" -lt "$max_issues" ]]; do
+		[[ -z "$infra_repo" ]] && continue
+		local advisory_cluster
+		advisory_cluster=$(build_infra_advisory_cluster "$events_json" "$infra_repo")
+		if [[ -z "$advisory_cluster" ]] || [[ "$advisory_cluster" == "null" ]]; then
+			continue
+		fi
+		local infra_count
+		infra_count=$(printf '%s\n' "$advisory_cluster" | jq -r '.count')
+		local pattern_id
+		pattern_id=$(compute_pattern_id "${infra_repo}|infra:outage")
+		local signal_tag="gh-failure-miner:${pattern_id}"
+		if issue_already_exists "$infra_repo" "$signal_tag"; then
+			echo "Skipping infra advisory for ${infra_repo} - existing open issue with ${signal_tag}"
+			continue
+		fi
+		create_or_preview_issue "$advisory_cluster" "$pattern_id" "$systemic_threshold" "$dry_run" "true"
+		created=$((created + 1))
+	done <<<"$infra_repos"
+
+	# --- Code-defect cluster pass ---
+	# Only process non-infra clusters. Exclude billing/job_not_started signatures.
+	local candidate_file
+	candidate_file=$(mktemp)
+	printf '%s\n' "$clusters_json" | jq --argjson min_count "$systemic_threshold" '[.[] | select(
+		.count >= $min_count
+		and (.is_infra // false) == false
+		and ((.signature // "") as $signature | ["billing_outage","job_not_started"] | index($signature) | not)
+	)]' >"$candidate_file"
+
 	local candidate_count
 	candidate_count=$(jq "$JQ_COUNT" "$candidate_file")
 	if [[ "$candidate_count" -eq 0 ]]; then
-		echo "No systemic clusters met threshold (${systemic_threshold})."
+		if [[ "$created" -eq 0 ]]; then
+			echo "No systemic clusters met threshold (${systemic_threshold})."
+		fi
 		rm -f "$candidate_file"
 		return 0
 	fi
 
-	local created=0
 	local idx=0
 	while [[ "$idx" -lt "$candidate_count" ]] && [[ "$created" -lt "$max_issues" ]]; do
 		local cluster_json
@@ -827,7 +969,7 @@ create_systemic_issues() {
 			continue
 		fi
 
-		create_or_preview_issue "$cluster_json" "$pattern_id" "$systemic_threshold" "$dry_run" ${extra_labels[@]+"${extra_labels[@]}"}
+		create_or_preview_issue "$cluster_json" "$pattern_id" "$systemic_threshold" "$dry_run" "false" ${extra_labels[@]+"${extra_labels[@]}"}
 
 		created=$((created + 1))
 		idx=$((idx + 1))
