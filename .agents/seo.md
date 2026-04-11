@@ -64,7 +64,7 @@ subagents:
 - **Media/debug**: `image-seo` (alt text, Moondream) | `upscale` | `moondream` | `rich-results` (browser automation) | `debug-opengraph` | `debug-favicon`
 - **Export**: `data-export` (GSC, Bing, Ahrefs, DataForSEO → TOON) | `gsc-sitemaps` (Playwright submission)
 
-**Content analysis** ([SEO Machine](https://github.com/TheCraigHewitt/seomachine)): `python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py {analyze|readability|keywords|quality|intent} <file|query> [--keyword "kw"]`
+**Content analysis** ([SEO Machine](https://github.com/TheCraigHewitt/seomachine)): `seo-content-analyzer.py {analyze|readability|keywords|quality|intent} <file|query> [--keyword "kw"]`
 
 <!-- AI-CONTEXT-END -->
 
@@ -76,22 +76,18 @@ subagents:
 
 **SERP/backlinks/technical**: SERP via DataForSEO (comprehensive) or Serper (quick) | Backlinks via DataForSEO or Ahrefs | PageSpeed/CWV: `tools/browser/pagespeed.md` | On-page: DataForSEO | Crawling: `seo/site-crawler.md` | Real-time monitoring: `seo/contentking.md`.
 
-**Site audit**:
+**Site audit** (output: `~/Downloads/{domain}/{datestamp}/` CSV/XLSX):
 
 ```bash
 site-crawler-helper.sh {crawl|audit-links|audit-meta|audit-redirects} https://example.com
 ```
 
-Output: `~/Downloads/{domain}/{datestamp}/` (CSV/XLSX).
-
-**E-E-A-T scoring** (7 criteria, 1-10: Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing):
+**E-E-A-T scoring** (7 criteria, 1-10: Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing; output: `{domain}-eeat-score-{date}.xlsx`):
 
 ```bash
 eeat-score-helper.sh analyze ~/Downloads/example.com/_latest/crawl-data.json
 eeat-score-helper.sh score https://example.com/article
 ```
-
-Output: `{domain}-eeat-score-{date}.xlsx`.
 
 **Sitemap submission** (Playwright + persistent Chrome; first-time: `gsc-sitemap-helper.sh login`):
 
