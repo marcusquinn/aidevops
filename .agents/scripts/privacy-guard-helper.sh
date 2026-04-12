@@ -90,13 +90,17 @@ privacy_is_target_public() {
 	fi
 
 	# Cache hit?
+	# NOTE: use `.private | tostring` — NOT `.private // ""`. The `//` operator
+	# treats `false` as null-ish and would collapse every public cache entry
+	# to an empty string (t1969 regression: cached public → cache miss →
+	# unnecessary gh probe). `tostring` returns "true", "false", or "null".
 	mkdir -p "$(dirname "$PRIVACY_CACHE_FILE")" 2>/dev/null || true
 	if [[ -f "$PRIVACY_CACHE_FILE" ]]; then
 		local cached_ts cached_private now
 		cached_ts=$(jq -r --arg slug "$slug" '.[$slug].checked_at // ""' "$PRIVACY_CACHE_FILE" 2>/dev/null)
-		cached_private=$(jq -r --arg slug "$slug" '.[$slug].private // ""' "$PRIVACY_CACHE_FILE" 2>/dev/null)
+		cached_private=$(jq -r --arg slug "$slug" '.[$slug].private | tostring' "$PRIVACY_CACHE_FILE" 2>/dev/null)
 		now=$(date +%s)
-		if [[ -n "$cached_ts" && -n "$cached_private" ]]; then
+		if [[ -n "$cached_ts" && "$cached_private" != "null" ]]; then
 			local age=$((now - cached_ts))
 			if [[ "$age" -lt "$PRIVACY_CACHE_TTL" ]]; then
 				if [[ "$cached_private" == "false" ]]; then
