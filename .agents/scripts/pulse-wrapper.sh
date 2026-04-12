@@ -700,20 +700,30 @@ check_session_gate() {
 TRIAGE_CACHE_DIR="${TRIAGE_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/tmp/triage-cache}"
 
 #######################################
-# GH#17827: Triage failure retry cap.
+# GH#17827, t2014: Triage failure retry cap (default 1 — single attempt).
 #
 # When triage fails (no review posted), the GH#17873 fix intentionally
-# skips caching the content hash so the next cycle retries. But if the
-# failure is persistent (e.g., model quota, formatting issues), this
-# creates an infinite lock→agent→fail→unlock loop that pollutes the
-# issue timeline with dozens of lock/unlock events.
+# skips caching the content hash so the next cycle retries. But failing
+# triages are overwhelmingly deterministic (format-validation rejections,
+# not transient model quota) — three retries per content version burn
+# three full opus agent invocations (~100K chars each) and three
+# lock/unlock pairs on the issue timeline, all to reach the same outcome.
 #
-# Solution: track failure count per issue+hash. After TRIAGE_MAX_RETRIES
-# failures on the same content hash, cache it anyway to break the loop.
-# The triage-failed label remains so maintainers can identify these.
-# A new human comment changes the hash, resetting the counter.
+# Solution: cap retries at 1. The FIRST failure increments the counter
+# to 1, sees 1 >= TRIAGE_MAX_RETRIES, caches the hash, and marks the
+# issue with triage-failed. Subsequent cycles skip via the content-hash
+# cache — zero lock/unlock, zero agent invocations. A new human comment
+# changes the hash and resets the counter, giving another attempt.
+#
+# Transient failures (network, gh API, model rate-limit) are caught
+# earlier in the dispatch loop (before lock_issue_for_worker) or
+# handled by the model rotation pool, so the retry budget here adds no
+# value for transients — only cost for deterministic failures.
+#
+# Maintainers can force a re-triage by removing the triage-failed label
+# and the corresponding .failures/.hash files in TRIAGE_CACHE_DIR.
 #######################################
-TRIAGE_MAX_RETRIES="${TRIAGE_MAX_RETRIES:-3}"
+TRIAGE_MAX_RETRIES="${TRIAGE_MAX_RETRIES:-1}"
 
 #######################################
 # Atomic dispatch: dedup guard + assign + launch in a single call (GH#12436)
