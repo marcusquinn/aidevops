@@ -724,6 +724,11 @@ _run_preflight_stages() {
 	# instead of stuck forever behind a label that list_dispatchable_issue_candidates_json
 	# filters out (needs-* exclusion at line 6703).
 	_reevaluate_consolidation_labels
+	# t1982: Backfill pass for stuck needs-consolidation issues that never
+	# got a consolidation-task child created (pre-t1982 dispatches just
+	# labelled and returned). Dispatches a child retroactively so the
+	# parent can actually be consolidated instead of sitting forever.
+	_backfill_stale_consolidation_labels
 	_reevaluate_simplification_labels
 
 	# Early dispatch pass: fill available worker slots BEFORE heavy housekeeping.
