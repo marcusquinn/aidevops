@@ -89,6 +89,9 @@ install_hook() {
 	# Run self-test
 	test_hook || return 1
 
+	# Also install git-level hooks if inside a git repo
+	_install_git_hooks_if_repo || true
+
 	echo ""
 	print_success "Safety hooks installed successfully"
 	echo ""
@@ -99,6 +102,31 @@ install_hook() {
 	echo "  rm -rf (non-temp paths)    git stash drop/clear"
 	echo ""
 	print_warning "Restart Claude Code for the hook to take effect"
+	return 0
+}
+
+#######################################
+# Install git-level hooks (privacy-guard + main-branch-guard) when inside
+# a git repository. Called from install_hook; failures are non-fatal.
+#######################################
+_install_git_hooks_if_repo() {
+	if ! git rev-parse --git-dir >/dev/null 2>&1; then
+		return 0
+	fi
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+	# Privacy-guard pre-push hook
+	local privacy_installer="${script_dir}/install-privacy-guard.sh"
+	if [[ -f "$privacy_installer" ]]; then
+		bash "$privacy_installer" install 2>/dev/null || true
+	fi
+
+	# Main-branch-guard post-checkout hook
+	local mbg_installer="${script_dir}/install-main-branch-guard.sh"
+	if [[ -f "$mbg_installer" ]]; then
+		bash "$mbg_installer" install 2>/dev/null || true
+	fi
 	return 0
 }
 

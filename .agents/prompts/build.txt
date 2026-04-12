@@ -307,6 +307,10 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - Loop mode: `pre-edit-check.sh --loop-mode --task "description"`
 - NEVER revert others' changes without explicit user request
 
+**Git hook protection (t1994):**
+- A `post-checkout` hook (`.agents/hooks/main-branch-guard-post-checkout.sh`) enforces "canonical worktree stays on main" at the git-operation level. It fires immediately after any branch-level `git checkout` or `git switch` in the canonical worktree, auto-restores `main`, and directs the user to `wt add <branch>`. Linked worktrees are unaffected.
+- Installed automatically by `setup.sh` via `install-main-branch-guard.sh`. Diagnose: `install-main-branch-guard.sh status`. Bypass: `AIDEVOPS_MAIN_BRANCH_GUARD=false git checkout ...`.
+
 **Post-edit commit rule (data loss prevention):**
 - After each logical change (one tool call or one coherent multi-file edit): `git add -A && git commit -m "wip: <brief description>"`.
 - Commit at the end of each tool call — do not defer across multiple unrelated edits.

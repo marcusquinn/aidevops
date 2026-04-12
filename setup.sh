@@ -89,6 +89,8 @@ if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	source "$SETUP_MODULES_DIR/_routines.sh"
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_privacy_guard.sh"
+	# shellcheck disable=SC1091
+	source "$SETUP_MODULES_DIR/_main_branch_guard.sh"
 fi
 
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -919,6 +921,10 @@ _setup_run_non_interactive() {
 	# repo so TODO/todo/README/ISSUE_TEMPLATE pushes to public GitHub repos
 	# are scanned for private slug leaks (t1968).
 	setup_privacy_guard
+	# Install/refresh the main-branch-guard post-checkout hook in every
+	# initialized repo so the canonical worktree is auto-restored to main
+	# whenever a branch-level checkout drifts off main (t1994).
+	setup_main_branch_guard
 	return 0
 }
 
