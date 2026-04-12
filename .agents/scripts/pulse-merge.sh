@@ -30,6 +30,7 @@
 #   - check_workflow_merge_guard
 #   - merge_ready_prs_all_repos
 #   - _merge_ready_prs_for_repo
+#   - _process_single_ready_pr
 #   - _is_collaborator_author
 #   - _extract_linked_issue
 #   - _extract_merge_summary
@@ -537,7 +538,10 @@ merge_ready_prs_all_repos() {
 #######################################
 # Merge ready PRs for a single repo.
 #
-# Uses nameref variables to return counts to the caller.
+# Fetches the PR list for the repo, iterates, and delegates each PR
+# to _process_single_ready_pr. Uses eval to return counts to caller
+# (Bash 3.2 compat: no nameref).
+#
 # Args:
 #   $1 - repo slug
 #   $2 - nameref for merged count
@@ -578,224 +582,237 @@ _merge_ready_prs_for_repo() {
 		return 0
 	fi
 
-	# Process each PR
+	# Process each PR — extract its JSON object and delegate to inner helper
 	local i=0
 	while [[ "$i" -lt "$pr_count" ]]; do
-		if [[ -f "$STOP_FLAG" ]]; then
-			break
-		fi
-
-		local pr_number pr_mergeable pr_review pr_author pr_title
-		pr_number=$(printf '%s' "$pr_json" | jq -r ".[$i].number" 2>/dev/null)
-		pr_mergeable=$(printf '%s' "$pr_json" | jq -r ".[$i].mergeable" 2>/dev/null)
-		pr_review=$(printf '%s' "$pr_json" | jq -r ".[$i].reviewDecision // \"NONE\"" 2>/dev/null)
-		pr_author=$(printf '%s' "$pr_json" | jq -r ".[$i].author.login // \"unknown\"" 2>/dev/null)
-		pr_title=$(printf '%s' "$pr_json" | jq -r ".[$i].title // \"\"" 2>/dev/null)
+		[[ -f "$STOP_FLAG" ]] && break
+		local pr_obj
+		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
 		i=$((i + 1))
+		[[ -n "$pr_obj" ]] || continue
 
-		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
-
-		# Close conflicting PRs — they can never be merged and block the queue
-		if [[ "$pr_mergeable" == "CONFLICTING" && "$PULSE_MERGE_CLOSE_CONFLICTING" == "true" ]]; then
-			_close_conflicting_pr "$pr_number" "$repo_slug" "$pr_title"
-			closed=$((closed + 1))
-			continue
-		fi
-
-		# Skip non-mergeable — retry UNKNOWN once (GitHub race: mergeability
-		# not yet computed for recently-pushed PRs, resolves in seconds).
-		# sleep removed: blocking sleep inside the loop stalls all subsequent
-		# PRs; a single immediate retry is sufficient for the GitHub race.
-		if [[ "$pr_mergeable" == "UNKNOWN" ]]; then
-			local _retry_mergeable
-			local _retry_output
-			# Separate local declaration from assignment to preserve exit code (SC2181).
-			_retry_output=$(gh pr view "$pr_number" --repo "$repo_slug" \
-				--json mergeable --jq '.mergeable' 2>/dev/null)
-			local _retry_exit=$?
-			if [[ $_retry_exit -eq 0 && -n "$_retry_output" ]]; then
-				_retry_mergeable="$_retry_output"
-			else
-				_retry_mergeable="UNKNOWN"
-			fi
-			if [[ "$_retry_mergeable" == "MERGEABLE" ]]; then
-				pr_mergeable="MERGEABLE"
-				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — mergeable resolved to MERGEABLE after retry" >>"$LOGFILE"
-			else
-				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — mergeable=${_retry_mergeable} (was UNKNOWN, still not MERGEABLE after retry)" >>"$LOGFILE"
-				continue
-			fi
-		fi
-		if [[ "$pr_mergeable" != "MERGEABLE" ]]; then
-			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — mergeable=${pr_mergeable}" >>"$LOGFILE"
-			continue
-		fi
-
-		# Skip CHANGES_REQUESTED — needs a fix worker, not a merge
-		if [[ "$pr_review" == "CHANGES_REQUESTED" ]]; then
-			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision=CHANGES_REQUESTED" >>"$LOGFILE"
-			continue
-		fi
-
-		# Skip external contributor PRs (non-collaborator)
-		if ! _is_collaborator_author "$pr_author" "$repo_slug"; then
-			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator" >>"$LOGFILE"
-			continue
-		fi
-
-		# Skip PRs modifying workflow files when we lack the scope
-		if check_pr_modifies_workflows "$pr_number" "$repo_slug" 2>/dev/null; then
-			if ! check_gh_workflow_scope 2>/dev/null; then
-				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — modifies workflow files but token lacks workflow scope" >>"$LOGFILE"
-				continue
-			fi
-		fi
-
-		# Check maintainer-gate: skip if linked issue has needs-maintainer-review
-		local linked_issue
-		linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
-		if [[ -n "$linked_issue" ]]; then
-			local issue_labels
-			issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
-				--jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
-			if [[ "$issue_labels" == *"needs-maintainer-review"* ]]; then
-				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} has needs-maintainer-review" >>"$LOGFILE"
-				continue
-			fi
-		fi
-
-		# ── External contributor gate (t1958) ──
-		# PRs labelled external-contributor require:
-		#   1. A linked issue (Resolves #NNN in body or GH#NNN: in title)
-		#   2. Cryptographic approval on that linked issue
-		# This is defence-in-depth: the _is_collaborator_author check above
-		# already blocks non-collaborator authors. This gate catches the case
-		# where a collaborator re-submits work originally flagged as external,
-		# or where the external-contributor label was applied manually.
-		local pr_labels_for_ext
-		pr_labels_for_ext=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels \
-			--jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels_for_ext=""
-		if [[ "$pr_labels_for_ext" == *"external-contributor"* ]]; then
-			if ! _external_pr_has_linked_issue "$pr_number" "$repo_slug"; then
-				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — external-contributor PR has no linked issue (t1958)" >>"$LOGFILE"
-				continue
-			fi
-			if ! _external_pr_linked_issue_crypto_approved "$pr_number" "$repo_slug"; then
-				local ext_linked_for_log
-				ext_linked_for_log=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || ext_linked_for_log="unknown"
-				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — external-contributor PR linked issue #${ext_linked_for_log} lacks crypto approval (t1958)" >>"$LOGFILE"
-				continue
-			fi
-		fi
-
-		# ── Review bot gate (GH#17490) ──
-		# The deterministic merge pass uses --admin which bypasses branch
-		# protection (including the review-bot-gate required status check).
-		# Enforce the gate in code so PRs cannot be merged without bot review.
-		local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
-		if [[ -f "$rbg_helper" ]]; then
-			local rbg_result=""
-			rbg_result=$(bash "$rbg_helper" check "$pr_number" "$repo_slug" 2>/dev/null) || rbg_result=""
-			local rbg_status=""
-			rbg_status=$(printf '%s' "$rbg_result" | grep -oE '^(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | head -1)
-			case "$rbg_status" in
-			PASS | SKIP | PASS_RATE_LIMITED)
-				echo "[pulse-wrapper] Review bot gate: ${rbg_status} for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
-				;;
-			*)
-				echo "[pulse-wrapper] Review bot gate: ${rbg_status:-UNKNOWN} for PR #${pr_number} in ${repo_slug} — skipping merge" >>"$LOGFILE"
-				continue
-				;;
-			esac
-		fi
-
-		# Approve (satisfies REVIEW_REQUIRED for collaborator PRs)
-		approve_collaborator_pr "$pr_number" "$repo_slug" "$pr_author" 2>/dev/null || true
-
-		# Extract merge summary for closing comments. Tries (in order):
-		# 1. Worker's <!-- MERGE_SUMMARY --> tagged comment (richest, ~35% hit rate)
-		# 2. PR body text (always present, created atomically with gh pr create)
-		# Fallback to generic only if both are empty (should be near-zero).
-		local merge_summary
-		merge_summary=$(_extract_merge_summary "$pr_number" "$repo_slug")
-
-		# Merge
-		local merge_output
-		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)
-		if [[ $? -eq 0 ]]; then
-			merged=$((merged + 1))
-			echo "[pulse-wrapper] Deterministic merge: merged PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
-
-			# Build closing comment — use worker summary if available, fall back to generic
-			local closing_comment
-			if [[ -n "$merge_summary" ]]; then
-				closing_comment="${merge_summary}
-
----
-Merged via PR #${pr_number} to main.
-_Merged by deterministic merge pass (pulse-wrapper.sh)._"
-			else
-				closing_comment="Completed via PR #${pr_number}, merged to main.
-
-_Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY comment nor PR body text was available._"
-			fi
-
-			# Append signature footer to closing comment (GH#15486).
-			# The merge pass is not an LLM session, so use --no-session.
-			# Pass --issue for total-time and cumulative token tracking.
-			local _merge_sig_footer="" _merge_elapsed=""
-			_merge_elapsed=$(($(date +%s) - PULSE_START_EPOCH))
-			local _merge_issue_ref=""
-			if [[ -n "$linked_issue" ]]; then
-				_merge_issue_ref="${repo_slug}#${linked_issue}"
-			fi
-			_merge_sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
-				--body "$closing_comment" --no-session --tokens 0 \
-				--time "$_merge_elapsed" --session-type routine \
-				${_merge_issue_ref:+--issue "$_merge_issue_ref"} --solved 2>/dev/null || true)
-			closing_comment="${closing_comment}${_merge_sig_footer}"
-
-			# Post closing comment on PR
-			gh pr comment "$pr_number" --repo "$repo_slug" \
-				--body "$closing_comment" 2>/dev/null || true
-
-			# t1934: Unlock the merged PR (locked at dispatch time)
-			unlock_issue_after_worker "$pr_number" "$repo_slug"
-
-			# Close linked issue with the same context
-			if [[ -n "$linked_issue" ]]; then
-				# Dedup guard: skip closing comment if one for this PR already exists. (GH#18098)
-				# Two concurrent merge pass runners (local + remote collaborator) can both detect
-				# the same merge event and race to post the identical ~9KB closing comment.
-				# The second runner checks for "PR #NNN" in existing comments and skips posting.
-				local _dedup_count
-				_dedup_count=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments" \
-					2>/dev/null | jq --arg prnum "PR #${pr_number}" \
-					'[.[] | select(.body | contains($prnum))] | length' 2>/dev/null) || _dedup_count=0
-				[[ "$_dedup_count" =~ ^[0-9]+$ ]] || _dedup_count=0
-				if [[ "$_dedup_count" -gt 0 ]]; then
-					echo "[pulse-wrapper] Deterministic merge: skipped duplicate closing comment on #${linked_issue} — PR #${pr_number} already referenced in existing comment (GH#18098)" >>"$LOGFILE"
-				else
-					gh issue comment "$linked_issue" --repo "$repo_slug" \
-						--body "$closing_comment" 2>/dev/null || true
-				fi
-				gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
-				# Reset fast-fail counter now that the issue is resolved (GH#2076)
-				fast_fail_reset "$linked_issue" "$repo_slug" || true
-				# t1934: Unlock the issue (locked at dispatch time)
-				unlock_issue_after_worker "$linked_issue" "$repo_slug"
-			fi
-		else
-			failed=$((failed + 1))
-			echo "[pulse-wrapper] Deterministic merge: FAILED PR #${pr_number} in ${repo_slug}: ${merge_output}" >>"$LOGFILE"
-		fi
-
-		# Rate-limit: 1 second between merges to avoid GitHub API abuse
-		sleep 1
+		_process_single_ready_pr "$repo_slug" "$pr_obj"
+		local _pr_rc=$?
+		case "$_pr_rc" in
+		0) merged=$((merged + 1)) ;;
+		2) closed=$((closed + 1)) ;;
+		3) failed=$((failed + 1)) ;;
+		esac
 	done
 
 	eval "${_merged_var}=${merged}; ${_closed_var}=${closed}; ${_failed_var}=${failed}"
 	return 0
+}
+
+#######################################
+# Process a single PR end-to-end: gate checks, merge attempt,
+# conflict detection, and closing comment posting.
+#
+# Extracted from _merge_ready_prs_for_repo (t2002 / GH#18450, Phase 12).
+# Enables per-PR debugging and unit testing in isolation.
+#
+# Args:
+#   $1 - repo slug
+#   $2 - PR JSON object (single element from gh pr list --json output)
+# Returns:
+#   0 = merged successfully
+#   1 = skipped (gate failure or non-mergeable)
+#   2 = closed conflicting
+#   3 = merge failed
+#######################################
+_process_single_ready_pr() {
+	local repo_slug="$1"
+	local pr_obj="$2"
+
+	local pr_number pr_mergeable pr_review pr_author pr_title
+	pr_number=$(printf '%s' "$pr_obj" | jq -r '.number' 2>/dev/null)
+	pr_mergeable=$(printf '%s' "$pr_obj" | jq -r '.mergeable' 2>/dev/null)
+	pr_review=$(printf '%s' "$pr_obj" | jq -r '.reviewDecision // "NONE"' 2>/dev/null)
+	pr_author=$(printf '%s' "$pr_obj" | jq -r '.author.login // "unknown"' 2>/dev/null)
+	pr_title=$(printf '%s' "$pr_obj" | jq -r '.title // ""' 2>/dev/null)
+
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
+
+	# Close conflicting PRs — they can never be merged and block the queue
+	if [[ "$pr_mergeable" == "CONFLICTING" && "$PULSE_MERGE_CLOSE_CONFLICTING" == "true" ]]; then
+		_close_conflicting_pr "$pr_number" "$repo_slug" "$pr_title"
+		return 2
+	fi
+
+	# Skip non-mergeable — retry UNKNOWN once (GitHub race, resolves in seconds;
+	# sleep removed: single immediate retry avoids stalling subsequent PRs).
+	if [[ "$pr_mergeable" == "UNKNOWN" ]]; then
+		local _retry_mergeable
+		local _retry_output
+		# Separate local declaration from assignment to preserve exit code (SC2181).
+		_retry_output=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			--json mergeable --jq '.mergeable' 2>/dev/null)
+		local _retry_exit=$?
+		if [[ $_retry_exit -eq 0 && -n "$_retry_output" ]]; then
+			_retry_mergeable="$_retry_output"
+		else
+			_retry_mergeable="UNKNOWN"
+		fi
+		if [[ "$_retry_mergeable" == "MERGEABLE" ]]; then
+			pr_mergeable="MERGEABLE"
+			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — mergeable resolved to MERGEABLE after retry" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — mergeable=${_retry_mergeable} (was UNKNOWN, still not MERGEABLE after retry)" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+	if [[ "$pr_mergeable" != "MERGEABLE" ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — mergeable=${pr_mergeable}" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Skip CHANGES_REQUESTED — needs a fix worker, not a merge
+	if [[ "$pr_review" == "CHANGES_REQUESTED" ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision=CHANGES_REQUESTED" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Skip external contributor PRs (non-collaborator)
+	if ! _is_collaborator_author "$pr_author" "$repo_slug"; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Skip PRs modifying workflow files when we lack the scope
+	if check_pr_modifies_workflows "$pr_number" "$repo_slug" 2>/dev/null; then
+		if ! check_gh_workflow_scope 2>/dev/null; then
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — modifies workflow files but token lacks workflow scope" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	# Check maintainer-gate: skip if linked issue has needs-maintainer-review
+	local linked_issue
+	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
+	if [[ -n "$linked_issue" ]]; then
+		local issue_labels
+		issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
+			--jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+		if [[ "$issue_labels" == *"needs-maintainer-review"* ]]; then
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} has needs-maintainer-review" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	# ── External contributor gate (t1958) ──
+	# Requires linked issue + crypto approval (defence-in-depth after _is_collaborator_author).
+	local pr_labels_for_ext
+	pr_labels_for_ext=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels \
+		--jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels_for_ext=""
+	if [[ "$pr_labels_for_ext" == *"external-contributor"* ]]; then
+		if ! _external_pr_has_linked_issue "$pr_number" "$repo_slug"; then
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — external-contributor PR has no linked issue (t1958)" >>"$LOGFILE"
+			return 1
+		fi
+		if ! _external_pr_linked_issue_crypto_approved "$pr_number" "$repo_slug"; then
+			local ext_linked_for_log
+			ext_linked_for_log=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || ext_linked_for_log="unknown"
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — external-contributor PR linked issue #${ext_linked_for_log} lacks crypto approval (t1958)" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	# ── Review bot gate (GH#17490) ──
+	# --admin bypasses branch protection; enforce in code (see review-bot-gate-helper.sh).
+	local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
+	if [[ -f "$rbg_helper" ]]; then
+		local rbg_result=""
+		rbg_result=$(bash "$rbg_helper" check "$pr_number" "$repo_slug" 2>/dev/null) || rbg_result=""
+		local rbg_status=""
+		rbg_status=$(printf '%s' "$rbg_result" | grep -oE '^(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | head -1)
+		case "$rbg_status" in
+		PASS | SKIP | PASS_RATE_LIMITED)
+			echo "[pulse-wrapper] Review bot gate: ${rbg_status} for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+			;;
+		*)
+			echo "[pulse-wrapper] Review bot gate: ${rbg_status:-UNKNOWN} for PR #${pr_number} in ${repo_slug} — skipping merge" >>"$LOGFILE"
+			return 1
+			;;
+		esac
+	fi
+
+	# Approve (satisfies REVIEW_REQUIRED for collaborator PRs)
+	approve_collaborator_pr "$pr_number" "$repo_slug" "$pr_author" 2>/dev/null || true
+
+	# Extract merge summary: MERGE_SUMMARY comment → PR body → generic fallback.
+	local merge_summary
+	merge_summary=$(_extract_merge_summary "$pr_number" "$repo_slug")
+
+	# Merge
+	local merge_output _merge_exit
+	merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)
+	_merge_exit=$?
+
+	# Rate-limit: 1 second between merges to avoid GitHub API abuse
+	sleep 1
+
+	if [[ $_merge_exit -eq 0 ]]; then
+		echo "[pulse-wrapper] Deterministic merge: merged PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+
+		# Build closing comment — use worker summary if available, fall back to generic
+		local closing_comment
+		if [[ -n "$merge_summary" ]]; then
+			closing_comment="${merge_summary}
+
+---
+Merged via PR #${pr_number} to main.
+_Merged by deterministic merge pass (pulse-wrapper.sh)._"
+		else
+			closing_comment="Completed via PR #${pr_number}, merged to main.
+
+_Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY comment nor PR body text was available._"
+		fi
+
+		# Append signature footer (GH#15486) — no-session, routine type.
+		local _merge_sig_footer="" _merge_elapsed=""
+		_merge_elapsed=$(($(date +%s) - PULSE_START_EPOCH))
+		local _merge_issue_ref=""
+		if [[ -n "$linked_issue" ]]; then
+			_merge_issue_ref="${repo_slug}#${linked_issue}"
+		fi
+		_merge_sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
+			--body "$closing_comment" --no-session --tokens 0 \
+			--time "$_merge_elapsed" --session-type routine \
+			${_merge_issue_ref:+--issue "$_merge_issue_ref"} --solved 2>/dev/null || true)
+		closing_comment="${closing_comment}${_merge_sig_footer}"
+
+		# Post closing comment on PR
+		gh pr comment "$pr_number" --repo "$repo_slug" \
+			--body "$closing_comment" 2>/dev/null || true
+
+		# t1934: Unlock the merged PR (locked at dispatch time)
+		unlock_issue_after_worker "$pr_number" "$repo_slug"
+
+		# Close linked issue with the same context
+		if [[ -n "$linked_issue" ]]; then
+			# Dedup guard: skip if closing comment for this PR already exists (GH#18098).
+			local _dedup_count
+			_dedup_count=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments" \
+				2>/dev/null | jq --arg prnum "PR #${pr_number}" \
+				'[.[] | select(.body | contains($prnum))] | length' 2>/dev/null) || _dedup_count=0
+			[[ "$_dedup_count" =~ ^[0-9]+$ ]] || _dedup_count=0
+			if [[ "$_dedup_count" -gt 0 ]]; then
+				echo "[pulse-wrapper] Deterministic merge: skipped duplicate closing comment on #${linked_issue} — PR #${pr_number} already referenced in existing comment (GH#18098)" >>"$LOGFILE"
+			else
+				gh issue comment "$linked_issue" --repo "$repo_slug" \
+					--body "$closing_comment" 2>/dev/null || true
+			fi
+			gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
+			# Reset fast-fail counter now that the issue is resolved (GH#2076)
+			fast_fail_reset "$linked_issue" "$repo_slug" || true
+			# t1934: Unlock the issue (locked at dispatch time)
+			unlock_issue_after_worker "$linked_issue" "$repo_slug"
+		fi
+		return 0
+	else
+		echo "[pulse-wrapper] Deterministic merge: FAILED PR #${pr_number} in ${repo_slug}: ${merge_output}" >>"$LOGFILE"
+		return 3
+	fi
 }
 
 #######################################
