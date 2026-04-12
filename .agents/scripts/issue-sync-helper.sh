@@ -44,6 +44,7 @@ VERBOSE="${VERBOSE:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 FORCE_CLOSE="${FORCE_CLOSE:-false}"
 FORCE_PUSH="${FORCE_PUSH:-false}"
+FORCE_ENRICH="${FORCE_ENRICH:-false}"
 REPO_SLUG=""
 
 log_verbose() {
@@ -720,12 +721,43 @@ cmd_enrich() {
 		# Only run when add succeeded (or no labels to add) to avoid destructive removal
 		# after a transient add failure.
 		[[ "$add_ok" == "true" ]] && _reconcile_labels "$repo" "$num" "$labels"
-		if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
+
+		# Hybrid sentinel + content-diff gate (GH#18411):
+		# Prevent overwriting externally-authored bodies and skip no-op API calls.
+		local do_body_update=true
+		if [[ "$FORCE_ENRICH" != "true" ]]; then
+			local current_body
+			current_body=$(gh issue view "$num" --repo "$repo" --json body -q .body 2>/dev/null || echo "")
+			if [[ "$current_body" != *"Synced from TODO.md by issue-sync-helper.sh"* ]]; then
+				print_info "Preserving external body on #$num ($task_id) — no sentinel footer (use --force to override)"
+				do_body_update=false
+			elif [[ "$current_body" == "$body" ]]; then
+				print_info "Body unchanged on #$num ($task_id), skipping API call"
+				do_body_update=false
+			fi
+		fi
+
+		local edit_ok=false
+		if [[ "$do_body_update" == "true" ]]; then
+			if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
+				edit_ok=true
+			else
+				print_error "Failed to enrich body on #$num ($task_id)"
+			fi
+		else
+			# Still update title even when body is preserved/skipped (GH#18411)
+			if gh issue edit "$num" --repo "$repo" --title "$title" 2>/dev/null; then
+				edit_ok=true
+			else
+				print_error "Failed to enrich title on #$num ($task_id)"
+			fi
+		fi
+		if [[ "$edit_ok" == "true" ]]; then
 			print_success "Enriched #$num ($task_id)"
 			# Sync relationships (blocked-by, sub-issues) after enrichment (t1889)
 			sync_relationships_for_task "$task_id" "$todo_file" "$repo"
 			enriched=$((enriched + 1))
-		else print_error "Failed to enrich #$num ($task_id)"; fi
+		fi
 	done
 	print_info "Enrich complete: $enriched updated"
 }
@@ -1453,7 +1485,7 @@ Issue Sync Helper — stateless TODO.md <-> GitHub Issues sync via gh CLI.
 Usage: issue-sync-helper.sh [command] [options]
 Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reopen
           reconcile | relationships [tNNN] | status | help
-Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close)
+Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close; bypass enrich body-gate)
          --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
 
 Drift detection:
@@ -1493,6 +1525,7 @@ main() {
 			;;
 		--force)
 			FORCE_CLOSE="true"
+			FORCE_ENRICH="true"
 			shift
 			;;
 		--force-push)
