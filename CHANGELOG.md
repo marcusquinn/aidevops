@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-04-12
+
+### Changed
+
+- Claude CLI transport proxy for OpenCode plugin (#18343)
+- fix model definitions — image modality, names, attachments (#18345)
+
 ## [3.6.244] - 2026-04-12
 
 ### Added
