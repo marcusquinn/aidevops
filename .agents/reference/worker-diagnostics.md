@@ -114,6 +114,12 @@ done
 gh api notifications --jq '.[0:5] | .[] | "\(.updated_at[0:16]) \(.subject.type): \(.subject.title)"'
 ```
 
+## Multi-Runner Environments
+
+When multiple pulse runners are operating across machines, single-worker diagnostics above
+remain valid. For cross-runner race conditions, stale-recovery loops, and new runner setup,
+see `reference/cross-runner-coordination.md`.
+
 ## Recovery Checklist
 
 When workers are failing systemically:
