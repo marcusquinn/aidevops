@@ -538,7 +538,67 @@ _ts_to_epoch() {
 }
 
 #######################################
-# Execute stale assignment recovery: unassign, relabel, comment
+# Apply escalation when stale-recovery threshold is reached (t2008).
+# Called by _recover_stale_assignment when prior_ticks >= threshold.
+# Unassigns workers, applies needs-maintainer-review, posts comment.
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+#   $3 = comma-separated stale assignee logins
+#   $4 = reason string for audit trail
+#   $5 = escalation threshold (numeric)
+#   $6 = prior tick count (numeric)
+#######################################
+_escalate_stale_recovery() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local stale_assignees="$3"
+	local reason="$4"
+	local threshold="$5"
+	local prior_ticks="$6"
+
+	# Unassign stale workers (still needed to clean up the assignment)
+	local _esc_ifs="${IFS:-}"
+	local -a _esc_assignee_arr=()
+	IFS=',' read -ra _esc_assignee_arr <<<"$stale_assignees"
+	IFS="$_esc_ifs"
+	for _esc_assignee in "${_esc_assignee_arr[@]}"; do
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--remove-assignee "$_esc_assignee" 2>/dev/null || true
+	done
+
+	# Remove stale status labels; apply needs-maintainer-review (NOT status:available)
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--remove-label "status:queued" --remove-label "status:in-progress" \
+		--remove-label "status:available" \
+		--add-label "needs-maintainer-review" 2>/dev/null || true
+
+	# Post escalation comment explaining the suspension
+	gh issue comment "$issue_number" --repo "$repo_slug" \
+		--body "<!-- stale-recovery-tick:escalated (threshold=${threshold}) -->
+**Stale recovery threshold reached** (t2008)
+
+This issue has been stale-recovered **${prior_ticks}** consecutive time(s) without producing a PR. Further automated dispatch is suspended until a human reviews the root cause.
+
+Previously assigned to: ${stale_assignees}
+Reason for latest stale: ${reason}
+Recovery count: ${prior_ticks} (threshold: ${threshold})
+
+Marked \`needs-maintainer-review\`. Remove this label after investigating why workers keep failing (wrong brief, unimplementable scope, missing dependency, etc.) to re-enable dispatch.
+
+_This escalation is the \"no-progress fail-safe\" from t2008 (paired with t1986 parent-task guard and t2007 cost circuit breaker)._" \
+		2>/dev/null || true
+
+	printf 'STALE_ESCALATED: issue #%s in %s — unassigned %s, applied needs-maintainer-review (threshold %s reached after %s ticks)\n' \
+		"$issue_number" "$repo_slug" "$stale_assignees" "$threshold" "$prior_ticks"
+	return 0
+}
+
+#######################################
+# Execute stale assignment recovery: unassign, relabel, comment.
+# Includes escalation guard (t2008): after STALE_RECOVERY_THRESHOLD
+# consecutive recoveries without a PR, applies needs-maintainer-review
+# instead of resetting to status:available.
 # Args:
 #   $1 = issue number
 #   $2 = repo slug
@@ -550,6 +610,47 @@ _recover_stale_assignment() {
 	local repo_slug="$2"
 	local stale_assignees="$3"
 	local reason="$4"
+
+	# ── Stale-recovery escalation check (t2008) ──────────────────────────
+	# Load threshold from config (default 2 consecutive recoveries)
+	local _stale_conf="${SCRIPT_DIR}/../configs/dispatch-stale-recovery.conf"
+	if [[ -f "$_stale_conf" ]]; then
+		# shellcheck source=/dev/null
+		source "$_stale_conf"
+	fi
+	local _threshold="${STALE_RECOVERY_THRESHOLD:-2}"
+
+	# Count prior non-reset stale-recovery-tick comments (cross-runner counter)
+	local _prior_ticks
+	_prior_ticks=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--jq '[.[] | select(.body | (test("<!-- stale-recovery-tick:[1-9]") and (test("reset") | not)))] | length' \
+		2>/dev/null) || _prior_ticks=0
+	[[ "$_prior_ticks" =~ ^[0-9]+$ ]] || _prior_ticks=0
+
+	# Check for any open PR referencing this issue (resets the counter)
+	local _open_pr
+	_open_pr=$(gh pr list --repo "$repo_slug" --state open \
+		--search "#${issue_number} in:body" --limit 1 \
+		--json number --jq '.[0].number // empty' 2>/dev/null) || _open_pr=""
+
+	if [[ -n "$_open_pr" ]]; then
+		# Open PR detected — reset counter, allow normal recovery
+		gh issue comment "$issue_number" --repo "$repo_slug" \
+			--body "<!-- stale-recovery-tick:0 (reset: open PR #${_open_pr} detected) -->" \
+			2>/dev/null || true
+	elif [[ "$_prior_ticks" -ge "$_threshold" ]]; then
+		# Threshold reached — delegate to escalation helper and return
+		_escalate_stale_recovery "$issue_number" "$repo_slug" \
+			"$stale_assignees" "$reason" "$_threshold" "$_prior_ticks"
+		return 0
+	else
+		# Under threshold — post tick comment, continue normal recovery
+		local _next_tick=$((_prior_ticks + 1))
+		gh issue comment "$issue_number" --repo "$repo_slug" \
+			--body "<!-- stale-recovery-tick:${_next_tick} -->" \
+			2>/dev/null || true
+	fi
+	# ── End stale-recovery escalation check ──────────────────────────────
 
 	# Unassign all stale users
 	local saved_ifs="${IFS:-}"
@@ -1288,6 +1389,16 @@ main() {
 			return 1
 		}
 		normalize_title "$1"
+		;;
+	test-recover)
+		# Test shim for t2008: expose _recover_stale_assignment for test harness.
+		# Usage: dispatch-dedup-helper.sh test-recover <issue> <repo> <assignees> <reason>
+		# Not for production use — test files only.
+		[[ $# -lt 4 ]] && {
+			echo "Error: test-recover requires <issue> <repo> <assignees> <reason>" >&2
+			return 1
+		}
+		_recover_stale_assignment "$1" "$2" "$3" "$4"
 		;;
 	help | --help | -h)
 		show_help
