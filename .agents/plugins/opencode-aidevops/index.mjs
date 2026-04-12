@@ -43,6 +43,7 @@ import { createPoolAuthHook, createPoolTool, initPoolAuth, getAccounts } from ".
 import { createProviderAuthHook } from "./provider-auth.mjs";
 import { startCursorProxy } from "./cursor-proxy.mjs";
 import { startGoogleProxy } from "./google-proxy.mjs";
+import { startClaudeProxy } from "./claude-proxy.mjs";
 
 // ---------------------------------------------------------------------------
 // Directory constants
@@ -144,6 +145,16 @@ export async function AidevopsPlugin({ directory, client }) {
     } catch (err) {
       console.error(`[aidevops] Google proxy failed to start: ${err.message}`);
     }
+  }
+
+  // Claude CLI transport proxy
+  try {
+    const claudeProxyResult = await startClaudeProxy(client, directory);
+    if (claudeProxyResult) {
+      console.error(`[aidevops] Claude proxy started on port ${claudeProxyResult.port} with ${claudeProxyResult.models.length} models`);
+    }
+  } catch (err) {
+    console.error(`[aidevops] Claude proxy failed to start: ${err.message}`);
   }
 
   // Create tools

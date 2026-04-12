@@ -10,6 +10,7 @@ import { registerMcpServers } from "./mcp-registry.mjs";
 import { registerPoolProvider, getAccounts, ensureValidToken } from "./oauth-pool.mjs";
 import { getCursorProxyPort, registerCursorProvider } from "./cursor-proxy.mjs";
 import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
+import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDrift } from "./version-tracking.mjs";
 
 /**
@@ -246,6 +247,19 @@ export function createConfigHook(deps) {
       config,
     });
 
+    // Claude CLI transport proxy — registers the `claudecli` provider with the
+    // local proxy base URL. Overwrites any placeholder `claudecli` models that
+    // `registerAnthropicModels` may have pre-seeded.
+    const claudeProxyPort = getClaudeProxyPort();
+    const claudeModels = [
+      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5 (via Claude CLI)", reasoning: true, contextWindow: 200000, maxTokens: 32000 },
+      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (via Claude CLI)", reasoning: true, contextWindow: 200000, maxTokens: 64000 },
+      { id: "claude-opus-4-6", name: "Claude Opus 4.6 (via Claude CLI)", reasoning: true, contextWindow: 200000, maxTokens: 32000 },
+    ];
+    const claudeModelsRegistered = claudeProxyPort && registerClaudeProvider(config, claudeProxyPort, claudeModels)
+      ? claudeModels.length
+      : 0;
+
     const versionDrift = checkOpenCodeVersionDrift(pluginDir);
 
     // Silent unless something was actually changed
@@ -257,6 +271,7 @@ export function createConfigHook(deps) {
     if (anthropicModelsRegistered > 0) parts.push(`${anthropicModelsRegistered} anthropic models`);
     if (cursorModelsRegistered > 0) parts.push(`${cursorModelsRegistered} Cursor models`);
     if (googleModelsRegistered > 0) parts.push(`${googleModelsRegistered} Google models`);
+    if (claudeModelsRegistered > 0) parts.push(`${claudeModelsRegistered} Claude CLI models`);
 
     if (parts.length > 0) {
       console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
