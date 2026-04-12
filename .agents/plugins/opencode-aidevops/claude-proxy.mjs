@@ -428,9 +428,18 @@ function createOpenAIChunk(id, created, model, delta, finishReason = null) {
 function summarizeToolInput(input) {
   if (!input || typeof input !== "object") return "";
   const parts = [];
+  // Bash
   if (typeof input.command === "string") parts.push(input.command);
+  // Read / Edit / Write
+  if (typeof input.filePath === "string") parts.push(input.filePath);
+  // Glob
+  if (typeof input.pattern === "string") parts.push(input.pattern);
+  // Grep
+  if (typeof input.regex === "string") parts.push(input.regex);
+  // Description (Bash, Task)
   if (typeof input.description === "string") parts.push(input.description);
-  if (typeof input.prompt === "string") parts.push(input.prompt);
+  // Task / subagent
+  if (typeof input.prompt === "string") parts.push(input.prompt.slice(0, 120));
   if (typeof input.subagent_type === "string") parts.push(`type=${input.subagent_type}`);
   return parts.filter(Boolean).join(" — ");
 }
@@ -484,12 +493,15 @@ function processStreamEvent(event, ctx) {
   } else if (event.type === "user" && event.uuid && event.tool_use_result && !seenToolResults.has(event.uuid)) {
     seenToolResults.add(event.uuid);
     const toolResult = event.tool_use_result;
+    const toolName = event.tool_use_name || "unknown";
+    const isError = toolResult.is_error === true;
     const preview = Array.isArray(toolResult.content)
       ? toolResult.content.map((item) => item?.text).filter(Boolean).join(" ")
       : (toolResult.stdout || "");
     if (preview) {
+      const label = isError ? `Tool error: ${toolName}` : `Tool result: ${toolName}`;
       send(createOpenAIChunk(completionId, created, model, {
-        content: formatStatusLine("Tool result", preview.slice(0, 200)),
+        content: formatStatusLine(label, preview.slice(0, 500)),
       }));
     }
   }
