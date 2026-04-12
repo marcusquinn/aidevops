@@ -7,6 +7,10 @@ import { ensureValidToken, getAccounts } from "./oauth-pool.mjs";
 const CLAUDE_PROXY_DEFAULT_PORT = parseInt(process.env.CLAUDE_PROXY_PORT || "32125", 10);
 const CLAUDE_PROVIDER_ID = "claudecli";
 const OPENCODE_CONFIG_PATH = join(homedir(), ".config", "opencode", "opencode.json");
+/** Maximum time (ms) a CLI subprocess may run before being killed. */
+const CHILD_TIMEOUT_MS = parseInt(process.env.CLAUDE_PROXY_TIMEOUT || "600000", 10); // 10 min
+/** Opt-in debug request dump — set CLAUDE_PROXY_DEBUG_DUMP=1 to enable. */
+const DEBUG_DUMP_ENABLED = process.env.CLAUDE_PROXY_DEBUG_DUMP === "1";
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
   "Cache-Control": "no-cache",
@@ -490,13 +494,23 @@ async function runClaudeJsonWithAccount(body, directory, account) {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  // Lifetime bound: kill child if it exceeds timeout
+  const timeout = setTimeout(() => {
+    console.error(`[aidevops] Claude proxy: json child timeout (${CHILD_TIMEOUT_MS}ms), killing`);
+    child.kill("SIGKILL");
+  }, CHILD_TIMEOUT_MS);
+
   const stdoutChunks = [];
   const stderrChunks = [];
 
   child.stdout.on("data", (chunk) => stdoutChunks.push(chunk));
   child.stderr.on("data", (chunk) => stderrChunks.push(chunk));
 
-  const exitCode = await new Promise((resolve) => child.on("close", resolve));
+  const exitCode = await new Promise((resolve) => {
+    child.on("close", resolve);
+    child.on("error", () => resolve(1));
+  });
+  clearTimeout(timeout);
   const stdout = Buffer.concat(stdoutChunks).toString("utf-8").trim();
   const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
 
@@ -652,6 +666,12 @@ function tryStreamWithAccount(controller, encoder, completionId, created, body, 
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    // Lifetime bound: kill child if it exceeds timeout
+    const timeout = setTimeout(() => {
+      console.error(`[aidevops] Claude proxy: stream child timeout (${CHILD_TIMEOUT_MS}ms), killing`);
+      child.kill("SIGKILL");
+    }, CHILD_TIMEOUT_MS);
+
     let buffer = "";
     let closed = false;
     let stderrText = "";
@@ -750,6 +770,7 @@ function tryStreamWithAccount(controller, encoder, completionId, created, body, 
     });
 
     child.on("close", (exitCode) => {
+      clearTimeout(timeout);
       // If we bailed due to rate limiting, the controller belongs to the next
       // account attempt — do NOT write to it or close it.
       if (rateLimitBailed) {
@@ -781,6 +802,7 @@ function tryStreamWithAccount(controller, encoder, completionId, created, body, 
     });
 
     child.on("error", (err) => {
+      clearTimeout(timeout);
       if (probePhase) {
         resolve("error");
         return;
@@ -867,15 +889,21 @@ async function handleChatCompletions(req, directory) {
 
   // Agent selection: X-Agent header > model name suffix (e.g. "claudecli/seo/opus") > default
   let agentName = req.headers.get("x-agent") || null;
-  if (!agentName && typeof incoming.model === "string" && incoming.model.includes("/")) {
+  // Normalize model: strip routing prefix (e.g. "claudecli/seo/opus" → "claude-opus-4-6")
+  let resolvedModel = incoming.model;
+  if (typeof incoming.model === "string" && incoming.model.includes("/")) {
     const parts = incoming.model.split("/");
     if (parts.length >= 2 && AGENT_FILES[parts[1]]) {
-      agentName = parts[1];
+      agentName = agentName || parts[1];
     }
+    // Map model alias suffix to real model ID
+    const modelSuffix = parts[parts.length - 1];
+    const MODEL_ALIASES = { haiku: "claude-haiku-4-5", sonnet: "claude-sonnet-4-6", opus: "claude-opus-4-6" };
+    resolvedModel = MODEL_ALIASES[modelSuffix] || incoming.model;
   }
 
   const body = {
-    model: incoming.model,
+    model: resolvedModel,
     agentName: agentName || "build-plus",
     systemPrompt: parsed.systemPrompt,
     prompt: parsed.prompt,
@@ -885,14 +913,16 @@ async function handleChatCompletions(req, directory) {
   console.error(
     `[aidevops] Claude proxy: request model=${body.model} agent=${body.agentName} stream=${body.stream} systemChars=${body.systemPrompt.length} promptChars=${body.prompt.length}`,
   );
-  try {
-    writeFileSync(
-      "/tmp/claude-proxy-last-request.json",
-      JSON.stringify({ model: body.model, agent: body.agentName, stream: body.stream, systemPrompt: body.systemPrompt, prompt: body.prompt }, null, 2),
-      "utf-8",
-    );
-  } catch {
-    // best effort debugging
+  if (DEBUG_DUMP_ENABLED) {
+    try {
+      writeFileSync(
+        "/tmp/claude-proxy-last-request.json",
+        JSON.stringify({ model: body.model, agent: body.agentName, stream: body.stream }, null, 2),
+        "utf-8",
+      );
+    } catch {
+      // best effort debugging
+    }
   }
 
   if (incoming.stream === false) {
