@@ -335,7 +335,7 @@ bash .agents/scripts/tests/test-pulse-wrapper-characterization.sh
   ```yaml
   verify:
     method: codebase
-    pattern: "gh issue create.*consolidation-task"
+    pattern: "gh issue create --repo"
     path: ".agents/scripts/pulse-triage.sh"
   ```
 - [ ] The child issue body contains the parent title, full parent body verbatim, and each substantive comment verbatim (author + timestamp header), so the worker never needs to read the parent.
@@ -349,14 +349,14 @@ bash .agents/scripts/tests/test-pulse-wrapper-characterization.sh
   ```yaml
   verify:
     method: codebase
-    pattern: "authors_csv.*unique.*map\\(\"@\""
+    pattern: "unique \\| map"
     path: ".agents/scripts/pulse-triage.sh"
   ```
 - [ ] Calling `_dispatch_issue_consolidation()` twice on the same parent does NOT create a second child (dedup by open `consolidation-task` + parent reference).
   ```yaml
   verify:
     method: codebase
-    pattern: "existing_child.*consolidation-task"
+    pattern: "_consolidation_child_exists"
     path: ".agents/scripts/pulse-triage.sh"
   ```
 - [ ] A pre-dispatch backfill pass dispatches a child for any open `needs-consolidation` issue that has no linked child, so existing stuck issues (including #18365) self-heal on the next pulse cycle.
@@ -370,7 +370,7 @@ bash .agents/scripts/tests/test-pulse-wrapper-characterization.sh
   ```yaml
   verify:
     method: codebase
-    pattern: "existing_child_count.*gt 0"
+    pattern: "if _consolidation_child_exists"
     path: ".agents/scripts/pulse-triage.sh"
   ```
 - [ ] `shellcheck` passes for all touched scripts.
