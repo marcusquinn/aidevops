@@ -18,6 +18,9 @@
 #   - unlock_issue_after_worker
 #   - _unlock_linked_prs
 #   - _count_impl_commits
+#   - _task_id_in_recent_commits
+#   - _task_id_in_merged_pr
+#   - _task_id_in_changed_files
 #   - _is_task_committed_to_main
 #   - _issue_targets_large_files
 #   - dispatch_with_dedup
@@ -26,8 +29,9 @@
 #   - check_terminal_blockers
 #
 # Pure move from pulse-wrapper.sh. Byte-identical function bodies.
-# Phase 12 post-gate simplification will split the largest functions
-# (dispatch_with_dedup=370, _is_task_committed_to_main=189, etc.).
+# Phase 12 post-gate simplification: _is_task_committed_to_main split into
+# _task_id_in_recent_commits, _task_id_in_merged_pr, _task_id_in_changed_files
+# (t2004). dispatch_with_dedup=370 lines remains for a future phase.
 
 [[ -n "${_PULSE_DISPATCH_CORE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_CORE_LOADED=1
@@ -431,6 +435,168 @@ _count_impl_commits() {
 }
 
 #######################################
+# t2004: Signal 1 — search git log subject lines for task ID patterns.
+# Handles tNNN and GH#NNN prefixes extracted from the issue title.
+# Subject-only matching prevents body cross-references from causing false
+# positives (GH#17779). Uses _count_impl_commits to filter planning-only
+# commits (GH#17707).
+#
+# Args:
+#   $1 - issue_title (to extract tNNN / GH#NNN prefix patterns)
+#   $2 - repo_path (local path to the repo)
+#   $3 - created_at (ISO timestamp for --since filter)
+#
+# Exit codes:
+#   0 - found matching implementation commit(s) on origin/main
+#   1 - no match
+#######################################
+_task_id_in_recent_commits() {
+	local issue_title="$1"
+	local repo_path="$2"
+	local created_at="$3"
+
+	# Pattern 1: tNNN task ID from title (e.g., "t153: add dark mode")
+	# Subject-only: body cross-references like "(t101)" must not match.
+	# grep -w enforces word boundaries — prevents t101 matching t1010.
+	local -a subject_patterns=()
+	local task_id_match
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+' | head -1) || task_id_match=""
+	if [[ -n "$task_id_match" ]]; then
+		subject_patterns+=("$task_id_match")
+	fi
+
+	# Pattern 2: GH#NNN from title (e.g., "GH#17574: fix pulse dispatch")
+	# Subject-only: body mentions of other GH# IDs must not match.
+	local gh_id_match
+	gh_id_match=$(printf '%s' "$issue_title" | grep -oE '^GH#[0-9]+' | head -1) || gh_id_match=""
+	if [[ -n "$gh_id_match" ]]; then
+		subject_patterns+=("$gh_id_match")
+	fi
+
+	[[ ${#subject_patterns[@]} -gt 0 ]] || return 1
+
+	# Bash 3.2 + set -u: length check already done above.
+	local pattern
+	for pattern in "${subject_patterns[@]}"; do
+		local match_count=0
+		# Fetch all commits as "HASH SUBJECT", filter planning subjects, then
+		# grep -w for word-boundary match on the subject portion only.
+		match_count=$(_count_impl_commits "$repo_path" < <(
+			git -C "$repo_path" log origin/main --since="$created_at" \
+				--format='%H %s' |
+				grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
+				grep -wE "$pattern" |
+				cut -d' ' -f1 || true
+		))
+		if [[ "$match_count" -gt 0 ]]; then
+			echo "[pulse-wrapper] _task_id_in_recent_commits: found ${match_count} commit(s) matching subject pattern '${pattern}' on origin/main since ${created_at}" >>"$LOGFILE"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+#######################################
+# t2004: Signal 2 — search git log commit messages for closing keywords and
+# squash-merge suffixes that indicate the issue was resolved via a merged PR.
+#
+# Patterns: "(#NNN)" squash-merge suffix, "Closes #NNN", "Fixes #NNN".
+# Full-message matching is safe here — these keywords legitimately appear
+# only in commit bodies for commits that close an issue (GH#17779).
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_path (local path to the repo)
+#   $3 - created_at (ISO timestamp for --since filter)
+#
+# Exit codes:
+#   0 - found matching implementation commit(s) on origin/main
+#   1 - no match
+#######################################
+_task_id_in_merged_pr() {
+	local issue_number="$1"
+	local repo_path="$2"
+	local created_at="$3"
+
+	# Pattern 3: GitHub squash-merge suffix "(#NNN)" — only matches commit
+	# titles, not body references. The bare "#NNN" pattern previously caused
+	# false positives: any commit that MENTIONED an issue (e.g., "Relabeled
+	# #17659 and #17660") would match, closing issues whose work hadn't been
+	# done. Restrict to the "(#NNN)" suffix that GitHub adds to squash merges.
+	# t1927: Escape parens for -E regex — unescaped parens are capture groups
+	# that match bare "#NNN" in commit bodies (evidence tables, PR descriptions).
+	# With \( \) the pattern only matches the literal "(#NNN)" suffix.
+	local -a message_patterns=()
+	message_patterns+=("\\(#${issue_number}\\)")
+
+	# Patterns 4-5: "Closes #NNN" / "Fixes #NNN" in commit messages — these
+	# are the conventional patterns for commits that resolve an issue.
+	# \b word boundary prevents #17779 from matching #177790 (longer IDs).
+	message_patterns+=("[Cc]loses #${issue_number}\\b")
+	message_patterns+=("[Ff]ixes #${issue_number}\\b")
+
+	# Bash 3.2 + set -u: guard empty array iteration.
+	local pattern
+	for pattern in "${message_patterns[@]}"; do
+		local match_count=0
+		match_count=$(_count_impl_commits "$repo_path" < <(
+			git -C "$repo_path" log origin/main --since="$created_at" \
+				-E --grep="$pattern" --format='%H %s' |
+				grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
+				cut -d' ' -f1 || true
+		))
+		if [[ "$match_count" -gt 0 ]]; then
+			echo "[pulse-wrapper] _task_id_in_merged_pr: found ${match_count} commit(s) matching message pattern '${pattern}' on origin/main since ${created_at}" >>"$LOGFILE"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+#######################################
+# t2004: Signal 3 — scan TODO.md on origin/main for completed task markers.
+# Catches tasks marked [x] in planning files without a conventional commit
+# message — e.g., tasks completed via direct TODO edit + push.
+#
+# Args:
+#   $1 - issue_number
+#   $2 - issue_title (to extract tNNN prefix)
+#   $3 - repo_path (local path to the repo)
+#
+# Exit codes:
+#   0 - task found completed ([x]) in TODO.md on origin/main
+#   1 - no match (or TODO.md unavailable)
+#######################################
+_task_id_in_changed_files() {
+	local issue_number="$1"
+	local issue_title="$2"
+	local repo_path="$3"
+
+	local todo_content
+	todo_content=$(git -C "$repo_path" show origin/main:TODO.md 2>/dev/null) || return 1
+
+	# Check for tNNN completion marker: "- [x] tNNN ..."
+	local task_id_match
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+' | head -1) || task_id_match=""
+	if [[ -n "$task_id_match" ]]; then
+		if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\]\s+${task_id_match}(\s|$)"; then
+			echo "[pulse-wrapper] _task_id_in_changed_files: found completed '${task_id_match}' in TODO.md on origin/main" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
+	# Check for GH#NNN completion marker: "- [x] ... GH#NNN ..."
+	if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\].*\bGH#${issue_number}\b"; then
+		echo "[pulse-wrapper] _task_id_in_changed_files: found completed 'GH#${issue_number}' in TODO.md on origin/main" >>"$LOGFILE"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # GH#17574: Check if a task has already been committed directly to main.
 #
 # Workers that bypass the PR flow (direct commits to main) complete the
@@ -438,9 +604,10 @@ _count_impl_commits() {
 # pass runs, which happens AFTER dispatch decisions for the next cycle.
 # This caused 3× token waste in the observed incident (t153–t160).
 #
-# Strategy: Extract task ID patterns from the issue title (tNNN, GH#NNN)
-# and search recent commits on origin/main since the issue was created.
-# A match means the work is already done — skip dispatch.
+# Delegates to three per-signal helpers (t2004):
+#   _task_id_in_recent_commits — task ID in commit subject line
+#   _task_id_in_merged_pr      — closing keywords / squash-merge suffix
+#   _task_id_in_changed_files  — [x] completion marker in TODO.md
 #
 # Args:
 #   $1 - issue_number
@@ -460,58 +627,6 @@ _is_task_committed_to_main() {
 
 	[[ -n "$issue_number" && -n "$repo_slug" && -n "$repo_path" ]] || return 1
 
-	# Extract task ID patterns from the issue title.
-	# Matches: "t153:", "t153 ", "GH#17574:", "GH#17574 "
-	# Also matches the issue number itself: "#17574" in commit messages.
-	#
-	# GH#17779: Split patterns into two arrays by match scope:
-	#   subject_patterns — Patterns 1 & 2: task IDs that belong in the commit
-	#     subject line only. git --grep searches subject+body, so body
-	#     cross-references (e.g. "feeds scope-aware extraction (t101)") cause
-	#     false positives. Use --format '%H %s' + grep -w for subject-only match.
-	#   message_patterns — Patterns 3-5: closing keywords / squash-merge suffixes
-	#     that legitimately appear in commit bodies. Keep using --grep.
-	local -a subject_patterns=() # Patterns 1, 2: subject-only matching
-	local -a message_patterns=() # Patterns 3, 4, 5: full-message matching
-
-	# Pattern 1: tNNN task ID from title (e.g., "t153: add dark mode")
-	# Subject-only: body cross-references like "(t101)" must not match.
-	# grep -w enforces word boundaries — prevents t101 matching t1010.
-	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+' | head -1) || task_id_match=""
-	if [[ -n "$task_id_match" ]]; then
-		subject_patterns+=("$task_id_match")
-	fi
-
-	# Pattern 2: GH#NNN from title (e.g., "GH#17574: fix pulse dispatch")
-	# Subject-only: body mentions of other GH# IDs must not match.
-	local gh_id_match
-	gh_id_match=$(printf '%s' "$issue_title" | grep -oE '^GH#[0-9]+' | head -1) || gh_id_match=""
-	if [[ -n "$gh_id_match" ]]; then
-		subject_patterns+=("$gh_id_match")
-	fi
-
-	# Pattern 3: GitHub squash-merge suffix "(#NNN)" — only matches commit
-	# titles, not body references. The bare "#NNN" pattern previously caused
-	# false positives: any commit that MENTIONED an issue (e.g., "Relabeled
-	# #17659 and #17660") would match, closing issues whose work hadn't been
-	# done. Restrict to the "(#NNN)" suffix that GitHub adds to squash merges.
-	# t1927: Escape parens for -E regex — unescaped parens are capture groups
-	# that match bare "#NNN" in commit bodies (evidence tables, PR descriptions).
-	# With \( \) the pattern only matches the literal "(#NNN)" suffix.
-	message_patterns+=("\\(#${issue_number}\\)")
-
-	# Pattern 4: "Closes #NNN" / "Fixes #NNN" in commit messages — these
-	# are the conventional patterns for commits that resolve an issue.
-	# \b word boundary prevents #17779 from matching #177790 (longer IDs).
-	message_patterns+=("[Cc]loses #${issue_number}\\b")
-	message_patterns+=("[Ff]ixes #${issue_number}\\b")
-
-	# No patterns to search — cannot determine if committed
-	if [[ ${#subject_patterns[@]} -eq 0 && ${#message_patterns[@]} -eq 0 ]]; then
-		return 1
-	fi
-
 	# Get the issue creation date for --since filtering
 	local created_at
 	created_at=$(gh issue view "$issue_number" --repo "$repo_slug" \
@@ -528,61 +643,9 @@ _is_task_committed_to_main() {
 		return 1
 	fi
 
-	# Search recent commits on origin/main for any matching pattern.
-	# GH#17707: Filter out planning-only commits that mention task IDs but
-	# don't contain implementation work. Two-stage filter:
-	#   1. Subject-line filter: drop obvious planning prefixes (chore: claim, plan:)
-	#   2. Path-based filter: for remaining commits, check if ALL touched paths
-	#      are planning-only files (TODO.md, todo/*, AGENTS.md). If so, exclude.
-	# This preserves real docs: commits while filtering true planning-only commits.
-	#
-	# GH#17779: subject_patterns use subject-only matching (--format + grep -w)
-	# to avoid false positives from body cross-references. message_patterns keep
-	# using --grep (full message) because closing keywords belong in commit bodies.
-
-	# Search subject_patterns (Patterns 1 & 2): subject-only via --format + grep -w
-	# This prevents body cross-references from triggering false positives.
-	# Bash 3.2 + set -u: "${arr[@]}" on an empty array triggers "unbound variable".
-	# Guard with length check first.
-	local pattern
-	if [[ ${#subject_patterns[@]} -gt 0 ]]; then
-		for pattern in "${subject_patterns[@]}"; do
-			local match_count=0
-			# Fetch all commits as "HASH SUBJECT", filter planning subjects, then
-			# grep -w for word-boundary match on the subject portion only.
-			match_count=$(_count_impl_commits "$repo_path" < <(
-				git -C "$repo_path" log origin/main --since="$created_at" \
-					--format='%H %s' |
-					grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
-					grep -wE "$pattern" |
-					cut -d' ' -f1 || true
-			))
-			if [[ "$match_count" -gt 0 ]]; then
-				echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching subject pattern '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
-				return 0
-			fi
-		done
-	fi # subject_patterns guard
-
-	# Search message_patterns (Patterns 3-5): full-message via --grep
-	# Closing keywords and squash-merge suffixes legitimately appear in bodies.
-	# Bash 3.2 + set -u: guard empty array iteration (same as subject_patterns above).
-	if [[ ${#message_patterns[@]} -gt 0 ]]; then
-		for pattern in "${message_patterns[@]}"; do
-			local match_count=0
-			match_count=$(_count_impl_commits "$repo_path" < <(
-				git -C "$repo_path" log origin/main --since="$created_at" \
-					-E --grep="$pattern" --format='%H %s' |
-					grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
-					cut -d' ' -f1 || true
-			))
-			if [[ "$match_count" -gt 0 ]]; then
-				echo "[pulse-wrapper] _is_task_committed_to_main: found ${match_count} commit(s) matching message pattern '${pattern}' on origin/main since ${created_at} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
-				return 0
-			fi
-		done
-	fi # message_patterns guard
-
+	_task_id_in_recent_commits "$issue_title" "$repo_path" "$created_at" && return 0
+	_task_id_in_merged_pr "$issue_number" "$repo_path" "$created_at" && return 0
+	_task_id_in_changed_files "$issue_number" "$issue_title" "$repo_path" && return 0
 	return 1
 }
 
