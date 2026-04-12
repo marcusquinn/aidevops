@@ -448,12 +448,20 @@ function buildClaudeArgs(body, systemPrompt, streaming) {
     "-p",
     "--model",
     body.model,
+  ];
+
+  // Add reasoning effort level if provided
+  if (body.effortLevel) {
+    args.push("--effort", body.effortLevel);
+  }
+
+  args.push(
     "--permission-mode",
     "default",
     "--no-session-persistence",
     "--add-dir",
     agentsDir,
-  ];
+  );
 
   // Agent-specific MCP config (lazy loading — only needed MCPs start)
   const mcpConfig = getMcpConfigForAgent(agentName);
@@ -902,12 +910,19 @@ async function handleChatCompletions(req, directory) {
     resolvedModel = MODEL_ALIASES[modelSuffix] || incoming.model;
   }
 
+  // Extract reasoning effort level from OpenAI-compatible request
+  const EFFORT_LEVELS = new Set(["low", "medium", "high", "max"]);
+  const effortLevel = typeof incoming.reasoning_effort === "string" && EFFORT_LEVELS.has(incoming.reasoning_effort)
+    ? incoming.reasoning_effort
+    : null;
+
   const body = {
     model: resolvedModel,
     agentName: agentName || "build-plus",
     systemPrompt: parsed.systemPrompt,
     prompt: parsed.prompt,
     stream: incoming.stream !== false,
+    effortLevel: effortLevel,
   };
 
   console.error(

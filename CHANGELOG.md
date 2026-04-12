@@ -10,6 +10,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.2] - 2026-04-12
+
+### Added
+
+- setup.sh auto-installs privacy guard in every initialized repo (#18373)
+- add git pre-push privacy guard for private slug leaks (#18361)
+
+### Changed
+
+- fix(pulse-triage): consolidation flow never creates the promised child issue (#18405)
+- chore(ci): add Complexity Analysis to required status checks on main (#18397)
+- Phase 10 (FINAL) — quality-debt + ancillary-dispatch, CLEARS 2000-line gate (#18392)
+- Phase 9 — extract dispatch-core + dispatch-engine (26 fns, 2,141 lines) (#18390)
+- Phase 8 — extract triage cluster (10 fns, 428 lines) (#18388)
+- Phase 7 — extract prefetch cluster (26 fns, 1,668 lines) (#18386)
+- Phase 6 — extract simplification cluster (1,990 lines, 29 fns, largest) (#18384)
+- Phase 5 — extract cleanup + issue-reconcile clusters (#18381)
+- Phase 4 — extract pr-gates + merge cycle into pulse-merge.sh (#18379)
+- Maintenance: bump complexity threshold 40→43 (post-#18376 Phase 3 hotfix) (#18377)
+- Maintenance: mark t1970 complete (pr:#18374)
+- Maintenance: mark t1969 complete (pr:#18375)
+- Maintenance: mark t1968 complete (pr:#18373)
+- fix interactive-claim race — auto-assign + dedup excludes closed (#18374)
+- stub-based tests for privacy-guard (caught a latent cache bug) (#18375)
+- Phase 3 — extract operational plumbing (capacity, logging, watchdog, capacity-alloc) (#18376)
+- Phase 2 — extract 4 leaves with fan-in (queue-governor, nmr-approval, dep-graph, fast-fail) (#18368)
+- Phase 1 — extract 5 leaf modules (model-routing, instance-lock, meta-parse, repo-meta, routines) (#18366)
+- Phase 0 safety net — characterization tests, --self-check, --dry-run (#18362)
+- Maintenance: mark t1965 complete (pr:#18361)
+- Maintenance: mark t1964 complete (pr:#18360)
+- Maintenance: add r005 mirror-sync routine — daily sync of private mirror repos from their upstream sources
+- Maintenance: mark t1961 complete (pr:#18355)
+- skip pulse dispatch for interactive-session issues (#18353)
+- Maintenance: mark complete — shipped in #18351 (v3.7.1)
+
+### Fixed
+
+- copy all session-miner *.py modules to workspace (#18409)
+- exact tNNN-prefix dedup instead of fuzzy substring search (#18396)
+- remove context betas, prevent infinite 429 rotation (#18363)
+- skip fake-metric update when core tracking issue already exists (#18360)
+
 ## [3.7.1] - 2026-04-12
 
 ### Changed

@@ -116,10 +116,28 @@ get_repo_priority_by_slug() {
 
 #######################################
 # Return dispatchable issue candidates as JSON for one repo.
+#
+# Design: this function is intentionally permissive — it returns all
+# open issues that are not in a hard-blocked terminal state. It does NOT
+# filter by assignee or active-claim status label. Both are included in
+# the output JSON (.assignees and .labels arrays) for use by downstream
+# dispatch logic.
+#
+# The combined "label AND assignee" dedup gate (t1996 canonical rule) is
+# enforced downstream by dispatch_with_dedup() → check_dispatch_dedup()
+# Layer 6 (dispatch-dedup-helper.sh is-assigned). Applying it here would
+# require per-issue API calls on a batch response, which is expensive.
+#
+# The jq filter excludes only deterministic blockers:
+#   - status:blocked (explicit hold)
+#   - needs-* (waiting for maintainer action)
+#   - supervisor/persistent/routine-tracking (non-work telemetry)
+# Everything else passes through for the downstream dedup layers to decide.
+#
 # Arguments:
 #   $1 - repo slug (owner/repo)
 #   $2 - max issues to fetch (optional, default 100)
-# Returns: JSON array of issue objects
+# Returns: JSON array of issue objects (number, title, url, updatedAt, labels, assignees)
 #######################################
 list_dispatchable_issue_candidates_json() {
 	local repo_slug="$1"

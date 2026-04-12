@@ -44,6 +44,7 @@ VERBOSE="${VERBOSE:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 FORCE_CLOSE="${FORCE_CLOSE:-false}"
 FORCE_PUSH="${FORCE_PUSH:-false}"
+FORCE_ENRICH="${FORCE_ENRICH:-false}"
 REPO_SLUG=""
 
 log_verbose() {
@@ -128,7 +129,8 @@ _is_protected_label() {
 	# Exact-match protected labels
 	case "$lbl" in
 	persistent | needs-maintainer-review | not-planned | duplicate | wontfix | \
-		already-fixed | "good first issue" | "help wanted")
+		already-fixed | "good first issue" | "help wanted" | \
+		parent-task | meta)
 		return 0
 		;;
 	esac
@@ -468,11 +470,20 @@ _push_create_issue() {
 	# to self-assign — CI fires on the created issue within seconds, and
 	# re-running the workflow after a manual assign is extra friction.
 	#
+	# t1984: In the `Sync TODO.md → GitHub Issues` workflow, `gh api user`
+	# resolves to `github-actions[bot]` (the GITHUB_TOKEN identity), not the
+	# human pusher. The workflow sets AIDEVOPS_SESSION_ORIGIN=interactive
+	# AND AIDEVOPS_SESSION_USER=<github.actor> to override both the origin
+	# detection and the assignee target. Falls back to `gh api user` when
+	# the env var is unset (normal local interactive usage).
+	#
 	# Worker-origin issues are NOT auto-assigned here — they follow the
 	# existing dispatch flow (`status:claimed` + pulse-managed assignment).
 	if [[ -n "$num" && -z "$assignee" && "$origin_label" == "origin:interactive" ]]; then
-		local current_user
-		current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+		local current_user="${AIDEVOPS_SESSION_USER:-}"
+		if [[ -z "$current_user" ]]; then
+			current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+		fi
 		if [[ -n "$current_user" ]]; then
 			if gh issue edit "$num" --repo "$repo" --add-assignee "$current_user" >/dev/null 2>&1; then
 				print_info "Auto-assigned #${num} to @${current_user} (origin:interactive)"
@@ -720,12 +731,43 @@ cmd_enrich() {
 		# Only run when add succeeded (or no labels to add) to avoid destructive removal
 		# after a transient add failure.
 		[[ "$add_ok" == "true" ]] && _reconcile_labels "$repo" "$num" "$labels"
-		if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
+
+		# Hybrid sentinel + content-diff gate (GH#18411):
+		# Prevent overwriting externally-authored bodies and skip no-op API calls.
+		local do_body_update=true
+		if [[ "$FORCE_ENRICH" != "true" ]]; then
+			local current_body
+			current_body=$(gh issue view "$num" --repo "$repo" --json body -q .body 2>/dev/null || echo "")
+			if [[ "$current_body" != *"Synced from TODO.md by issue-sync-helper.sh"* ]]; then
+				print_info "Preserving external body on #$num ($task_id) — no sentinel footer (use --force to override)"
+				do_body_update=false
+			elif [[ "$current_body" == "$body" ]]; then
+				print_info "Body unchanged on #$num ($task_id), skipping API call"
+				do_body_update=false
+			fi
+		fi
+
+		local edit_ok=false
+		if [[ "$do_body_update" == "true" ]]; then
+			if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
+				edit_ok=true
+			else
+				print_error "Failed to enrich body on #$num ($task_id)"
+			fi
+		else
+			# Still update title even when body is preserved/skipped (GH#18411)
+			if gh issue edit "$num" --repo "$repo" --title "$title" 2>/dev/null; then
+				edit_ok=true
+			else
+				print_error "Failed to enrich title on #$num ($task_id)"
+			fi
+		fi
+		if [[ "$edit_ok" == "true" ]]; then
 			print_success "Enriched #$num ($task_id)"
 			# Sync relationships (blocked-by, sub-issues) after enrichment (t1889)
 			sync_relationships_for_task "$task_id" "$todo_file" "$repo"
 			enriched=$((enriched + 1))
-		else print_error "Failed to enrich #$num ($task_id)"; fi
+		fi
 	done
 	print_info "Enrich complete: $enriched updated"
 }
@@ -1453,7 +1495,7 @@ Issue Sync Helper — stateless TODO.md <-> GitHub Issues sync via gh CLI.
 Usage: issue-sync-helper.sh [command] [options]
 Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reopen
           reconcile | relationships [tNNN] | status | help
-Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close)
+Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close; bypass enrich body-gate)
          --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
 
 Drift detection:
@@ -1493,6 +1535,7 @@ main() {
 			;;
 		--force)
 			FORCE_CLOSE="true"
+			FORCE_ENRICH="true"
 			shift
 			;;
 		--force-push)

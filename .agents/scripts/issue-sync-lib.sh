@@ -667,6 +667,7 @@ map_tags_to_labels() {
 		docs) label="documentation" ;;
 		worker) label="origin:worker" ;;
 		interactive) label="origin:interactive" ;;
+		parent | parent-task | meta) label="parent-task" ;;
 		esac
 
 		labels="${labels:+$labels,}$label"
@@ -1124,11 +1125,16 @@ fix_gh_ref_in_todo() {
 		return 0
 	fi
 
-	# Find line number outside code fences, then replace only that line
+	# Find line number outside code fences, then replace only that line.
+	# NOTE: regex escapes must be doubled in the dynamic `pat` string (t1983) —
+	# BSD awk (macOS default) interprets `\[` in `$0 ~ pat` as literal `\` + `[`
+	# rather than a single literal `[`, causing the match to silently miss. The
+	# `\\[` / `\\]` form is correct on both BSD awk and gawk: awk's dynamic regex
+	# compiler reads `\\` as `\` and `\[` as literal `[`.
 	local task_id_ere
 	task_id_ere=$(_escape_ere "$task_id")
 	local line_num
-	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id_ere} .*ref:GH#${old_number}" \
+	line_num=$(awk -v pat="^[[:space:]]*- \\\\[.\\\\] ${task_id_ere} .*ref:GH#${old_number}" \
 		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
 	[[ -z "$line_num" ]] && {
 		log_verbose "$task_id with ref:GH#$old_number not found outside code fences"
@@ -1165,8 +1171,11 @@ add_gh_ref_to_todo() {
 
 	# Find the line number of the task OUTSIDE code fences, then apply sed to that specific line.
 	# This prevents modifying format examples inside code-fenced blocks.
+	# NOTE: double-backslash escapes in the dynamic `pat` string — required for
+	# BSD awk dynamic-regex semantics (t1983). See _fix_gh_ref_in_todo for
+	# the detailed explanation.
 	local line_num
-	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id_ere} " \
+	line_num=$(awk -v pat="^[[:space:]]*- \\\\[.\\\\] ${task_id_ere} " \
 		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
 	[[ -z "$line_num" ]] && {
 		log_verbose "$task_id not found outside code fences"
@@ -1217,9 +1226,11 @@ add_pr_ref_to_todo() {
 		return 0
 	fi
 
-	# Find line number outside code fences, then modify only that line
+	# Find line number outside code fences, then modify only that line.
+	# NOTE: double-backslash escapes in the dynamic `pat` string — required for
+	# BSD awk dynamic-regex semantics (t1983).
 	local line_num
-	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id_ere} " \
+	line_num=$(awk -v pat="^[[:space:]]*- \\\\[.\\\\] ${task_id_ere} " \
 		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
 	[[ -z "$line_num" ]] && {
 		log_verbose "$task_id not found outside code fences for pr: ref"

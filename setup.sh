@@ -12,7 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.7.1
+# Version: 3.7.2
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -89,6 +89,8 @@ if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	source "$SETUP_MODULES_DIR/_routines.sh"
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_privacy_guard.sh"
+	# shellcheck disable=SC1091
+	source "$SETUP_MODULES_DIR/_canonical_guard.sh"
 fi
 
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -919,6 +921,11 @@ _setup_run_non_interactive() {
 	# repo so TODO/todo/README/ISSUE_TEMPLATE pushes to public GitHub repos
 	# are scanned for private slug leaks (t1968).
 	setup_privacy_guard
+	# Install/refresh the canonical-on-main post-checkout hook in every
+	# initialized repo so branch switches away from main in the canonical
+	# directory are warned against (t1995). Complements pre-edit-check.sh's
+	# t1990 edit-time check by catching the branch switch itself.
+	setup_canonical_guard
 	return 0
 }
 

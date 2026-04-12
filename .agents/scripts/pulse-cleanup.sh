@@ -156,7 +156,10 @@ cleanup_worktrees() {
 				if [[ -f "$wt_path_age/.git" ]]; then
 					wt_created=$(stat -c '%Y' "$wt_path_age/.git" 2>/dev/null || stat -f '%m' "$wt_path_age/.git" 2>/dev/null) || wt_created=0
 				fi
-				[[ "$wt_created" -eq 0 ]] && continue
+				if [[ "$wt_created" -eq 0 ]]; then
+					echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch_age:-detached} ($wt_path_age) — stat on .git failed (wt_created=0)" >>"$LOGFILE"
+					continue
+				fi
 				local wt_age_secs=$((now_epoch - wt_created))
 
 				# Count commits ahead of main
@@ -169,6 +172,7 @@ cleanup_worktrees() {
 
 				# Check for active worker process using this worktree
 				if pgrep -f "$wt_path_age" >/dev/null 2>&1; then
+					echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch_age:-detached} ($wt_path_age) — pgrep matched active process" >>"$LOGFILE"
 					continue
 				fi
 

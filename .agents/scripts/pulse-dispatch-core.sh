@@ -33,6 +33,36 @@
 _PULSE_DISPATCH_CORE_LOADED=1
 
 #######################################
+# Resolve the worker tier from issue labels. When multiple tier:* labels
+# are present (collision — see t1997), pick the highest rank order.
+# Fallback: tier:standard if no tier label is present.
+# Arguments:
+#   $1 - comma-separated label list (e.g., "bug,tier:simple,auto-dispatch")
+# Output:
+#   tier:reasoning, tier:standard, or tier:simple
+# Exit codes:
+#   0 - always succeeds
+#######################################
+_resolve_worker_tier() {
+	local labels_csv="$1"
+	# Convert to lowercase for case-insensitive matching (Bash 3.2 compatible)
+	local labels_lower
+	labels_lower=$(printf '%s' "$labels_csv" | tr '[:upper:]' '[:lower:]')
+	local labels_with_commas=",${labels_lower},"
+
+	if [[ "$labels_with_commas" == *",tier:reasoning,"* ]]; then
+		printf 'tier:reasoning'
+	elif [[ "$labels_with_commas" == *",tier:standard,"* ]]; then
+		printf 'tier:standard'
+	elif [[ "$labels_with_commas" == *",tier:simple,"* ]]; then
+		printf 'tier:simple'
+	else
+		printf 'tier:standard' # default when no tier label present
+	fi
+	return 0
+}
+
+#######################################
 # Check if a worker exists for a specific repo+issue pair
 # Arguments:
 #   $1 - issue number
@@ -561,6 +591,13 @@ _issue_targets_large_files() {
 	local repo_slug="$2"
 	local issue_body="$3"
 	local repo_path="$4"
+	# t1998: force_recheck bypasses the skip-if-already-labeled short-circuit
+	# below. The normal dispatch path leaves this false (perf optimisation —
+	# no need to re-run wc -l on an issue we just gated). The re-evaluation
+	# path in pulse-triage.sh _reevaluate_simplification_labels() passes
+	# "true" so it can detect when a previously-gated file has been
+	# simplified below threshold and clear the label.
+	local force_recheck="${5:-false}"
 
 	[[ -n "$issue_body" ]] || return 1
 	[[ -d "$repo_path" ]] || return 1
@@ -589,8 +626,15 @@ _issue_targets_large_files() {
 		return 1
 	fi
 
-	# Skip if already labeled (avoid re-checking every cycle)
-	if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+	# Skip if already labeled (avoid re-checking every cycle).
+	# EXCEPTION (t1998): when called from _reevaluate_simplification_labels,
+	# force_recheck is "true" and we bypass this short-circuit. Without the
+	# bypass, the re-eval path can never clear a stale label because it
+	# always sees an immediate return 0 on labeled issues. This made
+	# #18346 and any similar stale issue impossible to unstick even after
+	# the target file had been simplified below threshold.
+	if [[ "$force_recheck" != "true" ]] &&
+		[[ ",$issue_labels," == *",needs-simplification,"* ]]; then
 		return 0
 	fi
 	# Skip if simplification was already done
@@ -939,16 +983,20 @@ dispatch_with_dedup() {
 	local dispatch_model_tier="sonnet"
 	local issue_labels_csv
 	issue_labels_csv=$(echo "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
-	case ",$issue_labels_csv," in
-	*,tier:reasoning,* | *,tier:thinking,*)
+
+	# Resolve tier from labels, preferring highest rank when multiple are present (t1997)
+	local resolved_tier
+	resolved_tier=$(_resolve_worker_tier "$issue_labels_csv")
+	case "$resolved_tier" in
+	tier:reasoning)
 		dispatch_tier="reasoning"
 		dispatch_model_tier="opus"
 		;;
-	*,tier:standard,*)
+	tier:standard)
 		dispatch_tier="standard"
 		dispatch_model_tier="sonnet"
 		;;
-	*,tier:simple,*)
+	tier:simple)
 		dispatch_tier="simple"
 		dispatch_model_tier="haiku"
 		;;

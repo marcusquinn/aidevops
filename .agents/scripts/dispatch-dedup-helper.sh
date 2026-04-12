@@ -603,6 +603,16 @@ _This recovery prevents the orphaned-assignment deadlock where offline runners p
 # complexity cap after GH#18352 expanded the active-claim signal set
 # (see t1961). Adding new active-state labels is a one-line change here.
 #
+# Canonical dedup rule (t1996):
+#   The dispatch dedup signal is (active status label) AND (non-self assignee).
+#   Both are required; neither alone is sufficient:
+#   - Label without assignee = degraded state (safe to reclaim after stale recovery)
+#   - Assignee without active label = passive backlog bookkeeping (owner/maintainer
+#     passive exemption applies; non-owner/maintainer still blocks)
+#   - Label WITH non-self assignee = active claim (always blocks)
+#   This function evaluates only the label half. is_assigned() enforces the
+#   combined check by calling this only after an assignee is confirmed present.
+#
 # Args:
 #   $1 = issue metadata JSON from `gh issue view --json labels` (at minimum
 #        must contain a .labels array of {name: ...} objects)
@@ -644,6 +654,14 @@ _has_active_claim() {
 # maintainer. The result was hundreds of open issues that looked "claimed"
 # to the deterministic guard but had no worker, no queued state, and no PR.
 #
+# Canonical dedup rule (t1996):
+#   The dispatch dedup signal is (active status label) AND (non-self assignee).
+#   Both are required; neither alone is sufficient.
+#   See _has_active_claim() for the label-half definition.
+#   This function enforces the combined check: it first checks whether an
+#   assignee is present; if so, it calls _has_active_claim() to determine
+#   if the passive exemption for owner/maintainer should be bypassed.
+#
 # Systemic rule:
 # - self_login never blocks
 # - owner/maintainer assignees are passive unless EITHER:
@@ -658,6 +676,15 @@ _has_active_claim() {
 # - any other assignee blocks dispatch — UNLESS the assignment is stale
 #   (no active worker, dispatch claim >1h old, no recent progress).
 #   Stale assignments are auto-recovered (GH#15060).
+#
+# Every dispatch decision site that emits a worker assignment MUST route
+# through this function (or apply an equivalent inline combined check)
+# before claiming. Any code path that checks only labels or only assignees
+# is not safe in multi-operator conditions. (t1996 — audit confirmed that
+# dispatch_with_dedup, apply_deterministic_fill_floor, and all implementation
+# dispatch paths correctly route through check_dispatch_dedup which calls
+# this function at Layer 6; normalize_active_issue_assignments was hardened
+# in the same fix to also call this before self-assigning orphaned issues.)
 #
 # This preserves GH#10521 (maintainer assignment alone must not starve the
 # queue) while still protecting GH#11141 (owner-assigned queued work must
@@ -694,6 +721,25 @@ is_assigned() {
 
 	if [[ -z "$issue_meta_json" ]]; then
 		return 1
+	fi
+
+	# t1986: parent-task / meta label is an unconditional dispatch block.
+	# Any issue tagged as parent-only is plan-only work and must never
+	# receive a dispatched worker, regardless of assignees or status
+	# labels. Closes the dispatch loop observed on GH#18356 during
+	# t1962 Phase 3 (parent task dispatched twice with opus-4-6,
+	# burning ~20K tokens for zero productive output) and the
+	# same race reproduced on GH#18399 / GH#18400 while filing the
+	# follow-up issues for this very fix.
+	#
+	# Emits PARENT_TASK_BLOCKED on stdout for caller pattern matching
+	# (mirrors the STALE_RECOVERED token used by stale-recovery path).
+	local parent_task_hit
+	parent_task_hit=$(printf '%s' "$issue_meta_json" |
+		jq -r '[.labels[].name] | map(select(. == "parent-task" or . == "meta")) | .[0] // empty' 2>/dev/null)
+	if [[ -n "$parent_task_hit" ]]; then
+		printf 'PARENT_TASK_BLOCKED (label=%s)\n' "$parent_task_hit"
+		return 0
 	fi
 
 	# Query GitHub for current assignees

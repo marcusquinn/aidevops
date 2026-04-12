@@ -293,6 +293,9 @@ jobs:
         echo "Profile README boundary guard passed"
 
   complexity-check:
+    # IMPORTANT: This job's `name:` is a required status check on main (GH#18393).
+    # Renaming it requires updating branch protection: gh api -X PATCH
+    # "repos/marcusquinn/aidevops/branches/main/protection/required_status_checks"
     name: Complexity Analysis
     runs-on: ubuntu-latest
 

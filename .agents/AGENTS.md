@@ -44,7 +44,7 @@ New to aidevops? Type `/onboarding`.
 
 Rules: `prompts/build.txt`. Details: `workflows/pre-edit.md`.
 
-Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. All other writes → proposed edits in a worktree.
+Subagent write restrictions: on `main`/`master`, **headless subagents** may write to `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. **Interactive subagents** must always use a linked worktree regardless of path — no planning exception (t1990). All other writes → proposed edits in a worktree.
 
 ---
 
@@ -106,11 +106,25 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 **`origin:interactive` also skips pulse dispatch (GH#18352)**: When an issue carries `origin:interactive` AND has any human assignee, the pulse's deterministic dedup guard (`dispatch-dedup-helper.sh is-assigned`) treats the assignee as blocking — even if that assignee is the repo owner or maintainer, and regardless of the current `status:*` label. This closes the race where an interactive session claimed a task via `claim-task-id.sh` (applying `status:claimed` + owner assignment) and the pulse dispatched a duplicate worker before the session could open its PR. The full active lifecycle is now recognised: `status:queued`, `status:in-progress`, `status:in-review`, and `status:claimed` all keep owner/maintainer assignees in the blocking set.
 
+**General dedup rule — combined signal (t1996):** The dispatch dedup signal is `(active status label) AND (non-self assignee)` — both required, neither sufficient alone. Every code path that emits a dispatch claim must consult `dispatch-dedup-helper.sh is-assigned` (or apply an equivalent combined check inline) before assigning a worker. Label-only or assignee-only filters are not safe in multi-operator conditions. Specifically:
+- A status label without an assignee = degraded state (worker died mid-claim) — safe to reclaim after `normalize_active_issue_assignments` / stale recovery.
+- A non-owner/maintainer assignee without a status label = active contributor claim — always blocks dispatch regardless of labels.
+- An owner/maintainer assignee with an active status label = active pulse claim — blocks dispatch (GH#18352).
+- An owner/maintainer assignee without an active status label = passive backlog bookkeeping — allows dispatch (GH#10521).
+
+Test coverage: `.agents/scripts/tests/test-dispatch-dedup-multi-operator.sh` (7 assertions covering all four cases above). Architecture: `dispatch_with_dedup` → `check_dispatch_dedup` Layer 6 is the canonical enforcement point for all implementation dispatch; `normalize_active_issue_assignments` in `pulse-issue-reconcile.sh` was hardened in t1996 to also call `is_assigned` before self-assigning orphaned issues.
+
+**Parent / meta tasks (`#parent` tag, t1986)**: Mark planning-only or roadmap-tracker tasks with the `#parent` (alias: `#parent-task`, `#meta`) TODO tag. The tag maps to the protected `parent-task` label, which:
+- **Survives reconciliation** — `_is_protected_label` in `issue-sync-helper.sh` prevents tag-derived label cleanup from stripping it.
+- **Blocks dispatch unconditionally** — `dispatch-dedup-helper.sh is-assigned` short-circuits with a `PARENT_TASK_BLOCKED` signal whenever the label is present, regardless of assignees, status labels, or tier. The pulse will never run a worker on a parent-tagged issue.
+
+Use this for: decomposition epics with child implementation tasks, roadmap trackers, research summaries that spawn separate work items. **Do not use for:** issues that should eventually be implemented as a single unit — those are normal tasks. The point of the `#parent` tag is "this issue will never be implemented directly; only its children will". Test coverage: `.agents/scripts/tests/test-parent-task-guard.sh`.
+
 Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-DD`. Use `task-complete-helper.sh`. Every completed task must link to its verification evidence — work without an audit trail is unverifiable and may be reverted.
 
-Planning files go direct to main. Code changes need worktree + PR. Workers NEVER edit TODO.md.
+Code changes need worktree + PR. Workers NEVER edit TODO.md.
 
-**Main-branch planning exception:** `TODO.md` and `todo/*` are the explicit exception to the PR-only flow — planning-only edits may be committed and pushed directly to `main`.
+**Main-branch planning exception (headless sessions only, t1990):** `TODO.md`, `todo/*`, and `README.md` are an explicit exception to the PR-only flow for **headless sessions** (pulse, CI workers, routines). Headless workers may commit and push these directly to `main` without worktree ceremony. **Interactive sessions have NO such exception** — every edit, including planning files, goes through a linked worktree at `~/Git/<repo>-<branch>/`. The canonical repo directory (`~/Git/<repo>/`) stays on `main` always. Enforced by `pre-edit-check.sh` `is_main_allowlisted_path()` which short-circuits FALSE when none of `FULL_LOOP_HEADLESS` / `AIDEVOPS_HEADLESS` / `OPENCODE_HEADLESS` / `GITHUB_ACTIONS` is set.
 
 **Simplification state policy:** Keep all changes to `.agents/configs/simplification-state.json`. It is the shared hash registry used by the simplification routine to detect unchanged vs changed files and decide when recheck/re-processing is needed.
 

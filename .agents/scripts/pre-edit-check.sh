@@ -169,8 +169,30 @@ PYEOF
 # Returns: 0 if path is allowlisted, 1 if not
 # Canonicalizes the path to a repo-relative form before evaluating the allowlist,
 # preventing path traversal bypasses (e.g. todo/../secret.py).
+#
+# t1990: Interactive sessions have NO main-branch planning exception — every
+# edit on main (including TODO.md, todo/**, README.md) requires a linked
+# worktree. Headless sessions (pulse, CI workers, routines) keep the
+# allowlist so they can continue to write routine state and dispatch
+# bookkeeping directly on main without PR ceremony.
+#
+# Session-origin detection is inlined here (rather than calling
+# detect_session_origin from shared-constants.sh) to avoid any source-order
+# dependency — this function may be called before shared-constants.sh is
+# sourced in the execution flow.
 is_main_allowlisted_path() {
 	local file_path="$1"
+
+	# t1990: short-circuit FALSE for interactive sessions. A session is
+	# interactive unless one of the known headless env vars is set. This
+	# mirrors detect_session_origin() in shared-constants.sh — keep in sync.
+	if [[ "${FULL_LOOP_HEADLESS:-}" != "true" ]] &&
+		[[ "${AIDEVOPS_HEADLESS:-}" != "true" ]] &&
+		[[ "${OPENCODE_HEADLESS:-}" != "true" ]] &&
+		[[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+		# Interactive session: no allowlist, always require a worktree.
+		return 1
+	fi
 
 	# Resolve repo root for canonicalization
 	local repo_root
