@@ -21,6 +21,48 @@ let proxyPort = null;
 let proxyStarting = false;
 
 // ---------------------------------------------------------------------------
+// Framework system prompt — loaded once and cached
+// ---------------------------------------------------------------------------
+
+/** @type {string | null} */
+let _frameworkPromptCache = null;
+
+/**
+ * Load and cache the AI DevOps framework prompt (build.txt + AGENTS.md + main agent).
+ * Appended to Claude CLI's default system prompt via --append-system-prompt so
+ * the CLI agent behaves consistently with our OpenCode agent configuration.
+ * Files are read from ~/.aidevops/agents/ (the deployed copy).
+ */
+function getFrameworkPrompt() {
+  if (_frameworkPromptCache !== null) return _frameworkPromptCache;
+
+  const agentsDir = join(homedir(), ".aidevops", "agents");
+  const files = [
+    join(agentsDir, "prompts", "build.txt"),
+    join(agentsDir, "AGENTS.md"),
+    join(agentsDir, "build-plus.md"),
+  ];
+
+  const parts = [];
+  for (const filePath of files) {
+    try {
+      const content = readFileSync(filePath, "utf-8").trim();
+      if (content) parts.push(content);
+    } catch {
+      // File may not exist in minimal installations
+    }
+  }
+
+  _frameworkPromptCache = parts.length > 0 ? parts.join("\n\n---\n\n") : "";
+  if (_frameworkPromptCache) {
+    console.error(
+      `[aidevops] Claude proxy: loaded framework prompt (${_frameworkPromptCache.length} chars from ${parts.length} files)`,
+    );
+  }
+  return _frameworkPromptCache;
+}
+
+// ---------------------------------------------------------------------------
 // Account rotation with rate-limit tracking
 // ---------------------------------------------------------------------------
 
@@ -276,6 +318,7 @@ function renderConversationPrompt(conversation) {
 }
 
 function buildClaudeArgs(body, systemPrompt, streaming) {
+  const agentsDir = join(homedir(), ".aidevops", "agents");
   const args = [
     "-p",
     "--model",
@@ -283,14 +326,27 @@ function buildClaudeArgs(body, systemPrompt, streaming) {
     "--permission-mode",
     "default",
     "--no-session-persistence",
+    "--add-dir",
+    agentsDir,
   ];
 
-  if (systemPrompt) {
-    args.push("--append-system-prompt", systemPrompt);
+  // Combine framework instructions (build.txt + AGENTS.md + build-plus.md)
+  // with the per-request system prompt from OpenCode.  Framework goes first
+  // (static / cacheable), OpenCode's context-specific prompt second.
+  const frameworkPrompt = getFrameworkPrompt();
+  const combinedPrompt = [frameworkPrompt, systemPrompt].filter(Boolean).join("\n\n");
+  if (combinedPrompt) {
+    args.push("--append-system-prompt", combinedPrompt);
   }
 
   if (streaming) {
-    args.push("--verbose", "--output-format", "stream-json", "--include-partial-messages");
+    args.push(
+      "--verbose",
+      "--output-format",
+      "stream-json",
+      "--include-partial-messages",
+      "--include-hook-events",
+    );
   } else {
     args.push("--output-format", "json");
   }
