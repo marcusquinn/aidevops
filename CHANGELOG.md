@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.1] - 2026-04-12
+
+### Changed
+
+- Maintenance: add TODO entry and brief for 1M context window fix
+
+### Fixed
+
+- enable 1M context window for Claude models in opencode-aidevops plugin (#18351)
+
 ## [3.7.0] - 2026-04-12
 
 ### Changed
