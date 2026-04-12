@@ -158,3 +158,7 @@ For frequent interactive use, enable the MCP server in `opencode.json`:
 Install: `uv tool install 'mcp-hetzner @ git+https://github.com/dkruyt/mcp-hetzner.git'`
 
 The MCP costs ~2K context tokens per session but provides richer tool integration.
+
+## Related
+
+- `services/hosting/ubicloud.md` — Ubicloud layers an open-source IaaS control plane on top of Hetzner bare metal. Hetzner customers who want a managed-cloud experience (elastic VMs by the minute, managed Postgres, managed Kubernetes, ~10x cheaper GitHub Actions runners) can consume Ubicloud's managed SaaS on Hetzner regions (`eu-central-h1`, `eu-north-h1`) *or* self-host Ubicloud on their own Hetzner lease via the `cloudify_server` script. Zero vendor lock-in in either direction because the codebase is AGPL v3.
