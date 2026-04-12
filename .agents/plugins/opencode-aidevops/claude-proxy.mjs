@@ -473,6 +473,10 @@ async function handleChatCompletions(req, directory) {
 }
 
 export async function startClaudeProxy(client, directory) {
+  if (typeof globalThis.Bun === "undefined") {
+    console.error("[aidevops] Claude proxy: skipped (not running under Bun)");
+    return null;
+  }
   if (!isClaudeCliAvailable()) return null;
   if (proxyStarting) return null;
   if (proxyPort) return { port: proxyPort, models: getClaudeProxyModels() };
