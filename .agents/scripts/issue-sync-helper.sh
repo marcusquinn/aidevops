@@ -128,7 +128,8 @@ _is_protected_label() {
 	# Exact-match protected labels
 	case "$lbl" in
 	persistent | needs-maintainer-review | not-planned | duplicate | wontfix | \
-		already-fixed | "good first issue" | "help wanted")
+		already-fixed | "good first issue" | "help wanted" | \
+		parent-task | meta)
 		return 0
 		;;
 	esac

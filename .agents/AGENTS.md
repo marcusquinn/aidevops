@@ -106,6 +106,12 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 **`origin:interactive` also skips pulse dispatch (GH#18352)**: When an issue carries `origin:interactive` AND has any human assignee, the pulse's deterministic dedup guard (`dispatch-dedup-helper.sh is-assigned`) treats the assignee as blocking — even if that assignee is the repo owner or maintainer, and regardless of the current `status:*` label. This closes the race where an interactive session claimed a task via `claim-task-id.sh` (applying `status:claimed` + owner assignment) and the pulse dispatched a duplicate worker before the session could open its PR. The full active lifecycle is now recognised: `status:queued`, `status:in-progress`, `status:in-review`, and `status:claimed` all keep owner/maintainer assignees in the blocking set.
 
+**Parent / meta tasks (`#parent` tag, t1986)**: Mark planning-only or roadmap-tracker tasks with the `#parent` (alias: `#parent-task`, `#meta`) TODO tag. The tag maps to the protected `parent-task` label, which:
+- **Survives reconciliation** — `_is_protected_label` in `issue-sync-helper.sh` prevents tag-derived label cleanup from stripping it.
+- **Blocks dispatch unconditionally** — `dispatch-dedup-helper.sh is-assigned` short-circuits with a `PARENT_TASK_BLOCKED` signal whenever the label is present, regardless of assignees, status labels, or tier. The pulse will never run a worker on a parent-tagged issue.
+
+Use this for: decomposition epics with child implementation tasks, roadmap trackers, research summaries that spawn separate work items. **Do not use for:** issues that should eventually be implemented as a single unit — those are normal tasks. The point of the `#parent` tag is "this issue will never be implemented directly; only its children will". Test coverage: `.agents/scripts/tests/test-parent-task-guard.sh`.
+
 Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-DD`. Use `task-complete-helper.sh`. Every completed task must link to its verification evidence — work without an audit trail is unverifiable and may be reverted.
 
 Planning files go direct to main. Code changes need worktree + PR. Workers NEVER edit TODO.md.

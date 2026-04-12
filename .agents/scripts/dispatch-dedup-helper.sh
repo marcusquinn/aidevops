@@ -696,6 +696,25 @@ is_assigned() {
 		return 1
 	fi
 
+	# t1986: parent-task / meta label is an unconditional dispatch block.
+	# Any issue tagged as parent-only is plan-only work and must never
+	# receive a dispatched worker, regardless of assignees or status
+	# labels. Closes the dispatch loop observed on GH#18356 during
+	# t1962 Phase 3 (parent task dispatched twice with opus-4-6,
+	# burning ~20K tokens for zero productive output) and the
+	# same race reproduced on GH#18399 / GH#18400 while filing the
+	# follow-up issues for this very fix.
+	#
+	# Emits PARENT_TASK_BLOCKED on stdout for caller pattern matching
+	# (mirrors the STALE_RECOVERED token used by stale-recovery path).
+	local parent_task_hit
+	parent_task_hit=$(printf '%s' "$issue_meta_json" |
+		jq -r '[.labels[].name] | map(select(. == "parent-task" or . == "meta")) | .[0] // empty' 2>/dev/null)
+	if [[ -n "$parent_task_hit" ]]; then
+		printf 'PARENT_TASK_BLOCKED (label=%s)\n' "$parent_task_hit"
+		return 0
+	fi
+
 	# Query GitHub for current assignees
 	local assignees
 	assignees=$(printf '%s' "$issue_meta_json" | jq -r '[.assignees[].login] | join(",")' 2>/dev/null) || assignees=""

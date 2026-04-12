@@ -667,6 +667,7 @@ map_tags_to_labels() {
 		docs) label="documentation" ;;
 		worker) label="origin:worker" ;;
 		interactive) label="origin:interactive" ;;
+		parent | parent-task | meta) label="parent-task" ;;
 		esac
 
 		labels="${labels:+$labels,}$label"
