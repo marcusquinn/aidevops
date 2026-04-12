@@ -955,9 +955,9 @@ function applyBodyTransforms(parsed) {
     if (!parsed.thinking || parsed.thinking.type !== "adaptive") {
       parsed.thinking = { type: "adaptive" };
     }
-    if (parsed.temperature !== undefined && parsed.temperature !== 1) {
-      parsed.temperature = 1;
-    }
+    // The real CLI omits temperature entirely when thinking is enabled.
+    // The API rejects any value other than 1; deleting it is cleaner.
+    delete parsed.temperature;
   }
 }
 
