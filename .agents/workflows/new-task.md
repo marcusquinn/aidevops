@@ -130,3 +130,75 @@ AI:   Added and claimed:
       - Issue #1260: assigned + status:in-progress + origin:interactive
       Pulse workers will skip until you release or 3h stale recovery kicks in.
 ```
+
+## Batch Mode
+
+When the user provides multiple task titles at once (e.g., a sprint planning list), use batch mode to avoid 11 interactive rounds. Batch mode creates all tasks in a single pass and emits **one commit+push** for all planning files.
+
+**When to use batch:** user provides a list of 3+ titles, or says "create these tasks in bulk", or pastes a list.
+
+### Step B1: Detect batch intent
+
+If `$ARGUMENTS` contains multiple lines, repeated `--title` flags, or `--from-file`, invoke batch mode:
+
+```bash
+~/.aidevops/agents/scripts/new-task-helper.sh batch \
+  --title "Task 1" \
+  --title "Task 2" \
+  --title "Task 3"
+```
+
+Or from a file:
+
+```bash
+~/.aidevops/agents/scripts/new-task-helper.sh batch --from-file sprint-tasks.txt
+```
+
+Or from stdin:
+
+```bash
+printf "Fix login bug\nAdd CSV export\nUpdate API docs\n" | \
+  ~/.aidevops/agents/scripts/new-task-helper.sh batch
+```
+
+### Step B2: Review the summary table
+
+The helper prints:
+
+```text
+ID           Title                                                   GH#
+------------ ------------------------------------------------------- -------
+t1234        Fix login bug                                           GH#5001
+t1235        Add CSV export                                          GH#5002
+t1236        Update API docs                                         GH#5003
+```
+
+One planning commit covers all tasks. Each task gets a stub brief at `todo/tasks/{id}-brief.md` that needs the **How** section filled in before dispatch.
+
+### Step B3: Warn about stub briefs
+
+After batch creation, inform the user:
+
+```text
+Created N tasks. Stub briefs need the "How" section filled in before pulse dispatch.
+Run /define <task_id> to flesh out each brief, or edit todo/tasks/{id}-brief.md directly.
+Tasks without a complete How section will fail tier:simple dispatch.
+```
+
+### Notes
+
+- Each title still gets its own GitHub issue (separate API call per title).
+- The `.task-counter` branch is updated per allocation — that is unavoidable.
+- The planning files (`TODO.md`, `todo/tasks/*.md`) use a **single** commit+push.
+- `--labels` applies the same label set to all tasks in the batch.
+- `--no-issue` skips GitHub issue creation (useful for offline / bulk planning).
+
+```text
+User: /new-task --batch Fix login, Add export, Update docs
+AI:   Running batch mode (3 titles)...
+      ID           Title                                             GH#
+      t325         Fix login                                         GH#1260
+      t326         Add export                                        GH#1261
+      t327         Update docs                                       GH#1262
+      1 commit pushed. Fill in How sections before dispatching.
+```
