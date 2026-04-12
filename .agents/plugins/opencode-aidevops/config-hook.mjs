@@ -76,10 +76,9 @@ function registerAnthropicModels(config) {
   if (!config.provider.anthropic.models) config.provider.anthropic.models = {};
   for (const [id, def] of Object.entries(ANTHROPIC_MODELS)) {
     const existing = config.provider.anthropic.models[id];
-    if (!existing || existing.name !== def.name) {
-      config.provider.anthropic.models[id] = { ...existing, ...def };
-      count++;
-    }
+    // Always merge — ensures stale fields (modalities, attachment) get updated
+    config.provider.anthropic.models[id] = { ...existing, ...def };
+    if (!existing) count++;
   }
 
   // claudecli provider — via Claude CLI proxy
@@ -89,14 +88,16 @@ function registerAnthropicModels(config) {
       npm: "@ai-sdk/openai-compatible",
       api: "http://127.0.0.1:32125/v1",
     };
+  } else if (config.provider.claudecli.name === "Claude CLI (coming soon)") {
+    // Migrate legacy provider name
+    config.provider.claudecli.name = "Claude CLI";
   }
   if (!config.provider.claudecli.models) config.provider.claudecli.models = {};
   for (const [id, def] of Object.entries(CLAUDECLI_MODELS)) {
     const existing = config.provider.claudecli.models[id];
-    if (!existing || existing.name !== def.name) {
-      config.provider.claudecli.models[id] = { ...existing, ...def };
-      count++;
-    }
+    // Always merge — ensures stale fields (modalities, attachment) get updated
+    config.provider.claudecli.models[id] = { ...existing, ...def };
+    if (!existing) count++;
   }
 
   return count;
