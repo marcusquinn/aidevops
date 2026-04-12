@@ -1,0 +1,562 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# pulse-capacity-alloc.sh — Per-priority worker allocation — peak-hours cap, max-worker arithmetic, priority allocation table, debt worker counting, per-repo cap, hygiene + PR salvage helpers.
+#
+# Extracted from pulse-wrapper.sh in Phase 3 of the phased decomposition
+# (parent: GH#18356, plan: todo/plans/pulse-wrapper-decomposition.md §6).
+#
+# This module is sourced by pulse-wrapper.sh. It MUST NOT be executed
+# directly — it relies on the orchestrator having sourced:
+#   shared-constants.sh
+#   worker-lifecycle-common.sh
+# and having defined all PULSE_* configuration constants and mutable
+# _PULSE_HEALTH_* counters in the bootstrap section.
+#
+# Functions in this module (in source order):
+#   - _append_priority_allocations
+#   - _check_repo_hygiene
+#   - _scan_pr_salvage
+#   - apply_peak_hours_cap
+#   - calculate_max_workers
+#   - calculate_priority_allocations
+#   - count_debt_workers
+#   - check_repo_worker_cap
+#
+# This is a pure move from pulse-wrapper.sh. The function bodies are
+# byte-identical to their pre-extraction form. Any change must go in a
+# separate follow-up PR after the full decomposition (Phase 12) lands.
+
+# Include guard — prevent double-sourcing.
+[[ -n "${_PULSE_CAPACITY_ALLOC_LOADED:-}" ]] && return 0
+_PULSE_CAPACITY_ALLOC_LOADED=1
+
+#######################################
+# Append priority-class worker allocations to state file (t1423)
+#
+# Reads the allocation file written by calculate_priority_allocations()
+# and formats it as a section the pulse agent can act on.
+#
+# The pulse agent uses this to enforce soft reservations: product repos
+# get a guaranteed minimum share of worker slots, tooling gets the rest.
+# When one class has no pending work, the other can use freed slots.
+#
+# Output: allocation summary to stdout (appended to STATE_FILE by caller)
+#######################################
+_append_priority_allocations() {
+	local alloc_file="${HOME}/.aidevops/logs/pulse-priority-allocations"
+
+	echo ""
+	echo "# Priority-Class Worker Allocations (t1423)"
+	echo ""
+
+	if [[ ! -f "$alloc_file" ]]; then
+		echo "- Allocation data not available — using flat pool (no reservations)"
+		echo ""
+		return 0
+	fi
+
+	# Read allocation values
+	local max_workers product_repos tooling_repos dispatchable_product_repos product_min tooling_max reservation_pct quality_debt_cap_pct
+	max_workers=$(grep '^MAX_WORKERS=' "$alloc_file" | cut -d= -f2) || max_workers=4
+	product_repos=$(grep '^PRODUCT_REPOS=' "$alloc_file" | cut -d= -f2) || product_repos=0
+	tooling_repos=$(grep '^TOOLING_REPOS=' "$alloc_file" | cut -d= -f2) || tooling_repos=0
+	dispatchable_product_repos=$(grep '^DISPATCHABLE_PRODUCT_REPOS=' "$alloc_file" | cut -d= -f2) || dispatchable_product_repos="$product_repos"
+	product_min=$(grep '^PRODUCT_MIN=' "$alloc_file" | cut -d= -f2) || product_min=0
+	tooling_max=$(grep '^TOOLING_MAX=' "$alloc_file" | cut -d= -f2) || tooling_max=0
+	reservation_pct=$(grep '^PRODUCT_RESERVATION_PCT=' "$alloc_file" | cut -d= -f2) || reservation_pct=60
+	quality_debt_cap_pct=$(grep '^QUALITY_DEBT_CAP_PCT=' "$alloc_file" | cut -d= -f2) || quality_debt_cap_pct=30
+
+	echo "Worker pool: **${max_workers}** total slots"
+	echo "Product repos (${product_repos}, dispatchable now: ${dispatchable_product_repos}): **${product_min}** reserved slots (${reservation_pct}% target minimum)"
+	echo "Tooling repos (${tooling_repos}): **${tooling_max}** slots (remainder)"
+	echo "Quality-debt cap: **${quality_debt_cap_pct}%** of worker pool"
+	echo ""
+	echo "**Enforcement rules:**"
+	echo "- Reservations are soft targets, not hard gates. If one class has no dispatchable candidates, immediately reassign its unused slots to the other class."
+	echo "- Product repos at daily PR cap are treated as temporarily non-dispatchable for reservation purposes."
+	echo "- Do not leave slots idle when runnable scoped work exists in any class."
+	echo "- If all ${max_workers} slots are needed for product work, tooling gets 0 (product reservation is a minimum, not a maximum)."
+	echo "- Merges (priority 1) and CI fixes (priority 2) are exempt — they always proceed regardless of class."
+	echo ""
+
+	return 0
+}
+
+#######################################
+# Pre-fetch repo hygiene data for LLM triage (t1417)
+#
+# Appends a "Repo Hygiene" section to the state file with:
+#   1. Orphan worktrees — branches with 0 commits ahead of main,
+#      no PR (open or merged), and no active worker process.
+#   2. Stash summary — count of needs-review stashes per repo.
+#   3. Uncommitted changes on main — repos with dirty main worktree.
+#
+# This data enables the pulse LLM to make intelligent triage decisions
+# about cleanup. Deterministic cleanup (merged-PR worktrees, safe stashes)
+# is handled by cleanup_worktrees() and cleanup_stashes() before this runs.
+# What remains here requires judgment.
+#
+# Output: hygiene summary to stdout (appended to STATE_FILE by caller)
+#######################################
+#######################################
+# Check a single repo for hygiene issues (GH#5627, extracted from prefetch_hygiene)
+#
+# Checks for orphan worktrees, stale stashes, and uncommitted changes
+# on the default branch. Returns issue descriptions via stdout.
+#
+# Arguments:
+#   $1 - repo_path
+#   $2 - repos_json path (for slug lookup)
+# Output: issue lines to stdout (empty if no issues)
+#######################################
+_check_repo_hygiene() {
+	local repo_path="$1"
+	local repos_json="$2"
+	local repo_issues=""
+
+	# 1. Orphan worktrees: 0 commits ahead of default branch, no PR
+	local default_branch
+	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || default_branch="main"
+	[[ -z "$default_branch" ]] && default_branch="main"
+
+	local wt_branch wt_path
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
+			wt_path="${BASH_REMATCH[1]}"
+		elif [[ "$line" =~ ^branch\ refs/heads/(.+)$ ]]; then
+			wt_branch="${BASH_REMATCH[1]}"
+		elif [[ -z "$line" && -n "$wt_branch" ]]; then
+			# Skip the default branch
+			if [[ "$wt_branch" != "$default_branch" ]]; then
+				local commits_ahead
+				commits_ahead=$(git -C "$repo_path" rev-list --count "${default_branch}..${wt_branch}" 2>/dev/null) || commits_ahead="?"
+
+				if [[ "$commits_ahead" == "0" ]]; then
+					# Check if any PR exists (open or merged)
+					local has_pr="false"
+					if command -v gh &>/dev/null; then
+						local pr_check
+						pr_check=$(gh pr list --repo "$(jq -r --arg p "$repo_path" '.initialized_repos[] | select(.path == $p) | .slug' "$repos_json" 2>/dev/null)" \
+							--head "$wt_branch" --state all --json number --jq 'length' 2>/dev/null) || pr_check="0"
+						[[ "${pr_check:-0}" -gt 0 ]] && has_pr="true"
+					fi
+
+					if [[ "$has_pr" == "false" ]]; then
+						# Check for dirty state
+						local dirty=""
+						local change_count
+						change_count=$(git -C "${wt_path:-$repo_path}" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || change_count=0
+						[[ "${change_count:-0}" -gt 0 ]] && dirty=" (${change_count} uncommitted files)"
+
+						repo_issues="${repo_issues}  - Orphan worktree: \`${wt_branch}\` — 0 commits, no PR${dirty} (${wt_path})\n"
+					fi
+				fi
+			fi
+			wt_path=""
+			wt_branch=""
+		fi
+	done < <(
+		git -C "$repo_path" worktree list --porcelain 2>/dev/null
+		echo ""
+	)
+
+	# 2. Stash summary (needs-review count)
+	local stash_count
+	stash_count=$(git -C "$repo_path" stash list 2>/dev/null | wc -l | tr -d ' ')
+	if [[ "${stash_count:-0}" -gt 0 ]]; then
+		repo_issues="${repo_issues}  - ${stash_count} stash(es) remaining (safe-to-drop already cleaned; these need review)\n"
+	fi
+
+	# 3. Uncommitted changes on main worktree
+	local main_wt_path="$repo_path"
+	local current_branch
+	current_branch=$(git -C "$main_wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || current_branch=""
+	if [[ "$current_branch" == "$default_branch" ]]; then
+		local main_dirty
+		main_dirty=$(git -C "$main_wt_path" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || main_dirty=0
+		if [[ "${main_dirty:-0}" -gt 0 ]]; then
+			repo_issues="${repo_issues}  - ${main_dirty} uncommitted file(s) on ${default_branch} branch\n"
+		fi
+	fi
+
+	echo -n "$repo_issues"
+	return 0
+}
+
+#######################################
+# Scan for salvageable closed-unmerged PRs (GH#5627, extracted from prefetch_hygiene)
+#
+# Arguments:
+#   $1 - repos_json path
+# Output: salvage summary to stdout
+#######################################
+_scan_pr_salvage() {
+	local repos_json="$1"
+	local salvage_helper="${SCRIPT_DIR}/pr-salvage-helper.sh"
+
+	if [[ ! -x "$salvage_helper" ]]; then
+		return 0
+	fi
+
+	echo ""
+	echo "# PR Salvage (closed-unmerged with recoverable code)"
+	echo ""
+
+	local salvage_found=false
+	local slug path
+	while IFS='|' read -r slug path; do
+		[[ -z "$slug" ]] && continue
+		local salvage_output
+		salvage_output=$("$salvage_helper" prefetch "$slug" "$path" 2>/dev/null) || true
+		if [[ -n "$salvage_output" ]]; then
+			salvage_found=true
+			echo "$salvage_output"
+		fi
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)
+
+	if [[ "$salvage_found" == "false" ]]; then
+		echo "- No salvageable closed-unmerged PRs detected"
+		echo ""
+	fi
+
+	return 0
+}
+
+#######################################
+# Apply peak-hours worker cap (t1677)
+#
+# When supervisor.peak_hours_enabled is true and the current local time
+# falls within the configured window, caps MAX_WORKERS at
+# ceil(off_peak_max * peak_hours_worker_fraction), minimum 1.
+#
+# The cap is applied AFTER the RAM-based calculation so it can only
+# reduce, never increase, the worker count.
+#
+# Settings read via settings-helper.sh (respects env var overrides):
+#   supervisor.peak_hours_enabled        (default: false)
+#   supervisor.peak_hours_start          (default: 5,  0-23 local hour)
+#   supervisor.peak_hours_end            (default: 11, 0-23 local hour)
+#   supervisor.peak_hours_tz             (default: America/Los_Angeles)
+#   supervisor.peak_hours_worker_fraction (default: 0.2)
+#
+# Arguments:
+#   $1 - current off-peak max_workers value (integer >= 1)
+#
+# Output: (possibly reduced) max_workers value to stdout
+# Returns: 0 always
+#######################################
+apply_peak_hours_cap() {
+	local off_peak_max="$1"
+
+	# Validate input
+	[[ "$off_peak_max" =~ ^[0-9]+$ ]] || off_peak_max=1
+	[[ "$off_peak_max" -lt 1 ]] && off_peak_max=1
+
+	# Read settings via helper (respects env var overrides)
+	local settings_helper="${SCRIPT_DIR}/settings-helper.sh"
+	if [[ ! -x "$settings_helper" ]]; then
+		echo "$off_peak_max"
+		return 0
+	fi
+
+	local peak_enabled
+	peak_enabled=$("$settings_helper" get supervisor.peak_hours_enabled 2>/dev/null || echo "false")
+	if [[ "$peak_enabled" != "true" ]]; then
+		echo "$off_peak_max"
+		return 0
+	fi
+
+	local ph_start ph_end ph_fraction
+	ph_start=$("$settings_helper" get supervisor.peak_hours_start 2>/dev/null || echo "5")
+	ph_end=$("$settings_helper" get supervisor.peak_hours_end 2>/dev/null || echo "11")
+	ph_fraction=$("$settings_helper" get supervisor.peak_hours_worker_fraction 2>/dev/null || echo "0.2")
+
+	# Validate hour values
+	[[ "$ph_start" =~ ^[0-9]+$ ]] || ph_start=5
+	[[ "$ph_end" =~ ^[0-9]+$ ]] || ph_end=11
+	[[ "$ph_start" -gt 23 ]] && ph_start=5
+	[[ "$ph_end" -gt 23 ]] && ph_end=11
+
+	# Get current local hour (strip leading zero to avoid octal interpretation)
+	local current_hour
+	current_hour=$(date +%H)
+	local cur ph_s ph_e
+	cur=$((10#${current_hour}))
+	ph_s=$((10#${ph_start}))
+	ph_e=$((10#${ph_end}))
+
+	# Determine if we are inside the peak window
+	# Supports overnight windows (start > end, e.g., 22→6)
+	local in_peak=false
+	if [[ "$ph_s" -le "$ph_e" ]]; then
+		# Normal window: in peak when cur >= start AND cur < end
+		if [[ "$cur" -ge "$ph_s" && "$cur" -lt "$ph_e" ]]; then
+			in_peak=true
+		fi
+	else
+		# Overnight window: in peak when cur >= start OR cur < end
+		if [[ "$cur" -ge "$ph_s" || "$cur" -lt "$ph_e" ]]; then
+			in_peak=true
+		fi
+	fi
+
+	if [[ "$in_peak" != "true" ]]; then
+		echo "$off_peak_max"
+		return 0
+	fi
+
+	# Compute capped value: ceil(off_peak_max * fraction), minimum 1
+	# Use awk for floating-point arithmetic (bash has no native float support)
+	local peak_max
+	peak_max=$(awk -v max="$off_peak_max" -v frac="$ph_fraction" \
+		'BEGIN { v = max * frac; c = int(v); if (c < v) c++; if (c < 1) c = 1; print c }' \
+		2>/dev/null || echo "1")
+	[[ "$peak_max" =~ ^[0-9]+$ ]] || peak_max=1
+	[[ "$peak_max" -lt 1 ]] && peak_max=1
+
+	echo "[pulse-wrapper] Peak hours active (window ${ph_s}→${ph_e}, current hour ${cur}): capping MAX_WORKERS ${off_peak_max}→${peak_max} (fraction=${ph_fraction})" >>"$LOGFILE"
+	echo "$peak_max"
+	return 0
+}
+
+#######################################
+# Calculate max workers from available RAM
+#
+# Formula: (free_ram - RAM_RESERVE_MB) / RAM_PER_WORKER_MB
+# Clamped to [1, MAX_WORKERS_CAP]
+#
+# Writes MAX_WORKERS to a file that pulse.md reads via bash.
+#######################################
+calculate_max_workers() {
+	local free_mb
+	if [[ "$(uname)" == "Darwin" ]]; then
+		# macOS: use vm_stat for free + inactive (reclaimable) pages
+		local page_size free_pages inactive_pages
+		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo 16384)
+		free_pages=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
+		inactive_pages=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+		# Validate integers before arithmetic expansion
+		[[ "$page_size" =~ ^[0-9]+$ ]] || page_size=16384
+		[[ "$free_pages" =~ ^[0-9]+$ ]] || free_pages=0
+		[[ "$inactive_pages" =~ ^[0-9]+$ ]] || inactive_pages=0
+		free_mb=$(((free_pages + inactive_pages) * page_size / 1024 / 1024))
+	else
+		# Linux: use MemAvailable from /proc/meminfo
+		free_mb=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 8192)
+	fi
+	[[ "$free_mb" =~ ^[0-9]+$ ]] || free_mb=8192
+
+	local available_mb=$((free_mb - RAM_RESERVE_MB))
+	local max_workers=$((available_mb / RAM_PER_WORKER_MB))
+
+	# Clamp to [1, MAX_WORKERS_CAP]
+	if [[ "$max_workers" -lt 1 ]]; then
+		max_workers=1
+	elif [[ "$max_workers" -gt "$MAX_WORKERS_CAP" ]]; then
+		max_workers="$MAX_WORKERS_CAP"
+	fi
+
+	# Apply peak-hours cap (t1677) — may further reduce max_workers
+	max_workers=$(apply_peak_hours_cap "$max_workers")
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+	[[ "$max_workers" -lt 1 ]] && max_workers=1
+
+	# Write to a file that pulse.md can read
+	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
+	echo "$max_workers" >"$max_workers_file"
+
+	echo "[pulse-wrapper] Available RAM: ${free_mb}MB, reserve: ${RAM_RESERVE_MB}MB, max workers: ${max_workers}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Calculate priority-class worker allocations (t1423)
+#
+# Reads repos.json to count product vs tooling repos, then computes
+# per-class slot reservations based on PRODUCT_RESERVATION_PCT.
+#
+# Product repos get a guaranteed minimum share of worker slots.
+# Tooling repos get the remainder. When one class has no pending work,
+# the other class can use the freed slots (soft reservation).
+#
+# Output: writes allocation data to pulse-priority-allocations file
+# and appends a summary section to STATE_FILE for the pulse agent.
+#
+# Depends on: calculate_max_workers() having run first (reads pulse-max-workers)
+#######################################
+calculate_priority_allocations() {
+	local repos_json="${REPOS_JSON}"
+	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
+	local alloc_file="${HOME}/.aidevops/logs/pulse-priority-allocations"
+
+	if [[ ! -f "$repos_json" ]] || ! command -v jq &>/dev/null; then
+		echo "[pulse-wrapper] repos.json or jq not available — skipping priority allocations" >>"$LOGFILE"
+		return 0
+	fi
+
+	local max_workers
+	max_workers=$(cat "$max_workers_file" 2>/dev/null || echo 4)
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=4
+
+	# Count pulse-enabled repos by priority class (single jq pass)
+	local product_repos tooling_repos
+	read -r product_repos tooling_repos < <(jq -r '
+		.initialized_repos |
+		map(select(.pulse == true and (.local_only // false) == false and .slug != "")) |
+		[
+			(map(select(.priority == "product")) | length),
+			(map(select(.priority == "tooling")) | length)
+		] | @tsv
+	' "$repos_json" 2>/dev/null) || true
+	product_repos=${product_repos:-0}
+	tooling_repos=${tooling_repos:-0}
+	[[ "$product_repos" =~ ^[0-9]+$ ]] || product_repos=0
+	[[ "$tooling_repos" =~ ^[0-9]+$ ]] || tooling_repos=0
+
+	# Count product repos that can actually dispatch now (not blocked by daily PR cap)
+	local dispatchable_product_repos today_utc
+	dispatchable_product_repos=0
+	today_utc=$(date -u +%Y-%m-%d)
+	if [[ "$product_repos" -gt 0 && "$DAILY_PR_CAP" -gt 0 ]]; then
+		while IFS= read -r slug; do
+			[[ -n "$slug" ]] || continue
+			local pr_json daily_pr_count pr_alloc_err
+			# GH#4412: use --state all to count merged/closed PRs too
+			pr_alloc_err=$(mktemp)
+			pr_json=$(gh pr list --repo "$slug" --state all --json createdAt --limit 200 2>"$pr_alloc_err") || pr_json="[]"
+			if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+				local _pr_alloc_err_msg
+				_pr_alloc_err_msg=$(cat "$pr_alloc_err" 2>/dev/null || echo "unknown error")
+				echo "[pulse-wrapper] calculate_priority_allocations: gh pr list FAILED for ${slug}: ${_pr_alloc_err_msg}" >>"$LOGFILE"
+				pr_json="[]"
+			fi
+			rm -f "$pr_alloc_err"
+			daily_pr_count=$(echo "$pr_json" | jq --arg today "$today_utc" '[.[] | select(.createdAt | startswith($today))] | length' 2>/dev/null) || daily_pr_count=0
+			[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
+			if [[ "$daily_pr_count" -lt "$DAILY_PR_CAP" ]]; then
+				dispatchable_product_repos=$((dispatchable_product_repos + 1))
+			fi
+		done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .priority == "product") | .slug' "$repos_json" 2>/dev/null)
+	else
+		dispatchable_product_repos="$product_repos"
+	fi
+	[[ "$dispatchable_product_repos" =~ ^[0-9]+$ ]] || dispatchable_product_repos="$product_repos"
+	if [[ "$dispatchable_product_repos" -lt "$product_repos" ]]; then
+		echo "[pulse-wrapper] Product dispatchability reduced by daily PR caps: ${dispatchable_product_repos}/${product_repos} repos can accept new workers" >>"$LOGFILE"
+	fi
+
+	# Calculate reservations
+	# product_min = ceil(max_workers * PRODUCT_RESERVATION_PCT / 100)
+	# Using integer arithmetic: ceil(a/b) = (a + b - 1) / b
+	local product_min tooling_max
+	if [[ "$dispatchable_product_repos" -eq 0 ]]; then
+		# No product repos — all slots available for tooling
+		product_min=0
+		tooling_max="$max_workers"
+	elif [[ "$tooling_repos" -eq 0 ]]; then
+		# No tooling repos — all slots available for product
+		product_min="$max_workers"
+		tooling_max=0
+	else
+		product_min=$(((max_workers * PRODUCT_RESERVATION_PCT + 99) / 100))
+		# Ensure product_min doesn't exceed max_workers
+		if [[ "$product_min" -gt "$max_workers" ]]; then
+			product_min="$max_workers"
+		fi
+		# Ensure at least 1 slot for tooling when tooling repos exist
+		# but only when there are multiple slots to distribute (with 1 slot,
+		# product keeps it — the reservation is a minimum guarantee)
+		if [[ "$max_workers" -gt 1 && "$product_min" -ge "$max_workers" && "$tooling_repos" -gt 0 ]]; then
+			product_min=$((max_workers - 1))
+		fi
+		tooling_max=$((max_workers - product_min))
+	fi
+
+	# Write allocation file (key=value, readable by pulse.md)
+	{
+		echo "MAX_WORKERS=${max_workers}"
+		echo "PRODUCT_REPOS=${product_repos}"
+		echo "TOOLING_REPOS=${tooling_repos}"
+		echo "DISPATCHABLE_PRODUCT_REPOS=${dispatchable_product_repos}"
+		echo "PRODUCT_MIN=${product_min}"
+		echo "TOOLING_MAX=${tooling_max}"
+		echo "PRODUCT_RESERVATION_PCT=${PRODUCT_RESERVATION_PCT}"
+		echo "QUALITY_DEBT_CAP_PCT=${QUALITY_DEBT_CAP_PCT}"
+	} >"$alloc_file"
+
+	echo "[pulse-wrapper] Priority allocations: product_min=${product_min}, tooling_max=${tooling_max} (${product_repos} product, ${tooling_repos} tooling repos, ${max_workers} total slots)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Count active debt workers for a repo (quality-debt + simplification-debt)
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - debt type: "quality-debt", "simplification-debt", or "all" (default: all)
+#
+# Outputs two lines: active_count queued_count
+# Exit code: always 0
+#######################################
+count_debt_workers() {
+	local repo_slug="$1"
+	local debt_type="${2:-all}"
+	local active=0
+	local queued=0
+
+	case "$debt_type" in
+	quality-debt)
+		active=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		queued=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		;;
+	simplification-debt)
+		active=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		queued=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		;;
+	all)
+		local qa_active qa_queued sd_active sd_queued
+		qa_active=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		qa_queued=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		sd_active=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		sd_queued=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		active=$((qa_active + sd_active))
+		queued=$((qa_queued + sd_queued))
+		;;
+	esac
+
+	[[ "$active" =~ ^[0-9]+$ ]] || active=0
+	[[ "$queued" =~ ^[0-9]+$ ]] || queued=0
+	echo "$active"
+	echo "$queued"
+	return 0
+}
+
+#######################################
+# Check per-repo worker cap before dispatch
+#
+# Arguments:
+#   $1 - repo path (canonical path on disk)
+#   $2 - max workers per repo (default: MAX_WORKERS_PER_REPO or 5)
+#
+# Exit codes:
+#   0 - at or above cap (skip dispatch for this repo)
+#   1 - below cap (safe to dispatch)
+#######################################
+check_repo_worker_cap() {
+	local repo_path="$1"
+	local cap="${2:-${MAX_WORKERS_PER_REPO:-5}}"
+	local active_for_repo
+
+	active_for_repo=$(list_active_worker_processes | awk -v path="$repo_path" '
+		BEGIN { esc=path; gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc) }
+		$0 ~ ("--dir[[:space:]]+" esc "([[:space:]]|$)") { count++ }
+		END { print count + 0 }
+	')
+	[[ "$active_for_repo" =~ ^[0-9]+$ ]] || active_for_repo=0
+
+	if [[ "$active_for_repo" -ge "$cap" ]]; then
+		return 0
+	fi
+	return 1
+}
