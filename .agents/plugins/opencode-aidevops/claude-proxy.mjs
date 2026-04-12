@@ -474,7 +474,7 @@ function processStreamEvent(event, ctx) {
   } else if (event.type === "assistant" && Array.isArray(event.message?.content)) {
     for (const block of event.message.content) {
       if (block?.type === "tool_use" && block.id && !seenToolUseIds.has(block.id)) {
-        seenToolUseIds.add(block.id);
+        seenToolUseIds.set(block.id, block.name || "unknown");
         send(createOpenAIChunk(completionId, created, model, {
           content: formatStatusLine(`Tool: ${block.name || "unknown"}`, summarizeToolInput(block.input)),
         }));
@@ -493,8 +493,10 @@ function processStreamEvent(event, ctx) {
   } else if (event.type === "user" && event.uuid && event.tool_use_result && !seenToolResults.has(event.uuid)) {
     seenToolResults.add(event.uuid);
     const toolResult = event.tool_use_result;
-    const toolName = event.tool_use_name || "unknown";
-    const isError = toolResult.is_error === true;
+    // Correlate tool name via tool_use_id from the message content
+    const toolUseId = event.message?.content?.[0]?.tool_use_id;
+    const toolName = (toolUseId && seenToolUseIds.get(toolUseId)) || "unknown";
+    const isError = toolResult.is_error === true || event.message?.content?.[0]?.is_error === true;
     const preview = Array.isArray(toolResult.content)
       ? toolResult.content.map((item) => item?.text).filter(Boolean).join(" ")
       : (toolResult.stdout || "");
@@ -537,7 +539,7 @@ function tryStreamWithAccount(controller, encoder, completionId, created, body, 
       textChunkCount: 0,
       textCharCount: 0,
       finishSent: false,
-      seenToolUseIds: new Set(),
+      seenToolUseIds: new Map(),  // id → tool name, for correlating results
       seenTaskIds: new Set(),
       seenToolResults: new Set(),
       send(payload) {
