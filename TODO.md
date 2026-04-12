@@ -80,12 +80,6 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 2.0,todo-md+toon+beads,2025-12-21T16:00:00Z
 -->
 
-## Routines
-
-Recurring operational jobs. Format and dispatch rules: see `reference/routines.md`.
-
-- [x] r005 Sync private mirror repos from their upstream sources (reads mirror_upstream entries from repos.json) repeat:daily(@05:30) ~2m run:custom/scripts/mirror-sync-helper.sh
-
 ## Ready
 
 Tasks with no open blockers - ready to work on. Use `/ready` to refresh this list.
