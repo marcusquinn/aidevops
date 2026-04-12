@@ -1700,14 +1700,11 @@ done | sort -rn | head -20
 	return 0
 }
 
-run_weekly_complexity_scan() {
-	local repos_json="$REPOS_JSON"
-	local aidevops_slug="marcusquinn/aidevops"
-
-	local now_epoch
-	now_epoch=$(date +%s)
-
-	_complexity_scan_check_interval "$now_epoch" || return 0
+# _complexity_scan_permission_gate — check current user has admin access (t2001)
+# Sets global _COMPLEXITY_SCAN_SKIP_REVIEW_GATE.
+# Returns 1 (call-site should return 0) if scan should be skipped.
+_complexity_scan_permission_gate() {
+	local aidevops_slug="$1"
 
 	# Permission gate: only admin users may create simplification issues.
 	# write/maintain collaborators are excluded — they could otherwise use
@@ -1723,7 +1720,7 @@ run_weekly_complexity_scan() {
 		admin) ;; # allowed — repo owner/admin only
 		*)
 			echo "[pulse-wrapper] Complexity scan: skipped — user '$current_user' has '$perm_level' permission on $aidevops_slug (need admin)" >>"$LOGFILE"
-			return 0
+			return 1
 			;;
 		esac
 	fi
@@ -1740,9 +1737,13 @@ run_weekly_complexity_scan() {
 	if [[ "$current_user" == "$maintainer_from_config" ]]; then
 		_COMPLEXITY_SCAN_SKIP_REVIEW_GATE=true
 	fi
+	return 0
+}
 
-	local aidevops_path
-	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
+# _complexity_scan_pull_latest — pull aidevops repo before scanning (GH#17848, t2001)
+# Fail-closed: returns 1 (skip cycle) if pull fails to avoid stale-state warnings.
+_complexity_scan_pull_latest() {
+	local aidevops_path="$1"
 
 	# GH#17848: Pull latest state before scanning to avoid false-positive
 	# proximity warnings from stale local checkouts. The proximity guard and
@@ -1758,47 +1759,18 @@ run_weekly_complexity_scan() {
 		if ! GIT_TERMINAL_PROMPT=0 timeout 30 \
 			git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 9>&-; then
 			echo "[pulse-wrapper] Complexity scan: git pull failed for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
-			return 0
+			return 1
 		fi
 	fi
+	return 0
+}
 
-	# Deterministic skip: if no tracked files changed since last scan, skip all
-	# file iteration (O(1) tree hash check vs O(n) per-file awk/wc scan).
-	# GH#15285: this is the primary perf fix — most pulse cycles see no changes.
-	local tree_changed=true
-	if ! _complexity_scan_tree_changed "$aidevops_path"; then
-		tree_changed=false
-	fi
-
-	# Daily LLM sweep: check independently of tree change — debt can stall even
-	# when no files changed (workers not dispatching, issues blocked, etc.).
-	local maintainer
-	maintainer=$(jq -r --arg slug "$aidevops_slug" \
-		'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
-		"$repos_json" 2>/dev/null)
-	if [[ -z "$maintainer" ]]; then
-		maintainer=$(printf '%s' "$aidevops_slug" | cut -d/ -f1)
-	fi
-	if _complexity_llm_sweep_due "$now_epoch" "$aidevops_slug"; then
-		_complexity_run_llm_sweep "$aidevops_slug" "$now_epoch" "$maintainer"
-	fi
-
-	# CI threshold proximity guard (GH#17808): warn before nesting depth
-	# violations reach the CI threshold. Runs independently of tree change
-	# so it catches regressions even when no files changed in this cycle.
-	_check_ci_nesting_threshold_proximity "$aidevops_path" "$aidevops_slug" "$maintainer" || true
-
-	# If tree unchanged, update last-run timestamp and return — no file work needed.
-	if [[ "$tree_changed" == false ]]; then
-		printf '%s\n' "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
-		return 0
-	fi
-
-	echo "[pulse-wrapper] Running deterministic complexity scan (GH#5628, GH#15285)..." >>"$LOGFILE"
-
-	# Ensure recheck label exists (used when a simplified file changes)
-	gh label create "recheck-simplicity" --repo "$aidevops_slug" --color "D4C5F9" \
-		--description "File changed since last simplification and needs recheck" --force 2>/dev/null || true
+# _complexity_scan_state_refresh — prune/refresh/backfill simplification state (t1754, t1855, t2001)
+# Updates state file and pushes to main if any entries changed.
+_complexity_scan_state_refresh() {
+	local aidevops_path="$1"
+	local state_file="$2"
+	local aidevops_slug="$3"
 
 	# Phase 1: Refresh simplification state hashes against current main (t1754).
 	# Replaces the previous timeline-API-based backfill which was fragile and
@@ -1806,7 +1778,6 @@ run_weekly_complexity_scan() {
 	# Now simply recomputes git hash-object for every file in state and updates
 	# any that differ. This catches all modifications (simplification PRs,
 	# feature work, refactors) without depending on GitHub API link resolution.
-	local state_file="${aidevops_path}/.agents/configs/simplification-state.json"
 	local state_updated=false
 
 	# Prune stale entries (files moved/renamed/deleted since last scan)
@@ -1841,67 +1812,91 @@ run_weekly_complexity_scan() {
 	if [[ "$state_updated" == true ]]; then
 		_simplification_state_push "$aidevops_path"
 	fi
+	return 0
+}
 
-	# Phase 2+3: Deterministic complexity scan via helper (GH#15285)
-	# Uses shell-based heuristics (line count, function count, nesting depth)
-	# with batch hash comparison against simplification-state.json.
-	# Only processes files whose hash has changed since last scan.
-	local scan_helper="${SCRIPT_DIR}/complexity-scan-helper.sh"
-	if [[ -x "$scan_helper" ]]; then
-		# Shell files — convert helper output to existing issue creation format
-		local sh_scan_output
-		sh_scan_output=$("$scan_helper" scan "$aidevops_path" --type sh --state-file "$state_file" 2>>"$LOGFILE") || true
-		if [[ -n "$sh_scan_output" ]]; then
-			# Helper outputs: status|file_path|line_count|func_count|long_func_count|max_nesting|file_type
-			# Issue creation expects: file_path|violation_count
-			local sh_results=""
-			while IFS='|' read -r _status file_path _lines _funcs long_funcs _nesting _type; do
-				[[ -n "$file_path" ]] || continue
-				sh_results="${sh_results}${file_path}|${long_funcs}"$'\n'
-			done <<<"$sh_scan_output"
-			if [[ -n "$sh_results" ]]; then
-				sh_results=$(printf '%s' "$sh_results" | sort -t'|' -k2 -rn)
-				_complexity_scan_create_issues "$sh_results" "$repos_json" "$aidevops_slug"
-			fi
+# _complexity_scan_lang_shell — shell-file complexity scan via helper (Phase 2, t2001)
+# Converts helper output to issue-creation format and calls _complexity_scan_create_issues.
+_complexity_scan_lang_shell() {
+	local scan_helper="$1"
+	local aidevops_path="$2"
+	local state_file="$3"
+	local repos_json="$4"
+	local aidevops_slug="$5"
+
+	# Shell files — convert helper output to existing issue creation format
+	# Helper outputs: status|file_path|line_count|func_count|long_func_count|max_nesting|file_type
+	# Issue creation expects: file_path|violation_count
+	local sh_scan_output
+	sh_scan_output=$("$scan_helper" scan "$aidevops_path" --type sh --state-file "$state_file" 2>>"$LOGFILE") || true
+	if [[ -n "$sh_scan_output" ]]; then
+		local sh_results=""
+		while IFS='|' read -r _status file_path _lines _funcs long_funcs _nesting _type; do
+			[[ -n "$file_path" ]] || continue
+			sh_results="${sh_results}${file_path}|${long_funcs}"$'\n'
+		done <<<"$sh_scan_output"
+		if [[ -n "$sh_results" ]]; then
+			sh_results=$(printf '%s' "$sh_results" | sort -t'|' -k2 -rn)
+			_complexity_scan_create_issues "$sh_results" "$repos_json" "$aidevops_slug"
 		fi
+	fi
+	return 0
+}
 
-		# Markdown files — convert helper output to existing issue creation format
-		local md_scan_output
-		md_scan_output=$("$scan_helper" scan "$aidevops_path" --type md --state-file "$state_file" 2>>"$LOGFILE") || true
-		if [[ -n "$md_scan_output" ]]; then
-			# Helper outputs: status|file_path|line_count|func_count|long_func_count|max_nesting|file_type
-			# Issue creation expects: file_path|line_count
-			local md_results=""
-			while IFS='|' read -r _status file_path lines _funcs _long_funcs _nesting _type; do
-				[[ -n "$file_path" ]] || continue
-				md_results="${md_results}${file_path}|${lines}"$'\n'
-			done <<<"$md_scan_output"
-			if [[ -n "$md_results" ]]; then
-				md_results=$(printf '%s' "$md_results" | sort -t'|' -k2 -rn)
-				_complexity_scan_create_md_issues "$md_results" "$repos_json" "$aidevops_slug"
-			fi
+# _complexity_scan_lang_md — markdown-file complexity scan via helper (Phase 3, t2001)
+# Converts helper output to issue-creation format and calls _complexity_scan_create_md_issues.
+_complexity_scan_lang_md() {
+	local scan_helper="$1"
+	local aidevops_path="$2"
+	local state_file="$3"
+	local repos_json="$4"
+	local aidevops_slug="$5"
+
+	# Markdown files — convert helper output to existing issue creation format
+	# Helper outputs: status|file_path|line_count|func_count|long_func_count|max_nesting|file_type
+	# Issue creation expects: file_path|line_count
+	local md_scan_output
+	md_scan_output=$("$scan_helper" scan "$aidevops_path" --type md --state-file "$state_file" 2>>"$LOGFILE") || true
+	if [[ -n "$md_scan_output" ]]; then
+		local md_results=""
+		while IFS='|' read -r _status file_path lines _funcs _long_funcs _nesting _type; do
+			[[ -n "$file_path" ]] || continue
+			md_results="${md_results}${file_path}|${lines}"$'\n'
+		done <<<"$md_scan_output"
+		if [[ -n "$md_results" ]]; then
+			md_results=$(printf '%s' "$md_results" | sort -t'|' -k2 -rn)
+			_complexity_scan_create_md_issues "$md_results" "$repos_json" "$aidevops_slug"
 		fi
+	fi
+	return 0
+}
 
-		# Phase 4: Daily LLM sweep check (GH#15285)
-		# If simplification debt hasn't decreased in 6h, flag for LLM review.
-		# The sweep itself runs as a separate worker dispatch, not inline.
-		local sweep_result
-		sweep_result=$("$scan_helper" sweep-check "$aidevops_slug" 2>>"$LOGFILE") || sweep_result=""
-		if [[ "$sweep_result" == needed* ]]; then
-			echo "[pulse-wrapper] LLM sweep triggered: ${sweep_result}" >>"$LOGFILE"
-			# Create a one-off issue for the LLM sweep if none exists (t1855: check both title patterns)
-			local sweep_issue_exists
-			sweep_issue_exists=$(gh issue list --repo "$aidevops_slug" \
-				--label "simplification-debt" --state open \
-				--search "in:title \"simplification debt stalled\" OR in:title \"LLM complexity sweep\"" \
-				--json number --jq 'length' 2>/dev/null) || sweep_issue_exists="0"
-			if [[ "${sweep_issue_exists:-0}" -eq 0 ]]; then
-				local sweep_reason
-				sweep_reason=$(echo "$sweep_result" | cut -d'|' -f2)
-				gh_create_issue --repo "$aidevops_slug" \
-					--title "LLM complexity sweep: review stalled simplification debt" \
-					--label "simplification-debt" --label "auto-dispatch" --label "tier:reasoning" \
-					--body "## Daily LLM sweep (automated, GH#15285)
+# _complexity_scan_sweep_check — LLM sweep check and issue creation (Phase 4, t2001)
+# If simplification debt stalled, creates a sweep issue for LLM review (GH#15285).
+_complexity_scan_sweep_check() {
+	local scan_helper="$1"
+	local aidevops_slug="$2"
+
+	# Phase 4: Daily LLM sweep check (GH#15285)
+	# If simplification debt hasn't decreased in 6h, flag for LLM review.
+	# The sweep itself runs as a separate worker dispatch, not inline.
+	local sweep_result
+	sweep_result=$("$scan_helper" sweep-check "$aidevops_slug" 2>>"$LOGFILE") || sweep_result=""
+	if [[ "$sweep_result" == needed* ]]; then
+		echo "[pulse-wrapper] LLM sweep triggered: ${sweep_result}" >>"$LOGFILE"
+		# Create a one-off issue for the LLM sweep if none exists (t1855: check both title patterns)
+		local sweep_issue_exists
+		sweep_issue_exists=$(gh issue list --repo "$aidevops_slug" \
+			--label "simplification-debt" --state open \
+			--search "in:title \"simplification debt stalled\" OR in:title \"LLM complexity sweep\"" \
+			--json number --jq 'length' 2>/dev/null) || sweep_issue_exists="0"
+		if [[ "${sweep_issue_exists:-0}" -eq 0 ]]; then
+			local sweep_reason
+			sweep_reason=$(echo "$sweep_result" | cut -d'|' -f2)
+			gh_create_issue --repo "$aidevops_slug" \
+				--title "LLM complexity sweep: review stalled simplification debt" \
+				--label "simplification-debt" --label "auto-dispatch" --label "tier:reasoning" \
+				--body "## Daily LLM sweep (automated, GH#15285)
 
 **Trigger:** ${sweep_reason}
 
@@ -1915,30 +1910,39 @@ The deterministic complexity scan detected that simplification debt has not decr
 ### Scope
 
 Review all open \`simplification-debt\` issues and the current \`simplification-state.json\`. Focus on the top 10 largest files first." >/dev/null 2>&1 || true
-				"$scan_helper" sweep-done 2>>"$LOGFILE" || true
-			fi
+			"$scan_helper" sweep-done 2>>"$LOGFILE" || true
 		fi
+	fi
+	return 0
+}
 
-		# Phase 5: Ratchet-check — lower thresholds when simplification wins accumulate (t1913)
-		# Runs after backfill so closed issues are reflected in violation counts.
-		# Creates a chore/ratchet-down PR when gap >= 5 (default).
-		local ratchet_output
-		ratchet_output=$("$scan_helper" ratchet-check "$aidevops_path" 2>>"$LOGFILE") || true
-		if [[ -n "$ratchet_output" ]]; then
-			echo "[pulse-wrapper] ratchet-check: proposals available" >>"$LOGFILE"
-			echo "$ratchet_output" >>"$LOGFILE"
-			# Check if a ratchet-down PR already exists to avoid duplicates
-			local ratchet_pr_exists
-			ratchet_pr_exists=$(gh pr list --repo "$aidevops_slug" \
-				--state open \
-				--search "in:title \"chore: ratchet-down complexity thresholds\"" \
-				--json number --jq 'length' 2>/dev/null) || ratchet_pr_exists="0"
-			if [[ "${ratchet_pr_exists:-0}" -eq 0 ]]; then
-				echo "[pulse-wrapper] ratchet-check: creating ratchet-down issue (t1913)" >>"$LOGFILE"
-				gh_create_issue --repo "$aidevops_slug" \
-					--title "chore: ratchet-down complexity thresholds" \
-					--label "code-quality" --label "auto-dispatch" --label "tier:standard" \
-					--body "## Automated ratchet-down (t1913)
+# _complexity_scan_ratchet_check — ratchet-down thresholds when wins accumulate (Phase 5, t1913, t2001)
+# Creates a chore issue when gap between violations and threshold reaches >= 5.
+_complexity_scan_ratchet_check() {
+	local scan_helper="$1"
+	local aidevops_path="$2"
+	local aidevops_slug="$3"
+
+	# Phase 5: Ratchet-check — lower thresholds when simplification wins accumulate (t1913)
+	# Runs after backfill so closed issues are reflected in violation counts.
+	# Creates a chore/ratchet-down PR when gap >= 5 (default).
+	local ratchet_output
+	ratchet_output=$("$scan_helper" ratchet-check "$aidevops_path" 2>>"$LOGFILE") || true
+	if [[ -n "$ratchet_output" ]]; then
+		echo "[pulse-wrapper] ratchet-check: proposals available" >>"$LOGFILE"
+		echo "$ratchet_output" >>"$LOGFILE"
+		# Check if a ratchet-down PR already exists to avoid duplicates
+		local ratchet_pr_exists
+		ratchet_pr_exists=$(gh pr list --repo "$aidevops_slug" \
+			--state open \
+			--search "in:title \"chore: ratchet-down complexity thresholds\"" \
+			--json number --jq 'length' 2>/dev/null) || ratchet_pr_exists="0"
+		if [[ "${ratchet_pr_exists:-0}" -eq 0 ]]; then
+			echo "[pulse-wrapper] ratchet-check: creating ratchet-down issue (t1913)" >>"$LOGFILE"
+			gh_create_issue --repo "$aidevops_slug" \
+				--title "chore: ratchet-down complexity thresholds" \
+				--label "code-quality" --label "auto-dispatch" --label "tier:standard" \
+				--body "## Automated ratchet-down (t1913)
 
 Simplification wins have accumulated. The following thresholds can be lowered:
 
@@ -1963,12 +1967,76 @@ grep -E 'FUNCTION_COMPLEXITY_THRESHOLD|NESTING_DEPTH_THRESHOLD|FILE_SIZE_THRESHO
 # Confirm CI would pass with new values
 .agents/scripts/complexity-scan-helper.sh ratchet-check . 5
 \`\`\`" >/dev/null 2>&1 || true
-			else
-				echo "[pulse-wrapper] ratchet-check: ratchet-down PR already open, skipping issue creation" >>"$LOGFILE"
-			fi
 		else
-			echo "[pulse-wrapper] ratchet-check: no ratchet-down available (thresholds already tight)" >>"$LOGFILE"
+			echo "[pulse-wrapper] ratchet-check: ratchet-down PR already open, skipping issue creation" >>"$LOGFILE"
 		fi
+	else
+		echo "[pulse-wrapper] ratchet-check: no ratchet-down available (thresholds already tight)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+# run_weekly_complexity_scan — orchestrator: interval check → auth gate → scan phases (t2001)
+# Refactored in Phase 12 (t2001): extracted per-language and per-phase helpers to reduce
+# this function from 287 lines to a clean orchestrator. New helpers:
+#   _complexity_scan_permission_gate, _complexity_scan_pull_latest,
+#   _complexity_scan_state_refresh, _complexity_scan_lang_shell,
+#   _complexity_scan_lang_md, _complexity_scan_sweep_check,
+#   _complexity_scan_ratchet_check
+run_weekly_complexity_scan() {
+	local repos_json="$REPOS_JSON"
+	local aidevops_slug="marcusquinn/aidevops"
+
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	_complexity_scan_check_interval "$now_epoch" || return 0
+
+	_complexity_scan_permission_gate "$aidevops_slug" || return 0
+
+	local aidevops_path
+	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
+
+	_complexity_scan_pull_latest "$aidevops_path" || return 0
+
+	# GH#15285: O(1) tree hash check — skip file iteration if no tracked files changed.
+	local tree_changed=true
+	if ! _complexity_scan_tree_changed "$aidevops_path"; then
+		tree_changed=false
+	fi
+
+	local maintainer
+	maintainer=$(jq -r --arg slug "$aidevops_slug" \
+		'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
+		"$repos_json" 2>/dev/null)
+	[[ -z "$maintainer" ]] && maintainer=$(printf '%s' "$aidevops_slug" | cut -d/ -f1)
+
+	# LLM sweep + CI proximity guard run independently of tree change (GH#15285, GH#17808).
+	if _complexity_llm_sweep_due "$now_epoch" "$aidevops_slug"; then
+		_complexity_run_llm_sweep "$aidevops_slug" "$now_epoch" "$maintainer"
+	fi
+	_check_ci_nesting_threshold_proximity "$aidevops_path" "$aidevops_slug" "$maintainer" || true
+
+	if [[ "$tree_changed" == false ]]; then
+		printf '%s\n' "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
+		return 0
+	fi
+
+	echo "[pulse-wrapper] Running deterministic complexity scan (GH#5628, GH#15285)..." >>"$LOGFILE"
+
+	# Ensure recheck label exists (used when a simplified file changes)
+	gh label create "recheck-simplicity" --repo "$aidevops_slug" --color "D4C5F9" \
+		--description "File changed since last simplification and needs recheck" --force 2>/dev/null || true
+
+	local state_file="${aidevops_path}/.agents/configs/simplification-state.json"
+	_complexity_scan_state_refresh "$aidevops_path" "$state_file" "$aidevops_slug"
+
+	local scan_helper="${SCRIPT_DIR}/complexity-scan-helper.sh"
+	if [[ -x "$scan_helper" ]]; then
+		_complexity_scan_lang_shell "$scan_helper" "$aidevops_path" "$state_file" "$repos_json" "$aidevops_slug"
+		_complexity_scan_lang_md "$scan_helper" "$aidevops_path" "$state_file" "$repos_json" "$aidevops_slug"
+		_complexity_scan_sweep_check "$scan_helper" "$aidevops_slug"
+		_complexity_scan_ratchet_check "$scan_helper" "$aidevops_path" "$aidevops_slug"
 	else
 		# Fallback to inline scan if helper not available
 		echo "[pulse-wrapper] complexity-scan-helper.sh not found, using inline scan" >>"$LOGFILE"
