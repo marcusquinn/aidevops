@@ -34,15 +34,15 @@ function claudeModelDef(overrides) {
 const ANTHROPIC_MODELS = {
   "claude-haiku-4-5": claudeModelDef({
     name: "Claude Haiku 4.5 (via aidevops)",
-    limit: { context: 200000, output: 32000 },
+    limit: { context: 1000000, output: 32000 },
   }),
   "claude-sonnet-4-6": claudeModelDef({
     name: "Claude Sonnet 4.6 (via aidevops)",
-    limit: { context: 200000, output: 32000 },
+    limit: { context: 1000000, output: 64000 },
   }),
   "claude-opus-4-6": claudeModelDef({
     name: "Claude Opus 4.6 (via aidevops)",
-    limit: { context: 200000, output: 64000 },
+    limit: { context: 1000000, output: 64000 },
   }),
 };
 
@@ -50,15 +50,15 @@ const ANTHROPIC_MODELS = {
 const CLAUDECLI_MODELS = {
   "claude-haiku-4-5": claudeModelDef({
     name: "Claude Haiku 4.5 (via CLI)",
-    limit: { context: 200000, output: 32000 },
+    limit: { context: 1000000, output: 32000 },
   }),
   "claude-sonnet-4-6": claudeModelDef({
     name: "Claude Sonnet 4.6 (via CLI)",
-    limit: { context: 200000, output: 32000 },
+    limit: { context: 1000000, output: 64000 },
   }),
   "claude-opus-4-6": claudeModelDef({
     name: "Claude Opus 4.6 (via CLI)",
-    limit: { context: 200000, output: 64000 },
+    limit: { context: 1000000, output: 64000 },
   }),
 };
 

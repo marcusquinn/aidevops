@@ -365,6 +365,7 @@ const REQUIRED_BETAS = [
   "oauth-2025-04-20",
   "interleaved-thinking-2025-05-14",
   "context-management-2025-06-27",
+  "context-1m-2025-08-07",
   "prompt-caching-scope-2026-01-05",
   "claude-code-20250219",
 ];
