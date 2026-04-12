@@ -682,12 +682,14 @@ _check_duplicate_issue() {
 		return 1
 	fi
 
+	# Only match against OPEN issues — closed issues are stale and re-linking
+	# to them poisons new TODO entries with a dead ref (observed t1970).
 	local existing_issue
 	existing_issue=$(gh issue list --repo "$repo_slug" \
-		--state all --search "$search_terms" \
+		--state open --search "$search_terms" \
 		--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
 	if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
-		log_info "Found existing issue #$existing_issue matching title, skipping duplicate creation"
+		log_info "Found existing OPEN issue #$existing_issue matching title, skipping duplicate creation"
 		echo "$existing_issue"
 		return 0
 	fi

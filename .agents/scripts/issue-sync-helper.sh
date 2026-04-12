@@ -461,6 +461,26 @@ _push_create_issue() {
 	local num
 	num=$(echo "$url" | grep -oE '[0-9]+$' || echo "")
 	[[ -n "$num" ]] && _PUSH_CREATED_NUM="$num"
+
+	# t1970: Auto-assign to current gh user when the session origin is
+	# interactive and no explicit assignee was set. This eliminates the race
+	# where the Maintainer Gate workflow runs before the user has a chance
+	# to self-assign — CI fires on the created issue within seconds, and
+	# re-running the workflow after a manual assign is extra friction.
+	#
+	# Worker-origin issues are NOT auto-assigned here — they follow the
+	# existing dispatch flow (`status:claimed` + pulse-managed assignment).
+	if [[ -n "$num" && -z "$assignee" && "$origin_label" == "origin:interactive" ]]; then
+		local current_user
+		current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+		if [[ -n "$current_user" ]]; then
+			if gh issue edit "$num" --repo "$repo" --add-assignee "$current_user" >/dev/null 2>&1; then
+				print_info "Auto-assigned #${num} to @${current_user} (origin:interactive)"
+			else
+				print_warning "Could not self-assign #${num} — assign manually to unblock Maintainer Gate"
+			fi
+		fi
+	fi
 	return 0
 }
 
