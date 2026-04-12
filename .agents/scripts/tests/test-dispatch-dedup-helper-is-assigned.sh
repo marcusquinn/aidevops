@@ -81,11 +81,19 @@ teardown_test_env() {
 }
 
 # Create a gh stub that returns specific issue metadata for a given issue.
+#
+# The stub also serves a recent-activity comment for `gh api .../comments`
+# so that _is_stale_assignment() in dispatch-dedup-helper.sh returns
+# "not stale" (exit 1). Without this, the stale recovery path fires in
+# the test environment (empty comments → no activity → treated as stale
+# → block → recover → allow dispatch), causing all "blocks dispatch"
+# assertions to flip. The recent-activity timestamp is generated fresh
+# at stub creation time to guarantee it's under the 10-minute threshold.
 create_gh_stub() {
 	local assignees_csv="$1"
 	local labels_csv="${2:-}"
 	local state="${3:-OPEN}"
-	local assignees_json labels_json
+	local assignees_json labels_json recent_ts
 
 	assignees_json=$(
 		ASSIGNEES_CSV="$assignees_csv" python3 - <<'PY'
@@ -104,6 +112,10 @@ print(json.dumps([{"name": item} for item in items]))
 PY
 	)
 
+	# Fresh UTC timestamp so the synthetic comment is always "recent"
+	# regardless of when the test runs.
+	recent_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
 	cat >"${TEST_ROOT}/bin/gh" <<GHEOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -113,7 +125,24 @@ if [[ "\${1:-}" == "issue" && "\${2:-}" == "view" ]]; then
 	exit 0
 fi
 
-printf 'unsupported gh invocation in test stub\n' >&2
+# Stale-assignment recovery calls: gh api repos/<slug>/issues/<num>/comments --jq '...'
+# Return a single recent "Dispatching worker" comment so the helper's
+# _is_stale_assignment() sees active work and does NOT recover the
+# assignment. The --jq filter is applied by the real gh client, but the
+# helper's own subsequent jq calls work on this array directly.
+if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -q '/comments'; then
+	printf '%s\n' '[{"created_at":"${recent_ts}","author":"runner1","body_start":"Dispatching worker (PID 12345)"}]'
+	exit 0
+fi
+
+# gh issue edit / gh issue comment — used by _recover_stale_assignment in
+# the unlikely event a test trips it. Succeed silently so the recovery is
+# idempotent and doesn't break the test run.
+if [[ "\${1:-}" == "issue" && ("\${2:-}" == "edit" || "\${2:-}" == "comment") ]]; then
+	exit 0
+fi
+
+printf 'unsupported gh invocation in test stub: %s\n' "\$*" >&2
 exit 1
 GHEOF
 
@@ -294,6 +323,114 @@ test_maintainer_assigned_with_active_status_blocks() {
 	return 0
 }
 
+# GH#18352: owner + status:claimed blocks dispatch.
+# Regression guard for the exact race that produced #18352: an interactive
+# session claimed a task via claim-task-id.sh, which applied status:claimed
+# + owner assignment. The old code only treated queued/in-progress as active,
+# so the owner-passive exemption fired and the pulse raced the interactive
+# session with a duplicate worker.
+test_owner_assigned_with_status_claimed_blocks() {
+	create_gh_stub "marcusquinn" "status:claimed"
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" is-assigned 100 marcusquinn/aidevops runner1 2>/dev/null); then
+		case "$output" in
+		*'ASSIGNED:'*'marcusquinn'*)
+			print_result "owner + status:claimed blocks dispatch (GH#18352)" 0
+			return 0
+			;;
+		esac
+		print_result "owner + status:claimed blocks dispatch (GH#18352)" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "owner + status:claimed blocks dispatch (GH#18352)" 1 "Expected exit 0 (blocked) but got exit 1 (safe)"
+	return 0
+}
+
+# GH#18352: owner + status:in-review blocks dispatch.
+# Once an interactive session opens a PR, the issue transitions to in-review.
+# The pulse must not dispatch a duplicate worker against an in-review issue
+# owned by the maintainer.
+test_owner_assigned_with_status_in_review_blocks() {
+	create_gh_stub "marcusquinn" "status:in-review"
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" is-assigned 100 marcusquinn/aidevops runner1 2>/dev/null); then
+		case "$output" in
+		*'ASSIGNED:'*'marcusquinn'*)
+			print_result "owner + status:in-review blocks dispatch (GH#18352)" 0
+			return 0
+			;;
+		esac
+		print_result "owner + status:in-review blocks dispatch (GH#18352)" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "owner + status:in-review blocks dispatch (GH#18352)" 1 "Expected exit 0 (blocked) but got exit 1 (safe)"
+	return 0
+}
+
+# GH#18352: owner + origin:interactive blocks dispatch even without a status
+# label. origin:interactive is a strong "human session owns this" signal —
+# the pulse must never race an in-flight interactive session regardless of
+# whether the status label has caught up yet.
+test_owner_assigned_with_origin_interactive_blocks() {
+	create_gh_stub "marcusquinn" "origin:interactive,bug"
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" is-assigned 100 marcusquinn/aidevops runner1 2>/dev/null); then
+		case "$output" in
+		*'ASSIGNED:'*'marcusquinn'*)
+			print_result "owner + origin:interactive blocks dispatch (GH#18352)" 0
+			return 0
+			;;
+		esac
+		print_result "owner + origin:interactive blocks dispatch (GH#18352)" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "owner + origin:interactive blocks dispatch (GH#18352)" 1 "Expected exit 0 (blocked) but got exit 1 (safe)"
+	return 0
+}
+
+# GH#18352: maintainer + origin:interactive blocks dispatch.
+# Same rule as owner — origin:interactive overrides the passive exemption.
+test_maintainer_assigned_with_origin_interactive_blocks() {
+	create_gh_stub "marcusquinn-bot" "origin:interactive"
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" is-assigned 100 marcusquinn/aidevops runner1 2>/dev/null); then
+		case "$output" in
+		*'ASSIGNED:'*'marcusquinn-bot'*)
+			print_result "maintainer + origin:interactive blocks dispatch (GH#18352)" 0
+			return 0
+			;;
+		esac
+		print_result "maintainer + origin:interactive blocks dispatch (GH#18352)" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "maintainer + origin:interactive blocks dispatch (GH#18352)" 1 "Expected exit 0 (blocked) but got exit 1 (safe)"
+	return 0
+}
+
+# Regression: the original owner-passive exemption must still work when
+# neither an active status label nor origin:interactive is present.
+# A bare owner-assignment from auto-triage workflows must not block dispatch
+# (this preserves the GH#10521 queue-starvation fix).
+test_owner_assigned_no_status_no_origin_allows_dispatch() {
+	create_gh_stub "marcusquinn" "bug"
+
+	if "$HELPER_SCRIPT" is-assigned 100 marcusquinn/aidevops runner1 >/dev/null 2>&1; then
+		print_result "owner + no active status + no origin:interactive allows dispatch (GH#10521 regression)" 1 "Expected exit 1 (safe) but got exit 0 (blocked)"
+		return 0
+	fi
+
+	print_result "owner + no active status + no origin:interactive allows dispatch (GH#10521 regression)" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -309,6 +446,11 @@ main() {
 	test_no_self_login_owner_assigned
 	test_owner_assigned_with_active_status_blocks
 	test_maintainer_assigned_with_active_status_blocks
+	test_owner_assigned_with_status_claimed_blocks
+	test_owner_assigned_with_status_in_review_blocks
+	test_owner_assigned_with_origin_interactive_blocks
+	test_maintainer_assigned_with_origin_interactive_blocks
+	test_owner_assigned_no_status_no_origin_allows_dispatch
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

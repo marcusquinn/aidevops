@@ -234,12 +234,15 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 - **`persistent` label** → NEVER close. CI guard auto-reopens accidental closures.
 - **Has merged PR** → comment linking PR, then close.
 - **`status:blocked` but blockers resolved** → remove label, add `status:available`, comment.
-- **`status:queued`/`status:in-progress`** → if updated within 3h, skip. If 3+ hours with no PR/worker, relabel `status:available`, unassign, comment recovery.
+- **`status:queued`/`status:in-progress`/`status:in-review`/`status:claimed`** → if updated within 3h, skip. If 3+ hours with no PR/worker, relabel `status:available`, unassign, comment recovery.
+- **`origin:interactive` + human assignee** → NEVER dispatch. An active interactive session owns this work; dispatching would race the user's in-flight PR. Skip silently regardless of status label state (GH#18352).
 - **`needs-maintainer-review`** → dispatch triage review worker (step 3.5), NOT implementation worker.
 - **`status:needs-info`** → check pre-fetched reply status (step 4.5).
 - **`status:available` or no status** → dispatch implementation worker.
 
 NEVER dispatch a worker for an issue with `needs-maintainer-review`. NEVER attempt to remove this label, comment on these issues, or bypass the gate. Approval is cryptographic (t1894) — only `sudo aidevops approve issue <number>` can unlock it. NMR issues are excluded from the LLM state file; if you encounter one, skip it.
+
+**Interactive-session protection (GH#18352):** `dispatch-dedup-helper.sh is-assigned` treats any human assignee as blocking when EITHER (a) the issue carries an active lifecycle label — `status:queued`, `status:in-progress`, `status:in-review`, or `status:claimed` — OR (b) the `origin:interactive` label is present. This is enforced in Layer 6 of `check_dispatch_dedup` and applies to owner/maintainer assignees too. Previously the owner-passive exemption only recognised `status:queued`/`status:in-progress`, so an interactive session using `claim-task-id.sh` (which applies `status:claimed`) could be raced by the pulse. Regression tested in `tests/test-dispatch-dedup-helper-is-assigned.sh`.
 
 ## Worker Management
 

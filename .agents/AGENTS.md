@@ -104,6 +104,8 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 **`origin:interactive` implies maintainer approval**: PRs tagged `origin:interactive` pass the maintainer gate automatically when the PR author is `OWNER` or `MEMBER` — the maintainer was present and directing the work. No separate `sudo aidevops approve` is needed. Contributors (`COLLABORATOR`) with `origin:interactive` still go through the normal gate — the label alone is not sufficient. The pulse also never auto-closes `origin:interactive` PRs via the deterministic merge pass, even if the task ID appears in recent commits (incremental work on the same issue is legitimate).
 
+**`origin:interactive` also skips pulse dispatch (GH#18352)**: When an issue carries `origin:interactive` AND has any human assignee, the pulse's deterministic dedup guard (`dispatch-dedup-helper.sh is-assigned`) treats the assignee as blocking — even if that assignee is the repo owner or maintainer, and regardless of the current `status:*` label. This closes the race where an interactive session claimed a task via `claim-task-id.sh` (applying `status:claimed` + owner assignment) and the pulse dispatched a duplicate worker before the session could open its PR. The full active lifecycle is now recognised: `status:queued`, `status:in-progress`, `status:in-review`, and `status:claimed` all keep owner/maintainer assignees in the blocking set.
+
 Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-DD`. Use `task-complete-helper.sh`. Every completed task must link to its verification evidence — work without an audit trail is unverifiable and may be reverted.
 
 Planning files go direct to main. Code changes need worktree + PR. Workers NEVER edit TODO.md.

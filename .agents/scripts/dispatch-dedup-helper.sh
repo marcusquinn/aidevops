@@ -610,15 +610,23 @@ _This recovery prevents the orphaned-assignment deadlock where offline runners p
 #
 # Systemic rule:
 # - self_login never blocks
-# - owner/maintainer assignees are passive unless the issue has an active
-#   claim status label (status:queued or status:in-progress)
+# - owner/maintainer assignees are passive unless EITHER:
+#     (a) the issue has an active claim status label — status:queued,
+#         status:in-progress, status:in-review, or status:claimed
+#         (full active lifecycle, not just the worker-set states), OR
+#     (b) the issue has the origin:interactive label — a human session
+#         is actively driving the work regardless of status label state
+#         (GH#18352 — closes the race where an interactive claim used
+#         status:claimed, which was not recognised as an active state,
+#         so the pulse dispatched a duplicate worker mid-flight)
 # - any other assignee blocks dispatch — UNLESS the assignment is stale
 #   (no active worker, dispatch claim >1h old, no recent progress).
 #   Stale assignments are auto-recovered (GH#15060).
 #
 # This preserves GH#10521 (maintainer assignment alone must not starve the
 # queue) while still protecting GH#11141 (owner-assigned queued work must
-# block other runners once a real claim is active).
+# block other runners once a real claim is active) and GH#18352 (interactive
+# sessions working on owner-assigned issues must not be raced by the pulse).
 #
 # Args:
 #   $1 = issue number
@@ -661,11 +669,22 @@ is_assigned() {
 		return 1
 	fi
 
-	local repo_owner repo_maintainer has_active_status
+	local repo_owner repo_maintainer has_active_status has_origin_interactive
 	repo_owner=$(_get_repo_owner "$repo_slug")
 	repo_maintainer=$(_get_repo_maintainer "$repo_slug")
-	has_active_status=$(printf '%s' "$issue_meta_json" | jq -r '([.labels[].name] | (index("status:queued") != null or index("status:in-progress") != null))' 2>/dev/null)
+	# GH#18352: recognise the full active lifecycle — status:claimed (set by
+	# claim-task-id.sh for interactive sessions) and status:in-review (set
+	# when a PR is opened) are active states just like queued/in-progress.
+	# Previously the check was limited to queued/in-progress, which let the
+	# pulse dispatch a worker against a status:claimed interactive task.
+	has_active_status=$(printf '%s' "$issue_meta_json" | jq -r '([.labels[].name] | (index("status:queued") != null or index("status:in-progress") != null or index("status:in-review") != null or index("status:claimed") != null))' 2>/dev/null)
 	[[ "$has_active_status" == "true" || "$has_active_status" == "false" ]] || has_active_status="false"
+	# GH#18352: origin:interactive is a strong "a human session owns this
+	# work" signal — treat any human assignee (owner included) as actively
+	# claimed regardless of status label state. Prevents the pulse from
+	# racing an in-flight interactive session.
+	has_origin_interactive=$(printf '%s' "$issue_meta_json" | jq -r '([.labels[].name] | index("origin:interactive") != null)' 2>/dev/null)
+	[[ "$has_origin_interactive" == "true" || "$has_origin_interactive" == "false" ]] || has_origin_interactive="false"
 
 	local -a assignee_array=()
 	local saved_ifs="${IFS:-}"
@@ -680,7 +699,10 @@ is_assigned() {
 		fi
 
 		if [[ "$assignee" == "$repo_owner" || (-n "$repo_maintainer" && "$assignee" == "$repo_maintainer") ]]; then
-			if [[ "$has_active_status" != "true" ]]; then
+			# Owner/maintainer is passive UNLESS an active status label is
+			# present OR origin:interactive signals a live human session
+			# (GH#18352).
+			if [[ "$has_active_status" != "true" && "$has_origin_interactive" != "true" ]]; then
 				continue
 			fi
 		fi
