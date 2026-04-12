@@ -260,6 +260,8 @@ Advisories delivered via `aidevops update`; shown in session greeting until dism
 
 **Cross-repo privacy:** NEVER include private repo names in TODO.md task descriptions, issue titles, or comments on public repos. Use generic references like "a managed private repo" or "cross-repo project". The issue-sync-helper.sh has automated sanitization, but prevention at the source is the primary defense.
 
+**Client-side privacy guard (t1965):** A git `pre-push` hook at `.agents/hooks/privacy-guard-pre-push.sh` blocks pushes to public GitHub repos that contain private repo slugs (from `repos.json`) in `TODO.md`, `todo/**`, `README.md`, or `.github/ISSUE_TEMPLATE/**`. Install per-repo with `.agents/scripts/install-privacy-guard.sh install`. Status/uninstall: same script, `status`/`uninstall`. Private slugs are enumerated from `initialized_repos[]` entries with `mirror_upstream` or `local_only: true`, plus optional extras in `~/.aidevops/configs/privacy-guard-extra-slugs.txt` (one per line). Bypass for legitimate cases: `PRIVACY_GUARD_DISABLE=1 git push ...` or `git push --no-verify`. Fail-open on offline/unauthenticated `gh` (the rule still holds, it's just not enforced client-side in that case — server-side `issue-sync-helper.sh` sanitisation is the second line). Test harness: `.agents/scripts/test-privacy-guard.sh`.
+
 ## Working Directories
 
 Tree: `prompts/build.txt`. Agent tiers:
