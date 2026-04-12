@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { spawn, spawnSync } from "child_process";
 import { homedir } from "os";
 import { dirname, join } from "path";
@@ -37,10 +37,11 @@ function getFrameworkPrompt() {
   if (_frameworkPromptCache !== null) return _frameworkPromptCache;
 
   const agentsDir = join(homedir(), ".aidevops", "agents");
+  // Framework base only — agent-specific prompt is added separately
+  // via getAgentPrompt() based on per-request agent selection.
   const files = [
     join(agentsDir, "prompts", "build.txt"),
     join(agentsDir, "AGENTS.md"),
-    join(agentsDir, "build-plus.md"),
   ];
 
   const parts = [];
@@ -60,6 +61,125 @@ function getFrameworkPrompt() {
     );
   }
   return _frameworkPromptCache;
+}
+
+// ---------------------------------------------------------------------------
+// Agent selection — pick the right agent file for the system prompt
+// ---------------------------------------------------------------------------
+
+/**
+ * Map of known agent identifiers to their file names in ~/.aidevops/agents/.
+ * The proxy selects an agent based on:
+ *   1. X-Agent header in the request (e.g., "build-plus", "automate", "seo")
+ *   2. Default: "build-plus" (the primary interactive agent)
+ */
+const AGENT_FILES = {
+  "build-plus": "build-plus.md",
+  "automate": "automate.md",
+  "seo": "seo.md",
+  "content": "content.md",
+  "research": "research.md",
+  "legal": "legal.md",
+  "business": "business.md",
+};
+
+/** @type {Map<string, string>} agent name → cached prompt content */
+const _agentPromptCache = new Map();
+
+/**
+ * Load the agent-specific prompt file.  Falls back to build-plus.md.
+ * @param {string} [agentName]
+ * @returns {string}
+ */
+function getAgentPrompt(agentName) {
+  const name = agentName && AGENT_FILES[agentName] ? agentName : "build-plus";
+  if (_agentPromptCache.has(name)) return _agentPromptCache.get(name);
+
+  const filePath = join(homedir(), ".aidevops", "agents", AGENT_FILES[name]);
+  let content = "";
+  try {
+    content = readFileSync(filePath, "utf-8").trim();
+  } catch {
+    // agent file not found — use empty
+  }
+  _agentPromptCache.set(name, content);
+  return content;
+}
+
+// ---------------------------------------------------------------------------
+// MCP config generation — per-agent lazy loading
+// ---------------------------------------------------------------------------
+
+/**
+ * Agent → MCP server mapping.  Only the MCPs listed here are passed via
+ * --mcp-config for the corresponding agent.  Agents not listed get no
+ * extra MCPs (Claude CLI's built-in tools are always available).
+ *
+ * Mirrors the OpenCode pattern: MCPs disabled by default, enabled per-agent.
+ */
+const AGENT_MCPS = {
+  "build-plus": ["context7"],
+  "seo": ["context7", "gsc", "dataforseo"],
+  "automate": ["context7"],
+  "content": ["context7"],
+  "research": ["context7"],
+};
+
+/**
+ * MCP server definitions in Claude CLI --mcp-config format.
+ * Only servers that might be needed per-agent are included here.
+ * Claude CLI's global config (~/.claude.json) handles always-on MCPs.
+ */
+function getMcpDefinition(name) {
+  const defs = {
+    context7: { command: "npx", args: ["-y", "@upstash/context7-mcp@latest"], type: "stdio" },
+    gsc: {
+      command: "/bin/bash",
+      args: ["-c", "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-~/.config/aidevops/gsc-credentials.json} npx -y mcp-server-gsc"],
+      type: "stdio",
+    },
+    dataforseo: {
+      command: "/bin/bash",
+      args: ["-c", "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD npx -y dataforseo-mcp-server"],
+      type: "stdio",
+    },
+    shadcn: { command: "npx", args: ["shadcn@latest", "mcp"], type: "stdio" },
+    playwright: { command: "npx", args: ["-y", "@playwright/mcp@latest"], type: "stdio" },
+  };
+  return defs[name] || null;
+}
+
+/** @type {Map<string, string>} agent name → path to generated MCP config file */
+const _mcpConfigFileCache = new Map();
+
+/**
+ * Generate a temporary MCP config JSON file for the given agent.
+ * Returns the file path, or null if no agent-specific MCPs are needed.
+ * @param {string} [agentName]
+ * @returns {string | null}
+ */
+function getMcpConfigForAgent(agentName) {
+  const name = agentName && AGENT_MCPS[agentName] ? agentName : "build-plus";
+  const mcpNames = AGENT_MCPS[name];
+  if (!mcpNames || mcpNames.length === 0) return null;
+
+  if (_mcpConfigFileCache.has(name)) return _mcpConfigFileCache.get(name);
+
+  const mcpServers = {};
+  for (const mcpName of mcpNames) {
+    const def = getMcpDefinition(mcpName);
+    if (def) mcpServers[mcpName] = def;
+  }
+
+  if (Object.keys(mcpServers).length === 0) return null;
+
+  const configDir = join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+  mkdirSync(configDir, { recursive: true });
+  const configPath = join(configDir, `claude-cli-mcp-${name}.json`);
+  writeFileSync(configPath, JSON.stringify({ mcpServers }, null, 2), "utf-8");
+  _mcpConfigFileCache.set(name, configPath);
+  console.error(`[aidevops] Claude proxy: generated MCP config for agent=${name} at ${configPath}`);
+  return configPath;
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +439,7 @@ function renderConversationPrompt(conversation) {
 
 function buildClaudeArgs(body, systemPrompt, streaming) {
   const agentsDir = join(homedir(), ".aidevops", "agents");
+  const agentName = body.agentName || "build-plus";
   const args = [
     "-p",
     "--model",
@@ -330,11 +451,17 @@ function buildClaudeArgs(body, systemPrompt, streaming) {
     agentsDir,
   ];
 
-  // Combine framework instructions (build.txt + AGENTS.md + build-plus.md)
-  // with the per-request system prompt from OpenCode.  Framework goes first
-  // (static / cacheable), OpenCode's context-specific prompt second.
+  // Agent-specific MCP config (lazy loading — only needed MCPs start)
+  const mcpConfig = getMcpConfigForAgent(agentName);
+  if (mcpConfig) {
+    args.push("--mcp-config", mcpConfig);
+  }
+
+  // Combine: framework base (build.txt + AGENTS.md) + agent prompt + request system prompt.
+  // Framework and agent go first (static), OpenCode's context-specific prompt last.
   const frameworkPrompt = getFrameworkPrompt();
-  const combinedPrompt = [frameworkPrompt, systemPrompt].filter(Boolean).join("\n\n");
+  const agentPrompt = getAgentPrompt(agentName);
+  const combinedPrompt = [frameworkPrompt, agentPrompt, systemPrompt].filter(Boolean).join("\n\n");
   if (combinedPrompt) {
     args.push("--append-system-prompt", combinedPrompt);
   }
@@ -737,20 +864,31 @@ function buildOpenAIResponse(body, content, usage) {
 async function handleChatCompletions(req, directory) {
   const incoming = await req.json();
   const parsed = parseChatMessages(incoming.messages || []);
+
+  // Agent selection: X-Agent header > model name suffix (e.g. "claudecli/seo/opus") > default
+  let agentName = req.headers.get("x-agent") || null;
+  if (!agentName && typeof incoming.model === "string" && incoming.model.includes("/")) {
+    const parts = incoming.model.split("/");
+    if (parts.length >= 2 && AGENT_FILES[parts[1]]) {
+      agentName = parts[1];
+    }
+  }
+
   const body = {
     model: incoming.model,
+    agentName: agentName || "build-plus",
     systemPrompt: parsed.systemPrompt,
     prompt: parsed.prompt,
     stream: incoming.stream !== false,
   };
 
   console.error(
-    `[aidevops] Claude proxy: request model=${body.model} stream=${body.stream} systemChars=${body.systemPrompt.length} promptChars=${body.prompt.length}`,
+    `[aidevops] Claude proxy: request model=${body.model} agent=${body.agentName} stream=${body.stream} systemChars=${body.systemPrompt.length} promptChars=${body.prompt.length}`,
   );
   try {
     writeFileSync(
       "/tmp/claude-proxy-last-request.json",
-      JSON.stringify({ model: body.model, stream: body.stream, systemPrompt: body.systemPrompt, prompt: body.prompt }, null, 2),
+      JSON.stringify({ model: body.model, agent: body.agentName, stream: body.stream, systemPrompt: body.systemPrompt, prompt: body.prompt }, null, 2),
       "utf-8",
     );
   } catch {
