@@ -299,28 +299,31 @@ function isClaudeCliAvailable() {
   }
 }
 
+// Model limits mirror config-hook.mjs CLAUDECLI_MODELS. 1M context requires
+// the `context-1m-2025-08-07` beta header (provider-auth.mjs REQUIRED_BETAS).
+// Sonnet/Opus support 64K output; Haiku caps at 32K.
 function getClaudeProxyModels() {
   return [
     {
       id: "claude-haiku-4-5",
       name: "Claude Haiku 4.5 (via Claude CLI)",
       reasoning: true,
-      contextWindow: 200000,
+      contextWindow: 1000000,
       maxTokens: 32000,
     },
     {
       id: "claude-sonnet-4-6",
       name: "Claude Sonnet 4.6 (via Claude CLI)",
       reasoning: true,
-      contextWindow: 200000,
+      contextWindow: 1000000,
       maxTokens: 64000,
     },
     {
       id: "claude-opus-4-6",
       name: "Claude Opus 4.6 (via Claude CLI)",
       reasoning: true,
-      contextWindow: 200000,
-      maxTokens: 32000,
+      contextWindow: 1000000,
+      maxTokens: 64000,
     },
   ];
 }

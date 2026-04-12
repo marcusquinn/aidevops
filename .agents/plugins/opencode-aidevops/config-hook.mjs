@@ -30,19 +30,27 @@ function claudeModelDef(overrides) {
   };
 }
 
+// Context window and output token limits. 1M context requires the
+// `context-1m-2025-08-07` beta header — injected automatically by
+// provider-auth.mjs REQUIRED_BETAS. Sonnet/Opus cap output at 64K;
+// Haiku caps output at 32K.
+const CONTEXT_1M = 1000000;
+const OUTPUT_64K = 64000;
+const OUTPUT_32K = 32000;
+
 /** Models registered under the built-in anthropic provider (via aidevops OAuth pool). */
 const ANTHROPIC_MODELS = {
   "claude-haiku-4-5": claudeModelDef({
     name: "Claude Haiku 4.5 (via aidevops)",
-    limit: { context: 200000, output: 32000 },
+    limit: { context: CONTEXT_1M, output: OUTPUT_32K },
   }),
   "claude-sonnet-4-6": claudeModelDef({
     name: "Claude Sonnet 4.6 (via aidevops)",
-    limit: { context: 200000, output: 32000 },
+    limit: { context: CONTEXT_1M, output: OUTPUT_64K },
   }),
   "claude-opus-4-6": claudeModelDef({
     name: "Claude Opus 4.6 (via aidevops)",
-    limit: { context: 200000, output: 64000 },
+    limit: { context: CONTEXT_1M, output: OUTPUT_64K },
   }),
 };
 
@@ -50,15 +58,15 @@ const ANTHROPIC_MODELS = {
 const CLAUDECLI_MODELS = {
   "claude-haiku-4-5": claudeModelDef({
     name: "Claude Haiku 4.5 (via CLI)",
-    limit: { context: 200000, output: 32000 },
+    limit: { context: CONTEXT_1M, output: OUTPUT_32K },
   }),
   "claude-sonnet-4-6": claudeModelDef({
     name: "Claude Sonnet 4.6 (via CLI)",
-    limit: { context: 200000, output: 32000 },
+    limit: { context: CONTEXT_1M, output: OUTPUT_64K },
   }),
   "claude-opus-4-6": claudeModelDef({
     name: "Claude Opus 4.6 (via CLI)",
-    limit: { context: 200000, output: 64000 },
+    limit: { context: CONTEXT_1M, output: OUTPUT_64K },
   }),
 };
 

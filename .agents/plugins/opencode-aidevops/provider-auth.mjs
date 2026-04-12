@@ -365,6 +365,12 @@ const REQUIRED_BETAS = [
   "oauth-2025-04-20",
   "interleaved-thinking-2025-05-14",
   "context-management-2025-06-27",
+  // context-1m-2025-08-07 unlocks the 1M token context window for Claude Haiku 4.5,
+  // Sonnet 4.6, and Opus 4.6. Paired with limit.context: 1000000 in config-hook.mjs
+  // so OpenCode's auto-compaction trigger moves from ~160K to ~800K (80% of window).
+  // Pricing above 200K tokens shifts to the higher 1M tier (~2x input, ~1.5x output)
+  // — absorbed by OAuth subscription accounts, real cost on pay-as-you-go API keys.
+  "context-1m-2025-08-07",
   "prompt-caching-scope-2026-01-05",
   "claude-code-20250219",
 ];
