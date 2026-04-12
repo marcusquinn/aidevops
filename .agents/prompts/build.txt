@@ -301,7 +301,8 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 **Pre-edit rules:**
 - Before ANY file modification: run `pre-edit-check.sh`
 - Exit 0=proceed, 1=STOP (main), 2=create worktree, 3=warn off-main
-- NEVER edit on main/master. Code work in worktrees (`~/Git/{repo}-{type}-{name}/`).
+- **Interactive sessions (t1990):** NEVER edit directly in the canonical repo on main/master. **ALL work** — code, planning files (TODO.md, todo/**, README.md), routine configs, everything — goes through a linked worktree at `~/Git/{repo}-{type}-{name}/`. No planning exception. The canonical directory stays on `main`.
+- **Headless sessions (pulse, CI workers, routines):** the main-branch planning allowlist (`README.md`, `TODO.md`, `todo/**`) still applies so routine bookkeeping doesn't need PR ceremony. Detected via `FULL_LOOP_HEADLESS` / `AIDEVOPS_HEADLESS` / `OPENCODE_HEADLESS` / `GITHUB_ACTIONS` env vars.
 - Exactly one active session may own a writable worktree path. Never share a live worktree between sessions; create a new worktree on ownership conflict.
 - Loop mode: `pre-edit-check.sh --loop-mode --task "description"`
 - NEVER revert others' changes without explicit user request

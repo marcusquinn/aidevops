@@ -44,7 +44,7 @@ New to aidevops? Type `/onboarding`.
 
 Rules: `prompts/build.txt`. Details: `workflows/pre-edit.md`.
 
-Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. All other writes → proposed edits in a worktree.
+Subagent write restrictions: on `main`/`master`, **headless subagents** may write to `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. **Interactive subagents** must always use a linked worktree regardless of path — no planning exception (t1990). All other writes → proposed edits in a worktree.
 
 ---
 
@@ -108,9 +108,9 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-DD`. Use `task-complete-helper.sh`. Every completed task must link to its verification evidence — work without an audit trail is unverifiable and may be reverted.
 
-Planning files go direct to main. Code changes need worktree + PR. Workers NEVER edit TODO.md.
+Code changes need worktree + PR. Workers NEVER edit TODO.md.
 
-**Main-branch planning exception:** `TODO.md` and `todo/*` are the explicit exception to the PR-only flow — planning-only edits may be committed and pushed directly to `main`.
+**Main-branch planning exception (headless sessions only, t1990):** `TODO.md`, `todo/*`, and `README.md` are an explicit exception to the PR-only flow for **headless sessions** (pulse, CI workers, routines). Headless workers may commit and push these directly to `main` without worktree ceremony. **Interactive sessions have NO such exception** — every edit, including planning files, goes through a linked worktree at `~/Git/<repo>-<branch>/`. The canonical repo directory (`~/Git/<repo>/`) stays on `main` always. Enforced by `pre-edit-check.sh` `is_main_allowlisted_path()` which short-circuits FALSE when none of `FULL_LOOP_HEADLESS` / `AIDEVOPS_HEADLESS` / `OPENCODE_HEADLESS` / `GITHUB_ACTIONS` is set.
 
 **Simplification state policy:** Keep all changes to `.agents/configs/simplification-state.json`. It is the shared hash registry used by the simplification routine to detect unchanged vs changed files and decide when recheck/re-processing is needed.
 
