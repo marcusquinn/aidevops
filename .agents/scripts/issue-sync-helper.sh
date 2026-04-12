@@ -130,7 +130,7 @@ _is_protected_label() {
 	case "$lbl" in
 	persistent | needs-maintainer-review | not-planned | duplicate | wontfix | \
 		already-fixed | "good first issue" | "help wanted" | \
-		parent-task | meta)
+		parent-task | meta | auto-dispatch)
 		return 0
 		;;
 	esac
