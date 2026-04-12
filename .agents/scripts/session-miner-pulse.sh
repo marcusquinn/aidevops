@@ -666,13 +666,20 @@ parse_args() {
 }
 
 sync_scripts() {
+	local _miner_src_dir="${SCRIPT_DIR}/session-miner"
+	local _py_src
+	local _py_dst
 	mkdir -p "${MINER_DIR}"
-	if [[ -f "${EXTRACTOR_SRC}" ]] && [[ ! -f "${EXTRACTOR}" || "${EXTRACTOR_SRC}" -nt "${EXTRACTOR}" ]]; then
-		cp "${EXTRACTOR_SRC}" "${EXTRACTOR}"
-	fi
-	if [[ -f "${COMPRESSOR_SRC}" ]] && [[ ! -f "${COMPRESSOR}" || "${COMPRESSOR_SRC}" -nt "${COMPRESSOR}" ]]; then
-		cp "${COMPRESSOR_SRC}" "${COMPRESSOR}"
-	fi
+	# Copy all Python modules from source to workspace (not just extract.py + compress.py).
+	# This is resilient to future refactoring — any new .py module added to
+	# scripts/session-miner/ will be automatically deployed.
+	for _py_src in "${_miner_src_dir}"/*.py; do
+		[[ -f "$_py_src" ]] || continue
+		_py_dst="${MINER_DIR}/$(basename "$_py_src")"
+		if [[ ! -f "$_py_dst" || "$_py_src" -nt "$_py_dst" ]]; then
+			cp "$_py_src" "$_py_dst"
+		fi
+	done
 	return 0
 }
 
