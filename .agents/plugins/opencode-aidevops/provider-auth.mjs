@@ -882,6 +882,7 @@ function sanitizeSystemPrompt(system) {
   const TAG_RENAMES = [
     [/<directories>/g, "<working_dirs>"],     [/<\/directories>/g, "</working_dirs>"],
     [/<available_skills>/g, "<skill_list>"],   [/<\/available_skills>/g, "</skill_list>"],
+    [/<skill>/g, "<skill_entry>"],             [/<\/skill>/g, "</skill_entry>"],
     [/<env>/g, "<environment>"],               [/<\/env>/g, "</environment>"],
   ];
 
@@ -898,6 +899,39 @@ function sanitizeSystemPrompt(system) {
 }
 
 /**
+ * Strip non-standard JSON Schema fields from a tool input_schema.
+ * The Anthropic API (specifically opus-4-6) rejects $schema and other
+ * draft-2020-12 fields that are not part of the Anthropic tool schema spec.
+ * @param {object} schema
+ * @returns {object}
+ */
+/**
+ * Recursively strip non-standard JSON Schema fields from a tool input_schema.
+ * The Anthropic API (specifically opus-4-6) rejects $schema and additionalProperties
+ * anywhere in the schema tree — including nested inside items/properties.
+ * @param {object} schema
+ * @returns {object}
+ */
+function sanitizeToolSchema(schema) {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return schema;
+  const STRIP = new Set(["$schema", "additionalProperties"]);
+  const result = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (STRIP.has(k)) continue;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      result[k] = sanitizeToolSchema(v);
+    } else if (Array.isArray(v)) {
+      result[k] = v.map((item) =>
+        item && typeof item === "object" ? sanitizeToolSchema(item) : item,
+      );
+    } else {
+      result[k] = v;
+    }
+  }
+  return result;
+}
+
+/**
  * Prefix tool definition names with TOOL_PREFIX.
  * @param {object[]} tools
  * @returns {object[]}
@@ -906,6 +940,7 @@ function prefixToolNames(tools) {
   return tools.map((tool) => ({
     ...tool,
     name: tool.name ? `${TOOL_PREFIX}${tool.name}` : tool.name,
+    ...(tool.input_schema ? { input_schema: sanitizeToolSchema(tool.input_schema) } : {}),
   }));
 }
 
@@ -947,6 +982,30 @@ function applyBodyTransforms(parsed) {
   parsed.system = sanitizeSystemPrompt(parsed.system);
   if (Array.isArray(parsed.tools)) parsed.tools = prefixToolNames(parsed.tools);
   if (Array.isArray(parsed.messages)) parsed.messages = prefixToolUseBlocks(parsed.messages);
+
+  // Strip explicit null top-level fields — opus-4-6 rejects null values for
+  // context_management, metadata, and other optional fields that should be omitted.
+  for (const key of Object.keys(parsed)) {
+    if (parsed[key] === null) delete parsed[key];
+  }
+
+  // Opus 4.6 and Sonnet 4.6 require thinking:{type:"adaptive"} — budget_tokens is deprecated
+  // and triggers invalid_request_error. Rewrite any enabled+budget_tokens block to adaptive.
+  if (parsed.thinking?.type === "enabled" && isAdaptiveThinkingModel(parsed.model)) {
+    parsed.thinking = { type: "adaptive" };
+  }
+}
+
+/**
+ * Models that require thinking:{type:"adaptive"} instead of {type:"enabled",budget_tokens:N}.
+ * Matches claude-opus-4-6, claude-sonnet-4-6, and any future claude-*-4-6+ variants.
+ * @param {string|undefined} model
+ * @returns {boolean}
+ */
+function isAdaptiveThinkingModel(model) {
+  if (!model) return false;
+  // Match claude-{name}-4-6 and claude-{name}-4.6 patterns (with or without date suffix)
+  return /claude-[a-z]+-4[-.]6/i.test(model);
 }
 
 /**
@@ -1156,8 +1215,8 @@ async function handle401Recovery(client, response, accessToken, sessionAccountEm
  * @param {{requestHeaders: Headers, requestInput: Request|string|URL, requestInit: RequestInit, body: string|null|undefined}} ctx
  * @returns {Promise<{response: Response, sessionAccountEmail: string|null}>}
  */
-async function handle429Recovery(client, response, accessToken, sessionAccountEmail, ctx) {
-  const cooldownMs = parseRetryAfterMs(response);
+async function handle429Recovery(client, response, accessToken, sessionAccountEmail, ctx, cooldownOverrideMs) {
+  const cooldownMs = cooldownOverrideMs ?? parseRetryAfterMs(response);
   const { accounts, currentAccount, currentEmail } = resolvePoolState(sessionAccountEmail, accessToken);
 
   console.error(
@@ -1184,6 +1243,64 @@ async function handle429Recovery(client, response, accessToken, sessionAccountEm
 
   forceClearAllCooldowns("429");
   return { response, sessionAccountEmail };
+}
+
+/**
+ * Peek at the first SSE chunk of a 200 response to detect stream-level errors.
+ * The Anthropic API returns HTTP 200 with an `event: error` SSE event for
+ * rate limits and invalid requests — these bypass the HTTP status checks.
+ *
+ * Returns { errorType, firstChunk } where errorType is null if no error,
+ * or the error type string (e.g. "rate_limit_error", "invalid_request_error").
+ * firstChunk is the raw bytes of the first chunk (must be re-prepended to stream).
+ *
+ * @param {Response} response
+ * @returns {Promise<{errorType: string|null, errorMessage: string|null, firstChunk: Uint8Array|null}>}
+ */
+async function peekStreamError(response) {
+  if (!response.body) return { errorType: null, errorMessage: null, firstChunk: null };
+  try {
+    const reader = response.body.getReader();
+    const { done, value } = await reader.read();
+    reader.releaseLock();
+    if (done || !value) return { errorType: null, errorMessage: null, firstChunk: value ?? null };
+    const text = new TextDecoder().decode(value);
+    // SSE error event looks like:
+    //   event: error\ndata: {"type":"error","error":{"type":"rate_limit_error",...}}\n
+    if (text.includes('"type":"error"') || text.includes('"type": "error"')) {
+      const m = text.match(/"type"\s*:\s*"([^"]+_error)"/);
+      const msg = text.match(/"message"\s*:\s*"([^"]+)"/);
+      if (m) return { errorType: m[1], errorMessage: msg?.[1] ?? null, firstChunk: value };
+    }
+    return { errorType: null, errorMessage: null, firstChunk: value };
+  } catch {
+    return { errorType: null, errorMessage: null, firstChunk: null };
+  }
+}
+
+/**
+ * Reconstruct a Response whose body stream has already had its first chunk read.
+ * Prepends firstChunk back so the consumer sees the full stream.
+ * @param {Response} response
+ * @param {Uint8Array} firstChunk
+ * @returns {Response}
+ */
+function prependChunkToResponse(response, firstChunk) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(firstChunk);
+    },
+    pull(controller) {
+      // remaining body is gone — this is only used for error responses
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 /**
@@ -1281,6 +1398,52 @@ async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAc
     ({ response, sessionAccountEmail: currentEmail } = await handle429Recovery(
       client, response, accessToken, currentEmail, ctx,
     ));
+  }
+
+  // Peek at the first SSE chunk to detect stream-level errors (HTTP 200 with error body).
+  // The Anthropic API returns rate limits and invalid_request as SSE error events with
+  // HTTP 200 — these bypass the HTTP status checks above. Loop to handle the case where
+  // the rotated account also fails (e.g. all accounts exhausted for this model).
+  const MAX_STREAM_RETRIES = 3;
+  for (let streamRetry = 0; streamRetry < MAX_STREAM_RETRIES && response.status === 200 && response.body; streamRetry++) {
+    const reader = response.body.getReader();
+    const { done, value: firstChunk } = await reader.read();
+    if (done || !firstChunk) break;
+
+    const text = new TextDecoder().decode(firstChunk);
+    const isStreamError = text.includes('"type":"error"') || text.includes('"type": "error"');
+    const errorTypeMatch = isStreamError ? text.match(/"type"\s*:\s*"([^"]+_error)"/) : null;
+    const errorType = errorTypeMatch?.[1] ?? null;
+
+    if (errorType === "rate_limit_error" || errorType === "invalid_request_error") {
+      reader.releaseLock();
+      const errorMsg = (text.match(/"message"\s*:\s*"([^"]+)"/) ?? [])[1] ?? errorType;
+      console.error(
+        `[aidevops] provider-auth: stream-level ${errorType} ("${errorMsg}") for ${currentEmail} — attempting pool rotation (attempt ${streamRetry + 1}/${MAX_STREAM_RETRIES})`,
+      );
+      // Use 60s cooldown — stream-level errors are usage limits that recover
+      // over minutes, not seconds. Rotate to next account immediately.
+      const fakeResponse = new Response(null, { status: 429 });
+      const recovered = await handle429Recovery(client, fakeResponse, accessToken, currentEmail, ctx, 60_000);
+      currentEmail = recovered.sessionAccountEmail;
+      response = recovered.response;
+      // Continue loop to peek at the new response
+    } else {
+      // No error — reconstruct full stream with firstChunk prepended and break
+      const remaining = reader;
+      response = new Response(
+        new ReadableStream({
+          start(controller) { controller.enqueue(firstChunk); },
+          async pull(controller) {
+            const { done: d, value: v } = await remaining.read();
+            if (d) { controller.close(); } else { controller.enqueue(v); }
+          },
+          cancel() { remaining.cancel(); },
+        }),
+        { status: response.status, statusText: response.statusText, headers: response.headers },
+      );
+      break;
+    }
   }
 
   return { response: transformResponseStream(response), sessionAccountEmail: currentEmail };
