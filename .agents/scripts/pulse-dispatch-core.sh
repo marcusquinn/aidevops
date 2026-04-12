@@ -561,6 +561,13 @@ _issue_targets_large_files() {
 	local repo_slug="$2"
 	local issue_body="$3"
 	local repo_path="$4"
+	# t1998: force_recheck bypasses the skip-if-already-labeled short-circuit
+	# below. The normal dispatch path leaves this false (perf optimisation —
+	# no need to re-run wc -l on an issue we just gated). The re-evaluation
+	# path in pulse-triage.sh _reevaluate_simplification_labels() passes
+	# "true" so it can detect when a previously-gated file has been
+	# simplified below threshold and clear the label.
+	local force_recheck="${5:-false}"
 
 	[[ -n "$issue_body" ]] || return 1
 	[[ -d "$repo_path" ]] || return 1
@@ -589,8 +596,15 @@ _issue_targets_large_files() {
 		return 1
 	fi
 
-	# Skip if already labeled (avoid re-checking every cycle)
-	if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+	# Skip if already labeled (avoid re-checking every cycle).
+	# EXCEPTION (t1998): when called from _reevaluate_simplification_labels,
+	# force_recheck is "true" and we bypass this short-circuit. Without the
+	# bypass, the re-eval path can never clear a stale label because it
+	# always sees an immediate return 0 on labeled issues. This made
+	# #18346 and any similar stale issue impossible to unstick even after
+	# the target file had been simplified below threshold.
+	if [[ "$force_recheck" != "true" ]] &&
+		[[ ",$issue_labels," == *",needs-simplification,"* ]]; then
 		return 0
 	fi
 	# Skip if simplification was already done

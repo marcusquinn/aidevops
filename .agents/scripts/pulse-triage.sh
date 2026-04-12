@@ -388,8 +388,13 @@ _reevaluate_simplification_labels() {
 			body=$(gh issue view "$num" --repo "$slug" \
 				--json body --jq '.body // ""' 2>/dev/null) || body=""
 			# _issue_targets_large_files returns 1 (no large files) AND
-			# auto-clears the label when was_already_labeled
-			if ! _issue_targets_large_files "$num" "$slug" "$body" "$rpath"; then
+			# auto-clears the label when was_already_labeled.
+			# t1998: pass force_recheck=true to bypass the
+			# skip-if-already-labeled short-circuit at pulse-dispatch-core.sh:592.
+			# Without this flag, the re-eval loop never sees a cleared case
+			# because the function returns 0 immediately on any already-labeled
+			# issue, keeping stale needs-simplification labels forever.
+			if ! _issue_targets_large_files "$num" "$slug" "$body" "$rpath" "true"; then
 				total_cleared=$((total_cleared + 1))
 			fi
 		done
