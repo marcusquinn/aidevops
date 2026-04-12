@@ -54,6 +54,10 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 | 404 | baseline (2026-03-24) | initial baseline |
 | 31 | GH#17875 | ratcheted down — actual violations 29 + 2 buffer |
 | 36 | GH#17969 | pre-existing regression on main — 34 violations vs threshold 31; 34 violations + 2 buffer = 36 |
+| 40 | GH#18037 | pre-existing regression on main — 38 violations vs threshold 36; 38 violations + 2 buffer = 40 |
+| 43 | post-GH#18376 t1971 Phase 3 | decomposition moved calculate_priority_allocations into pulse-capacity-alloc.sh; awk counter records it at 102 lines (was ≤100 in wrapper due to adjacent context). Net violations: 41. 41 + 2 buffer = 43 |
+| 46 | GH#18419 t1986 | post-merge of t1982 (GH#18405) added _compose_consolidation_child_body (101) and _dispatch_issue_consolidation (104) to pulse-triage.sh, plus setup_gh_stub (102) test helper. Net violations: 44. 44 + 2 buffer = 46 |
+| 46 | t1999 Phase 12 | dispatch_with_dedup (328 lines) split into _dispatch_dedup_check_layers (92 lines, not a violation) + _dispatch_launch_worker (214 lines, still a violation) + thin orchestrator (53 lines). Net violation change: 0 (one violation replaced by one violation). Ratchet not achievable in this PR; threshold stays at 46. Full-codebase count: 46 violations = threshold (no buffer). Ratchet will require _dispatch_launch_worker to be further split in a follow-up (t2000+). |
 
 ## FILE_SIZE_THRESHOLD History
 

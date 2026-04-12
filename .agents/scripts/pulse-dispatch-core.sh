@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# pulse-dispatch-core.sh — Core worker dispatch primitives — dedup check, issue lock/unlock + linked PR lock, impl-commit detection, main-commit check, large-file gate, dispatch_with_dedup (370 lines), terminal blocker matching.
+# pulse-dispatch-core.sh — Core worker dispatch primitives — dedup check, issue lock/unlock + linked PR lock, impl-commit detection, main-commit check, large-file gate, dispatch_with_dedup orchestrator + helpers, terminal blocker matching.
 #
 # Extracted from pulse-wrapper.sh in Phase 9 of the phased decomposition
 # (parent: GH#18356, plan: todo/plans/pulse-wrapper-decomposition.md §6).
@@ -11,6 +11,7 @@
 # and worker-lifecycle-common.sh being sourced first by the orchestrator.
 #
 # Functions in this module (in source order):
+#   - _resolve_worker_tier
 #   - has_worker_for_repo_issue
 #   - check_dispatch_dedup
 #   - lock_issue_for_worker
@@ -23,7 +24,9 @@
 #   - _task_id_in_changed_files
 #   - _is_task_committed_to_main
 #   - _issue_targets_large_files
-#   - dispatch_with_dedup
+#   - _dispatch_dedup_check_layers  (t1999: extracted from dispatch_with_dedup)
+#   - _dispatch_launch_worker       (t1999: extracted from dispatch_with_dedup)
+#   - dispatch_with_dedup           (t1999: thin orchestrator, <80 lines)
 #   - _match_terminal_blocker_pattern
 #   - _apply_terminal_blocker
 #   - check_terminal_blockers
@@ -31,7 +34,9 @@
 # Pure move from pulse-wrapper.sh. Byte-identical function bodies.
 # Phase 12 post-gate simplification: _is_task_committed_to_main split into
 # _task_id_in_recent_commits, _task_id_in_merged_pr, _task_id_in_changed_files
-# (t2004). dispatch_with_dedup=370 lines remains for a future phase.
+# (t2004). Phase 12 (t1999): dispatch_with_dedup split into decision helper
+# (_dispatch_dedup_check_layers) + action helper (_dispatch_launch_worker)
+# + thin orchestrator. External signature of dispatch_with_dedup unchanged.
 
 [[ -n "${_PULSE_DISPATCH_CORE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_CORE_LOADED=1
@@ -874,59 +879,60 @@ _Automated by \`_issue_targets_large_files()\` in pulse-wrapper.sh_"
 	return 1
 }
 
-dispatch_with_dedup() {
+#######################################
+# Pre-dispatch validation + dedup check layers for dispatch_with_dedup.
+# Extracted from dispatch_with_dedup (t1999, Phase 12) to reduce the
+# parent function to a thin orchestrator.
+#
+# Runs all pre-dispatch safety gates in order:
+#   1. Issue state (must be OPEN)
+#   2. Management labels (supervisor/contributor/persistent/etc.)
+#   3. Cryptographic approval gate (t1894, ever-NMR)
+#   4. Supervisor telemetry title guard
+#   5. Main-commit check (GH#17574 — task already done)
+#   6. Blocked-by dependency enforcement (t1927)
+#   7. Issue consolidation pre-check
+#   8. Large-file simplification gate
+#   9. 7-layer check_dispatch_dedup chain (Layers 1–7)
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#   $3 - dispatch_title (normalized title used as dedup key)
+#   $4 - issue_title (raw issue title, may differ from dispatch_title)
+#   $5 - self_login (dispatching runner login)
+#   $6 - repo_path (local path to the repo)
+#   $7 - issue_meta_json (pre-fetched JSON: number,title,state,labels,assignees)
+#
+# Exit codes:
+#   0 - all gates passed; safe to dispatch
+#   1 - blocked (reason logged to LOGFILE by the failing gate)
+#######################################
+_dispatch_dedup_check_layers() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local dispatch_title="$3"
-	local issue_title="${4:-}"
-	local self_login="${5:-}"
+	local issue_title="$4"
+	local self_login="$5"
 	local repo_path="$6"
-	local prompt="$7"
-	local session_key="${8:-issue-${issue_number}}"
-	local model_override="${9:-}"
-	# GH#15317 fix: _claim_comment_id is set by check_dispatch_dedup() via
-	# bash dynamic scoping, but must be declared in the calling function's
-	# scope first. Without this, set -u crashes the wrapper on every dispatch,
-	# SIGTERM-ing all active workers.
-	local _claim_comment_id=""
-
-	# GH#17503: Claim comments are NEVER deleted — they form the audit trail.
-	# The _cleanup_claim_comment function is retained as a no-op for backward
-	# compatibility (callers may still reference it on early-return paths).
-	_cleanup_claim_comment() {
-		# No-op: claim comments are persistent audit trail (GH#17503).
-		# Previously deleted DISPATCH_CLAIM comments, which destroyed both
-		# the lock and the audit trail — causing duplicate dispatches.
-		return 0
-	}
-
-	# Hard stop for supervisor/telemetry issues (t1702 pulse guard).
-	# The pulse prompt should already avoid these, but this deterministic
-	# gate prevents dispatch when prompt fallback logic is too permissive.
-	local issue_meta_json
-	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json number,title,state,labels,assignees 2>/dev/null) || issue_meta_json=""
-	if [[ -z "$issue_meta_json" ]]; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
-		return 1
-	fi
+	local issue_meta_json="$7"
 
 	local target_state target_title
-	target_state=$(echo "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null)
-	target_title=$(echo "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
+	target_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null)
+	target_title=$(printf '%s' "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
 
 	if [[ "$target_state" != "OPEN" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: issue state is ${target_state:-unknown}" >>"$LOGFILE"
 		return 1
 	fi
 
-	if echo "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("on hold") or index("blocked"))' >/dev/null 2>&1; then
+	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("on hold") or index("blocked"))' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
 		return 1
 	fi
 
 	local known_ever_nmr="unknown"
-	if echo "$issue_meta_json" | jq -e '.labels | map(.name) | index("needs-maintainer-review")' >/dev/null 2>&1; then
+	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | index("needs-maintainer-review")' >/dev/null 2>&1; then
 		known_ever_nmr="true"
 	fi
 
@@ -993,6 +999,61 @@ dispatch_with_dedup() {
 		return 1
 	fi
 
+	return 0
+}
+
+#######################################
+# Post-clearance worker launch for dispatch_with_dedup.
+# Extracted from dispatch_with_dedup (t1999, Phase 12) to reduce the
+# parent function to a thin orchestrator.
+#
+# Executes all post-clearance steps after _dispatch_dedup_check_layers
+# has confirmed the issue is safe to dispatch:
+#   - Issue edit: replace assignees, add status:queued + origin:worker
+#   - Worker log file setup (per-issue temp log, GH#14483)
+#   - Model/tier resolution (round-robin, t1997)
+#   - Issue + linked PR lock (t1894/t1934)
+#   - Git pull to latest remote commit (GH#17584)
+#   - Worktree pre-creation for the worker (5-8 tool call savings)
+#   - Worker command construction + nohup launch (GH#17549)
+#   - Stagger delay (SQLite contention, GH#17549)
+#   - Dispatch ledger registration (tier telemetry)
+#   - Deterministic dispatch comment (GH#15317)
+#   - Claim comment audit trail retention (GH#17503)
+#
+# Arguments:
+#    $1 - issue_number
+#    $2 - repo_slug (owner/repo)
+#    $3 - dispatch_title
+#    $4 - issue_title
+#    $5 - self_login (dispatching runner login)
+#    $6 - repo_path (local path to the repo)
+#    $7 - prompt (worker prompt string)
+#    $8 - session_key
+#    $9 - model_override (empty = auto-select via round-robin)
+#   $10 - issue_meta_json (pre-fetched JSON: number,title,state,labels,assignees)
+#
+# Dynamic scoping: reads/writes _claim_comment_id from the calling
+# dispatch_with_dedup frame (set by check_dispatch_dedup, GH#15317).
+# Do NOT declare local _claim_comment_id here — it must remain in the
+# caller's scope so the value survives the function return.
+#
+# Exit codes:
+#   0 - worker launched successfully
+#   non-zero - launch failed (logged to LOGFILE)
+#######################################
+_dispatch_launch_worker() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local dispatch_title="$3"
+	local issue_title="$4"
+	local self_login="$5"
+	local repo_path="$6"
+	local prompt="$7"
+	local session_key="$8"
+	local model_override="$9"
+	local issue_meta_json="${10}"
+
 	# Replace existing assignees with dispatching runner (GH#17777).
 	# Previous behavior only added self (--add-assignee), leaving the original
 	# assignee (typically the issue creator) co-assigned. This created ambiguity
@@ -1014,7 +1075,7 @@ dispatch_with_dedup() {
 	# worker stdout/stderr into per-issue temp logs so launch validation reads the
 	# intended output file and dispatcher shells stay clean.
 	local safe_slug worker_log worker_log_fallback
-	safe_slug=$(echo "$repo_slug" | tr '/:' '--')
+	safe_slug=$(printf '%s' "$repo_slug" | tr '/:' '--')
 	worker_log="/tmp/pulse-${safe_slug}-${issue_number}.log"
 	worker_log_fallback="/tmp/pulse-${issue_number}.log"
 	rm -f "$worker_log" "$worker_log_fallback"
@@ -1027,27 +1088,20 @@ dispatch_with_dedup() {
 	# headless-runtime-helper.sh select --role worker, which resolves the
 	# worker model from the routing table / local override (respecting
 	# backoff DB, auth availability, provider allowlists, and rotation).
-	# The resolved model name
-	# is shown in the dispatch comment so the audit trail records exactly
-	# which provider/model the worker used.
+	# The resolved model name is shown in the dispatch comment so the audit
+	# trail records exactly which provider/model the worker used.
 	#
-	# IMPORTANT: Callers (including the pulse AI) MUST NOT pass a model
-	# override for default dispatches. Only pass model_override when a
-	# specific tier is required (e.g., tier:reasoning → opus escalation,
-	# tier:simple → haiku). Passing an arbitrary model here bypasses the
-	# round-robin and causes provider imbalance — e.g., all workers end
-	# up on a single provider instead of alternating between anthropic
-	# and openai as configured.
-	#
-	# History: GH#17503 moved model resolution here (from the worker) so
-	# the dispatch comment shows the actual model. Prior to that fix, the
-	# comment showed "auto-select (round-robin)" which was unhelpful.
+	# IMPORTANT: Callers MUST NOT pass a model override for default dispatches.
+	# Only pass model_override when a specific tier is required (e.g.,
+	# tier:reasoning → opus escalation, tier:simple → haiku). Passing an
+	# arbitrary model here bypasses the round-robin and causes provider
+	# imbalance. History: GH#17503 moved model resolution here from the worker.
 	local dispatch_tier="standard"
 	local dispatch_model_tier="sonnet"
 	local issue_labels_csv
-	issue_labels_csv=$(echo "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
+	issue_labels_csv=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
 
-	# Resolve tier from labels, preferring highest rank when multiple are present (t1997)
+	# Resolve tier from labels, preferring highest rank when multiple present (t1997)
 	local resolved_tier
 	resolved_tier=$(_resolve_worker_tier "$issue_labels_csv")
 	case "$resolved_tier" in
@@ -1092,7 +1146,7 @@ dispatch_with_dedup() {
 	local worker_worktree_path="" worker_worktree_branch=""
 	local _wt_helper="${SCRIPT_DIR}/worktree-helper.sh"
 	if [[ -x "$_wt_helper" && -d "$repo_path" ]]; then
-		# Derive branch name from issue number (deterministic, collision-free)
+		# Derive branch name from timestamp (deterministic, collision-free)
 		worker_worktree_branch="feature/auto-$(date +%Y%m%d-%H%M%S)"
 		local _wt_output=""
 		# Run from repo_path — worktree-helper.sh uses git commands that need
@@ -1202,6 +1256,82 @@ Dispatching worker (deterministic).
 
 	echo "[dispatch_with_dedup] Dispatched worker PID ${worker_pid} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 	return 0
+}
+
+#######################################
+# Dispatch a worker for the given issue, guarded by all dedup and
+# pre-dispatch safety layers. Thin orchestrator: delegates to
+# _dispatch_dedup_check_layers (decision) and _dispatch_launch_worker
+# (action). External signature is unchanged from the pre-t1999 version.
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#   $3 - dispatch_title (normalized title used as dedup key)
+#   $4 - issue_title (raw issue title; optional, default empty)
+#   $5 - self_login (dispatching runner login; optional, default empty)
+#   $6 - repo_path (local path to the repo)
+#   $7 - prompt (worker prompt string)
+#   $8 - session_key (optional, default "issue-{issue_number}")
+#   $9 - model_override (optional, default empty = auto round-robin)
+#
+# Exit codes:
+#   0 - worker dispatched successfully, or blocked (not a failure)
+#   1 - hard error (metadata unavailable, dedup gate blocked)
+#######################################
+dispatch_with_dedup() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local dispatch_title="$3"
+	local issue_title="${4:-}"
+	local self_login="${5:-}"
+	local repo_path="$6"
+	local prompt="$7"
+	local session_key="${8:-issue-${issue_number}}"
+	local model_override="${9:-}"
+	# GH#15317 fix: _claim_comment_id is set by check_dispatch_dedup() via
+	# bash dynamic scoping, but must be declared in the calling function's
+	# scope first. Without this, set -u crashes the wrapper on every dispatch,
+	# SIGTERM-ing all active workers.
+	local _claim_comment_id=""
+
+	# GH#17503: Claim comments are NEVER deleted — they form the audit trail.
+	# The _cleanup_claim_comment function is retained as a no-op for backward
+	# compatibility (callers may still reference it on early-return paths).
+	_cleanup_claim_comment() {
+		# No-op: claim comments are persistent audit trail (GH#17503).
+		# Previously deleted DISPATCH_CLAIM comments, which destroyed both
+		# the lock and the audit trail — causing duplicate dispatches.
+		return 0
+	}
+
+	# Hard stop for supervisor/telemetry issues (t1702 pulse guard).
+	# The pulse prompt should already avoid these, but this deterministic
+	# gate prevents dispatch when prompt fallback logic is too permissive.
+	# Load metadata once here; passed to both helpers to avoid extra API calls.
+	local issue_meta_json
+	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json number,title,state,labels,assignees 2>/dev/null) || issue_meta_json=""
+	if [[ -z "$issue_meta_json" ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Run all pre-dispatch validation and dedup check layers (9 gates total).
+	# Each gate logs its own blocked reason to LOGFILE before returning 1.
+	# _claim_comment_id is set by check_dispatch_dedup inside this call via
+	# bash dynamic scoping — accessible below because it was declared local above.
+	if ! _dispatch_dedup_check_layers \
+		"$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
+		"$self_login" "$repo_path" "$issue_meta_json"; then
+		return 1
+	fi
+
+	# All checks passed — launch the worker.
+	_dispatch_launch_worker \
+		"$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
+		"$self_login" "$repo_path" "$prompt" "$session_key" \
+		"$model_override" "$issue_meta_json"
 }
 
 #######################################
