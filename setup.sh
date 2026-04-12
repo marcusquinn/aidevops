@@ -983,7 +983,6 @@ _setup_run_interactive() {
 	confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
 	confirm_step "Sync agents from private repositories" && sync_agent_sources
 	confirm_step "Set up routines repo (private repo for recurring operational jobs)" && setup_routines
-	confirm_step "Install privacy guard pre-push hook across initialized repos (blocks private slug leaks on public push)" && setup_privacy_guard
 	is_feature_enabled safety_hooks 2>/dev/null && confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
 	confirm_step "Initialize settings.json (canonical config file)" && init_settings_json
 	confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
