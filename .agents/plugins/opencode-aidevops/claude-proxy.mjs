@@ -459,6 +459,7 @@ function tryStreamWithAccount(controller, encoder, completionId, created, body, 
     let closed = false;
     let stderrText = "";
     let probePhase = true; // buffer events until we know it's not rate-limited
+    let rateLimitBailed = false; // true if we resolved "rate_limited" — don't touch controller
     const bufferedEvents = [];
 
     const ctx = {
@@ -520,6 +521,7 @@ function tryStreamWithAccount(controller, encoder, completionId, created, body, 
             const rl = detectRateLimitStream(event);
             if (rl.rateLimited) {
               markAccountRateLimited(account.email, rl.resetsAt);
+              rateLimitBailed = true;
               child.kill("SIGTERM");
               resolve("rate_limited");
               return;
@@ -551,6 +553,15 @@ function tryStreamWithAccount(controller, encoder, completionId, created, body, 
     });
 
     child.on("close", (exitCode) => {
+      // If we bailed due to rate limiting, the controller belongs to the next
+      // account attempt — do NOT write to it or close it.
+      if (rateLimitBailed) {
+        console.error(
+          `[aidevops] Claude proxy: killed rate-limited child account=${account.email} exitCode=${exitCode}`,
+        );
+        return;
+      }
+
       // If we never exited probe phase (e.g. very short response), flush now
       if (probePhase) {
         commitToStream();
