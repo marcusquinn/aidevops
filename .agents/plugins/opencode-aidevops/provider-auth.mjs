@@ -947,6 +947,29 @@ function applyBodyTransforms(parsed) {
   parsed.system = sanitizeSystemPrompt(parsed.system);
   if (Array.isArray(parsed.tools)) parsed.tools = prefixToolNames(parsed.tools);
   if (Array.isArray(parsed.messages)) parsed.messages = prefixToolUseBlocks(parsed.messages);
+
+  // claude-opus-4-6 and claude-sonnet-4-6 require thinking:{type:"adaptive"}.
+  // OpenCode does not send this field; the API rejects requests without it.
+  // Also: temperature must be 1 when thinking is enabled.
+  if (isAdaptiveThinkingModel(parsed.model)) {
+    if (!parsed.thinking || parsed.thinking.type !== "adaptive") {
+      parsed.thinking = { type: "adaptive" };
+    }
+    if (parsed.temperature !== undefined && parsed.temperature !== 1) {
+      parsed.temperature = 1;
+    }
+  }
+}
+
+/**
+ * Models that require thinking:{type:"adaptive"}.
+ * Matches claude-opus-4-6, claude-sonnet-4-6, and future claude-*-4-6+ variants.
+ * @param {string|undefined} model
+ * @returns {boolean}
+ */
+function isAdaptiveThinkingModel(model) {
+  if (!model) return false;
+  return /claude-[a-z]+-4[-.]6/i.test(model);
 }
 
 /**
