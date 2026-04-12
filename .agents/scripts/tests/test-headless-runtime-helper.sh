@@ -60,8 +60,8 @@ test_appends_escalation_contract() {
 	local output
 	output=$(append_worker_headless_contract "$prompt")
 
-	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V5'* ]] &&
-		[[ "$output" == *'Read the issue body FIRST. Look for a "Worker Guidance" or "How" section'* ]] &&
+	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V6'* ]] &&
+		[[ "$output" == *'Read the issue body FIRST'* ]] &&
 		[[ "$output" == *'Never ask for user confirmation, approval, or next steps. No user will respond.'* ]] &&
 		[[ "$output" == *'The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.'* ]]; then
 		print_result "appends escalation-before-blocked contract to full-loop prompts" 0
@@ -89,7 +89,7 @@ test_non_full_loop_prompt_unchanged() {
 test_does_not_double_append() {
 	local prompt='/full-loop Continue issue #14964
 
-[HEADLESS_CONTINUATION_CONTRACT_V5]
+[HEADLESS_CONTINUATION_CONTRACT_V6]
 This worker run is unattended.'
 	local output
 	output=$(append_worker_headless_contract "$prompt")
