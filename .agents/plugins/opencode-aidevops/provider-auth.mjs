@@ -354,7 +354,7 @@ function parseRetryAfterMs(response) {
 const AUTH_FAILURE_COOLDOWN_MS = 300_000;
 
 /** Max wait time when all accounts are exhausted before giving up (ms) */
-const MAX_EXHAUSTION_WAIT_MS = 120_000;
+const MAX_EXHAUSTION_WAIT_MS = 15_000;
 
 /** Poll interval when waiting for cooldowns to expire (ms) */
 const EXHAUSTION_POLL_MS = 5_000;
@@ -364,8 +364,6 @@ const TOOL_PREFIX = "mcp_";
 const REQUIRED_BETAS = [
   "oauth-2025-04-20",
   "interleaved-thinking-2025-05-14",
-  "context-management-2025-06-27",
-  "context-1m-2025-08-07",
   "prompt-caching-scope-2026-01-05",
   "claude-code-20250219",
 ];
@@ -1180,7 +1178,7 @@ async function handle401Recovery(client, response, accessToken, sessionAccountEm
  * @param {{requestHeaders: Headers, requestInput: Request|string|URL, requestInit: RequestInit, body: string|null|undefined}} ctx
  * @returns {Promise<{response: Response, sessionAccountEmail: string|null}>}
  */
-async function handle429Recovery(client, response, accessToken, sessionAccountEmail, ctx) {
+async function handle429Recovery(client, response, accessToken, sessionAccountEmail, ctx, triedEmails) {
   const cooldownMs = parseRetryAfterMs(response);
   const { accounts, currentAccount, currentEmail } = resolvePoolState(sessionAccountEmail, accessToken);
 
@@ -1195,18 +1193,31 @@ async function handle429Recovery(client, response, accessToken, sessionAccountEm
     });
   }
 
-  const alternates = getAvailableAlternates(accounts, currentEmail);
-  const rotated = await rotateToAlternateAccount(client, alternates, false);
-  if (rotated) {
-    console.error(`[aidevops] provider-auth: rotated to ${rotated.email} — retrying request once`);
-    return applyTokenAndRetry(rotated.token, rotated.email, ctx);
+  // Track tried accounts to prevent infinite rotation across all accounts.
+  const tried = triedEmails ?? new Set();
+  tried.add(currentEmail);
+
+  // Only rotate to accounts we haven't tried yet this request.
+  const alternates = getAvailableAlternates(accounts, currentEmail)
+    .filter((a) => !tried.has(a.email));
+
+  if (alternates.length === 0) {
+    // All accounts tried this request — give up immediately without clearing cooldowns.
+    console.error(`[aidevops] provider-auth: all ${tried.size} accounts tried — giving up`);
+    return { response, sessionAccountEmail };
   }
 
-  // All accounts rate-limited — wait for cooldown recovery
-  const recovered = await waitForCooldownRecovery(client, currentEmail, "429");
-  if (recovered) return applyTokenAndRetry(recovered.token, recovered.email, ctx);
+  const rotated = await rotateToAlternateAccount(client, alternates, false);
+  if (rotated) {
+    tried.add(rotated.email);
+    console.error(`[aidevops] provider-auth: rotated to ${rotated.email} — retrying`);
+    const retried = await applyTokenAndRetry(rotated.token, rotated.email, ctx);
+    if (retried.response.status !== 429) return retried;
+    // Also 429 — recurse with updated tried set
+    return handle429Recovery(client, retried.response, accessToken, rotated.email, ctx, tried);
+  }
 
-  forceClearAllCooldowns("429");
+  console.error(`[aidevops] provider-auth: all accounts rate-limited — giving up`);
   return { response, sessionAccountEmail };
 }
 
@@ -1293,6 +1304,9 @@ async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAc
     requestInit: init ?? {},
   };
 
+  // Track which accounts have been tried this request to prevent infinite rotation.
+  const triedEmails = new Set([currentEmail].filter(Boolean));
+
   let response = await fetch(ctx.requestInput, { ...ctx.requestInit, body: ctx.body, headers: ctx.requestHeaders });
 
   if (response.status === 401 || response.status === 403) {
@@ -1303,7 +1317,7 @@ async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAc
 
   if (response.status === 429) {
     ({ response, sessionAccountEmail: currentEmail } = await handle429Recovery(
-      client, response, accessToken, currentEmail, ctx,
+      client, response, accessToken, currentEmail, ctx, triedEmails,
     ));
   }
 
