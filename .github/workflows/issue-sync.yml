@@ -86,6 +86,13 @@ jobs:
           bash .agents/scripts/issue-sync-helper.sh push --verbose || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # t1984: override origin detection and assignee target so issues
+          # created from human-triggered TODO.md pushes get origin:interactive
+          # and are assigned to the human pusher, not github-actions[bot].
+          # `check-author` upstream already filters out bot-authored commits,
+          # so by this step the push is guaranteed human (or a non-[bot] actor).
+          AIDEVOPS_SESSION_ORIGIN: ${{ endsWith(github.actor, '[bot]') && 'worker' || 'interactive' }}
+          AIDEVOPS_SESSION_USER: ${{ endsWith(github.actor, '[bot]') && '' || github.actor }}
 
       - name: Enrich plan-linked issues
         if: steps.check-author.outputs.skip != 'true'

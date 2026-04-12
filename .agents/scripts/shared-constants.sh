@@ -754,6 +754,22 @@ files_include_workflow_changes() {
 #   # Returns: "origin:worker" or "origin:interactive"
 
 detect_session_origin() {
+	# t1984: Explicit override via AIDEVOPS_SESSION_ORIGIN takes precedence
+	# over the headless auto-detection. Used by the sync-todo-to-issues
+	# workflow to mark issues created from human-triggered TODO.md pushes
+	# as origin:interactive rather than origin:worker, so the t1970 auto-
+	# assign path fires and the Maintainer Gate doesn't block downstream PRs.
+	case "${AIDEVOPS_SESSION_ORIGIN:-}" in
+	interactive)
+		echo "interactive"
+		return 0
+		;;
+	worker)
+		echo "worker"
+		return 0
+		;;
+	esac
+
 	# Known headless signals — set by dispatch infrastructure only.
 	# If none of these are set, the session is interactive by default.
 	if [[ "${FULL_LOOP_HEADLESS:-}" == "true" ]]; then

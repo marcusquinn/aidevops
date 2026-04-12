@@ -470,11 +470,20 @@ _push_create_issue() {
 	# to self-assign — CI fires on the created issue within seconds, and
 	# re-running the workflow after a manual assign is extra friction.
 	#
+	# t1984: In the `Sync TODO.md → GitHub Issues` workflow, `gh api user`
+	# resolves to `github-actions[bot]` (the GITHUB_TOKEN identity), not the
+	# human pusher. The workflow sets AIDEVOPS_SESSION_ORIGIN=interactive
+	# AND AIDEVOPS_SESSION_USER=<github.actor> to override both the origin
+	# detection and the assignee target. Falls back to `gh api user` when
+	# the env var is unset (normal local interactive usage).
+	#
 	# Worker-origin issues are NOT auto-assigned here — they follow the
 	# existing dispatch flow (`status:claimed` + pulse-managed assignment).
 	if [[ -n "$num" && -z "$assignee" && "$origin_label" == "origin:interactive" ]]; then
-		local current_user
-		current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+		local current_user="${AIDEVOPS_SESSION_USER:-}"
+		if [[ -z "$current_user" ]]; then
+			current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+		fi
 		if [[ -n "$current_user" ]]; then
 			if gh issue edit "$num" --repo "$repo" --add-assignee "$current_user" >/dev/null 2>&1; then
 				print_info "Auto-assigned #${num} to @${current_user} (origin:interactive)"
