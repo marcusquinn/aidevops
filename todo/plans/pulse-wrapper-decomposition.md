@@ -783,22 +783,21 @@ tail -f ~/.aidevops/logs/pulse.log  # watch two live cycles
 
 ---
 
-## 10. Open questions (resolve before Phase 0 PR)
+## 10. Decisions (resolved 2026-04-12)
 
-1. **Module file location.** `.agents/scripts/pulse-<cluster>.sh` (flat, sibling to `pulse-wrapper.sh`) or `.agents/scripts/pulse/<cluster>.sh` (subdirectory)? Flat is simpler but crowds the `scripts/` dir with 15 new files. Subdirectory is cleaner but requires updating `setup.sh` to deploy the subdirectory.
-   - Recommendation: flat. Consistent with `stats-functions.sh` precedent. `setup.sh` already uses `find` or glob to deploy scripts.
-2. **Parent task ID.** Claim `t1961` (next in sequence) as the parent decomposition task. Each phase gets a subtask `t1961.N` with its own brief and GH issue.
-3. **Pulse pause during each merge.** Manual (`launchctl unload`) or gate via the `STOP_FLAG` mechanism? STOP_FLAG is non-destructive and lets in-flight workers finish — preferred.
-4. **Characterization test scope.** Just "functions exist" (cheap, weak) or per-function behavioural tests (expensive, strong)? Recommendation: hybrid. "Exists" check for all 201 + behavioural tests for the 20 hotspots in §3.2.
-5. **Extraction authorisation model.** These PRs are high-risk. Recommend **`origin:interactive` with human-in-the-loop review**, not worker dispatch. Rationale: post-merge smoke test requires maintainer laptop access to pause launchd and tail the log. Worker cannot do that.
+1. **Module file location: flat.** `.agents/scripts/pulse-<cluster>.sh` as siblings to `pulse-wrapper.sh`. Matches the `stats-functions.sh` precedent. `setup.sh` glob-deploys all `*.sh` under `.agents/scripts/`; no install-script change required.
+2. **Parent task ID: allocated via `claim-task-id.sh` when Phase 0 begins** (not `t1961` — that was already taken for an unrelated refactor). Each phase gets a subtask with its own brief and GH issue.
+3. **Pulse pause mechanism: `STOP_FLAG`.** Non-destructive; in-flight workers finish; next pulse cycle short-circuits. No launchd unload needed. `touch ~/.aidevops/logs/pulse-session.stop` before merge; `rm` after smoke test.
+4. **Characterization test scope: hybrid.** "Function exists" check for all 201 + behavioural tests for the 20 most-called hotspots in §3.2.
+5. **Extraction authorisation: `origin:interactive` for Phases 0–9.** Post-merge smoke test requires maintainer laptop access (STOP_FLAG handling, log tailing, rollback window). Worker dispatch prohibited for these phases. Phase 10+ may use workers once the pattern is proven.
 
 ---
 
 ## 11. Next action
 
-1. User reviews this plan; opens GH issue; claims task ID `t1961`; creates `todo/tasks/t1961-brief.md` pointing here.
-2. Open child issues for Phase 0 (safety net) as `t1961.0`; assign `origin:interactive`; work in a worktree from `main`.
-3. Repeat for Phase 1 once Phase 0 is green.
+1. Claim parent decomposition task ID via `claim-task-id.sh`, create `todo/tasks/{id}-brief.md` pointing here.
+2. Claim Phase 0 task ID, create its brief, add TODO.md entry.
+3. Create a worktree `feature/{id}-pulse-safety-net` from `main` and implement Phase 0 there.
 4. Do NOT dispatch Phase 0 or Phase 1 to a worker. The pulse-wrapper touching its own critical infrastructure via its own worker pool is too fragile. Interactive execution only for Phases 0–9. Phases 10+ may use workers once the pattern is proven.
 
 ---
