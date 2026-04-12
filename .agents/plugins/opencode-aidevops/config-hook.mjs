@@ -248,17 +248,25 @@ export function createConfigHook(deps) {
     });
 
     // Claude CLI transport proxy — registers the `claudecli` provider with the
-    // local proxy base URL. Overwrites any placeholder `claudecli` models that
-    // `registerAnthropicModels` may have pre-seeded.
+    // local proxy base URL. Derives models from CLAUDECLI_MODELS to avoid drift.
+    // When proxy is not running, removes placeholder entries to avoid dead models.
     const claudeProxyPort = getClaudeProxyPort();
-    const claudeModels = [
-      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5 (via Claude CLI)", reasoning: true, contextWindow: 200000, maxTokens: 32000 },
-      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (via Claude CLI)", reasoning: true, contextWindow: 200000, maxTokens: 64000 },
-      { id: "claude-opus-4-6", name: "Claude Opus 4.6 (via Claude CLI)", reasoning: true, contextWindow: 200000, maxTokens: 32000 },
-    ];
-    const claudeModelsRegistered = claudeProxyPort && registerClaudeProvider(config, claudeProxyPort, claudeModels)
-      ? claudeModels.length
-      : 0;
+    let claudeModelsRegistered = 0;
+    if (claudeProxyPort) {
+      const claudeModels = Object.entries(CLAUDECLI_MODELS).map(([id, def]) => ({
+        id,
+        name: def.name,
+        reasoning: def.reasoning !== false,
+        contextWindow: def.limit?.context || 200000,
+        maxTokens: def.limit?.output || 32000,
+      }));
+      claudeModelsRegistered = registerClaudeProvider(config, claudeProxyPort, claudeModels)
+        ? claudeModels.length
+        : 0;
+    } else if (config.provider?.claudecli) {
+      // Proxy not running — remove placeholder entries so dead models don't show
+      delete config.provider.claudecli;
+    }
 
     const versionDrift = checkOpenCodeVersionDrift(pluginDir);
 
