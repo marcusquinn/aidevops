@@ -171,6 +171,8 @@ Set fields based on the repo's purpose:
 
 Full rules: `reference/planning-detail.md`
 
+For multi-runner coordination (concurrent pulse runners across machines), see `reference/cross-runner-coordination.md`.
+
 ## Git Workflow
 
 Worktree naming prefixes: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
