@@ -20,6 +20,16 @@ let proxyPort = null;
 /** @type {boolean} */
 let proxyStarting = false;
 
+// ---------------------------------------------------------------------------
+// Account rotation with rate-limit tracking
+// ---------------------------------------------------------------------------
+
+/** Map<email, expiryTimestamp> — accounts known to be rate-limited. */
+const rateLimitedAccounts = new Map();
+
+/** Default cooldown (ms) before retrying a rate-limited account. */
+const RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
 function sortAccountsByPriority(accounts) {
   return [...accounts].sort((a, b) => {
     const pa = Number(a?.priority || 0);
@@ -29,27 +39,85 @@ function sortAccountsByPriority(accounts) {
   });
 }
 
-async function getClaudeOAuthToken() {
-  const accounts = sortAccountsByPriority(getAccounts("anthropic"));
-  for (const account of accounts) {
-    const token = await ensureValidToken("anthropic", account);
-    if (token) {
-      return token;
+/**
+ * Mark an account as rate-limited so subsequent requests skip it.
+ * @param {string} email
+ * @param {string} [resetsAt] - optional ISO/epoch from Claude's rate_limit_event
+ */
+function markAccountRateLimited(email, resetsAt) {
+  let expiry = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+  if (resetsAt) {
+    const parsed = Number(resetsAt) > 1e9 ? Number(resetsAt) * 1000 : Date.parse(resetsAt);
+    if (!isNaN(parsed) && parsed > Date.now()) {
+      expiry = parsed;
     }
   }
-  return null;
+  rateLimitedAccounts.set(email, expiry);
+  console.error(`[aidevops] Claude proxy: account ${email} rate-limited until ${new Date(expiry).toISOString()}`);
 }
 
-async function buildClaudeChildEnv() {
-  const token = await getClaudeOAuthToken();
-  if (!token) {
-    throw new Error("No valid Anthropic OAuth pool token available for Claude transport");
+function isAccountRateLimited(email) {
+  const expiry = rateLimitedAccounts.get(email);
+  if (!expiry) return false;
+  if (Date.now() >= expiry) {
+    rateLimitedAccounts.delete(email);
+    return false;
   }
+  return true;
+}
 
+/**
+ * Get all available accounts with valid tokens, skipping rate-limited ones.
+ * Returns array of { email, token } in priority order.
+ */
+async function getAvailableAccounts() {
+  const accounts = sortAccountsByPriority(getAccounts("anthropic"));
+  const available = [];
+  for (const account of accounts) {
+    const email = account?.email || "unknown";
+    if (isAccountRateLimited(email)) {
+      continue;
+    }
+    const token = await ensureValidToken("anthropic", account);
+    if (token) {
+      available.push({ email, token });
+    }
+  }
+  return available;
+}
+
+function buildChildEnvWithToken(token) {
   const childEnv = { ...process.env };
   delete childEnv.ANTHROPIC_API_KEY;
   childEnv.CLAUDE_CODE_OAUTH_TOKEN = token;
   return childEnv;
+}
+
+/**
+ * Detect rate-limit signals in Claude CLI JSON output.
+ * @param {object} parsed - parsed JSON from Claude CLI
+ * @returns {string|null} - resetsAt value if rate-limited, null otherwise
+ */
+function detectRateLimitJson(parsed) {
+  if (parsed?.is_error && typeof parsed?.result === "string" && parsed.result.includes("hit your limit")) {
+    return null; // rate-limited but no explicit reset time in JSON mode
+  }
+  return undefined; // not rate-limited
+}
+
+/**
+ * Detect rate-limit signals in a stream-json event line.
+ * @param {object} event - parsed stream event
+ * @returns {{ rateLimited: boolean, resetsAt?: string }} 
+ */
+function detectRateLimitStream(event) {
+  if (event?.type === "rate_limit_event") {
+    return { rateLimited: true, resetsAt: event?.rate_limit_info?.resetsAt };
+  }
+  if (event?.type === "assistant" && event?.error === "rate_limit") {
+    return { rateLimited: true };
+  }
+  return { rateLimited: false };
 }
 
 function isClaudeCliAvailable() {
@@ -231,8 +299,8 @@ function buildClaudeArgs(body, systemPrompt, streaming) {
   return args;
 }
 
-async function runClaudeJson(body, directory) {
-  const childEnv = await buildClaudeChildEnv();
+async function runClaudeJsonWithAccount(body, directory, account) {
+  const childEnv = buildChildEnvWithToken(account.token);
   const child = spawn("claude", buildClaudeArgs(body, body.systemPrompt, false), {
     cwd: directory,
     env: childEnv,
@@ -249,15 +317,46 @@ async function runClaudeJson(body, directory) {
   const stdout = Buffer.concat(stdoutChunks).toString("utf-8").trim();
   const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
 
-  if (exitCode !== 0 || !stdout) {
+  if (!stdout) {
     throw new Error(stderr || `claude exited with status ${exitCode}`);
   }
 
   const parsed = JSON.parse(stdout);
+
+  // Check for rate limit in JSON response
+  const rateLimitResult = detectRateLimitJson(parsed);
+  if (rateLimitResult !== undefined) {
+    markAccountRateLimited(account.email, rateLimitResult);
+    return { rateLimited: true };
+  }
+
+  if (exitCode !== 0) {
+    throw new Error(parsed.result || stderr || `claude exited with status ${exitCode}`);
+  }
+
   return {
+    rateLimited: false,
     content: parsed.result || "",
     usage: parsed.usage || {},
   };
+}
+
+async function runClaudeJson(body, directory) {
+  const accounts = await getAvailableAccounts();
+  if (accounts.length === 0) {
+    throw new Error("No Anthropic OAuth pool accounts available (all rate-limited or no valid tokens)");
+  }
+
+  for (const account of accounts) {
+    console.error(`[aidevops] Claude proxy: trying account ${account.email} (json mode)`);
+    const result = await runClaudeJsonWithAccount(body, directory, account);
+    if (!result.rateLimited) {
+      return result;
+    }
+    console.error(`[aidevops] Claude proxy: account ${account.email} rate-limited, trying next...`);
+  }
+
+  throw new Error("All Anthropic OAuth pool accounts are rate-limited");
 }
 
 function createOpenAIChunk(id, created, model, delta, finishReason = null) {
@@ -284,134 +383,251 @@ function formatStatusLine(label, detail = "") {
   return detail ? `[${label}] ${detail}\n` : `[${label}]\n`;
 }
 
-function streamClaudeResponse(body, directory) {
-  const completionId = `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 28)}`;
-  const created = Math.floor(Date.now() / 1000);
+/**
+ * Process a parsed stream-json event, emitting OpenAI chunks via `send`.
+ * Returns true if the event produced visible content (text/thinking/tool).
+ */
+function processStreamEvent(event, ctx) {
+  const { completionId, created, model, send, seenToolUseIds, seenTaskIds, seenToolResults } = ctx;
 
-  return new ReadableStream({
-    async start(controller) {
-      const encoder = new TextEncoder();
-      const childEnv = await buildClaudeChildEnv();
-      const child = spawn("claude", buildClaudeArgs(body, body.systemPrompt, true), {
-        cwd: directory,
-        env: childEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+  if (event.type === "stream_event" && event.event?.type === "content_block_delta") {
+    if (event.event.delta?.type === "text_delta" && event.event.delta.text) {
+      ctx.textChunkCount += 1;
+      ctx.textCharCount += event.event.delta.text.length;
+      send(createOpenAIChunk(completionId, created, model, { content: event.event.delta.text }));
+      return true;
+    }
+    if (event.event.delta?.type === "thinking_delta" && event.event.delta.thinking) {
+      send(createOpenAIChunk(completionId, created, model, { reasoning_content: event.event.delta.thinking }));
+      return true;
+    }
+  } else if (event.type === "stream_event" && event.event?.type === "message_delta") {
+    if (event.event.delta?.stop_reason && !ctx.finishSent) {
+      ctx.finishSent = true;
+      send(createOpenAIChunk(completionId, created, model, {}, "stop"));
+    }
+  } else if (event.type === "assistant" && Array.isArray(event.message?.content)) {
+    for (const block of event.message.content) {
+      if (block?.type === "tool_use" && block.id && !seenToolUseIds.has(block.id)) {
+        seenToolUseIds.add(block.id);
+        send(createOpenAIChunk(completionId, created, model, {
+          content: formatStatusLine(`Tool: ${block.name || "unknown"}`, summarizeToolInput(block.input)),
+        }));
+      }
+    }
+  } else if (event.type === "system" && event.subtype === "task_started" && event.task_id && !seenTaskIds.has(`start:${event.task_id}`)) {
+    seenTaskIds.add(`start:${event.task_id}`);
+    send(createOpenAIChunk(completionId, created, model, {
+      content: formatStatusLine("Subagent started", event.description || event.prompt || event.task_id),
+    }));
+  } else if (event.type === "system" && event.subtype === "task_notification" && event.task_id && !seenTaskIds.has(`done:${event.task_id}`)) {
+    seenTaskIds.add(`done:${event.task_id}`);
+    send(createOpenAIChunk(completionId, created, model, {
+      content: formatStatusLine("Subagent completed", event.summary || event.task_id),
+    }));
+  } else if (event.type === "user" && event.uuid && event.tool_use_result && !seenToolResults.has(event.uuid)) {
+    seenToolResults.add(event.uuid);
+    const toolResult = event.tool_use_result;
+    const preview = Array.isArray(toolResult.content)
+      ? toolResult.content.map((item) => item?.text).filter(Boolean).join(" ")
+      : (toolResult.stdout || "");
+    if (preview) {
+      send(createOpenAIChunk(completionId, created, model, {
+        content: formatStatusLine("Tool result", preview.slice(0, 200)),
+      }));
+    }
+  }
 
-      let buffer = "";
-      let closed = false;
-      let finishSent = false;
-      let textChunkCount = 0;
-      let textCharCount = 0;
-      let stderrText = "";
-      const seenToolUseIds = new Set();
-      const seenTaskIds = new Set();
-      const seenToolResults = new Set();
+  return false;
+}
 
-      const send = (payload) => {
+/**
+ * Attempt to stream with a specific account. Buffers initial events to detect
+ * rate limiting before committing to the stream. Returns "rate_limited" if the
+ * account is rate-limited, otherwise streams to completion and returns "done".
+ */
+function tryStreamWithAccount(controller, encoder, completionId, created, body, directory, account) {
+  return new Promise((resolve) => {
+    const childEnv = buildChildEnvWithToken(account.token);
+    const child = spawn("claude", buildClaudeArgs(body, body.systemPrompt, true), {
+      cwd: directory,
+      env: childEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let buffer = "";
+    let closed = false;
+    let stderrText = "";
+    let probePhase = true; // buffer events until we know it's not rate-limited
+    const bufferedEvents = [];
+
+    const ctx = {
+      completionId,
+      created,
+      model: body.model,
+      textChunkCount: 0,
+      textCharCount: 0,
+      finishSent: false,
+      seenToolUseIds: new Set(),
+      seenTaskIds: new Set(),
+      seenToolResults: new Set(),
+      send(payload) {
         if (closed) return;
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
         } catch {
           closed = true;
         }
-      };
+      },
+    };
 
-      const close = () => {
-        if (closed) return;
-        closed = true;
+    const closeStream = () => {
+      if (closed) return;
+      closed = true;
+      try {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      } catch {
+        // already closed
+      }
+      try {
+        controller.close();
+      } catch {
+        // already closed by runtime
+      }
+    };
+
+    /** Flush buffered events and exit probe phase. */
+    const commitToStream = () => {
+      probePhase = false;
+      for (const evt of bufferedEvents) {
+        processStreamEvent(evt, ctx);
+      }
+      bufferedEvents.length = 0;
+    };
+
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk.toString("utf-8");
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
         try {
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          const event = JSON.parse(line);
+
+          // During probe phase, check for rate limiting before sending anything
+          if (probePhase) {
+            const rl = detectRateLimitStream(event);
+            if (rl.rateLimited) {
+              markAccountRateLimited(account.email, rl.resetsAt);
+              child.kill("SIGTERM");
+              resolve("rate_limited");
+              return;
+            }
+            bufferedEvents.push(event);
+
+            // If we see actual content, commit to this account
+            if (
+              (event.type === "stream_event" && event.event?.type === "content_block_start") ||
+              (event.type === "stream_event" && event.event?.type === "content_block_delta") ||
+              (event.type === "stream_event" && event.event?.type === "message_start" && event.event?.message?.usage)
+            ) {
+              commitToStream();
+            }
+            continue;
+          }
+
+          processStreamEvent(event, ctx);
         } catch {
-          return;
+          // ignore malformed line fragments
         }
+      }
+    });
+
+    child.stderr.on("data", (chunk) => {
+      if (stderrText.length < 4000) {
+        stderrText += chunk.toString("utf-8");
+      }
+    });
+
+    child.on("close", (exitCode) => {
+      // If we never exited probe phase (e.g. very short response), flush now
+      if (probePhase) {
+        commitToStream();
+      }
+
+      if (exitCode !== 0 && stderrText.trim()) {
+        ctx.send(createOpenAIChunk(completionId, created, body.model, {
+          content: `\n[Claude CLI transport error: ${stderrText.trim().slice(0, 500)}]`,
+        }));
+      }
+      if (!ctx.finishSent) {
+        ctx.finishSent = true;
+        ctx.send(createOpenAIChunk(completionId, created, body.model, {}, "stop"));
+      }
+      console.error(
+        `[aidevops] Claude proxy: stream complete model=${body.model} account=${account.email} exitCode=${exitCode} textChunks=${ctx.textChunkCount} textChars=${ctx.textCharCount} stderr=${JSON.stringify(stderrText.trim().slice(0, 300))}`,
+      );
+      closeStream();
+      resolve("done");
+    });
+
+    child.on("error", (err) => {
+      if (probePhase) {
+        resolve("error");
+        return;
+      }
+      controller.error(err);
+      resolve("done");
+    });
+  });
+}
+
+function streamClaudeResponse(body, directory) {
+  const completionId = `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 28)}`;
+  const created = Math.floor(Date.now() / 1000);
+  const encoder = new TextEncoder();
+
+  return new ReadableStream({
+    async start(controller) {
+      const accounts = await getAvailableAccounts();
+      if (accounts.length === 0) {
+        const errChunk = createOpenAIChunk(completionId, created, body.model, {
+          content: "[Claude CLI transport: all Anthropic OAuth pool accounts are rate-limited]",
+        });
         try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(errChunk)}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(createOpenAIChunk(completionId, created, body.model, {}, "stop"))}\n\n`));
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
           controller.close();
         } catch {
-          // already closed by runtime
+          // already closed
         }
-      };
+        return;
+      }
 
-      child.stdout.on("data", (chunk) => {
-        buffer += chunk.toString("utf-8");
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+      for (const account of accounts) {
+        console.error(`[aidevops] Claude proxy: trying account ${account.email} (stream mode)`);
+        const result = await tryStreamWithAccount(controller, encoder, completionId, created, body, directory, account);
+        if (result === "rate_limited") {
+          console.error(`[aidevops] Claude proxy: account ${account.email} rate-limited, trying next...`);
+          continue;
+        }
+        return; // stream completed
+      }
 
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line);
-            if (event.type === "stream_event" && event.event?.type === "content_block_delta") {
-              if (event.event.delta?.type === "text_delta" && event.event.delta.text) {
-                textChunkCount += 1;
-                textCharCount += event.event.delta.text.length;
-                send(createOpenAIChunk(completionId, created, body.model, { content: event.event.delta.text }));
-              } else if (event.event.delta?.type === "thinking_delta" && event.event.delta.thinking) {
-                send(createOpenAIChunk(completionId, created, body.model, { reasoning_content: event.event.delta.thinking }));
-              }
-            } else if (event.type === "stream_event" && event.event?.type === "message_delta") {
-              if (event.event.delta?.stop_reason && !finishSent) {
-                finishSent = true;
-                send(createOpenAIChunk(completionId, created, body.model, {}, "stop"));
-              }
-            } else if (event.type === "assistant" && Array.isArray(event.message?.content)) {
-              for (const block of event.message.content) {
-                if (block?.type === "tool_use" && block.id && !seenToolUseIds.has(block.id)) {
-                  seenToolUseIds.add(block.id);
-                  send(createOpenAIChunk(completionId, created, body.model, {
-                    content: formatStatusLine(`Tool: ${block.name || "unknown"}`, summarizeToolInput(block.input)),
-                  }));
-                }
-              }
-            } else if (event.type === "system" && event.subtype === "task_started" && event.task_id && !seenTaskIds.has(`start:${event.task_id}`)) {
-              seenTaskIds.add(`start:${event.task_id}`);
-              send(createOpenAIChunk(completionId, created, body.model, {
-                content: formatStatusLine("Subagent started", event.description || event.prompt || event.task_id),
-              }));
-            } else if (event.type === "system" && event.subtype === "task_notification" && event.task_id && !seenTaskIds.has(`done:${event.task_id}`)) {
-              seenTaskIds.add(`done:${event.task_id}`);
-              send(createOpenAIChunk(completionId, created, body.model, {
-                content: formatStatusLine("Subagent completed", event.summary || event.task_id),
-              }));
-            } else if (event.type === "user" && event.uuid && event.tool_use_result && !seenToolResults.has(event.uuid)) {
-              seenToolResults.add(event.uuid);
-              const toolResult = event.tool_use_result;
-              const preview = Array.isArray(toolResult.content)
-                ? toolResult.content.map((item) => item?.text).filter(Boolean).join(" ")
-                : (toolResult.stdout || "");
-              if (preview) {
-                send(createOpenAIChunk(completionId, created, body.model, {
-                  content: formatStatusLine("Tool result", preview.slice(0, 200)),
-                }));
-              }
-            }
-          } catch {
-            // ignore malformed line fragments
-          }
-        }
+      // All accounts exhausted
+      const errChunk = createOpenAIChunk(completionId, created, body.model, {
+        content: "[Claude CLI transport: all Anthropic OAuth pool accounts are rate-limited]",
       });
-
-      child.stderr.on("data", (chunk) => {
-        if (stderrText.length < 4000) {
-          stderrText += chunk.toString("utf-8");
-        }
-      });
-      child.on("close", (exitCode) => {
-        if (exitCode !== 0 && stderrText.trim()) {
-          send(createOpenAIChunk(completionId, created, body.model, {
-            content: `\n[Claude CLI transport error: ${stderrText.trim().slice(0, 500)}]`,
-          }));
-        }
-        if (!finishSent) {
-          finishSent = true;
-          send(createOpenAIChunk(completionId, created, body.model, {}, "stop"));
-        }
-        console.error(
-          `[aidevops] Claude proxy: stream complete model=${body.model} exitCode=${exitCode} textChunks=${textChunkCount} textChars=${textCharCount} stderr=${JSON.stringify(stderrText.trim().slice(0, 300))}`,
-        );
-        close();
-      });
-      child.on("error", (err) => controller.error(err));
+      try {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(errChunk)}\n\n`));
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(createOpenAIChunk(completionId, created, body.model, {}, "stop"))}\n\n`));
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      } catch {
+        // already closed
+      }
     },
   });
 }
