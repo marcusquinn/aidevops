@@ -33,6 +33,20 @@ _PULSE_ISSUE_RECONCILE_LOADED=1
 # actively worked (`status:queued` or `status:in-progress`). If an issue
 # has one of these labels but no assignee, assign it to the runner user.
 #
+# Multi-runner dedup (t1996): Before self-assigning an orphaned issue,
+# call dispatch-dedup-helper.sh is-assigned to check whether another
+# runner has already claimed it in the window between the batch query
+# and this assignment. This prevents the two-assignee stuck state where
+# two runners both reconcile the same issue simultaneously — both see
+# "no assignee" in the batch response, both assign themselves, both
+# become blocked by is_assigned() in the next dispatch cycle, and the
+# issue is stuck until stale recovery clears it.
+#
+# Note: the combined "label AND assignee" rule (t1996) applies here:
+#   - A status label without an assignee = degraded state (safe to claim)
+#   - A status label WITH a non-self assignee = another runner claimed it
+#   - Both signals are required; neither is sufficient alone
+#
 # Returns: 0 always (best-effort)
 #######################################
 normalize_active_issue_assignments() {
@@ -48,8 +62,11 @@ normalize_active_issue_assignments() {
 		return 0
 	fi
 
+	local dedup_helper="${HOME}/.aidevops/agents/scripts/dispatch-dedup-helper.sh"
+
 	local total_checked=0
 	local total_assigned=0
+	local total_skipped_claimed=0
 	local now_epoch
 	now_epoch=$(date +%s)
 
@@ -75,6 +92,28 @@ normalize_active_issue_assignments() {
 		while IFS= read -r issue_number; do
 			[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
 			total_checked=$((total_checked + 1))
+
+			# t1996: Guard against the multi-runner assignment race. Two runners
+			# may both observe the same "status:queued, no assignee" issue in
+			# their batch queries and race to self-assign. Without this check,
+			# both succeed and the issue ends up with two assignees — each runner
+			# sees the other as blocking, so neither can dispatch, and the issue
+			# sits stuck until stale recovery clears it (up to 1h).
+			#
+			# Checking is_assigned() here re-reads the live issue state. If
+			# another runner has already claimed it (exit 0 = assigned to other),
+			# skip this issue and let that runner's pulse handle dispatch.
+			# If still unassigned (exit 1 = safe), proceed with self-assignment.
+			if [[ -x "$dedup_helper" ]]; then
+				local _is_assigned_output=""
+				if _is_assigned_output=$("$dedup_helper" is-assigned "$issue_number" "$slug" "$runner_user" 2>/dev/null); then
+					# Another runner already claimed this issue — skip reconcile
+					echo "[pulse-wrapper] Assignment normalization: skipping #${issue_number} in ${slug} — already claimed by another runner (${_is_assigned_output})" >>"$LOGFILE"
+					total_skipped_claimed=$((total_skipped_claimed + 1))
+					continue
+				fi
+			fi
+
 			if gh issue edit "$issue_number" --repo "$slug" --add-assignee "$runner_user" >/dev/null 2>&1; then
 				total_assigned=$((total_assigned + 1))
 			fi
@@ -82,7 +121,7 @@ normalize_active_issue_assignments() {
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
 
 	if [[ "$total_checked" -gt 0 ]]; then
-		echo "[pulse-wrapper] Assignment normalization: assigned ${total_assigned}/${total_checked} active unassigned issues to ${runner_user}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Assignment normalization: assigned ${total_assigned}/${total_checked} active unassigned issues to ${runner_user} (skipped_claimed=${total_skipped_claimed})" >>"$LOGFILE"
 	fi
 
 	# --- Pass 2: Reset stale assignments (GH#16842) ---
