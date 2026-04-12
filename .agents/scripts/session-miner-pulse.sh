@@ -25,9 +25,7 @@ _smp_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_smp_dir" == "${BASH_SOURCE[0]}" ]] && _smp_dir="."
 SCRIPT_DIR="$(cd "$_smp_dir" && pwd)"
 MINER_DIR="${HOME}/.aidevops/.agent-workspace/work/session-miner"
-# Shipped with aidevops; copied to workspace on first run
-EXTRACTOR_SRC="${SCRIPT_DIR}/session-miner/extract.py"
-COMPRESSOR_SRC="${SCRIPT_DIR}/session-miner/compress.py"
+# Runtime paths — all *.py modules copied from SCRIPT_DIR/session-miner/ by sync_scripts()
 EXTRACTOR="${MINER_DIR}/extract.py"
 COMPRESSOR="${MINER_DIR}/compress.py"
 STATE_FILE="${MINER_DIR}/.last-pulse"
@@ -666,13 +664,19 @@ parse_args() {
 }
 
 sync_scripts() {
+	local _py_src _py_dst _miner_src_dir
 	mkdir -p "${MINER_DIR}"
-	if [[ -f "${EXTRACTOR_SRC}" ]] && [[ ! -f "${EXTRACTOR}" || "${EXTRACTOR_SRC}" -nt "${EXTRACTOR}" ]]; then
-		cp "${EXTRACTOR_SRC}" "${EXTRACTOR}"
-	fi
-	if [[ -f "${COMPRESSOR_SRC}" ]] && [[ ! -f "${COMPRESSOR}" || "${COMPRESSOR_SRC}" -nt "${COMPRESSOR}" ]]; then
-		cp "${COMPRESSOR_SRC}" "${COMPRESSOR}"
-	fi
+	# Copy all Python modules from source to workspace (not just extract.py + compress.py).
+	# Resilient to future refactoring: any new .py module added to scripts/session-miner/
+	# will be automatically deployed. Fixes GH#18383 (t1944 refactor added 5 new modules).
+	_miner_src_dir="${SCRIPT_DIR}/session-miner"
+	for _py_src in "${_miner_src_dir}"/*.py; do
+		[[ -f "$_py_src" ]] || continue
+		_py_dst="${MINER_DIR}/$(basename "$_py_src")"
+		if [[ ! -f "$_py_dst" || "$_py_src" -nt "$_py_dst" ]]; then
+			cp "$_py_src" "$_py_dst"
+		fi
+	done
 	return 0
 }
 
