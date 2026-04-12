@@ -468,6 +468,9 @@ _setup_dispatch_stub() {
 	printf 'printf "%%s\\n" "$session_key" >> "${DISPATCH_LOG_FILE}"\n' >>"${stub_dir}/headless-runtime-helper.sh"
 	chmod +x "${stub_dir}/headless-runtime-helper.sh"
 	export PATH="${stub_dir}:${PATH}"
+	# Override HEADLESS_RUNTIME_HELPER so dispatch_triage_reviews uses the stub
+	# instead of the absolute path set when pulse-wrapper.sh was sourced.
+	export HEADLESS_RUNTIME_HELPER="${stub_dir}/headless-runtime-helper.sh"
 	export DISPATCH_LOG_FILE="${TEST_ROOT}/dispatch.log"
 	: >"$DISPATCH_LOG_FILE"
 	return 0
@@ -508,6 +511,7 @@ test_dispatch_triage_reviews_decrements_slot_count() {
 ")
 
 	STATE_FILE="$state_file"
+	TRIAGE_STATE_FILE="$state_file"
 	# model-availability-helper.sh is not available in test env; resolved_model
 	# will be empty, which exercises the no-model branch (same as production
 	# when all models are rate-limited).
@@ -537,6 +541,7 @@ test_dispatch_triage_reviews_no_stderr_errors() {
 ")
 
 	STATE_FILE="$state_file"
+	TRIAGE_STATE_FILE="$state_file"
 	local stderr_file="${TEST_ROOT}/triage-stderr.txt"
 	dispatch_triage_reviews 3 "$repos_json" 2>"$stderr_file" >/dev/null
 
@@ -576,6 +581,7 @@ test_dispatch_triage_reviews_returns_available_when_no_candidates() {
 ")
 
 	STATE_FILE="$state_file"
+	TRIAGE_STATE_FILE="$state_file"
 	local remaining
 	remaining=$(dispatch_triage_reviews 4 "$repos_json" 2>/dev/null)
 
@@ -603,6 +609,7 @@ test_dispatch_triage_reviews_caps_at_triage_max() {
 ")
 
 	STATE_FILE="$state_file"
+	TRIAGE_STATE_FILE="$state_file"
 	local remaining
 	remaining=$(dispatch_triage_reviews 10 "$repos_json" 2>/dev/null)
 
@@ -629,6 +636,7 @@ test_dispatch_triage_reviews_returns_zero_when_no_slots() {
 ")
 
 	STATE_FILE="$state_file"
+	TRIAGE_STATE_FILE="$state_file"
 	local remaining
 	remaining=$(dispatch_triage_reviews 0 "$repos_json" 2>/dev/null)
 
@@ -659,6 +667,7 @@ test_dispatch_triage_reviews_resolves_repo_path_via_initialized_repos() {
 ")
 
 	STATE_FILE="$state_file"
+	TRIAGE_STATE_FILE="$state_file"
 	local remaining
 	remaining=$(dispatch_triage_reviews 3 "$repos_json_path" 2>/dev/null)
 
@@ -678,6 +687,8 @@ test_dispatch_triage_reviews_returns_available_when_no_state_file() {
 	local repos_json
 	repos_json=$(_make_repos_json "owner/repo" "/tmp/repo")
 
+	# Clear TRIAGE_STATE_FILE so the function falls back to deriving from STATE_FILE.
+	TRIAGE_STATE_FILE=""
 	STATE_FILE="/nonexistent/state-file-that-does-not-exist.txt"
 	local remaining
 	remaining=$(dispatch_triage_reviews 7 "$repos_json" 2>/dev/null)
