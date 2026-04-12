@@ -591,6 +591,42 @@ _This recovery prevents the orphaned-assignment deadlock where offline runners p
 }
 
 #######################################
+# Return "true" if the issue metadata represents an active claim that
+# should override the owner/maintainer passive-assignee exemption in
+# is_assigned(). An issue is actively claimed when EITHER:
+#   - a lifecycle status label is set: status:queued, status:in-progress,
+#     status:in-review, or status:claimed, OR
+#   - the origin:interactive label is present (a live human session is
+#     driving the work regardless of status label state)
+#
+# Extracted from is_assigned() to keep that function under the 100-line
+# complexity cap after GH#18352 expanded the active-claim signal set
+# (see t1961). Adding new active-state labels is a one-line change here.
+#
+# Args:
+#   $1 = issue metadata JSON from `gh issue view --json labels` (at minimum
+#        must contain a .labels array of {name: ...} objects)
+# Stdout: "true" or "false"
+#######################################
+_has_active_claim() {
+	local issue_meta_json="$1"
+	local result
+	result=$(printf '%s' "$issue_meta_json" | jq -r '
+		[.labels[].name] as $labels |
+		(
+			($labels | index("status:queued") != null) or
+			($labels | index("status:in-progress") != null) or
+			($labels | index("status:in-review") != null) or
+			($labels | index("status:claimed") != null) or
+			($labels | index("origin:interactive") != null)
+		)
+	' 2>/dev/null) || result="false"
+	[[ "$result" == "true" || "$result" == "false" ]] || result="false"
+	printf '%s' "$result"
+	return 0
+}
+
+#######################################
 # Check if a GitHub issue is already assigned to another runner.
 #
 # This is the primary cross-machine dedup guard. Process-based checks
@@ -669,22 +705,14 @@ is_assigned() {
 		return 1
 	fi
 
-	local repo_owner repo_maintainer has_active_status has_origin_interactive
+	local repo_owner repo_maintainer active_claim
 	repo_owner=$(_get_repo_owner "$repo_slug")
 	repo_maintainer=$(_get_repo_maintainer "$repo_slug")
-	# GH#18352: recognise the full active lifecycle — status:claimed (set by
-	# claim-task-id.sh for interactive sessions) and status:in-review (set
-	# when a PR is opened) are active states just like queued/in-progress.
-	# Previously the check was limited to queued/in-progress, which let the
-	# pulse dispatch a worker against a status:claimed interactive task.
-	has_active_status=$(printf '%s' "$issue_meta_json" | jq -r '([.labels[].name] | (index("status:queued") != null or index("status:in-progress") != null or index("status:in-review") != null or index("status:claimed") != null))' 2>/dev/null)
-	[[ "$has_active_status" == "true" || "$has_active_status" == "false" ]] || has_active_status="false"
-	# GH#18352: origin:interactive is a strong "a human session owns this
-	# work" signal — treat any human assignee (owner included) as actively
-	# claimed regardless of status label state. Prevents the pulse from
-	# racing an in-flight interactive session.
-	has_origin_interactive=$(printf '%s' "$issue_meta_json" | jq -r '([.labels[].name] | index("origin:interactive") != null)' 2>/dev/null)
-	[[ "$has_origin_interactive" == "true" || "$has_origin_interactive" == "false" ]] || has_origin_interactive="false"
+	# GH#18352 / t1961: owner/maintainer assignees are passive unless
+	# _has_active_claim() reports an active lifecycle label (queued,
+	# in-progress, in-review, claimed) or origin:interactive is present.
+	# See _has_active_claim() above for the full rule set.
+	active_claim=$(_has_active_claim "$issue_meta_json")
 
 	local -a assignee_array=()
 	local saved_ifs="${IFS:-}"
@@ -699,10 +727,9 @@ is_assigned() {
 		fi
 
 		if [[ "$assignee" == "$repo_owner" || (-n "$repo_maintainer" && "$assignee" == "$repo_maintainer") ]]; then
-			# Owner/maintainer is passive UNLESS an active status label is
-			# present OR origin:interactive signals a live human session
-			# (GH#18352).
-			if [[ "$has_active_status" != "true" && "$has_origin_interactive" != "true" ]]; then
+			# Owner/maintainer is passive UNLESS _has_active_claim returned
+			# "true" (GH#18352 / t1961).
+			if [[ "$active_claim" != "true" ]]; then
 				continue
 			fi
 		fi
