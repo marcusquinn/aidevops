@@ -746,7 +746,21 @@ _create_core_routine_issues() {
 		local human_schedule
 		human_schedule=$(_humanise_schedule "$schedule" "$tz_name")
 
-		print_info "Creating issue for ${rid}: ${short_title}..."
+		# Detect whether this routine already has a tracking state file. If it
+		# does, we must NOT fire the initial `update --status success` body-
+		# rebuild trigger, because that call appends a fake run entry, bumps
+		# streak counters, and drags avg_duration toward zero. The
+		# `create-issue` call itself is already idempotent (see t1964).
+		local state_file="${HOME}/.aidevops/.agent-workspace/cron/${rid}/routine-state.json"
+		local preexisting_state=false
+		[[ -f "$state_file" ]] && preexisting_state=true
+
+		if [[ "$preexisting_state" == true ]]; then
+			print_info "Tracking issue for ${rid}: ${short_title} already exists — refreshing description only"
+		else
+			print_info "Creating tracking issue for ${rid}: ${short_title}..."
+		fi
+
 		local issue_num
 		issue_num=$(bash "$log_helper" create-issue "$rid" \
 			--repo "$slug" \
@@ -759,8 +773,12 @@ _create_core_routine_issues() {
 			gh issue edit "$issue_num" --repo "$slug" --add-label "routine-tracking" 2>/dev/null || true
 			# Store description in state so _build_issue_body includes it
 			_store_routine_description "$rid" "$short_title" "$human_schedule" "$script" "$rtype"
-			# Trigger a body rebuild to include the description
-			bash "$log_helper" update "$rid" --status success --duration 0 2>/dev/null || true
+			# Only fire the initial body-rebuild on fresh init — otherwise we
+			# append a fake success/duration=0 entry to every core routine on
+			# every invocation, polluting streak and avg_duration metrics (t1964).
+			if [[ "$preexisting_state" != true ]]; then
+				bash "$log_helper" update "$rid" --status success --duration 0 2>/dev/null || true
+			fi
 		fi
 	done < <(get_core_routine_entries)
 
