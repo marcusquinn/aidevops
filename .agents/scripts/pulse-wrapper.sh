@@ -78,13 +78,22 @@ export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 # PULSE_JITTER_MAX: max jitter in seconds (default 30, set to 0 to disable)
 #######################################
 PULSE_JITTER_MAX="${PULSE_JITTER_MAX:-30}"
-if [[ "$PULSE_JITTER_MAX" =~ ^[0-9]+$ && "$PULSE_JITTER_MAX" -gt 0 ]]; then
+# Phase 0 (t1963): diagnostic flags must return instantly. Skip jitter
+# when the first arg is --self-check or --dry-run (or PULSE_DRY_RUN=1)
+# so CI, post-install verification, and interactive debugging aren't
+# delayed by up to 30 s of random sleep.
+_pulse_skip_jitter=0
+if [[ "${1:-}" == "--self-check" || "${1:-}" == "--dry-run" || "${PULSE_DRY_RUN:-0}" == "1" ]]; then
+	_pulse_skip_jitter=1
+fi
+if [[ "$_pulse_skip_jitter" -eq 0 && "$PULSE_JITTER_MAX" =~ ^[0-9]+$ && "$PULSE_JITTER_MAX" -gt 0 ]]; then
 	# $RANDOM is 0-32767; modulo gives 0 to PULSE_JITTER_MAX
 	jitter_seconds=$((RANDOM % (PULSE_JITTER_MAX + 1)))
 	if [[ "$jitter_seconds" -gt 0 ]]; then
 		sleep "$jitter_seconds"
 	fi
 fi
+unset _pulse_skip_jitter
 
 # Track pulse start time for signature footer elapsed time (GH#13099)
 PULSE_START_EPOCH=$(date +%s)
@@ -12073,6 +12082,122 @@ evaluate_routines() {
 }
 
 main() {
+	# Phase 0 (t1963, GH#18357): --self-check short-circuit for CI, pre-edit
+	# verification, and post-install smoke testing. Runs before any lock,
+	# state mutation, or side effect. Sources are already in place (the
+	# wrapper sources its helpers before main() is called), so by the time
+	# control reaches here every function the wrapper claims to define has
+	# been parsed.
+	#
+	# The canonical function set below covers every cluster identified in
+	# todo/plans/pulse-wrapper-decomposition.md §3. During extraction the
+	# cluster representatives stay stable but each phase appends a new
+	# _PULSE_<CLUSTER>_LOADED guard variable check so we catch modules that
+	# fail to source for any reason (missing file, syntax error, failed
+	# include-guard logic). Phase 0 has zero guards; they come online as
+	# Phases 1–10 land.
+	#
+	# Exit 0: self-check passed.
+	# Exit 1: at least one expected function or module guard is missing.
+	if [[ "${1:-}" == "--self-check" ]]; then
+		local _sc_missing=()
+		local _sc_fn
+		local _sc_expected_fns=(
+			resolve_dispatch_model_for_labels
+			acquire_instance_lock
+			check_dedup
+			prefetch_state
+			_extract_frontmatter_field
+			check_external_contributor_pr
+			run_cmd_with_timeout
+			run_pulse
+			cleanup_worktrees
+			normalize_active_issue_assignments
+			issue_has_required_approval
+			run_weekly_complexity_scan
+			get_repo_path_by_slug
+			dispatch_with_dedup
+			_triage_content_hash
+			normalize_count_output
+			_ff_key
+			build_dependency_graph_cache
+			dispatch_deterministic_fill_floor
+			merge_ready_prs_all_repos
+			rotate_pulse_log
+			evaluate_routines
+			main
+			write_pulse_health_file
+			calculate_max_workers
+			dispatch_enrichment_workers
+			dispatch_triage_reviews
+			sync_todo_refs_for_repo
+		)
+		for _sc_fn in "${_sc_expected_fns[@]}"; do
+			if ! declare -F "$_sc_fn" >/dev/null 2>&1; then
+				_sc_missing+=("$_sc_fn")
+			fi
+		done
+		# Module include guards. Appended as each phase lands.
+		# Phase 1:  _PULSE_MODEL_ROUTING_LOADED _PULSE_INSTANCE_LOCK_LOADED
+		#           _PULSE_META_PARSE_LOADED _PULSE_REPO_META_LOADED
+		#           _PULSE_ROUTINES_LOADED
+		# Phase 2:  _PULSE_QUEUE_GOVERNOR_LOADED _PULSE_NMR_APPROVAL_LOADED
+		#           _PULSE_DEP_GRAPH_LOADED _PULSE_FAST_FAIL_LOADED
+		# Phase 3+: ...
+		local _sc_expected_guards=()
+		local _sc_guard _sc_val
+		# The `${array[@]+"${array[@]}"}` pattern is safe under `set -u`
+		# when the array is empty — required in Phase 0 where no module
+		# guards exist yet.
+		for _sc_guard in ${_sc_expected_guards[@]+"${_sc_expected_guards[@]}"}; do
+			_sc_val="${!_sc_guard:-}"
+			if [[ -z "$_sc_val" ]]; then
+				_sc_missing+=("${_sc_guard} (module not loaded)")
+			fi
+		done
+		if [[ ${#_sc_missing[@]} -eq 0 ]]; then
+			printf 'self-check: ok (%d canonical functions defined, %d module guards verified)\n' \
+				"${#_sc_expected_fns[@]}" "${#_sc_expected_guards[@]}"
+			return 0
+		fi
+		printf 'self-check: FAIL: %d missing:\n' "${#_sc_missing[@]}" >&2
+		local _sc_item
+		for _sc_item in "${_sc_missing[@]}"; do
+			printf '  - %s\n' "$_sc_item" >&2
+		done
+		return 1
+	fi
+
+	# Phase 0 (t1963, GH#18357): --dry-run flag sets PULSE_DRY_RUN=1 so the
+	# cycle can short-circuit before touching destructive operations. This
+	# smoke-tests bootstrap, sourcing, config validation, lock acquisition,
+	# and the main() prelude — the code paths most at risk during the
+	# phased decomposition — without dispatching workers, merging PRs,
+	# writing GitHub state, or removing worktrees.
+	#
+	# Phase 0 scope is narrow by design: --dry-run runs up to (but not
+	# through) _run_preflight_stages, which is where preflight cleanup and
+	# prefetch functions begin their real side effects. Later phases may
+	# widen --dry-run by shimming individual destructive call sites with a
+	# _dry_run_log() helper, allowing the preflight, merge pass, dispatch
+	# fill floor, and LLM session to exercise their full code paths
+	# without writing.
+	#
+	# USAGE NOTE: --dry-run still runs acquire_instance_lock, session_gate,
+	# and dedup — which means an active pulse or a live user session will
+	# cause --dry-run to short-circuit silently. For CI, post-install
+	# verification, and smoke tests, run --dry-run in a sandboxed $HOME:
+	#
+	#   SANDBOX=$(mktemp -d)
+	#   HOME="$SANDBOX/home" PULSE_JITTER_MAX=0 \
+	#     pulse-wrapper.sh --dry-run
+	#
+	# The sandbox ensures no collision with the live pulse's PID file,
+	# lock dir, or session flag.
+	if [[ "${1:-}" == "--dry-run" ]]; then
+		export PULSE_DRY_RUN=1
+	fi
+
 	# GH#4513: Acquire exclusive instance lock FIRST — before any other
 	# check. Uses mkdir atomicity as the primary primitive (POSIX-guaranteed,
 	# works on macOS APFS/HFS+ without util-linux). flock is used as a
@@ -12112,6 +12237,17 @@ main() {
 	# Record cycle start for append_cycle_index duration tracking (t1886)
 	local _cycle_start_epoch
 	_cycle_start_epoch=$(date +%s)
+
+	# Phase 0 (t1963): --dry-run short-circuits here. Bootstrap, sourcing,
+	# config validation, lock acquisition, session gate, dedup guard, and
+	# log rotation have all run cleanly by this point — that is the Phase 0
+	# scope of the dry-run smoke test. Pre-flight stages below are skipped
+	# because they start touching worktrees, GitHub state, and process
+	# spawning. Later phases may shim those sites individually.
+	if [[ "${PULSE_DRY_RUN:-0}" == "1" ]]; then
+		printf 'dry-run: ok (bootstrap + sourcing + lock + session-gate + dedup + log-rotate exercised; pre-flight stages and beyond skipped)\n'
+		return 0
+	fi
 
 	# Run pre-flight stages (cleanup, prefetch, normalization)
 	if ! _run_preflight_stages; then
