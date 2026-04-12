@@ -14,61 +14,39 @@
 # section.
 #
 # Functions in this module (in source order):
-#   - normalize_active_issue_assignments
+#   - _normalize_reassign_self           (Phase 12: orphaned active issue → self-assign)
+#   - _normalize_clear_status_labels     (Phase 12: reset one stale issue's labels/assignee)
+#   - _normalize_unassign_stale          (Phase 12: detect + reset stale assignments)
+#   - normalize_active_issue_assignments (coordinator — calls the three helpers above)
 #   - close_issues_with_merged_prs
 #   - reconcile_stale_done_issues
-#
-# This is a pure move from pulse-wrapper.sh. The function bodies are
-# byte-identical to their pre-extraction form. Any change must go in a
-# separate follow-up PR after the full decomposition (Phase 12) lands.
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_ISSUE_RECONCILE_LOADED:-}" ]] && return 0
 _PULSE_ISSUE_RECONCILE_LOADED=1
 
 #######################################
-# Ensure active issues have an assignee
+# (Phase 12 helper) Assign runner to orphaned active issues.
 #
-# Prevent overlap by normalizing assignment on issues already marked as
-# actively worked (`status:queued` or `status:in-progress`). If an issue
-# has one of these labels but no assignee, assign it to the runner user.
+# Pass 1 of normalize_active_issue_assignments: scan all pulse repos for
+# issues that have status:queued or status:in-progress but no assignee,
+# and self-assign this runner. Includes the t1996 dedup guard to prevent
+# the two-runner simultaneous-assign stuck state.
 #
-# Multi-runner dedup (t1996): Before self-assigning an orphaned issue,
-# call dispatch-dedup-helper.sh is-assigned to check whether another
-# runner has already claimed it in the window between the batch query
-# and this assignment. This prevents the two-assignee stuck state where
-# two runners both reconcile the same issue simultaneously — both see
-# "no assignee" in the batch response, both assign themselves, both
-# become blocked by is_assigned() in the next dispatch cycle, and the
-# issue is stuck until stale recovery clears it.
-#
-# Note: the combined "label AND assignee" rule (t1996) applies here:
-#   - A status label without an assignee = degraded state (safe to claim)
-#   - A status label WITH a non-self assignee = another runner claimed it
-#   - Both signals are required; neither is sufficient alone
-#
-# Returns: 0 always (best-effort)
+# Args:
+#   $1 runner_user        — GH login of the current runner
+#   $2 repos_json         — path to repos.json
+#   $3 dedup_helper       — path to dispatch-dedup-helper.sh (may be absent)
+# Returns: 0 always (best-effort; logs summary to $LOGFILE)
 #######################################
-normalize_active_issue_assignments() {
-	local repos_json="$REPOS_JSON"
-	if [[ ! -f "$repos_json" ]]; then
-		return 0
-	fi
-
-	local runner_user
-	runner_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
-	if [[ -z "$runner_user" ]]; then
-		echo "[pulse-wrapper] Assignment normalization skipped: unable to resolve runner user" >>"$LOGFILE"
-		return 0
-	fi
-
-	local dedup_helper="${HOME}/.aidevops/agents/scripts/dispatch-dedup-helper.sh"
+_normalize_reassign_self() {
+	local runner_user="$1"
+	local repos_json="$2"
+	local dedup_helper="$3"
 
 	local total_checked=0
 	local total_assigned=0
 	local total_skipped_claimed=0
-	local now_epoch
-	now_epoch=$(date +%s)
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
@@ -84,10 +62,9 @@ normalize_active_issue_assignments() {
 			continue
 		fi
 		rm -f "$issue_rows_err"
+		local issue_rows
 		issue_rows=$(printf '%s' "$issue_rows_json" | jq -r '.[] | select(((.labels | map(.name) | index("status:queued")) or (.labels | map(.name) | index("status:in-progress"))) and ((.assignees | length) == 0)) | .number' 2>/dev/null) || issue_rows=""
-		if [[ -z "$issue_rows" ]]; then
-			continue
-		fi
+		[[ -n "$issue_rows" ]] || continue
 
 		while IFS= read -r issue_number; do
 			[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
@@ -124,20 +101,67 @@ normalize_active_issue_assignments() {
 		echo "[pulse-wrapper] Assignment normalization: assigned ${total_assigned}/${total_checked} active unassigned issues to ${runner_user} (skipped_claimed=${total_skipped_claimed})" >>"$LOGFILE"
 	fi
 
-	# --- Pass 2: Reset stale assignments (GH#16842) ---
-	# Workers that crash after the launch validation window leave issues with
-	# assignees + status:queued/in-progress but no running worker process.
-	# The dedup guard then blocks re-dispatch indefinitely. Reset these so
-	# the deterministic fill floor can re-dispatch them.
-	#
-	# t1933: PID-based checks are local-only. In multi-runner setups, a worker
-	# dispatched by another machine is invisible to pgrep on this machine.
-	# Gate PID checks on runner identity: if the dispatch comment's Worker PID
-	# is not running locally, fall back to WORKER_MAX_RUNTIME time-based expiry
-	# before resetting. This prevents false recovery of cross-runner dispatches.
+	return 0
+}
+
+#######################################
+# (Phase 12 helper) Reset a single stale issue's labels and assignee.
+#
+# Removes the active dispatch labels (status:queued, status:in-progress)
+# and the runner's assignee from one issue, then marks it status:available
+# so the deterministic fill floor can re-dispatch it.
+#
+# Called by _normalize_unassign_stale once it has confirmed that no worker
+# process is actively handling the issue.
+#
+# Args:
+#   $1 issue_num   — numeric GitHub issue number
+#   $2 slug        — owner/repo
+#   $3 runner_user — GH login to remove as assignee
+# Returns: 0 on gh success, non-zero on gh failure
+#######################################
+_normalize_clear_status_labels() {
+	local issue_num="$1"
+	local slug="$2"
+	local runner_user="$3"
+
+	gh issue edit "$issue_num" --repo "$slug" \
+		--remove-assignee "$runner_user" \
+		--remove-label "status:queued" --remove-label "status:in-progress" \
+		--add-label "status:available" >/dev/null 2>&1
+	return $?
+}
+
+#######################################
+# (Phase 12 helper) Detect and reset stale runner assignments.
+#
+# Pass 2 of normalize_active_issue_assignments: find issues assigned to
+# runner_user with status:queued/in-progress that have been idle for >1h,
+# verify no worker process is handling them (local PID check + cross-runner
+# time-based guard + log recency check), and reset via
+# _normalize_clear_status_labels so they can be re-dispatched.
+#
+# t1933: PID-based checks are local-only. In multi-runner setups, a worker
+# dispatched by another machine is invisible to pgrep on this machine.
+# Gate PID checks on runner identity: if the dispatch comment's Worker PID
+# is not running locally, fall back to WORKER_MAX_RUNTIME time-based expiry
+# before resetting. This prevents false recovery of cross-runner dispatches.
+#
+# Args:
+#   $1 runner_user              — GH login of the current runner
+#   $2 repos_json               — path to repos.json
+#   $3 now_epoch                — current Unix timestamp (date +%s)
+#   $4 cross_runner_max_runtime — seconds before a cross-runner dispatch is
+#                                  considered expired (default: WORKER_MAX_RUNTIME)
+# Returns: 0 always (best-effort; logs summary to $LOGFILE)
+#######################################
+_normalize_unassign_stale() {
+	local runner_user="$1"
+	local repos_json="$2"
+	local now_epoch="$3"
+	local cross_runner_max_runtime="$4"
+
 	local total_reset=0
-	# Default max runtime for cross-runner time-based expiry (3h, matches worker-watchdog.sh default)
-	local cross_runner_max_runtime="${WORKER_MAX_RUNTIME:-10800}"
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
@@ -157,10 +181,6 @@ normalize_active_issue_assignments() {
 			) | .number] | .[]
 		' 2>/dev/null) || stale_issues=""
 		[[ -n "$stale_issues" ]] || continue
-
-		# For each candidate, verify no active worker process exists
-		local repo_path_for_slug
-		repo_path_for_slug=$(jq -r --arg s "$slug" '.initialized_repos[] | select(.slug == $s) | .path' "$repos_json" 2>/dev/null) || repo_path_for_slug=""
 
 		local stale_num
 		while IFS= read -r stale_num; do
@@ -230,19 +250,16 @@ normalize_active_issue_assignments() {
 			local worker_log="/tmp/pulse-${safe_slug_check}-${stale_num}.log"
 			if [[ -f "$worker_log" ]]; then
 				local log_mtime
-				# Linux stat -c first (stat -f '%m' on Linux outputs filesystem info to stdout)
+				# Linux stat -c first (stat -f '%m' on macOS outputs file info in a different format)
 				log_mtime=$(stat -c '%Y' "$worker_log" 2>/dev/null || stat -f '%m' "$worker_log" 2>/dev/null) || log_mtime=0
 				if [[ $((now_epoch - log_mtime)) -lt 600 ]]; then
 					continue
 				fi
 			fi
 
-			# No local worker and cross-runner guard passed — reset the issue for re-dispatch
+			# No active worker and cross-runner guard passed — reset the issue for re-dispatch
 			echo "[pulse-wrapper] Stale assignment reset: #${stale_num} in ${slug} — assigned to ${runner_user} with active label but no worker process" >>"$LOGFILE"
-			gh issue edit "$stale_num" --repo "$slug" \
-				--remove-assignee "$runner_user" \
-				--remove-label "status:queued" --remove-label "status:in-progress" \
-				--add-label "status:available" >/dev/null 2>&1 || true
+			_normalize_clear_status_labels "$stale_num" "$slug" "$runner_user" || true
 			total_reset=$((total_reset + 1))
 		done <<<"$stale_issues"
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
@@ -250,6 +267,53 @@ normalize_active_issue_assignments() {
 	if [[ "$total_reset" -gt 0 ]]; then
 		echo "[pulse-wrapper] Stale assignment cleanup: reset ${total_reset} issues for re-dispatch" >>"$LOGFILE"
 	fi
+
+	return 0
+}
+
+#######################################
+# Ensure active issues have an assignee (coordinator).
+#
+# Prevent overlap by normalizing assignment on issues already marked as
+# actively worked (`status:queued` or `status:in-progress`). Coordinates
+# two passes via private helpers:
+#
+#   Pass 1 — _normalize_reassign_self: find issues with active labels but
+#     no assignee and self-assign this runner (with t1996 dedup guard).
+#
+#   Pass 2 — _normalize_unassign_stale: find issues assigned to this runner
+#     with active labels but no running worker, and reset via
+#     _normalize_clear_status_labels so they can be re-dispatched.
+#
+# Note: the combined "label AND assignee" rule (t1996) applies here:
+#   - A status label without an assignee = degraded state (safe to claim)
+#   - A status label WITH a non-self assignee = another runner claimed it
+#   - Both signals are required; neither is sufficient alone
+#
+# Returns: 0 always (best-effort)
+#######################################
+normalize_active_issue_assignments() {
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	local runner_user
+	runner_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	if [[ -z "$runner_user" ]]; then
+		echo "[pulse-wrapper] Assignment normalization skipped: unable to resolve runner user" >>"$LOGFILE"
+		return 0
+	fi
+
+	local dedup_helper="${HOME}/.aidevops/agents/scripts/dispatch-dedup-helper.sh"
+	local now_epoch
+	now_epoch=$(date +%s)
+	# Default max runtime for cross-runner time-based expiry (3h, matches worker-watchdog.sh default)
+	local cross_runner_max_runtime="${WORKER_MAX_RUNTIME:-10800}"
+
+	# Pass 1: assign runner to orphaned active issues (active label, no assignee)
+	_normalize_reassign_self "$runner_user" "$repos_json" "$dedup_helper"
+
+	# Pass 2: reset stale assignments (active label, assignee present, no running worker)
+	_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
 
 	return 0
 }
