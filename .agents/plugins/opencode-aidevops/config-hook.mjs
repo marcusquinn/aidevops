@@ -13,6 +13,102 @@ import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
 import { checkOpenCodeVersionDrift } from "./version-tracking.mjs";
 
 /**
+ * Shared model definition template for Claude models managed by aidevops.
+ * @param {object} overrides
+ * @returns {object}
+ */
+function claudeModelDef(overrides) {
+  return {
+    attachment: false,
+    tool_call: false,
+    temperature: true,
+    reasoning: true,
+    modalities: { input: ["text"], output: ["text"] },
+    cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+    ...overrides,
+  };
+}
+
+/** Models registered under the built-in anthropic provider (via aidevops OAuth pool). */
+const ANTHROPIC_MODELS = {
+  "claude-haiku-4-5": claudeModelDef({
+    name: "Claude Haiku 4.5 (via aidevops)",
+    limit: { context: 200000, output: 32000 },
+    family: "claudecli",
+  }),
+  "claude-sonnet-4-6": claudeModelDef({
+    name: "Claude Sonnet 4.6 (via aidevops)",
+    limit: { context: 200000, output: 32000 },
+    family: "claudecli",
+  }),
+  "claude-opus-4-6": claudeModelDef({
+    name: "Claude Opus 4.6 (via aidevops)",
+    limit: { context: 200000, output: 64000 },
+    family: "claudecli",
+  }),
+};
+
+/** Models registered under the claudecli provider (via Claude CLI binary — coming soon). */
+const CLAUDECLI_MODELS = {
+  "claude-haiku-4-5": claudeModelDef({
+    name: "Claude Haiku 4.5 (via Claude CLI — coming soon)",
+    limit: { context: 200000, output: 32000 },
+    family: "claudecli",
+  }),
+  "claude-sonnet-4-6": claudeModelDef({
+    name: "Claude Sonnet 4.6 (via Claude CLI — coming soon)",
+    limit: { context: 200000, output: 32000 },
+    family: "claudecli",
+  }),
+  "claude-opus-4-6": claudeModelDef({
+    name: "Claude Opus 4.6 (via Claude CLI — coming soon)",
+    limit: { context: 200000, output: 64000 },
+    family: "claudecli",
+  }),
+};
+
+/**
+ * Upsert aidevops-managed models into the anthropic and claudecli providers.
+ * Preserves any user options already set on the providers.
+ * @param {object} config - OpenCode Config object (mutable)
+ * @returns {number} number of model entries upserted
+ */
+function registerAnthropicModels(config) {
+  if (!config.provider) config.provider = {};
+  let count = 0;
+
+  // anthropic provider — via aidevops OAuth pool
+  if (!config.provider.anthropic) config.provider.anthropic = {};
+  if (!config.provider.anthropic.models) config.provider.anthropic.models = {};
+  for (const [id, def] of Object.entries(ANTHROPIC_MODELS)) {
+    const existing = config.provider.anthropic.models[id];
+    if (!existing || existing.name !== def.name) {
+      config.provider.anthropic.models[id] = { ...existing, ...def };
+      count++;
+    }
+  }
+
+  // claudecli provider — via Claude CLI binary (coming soon)
+  if (!config.provider.claudecli) {
+    config.provider.claudecli = {
+      name: "Claude CLI (coming soon)",
+      npm: "@ai-sdk/openai-compatible",
+      api: "http://127.0.0.1:32125/v1",
+    };
+  }
+  if (!config.provider.claudecli.models) config.provider.claudecli.models = {};
+  for (const [id, def] of Object.entries(CLAUDECLI_MODELS)) {
+    const existing = config.provider.claudecli.models[id];
+    if (!existing || existing.name !== def.name) {
+      config.provider.claudecli.models[id] = { ...existing, ...def };
+      count++;
+    }
+  }
+
+  return count;
+}
+
+/**
  * Read a file if it exists, or return empty string.
  * @param {string} filepath
  * @returns {string}
@@ -128,6 +224,7 @@ export function createConfigHook(deps) {
     const mcpsRegistered = registerMcpServers(config);
     const agentToolsUpdated = applyAgentMcpTools(config);
     const poolCleaned = registerPoolProvider(config);
+    const anthropicModelsRegistered = registerAnthropicModels(config);
 
     // Discover and register proxy provider models
     const { getCursorModels } = await import("./cursor/models.js");
@@ -157,6 +254,7 @@ export function createConfigHook(deps) {
     if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
     if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
     if (poolCleaned > 0) parts.push(`cleaned ${poolCleaned} stale pool provider${poolCleaned === 1 ? "" : "s"}`);
+    if (anthropicModelsRegistered > 0) parts.push(`${anthropicModelsRegistered} anthropic models`);
     if (cursorModelsRegistered > 0) parts.push(`${cursorModelsRegistered} Cursor models`);
     if (googleModelsRegistered > 0) parts.push(`${googleModelsRegistered} Google models`);
 
