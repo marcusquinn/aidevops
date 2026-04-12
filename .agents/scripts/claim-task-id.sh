@@ -674,26 +674,41 @@ _check_duplicate_issue() {
 		return 1
 	fi
 
-	# Extract the descriptive part of the title (after any "tNNN: " or "prefix: " pattern)
-	local search_terms
-	search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
-	# Avoid overly broad matches with short/generic terms
-	if [[ -z "$search_terms" || ${#search_terms} -lt 10 ]]; then
+	# Extract task ID prefix (e.g. "t1968" from "t1968: ...")
+	local task_id_prefix
+	task_id_prefix=$(printf '%s' "$title" | grep -oE '^t[0-9]+' || echo "")
+	if [[ -z "$task_id_prefix" ]]; then
+		# No tNNN prefix to match against — fall back to old behaviour
+		# but ONLY if search_terms is substantial enough to be safe.
+		local search_terms
+		search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
+		if [[ ${#search_terms} -lt 10 ]]; then
+			return 1
+		fi
+		local existing_issue
+		existing_issue=$(gh issue list --repo "$repo_slug" \
+			--state open --search "\"$search_terms\"" \
+			--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
+		if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
+			log_info "Found existing OPEN issue #$existing_issue matching title, skipping duplicate creation"
+			echo "$existing_issue"
+			return 0
+		fi
 		return 1
 	fi
 
-	# Only match against OPEN issues — closed issues are stale and re-linking
-	# to them poisons new TODO entries with a dead ref (observed t1970).
+	# Exact tNNN: prefix match, case-sensitive
 	local existing_issue
 	existing_issue=$(gh issue list --repo "$repo_slug" \
-		--state open --search "$search_terms" \
-		--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
+		--state open --search "${task_id_prefix}: in:title" \
+		--json number,title --limit 10 \
+		-q ".[] | select(.title | startswith(\"${task_id_prefix}: \")) | .number" 2>/dev/null | head -1)
+
 	if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
-		log_info "Found existing OPEN issue #$existing_issue matching title, skipping duplicate creation"
+		log_info "Found existing OPEN issue #$existing_issue with exact ${task_id_prefix} prefix, skipping duplicate creation"
 		echo "$existing_issue"
 		return 0
 	fi
-
 	return 1
 }
 
