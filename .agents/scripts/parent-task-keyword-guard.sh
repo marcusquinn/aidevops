@@ -247,10 +247,11 @@ cmd_check_pr() {
 		return 0
 	fi
 
-	# Write to a temp file and delegate to check-body
+	# Write to a temp file and delegate to check-body.
+	# NOTE: use explicit cleanup (not trap) to avoid unbound-variable error
+	# under set -u when the trap fires after the local variable goes out of scope.
 	local tmp_body
 	tmp_body=$(mktemp)
-	trap 'rm -f "$tmp_body"' EXIT
 	printf '%s\n' "$pr_body" >"$tmp_body"
 
 	local check_args=("--body-file" "$tmp_body" "--repo" "$repo")
@@ -259,6 +260,7 @@ cmd_check_pr() {
 
 	local check_rc=0
 	cmd_check_body "${check_args[@]}" || check_rc=$?
+	rm -f "$tmp_body"
 	return "$check_rc"
 }
 
