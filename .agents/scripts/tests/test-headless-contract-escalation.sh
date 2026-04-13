@@ -19,6 +19,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 HEADLESS_HELPER="${SCRIPT_DIR}/../headless-runtime-helper.sh"
+HEADLESS_LIB="${SCRIPT_DIR}/../headless-runtime-lib.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -50,7 +51,7 @@ print_result() {
 # This is the source of truth — we test the actual contract content, not the
 # injection logic (which is already tested by the existing contract injection tests).
 extract_contract_text() {
-	python3 - "${HEADLESS_HELPER}" <<'PY'
+	python3 - "${HEADLESS_LIB}" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -78,10 +79,10 @@ _call_append_contract() {
 	local append_enabled="${1:-1}"
 	local prompt_text="$2"
 
-	# Extract just the append_worker_headless_contract function from the helper
+	# Extract just the append_worker_headless_contract function from the lib
 	local func_body
 	func_body=$(
-		python3 - "${HEADLESS_HELPER}" <<'PY'
+		python3 - "${HEADLESS_LIB}" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -164,7 +165,7 @@ test_contract_not_injected_when_disabled() {
 	local result
 	result=$(_call_append_contract "0" "$prompt")
 
-	if [[ "$result" == *"HEADLESS_CONTINUATION_CONTRACT_V1"* ]]; then
+	if [[ "$result" == *"HEADLESS_CONTINUATION_CONTRACT_V"* ]]; then
 		print_result "contract not injected when AIDEVOPS_HEADLESS_APPEND_CONTRACT=0" 1 \
 			"Expected no contract injection when disabled"
 		return 0
@@ -179,7 +180,7 @@ test_contract_not_injected_for_non_full_loop() {
 	local result
 	result=$(_call_append_contract "1" "$prompt")
 
-	if [[ "$result" == *"HEADLESS_CONTINUATION_CONTRACT_V1"* ]]; then
+	if [[ "$result" == *"HEADLESS_CONTINUATION_CONTRACT_V"* ]]; then
 		print_result "contract not injected for non-/full-loop prompts" 1 \
 			"Expected no contract injection for non-/full-loop prompt"
 		return 0
@@ -191,13 +192,13 @@ test_contract_not_injected_for_non_full_loop() {
 
 test_contract_idempotent() {
 	local prompt
-	prompt=$(printf '/full-loop Implement issue #14964\n\n[HEADLESS_CONTINUATION_CONTRACT_V1]\nThis worker run is unattended.')
+	prompt=$(printf '/full-loop Implement issue #14964\n\n[HEADLESS_CONTINUATION_CONTRACT_V6]\nThis worker run is unattended.')
 	local result
 	result=$(_call_append_contract "1" "$prompt")
 
-	# Count occurrences of the contract marker
+	# Count occurrences of the contract marker (anchored on V\d+ to match any version)
 	local count
-	count=$(printf '%s' "$result" | grep -c "HEADLESS_CONTINUATION_CONTRACT_V1" || true)
+	count=$(printf '%s' "$result" | grep -c "HEADLESS_CONTINUATION_CONTRACT_V[0-9]" || true)
 
 	if [[ "$count" -eq 1 ]]; then
 		print_result "contract injection is idempotent (not duplicated)" 0
@@ -213,16 +214,16 @@ test_genuine_blockers_distinguished() {
 	local contract_text
 	contract_text=$(extract_contract_text)
 
-	# The contract should mention that genuine blockers (missing credentials, etc.)
-	# ARE valid — it should not say ALL blockers are invalid
-	if [[ "$contract_text" == *"genuine blocker"* ]] ||
-		[[ "$contract_text" == *"persists after escalation"* ]]; then
+	# The V6 contract distinguishes genuine blockers (missing permission,
+	# explicit policy gate) from invalid ones. Check for the actual V6 phrasing.
+	if [[ "$contract_text" == *"missing permission"* ]] &&
+		[[ "$contract_text" == *"explicit policy gate"* ]]; then
 		print_result "contract distinguishes genuine blockers from invalid ones" 0
 		return 0
 	fi
 
 	print_result "contract distinguishes genuine blockers from invalid ones" 1 \
-		"Expected contract to mention genuine blockers; got: $(printf '%s' "$contract_text" | tail -5)"
+		"Expected contract to mention 'missing permission' and 'explicit policy gate'; got: $(printf '%s' "$contract_text" | tail -5)"
 	return 0
 }
 
@@ -231,7 +232,7 @@ test_contract_injected_for_full_loop() {
 	local result
 	result=$(_call_append_contract "1" "$prompt")
 
-	if [[ "$result" == *"HEADLESS_CONTINUATION_CONTRACT_V1"* ]]; then
+	if [[ "$result" == *"HEADLESS_CONTINUATION_CONTRACT_V6"* ]]; then
 		print_result "contract injected for /full-loop prompts" 0
 		return 0
 	fi
@@ -245,6 +246,11 @@ main() {
 	[[ -f "$HEADLESS_HELPER" ]] || {
 		printf '%bFAIL%b headless-runtime-helper.sh not found at %s\n' \
 			"$TEST_RED" "$TEST_RESET" "$HEADLESS_HELPER"
+		exit 1
+	}
+	[[ -f "$HEADLESS_LIB" ]] || {
+		printf '%bFAIL%b headless-runtime-lib.sh not found at %s\n' \
+			"$TEST_RED" "$TEST_RESET" "$HEADLESS_LIB"
 		exit 1
 	}
 
