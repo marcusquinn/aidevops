@@ -462,7 +462,12 @@ jobs:
         with:
           ref: main
           fetch-depth: 1
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # t2048: prefer SYNC_PAT (fine-grained PAT scoped to this repo,
+          # Contents: Read and write) to bypass branch protection via
+          # enforce_admins:false. Falls back to GITHUB_TOKEN when the secret
+          # is unset, which routes to the t2029/t2034 loud-failure path.
+          # See todo/tasks/t2038-brief.md Decision section for rationale.
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Update TODO.md proof-log
         if: steps.extract.outputs.task_id != ''
@@ -476,10 +481,28 @@ jobs:
           # branch correctly but the comment never landed because gh ran
           # without GH_TOKEN and printed nothing visible (gh's silent failure
           # mode on missing auth).
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # t2048: prefer SYNC_PAT for the push so branch protection bypass
+          # works via enforce_admins:false. Still falls back to GITHUB_TOKEN
+          # for the gh CLI call even when SYNC_PAT is unset — the PR comment
+          # is always useful to post regardless of which token did the push.
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          # t2048: expose secret presence as a boolean-ish env var. GitHub
+          # hides secret values from logs, but ${{ secrets.SYNC_PAT != '' }}
+          # evaluates to 'true' or 'false' at workflow-compile time and is
+          # safe to log.
+          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+
+          # t2048: log which credential path is active so operators can tell
+          # at a glance whether the PAT is wired up. This is the single clear
+          # signal that tells "did the PAT swap land?" without spelunking.
+          if [[ -n "${SYNC_PAT_PRESENT:-}" ]]; then
+            echo "::notice::Using SYNC_PAT for push (t2048 path)"
+          else
+            echo "::notice::Using GITHUB_TOKEN for push (pre-t2048 fallback — push will be rejected by branch protection)"
+          fi
 
           TODAY=$(date +%Y-%m-%d)
           PROOF="pr:#${PR_NUMBER} completed:${TODAY}"
