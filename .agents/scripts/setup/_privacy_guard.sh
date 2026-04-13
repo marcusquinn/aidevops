@@ -16,7 +16,7 @@
 #######################################
 _load_privacy_guard_installer() {
 	local installer_path
-	installer_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../install-privacy-guard.sh"
+	installer_path="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../install-privacy-guard.sh"
 	if [[ ! -f "$installer_path" ]]; then
 		print_warning "install-privacy-guard.sh not found at: $installer_path"
 		return 1
@@ -78,16 +78,21 @@ setup_privacy_guard() {
 			skip=$((skip + 1))
 			continue
 		fi
-		result=$(cd "$path" && bash "$installer_path" install 2>&1 </dev/null || true)
-		if [[ "$result" == *"installed privacy guard"* ]]; then
+		result=$(cd -- "$path" && bash "$installer_path" install 2>&1 </dev/null || true)
+		case "$result" in
+		*"installed privacy guard"*)
 			ok=$((ok + 1))
-		elif [[ "$result" == *"already installed"* ]]; then
+			;;
+		*"already installed"*)
 			already=$((already + 1))
-		elif [[ "$result" == *"Refusing to overwrite"* || "$result" == *"NOT managed"* ]]; then
+			;;
+		*"Refusing to overwrite"* | *"NOT managed"*)
 			conflict=$((conflict + 1))
-		else
+			;;
+		*)
 			err=$((err + 1))
-		fi
+			;;
+		esac
 	done < <(jq -r '.initialized_repos[]? | select(.path != null) | .path' "$repos_config")
 
 	print_info "Privacy guard: ok=$ok already=$already conflict=$conflict skip=$skip err=$err"
