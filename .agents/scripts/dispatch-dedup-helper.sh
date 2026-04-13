@@ -1021,9 +1021,24 @@ _has_active_claim() {
 #   $2 = repo slug (owner/repo)
 #   $3 = (optional) current runner login — if assigned to self, not a dup
 # Returns:
-#   exit 0 if assigned to another login (do NOT dispatch)
+#   exit 0 if assigned to another login (do NOT dispatch), parent-task labeled,
+#          cost-budget exceeded, or guard cannot determine safety (GUARD_UNCERTAIN)
 #   exit 1 if unassigned or assigned only to self (safe to dispatch)
-# Outputs: assignee info on stdout if assigned to another login
+# Outputs: one of the following signals on stdout when blocking:
+#   PARENT_TASK_BLOCKED (label=<name>) — unconditional parent-task block
+#   COST_BUDGET_EXCEEDED (...)         — token spend circuit breaker
+#   GUARD_UNCERTAIN (reason=...)       — internal error, cannot determine safety
+#   <assignee info>                    — active claim by another runner
+#
+# FAIL-CLOSED CONTRACT (t2046):
+#   When the guard cannot determine whether dispatch is safe due to an internal
+#   error (gh API failure, jq error, helper failure), the function MUST block
+#   dispatch and emit GUARD_UNCERTAIN. This is intentionally conservative:
+#   a transient block clears in the next pulse cycle at zero cost; a wasted
+#   worker dispatch burns ~20K tokens for zero output (GH#18458 incident).
+#   The previous default (fail-open) allowed three workers to be dispatched
+#   to a parent-task issue because a jq null-handling bug silently fell through
+#   to the "allow dispatch" code path (see plan in todo/plans/parent-task-incident-hardening.md).
 #######################################
 is_assigned() {
 	local issue_number="$1"
@@ -1040,12 +1055,18 @@ is_assigned() {
 		return 1
 	fi
 
-	local issue_meta_json
+	local issue_meta_json gh_rc=0
 	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json state,assignees,labels 2>/dev/null) || issue_meta_json=""
+		--json state,assignees,labels 2>/dev/null) || gh_rc=$?
 
-	if [[ -z "$issue_meta_json" ]]; then
-		return 1
+	# t2046: fail-closed on gh API failure. When we cannot fetch issue metadata
+	# (network error, auth failure, rate limit, issue not found), we cannot
+	# determine whether dispatch is safe. Block and emit GUARD_UNCERTAIN so the
+	# pulse skips this cycle rather than dispatching blindly.
+	if [[ "$gh_rc" -ne 0 || -z "$issue_meta_json" ]]; then
+		printf 'GUARD_UNCERTAIN (reason=gh-api-failure issue=%s repo=%s rc=%s)\n' \
+			"$issue_number" "$repo_slug" "$gh_rc"
+		return 0
 	fi
 
 	# t1986: parent-task / meta label is an unconditional dispatch block.

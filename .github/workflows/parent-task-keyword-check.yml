@@ -1,0 +1,70 @@
+name: Parent-Task Keyword Check
+
+# Belt-and-braces guard for the parent-task PR keyword rule (t2046).
+#
+# Prevents PRs from using Resolves/Closes/Fixes on parent-task-labeled issues,
+# which would auto-close the parent tracker on merge (incident: PR #18581).
+#
+# Client-side enforcement: full-loop-helper.sh commit-and-pr (--strict mode).
+# This workflow catches PRs created via the GitHub web UI, external contributors,
+# or any path that bypasses the client-side helper.
+#
+# Exit behavior:
+#   PASS — no closing keywords reference a parent-task issue
+#   FAIL — closing keyword would auto-close a parent-task issue
+#
+# To allow a PR to intentionally close a parent (final-phase PR), a maintainer
+# can set the `allow-parent-close` label on the PR, which skips the check.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, ready_for_review]
+
+jobs:
+  parent-task-keyword-check:
+    name: Parent-Task Keyword Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: parent-task-keyword-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      pull-requests: read
+      issues: read
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Check PR body for parent-task closing keywords
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          # Check if the PR has the allow-parent-close label (maintainer opt-out)
+          if echo "$PR_LABELS" | grep -q '"allow-parent-close"'; then
+            echo "allow-parent-close label present — skipping check"
+            exit 0
+          fi
+
+          echo "Checking PR #${PR_NUMBER} for parent-task closing keywords..."
+
+          # Run the guard in strict mode. The script is checked out from the PR head.
+          chmod +x .agents/scripts/parent-task-keyword-guard.sh
+          if ! .agents/scripts/parent-task-keyword-guard.sh check-pr "${PR_NUMBER}" \
+              --repo "${REPO}" \
+              --strict; then
+            echo ""
+            echo "FAIL: PR body uses a closing keyword (Closes/Resolves/Fixes) that would"
+            echo "      auto-close a parent-task issue on merge."
+            echo ""
+            echo "Fix: Change the closing keyword to 'For #NNN' or 'Ref #NNN'."
+            echo "     The parent issue must stay open until ALL phase children merge."
+            echo "     Only the final-phase PR should use 'Closes #NNN'."
+            exit 1
+          fi
+
+          echo "PASS: No parent-task keyword violations found."
