@@ -592,6 +592,20 @@ recover_failed_launch_state() {
 	# for crash-type-aware escalation (overwhelmed = immediate, no_work = default)
 	fast_fail_record "$issue_number" "$repo_slug" "$failure_reason" "anthropic" "$crash_type" || true
 
+	# t1959: Wire global circuit breaker for launch-class failures only.
+	# Stale timeouts and in-execution failures have their own per-issue backoff
+	# and should not trip a global halt. Only true launch failures signal
+	# systemic runtime breakage. Recovery happens via record-success on PR merge
+	# or issue close (already wired in supervisor) — NEVER reset on launch success.
+	case "$failure_reason" in
+	no_worker_process | cli_usage_output)
+		local cb_helper="${SCRIPT_DIR}/circuit-breaker-helper.sh"
+		if [[ -x "$cb_helper" ]]; then
+			"$cb_helper" record-failure "${repo_slug}#${issue_number}" "$failure_reason" >/dev/null 2>&1 || true
+		fi
+		;;
+	esac
+
 	echo "[pulse-wrapper] Launch recovery reset #${issue_number} (${repo_slug}) after ${failure_reason} crash_type=${crash_type:-unclassified}: removed self assignee + status:queued" >>"$LOGFILE"
 	return 0
 }
