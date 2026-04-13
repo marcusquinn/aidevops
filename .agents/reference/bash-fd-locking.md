@@ -8,13 +8,9 @@ layer (FD 9) was removed in GH#18668 after four recurring deadlock incidents.
 ## Background
 
 `pulse-instance-lock.sh` uses `mkdir "$LOCKDIR"` as the primary atomic lock
-primitive. Because mkdir is POSIX-guaranteed atomic on all local filesystems
-(APFS, HFS+, ext4, btrfs, xfs), it provides sufficient mutual exclusion without
-additional layers.
-
-A supplementary `flock` on a lock file (FD 9) was added in GH#4513 as a
-"belt-and-suspenders" guard for Linux. It was intended as defence-in-depth,
-not as the primary primitive.
+primitive (POSIX-guaranteed atomic on APFS, HFS+, ext4, btrfs, xfs). A
+supplementary `flock` on FD 9 was added in GH#4513 as a Linux
+"belt-and-suspenders" guard — defence-in-depth, not the primary primitive.
 
 ## The recurring problem: FD inheritance
 
@@ -28,7 +24,7 @@ opens `exec 9>"$LOCKFILE"` in the parent bash process, FD 9 is inherited by
 - all backgrounded workers
 
 Any of these can daemonise (reparent to PID 1), permanently holding the flock
-after the pulse exits. The next pulse cycle is then deadlocked indefinitely.
+and deadlocking the next pulse cycle.
 
 ## Four failed fix attempts
 
