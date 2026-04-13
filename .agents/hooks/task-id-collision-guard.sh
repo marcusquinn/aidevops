@@ -100,25 +100,6 @@ _find_merge_base() {
 }
 
 # ---------------------------------------------------------------------------
-# Check if a given issue title (from gh) references the t-ID.
-# Returns 0 if it does, 1 if not.
-# ---------------------------------------------------------------------------
-_issue_title_contains_tid() {
-	local tid="${1:-}"
-	local issue_number="${2:-}"
-	if [[ -z "$tid" || -z "$issue_number" ]]; then
-		return 1
-	fi
-	local title
-	title=$(gh issue view "$issue_number" --json title --jq '.title' 2>/dev/null) || return 1
-	_debug "Issue #${issue_number} title: $title"
-	if printf '%s' "$title" | grep -qE "(^|[^0-9])${tid}([^0-9]|$)"; then
-		return 0
-	fi
-	return 1
-}
-
-# ---------------------------------------------------------------------------
 # Extract all tNNN references from text.
 # Outputs one per line.
 # ---------------------------------------------------------------------------
@@ -215,16 +196,44 @@ _check_message() {
 		# The ID is beyond the current counter. Check if any linked issue title
 		# contains this t-ID (cross-reference confirmation).
 		local confirmed=0
-		if [[ -n "$closing_issues" ]]; then
-			local iss_num
-			while IFS= read -r iss_num; do
-				[[ -z "$iss_num" ]] && continue
-				if _issue_title_contains_tid "$tid" "$iss_num"; then
-					_debug "$tid confirmed via linked issue #${iss_num}"
-					confirmed=1
-					break
-				fi
-			done <<<"$closing_issues"
+
+		if [[ -z "$closing_issues" ]]; then
+			# No closing issues — cannot possibly cross-reference. Reject.
+			_debug "$tid: no closing issues — marking as violation"
+			violations="${violations}  ${tid} — numeric ID ${num} > current counter ${counter}, and not confirmed via a linked issue title\n"
+			continue
+		fi
+
+		# Has closing issues. Need gh to verify — check availability first.
+		if ! command -v gh >/dev/null 2>&1; then
+			_warn "gh not available — fail-open (CI will validate on push)"
+			return 2
+		fi
+
+		local iss_num
+		local gh_had_error=0
+		while IFS= read -r iss_num; do
+			[[ -z "$iss_num" ]] && continue
+			local title
+			title=$(gh issue view "$iss_num" --json title --jq '.title' 2>/dev/null)
+			local gh_rc=$?
+			if [[ "$gh_rc" -ne 0 || -z "$title" ]]; then
+				_debug "gh issue view #${iss_num} failed (rc=${gh_rc}) — marking gh_had_error"
+				gh_had_error=1
+				continue
+			fi
+			_debug "Issue #${iss_num} title: $title"
+			if printf '%s' "$title" | grep -qE "(^|[^0-9])${tid}([^0-9]|$)"; then
+				_debug "$tid confirmed via linked issue #${iss_num}"
+				confirmed=1
+				break
+			fi
+		done <<<"$closing_issues"
+
+		# If all gh calls failed (offline, unauthenticated, API error) → fail-open
+		if [[ "$gh_had_error" -eq 1 && "$confirmed" -eq 0 ]]; then
+			_warn "gh API error during cross-reference check — fail-open (CI will validate on push)"
+			return 2
 		fi
 
 		if [[ "$confirmed" -eq 0 ]]; then

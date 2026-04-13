@@ -176,51 +176,23 @@ test_allows_no_tids() {
 }
 
 # ---------------------------------------------------------------------------
-# Case 4: Allow — fail-open when gh CLI unavailable (offline)
+# Case 4: Allow — fail-open when gh API fails (closing issue present, gh errors)
+# This validates acceptance criterion: "fail-safe on gh API failure or offline state"
 # ---------------------------------------------------------------------------
 test_failopen_on_gh_failure() {
-	local name="case-4: fail-open when .task-counter unreadable"
-	# Use an empty counter value — guard should warn and allow
-	local msg="feat(foo): bar (t99999)"
-	local tmpdir
-	tmpdir=$(mktemp -d)
-	# shellcheck disable=SC2064
-	trap "rm -rf '$tmpdir'" RETURN
-
-	# Create a repo with NO .task-counter file at the merge base
-	local base_repo="${tmpdir}/base"
-	mkdir -p "$base_repo"
-	git -C "$base_repo" init -q
-	git -C "$base_repo" config user.email "test@test.local"
-	git -C "$base_repo" config user.name "Test"
-	git -C "$base_repo" config commit.gpgsign false
-	printf 'placeholder' >"${base_repo}/README.md"
-	git -C "$base_repo" add README.md
-	git -C "$base_repo" commit -q -m "init"
-
-	local work_repo="${tmpdir}/work"
-	git clone -q "$base_repo" "$work_repo" 2>/dev/null
-	git -C "$work_repo" config user.email "test@test.local"
-	git -C "$work_repo" config user.name "Test"
-	git -C "$work_repo" config commit.gpgsign false
-
-	printf 'change' >"${work_repo}/change.txt"
-	git -C "$work_repo" add change.txt
-	git -C "$work_repo" commit -q -m "wip"
-
-	local msg_file="${tmpdir}/COMMIT_EDITMSG"
-	printf '%s' "$msg" >"$msg_file"
-
+	local name="case-4: fail-open when gh API fails with closing issue present"
+	# Message has t99999 (> counter) AND a Resolves footer, but gh fails
+	local msg
+	msg=$(printf 'feat(foo): invented id (t99999)\n\nResolves #123\n')
 	local rc
-	GIT_DIR="${work_repo}/.git" \
-		bash "$GUARD" "$msg_file" 2>/dev/null
+	# Pass gh_available=no — stubs gh to exit 1 (API/offline failure)
+	_run_with_counter "$msg" "100" "no"
 	rc=$?
-
-	# Fail-open = exit 0
+	# Fail-open = exit 0 (guard cannot verify cross-ref, CI will catch on push)
 	if [[ "$rc" -eq 0 ]]; then
 		pass "$name"
 	else
-		fail "$name" "expected exit 0 (fail-open), got $rc"
+		fail "$name" "expected exit 0 (fail-open on gh failure), got $rc"
 	fi
 	return 0
 }
