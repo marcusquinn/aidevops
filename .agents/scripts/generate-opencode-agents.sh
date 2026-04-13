@@ -196,6 +196,25 @@ generate_subagent_stub() {
 	*) ;; # No extra tools for other agents
 	esac
 
+	# GH#18509: If source frontmatter explicitly sets bash: false, the agent is
+	# security-sandboxed or has its own tool restrictions. Copy source verbatim
+	# (with model-name normalisation) instead of writing a permissive stub.
+	local src_bash_false
+	src_bash_false=$(awk '
+		/^---$/ { fm_delim++; next }
+		fm_delim == 1 && /bash:[[:space:]]*false/ { print; exit }
+		fm_delim == 2 { exit }
+	' "$f" 2>/dev/null)
+	if [[ -n "$src_bash_false" ]]; then
+		sed \
+			-e 's/^model: opus$/model: anthropic\/claude-opus-4-6/' \
+			-e 's/^model: sonnet$/model: anthropic\/claude-sonnet-4-6/' \
+			-e 's/^model: haiku$/model: anthropic\/claude-haiku-4-5/' \
+			"$f" >"$OPENCODE_AGENT_DIR/$name.md"
+		echo 1
+		return 0
+	fi
+
 	# GH#3601: Use printf to write stub content — avoids unquoted heredoc expansion.
 	# src_desc and rel_path come from filesystem (frontmatter sed extraction / path
 	# stripping) and could contain shell metacharacters that would execute inside

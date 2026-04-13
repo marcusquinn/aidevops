@@ -256,6 +256,29 @@ _write_subagent_stub() {
 
 	local rel_path="${f#"$AGENTS_DIR"/}"
 
+	# GH#18509: If source frontmatter explicitly sets bash: false, the agent is
+	# security-sandboxed or has its own tool restrictions. Copy source verbatim
+	# (with model-name normalisation) instead of writing a permissive stub that
+	# grants bash:true and external_directory:allow — those would override the
+	# source's intent and become an attack surface for prompt-injected content.
+	local src_bash_false
+	src_bash_false=$(awk '
+		/^---$/ { fm_delim++; next }
+		fm_delim == 1 && /bash:[[:space:]]*false/ { print; exit }
+		fm_delim == 2 { exit }
+	' "$f" 2>/dev/null)
+	if [[ -n "$src_bash_false" ]]; then
+		# Deploy source verbatim, normalising short model aliases to full provider/model IDs
+		# (mirrors the mapping in opencode-agent-discovery.py)
+		sed \
+			-e 's/^model: opus$/model: anthropic\/claude-opus-4-6/' \
+			-e 's/^model: sonnet$/model: anthropic\/claude-sonnet-4-6/' \
+			-e 's/^model: haiku$/model: anthropic\/claude-haiku-4-5/' \
+			"$f" >"$agent_dir/$name.md"
+		echo 1
+		return 0
+	fi
+
 	# Extract description from source file frontmatter
 	local src_desc
 	src_desc=$(sed -n '/^---$/,/^---$/{ /^description:/{s/^description: *//p; q} }' "$f" 2>/dev/null)
