@@ -21,6 +21,133 @@
 _PULSE_ANCILLARY_DISPATCH_LOADED=1
 
 #######################################
+# Ensure the triage-failed label exists in the target repo.
+#
+# Uses gh label create --force (idempotent — creates if missing,
+# refreshes colour/description if present). This fixes t2016 where
+# the label was never provisioned in any repo and every
+# `gh issue edit --add-label "triage-failed"` call failed silently.
+#
+# Arguments:
+#   $1 - repo_slug (owner/repo)
+#######################################
+_ensure_triage_failed_label() {
+	local repo_slug="$1"
+	[[ -n "$repo_slug" ]] || return 0
+	gh label create "triage-failed" \
+		--repo "$repo_slug" \
+		--color "E11D21" \
+		--description "Automated triage could not produce a review — needs manual attention" \
+		--force >/dev/null 2>&1 || true
+	return 0
+}
+
+#######################################
+# Post a maintainer-visible escalation comment when automated triage
+# has exhausted its retry budget.
+#
+# Idempotent via the `<!-- triage-escalation -->` HTML marker — if a
+# comment containing the marker already exists, this is a no-op.
+# This closes the observability gap identified in t2016 where the
+# content-hash cache was written after N failures, silently locking
+# the issue out of triage with no visible signal to maintainers.
+#
+# Arguments:
+#   $1 - issue_num
+#   $2 - repo_slug
+#   $3 - failure_reason (short machine-readable tag)
+#   $4 - attempts (integer count of retries used)
+#   $5 - last_output_chars (integer)
+#
+# Returns 0 on success or when the marker already exists; non-zero
+# is reserved for unexpected gh failures (best-effort — the caller
+# should not block on this).
+#######################################
+_post_triage_escalation_comment() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local failure_reason="${3:-unknown}"
+	local attempts="${4:-0}"
+	local last_output_chars="${5:-0}"
+
+	[[ -n "$issue_num" && -n "$repo_slug" ]] || return 0
+
+	# Idempotency guard — scan existing comments for our marker.
+	local existing=""
+	existing=$(gh api "repos/${repo_slug}/issues/${issue_num}/comments" \
+		--jq '[.[] | select(.body | contains("<!-- triage-escalation -->"))] | length' \
+		2>/dev/null) || existing=""
+	if [[ "$existing" =~ ^[0-9]+$ && "$existing" -gt 0 ]]; then
+		echo "[pulse-wrapper] triage escalation comment already present on #${issue_num} in ${repo_slug} — skipping (idempotent)" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Map failure_reason → human-readable explanation.
+	local reason_human="${failure_reason}"
+	case "$failure_reason" in
+	no-review-header)
+		reason_human="Worker produced output but it did not contain a \`## Review\` header (safety filter suppressed the post)."
+		;;
+	raw-sandbox-output)
+		reason_human="Worker output contained infrastructure/sandbox markers (log lines, exec metadata). Suppressed to prevent leaking internal paths."
+		;;
+	no-usable-output)
+		reason_human="Worker returned no usable output (empty or <50 chars)."
+		;;
+	infra-markers-after-extraction)
+		reason_human="Extracted review block still contained infrastructure markers — suppressed as a belt-and-suspenders safety check."
+		;;
+	esac
+
+	# Compose signature footer via the canonical helper.
+	local footer=""
+	if [[ -x "$HOME/.aidevops/agents/scripts/gh-signature-helper.sh" ]]; then
+		footer=$("$HOME/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
+			--model "pulse-triage" \
+			--issue "${repo_slug}#${issue_num}" 2>/dev/null) || footer=""
+	fi
+
+	local body_file=""
+	body_file=$(mktemp)
+	cat >"$body_file" <<ESCALATION_EOF
+<!-- triage-escalation -->
+## Automated triage could not produce a review
+
+The pulse attempted to post an automated triage review on this issue **${attempts}** time(s) but every attempt was suppressed by the safety filter. The content-hash cache has now been written to stop the lock/unlock churn, which means **this issue will no longer appear in the automated triage queue** until its body or comments change.
+
+### What went wrong
+
+- **Reason:** ${reason_human}
+- **Last attempt output size:** ${last_output_chars} chars
+- **Failure tag:** \`${failure_reason}\`
+
+### What a maintainer should do
+
+1. **Review manually** — run \`/review-issue-pr ${issue_num}\` in an interactive session, or open the issue and evaluate it by hand.
+2. **Force a retry** (optional) — delete the cache entry to let the next pulse cycle re-attempt:
+
+    \`\`\`bash
+    rm -f ~/.aidevops/.agent-workspace/tmp/triage-cache/$(echo "$repo_slug" | tr '/' '_')-${issue_num}.hash
+    gh issue edit ${issue_num} --repo ${repo_slug} --remove-label triage-failed
+    \`\`\`
+
+3. **Fix the worker** (if this keeps happening) — huge headerless outputs usually mean the triage-review agent prompt needs tightening. See \`.agents/workflows/triage-review.md\`.
+
+*This escalation was posted automatically by \`_post_triage_escalation_comment\` in \`pulse-ancillary-dispatch.sh\` (t2016) because the retry budget was exhausted without a visible review.*${footer:+
+
+}${footer:-}
+ESCALATION_EOF
+
+	if gh issue comment "$issue_num" --repo "$repo_slug" --body-file "$body_file" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Posted triage escalation comment on #${issue_num} in ${repo_slug} (reason: ${failure_reason}, attempts: ${attempts})" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] Failed to post triage escalation comment on #${issue_num} in ${repo_slug}" >>"$LOGFILE"
+	fi
+	rm -f "$body_file"
+	return 0
+}
+
+#######################################
 # Build the prefetch prompt for a triage review
 #
 # Fetches issue metadata and comments, runs dedup-cache and
@@ -181,6 +308,10 @@ _dispatch_triage_review_worker() {
 	rm -f "$review_output_file"
 
 	local triage_posted="false"
+	# t2016: Track WHY the post was suppressed so the escalation comment
+	# can surface an actionable reason instead of a buried log line.
+	local failure_reason=""
+	local output_chars="${#review_text}"
 
 	if [[ -n "$review_text" && ${#review_text} -gt 50 ]]; then
 		# ── Safety filter: NEVER post raw sandbox/infrastructure output ──
@@ -203,6 +334,7 @@ _dispatch_triage_review_worker() {
 			# Re-check extracted review for infra leaks (belt-and-suspenders)
 			if echo "$clean_review" | grep -qE '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper'; then
 				echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} contained infrastructure markers after extraction — suppressed" >>"$LOGFILE"
+				failure_reason="infra-markers-after-extraction"
 			else
 				gh issue comment "$issue_num" --repo "$repo_slug" \
 					--body "$clean_review" >/dev/null 2>&1 || true
@@ -212,22 +344,31 @@ _dispatch_triage_review_worker() {
 		elif [[ "$has_infra_markers" == "true" ]]; then
 			# No review header AND infra markers present — raw sandbox output, discard entirely
 			echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} was raw sandbox output — suppressed (${#review_text} chars)" >>"$LOGFILE"
+			failure_reason="raw-sandbox-output"
 		else
 			echo "[pulse-wrapper] Triage review for #${issue_num} had no review header (## *Review*) and no infra markers — suppressed to be safe (${#review_text} chars)" >>"$LOGFILE"
+			failure_reason="no-review-header"
 		fi
 	else
 		echo "[pulse-wrapper] Triage review for #${issue_num} produced no usable output (${#review_text} chars)" >>"$LOGFILE"
+		failure_reason="no-usable-output"
 	fi
 
 	# GH#17829: Surface triage failures visibly. Add label so maintainers
 	# can identify issues needing manual triage; remove on success.
+	# t2016: Ensure the label exists first (gh label create --force is
+	# idempotent) and only log "Added" when the add command succeeds.
 	if [[ "$triage_posted" == "true" ]]; then
 		gh issue edit "$issue_num" --repo "$repo_slug" \
 			--remove-label "triage-failed" >/dev/null 2>&1 || true
 	else
-		gh issue edit "$issue_num" --repo "$repo_slug" \
-			--add-label "triage-failed" >/dev/null 2>&1 || true
-		echo "[pulse-wrapper] Added triage-failed label to #${issue_num} in ${repo_slug}" >>"$LOGFILE"
+		_ensure_triage_failed_label "$repo_slug"
+		if gh issue edit "$issue_num" --repo "$repo_slug" \
+			--add-label "triage-failed" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Added triage-failed label to #${issue_num} in ${repo_slug}" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] FAILED to add triage-failed label to #${issue_num} in ${repo_slug} (gh issue edit returned non-zero)" >>"$LOGFILE"
+		fi
 	fi
 
 	# Unlock issue after triage
@@ -237,10 +378,17 @@ _dispatch_triage_review_worker() {
 	# GH#17827: If failures are persistent (>= TRIAGE_MAX_RETRIES on the
 	# same content hash), cache to break the infinite lock→agent→fail→unlock
 	# loop. The triage-failed label remains for maintainer visibility.
+	# t2016: When the retry cap is hit, post a structured escalation comment
+	# BEFORE writing the cache, so the maintainer has a visible signal
+	# instead of a silently-cached issue that disappears from triage forever.
 	if [[ "$triage_posted" == "true" ]]; then
 		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
 	elif _triage_increment_failure "$issue_num" "$repo_slug" "$content_hash"; then
 		echo "[pulse-wrapper] Triage retry cap reached for #${issue_num} in ${repo_slug} — caching hash to stop lock/unlock loop (GH#17827)" >>"$LOGFILE"
+		local cap_attempts="${TRIAGE_MAX_RETRIES:-1}"
+		_post_triage_escalation_comment \
+			"$issue_num" "$repo_slug" \
+			"$failure_reason" "$cap_attempts" "$output_chars"
 		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
 	else
 		echo "[pulse-wrapper] Skipping triage cache for #${issue_num} — review not posted, will retry on next cycle" >>"$LOGFILE"
