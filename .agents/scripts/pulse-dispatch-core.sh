@@ -871,12 +871,15 @@ _issue_targets_large_files() {
 				_created_issues="${_created_issues}#${_existing} (existing), "
 				continue
 			fi
-			# Create the simplification-debt issue now
-			local _new_num
-			_new_num=$(gh issue create --repo "$repo_slug" \
-				--title "simplification-debt: ${_lf_path} exceeds ${LARGE_FILE_LINE_THRESHOLD} lines" \
-				--label "simplification-debt,auto-dispatch,origin:worker" \
-				--body "## What
+			# Create the simplification-debt issue now.
+			# t2021: gh issue create does NOT support --json; capture the issue
+			# number by parsing the URL it prints to stdout on success. The
+			# `|| true` on the $() guards against gh non-zero exits (e.g. when
+			# label application fails but the issue still creates server-side —
+			# see issue-sync-helper.sh:441-464 for the same pattern + GH#15234
+			# context).
+			local _new_num _create_body _create_combined
+			_create_body="## What
 Simplify \`${_lf_path}\` — currently over ${LARGE_FILE_LINE_THRESHOLD} lines. Break into smaller, focused modules.
 
 ## Why
@@ -888,11 +891,23 @@ Issue #${issue_number} is blocked by the large-file gate. Workers dispatched aga
 - Keep a thin orchestrator in the original file that sources/imports the extracted modules
 - Verify: \`wc -l ${_lf_path}\` should be below ${LARGE_FILE_LINE_THRESHOLD}
 
-_Created by large-file simplification gate (pulse-wrapper.sh)_" \
-				--json number --jq '.number' 2>/dev/null) || _new_num=""
+_Created by large-file simplification gate (pulse-dispatch-core.sh)_"
+			_create_combined=$(gh issue create --repo "$repo_slug" \
+				--title "simplification-debt: ${_lf_path} exceeds ${LARGE_FILE_LINE_THRESHOLD} lines" \
+				--label "simplification-debt,auto-dispatch,origin:worker" \
+				--body "$_create_body" 2>&1) || true
+			_new_num=$(printf '%s' "$_create_combined" |
+				grep -oE 'https://github\.com/[^ ]+/issues/[0-9]+' |
+				head -1 |
+				grep -oE '[0-9]+$' || true)
 			if [[ -n "$_new_num" ]]; then
 				_created_issues="${_created_issues}#${_new_num} (new), "
 				echo "[pulse-wrapper] Created simplification-debt issue #${_new_num} for ${_lf_path} (blocking #${issue_number})" >>"$LOGFILE"
+			else
+				# Log the gh failure so the next cycle's operator can see why
+				# the gate "created" nothing. 200-char truncation matches
+				# issue-sync-helper.sh style.
+				echo "[pulse-wrapper] WARN: failed to create simplification-debt issue for ${_lf_path} (blocking #${issue_number}): ${_create_combined:0:200}" >>"$LOGFILE"
 			fi
 		done < <(printf '%b' "$large_file_paths")
 
