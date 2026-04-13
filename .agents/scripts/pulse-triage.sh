@@ -21,7 +21,12 @@
 #   - _reevaluate_simplification_labels
 #   - _consolidation_child_exists        (t1982)
 #   - _consolidation_substantive_comments (t1982)
+#   - _format_consolidation_comments_section (t1982)
+#   - _compose_consolidation_worker_instructions (t1982)
 #   - _compose_consolidation_child_body  (t1982)
+#   - _ensure_consolidation_labels       (t1982)
+#   - _create_consolidation_child_issue  (t1982)
+#   - _post_consolidation_dispatch_comment (t1982)
 #   - _dispatch_issue_consolidation
 #   - _backfill_stale_consolidation_labels (t1982)
 
@@ -511,29 +516,15 @@ _consolidation_substantive_comments() {
 }
 
 #######################################
-# t1982: Compose a self-contained consolidation-task child issue body.
+# t1982: Format substantive comments JSON into a readable Markdown section.
+# Returns formatted text to stdout. Called by _compose_consolidation_child_body.
 #
-# The worker reading this body must NOT need to read the parent — all
-# required content is inlined here. Includes:
-#   - Consolidation target marker (for dedup lookup)
-#   - Explicit worker instructions (gh commands)
-#   - Parent body verbatim
-#   - Substantive comments verbatim (author + timestamp headers)
-#   - Contributors cc line (@mentions)
-#
-# Args: parent_num repo_slug parent_title parent_body substantive_json authors_csv parent_labels
+# Args: $1=substantive_json
 #######################################
-_compose_consolidation_child_body() {
-	local parent_num="$1"
-	local repo_slug="$2"
-	local parent_title="$3"
-	local parent_body="$4"
-	local substantive_json="$5"
-	local authors_csv="$6"
-	local parent_labels="$7"
-
-	local comments_section
-	comments_section=$(printf '%s' "$substantive_json" | jq -r '
+_format_consolidation_comments_section() {
+	local substantive_json="$1"
+	local result
+	result=$(printf '%s' "$substantive_json" | jq -r '
 		if (. | length) == 0 then
 			"_No substantive comments captured — the filter excluded everything. If this seems wrong, inspect the filter in _consolidation_substantive_comments._"
 		else
@@ -542,21 +533,23 @@ _compose_consolidation_child_body() {
 				"\n\n" + .value.body + "\n"
 			) | join("\n---\n\n")
 		end
-	' 2>/dev/null) || comments_section="_Comment fetch failed._"
+	' 2>/dev/null) || result="_Comment fetch failed._"
+	printf '%s' "$result"
+	return 0
+}
 
-	local authors_line="${authors_csv:-_no substantive authors detected_}"
-	local parent_body_section="${parent_body:-_(parent body was empty)_}"
+#######################################
+# t1982: Compose the "What to do" instructions and "Constraints" sections
+# for the consolidation-task child body. Called by _compose_consolidation_child_body.
+#
+# Args: $1=parent_num $2=repo_slug $3=authors_line
+#######################################
+_compose_consolidation_worker_instructions() {
+	local parent_num="$1"
+	local repo_slug="$2"
+	local authors_line="$3"
 
 	cat <<EOF
-## Consolidation target: #${parent_num}
-
-**Parent issue:** #${parent_num} in \`${repo_slug}\`
-**Parent title:** ${parent_title}
-**Parent labels:** \`${parent_labels}\`
-
-> You do **NOT** need to read #${parent_num}. Everything required is inlined below.
-> Reading the parent wastes the token budget and is explicitly disallowed for this task.
-
 ## What to do
 
 1. **Read the parent body and substantive comments inlined below.** Identify:
@@ -611,6 +604,52 @@ gh issue close \$THIS_ISSUE --repo "${repo_slug}" --reason "completed"
 - **Preserve author attribution** for specific contributions: "per @user1: …".
 - **No PR is required.** This is an operational task. The completion signal is the new issue number + parent closure + self-close.
 - **Contributors to @-mention** on the new issue: ${authors_line}
+EOF
+}
+
+#######################################
+# t1982: Compose a self-contained consolidation-task child issue body.
+#
+# The worker reading this body must NOT need to read the parent — all
+# required content is inlined here. Includes:
+#   - Consolidation target marker (for dedup lookup)
+#   - Explicit worker instructions (gh commands)
+#   - Parent body verbatim
+#   - Substantive comments verbatim (author + timestamp headers)
+#   - Contributors cc line (@mentions)
+#
+# Args: parent_num repo_slug parent_title parent_body substantive_json authors_csv parent_labels
+#######################################
+_compose_consolidation_child_body() {
+	local parent_num="$1"
+	local repo_slug="$2"
+	local parent_title="$3"
+	local parent_body="$4"
+	local substantive_json="$5"
+	local authors_csv="$6"
+	local parent_labels="$7"
+
+	local comments_section
+	comments_section=$(_format_consolidation_comments_section "$substantive_json")
+
+	local authors_line="${authors_csv:-_no substantive authors detected_}"
+	local parent_body_section="${parent_body:-_(parent body was empty)_}"
+
+	local instructions_block
+	instructions_block=$(_compose_consolidation_worker_instructions \
+		"$parent_num" "$repo_slug" "$authors_line")
+
+	cat <<EOF
+## Consolidation target: #${parent_num}
+
+**Parent issue:** #${parent_num} in \`${repo_slug}\`
+**Parent title:** ${parent_title}
+**Parent labels:** \`${parent_labels}\`
+
+> You do **NOT** need to read #${parent_num}. Everything required is inlined below.
+> Reading the parent wastes the token budget and is explicitly disallowed for this task.
+
+${instructions_block}
 
 ## Parent body (verbatim)
 
@@ -624,6 +663,98 @@ ${comments_section}
 
 _Self-contained dispatch packet generated by \`_dispatch_issue_consolidation()\` in \`pulse-triage.sh\` (t1982). Everything above is sufficient — do not read #${parent_num}._
 EOF
+}
+
+#######################################
+# t1982: Ensure the three GitHub labels required for the consolidation
+# workflow exist on the given repo. Idempotent (uses --force).
+# Called by _dispatch_issue_consolidation.
+#
+# Args: $1=repo_slug
+#######################################
+_ensure_consolidation_labels() {
+	local repo_slug="$1"
+	gh label create "needs-consolidation" \
+		--repo "$repo_slug" \
+		--description "Issue held from dispatch pending comment consolidation" \
+		--color "FBCA04" --force 2>/dev/null || true
+	gh label create "consolidation-task" \
+		--repo "$repo_slug" \
+		--description "Operational task: merge parent issue body + comments into a consolidated child issue" \
+		--color "C5DEF5" --force 2>/dev/null || true
+	gh label create "consolidated" \
+		--repo "$repo_slug" \
+		--description "Issue superseded by a consolidated child" \
+		--color "0E8A16" --force 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# t1982: File the consolidation child issue via a temp body file (avoids
+# argv length limits on long parent bodies with many comments).
+# Prints the child issue number to stdout on success, empty on failure.
+# Called by _dispatch_issue_consolidation.
+#
+# Args: $1=repo_slug $2=issue_number $3=child_body
+#######################################
+_create_consolidation_child_issue() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local child_body="$3"
+
+	local body_file
+	body_file=$(mktemp -t consolidation-child.XXXXXX) || {
+		echo "[pulse-wrapper] ERROR: mktemp failed for consolidation child body (#${issue_number})" >>"$LOGFILE"
+		return 1
+	}
+	printf '%s\n' "$child_body" >"$body_file"
+
+	local child_url
+	child_url=$(gh issue create --repo "$repo_slug" \
+		--title "consolidation-task: merge thread on #${issue_number} into single spec" \
+		--label "consolidation-task,auto-dispatch,origin:worker,tier:standard" \
+		--body-file "$body_file" 2>/dev/null) || child_url=""
+	rm -f "$body_file"
+
+	# gh issue create prints the URL on success; extract the number.
+	if [[ -n "$child_url" ]]; then
+		printf '%s' "${child_url##*/}"
+	fi
+	return 0
+}
+
+#######################################
+# t1982: Flag parent issue with needs-consolidation label and post the
+# idempotent pointer comment linking to the newly created child issue.
+# Called by _dispatch_issue_consolidation after successful child creation.
+#
+# Args: $1=issue_number $2=repo_slug $3=child_num $4=authors_csv
+#######################################
+_post_consolidation_dispatch_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local child_num="$3"
+	local authors_csv="$4"
+
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "needs-consolidation" 2>/dev/null || true
+
+	local parent_comment_body="## Issue Consolidation Dispatched
+
+A consolidation task has been filed as **#${child_num}**. It contains the full body and substantive comments of this issue inline, plus instructions for a worker to produce a merged spec, file it as a new issue, @mention all contributors, and close this issue as superseded.
+
+**What happens next:**
+
+1. A worker picks up #${child_num} on the next pulse cycle
+2. It files a new consolidated issue with the merged spec
+3. It comments \"Superseded by #NNN\" here, applies the \`consolidated\` label, and closes this issue
+4. Contributors (${authors_csv:-_none detected_}) are @-mentioned on the new issue
+
+_Automated by \`_dispatch_issue_consolidation()\` in \`pulse-triage.sh\` (t1982)_"
+
+	_gh_idempotent_comment "$issue_number" "$repo_slug" \
+		"## Issue Consolidation Dispatched" "$parent_comment_body"
+	return 0
 }
 
 #######################################
@@ -644,18 +775,7 @@ _dispatch_issue_consolidation() {
 	local repo_path="$3"
 
 	# Ensure labels exist on this repo up front. Idempotent (--force).
-	gh label create "needs-consolidation" \
-		--repo "$repo_slug" \
-		--description "Issue held from dispatch pending comment consolidation" \
-		--color "FBCA04" --force 2>/dev/null || true
-	gh label create "consolidation-task" \
-		--repo "$repo_slug" \
-		--description "Operational task: merge parent issue body + comments into a consolidated child issue" \
-		--color "C5DEF5" --force 2>/dev/null || true
-	gh label create "consolidated" \
-		--repo "$repo_slug" \
-		--description "Issue superseded by a consolidated child" \
-		--color "0E8A16" --force 2>/dev/null || true
+	_ensure_consolidation_labels "$repo_slug"
 
 	# Dedup: if an open consolidation-task already references this parent,
 	# just ensure the parent is flagged and return. Do NOT create a duplicate.
@@ -692,25 +812,9 @@ _dispatch_issue_consolidation() {
 		"$issue_number" "$repo_slug" "$parent_title" "$parent_body" \
 		"$substantive_json" "$authors_csv" "$parent_labels")
 
-	# File the child via a temp body file (avoids argv length limits on
-	# long parent bodies with many comments).
-	local body_file
-	body_file=$(mktemp -t consolidation-child.XXXXXX) || {
-		echo "[pulse-wrapper] ERROR: mktemp failed for consolidation child body (#${issue_number})" >>"$LOGFILE"
-		return 1
-	}
-	printf '%s\n' "$child_body" >"$body_file"
-
+	# File the child issue via a temp body file.
 	local child_num
-	child_num=$(gh issue create --repo "$repo_slug" \
-		--title "consolidation-task: merge thread on #${issue_number} into single spec" \
-		--label "consolidation-task,auto-dispatch,origin:worker,tier:standard" \
-		--body-file "$body_file" 2>/dev/null) || child_num=""
-	# gh issue create prints the URL on success; extract the number.
-	if [[ -n "$child_num" ]]; then
-		child_num="${child_num##*/}"
-	fi
-	rm -f "$body_file"
+	child_num=$(_create_consolidation_child_issue "$repo_slug" "$issue_number" "$child_body")
 
 	if [[ -z "$child_num" || ! "$child_num" =~ ^[0-9]+$ ]]; then
 		echo "[pulse-wrapper] ERROR: consolidation child creation FAILED for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
@@ -721,25 +825,7 @@ _dispatch_issue_consolidation() {
 	fi
 
 	# Flag parent and post the idempotent pointer comment.
-	gh issue edit "$issue_number" --repo "$repo_slug" \
-		--add-label "needs-consolidation" 2>/dev/null || true
-
-	local parent_comment_body="## Issue Consolidation Dispatched
-
-A consolidation task has been filed as **#${child_num}**. It contains the full body and substantive comments of this issue inline, plus instructions for a worker to produce a merged spec, file it as a new issue, @mention all contributors, and close this issue as superseded.
-
-**What happens next:**
-
-1. A worker picks up #${child_num} on the next pulse cycle
-2. It files a new consolidated issue with the merged spec
-3. It comments \"Superseded by #NNN\" here, applies the \`consolidated\` label, and closes this issue
-4. Contributors (${authors_csv:-_none detected_}) are @-mentioned on the new issue
-
-_Automated by \`_dispatch_issue_consolidation()\` in \`pulse-triage.sh\` (t1982)_"
-
-	_gh_idempotent_comment "$issue_number" "$repo_slug" \
-		"## Issue Consolidation Dispatched" "$parent_comment_body"
-
+	_post_consolidation_dispatch_comment "$issue_number" "$repo_slug" "$child_num" "$authors_csv"
 	echo "[pulse-wrapper] Consolidation: flagged #${issue_number} in ${repo_slug}, dispatched child #${child_num}" >>"$LOGFILE"
 	return 0
 }
