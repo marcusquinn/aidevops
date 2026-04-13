@@ -529,9 +529,12 @@ merge_ready_prs_all_repos() {
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$REPOS_JSON" 2>/dev/null)
 
 	echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}" >>"$LOGFILE"
-	# Accumulate into per-cycle health counters (GH#15107)
-	_PULSE_HEALTH_PRS_MERGED=$((_PULSE_HEALTH_PRS_MERGED + total_merged))
-	_PULSE_HEALTH_PRS_CLOSED_CONFLICTING=$((_PULSE_HEALTH_PRS_CLOSED_CONFLICTING + total_closed))
+	# Write health counter deltas to a temp file (GH#18571, GH#15107).
+	# run_stage_with_timeout backgrounds this function in a subshell, so
+	# direct updates to _PULSE_HEALTH_* variables are lost on return.
+	# The parent process reads this file after the stage completes.
+	local _health_delta_file="${TMPDIR:-/tmp}/pulse-health-merge-$$.tmp"
+	printf '%s %s\n' "$total_merged" "$total_closed" >"$_health_delta_file" || true
 	return 0
 }
 
@@ -775,7 +778,8 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 		if [[ -n "$linked_issue" ]]; then
 			_merge_issue_ref="${repo_slug}#${linked_issue}"
 		fi
-		_merge_sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
+		local _sig_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/gh-signature-helper.sh"
+		_merge_sig_footer=$("$_sig_helper" footer \
 			--body "$closing_comment" --no-session --tokens 0 \
 			--time "$_merge_elapsed" --session-type routine \
 			${_merge_issue_ref:+--issue "$_merge_issue_ref"} --solved 2>/dev/null || true)
@@ -984,7 +988,7 @@ _close_conflicting_pr() {
 		# squash-merge "(#NNN)" suffix.
 		local commit_subjects
 		commit_subjects=$(gh api "repos/${repo_slug}/commits" \
-			--method GET -f sha=main -f per_page=50 \
+			--method GET -f per_page=50 \
 			--jq '.[] | .commit.message | split("\n")[0]' \
 			2>/dev/null) || commit_subjects=""
 
