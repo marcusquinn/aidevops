@@ -7289,15 +7289,21 @@
       "passes": 1
     },
     ".agents/scripts/pulse-triage.sh": {
-      "hash": "0ce631b6713fa593171397169b624dfc6ac3be53",
-      "at": "2026-04-13T17:44:12Z",
+      "hash": "2a06083562d2a8110b40d80dbaacb4c3704538af",
+      "at": "2026-04-13T18:32:08Z",
       "pr": 18655,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/pulse-simplification.sh": {
       "hash": "3ebcc6b4610761efacbc1d0f23ca240200087c55",
       "at": "2026-04-13T17:44:12Z",
       "pr": 18653,
+      "passes": 1
+    },
+    ".agents/scripts/tests/test-consolidation-dispatch.sh": {
+      "hash": "ac194cd3d61e5fb85f61c4041b46e4c460c5f389",
+      "at": "2026-04-13T18:32:08Z",
+      "pr": 18679,
       "passes": 1
     }
   },
