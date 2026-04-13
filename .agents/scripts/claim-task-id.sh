@@ -632,8 +632,8 @@ _try_issue_sync_delegation() {
 	local repo_path="$2"
 
 	# Extract task ID from title (format: "tNNN: description")
-	local task_id
-	task_id=$(printf '%s' "$title" | grep -oE '^t[0-9]+' || echo "")
+	local task_id=""
+	[[ "$title" =~ ^(t[0-9]+) ]] && task_id="${BASH_REMATCH[1]}"
 
 	local issue_sync_helper="${SCRIPT_DIR}/issue-sync-helper.sh"
 	if [[ -z "$task_id" || ! -x "$issue_sync_helper" || ! -f "$repo_path/TODO.md" ]]; then
@@ -675,8 +675,8 @@ _check_duplicate_issue() {
 	fi
 
 	# Extract task ID prefix (e.g. "t1968" from "t1968: ...")
-	local task_id_prefix
-	task_id_prefix=$(printf '%s' "$title" | grep -oE '^t[0-9]+' || echo "")
+	local task_id_prefix=""
+	[[ "$title" =~ ^(t[0-9]+) ]] && task_id_prefix="${BASH_REMATCH[1]}"
 	if [[ -z "$task_id_prefix" ]]; then
 		# No tNNN prefix to match against — fall back to old behaviour
 		# but ONLY if search_terms is substantial enough to be safe.
@@ -688,8 +688,8 @@ _check_duplicate_issue() {
 		local existing_issue
 		existing_issue=$(gh issue list --repo "$repo_slug" \
 			--state open --search "\"$search_terms\"" \
-			--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
-		if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
+			--json number --limit 1 -q '.[0].number // empty' 2>/dev/null || echo "")
+		if [[ -n "$existing_issue" ]]; then
 			log_info "Found existing OPEN issue #$existing_issue matching title, skipping duplicate creation"
 			echo "$existing_issue"
 			return 0
@@ -697,14 +697,17 @@ _check_duplicate_issue() {
 		return 1
 	fi
 
-	# Exact tNNN: prefix match, case-sensitive
+	# Exact tNNN: prefix match, case-sensitive; use jq --arg to avoid embedding
+	# the variable in the filter string (defense-in-depth, GH#18550)
 	local existing_issue
 	existing_issue=$(gh issue list --repo "$repo_slug" \
 		--state open --search "${task_id_prefix}: in:title" \
-		--json number,title --limit 10 \
-		-q ".[] | select(.title | startswith(\"${task_id_prefix}: \")) | .number" 2>/dev/null | head -1)
+		--json number,title --limit 10 2>/dev/null |
+		jq -r --arg prefix "${task_id_prefix}: " \
+			'.[] | select(.title | startswith($prefix)) | .number // empty' |
+		head -1)
 
-	if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
+	if [[ -n "$existing_issue" ]]; then
 		log_info "Found existing OPEN issue #$existing_issue with exact ${task_id_prefix} prefix, skipping duplicate creation"
 		echo "$existing_issue"
 		return 0
@@ -749,8 +752,8 @@ _compose_issue_body() {
 		body="$description"
 	else
 		# t1906: Try reading the brief file's What section before falling back to stub
-		local task_id
-		task_id=$(printf '%s' "$title" | grep -oE '^t[0-9]+' || echo "")
+		local task_id=""
+		[[ "$title" =~ ^(t[0-9]+) ]] && task_id="${BASH_REMATCH[1]}"
 		local brief_what=""
 		if [[ -n "$task_id" ]]; then
 			brief_what=$(_read_brief_what_section "$task_id" "$REPO_PATH") || true
