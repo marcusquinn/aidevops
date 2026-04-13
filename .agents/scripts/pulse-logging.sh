@@ -202,7 +202,7 @@ append_cycle_index() {
 #######################################
 # Write pulse-health.json — structured status snapshot for instant diagnosis.
 #
-# Fields (GH#15107, GH#18141):
+# Fields (GH#15107):
 #   workers_active          — current live worker count
 #   workers_max             — configured max worker slots
 #   prs_merged_this_cycle   — PRs squash-merged by deterministic merge pass
@@ -211,11 +211,10 @@ append_cycle_index() {
 #   prefetch_errors         — prefetch_state failures this cycle
 #   stalled_workers_killed  — stalled workers killed by cleanup_stalled_workers
 #   models_backed_off       — active backoff entries in provider_backoff DB
-#   deadlock_detected       — true if flock held by non-pulse process this cycle
-#   deadlock_holder_pid     — PID of the process holding the flock (if deadlock)
-#   deadlock_holder_cmd     — command line of the holder (truncated to 120 chars)
-#   deadlock_bounces        — consecutive flock bounce count at time of detection
-#   deadlock_recovered      — true if inode recreation self-recovery succeeded
+#
+# Historical note (GH#18668): the deadlock_* fields were removed along with
+# the flock layer they reported on. The lock is now mkdir-only and cannot
+# deadlock in the way flock FD inheritance did. See reference/bash-fd-locking.md.
 #
 # Atomic write: write to tmp file then mv to avoid partial reads.
 # Non-fatal: any failure is logged and silently ignored.
@@ -253,15 +252,6 @@ write_pulse_health_file() {
 		return 0
 	}
 
-	# GH#18141: sanitize deadlock holder cmd for JSON embedding.
-	# Escape backslashes first, then double-quotes.
-	local escaped_holder_cmd
-	escaped_holder_cmd="${_PULSE_HEALTH_DEADLOCK_HOLDER_CMD//\\/\\\\}"
-	escaped_holder_cmd="${escaped_holder_cmd//\"/\\\"}"
-
-	local deadlock_bounces="${_PULSE_HEALTH_DEADLOCK_BOUNCES:-0}"
-	[[ "$deadlock_bounces" =~ ^[0-9]+$ ]] || deadlock_bounces=0
-
 	cat >"$tmp_health" <<EOF
 {
   "timestamp": "${ts}",
@@ -272,12 +262,7 @@ write_pulse_health_file() {
   "issues_dispatched": ${issues_dispatched},
   "prefetch_errors": ${_PULSE_HEALTH_PREFETCH_ERRORS},
   "stalled_workers_killed": ${_PULSE_HEALTH_STALLED_KILLED},
-  "models_backed_off": ${models_backed_off},
-  "deadlock_detected": ${_PULSE_HEALTH_DEADLOCK_DETECTED},
-  "deadlock_holder_pid": "${_PULSE_HEALTH_DEADLOCK_HOLDER_PID}",
-  "deadlock_holder_cmd": "${escaped_holder_cmd}",
-  "deadlock_bounces": ${deadlock_bounces},
-  "deadlock_recovered": ${_PULSE_HEALTH_DEADLOCK_RECOVERED}
+  "models_backed_off": ${models_backed_off}
 }
 EOF
 
@@ -287,6 +272,6 @@ EOF
 		return 0
 	}
 
-	echo "[pulse-wrapper] pulse-health.json written: workers=${workers_active}/${workers_max} merged=${_PULSE_HEALTH_PRS_MERGED} closed_conflicting=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING} dispatched=${issues_dispatched} stalled_killed=${_PULSE_HEALTH_STALLED_KILLED} backed_off=${models_backed_off} deadlock=${_PULSE_HEALTH_DEADLOCK_DETECTED} deadlock_bounces=${deadlock_bounces} deadlock_recovered=${_PULSE_HEALTH_DEADLOCK_RECOVERED}" >>"$LOGFILE"
+	echo "[pulse-wrapper] pulse-health.json written: workers=${workers_active}/${workers_max} merged=${_PULSE_HEALTH_PRS_MERGED} closed_conflicting=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING} dispatched=${issues_dispatched} stalled_killed=${_PULSE_HEALTH_STALLED_KILLED} backed_off=${models_backed_off}" >>"$LOGFILE"
 	return 0
 }

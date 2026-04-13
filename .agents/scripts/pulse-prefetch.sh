@@ -1267,7 +1267,7 @@ prefetch_state() {
 	while IFS='|' read -r slug path; do
 		(
 			_prefetch_single_repo "$slug" "$path" "${tmpdir}/${idx}.txt"
-		) 9>&- &
+		) &
 		pids+=($!)
 		idx=$((idx + 1))
 	done <<<"$repo_entries"

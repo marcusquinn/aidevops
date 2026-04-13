@@ -1497,7 +1497,7 @@ _complexity_scan_pull_latest() {
 	# `gtimeout`, and a bash-native PGID-kill fallback.
 	if git -C "$aidevops_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		if ! GIT_TERMINAL_PROMPT=0 timeout_sec 30 \
-			git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 9>&-; then
+			git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1; then
 			echo "[pulse-wrapper] Complexity scan: git pull failed for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
 			return 1
 		fi

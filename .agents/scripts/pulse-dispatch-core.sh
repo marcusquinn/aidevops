@@ -901,7 +901,7 @@ _is_task_committed_to_main() {
 	# Ensure we have the latest remote refs (the dispatch loop already
 	# does git pull, but fetch is cheaper and sufficient for log queries)
 	if [[ -d "$repo_path/.git" ]] || git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
-		git -C "$repo_path" fetch origin main --quiet 2>/dev/null 9>&- || true
+		git -C "$repo_path" fetch origin main --quiet 2>/dev/null || true
 	else
 		return 1
 	fi
@@ -1461,7 +1461,7 @@ _dispatch_launch_worker() {
 	# close issues as "Invalid — file does not exist" when the target
 	# file was added in a recent commit they haven't pulled.
 	if git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 9>&- || {
+		git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 || {
 			echo "[dispatch_with_dedup] Warning: git pull failed for ${repo_path} — proceeding with current checkout" >>"$LOGFILE"
 		}
 	fi
@@ -1551,7 +1551,7 @@ _dispatch_launch_worker() {
 	# exits after its dispatch cycle, bash sends SIGHUP to background jobs.
 	# nohup makes the worker immune to SIGHUP so it survives the parent's
 	# exit. The EXIT trap only releases the instance lock (no child killing).
-	nohup "${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 9>&- &
+	nohup "${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
 	local worker_pid="$!"
 
 	# GH#17549: Stagger delay between worker launches to reduce SQLite

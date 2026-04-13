@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# pulse-instance-lock.sh — Instance lock (mkdir + flock), PID sentinel handling, dedup guard.
+# pulse-instance-lock.sh — Instance lock (mkdir), PID sentinel handling, dedup guard.
 #
 # Extracted from pulse-wrapper.sh in Phase 1 of the phased decomposition
 # (parent: GH#18356, plan: todo/plans/pulse-wrapper-decomposition.md §6).
+#
+# Lock primitive: mkdir atomicity + PID file for stale detection.
+# flock was removed in GH#18668 after four recurring deadlock incidents
+# (GH#18094 → GH#18141 → GH#18264 → GH#18668) traced to the same root
+# cause: bash has no built-in for fcntl(F_SETFD, FD_CLOEXEC), so any
+# persistent FD held by the parent is inherited by every daemonising
+# descendant. The annotation-based allowlist (`9>&-` on known call
+# sites) was a structurally incomplete blocklist. See:
+#   reference/bash-fd-locking.md
 #
 # This module is sourced by pulse-wrapper.sh. It MUST NOT be executed
 # directly — it relies on the orchestrator having sourced:
@@ -19,10 +28,6 @@
 #   - _handle_setup_sentinel
 #   - _handle_running_pulse_pid
 #   - check_dedup
-#
-# This is a pure move from pulse-wrapper.sh. The function bodies are
-# byte-identical to their pre-extraction form. Any change must go in a
-# separate follow-up PR after the full decomposition (Phase 12) lands.
 
 # Include guard — prevent double-sourcing. pulse-wrapper.sh sources every
 # module unconditionally on start, and characterization tests re-source to
@@ -33,9 +38,14 @@ _PULSE_INSTANCE_LOCK_LOADED=1
 #######################################
 # Acquire an exclusive instance lock using mkdir atomicity (GH#4513)
 #
-# Primary defense against concurrent pulse instances on macOS and Linux.
-# mkdir is POSIX-guaranteed atomic — the kernel ensures only one process
-# succeeds even under concurrent invocations. No TOCTOU race is possible.
+# mkdir is the ONLY lock primitive. flock was removed in GH#18668 after
+# recurring deadlocks — see module header and reference/bash-fd-locking.md
+# for the full rationale.
+#
+# mkdir is POSIX-guaranteed atomic on all local filesystems — the kernel
+# ensures only one process succeeds even under concurrent invocations.
+# No TOCTOU race is possible. Works identically on macOS APFS/HFS+ and
+# Linux ext4/btrfs/xfs without util-linux.
 #
 # The lock directory (LOCKDIR) contains a PID file so stale locks from
 # SIGKILL or power loss can be detected and cleared on the next startup.
@@ -43,14 +53,9 @@ _PULSE_INSTANCE_LOCK_LOADED=1
 # SIGTERM. SIGKILL cannot be trapped — the stale-lock detection handles
 # that case on the next invocation.
 #
-# On Linux with util-linux flock available, flock is used as an additional
-# layer on the LOCKFILE (FD 9) for belt-and-suspenders protection. The
-# mkdir guard is the primary atomic primitive; flock is supplementary.
-#
 # Returns: 0 if lock acquired, 1 if another instance holds the lock
 #######################################
 acquire_instance_lock() {
-	# Step 1: mkdir-based atomic lock (primary — works on macOS and Linux)
 	if ! mkdir "$LOCKDIR" 2>/dev/null; then
 		# Lock directory already exists — check if the owning process is alive
 		local lock_pid=""
@@ -83,74 +88,7 @@ acquire_instance_lock() {
 	# Write our PID into the lock directory for stale-lock detection
 	echo "$$" >"${LOCKDIR}/pid"
 
-	# Step 2: flock as supplementary layer on Linux (belt-and-suspenders)
-	# flock is not available on macOS without util-linux — skip silently.
-	if command -v flock &>/dev/null; then
-		if ! flock -n 9 2>/dev/null; then
-			# flock says another instance holds it — diagnose and attempt recovery
-			# (GH#18141: Layer 1 diagnostic + Layer 2 inode self-recovery)
-			local flock_holder_pid flock_holder_cmd flock_holder_comm
-			local bounce_file bounce_count
-			flock_holder_pid=$(fuser "$LOCKFILE" 2>/dev/null | tr -d ' ')
-			flock_holder_cmd=$(ps -p "$flock_holder_pid" -o args= 2>/dev/null | head -c 120)
-			flock_holder_comm=$(ps -p "$flock_holder_pid" -o comm= 2>/dev/null)
-
-			# Track consecutive bounces in a file so we can detect sustained deadlocks
-			bounce_file="${HOME}/.aidevops/logs/pulse-flock-bounce-count"
-			bounce_count=0
-			[[ -f "$bounce_file" ]] && bounce_count=$(cat "$bounce_file" 2>/dev/null || echo "0")
-			[[ "$bounce_count" =~ ^[0-9]+$ ]] || bounce_count=0
-			bounce_count=$((bounce_count + 1))
-			echo "$bounce_count" >"$bounce_file"
-
-			echo "[pulse-wrapper] flock secondary guard: held by PID ${flock_holder_pid:-unknown} (${flock_holder_cmd:-unknown}), bounce ${bounce_count}" >>"$WRAPPER_LOGFILE"
-
-			# Update deadlock health state for pulse-health.json (GH#18141: Layer 3)
-			_PULSE_HEALTH_DEADLOCK_DETECTED=true
-			_PULSE_HEALTH_DEADLOCK_HOLDER_PID="${flock_holder_pid:-unknown}"
-			_PULSE_HEALTH_DEADLOCK_HOLDER_CMD="${flock_holder_cmd:-unknown}"
-			_PULSE_HEALTH_DEADLOCK_BOUNCES="$bounce_count"
-
-			# GH#18141: Layer 2 — inode recreation self-recovery after 3+ bounces
-			# when the holder is NOT a pulse-wrapper/bash process.
-			# Safety: we hold the mkdir lock (primary guard), so no concurrency hole.
-			# The orphaned child's flock on the old (now unlinked) inode becomes
-			# a lock on nothing — POSIX guarantees unlink+open creates a new inode.
-			if ((bounce_count >= 3)) &&
-				[[ -n "$flock_holder_comm" ]] &&
-				[[ "$flock_holder_comm" != "bash" ]] &&
-				[[ "$flock_holder_comm" != "pulse-wrapper" ]] &&
-				[[ "$flock_holder_comm" != "pulse-wrapper.sh" ]]; then
-				echo "[pulse-wrapper] Deadlock detected: flock held by non-pulse process PID ${flock_holder_pid:-unknown} (${flock_holder_cmd:-unknown}) for ${bounce_count} consecutive bounces — attempting inode recovery" >>"$WRAPPER_LOGFILE"
-				exec 9>&-          # close our FD to the old inode
-				rm -f "$LOCKFILE"  # unlink old inode (orphan keeps its FD)
-				exec 9>"$LOCKFILE" # create new file at same path = new inode
-				if flock -n 9 2>/dev/null; then
-					echo "[pulse-wrapper] Deadlock recovery successful — acquired flock on new inode after ${bounce_count} bounces" >>"$WRAPPER_LOGFILE"
-					echo "0" >"$bounce_file"
-					_PULSE_HEALTH_DEADLOCK_RECOVERED=true
-					# Fall through to success path below
-				else
-					echo "[pulse-wrapper] Deadlock recovery failed — flock still contested after inode recreation, releasing mkdir lock and exiting" >>"$WRAPPER_LOGFILE"
-					rm -rf "$LOCKDIR" 2>/dev/null || true
-					return 1
-				fi
-			else
-				# Holder is a pulse process or bounce threshold not yet met — normal exit
-				rm -rf "$LOCKDIR" 2>/dev/null || true
-				return 1
-			fi
-		else
-			# Successful flock acquisition — reset the bounce counter
-			local bounce_file
-			bounce_file="${HOME}/.aidevops/logs/pulse-flock-bounce-count"
-			[[ -f "$bounce_file" ]] && echo "0" >"$bounce_file"
-		fi
-		echo "[pulse-wrapper] Instance lock acquired via mkdir+flock (PID $$)" >>"$WRAPPER_LOGFILE"
-	else
-		# yeah, mkdir atomicity is sufficient on macOS without flock
-		echo "[pulse-wrapper] Instance lock acquired via mkdir (PID $$, flock not available on this platform)" >>"$WRAPPER_LOGFILE"
-	fi
+	echo "[pulse-wrapper] Instance lock acquired via mkdir (PID $$)" >>"$WRAPPER_LOGFILE"
 
 	# GH#18264: mark that this process owns the lock so release_instance_lock()
 	# only cleans up when we actually hold it.
@@ -173,9 +111,6 @@ release_instance_lock() {
 	# This prevents the EXIT trap from removing LOCKDIR when the lock was
 	# never acquired (e.g., another instance was already running).
 	[[ "$_LOCK_OWNED" == "true" ]] || return 0
-	# exec 9>&- closes FD 9 in the current (parent) bash process, releasing the
-	# flock so the next pulse cycle can acquire it immediately.
-	exec 9>&- 2>/dev/null || true
 	rm -rf "$LOCKDIR" 2>/dev/null || true
 	return 0
 } # nice — idempotent cleanup

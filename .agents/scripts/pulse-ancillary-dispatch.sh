@@ -896,7 +896,7 @@ dispatch_foss_workers() {
 			--dir "$foss_path" \
 			--title "FOSS: ${foss_slug} #${foss_issue_num}: ${foss_issue_title}" \
 			--prompt "/full-loop Implement issue #${foss_issue_num} (https://github.com/${foss_slug}/issues/${foss_issue_num}) -- ${foss_issue_title}. This is a FOSS contribution.${disclosure_flag} After completion, run: foss-contribution-helper.sh record ${foss_slug} <tokens_used>" \
-			</dev/null >>"${HOME}/.aidevops/logs/pulse-foss-${foss_issue_num}.log" 2>&1 9>&- &
+			</dev/null >>"${HOME}/.aidevops/logs/pulse-foss-${foss_issue_num}.log" 2>&1 &
 		sleep 2
 
 		foss_count=$((foss_count + 1))

@@ -131,7 +131,7 @@ _routine_execute() {
 			--dir "$dispatch_dir" \
 			--agent "$agent_name" \
 			--title "Routine ${routine_id}: ${description}" \
-			--prompt "Execute routine ${routine_id}: ${description}" 9>&- &
+			--prompt "Execute routine ${routine_id}: ${description}" &
 		# Don't wait — let it run in background like a worker
 	else
 		# Fallback: check for custom script
@@ -151,7 +151,7 @@ _routine_execute() {
 				--session-key "routine-${routine_id}" \
 				--dir "${repo_path:-$PULSE_DIR}" \
 				--title "Routine ${routine_id}: ${description}" \
-				--prompt "Execute routine ${routine_id}: ${description}" 9>&- &
+				--prompt "Execute routine ${routine_id}: ${description}" &
 		fi
 	fi
 

@@ -8,9 +8,9 @@
 #
 # This wrapper:
 #   1. mkdir-based atomic instance lock prevents concurrent pulses (GH#4513)
-#      Falls back to flock on Linux when util-linux flock is available.
 #      mkdir is POSIX-guaranteed atomic on all filesystems (APFS, HFS+, ext4)
-#      and does not require util-linux, which is absent on macOS.
+#      and is the only lock primitive — flock was removed in GH#18668 after
+#      recurring FD-inheritance deadlocks. See reference/bash-fd-locking.md.
 #   2. Uses a PID file with staleness check (not pgrep) for dedup
 #   3. Cleans up orphaned opencode processes before each pulse
 #   4. Kills runaway processes exceeding RSS or runtime limits (t1398.1)
@@ -45,14 +45,21 @@
 #   where launchd fires between rm -f and the next write, which caused the
 #   82-concurrent-pulse incident (2026-03-13T02:06:01Z, issue #4318).
 #
-# Instance lock protocol (GH#4513):
-#   Uses mkdir atomicity as the primary lock primitive. mkdir is guaranteed
+# Instance lock protocol (GH#4513, GH#18668):
+#   Uses mkdir atomicity as the ONLY lock primitive. mkdir is guaranteed
 #   atomic by POSIX on all local filesystems — the kernel ensures only one
 #   process succeeds even under concurrent invocations. The lock directory
 #   contains a PID file so stale locks (from SIGKILL/power loss) can be
 #   detected and cleared on the next startup. A trap ensures cleanup on
-#   normal exit and SIGTERM. flock (Linux util-linux) is used as an
-#   additional layer when available, but mkdir is the primary guard.
+#   normal exit and SIGTERM.
+#
+#   flock was previously layered on top as a secondary guard, but four
+#   recurring deadlock incidents (GH#18094, GH#18141, GH#18264, GH#18668)
+#   all traced to FD 9 being inherited by daemonising git hooks and
+#   ancillary workers. bash has no built-in fcntl(F_SETFD, FD_CLOEXEC),
+#   and annotation-based `9>&-` coverage is a structurally incomplete
+#   blocklist. flock was removed entirely in GH#18668 (Path A) — see
+#   reference/bash-fd-locking.md for the full rationale and policy.
 #
 # Called by launchd every 120s via the supervisor-pulse plist.
 
@@ -414,11 +421,10 @@ EVER_NMR_NEGATIVE_CACHE_TTL_SECS=$(_validate_int EVER_NMR_NEGATIVE_CACHE_TTL_SEC
 # _sanitize_markdown and _sanitize_log_field provided by worker-lifecycle-common.sh
 
 PIDFILE="${HOME}/.aidevops/logs/pulse.pid"
-LOCKFILE="${HOME}/.aidevops/logs/pulse-wrapper.lock"
 LOCKDIR="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
 # GH#18264: tracks whether this process successfully acquired the instance lock.
-# release_instance_lock() checks this flag so it only closes FD 9 and removes
-# LOCKDIR when this process actually owns the lock.
+# release_instance_lock() checks this flag so it only removes LOCKDIR when
+# this process actually owns the lock.
 _LOCK_OWNED=false
 LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 WRAPPER_LOGFILE="${HOME}/.aidevops/logs/pulse-wrapper.log"
@@ -490,15 +496,6 @@ _PULSE_HEALTH_PRS_MERGED=0
 _PULSE_HEALTH_PRS_CLOSED_CONFLICTING=0
 _PULSE_HEALTH_STALLED_KILLED=0
 _PULSE_HEALTH_PREFETCH_ERRORS=0
-
-# Flock deadlock health state (GH#18141) — set by acquire_instance_lock() when
-# a non-pulse process holds the flock. Persisted to pulse-health.json so the
-# session greeting can warn the user. Cleared on next clean cycle.
-_PULSE_HEALTH_DEADLOCK_DETECTED=false
-_PULSE_HEALTH_DEADLOCK_HOLDER_PID=""
-_PULSE_HEALTH_DEADLOCK_HOLDER_CMD=""
-_PULSE_HEALTH_DEADLOCK_BOUNCES=0
-_PULSE_HEALTH_DEADLOCK_RECOVERED=false
 
 # Validate complexity scan configuration (defined above, validated here)
 COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 900 300)
@@ -602,7 +599,7 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 	if [[ -n "$PULSE_MODEL" ]]; then
 		pulse_cmd+=(--model "$PULSE_MODEL")
 	fi
-	"${pulse_cmd[@]}" >>"$LOGFILE" 2>&1 9>&- &
+	"${pulse_cmd[@]}" >>"$LOGFILE" 2>&1 &
 
 	local opencode_pid=$!
 	echo "$opencode_pid" >"$PIDFILE"
@@ -1117,25 +1114,20 @@ main() {
 	unset _dr_arg
 
 	# GH#4513: Acquire exclusive instance lock FIRST — before any other
-	# check. Uses mkdir atomicity as the primary primitive (POSIX-guaranteed,
-	# works on macOS APFS/HFS+ without util-linux). flock is used as a
-	# supplementary layer on Linux when available.
+	# check. Uses mkdir atomicity as the ONLY primitive (POSIX-guaranteed,
+	# works identically on macOS APFS/HFS+ and Linux ext4/btrfs/xfs).
+	#
+	# flock was removed in GH#18668 after recurring FD 9 inheritance
+	# deadlocks. bash has no built-in fcntl(F_SETFD, FD_CLOEXEC), so any
+	# persistent FD held by the parent is inherited by every daemonising
+	# descendant (git hooks, ancillary workers). See the module header of
+	# pulse-instance-lock.sh and reference/bash-fd-locking.md for history.
 	#
 	# Register EXIT trap BEFORE acquiring the lock so the lock is always
 	# released on exit — including set -e aborts, SIGTERM, and return paths.
 	# SIGKILL cannot be trapped; stale-lock detection handles that case.
 	trap 'release_instance_lock' EXIT
 
-	# Open FD 9 for flock supplementary layer (no-op if flock unavailable)
-	exec 9>"$LOCKFILE"
-	# GH#18264: FD 9 inheritance is prevented by appending 9>&- to every child-
-	# spawning command below (backgrounded workers, git calls, subshells). This
-	# tells bash to close FD 9 in the child before exec — the parent's FD 9 and
-	# flock are unaffected. The previous python3 fcntl(F_SETFD) approach (GH#18094)
-	# was ineffective: fcntl() operates on the calling process's FD table, so
-	# running it in a child python3 process only set CLOEXEC on python's copy of
-	# FD 9, which was discarded when python exited. The parent bash FD 9 was never
-	# modified. Bash has no built-in for fcntl().
 	if ! acquire_instance_lock; then
 		return 0
 	fi

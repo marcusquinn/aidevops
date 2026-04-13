@@ -382,6 +382,81 @@ check_string_literals() {
 	return 0
 }
 
+# check_forbidden_exec_fd (GH#18668): categorical block on persistent FD-based
+# file locks in pulse-adjacent scripts. Matches any `exec N>PATH` where PATH
+# references a `.aidevops/logs/*.lock` or `pulse-*.lock` file.
+#
+# Rationale: bash has no built-in for fcntl(F_SETFD, FD_CLOEXEC), so any FD
+# opened with `exec N>` is inherited by every child process (including
+# daemonising git hooks and ancillary workers). This caused four recurring
+# deadlock incidents (GH#18094, GH#18141, GH#18264, GH#18668) before the
+# flock layer was dropped in favour of mkdir atomicity. See
+# reference/bash-fd-locking.md for the full post-mortem and policy.
+#
+# The rule is a hard block (not a ratchet) because the policy is categorical:
+# there is no legitimate reason for the pulse to hold a persistent FD.
+# Short-lived flock inside a single helper (e.g. audit-log-helper.sh) is
+# permitted because the FD dies with the helper and does not get inherited
+# across process spawning.
+check_forbidden_exec_fd() {
+	echo -e "${BLUE}Checking Forbidden exec FD Locks (GH#18668)...${NC}"
+
+	local violations=0
+	local violation_lines=""
+
+	for file in "${ALL_SH_FILES[@]}"; do
+		[[ -f "$file" ]] || continue
+		# Skip the post-mortem doc itself (it quotes the forbidden pattern
+		# in a bash code block), the reference docs, the linter itself
+		# (defines the rule), and archived code.
+		case "$file" in
+		*/_archive/*) continue ;;
+		*/reference/*) continue ;;
+		*/linters-local.sh) continue ;;
+		esac
+
+		# Match: exec N>path, exec N>>path, or exec N>"$VAR" where the
+		# target path (literal or expanded) suggests a lock file.
+		# The grep is intentionally narrow — it matches the exact shape
+		# of the forbidden pattern, not "all flock usage".
+		local matches
+		matches=$(grep -nE '^[[:space:]]*exec[[:space:]]+[0-9]+>[^&]' "$file" 2>/dev/null || true)
+		if [[ -z "$matches" ]]; then
+			continue
+		fi
+
+		# Filter to only lock-suggestive targets: .lock, .lockfile, LOCKFILE
+		# variable references, or .aidevops/logs paths.
+		local filtered
+		filtered=$(printf '%s\n' "$matches" | grep -E '\.lock|LOCKFILE|\.aidevops/logs' 2>/dev/null || true)
+		if [[ -z "$filtered" ]]; then
+			continue
+		fi
+
+		while IFS= read -r line; do
+			[[ -z "$line" ]] && continue
+			violations=$((violations + 1))
+			violation_lines+="${file}:${line}"$'\n'
+		done <<<"$filtered"
+	done
+
+	if [[ $violations -eq 0 ]]; then
+		print_success "Forbidden exec FD locks: 0 violations (policy upheld)"
+		return 0
+	fi
+
+	print_error "Forbidden exec FD locks: $violations violation(s)"
+	printf '%s' "$violation_lines" | head -10
+	if [[ $violations -gt 10 ]]; then
+		echo "... and $((violations - 10)) more"
+	fi
+	print_info "Persistent FD-based locks in bash cannot set CLOEXEC — daemonising"
+	print_info "children inherit the FD and deadlock the next pulse cycle."
+	print_info "Use mkdir-based atomic locking instead. See:"
+	print_info "  .agents/reference/bash-fd-locking.md"
+	return 1
+}
+
 run_shfmt() {
 	echo -e "${BLUE}Running shfmt Syntax Check (fast pre-pass)...${NC}"
 
@@ -1737,6 +1812,11 @@ _run_gate_checks_static() {
 
 	if ! should_skip_gate "string-literals"; then
 		check_string_literals || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "forbidden-exec-fd"; then
+		check_forbidden_exec_fd || exit_code=1
 		echo ""
 	fi
 

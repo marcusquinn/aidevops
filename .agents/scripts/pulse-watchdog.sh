@@ -146,7 +146,7 @@ run_cmd_with_timeout() {
 	shift
 	[[ "$timeout_secs" =~ ^[0-9]+$ ]] || timeout_secs=60
 
-	"$@" 9>&- &
+	"$@" &
 	local cmd_pid=$!
 
 	local elapsed=0
@@ -199,7 +199,7 @@ run_stage_with_timeout() {
 	stage_start=$(date +%s)
 	echo "[pulse-wrapper] Stage start: ${stage_name} (timeout ${timeout_seconds}s)" >>"$LOGFILE"
 
-	"$@" 9>&- &
+	"$@" &
 	local stage_pid=$!
 
 	while kill -0 "$stage_pid" 2>/dev/null; do
