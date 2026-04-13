@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.6] - 2026-04-13
+
+### Added
+
+- setup.sh completion sentinel + verify-setup-log.sh + auto-update wiring (#18510)
+
+### Changed
+
+- Maintenance: mark t2032 complete (pr:#18502)
+- Maintenance: mark t2029 complete (pr:#18506 testing:runtime-verified)
+- scope simplification gate on cited line ranges, not file size alone (#18497)
+
+### Fixed
+
+- make sync-on-pr-merge push failure visible (t2029) (#18506)
+
 ## [3.7.5] - 2026-04-13
 
 ### Changed
