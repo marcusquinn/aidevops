@@ -364,23 +364,47 @@ _compute_queue_governor_guidance() {
 	[[ "$ready_prs" =~ ^[0-9]+$ ]] || ready_prs=0
 	[[ "$failing_prs" =~ ^[0-9]+$ ]] || failing_prs=0
 
-	# Load previous cycle metrics
+	# Load previous cycle metrics — use while+printf -v instead of eval (security).
 	local prev_total_prs prev_total_issues prev_ready_prs prev_failing_prs prev_recorded_at
-	eval "$(_load_queue_metrics_history)"
+	local _qg_key _qg_val
+	while IFS='=' read -r _qg_key _qg_val; do
+		[[ -n "$_qg_key" ]] || continue
+		case "$_qg_key" in
+		prev_total_prs | prev_total_issues | prev_ready_prs | prev_failing_prs | prev_recorded_at)
+			printf -v "$_qg_key" '%s' "$_qg_val"
+			;;
+		esac
+	done < <(_load_queue_metrics_history)
 
-	# Compute deltas and drain metrics
+	# Compute deltas and drain metrics — use while+printf -v instead of eval (security).
 	local pr_delta issue_delta ready_delta failing_delta
 	local backlog_drain_per_cycle backlog_growth_pressure drain_rate_per_hour
 	local elapsed_seconds now_epoch
-	eval "$(_compute_queue_deltas \
+	while IFS='=' read -r _qg_key _qg_val; do
+		[[ -n "$_qg_key" ]] || continue
+		case "$_qg_key" in
+		pr_delta | issue_delta | ready_delta | failing_delta | \
+			backlog_drain_per_cycle | backlog_growth_pressure | drain_rate_per_hour | \
+			elapsed_seconds | now_epoch)
+			printf -v "$_qg_key" '%s' "$_qg_val"
+			;;
+		esac
+	done < <(_compute_queue_deltas \
 		"$total_prs" "$total_issues" "$ready_prs" "$failing_prs" \
 		"$prev_total_prs" "$prev_total_issues" "$prev_ready_prs" "$prev_failing_prs" \
-		"$prev_recorded_at")"
+		"$prev_recorded_at")
 
-	# Determine queue mode and focus percentages
+	# Determine queue mode and focus percentages — use while+printf -v instead of eval (security).
 	local queue_mode backlog_band pr_focus_pct new_issue_pct
-	eval "$(_compute_queue_mode \
-		"$total_prs" "$total_issues" "$ready_prs" "$failing_prs" "$pr_delta")"
+	while IFS='=' read -r _qg_key _qg_val; do
+		[[ -n "$_qg_key" ]] || continue
+		case "$_qg_key" in
+		queue_mode | backlog_band | pr_focus_pct | new_issue_pct)
+			printf -v "$_qg_key" '%s' "$_qg_val"
+			;;
+		esac
+	done < <(_compute_queue_mode \
+		"$total_prs" "$total_issues" "$ready_prs" "$failing_prs" "$pr_delta")
 
 	# Get worker utilization
 	local active_workers max_workers utilization_pct

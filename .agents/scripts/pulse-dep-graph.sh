@@ -126,16 +126,20 @@ _dep_graph_process_issue_json() {
 }
 
 #######################################
-# Build per-repo dep graph data (t2031 refactor)
+# Build per-repo dep graph data (t2031 refactor, GH#18593 perf)
 #
-# Fetches all open issues for one repo slug and accumulates the
-# open_issues / task_to_issue / blocked_by / defer_flags state by
-# calling _dep_graph_process_issue_json once per issue. Emits a single
-# JSON object on stdout with the per-repo shape:
-#   { "open_issues": [], "task_to_issue": {}, "blocked_by": {}, "defer_flags": {} }
+# Fetches all open issues for one repo slug and produces the per-repo
+# dep-graph cache object in a single jq call instead of spawning a
+# subshell per issue. This collapses O(n * ~13) process forks down to
+# O(1) per repo, which is significant for repos with 200+ open issues.
 #
-# Extracted from build_dependency_graph_cache so that function stays
-# under the 100-line complexity gate.
+# The jq program replicates the logic of _dep_graph_process_issue_json:
+#   - task ID extraction from title (^tNNN: prefix)
+#   - blocked-by line detection and tID/issueNum extraction
+#   - defer/hold marker detection (same patterns as _body_has_defer_marker)
+#
+# _dep_graph_process_issue_json is retained for unit testing and as a
+# reference implementation.
 #
 # Arguments: $1 - repo slug (owner/repo)
 # Output:    one JSON object on stdout
@@ -146,24 +150,54 @@ _dep_graph_build_repo_data() {
 	issues_json=$(gh issue list --repo "$slug" --state open --limit 200 \
 		--json number,title,body,labels 2>/dev/null) || issues_json='[]'
 
-	# Single compact JSON accumulator threaded through the per-issue
-	# parser. Using one object keeps shell plumbing simple and guarantees
-	# that multi-line jq output can't corrupt the per-field state.
-	local acc='{"open_nums":[],"task_to_issue":{},"blocked_by_map":{},"defer_flags_map":{}}'
+	# Single jq pass: extract all fields, apply regex, build accumulator.
+	# Equivalent to calling _dep_graph_process_issue_json once per issue
+	# but without spawning a subshell for each issue.
+	printf '%s' "$issues_json" | jq -c '
+		reduce .[] as $issue (
+			{"open_nums":[],"task_to_issue":{},"blocked_by_map":{},"defer_flags_map":{}};
+			($issue.number) as $num |
+			($issue.title // "") as $title |
+			($issue.body // "") as $body |
 
-	local issue_json
-	while IFS= read -r issue_json; do
-		[[ -n "$issue_json" ]] || continue
-		acc=$(_dep_graph_process_issue_json "$issue_json" "$acc")
-	done < <(printf '%s' "$issues_json" | jq -c '.[]' 2>/dev/null)
+			# Extract task ID from title (e.g. "t1935: ..." -> "1935")
+			(if ($title | test("^t[0-9]+:"))
+			 then ($title | capture("^t(?<id>[0-9]+):").id)
+			 else ""
+			 end) as $tid |
 
-	# Project the internal accumulator shape onto the stable cache schema.
-	printf '%s' "$acc" | jq -c '{
-		"open_issues": .open_nums,
-		"task_to_issue": .task_to_issue,
-		"blocked_by": .blocked_by_map,
-		"defer_flags": .defer_flags_map
-	}' 2>/dev/null || printf '{"open_issues":[],"task_to_issue":{},"blocked_by":{},"defer_flags":{}}\n'
+			# Extract all lines matching the blocked-by pattern (case-insensitive)
+			([$body | split("\n") | .[] | select(test("(?i)blocked[- ]by"))] | join(" ")) as $blocker_text |
+
+			# Extract tNNN task IDs from blocked-by text (capture group -> number only)
+			([$blocker_text | scan("t([0-9]+)") | .[0]] | unique) as $blocker_tids |
+
+			# Extract #NNN issue numbers from blocked-by text (capture group -> number only)
+			([$blocker_text | scan("#([0-9]+)") | .[0]] | unique) as $blocker_nums |
+
+			# Defer/hold marker detection (mirrors _body_has_defer_marker shell patterns)
+			($body | test("(?i)defer until|do[- ]not[- ]dispatch|on[- ]hold|HUMAN_UNBLOCK_REQUIRED|hold for |paused[[:space:]:]")) as $has_defer |
+
+			(($blocker_tids | length) > 0 or ($blocker_nums | length) > 0) as $has_blockers |
+
+			.open_nums += [$num]
+			| (if $tid != "" then .task_to_issue[$tid] = $num else . end)
+			| (if $has_blockers
+			   then .blocked_by_map[($num | tostring)] = {
+			       "task_ids": $blocker_tids,
+			       "issue_nums": $blocker_nums,
+			       "has_defer_marker": $has_defer
+			   }
+			   else . end)
+			| (if $has_defer then .defer_flags_map[($num | tostring)] = true else . end)
+		)
+		| {
+			"open_issues": .open_nums,
+			"task_to_issue": .task_to_issue,
+			"blocked_by": .blocked_by_map,
+			"defer_flags": .defer_flags_map
+		}
+	' 2>/dev/null || printf '{"open_issues":[],"task_to_issue":{},"blocked_by":{},"defer_flags":{}}\n'
 }
 
 #######################################

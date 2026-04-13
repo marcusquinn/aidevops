@@ -144,10 +144,23 @@ _ff_with_lock() {
 			echo "[pulse-wrapper] _ff_with_lock: lock acquisition timed out" >>"$LOGFILE"
 			return 1
 		fi
+		# Stale lock detection: read the owner PID stored in the lock directory.
+		# If that process is no longer running, the lock is orphaned — clear it.
+		local _ff_owner_pid
+		_ff_owner_pid=$(cat "${lock_dir}/owner.pid" 2>/dev/null || true)
+		if [[ -n "$_ff_owner_pid" ]] && ! kill -0 "$_ff_owner_pid" 2>/dev/null; then
+			echo "[pulse-wrapper] _ff_with_lock: clearing stale lock (owner PID ${_ff_owner_pid} gone)" >>"$LOGFILE"
+			rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
+			rmdir "$lock_dir" 2>/dev/null || true
+			continue
+		fi
 		sleep 0.1
 	done
+	# Record owner PID inside lock directory so retrying callers can detect staleness.
+	printf '%s\n' "$$" >"${lock_dir}/owner.pid" 2>/dev/null || true
 	local rc=0
 	"$@" || rc=$?
+	rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
 	rmdir "$lock_dir" 2>/dev/null || true
 	return "$rc"
 }
