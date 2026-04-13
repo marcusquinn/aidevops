@@ -23,6 +23,8 @@
 # constants in the bootstrap section.
 #
 # Functions in this module (in source order):
+#   - _read_lock_pid           (acquire helper: read existing lock PID)
+#   - _handle_existing_lock    (acquire helper: live vs stale owner check)
 #   - acquire_instance_lock
 #   - release_instance_lock
 #   - _handle_setup_sentinel
@@ -36,6 +38,62 @@
 _PULSE_INSTANCE_LOCK_LOADED=1
 
 #######################################
+# Read the existing lock owner's PID from LOCKDIR/pid
+#
+# Prints the PID to stdout (empty string if the file is absent or
+# unreadable). Called by _handle_existing_lock() before any liveness check.
+#
+# Arguments: none (uses LOCKDIR global)
+#######################################
+_read_lock_pid() {
+	local lock_pid_file="${LOCKDIR}/pid"
+	if [[ -f "$lock_pid_file" ]]; then
+		cat "$lock_pid_file" 2>/dev/null || echo ""
+	else
+		echo ""
+	fi
+	return 0
+}
+
+#######################################
+# Handle an already-existing lock directory (mkdir failed)
+#
+# Called by acquire_instance_lock() when the initial mkdir returns non-zero.
+# Checks whether the current lock owner is alive:
+#   - Alive  → log the conflict and return 1 (genuine concurrent instance).
+#   - Dead   → clear the stale lock and attempt to re-acquire via mkdir.
+#              Returns 0 on success, 1 if another instance won the race.
+#
+# Arguments: none (uses LOCKDIR, WRAPPER_LOGFILE globals)
+# Returns: 0 if lock re-acquired, 1 if a live owner holds the lock
+#######################################
+_handle_existing_lock() {
+	local lock_pid
+	lock_pid=$(_read_lock_pid)
+
+	if [[ -n "$lock_pid" ]] && [[ "$lock_pid" =~ ^[0-9]+$ ]] && ps -p "$lock_pid" >/dev/null 2>&1; then
+		# Lock owner is alive — genuine concurrent instance
+		local lock_age
+		lock_age=$(_get_process_age "$lock_pid")
+		echo "[pulse-wrapper] Another pulse instance holds the mkdir lock (PID ${lock_pid}, age ${lock_age}s) — exiting immediately (GH#4513)" >>"$WRAPPER_LOGFILE"
+		return 1
+	fi
+
+	# Lock owner is dead (SIGKILL, power loss, OOM) — stale lock.
+	# Remove and re-acquire atomically. If two instances race here,
+	# only one will succeed at the mkdir below.
+	echo "[pulse-wrapper] Stale mkdir lock detected (owner PID ${lock_pid:-unknown} is dead) — clearing and re-acquiring" >>"$WRAPPER_LOGFILE"
+	rm -rf "$LOCKDIR" 2>/dev/null || true
+
+	if ! mkdir "$LOCKDIR" 2>/dev/null; then
+		# Another instance won the race to re-acquire
+		echo "[pulse-wrapper] Lost mkdir lock race after stale-lock clear — another instance acquired it first" >>"$WRAPPER_LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Acquire an exclusive instance lock using mkdir atomicity (GH#4513)
 #
 # mkdir is the ONLY lock primitive. flock was removed in GH#18668 after
@@ -47,42 +105,15 @@ _PULSE_INSTANCE_LOCK_LOADED=1
 # No TOCTOU race is possible. Works identically on macOS APFS/HFS+ and
 # Linux ext4/btrfs/xfs without util-linux.
 #
-# The lock directory (LOCKDIR) contains a PID file so stale locks from
-# SIGKILL or power loss can be detected and cleared on the next startup.
-# A trap registered by the caller releases the lock on normal exit and
-# SIGTERM. SIGKILL cannot be trapped — the stale-lock detection handles
-# that case on the next invocation.
+# When mkdir fails (lock already held), delegates to _handle_existing_lock()
+# which distinguishes a live owner (return 1) from a dead/stale one
+# (clear + re-acquire). See that function for the detailed logic.
 #
 # Returns: 0 if lock acquired, 1 if another instance holds the lock
 #######################################
 acquire_instance_lock() {
 	if ! mkdir "$LOCKDIR" 2>/dev/null; then
-		# Lock directory already exists — check if the owning process is alive
-		local lock_pid=""
-		local lock_pid_file="${LOCKDIR}/pid"
-		if [[ -f "$lock_pid_file" ]]; then
-			lock_pid=$(cat "$lock_pid_file" 2>/dev/null || echo "")
-		fi
-
-		if [[ -n "$lock_pid" ]] && [[ "$lock_pid" =~ ^[0-9]+$ ]] && ps -p "$lock_pid" >/dev/null 2>&1; then
-			# Lock owner is alive — genuine concurrent instance
-			local lock_age
-			lock_age=$(_get_process_age "$lock_pid")
-			echo "[pulse-wrapper] Another pulse instance holds the mkdir lock (PID ${lock_pid}, age ${lock_age}s) — exiting immediately (GH#4513)" >>"$WRAPPER_LOGFILE"
-			return 1
-		fi
-
-		# Lock owner is dead (SIGKILL, power loss, OOM) — stale lock
-		# Remove and re-acquire atomically. If two instances race here,
-		# only one will succeed at the mkdir below.
-		echo "[pulse-wrapper] Stale mkdir lock detected (owner PID ${lock_pid:-unknown} is dead) — clearing and re-acquiring" >>"$WRAPPER_LOGFILE"
-		rm -rf "$LOCKDIR" 2>/dev/null || true
-
-		if ! mkdir "$LOCKDIR" 2>/dev/null; then
-			# Another instance won the race to re-acquire
-			echo "[pulse-wrapper] Lost mkdir lock race after stale-lock clear — another instance acquired it first" >>"$WRAPPER_LOGFILE"
-			return 1
-		fi
+		_handle_existing_lock || return 1
 	fi
 
 	# Write our PID into the lock directory for stale-lock detection
@@ -115,16 +146,6 @@ release_instance_lock() {
 	return 0
 } # nice — idempotent cleanup
 
-#######################################
-# Check for stale PID file and clean up
-# Returns: 0 if safe to proceed, 1 if another pulse is genuinely running
-#
-# PID file sentinel protocol (GH#4324):
-#   The PID file is never deleted — only overwritten. Valid states:
-#     <numeric PID>  — a pulse may be running; verify with ps
-#     IDLE:<ts>      — last run completed normally; safe to proceed
-#     empty / other  — treat as safe to proceed (first run or corrupt)
-#######################################
 #######################################
 # Handle SETUP sentinel in PID file (GH#5627, extracted from check_dedup)
 #
