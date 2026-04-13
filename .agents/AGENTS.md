@@ -187,6 +187,8 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Traceability and signature footer:** Hard rules in `prompts/build.txt` (sections "Traceability" and "#8 Signature footer"). Link both sides when closing (issue→PR, PR→issue). Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
 
+**Parent-task PR keyword rule (t2046 — MANDATORY).** When a PR delivers ANY work for a `parent-task`-labeled issue — including the initial plan-filing PR — use `For #NNN` or `Ref #NNN` in the PR body, NEVER `Closes`/`Resolves`/`Fixes`. The parent issue must stay open until ALL phase children merge; only the final phase PR uses `Closes #NNN`. `full-loop-helper.sh commit-and-pr` enforces this automatically (see `.github/workflows/parent-task-keyword-check.yml`). For leaf (non-parent) issues, use `Resolves #NNN` as normal. See `templates/brief-template.md` "PR Conventions" for the full rule.
+
 **Self-improvement routing (t1541):** Framework-level tasks → `framework-routing-helper.sh log-framework-issue`. Project tasks → current repo. Framework tasks in project repos are invisible to maintainers.
 
 **Pulse scope (t1405):** `PULSE_SCOPE_REPOS` limits code changes. Issues allowed anywhere. Empty/unset = no restriction.

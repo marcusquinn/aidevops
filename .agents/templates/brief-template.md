@@ -48,6 +48,26 @@ All checked = `tier:simple`. Any unchecked = `tier:standard` (default) or `tier:
 drove the decision. e.g., "6 files across 3 packages, fallback retry logic needed -> tier:standard"
 or "Single-file config edit with exact code block provided -> tier:simple"}
 
+## PR Conventions
+
+<!-- PR KEYWORD RULE (t2046 — MANDATORY for parent-task issues):
+
+     **Parent-task PRs.** When a PR delivers ANY work for an issue tagged `parent-task`
+     — including the initial plan-filing PR — the PR body MUST use `For #NNN` or
+     `Ref #NNN`, NEVER `Closes`/`Resolves`/`Fixes`. The parent issue must stay open
+     until ALL phase children merge. The final phase PR uses `Closes #NNN` to close
+     the parent. `full-loop-helper.sh commit-and-pr` enforces this in --strict mode
+     (aborts if the PR body uses a closing keyword on a parent-task issue).
+     CI also checks via `.github/workflows/parent-task-keyword-check.yml`.
+
+     If you wrote `Resolves` and the parent auto-closed, reopen it manually with
+     a comment explaining the convention.
+
+     Leaf (non-parent) issue PRs: use `Resolves #NNN` or `Closes #NNN` as normal. -->
+
+{If this task is for a `parent-task`-labeled issue, confirm: PR body will use `For #NNN`, not `Resolves`.}
+{If leaf task: use `Resolves #NNN` as normal — delete this section or leave it blank.}
+
 ## How (Approach)
 
 <!-- Worker-ready implementation context (t1900): every section below is required

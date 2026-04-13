@@ -506,8 +506,9 @@ cmd_pre_merge_gate() {
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
 # Workers and interactive sessions both use this — no parallel logic.
 #
-# Usage: full-loop-helper.sh commit-and-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--decisions <notes>] [--label <label>...]
+# Usage: full-loop-helper.sh commit-and-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--decisions <notes>] [--label <label>...] [--allow-parent-close]
 # Exit codes: 0 = PR created (prints PR number to stdout), 1 = failure
+# --allow-parent-close: skip the parent-task keyword guard (final-phase PR only)
 #
 # On rebase conflict: returns 1 with instructions. Caller must resolve and retry.
 # On push failure: returns 1. Caller should check remote state.
@@ -548,6 +549,10 @@ _parse_commit_and_pr_args() {
 		--label)
 			extra_labels+=("$2")
 			shift 2
+			;;
+		--allow-parent-close)
+			allow_parent_close=1
+			shift
 			;;
 		*)
 			print_error "Unknown argument: $1"
@@ -807,6 +812,7 @@ _label_issue_in_review() {
 cmd_commit_and_pr() {
 	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
 	local -a extra_labels=()
+	local allow_parent_close=0
 
 	_parse_commit_and_pr_args "$@" || return 1
 
@@ -838,6 +844,26 @@ cmd_commit_and_pr() {
 
 	local pr_body=""
 	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer")
+
+	# t2046: parent-task keyword guard — prevent Resolves/Closes/Fixes on
+	# parent-task issues. The parent must stay open until all phase children merge.
+	# Runs in --strict mode (exit 2 = abort PR creation). Pass --allow-parent-close
+	# for the legitimate final-phase PR that intentionally closes the parent tracker.
+	local keyword_guard="${SCRIPT_DIR}/parent-task-keyword-guard.sh"
+	if [[ -x "$keyword_guard" ]]; then
+		local tmp_pr_body
+		tmp_pr_body=$(mktemp)
+		printf '%s\n' "$pr_body" >"$tmp_pr_body"
+		local guard_args=("check-body" "--body-file" "$tmp_pr_body" "--repo" "$repo" "--strict")
+		[[ "$allow_parent_close" -eq 1 ]] && guard_args+=("--allow-parent-close")
+		local guard_rc=0
+		"$keyword_guard" "${guard_args[@]}" 2>&1 >&2 || guard_rc=$?
+		rm -f "$tmp_pr_body"
+		if [[ "$guard_rc" -eq 2 ]]; then
+			print_error "Aborting PR creation: parent-task keyword violation (t2046). See error above."
+			return 1
+		fi
+	fi
 
 	# t1955: Validate dispatch claim before creating PR. In headless mode,
 	# abort if this worker was stale-recovered and replaced by another runner.
