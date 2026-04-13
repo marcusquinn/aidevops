@@ -199,6 +199,8 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Cryptographic issue/PR approval (human-only gate):** `sudo aidevops approve issue <number> [owner/repo]` — SSH-signed approval comment; workers cannot forge it (private key is root-only). Setup once with `sudo aidevops approve setup`. Verify: `aidevops approve verify <number>`. This is distinct from the `ai-approved` label (which is a simple collaborator gate, not cryptographic).
 
+**Task-ID collision guard (t2047):** t-IDs in commit subjects MUST be claimed via `claim-task-id.sh`. The commit-msg hook (`install-task-id-guard.sh install`) enforces this client-side; the CI check (`.github/workflows/task-id-collision-check.yml`) enforces it server-side for commits authored outside the hook.
+
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 
 ---

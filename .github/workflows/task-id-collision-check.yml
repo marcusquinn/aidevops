@@ -1,0 +1,95 @@
+name: Task-ID Collision Check
+
+# Belt-and-braces server-side enforcement for the task-id-collision-guard hook.
+# Catches commits authored outside the hook (web UI, external contributors,
+# --no-verify bypasses) on push and pull_request events.
+#
+# The hook (client-side) and this workflow (server-side) implement the same
+# logic via task-id-collision-guard.sh check-pr <PR_NUMBER>.
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - 'TODO.md'
+      - 'todo/**'
+      - 'README.md'
+      - 'CHANGELOG.md'
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  task-id-collision-check:
+    name: Task-ID Collision Guard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0  # Full history needed for merge-base detection
+
+      - name: Fetch main branch for merge-base comparison
+        run: |
+          git fetch origin main --depth=100 2>/dev/null || true
+          git fetch origin develop --depth=100 2>/dev/null || true
+
+      - name: Run task-id collision check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TASK_ID_GUARD_DEBUG: "0"
+        run: |
+          GUARD=".agents/hooks/task-id-collision-guard.sh"
+          if [[ ! -f "$GUARD" ]]; then
+            echo "[task-id-guard][WARN] Guard script not found at $GUARD — skipping"
+            exit 0
+          fi
+          chmod +x "$GUARD"
+
+          # Determine PR number (for check-pr mode) or use push range
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          if [[ -n "$PR_NUMBER" ]]; then
+            echo "Running check-pr for PR #${PR_NUMBER}"
+            bash "$GUARD" check-pr "$PR_NUMBER"
+          else
+            # Push event: check commits in the push range
+            BEFORE="${{ github.event.before }}"
+            AFTER="${{ github.event.after }}"
+            if [[ -z "$BEFORE" || "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+              echo "New branch push — checking HEAD only"
+              MSG_FILE=$(mktemp)
+              git log -1 --format='%s%n%n%b' > "$MSG_FILE"
+              bash "$GUARD" "$MSG_FILE"
+              rm -f "$MSG_FILE"
+            else
+              echo "Push range: ${BEFORE}..${AFTER}"
+              violations=0
+              while IFS= read -r commit_hash; do
+                [[ -z "$commit_hash" ]] && continue
+                subject=$(git log -1 --format='%s' "$commit_hash")
+                # Skip merge commits
+                if echo "$subject" | grep -qE '^(Merge|fixup!|squash!)'; then
+                  continue
+                fi
+                MSG_FILE=$(mktemp)
+                git log -1 --format='%s%n%n%b' "$commit_hash" > "$MSG_FILE"
+                if ! bash "$GUARD" "$MSG_FILE" 2>&1; then
+                  echo "[task-id-guard][VIOLATION] commit $commit_hash: $subject"
+                  violations=$((violations + 1))
+                fi
+                rm -f "$MSG_FILE"
+              done < <(git rev-list "${BEFORE}..${AFTER}" 2>/dev/null)
+              if [[ "$violations" -gt 0 ]]; then
+                echo ""
+                echo "[task-id-guard][SUMMARY] $violations violation(s) found in push"
+                echo ""
+                echo "Fix: use claim-task-id.sh to allocate t-IDs before using them in commit subjects."
+                exit 1
+              fi
+              echo "[task-id-guard] Push clean — no invented t-IDs detected"
+            fi
+          fi

@@ -90,6 +90,8 @@ if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_privacy_guard.sh"
 	# shellcheck disable=SC1091
+	source "$SETUP_MODULES_DIR/_task_id_guard.sh"
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_canonical_guard.sh"
 fi
 
@@ -926,6 +928,11 @@ _setup_run_non_interactive() {
 	# directory are warned against (t1995). Complements pre-edit-check.sh's
 	# t1990 edit-time check by catching the branch switch itself.
 	setup_canonical_guard
+	# Install/refresh the task-id collision guard commit-msg hook in every
+	# initialized repo so invented t-IDs in commit subjects are rejected
+	# at commit time (t2047). Belt-and-braces with the CI check in
+	# .github/workflows/task-id-collision-check.yml.
+	setup_task_id_guard
 	return 0
 }
 
