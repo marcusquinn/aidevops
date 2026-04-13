@@ -290,8 +290,8 @@ dispatch_deterministic_fill_floor() {
 		# Detects both the legacy GitLab stub and the current claim-task-id.sh
 		# stub marker ("no description provided — enrich before dispatch").
 		local issue_body
-		issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body -q '.body' 2>/dev/null || echo "")
-		if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" || "$issue_body" == "null" ]]; then
+		issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || issue_body=""
+		if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" ]]; then
 			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"
 			continue
 		fi

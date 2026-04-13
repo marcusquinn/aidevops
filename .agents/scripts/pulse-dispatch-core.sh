@@ -1532,6 +1532,7 @@ check_terminal_blockers() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local max_comments="${3:-5}"
+	[[ "$max_comments" =~ ^[0-9]+$ ]] || max_comments=5
 
 	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
 		echo "[pulse-wrapper] check_terminal_blockers: missing arguments" >>"$LOGFILE"
