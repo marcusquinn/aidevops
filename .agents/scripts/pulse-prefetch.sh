@@ -123,14 +123,18 @@ _prefetch_needs_full_sweep() {
 	local entry="$1"
 	local last_full_sweep
 	last_full_sweep=$(echo "$entry" | jq -r '.last_full_sweep // ""' 2>/dev/null) || last_full_sweep=""
-	if [[ -z "$last_full_sweep" || "$last_full_sweep" == "null" ]]; then
+	if [[ -z "$last_full_sweep" ]]; then
 		return 0 # No prior full sweep — must do one
 	fi
 
-	# Convert ISO timestamp to epoch (macOS date -j -f)
+	# Convert ISO timestamp to epoch — cross-platform (macOS/Linux)
 	local last_epoch now_epoch
 	# GH#17699: TZ=UTC required — macOS date interprets input as local time
-	last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_full_sweep" "+%s" 2>/dev/null) || last_epoch=0
+	if [[ "$(uname)" == "Darwin" ]]; then
+		last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_full_sweep" "+%s" 2>/dev/null) || last_epoch=0
+	else
+		last_epoch=$(date -u -d "$last_full_sweep" +%s 2>/dev/null) || last_epoch=0
+	fi
 	now_epoch=$(date -u +%s)
 	local age=$((now_epoch - last_epoch))
 	if [[ "$age" -ge "$PULSE_PREFETCH_FULL_SWEEP_INTERVAL" ]]; then
@@ -171,7 +175,7 @@ _prefetch_prs_try_delta() {
 	last_prefetch=$(echo "$cache_entry" | jq -r '.last_prefetch // ""' 2>/dev/null) || last_prefetch=""
 
 	# No usable timestamp — fall back to full
-	if [[ -z "$last_prefetch" || "$last_prefetch" == "null" ]]; then
+	if [[ -z "$last_prefetch" ]]; then
 		echo "[pulse-wrapper] _prefetch_repo_prs: delta fetch failed for ${slug} (falling back to full): no timestamp or fetch error" >>"$LOGFILE"
 		PREFETCH_PR_SWEEP_MODE="full"
 		return 0
@@ -429,7 +433,7 @@ _prefetch_issues_try_delta() {
 	last_prefetch=$(echo "$cache_entry" | jq -r '.last_prefetch // ""' 2>/dev/null) || last_prefetch=""
 
 	# No usable timestamp — fall back to full
-	if [[ -z "$last_prefetch" || "$last_prefetch" == "null" ]]; then
+	if [[ -z "$last_prefetch" ]]; then
 		echo "[pulse-wrapper] _prefetch_repo_issues: delta fetch failed for ${slug} (falling back to full): no timestamp or fetch error" >>"$LOGFILE"
 		PREFETCH_ISSUE_SWEEP_MODE="full"
 		return 0
@@ -1600,8 +1604,9 @@ prefetch_needs_info_replies() {
 			# Check for author comments after the label was applied
 			local author_replied=false
 			local latest_author_comment_date=""
-			latest_author_comment_date=$(gh api "repos/${slug}/issues/${number}/comments" --paginate \
-				--jq "[.[] | select(.user.login == \"${author}\")] | last | .created_at" 2>/dev/null) || latest_author_comment_date=""
+			# GH#18554: use --arg to safely pass $author into jq (avoids injection if login contains special chars)
+			latest_author_comment_date=$(gh api "repos/${slug}/issues/${number}/comments" --paginate 2>/dev/null |
+				jq -r --arg author "$author" '.[] | select(.user.login == $author) | .created_at' 2>/dev/null | tail -n 1) || latest_author_comment_date=""
 
 			if [[ -n "$latest_author_comment_date" && "$latest_author_comment_date" != "null" && "$latest_author_comment_date" > "$label_date" ]]; then
 				author_replied=true
