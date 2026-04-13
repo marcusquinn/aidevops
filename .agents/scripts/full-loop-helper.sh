@@ -887,24 +887,43 @@ cmd_commit_and_pr() {
 # Single command that replaces the multi-step protocol (wait + merge).
 # Workers call this instead of bare `gh pr merge`.
 #
-# Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase]
-# Exit codes: 0 = merged, 1 = gate failed or merge failed
+# Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto]
+#   --admin  pass --admin to gh pr merge (GH#18731 — owner-only bypass of
+#            branch protection for self-authored PRs on personal-account
+#            repos; skips the error-retry path since intent is explicit)
+#   --auto   pass --auto to gh pr merge (GH#18731 — queues auto-merge to
+#            run when required checks pass, rather than merging now)
+# Exit codes: 0 = merged (or queued, with --auto), 1 = gate failed or merge failed
 cmd_merge() {
 	local pr_number="${1:-}"
 	local repo=""
 	local merge_method="--squash"
+	local merge_flags=()
+	local has_admin=0
+	local has_auto=0
 
 	if [[ -z "$pr_number" ]]; then
-		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase]"
+		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto]"
 		return 1
 	fi
 	shift
 
-	# Parse optional repo and merge method from remaining arguments
+	# Parse optional repo, merge method, and gh pass-through flags.
+	# --admin / --auto (GH#18731) pass straight through to `gh pr merge`
+	# so callers can control branch-protection escape hatches explicitly
+	# instead of relying on the error-retry fallback below.
 	for arg in "$@"; do
 		case "$arg" in
 		--squash | --merge | --rebase)
 			merge_method="$arg"
+			;;
+		--admin)
+			merge_flags+=("$arg")
+			has_admin=1
+			;;
+		--auto)
+			merge_flags+=("$arg")
+			has_auto=1
 			;;
 		*)
 			if [[ -z "$repo" ]]; then
@@ -943,10 +962,21 @@ cmd_merge() {
 	# (when the authenticated user has admin rights; GitHub rejects it
 	# otherwise and we surface the original error).
 	#
-	# Strategy: try the plain merge first. If it fails specifically with
-	# the base-branch-policy error, retry once with `--admin`. Any other
-	# failure is surfaced as-is (no blind --admin escalation).
-	print_info "Merging PR #${pr_number} in ${repo} (${merge_method})..."
+	# GH#18731: callers can also pass --admin or --auto explicitly via
+	# $merge_flags. When they do, we skip the error-retry fallback below
+	# because the caller's intent is already explicit (retrying --admin
+	# when --admin was requested is a no-op; retrying --admin when --auto
+	# was requested would clobber the caller's queue-for-later intent).
+	#
+	# Strategy: try with whatever flags the caller passed (first attempt).
+	# On failure, if no explicit pass-through flag was given AND the error
+	# matches a branch-protection pattern, retry once with --admin. Any
+	# other failure is surfaced as-is (no blind --admin escalation).
+	local merge_desc="${merge_method}"
+	if [[ ${#merge_flags[@]} -gt 0 ]]; then
+		merge_desc+=" ${merge_flags[*]}"
+	fi
+	print_info "Merging PR #${pr_number} in ${repo} (${merge_desc})..."
 	# Capture output AND exit code under `set -e`. A bare assignment
 	# `_merge_out=$(failing_cmd)` triggers errexit before we reach
 	# `_merge_rc=$?`, so the function exits silently on the first plain-
@@ -955,15 +985,22 @@ cmd_merge() {
 	# which shipped the bare-assignment form and was bug-verified
 	# end-to-end (the fallback only worked when run from a worktree with
 	# this fix applied locally before commit).
+	#
+	# Bash 3.2 gotcha: `"${merge_flags[@]}"` raises "unbound variable"
+	# when the array is empty under set -u on macOS default bash. Use
+	# the `${arr[@]+"${arr[@]}"}` form which expands to zero words when
+	# the array is unset or empty.
 	local _merge_out _merge_rc=0
-	if _merge_out=$(gh pr merge "$pr_number" --repo "$repo" "$merge_method" 2>&1); then
+	if _merge_out=$(gh pr merge "$pr_number" --repo "$repo" "$merge_method" ${merge_flags[@]+"${merge_flags[@]}"} 2>&1); then
 		_merge_rc=0
 	else
 		_merge_rc=$?
 	fi
 	if [[ $_merge_rc -ne 0 ]]; then
 		printf '%s\n' "$_merge_out"
-		if printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
+		# Only fall back to --admin when the caller passed neither
+		# --admin nor --auto. Both carry explicit intent.
+		if [[ $has_admin -eq 0 && $has_auto -eq 0 ]] && printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
 			print_info "Branch protection blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
 			if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin 2>&1; then
 				print_success "PR #${pr_number} merged with --admin fallback"
@@ -977,7 +1014,11 @@ cmd_merge() {
 		fi
 	else
 		printf '%s\n' "$_merge_out"
-		print_success "PR #${pr_number} merged successfully"
+		if [[ $has_auto -eq 1 ]]; then
+			print_success "PR #${pr_number} queued for auto-merge"
+		else
+			print_success "PR #${pr_number} merged successfully"
+		fi
 	fi
 
 	# t1934: Unlock PR and linked issue after worker merge.
@@ -1022,7 +1063,10 @@ Commands:
   logs [N]                      Show last N log lines (default: 50)
   commit-and-pr --issue N --message "msg"  Stage, commit, rebase, push, create PR, post merge summary
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
-  merge <PR> [REPO] [--squash]  Gate-enforced merge (runs pre-merge-gate first)
+  merge <PR> [REPO] [--squash|--merge|--rebase] [--admin] [--auto]
+                                Gate-enforced merge (runs pre-merge-gate first).
+                                --admin / --auto pass through to gh pr merge
+                                for branch-protected personal-account repos (GH#18731).
   help                          Show this help
 Options: --max-task-iterations N (50) | --max-preflight-iterations N (5)
   --max-pr-iterations N (20) | --skip-preflight | --skip-postflight
