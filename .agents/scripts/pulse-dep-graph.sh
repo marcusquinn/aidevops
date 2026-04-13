@@ -43,9 +43,13 @@ _PULSE_DEP_GRAPH_LOADED=1
 #       "blocked_by": {
 #         "<issue_number>": {
 #           "task_ids": ["NNN", ...],
-#           "issue_nums": ["NNN", ...]
+#           "issue_nums": ["NNN", ...],
+#           "has_defer_marker": true|false  # t2031 — body signals human hold
 #         }
-#       }
+#       },
+#       "defer_flags": { "<issue_number>": true, ... }  # t2031 — body defer
+#                                                       # markers for issues
+#                                                       # without blocked-by
 #     }
 #   }
 # }
@@ -93,10 +97,11 @@ build_dependency_graph_cache() {
 		issues_json=$(gh issue list --repo "$slug" --state open --limit 200 \
 			--json number,title,body,labels 2>/dev/null) || issues_json='[]'
 
-		local open_nums task_to_issue blocked_by_map
+		local open_nums task_to_issue blocked_by_map defer_flags_map
 		open_nums='[]'
 		task_to_issue='{}'
 		blocked_by_map='{}'
+		defer_flags_map='{}'
 
 		# Parse each issue: extract open issue numbers, task→issue mapping, and blocked-by refs
 		while IFS= read -r issue_json; do
@@ -135,13 +140,27 @@ build_dependency_graph_cache() {
 			blocker_tids=$(printf '%s' "$blocker_lines" | grep -oE 't[0-9]+' | grep -oE '[0-9]+' || true)
 			blocker_nums=$(printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true)
 
+			# Body defer/hold marker detection (t2031). A `status:blocked`
+			# label may have been applied for reasons other than the
+			# blocked-by chain — most commonly a human-imposed hold phrased
+			# in the issue body like "Defer until X" or "On hold". The
+			# refresh routine must not auto-unblock these. We record a
+			# boolean flag per issue that the refresh consults before
+			# removing the label.
+			local has_defer_marker="false"
+			if printf '%s' "$body" | grep -qiE 'defer until|do[-[:space:]]not[-[:space:]]dispatch|on[-[:space:]]hold|HUMAN_UNBLOCK_REQUIRED|hold for |paused[[:space:]:]'; then
+				has_defer_marker="true"
+				defer_flags_map=$(printf '%s' "$defer_flags_map" |
+					jq --arg n "$num" '.[$n] = true' 2>/dev/null) || true
+			fi
+
 			if [[ -n "$blocker_tids" || -n "$blocker_nums" ]]; then
 				local tid_arr num_arr
 				tid_arr=$(printf '%s' "$blocker_tids" | jq -Rs 'split("\n") | map(select(length > 0))' 2>/dev/null) || tid_arr='[]'
 				num_arr=$(printf '%s' "$blocker_nums" | jq -Rs 'split("\n") | map(select(length > 0))' 2>/dev/null) || num_arr='[]'
 				blocked_by_map=$(printf '%s' "$blocked_by_map" |
-					jq --arg n "$num" --argjson tids "$tid_arr" --argjson nums "$num_arr" \
-						'.[$n] = {"task_ids": $tids, "issue_nums": $nums}' 2>/dev/null) || true
+					jq --arg n "$num" --argjson tids "$tid_arr" --argjson nums "$num_arr" --argjson defer "$has_defer_marker" \
+						'.[$n] = {"task_ids": $tids, "issue_nums": $nums, "has_defer_marker": $defer}' 2>/dev/null) || true
 			fi
 		done < <(printf '%s' "$issues_json" | jq -c '.[]' 2>/dev/null)
 
@@ -151,7 +170,8 @@ build_dependency_graph_cache() {
 				--argjson open "$open_nums" \
 				--argjson t2i "$task_to_issue" \
 				--argjson bb "$blocked_by_map" \
-				'.repos[$slug] = {"open_issues": $open, "task_to_issue": $t2i, "blocked_by": $bb}' \
+				--argjson df "$defer_flags_map" \
+				'.repos[$slug] = {"open_issues": $open, "task_to_issue": $t2i, "blocked_by": $bb, "defer_flags": $df}' \
 				2>/dev/null) || true
 
 	done <<<"$repos_json"
@@ -174,12 +194,96 @@ build_dependency_graph_cache() {
 }
 
 #######################################
-# Refresh blocked status from dependency graph (t1935)
+# Non-dep-block comment markers (t2031)
+#
+# Patterns that indicate `status:blocked` was applied for a reason other
+# than the blocked-by chain. When any of these markers appears in recent
+# comments, the refresh routine must NOT auto-unblock — removing the
+# label would discard worker/watchdog/human evidence and waste cycles on
+# a guaranteed re-BLOCKED dispatch.
+#
+# Sources:
+#   - `**BLOCKED**.*cannot proceed` — worker exit BLOCKED with evidence
+#   - `Worker Watchdog Kill`        — watchdog thrash kill (zero-commit loops)
+#   - `Terminal blocker detected`   — pulse-dispatch-core._apply_terminal_blocker
+#   - `ACTION REQUIRED`             — supervisor-posted human-action escalation
+#   - `HUMAN_UNBLOCK_REQUIRED`      — explicit machine-readable hold marker
+#######################################
+_PULSE_DEP_GRAPH_NON_DEP_BLOCK_MARKERS='\*\*BLOCKED\*\*.*cannot proceed|Worker Watchdog Kill|Terminal blocker detected|ACTION REQUIRED|HUMAN_UNBLOCK_REQUIRED'
+
+#######################################
+# Decide whether to defer auto-unblock for an issue (t2031)
+#
+# Conservative gate for `refresh_blocked_status_from_graph`. An issue with
+# a resolved blocked-by chain should still NOT be auto-unblocked when the
+# `status:blocked` label was applied for another reason (worker BLOCKED
+# exit, watchdog thrash kill, terminal blocker, manual human hold). Those
+# origins leave evidence that auto-unblock would silently discard,
+# producing repeat BLOCKED dispatches.
+#
+# Two signals:
+#   (a) Defer/hold marker in the issue body (cached, zero API cost).
+#   (b) Non-dep BLOCKED markers in the 10 most recent comments (one API
+#       call per unblock candidate — candidates are rare, cost is fine).
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - issue number
+#   $3 - cached defer flag ("true" or "false" from build time)
+#
+# Output (stdout):
+#   A short machine-readable reason token when the refresh should defer
+#   ("body-defer" or "comment-marker"). Empty string when safe to unblock.
+#
+# Exit codes:
+#   0 - defer (do NOT auto-unblock); reason printed to stdout
+#   1 - safe to unblock (no signal)
+#######################################
+_should_defer_auto_unblock() {
+	local repo_slug="$1"
+	local issue_num="$2"
+	local has_defer_flag="$3"
+
+	# (a) Body defer marker — cached at build time, free to consult.
+	if [[ "$has_defer_flag" == "true" ]]; then
+		printf 'body-defer\n'
+		return 0
+	fi
+
+	# (b) Non-dep BLOCKED markers in recent comments. Single API call per
+	# candidate; unblock candidates are rare (typical cycle: 0-5 across all
+	# repos), so the cost is well-bounded. Silently tolerate fetch failures
+	# (fail-open on API error → behave as before, preserving the t1935
+	# auto-unblock path when network is flaky).
+	local recent_bodies=""
+	recent_bodies=$(gh issue view "$issue_num" --repo "$repo_slug" \
+		--json comments --jq '[.comments[-10:][] | .body] | join("\n---\n")' \
+		2>/dev/null) || recent_bodies=""
+
+	if [[ -n "$recent_bodies" ]]; then
+		if printf '%s' "$recent_bodies" | grep -qE "$_PULSE_DEP_GRAPH_NON_DEP_BLOCK_MARKERS"; then
+			printf 'comment-marker\n'
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+#######################################
+# Refresh blocked status from dependency graph (t1935, hardened t2031)
 #
 # Reads the cached dependency graph and relabels issues from
 # status:blocked → status:available when all their blockers are closed.
 # Runs once per cycle with zero API calls for the resolution check
 # (the graph already contains open issue numbers).
+#
+# t2031 hardening: before removing the label, consults
+# _should_defer_auto_unblock() to skip issues whose block origin is
+# clearly non-dep (body defer gate, worker BLOCKED exit, watchdog kill,
+# terminal blocker, human hold). The old behaviour — blindly unblocking
+# on dep resolution — wasted worker budget on guaranteed-re-BLOCKED
+# dispatches (awardsapp#2273 / aidevops t2031).
 #
 # Returns: 0 always (non-fatal)
 #######################################
@@ -205,11 +309,12 @@ refresh_blocked_status_from_graph() {
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 
-		local repo_data open_issues_json task_to_issue_json blocked_by_json
+		local repo_data open_issues_json task_to_issue_json blocked_by_json defer_flags_json
 		repo_data=$(printf '%s' "$graph_json" | jq -c --arg s "$slug" '.repos[$s]' 2>/dev/null) || continue
 		open_issues_json=$(printf '%s' "$repo_data" | jq -c '.open_issues // []' 2>/dev/null) || open_issues_json='[]'
 		task_to_issue_json=$(printf '%s' "$repo_data" | jq -c '.task_to_issue // {}' 2>/dev/null) || task_to_issue_json='{}'
 		blocked_by_json=$(printf '%s' "$repo_data" | jq -c '.blocked_by // {}' 2>/dev/null) || blocked_by_json='{}'
+		defer_flags_json=$(printf '%s' "$repo_data" | jq -c '.defer_flags // {}' 2>/dev/null) || defer_flags_json='{}'
 
 		# For each issue that has blocked-by entries, check if all blockers are resolved
 		local blocked_issue_nums
@@ -258,17 +363,36 @@ refresh_blocked_status_from_graph() {
 				done <<<"$blocker_nums"
 			fi
 
-			# If all blockers resolved, relabel status:blocked → status:available
+			# If all blockers resolved, consider relabeling status:blocked → status:available.
+			# t2031: gate the unblock behind _should_defer_auto_unblock to respect
+			# non-dep block origins (body defer, worker BLOCKED, watchdog, terminal).
 			if [[ "$all_resolved" == "true" ]]; then
 				# Verify the issue actually has status:blocked before making API call
 				local current_labels
 				current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 					--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
 				if [[ ",${current_labels}," == *",status:blocked,"* ]]; then
-					gh issue edit "$issue_num" --repo "$slug" \
-						--remove-label "status:blocked" --add-label "status:available" 2>/dev/null || true
-					echo "[pulse-wrapper] dep-graph-cache: unblocked #${issue_num} in ${slug} — all blockers resolved (t1935)" >>"$LOGFILE"
-					unblocked_count=$((unblocked_count + 1))
+					# Look up cached defer flag. Two places: either inside the
+					# blocked_by entry (has_defer_marker) or in the top-level
+					# defer_flags map (belt-and-braces for issues that may have
+					# been bucketed differently). Either "true" triggers defer.
+					local entry_defer top_defer has_defer_flag
+					entry_defer=$(printf '%s' "$entry_json" | jq -r '.has_defer_marker // false' 2>/dev/null) || entry_defer="false"
+					top_defer=$(printf '%s' "$defer_flags_json" | jq -r --arg n "$issue_num" '.[$n] // false' 2>/dev/null) || top_defer="false"
+					has_defer_flag="false"
+					if [[ "$entry_defer" == "true" || "$top_defer" == "true" ]]; then
+						has_defer_flag="true"
+					fi
+
+					local skip_reason=""
+					if skip_reason=$(_should_defer_auto_unblock "$slug" "$issue_num" "$has_defer_flag"); then
+						echo "[pulse-wrapper] dep-graph-cache: NOT unblocking #${issue_num} in ${slug} — non-dep block detected (${skip_reason}) (t2031)" >>"$LOGFILE"
+					else
+						gh issue edit "$issue_num" --repo "$slug" \
+							--remove-label "status:blocked" --add-label "status:available" 2>/dev/null || true
+						echo "[pulse-wrapper] dep-graph-cache: unblocked #${issue_num} in ${slug} — all blockers resolved, no non-dep markers (t1935/t2031)" >>"$LOGFILE"
+						unblocked_count=$((unblocked_count + 1))
+					fi
 				fi
 			fi
 		done <<<"$blocked_issue_nums"
