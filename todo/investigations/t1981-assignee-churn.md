@@ -12,7 +12,7 @@
 
 ### Event trace — issue #18370 (t1969, first reproduction)
 
-```
+```text
 2026-04-12T17:05:23Z labeled status:available by marcusquinn
 2026-04-12T17:05:23Z labeled auto-dispatch by marcusquinn
 2026-04-12T17:05:23Z labeled test by marcusquinn
@@ -72,7 +72,7 @@ The current `.agents/scripts/dispatch-dedup-helper.sh` at `_has_active_claim()` 
 
 Any aidevops install at the latest version will NOT reproduce this churn on issues that carry `origin:interactive`.
 
-### Secondary fix — t1984 (merged: PR #18431 or in review)
+### Secondary fix — t1984 (merged: PR #18431)
 
 **t1984** fixes the orthogonal problem that workflow-created issues (from TODO.md pushes triggering `Sync TODO.md → GitHub Issues`) were getting `origin:worker` + no assignee, so even a current-version pulse wouldn't see `origin:interactive` and wouldn't block. After t1984 merges:
 
@@ -110,7 +110,7 @@ The attribution pattern looked suspicious initially but is fully explained by Gi
 ## Operational recommendations
 
 1. **Ask alex-solovyev to run `aidevops update`** and report their version.
-2. **Monitor #18394 and #18395 for 24 hours** after t1984 merges — if churn recurs, alex-solovyev is still on an old version.
+2. **Monitor #18394 and #18395 for 48 hours** after t1984 merges — if churn recurs, alex-solovyev is still on an old version.
 3. **Document the GitHub event attribution quirk** in `reference/worker-diagnostics.md` so future debuggers don't chase the wrong lead.
 4. **Confirm t1984 actually lands `origin:interactive` on workflow-created issues** — the first TODO.md push after t1984 merges is the test.
 
