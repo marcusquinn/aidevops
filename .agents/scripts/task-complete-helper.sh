@@ -345,17 +345,86 @@ complete_task() {
 	local today
 	today=$(date +%Y-%m-%d)
 
+	# Verify ## Done section exists before modifying the file
+	if ! grep -q "^## Done$" "$todo_file"; then
+		log_error "## Done section not found in $todo_file — cannot move task"
+		return 1
+	fi
+
 	# Create backup
 	cp "$todo_file" "${todo_file}.bak"
 
-	# Mark as complete: [ ] -> [x], append proof-log and completed:date
-	# Use sed to match the line and transform it
-	local sed_pattern="s/^([[:space:]]*- )\[ \] (${task_id} .*)$/\1[x] \2 ${proof_log} completed:${today}/"
+	local tmp_block
+	tmp_block=$(mktemp)
+	local tmp_result
+	tmp_result=$(mktemp)
 
-	if [[ "$OSTYPE" == "darwin"* ]]; then
-		sed -i '' -E "$sed_pattern" "$todo_file"
-	else
-		sed -i -E "$sed_pattern" "$todo_file"
+	# Pass 1: Extract the task block (parent + indented children) into a temp
+	# file, transform the parent line ([ ] -> [x], append proof_log +
+	# completed:today), and output the file with the block removed.
+	#
+	# Block boundary: the matching "- [ ] TASKID" line plus any immediately-
+	# following lines indented with 2+ spaces.  Ends at the first blank line,
+	# next top-level "- [" entry, or EOF.
+	awk -v tid="$task_id" -v proof="$proof_log" -v tday="$today" -v bfile="$tmp_block" '
+	BEGIN { capturing=0; pat="^[[:space:]]*- \\[ \\] " tid "( |$)" }
+	!capturing {
+		if ($0 ~ pat) {
+			capturing=1
+			sub(/\[ \]/, "[x]")
+			print $0 " " proof " completed:" tday > bfile
+			next
+		}
+		print
+		next
+	}
+	/^[[:space:]]*$/ { capturing=0; print; next }
+	/^- \[/ { capturing=0; print; next }
+	/^  / { print > bfile; next }
+	{ capturing=0; print }
+	' "$todo_file" >"$tmp_result"
+
+	# Pass 2: Insert the extracted block at the top of the ## Done section
+	# (immediately after the blank line that follows the ## Done header).
+	local pass2_rc=0
+	awk -v bfile="$tmp_block" '
+	BEGIN { done_found=0 }
+	/^## Done$/ {
+		done_found=1
+		print
+		if ((getline nl) > 0) {
+			if (nl == "") {
+				print nl
+				while ((getline bl < bfile) > 0) { print bl }
+				print ""
+				close(bfile)
+			} else {
+				while ((getline bl < bfile) > 0) { print bl }
+				print ""
+				print nl
+				close(bfile)
+			}
+		} else {
+			while ((getline bl < bfile) > 0) { print bl }
+			close(bfile)
+		}
+		next
+	}
+	{ print }
+	END {
+		if (!done_found) {
+			print "ERROR: ## Done section not found" > "/dev/stderr"
+			exit 1
+		}
+	}
+	' "$tmp_result" >"$todo_file" || pass2_rc=$?
+
+	rm -f "$tmp_result" "$tmp_block"
+
+	if [[ "$pass2_rc" -ne 0 ]]; then
+		log_error "Failed to insert block into ## Done section"
+		mv "${todo_file}.bak" "$todo_file"
+		return 1
 	fi
 
 	# Verify the change was made
@@ -372,8 +441,15 @@ complete_task() {
 		return 1
 	fi
 
+	# Verify the task is now in the ## Done section
+	if ! awk '/^## Done$/{f=1; next} /^## /{f=0} f' "$todo_file" | grep -qE "^[[:space:]]*- \[x\] ${task_id}( |$)"; then
+		log_error "Task $task_id not found in ## Done section after move"
+		mv "${todo_file}.bak" "$todo_file"
+		return 1
+	fi
+
 	rm -f "${todo_file}.bak"
-	log_success "Marked $task_id complete with proof-log: $proof_log"
+	log_success "Marked $task_id complete and moved to ## Done: $proof_log"
 	return 0
 }
 
