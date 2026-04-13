@@ -44,6 +44,20 @@ RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
 
 Data is in your prompt between `--- PRE-FETCHED STATE ---` markers or in the state file path provided. Use it directly — do NOT run `gh pr list` or `gh issue list` (root cause of the "only processes first repo" bug).
 
+**t2041 read contract — summary first, deep reads on demand.** The state file is organised to let you process cheap cycles cheaply:
+
+1. **`## Hygiene Anomalies`** section (top). Zero anomalies = one line (`None — label invariants clean`). This is the most important signal in the file. If anomalies are non-zero on consecutive cycles, a write path is not using `set_issue_status` or is concatenating tier labels — investigate before doing any other work.
+
+2. **Per-repo section headers** may begin with `> **State cache hit** — fingerprint unchanged since TIMESTAMP`. When you see this marker, the LLM-observable state for that repo (labels, assignees, updatedAt across all open issues) is byte-identical to the last cycle AND the cheap `updated:>ISO` verification query confirmed nothing has changed. You SHOULD skip deep analysis of that repo this cycle — no dispatch, no merging, no commenting. The deterministic `merge_ready_prs_all_repos()` has already handled anything ready, and `list_dispatchable_issue_candidates()` will still surface true dispatch candidates if any exist.
+
+3. **Open PRs + Queued Issues** sections — present on every cycle (cheap to render), but on a cache-hit cycle they are informational: the same content as the last cycle. Do not re-process PRs on cache-hit repos.
+
+4. **`gh issue view NUMBER` on demand.** The state file gives you summaries, not full issue bodies. If you need to make a judgment call that requires the full body (e.g. checking a brief quality issue, reading an error trace), fetch it then — don't demand full bodies for every issue upfront. This caps the LLM's budget over its own token spend.
+
+5. **Hard event budget (t2041 Layer 4).** Even on a cache-miss cycle, inspect at most `PULSE_SWEEP_MAX_EVENTS_PER_PASS` events (default 50, see `.agents/configs/pulse-sweep-budget.json`). If more dispatchable items exist, prioritise by the standard priority order and defer the tail to the next cycle. The supervisor will not penalise deferred items; `dispatch_with_dedup` is idempotent.
+
+On very large backlogs the combination of cache-hit skip + hard event budget keeps cost roughly O(churn) — constant per cycle regardless of total open-issue count.
+
 ### 3. Approve and merge ready PRs (free — no worker slot needed)
 
 Most merging is handled by `merge_ready_prs_all_repos()` before the LLM session starts. Focus on edge cases: CI fix workers, `CHANGES_REQUESTED`, external contributor PRs, complex conflicts.

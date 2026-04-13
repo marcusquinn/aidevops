@@ -1,0 +1,11 @@
+{
+	"_comment": "t2041 pulse LLM sweep budget config. Enforces O(churn) cost scaling so aidevops.sh pulse stays affordable on large backlogs. Read by pulse-prefetch.sh at runtime; override per-repo in 'per_repo'.",
+	"default": {
+		"token_budget": 3000,
+		"max_events_per_pass": 50,
+		"deferral_promotion_threshold": 3,
+		"verification_query_limit": 5,
+		"state_fingerprint_cache_hit_enabled": true
+	},
+	"per_repo": {}
+}
