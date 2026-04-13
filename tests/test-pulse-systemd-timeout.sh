@@ -91,3 +91,47 @@ if ! grep -q '^Environment=PULSE_STALE_THRESHOLD="1800"$' "$SERVICE_FILE"; then
 fi
 
 printf 'PASS %s\n' "pulse systemd service timeout exceeds watchdog threshold"
+
+# GH#18439 Bug 1 regression: _scheduler_systemd_env_lines() emits a trailing
+# newline, but $() strips it. The caller MUST re-add the separator or
+# Environment=PATH=... will concatenate with StandardOutput=... on the same
+# line, breaking systemd parsing and producing opencode=unknown in canary.
+if grep -qE 'PATH=.*StandardOutput' "$SERVICE_FILE"; then
+	echo "GH#18439 Bug 1 regression: Environment=PATH concatenated with StandardOutput on same line" >&2
+	echo "--- service file ---" >&2
+	cat "$SERVICE_FILE" >&2
+	echo "--- end ---" >&2
+	exit 1
+fi
+
+if ! grep -qE '^Environment=PATH=' "$SERVICE_FILE"; then
+	echo "GH#18439 Bug 1 regression: Environment=PATH= not found as its own directive line" >&2
+	echo "--- service file ---" >&2
+	cat "$SERVICE_FILE" >&2
+	echo "--- end ---" >&2
+	exit 1
+fi
+
+if ! grep -qE '^StandardOutput=' "$SERVICE_FILE"; then
+	echo "GH#18439 Bug 1 regression: StandardOutput= not found as its own directive line" >&2
+	echo "--- service file ---" >&2
+	cat "$SERVICE_FILE" >&2
+	echo "--- end ---" >&2
+	exit 1
+fi
+
+printf 'PASS %s\n' "GH#18439 Bug 1 newline preserved between Environment= and StandardOutput="
+
+# GH#18439 Bug 2 regression: the Linux install path must embed OPENCODE_BIN
+# in the systemd service file (mirror of the macOS launchd plist) so
+# pulse-wrapper.sh can find the dispatch binary even under systemd's minimal
+# PATH after aidevops-auto-update.timer regenerates the unit.
+if ! grep -qE '^Environment=OPENCODE_BIN=' "$SERVICE_FILE"; then
+	echo "GH#18439 Bug 2 regression: Environment=OPENCODE_BIN= not found in Linux pulse service file" >&2
+	echo "--- service file ---" >&2
+	cat "$SERVICE_FILE" >&2
+	echo "--- end ---" >&2
+	exit 1
+fi
+
+printf 'PASS %s\n' "GH#18439 Bug 2 OPENCODE_BIN propagated to Linux systemd service"

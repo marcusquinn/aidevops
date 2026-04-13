@@ -142,8 +142,27 @@ _is_pulse_installed() {
 }
 
 _resolve_pulse_runtime_binary() {
+	# GH#18439 Bug 2: Persist the resolved binary path across setup.sh
+	# invocations. aidevops-auto-update.timer runs setup.sh under systemd's
+	# minimal PATH, so re-resolving from live `$PATH` alone yields the
+	# legacy macOS-biased `/opt/homebrew/bin/opencode` fallback on Linux.
+	# Reading from persistence first (populated during an interactive
+	# setup.sh run with a rich `$PATH`) prevents the auto-update cycle
+	# from silently degrading the service file.
+	local _persisted_file="$HOME/.config/aidevops/scheduler-runtime-bin"
 	local opencode_bin=""
 
+	# 1. Prefer persisted path if it still points at an executable file.
+	if [[ -f "$_persisted_file" ]]; then
+		local _persisted
+		_persisted=$(head -n1 "$_persisted_file" 2>/dev/null || true)
+		if [[ -n "$_persisted" ]] && [[ -x "$_persisted" ]]; then
+			printf '%s' "$_persisted"
+			return 0
+		fi
+	fi
+
+	# 2. Try runtime-registry lookup via live PATH.
 	if type rt_list_headless &>/dev/null; then
 		local _sched_rt_id=""
 		local _sched_bin=""
@@ -156,15 +175,64 @@ _resolve_pulse_runtime_binary() {
 		done < <(rt_list_headless)
 	fi
 
-	printf '%s' "${opencode_bin:-$(command -v opencode 2>/dev/null || printf '/opt/homebrew/bin/opencode')}"
+	# 3. Direct PATH lookup for the default runtime.
+	if [[ -z "$opencode_bin" ]]; then
+		opencode_bin=$(command -v opencode 2>/dev/null || true)
+	fi
+
+	# 4. OS-aware common-install-location sweep. Used when live `$PATH` is
+	# minimal (systemd-spawned setup.sh) and persistence hasn't been
+	# seeded yet. Covers Homebrew (macOS + Linuxbrew), /usr/local, npm
+	# global, Python/uv pipx-style `.local/bin`, and bun.
+	if [[ -z "$opencode_bin" ]]; then
+		local _candidate
+		for _candidate in \
+			/opt/homebrew/bin/opencode \
+			/usr/local/bin/opencode \
+			/home/linuxbrew/.linuxbrew/bin/opencode \
+			"$HOME/.npm-global/bin/opencode" \
+			"$HOME/.local/bin/opencode" \
+			"$HOME/.bun/bin/opencode" \
+			/opt/homebrew/bin/claude \
+			/usr/local/bin/claude \
+			"$HOME/.local/bin/claude"; do
+			if [[ -x "$_candidate" ]]; then
+				opencode_bin="$_candidate"
+				break
+			fi
+		done
+	fi
+
+	# 5. Last-resort legacy fallback (preserves pre-GH#18439 behaviour so
+	# setup.sh never exits the resolver empty-handed).
+	[[ -z "$opencode_bin" ]] && opencode_bin="/opt/homebrew/bin/opencode"
+
+	# Persist the resolved path for subsequent non-interactive invocations
+	# (auto-update timer, cron regeneration). Only write when we actually
+	# found a real executable — don't persist the legacy fallback.
+	if [[ -x "$opencode_bin" ]]; then
+		mkdir -p "$(dirname "$_persisted_file")" 2>/dev/null || true
+		printf '%s\n' "$opencode_bin" >"$_persisted_file" 2>/dev/null || true
+	fi
+
+	printf '%s' "$opencode_bin"
 	return 0
 }
 
 _build_pulse_linux_env() {
 	# GH#17546/GH#17769: Model config is derived from pool + routing table at
 	# runtime. No model env vars embedded in cron/systemd.
+	local opencode_bin="${1:-}"
 	local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace
 PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
+
+	# GH#18439 Bug 2: embed resolved runtime binary path so pulse-wrapper.sh
+	# and headless-runtime-helper.sh find the correct binary under systemd's
+	# minimal PATH (e.g. when aidevops-auto-update.timer regenerates the
+	# service file). Mirrors the macOS launchd <OPENCODE_BIN> key.
+	if [[ -n "$opencode_bin" ]]; then
+		_pulse_env+=$'\n'"OPENCODE_BIN=${opencode_bin}"
+	fi
 
 	printf '%s' "$_pulse_env"
 	return 0
@@ -255,7 +323,10 @@ _install_supervisor_pulse() {
 
 	local _pulse_timeout_sec=$((PULSE_STALE_THRESHOLD_SECONDS + 60))
 	local _pulse_env=""
-	_pulse_env=$(_build_pulse_linux_env)
+	# GH#18439 Bug 2: thread resolved runtime binary path through to the
+	# Linux env builder so OPENCODE_BIN is embedded in the systemd service
+	# file (parity with the macOS launchd plist at line 415).
+	_pulse_env=$(_build_pulse_linux_env "$opencode_bin")
 	_install_scheduler_linux \
 		"aidevops-supervisor-pulse" \
 		"aidevops: supervisor-pulse" \
@@ -555,8 +626,17 @@ _install_scheduler_systemd() {
 
 	mkdir -p "$service_dir"
 
+	# GH#18439 Bug 1: command substitution strips trailing newlines, which
+	# would run the final Environment=PATH=... into the following
+	# StandardOutput=... directive on the same line. Use a sentinel ('x')
+	# to preserve the trailing newline that _scheduler_systemd_env_lines
+	# always emits.
 	local _env_lines
-	_env_lines=$(_scheduler_systemd_env_lines "$env_vars")
+	_env_lines=$(
+		_scheduler_systemd_env_lines "$env_vars"
+		printf 'x'
+	)
+	_env_lines="${_env_lines%x}"
 
 	if [[ -z "$timeout_sec" ]]; then
 		timeout_sec="$interval_sec"
