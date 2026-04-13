@@ -28,12 +28,25 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22'
+          # Node 24 ships npm 11.5+ which natively supports OIDC Trusted Publishers.
+          # Do NOT downgrade to 22 + `npm install -g npm@latest` — that self-replaces
+          # the running npm process mid-install and dies with
+          # `Cannot find module 'promise-retry'` (broke 100+ releases between
+          # v3.5.896 and v3.8.1, fixed in t2043 / GH#18572).
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
-      
-      # Ensure npm supports OIDC trusted publishing
-      - name: Update npm for Trusted Publishers
-        run: npm install -g npm@latest
+
+      # Verify npm version is sufficient for Trusted Publishers (≥11.5.1).
+      # Assertion-only: never self-update the running npm process.
+      - name: Verify npm version supports Trusted Publishers
+        run: |
+          NPM_VERSION=$(npm --version)
+          echo "npm version: $NPM_VERSION"
+          REQUIRED="11.5.1"
+          if [ "$(printf '%s\n' "$REQUIRED" "$NPM_VERSION" | sort -V | head -n1)" != "$REQUIRED" ]; then
+            echo "::error::npm $NPM_VERSION < $REQUIRED required for Trusted Publishers. Bump node-version in setup-node step."
+            exit 1
+          fi
       
       - name: Get version
         id: version
