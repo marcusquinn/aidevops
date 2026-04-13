@@ -970,6 +970,19 @@ ensure_origin_labels_exist() {
 # reserved word (SC1010).
 ISSUE_STATUS_LABELS=("available" "queued" "claimed" "in-progress" "in-review" "done" "blocked")
 
+# t2040: precedence order for label-invariant reconciliation. First match wins
+# when picking the survivor from a multi-label pollution event. `done` is
+# terminal — always preserved if present. This guards against data loss in any
+# future code path that isn't fully atomic: if an issue transiently ends up
+# with both `in-review` and `done`, the reconciler MUST keep `done`.
+# Consumed by `_normalize_label_invariants` in pulse-issue-reconcile.sh.
+ISSUE_STATUS_LABEL_PRECEDENCE=("done" "in-review" "in-progress" "queued" "claimed" "available" "blocked")
+
+# t2040: tier label rank for invariant reconciliation. Must match the rank
+# order in .github/workflows/dedup-tier-labels.yml — reconciler and GH Action
+# must pick the same survivor so they're idempotent with each other.
+ISSUE_TIER_LABEL_RANK=("reasoning" "standard" "simple")
+
 # Ensure all core status:* labels exist on a repo (idempotent, cached per-process).
 # The helper relies on --remove-label being idempotent for *unset* labels (gh
 # returns exit 0 when a label exists in the repo but isn't applied to the issue),
