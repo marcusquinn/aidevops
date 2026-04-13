@@ -85,7 +85,7 @@ case "$1" in
 			exit 0
 		fi
 		;;
-	issue)
+	issue|pr)
 		case "$2" in
 			list)
 				# Detect --search (verification query) vs plain list
@@ -97,6 +97,8 @@ case "$1" in
 				done
 				if [[ "$has_search" == "true" ]]; then
 					printf '%s' "${GH_SEARCH_LIST_PAYLOAD:-[]}"
+				elif [[ "$1" == "pr" ]]; then
+					printf '%s' "${GH_PR_LIST_PAYLOAD:-[]}"
 				else
 					printf '%s' "${GH_ISSUE_LIST_PAYLOAD:-[]}"
 				fi

@@ -406,6 +406,10 @@ _fetch_label_invariant_rows() {
 		--json number,labels,createdAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json=""
 	[[ -n "$issues_json" && "$issues_json" != "null" ]] || return 1
 
+	# has_any_status counts ALL status:* labels (core + exception) so the
+	# triage-missing counter correctly ignores issues that are actively
+	# managed via an exception label (needs-info, verify-failed, stale,
+	# needs-testing, orphaned). See CodeRabbit review on PR #18546.
 	printf '%s' "$issues_json" | jq -r '
 		.[] | [
 			(.number | tostring),
@@ -413,7 +417,8 @@ _fetch_label_invariant_rows() {
 			([.labels[].name | select(startswith("tier:"))   | sub("^tier:";   "")] | join(" ")),
 			((.labels | map(.name) | index("origin:interactive")) != null | tostring),
 			((.labels | map(.name) | index("auto-dispatch"))      != null | tostring),
-			(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring)
+			(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring),
+			(([.labels[].name | select(startswith("status:"))] | length) | tostring)
 		] | join("|")
 	' 2>/dev/null
 	return 0
@@ -439,8 +444,8 @@ _normalize_label_invariants_for_repo() {
 	rows=$(_fetch_label_invariant_rows "$slug") || return 0
 	[[ -n "$rows" ]] || return 0
 
-	local issue_num status_list tier_list has_origin_i has_auto created_epoch
-	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto created_epoch; do
+	local issue_num status_list tier_list has_origin_i has_auto created_epoch all_status_count
+	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto created_epoch all_status_count; do
 		[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 		_LI_CHECKED=$((_LI_CHECKED + 1))
 
@@ -467,12 +472,15 @@ _normalize_label_invariants_for_repo() {
 		fi
 
 		# Triage-missing count (flag only, no auto-fix). origin:interactive
-		# + no tier + no auto-dispatch + no status + created >30min ago =
-		# maintainer-intended issue not briefed into the dispatch pipeline.
+		# + no tier + no auto-dispatch + no status:* AT ALL (including
+		# exception labels like needs-info/verify-failed/stale — an issue
+		# in those states is actively managed, not awaiting triage) +
+		# created >30min ago = maintainer-intended issue not briefed into
+		# the dispatch pipeline.
 		if [[ "$has_origin_i" == "true" &&
 			-z "$tier_list" &&
 			"$has_auto" == "false" &&
-			"$core_count" -eq 0 &&
+			"$all_status_count" == "0" &&
 			"$created_epoch" =~ ^[0-9]+$ &&
 			"$created_epoch" -lt "$triage_cutoff" ]]; then
 			_LI_TRIAGE_MISSING=$((_LI_TRIAGE_MISSING + 1))
