@@ -831,6 +831,11 @@ _run_preflight_stages() {
 	# Non-fatal — pulse proceeds even if the review request fails.
 	run_stage_with_timeout "coderabbit_review" "$PRE_RUN_STAGE_TIMEOUT" run_daily_codebase_review || true
 
+	# Daily post-merge review scanner (t1993): ingests inline AI bot review
+	# comments from recently merged PRs into review-followup issues.
+	# Time-gated to 24h; scans all pulse-enabled repos via scanner's own dedup.
+	run_stage_with_timeout "post_merge_scanner" "$PRE_RUN_STAGE_TIMEOUT" _run_post_merge_review_scanner || true
+
 	# Daily dedup cleanup: close duplicate simplification-debt issues.
 	# Runs after complexity scan so any new duplicates from this cycle are caught.
 	# Non-fatal — pulse proceeds even if cleanup fails.

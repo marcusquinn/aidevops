@@ -32,6 +32,7 @@
 #   - _complexity_scan_check_interval
 #   - _coderabbit_review_check_interval
 #   - run_daily_codebase_review
+#   - _run_post_merge_review_scanner
 #   - _complexity_scan_tree_hash
 #   - _complexity_scan_tree_changed
 #   - _complexity_llm_sweep_due
@@ -169,6 +170,58 @@ run_daily_codebase_review() {
 		echo "[pulse-wrapper] CodeRabbit review: findings will be processed by quality-feedback-helper.sh on next cycle" >>"$LOGFILE"
 	fi
 
+	return 0
+}
+
+#######################################
+# Daily post-merge review scanner (t1993).
+#
+# Scans recently merged PRs in pulse-enabled repos for actionable AI bot
+# review comments (CodeRabbit, Gemini Code Assist, claude-review, gpt-review)
+# and creates review-followup issues. Idempotent via existing dedup in
+# post-merge-review-scanner.sh's issue_exists() guard.
+#
+# Time-gated to run at most once per POST_MERGE_SCANNER_INTERVAL (default 24h).
+# Reference pattern: run_daily_codebase_review.
+#######################################
+_run_post_merge_review_scanner() {
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	# Time gate: skip if last run was within the interval
+	if [[ -f "$POST_MERGE_SCANNER_LAST_RUN" ]]; then
+		local last_run
+		last_run=$(cat "$POST_MERGE_SCANNER_LAST_RUN" 2>/dev/null || echo "0")
+		[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
+		local elapsed=$((now_epoch - last_run))
+		if [[ "$elapsed" -lt "$POST_MERGE_SCANNER_INTERVAL" ]]; then
+			return 0
+		fi
+	fi
+
+	local scanner="${SCRIPT_DIR}/post-merge-review-scanner.sh"
+	if [[ ! -x "$scanner" ]]; then
+		echo "[pulse-wrapper] Post-merge scanner: helper not found or not executable: $scanner" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Iterate pulse-enabled repos; scan each. Scanner is idempotent —
+	# existing review-followup issues are skipped via issue_exists().
+	local repos_json="$REPOS_JSON"
+	if [[ ! -f "$repos_json" ]]; then
+		return 0
+	fi
+
+	local total_repos=0
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		total_repos=$((total_repos + 1))
+		echo "[pulse-wrapper] Post-merge scanner: scanning $slug" >>"$LOGFILE"
+		SCANNER_DAYS="${SCANNER_DAYS:-7}" "$scanner" scan "$slug" >>"$LOGFILE" 2>&1 || true
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+
+	printf '%s\n' "$now_epoch" >"$POST_MERGE_SCANNER_LAST_RUN"
+	echo "[pulse-wrapper] Post-merge scanner: completed ${total_repos} repo(s), next run in ~$((POST_MERGE_SCANNER_INTERVAL / 3600))h" >>"$LOGFILE"
 	return 0
 }
 

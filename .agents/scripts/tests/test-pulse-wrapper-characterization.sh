@@ -179,6 +179,7 @@ readonly -a EXPECTED_FUNCTIONS=(
 	"_complexity_scan_check_interval"
 	"_coderabbit_review_check_interval"
 	"run_daily_codebase_review"
+	"_run_post_merge_review_scanner"
 	"_complexity_scan_tree_hash"
 	"_complexity_scan_tree_changed"
 	"_complexity_llm_sweep_due"
