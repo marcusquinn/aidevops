@@ -144,8 +144,6 @@ jobs:
 - **Allowlisting**: private services behind a firewall need to allow Ubicloud's egress IPs from https://api.ubicloud.com/ips-v4 (dynamic list; re-fetch periodically).
 - **SSH debug**: Ubicloud supports `ubicloud/upterm` or `mxschmitt/action-tmate` on its runners the same way GitHub-hosted does — see https://ubicloud.com/docs/github-actions-integration/debug-workflow-with-ssh
 
-Cross-ref: see `tools/git/github-actions.md` "Managed runner alternatives" for the CI-side integration summary.
-
 ## Virtual machines
 
 ```bash
@@ -189,7 +187,7 @@ Configure programs via env: `UBI_SSH`, `UBI_SFTP`, `UBI_SCP`, `UBI_PSQL`, `UBI_P
 
 ## Managed PostgreSQL
 
-Fast because local NVMe is used for storage and Ubicloud designs the data plane for each bare-metal host. ~3x cheaper than AWS RDS for comparable specs.
+Local NVMe, bare-metal-optimised data plane. ~3x cheaper than AWS RDS for comparable specs.
 
 - **Families**: `hobby-{1,2}` (shared CPU, $12.41/$24.81 per month) and `standard-{2..60}` ($49 → $1498 per month).
 - **HA**: synchronous replication with automatic failover on standard-family.
@@ -227,7 +225,7 @@ See https://ubicloud.com/docs/inference/endpoint
 
 ## Hosted (managed SaaS) vs. self-managed (build your own cloud)
 
-Ubicloud is unusual: the same AGPL v3 codebase runs the managed service *and* can be self-hosted on your own bare metal. Choose based on workload maturity, compliance needs, and where the cost savings actually show up.
+Same AGPL v3 codebase runs both the managed service and self-hosted on your own bare metal.
 
 | Dimension | Managed SaaS (console.ubicloud.com) | Self-managed (build your own cloud) |
 |-----------|-------------------------------------|--------------------------------------|
