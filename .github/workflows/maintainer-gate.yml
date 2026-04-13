@@ -525,6 +525,37 @@ jobs:
               continue
             fi
 
+            # -----------------------------------------------------------------
+            # Check -1 mirror: origin:interactive — skip pending + rerun for
+            # maintainer-authored interactive PRs (GH#18532, mirrors Job 1).
+            # When an issue changes, Job 3 would otherwise post a "pending"
+            # status that temporarily overrides Job 1's prior "success" for
+            # origin:interactive PRs. For those PRs the gate will always pass,
+            # so post success directly and skip the rerun entirely.
+            #
+            # Security gate: same as Job 1 — only OWNER or MEMBER. COLLABORATOR
+            # is excluded (write-access contributors must still use the normal gate).
+            # -----------------------------------------------------------------
+            PR_INFO=$(gh pr view "$PR_NUM" --repo "$REPO" \
+              --json labels,authorAssociation \
+              --jq '{labels: [.labels[].name], assoc: .authorAssociation}' \
+              2>/dev/null || true)
+            PR_LABELS_J3=$(printf '%s' "$PR_INFO" | jq -r '.labels[]' 2>/dev/null || true)
+            PR_AUTHOR_ASSOC_J3=$(printf '%s' "$PR_INFO" | jq -r '.assoc' 2>/dev/null || true)
+            if printf '%s' "$PR_LABELS_J3" | grep -q 'origin:interactive'; then
+              if [[ "$PR_AUTHOR_ASSOC_J3" == "OWNER" ]] || \
+                 [[ "$PR_AUTHOR_ASSOC_J3" == "MEMBER" ]]; then
+                echo "SKIP rerun: PR #$PR_NUM has origin:interactive and author is maintainer ($PR_AUTHOR_ASSOC_J3) — posting success, no Job 1 rerun needed"
+                gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                  --method POST \
+                  -f state=success \
+                  -f context="maintainer-gate" \
+                  -f description="origin:interactive by maintainer — implied approval (Job 3 exemption)" \
+                  2>/dev/null || true
+                continue
+              fi
+            fi
+
             # Post pending status while Job 1 re-evaluates
             # t2037: Job 3 is pure plumbing — gate evaluation is Job 1's sole responsibility
             gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
