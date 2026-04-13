@@ -238,15 +238,15 @@ _classify_stale_recovery_crash_type() {
 #   0 - duplicate detected (do NOT dispatch)
 #   1 - no duplicate (safe to dispatch)
 #######################################
-check_dispatch_dedup() {
+#######################################
+# Layer 1 (GH#6696): in-flight dispatch ledger check.
+# Catches workers in the 10-15 min gap between dispatch and PR creation.
+# Arguments: issue_number, repo_slug
+# Exit: 0 = blocked (duplicate), 1 = continue to next layer
+#######################################
+_dedup_layer1_ledger_check() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local title="$3"
-	local issue_title="${4:-}"
-	local self_login="${5:-}"
-
-	# Layer 1 (GH#6696): in-flight dispatch ledger — catches workers between
-	# dispatch and PR creation (the 10-15 min gap that caused duplicate dispatches)
 	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 	if [[ -x "$ledger_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
 		if "$ledger_helper" check-issue --issue "$issue_number" --repo "$repo_slug" >/dev/null 2>&1; then
@@ -254,14 +254,31 @@ check_dispatch_dedup() {
 			return 0
 		fi
 	fi
+	return 1
+}
 
-	# Layer 2: exact repo+issue process match
+#######################################
+# Layer 2: exact repo+issue process match.
+# Arguments: issue_number, repo_slug
+# Exit: 0 = blocked, 1 = continue
+#######################################
+_dedup_layer2_process_match() {
+	local issue_number="$1"
+	local repo_slug="$2"
 	if has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
 		echo "[pulse-wrapper] Dedup: worker already running for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		return 0
 	fi
+	return 1
+}
 
-	# Layer 3: normalized title key match via dispatch-dedup-helper
+#######################################
+# Layer 3: normalized title key match via dispatch-dedup-helper.
+# Arguments: title
+# Exit: 0 = blocked, 1 = continue
+#######################################
+_dedup_layer3_title_match() {
+	local title="$1"
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ -n "$title" ]]; then
 		if "$dedup_helper" is-duplicate "$title" >/dev/null 2>&1; then
@@ -269,10 +286,21 @@ check_dispatch_dedup() {
 			return 0
 		fi
 	fi
+	return 1
+}
 
-	# Layer 4: open or merged PR evidence for this issue/task — if a worker
-	# already produced a PR (open or merged), don't dispatch another worker.
-	# Previously only checked --state merged, missing open PRs entirely.
+#######################################
+# Layer 4: open or merged PR evidence for this issue/task.
+# If a worker already produced a PR (open or merged), do not dispatch another.
+# Previously only checked --state merged, missing open PRs entirely.
+# Arguments: issue_number, repo_slug, issue_title
+# Exit: 0 = blocked, 1 = continue
+#######################################
+_dedup_layer4_pr_evidence() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_title="$3"
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	local dedup_helper_output=""
 	if [[ -x "$dedup_helper" ]]; then
 		if dedup_helper_output=$("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>>"$LOGFILE"); then
@@ -284,15 +312,22 @@ check_dispatch_dedup() {
 			return 0
 		fi
 	fi
+	return 1
+}
 
-	# Layer 5 (GH#11141): cross-machine dispatch comment check — detects
-	# "Dispatching worker" comments posted by other runners. This is the
-	# persistent cross-machine signal that survives beyond the claim lock's
-	# 8-second window. The GH#11141 incident: marcusquinn dispatched at
-	# 02:36, johnwaldo dispatched at 03:18 (42 min later). The claim lock
-	# had long expired, the ledger is local-only, and the assignee guard
-	# excluded the repo owner. But the "Dispatching worker" comment was
-	# sitting right there on the issue — visible to all runners.
+#######################################
+# Layer 5 (GH#11141): cross-machine dispatch comment check.
+# Detects "Dispatching worker" comments posted by other runners — the
+# persistent cross-machine signal that survives beyond the claim lock's
+# 8-second window. See GH#11141 incident for rationale.
+# Arguments: issue_number, repo_slug, self_login
+# Exit: 0 = blocked, 1 = continue
+#######################################
+_dedup_layer5_dispatch_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
 		local dispatch_comment_output=""
 		if dispatch_comment_output=$("$dedup_helper" has-dispatch-comment "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE"); then
@@ -300,11 +335,21 @@ check_dispatch_dedup() {
 			return 0
 		fi
 	fi
+	return 1
+}
 
-	# Layer 6 (GH#6891): cross-machine assignee guard — prevents runners from
-	# dispatching workers for issues already assigned to another login. Only
-	# self_login is excluded; repo owner and maintainer are NOT excluded since
-	# they may also be runners (GH#11141 fix — reverts the GH#10521 exclusion).
+#######################################
+# Layer 6 (GH#6891): cross-machine assignee guard + stale recovery.
+# Prevents runners from dispatching workers for issues already assigned to
+# another login. On STALE_RECOVERED, records fast-fail (t1927/t2042).
+# Arguments: issue_number, repo_slug, self_login
+# Exit: 0 = blocked, 1 = continue
+#######################################
+_dedup_layer6_assignee_and_stale() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
 		local assigned_output=""
 		if assigned_output=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE"); then
@@ -328,25 +373,31 @@ check_dispatch_dedup() {
 			fast_fail_record "$issue_number" "$repo_slug" "stale_timeout" "" "$_stale_crash_type" || true
 		fi
 	fi
+	return 1
+}
 
-	# Layer 7 (GH#11086): cross-machine optimistic claim lock — the final safety
-	# net for multi-runner environments. Posts a plain-text claim comment on the issue,
-	# sleeps the consensus window (default 8s), then checks if this runner's claim
-	# is the oldest. Only the first claimant proceeds; others back off.
-	#
-	# Previously this was an LLM-instructed step in pulse.md that runners could
-	# skip. The GH#11086 incident: marcusquinn dispatched at 23:07:43, johnwaldo
-	# dispatched at 23:08:28 — 45 seconds apart on the same issue because the
-	# LLM skipped the claim step. Moving it here makes it deterministic.
-	#
-	# Exit codes from claim: 0=won, 1=lost, 2=error (fail-open).
-	# On error (exit 2), we allow dispatch to proceed — better to risk a rare
-	# duplicate than to block all dispatch on a transient GitHub API failure.
-	#
-	# GH#15317: Capture claim output to extract comment_id for cleanup after
-	# the deterministic dispatch comment is posted. Uses the caller's
-	# _claim_comment_id variable (declared in dispatch_with_dedup) via bash
-	# dynamic scoping — do NOT declare local here or the value is lost on return.
+#######################################
+# Layer 7 (GH#11086): cross-machine optimistic claim lock.
+# Final safety net for multi-runner environments. Posts a plain-text claim
+# comment, sleeps the consensus window, and checks if this runner's claim
+# is the oldest. See the GH#11086 incident (23:07:43 vs 23:08:28 race).
+#
+# GH#15317: Captures claim output to extract comment_id for audit-trail
+# retention. The caller-caller (dispatch_with_dedup) reads _claim_comment_id
+# via bash dynamic scoping — this helper assigns without `local` so the
+# value propagates up two stack frames.
+#
+# Arguments: issue_number, repo_slug, self_login
+# Exit: 0 = blocked, 1 = continue (won claim or fail-open error path)
+#######################################
+_dedup_layer7_claim_lock() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	# GH#15317: reset the dynamically-scoped _claim_comment_id unconditionally
+	# so the dispatch_with_dedup caller always sees a fresh value. Do NOT
+	# declare local here — see function header.
 	_claim_comment_id=""
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
 		# GH#17590: Pre-check for existing claims BEFORE posting our own.
@@ -377,6 +428,28 @@ check_dispatch_dedup() {
 		_claim_comment_id=$(printf '%s' "$claim_output" | sed -n 's/.*comment_id=\([0-9]*\).*/\1/p')
 		# claim_exit 0 = won, proceed to dispatch
 	fi
+	return 1
+}
+
+#######################################
+# Thin orchestrator — runs the 7-layer dedup chain in order.
+# Byte-for-byte behavioural equivalent of the pre-GH#18654 single-function
+# implementation. Each layer returns 0 to block dispatch or 1 to continue.
+#######################################
+check_dispatch_dedup() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local title="$3"
+	local issue_title="${4:-}"
+	local self_login="${5:-}"
+
+	_dedup_layer1_ledger_check "$issue_number" "$repo_slug" && return 0
+	_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
+	_dedup_layer3_title_match "$title" && return 0
+	_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" && return 0
+	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 0
+	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 0
+	_dedup_layer7_claim_lock "$issue_number" "$repo_slug" "$self_login" && return 0
 
 	return 1
 }
@@ -912,25 +985,29 @@ _is_task_committed_to_main() {
 	return 1
 }
 
-_issue_targets_large_files() {
+# Module-level skip pattern used by the large-file gate — files that are
+# large by nature and can't/shouldn't be "simplified" (lockfiles, generated
+# data, JSON/YAML configs, binary-adjacent formats). GH#17897: also skips
+# data files (.json/.yaml/.yml/.toml/.xml/.csv) which are config, not code.
+_LFG_SKIP_PATTERN='(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|Cargo\.lock|Gemfile\.lock|poetry\.lock|simplification-state\.json|\.min\.(js|css)$|\.json$|\.yaml$|\.yml$|\.toml$|\.xml$|\.csv$)'
+
+#######################################
+# Label-based early-exit precheck for the large-file gate.
+# Handles GH#18042 self-simplification auto-clear, force_recheck bypass,
+# already-labeled short-circuit, already-dispatched skips, and origin:worker
+# race-window guard.
+#
+# Arguments: issue_number, repo_slug, issue_labels (comma-joined), force_recheck
+# Exit codes:
+#   0 - continue to path extraction
+#   1 - caller should `return 1` (no gate, don't re-check)
+#   2 - caller should `return 0` (gate already applied, short-circuit)
+#######################################
+_large_file_gate_precheck_labels() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local issue_body="$3"
-	local repo_path="$4"
-	# t1998: force_recheck bypasses the skip-if-already-labeled short-circuit
-	# below. The normal dispatch path leaves this false (perf optimisation —
-	# no need to re-run wc -l on an issue we just gated). The re-evaluation
-	# path in pulse-triage.sh _reevaluate_simplification_labels() passes
-	# "true" so it can detect when a previously-gated file has been
-	# simplified below threshold and clear the label.
-	local force_recheck="${5:-false}"
-
-	[[ -n "$issue_body" ]] || return 1
-	[[ -d "$repo_path" ]] || return 1
-
-	local issue_labels
-	issue_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	local issue_labels="$3"
+	local force_recheck="$4"
 
 	# GH#18042: Never gate simplification tasks behind the large-file gate.
 	# Issues tagged "simplification" or "simplification-debt" exist to reduce
@@ -961,7 +1038,7 @@ _issue_targets_large_files() {
 	# the target file had been simplified below threshold.
 	if [[ "$force_recheck" != "true" ]] &&
 		[[ ",$issue_labels," == *",needs-simplification,"* ]]; then
-		return 0
+		return 2
 	fi
 	# Skip if simplification was already done
 	if [[ ",$issue_labels," == *",simplified,"* ]]; then
@@ -987,10 +1064,20 @@ _issue_targets_large_files() {
 		fi
 	fi
 
-	# Extract file paths from "EDIT:" and "Files to Modify" patterns in body.
-	# Patterns: "EDIT: path/to/file.sh", "EDIT: path/to/file.sh:123",
-	#           "EDIT: path/to/file.sh:123-456", "- EDIT: path/to/file"
-	#
+	return 0
+}
+
+#######################################
+# Extract candidate file paths from an issue body, preserving any trailing
+# ":NNN" or ":START-END" line qualifiers (t2024). Combines two extractors:
+#   1. "EDIT:" / "NEW:" / "File:" markers referencing agents/scripts paths.
+#   2. Backtick-quoted script paths on list-item or File:-marker lines
+#      (GH#17897 — avoid review-prose false matches).
+# Prints deduplicated, non-empty paths to stdout (one per line).
+#######################################
+_large_file_gate_extract_paths() {
+	local issue_body="$1"
+
 	# t2024: Preserve any trailing ":NNN" or ":START-END" line qualifier so
 	# the gate loop below can distinguish scoped ranges from whole-file targets.
 	# Previously this extractor stripped the qualifier via `sed 's/:.*//'`,
@@ -1000,7 +1087,6 @@ _issue_targets_large_files() {
 	file_paths=$(printf '%s' "$issue_body" | grep -oE '(EDIT|NEW|File):?\s+[`"]?\.?agents/scripts/[^`"[:space:],]+' 2>/dev/null |
 		sed 's/^[A-Z]*:*[[:space:]]*//' | sed 's/^[`"]//' | sed 's/[`"]*$//' | sort -u) || file_paths=""
 
-	# Also check for backtick-quoted filenames that look like script paths.
 	# GH#17897: Only match backtick paths on lines that look like implementation
 	# targets (list items, "File:" markers), not paths mentioned as evidence in
 	# review feedback prose. Previously, files cited in Gemini review comments
@@ -1015,175 +1101,219 @@ _issue_targets_large_files() {
 		grep -oE '`[^`]*\.(sh|py|js|ts)[^`]*`' 2>/dev/null |
 		tr -d '`' | grep -v '^#' | sort -u) || backtick_paths=""
 
-	# Combine and deduplicate
-	local all_paths
-	all_paths=$(printf '%s\n%s' "$file_paths" "$backtick_paths" | sort -u | grep -v '^$') || all_paths=""
+	printf '%s\n%s' "$file_paths" "$backtick_paths" | sort -u | grep -v '^$' || true
+	return 0
+}
 
-	[[ -n "$all_paths" ]] || return 1
+#######################################
+# Evaluate one candidate target against the large-file threshold.
+# Parses an optional "file:NNN" or "file:START-END" qualifier (t2024),
+# applies the skip-pattern filter, resolves the path relative to the repo
+# (checking bare, .agents/, and .-prefixed variants), handles single-line
+# and scoped-range citations, then compares `wc -l` to LARGE_FILE_LINE_THRESHOLD.
+#
+# Arguments: raw_target, repo_path, issue_number
+# Stdout: "fpath|line_count" when the file exceeds threshold (exit 0)
+# Exit codes:
+#   0 - file is large, output emitted on stdout
+#   1 - file is under threshold
+#   2 - target was skipped (invalid, missing, skip-pattern, single-line, scoped-range)
+#######################################
+_large_file_gate_evaluate_target() {
+	local raw_target="$1"
+	local repo_path="$2"
+	local issue_number="$3"
+	[[ -n "$raw_target" ]] || return 2
 
-	# Files that are large by nature and can't/shouldn't be "simplified":
-	# lockfiles, generated data, JSON/YAML configs, binary-adjacent formats.
-	# These should never block dispatch — workers don't modify them directly.
-	# GH#17897: Also skip all .json/.yaml/.yml/.toml/.xml/.csv data files —
-	# these are config/data, not code. The simplification routine doesn't
-	# target them, so gating dispatch on their size is incorrect.
-	local _skip_pattern='(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|Cargo\.lock|Gemfile\.lock|poetry\.lock|simplification-state\.json|\.min\.(js|css)$|\.json$|\.yaml$|\.yml$|\.toml$|\.xml$|\.csv$)'
+	# t2024: Parse optional line qualifier off the end of the target.
+	#   "file.sh"            → fpath="file.sh", line_spec=""
+	#   "file.sh:1477"       → fpath="file.sh", line_spec="1477"
+	#   "file.sh:221-253"    → fpath="file.sh", line_spec="221-253"
+	# Only accept a line qualifier when it's numeric (optionally ranged).
+	# Anything else (colons inside shell-safe paths, rare but possible)
+	# is preserved as part of the path.
+	local fpath="$raw_target"
+	local line_spec=""
+	if [[ "$raw_target" =~ ^(.+):([0-9]+(-[0-9]+)?)$ ]]; then
+		fpath="${BASH_REMATCH[1]}"
+		line_spec="${BASH_REMATCH[2]}"
+	fi
 
-	local found_large=false
-	local large_files=""
-	local large_file_paths=""
-	while IFS= read -r raw_target; do
-		[[ -z "$raw_target" ]] && continue
+	# Skip non-simplifiable files (lockfiles, generated data, configs)
+	local basename_fpath
+	basename_fpath=$(basename "$fpath")
+	if printf '%s' "$basename_fpath" | grep -qE "$_LFG_SKIP_PATTERN" 2>/dev/null; then
+		return 2
+	fi
 
-		# t2024: Parse optional line qualifier off the end of the target.
-		#   "file.sh"            → fpath="file.sh", line_spec=""
-		#   "file.sh:1477"       → fpath="file.sh", line_spec="1477"
-		#   "file.sh:221-253"    → fpath="file.sh", line_spec="221-253"
-		# Only accept a line qualifier when it's numeric (optionally ranged).
-		# Anything else (colons inside shell-safe paths, rare but possible)
-		# is preserved as part of the path.
-		local fpath="$raw_target"
-		local line_spec=""
-		if [[ "$raw_target" =~ ^(.+):([0-9]+(-[0-9]+)?)$ ]]; then
-			fpath="${BASH_REMATCH[1]}"
-			line_spec="${BASH_REMATCH[2]}"
+	# Resolve path relative to repo
+	local full_path=""
+	if [[ -f "${repo_path}/${fpath}" ]]; then
+		full_path="${repo_path}/${fpath}"
+	elif [[ -f "${repo_path}/.agents/${fpath}" ]]; then
+		full_path="${repo_path}/.agents/${fpath}"
+	elif [[ -f "${repo_path}/.${fpath}" ]]; then
+		full_path="${repo_path}/.${fpath}"
+	else
+		return 2
+	fi
+
+	# t2024: scoped-range and single-line qualifier handling.
+	#
+	# 1. Single-line references (no range) are context for the human
+	#    reader — they help locate the bug but do not describe an edit
+	#    target. Skip them for gate evaluation entirely.
+	# 2. Ranged references that fit inside SCOPED_RANGE_THRESHOLD bypass
+	#    the file-size check — the worker only navigates the cited range.
+	# 3. Anything else (no qualifier, or range too large) falls through
+	#    to the file-size check as before.
+	if [[ "$line_spec" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] Large-file gate: #${issue_number} skipping ${fpath}:${line_spec} (single-line citation — context reference, not edit target)" >>"$LOGFILE"
+		return 2
+	fi
+	if [[ "$line_spec" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+		local _range_start="${BASH_REMATCH[1]}"
+		local _range_end="${BASH_REMATCH[2]}"
+		local _range_size=$((_range_end - _range_start + 1))
+		if [[ "$_range_size" -gt 0 && "$_range_size" -le "$SCOPED_RANGE_THRESHOLD" ]]; then
+			echo "[pulse-wrapper] Large-file gate: #${issue_number} scoped-range pass for ${fpath}:${line_spec} (${_range_size} lines, threshold ${SCOPED_RANGE_THRESHOLD})" >>"$LOGFILE"
+			return 2
 		fi
+	fi
 
-		# Skip non-simplifiable files (lockfiles, generated data, configs)
-		local basename_fpath
-		basename_fpath=$(basename "$fpath")
-		if printf '%s' "$basename_fpath" | grep -qE "$_skip_pattern" 2>/dev/null; then
-			continue
-		fi
+	local line_count=0
+	line_count=$(wc -l <"$full_path" 2>/dev/null | tr -d ' ') || line_count=0
+	if [[ "$line_count" -ge "$LARGE_FILE_LINE_THRESHOLD" ]]; then
+		printf '%s|%s\n' "$fpath" "$line_count"
+		return 0
+	fi
+	return 1
+}
 
-		# Resolve path relative to repo
-		local full_path=""
-		if [[ -f "${repo_path}/${fpath}" ]]; then
-			full_path="${repo_path}/${fpath}"
-		elif [[ -f "${repo_path}/.agents/${fpath}" ]]; then
-			full_path="${repo_path}/.agents/${fpath}"
-		elif [[ -f "${repo_path}/.${fpath}" ]]; then
-			full_path="${repo_path}/.${fpath}"
-		else
-			continue
-		fi
+#######################################
+# Create a simplification-debt issue for one large-file target. Idempotent:
+# if an open simplification-debt issue already mentions the file, emit a
+# reference to it instead of creating a new one.
+#
+# t2021: `gh issue create` does NOT support --json; the issue number is
+# parsed from the issue URL on stdout. The `|| true` on the $() guards
+# against gh non-zero exits (label application failing server-side while
+# the issue still creates — see issue-sync-helper.sh:441-464, GH#15234).
+#
+# GH#18644: the `simplification-debt` label is created idempotently here
+# so first-use in a fresh repo doesn't fail.
+#
+# Arguments: lf_path, parent_issue, repo_slug
+# Stdout: "#NNN (existing)" or "#NNN (new)" on success; empty on failure
+# Exit: 0 always (non-fatal; failure is logged)
+#######################################
+_large_file_gate_create_debt_issue() {
+	local lf_path="$1"
+	local parent_issue="$2"
+	local repo_slug="$3"
+	local _lf_basename
+	_lf_basename=$(basename "$lf_path")
 
-		# t2024: scoped-range and single-line qualifier handling.
-		#
-		# 1. Single-line references (no range) are context for the human
-		#    reader — they help locate the bug but do not describe an edit
-		#    target. Skip them for gate evaluation entirely.
-		# 2. Ranged references that fit inside SCOPED_RANGE_THRESHOLD bypass
-		#    the file-size check — the worker only navigates the cited range.
-		# 3. Anything else (no qualifier, or range too large) falls through
-		#    to the file-size check as before.
-		if [[ "$line_spec" =~ ^[0-9]+$ ]]; then
-			echo "[pulse-wrapper] Large-file gate: #${issue_number} skipping ${fpath}:${line_spec} (single-line citation — context reference, not edit target)" >>"$LOGFILE"
-			continue
-		fi
-		if [[ "$line_spec" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-			local _range_start="${BASH_REMATCH[1]}"
-			local _range_end="${BASH_REMATCH[2]}"
-			local _range_size=$((_range_end - _range_start + 1))
-			if [[ "$_range_size" -gt 0 && "$_range_size" -le "$SCOPED_RANGE_THRESHOLD" ]]; then
-				echo "[pulse-wrapper] Large-file gate: #${issue_number} scoped-range pass for ${fpath}:${line_spec} (${_range_size} lines, threshold ${SCOPED_RANGE_THRESHOLD})" >>"$LOGFILE"
-				continue
-			fi
-		fi
+	# Check if a simplification-debt issue already exists for this file
+	local _existing
+	_existing=$(gh issue list --repo "$repo_slug" --state open \
+		--label "simplification-debt" --search "$_lf_basename" \
+		--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _existing=""
+	if [[ -n "$_existing" ]]; then
+		printf '#%s (existing)' "$_existing"
+		return 0
+	fi
 
-		local line_count=0
-		line_count=$(wc -l <"$full_path" 2>/dev/null | tr -d ' ') || line_count=0
-		if [[ "$line_count" -ge "$LARGE_FILE_LINE_THRESHOLD" ]]; then
-			found_large=true
-			large_files="${large_files}${fpath} (${line_count} lines), "
-			large_file_paths="${large_file_paths}${fpath}\n"
-		fi
-	done <<<"$all_paths"
+	# GH#18644: ensure the `simplification-debt` label exists before the
+	# create call. Without this, a first-use of the gate in any repo that
+	# doesn't already have the label fails with "could not add label:
+	# 'simplification-debt' not found" and the whole gate becomes a no-op
+	# for that repo forever. gh label create is idempotent with --force.
+	gh label create "simplification-debt" \
+		--repo "$repo_slug" \
+		--description "Target file needs simplification before implementation work can proceed" \
+		--color "D93F0B" \
+		--force 2>/dev/null || true
 
-	if [[ "$found_large" == "true" ]]; then
-		# Add label to hold dispatch
-		gh label create "needs-simplification" \
-			--repo "$repo_slug" \
-			--description "Issue targets large file(s) needing simplification first" \
-			--color "D93F0B" \
-			--force 2>/dev/null || true
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "needs-simplification" 2>/dev/null || true
-
-		large_files="${large_files%, }"
-
-		# Create simplification-debt issues for each large file immediately
-		# (don't wait for the daily complexity scan). Dedup: skip if an open
-		# simplification-debt issue already mentions this file.
-		local _created_issues=""
-		while IFS= read -r _lf_path; do
-			[[ -z "$_lf_path" ]] && continue
-			local _lf_basename
-			_lf_basename=$(basename "$_lf_path")
-			# Check if a simplification-debt issue already exists for this file
-			local _existing
-			_existing=$(gh issue list --repo "$repo_slug" --state open \
-				--label "simplification-debt" --search "$_lf_basename" \
-				--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _existing=""
-			if [[ -n "$_existing" ]]; then
-				_created_issues="${_created_issues}#${_existing} (existing), "
-				continue
-			fi
-			# Create the simplification-debt issue now.
-			# t2021: gh issue create does NOT support --json; capture the issue
-			# number by parsing the URL it prints to stdout on success. The
-			# `|| true` on the $() guards against gh non-zero exits (e.g. when
-			# label application fails but the issue still creates server-side —
-			# see issue-sync-helper.sh:441-464 for the same pattern + GH#15234
-			# context).
-			#
-			# GH#18644: ensure the `simplification-debt` label exists before the
-			# create call. Without this, a first-use of the gate in any repo that
-			# doesn't already have the label fails with "could not add label:
-			# 'simplification-debt' not found" and the whole gate becomes a no-op
-			# for that repo forever. gh label create is idempotent with --force.
-			gh label create "simplification-debt" \
-				--repo "$repo_slug" \
-				--description "Target file needs simplification before implementation work can proceed" \
-				--color "D93F0B" \
-				--force 2>/dev/null || true
-			local _new_num _create_body _create_combined
-			_create_body="## What
-Simplify \`${_lf_path}\` — currently over ${LARGE_FILE_LINE_THRESHOLD} lines. Break into smaller, focused modules.
+	local _new_num _create_body _create_combined
+	_create_body="## What
+Simplify \`${lf_path}\` — currently over ${LARGE_FILE_LINE_THRESHOLD} lines. Break into smaller, focused modules.
 
 ## Why
-Issue #${issue_number} is blocked by the large-file gate. Workers dispatched against this file spend most of their context budget reading it, leaving insufficient capacity for implementation.
+Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched against this file spend most of their context budget reading it, leaving insufficient capacity for implementation.
 
 ## How
-- EDIT: \`${_lf_path}\`
+- EDIT: \`${lf_path}\`
 - Extract cohesive function groups into separate files
 - Keep a thin orchestrator in the original file that sources/imports the extracted modules
-- Verify: \`wc -l ${_lf_path}\` should be below ${LARGE_FILE_LINE_THRESHOLD}
+- Verify: \`wc -l ${lf_path}\` should be below ${LARGE_FILE_LINE_THRESHOLD}
 
 _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
-			_create_combined=$(gh issue create --repo "$repo_slug" \
-				--title "simplification-debt: ${_lf_path} exceeds ${LARGE_FILE_LINE_THRESHOLD} lines" \
-				--label "simplification-debt,auto-dispatch,origin:worker" \
-				--body "$_create_body" 2>&1) || true
-			_new_num=$(printf '%s' "$_create_combined" |
-				grep -oE 'https://github\.com/[^ ]+/issues/[0-9]+' |
-				head -1 |
-				grep -oE '[0-9]+$' || true)
-			if [[ -n "$_new_num" ]]; then
-				_created_issues="${_created_issues}#${_new_num} (new), "
-				echo "[pulse-wrapper] Created simplification-debt issue #${_new_num} for ${_lf_path} (blocking #${issue_number})" >>"$LOGFILE"
-			else
-				# Log the gh failure so the next cycle's operator can see why
-				# the gate "created" nothing. 200-char truncation matches
-				# issue-sync-helper.sh style.
-				echo "[pulse-wrapper] WARN: failed to create simplification-debt issue for ${_lf_path} (blocking #${issue_number}): ${_create_combined:0:200}" >>"$LOGFILE"
-			fi
-		done < <(printf '%b' "$large_file_paths")
+	_create_combined=$(gh issue create --repo "$repo_slug" \
+		--title "simplification-debt: ${lf_path} exceeds ${LARGE_FILE_LINE_THRESHOLD} lines" \
+		--label "simplification-debt,auto-dispatch,origin:worker" \
+		--body "$_create_body" 2>&1) || true
+	_new_num=$(printf '%s' "$_create_combined" |
+		grep -oE 'https://github\.com/[^ ]+/issues/[0-9]+' |
+		head -1 |
+		grep -oE '[0-9]+$' || true)
+	if [[ -n "$_new_num" ]]; then
+		printf '#%s (new)' "$_new_num"
+		echo "[pulse-wrapper] Created simplification-debt issue #${_new_num} for ${lf_path} (blocking #${parent_issue})" >>"$LOGFILE"
+	else
+		# Log the gh failure so the next cycle's operator can see why
+		# the gate "created" nothing. 200-char truncation matches
+		# issue-sync-helper.sh style.
+		echo "[pulse-wrapper] WARN: failed to create simplification-debt issue for ${lf_path} (blocking #${parent_issue}): ${_create_combined:0:200}" >>"$LOGFILE"
+	fi
+	return 0
+}
 
-		_created_issues="${_created_issues%, }"
-		local simplification_body="## Large File Simplification Gate
+#######################################
+# Apply the large-file gate: add `needs-simplification` label to the parent
+# issue, create one simplification-debt issue per large file (dedup-aware),
+# and post the gate comment on the parent issue.
+#
+# Arguments:
+#   $1 - issue_number (parent, being gated)
+#   $2 - repo_slug
+#   $3 - large_files_display ("path (N lines), " comma-trailed display string)
+#   $4 - large_file_paths (newline-separated paths, may contain \n escapes)
+#######################################
+_large_file_gate_apply() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local large_files_display="$3"
+	local large_file_paths="$4"
 
-This issue references file(s) exceeding ${LARGE_FILE_LINE_THRESHOLD} lines: ${large_files}.
+	# Add label to hold dispatch
+	gh label create "needs-simplification" \
+		--repo "$repo_slug" \
+		--description "Issue targets large file(s) needing simplification first" \
+		--color "D93F0B" \
+		--force 2>/dev/null || true
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "needs-simplification" 2>/dev/null || true
+
+	large_files_display="${large_files_display%, }"
+
+	# Create simplification-debt issues for each large file immediately
+	# (don't wait for the daily complexity scan). Dedup: skip if an open
+	# simplification-debt issue already mentions this file.
+	local _created_issues=""
+	local _lf_path _debt_ref
+	while IFS= read -r _lf_path; do
+		[[ -z "$_lf_path" ]] && continue
+		_debt_ref=$(_large_file_gate_create_debt_issue "$_lf_path" "$issue_number" "$repo_slug")
+		if [[ -n "$_debt_ref" ]]; then
+			_created_issues="${_created_issues}${_debt_ref}, "
+		fi
+	done < <(printf '%b' "$large_file_paths")
+
+	_created_issues="${_created_issues%, }"
+	local simplification_body="## Large File Simplification Gate
+
+This issue references file(s) exceeding ${LARGE_FILE_LINE_THRESHOLD} lines: ${large_files_display}.
 
 Workers dispatched against large files spend most of their context budget reading the file, leaving insufficient capacity for implementation.
 
@@ -1193,26 +1323,111 @@ Workers dispatched against large files spend most of their context budget readin
 
 _Automated by \`_issue_targets_large_files()\` in pulse-wrapper.sh_"
 
-		_gh_idempotent_comment "$issue_number" "$repo_slug" \
-			"## Large File Simplification Gate" "$simplification_body"
+	_gh_idempotent_comment "$issue_number" "$repo_slug" \
+		"## Large File Simplification Gate" "$simplification_body"
 
-		echo "[pulse-wrapper] Large-file gate: #${issue_number} in ${repo_slug} targets ${large_files}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Large-file gate: #${issue_number} in ${repo_slug} targets ${large_files_display}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Clear a stale `needs-simplification` label when no large files remain
+# (e.g., all targets now excluded by skip pattern or simplified below
+# threshold). Posts a follow-up "CLEARED" comment via the triage helper
+# so the original "Held from dispatch" comment doesn't mislead readers (t2042).
+#
+# Arguments: issue_number, repo_slug
+#######################################
+_large_file_gate_clear_stale_label() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--remove-label "needs-simplification" >/dev/null 2>&1 || true
+	echo "[pulse-wrapper] Simplification gate cleared for #${issue_number} (${repo_slug}) — no large files after exclusion filter" >>"$LOGFILE"
+	# t2042: post follow-up "CLEARED" comment so the original
+	# "Held from dispatch" comment doesn't mislead readers. Helper
+	# is defined in pulse-triage.sh which is sourced before this
+	# file (see pulse-wrapper.sh:169-172).
+	if declare -F _post_simplification_gate_cleared_comment >/dev/null 2>&1; then
+		_post_simplification_gate_cleared_comment "$issue_number" "$repo_slug"
+	fi
+	return 0
+}
+
+#######################################
+# Thin orchestrator for the large-file gate. Delegates label precheck,
+# path extraction, per-target evaluation, gate application, and stale-label
+# cleanup to the `_large_file_gate_*` helpers above. Byte-for-byte
+# behaviourally equivalent to the pre-GH#18654 monolithic implementation.
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug
+#   $3 - issue_body
+#   $4 - repo_path
+#   $5 - force_recheck (optional, default "false"; t1998 re-eval bypass)
+#
+# Exit codes:
+#   0 - gate applied (dispatch blocked)
+#   1 - gate not applied (dispatch may proceed)
+#######################################
+_issue_targets_large_files() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_body="$3"
+	local repo_path="$4"
+	# t1998: force_recheck bypasses the skip-if-already-labeled short-circuit.
+	# The normal dispatch path leaves this false (perf optimisation — no need
+	# to re-run wc -l on an issue we just gated). The re-evaluation path in
+	# pulse-triage.sh _reevaluate_simplification_labels() passes "true" so it
+	# can detect when a previously-gated file has been simplified below
+	# threshold and clear the label.
+	local force_recheck="${5:-false}"
+
+	[[ -n "$issue_body" ]] || return 1
+	[[ -d "$repo_path" ]] || return 1
+
+	local issue_labels
+	issue_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+
+	local _precheck_rc=0
+	_large_file_gate_precheck_labels "$issue_number" "$repo_slug" "$issue_labels" "$force_recheck" || _precheck_rc=$?
+	case "$_precheck_rc" in
+	1) return 1 ;;
+	2) return 0 ;;
+	esac
+
+	local all_paths
+	all_paths=$(_large_file_gate_extract_paths "$issue_body")
+	[[ -n "$all_paths" ]] || return 1
+
+	local found_large=false
+	local large_files=""
+	local large_file_paths=""
+	local raw_target eval_output eval_rc
+	while IFS= read -r raw_target; do
+		[[ -z "$raw_target" ]] && continue
+		eval_rc=0
+		eval_output=$(_large_file_gate_evaluate_target "$raw_target" "$repo_path" "$issue_number") || eval_rc=$?
+		if [[ "$eval_rc" -eq 0 && -n "$eval_output" ]]; then
+			local _f="${eval_output%|*}" _c="${eval_output##*|}"
+			found_large=true
+			large_files="${large_files}${_f} (${_c} lines), "
+			# shellcheck disable=SC2129  # two appends to large_file_paths is clearer as separate statements
+			large_file_paths="${large_file_paths}${_f}\n"
+		fi
+	done <<<"$all_paths"
+
+	if [[ "$found_large" == "true" ]]; then
+		_large_file_gate_apply "$issue_number" "$repo_slug" "$large_files" "$large_file_paths"
 		return 0
 	fi
 
 	# If was_already_labeled but no large files found (e.g., all files now
 	# excluded by skip pattern or simplified below threshold), auto-clear.
 	if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--remove-label "needs-simplification" >/dev/null 2>&1 || true
-		echo "[pulse-wrapper] Simplification gate cleared for #${issue_number} (${repo_slug}) — no large files after exclusion filter" >>"$LOGFILE"
-		# t2042: post follow-up "CLEARED" comment so the original
-		# "Held from dispatch" comment doesn't mislead readers. Helper
-		# is defined in pulse-triage.sh which is sourced before this
-		# file (see pulse-wrapper.sh:169-172).
-		if declare -F _post_simplification_gate_cleared_comment >/dev/null 2>&1; then
-			_post_simplification_gate_cleared_comment "$issue_number" "$repo_slug"
-		fi
+		_large_file_gate_clear_stale_label "$issue_number" "$repo_slug"
 	fi
 
 	return 1
@@ -1365,28 +1580,28 @@ _dispatch_dedup_check_layers() {
 #   0 - worker launched successfully
 #   non-zero - launch failed (logged to LOGFILE)
 #######################################
-_dispatch_launch_worker() {
+#######################################
+# Atomically swap issue assignment to the dispatching runner and apply
+# status labels for a queued worker (GH#17777, t2033).
+#
+# Previous behavior only added self (--add-assignee), leaving the original
+# assignee (typically the issue creator) co-assigned. This created ambiguity
+# about ownership and confused dedup layer 6 (is_assigned) when status:queued
+# made passive owner assignments appear active.
+#
+# t2033: use set_issue_status to atomically clear sibling status:* labels.
+# Before t2033, this call site added status:queued without removing
+# status:available — #18444/#18454/#18455 accumulated both labels and
+# broke t2008 stale-recovery tick counting.
+#
+# Arguments: issue_number, repo_slug, self_login, issue_meta_json
+#######################################
+_dlw_assign_and_label() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local dispatch_title="$3"
-	local issue_title="$4"
-	local self_login="$5"
-	local repo_path="$6"
-	local prompt="$7"
-	local session_key="$8"
-	local model_override="$9"
-	local issue_meta_json="${10}"
+	local self_login="$3"
+	local issue_meta_json="$4"
 
-	# Replace existing assignees with dispatching runner (GH#17777).
-	# Previous behavior only added self (--add-assignee), leaving the original
-	# assignee (typically the issue creator) co-assigned. This created ambiguity
-	# about ownership and confused dedup layer 6 (is_assigned) when status:queued
-	# made passive owner assignments appear active.
-	#
-	# t2033: use set_issue_status to atomically clear sibling status:* labels.
-	# Before t2033, this call site added status:queued without removing
-	# status:available — #18444/#18454/#18455 accumulated both labels and
-	# broke t2008 stale-recovery tick counting.
 	local -a _extra_flags=(--add-assignee "$self_login" --add-label "origin:worker")
 	local _prev_login
 	while IFS= read -r _prev_login; do
@@ -1394,13 +1609,20 @@ _dispatch_launch_worker() {
 	done < <(printf '%s' "$issue_meta_json" | jq -r '.assignees[].login' 2>/dev/null)
 
 	set_issue_status "$issue_number" "$repo_slug" "queued" "${_extra_flags[@]}" || true
+	return 0
+}
 
-	# Detach worker stdio from the dispatcher (GH#14483).
-	# Without this, background workers inherit the candidate-loop stdin created by
-	# process substitutions and can consume the remaining candidate stream,
-	# causing the deterministic fill floor to stop after one dispatch. Redirect
-	# worker stdout/stderr into per-issue temp logs so launch validation reads the
-	# intended output file and dispatcher shells stay clean.
+#######################################
+# Create per-issue worker log files with a shared fallback symlink (GH#14483).
+# The primary log is namespaced by repo_slug + issue_number; the fallback is
+# a plain `/tmp/pulse-{issue}.log` symlink that older validators expect.
+#
+# Arguments: repo_slug, issue_number
+# Stdout: absolute path to the primary worker log
+#######################################
+_dlw_setup_worker_log() {
+	local repo_slug="$1"
+	local issue_number="$2"
 	local safe_slug worker_log worker_log_fallback
 	safe_slug=$(printf '%s' "$repo_slug" | tr '/:' '--')
 	worker_log="/tmp/pulse-${safe_slug}-${issue_number}.log"
@@ -1408,23 +1630,41 @@ _dispatch_launch_worker() {
 	rm -f "$worker_log" "$worker_log_fallback"
 	: >"$worker_log"
 	ln -s "$worker_log" "$worker_log_fallback" 2>/dev/null || true
+	printf '%s\n' "$worker_log"
+	return 0
+}
 
-	# ROUND-ROBIN MODEL SELECTION (owned by this function, NOT the caller).
-	#
-	# When model_override (param 9) is EMPTY, this function calls
-	# headless-runtime-helper.sh select --role worker, which resolves the
-	# worker model from the routing table / local override (respecting
-	# backoff DB, auth availability, provider allowlists, and rotation).
-	# The resolved model name is shown in the dispatch comment so the audit
-	# trail records exactly which provider/model the worker used.
-	#
-	# IMPORTANT: Callers MUST NOT pass a model override for default dispatches.
-	# Only pass model_override when a specific tier is required (e.g.,
-	# tier:reasoning → opus escalation, tier:simple → haiku). Passing an
-	# arbitrary model here bypasses the round-robin and causes provider
-	# imbalance. History: GH#17503 moved model resolution here from the worker.
-	local dispatch_tier="standard"
-	local dispatch_model_tier="sonnet"
+#######################################
+# Resolve the dispatch tier from labels and select a worker model.
+# Populates three module-level globals so the orchestrator can read them
+# without the complexity of multi-value stdout parsing (bash 3.2 has no
+# namerefs — pattern from GH#18705 decomposition memory lesson):
+#   _DLW_DISPATCH_TIER        — cascade tier name: simple|standard|reasoning
+#   _DLW_DISPATCH_MODEL_TIER  — runtime tier: haiku|sonnet|opus
+#   _DLW_SELECTED_MODEL       — concrete model name, or empty for auto-select
+#
+# ROUND-ROBIN MODEL SELECTION (owned by this helper, NOT the caller).
+# When model_override is EMPTY, calls headless-runtime-helper.sh select
+# --role worker, which resolves the worker model from the routing table /
+# local override (respecting backoff DB, auth availability, provider
+# allowlists, and rotation). The resolved model name is shown in the
+# dispatch comment so the audit trail records exactly which provider/model
+# the worker used.
+#
+# IMPORTANT: Callers MUST NOT pass a model override for default dispatches.
+# Only pass model_override when a specific tier is required (e.g.,
+# tier:reasoning → opus escalation, tier:simple → haiku). Passing an
+# arbitrary model here bypasses the round-robin and causes provider
+# imbalance. History: GH#17503 moved model resolution here from the worker.
+#
+# Arguments: issue_meta_json, model_override
+#######################################
+_dlw_resolve_tier_and_model() {
+	local issue_meta_json="$1"
+	local model_override="$2"
+
+	_DLW_DISPATCH_TIER="standard"
+	_DLW_DISPATCH_MODEL_TIER="sonnet"
 	local issue_labels_csv
 	issue_labels_csv=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
 
@@ -1433,86 +1673,128 @@ _dispatch_launch_worker() {
 	resolved_tier=$(_resolve_worker_tier "$issue_labels_csv")
 	case "$resolved_tier" in
 	tier:reasoning)
-		dispatch_tier="reasoning"
-		dispatch_model_tier="opus"
+		_DLW_DISPATCH_TIER="reasoning"
+		_DLW_DISPATCH_MODEL_TIER="opus"
 		;;
 	tier:standard)
-		dispatch_tier="standard"
-		dispatch_model_tier="sonnet"
+		_DLW_DISPATCH_TIER="standard"
+		_DLW_DISPATCH_MODEL_TIER="sonnet"
 		;;
 	tier:simple)
-		dispatch_tier="simple"
-		dispatch_model_tier="haiku"
+		_DLW_DISPATCH_TIER="simple"
+		_DLW_DISPATCH_MODEL_TIER="haiku"
 		;;
 	esac
 
-	local selected_model=""
+	_DLW_SELECTED_MODEL=""
 	if [[ -n "$model_override" ]]; then
-		selected_model="$model_override"
+		_DLW_SELECTED_MODEL="$model_override"
 	else
-		selected_model=$("$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$dispatch_model_tier" 2>/dev/null) || selected_model=""
+		_DLW_SELECTED_MODEL=$("$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$_DLW_DISPATCH_MODEL_TIER" 2>/dev/null) || _DLW_SELECTED_MODEL=""
 	fi
+	return 0
+}
 
-	# t1894/t1934: Lock issue and linked PRs during worker execution
-	lock_issue_for_worker "$issue_number" "$repo_slug"
+#######################################
+# Pre-create a worker worktree so the worker can start coding immediately
+# instead of spending 5-8 tool calls on worktree setup. Populates two
+# module-level globals:
+#   _DLW_WORKTREE_PATH    — absolute path on success, empty on failure
+#   _DLW_WORKTREE_BRANCH  — branch name on success, empty on failure
+# Both are reset on entry so the orchestrator always sees the fresh state.
+#
+# The worktree is idempotent — if a previous worker already created it,
+# `worktree-helper.sh add` returns the existing path. On failure, the
+# worker falls back to creating its own via full-loop-helper.sh.
+#
+# GH#18671: worktree-helper.sh emits ANSI color codes on the "Path:" line.
+# The path-extraction grep `/[^ ]*Git/[^ ]*` matches up to the next
+# whitespace but ANSI reset sequences (\x1b[0m) contain no whitespace, so
+# the captured path ends up with a trailing `\x1b[0m` suffix. The subsequent
+# `[[ -d "$worker_worktree_path" ]]` check then fails because no such
+# directory exists — the REAL path is the same string without the reset
+# code. Result: pre-creation was silently marked "failed" on every dispatch,
+# the worktree was successfully created but orphaned (27 leftover
+# feature/auto-* directories observed in ~/Git/), the worker was launched
+# without WORKER_WORKTREE_PATH, and its self-setup path crashed in ~17s
+# with crash_type=no_work. That fed the t2008 stale-recovery escalation
+# path, which applied needs-maintainer-review after 2 failed attempts,
+# which then drained the dispatch queue to zero.
+#
+# Fix: strip ANSI CSI sequences before the path grep so the captured string
+# is a clean filesystem path. The sed pattern matches the standard CSI form
+# ESC[ ... m. The $'...' quoting evaluates \x1b (ESC, 0x1B) at parse time
+# in bash.
+#
+# Arguments: issue_number, repo_path
+#######################################
+_dlw_precreate_worktree() {
+	local issue_number="$1"
+	local repo_path="$2"
+	_DLW_WORKTREE_PATH=""
+	_DLW_WORKTREE_BRANCH=""
 
-	# GH#17584: Ensure the repo is on the latest remote commit before
-	# launching the worker. Without this, workers on stale checkouts
-	# close issues as "Invalid — file does not exist" when the target
-	# file was added in a recent commit they haven't pulled.
-	if git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 || {
-			echo "[dispatch_with_dedup] Warning: git pull failed for ${repo_path} — proceeding with current checkout" >>"$LOGFILE"
-		}
-	fi
-
-	# Pre-create worktree for the worker so it can start coding immediately
-	# instead of spending 5-8 tool calls on worktree setup. The worktree is
-	# idempotent — if a previous worker already created it, add returns the
-	# existing path. On failure, fall back to letting the worker create it.
-	local worker_worktree_path="" worker_worktree_branch=""
 	local _wt_helper="${SCRIPT_DIR}/worktree-helper.sh"
-	if [[ -x "$_wt_helper" && -d "$repo_path" ]]; then
-		# Derive branch name from timestamp (deterministic, collision-free)
-		worker_worktree_branch="feature/auto-$(date +%Y%m%d-%H%M%S)"
-		local _wt_output=""
-		# Run from repo_path — worktree-helper.sh uses git commands that need
-		# to be inside the repo. The pulse-wrapper's cwd is typically / (launchd).
-		_wt_output=$(cd "$repo_path" && "$_wt_helper" add "$worker_worktree_branch" 2>&1) || true
-		# GH#18671: worktree-helper.sh emits ANSI color codes in its status
-		# output, including on the "Path:" line. The original path-extraction
-		# grep `/[^ ]*Git/[^ ]*` matches up to the next whitespace but ANSI
-		# reset sequences (\x1b[0m) contain no whitespace, so the captured
-		# path ends up with a trailing `\x1b[0m` suffix. The subsequent
-		# `[[ -d "$worker_worktree_path" ]]` check then fails because no
-		# such directory exists — the REAL path is the same string without
-		# the reset code. Result: pre-creation was silently marked "failed"
-		# on every dispatch, the worktree was successfully created but
-		# orphaned (27 leftover feature/auto-* directories observed in
-		# ~/Git/), the worker was launched without WORKER_WORKTREE_PATH,
-		# and its self-setup path crashed in ~17 seconds with crash_type=
-		# no_work. That fed the t2008 stale-recovery escalation path,
-		# which applied needs-maintainer-review after 2 failed attempts,
-		# which then drained the dispatch queue to zero.
-		#
-		# Fix: strip ANSI CSI sequences before the path grep so the captured
-		# string is a clean filesystem path. The sed pattern matches the
-		# standard CSI form ESC[ ... m. The $'...' quoting evaluates \x1b
-		# (ESC, 0x1B) at parse time in bash.
-		_wt_output=$(printf '%s' "$_wt_output" | sed $'s/\x1b\\[[0-9;]*m//g')
-		worker_worktree_path=$(printf '%s' "$_wt_output" | grep -oE '/[^ ]*Git/[^ ]*' | head -1) || worker_worktree_path=""
-		if [[ -n "$worker_worktree_path" && -d "$worker_worktree_path" ]]; then
-			echo "[dispatch_with_dedup] Pre-created worktree for #${issue_number}: ${worker_worktree_path} (branch: ${worker_worktree_branch})" >>"$LOGFILE"
-		else
-			# GH#18671: emit the raw extracted string on failure so future
-			# regressions in path parsing are visible in the log. Previously
-			# this message gave no diagnostic — 247 failures accumulated in
-			# a single pulse.log before the root cause was found.
-			echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — worker will create its own (extracted: '${worker_worktree_path:-<empty>}', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
-			worker_worktree_path=""
-			worker_worktree_branch=""
-		fi
+	if [[ ! -x "$_wt_helper" || ! -d "$repo_path" ]]; then
+		return 0
 	fi
+
+	# Derive branch name from timestamp (deterministic, collision-free)
+	local _branch _wt_output=""
+	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)"
+	# Run from repo_path — worktree-helper.sh uses git commands that need
+	# to be inside the repo. The pulse-wrapper's cwd is typically / (launchd).
+	_wt_output=$(cd "$repo_path" && "$_wt_helper" add "$_branch" 2>&1) || true
+	_wt_output=$(printf '%s' "$_wt_output" | sed $'s/\x1b\\[[0-9;]*m//g')
+	local _path
+	_path=$(printf '%s' "$_wt_output" | grep -oE '/[^ ]*Git/[^ ]*' | head -1) || _path=""
+	if [[ -n "$_path" && -d "$_path" ]]; then
+		_DLW_WORKTREE_PATH="$_path"
+		_DLW_WORKTREE_BRANCH="$_branch"
+		echo "[dispatch_with_dedup] Pre-created worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
+	else
+		# GH#18671: emit the raw extracted string on failure so future
+		# regressions in path parsing are visible in the log. Previously
+		# this message gave no diagnostic — 247 failures accumulated in
+		# a single pulse.log before the root cause was found.
+		echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — worker will create its own (extracted: '${_path:-<empty>}', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Build the worker command and launch it via `nohup` (GH#17549).
+# launchd runs pulse-wrapper with StartInterval=120s. When the wrapper
+# exits after its dispatch cycle, bash sends SIGHUP to background jobs.
+# `nohup` makes the worker immune to SIGHUP so it survives the parent's
+# exit. The EXIT trap only releases the instance lock (no child killing).
+#
+# Arguments:
+#   $1  - issue_number
+#   $2  - dispatch_title
+#   $3  - issue_title
+#   $4  - session_key
+#   $5  - worker_log (path from _dlw_setup_worker_log)
+#   $6  - prompt
+#   $7  - repo_path
+#   $8  - dispatch_model_tier (haiku|sonnet|opus)
+#   $9  - selected_model (may be empty for auto-select)
+#   $10 - worker_worktree_path (may be empty)
+#   $11 - worker_worktree_branch (may be empty)
+# Stdout: worker PID
+#######################################
+_dlw_nohup_launch() {
+	local issue_number="$1"
+	local dispatch_title="$2"
+	local issue_title="$3"
+	local session_key="$4"
+	local worker_log="$5"
+	local prompt="$6"
+	local repo_path="$7"
+	local dispatch_model_tier="$8"
+	local selected_model="$9"
+	local worker_worktree_path="${10}"
+	local worker_worktree_branch="${11}"
 
 	# Use issue title as session title for searchable history (not generic "Issue #NNN").
 	# Workers no longer need to call session-rename — the title is set at dispatch.
@@ -1546,19 +1828,51 @@ _dispatch_launch_worker() {
 	if [[ -n "$selected_model" ]]; then
 		worker_cmd+=(--model "$selected_model")
 	fi
-	# GH#17549: Detach worker from the pulse-wrapper's SIGHUP.
-	# launchd runs pulse-wrapper with StartInterval=120s. When the wrapper
-	# exits after its dispatch cycle, bash sends SIGHUP to background jobs.
-	# nohup makes the worker immune to SIGHUP so it survives the parent's
-	# exit. The EXIT trap only releases the instance lock (no child killing).
 	nohup "${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
-	local worker_pid="$!"
+	printf '%s\n' "$!"
+	return 0
+}
 
-	# GH#17549: Stagger delay between worker launches to reduce SQLite
-	# write contention on opencode.db (busy_timeout=0). Without this,
-	# batches of 8+ workers all hit the DB simultaneously, causing
-	# SQLITE_BUSY → silent mid-turn death. The stagger gives each worker
-	# time to complete its initial DB writes before the next one starts.
+#######################################
+# Post-launch bookkeeping: stagger delay, dispatch-ledger registration, the
+# deterministic "Dispatching worker" comment on the issue, and claim-comment
+# retention logging.
+#
+# Stagger (GH#17549): reduces SQLite write contention on opencode.db
+# (busy_timeout=0). Without it, batches of 8+ workers all hit the DB
+# simultaneously, causing SQLITE_BUSY → silent mid-turn death. The stagger
+# gives each worker time to complete its initial DB writes before the next
+# one starts.
+#
+# Dispatch comment (GH#15317): posted from the dispatcher, NOT from the
+# worker LLM session. Previously, the worker was responsible for posting
+# this comment — but workers could crash before posting, leaving no
+# persistent signal. Without this signal, Layer 5 (has_dispatch_comment)
+# had nothing to find, and the issue would be re-dispatched every pulse
+# cycle. Evidence: awardsapp #2051 accumulated 29 DISPATCH_CLAIM comments
+# over 6 hours because workers kept dying before posting.
+#
+# Claim comment retention (GH#17503): claim comments are NEVER deleted —
+# they form the persistent audit trail and are respected as the primary
+# dedup lock for 30 minutes. The deferred deletion that previously ran
+# here (GH#17497) was the root cause of duplicate dispatches. Evidence:
+# GH#17503 — 6 dispatches from marcusquinn + 1 from alex-solovyev,
+# producing 2 duplicate PRs (#17512, #17513). This helper clears
+# `_claim_comment_id` (dynamically-scoped from dispatch_with_dedup) once
+# the retention message is logged so subsequent dispatches start fresh.
+#
+# Arguments: issue_number, repo_slug, self_login, worker_pid, session_key,
+#            dispatch_tier, selected_model
+#######################################
+_dlw_post_launch_hooks() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local worker_pid="$4"
+	local session_key="$5"
+	local dispatch_tier="$6"
+	local selected_model="$7"
+
 	local stagger_delay="${PULSE_DISPATCH_STAGGER_SECONDS:-8}"
 	sleep "$stagger_delay"
 
@@ -1571,13 +1885,6 @@ _dispatch_launch_worker() {
 			--model "$selected_model" 2>/dev/null || true
 	fi
 
-	# GH#15317: Post deterministic "Dispatching worker" comment from the dispatcher,
-	# not from the worker LLM session. Previously, the worker was responsible for
-	# posting this comment — but workers could crash before posting, leaving no
-	# persistent signal. Without this signal, Layer 5 (has_dispatch_comment) had
-	# nothing to find, and the issue would be re-dispatched every pulse cycle.
-	# Evidence: awardsapp #2051 accumulated 29 DISPATCH_CLAIM comments over 6 hours
-	# because workers kept dying before posting.
 	local dispatch_comment_body
 	local display_model="${selected_model:-auto-select (round-robin)}"
 	dispatch_comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
@@ -1594,17 +1901,82 @@ Dispatching worker (deterministic).
 		echo "[dispatch_with_dedup] Warning: failed to post deterministic dispatch comment for #${issue_number}" >>"$LOGFILE"
 	}
 
-	# GH#17503: Claim comments are NEVER deleted — they form the persistent
-	# audit trail and are respected as the primary dedup lock for 30 minutes.
-	# The deferred deletion that previously ran here (GH#17497) was the root
-	# cause of duplicate dispatches: deleting the claim removed the lock,
-	# allowing subsequent pulse cycles and other runners to re-dispatch.
-	# Evidence: GH#17503 — 6 dispatches from marcusquinn + 1 from alex-solovyev,
-	# producing 2 duplicate PRs (#17512, #17513).
+	# _claim_comment_id is dynamically scoped from dispatch_with_dedup through
+	# _dispatch_launch_worker into this helper — assignment without `local`
+	# propagates up the stack, matching the pre-GH#18654 behavior.
 	if [[ -n "$_claim_comment_id" ]]; then
 		echo "[dispatch_with_dedup] Claim comment ${_claim_comment_id} retained for audit trail on #${issue_number} (GH#17503)" >>"$LOGFILE"
 		_claim_comment_id=""
 	fi
+	return 0
+}
+
+#######################################
+# Thin orchestrator for worker launch. Delegates each distinct concern
+# (assignment + labels, log files, model resolution, issue lock, repo pull,
+# worktree pre-creation, nohup launch, post-launch bookkeeping) to dedicated
+# `_dlw_*` helpers. Byte-for-byte behaviourally equivalent to the
+# pre-GH#18654 monolithic implementation.
+#
+# Arguments:
+#   $1  - issue_number
+#   $2  - repo_slug
+#   $3  - dispatch_title
+#   $4  - issue_title
+#   $5  - self_login
+#   $6  - repo_path
+#   $7  - prompt
+#   $8  - session_key
+#   $9  - model_override (may be empty)
+#   $10 - issue_meta_json
+#######################################
+_dispatch_launch_worker() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local dispatch_title="$3"
+	local issue_title="$4"
+	local self_login="$5"
+	local repo_path="$6"
+	local prompt="$7"
+	local session_key="$8"
+	local model_override="$9"
+	local issue_meta_json="${10}"
+
+	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json"
+
+	local worker_log
+	worker_log=$(_dlw_setup_worker_log "$repo_slug" "$issue_number")
+
+	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override"
+	local dispatch_tier="$_DLW_DISPATCH_TIER"
+	local dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER"
+	local selected_model="$_DLW_SELECTED_MODEL"
+
+	# t1894/t1934: Lock issue and linked PRs during worker execution
+	lock_issue_for_worker "$issue_number" "$repo_slug"
+
+	# GH#17584: Ensure the repo is on the latest remote commit before
+	# launching the worker. Without this, workers on stale checkouts
+	# close issues as "Invalid — file does not exist" when the target
+	# file was added in a recent commit they haven't pulled.
+	if git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 || {
+			echo "[dispatch_with_dedup] Warning: git pull failed for ${repo_path} — proceeding with current checkout" >>"$LOGFILE"
+		}
+	fi
+
+	_dlw_precreate_worktree "$issue_number" "$repo_path"
+	local worker_worktree_path="$_DLW_WORKTREE_PATH"
+	local worker_worktree_branch="$_DLW_WORKTREE_BRANCH"
+
+	local worker_pid
+	worker_pid=$(_dlw_nohup_launch "$issue_number" "$dispatch_title" "$issue_title" \
+		"$session_key" "$worker_log" "$prompt" "$repo_path" \
+		"$dispatch_model_tier" "$selected_model" \
+		"$worker_worktree_path" "$worker_worktree_branch")
+
+	_dlw_post_launch_hooks "$issue_number" "$repo_slug" "$self_login" \
+		"$worker_pid" "$session_key" "$dispatch_tier" "$selected_model"
 
 	echo "[dispatch_with_dedup] Dispatched worker PID ${worker_pid} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 	return 0
