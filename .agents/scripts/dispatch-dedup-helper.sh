@@ -954,14 +954,7 @@ _has_active_claim() {
 	local issue_meta_json="$1"
 	local result
 	result=$(printf '%s' "$issue_meta_json" | jq -r '
-		[(.labels // [])[].name] as $labels |
-		(
-			($labels | index("status:queued") != null) or
-			($labels | index("status:in-progress") != null) or
-			($labels | index("status:in-review") != null) or
-			($labels | index("status:claimed") != null) or
-			($labels | index("origin:interactive") != null)
-		)
+		.labels? // [] | any(.[].name; . == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed" or . == "origin:interactive")
 	' 2>/dev/null) || result="false"
 	[[ "$result" == "true" || "$result" == "false" ]] || result="false"
 	printf '%s' "$result"
