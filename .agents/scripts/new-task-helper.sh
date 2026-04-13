@@ -136,7 +136,9 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# _append_todo_entry: append a single task line to TODO.md
+# _append_todo_entry: insert a single task line under the active backlog
+# header in TODO.md (## Ready), preserving file structure.
+# Falls back to appending at EOF only if no suitable header is found.
 # ---------------------------------------------------------------------------
 _append_todo_entry() {
 	local task_id="$1"
@@ -153,13 +155,49 @@ _append_todo_entry() {
 
 	local entry="- [ ] ${task_id} ${title} #auto-dispatch ~1h${ref_field} logged:${today}"
 
-	# Append under the first "## " section header that looks like an active backlog
-	# If no suitable header, append at end of file
-	if [[ -f "$todo_file" ]]; then
-		echo "$entry" >>"$todo_file"
+	# Find the "## Ready" header (or similar active backlog headers) and insert
+	# the entry after the last task line in that section, or immediately after
+	# the header if the section is empty.
+	local insert_line=""
+	local in_section=false
+	local line_num=0
+	local last_task_line=0
+	local header_line=0
+
+	while IFS= read -r file_line; do
+		line_num=$((line_num + 1))
+		# Match active backlog headers: ## Ready, ## Backlog
+		if [[ "$file_line" =~ ^##[[:space:]]+(Ready|Backlog) ]]; then
+			if [[ "$in_section" == false ]]; then
+				in_section=true
+				header_line=$line_num
+				last_task_line=$line_num
+			fi
+		elif [[ "$in_section" == true ]]; then
+			# If we hit another ## header, we've left the section
+			if [[ "$file_line" =~ ^## ]]; then
+				break
+			fi
+			# Track the last task line (- [ ] ...) in this section
+			if [[ "$file_line" =~ ^-[[:space:]]\[ ]]; then
+				last_task_line=$line_num
+			fi
+		fi
+	done <"$todo_file"
+
+	if [[ "$header_line" -gt 0 ]]; then
+		# Insert after the last task line in the section (or after header if empty)
+		insert_line=$last_task_line
+		# Use sed to insert after the target line
+		# macOS sed requires '' after -i; GNU sed does not — use temp file for portability
+		local tmp_file
+		tmp_file=$(mktemp)
+		awk -v n="$insert_line" -v entry="$entry" 'NR==n{print; print entry; next}1' "$todo_file" >"$tmp_file"
+		mv "$tmp_file" "$todo_file"
 	else
-		log_error "TODO.md not found at: $todo_file"
-		return 1
+		# No suitable header found — fall back to appending at end
+		log_warn "No ## Ready or ## Backlog header found in $todo_file — appending at end"
+		echo "$entry" >>"$todo_file"
 	fi
 
 	return 0
@@ -219,9 +257,11 @@ cmd_batch() {
 	if [[ -n "$from_file" ]]; then
 		if [[ "$from_file" == "-" ]]; then
 			while IFS= read -r line; do
-				line="${line%%#*}"                      # strip inline comments
 				line="${line#"${line%%[![:space:]]*}"}" # ltrim
 				line="${line%"${line##*[![:space:]]}"}" # rtrim
+				# Skip full-line comments (line starts with #) but preserve
+				# inline # refs like "Fix bug #123" — do NOT strip with ${line%%#*}
+				[[ "$line" =~ ^# ]] && continue
 				[[ -n "$line" ]] && titles+=("$line")
 			done
 		else
@@ -230,9 +270,9 @@ cmd_batch() {
 				return 1
 			fi
 			while IFS= read -r line; do
-				line="${line%%#*}"
-				line="${line#"${line%%[![:space:]]*}"}"
-				line="${line%"${line##*[![:space:]]}"}"
+				line="${line#"${line%%[![:space:]]*}"}" # ltrim
+				line="${line%"${line##*[![:space:]]}"}" # rtrim
+				[[ "$line" =~ ^# ]] && continue
 				[[ -n "$line" ]] && titles+=("$line")
 			done <"$from_file"
 		fi
@@ -241,9 +281,9 @@ cmd_batch() {
 	# If no titles yet and stdin is a pipe, read from stdin
 	if [[ ${#titles[@]} -eq 0 ]] && ! [[ -t 0 ]]; then
 		while IFS= read -r line; do
-			line="${line%%#*}"
-			line="${line#"${line%%[![:space:]]*}"}"
-			line="${line%"${line##*[![:space:]]}"}"
+			line="${line#"${line%%[![:space:]]*}"}" # ltrim
+			line="${line%"${line##*[![:space:]]}"}" # rtrim
+			[[ "$line" =~ ^# ]] && continue
 			[[ -n "$line" ]] && titles+=("$line")
 		done
 	fi
@@ -261,6 +301,12 @@ cmd_batch() {
 		repo_path=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
 	fi
 	local todo_file="$repo_path/TODO.md"
+
+	# Validate TODO.md exists once before the loop, not per-task
+	if [[ ! -f "$todo_file" ]]; then
+		log_error "TODO.md not found at: $todo_file"
+		return 1
+	fi
 
 	local claim_script="$SCRIPT_DIR/claim-task-id.sh"
 	if [[ ! -x "$claim_script" ]]; then
@@ -297,7 +343,7 @@ cmd_batch() {
 
 		local claim_output=""
 		local claim_rc=0
-		claim_output=$("$claim_script" "${claim_args[@]}" 2>/dev/null) || claim_rc=$?
+		claim_output=$("$claim_script" "${claim_args[@]}") || claim_rc=$?
 
 		if [[ $claim_rc -ne 0 && $claim_rc -ne 2 ]]; then
 			log_error "Failed to allocate ID for: $title (exit code: $claim_rc)"
