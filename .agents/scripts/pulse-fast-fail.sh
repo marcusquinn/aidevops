@@ -19,6 +19,9 @@
 #   - _ff_query_pool_retry_seconds
 #   - _ff_with_lock
 #   - _ff_save
+#   - _ff_parse_entry
+#   - _ff_compute_rate_limit_strategy
+#   - _ff_compute_failure_strategy
 #   - fast_fail_record
 #   - _fast_fail_record_locked
 #   - fast_fail_reset
@@ -28,9 +31,9 @@
 #   - _fast_fail_prune_expired_locked
 #   - _ff_mark_enrichment_done
 #
-# This is a pure move from pulse-wrapper.sh. The function bodies are
-# byte-identical to their pre-extraction form. Any change must go in a
-# separate follow-up PR after the full decomposition (Phase 12) lands.
+# Originally a pure move from pulse-wrapper.sh (byte-identical to pre-extraction
+# form). GH#18692 decomposed _fast_fail_record_locked (115 lines) into focused
+# helpers to satisfy the 100-line complexity gate.
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_FAST_FAIL_LOADED:-}" ]] && return 0
@@ -189,6 +192,125 @@ _ff_save() {
 }
 
 #######################################
+# Parse an existing fast-fail entry from state, resetting fields if expired.
+#
+# Reads count and backoff_secs for the given key, normalises non-integer
+# values to 0, and resets both to 0 when the entry age exceeds
+# FAST_FAIL_EXPIRY_SECS.
+#
+# Arguments:
+#   $1 - state JSON string
+#   $2 - key (repo_slug/issue_number)
+#   $3 - current timestamp (seconds since epoch)
+# Stdout: TAB-delimited pair: existing_count<TAB>existing_backoff
+#######################################
+_ff_parse_entry() {
+	local state="$1"
+	local key="$2"
+	local now="$3"
+
+	local existing_ts existing_count existing_backoff
+	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
+	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
+	existing_backoff=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].backoff_secs // 0' 2>/dev/null) || existing_backoff=0
+	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
+	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
+	[[ "$existing_backoff" =~ ^[0-9]+$ ]] || existing_backoff=0
+
+	local age=$((now - existing_ts))
+	if [[ "$age" -ge "$FAST_FAIL_EXPIRY_SECS" ]]; then
+		existing_count=0
+		existing_backoff=0
+	fi
+
+	printf '%s\t%s\n' "$existing_count" "$existing_backoff"
+	return 0
+}
+
+#######################################
+# Compute retry strategy for rate-limit / backoff failures.
+#
+# Queries the OAuth account pool; picks immediate-retry (accounts available),
+# no-pool exponential backoff (pool unconfigured), or pool-exhausted wait
+# (all accounts rate-limited) depending on pool state.
+#
+# Arguments:
+#   $1 - existing_count
+#   $2 - existing_backoff (backoff_secs)
+#   $3 - provider (e.g. anthropic)
+#   $4 - current timestamp (seconds since epoch)
+# Stdout: TAB-delimited: new_count<TAB>new_backoff<TAB>retry_after<TAB>log_action
+#######################################
+_ff_compute_rate_limit_strategy() {
+	local existing_count="$1"
+	local existing_backoff="$2"
+	local provider="$3"
+	local now="$4"
+
+	local new_count="$existing_count"
+	local new_backoff="$existing_backoff"
+	local retry_after=0
+	local log_action=""
+
+	local pool_wait
+	pool_wait=$(_ff_query_pool_retry_seconds "$provider")
+
+	if [[ "$pool_wait" == "0" ]]; then
+		# Other accounts available — immediate retry, no counter increment.
+		# The next dispatch will rotate to a different account automatically.
+		retry_after=0
+		log_action="rate_limit_rotate (accounts available, immediate retry)"
+	elif [[ "$pool_wait" == "-1" ]]; then
+		# No pool configured or query failed — use exponential backoff.
+		new_count=$((existing_count + 1))
+		new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : FAST_FAIL_INITIAL_BACKOFF_SECS))
+		[[ "$new_backoff" -gt "$FAST_FAIL_MAX_BACKOFF_SECS" ]] && new_backoff="$FAST_FAIL_MAX_BACKOFF_SECS"
+		retry_after=$((now + new_backoff))
+		log_action="rate_limit_no_pool (no pool data, backoff=${new_backoff}s)"
+	else
+		# All accounts exhausted — wait for earliest recovery.
+		# Use pool_wait for retry_after but keep backoff_secs on the
+		# exponential ladder so a subsequent failure doesn't reset to
+		# a short pool cooldown value.
+		new_count=$((existing_count + 1))
+		retry_after=$((now + pool_wait))
+		new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : FAST_FAIL_INITIAL_BACKOFF_SECS))
+		[[ "$new_backoff" -gt "$FAST_FAIL_MAX_BACKOFF_SECS" ]] && new_backoff="$FAST_FAIL_MAX_BACKOFF_SECS"
+		log_action="rate_limit_exhausted (all accounts rate-limited, wait=${pool_wait}s, backoff_stage=${new_backoff}s)"
+	fi
+
+	printf '%s\t%s\t%s\t%s\n' "$new_count" "$new_backoff" "$retry_after" "$log_action"
+	return 0
+}
+
+#######################################
+# Compute retry strategy for non-rate-limit failures (exponential backoff).
+#
+# Always increments the counter and doubles the backoff window, capped at
+# FAST_FAIL_MAX_BACKOFF_SECS.
+#
+# Arguments:
+#   $1 - existing_count
+#   $2 - existing_backoff (backoff_secs)
+#   $3 - current timestamp (seconds since epoch)
+# Stdout: TAB-delimited: new_count<TAB>new_backoff<TAB>retry_after<TAB>log_action
+#######################################
+_ff_compute_failure_strategy() {
+	local existing_count="$1"
+	local existing_backoff="$2"
+	local now="$3"
+
+	local new_count=$((existing_count + 1))
+	local new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : FAST_FAIL_INITIAL_BACKOFF_SECS))
+	[[ "$new_backoff" -gt "$FAST_FAIL_MAX_BACKOFF_SECS" ]] && new_backoff="$FAST_FAIL_MAX_BACKOFF_SECS"
+	local retry_after=$((now + new_backoff))
+	local log_action="failure_backoff (count=${new_count}, backoff=${new_backoff}s)"
+
+	printf '%s\t%s\t%s\t%s\n' "$new_count" "$new_backoff" "$retry_after" "$log_action"
+	return 0
+}
+
+#######################################
 # Record a worker failure for an issue with cause-aware retry strategy.
 #
 # Rate-limit failures query the account pool before deciding on backoff.
@@ -225,69 +347,28 @@ _fast_fail_record_locked() {
 	now=$(date +%s)
 	state=$(_ff_load)
 
-	# Read existing entry (reset all fields if expired)
-	local existing_ts existing_count existing_backoff
-	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
-	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
-	existing_backoff=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].backoff_secs // 0' 2>/dev/null) || existing_backoff=0
-	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
-	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
-	[[ "$existing_backoff" =~ ^[0-9]+$ ]] || existing_backoff=0
+	# Parse existing entry, resetting count/backoff if the entry has expired.
+	local existing_count existing_backoff
+	IFS=$'\t' read -r existing_count existing_backoff \
+		<<<"$(_ff_parse_entry "$state" "$key" "$now")"
 
-	local age=$((now - existing_ts))
-	if [[ "$age" -ge "$FAST_FAIL_EXPIRY_SECS" ]]; then
-		existing_count=0
-		existing_backoff=0
-	fi
-
-	# ── Decide retry strategy based on failure cause ──
-	local new_count="$existing_count"
-	local new_backoff="$existing_backoff"
-	local retry_after=0
-	local log_action=""
-
+	# Determine whether this is a rate-limit class failure.
+	local is_rate_limit=false
 	case "$reason" in
-	rate_limit* | backoff)
-		# Rate-limit: check if other accounts are available
-		local pool_wait
-		pool_wait=$(_ff_query_pool_retry_seconds "$provider")
-
-		if [[ "$pool_wait" == "0" ]]; then
-			# Other accounts available — immediate retry, no counter increment.
-			# The next dispatch will rotate to a different account automatically.
-			retry_after=0
-			log_action="rate_limit_rotate (accounts available, immediate retry)"
-		elif [[ "$pool_wait" == "-1" ]]; then
-			# No pool configured or query failed — use exponential backoff
-			new_count=$((existing_count + 1))
-			new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : FAST_FAIL_INITIAL_BACKOFF_SECS))
-			[[ "$new_backoff" -gt "$FAST_FAIL_MAX_BACKOFF_SECS" ]] && new_backoff="$FAST_FAIL_MAX_BACKOFF_SECS"
-			retry_after=$((now + new_backoff))
-			log_action="rate_limit_no_pool (no pool data, backoff=${new_backoff}s)"
-		else
-			# All accounts exhausted — wait for earliest recovery.
-			# Use pool_wait for retry_after but keep backoff_secs on the
-			# exponential ladder so a subsequent failure doesn't reset to
-			# a short pool cooldown value.
-			new_count=$((existing_count + 1))
-			retry_after=$((now + pool_wait))
-			new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : FAST_FAIL_INITIAL_BACKOFF_SECS))
-			[[ "$new_backoff" -gt "$FAST_FAIL_MAX_BACKOFF_SECS" ]] && new_backoff="$FAST_FAIL_MAX_BACKOFF_SECS"
-			log_action="rate_limit_exhausted (all accounts rate-limited, wait=${pool_wait}s, backoff_stage=${new_backoff}s)"
-		fi
-		;;
-
-	*)
-		# Non-rate-limit failure: exponential backoff
-		new_count=$((existing_count + 1))
-		new_backoff=$((existing_backoff > 0 ? existing_backoff * 2 : FAST_FAIL_INITIAL_BACKOFF_SECS))
-		[[ "$new_backoff" -gt "$FAST_FAIL_MAX_BACKOFF_SECS" ]] && new_backoff="$FAST_FAIL_MAX_BACKOFF_SECS"
-		retry_after=$((now + new_backoff))
-		log_action="failure_backoff (count=${new_count}, backoff=${new_backoff}s)"
-		;;
+	rate_limit* | backoff) is_rate_limit=true ;;
 	esac
 
-	# Write updated state (include crash_type for diagnostics)
+	# ── Compute retry strategy based on failure cause ──
+	local new_count new_backoff retry_after log_action
+	if [[ "$is_rate_limit" == "true" ]]; then
+		IFS=$'\t' read -r new_count new_backoff retry_after log_action \
+			<<<"$(_ff_compute_rate_limit_strategy "$existing_count" "$existing_backoff" "$provider" "$now")"
+	else
+		IFS=$'\t' read -r new_count new_backoff retry_after log_action \
+			<<<"$(_ff_compute_failure_strategy "$existing_count" "$existing_backoff" "$now")"
+	fi
+
+	# Write updated state (include crash_type for diagnostics).
 	local updated_state
 	updated_state=$(printf '%s' "$state" | jq \
 		--arg k "$key" \
@@ -302,10 +383,6 @@ _fast_fail_record_locked() {
 	# Flag for enrichment on first non-rate-limit failure: a reasoning worker
 	# will analyze the issue and add implementation guidance before re-dispatch.
 	# Only set once — cleared after enrichment runs.
-	local is_rate_limit=false
-	case "$reason" in
-	rate_limit* | backoff) is_rate_limit=true ;;
-	esac
 	if [[ "$is_rate_limit" == "false" && "$new_count" -eq 1 ]]; then
 		updated_state=$(printf '%s' "$updated_state" | jq \
 			--arg k "$key" \
