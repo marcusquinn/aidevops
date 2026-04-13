@@ -185,6 +185,15 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Worktree/session isolation (MANDATORY):** exactly one active session may own a writable worktree path at a time. Never reuse a live worktree across sessions (interactive or headless). If ownership conflict is detected, create a fresh worktree for the current task/session instead of continuing in the contested path.
 
+**Interactive issue ownership (MANDATORY — AI-driven, t2056):** When an interactive session engages with a GitHub issue — opening a worktree for it, claiming a new task, or identifying an existing issue to work on — the agent MUST immediately call `interactive-session-helper.sh claim <N> <slug>`. This applies `status:in-review` + self-assignment, which the pulse's dispatch-dedup guard (`_has_active_claim`) already honours as a block. Unlike `origin:interactive` (which only marks creation-time origin), this is the session-ownership signal for picking up *any* issue mid-lifecycle.
+
+- **Release is the agent's responsibility**, not the user's. Call `interactive-session-helper.sh release <N> <slug>` when the user signals completion ("done", "ship it", "moving on", "let a worker take over"), when they switch to a different issue, or when a PR they opened merges. The user should never need to type a release command.
+- **Session start:** run `interactive-session-helper.sh scan-stale` and, if any dead claims surface (PID gone, worktree missing), prompt the user to release them.
+- **Offline `gh`:** the helper warns and continues (exit 0). A collision with a worker is harmless — the interactive work naturally becomes its own issue/PR.
+- **`sudo aidevops approve issue <N>`** (crypto-approval flow for contributor-filed NMR issues) also clears `status:in-review` idempotently when present — no new user-facing command, it's a passive side effect of the already-required approval step.
+- `/release-issue <N>` and `aidevops issue release <N>` exist as fallbacks only.
+- Full rule in `prompts/build.txt` → "Interactive issue ownership".
+
 **Traceability and signature footer:** Hard rules in `prompts/build.txt` (sections "Traceability" and "#8 Signature footer"). Link both sides when closing (issue→PR, PR→issue). Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
 
 **Parent-task PR keyword rule (t2046 — MANDATORY).** When a PR delivers ANY work for a `parent-task`-labeled issue — including the initial plan-filing PR — use `For #NNN` or `Ref #NNN` in the PR body, NEVER `Closes`/`Resolves`/`Fixes`. The parent issue must stay open until ALL phase children merge; only the final phase PR uses `Closes #NNN`. `full-loop-helper.sh commit-and-pr` enforces this automatically (see `.github/workflows/parent-task-keyword-check.yml`). For leaf (non-parent) issues, use `Resolves #NNN` as normal. See `templates/brief-template.md` "PR Conventions" for the full rule.

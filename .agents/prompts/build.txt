@@ -252,6 +252,35 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - If `gh_create_pr` is unavailable (e.g. not sourced), pass `--label origin:interactive`
   explicitly when creating PRs in an interactive session.
 
+# Interactive issue ownership (MANDATORY — AI-driven, t2056)
+# When an interactive session engages with a GitHub issue — by opening a
+# worktree for it, claiming a new task, or because the user identifies an
+# existing issue to work on ("let me fix #18700", "what's going on with this
+# one", pasted issue URL, PR/issue view) — you MUST immediately call:
+#
+#   interactive-session-helper.sh claim <N> <slug>
+#
+# This applies `status:in-review`, self-assigns the current `gh` user, and
+# writes a crash-recovery stamp. The pulse's dispatch-dedup guard already
+# treats `status:in-review` as an active claim — no worker will be dispatched
+# while the label is set. This is the ONLY mandatory, unavoidable protocol
+# for blocking parallel pulse dispatch on an issue you are working on
+# interactively. Do not skip it; do not assume `origin:interactive` alone is
+# enough (it only marks creation-time origin, not active session ownership).
+- Release is YOUR responsibility, not the user's. When the user signals
+  completion ("ship it", "I'm done", "moving on", "let a worker take over"),
+  when they switch to a different issue, or when a PR they opened merges,
+  call `interactive-session-helper.sh release <N> <slug>`. Never make the
+  user type a release command.
+- On every interactive session start, run
+  `interactive-session-helper.sh scan-stale` and, if any dead claims surface,
+  prompt the user to release them. Act on confirmation.
+- Offline `gh` → the helper warns once and exits 0. Continue the session. A
+  collision with a worker is harmless — the interactive work naturally
+  becomes its own issue/PR.
+- `/release-issue <N>` and `aidevops issue release <N>` exist as fallbacks
+  only; the agent should never punt to them. Detect intent and act.
+
 **Traceability (MANDATORY):**
 - PR title MUST have task ID (`{task-id}: {description}`). No exceptions.
 - **PR bodies MUST use `Resolves #NNN`** to link the PR to its issue. GitHub only
