@@ -12,6 +12,11 @@
 # Functions in this module (in source order):
 #   - create_quality_debt_worktree
 #   - close_stale_quality_debt_prs
+#   - _enrichment_resolve_model        (private helper)
+#   - _enrichment_resolve_repo_path    (private helper)
+#   - _enrichment_fetch_issue_data     (private helper)
+#   - _enrichment_build_prompt         (private helper)
+#   - _enrichment_run_worker           (private helper)
 #   - dispatch_enrichment_workers
 
 [[ -n "${_PULSE_QUALITY_DEBT_LOADED:-}" ]] && return 0
@@ -121,25 +126,15 @@ close_stale_quality_debt_prs() {
 	return 0
 }
 
-dispatch_enrichment_workers() {
-	local available="$1"
-	local enrichment_count=0
-
-	[[ "$available" =~ ^[0-9]+$ ]] || available=0
-	[[ "$available" -gt 0 ]] || {
-		printf '%d\n' "$available"
-		return 0
-	}
-
-	# Read fast-fail state for issues needing enrichment
-	local state
-	state=$(_ff_load)
-	[[ -n "$state" && "$state" != "{}" && "$state" != "null" ]] || {
-		printf '%d\n' "$available"
-		return 0
-	}
-
-	# Resolve reasoning model
+#######################################
+# Resolve the best available enrichment model (opus preferred, sonnet fallback)
+#
+# Outputs: model identifier string (stdout) if resolved
+# Exit codes:
+#   0 - model resolved and printed to stdout
+#   1 - no reasoning model available
+#######################################
+_enrichment_resolve_model() {
 	local resolved_model=""
 	resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve opus || echo "")
 	if [[ -z "$resolved_model" ]]; then
@@ -147,60 +142,99 @@ dispatch_enrichment_workers() {
 	fi
 	if [[ -z "$resolved_model" ]]; then
 		echo "[pulse-wrapper] dispatch_enrichment_workers: no reasoning model available — skipping" >>"$LOGFILE"
-		printf '%d\n' "$available"
-		return 0
+		return 1
 	fi
+	printf '%s\n' "$resolved_model"
+	return 0
+}
 
-	# Extract keys with enrichment_needed=true
-	local enrichment_keys
-	enrichment_keys=$(printf '%s' "$state" | jq -r 'to_entries[] | select(.value.enrichment_needed == true) | .key' 2>/dev/null) || enrichment_keys=""
+#######################################
+# Resolve the local filesystem path for a repo slug
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - repos.json path (optional; defaults to $REPOS_JSON or ~/.config/aidevops/repos.json)
+#
+# Outputs: absolute repo path (stdout) if found
+# Exit codes:
+#   0 - path resolved and printed to stdout
+#   1 - slug not found or directory does not exist
+#######################################
+_enrichment_resolve_repo_path() {
+	local repo_slug="$1"
+	local repos_json="${2:-${REPOS_JSON:-$HOME/.config/aidevops/repos.json}}"
 
-	[[ -n "$enrichment_keys" ]] || {
-		printf '%d\n' "$available"
-		return 0
-	}
+	local repo_path
+	repo_path=$(jq -r --arg s "$repo_slug" \
+		'.initialized_repos[]? | select(.slug == $s) | .path' \
+		"$repos_json" 2>/dev/null || echo "")
+	repo_path="${repo_path/#\~/$HOME}"
+	[[ -n "$repo_path" && -d "$repo_path" ]] || return 1
 
-	local repos_json="${REPOS_JSON:-$HOME/.config/aidevops/repos.json}"
-	local enriched_total=0
+	printf '%s\n' "$repo_path"
+	return 0
+}
 
-	while IFS= read -r ff_key; do
-		[[ -n "$ff_key" ]] || continue
-		[[ "$enrichment_count" -lt "$ENRICHMENT_MAX_PER_CYCLE" ]] || break
-		[[ "$available" -gt 0 ]] || break
-		[[ -f "$STOP_FLAG" ]] && break
+#######################################
+# Fetch issue body, title, and relevant failure-context comments
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+#
+# Outputs: JSON object {title, body, comments} (stdout)
+# Exit codes:
+#   0 - data fetched (partial data is acceptable; fields may be empty strings)
+#######################################
+_enrichment_fetch_issue_data() {
+	local issue_number="$1"
+	local repo_slug="$2"
 
-		# Parse key format: "issue_number:repo_slug"
-		local issue_number repo_slug
-		issue_number="${ff_key%%:*}"
-		repo_slug="${ff_key#*:}"
-		[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
-		[[ -n "$repo_slug" ]] || continue
+	local issue_body issue_title issue_comments
+	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json body --jq '.body // ""' 2>/dev/null) || issue_body=""
+	issue_title=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json title --jq '.title // ""' 2>/dev/null) || issue_title=""
 
-		# Resolve repo path
-		local repo_path
-		repo_path=$(jq -r --arg s "$repo_slug" \
-			'.initialized_repos[]? | select(.slug == $s) | .path' \
-			"$repos_json" 2>/dev/null || echo "")
-		repo_path="${repo_path/#\~/$HOME}"
-		[[ -n "$repo_path" && -d "$repo_path" ]] || continue
+	# Get kill/dispatch comments for failure context
+	issue_comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--jq '[.[] | select(.body | test("CLAIM|kill|premature|BLOCKED|worker_failed|Dispatching")) | {author: .user.login, body: .body, created: .created_at}] | last(3) // []' \
+		2>/dev/null) || issue_comments="[]"
 
-		echo "[pulse-wrapper] Enrichment: analyzing #${issue_number} in ${repo_slug} after worker failure" >>"$LOGFILE"
+	jq -n \
+		--arg title "$issue_title" \
+		--arg body "$issue_body" \
+		--argjson comments "$issue_comments" \
+		'{title: $title, body: $body, comments: $comments}'
+	return 0
+}
 
-		# Pre-fetch issue data (deterministic, no LLM)
-		local issue_body issue_title issue_comments
-		issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
-			--json body --jq '.body // ""' 2>/dev/null) || issue_body=""
-		issue_title=$(gh issue view "$issue_number" --repo "$repo_slug" \
-			--json title --jq '.title // ""' 2>/dev/null) || issue_title=""
+#######################################
+# Build the enrichment analysis prompt and write it to a temp file
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - issue title
+#   $3 - issue body
+#   $4 - issue comments (JSON array string)
+#   $5 - repo slug (owner/repo)
+#
+# Outputs: path to the temporary prompt file (stdout)
+# Exit codes:
+#   0 - prompt file created and path printed to stdout
+#   1 - failed to create temp file
+#######################################
+_enrichment_build_prompt() {
+	local issue_number="$1"
+	local issue_title="$2"
+	local issue_body="$3"
+	local issue_comments="$4"
+	local repo_slug="$5"
 
-		# Get kill/dispatch comments for failure context
-		issue_comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-			--jq '[.[] | select(.body | test("CLAIM|kill|premature|BLOCKED|worker_failed|Dispatching")) | {author: .user.login, body: .body, created: .created_at}] | last(3) // []' 2>/dev/null) || issue_comments="[]"
+	local prompt_file
+	prompt_file=$(mktemp) || return 1
 
-		# Build enrichment prompt
-		local prompt_file
-		prompt_file=$(mktemp)
-		cat >"$prompt_file" <<ENRICHMENT_PROMPT_EOF
+	cat >"$prompt_file" <<ENRICHMENT_PROMPT_EOF
 You are a reasoning-tier analyst. A worker attempted to implement issue #${issue_number} but failed.
 Your job: analyze the issue and codebase, then edit the issue body to add concrete implementation guidance.
 
@@ -240,35 +274,150 @@ ${issue_comments}
 5. Do NOT implement the solution. Only analyze and document guidance.
 ENRICHMENT_PROMPT_EOF
 
-		# Run inline reasoning worker
-		local enrichment_output
-		enrichment_output=$(mktemp)
+	printf '%s\n' "$prompt_file"
+	return 0
+}
 
-		# shellcheck disable=SC2086
-		"$HEADLESS_RUNTIME_HELPER" run \
-			--role worker \
-			--session-key "enrichment-${issue_number}" \
-			--dir "$repo_path" \
-			--model "$resolved_model" \
-			--title "Enrichment analysis: Issue #${issue_number}" \
-			--prompt-file "$prompt_file" </dev/null >"$enrichment_output" 2>&1
+#######################################
+# Run the enrichment worker for a single issue and check whether it succeeded
+#
+# Runs a reasoning-tier headless worker using the provided prompt file, then
+# verifies that "Worker Guidance" was added to the issue body on GitHub.
+# Cleans up the prompt file and worker output regardless of result.
+#
+# Arguments:
+#   $1 - prompt file path (deleted by this function on completion)
+#   $2 - issue number
+#   $3 - repo slug (owner/repo)
+#   $4 - repo path (working directory for the worker)
+#   $5 - resolved model identifier
+#
+# Exit codes:
+#   0 - enrichment succeeded (Worker Guidance section found in issue body)
+#   1 - enrichment ran but no Worker Guidance was added
+#######################################
+_enrichment_run_worker() {
+	local prompt_file="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local repo_path="$4"
+	local resolved_model="$5"
 
-		local enrichment_exit=$?
-		rm -f "$prompt_file"
+	local enrichment_output
+	enrichment_output=$(mktemp)
 
-		# Check if enrichment succeeded (issue body was edited)
-		local post_body
-		post_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
-			--json body --jq '.body // ""' 2>/dev/null) || post_body=""
+	# shellcheck disable=SC2086
+	"$HEADLESS_RUNTIME_HELPER" run \
+		--role worker \
+		--session-key "enrichment-${issue_number}" \
+		--dir "$repo_path" \
+		--model "$resolved_model" \
+		--title "Enrichment analysis: Issue #${issue_number}" \
+		--prompt-file "$prompt_file" </dev/null >"$enrichment_output" 2>&1
 
-		if [[ "$post_body" == *"Worker Guidance"* ]]; then
-			echo "[pulse-wrapper] Enrichment: successfully added Worker Guidance to #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+	local enrichment_exit=$?
+	rm -f "$prompt_file" "$enrichment_output"
+
+	# Check if enrichment succeeded (issue body was edited)
+	local post_body
+	post_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json body --jq '.body // ""' 2>/dev/null) || post_body=""
+
+	if [[ "$post_body" == *"Worker Guidance"* ]]; then
+		echo "[pulse-wrapper] Enrichment: successfully added Worker Guidance to #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	else
+		echo "[pulse-wrapper] Enrichment: worker ran (exit=${enrichment_exit}) but no Worker Guidance found in #${issue_number} body (${#post_body} chars)" >>"$LOGFILE"
+		return 1
+	fi
+}
+
+#######################################
+# Dispatch enrichment workers for issues that failed and need implementation guidance
+#
+# Reads the fast-fail state to find issues with enrichment_needed=true, resolves
+# a reasoning model, then dispatches a headless worker per issue to add a
+# "Worker Guidance" section to the issue body on GitHub.
+#
+# Arguments:
+#   $1 - available worker slots (integer)
+#
+# Outputs: updated available slot count (stdout)
+# Exit code: always 0
+#######################################
+dispatch_enrichment_workers() {
+	local available="$1"
+	local enrichment_count=0
+
+	[[ "$available" =~ ^[0-9]+$ ]] || available=0
+	[[ "$available" -gt 0 ]] || {
+		printf '%d\n' "$available"
+		return 0
+	}
+
+	# Read fast-fail state for issues needing enrichment
+	local state
+	state=$(_ff_load)
+	[[ -n "$state" && "$state" != "{}" && "$state" != "null" ]] || {
+		printf '%d\n' "$available"
+		return 0
+	}
+
+	# Resolve reasoning model (opus preferred, sonnet fallback)
+	local resolved_model
+	resolved_model=$(_enrichment_resolve_model) || {
+		printf '%d\n' "$available"
+		return 0
+	}
+
+	# Extract keys with enrichment_needed=true
+	local enrichment_keys
+	enrichment_keys=$(printf '%s' "$state" | jq -r 'to_entries[] | select(.value.enrichment_needed == true) | .key' 2>/dev/null) || enrichment_keys=""
+
+	[[ -n "$enrichment_keys" ]] || {
+		printf '%d\n' "$available"
+		return 0
+	}
+
+	local repos_json="${REPOS_JSON:-$HOME/.config/aidevops/repos.json}"
+	local enriched_total=0
+
+	while IFS= read -r ff_key; do
+		[[ -n "$ff_key" ]] || continue
+		[[ "$enrichment_count" -lt "$ENRICHMENT_MAX_PER_CYCLE" ]] || break
+		[[ "$available" -gt 0 ]] || break
+		[[ -f "$STOP_FLAG" ]] && break
+
+		# Parse key format: "issue_number:repo_slug"
+		local issue_number repo_slug
+		issue_number="${ff_key%%:*}"
+		repo_slug="${ff_key#*:}"
+		[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
+		[[ -n "$repo_slug" ]] || continue
+
+		# Resolve repo path
+		local repo_path
+		repo_path=$(_enrichment_resolve_repo_path "$repo_slug" "$repos_json") || continue
+
+		echo "[pulse-wrapper] Enrichment: analyzing #${issue_number} in ${repo_slug} after worker failure" >>"$LOGFILE"
+
+		# Fetch issue data (body, title, failure-context comments) as JSON
+		local issue_data issue_title issue_body issue_comments
+		issue_data=$(_enrichment_fetch_issue_data "$issue_number" "$repo_slug")
+		issue_title=$(printf '%s' "$issue_data" | jq -r '.title // ""')
+		issue_body=$(printf '%s' "$issue_data" | jq -r '.body // ""')
+		issue_comments=$(printf '%s' "$issue_data" | jq -r '.comments // []')
+
+		# Build enrichment prompt file
+		local prompt_file
+		prompt_file=$(_enrichment_build_prompt \
+			"$issue_number" "$issue_title" "$issue_body" "$issue_comments" "$repo_slug") || continue
+
+		# Run enrichment worker; prompt_file is deleted inside helper
+		if _enrichment_run_worker \
+			"$prompt_file" "$issue_number" "$repo_slug" "$repo_path" "$resolved_model"; then
 			enriched_total=$((enriched_total + 1))
-		else
-			echo "[pulse-wrapper] Enrichment: worker ran (exit=${enrichment_exit}) but no Worker Guidance found in #${issue_number} body (${#post_body} chars)" >>"$LOGFILE"
 		fi
-
-		rm -f "$enrichment_output"
 
 		# Mark enrichment complete in fast-fail state (regardless of success —
 		# don't retry enrichment, let normal escalation handle persistent failures)
