@@ -356,6 +356,54 @@ _reevaluate_consolidation_labels() {
 }
 
 #######################################
+# Post a "Large File Simplification Gate — CLEARED" follow-up comment
+# on an issue whose `needs-simplification` label was just removed. This
+# annotates the prior "Held from dispatch" comment as superseded so
+# readers (workers, supervisors, humans) don't act on stale state.
+#
+# Idempotent: uses _gh_idempotent_comment with a per-issue marker so it
+# only posts once per clearing event even if the re-eval loop visits the
+# same issue across multiple cycles.
+#
+# t2042: addresses the misleading-comment failure mode where #18418
+# carried a "Held from dispatch" comment from a pre-t2024 gate
+# evaluation while dispatch was already proceeding under the
+# scoped-range bypass.
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug
+# Returns: 0 always (best-effort, never blocks)
+#######################################
+_post_simplification_gate_cleared_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+
+	local _scoped_threshold="${SCOPED_RANGE_THRESHOLD:-300}"
+	local _large_threshold="${LARGE_FILE_LINE_THRESHOLD:-2000}"
+	local _marker="<!-- simplification-gate-cleared:${issue_number} -->"
+	local _body="${_marker}
+## Large File Simplification Gate — CLEARED
+
+The previous \"Held from dispatch\" comment on this issue no longer
+applies. On re-evaluation, the cited file references either fall within
+the scoped-range bypass (≤ ${_scoped_threshold} lines per range) or the
+target file has been simplified below ${_large_threshold} lines.
+
+The \`needs-simplification\` label has been removed and the issue is
+open for dispatch.
+
+_Automated by \`_post_simplification_gate_cleared_comment()\` in pulse-triage.sh (t2042)_"
+
+	_gh_idempotent_comment "$issue_number" "$repo_slug" \
+		"$_marker" "$_body" || true
+	return 0
+}
+
+#######################################
 # Re-evaluate needs-simplification labeled issues across pulse repos.
 # Same pattern as _reevaluate_consolidation_labels: issues filtered out
 # by the needs-* exclusion never reach dispatch_with_dedup, so the
@@ -396,6 +444,9 @@ _reevaluate_simplification_labels() {
 			# issue, keeping stale needs-simplification labels forever.
 			if ! _issue_targets_large_files "$num" "$slug" "$body" "$rpath" "true"; then
 				total_cleared=$((total_cleared + 1))
+				# t2042: post follow-up "CLEARED" comment so the original
+				# "Held from dispatch" comment doesn't mislead readers.
+				_post_simplification_gate_cleared_comment "$num" "$slug"
 			fi
 		done
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)

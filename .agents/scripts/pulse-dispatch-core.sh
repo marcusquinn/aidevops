@@ -135,6 +135,75 @@ has_worker_for_repo_issue() {
 }
 
 #######################################
+# Classify a stale-recovered worker by what (if anything) it produced
+# before stalling. Used by the STALE_RECOVERED branch in
+# _dispatch_dedup_check_layers to give escalate_issue_tier a meaningful
+# crash_type instead of leaving it empty.
+#
+# t2042: addresses the diagnostic gap on #18418 where two stale-recovered
+# workers escalated to tier:reasoning with reason="stale_timeout" and no
+# crash_type, so the cascade comment couldn't tell the next worker
+# whether it was a no-work infra failure or a partial implementation
+# stall.
+#
+# Returns one of:
+#   "partial"  — open PR or remote branch references this issue
+#                (worker reached at least the worktree/PR stage)
+#   "no_work"  — no PR, no branch (worker died before producing any
+#                durable artifact — transient/infrastructure failure)
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug
+# Output: crash_type string on stdout
+#######################################
+_classify_stale_recovery_crash_type() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || {
+		printf 'no_work'
+		return 0
+	}
+	[[ -n "$repo_slug" ]] || {
+		printf 'no_work'
+		return 0
+	}
+
+	# Fast path: open PR exists referencing the issue. Worker got far
+	# enough to produce a PR — definitely "partial".
+	local _open_pr_count
+	_open_pr_count=$(gh pr list --repo "$repo_slug" --state open \
+		--search "#${issue_number} in:body" --limit 1 \
+		--json number --jq 'length' 2>/dev/null) || _open_pr_count=0
+	[[ "$_open_pr_count" =~ ^[0-9]+$ ]] || _open_pr_count=0
+	if [[ "$_open_pr_count" -gt 0 ]]; then
+		printf 'partial'
+		return 0
+	fi
+
+	# Second check: any remote branch whose name references the issue
+	# number. Workers create branches like `bugfix/t1992-...`,
+	# `feature/auto-...-issue-18418`, or contain `gh-18418`. If we find
+	# anything, the worker reached the worktree-creation stage.
+	local _branch_count
+	_branch_count=$(gh api "repos/${repo_slug}/branches" --paginate \
+		--jq "[.[] | select(.name | test(\"(t|gh-?)${issue_number}([^0-9]|\$)\"))] | length" \
+		2>/dev/null) || _branch_count=0
+	[[ "$_branch_count" =~ ^[0-9]+$ ]] || _branch_count=0
+	if [[ "$_branch_count" -gt 0 ]]; then
+		printf 'partial'
+		return 0
+	fi
+
+	# No PR, no branch — the worker died before producing any durable
+	# artifact. Classify as no_work so the cascade tier escalation
+	# comment renders the "Likely infrastructure/transient failure" line.
+	printf 'no_work'
+	return 0
+}
+
+#######################################
 # Check if dispatching a worker would be a duplicate (GH#4400, GH#5210, GH#6696, GH#11086)
 #
 # Seven-layer dedup:
@@ -249,8 +318,14 @@ check_dispatch_dedup() {
 		# dispatch→timeout→stale-recovery cycles. Observed: 8+ dispatches in 6h
 		# with 0 PRs and 0 fast-fail entries (GH#17700, GH#17701, GH#17702).
 		if [[ "$assigned_output" == *STALE_RECOVERED* ]]; then
-			echo "[pulse-wrapper] Dedup: stale recovery detected for #${issue_number} in ${repo_slug} — recording fast-fail (t1927)" >>"$LOGFILE"
-			fast_fail_record "$issue_number" "$repo_slug" "stale_timeout" || true
+			# t2042: classify what (if anything) the dead worker produced
+			# before stalling so the cascade tier escalation comment can
+			# render a "Crash type: no_work | partial" diagnostic line
+			# instead of a bare "Reason: stale_timeout" with no signal.
+			local _stale_crash_type
+			_stale_crash_type=$(_classify_stale_recovery_crash_type "$issue_number" "$repo_slug")
+			echo "[pulse-wrapper] Dedup: stale recovery detected for #${issue_number} in ${repo_slug} crash_type=${_stale_crash_type} — recording fast-fail (t1927/t2042)" >>"$LOGFILE"
+			fast_fail_record "$issue_number" "$repo_slug" "stale_timeout" "" "$_stale_crash_type" || true
 		fi
 	fi
 
@@ -937,6 +1012,13 @@ _Automated by \`_issue_targets_large_files()\` in pulse-wrapper.sh_"
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--remove-label "needs-simplification" >/dev/null 2>&1 || true
 		echo "[pulse-wrapper] Simplification gate cleared for #${issue_number} (${repo_slug}) — no large files after exclusion filter" >>"$LOGFILE"
+		# t2042: post follow-up "CLEARED" comment so the original
+		# "Held from dispatch" comment doesn't mislead readers. Helper
+		# is defined in pulse-triage.sh which is sourced before this
+		# file (see pulse-wrapper.sh:169-172).
+		if declare -F _post_simplification_gate_cleared_comment >/dev/null 2>&1; then
+			_post_simplification_gate_cleared_comment "$issue_number" "$repo_slug"
+		fi
 	fi
 
 	return 1
