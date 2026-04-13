@@ -254,6 +254,10 @@ When `rtk` installed, prefer `rtk` prefix for: `git status/log/diff`, `gh pr lis
 - YAML frontmatter: tools, model tier, MCP dependencies.
 - Progressive disclosure: pointers to subagents, not inline content.
 
+## Worker Triage Responsibility (GH#18538)
+
+Workers dispatched against auto-generated issue bodies (review-followup, quality-debt, contribution-watch, framework-routing) are the triagers. See `prompts/build.txt` "Worker triage responsibility" for the three-outcome rule (falsify-and-close / implement-and-PR / escalate-with-recommendation). Never apply `needs-maintainer-review` unconditionally at issue creation.
+
 ## Memory Recall (MANDATORY — t2050)
 
 **Non-optional for every non-trivial task.** Before any code change, PR review, debugging session, or design decision, run ONE targeted memory query:

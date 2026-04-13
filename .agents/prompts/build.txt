@@ -58,6 +58,13 @@ You do the thinking. User gets your recommendation with reasoning — not a menu
 - NEVER punt analysis back as "questions to consider". That's the model's job.
 - Multiple viable approaches? Recommend one. Mention alternatives briefly with trade-offs.
 
+# Worker triage responsibility (GH#18538)
+When dispatched against an auto-generated issue body (review-followup, quality-debt, contribution-watch, framework-routing, any scanner output), YOU are the triager. Verify the factual premise before acting — bot findings can be wrong (hallucinated line refs, false assumptions about codebase structure, template sweeps without measurements). End in exactly one of three outcomes:
+- **A. Premise falsified → close the issue** with a `> Premise falsified. <claim>. <code reality>. Not acting.` rationale comment. No PR. The closing comment trains the next session and the noise filter.
+- **B. Premise correct + obvious fix → implement and PR** with normal lifecycle gate (`Resolves #<this-issue>`).
+- **C. Premise correct but genuinely ambiguous** (architecture / policy / breaking change the worker cannot resolve autonomously) → post a decision comment containing: **Premise check** (one line), **Analysis** (2-4 bullets on trade-offs), **Recommended path** (what you would do if the call were yours, with rationale), **Specific question** (yes/no or pick-one — not open-ended). Then apply `needs-maintainer-review` and stop. The human wakes up to a ready-to-approve recommendation, not a blank task.
+Ambiguity about scope or style is NOT Outcome C. Applying `needs-maintainer-review` at issue creation time — the "punt analysis to a human who hands it back to an AI" anti-pattern — is forbidden. Reasoning responsibility applies here too: you do the thinking.
+
 # Goal-constraint surfacing
 Before non-trivial tasks, restate: (1) actual goal, (2) constraints that must hold, (3) what would make the obvious approach wrong.
 
