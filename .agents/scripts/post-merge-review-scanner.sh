@@ -17,28 +17,49 @@
 #        SCANNER_LABEL (default review-followup),
 #        SCANNER_PR_LIMIT (default 1000),
 #        SCANNER_MAX_COMMENTS (default 10) — cap per issue body,
-#        SCANNER_NEEDS_REVIEW (default true) — apply needs-maintainer-review
-#          label so workers do not auto-dispatch on unverified bot findings;
-#          set to "false" to allow direct dispatch.
+#        SCANNER_NEEDS_REVIEW (default false) — opt-in escape hatch to apply
+#          needs-maintainer-review at creation time. Normally the worker
+#          itself triages (verify premise → implement / close-wontfix /
+#          escalate-with-recommendation), so this should stay off. Flip to
+#          true only for pipelines where every bot finding genuinely needs
+#          human sign-off before any automated action.
 #
-# Why needs-maintainer-review by default (GH#18538 follow-up to PR #18607):
-# PR #18607 made the issue body worker-actionable (file:line refs, full bot
-# bodies, Worker Guidance), but rich body context cannot rescue a finding
-# whose factual premise is wrong. The original #18538 was triggered by a
-# Gemini comment claiming the TODO.md "Ready" section is auto-generated
-# (it is not — todo-ready.sh is read-only). A worker reading even a
-# perfectly-mentored body would still chase a false premise. Routing every
-# review-followup through human triage at creation time means the
-# maintainer either (a) verifies the premise and removes the label, (b)
-# closes as won't-fix with rationale, or (c) reframes the scope before
-# dispatch. This pairs with #18607's body work — together they turn 0
-# wasted dispatches per false-premise finding instead of #18538's 2.
+# Worker-is-triager philosophy (GH#18538):
+#   A review-followup issue is not a human-only inbox item. The dispatched
+#   worker IS the triager. It must:
+#     1. Verify the bot's premise by reading the cited file:line.
+#     2. If premise is falsified → close the issue with a rationale comment
+#        explaining what the bot got wrong (this mentors the next session
+#        reading the thread and trains the noise filter).
+#     3. If premise is correct + fix is obvious → implement and open a PR
+#        with `Resolves #NNN`.
+#     4. ONLY if premise is correct but the approach requires a genuine
+#        judgment call the worker cannot make (architecture / policy /
+#        breaking change) → post a decision comment containing analysis,
+#        a recommended path, and the specific question that needs input,
+#        then apply needs-maintainer-review. The human reads a ready-to-
+#        approve recommendation, not a blank triage task.
+#
+#   This is the same rule as prompts/build.txt "Reasoning responsibility":
+#   the model does the thinking and delivers a recommendation. Applying
+#   needs-maintainer-review unconditionally at creation time is that
+#   anti-pattern at the dispatch layer — punting analysis to a human who
+#   then just hands it back to an AI anyway. Original GH#18538 was caused
+#   by a bot finding with a false premise (Gemini claimed TODO.md's
+#   "## Ready" section is auto-generated; todo-ready.sh is read-only).
+#   Under this model the worker reads the section header, greps the
+#   helper, closes with "premise falsified — no write path exists" — done
+#   in minutes, with zero human touches.
 #
 # Prior art for the false-premise risk: prompts/build.txt section 6a
-# (AI-generated issue quality, GH#17832-17835).
+# (AI-generated issue quality, GH#17832-17835). The prompts/build.txt
+# principle "Reasoning responsibility" and AGENTS.md "origin:interactive
+# implies maintainer approval" are both echoes of the same rule: humans
+# approve decisions, they don't re-do analysis.
 #
 # t1386: https://github.com/marcusquinn/aidevops/issues/2785
 # GH#18538: workers timed out on review-followup issues with truncated bodies.
+# GH#18538 follow-up: worker-is-triager model replaces default-gate model.
 set -euo pipefail
 
 # Source shared-constants for gh_create_issue wrapper (t1756)
@@ -51,7 +72,7 @@ SCANNER_MAX_ISSUES="${SCANNER_MAX_ISSUES:-10}"
 SCANNER_LABEL="${SCANNER_LABEL:-review-followup}"
 SCANNER_PR_LIMIT="${SCANNER_PR_LIMIT:-1000}"
 SCANNER_MAX_COMMENTS="${SCANNER_MAX_COMMENTS:-10}"
-SCANNER_NEEDS_REVIEW="${SCANNER_NEEDS_REVIEW:-true}"
+SCANNER_NEEDS_REVIEW="${SCANNER_NEEDS_REVIEW:-false}"
 BOT_RE="coderabbitai|gemini-code-assist|claude-review|gpt-review"
 ACT_RE="should|consider|fix|change|update|refactor|missing|add"
 
@@ -160,33 +181,64 @@ with a wontfix rationale.
 
 ---
 
-### Triage required (read before dispatching a worker)
+### You are the triager (worker-is-triager rule)
 
-This issue is **auto-created from review bot output**. Review bots can be
-wrong: hallucinated line refs, false premises about codebase structure,
-template-driven sweeps without measurements (see GH#17832-17835 for prior
-art and \`prompts/build.txt\` section 6a). The \`needs-maintainer-review\`
-label gates this issue from worker auto-dispatch until a human verifies
-the bot's premise against the actual code.
+This issue is **auto-created from review bot output** and dispatched
+directly to you. Review bots can be wrong: hallucinated line refs, false
+premises about codebase structure, template-driven sweeps without
+measurements (see GH#17832-17835 for prior art and \`prompts/build.txt\`
+section 6a). **Do not assume the bot is correct.** Verify before acting.
 
-Pick one path:
+You must end in exactly one of three outcomes — no fourth "hand it back
+to the human" path exists. Humans approve decisions; they do not re-do
+analysis.
 
-1. **Accept** — verify the bot is right by reading the cited file:line in
-   the source PR. Confirm the suggested change makes sense in context.
-   Optionally tighten the Worker Guidance section below for the dispatched
-   worker. Then remove \`needs-maintainer-review\` and add a tier label
-   (\`tier:simple\` / \`tier:standard\` / \`tier:reasoning\`).
-2. **Reject** — comment with the falsified premise (e.g. "section X is
-   not auto-generated, finding is wrong") and close the issue. Optionally
-   file a meta-issue if the bot is producing systemic noise from a
-   specific rule.
-3. **Modify scope** — edit title and body to reframe (e.g. "this finding
-   on file X is wrong, but it surfaced a real issue on file Y"). Then
-   follow path 1.
+#### Outcome A — Premise falsified → close the issue
 
-Workers dispatched against an unverified premise burn tokens on
-exploration and stale-recover via the t2008 fail-safe — that path works
-but is wasteful.
+1. Read the cited \`file:line\` (listed under *Files to modify* below).
+2. If the bot's claim is factually wrong (file doesn't exist at that
+   line, function doesn't behave as described, "auto-generated" section
+   isn't actually auto-generated, etc.), **close the issue** with a
+   comment in this shape:
+
+   > **Premise falsified.** \<what the bot claimed\>. \<what the code
+   > actually shows, with a \`file:line\` citation or one-line quote\>.
+   > Not acting.
+
+   No PR. No further dispatch. The closing comment trains the next
+   session reading this thread and the noise filter.
+
+#### Outcome B — Premise correct + fix is obvious → implement and PR
+
+1. Verify the bot's premise as above.
+2. Read the Worker Guidance section below, open a worktree, implement.
+3. Open a PR with \`Resolves #<this-issue-number>\` in the body
+   (use THIS issue's number, not the source PR's) so merge auto-closes it.
+4. Follow the normal Lifecycle Gate (brief, tests, review-bot-gate,
+   merge, postflight).
+
+#### Outcome C — Premise correct but approach is a genuine judgment call
+
+Only use this path if you reach it after Outcomes A and B don't apply:
+the bot's finding is real, but the fix requires a decision that is
+architectural, policy, breaking-change, or otherwise genuinely outside
+what you can resolve autonomously. In that case, post a **decision
+comment** with exactly these fields:
+
+- **Premise check:** one line, confirming the finding is real.
+- **Analysis:** 2-4 bullets on the trade-offs.
+- **Recommended path:** the option you would take if the decision were
+  yours, with rationale.
+- **Specific question:** the single decision the human needs to make
+  (yes/no or pick-one, not open-ended).
+
+Then apply \`needs-maintainer-review\` and stop. The human wakes up to a
+ready-to-approve recommendation, not a blank task.
+
+> **Ambiguity about scope or style is not Outcome C.** Per
+> \`prompts/build.txt\` "Reasoning responsibility", the model does the
+> thinking and delivers a recommendation. Only escalate what is genuinely
+> a maintainer-only decision.
 
 ### Worker Guidance
 
@@ -194,18 +246,18 @@ but is wasteful.
 
 ${refs_section}
 
-**Implementation steps:**
+**Implementation steps (Outcome B path):**
 
 1. Read each file at the specified \`:line\` (read ~20 lines around for context).
 2. Read the bot's full comment below — it contains the rationale and suggested change.
-3. Apply the change if it's correct. If you disagree, close this issue with an explanation rather than burning iterations trying to satisfy a wrong suggestion.
-4. If multiple comments target the same file, group your edits into one logical commit.
+3. Verify the premise before implementing (see Outcome A).
+4. If multiple comments target the same file, group edits into one logical commit.
 5. Run \`shellcheck\` / \`markdownlint-cli2\` / project tests as appropriate.
 
 **Verification:**
 
 - Open the new PR with \`Resolves #<this-issue>\` so this followup is auto-closed on merge.
-- If the bot's suggestion was incorrect, leave a comment on this issue explaining why before closing — that comment trains the next session reading this thread.
+- If the bot's suggestion was incorrect, close this issue with a Outcome A comment — do not open a no-op PR.
 
 ### Inline comments
 
@@ -239,10 +291,15 @@ create_issue() {
 	gh label create "source:review-scanner" --repo "$repo" \
 		--description "Auto-created by post-merge-review-scanner.sh" --color "C2E0C6" --force || true
 
-	# GH#18538: gate worker dispatch on human triage by default. Bot
-	# findings can have false premises that no amount of body context
-	# rescues. The maintainer either approves (removes label, adds tier),
-	# rejects (closes), or reframes scope before any worker runs.
+	# GH#18538 follow-up: worker-is-triager model (see header comment).
+	# The worker itself verifies the bot's premise and picks one of three
+	# outcomes: close-as-falsified (Outcome A), implement-and-PR (B), or
+	# escalate-with-recommendation (C). We do NOT apply
+	# needs-maintainer-review unconditionally — that would be the exact
+	# "punt analysis to a human who hands it back to an AI" anti-pattern
+	# this script is meant to avoid. SCANNER_NEEDS_REVIEW is an opt-in
+	# escape hatch; the worker guidance inside the issue body carries the
+	# enforcement.
 	#
 	# GH#18670 (Fix 7): hardcode origin:worker here as defence in depth
 	# against pulse-wrapper.sh forgetting to export AIDEVOPS_HEADLESS=true
