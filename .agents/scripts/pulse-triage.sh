@@ -331,22 +331,15 @@ _reevaluate_consolidation_labels() {
 		issues_json=$(gh issue list --repo "$slug" --state open \
 			--label "needs-consolidation" \
 			--json number --limit 50 2>/dev/null) || issues_json="[]"
-		local count
-		count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || count=0
-		[[ "$count" -gt 0 ]] || continue
 
-		local i=0
-		while [[ "$i" -lt "$count" ]]; do
-			local num
-			num=$(printf '%s' "$issues_json" | jq -r ".[$i].number" 2>/dev/null)
-			i=$((i + 1))
+		while read -r num; do
 			[[ "$num" =~ ^[0-9]+$ ]] || continue
 			# _issue_needs_consolidation returns 1 (no consolidation needed)
 			# AND auto-clears the label when was_already_labeled=true
 			if ! _issue_needs_consolidation "$num" "$slug"; then
 				total_cleared=$((total_cleared + 1))
 			fi
-		done
+		done < <(printf '%s' "$issues_json" | jq -r '.[].number' 2>/dev/null)
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
 
 	if [[ "$total_cleared" -gt 0 ]]; then
@@ -374,15 +367,8 @@ _reevaluate_simplification_labels() {
 		issues_json=$(gh issue list --repo "$slug" --state open \
 			--label "needs-simplification" \
 			--json number --limit 50 2>/dev/null) || issues_json="[]"
-		local count
-		count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || count=0
-		[[ "$count" -gt 0 ]] || continue
 
-		local i=0
-		while [[ "$i" -lt "$count" ]]; do
-			local num
-			num=$(printf '%s' "$issues_json" | jq -r ".[$i].number" 2>/dev/null)
-			i=$((i + 1))
+		while read -r num; do
 			[[ "$num" =~ ^[0-9]+$ ]] || continue
 			local body
 			body=$(gh issue view "$num" --repo "$slug" \
@@ -397,7 +383,7 @@ _reevaluate_simplification_labels() {
 			if ! _issue_targets_large_files "$num" "$slug" "$body" "$rpath" "true"; then
 				total_cleared=$((total_cleared + 1))
 			fi
-		done
+		done < <(printf '%s' "$issues_json" | jq -r '.[].number' 2>/dev/null)
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)
 
 	if [[ "$total_cleared" -gt 0 ]]; then
@@ -734,15 +720,8 @@ _backfill_stale_consolidation_labels() {
 		issues_json=$(gh issue list --repo "$slug" --state open \
 			--label "needs-consolidation" \
 			--json number --limit 50 2>/dev/null) || issues_json="[]"
-		local count
-		count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || count=0
-		[[ "$count" -gt 0 ]] || continue
 
-		local i=0
-		while [[ "$i" -lt "$count" ]]; do
-			local num
-			num=$(printf '%s' "$issues_json" | jq -r ".[$i].number" 2>/dev/null)
-			i=$((i + 1))
+		while read -r num; do
 			[[ "$num" =~ ^[0-9]+$ ]] || continue
 			# Skip if a child already exists — the dispatch path is
 			# already idempotent but short-circuiting saves API calls.
@@ -752,7 +731,7 @@ _backfill_stale_consolidation_labels() {
 			if _dispatch_issue_consolidation "$num" "$slug" "$rpath"; then
 				total_backfilled=$((total_backfilled + 1))
 			fi
-		done
+		done < <(printf '%s' "$issues_json" | jq -r '.[].number' 2>/dev/null)
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path // "")"' "$repos_json" 2>/dev/null)
 
 	if [[ "$total_backfilled" -gt 0 ]]; then
