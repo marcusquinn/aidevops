@@ -539,7 +539,13 @@ _push_create_issue() {
 	if [[ -n "$num" && -z "$assignee" && "$origin_label" == "origin:interactive" ]]; then
 		local current_user="${AIDEVOPS_SESSION_USER:-}"
 		if [[ -z "$current_user" ]]; then
-			current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+			# GH#18591: cache gh api user result to avoid repeated API calls when
+			# processing multiple tasks in a loop. Use .login // "" so a null
+			# login field yields an empty string rather than the literal "null".
+			if [[ -z "${_CACHED_GH_USER:-}" ]]; then
+				_CACHED_GH_USER=$(gh api user --jq '.login // ""' 2>/dev/null || echo "")
+			fi
+			current_user="$_CACHED_GH_USER"
 		fi
 		if [[ -n "$current_user" ]]; then
 			if gh issue edit "$num" --repo "$repo" --add-assignee "$current_user" >/dev/null 2>&1; then
