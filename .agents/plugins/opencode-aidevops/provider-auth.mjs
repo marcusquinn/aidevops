@@ -1176,6 +1176,7 @@ async function handle401Recovery(client, response, accessToken, sessionAccountEm
  * @param {string} accessToken
  * @param {string|null} sessionAccountEmail
  * @param {{requestHeaders: Headers, requestInput: Request|string|URL, requestInit: RequestInit, body: string|null|undefined}} ctx
+ * @param {Set<string>} [triedEmails] - set of account emails already tried this request cycle, used to prevent infinite rotation when all accounts are rate-limited
  * @returns {Promise<{response: Response, sessionAccountEmail: string|null}>}
  */
 async function handle429Recovery(client, response, accessToken, sessionAccountEmail, ctx, triedEmails) {
