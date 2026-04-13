@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.8] - 2026-04-13
+
+### Added
+
+- auto-assign issues from interactive sessions (t2028) (#18500)
+
+### Changed
+
+- Maintenance: mark t2033 complete (pr:#18519 testing:self-assessed) (#18520)
+- fix(pulse): enforce mutually-exclusive status labels via helper (#18519)
+- Maintenance: mark t2034 complete (pr:#18514 testing:self-assessed)
+- file plans for upstream wrapper auto-assign + runtime-debug diagnostic rule (#18518)
+- Maintenance: mark t2030 complete (pr:#18512 testing:self-assessed)
+- Maintenance: mark t2028 complete (pr:#18500 testing:self-assessed)
+- Maintenance: mark t2031 complete (pr:#18505)
+
+### Fixed
+
+- guard session-rename-helper against main/master titles (#18525)
+- add GH_TOKEN to Update TODO.md proof-log step (t2034) (#18514)
+
 ## [3.7.7] - 2026-04-13
 
 ### Changed
