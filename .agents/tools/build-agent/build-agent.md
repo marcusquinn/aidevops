@@ -18,7 +18,7 @@ mode: subagent
 - **MCP servers**: Disabled globally, enabled per-agent
 - **Code refs**: `rg "pattern"` search patterns, not `file:line` (line numbers drift)
 - **Subagents**: `agent-review.md` (review), `agent-testing.md` (testing)
-- **Slash command**: `/build-agent {name} {kind} [category]` → `scripts/commands/build-agent.md` (interactive harness for creating new agents)
+- **Slash command**: `/build-agent {name} {kind} [category]` → `.agents/scripts/commands/build-agent.md` (interactive harness for creating new agents)
 - **Related**: `@code-standards`, `.agents/aidevops/architecture.md`, `tools/browser/browser-automation.md`
 - **After creating/promoting**: `~/.aidevops/agents/scripts/subagent-index-helper.sh generate`
 - **Testing**: `agent-test-helper.sh run my-tests` or `claude -p "Test query"`
