@@ -887,24 +887,30 @@ cmd_commit_and_pr() {
 # Single command that replaces the multi-step protocol (wait + merge).
 # Workers call this instead of bare `gh pr merge`.
 #
-# Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase]
+# Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto]
+#   --admin  bypass branch-protection on personal-account repos (owner only)
+#   --auto   queue auto-merge when all checks pass (branch-protection repos)
 # Exit codes: 0 = merged, 1 = gate failed or merge failed
 cmd_merge() {
 	local pr_number="${1:-}"
 	local repo=""
 	local merge_method="--squash"
+	local merge_flags=()
 
 	if [[ -z "$pr_number" ]]; then
-		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase]"
+		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto]"
 		return 1
 	fi
 	shift
 
-	# Parse optional repo and merge method from remaining arguments
+	# Parse optional repo, merge method, and pass-through flags from remaining arguments
 	for arg in "$@"; do
 		case "$arg" in
 		--squash | --merge | --rebase)
 			merge_method="$arg"
+			;;
+		--admin | --auto)
+			merge_flags+=("$arg")
 			;;
 		*)
 			if [[ -z "$repo" ]]; then
@@ -933,8 +939,8 @@ cmd_merge() {
 	}
 
 	# Merge (no --delete-branch from inside worktree, per full-loop.md step 4.5)
-	print_info "Merging PR #${pr_number} in ${repo} (${merge_method})..."
-	if gh pr merge "$pr_number" --repo "$repo" "$merge_method" 2>&1; then
+	print_info "Merging PR #${pr_number} in ${repo} (${merge_method}${merge_flags[*]:+ }${merge_flags[*]:-})..."
+	if gh pr merge "$pr_number" --repo "$repo" "$merge_method" "${merge_flags[@]}" 2>&1; then
 		print_success "PR #${pr_number} merged successfully"
 
 		# t1934: Unlock PR and linked issue after worker merge.
@@ -983,7 +989,7 @@ Commands:
   logs [N]                      Show last N log lines (default: 50)
   commit-and-pr --issue N --message "msg"  Stage, commit, rebase, push, create PR, post merge summary
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
-  merge <PR> [REPO] [--squash]  Gate-enforced merge (runs pre-merge-gate first)
+  merge <PR> [REPO] [--squash] [--admin] [--auto]  Gate-enforced merge (runs pre-merge-gate first)
   help                          Show this help
 Options: --max-task-iterations N (50) | --max-preflight-iterations N (5)
   --max-pr-iterations N (20) | --skip-preflight | --skip-postflight
