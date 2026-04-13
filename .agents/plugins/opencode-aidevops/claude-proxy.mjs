@@ -320,7 +320,7 @@ function getClaudeProxyModels() {
       name: "Claude Opus 4.6 (via Claude CLI)",
       reasoning: true,
       contextWindow: 1000000,
-      maxTokens: 32000,
+      maxTokens: 64000,
     },
   ];
 }
