@@ -27,6 +27,146 @@
 _PULSE_DEP_GRAPH_LOADED=1
 
 #######################################
+# Body defer/hold marker detection (t2031)
+#
+# A `status:blocked` label may have been applied for reasons other than
+# the blocked-by chain — most commonly a human-imposed hold phrased in
+# the issue body like "Defer until X" or "On hold". The refresh routine
+# must not auto-unblock those. This helper runs at cache build time and
+# at assertion time in the regression test; keep the regex in sync
+# across both copies.
+#
+# Arguments: $1 - issue body text
+# Outputs:   "true" or "false" on stdout
+#######################################
+_body_has_defer_marker() {
+	local body="$1"
+	if printf '%s' "$body" | grep -qiE 'defer until|do[-[:space:]]not[-[:space:]]dispatch|on[-[:space:]]hold|HUMAN_UNBLOCK_REQUIRED|hold for |paused[[:space:]:]'; then
+		echo "true"
+	else
+		echo "false"
+	fi
+}
+
+#######################################
+# Parse a single issue for the dep-graph cache (t2031 refactor)
+#
+# Consumes one issue JSON blob (from `gh issue list --json
+# number,title,body,labels`) and the current per-repo accumulator state,
+# and emits updated accumulator state. Extracted from
+# build_dependency_graph_cache so that function stays under the 100-line
+# complexity gate.
+#
+# Arguments:
+#   $1 - issue JSON (single object)
+#   $2 - current accumulator JSON (compact object with keys:
+#        open_nums, task_to_issue, blocked_by_map, defer_flags_map)
+#
+# Output: a single compact JSON object with the updated accumulator.
+# If the input issue JSON is invalid or missing a number, emits the
+# input accumulator unchanged.
+#######################################
+_dep_graph_process_issue_json() {
+	local issue_json="$1"
+	local acc_json="$2"
+
+	local num title body
+	num=$(printf '%s' "$issue_json" | jq -r '.number // empty' 2>/dev/null)
+	title=$(printf '%s' "$issue_json" | jq -r '.title // ""' 2>/dev/null)
+	body=$(printf '%s' "$issue_json" | jq -r '.body // ""' 2>/dev/null)
+
+	if ! [[ "$num" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$acc_json"
+		return 0
+	fi
+
+	# Extract task ID from title (e.g. "t1935: ..." → "1935")
+	local task_id_in_title
+	task_id_in_title=$(printf '%s' "$title" | grep -oE '^t([0-9]+):' | grep -oE '[0-9]+' || true)
+
+	# Extract blocked-by task IDs and issue numbers from body. Two-step
+	# parse tolerates both the markdown format emitted by
+	# brief-template.md (`**Blocked by:** ` + backtick-quoted IDs) and
+	# the bare TODO.md format (`blocked-by:tNNN,tMMM`). BSD/GNU portable
+	# via POSIX `[^[:cntrl:]]` (see t1983 / t2015 for history).
+	local blocker_lines blocker_tids blocker_nums
+	blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*' || true)
+	blocker_tids=$(printf '%s' "$blocker_lines" | grep -oE 't[0-9]+' | grep -oE '[0-9]+' || true)
+	blocker_nums=$(printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true)
+
+	local tid_arr num_arr
+	tid_arr=$(printf '%s' "$blocker_tids" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || tid_arr='[]'
+	num_arr=$(printf '%s' "$blocker_nums" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || num_arr='[]'
+	local has_blockers="false"
+	[[ -n "$blocker_tids" || -n "$blocker_nums" ]] && has_blockers="true"
+
+	# Body defer/hold marker detection (t2031).
+	local has_defer_marker
+	has_defer_marker=$(_body_has_defer_marker "$body")
+
+	# Single jq call merges every accumulator update in one pass.
+	# Keeps the shell shorter and guarantees compact single-line output.
+	printf '%s' "$acc_json" | jq -c \
+		--argjson n "$num" \
+		--arg tid "$task_id_in_title" \
+		--argjson tids "$tid_arr" \
+		--argjson nums "$num_arr" \
+		--arg has_blockers "$has_blockers" \
+		--argjson defer "$has_defer_marker" \
+		'
+		.open_nums = (.open_nums + [$n])
+		| (if $tid != "" then .task_to_issue[$tid] = $n else . end)
+		| (if $has_blockers == "true"
+			then .blocked_by_map[($n | tostring)] = {"task_ids": $tids, "issue_nums": $nums, "has_defer_marker": $defer}
+			else . end)
+		| (if $defer == true
+			then .defer_flags_map[($n | tostring)] = true
+			else . end)
+		' 2>/dev/null || printf '%s\n' "$acc_json"
+}
+
+#######################################
+# Build per-repo dep graph data (t2031 refactor)
+#
+# Fetches all open issues for one repo slug and accumulates the
+# open_issues / task_to_issue / blocked_by / defer_flags state by
+# calling _dep_graph_process_issue_json once per issue. Emits a single
+# JSON object on stdout with the per-repo shape:
+#   { "open_issues": [], "task_to_issue": {}, "blocked_by": {}, "defer_flags": {} }
+#
+# Extracted from build_dependency_graph_cache so that function stays
+# under the 100-line complexity gate.
+#
+# Arguments: $1 - repo slug (owner/repo)
+# Output:    one JSON object on stdout
+#######################################
+_dep_graph_build_repo_data() {
+	local slug="$1"
+	local issues_json
+	issues_json=$(gh issue list --repo "$slug" --state open --limit 200 \
+		--json number,title,body,labels 2>/dev/null) || issues_json='[]'
+
+	# Single compact JSON accumulator threaded through the per-issue
+	# parser. Using one object keeps shell plumbing simple and guarantees
+	# that multi-line jq output can't corrupt the per-field state.
+	local acc='{"open_nums":[],"task_to_issue":{},"blocked_by_map":{},"defer_flags_map":{}}'
+
+	local issue_json
+	while IFS= read -r issue_json; do
+		[[ -n "$issue_json" ]] || continue
+		acc=$(_dep_graph_process_issue_json "$issue_json" "$acc")
+	done < <(printf '%s' "$issues_json" | jq -c '.[]' 2>/dev/null)
+
+	# Project the internal accumulator shape onto the stable cache schema.
+	printf '%s' "$acc" | jq -c '{
+		"open_issues": .open_nums,
+		"task_to_issue": .task_to_issue,
+		"blocked_by": .blocked_by_map,
+		"defer_flags": .defer_flags_map
+	}' 2>/dev/null || printf '{"open_issues":[],"task_to_issue":{},"blocked_by":{},"defer_flags":{}}\n'
+}
+
+#######################################
 # Dependency graph cache (t1935)
 #
 # Builds a JSON cache of all blocked-by relationships across pulse repos.
@@ -92,88 +232,17 @@ build_dependency_graph_cache() {
 		slug=$(printf '%s' "$repo_entry" | jq -r '.slug // empty' 2>/dev/null)
 		[[ -n "$slug" ]] || continue
 
-		# Fetch all open issues with their bodies in one API call
-		local issues_json
-		issues_json=$(gh issue list --repo "$slug" --state open --limit 200 \
-			--json number,title,body,labels 2>/dev/null) || issues_json='[]'
-
-		local open_nums task_to_issue blocked_by_map defer_flags_map
-		open_nums='[]'
-		task_to_issue='{}'
-		blocked_by_map='{}'
-		defer_flags_map='{}'
-
-		# Parse each issue: extract open issue numbers, task→issue mapping, and blocked-by refs
-		while IFS= read -r issue_json; do
-			[[ -n "$issue_json" ]] || continue
-			local num title body
-			num=$(printf '%s' "$issue_json" | jq -r '.number // empty' 2>/dev/null)
-			title=$(printf '%s' "$issue_json" | jq -r '.title // ""' 2>/dev/null)
-			body=$(printf '%s' "$issue_json" | jq -r '.body // ""' 2>/dev/null)
-			[[ "$num" =~ ^[0-9]+$ ]] || continue
-
-			# Accumulate open issue numbers
-			local _new_open_nums
-			_new_open_nums=$(printf '%s' "$open_nums" | jq --argjson n "$num" '. + [$n]' 2>/dev/null) || _new_open_nums=""
-			[[ -n "$_new_open_nums" ]] && open_nums="$_new_open_nums"
-
-			# Extract task ID from title (e.g. "t1935: ..." → "1935")
-			local task_id_in_title
-			task_id_in_title=$(printf '%s' "$title" | grep -oE '^t([0-9]+):' | grep -oE '[0-9]+' || true)
-			if [[ -n "$task_id_in_title" ]]; then
-				task_to_issue=$(printf '%s' "$task_to_issue" |
-					jq --arg tid "$task_id_in_title" --argjson n "$num" '.[$tid] = $n' 2>/dev/null) || true
-			fi
-
-			# Extract blocked-by task IDs and issue numbers from body.
-			# Two-step parse tolerates both the markdown format emitted by
-			# brief-template.md (`**Blocked by:** ` + backtick-quoted IDs) and
-			# the bare TODO.md format (`blocked-by:tNNN,tMMM`). The first step
-			# locates every blocked-by line; the second step pulls every tNNN
-			# and #NNN token from those lines. This captures comma-separated
-			# IDs that the original single-match regex silently dropped (t2015,
-			# GH#18429). Uses POSIX `[^[:cntrl:]]` rather than `[^\n]` because
-			# BSD grep on macOS does not expand \n inside bracket expressions
-			# (same class of bug as t1983 BSD awk).
-			local blocker_lines blocker_tids blocker_nums
-			blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*' || true)
-			blocker_tids=$(printf '%s' "$blocker_lines" | grep -oE 't[0-9]+' | grep -oE '[0-9]+' || true)
-			blocker_nums=$(printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true)
-
-			# Body defer/hold marker detection (t2031). A `status:blocked`
-			# label may have been applied for reasons other than the
-			# blocked-by chain — most commonly a human-imposed hold phrased
-			# in the issue body like "Defer until X" or "On hold". The
-			# refresh routine must not auto-unblock these. We record a
-			# boolean flag per issue that the refresh consults before
-			# removing the label.
-			local has_defer_marker="false"
-			if printf '%s' "$body" | grep -qiE 'defer until|do[-[:space:]]not[-[:space:]]dispatch|on[-[:space:]]hold|HUMAN_UNBLOCK_REQUIRED|hold for |paused[[:space:]:]'; then
-				has_defer_marker="true"
-				defer_flags_map=$(printf '%s' "$defer_flags_map" |
-					jq --arg n "$num" '.[$n] = true' 2>/dev/null) || true
-			fi
-
-			if [[ -n "$blocker_tids" || -n "$blocker_nums" ]]; then
-				local tid_arr num_arr
-				tid_arr=$(printf '%s' "$blocker_tids" | jq -Rs 'split("\n") | map(select(length > 0))' 2>/dev/null) || tid_arr='[]'
-				num_arr=$(printf '%s' "$blocker_nums" | jq -Rs 'split("\n") | map(select(length > 0))' 2>/dev/null) || num_arr='[]'
-				blocked_by_map=$(printf '%s' "$blocked_by_map" |
-					jq --arg n "$num" --argjson tids "$tid_arr" --argjson nums "$num_arr" --argjson defer "$has_defer_marker" \
-						'.[$n] = {"task_ids": $tids, "issue_nums": $nums, "has_defer_marker": $defer}' 2>/dev/null) || true
-			fi
-		done < <(printf '%s' "$issues_json" | jq -c '.[]' 2>/dev/null)
+		# Delegate the per-repo fetch + parse to _dep_graph_build_repo_data
+		# (t2031 refactor — keeps build_dependency_graph_cache under the
+		# 100-line complexity gate).
+		local repo_data
+		repo_data=$(_dep_graph_build_repo_data "$slug")
+		[[ -n "$repo_data" ]] || continue
 
 		# Merge repo data into graph
 		graph_json=$(printf '%s' "$graph_json" |
-			jq --arg slug "$slug" \
-				--argjson open "$open_nums" \
-				--argjson t2i "$task_to_issue" \
-				--argjson bb "$blocked_by_map" \
-				--argjson df "$defer_flags_map" \
-				'.repos[$slug] = {"open_issues": $open, "task_to_issue": $t2i, "blocked_by": $bb, "defer_flags": $df}' \
-				2>/dev/null) || true
-
+			jq --arg slug "$slug" --argjson rd "$repo_data" \
+				'.repos[$slug] = $rd' 2>/dev/null) || true
 	done <<<"$repos_json"
 
 	# Atomically write cache (write to tmp then mv)
@@ -271,6 +340,95 @@ _should_defer_auto_unblock() {
 }
 
 #######################################
+# Check whether all blocked-by entries of a single cache entry are
+# resolved (t2031 refactor helper).
+#
+# Arguments:
+#   $1 - entry_json (blocked_by cache entry for one issue)
+#   $2 - task_to_issue_json (repo-level task→issue mapping)
+#   $3 - open_issues_json (repo-level open issue numbers)
+#
+# Exit codes:
+#   0 - all blockers resolved
+#   1 - at least one blocker still open
+#######################################
+_refresh_all_blockers_resolved() {
+	local entry_json="$1"
+	local task_to_issue_json="$2"
+	local open_issues_json="$3"
+
+	# Task ID blockers
+	local blocker_tids tid blocker_issue_num is_open
+	blocker_tids=$(printf '%s' "$entry_json" | jq -r '.task_ids[]' 2>/dev/null) || blocker_tids=""
+	while IFS= read -r tid; do
+		[[ -n "$tid" ]] || continue
+		blocker_issue_num=$(printf '%s' "$task_to_issue_json" | jq -r --arg t "$tid" '.[$t] // empty' 2>/dev/null)
+		[[ -n "$blocker_issue_num" ]] || continue
+		is_open=$(printf '%s' "$open_issues_json" | jq --argjson n "$blocker_issue_num" 'index($n) != null' 2>/dev/null) || is_open="false"
+		[[ "$is_open" == "true" ]] && return 1
+	done <<<"$blocker_tids"
+
+	# Issue number blockers
+	local blocker_nums bnum
+	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]' 2>/dev/null) || blocker_nums=""
+	while IFS= read -r bnum; do
+		[[ "$bnum" =~ ^[0-9]+$ ]] || continue
+		is_open=$(printf '%s' "$open_issues_json" | jq --argjson n "$bnum" 'index($n) != null' 2>/dev/null) || is_open="false"
+		[[ "$is_open" == "true" ]] && return 1
+	done <<<"$blocker_nums"
+
+	return 0
+}
+
+#######################################
+# Attempt to auto-unblock a single issue (t2031 refactor helper).
+#
+# Consults the non-dep defer gate and only unblocks when both body and
+# comments are clean. Extracted from refresh_blocked_status_from_graph
+# so that function stays under the 100-line complexity gate.
+#
+# Arguments:
+#   $1 - slug
+#   $2 - issue_num
+#   $3 - entry_json (blocked_by cache entry)
+#   $4 - defer_flags_json (repo-level defer flags)
+#
+# Exit codes:
+#   0 - issue unblocked (caller should increment counter)
+#   1 - skipped (label absent, API error, or non-dep block detected)
+#######################################
+_refresh_try_unblock_issue() {
+	local slug="$1"
+	local issue_num="$2"
+	local entry_json="$3"
+	local defer_flags_json="$4"
+
+	local current_labels
+	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
+	[[ ",${current_labels}," == *",status:blocked,"* ]] || return 1
+
+	# Cached defer flag — either inside the blocked_by entry or in the
+	# repo-level defer_flags map. Either "true" triggers defer.
+	local entry_defer top_defer has_defer_flag
+	entry_defer=$(printf '%s' "$entry_json" | jq -r '.has_defer_marker // false' 2>/dev/null) || entry_defer="false"
+	top_defer=$(printf '%s' "$defer_flags_json" | jq -r --arg n "$issue_num" '.[$n] // false' 2>/dev/null) || top_defer="false"
+	has_defer_flag="false"
+	[[ "$entry_defer" == "true" || "$top_defer" == "true" ]] && has_defer_flag="true"
+
+	local skip_reason=""
+	if skip_reason=$(_should_defer_auto_unblock "$slug" "$issue_num" "$has_defer_flag"); then
+		echo "[pulse-wrapper] dep-graph-cache: NOT unblocking #${issue_num} in ${slug} — non-dep block detected (${skip_reason}) (t2031)" >>"$LOGFILE"
+		return 1
+	fi
+
+	gh issue edit "$issue_num" --repo "$slug" \
+		--remove-label "status:blocked" --add-label "status:available" 2>/dev/null || true
+	echo "[pulse-wrapper] dep-graph-cache: unblocked #${issue_num} in ${slug} — all blockers resolved, no non-dep markers (t1935/t2031)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Refresh blocked status from dependency graph (t1935, hardened t2031)
 #
 # Reads the cached dependency graph and relabels issues from
@@ -279,11 +437,11 @@ _should_defer_auto_unblock() {
 # (the graph already contains open issue numbers).
 #
 # t2031 hardening: before removing the label, consults
-# _should_defer_auto_unblock() to skip issues whose block origin is
-# clearly non-dep (body defer gate, worker BLOCKED exit, watchdog kill,
-# terminal blocker, human hold). The old behaviour — blindly unblocking
-# on dep resolution — wasted worker budget on guaranteed-re-BLOCKED
-# dispatches (awardsapp#2273 / aidevops t2031).
+# _should_defer_auto_unblock() via _refresh_try_unblock_issue() to skip
+# issues whose block origin is clearly non-dep (body defer gate, worker
+# BLOCKED exit, watchdog kill, terminal blocker, human hold). The old
+# behaviour — blindly unblocking on dep resolution — wasted worker
+# budget on guaranteed-re-BLOCKED dispatches (awardsapp#2273).
 #
 # Returns: 0 always (non-fatal)
 #######################################
@@ -316,84 +474,19 @@ refresh_blocked_status_from_graph() {
 		blocked_by_json=$(printf '%s' "$repo_data" | jq -c '.blocked_by // {}' 2>/dev/null) || blocked_by_json='{}'
 		defer_flags_json=$(printf '%s' "$repo_data" | jq -c '.defer_flags // {}' 2>/dev/null) || defer_flags_json='{}'
 
-		# For each issue that has blocked-by entries, check if all blockers are resolved
 		local blocked_issue_nums
 		blocked_issue_nums=$(printf '%s' "$blocked_by_json" | jq -r 'keys[]' 2>/dev/null) || blocked_issue_nums=""
 		[[ -n "$blocked_issue_nums" ]] || continue
 
+		local issue_num entry_json
 		while IFS= read -r issue_num; do
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
-
-			local entry_json
 			entry_json=$(printf '%s' "$blocked_by_json" | jq -c --arg n "$issue_num" '.[$n]' 2>/dev/null) || continue
 
-			local all_resolved=true
+			_refresh_all_blockers_resolved "$entry_json" "$task_to_issue_json" "$open_issues_json" || continue
 
-			# Check task ID blockers against task_to_issue map + open_issues
-			local blocker_tids
-			blocker_tids=$(printf '%s' "$entry_json" | jq -r '.task_ids[]' 2>/dev/null) || blocker_tids=""
-			while IFS= read -r tid; do
-				[[ -n "$tid" ]] || continue
-				local blocker_issue_num
-				blocker_issue_num=$(printf '%s' "$task_to_issue_json" | jq -r --arg t "$tid" '.[$t] // empty' 2>/dev/null)
-				if [[ -n "$blocker_issue_num" ]]; then
-					# Check if blocker issue is in open_issues list
-					local is_open
-					is_open=$(printf '%s' "$open_issues_json" | jq --argjson n "$blocker_issue_num" 'index($n) != null' 2>/dev/null) || is_open="false"
-					if [[ "$is_open" == "true" ]]; then
-						all_resolved=false
-						break
-					fi
-				fi
-				# If task not in map, assume resolved (issue may have been closed and pruned)
-			done <<<"$blocker_tids"
-
-			# Check issue number blockers against open_issues
-			if [[ "$all_resolved" == "true" ]]; then
-				local blocker_nums
-				blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]' 2>/dev/null) || blocker_nums=""
-				while IFS= read -r bnum; do
-					[[ "$bnum" =~ ^[0-9]+$ ]] || continue
-					local is_open
-					is_open=$(printf '%s' "$open_issues_json" | jq --argjson n "$bnum" 'index($n) != null' 2>/dev/null) || is_open="false"
-					if [[ "$is_open" == "true" ]]; then
-						all_resolved=false
-						break
-					fi
-				done <<<"$blocker_nums"
-			fi
-
-			# If all blockers resolved, consider relabeling status:blocked → status:available.
-			# t2031: gate the unblock behind _should_defer_auto_unblock to respect
-			# non-dep block origins (body defer, worker BLOCKED, watchdog, terminal).
-			if [[ "$all_resolved" == "true" ]]; then
-				# Verify the issue actually has status:blocked before making API call
-				local current_labels
-				current_labels=$(gh issue view "$issue_num" --repo "$slug" \
-					--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
-				if [[ ",${current_labels}," == *",status:blocked,"* ]]; then
-					# Look up cached defer flag. Two places: either inside the
-					# blocked_by entry (has_defer_marker) or in the top-level
-					# defer_flags map (belt-and-braces for issues that may have
-					# been bucketed differently). Either "true" triggers defer.
-					local entry_defer top_defer has_defer_flag
-					entry_defer=$(printf '%s' "$entry_json" | jq -r '.has_defer_marker // false' 2>/dev/null) || entry_defer="false"
-					top_defer=$(printf '%s' "$defer_flags_json" | jq -r --arg n "$issue_num" '.[$n] // false' 2>/dev/null) || top_defer="false"
-					has_defer_flag="false"
-					if [[ "$entry_defer" == "true" || "$top_defer" == "true" ]]; then
-						has_defer_flag="true"
-					fi
-
-					local skip_reason=""
-					if skip_reason=$(_should_defer_auto_unblock "$slug" "$issue_num" "$has_defer_flag"); then
-						echo "[pulse-wrapper] dep-graph-cache: NOT unblocking #${issue_num} in ${slug} — non-dep block detected (${skip_reason}) (t2031)" >>"$LOGFILE"
-					else
-						gh issue edit "$issue_num" --repo "$slug" \
-							--remove-label "status:blocked" --add-label "status:available" 2>/dev/null || true
-						echo "[pulse-wrapper] dep-graph-cache: unblocked #${issue_num} in ${slug} — all blockers resolved, no non-dep markers (t1935/t2031)" >>"$LOGFILE"
-						unblocked_count=$((unblocked_count + 1))
-					fi
-				fi
+			if _refresh_try_unblock_issue "$slug" "$issue_num" "$entry_json" "$defer_flags_json"; then
+				unblocked_count=$((unblocked_count + 1))
 			fi
 		done <<<"$blocked_issue_nums"
 	done <<<"$slugs"
