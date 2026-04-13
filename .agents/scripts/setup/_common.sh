@@ -4,13 +4,16 @@
 # Common helper functions for setup.sh
 # Sourced by all setup modules
 
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-GRAY='\033[0;90m'
-NC='\033[0m' # No Color
+# Colors for output (guarded — GH#18702)
+# setup.sh sources shared-constants.sh later in the flow, which declares
+# these as readonly. If this module is ever re-sourced after that, unguarded
+# assignment would fail under `set -Eeuo pipefail`. Use the `${VAR+x}` guard.
+[[ -z "${GREEN+x}" ]] && GREEN='\033[0;32m'
+[[ -z "${BLUE+x}" ]] && BLUE='\033[0;34m'
+[[ -z "${YELLOW+x}" ]] && YELLOW='\033[1;33m'
+[[ -z "${RED+x}" ]] && RED='\033[0;31m'
+[[ -z "${GRAY+x}" ]] && GRAY='\033[0;90m'
+[[ -z "${NC+x}" ]] && NC='\033[0m' # No Color
 
 # Print functions
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
