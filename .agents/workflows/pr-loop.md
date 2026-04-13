@@ -47,6 +47,23 @@ RESULT=$(~/.aidevops/agents/scripts/review-bot-gate-helper.sh check "$PR_NUMBER"
 
 AI review verification rules: `reference/session.md` "Bot Reviewer Feedback" and `prompts/build.txt` "AI Suggestion Verification".
 
+### Gate Failure Playbook
+
+When `Maintainer Review & Assignee Gate` fails, the `maintainer-gate` status-context description and the auto-posted gate comment on the PR say why. Map the reason to the fix path below — do not re-read `maintainer-gate.yml` to re-derive it.
+
+| Failure reason (observable in gate output) | Fix path | Who runs it |
+|---|---|---|
+| `Issue #N has needs-maintainer-review label` | `sudo aidevops approve issue N` — cryptographic, posts signed comment, removes label | **User only** — requires sudo + root-protected SSH key; LLM cannot forge |
+| `Issue #N has no assignee` | `gh issue edit N --add-assignee USER` | LLM or user |
+| `PR #N has needs-maintainer-review label` | `sudo aidevops approve pr N` | **User only** |
+| `Title-based issue lookup failed` | Either fix PR title to `tNNN: ...` format or add `Closes #NNN` to PR body | LLM |
+
+After user-only fixes, the required `Maintainer Review & Assignee Gate` CheckRun auto-refreshes via the `retrigger-pr-checks` job in `maintainer-gate.yml` (t2018). That job observes issue label/assignee changes and calls the `rerun-failed-jobs` REST API endpoint to re-run the failed `check-pr` job. Expect SUCCESS within ~20 seconds of the approval comment being posted (approximate — not explicitly time-bound in the code); the PR becomes mergeable without manual `gh run rerun`.
+
+If the required CheckRun does NOT refresh within ~60 seconds after an approval, fall back to manual: `gh run rerun <run_id> --failed` against the latest `Maintainer Gate` workflow run for the PR's HEAD SHA.
+
+**Hard rule:** NEVER remove `needs-maintainer-review` by direct `gh issue edit --remove-label`. The `protect-labels` job in `maintainer-gate.yml` re-applies it ~7 seconds later unless a `<!-- aidevops-signed-approval -->` comment exists on the issue. Removing the label without the signed comment is a guaranteed-to-fail path that wastes tool calls.
+
 ## Completion Promises
 
 | Outcome | Promise |
