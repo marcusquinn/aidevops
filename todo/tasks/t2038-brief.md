@@ -217,23 +217,72 @@ grep "Known limitation — sync-on-pr-merge" .agents/AGENTS.md | grep -E "(rules
 
 ## Decision
 
-> **TBD — fill in during Phase 2 once research is complete.**
->
-> Template:
->
-> **Chosen path:** `<rulesets | PAT | neither>`
->
-> **Why:**
-> - <reason 1>
-> - <reason 2>
-> - <reason 3>
->
-> **Rejected because:**
-> - <other path>: <reason>
->
-> **Implementation task:** `t<NNNN>` — `<title>`
->
-> **Failure-mode rollback:** `<what to do if the chosen path breaks something>`
+**Chosen path: fine-grained PAT (Path B)**
+
+**Implementation task:** `t2048` — `implement: fine-grained PAT path for github-actions[bot] main push (from t2038 decision)` — GH#18643
+
+**Failure-mode rollback:** Revoke the PAT in GitHub UI and unset the `SYNC_PAT` secret. The workflow immediately falls back to the t2029/t2034 loud-failure path (visible workflow error + PR comment with the manual `task-complete-helper.sh` command). No branch-protection state change to roll back.
+
+### Research findings
+
+**Phase 1.1 — HTTP 500 reproduces (2026-04-13, 16:41Z).**
+`PATCH /repos/marcusquinn/aidevops/branches/main/protection/required_pull_request_reviews` with `bypass_pull_request_allowances.apps: ["github-actions"]` still returns `HTTP/2 500` with empty body on this personal-account public repo. `x-github-request-id: F2C4:482FE:BBC65B9:A3BB5F9:69DD0EA9`. Path 0 ("just use the existing classic-protection bypass list") remains unavailable. The limitation is not a configuration error — `bypass_pull_request_allowances` is genuinely unsupported on this plan.
+
+**Phase 1.2 — Rulesets feature parity is fine, but Integration bypass is blocked for personal repos.**
+Current classic protection has 3 rules that need an equivalent in rulesets: `required_status_checks` (3 contexts — `review-bot-gate`, `Maintainer Review & Assignee Gate`, `Complexity Analysis`), `required_pull_request_reviews` (1 approval, dismiss-stale), and nothing else non-default. All three map cleanly to ruleset rule types (`required_status_checks`, `pull_request`). No feature-parity blockers.
+
+**But the critical finding:** creating a ruleset with `bypass_actors: [{actor_type: "Integration", actor_id: 15368}]` (GitHub Actions app) on this personal-account repo fails with:
+
+```
+422 Validation Failed
+Actor GitHub Actions integration must be part of the ruleset source or owner organization
+```
+
+Personal repos have no "owner organization", so GitHub App integrations cannot be added as bypass actors. **This disqualifies the originally-proposed Path 1 (rulesets + Integration bypass) entirely on personal-account repos.**
+
+What _did_ work in testing (verified by creating + deleting disposable rulesets):
+
+- `RepositoryRole` bypass actors (role IDs 2, 4, 5 — write/maintain/admin). Accepted, but `github-actions[bot]` has no repo role that would trigger the bypass — it authenticates as the special github-actions app, not as a user with a role.
+- `DeployKey` bypass actor with `actor_id: 0`. Accepted. Any push via a repo deploy key would bypass the rule. This surfaced an unanticipated **Path C**: migrate to rulesets + add a deploy key + change the workflow to push over SSH.
+
+**Phase 1.3 — Fine-grained PAT capabilities.**
+A fine-grained PAT scoped to a single repo with `Contents: Write` authenticates as the owning user. When that user is an admin and classic protection has `enforce_admins: false` (current state), the push is evaluated under the admin role and bypasses `required_approving_review_count`. No ruleset migration needed. The PAT must have a ≤366-day expiration (no "never expires" option for fine-grained PATs as of 2026-04) and is stored as an Actions secret (`SYNC_PAT`) consumed by the `checkout` and `push` steps of the `sync-on-pr-merge` job. Recursion is prevented by the existing `[skip ci]` tag on the commit message.
+
+**Phase 1.4 — Threat model + rotation cost.**
+
+| Dimension | Path B (fine-grained PAT) | Path C (rulesets + deploy key) |
+|---|---|---|
+| Setup time | ~20-30m | ~2-3h (ruleset migration + key gen + SSH workflow change) |
+| Ongoing rotation | ~15m/year (PAT max 366d) | zero (SSH keys do not expire) |
+| Migration risk | none — classic protection untouched | moderate — must preserve 3 status checks + PR rule + dismiss-stale in new ruleset, 1-step rollback possible |
+| Credential scope | single repo (`Contents:Write`) | single repo (deploy key with write) |
+| Credential trust boundary | "anyone who can read the `SYNC_PAT` secret" | "anyone who can read the SSH private key secret" — identical |
+| Expiry failure mode | loud — push fails → t2029+t2034 fallback fires (error annotation + PR comment) | loud — same fallback fires if ruleset is misconfigured |
+| Future-proofing | classic protection may deprecate; would force eventual rulesets migration | already on the forward-looking rulesets track |
+
+**Phase 2 — Why Path B.**
+
+1. **Setup cost asymmetry.** 20-30m vs 2-3h is ~6-9× cheaper for identical immediate benefit (eliminating the ~10-30 manual `task-complete-helper.sh` calls/day created by the t2029 loud-failure path). The "no rotation" benefit of Path C is worth ~15m/year, which would take ~8-10 years to amortise the extra 2h of up-front work — well past the half-life of this repo's workflow file.
+2. **Rollback simplicity.** Path B's rollback is one secret revoke. Path C's rollback requires restoring classic protection state, re-enabling the deploy key's previous state, and reverting the workflow's SSH changes. In a break-glass scenario (e.g., key compromise), Path B is fewer steps under stress.
+3. **The rotation failure mode is already solved.** Path C's pitch is "no rotation = no silent breakage", but t2029+t2034 already turned PAT expiry into a loud, self-announcing failure (workflow annotation + PR comment + exact manual command). The hidden-silent-failure cost that motivates "no rotation" doesn't exist here.
+4. **Future-proofing pays later, not now.** GitHub has announced rulesets as the future but has NOT announced a classic-protection sunset date. Doing the migration now is speculative work — better to wait until GitHub forces the migration, at which point Path C (or `RepositoryRole` + admin PAT) becomes the natural choice. No reason to eat the migration cost twice.
+5. **Threat model is identical.** Both paths store a long-lived credential with write access to this repo as an Actions secret. Neither is meaningfully "more secure" — the attack is the same: compromise a workflow that can read secrets. Path B is simpler to reason about because its identity (PAT owner = admin user) is also the identity that already has direct-push capability.
+
+**Path C (rulesets + deploy key) remains a reasonable _later_ migration target** when GitHub eventually deprecates classic protection or when PAT rotation becomes annoying enough to justify the migration. At that point, t2038 can be re-opened to file a new decision task, or the rulesets migration can be folded into a broader infrastructure refresh.
+
+**Path A (rulesets + github-actions Integration bypass): disqualified.** The 422 error on Integration bypass actors for personal-account repos makes this path unbuildable without migrating the repo to an organization first — a disruption out of all proportion to the problem being solved.
+
+### Threat-model note on PAT scope
+
+The fine-grained PAT must be scoped as narrowly as possible:
+
+- **Repository access:** only `marcusquinn/aidevops` (no `all repositories` selector).
+- **Repository permissions:** only `Contents: Read and write`. Explicitly NOT `Workflows: Write` (which would let the PAT modify workflow files, broadening the blast radius for a compromised secret).
+- **Expiration:** ≤366 days. Calendar reminder at day 330 to rotate.
+- **Storage:** Actions secret named `SYNC_PAT` on this repo only. Not shared across repos.
+- **Owner identity:** `marcusquinn` (repo admin). When the PAT pushes, the commit author is the workflow identity but the authenticated principal is the admin user, which bypasses PR-review requirements via `enforce_admins: false`.
+
+The 6 non-admin collaborators (`vladimirdulov`, `alex-solovyev`, `zzhovo`, `optimizewp`, `Bartek532`, `B-Novembit`) do NOT gain push-to-main capability from this change — their identities are unchanged, and the PAT identity is admin-only.
 
 ## Context & Decisions (research-time)
 
