@@ -95,7 +95,7 @@ _normalize_reassign_self() {
 				total_assigned=$((total_assigned + 1))
 			fi
 		done <<<"$issue_rows"
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
 	if [[ "$total_checked" -gt 0 ]]; then
 		echo "[pulse-wrapper] Assignment normalization: assigned ${total_assigned}/${total_checked} active unassigned issues to ${runner_user} (skipped_claimed=${total_skipped_claimed})" >>"$LOGFILE"
@@ -262,7 +262,7 @@ _normalize_unassign_stale() {
 			_normalize_clear_status_labels "$stale_num" "$slug" "$runner_user" || true
 			total_reset=$((total_reset + 1))
 		done <<<"$stale_issues"
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
 	if [[ "$total_reset" -gt 0 ]]; then
 		echo "[pulse-wrapper] Stale assignment cleanup: reset ${total_reset} issues for re-dispatch" >>"$LOGFILE"
@@ -536,7 +536,7 @@ _normalize_label_invariants() {
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 		_normalize_label_invariants_for_repo "$slug" "$triage_cutoff"
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
 	echo "[pulse-wrapper] label_invariants: checked=${_LI_CHECKED} status_fixed=${_LI_STATUS_FIXED} tier_fixed=${_LI_TIER_FIXED} triage_missing=${_LI_TRIAGE_MISSING}" >>"$LOGFILE"
 
@@ -638,7 +638,7 @@ close_issues_with_merged_prs() {
 		local i=0
 		while [[ "$i" -lt "$issue_count" ]]; do
 			local issue_num issue_title
-			issue_num=$(printf '%s' "$issues_json" | jq -r ".[$i].number" 2>/dev/null)
+			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
 			issue_title=$(printf '%s' "$issues_json" | jq -r ".[$i].title // empty" 2>/dev/null)
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
@@ -695,7 +695,7 @@ close_issues_with_merged_prs() {
 				total_closed=$((total_closed + 1))
 			fi
 		done
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
 	if [[ "$total_closed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Close issues with merged PRs: closed ${total_closed} issue(s)" >>"$LOGFILE"
@@ -744,7 +744,7 @@ reconcile_stale_done_issues() {
 		local i=0
 		while [[ "$i" -lt "$issue_count" ]]; do
 			local issue_num issue_title
-			issue_num=$(printf '%s' "$issues_json" | jq -r ".[$i].number" 2>/dev/null)
+			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
 			issue_title=$(printf '%s' "$issues_json" | jq -r ".[$i].title // empty" 2>/dev/null)
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
@@ -801,7 +801,7 @@ reconcile_stale_done_issues() {
 				total_reset=$((total_reset + 1))
 			fi
 		done
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
 	if [[ "$((total_closed + total_reset))" -gt 0 ]]; then
 		echo "[pulse-wrapper] Reconcile stale done issues: closed=${total_closed}, reset=${total_reset}" >>"$LOGFILE"

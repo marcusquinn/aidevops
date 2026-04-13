@@ -65,7 +65,7 @@ _cleanup_merged_prs_for_all_repos() {
 		# worktrees in any managed repo. Skip local_only repos since
 		# worktree-helper.sh uses gh pr list for squash-merge detection.
 		local repo_paths
-		repo_paths=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path' "$repos_json" || echo "")
+		repo_paths=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path // ""' "$repos_json" || echo "")
 
 		local repo_path
 		while IFS= read -r repo_path; do
@@ -323,7 +323,7 @@ cleanup_worktrees() {
 	[[ -f "$repos_json" ]] && command -v jq &>/dev/null || return 0
 
 	local repo_paths_age
-	repo_paths_age=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path' "$repos_json" || echo "")
+	repo_paths_age=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path // ""' "$repos_json" || echo "")
 
 	local rp_age
 	while IFS= read -r rp_age; do
@@ -387,7 +387,7 @@ cleanup_stashes() {
 
 	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
 		local repo_paths
-		repo_paths=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path' "$repos_json" || echo "")
+		repo_paths=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path // ""' "$repos_json" || echo "")
 
 		local repo_path
 		while IFS= read -r repo_path; do
@@ -467,16 +467,16 @@ reap_zombie_workers() {
 		fi
 		# Fallback: check all pulse-enabled repos
 		if [[ -z "$repo_slug" ]]; then
-			repo_slug=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .slug' "$REPOS_JSON" 2>/dev/null | head -1) || continue
+			repo_slug=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .slug // ""' "$REPOS_JSON" | head -1) || continue
 		fi
 		[[ -n "$repo_slug" ]] || continue
 
 		# Check if a merged PR exists that closes this issue
 		local merged_pr
 		merged_pr=$(gh pr list --repo "$repo_slug" --state merged --search "closes #${issue_number} OR Closes #${issue_number} OR Resolves #${issue_number} OR resolves #${issue_number}" \
-			--limit 1 --json number --jq '.[0].number' 2>/dev/null) || merged_pr=""
+			--limit 1 --json number --jq '.[0].number // ""' 2>/dev/null) || merged_pr=""
 
-		if [[ -n "$merged_pr" && "$merged_pr" != "null" ]]; then
+		if [[ -n "$merged_pr" ]]; then
 			# Kill the worker process tree
 			worker_pids=$(ps aux | grep "[h]eadless-runtime.*--session-key ${worker_key}" | grep -v grep | awk '{print $2}')
 			if [[ -n "$worker_pids" ]]; then
@@ -639,7 +639,7 @@ cleanup_stalled_workers() {
 		local safe_slug log_file log_size
 		# Check all pulse-enabled repos for matching log
 		local found_log=""
-		for safe_slug in $(jq -r '.initialized_repos[] | select(.pulse == true) | .slug' "$REPOS_JSON" 2>/dev/null | tr '/:' '--'); do
+		for safe_slug in $(jq -r '.initialized_repos[] | select(.pulse == true) | .slug // ""' "$REPOS_JSON" | tr '/:' '--'); do
 			log_file="/tmp/pulse-${safe_slug}-${issue_num}.log"
 			if [[ -f "$log_file" ]]; then
 				found_log="$log_file"
