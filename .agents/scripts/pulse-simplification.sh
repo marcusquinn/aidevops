@@ -46,10 +46,17 @@
 #   - _complexity_scan_close_duplicate_issues_by_title
 #   - _complexity_scan_build_md_issue_body
 #   - _complexity_scan_check_open_cap
+#   - _complexity_scan_md_file_status        (extracted from _complexity_scan_process_single_md_file, GH#18653)
+#   - _complexity_scan_md_build_full_body    (extracted from _complexity_scan_process_single_md_file, GH#18653)
 #   - _complexity_scan_process_single_md_file
 #   - _complexity_scan_create_md_issues
+#   - _complexity_scan_sh_build_issue_body_with_sig  (extracted from _complexity_scan_create_issues, GH#18653)
+#   - _complexity_scan_sh_create_issue       (extracted from _complexity_scan_create_issues, GH#18653)
 #   - _complexity_scan_create_issues
 #   - run_simplification_dedup_cleanup
+#   - _check_ci_nesting_read_threshold       (extracted from _check_ci_nesting_threshold_proximity, GH#18653)
+#   - _check_ci_nesting_count_violations     (extracted from _check_ci_nesting_threshold_proximity, GH#18653)
+#   - _check_ci_nesting_build_issue_body     (extracted from _check_ci_nesting_threshold_proximity, GH#18653)
 #   - _check_ci_nesting_threshold_proximity
 #   - run_weekly_complexity_scan
 #
@@ -811,6 +818,73 @@ _complexity_scan_check_open_cap() {
 	return 0
 }
 
+# Determine early-exit status for a single agent doc file.
+# Checks simplification state (unchanged/converged) and open-issue dedup.
+# Arguments: $1 - aidevops_slug, $2 - file_path, $3 - state_file, $4 - aidevops_path
+# Output: "unchanged"|"converged"|"existing"|"new"|"recheck" via stdout
+# Returns: 0 always
+_complexity_scan_md_file_status() {
+	local aidevops_slug="$1"
+	local file_path="$2"
+	local state_file="$3"
+	local aidevops_path="$4"
+
+	local file_status="new"
+	if [[ -n "$state_file" && -n "$aidevops_path" ]]; then
+		file_status=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
+		if [[ "$file_status" == "unchanged" || "$file_status" == "converged" ]]; then
+			printf '%s' "$file_status"
+			return 0
+		fi
+		# "recheck" falls through — gets a new issue with recheck label
+	fi
+
+	if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
+		printf '%s' "existing"
+		return 0
+	fi
+
+	printf '%s' "$file_status"
+	return 0
+}
+
+# Build the full issue body for an agent doc: base body + optional recheck note + sig footer.
+# Arguments: $1 - file_path, $2 - line_count, $3 - topic_label,
+#            $4 - needs_recheck (true/false), $5 - state_file
+# Output: full issue body to stdout
+# Returns: 0 always
+_complexity_scan_md_build_full_body() {
+	local file_path="$1"
+	local line_count="$2"
+	local topic_label="$3"
+	local needs_recheck="$4"
+	local state_file="$5"
+
+	local issue_body
+	issue_body=$(_complexity_scan_build_md_issue_body "$file_path" "$line_count" "$topic_label")
+
+	if [[ "$needs_recheck" == true ]]; then
+		local prev_pr
+		prev_pr=$(jq -r --arg fp "$file_path" '.files[$fp].pr // 0' "$state_file" 2>/dev/null) || prev_pr="0"
+		issue_body="${issue_body}
+
+### Recheck note
+
+This file was previously simplified (PR #${prev_pr}) but has since been modified. The content hash no longer matches the post-simplification state. Please re-evaluate."
+	fi
+
+	# Append signature footer. The pulse-wrapper runs as standalone bash via
+	# launchd (not inside OpenCode), so --no-session skips session DB lookups.
+	# Pass elapsed time and 0 tokens to show honest stats (GH#13099).
+	local sig_footer="" _pulse_elapsed=""
+	_pulse_elapsed=$(($(date +%s) - PULSE_START_EPOCH))
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
+		--body "$issue_body" --cli "OpenCode" --no-session \
+		--tokens 0 --time "$_pulse_elapsed" --session-type routine 2>/dev/null || true)
+	printf '%s%s' "$issue_body" "$sig_footer"
+	return 0
+}
+
 # Process a single agent doc file for simplification issue creation (GH#5627).
 # Checks simplification state, dedup, changed-since-simplification status,
 # builds title/body, and creates issue.
@@ -831,69 +905,43 @@ _complexity_scan_process_single_md_file() {
 	local state_file="$5"
 	local maintainer="$6"
 
-	# Cache simplification state to avoid redundant jq + git hash-object calls
-	local file_status="new"
-	if [[ -n "$state_file" && -n "$aidevops_path" ]]; then
-		file_status=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
-		if [[ "$file_status" == "unchanged" ]]; then
-			echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — already simplified (hash unchanged)" >>"$LOGFILE"
-			echo "skipped"
-			return 0
-		fi
-		if [[ "$file_status" == "converged" ]]; then
-			echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — converged after ${SIMPLIFICATION_MAX_PASSES:-3} passes (t1754)" >>"$LOGFILE"
-			echo "skipped"
-			return 0
-		fi
-		# "recheck" files fall through — they get a new issue with recheck label
-	fi
-
-	if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
+	local file_status
+	file_status=$(_complexity_scan_md_file_status "$aidevops_slug" "$file_path" "$state_file" "$aidevops_path")
+	case "$file_status" in
+	unchanged)
+		echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — already simplified (hash unchanged)" >>"$LOGFILE"
+		echo "skipped"
+		return 0
+		;;
+	converged)
+		echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — converged after ${SIMPLIFICATION_MAX_PASSES:-3} passes (t1754)" >>"$LOGFILE"
+		echo "skipped"
+		return 0
+		;;
+	existing)
 		echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — existing open issue" >>"$LOGFILE"
 		echo "skipped"
 		return 0
-	fi
+		;;
+	esac
+	# file_status is "new" or "recheck" at this point
 
 	local topic_label=""
 	if [[ -n "$aidevops_path" ]]; then
 		topic_label=$(_complexity_scan_extract_md_topic_label "$aidevops_path" "$file_path" 2>/dev/null || true)
 	fi
 
-	# Determine whether this file needs simplification recheck
 	local needs_recheck=false
-	if [[ "$file_status" == "recheck" ]]; then
-		needs_recheck=true
-	fi
+	[[ "$file_status" == "recheck" ]] && needs_recheck=true
 
 	local issue_title="simplification: tighten agent doc ${file_path} (${line_count} lines)"
 	if [[ -n "$topic_label" ]]; then
 		issue_title="simplification: tighten agent doc ${topic_label} (${file_path}, ${line_count} lines)"
 	fi
-	if [[ "$needs_recheck" == true ]]; then
-		issue_title="recheck: ${issue_title}"
-	fi
+	[[ "$needs_recheck" == true ]] && issue_title="recheck: ${issue_title}"
 
 	local issue_body
-	issue_body=$(_complexity_scan_build_md_issue_body "$file_path" "$line_count" "$topic_label")
-	if [[ "$needs_recheck" == true ]]; then
-		local prev_pr
-		prev_pr=$(jq -r --arg fp "$file_path" '.files[$fp].pr // 0' "$state_file" 2>/dev/null) || prev_pr="0"
-		issue_body="${issue_body}
-
-### Recheck note
-
-This file was previously simplified (PR #${prev_pr}) but has since been modified. The content hash no longer matches the post-simplification state. Please re-evaluate."
-	fi
-
-	# Append signature footer. The pulse-wrapper runs as standalone bash via
-	# launchd (not inside OpenCode), so --no-session skips session DB lookups.
-	# Pass elapsed time and 0 tokens to show honest stats (GH#13099).
-	local sig_footer="" _pulse_elapsed=""
-	_pulse_elapsed=$(($(date +%s) - PULSE_START_EPOCH))
-	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
-		--body "$issue_body" --cli "OpenCode" --no-session \
-		--tokens 0 --time "$_pulse_elapsed" --session-type routine 2>/dev/null || true)
-	issue_body="${issue_body}${sig_footer}"
+	issue_body=$(_complexity_scan_md_build_full_body "$file_path" "$line_count" "$topic_label" "$needs_recheck" "$state_file")
 
 	# Build label list — skip needs-maintainer-review when user is maintainer (GH#16786)
 	local review_label=""
@@ -921,7 +969,7 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 	if [[ "$create_ok" == true ]]; then
 		_complexity_scan_close_duplicate_issues_by_title "$aidevops_slug" "$issue_title"
 		local log_suffix=""
-		if [[ "$needs_recheck" == true ]]; then log_suffix=" [RECHECK]"; fi
+		[[ "$needs_recheck" == true ]] && log_suffix=" [RECHECK]"
 		echo "[pulse-wrapper] Complexity scan (.md): created issue for ${file_path} (${line_count} lines)${log_suffix}" >>"$LOGFILE"
 		echo "created"
 	else
@@ -986,6 +1034,105 @@ _complexity_scan_create_md_issues() {
 	return 0
 }
 
+# Build issue body for a shell file complexity finding, with signature footer appended.
+# Arguments: $1 - file_path, $2 - violation_count, $3 - details (function-detail text)
+# Output: full body to stdout
+# Returns: 0 always
+_complexity_scan_sh_build_issue_body_with_sig() {
+	local file_path="$1"
+	local violation_count="$2"
+	local details="$3"
+
+	local issue_body
+	issue_body="## Complexity scan finding (automated, GH#5628)
+
+**File:** \`${file_path}\`
+**Violations:** ${violation_count} functions exceed ${COMPLEXITY_FUNC_LINE_THRESHOLD} lines
+
+### Functions exceeding threshold
+
+\`\`\`
+${details}
+\`\`\`
+
+### Proposed action
+
+Break down the listed functions into smaller, focused helper functions. Each function should ideally be under ${COMPLEXITY_FUNC_LINE_THRESHOLD} lines.
+
+### Verification
+
+- \`bash -n <file>\` (syntax check)
+- \`shellcheck <file>\` (lint)
+- Run existing tests if present
+- Confirm no functionality is lost
+
+### Confidence: medium
+
+This is an automated scan. The function lengths are factual, but the best decomposition strategy requires human judgment.
+
+---
+**To approve or decline**, comment on this issue:
+- \`approved\` — removes the review gate and queues for automated dispatch
+- \`declined: <reason>\` — closes this issue (include your reason after the colon)"
+
+	# Append signature footer (--no-session + elapsed time, GH#13099)
+	local sig_footer="" _pulse_elapsed=""
+	_pulse_elapsed=$(($(date +%s) - PULSE_START_EPOCH))
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
+		--body "$issue_body" --cli "OpenCode" --no-session \
+		--tokens 0 --time "$_pulse_elapsed" --session-type routine 2>/dev/null || true)
+	printf '%s%s' "$issue_body" "$sig_footer"
+	return 0
+}
+
+# Create a GitHub issue for a single shell file with function-complexity violations.
+# Assumes nesting-only and dedup checks have already passed (caller's responsibility).
+# Arguments: $1 - file_path, $2 - violation_count, $3 - repos_json, $4 - aidevops_slug
+# Returns: 0 if issue created, 1 if failed
+_complexity_scan_sh_create_issue() {
+	local file_path="$1"
+	local violation_count="$2"
+	local repos_json="$3"
+	local aidevops_slug="$4"
+
+	# Compute function details (not in scan_results to avoid breaking IFS='|', GH#5630)
+	local aidevops_path
+	aidevops_path=$(jq -r --arg slug "$aidevops_slug" \
+		'.initialized_repos[] | select(.slug == $slug) | .path' \
+		"$repos_json" 2>/dev/null | head -n 1)
+	local details=""
+	if [[ -n "$aidevops_path" && -f "${aidevops_path}/${file_path}" ]]; then
+		# Use -v to pass the threshold safely — interpolating shell variables into
+		# awk scripts is a security risk and breaks if the value contains quotes (GH#18555).
+		details=$(awk -v threshold="$COMPLEXITY_FUNC_LINE_THRESHOLD" '
+			/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
+			fname && /^\}$/ { lines=NR-start; if(lines+0>threshold+0) printf "%s() %d lines\n", fname, lines; fname="" }
+		' "${aidevops_path}/${file_path}" | head -10)
+	fi
+
+	local issue_body
+	issue_body=$(_complexity_scan_sh_build_issue_body_with_sig "$file_path" "$violation_count" "$details")
+
+	local issue_title="simplification: reduce function complexity in ${file_path} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)"
+	# Skip needs-maintainer-review when user is maintainer (GH#16786)
+	local review_label_sh=""
+	if [[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" != "true" ]]; then
+		review_label_sh="--label needs-maintainer-review"
+	fi
+	# t1955: Don't self-assign — let dispatch_with_dedup handle assignment.
+	# shellcheck disable=SC2086
+	if gh_create_issue --repo "$aidevops_slug" \
+		--title "$issue_title" \
+		--label "simplification-debt" $review_label_sh \
+		--body "$issue_body" >/dev/null 2>&1; then
+		_complexity_scan_close_duplicate_issues_by_title "$aidevops_slug" "$issue_title"
+		echo "[pulse-wrapper] Complexity scan: created issue for ${file_path} (${violation_count} violations)" >>"$LOGFILE"
+		return 0
+	fi
+	echo "[pulse-wrapper] Complexity scan: failed to create issue for ${file_path}" >>"$LOGFILE"
+	return 1
+}
+
 # Create GitHub issues for qualifying files (dedup via server-side title search).
 # Arguments: $1 - scan_results (pipe-delimited: file_path|count), $2 - repos_json, $3 - aidevops_slug
 # Returns: 0 always
@@ -1029,79 +1176,8 @@ _complexity_scan_create_issues() {
 			continue
 		fi
 
-		# Compute details inside the issue-creation loop (not stored in scan_results
-		# to avoid multiline values breaking the IFS='|' parser, GH#5630)
-		local aidevops_path
-		aidevops_path=$(jq -r --arg slug "$aidevops_slug" \
-			'.initialized_repos[] | select(.slug == $slug) | .path' \
-			"$repos_json" 2>/dev/null | head -n 1)
-		local details=""
-		if [[ -n "$aidevops_path" && -f "${aidevops_path}/${file_path}" ]]; then
-			# Use -v to pass the threshold safely — interpolating shell variables into
-			# awk scripts is a security risk and breaks if the value contains quotes (GH#18555).
-			details=$(awk -v threshold="$COMPLEXITY_FUNC_LINE_THRESHOLD" '
-				/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
-				fname && /^\}$/ { lines=NR-start; if(lines+0>threshold+0) printf "%s() %d lines\n", fname, lines; fname="" }
-			' "${aidevops_path}/${file_path}" | head -10)
-		fi
-
-		local issue_body
-		issue_body="## Complexity scan finding (automated, GH#5628)
-
-**File:** \`${file_path}\`
-**Violations:** ${violation_count} functions exceed ${COMPLEXITY_FUNC_LINE_THRESHOLD} lines
-
-### Functions exceeding threshold
-
-\`\`\`
-${details}
-\`\`\`
-
-### Proposed action
-
-Break down the listed functions into smaller, focused helper functions. Each function should ideally be under ${COMPLEXITY_FUNC_LINE_THRESHOLD} lines.
-
-### Verification
-
-- \`bash -n <file>\` (syntax check)
-- \`shellcheck <file>\` (lint)
-- Run existing tests if present
-- Confirm no functionality is lost
-
-### Confidence: medium
-
-This is an automated scan. The function lengths are factual, but the best decomposition strategy requires human judgment.
-
----
-**To approve or decline**, comment on this issue:
-- \`approved\` — removes the review gate and queues for automated dispatch
-- \`declined: <reason>\` — closes this issue (include your reason after the colon)"
-		# Append signature footer (--no-session + elapsed time, GH#13099)
-		local sig_footer2="" _pulse_elapsed2=""
-		_pulse_elapsed2=$(($(date +%s) - PULSE_START_EPOCH))
-		sig_footer2=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
-			--body "$issue_body" --cli "OpenCode" --no-session \
-			--tokens 0 --time "$_pulse_elapsed2" --session-type routine 2>/dev/null || true)
-		issue_body="${issue_body}${sig_footer2}"
-
-		local issue_key="$file_path"
-		local issue_title="simplification: reduce function complexity in ${issue_key} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)"
-		# Skip needs-maintainer-review when user is maintainer (GH#16786)
-		local review_label_sh=""
-		if [[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" != "true" ]]; then
-			review_label_sh="--label needs-maintainer-review"
-		fi
-		# t1955: Don't self-assign — let dispatch_with_dedup handle assignment.
-		# shellcheck disable=SC2086
-		if gh_create_issue --repo "$aidevops_slug" \
-			--title "$issue_title" \
-			--label "simplification-debt" $review_label_sh \
-			--body "$issue_body" >/dev/null 2>&1; then
-			_complexity_scan_close_duplicate_issues_by_title "$aidevops_slug" "$issue_title"
+		if _complexity_scan_sh_create_issue "$file_path" "$violation_count" "$repos_json" "$aidevops_slug"; then
 			issues_created=$((issues_created + 1))
-			echo "[pulse-wrapper] Complexity scan: created issue for ${file_path} (${violation_count} violations)" >>"$LOGFILE"
-		else
-			echo "[pulse-wrapper] Complexity scan: failed to create issue for ${file_path}" >>"$LOGFILE"
 		fi
 	done <<<"$scan_results"
 	echo "[pulse-wrapper] Complexity scan complete: ${issues_created} issues created, ${issues_skipped} skipped (existing)" >>"$LOGFILE"
@@ -1195,28 +1271,12 @@ run_simplification_dedup_cleanup() {
 	return 0
 }
 
-#######################################
-# Check if nesting depth violation count is approaching the CI threshold.
-# Creates a warning issue when within the buffer to prevent CI regressions
-# before they happen (GH#17808 — regression guard for Complexity Analysis CI).
-#
-# The CI check uses a global awk counter (not per-function) that counts all
-# if/for/while/until/case across the entire file without resetting at function
-# boundaries. This function replicates that logic to detect proximity.
-#
-# Arguments:
-#   $1 - aidevops_path (repo root)
-#   $2 - aidevops_slug (owner/repo)
-#   $3 - maintainer (GitHub login)
-# Returns: 0 always (best-effort)
-#######################################
-_check_ci_nesting_threshold_proximity() {
+# Read the nesting depth CI threshold from the config file.
+# Arguments: $1 - aidevops_path
+# Output: threshold integer to stdout (defaults to 260 if config unreadable)
+# Returns: 0 always
+_check_ci_nesting_read_threshold() {
 	local aidevops_path="$1"
-	local aidevops_slug="$2"
-	local maintainer="$3"
-	local buffer=5
-
-	# Read threshold from config file (same logic as CI check)
 	local threshold=260
 	local conf_file="${aidevops_path}/.agents/configs/complexity-thresholds.conf"
 	if [[ -f "$conf_file" ]]; then
@@ -1226,17 +1286,25 @@ _check_ci_nesting_threshold_proximity() {
 			threshold="$val"
 		fi
 	fi
+	printf '%s' "$threshold"
+	return 0
+}
 
-	# Count violations using same awk logic as CI (global counter, no function resets)
+# Count shell files with nesting depth > 8 (CI metric, global counter, no function resets).
+# Arguments: $1 - aidevops_path
+# Output: violation count to stdout
+# Returns: 0 always (returns 0 and outputs 0 when no shell files found)
+_check_ci_nesting_count_violations() {
+	local aidevops_path="$1"
 	local violations=0
 	local lint_files
 	lint_files=$(git -C "$aidevops_path" ls-files '*.sh' 2>/dev/null |
 		grep -v 'node_modules\|vendor\|\.git' |
 		sed "s|^|${aidevops_path}/|" || true)
 	if [[ -z "$lint_files" ]]; then
+		printf '0'
 		return 0
 	fi
-
 	while IFS= read -r file; do
 		[[ -n "$file" ]] || continue
 		[[ -f "$file" ]] || continue
@@ -1252,27 +1320,20 @@ _check_ci_nesting_threshold_proximity() {
 			violations=$((violations + 1))
 		fi
 	done <<<"$lint_files"
+	printf '%s' "$violations"
+	return 0
+}
 
-	local warn_at=$((threshold - buffer))
-	if [[ "$violations" -le "$warn_at" ]]; then
-		echo "[pulse-wrapper] CI nesting threshold proximity: ${violations}/${threshold} violations (buffer: ${buffer}) — OK" >>"$LOGFILE"
-		return 0
-	fi
+# Build the CI nesting threshold proximity warning issue body with signature footer.
+# Arguments: $1 - violations, $2 - threshold, $3 - headroom, $4 - buffer
+# Output: full body to stdout
+# Returns: 0 always
+_check_ci_nesting_build_issue_body() {
+	local violations="$1"
+	local threshold="$2"
+	local headroom="$3"
+	local buffer="$4"
 
-	echo "[pulse-wrapper] CI nesting threshold proximity: ${violations}/${threshold} violations — within ${buffer} of threshold, creating warning issue" >>"$LOGFILE"
-
-	# Check for existing open warning issue to avoid duplicates
-	local existing
-	existing=$(gh issue list --repo "$aidevops_slug" \
-		--state open \
-		--search "in:title \"CI nesting threshold proximity\"" \
-		--json number --jq 'length' 2>/dev/null) || existing="0"
-	if [[ "${existing:-0}" -gt 0 ]]; then
-		echo "[pulse-wrapper] CI nesting threshold proximity: warning issue already exists — skipping" >>"$LOGFILE"
-		return 0
-	fi
-
-	local headroom=$((threshold - violations))
 	local issue_body
 	issue_body="## CI Nesting Threshold Proximity Warning
 
@@ -1307,7 +1368,62 @@ done | sort -rn | head -20
 	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
 		--body "$issue_body" --cli "OpenCode" --no-session \
 		--tokens 0 --time "$_pulse_elapsed" --session-type routine 2>/dev/null || true)
-	issue_body="${issue_body}${sig_footer}"
+	printf '%s%s' "$issue_body" "$sig_footer"
+	return 0
+}
+
+#######################################
+# Check if nesting depth violation count is approaching the CI threshold.
+# Creates a warning issue when within the buffer to prevent CI regressions
+# before they happen (GH#17808 — regression guard for Complexity Analysis CI).
+#
+# The CI check uses a global awk counter (not per-function) that counts all
+# if/for/while/until/case across the entire file without resetting at function
+# boundaries. This function replicates that logic to detect proximity.
+#
+# Arguments:
+#   $1 - aidevops_path (repo root)
+#   $2 - aidevops_slug (owner/repo)
+#   $3 - maintainer (GitHub login)
+# Returns: 0 always (best-effort)
+#######################################
+_check_ci_nesting_threshold_proximity() {
+	local aidevops_path="$1"
+	local aidevops_slug="$2"
+	local maintainer="$3"
+	local buffer=5
+
+	local threshold
+	threshold=$(_check_ci_nesting_read_threshold "$aidevops_path")
+
+	local violations
+	violations=$(_check_ci_nesting_count_violations "$aidevops_path")
+	if [[ -z "$violations" ]]; then
+		return 0
+	fi
+
+	local warn_at=$((threshold - buffer))
+	if [[ "$violations" -le "$warn_at" ]]; then
+		echo "[pulse-wrapper] CI nesting threshold proximity: ${violations}/${threshold} violations (buffer: ${buffer}) — OK" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-wrapper] CI nesting threshold proximity: ${violations}/${threshold} violations — within ${buffer} of threshold, creating warning issue" >>"$LOGFILE"
+
+	# Check for existing open warning issue to avoid duplicates
+	local existing
+	existing=$(gh issue list --repo "$aidevops_slug" \
+		--state open \
+		--search "in:title \"CI nesting threshold proximity\"" \
+		--json number --jq 'length' 2>/dev/null) || existing="0"
+	if [[ "${existing:-0}" -gt 0 ]]; then
+		echo "[pulse-wrapper] CI nesting threshold proximity: warning issue already exists — skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	local headroom=$((threshold - violations))
+	local issue_body
+	issue_body=$(_check_ci_nesting_build_issue_body "$violations" "$threshold" "$headroom" "$buffer")
 
 	# t1955: Don't self-assign — let dispatch_with_dedup handle assignment.
 	gh_create_issue --repo "$aidevops_slug" \
