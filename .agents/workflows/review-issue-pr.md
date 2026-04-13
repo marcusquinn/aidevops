@@ -32,6 +32,55 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-Review Discovery (MANDATORY)
+
+Before evaluating the issue or PR, run these discovery checks to avoid temporal-duplicate blindness, framing acceptance, and symptom-vs-root-cause confusion.
+
+### 0.1 Duplicate and Temporal-Duplicate Check
+
+| Check | Command | What to Look For |
+|-------|---------|------------------|
+| **Pre-existing duplicate** | `gh issue list --search "keyword" --state all` | Same issue already reported (open or closed) |
+| **Temporal duplicate** | `git log --since="<issue_date>" --oneline -- <affected_files>` | Recent commits that fix the same problem |
+| **Recent merged PRs** | `gh pr list --state merged --search "keyword" --limit 20` | Merged fixes in the last 7 days matching issue keywords |
+
+**Action**: If a temporal duplicate is found (recent commit or merged PR addressing the same root cause), redirect the conversation: "This was already fixed in PR #NNN (merged DATE). The fix will ship in the next release."
+
+### 0.2 Affected-Files Discovery
+
+Read the **current state** of files cited in the issue body, not the state described in the issue. Discrepancies signal:
+- Issue is stale (problem already fixed)
+- Issue describes a different code path than what exists now
+- Framing is based on outdated assumptions
+
+**How**: For each file mentioned in the issue, run:
+
+```bash
+git log --oneline -5 -- path/to/file
+cat path/to/file | head -50  # or read the specific line range cited
+```
+
+**Red flag**: If the cited line numbers don't match the current file, the issue is stale or the framing is wrong.
+
+### 0.3 Framing Critique
+
+The issue body describes a **symptom and a proposed framing**. Verify the framing matches codebase reality:
+
+- **Symptom**: What the user observed (e.g., "triage retries 3 times")
+- **Framing**: The user's explanation (e.g., "lock/unlock for gated issues")
+- **Reality check**: Does the code path described in the framing actually exist? Is the symptom caused by that path?
+
+**How**: Search the codebase for the framing's key terms:
+
+```bash
+rg "lock|unlock" --type sh --type py  # if framing mentions lock/unlock
+rg "TRIAGE_MAX_RETRIES" .agents/scripts/  # if framing mentions retries
+```
+
+**Red flag**: If the framing's key terms don't appear in the code, or appear in a different context, the issue is misframed. The real problem lives elsewhere.
+
+---
+
 ## Issue Review Checklist
 
 ### 1. Problem Validation
@@ -40,7 +89,8 @@ tools:
 |-------|----------|---------------|
 | **Reproducible** | Can we reproduce? | Follow steps, test locally |
 | **Version confirmed** | Occurs on latest? | Check reporter's version vs current |
-| **Not duplicate** | Already reported? | Search closed/open issues |
+| **Not a pre-existing duplicate** | Already reported? | Search closed/open issues |
+| **Not superseded by recent work** | Fixed in last 7 days? | `git log --since`, `gh pr list --state merged` (see 0.1) |
 | **Actual bug** | Bug or expected behavior? | Check docs, design decisions |
 | **In scope** | Within project scope? | Check project goals, roadmap |
 
@@ -83,6 +133,68 @@ tools:
 | **Breaking changes** | Breaks backward compatibility? |
 | **Test coverage** | Adequate tests for the right things? |
 
+### 6. Second-Order Effects and Safety Gates
+
+After validating the problem and evaluating the solution, check for unintended consequences and architectural conflicts.
+
+#### 6.1 Architectural Intent
+
+Does this change contradict a decision landed in the last 30 days?
+
+**How**: Search recent commits for architectural decisions:
+
+```bash
+git log --since="30 days ago" --oneline --grep="architecture\|design\|decision" -- .agents/
+git log --since="30 days ago" --oneline -- .agents/aidevops/architecture.md
+```
+
+**Red flag**: If the proposed fix contradicts a recent architectural decision (e.g., "we just added a dedup gate, and this PR defeats it"), the fix is solving the wrong problem or the recent decision needs revisiting.
+
+#### 6.2 Safety Gate Interaction
+
+Map the change against these seven enumerated gates:
+
+| Gate | What It Protects | Check |
+|------|------------------|-------|
+| **Maintainer approval** | Prevents unauthorized changes | Does this bypass `sudo aidevops approve`? |
+| **Sandbox isolation** | Prevents headless agents from editing main | Does this allow headless writes to main? |
+| **Dedup guard** | Prevents duplicate dispatch | Does this defeat `dispatch-dedup-helper.sh`? |
+| **Prompt injection** | Prevents instruction override | Does this allow external content to modify behavior? |
+| **Privacy guard** | Prevents private repo leaks | Does this expose private slugs in public repos? |
+| **Review bot gate** | Prevents merge without review | Does this skip `review-bot-gate-helper.sh check`? |
+| **Origin labels** | Tracks work provenance | Does this break `origin:interactive` / `origin:worker` tracking? |
+
+**Red flag**: If the change defeats or bypasses any gate, it's a security or audit trail issue. Reject unless the gate itself is being intentionally updated.
+
+#### 6.3 Symptom vs Root Cause
+
+Five anti-patterns signal the proposal is papering over a deeper bug:
+
+1. **Reducing retry limits** — "Set `MAX_RETRIES=1`" when retries are failing identically every time (symptom: retries are broken; root cause: the thing being retried is 100% broken)
+2. **Adding cache/memoization** — "Cache the result" when the result is computed incorrectly (symptom: slow; root cause: wrong algorithm)
+3. **Increasing timeouts** — "Raise the timeout" when the operation hangs (symptom: slow; root cause: deadlock or infinite loop)
+4. **Silencing errors** — "Suppress the warning" when the warning is correct (symptom: noisy logs; root cause: the underlying issue is real)
+5. **Changing thresholds** — "Raise the threshold" when the threshold is being exceeded legitimately (symptom: too many alerts; root cause: the system is overloaded)
+
+**How**: For each proposal, ask: "If we do this, does the underlying problem still exist?" If yes, it's a symptom fix.
+
+**Red flag**: If the proposal is one of these five patterns, ask the reporter to investigate the root cause first.
+
+#### 6.4 Ripple Effects
+
+Enumerate downstream code paths that depend on the changed behavior. An empty list is a red flag.
+
+**How**: For each changed function/config/gate, search for callers:
+
+```bash
+rg "function_name|config_key" --type sh --type py
+git log --all --oneline --grep="function_name"
+```
+
+**Red flag**: If no downstream code uses the changed behavior, it's dead code or the change is incomplete. If many downstream paths use it, the change is high-risk — ensure all callers are tested.
+
+---
+
 ## Review Output Format
 
 Heading MUST contain `## Review:` or `## Issue/PR Review:` — pulse idempotency guard uses this marker to detect existing triage reviews.
@@ -90,12 +202,19 @@ Heading MUST contain `## Review:` or `## Issue/PR Review:` — pulse idempotency
 ```markdown
 ## Review: Approved / Needs Changes / Decline
 
+### Pre-Review Context
+
+- **Temporal duplicates**: [any recent commits/PRs fixing the same issue?]
+- **Affected files**: [current state of cited files; any discrepancies with issue description?]
+- **Framing critique**: [does the issue's framing match codebase reality?]
+
 ### Issue Validation
 
 | Check | Status | Notes |
 |-------|--------|-------|
 | Reproducible | Yes/No | [details] |
-| Not duplicate | Yes/No | [related issues] |
+| Not a pre-existing duplicate | Yes/No | [related issues] |
+| Not superseded by recent work | Yes/No | [recent commits/PRs?] |
 | Actual bug | Yes/No | [or expected behavior?] |
 | In scope | Yes/No | [project goal alignment] |
 
@@ -119,6 +238,13 @@ Heading MUST contain `## Review:` or `## Issue/PR Review:` — pulse idempotency
 - **Decision**: APPROVE / REQUEST CHANGES / DECLINE
 - **Labels**: [e.g., `tier:simple`, `bug`, `status:available`]
 - **Implementation guidance**: [key steps, test cases to add]
+
+### Second-Order Effects
+
+- **Architectural intent**: [any recent decisions this contradicts?]
+- **Safety gates**: [does this defeat any gates? (maintainer approval, sandbox, dedup, prompt injection, privacy, review bot, origin labels)]
+- **Symptom vs root cause**: [is this papering over a deeper bug?]
+- **Ripple effects**: [downstream code paths affected; empty list = red flag]
 
 ### Dispatchability Assessment
 
@@ -181,6 +307,8 @@ When invoked by pulse (via `/review-issue-pr <number>`):
 
 The review comment is the only output. Pulse detects it next cycle; maintainer responds with "approved", "declined", or direction. If dispatch prompt includes prior maintainer comments, address those concerns specifically.
 
+> **Gap (t2017):** The sandboxed `triage-review.md` agent cannot run the discovery checks in Section 0 (temporal-duplicate, affected-files, framing critique) because it has no Bash/network tools. Bringing the same discipline to pulse triage requires extending the prefetch in `pulse-ancillary-dispatch.sh` to pass discovery data inline: (1) recent merged PRs matching issue keywords, (2) recent commits on affected files, (3) current file contents at cited line numbers. Tracked as a separate follow-up task.
+
 ## Common Scenarios
 
 ### Issue is Not a Bug
@@ -222,6 +350,44 @@ There's a simpler approach:
 - **Alternative**: [simpler solution] — preferable because [reason]
 
 Would you be open to updating? Or I can make the change.
+```
+
+### Issue Already Superseded by Recent Work
+
+```markdown
+This issue was already addressed in PR #NNN, which merged on DATE. The fix will ship in the next release.
+
+- **Your issue**: [symptom]
+- **Recent fix**: [PR #NNN] — [what it fixed]
+
+No further action needed. Closing as superseded.
+```
+
+### Fix Addresses Symptom, Root Cause Lives Elsewhere
+
+```markdown
+The proposed fix reduces the cost of the symptom, but the root cause should be addressed instead:
+
+- **Symptom**: [what the user observed]
+- **Proposed fix**: [what the PR does] — reduces cost by X%
+- **Root cause**: [underlying issue]
+- **Better approach**: [fix the root cause instead]
+
+Example: If retries are failing identically every time, the issue is not "retries are expensive" (reduce `MAX_RETRIES`), but "the thing being retried is broken" (fix the retry target).
+
+Would you be open to investigating the root cause? Happy to discuss.
+```
+
+### Fix Defeats a Recent Architectural Decision
+
+```markdown
+This fix contradicts a decision we landed recently:
+
+- **Your fix**: [what it changes]
+- **Recent decision**: [PR #NNN, DATE] — [why we made it]
+- **Conflict**: [how they contradict]
+
+Before proceeding, let's discuss whether the recent decision needs revisiting, or if there's a different approach that respects both.
 ```
 
 ## CLI Commands
