@@ -48,20 +48,10 @@ print_result() {
 	return 0
 }
 
-# Create a stubbed `gh` binary on PATH. Canned responses are driven by
-# environment variables set per test:
-#   GH_ISSUE_VIEW_TITLE — string returned by `gh issue view --json title --jq .title`
-#   GH_ISSUE_VIEW_BODY — string for body
-#   GH_ISSUE_VIEW_LABELS — CSV returned by `--json labels --jq '[.labels[].name] | join(",")'`
-#   GH_API_COMMENTS_JSON — raw JSON returned by `gh api .../comments`
-#   GH_ISSUE_LIST_CHILD_JSON — JSON array used for dedup lookups
-#   GH_ISSUE_CREATE_URL — URL echoed by `gh issue create` on success
-setup_gh_stub() {
-	TEST_ROOT=$(mktemp -d -t t1982-consol.XXXXXX)
-	GH_LOG="${TEST_ROOT}/gh.log"
-	: >"$GH_LOG"
+# _write_gh_stub_binary: write the stubbed gh binary to TEST_ROOT/bin/gh.
+# Requires TEST_ROOT to be set. Called by setup_gh_stub.
+_write_gh_stub_binary() {
 	mkdir -p "${TEST_ROOT}/bin"
-
 	cat >"${TEST_ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 # Minimal `gh` stub for consolidation tests.
@@ -140,6 +130,12 @@ printf 'gh stub: unhandled: %s\n' "$*" >&2
 exit 0
 STUB
 	chmod +x "${TEST_ROOT}/bin/gh"
+	return 0
+}
+
+# _setup_gh_stub_globals: export PATH and pulse-triage globals, then source the script.
+# Requires TEST_ROOT and GH_LOG to be set. Called by setup_gh_stub.
+_setup_gh_stub_globals() {
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	export GH_LOG
 	export LOGFILE="${TEST_ROOT}/pulse.log"
@@ -157,6 +153,23 @@ STUB
 	# from pulse-wrapper.sh but the consolidation helpers are self-contained.
 	# shellcheck disable=SC1091
 	source "${REPO_ROOT}/.agents/scripts/pulse-triage.sh"
+	return 0
+}
+
+# Create a stubbed `gh` binary on PATH. Canned responses are driven by
+# environment variables set per test:
+#   GH_ISSUE_VIEW_TITLE — string returned by `gh issue view --json title --jq .title`
+#   GH_ISSUE_VIEW_BODY — string for body
+#   GH_ISSUE_VIEW_LABELS — CSV returned by `--json labels --jq '[.labels[].name] | join(",")'`
+#   GH_API_COMMENTS_JSON — raw JSON returned by `gh api .../comments`
+#   GH_ISSUE_LIST_CHILD_JSON — JSON array used for dedup lookups
+#   GH_ISSUE_CREATE_URL — URL echoed by `gh issue create` on success
+setup_gh_stub() {
+	TEST_ROOT=$(mktemp -d -t t1982-consol.XXXXXX)
+	GH_LOG="${TEST_ROOT}/gh.log"
+	: >"$GH_LOG"
+	_write_gh_stub_binary
+	_setup_gh_stub_globals
 	return 0
 }
 
