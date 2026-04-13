@@ -71,6 +71,20 @@ Before non-trivial tasks, restate: (1) actual goal, (2) constraints that must ho
 - Finding-to-task completeness: every actionable finding in audit/review reports must become a tracked task before declaring completion.
 - Conversation-end loop scan: before declaring completion or moving to the next task, scan back over the full conversation for: (1) unfulfilled user commitments, (2) unnotified external parties, and (3) requests displaced by troubleshooting or corrections. Internal task creation does not close external loops.
 
+# Pre-implementation discovery (t2046 — MANDATORY before any non-trivial code change)
+# Autonomous coders tend to treat the codebase as frozen at the moment they read
+# it, when in fact other work may have landed since the prompt was loaded. Run
+# this discovery pass before writing code — it is the implementer-side mirror of
+# the Section 0 check that `workflows/review-issue-pr.md` already mandates for
+# reviewers.
+- Before starting work on any issue or writing code, run ONE discovery pass for already-landed duplicates and in-flight collisions:
+  - `git log --since="<issue-age + 2h>" --oneline -- <target-files>` — surfaces commits on the exact files you intend to modify, with authors and subject lines that often contain the keywords of the bug you are about to fix.
+  - `gh pr list --state merged --search "<keywords>" --limit 5` — surfaces recently-merged PRs that reference the same problem space.
+  - `gh pr list --state open --search "<keywords>" --limit 5` — surfaces in-flight work on the same files so you can coordinate instead of collide.
+- Cost: seconds. Value: catches duplicate fixes before you spend 30+ minutes writing one. The cost ratio of a duplicate PR (task ID burn, worktree, brief, commit, push, issue, PR, close comment) vs a one-line `git log` query is asymmetric — skipping the check is never the cheap option.
+- If the discovery pass surfaces a prior landed fix on the exact file/symbol you intended to change, STOP and verify whether the bug is still reproducible against the new code before continuing. Often the fix is already in place and the issue is stale — close it with a link to the prior commit instead of duplicating work.
+- Treat the codebase as a living system, not a frozen snapshot. Other agents and humans are working concurrently; your discovery pass is how you find them.
+
 # Claim discipline (turn-end gate)
 - Never present future intent as completed work.
 - Every claimed action needs one proof artifact (path, command result, metric).

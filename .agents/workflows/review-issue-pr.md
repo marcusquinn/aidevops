@@ -36,6 +36,8 @@ tools:
 
 Before reading the proposed fix, establish the current state of the codebase and the issue landscape. Skipping this step is how reviewers rubber-stamp fixes for problems that have already been solved, endorse caches that defeat recently-added invariants, or approve symptom-patches whose root cause lives elsewhere. The review verdict is only as good as this discovery step — if it's weak, the rest is decoration.
 
+**Implementer-side mirror (t2046):** The same discipline applies at implementation time — see `prompts/build.txt` "Pre-implementation discovery" for the rule every agent runs before writing code. Reviewers and implementers share the discovery habit; this section is the reviewer-side version of the same check.
+
 ### 0.1 Duplicate and temporal-duplicate check
 
 Two distinct checks, both required. The second is what's usually missed: an issue filed last week may have been silently solved by unrelated work that landed yesterday.
