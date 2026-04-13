@@ -79,12 +79,22 @@ export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 #######################################
 PULSE_JITTER_MAX="${PULSE_JITTER_MAX:-30}"
 # Phase 0 (t1963): diagnostic flags must return instantly. Skip jitter
-# when the first arg is --self-check or --dry-run (or PULSE_DRY_RUN=1)
-# so CI, post-install verification, and interactive debugging aren't
-# delayed by up to 30 s of random sleep.
+# when --self-check or --dry-run appears anywhere in the argument list
+# (or PULSE_DRY_RUN=1 is set) so CI, post-install verification, and
+# interactive debugging aren't delayed by up to 30 s of random sleep.
+# GH#18614: iterate through all args — not just $1 — so diagnostic
+# flags are detected regardless of their position in the invocation.
 _pulse_skip_jitter=0
-if [[ "${1:-}" == "--self-check" || "${1:-}" == "--dry-run" || "${PULSE_DRY_RUN:-0}" == "1" ]]; then
+if [[ "${PULSE_DRY_RUN:-0}" == "1" ]]; then
 	_pulse_skip_jitter=1
+else
+	for _pulse_arg in "$@"; do
+		if [[ "$_pulse_arg" == "--self-check" || "$_pulse_arg" == "--dry-run" ]]; then
+			_pulse_skip_jitter=1
+			break
+		fi
+	done
+	unset _pulse_arg
 fi
 if [[ "$_pulse_skip_jitter" -eq 0 && "$PULSE_JITTER_MAX" =~ ^[0-9]+$ && "$PULSE_JITTER_MAX" -gt 0 ]]; then
 	# $RANDOM is 0-32767; modulo gives 0 to PULSE_JITTER_MAX
@@ -937,7 +947,17 @@ main() {
 	#
 	# Exit 0: self-check passed.
 	# Exit 1: at least one expected function or module guard is missing.
-	if [[ "${1:-}" == "--self-check" ]]; then
+	# GH#18614: scan all args so --self-check is detected regardless of position.
+	local _sc_flag=0
+	local _arg
+	for _arg in "$@"; do
+		if [[ "$_arg" == "--self-check" ]]; then
+			_sc_flag=1
+			break
+		fi
+	done
+	unset _arg
+	if [[ "$_sc_flag" -eq 1 ]]; then
 		local _sc_missing=()
 		local _sc_fn
 		local _sc_expected_fns=(
@@ -1016,6 +1036,11 @@ main() {
 		# The `${array[@]+"${array[@]}"}` pattern is safe under `set -u`
 		# when the array is empty — required in Phase 0 where no module
 		# guards exist yet.
+		# GH#18614: all guard names in _sc_expected_guards are simple scalar
+		# variables (e.g. _PULSE_MODEL_ROUTING_LOADED="1"). The indirect
+		# expansion ${!_sc_guard:-} is therefore safe — it will never silently
+		# read only the first element of an array. Never add array names to
+		# _sc_expected_guards; use a dedicated scalar for each module.
 		for _sc_guard in ${_sc_expected_guards[@]+"${_sc_expected_guards[@]}"}; do
 			_sc_val="${!_sc_guard:-}"
 			if [[ -z "$_sc_val" ]]; then
@@ -1061,9 +1086,15 @@ main() {
 	#
 	# The sandbox ensures no collision with the live pulse's PID file,
 	# lock dir, or session flag.
-	if [[ "${1:-}" == "--dry-run" ]]; then
-		export PULSE_DRY_RUN=1
-	fi
+	# GH#18614: scan all args so --dry-run is detected regardless of position.
+	local _dr_arg
+	for _dr_arg in "$@"; do
+		if [[ "$_dr_arg" == "--dry-run" ]]; then
+			export PULSE_DRY_RUN=1
+			break
+		fi
+	done
+	unset _dr_arg
 
 	# GH#4513: Acquire exclusive instance lock FIRST — before any other
 	# check. Uses mkdir atomicity as the primary primitive (POSIX-guaranteed,
