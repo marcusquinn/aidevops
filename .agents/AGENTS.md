@@ -245,6 +245,18 @@ When `rtk` installed, prefer `rtk` prefix for: `git status/log/diff`, `gh pr lis
 - YAML frontmatter: tools, model tier, MCP dependencies.
 - Progressive disclosure: pointers to subagents, not inline content.
 
+## Memory Recall (MANDATORY — t2050)
+
+**Non-optional for every non-trivial task.** Before any code change, PR review, debugging session, or design decision, run ONE targeted memory query:
+
+```bash
+memory-helper.sh recall --query "<1-3 keyword phrase>" --limit 5
+```
+
+Pick keywords from the task description, issue title, or file path you're about to edit. Read any surfaced memories BEFORE writing code — they are accumulated lessons from prior sessions that would otherwise be invisible. This is independent from the t2046 git/gh discovery pass: git tells you about in-flight code, memory tells you about accumulated lessons. Run BOTH.
+
+Store new lessons at session end: `memory-helper.sh store --content "<lesson>" --confidence high|medium|low`. Full rule in `prompts/build.txt` "Memory recall".
+
 ## Conversational Memory Lookup
 
 User references past work ("remember when...")? Search progressively: memory recall → TODO.md → git log → transcripts → GitHub API. Full guide: `reference/memory-lookup.md`.

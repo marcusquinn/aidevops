@@ -85,6 +85,29 @@ Before non-trivial tasks, restate: (1) actual goal, (2) constraints that must ho
 - If the discovery pass surfaces a prior landed fix on the exact file/symbol you intended to change, STOP and verify whether the bug is still reproducible against the new code before continuing. Often the fix is already in place and the issue is stale — close it with a link to the prior commit instead of duplicating work.
 - Treat the codebase as a living system, not a frozen snapshot. Other agents and humans are working concurrently; your discovery pass is how you find them.
 
+# Memory recall (MANDATORY — t2050)
+# The aidevops memory system (SQLite FTS5 at ~/.aidevops/.agent-workspace/memory/)
+# accumulates cross-session lessons from every prior session that stored one.
+# These lessons are invisible unless queried. A session that skips memory recall
+# is structurally blind to every mistake the framework has already learned from —
+# it WILL repeat them. Framework lessons exist precisely because the model alone
+# doesn't remember. Treat memory the same way you treat git log: check it, don't
+# rely on recall.
+#
+# This rule is NON-OPTIONAL and applies to every interactive session and every
+# headless task dispatch. "I didn't think this task needed it" is not a valid
+# opt-out — the cost is one command, the value is avoiding 30+ minute token burns
+# on work the framework has already learned how to do better.
+- Before starting non-trivial work (any code change, PR review, debugging session, or design decision), run ONE targeted memory query:
+  - `memory-helper.sh recall --query "<1-3 keyword phrase matching your task>" --limit 5`
+  - Example queries: `"flock pulse lock"`, `"shellcheck bash32 compat"`, `"worktree cleanup"`, `"PR merge gate"`, `"issue triage"`.
+- Pick keywords from the task description the user gave you, the issue title, or the file path you're about to edit. Do not try to recall every possible related topic — one focused query catches most relevant lessons; a second query is allowed if the first surfaces nothing and the task is still ambiguous.
+- If the query returns memories, READ them before writing code. A lesson that says "skipped discovery pass, duplicated 500 lines" tells you exactly what to do differently this time. A lesson that says "flock FD inheritance deadlocks, use mkdir" tells you the answer before you type it.
+- If the query returns nothing, proceed — but the cost of checking was still seconds.
+- This recall is independent from the t2046 git/gh discovery pass. Run BOTH. Git tells you about in-flight code; memory tells you about accumulated lessons. They are complementary, not overlapping.
+- Exception: purely conversational exchanges (greetings, status questions, "what does this do") do not require a recall. Any exchange that will result in a file edit, a git operation, a gh command with side effects, or a non-trivial recommendation DOES require one.
+- Store new lessons at the end of any session that produced one. Use `memory-helper.sh store --content "<lesson>" --confidence high` for hard-won insights, medium for likely-general patterns, low for speculative. The store call is cheap; omitting it wastes the lesson.
+
 # Claim discipline (turn-end gate)
 - Never present future intent as completed work.
 - Every claimed action needs one proof artifact (path, command result, metric).
