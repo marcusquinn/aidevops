@@ -52,6 +52,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 CLAIM_HELPER="${SCRIPT_DIR}/dispatch-claim-helper.sh"
 
+# t2033: source shared-constants for set_issue_status helper. Include guard
+# inside shared-constants.sh makes this safe even when orchestrator already
+# sourced it.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 #######################################
 # Extract canonical dedup keys from a title string.
 # Looks for patterns: issue #NNN, PR #NNN, tNNN (task IDs), issue-NNN, pr-NNN.
@@ -591,15 +597,14 @@ _recover_stale_assignment() {
 		local -a _esc_assignee_arr=()
 		IFS=',' read -ra _esc_assignee_arr <<<"$stale_assignees"
 		IFS="$_esc_ifs"
+		# t2033: build remove-assignee flags and clear all core status labels
+		# in one atomic edit via set_issue_status (empty target = clear only,
+		# pass-through --add-label "needs-maintainer-review").
+		local -a _esc_extra=(--add-label "needs-maintainer-review")
 		for _esc_assignee in "${_esc_assignee_arr[@]}"; do
-			gh issue edit "$issue_number" --repo "$repo_slug" \
-				--remove-assignee "$_esc_assignee" 2>/dev/null || true
+			_esc_extra+=(--remove-assignee "$_esc_assignee")
 		done
-		# Remove stale status labels; apply needs-maintainer-review (NOT status:available)
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--remove-label "status:queued" --remove-label "status:in-progress" \
-			--remove-label "status:available" \
-			--add-label "needs-maintainer-review" 2>/dev/null || true
+		set_issue_status "$issue_number" "$repo_slug" "" "${_esc_extra[@]}" || true
 		# Post escalation comment explaining the suspension
 		gh issue comment "$issue_number" --repo "$repo_slug" \
 			--body "<!-- stale-recovery-tick:escalated (threshold=${_threshold}) -->
@@ -627,21 +632,20 @@ _This escalation is the \"no-progress fail-safe\" from t2008 (paired with t1986 
 	fi
 	# ── End stale-recovery escalation check ──────────────────────────────
 
-	# Unassign all stale users
+	# t2033: atomically unassign all stale users and transition to status:available
+	# via set_issue_status — previously two separate gh edits could race and leave
+	# conflicting labels (e.g., status:available + status:queued on #18444).
 	local saved_ifs="${IFS:-}"
 	local -a assignee_arr=()
 	IFS=',' read -ra assignee_arr <<<"$stale_assignees"
 	IFS="$saved_ifs"
 
+	local -a _recov_extra=()
+	local assignee
 	for assignee in "${assignee_arr[@]}"; do
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--remove-assignee "$assignee" 2>/dev/null || true
+		[[ -n "$assignee" ]] && _recov_extra+=(--remove-assignee "$assignee")
 	done
-
-	# Remove stale status labels — they are lies (no worker is running)
-	gh issue edit "$issue_number" --repo "$repo_slug" \
-		--remove-label "status:queued" --remove-label "status:in-progress" \
-		--add-label "status:available" 2>/dev/null || true
+	set_issue_status "$issue_number" "$repo_slug" "available" "${_recov_extra[@]}" || true
 
 	# Post audit comment with WORKER_SUPERSEDED marker (t1955).
 	# The marker is a structured HTML comment that workers can detect before

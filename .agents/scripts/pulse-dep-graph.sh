@@ -422,8 +422,8 @@ _refresh_try_unblock_issue() {
 		return 1
 	fi
 
-	gh issue edit "$issue_num" --repo "$slug" \
-		--remove-label "status:blocked" --add-label "status:available" 2>/dev/null || true
+	# t2033: atomic transition — clears all sibling status:* labels, not just status:blocked
+	set_issue_status "$issue_num" "$slug" "available" 2>/dev/null || true
 	echo "[pulse-wrapper] dep-graph-cache: unblocked #${issue_num} in ${slug} — all blockers resolved, no non-dep markers (t1935/t2031)" >>"$LOGFILE"
 	return 0
 }

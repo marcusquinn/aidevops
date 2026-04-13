@@ -295,6 +295,35 @@ test_canonical_label_list() {
 	print_result "ISSUE_STATUS_LABELS matches expected order" 0
 }
 
+#######################################
+# TEST 8: Dispatch-realistic pattern — queued + add-assignee + add-label +
+# remove-assignee (the exact shape _dispatch_launch_worker uses). This is
+# the bug site from t2033: #18444 accumulated status:available + status:queued
+# because the old code didn't remove siblings.
+#######################################
+test_dispatch_realistic_pattern() {
+	_reset_state
+	# Simulate the real call from pulse-dispatch-core.sh after t2033 migration
+	set_issue_status 18444 "marcusquinn/aidevops" "queued" \
+		--add-assignee "runner-a" \
+		--add-label "origin:worker" \
+		--remove-assignee "runner-b" || {
+		print_result "dispatch pattern returns 0" 1 "(exit=$?)"
+		return 0
+	}
+	print_result "dispatch pattern returns 0" 0
+	assert_last_edit_has "dispatch: adds status:queued" \
+		"--add-label status:queued"
+	assert_last_edit_has "dispatch: removes status:available (the t2033 bug fix)" \
+		"--remove-label status:available"
+	assert_last_edit_has "dispatch: passes through --add-assignee" \
+		"--add-assignee runner-a"
+	assert_last_edit_has "dispatch: passes through --add-label origin:worker" \
+		"--add-label origin:worker"
+	assert_last_edit_has "dispatch: passes through --remove-assignee" \
+		"--remove-assignee runner-b"
+}
+
 # =============================================================================
 # Run tests
 # =============================================================================
@@ -306,6 +335,7 @@ main() {
 	test_invalid_status_rejected
 	test_missing_args_rejected
 	test_canonical_label_list
+	test_dispatch_realistic_pattern
 
 	printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

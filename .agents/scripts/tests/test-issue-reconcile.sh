@@ -70,6 +70,11 @@ mkdir -p "$STUB_DIR"
 # =============================================================================
 # Source the module under test
 # =============================================================================
+# t2033: pulse-issue-reconcile.sh uses set_issue_status from shared-constants.sh.
+# Source shared-constants first so the helper is defined, matching the
+# pulse-wrapper.sh orchestrator sourcing order.
+# shellcheck source=/dev/null
+source "${TEST_SCRIPTS_DIR}/shared-constants.sh" >/dev/null 2>&1
 # pulse-issue-reconcile.sh has an include guard; clear it so we can source
 # it directly without the full pulse-wrapper.sh bootstrap.
 unset _PULSE_ISSUE_RECONCILE_LOADED

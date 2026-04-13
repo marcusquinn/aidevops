@@ -923,17 +923,13 @@ _Automated by \`worker-watchdog.sh\` (t1419)_"
 		log_msg "Failed to post comment on ${repo_slug}#${issue_number}"
 	fi
 
-	# Remove stale status labels and add destination status label.
-	# For thrash kills destination is status:blocked, otherwise status:available.
-	gh issue edit "$issue_number" --repo "$repo_slug" \
-		--remove-label "status:in-progress" \
-		--remove-label "status:claimed" \
-		--remove-label "status:queued" \
-		--remove-label "status:available" \
-		--remove-label "status:blocked" \
-		--add-label "$destination_status" 2>>"$LOG_FILE" || {
+	# t2033: atomic transition via set_issue_status. Strip the "status:" prefix
+	# because the helper takes the bare name. For thrash kills destination is
+	# status:blocked, otherwise status:available.
+	local dest_bare="${destination_status#status:}"
+	if ! set_issue_status "$issue_number" "$repo_slug" "$dest_bare" 2>>"$LOG_FILE"; then
 		log_msg "Failed to update labels on ${repo_slug}#${issue_number}"
-	}
+	fi
 
 	return 0
 }

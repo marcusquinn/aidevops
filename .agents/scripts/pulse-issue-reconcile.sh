@@ -125,10 +125,10 @@ _normalize_clear_status_labels() {
 	local slug="$2"
 	local runner_user="$3"
 
-	gh issue edit "$issue_num" --repo "$slug" \
-		--remove-assignee "$runner_user" \
-		--remove-label "status:queued" --remove-label "status:in-progress" \
-		--add-label "status:available" >/dev/null 2>&1
+	# t2033: atomic transition to status:available, clearing all sibling
+	# core status labels in one edit (not just queued/in-progress).
+	set_issue_status "$issue_num" "$slug" "available" \
+		--remove-assignee "$runner_user" >/dev/null 2>&1
 	return $?
 }
 
@@ -482,10 +482,8 @@ reconcile_stale_done_issues() {
 					merged_at=$(gh pr view "$pr_num" --repo "$slug" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || merged_at=""
 					if [[ -z "$merged_at" ]]; then
 						echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} is NOT merged (GH#17871 guard)" >>"$LOGFILE"
-						# Reset to available — PR exists but isn't merged yet
-						gh issue edit "$issue_num" --repo "$slug" \
-							--remove-label "status:done" \
-							--add-label "status:available" >/dev/null 2>&1 || continue
+						# Reset to available — PR exists but isn't merged yet (t2033: atomic)
+						set_issue_status "$issue_num" "$slug" "available" >/dev/null 2>&1 || continue
 						total_reset=$((total_reset + 1))
 						continue
 					fi
@@ -495,10 +493,8 @@ reconcile_stale_done_issues() {
 				if [[ -n "$pr_num" ]] && [[ -x "$verify_helper" ]]; then
 					if ! "$verify_helper" check "$issue_num" "$pr_num" "$slug" >/dev/null 2>&1; then
 						echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} does not touch issue files (GH#17372 guard)" >>"$LOGFILE"
-						# Reset to available for re-evaluation instead of closing
-						gh issue edit "$issue_num" --repo "$slug" \
-							--remove-label "status:done" \
-							--add-label "status:available" >/dev/null 2>&1 || continue
+						# Reset to available for re-evaluation instead of closing (t2033: atomic)
+						set_issue_status "$issue_num" "$slug" "available" >/dev/null 2>&1 || continue
 						total_reset=$((total_reset + 1))
 						continue
 					fi
@@ -516,10 +512,8 @@ reconcile_stale_done_issues() {
 				echo "[pulse-wrapper] Reconcile done: closed #${issue_num} in ${slug} — merged PR: ${dedup_output:-"found"}" >>"$LOGFILE"
 				total_closed=$((total_closed + 1))
 			else
-				# No merged PR — reset for re-evaluation
-				gh issue edit "$issue_num" --repo "$slug" \
-					--remove-label "status:done" \
-					--add-label "status:available" >/dev/null 2>&1 || continue
+				# No merged PR — reset for re-evaluation (t2033: atomic)
+				set_issue_status "$issue_num" "$slug" "available" >/dev/null 2>&1 || continue
 				echo "[pulse-wrapper] Reconcile done: reset #${issue_num} in ${slug} to status:available — no merged PR evidence" >>"$LOGFILE"
 				total_reset=$((total_reset + 1))
 			fi

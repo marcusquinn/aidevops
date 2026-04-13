@@ -573,14 +573,15 @@ recover_failed_launch_state() {
 		return 0
 	fi
 
+	# t2033: atomic transitions via set_issue_status. The blocked branch
+	# preserves status:blocked (target = "blocked"); the normal branch
+	# transitions to status:available.
 	if [[ "$is_blocked" == "true" ]]; then
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--remove-assignee "$self_login" --remove-label "status:queued" >/dev/null 2>&1 || true
+		set_issue_status "$issue_number" "$repo_slug" "blocked" \
+			--remove-assignee "$self_login" >/dev/null 2>&1 || true
 	else
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--remove-assignee "$self_login" --remove-label "status:queued" --add-label "status:available" >/dev/null 2>&1 ||
-			gh issue edit "$issue_number" --repo "$repo_slug" \
-				--remove-assignee "$self_login" --remove-label "status:queued" >/dev/null 2>&1 || true
+		set_issue_status "$issue_number" "$repo_slug" "available" \
+			--remove-assignee "$self_login" >/dev/null 2>&1 || true
 	fi
 
 	# t1934: Unlock issue and linked PRs (locked at dispatch time)

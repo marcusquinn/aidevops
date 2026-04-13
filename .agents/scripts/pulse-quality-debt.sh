@@ -112,8 +112,9 @@ close_stale_quality_debt_prs() {
 				--jq '.body | match("(?i)(closes|fixes|resolves)[[:space:]]+#([0-9]+)").captures[1].string' \
 				2>/dev/null || true)
 			if [[ -n "$issue_num" ]]; then
-				gh issue edit "$issue_num" --repo "$repo_slug" \
-					--remove-label "status:in-review" --add-label "status:available" 2>/dev/null || true
+				# t2033: atomic transition — clears all sibling status labels,
+				# not just status:in-review.
+				set_issue_status "$issue_num" "$repo_slug" "available" 2>/dev/null || true
 			fi
 		fi
 	done

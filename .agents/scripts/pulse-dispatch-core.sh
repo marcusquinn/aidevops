@@ -1107,14 +1107,18 @@ _dispatch_launch_worker() {
 	# assignee (typically the issue creator) co-assigned. This created ambiguity
 	# about ownership and confused dedup layer 6 (is_assigned) when status:queued
 	# made passive owner assignments appear active.
-	local -a _edit_flags=(--add-assignee "$self_login" --add-label "status:queued" --add-label "origin:worker")
+	#
+	# t2033: use set_issue_status to atomically clear sibling status:* labels.
+	# Before t2033, this call site added status:queued without removing
+	# status:available — #18444/#18454/#18455 accumulated both labels and
+	# broke t2008 stale-recovery tick counting.
+	local -a _extra_flags=(--add-assignee "$self_login" --add-label "origin:worker")
 	local _prev_login
 	while IFS= read -r _prev_login; do
-		[[ -n "$_prev_login" && "$_prev_login" != "$self_login" ]] && _edit_flags+=(--remove-assignee "$_prev_login")
+		[[ -n "$_prev_login" && "$_prev_login" != "$self_login" ]] && _extra_flags+=(--remove-assignee "$_prev_login")
 	done < <(printf '%s' "$issue_meta_json" | jq -r '.assignees[].login' 2>/dev/null)
 
-	gh issue edit "$issue_number" --repo "$repo_slug" \
-		"${_edit_flags[@]}" 2>/dev/null || true
+	set_issue_status "$issue_number" "$repo_slug" "queued" "${_extra_flags[@]}" || true
 
 	# Detach worker stdio from the dispatcher (GH#14483).
 	# Without this, background workers inherit the candidate-loop stdin created by
@@ -1487,13 +1491,10 @@ _apply_terminal_blocker() {
 		already_blocked=true
 	fi
 
-	# Add label if not already present
+	# Add label if not already present (t2033: use set_issue_status to atomically
+	# clear all sibling status:* labels, not just available/queued)
 	if [[ "$already_blocked" == "false" ]]; then
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "status:blocked" \
-			--remove-label "status:available" --remove-label "status:queued" 2>/dev/null ||
-			gh issue edit "$issue_number" --repo "$repo_slug" \
-				--add-label "status:blocked" 2>/dev/null || true
+		set_issue_status "$issue_number" "$repo_slug" "blocked" || true
 	fi
 
 	# Post comment if not already posted (idempotent — safe against concurrent pulses)

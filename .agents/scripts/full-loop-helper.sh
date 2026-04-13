@@ -791,7 +791,7 @@ _post_merge_summary() {
 	return 0
 }
 
-# Label the linked issue as in-review, removing in-progress/queued labels.
+# Label the linked issue as in-review, removing all sibling status labels (t2033).
 # Arguments: issue_number, repo
 _label_issue_in_review() {
 	local issue_number="$1" repo="$2"
@@ -799,10 +799,7 @@ _label_issue_in_review() {
 	local issue_state=""
 	issue_state=$(gh issue view "$issue_number" --repo "$repo" --json state -q '.state' 2>/dev/null || echo "")
 	if [[ "$issue_state" == "OPEN" ]]; then
-		gh issue edit "$issue_number" --repo "$repo" \
-			--add-label "status:in-review" \
-			--remove-label "status:in-progress" \
-			--remove-label "status:queued" >/dev/null 2>&1 || true
+		set_issue_status "$issue_number" "$repo" "in-review" >/dev/null 2>&1 || true
 	fi
 	return 0
 }
