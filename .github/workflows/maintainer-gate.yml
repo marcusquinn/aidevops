@@ -161,23 +161,34 @@ jobs:
             exit 0
           fi
 
-          if [[ -z "$LINKED_ISSUES" ]]; then
           # ---------------------------------------------------------------
           # Check -1: origin:interactive — implied maintainer approval
           # GH#18285 post-mortem: PRs created during interactive maintainer
           # sessions carry origin:interactive. The maintainer was present and
           # directing the work — no separate cryptographic approval is needed.
           #
+          # t2030: applies to ALL PRs (with or without linked issues). The
+          # previous placement was nested inside `if [[ -z "$LINKED_ISSUES" ]]`,
+          # which was a documented-vs-implemented mismatch — build.txt says
+          # "PRs tagged origin:interactive pass the maintainer gate
+          # automatically when the PR author is OWNER or MEMBER", full stop.
+          # The nested placement narrowed the rule to "only PRs with no
+          # linked issues", making the common maintainer-triages-external-bug
+          # flow still hit the full linked-issue gate despite being the exact
+          # case the rule was supposed to cover.
+          #
           # Security gate: ONLY passes for OWNER or MEMBER author_association.
           # COLLABORATOR is excluded — write-access contributors must still go
           # through the normal gate. A contributor could apply origin:interactive
           # manually (labels are not protected like origin:worker), so we verify
           # the PR author is actually a maintainer via GitHub's author_association.
+          # The authorship check is unchanged from the pre-t2030 version — the
+          # only change is which PRs reach it.
           # ---------------------------------------------------------------
           if echo "$PR_LABELS" | grep -q 'origin:interactive'; then
             if [[ "$PR_AUTHOR_ASSOCIATION" == "OWNER" ]] || \
                [[ "$PR_AUTHOR_ASSOCIATION" == "MEMBER" ]]; then
-              echo "PASS: PR #$PR_NUMBER has origin:interactive and author is maintainer ($PR_AUTHOR_ASSOCIATION) — implied approval"
+              echo "PASS: PR #$PR_NUMBER has origin:interactive and author is maintainer ($PR_AUTHOR_ASSOCIATION) — implied approval (t2030: applies to linked-issue PRs too)"
               gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
                 --method POST \
                 -f state=success \
@@ -190,6 +201,7 @@ jobs:
             fi
           fi
 
+          if [[ -z "$LINKED_ISSUES" ]]; then
             echo "No linked issues found — gate passes (no issues to check)"
             echo "blocked=false" >> "$GITHUB_OUTPUT"
             echo "reason=" >> "$GITHUB_OUTPUT"
