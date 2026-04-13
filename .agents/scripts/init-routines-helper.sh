@@ -18,12 +18,17 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# Colors
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+# Colors (guarded — GH#18702)
+# When this helper is sourced from setup.sh (via _routines.sh), the parent
+# shell has already sourced shared-constants.sh which declares these as
+# readonly. Unguarded assignment would fail under `set -Eeuo pipefail` and
+# kill the whole setup.sh run. Use the `${VAR+x}` guard which skips the
+# assignment when the variable is already set (readonly or not).
+[[ -z "${GREEN+x}" ]] && GREEN='\033[0;32m'
+[[ -z "${BLUE+x}" ]] && BLUE='\033[0;34m'
+[[ -z "${YELLOW+x}" ]] && YELLOW='\033[1;33m'
+[[ -z "${RED+x}" ]] && RED='\033[0;31m'
+[[ -z "${NC+x}" ]] && NC='\033[0m'
 
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[OK]${NC} $1"; }
