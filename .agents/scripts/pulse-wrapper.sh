@@ -1135,6 +1135,19 @@ main() {
 	# LLM failed to execute merge steps or the prefetch showed 0 PRs.
 	run_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
 		merge_ready_prs_all_repos || true
+	# Accumulate health counters written by merge_ready_prs_all_repos (GH#18571, GH#15107).
+	# The function runs in a subshell via run_stage_with_timeout, so variable
+	# updates are lost. Read the temp file it writes and accumulate here.
+	local _merge_health_file="${TMPDIR:-/tmp}/pulse-health-merge-$$.tmp"
+	if [[ -f "$_merge_health_file" ]]; then
+		local _mhf_merged=0 _mhf_closed=0
+		read -r _mhf_merged _mhf_closed <"$_merge_health_file" || true
+		[[ "$_mhf_merged" =~ ^[0-9]+$ ]] || _mhf_merged=0
+		[[ "$_mhf_closed" =~ ^[0-9]+$ ]] || _mhf_closed=0
+		_PULSE_HEALTH_PRS_MERGED=$((_PULSE_HEALTH_PRS_MERGED + _mhf_merged))
+		_PULSE_HEALTH_PRS_CLOSED_CONFLICTING=$((_PULSE_HEALTH_PRS_CLOSED_CONFLICTING + _mhf_closed))
+		rm -f "$_merge_health_file" || true
+	fi
 
 	# Dependency graph cache (t1935): build once per cycle so that
 	# is_blocked_by_unresolved() can resolve blocker state without API calls.
