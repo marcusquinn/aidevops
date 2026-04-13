@@ -1124,6 +1124,30 @@ _setup_post_setup_steps() {
 	return 0
 }
 
+# Print the completion sentinel. This is the canonical "setup.sh finished all
+# phases" marker — any caller that needs to detect silent early-termination
+# (e.g., t2022-class bugs where a sourced helper's set -e propagates a
+# readonly assignment failure and kills the parent) should grep log output
+# for the literal "[SETUP_COMPLETE]" prefix.
+#
+# Format is intentionally stable and parseable. Do NOT add human-readable
+# decoration or move this function without updating:
+#   .agents/scripts/verify-setup-log.sh       (the consumer)
+#   tests/test-setup-completion-sentinel.sh   (the contract guard)
+#
+# GH#18492 / t2026.
+print_setup_complete_sentinel() {
+	local _version="unknown"
+	if [[ -r "${INSTALL_DIR}/VERSION" ]]; then
+		_version="$(head -n1 "${INSTALL_DIR}/VERSION" 2>/dev/null || printf 'unknown')"
+	fi
+	local _mode="non-interactive"
+	[[ "${NON_INTERACTIVE:-false}" != "true" ]] && _mode="interactive"
+	printf '[SETUP_COMPLETE] aidevops setup.sh v%s finished all phases (mode=%s)\n' \
+		"$_version" "$_mode"
+	return 0
+}
+
 # Main setup function — orchestrates init, mode dispatch, and post-setup.
 main() {
 	# Bootstrap first (handles curl install)
@@ -1154,6 +1178,13 @@ main() {
 	fi
 
 	_setup_post_setup_steps "$_os"
+
+	# GH#18492 / t2026: completion sentinel. Must be the last output of a
+	# successful run — any silent early-termination will leave this absent
+	# from the log. Consumed by .agents/scripts/verify-setup-log.sh and
+	# enforced as the regression contract by
+	# tests/test-setup-completion-sentinel.sh.
+	print_setup_complete_sentinel
 
 	return 0
 }

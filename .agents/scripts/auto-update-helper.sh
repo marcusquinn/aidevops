@@ -1338,9 +1338,43 @@ _cmd_check_perform_update() {
 
 	# Run setup.sh non-interactively to deploy agents
 	log_info "Running setup.sh --non-interactive..."
-	if ! bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
-		log_error "setup.sh failed (exit code: $?)"
+	local _setup_exit=0
+	bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1 || _setup_exit=$?
+
+	# GH#18492 / t2026: verify the completion sentinel regardless of exit
+	# code. "exit non-zero AND no sentinel" is the t2022-class silent
+	# termination (e.g., a sourced helper's set -e propagates a readonly
+	# assignment failure that kills the parent script mid-run). "exit 0 but
+	# no sentinel" would indicate a subshell swallowed a failure — rare but
+	# possible, and we want to catch it as a distinct anomaly.
+	#
+	# Capture the verifier's combined output into a variable first, then
+	# append to the log file, to avoid a read-write-in-pipeline warning
+	# (SC2094). The verifier reads $LOG_FILE; setup.sh has already finished
+	# writing to it by this point so there's no real race, but capturing
+	# keeps shellcheck happy and is clearer.
+	local _sentinel_ok=0
+	local _verifier="$INSTALL_DIR/.agents/scripts/verify-setup-log.sh"
+	if [[ -x "$_verifier" ]]; then
+		local _verify_out=""
+		_verify_out=$(bash "$_verifier" "$LOG_FILE" 2>&1) || _sentinel_ok=$?
+		if [[ -n "$_verify_out" ]]; then
+			printf '%s\n' "$_verify_out" >>"$LOG_FILE"
+		fi
+	fi
+
+	if [[ "$_setup_exit" -ne 0 ]]; then
+		log_error "setup.sh failed (exit code: $_setup_exit)"
+		if [[ "$_sentinel_ok" -ne 0 ]]; then
+			log_error "setup.sh did not reach completion sentinel — forensic tail written to $LOG_FILE by verify-setup-log.sh"
+		fi
 		update_state "update" "$remote" "setup_failed"
+		return 1
+	fi
+
+	if [[ "$_sentinel_ok" -ne 0 ]]; then
+		log_error "setup.sh exited 0 but did not reach completion sentinel — silent termination, forensic tail in $LOG_FILE"
+		update_state "update" "$remote" "setup_sentinel_missing"
 		return 1
 	fi
 
