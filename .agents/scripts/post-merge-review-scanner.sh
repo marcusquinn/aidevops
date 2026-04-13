@@ -243,7 +243,16 @@ create_issue() {
 	# findings can have false premises that no amount of body context
 	# rescues. The maintainer either approves (removes label, adds tier),
 	# rejects (closes), or reframes scope before any worker runs.
-	local label_list="$SCANNER_LABEL,source:review-scanner"
+	#
+	# GH#18670 (Fix 7): hardcode origin:worker here as defence in depth
+	# against pulse-wrapper.sh forgetting to export AIDEVOPS_HEADLESS=true
+	# OR against this script being invoked directly from a dev shell
+	# (test runs, manual triage). gh_create_issue deduplicates labels
+	# server-side so there is no harm if session_origin_label() also
+	# produces origin:worker. The hardcoding is a source-of-truth
+	# assertion: this scanner is by definition pulse-only output and
+	# should never ship origin:interactive regardless of caller context.
+	local label_list="$SCANNER_LABEL,source:review-scanner,origin:worker"
 	if [[ "$SCANNER_NEEDS_REVIEW" == "true" ]]; then
 		gh label create "needs-maintainer-review" --repo "$repo" \
 			--description "Requires human triage before worker dispatch" \

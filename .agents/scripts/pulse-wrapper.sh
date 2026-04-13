@@ -930,6 +930,26 @@ ROUTINE_SCHEDULE_HELPER="${SCRIPT_DIR}/routine-schedule-helper.sh"
 ROUTINE_LOG_HELPER="${SCRIPT_DIR}/routine-log-helper.sh"
 
 main() {
+	# GH#18670 (Fix 7 — session origin declaration): declare this process
+	# as headless BEFORE anything else runs, so every child shell stage
+	# (post-merge-review-scanner, pulse-triage consolidated-issue, pulse-
+	# dispatch-core simplification-debt, quality-debt-helper, etc.) sees
+	# the env var and detect_session_origin() returns "worker". Without
+	# this, shell stages running in the pulse wrapper's own process find
+	# no headless signal and default to "interactive" (shared-constants.sh
+	# line 796), which makes gh_create_issue label new issues with
+	# origin:interactive AND auto-assign the maintainer via
+	# _gh_wrapper_auto_assignee() — and then GH#18352's dedup guard
+	# (origin:interactive + maintainer assignee → blocked) drains the
+	# queue indefinitely. Placing the export at the very top of main()
+	# covers --self-check, all pulse stages, and any future stages that
+	# may be added. The scope is limited to main() so that callers
+	# sourcing pulse-wrapper.sh for testing (rather than executing main)
+	# do not inherit the env var. Child processes inherit it via normal
+	# POSIX env propagation. This is a declarative source-of-truth: the
+	# pulse KNOWS it is headless; we simply stop pretending otherwise.
+	export AIDEVOPS_HEADLESS=true
+
 	# Phase 0 (t1963, GH#18357): --self-check short-circuit for CI, pre-edit
 	# verification, and post-install smoke testing. Runs before any lock,
 	# state mutation, or side effect. Sources are already in place (the
