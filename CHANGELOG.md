@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.7] - 2026-04-13
+
+### Changed
+
+- fix(pulse-dep-graph): respect non-dep blocks when auto-unblocking (#18505)
+
 ## [3.7.6] - 2026-04-13
 
 ### Added
