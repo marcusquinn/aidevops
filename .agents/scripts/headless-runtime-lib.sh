@@ -1186,6 +1186,126 @@ _release_dispatch_claim() {
 }
 
 #######################################
+# Acquire the fast-fail mkdir lock with retries.
+#
+# Args:
+#   $1 - lock_dir path
+#   $2 - issue_number (for warning message)
+#   $3 - repo_slug (for warning message)
+# Returns: 0=acquired, 1=timed out
+#######################################
+_fast_fail_acquire_lock() {
+	local lock_dir="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local retries=0
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		retries=$((retries + 1))
+		if [[ "$retries" -ge 50 ]]; then
+			print_warning "[fast-fail] lock timeout for #${issue_number} (${repo_slug})"
+			return 1
+		fi
+		sleep 0.1
+	done
+	return 0
+}
+
+#######################################
+# Read existing count and backoff from fast-fail state file.
+# Stale entries (older than expiry_secs) are treated as absent.
+#
+# Args:
+#   $1 - state_file path
+#   $2 - key (repo_slug/issue_number)
+#   $3 - now (epoch seconds)
+#   $4 - expiry_secs
+# Sets globals: _FAST_FAIL_EXISTING_COUNT, _FAST_FAIL_EXISTING_BACKOFF
+#######################################
+_fast_fail_read_state() {
+	local state_file="$1"
+	local key="$2"
+	local now="$3"
+	local expiry_secs="$4"
+	_FAST_FAIL_EXISTING_COUNT=0
+	_FAST_FAIL_EXISTING_BACKOFF=0
+	if [[ ! -f "$state_file" ]]; then
+		return 0
+	fi
+	local entry=""
+	entry=$(jq -r --arg k "$key" '.[$k] // empty' "$state_file" 2>/dev/null) || entry=""
+	if [[ -z "$entry" ]]; then
+		return 0
+	fi
+	local entry_ts=""
+	entry_ts=$(printf '%s' "$entry" | jq -r '.ts // 0' 2>/dev/null) || entry_ts=0
+	# Expire stale entries
+	if [[ $((now - entry_ts)) -ge "$expiry_secs" ]]; then
+		return 0
+	fi
+	_FAST_FAIL_EXISTING_COUNT=$(printf '%s' "$entry" | jq -r '.count // 0' 2>/dev/null) || _FAST_FAIL_EXISTING_COUNT=0
+	_FAST_FAIL_EXISTING_BACKOFF=$(printf '%s' "$entry" | jq -r '.backoff_secs // 0' 2>/dev/null) || _FAST_FAIL_EXISTING_BACKOFF=0
+	return 0
+}
+
+#######################################
+# Write updated fast-fail state atomically via tmp+mv.
+#
+# Args:
+#   $1  - state_file path
+#   $2  - state_dir path
+#   $3  - key (repo_slug/issue_number)
+#   $4  - new_count
+#   $5  - now (epoch seconds)
+#   $6  - reason
+#   $7  - retry_after (epoch seconds)
+#   $8  - new_backoff (seconds)
+#   $9  - crash_type (may be empty)
+#######################################
+_fast_fail_write_state() {
+	local state_file="$1"
+	local state_dir="$2"
+	local key="$3"
+	local new_count="$4"
+	local now="$5"
+	local reason="$6"
+	local retry_after="$7"
+	local new_backoff="$8"
+	local crash_type="$9"
+	local updated_state=""
+	if [[ -f "$state_file" ]]; then
+		updated_state=$(jq --arg k "$key" \
+			--argjson count "$new_count" \
+			--argjson ts "$now" \
+			--arg reason "$reason" \
+			--argjson retry_after "$retry_after" \
+			--argjson backoff_secs "$new_backoff" \
+			'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' \
+			"$state_file" 2>/dev/null) || updated_state=""
+	else
+		updated_state=$(printf '{}' | jq --arg k "$key" \
+			--argjson count "$new_count" \
+			--argjson ts "$now" \
+			--arg reason "$reason" \
+			--argjson retry_after "$retry_after" \
+			--argjson backoff_secs "$new_backoff" \
+			--arg crash_type "${crash_type:-}" \
+			'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type}' \
+			2>/dev/null) || updated_state=""
+	fi
+	if [[ -z "$updated_state" ]]; then
+		return 0
+	fi
+	local tmp_file=""
+	tmp_file=$(mktemp "${state_dir}/.fast-fail-counter.XXXXXX" 2>/dev/null) || tmp_file=""
+	if [[ -z "$tmp_file" ]]; then
+		return 0
+	fi
+	printf '%s\n' "$updated_state" >"$tmp_file" 2>/dev/null &&
+		mv "$tmp_file" "$state_file" 2>/dev/null || rm -f "$tmp_file" 2>/dev/null
+	return 0
+}
+
+#######################################
 # Report worker failure to the shared fast-fail counter and trigger
 # tier escalation when threshold is reached.
 #
@@ -1202,6 +1322,7 @@ _release_dispatch_claim() {
 # Args:
 #   $1 - session_key (e.g., "issue-marcusquinn-aidevops-17642")
 #   $2 - failure reason (premature_exit, rate_limit, etc.)
+#   $3 - crash_type (optional, e.g., "overwhelmed")
 #######################################
 _report_failure_to_fast_fail() {
 	local session_key="$1"
@@ -1229,15 +1350,7 @@ _report_failure_to_fast_fail() {
 
 	# Acquire lock (shared with pulse-wrapper.sh and worker-watchdog.sh)
 	local lock_dir="${state_file}.lockdir"
-	local retries=0
-	while ! mkdir "$lock_dir" 2>/dev/null; do
-		retries=$((retries + 1))
-		if [[ "$retries" -ge 50 ]]; then
-			print_warning "[fast-fail] lock timeout for #${issue_number} (${repo_slug})"
-			return 0
-		fi
-		sleep 0.1
-	done
+	_fast_fail_acquire_lock "$lock_dir" "$issue_number" "$repo_slug" || return 0
 
 	local key now
 	key="${repo_slug}/${issue_number}"
@@ -1247,22 +1360,10 @@ _report_failure_to_fast_fail() {
 	local max_backoff="${FAST_FAIL_MAX_BACKOFF_SECS:-604800}"
 	local expiry_secs="${FAST_FAIL_EXPIRY_SECS:-604800}"
 
-	# Read current state -- reuse watchdog's helper if available, else inline
-	local existing_count=0
-	local existing_backoff=0
-	if [[ -f "$state_file" ]]; then
-		local entry=""
-		entry=$(jq -r --arg k "$key" '.[$k] // empty' "$state_file" 2>/dev/null) || entry=""
-		if [[ -n "$entry" ]]; then
-			local entry_ts=""
-			entry_ts=$(printf '%s' "$entry" | jq -r '.ts // 0' 2>/dev/null) || entry_ts=0
-			# Expire stale entries
-			if [[ $((now - entry_ts)) -lt "$expiry_secs" ]]; then
-				existing_count=$(printf '%s' "$entry" | jq -r '.count // 0' 2>/dev/null) || existing_count=0
-				existing_backoff=$(printf '%s' "$entry" | jq -r '.backoff_secs // 0' 2>/dev/null) || existing_backoff=0
-			fi
-		fi
-	fi
+	# Read current state -- sets _FAST_FAIL_EXISTING_COUNT and _FAST_FAIL_EXISTING_BACKOFF
+	_fast_fail_read_state "$state_file" "$key" "$now" "$expiry_secs"
+	local existing_count="$_FAST_FAIL_EXISTING_COUNT"
+	local existing_backoff="$_FAST_FAIL_EXISTING_BACKOFF"
 
 	# Non-rate-limit failures: increment + exponential backoff
 	local new_count=$((existing_count + 1))
@@ -1271,36 +1372,8 @@ _report_failure_to_fast_fail() {
 	local retry_after=$((now + new_backoff))
 
 	# Write updated state atomically (tmp + mv)
-	local updated_state=""
-	if [[ -f "$state_file" ]]; then
-		updated_state=$(jq --arg k "$key" \
-			--argjson count "$new_count" \
-			--argjson ts "$now" \
-			--arg reason "$reason" \
-			--argjson retry_after "$retry_after" \
-			--argjson backoff_secs "$new_backoff" \
-			'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' \
-			"$state_file" 2>/dev/null) || updated_state=""
-	else
-		updated_state=$(printf '{}' | jq --arg k "$key" \
-			--argjson count "$new_count" \
-			--argjson ts "$now" \
-			--arg reason "$reason" \
-			--argjson retry_after "$retry_after" \
-			--argjson backoff_secs "$new_backoff" \
-			--arg crash_type "${crash_type:-}" \
-			'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type}' \
-			2>/dev/null) || updated_state=""
-	fi
-
-	if [[ -n "$updated_state" ]]; then
-		local tmp_file=""
-		tmp_file=$(mktemp "${state_dir}/.fast-fail-counter.XXXXXX" 2>/dev/null) || tmp_file=""
-		if [[ -n "$tmp_file" ]]; then
-			printf '%s\n' "$updated_state" >"$tmp_file" 2>/dev/null &&
-				mv "$tmp_file" "$state_file" 2>/dev/null || rm -f "$tmp_file" 2>/dev/null
-		fi
-	fi
+	_fast_fail_write_state "$state_file" "$state_dir" "$key" "$new_count" "$now" \
+		"$reason" "$retry_after" "$new_backoff" "$crash_type"
 
 	# Release lock
 	rmdir "$lock_dir" 2>/dev/null || true
