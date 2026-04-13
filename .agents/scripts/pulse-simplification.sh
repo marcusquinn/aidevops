@@ -1574,10 +1574,14 @@ ${ratchet_output}
 **Files to Modify:**
 - \`EDIT: .agents/configs/complexity-thresholds.conf\` — lower the thresholds listed above
 
+**Do NOT modify:**
+- \`.agents/configs/simplification-state.json\` — this is a maintenance registry updated by the pulse on \`main\` only. Including it in a focused ratchet-down PR causes diff noise across hundreds of unrelated entries and increases merge-conflict surface (GH#18622). The pulse refreshes it automatically after the PR merges. If it appears modified in your worktree, do not \`git add\` it.
+
 **Implementation Steps:**
 1. For each proposed threshold, update the value in \`complexity-thresholds.conf\`
 2. Add a ratchet-down comment above the updated value documenting the change (e.g., \`# Ratcheted down to NNN (GH#NNNN): actual violations NNN + 2 buffer\`)
 3. Do NOT remove existing bump history comments — they are the audit trail
+4. Verify the state file is NOT staged before committing: \`git diff --cached --name-only | grep -v simplification-state\`
 
 **Verification:**
 \`\`\`bash
@@ -1585,6 +1589,8 @@ ${ratchet_output}
 grep -E 'FUNCTION_COMPLEXITY_THRESHOLD|NESTING_DEPTH_THRESHOLD|FILE_SIZE_THRESHOLD|BASH32_COMPAT_THRESHOLD' .agents/configs/complexity-thresholds.conf
 # Confirm CI would pass with new values
 .agents/scripts/complexity-scan-helper.sh ratchet-check . 5
+# Confirm state file is NOT staged in the PR commit
+git diff --cached --name-only | grep -v 'simplification-state.json'
 \`\`\`" >/dev/null 2>&1 || true
 		else
 			echo "[pulse-wrapper] ratchet-check: ratchet-down PR already open, skipping issue creation" >>"$LOGFILE"

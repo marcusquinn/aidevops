@@ -152,6 +152,14 @@ _simplification_state_record() {
 # in state, recompute git hash-object. If the hash matches, do nothing. If it
 # differs, update the hash AND increment the pass counter (the file was changed
 # by a simplification PR that merged since the last scan).
+#
+# BRANCH GUARD (GH#18622): This function must only write state when on the main
+# branch. Running it on a feature branch would pollute PR diffs with hundreds of
+# unrelated hash updates, increasing merge-conflict surface. The function checks
+# the current branch and skips the write phase (but not the read/check) when
+# not on main. _simplification_state_push has a matching guard; this guard
+# prevents even the in-memory tmp_state from being persisted to disk.
+#
 # Arguments: $1 - repo_path, $2 - state_file path
 # Returns: 0 on success. Outputs refreshed count to stdout.
 _simplification_state_refresh() {
@@ -160,6 +168,18 @@ _simplification_state_refresh() {
 	local refreshed=0
 
 	if [[ ! -f "$state_file" ]]; then
+		echo "0"
+		return 0
+	fi
+
+	# Branch guard: skip write phase when not on main (GH#18622).
+	# State refresh is a main-branch-only maintenance operation. On feature branches,
+	# return 0 (no changes) so the caller does not trigger a state push commit.
+	local main_branch current_branch
+	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="main"
+	current_branch=$(git -C "$repo_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || current_branch=""
+	if [[ -n "$current_branch" && "$current_branch" != "$main_branch" && "$current_branch" != "HEAD" ]]; then
+		echo "[pulse-wrapper] simplification-state: skipping refresh write — not on $main_branch (on $current_branch); state is read-only on PR branches (GH#18622)" >>"${LOGFILE:-/dev/null}"
 		echo "0"
 		return 0
 	fi
