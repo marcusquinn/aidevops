@@ -1292,39 +1292,6 @@ has_open_pr() {
 }
 
 #######################################
-# Check whether an issue has an active claim state.
-# Active = OPEN + has assignee + has status:queued or status:in-progress label.
-# Args: $1 = issue number, $2 = repo slug
-# Returns: exit 0 if actively claimed, exit 1 otherwise
-# Outputs: issue_meta_json on stdout (for reuse by caller)
-#######################################
-_get_active_claim_meta() {
-	local issue_number="$1"
-	local repo_slug="$2"
-
-	local issue_meta_json
-	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" --json state,assignees,labels 2>/dev/null) || issue_meta_json=""
-	if [[ -z "$issue_meta_json" ]]; then
-		return 1
-	fi
-
-	local is_open has_assignee has_active_status
-	is_open=$(printf '%s' "$issue_meta_json" | jq -r '.state == "OPEN"' 2>/dev/null)
-	has_assignee=$(printf '%s' "$issue_meta_json" | jq -r '(.assignees | length) > 0' 2>/dev/null)
-	has_active_status=$(printf '%s' "$issue_meta_json" | jq -r '([(.labels // [])[].name] | (index("status:queued") != null or index("status:in-progress") != null))' 2>/dev/null)
-
-	[[ "$is_open" == "true" || "$is_open" == "false" ]] || is_open="false"
-	[[ "$has_assignee" == "true" || "$has_assignee" == "false" ]] || has_assignee="false"
-	[[ "$has_active_status" == "true" || "$has_active_status" == "false" ]] || has_active_status="false"
-
-	if [[ "$is_open" != "true" || "$has_assignee" != "true" || "$has_active_status" != "true" ]]; then
-		return 1
-	fi
-
-	return 0
-}
-
-#######################################
 # Check whether a single dispatch comment is still active (within TTL and
 # backed by a live local worker process).
 #
@@ -1414,9 +1381,9 @@ has_dispatch_comment() {
 	fi
 
 	# GH#17503: No active-claim-state gate — dispatch comment IS the claim.
-	# Removed the _get_active_claim_meta() check that required OPEN + assigned +
-	# status:queued/in-progress. That gate allowed stale recovery to destroy the
-	# claim state and bypass this check entirely.
+	# Active-claim pre-gate was removed: it required OPEN + assigned +
+	# status:queued/in-progress, but stale recovery could destroy that state and
+	# bypass this check entirely.
 
 	local max_age="${DISPATCH_COMMENT_MAX_AGE:-600}" # 10 min (was 30 min/1800s — reduced to match worker lifecycle; crash recovery was wasting 28 min per crash)
 	local now_epoch
