@@ -120,10 +120,20 @@ build_dependency_graph_cache() {
 					jq --arg tid "$task_id_in_title" --argjson n "$num" '.[$tid] = $n' 2>/dev/null) || true
 			fi
 
-			# Extract blocked-by task IDs and issue numbers from body
-			local blocker_tids blocker_nums
-			blocker_tids=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*t([0-9]+)' | grep -oE '[0-9]+' || true)
-			blocker_nums=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*#([0-9]+)' | grep -oE '[0-9]+' || true)
+			# Extract blocked-by task IDs and issue numbers from body.
+			# Two-step parse tolerates both the markdown format emitted by
+			# brief-template.md (`**Blocked by:** ` + backtick-quoted IDs) and
+			# the bare TODO.md format (`blocked-by:tNNN,tMMM`). The first step
+			# locates every blocked-by line; the second step pulls every tNNN
+			# and #NNN token from those lines. This captures comma-separated
+			# IDs that the original single-match regex silently dropped (t2015,
+			# GH#18429). Uses POSIX `[^[:cntrl:]]` rather than `[^\n]` because
+			# BSD grep on macOS does not expand \n inside bracket expressions
+			# (same class of bug as t1983 BSD awk).
+			local blocker_lines blocker_tids blocker_nums
+			blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*' || true)
+			blocker_tids=$(printf '%s' "$blocker_lines" | grep -oE 't[0-9]+' | grep -oE '[0-9]+' || true)
+			blocker_nums=$(printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true)
 
 			if [[ -n "$blocker_tids" || -n "$blocker_nums" ]]; then
 				local tid_arr num_arr
