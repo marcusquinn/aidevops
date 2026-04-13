@@ -238,15 +238,15 @@ _classify_stale_recovery_crash_type() {
 #   0 - duplicate detected (do NOT dispatch)
 #   1 - no duplicate (safe to dispatch)
 #######################################
-check_dispatch_dedup() {
+#######################################
+# Layer 1 (GH#6696): in-flight dispatch ledger check.
+# Catches workers in the 10-15 min gap between dispatch and PR creation.
+# Arguments: issue_number, repo_slug
+# Exit: 0 = blocked (duplicate), 1 = continue to next layer
+#######################################
+_dedup_layer1_ledger_check() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local title="$3"
-	local issue_title="${4:-}"
-	local self_login="${5:-}"
-
-	# Layer 1 (GH#6696): in-flight dispatch ledger — catches workers between
-	# dispatch and PR creation (the 10-15 min gap that caused duplicate dispatches)
 	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 	if [[ -x "$ledger_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
 		if "$ledger_helper" check-issue --issue "$issue_number" --repo "$repo_slug" >/dev/null 2>&1; then
@@ -254,14 +254,31 @@ check_dispatch_dedup() {
 			return 0
 		fi
 	fi
+	return 1
+}
 
-	# Layer 2: exact repo+issue process match
+#######################################
+# Layer 2: exact repo+issue process match.
+# Arguments: issue_number, repo_slug
+# Exit: 0 = blocked, 1 = continue
+#######################################
+_dedup_layer2_process_match() {
+	local issue_number="$1"
+	local repo_slug="$2"
 	if has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
 		echo "[pulse-wrapper] Dedup: worker already running for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		return 0
 	fi
+	return 1
+}
 
-	# Layer 3: normalized title key match via dispatch-dedup-helper
+#######################################
+# Layer 3: normalized title key match via dispatch-dedup-helper.
+# Arguments: title
+# Exit: 0 = blocked, 1 = continue
+#######################################
+_dedup_layer3_title_match() {
+	local title="$1"
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ -n "$title" ]]; then
 		if "$dedup_helper" is-duplicate "$title" >/dev/null 2>&1; then
@@ -269,10 +286,21 @@ check_dispatch_dedup() {
 			return 0
 		fi
 	fi
+	return 1
+}
 
-	# Layer 4: open or merged PR evidence for this issue/task — if a worker
-	# already produced a PR (open or merged), don't dispatch another worker.
-	# Previously only checked --state merged, missing open PRs entirely.
+#######################################
+# Layer 4: open or merged PR evidence for this issue/task.
+# If a worker already produced a PR (open or merged), do not dispatch another.
+# Previously only checked --state merged, missing open PRs entirely.
+# Arguments: issue_number, repo_slug, issue_title
+# Exit: 0 = blocked, 1 = continue
+#######################################
+_dedup_layer4_pr_evidence() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_title="$3"
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	local dedup_helper_output=""
 	if [[ -x "$dedup_helper" ]]; then
 		if dedup_helper_output=$("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>>"$LOGFILE"); then
@@ -284,15 +312,22 @@ check_dispatch_dedup() {
 			return 0
 		fi
 	fi
+	return 1
+}
 
-	# Layer 5 (GH#11141): cross-machine dispatch comment check — detects
-	# "Dispatching worker" comments posted by other runners. This is the
-	# persistent cross-machine signal that survives beyond the claim lock's
-	# 8-second window. The GH#11141 incident: marcusquinn dispatched at
-	# 02:36, johnwaldo dispatched at 03:18 (42 min later). The claim lock
-	# had long expired, the ledger is local-only, and the assignee guard
-	# excluded the repo owner. But the "Dispatching worker" comment was
-	# sitting right there on the issue — visible to all runners.
+#######################################
+# Layer 5 (GH#11141): cross-machine dispatch comment check.
+# Detects "Dispatching worker" comments posted by other runners — the
+# persistent cross-machine signal that survives beyond the claim lock's
+# 8-second window. See GH#11141 incident for rationale.
+# Arguments: issue_number, repo_slug, self_login
+# Exit: 0 = blocked, 1 = continue
+#######################################
+_dedup_layer5_dispatch_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
 		local dispatch_comment_output=""
 		if dispatch_comment_output=$("$dedup_helper" has-dispatch-comment "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE"); then
@@ -300,11 +335,21 @@ check_dispatch_dedup() {
 			return 0
 		fi
 	fi
+	return 1
+}
 
-	# Layer 6 (GH#6891): cross-machine assignee guard — prevents runners from
-	# dispatching workers for issues already assigned to another login. Only
-	# self_login is excluded; repo owner and maintainer are NOT excluded since
-	# they may also be runners (GH#11141 fix — reverts the GH#10521 exclusion).
+#######################################
+# Layer 6 (GH#6891): cross-machine assignee guard + stale recovery.
+# Prevents runners from dispatching workers for issues already assigned to
+# another login. On STALE_RECOVERED, records fast-fail (t1927/t2042).
+# Arguments: issue_number, repo_slug, self_login
+# Exit: 0 = blocked, 1 = continue
+#######################################
+_dedup_layer6_assignee_and_stale() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
 		local assigned_output=""
 		if assigned_output=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE"); then
@@ -328,25 +373,31 @@ check_dispatch_dedup() {
 			fast_fail_record "$issue_number" "$repo_slug" "stale_timeout" "" "$_stale_crash_type" || true
 		fi
 	fi
+	return 1
+}
 
-	# Layer 7 (GH#11086): cross-machine optimistic claim lock — the final safety
-	# net for multi-runner environments. Posts a plain-text claim comment on the issue,
-	# sleeps the consensus window (default 8s), then checks if this runner's claim
-	# is the oldest. Only the first claimant proceeds; others back off.
-	#
-	# Previously this was an LLM-instructed step in pulse.md that runners could
-	# skip. The GH#11086 incident: marcusquinn dispatched at 23:07:43, johnwaldo
-	# dispatched at 23:08:28 — 45 seconds apart on the same issue because the
-	# LLM skipped the claim step. Moving it here makes it deterministic.
-	#
-	# Exit codes from claim: 0=won, 1=lost, 2=error (fail-open).
-	# On error (exit 2), we allow dispatch to proceed — better to risk a rare
-	# duplicate than to block all dispatch on a transient GitHub API failure.
-	#
-	# GH#15317: Capture claim output to extract comment_id for cleanup after
-	# the deterministic dispatch comment is posted. Uses the caller's
-	# _claim_comment_id variable (declared in dispatch_with_dedup) via bash
-	# dynamic scoping — do NOT declare local here or the value is lost on return.
+#######################################
+# Layer 7 (GH#11086): cross-machine optimistic claim lock.
+# Final safety net for multi-runner environments. Posts a plain-text claim
+# comment, sleeps the consensus window, and checks if this runner's claim
+# is the oldest. See the GH#11086 incident (23:07:43 vs 23:08:28 race).
+#
+# GH#15317: Captures claim output to extract comment_id for audit-trail
+# retention. The caller-caller (dispatch_with_dedup) reads _claim_comment_id
+# via bash dynamic scoping — this helper assigns without `local` so the
+# value propagates up two stack frames.
+#
+# Arguments: issue_number, repo_slug, self_login
+# Exit: 0 = blocked, 1 = continue (won claim or fail-open error path)
+#######################################
+_dedup_layer7_claim_lock() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	# GH#15317: reset the dynamically-scoped _claim_comment_id unconditionally
+	# so the dispatch_with_dedup caller always sees a fresh value. Do NOT
+	# declare local here — see function header.
 	_claim_comment_id=""
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
 		# GH#17590: Pre-check for existing claims BEFORE posting our own.
@@ -377,6 +428,28 @@ check_dispatch_dedup() {
 		_claim_comment_id=$(printf '%s' "$claim_output" | sed -n 's/.*comment_id=\([0-9]*\).*/\1/p')
 		# claim_exit 0 = won, proceed to dispatch
 	fi
+	return 1
+}
+
+#######################################
+# Thin orchestrator — runs the 7-layer dedup chain in order.
+# Byte-for-byte behavioural equivalent of the pre-GH#18654 single-function
+# implementation. Each layer returns 0 to block dispatch or 1 to continue.
+#######################################
+check_dispatch_dedup() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local title="$3"
+	local issue_title="${4:-}"
+	local self_login="${5:-}"
+
+	_dedup_layer1_ledger_check "$issue_number" "$repo_slug" && return 0
+	_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
+	_dedup_layer3_title_match "$title" && return 0
+	_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" && return 0
+	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 0
+	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 0
+	_dedup_layer7_claim_lock "$issue_number" "$repo_slug" "$self_login" && return 0
 
 	return 1
 }
