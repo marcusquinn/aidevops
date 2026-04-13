@@ -345,10 +345,15 @@ _normalize_label_invariants() {
 
 		total_checked=$((total_checked + issue_count))
 
-		# Extract rows of (number, status_labels_tsv, tier_labels_tsv,
-		# has_origin_interactive, has_auto_dispatch, created_epoch). One line
-		# per issue, tab-separated fields, space-separated labels within a
-		# field. Keeps jq work outside the hot loop.
+		# Extract rows of (number, status_labels, tier_labels,
+		# has_origin_interactive, has_auto_dispatch, created_epoch).
+		#
+		# DELIMITER CHOICE: use '|' — a non-whitespace character that GitHub
+		# label names cannot contain. Do NOT use @tsv here: bash read with
+		# IFS=$'\t' collapses consecutive tabs because tab is a whitespace
+		# character in bash's field-splitting rules, so empty fields (like
+		# "no status labels" on a tier-polluted issue) silently disappear
+		# and the next field shifts into place, corrupting the parse.
 		local rows
 		rows=$(printf '%s' "$issues_json" | jq -r '
 			.[] | [
@@ -358,12 +363,12 @@ _normalize_label_invariants() {
 				((.labels | map(.name) | index("origin:interactive")) != null | tostring),
 				((.labels | map(.name) | index("auto-dispatch"))      != null | tostring),
 				(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring)
-			] | @tsv
+			] | join("|")
 		' 2>/dev/null) || rows=""
 		[[ -n "$rows" ]] || continue
 
 		local issue_num status_list tier_list has_origin_i has_auto created_epoch
-		while IFS=$'\t' read -r issue_num status_list tier_list has_origin_i has_auto created_epoch; do
+		while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto created_epoch; do
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
 			# ---------- Status invariant ----------

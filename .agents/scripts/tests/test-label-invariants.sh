@@ -1,0 +1,394 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# test-label-invariants.sh — t2040 regression guard.
+#
+# Asserts the three components of the label-invariant subsystem work:
+#
+#   Part 1 — ISSUE_STATUS_LABEL_PRECEDENCE + ISSUE_TIER_LABEL_RANK
+#            arrays are present in shared-constants.sh with the correct
+#            order and 'done' as terminal.
+#
+#   Part 2 — _mark_issue_done() in issue-sync-helper.sh issues exactly
+#            one `gh issue edit` call (atomic) and sets status:done
+#            via set_issue_status passthrough.
+#
+#   Part 3 — _normalize_label_invariants() in pulse-issue-reconcile.sh:
+#            * dual-status reduction picks the highest-precedence label
+#            * 'done' is always preserved (terminal)
+#            * triple-tier reduction picks the highest-rank tier
+#            * single-label issues are a no-op
+#            * triage-missing issues are counted (not auto-fixed)
+#            * counter file is written after the pass
+#
+# Failure history: PR #18519 (t2033) and PR #18441 (t1997) fixed the
+# forward paths for the write-without-remove status bug and the
+# tier-concatenation enrich bug, but 14 already-polluted issues
+# (9 dual-status + 5 multi-tier) needed backfill. This test guards
+# against regression on both the precedence logic and the backfill path.
+
+set -uo pipefail
+
+TEST_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+TEST_RED=$'\033[0;31m'
+TEST_GREEN=$'\033[0;32m'
+TEST_RESET=$'\033[0m'
+
+TESTS_RUN=0
+TESTS_FAILED=0
+
+print_result() {
+	local name="$1" rc="$2" extra="${3:-}"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$rc" -eq 0 ]]; then
+		printf '%sPASS%s %s\n' "$TEST_GREEN" "$TEST_RESET" "$name"
+	else
+		printf '%sFAIL%s %s %s\n' "$TEST_RED" "$TEST_RESET" "$name" "$extra"
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+}
+
+# Sandbox HOME — side-effect-free sourcing + isolate cache writes
+TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "$TEST_ROOT"' EXIT
+export HOME="${TEST_ROOT}/home"
+mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor" "${HOME}/.aidevops/cache"
+export LOGFILE="${HOME}/.aidevops/logs/pulse.log"
+: >"$LOGFILE"
+
+# =============================================================================
+# Part 1 — precedence arrays exist and are correct
+# =============================================================================
+# shellcheck source=/dev/null
+source "${TEST_SCRIPTS_DIR}/shared-constants.sh"
+set +e
+
+if [[ -n "${ISSUE_STATUS_LABEL_PRECEDENCE+x}" ]]; then
+	print_result "ISSUE_STATUS_LABEL_PRECEDENCE is defined" 0
+else
+	print_result "ISSUE_STATUS_LABEL_PRECEDENCE is defined" 1 "(not set)"
+fi
+
+if [[ "${ISSUE_STATUS_LABEL_PRECEDENCE[0]:-}" == "done" ]]; then
+	print_result "ISSUE_STATUS_LABEL_PRECEDENCE[0] is 'done' (terminal)" 0
+else
+	print_result "ISSUE_STATUS_LABEL_PRECEDENCE[0] is 'done' (terminal)" 1 \
+		"(got: '${ISSUE_STATUS_LABEL_PRECEDENCE[0]:-}')"
+fi
+
+# Every core status label must appear in precedence
+all_present=1
+for core in "${ISSUE_STATUS_LABELS[@]}"; do
+	found=0
+	for p in "${ISSUE_STATUS_LABEL_PRECEDENCE[@]}"; do
+		if [[ "$p" == "$core" ]]; then
+			found=1
+			break
+		fi
+	done
+	if [[ "$found" -eq 0 ]]; then
+		all_present=0
+		break
+	fi
+done
+if [[ "$all_present" -eq 1 ]]; then
+	print_result "every core status label is in the precedence array" 0
+else
+	print_result "every core status label is in the precedence array" 1 \
+		"(missing core label '$core')"
+fi
+
+if [[ -n "${ISSUE_TIER_LABEL_RANK+x}" && "${ISSUE_TIER_LABEL_RANK[0]:-}" == "reasoning" &&
+	"${ISSUE_TIER_LABEL_RANK[1]:-}" == "standard" && "${ISSUE_TIER_LABEL_RANK[2]:-}" == "simple" ]]; then
+	print_result "ISSUE_TIER_LABEL_RANK matches dedup-tier-labels.yml order" 0
+else
+	print_result "ISSUE_TIER_LABEL_RANK matches dedup-tier-labels.yml order" 1 \
+		"(got: ${ISSUE_TIER_LABEL_RANK[*]:-})"
+fi
+
+# =============================================================================
+# Part 2 — _mark_issue_done delegates to set_issue_status (single gh call)
+# =============================================================================
+STUB_DIR="${TEST_ROOT}/bin"
+mkdir -p "$STUB_DIR"
+
+# Stub gh that logs every invocation to a file so we can count calls.
+GH_CALLS="${TEST_ROOT}/gh-calls.log"
+: >"$GH_CALLS"
+cat >"${STUB_DIR}/gh" <<'STUB'
+#!/usr/bin/env bash
+# Stub gh — logs every call to $GH_CALLS and returns success
+printf '%s\n' "$*" >>"${GH_CALLS}"
+case "$1" in
+	api)
+		# issue-sync-helper.sh sources shared-constants.sh which references
+		# `gh api user --jq '.login'`. Return a placeholder login.
+		if [[ "$2" == "user" ]]; then
+			echo '{"login":"test-user"}'
+			exit 0
+		fi
+		;;
+	label)
+		# gh label create (used by ensure_status_labels_exist)
+		exit 0
+		;;
+	issue)
+		case "$2" in
+			edit) exit 0 ;;
+			view) echo '{"state":"OPEN","labels":[]}'; exit 0 ;;
+			list) echo '[]'; exit 0 ;;
+		esac
+		;;
+esac
+exit 0
+STUB
+chmod +x "${STUB_DIR}/gh"
+export GH_CALLS
+
+# Source issue-sync-helper.sh to get _mark_issue_done + set_issue_status.
+# NOTE: issue-sync-helper.sh line 29 prepends /usr/local/bin:/usr/bin:/bin
+# to PATH on source, so we must re-prepend STUB_DIR AFTER sourcing or the
+# real gh wins.
+# shellcheck source=/dev/null
+source "${TEST_SCRIPTS_DIR}/issue-sync-helper.sh" >/dev/null 2>&1
+set +e
+export PATH="${STUB_DIR}:${PATH}"
+
+# Call _mark_issue_done — should produce exactly ONE `issue edit` call
+: >"$GH_CALLS"
+_mark_issue_done "owner/repo" "12345" >/dev/null 2>&1
+edit_calls=$(grep -c '^issue edit' "$GH_CALLS" 2>/dev/null || echo 0)
+# Trim whitespace and ensure numeric
+edit_calls="${edit_calls//[^0-9]/}"
+edit_calls="${edit_calls:-0}"
+if [[ "$edit_calls" -eq 1 ]]; then
+	print_result "_mark_issue_done makes exactly ONE gh issue edit call (atomic)" 0
+else
+	print_result "_mark_issue_done makes exactly ONE gh issue edit call (atomic)" 1 \
+		"(got $edit_calls edit calls; log: $(cat "$GH_CALLS"))"
+fi
+
+# That single edit must add status:done and remove every sibling status
+edit_line=$(grep '^issue edit' "$GH_CALLS" | head -1)
+if [[ "$edit_line" == *"--add-label status:done"* ]]; then
+	print_result "_mark_issue_done atomic edit adds status:done" 0
+else
+	print_result "_mark_issue_done atomic edit adds status:done" 1 "(line: '$edit_line')"
+fi
+
+if [[ "$edit_line" == *"--remove-label status:in-review"* &&
+	"$edit_line" == *"--remove-label status:in-progress"* &&
+	"$edit_line" == *"--remove-label status:queued"* ]]; then
+	print_result "_mark_issue_done atomic edit removes all sibling status labels" 0
+else
+	print_result "_mark_issue_done atomic edit removes all sibling status labels" 1 \
+		"(line: '$edit_line')"
+fi
+
+# And it must also clear status:verify-failed (t2040 migration preserved this)
+if [[ "$edit_line" == *"--remove-label status:verify-failed"* ]]; then
+	print_result "_mark_issue_done clears status:verify-failed" 0
+else
+	print_result "_mark_issue_done clears status:verify-failed" 1 "(line: '$edit_line')"
+fi
+
+# =============================================================================
+# Part 3 — _normalize_label_invariants reconciler pass
+# =============================================================================
+# Fresh gh stub that returns a synthetic issue list, then records edit
+# calls so we can assert which issues were fixed.
+REPOS_JSON_FILE="${TEST_ROOT}/repos.json"
+cat >"$REPOS_JSON_FILE" <<'JSON'
+{
+	"initialized_repos": [
+		{"slug": "test/repo", "pulse": true, "local_only": false}
+	],
+	"git_parent_dirs": []
+}
+JSON
+export REPOS_JSON="$REPOS_JSON_FILE"
+export PULSE_QUEUED_SCAN_LIMIT=100
+
+# Synthesize an issue list covering every reconciler case:
+#   #1: dual-status (available + queued) → keep queued (precedence)
+#   #2: triple-status with 'done' (done + in-review + in-progress) → keep done (terminal)
+#   #3: multi-tier (simple + standard + reasoning) → keep reasoning
+#   #4: dual-status with 'blocked' (blocked + queued) → keep queued (blocked is lowest)
+#   #5: single status → no-op
+#   #6: triage-missing (origin:interactive, no tier, no auto-dispatch, no status, old)
+#   #7: triage-missing-but-recent → not counted
+#   #8: triage-missing-but-has-tier → not counted
+OLD_ISO=$(date -u -d '-1 hour' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
+	TZ=UTC date -v-1H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "2026-04-13T00:00:00Z")
+NEW_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+ISSUES_JSON=$(
+	cat <<JSON
+[
+	{"number":1,"labels":[{"name":"status:available"},{"name":"status:queued"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":2,"labels":[{"name":"status:done"},{"name":"status:in-review"},{"name":"status:in-progress"}],"createdAt":"${OLD_ISO}"},
+	{"number":3,"labels":[{"name":"tier:simple"},{"name":"tier:standard"},{"name":"tier:reasoning"}],"createdAt":"${OLD_ISO}"},
+	{"number":4,"labels":[{"name":"status:blocked"},{"name":"status:queued"}],"createdAt":"${OLD_ISO}"},
+	{"number":5,"labels":[{"name":"status:available"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":6,"labels":[{"name":"origin:interactive"}],"createdAt":"${OLD_ISO}"},
+	{"number":7,"labels":[{"name":"origin:interactive"}],"createdAt":"${NEW_ISO}"},
+	{"number":8,"labels":[{"name":"origin:interactive"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"}
+]
+JSON
+)
+ISSUES_JSON_FILE="${TEST_ROOT}/issues.json"
+printf '%s\n' "$ISSUES_JSON" >"$ISSUES_JSON_FILE"
+export ISSUES_JSON_FILE
+
+cat >"${STUB_DIR}/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GH_CALLS}"
+case "$1" in
+	api)
+		# api user --jq '.login'
+		if [[ "$2" == "user" ]]; then
+			echo "test-user"
+			exit 0
+		fi
+		;;
+	issue)
+		case "$2" in
+			list)
+				cat "${ISSUES_JSON_FILE}"
+				exit 0
+				;;
+			edit) exit 0 ;;
+			view) echo '{"state":"OPEN","labels":[]}'; exit 0 ;;
+		esac
+		;;
+	label)
+		exit 0
+		;;
+esac
+exit 0
+STUB
+chmod +x "${STUB_DIR}/gh"
+
+# Source the reconciler now that the stub is in place
+: >"$GH_CALLS"
+# shellcheck source=/dev/null
+source "${TEST_SCRIPTS_DIR}/pulse-issue-reconcile.sh" >/dev/null 2>&1
+set +e
+
+_normalize_label_invariants "test-user" "$REPOS_JSON_FILE" >/dev/null 2>&1
+
+# Count edit calls per issue number
+count_edits_for() {
+	local num="$1"
+	local count
+	count=$(grep -c "^issue edit ${num} " "$GH_CALLS" 2>/dev/null || echo 0)
+	count="${count//[^0-9]/}"
+	echo "${count:-0}"
+}
+
+# Issue #1: dual-status → one edit (set_issue_status = one gh call)
+n1=$(count_edits_for 1)
+if [[ "$n1" -ge 1 ]]; then
+	print_result "reconciler fixes #1 dual-status (keeps 'queued')" 0
+else
+	print_result "reconciler fixes #1 dual-status (keeps 'queued')" 1 "(edit calls: $n1)"
+fi
+
+# The edit for #1 must add queued and remove available
+edit1=$(grep "^issue edit 1 " "$GH_CALLS" | head -1)
+if [[ "$edit1" == *"--add-label status:queued"* && "$edit1" == *"--remove-label status:available"* ]]; then
+	print_result "reconciler #1 survivor is 'queued' (precedence over 'available')" 0
+else
+	print_result "reconciler #1 survivor is 'queued' (precedence over 'available')" 1 "(line: '$edit1')"
+fi
+
+# Issue #2: done + in-review + in-progress → survivor MUST be done (terminal)
+edit2=$(grep "^issue edit 2 " "$GH_CALLS" | head -1)
+if [[ "$edit2" == *"--add-label status:done"* ]]; then
+	print_result "reconciler #2 survivor is 'done' (terminal — wins over in-review)" 0
+else
+	print_result "reconciler #2 survivor is 'done' (terminal — wins over in-review)" 1 "(line: '$edit2')"
+fi
+
+# Issue #3: triple-tier → keep reasoning, remove standard + simple
+edit3=$(grep "^issue edit 3 " "$GH_CALLS" | head -1)
+if [[ "$edit3" == *"--remove-label tier:standard"* && "$edit3" == *"--remove-label tier:simple"* &&
+	"$edit3" != *"--remove-label tier:reasoning"* ]]; then
+	print_result "reconciler #3 keeps tier:reasoning, removes tier:standard and tier:simple" 0
+else
+	print_result "reconciler #3 keeps tier:reasoning, removes tier:standard and tier:simple" 1 "(line: '$edit3')"
+fi
+
+# Issue #4: blocked + queued → keep queued (blocked is lowest-precedence)
+edit4=$(grep "^issue edit 4 " "$GH_CALLS" | head -1)
+if [[ "$edit4" == *"--add-label status:queued"* && "$edit4" == *"--remove-label status:blocked"* ]]; then
+	print_result "reconciler #4 survivor is 'queued' (blocked is lowest precedence)" 0
+else
+	print_result "reconciler #4 survivor is 'queued' (blocked is lowest precedence)" 1 "(line: '$edit4')"
+fi
+
+# Issue #5: single status → no-op (no edit call for this number)
+n5=$(count_edits_for 5)
+if [[ "$n5" -eq 0 ]]; then
+	print_result "reconciler #5 single-label no-op" 0
+else
+	print_result "reconciler #5 single-label no-op" 1 "(edit calls: $n5)"
+fi
+
+# Issue #6, #7, #8: triage-missing count-only (no edits)
+n6=$(count_edits_for 6)
+n7=$(count_edits_for 7)
+n8=$(count_edits_for 8)
+if [[ "$n6" -eq 0 && "$n7" -eq 0 && "$n8" -eq 0 ]]; then
+	print_result "reconciler does not auto-fix triage-missing issues" 0
+else
+	print_result "reconciler does not auto-fix triage-missing issues" 1 "(edits: #6=$n6 #7=$n7 #8=$n8)"
+fi
+
+# Counter file must be written with exact numbers
+COUNTER_FILE="${HOME}/.aidevops/cache/pulse-label-invariants.$(hostname -s 2>/dev/null || echo unknown).json"
+if [[ -f "$COUNTER_FILE" ]]; then
+	print_result "reconciler writes counter file" 0
+else
+	print_result "reconciler writes counter file" 1 "(expected: $COUNTER_FILE)"
+fi
+
+if [[ -f "$COUNTER_FILE" ]]; then
+	status_fixed=$(jq -r '.status_fixed' "$COUNTER_FILE" 2>/dev/null || echo 0)
+	tier_fixed=$(jq -r '.tier_fixed' "$COUNTER_FILE" 2>/dev/null || echo 0)
+	triage_missing=$(jq -r '.triage_missing' "$COUNTER_FILE" 2>/dev/null || echo 0)
+
+	# status_fixed: #1, #2, #4 → 3
+	if [[ "$status_fixed" -eq 3 ]]; then
+		print_result "counter status_fixed=3 (issues #1, #2, #4)" 0
+	else
+		print_result "counter status_fixed=3 (issues #1, #2, #4)" 1 "(got: $status_fixed)"
+	fi
+
+	# tier_fixed: #3 → 1
+	if [[ "$tier_fixed" -eq 1 ]]; then
+		print_result "counter tier_fixed=1 (issue #3)" 0
+	else
+		print_result "counter tier_fixed=1 (issue #3)" 1 "(got: $tier_fixed)"
+	fi
+
+	# triage_missing: #6 only (#7 is recent, #8 has a tier)
+	if [[ "$triage_missing" -eq 1 ]]; then
+		print_result "counter triage_missing=1 (only #6 matches all criteria)" 0
+	else
+		print_result "counter triage_missing=1 (only #6 matches all criteria)" 1 "(got: $triage_missing)"
+	fi
+fi
+
+# =============================================================================
+# Summary
+# =============================================================================
+echo
+if [[ "$TESTS_FAILED" -eq 0 ]]; then
+	printf '%sAll %d tests passed%s\n' "$TEST_GREEN" "$TESTS_RUN" "$TEST_RESET"
+	exit 0
+else
+	printf '%s%d / %d tests failed%s\n' "$TEST_RED" "$TESTS_FAILED" "$TESTS_RUN" "$TEST_RESET"
+	exit 1
+fi
