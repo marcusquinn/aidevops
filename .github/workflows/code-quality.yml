@@ -292,6 +292,14 @@ jobs:
         bash .agents/scripts/tests/test-profile-readme-boundary.sh
         echo "Profile README boundary guard passed"
 
+    - name: Stats Functions Characterization (t2044)
+      run: |
+        echo "Running stats-functions.sh characterization tests..."
+        bash .agents/scripts/tests/test-stats-functions-characterization.sh
+        echo "Running stats-wrapper.sh --self-check..."
+        bash .agents/scripts/stats-wrapper.sh --self-check
+        echo "Stats characterization tests passed"
+
   complexity-check:
     # IMPORTANT: This job's `name:` is a required status check on main (GH#18393).
     # Renaming it requires updating branch protection: gh api -X PATCH

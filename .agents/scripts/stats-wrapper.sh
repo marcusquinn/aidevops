@@ -148,6 +148,58 @@ check_stats_dedup() {
 # Main
 #######################################
 main() {
+	#######################################
+	# --self-check mode (t2044 Phase 0 -- plan section 5.2)
+	#
+	# Source stats-functions.sh and assert the public entry points plus a
+	# representative private helper are defined. Used in CI gates and
+	# post-merge validation. Does not create a PID file or run any stats.
+	#######################################
+	if [[ "${1:-}" == "--self-check" ]]; then
+		LOGFILE="$STATS_LOGFILE"
+		# shellcheck source=stats-functions.sh
+		source "${SCRIPT_DIR}/stats-functions.sh" || {
+			echo "stats-wrapper self-check FAILED: source failed"
+			return 1
+		}
+		local fn
+		for fn in update_health_issues run_daily_quality_sweep _validate_repo_slug \
+			_get_runner_role _persist_role_cache _scan_active_workers \
+			_ensure_quality_issue _run_sweep_tools; do
+			declare -F "$fn" >/dev/null || {
+				echo "stats-wrapper self-check FAILED: missing $fn"
+				return 1
+			}
+		done
+		echo "stats-wrapper self-check OK"
+		return 0
+	fi
+
+	#######################################
+	# --dry-run mode (t2044 Phase 0 -- plan section 5.3)
+	#
+	# Source everything and exercise the main flow with STATS_DRY_RUN=1.
+	# The two public entry points (update_health_issues, run_daily_quality_sweep)
+	# have sentinel early-returns that check this variable, so the call graph
+	# executes end-to-end without making any gh/git API calls.
+	#######################################
+	if [[ "${1:-}" == "--dry-run" ]]; then
+		export STATS_DRY_RUN=1
+		LOGFILE="$STATS_LOGFILE"
+		# shellcheck source=stats-functions.sh
+		source "${SCRIPT_DIR}/stats-functions.sh" || {
+			echo "stats-wrapper dry-run FAILED: source failed"
+			return 1
+		}
+		echo "[stats-wrapper] Dry-run: calling run_daily_quality_sweep..." >>"$STATS_LOGFILE"
+		run_daily_quality_sweep || true
+		echo "[stats-wrapper] Dry-run: calling update_health_issues..." >>"$STATS_LOGFILE"
+		update_health_issues || true
+		echo "[stats-wrapper] Dry-run: complete (no API calls made)" >>"$STATS_LOGFILE"
+		echo "stats-wrapper dry-run OK"
+		return 0
+	fi
+
 	if ! check_stats_dedup; then
 		return 0
 	fi

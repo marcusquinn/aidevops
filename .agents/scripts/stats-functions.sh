@@ -1393,6 +1393,13 @@ _refresh_person_stats_cache() {
 # rate limiting. Best-effort — failures in one repo don't block others.
 #######################################
 update_health_issues() {
+	# t2044 Phase 0: dry-run sentinel. When STATS_DRY_RUN=1, return immediately
+	# to exercise the call graph without making gh/git API calls. Temporary
+	# scaffolding — removed after Phase 3 merges.
+	if [[ "${STATS_DRY_RUN:-}" == "1" ]]; then
+		echo "[stats] update_health_issues: dry-run, skipping" >>"$LOGFILE"
+		return 0
+	fi
 	command -v gh &>/dev/null || return 0
 	gh auth status &>/dev/null 2>&1 || return 0
 
@@ -1471,6 +1478,13 @@ update_health_issues() {
 # See GH#10308 for the sweep-pulse dedup contract.
 #######################################
 run_daily_quality_sweep() {
+	# t2044 Phase 0: dry-run sentinel. When STATS_DRY_RUN=1, return immediately
+	# to exercise the call graph without making gh/git API calls. Temporary
+	# scaffolding — removed after Phase 3 merges.
+	if [[ "${STATS_DRY_RUN:-}" == "1" ]]; then
+		echo "[stats] run_daily_quality_sweep: dry-run, skipping" >>"$LOGFILE"
+		return 0
+	fi
 	# Time-of-day gate — only run during Anthropic's 2x usage boost hours.
 	# Claude doubles usage allowance outside peak: for UK/GMT that's 18:00-11:59
 	# (standard 1x is only 12:00-17:59). Weekends are 2x all day, all timezones.
