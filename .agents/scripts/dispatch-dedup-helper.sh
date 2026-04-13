@@ -551,63 +551,98 @@ _ts_to_epoch() {
 #   $3 = comma-separated stale assignee logins
 #   $4 = reason string for audit trail
 #######################################
-_recover_stale_assignment() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local stale_assignees="$3"
-	local reason="$4"
-
-	# ── Stale-recovery escalation check (t2008) ──────────────────────────
-	# After STALE_RECOVERY_THRESHOLD consecutive recoveries without a PR, stop
-	# resetting to status:available and apply needs-maintainer-review instead.
-	# Counter is stored as structured comment markers for cross-runner correctness.
-	# Config: .agents/configs/dispatch-stale-recovery.conf
-
-	# Load threshold from config (default 2 consecutive recoveries)
+#######################################
+# Load the stale-recovery escalation threshold from config (default 2).
+# Sources .agents/configs/dispatch-stale-recovery.conf if present.
+# Output: integer threshold on stdout
+#######################################
+_stale_recovery_load_threshold() {
 	local _stale_conf="${SCRIPT_DIR}/../configs/dispatch-stale-recovery.conf"
 	if [[ -f "$_stale_conf" ]]; then
 		# shellcheck source=/dev/null
 		source "$_stale_conf"
 	fi
-	local _threshold="${STALE_RECOVERY_THRESHOLD:-2}"
+	printf '%s' "${STALE_RECOVERY_THRESHOLD:-2}"
+	return 0
+}
 
-	# Count prior non-reset stale-recovery-tick comments (cross-runner counter)
+#######################################
+# Count prior non-reset stale-recovery-tick comments on an issue
+# (cross-runner counter). Fails open: returns 0 on gh failure.
+# Args: $1 = issue number, $2 = repo slug
+# Output: integer count on stdout
+#######################################
+_stale_recovery_count_ticks() {
+	local issue_number="$1"
+	local repo_slug="$2"
 	local _prior_ticks
 	_prior_ticks=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--jq '[.[] | select(.body | (test("<!-- stale-recovery-tick:[1-9]") and (test("reset") | not)))] | length' \
 		2>/dev/null) || _prior_ticks=0
 	[[ "$_prior_ticks" =~ ^[0-9]+$ ]] || _prior_ticks=0
+	printf '%s' "$_prior_ticks"
+	return 0
+}
 
-	# Check for any open PR referencing this issue (resets the counter)
-	# A PR means progress is being made — don't escalate yet.
+#######################################
+# Look up any open PR referencing this issue (counter reset signal).
+# A PR means progress is being made — don't escalate yet.
+# Args: $1 = issue number, $2 = repo slug
+# Output: PR number (or empty) on stdout
+#######################################
+_stale_recovery_find_open_pr() {
+	local issue_number="$1"
+	local repo_slug="$2"
 	local _open_pr
 	_open_pr=$(gh pr list --repo "$repo_slug" --state open \
 		--search "#${issue_number} in:body" --limit 1 \
 		--json number --jq '.[0].number // empty' 2>/dev/null) || _open_pr=""
+	printf '%s' "$_open_pr"
+	return 0
+}
 
-	if [[ -n "$_open_pr" ]]; then
-		# Open PR exists — counter resets; post a reset marker and allow normal recovery
-		gh issue comment "$issue_number" --repo "$repo_slug" \
-			--body "<!-- stale-recovery-tick:0 (reset: open PR #${_open_pr} detected) -->" \
-			2>/dev/null || true
-	elif [[ "$_prior_ticks" -ge "$_threshold" ]]; then
-		# Threshold reached — escalate to needs-maintainer-review (t2008)
-		# Unassign stale workers (still needed to clean up the assignment)
-		local _esc_ifs="${IFS:-}"
-		local -a _esc_assignee_arr=()
-		IFS=',' read -ra _esc_assignee_arr <<<"$stale_assignees"
-		IFS="$_esc_ifs"
-		# t2033: build remove-assignee flags and clear all core status labels
-		# in one atomic edit via set_issue_status (empty target = clear only,
-		# pass-through --add-label "needs-maintainer-review").
-		local -a _esc_extra=(--add-label "needs-maintainer-review")
-		for _esc_assignee in "${_esc_assignee_arr[@]}"; do
-			_esc_extra+=(--remove-assignee "$_esc_assignee")
-		done
-		set_issue_status "$issue_number" "$repo_slug" "" "${_esc_extra[@]}" || true
-		# Post escalation comment explaining the suspension
-		gh issue comment "$issue_number" --repo "$repo_slug" \
-			--body "<!-- stale-recovery-tick:escalated (threshold=${_threshold}) -->
+#######################################
+# Escalate to needs-maintainer-review after the stale-recovery threshold
+# is reached (t2008).
+#
+# Unassigns stale workers, clears status labels via set_issue_status, adds
+# needs-maintainer-review, and posts an explanatory comment. Emits
+# STALE_ESCALATED on stdout for caller pattern matching.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+#   $3 = stale assignees (comma-separated)
+#   $4 = reason for latest stale
+#   $5 = threshold
+#   $6 = prior tick count
+# Returns: 0 (always — all gh ops are fire-and-forget)
+#######################################
+_stale_recovery_escalate() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local stale_assignees="$3"
+	local reason="$4"
+	local _threshold="$5"
+	local _prior_ticks="$6"
+
+	# Unassign stale workers (still needed to clean up the assignment)
+	local _esc_ifs="${IFS:-}"
+	local -a _esc_assignee_arr=()
+	IFS=',' read -ra _esc_assignee_arr <<<"$stale_assignees"
+	IFS="$_esc_ifs"
+	# t2033: build remove-assignee flags and clear all core status labels
+	# in one atomic edit via set_issue_status (empty target = clear only,
+	# pass-through --add-label "needs-maintainer-review").
+	local -a _esc_extra=(--add-label "needs-maintainer-review")
+	for _esc_assignee in "${_esc_assignee_arr[@]}"; do
+		_esc_extra+=(--remove-assignee "$_esc_assignee")
+	done
+	set_issue_status "$issue_number" "$repo_slug" "" "${_esc_extra[@]}" || true
+
+	# Post escalation comment explaining the suspension
+	gh issue comment "$issue_number" --repo "$repo_slug" \
+		--body "<!-- stale-recovery-tick:escalated (threshold=${_threshold}) -->
 **Stale recovery threshold reached** (t2008)
 
 This issue has been stale-recovered **${_prior_ticks}** consecutive time(s) without producing a PR. Further automated dispatch is suspended until a human reviews the root cause.
@@ -619,22 +654,38 @@ Recovery count: ${_prior_ticks} (threshold: ${_threshold})
 Marked \`needs-maintainer-review\`. Remove this label after investigating why workers keep failing (wrong brief, unimplementable scope, missing dependency, etc.) to re-enable dispatch.
 
 _This escalation is the \"no-progress fail-safe\" from t2008 (paired with t1986 parent-task guard and t2007 cost circuit breaker)._" \
-			2>/dev/null || true
-		printf 'STALE_ESCALATED: issue #%s in %s — unassigned %s, applied needs-maintainer-review (threshold %s reached after %s ticks)\n' \
-			"$issue_number" "$repo_slug" "$stale_assignees" "$_threshold" "$_prior_ticks"
-		return 0
-	else
-		# Under threshold — increment tick counter, continue normal recovery
-		local _next_tick=$((_prior_ticks + 1))
-		gh issue comment "$issue_number" --repo "$repo_slug" \
-			--body "<!-- stale-recovery-tick:${_next_tick} -->" \
-			2>/dev/null || true
-	fi
-	# ── End stale-recovery escalation check ──────────────────────────────
+		2>/dev/null || true
+	printf 'STALE_ESCALATED: issue #%s in %s — unassigned %s, applied needs-maintainer-review (threshold %s reached after %s ticks)\n' \
+		"$issue_number" "$repo_slug" "$stale_assignees" "$_threshold" "$_prior_ticks"
+	return 0
+}
 
-	# t2033: atomically unassign all stale users and transition to status:available
-	# via set_issue_status — previously two separate gh edits could race and leave
-	# conflicting labels (e.g., status:available + status:queued on #18444).
+#######################################
+# Apply normal stale recovery: unassign stale users, transition to
+# status:available, post the audit comment with WORKER_SUPERSEDED marker.
+#
+# t2033: atomically unassign all stale users and transition to status:available
+# via set_issue_status — previously two separate gh edits could race and leave
+# conflicting labels (e.g., status:available + status:queued on #18444).
+#
+# The WORKER_SUPERSEDED marker (t1955) is a structured HTML comment that
+# workers can detect before creating PRs. If a worker's runner login matches
+# the superseded runner, it knows its assignment was revoked and should
+# abort or re-claim.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+#   $3 = stale assignees (comma-separated)
+#   $4 = reason
+# Returns: 0 (always)
+#######################################
+_stale_recovery_apply() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local stale_assignees="$3"
+	local reason="$4"
+
 	local saved_ifs="${IFS:-}"
 	local -a assignee_arr=()
 	IFS=',' read -ra assignee_arr <<<"$stale_assignees"
@@ -647,10 +698,6 @@ _This escalation is the \"no-progress fail-safe\" from t2008 (paired with t1986 
 	done
 	set_issue_status "$issue_number" "$repo_slug" "available" "${_recov_extra[@]}" || true
 
-	# Post audit comment with WORKER_SUPERSEDED marker (t1955).
-	# The marker is a structured HTML comment that workers can detect before
-	# creating PRs. If a worker's runner login matches the superseded runner,
-	# it knows its assignment was revoked and should abort or re-claim.
 	local _now_ts
 	_now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	gh issue comment "$issue_number" --repo "$repo_slug" \
@@ -667,6 +714,64 @@ _This recovery prevents the orphaned-assignment deadlock where offline runners p
 
 	printf 'STALE_RECOVERED: issue #%s in %s — unassigned %s (%s)\n' \
 		"$issue_number" "$repo_slug" "$stale_assignees" "$reason"
+	return 0
+}
+
+#######################################
+# Recover a stale assignment.
+#
+# Decision flow (t2008 escalation check):
+#   1. Load threshold from config (default 2).
+#   2. Count prior non-reset tick comments.
+#   3. Look up any open PR referencing this issue.
+#      - If an open PR exists: reset tick counter (progress is being made),
+#        continue to normal recovery.
+#      - Else if prior_ticks >= threshold: escalate to needs-maintainer-review
+#        and return immediately (no normal recovery).
+#      - Else: increment the tick counter and continue to normal recovery.
+#   4. Normal recovery: unassign stale users, set status:available, post audit.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+#   $3 = stale assignees (comma-separated)
+#   $4 = reason
+#######################################
+_recover_stale_assignment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local stale_assignees="$3"
+	local reason="$4"
+
+	# ── Stale-recovery escalation check (t2008) ──────────────────────────
+	# After STALE_RECOVERY_THRESHOLD consecutive recoveries without a PR, stop
+	# resetting to status:available and apply needs-maintainer-review instead.
+	# Counter is stored as structured comment markers for cross-runner correctness.
+	# Config: .agents/configs/dispatch-stale-recovery.conf
+	local _threshold _prior_ticks _open_pr
+	_threshold=$(_stale_recovery_load_threshold)
+	_prior_ticks=$(_stale_recovery_count_ticks "$issue_number" "$repo_slug")
+	_open_pr=$(_stale_recovery_find_open_pr "$issue_number" "$repo_slug")
+
+	if [[ -n "$_open_pr" ]]; then
+		# Open PR exists — counter resets; post a reset marker and allow normal recovery
+		gh issue comment "$issue_number" --repo "$repo_slug" \
+			--body "<!-- stale-recovery-tick:0 (reset: open PR #${_open_pr} detected) -->" \
+			2>/dev/null || true
+	elif [[ "$_prior_ticks" -ge "$_threshold" ]]; then
+		# Threshold reached — escalate and bail out (no normal recovery)
+		_stale_recovery_escalate "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_threshold" "$_prior_ticks"
+		return 0
+	else
+		# Under threshold — increment tick counter, continue normal recovery
+		local _next_tick=$((_prior_ticks + 1))
+		gh issue comment "$issue_number" --repo "$repo_slug" \
+			--body "<!-- stale-recovery-tick:${_next_tick} -->" \
+			2>/dev/null || true
+	fi
+	# ── End stale-recovery escalation check ──────────────────────────────
+
+	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason"
 	return 0
 }
 
@@ -1040,6 +1145,124 @@ _has_active_claim() {
 #   to a parent-task issue because a jq null-handling bug silently fell through
 #   to the "allow dispatch" code path (see plan in todo/plans/parent-task-incident-hardening.md).
 #######################################
+#######################################
+# is_assigned helper: check the parent-task / meta unconditional block.
+#
+# t1986: parent-task / meta label is an unconditional dispatch block.
+# Any issue tagged as parent-only is plan-only work and must never
+# receive a dispatched worker, regardless of assignees or status
+# labels. Closes the dispatch loop observed on GH#18356 during
+# t1962 Phase 3 (parent task dispatched twice with opus-4-6,
+# burning ~20K tokens for zero productive output) and the
+# same race reproduced on GH#18399 / GH#18400 while filing the
+# follow-up issues for this very fix.
+#
+# Emits PARENT_TASK_BLOCKED on stdout for caller pattern matching
+# (mirrors the STALE_RECOVERED token used by stale-recovery path).
+#
+# Args: $1 = issue metadata JSON (from `gh issue view --json ...,labels`)
+# Returns: exit 0 if parent-task label found (prints signal), exit 1 otherwise
+#######################################
+_is_assigned_check_parent_task() {
+	local meta_json="$1"
+	local parent_task_hit
+	parent_task_hit=$(printf '%s' "$meta_json" |
+		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' | head -n 1 || true)
+	if [[ -n "$parent_task_hit" ]]; then
+		printf 'PARENT_TASK_BLOCKED (label=%s)\n' "$parent_task_hit"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# is_assigned helper: cost-per-issue circuit breaker (t2007).
+#
+# Aggregate token spend across all worker attempts; if the cumulative total
+# exceeds the tier-appropriate budget, apply needs-maintainer-review and
+# block dispatch. Fail-open on aggregation errors so unrelated GitHub API
+# hiccups don't starve the queue. Closes the cost-runaway hole that t1986
+# (parent-task guard) and t2008 (stale-recovery escalation) leave open: an
+# issue with a correct tier assignment that workers can never finish
+# (loop, hidden blocker, scope).
+#
+# Args: $1 = issue number, $2 = repo slug, $3 = issue metadata JSON
+# Returns: exit 0 if budget tripped (prints signal), exit 1 if under budget
+#######################################
+_is_assigned_check_cost_budget() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local meta_json="$3"
+
+	local _t2007_tier
+	_t2007_tier=$(printf '%s' "$meta_json" |
+		jq -r '[(.labels // [])[].name] | map(select(startswith("tier:"))) | .[0] // "tier:standard"' 2>/dev/null)
+	[[ -z "$_t2007_tier" || "$_t2007_tier" == "null" ]] && _t2007_tier="tier:standard"
+
+	local _t2007_signal _t2007_rc=0
+	_t2007_signal=$(_check_cost_budget "$issue_number" "$repo_slug" "$_t2007_tier" "$meta_json") || _t2007_rc=$?
+	if [[ "$_t2007_rc" -eq 0 ]]; then
+		printf '%s\n' "$_t2007_signal"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# is_assigned helper: compute the blocking assignees set.
+#
+# Walks the assignees list and filters out:
+#   - self_login (never blocks itself)
+#   - owner/maintainer if no active claim state (GH#18352 / t1961)
+#
+# Owner/maintainer is passive UNLESS _has_active_claim returned "true".
+# See _has_active_claim() for the full rule set.
+#
+# Args:
+#   $1 = assignees (comma-separated login list)
+#   $2 = repo_owner
+#   $3 = repo_maintainer (may be empty)
+#   $4 = active_claim ("true" or other)
+#   $5 = self_login (may be empty)
+# Output: comma-separated list of blocking assignees on stdout (may be empty)
+#######################################
+_is_assigned_compute_blocking() {
+	local assignees="$1"
+	local repo_owner="$2"
+	local repo_maintainer="$3"
+	local active_claim="$4"
+	local self_login="$5"
+
+	local -a assignee_array=()
+	local saved_ifs="${IFS:-}"
+	IFS=',' read -ra assignee_array <<<"$assignees"
+	IFS="$saved_ifs"
+
+	local blocking_assignees=""
+	local assignee
+	for assignee in "${assignee_array[@]}"; do
+		if [[ -n "$self_login" && "$assignee" == "$self_login" ]]; then
+			continue
+		fi
+
+		if [[ "$assignee" == "$repo_owner" || (-n "$repo_maintainer" && "$assignee" == "$repo_maintainer") ]]; then
+			# Owner/maintainer is passive UNLESS _has_active_claim returned
+			# "true" (GH#18352 / t1961).
+			if [[ "$active_claim" != "true" ]]; then
+				continue
+			fi
+		fi
+
+		if [[ -n "$blocking_assignees" ]]; then
+			blocking_assignees="${blocking_assignees},${assignee}"
+		else
+			blocking_assignees="$assignee"
+		fi
+	done
+	printf '%s' "$blocking_assignees"
+	return 0
+}
+
 is_assigned() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1069,40 +1292,13 @@ is_assigned() {
 		return 0
 	fi
 
-	# t1986: parent-task / meta label is an unconditional dispatch block.
-	# Any issue tagged as parent-only is plan-only work and must never
-	# receive a dispatched worker, regardless of assignees or status
-	# labels. Closes the dispatch loop observed on GH#18356 during
-	# t1962 Phase 3 (parent task dispatched twice with opus-4-6,
-	# burning ~20K tokens for zero productive output) and the
-	# same race reproduced on GH#18399 / GH#18400 while filing the
-	# follow-up issues for this very fix.
-	#
-	# Emits PARENT_TASK_BLOCKED on stdout for caller pattern matching
-	# (mirrors the STALE_RECOVERED token used by stale-recovery path).
-	local parent_task_hit
-	parent_task_hit=$(printf '%s' "$issue_meta_json" |
-		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' | head -n 1 || true)
-	if [[ -n "$parent_task_hit" ]]; then
-		printf 'PARENT_TASK_BLOCKED (label=%s)\n' "$parent_task_hit"
+	# t1986: parent-task / meta is an unconditional dispatch block.
+	if _is_assigned_check_parent_task "$issue_meta_json"; then
 		return 0
 	fi
 
-	# t2007: cost-per-issue circuit breaker. Aggregate token spend across all
-	# worker attempts; if the cumulative total exceeds the tier-appropriate
-	# budget, apply needs-maintainer-review and block dispatch. Fail-open on
-	# aggregation errors so unrelated GitHub API hiccups don't starve the queue.
-	# Closes the cost-runaway hole that t1986 (parent-task guard) and t2008
-	# (stale-recovery escalation) leave open: an issue with a correct tier
-	# assignment that workers can never finish (loop, hidden blocker, scope).
-	local _t2007_tier
-	_t2007_tier=$(printf '%s' "$issue_meta_json" |
-		jq -r '[(.labels // [])[].name] | map(select(startswith("tier:"))) | .[0] // "tier:standard"' 2>/dev/null)
-	[[ -z "$_t2007_tier" || "$_t2007_tier" == "null" ]] && _t2007_tier="tier:standard"
-	local _t2007_signal _t2007_rc=0
-	_t2007_signal=$(_check_cost_budget "$issue_number" "$repo_slug" "$_t2007_tier" "$issue_meta_json") || _t2007_rc=$?
-	if [[ "$_t2007_rc" -eq 0 ]]; then
-		printf '%s\n' "$_t2007_signal"
+	# t2007: cost-per-issue circuit breaker.
+	if _is_assigned_check_cost_budget "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		return 0
 	fi
 
@@ -1124,32 +1320,9 @@ is_assigned() {
 	# See _has_active_claim() above for the full rule set.
 	active_claim=$(_has_active_claim "$issue_meta_json")
 
-	local -a assignee_array=()
-	local saved_ifs="${IFS:-}"
-	IFS=',' read -ra assignee_array <<<"$assignees"
-	IFS="$saved_ifs"
-
-	local blocking_assignees=""
-	local assignee
-	for assignee in "${assignee_array[@]}"; do
-		if [[ -n "$self_login" && "$assignee" == "$self_login" ]]; then
-			continue
-		fi
-
-		if [[ "$assignee" == "$repo_owner" || (-n "$repo_maintainer" && "$assignee" == "$repo_maintainer") ]]; then
-			# Owner/maintainer is passive UNLESS _has_active_claim returned
-			# "true" (GH#18352 / t1961).
-			if [[ "$active_claim" != "true" ]]; then
-				continue
-			fi
-		fi
-
-		if [[ -n "$blocking_assignees" ]]; then
-			blocking_assignees="${blocking_assignees},${assignee}"
-		else
-			blocking_assignees="$assignee"
-		fi
-	done
+	local blocking_assignees
+	blocking_assignees=$(_is_assigned_compute_blocking \
+		"$assignees" "$repo_owner" "$repo_maintainer" "$active_claim" "$self_login")
 
 	if [[ -z "$blocking_assignees" ]]; then
 		# Only passive assignees remain (self and/or owner/maintainer without
@@ -1175,6 +1348,158 @@ is_assigned() {
 
 	printf 'ASSIGNED: issue #%s in %s is assigned to %s\n' "$issue_number" "$repo_slug" "$blocking_assignees"
 	return 0
+}
+
+#######################################
+# has_open_pr Check 1: Open PRs with commits referencing this issue.
+#
+# The source of truth for "this PR solves this issue" is the commit messages,
+# not the PR body. PR bodies are written at creation time (often from templates)
+# and may mention issues for context without solving them. Commit messages are
+# attached to actual code changes.
+#
+# GitHub auto-close works from commit messages on merge to default branch, so
+# moving closing keywords from PR body to commits changes nothing for auto-close
+# but eliminates false-positive dedup blocks.
+#
+# Args: $1 = issue number, $2 = repo slug
+# Returns: exit 0 if an open PR matches (prints reason), exit 1 if no match
+#######################################
+_has_open_pr_check_open_commits() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local open_pr_json open_pr_count
+	open_pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--json number,title,commits --limit 10 2>/dev/null) || open_pr_json="[]"
+	open_pr_count=$(printf '%s' "$open_pr_json" | jq 'length' 2>/dev/null) || open_pr_count=0
+	[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
+	[[ "$open_pr_count" -eq 0 ]] && return 1
+
+	# Match: closing keyword + #NNN in commit messages, or GH#NNN/#NNN in PR title
+	local close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
+	local title_pattern="(GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
+
+	local match_pr
+	match_pr=$(printf '%s' "$open_pr_json" | jq -r --arg cp "$close_pattern" --arg tp "$title_pattern" \
+		'[.[] | select(
+			(.title // "" | test($tp)) or
+			((.commits // [])[] | .messageHeadline // "" | test($cp; "i"))
+		)] | .[0].number // empty' 2>/dev/null) || match_pr=""
+	if [[ -n "$match_pr" ]]; then
+		printf 'open PR #%s has commits targeting issue #%s\n' "$match_pr" "$issue_number"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# has_open_pr Check 2: Merged PRs with closing-keyword in body.
+#
+# Loops through all closing keyword variants and searches merged PRs via
+# gh pr list --search. Post-filters each hit with an exact regex on the PR
+# body because GitHub search is full-text and a PR mentioning "v3.5.670"
+# would falsely match issue #670.
+#
+# Args: $1 = issue number, $2 = repo slug
+# Returns: exit 0 if a merged PR closes this issue (prints reason), exit 1 if none
+#######################################
+_has_open_pr_check_merged_keywords() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local query pr_json pr_count pr_number
+	for keyword in close closes closed fix fixes fixed resolve resolves resolved; do
+		query="${keyword} #${issue_number} in:body"
+		pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
+		pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+		[[ "$pr_count" -eq 0 ]] && continue
+
+		pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
+		if [[ -n "$pr_number" ]]; then
+			local pr_body
+			pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || pr_body=""
+			# Match: keyword + optional whitespace + #NNN or owner/repo#NNN followed by a non-word char or end
+			local close_pattern_merged="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
+			if ! printf '%s' "$pr_body" | grep -iqE "$close_pattern_merged"; then
+				continue
+			fi
+			printf 'merged PR #%s references issue #%s via "%s" keyword\n' "$pr_number" "$issue_number" "$keyword"
+		else
+			printf 'merged PR references issue #%s via "%s" keyword\n' "$issue_number" "$keyword"
+		fi
+		return 0
+	done
+	return 1
+}
+
+#######################################
+# has_open_pr Check 3: Task-ID title match on merged PRs.
+#
+# GH#18041 (t1957): When a merged PR matches by task ID, verify it actually
+# targets the same issue. A task ID collision (counter reset, fabricated ID)
+# produces a merged PR for a *different* issue — blocking dispatch forever.
+#
+# GH#18641 (planning-only awareness): The framework convention uses
+# `For #NNN` / `Ref #NNN` in planning-only PR bodies (briefs, TODO entries,
+# research docs) so the brief PR does NOT auto-close the real implementation
+# issue. The previous bare `#NNN` body-reference check treated those as
+# dispatch blockers, creating a deadlock: every brief PR permanently
+# blocked dispatch on its own follow-up implementation issue.
+#
+# Semantic: a merged PR whose title matches the task ID blocks dispatch ONLY
+# if the body contains a closing-keyword reference to the specific issue
+# number (the same pattern used by Check 2 and by GitHub's own auto-close
+# logic). Planning references (`For #`, `Ref #`) and unrelated-issue
+# collisions both fall through to "allow dispatch".
+#
+# Args: $1 = issue number, $2 = repo slug, $3 = issue title
+# Returns: exit 0 if a merged PR closes this issue (prints reason), exit 1 otherwise
+#######################################
+_has_open_pr_check_task_id_title() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_title="$3"
+
+	local task_id
+	task_id=$(printf '%s' "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || true)
+	[[ -z "$task_id" ]] && return 1
+
+	local query pr_json pr_count pr_number
+	query="${task_id} in:title"
+	pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	[[ "$pr_count" -eq 0 ]] && return 1
+
+	pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
+	if [[ -z "$pr_number" ]]; then
+		printf 'merged PR found by task id %s in title\n' "$task_id"
+		return 0
+	fi
+
+	# Fetch the merged PR body and verify it contains a closing-keyword
+	# reference to OUR specific issue number. This mirrors the pattern in
+	# Check 2 and is the single source of truth for "this PR closed this
+	# issue": if GitHub would auto-close it, we block; otherwise we allow
+	# dispatch.
+	local merged_pr_body
+	merged_pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || merged_pr_body=""
+	local close_pattern_check3="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
+	if printf '%s' "$merged_pr_body" | grep -iqE "$close_pattern_check3"; then
+		printf 'merged PR #%s found by task id %s in title\n' "$pr_number" "$task_id"
+		return 0
+	fi
+
+	# The merged PR has the same task ID but does NOT close issue
+	# #${issue_number} via a closing keyword. Two valid cases fall
+	# through here: (a) task-ID collision (different issue), and
+	# (b) planning-only brief (For #NNN / Ref #NNN body reference).
+	# Both cases allow dispatch — the real implementation is not done.
+	printf 'NO_CLOSE_REF: merged PR #%s has task id %s but does not close issue #%s via closing keyword — allowing dispatch\n' \
+		"$pr_number" "$task_id" "$issue_number" >&2
+	return 1
 }
 
 #######################################
@@ -1206,126 +1531,15 @@ has_open_pr() {
 		return 1
 	fi
 
-	# ── Check 1: Open PRs with commits that reference this issue ──
-	# The source of truth for "this PR solves this issue" is the commit
-	# messages, not the PR body. PR bodies are written at creation time
-	# (often from templates) and may mention issues for context without
-	# solving them. Commit messages are attached to actual code changes.
-	#
-	# GitHub auto-close works from commit messages on merge to default
-	# branch, so moving closing keywords from PR body to commits changes
-	# nothing for auto-close but eliminates false-positive dedup blocks.
-	local open_pr_json open_pr_count
-	open_pr_json=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,title,commits --limit 10 2>/dev/null) || open_pr_json="[]"
-	open_pr_count=$(printf '%s' "$open_pr_json" | jq 'length' 2>/dev/null) || open_pr_count=0
-	[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
+	# Check 1: open PRs whose commits reference this issue.
+	_has_open_pr_check_open_commits "$issue_number" "$repo_slug" && return 0
 
-	if [[ "$open_pr_count" -gt 0 ]]; then
-		# Match: closing keyword + #NNN in commit messages, or GH#NNN/#NNN in PR title
-		local close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
-		local title_pattern="(GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
+	# Check 2: merged PRs with closing-keyword in body.
+	_has_open_pr_check_merged_keywords "$issue_number" "$repo_slug" && return 0
 
-		local match_pr
-		match_pr=$(printf '%s' "$open_pr_json" | jq -r --arg cp "$close_pattern" --arg tp "$title_pattern" \
-			'[.[] | select(
-				(.title // "" | test($tp)) or
-				((.commits // [])[] | .messageHeadline // "" | test($cp; "i"))
-			)] | .[0].number // empty' 2>/dev/null) || match_pr=""
-		if [[ -n "$match_pr" ]]; then
-			printf 'open PR #%s has commits targeting issue #%s\n' "$match_pr" "$issue_number"
-			return 0
-		fi
-	fi
+	# Check 3: task-ID title match on merged PRs (planning-aware).
+	_has_open_pr_check_task_id_title "$issue_number" "$repo_slug" "$issue_title" && return 0
 
-	# ── Check 2: Merged PRs (existing logic) ──
-	local query pr_json pr_count pr_number
-	for keyword in close closes closed fix fixes fixed resolve resolves resolved; do
-		query="${keyword} #${issue_number} in:body"
-		pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
-		pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-		if [[ "$pr_count" -gt 0 ]]; then
-			pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
-			if [[ -n "$pr_number" ]]; then
-				# Verify the PR body contains an exact close reference for this issue.
-				# GitHub search is full-text: a PR with "Closes #621" and "v3.5.670"
-				# would falsely match issue #670. Post-filter with exact regex.
-				local pr_body
-				pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || pr_body=""
-				# Match: keyword + optional whitespace + #NNN or owner/repo#NNN followed by a non-word char or end
-				local close_pattern_merged="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
-				if ! printf '%s' "$pr_body" | grep -iqE "$close_pattern_merged"; then
-					continue
-				fi
-				printf 'merged PR #%s references issue #%s via "%s" keyword\n' "$pr_number" "$issue_number" "$keyword"
-			else
-				printf 'merged PR references issue #%s via "%s" keyword\n' "$issue_number" "$keyword"
-			fi
-			return 0
-		fi
-	done
-
-	# ── Check 3: Task-ID title match (merged PRs) ──
-	# GH#18041 (t1957): When a merged PR matches by task ID, verify it actually
-	# targets the same issue. A task ID collision (counter reset, fabricated ID)
-	# produces a merged PR for a *different* issue — blocking dispatch forever.
-	#
-	# GH#18641 (planning-only awareness): The framework convention uses
-	# `For #NNN` / `Ref #NNN` in planning-only PR bodies (briefs, TODO entries,
-	# research docs) so the brief PR does NOT auto-close the real implementation
-	# issue. The previous bare `#NNN` body-reference check treated those as
-	# dispatch blockers, creating a deadlock: every brief PR permanently
-	# blocked dispatch on its own follow-up implementation issue.
-	#
-	# New semantic: a merged PR whose title matches the task ID blocks
-	# dispatch ONLY if the body contains a closing-keyword reference to the
-	# specific issue number (the same pattern used by Check 2 and by GitHub's
-	# own auto-close logic). Planning references (`For #`, `Ref #`) and
-	# unrelated-issue collisions both fall through to "allow dispatch".
-	local task_id
-	task_id=$(printf '%s' "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || true)
-	if [[ -z "$task_id" ]]; then
-		return 1
-	fi
-
-	query="${task_id} in:title"
-	pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-	if [[ "$pr_count" -gt 0 ]]; then
-		pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
-		if [[ -n "$pr_number" ]]; then
-			# Fetch the merged PR body and verify it contains a closing-keyword
-			# reference to OUR specific issue number. This mirrors the pattern
-			# in Check 2 (line 1236) and is the single source of truth for
-			# "this PR closed this issue": if GitHub would auto-close it, we
-			# block; otherwise we allow dispatch.
-			local merged_pr_body
-			merged_pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || merged_pr_body=""
-
-			# Match: closing keyword + optional whitespace + #NNN or owner/repo#NNN
-			# followed by a non-word char or end-of-string. Identical to the
-			# Check 2 pattern so the two code paths agree on "closed".
-			local close_pattern_check3="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
-			if printf '%s' "$merged_pr_body" | grep -iqE "$close_pattern_check3"; then
-				printf 'merged PR #%s found by task id %s in title\n' "$pr_number" "$task_id"
-				return 0
-			fi
-
-			# The merged PR has the same task ID but does NOT close issue
-			# #${issue_number} via a closing keyword. Two valid cases fall
-			# through here: (a) task-ID collision (different issue), and
-			# (b) planning-only brief (For #NNN / Ref #NNN body reference).
-			# Both cases allow dispatch — the real implementation is not done.
-			printf 'NO_CLOSE_REF: merged PR #%s has task id %s but does not close issue #%s via closing keyword — allowing dispatch\n' \
-				"$pr_number" "$task_id" "$issue_number" >&2
-			return 1
-		else
-			printf 'merged PR found by task id %s in title\n' "$task_id"
-			return 0
-		fi
-	fi
 	return 1
 }
 
@@ -1493,6 +1707,28 @@ has_dispatch_comment() {
 }
 
 #######################################
+# Validate subcommand arg count. Used by main() to collapse the repeated
+# "[[ $# -lt N ]] && { echo Error; return 1; }" pattern into a single call.
+# Args:
+#   $1 = subcommand name (for error message)
+#   $2 = required arg count
+#   $3 = provided arg count (typically "$#")
+#   $4 = usage hint (e.g., "<issue-number> <repo-slug>")
+# Returns: 0 if enough args, 1 otherwise (and prints error to stderr)
+#######################################
+_require_args() {
+	local cmd="$1"
+	local required="$2"
+	local provided="$3"
+	local usage="$4"
+	if [[ "$provided" -lt "$required" ]]; then
+		echo "Error: ${cmd} requires ${usage}" >&2
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Show help
 #######################################
 show_help() {
@@ -1574,62 +1810,38 @@ main() {
 
 	case "$command" in
 	extract-keys)
-		[[ $# -lt 1 ]] && {
-			echo "Error: extract-keys requires a title argument" >&2
-			return 1
-		}
+		_require_args extract-keys 1 "$#" "a title argument" || return 1
 		extract_keys "$1"
 		;;
 	is-duplicate)
-		[[ $# -lt 1 ]] && {
-			echo "Error: is-duplicate requires a title argument" >&2
-			return 1
-		}
+		_require_args is-duplicate 1 "$#" "a title argument" || return 1
 		is_duplicate "$1"
 		;;
 	is-assigned)
-		[[ $# -lt 2 ]] && {
-			echo "Error: is-assigned requires <issue-number> <repo-slug> [self-login]" >&2
-			return 1
-		}
+		_require_args is-assigned 2 "$#" "<issue-number> <repo-slug> [self-login]" || return 1
 		is_assigned "$1" "$2" "${3:-}"
 		;;
 	check-cost-budget)
 		# t2007: cost-per-issue circuit breaker. Direct entry point for tests
 		# and ad-hoc inspection. The same check fires inline from is-assigned.
-		[[ $# -lt 2 ]] && {
-			echo "Error: check-cost-budget requires <issue-number> <repo-slug> [tier]" >&2
-			return 1
-		}
+		_require_args check-cost-budget 2 "$#" "<issue-number> <repo-slug> [tier]" || return 1
 		_check_cost_budget "$1" "$2" "${3:-standard}"
 		;;
 	sum-issue-token-spend)
 		# t2007: read-only aggregator (no side effects). Useful for calibration.
-		[[ $# -lt 2 ]] && {
-			echo "Error: sum-issue-token-spend requires <issue-number> <repo-slug>" >&2
-			return 1
-		}
+		_require_args sum-issue-token-spend 2 "$#" "<issue-number> <repo-slug>" || return 1
 		_sum_issue_token_spend "$1" "$2"
 		;;
 	has-dispatch-comment)
-		[[ $# -lt 2 ]] && {
-			echo "Error: has-dispatch-comment requires <issue-number> <repo-slug> [self-login]" >&2
-			return 1
-		}
+		_require_args has-dispatch-comment 2 "$#" "<issue-number> <repo-slug> [self-login]" || return 1
 		has_dispatch_comment "$1" "$2" "${3:-}"
 		;;
 	has-open-pr)
-		[[ $# -lt 2 ]] && {
-			echo "Error: has-open-pr requires <issue-number> <repo-slug> [issue-title]" >&2
-			return 1
-		}
+		_require_args has-open-pr 2 "$#" "<issue-number> <repo-slug> [issue-title]" || return 1
 		has_open_pr "$1" "$2" "${3:-}"
 		;;
 	claim)
-		[[ $# -lt 2 ]] && {
-			echo "Error: claim requires <issue-number> <repo-slug> [runner-login]" >&2
-			return 1
-		}
+		_require_args claim 2 "$#" "<issue-number> <repo-slug> [runner-login]" || return 1
 		if [[ ! -x "$CLAIM_HELPER" ]]; then
 			echo "Error: dispatch-claim-helper.sh not found at ${CLAIM_HELPER}" >&2
 			return 2
@@ -1638,10 +1850,7 @@ main() {
 		;;
 	check-claim)
 		# GH#17590: Pre-check for active claims (read-only, no comment posted).
-		[[ $# -lt 2 ]] && {
-			echo "Error: check-claim requires <issue-number> <repo-slug>" >&2
-			return 1
-		}
+		_require_args check-claim 2 "$#" "<issue-number> <repo-slug>" || return 1
 		if [[ ! -x "$CLAIM_HELPER" ]]; then
 			echo "Error: dispatch-claim-helper.sh not found at ${CLAIM_HELPER}" >&2
 			return 2
@@ -1652,20 +1861,14 @@ main() {
 		list_running_keys
 		;;
 	normalize)
-		[[ $# -lt 1 ]] && {
-			echo "Error: normalize requires a title argument" >&2
-			return 1
-		}
+		_require_args normalize 1 "$#" "a title argument" || return 1
 		normalize_title "$1"
 		;;
 	test-recover)
 		# Test shim for t2008: expose _recover_stale_assignment for test harness.
 		# Usage: dispatch-dedup-helper.sh test-recover <issue> <repo> <assignees> <reason>
 		# Not for production use — test files only.
-		[[ $# -lt 4 ]] && {
-			echo "Error: test-recover requires <issue> <repo> <assignees> <reason>" >&2
-			return 1
-		}
+		_require_args test-recover 4 "$#" "<issue> <repo> <assignees> <reason>" || return 1
 		_recover_stale_assignment "$1" "$2" "$3" "$4"
 		;;
 	help | --help | -h)
