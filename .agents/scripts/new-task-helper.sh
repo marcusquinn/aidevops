@@ -166,46 +166,72 @@ _append_todo_entry() {
 }
 
 # ---------------------------------------------------------------------------
-# cmd_batch: main batch creation flow
+# cmd_batch decomposition (GH#18705)
+#
+# The batch flow was originally a single 211-line function. It is now split
+# into orchestrator (`cmd_batch`) + focused helpers, each well under 100
+# lines. Bash 3.2 does not support `local -n` namerefs, so the helpers that
+# produce multi-value output either:
+#   - populate module-level globals prefixed `_BATCH_` (parsed args and
+#     result arrays), or
+#   - emit a compact `id|ref` line on stdout that the caller parses.
 # ---------------------------------------------------------------------------
-cmd_batch() {
-	local -a titles=()
-	local from_file=""
-	local labels=""
-	local dry_run=false
-	local no_issue=false
-	local offline=false
-	local repo_path=""
 
-	# Parse arguments
+# Module-level state for cmd_batch. Declared at file scope so the helpers
+# can read and append without passing large argument lists. Re-initialised
+# at the top of cmd_batch on every invocation.
+_BATCH_TITLES=()
+_BATCH_FROM_FILE=""
+_BATCH_LABELS=""
+_BATCH_DRY_RUN=false
+_BATCH_NO_ISSUE=false
+_BATCH_OFFLINE=false
+_BATCH_REPO_PATH=""
+_BATCH_RESULT_IDS=()
+_BATCH_RESULT_TITLES=()
+_BATCH_RESULT_REFS=()
+
+# ---------------------------------------------------------------------------
+# _parse_batch_args: parse CLI args for the batch subcommand into the
+# module-level `_BATCH_*` globals. Returns 1 on unknown option.
+# ---------------------------------------------------------------------------
+_parse_batch_args() {
+	_BATCH_TITLES=()
+	_BATCH_FROM_FILE=""
+	_BATCH_LABELS=""
+	_BATCH_DRY_RUN=false
+	_BATCH_NO_ISSUE=false
+	_BATCH_OFFLINE=false
+	_BATCH_REPO_PATH=""
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--title)
-			titles+=("$2")
+			_BATCH_TITLES+=("$2")
 			shift 2
 			;;
 		--from-file)
-			from_file="$2"
+			_BATCH_FROM_FILE="$2"
 			shift 2
 			;;
 		--labels)
-			labels="$2"
+			_BATCH_LABELS="$2"
 			shift 2
 			;;
 		--dry-run)
-			dry_run=true
+			_BATCH_DRY_RUN=true
 			shift
 			;;
 		--no-issue)
-			no_issue=true
+			_BATCH_NO_ISSUE=true
 			shift
 			;;
 		--offline)
-			offline=true
+			_BATCH_OFFLINE=true
 			shift
 			;;
 		--repo-path)
-			repo_path="$2"
+			_BATCH_REPO_PATH="$2"
 			shift 2
 			;;
 		*)
@@ -214,49 +240,216 @@ cmd_batch() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	# Read titles from file or stdin if --from-file given
-	if [[ -n "$from_file" ]]; then
-		if [[ "$from_file" == "-" ]]; then
-			while IFS= read -r line; do
-				line="${line%%#*}"                      # strip inline comments
-				line="${line#"${line%%[![:space:]]*}"}" # ltrim
-				line="${line%"${line##*[![:space:]]}"}" # rtrim
-				[[ -n "$line" ]] && titles+=("$line")
-			done
+# ---------------------------------------------------------------------------
+# _read_titles_stream: read titles from the current stdin, stripping inline
+# `#` comments and whitespace, appending non-empty lines to `_BATCH_TITLES`.
+# Called with stdin redirected by the caller (file or pipe).
+# ---------------------------------------------------------------------------
+_read_titles_stream() {
+	local line
+	while IFS= read -r line; do
+		line="${line%%#*}"                      # strip inline comments
+		line="${line#"${line%%[![:space:]]*}"}" # ltrim
+		line="${line%"${line##*[![:space:]]}"}" # rtrim
+		[[ -n "$line" ]] && _BATCH_TITLES+=("$line")
+	done
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _resolve_batch_titles: populate `_BATCH_TITLES` from `--from-file`, then
+# from stdin if none given and stdin is a pipe. Emits a usage message and
+# returns 1 if no titles can be found.
+# ---------------------------------------------------------------------------
+_resolve_batch_titles() {
+	if [[ -n "$_BATCH_FROM_FILE" ]]; then
+		if [[ "$_BATCH_FROM_FILE" == "-" ]]; then
+			_read_titles_stream
 		else
-			if [[ ! -f "$from_file" ]]; then
-				log_error "File not found: $from_file"
+			if [[ ! -f "$_BATCH_FROM_FILE" ]]; then
+				log_error "File not found: $_BATCH_FROM_FILE"
 				return 1
 			fi
-			while IFS= read -r line; do
-				line="${line%%#*}"
-				line="${line#"${line%%[![:space:]]*}"}"
-				line="${line%"${line##*[![:space:]]}"}"
-				[[ -n "$line" ]] && titles+=("$line")
-			done <"$from_file"
+			_read_titles_stream <"$_BATCH_FROM_FILE"
 		fi
 	fi
 
-	# If no titles yet and stdin is a pipe, read from stdin
-	if [[ ${#titles[@]} -eq 0 ]] && ! [[ -t 0 ]]; then
-		while IFS= read -r line; do
-			line="${line%%#*}"
-			line="${line#"${line%%[![:space:]]*}"}"
-			line="${line%"${line##*[![:space:]]}"}"
-			[[ -n "$line" ]] && titles+=("$line")
-		done
+	# Fall back to stdin if nothing supplied and stdin is a pipe
+	if [[ ${#_BATCH_TITLES[@]} -eq 0 ]] && ! [[ -t 0 ]]; then
+		_read_titles_stream
 	fi
 
-	if [[ ${#titles[@]} -eq 0 ]]; then
+	if [[ ${#_BATCH_TITLES[@]} -eq 0 ]]; then
 		log_error "No titles provided. Use --title, --from-file, or pipe titles on stdin."
 		echo "Usage: new-task-helper.sh batch --title \"Title 1\" --title \"Title 2\"" >&2
 		echo "       new-task-helper.sh batch --from-file titles.txt" >&2
 		printf "       printf 'Title 1\\\\nTitle 2\\\\n' | new-task-helper.sh batch\n" >&2
 		return 1
 	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _allocate_one_task: allocate a single task via `claim-task-id.sh` and
+# print `task_id|task_ref` on stdout for the caller to parse.
+# Args: title, labels, no_issue, offline, repo_path, claim_script
+# Returns: 0 on success (with id|ref on stdout), 1 on failure (logs error).
+# ---------------------------------------------------------------------------
+_allocate_one_task() {
+	local title="$1"
+	local labels="$2"
+	local no_issue="$3"
+	local offline="$4"
+	local repo_path="$5"
+	local claim_script="$6"
+
+	local -a claim_args=(--title "$title" --repo-path "$repo_path")
+	[[ -n "$labels" ]] && claim_args+=(--labels "$labels")
+	[[ "$no_issue" == "true" ]] && claim_args+=(--no-issue)
+	[[ "$offline" == "true" ]] && claim_args+=(--offline)
+
+	local claim_output=""
+	local claim_rc=0
+	claim_output=$("$claim_script" "${claim_args[@]}" 2>/dev/null) || claim_rc=$?
+
+	# claim-task-id.sh uses rc 2 for "offline, id claimed locally" — still success
+	if [[ $claim_rc -ne 0 && $claim_rc -ne 2 ]]; then
+		log_error "Failed to allocate ID for: $title (exit code: $claim_rc)"
+		return 1
+	fi
+
+	local task_id="" task_ref="" line=""
+	while IFS= read -r line; do
+		case "$line" in
+		task_id=*) task_id="${line#task_id=}" ;;
+		ref=*) task_ref="${line#ref=}" ;;
+		esac
+	done <<<"$claim_output"
+
+	if [[ -z "$task_id" ]]; then
+		log_error "No task_id returned for: $title"
+		return 1
+	fi
+
+	printf '%s|%s\n' "$task_id" "$task_ref"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _commit_batch_planning: single commit+push of planning files (TODO.md +
+# todo/tasks/). Prefers planning-commit-helper.sh, falls back to direct git.
+# Args: n (count for commit message), repo_path
+# Non-fatal on failure (logs warn and returns 0).
+# ---------------------------------------------------------------------------
+_commit_batch_planning() {
+	local n="$1"
+	local repo_path="$2"
+	local commit_msg="plan: batch add ${n} task(s) via /new-task --batch"
+	local planning_helper="$SCRIPT_DIR/planning-commit-helper.sh"
+
+	if [[ -x "$planning_helper" ]]; then
+		log_info "Committing $n planning file(s)..."
+		"$planning_helper" "$commit_msg" || log_warn "Planning commit failed — files written but not committed"
+	else
+		log_info "planning-commit-helper.sh not found, using direct git commit..."
+		git -C "$repo_path" add TODO.md "todo/tasks/" 2>/dev/null || true
+		git -C "$repo_path" commit -m "$commit_msg" 2>/dev/null || true
+		git -C "$repo_path" push 2>/dev/null || log_warn "Push failed — committed locally"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _print_batch_summary: print the ID / Title / GH# table from the module-level
+# result arrays populated by cmd_batch's allocation loop.
+# ---------------------------------------------------------------------------
+_print_batch_summary() {
+	echo ""
+	printf "%-12s %-55s %s\n" "ID" "Title" "GH#"
+	printf "%-12s %-55s %s\n" "------------" "-------------------------------------------------------" "-------"
+
+	local i=0
+	local n="${#_BATCH_RESULT_IDS[@]}"
+	while [[ $i -lt $n ]]; do
+		local tid="${_BATCH_RESULT_IDS[$i]}"
+		local ttitle="${_BATCH_RESULT_TITLES[$i]}"
+		local tref="${_BATCH_RESULT_REFS[$i]}"
+		# Truncate title if too long for display
+		if [[ ${#ttitle} -gt 55 ]]; then
+			ttitle="${ttitle:0:52}..."
+		fi
+		printf "%-12s %-55s %s\n" "$tid" "$ttitle" "$tref"
+		i=$((i + 1))
+	done
+	echo ""
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _process_one_batch_title: per-iteration body of the allocation loop.
+# Handles dry-run, claim call, stub brief, TODO entry, and result appends.
+# Reads batch config from `_BATCH_*` globals; writes results to
+# `_BATCH_RESULT_*` globals.
+# Args: title, repo_path, todo_file, claim_script
+# Returns: 0 on success, 1 on per-task failure (caller still continues).
+# ---------------------------------------------------------------------------
+_process_one_batch_title() {
+	local title="$1"
+	local repo_path="$2"
+	local todo_file="$3"
+	local claim_script="$4"
+
+	log_info "Allocating: $title"
+
+	if [[ "$_BATCH_DRY_RUN" == "true" ]]; then
+		_BATCH_RESULT_IDS+=("[dry-run]")
+		_BATCH_RESULT_TITLES+=("$title")
+		_BATCH_RESULT_REFS+=("[dry-run]")
+		return 0
+	fi
+
+	local alloc_out=""
+	if ! alloc_out=$(_allocate_one_task "$title" "$_BATCH_LABELS" "$_BATCH_NO_ISSUE" "$_BATCH_OFFLINE" "$repo_path" "$claim_script"); then
+		return 1
+	fi
+
+	local task_id="${alloc_out%%|*}"
+	local task_ref="${alloc_out#*|}"
+
+	_create_stub_brief "$task_id" "$title" "$task_ref" "$repo_path" ||
+		log_warn "Brief creation failed for $task_id — continuing"
+
+	_append_todo_entry "$task_id" "$title" "$task_ref" "$todo_file" ||
+		log_warn "TODO entry failed for $task_id — continuing"
+
+	_BATCH_RESULT_IDS+=("$task_id")
+	_BATCH_RESULT_TITLES+=("$title")
+	_BATCH_RESULT_REFS+=("${task_ref:-offline}")
+	log_success "Allocated $task_id ($task_ref): $title"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# cmd_batch: main batch creation flow — orchestrator.
+#
+# Steps:
+#   1. Parse CLI args into `_BATCH_*` globals (`_parse_batch_args`).
+#   2. Resolve titles from args / file / stdin (`_resolve_batch_titles`).
+#   3. Resolve repo path, TODO.md path, and locate `claim-task-id.sh`.
+#   4. Allocate each title via `_process_one_batch_title`, tracking
+#      per-iteration failures in `any_failed`.
+#   5. Commit+push planning files as one unit (`_commit_batch_planning`).
+#   6. Print the summary table (`_print_batch_summary`).
+# ---------------------------------------------------------------------------
+cmd_batch() {
+	_parse_batch_args "$@" || return 1
+	_resolve_batch_titles || return 1
 
 	# Resolve repo path
+	local repo_path="$_BATCH_REPO_PATH"
 	if [[ -z "$repo_path" ]]; then
 		repo_path=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
 	fi
@@ -268,116 +461,36 @@ cmd_batch() {
 		return 1
 	fi
 
-	log_info "Batch creating ${#titles[@]} task(s)..."
-	if [[ "$dry_run" == "true" ]]; then
+	log_info "Batch creating ${#_BATCH_TITLES[@]} task(s)..."
+	if [[ "$_BATCH_DRY_RUN" == "true" ]]; then
 		log_info "[DRY-RUN] No changes will be made"
 	fi
 
-	# Summary table data: parallel arrays
-	local -a result_ids=()
-	local -a result_titles=()
-	local -a result_refs=()
+	# Reset result arrays for this invocation
+	_BATCH_RESULT_IDS=()
+	_BATCH_RESULT_TITLES=()
+	_BATCH_RESULT_REFS=()
 	local any_failed=false
 
-	for title in "${titles[@]}"; do
-		log_info "Allocating: $title"
-
-		if [[ "$dry_run" == "true" ]]; then
-			result_ids+=("[dry-run]")
-			result_titles+=("$title")
-			result_refs+=("[dry-run]")
-			continue
-		fi
-
-		# Build claim args
-		local -a claim_args=(--title "$title" --repo-path "$repo_path")
-		[[ -n "$labels" ]] && claim_args+=(--labels "$labels")
-		[[ "$no_issue" == "true" ]] && claim_args+=(--no-issue)
-		[[ "$offline" == "true" ]] && claim_args+=(--offline)
-
-		local claim_output=""
-		local claim_rc=0
-		claim_output=$("$claim_script" "${claim_args[@]}" 2>/dev/null) || claim_rc=$?
-
-		if [[ $claim_rc -ne 0 && $claim_rc -ne 2 ]]; then
-			log_error "Failed to allocate ID for: $title (exit code: $claim_rc)"
+	local title
+	for title in "${_BATCH_TITLES[@]}"; do
+		_process_one_batch_title "$title" "$repo_path" "$todo_file" "$claim_script" ||
 			any_failed=true
-			continue
-		fi
-
-		# Parse output
-		local task_id="" task_ref=""
-		while IFS= read -r line; do
-			case "$line" in
-			task_id=*) task_id="${line#task_id=}" ;;
-			ref=*) task_ref="${line#ref=}" ;;
-			esac
-		done <<<"$claim_output"
-
-		if [[ -z "$task_id" ]]; then
-			log_error "No task_id returned for: $title"
-			any_failed=true
-			continue
-		fi
-
-		# Create stub brief
-		_create_stub_brief "$task_id" "$title" "$task_ref" "$repo_path" || {
-			log_warn "Brief creation failed for $task_id — continuing"
-		}
-
-		# Append TODO entry
-		_append_todo_entry "$task_id" "$title" "$task_ref" "$todo_file" || {
-			log_warn "TODO entry failed for $task_id — continuing"
-		}
-
-		result_ids+=("$task_id")
-		result_titles+=("$title")
-		result_refs+=("${task_ref:-offline}")
-		log_success "Allocated $task_id ($task_ref): $title"
 	done
 
 	# Single commit+push for all planning files
-	if [[ "$dry_run" == "false" && ${#result_ids[@]} -gt 0 ]]; then
-		local planning_helper="$SCRIPT_DIR/planning-commit-helper.sh"
-		if [[ -x "$planning_helper" ]]; then
-			local n="${#result_ids[@]}"
-			local commit_msg="plan: batch add ${n} task(s) via /new-task --batch"
-			log_info "Committing $n planning file(s)..."
-			"$planning_helper" "$commit_msg" || log_warn "Planning commit failed — files written but not committed"
-		else
-			# Fallback: direct git commit
-			local n="${#result_ids[@]}"
-			log_info "planning-commit-helper.sh not found, using direct git commit..."
-			git -C "$repo_path" add TODO.md "todo/tasks/" 2>/dev/null || true
-			git -C "$repo_path" commit -m "plan: batch add ${n} task(s) via /new-task --batch" 2>/dev/null || true
-			git -C "$repo_path" push 2>/dev/null || log_warn "Push failed — committed locally"
-		fi
+	if [[ "$_BATCH_DRY_RUN" == "false" && ${#_BATCH_RESULT_IDS[@]} -gt 0 ]]; then
+		_commit_batch_planning "${#_BATCH_RESULT_IDS[@]}" "$repo_path"
 	fi
 
-	# Print summary table
-	echo ""
-	printf "%-12s %-55s %s\n" "ID" "Title" "GH#"
-	printf "%-12s %-55s %s\n" "------------" "-------------------------------------------------------" "-------"
-	local i=0
-	while [[ $i -lt ${#result_ids[@]} ]]; do
-		local tid="${result_ids[$i]}"
-		local ttitle="${result_titles[$i]}"
-		local tref="${result_refs[$i]}"
-		# Truncate title if too long for display
-		if [[ ${#ttitle} -gt 55 ]]; then
-			ttitle="${ttitle:0:52}..."
-		fi
-		printf "%-12s %-55s %s\n" "$tid" "$ttitle" "$tref"
-		i=$((i + 1))
-	done
-	echo ""
+	_print_batch_summary
 
 	if [[ "$any_failed" == "true" ]]; then
 		log_warn "Some tasks failed to allocate — check stderr above"
 		return 1
 	fi
 
-	log_success "Batch complete: ${#result_ids[@]} task(s) created"
+	log_success "Batch complete: ${#_BATCH_RESULT_IDS[@]} task(s) created"
 	return 0
 }
 
