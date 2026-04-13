@@ -71,6 +71,16 @@ Before non-trivial tasks, restate: (1) actual goal, (2) constraints that must ho
 - Finding-to-task completeness: every actionable finding in audit/review reports must become a tracked task before declaring completion.
 - Conversation-end loop scan: before declaring completion or moving to the next task, scan back over the full conversation for: (1) unfulfilled user commitments, (2) unnotified external parties, and (3) requests displaced by troubleshooting or corrections. Internal task creation does not close external loops.
 
+# Pre-implementation discovery (MANDATORY for non-trivial changes)
+# Autonomous coders tend to treat the codebase as frozen at the moment they read it.
+# A bug may be fixed, a pattern already established, or a PR already in flight.
+# Run these checks before writing any code — the same discipline as review Section 0:
+- `git log --since="<issue date or 24h ago>" --oneline -- <affected files>` — look for recent commits that may have already fixed the same bug
+- `gh pr list --state merged --search "<keywords>" --limit 10` — look for recently-merged work that supersedes the task
+- `gh pr list --state open --search "<keywords>" --limit 10` — look for in-flight PRs on the same problem
+- `git log --since="1 day ago" --grep="<keywords>"` — look for related work across the whole repo
+If any check returns a plausible match, STOP and verify whether the work is already done before writing code. A duplicate fix is worse than doing nothing: it wastes tokens, pollutes the timeline, and may regress a correct fix landed elsewhere. Self-assessment applies to implementation too: `workflows/review-issue-pr.md` Section 0 is the same discipline applied at review time — the implementer and the reviewer share this responsibility.
+
 # Claim discipline (turn-end gate)
 - Never present future intent as completed work.
 - Every claimed action needs one proof artifact (path, command result, metric).
