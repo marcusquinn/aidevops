@@ -137,7 +137,8 @@ _check_repo_hygiene() {
 					local has_pr="false"
 					if command -v gh &>/dev/null; then
 						local pr_check
-						pr_check=$(gh pr list --repo "$(jq -r --arg p "$repo_path" '.initialized_repos[] | select(.path == $p) | .slug' "$repos_json" 2>/dev/null)" \
+						# Use first() to guard against duplicate entries in initialized_repos for the same path.
+						pr_check=$(gh pr list --repo "$(jq -r --arg p "$repo_path" 'first(.initialized_repos[] | select(.path == $p) | .slug)' "$repos_json" 2>/dev/null)" \
 							--head "$wt_branch" --state all --json number --jq 'length' 2>/dev/null) || pr_check="0"
 						[[ "${pr_check:-0}" -gt 0 ]] && has_pr="true"
 					fi
@@ -424,7 +425,7 @@ _count_dispatchable_product_repos() {
 			# GH#4412: use --state all to count merged/closed PRs too
 			pr_alloc_err=$(mktemp)
 			pr_json=$(gh pr list --repo "$slug" --state all --json createdAt --limit 200 2>"$pr_alloc_err") || pr_json="[]"
-			if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+			if [[ -z "$pr_json" ]]; then
 				local _pr_alloc_err_msg
 				_pr_alloc_err_msg=$(cat "$pr_alloc_err" 2>/dev/null || echo "unknown error")
 				echo "[pulse-wrapper] calculate_priority_allocations: gh pr list FAILED for ${slug}: ${_pr_alloc_err_msg}" >>"$LOGFILE"
@@ -599,6 +600,9 @@ count_debt_workers() {
 # Arguments:
 #   $1 - repo path (canonical path on disk)
 #   $2 - max workers per repo (default: MAX_WORKERS_PER_REPO or 5)
+#   $3 - (optional) pre-fetched output of list_active_worker_processes
+#         Pass this when calling inside a loop to avoid repeated ps invocations.
+#         Omit (or pass empty) to fetch fresh process data.
 #
 # Exit codes:
 #   0 - at or above cap (skip dispatch for this repo)
@@ -607,9 +611,18 @@ count_debt_workers() {
 check_repo_worker_cap() {
 	local repo_path="$1"
 	local cap="${2:-${MAX_WORKERS_PER_REPO:-5}}"
+	local cached_worker_procs="${3:-}"
 	local active_for_repo
+	local worker_procs
 
-	active_for_repo=$(list_active_worker_processes | awk -v path="$repo_path" '
+	# Use caller-supplied cache when available to avoid repeated ps calls in loops.
+	if [[ -n "$cached_worker_procs" ]]; then
+		worker_procs="$cached_worker_procs"
+	else
+		worker_procs=$(list_active_worker_processes)
+	fi
+
+	active_for_repo=$(printf '%s\n' "$worker_procs" | awk -v path="$repo_path" '
 		BEGIN { esc=path; gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc) }
 		$0 ~ ("--dir[[:space:]]+" esc "([[:space:]]|$)") { count++ }
 		END { print count + 0 }
