@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.10] - 2026-04-13
+
+### Fixed
+
+- flip to worker-is-triager model — workers decide, humans approve (GH#18538 follow-up) (#18743)
+
 ## [3.8.9] - 2026-04-13
 
 ### Changed
