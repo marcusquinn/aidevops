@@ -235,11 +235,14 @@ _complexity_scan_tree_hash() {
 	# Hash the tree of .agents/ tracked files — covers both .sh and .md targets.
 	# git ls-tree -r HEAD outputs blob hashes + paths; piping through sha256sum
 	# gives a single stable hash that changes iff any tracked file changes.
-	git -C "$repo_path" ls-tree -r HEAD -- .agents/ 2>/dev/null |
-		awk '{print $3, $4}' |
-		sha256sum 2>/dev/null |
-		awk '{print $1}' ||
-		true
+	# Capture output first: sha256sum always produces output (even for empty input),
+	# so an empty-check on the pipeline result is unreliable (GH#18555).
+	local tree_data
+	tree_data=$(git -C "$repo_path" ls-tree -r HEAD -- .agents/ 2>/dev/null)
+	if [[ -z "$tree_data" ]]; then
+		return 0
+	fi
+	printf '%s\n' "$tree_data" | awk '{print $3, $4}' | sha256sum 2>/dev/null | awk '{print $1}' || true
 	return 0
 }
 
@@ -483,9 +486,11 @@ _complexity_scan_collect_violations() {
 		local full_path="${aidevops_path}/${file}"
 		[[ -f "$full_path" ]] || continue
 		local result
-		result=$(awk '
+		# Use -v to pass the threshold safely — interpolating shell variables into
+		# awk scripts is a security risk and breaks if the value contains quotes (GH#18555).
+		result=$(awk -v threshold="$COMPLEXITY_FUNC_LINE_THRESHOLD" '
 			/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
-			fname && /^\}$/ { lines=NR-start; if(lines>'"$COMPLEXITY_FUNC_LINE_THRESHOLD"') printf "%s() %d lines\n", fname, lines; fname="" }
+			fname && /^\}$/ { lines=NR-start; if(lines+0>threshold+0) printf "%s() %d lines\n", fname, lines; fname="" }
 		' "$full_path")
 		if [[ -n "$result" ]]; then
 			local count
@@ -1032,9 +1037,11 @@ _complexity_scan_create_issues() {
 			"$repos_json" 2>/dev/null | head -n 1)
 		local details=""
 		if [[ -n "$aidevops_path" && -f "${aidevops_path}/${file_path}" ]]; then
-			details=$(awk '
+			# Use -v to pass the threshold safely — interpolating shell variables into
+			# awk scripts is a security risk and breaks if the value contains quotes (GH#18555).
+			details=$(awk -v threshold="$COMPLEXITY_FUNC_LINE_THRESHOLD" '
 				/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
-				fname && /^\}$/ { lines=NR-start; if(lines>'"$COMPLEXITY_FUNC_LINE_THRESHOLD"') printf "%s() %d lines\n", fname, lines; fname="" }
+				fname && /^\}$/ { lines=NR-start; if(lines+0>threshold+0) printf "%s() %d lines\n", fname, lines; fname="" }
 			' "${aidevops_path}/${file_path}" | head -10)
 		fi
 

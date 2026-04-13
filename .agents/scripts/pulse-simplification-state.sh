@@ -182,14 +182,22 @@ _simplification_state_refresh() {
 
 		local current_hash stored_hash
 		current_hash=$(git -C "$repo_path" hash-object "$full_path" 2>/dev/null) || continue
-		stored_hash=$(jq -r --arg fp "$fp" '.files[$fp].hash // empty' "$tmp_state" 2>/dev/null) || stored_hash=""
+		# Read hash and passes in a single jq call — spawning jq twice per file
+		# inside a loop is inefficient when the state file can have hundreds of entries (GH#18555).
+		local prev_passes
+		IFS=$'\t' read -r stored_hash prev_passes < <(
+			jq -r --arg fp "$fp" \
+				'.files[$fp] // {"hash": "", "passes": 0} | [(.hash // ""), (.passes // 0 | tostring)] | join("\t")' \
+				"$tmp_state" 2>/dev/null
+		)
+		[[ -n "$stored_hash" ]] || stored_hash=""
+		[[ "$prev_passes" =~ ^[0-9]+$ ]] || prev_passes=0
 
 		# Also fix any non-SHA1 hashes (wrong algorithm, t1754)
 		local stored_len=${#stored_hash}
 		if [[ "$current_hash" != "$stored_hash" || "$stored_len" -ne 40 ]]; then
-			local now_iso prev_passes new_passes
+			local now_iso new_passes
 			now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-			prev_passes=$(jq -r --arg fp "$fp" '.files[$fp].passes // 0' "$tmp_state" 2>/dev/null) || prev_passes=0
 			new_passes=$((prev_passes + 1))
 			local inner_tmp
 			inner_tmp=$(mktemp)
@@ -245,14 +253,16 @@ _simplification_state_prune() {
 	if [[ "$pruned" -gt 0 ]]; then
 		local tmp_file
 		tmp_file=$(mktemp)
-		# Remove all stale entries in one jq pass
-		local jq_filter=".files"
-		while IFS= read -r sp; do
-			[[ -z "$sp" ]] && continue
-			jq_filter="${jq_filter} | del(.[\"${sp}\"])"
-		done < <(printf '%b' "$stale_paths")
-		jq "${jq_filter} | {\"files\": .}" "$state_file" >"$tmp_file" 2>/dev/null || {
-			# Fallback: remove one at a time
+		# Build a JSON array of stale paths and remove all in one jq pass using
+		# --argjson. Building a jq filter by string concatenation is fragile:
+		# paths containing quotes or special characters cause syntax errors and
+		# are a potential injection vector (GH#18555).
+		local stale_paths_json
+		stale_paths_json=$(printf '%b' "$stale_paths" | jq -R . | jq -s .)
+		jq --argjson paths "${stale_paths_json:-[]}" \
+			'reduce $paths[] as $p (.; del(.files[$p])) | {"files": .files}' \
+			"$state_file" >"$tmp_file" 2>/dev/null || {
+			# Fallback: remove entries one at a time using safe --arg (not string concat)
 			cp "$state_file" "$tmp_file"
 			while IFS= read -r sp; do
 				[[ -z "$sp" ]] && continue
