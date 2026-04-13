@@ -60,7 +60,48 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
      - tier:standard: Code skeletons with function signatures and inline comments.
        The worker fills in logic following the specified pattern.
      - tier:reasoning: Approach description with constraints and trade-offs.
-       The worker designs the solution. -->
+       The worker designs the solution.
+
+     INLINE DATA RULE (GH#18458 — worker token budget protection):
+     When a brief references data from a large file (plan doc, source file, config),
+     include the data INLINE rather than saying "see Plan section X" or "see file Y".
+     Workers that must read 500+ line files just to extract a 50-line data list burn
+     tokens on reading before implementing. Examples:
+       BAD:  "Use the 48 function names from Plan section 3.1"
+       GOOD: List all 48 function names directly in the brief
+       BAD:  "Model on test-pulse-wrapper-characterization.sh"
+       GOOD: "Model on test-pulse-wrapper-characterization.sh — key structure:
+              setup_sandbox(), EXPECTED_FUNCTIONS array, declare -F loop, print_result
+              helper, main() calling all test_* functions"
+
+     PLAN-SKETCH VERIFICATION (GH#18458):
+     When code sketches from a plan document are included in a brief, verify every
+     function call against the actual source file signatures BEFORE filing the child
+     task. Plan sketches are written during planning (before implementation); function
+     signatures may have been updated since. A wrong signature in a brief causes the
+     worker to write broken code and burn tokens debugging. -->
+
+### Worker Quick-Start
+
+<!-- OPTIONAL but RECOMMENDED for tasks with 3+ reference files or >2,000 lines of
+     total reference material. Gives the worker the 5-10 most critical commands/facts
+     to start implementing immediately, without reading all reference files first.
+     Workers dispatched at tier:standard (sonnet) have limited context budgets —
+     front-loading the critical data here prevents token exhaustion during reading.
+     Omit for simple tasks where Implementation Steps are sufficient. -->
+
+{Delete this section if the task is straightforward. For complex tasks:}
+
+```bash
+# 1. Extract key data (e.g., function names from a large file):
+{grep/awk command that extracts the critical data the worker needs}
+
+# 2. Key structural pattern to follow:
+{1-3 line description of the reference file's structure, not "read the whole file"}
+
+# 3. Critical gotchas (verified signatures, known quirks):
+{e.g., "_persist_role_cache takes 3 args (runner_user, repo_slug, role), not 2"}
+```
 
 ### Files to Modify
 
@@ -181,3 +222,15 @@ that defines how to machine-check the criterion. See `.agents/scripts/verify-bri
 | Implementation | {Xh} | {scope} |
 | Testing | {Xm} | {test strategy} |
 | **Total** | **{Xh}** | |
+
+<!-- READING BUDGET CHECK (GH#18458):
+     If the Research/read phase lists >2,000 lines of reference material across all
+     files, the task is at HIGH RISK of worker timeout (token exhaustion before
+     implementation starts). Mitigations:
+     1. Use the Worker Quick-Start section to front-load critical data
+     2. Include extracted data inline (don't just point to large files)
+     3. Consider tier:reasoning if the task requires synthesizing across 5+ files
+     4. For decomposition Phase 0 tasks specifically, use tier:reasoning — these
+        require reading the plan + model file + target file + wrapper file, which
+        routinely exceeds 4,000 lines of reference material.
+-->
