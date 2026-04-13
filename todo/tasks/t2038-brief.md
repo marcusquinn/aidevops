@@ -187,28 +187,28 @@ grep "Known limitation — sync-on-pr-merge" .agents/AGENTS.md | grep -E "(rules
 
 ## Acceptance Criteria
 
-- [ ] The brief contains a `## Decision` section naming the chosen path with explicit rationale.
+- [x] The brief contains a `## Decision` section naming the chosen path with explicit rationale.
   ```yaml
   verify:
     method: codebase
     pattern: "^## Decision"
     path: "todo/tasks/t2038-brief.md"
   ```
-- [ ] A child implementation task is filed with its own task ID and brief.
+- [x] A child implementation task is filed with its own task ID and brief.
   ```yaml
   verify:
     method: codebase
     pattern: "Implementation task: t[0-9]+"
     path: "todo/tasks/t2038-brief.md"
   ```
-- [ ] `.agents/AGENTS.md` "Known limitation" paragraph references the chosen path and the child task ID.
+- [x] `.agents/AGENTS.md` "Known limitation" paragraph references the chosen path and the child task ID.
   ```yaml
   verify:
     method: codebase
     pattern: "Known limitation.*sync-on-pr-merge.*(rulesets|fine-grained PAT)"
     path: ".agents/AGENTS.md"
   ```
-- [ ] The classic-protection HTTP 500 limitation is verified still present (or documented as resolved by GitHub).
+- [x] The classic-protection HTTP 500 limitation is verified still present (or documented as resolved by GitHub).
   ```yaml
   verify:
     method: manual
