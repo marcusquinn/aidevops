@@ -153,6 +153,14 @@ source "${SCRIPT_DIR}/pulse-issue-reconcile.sh"
 # Phase 6 (t1974, GH#18382): simplification cluster extracted (largest single extraction).
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-simplification.sh"
+# t2020 (GH#18483): state sub-cluster split out to clear the 2,000-line gate
+# that was blocking #18420 (t1993). Must be sourced AFTER pulse-simplification.sh
+# because _simplification_state_backfill_closed in the state module calls
+# _complexity_scan_has_existing_issue which stays in the parent module. Bash
+# resolves function names at call time, so source order is informational
+# rather than strict, but this order reads "parent, then state sub-cluster".
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-simplification-state.sh"
 # Phase 7 (t1975, GH#18385): prefetch cluster extracted.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-prefetch.sh"
@@ -974,6 +982,7 @@ main() {
 			_PULSE_CLEANUP_LOADED
 			_PULSE_ISSUE_RECONCILE_LOADED
 			_PULSE_SIMPLIFICATION_LOADED
+			_PULSE_SIMPLIFICATION_STATE_LOADED
 			_PULSE_PREFETCH_LOADED
 			_PULSE_TRIAGE_LOADED
 			_PULSE_DISPATCH_CORE_LOADED
