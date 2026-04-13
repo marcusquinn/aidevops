@@ -254,12 +254,16 @@ _seed_cache() {
 		printf '{}\n' >"$PRIVACY_CACHE_FILE"
 	fi
 	local tmp
-	tmp=$(mktemp)
+	tmp=$(mktemp "${TMP}/cache.XXXXXX")
 	jq --arg slug "$slug" \
 		--argjson private "$private_bool" \
 		--argjson ca "$checked_at" \
 		'.[$slug] = {private: $private, checked_at: $ca}' \
-		"$PRIVACY_CACHE_FILE" >"$tmp"
+		"$PRIVACY_CACHE_FILE" >"$tmp" || {
+		rm -f "$tmp"
+		printf 'Error: failed to update cache file at %s\n' "$PRIVACY_CACHE_FILE" >&2
+		return 1
+	}
 	mv "$tmp" "$PRIVACY_CACHE_FILE"
 	return 0
 }
