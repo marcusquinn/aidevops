@@ -60,6 +60,11 @@ jobs:
             // GH#18197: simplification-debt issues are exclusively machine-generated.
             // A non-maintainer creating one is either a mistake or an attempt to bypass
             // the assignee gate. Strip the label and apply needs-maintainer-review.
+            //
+            // GH#18623: origin:worker is ALSO machine-only — strip it independently of
+            // simplification-debt. A non-maintainer opening an issue with only the
+            // origin:worker label would previously keep that label, since the stripping
+            // logic was nested inside the simplification-debt check.
             const issueLabels = (issue.labels || []).map(l => l.name);
             if (issueLabels.includes('simplification-debt')) {
               console.log(`Non-maintainer ${author} created issue with simplification-debt label — stripping label and gating`);
@@ -73,7 +78,9 @@ jobs:
               } catch (e) {
                 // Label may not be present — fine
               }
-              // Also strip origin:worker if present (belt-and-suspenders)
+            }
+            if (issueLabels.includes('origin:worker')) {
+              console.log(`Non-maintainer ${author} created issue with origin:worker label — stripping label`);
               try {
                 await github.rest.issues.removeLabel({
                   owner: context.repo.owner,
