@@ -136,7 +136,12 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# _append_todo_entry: append a single task line to TODO.md
+# _append_todo_entry: insert a single task line under the active backlog
+# header in TODO.md (## Ready, fallback to ## Backlog), preserving file
+# structure. Falls back to EOF append only if no header is found.
+#
+# Caller MUST validate `$todo_file` exists before calling (cmd_batch does
+# this once before the loop — the check is NOT repeated here per GH#18539).
 # ---------------------------------------------------------------------------
 _append_todo_entry() {
 	local task_id="$1"
@@ -153,13 +158,48 @@ _append_todo_entry() {
 
 	local entry="- [ ] ${task_id} ${title} #auto-dispatch ~1h${ref_field} logged:${today}"
 
-	# Append under the first "## " section header that looks like an active backlog
-	# If no suitable header, append at end of file
-	if [[ -f "$todo_file" ]]; then
-		echo "$entry" >>"$todo_file"
+	# Scan for the first "## Ready" (or "## Backlog") header and track the
+	# last "- [ ]" task line within that section. Insert after that line so
+	# new tasks land at the bottom of the active backlog, not after ## Done.
+	#
+	# Regex is stored in a variable per Bash Pitfall #46: inline regex with
+	# backslash-brackets can be parsed ambiguously against POSIX char classes.
+	local header_re='^##[[:space:]]+(Ready|Backlog)'
+	local next_header_re='^##'
+	local task_re='^-[[:space:]]+\[[[:space:]]+\]'
+	local header_line=0 last_task_line=0 line_num=0
+	local in_section=false
+	local file_line=""
+	while IFS= read -r file_line; do
+		line_num=$((line_num + 1))
+		if [[ "$in_section" == false && "$file_line" =~ $header_re ]]; then
+			in_section=true
+			header_line=$line_num
+			last_task_line=$line_num
+			continue
+		fi
+		if [[ "$in_section" == true ]]; then
+			# Hit the next ## header — stop scanning this section.
+			if [[ "$file_line" =~ $next_header_re ]]; then
+				break
+			fi
+			# Track the last task checkbox in the section.
+			if [[ "$file_line" =~ $task_re ]]; then
+				last_task_line=$line_num
+			fi
+		fi
+	done <"$todo_file"
+
+	if [[ "$header_line" -gt 0 ]]; then
+		# Insert after the last task line (or header if section is empty).
+		local tmp_file
+		tmp_file=$(mktemp)
+		awk -v n="$last_task_line" -v entry="$entry" \
+			'NR==n{print; print entry; next}1' \
+			"$todo_file" >"$tmp_file" && mv "$tmp_file" "$todo_file"
 	else
-		log_error "TODO.md not found at: $todo_file"
-		return 1
+		log_warn "No ## Ready or ## Backlog header found in $todo_file — appending at end"
+		echo "$entry" >>"$todo_file"
 	fi
 
 	return 0
@@ -244,16 +284,22 @@ _parse_batch_args() {
 }
 
 # ---------------------------------------------------------------------------
-# _read_titles_stream: read titles from the current stdin, stripping inline
-# `#` comments and whitespace, appending non-empty lines to `_BATCH_TITLES`.
+# _read_titles_stream: read titles from the current stdin, skipping full-line
+# comments and whitespace, appending non-empty lines to `_BATCH_TITLES`.
 # Called with stdin redirected by the caller (file or pipe).
+#
+# GH#18539: only skip lines that START with `#` (after whitespace). The
+# previous `${line%%#*}` destroyed legitimate titles like "Fix bug #123",
+# "Add PR #42 handler", or any title containing a GitHub issue reference.
 # ---------------------------------------------------------------------------
 _read_titles_stream() {
 	local line
 	while IFS= read -r line; do
-		line="${line%%#*}"                      # strip inline comments
 		line="${line#"${line%%[![:space:]]*}"}" # ltrim
 		line="${line%"${line##*[![:space:]]}"}" # rtrim
+		# Skip full-line comments (entire line is a comment) but preserve
+		# inline `#` refs — do NOT strip with ${line%%#*}.
+		[[ "$line" =~ ^# ]] && continue
 		[[ -n "$line" ]] && _BATCH_TITLES+=("$line")
 	done
 	return 0
@@ -313,7 +359,10 @@ _allocate_one_task() {
 
 	local claim_output=""
 	local claim_rc=0
-	claim_output=$("$claim_script" "${claim_args[@]}" 2>/dev/null) || claim_rc=$?
+	# GH#18539: do NOT suppress claim-task-id.sh stderr — users need to see
+	# auth failures, network errors, and lock contention. Suppressing hides
+	# the diagnostic output that tells them why allocation failed.
+	claim_output=$("$claim_script" "${claim_args[@]}") || claim_rc=$?
 
 	# claim-task-id.sh uses rc 2 for "offline, id claimed locally" — still success
 	if [[ $claim_rc -ne 0 && $claim_rc -ne 2 ]]; then
@@ -454,6 +503,13 @@ cmd_batch() {
 		repo_path=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
 	fi
 	local todo_file="$repo_path/TODO.md"
+
+	# GH#18539: validate TODO.md once at cmd_batch entry, not per-task
+	# inside `_append_todo_entry`. Fails fast if the target file is missing.
+	if [[ ! -f "$todo_file" ]]; then
+		log_error "TODO.md not found at: $todo_file"
+		return 1
+	fi
 
 	local claim_script="$SCRIPT_DIR/claim-task-id.sh"
 	if [[ ! -x "$claim_script" ]]; then
