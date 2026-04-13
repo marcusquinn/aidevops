@@ -908,7 +908,7 @@ _check_cost_budget() {
 	if [[ -n "$issue_meta_json" ]]; then
 		local label_hit
 		label_hit=$(printf '%s' "$issue_meta_json" |
-			jq -r '[.labels[].name] | index("needs-maintainer-review") != null' 2>/dev/null) || label_hit="false"
+			jq -r '[(.labels // [])[].name] | index("needs-maintainer-review") != null' 2>/dev/null) || label_hit="false"
 		[[ "$label_hit" == "true" ]] && has_label="true"
 	fi
 
@@ -954,7 +954,7 @@ _has_active_claim() {
 	local issue_meta_json="$1"
 	local result
 	result=$(printf '%s' "$issue_meta_json" | jq -r '
-		[.labels[].name] as $labels |
+		[(.labels // [])[].name] as $labels |
 		(
 			($labels | index("status:queued") != null) or
 			($labels | index("status:in-progress") != null) or
@@ -1068,7 +1068,7 @@ is_assigned() {
 	# (mirrors the STALE_RECOVERED token used by stale-recovery path).
 	local parent_task_hit
 	parent_task_hit=$(printf '%s' "$issue_meta_json" |
-		jq -r '[.labels[].name] | map(select(. == "parent-task" or . == "meta")) | .[0] // empty' 2>/dev/null)
+		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' | head -n 1 || true)
 	if [[ -n "$parent_task_hit" ]]; then
 		printf 'PARENT_TASK_BLOCKED (label=%s)\n' "$parent_task_hit"
 		return 0
@@ -1083,7 +1083,7 @@ is_assigned() {
 	# assignment that workers can never finish (loop, hidden blocker, scope).
 	local _t2007_tier
 	_t2007_tier=$(printf '%s' "$issue_meta_json" |
-		jq -r '[.labels[].name] | map(select(startswith("tier:"))) | .[0] // "tier:standard"' 2>/dev/null)
+		jq -r '[(.labels // [])[].name] | map(select(startswith("tier:"))) | .[0] // "tier:standard"' 2>/dev/null)
 	[[ -z "$_t2007_tier" || "$_t2007_tier" == "null" ]] && _t2007_tier="tier:standard"
 	local _t2007_signal _t2007_rc=0
 	_t2007_signal=$(_check_cost_budget "$issue_number" "$repo_slug" "$_t2007_tier" "$issue_meta_json") || _t2007_rc=$?
@@ -1318,7 +1318,7 @@ _get_active_claim_meta() {
 	local is_open has_assignee has_active_status
 	is_open=$(printf '%s' "$issue_meta_json" | jq -r '.state == "OPEN"' 2>/dev/null)
 	has_assignee=$(printf '%s' "$issue_meta_json" | jq -r '(.assignees | length) > 0' 2>/dev/null)
-	has_active_status=$(printf '%s' "$issue_meta_json" | jq -r '([.labels[].name] | (index("status:queued") != null or index("status:in-progress") != null))' 2>/dev/null)
+	has_active_status=$(printf '%s' "$issue_meta_json" | jq -r '([(.labels // [])[].name] | (index("status:queued") != null or index("status:in-progress") != null))' 2>/dev/null)
 
 	[[ "$is_open" == "true" || "$is_open" == "false" ]] || is_open="false"
 	[[ "$has_assignee" == "true" || "$has_assignee" == "false" ]] || has_assignee="false"
