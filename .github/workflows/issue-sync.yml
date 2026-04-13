@@ -469,6 +469,14 @@ jobs:
         env:
           TASK_ID: ${{ steps.extract.outputs.task_id }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          # t2034: gh CLI needs GH_TOKEN explicitly — without it, the t2029
+          # `gh pr comment` fallback (posted when the TODO.md push is rejected
+          # by branch protection) silently fails because gh has no auth.
+          # Verified observation: t2029's own merge run hit the t2029 fallback
+          # branch correctly but the comment never landed because gh ran
+          # without GH_TOKEN and printed nothing visible (gh's silent failure
+          # mode on missing auth).
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
