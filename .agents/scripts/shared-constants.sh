@@ -939,6 +939,155 @@ ensure_origin_labels_exist() {
 }
 
 # =============================================================================
+# Issue Status Label State Machine (t2033)
+# =============================================================================
+# aidevops models issue lifecycle as a set of mutually-exclusive `status:*`
+# labels. Every transition must atomically remove siblings so the state is
+# always consistent — audit queries like `gh issue list --label status:*`
+# can only be trusted if no issue ever carries two status labels at once.
+#
+# Background: #18444, #18454, #18455 all accumulated both `status:available`
+# and `status:queued` because `_dispatch_launch_worker` added `queued` without
+# removing `available`. t2008 stale-recovery escalation failed to fire as a
+# result. Root cause: 8+ call sites constructed their own --add-label /
+# --remove-label flags, with several forgetting one or more siblings.
+#
+# Canonical core lifecycle (managed here):
+#   available → queued → claimed → in-progress → in-review → done
+#                                   ↓
+#                                blocked (waiting on dependency)
+#
+# Exception labels (NOT managed here — out-of-band signals):
+#   status:needs-info, status:verify-failed, status:stale,
+#   status:needs-testing, status:orphaned
+# These are set/cleared by separate workflows and do not participate in
+# the core dispatch lifecycle enforced by this helper.
+
+# Canonical ordered list of mutually-exclusive core status:* labels.
+# When transitioning, all siblings of the target must be removed atomically.
+# Order matches the lifecycle flow for human readability; the helper treats
+# them as an unordered set. Elements are quoted because "done" is a bash
+# reserved word (SC1010).
+ISSUE_STATUS_LABELS=("available" "queued" "claimed" "in-progress" "in-review" "done" "blocked")
+
+# Ensure all core status:* labels exist on a repo (idempotent, cached per-process).
+# The helper relies on --remove-label being idempotent for *unset* labels (gh
+# returns exit 0 when a label exists in the repo but isn't applied to the issue),
+# but fails hard when a label doesn't exist in the repo at all. Pre-creating
+# them once per repo per process closes that gap.
+#
+# Usage: ensure_status_labels_exist "owner/repo"
+_STATUS_LABELS_ENSURED=""
+ensure_status_labels_exist() {
+	local repo="$1"
+	[[ -z "$repo" ]] && return 1
+	# Skip if already ensured for this repo in this process
+	case ",${_STATUS_LABELS_ENSURED}," in
+	*",${repo},"*) return 0 ;;
+	esac
+
+	# Colors roughly follow GitHub's default palette for lifecycle states.
+	gh label create "status:available" --repo "$repo" \
+		--description "Task is available for claiming" --color "0E8A16" --force 2>/dev/null || true
+	gh label create "status:queued" --repo "$repo" \
+		--description "Worker dispatched, not yet started" --color "FBCA04" --force 2>/dev/null || true
+	gh label create "status:claimed" --repo "$repo" \
+		--description "Interactive session claimed this task" --color "F9D0C4" --force 2>/dev/null || true
+	gh label create "status:in-progress" --repo "$repo" \
+		--description "Worker actively running" --color "1D76DB" --force 2>/dev/null || true
+	gh label create "status:in-review" --repo "$repo" \
+		--description "PR open, awaiting review/merge" --color "5319E7" --force 2>/dev/null || true
+	gh label create "status:done" --repo "$repo" \
+		--description "Task is complete" --color "6F42C1" --force 2>/dev/null || true
+	gh label create "status:blocked" --repo "$repo" \
+		--description "Waiting on blocker task" --color "D93F0B" --force 2>/dev/null || true
+
+	_STATUS_LABELS_ENSURED="${_STATUS_LABELS_ENSURED:+${_STATUS_LABELS_ENSURED},}${repo}"
+	return 0
+}
+
+#######################################
+# Transition an issue to a status:* label atomically (t2033).
+#
+# Removes every sibling core status:* label in a single `gh issue edit` call,
+# then adds the target. This is the ONLY sanctioned way to change an issue's
+# status label — ad-hoc --add-label/--remove-label calls must go through
+# this helper so the status state machine is enforced centrally.
+#
+# Args:
+#   $1 — issue number
+#   $2 — repo slug (owner/repo)
+#   $3 — new status: one of available|queued|claimed|in-progress|in-review|done|blocked
+#        OR empty string to clear all core status labels without adding one
+#        (used by stale-recovery escalation which applies needs-maintainer-review
+#        instead of a core status)
+#   $@ — additional gh issue edit flags passed through verbatim (e.g.,
+#        --add-assignee, --remove-assignee, --add-label "other-non-status-label")
+#
+# Returns:
+#   0 on gh success (including idempotent no-op cases)
+#   1 on gh failure (logged; callers typically ignore with || true to match
+#     the existing convention for best-effort label operations)
+#   2 on invalid status argument (caller bug — not suppressed)
+#
+# Example:
+#   set_issue_status 18444 owner/repo queued \
+#       --add-assignee "$worker_login" \
+#       --add-label "origin:worker"
+#
+#   set_issue_status 18444 owner/repo "" \
+#       --add-label "needs-maintainer-review"
+#######################################
+set_issue_status() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local new_status="$3"
+	shift 3
+
+	# Validate inputs
+	if [[ -z "$issue_num" || -z "$repo_slug" ]]; then
+		printf 'set_issue_status: issue_num and repo_slug are required\n' >&2
+		return 2
+	fi
+
+	# Validate target status (empty is allowed = clear only)
+	if [[ -n "$new_status" ]]; then
+		local _valid=0
+		local _status
+		for _status in "${ISSUE_STATUS_LABELS[@]}"; do
+			[[ "$_status" == "$new_status" ]] && {
+				_valid=1
+				break
+			}
+		done
+		if [[ "$_valid" -eq 0 ]]; then
+			printf 'set_issue_status: invalid status "%s" (valid: %s)\n' \
+				"$new_status" "${ISSUE_STATUS_LABELS[*]}" >&2
+			return 2
+		fi
+	fi
+
+	# Ensure labels exist (cached per-process per-repo so this is cheap)
+	ensure_status_labels_exist "$repo_slug" || true
+
+	# Build flag list: remove all core status labels, add target if non-empty.
+	local -a _flags=()
+	local _label
+	for _label in "${ISSUE_STATUS_LABELS[@]}"; do
+		if [[ "$_label" == "$new_status" ]]; then
+			_flags+=(--add-label "status:${_label}")
+		else
+			_flags+=(--remove-label "status:${_label}")
+		fi
+	done
+
+	# Pass through any extra flags the caller wants to apply in the same edit
+	_flags+=("$@")
+
+	gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
+}
+
+# =============================================================================
 # TODO.md Serialized Commit+Push
 # =============================================================================
 # Provides atomic locking and pull-rebase-retry for TODO.md operations.
