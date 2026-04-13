@@ -544,6 +544,93 @@ _remove_show_owner_error() {
 	return 0
 }
 
+# t2057 — interactive issue auto-claim from branch name.
+# When cmd_add creates a worktree whose branch encodes an issue number AND
+# the session is interactive, call interactive-session-helper.sh claim to
+# apply status:in-review + self-assign. The label blocks the pulse's
+# dispatch-dedup guard so no parallel worker can be dispatched on the same
+# issue while the interactive session owns it.
+#
+# Branch name patterns accepted:
+#   <prefix>/gh<NNN>-<rest>     e.g., bugfix/gh18700-foo
+#   <prefix>/t<NNN>-<rest>      e.g., feature/t2057-phase2-wire
+#   <prefix>/gh<NNN>_<rest>     (underscore separator)
+#   <prefix>/t<NNN>_<rest>
+#
+# Note: t<NNN> references a task ID and its linked GitHub issue may differ
+# from NNN. When the branch encodes only a t-ID, we resolve the linked issue
+# number via todo/tasks/<taskid>-brief.md ref:GH#NNN when possible; otherwise
+# the claim is skipped (the task-id path doesn't map to a GH issue reliably).
+# The gh<NNN> path is unambiguous.
+#
+# All failure modes are non-blocking — worktree creation proceeds regardless.
+_interactive_session_auto_claim() {
+	local branch="$1"
+	local worktree_path="$2"
+
+	# Only engage for interactive sessions — workers handle their own
+	# claim flow via dispatch-dedup-helper.sh at dispatch time.
+	if [[ -n "${FULL_LOOP_HEADLESS:-}" ]] || [[ -n "${AIDEVOPS_HEADLESS:-}" ]] ||
+		[[ -n "${OPENCODE_HEADLESS:-}" ]] || [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+		return 0
+	fi
+	if [[ "${AIDEVOPS_SESSION_ORIGIN:-}" == "worker" ]]; then
+		return 0
+	fi
+
+	# Parse issue number from branch. Accept gh<N> unambiguously; skip
+	# t<N>-only branches for now (ambiguous without the todo/tasks lookup).
+	local issue_num=""
+	if [[ "$branch" =~ /gh([0-9]+)[-_] ]]; then
+		issue_num="${BASH_REMATCH[1]}"
+	fi
+	if [[ -z "$issue_num" ]]; then
+		# t<N> branch — attempt to resolve the linked issue from the brief file
+		local task_id=""
+		if [[ "$branch" =~ /(t[0-9]+)[-_] ]]; then
+			task_id="${BASH_REMATCH[1]}"
+		fi
+		if [[ -n "$task_id" ]]; then
+			local brief_file
+			brief_file=$(git rev-parse --show-toplevel 2>/dev/null)/todo/tasks/"${task_id}"-brief.md
+			if [[ -f "$brief_file" ]]; then
+				issue_num=$(grep -oE 'GH#[0-9]+|#[0-9]+' "$brief_file" | grep -oE '[0-9]+' | head -1 || true)
+			fi
+		fi
+	fi
+
+	if [[ -z "$issue_num" ]]; then
+		return 0
+	fi
+
+	# Resolve the repo slug from the git remote
+	local slug
+	slug=$(git -C "$worktree_path" remote get-url origin 2>/dev/null |
+		sed 's|.*github\.com[:/]||;s|\.git$||' || echo "")
+	if [[ -z "$slug" ]]; then
+		return 0
+	fi
+
+	# Locate the helper. Prefer the deployed copy (runtime source of truth);
+	# fall back to the in-repo copy when running from the canonical repo
+	# before deploy. Silent on missing helper — the Phase 1 AI rule handles
+	# the agent-driven path.
+	local helper=""
+	if [[ -x "${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh"
+	elif [[ -x "${SCRIPT_DIR}/interactive-session-helper.sh" ]]; then
+		helper="${SCRIPT_DIR}/interactive-session-helper.sh"
+	fi
+
+	if [[ -z "$helper" ]]; then
+		return 0
+	fi
+
+	echo -e "${BLUE}Auto-claiming issue #${issue_num} for interactive session...${NC}"
+	"$helper" claim "$issue_num" "$slug" --worktree "$worktree_path" >/dev/null 2>&1 || true
+	return 0
+}
+
 cmd_add() {
 	local branch="${1:-}"
 	local path="${2:-}"
@@ -599,6 +686,15 @@ cmd_add() {
 
 	# Register ownership (t189)
 	register_worktree "$path" "$branch"
+
+	# t2057: interactive issue auto-claim. When the branch name encodes an
+	# issue number AND this is an interactive session, immediately apply
+	# status:in-review + self-assign so the pulse's dispatch-dedup guard
+	# blocks parallel worker dispatch. Silent on failure — the agent-driven
+	# contract in prompts/build.txt covers the fallback path. Guard on
+	# helper presence so the worktree create works even before Phase 1
+	# has been deployed to the running environment.
+	_interactive_session_auto_claim "$branch" "$path" || true
 
 	echo ""
 	echo -e "${GREEN}Worktree created successfully!${NC}"

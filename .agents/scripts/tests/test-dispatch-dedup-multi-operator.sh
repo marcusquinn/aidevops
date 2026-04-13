@@ -332,6 +332,47 @@ test_reconcile_race_second_runner_blocked() {
 	return 0
 }
 
+# ─── Test 8: Interactive session on existing origin:worker issue ─────────────
+#
+# t2057 — When an interactive session engages with an existing origin:worker
+# issue, it calls interactive-session-helper.sh claim which applies
+# status:in-review and self-assigns. The resulting state is:
+#
+#   assignee: testorg (owner, self-assigned by interactive session)
+#   labels:   origin:worker, status:in-review
+#
+# When a pulse worker (runner-b) checks is_assigned(), it must be BLOCKED
+# via the combined signal: owner + active status label (in-review). The
+# origin:worker label is a creation-time marker that does NOT prevent
+# interactive takeover; the status:in-review label is what signals active
+# human ownership. This closes the gap where an interactive session picking
+# up a worker-origin issue previously left no dispatch-blocking signal.
+#
+# Equivalent to Test 4 but with origin:worker present to confirm the label
+# does not confuse the combined rule.
+test_interactive_on_worker_origin_blocks() {
+	# interactive session on existing origin:worker issue: owner self-assigned,
+	# status:in-review applied by interactive-session-helper.sh claim
+	create_gh_stub "testorg" "origin:worker,status:in-review,tier:standard"
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" is-assigned 100 testorg/testrepo runner-b 2>/dev/null); then
+		case "$output" in
+		*'ASSIGNED:'*'testorg'*)
+			print_result "interactive session on origin:worker issue blocks dispatch (t2057)" 0
+			return 0
+			;;
+		esac
+		print_result "interactive session on origin:worker issue blocks dispatch (t2057)" 1 \
+			"exit 0 but unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "interactive session on origin:worker issue blocks dispatch (t2057)" 1 \
+		"Expected exit 0 (blocked) but got exit 1 (safe). Interactive claim via status:in-review must block parallel worker dispatch."
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -346,6 +387,7 @@ main() {
 	test_owner_no_label_is_passive
 	test_maintainer_plus_active_label_blocks
 	test_reconcile_race_second_runner_blocked
+	test_interactive_on_worker_origin_blocks
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

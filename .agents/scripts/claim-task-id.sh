@@ -624,6 +624,52 @@ _auto_assign_issue() {
 	return 0
 }
 
+# t2057: interactive session auto-claim on new-task allocation.
+# After the issue is created and self-assigned, transition it to
+# status:in-review so the pulse dispatch-dedup guard treats it as an active
+# claim and won't dispatch a parallel worker. Only fires for interactive
+# sessions — workers leave the status label to their own dispatch flow.
+#
+# Non-blocking — all failure modes (helper missing, slug unresolvable, gh
+# offline) are swallowed. The Phase 1 AI-guidance rule in prompts/build.txt
+# is the primary enforcement layer; this is the code-level safety net.
+_interactive_session_auto_claim_new_task() {
+	local issue_num="$1"
+	local repo_path="$2"
+
+	# Only for interactive sessions
+	local origin
+	origin=$(detect_session_origin 2>/dev/null || echo "interactive")
+	if [[ "$origin" != "interactive" ]]; then
+		return 0
+	fi
+
+	# Resolve slug from the repo remote
+	local slug
+	slug=$(git -C "$repo_path" remote get-url origin 2>/dev/null |
+		sed 's|.*github\.com[:/]||;s|\.git$||' || echo "")
+	if [[ -z "$slug" ]]; then
+		return 0
+	fi
+
+	# Locate the helper. Prefer deployed over in-repo (deployed is runtime
+	# source of truth); silent on missing helper so the claim-task-id.sh
+	# flow still works before Phase 1 has deployed to the environment.
+	local helper=""
+	if [[ -x "${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh"
+	elif [[ -x "${SCRIPT_DIR}/interactive-session-helper.sh" ]]; then
+		helper="${SCRIPT_DIR}/interactive-session-helper.sh"
+	fi
+
+	if [[ -z "$helper" ]]; then
+		return 0
+	fi
+
+	"$helper" claim "$issue_num" "$slug" --worktree "$repo_path" >/dev/null 2>&1 || true
+	return 0
+}
+
 # Try delegating issue creation to issue-sync-helper.sh for rich bodies,
 # proper labels (including auto-dispatch), and duplicate detection (t1324).
 # Echoes the issue number on success, returns 1 if delegation unavailable/failed.
@@ -805,6 +851,7 @@ create_github_issue() {
 	local issue_num
 	if issue_num=$(_try_issue_sync_delegation "$title" "$repo_path"); then
 		_auto_assign_issue "$issue_num" "$repo_path"
+		_interactive_session_auto_claim_new_task "$issue_num" "$repo_path"
 		echo "$issue_num"
 		return 0
 	fi
@@ -853,6 +900,7 @@ create_github_issue() {
 
 	# Auto-assign to current user to prevent duplicate dispatch
 	_auto_assign_issue "$issue_num" "$repo_path"
+	_interactive_session_auto_claim_new_task "$issue_num" "$repo_path"
 
 	echo "$issue_num"
 	return 0

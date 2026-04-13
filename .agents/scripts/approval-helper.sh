@@ -352,6 +352,38 @@ _post_issue_approval_updates() {
 		# is idempotent). Unlock still happens after worker completion.
 		gh issue lock "$target_number" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || true
 		_print_info "Issue #$target_number locked (scope finalized, unlocks after worker completion)"
+
+		# t2057: idempotent release of status:in-review. If the maintainer was
+		# interactively reviewing this contributor issue before signing the
+		# cryptographic approval, the `interactive-session-helper.sh claim`
+		# will have applied `status:in-review`. Clear it here so the pulse
+		# dispatch-dedup guard no longer blocks — signing is the handoff to
+		# automation, so the interactive hold must lift. Idempotent: no-op
+		# when the label is not present. Delete the stamp too so the local
+		# state matches the remote.
+		local _ah_labels_json
+		_ah_labels_json=$(gh issue view "$target_number" --repo "$slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+		if [[ "$_ah_labels_json" == *"status:in-review"* ]]; then
+			# Use set_issue_status from shared-constants.sh for the atomic
+			# status transition. Located via deployed helper first, then
+			# in-repo source.
+			local _ah_helper=""
+			if [[ -x "${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh" ]]; then
+				_ah_helper="${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh"
+			else
+				# Resolve sibling path relative to this file
+				local _ah_script_dir
+				_ah_script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || _ah_script_dir=""
+				if [[ -n "$_ah_script_dir" && -x "${_ah_script_dir}/interactive-session-helper.sh" ]]; then
+					_ah_helper="${_ah_script_dir}/interactive-session-helper.sh"
+				fi
+			fi
+			if [[ -n "$_ah_helper" ]]; then
+				"$_ah_helper" release "$target_number" "$slug" >/dev/null 2>&1 || true
+				_print_info "Released status:in-review (interactive review transitioned to available)"
+			fi
+		fi
 	else
 		# GH#17903: Lock PRs at approval time to close the same prompt-injection
 		# window that exists for issues. Without locking, non-collaborators can
