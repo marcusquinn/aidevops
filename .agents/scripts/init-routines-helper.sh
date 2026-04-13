@@ -773,10 +773,15 @@ _create_core_routine_issues() {
 			gh issue edit "$issue_num" --repo "$slug" --add-label "routine-tracking" 2>/dev/null || true
 			# Store description in state so _build_issue_body includes it
 			_store_routine_description "$rid" "$short_title" "$human_schedule" "$script" "$rtype"
-			# Only fire the initial body-rebuild on fresh init — otherwise we
-			# append a fake success/duration=0 entry to every core routine on
-			# every invocation, polluting streak and avg_duration metrics (t1964).
-			if [[ "$preexisting_state" != true ]]; then
+			if [[ "$preexisting_state" == true ]]; then
+				# Refresh the issue body with the updated description text without
+				# recording a new run entry — prevents metric pollution (t1964)
+				# while making the "refreshing description only" log truthful
+				# (GH#18616). Streak and avg_duration are preserved.
+				bash "$log_helper" refresh-description "$rid" 2>/dev/null || true
+			else
+				# Fresh init: record a synthetic first entry so the metrics table
+				# is populated before the routine's first real run.
 				bash "$log_helper" update "$rid" --status success --duration 0 2>/dev/null || true
 			fi
 		fi

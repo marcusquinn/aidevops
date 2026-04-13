@@ -665,6 +665,90 @@ cmd_update() {
 }
 
 # =============================================================================
+# Subcommand: refresh-description
+# =============================================================================
+
+# Rebuild and push the GitHub issue body for an existing routine using the
+# current state and stored description data, without recording a new run entry.
+# Use this when routine description or management text has been updated and
+# the GitHub issue body should reflect the changes (GH#18616).
+# Args: <routine-id>
+cmd_refresh_description() {
+	local routine_id=""
+
+	if [[ $# -lt 1 ]]; then
+		_log_error "Usage: routine-log-helper.sh refresh-description <routine-id>"
+		return 1
+	fi
+	routine_id="$1"
+
+	_check_prerequisites || return 1
+	_ensure_state_dir "$routine_id"
+
+	# Load and validate state — must have a tracking issue already
+	local state
+	state=$(_load_routine_state "$routine_id") || return 1
+
+	local issue_number
+	issue_number=$(echo "$state" | jq -r '.issue_number // empty')
+	local repo_slug
+	repo_slug=$(echo "$state" | jq -r '.repo_slug // empty')
+	local title
+	title=$(echo "$state" | jq -r '.title // "Untitled Routine"')
+	local schedule
+	schedule=$(echo "$state" | jq -r '.schedule // "unknown"')
+	local routine_type
+	routine_type=$(echo "$state" | jq -r '.routine_type // "unknown"')
+	local status_label
+	status_label=$(echo "$state" | jq -r '.status_label // "active"')
+	local last_run
+	last_run=$(echo "$state" | jq -r '.last_run // "never"')
+	local last_status
+	last_status=$(echo "$state" | jq -r '.last_status // "none"')
+	local last_duration
+	last_duration=$(echo "$state" | jq -r '.last_duration // 0')
+	local next_run
+	next_run=$(echo "$state" | jq -r '.next_run // "pending first run"')
+	local streak_count
+	streak_count=$(echo "$state" | jq -r '.streak_count // 0')
+	local streak_type
+	streak_type=$(echo "$state" | jq -r '.streak_type // ""')
+	local total_cost
+	total_cost=$(echo "$state" | jq -r '.total_cost // "0.00"')
+
+	# Compute period summary from existing log — no new entry added
+	local period_summary
+	period_summary=$(_compute_period_summary "$routine_id")
+
+	# Build issue body using current state; no metrics are modified
+	local new_body
+	new_body=$(_build_issue_body \
+		"$routine_id" \
+		"$title" \
+		"$schedule" \
+		"$routine_type" \
+		"$status_label" \
+		"$last_run" \
+		"$last_status" \
+		"$last_duration" \
+		"$next_run" \
+		"$streak_count" \
+		"$streak_type" \
+		"$total_cost" \
+		"$period_summary")
+
+	# Push updated body to GitHub
+	if gh issue edit "$issue_number" --repo "$repo_slug" --body "$new_body" &>/dev/null; then
+		_log_success "Refreshed description for issue #${issue_number} (${routine_id}) — no run entry recorded"
+	else
+		_log_error "Failed to refresh issue #${issue_number} for ${routine_id}"
+		return 1
+	fi
+
+	return 0
+}
+
+# =============================================================================
 # Subcommand: notable
 # =============================================================================
 
@@ -992,6 +1076,12 @@ Usage:
     Create the initial tracking issue with template description.
     Returns the issue number. Stores mapping in routine-state.json.
 
+  routine-log-helper.sh refresh-description <routine-id>
+    Rebuild and push the GitHub issue body using current state and stored
+    description data. Does NOT record a new run entry or modify metrics.
+    Use after init-routines-helper.sh refreshes a description for an
+    existing routine.
+
   routine-log-helper.sh status
     Print summary table of all tracked routines.
 
@@ -1051,6 +1141,9 @@ main() {
 		;;
 	notable)
 		cmd_notable "$@"
+		;;
+	refresh-description)
+		cmd_refresh_description "$@"
 		;;
 	create-issue)
 		cmd_create_issue "$@"
