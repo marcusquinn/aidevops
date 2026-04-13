@@ -172,10 +172,55 @@ cmd_rename() {
 	return 0
 }
 
+# Check whether a branch name is a meaningful session title.
+# Default branches (main/master/HEAD) are NOT meaningful — they represent the
+# absence of a feature branch and should never clobber a session title. This
+# matters because pre-edit-check.sh triggers sync-branch on every edit, and
+# interactive sessions in canonical repo directories stay on main (t1990).
+# Without this guard, planning-only sessions end up titled "main" forever.
+# Arguments:
+#   $1 - branch name
+# Returns: 0 if branch is meaningful (rename allowed), 1 otherwise
+_is_meaningful_branch_title() {
+	local branch="$1"
+	case "$branch" in
+	"" | HEAD | main | master) return 1 ;;
+	*) return 0 ;;
+	esac
+}
+
+# Check whether the current session title is safe to overwrite.
+# A title is overwritable when it is empty, the default "New Session", or
+# itself one of the default branch names (main/master/HEAD). A meaningful
+# custom title — anything else, including feature branch names or
+# LLM-generated summaries — is preserved.
+# Arguments:
+#   $1 - sqlite database path
+#   $2 - session ID
+# Returns: 0 if safe to overwrite, 1 if a meaningful title already exists
+_is_title_overwritable() {
+	local db_path="$1"
+	local session_id="$2"
+
+	local escaped_session_id
+	escaped_session_id="$(_sql_escape "$session_id")"
+
+	local current_title
+	current_title="$(sqlite3 "$db_path" \
+		"SELECT COALESCE(title, '') FROM session WHERE id = '${escaped_session_id}';" 2>/dev/null || echo "")"
+
+	case "$current_title" in
+	"" | "New Session" | HEAD | main | master) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
 # Rename the most relevant (or specified) session to match the current git branch.
+# Skips default branch names (main/master/HEAD) and preserves meaningful
+# existing titles to avoid the "session title stuck as main" bug (t2039).
 # Arguments:
 #   $1 - session ID (optional; defaults to current-directory session)
-# Returns: 0 on success, 1 on failure
+# Returns: 0 on success or skip, 1 on failure
 cmd_sync_branch() {
 	local session_id="${1:-}"
 
@@ -197,6 +242,21 @@ cmd_sync_branch() {
 	if [[ -z "$branch" || "$branch" == "HEAD" ]]; then
 		print_error "No branch checked out (detached HEAD state)"
 		return 1
+	fi
+
+	# Guard 1: never write default branch names as session titles.
+	# Returns 0 (success) so pre-edit-check.sh's best-effort trigger stays quiet.
+	if ! _is_meaningful_branch_title "$branch"; then
+		print_info "Skipping session rename: '${branch}' is not a meaningful title"
+		return 0
+	fi
+
+	# Guard 2: do not clobber a meaningful existing title.
+	# A user-set title or a feature-branch title should survive later syncs
+	# that happen from the canonical main directory.
+	if ! _is_title_overwritable "$db_path" "$session_id"; then
+		print_info "Skipping session rename: session already has a meaningful title"
+		return 0
 	fi
 
 	cmd_rename "$session_id" "$branch"
