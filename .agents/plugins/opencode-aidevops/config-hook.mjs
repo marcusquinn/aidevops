@@ -30,37 +30,46 @@ function claudeModelDef(overrides) {
   };
 }
 
-/** Models registered under the built-in anthropic provider (via aidevops OAuth pool). */
-const ANTHROPIC_MODELS = {
-  "claude-haiku-4-5": claudeModelDef({
-    name: "Claude Haiku 4.5 (via aidevops)",
-    limit: { context: 1000000, output: 32000 },
-  }),
-  "claude-sonnet-4-6": claudeModelDef({
-    name: "Claude Sonnet 4.6 (via aidevops)",
-    limit: { context: 1000000, output: 64000 },
-  }),
-  "claude-opus-4-6": claudeModelDef({
-    name: "Claude Opus 4.6 (via aidevops)",
-    limit: { context: 1000000, output: 64000 },
-  }),
+/**
+ * Single source of truth for Claude model limits (GH#18621 Finding 5).
+ * Both ANTHROPIC_MODELS and CLAUDECLI_MODELS derive their `limit` from here so
+ * the transport metadata stays consistent no matter which provider
+ * registration path runs first.
+ */
+const CLAUDE_MODEL_LIMITS = {
+  "claude-haiku-4-5":  { context: 1000000, output: 32000 },
+  "claude-sonnet-4-6": { context: 1000000, output: 64000 },
+  "claude-opus-4-6":   { context: 1000000, output: 64000 },
 };
 
+/**
+ * Build a provider model map from CLAUDE_MODEL_LIMITS with provider-specific
+ * display names. Preserves backward compatibility with the previous
+ * ANTHROPIC_MODELS / CLAUDECLI_MODELS shapes.
+ * @param {Record<string,string>} names - model id → display name
+ * @returns {Record<string,object>}
+ */
+function buildClaudeModelMap(names) {
+  const out = {};
+  for (const [id, limit] of Object.entries(CLAUDE_MODEL_LIMITS)) {
+    out[id] = claudeModelDef({ name: names[id] || id, limit });
+  }
+  return out;
+}
+
+/** Models registered under the built-in anthropic provider (via aidevops OAuth pool). */
+const ANTHROPIC_MODELS = buildClaudeModelMap({
+  "claude-haiku-4-5":  "Claude Haiku 4.5 (via aidevops)",
+  "claude-sonnet-4-6": "Claude Sonnet 4.6 (via aidevops)",
+  "claude-opus-4-6":   "Claude Opus 4.6 (via aidevops)",
+});
+
 /** Models registered under the claudecli provider (via Claude CLI proxy). */
-const CLAUDECLI_MODELS = {
-  "claude-haiku-4-5": claudeModelDef({
-    name: "Claude Haiku 4.5 (via CLI)",
-    limit: { context: 1000000, output: 32000 },
-  }),
-  "claude-sonnet-4-6": claudeModelDef({
-    name: "Claude Sonnet 4.6 (via CLI)",
-    limit: { context: 1000000, output: 64000 },
-  }),
-  "claude-opus-4-6": claudeModelDef({
-    name: "Claude Opus 4.6 (via CLI)",
-    limit: { context: 1000000, output: 64000 },
-  }),
-};
+const CLAUDECLI_MODELS = buildClaudeModelMap({
+  "claude-haiku-4-5":  "Claude Haiku 4.5 (via CLI)",
+  "claude-sonnet-4-6": "Claude Sonnet 4.6 (via CLI)",
+  "claude-opus-4-6":   "Claude Opus 4.6 (via CLI)",
+});
 
 /**
  * Upsert aidevops-managed models into the anthropic and claudecli providers.
