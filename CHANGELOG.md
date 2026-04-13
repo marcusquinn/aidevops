@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.3] - 2026-04-13
+
+### Fixed
+
+- t2042 — clean stale gate comments + classify zero-artifact stale-recovery (#18569)
+
 ## [3.8.2] - 2026-04-13
 
 ### Added
