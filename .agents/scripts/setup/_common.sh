@@ -374,6 +374,10 @@ ensure_homebrew() {
 	print_info "Homebrew (Linuxbrew) is not installed."
 	print_info "Several optional tools (Beads CLI, Worktrunk, bv) install via Homebrew taps."
 	echo ""
+	# Declare before setup_prompt so shellcheck can track it (SC2154).
+	# setup_prompt assigns via `printf -v $var_name`, which shellcheck
+	# cannot follow across the function boundary.
+	local install_brew=""
 	setup_prompt install_brew "Install Homebrew for Linux? [Y/n]: " "Y"
 
 	if [[ ! "$install_brew" =~ ^[Yy]?$ ]]; then
@@ -588,6 +592,10 @@ offer_python_brew_install() {
 		return 1
 	fi
 
+	# Declare before setup_prompt so shellcheck can track it (SC2154).
+	# setup_prompt assigns via `printf -v $var_name`, which shellcheck
+	# cannot follow across the function boundary.
+	local install_python=""
 	setup_prompt install_python "${prompt_verb} Python via Homebrew now? [Y/n]: " "Y"
 	if [[ "$install_python" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing $recommended_formula" brew install "$recommended_formula"; then
