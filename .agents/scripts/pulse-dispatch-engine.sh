@@ -10,7 +10,7 @@
 # This module is sourced by pulse-wrapper.sh. Depends on shared-constants.sh
 # and worker-lifecycle-common.sh being sourced first by the orchestrator.
 #
-# Functions in this module (in source order):
+# Public functions in this module (in source order):
 #   - check_worker_launch
 #   - build_ranked_dispatch_candidates_json
 #   - dispatch_deterministic_fill_floor
@@ -25,9 +25,14 @@
 #   - _compute_initial_underfill
 #   - _run_early_exit_recycle_loop
 #
-# Pure move from pulse-wrapper.sh. Byte-identical function bodies.
-# Phase 12 post-gate simplification will split the largest functions
-# (dispatch_with_dedup=370, _is_task_committed_to_main=189, etc.).
+# Internal helpers (GH#18656 function decomposition):
+#   _dff_*                 — helpers for dispatch_deterministic_fill_floor
+#   _preflight_*           — helpers for _run_preflight_stages
+#
+# Phase 9 origin: pure move from pulse-wrapper.sh, byte-identical bodies.
+# GH#18656 split the two functions that still exceeded 100 lines
+# (dispatch_deterministic_fill_floor=202, _run_preflight_stages=134)
+# into focused helpers while preserving byte-for-byte behavior.
 
 [[ -n "${_PULSE_DISPATCH_ENGINE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_ENGINE_LOADED=1
@@ -162,6 +167,252 @@ build_ranked_dispatch_candidates_json() {
 	return 0
 }
 
+# -----------------------------------------------------------------------------
+# Helpers for dispatch_deterministic_fill_floor (GH#18656)
+# -----------------------------------------------------------------------------
+# The helpers below are split out so the orchestrator stays under 100 lines
+# and each discrete responsibility (capacity planning, pre-passes, per-candidate
+# skip checks, launch-outcome tracking, post-round throttle) can be read and
+# reviewed in isolation. Behavior is byte-for-byte equivalent to the pre-split
+# monolithic function — see git log for the refactor commit.
+#
+# The round-state counters (_round_dispatched, _round_no_worker_failures,
+# _consecutive_no_worker) are module-level with a `_DFF_` prefix so the
+# helpers can update them without needing bash 4.3+ namerefs.
+
+_DFF_ROUND_DISPATCHED=0
+_DFF_ROUND_NO_WORKER_FAILURES=0
+_DFF_CONSECUTIVE_NO_WORKER=0
+_DFF_THROTTLE_FILE=""
+_DFF_CANARY_CACHE=""
+# Out-parameter set by _dff_process_candidate when a successful launch clears
+# the throttle file. The orchestrator loop reads this and restores
+# _effective_slots to the unthrottled available_slots value.
+_DFF_THROTTLE_CLEARED=0
+
+#######################################
+# Compute the dispatch capacity for this round.
+#
+# Stdout: "<max_workers> <active_workers> <available_slots>" on success.
+# Returns:
+#   0 - capacity computed (caller checks available_slots > 0 before dispatch)
+#   1 - stop flag present; caller should short-circuit
+#######################################
+_dff_compute_capacity() {
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor skipped: stop flag present" >>"$LOGFILE"
+		return 1
+	fi
+
+	local max_workers active_workers available_slots
+	max_workers=$(get_max_workers_target)
+	active_workers=$(count_active_workers)
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+	available_slots=$((max_workers - active_workers))
+
+	printf '%s %s %s\n' "$max_workers" "$active_workers" "$available_slots"
+	return 0
+}
+
+#######################################
+# Run the triage + enrichment pre-passes, subtracting their dispatches from the
+# implementation slot budget. Triage runs first (community responsiveness) and
+# enrichment runs second (so enriched issues get better context on the next
+# attempt).
+#
+# Arguments:
+#   $1 - available slots before pre-passes
+# Stdout: "<remaining_slots> <triage_dispatched>"
+#######################################
+_dff_run_prepasses() {
+	local available_slots="$1"
+
+	local triage_remaining
+	triage_remaining=$(dispatch_triage_reviews "$available_slots" 2>>"$LOGFILE") || triage_remaining="$available_slots"
+	[[ "$triage_remaining" =~ ^[0-9]+$ ]] || triage_remaining="$available_slots"
+	local triage_dispatched=$((available_slots - triage_remaining))
+	if [[ "$triage_dispatched" -gt 0 ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: dispatched ${triage_dispatched} triage review(s), ${triage_remaining} slots remaining for implementation" >>"$LOGFILE"
+	fi
+	available_slots="$triage_remaining"
+
+	local enrichment_remaining
+	enrichment_remaining=$(dispatch_enrichment_workers "$available_slots" 2>>"$LOGFILE") || enrichment_remaining="$available_slots"
+	[[ "$enrichment_remaining" =~ ^[0-9]+$ ]] || enrichment_remaining="$available_slots"
+	local enrichment_dispatched=$((available_slots - enrichment_remaining))
+	if [[ "$enrichment_dispatched" -gt 0 ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: dispatched ${enrichment_dispatched} enrichment worker(s), ${enrichment_remaining} slots remaining for implementation" >>"$LOGFILE"
+	fi
+	available_slots="$enrichment_remaining"
+
+	printf '%s %s\n' "$available_slots" "$triage_dispatched"
+	return 0
+}
+
+#######################################
+# Per-candidate skip checks: terminal blockers (t1888), fast-fail (t1888), and
+# placeholder/empty issue body (t1899/t1937). Emits the same skip log lines
+# the monolithic function used so operator tooling that greps $LOGFILE keeps
+# working.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Returns:
+#   0 - candidate is skippable
+#   1 - candidate should proceed to dispatch
+#######################################
+_dff_should_skip_candidate() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	if check_terminal_blockers "$issue_number" "$repo_slug" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	if fast_fail_is_skipped "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — fast-fail threshold reached" >>"$LOGFILE"
+		return 0
+	fi
+
+	# t1899/t1937: Skip issues with placeholder/empty bodies — dispatching a
+	# worker to an undescribed issue wastes a session. The body check is
+	# a single API call per candidate. Detects both the legacy GitLab stub
+	# and the current claim-task-id.sh stub marker.
+	local issue_body
+	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || issue_body=""
+	if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$issue_body" == *"no description provided — enrich before dispatch"* ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — claim-task-id.sh stub body, needs enrichment before dispatch" >>"$LOGFILE"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
+# Record a check_worker_launch failure. Updates the round counters and, on
+# three consecutive no_worker_process failures, invalidates the canary cache
+# so the next dispatch forces a re-test instead of trusting a stale "passed N
+# minutes ago" signal (t1959).
+#######################################
+_dff_record_launch_failure() {
+	if [[ "$_PULSE_LAST_LAUNCH_FAILURE" == "no_worker_process" ]]; then
+		_DFF_ROUND_NO_WORKER_FAILURES=$((_DFF_ROUND_NO_WORKER_FAILURES + 1))
+		_DFF_CONSECUTIVE_NO_WORKER=$((_DFF_CONSECUTIVE_NO_WORKER + 1))
+		if [[ "$_DFF_CONSECUTIVE_NO_WORKER" -ge 3 ]]; then
+			if [[ -f "$_DFF_CANARY_CACHE" ]]; then
+				rm -f "$_DFF_CANARY_CACHE"
+				echo "[pulse-wrapper] Canary cache invalidated after ${_DFF_CONSECUTIVE_NO_WORKER} consecutive no_worker_process failures in round — next dispatch will re-run canary" >>"$LOGFILE"
+			fi
+			_DFF_CONSECUTIVE_NO_WORKER=0
+		fi
+	else
+		# cli_usage_output or other launch-class failure: don't count toward
+		# the consecutive no_worker_process streak.
+		_DFF_CONSECUTIVE_NO_WORKER=0
+	fi
+	return 0
+}
+
+#######################################
+# Process a single dispatch candidate: extract fields, skip if ineligible,
+# dispatch via dispatch_with_dedup, verify worker launch, and track the
+# outcome for adaptive batch throttling.
+#
+# Arguments:
+#   $1 - candidate JSON object (one line of `jq -c '.[]'`)
+#   $2 - self_login (GitHub user for dedup)
+#   $3 - available_slots (for throttle-clear log message)
+#
+# Returns:
+#   0 - candidate dispatched and launch verified (caller should increment
+#       dispatched_count; if _DFF_THROTTLE_CLEARED=1 also restore
+#       _effective_slots)
+#   1 - candidate skipped or dispatch failed (caller should `continue`)
+#
+# Side effects:
+#   - Updates _DFF_ROUND_DISPATCHED / _DFF_ROUND_NO_WORKER_FAILURES /
+#     _DFF_CONSECUTIVE_NO_WORKER for the round.
+#   - Clears _DFF_THROTTLE_FILE and sets _DFF_THROTTLE_CLEARED=1 on a
+#     successful launch while throttle was active.
+#######################################
+_dff_process_candidate() {
+	local candidate_json="$1"
+	local self_login="$2"
+	local available_slots="$3"
+	_DFF_THROTTLE_CLEARED=0
+
+	local issue_number repo_slug repo_path issue_url issue_title dispatch_title prompt labels_csv model_override
+	issue_number=$(printf '%s' "$candidate_json" | jq -r '.number // empty' 2>/dev/null)
+	repo_slug=$(printf '%s' "$candidate_json" | jq -r '.repo_slug // empty' 2>/dev/null)
+	repo_path=$(printf '%s' "$candidate_json" | jq -r '.repo_path // empty' 2>/dev/null)
+	issue_url=$(printf '%s' "$candidate_json" | jq -r '.url // empty' 2>/dev/null)
+	issue_title=$(printf '%s' "$candidate_json" | jq -r '.title // empty' 2>/dev/null | tr '\n' ' ')
+	labels_csv=$(printf '%s' "$candidate_json" | jq -r '(.labels // []) | join(",")' 2>/dev/null)
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
+	[[ -n "$repo_slug" && -n "$repo_path" ]] || return 1
+
+	if _dff_should_skip_candidate "$issue_number" "$repo_slug"; then
+		return 1
+	fi
+
+	dispatch_title="Issue #${issue_number}"
+	prompt="/full-loop Implement issue #${issue_number}"
+	if [[ -n "$issue_url" ]]; then
+		prompt="${prompt} (${issue_url})"
+	fi
+	model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
+
+	local dispatch_rc=0
+	dispatch_with_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
+		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
+	if [[ "$dispatch_rc" -ne 0 ]]; then
+		return 1
+	fi
+
+	# Count every successful dispatch attempt as a round denominator (t1959)
+	_DFF_ROUND_DISPATCHED=$((_DFF_ROUND_DISPATCHED + 1))
+	_PULSE_LAST_LAUNCH_FAILURE=""
+
+	if ! check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1; then
+		_dff_record_launch_failure
+		return 1
+	fi
+
+	# Launch confirmed. Reset consecutive streak and clear throttle if active.
+	_DFF_CONSECUTIVE_NO_WORKER=0
+	# t1959: A single successful launch proves the runtime is back.
+	# Restore full batch immediately — do not wait for N successes.
+	if [[ -f "$_DFF_THROTTLE_FILE" ]]; then
+		rm -f "$_DFF_THROTTLE_FILE"
+		echo "[pulse-wrapper] Dispatch throttle CLEARED: launch success in throttled mode — restoring full batch=${available_slots}" >>"$LOGFILE"
+		_DFF_THROTTLE_CLEARED=1
+	fi
+	return 0
+}
+
+#######################################
+# After the dispatch loop finishes, compute the no_worker_process failure
+# ratio for this round. If >80% of dispatches ended with no_worker_process,
+# engage the adaptive batch throttle so the next round is limited to batch=1
+# to avoid wasted dispatch cycles during runtime breakage (t1959).
+#######################################
+_dff_maybe_engage_throttle() {
+	if [[ "$_DFF_ROUND_DISPATCHED" -gt 0 ]]; then
+		local ratio_pct=$((_DFF_ROUND_NO_WORKER_FAILURES * 100 / _DFF_ROUND_DISPATCHED))
+		if [[ "$ratio_pct" -gt 80 ]]; then
+			echo "1" >"$_DFF_THROTTLE_FILE" 2>/dev/null || true
+			echo "[pulse-wrapper] Dispatch throttle ENGAGED: ${ratio_pct}% no_worker_process in round (${_DFF_ROUND_NO_WORKER_FAILURES}/${_DFF_ROUND_DISPATCHED}) — next round limited to batch=1" >>"$LOGFILE"
+		fi
+	fi
+	return 0
+}
+
 #######################################
 # Deterministic fill floor for obvious backlog.
 #
@@ -172,25 +423,21 @@ build_ranked_dispatch_candidates_json() {
 # Returns: dispatched worker count via stdout
 #######################################
 dispatch_deterministic_fill_floor() {
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor skipped: stop flag present" >>"$LOGFILE"
+	local capacity_line
+	capacity_line=$(_dff_compute_capacity) || {
 		echo 0
 		return 0
-	fi
-
-	local max_workers active_workers available_slots runnable_count queued_without_worker
-	max_workers=$(get_max_workers_target)
-	active_workers=$(count_active_workers)
-	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
-	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
-	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
-	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
-
-	available_slots=$((max_workers - active_workers))
+	}
+	local max_workers active_workers available_slots
+	read -r max_workers active_workers available_slots <<<"$capacity_line"
 	if [[ "$available_slots" -le 0 ]]; then
 		echo 0
 		return 0
 	fi
+
+	local runnable_count queued_without_worker
+	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
+	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
 
 	local self_login
 	self_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
@@ -211,45 +458,23 @@ dispatch_deterministic_fill_floor() {
 
 	echo "[pulse-wrapper] Deterministic fill floor: available=${available_slots}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, candidates=${candidate_count}" >>"$LOGFILE"
 
-	# Triage reviews first — community responsiveness before implementation backlog.
-	# dispatch_triage_reviews returns the remaining available count via stdout.
-	local triage_remaining
-	triage_remaining=$(dispatch_triage_reviews "$available_slots" 2>>"$LOGFILE") || triage_remaining="$available_slots"
-	[[ "$triage_remaining" =~ ^[0-9]+$ ]] || triage_remaining="$available_slots"
-	local triage_dispatched=$((available_slots - triage_remaining))
-	if [[ "$triage_dispatched" -gt 0 ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: dispatched ${triage_dispatched} triage review(s), ${triage_remaining} slots remaining for implementation" >>"$LOGFILE"
-	fi
-	available_slots="$triage_remaining"
+	local prepass_line triage_dispatched
+	prepass_line=$(_dff_run_prepasses "$available_slots")
+	read -r available_slots triage_dispatched <<<"$prepass_line"
 
-	# Enrichment pass: analyze failed issues with reasoning before re-dispatch.
-	# Runs after triage (responsiveness) but before implementation dispatch
-	# (so enriched issues get better context on the next dispatch attempt).
-	local enrichment_remaining
-	enrichment_remaining=$(dispatch_enrichment_workers "$available_slots" 2>>"$LOGFILE") || enrichment_remaining="$available_slots"
-	[[ "$enrichment_remaining" =~ ^[0-9]+$ ]] || enrichment_remaining="$available_slots"
-	local enrichment_dispatched=$((available_slots - enrichment_remaining))
-	if [[ "$enrichment_dispatched" -gt 0 ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: dispatched ${enrichment_dispatched} enrichment worker(s), ${enrichment_remaining} slots remaining for implementation" >>"$LOGFILE"
-	fi
-	available_slots="$enrichment_remaining"
+	# Reset module-level round state before the dispatch loop (t1959).
+	_DFF_ROUND_DISPATCHED=0
+	_DFF_ROUND_NO_WORKER_FAILURES=0
+	_DFF_CONSECUTIVE_NO_WORKER=0
+	_DFF_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
+	# Use same env-var fallback as headless-runtime-helper.sh:32 for path consistency
+	_DFF_CANARY_CACHE="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/canary-last-pass"
 
 	local dispatched_count=0
-	# t1959: Per-round tracking for adaptive batch throttling and canary invalidation.
-	# _round_dispatched: total dispatch attempts this round (denominator for ratio).
-	# _round_no_worker_failures: no_worker_process failures (numerator for ratio).
-	# _consecutive_no_worker: consecutive no_worker_process streak (triggers canary invalidation).
-	local _round_dispatched=0
-	local _round_no_worker_failures=0
-	local _consecutive_no_worker=0
-	local _throttle_file="${HOME}/.aidevops/logs/dispatch-throttle"
-	# Use same env-var fallback as headless-runtime-helper.sh:32 for path consistency
-	local _canary_cache="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/canary-last-pass"
-
 	# Honour adaptive batch throttle — limit to 1 when runtime is degraded.
 	# A successful launch in throttled mode clears the flag immediately.
 	local _effective_slots="$available_slots"
-	if [[ -f "$_throttle_file" ]]; then
+	if [[ -f "$_DFF_THROTTLE_FILE" ]]; then
 		_effective_slots=1
 		echo "[pulse-wrapper] Dispatch throttle active: limiting implementation batch to 1 (runtime degraded)" >>"$LOGFILE"
 	fi
@@ -264,109 +489,17 @@ dispatch_deterministic_fill_floor() {
 			break
 		fi
 
-		local issue_number repo_slug repo_path issue_url issue_title dispatch_title prompt labels_csv model_override
-		issue_number=$(printf '%s' "$candidate_json" | jq -r '.number // empty' 2>/dev/null)
-		repo_slug=$(printf '%s' "$candidate_json" | jq -r '.repo_slug // empty' 2>/dev/null)
-		repo_path=$(printf '%s' "$candidate_json" | jq -r '.repo_path // empty' 2>/dev/null)
-		issue_url=$(printf '%s' "$candidate_json" | jq -r '.url // empty' 2>/dev/null)
-		issue_title=$(printf '%s' "$candidate_json" | jq -r '.title // empty' 2>/dev/null | tr '\n' ' ')
-		labels_csv=$(printf '%s' "$candidate_json" | jq -r '(.labels // []) | join(",")' 2>/dev/null)
-		[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
-		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
-
-		if check_terminal_blockers "$issue_number" "$repo_slug" >/dev/null 2>&1; then
-			continue
-		fi
-
-		# Skip issues with repeated launch deaths (t1888)
-		if fast_fail_is_skipped "$issue_number" "$repo_slug"; then
-			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — fast-fail threshold reached" >>"$LOGFILE"
-			continue
-		fi
-
-		# t1899/t1937: Skip issues with placeholder/empty bodies — dispatching a
-		# worker to an undescribed issue wastes a session. The body check is
-		# a single API call cached for the candidate loop iteration.
-		# Detects both the legacy GitLab stub and the current claim-task-id.sh
-		# stub marker ("no description provided — enrich before dispatch").
-		local issue_body
-		issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || issue_body=""
-		if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"
-			continue
-		fi
-		# t1937: Detect the current claim-task-id.sh stub marker embedded in
-		# structured bodies (## Task\n\n<title>\n\n---\n*Created by claim-task-id.sh ...*)
-		if [[ "$issue_body" == *"no description provided — enrich before dispatch"* ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — claim-task-id.sh stub body, needs enrichment before dispatch" >>"$LOGFILE"
-			continue
-		fi
-
-		dispatch_title="Issue #${issue_number}"
-		prompt="/full-loop Implement issue #${issue_number}"
-		if [[ -n "$issue_url" ]]; then
-			prompt="${prompt} (${issue_url})"
-		fi
-		model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
-
-		local dispatch_rc=0
-		dispatch_with_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
-			"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
-		if [[ "$dispatch_rc" -ne 0 ]]; then
-			continue
-		fi
-
-		# Count every successful dispatch attempt as a round denominator (t1959)
-		_round_dispatched=$((_round_dispatched + 1))
-		_PULSE_LAST_LAUNCH_FAILURE=""
-
-		if ! check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1; then
-			# t1959: Track no_worker_process failures for canary invalidation
-			# and adaptive batch-size throttling. cli_usage_output resets the
-			# consecutive streak (different failure class).
-			if [[ "$_PULSE_LAST_LAUNCH_FAILURE" == "no_worker_process" ]]; then
-				_round_no_worker_failures=$((_round_no_worker_failures + 1))
-				_consecutive_no_worker=$((_consecutive_no_worker + 1))
-				# After 3 consecutive no_worker_process failures, the stale canary
-				# "passed N minutes ago" signal is no longer trustworthy. Force a
-				# re-test on the next dispatch attempt.
-				if [[ "$_consecutive_no_worker" -ge 3 ]]; then
-					if [[ -f "$_canary_cache" ]]; then
-						rm -f "$_canary_cache"
-						echo "[pulse-wrapper] Canary cache invalidated after ${_consecutive_no_worker} consecutive no_worker_process failures in round — next dispatch will re-run canary" >>"$LOGFILE"
-					fi
-					_consecutive_no_worker=0
-				fi
-			else
-				# cli_usage_output or other launch-class failure: don't count toward
-				# the consecutive no_worker_process streak.
-				_consecutive_no_worker=0
+		if _dff_process_candidate "$candidate_json" "$self_login" "$available_slots"; then
+			dispatched_count=$((dispatched_count + 1))
+			# Throttle was cleared mid-round by a successful launch — restore
+			# the unthrottled slot budget so subsequent iterations can dispatch.
+			if [[ "$_DFF_THROTTLE_CLEARED" -eq 1 ]]; then
+				_effective_slots="$available_slots"
 			fi
-			continue
-		fi
-
-		# Launch confirmed. Reset consecutive streak and clear throttle if active.
-		_consecutive_no_worker=0
-		dispatched_count=$((dispatched_count + 1))
-		# t1959: A single successful launch proves the runtime is back.
-		# Restore full batch immediately — do not wait for N successes.
-		if [[ -f "$_throttle_file" ]]; then
-			rm -f "$_throttle_file"
-			echo "[pulse-wrapper] Dispatch throttle CLEARED: launch success in throttled mode — restoring full batch=${available_slots}" >>"$LOGFILE"
-			_effective_slots="$available_slots"
 		fi
 	done < <(printf '%s' "$candidates_json" | jq -c '.[]' 2>/dev/null)
 
-	# t1959: Compute no_worker_process ratio for this round.
-	# If >80% of dispatches ended with no_worker_process, throttle the next round
-	# to limit wasted dispatch cycles during runtime breakage.
-	if [[ "$_round_dispatched" -gt 0 ]]; then
-		local _ratio_pct=$((_round_no_worker_failures * 100 / _round_dispatched))
-		if [[ "$_ratio_pct" -gt 80 ]]; then
-			echo "1" >"$_throttle_file" 2>/dev/null || true
-			echo "[pulse-wrapper] Dispatch throttle ENGAGED: ${_ratio_pct}% no_worker_process in round (${_round_no_worker_failures}/${_round_dispatched}) — next round limited to batch=1" >>"$LOGFILE"
-		fi
-	fi
+	_dff_maybe_engage_throttle
 
 	local total_dispatched=$((dispatched_count + triage_dispatched))
 	echo "[pulse-wrapper] Deterministic fill floor complete: dispatched=${total_dispatched} (${triage_dispatched} triage + ${dispatched_count} implementation), target_available=${available_slots}" >>"$LOGFILE"
@@ -742,15 +875,20 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 # contributor-activity-helper.sh bails out with partial results, but
 # even the API calls themselves add latency that delays dispatch.
 #######################################
-#######################################
-# Run pre-flight stages: cleanup, calculations, normalization (GH#5627)
-#
-# Returns: 0 if prefetch succeeded, 1 if prefetch failed (abort cycle)
-#######################################
-_run_preflight_stages() {
-	# t1425, t1482: Write SETUP sentinel during pre-flight stages.
-	echo "SETUP:$$" >"$PIDFILE"
+# -----------------------------------------------------------------------------
+# Helpers for _run_preflight_stages (GH#18656)
+# -----------------------------------------------------------------------------
+# The helpers below group related preflight work so _run_preflight_stages
+# stays under 100 lines and each group (cleanup/reap, capacity/labels, early
+# dispatch, daily scans, ownership reconcile, prefetch+scope) can be read
+# independently. Behavior is byte-for-byte equivalent to the pre-split
+# monolithic function — see git log for the refactor commit.
 
+#######################################
+# Cleanup + zombie reap + ledger maintenance. Runs before worker counting
+# so count_active_workers sees accurate slot availability.
+#######################################
+_preflight_cleanup_and_ledger() {
 	run_stage_with_timeout "cleanup_orphans" "$PRE_RUN_STAGE_TIMEOUT" cleanup_orphans || true
 	run_stage_with_timeout "cleanup_stale_opencode" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stale_opencode || true
 	run_stage_with_timeout "cleanup_stalled_workers" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stalled_workers || true
@@ -780,7 +918,15 @@ _run_preflight_stages() {
 			echo "[pulse-wrapper] Dispatch ledger: expired ${expired_count} stale in-flight entries (GH#6696)" >>"$LOGFILE"
 		fi
 	fi
+	return 0
+}
 
+#######################################
+# Capacity calculation + session count warning + needs-* label
+# re-evaluation. Must run before the early dispatch pass so max workers
+# and priority allocations are current.
+#######################################
+_preflight_capacity_and_labels() {
 	calculate_max_workers
 	calculate_priority_allocations
 	local _session_ct
@@ -801,13 +947,20 @@ _run_preflight_stages() {
 	# parent can actually be consolidated instead of sitting forever.
 	_backfill_stale_consolidation_labels
 	_reevaluate_simplification_labels
+	return 0
+}
 
-	# Early dispatch pass: fill available worker slots BEFORE heavy housekeeping.
-	# Workers take 25-30s to cold-start (sandbox-exec + opencode), so dispatching
-	# here lets them boot in parallel with the remaining housekeeping stages
-	# (close_issues_with_merged_prs ~260s, prefetch_state ~130s, etc.).
-	# The main fill floor at the end of the cycle catches any slots freed by
-	# housekeeping. Without this, workers sit idle for ~7 minutes of cleanup.
+#######################################
+# Early dispatch pass + routine comment responses.
+#
+# Fills available worker slots BEFORE heavy housekeeping. Workers take
+# 25-30s to cold-start (sandbox-exec + opencode), so dispatching here lets
+# them boot in parallel with the remaining housekeeping stages
+# (close_issues_with_merged_prs ~260s, prefetch_state ~130s, etc.).
+# The main fill floor at the end of the cycle catches any slots freed by
+# housekeeping. Without this, workers sit idle for ~7 minutes of cleanup.
+#######################################
+_preflight_early_dispatch() {
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag present — skipping early fill floor" >>"$LOGFILE"
 	else
@@ -819,16 +972,22 @@ _run_preflight_stages() {
 	# user comments and dispatch lightweight Haiku workers to respond.
 	# Runs before heavy housekeeping so responses are fast.
 	dispatch_routine_comment_responses || true
+	return 0
+}
 
+#######################################
+# Daily maintenance scans: complexity scan, CodeRabbit review, post-merge
+# scanner, dedup cleanup, fast-fail prune. All non-fatal — pulse proceeds
+# even if any individual scan fails.
+#######################################
+_preflight_daily_scans() {
 	# Daily complexity scan (GH#5628): creates simplification-debt issues
 	# for .sh files with complex functions and .md agent docs exceeding size
 	# threshold. Longest files first. Runs at most once per day.
-	# Non-fatal — pulse proceeds even if the scan fails.
 	run_stage_with_timeout "complexity_scan" "$PRE_RUN_STAGE_TIMEOUT" run_weekly_complexity_scan || true
 
 	# Daily full codebase review via CodeRabbit (GH#17640): posts a review
 	# trigger on issue #2632 once per 24h. Uses simple timestamp gate.
-	# Non-fatal — pulse proceeds even if the review request fails.
 	run_stage_with_timeout "coderabbit_review" "$PRE_RUN_STAGE_TIMEOUT" run_daily_codebase_review || true
 
 	# Daily post-merge review scanner (t1993): ingests inline AI bot review
@@ -838,13 +997,21 @@ _run_preflight_stages() {
 
 	# Daily dedup cleanup: close duplicate simplification-debt issues.
 	# Runs after complexity scan so any new duplicates from this cycle are caught.
-	# Non-fatal — pulse proceeds even if cleanup fails.
 	run_stage_with_timeout "dedup_cleanup" "$PRE_RUN_STAGE_TIMEOUT" run_simplification_dedup_cleanup || true
 
 	# Prune expired fast-fail counter entries (t1888).
 	# Lightweight — just reads and rewrites a small JSON file.
 	fast_fail_prune_expired || true
+	return 0
+}
 
+#######################################
+# Ownership normalization + issue reconciliation stages.
+# Ensures active labels reflect ownership (prevents multi-worker overlap),
+# closes issues whose linked PRs already merged, reconciles status:done
+# stuck states, and auto-approves maintainer-created issues.
+#######################################
+_preflight_ownership_reconcile() {
 	# Contribution watch: lightweight scan of external issues/PRs (t1419).
 	prefetch_contribution_watch
 
@@ -862,7 +1029,18 @@ _run_preflight_stages() {
 	# Auto-approve maintainer issues: remove needs-maintainer-review when
 	# the maintainer created or commented on the issue (GH#16842).
 	run_stage_with_timeout "auto_approve_maintainer_issues" "$PRE_RUN_STAGE_TIMEOUT" auto_approve_maintainer_issues || true
+	return 0
+}
 
+#######################################
+# Prefetch GitHub state + restore persisted PULSE_SCOPE_REPOS.
+#
+# Returns:
+#   0 - prefetch succeeded (or succeeded with warnings)
+#   1 - prefetch failed; caller should abort this cycle to avoid stale
+#       dispatch decisions
+#######################################
+_preflight_prefetch_and_scope() {
 	if ! run_stage_with_timeout "prefetch_state" "$PRE_RUN_STAGE_TIMEOUT" prefetch_state; then
 		echo "[pulse-wrapper] prefetch_state did not complete successfully — aborting this cycle to avoid stale dispatch decisions" >>"$LOGFILE"
 		_PULSE_HEALTH_PREFETCH_ERRORS=$((_PULSE_HEALTH_PREFETCH_ERRORS + 1))
@@ -878,7 +1056,24 @@ _run_preflight_stages() {
 			echo "[pulse-wrapper] Restored PULSE_SCOPE_REPOS from ${SCOPE_FILE}" >>"$LOGFILE"
 		fi
 	fi
+	return 0
+}
 
+#######################################
+# Run pre-flight stages: cleanup, calculations, normalization (GH#5627)
+#
+# Returns: 0 if prefetch succeeded, 1 if prefetch failed (abort cycle)
+#######################################
+_run_preflight_stages() {
+	# t1425, t1482: Write SETUP sentinel during pre-flight stages.
+	echo "SETUP:$$" >"$PIDFILE"
+
+	_preflight_cleanup_and_ledger
+	_preflight_capacity_and_labels
+	_preflight_early_dispatch
+	_preflight_daily_scans
+	_preflight_ownership_reconcile
+	_preflight_prefetch_and_scope || return 1
 	return 0
 }
 
