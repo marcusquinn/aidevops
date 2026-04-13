@@ -115,6 +115,58 @@ _gh_edit_labels() {
 	[[ ${#args[@]} -gt 0 ]] && gh issue edit "$num" --repo "$repo" "${args[@]}" 2>/dev/null || true
 }
 
+# _apply_tier_label_replace: set the tier label on an issue, replacing any
+# existing tier:* labels. Avoids the collision class observed in t2012/t1997
+# where multiple tier:* labels could coexist when issue-sync added a new tier
+# without removing old ones (and the protected-prefix rule prevented
+# _reconcile_labels from cleaning up the old one).
+#
+# Re-fetches current labels from gh to defend against stale upstream label
+# state (race window between view and edit). Two API calls per tier change is
+# acceptable; tier changes are infrequent.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - issue number
+#   $3 - new tier label (e.g., tier:standard)
+_apply_tier_label_replace() {
+	local repo="$1" num="$2" new_tier="$3"
+	[[ -z "$repo" || -z "$num" || -z "$new_tier" ]] && return 0
+
+	# Validate the new tier matches the expected pattern — refuse to push
+	# arbitrary labels through this helper.
+	if [[ ! "$new_tier" =~ ^tier:(simple|standard|reasoning)$ ]]; then
+		print_warning "tier replace: refusing to apply non-tier label '$new_tier' to #$num in $repo"
+		return 0
+	fi
+
+	local existing_tiers
+	existing_tiers=$(gh issue view "$num" --repo "$repo" --json labels \
+		--jq '[.labels[].name | select(startswith("tier:"))] | join(",")' 2>/dev/null || echo "")
+
+	# Remove any existing tier labels that don't match the new one.
+	if [[ -n "$existing_tiers" ]]; then
+		local -a remove_args=()
+		local _saved_ifs="$IFS"
+		IFS=','
+		local old
+		for old in $existing_tiers; do
+			[[ -z "$old" ]] && continue
+			[[ "$old" == "$new_tier" ]] && continue
+			remove_args+=("--remove-label" "$old")
+		done
+		IFS="$_saved_ifs"
+		if [[ ${#remove_args[@]} -gt 0 ]]; then
+			gh issue edit "$num" --repo "$repo" "${remove_args[@]}" 2>/dev/null ||
+				print_warning "tier replace: failed to remove stale tier label(s) from #$num in $repo"
+		fi
+	fi
+
+	# Add the new tier label (idempotent — gh edit silently no-ops if present).
+	gh issue edit "$num" --repo "$repo" --add-label "$new_tier" 2>/dev/null || true
+	return 0
+}
+
 # _is_protected_label: returns 0 if the label must NOT be removed by enrich reconciliation.
 # Protected labels are managed by other workflows (lifecycle, closure hygiene, PR labeler)
 # and must not be touched by tag-derived label reconciliation.
@@ -545,19 +597,14 @@ _push_process_task() {
 	local labels
 	labels=$(map_tags_to_labels "$tags")
 
-	# Extract and validate tier from brief file
+	# Extract and validate tier from brief file. Held aside from the main
+	# labels CSV — applied via _apply_tier_label_replace AFTER the issue
+	# exists, so any pre-existing tier:* label is removed first (t2012).
 	local brief_path="$project_root/todo/tasks/${task_id}-brief.md"
 	local tier_label
 	tier_label=$(_extract_tier_from_brief "$brief_path")
 	if [[ -n "$tier_label" ]]; then
-		# Validate tier:simple against checklist
 		tier_label=$(_validate_tier_checklist "$brief_path" "$tier_label")
-		# Add tier label to labels list
-		if [[ -n "$labels" ]]; then
-			labels="${labels},${tier_label}"
-		else
-			labels="$tier_label"
-		fi
 	fi
 
 	local body
@@ -587,6 +634,12 @@ _push_process_task() {
 	rc=$?
 	if [[ $rc -eq 0 && -n "$_PUSH_CREATED_NUM" ]]; then
 		print_success "Created #${_PUSH_CREATED_NUM}: $title"
+		# Apply tier label via the replace-not-append helper so any existing
+		# tier:* label is removed first (t2012). Done after creation so the
+		# newly-created issue has a number to address.
+		if [[ -n "$tier_label" ]]; then
+			_apply_tier_label_replace "$repo" "$_PUSH_CREATED_NUM" "$tier_label"
+		fi
 		add_gh_ref_to_todo "$task_id" "$_PUSH_CREATED_NUM" "$todo_file"
 		# Sync relationships (blocked-by, sub-issues) after creation (t1889)
 		sync_relationships_for_task "$task_id" "$todo_file" "$repo"
@@ -688,19 +741,14 @@ cmd_enrich() {
 		local labels
 		labels=$(map_tags_to_labels "$tags")
 
-		# Extract and validate tier from brief file
+		# Extract and validate tier from brief file. Held aside from the main
+		# labels CSV — applied via _apply_tier_label_replace below so any
+		# pre-existing tier:* label is removed first (t2012).
 		local brief_path="$project_root/todo/tasks/${task_id}-brief.md"
 		local tier_label
 		tier_label=$(_extract_tier_from_brief "$brief_path")
 		if [[ -n "$tier_label" ]]; then
-			# Validate tier:simple against checklist
 			tier_label=$(_validate_tier_checklist "$brief_path" "$tier_label")
-			# Add tier label to labels list
-			if [[ -n "$labels" ]]; then
-				labels="${labels},${tier_label}"
-			else
-				labels="$tier_label"
-			fi
 		fi
 
 		local title
@@ -709,7 +757,9 @@ cmd_enrich() {
 		body=$(compose_issue_body "$task_id" "$project_root")
 
 		if [[ "$DRY_RUN" == "true" ]]; then
-			print_info "[DRY-RUN] Would enrich #$num ($task_id) labels=$labels"
+			local _dry_tier_msg=""
+			[[ -n "$tier_label" ]] && _dry_tier_msg=" tier=${tier_label}(replace)"
+			print_info "[DRY-RUN] Would enrich #$num ($task_id) labels=${labels}${_dry_tier_msg}"
 			enriched=$((enriched + 1))
 			continue
 		fi
@@ -731,6 +781,14 @@ cmd_enrich() {
 		# Only run when add succeeded (or no labels to add) to avoid destructive removal
 		# after a transient add failure.
 		[[ "$add_ok" == "true" ]] && _reconcile_labels "$repo" "$num" "$labels"
+
+		# Apply tier label via the replace-not-append helper (t2012). Done
+		# after the main label set so any pre-existing tier:* label is
+		# removed first — the protected-prefix rule prevents _reconcile_labels
+		# from doing this cleanup on its own.
+		if [[ -n "$tier_label" ]]; then
+			_apply_tier_label_replace "$repo" "$num" "$tier_label"
+		fi
 
 		# Hybrid sentinel + content-diff gate (GH#18411):
 		# Prevent overwriting externally-authored bodies and skip no-op API calls.

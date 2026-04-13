@@ -1311,6 +1311,13 @@ resolve_gh_node_id() {
 # Arguments:
 #   $1 - brief file path
 # Returns: tier label on stdout (e.g., "tier:simple"), or empty string if not found
+#
+# t2012: parse the explicit `**Selected tier:**` line first. The previous
+# implementation grep-anywhere'd the whole brief and took `head -1`, which
+# matched commentary like "use `tier:standard` or higher" or rank-order text
+# (`tier:reasoning` > `tier:standard` > `tier:simple`) before the actual
+# **Selected tier:** line — returning the wrong tier and creating tier label
+# collisions with `_validate_tier_checklist`'s override path.
 _extract_tier_from_brief() {
 	local brief_path="$1"
 
@@ -1318,8 +1325,28 @@ _extract_tier_from_brief() {
 		return 0
 	fi
 
-	# Extract tier from "**Selected tier:** `tier:XXX`" line
-	grep -oE 'tier:(simple|standard|reasoning)' "$brief_path" | head -1 || true
+	# PRIMARY: parse the explicit `**Selected tier:**` line. The brief
+	# template requires this exact prefix; search for it specifically rather
+	# than grepping the whole document.
+	local selected_line
+	selected_line=$(grep -m1 -E '^\*\*Selected tier:\*\*' "$brief_path" 2>/dev/null || true)
+	if [[ -n "$selected_line" ]]; then
+		local tier
+		tier=$(printf '%s' "$selected_line" | grep -oE 'tier:(simple|standard|reasoning)' | head -1 || true)
+		if [[ -n "$tier" ]]; then
+			printf '%s' "$tier"
+			return 0
+		fi
+	fi
+
+	# FALLBACK: grep-anywhere for briefs that don't follow the template.
+	# Logged as a warning to stderr so we can chase non-conforming briefs.
+	local fallback
+	fallback=$(grep -oE 'tier:(simple|standard|reasoning)' "$brief_path" 2>/dev/null | head -1 || true)
+	if [[ -n "$fallback" ]]; then
+		echo "[WARN] _extract_tier_from_brief: brief at $brief_path missing **Selected tier:** line, falling back to first tier mention ($fallback)" >&2
+		printf '%s' "$fallback"
+	fi
 	return 0
 }
 
