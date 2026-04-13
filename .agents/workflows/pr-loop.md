@@ -62,7 +62,7 @@ After user-only fixes, the required `Maintainer Review & Assignee Gate` CheckRun
 
 If the required CheckRun does NOT refresh within ~60 seconds after an approval, fall back to manual: `gh run rerun <run_id> --failed` against the latest `Maintainer Gate` workflow run for the PR's HEAD SHA.
 
-**Hard rule:** NEVER remove `needs-maintainer-review` by direct `gh issue edit --remove-label`. The `protect-labels` job in `maintainer-gate.yml` re-applies it ~7 seconds later unless a `<!-- aidevops-signed-approval -->` comment exists on the issue. Removing the label without the signed comment is a guaranteed-to-fail path that wastes tool calls.
+**Hard rule:** NEVER remove `needs-maintainer-review` by direct `gh issue edit --remove-label`. The `protect-labels` job in `maintainer-gate.yml` re-applies it ~7 seconds later (webhook trigger delay) unless a `<!-- aidevops-signed-approval -->` comment exists on the issue. Removing the label without the signed comment is a guaranteed-to-fail path that wastes tool calls.
 
 ## Completion Promises
 
