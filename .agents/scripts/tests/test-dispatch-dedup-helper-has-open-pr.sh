@@ -37,17 +37,9 @@ print_result() {
 	return 0
 }
 
-setup_test_env() {
-	TEST_ROOT=$(mktemp -d)
-	GH_FIXTURE_FILE="${TEST_ROOT}/gh-pr-list-fixtures.txt"
-	GH_PR_VIEW_FIXTURE_FILE="${TEST_ROOT}/gh-pr-view-fixtures.txt"
-
-	mkdir -p "${TEST_ROOT}/bin"
-	export PATH="${TEST_ROOT}/bin:${PATH}"
-	export GH_FIXTURE_FILE
-	export GH_PR_VIEW_FIXTURE_FILE
-
-	cat >"${TEST_ROOT}/bin/gh" <<'EOF'
+_write_gh_stub() {
+	local stub_path="$1"
+	cat >"$stub_path" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -57,32 +49,18 @@ if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
 	local_state=""
 	local_search=""
 	shift 2
-
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--repo)
-			local_repo="${2:-}"
-			shift 2
-			;;
-		--state)
-			local_state="${2:-}"
-			shift 2
-			;;
-		--search)
-			local_search="${2:-}"
-			shift 2
-			;;
-		*)
-			shift
-			;;
+		--repo) local_repo="${2:-}"; shift 2 ;;
+		--state) local_state="${2:-}"; shift 2 ;;
+		--search) local_search="${2:-}"; shift 2 ;;
+		*) shift ;;
 		esac
 	done
-
 	if [[ -z "$local_repo" || -z "$local_state" || -z "$local_search" ]]; then
 		printf '[]\n'
 		exit 0
 	fi
-
 	compound_key="${local_repo}|${local_state}|${local_search}"
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
@@ -93,48 +71,29 @@ if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
 			exit 0
 		fi
 	done <"${GH_FIXTURE_FILE}"
-
 	printf '[]\n'
 	exit 0
 fi
 
 # gh pr view <number> --repo R --json body|title --jq '.body|.title'
-# Returns fixture body/title keyed by PR number + field name.
-# Fixture line format: "<pr_number>|<field>|<payload>".
-# <payload> is emitted verbatim to stdout (no jq processing — the helper
-# pipes to `--jq '.body'` but we've already pre-extracted the field value
-# server-side for test simplicity).
+# Fixture line format: "<pr_number>|<field>|<payload>". Payload may
+# contain '|' — we split on the first two delimiters only.
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
 	pr_num="${3:-}"
 	field=""
 	shift 3 2>/dev/null || true
-
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--json)
-			field="${2:-}"
-			shift 2
-			;;
-		--jq)
-			shift 2
-			;;
-		--repo)
-			shift 2
-			;;
-		*)
-			shift
-			;;
+		--json) field="${2:-}"; shift 2 ;;
+		--jq) shift 2 ;;
+		--repo) shift 2 ;;
+		*) shift ;;
 		esac
 	done
-
-	if [[ -z "$pr_num" || -z "$field" ]]; then
-		exit 1
-	fi
-
+	[[ -z "$pr_num" || -z "$field" ]] && exit 1
 	if [[ -f "${GH_PR_VIEW_FIXTURE_FILE}" ]]; then
 		while IFS= read -r line; do
 			[[ -n "$line" ]] || continue
-			# Split on first two '|' delimiters so payload may contain '|'.
 			fixture_pr="${line%%|*}"
 			rest="${line#*|}"
 			fixture_field="${rest%%|*}"
@@ -145,8 +104,6 @@ if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
 			fi
 		done <"${GH_PR_VIEW_FIXTURE_FILE}"
 	fi
-
-	# No fixture — return empty (helper falls back to empty string).
 	printf '\n'
 	exit 0
 fi
@@ -154,8 +111,22 @@ fi
 printf 'unsupported gh invocation in test stub: %s\n' "$*" >&2
 exit 1
 EOF
+	chmod +x "$stub_path"
+	return 0
+}
 
-	chmod +x "${TEST_ROOT}/bin/gh"
+setup_test_env() {
+	TEST_ROOT=$(mktemp -d)
+	GH_FIXTURE_FILE="${TEST_ROOT}/gh-pr-list-fixtures.txt"
+	GH_PR_VIEW_FIXTURE_FILE="${TEST_ROOT}/gh-pr-view-fixtures.txt"
+
+	mkdir -p "${TEST_ROOT}/bin"
+	export PATH="${TEST_ROOT}/bin:${PATH}"
+	export GH_FIXTURE_FILE
+	export GH_PR_VIEW_FIXTURE_FILE
+
+	_write_gh_stub "${TEST_ROOT}/bin/gh"
+
 	printf '' >"${GH_FIXTURE_FILE}"
 	printf '' >"${GH_PR_VIEW_FIXTURE_FILE}"
 	return 0
