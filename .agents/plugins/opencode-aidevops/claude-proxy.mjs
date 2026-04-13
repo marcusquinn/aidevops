@@ -494,7 +494,7 @@ function buildClaudeArgs(body, systemPrompt, streaming) {
   return args;
 }
 
-async function runClaudeJsonWithAccount(body, directory, account) {
+async function runClaudeJsonWithAccount(body, directory, account, abortSignal) {
   const childEnv = buildChildEnvWithToken(account.token);
   const child = spawn("claude", buildClaudeArgs(body, body.systemPrompt, false), {
     cwd: directory,
@@ -508,6 +508,23 @@ async function runClaudeJsonWithAccount(body, directory, account) {
     child.kill("SIGKILL");
   }, CHILD_TIMEOUT_MS);
 
+  // Abort cleanup: if the caller's request is aborted (client disconnect),
+  // terminate the child immediately (GH#18621 Finding 1).
+  const onAbort = () => {
+    if (child.exitCode === null && !child.killed) {
+      try {
+        child.kill("SIGTERM");
+        console.error(`[aidevops] Claude proxy: json request aborted by client, killed child pid=${child.pid}`);
+      } catch {
+        // best effort
+      }
+    }
+  };
+  if (abortSignal) {
+    if (abortSignal.aborted) onAbort();
+    else abortSignal.addEventListener("abort", onAbort, { once: true });
+  }
+
   const stdoutChunks = [];
   const stderrChunks = [];
 
@@ -519,6 +536,7 @@ async function runClaudeJsonWithAccount(body, directory, account) {
     child.on("error", () => resolve(1));
   });
   clearTimeout(timeout);
+  if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
   const stdout = Buffer.concat(stdoutChunks).toString("utf-8").trim();
   const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
 
@@ -546,15 +564,16 @@ async function runClaudeJsonWithAccount(body, directory, account) {
   };
 }
 
-async function runClaudeJson(body, directory) {
+async function runClaudeJson(body, directory, abortSignal) {
   const accounts = await getAvailableAccounts();
   if (accounts.length === 0) {
     throw new Error("No Anthropic OAuth pool accounts available (all rate-limited or no valid tokens)");
   }
 
   for (const account of accounts) {
+    if (abortSignal && abortSignal.aborted) throw new Error("Request aborted by client");
     console.error(`[aidevops] Claude proxy: trying account ${account.email} (json mode)`);
-    const result = await runClaudeJsonWithAccount(body, directory, account);
+    const result = await runClaudeJsonWithAccount(body, directory, account, abortSignal);
     if (!result.rateLimited) {
       return result;
     }
@@ -665,7 +684,7 @@ function processStreamEvent(event, ctx) {
  * rate limiting before committing to the stream. Returns "rate_limited" if the
  * account is rate-limited, otherwise streams to completion and returns "done".
  */
-function tryStreamWithAccount(controller, encoder, completionId, created, body, directory, account) {
+function tryStreamWithAccount(controller, encoder, completionId, created, body, directory, account, abortRef) {
   return new Promise((resolve) => {
     const childEnv = buildChildEnvWithToken(account.token);
     const child = spawn("claude", buildClaudeArgs(body, body.systemPrompt, true), {
@@ -674,11 +693,20 @@ function tryStreamWithAccount(controller, encoder, completionId, created, body, 
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    // Expose the running child so the enclosing ReadableStream can signal it
+    // on client disconnect via the `cancel` callback (GH#18621 Finding 1).
+    if (abortRef) abortRef.child = child;
+
     // Lifetime bound: kill child if it exceeds timeout
     const timeout = setTimeout(() => {
       console.error(`[aidevops] Claude proxy: stream child timeout (${CHILD_TIMEOUT_MS}ms), killing`);
       child.kill("SIGKILL");
     }, CHILD_TIMEOUT_MS);
+
+    // If the caller already signalled cancel before the child spawned, kill immediately.
+    if (abortRef && abortRef.cancelled) {
+      child.kill("SIGTERM");
+    }
 
     let buffer = "";
     let closed = false;
@@ -826,6 +854,11 @@ function streamClaudeResponse(body, directory) {
   const created = Math.floor(Date.now() / 1000);
   const encoder = new TextEncoder();
 
+  // Shared ref between start() and cancel() so the cancel callback can kill
+  // whatever child is currently running (GH#18621 Finding 1 — client disconnect
+  // cleanup). `child` is mutated by tryStreamWithAccount as each retry spawns.
+  const abortRef = { child: null, cancelled: false };
+
   return new ReadableStream({
     async start(controller) {
       const accounts = await getAvailableAccounts();
@@ -845,8 +878,9 @@ function streamClaudeResponse(body, directory) {
       }
 
       for (const account of accounts) {
+        if (abortRef.cancelled) return; // client already bailed
         console.error(`[aidevops] Claude proxy: trying account ${account.email} (stream mode)`);
-        const result = await tryStreamWithAccount(controller, encoder, completionId, created, body, directory, account);
+        const result = await tryStreamWithAccount(controller, encoder, completionId, created, body, directory, account, abortRef);
         if (result === "rate_limited") {
           console.error(`[aidevops] Claude proxy: account ${account.email} rate-limited, trying next...`);
           continue;
@@ -865,6 +899,20 @@ function streamClaudeResponse(body, directory) {
         controller.close();
       } catch {
         // already closed
+      }
+    },
+    cancel(reason) {
+      // Client disconnected (or opencode aborted) — kill the in-flight child
+      // so it stops consuming quota and touching the workspace (GH#18621).
+      abortRef.cancelled = true;
+      const child = abortRef.child;
+      if (child && child.exitCode === null && !child.killed) {
+        try {
+          child.kill("SIGTERM");
+          console.error(`[aidevops] Claude proxy: stream cancelled by client (${reason || "no-reason"}), killed child pid=${child.pid}`);
+        } catch {
+          // best effort
+        }
       }
     },
   });
@@ -941,7 +989,9 @@ async function handleChatCompletions(req, directory) {
   }
 
   if (incoming.stream === false) {
-    const result = await runClaudeJson(body, directory);
+    // Thread the fetch Request's abort signal into the JSON path so client
+    // disconnect terminates the child immediately (GH#18621 Finding 1).
+    const result = await runClaudeJson(body, directory, req.signal);
     return new Response(JSON.stringify(buildOpenAIResponse(body, result.content, result.usage)), {
       headers: { "Content-Type": "application/json" },
     });
