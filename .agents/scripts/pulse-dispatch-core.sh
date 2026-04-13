@@ -730,10 +730,17 @@ _issue_targets_large_files() {
 	fi
 
 	# Extract file paths from "EDIT:" and "Files to Modify" patterns in body.
-	# Patterns: "EDIT: path/to/file.sh:123-456", "- EDIT: path/to/file"
+	# Patterns: "EDIT: path/to/file.sh", "EDIT: path/to/file.sh:123",
+	#           "EDIT: path/to/file.sh:123-456", "- EDIT: path/to/file"
+	#
+	# t2024: Preserve any trailing ":NNN" or ":START-END" line qualifier so
+	# the gate loop below can distinguish scoped ranges from whole-file targets.
+	# Previously this extractor stripped the qualifier via `sed 's/:.*//'`,
+	# which threw away the one piece of information needed to tell "targeted
+	# edit in a 30-line range" from "rewrite the whole 3000-line file".
 	local file_paths
-	file_paths=$(printf '%s' "$issue_body" | grep -oE '(EDIT|NEW|File):?\s+[`"]?\.?agents/scripts/[^`"[:space:],:]+' 2>/dev/null |
-		sed 's/^[A-Z]*:*[[:space:]]*//' | sed 's/^[`"]//' | sed 's/:.*//' | sort -u) || file_paths=""
+	file_paths=$(printf '%s' "$issue_body" | grep -oE '(EDIT|NEW|File):?\s+[`"]?\.?agents/scripts/[^`"[:space:],]+' 2>/dev/null |
+		sed 's/^[A-Z]*:*[[:space:]]*//' | sed 's/^[`"]//' | sed 's/[`"]*$//' | sort -u) || file_paths=""
 
 	# Also check for backtick-quoted filenames that look like script paths.
 	# GH#17897: Only match backtick paths on lines that look like implementation
@@ -741,10 +748,14 @@ _issue_targets_large_files() {
 	# review feedback prose. Previously, files cited in Gemini review comments
 	# (e.g., "aidevops.sh hashes were updated") triggered the large-file gate
 	# even though they weren't implementation targets.
+	#
+	# t2024: Also preserve line qualifiers here. A list-item reference like
+	#   - **Broken extractor:** `pulse-ancillary-dispatch.sh:221-253`
+	# should be parsed as "file + range", not stripped to bare "file".
 	local backtick_paths
 	backtick_paths=$(printf '%s' "$issue_body" | grep -E '^\s*[-*]\s|^(EDIT|NEW|File):' 2>/dev/null |
 		grep -oE '`[^`]*\.(sh|py|js|ts)[^`]*`' 2>/dev/null |
-		tr -d '`' | grep -v '^#' | sed 's/:.*//' | sort -u) || backtick_paths=""
+		tr -d '`' | grep -v '^#' | sort -u) || backtick_paths=""
 
 	# Combine and deduplicate
 	local all_paths
@@ -763,8 +774,22 @@ _issue_targets_large_files() {
 	local found_large=false
 	local large_files=""
 	local large_file_paths=""
-	while IFS= read -r fpath; do
-		[[ -z "$fpath" ]] && continue
+	while IFS= read -r raw_target; do
+		[[ -z "$raw_target" ]] && continue
+
+		# t2024: Parse optional line qualifier off the end of the target.
+		#   "file.sh"            → fpath="file.sh", line_spec=""
+		#   "file.sh:1477"       → fpath="file.sh", line_spec="1477"
+		#   "file.sh:221-253"    → fpath="file.sh", line_spec="221-253"
+		# Only accept a line qualifier when it's numeric (optionally ranged).
+		# Anything else (colons inside shell-safe paths, rare but possible)
+		# is preserved as part of the path.
+		local fpath="$raw_target"
+		local line_spec=""
+		if [[ "$raw_target" =~ ^(.+):([0-9]+(-[0-9]+)?)$ ]]; then
+			fpath="${BASH_REMATCH[1]}"
+			line_spec="${BASH_REMATCH[2]}"
+		fi
 
 		# Skip non-simplifiable files (lockfiles, generated data, configs)
 		local basename_fpath
@@ -783,6 +808,29 @@ _issue_targets_large_files() {
 			full_path="${repo_path}/.${fpath}"
 		else
 			continue
+		fi
+
+		# t2024: scoped-range and single-line qualifier handling.
+		#
+		# 1. Single-line references (no range) are context for the human
+		#    reader — they help locate the bug but do not describe an edit
+		#    target. Skip them for gate evaluation entirely.
+		# 2. Ranged references that fit inside SCOPED_RANGE_THRESHOLD bypass
+		#    the file-size check — the worker only navigates the cited range.
+		# 3. Anything else (no qualifier, or range too large) falls through
+		#    to the file-size check as before.
+		if [[ "$line_spec" =~ ^[0-9]+$ ]]; then
+			echo "[pulse-wrapper] Large-file gate: #${issue_number} skipping ${fpath}:${line_spec} (single-line citation — context reference, not edit target)" >>"$LOGFILE"
+			continue
+		fi
+		if [[ "$line_spec" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+			local _range_start="${BASH_REMATCH[1]}"
+			local _range_end="${BASH_REMATCH[2]}"
+			local _range_size=$((_range_end - _range_start + 1))
+			if [[ "$_range_size" -gt 0 && "$_range_size" -le "$SCOPED_RANGE_THRESHOLD" ]]; then
+				echo "[pulse-wrapper] Large-file gate: #${issue_number} scoped-range pass for ${fpath}:${line_spec} (${_range_size} lines, threshold ${SCOPED_RANGE_THRESHOLD})" >>"$LOGFILE"
+				continue
+			fi
 		fi
 
 		local line_count=0

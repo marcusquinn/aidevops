@@ -786,6 +786,25 @@ ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS="${ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS:-
 #######################################
 LARGE_FILE_LINE_THRESHOLD="${LARGE_FILE_LINE_THRESHOLD:-2000}"
 
+# t2024: Scoped-range exemption for the large-file gate.
+#
+# The gate's purpose is to prevent a worker from paying the complexity tax
+# of navigating a huge file when it only needs to understand a small section.
+# If the issue body cites an explicit line range (e.g., "EDIT: file.sh:221-253")
+# and the range is at most SCOPED_RANGE_THRESHOLD lines, the worker can
+# navigate the cited range directly without reading the whole file — so we
+# pass the gate regardless of the enclosing file's total line count.
+#
+# Single-line citations (e.g., "file.sh:1477") are treated as context references
+# for the human reader, not implementation targets, and are excluded from
+# gate evaluation entirely. A worker never "edits line 1477" — they edit a
+# function or a range; a bare line number is documentation, not a target.
+#
+# File references without any line qualifier (e.g., "file.sh") fall through
+# to the existing file-size check — this preserves the original safety for
+# whole-file rewrites where the worker really does need to understand everything.
+SCOPED_RANGE_THRESHOLD="${SCOPED_RANGE_THRESHOLD:-300}"
+
 #######################################
 # Per-issue retry state (t1888, GH#2076, GH#17384)
 #
