@@ -231,6 +231,28 @@ else
 	print_result "is-assigned blocks CLOSED parent-task issue (label-first precedence)" 1 "(rc=$rc output='$output')"
 fi
 
+# Case F: labels key is null (missing from response) — must not error, must
+# allow dispatch (no parent-task label = not blocked). Validates the
+# `(.labels // [])` null-fallback fix from GH#18537.
+write_stub_gh '{"state":"OPEN","assignees":[],"labels":null}'
+run_is_assigned 99994 "owner/repo"
+if [[ "$rc" -eq 1 && "$output" != *"PARENT_TASK_BLOCKED"* ]]; then
+	print_result "is-assigned allows dispatch when labels key is null (null-fallback safety)" 0
+else
+	print_result "is-assigned allows dispatch when labels key is null (null-fallback safety)" 1 \
+		"(rc=$rc output='$output')"
+fi
+
+# Case G: labels key absent entirely — must not error, must allow dispatch.
+write_stub_gh '{"state":"OPEN","assignees":[]}'
+run_is_assigned 99993 "owner/repo"
+if [[ "$rc" -eq 1 && "$output" != *"PARENT_TASK_BLOCKED"* ]]; then
+	print_result "is-assigned allows dispatch when labels key is absent (null-fallback safety)" 0
+else
+	print_result "is-assigned allows dispatch when labels key is absent (null-fallback safety)" 1 \
+		"(rc=$rc output='$output')"
+fi
+
 export PATH="$OLD_PATH"
 
 # =============================================================================
