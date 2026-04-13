@@ -278,19 +278,24 @@ ensure_labels_exist() {
 	IFS="$_saved_ifs"
 }
 
-# Status labels to remove when marking an issue done (t3517: array for safe iteration).
-_DONE_REMOVE_LABELS=("status:available" "status:queued" "status:claimed" "status:in-review" "status:blocked" "status:verify-failed")
-
+# t2040: _mark_issue_done delegates to set_issue_status which performs the
+# add+remove atomically in a single `gh issue edit` call. The previous
+# implementation used a non-atomic two-call sequence (add then remove) that
+# created a transient window where the issue carried both `status:in-review`
+# and `status:done`. The reconciler's label-invariant pass would see two
+# status labels and could pick the wrong survivor, potentially losing `done`.
+# Precedence (ISSUE_STATUS_LABEL_PRECEDENCE) now treats `done` as terminal,
+# but the correct fix is to close the window entirely.
+#
+# set_issue_status handles every core status:* label in ISSUE_STATUS_LABELS
+# (available/queued/claimed/in-progress/in-review/done/blocked) atomically.
+# The only extra label to clear is `status:verify-failed` which is an
+# out-of-band exception label not managed by set_issue_status — passed
+# through via its trailing passthrough flags.
 _mark_issue_done() {
 	local repo="$1" num="$2"
-	local -a remove_args=()
-	local lbl
-	for lbl in "${_DONE_REMOVE_LABELS[@]}"; do
-		remove_args+=("--remove-label" "$lbl")
-	done
-	gh_create_label "$repo" "status:done" "6F42C1" "Task is complete"
-	_gh_edit_labels "add" "$repo" "$num" "status:done"
-	[[ ${#remove_args[@]} -gt 0 ]] && gh issue edit "$num" --repo "$repo" "${remove_args[@]}" 2>/dev/null || true
+	set_issue_status "$num" "$repo" "done" \
+		--remove-label "status:verify-failed" 2>/dev/null || true
 }
 
 # =============================================================================
