@@ -290,6 +290,15 @@ _dispatch_triage_review_worker() {
 	# t1894/t1934: Lock issue and linked PRs during triage
 	lock_issue_for_worker "$issue_num" "$repo_slug"
 
+	# t2025: Capture stderr to a separate file so sandbox INFO lines
+	# (written to stderr by sandbox-exec-helper.sh's log_sandbox) don't
+	# contaminate the stdout review capture. Previously, "2>&1" merged
+	# '[INFO] Executing (timeout=..., network_blocked=...)' lines into
+	# the capture file, which caused the safety filter to classify
+	# legitimate output as "raw sandbox output" and suppress it.
+	local review_stderr_file=""
+	review_stderr_file="${review_output_file}.stderr"
+
 	# Run agent with triage-review prompt — agent file restricts to Read/Glob/Grep
 	# shellcheck disable=SC2086
 	"$HEADLESS_RUNTIME_HELPER" run \
@@ -298,14 +307,54 @@ _dispatch_triage_review_worker() {
 		--dir "$repo_path" \
 		$model_flag \
 		--title "Sandboxed triage review: Issue #${issue_num}" \
-		--prompt-file "$prefetch_file" </dev/null >"$review_output_file" 2>&1
+		--prompt-file "$prefetch_file" </dev/null >"$review_output_file" 2>"$review_stderr_file"
 
 	rm -f "$prefetch_file"
 
-	# ── Post-process: post the review comment (deterministic) ──
+	# t2025: opencode run is invoked with --format json by
+	# headless-runtime-helper.sh (see _build_opencode_cmd_args:1477), which
+	# means the capture file contains a JSONL transcript of the full
+	# session: user prompt + tool_use events + tool_result events +
+	# assistant messages. The final assistant message holds the review
+	# text. Parse it with jq before running the plain-text safety filter,
+	# otherwise the "## Review:" header is buried inside an escaped JSON
+	# string and the "^## .*[Rr]eview" regex never matches.
+	#
+	# Defensive fallback: if the file isn't valid JSONL (e.g., opencode
+	# crashed before emitting anything structured, or the format changes
+	# in a future release), fall through to reading the raw file as plain
+	# text — same behaviour as before this fix.
 	local review_text=""
-	review_text=$(cat "$review_output_file")
-	rm -f "$review_output_file"
+	local jsonl_parsed=""
+	if [[ -s "$review_output_file" ]]; then
+		jsonl_parsed=$(jq -rs '
+			[.[] | select(.type == "assistant")] as $assistants
+			| if ($assistants | length) > 0 then
+				$assistants
+				| last
+				| (.message.content // .content // "")
+				| if type == "array" then
+					[.[] | select(.type == "text") | .text] | join("\n")
+				  elif type == "string" then
+					.
+				  else
+					""
+				  end
+			  else
+				""
+			  end
+		' "$review_output_file" 2>/dev/null) || jsonl_parsed=""
+	fi
+	if [[ -n "$jsonl_parsed" ]]; then
+		review_text="$jsonl_parsed"
+	else
+		# Fallback: raw file (non-JSONL or parser failure)
+		review_text=$(cat "$review_output_file" 2>/dev/null || echo "")
+	fi
+
+	# t2025: On any failure path below, save the raw capture for debugging.
+	# Keep a reference to the raw file until we know whether to preserve it.
+	local _triage_raw_capture="$review_output_file"
 
 	local triage_posted="false"
 	# t2016: Track WHY the post was suppressed so the escalation comment
@@ -370,6 +419,39 @@ _dispatch_triage_review_worker() {
 			echo "[pulse-wrapper] FAILED to add triage-failed label to #${issue_num} in ${repo_slug} (gh issue edit returned non-zero)" >>"$LOGFILE"
 		fi
 	fi
+
+	# t2025: On any failure, save the raw JSONL capture for future debugging
+	# so we don't have to re-trigger the bug. Capped at 100 files to prevent
+	# runaway accumulation.
+	if [[ "$triage_posted" != "true" && -s "$_triage_raw_capture" ]]; then
+		local _triage_debug_dir="${TRIAGE_DEBUG_DIR:-${HOME}/.aidevops/.agent-workspace/tmp/triage-debug}"
+		if mkdir -p "$_triage_debug_dir" 2>/dev/null; then
+			local _triage_debug_count
+			_triage_debug_count=$(find "$_triage_debug_dir" -type f -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+			if [[ "$_triage_debug_count" -ge 100 ]]; then
+				# Drop the oldest to make room
+				local _oldest
+				_oldest=$(find "$_triage_debug_dir" -type f -name '*.jsonl' -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | tail -1)
+				[[ -n "$_oldest" ]] && rm -f "$_oldest" "${_oldest%.jsonl}.meta"
+			fi
+			local _slug_safe_dbg="${repo_slug//\//_}"
+			local _ts_dbg
+			_ts_dbg=$(date +%s)
+			local _dest_dbg="${_triage_debug_dir}/${_slug_safe_dbg}-${issue_num}-${_ts_dbg}.jsonl"
+			if cp "$_triage_raw_capture" "$_dest_dbg" 2>/dev/null; then
+				printf 'reason=%s\ntime=%s\nslug=%s\nissue=%s\nchars=%s\nstderr=%s\n' \
+					"$failure_reason" \
+					"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+					"$repo_slug" \
+					"$issue_num" \
+					"$output_chars" \
+					"$([[ -s "$review_stderr_file" ]] && echo "present" || echo "empty")" \
+					>"${_dest_dbg%.jsonl}.meta" 2>/dev/null || true
+				echo "[pulse-wrapper] Triage debug capture saved to ${_dest_dbg} (reason: ${failure_reason})" >>"$LOGFILE"
+			fi
+		fi
+	fi
+	rm -f "$review_output_file" "$review_stderr_file"
 
 	# Unlock issue after triage
 	unlock_issue_after_worker "$issue_num" "$repo_slug"
