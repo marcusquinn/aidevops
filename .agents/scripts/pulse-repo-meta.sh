@@ -45,10 +45,7 @@ get_repo_path_by_slug() {
 	fi
 
 	local repo_path
-	repo_path=$(jq -r --arg slug "$repo_slug" '.initialized_repos[] | select(.slug == $slug) | .path' "$REPOS_JSON" 2>/dev/null | head -n 1)
-	if [[ "$repo_path" == "null" ]]; then
-		repo_path=""
-	fi
+	repo_path=$(jq -r --arg slug "$repo_slug" '.initialized_repos[] | select(.slug == $slug) | .path // ""' "$REPOS_JSON" 2>/dev/null | head -n 1)
 	echo "$repo_path"
 	return 0
 }
@@ -84,10 +81,7 @@ get_repo_maintainer_by_slug() {
 	fi
 
 	local maintainer
-	maintainer=$(jq -r --arg slug "$repo_slug" '.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' "$REPOS_JSON" 2>/dev/null) || maintainer=""
-	if [[ "$maintainer" == "null" ]]; then
-		maintainer=""
-	fi
+	maintainer=$(jq -r --arg slug "$repo_slug" '.initialized_repos[] | select(.slug == $slug) | .maintainer // ""' "$REPOS_JSON" 2>/dev/null) || maintainer=""
 	printf '%s\n' "$maintainer"
 	return 0
 }
@@ -107,7 +101,7 @@ get_repo_priority_by_slug() {
 
 	local repo_priority
 	repo_priority=$(jq -r --arg slug "$repo_slug" '.initialized_repos[] | select(.slug == $slug) | .priority // "tooling"' "$REPOS_JSON" 2>/dev/null | head -n 1)
-	if [[ -z "$repo_priority" || "$repo_priority" == "null" ]]; then
+	if [[ -z "$repo_priority" ]]; then
 		repo_priority="tooling"
 	fi
 	printf '%s\n' "$repo_priority"
@@ -149,13 +143,14 @@ list_dispatchable_issue_candidates_json() {
 	fi
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=100
 
-	local issue_json issue_dispatch_err
+	local issue_json issue_dispatch_err gh_exit_code
 	issue_dispatch_err=$(mktemp)
-	issue_json=$(gh issue list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>"$issue_dispatch_err") || issue_json="[]"
-	if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
+	gh_exit_code=0
+	issue_json=$(gh issue list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>"$issue_dispatch_err") || gh_exit_code=$?
+	if [[ "$gh_exit_code" -ne 0 ]] || [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
 		local _issue_dispatch_err_msg
 		_issue_dispatch_err_msg=$(cat "$issue_dispatch_err" 2>/dev/null || echo "unknown error")
-		echo "[pulse-wrapper] list_dispatchable_issue_candidates: gh issue list FAILED for ${repo_slug}: ${_issue_dispatch_err_msg}" >>"$LOGFILE"
+		echo "[pulse-wrapper] list_dispatchable_issue_candidates: gh issue list FAILED for ${repo_slug} (exit ${gh_exit_code}): ${_issue_dispatch_err_msg}" >>"$LOGFILE"
 		issue_json="[]"
 	fi
 	rm -f "$issue_dispatch_err"

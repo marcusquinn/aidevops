@@ -42,7 +42,7 @@ _routine_last_run_epoch() {
 	fi
 	local epoch
 	epoch=$(jq -r --arg id "$routine_id" '.[$id].last_run // ""' "$ROUTINE_STATE_FILE" 2>/dev/null) || epoch=""
-	if [[ -z "$epoch" || "$epoch" == "null" ]]; then
+	if [[ -z "$epoch" ]]; then
 		printf '0'
 		return 0
 	fi
