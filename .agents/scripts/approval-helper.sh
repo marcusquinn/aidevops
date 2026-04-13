@@ -23,7 +23,25 @@
 
 set -euo pipefail
 
-readonly APPROVAL_DIR="$HOME/.aidevops/approval-keys"
+# Resolve the real user's home directory, handling sudo env_reset on Linux.
+# Under sudo on Linux, HOME is reset to /root/ by env_reset; SUDO_USER holds
+# the original username. getent passwd is the canonical resolver on Linux.
+# On macOS, sudo does not reset HOME (and getent is not available), so the
+# fallback to $HOME is correct for both platforms.
+# Security: no escalation — root already has full filesystem access.
+_resolve_real_home() {
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v getent &>/dev/null; then
+		getent passwd "$SUDO_USER" | cut -d: -f6
+	else
+		printf '%s' "$HOME"
+	fi
+	return 0
+}
+
+# Compute real home once at script load; used for all path variables below.
+_APPROVAL_HOME=$(_resolve_real_home)
+
+readonly APPROVAL_DIR="$_APPROVAL_HOME/.aidevops/approval-keys"
 readonly APPROVAL_PRIVATE_DIR="$APPROVAL_DIR/private"
 readonly APPROVAL_KEY="$APPROVAL_PRIVATE_DIR/approval.key"
 readonly APPROVAL_PUB="$APPROVAL_DIR/approval.pub"
@@ -41,7 +59,7 @@ _detect_slug() {
 	fi
 	# Fall back to repos.json current directory match
 	if [[ -z "$slug" || "$slug" != *"/"* ]]; then
-		local repos_json="$HOME/.config/aidevops/repos.json"
+		local repos_json="$_APPROVAL_HOME/.config/aidevops/repos.json"
 		if [[ -f "$repos_json" ]]; then
 			local cwd
 			cwd=$(pwd)
@@ -79,12 +97,47 @@ _print_error() {
 }
 
 _require_gh_auth() {
-	if ! gh auth status >/dev/null 2>&1; then
-		_print_error "gh authentication failed (common under sudo on Linux — gnome-keyring is inaccessible)"
-		_print_info "Workaround: export GH_TOKEN before sudo, or run: sudo GH_TOKEN=\$(gh auth token) aidevops approve ..."
-		return 1
+	if gh auth status >/dev/null 2>&1; then
+		return 0
 	fi
-	return 0
+	# Under sudo on Linux, gnome-keyring is inaccessible because env_reset strips
+	# DBUS_SESSION_BUS_ADDRESS. Attempt automatic token resolution via two methods
+	# before falling back to a descriptive error.
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+		local real_uid=""
+		real_uid=$(id -u "$SUDO_USER" 2>/dev/null || echo "")
+		# Method 1: reconnect to user's D-Bus session socket via runuser
+		if [[ -n "$real_uid" && -S "/run/user/${real_uid}/bus" ]] && command -v runuser &>/dev/null; then
+			local token=""
+			token=$(runuser -u "$SUDO_USER" -- env \
+				"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${real_uid}/bus" \
+				"XDG_RUNTIME_DIR=/run/user/${real_uid}" \
+				gh auth token 2>/dev/null || echo "")
+			if [[ -n "$token" ]]; then
+				export GH_TOKEN="$token"
+				if gh auth status >/dev/null 2>&1; then
+					return 0
+				fi
+			fi
+		fi
+		# Method 2: read token directly from gh config file (non-keyring storage)
+		local real_home
+		real_home=$(_resolve_real_home)
+		local gh_hosts="${real_home}/.config/gh/hosts.yml"
+		if [[ -f "$gh_hosts" ]]; then
+			local file_token=""
+			file_token=$(awk '/oauth_token:/{print $2; exit}' "$gh_hosts" 2>/dev/null || echo "")
+			if [[ -n "$file_token" ]]; then
+				export GH_TOKEN="$file_token"
+				if gh auth status >/dev/null 2>&1; then
+					return 0
+				fi
+			fi
+		fi
+	fi
+	_print_error "gh authentication failed (common under sudo on Linux — gnome-keyring is inaccessible)"
+	_print_info "Workaround: export GH_TOKEN=\$(gh auth token) && sudo --preserve-env=GH_TOKEN aidevops approve ..."
+	return 1
 }
 
 _require_number_arg() {
@@ -128,9 +181,7 @@ _approval_real_user() {
 }
 
 _approval_real_home() {
-	local real_user
-	real_user=$(_approval_real_user)
-	eval echo "~$real_user"
+	_resolve_real_home
 	return 0
 }
 
@@ -464,7 +515,7 @@ cmd_setup() {
 	# Detect the real user behind sudo
 	local real_user="${SUDO_USER:-$(whoami)}"
 	local real_home
-	real_home=$(eval echo "~$real_user")
+	real_home=$(_resolve_real_home)
 	local actual_approval_dir="$real_home/.aidevops/approval-keys"
 	local actual_private_dir="$actual_approval_dir/private"
 	local actual_key="$actual_private_dir/approval.key"

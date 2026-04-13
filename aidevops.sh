@@ -19,9 +19,17 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # Paths
-INSTALL_DIR="$HOME/Git/aidevops"
-AGENTS_DIR="$HOME/.aidevops/agents"
-CONFIG_DIR="$HOME/.config/aidevops"
+# When running under sudo on Linux, HOME is reset to /root/ by env_reset.
+# Resolve the real user's home via SUDO_USER so agent/config paths are correct.
+# Security: no escalation — root already has full filesystem access.
+if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+	_AIDEVOPS_REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+	_AIDEVOPS_REAL_HOME="$HOME"
+fi
+INSTALL_DIR="$_AIDEVOPS_REAL_HOME/Git/aidevops"
+AGENTS_DIR="$_AIDEVOPS_REAL_HOME/.aidevops/agents"
+CONFIG_DIR="$_AIDEVOPS_REAL_HOME/.config/aidevops"
 REPOS_FILE="$CONFIG_DIR/repos.json"
 # shellcheck disable=SC2034  # Used in fresh install fallback
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
