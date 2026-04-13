@@ -371,36 +371,18 @@ calculate_max_workers() {
 }
 
 #######################################
-# Calculate priority-class worker allocations (t1423)
+# Count pulse-enabled repos by priority class (t2006)
 #
-# Reads repos.json to count product vs tooling repos, then computes
-# per-class slot reservations based on PRODUCT_RESERVATION_PCT.
+# Single jq pass over repos.json to count product vs tooling repos.
+# Prints: "<product_count> <tooling_count>" to stdout.
 #
-# Product repos get a guaranteed minimum share of worker slots.
-# Tooling repos get the remainder. When one class has no pending work,
-# the other class can use the freed slots (soft reservation).
-#
-# Output: writes allocation data to pulse-priority-allocations file
-# and appends a summary section to STATE_FILE for the pulse agent.
-#
-# Depends on: calculate_max_workers() having run first (reads pulse-max-workers)
+# Arguments:
+#   $1 - path to repos.json
 #######################################
-calculate_priority_allocations() {
-	local repos_json="${REPOS_JSON}"
-	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
-	local alloc_file="${HOME}/.aidevops/logs/pulse-priority-allocations"
-
-	if [[ ! -f "$repos_json" ]] || ! command -v jq &>/dev/null; then
-		echo "[pulse-wrapper] repos.json or jq not available — skipping priority allocations" >>"$LOGFILE"
-		return 0
-	fi
-
-	local max_workers
-	max_workers=$(cat "$max_workers_file" 2>/dev/null || echo 4)
-	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=4
-
-	# Count pulse-enabled repos by priority class (single jq pass)
+_count_priority_repos() {
+	local repos_json="$1"
 	local product_repos tooling_repos
+
 	read -r product_repos tooling_repos < <(jq -r '
 		.initialized_repos |
 		map(select(.pulse == true and (.local_only // false) == false and .slug != "")) |
@@ -414,10 +396,27 @@ calculate_priority_allocations() {
 	[[ "$product_repos" =~ ^[0-9]+$ ]] || product_repos=0
 	[[ "$tooling_repos" =~ ^[0-9]+$ ]] || tooling_repos=0
 
-	# Count product repos that can actually dispatch now (not blocked by daily PR cap)
-	local dispatchable_product_repos today_utc
-	dispatchable_product_repos=0
+	echo "$product_repos $tooling_repos"
+	return 0
+}
+
+#######################################
+# Count product repos that can dispatch (not blocked by daily PR cap) (t2006)
+#
+# Iterates product repos from repos.json, checks each against DAILY_PR_CAP.
+# Prints: "<dispatchable_count>" to stdout.
+#
+# Arguments:
+#   $1 - path to repos.json
+#   $2 - total product repo count
+#######################################
+_count_dispatchable_product_repos() {
+	local repos_json="$1"
+	local product_repos="$2"
+	local dispatchable=0
+	local today_utc
 	today_utc=$(date -u +%Y-%m-%d)
+
 	if [[ "$product_repos" -gt 0 && "$DAILY_PR_CAP" -gt 0 ]]; then
 		while IFS= read -r slug; do
 			[[ -n "$slug" ]] || continue
@@ -435,21 +434,36 @@ calculate_priority_allocations() {
 			daily_pr_count=$(echo "$pr_json" | jq --arg today "$today_utc" '[.[] | select(.createdAt | startswith($today))] | length' 2>/dev/null) || daily_pr_count=0
 			[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
 			if [[ "$daily_pr_count" -lt "$DAILY_PR_CAP" ]]; then
-				dispatchable_product_repos=$((dispatchable_product_repos + 1))
+				dispatchable=$((dispatchable + 1))
 			fi
 		done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .priority == "product") | .slug' "$repos_json" 2>/dev/null)
 	else
-		dispatchable_product_repos="$product_repos"
+		dispatchable="$product_repos"
 	fi
-	[[ "$dispatchable_product_repos" =~ ^[0-9]+$ ]] || dispatchable_product_repos="$product_repos"
-	if [[ "$dispatchable_product_repos" -lt "$product_repos" ]]; then
-		echo "[pulse-wrapper] Product dispatchability reduced by daily PR caps: ${dispatchable_product_repos}/${product_repos} repos can accept new workers" >>"$LOGFILE"
-	fi
+	[[ "$dispatchable" =~ ^[0-9]+$ ]] || dispatchable="$product_repos"
 
-	# Calculate reservations
-	# product_min = ceil(max_workers * PRODUCT_RESERVATION_PCT / 100)
-	# Using integer arithmetic: ceil(a/b) = (a + b - 1) / b
+	echo "$dispatchable"
+	return 0
+}
+
+#######################################
+# Compute product_min and tooling_max slot reservations (t2006)
+#
+# Applies PRODUCT_RESERVATION_PCT with ceiling division and edge-case
+# guards (no product repos, no tooling repos, single-slot minimum).
+# Prints: "<product_min> <tooling_max>" to stdout.
+#
+# Arguments:
+#   $1 - max_workers (total capacity)
+#   $2 - dispatchable_product_repos count
+#   $3 - tooling_repos count
+#######################################
+_compute_slot_reservations() {
+	local max_workers="$1"
+	local dispatchable_product_repos="$2"
+	local tooling_repos="$3"
 	local product_min tooling_max
+
 	if [[ "$dispatchable_product_repos" -eq 0 ]]; then
 		# No product repos — all slots available for tooling
 		product_min=0
@@ -459,6 +473,8 @@ calculate_priority_allocations() {
 		product_min="$max_workers"
 		tooling_max=0
 	else
+		# product_min = ceil(max_workers * PRODUCT_RESERVATION_PCT / 100)
+		# Using integer arithmetic: ceil(a/b) = (a + b - 1) / b
 		product_min=$(((max_workers * PRODUCT_RESERVATION_PCT + 99) / 100))
 		# Ensure product_min doesn't exceed max_workers
 		if [[ "$product_min" -gt "$max_workers" ]]; then
@@ -473,7 +489,19 @@ calculate_priority_allocations() {
 		tooling_max=$((max_workers - product_min))
 	fi
 
-	# Write allocation file (key=value, readable by pulse.md)
+	echo "$product_min $tooling_max"
+	return 0
+}
+
+#######################################
+# Write priority allocation file (key=value format) (t2006)
+#
+# Arguments: $1=alloc_file $2=max_workers $3=product_repos $4=tooling_repos
+#            $5=dispatchable_product_repos $6=product_min $7=tooling_max
+#######################################
+_write_priority_alloc_file() {
+	local alloc_file="$1" max_workers="$2" product_repos="$3" tooling_repos="$4"
+	local dispatchable_product_repos="$5" product_min="$6" tooling_max="$7"
 	{
 		echo "MAX_WORKERS=${max_workers}"
 		echo "PRODUCT_REPOS=${product_repos}"
@@ -484,6 +512,39 @@ calculate_priority_allocations() {
 		echo "PRODUCT_RESERVATION_PCT=${PRODUCT_RESERVATION_PCT}"
 		echo "QUALITY_DEBT_CAP_PCT=${QUALITY_DEBT_CAP_PCT}"
 	} >"$alloc_file"
+	return 0
+}
+
+#######################################
+# Calculate priority-class worker allocations (t1423, refactored t2006)
+#
+# Coordinator: reads repos.json counts, computes slot reservations,
+# writes allocation file. Delegates to per-concern helpers.
+#
+# Depends on: calculate_max_workers() having run first (reads pulse-max-workers)
+#######################################
+calculate_priority_allocations() {
+	local repos_json="${REPOS_JSON}"
+	local alloc_file="${HOME}/.aidevops/logs/pulse-priority-allocations"
+	if [[ ! -f "$repos_json" ]] || ! command -v jq &>/dev/null; then
+		echo "[pulse-wrapper] repos.json or jq not available — skipping priority allocations" >>"$LOGFILE"
+		return 0
+	fi
+	local max_workers
+	max_workers=$(cat "${HOME}/.aidevops/logs/pulse-max-workers" 2>/dev/null || echo 4)
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=4
+
+	local product_repos tooling_repos
+	read -r product_repos tooling_repos < <(_count_priority_repos "$repos_json")
+	local dispatchable_product_repos
+	dispatchable_product_repos=$(_count_dispatchable_product_repos "$repos_json" "$product_repos")
+	if [[ "$dispatchable_product_repos" -lt "$product_repos" ]]; then
+		echo "[pulse-wrapper] Product dispatchability reduced by daily PR caps: ${dispatchable_product_repos}/${product_repos} repos can accept new workers" >>"$LOGFILE"
+	fi
+
+	local product_min tooling_max
+	read -r product_min tooling_max < <(_compute_slot_reservations "$max_workers" "$dispatchable_product_repos" "$tooling_repos")
+	_write_priority_alloc_file "$alloc_file" "$max_workers" "$product_repos" "$tooling_repos" "$dispatchable_product_repos" "$product_min" "$tooling_max"
 
 	echo "[pulse-wrapper] Priority allocations: product_min=${product_min}, tooling_max=${tooling_max} (${product_repos} product, ${tooling_repos} tooling repos, ${max_workers} total slots)" >>"$LOGFILE"
 	return 0
