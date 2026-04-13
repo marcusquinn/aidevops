@@ -677,6 +677,62 @@ _task_id_in_changed_files() {
 }
 
 #######################################
+# t1894 + GH#18648: Cryptographic approval gate (ever-NMR) with
+# review-followup exemption for bot-generated cleanup issues.
+#
+# Extracted from _dispatch_dedup_check_layers() to keep the parent
+# function under the 100-line complexity threshold while the exemption
+# logic grew.
+#
+# Logic:
+#   1. Determine if the issue currently has `needs-maintainer-review`
+#      — set known_ever_nmr="true" for the cache-path short-circuit.
+#   2. If the issue is bot-generated cleanup (review-followup or
+#      source:review-scanner) AND the label is not currently present,
+#      override known_ever_nmr="false" to skip the historical timeline
+#      check. This clears the ever-NMR permanence trap for routine
+#      cleanup issues whose NMR label was applied by the fast-fail
+#      escalation path and has since been removed.
+#   3. Call issue_has_required_approval with the determined state.
+#
+# The exemption does NOT fire when the label is currently present —
+# maintainer-applied or bot-applied NMR still blocks dispatch until
+# the label is removed or cryptographic approval is posted.
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#   $3 - issue_meta_json (pre-fetched JSON with .labels array)
+#
+# Exit codes:
+#   0 - gate blocks dispatch (ever-NMR without approval)
+#   1 - gate allows dispatch
+#######################################
+_check_nmr_approval_gate() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_meta_json="$3"
+
+	local known_ever_nmr="unknown"
+	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | index("needs-maintainer-review")' >/dev/null 2>&1; then
+		known_ever_nmr="true"
+	fi
+
+	# GH#18648: bot-generated cleanup exemption. See
+	# _is_bot_generated_cleanup_issue() doc for full rationale.
+	if [[ "$known_ever_nmr" != "true" ]] && _is_bot_generated_cleanup_issue "$issue_meta_json"; then
+		known_ever_nmr="false"
+		echo "[pulse-wrapper] dispatch_with_dedup: review-followup exemption for #${issue_number} in ${repo_slug} — skipping historical ever-NMR check (GH#18648)" >>"$LOGFILE"
+	fi
+
+	if ! issue_has_required_approval "$issue_number" "$repo_slug" "$known_ever_nmr"; then
+		echo "[pulse-wrapper] dispatch_with_dedup: BLOCKED #${issue_number} in ${repo_slug} — requires cryptographic approval (ever-NMR)" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # GH#17574 + GH#18644: Combined commit-subject dedup gate with
 # force-dispatch maintainer override.
 #
@@ -768,6 +824,39 @@ _has_force_dispatch_label() {
 	[[ -n "$issue_meta_json" ]] || return 1
 	printf '%s' "$issue_meta_json" |
 		jq -e '.labels | map(.name) | index("force-dispatch")' >/dev/null 2>&1
+}
+
+#######################################
+# GH#18648 (Fix 3a): Detect bot-generated cleanup issues.
+#
+# Bot-generated cleanup issues carry either `review-followup` (from
+# post-merge-review-scanner.sh) or `source:review-scanner` (the
+# provenance marker the scanner applies alongside it). Both labels
+# indicate: "this issue was auto-created from already-merged PR
+# review comments, no new maintainer decision is required".
+#
+# Callers use this to exempt the issue from the ever-NMR permanence
+# trap — historical NMR labels applied by automated escalation paths
+# (dispatch-dedup fast-fail circuit breaker) no longer drain the
+# dispatch queue once the label is manually removed.
+#
+# The exemption does NOT fire when the issue CURRENTLY has the
+# needs-maintainer-review label — a present label still requires
+# cryptographic approval, regardless of issue provenance. The fix
+# is surgical to the historical-timeline false-positive case.
+#
+# Args:
+#   $1 - issue_meta_json (pre-fetched JSON with .labels array)
+#
+# Exit codes:
+#   0 - issue is bot-generated cleanup
+#   1 - issue is not bot-generated (or meta_json is empty/invalid)
+#######################################
+_is_bot_generated_cleanup_issue() {
+	local issue_meta_json="$1"
+	[[ -n "$issue_meta_json" ]] || return 1
+	printf '%s' "$issue_meta_json" |
+		jq -e '.labels | map(.name) | (index("review-followup") != null or index("source:review-scanner") != null)' >/dev/null 2>&1
 }
 
 #######################################
@@ -1181,15 +1270,9 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 
-	local known_ever_nmr="unknown"
-	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | index("needs-maintainer-review")' >/dev/null 2>&1; then
-		known_ever_nmr="true"
-	fi
-
-	# t1894: Cryptographic approval gate — block dispatch for issues that were
-	# ever labeled needs-maintainer-review without a signed approval.
-	if ! issue_has_required_approval "$issue_number" "$repo_slug" "$known_ever_nmr"; then
-		echo "[pulse-wrapper] dispatch_with_dedup: BLOCKED #${issue_number} in ${repo_slug} — requires cryptographic approval (ever-NMR)" >>"$LOGFILE"
+	# t1894/GH#18648: Cryptographic approval gate (ever-NMR) with
+	# review-followup exemption for bot-generated cleanup issues.
+	if _check_nmr_approval_gate "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		return 1
 	fi
 
