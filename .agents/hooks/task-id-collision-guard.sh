@@ -122,6 +122,52 @@ _extract_closing_issues() {
 }
 
 # ---------------------------------------------------------------------------
+# Verify a suspicious t-ID against linked issues in the commit footer.
+# Args: $1=tid, $2=num, $3=counter, $4=closing_issues (newline-separated)
+# Returns: 0 (confirmed — cross-ref found), 1 (violation), 2 (fail-open).
+# ---------------------------------------------------------------------------
+_verify_tid_cross_ref() {
+	local tid="${1:-}"
+	local num="${2:-}"
+	local counter="${3:-}"
+	local closing_issues="${4:-}"
+
+	if [[ -z "$closing_issues" ]]; then
+		_debug "$tid: no closing issues — violation"
+		return 1
+	fi
+
+	if ! command -v gh >/dev/null 2>&1; then
+		_warn "gh not available — fail-open (CI will validate on push)"
+		return 2
+	fi
+
+	local iss_num gh_had_error=0
+	while IFS= read -r iss_num; do
+		[[ -z "$iss_num" ]] && continue
+		local title
+		title=$(gh issue view "$iss_num" --json title --jq '.title' 2>/dev/null)
+		local gh_rc=$?
+		if [[ "$gh_rc" -ne 0 || -z "$title" ]]; then
+			_debug "gh issue view #${iss_num} failed (rc=${gh_rc})"
+			gh_had_error=1
+			continue
+		fi
+		_debug "Issue #${iss_num} title: $title"
+		if printf '%s' "$title" | grep -qE "(^|[^0-9])${tid}([^0-9]|$)"; then
+			_debug "$tid confirmed via linked issue #${iss_num}"
+			return 0
+		fi
+	done <<<"$closing_issues"
+
+	if [[ "$gh_had_error" -eq 1 ]]; then
+		_warn "gh API error during cross-reference check — fail-open (CI will validate on push)"
+		return 2
+	fi
+	return 1
+}
+
+# ---------------------------------------------------------------------------
 # Core check: given a commit message, check if any t\d+ reference is invented.
 # Args:
 #   $1 = full commit message text
@@ -139,105 +185,55 @@ _check_message() {
 		return 0
 	fi
 
-	# Extract first line as the subject if not provided
-	if [[ "$subject" == "<unknown>" ]]; then
-		subject=$(printf '%s' "$msg" | head -1)
-	fi
+	[[ "$subject" == "<unknown>" ]] && subject=$(printf '%s' "$msg" | head -1)
 
-	# Find all t-ID references
 	local tids
 	tids=$(_extract_tids "$msg")
-	if [[ -z "$tids" ]]; then
-		_debug "No t-IDs in commit — allowing"
+	[[ -z "$tids" ]] && {
+		_debug "No t-IDs — allowing"
 		return 0
-	fi
+	}
 
 	_debug "Found t-IDs: $(printf '%s' "$tids" | tr '\n' ' ')"
 
-	# Read counter at merge base
 	local counter=""
-	if [[ -n "$merge_base" ]]; then
-		counter=$(_read_counter_at_ref "$merge_base")
-	fi
+	[[ -n "$merge_base" ]] && counter=$(_read_counter_at_ref "$merge_base")
 
 	if [[ -z "$counter" ]]; then
 		_warn ".task-counter not readable at merge base '${merge_base}' — fail-open"
 		return 2
 	fi
 
-	_debug "Merge-base counter value: $counter"
+	_debug "Merge-base counter: $counter"
 
-	# Extract closing issue numbers from the commit footer
 	local closing_issues
 	closing_issues=$(_extract_closing_issues "$msg")
 	_debug "Closing issues: $(printf '%s' "$closing_issues" | tr '\n' ' ')"
 
-	# Check each t-ID
-	local violations=""
-	local tid
+	local violations="" tid
 	while IFS= read -r tid; do
 		[[ -z "$tid" ]] && continue
 		local num
 		num=$(printf '%s' "$tid" | tr -d 't')
-
-		if ! [[ "$num" =~ ^[0-9]+$ ]]; then
-			_debug "Non-numeric suffix for $tid — skipping"
+		[[ "$num" =~ ^[0-9]+$ ]] || {
+			_debug "Non-numeric $tid — skipping"
 			continue
-		fi
+		}
 
-		# If numeric_id <= counter, the ID is claimed (or pre-dates the counter)
 		if [[ "$num" -le "$counter" ]]; then
 			_debug "$tid ≤ counter ($counter) — allowed"
 			continue
 		fi
 
-		_debug "$tid ($num) > counter ($counter) — suspicious, checking linked issues"
+		_debug "$tid > counter ($counter) — suspicious"
 
-		# The ID is beyond the current counter. Check if any linked issue title
-		# contains this t-ID (cross-reference confirmation).
-		local confirmed=0
-
-		if [[ -z "$closing_issues" ]]; then
-			# No closing issues — cannot possibly cross-reference. Reject.
-			_debug "$tid: no closing issues — marking as violation"
-			violations="${violations}  ${tid} — numeric ID ${num} > current counter ${counter}, and not confirmed via a linked issue title\n"
-			continue
-		fi
-
-		# Has closing issues. Need gh to verify — check availability first.
-		if ! command -v gh >/dev/null 2>&1; then
-			_warn "gh not available — fail-open (CI will validate on push)"
+		local xref_rc
+		_verify_tid_cross_ref "$tid" "$num" "$counter" "$closing_issues"
+		xref_rc=$?
+		if [[ "$xref_rc" -eq 2 ]]; then
 			return 2
-		fi
-
-		local iss_num
-		local gh_had_error=0
-		while IFS= read -r iss_num; do
-			[[ -z "$iss_num" ]] && continue
-			local title
-			title=$(gh issue view "$iss_num" --json title --jq '.title' 2>/dev/null)
-			local gh_rc=$?
-			if [[ "$gh_rc" -ne 0 || -z "$title" ]]; then
-				_debug "gh issue view #${iss_num} failed (rc=${gh_rc}) — marking gh_had_error"
-				gh_had_error=1
-				continue
-			fi
-			_debug "Issue #${iss_num} title: $title"
-			if printf '%s' "$title" | grep -qE "(^|[^0-9])${tid}([^0-9]|$)"; then
-				_debug "$tid confirmed via linked issue #${iss_num}"
-				confirmed=1
-				break
-			fi
-		done <<<"$closing_issues"
-
-		# If all gh calls failed (offline, unauthenticated, API error) → fail-open
-		if [[ "$gh_had_error" -eq 1 && "$confirmed" -eq 0 ]]; then
-			_warn "gh API error during cross-reference check — fail-open (CI will validate on push)"
-			return 2
-		fi
-
-		if [[ "$confirmed" -eq 0 ]]; then
-			violations="${violations}  ${tid} — numeric ID ${num} > current counter ${counter}, and not confirmed via a linked issue title\n"
+		elif [[ "$xref_rc" -eq 1 ]]; then
+			violations="${violations}  ${tid} — ID ${num} > counter ${counter}, not confirmed via linked issue\n"
 		fi
 	done <<<"$tids"
 
@@ -247,10 +243,9 @@ _check_message() {
 		printf '%b\n' "$violations" >&2
 		printf '  To fix:\n' >&2
 		printf '    1. Remove the t-ID from the commit subject/body, OR\n' >&2
-		printf '    2. Claim the ID first: claim-task-id.sh --title "..." → then use the allocated ID, OR\n' >&2
-		printf '    3. If cross-referencing another person'"'"'s task, add "Resolves/Closes/Fixes #NNN" footer\n' >&2
-		printf '       where the linked issue title contains the t-ID.\n' >&2
-		printf '  Bypass (sets audit trail): TASK_ID_GUARD_DISABLE=1 git commit ...  or git commit --no-verify\n\n' >&2
+		printf '    2. Claim the ID first: claim-task-id.sh --title "..." then use the allocated ID, OR\n' >&2
+		printf '    3. Cross-reference: add "Resolves/Closes/Fixes #NNN" where the issue title has the t-ID.\n' >&2
+		printf '  Bypass: TASK_ID_GUARD_DISABLE=1 git commit ...  or git commit --no-verify\n\n' >&2
 		return 1
 	fi
 
