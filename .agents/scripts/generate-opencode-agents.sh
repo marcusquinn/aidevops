@@ -108,23 +108,25 @@ find "$OPENCODE_AGENT_DIR" -name "*.md" -type f -delete 2>/dev/null || true
 # Generate SUBAGENT files from subfolders
 # Some subagents need specific MCP tools enabled
 # t1041: Use parallel processing to handle 907+ files efficiently
-generate_subagent_stub() {
+
+# Extract description from source file frontmatter (t255).
+# Falls back to "Read <path>" if no description found in frontmatter.
+_get_subagent_description() {
 	local f="$1"
-	local name
-	name=$(basename "$f" .md)
-	[[ "$name" == "AGENTS" || "$name" == "README" ]] && return 0
-
-	local rel_path="${f#"$AGENTS_DIR"/}"
-
-	# Extract description from source file frontmatter (t255)
-	# Falls back to "Read <path>" if no description found
+	local rel_path="$2"
 	local src_desc
 	src_desc=$(sed -n '/^---$/,/^---$/{ /^description:/{s/^description: *//p; q} }' "$f" 2>/dev/null)
 	if [[ -z "$src_desc" ]]; then
 		src_desc="Read ~/.aidevops/agents/${rel_path}"
 	fi
+	printf '%s' "$src_desc"
+	return 0
+}
 
-	# Determine additional tools based on subagent name/path
+# Determine additional MCP tool lines based on subagent name.
+# Outputs the extra_tools string (may be empty) to stdout.
+_get_extra_tools() {
+	local name="$1"
 	local extra_tools=""
 	case "$name" in
 	outscraper)
@@ -195,10 +197,17 @@ generate_subagent_stub() {
 		;;
 	*) ;; # No extra tools for other agents
 	esac
+	printf '%s' "$extra_tools"
+	return 0
+}
 
-	# GH#18509: If source frontmatter explicitly sets bash: false, the agent is
-	# security-sandboxed or has its own tool restrictions. Copy source verbatim
-	# (with model-name normalisation) instead of writing a permissive stub.
+# GH#18509: Copy source verbatim (with model-name normalisation) when the
+# agent's frontmatter sets bash: false — it is security-sandboxed or has its
+# own tool restrictions and must not be overwritten with a permissive stub.
+# Returns 0 and emits "1" (count) if handled; returns 1 if not a sandboxed file.
+_write_sandboxed_agent() {
+	local f="$1"
+	local name="$2"
 	local src_bash_false
 	src_bash_false=$(awk '
 		/^---$/ { fm_delim++; next }
@@ -214,12 +223,18 @@ generate_subagent_stub() {
 		echo 1
 		return 0
 	fi
+	return 1
+}
 
-	# GH#3601: Use printf to write stub content — avoids unquoted heredoc expansion.
-	# src_desc and rel_path come from filesystem (frontmatter sed extraction / path
-	# stripping) and could contain shell metacharacters that would execute inside
-	# an unquoted <<EOF heredoc. printf '%s\n' treats its argument as literal data,
-	# so $(…) or backticks in a description field are never executed.
+# GH#3601: Write the permissive stub using printf — avoids unquoted heredoc
+# expansion. src_desc and rel_path come from the filesystem and could contain
+# shell metacharacters. printf '%s\n' treats arguments as literal data so
+# $(…) or backticks in a description field are never executed.
+_write_permissive_stub() {
+	local name="$1"
+	local src_desc="$2"
+	local rel_path="$3"
+	local extra_tools="$4"
 	{
 		printf '%s\n' \
 			"---" \
@@ -238,9 +253,30 @@ generate_subagent_stub() {
 			"**MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it."
 	} >"$OPENCODE_AGENT_DIR/$name.md"
 	echo 1 # Return 1 for counting
+	return 0
 }
 
-export -f generate_subagent_stub 2>/dev/null || true
+# Main entry point: orchestrates description extraction, tool lookup, and stub
+# writing for a single subagent markdown source file.
+generate_subagent_stub() {
+	local f="$1"
+	local name
+	name=$(basename "$f" .md)
+	[[ "$name" == "AGENTS" || "$name" == "README" ]] && return 0
+
+	local rel_path="${f#"$AGENTS_DIR"/}"
+	local src_desc extra_tools
+	src_desc=$(_get_subagent_description "$f" "$rel_path")
+	extra_tools=$(_get_extra_tools "$name")
+
+	# Security-sandboxed agents are copied verbatim; exit early if handled.
+	_write_sandboxed_agent "$f" "$name" && return 0
+
+	_write_permissive_stub "$name" "$src_desc" "$rel_path" "$extra_tools"
+	return 0
+}
+
+export -f generate_subagent_stub _get_subagent_description _get_extra_tools _write_sandboxed_agent _write_permissive_stub 2>/dev/null || true
 export AGENTS_DIR
 export OPENCODE_AGENT_DIR
 
