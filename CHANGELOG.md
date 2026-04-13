@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.11] - 2026-04-13
+
+### Changed
+
+- wire interactive-session-helper into worktree-helper, claim-task-id, approval-helper (#18747)
+- Maintenance: backfill Ready→Done in TODO.md and add --admin fallback to merge wrapper (#18748)
+- Maintenance: mark t2054 complete (pr:#18736)
+- GraphQL review-thread resolution filter + diffHunk context + refresh backfill (#18736)
+- interactive-session-helper.sh foundation + AI-guidance prompt rule (#18744)
+
 ## [3.8.10] - 2026-04-13
 
 ### Fixed
