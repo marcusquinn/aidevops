@@ -10,8 +10,12 @@
 # functions to reduce size from 291 to <80 lines and improve testability.
 #
 # Functions in this module (in source order):
-#   - _build_triage_review_prompt   (private: pure prompt construction)
-#   - _dispatch_triage_review_worker (private: side-effecting worker dispatch)
+#   - _triage_prefetch_issue        (private: fetch issue data + skip checks)
+#   - _triage_write_prompt_file     (private: write prompt heredoc to temp file)
+#   - _build_triage_review_prompt   (private: orchestrate prompt construction)
+#   - _extract_and_post_triage_review (private: validate + post review output)
+#   - _finalize_triage_state        (private: label management + cache update)
+#   - _dispatch_triage_review_worker (private: orchestrate worker dispatch)
 #   - dispatch_triage_reviews       (public: thin orchestrator)
 #   - relabel_needs_info_replies
 #   - dispatch_routine_comment_responses
@@ -311,63 +315,96 @@ _log_suppressed_triage_output() {
 }
 
 #######################################
-# Build the prefetch prompt for a triage review
+# Fetch issue data and perform skip-condition checks.
 #
-# Fetches issue metadata and comments, runs dedup-cache and
-# contributor-reply guards, then writes the prompt to a temp file.
-# Pure in the sense of no lock/unlock or agent launch; cache writes
-# and LOGFILE writes are allowed as logging side effects.
+# Fetches issue JSON, comments, and body; computes the content hash;
+# checks the triage dedup cache; checks if awaiting a contributor reply.
+#
+# Output (module-scoped variables set for the caller):
+#   __TRIAGE_ISSUE_JSON     — raw issue JSON from gh
+#   __TRIAGE_ISSUE_BODY     — extracted issue body text
+#   __TRIAGE_ISSUE_COMMENTS — raw comments JSON array
+#   __TRIAGE_CONTENT_HASH   — content hash for cache keying
 #
 # Arguments:
 #   $1 - issue_num
 #   $2 - repo_slug
-#   $3 - repo_path (may be empty for non-local repos)
 #
-# Outputs to stdout: "prompt_file_path|content_hash" (pipe-separated)
-# Returns 0 on success; 1 if the issue should be skipped (cached or
-#   awaiting contributor reply)
+# Returns:
+#   0 — proceed with triage
+#   1 — skip (cache hit or awaiting contributor reply)
 #######################################
-_build_triage_review_prompt() {
+_triage_prefetch_issue() {
 	local issue_num="$1"
 	local repo_slug="$2"
-	local repo_path="$3"
 
 	# ── GH#17746: Fetch body+comments early — needed for dedup AND prompt ──
-	local issue_json=""
-	issue_json=$(gh issue view "$issue_num" --repo "$repo_slug" \
-		--json number,title,body,author,labels,createdAt,updatedAt 2>/dev/null) || issue_json="{}"
+	__TRIAGE_ISSUE_JSON=""
+	__TRIAGE_ISSUE_JSON=$(gh issue view "$issue_num" --repo "$repo_slug" \
+		--json number,title,body,author,labels,createdAt,updatedAt 2>/dev/null) || __TRIAGE_ISSUE_JSON="{}"
 
-	local issue_comments=""
-	issue_comments=$(gh api "repos/${repo_slug}/issues/${issue_num}/comments" \
-		--jq '[.[] | {author: .user.login, body: .body, created: .created_at}]' 2>/dev/null) || issue_comments="[]"
+	__TRIAGE_ISSUE_COMMENTS=""
+	__TRIAGE_ISSUE_COMMENTS=$(gh api "repos/${repo_slug}/issues/${issue_num}/comments" \
+		--jq '[.[] | {author: .user.login, body: .body, created: .created_at}]' 2>/dev/null) || __TRIAGE_ISSUE_COMMENTS="[]"
 
-	local issue_body=""
-	issue_body=$(echo "$issue_json" | jq -r '.body // "No body"' 2>/dev/null) || issue_body="No body"
+	__TRIAGE_ISSUE_BODY=""
+	__TRIAGE_ISSUE_BODY=$(echo "$__TRIAGE_ISSUE_JSON" | jq -r '.body // "No body"' 2>/dev/null) || __TRIAGE_ISSUE_BODY="No body"
 
 	# Compute content hash and check cache
-	local content_hash=""
-	content_hash=$(_triage_content_hash "$issue_num" "$repo_slug" "$issue_body" "$issue_comments")
+	__TRIAGE_CONTENT_HASH=""
+	__TRIAGE_CONTENT_HASH=$(_triage_content_hash "$issue_num" "$repo_slug" "$__TRIAGE_ISSUE_BODY" "$__TRIAGE_ISSUE_COMMENTS")
 
-	if _triage_is_cached "$issue_num" "$repo_slug" "$content_hash"; then
+	if _triage_is_cached "$issue_num" "$repo_slug" "$__TRIAGE_CONTENT_HASH"; then
 		echo "[pulse-wrapper] triage dedup: skipping #${issue_num} in ${repo_slug} — content unchanged since last triage" >>"$LOGFILE"
 		return 1
 	fi
 
 	# ── GH#17827: Skip if awaiting contributor reply ──
 	# A new contributor comment will change the hash and trigger re-evaluation.
-	if _triage_awaiting_contributor_reply "$issue_comments" "$repo_slug"; then
+	if _triage_awaiting_contributor_reply "$__TRIAGE_ISSUE_COMMENTS" "$repo_slug"; then
 		echo "[pulse-wrapper] triage skip: #${issue_num} in ${repo_slug} — awaiting contributor reply (GH#17827)" >>"$LOGFILE"
-		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
+		_triage_update_cache "$issue_num" "$repo_slug" "$__TRIAGE_CONTENT_HASH"
 		return 1
 	fi
 
-	# ── Content is new or changed — proceed with full prefetch ──
-	local pr_diff="" pr_files="" is_pr=""
-	is_pr=$(gh pr view "$issue_num" --repo "$repo_slug" --json number --jq '.number' 2>/dev/null) || is_pr=""
-	if [[ -n "$is_pr" ]]; then
-		pr_diff=$(gh pr diff "$issue_num" --repo "$repo_slug" 2>/dev/null | head -500) || pr_diff=""
-		pr_files=$(gh pr view "$issue_num" --repo "$repo_slug" --json files --jq '[.files[].path]' 2>/dev/null) || pr_files="[]"
-	fi
+	return 0
+}
+
+#######################################
+# Write the triage review prompt to a temp file.
+#
+# Caps issue comments at 8KB, fetches recent closed issues and git log,
+# then writes the format-first inlined prompt to a mktemp file.
+#
+# t2019: format-first prompt structure — rules FIRST, context second.
+# The fix is independent of runtime (Claude CLI, OpenCode, etc.):
+#   (1) puts format rules FIRST (before any context data)
+#   (2) explicitly forbids tool exploration
+#   (3) caps output to 800 words
+#
+# Arguments:
+#   $1 - issue_num
+#   $2 - repo_slug
+#   $3 - repo_path
+#   $4 - issue_json
+#   $5 - issue_body
+#   $6 - issue_comments (uncapped; capped internally)
+#   $7 - pr_diff
+#   $8 - pr_files
+#   $9 - is_pr (non-empty if this item is a PR)
+#
+# Prints the temp file path to stdout. Returns 0.
+#######################################
+_triage_write_prompt_file() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+	local issue_json="$4"
+	local issue_body="$5"
+	local issue_comments="$6"
+	local pr_diff="$7"
+	local pr_files="$8"
+	local is_pr="$9"
 
 	# t2019: cap ISSUE_COMMENTS input to 8KB so a huge thread doesn't push
 	# the model into summarisation mode. 8KB is ~20 average-length comments;
@@ -390,22 +427,6 @@ _build_triage_review_prompt() {
 	local prefetch_file=""
 	prefetch_file=$(mktemp)
 
-	# t2019: format-first prompt structure.
-	#
-	# Root cause of #18482 was a combination of:
-	#   (1) no --agent flag → the runtime loaded its default agent (build-plus
-	#       on Claude CLI, unrestricted on OpenCode), not triage-review, so
-	#       none of the triage-review.md constraints applied;
-	#   (2) the prior prompt ended with "Now read the triage-review.md agent
-	#       instructions" which invited exploratory Read tool use (and thus
-	#       long output);
-	#   (3) the prior prompt had no explicit "first line must be ## Review:"
-	#       constraint and no cap on output length.
-	#
-	# This new prompt inlines the agent instructions, puts format rules FIRST
-	# (before any context data), and explicitly forbids tool exploration.
-	# The fix is independent of which runtime / agent the helper picks, so
-	# the same prompt works under Claude CLI, OpenCode, or any future runtime.
 	cat >"$prefetch_file" <<PREFETCH_EOF
 # TRIAGE REVIEW — STRICT OUTPUT RULES
 
@@ -483,8 +504,207 @@ ${git_log_context:-No git log available}
 Respond now. Your first line must be \`## Review:\`. Do not use tools. Do not write anything before the review.
 PREFETCH_EOF
 
+	printf '%s\n' "$prefetch_file"
+	return 0
+}
+
+#######################################
+# Build the triage review prompt for a given issue/PR.
+#
+# Orchestrates: issue prefetch + skip checks, PR context fetch,
+# and prompt file construction. Delegates data fetching and prompt
+# writing to focused helpers (_triage_prefetch_issue,
+# _triage_write_prompt_file). Reads module-scoped __TRIAGE_* variables
+# written by _triage_prefetch_issue.
+#
+# Arguments:
+#   $1 - issue_num
+#   $2 - repo_slug
+#   $3 - repo_path
+#
+# Prints "<prefetch_file>|<content_hash>" to stdout.
+# Returns 0 on success, 1 if triage should be skipped.
+#######################################
+_build_triage_review_prompt() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+
+	# Fetch issue data and check skip conditions; sets __TRIAGE_* module vars.
+	_triage_prefetch_issue "$issue_num" "$repo_slug" || return 1
+
+	# ── Content is new or changed — proceed with full prefetch ──
+	local pr_diff="" pr_files="" is_pr=""
+	is_pr=$(gh pr view "$issue_num" --repo "$repo_slug" --json number --jq '.number' 2>/dev/null) || is_pr=""
+	if [[ -n "$is_pr" ]]; then
+		pr_diff=$(gh pr diff "$issue_num" --repo "$repo_slug" 2>/dev/null | head -500) || pr_diff=""
+		pr_files=$(gh pr view "$issue_num" --repo "$repo_slug" --json files --jq '[.files[].path]' 2>/dev/null) || pr_files="[]"
+	fi
+
+	local prefetch_file=""
+	prefetch_file=$(_triage_write_prompt_file \
+		"$issue_num" "$repo_slug" "$repo_path" \
+		"$__TRIAGE_ISSUE_JSON" "$__TRIAGE_ISSUE_BODY" "$__TRIAGE_ISSUE_COMMENTS" \
+		"$pr_diff" "$pr_files" "$is_pr") || return 1
+
 	# Output file path and content hash (pipe-separated) for the caller
-	printf '%s|%s\n' "$prefetch_file" "$content_hash"
+	printf '%s|%s\n' "$prefetch_file" "$__TRIAGE_CONTENT_HASH"
+	return 0
+}
+
+#######################################
+# Validate triage review output and post if safe.
+#
+# Checks for oversized output, infrastructure markers in the text,
+# and a required ## Review: header. Posts the comment to GitHub if
+# all checks pass; logs suppression reason if any check fails.
+#
+# Arguments:
+#   $1 - issue_num
+#   $2 - repo_slug
+#   $3 - review_text (extracted from JSON stream output)
+#   $4 - output_chars (char count of review_text)
+#   $5 - raw_output_chars (char count of raw runtime output)
+#   $6 - raw_sample (first 1000 chars of raw output for diagnostics)
+#
+# Outputs to stdout: "POSTED" if posted, "FAILED:<reason>" if suppressed.
+# Returns 0 always.
+#######################################
+_extract_and_post_triage_review() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local review_text="$3"
+	local output_chars="$4"
+	local raw_output_chars="$5"
+	local raw_sample="$6"
+
+	# t2019: Shape ceiling — a valid triage review is 1-3KB. Anything over
+	# 20KB of extracted text is a malfunctioning worker (tool exploration,
+	# runaway summarisation, format drift). Suppress fast so the retry cap
+	# isn't wasted and the escalation comment is posted sooner.
+	local TRIAGE_OUTPUT_MAX_CHARS="${TRIAGE_OUTPUT_MAX_CHARS:-20000}"
+	if [[ -n "$review_text" && "$output_chars" -gt "$TRIAGE_OUTPUT_MAX_CHARS" ]]; then
+		echo "[pulse-wrapper] Triage review for #${issue_num} produced oversized output (${output_chars} extracted chars / ${raw_output_chars} raw, ceiling=${TRIAGE_OUTPUT_MAX_CHARS}) — suppressed (t2019)" >>"$LOGFILE"
+		_log_suppressed_triage_output "$issue_num" "$repo_slug" \
+			"oversized-output" "$output_chars" "$raw_sample"
+		printf 'FAILED:oversized-output\n'
+		return 0
+	fi
+
+	if [[ -n "$review_text" && "${#review_text}" -gt 50 ]]; then
+		# ── Safety filter: NEVER post raw sandbox/infrastructure output ──
+		# If the LLM failed (quota, timeout, garbled), the output contains
+		# sandbox startup logs, execution metadata, or internal paths.
+		# These MUST be discarded — posting them leaks sensitive infra data.
+		local has_infra_markers="false"
+		if echo "$review_text" | grep -qE '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper|/opt/homebrew/|opencode run '; then
+			has_infra_markers="true"
+		fi
+
+		# Extract just the review portion (starts with ## Review variants).
+		# GH#17873: Workers sometimes produce slightly different headers
+		# (e.g., "## Review", "## Triage Review:", "## Review Summary:").
+		# Match any "## " line containing "Review" (case-insensitive).
+		local clean_review=""
+		clean_review=$(echo "$review_text" | sed -n '/^## .*[Rr]eview/,$ p')
+
+		if [[ -n "$clean_review" ]]; then
+			# Re-check extracted review for infra leaks (belt-and-suspenders)
+			if echo "$clean_review" | grep -qE '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper'; then
+				echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} contained infrastructure markers after extraction — suppressed" >>"$LOGFILE"
+				_log_suppressed_triage_output "$issue_num" "$repo_slug" \
+					"infra-markers-after-extraction" "$output_chars" "$raw_sample"
+				printf 'FAILED:infra-markers-after-extraction\n'
+			else
+				gh issue comment "$issue_num" --repo "$repo_slug" \
+					--body "$clean_review" >/dev/null 2>&1 || true
+				echo "[pulse-wrapper] Posted sandboxed triage review for #${issue_num} in ${repo_slug} (${output_chars} extracted chars)" >>"$LOGFILE"
+				printf 'POSTED\n'
+			fi
+		elif [[ "$has_infra_markers" == "true" ]]; then
+			# No review header AND infra markers present — raw sandbox output
+			echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} was raw sandbox output — suppressed (${#review_text} chars)" >>"$LOGFILE"
+			_log_suppressed_triage_output "$issue_num" "$repo_slug" \
+				"raw-sandbox-output" "$output_chars" "$raw_sample"
+			printf 'FAILED:raw-sandbox-output\n'
+		else
+			echo "[pulse-wrapper] Triage review for #${issue_num} had no review header (## *Review*) and no infra markers — suppressed to be safe (${#review_text} chars extracted / ${raw_output_chars} raw)" >>"$LOGFILE"
+			_log_suppressed_triage_output "$issue_num" "$repo_slug" \
+				"no-review-header" "$output_chars" "$raw_sample"
+			printf 'FAILED:no-review-header\n'
+		fi
+	else
+		echo "[pulse-wrapper] Triage review for #${issue_num} produced no usable output (${#review_text} chars extracted / ${raw_output_chars} raw)" >>"$LOGFILE"
+		_log_suppressed_triage_output "$issue_num" "$repo_slug" \
+			"no-usable-output" "$output_chars" "$raw_sample"
+		printf 'FAILED:no-usable-output\n'
+	fi
+	return 0
+}
+
+#######################################
+# Update triage-failed label and content-hash cache after a dispatch.
+#
+# Manages the triage-failed label (remove on success, add on failure),
+# unlocks the issue, then updates the content-hash cache. On success
+# the hash is cached immediately; on failure, the retry counter is
+# incremented and the hash is only cached when the retry cap is hit.
+#
+# Arguments:
+#   $1 - issue_num
+#   $2 - repo_slug
+#   $3 - content_hash
+#   $4 - triage_posted ("true" or "false")
+#   $5 - failure_reason (empty string if posted successfully)
+#   $6 - output_chars
+#######################################
+_finalize_triage_state() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local content_hash="$3"
+	local triage_posted="$4"
+	local failure_reason="$5"
+	local output_chars="$6"
+
+	# GH#17829: Surface triage failures visibly. Add label so maintainers
+	# can identify issues needing manual triage; remove on success.
+	# t2016: Ensure the label exists first (gh label create --force is
+	# idempotent) and only log "Added" when the add command succeeds.
+	if [[ "$triage_posted" == "true" ]]; then
+		gh issue edit "$issue_num" --repo "$repo_slug" \
+			--remove-label "triage-failed" >/dev/null 2>&1 || true
+	else
+		_ensure_triage_failed_label "$repo_slug"
+		if gh issue edit "$issue_num" --repo "$repo_slug" \
+			--add-label "triage-failed" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Added triage-failed label to #${issue_num} in ${repo_slug}" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] FAILED to add triage-failed label to #${issue_num} in ${repo_slug} (gh issue edit returned non-zero)" >>"$LOGFILE"
+		fi
+	fi
+
+	# Unlock issue after label management, before cache write.
+	unlock_issue_after_worker "$issue_num" "$repo_slug"
+
+	# GH#17873: Only cache content hash on successful post.
+	# GH#17827: If failures are persistent (>= TRIAGE_MAX_RETRIES on the
+	# same content hash), cache to break the infinite lock→agent→fail→unlock
+	# loop. The triage-failed label remains for maintainer visibility.
+	# t2016: When the retry cap is hit, post a structured escalation comment
+	# BEFORE writing the cache, so the maintainer has a visible signal
+	# instead of a silently-cached issue that disappears from triage forever.
+	if [[ "$triage_posted" == "true" ]]; then
+		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
+	elif _triage_increment_failure "$issue_num" "$repo_slug" "$content_hash"; then
+		echo "[pulse-wrapper] Triage retry cap reached for #${issue_num} in ${repo_slug} — caching hash to stop lock/unlock loop (GH#17827)" >>"$LOGFILE"
+		local cap_attempts="${TRIAGE_MAX_RETRIES:-1}"
+		_post_triage_escalation_comment \
+			"$issue_num" "$repo_slug" \
+			"$failure_reason" "$cap_attempts" "$output_chars"
+		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
+	else
+		echo "[pulse-wrapper] Skipping triage cache for #${issue_num} — review not posted, will retry on next cycle" >>"$LOGFILE"
+	fi
 	return 0
 }
 
@@ -492,8 +712,9 @@ PREFETCH_EOF
 # Dispatch a sandboxed triage review worker and post its output
 #
 # Locks the issue, runs the triage-review agent, posts the review
-# comment (with safety filtering), updates triage labels, updates the
-# content-hash cache, and unlocks the issue. All side effects live here.
+# comment (with safety filtering via _extract_and_post_triage_review),
+# updates triage labels and cache (via _finalize_triage_state), and
+# unlocks the issue.
 #
 # Arguments:
 #   $1 - issue_num
@@ -548,143 +769,46 @@ _dispatch_triage_review_worker() {
 
 	rm -f "$prefetch_file"
 
-	# ── Post-process: post the review comment (deterministic) ──
-	#
-	# t2019: The headless runtime emits line-delimited JSON (OpenCode
-	# --format json, Claude CLI --output-format stream-json). The model's
-	# markdown response is embedded inside "text" fields of JSON objects
-	# on single physical lines. Previously we ran a plain-text sed pattern
-	# on the raw output, which never matched because `## Review:` never
-	# appeared at the start of a physical line — it was always wrapped in
-	# JSON escaping. That caused every triage attempt on #18428 to look
-	# headerless and get suppressed (72K/80K/62K char failures, v3.7.3
-	# escalation comment evidence in ~/.aidevops/logs/pulse-wrapper.log).
-	#
-	# Fix: extract text events from the JSON stream BEFORE any filtering
-	# or header detection. Raw output is still available for diagnosis via
-	# the debug log when suppression occurs.
-	local raw_output_file="$review_output_file"
+	# t2019: Extract raw metrics and text content from the JSON stream.
+	# The headless runtime emits line-delimited JSON; the model's markdown
+	# is embedded in "text" fields — extract before filtering so header
+	# detection works on decoded text, not raw JSON escaping.
 	local raw_output_chars=0
-	if [[ -f "$raw_output_file" ]]; then
-		raw_output_chars=$(wc -c <"$raw_output_file" 2>/dev/null || echo 0)
+	if [[ -f "$review_output_file" ]]; then
+		raw_output_chars=$(wc -c <"$review_output_file" 2>/dev/null || echo 0)
 		raw_output_chars="${raw_output_chars// /}"
 	fi
 
 	local review_text=""
-	review_text=$(_extract_review_text_from_json "$raw_output_file")
+	review_text=$(_extract_review_text_from_json "$review_output_file")
 	local output_chars="${#review_text}"
 
-	local triage_posted="false"
-	# t2016: Track WHY the post was suppressed so the escalation comment
-	# can surface an actionable reason instead of a buried log line.
-	local failure_reason=""
-	# t2019: grab a small sample before any rm -f so we can write a
-	# diagnostic record on suppression without re-running live captures.
+	# t2019: grab a small sample before rm -f for diagnostic records.
 	local raw_sample=""
-	if [[ -f "$raw_output_file" ]]; then
-		raw_sample=$(head -c 1000 "$raw_output_file" 2>/dev/null || true)
+	if [[ -f "$review_output_file" ]]; then
+		raw_sample=$(head -c 1000 "$review_output_file" 2>/dev/null || true)
 	fi
 
-	# t2019: Shape ceiling — a valid triage review is 1-3KB. Anything over
-	# 20KB of extracted text is a malfunctioning worker (tool exploration,
-	# runaway summarisation, format drift). Suppress fast so the retry cap
-	# isn't wasted and the escalation comment is posted sooner.
-	local TRIAGE_OUTPUT_MAX_CHARS="${TRIAGE_OUTPUT_MAX_CHARS:-20000}"
-	if [[ -n "$review_text" && "$output_chars" -gt "$TRIAGE_OUTPUT_MAX_CHARS" ]]; then
-		echo "[pulse-wrapper] Triage review for #${issue_num} produced oversized output (${output_chars} extracted chars / ${raw_output_chars} raw, ceiling=${TRIAGE_OUTPUT_MAX_CHARS}) — suppressed (t2019)" >>"$LOGFILE"
-		failure_reason="oversized-output"
-		_log_suppressed_triage_output "$issue_num" "$repo_slug" \
-			"$failure_reason" "$output_chars" "$raw_sample"
-	elif [[ -n "$review_text" && ${#review_text} -gt 50 ]]; then
-		# ── Safety filter: NEVER post raw sandbox/infrastructure output ──
-		# If the LLM failed (quota, timeout, garbled), the output contains
-		# sandbox startup logs, execution metadata, or internal paths.
-		# These MUST be discarded — posting them leaks sensitive infra data.
-		local has_infra_markers="false"
-		if echo "$review_text" | grep -qE '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper|/opt/homebrew/|opencode run '; then
-			has_infra_markers="true"
-		fi
+	# Validate output safety and post or suppress the review comment.
+	local post_result=""
+	post_result=$(_extract_and_post_triage_review \
+		"$issue_num" "$repo_slug" \
+		"$review_text" "$output_chars" "$raw_output_chars" "$raw_sample")
 
-		# Extract just the review portion (starts with ## Review variants).
-		# GH#17873: Workers sometimes produce slightly different headers
-		# (e.g., "## Review", "## Triage Review:", "## Review Summary:").
-		# Match any "## " line containing "Review" (case-insensitive).
-		local clean_review=""
-		clean_review=$(echo "$review_text" | sed -n '/^## .*[Rr]eview/,$ p')
+	rm -f "$review_output_file"
 
-		if [[ -n "$clean_review" ]]; then
-			# Re-check extracted review for infra leaks (belt-and-suspenders)
-			if echo "$clean_review" | grep -qE '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper'; then
-				echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} contained infrastructure markers after extraction — suppressed" >>"$LOGFILE"
-				failure_reason="infra-markers-after-extraction"
-				_log_suppressed_triage_output "$issue_num" "$repo_slug" \
-					"$failure_reason" "$output_chars" "$raw_sample"
-			else
-				gh issue comment "$issue_num" --repo "$repo_slug" \
-					--body "$clean_review" >/dev/null 2>&1 || true
-				echo "[pulse-wrapper] Posted sandboxed triage review for #${issue_num} in ${repo_slug} (${output_chars} extracted chars)" >>"$LOGFILE"
-				triage_posted="true"
-			fi
-		elif [[ "$has_infra_markers" == "true" ]]; then
-			# No review header AND infra markers present — raw sandbox output, discard entirely
-			echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} was raw sandbox output — suppressed (${#review_text} chars)" >>"$LOGFILE"
-			failure_reason="raw-sandbox-output"
-			_log_suppressed_triage_output "$issue_num" "$repo_slug" \
-				"$failure_reason" "$output_chars" "$raw_sample"
-		else
-			echo "[pulse-wrapper] Triage review for #${issue_num} had no review header (## *Review*) and no infra markers — suppressed to be safe (${#review_text} chars extracted / ${raw_output_chars} raw)" >>"$LOGFILE"
-			failure_reason="no-review-header"
-			_log_suppressed_triage_output "$issue_num" "$repo_slug" \
-				"$failure_reason" "$output_chars" "$raw_sample"
-		fi
+	local triage_posted="false"
+	local failure_reason=""
+	if [[ "$post_result" == "POSTED" ]]; then
+		triage_posted="true"
 	else
-		echo "[pulse-wrapper] Triage review for #${issue_num} produced no usable output (${#review_text} chars extracted / ${raw_output_chars} raw)" >>"$LOGFILE"
-		failure_reason="no-usable-output"
-		_log_suppressed_triage_output "$issue_num" "$repo_slug" \
-			"$failure_reason" "$output_chars" "$raw_sample"
+		failure_reason="${post_result#FAILED:}"
 	fi
 
-	rm -f "$raw_output_file"
-
-	# GH#17829: Surface triage failures visibly. Add label so maintainers
-	# can identify issues needing manual triage; remove on success.
-	# t2016: Ensure the label exists first (gh label create --force is
-	# idempotent) and only log "Added" when the add command succeeds.
-	if [[ "$triage_posted" == "true" ]]; then
-		gh issue edit "$issue_num" --repo "$repo_slug" \
-			--remove-label "triage-failed" >/dev/null 2>&1 || true
-	else
-		_ensure_triage_failed_label "$repo_slug"
-		if gh issue edit "$issue_num" --repo "$repo_slug" \
-			--add-label "triage-failed" >/dev/null 2>&1; then
-			echo "[pulse-wrapper] Added triage-failed label to #${issue_num} in ${repo_slug}" >>"$LOGFILE"
-		else
-			echo "[pulse-wrapper] FAILED to add triage-failed label to #${issue_num} in ${repo_slug} (gh issue edit returned non-zero)" >>"$LOGFILE"
-		fi
-	fi
-
-	# Unlock issue after triage
-	unlock_issue_after_worker "$issue_num" "$repo_slug"
-
-	# GH#17873: Only cache content hash on successful post.
-	# GH#17827: If failures are persistent (>= TRIAGE_MAX_RETRIES on the
-	# same content hash), cache to break the infinite lock→agent→fail→unlock
-	# loop. The triage-failed label remains for maintainer visibility.
-	# t2016: When the retry cap is hit, post a structured escalation comment
-	# BEFORE writing the cache, so the maintainer has a visible signal
-	# instead of a silently-cached issue that disappears from triage forever.
-	if [[ "$triage_posted" == "true" ]]; then
-		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
-	elif _triage_increment_failure "$issue_num" "$repo_slug" "$content_hash"; then
-		echo "[pulse-wrapper] Triage retry cap reached for #${issue_num} in ${repo_slug} — caching hash to stop lock/unlock loop (GH#17827)" >>"$LOGFILE"
-		local cap_attempts="${TRIAGE_MAX_RETRIES:-1}"
-		_post_triage_escalation_comment \
-			"$issue_num" "$repo_slug" \
-			"$failure_reason" "$cap_attempts" "$output_chars"
-		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
-	else
-		echo "[pulse-wrapper] Skipping triage cache for #${issue_num} — review not posted, will retry on next cycle" >>"$LOGFILE"
-	fi
+	# Update labels, unlock issue, and update content-hash cache.
+	_finalize_triage_state \
+		"$issue_num" "$repo_slug" "$content_hash" \
+		"$triage_posted" "$failure_reason" "$output_chars"
 
 	return 0
 }
