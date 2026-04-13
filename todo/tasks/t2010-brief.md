@@ -6,127 +6,66 @@
 ## Origin
 
 - **Created:** 2026-04-12, claude-code:interactive
-- **Parent context:** Plan §6 Phase 11 of t1962 (pulse-wrapper decomposition) explicitly noted: *"the large-file gate continues to fire for `stats-functions.sh` (3,125 lines)... scope as a separate decomposition plan."* This task is that separate plan + parent.
-- **Why now:** the t1962 decomposition methodology is proven (10 phases, 23 modules, 90% reduction, no regressions). Applying the same pattern to the next-largest violator is straightforward and the cost amortizes (the methodology stays the same; only the function/cluster map differs).
+- **Plan landed:** 2026-04-13 (this PR — `todo/plans/stats-functions-decomposition.md`)
+- **Parent context:** Plan §6 Phase 11 of t1962 (pulse-wrapper decomposition) explicitly noted: *"the large-file gate continues to fire for `stats-functions.sh` (3,164 lines)... scope as a separate decomposition plan."* This task is that separate plan + parent.
+- **Why now:** the t1962 decomposition methodology is proven (10 phases, ~15 modules, 90% reduction, no regressions). Applying the same pattern to the next-largest violator is straightforward.
 
 ## What
 
-**Parent task** for the phased decomposition of `.agents/scripts/stats-functions.sh` (3,125 lines, 48 functions). Mirrors the t1962 plan structure: characterization safety net → phased extractions → byte-preserving moves only → simplification deferred.
+**Parent task** for the phased decomposition of `.agents/scripts/stats-functions.sh` (3,164 lines, 48 functions). Mirrors the t1962 plan structure: characterization safety net → phased extractions → byte-preserving moves only → simplification deferred.
 
-This task is **plan-only**. No code is moved by THIS issue. Implementation lives in subtask issues filed once the plan is reviewed and approved.
+**This task is parent-only.** No code is moved by THIS issue, ever. The plan document was committed as part of the PR that opened this parent — see `todo/plans/stats-functions-decomposition.md`. Implementation lives in subtask issues filed sequentially as each prior phase merges.
 
-**Tagged `#parent`** to invoke the t1986 dispatch guard — this issue must NEVER be dispatched directly to a worker. Only its (eventual) child phase tasks dispatch.
+**Tagged `#parent`** to invoke the t1986 dispatch guard — this issue must NEVER be dispatched directly to a worker. Only its child phase tasks dispatch. The dispatch loop observed on 2026-04-12T23:08-2026-04-13T00:19 UTC was caused by a jq null-handling bug in the guard (fixed independently by GH#18537), not by a misconfigured label on this issue.
 
 ## Why
 
-- **3,125 lines** is the second-largest file in the codebase post-t1962, more than 2× the simplification gate threshold.
-- **48 functions** in one file means the file routinely shows up in `--complexity-scan` runs and creates noise in PR review.
-- **Methodology is proven** — t1962 ran for 10 phases without a single byte-level regression. The same pattern applied to a smaller file (~3,125 vs ~13,797) should be a 4-6 phase project at most.
-- **Currently sourced by `stats-wrapper.sh`** (per the t1431 history) — a single, well-defined sourcer means the orchestrator changes are scoped to one file. Easier than the pulse-wrapper case which had many call sites.
+- **3,164 lines** is the second-largest file in the codebase post-t1962, more than 1.5× the simplification gate's 2,000-line threshold.
+- **48 functions** in one file means it routinely shows up in `--complexity-scan` runs and creates noise in PR review.
+- **Methodology is proven** — t1962 ran for 10 phases without a single byte-level regression. The same pattern applied to a smaller file (~3,164 vs ~13,797) is a 3-phase project (Plan §6).
+- **Currently sourced by `stats-wrapper.sh` and one test file only** (per the t1431 history) — minimal external surface means the orchestrator change is scoped.
 
 ## Tier
 
-`tier:reasoning`. This is plan + decomposition design work. The brief alone is the deliverable; the plan doc is the substance. Worker must:
-- Read all 48 functions and group them by call graph + concern
-- Decide cluster boundaries minimizing cross-cluster edges
-- Sequence the phases to start with leaves and end with the orchestrator residual
-- Estimate each phase's scope and risk
-- Write the plan doc (modeled on `todo/plans/pulse-wrapper-decomposition.md`)
-
-This is the same kind of work that produced the t1962 plan. That plan was ~830 lines. This one will be ~400-500 lines because the file is smaller.
+`tier:reasoning` — nominal only. **Never dispatched directly.** Each phase subtask gets its own tier (Phases 0-3 are all `tier:standard` per Plan §6 — mechanical extractions following an established methodology).
 
 ### Tier checklist
 
-All 6 fail. `tier:reasoning`.
+This is a parent tracking task. Tier assignment does not apply directly. Field is set for label-routing consistency only.
 
-## How
+## How (parent role only)
 
-### Pre-work — read the precedent
+The parent task tracks progress against `todo/plans/stats-functions-decomposition.md` and files each phase subtask sequentially. The parent itself does no code work.
 
-```bash
-# 1. The t1962 plan — model for this one
-cat todo/plans/pulse-wrapper-decomposition.md
+### Phase tracker
 
-# 2. The Phase 0 safety net pattern (characterization tests)
-cat .agents/scripts/tests/test-pulse-wrapper-characterization.sh
+- [ ] **Phase 0** — characterization safety net (test harness, `--self-check`, `--dry-run`). Plan §5, §6 Phase 0. `tier:standard`. Subtask filed as part of this PR (see `## Filed children` below).
+- [ ] **Phase 1** — extract `stats-shared.sh` (3 fns, ~120 lines). Plan §6 Phase 1. File after Phase 0 merges.
+- [ ] **Phase 2** — extract `stats-quality-sweep.sh` (23 fns, ~1,692 lines). Plan §6 Phase 2. File after Phase 1 merges.
+- [ ] **Phase 3** — extract `stats-health-dashboard.sh` (22 fns, ~1,252 lines). Plan §6 Phase 3. File after Phase 2 merges.
+- [ ] **Phase 4 (optional)** — clear the simplification gate, lower `FILE_SIZE_THRESHOLD` ratchet. Plan §6 Phase 4.
 
-# 3. The two-commit PR structure used in every t1962 phase
-gh pr view 18366 --repo marcusquinn/aidevops  # Phase 1
-gh pr view 18392 --repo marcusquinn/aidevops  # Phase 10 (final)
-```
-
-### Step 1 — characterise stats-functions.sh
-
-```bash
-# Function inventory
-grep -n "^[a-zA-Z_][a-zA-Z0-9_]*() {" .agents/scripts/stats-functions.sh | wc -l  # confirm 48
-grep -n "^[a-zA-Z_][a-zA-Z0-9_]*() {" .agents/scripts/stats-functions.sh > /tmp/stats-fn-inventory.txt
-
-# Per-function line counts (largest first)
-awk '
-/^[a-zA-Z_][a-zA-Z0-9_]*\(\) \{/ { fname=$1; sub(/\(\)/,"",fname); start=NR; next }
-fname && /^\}$/ { lines=NR-start; print lines, fname; fname="" }
-' .agents/scripts/stats-functions.sh | sort -rn > /tmp/stats-fn-sizes.txt
-
-# Inter-function call graph (which functions call which others within the same file)
-for fn in $(awk '{print $1}' /tmp/stats-fn-inventory.txt | sed 's/() {//'); do
-    callers=$(grep -c "\\b${fn}\\b" .agents/scripts/stats-functions.sh)
-    echo "$callers $fn"
-done | sort -rn > /tmp/stats-fn-call-counts.txt
-
-# External callers (who calls into stats-functions.sh from outside)
-rg -l "stats-functions" .agents/scripts/ --type sh
-```
-
-### Step 2 — derive cluster map
-
-Group functions by:
-1. **Concern** — what does this function compute? Stats over what input?
-2. **Call graph locality** — which functions call which others? Cluster tightly-coupled functions together.
-3. **Size** — target sub-modules of 200-700 lines each (small enough to review, large enough to be coherent).
-
-Sketch (worker should validate by reading actual code):
-
-- **`stats-fetchers.sh`** — functions that pull raw data from `gh`, `git`, or files (~10-15 fns)
-- **`stats-aggregators.sh`** — functions that bucket / sum / average raw data into shaped results (~10-15 fns)
-- **`stats-formatters.sh`** — functions that turn shaped results into markdown / TSV / JSON output (~10-15 fns)
-- **`stats-wrapper.sh` orchestrator residual** — the top-level entry points + globals + bootstrap (~5-10 fns)
-
-Or if the call graph suggests different boundaries (e.g. by domain: per-issue stats vs per-PR stats vs per-repo stats), use those instead. Pick whichever produces fewer cross-cluster edges.
-
-### Step 3 — write the plan doc
-
-Create `todo/plans/stats-functions-decomposition.md`. Use `todo/plans/pulse-wrapper-decomposition.md` as the template. Required sections:
-
-1. **Problem statement** — file size, complexity, current state
-2. **Constraints** — byte-preserving moves only, sourcers must continue to work, etc.
-3. **Cluster map** — full 48-function → cluster mapping. The substantive part.
-4. **Inter-cluster edges** — call graph between proposed clusters
-5. **Global state audit** — what globals does the file expose? Who reads them?
-6. **Regression safety net** — characterization test, --self-check pattern, dry-run
-7. **Phase sequence** — Phase 0 (safety net) + 4-6 extraction phases + final orchestrator
-8. **Extraction methodology** — module template, two-commit PR structure, verification gauntlet (copy from t1962 plan §7)
-9. **Rules** — same as t1962 §10 (no refactoring during extraction, etc.)
-
-### Step 4 — file the Phase 0 subtask
-
-Once the plan is on main, file ONE follow-up task: `tNNNN: stats-functions decomposition Phase 0 — safety net`. That phase task is the entry point for actual implementation work and can be auto-dispatched normally.
-
-DO NOT file all phase subtasks upfront. The t1962 pattern was: file Phase 0 + parent, and let each subsequent phase be filed sequentially after the prior one merges. This avoids dispatching workers to phases that depend on prior phases not yet landed.
+**File Phase N+1 only after Phase N merges.** This is the t1962 sequencing rule — prevents workers from picking up phases whose prerequisites have not landed.
 
 ## Acceptance Criteria
 
-- [ ] Function inventory generated and documented in PR body (size distribution, top-10 largest)
-- [ ] Cluster map derived from call-graph analysis (not just from function name heuristics)
-- [ ] Plan doc `todo/plans/stats-functions-decomposition.md` created with all 9 sections, modeled on the t1962 plan
-- [ ] Phase 0 subtask filed with brief (`todo/tasks/tNNNN-brief.md`) and TODO entry
-- [ ] **No code in `.agents/scripts/stats-functions.sh` is moved by this PR** — this is plan-only
-- [ ] `#parent` tag applied so the dispatch guard (t1986) prevents this issue from being dispatched to workers
+Parent-task acceptance is binary on plan + child completion:
+
+- [x] Plan doc `todo/plans/stats-functions-decomposition.md` committed with all 11 sections
+- [x] `#parent` tag applied so the dispatch guard (t1986) prevents this issue from being dispatched to workers
+- [x] Phase 0 child subtask filed with brief and TODO entry (this PR)
+- [ ] Phase 0 merged (all of §5.1, §5.2, §5.3 deliverables)
+- [ ] Phase 1 merged (`stats-shared.sh` extracted)
+- [ ] Phase 2 merged (`stats-quality-sweep.sh` extracted)
+- [ ] Phase 3 merged (`stats-health-dashboard.sh` extracted, orchestrator residual ≤80 lines)
+- [ ] Verification: `bash .agents/scripts/stats-wrapper.sh --self-check` passes against the fully decomposed state
 
 ## Relevant Files
 
-- `.agents/scripts/stats-functions.sh` — the target (3,125 lines, 48 functions)
+- `todo/plans/stats-functions-decomposition.md` — **the authoritative plan** (committed in this PR)
+- `.agents/scripts/stats-functions.sh` — the target (3,164 lines, 48 functions)
 - `.agents/scripts/stats-wrapper.sh` — the canonical sourcer (per t1431 history)
+- `.agents/scripts/tests/test-quality-sweep-serialization.sh` — second real sourcer (test fixture, exercises Cluster C)
 - `todo/plans/pulse-wrapper-decomposition.md` — methodology template
 - `todo/tasks/t1962-brief.md` — parent-task brief template
 
@@ -134,18 +73,27 @@ DO NOT file all phase subtasks upfront. The t1962 pattern was: file Phase 0 + pa
 
 - **Blocked by:** none
 - **Blocks:** any future simplification that touches stats-functions.sh; the file-size threshold ratchet-down (`FILE_SIZE_THRESHOLD` is currently 59 partly because of this file)
-- **Related:** t1962 (the precedent), t1987 (sibling Phase 12 module split inside the pulse wrapper)
+- **Related:** t1962 (the precedent), t1986 (parent-task dispatch guard), GH#18537 (jq null-fallback fix that closed the dispatch-loop hole)
 - **Methodology source:** every PR merged in t1962 (Phases 0-10) — the pattern is locked in
 
 ## Estimate
 
-**For THIS task (plan + parent only):** ~4h. Breakdown: 1h read stats-functions.sh end-to-end + 1h call graph analysis + 1.5h plan doc writing + 30m Phase 0 brief.
+**Parent task overhead:** ~0h. The parent is administrative; it tracks children and files the next phase when the prior one merges.
 
-**For the FULL stats-functions decomposition (parent + children):** ~15-20h spread across 4-6 phases, modeled after t1962's 35h spread across 10 phases (smaller because the file is ~25% the size).
+**Plan-writing overhead (this PR):** ~3h (interactive). Function inventory, call-graph analysis, cluster derivation, plan doc.
+
+**Full stats-functions decomposition (Phases 0-3):** ~10-12h spread across 4 phases:
+
+- Phase 0 — safety net: 2-3h, `tier:standard`
+- Phase 1 — `stats-shared.sh`: 1-2h, `tier:standard`
+- Phase 2 — `stats-quality-sweep.sh`: 3-4h, `tier:standard`
+- Phase 3 — `stats-health-dashboard.sh`: 3-4h, `tier:standard`
+
+Smaller than t1962's ~35h because the file is 23% the size and has cleaner cluster boundaries (zero edges between health and quality clusters, one edge from health to shared utilities).
 
 ## Out of scope (for THIS task — but in scope for the children it spawns)
 
-- Any actual extraction
-- Any function simplification
+- Any actual extraction (Phases 1-3 own that)
+- Any function simplification (deferred to follow-up tasks once modules exist in isolation)
 - Any rename or API change
-- Splitting `stats-wrapper.sh` itself (it's small)
+- Splitting `stats-wrapper.sh` itself (it's small at 189 lines)
