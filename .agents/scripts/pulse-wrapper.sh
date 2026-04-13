@@ -926,250 +926,144 @@ ROUTINE_STATE_FILE="${HOME}/.aidevops/.agent-workspace/routine-state.json"
 ROUTINE_SCHEDULE_HELPER="${SCRIPT_DIR}/routine-schedule-helper.sh"
 ROUTINE_LOG_HELPER="${SCRIPT_DIR}/routine-log-helper.sh"
 
-main() {
-	# GH#18670 (Fix 7 — session origin declaration): declare this process
-	# as headless BEFORE anything else runs, so every child shell stage
-	# (post-merge-review-scanner, pulse-triage consolidated-issue, pulse-
-	# dispatch-core simplification-debt, quality-debt-helper, etc.) sees
-	# the env var and detect_session_origin() returns "worker". Without
-	# this, shell stages running in the pulse wrapper's own process find
-	# no headless signal and default to "interactive" (shared-constants.sh
-	# line 796), which makes gh_create_issue label new issues with
-	# origin:interactive AND auto-assign the maintainer via
-	# _gh_wrapper_auto_assignee() — and then GH#18352's dedup guard
-	# (origin:interactive + maintainer assignee → blocked) drains the
-	# queue indefinitely. Placing the export at the very top of main()
-	# covers --self-check, all pulse stages, and any future stages that
-	# may be added. The scope is limited to main() so that callers
-	# sourcing pulse-wrapper.sh for testing (rather than executing main)
-	# do not inherit the env var. Child processes inherit it via normal
-	# POSIX env propagation. This is a declarative source-of-truth: the
-	# pulse KNOWS it is headless; we simply stop pretending otherwise.
-	export AIDEVOPS_HEADLESS=true
-
-	# Phase 0 (t1963, GH#18357): --self-check short-circuit for CI, pre-edit
-	# verification, and post-install smoke testing. Runs before any lock,
-	# state mutation, or side effect. Sources are already in place (the
-	# wrapper sources its helpers before main() is called), so by the time
-	# control reaches here every function the wrapper claims to define has
-	# been parsed.
-	#
-	# The canonical function set below covers every cluster identified in
-	# todo/plans/pulse-wrapper-decomposition.md §3. During extraction the
-	# cluster representatives stay stable but each phase appends a new
-	# _PULSE_<CLUSTER>_LOADED guard variable check so we catch modules that
-	# fail to source for any reason (missing file, syntax error, failed
-	# include-guard logic). Phase 0 has zero guards; they come online as
-	# Phases 1–10 land.
-	#
-	# Exit 0: self-check passed.
-	# Exit 1: at least one expected function or module guard is missing.
-	# GH#18614: scan all args so --self-check is detected regardless of position.
-	local _sc_flag=0
-	local _arg
-	for _arg in "$@"; do
-		if [[ "$_arg" == "--self-check" ]]; then
-			_sc_flag=1
-			break
+# ---------------------------------------------------------------------------
+# _pulse_execute_self_check
+#
+# Phase 0 (t1963, GH#18357): validate that all expected functions and module
+# include-guards are present. Extracted from main() (GH#18689) to reduce
+# cyclomatic complexity — the self-check body was ~100 lines inside main().
+#
+# Exit 0: all functions and guards present.
+# Exit 1: at least one expected symbol is missing (names printed to stderr).
+# ---------------------------------------------------------------------------
+_pulse_execute_self_check() {
+	local _sc_missing=()
+	local _sc_fn
+	local _sc_expected_fns=(
+		resolve_dispatch_model_for_labels
+		acquire_instance_lock
+		check_dedup
+		prefetch_state
+		_extract_frontmatter_field
+		check_external_contributor_pr
+		run_cmd_with_timeout
+		run_pulse
+		cleanup_worktrees
+		normalize_active_issue_assignments
+		issue_has_required_approval
+		run_weekly_complexity_scan
+		get_repo_path_by_slug
+		dispatch_with_dedup
+		_triage_content_hash
+		normalize_count_output
+		_ff_key
+		build_dependency_graph_cache
+		dispatch_deterministic_fill_floor
+		merge_ready_prs_all_repos
+		rotate_pulse_log
+		evaluate_routines
+		main
+		write_pulse_health_file
+		calculate_max_workers
+		dispatch_enrichment_workers
+		dispatch_triage_reviews
+		sync_todo_refs_for_repo
+		_pulse_execute_self_check
+		_pulse_handle_self_check
+		_pulse_setup_dry_run_mode
+		_pulse_run_deterministic_pipeline
+		_pulse_maybe_run_llm_supervisor
+	)
+	for _sc_fn in "${_sc_expected_fns[@]}"; do
+		if ! declare -F "$_sc_fn" >/dev/null 2>&1; then
+			_sc_missing+=("$_sc_fn")
 		fi
 	done
-	unset _arg
-	if [[ "$_sc_flag" -eq 1 ]]; then
-		local _sc_missing=()
-		local _sc_fn
-		local _sc_expected_fns=(
-			resolve_dispatch_model_for_labels
-			acquire_instance_lock
-			check_dedup
-			prefetch_state
-			_extract_frontmatter_field
-			check_external_contributor_pr
-			run_cmd_with_timeout
-			run_pulse
-			cleanup_worktrees
-			normalize_active_issue_assignments
-			issue_has_required_approval
-			run_weekly_complexity_scan
-			get_repo_path_by_slug
-			dispatch_with_dedup
-			_triage_content_hash
-			normalize_count_output
-			_ff_key
-			build_dependency_graph_cache
-			dispatch_deterministic_fill_floor
-			merge_ready_prs_all_repos
-			rotate_pulse_log
-			evaluate_routines
-			main
-			write_pulse_health_file
-			calculate_max_workers
-			dispatch_enrichment_workers
-			dispatch_triage_reviews
-			sync_todo_refs_for_repo
-		)
-		for _sc_fn in "${_sc_expected_fns[@]}"; do
-			if ! declare -F "$_sc_fn" >/dev/null 2>&1; then
-				_sc_missing+=("$_sc_fn")
-			fi
-		done
-		# Module include guards. Appended as each phase lands.
-		# Phase 1 (t1966, GH#18364): 5 leaf modules
-		# Phase 2 (t1967, GH#18367): 4 leaves with fan-in
-		# Phase 3 (t1971, GH#18372): 4 operational plumbing clusters
-		# Phase 4 (t1972, GH#18378): pr-gates + merge cycle co-extracted
-		# Phase 5 (t1973, GH#18380): cleanup + issue-reconcile extracted
-		# Phase 6 (t1974, GH#18382): simplification cluster (29 fns, largest)
-		# Phase 7 (t1975, GH#18385): prefetch cluster (26 fns)
-		# Phase 8 (t1976, GH#18387): triage cluster (10 fns)
-		# Phase 9 (t1977, GH#18389): dispatch-core + dispatch-engine (26 fns)
-		# Phase 10 (t1978, GH#18391): quality-debt + ancillary-dispatch (FINAL — clears 2K gate)
-		local _sc_expected_guards=(
-			_PULSE_MODEL_ROUTING_LOADED
-			_PULSE_INSTANCE_LOCK_LOADED
-			_PULSE_META_PARSE_LOADED
-			_PULSE_REPO_META_LOADED
-			_PULSE_ROUTINES_LOADED
-			_PULSE_QUEUE_GOVERNOR_LOADED
-			_PULSE_NMR_APPROVAL_LOADED
-			_PULSE_DEP_GRAPH_LOADED
-			_PULSE_FAST_FAIL_LOADED
-			_PULSE_CAPACITY_LOADED
-			_PULSE_LOGGING_LOADED
-			_PULSE_WATCHDOG_LOADED
-			_PULSE_CAPACITY_ALLOC_LOADED
-			_PULSE_MERGE_LOADED
-			_PULSE_CLEANUP_LOADED
-			_PULSE_ISSUE_RECONCILE_LOADED
-			_PULSE_SIMPLIFICATION_LOADED
-			_PULSE_SIMPLIFICATION_STATE_LOADED
-			_PULSE_PREFETCH_LOADED
-			_PULSE_TRIAGE_LOADED
-			_PULSE_DISPATCH_CORE_LOADED
-			_PULSE_DISPATCH_ENGINE_LOADED
-			_PULSE_QUALITY_DEBT_LOADED
-			_PULSE_ANCILLARY_DISPATCH_LOADED
-		)
-		local _sc_guard _sc_val
-		# The `${array[@]+"${array[@]}"}` pattern is safe under `set -u`
-		# when the array is empty — required in Phase 0 where no module
-		# guards exist yet.
-		# GH#18614: all guard names in _sc_expected_guards are simple scalar
-		# variables (e.g. _PULSE_MODEL_ROUTING_LOADED="1"). The indirect
-		# expansion ${!_sc_guard:-} is therefore safe — it will never silently
-		# read only the first element of an array. Never add array names to
-		# _sc_expected_guards; use a dedicated scalar for each module.
-		for _sc_guard in ${_sc_expected_guards[@]+"${_sc_expected_guards[@]}"}; do
-			_sc_val="${!_sc_guard:-}"
-			if [[ -z "$_sc_val" ]]; then
-				_sc_missing+=("${_sc_guard} (module not loaded)")
-			fi
-		done
-		if [[ ${#_sc_missing[@]} -eq 0 ]]; then
-			printf 'self-check: ok (%d canonical functions defined, %d module guards verified)\n' \
-				"${#_sc_expected_fns[@]}" "${#_sc_expected_guards[@]}"
-			return 0
-		fi
-		printf 'self-check: FAIL: %d missing:\n' "${#_sc_missing[@]}" >&2
-		local _sc_item
-		for _sc_item in "${_sc_missing[@]}"; do
-			printf '  - %s\n' "$_sc_item" >&2
-		done
-		return 1
-	fi
-
-	# Phase 0 (t1963, GH#18357): --dry-run flag sets PULSE_DRY_RUN=1 so the
-	# cycle can short-circuit before touching destructive operations. This
-	# smoke-tests bootstrap, sourcing, config validation, lock acquisition,
-	# and the main() prelude — the code paths most at risk during the
-	# phased decomposition — without dispatching workers, merging PRs,
-	# writing GitHub state, or removing worktrees.
-	#
-	# Phase 0 scope is narrow by design: --dry-run runs up to (but not
-	# through) _run_preflight_stages, which is where preflight cleanup and
-	# prefetch functions begin their real side effects. Later phases may
-	# widen --dry-run by shimming individual destructive call sites with a
-	# _dry_run_log() helper, allowing the preflight, merge pass, dispatch
-	# fill floor, and LLM session to exercise their full code paths
-	# without writing.
-	#
-	# USAGE NOTE: --dry-run still runs acquire_instance_lock, session_gate,
-	# and dedup — which means an active pulse or a live user session will
-	# cause --dry-run to short-circuit silently. For CI, post-install
-	# verification, and smoke tests, run --dry-run in a sandboxed $HOME:
-	#
-	#   SANDBOX=$(mktemp -d)
-	#   HOME="$SANDBOX/home" PULSE_JITTER_MAX=0 \
-	#     pulse-wrapper.sh --dry-run
-	#
-	# The sandbox ensures no collision with the live pulse's PID file,
-	# lock dir, or session flag.
-	# GH#18614: scan all args so --dry-run is detected regardless of position.
-	local _dr_arg
-	for _dr_arg in "$@"; do
-		if [[ "$_dr_arg" == "--dry-run" ]]; then
-			export PULSE_DRY_RUN=1
-			break
+	# Module include guards. Appended as each phase lands.
+	# Phase 1 (t1966, GH#18364): 5 leaf modules
+	# Phase 2 (t1967, GH#18367): 4 leaves with fan-in
+	# Phase 3 (t1971, GH#18372): 4 operational plumbing clusters
+	# Phase 4 (t1972, GH#18378): pr-gates + merge cycle co-extracted
+	# Phase 5 (t1973, GH#18380): cleanup + issue-reconcile extracted
+	# Phase 6 (t1974, GH#18382): simplification cluster (29 fns, largest)
+	# Phase 7 (t1975, GH#18385): prefetch cluster (26 fns)
+	# Phase 8 (t1976, GH#18387): triage cluster (10 fns)
+	# Phase 9 (t1977, GH#18389): dispatch-core + dispatch-engine (26 fns)
+	# Phase 10 (t1978, GH#18391): quality-debt + ancillary-dispatch (FINAL — clears 2K gate)
+	local _sc_expected_guards=(
+		_PULSE_MODEL_ROUTING_LOADED
+		_PULSE_INSTANCE_LOCK_LOADED
+		_PULSE_META_PARSE_LOADED
+		_PULSE_REPO_META_LOADED
+		_PULSE_ROUTINES_LOADED
+		_PULSE_QUEUE_GOVERNOR_LOADED
+		_PULSE_NMR_APPROVAL_LOADED
+		_PULSE_DEP_GRAPH_LOADED
+		_PULSE_FAST_FAIL_LOADED
+		_PULSE_CAPACITY_LOADED
+		_PULSE_LOGGING_LOADED
+		_PULSE_WATCHDOG_LOADED
+		_PULSE_CAPACITY_ALLOC_LOADED
+		_PULSE_MERGE_LOADED
+		_PULSE_CLEANUP_LOADED
+		_PULSE_ISSUE_RECONCILE_LOADED
+		_PULSE_SIMPLIFICATION_LOADED
+		_PULSE_SIMPLIFICATION_STATE_LOADED
+		_PULSE_PREFETCH_LOADED
+		_PULSE_TRIAGE_LOADED
+		_PULSE_DISPATCH_CORE_LOADED
+		_PULSE_DISPATCH_ENGINE_LOADED
+		_PULSE_QUALITY_DEBT_LOADED
+		_PULSE_ANCILLARY_DISPATCH_LOADED
+	)
+	local _sc_guard _sc_val
+	# The `${array[@]+"${array[@]}"}` pattern is safe under `set -u`
+	# when the array is empty — required in Phase 0 where no module
+	# guards exist yet.
+	# GH#18614: all guard names in _sc_expected_guards are simple scalar
+	# variables (e.g. _PULSE_MODEL_ROUTING_LOADED="1"). The indirect
+	# expansion ${!_sc_guard:-} is therefore safe — it will never silently
+	# read only the first element of an array. Never add array names to
+	# _sc_expected_guards; use a dedicated scalar for each module.
+	for _sc_guard in ${_sc_expected_guards[@]+"${_sc_expected_guards[@]}"}; do
+		_sc_val="${!_sc_guard:-}"
+		if [[ -z "$_sc_val" ]]; then
+			_sc_missing+=("${_sc_guard} (module not loaded)")
 		fi
 	done
-	unset _dr_arg
-
-	# GH#4513: Acquire exclusive instance lock FIRST — before any other
-	# check. Uses mkdir atomicity as the ONLY primitive (POSIX-guaranteed,
-	# works identically on macOS APFS/HFS+ and Linux ext4/btrfs/xfs).
-	#
-	# flock was removed in GH#18668 after recurring FD 9 inheritance
-	# deadlocks. bash has no built-in fcntl(F_SETFD, FD_CLOEXEC), so any
-	# persistent FD held by the parent is inherited by every daemonising
-	# descendant (git hooks, ancillary workers). See the module header of
-	# pulse-instance-lock.sh and reference/bash-fd-locking.md for history.
-	#
-	# Register EXIT trap BEFORE acquiring the lock so the lock is always
-	# released on exit — including set -e aborts, SIGTERM, and return paths.
-	# SIGKILL cannot be trapped; stale-lock detection handles that case.
-	trap 'release_instance_lock' EXIT
-
-	if ! acquire_instance_lock; then
+	if [[ ${#_sc_missing[@]} -eq 0 ]]; then
+		printf 'self-check: ok (%d canonical functions defined, %d module guards verified)\n' \
+			"${#_sc_expected_fns[@]}" "${#_sc_expected_guards[@]}"
 		return 0
 	fi
+	printf 'self-check: FAIL: %d missing:\n' "${#_sc_missing[@]}" >&2
+	local _sc_item
+	for _sc_item in "${_sc_missing[@]}"; do
+		printf '  - %s\n' "$_sc_item" >&2
+	done
+	return 1
+}
 
-	if ! check_session_gate; then
-		return 0
-	fi
-
-	if ! check_dedup; then
-		return 0
-	fi
-
-	# Rotate hot log to cold archive if over cap (t1886)
-	# Run before any log writes so the new cycle starts with a fresh hot log.
-	rotate_pulse_log || true
-
-	# Record cycle start for append_cycle_index duration tracking (t1886)
-	local _cycle_start_epoch
-	_cycle_start_epoch=$(date +%s)
-
-	# Phase 0 (t1963): --dry-run short-circuits here. Bootstrap, sourcing,
-	# config validation, lock acquisition, session gate, dedup guard, and
-	# log rotation have all run cleanly by this point — that is the Phase 0
-	# scope of the dry-run smoke test. Pre-flight stages below are skipped
-	# because they start touching worktrees, GitHub state, and process
-	# spawning. Later phases may shim those sites individually.
-	if [[ "${PULSE_DRY_RUN:-0}" == "1" ]]; then
-		printf 'dry-run: ok (bootstrap + sourcing + lock + session-gate + dedup + log-rotate exercised; pre-flight stages and beyond skipped)\n'
-		return 0
-	fi
-
-	# Run pre-flight stages (cleanup, prefetch, normalization)
-	if ! _run_preflight_stages; then
-		return 0
-	fi
-
-	# Re-check stop flag immediately before run_pulse() — a stop may have
-	# been issued during the prefetch/cleanup phase above (t2943)
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Stop flag appeared during setup — aborting before run_pulse()" >>"$LOGFILE"
-		return 0
-	fi
+# ---------------------------------------------------------------------------
+# _pulse_run_deterministic_pipeline
+#
+# Deterministic cycle stages: merge pass, dependency graph, blocked-status
+# refresh, fill floor, routine evaluation, health snapshot, cycle index, and
+# instance lock release. Extracted from main() (GH#18689) to reduce function
+# length below the 100-line threshold.
+#
+# Arguments:
+#   $1 — cycle_start_epoch (seconds since epoch, captured in main())
+#
+# Side effects:
+#   - merges ready PRs across all repos
+#   - writes health snapshot and cycle index JSONL record
+#   - releases the instance lock so the LLM session runs lock-free
+#
+# Exit code: always 0
+# ---------------------------------------------------------------------------
+_pulse_run_deterministic_pipeline() {
+	local cycle_start_epoch="$1"
 
 	# Deterministic merge pass: approve and merge all ready PRs across pulse
 	# repos. This runs BEFORE the LLM session because merging is free (no
@@ -1237,7 +1131,7 @@ main() {
 	# Append one JSONL record to the cycle index (t1886)
 	local _cycle_end_epoch
 	_cycle_end_epoch=$(date +%s)
-	local _cycle_duration=$((_cycle_end_epoch - _cycle_start_epoch))
+	local _cycle_duration=$((_cycle_end_epoch - cycle_start_epoch))
 	append_cycle_index "$_cycle_duration" || true
 
 	# Release the instance lock BEFORE the LLM session so the next 2-min
@@ -1246,20 +1140,30 @@ main() {
 	# and workers are protected by 7-layer dedup guards (assignee labels,
 	# DISPATCH_CLAIM comments, ledger checks). No risk of duplication.
 	release_instance_lock
+	return 0
+}
 
-	# Conditional LLM supervisor: the deterministic layer (merge pass, fill
-	# floor, stalled worker cleanup) handles the common case every cycle.
-	# The LLM supervisor adds value only for edge cases (CHANGES_REQUESTED
-	# PRs, external contributor triage, semantic dedup, stale coaching).
-	#
-	# Skip the LLM session unless:
-	#   1. Backlog is stalled (issue+PR count unchanged for PULSE_LLM_STALL_THRESHOLD)
-	#   2. Daily sweep is due (last LLM run was >24h ago)
-	#   3. PULSE_FORCE_LLM=1 is set (manual override)
-	#
-	# Trigger mode routing (GH#15287):
-	#   daily_sweep → /pulse-sweep (full edge-case triage, quality review, mission awareness)
-	#   stall / first_run → /pulse (lightweight dispatch+merge, unblocks the stall faster)
+# ---------------------------------------------------------------------------
+# _pulse_maybe_run_llm_supervisor
+#
+# Conditional LLM supervisor: the deterministic layer (merge pass, fill
+# floor, stalled worker cleanup) handles the common case every cycle.
+# The LLM supervisor adds value only for edge cases (CHANGES_REQUESTED
+# PRs, external contributor triage, semantic dedup, stale coaching).
+#
+# Skip the LLM session unless:
+#   1. Backlog is stalled (issue+PR count unchanged for PULSE_LLM_STALL_THRESHOLD)
+#   2. Daily sweep is due (last LLM run was >24h ago)
+#   3. PULSE_FORCE_LLM=1 is set (manual override)
+#
+# Trigger mode routing (GH#15287):
+#   daily_sweep → /pulse-sweep (full edge-case triage, quality review, mission awareness)
+#   stall / first_run → /pulse (lightweight dispatch+merge, unblocks the stall faster)
+#
+# Extracted from main() (GH#18689) to reduce function length.
+# Exit code: always 0
+# ---------------------------------------------------------------------------
+_pulse_maybe_run_llm_supervisor() {
 	local skip_llm=false
 	local llm_trigger_mode="stall"
 	if [[ "${PULSE_FORCE_LLM:-0}" != "1" ]] && ! _should_run_llm_supervisor; then
@@ -1303,6 +1207,160 @@ main() {
 			echo "[pulse-wrapper] LLM session already running (lock held) — skipping" >>"$LOGFILE"
 		fi
 	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_handle_self_check
+#
+# Phase 0 (t1963, GH#18357): --self-check short-circuit for CI, pre-edit
+# verification, and post-install smoke testing. Runs before any lock,
+# state mutation, or side effect. Sources are already in place (the
+# wrapper sources its helpers before main() is called), so by the time
+# control reaches here every function the wrapper claims to define has
+# been parsed.
+#
+# Scans "$@" for --self-check (GH#18614: position-independent).
+# Extracted from main() (GH#18689) to reduce function length.
+#
+# Returns:
+#   0 — --self-check found and all symbols verified (self-check passed)
+#   1 — --self-check found but one or more symbols missing (self-check failed)
+#   2 — --self-check not present; caller should continue normally
+# ---------------------------------------------------------------------------
+_pulse_handle_self_check() {
+	local _sc_flag=0
+	local _arg
+	for _arg in "$@"; do
+		if [[ "$_arg" == "--self-check" ]]; then
+			_sc_flag=1
+			break
+		fi
+	done
+	unset _arg
+	[[ "$_sc_flag" -eq 0 ]] && return 2
+	_pulse_execute_self_check
+	return $?
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_setup_dry_run_mode
+#
+# Phase 0 (t1963, GH#18357): --dry-run flag sets PULSE_DRY_RUN=1 so the
+# cycle can short-circuit before touching destructive operations. This
+# smoke-tests bootstrap, sourcing, config validation, lock acquisition,
+# and the main() prelude without dispatching workers, merging PRs,
+# writing GitHub state, or removing worktrees.
+#
+# Phase 0 scope is narrow by design: --dry-run runs up to (but not
+# through) _run_preflight_stages. Later phases may widen --dry-run by
+# shimming individual destructive call sites with a _dry_run_log() helper.
+#
+# USAGE NOTE: --dry-run still runs acquire_instance_lock, session_gate,
+# and dedup. For CI/smoke tests, run in a sandboxed $HOME:
+#   SANDBOX=$(mktemp -d)
+#   HOME="$SANDBOX/home" PULSE_JITTER_MAX=0 pulse-wrapper.sh --dry-run
+#
+# Scans "$@" for --dry-run (GH#18614: position-independent).
+# Extracted from main() (GH#18689) to reduce function length.
+# Exit code: always 0
+# ---------------------------------------------------------------------------
+_pulse_setup_dry_run_mode() {
+	local _dr_arg
+	for _dr_arg in "$@"; do
+		if [[ "$_dr_arg" == "--dry-run" ]]; then
+			export PULSE_DRY_RUN=1
+			break
+		fi
+	done
+	unset _dr_arg
+	return 0
+}
+
+main() {
+	# GH#18670: declare this process as headless BEFORE anything else runs
+	# so every child shell stage sees AIDEVOPS_HEADLESS and
+	# detect_session_origin() returns "worker". Without this, shell stages
+	# default to "interactive", label new issues with origin:interactive,
+	# and trigger GH#18352's dedup guard (origin:interactive + maintainer
+	# assignee → blocked), draining the queue indefinitely. Scoped to
+	# main() so callers sourcing pulse-wrapper.sh for testing do not
+	# inherit the env var.
+	export AIDEVOPS_HEADLESS=true
+
+	# GH#18689: --self-check and --dry-run arg scanning extracted to helpers.
+	local _sc_rc
+	_pulse_handle_self_check "$@"
+	_sc_rc=$?
+	[[ "$_sc_rc" -ne 2 ]] && return "$_sc_rc"
+	_pulse_setup_dry_run_mode "$@"
+
+	# GH#4513: Acquire exclusive instance lock FIRST — before any other
+	# check. Uses mkdir atomicity as the ONLY primitive (POSIX-guaranteed,
+	# works identically on macOS APFS/HFS+ and Linux ext4/btrfs/xfs).
+	#
+	# flock was removed in GH#18668 after recurring FD 9 inheritance
+	# deadlocks. bash has no built-in fcntl(F_SETFD, FD_CLOEXEC), so any
+	# persistent FD held by the parent is inherited by every daemonising
+	# descendant (git hooks, ancillary workers). See the module header of
+	# pulse-instance-lock.sh and reference/bash-fd-locking.md for history.
+	#
+	# Register EXIT trap BEFORE acquiring the lock so the lock is always
+	# released on exit — including set -e aborts, SIGTERM, and return paths.
+	# SIGKILL cannot be trapped; stale-lock detection handles that case.
+	trap 'release_instance_lock' EXIT
+
+	if ! acquire_instance_lock; then
+		return 0
+	fi
+
+	if ! check_session_gate; then
+		return 0
+	fi
+
+	if ! check_dedup; then
+		return 0
+	fi
+
+	# Rotate hot log to cold archive if over cap (t1886)
+	# Run before any log writes so the new cycle starts with a fresh hot log.
+	rotate_pulse_log || true
+
+	# Record cycle start for append_cycle_index duration tracking (t1886)
+	local _cycle_start_epoch
+	_cycle_start_epoch=$(date +%s)
+
+	# Phase 0 (t1963): --dry-run short-circuits here. Bootstrap, sourcing,
+	# config validation, lock acquisition, session gate, dedup guard, and
+	# log rotation have all run cleanly by this point — that is the Phase 0
+	# scope of the dry-run smoke test. Pre-flight stages below are skipped
+	# because they start touching worktrees, GitHub state, and process
+	# spawning. Later phases may shim those sites individually.
+	if [[ "${PULSE_DRY_RUN:-0}" == "1" ]]; then
+		printf 'dry-run: ok (bootstrap + sourcing + lock + session-gate + dedup + log-rotate exercised; pre-flight stages and beyond skipped)\n'
+		return 0
+	fi
+
+	# Run pre-flight stages (cleanup, prefetch, normalization)
+	if ! _run_preflight_stages; then
+		return 0
+	fi
+
+	# Re-check stop flag immediately before run_pulse() — a stop may have
+	# been issued during the prefetch/cleanup phase above (t2943)
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared during setup — aborting before run_pulse()" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Run deterministic pipeline: merge pass, dep graph, blocked-status
+	# refresh, fill floor, routine evaluation, health snapshot, cycle index,
+	# and instance lock release. GH#18689: extracted to helper.
+	_pulse_run_deterministic_pipeline "$_cycle_start_epoch"
+
+	# Run LLM supervisor if stall/daily-sweep/force conditions are met.
+	# GH#18689: extracted to _pulse_maybe_run_llm_supervisor().
+	_pulse_maybe_run_llm_supervisor
 
 	return 0
 }
