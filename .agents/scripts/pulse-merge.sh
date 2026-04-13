@@ -941,6 +941,78 @@ _extract_merge_summary() {
 }
 
 #######################################
+# GH#18650 (Fix 4): Post a one-time rebase nudge on an origin:interactive
+# CONFLICTING PR that the pulse is about to skip.
+#
+# Rationale: the merge pass correctly refuses to auto-close origin:interactive
+# PRs (GH#18285 — maintainer session work is theirs to own), but without any
+# counterforce the CONFLICTING state persists and the PR rots silently. The
+# maintainer sees nothing in their inbox and only discovers the stuck PR
+# when they manually check `gh pr list`. This nudge surfaces the stuck state
+# on the PR itself, where GitHub's notification system will ping the author.
+#
+# Idempotent via _gh_idempotent_comment marker — posted once per PR lifetime.
+# If the PR is updated and still conflicts, the nudge does NOT repeat. Workers
+# and humans who care about the PR will see it in the timeline.
+#
+# Fail-open: missing helpers or API errors never block the merge pass. The
+# nudge is best-effort operational plumbing.
+#
+# Args:
+#   $1 - pr_number
+#   $2 - repo_slug (owner/repo)
+#######################################
+_post_rebase_nudge_on_interactive_conflicting() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
+
+	# _gh_idempotent_comment is defined in pulse-triage.sh which is sourced
+	# after pulse-merge.sh; bash resolves function names at call time so
+	# this works at runtime. Skip if for some reason the helper is absent
+	# (e.g., out-of-order standalone execution).
+	if ! declare -F _gh_idempotent_comment >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _post_rebase_nudge_on_interactive_conflicting: _gh_idempotent_comment not defined — skipping nudge for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	local head_branch
+	head_branch=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json headRefName --jq '.headRefName' 2>/dev/null) || head_branch="<branch>"
+	[[ -n "$head_branch" ]] || head_branch="<branch>"
+
+	local marker="<!-- pulse-rebase-nudge -->"
+	local nudge_body
+	nudge_body="${marker}
+## Rebase needed — branch has diverged from \`main\`
+
+This \`origin:interactive\` PR has merge conflicts against \`main\`. The pulse merge pass skips auto-close on maintainer session work (GH#18285), but there is no automated path to resolve conflicts on behalf of a human author — this PR needs your attention.
+
+### To resolve
+
+From a terminal (not a chat session):
+
+\`\`\`bash
+wt switch ${head_branch}
+git pull --rebase origin main
+# resolve any conflicts, then:
+git push --force-with-lease
+\`\`\`
+
+Or use the GitHub web UI's *Update branch* button if the conflicts are trivial enough for GitHub's web merger.
+
+### Why you're seeing this
+
+Every pulse cycle the deterministic merge pass evaluates open PRs and auto-closes \`CONFLICTING\` ones that have no clear owner. \`origin:interactive\` PRs are explicitly protected from that path, which is correct for active maintainer work but left them to rot silently in the queue. This nudge is posted exactly once per PR so the stuck state surfaces in your inbox. If the PR still conflicts after you think you've rebased, the nudge will NOT repeat — re-check manually via \`gh pr view ${pr_number}\`.
+
+<sub>Posted automatically by \`pulse-merge.sh\` (GH#18650 / Fix 4 of the 2026-04-13 dispatch-unblocker pass).</sub>"
+
+	_gh_idempotent_comment "$pr_number" "$repo_slug" "$marker" "$nudge_body" "pr" || true
+	return 0
+}
+
+#######################################
 # Close a conflicting PR with audit comment.
 #
 # GH#17574: Before saying "remains open for re-attempt", check if the
@@ -966,6 +1038,12 @@ _close_conflicting_pr() {
 		--json labels --jq '.labels[].name' 2>/dev/null || true)
 	if printf '%s' "$pr_labels" | grep -q 'origin:interactive'; then
 		echo "[pulse-wrapper] Deterministic merge: skipping auto-close of origin:interactive PR #${pr_number} — maintainer session work is never auto-closed" >>"$LOGFILE"
+		# GH#18650 (Fix 4): post a one-time rebase nudge so the maintainer
+		# has a visible signal that their CONFLICTING PR needs manual
+		# attention. Without this, interactive CONFLICTING PRs rot
+		# silently — the pulse log keeps skipping them every cycle but
+		# the maintainer never sees the signal.
+		_post_rebase_nudge_on_interactive_conflicting "$pr_number" "$repo_slug"
 		return 0
 	fi
 
