@@ -703,36 +703,66 @@ jobs:
       issues: write
 
     steps:
-      - name: Enforce bot-only origin:worker label (GH#18197)
+      - name: Enforce bot-only origin:worker label (GH#18197, widened for repo owner GH#18684)
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ACTION: ${{ github.event.action }}
           ACTOR: ${{ github.actor }}
           REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "origin:worker label $ACTION on issue #$ISSUE_NUMBER by $ACTOR"
+          echo "origin:worker label $ACTION on issue #$ISSUE_NUMBER by $ACTOR (repo owner: $REPO_OWNER)"
 
-          # Only github-actions[bot] may add or remove this label.
+          # ALLOWLIST: who may add or remove origin:worker.
+          #
+          # 1. github-actions[bot] — the original allowlist from GH#18197.
+          #    Covers server-side CI workflows that label issues (e.g.
+          #    issue-triage-gate.yml assigning origin:worker to non-
+          #    maintainer-authored issues).
+          #
+          # 2. The repository owner — added by GH#18670. The aidevops
+          #    pulse runs on the maintainer's local machine authenticated
+          #    as the owner's personal token, not as github-actions[bot].
+          #    When the pulse creates issues via gh_create_issue under
+          #    AIDEVOPS_HEADLESS=true, it correctly applies origin:worker
+          #    — but this server-side protection was stripping the label
+          #    on every application because the actor was the owner, not
+          #    the bot. The owner has unambiguous repo authority and
+          #    cannot be a "forger". Adding the repo owner to the
+          #    allowlist restores the intent of the protection: block
+          #    external contributors from forging origin:worker to bypass
+          #    the assignee gate, while allowing the legitimate automation
+          #    pipeline (which runs as the owner) to apply it.
+          #
+          # Non-allowlisted contributors (COLLABORATOR, CONTRIBUTOR, NONE)
+          # are still blocked — they cannot apply origin:worker. The
+          # contributor-forge guarantee from GH#18197 is preserved.
           if [[ "$ACTOR" == "github-actions[bot]" ]] || [[ "$ACTOR" == "github-actions" ]]; then
             echo "ALLOWED: GitHub Actions bot — origin:worker label change accepted"
             exit 0
           fi
+          if [[ -n "$REPO_OWNER" && "$ACTOR" == "$REPO_OWNER" ]]; then
+            echo "ALLOWED: repository owner ($ACTOR) — origin:worker label change accepted (GH#18684)"
+            exit 0
+          fi
 
-          echo "DENIED: $ACTOR is not the bot — reversing origin:worker label $ACTION"
+          echo "DENIED: $ACTOR is not in the allowlist — reversing origin:worker label $ACTION"
 
           if [[ "$ACTION" == "labeled" ]]; then
-            # Non-bot added the label — remove it
+            # Non-allowlisted actor added the label — remove it
             gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label "origin:worker"
-            NOTICE="The \`origin:worker\` label was removed automatically. This label is reserved for issues created by the automation pipeline and cannot be applied manually."
+            NOTICE="The \`origin:worker\` label was removed automatically. This label is reserved for issues created by the automation pipeline and cannot be applied by non-maintainer contributors."
           else
-            # Non-bot removed the label — re-apply it only if the issue was bot-authored
+            # Non-allowlisted actor removed the label — re-apply it only if
+            # the issue was authored by the bot OR the repo owner (both
+            # valid pulse authorship paths).
             ISSUE_AUTHOR=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '.user.login' 2>/dev/null || echo "unknown")
-            if [[ "$ISSUE_AUTHOR" == "github-actions[bot]" ]]; then
+            if [[ "$ISSUE_AUTHOR" == "github-actions[bot]" ]] || [[ "$ISSUE_AUTHOR" == "$REPO_OWNER" ]]; then
               gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "origin:worker"
-              NOTICE="The \`origin:worker\` label was re-applied automatically. This issue was created by the automation pipeline and its provenance label cannot be removed manually."
+              NOTICE="The \`origin:worker\` label was re-applied automatically. This issue was created by the automation pipeline and its provenance label cannot be removed by non-maintainer contributors."
             else
-              echo "Issue #$ISSUE_NUMBER was not bot-authored — skipping re-apply"
+              echo "Issue #$ISSUE_NUMBER was not bot- or owner-authored — skipping re-apply"
               exit 0
             fi
           fi
