@@ -947,9 +947,20 @@ cmd_merge() {
 	# the base-branch-policy error, retry once with `--admin`. Any other
 	# failure is surfaced as-is (no blind --admin escalation).
 	print_info "Merging PR #${pr_number} in ${repo} (${merge_method})..."
-	local _merge_out _merge_rc
-	_merge_out=$(gh pr merge "$pr_number" --repo "$repo" "$merge_method" 2>&1)
-	_merge_rc=$?
+	# Capture output AND exit code under `set -e`. A bare assignment
+	# `_merge_out=$(failing_cmd)` triggers errexit before we reach
+	# `_merge_rc=$?`, so the function exits silently on the first plain-
+	# merge failure and the --admin fallback never runs. The if-form
+	# keeps both available. This is the GH#18538 follow-up to PR #18748,
+	# which shipped the bare-assignment form and was bug-verified
+	# end-to-end (the fallback only worked when run from a worktree with
+	# this fix applied locally before commit).
+	local _merge_out _merge_rc=0
+	if _merge_out=$(gh pr merge "$pr_number" --repo "$repo" "$merge_method" 2>&1); then
+		_merge_rc=0
+	else
+		_merge_rc=$?
+	fi
 	if [[ $_merge_rc -ne 0 ]]; then
 		printf '%s\n' "$_merge_out"
 		if printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
