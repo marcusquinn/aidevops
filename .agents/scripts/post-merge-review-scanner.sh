@@ -131,6 +131,15 @@ parse_repo_slug() {
 # decide whether the finding still applies and to render it as actionable
 # markdown.
 #
+# Exit codes:
+#   0  — success (JSON response emitted to stdout)
+#   2  — fetch/parse error (gh call failed or returned non-JSON).
+#        Callers MUST distinguish rc 0 (fetch OK, possibly no threads) from
+#        rc 2 (fetch failed) — the former means "no findings", the latter
+#        means "we have no data and cannot decide". Collapsing them into a
+#        single "no findings" outcome risks silently closing valid review-
+#        followup issues on transient GitHub/jq errors (CodeRabbit CR #18736).
+#
 # Why GraphQL over REST /pulls/:pr/comments:
 #   - REST does not expose thread state — we'd have to fall back to per-bot
 #     marker detection (CodeRabbit "Addressed in commit X"), which misses
@@ -143,11 +152,12 @@ fetch_review_threads_json() {
 	local repo="$1" pr="$2"
 	local owner name
 	parse_repo_slug "$repo" owner name
+	local resp rc=0
 	# SC2016: the $owner/$name/$pr tokens inside this heredoc are GraphQL
 	# variables, not bash variables. The single-quoting is required so
 	# they reach the GraphQL server unexpanded.
 	# shellcheck disable=SC2016
-	gh api graphql \
+	resp=$(gh api graphql \
 		-F owner="$owner" -F name="$name" -F pr="$pr" \
 		-f query='
 			query($owner: String!, $name: String!, $pr: Int!) {
@@ -172,7 +182,18 @@ fetch_review_threads_json() {
 					}
 				}
 			}
-		' 2>/dev/null || echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
+		' 2>/dev/null) || rc=$?
+	if [[ $rc -ne 0 ]]; then
+		log "fetch_review_threads_json: gh graphql failed for ${repo}#${pr} (rc=${rc})"
+		return 2
+	fi
+	# Validate the response is shaped as expected. If the API returned an
+	# error object instead of data, treat it as a fetch failure.
+	if ! printf '%s' "$resp" | jq -e '.data.repository.pullRequest.reviewThreads' >/dev/null 2>&1; then
+		log "fetch_review_threads_json: malformed response for ${repo}#${pr}"
+		return 2
+	fi
+	printf '%s' "$resp"
 	return 0
 }
 
@@ -187,15 +208,21 @@ fetch_review_threads_json() {
 #   - Thread must not be outdated (isOutdated == false)
 #   - First comment author must match BOT_RE
 #
-# Output: empty string if no unresolved findings; otherwise a series of
-# markdown blocks joined by blank lines.
+# Exit codes:
+#   0  — success (stdout is markdown; empty string = no unresolved findings)
+#   2  — fetch error (propagated from fetch_review_threads_json or jq failure)
 fetch_inline_comments_md() {
 	local repo="$1" pr="$2"
-	fetch_review_threads_json "$repo" "$pr" |
-		jq -r \
-			--arg bots "$BOT_RE" \
-			--argjson cap "$SCANNER_MAX_COMMENTS" \
-			--argjson hunk "$SCANNER_DIFFHUNK_LINES" '
+	local json rc=0
+	json=$(fetch_review_threads_json "$repo" "$pr") || rc=$?
+	if [[ $rc -ne 0 ]]; then
+		return 2
+	fi
+	local out
+	out=$(printf '%s' "$json" | jq -r \
+		--arg bots "$BOT_RE" \
+		--argjson cap "$SCANNER_MAX_COMMENTS" \
+		--argjson hunk "$SCANNER_DIFFHUNK_LINES" '
 			[.data.repository.pullRequest.reviewThreads.nodes[]?
 				| select((.isResolved // false) == false)
 				| select((.isOutdated // false) == false)
@@ -221,7 +248,11 @@ fetch_inline_comments_md() {
 					+ "\n"
 				) | join("\n")
 			end
-		' 2>/dev/null || true
+		' 2>/dev/null) || {
+		log "fetch_inline_comments_md: jq failed on ${repo}#${pr}"
+		return 2
+	}
+	printf '%s' "$out"
 	return 0
 }
 
@@ -240,13 +271,23 @@ fetch_inline_comments_md() {
 #     and adds <details> wrapper noise.
 #   - Body must contain at least one ACT_RE keyword (cheap noise filter
 #     against "LGTM"/"Reviewed" acks).
+#
+# Exit codes:
+#   0  — success (stdout is markdown; empty string = no bot summaries)
+#   2  — fetch error (gh call failed or jq failure)
 fetch_review_summaries_md() {
 	local repo="$1" pr="$2"
-	gh api "repos/${repo}/pulls/${pr}/reviews" --paginate 2>/dev/null |
-		jq -r \
-			--arg bots "$BOT_RE" \
-			--arg acts "$ACT_RE" \
-			--argjson cap "$SCANNER_MAX_COMMENTS" '
+	local resp rc=0
+	resp=$(gh api "repos/${repo}/pulls/${pr}/reviews" --paginate 2>/dev/null) || rc=$?
+	if [[ $rc -ne 0 ]]; then
+		log "fetch_review_summaries_md: gh api failed for ${repo}#${pr} (rc=${rc})"
+		return 2
+	fi
+	local out
+	out=$(printf '%s' "$resp" | jq -r \
+		--arg bots "$BOT_RE" \
+		--arg acts "$ACT_RE" \
+		--argjson cap "$SCANNER_MAX_COMMENTS" '
 			[.[]?
 				| select(((.user.login // "")) | test($bots; "i"))
 				| select(((.body // "")) | length > 0)
@@ -266,7 +307,11 @@ fetch_review_summaries_md() {
 					+ "\n"
 				) | join("\n")
 			end
-		' 2>/dev/null || true
+		' 2>/dev/null) || {
+		log "fetch_review_summaries_md: jq failed on ${repo}#${pr}"
+		return 2
+	}
+	printf '%s' "$out"
 	return 0
 }
 
@@ -277,10 +322,19 @@ fetch_review_summaries_md() {
 # Uses the same GraphQL thread source as fetch_inline_comments_md so the
 # file list stays in sync with the rendered comments (no phantom refs
 # from resolved threads).
+#
+# Exit codes:
+#   0  — success (stdout is markdown; empty string = no file refs)
+#   2  — fetch error (propagated from fetch_review_threads_json or jq failure)
 fetch_file_refs_md() {
 	local repo="$1" pr="$2"
-	fetch_review_threads_json "$repo" "$pr" |
-		jq -r --arg bots "$BOT_RE" '
+	local json rc=0
+	json=$(fetch_review_threads_json "$repo" "$pr") || rc=$?
+	if [[ $rc -ne 0 ]]; then
+		return 2
+	fi
+	local out
+	out=$(printf '%s' "$json" | jq -r --arg bots "$BOT_RE" '
 			[.data.repository.pullRequest.reviewThreads.nodes[]?
 				| select((.isResolved // false) == false)
 				| select((.isOutdated // false) == false)
@@ -290,18 +344,44 @@ fetch_file_refs_md() {
 				| select(.path != null)
 				| "- `\(.path):\(.line // "?")`"
 			] | unique | .[]
-		' 2>/dev/null || true
+		' 2>/dev/null) || {
+		log "fetch_file_refs_md: jq failed on ${repo}#${pr}"
+		return 2
+	}
+	printf '%s' "$out"
 	return 0
 }
 
 # Build a worker-actionable issue body for a PR's unaddressed bot feedback.
-# Returns 1 (and prints nothing) if there's no actionable content.
+#
+# Exit codes:
+#   0  — success (body printed to stdout)
+#   1  — no actionable content (all threads resolved/outdated, no bot
+#        summaries). Sentinel that callers — notably do_refresh — use to
+#        decide whether to close a follow-up issue as superseded.
+#   2  — fetch error (one or more helpers failed). Callers MUST NOT treat
+#        this as "no findings" — it means we do not have enough data to
+#        decide, and proceeding risks closing valid follow-up issues.
+#
+# This 3-valued return is important for do_refresh correctness: a
+# transient GitHub/jq failure would otherwise auto-close still-valid
+# follow-up issues on the next refresh run. See PR #18736 CodeRabbit
+# feedback for the original report.
 build_pr_followup_body() {
 	local repo="$1" pr="$2"
 	local inline review file_refs refs_section
-	inline=$(fetch_inline_comments_md "$repo" "$pr")
-	review=$(fetch_review_summaries_md "$repo" "$pr")
-	file_refs=$(fetch_file_refs_md "$repo" "$pr")
+	local inline_rc=0 review_rc=0 refs_rc=0
+	inline=$(fetch_inline_comments_md "$repo" "$pr") || inline_rc=$?
+	review=$(fetch_review_summaries_md "$repo" "$pr") || review_rc=$?
+	file_refs=$(fetch_file_refs_md "$repo" "$pr") || refs_rc=$?
+
+	# Any fetch error → refuse to produce a body. Callers get rc=2 and
+	# must log + skip (not close). This prevents closing valid issues on
+	# transient errors.
+	if [[ $inline_rc -ne 0 || $review_rc -ne 0 || $refs_rc -ne 0 ]]; then
+		log "build_pr_followup_body: fetch error for ${repo}#${pr} (inline=${inline_rc} review=${review_rc} refs=${refs_rc})"
+		return 2
+	fi
 
 	if [[ -z "$inline" && -z "$review" ]]; then
 		return 1
@@ -515,11 +595,21 @@ do_scan() {
 			log "PR #${pr}: issue exists, skip (use 'refresh' to rewrite)"
 			continue
 		fi
-		local body
-		body=$(build_pr_followup_body "$repo" "$pr") || {
+		local body=""
+		local build_rc=0
+		body=$(build_pr_followup_body "$repo" "$pr") || build_rc=$?
+		if [[ "$build_rc" -eq 1 ]]; then
 			log "PR #${pr}: no actionable bot feedback, skip"
 			continue
-		}
+		fi
+		if [[ "$build_rc" -eq 2 ]]; then
+			log "PR #${pr}: fetch error, skip (will retry next scan)"
+			continue
+		fi
+		if [[ -z "$body" ]]; then
+			log "PR #${pr}: inconsistent state (rc=0 but empty body), skip"
+			continue
+		fi
 		local pr_title
 		pr_title=$(gh pr view "$pr" --repo "$repo" --json title --jq '.title' || echo "Unknown")
 		log "PR #${pr}: creating issue"
@@ -573,13 +663,24 @@ do_refresh() {
 		local build_rc=0
 		new_body=$(build_pr_followup_body "$repo" "$pr") || build_rc=$?
 
-		if [[ "$build_rc" -ne 0 || -z "$new_body" ]]; then
-			# All findings resolved/outdated — close the issue.
+		# IMPORTANT (CodeRabbit CR on PR #18736): only close on the
+		# explicit no-findings sentinel (rc=1). Any other non-zero is a
+		# fetch error (rc=2) — log it and skip so we don't auto-close
+		# still-valid follow-up issues on transient GitHub/jq failures.
+		if [[ "$build_rc" -eq 2 ]]; then
+			log "issue #${issue_number}: fetch error building body for PR #${pr}, skip (will retry next refresh)"
+			skipped=$((skipped + 1))
+			continue
+		fi
+
+		if [[ "$build_rc" -eq 1 ]]; then
+			# Explicit no-findings sentinel — all findings resolved or
+			# outdated. Safe to close the follow-up issue.
 			local close_comment="All review findings on PR #${pr} are now resolved or outdated according to GitHub's review-thread state (isResolved or isOutdated == true). Closing as superseded by the GraphQL resolution filter.
 
 If any finding was missed, reopen this issue manually with a comment pointing at the specific thread — that feedback trains the next session on whether the filter needs tightening.
 
-_Refreshed by \`post-merge-review-scanner.sh refresh\` (t2052)._"
+_Refreshed by \`post-merge-review-scanner.sh refresh\` (t2054)._"
 
 			if [[ "$dry_run" == "true" ]]; then
 				log "[DRY-RUN] issue #${issue_number}: would close (PR #${pr} has no unresolved findings)"
@@ -593,6 +694,16 @@ _Refreshed by \`post-merge-review-scanner.sh refresh\` (t2052)._"
 					skipped=$((skipped + 1))
 				fi
 			fi
+			continue
+		fi
+
+		# Paranoid guard: rc=0 but empty body should never happen if
+		# build_pr_followup_body is correct, but if it does, log it and
+		# skip rather than silently closing or silently updating with
+		# empty content.
+		if [[ -z "$new_body" ]]; then
+			log "issue #${issue_number}: inconsistent state (rc=0 but empty body) for PR #${pr}, skip"
+			skipped=$((skipped + 1))
 			continue
 		fi
 

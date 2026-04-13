@@ -291,7 +291,16 @@ write_reviews_fixture "$FIX_REVIEWS"
 rc=0
 out=$(build_pr_followup_body "stub/repo" "42") || rc=$?
 assert_rc "returns exit 1 when all threads resolved" "1" "$rc"
-assert_contains "prints empty body when all resolved" "" "${out:-}"
+# Explicit emptiness check: `assert_contains ... ""` with an empty needle
+# is a no-op (CodeRabbit CR on PR #18736). Verify length directly.
+if [[ -z "${out:-}" ]]; then
+	echo "  PASS: prints empty body when all resolved"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: prints empty body when all resolved"
+	echo "    actual (first 200): ${out:0:200}"
+	FAIL=$((FAIL + 1))
+fi
 
 echo ""
 echo "Test: build_pr_followup_body — all threads outdated → exit 1"
@@ -440,6 +449,131 @@ rc=0
 out=$(do_refresh "stub/repo" "true" 2>&1) || rc=$?
 assert_rc "refresh skips malformed title without erroring" "0" "$rc"
 assert_contains "refresh logs malformed title skip" "cannot extract PR number" "$out"
+
+# -----------------------------------------------------------------------------
+# Error-propagation tests (CodeRabbit CR on PR #18736)
+#
+# These tests use a second gh stub that unconditionally fails, to
+# simulate transient GitHub / jq errors. The contract:
+#   - fetch_* helpers return rc=2 on fetch failure
+#   - build_pr_followup_body propagates rc=2
+#   - do_refresh with rc=2 logs "fetch error" and SKIPS (does NOT close)
+#   - do_scan with rc=2 logs "fetch error" and skips (does NOT create)
+# -----------------------------------------------------------------------------
+
+# Install a failing gh stub for error-path tests. Restored after each test.
+install_failing_gh() {
+	cat >"${STUB_BIN}/gh" <<'FAIL_STUB_EOF'
+#!/usr/bin/env bash
+# Always fail except for `gh issue list` (which returns valid JSON so
+# do_refresh can enter its loop and then hit the build failure).
+cmd="${1:-}"
+sub="${2:-}"
+if [[ "$cmd" == "issue" && "$sub" == "list" ]]; then
+	if [[ -n "${FIX_ISSUE_LIST:-}" && -f "$FIX_ISSUE_LIST" ]]; then
+		cat "$FIX_ISSUE_LIST"
+	else
+		echo '[]'
+	fi
+	exit 0
+fi
+echo "gh stub: simulated failure for $cmd $sub" >&2
+exit 1
+FAIL_STUB_EOF
+	chmod +x "${STUB_BIN}/gh"
+}
+
+install_ok_gh() {
+	# Restore the happy-path stub. (This is the one written at the top of
+	# the file via the STUB_EOF heredoc — rewrite it here for symmetry.)
+	cat >"${STUB_BIN}/gh" <<'OK_STUB_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+sub="${2:-}"
+case "$cmd" in
+api)
+	case "$sub" in
+	graphql) [[ -f "${FIX_GRAPHQL:-/dev/null}" ]] && cat "$FIX_GRAPHQL" || echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
+	*pulls*/reviews*) [[ -f "${FIX_REVIEWS:-/dev/null}" ]] && cat "$FIX_REVIEWS" || echo '[]' ;;
+	*pulls*/comments*) [[ -f "${FIX_COMMENTS:-/dev/null}" ]] && cat "$FIX_COMMENTS" || echo '[]' ;;
+	*) echo '{}' ;;
+	esac ;;
+issue)
+	case "$sub" in
+	list) [[ -f "${FIX_ISSUE_LIST:-/dev/null}" ]] && cat "$FIX_ISSUE_LIST" || echo '[]' ;;
+	edit | close | create) echo "STUB gh issue $sub $*" >&2 ;;
+	*) echo '[]' ;;
+	esac ;;
+label) exit 0 ;;
+pr)
+	case "$sub" in
+	list) echo '[]' ;;
+	view) echo '{"title":"stub pr title"}' ;;
+	esac ;;
+repo) echo 'stub/repo' ;;
+*) echo "stub gh: unhandled: $cmd $sub $*" >&2; exit 1 ;;
+esac
+OK_STUB_EOF
+	chmod +x "${STUB_BIN}/gh"
+}
+
+echo ""
+echo "Test: fetch_review_threads_json — gh failure returns exit 2"
+install_failing_gh
+rc=0
+fetch_review_threads_json "stub/repo" "42" >/dev/null 2>&1 || rc=$?
+assert_rc "fetch_review_threads_json propagates gh failure" "2" "$rc"
+
+echo ""
+echo "Test: build_pr_followup_body — fetch error returns exit 2 (NOT 1)"
+# rc=2 is the critical signal: callers must NOT treat it as "no findings".
+rc=0
+out=$(build_pr_followup_body "stub/repo" "42" 2>&1) || rc=$?
+assert_rc "build_pr_followup_body returns exit 2 on fetch error" "2" "$rc"
+
+echo ""
+echo "Test: do_refresh — fetch error logs 'fetch error' and does NOT close"
+# A stale review-followup issue exists; the fetch fails. do_refresh must
+# SKIP it, not close it. This is the crux of the CodeRabbit finding:
+# conflating rc=1 (no findings) with rc=2 (fetch error) would auto-close
+# valid follow-up issues on transient GitHub outages.
+jq -n '[{number: 999, title: "Review followup: PR #123 — transient fetch error target", body: "old body"}]' >"$FIX_ISSUE_LIST"
+rc=0
+out=$(do_refresh "stub/repo" "true" 2>&1) || rc=$?
+assert_rc "do_refresh returns 0 when fetch fails" "0" "$rc"
+assert_contains "do_refresh logs fetch-error skip" "fetch error" "$out"
+assert_not_contains "do_refresh does NOT flag for close on fetch error" "would close" "$out"
+assert_not_contains "do_refresh does NOT actually close on fetch error" "STUB gh issue close" "$out"
+
+echo ""
+echo "Test: do_scan — fetch error logs 'fetch error' and does NOT create issue"
+# Point do_scan at a real-ish PR list with a failing graphql helper.
+# We need gh pr list to work (returns 1 PR) but the per-PR graphql to fail.
+cat >"${STUB_BIN}/gh" <<'MIXED_STUB_EOF'
+#!/usr/bin/env bash
+cmd="${1:-}"; sub="${2:-}"
+case "$cmd $sub" in
+"pr list") echo '[{"number":42}]' ;;
+"api graphql") echo "simulated graphql failure" >&2; exit 1 ;;
+"api repos"*) echo '[]' ;;
+"issue list") echo '[]' ;;
+"pr view") echo '{"title":"stub"}' ;;
+"repo view") echo 'stub/repo' ;;
+"label create") exit 0 ;;
+*) exit 0 ;;
+esac
+MIXED_STUB_EOF
+chmod +x "${STUB_BIN}/gh"
+
+rc=0
+out=$(do_scan "stub/repo" "true" 2>&1) || rc=$?
+assert_rc "do_scan returns 0 on fetch error" "0" "$rc"
+assert_contains "do_scan logs fetch-error skip" "fetch error" "$out"
+assert_not_contains "do_scan does NOT flag for creation on fetch error" "Would create" "$out"
+
+# Restore happy-path stub for any future tests
+install_ok_gh
 
 # -----------------------------------------------------------------------------
 # Report
