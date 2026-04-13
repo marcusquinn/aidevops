@@ -708,21 +708,152 @@ cmd_push() {
 	return 0
 }
 
+# _enrich_build_task_list: collect task IDs to enrich — single target or all
+# TODO tasks that already have a ref:GH# number. Outputs one task ID per line.
+_enrich_build_task_list() {
+	local target_task="$1" todo_file="$2"
+	if [[ -n "$target_task" ]]; then
+		echo "$target_task"
+		return 0
+	fi
+	while IFS= read -r line; do
+		local tid
+		tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+		[[ -n "$tid" ]] && echo "$tid"
+	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
+	return 0
+}
+
+# _enrich_apply_labels: add labels, reconcile stale ones, then apply tier label
+# via replace-not-append (t2012). Skips add when labels is empty.
+# add_ok gates reconciliation to avoid destructive removal after transient API
+# failures (GH#17402 CR fix).
+_enrich_apply_labels() {
+	local repo="$1" num="$2" labels="$3" tier_label="$4"
+	local add_ok=true
+	if [[ -n "$labels" ]]; then
+		ensure_labels_exist "$labels" "$repo"
+		# Build add args and check exit status — _gh_edit_labels masks failures
+		# via || true, so we call gh issue edit directly here.
+		local -a add_args=()
+		local _saved_ifs_add="$IFS"
+		IFS=','
+		for _lbl in $labels; do [[ -n "$_lbl" ]] && add_args+=("--add-label" "$_lbl"); done
+		IFS="$_saved_ifs_add"
+		if [[ ${#add_args[@]} -gt 0 ]]; then
+			gh issue edit "$num" --repo "$repo" "${add_args[@]}" 2>/dev/null || add_ok=false
+		fi
+	fi
+	# Reconcile: remove tag-derived labels no longer in desired set (GH#17402).
+	[[ "$add_ok" == "true" ]] && _reconcile_labels "$repo" "$num" "$labels"
+	# Apply tier label via replace-not-append — protected-prefix rule prevents
+	# _reconcile_labels from cleaning up stale tier:* labels on its own.
+	if [[ -n "$tier_label" ]]; then
+		_apply_tier_label_replace "$repo" "$num" "$tier_label"
+	fi
+	return 0
+}
+
+# _enrich_update_issue: hybrid sentinel + content-diff gate (GH#18411) then
+# edit issue title and/or body. Returns 0 on successful edit, 1 on failure.
+# When FORCE_ENRICH=true the gate is bypassed and both title and body are set.
+_enrich_update_issue() {
+	local repo="$1" num="$2" task_id="$3" title="$4" body="$5"
+	local do_body_update=true
+	if [[ "$FORCE_ENRICH" != "true" ]]; then
+		local current_body
+		current_body=$(gh issue view "$num" --repo "$repo" --json body -q .body 2>/dev/null || echo "")
+		if [[ "$current_body" != *"Synced from TODO.md by issue-sync-helper.sh"* ]]; then
+			print_info "Preserving external body on #$num ($task_id) — no sentinel footer (use --force to override)"
+			do_body_update=false
+		elif [[ "$current_body" == "$body" ]]; then
+			print_info "Body unchanged on #$num ($task_id), skipping API call"
+			do_body_update=false
+		fi
+	fi
+	if [[ "$do_body_update" == "true" ]]; then
+		if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
+			return 0
+		fi
+		print_error "Failed to enrich body on #$num ($task_id)"
+		return 1
+	fi
+	# Still update title even when body is preserved/skipped (GH#18411).
+	if gh issue edit "$num" --repo "$repo" --title "$title" 2>/dev/null; then
+		return 0
+	fi
+	print_error "Failed to enrich title on #$num ($task_id)"
+	return 1
+}
+
+# _enrich_process_task: enrich a single task — resolve issue number, parse
+# metadata, apply labels, update title/body. Outputs "ENRICHED" on success
+# so the caller can count enriched tasks via token matching.
+_enrich_process_task() {
+	local task_id="$1" repo="$2" todo_file="$3" project_root="$4"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+	local task_line
+	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
+	local num
+	num=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+	[[ -z "$num" ]] && num=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 500)
+	[[ -z "$num" || "$num" == "null" ]] && {
+		print_warning "$task_id: no issue found"
+		return 0
+	}
+
+	local parsed
+	parsed=$(parse_task_line "$task_line")
+	local desc
+	desc=$(echo "$parsed" | grep '^description=' | cut -d= -f2-)
+	local tags
+	tags=$(echo "$parsed" | grep '^tags=' | cut -d= -f2-)
+	local labels
+	labels=$(map_tags_to_labels "$tags")
+
+	# Extract and validate tier from brief file. Held aside from the main
+	# labels CSV — applied via _apply_tier_label_replace so any pre-existing
+	# tier:* label is removed first (t2012).
+	local brief_path="$project_root/todo/tasks/${task_id}-brief.md"
+	local tier_label
+	tier_label=$(_extract_tier_from_brief "$brief_path")
+	if [[ -n "$tier_label" ]]; then
+		tier_label=$(_validate_tier_checklist "$brief_path" "$tier_label")
+	fi
+
+	local title
+	title=$(_build_title "$task_id" "$desc")
+	local body
+	body=$(compose_issue_body "$task_id" "$project_root")
+
+	if [[ "$DRY_RUN" == "true" ]]; then
+		local _dry_tier_msg=""
+		[[ -n "$tier_label" ]] && _dry_tier_msg=" tier=${tier_label}(replace)"
+		print_info "[DRY-RUN] Would enrich #$num ($task_id) labels=${labels}${_dry_tier_msg}"
+		echo "ENRICHED"
+		return 0
+	fi
+
+	_enrich_apply_labels "$repo" "$num" "$labels" "$tier_label"
+	if _enrich_update_issue "$repo" "$num" "$task_id" "$title" "$body"; then
+		print_success "Enriched #$num ($task_id)"
+		# Sync relationships (blocked-by, sub-issues) after enrichment (t1889)
+		sync_relationships_for_task "$task_id" "$todo_file" "$repo"
+		echo "ENRICHED"
+	fi
+	return 0
+}
+
 cmd_enrich() {
 	local target_task="${1:-}"
 	_init_cmd || return 1
 	local repo="$_CMD_REPO" todo_file="$_CMD_TODO" project_root="$_CMD_ROOT"
 
 	local tasks=()
-	if [[ -n "$target_task" ]]; then
-		tasks=("$target_task")
-	else
-		while IFS= read -r line; do
-			local tid
-			tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
-			[[ -n "$tid" ]] && tasks+=("$tid")
-		done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
-	fi
+	while IFS= read -r tid; do
+		[[ -n "$tid" ]] && tasks+=("$tid")
+	done < <(_enrich_build_task_list "$target_task" "$todo_file")
 	[[ ${#tasks[@]} -eq 0 ]] && {
 		print_info "No tasks to enrich"
 		return 0
@@ -731,114 +862,12 @@ cmd_enrich() {
 
 	local enriched=0
 	for task_id in "${tasks[@]}"; do
-		local task_id_ere
-		task_id_ere=$(_escape_ere "$task_id")
-		local task_line
-		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
-		local num
-		num=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
-		[[ -z "$num" ]] && num=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 500)
-		[[ -z "$num" || "$num" == "null" ]] && {
-			print_warning "$task_id: no issue found"
-			continue
-		}
-
-		local parsed
-		parsed=$(parse_task_line "$task_line")
-		local desc
-		desc=$(echo "$parsed" | grep '^description=' | cut -d= -f2-)
-		local tags
-		tags=$(echo "$parsed" | grep '^tags=' | cut -d= -f2-)
-		local labels
-		labels=$(map_tags_to_labels "$tags")
-
-		# Extract and validate tier from brief file. Held aside from the main
-		# labels CSV — applied via _apply_tier_label_replace below so any
-		# pre-existing tier:* label is removed first (t2012).
-		local brief_path="$project_root/todo/tasks/${task_id}-brief.md"
-		local tier_label
-		tier_label=$(_extract_tier_from_brief "$brief_path")
-		if [[ -n "$tier_label" ]]; then
-			tier_label=$(_validate_tier_checklist "$brief_path" "$tier_label")
-		fi
-
-		local title
-		title=$(_build_title "$task_id" "$desc")
-		local body
-		body=$(compose_issue_body "$task_id" "$project_root")
-
-		if [[ "$DRY_RUN" == "true" ]]; then
-			local _dry_tier_msg=""
-			[[ -n "$tier_label" ]] && _dry_tier_msg=" tier=${tier_label}(replace)"
-			print_info "[DRY-RUN] Would enrich #$num ($task_id) labels=${labels}${_dry_tier_msg}"
-			enriched=$((enriched + 1))
-			continue
-		fi
-		local add_ok=true
-		if [[ -n "$labels" ]]; then
-			ensure_labels_exist "$labels" "$repo"
-			# Build add args and check exit status — _gh_edit_labels masks failures via || true,
-			# so we call gh issue edit directly here to gate reconciliation (GH#17402 CR fix).
-			local -a add_args=()
-			local _saved_ifs_add="$IFS"
-			IFS=','
-			for _lbl in $labels; do [[ -n "$_lbl" ]] && add_args+=("--add-label" "$_lbl"); done
-			IFS="$_saved_ifs_add"
-			if [[ ${#add_args[@]} -gt 0 ]]; then
-				gh issue edit "$num" --repo "$repo" "${add_args[@]}" 2>/dev/null || add_ok=false
-			fi
-		fi
-		# Reconcile: remove tag-derived labels no longer in desired set (GH#17402).
-		# Only run when add succeeded (or no labels to add) to avoid destructive removal
-		# after a transient add failure.
-		[[ "$add_ok" == "true" ]] && _reconcile_labels "$repo" "$num" "$labels"
-
-		# Apply tier label via the replace-not-append helper (t2012). Done
-		# after the main label set so any pre-existing tier:* label is
-		# removed first — the protected-prefix rule prevents _reconcile_labels
-		# from doing this cleanup on its own.
-		if [[ -n "$tier_label" ]]; then
-			_apply_tier_label_replace "$repo" "$num" "$tier_label"
-		fi
-
-		# Hybrid sentinel + content-diff gate (GH#18411):
-		# Prevent overwriting externally-authored bodies and skip no-op API calls.
-		local do_body_update=true
-		if [[ "$FORCE_ENRICH" != "true" ]]; then
-			local current_body
-			current_body=$(gh issue view "$num" --repo "$repo" --json body -q .body 2>/dev/null || echo "")
-			if [[ "$current_body" != *"Synced from TODO.md by issue-sync-helper.sh"* ]]; then
-				print_info "Preserving external body on #$num ($task_id) — no sentinel footer (use --force to override)"
-				do_body_update=false
-			elif [[ "$current_body" == "$body" ]]; then
-				print_info "Body unchanged on #$num ($task_id), skipping API call"
-				do_body_update=false
-			fi
-		fi
-
-		local edit_ok=false
-		if [[ "$do_body_update" == "true" ]]; then
-			if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
-				edit_ok=true
-			else
-				print_error "Failed to enrich body on #$num ($task_id)"
-			fi
-		else
-			# Still update title even when body is preserved/skipped (GH#18411)
-			if gh issue edit "$num" --repo "$repo" --title "$title" 2>/dev/null; then
-				edit_ok=true
-			else
-				print_error "Failed to enrich title on #$num ($task_id)"
-			fi
-		fi
-		if [[ "$edit_ok" == "true" ]]; then
-			print_success "Enriched #$num ($task_id)"
-			# Sync relationships (blocked-by, sub-issues) after enrichment (t1889)
-			sync_relationships_for_task "$task_id" "$todo_file" "$repo"
-			enriched=$((enriched + 1))
-		fi
+		local result
+		result=$(_enrich_process_task "$task_id" "$repo" "$todo_file" "$project_root")
+		[[ "$result" == *"ENRICHED"* ]] && enriched=$((enriched + 1))
 	done
 	print_info "Enrich complete: $enriched updated"
+	return 0
 }
 
 cmd_pull() {
