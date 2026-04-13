@@ -457,6 +457,7 @@ jobs:
       issues: read
       contents: read
       statuses: write
+      actions: write  # t2018: refresh required CheckRun by re-running Job 1
 
     steps:
       - name: Find linked PRs and re-evaluate gate
@@ -681,6 +682,50 @@ jobs:
                 -f context="maintainer-gate" \
                 -f description="$DESCRIPTION" \
                 2>/dev/null || echo "::warning::Could not post success status on PR #$PR_NUM"
+            fi
+
+            # -----------------------------------------------------------------
+            # t2018: refresh the REQUIRED CheckRun by re-running Job 1.
+            #
+            # The `maintainer-gate` status context posted above is NOT the
+            # required check — branch protection requires the CheckRun
+            # "Maintainer Review & Assignee Gate" produced by Job 1's job
+            # name. Job 1 only runs on `pull_request_target` events, so when
+            # an approval happens AFTER the PR is opened the required
+            # CheckRun stays stuck on its stale PR-creation-time failure
+            # until someone manually re-runs the workflow.
+            #
+            # Fix: find the latest completed `check-pr` workflow run for
+            # this PR's HEAD SHA and re-run its failed jobs if its conclusion
+            # was not `success`. The re-run creates a new CheckRun with the
+            # same required name, and branch protection uses the latest one.
+            #
+            # Job 1 is idempotent — it reads issue state via gh api at
+            # runtime rather than caching — so re-running reflects the
+            # post-approval state automatically.
+            # -----------------------------------------------------------------
+            RUN_LOOKUP=$(gh api \
+              "repos/${REPO}/actions/workflows/maintainer-gate.yml/runs?head_sha=${HEAD_SHA}&event=pull_request_target&per_page=1" \
+              --jq '.workflow_runs[0] | [.id, .conclusion] | @tsv' \
+              2>/dev/null || true)
+
+            if [[ -z "$RUN_LOOKUP" ]]; then
+              echo "No prior maintainer-gate run found for PR #$PR_NUM at $HEAD_SHA — skipping CheckRun refresh"
+            else
+              RUN_ID=$(printf '%s' "$RUN_LOOKUP" | cut -f1)
+              RUN_CONCLUSION=$(printf '%s' "$RUN_LOOKUP" | cut -f2)
+              if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
+                echo "::warning::Could not parse run id from Job 1 lookup for PR #$PR_NUM"
+              elif [[ "$RUN_CONCLUSION" == "success" ]]; then
+                echo "Latest Job 1 run $RUN_ID already succeeded — no refresh needed for PR #$PR_NUM"
+              else
+                echo "Refreshing required CheckRun: re-running Job 1 (run_id=$RUN_ID, prior=$RUN_CONCLUSION) for PR #$PR_NUM"
+                gh api \
+                  "repos/${REPO}/actions/runs/${RUN_ID}/rerun-failed-jobs" \
+                  --method POST \
+                  2>/dev/null \
+                  || echo "::warning::Failed to re-run Job 1 for PR #$PR_NUM — required CheckRun may remain stale until the next pull_request_target event"
+              fi
             fi
           done
 
