@@ -820,11 +820,73 @@ session_origin_label() {
 #
 # These forward all arguments to gh and append --label <origin>.
 
+# t2028: Internal — check if argv already contains an --assignee flag.
+# Used by gh_create_issue to avoid overriding caller-supplied assignees.
+_gh_wrapper_args_have_assignee() {
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--assignee | --assignee=*)
+			return 0
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+	return 1
+}
+
+# t2028: Internal — determine the auto-assignee for a newly-created issue.
+# Returns empty string when the session is worker-origin, when the user
+# lookup fails, or when there is otherwise nothing to assign. Callers must
+# treat empty as "skip assignment". Non-fatal: all failure modes echo empty.
+#
+# Mirrors the _auto_assign_issue logic at claim-task-id.sh:607 (t1970) so
+# the direct gh_create_issue path reaches assignee-gate parity with the
+# claim-task-id.sh path.
+_gh_wrapper_auto_assignee() {
+	local origin
+	origin=$(detect_session_origin)
+	if [[ "$origin" != "interactive" ]]; then
+		return 0
+	fi
+	# t1984 override: sync-todo-to-issues workflow sets AIDEVOPS_SESSION_USER
+	# to github.actor when the commit author is human. Prefer that explicit
+	# signal over `gh api user`, which would return github-actions[bot]
+	# inside a workflow run.
+	if [[ -n "${AIDEVOPS_SESSION_USER:-}" ]]; then
+		printf '%s' "$AIDEVOPS_SESSION_USER"
+		return 0
+	fi
+	local current_user
+	current_user=$(gh api user --jq '.login' 2>/dev/null || true)
+	if [[ -z "$current_user" ]] || [[ "$current_user" == "null" ]]; then
+		return 0
+	fi
+	printf '%s' "$current_user"
+	return 0
+}
+
 gh_create_issue() {
 	local origin_label
 	origin_label=$(session_origin_label)
 	# Ensure labels exist on the target repo (once per repo per process)
 	_ensure_origin_labels_for_args "$@"
+
+	# t2028: auto-assign to the current user when the session is interactive
+	# and the caller did not pass an explicit --assignee. Reaches parity with
+	# the t1970 auto-assign already applied on the claim-task-id.sh path so
+	# the maintainer gate's assignee check passes on first PR open for
+	# interactively-created issues.
+	if ! _gh_wrapper_args_have_assignee "$@"; then
+		local auto_assignee
+		auto_assignee=$(_gh_wrapper_auto_assignee)
+		if [[ -n "$auto_assignee" ]]; then
+			gh issue create "$@" --label "$origin_label" --assignee "$auto_assignee"
+			return $?
+		fi
+	fi
+
 	gh issue create "$@" --label "$origin_label"
 }
 
