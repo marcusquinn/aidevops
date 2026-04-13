@@ -602,7 +602,7 @@ _task_id_in_changed_files() {
 }
 
 #######################################
-# GH#17574: Check if a task has already been committed directly to main.
+# GH#17574: Check if a task has already landed on main (via PR merge or direct commit).
 #
 # Workers that bypass the PR flow (direct commits to main) complete the
 # work invisibly — the issue stays open until the pulse's mark-complete

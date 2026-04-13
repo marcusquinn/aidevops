@@ -965,29 +965,56 @@ _close_conflicting_pr() {
 		return 0
 	fi
 
-	# GH#17574: Check if the work is already on the default branch.
+	# GH#17574 / t2032: Check if the work is already on the default branch.
 	# Extract task ID from PR title (e.g., "t153: add dark mode" → "t153")
-	# and search recent commits on the default branch.
+	# and search recent commits on the default branch. When found, also try
+	# to extract the merging PR number from the squash-merge suffix "(#NNN)"
+	# on the matching commit subject, so the close comment can cite the
+	# actual audit trail instead of claiming the work was "committed directly
+	# to main" (which is misleading when the common case is a sibling PR).
 	local work_on_main="false"
+	local merging_pr=""
 	local task_id_from_pr
 	task_id_from_pr=$(printf '%s' "$pr_title" | grep -oE '^(t[0-9]+|GH#[0-9]+)' | head -1) || task_id_from_pr=""
 
 	if [[ -n "$task_id_from_pr" ]]; then
-		# Search commits on the default branch via GitHub API
-		local commit_match
-		commit_match=$(gh api "repos/${repo_slug}/commits" \
+		# Fetch recent commit subjects on main and find the first one
+		# matching the task ID. The matching subject is used for two
+		# things: (1) confirming work_on_main, (2) parsing the
+		# squash-merge "(#NNN)" suffix.
+		local commit_subjects
+		commit_subjects=$(gh api "repos/${repo_slug}/commits" \
 			--method GET -f sha=main -f per_page=50 \
-			--jq "[.[] | select(.commit.message | test(\"(?i)${task_id_from_pr}\"))] | length" \
-			2>/dev/null) || commit_match="0"
-		if [[ "$commit_match" =~ ^[0-9]+$ ]] && [[ "$commit_match" -gt 0 ]]; then
+			--jq '.[] | .commit.message | split("\n")[0]' \
+			2>/dev/null) || commit_subjects=""
+
+		local matching_subject=""
+		if [[ -n "$commit_subjects" ]]; then
+			matching_subject=$(printf '%s\n' "$commit_subjects" |
+				grep -iE "(^|[^a-zA-Z0-9])${task_id_from_pr}([^a-zA-Z0-9]|$)" |
+				head -1) || matching_subject=""
+		fi
+
+		if [[ -n "$matching_subject" ]]; then
 			work_on_main="true"
+			# Parse trailing "(#NNN)" from the squash-merge commit subject.
+			# Non-squash merges won't have this suffix — that's fine, we
+			# just omit the parenthetical from the close comment.
+			merging_pr=$(printf '%s' "$matching_subject" |
+				grep -oE '\(#[0-9]+\)$' |
+				grep -oE '[0-9]+' | head -1) || merging_pr=""
 		fi
 	fi
 
 	if [[ "$work_on_main" == "true" ]]; then
-		# Work is already on main — close PR with accurate message
+		# Work is already on main — close PR with accurate message.
+		# Cite the merging PR number when we could parse one.
+		local landed_via=""
+		if [[ -n "$merging_pr" ]]; then
+			landed_via=" (via PR #${merging_pr})"
+		fi
 		gh pr close "$pr_number" --repo "$repo_slug" \
-			--comment "Closing — this PR has merge conflicts with the base branch. The work for this task (\`${task_id_from_pr}\`) has already been committed directly to main, so no re-attempt is needed.
+			--comment "Closing — this PR has merge conflicts with the base branch. The work for this task (\`${task_id_from_pr}\`) has already landed on main${landed_via}, so no re-attempt is needed.
 
 _Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null || true
 
