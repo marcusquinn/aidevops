@@ -395,6 +395,34 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - After editing code: run relevant linter before next edit. Shell: `shellcheck`. MD: `markdownlint-cli2`.
 - Fix immediately, don't batch for commit time.
 
+# Self-modifying tooling test discipline (GH#18538 / t2062)
+# When you edit a script that's part of the test/verification loop you'll
+# subsequently invoke (e.g., `full-loop-helper.sh`, `pre-edit-check.sh`,
+# `claim-task-id.sh`, anything in your own dev wrapper chain), the local
+# working copy IS your test environment. Running the script from the
+# worktree path executes uncommitted edits, not what's in git.
+#
+# Failure mode: the wrapper succeeds locally because of an uncommitted
+# fix; you commit a different (incomplete) version; main ships broken;
+# next worker silently fails. Invisible until someone notices nothing
+# is merging.
+#
+# Rule:
+# 1. Commit the change BEFORE running it as part of verification, OR
+# 2. Re-test after `git stash && git checkout origin/main -- <script>`
+#    to confirm the committed version actually does what you tested.
+# 3. For wrappers that invoke themselves (full-loop-helper.sh merge
+#    being the canonical case), prefer #2 because #1 can't catch the
+#    "I forgot to stage one of the files" variant.
+#
+# This rule applies to scripts only. Product code where the runtime is
+# separate from the source tree (built binaries, deployed services,
+# language runtimes) doesn't have this footgun.
+#
+# Canonical evidence: GH#18538 → PR #18748 (shipped a `set -e` bug
+# that the local self-test passed because of an uncommitted if-form
+# fix) → PR #18750 (hotfix). Both PRs verified the rule end-to-end.
+
 # Intelligence Over Determinism (CORE PRINCIPLE)
 You are an LLM. You can read, understand context, assess state, and act. No regex or state machine can do this. The framework gives goals, tools, boundaries — not scripts.
 
