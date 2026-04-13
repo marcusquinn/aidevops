@@ -1719,6 +1719,7 @@ _sweep_shellcheck() {
 
 	local sc_errors=0
 	local sc_warnings=0
+	local sc_notes=0
 	local sc_details=""
 
 	# timeout_sec (from shared-constants.sh) handles macOS + Linux portably,
@@ -1750,12 +1751,21 @@ _sweep_shellcheck() {
 			timeout_sec 30 shellcheck --norc -f gcc "$shfile" 2>&1 || true
 		)
 		if [[ -n "$result" ]]; then
-			local file_errors
-			file_errors=$(grep -c ':.*: error:' <<<"$result") || file_errors=0
-			local file_warnings
-			file_warnings=$(grep -c ':.*: warning:' <<<"$result") || file_warnings=0
+			# t1992: shellcheck -f gcc emits three severities: error, warning,
+			# note. The previous patterns (':.*: error:' and ':.*: warning:')
+			# matched only error+warning, so SC1091 — the noisiest rule, which
+			# fires `note` for every sourced file when -x is disabled — was
+			# silently counted as zero, leaving the sweep summary to show
+			# "(N files scanned)" with no findings even when several existed.
+			# Pin the regex to the gcc location prefix `<file>:<line>:<col>:`
+			# so we don't accidentally match content inside a finding message.
+			local file_errors file_warnings file_notes
+			file_errors=$(grep -cE ':[0-9]+:[0-9]+: error:' <<<"$result") || file_errors=0
+			file_warnings=$(grep -cE ':[0-9]+:[0-9]+: warning:' <<<"$result") || file_warnings=0
+			file_notes=$(grep -cE ':[0-9]+:[0-9]+: note:' <<<"$result") || file_notes=0
 			sc_errors=$((sc_errors + file_errors))
 			sc_warnings=$((sc_warnings + file_warnings))
+			sc_notes=$((sc_notes + file_notes))
 
 			# Capture first 3 findings per file for the summary
 			local rel_path="${shfile#"$repo_path"/}"
@@ -1776,13 +1786,14 @@ _sweep_shellcheck() {
 
 - **Errors**: ${sc_errors}
 - **Warnings**: ${sc_warnings}
+- **Notes**: ${sc_notes}
 "
 	if [[ -n "$sc_details" ]]; then
 		shellcheck_section="${shellcheck_section}
 **Top findings:**
 ${sc_details}"
 	fi
-	if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 ]]; then
+	if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 && "$sc_notes" -eq 0 ]]; then
 		shellcheck_section="${shellcheck_section}
 _All clear — no issues found._
 "
@@ -2327,15 +2338,23 @@ COMMENT
 }
 
 #######################################
-# Run all quality sweep tools for a repo and return results.
+# Run all quality sweep tools for a repo and write results to a sections dir.
+#
+# t1992: Each section is written to its own temp file (one file per variable)
+# so multi-line markdown sections survive the writer/reader round trip.
+# The previous implementation used `printf '%s\n'` + `IFS= read -r` chains,
+# which silently truncated every section after the first line — fragmenting
+# the daily quality-sweep comment.
 #
 # Arguments:
 #   $1 - repo slug
 #   $2 - repo path
-# Output: pipe-delimited
-#   tool_count|shellcheck_section|qlty_section|qlty_smell_count|qlty_grade|
-#   sonar_section|sweep_gate_status|sweep_total_issues|sweep_high_critical|
-#   codacy_section|coderabbit_section|review_scan_section
+# Output (single line on stdout): the absolute path of the sections directory.
+# Files written inside the sections directory (one file per variable):
+#   - tool_count, shellcheck, qlty, qlty_smell_count, qlty_grade
+#   - sonar, sweep_gate_status, sweep_total_issues, sweep_high_critical
+#   - codacy, coderabbit, review_scan
+# The caller is responsible for `rm -rf`ing the directory after consumption.
 #######################################
 _run_sweep_tools() {
 	local repo_slug="$1"
@@ -2387,11 +2406,27 @@ _run_sweep_tools() {
 	review_scan_section=$(_sweep_review_scanner "$repo_slug")
 	[[ -n "$review_scan_section" ]] && tool_count=$((tool_count + 1))
 
-	printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
-		"$tool_count" "$shellcheck_section" "$qlty_section" \
-		"$qlty_smell_count" "$qlty_grade" "$sonar_section" \
-		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
-		"$codacy_section" "$coderabbit_section" "$review_scan_section"
+	# t1992: write each section to its own file. printf '%s' (no trailing
+	# newline) preserves byte-for-byte content; multi-line strings round-trip
+	# intact because each file owns exactly one variable.
+	local sections_dir
+	sections_dir=$(mktemp -d 2>/dev/null) || return 1
+	printf '%s' "$tool_count" >"${sections_dir}/tool_count"
+	printf '%s' "$shellcheck_section" >"${sections_dir}/shellcheck"
+	printf '%s' "$qlty_section" >"${sections_dir}/qlty"
+	printf '%s' "$qlty_smell_count" >"${sections_dir}/qlty_smell_count"
+	printf '%s' "$qlty_grade" >"${sections_dir}/qlty_grade"
+	printf '%s' "$sonar_section" >"${sections_dir}/sonar"
+	printf '%s' "$sweep_gate_status" >"${sections_dir}/sweep_gate_status"
+	printf '%s' "$sweep_total_issues" >"${sections_dir}/sweep_total_issues"
+	printf '%s' "$sweep_high_critical" >"${sections_dir}/sweep_high_critical"
+	printf '%s' "$codacy_section" >"${sections_dir}/codacy"
+	printf '%s' "$coderabbit_section" >"${sections_dir}/coderabbit"
+	printf '%s' "$review_scan_section" >"${sections_dir}/review_scan"
+
+	# Single-line handshake: just the directory path. The caller reads each
+	# section by `cat`ing one file at a time.
+	printf '%s\n' "$sections_dir"
 	return 0
 }
 
@@ -2405,29 +2440,33 @@ _quality_sweep_for_repo() {
 	local now_iso
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-	# Run all tools and read results via temp file
-	local tools_tmp
-	tools_tmp=$(mktemp)
-	_run_sweep_tools "$repo_slug" "$repo_path" >"$tools_tmp"
+	# t1992: read each section back from its own file. The previous code
+	# used `IFS= read -r` chains which only handled single-line values and
+	# silently truncated every multi-line markdown section.
+	local sections_dir
+	sections_dir=$(_run_sweep_tools "$repo_slug" "$repo_path")
+	if [[ -z "$sections_dir" || ! -d "$sections_dir" ]]; then
+		echo "[stats] Quality sweep: _run_sweep_tools produced no sections dir for ${repo_slug}" >>"$LOGFILE"
+		[[ -n "$sections_dir" && -e "$sections_dir" ]] && rm -rf "$sections_dir"
+		return 0
+	fi
 
 	local tool_count shellcheck_section qlty_section qlty_smell_count qlty_grade
 	local sonar_section sweep_gate_status sweep_total_issues sweep_high_critical
 	local codacy_section coderabbit_section review_scan_section
-	{
-		IFS= read -r tool_count
-		IFS= read -r shellcheck_section
-		IFS= read -r qlty_section
-		IFS= read -r qlty_smell_count
-		IFS= read -r qlty_grade
-		IFS= read -r sonar_section
-		IFS= read -r sweep_gate_status
-		IFS= read -r sweep_total_issues
-		IFS= read -r sweep_high_critical
-		IFS= read -r codacy_section
-		IFS= read -r coderabbit_section
-		IFS= read -r review_scan_section
-	} <"$tools_tmp"
-	rm -f "$tools_tmp"
+	tool_count=$(cat "${sections_dir}/tool_count" 2>/dev/null || echo 0)
+	shellcheck_section=$(cat "${sections_dir}/shellcheck" 2>/dev/null || echo "")
+	qlty_section=$(cat "${sections_dir}/qlty" 2>/dev/null || echo "")
+	qlty_smell_count=$(cat "${sections_dir}/qlty_smell_count" 2>/dev/null || echo 0)
+	qlty_grade=$(cat "${sections_dir}/qlty_grade" 2>/dev/null || echo UNKNOWN)
+	sonar_section=$(cat "${sections_dir}/sonar" 2>/dev/null || echo "")
+	sweep_gate_status=$(cat "${sections_dir}/sweep_gate_status" 2>/dev/null || echo UNKNOWN)
+	sweep_total_issues=$(cat "${sections_dir}/sweep_total_issues" 2>/dev/null || echo 0)
+	sweep_high_critical=$(cat "${sections_dir}/sweep_high_critical" 2>/dev/null || echo 0)
+	codacy_section=$(cat "${sections_dir}/codacy" 2>/dev/null || echo "")
+	coderabbit_section=$(cat "${sections_dir}/coderabbit" 2>/dev/null || echo "")
+	review_scan_section=$(cat "${sections_dir}/review_scan" 2>/dev/null || echo "")
+	rm -rf "$sections_dir"
 
 	if [[ "${tool_count:-0}" -eq 0 ]]; then
 		echo "[stats] Quality sweep: no tools available for ${repo_slug}" >>"$LOGFILE"
