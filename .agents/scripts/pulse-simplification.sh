@@ -1373,9 +1373,14 @@ _complexity_scan_pull_latest() {
 	# with stale data (which would reintroduce the exact problem we're fixing).
 	# Do NOT update COMPLEXITY_SCAN_LAST_RUN on skip — the next cycle retries.
 	# GIT_TERMINAL_PROMPT=0 prevents credential prompts from hanging the pulse.
-	# timeout 30 prevents network hangs from blocking the pulse cycle.
+	# GH#18644: timeout_sec 30 prevents network hangs from blocking the pulse
+	# cycle. Previously used bare `timeout` which is Linux-only — on macOS it
+	# exits immediately with "command not found" and the pull runs without any
+	# timeout protection (or, if set -e is active, aborts the stage). The
+	# portable timeout_sec helper from shared-constants.sh tries `timeout`,
+	# `gtimeout`, and a bash-native PGID-kill fallback.
 	if git -C "$aidevops_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		if ! GIT_TERMINAL_PROMPT=0 timeout 30 \
+		if ! GIT_TERMINAL_PROMPT=0 timeout_sec 30 \
 			git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 9>&-; then
 			echo "[pulse-wrapper] Complexity scan: git pull failed for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
 			return 1
