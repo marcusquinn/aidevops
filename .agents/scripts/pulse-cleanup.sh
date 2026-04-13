@@ -15,9 +15,12 @@
 #
 # Functions in this module (in source order):
 #   Private helpers (called only within this module):
-#   - _cleanup_merged_prs_for_all_repos  (Pass 1: merged-PR worktree removal)
-#   - _worktree_owner_alive              (pgrep + registry ownership check)
-#   - _cleanup_single_worktree           (per-worktree age/orphan decision)
+#   - _cleanup_merged_prs_for_all_repos     (Pass 1: merged-PR worktree removal)
+#   - _worktree_owner_alive                 (pgrep + registry ownership check)
+#   - _worktree_creation_epoch              (stat .git file mtime, with silent-skip logging)
+#   - _evaluate_worktree_removal            (age/commit/PR threshold decision)
+#   - _record_orphan_crash_classification   (crash type + dedup clearing for orphaned workers)
+#   - _cleanup_single_worktree              (per-worktree orchestrator)
 #   Public interface (called by pulse-wrapper.sh):
 #   - cleanup_worktrees
 #   - cleanup_stashes
@@ -32,6 +35,14 @@
 # (silent-skip logging) that was applied during Phase 5 extraction — see
 # _worktree_owner_alive() and _cleanup_single_worktree() for the two
 # previously-silent continue paths that now emit diagnostic log entries.
+#
+# GH#18704 refactor: split _cleanup_single_worktree() (125 lines) into three
+# focused private helpers: _worktree_creation_epoch(),
+# _evaluate_worktree_removal(), and _record_orphan_crash_classification().
+# The orchestrator now reads as a linear five-step pipeline instead of a
+# single flat function. Preserves identical behaviour including the GH#18346
+# silent-skip log entry, the GH#16830/t1884 age thresholds, and the crash
+# classification rules for "overwhelmed" vs "no_work" workers.
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_CLEANUP_LOADED:-}" ]] && return 0
@@ -146,17 +157,185 @@ _worktree_owner_alive() {
 }
 
 #######################################
+# Get worktree creation epoch from the .git file's mtime.
+#
+# Linux uses `stat -c '%Y'`; macOS uses `stat -f '%m'`. Writes 0 to stdout
+# when the .git file is missing or stat fails, and logs a diagnostic in
+# that case (GH#18346: this path was previously a silent continue).
+#
+# Args:
+#   $1 - wt_path: absolute worktree path
+#   $2 - wt_branch: branch name (for log context; "" = detached)
+# Outputs: epoch seconds on stdout (0 on failure)
+# Returns: 0 always (caller inspects the printed value)
+#######################################
+_worktree_creation_epoch() {
+	local wt_path="$1"
+	local wt_branch="${2:-}"
+	local wt_created=0
+
+	if [[ -f "$wt_path/.git" ]]; then
+		wt_created=$(stat -c '%Y' "$wt_path/.git" 2>/dev/null || stat -f '%m' "$wt_path/.git" 2>/dev/null) || wt_created=0
+	fi
+
+	if [[ "$wt_created" -eq 0 ]]; then
+		# GH#18346: previously a silent skip — now logs the reason
+		echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch:-detached} ($wt_path) — stat on .git failed (wt_created=0)" >>"$LOGFILE"
+	fi
+
+	echo "$wt_created"
+	return 0
+}
+
+#######################################
+# Decide whether a worktree is eligible for orphan cleanup.
+#
+# Applies the age/commit/PR thresholds from GH#16830 and t1884:
+#   0 commits, no open PR, >grace → crashed worker (fast-path)
+#   0 commits, clean,      >3h    → empty, safe to remove
+#   0 commits, dirty,      >6h    → worker died mid-edit
+#   any commits, no PR,    >24h   → abandoned, will be re-dispatched
+#
+# GitHub queries are only attempted when both repo_slug and branch are
+# non-empty. On eligibility the reason string is written to stdout so the
+# caller can log it and feed it to crash classification.
+#
+# Args:
+#   $1 - commits_ahead
+#   $2 - dirty_count
+#   $3 - wt_age_secs
+#   $4 - wt_branch_age (may be empty)
+#   $5 - repo_slug_age (may be empty)
+# Outputs: reason string on stdout when eligible
+# Returns: 0 if eligible for removal, 1 otherwise
+#######################################
+_evaluate_worktree_removal() {
+	local commits_ahead="$1"
+	local dirty_count="$2"
+	local wt_age_secs="$3"
+	local wt_branch_age="${4:-}"
+	local repo_slug_age="${5:-}"
+
+	# Age thresholds — grace period from config, others hardcoded
+	local age_grace="$ORPHAN_WORKTREE_GRACE_SECS"
+	local age_3h=$((3 * 3600))
+	local age_6h=$((6 * 3600))
+	local age_24h=$((24 * 3600))
+
+	# The branches below are mutually exclusive via an elif chain — once the
+	# fast-path's outer condition matches (0 commits + past grace), the later
+	# branches MUST NOT be checked even if the fast-path decides "not
+	# eligible" (e.g. an open PR protects the worktree). Preserving this
+	# short-circuit is what keeps worktrees with active PRs alive past 3h.
+
+	# Fast-path: 0 commits + past grace period → crashed worker candidate (t1884)
+	if [[ "$commits_ahead" -eq 0 && "$wt_age_secs" -ge "$age_grace" ]]; then
+		local has_open_pr=false
+		if [[ -n "$repo_slug_age" && -n "$wt_branch_age" ]]; then
+			local open_pr_count
+			open_pr_count=$(gh pr list --repo "$repo_slug_age" --head "$wt_branch_age" --state open --limit 1 2>/dev/null | wc -l | tr -d ' ') || open_pr_count=0
+			[[ "$open_pr_count" -gt 0 ]] && has_open_pr=true
+		fi
+		if [[ "$has_open_pr" == "false" ]]; then
+			echo "0 commits, no open PR, age $((wt_age_secs / 60))m (crashed worker)"
+			return 0
+		fi
+	# 0 commits, clean worktree, >3h → empty (no PR, no dirty state)
+	elif [[ "$commits_ahead" -eq 0 && "$dirty_count" -eq 0 && "$wt_age_secs" -ge "$age_3h" ]]; then
+		echo "0 commits, clean, age $((wt_age_secs / 3600))h"
+		return 0
+	# 0 commits, dirty, >6h → worker died mid-edit
+	elif [[ "$commits_ahead" -eq 0 && "$dirty_count" -gt 0 && "$wt_age_secs" -ge "$age_6h" ]]; then
+		echo "0 commits, ${dirty_count} dirty files, age $((wt_age_secs / 3600))h"
+		return 0
+	# Has commits, >24h, no PR of any state → abandoned
+	elif [[ "$commits_ahead" -gt 0 && "$wt_age_secs" -ge "$age_24h" ]]; then
+		local has_pr=false
+		if [[ -n "$repo_slug_age" && -n "$wt_branch_age" ]]; then
+			local pr_count
+			pr_count=$(gh pr list --repo "$repo_slug_age" --head "$wt_branch_age" --state all --limit 1 2>/dev/null | wc -l | tr -d ' ') || pr_count=0
+			[[ "$pr_count" -gt 0 ]] && has_pr=true
+		fi
+		if [[ "$has_pr" == "false" ]]; then
+			echo "${commits_ahead} commits, no PR, age $((wt_age_secs / 3600))h"
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+#######################################
+# Record crash classification for an orphaned worker worktree.
+#
+# Extracts the issue number from the branch name (pattern: gh[-]?NNN),
+# classifies the crash type, updates failure launch state, logs the
+# outcome, and posts a "Worker failed" comment on the issue to clear
+# the dispatch dedup guard (t1884, GH#18021).
+#
+# Classification rules (drive crash-type-aware tier escalation):
+#   "overwhelmed": dirty files, OR issue-named branch with no commits.
+#                  Model attempted real work but couldn't produce commits.
+#                  Pattern: "read files, created worktree, couldn't close the loop".
+#   "no_work":     auto-named feature/auto-* branch with clean worktree.
+#                  Worker never got past setup — likely infra/transient.
+#
+# Args:
+#   $1 - wt_branch_age: branch name (non-empty; caller checks)
+#   $2 - dirty_count:   number of dirty files in the worktree
+#   $3 - repo_slug_age: owner/repo slug (non-empty; caller checks)
+# Returns: 0 always
+#######################################
+_record_orphan_crash_classification() {
+	local wt_branch_age="$1"
+	local dirty_count="$2"
+	local repo_slug_age="$3"
+
+	local orphan_issue_num=""
+	if [[ "$wt_branch_age" =~ gh[-]?([0-9]+) ]]; then
+		orphan_issue_num="${BASH_REMATCH[1]}"
+	fi
+	# Auto-named branches without an embedded issue number can't be
+	# recovered — the worker never parsed the issue, nothing to clear.
+	if [[ -z "$orphan_issue_num" ]]; then
+		return 0
+	fi
+
+	local orphan_crash_type="no_work"
+	if [[ "$dirty_count" -gt 0 ]]; then
+		orphan_crash_type="overwhelmed"
+	elif [[ "$wt_branch_age" != feature/auto-* ]]; then
+		# Issue-named branch = model parsed the issue but produced nothing.
+		orphan_crash_type="overwhelmed"
+	fi
+	# Auto-named branches (feature/auto-*) with 0 dirty files stay as
+	# "no_work" — the worker couldn't parse the issue, likely infra.
+
+	recover_failed_launch_state "$orphan_issue_num" "$repo_slug_age" "premature_exit" "$orphan_crash_type"
+	echo "[pulse-wrapper] Orphan cleanup: recorded premature_exit for #${orphan_issue_num} (${repo_slug_age}) crash_type=${orphan_crash_type} — triggers fast-fail escalation" >>"$LOGFILE"
+
+	# Post failure comment to clear dedup guard immediately. Without this
+	# the dispatch comment blocks re-dispatch for the full TTL even though
+	# the worker is dead. "Worker failed" is a recognised completion
+	# signal in dispatch-dedup-helper.sh has_dispatch_comment().
+	gh issue comment "$orphan_issue_num" --repo "$repo_slug_age" \
+		--body "Worker failed: orphan worktree detected (crash_type=${orphan_crash_type}, 0 commits). Cleared for re-dispatch." \
+		>/dev/null 2>&1 || true
+
+	return 0
+}
+
+#######################################
 # Per-worktree age-based orphan cleanup decision and removal.
 #
-# Evaluates a single worktree against the age/commit/PR thresholds and
-# removes it if eligible. Also handles crash classification and issue
-# state recovery for crashed workers (t1884, GH#18021).
+# Thin orchestrator over three private helpers:
+#   1. _worktree_creation_epoch      — creation time from .git mtime
+#   2. _worktree_owner_alive         — pgrep + registry ownership check
+#   3. _evaluate_worktree_removal    — age/commit/PR threshold decision
+#   4. _record_orphan_crash_classification — crash type + dedup clearing
 #
-# Age thresholds (GH#16830, t1884):
-#   0 commits, no open PR, >30m → crashed worker, safe to remove fast
-#   0 commits, 0 dirty,   >3h  → empty, safe to remove
-#   0 commits, dirty,     >6h  → worker died mid-edit, no active process
-#   any commits, no PR,   >24h → abandoned, issue will be re-dispatched
+# On eligible worktrees, performs the git worktree remove + branch delete
+# + remote ref delete sequence (t1884, GH#18021).
 #
 # Args:
 #   $1 - rp_age:        repo root path (for git -C commands)
@@ -175,117 +354,44 @@ _cleanup_single_worktree() {
 	local repo_slug_age="$5"
 	local main_branch="$6"
 
-	# Age thresholds — grace period from config, others hardcoded
-	local age_grace="$ORPHAN_WORKTREE_GRACE_SECS"
-	local age_3h=$((3 * 3600))
-	local age_6h=$((6 * 3600))
-	local age_24h=$((24 * 3600))
-
-	# Get worktree creation time from .git file mtime.
-	# Linux uses stat -c '%Y'; macOS uses stat -f '%m'.
-	local wt_created=0
-	if [[ -f "$wt_path_age/.git" ]]; then
-		wt_created=$(stat -c '%Y' "$wt_path_age/.git" 2>/dev/null || stat -f '%m' "$wt_path_age/.git" 2>/dev/null) || wt_created=0
-	fi
+	# Step 1: creation time (stat .git file mtime; logs on failure)
+	local wt_created
+	wt_created=$(_worktree_creation_epoch "$wt_path_age" "$wt_branch_age")
 	if [[ "$wt_created" -eq 0 ]]; then
-		# GH#18346: previously a silent skip — now logs the reason
-		echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch_age:-detached} ($wt_path_age) — stat on .git failed (wt_created=0)" >>"$LOGFILE"
 		return 1
 	fi
 	local wt_age_secs=$((now_epoch - wt_created))
 
-	# Count commits ahead of main and dirty files
+	# Step 2: collect commit/dirty state
 	local commits_ahead=0
 	commits_ahead=$(git -C "$wt_path_age" rev-list --count "HEAD" "^${main_branch}" 2>/dev/null) || commits_ahead=0
 	local dirty_count=0
 	dirty_count=$(git -C "$wt_path_age" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || dirty_count=0
 
-	# Check for active owner (process or registry) — GH#18346, GH#18021
+	# Step 3: skip if an active owner still holds the worktree (GH#18346, GH#18021)
 	if _worktree_owner_alive "$wt_path_age" "$wt_branch_age"; then
 		return 1
 	fi
 
-	# Determine whether this worktree is eligible for removal
-	local should_remove=false
-	local reason=""
-
-	# Fast-path: 0 commits + no open PR + past grace period → crashed worker (t1884)
-	# Only check GitHub if we have a slug and branch name; skip if either is missing.
-	if [[ "$commits_ahead" -eq 0 && "$wt_age_secs" -ge "$age_grace" ]]; then
-		local has_open_pr=false
-		if [[ -n "$repo_slug_age" && -n "$wt_branch_age" ]]; then
-			local open_pr_count
-			open_pr_count=$(gh pr list --repo "$repo_slug_age" --head "$wt_branch_age" --state open --limit 1 2>/dev/null | wc -l | tr -d ' ') || open_pr_count=0
-			[[ "$open_pr_count" -gt 0 ]] && has_open_pr=true
-		fi
-		if [[ "$has_open_pr" == "false" ]]; then
-			should_remove=true
-			reason="0 commits, no open PR, age $((wt_age_secs / 60))m (crashed worker)"
-		fi
-	elif [[ "$commits_ahead" -eq 0 && "$dirty_count" -eq 0 && "$wt_age_secs" -ge "$age_3h" ]]; then
-		should_remove=true
-		reason="0 commits, clean, age $((wt_age_secs / 3600))h"
-	elif [[ "$commits_ahead" -eq 0 && "$dirty_count" -gt 0 && "$wt_age_secs" -ge "$age_6h" ]]; then
-		should_remove=true
-		reason="0 commits, ${dirty_count} dirty files, age $((wt_age_secs / 3600))h"
-	elif [[ "$commits_ahead" -gt 0 && "$wt_age_secs" -ge "$age_24h" ]]; then
-		# Only remove if no PR exists for this branch
-		local has_pr=false
-		if [[ -n "$repo_slug_age" && -n "$wt_branch_age" ]]; then
-			local pr_count
-			pr_count=$(gh pr list --repo "$repo_slug_age" --head "$wt_branch_age" --state all --limit 1 2>/dev/null | wc -l | tr -d ' ') || pr_count=0
-			[[ "$pr_count" -gt 0 ]] && has_pr=true
-		fi
-		if [[ "$has_pr" == "false" ]]; then
-			should_remove=true
-			reason="${commits_ahead} commits, no PR, age $((wt_age_secs / 3600))h"
-		fi
+	# Step 4: evaluate age/commit/PR thresholds for eligibility
+	local reason
+	if ! reason=$(_evaluate_worktree_removal "$commits_ahead" "$dirty_count" "$wt_age_secs" "$wt_branch_age" "$repo_slug_age"); then
+		return 1
 	fi
-
-	[[ "$should_remove" != "true" ]] && return 1
+	if [[ -z "$reason" ]]; then
+		return 1
+	fi
 
 	local repo_name_age
 	repo_name_age=$(basename "$rp_age")
 	echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): removing ${wt_branch_age:-detached} — $reason" >>"$LOGFILE"
 
-	# Crash classification for orphaned workers.
-	# Classify based on worktree state to drive crash-type-aware tier escalation:
-	#   "overwhelmed": issue-named branch + dirty files or evidence of file reads.
-	#                  Model attempted real work but couldn't produce commits.
-	#   "no_work":     auto-named branch (feature/auto-*) or clean worktree.
-	#                  Worker never got past setup. Transient — retry at same tier.
+	# Step 5a: crash classification for the fast-path "crashed worker" case
 	if [[ "$reason" == *"crashed worker"* && -n "$wt_branch_age" && -n "$repo_slug_age" ]]; then
-		local orphan_issue_num=""
-		if [[ "$wt_branch_age" =~ gh[-]?([0-9]+) ]]; then
-			orphan_issue_num="${BASH_REMATCH[1]}"
-		fi
-		if [[ -n "$orphan_issue_num" ]]; then
-			local orphan_crash_type="no_work"
-			if [[ "$dirty_count" -gt 0 ]]; then
-				orphan_crash_type="overwhelmed"
-			elif [[ "$wt_branch_age" != feature/auto-* ]]; then
-				# Issue-named branch = model parsed the issue but produced nothing.
-				# "Read files, created worktree, couldn't close the loop" pattern.
-				orphan_crash_type="overwhelmed"
-			fi
-			# Auto-named branches (feature/auto-*) with 0 dirty files stay
-			# as "no_work" — the worker couldn't parse the issue, likely infra.
-
-			recover_failed_launch_state "$orphan_issue_num" "$repo_slug_age" "premature_exit" "$orphan_crash_type"
-			echo "[pulse-wrapper] Orphan cleanup: recorded premature_exit for #${orphan_issue_num} (${repo_slug_age}) crash_type=${orphan_crash_type} — triggers fast-fail escalation" >>"$LOGFILE"
-
-			# Post failure comment to clear dedup guard immediately.
-			# Without this, the dispatch comment blocks re-dispatch for the
-			# full TTL even though the worker is dead.
-			# "Worker failed" is a recognised completion signal in
-			# dispatch-dedup-helper.sh has_dispatch_comment().
-			gh issue comment "$orphan_issue_num" --repo "$repo_slug_age" \
-				--body "Worker failed: orphan worktree detected (crash_type=${orphan_crash_type}, 0 commits). Cleared for re-dispatch." \
-				>/dev/null 2>&1 || true
-		fi
+		_record_orphan_crash_classification "$wt_branch_age" "$dirty_count" "$repo_slug_age"
 	fi
 
-	# Perform removal
+	# Step 5b: perform removal (worktree + local branch + remote ref)
 	git -C "$rp_age" worktree remove --force "$wt_path_age" 2>/dev/null || rm -rf "$wt_path_age"
 	if [[ -n "$wt_branch_age" ]]; then
 		git -C "$rp_age" branch -D "$wt_branch_age" 2>/dev/null || true
