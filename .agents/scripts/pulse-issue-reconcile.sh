@@ -303,176 +303,186 @@ _normalize_unassign_stale() {
 #   $2 repos_json  — path to repos.json
 # Returns: 0 always (best-effort; logs counters to $LOGFILE)
 #######################################
-_normalize_label_invariants() {
-	local runner_user="$1"
-	local repos_json="$2"
-	# shellcheck disable=SC2034  # runner_user kept for signature symmetry
-	local _unused_runner="$runner_user"
-
-	local total_status_fixed=0
-	local total_tier_fixed=0
-	local total_triage_missing=0
-	local total_checked=0
-
-	# Guard: requires the precedence arrays from shared-constants.sh. If the
-	# orchestrator didn't source them we silently skip (fail-open) to avoid
-	# blocking the pulse cycle on a bootstrap bug.
-	if [[ -z "${ISSUE_STATUS_LABEL_PRECEDENCE+x}" || -z "${ISSUE_TIER_LABEL_RANK+x}" ]]; then
-		echo "[pulse-wrapper] normalize_label_invariants skipped: precedence arrays not loaded" >>"$LOGFILE"
-		return 0
-	fi
-
-	local now_epoch
-	now_epoch=$(date +%s)
-	local triage_cutoff=$((now_epoch - 1800))
-
-	while IFS= read -r slug; do
-		[[ -n "$slug" ]] || continue
-
-		# Fetch open issues with labels + createdAt. Capped at
-		# PULSE_QUEUED_SCAN_LIMIT per repo (same cap the other normalize
-		# passes use) — a full backfill sweep for a large backlog is out
-		# of scope for a pre-run normalization stage; the reconciler will
-		# revisit on each cycle until clean.
-		local issues_json
-		issues_json=$(gh issue list --repo "$slug" --state open \
-			--json number,labels,createdAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json=""
-		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
-
-		local issue_count
-		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
-		[[ "$issue_count" -gt 0 ]] || continue
-
-		total_checked=$((total_checked + issue_count))
-
-		# Extract rows of (number, status_labels, tier_labels,
-		# has_origin_interactive, has_auto_dispatch, created_epoch).
-		#
-		# DELIMITER CHOICE: use '|' — a non-whitespace character that GitHub
-		# label names cannot contain. Do NOT use @tsv here: bash read with
-		# IFS=$'\t' collapses consecutive tabs because tab is a whitespace
-		# character in bash's field-splitting rules, so empty fields (like
-		# "no status labels" on a tier-polluted issue) silently disappear
-		# and the next field shifts into place, corrupting the parse.
-		local rows
-		rows=$(printf '%s' "$issues_json" | jq -r '
-			.[] | [
-				(.number | tostring),
-				([.labels[].name | select(startswith("status:")) | sub("^status:"; "")] | join(" ")),
-				([.labels[].name | select(startswith("tier:"))   | sub("^tier:";   "")] | join(" ")),
-				((.labels | map(.name) | index("origin:interactive")) != null | tostring),
-				((.labels | map(.name) | index("auto-dispatch"))      != null | tostring),
-				(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring)
-			] | join("|")
-		' 2>/dev/null) || rows=""
-		[[ -n "$rows" ]] || continue
-
-		local issue_num status_list tier_list has_origin_i has_auto created_epoch
-		while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto created_epoch; do
-			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
-
-			# ---------- Status invariant ----------
-			# Only core status labels (listed in ISSUE_STATUS_LABELS) count
-			# for this invariant. Out-of-band exception labels (needs-info,
-			# verify-failed, stale, needs-testing, orphaned) are intentionally
-			# excluded — they can legitimately coexist with a core status.
-			local -a core_status=()
-			if [[ -n "$status_list" ]]; then
-				local _s
-				for _s in $status_list; do
-					local _core_label
-					for _core_label in "${ISSUE_STATUS_LABELS[@]}"; do
-						if [[ "$_s" == "$_core_label" ]]; then
-							core_status+=("$_s")
-							break
-						fi
-					done
-				done
+# Helper: filter a space-separated list of status names down to those
+# that are members of ISSUE_STATUS_LABELS. Used by the status-invariant
+# check to ignore out-of-band labels (needs-info, verify-failed, etc.)
+# which can legitimately coexist with a core status.
+#
+# Writes the result to the global array _LI_FILTERED_STATUS (bash 3.2
+# has no namerefs; eval-based output patterns break under `set -u` when
+# the result array is empty).
+#
+# Args:
+#   $1 - space-separated status names (e.g. "available queued")
+_filter_core_status_labels() {
+	local status_list="$1"
+	_LI_FILTERED_STATUS=()
+	local _s _core_label
+	[[ -n "$status_list" ]] || return 0
+	for _s in $status_list; do
+		for _core_label in "${ISSUE_STATUS_LABELS[@]}"; do
+			if [[ "$_s" == "$_core_label" ]]; then
+				_LI_FILTERED_STATUS+=("$_s")
+				break
 			fi
+		done
+	done
+	return 0
+}
 
-			if [[ "${#core_status[@]}" -gt 1 ]]; then
-				# Pick survivor by precedence order
-				local survivor=""
-				local _precedent
-				for _precedent in "${ISSUE_STATUS_LABEL_PRECEDENCE[@]}"; do
-					local _current
-					for _current in "${core_status[@]}"; do
-						if [[ "$_current" == "$_precedent" ]]; then
-							survivor="$_precedent"
-							break 2
-						fi
-					done
-				done
-				if [[ -n "$survivor" ]]; then
-					echo "[pulse-wrapper] label_invariants: #${issue_num} in ${slug} had status labels [${core_status[*]}] -> keeping '${survivor}'" >>"$LOGFILE"
-					# set_issue_status performs the atomic add + remove-all-siblings
-					# in a single gh issue edit call
-					set_issue_status "$issue_num" "$slug" "$survivor" >/dev/null 2>&1 || true
-					total_status_fixed=$((total_status_fixed + 1))
-				fi
+# Helper: given an array of core status names, pick the survivor per
+# ISSUE_STATUS_LABEL_PRECEDENCE and emit it on stdout. Empty if none.
+_pick_status_survivor() {
+	local _precedent _current
+	for _precedent in "${ISSUE_STATUS_LABEL_PRECEDENCE[@]}"; do
+		for _current in "$@"; do
+			if [[ "$_current" == "$_precedent" ]]; then
+				echo "$_precedent"
+				return 0
 			fi
+		done
+	done
+	return 0
+}
 
-			# ---------- Tier invariant ----------
-			# Count space-separated tier names. Use array form to get count.
-			local -a tier_arr=()
-			if [[ -n "$tier_list" ]]; then
-				local _t
-				for _t in $tier_list; do
-					tier_arr+=("$_t")
-				done
+# Helper: given an array of tier names, pick the survivor per
+# ISSUE_TIER_LABEL_RANK and emit it on stdout. Empty if none.
+_pick_tier_survivor() {
+	local _rank _current_tier
+	for _rank in "${ISSUE_TIER_LABEL_RANK[@]}"; do
+		for _current_tier in "$@"; do
+			if [[ "$_current_tier" == "$_rank" ]]; then
+				echo "$_rank"
+				return 0
 			fi
+		done
+	done
+	return 0
+}
 
-			if [[ "${#tier_arr[@]}" -gt 1 ]]; then
-				# Pick survivor by rank order (first match wins)
-				local tier_survivor=""
-				local _rank
-				for _rank in "${ISSUE_TIER_LABEL_RANK[@]}"; do
-					local _current_tier
-					for _current_tier in "${tier_arr[@]}"; do
-						if [[ "$_current_tier" == "$_rank" ]]; then
-							tier_survivor="$_rank"
-							break 2
-						fi
-					done
-				done
-				if [[ -n "$tier_survivor" ]]; then
-					echo "[pulse-wrapper] label_invariants: #${issue_num} in ${slug} had tier labels [${tier_arr[*]}] -> keeping 'tier:${tier_survivor}'" >>"$LOGFILE"
-					# Remove every tier:* except the survivor in one edit
-					local -a tier_flags=()
-					local _losing
-					for _losing in "${tier_arr[@]}"; do
-						if [[ "$_losing" != "$tier_survivor" ]]; then
-							tier_flags+=(--remove-label "tier:${_losing}")
-						fi
-					done
-					if [[ "${#tier_flags[@]}" -gt 0 ]]; then
-						gh issue edit "$issue_num" --repo "$slug" "${tier_flags[@]}" >/dev/null 2>&1 || true
-						total_tier_fixed=$((total_tier_fixed + 1))
-					fi
-				fi
-			fi
+# Helper: enforce status invariant for one issue. Caller passes the
+# already-filtered core_status names as positional args (guaranteed
+# by the caller to have length >1). Returns 0 if a fix was applied.
+_enforce_status_invariant_one_issue() {
+	local issue_num="$1" slug="$2"
+	shift 2
+	local survivor
+	survivor=$(_pick_status_survivor "$@")
+	[[ -n "$survivor" ]] || return 1
 
-			# ---------- Triage-missing count (flag only, no auto-fix) ----------
-			# origin:interactive AND no tier AND no auto-dispatch AND no status AND created >30min ago.
-			# A maintainer-intended issue that hasn't been briefed into the dispatch
-			# pipeline — needs human tier assignment and brief creation.
-			if [[ "$has_origin_i" == "true" &&
-				-z "$tier_list" &&
-				"$has_auto" == "false" &&
-				"${#core_status[@]}" -eq 0 &&
-				"$created_epoch" =~ ^[0-9]+$ &&
-				"$created_epoch" -lt "$triage_cutoff" ]]; then
-				total_triage_missing=$((total_triage_missing + 1))
-			fi
-		done <<<"$rows"
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+	echo "[pulse-wrapper] label_invariants: #${issue_num} in ${slug} had status labels [$*] -> keeping '${survivor}'" >>"$LOGFILE"
+	set_issue_status "$issue_num" "$slug" "$survivor" >/dev/null 2>&1 || true
+	return 0
+}
 
-	# Always log the counters — zeros are informative (they confirm the pass ran
-	# and the state is clean; the t2041 LLM sweep reads them for Hygiene Anomalies).
-	echo "[pulse-wrapper] label_invariants: checked=${total_checked} status_fixed=${total_status_fixed} tier_fixed=${total_tier_fixed} triage_missing=${total_triage_missing}" >>"$LOGFILE"
+# Helper: enforce tier invariant for one issue. Caller passes tier
+# names as positional args (guaranteed to have length >1).
+_enforce_tier_invariant_one_issue() {
+	local issue_num="$1" slug="$2"
+	shift 2
+	local tier_survivor
+	tier_survivor=$(_pick_tier_survivor "$@")
+	[[ -n "$tier_survivor" ]] || return 1
 
-	# t2041: persist the counters to a well-known cache path so the prefetch
-	# layer can read them without re-parsing the log. Per-runner.
+	echo "[pulse-wrapper] label_invariants: #${issue_num} in ${slug} had tier labels [$*] -> keeping 'tier:${tier_survivor}'" >>"$LOGFILE"
+	local -a tier_flags=()
+	local _losing
+	for _losing in "$@"; do
+		if [[ "$_losing" != "$tier_survivor" ]]; then
+			tier_flags+=(--remove-label "tier:${_losing}")
+		fi
+	done
+	[[ "${#tier_flags[@]}" -gt 0 ]] || return 1
+	gh issue edit "$issue_num" --repo "$slug" "${tier_flags[@]}" >/dev/null 2>&1 || true
+	return 0
+}
+
+# Helper: fetch issues for a repo and emit '|'-delimited rows per issue.
+# See delimiter note in _normalize_label_invariants_for_repo.
+_fetch_label_invariant_rows() {
+	local slug="$1"
+	local issues_json
+	issues_json=$(gh issue list --repo "$slug" --state open \
+		--json number,labels,createdAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json=""
+	[[ -n "$issues_json" && "$issues_json" != "null" ]] || return 1
+
+	printf '%s' "$issues_json" | jq -r '
+		.[] | [
+			(.number | tostring),
+			([.labels[].name | select(startswith("status:")) | sub("^status:"; "")] | join(" ")),
+			([.labels[].name | select(startswith("tier:"))   | sub("^tier:";   "")] | join(" ")),
+			((.labels | map(.name) | index("origin:interactive")) != null | tostring),
+			((.labels | map(.name) | index("auto-dispatch"))      != null | tostring),
+			(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring)
+		] | join("|")
+	' 2>/dev/null
+	return 0
+}
+
+# Helper: process all issues for one repo. Updates the global
+# _LI_* counters (caller accumulates into totals).
+#
+# Uses global accumulators rather than per-call output vars because
+# the outer coordinator needs three counters and one checked count.
+#
+# DELIMITER CHOICE: '|' — a non-whitespace character that GitHub
+# label names cannot contain. Do NOT use @tsv: bash read with
+# IFS=$'\t' collapses consecutive tabs because tab is a whitespace
+# character in bash's field-splitting rules, so empty fields silently
+# disappear and the next field shifts into place, corrupting parses
+# on issues with no status labels (tier-only pollution case).
+_normalize_label_invariants_for_repo() {
+	local slug="$1"
+	local triage_cutoff="$2"
+
+	local rows
+	rows=$(_fetch_label_invariant_rows "$slug") || return 0
+	[[ -n "$rows" ]] || return 0
+
+	local issue_num status_list tier_list has_origin_i has_auto created_epoch
+	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto created_epoch; do
+		[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+		_LI_CHECKED=$((_LI_CHECKED + 1))
+
+		_filter_core_status_labels "$status_list"
+		local core_count="${#_LI_FILTERED_STATUS[@]}"
+
+		if [[ "$core_count" -gt 1 ]] &&
+			_enforce_status_invariant_one_issue "$issue_num" "$slug" "${_LI_FILTERED_STATUS[@]}"; then
+			_LI_STATUS_FIXED=$((_LI_STATUS_FIXED + 1))
+		fi
+
+		local -a tier_arr=()
+		if [[ -n "$tier_list" ]]; then
+			local _t
+			for _t in $tier_list; do
+				tier_arr+=("$_t")
+			done
+		fi
+
+		local tier_count="${#tier_arr[@]}"
+		if [[ "$tier_count" -gt 1 ]] &&
+			_enforce_tier_invariant_one_issue "$issue_num" "$slug" "${tier_arr[@]}"; then
+			_LI_TIER_FIXED=$((_LI_TIER_FIXED + 1))
+		fi
+
+		# Triage-missing count (flag only, no auto-fix). origin:interactive
+		# + no tier + no auto-dispatch + no status + created >30min ago =
+		# maintainer-intended issue not briefed into the dispatch pipeline.
+		if [[ "$has_origin_i" == "true" &&
+			-z "$tier_list" &&
+			"$has_auto" == "false" &&
+			"$core_count" -eq 0 &&
+			"$created_epoch" =~ ^[0-9]+$ &&
+			"$created_epoch" -lt "$triage_cutoff" ]]; then
+			_LI_TRIAGE_MISSING=$((_LI_TRIAGE_MISSING + 1))
+		fi
+	done <<<"$rows"
+	return 0
+}
+
+# Helper: write the counter JSON file consumed by t2041 prefetch layer.
+_write_label_invariants_counter_file() {
 	local counters_dir="${HOME}/.aidevops/cache"
 	local hostname_short
 	hostname_short=$(hostname -s 2>/dev/null || echo unknown)
@@ -481,9 +491,48 @@ _normalize_label_invariants() {
 	{
 		printf '{"timestamp": "%s", "checked": %d, "status_fixed": %d, "tier_fixed": %d, "triage_missing": %d}\n' \
 			"$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-			"$total_checked" "$total_status_fixed" "$total_tier_fixed" "$total_triage_missing"
+			"$_LI_CHECKED" "$_LI_STATUS_FIXED" "$_LI_TIER_FIXED" "$_LI_TRIAGE_MISSING"
 	} >"$counters_file" 2>/dev/null || true
+	return 0
+}
 
+# t2040: coordinator for the label-invariant pass. Delegates the per-issue
+# work to focused helpers so each function stays under the 100-line block
+# threshold. Global accumulators (_LI_*) are used instead of per-call
+# output vars because the coordinator needs four counters and bash 3.2
+# lacks namerefs.
+_normalize_label_invariants() {
+	local runner_user="$1"
+	local repos_json="$2"
+	# shellcheck disable=SC2034  # runner_user kept for signature symmetry
+	local _unused_runner="$runner_user"
+
+	# Guard: requires the precedence arrays from shared-constants.sh.
+	# Silently skip (fail-open) to avoid blocking the pulse on a bootstrap bug.
+	if [[ -z "${ISSUE_STATUS_LABEL_PRECEDENCE+x}" || -z "${ISSUE_TIER_LABEL_RANK+x}" ]]; then
+		echo "[pulse-wrapper] normalize_label_invariants skipped: precedence arrays not loaded" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Shared accumulators — reset at start of every pass.
+	_LI_CHECKED=0
+	_LI_STATUS_FIXED=0
+	_LI_TIER_FIXED=0
+	_LI_TRIAGE_MISSING=0
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	local triage_cutoff=$((now_epoch - 1800))
+
+	local slug
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		_normalize_label_invariants_for_repo "$slug" "$triage_cutoff"
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+
+	echo "[pulse-wrapper] label_invariants: checked=${_LI_CHECKED} status_fixed=${_LI_STATUS_FIXED} tier_fixed=${_LI_TIER_FIXED} triage_missing=${_LI_TRIAGE_MISSING}" >>"$LOGFILE"
+
+	_write_label_invariants_counter_file
 	return 0
 }
 
