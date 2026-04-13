@@ -1249,8 +1249,19 @@ has_open_pr() {
 	# GH#18041 (t1957): When a merged PR matches by task ID, verify it actually
 	# targets the same issue. A task ID collision (counter reset, fabricated ID)
 	# produces a merged PR for a *different* issue — blocking dispatch forever.
-	# Fix: fetch the merged PR body and check if it references our issue_number.
-	# If it references a different issue, it's a collision — warn but don't block.
+	#
+	# GH#18641 (planning-only awareness): The framework convention uses
+	# `For #NNN` / `Ref #NNN` in planning-only PR bodies (briefs, TODO entries,
+	# research docs) so the brief PR does NOT auto-close the real implementation
+	# issue. The previous bare `#NNN` body-reference check treated those as
+	# dispatch blockers, creating a deadlock: every brief PR permanently
+	# blocked dispatch on its own follow-up implementation issue.
+	#
+	# New semantic: a merged PR whose title matches the task ID blocks
+	# dispatch ONLY if the body contains a closing-keyword reference to the
+	# specific issue number (the same pattern used by Check 2 and by GitHub's
+	# own auto-close logic). Planning references (`For #`, `Ref #`) and
+	# unrelated-issue collisions both fall through to "allow dispatch".
 	local task_id
 	task_id=$(printf '%s' "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || true)
 	if [[ -z "$task_id" ]]; then
@@ -1264,23 +1275,29 @@ has_open_pr() {
 	if [[ "$pr_count" -gt 0 ]]; then
 		pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
 		if [[ -n "$pr_number" ]]; then
-			# Verify the merged PR actually targets our issue, not a different
-			# one that happened to reuse the same task ID (collision detection).
+			# Fetch the merged PR body and verify it contains a closing-keyword
+			# reference to OUR specific issue number. This mirrors the pattern
+			# in Check 2 (line 1236) and is the single source of truth for
+			# "this PR closed this issue": if GitHub would auto-close it, we
+			# block; otherwise we allow dispatch.
 			local merged_pr_body
 			merged_pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || merged_pr_body=""
-			local merged_pr_title
-			merged_pr_title=$(gh pr view "$pr_number" --repo "$repo_slug" --json title --jq '.title' 2>/dev/null) || merged_pr_title=""
 
-			# Check if the merged PR references our specific issue number
-			local our_issue_pattern="#${issue_number}([^[:alnum:]_]|$)"
-			if printf '%s\n%s' "$merged_pr_title" "$merged_pr_body" | grep -qE "$our_issue_pattern"; then
+			# Match: closing keyword + optional whitespace + #NNN or owner/repo#NNN
+			# followed by a non-word char or end-of-string. Identical to the
+			# Check 2 pattern so the two code paths agree on "closed".
+			local close_pattern_check3="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
+			if printf '%s' "$merged_pr_body" | grep -iqE "$close_pattern_check3"; then
 				printf 'merged PR #%s found by task id %s in title\n' "$pr_number" "$task_id"
 				return 0
 			fi
 
-			# The merged PR has the same task ID but targets a different issue.
-			# This is a task ID collision — warn on stderr but don't block dispatch.
-			printf 'COLLISION: merged PR #%s has task id %s but targets a different issue (not #%s) — allowing dispatch\n' \
+			# The merged PR has the same task ID but does NOT close issue
+			# #${issue_number} via a closing keyword. Two valid cases fall
+			# through here: (a) task-ID collision (different issue), and
+			# (b) planning-only brief (For #NNN / Ref #NNN body reference).
+			# Both cases allow dispatch — the real implementation is not done.
+			printf 'NO_CLOSE_REF: merged PR #%s has task id %s but does not close issue #%s via closing keyword — allowing dispatch\n' \
 				"$pr_number" "$task_id" "$issue_number" >&2
 			return 1
 		else
