@@ -59,11 +59,7 @@ export UBI_TOKEN="$UBICLOUD_TOKEN_MAIN"
 AUTH="Authorization: Bearer $UBI_TOKEN"
 
 # Verify access — list projects you can see
-curl -s -H "$AUTH" https://api.ubicloud.com/project | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-for p in d.get('items', []):
-    print(f\"{p['id']}  {p['name']}\")"
+curl -s -H "$AUTH" https://api.ubicloud.com/project | jq -r '.items[] | "\(.id)  \(.name)"'
 ```
 
 Getting a token: console.ubicloud.com → your project → **Tokens** → **Create Token** → copy.

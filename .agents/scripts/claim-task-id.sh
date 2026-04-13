@@ -688,7 +688,7 @@ _check_duplicate_issue() {
 		local existing_issue
 		existing_issue=$(gh issue list --repo "$repo_slug" \
 			--state open --search "\"$search_terms\"" \
-			--json number --limit 1 -q '.[0].number // empty' 2>/dev/null || echo "")
+			--json number --limit 1 -q '.[0].number // ""' || true)
 		if [[ -n "$existing_issue" ]]; then
 			log_info "Found existing OPEN issue #$existing_issue matching title, skipping duplicate creation"
 			echo "$existing_issue"
@@ -702,9 +702,9 @@ _check_duplicate_issue() {
 	local existing_issue
 	existing_issue=$(gh issue list --repo "$repo_slug" \
 		--state open --search "${task_id_prefix}: in:title" \
-		--json number,title --limit 10 2>/dev/null |
+		--json number,title --limit 10 |
 		jq -r --arg prefix "${task_id_prefix}: " \
-			'.[] | select(.title | startswith($prefix)) | .number // empty' |
+			'.[] | select(.title | startswith($prefix)) | .number // ""' |
 		head -1)
 
 	if [[ -n "$existing_issue" ]]; then
