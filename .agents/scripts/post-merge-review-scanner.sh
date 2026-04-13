@@ -39,16 +39,17 @@ get_lookback_date() {
 }
 
 # Fetch actionable bot comments for a PR. Output: "bot|path|snippet" per line.
+# Snippet is truncated to 500 chars to preserve enough context for workers (GH#18539).
 fetch_actionable() {
 	local repo="$1" pr="$2"
 	local jq_f='[.[] | select((.user.login // "") | test("'"$BOT_RE"'";"i"))
 		| select((.body // "") | test("'"$ACT_RE"'";"i"))
-		| "\((.user.login // ""))|\(.path // "")|\((.body // "") | gsub("\n";" ") | .[:200])"] | .[]'
+		| "\((.user.login // ""))|\(.path // "")|\((.body // "") | gsub("\n";" ") | .[:500])"] | .[]'
 	{ gh api "repos/${repo}/pulls/${pr}/comments" --paginate || echo '[]'; } |
 		jq -r "$jq_f"
 	local jq_r='[.[] | select((.user.login // "") | test("'"$BOT_RE"'";"i"))
 		| select((.body // "") | test("'"$ACT_RE"'";"i"))
-		| "\((.user.login // ""))||\((.body // "") | gsub("\n";" ") | .[:200])"] | .[]'
+		| "\((.user.login // ""))||\((.body // "") | gsub("\n";" ") | .[:500])"] | .[]'
 	{ gh api "repos/${repo}/pulls/${pr}/reviews" --paginate || echo '[]'; } |
 		jq -r "$jq_r"
 }
@@ -64,6 +65,7 @@ issue_exists() {
 
 create_issue() {
 	local repo="$1" pr="$2" pr_title="$3" summary="$4" dry_run="$5"
+	local file_paths="$6"
 	local title="Review followup: PR #${pr} — ${pr_title}"
 	if [[ "$dry_run" == "true" ]]; then
 		log "[DRY-RUN] Would create: $title"
@@ -82,6 +84,37 @@ create_issue() {
 		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
 	fi
 
+	# Build worker guidance section with file paths (GH#18539)
+	local worker_guidance=""
+	if [[ -n "$file_paths" ]]; then
+		local files_list=""
+		while IFS= read -r fp; do
+			[[ -n "$fp" ]] && files_list="${files_list}
+- EDIT: \`${fp}\`"
+		done <<<"$file_paths"
+		worker_guidance="
+## Worker Guidance
+
+### Files to Modify
+${files_list}
+
+### Implementation Steps
+
+1. Read the full review comments on the source PR: \`gh api repos/${repo}/pulls/${pr}/comments --jq '.[] | select(.user.login | test(\"coderabbit|gemini-code-assist|claude-review|gpt-review\";\"i\")) | {path: .path, body: .body}'\`
+2. For each actionable comment above, apply the suggested fix to the referenced file
+3. Run verification (see below) after each change
+
+### Verification
+
+\`\`\`bash
+# For shell scripts:
+shellcheck <modified-files>
+# For all files:
+git diff --stat
+\`\`\`
+"
+	fi
+
 	body="## Unaddressed review bot suggestions
 
 PR #${pr} was merged with unaddressed review bot feedback.
@@ -89,7 +122,8 @@ PR #${pr} was merged with unaddressed review bot feedback.
 
 ### Actionable comments
 
-${summary}${sig_footer}"
+${summary}${worker_guidance}
+${sig_footer}"
 	gh_create_issue --repo "$repo" --title "$title" --label "$SCANNER_LABEL,source:review-scanner" --body "$body"
 }
 
@@ -118,16 +152,25 @@ do_scan() {
 		local hits
 		hits=$(fetch_actionable "$repo" "$pr")
 		[[ -z "$hits" ]] && continue
-		local pr_title summary=""
+		local pr_title summary="" unique_paths=""
 		pr_title=$(gh pr view "$pr" --repo "$repo" --json title --jq '.title' || echo "Unknown")
 		while IFS='|' read -r bot path snippet; do
 			local ref=""
 			[[ -n "$path" ]] && ref=" (\`${path}\`)"
 			printf -v summary '%s- **%s**%s: %s...\n' "$summary" "$bot" "$ref" "$snippet"
+			# Collect unique file paths for worker guidance (GH#18539)
+			if [[ -n "$path" ]]; then
+				if [[ -z "$unique_paths" ]]; then
+					unique_paths="$path"
+				elif ! echo "$unique_paths" | grep -qxF "$path"; then
+					unique_paths="${unique_paths}
+${path}"
+				fi
+			fi
 		done <<<"$hits"
 		[[ -z "$summary" ]] && continue
 		log "PR #${pr}: creating issue"
-		create_issue "$repo" "$pr" "$pr_title" "$summary" "$dry_run"
+		create_issue "$repo" "$pr" "$pr_title" "$summary" "$dry_run" "$unique_paths"
 		issues_created=$((issues_created + 1))
 	done <<<"$pr_numbers"
 	log "Done. Issues created: ${issues_created}"
