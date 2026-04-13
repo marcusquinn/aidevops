@@ -133,13 +133,119 @@ _normalize_clear_status_labels() {
 }
 
 #######################################
-# (Phase 12 helper) Detect and reset stale runner assignments.
+# (Phase 12 helper) Read the Worker PID and dispatch timestamp from the most
+# recent dispatch comment on a GitHub issue.
+#
+# Outputs two lines to stdout: the Worker PID (blank if not found) followed by
+# the ISO-8601 created_at timestamp (blank if not found). Uses a single gh api
+# call with jq to avoid multiple round-trips.
+#
+# Args:
+#   $1 slug       — owner/repo
+#   $2 stale_num  — numeric GitHub issue number
+# Returns: 0 always (best-effort)
+#######################################
+_normalize_stale_get_dispatch_info() {
+	local slug="$1"
+	local stale_num="$2"
+
+	local dispatch_pid=""
+	local dispatch_created_at=""
+
+	# The || true prevents set -e from exiting if gh api returns no comments.
+	{
+		IFS= read -r dispatch_pid
+		IFS= read -r dispatch_created_at
+	} < <(gh api "repos/${slug}/issues/${stale_num}/comments" \
+		--jq '[.[] | select(.body | test("^(<!-- ops:start[^>]*-->\\s*)?Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") | .pid // ""), .created_at) else empty end' \
+		2>/dev/null) || true
+
+	printf '%s\n%s\n' "$dispatch_pid" "$dispatch_created_at"
+	return 0
+}
+
+#######################################
+# (Phase 12 helper) Decide whether a stale-assigned issue should be skipped
+# (worker still active) or reset (worker gone).
+#
+# Applies three checks in order:
+#   1. Local pgrep — is any process referencing this issue number still running?
+#   2. Cross-runner PID guard (t1933) — PID absent locally but dispatch comment
+#      still within WORKER_MAX_RUNTIME, suggesting the worker is on another machine.
+#   3. Worker log recency — was the worker log written in the last 10 minutes?
+#
+# Returns: 0 = skip (worker still active), 1 = reset (worker gone)
+#
+# Args:
+#   $1 stale_num               — numeric GitHub issue number
+#   $2 slug                    — owner/repo
+#   $3 now_epoch               — current Unix timestamp (date +%s)
+#   $4 cross_runner_max_runtime — seconds before cross-runner dispatch expires
+#######################################
+_normalize_stale_should_skip_reset() {
+	local stale_num="$1"
+	local slug="$2"
+	local now_epoch="$3"
+	local cross_runner_max_runtime="$4"
+
+	# Check 1: local worker process still referencing this issue
+	if pgrep -f "issue.*${stale_num}" >/dev/null 2>&1 || pgrep -f "#${stale_num}" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# Read dispatch PID and timestamp from the most recent dispatch comment
+	local dispatch_info dispatch_pid dispatch_created_at
+	dispatch_info=$(_normalize_stale_get_dispatch_info "$slug" "$stale_num")
+	dispatch_pid=$(printf '%s\n' "$dispatch_info" | head -1)
+	dispatch_created_at=$(printf '%s\n' "$dispatch_info" | tail -1)
+
+	local dispatch_comment_age=0
+	if [[ -n "$dispatch_created_at" ]]; then
+		local dispatch_epoch
+		dispatch_epoch=$(date -u -d "$dispatch_created_at" '+%s' 2>/dev/null ||
+			TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$dispatch_created_at" '+%s' 2>/dev/null ||
+			echo "0")
+		if [[ "$dispatch_epoch" -gt 0 ]]; then
+			dispatch_comment_age=$((now_epoch - dispatch_epoch))
+		fi
+	fi
+
+	# Check 2: t1933 cross-runner guard — PID absent locally but within max_runtime
+	if [[ -n "$dispatch_pid" ]] && [[ "$dispatch_pid" =~ ^[0-9]+$ ]]; then
+		if ! ps -p "$dispatch_pid" >/dev/null 2>&1; then
+			# PID not running locally — could be cross-runner dispatch.
+			# Only reset if the dispatch comment has aged beyond WORKER_MAX_RUNTIME.
+			if [[ "$dispatch_comment_age" -lt "$cross_runner_max_runtime" ]]; then
+				echo "[pulse-wrapper] Stale assignment skip (cross-runner guard): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not local, comment age ${dispatch_comment_age}s < max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
+				return 0
+			fi
+			echo "[pulse-wrapper] Stale assignment reset (cross-runner expired): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not local, comment age ${dispatch_comment_age}s >= max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
+		fi
+	fi
+
+	# Check 3: worker log recency — log written in last 10 min means worker may still be active
+	local safe_slug_check
+	safe_slug_check=$(printf '%s' "$slug" | tr '/:' '--')
+	local worker_log="/tmp/pulse-${safe_slug_check}-${stale_num}.log"
+	if [[ -f "$worker_log" ]]; then
+		local log_mtime
+		# Linux stat -c first (stat -f '%m' on macOS outputs file info in a different format)
+		log_mtime=$(stat -c '%Y' "$worker_log" 2>/dev/null || stat -f '%m' "$worker_log" 2>/dev/null) || log_mtime=0
+		if [[ $((now_epoch - log_mtime)) -lt 600 ]]; then
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+#######################################
+# (Phase 12) Detect and reset stale runner assignments.
 #
 # Pass 2 of normalize_active_issue_assignments: find issues assigned to
 # runner_user with status:queued/in-progress that have been idle for >1h,
-# verify no worker process is handling them (local PID check + cross-runner
-# time-based guard + log recency check), and reset via
-# _normalize_clear_status_labels so they can be re-dispatched.
+# verify no worker process is handling them (via _normalize_stale_should_skip_reset),
+# and reset via _normalize_clear_status_labels so they can be re-dispatched.
 #
 # t1933: PID-based checks are local-only. In multi-runner setups, a worker
 # dispatched by another machine is invisible to pgrep on this machine.
@@ -186,78 +292,11 @@ _normalize_unassign_stale() {
 		while IFS= read -r stale_num; do
 			[[ "$stale_num" =~ ^[0-9]+$ ]] || continue
 
-			# t1933: Extract Worker PID from the most recent dispatch comment.
-			# If the dispatch comment records a PID that is NOT running locally,
-			# this may be a cross-runner dispatch — use time-based expiry instead
-			# of PID-based recovery to avoid falsely resetting active workers on
-			# other machines.
-			local dispatch_pid=""
-			local dispatch_comment_age=0
-			local dispatch_created_at=""
-
-			# Read PID and creation date from the latest dispatch comment in one go.
-			# This avoids storing the full comment JSON and running multiple jq processes.
-			# The || true on the process substitution prevents set -e from exiting
-			# if gh api returns no comments.
-			{
-				IFS= read -r dispatch_pid
-				IFS= read -r dispatch_created_at
-			} < <(gh api "repos/${slug}/issues/${stale_num}/comments" \
-				--jq '[.[] | select(.body | test("^(<!-- ops:start[^>]*-->\\s*)?Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") | .pid // ""), .created_at) else empty end' \
-				2>/dev/null) || true
-
-			if [[ -n "$dispatch_created_at" ]]; then
-				local dispatch_epoch
-				dispatch_epoch=$(date -u -d "$dispatch_created_at" '+%s' 2>/dev/null ||
-					TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$dispatch_created_at" '+%s' 2>/dev/null ||
-					echo "0")
-				if [[ "$dispatch_epoch" -gt 0 ]]; then
-					dispatch_comment_age=$((now_epoch - dispatch_epoch))
-				fi
-			fi
-
-			# Check if any worker process references this issue (local PID check)
-			local local_worker_found=false
-			if pgrep -f "issue.*${stale_num}" >/dev/null 2>&1 || pgrep -f "#${stale_num}" >/dev/null 2>&1; then
-				local_worker_found=true
-			fi
-
-			if [[ "$local_worker_found" == "true" ]]; then
-				# Local worker is running — do not reset
+			if _normalize_stale_should_skip_reset "$stale_num" "$slug" "$now_epoch" "$cross_runner_max_runtime"; then
 				continue
 			fi
 
-			# t1933: If dispatch comment has a PID that is not running locally,
-			# determine if this is a cross-runner dispatch by checking whether
-			# the PID exists on this machine. If the PID is absent locally but
-			# the dispatch comment is still within WORKER_MAX_RUNTIME, assume
-			# the worker is running on another machine and skip the reset.
-			if [[ -n "$dispatch_pid" ]] && [[ "$dispatch_pid" =~ ^[0-9]+$ ]]; then
-				if ! ps -p "$dispatch_pid" >/dev/null 2>&1; then
-					# PID not running locally — could be cross-runner dispatch.
-					# Only reset if the dispatch comment has aged beyond WORKER_MAX_RUNTIME.
-					if [[ "$dispatch_comment_age" -lt "$cross_runner_max_runtime" ]]; then
-						echo "[pulse-wrapper] Stale assignment skip (cross-runner guard): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not local, comment age ${dispatch_comment_age}s < max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
-						continue
-					fi
-					echo "[pulse-wrapper] Stale assignment reset (cross-runner expired): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not local, comment age ${dispatch_comment_age}s >= max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
-				fi
-			fi
-
-			# Also check worker log recency — if log was written in last 10 min, worker may still be active
-			local safe_slug_check
-			safe_slug_check=$(printf '%s' "$slug" | tr '/:' '--')
-			local worker_log="/tmp/pulse-${safe_slug_check}-${stale_num}.log"
-			if [[ -f "$worker_log" ]]; then
-				local log_mtime
-				# Linux stat -c first (stat -f '%m' on macOS outputs file info in a different format)
-				log_mtime=$(stat -c '%Y' "$worker_log" 2>/dev/null || stat -f '%m' "$worker_log" 2>/dev/null) || log_mtime=0
-				if [[ $((now_epoch - log_mtime)) -lt 600 ]]; then
-					continue
-				fi
-			fi
-
-			# No active worker and cross-runner guard passed — reset the issue for re-dispatch
+			# No active worker and all guards passed — reset for re-dispatch
 			echo "[pulse-wrapper] Stale assignment reset: #${stale_num} in ${slug} — assigned to ${runner_user} with active label but no worker process" >>"$LOGFILE"
 			_normalize_clear_status_labels "$stale_num" "$slug" "$runner_user" || true
 			total_reset=$((total_reset + 1))
