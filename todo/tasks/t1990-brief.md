@@ -86,13 +86,13 @@ During the filing of t1979–t1985 I committed a planning-only change directly o
 
 3. Update `.agents/AGENTS.md`. Find the paragraph:
 
-    ```
+    ```markdown
     **Main-branch planning exception:** `TODO.md` and `todo/*` are the explicit exception to the PR-only flow — planning-only edits may be committed and pushed directly to `main`.
     ```
 
     Replace with:
 
-    ```
+    ```markdown
     **Main-branch planning exception (headless sessions only):** `TODO.md` and `todo/*` are an explicit exception to the PR-only flow for **headless sessions** (pulse, CI workers, routines) — they may be committed and pushed directly to `main`. **Interactive sessions must always use a linked worktree**, regardless of file path. No exceptions. The canonical repo directory always stays on `main`; every interactive edit goes through a worktree at `~/Git/<repo>-<branch>`. Enforced by `pre-edit-check.sh` (t1990).
     ```
 
