@@ -5,8 +5,8 @@
 # Tests for _is_task_committed_to_main() (GH#17574)
 #
 # Verifies that the pre-dispatch main-commit check correctly detects
-# when a task has already been committed directly to main, preventing
-# redundant worker dispatch.
+# when a task has already landed on main (via PR merge or direct commit),
+# preventing redundant worker dispatch.
 
 set -euo pipefail
 
