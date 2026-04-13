@@ -16,7 +16,26 @@
 # Env:   SCANNER_DAYS (default 7), SCANNER_MAX_ISSUES (default 10),
 #        SCANNER_LABEL (default review-followup),
 #        SCANNER_PR_LIMIT (default 1000),
-#        SCANNER_MAX_COMMENTS (default 10) — cap per issue body
+#        SCANNER_MAX_COMMENTS (default 10) — cap per issue body,
+#        SCANNER_NEEDS_REVIEW (default true) — apply needs-maintainer-review
+#          label so workers do not auto-dispatch on unverified bot findings;
+#          set to "false" to allow direct dispatch.
+#
+# Why needs-maintainer-review by default (GH#18538 follow-up to PR #18607):
+# PR #18607 made the issue body worker-actionable (file:line refs, full bot
+# bodies, Worker Guidance), but rich body context cannot rescue a finding
+# whose factual premise is wrong. The original #18538 was triggered by a
+# Gemini comment claiming the TODO.md "Ready" section is auto-generated
+# (it is not — todo-ready.sh is read-only). A worker reading even a
+# perfectly-mentored body would still chase a false premise. Routing every
+# review-followup through human triage at creation time means the
+# maintainer either (a) verifies the premise and removes the label, (b)
+# closes as won't-fix with rationale, or (c) reframes the scope before
+# dispatch. This pairs with #18607's body work — together they turn 0
+# wasted dispatches per false-premise finding instead of #18538's 2.
+#
+# Prior art for the false-premise risk: prompts/build.txt section 6a
+# (AI-generated issue quality, GH#17832-17835).
 #
 # t1386: https://github.com/marcusquinn/aidevops/issues/2785
 # GH#18538: workers timed out on review-followup issues with truncated bodies.
@@ -32,6 +51,7 @@ SCANNER_MAX_ISSUES="${SCANNER_MAX_ISSUES:-10}"
 SCANNER_LABEL="${SCANNER_LABEL:-review-followup}"
 SCANNER_PR_LIMIT="${SCANNER_PR_LIMIT:-1000}"
 SCANNER_MAX_COMMENTS="${SCANNER_MAX_COMMENTS:-10}"
+SCANNER_NEEDS_REVIEW="${SCANNER_NEEDS_REVIEW:-true}"
 BOT_RE="coderabbitai|gemini-code-assist|claude-review|gpt-review"
 ACT_RE="should|consider|fix|change|update|refactor|missing|add"
 
@@ -138,6 +158,36 @@ with a wontfix rationale.
 
 **Source PR:** https://github.com/${repo}/pull/${pr}
 
+---
+
+### Triage required (read before dispatching a worker)
+
+This issue is **auto-created from review bot output**. Review bots can be
+wrong: hallucinated line refs, false premises about codebase structure,
+template-driven sweeps without measurements (see GH#17832-17835 for prior
+art and \`prompts/build.txt\` section 6a). The \`needs-maintainer-review\`
+label gates this issue from worker auto-dispatch until a human verifies
+the bot's premise against the actual code.
+
+Pick one path:
+
+1. **Accept** — verify the bot is right by reading the cited file:line in
+   the source PR. Confirm the suggested change makes sense in context.
+   Optionally tighten the Worker Guidance section below for the dispatched
+   worker. Then remove \`needs-maintainer-review\` and add a tier label
+   (\`tier:simple\` / \`tier:standard\` / \`tier:reasoning\`).
+2. **Reject** — comment with the falsified premise (e.g. "section X is
+   not auto-generated, finding is wrong") and close the issue. Optionally
+   file a meta-issue if the bot is producing systemic noise from a
+   specific rule.
+3. **Modify scope** — edit title and body to reframe (e.g. "this finding
+   on file X is wrong, but it surfaced a real issue on file Y"). Then
+   follow path 1.
+
+Workers dispatched against an unverified premise burn tokens on
+exploration and stale-recover via the t2008 fail-safe — that path works
+but is wasteful.
+
 ### Worker Guidance
 
 **Files to modify:**
@@ -189,6 +239,18 @@ create_issue() {
 	gh label create "source:review-scanner" --repo "$repo" \
 		--description "Auto-created by post-merge-review-scanner.sh" --color "C2E0C6" --force || true
 
+	# GH#18538: gate worker dispatch on human triage by default. Bot
+	# findings can have false premises that no amount of body context
+	# rescues. The maintainer either approves (removes label, adds tier),
+	# rejects (closes), or reframes scope before any worker runs.
+	local label_list="$SCANNER_LABEL,source:review-scanner"
+	if [[ "$SCANNER_NEEDS_REVIEW" == "true" ]]; then
+		gh label create "needs-maintainer-review" --repo "$repo" \
+			--description "Requires human triage before worker dispatch" \
+			--color "B60205" || true
+		label_list="${label_list},needs-maintainer-review"
+	fi
+
 	# Append signature footer
 	local sig_footer="" sig_helper
 	sig_helper="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/gh-signature-helper.sh"
@@ -197,7 +259,7 @@ create_issue() {
 	fi
 
 	gh_create_issue --repo "$repo" --title "$title" \
-		--label "$SCANNER_LABEL,source:review-scanner" \
+		--label "$label_list" \
 		--body "${body}${sig_footer}"
 }
 
