@@ -10,11 +10,8 @@ tools:
   grep: true
   webfetch: true
   shopify-dev-mcp_*: true
-  # TODO(permission-migration): When anomalyco/opencode#6892 is resolved and
-  # permission: supports MCP wildcard gating, migrate to:
-  #   permission:
-  #     shopify-dev-mcp: allow
-  # and remove the tools: shopify-dev-mcp_* entry above.
+  # TODO(permission-migration, anomalyco/opencode#6892): when MCP wildcard gating lands,
+  # migrate to `permission: shopify-dev-mcp: allow` and remove shopify-dev-mcp_* above.
 mcp:
   - shopify-dev-mcp
 ---
@@ -37,13 +34,9 @@ mcp:
 
 ## Activation
 
-This agent is invoked with `@shopify`. The `shopify-dev-mcp` server is lazy-loaded on demand
-(`eager: false` in the plugin registry) — it starts on the first tool call, not at OpenCode
-launch. Tool calls are gated: `shopify-dev-mcp_*: false` globally, `true` only for this agent.
-No context bloat for sessions that don't use Shopify.
+Invoked with `@shopify`. The `shopify-dev-mcp` server lazy-loads on first tool call (`eager: false` in plugin registry) — no context bloat for non-Shopify sessions. Tool calls gated: `shopify-dev-mcp_*: false` globally, `true` only for this agent.
 
-**Headless workers**: The MCP is registered automatically by the plugin on every OpenCode
-startup. If `shopify-dev-mcp` tools are absent from the session tool list, exit BLOCKED:
+**Headless workers**: If `shopify-dev-mcp` tools are absent from the session tool list, exit BLOCKED:
 `BLOCKED: Required MCP shopify-dev-mcp not available. Ensure aidevops plugin is loaded and restart OpenCode.`
 
 ## Capabilities
@@ -57,12 +50,7 @@ startup. If `shopify-dev-mcp` tools are absent from the session tool list, exit 
 | Pages, redirects, navigation | Content management surface |
 | Metafields, SEO metadata | Structured data management |
 
-## Why MCP over CLI
-
-`shopify store execute` (CLI) is raw GraphQL — no schema awareness, no field validation.
-The MCP guides correct queries and catches schema errors before hitting the API.
-CLI is only appropriate for theme file operations (`themeFilesUpsert`) and simple
-product/order reads where the schema is stable and well-known.
+> **Why MCP over CLI**: `shopify store execute` (CLI) is raw GraphQL — no schema awareness, no field validation. MCP guides correct queries and catches schema errors before hitting the API. CLI is only appropriate for theme file operations (`themeFilesUpsert`) and simple product/order reads where the schema is stable and well-known.
 
 ## Repo-Level Skills
 
@@ -78,8 +66,7 @@ Available: `shopify-admin`, `shopify-admin-execution`, `shopify-liquid`, `shopif
 
 ## repos.json Integration
 
-Tag Shopify repos with `"platform": "shopify"` to document intent (auto-enable is not yet
-implemented at the dispatch layer — invoke `@shopify` explicitly):
+Tag Shopify repos with `"platform": "shopify"` to document intent (auto-enable not yet implemented at dispatch layer — invoke `@shopify` explicitly):
 
 ```json
 {
