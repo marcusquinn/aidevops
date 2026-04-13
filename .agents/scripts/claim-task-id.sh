@@ -681,15 +681,15 @@ _check_duplicate_issue() {
 		# No tNNN prefix to match against — fall back to old behaviour
 		# but ONLY if search_terms is substantial enough to be safe.
 		local search_terms
-		search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
+		search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//; s/"/\\"/g')
 		if [[ ${#search_terms} -lt 10 ]]; then
 			return 1
 		fi
 		local existing_issue
 		existing_issue=$(gh issue list --repo "$repo_slug" \
 			--state open --search "\"$search_terms\"" \
-			--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
-		if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
+			--json number --limit 1 -q '.[0].number // ""' || echo "")
+		if [[ -n "$existing_issue" ]]; then
 			log_info "Found existing OPEN issue #$existing_issue matching title, skipping duplicate creation"
 			echo "$existing_issue"
 			return 0
@@ -702,9 +702,9 @@ _check_duplicate_issue() {
 	existing_issue=$(gh issue list --repo "$repo_slug" \
 		--state open --search "${task_id_prefix}: in:title" \
 		--json number,title --limit 10 \
-		-q ".[] | select(.title | startswith(\"${task_id_prefix}: \")) | .number" 2>/dev/null | head -1)
+		-q ".[] | select(.title | startswith(\"${task_id_prefix}: \")) | .number" | head -1)
 
-	if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
+	if [[ -n "$existing_issue" ]]; then
 		log_info "Found existing OPEN issue #$existing_issue with exact ${task_id_prefix} prefix, skipping duplicate creation"
 		echo "$existing_issue"
 		return 0
