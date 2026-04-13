@@ -725,8 +725,10 @@ dispatch_triage_reviews() {
 
 	# Resolve model: prefer opus, fall back to sonnet, then omit --model
 	local resolved_model=""
-	resolved_model=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve opus 2>/dev/null || echo "")
-	[[ -n "$resolved_model" ]] || resolved_model=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve sonnet 2>/dev/null || echo "")
+	resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve opus || echo "")
+	if [[ -z "$resolved_model" ]]; then
+		resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve sonnet || echo "")
+	fi
 	[[ -n "$resolved_model" ]] || echo "[pulse-wrapper] dispatch_triage_reviews: model resolution failed (opus and sonnet unavailable)" >>"$LOGFILE"
 
 	# Parse "## owner/repo" headers and "- Issue #N: ... [status: **needs-review**]" lines.
@@ -801,7 +803,7 @@ relabel_needs_info_replies() {
 		gh issue comment "$issue_num" --repo "$repo_slug" \
 			--body "Contributor replied to the information request. Relabeled to \`needs-maintainer-review\` for re-evaluation." \
 			2>/dev/null || true
-	done < <(grep -oP '(?<=replied\|)\d+\|[^\n]+' "$state_file" 2>/dev/null || true)
+	done < <(sed -n 's/^replied|//p' "$state_file" 2>/dev/null || true)
 
 	return 0
 }
@@ -866,7 +868,7 @@ dispatch_foss_workers() {
 		[[ "$available" -gt 0 && "$foss_count" -lt "$foss_max" ]] || break
 
 		# Pre-dispatch eligibility check (budget + rate limit)
-		~/.aidevops/agents/scripts/foss-contribution-helper.sh check "$foss_slug" >/dev/null 2>&1 || continue
+		"${SCRIPT_DIR}/foss-contribution-helper.sh" check "$foss_slug" >/dev/null || continue
 
 		# Scan for a suitable issue
 		local labels_filter foss_issue foss_issue_num foss_issue_title
@@ -888,13 +890,13 @@ dispatch_foss_workers() {
 			"$repos_json" 2>/dev/null || echo "true")
 		[[ "$disclosure" == "true" ]] && disclosure_flag=" Include AI disclosure note in the PR."
 
-		~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+		"$HEADLESS_RUNTIME_HELPER" run \
 			--role worker \
 			--session-key "foss-${foss_slug}-${foss_issue_num}" \
 			--dir "$foss_path" \
 			--title "FOSS: ${foss_slug} #${foss_issue_num}: ${foss_issue_title}" \
 			--prompt "/full-loop Implement issue #${foss_issue_num} (https://github.com/${foss_slug}/issues/${foss_issue_num}) -- ${foss_issue_title}. This is a FOSS contribution.${disclosure_flag} After completion, run: foss-contribution-helper.sh record ${foss_slug} <tokens_used>" \
-			</dev/null >>"/tmp/pulse-foss-${foss_issue_num}.log" 2>&1 9>&- &
+			</dev/null >>"${HOME}/.aidevops/logs/pulse-foss-${foss_issue_num}.log" 2>&1 9>&- &
 		sleep 2
 
 		foss_count=$((foss_count + 1))

@@ -141,9 +141,9 @@ dispatch_enrichment_workers() {
 
 	# Resolve reasoning model
 	local resolved_model=""
-	resolved_model=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve opus 2>/dev/null || echo "")
+	resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve opus || echo "")
 	if [[ -z "$resolved_model" ]]; then
-		resolved_model=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve sonnet 2>/dev/null || echo "")
+		resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve sonnet || echo "")
 	fi
 	if [[ -z "$resolved_model" ]]; then
 		echo "[pulse-wrapper] dispatch_enrichment_workers: no reasoning model available — skipping" >>"$LOGFILE"
