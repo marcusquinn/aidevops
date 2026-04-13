@@ -276,34 +276,16 @@ verify_pr_merged() {
 	return 0
 }
 
-# Mark task complete in TODO.md
-complete_task() {
+# Guard: reject completion when any subtask of task_id is still open.
+# Returns 0 if safe to proceed, 1 if blocked (logs the reason).
+# Args: task_id todo_file
+_check_task_subtasks_open() {
 	local task_id="$1"
-	local proof_log="$2"
-	local repo_path="$3"
+	local todo_file="$2"
 
-	local todo_file="$repo_path/TODO.md"
-	if [[ ! -f "$todo_file" ]]; then
-		log_error "TODO.md not found at $todo_file"
-		return 1
-	fi
-
-	# Check if task exists and is open
-	if ! grep -qE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file"; then
-		if grep -qE "^[[:space:]]*- \[x\] ${task_id}( |$)" "$todo_file"; then
-			log_warn "Task $task_id is already marked complete"
-			return 0
-		else
-			log_error "Task $task_id not found in $todo_file"
-			return 1
-		fi
-	fi
-
-	# t1003: Guard against marking parent tasks complete when subtasks are still open
-	# Check for explicit subtask IDs (e.g., t123.1, t123.2 are children of t123)
+	# t1003: Check for explicit subtask IDs (e.g., t123.1, t123.2)
 	local explicit_subtasks
 	explicit_subtasks=$(grep -E "^[[:space:]]*- \[ \] ${task_id}\.[0-9]+( |$)" "$todo_file" || true)
-
 	if [[ -n "$explicit_subtasks" ]]; then
 		local open_count
 		open_count=$(echo "$explicit_subtasks" | wc -l | tr -d ' ')
@@ -313,9 +295,8 @@ complete_task() {
 	fi
 
 	# Check for indentation-based subtasks
-	local task_line
+	local task_line task_indent
 	task_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1)
-	local task_indent
 	task_indent=$(echo "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
 	task_indent=$((task_indent - 1)) # wc -c counts newline
 
@@ -341,42 +322,33 @@ complete_task() {
 		log_error "  Complete all indented subtasks first"
 		return 1
 	fi
+	return 0
+}
 
-	local today
-	today=$(date +%Y-%m-%d)
+# Extract the task block from its current location and insert it at the top
+# of the ## Done section.  Caller must create ${todo_file}.bak first; this
+# function restores from it on any failure.
+# Args: task_id proof_log today todo_file
+_move_task_block_to_done() {
+	local task_id="$1"
+	local proof_log="$2"
+	local today="$3"
+	local todo_file="$4"
 
-	# Verify ## Done section exists before modifying the file
-	if ! grep -q "^## Done$" "$todo_file"; then
-		log_error "## Done section not found in $todo_file — cannot move task"
-		return 1
-	fi
-
-	# Create backup
-	cp "$todo_file" "${todo_file}.bak"
-
-	local tmp_block
+	local tmp_block tmp_result
 	tmp_block=$(mktemp)
-	local tmp_result
 	tmp_result=$(mktemp)
 
-	# Pass 1: Extract the task block (parent + indented children) into a temp
-	# file, transform the parent line ([ ] -> [x], append proof_log +
-	# completed:today), and output the file with the block removed.
-	#
-	# Block boundary: the matching "- [ ] TASKID" line plus any immediately-
-	# following lines indented with 2+ spaces.  Ends at the first blank line,
-	# next top-level "- [" entry, or EOF.
+	# Pass 1: capture + transform block (parent→[x], append proof+date);
+	# output the file without the block.  Block = task line + indented lines.
 	awk -v tid="$task_id" -v proof="$proof_log" -v tday="$today" -v bfile="$tmp_block" '
 	BEGIN { capturing=0; pat="^[[:space:]]*- \\[ \\] " tid "( |$)" }
 	!capturing {
 		if ($0 ~ pat) {
-			capturing=1
-			sub(/\[ \]/, "[x]")
-			print $0 " " proof " completed:" tday > bfile
-			next
+			capturing=1; sub(/\[ \]/, "[x]")
+			print $0 " " proof " completed:" tday > bfile; next
 		}
-		print
-		next
+		print; next
 	}
 	/^[[:space:]]*$/ { capturing=0; print; next }
 	/^- \[/ { capturing=0; print; next }
@@ -384,39 +356,28 @@ complete_task() {
 	{ capturing=0; print }
 	' "$todo_file" >"$tmp_result"
 
-	# Pass 2: Insert the extracted block at the top of the ## Done section
-	# (immediately after the blank line that follows the ## Done header).
+	# Pass 2: insert block at top of ## Done (after its blank-line separator).
 	local pass2_rc=0
 	awk -v bfile="$tmp_block" '
 	BEGIN { done_found=0 }
 	/^## Done$/ {
-		done_found=1
-		print
+		done_found=1; print
 		if ((getline nl) > 0) {
 			if (nl == "") {
 				print nl
 				while ((getline bl < bfile) > 0) { print bl }
-				print ""
-				close(bfile)
+				print ""; close(bfile)
 			} else {
 				while ((getline bl < bfile) > 0) { print bl }
-				print ""
-				print nl
-				close(bfile)
+				print ""; print nl; close(bfile)
 			}
 		} else {
-			while ((getline bl < bfile) > 0) { print bl }
-			close(bfile)
+			while ((getline bl < bfile) > 0) { print bl }; close(bfile)
 		}
 		next
 	}
 	{ print }
-	END {
-		if (!done_found) {
-			print "ERROR: ## Done section not found" > "/dev/stderr"
-			exit 1
-		}
-	}
+	END { if (!done_found) { print "ERROR: ## Done section not found" > "/dev/stderr"; exit 1 } }
 	' "$tmp_result" >"$todo_file" || pass2_rc=$?
 
 	rm -f "$tmp_result" "$tmp_block"
@@ -424,6 +385,51 @@ complete_task() {
 	if [[ "$pass2_rc" -ne 0 ]]; then
 		log_error "Failed to insert block into ## Done section"
 		mv "${todo_file}.bak" "$todo_file"
+		return 1
+	fi
+	return 0
+}
+
+# Mark task complete in TODO.md: extract block and move to ## Done.
+complete_task() {
+	local task_id="$1"
+	local proof_log="$2"
+	local repo_path="$3"
+
+	local todo_file="$repo_path/TODO.md"
+	if [[ ! -f "$todo_file" ]]; then
+		log_error "TODO.md not found at $todo_file"
+		return 1
+	fi
+
+	# Check if task exists and is open
+	if ! grep -qE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file"; then
+		if grep -qE "^[[:space:]]*- \[x\] ${task_id}( |$)" "$todo_file"; then
+			log_warn "Task $task_id is already marked complete"
+			return 0
+		else
+			log_error "Task $task_id not found in $todo_file"
+			return 1
+		fi
+	fi
+
+	# All subtasks must be complete before the parent can be marked done
+	if ! _check_task_subtasks_open "$task_id" "$todo_file"; then
+		return 1
+	fi
+
+	local today
+	today=$(date +%Y-%m-%d)
+
+	# ## Done section must exist before we modify the file
+	if ! grep -q "^## Done$" "$todo_file"; then
+		log_error "## Done section not found in $todo_file — cannot move task"
+		return 1
+	fi
+
+	cp "$todo_file" "${todo_file}.bak"
+
+	if ! _move_task_block_to_done "$task_id" "$proof_log" "$today" "$todo_file"; then
 		return 1
 	fi
 
@@ -441,7 +447,7 @@ complete_task() {
 		return 1
 	fi
 
-	# Verify the task is now in the ## Done section
+	# Verify the task is now in ## Done section
 	if ! awk '/^## Done$/{f=1; next} /^## /{f=0} f' "$todo_file" | grep -qE "^[[:space:]]*- \[x\] ${task_id}( |$)"; then
 		log_error "Task $task_id not found in ## Done section after move"
 		mv "${todo_file}.bak" "$todo_file"
