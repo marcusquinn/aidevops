@@ -1479,11 +1479,36 @@ _dispatch_launch_worker() {
 		# Run from repo_path — worktree-helper.sh uses git commands that need
 		# to be inside the repo. The pulse-wrapper's cwd is typically / (launchd).
 		_wt_output=$(cd "$repo_path" && "$_wt_helper" add "$worker_worktree_branch" 2>&1) || true
+		# GH#18671: worktree-helper.sh emits ANSI color codes in its status
+		# output, including on the "Path:" line. The original path-extraction
+		# grep `/[^ ]*Git/[^ ]*` matches up to the next whitespace but ANSI
+		# reset sequences (\x1b[0m) contain no whitespace, so the captured
+		# path ends up with a trailing `\x1b[0m` suffix. The subsequent
+		# `[[ -d "$worker_worktree_path" ]]` check then fails because no
+		# such directory exists — the REAL path is the same string without
+		# the reset code. Result: pre-creation was silently marked "failed"
+		# on every dispatch, the worktree was successfully created but
+		# orphaned (27 leftover feature/auto-* directories observed in
+		# ~/Git/), the worker was launched without WORKER_WORKTREE_PATH,
+		# and its self-setup path crashed in ~17 seconds with crash_type=
+		# no_work. That fed the t2008 stale-recovery escalation path,
+		# which applied needs-maintainer-review after 2 failed attempts,
+		# which then drained the dispatch queue to zero.
+		#
+		# Fix: strip ANSI CSI sequences before the path grep so the captured
+		# string is a clean filesystem path. The sed pattern matches the
+		# standard CSI form ESC[ ... m. The $'...' quoting evaluates \x1b
+		# (ESC, 0x1B) at parse time in bash.
+		_wt_output=$(printf '%s' "$_wt_output" | sed $'s/\x1b\\[[0-9;]*m//g')
 		worker_worktree_path=$(printf '%s' "$_wt_output" | grep -oE '/[^ ]*Git/[^ ]*' | head -1) || worker_worktree_path=""
 		if [[ -n "$worker_worktree_path" && -d "$worker_worktree_path" ]]; then
 			echo "[dispatch_with_dedup] Pre-created worktree for #${issue_number}: ${worker_worktree_path} (branch: ${worker_worktree_branch})" >>"$LOGFILE"
 		else
-			echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — worker will create its own" >>"$LOGFILE"
+			# GH#18671: emit the raw extracted string on failure so future
+			# regressions in path parsing are visible in the log. Previously
+			# this message gave no diagnostic — 247 failures accumulated in
+			# a single pulse.log before the root cause was found.
+			echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — worker will create its own (extracted: '${worker_worktree_path:-<empty>}', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
 			worker_worktree_path=""
 			worker_worktree_branch=""
 		fi

@@ -245,16 +245,105 @@ issue_has_required_approval() {
 }
 
 #######################################
+# GH#18671 (Fix 6b): Check whether an NMR label application on an issue
+# was accompanied by a pulse automation signature — a comment posted
+# immediately after (or within a ~60-second window of) the label event
+# that identifies the automated escalation path.
+#
+# Without this check, `_nmr_applied_by_maintainer` treats every NMR
+# application by the maintainer's GitHub token as a manual hold, even
+# when it was the t2008 stale-recovery circuit breaker, the t2007 cost
+# circuit breaker, or the GH#18538 review-scanner default-NMR path.
+# That is the direct cause of the "NMR drain" where workers crash in
+# ~17s during setup (pre-creation bug, Fix 6a), get stale-recovered,
+# hit the threshold, and are escalated to NMR. The maintainer never
+# touched the label, but auto_approve skips them because
+# _nmr_applied_by_maintainer returns true, and the issues stay blocked
+# until the human manually runs `sudo aidevops approve issue NNN`.
+#
+# Automation signatures detected (all are idempotent markers the pulse
+# leaves when it applies NMR via an escalation path):
+#   - <!-- stale-recovery-tick:escalated   — t2008 stale recovery
+#   - <!-- cost-circuit-breaker:fired      — t2007 cost circuit breaker
+#   - <!-- circuit-breaker-escalated       — legacy fast-fail alias
+#   - <!-- source:review-scanner           — GH#18538 scanner default NMR
+#
+# Args:
+#   $1 - issue_num  : GitHub issue number
+#   $2 - slug       : repo slug (owner/repo)
+#   $3 - label_at   : ISO8601 timestamp when NMR label was applied
+#
+# Exit codes:
+#   0 - automation signature found (NMR was auto-applied, safe to clear)
+#   1 - no automation signature (NMR was likely a manual hold)
+#######################################
+_nmr_application_has_automation_signature() {
+	local issue_num="$1"
+	local slug="$2"
+	local label_at="$3"
+
+	[[ -n "$issue_num" && -n "$slug" && -n "$label_at" ]] || return 1
+
+	# Fetch all issue comments once. Filter in jq to any comment posted
+	# within a 60-second window of the label event AND containing a known
+	# automation marker. The 60s window is generous for API latency between
+	# the label API call and the follow-up comment post, while still tight
+	# enough to exclude unrelated maintainer activity.
+	#
+	# Window math: label_at - 5s ≤ comment.created_at ≤ label_at + 60s.
+	# Lower bound covers the case where the comment was posted first and
+	# the label application was slightly delayed (rare but observed).
+	local has_signature
+	has_signature=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate \
+		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"stale-recovery-tick:escalated|cost-circuit-breaker:fired|circuit-breaker-escalated|source:review-scanner\"))] | length" \
+		2>/dev/null) || has_signature=0
+	[[ "$has_signature" =~ ^[0-9]+$ ]] || has_signature=0
+
+	if [[ "$has_signature" -gt 0 ]]; then
+		return 0
+	fi
+
+	# Also accept: the issue itself carries review-followup or
+	# source:review-scanner labels (bot-generated cleanup from
+	# post-merge-review-scanner.sh, GH#18538). These issues apply NMR at
+	# creation via the scanner's SCANNER_NEEDS_REVIEW=true default, which
+	# does not necessarily emit a post-label comment marker. The label
+	# presence itself is the automation signature.
+	local has_bot_label
+	has_bot_label=$(gh api "repos/${slug}/issues/${issue_num}" \
+		--jq '[.labels[].name] | map(select(. == "review-followup" or . == "source:review-scanner")) | length' \
+		2>/dev/null) || has_bot_label=0
+	[[ "$has_bot_label" =~ ^[0-9]+$ ]] || has_bot_label=0
+
+	if [[ "$has_bot_label" -gt 0 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Check if the needs-maintainer-review label was most recently applied
 # by the maintainer themselves (indicating a manual hold).
+#
+# GH#18671 (Fix 6b): the pulse runs as the maintainer's GitHub token, so
+# `actor.login == maintainer` matches both human manual label actions
+# AND automated escalation paths (t2007 cost circuit breaker, t2008
+# stale-recovery, GH#18538 scanner default-NMR). This function now
+# consults `_nmr_application_has_automation_signature` — if the label
+# event has an adjacent automation marker comment (or the issue itself
+# carries bot-cleanup labels), it classifies as automation-applied and
+# returns 1 so `auto_approve_maintainer_issues` can clear the label.
 #
 # Arguments:
 #   $1 - issue_num  : GitHub issue number
 #   $2 - slug       : repo slug (owner/repo)
 #   $3 - maintainer : maintainer GitHub login
 #
-# Returns 0 if the maintainer applied NMR (manual hold — do NOT auto-approve).
-# Returns 1 if NMR was applied by automation or the actor is unknown.
+# Returns 0 if the maintainer applied NMR AND no automation signature
+#           is present (genuine manual hold — do NOT auto-approve).
+# Returns 1 if NMR was applied by automation, the actor is unknown, or
+#           the label event is paired with an automation marker.
 #######################################
 _nmr_applied_by_maintainer() {
 	local issue_num="$1"
@@ -263,16 +352,29 @@ _nmr_applied_by_maintainer() {
 
 	[[ -n "$issue_num" && -n "$slug" && -n "$maintainer" ]] || return 1
 
-	local nmr_actor
-	nmr_actor=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate \
-		--jq '[.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")] | last | .actor.login // empty' \
-		2>/dev/null) || nmr_actor=""
+	# Fetch both actor and creation timestamp of the latest NMR label event.
+	local nmr_event_json
+	nmr_event_json=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate \
+		--jq '[.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")] | last | {actor:(.actor.login // ""),at:(.created_at // "")}' \
+		2>/dev/null) || nmr_event_json=""
 
-	if [[ "$nmr_actor" == "$maintainer" ]]; then
-		return 0
+	local nmr_actor nmr_at
+	nmr_actor=$(printf '%s' "$nmr_event_json" | jq -r '.actor // ""' 2>/dev/null) || nmr_actor=""
+	nmr_at=$(printf '%s' "$nmr_event_json" | jq -r '.at // ""' 2>/dev/null) || nmr_at=""
+
+	if [[ "$nmr_actor" != "$maintainer" ]]; then
+		return 1
 	fi
 
-	return 1
+	# Actor matches the maintainer — but is this a real manual action or
+	# the pulse running as the maintainer's token? Check for automation
+	# signature adjacent to the label event.
+	if [[ -n "$nmr_at" ]] && _nmr_application_has_automation_signature "$issue_num" "$slug" "$nmr_at"; then
+		echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — actor=${maintainer} but automation signature detected — classifying as automation-applied (GH#18671)" >>"$LOGFILE"
+		return 1
+	fi
+
+	return 0
 }
 
 #######################################
