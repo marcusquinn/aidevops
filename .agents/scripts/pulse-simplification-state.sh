@@ -36,17 +36,24 @@
 #                              "parent, then the state sub-cluster extracted
 #                              from it".)
 #
-# Functions in this module (in source order, unchanged from parent):
+# Functions in this module (in source order):
 #   - _simplification_state_check
 #   - _simplification_state_record
 #   - _simplification_state_refresh
 #   - _simplification_state_prune
 #   - _simplification_state_push
 #   - _create_requeue_issue
+#   - _simplification_backfill_extract_file_path            (helper, GH#18680)
+#   - _simplification_backfill_update_entry_state           (helper, GH#18680)
+#   - _simplification_backfill_verify_remaining_smells      (helper, GH#18680)
 #   - _simplification_state_backfill_closed
 #
-# This is a pure move from pulse-simplification.sh. Function bodies are
-# byte-identical to their pre-extraction form.
+# The three _simplification_backfill_* helpers were extracted from
+# _simplification_state_backfill_closed in GH#18680 to keep the orchestrator
+# under the 100-line function-complexity gate. The public call contract
+# (same args, same stdout, same state file mutations, same log lines) is
+# unchanged. All other function bodies remain byte-identical to the pre-
+# extraction (t2020) form.
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_SIMPLIFICATION_STATE_LOADED:-}" ]] && return 0
@@ -424,13 +431,151 @@ REQUEUE_BODY_EOF
 #
 # Arguments: $1 - repo_path, $2 - state_file, $3 - aidevops_slug
 # Returns: 0. Outputs count of entries added to stdout.
+# ---------------------------------------------------------------------------
+# Backfill helpers (GH#18680 — decomposition of
+# _simplification_state_backfill_closed to keep the orchestrator under the
+# 100-line function-complexity gate).
+#
+# Each helper is self-contained, side-effect-scoped (explicit args only), and
+# preserves the behaviour of the original inline block byte-for-byte.
+# ---------------------------------------------------------------------------
+
+# Extract a repo-relative file path from a simplification issue title.
+# Handles titles in both forms produced by the complexity scanner:
+#   "simplification: tighten <path> (<N> lines)"
+#   "simplification: reduce function complexity in <path> (<N> functions ...)"
+# Arguments:
+#   $1 - issue title (string)
+# Outputs:
+#   The first .md or .sh path found in the title, or empty if none.
+# Returns: 0 always (empty output on no match is a normal signal).
+_simplification_backfill_extract_file_path() {
+	local title="$1"
+	# `|| true` swallows the pipefail that grep -o / head -1 raise when the
+	# regex does not match — the caller distinguishes "no path" via empty
+	# output, not exit code, so we must not propagate the failure.
+	echo "$title" | grep -oE '\.[a-z][^ ,)]+\.(md|sh)' | head -1 || true
+	return 0
+}
+
+# Record (or refresh) a file's entry in the in-progress tmp_state JSON.
+# Bumps the pass counter, stamps the current hash, and sets the merged PR/
+# issue number and timestamp. The mutation is staged into a second temp file
+# and atomically renamed over tmp_state so a mid-jq failure cannot corrupt
+# the in-progress state.
+# Arguments:
+#   $1 - tmp_state path (will be mutated in place on success)
+#   $2 - file_path (repo-relative)
+#   $3 - current_hash (git hash-object of the file)
+#   $4 - issue_num (merged simplification issue number)
+# Outputs:
+#   new_passes (integer, previous passes + 1) on success.
+# Returns: 0 on successful mutation, 1 if jq failed (tmp_state untouched).
+_simplification_backfill_update_entry_state() {
+	local tmp_state="$1"
+	local file_path="$2"
+	local current_hash="$3"
+	local issue_num="$4"
+
+	local now_iso prev_passes new_passes
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	prev_passes=$(jq -r --arg fp "$file_path" '.files[$fp].passes // 0' "$tmp_state" 2>/dev/null) || prev_passes=0
+	new_passes=$((prev_passes + 1))
+
+	local inner_tmp
+	inner_tmp=$(mktemp)
+	if jq --arg fp "$file_path" --arg hash "$current_hash" --arg at "$now_iso" \
+		--argjson pr "$issue_num" --argjson passes "$new_passes" \
+		'.files[$fp] = {"hash": $hash, "at": $at, "pr": $pr, "passes": $passes}' \
+		"$tmp_state" >"$inner_tmp" 2>/dev/null; then
+		mv "$inner_tmp" "$tmp_state"
+		echo "$new_passes"
+		return 0
+	fi
+	rm -f "$inner_tmp"
+	return 1
+}
+
+# Post-merge smell verification (t1912): after we record a merged
+# simplification PR, probe the file with Qlty and, if smells persist, open a
+# re-queue issue so the file gets another pass. Qlty CLI is optional — if
+# not installed, this step is skipped silently and the function behaves as
+# a no-op.
+# Arguments:
+#   $1 - repo_path       (absolute worktree path)
+#   $2 - file_path       (repo-relative)
+#   $3 - aidevops_slug   (owner/repo for issue creation)
+#   $4 - new_passes      (pass counter after this merge, from update_entry_state)
+#   $5 - issue_num       (merged simplification issue number)
+# Side effects:
+#   - Writes one line to $LOGFILE describing the outcome (clean / re-queued
+#     / skipped duplicate) when Qlty is available.
+#   - May call _create_requeue_issue (defined earlier in this file) to open
+#     a follow-up simplification-debt issue.
+# Returns: 0 always (this is an advisory step; failures should not abort
+#          the surrounding backfill loop).
+_simplification_backfill_verify_remaining_smells() {
+	local repo_path="$1"
+	local file_path="$2"
+	local aidevops_slug="$3"
+	local new_passes="$4"
+	local issue_num="$5"
+
+	local qlty_cmd=""
+	if command -v qlty >/dev/null 2>&1; then
+		qlty_cmd="qlty"
+	elif [[ -x "${HOME}/.qlty/bin/qlty" ]]; then
+		qlty_cmd="${HOME}/.qlty/bin/qlty"
+	fi
+	[[ -z "$qlty_cmd" ]] && return 0
+
+	local full_path="${repo_path}/${file_path}"
+	local remaining_smells
+	remaining_smells=$("$qlty_cmd" smells --all "$full_path" 2>/dev/null | grep -c '^[^ ]' || echo "0")
+
+	if [[ "$remaining_smells" -eq 0 ]]; then
+		echo "[pulse-wrapper] backfill: ${file_path} — Qlty clean after #${issue_num} (pass ${new_passes})" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Smells persist. Check for an existing open re-queue issue before
+	# creating a new one to avoid duplicate-issue noise.
+	if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
+		echo "[pulse-wrapper] backfill: ${file_path} has ${remaining_smells} smells after #${issue_num} but open issue already exists — skipping re-queue" >>"$LOGFILE"
+		return 0
+	fi
+
+	local requeue_result=""
+	requeue_result=$(_create_requeue_issue "$aidevops_slug" "$file_path" "$remaining_smells" "$new_passes" "$issue_num") || true
+	if [[ -n "$requeue_result" ]]; then
+		echo "[pulse-wrapper] backfill: re-queued ${file_path} → #${requeue_result} (${remaining_smells} smells remain after #${issue_num})" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+# Main backfill orchestrator. Scans recently-closed simplification-debt
+# issues, records any whose underlying file has drifted from the known
+# state, and (via _simplification_backfill_verify_remaining_smells) opens
+# follow-up issues when Qlty smells persist post-merge.
+#
+# Decomposed in GH#18680 from a 107-line inline implementation; the public
+# contract (args, stdout, return code, state-file mutations, log lines) is
+# unchanged from the pre-decomposition form.
+#
+# Arguments:
+#   $1 - repo_path       (absolute worktree path)
+#   $2 - state_file      (absolute path to simplification-state.json)
+#   $3 - aidevops_slug   (owner/repo for gh issue queries)
+# Outputs:
+#   "added" integer (count of files whose state entry was updated) to stdout.
+# Returns: 0 always.
 _simplification_state_backfill_closed() {
 	local repo_path="$1"
 	local state_file="$2"
 	local aidevops_slug="$3"
 	local added=0
 
-	# Fetch recently closed simplification issues (last 7 days, max 50)
+	# Fetch recently closed simplification issues (last 7 days, max 50).
 	local closed_issues
 	closed_issues=$(gh issue list --repo "$aidevops_slug" \
 		--label "simplification-debt" --state closed \
@@ -447,8 +592,8 @@ _simplification_state_backfill_closed() {
 	tmp_state=$(mktemp)
 	cp "$state_file" "$tmp_state"
 
-	# Use process substitution to avoid subshell variable propagation bug (t1855).
-	# A pipe (| while read) runs the loop in a subshell where $added won't propagate.
+	# Process substitution (not a pipe) so $added propagates out of the loop
+	# (t1855 subshell variable propagation bug).
 	while IFS= read -r issue; do
 		[[ -z "$issue" ]] && continue
 		local title file_path issue_num
@@ -456,72 +601,28 @@ _simplification_state_backfill_closed() {
 		title=$(echo "$issue" | jq -r '.title') || continue
 		issue_num=$(echo "$issue" | jq -r '.number') || continue
 
-		# Extract file path from title — pattern: "simplification: tighten agent doc ... (path, N lines)"
-		# or "simplification: reduce function complexity in path (N functions ...)"
-		file_path=$(echo "$title" | grep -oE '\.[a-z][^ ,)]+\.(md|sh)' | head -1) || continue
+		file_path=$(_simplification_backfill_extract_file_path "$title")
 		[[ -z "$file_path" ]] && continue
 
-		# Skip if file doesn't exist
+		# Skip if the file no longer exists in the worktree.
 		[[ ! -f "${repo_path}/${file_path}" ]] && continue
 
-		# Skip if already in state with matching hash
-		local existing_hash
+		# Skip if already recorded at the current hash (nothing to backfill).
+		local existing_hash current_hash
 		existing_hash=$(jq -r --arg fp "$file_path" '.files[$fp].hash // empty' "$tmp_state" 2>/dev/null) || existing_hash=""
-		local current_hash
 		current_hash=$(git -C "$repo_path" hash-object "${repo_path}/${file_path}" 2>/dev/null) || continue
+		[[ "$existing_hash" == "$current_hash" ]] && continue
 
-		if [[ "$existing_hash" == "$current_hash" ]]; then
-			continue
-		fi
-
-		# Record the file in state — either new entry or updated hash
-		local now_iso prev_passes new_passes
-		now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-		prev_passes=$(jq -r --arg fp "$file_path" '.files[$fp].passes // 0' "$tmp_state" 2>/dev/null) || prev_passes=0
-		new_passes=$((prev_passes + 1))
-
-		local inner_tmp
-		inner_tmp=$(mktemp)
-		jq --arg fp "$file_path" --arg hash "$current_hash" --arg at "$now_iso" \
-			--argjson pr "$issue_num" --argjson passes "$new_passes" \
-			'.files[$fp] = {"hash": $hash, "at": $at, "pr": $pr, "passes": $passes}' \
-			"$tmp_state" >"$inner_tmp" 2>/dev/null && mv "$inner_tmp" "$tmp_state" || {
-			rm -f "$inner_tmp"
-			continue
-		}
+		# Record the file in state — either new entry or updated hash.
+		local new_passes
+		new_passes=$(_simplification_backfill_update_entry_state \
+			"$tmp_state" "$file_path" "$current_hash" "$issue_num") || continue
 		added=$((added + 1))
 
-		# Post-merge smell verification (t1912): check if Qlty still flags this file.
-		# If smells persist after the simplification PR merged, create a follow-up
-		# issue so the file gets another pass. Qlty CLI is optional — if not
-		# installed, this step is skipped silently and the function behaves as before.
-		local full_path="${repo_path}/${file_path}"
-		local qlty_cmd=""
-		if command -v qlty >/dev/null 2>&1; then
-			qlty_cmd="qlty"
-		elif [[ -x "${HOME}/.qlty/bin/qlty" ]]; then
-			qlty_cmd="${HOME}/.qlty/bin/qlty"
-		fi
-
-		if [[ -n "$qlty_cmd" ]]; then
-			local remaining_smells
-			remaining_smells=$("$qlty_cmd" smells --all "$full_path" 2>/dev/null | grep -c '^[^ ]' || echo "0")
-
-			if [[ "$remaining_smells" -gt 0 ]]; then
-				# Check for existing open re-queue issue before creating a new one
-				if ! _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
-					local requeue_result=""
-					requeue_result=$(_create_requeue_issue "$aidevops_slug" "$file_path" "$remaining_smells" "$new_passes" "$issue_num") || true
-					if [[ -n "$requeue_result" ]]; then
-						echo "[pulse-wrapper] backfill: re-queued ${file_path} → #${requeue_result} (${remaining_smells} smells remain after #${issue_num})" >>"$LOGFILE"
-					fi
-				else
-					echo "[pulse-wrapper] backfill: ${file_path} has ${remaining_smells} smells after #${issue_num} but open issue already exists — skipping re-queue" >>"$LOGFILE"
-				fi
-			else
-				echo "[pulse-wrapper] backfill: ${file_path} — Qlty clean after #${issue_num} (pass ${new_passes})" >>"$LOGFILE"
-			fi
-		fi
+		# Advisory post-merge smell verification. Failures here never abort
+		# the loop; the helper always returns 0.
+		_simplification_backfill_verify_remaining_smells \
+			"$repo_path" "$file_path" "$aidevops_slug" "$new_passes" "$issue_num"
 	done < <(echo "$closed_issues" | jq -c '.[]')
 
 	if [[ "$added" -gt 0 ]]; then
