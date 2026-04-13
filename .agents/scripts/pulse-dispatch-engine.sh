@@ -32,6 +32,11 @@
 [[ -n "${_PULSE_DISPATCH_ENGINE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_ENGINE_LOADED=1
 
+# t1959: Module-level variable to communicate launch failure reason to callers.
+# Set by check_worker_launch before each return 1; read by dispatch loop for
+# per-round no_worker_process tracking and canary cache invalidation.
+_PULSE_LAST_LAUNCH_FAILURE=""
+
 #######################################
 # Launch validation gate for pulse dispatches (t1453)
 #
@@ -74,6 +79,7 @@ check_worker_launch() {
 				if [[ -f "$candidate" ]] && rg -q '^opencode run \[message\.\.\]|^run opencode with a message|^Options:' "$candidate"; then
 					recover_failed_launch_state "$issue_number" "$repo_slug" "cli_usage_output"
 					echo "[pulse-wrapper] Launch validation failed for issue #${issue_number} (${repo_slug}) — CLI usage output detected in ${candidate}" >>"$LOGFILE"
+					_PULSE_LAST_LAUNCH_FAILURE="cli_usage_output"
 					return 1
 				fi
 			done
@@ -91,6 +97,7 @@ check_worker_launch() {
 
 	recover_failed_launch_state "$issue_number" "$repo_slug" "no_worker_process"
 	echo "[pulse-wrapper] Launch validation failed for issue #${issue_number} (${repo_slug}) — no active worker process within ${grace_seconds}s" >>"$LOGFILE"
+	_PULSE_LAST_LAUNCH_FAILURE="no_worker_process"
 	return 1
 }
 
@@ -228,9 +235,28 @@ dispatch_deterministic_fill_floor() {
 	available_slots="$enrichment_remaining"
 
 	local dispatched_count=0
+	# t1959: Per-round tracking for adaptive batch throttling and canary invalidation.
+	# _round_dispatched: total dispatch attempts this round (denominator for ratio).
+	# _round_no_worker_failures: no_worker_process failures (numerator for ratio).
+	# _consecutive_no_worker: consecutive no_worker_process streak (triggers canary invalidation).
+	local _round_dispatched=0
+	local _round_no_worker_failures=0
+	local _consecutive_no_worker=0
+	local _throttle_file="${HOME}/.aidevops/logs/dispatch-throttle"
+	# Use same env-var fallback as headless-runtime-helper.sh:32 for path consistency
+	local _canary_cache="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/canary-last-pass"
+
+	# Honour adaptive batch throttle — limit to 1 when runtime is degraded.
+	# A successful launch in throttled mode clears the flag immediately.
+	local _effective_slots="$available_slots"
+	if [[ -f "$_throttle_file" ]]; then
+		_effective_slots=1
+		echo "[pulse-wrapper] Dispatch throttle active: limiting implementation batch to 1 (runtime degraded)" >>"$LOGFILE"
+	fi
+
 	while IFS= read -r candidate_json; do
 		[[ -n "$candidate_json" ]] || continue
-		if [[ "$dispatched_count" -ge "$available_slots" ]]; then
+		if [[ "$dispatched_count" -ge "$_effective_slots" ]]; then
 			break
 		fi
 		if [[ -f "$STOP_FLAG" ]]; then
@@ -290,12 +316,57 @@ dispatch_deterministic_fill_floor() {
 			continue
 		fi
 
+		# Count every successful dispatch attempt as a round denominator (t1959)
+		_round_dispatched=$((_round_dispatched + 1))
+		_PULSE_LAST_LAUNCH_FAILURE=""
+
 		if ! check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1; then
+			# t1959: Track no_worker_process failures for canary invalidation
+			# and adaptive batch-size throttling. cli_usage_output resets the
+			# consecutive streak (different failure class).
+			if [[ "$_PULSE_LAST_LAUNCH_FAILURE" == "no_worker_process" ]]; then
+				_round_no_worker_failures=$((_round_no_worker_failures + 1))
+				_consecutive_no_worker=$((_consecutive_no_worker + 1))
+				# After 3 consecutive no_worker_process failures, the stale canary
+				# "passed N minutes ago" signal is no longer trustworthy. Force a
+				# re-test on the next dispatch attempt.
+				if [[ "$_consecutive_no_worker" -ge 3 ]]; then
+					if [[ -f "$_canary_cache" ]]; then
+						rm -f "$_canary_cache"
+						echo "[pulse-wrapper] Canary cache invalidated after ${_consecutive_no_worker} consecutive no_worker_process failures in round — next dispatch will re-run canary" >>"$LOGFILE"
+					fi
+					_consecutive_no_worker=0
+				fi
+			else
+				# cli_usage_output or other launch-class failure: don't count toward
+				# the consecutive no_worker_process streak.
+				_consecutive_no_worker=0
+			fi
 			continue
 		fi
 
+		# Launch confirmed. Reset consecutive streak and clear throttle if active.
+		_consecutive_no_worker=0
 		dispatched_count=$((dispatched_count + 1))
+		# t1959: A single successful launch proves the runtime is back.
+		# Restore full batch immediately — do not wait for N successes.
+		if [[ -f "$_throttle_file" ]]; then
+			rm -f "$_throttle_file"
+			echo "[pulse-wrapper] Dispatch throttle CLEARED: launch success in throttled mode — restoring full batch=${available_slots}" >>"$LOGFILE"
+			_effective_slots="$available_slots"
+		fi
 	done < <(printf '%s' "$candidates_json" | jq -c '.[]' 2>/dev/null)
+
+	# t1959: Compute no_worker_process ratio for this round.
+	# If >80% of dispatches ended with no_worker_process, throttle the next round
+	# to limit wasted dispatch cycles during runtime breakage.
+	if [[ "$_round_dispatched" -gt 0 ]]; then
+		local _ratio_pct=$((_round_no_worker_failures * 100 / _round_dispatched))
+		if [[ "$_ratio_pct" -gt 80 ]]; then
+			echo "1" >"$_throttle_file" 2>/dev/null || true
+			echo "[pulse-wrapper] Dispatch throttle ENGAGED: ${_ratio_pct}% no_worker_process in round (${_round_no_worker_failures}/${_round_dispatched}) — next round limited to batch=1" >>"$LOGFILE"
+		fi
+	fi
 
 	local total_dispatched=$((dispatched_count + triage_dispatched))
 	echo "[pulse-wrapper] Deterministic fill floor complete: dispatched=${total_dispatched} (${triage_dispatched} triage + ${dispatched_count} implementation), target_available=${available_slots}" >>"$LOGFILE"
