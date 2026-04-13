@@ -304,7 +304,8 @@ privacy_scan_diff() {
 	fi
 
 	# Walk the diff, tracking current file and hunk line counter. Match added
-	# lines (those starting with "+" but not "+++") against each slug.
+	# lines (those starting with "+" but not "+++") against private slugs using
+	# grep -F -f for O(lines) matching instead of O(lines × slugs).
 	local hits=0
 	local current_file=""
 	local line_num=0
@@ -326,16 +327,19 @@ privacy_scan_diff() {
 			# Skip the "+++ b/..." which we already handled
 			[[ "$line" == "+++ "* ]] && continue
 			local added="${line:1}"
-			local slug
-			while IFS= read -r slug; do
-				[[ -z "$slug" ]] && continue
-				# Match as a literal substring. Slugs look like owner/repo and
-				# contain no regex metacharacters by convention.
-				if [[ "$added" == *"$slug"* ]]; then
+			local matching_slugs slug
+			# grep -F -f matches all slugs at once (fixed strings, no regex).
+			# -o outputs only the matched text, one match per line.
+			# grep exits 1 on no match; || true prevents aborting if the caller
+			# has set -e.
+			matching_slugs=$(printf '%s\n' "$added" | grep -F -o -f "$slugs_file" 2>/dev/null || true)
+			if [[ -n "$matching_slugs" ]]; then
+				while IFS= read -r slug; do
+					[[ -z "$slug" ]] && continue
 					printf '%s:%s: %s\n' "$current_file" "$line_num" "$slug"
 					hits=$((hits + 1))
-				fi
-			done <"$slugs_file"
+				done <<<"$matching_slugs"
+			fi
 			line_num=$((line_num + 1))
 			;;
 		" "*)
