@@ -123,20 +123,6 @@ jobs:
           sed -i "s|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v.*\.tar\.gz\"|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v${RELEASE_VERSION}.tar.gz\"|" homebrew/aidevops.rb
           sed -i "s|sha256 \".*\"|sha256 \"${RELEASE_SHA256}\"|" homebrew/aidevops.rb
 
-      - name: Sync Homebrew formula back to repo
-        env:
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if git diff --quiet -- homebrew/aidevops.rb; then
-            echo "Homebrew formula already current"
-            exit 0
-          fi
-
-          git add homebrew/aidevops.rb
-          git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "chore: sync homebrew formula for v${RELEASE_VERSION}"
-          git push origin HEAD:main
-
       - name: Push to homebrew-tap repo
         # Pinned to commit SHA for security
         uses: dmnemec/copy_file_to_another_repo_action@bbebd3da22e4a37d04dca5f782edd5201cb97083
