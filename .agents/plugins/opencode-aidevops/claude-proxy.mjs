@@ -294,17 +294,36 @@ async function registerProxyAuth(client) {
 }
 
 /**
+ * Probe whether a proxy server is already listening on CLAUDE_PROXY_DEFAULT_PORT.
+ * Used to adopt an existing server after plugin hot-reload (where the module
+ * scope resets but the Bun.serve instance from the previous load lives on) or
+ * when the plugin runs in a non-Bun JS runtime that cannot call Bun.serve.
+ *
+ * Returns the port number on success, null if no server is reachable.
+ */
+async function probeExistingProxy() {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1000);
+    const res = await fetch(
+      `http://127.0.0.1:${CLAUDE_PROXY_DEFAULT_PORT}/v1/models`,
+      { signal: controller.signal },
+    );
+    clearTimeout(timer);
+    if (res.ok) return CLAUDE_PROXY_DEFAULT_PORT;
+  } catch {
+    // not running or not reachable
+  }
+  return null;
+}
+
+/**
  * Pre-flight gate for `startClaudeProxy`. Returns:
  *   - `null` if the proxy should be skipped (no Bun, no claude CLI, race)
  *   - `{ port, models }` if the proxy is already running (fast-path)
  *   - `undefined` if the caller should proceed with a full launch
  */
 function checkProxyPreconditions() {
-  if (typeof globalThis.Bun === "undefined") {
-    console.error("[aidevops] Claude proxy: skipped (not running under Bun)");
-    return null;
-  }
-  if (!isClaudeCliAvailable()) return null;
   if (proxyStarting) return null;
   if (proxyPort) return { port: proxyPort, models: getClaudeProxyModels() };
   return undefined;
@@ -335,6 +354,23 @@ async function launchProxyServer(client, directory) {
 export async function startClaudeProxy(client, directory) {
   const earlyExit = checkProxyPreconditions();
   if (earlyExit !== undefined) return earlyExit;
+
+  // Probe first: adopt any existing proxy (handles hot-reload and non-Bun runtimes).
+  // This avoids the module-scope reset issue where proxyPort is null after a
+  // plugin reload but the Bun.serve instance from the previous load is still live.
+  const existingPort = await probeExistingProxy();
+  if (existingPort) {
+    proxyPort = existingPort;
+    console.error(`[aidevops] Claude proxy: adopted existing server on port ${proxyPort}`);
+    return { port: proxyPort, models: getClaudeProxyModels() };
+  }
+
+  // No existing proxy — try to launch a new Bun.serve instance.
+  if (typeof globalThis.Bun === "undefined") {
+    console.error("[aidevops] Claude proxy: skipped (not running under Bun and no existing proxy found)");
+    return null;
+  }
+  if (!isClaudeCliAvailable()) return null;
 
   proxyStarting = true;
   let result = null;
