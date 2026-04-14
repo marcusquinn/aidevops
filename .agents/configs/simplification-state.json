@@ -6899,10 +6899,10 @@
       "passes": 1
     },
     ".agents/commands/AGENTS.md": {
-      "hash": "cb1612e6190f8d83a94a6b748b6c16d6eb784fbd",
-      "at": "2026-04-14T03:58:15Z",
+      "hash": "c0bb7a793b45f8982117e7e945e22500cf731f2d",
+      "at": "2026-04-14T06:24:32Z",
       "pr": 18117,
-      "passes": 7
+      "passes": 8
     },
     ".agents/workflows/pulse.md": {
       "hash": "f13a6f55eeb01caf5bb18ff2a6a22e02df63e952",
@@ -7391,10 +7391,10 @@
       "passes": 1
     },
     ".agents/scripts/pulse-dep-graph.sh": {
-      "hash": "7cc376847d4f095a0737a7e72be7629fc3ba9a32",
-      "at": "2026-04-14T02:22:36Z",
-      "pr": 18693,
-      "passes": 1
+      "hash": "b5be2e1e04ea9d7e5242220c3b048319cca91cfa",
+      "at": "2026-04-14T06:24:41Z",
+      "pr": 18796,
+      "passes": 2
     },
     ".agents/reference/cross-runner-coordination.md": {
       "hash": "2a48bff5283c02223926fd71eb394cfee9842758",
@@ -7403,10 +7403,10 @@
       "passes": 1
     },
     ".agents/scripts/pulse-dispatch-engine.sh": {
-      "hash": "845b795ed6d1cdc91d151b40fb16aa7cf14fbc8f",
-      "at": "2026-04-14T03:42:37Z",
-      "pr": 18656,
-      "passes": 2
+      "hash": "a7bba4ae89e6656640bda757224983c39b579e15",
+      "at": "2026-04-14T06:24:41Z",
+      "pr": 18799,
+      "passes": 3
     },
     ".agents/scripts/pulse-dispatch-core.sh": {
       "hash": "56ba6e0c2dca39c52a05e9e7377c451565121890",
@@ -7415,10 +7415,10 @@
       "passes": 1
     },
     ".agents/scripts/stats-quality-sweep.sh": {
-      "hash": "c9ef59b8d0cf32a2e83fa462cbccb28eaf2e4281",
-      "at": "2026-04-14T05:27:04Z",
+      "hash": "6fe05a80fbe9be2c6c0c56f40f40bd3b96f52bf1",
+      "at": "2026-04-14T06:24:41Z",
       "pr": 18810,
-      "passes": 1
+      "passes": 2
     }
   },
   ".agents/tools/design/library/brands/clickhouse/DESIGN.md": {
