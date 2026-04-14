@@ -345,18 +345,96 @@ complete_task() {
 	local today
 	today=$(date +%Y-%m-%d)
 
+	# Ensure ## Done section exists before attempting the move
+	if ! grep -q "^## Done$" "$todo_file"; then
+		log_error "## Done section not found in $todo_file — cannot move completed task"
+		return 1
+	fi
+
 	# Create backup
 	cp "$todo_file" "${todo_file}.bak"
 
-	# Mark as complete: [ ] -> [x], append proof-log and completed:date
-	# Use sed to match the line and transform it
-	local sed_pattern="s/^([[:space:]]*- )\[ \] (${task_id} .*)$/\1[x] \2 ${proof_log} completed:${today}/"
+	# Temp files for the two-pass awk operation
+	local tmp_no_block="${todo_file}.no_block"
+	local tmp_block="${todo_file}.extracted_block"
 
-	if [[ "$OSTYPE" == "darwin"* ]]; then
-		sed -i '' -E "$sed_pattern" "$todo_file"
-	else
-		sed -i -E "$sed_pattern" "$todo_file"
+	# Pass 1: Extract the task block (parent + indented children) with transformation;
+	# produce the file-without-block in tmp_no_block.
+	# Block ends at: blank line OR next top-level "- [" entry (col 0).
+	# shellcheck disable=SC2016
+	awk -v tid="$task_id" -v proof="$proof_log" -v today="$today" -v bf="$tmp_block" '
+BEGIN { in_block=0; block_done=0; block="" }
+
+!in_block && !block_done && $0 ~ ("^[[:space:]]*- \\[ \\] " tid "([[:space:]]|$)") {
+    in_block=1
+    line=$0
+    sub(/\[ \]/, "[x]", line)
+    sub(/[[:space:]]*$/, "", line)
+    block = line " " proof " completed:" today
+    next
+}
+
+in_block {
+    if (/^$/ || /^- \[/) {
+        in_block=0
+        block_done=1
+    } else {
+        block = block "\n" $0
+        next
+    }
+}
+
+{ print }
+
+END {
+    if (in_block || block_done) {
+        printf "%s\n", block > bf
+    }
+}
+' "$todo_file" >"$tmp_no_block"
+
+	if [[ ! -s "$tmp_block" ]]; then
+		log_error "Failed to extract task block for $task_id — awk pass 1 produced empty output"
+		mv "${todo_file}.bak" "$todo_file"
+		rm -f "$tmp_no_block" "$tmp_block"
+		return 1
 	fi
+
+	# Pass 2: Insert the transformed block at the top of ## Done (after the blank line
+	# that follows the header per markdown convention).
+	# shellcheck disable=SC2016
+	awk -v bf="$tmp_block" '
+BEGIN { seen_done=0; inserted=0 }
+
+/^## Done$/ { print; seen_done=1; next }
+
+seen_done && !inserted && /^[[:space:]]*$/ {
+    print
+    while ((getline bline < bf) > 0) { print bline }
+    close(bf)
+    inserted=1
+    next
+}
+
+seen_done && !inserted {
+    while ((getline bline < bf) > 0) { print bline }
+    close(bf)
+    inserted=1
+    print
+    next
+}
+
+{ print }
+
+END {
+    if (seen_done && !inserted) {
+        while ((getline bline < bf) > 0) { print bline }
+        close(bf)
+    }
+}
+' "$tmp_no_block" >"$todo_file"
+
+	rm -f "$tmp_no_block" "$tmp_block"
 
 	# Verify the change was made
 	if ! grep -qE "^[[:space:]]*- \[x\] ${task_id} " "$todo_file"; then
@@ -372,8 +450,23 @@ complete_task() {
 		return 1
 	fi
 
+	# Verify the task now lives in the ## Done section
+	local in_done_section
+	in_done_section=$(awk -v tid="$task_id" '
+		/^## Done$/ { in_done=1; next }
+		/^## /      { in_done=0; next }
+		in_done && $0 ~ ("^[[:space:]]*- \\[x\\] " tid "([[:space:]]|$)") { found=1 }
+		END { print found+0 }
+	' "$todo_file")
+
+	if [[ "$in_done_section" != "1" ]]; then
+		log_error "Task $task_id was not placed in ## Done section"
+		mv "${todo_file}.bak" "$todo_file"
+		return 1
+	fi
+
 	rm -f "${todo_file}.bak"
-	log_success "Marked $task_id complete with proof-log: $proof_log"
+	log_success "Marked $task_id complete and moved to ## Done with proof-log: $proof_log"
 	return 0
 }
 
@@ -546,6 +639,12 @@ commit_and_push() {
 	if [[ -f "todo/PLANS.md" ]] && ! git diff --quiet todo/PLANS.md 2>/dev/null; then
 		git add todo/PLANS.md
 		log_info "Staged PLANS.md (plan status updated)"
+	fi
+
+	# Skip commit if nothing was staged (idempotent call — task already complete)
+	if git diff --quiet --cached HEAD 2>/dev/null; then
+		log_info "No changes staged — task was already marked complete"
+		return 0
 	fi
 
 	# Commit
