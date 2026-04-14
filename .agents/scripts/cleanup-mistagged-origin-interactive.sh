@@ -157,7 +157,7 @@ fix_issue() {
 
 	local action_summary="#${issue_number}: remove origin:interactive, add origin:worker"
 	local -a assignees_arr=()
-	if [[ -n "$assignees_csv" && "$assignees_csv" != "null" ]]; then
+	if [[ -n "$assignees_csv" ]]; then
 		# shellcheck disable=SC2034  # assignees_arr is populated here and iterated below
 		IFS=',' read -ra assignees_arr <<<"$assignees_csv"
 	fi

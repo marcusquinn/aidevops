@@ -578,7 +578,7 @@ _compose_consolidation_worker_instructions() {
 \`\`\`bash
 gh issue create --repo "${repo_slug}" \\
   --title "consolidated: <concise description derived from the merged spec>" \\
-  --label "consolidated,origin:worker,<copy relevant labels from parent, excluding needs-consolidation and consolidation-task>" \\
+  --label "consolidated,origin:worker,<copy relevant labels from parent, excluding needs-consolidation, consolidation-task, and origin:interactive>" \\
   --body "<merged body from step 2>"
 \`\`\`
 
