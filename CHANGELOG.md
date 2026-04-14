@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.16] - 2026-04-14
+
+### Fixed
+
+- repair claim flow under set -euo pipefail (GH#18786) (#18793)
+
 ## [3.8.14] - 2026-04-14
 
 ### Changed
