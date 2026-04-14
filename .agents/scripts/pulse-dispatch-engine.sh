@@ -1036,7 +1036,10 @@ _preflight_cleanup_and_ledger() {
 	run_stage_with_timeout "cleanup_orphans" "$PRE_RUN_STAGE_TIMEOUT" cleanup_orphans || true
 	run_stage_with_timeout "cleanup_stale_opencode" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stale_opencode || true
 	run_stage_with_timeout "cleanup_stalled_workers" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stalled_workers || true
-	run_stage_with_timeout "cleanup_worktrees" "$PRE_RUN_STAGE_TIMEOUT" cleanup_worktrees || true
+	# GH#18979: Worktree cleanup is non-critical and can hang on per-worktree
+	# gh API calls across many repos. Use a short timeout (60s) so a slow
+	# cleanup doesn't block prefetch/dispatch. Missed cleanup catches up next cycle.
+	run_stage_with_timeout "cleanup_worktrees" 60 cleanup_worktrees || true
 	run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
 
 	# GH#17549: Archive old OpenCode sessions to keep the active DB small.
