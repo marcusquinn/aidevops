@@ -563,12 +563,42 @@ dispatch_deterministic_fill_floor() {
 	# same observable symptom (`Adaptive settle wait: 0 dispatches`).
 	echo "[pulse-wrapper] Deterministic fill floor: entering candidate loop with effective_slots=${_effective_slots}, candidates=${candidate_count}" >>"$LOGFILE"
 
+	# GH#18804 follow-up: dump the first candidate JSON line to LOGFILE so
+	# operators can see what the loop is actually iterating over. Truncated
+	# to 240 bytes to avoid log churn for long titles/labels.
+	local _dff_first_candidate_preview
+	_dff_first_candidate_preview=$(printf '%s' "$candidates_json" | jq -c '.[0]' 2>/dev/null || echo "<jq error>")
+	echo "[pulse-wrapper] Deterministic fill floor: first candidate preview (240 bytes): ${_dff_first_candidate_preview:0:240}" >>"$LOGFILE"
+
 	local processed_count=0
+	# GH#18804 follow-up: feed candidates from a tempfile rather than process
+	# substitution. Process substitution failures are invisible to set -e and
+	# the parent subshell, but a tempfile is observable: we can log the line
+	# count BEFORE the loop runs, so a "loop entered but never iterated"
+	# state is now diagnosable.
+	local _dff_candidate_file=""
+	_dff_candidate_file=$(mktemp 2>/dev/null || echo "/tmp/aidevops-dff-candidates.$$")
+	if ! printf '%s' "$candidates_json" | jq -c '.[]' >"$_dff_candidate_file" 2>>"$LOGFILE"; then
+		echo "[pulse-wrapper] Deterministic fill floor: jq failed to enumerate candidates_json — aborting loop with 0 dispatches" >>"$LOGFILE"
+		rm -f "$_dff_candidate_file"
+		_dff_maybe_engage_throttle
+		echo "[pulse-wrapper] Deterministic fill floor complete: dispatched=${triage_dispatched} (${triage_dispatched} triage + 0 implementation), processed=0/${candidate_count}, target_available=${available_slots}" >>"$LOGFILE"
+		echo "$triage_dispatched"
+		return 0
+	fi
+	local _dff_line_count
+	_dff_line_count=$(wc -l <"$_dff_candidate_file" 2>/dev/null | tr -d ' ' || echo 0)
+	echo "[pulse-wrapper] Deterministic fill floor: candidate enumeration produced ${_dff_line_count} lines in ${_dff_candidate_file}" >>"$LOGFILE"
+
 	while IFS= read -r candidate_json; do
 		[[ -n "$candidate_json" ]] || continue
 		processed_count=$((processed_count + 1))
+		# GH#18804 follow-up: per-iteration fence-post log (unconditional).
+		# This proves the loop body is executing and pinpoints the exact
+		# iteration where a silent exit occurs.
+		echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — entering body" >>"$LOGFILE"
 		if [[ "$dispatched_count" -ge "$_effective_slots" ]]; then
-			pulse_dispatch_debug_log "stopping early — dispatched_count=${dispatched_count} reached effective_slots=${_effective_slots}"
+			echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — stopping (dispatched=${dispatched_count} >= effective_slots=${_effective_slots})" >>"$LOGFILE"
 			break
 		fi
 		if [[ -f "$STOP_FLAG" ]]; then
@@ -576,7 +606,13 @@ dispatch_deterministic_fill_floor() {
 			break
 		fi
 
-		if _dff_process_candidate "$candidate_json" "$self_login" "$available_slots"; then
+		# GH#18804 follow-up: capture the rc explicitly using set-e-safe
+		# capture idiom INSIDE the if-test position. Belt-and-braces against
+		# any future refactor that might lose the if-context masking.
+		local _dff_proc_rc=0
+		_dff_process_candidate "$candidate_json" "$self_login" "$available_slots" || _dff_proc_rc=$?
+		echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — _dff_process_candidate rc=${_dff_proc_rc}" >>"$LOGFILE"
+		if [[ "$_dff_proc_rc" -eq 0 ]]; then
 			dispatched_count=$((dispatched_count + 1))
 			# Throttle was cleared mid-round by a successful launch — restore
 			# the unthrottled slot budget so subsequent iterations can dispatch.
@@ -584,9 +620,10 @@ dispatch_deterministic_fill_floor() {
 				_effective_slots="$available_slots"
 			fi
 		fi
-	done < <(printf '%s' "$candidates_json" | jq -c '.[]' 2>/dev/null)
+	done <"$_dff_candidate_file"
+	rm -f "$_dff_candidate_file"
 
-	pulse_dispatch_debug_log "loop exited — processed=${processed_count} dispatched=${dispatched_count}"
+	echo "[pulse-wrapper] Deterministic fill floor: loop body finished — processed=${processed_count} dispatched=${dispatched_count}" >>"$LOGFILE"
 	_dff_maybe_engage_throttle
 
 	local total_dispatched=$((dispatched_count + triage_dispatched))
