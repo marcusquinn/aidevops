@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.26] - 2026-04-14
+
+### Fixed
+
+- make test-bash-reexec-guard.sh robust to scripts/ layout (GH#18950 follow-up) (#18957)
+
 ## [3.8.25] - 2026-04-14
 
 ### Changed
