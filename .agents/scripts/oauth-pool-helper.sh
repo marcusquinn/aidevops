@@ -8,6 +8,7 @@
 #
 # Usage:
 #   oauth-pool-helper.sh add [anthropic|openai|cursor|google]           # Add account via OAuth/device flow
+#   oauth-pool-helper.sh add --no-open [anthropic|openai|cursor|google]  # Print URL instead of opening browser
 #   oauth-pool-helper.sh check [anthropic|openai|cursor|google|all]     # Health check all accounts
 #   oauth-pool-helper.sh list [anthropic|openai|cursor|google|all]      # List accounts
 #   oauth-pool-helper.sh remove <provider> <email>                      # Remove an account
@@ -26,6 +27,9 @@ IFS=$'\n\t'
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+# Global flag: set by --no-open to skip browser launch and print the URL instead.
+OAUTH_NO_OPEN=false
 
 POOL_FILE="${HOME}/.aidevops/oauth-pool.json"
 OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
@@ -191,9 +195,17 @@ save_pool() {
 	return 0
 }
 
-# Open URL in browser (best-effort, never fatal — cascades on failure)
+# Open URL in browser (best-effort, never fatal — cascades on failure).
+# When OAUTH_NO_OPEN=true (set by --no-open), skip the browser and just print the URL.
 open_browser() {
 	local url="$1"
+
+	if [[ "$OAUTH_NO_OPEN" == "true" ]]; then
+		print_info "Open this URL in your browser:"
+		printf '%s\n' "$url" >&2
+		return 0
+	fi
+
 	local cmd
 	for cmd in open xdg-open wslview; do
 		if command -v "$cmd" &>/dev/null && "$cmd" "$url" 2>/dev/null; then
@@ -1752,6 +1764,7 @@ Preferred CLI (same commands, no path needed):
 
 Commands:
   add [anthropic|openai|cursor|google]            Add an account (OAuth; OpenAI defaults to device flow)
+  add --no-open [provider]                        Print OAuth URL instead of opening browser
   check [anthropic|openai|cursor|google|all]      Health check: token expiry + live validity
   diagnose [anthropic]                            Full pipeline diagnostics (pool, plugin, CCH, runtime)
   list [anthropic|openai|cursor|google|all]       List accounts with per-account status
@@ -1765,6 +1778,9 @@ Commands:
   remove <provider> <email>                       Remove an account from the pool
   import [claude-cli]                             Import account from Claude CLI auth
 
+Global flags:
+  --no-open                                       Print OAuth URL instead of opening browser
+
 Quickstart (if you see "Key Missing", "invalid request data", or auth errors):
   aidevops model-accounts-pool diagnose          # 0. Full pipeline check (start here)
   aidevops model-accounts-pool status            # 1. See pool health at a glance
@@ -1775,6 +1791,7 @@ Quickstart (if you see "Key Missing", "invalid request data", or auth errors):
 
 Examples:
   oauth-pool-helper.sh add anthropic                      # Claude Pro/Max (browser OAuth)
+  oauth-pool-helper.sh add --no-open anthropic             # Print URL instead of opening browser
   oauth-pool-helper.sh add openai                         # ChatGPT Plus/Pro (device flow default)
   oauth-pool-helper.sh add cursor                         # Cursor Pro (reads from IDE)
   oauth-pool-helper.sh add google                         # Google AI Pro/Ultra/Workspace (browser OAuth)
@@ -2075,20 +2092,34 @@ main() {
 	local cmd="${1:-help}"
 	shift || true
 
+	# Parse global flags before command dispatch
+	local args=()
+	local arg
+	for arg in "$@"; do
+		case "$arg" in
+		--no-open)
+			OAUTH_NO_OPEN=true
+			;;
+		*)
+			args+=("$arg")
+			;;
+		esac
+	done
+
 	case "$cmd" in
-	add) cmd_add "$@" ;;
-	assign-pending | assign_pending) cmd_assign_pending "$@" ;;
-	check | test) cmd_check "$@" ;;
-	diagnose) cmd_diagnose "$@" ;;
-	import) cmd_import "$@" ;;
-	list) cmd_list "$@" ;;
-	mark-failure | mark_failure) cmd_mark_failure "$@" ;;
-	refresh) cmd_refresh "$@" ;;
-	rotate) cmd_rotate "$@" ;;
-	reset-cooldowns | reset_cooldowns | reset) cmd_reset_cooldowns "$@" ;;
-	remove) cmd_remove "$@" ;;
-	set-priority | set_priority) cmd_set_priority "$@" ;;
-	status) cmd_status "$@" ;;
+	add) cmd_add "${args[@]}" ;;
+	assign-pending | assign_pending) cmd_assign_pending "${args[@]}" ;;
+	check | test) cmd_check "${args[@]}" ;;
+	diagnose) cmd_diagnose "${args[@]}" ;;
+	import) cmd_import "${args[@]}" ;;
+	list) cmd_list "${args[@]}" ;;
+	mark-failure | mark_failure) cmd_mark_failure "${args[@]}" ;;
+	refresh) cmd_refresh "${args[@]}" ;;
+	rotate) cmd_rotate "${args[@]}" ;;
+	reset-cooldowns | reset_cooldowns | reset) cmd_reset_cooldowns "${args[@]}" ;;
+	remove) cmd_remove "${args[@]}" ;;
+	set-priority | set_priority) cmd_set_priority "${args[@]}" ;;
+	status) cmd_status "${args[@]}" ;;
 	help | -h | --help) cmd_help ;;
 	*)
 		print_error "Unknown command: $cmd"
