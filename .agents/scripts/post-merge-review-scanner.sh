@@ -110,7 +110,7 @@ ACT_RE="should|consider|fix|change|update|refactor|missing|add"
 # fetch_review_summaries_md BEFORE the ACT_RE check. The phrases are specific
 # enough that false positives (a real review that also contains "no feedback to
 # provide" in a sub-clause) are rare in practice.
-NOOP_RE="I have no feedback to provide|no feedback to provide|have no feedback|have no suggestions|no actionable feedback|no actionable suggestions|no further feedback|no issues to report|no suggestions to (add|provide|make)"
+NOOP_RE="(I have no feedback to provide|no feedback to provide|have no feedback|have no suggestions|no actionable feedback|no actionable suggestions|no further feedback|no issues to report|no suggestions to (add|provide|make))[[:space:][:punct:]]*$"
 
 log() { echo "[scanner] $*" >&2; }
 
