@@ -24,9 +24,32 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-HELPER="$REPO_ROOT/.agents/scripts/bash-upgrade-helper.sh"
-SHARED="$REPO_ROOT/.agents/scripts/shared-constants.sh"
+
+# Resolve repo/agents root — supports both:
+#   - git worktree layout:   $REPO/.agents/scripts/tests/ → $REPO/.agents/scripts/
+#   - deployed layout:       ~/.aidevops/agents/scripts/tests/ → ~/.aidevops/agents/scripts/
+# The test walks up one directory (from tests/ to scripts/) and looks for the
+# sibling files. If both layouts fail, it exits with a clear error.
+_resolve_scripts_dir() {
+	local candidate
+	# Layout 1: git worktree
+	candidate="$(cd "$SCRIPT_DIR/.." && pwd)"
+	if [[ -f "$candidate/shared-constants.sh" ]] && [[ -f "$candidate/bash-upgrade-helper.sh" ]]; then
+		echo "$candidate"
+		return 0
+	fi
+	return 1
+}
+
+SCRIPTS_DIR="$(_resolve_scripts_dir || echo "")"
+if [[ -z "$SCRIPTS_DIR" ]]; then
+	printf 'FATAL: cannot locate scripts dir containing shared-constants.sh + bash-upgrade-helper.sh\n' >&2
+	printf '       SCRIPT_DIR=%s\n' "$SCRIPT_DIR" >&2
+	exit 1
+fi
+
+HELPER="$SCRIPTS_DIR/bash-upgrade-helper.sh"
+SHARED="$SCRIPTS_DIR/shared-constants.sh"
 
 pass_count=0
 fail_count=0
@@ -191,7 +214,7 @@ fi
 # check, since this task reinforces the same class of fix.)
 # -----------------------------------------------------------------------
 nul_in_expansion=$(
-	grep -rn -E '\$\{[^}]*\$'"'"'\\0' "$REPO_ROOT/.agents/scripts/" \
+	grep -rn -E '\$\{[^}]*\$'"'"'\\0' "$SCRIPTS_DIR/" \
 		--include='*.sh' \
 		--exclude='test-pulse-dep-graph-bash32-nul-crash.sh' \
 		--exclude='test-bash-reexec-guard.sh' 2>/dev/null |
