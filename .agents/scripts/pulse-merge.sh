@@ -1060,6 +1060,154 @@ Every pulse cycle the deterministic merge pass evaluates open PRs and auto-close
 }
 
 #######################################
+# Detect whether a path is a planning-only file that should NOT be used
+# as evidence of "implementation work landed on main".
+#
+# GH#18815: The deterministic merge pass had a false-positive in PR #18760
+# where a planning-brief PR (`plan(t2059, t2060): file follow-ups`) was
+# mistaken for an implementation PR because the task-ID grep matched the
+# planning commit's subject. Planning paths are excluded from the file
+# overlap check so a planning-only commit cannot satisfy the duplicate-work
+# heuristic on its own.
+#
+# Returns 0 (true) if the path is planning-only, 1 (false) if it is an
+# implementation file.
+#
+# Args: $1 = path
+#######################################
+_is_planning_path_for_overlap() {
+	local path="$1"
+	case "$path" in
+	TODO.md | README.md | CHANGELOG.md | VERSION) return 0 ;;
+	todo/* | .agents/configs/simplification-state.json) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+#######################################
+# Verify that the closing PR and the matching commit on main share at
+# least one non-planning file path.
+#
+# GH#18815: This is the file-overlap gate that distinguishes a genuine
+# duplicate (where the same implementation files were touched on both
+# sides) from a false positive (where the task ID appeared in a planning
+# commit's subject but no implementation work landed).
+#
+# Returns 0 if the intersection contains at least one implementation file
+# → genuine duplicate, safe to close as "already landed".
+#
+# Returns 1 if:
+#   - The intersection is empty (planning-only match → false positive)
+#   - File lookup failed (network error, missing API permissions, etc.)
+#
+# In all "return 1" cases the caller MUST NOT auto-close the PR. The
+# function fails CLOSED on lookup errors because the cost of leaving a
+# stuck PR open is far less than the cost of discarding real work.
+#
+# Args: $1 = closing PR number, $2 = repo slug, $3 = matching commit SHA
+#######################################
+_verify_pr_overlaps_commit() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local commit_sha="$3"
+
+	local pr_files commit_files
+	pr_files=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json files --jq '.files[].path' 2>/dev/null) || return 1
+	[[ -n "$pr_files" ]] || return 1
+
+	commit_files=$(gh api "repos/${repo_slug}/commits/${commit_sha}" \
+		--jq '.files[].filename' 2>/dev/null) || return 1
+	[[ -n "$commit_files" ]] || return 1
+
+	# Compute intersection, excluding planning paths. Iterate the closing
+	# PR's files (typically smaller set) and check membership in the
+	# matching commit's files via grep -Fxq for exact line match.
+	local file
+	while IFS= read -r file; do
+		[[ -n "$file" ]] || continue
+		if _is_planning_path_for_overlap "$file"; then
+			continue
+		fi
+		if printf '%s\n' "$commit_files" | grep -Fxq -- "$file"; then
+			return 0
+		fi
+	done <<<"$pr_files"
+
+	return 1
+}
+
+#######################################
+# Post a one-time rebase nudge on a conflicting worker PR that the
+# deterministic merge pass left open due to a false-positive task-ID
+# match (GH#18815).
+#
+# Modelled on _post_rebase_nudge_on_interactive_conflicting. Idempotent
+# via the marker `<!-- pulse-rebase-nudge-worker -->` — posted exactly
+# once per PR lifetime.
+#
+# Args:
+#   $1 - pr_number
+#   $2 - repo_slug (owner/repo)
+#   $3 - task_id (e.g., "t2060" or "GH#18746")
+#   $4 - matching_pr (optional — the PR number from the false-positive match)
+#######################################
+_post_rebase_nudge_on_worker_conflicting() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local task_id="$3"
+	local matching_pr="${4:-}"
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
+
+	if ! declare -F _gh_idempotent_comment >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _post_rebase_nudge_on_worker_conflicting: _gh_idempotent_comment not defined — skipping nudge for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	local head_branch
+	head_branch=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json headRefName --jq '.headRefName' 2>/dev/null) || head_branch="<branch>"
+	[[ -n "$head_branch" ]] || head_branch="<branch>"
+
+	local matching_pr_clause=""
+	if [[ -n "$matching_pr" ]]; then
+		matching_pr_clause=" The matching commit was from PR #${matching_pr}, which only touches planning files (briefs, TODO.md). The implementation in this PR has not landed."
+	fi
+
+	local marker="<!-- pulse-rebase-nudge-worker -->"
+	local nudge_body
+	nudge_body="${marker}
+## Rebase needed — task-ID heuristic detected a planning-only match
+
+This worker PR has merge conflicts against \`main\`. The deterministic merge pass found a recent commit on main mentioning task ID \`${task_id}\`, but its file footprint does not overlap with this PR's implementation files.${matching_pr_clause}
+
+To prevent value loss, the merge pass left this PR open instead of auto-closing it. The implementation work in this branch needs to be rebased and re-validated.
+
+### To resolve
+
+From a terminal:
+
+\`\`\`bash
+gh pr checkout ${pr_number}
+git pull --rebase origin main
+# resolve any conflicts, then:
+git push --force-with-lease
+\`\`\`
+
+Or use the GitHub web UI's *Update branch* button if the conflicts are trivial enough for GitHub's web merger.
+
+### Why you're seeing this
+
+Earlier versions of \`_close_conflicting_pr\` would have auto-closed this PR with a false 'already landed on main' claim — the task-ID grep alone matched the planning commit's subject and concluded the implementation had landed. The fix added file-overlap verification: when the task ID matches a commit but the file footprints do not intersect on any non-planning path, the heuristic is treated as a false positive and the PR is preserved.
+
+<sub>Posted automatically by \`pulse-merge.sh\` (GH#18815).</sub>"
+
+	_gh_idempotent_comment "$pr_number" "$repo_slug" "$marker" "$nudge_body" "pr" || true
+	return 0
+}
+
+#######################################
 # Close a conflicting PR with audit comment.
 #
 # GH#17574: Before saying "remains open for re-attempt", check if the
@@ -1068,6 +1216,13 @@ Every pulse cycle the deterministic merge pass evaluates open PRs and auto-close
 # the misleading "remains open for re-attempt" comment was itself a
 # dispatch trigger that caused a third redundant worker in the
 # observed incident.
+#
+# GH#18815: The task-ID grep alone produced a false positive in PR
+# #18760, where a planning PR (`plan(t2059, t2060): file follow-ups`)
+# was mistaken for an implementation PR. The fix requires file overlap
+# between the closing PR and the matching commit before claiming the
+# work landed. On overlap miss or lookup failure, the PR is left open
+# and a one-time rebase nudge is posted.
 #
 # Args: $1=PR number, $2=repo slug, $3=PR title
 #######################################
@@ -1101,37 +1256,68 @@ _close_conflicting_pr() {
 	# on the matching commit subject, so the close comment can cite the
 	# actual audit trail instead of claiming the work was "committed directly
 	# to main" (which is misleading when the common case is a sibling PR).
+	#
+	# GH#18815: Fetch (sha, subject) pairs as JSON instead of subjects only,
+	# so the file-overlap verification step can look up the matching commit's
+	# files via `gh api repos/.../commits/SHA`.
 	local work_on_main="false"
 	local merging_pr=""
 	local task_id_from_pr
 	task_id_from_pr=$(printf '%s' "$pr_title" | grep -oE '^(t[0-9]+|GH#[0-9]+)' | head -1) || task_id_from_pr=""
 
 	if [[ -n "$task_id_from_pr" ]]; then
-		# Fetch recent commit subjects on main and find the first one
-		# matching the task ID. The matching subject is used for two
-		# things: (1) confirming work_on_main, (2) parsing the
-		# squash-merge "(#NNN)" suffix.
-		local commit_subjects
-		commit_subjects=$(gh api "repos/${repo_slug}/commits" \
+		local commits_json
+		commits_json=$(gh api "repos/${repo_slug}/commits" \
 			--method GET -f per_page=50 \
-			--jq '.[] | .commit.message | split("\n")[0]' \
-			2>/dev/null) || commit_subjects=""
+			--jq '[.[] | {sha: .sha, subject: (.commit.message | split("\n")[0])}]' \
+			2>/dev/null) || commits_json=""
 
+		local matching_sha=""
 		local matching_subject=""
-		if [[ -n "$commit_subjects" ]]; then
-			matching_subject=$(printf '%s\n' "$commit_subjects" |
-				grep -iE "(^|[^a-zA-Z0-9])${task_id_from_pr}([^a-zA-Z0-9]|$)" |
-				head -1) || matching_subject=""
+		if [[ -n "$commits_json" && "$commits_json" != "null" ]]; then
+			# Use jq with a regex test for word-boundary matching on the subject.
+			# `first // empty` returns the first match or an empty string when
+			# nothing matches — distinguishable from a malformed JSON response.
+			local matching_obj
+			matching_obj=$(printf '%s' "$commits_json" |
+				jq -c --arg tid "$task_id_from_pr" '
+					[.[] | select(.subject | test("(^|[^a-zA-Z0-9])" + $tid + "([^a-zA-Z0-9]|$)"; "i"))] | first // empty
+				' 2>/dev/null) || matching_obj=""
+			if [[ -n "$matching_obj" && "$matching_obj" != "null" ]]; then
+				matching_sha=$(printf '%s' "$matching_obj" | jq -r '.sha // empty' 2>/dev/null) || matching_sha=""
+				matching_subject=$(printf '%s' "$matching_obj" | jq -r '.subject // empty' 2>/dev/null) || matching_subject=""
+			fi
 		fi
 
-		if [[ -n "$matching_subject" ]]; then
-			work_on_main="true"
-			# Parse trailing "(#NNN)" from the squash-merge commit subject.
-			# Non-squash merges won't have this suffix — that's fine, we
-			# just omit the parenthetical from the close comment.
-			merging_pr=$(printf '%s' "$matching_subject" |
-				grep -oE '\(#[0-9]+\)$' |
-				grep -oE '[0-9]+' | head -1) || merging_pr=""
+		if [[ -n "$matching_sha" ]]; then
+			# GH#18815: Verify the matching commit and the closing PR share
+			# at least one non-planning file. The task-ID grep alone produced
+			# false positives when a planning PR (e.g., 'plan(t2060): file
+			# follow-ups') was merged before the implementation PR — the
+			# regex matched the planning subject and the implementation PR
+			# was wrongly auto-closed (PR #18760 incident, 2026-04-14).
+			if _verify_pr_overlaps_commit "$pr_number" "$repo_slug" "$matching_sha"; then
+				work_on_main="true"
+				# Parse trailing "(#NNN)" from the matching commit's subject.
+				# Non-squash merges won't have this suffix — that's fine, we
+				# just omit the parenthetical from the close comment.
+				merging_pr=$(printf '%s' "$matching_subject" |
+					grep -oE '\(#[0-9]+\)$' |
+					grep -oE '[0-9]+' | head -1) || merging_pr=""
+			else
+				# Task ID matched but file footprints don't overlap, OR file
+				# lookup failed (network error, missing API permissions). Fail
+				# CLOSED — leave the PR open and post a one-time rebase nudge.
+				# Better to leave a stuck PR than to discard real work.
+				local matching_pr_for_nudge=""
+				matching_pr_for_nudge=$(printf '%s' "$matching_subject" |
+					grep -oE '\(#[0-9]+\)$' |
+					grep -oE '[0-9]+' | head -1) || matching_pr_for_nudge=""
+
+				echo "[pulse-wrapper] Deterministic merge: task ID match for ${task_id_from_pr} in commit ${matching_sha:0:8} has no implementation file overlap with PR #${pr_number} — false-positive heuristic, leaving PR open for rebase (GH#18815)" >>"$LOGFILE"
+				_post_rebase_nudge_on_worker_conflicting "$pr_number" "$repo_slug" "$task_id_from_pr" "$matching_pr_for_nudge"
+				return 0
+			fi
 		fi
 	fi
 
