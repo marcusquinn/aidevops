@@ -461,7 +461,9 @@ _simplification_backfill_extract_file_path() {
 	# `|| true` swallows the pipefail that grep -o / head -1 raise when the
 	# regex does not match — the caller distinguishes "no path" via empty
 	# output, not exit code, so we must not propagate the failure.
-	echo "$title" | grep -oE '\.[a-z][^ ,)]+\.(md|sh)' | head -1 || true
+	# printf is safer than echo for arbitrary strings; regex drops the leading-
+	# dot requirement so root files like README.md are matched correctly.
+	printf '%s\n' "$title" | grep -oE '[^ ,)]+\.(md|sh)' | head -1 || true
 	return 0
 }
 
@@ -475,6 +477,7 @@ _simplification_backfill_extract_file_path() {
 #   $2 - file_path (repo-relative)
 #   $3 - current_hash (git hash-object of the file)
 #   $4 - issue_num (merged simplification issue number)
+#   $5 - now_iso (optional; ISO 8601 timestamp; computed via date if absent)
 # Outputs:
 #   new_passes (integer, previous passes + 1) on success.
 # Returns: 0 on successful mutation, 1 if jq failed (tmp_state untouched).
@@ -485,7 +488,7 @@ _simplification_backfill_update_entry_state() {
 	local issue_num="$4"
 
 	local now_iso prev_passes new_passes
-	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	now_iso="${5:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
 	prev_passes=$(jq -r --arg fp "$file_path" '.files[$fp].passes // 0' "$tmp_state" 2>/dev/null) || prev_passes=0
 	new_passes=$((prev_passes + 1))
 
@@ -591,7 +594,10 @@ _simplification_state_backfill_closed() {
 	local repo_path="$1"
 	local state_file="$2"
 	local aidevops_slug="$3"
-	local added=0
+	local added=0 now_iso
+	# Compute timestamp once here — loop-invariant, passed to the helper to
+	# avoid a date(1) subprocess per issue iteration.
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 	# Fetch recently closed simplification issues (last 7 days, max 50).
 	local closed_issues
@@ -616,8 +622,9 @@ _simplification_state_backfill_closed() {
 		[[ -z "$issue" ]] && continue
 		local title file_path issue_num
 
-		title=$(echo "$issue" | jq -r '.title') || continue
-		issue_num=$(echo "$issue" | jq -r '.number') || continue
+		# Single jq pass for both fields — halves subprocess count per iteration.
+		IFS=$'\t' read -r title issue_num < <(printf '%s\n' "$issue" | jq -r '[.title // "", .number // ""] | @tsv')
+		[[ -z "$title" || -z "$issue_num" ]] && continue
 
 		file_path=$(_simplification_backfill_extract_file_path "$title")
 		[[ -z "$file_path" ]] && continue
@@ -634,7 +641,7 @@ _simplification_state_backfill_closed() {
 		# Record the file in state — either new entry or updated hash.
 		local new_passes
 		new_passes=$(_simplification_backfill_update_entry_state \
-			"$tmp_state" "$file_path" "$current_hash" "$issue_num") || continue
+			"$tmp_state" "$file_path" "$current_hash" "$issue_num" "$now_iso") || continue
 		added=$((added + 1))
 
 		# Advisory post-merge smell verification. Failures here never abort
