@@ -515,6 +515,52 @@ _check_signing() {
 }
 
 # -----------------------------------------------------------------------------
+# _check_pulse_health: detect stalled/crashed pulse (GH#18979).
+# If pulse-health.json exists but hasn't been updated in >30 minutes,
+# the pulse is stalled. Emit a warning so the user can investigate.
+# If the supervisor pulse launchd job exists but isn't running, nudge.
+# -----------------------------------------------------------------------------
+_check_pulse_health() {
+	local health_file="$HOME/.aidevops/logs/pulse-health.json"
+
+	# No health file = pulse never ran or not configured — skip silently
+	if [[ ! -f "$health_file" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local health_mtime now_epoch age_seconds
+	if [[ "$(uname)" == "Darwin" ]]; then
+		health_mtime=$(stat -f '%m' "$health_file" 2>/dev/null) || health_mtime=0
+	else
+		health_mtime=$(stat -c '%Y' "$health_file" 2>/dev/null) || health_mtime=0
+	fi
+	now_epoch=$(date +%s)
+	age_seconds=$((now_epoch - health_mtime))
+
+	# Stale threshold: 30 minutes (1800 seconds). The pulse cycles every 2 minutes,
+	# so 30 minutes of silence means ~15 consecutive failed cycles.
+	if [[ "$age_seconds" -gt 1800 ]]; then
+		local age_mins=$((age_seconds / 60))
+		local hint=""
+		# Check if launchd job exists but isn't running (macOS only)
+		if [[ "$(uname)" == "Darwin" ]]; then
+			local plist_label="com.aidevops.aidevops-supervisor-pulse"
+			local launchd_state=""
+			launchd_state=$(launchctl print "gui/$(id -u)/${plist_label}" 2>/dev/null | grep "state =" | awk '{print $NF}') || launchd_state=""
+			if [[ "$launchd_state" == "not" || "$launchd_state" == "" ]]; then
+				hint=" Run: launchctl kickstart gui/\$(id -u)/${plist_label}"
+			fi
+		fi
+		echo "Pulse stalled: last health update ${age_mins}m ago.${hint}"
+		return 0
+	fi
+
+	echo ""
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # _refresh_oauth_tokens: pre-emptive background token refresh on session startup.
 # Refreshes any OAuth tokens expiring within 1 hour — catches tokens that
 # expired while the machine was off. Runs silently; failures are harmless.
@@ -599,6 +645,8 @@ main() {
 	contribution_watch=$(_check_contribution_watch)
 	origin_notice=$(_check_origin)
 	signing_nudge=$(_check_signing)
+	local pulse_health
+	pulse_health=$(_check_pulse_health)
 
 	[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
 	[[ -n "$nudge_output" ]] && echo "$nudge_output"
@@ -609,6 +657,7 @@ main() {
 	[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
 	[[ -n "$origin_notice" ]] && echo "$origin_notice"
 	[[ -n "$signing_nudge" ]] && echo "$signing_nudge"
+	[[ -n "$pulse_health" ]] && echo "$pulse_health"
 
 	_write_cache "$cache_dir" "$output" "$runtime_hint" "$nudge_output" \
 		"$session_warning" "$security_posture" "$secret_hygiene" \

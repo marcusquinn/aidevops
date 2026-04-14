@@ -414,6 +414,18 @@ _cleanup_single_worktree() {
 # See also: GH#18346 (silent-skip logging fix preserved in helpers above)
 #######################################
 cleanup_worktrees() {
+	# GH#18979: Skip cleanup when API rate limit is low — both passes call
+	# `gh pr list` per repo/worktree, and blocking rate-limit waits cause
+	# the cleanup stage to hang for 10+ minutes, stalling the entire pulse
+	# cycle. The cost of skipping one cleanup pass is negligible (worktrees
+	# accumulate slowly); the cost of hanging is total pipeline stall.
+	local _rl_remaining=""
+	_rl_remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || _rl_remaining=""
+	if [[ "$_rl_remaining" =~ ^[0-9]+$ ]] && [[ "$_rl_remaining" -lt 100 ]]; then
+		echo "[pulse-wrapper] Worktree cleanup: skipped — GraphQL rate limit low (${_rl_remaining} remaining)" >>"$LOGFILE"
+		return 0
+	fi
+
 	local total_removed=0
 
 	# Pass 1: remove worktrees for merged PRs
