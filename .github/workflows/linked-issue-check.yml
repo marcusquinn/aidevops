@@ -1,0 +1,117 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# Linked Issue Check
+#
+# Requires every PR to reference a linked issue before it can be merged.
+# Accepts closing keywords (Closes, Fixes, Resolves) and reference keywords
+# (For, Ref) to support parent-task PRs that must not auto-close their issue.
+#
+# Exemptions:
+# - Bot accounts (github-actions[bot], dependabot[bot], etc.)
+# - PRs with a task-ID prefix in the title (tNNN: or GH#NNN:) — these are
+#   already linked to issues via the task system and the maintainer gate's
+#   title-based lookup.
+#
+# This check is intentionally separate from maintainer-gate.yml (which checks
+# the *status* of linked issues). This check is earlier — it gates on whether
+# a link exists at all, regardless of issue status.
+#
+# Required status check: add "linked-issue-check" to branch protection rules.
+
+name: Linked Issue Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+  statuses: write
+
+jobs:
+  check:
+    name: Linked Issue Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    concurrency:
+      group: linked-issue-check-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Check for linked issue reference
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = pr.body || '';
+            const title = pr.title || '';
+            const headSha = pr.head.sha;
+            const repo = context.repo;
+
+            // Bot accounts are exempt
+            if (pr.user.type === 'Bot') {
+              console.log(`Author ${pr.user.login} is a bot — exempt from linked-issue check`);
+              await github.rest.repos.createCommitStatus({
+                owner: repo.owner,
+                repo: repo.repo,
+                sha: headSha,
+                state: 'success',
+                context: 'linked-issue-check',
+                description: 'Bot PR — exempt from linked-issue requirement'
+              });
+              return;
+            }
+
+            // PRs with task-ID prefix are exempt (tNNN: or GH#NNN:)
+            // These are already tracked via the task system / maintainer-gate title lookup
+            if (/^(t\d+(\.\d+)*|GH#\d+)[:\s]/.test(title)) {
+              console.log(`PR "${title}" has task-ID prefix — exempt from linked-issue check`);
+              await github.rest.repos.createCommitStatus({
+                owner: repo.owner,
+                repo: repo.repo,
+                sha: headSha,
+                state: 'success',
+                context: 'linked-issue-check',
+                description: 'Task-ID prefix detected — issue linkage via task system'
+              });
+              return;
+            }
+
+            // Check PR body for issue references (closing and reference keywords)
+            // Closing: Closes, Fixes, Resolves (also plural/past forms)
+            // Reference: For, Ref (for parent-task PRs)
+            const issueRefPattern = /(closes?|fixes?|resolves?|for|ref)[:\s]+#\d+/i;
+            const hasLinkedIssue = issueRefPattern.test(body);
+
+            if (hasLinkedIssue) {
+              const match = body.match(/(closes?|fixes?|resolves?|for|ref)[:\s]+#(\d+)/i);
+              const issueNum = match ? match[2] : 'unknown';
+              console.log(`Found linked issue reference — #${issueNum}`);
+              await github.rest.repos.createCommitStatus({
+                owner: repo.owner,
+                repo: repo.repo,
+                sha: headSha,
+                state: 'success',
+                context: 'linked-issue-check',
+                description: `Linked issue found — #${issueNum}`
+              });
+              return;
+            }
+
+            // No linked issue found — block
+            console.log(`No linked issue reference found in PR body`);
+            await github.rest.repos.createCommitStatus({
+              owner: repo.owner,
+              repo: repo.repo,
+              sha: headSha,
+              state: 'failure',
+              context: 'linked-issue-check',
+              description: 'No linked issue — add Closes/Fixes/Resolves/For #NNN to PR body'
+            });
+
+            core.setFailed(
+              'PR body must reference a linked issue.\n' +
+              'Add one of: `Closes #NNN`, `Fixes #NNN`, `Resolves #NNN`, `For #NNN`, or `Ref #NNN`\n' +
+              'If no issue exists for this change, please create one first.'
+            );
