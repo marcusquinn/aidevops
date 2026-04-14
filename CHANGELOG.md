@@ -10,6 +10,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.25] - 2026-04-14
+
+### Changed
+
+- Refactor: extract stale-recovery and PR-evidence into dispatch-dedup modules (GH#18916) (#18955)
+- Maintenance: ratchet-down complexity thresholds (GH#18949) (#18953)
+- Maintenance: update simplification state registry
+- Maintenance: bump NESTING_DEPTH_THRESHOLD 274→279 (GH#18938) (#18942)
+- Maintenance: update simplification state registry
+- tighten tier-standard.md — merge fallback/done-when sections, 79→62 lines (#18941)
+- tighten pulse-sweep.md — compress t2041 read contract, fix tier:reasoning alias bug (439→426 lines) (#18939)
+- Maintenance: update simplification state registry
+- Maintenance: ratchet-down NESTING_DEPTH_THRESHOLD 279→274 (GH#18928) (#18937)
+- tighten brief.md — extract headless resilience detail to tier-standard.md (#18933)
+- tighten define.md workflow doc (122→120 lines) (#18932)
+- GH#18924: tighten pulse.md — compress intro, merge How-to-Think into Prime Directive, remove redundancy (#18930)
+- Maintenance: update simplification state registry
+- fix(dispatch-dedup): detect open PRs by body closing-keyword (race on #18779) (#18915)
+- rename tier:reasoning to tier:thinking across framework (#18918)
+- bump NESTING_DEPTH_THRESHOLD from 272 to 279 (#18920)
+- Maintenance: update simplification state registry
+- decompose opencode plugin cluster — cursor/proxy.js, ttsr.mjs, provider-auth.mjs, google-proxy.mjs (#18906)
+- add TEST_ROOT guard clauses to _write_gh_stub_binary and _setup_gh_stub_globals (#18913)
+- Maintenance: update simplification state registry
+- fix grammar in ubicloud.md — add 'versions' noun after self-hosted (#18909)
+- refactor(claude-proxy): drop Codacy complexity + non-static dispatch findings (#18900)
+- restore check_dedup docblock and PID sentinel protocol (GH#4324) (#18902)
+- consolidate triple jq calls into single pass in _ff_parse_entry (#18896)
+- refactor(claude-proxy): decompose into 6 sibling modules to clear all qlty smells (#18893)
+- refactor(t2069): decompose pool_ops.py into per-command modules (#18891)
+- decompose _isc_scan_closed_pr_orphans into focused helpers (#18873)
+- extract dedup layers, large-file gate, worker launch from pulse-dispatch-core.sh (#18874)
+- defensive auto-close sweep for spurious zero-smell re-queue issues (#18890)
+- Maintenance: ratchet-down NESTING_DEPTH_THRESHOLD 276→272 (GH#18845) (#18887)
+- consolidate email_imap_adapter modules (#18888)
+- Maintenance: update simplification state registry
+- add qlty new-file smell gate (#18885)
+- fix(t2066): local SARIF primary, retuned simplification caps, smell delta (#18886)
+
+### Fixed
+
+- jq null-fallback and single-pass consolidation (GH#18866) (#18905)
+- harden jq filter and pgrep patterns in pulse-issue-reconcile.sh (#18910)
+- optimise enrichment helpers in pulse-quality-debt.sh (#18911)
+- address review bot suggestions from PR #18676 (#18908)
+- guard getent empty output in real-home resolvers (#18907)
+- apply gemini review fixes to issue-sync-helper.sh enrich helpers (#18897)
+- apply review bot suggestions from PR #18708 (#18901)
+- fail-CLOSED on comments API error in _is_stale_assignment (GH#18816) (#18894)
+- include crash_type in fast-fail state update path (#18895)
+
 ## [3.8.24] - 2026-04-14
 
 ### Changed
