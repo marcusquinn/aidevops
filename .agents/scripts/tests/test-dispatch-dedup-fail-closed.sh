@@ -159,6 +159,39 @@ else
 		"(rc=$rc output='$output')"
 fi
 
+# =============================================================================
+# Case 5 — internal jq failure in parent-task check → GUARD_UNCERTAIN (t2061)
+# =============================================================================
+# Simulates: labels field is a string instead of an array. The jq filter
+# '(.labels // [])[].name | select(...)' fails with a type error when it
+# tries to iterate '[].name' over a string. Previously fell through to
+# "no parent-task label" via '|| true'; now emits GUARD_UNCERTAIN.
+write_stub_gh_success '{"state":"OPEN","assignees":[],"labels":"not-an-array"}'
+run_is_assigned 99994 "owner/repo"
+if [[ "$rc" -eq 0 && "$output" == *"GUARD_UNCERTAIN"* && "$output" == *"jq-failure"* ]]; then
+	print_result "t2061: internal jq failure (parent-task check) → GUARD_UNCERTAIN, exit 0 (block)" 0
+else
+	print_result "t2061: internal jq failure (parent-task check) → GUARD_UNCERTAIN, exit 0 (block)" 1 \
+		"(rc=$rc output='$output')"
+fi
+
+# =============================================================================
+# Case 6 — internal jq failure in assignees extraction → GUARD_UNCERTAIN (t2061)
+# =============================================================================
+# Simulates: assignees field is a string instead of an array. The jq filter
+# '[.assignees[].login] | join(",")' fails with a type error when it tries
+# to iterate '[].login' over a string. Previously set assignees="" → "No
+# assignees — safe to dispatch"; now emits GUARD_UNCERTAIN.
+# Labels are a valid empty array to pass the parent-task check cleanly.
+write_stub_gh_success '{"state":"OPEN","assignees":"not-an-array","labels":[{"name":"pulse"}]}'
+run_is_assigned 99995 "owner/repo"
+if [[ "$rc" -eq 0 && "$output" == *"GUARD_UNCERTAIN"* && "$output" == *"jq-failure"* ]]; then
+	print_result "t2061: internal jq failure (assignees extract) → GUARD_UNCERTAIN, exit 0 (block)" 0
+else
+	print_result "t2061: internal jq failure (assignees extract) → GUARD_UNCERTAIN, exit 0 (block)" 1 \
+		"(rc=$rc output='$output')"
+fi
+
 export PATH="$OLD_PATH"
 
 # =============================================================================
