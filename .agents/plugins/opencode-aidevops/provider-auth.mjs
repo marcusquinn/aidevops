@@ -359,7 +359,32 @@ const MAX_EXHAUSTION_WAIT_MS = 15_000;
 /** Poll interval when waiting for cooldowns to expire (ms) */
 const EXHAUSTION_POLL_MS = 5_000;
 
-const TOOL_PREFIX = "mcp_";
+// Anthropic's server-side third-party detector pattern-matches lowercase
+// canonical tool names (`bash`, `read`, `grep`, `glob`, `edit`, `write`,
+// `task`, `webfetch`, `todowrite`) and prefixed variants (`oc_bash`, etc.).
+// Real Claude CLI sends Capitalized names: Bash, Read, Grep, ...
+// We rewrite opencode's lowercase names to the canonical capitalized form
+// on the request and invert the mapping on the response stream.
+// Tools not in this map (skill, aidevops*, ...) pass through unchanged.
+const CANONICAL_TOOL_NAMES = {
+  bash: "Bash",
+  read: "Read",
+  grep: "Grep",
+  glob: "Glob",
+  edit: "Edit",
+  write: "Write",
+  task: "Task",
+  webfetch: "WebFetch",
+  todowrite: "TodoWrite",
+};
+const CANONICAL_TOOL_NAMES_INVERSE = Object.fromEntries(
+  Object.entries(CANONICAL_TOOL_NAMES).map(([k, v]) => [v, k]),
+);
+
+function toCanonicalName(name) {
+  if (!name) return name;
+  return CANONICAL_TOOL_NAMES[name] || name;
+}
 
 const REQUIRED_BETAS = [
   "oauth-2025-04-20",
@@ -897,19 +922,24 @@ function sanitizeSystemPrompt(system) {
 }
 
 /**
- * Prefix tool definition names with TOOL_PREFIX.
+ * Canonicalise tool definition names (lowercase → Claude CLI CapCase).
+ * See CANONICAL_TOOL_NAMES for the mapping; names outside the map pass
+ * through unchanged.
  * @param {object[]} tools
  * @returns {object[]}
  */
 function prefixToolNames(tools) {
   return tools.map((tool) => ({
     ...tool,
-    name: tool.name ? `${TOOL_PREFIX}${tool.name}` : tool.name,
+    name: toCanonicalName(tool.name),
   }));
 }
 
 /**
- * Prefix tool_use block names in messages with TOOL_PREFIX.
+ * Canonicalise tool_use block names in messages (lowercase → CapCase).
+ * Must match the request-side canonicalisation in prefixToolNames so the
+ * model sees a consistent name across tool definitions and prior tool_use
+ * history.
  * @param {object[]} messages
  * @returns {object[]}
  */
@@ -920,7 +950,7 @@ function prefixToolUseBlocks(messages) {
       ...msg,
       content: msg.content.map((block) => {
         if (block.type === "tool_use" && block.name) {
-          return { ...block, name: `${TOOL_PREFIX}${block.name}` };
+          return { ...block, name: toCanonicalName(block.name) };
         }
         return block;
       }),
@@ -1223,16 +1253,31 @@ async function handle429Recovery(client, response, accessToken, sessionAccountEm
 }
 
 /**
- * Strip mcp_ prefix from tool name fields in a text chunk.
+ * Invert canonical tool-name rewriting on the response stream so opencode's
+ * runtime sees its original lowercase tool names (e.g. "Bash" → "bash").
+ *
+ * Known trade-off: the regex matches any `"name": "..."` field in the SSE
+ * text, not only tool_use blocks. A rewrite only fires when the value is one
+ * of the 9 canonical Claude tool names in CANONICAL_TOOL_NAMES_INVERSE, so
+ * the blast radius is bounded, but a literal JSON fragment like
+ * `{"name": "Read"}` inside a text content delta would be rewritten to
+ * lowercase. In practice the model doesn't emit such fragments in text
+ * deltas, and a stricter lookbehind on `tool_use` would require buffering
+ * across SSE chunks. Accepted as a known limitation.
+ *
  * @param {string} text
  * @returns {string}
  */
-function stripMcpPrefix(text) {
-  return text.replace(/"name"\s*:\s*"mcp_([^"]+)"/g, '"name": "$1"');
+function restoreLowercaseToolNames(text) {
+  return text.replace(/"name"\s*:\s*"([^"]+)"/g, (m, name) => {
+    const lower = CANONICAL_TOOL_NAMES_INVERSE[name];
+    return lower ? `"name": "${lower}"` : m;
+  });
 }
 
 /**
- * Build a ReadableStream pull handler that strips mcp_ tool name prefixes.
+ * Build a ReadableStream pull handler that restores lowercase tool names
+ * in the response SSE stream (inverse of the request-side canonicalisation).
  * @param {ReadableStreamDefaultReader} reader
  * @param {TextDecoder} decoder
  * @param {TextEncoder} encoder
@@ -1245,12 +1290,15 @@ function makeStreamPullHandler(reader, decoder, encoder) {
       controller.close();
       return;
     }
-    controller.enqueue(encoder.encode(stripMcpPrefix(decoder.decode(value, { stream: true }))));
+    controller.enqueue(
+      encoder.encode(restoreLowercaseToolNames(decoder.decode(value, { stream: true }))),
+    );
   };
 }
 
 /**
- * Wrap a response body stream to strip mcp_ prefix from tool names.
+ * Wrap a response body stream to restore lowercase tool names (inverse of
+ * the request-side canonicalisation performed by prefixToolNames).
  * @param {Response} response
  * @returns {Response}
  */
@@ -1331,9 +1379,9 @@ async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAc
  *   - Bearer auth with pool tokens
  *   - Beta headers (required + filtered)
  *   - System prompt sanitization (OpenCode → Claude Code)
- *   - Tool name prefixing (mcp_)
+ *   - Tool name canonicalisation (lowercase → Claude CLI CapCase)
  *   - ?beta=true query param
- *   - Response stream tool name de-prefixing
+ *   - Response stream tool name restoration (CapCase → lowercase)
  *
  * @param {any} client - OpenCode SDK client
  * @returns {import('@opencode-ai/plugin').AuthHook}
