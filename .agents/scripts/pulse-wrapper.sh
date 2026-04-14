@@ -1289,9 +1289,20 @@ main() {
 	export AIDEVOPS_HEADLESS=true
 
 	# GH#18689: --self-check and --dry-run arg scanning extracted to helpers.
-	local _sc_rc
-	_pulse_handle_self_check "$@"
-	_sc_rc=$?
+	# GH#18770: the `_sc_rc=$?` capture MUST be guarded by `|| _sc_rc=$?`
+	# on the call itself — otherwise, under `set -euo pipefail` (line 42),
+	# any non-zero return from _pulse_handle_self_check (which is the
+	# normal path when --self-check is not requested: returns 2 as the
+	# "not a self-check invocation" signal) kills the script at the call
+	# site BEFORE `_sc_rc=$?` can capture it. The pulse then dies with
+	# exit 2 on every launchd restart, never acquiring the instance lock,
+	# never dispatching. Regressed in PR #18712 which extracted the
+	# handler without reviewing the set -e exit-code propagation. Same
+	# bug class as the aidevops.sh getent regression (GH#18784) and the
+	# interactive-session-helper set -e kill (GH#18786). See the pre-merge
+	# checklist item 4 in `.agents/reference/bash-compat.md`.
+	local _sc_rc=0
+	_pulse_handle_self_check "$@" || _sc_rc=$?
 	[[ "$_sc_rc" -ne 2 ]] && return "$_sc_rc"
 	_pulse_setup_dry_run_mode "$@"
 
