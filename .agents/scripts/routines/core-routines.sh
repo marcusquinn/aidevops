@@ -148,7 +148,7 @@ $(_scheduler_row "$os" 120 "com.aidevops.aidevops-supervisor-pulse" "sh.aidevops
 
 1. Reads \`repos.json\` for pulse-enabled repos (respects \`pulse_hours\`, \`pulse_expires\`)
 2. For each repo: checks open GitHub issues, TODO.md tasks, and enabled routines
-3. Applies tier routing (\`tier:simple\` → Haiku, \`tier:standard\` → Sonnet, \`tier:reasoning\` → Opus)
+3. Applies tier routing (\`tier:simple\` → Haiku, \`tier:standard\` → Sonnet, \`tier:thinking\` → Opus)
 4. Dispatches headless workers via \`headless-runtime-helper.sh\`
 5. Enforces concurrency limits (max workers per repo, global cap)
 6. Evaluates and dispatches due routines from \`## Routines\` sections

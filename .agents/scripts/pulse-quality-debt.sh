@@ -132,7 +132,7 @@ close_stale_quality_debt_prs() {
 # Outputs: model identifier string (stdout) if resolved
 # Exit codes:
 #   0 - model resolved and printed to stdout
-#   1 - no reasoning model available
+#   1 - no thinking-tier model available
 #######################################
 _enrichment_resolve_model() {
 	local resolved_model=""
@@ -141,7 +141,7 @@ _enrichment_resolve_model() {
 		resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve sonnet || echo "")
 	fi
 	if [[ -z "$resolved_model" ]]; then
-		echo "[pulse-wrapper] dispatch_enrichment_workers: no reasoning model available — skipping" >>"$LOGFILE"
+		echo "[pulse-wrapper] dispatch_enrichment_workers: no thinking-tier model available — skipping" >>"$LOGFILE"
 		return 1
 	fi
 	printf '%s\n' "$resolved_model"
@@ -235,7 +235,7 @@ _enrichment_build_prompt() {
 	prompt_file=$(mktemp) || return 1
 
 	cat >"$prompt_file" <<ENRICHMENT_PROMPT_EOF
-You are a reasoning-tier analyst. A worker attempted to implement issue #${issue_number} but failed.
+You are a thinking-tier analyst. A worker attempted to implement issue #${issue_number} but failed.
 Your job: analyze the issue and codebase, then edit the issue body to add concrete implementation guidance.
 
 ## Issue Title
@@ -281,7 +281,7 @@ ENRICHMENT_PROMPT_EOF
 #######################################
 # Run the enrichment worker for a single issue and check whether it succeeded
 #
-# Runs a reasoning-tier headless worker using the provided prompt file, then
+# Runs a thinking-tier headless worker using the provided prompt file, then
 # verifies that "Worker Guidance" was added to the issue body on GitHub.
 # Cleans up the prompt file and worker output regardless of result.
 #
@@ -340,7 +340,7 @@ _enrichment_run_worker() {
 # Dispatch enrichment workers for issues that failed and need implementation guidance
 #
 # Reads the fast-fail state to find issues with enrichment_needed=true, resolves
-# a reasoning model, then dispatches a headless worker per issue to add a
+# a thinking-tier model, then dispatches a headless worker per issue to add a
 # "Worker Guidance" section to the issue body on GitHub.
 #
 # Arguments:
@@ -367,7 +367,7 @@ dispatch_enrichment_workers() {
 		return 0
 	}
 
-	# Resolve reasoning model (opus preferred, sonnet fallback)
+	# Resolve thinking-tier model (opus preferred, sonnet fallback)
 	local resolved_model
 	resolved_model=$(_enrichment_resolve_model) || {
 		printf '%d\n' "$available"

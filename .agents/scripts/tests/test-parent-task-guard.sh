@@ -184,7 +184,7 @@ run_is_assigned() {
 }
 
 # Case A: parent-task labeled issue with no assignees → must block
-write_stub_gh '{"state":"OPEN","assignees":[],"labels":[{"name":"parent-task"},{"name":"pulse"},{"name":"tier:reasoning"}]}'
+write_stub_gh '{"state":"OPEN","assignees":[],"labels":[{"name":"parent-task"},{"name":"pulse"},{"name":"tier:thinking"}]}'
 run_is_assigned 99999 "owner/repo"
 if [[ "$rc" -eq 0 && "$output" == *"PARENT_TASK_BLOCKED"* && "$output" == *"parent-task"* ]]; then
 	print_result "is-assigned blocks parent-task labeled issue (PARENT_TASK_BLOCKED signal)" 0

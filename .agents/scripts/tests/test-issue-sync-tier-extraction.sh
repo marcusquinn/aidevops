@@ -116,7 +116,7 @@ cat >"$TMP/brief-with-commentary.md" <<'BRIEF'
 ### Tier checklist (verify before assigning)
 
 If any answer is "no", use `tier:standard` or higher. Rank order is
-`tier:reasoning` > `tier:standard` > `tier:simple`.
+`tier:thinking` > `tier:standard` > `tier:simple`.
 
 - [x] all checks pass
 - [x] all checks pass
@@ -184,7 +184,7 @@ else
 
 **Selected tier:** `tier:simple`
 
-**Tier rationale:** rank order `tier:reasoning` > `tier:standard` > `tier:simple`.
+**Tier rationale:** rank order `tier:thinking` > `tier:standard` > `tier:simple`.
 BRIEF
 	result=$(_extract_tier_from_brief "$TMP/brief-t1993-synthetic.md" 2>/dev/null)
 	if [[ "$result" == "tier:simple" ]]; then

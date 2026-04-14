@@ -16,7 +16,7 @@ When creating issues via `gh issue create`, wrap the appropriate tier content in
 
 ## Implementation
 
-{Tier-appropriate content from tier-simple.md, tier-standard.md, or tier-reasoning.md}
+{Tier-appropriate content from tier-simple.md, tier-standard.md, or tier-thinking.md}
 
 ## Acceptance Criteria
 
@@ -34,7 +34,7 @@ When creating issues via `gh issue create`, wrap the appropriate tier content in
 - Issue closed with closing comment linking PR
 ```
 
-Always include a tier label: `tier:simple`, `tier:standard`, or `tier:reasoning`.
+Always include a tier label: `tier:simple`, `tier:standard`, or `tier:thinking`.
 
 **Why "Done When" matters:** Workers that lack a concrete completion signal exhibit two failure modes: (1) stop after setup/exploration without implementing anything (observed on #17642, #17643), or (2) stop after PR creation without merging or posting closing comments. "Done When" gives the model a checklist to drive toward instead of an open-ended goal.
 

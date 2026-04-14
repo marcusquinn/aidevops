@@ -135,7 +135,7 @@ _apply_tier_label_replace() {
 
 	# Validate the new tier matches the expected pattern — refuse to push
 	# arbitrary labels through this helper.
-	if [[ ! "$new_tier" =~ ^tier:(simple|standard|reasoning)$ ]]; then
+	if [[ ! "$new_tier" =~ ^tier:(simple|standard|thinking)$ ]]; then
 		print_warning "tier replace: refusing to apply non-tier label '$new_tier' to #$num in $repo"
 		return 0
 	fi

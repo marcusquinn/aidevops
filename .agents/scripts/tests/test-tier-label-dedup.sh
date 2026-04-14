@@ -23,9 +23,12 @@ assert_equals() {
 	local actual="$2"
 	local test_name="$3"
 
-	((tests_run++))
+	# NOTE: use arithmetic assignment (not `((x++))`) — under `set -e`,
+	# post-increment returns the value before increment, which is 0 on
+	# the first call and trips ERR-exit. GH#18781 follow-up.
+	tests_run=$((tests_run + 1))
 	if [[ "$expected" == "$actual" ]]; then
-		((tests_passed++))
+		tests_passed=$((tests_passed + 1))
 		echo "✓ $test_name"
 		return 0
 	else
@@ -48,25 +51,25 @@ assert_equals "tier:simple" "$result" "Single tier:simple label"
 result=$(_resolve_worker_tier "bug,tier:standard,auto-dispatch")
 assert_equals "tier:standard" "$result" "Single tier:standard label"
 
-# Test 3: Single tier:reasoning label
-result=$(_resolve_worker_tier "tier:reasoning,bug")
-assert_equals "tier:reasoning" "$result" "Single tier:reasoning label"
+# Test 3: Single tier:thinking label
+result=$(_resolve_worker_tier "tier:thinking,bug")
+assert_equals "tier:thinking" "$result" "Single tier:thinking label"
 
 # Test 4: Multiple tiers - prefer tier:standard over tier:simple
 result=$(_resolve_worker_tier "bug,tier:standard,tier:simple")
 assert_equals "tier:standard" "$result" "Multiple tiers: standard > simple"
 
-# Test 5: Multiple tiers - prefer tier:reasoning over tier:standard
-result=$(_resolve_worker_tier "tier:reasoning,tier:standard,bug")
-assert_equals "tier:reasoning" "$result" "Multiple tiers: reasoning > standard"
+# Test 5: Multiple tiers - prefer tier:thinking over tier:standard
+result=$(_resolve_worker_tier "tier:thinking,tier:standard,bug")
+assert_equals "tier:thinking" "$result" "Multiple tiers: thinking > standard"
 
-# Test 6: Multiple tiers - prefer tier:reasoning over tier:simple
-result=$(_resolve_worker_tier "tier:simple,tier:reasoning")
-assert_equals "tier:reasoning" "$result" "Multiple tiers: reasoning > simple"
+# Test 6: Multiple tiers - prefer tier:thinking over tier:simple
+result=$(_resolve_worker_tier "tier:simple,tier:thinking")
+assert_equals "tier:thinking" "$result" "Multiple tiers: thinking > simple"
 
-# Test 7: All three tiers present - prefer tier:reasoning
-result=$(_resolve_worker_tier "tier:simple,tier:standard,tier:reasoning")
-assert_equals "tier:reasoning" "$result" "All three tiers: reasoning wins"
+# Test 7: All three tiers present - prefer tier:thinking
+result=$(_resolve_worker_tier "tier:simple,tier:standard,tier:thinking")
+assert_equals "tier:thinking" "$result" "All three tiers: thinking wins"
 
 # Test 8: No tier label - default to tier:standard
 result=$(_resolve_worker_tier "bug,auto-dispatch,help-wanted")

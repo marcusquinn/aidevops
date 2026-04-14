@@ -328,7 +328,7 @@ FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                 
 #     2. Cap at FAST_FAIL_MAX_BACKOFF_SECS (7 days).
 #     3. retry_after = now + backoff_seconds.
 #     4. Counter increments. At ESCALATION_FAILURE_THRESHOLD → cascade escalation
-#        (tier:simple → tier:standard → tier:reasoning).
+#        (tier:simple → tier:standard → tier:thinking).
 #
 # State file format:
 #   { "slug/number": {
@@ -692,7 +692,7 @@ check_session_gate() {
 # Results processed longest-first. .md issues get tier:standard by default.
 #
 # Daily LLM sweep (GH#15285): if simplification debt hasn't decreased in 6h,
-# creates a tier:reasoning issue for LLM-powered deep review of stalled debt.
+# creates a tier:thinking issue for LLM-powered deep review of stalled debt.
 #
 # Runs at most once per COMPLEXITY_SCAN_INTERVAL (default 15 min).
 # Creates up to 5 issues per run; open cap (500) prevents backlog flooding.
@@ -1437,11 +1437,11 @@ STALLED_WORKER_MAX_LOG_BYTES="${STALLED_WORKER_MAX_LOG_BYTES:-500}" # just the s
 STALE_OPENCODE_MAX_AGE="${STALE_OPENCODE_MAX_AGE:-14400}" # 4 hours
 
 #######################################
-# Enrich failed issues with reasoning-tier analysis before re-dispatch.
+# Enrich failed issues with thinking-tier analysis before re-dispatch.
 #
 # When a worker fails (premature_exit, idle kill), the issue body often
 # lacks the implementation context needed for success. This function
-# spawns an inline reasoning worker to analyze the codebase and append
+# spawns an inline thinking-tier worker to analyze the codebase and append
 # a "## Worker Guidance" section with concrete file paths, patterns,
 # and verification commands.
 #

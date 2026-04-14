@@ -124,7 +124,7 @@ The optimisation pipeline parses escalation reports to:
 - Missing: whether to handle refresh tokens (3 call sites suggest yes)
 ```
 
-### tier:standard → tier:reasoning (Sonnet failed, Opus gets both reports)
+### tier:standard → tier:thinking (Sonnet failed, Opus gets both reports)
 
 ```markdown
 ## Escalating from tier:standard

@@ -431,7 +431,7 @@ This is an automated stall-detection sweep. The LLM should review the actual iss
 	# on other runners, producing audit trail gaps.
 	if gh_create_issue --repo "$aidevops_slug" \
 		--title "perf: simplification debt stalled — LLM sweep needed ($(date -u +%Y-%m-%d))" \
-		--label "simplification-debt" $sweep_review_label --label "tier:reasoning" \
+		--label "simplification-debt" $sweep_review_label --label "tier:thinking" \
 		--body "$sweep_body" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] Complexity LLM sweep: created stall-review issue" >>"$LOGFILE"
 	else
@@ -984,7 +984,7 @@ _complexity_scan_process_single_md_file() {
 # its structure, deciding what to extract vs compress, and preserving institutional
 # knowledge. Haiku-tier models lack the judgment for this; they over-compress,
 # lose task IDs, or restructure without understanding the reasoning behind the
-# original layout. Maintainers can raise to tier:reasoning for architectural docs.
+# original layout. Maintainers can raise to tier:thinking for architectural docs.
 # Arguments: $1 - scan_results (pipe-delimited: file_path|line_count), $2 - repos_json, $3 - aidevops_slug
 _complexity_scan_create_md_issues() {
 	local scan_results="$1"
@@ -1647,7 +1647,7 @@ _complexity_scan_sweep_check() {
 			sweep_reason=$(echo "$sweep_result" | cut -d'|' -f2)
 			gh_create_issue --repo "$aidevops_slug" \
 				--title "LLM complexity sweep: review stalled simplification debt" \
-				--label "simplification-debt" --label "auto-dispatch" --label "tier:reasoning" \
+				--label "simplification-debt" --label "auto-dispatch" --label "tier:thinking" \
 				--body "## Daily LLM sweep (automated, GH#15285)
 
 **Trigger:** ${sweep_reason}

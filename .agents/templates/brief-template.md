@@ -40,9 +40,9 @@ Answer each question for `tier:simple`. If **any** answer is "no", use `tier:sta
 - [ ] **Estimate 1h or less?**
 - [ ] **4 or fewer acceptance criteria?**
 
-All checked = `tier:simple`. Any unchecked = `tier:standard` (default) or `tier:reasoning` (no existing pattern to follow).
+All checked = `tier:simple`. Any unchecked = `tier:standard` (default) or `tier:thinking` (no existing pattern to follow).
 
-**Selected tier:** `tier:simple` | `tier:standard` | `tier:reasoning`
+**Selected tier:** `tier:simple` | `tier:standard` | `tier:thinking`
 
 **Tier rationale:** {1-2 sentences justifying the tier choice, referencing which checklist items
 drove the decision. e.g., "6 files across 3 packages, fallback retry logic needed -> tier:standard"
@@ -88,7 +88,7 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
        full file content for new files. The worker copies and verifies, not invents.
      - tier:standard: Code skeletons with function signatures and inline comments.
        The worker fills in logic following the specified pattern.
-     - tier:reasoning: Approach description with constraints and trade-offs.
+     - tier:thinking: Approach description with constraints and trade-offs.
        The worker designs the solution.
 
      INLINE DATA RULE (GH#18458 — worker token budget protection):
@@ -258,8 +258,8 @@ that defines how to machine-check the criterion. See `.agents/scripts/verify-bri
      implementation starts). Mitigations:
      1. Use the Worker Quick-Start section to front-load critical data
      2. Include extracted data inline (don't just point to large files)
-     3. Consider tier:reasoning if the task requires synthesizing across 5+ files
-     4. For decomposition Phase 0 tasks specifically, use tier:reasoning — these
+     3. Consider tier:thinking if the task requires synthesizing across 5+ files
+     4. For decomposition Phase 0 tasks specifically, use tier:thinking — these
         require reading the plan + model file + target file + wrapper file, which
         routinely exceeds 4,000 lines of reference material.
 -->

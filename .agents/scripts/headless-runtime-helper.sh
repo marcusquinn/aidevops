@@ -87,7 +87,7 @@ cmd_select() {
 	# When a tier is specified, resolve the concrete model for that tier and
 	# use it as the explicit model override. This ensures the round-robin
 	# selects from the correct tier's model pool (e.g., haiku for tier:simple,
-	# opus for tier:reasoning) rather than always defaulting to sonnet.
+	# opus for tier:thinking) rather than always defaulting to sonnet.
 	if [[ -n "$tier_override" && -z "$model_override" ]]; then
 		local tier_model=""
 		tier_model=$(resolve_model_tier "$tier_override" 2>/dev/null) || tier_model=""

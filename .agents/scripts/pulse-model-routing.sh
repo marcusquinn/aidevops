@@ -31,9 +31,9 @@ resolve_dispatch_model_for_labels() {
 	local tier=""
 	local resolved_model=""
 
-	# Tier label resolution — tier:thinking is backward-compat alias for tier:reasoning
+	# Tier label resolution — tier:thinking is the canonical opus-tier label
 	case ",${labels_csv}," in
-	*,tier:reasoning,* | *,tier:thinking,*) tier="opus" ;;
+	*,tier:thinking,*) tier="opus" ;;
 	*,tier:standard,*) tier="sonnet" ;;
 	*,tier:simple,*) tier="haiku" ;;
 	esac

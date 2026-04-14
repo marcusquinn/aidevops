@@ -25,7 +25,7 @@ jobs:
           set -euo pipefail
 
           # Rank order — index in the array is the rank (highest first)
-          RANK=("tier:reasoning" "tier:standard" "tier:simple")
+          RANK=("tier:thinking" "tier:standard" "tier:simple")
 
           # Fetch current tier labels on the target
           current=$(gh "${KIND}" view "$TARGET_NUMBER" --repo "$REPO" \
@@ -62,6 +62,6 @@ jobs:
 
           # Post an explanatory comment (idempotent — only if anything changed)
           if [[ "${#removed[@]}" -gt 0 ]]; then
-            msg="## Tier label dedup (t1997)"$'\n\n'"Detected multiple tier labels on this ${KIND}. Kept the highest-ranked label (\`${keep}\`) and removed the lower ones."$'\n\n'"Rank order: tier:reasoning > tier:standard > tier:simple."$'\n\n'"Auto-cleaned by .github/workflows/dedup-tier-labels.yml"
+            msg="## Tier label dedup (t1997)"$'\n\n'"Detected multiple tier labels on this ${KIND}. Kept the highest-ranked label (\`${keep}\`) and removed the lower ones."$'\n\n'"Rank order: tier:thinking > tier:standard > tier:simple."$'\n\n'"Auto-cleaned by .github/workflows/dedup-tier-labels.yml"
             gh "${KIND}" comment "$TARGET_NUMBER" --repo "$REPO" --body "$msg"
           fi

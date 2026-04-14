@@ -34,7 +34,7 @@ Also classify **agent domain** and **model tier** using `reference/task-taxonomy
 
 - `tier:simple` — single-file, <100 lines changed, pattern-following. Brief MUST provide verbatim oldString/newString for every edit.
 - `tier:standard` — multi-file, structural refactoring, >100 lines, approach depends on reading codebase state.
-- `tier:reasoning` — architecture decisions, novel design, complex multi-system trade-offs, security audits.
+- `tier:thinking` — architecture decisions, novel design, complex multi-system trade-offs, security audits.
 
 **Default to `tier:simple` for review feedback and single-file fixes.** Haiku achieves 100% success when briefs provide exact code blocks. Only escalate when the task genuinely requires judgment.
 

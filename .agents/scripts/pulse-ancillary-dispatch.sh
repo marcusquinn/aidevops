@@ -475,7 +475,7 @@ You are a sandboxed triage review agent. Follow these rules exactly:
 ### Scope & Recommendation
 
 - **Scope creep:** Low/Medium/High
-- **Complexity tier:** \\\`tier:simple\\\` / \\\`tier:standard\\\` / \\\`tier:reasoning\\\`
+- **Complexity tier:** \\\`tier:simple\\\` / \\\`tier:standard\\\` / \\\`tier:thinking\\\`
 - **Decision:** APPROVE / REQUEST CHANGES / DECLINE
 - **Recommended labels:** <comma-separated>
 - **Implementation guidance:** <1-3 bullets for the worker who will implement this>

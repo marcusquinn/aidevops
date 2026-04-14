@@ -120,7 +120,7 @@ _dlw_setup_worker_log() {
 # Populates three module-level globals so the orchestrator can read them
 # without the complexity of multi-value stdout parsing (bash 3.2 has no
 # namerefs — pattern from GH#18705 decomposition memory lesson):
-#   _DLW_DISPATCH_TIER        — cascade tier name: simple|standard|reasoning
+#   _DLW_DISPATCH_TIER        — cascade tier name: simple|standard|thinking
 #   _DLW_DISPATCH_MODEL_TIER  — runtime tier: haiku|sonnet|opus
 #   _DLW_SELECTED_MODEL       — concrete model name, or empty for auto-select
 #
@@ -134,7 +134,7 @@ _dlw_setup_worker_log() {
 #
 # IMPORTANT: Callers MUST NOT pass a model override for default dispatches.
 # Only pass model_override when a specific tier is required (e.g.,
-# tier:reasoning → opus escalation, tier:simple → haiku). Passing an
+# tier:thinking → opus escalation, tier:simple → haiku). Passing an
 # arbitrary model here bypasses the round-robin and causes provider
 # imbalance. History: GH#17503 moved model resolution here from the worker.
 #
@@ -153,8 +153,8 @@ _dlw_resolve_tier_and_model() {
 	local resolved_tier
 	resolved_tier=$(_resolve_worker_tier "$issue_labels_csv")
 	case "$resolved_tier" in
-	tier:reasoning)
-		_DLW_DISPATCH_TIER="reasoning"
+	tier:thinking)
+		_DLW_DISPATCH_TIER="thinking"
 		_DLW_DISPATCH_MODEL_TIER="opus"
 		;;
 	tier:standard)

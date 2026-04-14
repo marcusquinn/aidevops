@@ -29,7 +29,7 @@ _PULSE_DISPATCH_DEDUP_LAYERS_LOADED=1
 # crash_type instead of leaving it empty.
 #
 # t2042: addresses the diagnostic gap on #18418 where two stale-recovered
-# workers escalated to tier:reasoning with reason="stale_timeout" and no
+# workers escalated to tier:thinking with reason="stale_timeout" and no
 # crash_type, so the cascade comment couldn't tell the next worker
 # whether it was a no-work infra failure or a partial implementation
 # stall.

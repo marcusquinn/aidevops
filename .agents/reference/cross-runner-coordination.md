@@ -252,7 +252,7 @@ grep "STALE_RECOVERED.*#<num>" ~/.aidevops/logs/pulse.log | tail -20
 
 ### 4.4 Token Cost Runaway (fixed t2007)
 
-**Pattern:** A worker session is dispatched at a model tier (`tier:reasoning` /
+**Pattern:** A worker session is dispatched at a model tier (`tier:thinking` /
 opus) that the issue does not warrant. The worker exhausts its context
 exploring the codebase without producing output, is watchdog-killed, and is
 re-dispatched (possibly at the same tier).

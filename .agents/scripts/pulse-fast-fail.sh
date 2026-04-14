@@ -382,7 +382,7 @@ _fast_fail_record_locked() {
 		--arg crash_type "${crash_type:-}" \
 		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type}' 2>/dev/null) || return 0
 
-	# Flag for enrichment on first non-rate-limit failure: a reasoning worker
+	# Flag for enrichment on first non-rate-limit failure: a thinking-tier worker
 	# will analyze the issue and add implementation guidance before re-dispatch.
 	# Only set once — cleared after enrichment runs.
 	if [[ "$is_rate_limit" == "false" && "$new_count" -eq 1 ]]; then

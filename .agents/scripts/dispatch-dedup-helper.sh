@@ -915,7 +915,7 @@ _recover_stale_assignment() {
 
 #######################################
 # Look up the per-tier cost budget from .agents/configs/dispatch-cost-budgets.conf.
-# Args: $1 = tier label or short name (simple|standard|reasoning|tier:simple|...)
+# Args: $1 = tier label or short name (simple|standard|thinking|tier:simple|...)
 # Stdout: integer token budget
 #######################################
 _get_cost_budget_for_tier() {
@@ -924,7 +924,7 @@ _get_cost_budget_for_tier() {
 	# Defaults match the documented tier sizing (see dispatch-cost-budgets.conf)
 	local COST_BUDGET_SIMPLE=30000
 	local COST_BUDGET_STANDARD=100000
-	local COST_BUDGET_REASONING=300000
+	local COST_BUDGET_THINKING=300000
 	local COST_BUDGET_DEFAULT=100000
 	if [[ -f "$_conf" ]]; then
 		# shellcheck source=/dev/null
@@ -937,7 +937,7 @@ _get_cost_budget_for_tier() {
 	case "$tier" in
 	simple) printf '%s' "$COST_BUDGET_SIMPLE" ;;
 	standard) printf '%s' "$COST_BUDGET_STANDARD" ;;
-	reasoning) printf '%s' "$COST_BUDGET_REASONING" ;;
+	thinking) printf '%s' "$COST_BUDGET_THINKING" ;;
 	*) printf '%s' "$COST_BUDGET_DEFAULT" ;;
 	esac
 	return 0
@@ -1017,7 +1017,7 @@ _sum_issue_token_spend() {
 #   $2 = repo slug
 #   $3 = spent (tokens, integer)
 #   $4 = budget (tokens, integer)
-#   $5 = tier short name (simple|standard|reasoning)
+#   $5 = tier short name (simple|standard|thinking)
 #   $6 = attempts count (integer)
 #   $7 = "true" if needs-maintainer-review label already set (skip side effects)
 #######################################
@@ -1054,7 +1054,7 @@ Maintainer review required before further dispatch. Possible causes:
 - Brief is unimplementable as written (refine scope or split the task)
 - Hidden blocker (missing dependency, environment issue, design conflict)
 - Worker stuck in a loop (model can't decompose the task — escalate tier)
-- Wrong tier assigned (downgrade a tier:reasoning task to standard, or vice versa)
+- Wrong tier assigned (downgrade a tier:thinking task to standard, or vice versa)
 
 Remove \`needs-maintainer-review\` after investigating the root cause to re-enable dispatch.
 

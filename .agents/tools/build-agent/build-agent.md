@@ -117,7 +117,7 @@ Record outcomes: `/remember "SUCCESS/FAILURE: agent with model — reason"`. Fro
 |------|-------|-----------|
 | `tier:simple` | Haiku | Execution of prescriptive briefs with exact code blocks. 100% success when oldString/newString provided verbatim. |
 | `tier:standard` | Sonnet | Standard implementation, judgment, error recovery, multi-file coordination. Default for code tasks. |
-| `tier:reasoning` | Opus | Architecture decisions, novel design, security audits, analysis that creates work for lower tiers. |
+| `tier:thinking` | Opus | Architecture decisions, novel design, security audits, analysis that creates work for lower tiers. |
 
 | Situation | Action |
 |-----------|--------|

@@ -784,7 +784,7 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 #######################################
 # Escalate issue model tier after repeated worker failures.
 #
-# Cascade escalation: tier:simple → tier:standard → tier:reasoning.
+# Cascade escalation: tier:simple → tier:standard → tier:thinking.
 # Crash-type-aware thresholds determine when escalation fires:
 #   - "overwhelmed": model read files, attempted work, but couldn't complete
 #     → escalate immediately (threshold=1). Retrying at the same tier wastes
@@ -794,7 +794,7 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 #   - "partial" / other: default threshold (2). Model got partway, may
 #     succeed with a continuation or fresh attempt.
 #
-# If already at tier:reasoning, no further escalation — the issue stays
+# If already at tier:thinking, no further escalation — the issue stays
 # for the needs-human path.
 #
 # Each escalation posts a structured report to the issue so the next
@@ -851,16 +851,16 @@ escalate_issue_tier() {
 	local next_label=""
 	local remove_label=""
 
-	# Determine current tier — tier:thinking is backward-compat alias for tier:reasoning
+	# Determine current tier — tier:thinking is the canonical opus-tier label
 	case ",$current_labels," in
-	*,tier:reasoning,* | *,tier:thinking,*)
+	*,tier:thinking,*)
 		# Already at highest auto-escalation tier
 		return 0
 		;;
 	*,tier:standard,*)
 		current_tier="standard"
-		next_tier="reasoning"
-		next_label="tier:reasoning"
+		next_tier="thinking"
+		next_label="tier:thinking"
 		remove_label="tier:standard"
 		;;
 	*,tier:simple,*)
@@ -870,10 +870,10 @@ escalate_issue_tier() {
 		remove_label="tier:simple"
 		;;
 	*)
-		# No tier label — treat as standard, escalate to reasoning
+		# No tier label — treat as standard, escalate to thinking
 		current_tier="standard"
-		next_tier="reasoning"
-		next_label="tier:reasoning"
+		next_tier="thinking"
+		next_label="tier:thinking"
 		remove_label=""
 		;;
 	esac
@@ -892,7 +892,7 @@ escalate_issue_tier() {
 	local label_desc=""
 	local label_color=""
 	case "$next_label" in
-	tier:reasoning)
+	tier:thinking)
 		label_desc="Route to opus-tier model for dispatch"
 		label_color="7057FF"
 		;;
@@ -912,10 +912,6 @@ escalate_issue_tier() {
 	local edit_args="--add-label $next_label"
 	if [[ -n "$remove_label" ]]; then
 		edit_args="$edit_args --remove-label $remove_label"
-	fi
-	# Also remove backward-compat tier:thinking if present
-	if [[ ",$current_labels," == *",tier:thinking,"* ]]; then
-		edit_args="$edit_args --remove-label tier:thinking"
 	fi
 	# shellcheck disable=SC2086
 	gh issue edit "$issue_number" --repo "$repo_slug" \
