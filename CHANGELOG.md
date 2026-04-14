@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.29] - 2026-04-14
+
+### Changed
+
+- add linked-issue-check workflow — require issue ref on every PR (#18971)
+- add claude-sonnet-4-5 and claude-opus-4-5 to claudecli proxy model list (#18967)
+
+### Fixed
+
+- restore pool_ops_token_utils.py with bug fixes (#18977)
+- native CLI auth fallback when pool rate-limited; rename provider to 'Claude CLI' (#18974)
+- probe existing proxy before launch — survive hot-reload and non-Bun runtimes (#18973)
+
 ## [3.8.28] - 2026-04-14
 
 ### Added
