@@ -7361,10 +7361,10 @@
       "passes": 1
     },
     ".agents/scripts/pulse-simplification-state.sh": {
-      "hash": "9a7bc9ed247366f023a670a42e332fb02bafab7b",
-      "at": "2026-04-13T20:02:43Z",
+      "hash": "48663547954d2f246e3c095c2a3b8a71c67af364",
+      "at": "2026-04-14T05:27:05Z",
       "pr": 18680,
-      "passes": 1
+      "passes": 2
     },
     ".agents/reference/bash-fd-locking.md": {
       "hash": "79fdafdb8ba9765b398538f513272a710e2f696a",
@@ -7412,6 +7412,12 @@
       "hash": "56ba6e0c2dca39c52a05e9e7377c451565121890",
       "at": "2026-04-14T02:22:52Z",
       "pr": 18654,
+      "passes": 1
+    },
+    ".agents/scripts/stats-quality-sweep.sh": {
+      "hash": "c9ef59b8d0cf32a2e83fa462cbccb28eaf2e4281",
+      "at": "2026-04-14T05:27:04Z",
+      "pr": 18810,
       "passes": 1
     }
   },
