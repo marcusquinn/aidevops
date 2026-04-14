@@ -1583,6 +1583,59 @@ _has_open_pr_check_open_commits() {
 }
 
 #######################################
+# has_open_pr Check 1b: OPEN PRs with closing-keyword in body (t2085).
+#
+# Mirrors Check 2 but scans --state open. Catches the standard framework
+# convention where `full-loop-helper.sh commit-and-pr` writes
+# `Resolves #NNN` into the PR body — Check 1's commit-subject matcher
+# does NOT see this because the framework convention does not put
+# closing keywords in commit subjects.
+#
+# Without this check, every routine implementation PR was invisible to
+# `has_open_pr`, which left Layer 4 dedup blind to in-flight work and
+# caused the marcusquinn-vs-alex-solovyev cross-runner duplicate-dispatch
+# race observed on issue #18779 → PR #18906 (a duplicate worker was
+# dispatched after PR #18906 was already open and waiting for review).
+#
+# Each candidate hit is post-filtered with the same exact regex Checks 2
+# and 3 use, to avoid GitHub full-text false positives (a PR mentioning
+# "v3.5.670" would otherwise falsely match issue #670 on the keyword
+# search alone).
+#
+# Args: $1 = issue number, $2 = repo slug
+# Returns: exit 0 if an open PR closes this issue (prints reason), exit 1 if none
+#######################################
+_has_open_pr_check_open_body_keyword() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local query pr_json pr_count pr_number
+	for keyword in close closes closed fix fixes fixed resolve resolves resolved; do
+		query="${keyword} #${issue_number} in:body"
+		pr_json=$(gh pr list --repo "$repo_slug" --state open --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
+		pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+		[[ "$pr_count" -eq 0 ]] && continue
+
+		pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
+		if [[ -n "$pr_number" ]]; then
+			local pr_body
+			pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || pr_body=""
+			# Match: keyword + optional whitespace + #NNN or owner/repo#NNN followed by a non-word char or end
+			local close_pattern_open="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
+			if ! printf '%s' "$pr_body" | grep -iqE "$close_pattern_open"; then
+				continue
+			fi
+			printf 'open PR #%s closes issue #%s via "%s" keyword in body\n' "$pr_number" "$issue_number" "$keyword"
+		else
+			printf 'open PR closes issue #%s via "%s" keyword in body\n' "$issue_number" "$keyword"
+		fi
+		return 0
+	done
+	return 1
+}
+
+#######################################
 # has_open_pr Check 2: Merged PRs with closing-keyword in body.
 #
 # Loops through all closing keyword variants and searches merged PRs via
@@ -1722,6 +1775,14 @@ has_open_pr() {
 
 	# Check 1: open PRs whose commits reference this issue.
 	_has_open_pr_check_open_commits "$issue_number" "$repo_slug" && return 0
+
+	# Check 1b (t2085): open PRs with closing-keyword in body. Required because
+	# the framework convention writes `Resolves #NNN` in the PR body, not in
+	# commit subjects — so Check 1's commit-subject matcher misses every
+	# routine implementation PR. Without this, Layer 4 dedup is blind to
+	# in-flight work and produces cross-runner duplicate dispatch (the
+	# marcusquinn-vs-alex-solovyev race on issue #18779 → PR #18906).
+	_has_open_pr_check_open_body_keyword "$issue_number" "$repo_slug" && return 0
 
 	# Check 2: merged PRs with closing-keyword in body.
 	_has_open_pr_check_merged_keywords "$issue_number" "$repo_slug" && return 0

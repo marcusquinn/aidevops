@@ -272,6 +272,78 @@ For #18522'
 	return 0
 }
 
+# t2085: Layer 4 dedup must detect OPEN PRs that put `Resolves #N` in the
+# PR body (the framework convention via full-loop-helper.sh commit-and-pr).
+# Without this check, the dedup helper is blind to every routine
+# implementation PR — Check 1 matches commit subjects + PR title, neither
+# of which carries the closing keyword under the framework convention.
+# Trigger incident: cross-runner race on issue #18779 → PR #18906.
+test_has_open_pr_detects_open_body_closing_keyword() {
+	set_gh_fixtures 'marcusquinn/aidevops|open|resolves #18779 in:body|[{"number":18906}]'
+	# Single-line body — the test gh stub reads fixtures line-by-line, so
+	# multi-line bodies get truncated to the first line. Real PR bodies have
+	# the closing keyword somewhere in the body; the post-filter regex
+	# does not require it on the first line.
+	set_gh_pr_view_fixtures '18906|body|Resolves #18779. Decompose four interconnected opencode plugin files.'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 18779 marcusquinn/aidevops 't2071: decompose opencode plugin cluster'); then
+		case "$output" in
+		*'open PR #18906 closes issue #18779 via "resolves" keyword in body'*)
+			print_result "has-open-pr detects OPEN PR via body closing keyword (t2085)" 0
+			return 0
+			;;
+		esac
+		print_result "has-open-pr detects OPEN PR via body closing keyword (t2085)" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "has-open-pr detects OPEN PR via body closing keyword (t2085)" 1 "Expected open PR evidence for issue #18779"
+	return 0
+}
+
+# t2085: planning-only OPEN PR bodies use `For #N` / `Ref #N` instead of a
+# closing keyword. The new open-body check must NOT treat those as evidence,
+# matching the existing planning-aware semantics already enforced by
+# Check 3 for merged PRs (GH#18641).
+test_has_open_pr_ignores_open_body_planning_for_reference() {
+	# No keyword-search hits at all — the brief PR body uses "For #18779" not
+	# any closing keyword, so the gh search-by-keyword stage finds nothing.
+	# Verify that none of the keyword variants produce a positive match.
+	set_gh_fixtures ''
+	set_gh_pr_view_fixtures ''
+
+	if "$HELPER_SCRIPT" has-open-pr 18779 marcusquinn/aidevops 't2071: planning brief'; then
+		print_result "has-open-pr ignores OPEN PR with planning-only 'For #N' (t2085)" 1 \
+			"Expected exit 1: a brief PR with only 'For #18779' must not block dispatch"
+		return 0
+	fi
+
+	print_result "has-open-pr ignores OPEN PR with planning-only 'For #N' (t2085)" 0
+	return 0
+}
+
+# t2085: a PR whose body contains a closing keyword for a DIFFERENT issue
+# but mentions our issue without a closing keyword must NOT block dispatch
+# on our issue. The post-filter regex must match OUR issue number
+# specifically. (Mirrors GH#18641 semantics for the open-state code path.)
+test_has_open_pr_requires_open_close_keyword_for_our_issue() {
+	# GitHub full-text search may match the keyword on a PR that closes a
+	# different issue. The fixture simulates a hit on the search but a body
+	# that closes #18999 instead of #18779. The post-filter must reject it.
+	set_gh_fixtures 'marcusquinn/aidevops|open|closes #18779 in:body|[{"number":18950}]'
+	set_gh_pr_view_fixtures '18950|body|Closes #18999. This PR is unrelated to #18779; the search just full-text matched.'
+
+	if "$HELPER_SCRIPT" has-open-pr 18779 marcusquinn/aidevops 't2071: opencode decomposition'; then
+		print_result "has-open-pr requires open-PR close keyword for OUR issue (t2085)" 1 \
+			"Expected exit 1: PR closes #18999, not #18779; full-text search hit must be filtered"
+		return 0
+	fi
+
+	print_result "has-open-pr requires open-PR close keyword for OUR issue (t2085)" 0
+	return 0
+}
+
 # Existing collision case (GH#18041 / t1957) must still allow dispatch:
 # different task used the same ID, merged PR closes some unrelated issue.
 test_has_open_pr_allows_dispatch_on_task_id_collision() {
@@ -299,6 +371,9 @@ main() {
 	test_has_open_pr_ignores_planning_ref_reference
 	test_has_open_pr_requires_close_keyword_for_our_issue
 	test_has_open_pr_allows_dispatch_on_task_id_collision
+	test_has_open_pr_detects_open_body_closing_keyword
+	test_has_open_pr_ignores_open_body_planning_for_reference
+	test_has_open_pr_requires_open_close_keyword_for_our_issue
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
