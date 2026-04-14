@@ -60,6 +60,11 @@ STUB_BIN="${TEST_ROOT}/stub-bin"
 STUB_LOG="${TEST_ROOT}/stub-calls.log"
 mkdir -p "$STUB_BIN"
 : >"$STUB_LOG"
+# Export STUB_LOG so subprocess invocations of the stub gh see it. Without
+# the export, subprocesses spawned by `"$HELPER_PATH" claim ...` inherit an
+# unset STUB_LOG and the stub logs to /dev/null, making subprocess-driven
+# assertions blind. Added in the GH#18786 regression coverage.
+export STUB_LOG
 
 # Default stub mode — override via STUB_GH_MODE
 #   online   — gh returns successful responses
@@ -321,6 +326,130 @@ if [[ $bad_issue_rc -eq 2 ]]; then
 	print_result "claim with non-numeric issue returns exit 2" 0
 else
 	print_result "claim with non-numeric issue returns exit 2" 1 "(rc=$bad_issue_rc, expected 2)"
+fi
+
+# =============================================================================
+# Test 11 — GH#18786 regression: claim must reach the label-apply branch
+# under the script's own `set -euo pipefail` when the label is absent.
+#
+# The reported bug was that a bare `_isc_has_in_review` call followed by
+# `has_rc=$?` capture killed _isc_cmd_claim before it could apply the
+# label — because `set -e` propagates unchecked non-zero returns out of
+# the parent function immediately, so `has_rc=$?` never runs. The other
+# tests in this file source the helper and run with `set +e`, which masks
+# this class entirely. This test EXECUTES the helper as a subprocess so
+# the script's `set -euo pipefail` at line 42 is live.
+#
+# A second latent bug was a broken `jq -e 'any(.name; ...)'` query in
+# _isc_has_in_review that raised "Cannot index array with string 'name'"
+# on jq 1.7+, swallowed by `2>&1 /dev/null`, and caused the function to
+# always report "label absent" — masking the set -e bug from Test 2's
+# idempotency assertion (which runs under set +e in source mode).
+#
+# A third latent bug was `"${extra_flags[@]}"` under bash 3.2 set -u,
+# previously unreachable because of the broken jq query.
+#
+# This regression test covers all three by asserting that:
+#   (a) The subprocess exits 0 (set -e did not kill it mid-flight)
+#   (b) `gh issue edit` was called with --add-label status:in-review
+#       (i.e. the label-apply branch actually ran)
+#   (c) A stamp file landed (end-of-claim side effect ran)
+#   (d) The idempotent path (label present) exits 0 AND hits the
+#       "already has status:in-review" info message without calling
+#       `gh issue edit` (no transition spam on repeat claims)
+#
+# Reference: GH#18786, reference/bash-compat.md checklist item 4, sibling
+# set -e bug class GH#18770 and GH#18784.
+# =============================================================================
+
+# Reset stamp dir for a clean run
+rm -f "${claim_dir}"/*.json 2>/dev/null || true
+: >"$STUB_LOG"
+
+# --- Case (a-c): label absent, subprocess exit must be 0 with label applied ---
+STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	"$HELPER_PATH" claim 56001 regress/test --worktree /tmp/regress-wt \
+	>/dev/null 2>&1
+subprocess_rc=$?
+
+regress_stamp="${claim_dir}/regress-test-56001.json"
+if [[ $subprocess_rc -eq 0 && -f "$regress_stamp" ]]; then
+	print_result "GH#18786: claim subprocess exits 0 under set -euo pipefail" 0
+else
+	print_result "GH#18786: claim subprocess exits 0 under set -euo pipefail" 1 \
+		"(rc=$subprocess_rc, stamp exists=$([[ -f "$regress_stamp" ]] && echo yes || echo no))"
+fi
+
+# Verify the label-apply branch actually ran (gh issue edit was called with
+# the add-label flag). This closes the test gap where Test 1 only checks the
+# stamp, not whether the label transition API call happened.
+if grep -q 'issue edit 56001' "$STUB_LOG" && grep -q 'add-label status:in-review' "$STUB_LOG"; then
+	print_result "GH#18786: claim applies status:in-review when absent" 0
+else
+	print_result "GH#18786: claim applies status:in-review when absent" 1 \
+		"(stub log: $(tr '\n' '|' <"$STUB_LOG"))"
+fi
+
+# --- Case (d): idempotent path — label already present, no transition ---
+rm -f "${claim_dir}"/*.json 2>/dev/null || true
+: >"$STUB_LOG"
+
+idempotent_out=$(STUB_ISSUE_HAS_IN_REVIEW=1 STUB_GH_MODE=online \
+	"$HELPER_PATH" claim 56001 regress/test --worktree /tmp/regress-wt \
+	2>&1)
+idempotent_rc=$?
+
+if [[ $idempotent_rc -eq 0 ]] && printf '%s' "$idempotent_out" | grep -q 'already has status:in-review'; then
+	print_result "GH#18786: claim idempotent when label already present (subprocess)" 0
+else
+	print_result "GH#18786: claim idempotent when label already present (subprocess)" 1 \
+		"(rc=$idempotent_rc, out=${idempotent_out:0:200})"
+fi
+
+# Idempotent path MUST NOT call gh issue edit (saves an API round-trip and
+# prevents spurious label-change noise on every re-claim).
+if ! grep -q 'issue edit' "$STUB_LOG"; then
+	print_result "GH#18786: idempotent claim skips gh issue edit" 0
+else
+	print_result "GH#18786: idempotent claim skips gh issue edit" 1 \
+		"(stub log: $(tr '\n' '|' <"$STUB_LOG"))"
+fi
+
+# --- Case (e): release subprocess also survives set -euo pipefail ---
+rm -f "${claim_dir}"/*.json 2>/dev/null || true
+: >"$STUB_LOG"
+
+# Pre-populate a stamp so release has something to delete
+STUB_ISSUE_HAS_IN_REVIEW=0 "$HELPER_PATH" claim 56002 regress/test >/dev/null 2>&1
+
+release_sub_rc=0
+STUB_ISSUE_HAS_IN_REVIEW=1 "$HELPER_PATH" release 56002 regress/test >/dev/null 2>&1 || release_sub_rc=$?
+release_stamp="${claim_dir}/regress-test-56002.json"
+
+if [[ $release_sub_rc -eq 0 && ! -f "$release_stamp" ]]; then
+	print_result "GH#18786: release subprocess exits 0 under set -euo pipefail" 0
+else
+	print_result "GH#18786: release subprocess exits 0 under set -euo pipefail" 1 \
+		"(rc=$release_sub_rc, stamp exists=$([[ -f "$release_stamp" ]] && echo yes || echo no))"
+fi
+
+# --- Case (f): _isc_has_in_review jq query is not broken (dead-code gate) ---
+# The previous `any(.name; ...)` form raised "Cannot index array with string".
+# Assert the repaired query correctly distinguishes present from absent and
+# from lookup-failure by driving _isc_has_in_review directly with stub modes.
+export STUB_ISSUE_HAS_IN_REVIEW=1
+_isc_has_in_review 56003 regress/test
+jq_present_rc=$?
+
+export STUB_ISSUE_HAS_IN_REVIEW=0
+_isc_has_in_review 56003 regress/test
+jq_absent_rc=$?
+
+if [[ $jq_present_rc -eq 0 && $jq_absent_rc -eq 1 ]]; then
+	print_result "GH#18786: _isc_has_in_review jq query returns 0/1 correctly" 0
+else
+	print_result "GH#18786: _isc_has_in_review jq query returns 0/1 correctly" 1 \
+		"(present_rc=$jq_present_rc, absent_rc=$jq_absent_rc, expected 0/1)"
 fi
 
 # =============================================================================
