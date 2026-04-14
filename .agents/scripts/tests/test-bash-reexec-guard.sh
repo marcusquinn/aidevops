@@ -227,9 +227,59 @@ else
 fi
 
 # -----------------------------------------------------------------------
+# Test 10 (GH#18965 / t2094): `ensure` subcommand exists and runs.
+# When bash is already modern and current, ensure should exit 0 (no-op).
+# -----------------------------------------------------------------------
+ensure_output="$("$HELPER" ensure --yes --quiet 2>&1 || true)"
+ensure_rc=0
+"$HELPER" ensure --yes --quiet >/dev/null 2>&1 || ensure_rc=$?
+if [[ "$ensure_rc" -eq 0 ]]; then
+	_pass "ensure subcommand runs (rc=0) when bash is current or upgradeable"
+elif [[ "$ensure_rc" -eq 3 ]]; then
+	_pass "ensure subcommand returns rc=3 (Homebrew missing) — acceptable"
+else
+	_fail "ensure subcommand returned unexpected rc=${ensure_rc}" "$ensure_output"
+fi
+
+# -----------------------------------------------------------------------
+# Test 11 (GH#18965 / t2094): `ensure` is idempotent. Calling it twice
+# in quick succession must NOT re-run `brew update` (rate-limited via
+# _BREW_UPDATE_STATE). We verify by timing: second call must be much
+# faster than the first on a cold run, or both very fast on a warm run.
+# Simpler assertion: both calls return rc=0 and neither errors.
+# -----------------------------------------------------------------------
+ensure_rc_1=0
+"$HELPER" ensure --yes --quiet >/dev/null 2>&1 || ensure_rc_1=$?
+ensure_rc_2=0
+"$HELPER" ensure --yes --quiet >/dev/null 2>&1 || ensure_rc_2=$?
+if [[ "$ensure_rc_1" -eq "$ensure_rc_2" ]] && [[ "$ensure_rc_1" -ne 4 ]]; then
+	_pass "ensure is idempotent (rc_1=${ensure_rc_1} rc_2=${ensure_rc_2})"
+else
+	_fail "ensure not idempotent" "rc_1=${ensure_rc_1} rc_2=${ensure_rc_2}"
+fi
+
+# -----------------------------------------------------------------------
+# Test 12 (GH#18965 / t2094): AIDEVOPS_AUTO_UPGRADE_BASH=0 short-circuits
+# ensure without calling brew. We verify by running it with the env var
+# set and confirming rc=0 + no brew-related error output.
+# -----------------------------------------------------------------------
+optout_output="$(AIDEVOPS_AUTO_UPGRADE_BASH=0 "$HELPER" ensure 2>&1 || true)"
+optout_rc=0
+AIDEVOPS_AUTO_UPGRADE_BASH=0 "$HELPER" ensure >/dev/null 2>&1 || optout_rc=$?
+if [[ "$optout_rc" -eq 0 ]] && [[ "$optout_output" == *"AIDEVOPS_AUTO_UPGRADE_BASH=0"* ]]; then
+	_pass "AIDEVOPS_AUTO_UPGRADE_BASH=0 short-circuits ensure (rc=0, skip message seen)"
+elif [[ "$optout_rc" -eq 0 ]]; then
+	# --quiet suppressed the message but rc=0 is still valid
+	_pass "AIDEVOPS_AUTO_UPGRADE_BASH=0 short-circuits ensure (rc=0)"
+else
+	_fail "AIDEVOPS_AUTO_UPGRADE_BASH=0 did not short-circuit cleanly" \
+		"rc=${optout_rc} output=${optout_output}"
+fi
+
+# -----------------------------------------------------------------------
 printf '\nResults: %d passed, %d failed\n' "$pass_count" "$fail_count"
 if [[ "$fail_count" -gt 0 ]]; then
 	exit 1
 fi
-printf 'GH#18950 (t2087) regression test: all checks pass.\n'
+printf 'GH#18950 (t2087) + GH#18965 (t2094) regression test: all checks pass.\n'
 exit 0

@@ -825,10 +825,16 @@ _setup_print_header() {
 	return 0
 }
 
-# GH#18950 (t2087): Check for bash 3.2 → modern bash upgrade opportunity.
-# Runs after platform detection, before deploy. Interactive mode prompts
-# for install; non-interactive respects AIDEVOPS_AUTO_UPGRADE_BASH=1.
-# Always fail-open — never block setup on a missing bash upgrade.
+# GH#18950 (t2087) + GH#18965 (t2094): ensure modern bash is installed
+# and up to date on macOS. Runs after platform detection, before deploy.
+# Uses the canonical `ensure` subcommand which combines install + upgrade:
+#   - Missing → interactive prompt for install (or silent with --yes)
+#   - Installed but drifted → silent upgrade (brew upgrade bash)
+#   - Current → no-op
+# Rate-limits `brew update` to 24h internally. Always fail-open — never
+# blocks setup on a bash upgrade failure.
+#
+# Opt-out: AIDEVOPS_AUTO_UPGRADE_BASH=0 disables install + upgrade entirely.
 _setup_check_bash_upgrade() {
 	# Only applies to macOS; Linux bash is already modern on any current distro.
 	if [[ "${AIDEVOPS_PLATFORM:-}" != "macos" ]]; then
@@ -838,32 +844,18 @@ _setup_check_bash_upgrade() {
 	local helper="${INSTALL_DIR}/.agents/scripts/bash-upgrade-helper.sh"
 	[[ -x "$helper" ]] || return 0
 
-	# Check exit 0 = ok; 1 = needs upgrade; 2 = unsupported platform; 3 = homebrew missing.
-	local rc=0
-	"$helper" check --quiet || rc=$?
-
-	if [[ "$rc" -eq 0 ]]; then
-		return 0 # Already has modern bash, nothing to do.
-	fi
-
-	echo ""
-	echo "ℹ️  macOS default bash is 3.2 — modern bash (4+) recommended to avoid bash-compat bugs."
-	echo "   Background: GH#18770, GH#18784, GH#18786, GH#18804, GH#18830 all traced to this class."
-	echo ""
-
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
-		if [[ "${AIDEVOPS_AUTO_UPGRADE_BASH:-}" == "1" ]]; then
-			print_info "AIDEVOPS_AUTO_UPGRADE_BASH=1 set: installing bash via Homebrew"
-			"$helper" install --yes || print_warning "bash install failed (non-fatal) — advisory written"
-		else
-			print_info "non-interactive mode: skipping bash upgrade prompt (set AIDEVOPS_AUTO_UPGRADE_BASH=1 to auto-install)"
-			"$helper" status 2>&1 | grep -E "^Remediation|^Status" || true
-		fi
+		# Non-interactive: ensure does everything silently (install with
+		# --yes, upgrade on drift, no-op when current). Same pattern as
+		# `aidevops update` — fire-and-forget.
+		"$helper" ensure --yes --quiet || print_warning "bash ensure failed (non-fatal) — advisory written"
 		return 0
 	fi
 
-	# Interactive: prompt to install.
-	"$helper" install || print_warning "bash install declined or failed (non-fatal) — advisory written"
+	# Interactive: ensure prompts on first install (inherited from
+	# _bu_cmd_install's read path), runs silently on upgrade. Users don't
+	# see a prompt on every `./setup.sh` run — only the first one.
+	"$helper" ensure || print_warning "bash ensure failed (non-fatal) — advisory written"
 	return 0
 }
 

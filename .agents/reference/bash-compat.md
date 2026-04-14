@@ -27,18 +27,22 @@ bash-upgrade-helper.sh status
 # Status:          OK
 ```
 
-**How the four-part fix works:**
+**How the four-part fix works (v3.8.25 + v3.8.28 updates):**
 
-1. `bash-upgrade-helper.sh` — self-contained helper with `check`, `status`, `path`, `install`, `upgrade`, and `update-check` subcommands. Detects modern bash at `/opt/homebrew/bin/bash`, `/usr/local/bin/bash`, or `$(brew --prefix)/bin/bash`.
-2. `setup.sh` — on macOS, calls `bash-upgrade-helper.sh check` after platform detection. Interactive mode prompts for install; non-interactive mode respects `AIDEVOPS_AUTO_UPGRADE_BASH=1` or emits an advisory.
-3. `aidevops-update-check.sh` — periodic (24h rate-limited) drift check. Writes advisory when modern bash is missing or Homebrew has a newer version available. Never auto-upgrades during an update cycle (could disrupt running workers).
+1. `bash-upgrade-helper.sh` — self-contained helper with `check`, `status`, `path`, `ensure`, `install`, `upgrade`, and `update-check` subcommands. Detects modern bash at `/opt/homebrew/bin/bash`, `/usr/local/bin/bash`, or `$(brew --prefix)/bin/bash`. **Canonical entry point is `ensure`** (since v3.8.28): it combines install-if-missing + upgrade-if-outdated + no-op-if-current, rate-limits `brew update` to once per 24h, and runs silently on upgrades (no prompt on every update cycle).
+2. `setup.sh` — on macOS, calls `bash-upgrade-helper.sh ensure` after platform detection. Interactive mode prompts on first install (inherited from `_bu_cmd_install`), runs silently on subsequent upgrades. Non-interactive mode runs with `--yes --quiet` by default.
+3. `aidevops-update-check.sh` — calls `bash-upgrade-helper.sh ensure --yes --quiet` in the periodic update cycle. **Actually runs `brew upgrade bash` on drift** (v3.8.28 change — previously advisory-only). Rate-limited internally via `~/.aidevops/state/brew-update-last-fetch` so multiple ensure calls in the same day share the fresh Homebrew index.
 4. `shared-constants.sh` — runtime re-exec guard at the top of the file (after the include guard, before any readonly definitions). When sourced under bash 3.2 AND a modern bash is available, the guard `exec`s the calling script under the modern bash. Transparent to callers; 339 scripts get the self-heal for free. Chicken-and-egg-safe: `setup.sh` and `bash-upgrade-helper.sh` do NOT source `shared-constants.sh`, so the upgrade path itself is unaffected.
 
-**Opt-out** (not recommended): set `AIDEVOPS_BASH_REEXECED=1` in your shell profile to disable the runtime guard. Use this only if you have a specific reason to run on bash 3.2 (e.g. reproducing a legacy bug).
+**Why actually upgrade, not just emit an advisory?** The framework's `aidevops update` already auto-pulls and auto-deploys new versions of aidevops every ~10 minutes — trusting it to `brew upgrade bash` (one binary, minor bumps only) is strictly less risky. Replacing a binary on disk does NOT kill running processes; existing bash processes continue on their in-memory copy. Only new invocations pick up the new version, and the re-exec guard makes that transparent.
+
+**Opt-out**:
+- Set `AIDEVOPS_AUTO_UPGRADE_BASH=0` in your shell profile to disable `ensure` (no auto install, no auto upgrade). You can still run `brew install bash` / `brew upgrade bash` manually at any time.
+- Set `AIDEVOPS_BASH_REEXECED=1` to disable the runtime re-exec guard (scripts will run on whatever bash invoked them — e.g. `/bin/bash` 3.2 on macOS).
 
 **Rollback:** `brew uninstall bash`. The runtime guard falls through gracefully when no modern bash is found, and scripts continue running on 3.2 (subject to the known bug class).
 
-Regression test: `.agents/scripts/tests/test-bash-reexec-guard.sh` — 12 assertions covering detection, status output, guard positioning, loop prevention via `AIDEVOPS_BASH_REEXECED`, and the live re-exec fire path.
+Regression test: `.agents/scripts/tests/test-bash-reexec-guard.sh` — 15 assertions (as of v3.8.28) covering detection, status output, guard positioning, loop prevention, the live re-exec fire path, `ensure` idempotence, and `AIDEVOPS_AUTO_UPGRADE_BASH=0` opt-out.
 
 ---
 

@@ -314,7 +314,7 @@ Rules: `prompts/build.txt`. Secrets: `gopass` preferred; `credentials.sh` plaint
 
 Advisories delivered via `aidevops update`; shown in session greeting until dismissed (`~/.aidevops/advisories/*.advisory`). Run all remediation in a **separate terminal**, never inside AI chat.
 
-**macOS bash upgrade (GH#18950 / t2087):** on macOS, `setup.sh` and `aidevops-update-check.sh` automatically check for modern bash (4+) via Homebrew and emit an advisory when absent or outdated. `shared-constants.sh` contains a runtime re-exec guard that transparently re-launches 339 framework scripts under modern bash when they're invoked via `/bin/bash` 3.2. Install with `brew install bash` (or let setup prompt you); opt out with `AIDEVOPS_BASH_REEXECED=1`. Full details: `reference/bash-compat.md`.
+**macOS bash upgrade (GH#18950/t2087 + GH#18965/t2094):** on macOS, `setup.sh` and `aidevops-update-check.sh` automatically install AND upgrade modern bash (4+) via Homebrew via the `bash-upgrade-helper.sh ensure` subcommand (rate-limited `brew update` to 24h, silent upgrades on drift, first-install prompt only in interactive setup). `shared-constants.sh` contains a runtime re-exec guard that transparently re-launches 339 framework scripts under modern bash when they're invoked via `/bin/bash` 3.2. Opt out: `AIDEVOPS_AUTO_UPGRADE_BASH=0` (no install/upgrade) or `AIDEVOPS_BASH_REEXECED=1` (no re-exec). Full details: `reference/bash-compat.md`.
 
 **Cross-repo privacy:** NEVER include private repo names in TODO.md task descriptions, issue titles, or comments on public repos. Use generic references like "a managed private repo" or "cross-repo project". The issue-sync-helper.sh has automated sanitization, but prevention at the source is the primary defense.
 

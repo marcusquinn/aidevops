@@ -51,6 +51,10 @@ _ADVISORY_DIR="${HOME}/.aidevops/advisories"
 _ADVISORY_FILE="${_ADVISORY_DIR}/bash-3.2-upgrade.advisory"
 _STATE_DIR="${HOME}/.aidevops/state"
 _UPDATE_CHECK_STATE="${_STATE_DIR}/bash-upgrade-last-check"
+# GH#18965 (t2094): `brew update` (package index fetch) is expensive.
+# Rate-limit to 24h in a separate state file so multiple ensure calls
+# in the same day share the fresh-index check.
+_BREW_UPDATE_STATE="${_STATE_DIR}/brew-update-last-fetch"
 
 # -------------------------------------------------------------------
 # Logging helpers (bash 3.2 safe, no colour dependency).
@@ -402,10 +406,138 @@ _bu_cmd_upgrade() {
 }
 
 # -------------------------------------------------------------------
+# Helper: _bu_maybe_brew_update — refresh Homebrew's package index at
+# most once per 24h. `brew update` is the expensive part of the
+# upgrade flow (network fetch of the package index), while `brew
+# outdated` is cheap once the index is fresh. Rate-limiting here lets
+# multiple `ensure` calls in the same day share the fresh index.
+# Returns 0 on success or when skipped; 1 if update failed.
+# -------------------------------------------------------------------
+
+_bu_maybe_brew_update() {
+	command -v brew >/dev/null 2>&1 || return 1
+
+	local now last_fetch
+	now="$(date +%s 2>/dev/null || echo 0)"
+	[[ "$now" =~ ^[0-9]+$ ]] || now=0
+
+	mkdir -p "$_STATE_DIR" 2>/dev/null || return 1
+
+	if [[ -f "$_BREW_UPDATE_STATE" ]]; then
+		last_fetch="$(cat "$_BREW_UPDATE_STATE" 2>/dev/null || echo 0)"
+		[[ "$last_fetch" =~ ^[0-9]+$ ]] || last_fetch=0
+		if [[ $((now - last_fetch)) -lt 86400 ]]; then
+			return 0 # Index is fresh
+		fi
+	fi
+
+	_bu_info "refreshing Homebrew package index (brew update)"
+	if brew update >/dev/null 2>&1; then
+		echo "$now" >"$_BREW_UPDATE_STATE" 2>/dev/null || true
+		return 0
+	fi
+	return 1
+}
+
+# -------------------------------------------------------------------
+# Subcommand: ensure — combined install-or-upgrade flow.
+# GH#18965 (t2094): this is the canonical entry point that setup.sh
+# and aidevops-update-check.sh both call. Behaviour:
+#   - Missing modern bash → call install (interactive prompt unless
+#     --yes; writes advisory if Homebrew missing)
+#   - Installed but drifted → brew upgrade bash (silently, no prompt)
+#   - Current → no-op
+#   - Non-macOS → no-op
+#   - AIDEVOPS_AUTO_UPGRADE_BASH=0 → honoured as opt-out (no install,
+#     no upgrade, no brew calls)
+# Returns 0 on success (including no-op cases); non-zero only on
+# genuine failure (install/upgrade command failed AND modern bash is
+# missing after the attempt).
+# -------------------------------------------------------------------
+
+_bu_cmd_ensure() {
+	local yes="$1"
+	local platform
+	platform="$(_bu_platform)"
+
+	case "$platform" in
+	linux)
+		_bu_info "linux: distro bash is already modern; ensure no-op"
+		return 0
+		;;
+	windows | unknown)
+		_bu_info "platform=${platform}: ensure is a no-op"
+		return 0
+		;;
+	esac
+
+	# Opt-out: AIDEVOPS_AUTO_UPGRADE_BASH=0 disables automated install/upgrade.
+	# Default (unset or any other value) = enabled.
+	if [[ "${AIDEVOPS_AUTO_UPGRADE_BASH:-1}" == "0" ]]; then
+		_bu_info "AIDEVOPS_AUTO_UPGRADE_BASH=0 — skipping ensure"
+		return 0
+	fi
+
+	# Homebrew missing — can't install or upgrade. Write advisory and return.
+	if ! command -v brew >/dev/null 2>&1; then
+		_bu_write_advisory "bash-3.2-upgrade | macOS needs bash 4+ via Homebrew. Install Homebrew then run: aidevops update"
+		return 3
+	fi
+
+	local existing
+	existing="$(_bu_find_modern_bash)"
+
+	# Case 1: not installed → delegate to install.
+	if [[ -z "$existing" ]]; then
+		_bu_cmd_install "$yes"
+		return $?
+	fi
+
+	# Case 2: installed — check for drift. Refresh index first (rate-limited).
+	_bu_maybe_brew_update || true
+
+	local outdated_info
+	outdated_info="$(brew outdated bash 2>/dev/null || true)"
+	if [[ -z "$outdated_info" ]]; then
+		_bu_info "bash is up to date at ${existing}"
+		_bu_dismiss_advisory_if_resolved
+		return 0
+	fi
+
+	# Case 3: installed but drifted → silent upgrade.
+	_bu_info "running: brew upgrade bash (drift detected)"
+	local brew_rc=0
+	brew upgrade bash >/dev/null 2>&1 || brew_rc=$?
+
+	# Verify via detection, same pattern as install (brew exit code
+	# can be non-zero for unrelated cleanup errors).
+	local updated
+	updated="$(_bu_find_modern_bash)"
+	if [[ -n "$updated" ]]; then
+		if [[ "$brew_rc" -ne 0 ]]; then
+			_bu_info "brew exited rc=${brew_rc} but modern bash present at ${updated} (cleanup step likely failed, upgrade OK)"
+		else
+			_bu_info "brew upgrade bash completed (modern bash at ${updated})"
+		fi
+		_bu_dismiss_advisory_if_resolved
+		return 0
+	fi
+
+	_bu_error "brew upgrade bash failed (rc=${brew_rc}, no modern bash found after upgrade)"
+	_bu_write_advisory "bash-upgrade-failed | brew upgrade bash FAILED. Run manually: brew upgrade bash"
+	return 4
+}
+
+# -------------------------------------------------------------------
 # Subcommand: update-check — cheap drift check for the update loop.
 # Rate-limited to once per 24h via state file. Writes advisory if
 # modern bash is outdated (brew outdated bash reports drift).
 # Returns 0 always (advisories are best-effort).
+#
+# GH#18965 (t2094): DEPRECATED in favour of `ensure` which actually
+# runs the upgrade. Kept for backward compat and as a read-only
+# diagnostic path (useful when you want the drift signal without
+# triggering any brew commands).
 # -------------------------------------------------------------------
 
 _bu_cmd_update_check() {
@@ -468,16 +600,24 @@ Subcommands:
   check           Exit 0 if modern bash (>=${_MIN_MAJOR_VERSION}) is available; 1 if not; 2 if unsupported.
   status          Print current/modern bash versions and remediation.
   path            Print absolute path to modern bash (empty if none).
+  ensure [-y]     Canonical entry: install if missing, upgrade if outdated, no-op if current.
+                  Silent on upgrade (no prompt). Respects AIDEVOPS_AUTO_UPGRADE_BASH=0 opt-out.
+                  Rate-limits brew update to once per 24h.
   install [-y]    Run \`brew install bash\` on macOS (interactive prompt unless -y).
   upgrade         Run \`brew upgrade bash\` if newer version is available.
-  update-check    Emit rate-limited (24h) advisory for drift or missing install.
+  update-check    Emit rate-limited (24h) advisory for drift (read-only, no brew commands).
+                  DEPRECATED in favour of \`ensure\` — kept for backward compat.
 
 Flags:
-  -y, --yes       Skip interactive prompt (install/upgrade).
+  -y, --yes       Skip interactive prompt (install/ensure first install).
   -q, --quiet     Suppress informational output.
 
+Environment:
+  AIDEVOPS_AUTO_UPGRADE_BASH  Set to "0" to disable automated install/upgrade in \`ensure\`.
+                              Default (unset or any other value) = enabled.
+
 Exit codes:
-  0   Success
+  0   Success (includes no-op cases)
   1   Modern bash missing or needs upgrade
   2   Unsupported platform
   3   Homebrew missing on macOS
@@ -487,10 +627,11 @@ Examples:
   bash-upgrade-helper.sh check && echo "ok"
   bash-upgrade-helper.sh status
   MODERN=\$(bash-upgrade-helper.sh path) && echo "\$MODERN"
-  bash-upgrade-helper.sh install --yes
-  bash-upgrade-helper.sh upgrade
+  bash-upgrade-helper.sh ensure --yes --quiet    # Used by aidevops update
+  bash-upgrade-helper.sh install --yes           # First-time install only
 
 GH#18950 (t2087): Systemic fix for macOS bash 3.2 compatibility class of bugs.
+GH#18965 (t2094): \`ensure\` subcommand for auto-upgrade in setup + update.
 EOF
 }
 
@@ -512,6 +653,7 @@ main() {
 	check) _bu_cmd_check ;;
 	status) _bu_cmd_status ;;
 	path) _bu_cmd_path ;;
+	ensure) _bu_cmd_ensure "$yes" ;;
 	install) _bu_cmd_install "$yes" ;;
 	upgrade) _bu_cmd_upgrade ;;
 	update-check) _bu_cmd_update_check ;;

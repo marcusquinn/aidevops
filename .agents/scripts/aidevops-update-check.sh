@@ -578,11 +578,13 @@ main() {
 	local script_dir
 	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-	# GH#18950 (t2087): bash 3.2 → modern bash drift check.
-	# Rate-limited to 24h internally; writes advisory file on drift.
-	# Best-effort — never blocks the update check on failure.
+	# GH#18950 (t2087) + GH#18965 (t2094): bash 3.2 → modern bash ensure.
+	# Actually runs `brew upgrade bash` when drift is detected, matching the
+	# framework's own auto-update philosophy. Rate-limits `brew update` to
+	# 24h internally via _BREW_UPDATE_STATE. Best-effort — never blocks.
+	# Opt-out: AIDEVOPS_AUTO_UPGRADE_BASH=0 disables.
 	if [[ -x "${script_dir}/bash-upgrade-helper.sh" ]]; then
-		"${script_dir}/bash-upgrade-helper.sh" update-check 2>/dev/null || true
+		"${script_dir}/bash-upgrade-helper.sh" ensure --yes --quiet 2>/dev/null || true
 	fi
 
 	local runtime_hint nudge_output session_warning security_posture
