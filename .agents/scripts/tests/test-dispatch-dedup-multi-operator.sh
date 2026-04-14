@@ -373,6 +373,64 @@ test_interactive_on_worker_origin_blocks() {
 	return 0
 }
 
+# ─── Test 9: Single-user — self-assigned + origin:interactive blocks dispatch ──
+#
+# GH#18956 / t2091 — The classic single-user failure mode.
+#
+# Scenario: an interactive session filed issue #100 with origin:interactive
+# and self-assigned it (user=testorg=repo owner). The pulse runner is ALSO
+# authenticated as testorg (single-user setup). The old code's self-login
+# exemption fired first → blocking_assignees was empty → pulse dispatched a
+# duplicate worker.
+#
+# Fix (t2091): the self-login exemption is skipped when active_claim=="true".
+# origin:interactive is an active claim signal, so the issue must block
+# dispatch even when assignee==self_login.
+test_single_user_interactive_self_assigned_blocks() {
+	# Interactive session: owner self-assigned, origin:interactive present.
+	# Pulse runner login == owner (single-user setup).
+	create_gh_stub "testorg" "origin:interactive,auto-dispatch,tier:standard"
+
+	local output=""
+	# Pulse calls is_assigned() with self_login=testorg (same as assignee)
+	if output=$("$HELPER_SCRIPT" is-assigned 100 testorg/testrepo testorg 2>/dev/null); then
+		case "$output" in
+		*'ASSIGNED:'* | *'INTERACTIVE_SESSION_BLOCKED:'*)
+			print_result "single-user: self-assigned + origin:interactive blocks dispatch (t2091)" 0
+			return 0
+			;;
+		esac
+		print_result "single-user: self-assigned + origin:interactive blocks dispatch (t2091)" 1 \
+			"exit 0 but unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "single-user: self-assigned + origin:interactive blocks dispatch (t2091)" 1 \
+		"Expected exit 0 (blocked) but got exit 1 (safe). GH#18956: self-login exemption must not override origin:interactive."
+	return 0
+}
+
+# ─── Test 10: Self-assigned WITHOUT active claim is still passive (regression) ─
+#
+# Verify that the t2091 fix does NOT break the GH#10521 passive-bookkeeping
+# rule. An owner self-assigned to an issue with NO active claim label (no
+# status:*, no origin:interactive) must still be treated as passive —
+# dispatch should proceed.
+test_single_user_self_assigned_no_label_is_passive() {
+	# Owner self-assigned, no active-claim labels (pure passive bookkeeping).
+	create_gh_stub "testorg" "enhancement,tier:standard"
+
+	local output=""
+	# Pulse (self_login=testorg) checks → must be SAFE (passive bookkeeping)
+	if "$HELPER_SCRIPT" is-assigned 100 testorg/testrepo testorg 2>/dev/null; then
+		print_result "single-user: self-assigned + no active label remains passive (GH#10521 regression)" 1 \
+			"Expected exit 1 (safe) but got exit 0 (blocked). Passive self-assignment must not block dispatch."
+		return 0
+	fi
+	print_result "single-user: self-assigned + no active label remains passive (GH#10521 regression)" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -388,6 +446,8 @@ main() {
 	test_maintainer_plus_active_label_blocks
 	test_reconcile_race_second_runner_blocked
 	test_interactive_on_worker_origin_blocks
+	test_single_user_interactive_self_assigned_blocks
+	test_single_user_self_assigned_no_label_is_passive
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
