@@ -1284,6 +1284,42 @@ check_secret_policy() {
 }
 
 # =============================================================================
+# Pulse Wrapper Canary (GH#18790)
+# =============================================================================
+# Runs pulse-wrapper.sh --canary in a sandboxed HOME. Catches the set -e
+# exit-code propagation regression class (GH#18770) that static analysis
+# cannot detect. Fast: exits after acquire_instance_lock, no side effects.
+
+check_pulse_canary() {
+	echo -e "${BLUE}Checking Pulse Wrapper Canary (GH#18790)...${NC}"
+
+	local wrapper_script=".agents/scripts/pulse-wrapper.sh"
+	if [[ ! -f "$wrapper_script" ]]; then
+		print_error "pulse-wrapper.sh not found at $wrapper_script"
+		return 1
+	fi
+
+	local sandbox rc output
+	sandbox=$(mktemp -d)
+	output=$(
+		HOME="${sandbox}/home" \
+			FULL_LOOP_HEADLESS=1 \
+			timeout 30 bash "$wrapper_script" --canary 2>&1
+	)
+	rc=$?
+	rm -rf "$sandbox"
+
+	if [[ "$rc" -eq 0 ]]; then
+		print_success "Pulse canary: ok (sourcing + _pulse_handle_self_check + acquire_instance_lock)"
+		return 0
+	fi
+
+	print_error "Pulse canary failed (exit $rc). Output: ${output}"
+	print_info "This indicates a set -e exit-code regression in pulse-wrapper.sh (see GH#18770)."
+	return 1
+}
+
+# =============================================================================
 # Bash 3.2 Compatibility Check
 # =============================================================================
 # macOS ships bash 3.2.57. Bash 4.0+ features silently crash or produce wrong
@@ -1852,6 +1888,11 @@ _run_gate_checks_static() {
 
 	if ! should_skip_gate "secret-policy"; then
 		check_secret_policy || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "pulse-canary"; then
+		check_pulse_canary || exit_code=1
 		echo ""
 	fi
 

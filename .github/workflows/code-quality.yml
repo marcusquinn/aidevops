@@ -300,6 +300,12 @@ jobs:
         bash .agents/scripts/stats-wrapper.sh --self-check
         echo "Stats characterization tests passed"
 
+    - name: Pulse Wrapper Canary (GH#18790)
+      run: |
+        echo "Running pulse-wrapper.sh canary test (catches set -e regression class GH#18770)..."
+        bash .agents/scripts/tests/test-pulse-wrapper-canary.sh
+        echo "Pulse wrapper canary test passed"
+
   complexity-check:
     # IMPORTANT: This job's `name:` is a required status check on main (GH#18393).
     # Renaming it requires updating branch protection: gh api -X PATCH
