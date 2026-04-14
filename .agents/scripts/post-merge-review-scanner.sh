@@ -101,6 +101,16 @@ BOT_RE="coderabbitai|gemini-code-assist|claude-review|gpt-review"
 # comments the thread-resolution filter is the canonical signal — every
 # unresolved review thread is by definition a finding worth surfacing.
 ACT_RE="should|consider|fix|change|update|refactor|missing|add"
+# NOOP_RE matches review bodies that are LGTM/no-feedback statements even when
+# they incidentally contain ACT_RE keywords. The canonical false-positive pattern
+# (awardsapp/awardsapp#2349, Gemini on PR #2308): bot writes a PR description
+# containing "refactors" (matches ACT_RE "refactor"), then concludes with "I have
+# no feedback to provide." — the entire body is a description + LGTM, not an
+# actionable suggestion. NOOP_RE is applied as a deny-list in
+# fetch_review_summaries_md BEFORE the ACT_RE check. The phrases are specific
+# enough that false positives (a real review that also contains "no feedback to
+# provide" in a sub-clause) are rare in practice.
+NOOP_RE="I have no feedback to provide|no feedback to provide|have no feedback|have no suggestions|no actionable feedback|no actionable suggestions|no further feedback|no issues to report|no suggestions to (add|provide|make)"
 
 log() { echo "[scanner] $*" >&2; }
 
@@ -269,6 +279,11 @@ fetch_inline_comments_md() {
 #     findings — the per-thread findings themselves appear via
 #     fetch_inline_comments_md. Including the summary duplicates content
 #     and adds <details> wrapper noise.
+#   - Body must NOT match NOOP_RE (deny-list of no-feedback terminal phrases).
+#     Applied before ACT_RE to catch Gemini's "PR description + I have no
+#     feedback to provide." pattern, where the description accidentally
+#     contains ACT_RE keywords (e.g. "refactors") even though the review
+#     is a LGTM. See awardsapp/awardsapp#2349 for the canonical false-positive.
 #   - Body must contain at least one ACT_RE keyword (cheap noise filter
 #     against "LGTM"/"Reviewed" acks).
 #
@@ -286,6 +301,7 @@ fetch_review_summaries_md() {
 	local out
 	out=$(printf '%s' "$resp" | jq -r \
 		--arg bots "$BOT_RE" \
+		--arg noop "$NOOP_RE" \
 		--arg acts "$ACT_RE" \
 		--argjson cap "$SCANNER_MAX_COMMENTS" '
 			[.[]?
@@ -296,6 +312,11 @@ fetch_review_summaries_md() {
 				# per-thread findings and pollute the issue body with
 				# boilerplate <details> wrappers.
 				| select(((.body // "")) | test("^\\*\\*Actionable comments posted:|^Actionable comments posted:"; "i") | not)
+				# Drop LGTM/no-feedback reviews even when they incidentally
+				# contain ACT_RE keywords (e.g. Gemini "refactors X. I have
+				# no feedback to provide." — "refactors" matches ACT_RE but
+				# the review is a description + LGTM, not a suggestion).
+				| select(((.body // "")) | test($noop; "i") | not)
 				# Keep only bodies containing at least one actionable keyword
 				| select(((.body // "")) | test($acts; "i"))
 			]
