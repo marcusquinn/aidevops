@@ -190,11 +190,11 @@ _enrichment_fetch_issue_data() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	local issue_body issue_title issue_comments
-	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || issue_body=""
-	issue_title=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json title --jq '.title // ""' 2>/dev/null) || issue_title=""
+	local issue_json issue_body issue_title issue_comments
+	issue_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json title,body 2>/dev/null) || issue_json="{}"
+	issue_title=$(printf '%s' "$issue_json" | jq -r '.title // ""')
+	issue_body=$(printf '%s' "$issue_json" | jq -r '.body // ""')
 
 	# Get kill/dispatch comments for failure context
 	issue_comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
@@ -303,8 +303,13 @@ _enrichment_run_worker() {
 	local repo_path="$4"
 	local resolved_model="$5"
 
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+
 	local enrichment_output
 	enrichment_output=$(mktemp)
+	push_cleanup "rm -f '${enrichment_output}'"
+	push_cleanup "rm -f '${prompt_file}'"
 
 	# shellcheck disable=SC2086
 	"$HEADLESS_RUNTIME_HELPER" run \
@@ -316,7 +321,6 @@ _enrichment_run_worker() {
 		--prompt-file "$prompt_file" </dev/null >"$enrichment_output" 2>&1
 
 	local enrichment_exit=$?
-	rm -f "$prompt_file" "$enrichment_output"
 
 	# Check if enrichment succeeded (issue body was edited)
 	local post_body
