@@ -369,6 +369,44 @@ _scan_single_pr() {
 		from_entries
 	') || inline_counts_json="{}"
 
+	# GH#18998: PR-level empty-review guard — bail out early when the PR has
+	# zero inline comments from ANY reviewer AND every review body matches a
+	# negative-finding phrase. This prevents noise issues from "no feedback"
+	# bot summaries that survive the per-reviewer summary_only filter (e.g.,
+	# when state=APPROVED instead of COMMENTED, or when the bot login does not
+	# match the reviewer regex but the body is clearly "no feedback").
+	# When --include-positive is set, this guard is bypassed for debugging.
+	if [[ "$include_positive" != "true" ]]; then
+		local total_inline_count
+		total_inline_count=$(printf '%s' "$comments" | jq 'length') || total_inline_count=0
+
+		if [[ "$total_inline_count" -eq 0 ]]; then
+			local all_negative
+			all_negative=$(printf '%s' "$reviews" | jq '
+				if length == 0 then true
+				else
+					[.[] |
+					select(.body != null and (.body | length) > 0) |
+					.body |
+					test(
+						"no feedback|no review comments|no issues found|lgtm|looks good to me|" +
+						"nothing to flag|no further|no comments|nothing actionable|" +
+						"i have no (feedback|issues|comments|concerns)|" +
+						"no (issues|problems|concerns|suggestions|recommendations) (found|detected|identified)|" +
+						"(found|identified|detected) no (issues|problems|concerns|suggestions)";
+						"i")
+					] | all
+				end
+			') || all_negative="false"
+
+			if [[ "$all_negative" == "true" ]]; then
+				echo "[quality-feedback] skip: empty-review PR#${pr_num} in ${repo_slug} (0 inline comments, all summaries negative)" >&2
+				echo "[]"
+				return 0
+			fi
+		fi
+	fi
+
 	# Process review bodies (for substantive reviews with body content)
 	local review_findings
 	review_findings=$(_build_review_findings \

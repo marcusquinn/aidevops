@@ -641,11 +641,41 @@ _extract_and_post_triage_review() {
 				printf 'POSTED\n'
 			fi
 		elif [[ "$has_infra_markers" == "true" ]]; then
-			# No review header AND infra markers present — raw sandbox output
-			echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} was raw sandbox output — suppressed (${#review_text} chars)" >>"$LOGFILE"
-			_log_suppressed_triage_output "$issue_num" "$repo_slug" \
-				"raw-sandbox-output" "$output_chars" "$raw_sample"
-			printf 'FAILED:raw-sandbox-output\n'
+			# No ## Review header found in the extracted text, but infra markers ARE present.
+			# GH#18998: Before classifying as raw-sandbox-output, check if the first
+			# non-empty line of review_text is a valid ## Review: header. This handles
+			# the case where the worker correctly starts its response with "## Review: Decline"
+			# but surrounding log lines (timing, exec metadata) confuse the sed extraction
+			# (e.g., CRLF endings, BOM prefix, or the JSON extractor emitting raw content).
+			# If the first non-empty line IS a valid header, re-extract from that line and
+			# post it — the infra tokens in the preamble do not invalidate a valid review.
+			local first_nonempty_line=""
+			first_nonempty_line=$(printf '%s' "$review_text" | grep -m1 '[^[:space:]]' 2>/dev/null) || first_nonempty_line=""
+			local header_first_review=""
+			if printf '%s' "$first_nonempty_line" | grep -qE '^## Review:'; then
+				# Valid ## Review: header is the first non-empty line — extract from it
+				header_first_review=$(printf '%s' "$review_text" | sed -n '/^## Review:/,$ p')
+			fi
+			if [[ -n "$header_first_review" ]]; then
+				# Belt-and-suspenders: re-check only the extracted portion for infra leaks
+				if echo "$header_first_review" | grep -qE '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper'; then
+					echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} header-first but extracted review still contains infra markers — suppressed" >>"$LOGFILE"
+					_log_suppressed_triage_output "$issue_num" "$repo_slug" \
+						"infra-markers-after-extraction" "$output_chars" "$raw_sample"
+					printf 'FAILED:infra-markers-after-extraction\n'
+				else
+					gh issue comment "$issue_num" --repo "$repo_slug" \
+						--body "$header_first_review" >/dev/null 2>&1 || true
+					echo "[pulse-wrapper] Posted header-first triage review for #${issue_num} in ${repo_slug} (${output_chars} chars, GH#18998 path)" >>"$LOGFILE"
+					printf 'POSTED\n'
+				fi
+			else
+				# No review header AND infra markers present — raw sandbox output
+				echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} was raw sandbox output — suppressed (${#review_text} chars)" >>"$LOGFILE"
+				_log_suppressed_triage_output "$issue_num" "$repo_slug" \
+					"raw-sandbox-output" "$output_chars" "$raw_sample"
+				printf 'FAILED:raw-sandbox-output\n'
+			fi
 		else
 			echo "[pulse-wrapper] Triage review for #${issue_num} had no review header (## *Review*) and no infra markers — suppressed to be safe (${#review_text} chars extracted / ${raw_output_chars} raw)" >>"$LOGFILE"
 			_log_suppressed_triage_output "$issue_num" "$repo_slug" \
