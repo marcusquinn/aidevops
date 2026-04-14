@@ -624,7 +624,7 @@ _resolve_pr_mergeable_status() {
 		# Separate local declaration from assignment to preserve exit code (SC2181).
 		local _retry_output _retry_exit
 		_retry_output=$(gh pr view "$pr_number" --repo "$repo_slug" \
-			--json mergeable --jq '.mergeable' 2>/dev/null)
+			--json mergeable --jq '.mergeable // ""')
 		_retry_exit=$?
 		[[ $_retry_exit -eq 0 && -n "$_retry_output" ]] && pr_mergeable="$_retry_output" || pr_mergeable="UNKNOWN"
 		if [[ "$pr_mergeable" == "MERGEABLE" ]]; then
@@ -812,11 +812,11 @@ _process_single_ready_pr() {
 	local pr_obj="$2"
 
 	local pr_number pr_mergeable pr_review pr_author pr_title
-	pr_number=$(printf '%s' "$pr_obj" | jq -r '.number' 2>/dev/null)
-	pr_mergeable=$(printf '%s' "$pr_obj" | jq -r '.mergeable' 2>/dev/null)
-	pr_review=$(printf '%s' "$pr_obj" | jq -r '.reviewDecision // "NONE"' 2>/dev/null)
-	pr_author=$(printf '%s' "$pr_obj" | jq -r '.author.login // "unknown"' 2>/dev/null)
-	pr_title=$(printf '%s' "$pr_obj" | jq -r '.title // ""' 2>/dev/null)
+	# Consolidate into a single jq pass to reduce process-spawn overhead.
+	IFS=$'\t' read -r pr_number pr_mergeable pr_review pr_author pr_title < <(
+		printf '%s' "$pr_obj" | jq -r \
+			'"\(.number // "")\t\(.mergeable // "")\t\(.reviewDecision // "NONE")\t\(.author.login // "unknown")\t\(.title // "")"'
+	)
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
 
