@@ -139,8 +139,8 @@ delta_rules() {
 	jq -rn --slurpfile b "$_base" --slurpfile h "$_head" '
 		def counts(s): s[0].runs[0].results
 			| group_by(.ruleId)
-			| map({rule: .[0].ruleId, count: length})
-			| from_entries | with_entries({key: .value.rule, value: .value.count});
+			| map({key: .[0].ruleId, value: length})
+			| from_entries;
 		(counts($b)) as $bc | (counts($h)) as $hc
 		| ($bc | keys) + ($hc | keys)
 		| unique
@@ -160,8 +160,8 @@ delta_files() {
 		def counts(s): s[0].runs[0].results
 			| map(.locations[0].physicalLocation.artifactLocation.uri // "unknown")
 			| group_by(.)
-			| map({file: .[0], count: length})
-			| from_entries | with_entries({key: .value.file, value: .value.count});
+			| map({key: .[0], value: length})
+			| from_entries;
 		(counts($b)) as $bc | (counts($h)) as $hc
 		| ($bc | keys) + ($hc | keys)
 		| unique
@@ -194,6 +194,7 @@ write_report() {
 	{
 		printf '## Qlty Smell Regression Gate\n\n'
 		printf '%s\n\n' "$_verdict"
+		# shellcheck disable=SC2016
 		printf '| Metric | Base (`%s`) | Head (`%s`) | Delta |\n' \
 			"${_base_sha:0:7}" "${_head_sha:0:7}"
 		printf '|---|---:|---:|---:|\n'
@@ -211,7 +212,9 @@ write_report() {
 				head -10 |
 				awk -F '\t' '{printf "| +%s | `%s` |\n", $1, $2}'
 			printf '\n'
+			# shellcheck disable=SC2016
 			printf '> To override (with justification), add the `ratchet-bump` label to this PR.\n'
+			# shellcheck disable=SC2016
 			printf '> See `.agents/AGENTS.md` → "Qlty Regression Gate" for details.\n'
 		fi
 		printf '\n<!-- qlty-regression-gate -->\n'
