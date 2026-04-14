@@ -531,7 +531,18 @@ _simplification_backfill_verify_remaining_smells() {
 
 	local full_path="${repo_path}/${file_path}"
 	local remaining_smells
-	remaining_smells=$("$qlty_cmd" smells --all "$full_path" 2>/dev/null | grep -c '^[^ ]' || echo "0")
+	# grep -c always emits a count on stdout; when there are zero matches it
+	# ALSO exits non-zero. A naive `|| echo "0"` fallback appends a second
+	# "0", giving us a literal "0\n0" in $remaining_smells. That string then
+	# fails the `-eq 0` test below and cascades into a spurious re-queue
+	# issue with "0\n0 smells remaining" in the title (seen on GH#18809,
+	# #18829, #18796, #18797, #18798, #18799 — every file Qlty reported
+	# clean generated a false-positive follow-up). Fix: swallow grep's exit
+	# code inside a group command WITHOUT emitting any extra output, then
+	# defensively normalise to a single integer before comparison.
+	remaining_smells=$("$qlty_cmd" smells --all "$full_path" 2>/dev/null | { grep -c '^[^ ]' || true; })
+	remaining_smells=$(printf '%s' "$remaining_smells" | tr -d '[:space:]')
+	[[ ! "$remaining_smells" =~ ^[0-9]+$ ]] && remaining_smells=0
 
 	if [[ "$remaining_smells" -eq 0 ]]; then
 		echo "[pulse-wrapper] backfill: ${file_path} — Qlty clean after #${issue_num} (pass ${new_passes})" >>"$LOGFILE"
