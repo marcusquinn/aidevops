@@ -17,6 +17,47 @@
 _SHARED_CONSTANTS_LOADED=1
 
 # =============================================================================
+# GH#18950 (t2087): Bash 3.2 → bash 4+ runtime re-exec self-heal guard.
+# =============================================================================
+# macOS ships /bin/bash 3.2.57 which has parser and set-e propagation bugs
+# (GH#18770, GH#18784, GH#18786, GH#18804, GH#18830). If this shared file
+# is sourced by a script running under bash < 4 AND a modern bash is
+# available at a known location, re-exec the calling script under the
+# modern bash. Transparent self-heal: the script runs from the top again
+# under the new interpreter, passes this guard (now on bash 4+), and
+# continues normally.
+#
+# Guard order matters: this MUST run before any bash 4+ constructs in
+# this file. It also runs AFTER the include guard to avoid re-execing
+# the same script multiple times through nested sources.
+#
+# Chicken-and-egg avoidance:
+#   - setup.sh itself does NOT source shared-constants.sh at the top; it
+#     can't, because it's the thing that installs modern bash.
+#   - bash-upgrade-helper.sh does NOT source shared-constants.sh either;
+#     it's the detector that this guard queries.
+#   - AIDEVOPS_BASH_REEXECED=1 is set before exec to prevent infinite
+#     loops if a symlink points at the wrong binary.
+#   - BASH_SOURCE[1] is the calling script; if unset, we're being
+#     executed directly (e.g., `bash shared-constants.sh`) and skip
+#     the guard.
+if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]] &&
+	[[ -z "${AIDEVOPS_BASH_REEXECED:-}" ]] &&
+	[[ -n "${BASH_SOURCE[1]:-}" ]]; then
+	for _aidevops_bash_candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash; do
+		if [[ -x "$_aidevops_bash_candidate" ]]; then
+			export AIDEVOPS_BASH_REEXECED=1
+			exec "$_aidevops_bash_candidate" "${BASH_SOURCE[1]}" "$@"
+		fi
+	done
+	unset _aidevops_bash_candidate
+	# Fall through: no modern bash found. The calling script will run
+	# on bash 3.2 and may hit compat bugs. The aidevops update check
+	# will surface an advisory on the next cycle (bash-upgrade-helper.sh
+	# update-check, rate-limited to 24h).
+fi
+
+# =============================================================================
 # Tool Version Pins
 # =============================================================================
 # Pin a tool to a specific version to prevent auto-upgrade to a broken release.

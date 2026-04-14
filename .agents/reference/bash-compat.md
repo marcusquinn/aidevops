@@ -3,9 +3,50 @@
 
 # Shell Portability: bash version + command coreutils
 
+## GH#18950 (t2087) — macOS bash upgrade automation
+
+**Since v3.8.25:** the framework automatically installs and maintains modern
+bash (4+) on macOS via Homebrew, and self-heals at runtime by re-execing
+scripts under modern bash when `/bin/bash` 3.2 is detected. This eliminates
+the entire class of bugs from GH#18770, GH#18784, GH#18786, GH#18804, and
+GH#18830 (bash 3.2 set-e propagation + parser quirks).
+
+**Quick install** (run once, or let `setup.sh` prompt you):
+
+```bash
+brew install bash
+```
+
+**Verify:**
+
+```bash
+bash-upgrade-helper.sh status
+# Platform:        macos
+# Current bash:    5.3.9 (major=5)
+# Modern bash:     /opt/homebrew/bin/bash (5.3.9(1)-release)
+# Status:          OK
+```
+
+**How the four-part fix works:**
+
+1. `bash-upgrade-helper.sh` — self-contained helper with `check`, `status`, `path`, `install`, `upgrade`, and `update-check` subcommands. Detects modern bash at `/opt/homebrew/bin/bash`, `/usr/local/bin/bash`, or `$(brew --prefix)/bin/bash`.
+2. `setup.sh` — on macOS, calls `bash-upgrade-helper.sh check` after platform detection. Interactive mode prompts for install; non-interactive mode respects `AIDEVOPS_AUTO_UPGRADE_BASH=1` or emits an advisory.
+3. `aidevops-update-check.sh` — periodic (24h rate-limited) drift check. Writes advisory when modern bash is missing or Homebrew has a newer version available. Never auto-upgrades during an update cycle (could disrupt running workers).
+4. `shared-constants.sh` — runtime re-exec guard at the top of the file (after the include guard, before any readonly definitions). When sourced under bash 3.2 AND a modern bash is available, the guard `exec`s the calling script under the modern bash. Transparent to callers; 339 scripts get the self-heal for free. Chicken-and-egg-safe: `setup.sh` and `bash-upgrade-helper.sh` do NOT source `shared-constants.sh`, so the upgrade path itself is unaffected.
+
+**Opt-out** (not recommended): set `AIDEVOPS_BASH_REEXECED=1` in your shell profile to disable the runtime guard. Use this only if you have a specific reason to run on bash 3.2 (e.g. reproducing a legacy bug).
+
+**Rollback:** `brew uninstall bash`. The runtime guard falls through gracefully when no modern bash is found, and scripts continue running on 3.2 (subject to the known bug class).
+
+Regression test: `.agents/scripts/tests/test-bash-reexec-guard.sh` — 12 assertions covering detection, status output, guard positioning, loop prevention via `AIDEVOPS_BASH_REEXECED`, and the live re-exec fire path.
+
+---
+
+## The two compatibility axes
+
 Two independent compatibility axes, both required:
 
-1. **Bash version** — macOS ships bash 3.2.57; Linux ships bash 4.0+. Scripts must run on the LOWEST version (3.2).
+1. **Bash version** — macOS ships bash 3.2.57; Linux ships bash 4.0+. Scripts must run on the LOWEST version (3.2). **Since v3.8.25**, modern bash is automatically installed on macOS via Homebrew, making this a soft requirement for NEW scripts — but existing scripts must still run under 3.2 as a fallback.
 2. **Command coreutils** — macOS ships BSD coreutils (no `getent`, `stat --format`, `readlink -f`, `date -d`, `timeout`); has `dscl`, `sw_vers`, `launchctl`, `pbcopy`. Linux ships GNU coreutils with the inverse. Scripts must run on BOTH.
 
 Regression pattern: a fix for one axis breaks the other. Recent production failures:
