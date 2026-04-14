@@ -63,7 +63,7 @@ Analyze issue/PR using ONLY the pre-fetched context above. Do not explore the co
 2. **Duplicate Check**: Compare against `RECENT_CLOSED` titles.
 3. **Root Cause**: 1-3 sentences based only on the pre-fetched context.
 4. **Scope Assessment**: In scope for project?
-5. **Complexity**: Estimate `tier:simple` (haiku), `tier:standard` (sonnet), or `tier:reasoning` (opus).
+5. **Complexity**: Estimate `tier:simple` (haiku), `tier:standard` (sonnet), or `tier:thinking` (opus).
 
 ### For PRs (all of the above, plus)
 
@@ -100,7 +100,7 @@ Analyze issue/PR using ONLY the pre-fetched context above. Do not explore the co
 ### Scope & Recommendation
 
 - **Scope creep:** Low/Medium/High
-- **Complexity tier:** `tier:simple` / `tier:standard` / `tier:reasoning`
+- **Complexity tier:** `tier:simple` / `tier:standard` / `tier:thinking`
 - **Decision:** APPROVE / REQUEST CHANGES / DECLINE
 - **Recommended labels:** <comma-separated>
 - **Implementation guidance:** <1-3 bullets for the worker who will implement this>

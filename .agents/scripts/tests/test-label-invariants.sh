@@ -99,7 +99,7 @@ else
 		"(missing core label '$core')"
 fi
 
-if [[ -n "${ISSUE_TIER_LABEL_RANK+x}" && "${ISSUE_TIER_LABEL_RANK[0]:-}" == "reasoning" &&
+if [[ -n "${ISSUE_TIER_LABEL_RANK+x}" && "${ISSUE_TIER_LABEL_RANK[0]:-}" == "thinking" &&
 	"${ISSUE_TIER_LABEL_RANK[1]:-}" == "standard" && "${ISSUE_TIER_LABEL_RANK[2]:-}" == "simple" ]]; then
 	print_result "ISSUE_TIER_LABEL_RANK matches dedup-tier-labels.yml order" 0
 else
@@ -213,7 +213,7 @@ export PULSE_QUEUED_SCAN_LIMIT=100
 # Synthesize an issue list covering every reconciler case:
 #   #1: dual-status (available + queued) → keep queued (precedence)
 #   #2: triple-status with 'done' (done + in-review + in-progress) → keep done (terminal)
-#   #3: multi-tier (simple + standard + reasoning) → keep reasoning
+#   #3: multi-tier (simple + standard + thinking) → keep thinking
 #   #4: dual-status with 'blocked' (blocked + queued) → keep queued (blocked is lowest)
 #   #5: single status → no-op
 #   #6: triage-missing (origin:interactive, no tier, no auto-dispatch, no status, old)
@@ -228,7 +228,7 @@ ISSUES_JSON=$(
 [
 	{"number":1,"labels":[{"name":"status:available"},{"name":"status:queued"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
 	{"number":2,"labels":[{"name":"status:done"},{"name":"status:in-review"},{"name":"status:in-progress"}],"createdAt":"${OLD_ISO}"},
-	{"number":3,"labels":[{"name":"tier:simple"},{"name":"tier:standard"},{"name":"tier:reasoning"}],"createdAt":"${OLD_ISO}"},
+	{"number":3,"labels":[{"name":"tier:simple"},{"name":"tier:standard"},{"name":"tier:thinking"}],"createdAt":"${OLD_ISO}"},
 	{"number":4,"labels":[{"name":"status:blocked"},{"name":"status:queued"}],"createdAt":"${OLD_ISO}"},
 	{"number":5,"labels":[{"name":"status:available"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
 	{"number":6,"labels":[{"name":"origin:interactive"}],"createdAt":"${OLD_ISO}"},
@@ -311,13 +311,13 @@ else
 	print_result "reconciler #2 survivor is 'done' (terminal — wins over in-review)" 1 "(line: '$edit2')"
 fi
 
-# Issue #3: triple-tier → keep reasoning, remove standard + simple
+# Issue #3: triple-tier → keep thinking, remove standard + simple
 edit3=$(grep "^issue edit 3 " "$GH_CALLS" | head -1)
 if [[ "$edit3" == *"--remove-label tier:standard"* && "$edit3" == *"--remove-label tier:simple"* &&
-	"$edit3" != *"--remove-label tier:reasoning"* ]]; then
-	print_result "reconciler #3 keeps tier:reasoning, removes tier:standard and tier:simple" 0
+	"$edit3" != *"--remove-label tier:thinking"* ]]; then
+	print_result "reconciler #3 keeps tier:thinking, removes tier:standard and tier:simple" 0
 else
-	print_result "reconciler #3 keeps tier:reasoning, removes tier:standard and tier:simple" 1 "(line: '$edit3')"
+	print_result "reconciler #3 keeps tier:thinking, removes tier:standard and tier:simple" 1 "(line: '$edit3')"
 fi
 
 # Issue #4: blocked + queued → keep queued (blocked is lowest-precedence)

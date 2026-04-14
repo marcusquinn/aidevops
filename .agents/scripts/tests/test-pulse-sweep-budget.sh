@@ -147,7 +147,7 @@ else
 fi
 
 # Sensitivity: change a label → fingerprint changes
-ISSUES_B='[{"number":1,"labels":[{"name":"tier:reasoning"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T10:00:00Z"},{"number":2,"labels":[{"name":"tier:simple"}],"assignees":[],"updatedAt":"2026-04-13T11:00:00Z"}]'
+ISSUES_B='[{"number":1,"labels":[{"name":"tier:thinking"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T10:00:00Z"},{"number":2,"labels":[{"name":"tier:simple"}],"assignees":[],"updatedAt":"2026-04-13T11:00:00Z"}]'
 export GH_ISSUE_LIST_PAYLOAD="$ISSUES_B"
 fp3=$(_compute_repo_state_fingerprint "test/repo")
 if [[ -n "$fp3" && "$fp3" != "$fp1" ]]; then

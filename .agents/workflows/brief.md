@@ -36,7 +36,7 @@ tools:
 
 Assess every work item against these empirical criteria (from 47-PR research):
 
-| Criterion | tier:simple | tier:standard | tier:reasoning |
+| Criterion | tier:simple | tier:standard | tier:thinking |
 |-----------|------------|---------------|----------------|
 | **Files** | Single file | 2-3 files with coordination | 4+ files or architectural |
 | **Lines changed** | Under 100 | 100-500 | 500+ or novel design |
@@ -100,7 +100,7 @@ Briefs consumed by headless workers must anticipate that the worker will encount
 - **Tier-specific formats**:
   - `tier:simple` → `brief/tier-simple.md` (prescriptive, exact code blocks)
   - `tier:standard` → `brief/tier-standard.md` (skeletons, judgment required)
-  - `tier:reasoning` → `brief/tier-reasoning.md` (problem space, constraints)
+  - `tier:thinking` → `brief/tier-thinking.md` (problem space, constraints)
 - **Templates**: `brief/templates.md` (issue body, comments, PR description, review comment)
 
 ## Callers: How to Reference This Agent

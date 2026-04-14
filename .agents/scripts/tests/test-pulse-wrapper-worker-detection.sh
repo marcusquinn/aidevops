@@ -801,9 +801,9 @@ test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity() {
 	: >"$dispatch_log"
 
 	resolve_dispatch_model_for_labels() {
-		# Tier label resolution — tier:thinking is backward-compat alias for tier:reasoning
+		# Tier label resolution — tier:thinking is the canonical opus-tier label
 		case ",${1}," in
-		*,tier:reasoning,* | *,tier:thinking,*)
+		*,tier:thinking,*)
 			echo "anthropic/claude-opus-4-6"
 			return 0
 			;;

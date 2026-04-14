@@ -1320,7 +1320,7 @@ resolve_gh_node_id() {
 # t2012: parse the explicit `**Selected tier:**` line first. The previous
 # implementation grep-anywhere'd the whole brief and took `head -1`, which
 # matched commentary like "use `tier:standard` or higher" or rank-order text
-# (`tier:reasoning` > `tier:standard` > `tier:simple`) before the actual
+# (`tier:thinking` > `tier:standard` > `tier:simple`) before the actual
 # **Selected tier:** line — returning the wrong tier and creating tier label
 # collisions with `_validate_tier_checklist`'s override path.
 _extract_tier_from_brief() {
@@ -1337,7 +1337,7 @@ _extract_tier_from_brief() {
 	selected_line=$(grep -m1 -E '^\*\*Selected tier:\*\*' "$brief_path" 2>/dev/null || true)
 	if [[ -n "$selected_line" ]]; then
 		local tier
-		tier=$(printf '%s' "$selected_line" | grep -oE 'tier:(simple|standard|reasoning)' | head -1 || true)
+		tier=$(printf '%s' "$selected_line" | grep -oE 'tier:(simple|standard|thinking)' | head -1 || true)
 		if [[ -n "$tier" ]]; then
 			printf '%s' "$tier"
 			return 0
@@ -1347,7 +1347,7 @@ _extract_tier_from_brief() {
 	# FALLBACK: grep-anywhere for briefs that don't follow the template.
 	# Logged as a warning to stderr so we can chase non-conforming briefs.
 	local fallback
-	fallback=$(grep -oE 'tier:(simple|standard|reasoning)' "$brief_path" 2>/dev/null | head -1 || true)
+	fallback=$(grep -oE 'tier:(simple|standard|thinking)' "$brief_path" 2>/dev/null | head -1 || true)
 	if [[ -n "$fallback" ]]; then
 		echo "[WARN] _extract_tier_from_brief: brief at $brief_path missing **Selected tier:** line, falling back to first tier mention ($fallback)" >&2
 		printf '%s' "$fallback"
@@ -1366,7 +1366,7 @@ _validate_tier_checklist() {
 	local brief_path="$1"
 	local selected_tier="$2"
 
-	# Only validate tier:simple — standard and reasoning don't have hard checklist gates
+	# Only validate tier:simple — standard and thinking don't have hard checklist gates
 	if [[ "$selected_tier" != "tier:simple" ]]; then
 		printf '%s' "$selected_tier"
 		return 0

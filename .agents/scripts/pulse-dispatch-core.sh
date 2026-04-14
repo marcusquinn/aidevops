@@ -66,7 +66,7 @@ source "${BASH_SOURCE[0]%/*}/pulse-dispatch-worker-launch.sh"
 # Arguments:
 #   $1 - comma-separated label list (e.g., "bug,tier:simple,auto-dispatch")
 # Output:
-#   tier:reasoning, tier:standard, or tier:simple
+#   tier:thinking, tier:standard, or tier:simple
 # Exit codes:
 #   0 - always succeeds
 #######################################
@@ -77,8 +77,8 @@ _resolve_worker_tier() {
 	labels_lower=$(printf '%s' "$labels_csv" | tr '[:upper:]' '[:lower:]')
 	local labels_with_commas=",${labels_lower},"
 
-	if [[ "$labels_with_commas" == *",tier:reasoning,"* ]]; then
-		printf 'tier:reasoning'
+	if [[ "$labels_with_commas" == *",tier:thinking,"* ]]; then
+		printf 'tier:thinking'
 	elif [[ "$labels_with_commas" == *",tier:standard,"* ]]; then
 		printf 'tier:standard'
 	elif [[ "$labels_with_commas" == *",tier:simple,"* ]]; then

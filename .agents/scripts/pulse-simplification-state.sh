@@ -361,11 +361,11 @@ _create_requeue_issue() {
 	local prev_issue_num="$5"
 	local max_passes="${SIMPLIFICATION_MAX_PASSES:-3}"
 
-	# Determine tier based on pass count — escalate to reasoning after max passes
+	# Determine tier based on pass count — escalate to thinking after max passes
 	local tier_label="tier:standard"
 	local escalation_note=""
 	if [[ "$pass_count" -ge "$max_passes" ]]; then
-		tier_label="tier:reasoning"
+		tier_label="tier:thinking"
 		escalation_note="
 
 ### Escalation note

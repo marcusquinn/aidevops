@@ -232,15 +232,15 @@ else
 fi
 
 # =============================================================================
-# Assertion 6 — same spend (50K) on tier:reasoning is well under budget (300K)
+# Assertion 6 — same spend (50K) on tier:thinking is well under budget (300K)
 # =============================================================================
-write_fixture_issue '[{"name":"tier:reasoning"}]'
+write_fixture_issue '[{"name":"tier:thinking"}]'
 write_fixture_comments "20000,30000"
-run_check_cost_budget 18006 "owner/repo" "reasoning"
+run_check_cost_budget 18006 "owner/repo" "thinking"
 if [[ "$rc" -eq 1 ]]; then
-	print_result "tier:reasoning budget (50K < 300K) allows" 0
+	print_result "tier:thinking budget (50K < 300K) allows" 0
 else
-	print_result "tier:reasoning budget (50K < 300K) allows" 1 "(rc=$rc output='$output')"
+	print_result "tier:thinking budget (50K < 300K) allows" 1 "(rc=$rc output='$output')"
 fi
 
 # =============================================================================

@@ -87,7 +87,7 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 - `tier:simple`: Haiku — requires a brief with verbatim code blocks, explicit file paths, and copy-pasteable implementation. **Hard disqualifiers:** >2 files, skeleton code blocks, error/fallback logic to design, estimate >1h, >4 acceptance criteria, judgment keywords (see `reference/task-taxonomy.md` "Tier Assignment Validation"). Never assign without checking the disqualifier list.
 - `tier:standard`: Sonnet — standard implementation, bug fixes, refactors. Narrative briefs with file references are sufficient. Use when uncertain. This is the default tier.
-- `tier:reasoning`: Opus — architecture, novel design with no existing pattern to follow, deep reasoning, security audits.
+- `tier:thinking`: Opus — architecture, novel design with no existing pattern to follow, deep reasoning, security audits.
 - **Cascade dispatch**: The pulse may start at `tier:simple` and escalate through tiers if the worker fails, accumulating context at each level. See `reference/task-taxonomy.md` "Cascade Dispatch Model".
 - **Tier checklist**: The brief template (`templates/brief-template.md`) includes a mandatory tier checklist. Complete it before assigning a tier — it catches obvious mis-classifications that waste dispatch cycles.
 

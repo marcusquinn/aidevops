@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Reasoning Brief Format (tier:reasoning)
+# Reasoning Brief Format (tier:thinking)
 
 For tasks requiring deep reasoning. Describe the problem space and constraints.
 

@@ -981,7 +981,7 @@ ISSUE_STATUS_LABEL_PRECEDENCE=("done" "in-review" "in-progress" "queued" "claime
 # t2040: tier label rank for invariant reconciliation. Must match the rank
 # order in .github/workflows/dedup-tier-labels.yml — reconciler and GH Action
 # must pick the same survivor so they're idempotent with each other.
-ISSUE_TIER_LABEL_RANK=("reasoning" "standard" "simple")
+ISSUE_TIER_LABEL_RANK=("thinking" "standard" "simple")
 
 # Ensure all core status:* labels exist on a repo (idempotent, cached per-process).
 # The helper relies on --remove-label being idempotent for *unset* labels (gh
@@ -1286,7 +1286,6 @@ _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 [[ -r "${_SC_SELF%/*}/shared-worktree-registry.sh" ]] && source "${_SC_SELF%/*}/shared-worktree-registry.sh"
 # shellcheck source=/dev/null
 [[ -r "${_SC_SELF%/*}/shared-sqlite-backup.sh" ]] && source "${_SC_SELF%/*}/shared-sqlite-backup.sh"
-
 
 # =============================================================================
 # Export all constants for use in other scripts
