@@ -534,14 +534,21 @@ _systemd_user_available() {
 	return 0
 }
 
-# Escape a value for safe embedding in a systemd unit Environment= directive.
-# systemd interprets % as specifiers (%h, %n, %t, etc.) and spaces as
-# key-value separators. This helper:
+# Escape a value for safe embedding in a systemd unit Environment= or ExecStart=
+# directive. systemd interprets % as specifiers (%h, %n, %t, etc.) and spaces
+# as key-value separators. This helper:
 #   1. Escapes \ → \\ (must be first to avoid double-escaping)
 #   2. Doubles % → %% (escape specifiers)
 #   3. Escapes embedded " → \"
 #   4. Wraps the result in "..." (handles spaces and other shell metacharacters)
 # Usage: escaped=$(_systemd_escape "$value")
+#
+# WARNING: Do NOT use for StandardOutput= or StandardError= directives.
+# systemd does not strip outer quotes from those values — "append:/path" is
+# treated as a literal filename with quote characters, failing silently.
+# Use bare values for StandardOutput=/StandardError=:
+#   StandardOutput=append:${log_file}  ← correct
+#   StandardOutput=$(_systemd_escape "append:${log_file}")  ← WRONG
 _systemd_escape() {
 	local _val="$1"
 	# Step 1: escape backslashes
@@ -660,8 +667,8 @@ Type=oneshot
 KillMode=process
 ExecStart=/bin/bash -lc $(_systemd_escape "$exec_command")
 TimeoutStartSec=${timeout_sec}
-${_service_extra}${_env_lines}StandardOutput=$(_systemd_escape "append:${log_file}")
-StandardError=$(_systemd_escape "append:${log_file}")
+${_service_extra}${_env_lines}StandardOutput=append:${log_file}
+StandardError=append:${log_file}
 " >"$service_file"
 
 	local _timer_lines=""

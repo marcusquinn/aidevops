@@ -1563,8 +1563,8 @@ ExecStart=/bin/bash -lc '"${script_path}" check'
 TimeoutStartSec=120
 Nice=10
 IOSchedulingClass=idle
-StandardOutput="append:${LOG_FILE}"
-StandardError="append:${LOG_FILE}"
+StandardOutput=append:${LOG_FILE}
+StandardError=append:${LOG_FILE}
 " >"$service_file"
 
 	printf '%s' "[Unit]
