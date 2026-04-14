@@ -30,15 +30,13 @@ Topic: $ARGUMENTS
 
 Also classify **agent domain** and **model tier** using `reference/task-taxonomy.md`. Include domain tag (e.g., `#seo`) in TODO.md entry and as GitHub label. Omit for code tasks.
 
-**Tier classification (cascade dispatch):**
+**Tier (cascade dispatch):** Default to `tier:simple` for review feedback and single-file fixes — Haiku succeeds when briefs provide exact code blocks; only escalate when judgment is required.
 
-- `tier:simple` — single-file, <100 lines changed, pattern-following. Brief MUST provide verbatim oldString/newString for every edit.
+- `tier:simple` — single-file, <100 lines, pattern-following. Brief MUST provide verbatim oldString/newString for every edit.
 - `tier:standard` — multi-file, structural refactoring, >100 lines, approach depends on reading codebase state.
 - `tier:thinking` — architecture decisions, novel design, complex multi-system trade-offs, security audits.
 
-**Default to `tier:simple` for review feedback and single-file fixes.** Haiku achieves 100% success when briefs provide exact code blocks. Only escalate when the task genuinely requires judgment.
-
-If ambiguous, ask with numbered options (1–5 matching table above), recommend based on description.
+If task type is ambiguous, offer numbered options (1–5 matching table) with a recommendation.
 
 ### Step 2: Structured Interview (3–5 questions)
 
@@ -86,7 +84,7 @@ Read `templates/brief-template.md` and format using `workflows/brief.md` for the
 | Pre-mortem / negative space | **Acceptance Criteria** (negative criteria) |
 | Files mentioned | **Relevant Files** |
 
-**Code scaffolding (t1901 — MANDATORY for code tasks):** For each file in Files to Modify, read the reference pattern and draft a code skeleton or diff in the Implementation Steps as fenced code blocks. New files: complete skeleton with imports, function signatures, and inline comments. Edits: exact code block with surrounding context showing insertion point.
+**Code scaffolding (t1901 — MANDATORY for code tasks):** For each file in Files to Modify, draft a code skeleton or diff in Implementation Steps as fenced code blocks. New files: complete skeleton with imports, function signatures, and inline comments. Edits: exact block with surrounding context showing insertion point.
 
 ### Step 6: Present and Confirm
 
