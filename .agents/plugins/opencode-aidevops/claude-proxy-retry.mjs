@@ -137,7 +137,7 @@ export function detectRateLimitJson(parsed) {
  * @returns {{ rateLimited: boolean, resetsAt?: string }}
  */
 export function detectRateLimitStream(event) {
-  if (event?.type === "rate_limit_event") {
+  if (event?.type === "rate_limit_event" && event?.rate_limit_info?.status === "rejected") {
     return { rateLimited: true, resetsAt: event?.rate_limit_info?.resetsAt };
   }
   if (event?.type === "assistant" && event?.error === "rate_limit") {
