@@ -1683,11 +1683,17 @@ _complexity_scan_ratchet_check() {
 	if [[ -n "$ratchet_output" ]]; then
 		echo "[pulse-wrapper] ratchet-check: proposals available" >>"$LOGFILE"
 		echo "$ratchet_output" >>"$LOGFILE"
-		# Check if a ratchet-down PR already exists to avoid duplicates
+		# t2089: Check if a ratchet-down PR already exists to avoid duplicates.
+		# The search uses "ratchet-down" as a keyword rather than the exact
+		# legacy issue title "chore: ratchet-down complexity thresholds" because
+		# worker-created PRs use the format "GH#NNN: chore: ratchet-down
+		# THRESHOLD_NAME X→Y" — the old exact-match search never found those,
+		# causing duplicate PRs every cycle (observed: #18944 and #18946).
+		# The keyword search covers both the issue title and the per-threshold PR format.
 		local ratchet_pr_exists
 		ratchet_pr_exists=$(gh pr list --repo "$aidevops_slug" \
 			--state open \
-			--search "in:title \"chore: ratchet-down complexity thresholds\"" \
+			--search "ratchet-down in:title" \
 			--json number --jq 'length' 2>/dev/null) || ratchet_pr_exists="0"
 		if [[ "${ratchet_pr_exists:-0}" -eq 0 ]]; then
 			echo "[pulse-wrapper] ratchet-check: creating ratchet-down issue (t1913)" >>"$LOGFILE"

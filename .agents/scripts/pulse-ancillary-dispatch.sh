@@ -689,10 +689,13 @@ _finalize_triage_state() {
 	# can identify issues needing manual triage; remove on success.
 	# t2016: Ensure the label exists first (gh label create --force is
 	# idempotent) and only log "Added" when the add command succeeds.
+	# t2089: canary-unavailable is an infrastructure failure, not a triage
+	# failure — do NOT apply triage-failed; leave the issue in its current
+	# state so the next cycle retries transparently.
 	if [[ "$triage_posted" == "true" ]]; then
 		gh issue edit "$issue_num" --repo "$repo_slug" \
 			--remove-label "triage-failed" >/dev/null 2>&1 || true
-	else
+	elif [[ "$failure_reason" != "canary-unavailable" ]]; then
 		_ensure_triage_failed_label "$repo_slug"
 		if gh issue edit "$issue_num" --repo "$repo_slug" \
 			--add-label "triage-failed" >/dev/null 2>&1; then
@@ -712,8 +715,14 @@ _finalize_triage_state() {
 	# t2016: When the retry cap is hit, post a structured escalation comment
 	# BEFORE writing the cache, so the maintainer has a visible signal
 	# instead of a silently-cached issue that disappears from triage forever.
+	# t2089: canary-unavailable skips BOTH the retry counter AND the cache
+	# write — the issue content hasn't changed; the infrastructure was just
+	# unavailable. Incrementing the counter would cause the next canary
+	# failure to hit the cap and permanently lock the issue out of triage.
 	if [[ "$triage_posted" == "true" ]]; then
 		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
+	elif [[ "$failure_reason" == "canary-unavailable" ]]; then
+		echo "[pulse-wrapper] Triage skipped for #${issue_num} — canary unavailable, will retry next cycle without consuming retry budget (t2089)" >>"$LOGFILE"
 	elif _triage_increment_failure "$issue_num" "$repo_slug" "$content_hash"; then
 		echo "[pulse-wrapper] Triage retry cap reached for #${issue_num} in ${repo_slug} — caching hash to stop lock/unlock loop (GH#17827)" >>"$LOGFILE"
 		local cap_attempts="${TRIAGE_MAX_RETRIES:-1}"
@@ -808,6 +817,21 @@ _dispatch_triage_review_worker() {
 		raw_sample=$(head -c 1000 "$review_output_file" 2>/dev/null || true)
 	fi
 
+	# t2089: Detect canary failure BEFORE calling the safety filter.
+	# When the headless runtime aborts due to a failed canary test (exit=142
+	# timeout, credit exhaustion, port conflict, etc.), the output is infra
+	# log lines with no review header. The safety filter correctly classifies
+	# this as raw-sandbox-output, but that causes _finalize_triage_state to
+	# increment the retry counter and — after TRIAGE_MAX_RETRIES — cache the
+	# content hash, permanently locking the issue out of the triage queue.
+	# Infrastructure unavailability is NOT a triage failure: the issue itself
+	# is fine. Detect it early and route to a separate non-counting path.
+	local canary_failed="false"
+	if printf '%s' "$raw_sample" | grep -qE 'Canary test FAILED|Canary failed.*aborting dispatch' 2>/dev/null; then
+		canary_failed="true"
+		echo "[pulse-wrapper] Triage canary failed for #${issue_num} in ${repo_slug} — infrastructure unavailability, not a review failure (t2089)" >>"$LOGFILE"
+	fi
+
 	# Validate output safety and post or suppress the review comment.
 	local post_result=""
 	post_result=$(_extract_and_post_triage_review \
@@ -820,6 +844,10 @@ _dispatch_triage_review_worker() {
 	local failure_reason=""
 	if [[ "$post_result" == "POSTED" ]]; then
 		triage_posted="true"
+	elif [[ "$canary_failed" == "true" ]]; then
+		# Canary unavailability overrides the safety-filter result.
+		# Route to the infra-failure path — skip retry counter and cache.
+		failure_reason="canary-unavailable"
 	else
 		failure_reason="${post_result#FAILED:}"
 	fi
