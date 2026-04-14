@@ -319,54 +319,63 @@ _log_suppressed_triage_output() {
 #
 # Fetches issue JSON, comments, and body; computes the content hash;
 # checks the triage dedup cache; checks if awaiting a contributor reply.
-#
-# Output (module-scoped variables set for the caller):
-#   __TRIAGE_ISSUE_JSON     — raw issue JSON from gh
-#   __TRIAGE_ISSUE_BODY     — extracted issue body text
-#   __TRIAGE_ISSUE_COMMENTS — raw comments JSON array
-#   __TRIAGE_CONTENT_HASH   — content hash for cache keying
+# Writes results to caller-supplied named variables via printf -v so the
+# function's "return" values are explicit in the signature (GH#18865).
 #
 # Arguments:
 #   $1 - issue_num
 #   $2 - repo_slug
+#   $3 - name of variable to receive raw issue JSON
+#   $4 - name of variable to receive raw comments JSON array
+#   $5 - name of variable to receive issue body text
+#   $6 - name of variable to receive content hash
 #
 # Returns:
-#   0 — proceed with triage
-#   1 — skip (cache hit or awaiting contributor reply)
+#   0 — proceed with triage (named variables are populated)
+#   1 — skip (cache hit or awaiting contributor reply; named variables unset)
 #######################################
 _triage_prefetch_issue() {
 	local issue_num="$1"
 	local repo_slug="$2"
+	local issue_json_var="$3"
+	local issue_comments_var="$4"
+	local issue_body_var="$5"
+	local content_hash_var="$6"
 
 	# ── GH#17746: Fetch body+comments early — needed for dedup AND prompt ──
-	__TRIAGE_ISSUE_JSON=""
-	__TRIAGE_ISSUE_JSON=$(gh issue view "$issue_num" --repo "$repo_slug" \
-		--json number,title,body,author,labels,createdAt,updatedAt 2>/dev/null) || __TRIAGE_ISSUE_JSON="{}"
+	local issue_json=""
+	issue_json=$(gh issue view "$issue_num" --repo "$repo_slug" \
+		--json number,title,body,author,labels,createdAt,updatedAt 2>/dev/null) || issue_json="{}"
 
-	__TRIAGE_ISSUE_COMMENTS=""
-	__TRIAGE_ISSUE_COMMENTS=$(gh api "repos/${repo_slug}/issues/${issue_num}/comments" \
-		--jq '[.[] | {author: .user.login, body: .body, created: .created_at}]' 2>/dev/null) || __TRIAGE_ISSUE_COMMENTS="[]"
+	local issue_comments=""
+	issue_comments=$(gh api "repos/${repo_slug}/issues/${issue_num}/comments" \
+		--jq '[.[] | {author: .user.login, body: .body, created: .created_at}]' 2>/dev/null) || issue_comments="[]"
 
-	__TRIAGE_ISSUE_BODY=""
-	__TRIAGE_ISSUE_BODY=$(echo "$__TRIAGE_ISSUE_JSON" | jq -r '.body // "No body"' 2>/dev/null) || __TRIAGE_ISSUE_BODY="No body"
+	local issue_body=""
+	issue_body=$(echo "$issue_json" | jq -r '.body // "No body"' 2>/dev/null) || issue_body="No body"
 
 	# Compute content hash and check cache
-	__TRIAGE_CONTENT_HASH=""
-	__TRIAGE_CONTENT_HASH=$(_triage_content_hash "$issue_num" "$repo_slug" "$__TRIAGE_ISSUE_BODY" "$__TRIAGE_ISSUE_COMMENTS")
+	local content_hash=""
+	content_hash=$(_triage_content_hash "$issue_num" "$repo_slug" "$issue_body" "$issue_comments")
 
-	if _triage_is_cached "$issue_num" "$repo_slug" "$__TRIAGE_CONTENT_HASH"; then
+	if _triage_is_cached "$issue_num" "$repo_slug" "$content_hash"; then
 		echo "[pulse-wrapper] triage dedup: skipping #${issue_num} in ${repo_slug} — content unchanged since last triage" >>"$LOGFILE"
 		return 1
 	fi
 
 	# ── GH#17827: Skip if awaiting contributor reply ──
 	# A new contributor comment will change the hash and trigger re-evaluation.
-	if _triage_awaiting_contributor_reply "$__TRIAGE_ISSUE_COMMENTS" "$repo_slug"; then
+	if _triage_awaiting_contributor_reply "$issue_comments" "$repo_slug"; then
 		echo "[pulse-wrapper] triage skip: #${issue_num} in ${repo_slug} — awaiting contributor reply (GH#17827)" >>"$LOGFILE"
-		_triage_update_cache "$issue_num" "$repo_slug" "$__TRIAGE_CONTENT_HASH"
+		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
 		return 1
 	fi
 
+	# Write results to caller's named variables (explicit data flow — GH#18865)
+	printf -v "$issue_json_var" '%s' "$issue_json"
+	printf -v "$issue_comments_var" '%s' "$issue_comments"
+	printf -v "$issue_body_var" '%s' "$issue_body"
+	printf -v "$content_hash_var" '%s' "$content_hash"
 	return 0
 }
 
@@ -514,8 +523,8 @@ PREFETCH_EOF
 # Orchestrates: issue prefetch + skip checks, PR context fetch,
 # and prompt file construction. Delegates data fetching and prompt
 # writing to focused helpers (_triage_prefetch_issue,
-# _triage_write_prompt_file). Reads module-scoped __TRIAGE_* variables
-# written by _triage_prefetch_issue.
+# _triage_write_prompt_file). Receives prefetched data via local
+# variables populated by _triage_prefetch_issue using printf -v.
 #
 # Arguments:
 #   $1 - issue_num
@@ -530,8 +539,18 @@ _build_triage_review_prompt() {
 	local repo_slug="$2"
 	local repo_path="$3"
 
-	# Fetch issue data and check skip conditions; sets __TRIAGE_* module vars.
-	_triage_prefetch_issue "$issue_num" "$repo_slug" || return 1
+	# Declare receiving variables; populated by _triage_prefetch_issue via printf -v.
+	local __TRIAGE_ISSUE_JSON=""
+	local __TRIAGE_ISSUE_COMMENTS=""
+	local __TRIAGE_ISSUE_BODY=""
+	local __TRIAGE_CONTENT_HASH=""
+
+	# Fetch issue data and check skip conditions; populates __TRIAGE_* via printf -v.
+	_triage_prefetch_issue "$issue_num" "$repo_slug" \
+		"__TRIAGE_ISSUE_JSON" \
+		"__TRIAGE_ISSUE_COMMENTS" \
+		"__TRIAGE_ISSUE_BODY" \
+		"__TRIAGE_CONTENT_HASH" || return 1
 
 	# ── Content is new or changed — proceed with full prefetch ──
 	local pr_diff="" pr_files="" is_pr=""
