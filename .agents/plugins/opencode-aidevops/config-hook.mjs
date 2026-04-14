@@ -38,7 +38,9 @@ function claudeModelDef(overrides) {
  */
 const CLAUDE_MODEL_LIMITS = {
   "claude-haiku-4-5":  { context: 1000000, output: 32000 },
+  "claude-sonnet-4-5": { context:  200000, output: 64000 },
   "claude-sonnet-4-6": { context: 1000000, output: 64000 },
+  "claude-opus-4-5":   { context:  200000, output: 64000 },
   "claude-opus-4-6":   { context: 1000000, output: 64000 },
 };
 
@@ -60,14 +62,18 @@ function buildClaudeModelMap(names) {
 /** Models registered under the built-in anthropic provider (via aidevops OAuth pool). */
 const ANTHROPIC_MODELS = buildClaudeModelMap({
   "claude-haiku-4-5":  "Claude Haiku 4.5 (via aidevops)",
+  "claude-sonnet-4-5": "Claude Sonnet 4.5 (via aidevops)",
   "claude-sonnet-4-6": "Claude Sonnet 4.6 (via aidevops)",
+  "claude-opus-4-5":   "Claude Opus 4.5 (via aidevops)",
   "claude-opus-4-6":   "Claude Opus 4.6 (via aidevops)",
 });
 
 /** Models registered under the claudecli provider (via Claude CLI proxy). */
 const CLAUDECLI_MODELS = buildClaudeModelMap({
   "claude-haiku-4-5":  "Claude Haiku 4.5 (via CLI)",
+  "claude-sonnet-4-5": "Claude Sonnet 4.5 (via CLI)",
   "claude-sonnet-4-6": "Claude Sonnet 4.6 (via CLI)",
+  "claude-opus-4-5":   "Claude Opus 4.5 (via CLI)",
   "claude-opus-4-6":   "Claude Opus 4.6 (via CLI)",
 });
 
