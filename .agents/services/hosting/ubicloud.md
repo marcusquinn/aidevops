@@ -221,7 +221,7 @@ See https://ubicloud.com/docs/inference/endpoint
 
 ## Hosted (managed SaaS) vs. self-managed (build your own cloud)
 
-Same AGPL v3 codebase runs both the managed service and self-hosted on your own bare metal.
+Same AGPL v3 codebase runs both the managed service and self-hosted versions on your own bare metal.
 
 | Dimension | Managed SaaS (console.ubicloud.com) | Self-managed (build your own cloud) |
 |-----------|-------------------------------------|--------------------------------------|
