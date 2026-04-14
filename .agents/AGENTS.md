@@ -188,7 +188,9 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 **Interactive issue ownership (MANDATORY — AI-driven, t2056):** When an interactive session engages with a GitHub issue — opening a worktree for it, claiming a new task, or identifying an existing issue to work on — the agent MUST immediately call `interactive-session-helper.sh claim <N> <slug>`. This applies `status:in-review` + self-assignment, which the pulse's dispatch-dedup guard (`_has_active_claim`) already honours as a block. Unlike `origin:interactive` (which only marks creation-time origin), this is the session-ownership signal for picking up *any* issue mid-lifecycle.
 
 - **Release is the agent's responsibility**, not the user's. Call `interactive-session-helper.sh release <N> <slug>` when the user signals completion ("done", "ship it", "moving on", "let a worker take over"), when they switch to a different issue, or when a PR they opened merges. The user should never need to type a release command.
-- **Session start:** run `interactive-session-helper.sh scan-stale` and, if any dead claims surface (PID gone, worktree missing), prompt the user to release them.
+- **Session start:** run `interactive-session-helper.sh scan-stale` and act on any findings:
+  - Phase 1 (dead claims): if stamps with dead PID and missing worktree surface, prompt user to release them.
+  - Phase 2 (closed-PR orphans): if a closed-not-merged PR with a still-open linked issue surfaces, surface it for human triage. Do NOT auto-reopen — the close may have been intentional. Closed by the deterministic merge pass (pulse-merge.sh) is a higher-severity signal.
 - **Offline `gh`:** the helper warns and continues (exit 0). A collision with a worker is harmless — the interactive work naturally becomes its own issue/PR.
 - **`sudo aidevops approve issue <N>`** (crypto-approval flow for contributor-filed NMR issues) also clears `status:in-review` idempotently when present — no new user-facing command, it's a passive side effect of the already-required approval step.
 - `/release-issue <N>` and `aidevops issue release <N>` exist as fallbacks only.

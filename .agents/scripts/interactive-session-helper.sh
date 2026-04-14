@@ -459,63 +459,202 @@ _isc_cmd_status() {
 }
 
 # -----------------------------------------------------------------------------
-# Subcommand: scan-stale
+# Internal: scan closed-not-merged PRs whose linked issue is still open
 # -----------------------------------------------------------------------------
-# For each stamp: check if the PID is alive AND the worktree path still
-# exists. Print a human-readable advisory. Does NOT auto-release — the agent
-# is expected to parse the output and prompt the user.
+# For each pulse-enabled repo in repos.json:
+#   1. List PRs closed (not merged) in the last 14 days via gh pr list.
+#   2. Extract linked issue numbers from the PR body keywords:
+#      Resolves/Closes/Fixes/For #N.
+#   3. For each linked issue that is still OPEN, print an advisory.
 #
-# Exit: 0 always.
-_isc_cmd_scan_stale() {
-	if [[ ! -d "$CLAIM_STAMP_DIR" ]]; then
-		printf 'No interactive claims to scan.\n'
+# Does NOT auto-reopen — surfaces for human triage only.
+# Exit: 0 always. Prints orphan count to stdout.
+_isc_scan_closed_pr_orphans() {
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	if [[ ! -f "$repos_json" ]]; then
+		printf '0'
 		return 0
 	fi
 
+	if ! _isc_gh_reachable; then
+		_isc_warn "gh not reachable — skipping closed-PR orphan scan"
+		printf '0'
+		return 0
+	fi
+
+	local orphan_count=0
+
+	# Compute cutoff epoch (14 days ago). Support GNU date (Linux) and BSD date (macOS).
+	local cutoff_epoch
+	cutoff_epoch=$(date -d '14 days ago' +%s 2>/dev/null ||
+		date -v-14d +%s 2>/dev/null ||
+		echo 0)
+
+	local slug
+	while IFS= read -r slug; do
+		[[ -z "$slug" ]] && continue
+
+		# Fetch closed PRs (last 50). We'll filter mergedAt==null + date in jq.
+		local prs_raw
+		prs_raw=$(gh pr list --repo "$slug" --state closed --limit 50 \
+			--json number,title,headRefName,closedAt,mergedAt,body \
+			2>/dev/null || echo "[]")
+
+		[[ "$prs_raw" == "[]" || -z "$prs_raw" ]] && continue
+
+		# Extract closed-not-merged PRs within the 14-day window.
+		# Output: one line per PR as "number|closedAt|title|branch|body"
+		# Using a placeholder separator (\x01) to safely embed body newlines.
+		local pr_entries
+		# shellcheck disable=SC2016  # $cutoff is a shell var, used outside jq
+		pr_entries=$(printf '%s' "$prs_raw" | jq -r \
+			--argjson cutoff "$cutoff_epoch" \
+			'.[] | select(
+				.mergedAt == null and
+				.closedAt != null and
+				(.closedAt | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) >= $cutoff
+			) | [(.number | tostring), .closedAt, .title, (.headRefName // ""), .body] | join("\u0001")' \
+			2>/dev/null || true)
+
+		[[ -z "$pr_entries" ]] && continue
+
+		# Process each matching PR
+		local pr_entry
+		while IFS= read -r pr_entry; do
+			[[ -z "$pr_entry" ]] && continue
+
+			# Parse fields (IFS=\x01 split)
+			local pr_number pr_closed_at pr_title pr_branch pr_body
+			IFS=$'\x01' read -r pr_number pr_closed_at pr_title pr_branch pr_body <<<"$pr_entry"
+
+			[[ -z "$pr_number" ]] && continue
+
+			# Extract issue numbers referenced in the PR body via closing keywords.
+			# Matches: Resolves #N, Closes #N, Fixes #N, For #N (case-insensitive).
+			local issue_nums=()
+			local raw_num
+			while IFS= read -r raw_num; do
+				[[ -z "$raw_num" ]] && continue
+				issue_nums+=("$raw_num")
+			done < <(printf '%s\n' "$pr_body" |
+				grep -oiE '(resolves|closes|fixes|for) #[0-9]+' |
+				grep -oE '[0-9]+' 2>/dev/null || true)
+
+			# Check each linked issue's current state
+			local issue_num
+			for issue_num in "${issue_nums[@]+"${issue_nums[@]}"}"; do
+				[[ -z "$issue_num" ]] && continue
+
+				local issue_state
+				issue_state=$(gh issue view "$issue_num" --repo "$slug" \
+					--json state --jq '.state' 2>/dev/null || echo "")
+				[[ -z "$issue_state" ]] && continue
+
+				if [[ "$issue_state" == "OPEN" ]]; then
+					if [[ $orphan_count -eq 0 ]]; then
+						printf '\nClosed-not-merged PRs with still-open linked issues:\n\n'
+					fi
+
+					# Detect if the close was by the deterministic merge pass.
+					# Match comment text containing the pulse-merge marker.
+					local closed_by="unknown"
+					local pulse_match
+					pulse_match=$(gh api "repos/${slug}/issues/${pr_number}/comments" \
+						--jq '[.[] | select(.body | test("deterministic merge pass|pulse-merge"; "i"))] | length' \
+						2>/dev/null || echo "0")
+					if [[ "${pulse_match:-0}" -gt 0 ]]; then
+						closed_by="deterministic merge pass (pulse-merge.sh) — HIGH severity"
+					fi
+
+					# Check if the branch still exists on origin.
+					local branch_exists="no"
+					if [[ -n "$pr_branch" ]]; then
+						if gh api "repos/${slug}/git/refs/heads/${pr_branch}" >/dev/null 2>&1; then
+							branch_exists="yes"
+						fi
+					fi
+
+					printf '  STALE: PR #%s (closed not merged) → issue #%s still OPEN\n' \
+						"$pr_number" "$issue_num"
+					printf '    Title:      %s\n' "$pr_title"
+					printf '    Branch:     %s (still on origin: %s)\n' \
+						"${pr_branch:-unknown}" "$branch_exists"
+					printf '    Closed by:  %s\n' "$closed_by"
+					printf '    Closed at:  %s\n' "$pr_closed_at"
+					printf '    Action:     gh pr reopen %s --repo %s\n' "$pr_number" "$slug"
+					printf '\n'
+					orphan_count=$((orphan_count + 1))
+				fi
+			done
+
+		done <<<"$pr_entries"
+
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' \
+		"$repos_json" 2>/dev/null || true)
+
+	printf '%d' "$orphan_count"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Subcommand: scan-stale
+# -----------------------------------------------------------------------------
+# For each stamp: check if the PID is alive AND the worktree path still
+# exists. Print a human-readable advisory. Also scans for closed-not-merged
+# PRs whose linked issue is still open (cross-repo visibility gap).
+# Does NOT auto-release or auto-reopen — the agent is expected to parse the
+# output and prompt the user.
+#
+# Exit: 0 always.
+_isc_cmd_scan_stale() {
 	local stale_count=0
-	local stamp
-	for stamp in "$CLAIM_STAMP_DIR"/*.json; do
-		[[ -f "$stamp" ]] || continue
-		local issue slug worktree pid hostname
-		issue=$(jq -r '.issue // empty' "$stamp" 2>/dev/null || echo "")
-		slug=$(jq -r '.slug // empty' "$stamp" 2>/dev/null || echo "")
-		worktree=$(jq -r '.worktree_path // empty' "$stamp" 2>/dev/null || echo "")
-		pid=$(jq -r '.pid // empty' "$stamp" 2>/dev/null || echo "")
-		hostname=$(jq -r '.hostname // empty' "$stamp" 2>/dev/null || echo "")
 
-		[[ -z "$issue" || -z "$slug" ]] && continue
+	# --- Phase 1: stamp-based stale claim detection ---
+	if [[ -d "$CLAIM_STAMP_DIR" ]]; then
+		local stamp
+		for stamp in "$CLAIM_STAMP_DIR"/*.json; do
+			[[ -f "$stamp" ]] || continue
+			local issue slug worktree pid hostname
+			issue=$(jq -r '.issue // empty' "$stamp" 2>/dev/null || echo "")
+			slug=$(jq -r '.slug // empty' "$stamp" 2>/dev/null || echo "")
+			worktree=$(jq -r '.worktree_path // empty' "$stamp" 2>/dev/null || echo "")
+			pid=$(jq -r '.pid // empty' "$stamp" 2>/dev/null || echo "")
+			hostname=$(jq -r '.hostname // empty' "$stamp" 2>/dev/null || echo "")
 
-		# Only consider stamps from the current hostname — cross-machine
-		# stamps can't be verified and we don't want to surface them as stale.
-		local local_host
-		local_host=$(hostname 2>/dev/null || echo "unknown")
-		if [[ "$hostname" != "$local_host" ]]; then
-			continue
-		fi
+			[[ -z "$issue" || -z "$slug" ]] && continue
 
-		local pid_alive=0
-		if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-			pid_alive=1
-		fi
-
-		local worktree_exists=0
-		if [[ -n "$worktree" && -d "$worktree" ]]; then
-			worktree_exists=1
-		fi
-
-		if [[ $pid_alive -eq 0 && $worktree_exists -eq 0 ]]; then
-			if [[ $stale_count -eq 0 ]]; then
-				printf 'Stale interactive claims (dead PID and missing worktree):\n'
-				printf '\n'
+			# Only consider stamps from the current hostname — cross-machine
+			# stamps can't be verified and we don't want to surface them as stale.
+			local local_host
+			local_host=$(hostname 2>/dev/null || echo "unknown")
+			if [[ "$hostname" != "$local_host" ]]; then
+				continue
 			fi
-			printf '  #%s in %s\n' "$issue" "$slug"
-			printf '    worktree: %s (missing)\n' "${worktree:-unknown}"
-			printf '    pid:      %s (dead)\n' "${pid:-unknown}"
-			printf '    release:  aidevops issue release %s\n' "$issue"
-			printf '\n'
-			stale_count=$((stale_count + 1))
-		fi
-	done
+
+			local pid_alive=0
+			if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+				pid_alive=1
+			fi
+
+			local worktree_exists=0
+			if [[ -n "$worktree" && -d "$worktree" ]]; then
+				worktree_exists=1
+			fi
+
+			if [[ $pid_alive -eq 0 && $worktree_exists -eq 0 ]]; then
+				if [[ $stale_count -eq 0 ]]; then
+					printf 'Stale interactive claims (dead PID and missing worktree):\n'
+					printf '\n'
+				fi
+				printf '  #%s in %s\n' "$issue" "$slug"
+				printf '    worktree: %s (missing)\n' "${worktree:-unknown}"
+				printf '    pid:      %s (dead)\n' "${pid:-unknown}"
+				printf '    release:  aidevops issue release %s\n' "$issue"
+				printf '\n'
+				stale_count=$((stale_count + 1))
+			fi
+		done
+	fi
 
 	if [[ $stale_count -eq 0 ]]; then
 		printf 'No stale interactive claims.\n'
@@ -523,6 +662,17 @@ _isc_cmd_scan_stale() {
 		# shellcheck disable=SC2016  # backticks are literal text, not command substitution
 		printf 'Total: %d stale claim(s). Release via `aidevops issue release <N>` or reclaim by `cd`-ing into the worktree.\n' "$stale_count"
 	fi
+
+	# --- Phase 2: closed-not-merged PR orphan detection (cross-repo) ---
+	printf '\nScanning for closed-not-merged PRs with still-open linked issues...\n'
+	local orphan_count
+	orphan_count=$(_isc_scan_closed_pr_orphans 2>/dev/null || echo "0")
+	if [[ "$orphan_count" -eq 0 ]]; then
+		printf 'No closed-not-merged PR orphans found.\n'
+	else
+		printf 'Total: %d closed-not-merged PR orphan(s). Review the above — do NOT auto-reopen without verifying the close was unintentional.\n' "$orphan_count"
+	fi
+
 	return 0
 }
 
@@ -546,8 +696,12 @@ USAGE:
       List active claims from the stamp directory, or check one issue.
 
   interactive-session-helper.sh scan-stale
-      Identify stamps with dead PID AND missing worktree path. Does NOT
-      auto-release — agent parses output and prompts the user.
+      Two-phase stale detection:
+      Phase 1 — Identify stamps with dead PID AND missing worktree path.
+                Does NOT auto-release — agent parses output and prompts user.
+      Phase 2 — Scan all pulse-enabled repos for closed-not-merged PRs
+                (last 14 days) whose linked issue is still OPEN. Surfaces
+                these as recovery candidates. Does NOT auto-reopen.
 
   interactive-session-helper.sh help
       Print this message.
