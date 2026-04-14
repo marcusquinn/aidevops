@@ -84,10 +84,24 @@ function getClaudeProxyModels() {
       maxTokens: 32000,
     },
     {
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5 (via Claude CLI)",
+      reasoning: true,
+      contextWindow: 200000,
+      maxTokens: 64000,
+    },
+    {
       id: "claude-sonnet-4-6",
       name: "Claude Sonnet 4.6 (via Claude CLI)",
       reasoning: true,
       contextWindow: 1000000,
+      maxTokens: 64000,
+    },
+    {
+      id: "claude-opus-4-5",
+      name: "Claude Opus 4.5 (via Claude CLI)",
+      reasoning: true,
+      contextWindow: 200000,
       maxTokens: 64000,
     },
     {
