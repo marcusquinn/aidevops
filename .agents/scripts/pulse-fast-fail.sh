@@ -210,9 +210,11 @@ _ff_parse_entry() {
 	local now="$3"
 
 	local existing_ts existing_count existing_backoff
-	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
-	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
-	existing_backoff=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].backoff_secs // 0' 2>/dev/null) || existing_backoff=0
+	IFS=$'\t' read -r existing_ts existing_count existing_backoff < <(
+		printf '%s' "$state" | jq -r --arg k "$key" \
+			'.[$k] // {} | "\(.ts // 0)\t\(.count // 0)\t\(.backoff_secs // 0)"' ||
+			printf '0\t0\t0\n'
+	)
 	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
 	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
 	[[ "$existing_backoff" =~ ^[0-9]+$ ]] || existing_backoff=0
