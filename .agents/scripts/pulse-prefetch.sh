@@ -2030,6 +2030,102 @@ prefetch_triage_review_status() {
 }
 
 #######################################
+# Fetch status:needs-info issues for a single repo via gh issue list.
+# Outputs JSON array to stdout; emits "[]" on any failure.
+# Handles rate-limit detection and logs errors to LOGFILE.
+#
+# Arguments:
+#   $1 - slug (owner/repo)
+# Output: JSON array of issue objects
+# Returns: 0 always (best-effort)
+#######################################
+_prefetch_ni_fetch_issues() {
+	local slug="$1"
+	local ni_err ni_json
+	ni_err=$(mktemp)
+	ni_json=$(gh issue list --repo "$slug" --label "status:needs-info" \
+		--state open --json number,title,author,createdAt,updatedAt \
+		--limit 50 2>"$ni_err") || ni_json="[]"
+	if [[ -z "$ni_json" || "$ni_json" == "null" ]]; then
+		local _ni_err_msg
+		_ni_err_msg=$(cat "$ni_err" 2>/dev/null || echo "unknown error")
+		# GH#18979 (t2097): detect rate-limit exhaustion
+		if _pulse_gh_err_is_rate_limit "$ni_err"; then
+			_pulse_mark_rate_limited "prefetch_needs_info_replies:${slug}"
+		fi
+		echo "[pulse-wrapper] prefetch_needs_info_replies: gh issue list FAILED for ${slug}: ${_ni_err_msg}" >>"$LOGFILE"
+		ni_json="[]"
+	fi
+	rm -f "$ni_err"
+	echo "$ni_json"
+	return 0
+}
+
+#######################################
+# Resolve the timestamp when status:needs-info was applied to an issue.
+# Uses the GitHub timeline API; falls back to the issue's updatedAt field
+# when the timeline call fails or returns null.
+#
+# Arguments:
+#   $1 - slug     (owner/repo)
+#   $2 - number   (issue number)
+#   $3 - ni_json  (full issues JSON array)
+#   $4 - i        (index into ni_json for this issue)
+# Output: ISO-8601 date string
+# Returns: 0 always
+#######################################
+_prefetch_ni_get_label_date() {
+	local slug="$1"
+	local number="$2"
+	local ni_json="$3"
+	local i="$4"
+	local label_date api_ok=true
+	label_date=$(gh api "repos/${slug}/issues/${number}/timeline" --paginate \
+		--jq '[.[] | select(.event == "labeled" and .label.name == "status:needs-info")] | last | .created_at' \
+		2>/dev/null) || api_ok=false
+	if [[ "$api_ok" != true || -z "$label_date" || "$label_date" == "null" ]]; then
+		# Fall back: use issue updatedAt as approximate label time
+		label_date=$(echo "$ni_json" | jq -r ".[$i].updatedAt")
+	fi
+	echo "$label_date"
+	return 0
+}
+
+#######################################
+# Determine whether the issue author replied after status:needs-info was applied.
+# Fetches all issue comments and compares the latest author comment date
+# against the label application timestamp.
+#
+# GH#18554: uses --arg to safely pass $author into jq (avoids injection if
+# login contains special chars).
+#
+# Arguments:
+#   $1 - slug       (owner/repo)
+#   $2 - number     (issue number)
+#   $3 - author     (GitHub login of the issue author)
+#   $4 - label_date (ISO-8601 timestamp when needs-info was applied)
+# Output: "true" if author replied after label date, "false" otherwise
+# Returns: 0 always
+#######################################
+_prefetch_ni_check_author_replied() {
+	local slug="$1"
+	local number="$2"
+	local author="$3"
+	local label_date="$4"
+	local latest_author_comment_date=""
+	latest_author_comment_date=$(gh api "repos/${slug}/issues/${number}/comments" --paginate 2>/dev/null |
+		jq -r --arg author "$author" '.[] | select(.user.login == $author) | .created_at' \
+			2>/dev/null | tail -n 1) || latest_author_comment_date=""
+	if [[ -n "$latest_author_comment_date" && "$latest_author_comment_date" != "null" &&
+		"$latest_author_comment_date" > "$label_date" ]]; then
+		echo "true"
+	else
+		echo "false"
+	fi
+	return 0
+}
+
+#######################################
 # Pre-fetch contributor reply status for status:needs-info issues
 #
 # For each pulse-enabled repo, finds issues with the status:needs-info
@@ -2037,10 +2133,6 @@ prefetch_triage_review_status() {
 # the label was applied. This enables the pulse to relabel issues back
 # to needs-maintainer-review when the contributor provides the requested
 # information.
-#
-# Detection: compare the label event timestamp (from timeline API) or
-# issue updatedAt against the most recent comment from the issue author.
-# If the author commented after the label was applied, mark as "replied".
 #
 # Arguments:
 #   $1 - repo_entries (slug|path pairs, one per line)
@@ -2060,25 +2152,8 @@ prefetch_needs_info_replies() {
 			continue
 		fi
 
-		# Get status:needs-info issues for this repo
-		local ni_json ni_err
-		ni_err=$(mktemp)
-		ni_json=$(gh issue list --repo "$slug" --label "status:needs-info" \
-			--state open --json number,title,author,createdAt,updatedAt \
-			--limit 50 2>"$ni_err") || ni_json="[]"
-		if [[ -z "$ni_json" || "$ni_json" == "null" ]]; then
-			local _ni_err_msg
-			_ni_err_msg=$(cat "$ni_err" 2>/dev/null || echo "unknown error")
-			# GH#18979 (t2097): detect rate-limit exhaustion
-			if _pulse_gh_err_is_rate_limit "$ni_err"; then
-				_pulse_mark_rate_limited "prefetch_needs_info_replies:${slug}"
-			fi
-			echo "[pulse-wrapper] prefetch_needs_info_replies: gh issue list FAILED for ${slug}: ${_ni_err_msg}" >>"$LOGFILE"
-			ni_json="[]"
-		fi
-		rm -f "$ni_err"
-
-		local ni_count
+		local ni_json ni_count
+		ni_json=$(_prefetch_ni_fetch_issues "$slug")
 		ni_count=$(echo "$ni_json" | jq 'length')
 		[[ "$ni_count" -gt 0 ]] || continue
 
@@ -2097,36 +2172,14 @@ prefetch_needs_info_replies() {
 
 		local i=0
 		while [[ "$i" -lt "$ni_count" ]]; do
-			local number title author created_at
+			local number title author label_date author_replied status_label
 			number=$(echo "$ni_json" | jq -r ".[$i].number")
 			title=$(echo "$ni_json" | jq -r ".[$i].title")
 			author=$(echo "$ni_json" | jq -r ".[$i].author.login")
-			created_at=$(echo "$ni_json" | jq -r ".[$i].createdAt")
 
-			# Find when status:needs-info was applied via timeline events
-			# Fall back to updatedAt if timeline API fails
-			local label_date=""
-			local api_ok=true
-			label_date=$(gh api "repos/${slug}/issues/${number}/timeline" --paginate \
-				--jq '[.[] | select(.event == "labeled" and .label.name == "status:needs-info")] | last | .created_at' 2>/dev/null) || api_ok=false
+			label_date=$(_prefetch_ni_get_label_date "$slug" "$number" "$ni_json" "$i")
+			author_replied=$(_prefetch_ni_check_author_replied "$slug" "$number" "$author" "$label_date")
 
-			if [[ "$api_ok" != true || -z "$label_date" || "$label_date" == "null" ]]; then
-				# Fall back: use issue updatedAt as approximate label time
-				label_date=$(echo "$ni_json" | jq -r ".[$i].updatedAt")
-			fi
-
-			# Check for author comments after the label was applied
-			local author_replied=false
-			local latest_author_comment_date=""
-			# GH#18554: use --arg to safely pass $author into jq (avoids injection if login contains special chars)
-			latest_author_comment_date=$(gh api "repos/${slug}/issues/${number}/comments" --paginate 2>/dev/null |
-				jq -r --arg author "$author" '.[] | select(.user.login == $author) | .created_at' 2>/dev/null | tail -n 1) || latest_author_comment_date=""
-
-			if [[ -n "$latest_author_comment_date" && "$latest_author_comment_date" != "null" && "$latest_author_comment_date" > "$label_date" ]]; then
-				author_replied=true
-			fi
-
-			local status_label
 			if [[ "$author_replied" == true ]]; then
 				status_label="replied"
 				total_replied=$((total_replied + 1))
@@ -2135,7 +2188,6 @@ prefetch_needs_info_replies() {
 			fi
 
 			echo "- Issue #${number}: ${title} [author: @${author}] [status: **${status_label}**] [labeled: ${label_date}]"
-
 			i=$((i + 1))
 		done
 
