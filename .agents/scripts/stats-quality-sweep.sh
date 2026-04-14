@@ -275,6 +275,68 @@ _save_sweep_state() {
 }
 
 #######################################
+# Discover tracked .sh files in a repo.
+#
+# Arguments:
+#   $1 - repo path
+# Output: newline-separated file paths to stdout (max 100)
+#######################################
+_sweep_shellcheck_get_files() {
+	local repo_path="$1"
+
+	# GH#5663: Use git ls-files to discover only tracked shell scripts.
+	# find can return deleted files still on disk, stale worktree paths, or
+	# build artifacts — causing false ShellCheck findings on non-existent files.
+	if git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+		git -C "$repo_path" ls-files '*.sh' 2>/dev/null | head -100
+	else
+		# Fallback for non-git directories (should not occur for pulse repos)
+		find "$repo_path" -name "*.sh" -not -path "*/node_modules/*" \
+			-not -path "*/.git/*" -type f 2>/dev/null | head -100
+	fi
+	return 0
+}
+
+#######################################
+# Format ShellCheck results into a markdown section.
+#
+# Arguments:
+#   $1 - file count scanned
+#   $2 - error count
+#   $3 - warning count
+#   $4 - note count
+#   $5 - top findings details (may be empty)
+# Output: markdown section to stdout
+#######################################
+_sweep_shellcheck_format_section() {
+	local file_count="$1"
+	local sc_errors="$2"
+	local sc_warnings="$3"
+	local sc_notes="$4"
+	local sc_details="$5"
+
+	local shellcheck_section="### ShellCheck ($file_count files scanned)
+
+- **Errors**: ${sc_errors}
+- **Warnings**: ${sc_warnings}
+- **Notes**: ${sc_notes}
+"
+	if [[ -n "$sc_details" ]]; then
+		shellcheck_section="${shellcheck_section}
+**Top findings:**
+${sc_details}"
+	fi
+	if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 && "$sc_notes" -eq 0 ]]; then
+		shellcheck_section="${shellcheck_section}
+_All clear — no issues found._
+"
+	fi
+
+	printf '%s' "$shellcheck_section"
+	return 0
+}
+
+#######################################
 # Run ShellCheck on all tracked .sh files in a repo.
 #
 # Arguments:
@@ -289,15 +351,7 @@ _sweep_shellcheck() {
 	command -v shellcheck &>/dev/null || return 0
 
 	local sh_files
-	# GH#5663: Use git ls-files to discover only tracked shell scripts.
-	# find can return deleted files still on disk, stale worktree paths, or
-	# build artifacts — causing false ShellCheck findings on non-existent files.
-	if git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
-		sh_files=$(git -C "$repo_path" ls-files '*.sh' 2>/dev/null | head -100)
-	else
-		# Fallback for non-git directories (should not occur for pulse repos)
-		sh_files=$(find "$repo_path" -name "*.sh" -not -path "*/node_modules/*" -not -path "*/.git/*" -type f 2>/dev/null | head -100)
-	fi
+	sh_files=$(_sweep_shellcheck_get_files "$repo_path")
 
 	[[ -z "$sh_files" ]] && return 0
 
@@ -336,12 +390,7 @@ _sweep_shellcheck() {
 		)
 		if [[ -n "$result" ]]; then
 			# t1992: shellcheck -f gcc emits three severities: error, warning,
-			# note. The previous patterns (':.*: error:' and ':.*: warning:')
-			# matched only error+warning, so SC1091 — the noisiest rule, which
-			# fires `note` for every sourced file when -x is disabled — was
-			# silently counted as zero, leaving the sweep summary to show
-			# "(N files scanned)" with no findings even when several existed.
-			# Pin the regex to the gcc location prefix `<file>:<line>:<col>:`
+			# note. Pin the regex to the gcc location prefix `<file>:<line>:<col>:`
 			# so we don't accidentally match content inside a finding message.
 			local file_errors file_warnings file_notes
 			file_errors=$(grep -cE ':[0-9]+:[0-9]+: error:' <<<"$result") || file_errors=0
@@ -366,24 +415,7 @@ _sweep_shellcheck() {
 
 	local file_count
 	file_count=$(echo "$sh_files" | wc -l | tr -d ' ')
-	local shellcheck_section="### ShellCheck ($file_count files scanned)
-
-- **Errors**: ${sc_errors}
-- **Warnings**: ${sc_warnings}
-- **Notes**: ${sc_notes}
-"
-	if [[ -n "$sc_details" ]]; then
-		shellcheck_section="${shellcheck_section}
-**Top findings:**
-${sc_details}"
-	fi
-	if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 && "$sc_notes" -eq 0 ]]; then
-		shellcheck_section="${shellcheck_section}
-_All clear — no issues found._
-"
-	fi
-
-	printf '%s' "$shellcheck_section"
+	_sweep_shellcheck_format_section "$file_count" "$sc_errors" "$sc_warnings" "$sc_notes" "$sc_details"
 	return 0
 }
 
