@@ -1703,6 +1703,232 @@ test_scan_single_pr_filters_pr5637_merge_comment() {
 	return 0
 }
 
+# GH#18998: Empty-review guard — Gemini "no feedback" summary with no inline
+# comments should produce zero findings (fixture: issue #18834 incident).
+test_empty_review_guard_gemini_no_feedback() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					# Zero inline file comments on this PR
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					# Gemini APPROVED review stating explicitly "no feedback"
+					echo '[{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"APPROVED","body":"I have no feedback to provide as there were no review comments on this pull request.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#pullrequestreview-1"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "GH#18998: Gemini 'no feedback' APPROVED review with 0 inline comments → 0 findings" 0
+	else
+		print_result "GH#18998: Gemini 'no feedback' APPROVED review with 0 inline comments → 0 findings" 1 \
+			"expected 0 findings, got ${count} — would have filed false-positive issue (GH#18834 regression)"
+	fi
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
+# GH#18998: Multiple bots all say "no issues" with zero inline comments → 0 findings
+test_empty_review_guard_skips_when_all_summaries_negative() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					echo '[
+						{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"APPROVED","body":"I have no feedback to provide as there were no review comments.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#r1"},
+						{"id":2,"user":{"login":"coderabbitai[bot]"},"state":"COMMENTED","body":"No issues found. LGTM!","submitted_at":"2024-01-01T00:00:01Z","html_url":"https://github.com/example/repo/pull/1#r2"}
+					]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "GH#18998: All bot summaries negative, 0 inline comments → 0 findings" 0
+	else
+		print_result "GH#18998: All bot summaries negative, 0 inline comments → 0 findings" 1 \
+			"expected 0 findings, got ${count} — GH#18998 empty-review guard not firing"
+	fi
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
+# GH#18998: Negative summary review + inline comments → guard must NOT fire
+# (inline comments may have actionable findings even if top-level summary is "LGTM").
+test_empty_review_guard_does_not_skip_with_inline_comments() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					# One inline comment with an actionable finding
+					# Note: "line" field required to pass the resolved-comment filter
+					# in _build_inline_findings (select .position or .line or .original_line)
+					echo '[{"id":1,"user":{"login":"coderabbitai[bot]"},"path":"src/foo.sh","line":10,"body":"**Medium:** This function should validate its input before use.","created_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#r1"}]'
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					# Top-level summary says "no issues" but inline comment has finding
+					echo '[{"id":1,"user":{"login":"coderabbitai[bot]"},"state":"COMMENTED","body":"LGTM! No issues found.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#r1"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					# Return the jq-filtered result directly (--jq '[.tree[].path]'
+					# is stripped by the mock, so return what gh api would have output)
+					echo '["src/foo.sh"]'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -gt 0 ]]; then
+		print_result "GH#18998: Negative top-level summary + inline comments → findings kept (guard does not fire)" 0
+	else
+		print_result "GH#18998: Negative top-level summary + inline comments → findings kept (guard does not fire)" 1 \
+			"expected >0 findings (inline comment should be kept), got ${count} — guard over-firing"
+	fi
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -1767,6 +1993,12 @@ main() {
 	test_skips_pr5637_pulse_supervisor_merge_comment
 	test_keeps_human_changes_requested_review_gh5668
 	test_scan_single_pr_filters_pr5637_merge_comment
+
+	echo ""
+	echo "Running empty-review guard tests (GH#18998)"
+	test_empty_review_guard_gemini_no_feedback
+	test_empty_review_guard_skips_when_all_summaries_negative
+	test_empty_review_guard_does_not_skip_with_inline_comments
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
