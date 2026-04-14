@@ -93,5 +93,7 @@ export async function convertFile(
     throw new Error(`Input file not found: ${inputPath}`)
   }
   const content = await inputFile.text()
+  // nosemgrep: javascript.lang.security.audit.unsafe-dynamic-method.unsafe-dynamic-method
+  // FILE_CONVERTERS keys are constrained by the 'toToon' | 'toJson' type union — not user-controlled.
   return FILE_CONVERTERS[direction](content, outputPath)
 }

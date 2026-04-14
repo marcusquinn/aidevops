@@ -58,14 +58,15 @@ def get_ollama_summary(text: str, model: str) -> Optional[str]:
         "options": {"temperature": 0.1, "num_predict": 80},
     }).encode('utf-8')
 
-    req = urllib.request.Request(
+    # Ollama runs over HTTP on localhost by design — HTTPS is not supported.
+    req = urllib.request.Request(  # nosec B105 nosemgrep: python.lang.security.audit.insecure-transport.urllib.insecure-request-object.insecure-request-object
         'http://localhost:11434/api/generate',
         data=payload,
         headers={'Content-Type': 'application/json'},
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # nosec B310 nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected,python_urlopen_rule-urllib-urlopen
             result = json.loads(resp.read().decode('utf-8'))
             summary = result.get('response', '').strip()
             summary = summary.strip('"\'')

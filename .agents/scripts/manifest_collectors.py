@@ -8,7 +8,6 @@ Extracted from generate-manifest.py to reduce file-level complexity.
 """
 
 import os
-import re
 import glob
 from collections import OrderedDict
 from typing import Any, Dict, List

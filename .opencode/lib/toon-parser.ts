@@ -21,6 +21,8 @@ const LITERAL_FACTORIES: Record<string, () => unknown> = {
 
 function parseLiteral(line: string): ParseResult | null {
   if (Object.prototype.hasOwnProperty.call(LITERAL_FACTORIES, line)) {
+    // nosemgrep: javascript.lang.security.audit.unsafe-dynamic-method.unsafe-dynamic-method
+    // LITERAL_FACTORIES keys are a fixed compile-time set — not user-controlled input.
     return { value: LITERAL_FACTORIES[line](), consumed: 1 }
   }
   if (/^-?\d+(\.\d+)?$/.test(line)) return { value: Number(line), consumed: 1 }
