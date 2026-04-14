@@ -110,6 +110,29 @@ _pulse_mark_rate_limited() {
 	return 0
 }
 
+#######################################
+# Check if a repo's cached issues contain any items with a given label.
+# Used by NMR and needs-info scans to skip repos with 0 matching items.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - label name to check for
+# Returns:
+#   0 if cached count > 0 or no cache available (proceed with live query)
+#   1 if cached count == 0 (safe to skip)
+#######################################
+_prefetch_cached_label_count_is_zero() {
+	local slug="$1"
+	local label="$2"
+	local cache_entry cached_count
+	cache_entry=$(_prefetch_cache_get "$slug" 2>/dev/null) || cache_entry=""
+	[[ -n "$cache_entry" ]] || return 0 # no cache = proceed
+	cached_count=$(echo "$cache_entry" | jq --arg l "$label" \
+		'[.issues // [] | .[] | select(.labels | map(.name) | index($l))] | length' 2>/dev/null) || return 0
+	[[ "$cached_count" == "0" ]] && return 1
+	return 0
+}
+
 # =============================================================================
 # t2041: Budget-aware LLM sweep — state fingerprint, hygiene anomalies,
 # cache-hit detection. See .agents/reference/pulse-llm-budget.md and
@@ -916,6 +939,96 @@ _prefetch_repo_issues() {
 #   $2 - repo path
 #   $3 - output file path
 #######################################
+
+#######################################
+# GH#18984 (t2098): Emit cached-data replay for an idle repo on cache-hit.
+#
+# On cache-hit, replays cached PR/issue sections from the cache entry
+# instead of making 6 expensive gh API calls. The only live call is
+# _prefetch_prs_enrich_checks for repos with cached PRs > 0 (catches
+# reviewDecision changes that don't always update updatedAt).
+#
+# Writes markdown sections to stdout. Sets PREFETCH_UPDATED_PRS and
+# PREFETCH_UPDATED_ISSUES for the cache-update path in the caller.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - cache_entry JSON
+#######################################
+_prefetch_single_repo_idle_skip() {
+	local slug="$1"
+	local cache_entry="$2"
+
+	local _cached_last
+	_cached_last=$(echo "$cache_entry" | jq -r '.last_prefetch // "unknown"' 2>/dev/null) || _cached_last="unknown"
+	echo "> **State cache hit** — fingerprint unchanged since \`${_cached_last}\`."
+	echo "> No open issues or PRs have been updated since then."
+	echo "> LLM may skip deep analysis of this repo this cycle."
+	echo ""
+
+	local _cached_prs _cached_issues _cached_pr_count _cached_issue_count
+	_cached_prs=$(echo "$cache_entry" | jq -c '.prs // []' 2>/dev/null) || _cached_prs="[]"
+	_cached_issues=$(echo "$cache_entry" | jq -c '.issues // []' 2>/dev/null) || _cached_issues="[]"
+	_cached_pr_count=$(echo "$_cached_prs" | jq 'length' 2>/dev/null) || _cached_pr_count=0
+	[[ "$_cached_pr_count" =~ ^[0-9]+$ ]] || _cached_pr_count=0
+	_cached_issue_count=$(echo "$_cached_issues" | jq 'length' 2>/dev/null) || _cached_issue_count=0
+	[[ "$_cached_issue_count" =~ ^[0-9]+$ ]] || _cached_issue_count=0
+
+	# Replay cached PR section
+	echo "### Open PRs (${_cached_pr_count}) [cached]"
+	if [[ "$_cached_pr_count" -gt 0 ]]; then
+		echo "$_cached_prs" | jq -r '.[] | "- PR #\(.number): \(.title) [review: \(.reviewDecision // "NONE")] [updated: \(.updatedAt)]"'
+	else
+		echo "- None"
+	fi
+	echo ""
+
+	# Checks enrichment: always run for repos with cached PRs > 0
+	if [[ "$_cached_pr_count" -gt 0 ]]; then
+		local _checks_json=""
+		_checks_json=$(_prefetch_prs_enrich_checks "$slug" 50)
+		if [[ -n "$_checks_json" && "$_checks_json" != "[]" && "$_checks_json" != "null" ]]; then
+			echo "### PR Check Status (live)"
+			echo "$_checks_json" | jq -r '.[] | "- PR #\(.number): \(.statusCheckRollup // "unknown")"' 2>/dev/null || true
+			echo ""
+		fi
+	fi
+
+	# Skip daily cap — unchanged repos don't create PRs
+	echo "### Daily PR Cap [cached]"
+	echo "- Skipped (idle repo, no new PRs expected)"
+	echo ""
+
+	# Replay cached issue sections using same filter logic as _prefetch_repo_issues
+	local _disp_json _sweep_json _disp_count _sweep_count
+	_disp_json=$(echo "$_cached_issues" | jq -c '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("needs-maintainer-review") or index("routine-tracking") or index("on hold") or index("blocked")) | not) | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")) | not)]' 2>/dev/null) || _disp_json="[]"
+	_sweep_json=$(echo "$_cached_issues" | jq -c '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("needs-maintainer-review") or index("routine-tracking") or index("on hold") or index("blocked")) | not) | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")))]' 2>/dev/null) || _sweep_json="[]"
+	_disp_count=$(echo "$_disp_json" | jq 'length' 2>/dev/null) || _disp_count=0
+	_sweep_count=$(echo "$_sweep_json" | jq 'length' 2>/dev/null) || _sweep_count=0
+
+	if [[ "$_disp_count" -gt 0 ]]; then
+		echo "### Open Issues (${_disp_count}) [cached]"
+		echo "$_disp_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)] [updated: \(.updatedAt)]"'
+	else
+		echo "### Open Issues (0) [cached]"
+		echo "- None"
+	fi
+	echo ""
+	if [[ "$_sweep_count" -gt 0 ]]; then
+		echo "### Quality-Tracked Issues (${_sweep_count}) [cached]"
+		echo "$_sweep_json" | jq -r '.[] | "- Issue #\(.number): \(.title)"'
+		echo ""
+	fi
+
+	# Set shared vars for cache update — reuse cached data
+	PREFETCH_UPDATED_PRS="$_cached_prs"
+	PREFETCH_UPDATED_ISSUES="$_cached_issues"
+
+	echo "[pulse-wrapper] _prefetch_single_repo: IDLE SKIP for ${slug} — reused cached data (${_cached_pr_count} PRs, ${_cached_issue_count} issues)" >>"$LOGFILE"
+	_PULSE_HEALTH_IDLE_REPO_SKIPS=$((_PULSE_HEALTH_IDLE_REPO_SKIPS + 1))
+	return 0
+}
+
 _prefetch_single_repo() {
 	local slug="$1"
 	local path="$2"
@@ -953,16 +1066,12 @@ _prefetch_single_repo() {
 		echo "## ${slug} (${path})"
 		echo ""
 		if [[ "$cache_hit" == "true" ]]; then
-			local _cached_last
-			_cached_last=$(echo "$cache_entry" | jq -r '.last_prefetch // "unknown"' 2>/dev/null) || _cached_last="unknown"
-			echo "> **State cache hit** — fingerprint unchanged since \`${_cached_last}\`."
-			echo "> No open issues or PRs have been updated since then."
-			echo "> LLM may skip deep analysis of this repo this cycle."
-			echo ""
+			_prefetch_single_repo_idle_skip "$slug" "$cache_entry"
+		else
+			_prefetch_repo_prs "$slug" "$cache_entry" "$sweep_mode"
+			_prefetch_repo_daily_cap "$slug"
+			_prefetch_repo_issues "$slug" "$cache_entry" "$sweep_mode"
 		fi
-		_prefetch_repo_prs "$slug" "$cache_entry" "$sweep_mode"
-		_prefetch_repo_daily_cap "$slug"
-		_prefetch_repo_issues "$slug" "$cache_entry" "$sweep_mode"
 	} >"$outfile"
 
 	# GH#15286: Update cache with fresh data.
@@ -1828,6 +1937,12 @@ prefetch_triage_review_status() {
 	while IFS='|' read -r slug path; do
 		[[ -n "$slug" ]] || continue
 
+		# GH#18984 (t2098): skip repos with 0 cached NMR issues
+		if _prefetch_cached_label_count_is_zero "$slug" "needs-maintainer-review"; then
+			echo "[pulse-wrapper] prefetch_triage_review_status: SKIP ${slug} — 0 NMR issues in cache" >>"$LOGFILE"
+			continue
+		fi
+
 		# Get needs-maintainer-review issues for this repo
 		local nmr_json nmr_err
 		nmr_err=$(mktemp)
@@ -1938,6 +2053,12 @@ prefetch_needs_info_replies() {
 
 	while IFS='|' read -r slug path; do
 		[[ -n "$slug" ]] || continue
+
+		# GH#18984 (t2098): skip repos with 0 cached needs-info issues
+		if _prefetch_cached_label_count_is_zero "$slug" "status:needs-info"; then
+			echo "[pulse-wrapper] prefetch_needs_info_replies: SKIP ${slug} — 0 needs-info issues in cache" >>"$LOGFILE"
+			continue
+		fi
 
 		# Get status:needs-info issues for this repo
 		local ni_json ni_err
