@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.28] - 2026-04-14
+
+### Added
+
+- ensure subcommand — auto-upgrade bash in setup + update (GH#18965/t2094) (#18966)
+
 ## [3.8.27] - 2026-04-14
 
 ### Changed
