@@ -19,6 +19,7 @@ import {
   buildChildEnvWithToken,
   detectRateLimitJson,
   getAvailableAccounts,
+  getNativeCliFallback,
   markAccountRateLimited,
 } from "./claude-proxy-retry.mjs";
 import { buildClaudeArgs } from "./claude-proxy-context.mjs";
@@ -117,11 +118,11 @@ async function runClaudeJsonWithAccount(body, directory, account, abortSignal) {
  */
 export async function runClaudeJson(body, directory, abortSignal) {
   const accounts = await getAvailableAccounts();
-  if (accounts.length === 0) {
-    throw new Error("No Anthropic OAuth pool accounts available (all rate-limited or no valid tokens)");
-  }
+  // Always append native CLI auth as final fallback so requests succeed
+  // even when all OAuth pool accounts are rate-limited.
+  const accountsWithFallback = [...accounts, getNativeCliFallback()];
 
-  for (const account of accounts) {
+  for (const account of accountsWithFallback) {
     if (abortSignal && abortSignal.aborted) throw new Error("Request aborted by client");
     console.error(`[aidevops] Claude proxy: trying account ${account.email} (json mode)`);
     const result = await runClaudeJsonWithAccount(body, directory, account, abortSignal);
@@ -131,7 +132,7 @@ export async function runClaudeJson(body, directory, abortSignal) {
     console.error(`[aidevops] Claude proxy: account ${account.email} rate-limited, trying next...`);
   }
 
-  throw new Error("All Anthropic OAuth pool accounts are rate-limited");
+  throw new Error("All Anthropic OAuth pool accounts and native CLI auth are rate-limited");
 }
 
 /**

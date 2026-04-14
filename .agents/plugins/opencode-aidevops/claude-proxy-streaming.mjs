@@ -21,6 +21,7 @@ import {
   buildChildEnvWithToken,
   detectRateLimitStream,
   getAvailableAccounts,
+  getNativeCliFallback,
   markAccountRateLimited,
 } from "./claude-proxy-retry.mjs";
 import {
@@ -353,12 +354,11 @@ export function streamClaudeResponse(body, directory) {
   return new ReadableStream({
     async start(controller) {
       const accounts = await getAvailableAccounts();
-      if (accounts.length === 0) {
-        emitAllAccountsRateLimited(controller, encoder, completionId, created, body.model);
-        return;
-      }
+      // Always append native CLI auth as final fallback so streams succeed
+      // even when all OAuth pool accounts are rate-limited.
+      const accountsWithFallback = [...accounts, getNativeCliFallback()];
       const streamCtx = { controller, encoder, completionId, created, body, directory, abortRef };
-      await iterateAccounts(streamCtx, accounts);
+      await iterateAccounts(streamCtx, accountsWithFallback);
     },
     cancel(reason) {
       handleStreamCancel(abortRef, reason);
