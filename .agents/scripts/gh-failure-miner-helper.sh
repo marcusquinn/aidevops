@@ -523,10 +523,11 @@ process_failed_runs() {
 		local signature
 		signature=$(resolve_check_signature "$run_json" "$run_id" "$repo_slug" "$include_logs" "$run_logs_checked" "$max_run_logs")
 		# Only charge the log-fetch budget when a real log fetch was attempted.
-		# job_not_started (0-step cancelled jobs) short-circuit before fetching any
-		# logs — counting them exhausts the budget for genuine failures in other PRs.
-		# This is the root cause of the signature_not_fetched false-positive cluster (GH#18978).
-		if [[ "$include_logs" == "true" ]] && [[ -n "$run_id" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]] && [[ "$signature" != "job_not_started" ]]; then
+		# job_not_started (0-step cancelled jobs) and billing_outage (annotation-detected,
+		# no gh run view call) both short-circuit before fetching any logs — counting them
+		# exhausts the budget for genuine failures in other PRs. (GH#18978)
+		if [[ "$include_logs" == "true" ]] && [[ -n "$run_id" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]] &&
+			[[ "$signature" != "job_not_started" ]] && [[ "$signature" != "billing_outage" ]]; then
 			run_logs_checked=$((run_logs_checked + 1))
 		fi
 
