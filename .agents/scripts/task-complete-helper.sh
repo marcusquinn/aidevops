@@ -348,32 +348,142 @@ complete_task() {
 	# Create backup
 	cp "$todo_file" "${todo_file}.bak"
 
-	# Mark as complete: [ ] -> [x], append proof-log and completed:date
-	# Use sed to match the line and transform it
-	local sed_pattern="s/^([[:space:]]*- )\[ \] (${task_id} .*)$/\1[x] \2 ${proof_log} completed:${today}/"
-
-	if [[ "$OSTYPE" == "darwin"* ]]; then
-		sed -i '' -E "$sed_pattern" "$todo_file"
-	else
-		sed -i -E "$sed_pattern" "$todo_file"
-	fi
-
-	# Verify the change was made
-	if ! grep -qE "^[[:space:]]*- \[x\] ${task_id} " "$todo_file"; then
-		log_error "Failed to update TODO.md for $task_id"
+	# Ensure ## Done section exists before extracting
+	if ! grep -qE "^## Done$" "$todo_file"; then
+		log_error "## Done section not found in $todo_file — cannot move task"
 		mv "${todo_file}.bak" "$todo_file"
 		return 1
 	fi
 
-	# Verify proof-log was added
-	if ! grep -E "^[[:space:]]*- \[x\] ${task_id} " "$todo_file" | grep -qE "(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})"; then
+	# Idempotency: if already in ## Done, nothing to do
+	if awk '/^## Done$/{f=1;next} /^## /{f=0} f' "$todo_file" |
+		grep -qE "^[[:space:]]*- \[x\] ${task_id}( |$)"; then
+		log_warn "Task $task_id is already in ## Done section"
+		rm -f "${todo_file}.bak"
+		return 0
+	fi
+
+	# Extract task block (parent line + indented continuations) to tmp file,
+	# outputting the file-minus-block to another tmp file.
+	# Block ends at: blank line OR next top-level task entry at same/lower indent.
+	local tmp_block
+	tmp_block=$(mktemp)
+	local tmp_rest
+	tmp_rest=$(mktemp)
+
+	awk -v tid="$task_id" -v bfile="$tmp_block" '
+	BEGIN { in_block=0; task_indent=-1 }
+	!in_block && /^[[:space:]]*- \[ \] / {
+		if (match($0, /- \[ \] [^ ]+/)) {
+			cand = substr($0, RSTART + 6, RLENGTH - 6)
+			if (cand == tid) {
+				pfx = $0; gsub(/[^ 	].*/, "", pfx)
+				task_indent = length(pfx)
+				in_block = 1
+				print $0 >> bfile
+				next
+			}
+		}
+	}
+	in_block {
+		pfx = $0; gsub(/[^ 	].*/, "", pfx); lindent = length(pfx)
+		if (/^[[:space:]]*$/ || (lindent <= task_indent && /^[[:space:]]*- /)) {
+			in_block = 0
+		} else {
+			print $0 >> bfile; next
+		}
+	}
+	{ print $0 }
+	' "$todo_file" >"$tmp_rest"
+
+	# Verify block was captured
+	if [[ ! -s "$tmp_block" ]]; then
+		log_error "Failed to extract task block for $task_id"
+		rm -f "$tmp_block" "$tmp_rest"
+		mv "${todo_file}.bak" "$todo_file"
+		return 1
+	fi
+
+	# Transform first line of block: [ ] -> [x], append proof_log + completed:date
+	local tmp_block_xf
+	tmp_block_xf=$(mktemp)
+	awk -v plog="$proof_log" -v dt="$today" '
+	NR == 1 {
+		sub(/\[ \]/, "[x]")
+		sub(/[[:space:]]+$/, "")
+		print $0 " " plog " completed:" dt
+		next
+	}
+	{ print }
+	' "$tmp_block" >"$tmp_block_xf"
+	rm -f "$tmp_block"
+
+	# Find ## Done line number in the modified file (tmp_rest)
+	local done_lineno
+	done_lineno=$(grep -n "^## Done$" "$tmp_rest" | head -1 | cut -d: -f1)
+	if [[ -z "$done_lineno" ]]; then
+		log_error "## Done section disappeared after extraction — aborting"
+		rm -f "$tmp_block_xf" "$tmp_rest"
+		mv "${todo_file}.bak" "$todo_file"
+		return 1
+	fi
+
+	# Determine insertion point: right after ## Done header + blank line
+	local next_line
+	next_line=$(sed -n "$((done_lineno + 1))p" "$tmp_rest")
+	local insert_after
+	local has_blank_line
+	if printf '%s\n' "$next_line" | grep -qE "^[[:space:]]*$"; then
+		insert_after=$((done_lineno + 1))
+		has_blank_line=1
+	else
+		insert_after=$done_lineno
+		has_blank_line=0
+	fi
+
+	# Assemble new file: prefix + [blank] + block + suffix
+	local total_lines
+	total_lines=$(wc -l <"$tmp_rest")
+	local rest_start
+	rest_start=$((insert_after + 1))
+	local tmp_final
+	tmp_final=$(mktemp)
+	{
+		sed -n "1,${insert_after}p" "$tmp_rest"
+		if [[ "$has_blank_line" -eq 0 ]]; then
+			printf '\n'
+		fi
+		cat "$tmp_block_xf"
+		if [[ "$rest_start" -le "$total_lines" ]]; then
+			sed -n "${rest_start},\$p" "$tmp_rest"
+		fi
+	} >"$tmp_final" && mv "$tmp_final" "$todo_file" || {
+		rm -f "$tmp_final" "$tmp_block_xf" "$tmp_rest"
+		log_error "Failed to assemble new TODO.md for $task_id"
+		mv "${todo_file}.bak" "$todo_file"
+		return 1
+	}
+
+	rm -f "$tmp_block_xf" "$tmp_rest"
+
+	# Verify task is now in ## Done with proof-log
+	if ! awk '/^## Done$/{f=1;next} /^## /{f=0} f' "$todo_file" |
+		grep -qE "^[[:space:]]*- \[x\] ${task_id}( |$)"; then
+		log_error "Failed to move $task_id to ## Done section"
+		mv "${todo_file}.bak" "$todo_file"
+		return 1
+	fi
+
+	if ! awk '/^## Done$/{f=1;next} /^## /{f=0} f' "$todo_file" |
+		grep -E "^[[:space:]]*- \[x\] ${task_id}( |$)" |
+		grep -qE "(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})"; then
 		log_error "Failed to add proof-log to $task_id"
 		mv "${todo_file}.bak" "$todo_file"
 		return 1
 	fi
 
 	rm -f "${todo_file}.bak"
-	log_success "Marked $task_id complete with proof-log: $proof_log"
+	log_success "Moved $task_id to ## Done with proof-log: $proof_log"
 	return 0
 }
 
@@ -546,6 +656,12 @@ commit_and_push() {
 	if [[ -f "todo/PLANS.md" ]] && ! git diff --quiet todo/PLANS.md 2>/dev/null; then
 		git add todo/PLANS.md
 		log_info "Staged PLANS.md (plan status updated)"
+	fi
+
+	# Skip commit when nothing actually changed (idempotent re-runs)
+	if git diff --cached --quiet; then
+		log_info "No changes to commit for $task_id (already complete, skipping commit)"
+		return 0
 	fi
 
 	# Commit
