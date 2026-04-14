@@ -277,11 +277,11 @@ function tryStreamWithAccount(streamCtx, account) {
 /**
  * Emit an "all accounts rate-limited" SSE message and close the stream.
  * Used both when no accounts are available at start and when every account
- * was exhausted mid-iteration.
+ * was exhausted mid-iteration (including the native CLI fallback).
  */
 function emitAllAccountsRateLimited(controller, encoder, completionId, created, model) {
   const errChunk = createOpenAIChunk(completionId, created, model, {
-    content: "[Claude CLI transport: all Anthropic OAuth pool accounts are rate-limited]",
+    content: "[Claude CLI transport: all Anthropic OAuth pool accounts are rate-limited and native CLI fallback also failed]",
   });
   try {
     controller.enqueue(encoder.encode(`data: ${JSON.stringify(errChunk)}\n\n`));

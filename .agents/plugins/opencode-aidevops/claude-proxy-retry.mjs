@@ -85,20 +85,23 @@ export async function getAvailableAccounts() {
 }
 
 /**
- * Build a child-process env that injects the OAuth token via
- * `CLAUDE_CODE_OAUTH_TOKEN` and strips any inherited `ANTHROPIC_API_KEY`
- * (which would otherwise win precedence in the Claude CLI).
+ * Build a child-process env for a Claude CLI subprocess.
  *
- * When `token` is null, the native CLI auth path is used: both
- * `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are removed so the
- * Claude CLI falls back to its own stored credentials (`~/.claude.json`).
+ * When `token` is a pool OAuth token: inject it via `CLAUDE_CODE_OAUTH_TOKEN`
+ * and strip `ANTHROPIC_API_KEY` so it cannot win precedence.
+ *
+ * When `token` is null (native CLI fallback): clear only `CLAUDE_CODE_OAUTH_TOKEN`
+ * and leave `ANTHROPIC_API_KEY` intact so the CLI can use whatever credential
+ * it has available (env API key, ~/.claude.json OAuth, etc.).
  */
 export function buildChildEnvWithToken(token) {
   const childEnv = { ...process.env };
-  delete childEnv.ANTHROPIC_API_KEY;
   if (token !== null) {
+    // Injecting pool OAuth token — strip API key so it doesn't win precedence.
+    delete childEnv.ANTHROPIC_API_KEY;
     childEnv.CLAUDE_CODE_OAUTH_TOKEN = token;
   } else {
+    // Native CLI auth — clear injected token only; keep ANTHROPIC_API_KEY.
     delete childEnv.CLAUDE_CODE_OAUTH_TOKEN;
   }
   return childEnv;
@@ -134,7 +137,7 @@ export function detectRateLimitJson(parsed) {
  * @returns {{ rateLimited: boolean, resetsAt?: string }}
  */
 export function detectRateLimitStream(event) {
-  if (event?.type === "rate_limit_event") {
+  if (event?.type === "rate_limit_event" && event?.rate_limit_info?.status === "rejected") {
     return { rateLimited: true, resetsAt: event?.rate_limit_info?.resetsAt };
   }
   if (event?.type === "assistant" && event?.error === "rate_limit") {
