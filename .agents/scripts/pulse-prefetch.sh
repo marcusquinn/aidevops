@@ -2045,7 +2045,7 @@ _prefetch_ni_fetch_issues() {
 	ni_err=$(mktemp)
 	ni_json=$(gh issue list --repo "$slug" --label "status:needs-info" \
 		--state open --json number,title,author,createdAt,updatedAt \
-		--limit 50 2>"$ni_err") || ni_json="[]"
+		--limit 50 2>"$ni_err") || ni_json=""
 	if [[ -z "$ni_json" || "$ni_json" == "null" ]]; then
 		local _ni_err_msg
 		_ni_err_msg=$(cat "$ni_err" 2>/dev/null || echo "unknown error")
