@@ -443,44 +443,14 @@ check_dispatch_dedup() {
 	local issue_title="${4:-}"
 	local self_login="${5:-}"
 
-	echo "[dwd-fence][#${issue_number}] cdd: entered" >>"$LOGFILE"
+	_dedup_layer1_ledger_check "$issue_number" "$repo_slug" && return 0
+	_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
+	_dedup_layer3_title_match "$title" && return 0
+	_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" && return 0
+	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 0
+	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 0
+	_dedup_layer7_claim_lock "$issue_number" "$repo_slug" "$self_login" && return 0
 
-	local _cdd_l1_rc=0
-	_dedup_layer1_ledger_check "$issue_number" "$repo_slug" || _cdd_l1_rc=$?
-	echo "[dwd-fence][#${issue_number}] cdd: layer1-ledger rc=${_cdd_l1_rc}" >>"$LOGFILE"
-	[[ $_cdd_l1_rc -eq 0 ]] && return 0
-
-	local _cdd_l2_rc=0
-	_dedup_layer2_process_match "$issue_number" "$repo_slug" || _cdd_l2_rc=$?
-	echo "[dwd-fence][#${issue_number}] cdd: layer2-process rc=${_cdd_l2_rc}" >>"$LOGFILE"
-	[[ $_cdd_l2_rc -eq 0 ]] && return 0
-
-	local _cdd_l3_rc=0
-	_dedup_layer3_title_match "$title" || _cdd_l3_rc=$?
-	echo "[dwd-fence][#${issue_number}] cdd: layer3-title rc=${_cdd_l3_rc}" >>"$LOGFILE"
-	[[ $_cdd_l3_rc -eq 0 ]] && return 0
-
-	local _cdd_l4_rc=0
-	_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" || _cdd_l4_rc=$?
-	echo "[dwd-fence][#${issue_number}] cdd: layer4-pr-evidence rc=${_cdd_l4_rc}" >>"$LOGFILE"
-	[[ $_cdd_l4_rc -eq 0 ]] && return 0
-
-	local _cdd_l5_rc=0
-	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" || _cdd_l5_rc=$?
-	echo "[dwd-fence][#${issue_number}] cdd: layer5-dispatch-comment rc=${_cdd_l5_rc}" >>"$LOGFILE"
-	[[ $_cdd_l5_rc -eq 0 ]] && return 0
-
-	local _cdd_l6_rc=0
-	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" || _cdd_l6_rc=$?
-	echo "[dwd-fence][#${issue_number}] cdd: layer6-assignee rc=${_cdd_l6_rc}" >>"$LOGFILE"
-	[[ $_cdd_l6_rc -eq 0 ]] && return 0
-
-	local _cdd_l7_rc=0
-	_dedup_layer7_claim_lock "$issue_number" "$repo_slug" "$self_login" || _cdd_l7_rc=$?
-	echo "[dwd-fence][#${issue_number}] cdd: layer7-claim-lock rc=${_cdd_l7_rc}" >>"$LOGFILE"
-	[[ $_cdd_l7_rc -eq 0 ]] && return 0
-
-	echo "[dwd-fence][#${issue_number}] cdd: all layers cleared → safe to dispatch" >>"$LOGFILE"
 	return 1
 }
 
@@ -1501,31 +1471,23 @@ _dispatch_dedup_check_layers() {
 	local repo_path="$6"
 	local issue_meta_json="$7"
 
-	echo "[dwd-fence][#${issue_number}] _dispatch_dedup_check_layers: entered" >>"$LOGFILE"
-
 	local target_state target_title
 	target_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null)
 	target_title=$(printf '%s' "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
-	echo "[dwd-fence][#${issue_number}] dcl: state=${target_state} title-len=${#target_title}" >>"$LOGFILE"
 
 	if [[ "$target_state" != "OPEN" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: issue state is ${target_state:-unknown}" >>"$LOGFILE"
 		return 1
 	fi
-	echo "[dwd-fence][#${issue_number}] dcl: state-gate passed" >>"$LOGFILE"
 
 	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("on hold") or index("blocked"))' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
 		return 1
 	fi
-	echo "[dwd-fence][#${issue_number}] dcl: mgmt-label gate passed" >>"$LOGFILE"
 
 	# t1894/GH#18648: Cryptographic approval gate (ever-NMR) with
 	# review-followup exemption for bot-generated cleanup issues.
-	local _dcl_nmr_rc=0
-	_check_nmr_approval_gate "$issue_number" "$repo_slug" "$issue_meta_json" || _dcl_nmr_rc=$?
-	echo "[dwd-fence][#${issue_number}] dcl: nmr-gate rc=${_dcl_nmr_rc}" >>"$LOGFILE"
-	if [[ $_dcl_nmr_rc -eq 0 ]]; then
+	if _check_nmr_approval_gate "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		return 1
 	fi
 
@@ -1533,13 +1495,9 @@ _dispatch_dedup_check_layers() {
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: supervisor telemetry title" >>"$LOGFILE"
 		return 1
 	fi
-	echo "[dwd-fence][#${issue_number}] dcl: supervisor-title gate passed" >>"$LOGFILE"
 
 	# GH#17574/GH#18644: commit-subject dedup gate with force-dispatch override.
-	local _dcl_commit_rc=0
-	_check_commit_subject_dedup_gate "$issue_number" "$repo_slug" "$target_title" "$repo_path" "$issue_meta_json" || _dcl_commit_rc=$?
-	echo "[dwd-fence][#${issue_number}] dcl: commit-subject gate rc=${_dcl_commit_rc}" >>"$LOGFILE"
-	if [[ $_dcl_commit_rc -eq 0 ]]; then
+	if _check_commit_subject_dedup_gate "$issue_number" "$repo_slug" "$target_title" "$repo_path" "$issue_meta_json"; then
 		return 1
 	fi
 
@@ -1548,22 +1506,17 @@ _dispatch_dedup_check_layers() {
 	local _dispatch_issue_body
 	_dispatch_issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json body --jq '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
-	echo "[dwd-fence][#${issue_number}] dcl: body-fetch body-len=${#_dispatch_issue_body}" >>"$LOGFILE"
 	if [[ -n "$_dispatch_issue_body" ]] && is_blocked_by_unresolved "$_dispatch_issue_body" "$repo_slug" "$issue_number"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (t1927)" >>"$LOGFILE"
 		return 1
 	fi
-	echo "[dwd-fence][#${issue_number}] dcl: blocked-by gate passed" >>"$LOGFILE"
 
 	# Pre-dispatch: issue consolidation check. If an issue has accumulated
 	# multiple substantive comments that change scope (not dispatch/approval
 	# machinery), dispatch a consolidation worker first to merge everything
 	# into a clean issue body. This prevents implementing workers from spending
 	# tokens reconstructing scope from comment archaeology.
-	local _dcl_cons_rc=0
-	_issue_needs_consolidation "$issue_number" "$repo_slug" || _dcl_cons_rc=$?
-	echo "[dwd-fence][#${issue_number}] dcl: consolidation gate rc=${_dcl_cons_rc}" >>"$LOGFILE"
-	if [[ $_dcl_cons_rc -eq 0 ]]; then
+	if _issue_needs_consolidation "$issue_number" "$repo_slug"; then
 		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
 		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
 		return 1
@@ -1573,25 +1526,17 @@ _dispatch_dedup_check_layers() {
 	# references files that exceed LARGE_FILE_LINE_THRESHOLD, create a
 	# blocked-by simplification task instead of dispatching. Workers
 	# shouldn't pay the complexity tax of navigating a 12,000-line file.
-	local _dcl_large_rc=0
-	_issue_targets_large_files "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$repo_path" || _dcl_large_rc=$?
-	echo "[dwd-fence][#${issue_number}] dcl: large-file gate rc=${_dcl_large_rc}" >>"$LOGFILE"
-	if [[ $_dcl_large_rc -eq 0 ]]; then
+	if _issue_targets_large_files "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$repo_path"; then
 		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: targets large file(s), simplification gate" >>"$LOGFILE"
 		return 1
 	fi
 
 	# All 7 dedup layers — cannot be skipped
-	echo "[dwd-fence][#${issue_number}] dcl: calling check_dispatch_dedup (7 layers)" >>"$LOGFILE"
-	local _dcl_dedup_rc=0
-	check_dispatch_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" "$self_login" || _dcl_dedup_rc=$?
-	echo "[dwd-fence][#${issue_number}] dcl: check_dispatch_dedup rc=${_dcl_dedup_rc}" >>"$LOGFILE"
-	if [[ $_dcl_dedup_rc -eq 0 ]]; then
+	if check_dispatch_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" "$self_login"; then
 		echo "[dispatch_with_dedup] Dedup guard blocked #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		return 1
 	fi
 
-	echo "[dwd-fence][#${issue_number}] dcl: ALL gates passed → dispatch allowed" >>"$LOGFILE"
 	return 0
 }
 
@@ -2074,11 +2019,6 @@ dispatch_with_dedup() {
 	# SIGTERM-ing all active workers.
 	local _claim_comment_id=""
 
-	# GH#18830 fence-post logging — unconditional trace of every step in
-	# dispatch_with_dedup so we can identify the silent-abort site contained
-	# by PR #18826. Single-line echoes, no helper, no conditionals.
-	echo "[dwd-fence][#${issue_number}] dispatch_with_dedup: entered" >>"$LOGFILE"
-
 	# GH#17503: Claim comments are NEVER deleted — they form the audit trail.
 	# The _cleanup_claim_comment function is retained as a no-op for backward
 	# compatibility (callers may still reference it on early-return paths).
@@ -2096,7 +2036,6 @@ dispatch_with_dedup() {
 	local issue_meta_json
 	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json number,title,state,labels,assignees 2>/dev/null) || issue_meta_json=""
-	echo "[dwd-fence][#${issue_number}] dispatch_with_dedup: meta-fetch rc=${?} len=${#issue_meta_json}" >>"$LOGFILE"
 	if [[ -z "$issue_meta_json" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
 		return 1
@@ -2106,13 +2045,9 @@ dispatch_with_dedup() {
 	# Each gate logs its own blocked reason to LOGFILE before returning 1.
 	# _claim_comment_id is set by check_dispatch_dedup inside this call via
 	# bash dynamic scoping — accessible below because it was declared local above.
-	echo "[dwd-fence][#${issue_number}] dispatch_with_dedup: calling _dispatch_dedup_check_layers" >>"$LOGFILE"
-	local _dwd_layers_rc=0
-	_dispatch_dedup_check_layers \
+	if ! _dispatch_dedup_check_layers \
 		"$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
-		"$self_login" "$repo_path" "$issue_meta_json" || _dwd_layers_rc=$?
-	echo "[dwd-fence][#${issue_number}] dispatch_with_dedup: _dispatch_dedup_check_layers returned rc=${_dwd_layers_rc}" >>"$LOGFILE"
-	if [[ $_dwd_layers_rc -ne 0 ]]; then
+		"$self_login" "$repo_path" "$issue_meta_json"; then
 		return 1
 	fi
 
@@ -2123,19 +2058,13 @@ dispatch_with_dedup() {
 	# catches any legacy issue created via the pre-t2063 bare path, and
 	# any future path that might bypass the primary fixes in claim-task-id.sh
 	# and issue-sync-helper.sh. Non-fatal — dispatch proceeds even if enrich fails.
-	echo "[dwd-fence][#${issue_number}] dispatch_with_dedup: calling _ensure_issue_body_has_brief" >>"$LOGFILE"
 	_ensure_issue_body_has_brief "$issue_number" "$repo_slug" "$repo_path" "$issue_title"
-	echo "[dwd-fence][#${issue_number}] dispatch_with_dedup: _ensure_issue_body_has_brief returned rc=$?" >>"$LOGFILE"
 
 	# All checks passed — launch the worker.
-	echo "[dwd-fence][#${issue_number}] dispatch_with_dedup: calling _dispatch_launch_worker" >>"$LOGFILE"
-	local _dwd_launch_rc=0
 	_dispatch_launch_worker \
 		"$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "$session_key" \
-		"$model_override" "$issue_meta_json" || _dwd_launch_rc=$?
-	echo "[dwd-fence][#${issue_number}] dispatch_with_dedup: _dispatch_launch_worker returned rc=${_dwd_launch_rc}" >>"$LOGFILE"
-	return $_dwd_launch_rc
+		"$model_override" "$issue_meta_json"
 }
 
 #######################################

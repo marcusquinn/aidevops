@@ -545,13 +545,37 @@ refresh_blocked_status_from_graph() {
 # Output:    two newline-separated lists on stdout, separated by a NUL:
 #            <task_ids>\0<issue_nums>
 #######################################
-_blocked_by_extract_refs() {
+# GH#18830: Single-return helpers for blocked-by extraction.
+#
+# History: Before GH#18830, these were combined into a single
+# `_blocked_by_extract_refs` helper that returned both lists via
+# `printf '%s\0%s'` and a `${refs%%$'\0'*}` split. That pattern was
+# fatally broken on bash 3.2:
+#
+#   1. Bash strings cannot hold NUL bytes — command substitution
+#      `refs=$(printf '%s\0%s' "$a" "$b")` truncated at the first NUL,
+#      silently losing the second value.
+#   2. Even worse, `${refs%%$'\0'*}` triggered a bash 3.2 parser bug:
+#      "bad substitution: no closing '}'", aborting the shell. The
+#      error went to stderr (never LOGFILE) and propagated up through
+#      the dispatch command-substitution subshell, killing every
+#      dispatch candidate that reached `is_blocked_by_unresolved`.
+#
+# On macOS default `/bin/bash` (3.2.57), this silently broke the
+# deterministic fill floor for weeks. Contained only by the subshell
+# wrapper added in PR #18826 (GH#18804) which isolated the abort
+# without identifying its cause.
+#
+# Fix: two single-return helpers, each printing one value to stdout.
+# No NUL, no parser traps, trivially portable across bash versions.
+_blocked_by_extract_tids() {
 	local body="$1"
-	local tids nums
-	tids=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*t([0-9]+)' | grep -oE '[0-9]+' || true)
-	nums=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*#([0-9]+)' | grep -oE '[0-9]+' || true)
-	printf '%s\0%s' "$tids" "$nums"
-	return 0
+	printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*t([0-9]+)' | grep -oE '[0-9]+' || true
+}
+
+_blocked_by_extract_nums() {
+	local body="$1"
+	printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*#([0-9]+)' | grep -oE '[0-9]+' || true
 }
 
 #######################################
@@ -705,9 +729,11 @@ _blocked_by_check_issue_num() {
 # once per cycle) for zero-API-call resolution. Falls back to live API calls
 # only when the cache is absent or the blocker is not found in it.
 #
-# Decomposed into _blocked_by_extract_refs, _blocked_by_load_cache,
-# _blocked_by_check_task_id, and _blocked_by_check_issue_num so this outer
-# orchestrator stays under the 100-line complexity gate.
+# Decomposed into _blocked_by_extract_tids, _blocked_by_extract_nums,
+# _blocked_by_load_cache, _blocked_by_check_task_id, and
+# _blocked_by_check_issue_num so this outer orchestrator stays under the
+# 100-line complexity gate. GH#18830: split extract into two single-return
+# helpers to avoid the broken NUL-delimited two-value return channel.
 #
 # Args:
 #   $1 - issue body text
@@ -725,11 +751,12 @@ is_blocked_by_unresolved() {
 	[[ -n "$issue_body" ]] || return 1
 	[[ -n "$repo_slug" ]] || return 1
 
-	# Extract blocked-by references (tNNN and #NNN).
-	local refs blocker_task_ids blocker_issue_nums
-	refs=$(_blocked_by_extract_refs "$issue_body")
-	blocker_task_ids="${refs%%$'\0'*}"
-	blocker_issue_nums="${refs#*$'\0'}"
+	# Extract blocked-by references (tNNN and #NNN) via two single-return
+	# helpers. GH#18830: the previous NUL-delimited two-value return was
+	# fatally broken on bash 3.2 — see `_blocked_by_extract_refs` header.
+	local blocker_task_ids blocker_issue_nums
+	blocker_task_ids=$(_blocked_by_extract_tids "$issue_body")
+	blocker_issue_nums=$(_blocked_by_extract_nums "$issue_body")
 
 	# No blocked-by references → not blocked
 	if [[ -z "$blocker_task_ids" && -z "$blocker_issue_nums" ]]; then
