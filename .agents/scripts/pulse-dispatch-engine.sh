@@ -428,16 +428,28 @@ _dff_process_candidate() {
 	model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
 	pulse_dispatch_debug_log "#${issue_number}: model_override=${model_override:-<auto>} — calling dispatch_with_dedup"
 
-	# GH#18830: root cause of the GH#18804 silent abort identified and fixed
-	# in pulse-dep-graph.sh `_blocked_by_extract_refs` — the broken
-	# `printf '%s\0%s'` / `${refs%%$'\0'*}` two-value return channel triggered
-	# a bash 3.2 parser bug ("bad substitution: no closing '}'") on macOS
-	# default `/bin/bash` (3.2.57), aborting the shell silently (error to
-	# stderr, never reached LOGFILE). The containment subshell wrapper from
-	# PR #18826 is no longer needed — dispatch_with_dedup is called directly.
+	# GH#18804 follow-up #3: isolate dispatch_with_dedup in an explicit
+	# subshell. PR #18823 added entry/exit logging that proved the silent
+	# abort happens INSIDE dispatch_with_dedup — even with set +e wrapping
+	# the parent _dff_process_candidate. The abort is NOT a set -e issue
+	# (the entry log shows save_e=none, meaning set -e was already off);
+	# something deeper in the call chain (likely a nested function that
+	# does an unguarded `local var=$(cmd)` where cmd dies, or a `read`
+	# from a closed pipe) is killing the parent subshell silently.
+	#
+	# Wrapping the call in `(...)` creates a NEW subshell whose abort
+	# cannot propagate back to dispatch_deterministic_fill_floor. The exit
+	# code is captured normally via `||`. dispatch_with_dedup has no
+	# shared-variable contract with the caller — it only mutates GitHub
+	# state via `gh` API and fork-execs the worker via nohup, both of
+	# which survive subshell isolation. Same defensive pattern as
+	# `( set -e; ... )` from GH#18770/GH#18794.
 	local dispatch_rc=0
-	dispatch_with_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
-		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
+	(
+		dispatch_with_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
+			"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override"
+	) || dispatch_rc=$?
+	echo "[pulse-wrapper] Deterministic fill floor: dispatch_with_dedup returned rc=${dispatch_rc} for #${issue_number}" >>"$LOGFILE"
 	if [[ "$dispatch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
 		return 1
