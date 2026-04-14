@@ -1132,10 +1132,40 @@ should_skip_cleanup() {
 _clean_fetch_remotes() {
 	local state_unknown=false
 	local remote
+	# GH#18979: Apply a 10-second timeout per remote fetch. In pulse cleanup
+	# context, git fetch --prune can hang indefinitely on network I/O or
+	# slow remote negotiation with many branches, stalling the entire pulse
+	# cycle. 10s is generous for a prune-only fetch; if it exceeds that,
+	# the remote is unreachable and we should treat state as unknown.
+	local fetch_timeout_cmd=""
+	if command -v gtimeout &>/dev/null; then
+		fetch_timeout_cmd="gtimeout 10"
+	elif command -v timeout &>/dev/null; then
+		fetch_timeout_cmd="timeout 10"
+	fi
 	for remote in $(git remote 2>/dev/null); do
-		if ! git fetch --prune "$remote" 2>/dev/null; then
-			echo -e "${YELLOW}Warning: failed to refresh $remote; skipping remote-deleted cleanup checks${NC}" >&2
-			state_unknown=true
+		if [[ -n "$fetch_timeout_cmd" ]]; then
+			if ! $fetch_timeout_cmd git fetch --prune "$remote" 2>/dev/null; then
+				echo -e "${YELLOW}Warning: failed to refresh $remote; skipping remote-deleted cleanup checks${NC}" >&2
+				state_unknown=true
+			fi
+		else
+			# No timeout command available — run unguarded but with a background kill
+			git fetch --prune "$remote" 2>/dev/null &
+			local _fetch_pid=$!
+			local _fetch_waited=0
+			while kill -0 "$_fetch_pid" 2>/dev/null && [[ "$_fetch_waited" -lt 10 ]]; do
+				sleep 1
+				_fetch_waited=$((_fetch_waited + 1))
+			done
+			if kill -0 "$_fetch_pid" 2>/dev/null; then
+				kill "$_fetch_pid" 2>/dev/null || true
+				wait "$_fetch_pid" 2>/dev/null || true
+				echo -e "${YELLOW}Warning: fetch timed out for $remote; skipping remote-deleted cleanup checks${NC}" >&2
+				state_unknown=true
+			else
+				wait "$_fetch_pid" 2>/dev/null || state_unknown=true
+			fi
 		fi
 	done
 	echo "$state_unknown"
