@@ -266,6 +266,16 @@ _handle_running_pulse_pid() {
 	return 1
 }
 
+#######################################
+# Check for stale PID file and clean up
+# Returns: 0 if safe to proceed, 1 if another pulse is genuinely running
+#
+# PID file sentinel protocol (GH#4324):
+#   The PID file is never deleted — only overwritten. Valid states:
+#     <numeric PID>  — a pulse may be running; verify with ps
+#     IDLE:<ts>      — last run completed normally; safe to proceed
+#     empty / other  — treat as safe to proceed (first run or corrupt)
+#######################################
 check_dedup() {
 	if [[ ! -f "$PIDFILE" ]]; then
 		return 0
