@@ -157,7 +157,7 @@ _normalize_stale_get_dispatch_info() {
 		IFS= read -r dispatch_pid
 		IFS= read -r dispatch_created_at
 	} < <(gh api "repos/${slug}/issues/${stale_num}/comments" \
-		--jq '[.[] | select(.body | test("^(<!-- ops:start[^>]*-->\\s*)?Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") | .pid // ""), .created_at) else empty end' \
+		--jq '[.[] | select(.body | contains("Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") // {pid: ""} | .pid), (.created_at | sub("\\.[0-9]+Z$"; "Z"))) else empty end' \
 		2>/dev/null) || true
 
 	printf '%s\n%s\n' "$dispatch_pid" "$dispatch_created_at"
@@ -189,7 +189,7 @@ _normalize_stale_should_skip_reset() {
 	local cross_runner_max_runtime="$4"
 
 	# Check 1: local worker process still referencing this issue
-	if pgrep -f "issue.*${stale_num}" >/dev/null 2>&1 || pgrep -f "#${stale_num}" >/dev/null 2>&1; then
+	if pgrep -f "pulse-reconcile.*[^0-9]${stale_num}([^0-9]|$)" >/dev/null 2>&1 || pgrep -f "#${stale_num}([^0-9]|$)" >/dev/null 2>&1; then
 		return 0
 	fi
 
