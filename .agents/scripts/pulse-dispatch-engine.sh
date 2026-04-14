@@ -394,23 +394,6 @@ _dff_process_candidate() {
 	local available_slots="$3"
 	_DFF_THROTTLE_CLEARED=0
 
-	# GH#18804 follow-up #2: defensive set +e wrapping. Bash 3.2 (macOS default)
-	# has a documented bug where the `set -e` "ignore" state inside an `if` or
-	# `||` context does NOT propagate down through nested function calls. So
-	# even when this function is called via `_dff_process_candidate ... || rc=$?`,
-	# any internal command that returns non-zero CAN still abort the parent
-	# subshell silently. The fix: explicitly disable set -e at function entry
-	# and restore the saved state on every return path. Belt-and-braces against
-	# the bash 3.2 quirk + any future bash version's edge cases. See
-	# https://lists.gnu.org/archive/html/bug-bash/2012-12/msg00094.html for the
-	# canonical bug report and the prompts/build.txt "Bash 3.2 Compatibility"
-	# section.
-	local _dff_pc_save_e=""
-	case "$-" in *e*) _dff_pc_save_e="e" ;; esac
-	set +e
-
-	echo "[pulse-wrapper] Deterministic fill floor: _dff_process_candidate ENTRY (save_e=${_dff_pc_save_e:-none})" >>"$LOGFILE"
-
 	local issue_number repo_slug repo_path issue_url issue_title dispatch_title prompt labels_csv model_override
 	issue_number=$(printf '%s' "$candidate_json" | jq -r '.number // empty' 2>/dev/null)
 	repo_slug=$(printf '%s' "$candidate_json" | jq -r '.repo_slug // empty' 2>/dev/null)
@@ -418,40 +401,22 @@ _dff_process_candidate() {
 	issue_url=$(printf '%s' "$candidate_json" | jq -r '.url // empty' 2>/dev/null)
 	issue_title=$(printf '%s' "$candidate_json" | jq -r '.title // empty' 2>/dev/null | tr '\n' ' ')
 	labels_csv=$(printf '%s' "$candidate_json" | jq -r '(.labels // []) | join(",")' 2>/dev/null)
-	echo "[pulse-wrapper] Deterministic fill floor: _dff_process_candidate parsed jq fields for #${issue_number:-?} (${repo_slug:-?})" >>"$LOGFILE"
-
-	# Helper: restore caller's set -e state on every return path.
-	# Bash 3.2 doesn't support `trap RETURN` reliably, so we inline this.
-	_dff_pc_restore() {
-		local rc="${1:-0}"
-		if [[ -n "$_dff_pc_save_e" ]]; then
-			set -e
-		fi
-		return "$rc"
-	}
 
 	# GH#18804: previously the next two checks silently `return 1`-ed without
 	# logging. Operators saw `candidates=N` but no per-candidate skip lines,
 	# making malformed candidate JSON impossible to diagnose from pulse.log.
 	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor: skipping malformed candidate — issue_number='${issue_number}' is not numeric (candidate_json prefix: ${candidate_json:0:120})" >>"$LOGFILE"
-		_dff_pc_restore 1
 		return 1
 	fi
 	if [[ -z "$repo_slug" || -z "$repo_path" ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} — missing repo_slug='${repo_slug}' or repo_path='${repo_path}'" >>"$LOGFILE"
-		_dff_pc_restore 1
 		return 1
 	fi
 
 	pulse_dispatch_debug_log "processing #${issue_number} (${repo_slug}) labels=[${labels_csv}]"
-	echo "[pulse-wrapper] Deterministic fill floor: _dff_process_candidate calling _dff_should_skip_candidate for #${issue_number}" >>"$LOGFILE"
 
-	local skip_rc=0
-	_dff_should_skip_candidate "$issue_number" "$repo_slug" || skip_rc=$?
-	echo "[pulse-wrapper] Deterministic fill floor: _dff_should_skip_candidate returned rc=${skip_rc} for #${issue_number}" >>"$LOGFILE"
-	if [[ "$skip_rc" -eq 0 ]]; then
-		_dff_pc_restore 1
+	if _dff_should_skip_candidate "$issue_number" "$repo_slug"; then
 		return 1
 	fi
 
@@ -462,15 +427,12 @@ _dff_process_candidate() {
 	fi
 	model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
 	pulse_dispatch_debug_log "#${issue_number}: model_override=${model_override:-<auto>} — calling dispatch_with_dedup"
-	echo "[pulse-wrapper] Deterministic fill floor: _dff_process_candidate calling dispatch_with_dedup for #${issue_number}" >>"$LOGFILE"
 
 	local dispatch_rc=0
 	dispatch_with_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
-	echo "[pulse-wrapper] Deterministic fill floor: dispatch_with_dedup returned rc=${dispatch_rc} for #${issue_number}" >>"$LOGFILE"
 	if [[ "$dispatch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
-		_dff_pc_restore 1
 		return 1
 	fi
 
@@ -483,7 +445,6 @@ _dff_process_candidate() {
 	if [[ "$launch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
 		_dff_record_launch_failure
-		_dff_pc_restore 1
 		return 1
 	fi
 
@@ -496,7 +457,6 @@ _dff_process_candidate() {
 		echo "[pulse-wrapper] Dispatch throttle CLEARED: launch success in throttled mode — restoring full batch=${available_slots}" >>"$LOGFILE"
 		_DFF_THROTTLE_CLEARED=1
 	fi
-	_dff_pc_restore 0
 	return 0
 }
 
