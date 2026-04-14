@@ -51,6 +51,10 @@ print_result() {
 # _write_gh_stub_binary: write the stubbed gh binary to TEST_ROOT/bin/gh.
 # Requires TEST_ROOT to be set. Called by setup_gh_stub.
 _write_gh_stub_binary() {
+	if [[ -z "${TEST_ROOT:-}" ]]; then
+		printf 'Error: TEST_ROOT is not set\n' >&2
+		return 1
+	fi
 	mkdir -p "${TEST_ROOT}/bin"
 	cat >"${TEST_ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -136,6 +140,10 @@ STUB
 # _setup_gh_stub_globals: export PATH and pulse-triage globals, then source the script.
 # Requires TEST_ROOT and GH_LOG to be set. Called by setup_gh_stub.
 _setup_gh_stub_globals() {
+	if [[ -z "${TEST_ROOT:-}" ]]; then
+		printf 'Error: TEST_ROOT is not set\n' >&2
+		return 1
+	fi
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	export GH_LOG
 	export LOGFILE="${TEST_ROOT}/pulse.log"
