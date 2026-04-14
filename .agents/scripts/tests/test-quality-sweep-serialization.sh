@@ -135,8 +135,13 @@ _sweep_shellcheck() {
 }
 
 _sweep_qlty() {
-	# Original signature: stdout = "section|smell_count|grade"
-	printf '%s|%s|%s' "$FIXTURE_QLTY" "42" "B"
+	# t2066: grade is now derived from the local smell count by
+	# _compute_qlty_grade_from_count — not hard-coded. Compute the expected
+	# grade from the fixture count so the test tracks the config thresholds
+	# instead of baking in a specific grade letter.
+	local expected_grade
+	expected_grade=$(_compute_qlty_grade_from_count 42)
+	printf '%s|%s|%s' "$FIXTURE_QLTY" "42" "$expected_grade"
 	return 0
 }
 
@@ -246,8 +251,41 @@ assert_file_eq "tool_count is captured (5 tools succeeded + coderabbit always-on
 	"${SECTIONS_DIR}/tool_count" "6"
 assert_file_eq "qlty_smell_count read independently of qlty_section" \
 	"${SECTIONS_DIR}/qlty_smell_count" "42"
-assert_file_eq "qlty_grade read independently of qlty_section" \
-	"${SECTIONS_DIR}/qlty_grade" "B"
+# t2066: grade is derived from the smell count via _compute_qlty_grade_from_count.
+# Derive the expected value the same way so the test doesn't hard-code a grade
+# letter — if the config thresholds are retuned, the test will still pass
+# without manual edit. This closes the AC "test-quality-sweep-serialization.sh
+# asserts against a computed-from-count value so the test doesn't hard-code".
+EXPECTED_GRADE=$(_compute_qlty_grade_from_count 42)
+assert_file_eq "qlty_grade read independently of qlty_section (derived from count)" \
+	"${SECTIONS_DIR}/qlty_grade" "$EXPECTED_GRADE"
+
+# t2066: directly test the grade-from-count mapping against known buckets.
+# Fails loudly if QLTY_GRADE_*_MAX thresholds drift away from the documented
+# bucket boundaries. If the config is intentionally retuned, update these
+# boundary cases accordingly.
+test_grade_mapping() {
+	local label="$1" count="$2" expected="$3"
+	local actual
+	actual=$(_compute_qlty_grade_from_count "$count")
+	if [[ "$actual" == "$expected" ]]; then
+		print_result "grade mapping: $label" 0
+	else
+		print_result "grade mapping: $label" 1 "count=$count expected=$expected actual=$actual"
+	fi
+	return 0
+}
+test_grade_mapping "0 smells → A" 0 A
+test_grade_mapping "20 smells → A (upper bound)" 20 A
+test_grade_mapping "21 smells → B (lower bound)" 21 B
+test_grade_mapping "45 smells → B (upper bound)" 45 B
+test_grade_mapping "46 smells → C (lower bound)" 46 C
+test_grade_mapping "90 smells → C (upper bound)" 90 C
+test_grade_mapping "91 smells → D (lower bound)" 91 D
+test_grade_mapping "150 smells → D (upper bound)" 150 D
+test_grade_mapping "151 smells → F (lower bound)" 151 F
+test_grade_mapping "500 smells → F" 500 F
+test_grade_mapping "non-numeric → UNKNOWN" "not-a-number" UNKNOWN
 
 # 7. _quality_sweep_for_repo end-to-end smoke test: stub _ensure_quality_issue
 #    and gh so it doesn't hit the network, then verify the full pipeline reads
