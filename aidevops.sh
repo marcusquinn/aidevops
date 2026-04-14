@@ -27,10 +27,12 @@ NC='\033[0m' # No Color
 # under `set -euo pipefail` on any BSD system and breaks sudo aidevops approve.
 # Mirrors the pattern in .agents/scripts/approval-helper.sh:_resolve_real_home().
 # Security: no escalation — root already has full filesystem access.
+_AIDEVOPS_REAL_HOME="$HOME"
 if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v getent &>/dev/null; then
-	_AIDEVOPS_REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-else
-	_AIDEVOPS_REAL_HOME="$HOME"
+	_tmp_real_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+	if [[ -n "$_tmp_real_home" ]]; then
+		_AIDEVOPS_REAL_HOME="$_tmp_real_home"
+	fi
 fi
 INSTALL_DIR="$_AIDEVOPS_REAL_HOME/Git/aidevops"
 AGENTS_DIR="$_AIDEVOPS_REAL_HOME/.aidevops/agents"

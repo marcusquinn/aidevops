@@ -31,10 +31,14 @@ set -euo pipefail
 # Security: no escalation — root already has full filesystem access.
 _resolve_real_home() {
 	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v getent &>/dev/null; then
-		getent passwd "$SUDO_USER" | cut -d: -f6
-	else
-		printf '%s' "$HOME"
+		local real_home
+		real_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+		if [[ -n "$real_home" ]]; then
+			printf '%s' "$real_home"
+			return 0
+		fi
 	fi
+	printf '%s' "$HOME"
 	return 0
 }
 
