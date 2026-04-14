@@ -644,6 +644,43 @@ _resolve_pr_mergeable_status() {
 }
 
 #######################################
+# Fetch statusCheckRollup for a single PR and verify no required check
+# is in a FAILURE or TIMED_OUT state. Skips PRs with failing CI even
+# when the merge would use --admin (which bypasses branch protection).
+#
+# t2092: This is intentionally a per-PR call (not batch) — the GH#15060
+# lesson was about fetching statusCheckRollup for the ENTIRE open PR list
+# (expensive). Here we only fetch it once per PR that has already passed
+# the cheap MERGEABLE + gate checks, so the cost is bounded and paid only
+# when a merge would otherwise proceed.
+#
+# Arguments: $1=pr_number, $2=repo_slug
+# Returns: 0 if all checks pass/pending/neutral, 1 if any check failed
+#######################################
+_pr_required_checks_pass() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local failing _gh_exit
+	# Separate declaration from assignment to preserve exit code (SC2181).
+	failing=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json statusCheckRollup \
+		--jq '[.statusCheckRollup[] | select(.conclusion == "FAILURE" or .conclusion == "TIMED_OUT")] | length' \
+		2>/dev/null)
+	_gh_exit=$?
+	# Fail-closed: if the API call itself fails, skip the merge rather than
+	# silently allowing it (t2092 — --admin bypasses branch protection).
+	if [[ $_gh_exit -ne 0 ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — statusCheckRollup fetch failed (exit ${_gh_exit}) (t2092)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "${failing:-0}" -gt 0 ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — ${failing} required check(s) failing (t2092)" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Run all merge-eligibility gate checks for a single PR.
 # Returns 0 if all gates pass (PR may proceed to merge).
 # Returns 1 if any gate fails (PR should be skipped).
@@ -850,6 +887,12 @@ _process_single_ready_pr() {
 
 	# Resolve UNKNOWN mergeable state with one retry; skip if not MERGEABLE
 	if ! _resolve_pr_mergeable_status "$pr_number" "$repo_slug" "$pr_mergeable"; then
+		return 1
+	fi
+
+	# Skip PRs with failing required CI checks — --admin bypasses branch
+	# protection but we must not merge when checks are red (t2092).
+	if ! _pr_required_checks_pass "$pr_number" "$repo_slug"; then
 		return 1
 	fi
 
