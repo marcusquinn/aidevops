@@ -284,6 +284,26 @@ _large_file_gate_create_debt_issue() {
 		return 0
 	fi
 
+	# Check recently-closed simplification-debt issues for this file (GH#18960)
+	# If a partial-simplification PR merged and closed the debt issue recently,
+	# return a reference to it instead of re-filing an identical issue.
+	# Configurable via LFG_DEBT_REOPEN_DAYS (default 30).
+	local _reopen_days="${LFG_DEBT_REOPEN_DAYS:-30}"
+	local _recent_date
+	_recent_date=$(date -u "-v-${_reopen_days}d" "+%Y-%m-%d" 2>/dev/null ||
+		date -u -d "${_reopen_days} days ago" "+%Y-%m-%d" 2>/dev/null || true)
+	if [[ -n "$_recent_date" ]]; then
+		_existing=$(gh issue list --repo "$repo_slug" \
+			--state closed --label "simplification-debt" \
+			--search "$_lf_basename closed:>$_recent_date" \
+			--json number --jq '.[0].number // empty' \
+			--limit 5 2>/dev/null) || _existing=""
+	fi
+	if [[ -n "$_existing" ]]; then
+		printf '#%s (recently-closed — continuation)' "$_existing"
+		return 0
+	fi
+
 	# GH#18644: ensure the `simplification-debt` label exists before the
 	# create call. Without this, a first-use of the gate in any repo that
 	# doesn't already have the label fails with "could not add label:
