@@ -1185,8 +1185,29 @@ _preflight_ownership_reconcile() {
 #       dispatch decisions
 #######################################
 _preflight_prefetch_and_scope() {
+	# GH#18979 (t2097): clear any stale flag from a previous cycle before
+	# prefetch runs. Only the current cycle's prefetch should set the flag —
+	# leftover files from a previous cycle would cause false aborts.
+	rm -f "$PULSE_RATE_LIMIT_FLAG" 2>/dev/null || true
+
 	if ! run_stage_with_timeout "prefetch_state" "$PRE_RUN_STAGE_TIMEOUT" prefetch_state; then
 		echo "[pulse-wrapper] prefetch_state did not complete successfully — aborting this cycle to avoid stale dispatch decisions" >>"$LOGFILE"
+		_PULSE_HEALTH_PREFETCH_ERRORS=$((_PULSE_HEALTH_PREFETCH_ERRORS + 1))
+		echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
+		return 1
+	fi
+
+	# GH#18979 (t2097): if any prefetch site detected GraphQL rate-limit
+	# exhaustion, abort the cycle cleanly. Empty prefetch data is
+	# indistinguishable from a genuinely quiet backlog; proceeding would run
+	# the deterministic pipeline on stale state while the instance lock is
+	# held for the full cycle duration. Existing return-1 path releases the
+	# lock and increments the health counter.
+	if [[ -f "$PULSE_RATE_LIMIT_FLAG" ]]; then
+		local _rl_affected_sites
+		_rl_affected_sites=$(wc -l <"$PULSE_RATE_LIMIT_FLAG" 2>/dev/null | tr -d ' ')
+		[[ "$_rl_affected_sites" =~ ^[0-9]+$ ]] || _rl_affected_sites="?"
+		echo "[pulse-wrapper] Prefetch aborted: GraphQL RATE_LIMIT_EXHAUSTED (${_rl_affected_sites} site(s) affected) — skipping cycle to avoid stale dispatch decisions" >>"$LOGFILE"
 		_PULSE_HEALTH_PREFETCH_ERRORS=$((_PULSE_HEALTH_PREFETCH_ERRORS + 1))
 		echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
 		return 1

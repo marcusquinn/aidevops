@@ -54,6 +54,63 @@
 _PULSE_PREFETCH_LOADED=1
 
 # =============================================================================
+# GH#18979 (t2097): Rate-limit detection helpers
+#
+# When GitHub's GraphQL budget is exhausted (5000/hr), `gh` commands return
+# empty results with an error on stderr. The existing prefetch error handlers
+# swallow this into a `"[]"` fallback, which makes the pulse run a full cycle
+# on empty data while holding the instance lock ~3 min. These helpers detect
+# rate-limit errors at each prefetch site, write a shared flag file, and let
+# `_preflight_prefetch_and_scope` abort the cycle cleanly via its existing
+# return-1 path.
+#
+# Non-rate-limit errors (network blips, 5xx) still fall back to `"[]"` and
+# continue — only exhaustion, where empty data is indistinguishable from a
+# quiet backlog, triggers the cycle abort.
+# =============================================================================
+
+#######################################
+# Classify a gh CLI stderr blob as a rate-limit exhaustion error.
+#
+# gh surfaces GraphQL / REST budget exhaustion in several forms depending on
+# which endpoint triggered it. This helper matches the common phrases
+# case-insensitively. The list is intentionally narrow — false positives
+# would turn transient network blips into cycle aborts.
+#
+# Arguments:
+#   $1 - path to a stderr file captured from `gh` (typically via `2>"$err"`)
+# Returns:
+#   0 if stderr indicates rate-limit exhaustion
+#   1 otherwise (file missing, empty, or unrelated error)
+#######################################
+_pulse_gh_err_is_rate_limit() {
+	local err_file="$1"
+	[[ -n "$err_file" && -s "$err_file" ]] || return 1
+	grep -qiE 'API rate limit exceeded|rate limit exceeded for|was submitted too quickly|secondary rate limit|GraphQL: API rate limit|You have exceeded a secondary rate limit' "$err_file"
+}
+
+#######################################
+# Mark the current cycle as rate-limited.
+#
+# Writes a timestamp + context line to the flag file. Idempotent — if the
+# flag already exists from an earlier prefetch site in the same cycle,
+# append the new context so postmortem logs show all affected sites.
+# Also emits a loud, greppable log line at the site of detection.
+#
+# Arguments:
+#   $1 - context string (function name + repo slug)
+#######################################
+_pulse_mark_rate_limited() {
+	local context="$1"
+	local ts
+	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	mkdir -p "$(dirname "$PULSE_RATE_LIMIT_FLAG")" 2>/dev/null || true
+	printf '%s %s\n' "$ts" "$context" >>"$PULSE_RATE_LIMIT_FLAG"
+	echo "[pulse-wrapper] GraphQL RATE_LIMIT_EXHAUSTED during ${context}" >>"$LOGFILE"
+	return 0
+}
+
+# =============================================================================
 # t2041: Budget-aware LLM sweep — state fingerprint, hygiene anomalies,
 # cache-hit detection. See .agents/reference/pulse-llm-budget.md and
 # .agents/configs/pulse-sweep-budget.json for the design contract.
@@ -607,6 +664,10 @@ _prefetch_repo_prs() {
 		if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 			local err_msg
 			err_msg=$(cat "$pr_err" 2>/dev/null || echo "unknown error")
+			# GH#18979 (t2097): classify rate-limit errors and flag the cycle
+			if _pulse_gh_err_is_rate_limit "$pr_err"; then
+				_pulse_mark_rate_limited "_prefetch_repo_prs:${slug}"
+			fi
 			echo "[pulse-wrapper] _prefetch_repo_prs: gh pr list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
 			pr_json="[]"
 		fi
@@ -654,6 +715,10 @@ _prefetch_repo_daily_cap() {
 	if [[ -z "$daily_cap_json" || "$daily_cap_json" == "null" ]]; then
 		local _daily_cap_err_msg
 		_daily_cap_err_msg=$(cat "$daily_cap_err" 2>/dev/null || echo "unknown error")
+		# GH#18979 (t2097): detect rate-limit exhaustion
+		if _pulse_gh_err_is_rate_limit "$daily_cap_err"; then
+			_pulse_mark_rate_limited "_prefetch_repo_daily_cap:${slug}"
+		fi
 		echo "[pulse-wrapper] _prefetch_repo_daily_cap: gh pr list FAILED for ${slug}: ${_daily_cap_err_msg}" >>"$LOGFILE"
 		daily_cap_json="[]"
 	fi
@@ -788,6 +853,10 @@ _prefetch_repo_issues() {
 		if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
 			local issue_err_msg
 			issue_err_msg=$(cat "$issue_err" 2>/dev/null || echo "unknown error")
+			# GH#18979 (t2097): detect rate-limit exhaustion
+			if _pulse_gh_err_is_rate_limit "$issue_err"; then
+				_pulse_mark_rate_limited "_prefetch_repo_issues:${slug}"
+			fi
 			echo "[pulse-wrapper] _prefetch_repo_issues: gh issue list FAILED for ${slug}: ${issue_err_msg}" >>"$LOGFILE"
 			issue_json="[]"
 		fi
@@ -1768,6 +1837,10 @@ prefetch_triage_review_status() {
 		if [[ -z "$nmr_json" || "$nmr_json" == "null" ]]; then
 			local _nmr_err_msg
 			_nmr_err_msg=$(cat "$nmr_err" 2>/dev/null || echo "unknown error")
+			# GH#18979 (t2097): detect rate-limit exhaustion
+			if _pulse_gh_err_is_rate_limit "$nmr_err"; then
+				_pulse_mark_rate_limited "prefetch_triage_review_status:${slug}"
+			fi
 			echo "[pulse-wrapper] prefetch_triage_review_status: gh issue list FAILED for ${slug}: ${_nmr_err_msg}" >>"$LOGFILE"
 			nmr_json="[]"
 		fi
@@ -1875,6 +1948,10 @@ prefetch_needs_info_replies() {
 		if [[ -z "$ni_json" || "$ni_json" == "null" ]]; then
 			local _ni_err_msg
 			_ni_err_msg=$(cat "$ni_err" 2>/dev/null || echo "unknown error")
+			# GH#18979 (t2097): detect rate-limit exhaustion
+			if _pulse_gh_err_is_rate_limit "$ni_err"; then
+				_pulse_mark_rate_limited "prefetch_needs_info_replies:${slug}"
+			fi
 			echo "[pulse-wrapper] prefetch_needs_info_replies: gh issue list FAILED for ${slug}: ${_ni_err_msg}" >>"$LOGFILE"
 			ni_json="[]"
 		fi
