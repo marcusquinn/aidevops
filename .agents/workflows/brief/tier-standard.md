@@ -50,18 +50,30 @@ Every tier:standard issue body must end with a machine-verifiable completion con
 ```markdown
 ### Done When
 
-- `{lint/test command}` exits 0
-- PR exists with `Closes #{issue_number}` and MERGE_SUMMARY comment posted
+- `shellcheck .agents/scripts/{file}.sh` exits 0
+- `gh pr view --json state` shows MERGED
 - Issue closed with closing comment linking PR
 ```
 
 Without this, workers explore indefinitely or stop after reading files without implementing anything.
+
+## Recovery paths (mandatory)
+
+For each implementation step, include what to do if the expected file/function/pattern is not found:
+
+```markdown
+### Implementation Steps
+
+1. Read `.agents/scripts/pulse-wrapper.sh:4254` — the `auto_approve_maintainer_issues()` function
+   - **If not found at that line:** `grep -n 'auto_approve_maintainer_issues' .agents/scripts/pulse-wrapper.sh`
+   - **If function was renamed/removed:** check `git log --oneline -5 .agents/scripts/pulse-wrapper.sh` for recent changes
+```
 
 ## Fallback patterns
 
 For each file reference, include a fallback search so the worker doesn't stop on first miss:
 
 ```markdown
-- EDIT: `path/to/file.ts:45-60` -- {what to change}
-  - Fallback: `grep -n 'functionName' path/to/file.ts`
+- EDIT: `.agents/scripts/memory-pressure-monitor.sh:877-888`
+  - Fallback: `grep -n 'cmd_daemon' .agents/scripts/memory-pressure-monitor.sh`
 ```

@@ -65,34 +65,7 @@ A dispatch comment that says "implement issue #42" teaches nothing. One that say
 
 ## Headless Continuation Resilience
 
-Briefs consumed by headless workers must anticipate that the worker will encounter empty results, wrong paths, and ambiguous states. Every brief section should answer: "what does the worker do when this step produces nothing?"
-
-**Completion signal (mandatory for all tiers):** Every issue body must include a `### Done When` section with a concrete, machine-verifiable condition. Without this, workers explore indefinitely or stop prematurely.
-
-```markdown
-### Done When
-
-- `shellcheck .agents/scripts/{file}.sh` exits 0
-- `gh pr view --json state` shows MERGED
-- The issue is closed with a closing comment linking the PR
-```
-
-**Recovery paths (mandatory for tier:standard and above):** For each implementation step, include what to do if the expected file/function/pattern is not found:
-
-```markdown
-### Implementation Steps
-
-1. Read `.agents/scripts/pulse-wrapper.sh:4254` — the `auto_approve_maintainer_issues()` function
-   - **If not found at that line:** `grep -n 'auto_approve_maintainer_issues' .agents/scripts/pulse-wrapper.sh`
-   - **If function was renamed/removed:** check `git log --oneline -5 .agents/scripts/pulse-wrapper.sh` for recent changes
-```
-
-**Empty-result fallbacks:** When a brief references a file path, include a fallback search so the worker doesn't stop on first miss:
-
-```markdown
-- EDIT: `.agents/scripts/memory-pressure-monitor.sh:877-888`
-  - Fallback: `grep -n 'cmd_daemon' .agents/scripts/memory-pressure-monitor.sh`
-```
+Briefs consumed by headless workers must anticipate empty results, wrong paths, and ambiguous states. Every brief section should answer: "what does the worker do when this step produces nothing?" Mandatory requirements — completion signals, recovery paths, fallback patterns — see `brief/tier-standard.md`.
 
 ## How to Use This Agent
 
