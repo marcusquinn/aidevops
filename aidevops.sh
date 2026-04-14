@@ -19,10 +19,15 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # Paths
-# When running under sudo on Linux, HOME is reset to /root/ by env_reset.
-# Resolve the real user's home via SUDO_USER so agent/config paths are correct.
+# When running under sudo on Linux, env_reset rewrites HOME to /root/; SUDO_USER
+# holds the original username. getent passwd is the canonical resolver on Linux.
+# On macOS, sudo preserves HOME by default (env_keep+="HOME MAIL" in /etc/sudoers)
+# and getent is not available, so the fallback to $HOME is correct.
+# The command -v getent guard MUST be present — omitting it crashes aidevops.sh
+# under `set -euo pipefail` on any BSD system and breaks sudo aidevops approve.
+# Mirrors the pattern in .agents/scripts/approval-helper.sh:_resolve_real_home().
 # Security: no escalation — root already has full filesystem access.
-if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v getent &>/dev/null; then
 	_AIDEVOPS_REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 else
 	_AIDEVOPS_REAL_HOME="$HOME"
