@@ -68,6 +68,15 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
 {If this task is for a `parent-task`-labeled issue, confirm: PR body will use `For #NNN`, not `Resolves`.}
 {If leaf task: use `Resolves #NNN` as normal — delete this section or leave it blank.}
 
+<!-- HEADING LOCK (t2063): the `## How` heading below must remain exactly
+     "## How" (optionally with " (Approach)" suffix). The subsection headings
+     MUST be exactly "### Files to Modify", "### Implementation Steps", and
+     "### Verification". The issue-sync-lib.sh `_compose_issue_worker_guidance`
+     helper extracts these sections and promotes them to a top-level
+     "Worker Guidance" block in the issue body so workers see actionable
+     context without hunting for the brief. The matcher is case-insensitive
+     as of t2063, but stick to the canonical casing for consistency. -->
+
 ## How (Approach)
 
 <!-- Worker-ready implementation context (t1900): every section below is required

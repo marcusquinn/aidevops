@@ -2051,11 +2051,86 @@ dispatch_with_dedup() {
 		return 1
 	fi
 
+	# t2063: brief-body freshness guard — defence-in-depth.
+	# If a brief file exists for this issue but the issue body lacks the
+	# `## Task Brief` or `## Worker Guidance` marker, force-enrich the body
+	# so the worker sees inlined implementation context on first read. This
+	# catches any legacy issue created via the pre-t2063 bare path, and
+	# any future path that might bypass the primary fixes in claim-task-id.sh
+	# and issue-sync-helper.sh. Non-fatal — dispatch proceeds even if enrich fails.
+	_ensure_issue_body_has_brief "$issue_number" "$repo_slug" "$repo_path" "$issue_title"
+
 	# All checks passed — launch the worker.
 	_dispatch_launch_worker \
 		"$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "$session_key" \
 		"$model_override" "$issue_meta_json"
+}
+
+#######################################
+# t2063: Pre-dispatch brief-body freshness guard.
+#
+# If a task brief file exists at `${repo_path}/todo/tasks/${task_id}-brief.md`
+# but the issue body does not contain the `## Task Brief` or `## Worker Guidance`
+# marker, force-enrich the body via issue-sync-helper.sh. This ensures the
+# worker sees the full implementation context on its first read of the issue,
+# eliminating the ~1500-3000 token exploration overhead of hunting for the
+# brief file inside the worktree.
+#
+# Defence-in-depth: the primary fixes in claim-task-id.sh (_compose_issue_body)
+# and issue-sync-helper.sh (_enrich_update_issue) should make this a no-op in
+# all normal paths. This guard catches:
+#   - Legacy issues created via the pre-t2063 bare path before the TODO push
+#   - Any future path that bypasses both primary fixes
+#   - Briefs added after the issue was created
+#
+# Non-fatal: always returns 0 so dispatch proceeds even if enrich fails.
+# The worker will still run, just with the pre-t2063 context cost.
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#   $3 - repo_path (local checkout)
+#   $4 - issue_title (used to extract task ID)
+#######################################
+_ensure_issue_body_has_brief() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+	local issue_title="$4"
+
+	# Extract task ID from title (format: "tNNN: description")
+	local task_id=""
+	[[ "$issue_title" =~ (t[0-9]+) ]] && task_id="${BASH_REMATCH[1]}"
+	[[ -z "$task_id" ]] && return 0
+
+	# Check for brief file on disk
+	local brief_file="${repo_path}/todo/tasks/${task_id}-brief.md"
+	[[ ! -f "$brief_file" ]] && return 0
+
+	# Check if body already contains the inline markers
+	local current_body
+	current_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body -q .body 2>/dev/null || echo "")
+	if [[ "$current_body" == *"## Task Brief"* ]] || [[ "$current_body" == *"## Worker Guidance"* ]]; then
+		return 0
+	fi
+
+	# Brief exists but body is a stub — force-enrich before worker sees it.
+	# Run enrich from the repo_path so `find_project_root` resolves correctly,
+	# and pass REPO_SLUG + FORCE_ENRICH via env so the helper skips the body
+	# preservation gate and targets the right repo.
+	echo "[dispatch_with_dedup] t2063: issue #${issue_number} has brief on disk but stub body — force-enriching" >>"$LOGFILE"
+	local issue_sync_helper
+	issue_sync_helper="$(dirname "${BASH_SOURCE[0]}")/issue-sync-helper.sh"
+	if [[ -x "$issue_sync_helper" ]]; then
+		(
+			cd "$repo_path" 2>/dev/null || exit 0
+			FORCE_ENRICH=true REPO_SLUG="$repo_slug" "$issue_sync_helper" enrich "$task_id" >>"$LOGFILE" 2>&1
+		) || {
+			echo "[dispatch_with_dedup] t2063: force-enrich failed for #${issue_number}; proceeding with stub body" >>"$LOGFILE"
+		}
+	fi
+	return 0
 }
 
 #######################################

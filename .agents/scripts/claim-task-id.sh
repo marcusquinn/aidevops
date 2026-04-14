@@ -80,6 +80,15 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+# t2063: Source issue-sync-lib.sh for shared body composition helpers
+# (_compose_issue_worker_guidance, _compose_issue_brief, _compose_issue_html_notes_and_footer).
+# Guarded against double-sourcing when claim-task-id.sh itself is sourced from another script.
+if [[ -z "${ISSUE_SYNC_LIB_SOURCED:-}" ]] && [[ -f "${SCRIPT_DIR}/issue-sync-lib.sh" ]]; then
+	# shellcheck source=/dev/null
+	source "${SCRIPT_DIR}/issue-sync-lib.sh"
+	ISSUE_SYNC_LIB_SOURCED=1
+fi
+
 set -euo pipefail
 
 # Configuration
@@ -785,42 +794,84 @@ _read_brief_what_section() {
 	return 0
 }
 
-# Compose a structured issue body from title and description (t1899).
-# Falls back to brief file's What section when no description provided (t1906).
-# Appends provenance signature footer when gh-signature-helper.sh is available.
-# Echoes the composed body text.
+# Compose a structured issue body from title and description (t1899, t2063).
+#
+# Behaviour (t2063 — brief-first inlining):
+#   1. If a brief file exists at `${REPO_PATH}/todo/tasks/${task_id}-brief.md`:
+#      - Use --description (or the brief's What section) as the summary paragraph
+#      - Inline Worker Guidance (from the brief's How section) via shared helper
+#      - Inline full Task Brief (stripped of frontmatter) via shared helper
+#      - Append the `*Synced from TODO.md by issue-sync-helper.sh*` sentinel so
+#        future enrich calls are allowed to refresh the body (t2063 fix for
+#        _enrich_update_issue preserving stub bodies created by this path)
+#   2. If no brief file exists:
+#      - Fall back to the pre-t2063 behaviour: use --description verbatim OR
+#        refuse to create a stub issue (t1937) when neither description nor
+#        brief is available
+#
+# Echoes the composed body text. Returns 0 on success, 1 when neither a
+# description nor a brief file is available (caller should skip issue creation).
 _compose_issue_body() {
 	local title="$1"
 	local description="$2"
 
+	# Extract task ID from title (format: "tNNN: description")
+	local task_id=""
+	[[ "$title" =~ ^(t[0-9]+) ]] && task_id="${BASH_REMATCH[1]}"
+
+	# Resolve brief file path (may or may not exist)
+	local brief_file=""
+	if [[ -n "$task_id" ]]; then
+		brief_file="${REPO_PATH}/todo/tasks/${task_id}-brief.md"
+	fi
+
+	# t2063 brief-first path: when a brief exists, the brief is the source of truth
+	if [[ -n "$brief_file" && -f "$brief_file" ]] && [[ "$(type -t _compose_issue_worker_guidance 2>/dev/null)" == "function" ]]; then
+		local body=""
+
+		# Summary paragraph: caller's --description, OR brief's What section, OR empty
+		if [[ -n "$description" ]]; then
+			body="$description"
+		else
+			local brief_what=""
+			brief_what=$(_read_brief_what_section "$task_id" "$REPO_PATH") || true
+			if [[ -n "$brief_what" ]]; then
+				log_info "Auto-read summary from brief What section: todo/tasks/${task_id}-brief.md"
+				body="## Task"$'\n\n'"$brief_what"
+			fi
+		fi
+
+		# Inline Worker Guidance (How section) and full Task Brief.
+		# These helpers are sourced from issue-sync-lib.sh at the top of this script.
+		body=$(_compose_issue_worker_guidance "$body" "$brief_file")
+		body=$(_compose_issue_brief "$body" "$brief_file")
+
+		# Append the sentinel footer (via shared composer) so _enrich_update_issue
+		# recognises this body as framework-generated and refreshes it on future
+		# sync passes. The empty second argument skips HTML implementation notes.
+		if [[ "$(type -t _compose_issue_html_notes_and_footer 2>/dev/null)" == "function" ]]; then
+			body=$(_compose_issue_html_notes_and_footer "$body" "")
+		fi
+
+		log_info "Inlined brief into issue body for ${task_id} (${#body} chars)"
+		echo "$body"
+		return 0
+	fi
+
+	# Fallback path: no brief file available — pre-t2063 behaviour
 	local body=""
 	if [[ -n "$description" ]]; then
 		body="$description"
 	else
-		# t1906: Try reading the brief file's What section before falling back to stub
-		local task_id=""
-		[[ "$title" =~ ^(t[0-9]+) ]] && task_id="${BASH_REMATCH[1]}"
-		local brief_what=""
-		if [[ -n "$task_id" ]]; then
-			brief_what=$(_read_brief_what_section "$task_id" "$REPO_PATH") || true
-		fi
-
-		if [[ -n "$brief_what" ]]; then
-			log_info "Auto-read description from brief file: todo/tasks/${task_id}-brief.md"
-			body="## Task"
-			body="$body"$'\n\n'"$brief_what"
-		else
-			# t1937: No description and no brief file — refuse to create a stub issue.
-			# The task ID is already secured; the issue should be created later when
-			# the brief is written (via issue-sync-helper.sh push or manually).
-			# Returning empty body signals create_github_issue() to skip creation.
-			log_error "No --description provided and no brief file found at todo/tasks/${task_id}-brief.md"
-			log_error "Issue creation skipped — create the issue after writing the brief:"
-			log_error "  issue-sync-helper.sh push ${task_id}"
-			log_error "  OR: gh issue create --title \"${title}\" --body \"<description>\""
-			echo ""
-			return 1
-		fi
+		# t1906 + t1937: no description and no brief — refuse to create a stub issue.
+		# The task ID is already secured; the issue should be created later when
+		# the brief is written (via issue-sync-helper.sh push or manually).
+		log_error "No --description provided and no brief file found at todo/tasks/${task_id}-brief.md"
+		log_error "Issue creation skipped — create the issue after writing the brief:"
+		log_error "  issue-sync-helper.sh push ${task_id}"
+		log_error "  OR: gh issue create --title \"${title}\" --body \"<description>\""
+		echo ""
+		return 1
 	fi
 
 	# t1899: Append provenance signature footer (build.txt rule #8)
@@ -1229,4 +1280,9 @@ main() {
 	return 0
 }
 
-main "$@"
+# t2063: only execute main when run as a script, not when sourced by tests.
+# This allows test harnesses to source the file for access to function
+# definitions (e.g. _compose_issue_body) without triggering main().
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	main "$@"
+fi

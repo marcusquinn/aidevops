@@ -754,23 +754,62 @@ _enrich_apply_labels() {
 	return 0
 }
 
-# _enrich_update_issue: hybrid sentinel + content-diff gate (GH#18411) then
-# edit issue title and/or body. Returns 0 on successful edit, 1 on failure.
-# When FORCE_ENRICH=true the gate is bypassed and both title and body are set.
+# _enrich_update_issue: brief-first authoritative body policy (t2063).
+#
+# Body update decision tree (in priority order):
+#   1. FORCE_ENRICH=true          → always update body
+#   2. Brief file exists on disk  → brief is authoritative, update body unless
+#                                    current == composed (no-op skip)
+#   3. No brief + has sentinel    → previously framework-synced, update on diff
+#                                    (existing GH#18411 behaviour)
+#   4. No brief + no sentinel     → genuine external content, preserve body
+#                                    (existing GH#18411 behaviour)
+#
+# Rationale (t2063): prior to this change, case 2 fell through to case 4
+# whenever the issue was created by `claim-task-id.sh` before the TODO entry
+# was pushed — the bare-fallback body had no sentinel, so enrich preserved
+# the stub even though a rich brief existed on disk. The brief-file check
+# short-circuits that case: if a brief exists, the brief is the source of
+# truth and the body is just a view of it.
+#
+# Returns 0 on successful edit, 1 on failure.
 _enrich_update_issue() {
 	local repo="$1" num="$2" task_id="$3" title="$4" body="$5"
 	local do_body_update=true
+
 	if [[ "$FORCE_ENRICH" != "true" ]]; then
 		local current_body
 		current_body=$(gh issue view "$num" --repo "$repo" --json body -q .body 2>/dev/null || echo "")
-		if [[ "$current_body" != *"Synced from TODO.md by issue-sync-helper.sh"* ]]; then
-			print_info "Preserving external body on #$num ($task_id) — no sentinel footer (use --force to override)"
-			do_body_update=false
-		elif [[ "$current_body" == "$body" ]]; then
-			print_info "Body unchanged on #$num ($task_id), skipping API call"
+
+		# t2063: brief-file presence is the authoritative signal.
+		# Resolve project root from the shared PROJECT_ROOT variable if set
+		# (normal sync path) or from git rev-parse as a fallback.
+		local _project_root="${PROJECT_ROOT:-}"
+		[[ -z "$_project_root" ]] && _project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+		local _brief_file=""
+		[[ -n "$_project_root" ]] && _brief_file="${_project_root}/todo/tasks/${task_id}-brief.md"
+
+		if [[ -n "$_brief_file" && -f "$_brief_file" ]]; then
+			# Case 2: brief exists → authoritative. Refresh unless no-op.
+			if [[ "$current_body" == "$body" ]]; then
+				print_info "Body unchanged on #$num ($task_id), skipping API call"
+				do_body_update=false
+			else
+				print_info "Refreshing body on #$num ($task_id) — brief file is authoritative (t2063)"
+			fi
+		elif [[ "$current_body" == *"Synced from TODO.md by issue-sync-helper.sh"* ]]; then
+			# Case 3: no brief, has sentinel → framework-synced, refresh on diff
+			if [[ "$current_body" == "$body" ]]; then
+				print_info "Body unchanged on #$num ($task_id), skipping API call"
+				do_body_update=false
+			fi
+		else
+			# Case 4: no brief, no sentinel → genuine external content, preserve
+			print_info "Preserving external body on #$num ($task_id) — no brief file, no sentinel (use --force to override)"
 			do_body_update=false
 		fi
 	fi
+
 	if [[ "$do_body_update" == "true" ]]; then
 		if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
 			return 0
@@ -1664,4 +1703,10 @@ main() {
 	esac
 }
 
-main "$@"
+# t2063: only execute main when run as a script, not when sourced by tests.
+# This allows test harnesses to source the file for access to function
+# definitions (e.g. _enrich_update_issue) without triggering main()'s command
+# parsing and print_help output.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	main "$@"
+fi

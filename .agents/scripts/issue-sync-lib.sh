@@ -990,11 +990,16 @@ _compose_issue_worker_guidance() {
 		return 0
 	fi
 
-	# Check if the How section has structured subsections (Files to Modify, Steps, Verification)
+	# Check if the How section has structured subsections (Files to Modify, Steps, Verification).
+	# t2063: case-insensitive match so lowercase "### files to modify" still activates
+	# the Worker Guidance extraction. has_verify is computed for future conditional use
+	# but currently only gates indirectly via has_files/has_steps — see the
+	# `: "${has_verify}"` marker below which suppresses the unused-variable lint.
 	local has_files has_steps has_verify
-	has_files=$(echo "$how_section" | grep -c '### Files to Modify\|EDIT:\|NEW:' || true)
-	has_steps=$(echo "$how_section" | grep -c '### Implementation Steps' || true)
-	has_verify=$(echo "$how_section" | grep -c '### Verification' || true)
+	has_files=$(echo "$how_section" | grep -ic '### Files to Modify\|EDIT:\|NEW:' || true)
+	has_steps=$(echo "$how_section" | grep -ic '### Implementation Steps' || true)
+	has_verify=$(echo "$how_section" | grep -ic '### Verification' || true)
+	: "${has_verify}"
 
 	if [[ "$has_files" -gt 0 || "$has_steps" -gt 0 ]]; then
 		body="$body"$'\n\n'"## Worker Guidance"$'\n\n'"$how_section"
