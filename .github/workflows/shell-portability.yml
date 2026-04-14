@@ -1,0 +1,123 @@
+name: Shell Portability Gate
+
+# t2076 (GH#18787): block PRs that introduce unguarded Linux/macOS-only
+# command calls in shell scripts.
+#
+# Scans only the .sh files CHANGED in the PR (not the full repo) so that
+# pre-existing violations in untouched files don't block unrelated work.
+# A full advisory scan also runs on main push (exit 0 — advisory only).
+#
+# Commands detected: getent, sha256sum, readlink -f, stat --format/-c,
+# date -d, timeout (standalone), sed -r, grep -P, xargs -r, find -printf,
+# mktemp --suffix, base64 -w (linux-only), and dscl, sw_vers, launchctl,
+# pbcopy, pbpaste, defaults, security (keychain), codesign (macos-only).
+#
+# Guards recognised: command -v <cmd>, uname/OSTYPE branch, 2>/dev/null,
+# &>/dev/null, || fallback, BSD probe pattern (if <cmd> &>/dev/null).
+# Inline suppression: # shell-portability: ignore next
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changed-sh:
+    name: Detect changed shell files
+    runs-on: ubuntu-latest
+    outputs:
+      has_sh_changes: ${{ steps.detect.outputs.has_sh_changes }}
+      changed_files: ${{ steps.detect.outputs.changed_files }}
+      is_pr: ${{ steps.detect.outputs.is_pr }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed .sh files
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          IS_PUSH: ${{ github.event_name == 'push' }}
+        run: |
+          set -euo pipefail
+          is_pr="false"
+          if [[ "${IS_PUSH}" == "false" ]]; then
+            is_pr="true"
+            echo "is_pr=true" >> "$GITHUB_OUTPUT"
+            # PR: scan only files changed in this PR
+            changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null | grep '\.sh$' || true)
+          else
+            echo "is_pr=false" >> "$GITHUB_OUTPUT"
+            # Main push: scan all tracked .sh files (advisory mode)
+            changed=$(git ls-files '*.sh' 2>/dev/null || true)
+          fi
+
+          if [[ -z "$changed" ]]; then
+            printf 'No .sh files in scope; skipping portability scan.\n'
+            echo "has_sh_changes=false" >> "$GITHUB_OUTPUT"
+            echo "changed_files=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          printf 'Shell files to scan:\n%s\n' "$changed"
+          echo "has_sh_changes=true" >> "$GITHUB_OUTPUT"
+          # Store newline-delimited list (used in next step)
+          printf '%s' "$changed" > /tmp/changed_sh_files.txt
+          {
+            printf 'changed_files='
+            printf '%s' "$changed" | tr '\n' ' '
+            printf '\n'
+          } >> "$GITHUB_OUTPUT"
+
+  portability-scan:
+    name: Shell portability scan
+    runs-on: ubuntu-latest
+    needs: detect-changed-sh
+    if: needs.detect-changed-sh.outputs.has_sh_changes == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Run portability scanner
+        id: scan
+        env:
+          IS_PR: ${{ needs.detect-changed-sh.outputs.is_pr }}
+          CHANGED_FILES: ${{ needs.detect-changed-sh.outputs.changed_files }}
+        run: |
+          set -euo pipefail
+          chmod +x .agents/scripts/lint-shell-portability.sh
+
+          # Run scanner on changed files
+          # shellcheck disable=SC2086
+          output=$(bash .agents/scripts/lint-shell-portability.sh $CHANGED_FILES 2>&1) || scan_rc=$?
+          scan_rc=${scan_rc:-0}
+
+          printf '%s\n' "$output"
+
+          if [[ "$scan_rc" -ne 0 ]]; then
+            if [[ "$IS_PR" == "true" ]]; then
+              printf '\n::error::Unguarded platform-specific commands found in changed files.\n'
+              printf '::error::See output above for details. Fix with command -v guard, uname branch,\n'
+              printf '::error::or add # shell-portability: ignore next above the call.\n'
+              printf '::error::Reference: .agents/reference/bash-compat.md\n'
+              exit 1
+            else
+              # Main push: advisory only — log warning but do not fail
+              printf '\n::warning::Unguarded platform-specific commands found (advisory, not blocking on main).\n'
+              exit 0
+            fi
+          fi
+
+          printf '\nShell portability: clean.\n'

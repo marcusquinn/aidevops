@@ -442,6 +442,7 @@ cmd_install() {
 PLIST
 
 	launchctl unload "$PLIST_FILE" 2>/dev/null || true
+	# shell-portability: ignore next — cch-canary is macOS-only (launchd)
 	launchctl load "$PLIST_FILE"
 
 	print_success "Installed daily canary: ${PLIST_LABEL} (runs at 06:00)"

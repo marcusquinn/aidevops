@@ -2772,9 +2772,11 @@ _store_bench_result() {
 	ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 	local prompt_hash
+	# shell-portability: ignore next — sha256sum: macOS needs shasum -a 256 (GH#18787)
 	prompt_hash=$(printf '%s' "$prompt_text" | sha256sum | cut -c1-12)
 
 	local output_hash
+	# shell-portability: ignore next — sha256sum: macOS needs shasum -a 256 (GH#18787)
 	output_hash=$(printf '%s' "${model_id}:${ts}" | sha256sum | cut -c1-12)
 
 	local judge_field=""

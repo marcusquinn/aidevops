@@ -1765,6 +1765,7 @@ _install_launchd() {
 EOF
 
 	launchctl bootout "gui/$(id -u)" "${PLIST_PATH}" 2>/dev/null || true
+	# shell-portability: ignore next — worker-watchdog macOS launchd installer (GH#18787)
 	launchctl bootstrap "gui/$(id -u)" "${PLIST_PATH}"
 
 	echo "Installed and loaded: ${LAUNCHD_LABEL}"
