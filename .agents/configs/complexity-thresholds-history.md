@@ -46,6 +46,8 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 | 254 | GH#18267 | proximity guard firing at 247/249 (2 headroom); bumped to 254 to restore adequate headroom — 247 violations + 7 headroom; proximity guard (warn_at = 254-5 = 249) fires when violations exceed 249 (i.e., at 250), preventing saturation |
 | 249 | GH#18293 | ratcheted down — actual violations 247 + 2 buffer |
 | 254 | GH#18314 | proximity guard firing at 247/249 (2 headroom); bumped to 254 to restore adequate headroom — 247 violations + 7 headroom; proximity guard (warn_at = 254-5 = 249) fires when violations exceed 249 (i.e., at 250), preventing saturation |
+| 269 | GH#18802 | ratcheted down — actual violations 267 + 2 buffer |
+| 276 | GH#18807 | proximity guard fired at 268/272 (4 headroom at filing time); subsequent ratchet to 269 reduced headroom to 0 as violations drifted to 269. 269 violations + 7 headroom = 276; proximity guard (warn_at = 276-5 = 271) fires when violations exceed 271 (i.e., at 272), preventing saturation |
 
 ## FUNCTION_COMPLEXITY_THRESHOLD History
 
@@ -58,6 +60,11 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 | 43 | post-GH#18376 t1971 Phase 3 | decomposition moved calculate_priority_allocations into pulse-capacity-alloc.sh; awk counter records it at 102 lines (was ≤100 in wrapper due to adjacent context). Net violations: 41. 41 + 2 buffer = 43 |
 | 46 | GH#18419 t1986 | post-merge of t1982 (GH#18405) added _compose_consolidation_child_body (101) and _dispatch_issue_consolidation (104) to pulse-triage.sh, plus setup_gh_stub (102) test helper. Net violations: 44. 44 + 2 buffer = 46 |
 | 46 | t1999 Phase 12 | dispatch_with_dedup (328 lines) split into _dispatch_dedup_check_layers (92 lines, not a violation) + _dispatch_launch_worker (214 lines, still a violation) + thin orchestrator (53 lines). Net violation change: 0 (one violation replaced by one violation). Ratchet not achievable in this PR; threshold stays at 46. Full-codebase count: 46 violations = threshold (no buffer). Ratchet will require _dispatch_launch_worker to be further split in a follow-up (t2000+). |
+| 43 | GH#18695 | ratcheted down — actual violations 41 + 2 buffer |
+| 33 | GH#18713 | ratcheted down — actual violations 31 + 2 buffer |
+| 30 | GH#18729 | ratcheted down — actual violations 28 + 2 buffer |
+| 23 | GH#18802 | ratcheted down — actual violations 21 + 2 buffer |
+| 26 | GH#18807 | pre-existing regression on main — 24 violations vs threshold 23; 24 violations + 2 buffer = 26 |
 
 ## FILE_SIZE_THRESHOLD History
 
