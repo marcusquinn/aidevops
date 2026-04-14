@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.27] - 2026-04-14
+
+### Changed
+
+- fix canary failure cached as permanent triage failure; fix ratchet-down dedup (#18959)
+- exempt parent-task/meta issues from large-file simplification gate (#18952)
+- fix(post-merge-review-scanner): add NOOP_RE deny-list anchored to terminal position
+
+### Fixed
+
+- dispatch-dedup self-login bypass + worker closed-issue guard + process docs (#18963)
+
 ## [3.8.26] - 2026-04-14
 
 ### Fixed
