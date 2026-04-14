@@ -38,6 +38,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections import namedtuple
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -769,6 +770,20 @@ def cmd_list_mailboxes(args):
     return 0
 
 
+def _resolve_parent_mailbox(api_url, user, account_id, name_parts):
+    """Resolve parent mailbox for a nested path. Returns (parent_id, error_msg)."""
+    if len(name_parts) <= 1:
+        return None, None
+    parent_path = "/".join(name_parts[:-1])
+    parent_id = _resolve_mailbox_id(api_url, user, account_id, parent_path)
+    if not parent_id:
+        return None, (
+            f"ERROR: Parent mailbox '{parent_path}' not found. "
+            "Create parent mailboxes first."
+        )
+    return parent_id, None
+
+
 def cmd_create_mailbox(args):
     """Create a JMAP mailbox, including nested paths."""
     _, account_id, api_url = _session_context(args)
@@ -778,23 +793,11 @@ def cmd_create_mailbox(args):
         print("ERROR: --name is required", file=sys.stderr)
         return 1
 
-    # Handle nested paths (e.g., "Archive/Projects/acme")
     parts = name.split("/")
-    parent_id = None
-
-    if len(parts) > 1:
-        # Resolve parent path
-        parent_path = "/".join(parts[:-1])
-        parent_id = _resolve_mailbox_id(
-            api_url, args.user, account_id, parent_path
-        )
-        if not parent_id:
-            print(
-                f"ERROR: Parent mailbox '{parent_path}' not found. "
-                "Create parent mailboxes first.",
-                file=sys.stderr,
-            )
-            return 1
+    parent_id, err = _resolve_parent_mailbox(api_url, args.user, account_id, parts)
+    if err:
+        print(err, file=sys.stderr)
+        return 1
 
     create_args = {
         "accountId": account_id,
@@ -830,15 +833,9 @@ def cmd_create_mailbox(args):
         print(json.dumps(result, indent=2))
         return 0
 
-    if "new0" in not_created:
-        err = not_created["new0"]
-        print(
-            f"ERROR: Mailbox creation failed: {err.get('description', err)}",
-            file=sys.stderr,
-        )
-        return 1
-
-    print("ERROR: Unknown creation result", file=sys.stderr)
+    err_detail = not_created.get("new0", {})
+    err_msg = err_detail.get("description", err_detail) if err_detail else "Unknown creation result"
+    print(f"ERROR: Mailbox creation failed: {err_msg}", file=sys.stderr)
     return 1
 
 
@@ -864,6 +861,19 @@ def _fetch_email_mailbox_ids(api_url, user, account_id, email_id):
     return get_result["list"][0].get("mailboxIds", {})
 
 
+def _validate_move_targets(api_url, user, account_id, email_id, dest_name):
+    """Validate move targets. Returns (dest_id, current_mailboxes, error_msg)."""
+    dest_id = _resolve_mailbox_id(api_url, user, account_id, dest_name)
+    if not dest_id:
+        return None, None, f"ERROR: Destination mailbox '{dest_name}' not found"
+
+    current_mailboxes = _fetch_email_mailbox_ids(api_url, user, account_id, email_id)
+    if current_mailboxes is None:
+        return None, None, f"ERROR: Email '{email_id}' not found"
+
+    return dest_id, current_mailboxes, None
+
+
 def cmd_move_email(args):
     """Move an email to a different mailbox by updating mailboxIds."""
     _, account_id, api_url = _session_context(args)
@@ -873,24 +883,11 @@ def cmd_move_email(args):
         print("ERROR: --dest-mailbox is required", file=sys.stderr)
         return 1
 
-    dest_id = _resolve_mailbox_id(
-        api_url, args.user, account_id, dest_name
+    dest_id, current_mailboxes, err = _validate_move_targets(
+        api_url, args.user, account_id, args.email_id, dest_name
     )
-    if not dest_id:
-        print(
-            f"ERROR: Destination mailbox '{dest_name}' not found",
-            file=sys.stderr,
-        )
-        return 1
-
-    current_mailboxes = _fetch_email_mailbox_ids(
-        api_url, args.user, account_id, args.email_id
-    )
-    if current_mailboxes is None:
-        print(
-            f"ERROR: Email '{args.email_id}' not found",
-            file=sys.stderr,
-        )
+    if err:
+        print(err, file=sys.stderr)
         return 1
 
     # Build update: remove from all current mailboxes, add to destination
@@ -919,9 +916,9 @@ def cmd_move_email(args):
 
     not_updated = set_result.get("notUpdated", {})
     if args.email_id in not_updated:
-        err = not_updated[args.email_id]
+        err_detail = not_updated[args.email_id]
         print(
-            f"ERROR: Move failed: {err.get('description', err)}",
+            f"ERROR: Move failed: {err_detail.get('description', err_detail)}",
             file=sys.stderr,
         )
         return 1
@@ -1036,6 +1033,14 @@ def cmd_clear_keyword(args):
 # index_sync helpers
 # ---------------------------------------------------------------------------
 
+# Context object for sync operations — replaces repeated (api_url, user,
+# account_id, account_key, mailbox_id, db_conn) parameter lists.
+SyncContext = namedtuple(
+    "SyncContext",
+    ["api_url", "user", "account_id", "account_key", "mailbox_id", "db_conn"],
+)
+
+
 def _load_saved_sync_state(db_conn, account_key, mailbox_id):
     """Return the saved JMAP query state string, or None."""
     row = db_conn.execute(
@@ -1071,9 +1076,12 @@ def _fetch_email_headers_batch(api_url, user, account_id, email_ids):
     return get_result.get("list", []) if get_result else []
 
 
-def _delta_sync(api_url, user, account_id, account_key, mailbox_id,
-                saved_state, db_conn):
+def _delta_sync(ctx, saved_state):
     """Attempt delta sync using Email/queryChanges.
+
+    Args:
+        ctx: SyncContext with connection and identity details.
+        saved_state: Previous JMAP query state string.
 
     Returns (synced_count, removed_count, new_state) on success,
     or raises Exception to signal fallback to full sync.
@@ -1082,8 +1090,8 @@ def _delta_sync(api_url, user, account_id, account_key, mailbox_id,
         [
             "Email/queryChanges",
             {
-                "accountId": account_id,
-                "filter": {"inMailbox": mailbox_id},
+                "accountId": ctx.account_id,
+                "filter": {"inMailbox": ctx.mailbox_id},
                 "sort": [{"property": "receivedAt", "isAscending": False}],
                 "sinceQueryState": saved_state,
             },
@@ -1091,7 +1099,7 @@ def _delta_sync(api_url, user, account_id, account_key, mailbox_id,
         ],
     ]
 
-    response = _jmap_request(api_url, user, method_calls)
+    response = _jmap_request(ctx.api_url, ctx.user, method_calls)
     qc_result = _find_response(
         response.get("methodResponses", []), "Email/queryChanges", "qc0"
     )
@@ -1105,21 +1113,23 @@ def _delta_sync(api_url, user, account_id, account_key, mailbox_id,
 
     synced = 0
     if added_ids:
-        emails = _fetch_email_headers_batch(api_url, user, account_id, added_ids)
+        emails = _fetch_email_headers_batch(
+            ctx.api_url, ctx.user, ctx.account_id, added_ids
+        )
         for em in emails:
-            _upsert_jmap_email(db_conn, account_key, em)
+            _upsert_jmap_email(ctx.db_conn, ctx.account_key, em)
             synced += 1
 
     for rid in removed_ids:
-        db_conn.execute(
+        ctx.db_conn.execute(
             "DELETE FROM jmap_emails WHERE account = ? AND email_id = ?",
-            (account_key, rid),
+            (ctx.account_key, rid),
         )
 
     if new_state:
-        _save_sync_state(db_conn, account_key, mailbox_id, new_state)
+        _save_sync_state(ctx.db_conn, ctx.account_key, ctx.mailbox_id, new_state)
 
-    db_conn.commit()
+    ctx.db_conn.commit()
     return synced, len(removed_ids), new_state
 
 
@@ -1171,28 +1181,33 @@ def _query_all_email_ids(api_url, user, account_id, mailbox_id, batch_size=100):
     return all_ids, query_state
 
 
-def _full_sync(api_url, user, account_id, account_key, mailbox_id, db_conn):
+def _full_sync(ctx):
     """Full sync: fetch all email IDs then retrieve headers in batches.
+
+    Args:
+        ctx: SyncContext with connection and identity details.
 
     Returns (synced_count, query_state).
     """
     batch_size = 100
     all_ids, query_state = _query_all_email_ids(
-        api_url, user, account_id, mailbox_id, batch_size
+        ctx.api_url, ctx.user, ctx.account_id, ctx.mailbox_id, batch_size
     )
 
     synced = 0
     for i in range(0, len(all_ids), batch_size):
         batch_ids = all_ids[i: i + batch_size]
-        emails = _fetch_email_headers_batch(api_url, user, account_id, batch_ids)
+        emails = _fetch_email_headers_batch(
+            ctx.api_url, ctx.user, ctx.account_id, batch_ids
+        )
         for em in emails:
-            _upsert_jmap_email(db_conn, account_key, em)
+            _upsert_jmap_email(ctx.db_conn, ctx.account_key, em)
             synced += 1
 
     if query_state:
-        _save_sync_state(db_conn, account_key, mailbox_id, query_state)
+        _save_sync_state(ctx.db_conn, ctx.account_key, ctx.mailbox_id, query_state)
 
-    db_conn.commit()
+    ctx.db_conn.commit()
     return synced, query_state
 
 
@@ -1216,15 +1231,14 @@ def cmd_index_sync(args):
 
     account_key = f"{args.user}@jmap"
     db_conn = _init_index_db()
+    ctx = SyncContext(api_url, args.user, account_id, account_key,
+                      mailbox_id, db_conn)
 
     if not args.full:
         saved_state = _load_saved_sync_state(db_conn, account_key, mailbox_id)
         if saved_state:
             try:
-                synced, removed, new_state = _delta_sync(
-                    api_url, args.user, account_id, account_key,
-                    mailbox_id, saved_state, db_conn,
-                )
+                synced, removed, new_state = _delta_sync(ctx, saved_state)
                 db_conn.close()
                 result = {
                     "mailbox": mailbox_name,
@@ -1241,9 +1255,7 @@ def cmd_index_sync(args):
                 # Fall through to full sync
                 pass
 
-    synced, query_state = _full_sync(
-        api_url, args.user, account_id, account_key, mailbox_id, db_conn
-    )
+    synced, query_state = _full_sync(ctx)
     db_conn.close()
 
     result = {

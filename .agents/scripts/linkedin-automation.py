@@ -26,7 +26,7 @@ except ImportError:
 
 # Shared browser automation utilities
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
-from browser_automation_utils import playwright_login, playwright_like_posts  # noqa: E402
+from browser_automation_utils import playwright_login, playwright_like_posts, LikePostsConfig  # noqa: E402
 
 try:
     # Selenium imports would go here if needed
@@ -105,14 +105,14 @@ class LinkedInAutomation:
 
     def _playwright_like_posts(self, page: Page, max_likes: int):
         """Like posts on LinkedIn timeline using Playwright"""
-        playwright_like_posts(
-            page,
-            max_likes,
-            self.session_stats,
-            self.random_delay,
+        cfg = LikePostsConfig(
+            max_likes=max_likes,
+            session_stats=self.session_stats,
+            random_delay_fn=self.random_delay,
             like_count_key="likes_given",
             processed_count_key="posts_processed",
         )
+        playwright_like_posts(page, cfg)
     
     def _print_session_summary(self):
         """Print automation session summary"""

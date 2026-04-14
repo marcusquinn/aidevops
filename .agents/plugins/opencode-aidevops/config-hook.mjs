@@ -217,6 +217,60 @@ function ensureAgentGuard(config, workspaceDir) {
 }
 
 /**
+ * Register Claude CLI proxy models or clean up stale placeholder entries.
+ * @param {object} config - OpenCode Config object (mutable)
+ * @returns {number} Number of models registered
+ */
+function registerClaudeCliModels(config) {
+  const claudeProxyPort = getClaudeProxyPort();
+  if (claudeProxyPort) {
+    const claudeModels = Object.entries(CLAUDECLI_MODELS).map(([id, def]) => ({
+      id,
+      name: def.name,
+      reasoning: def.reasoning !== false,
+      contextWindow: def.limit?.context || 200000,
+      maxTokens: def.limit?.output || 32000,
+    }));
+    return registerClaudeProvider(config, claudeProxyPort, claudeModels)
+      ? claudeModels.length
+      : 0;
+  }
+  // Proxy not running — remove placeholder entries so dead models don't show
+  if (config.provider?.claudecli) {
+    delete config.provider.claudecli;
+  }
+  return 0;
+}
+
+/**
+ * Log a summary of config hook changes (silent when nothing changed).
+ * @param {object} counts - { agents, mcps, agentTools, poolCleaned, anthropic, cursor, google, claude }
+ * @param {string|null} versionDrift
+ */
+function logConfigSummary(counts, versionDrift) {
+  const labels = [
+    [counts.agents, "agents"],
+    [counts.mcps, "MCPs"],
+    [counts.agentTools, "agent tool perms"],
+    [counts.poolCleaned, `cleaned ${counts.poolCleaned} stale pool provider${counts.poolCleaned === 1 ? "" : "s"}`],
+    [counts.anthropic, "anthropic models"],
+    [counts.cursor, "Cursor models"],
+    [counts.google, "Google models"],
+    [counts.claude, "Claude CLI models"],
+  ];
+  const parts = labels
+    .filter(([n]) => n > 0)
+    .map(([n, label]) => (typeof label === "string" && label.startsWith("cleaned")) ? label : `${n} ${label}`);
+
+  if (parts.length > 0) {
+    console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
+  }
+  if (versionDrift) {
+    console.error(`[aidevops] Version drift: ${versionDrift}`);
+  }
+}
+
+/**
  * Create the config hook function.
  * @param {object} deps - { agentsDir, workspaceDir, pluginDir }
  * @returns {Function} Config hook
@@ -232,19 +286,19 @@ export function createConfigHook(deps) {
   return async function configHook(config) {
     if (!config.agent) config.agent = {};
 
-    const agentsInjected = registerAgents(config, agentsDir);
+    const agents = registerAgents(config, agentsDir);
     ensureAgentGuard(config, workspaceDir);
 
-    const mcpsRegistered = registerMcpServers(config);
-    const agentToolsUpdated = applyAgentMcpTools(config);
+    const mcps = registerMcpServers(config);
+    const agentTools = applyAgentMcpTools(config);
     const poolCleaned = registerPoolProvider(config);
-    const anthropicModelsRegistered = registerAnthropicModels(config);
+    const anthropic = registerAnthropicModels(config);
 
     // Discover and register proxy provider models
     const { getCursorModels } = await import("./cursor/models.js");
     const { discoverGoogleModels } = await import("./google-proxy.mjs");
 
-    const cursorModelsRegistered = await discoverAndRegisterModels({
+    const cursor = await discoverAndRegisterModels({
       provider: "cursor",
       port: getCursorProxyPort(),
       discoverModels: getCursorModels,
@@ -252,7 +306,7 @@ export function createConfigHook(deps) {
       config,
     });
 
-    const googleModelsRegistered = await discoverAndRegisterModels({
+    const google = await discoverAndRegisterModels({
       provider: "google",
       port: getGoogleProxyPort(),
       discoverModels: discoverGoogleModels,
@@ -260,46 +314,11 @@ export function createConfigHook(deps) {
       config,
     });
 
-    // Claude CLI transport proxy — registers the `claudecli` provider with the
-    // local proxy base URL. Derives models from CLAUDECLI_MODELS to avoid drift.
-    // When proxy is not running, removes placeholder entries to avoid dead models.
-    const claudeProxyPort = getClaudeProxyPort();
-    let claudeModelsRegistered = 0;
-    if (claudeProxyPort) {
-      const claudeModels = Object.entries(CLAUDECLI_MODELS).map(([id, def]) => ({
-        id,
-        name: def.name,
-        reasoning: def.reasoning !== false,
-        contextWindow: def.limit?.context || 200000,
-        maxTokens: def.limit?.output || 32000,
-      }));
-      claudeModelsRegistered = registerClaudeProvider(config, claudeProxyPort, claudeModels)
-        ? claudeModels.length
-        : 0;
-    } else if (config.provider?.claudecli) {
-      // Proxy not running — remove placeholder entries so dead models don't show
-      delete config.provider.claudecli;
-    }
+    const claude = registerClaudeCliModels(config);
 
-    const versionDrift = checkOpenCodeVersionDrift(pluginDir);
-
-    // Silent unless something was actually changed
-    const parts = [];
-    if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
-    if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
-    if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
-    if (poolCleaned > 0) parts.push(`cleaned ${poolCleaned} stale pool provider${poolCleaned === 1 ? "" : "s"}`);
-    if (anthropicModelsRegistered > 0) parts.push(`${anthropicModelsRegistered} anthropic models`);
-    if (cursorModelsRegistered > 0) parts.push(`${cursorModelsRegistered} Cursor models`);
-    if (googleModelsRegistered > 0) parts.push(`${googleModelsRegistered} Google models`);
-    if (claudeModelsRegistered > 0) parts.push(`${claudeModelsRegistered} Claude CLI models`);
-
-    if (parts.length > 0) {
-      console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
-    }
-
-    if (versionDrift) {
-      console.error(`[aidevops] Version drift: ${versionDrift}`);
-    }
+    logConfigSummary(
+      { agents, mcps, agentTools, poolCleaned, anthropic, cursor, google, claude },
+      checkOpenCodeVersionDrift(pluginDir),
+    );
   };
 }

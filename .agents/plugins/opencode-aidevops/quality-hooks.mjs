@@ -144,61 +144,76 @@ function recordChildSubagent(taskId, scriptsDir, log) {
  * @param {object} deps - { scriptsDir, logsDir }
  * @returns {{ toolExecuteBefore: Function, toolExecuteAfter: Function, qualityLog: Function }}
  */
+/**
+ * Pre-tool-execution handler: intent tracing, signature gate, file quality.
+ * @param {object} ctx - Quality hooks context
+ * @param {Function} log - Bound quality logger
+ * @param {object} input - Tool input
+ * @param {object} output - Tool output
+ */
+function handleToolBefore(ctx, log, input, output) {
+  const callID = input.callID || "";
+  if (callID && output.args) {
+    const intent = extractAndStoreIntent(callID, output.args);
+    if (intent) {
+      log("INFO", `Intent [${input.tool}] callID=${callID}: ${intent}`);
+    }
+  }
+
+  if (isBashTool(input.tool)) {
+    checkSignatureFooterGate(output.args?.command || "", log);
+  }
+
+  if (!isWriteOrEditTool(input.tool)) return;
+
+  const filePath = output.args?.filePath || output.args?.file_path || "";
+  if (filePath) {
+    runFileQualityGate(ctx, filePath, output.args);
+  }
+}
+
+/**
+ * Post-tool-execution handler: bash tracking, file logging, observability.
+ * @param {object} ctx - Quality hooks context
+ * @param {Function} log - Bound quality logger
+ * @param {string} scriptsDir
+ * @param {object} input - Tool input
+ * @param {object} output - Tool output
+ */
+function handleToolAfter(ctx, log, scriptsDir, input, output) {
+  const toolName = input.tool || "";
+
+  if (isBashTool(toolName)) {
+    trackBashOperation(ctx, output.title || "", output.output || "");
+  }
+
+  if (isWriteOrEditTool(toolName)) {
+    const filePath = output.metadata?.filePath || "";
+    if (filePath) {
+      log("INFO", `File modified: ${filePath} via ${toolName}`);
+    }
+  }
+
+  const intent = consumeIntent(input.callID || "");
+  recordToolCall(input, output, intent);
+
+  if (toolName === "mcp_task" || toolName === "task") {
+    recordChildSubagent(output?.metadata?.task_id || "", scriptsDir, log);
+  }
+}
+
 export function createQualityHooks(deps) {
   const { scriptsDir, logsDir } = deps;
   const qualityLogPath = join(logsDir, "quality-hooks.log");
-  const detailLogPath = join(logsDir, "quality-details.log");
-  const detailMaxBytes = 2 * 1024 * 1024; // 2 MB
+  const ctx = { scriptsDir, logsDir, qualityLogPath };
 
-  const ctx = { scriptsDir, logsDir, qualityLogPath, detailLogPath, detailMaxBytes };
-
-  /** Bound quality logger for external consumers (e.g. TTSR hooks). */
   function boundQualityLog(level, message) {
     qualityLog(logsDir, qualityLogPath, level, message);
   }
 
-  async function toolExecuteBefore(input, output) {
-    const callID = input.callID || "";
-    if (callID && output.args) {
-      const intent = extractAndStoreIntent(callID, output.args);
-      if (intent) {
-        boundQualityLog("INFO", `Intent [${input.tool}] callID=${callID}: ${intent}`);
-      }
-    }
-
-    if (isBashTool(input.tool)) {
-      checkSignatureFooterGate(output.args?.command || "", boundQualityLog);
-    }
-
-    if (!isWriteOrEditTool(input.tool)) return;
-
-    const filePath = output.args?.filePath || output.args?.file_path || "";
-    if (filePath) {
-      runFileQualityGate(ctx, filePath, output.args);
-    }
-  }
-
-  async function toolExecuteAfter(input, output) {
-    const toolName = input.tool || "";
-
-    if (isBashTool(toolName)) {
-      trackBashOperation(ctx, output.title || "", output.output || "");
-    }
-
-    if (isWriteOrEditTool(toolName)) {
-      const filePath = output.metadata?.filePath || "";
-      if (filePath) {
-        boundQualityLog("INFO", `File modified: ${filePath} via ${toolName}`);
-      }
-    }
-
-    const intent = consumeIntent(input.callID || "");
-    recordToolCall(input, output, intent);
-
-    if (toolName === "mcp_task" || toolName === "task") {
-      recordChildSubagent(output?.metadata?.task_id || "", scriptsDir, boundQualityLog);
-    }
-  }
-
-  return { toolExecuteBefore, toolExecuteAfter, qualityLog: boundQualityLog };
+  return {
+    toolExecuteBefore: async (input, output) => handleToolBefore(ctx, boundQualityLog, input, output),
+    toolExecuteAfter: async (input, output) => handleToolAfter(ctx, boundQualityLog, scriptsDir, input, output),
+    qualityLog: boundQualityLog,
+  };
 }

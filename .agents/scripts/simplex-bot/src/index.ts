@@ -38,6 +38,8 @@ import { ApprovalManager } from "./approval";
 import { scanForLeaks, redactLeaks, formatLeakWarning } from "./leak-detector";
 import { loadConfig } from "./config";
 import { SessionStore } from "./session";
+import { Logger } from "./logger";
+import { CommandRouter } from "./router";
 import {
   handleContactConnected,
   handleContactRequest,
@@ -52,100 +54,9 @@ import {
   handleNonTextMessage,
 } from "./handlers";
 
-// =============================================================================
-// Logger
-// =============================================================================
-
-type LogLevel = "debug" | "info" | "warn" | "error";
-
-/** Numeric priority for each log level */
-const LOG_LEVELS: Record<LogLevel, number> = {
-  debug: 0,
-  info: 1,
-  warn: 2,
-  error: 3,
-};
-
-/** Level-filtered console logger for bot output */
-export class Logger {
-  private level: number;
-
-  /** Create a logger that filters messages below the given level */
-  constructor(level: LogLevel) {
-    this.level = LOG_LEVELS[level];
-  }
-
-  /** Log a debug-level message */
-  debug(msg: string, ...args: unknown[]): void {
-    if (this.level <= LOG_LEVELS.debug) {
-      console.log(`[DEBUG] ${msg}`, ...args);
-    }
-  }
-
-  /** Log an info-level message */
-  info(msg: string, ...args: unknown[]): void {
-    if (this.level <= LOG_LEVELS.info) {
-      console.log(`[INFO] ${msg}`, ...args);
-    }
-  }
-
-  /** Log a warning-level message */
-  warn(msg: string, ...args: unknown[]): void {
-    if (this.level <= LOG_LEVELS.warn) {
-      console.warn(`[WARN] ${msg}`, ...args);
-    }
-  }
-
-  /** Log an error-level message */
-  error(msg: string, ...args: unknown[]): void {
-    if (this.level <= LOG_LEVELS.error) {
-      console.error(`[ERROR] ${msg}`, ...args);
-    }
-  }
-}
-
-// =============================================================================
-// Command Router
-// =============================================================================
-
-/** Routes incoming messages to registered command handlers */
-export class CommandRouter {
-  private commands: Map<string, CommandDefinition> = new Map();
-
-  /** Register a single command definition */
-  register(cmd: CommandDefinition): void {
-    this.commands.set(cmd.name.toLowerCase(), cmd);
-  }
-
-  /** Register multiple command definitions at once */
-  registerAll(cmds: CommandDefinition[]): void {
-    for (const cmd of cmds) {
-      this.register(cmd);
-    }
-  }
-
-  /** Look up a command by name (case-insensitive) */
-  get(name: string): CommandDefinition | undefined {
-    return this.commands.get(name.toLowerCase());
-  }
-
-  /** Return all registered commands */
-  list(): CommandDefinition[] {
-    return Array.from(this.commands.values());
-  }
-
-  /** Parse a message into command name and args */
-  parse(text: string): { command: string; args: string[] } | null {
-    const trimmed = text.trim();
-    if (!trimmed.startsWith("/")) {
-      return null;
-    }
-    const parts = trimmed.slice(1).split(/\s+/);
-    const command = parts[0]?.toLowerCase() ?? "";
-    const args = parts.slice(1);
-    return { command, args };
-  }
-}
+// Re-export for consumers that import from this module
+export { Logger } from "./logger";
+export { CommandRouter } from "./router";
 
 // =============================================================================
 // SimpleX Adapter
@@ -363,90 +274,54 @@ export class SimplexAdapter {
       replyToItem: (item: ChatItem, text: string) => this.replyToItem(item, text),
       cacheContactName: (id: number, name: string) => this.contactNames.set(id, name),
       cacheGroupName: (id: number, name: string) => this.groupNames.set(id, name),
-      buildContactInfo: (id: number) => this.buildContactInfo(id),
-      buildGroupInfo: (id: number) => this.buildGroupInfo(id),
+      buildContactInfo: (id: number): ContactInfo => {
+        const name = this.contactNames.get(id) ?? "";
+        return { contactId: id, localDisplayName: name, profile: { displayName: name } };
+      },
+      buildGroupInfo: (id: number): GroupInfo => {
+        const name = this.groupNames.get(id) ?? "";
+        return { groupId: id, localDisplayName: name, groupProfile: { displayName: name } };
+      },
       onNonTextMessage: (item: ChatItem, msgType: string) =>
         handleNonTextMessage(item, msgType, fileDeps),
     };
 
-    switch (event.type) {
-      case "newChatItems":
-        void handleNewChatItems(event as NewChatItemsEvent, messageDeps).catch((err) => {
-          this.logger.error("Error handling newChatItems:", err);
-        });
-        break;
+    // Handler map: event type → [handler function, deps object]
+    const handlers: Record<string, [Function, unknown]> = {
+      newChatItems: [handleNewChatItems, messageDeps],
+      contactConnected: [handleContactConnected, contactDeps],
+      receivedContactRequest: [handleContactRequest, contactDeps],
+      acceptingBusinessRequest: [handleBusinessRequest, contactDeps],
+      receivedGroupInvitation: [handleGroupInvitation, groupDeps],
+      joinedGroupMember: [handleMemberJoined, groupDeps],
+      deletedMemberUser: [handleBotRemovedFromGroup, groupDeps],
+      memberConnected: [handleMemberConnected, groupDeps],
+      rcvFileDescrReady: [handleFileReady, fileDeps],
+      rcvFileComplete: [handleFileComplete, fileDeps],
+    };
 
-      case "contactConnected":
-        void handleContactConnected(event, contactDeps).catch((err) => {
-          this.logger.error("Error handling contactConnected:", err);
-        });
-        break;
-
-      case "receivedContactRequest":
-        void handleContactRequest(event, contactDeps).catch((err) => {
-          this.logger.error("Error handling receivedContactRequest:", err);
-        });
-        break;
-
-      case "acceptingBusinessRequest":
-        void handleBusinessRequest(event, contactDeps).catch((err) => {
-          this.logger.error("Error handling acceptingBusinessRequest:", err);
-        });
-        break;
-
-      case "receivedGroupInvitation":
-        void handleGroupInvitation(event, groupDeps).catch((err) => {
-          this.logger.error("Error handling receivedGroupInvitation:", err);
-        });
-        break;
-
-      case "joinedGroupMember":
-        void handleMemberJoined(event, groupDeps).catch((err) => {
-          this.logger.error("Error handling joinedGroupMember:", err);
-        });
-        break;
-
-      case "deletedMemberUser":
-        void handleBotRemovedFromGroup(event, groupDeps).catch((err) => {
-          this.logger.error("Error handling deletedMemberUser:", err);
-        });
-        break;
-
-      case "memberConnected":
-        void handleMemberConnected(event, groupDeps).catch((err) => {
-          this.logger.error("Error handling memberConnected:", err);
-        });
-        break;
-
-      case "rcvFileDescrReady":
-        void handleFileReady(event, fileDeps).catch((err) => {
-          this.logger.error("Error handling rcvFileDescrReady:", err);
-        });
-        break;
-
-      case "rcvFileComplete":
-        void handleFileComplete(event, fileDeps).catch((err) => {
-          this.logger.error("Error handling rcvFileComplete:", err);
-        });
-        break;
-
-      default:
-        // Tolerate unknown events (per API spec — forward compatibility)
-        this.logger.debug(`Unhandled event type: ${event.type}`);
-        break;
+    const entry = handlers[event.type];
+    if (entry) {
+      const [handler, deps] = entry;
+      void handler(event, deps).catch((err: unknown) => {
+        this.logger.error(`Error handling ${event.type}:`, err);
+      });
+    } else {
+      this.logger.debug(`Unhandled event type: ${event.type}`);
     }
   }
 
-  /** Build a ContactInfo object from cached display names */
-  private buildContactInfo(contactId: number): ContactInfo {
-    const name = this.contactNames.get(contactId) ?? "";
-    return { contactId, localDisplayName: name, profile: { displayName: name } };
-  }
-
-  /** Build a GroupInfo object from cached display names */
-  private buildGroupInfo(groupId: number): GroupInfo {
-    const name = this.groupNames.get(groupId) ?? "";
-    return { groupId, localDisplayName: name, groupProfile: { displayName: name } };
+  /** Resolve a chat direction to a @contact or #group target string, or null. */
+  private resolveTarget(chatDir: { contactId?: number; groupId?: number }): string | null {
+    if (chatDir.contactId !== undefined) {
+      const name = this.contactNames.get(chatDir.contactId);
+      return name ? `@${name}` : null;
+    }
+    if (chatDir.groupId !== undefined) {
+      const name = this.groupNames.get(chatDir.groupId);
+      return name ? `#${name}` : null;
+    }
+    return null;
   }
 
   /** Reply to a chat item using cached display names */
@@ -457,27 +332,9 @@ export class SimplexAdapter {
       return;
     }
 
-    let target: string;
-    if (chatDir.contactId !== undefined) {
-      const displayName = this.contactNames.get(chatDir.contactId);
-      if (!displayName) {
-        this.logger.warn(
-          `Cannot reply: no cached display name for contactId ${chatDir.contactId}`,
-        );
-        return;
-      }
-      target = `@${displayName}`;
-    } else if (chatDir.groupId !== undefined) {
-      const displayName = this.groupNames.get(chatDir.groupId);
-      if (!displayName) {
-        this.logger.warn(
-          `Cannot reply: no cached display name for groupId ${chatDir.groupId}`,
-        );
-        return;
-      }
-      target = `#${displayName}`;
-    } else {
-      this.logger.warn("Cannot reply: unknown chat direction");
+    const target = this.resolveTarget(chatDir);
+    if (!target) {
+      this.logger.warn("Cannot reply: no cached display name for chat target");
       return;
     }
 
@@ -516,38 +373,4 @@ export class SimplexAdapter {
 // Main
 // =============================================================================
 
-/** Entry point — configure and start the bot */
-async function main(): Promise<void> {
-  const config = loadConfig();
-
-  console.log(`SimpleX Bot v1.0.0`);
-  console.log(`Config: port=${config.port}, host=${config.host}, businessAddress=${config.businessAddress}`);
-
-  const bot = new SimplexAdapter(config);
-
-  // Graceful shutdown
-  process.on("SIGINT", () => {
-    console.log("\nShutting down...");
-    bot.disconnect();
-    process.exit(0);
-  });
-
-  process.on("SIGTERM", () => {
-    bot.disconnect();
-    process.exit(0);
-  });
-
-  try {
-    await bot.connect();
-    console.log("SimpleX bot is running. Press Ctrl+C to stop.");
-  } catch (err) {
-    console.error("Failed to start bot:", err);
-    console.error(
-      "\nMake sure SimpleX CLI is running as WebSocket server:",
-    );
-    console.error(`  simplex-chat -p ${config.port}`);
-    process.exit(1);
-  }
-}
-
-main();
+// Entry point moved to start.ts — run with: bun run src/start.ts

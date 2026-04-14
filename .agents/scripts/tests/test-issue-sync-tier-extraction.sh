@@ -320,41 +320,6 @@ else
 	pass "_apply_tier_label_replace refuses non-tier labels"
 fi
 
-# -----------------------------------------------------------------------------
-# Test 8a: Applying tier:simple also adds `good first issue` (t2099)
-# -----------------------------------------------------------------------------
-# tier:simple issues are the ideal shape for external contributors, so
-# _apply_tier_label_replace should also apply GitHub's community
-# `good first issue` label whenever it applies tier:simple. Only on
-# tier:simple; never auto-removed on escalation.
-: >"$GH_LOG"
-export GH_VIEW_LABELS_JSON='{"labels":[{"name":"bug"}]}'
-
-_apply_tier_label_replace "owner/repo" 126 "tier:simple" >/dev/null 2>&1
-
-if grep -q 'add-label tier:simple' "$GH_LOG" && grep -q 'add-label good first issue' "$GH_LOG"; then
-	pass "_apply_tier_label_replace adds 'good first issue' when applying tier:simple"
-else
-	fail "_apply_tier_label_replace adds 'good first issue' when applying tier:simple" \
-		"gh.log: $(tr '\n' '|' <"$GH_LOG")"
-fi
-
-# -----------------------------------------------------------------------------
-# Test 8b: Applying tier:standard does NOT add `good first issue` (t2099)
-# -----------------------------------------------------------------------------
-# Non-simple tiers must not trigger the good-first-issue ensure-and-add path.
-: >"$GH_LOG"
-export GH_VIEW_LABELS_JSON='{"labels":[{"name":"bug"}]}'
-
-_apply_tier_label_replace "owner/repo" 127 "tier:standard" >/dev/null 2>&1
-
-if grep -q 'add-label good first issue' "$GH_LOG"; then
-	fail "_apply_tier_label_replace does NOT add 'good first issue' on tier:standard" \
-		"unexpected add-label call: $(tr '\n' '|' <"$GH_LOG")"
-else
-	pass "_apply_tier_label_replace does NOT add 'good first issue' on tier:standard"
-fi
-
 # =============================================================================
 # Summary
 # =============================================================================

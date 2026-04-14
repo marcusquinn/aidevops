@@ -164,20 +164,6 @@ _apply_tier_label_replace() {
 
 	# Add the new tier label (idempotent — gh edit silently no-ops if present).
 	gh issue edit "$num" --repo "$repo" --add-label "$new_tier" 2>/dev/null || true
-
-	# t2099: tier:simple issues are, by definition, prescriptive single-file
-	# pattern-follows with verbatim code blocks — the exact shape of a
-	# community-friendly first contribution. Also apply the standard
-	# `good first issue` label so they surface via GitHub's built-in filter
-	# and external discovery sites (goodfirstissue.dev, up-for-grabs, etc.).
-	#
-	# Only ADD on tier:simple; never auto-remove on escalation. The label is
-	# protected by _is_protected_label and may also reflect human intent —
-	# fighting it would clobber deliberate maintainer signal.
-	if [[ "$new_tier" == "tier:simple" ]]; then
-		gh_create_label "$repo" "good first issue" "7057ff" "Good for newcomers"
-		gh issue edit "$num" --repo "$repo" --add-label "good first issue" 2>/dev/null || true
-	fi
 	return 0
 }
 

@@ -6773,10 +6773,10 @@
       "passes": 2
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "hash": "4599c1bb11f7c08610b2b3641b46cdf17c75e6fa",
-      "at": "2026-04-14T21:32:52Z",
+      "hash": "5a6b95cc20d459ffecc2e43bc793a7687d67b854",
+      "at": "2026-04-14T20:55:03Z",
       "pr": 17979,
-      "passes": 16
+      "passes": 15
     },
     ".agents/scripts/memory-pressure-monitor.sh": {
       "hash": "d71f3754e56b925114a9b13c4ae3809cfb0c199d",
@@ -6899,10 +6899,10 @@
       "passes": 1
     },
     ".agents/commands/AGENTS.md": {
-      "hash": "dc1453adbdc0921b09ac47b6cdf056dcf3c13adc",
-      "at": "2026-04-14T21:32:51Z",
+      "hash": "b8caa083de850abb3b9d7e6c87a0d7b53e8304fa",
+      "at": "2026-04-14T20:37:42Z",
       "pr": 18117,
-      "passes": 12
+      "passes": 11
     },
     ".agents/workflows/pulse.md": {
       "hash": "ff61825e354fc702e37c4716e1a891698d2b480e",
@@ -7331,10 +7331,10 @@
       "passes": 3
     },
     ".agents/scripts/pulse-ancillary-dispatch.sh": {
-      "hash": "277d113f48289d2a633e3f5c0e5abf64e977597c",
-      "at": "2026-04-14T21:32:59Z",
+      "hash": "3f62d5ff5685bd7d65449e45b9e686bb76515a83",
+      "at": "2026-04-14T20:17:00Z",
       "pr": 18657,
-      "passes": 5
+      "passes": 4
     },
     ".agents/scripts/generate-opencode-agents.sh": {
       "hash": "e386a288bebdbfca44c0c5e05627c777d153ba32",
@@ -7349,10 +7349,10 @@
       "passes": 2
     },
     ".agents/scripts/issue-sync-helper.sh": {
-      "hash": "58ea801c04ba723e00221b0498e36774b634d74b",
-      "at": "2026-04-14T21:32:59Z",
+      "hash": "778e2a1a0f2a5232b84fb55ff5b93afd77873407",
+      "at": "2026-04-14T08:25:18Z",
       "pr": 18706,
-      "passes": 5
+      "passes": 4
     },
     ".agents/scripts/pulse-fast-fail.sh": {
       "hash": "292f4dfd80d2cb97715a9bda1fe985b5cabf6c80",

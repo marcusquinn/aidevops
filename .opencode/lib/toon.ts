@@ -101,15 +101,21 @@ function isTabularArray(arr: unknown[]): boolean {
   return arr.every(item => isPlainObject(item) && Object.keys(item).sort().join(',') === firstKeys)
 }
 
+/**
+ * Check if a string value requires CSV-style quoting (contains delimiter,
+ * quotes, newlines, or leading/trailing whitespace).
+ */
+function needsCsvQuoting(str: string, delimiter: string): boolean {
+  const hasSpecialChars = str.includes(delimiter) || str.includes('"')
+  const hasWhitespaceIssues = str.includes('\n') || str.includes('\r') || str !== str.trim()
+  return hasSpecialChars || hasWhitespaceIssues
+}
+
 function formatTabularCell(val: unknown, delimiter: string): string {
   if (val === null) return 'null'
   if (val === undefined) return ''
   const str = String(val)
-  // CSV-style escaping: quote if the string contains delimiter, quotes, newlines,
-  // or leading/trailing whitespace. Internal quotes are doubled.
-  if (typeof val === 'string' &&
-      (str.includes(delimiter) || str.includes('"') || str.includes('\n') ||
-       str.includes('\r') || str !== str.trim())) {
+  if (typeof val === 'string' && needsCsvQuoting(str, delimiter)) {
     return `"${str.replace(/"/g, '""')}"`
   }
   return str
@@ -136,6 +142,8 @@ function convertTabularArray(
   return `${header}\n${rows.map(r => `${indent}  ${r}`).join('\n')}`
 }
 
+import { parseToon } from './toon-parser'
+
 /**
  * Convert TOON format back to JSON
  */
@@ -144,248 +152,5 @@ export function toonToJson(toon: string): unknown {
   return parseToon(lines, 0).value
 }
 
-interface ParseResult {
-  value: unknown
-  consumed: number
-}
-
-const LITERAL_FACTORIES: Record<string, () => unknown> = {
-  null: () => null,
-  undefined: () => undefined,
-  true: () => true,
-  false: () => false,
-  '[]': () => [],
-  '{}': () => ({}),
-}
-
-function parseLiteral(line: string): ParseResult | null {
-  if (Object.prototype.hasOwnProperty.call(LITERAL_FACTORIES, line)) {
-    return { value: LITERAL_FACTORIES[line](), consumed: 1 }
-  }
-  if (/^-?\d+(\.\d+)?$/.test(line)) return { value: Number(line), consumed: 1 }
-  return null
-}
-
-function parseTabularBlock(lines: string[], startIndex: number, match: RegExpMatchArray): ParseResult {
-  const count = parseInt(match[1], 10)
-  const keys = match[2].split(',')
-  const result: Record<string, unknown>[] = []
-
-  for (let i = 0; i < count && startIndex + 1 + i < lines.length; i++) {
-    const rowLine = lines[startIndex + 1 + i].trim()
-    const values = parseDelimitedRow(rowLine, ',')
-    const obj: Record<string, unknown> = {}
-    keys.forEach((key, idx) => {
-      obj[key] = parseValue(values[idx] || '', true)
-    })
-    result.push(obj)
-  }
-
-  return { value: result, consumed: count + 1 }
-}
-
-function parseKeyValuePair(lines: string[], startIndex: number, match: RegExpMatchArray): ParseResult {
-  const key = match[1].trim()
-  const valueStr = match[2].trim()
-
-  if (valueStr) {
-    return {
-      value: { [key]: parseValue(valueStr) },
-      consumed: 1,
-    }
-  }
-
-  const nested = parseToon(lines, startIndex + 1)
-  return {
-    value: { [key]: nested.value },
-    consumed: 1 + nested.consumed,
-  }
-}
-
-function parseToon(lines: string[], startIndex: number): ParseResult {
-  if (startIndex >= lines.length) {
-    return { value: null, consumed: 0 }
-  }
-
-  const line = lines[startIndex].trim()
-
-  const literal = parseLiteral(line)
-  if (literal !== null) return literal
-
-  const tabularMatch = line.match(/^\[(\d+)\]\{([^}]+)\}:$/)
-  if (tabularMatch) {
-    return parseTabularBlock(lines, startIndex, tabularMatch)
-  }
-
-  const kvMatch = line.match(/^([^:]+):\s*(.*)$/)
-  if (kvMatch) {
-    return parseKeyValuePair(lines, startIndex, kvMatch)
-  }
-
-  return { value: line, consumed: 1 }
-}
-
-function parseDelimitedRow(row: string, delimiter: string): string[] {
-  const result: string[] = []
-  let current = ''
-  let inQuotes = false
-  let i = 0
-
-  while (i < row.length) {
-    const char = row[i]
-    if (inQuotes) {
-      if (char === '"') {
-        // Peek ahead: doubled quote is an escaped literal quote
-        if (i + 1 < row.length && row[i + 1] === '"') {
-          current += '"'
-          i += 2
-          continue
-        }
-        // Single quote ends the quoted field
-        inQuotes = false
-        i++
-        continue
-      }
-      current += char
-      i++
-    } else {
-      if (char === '"' && current === '') {
-        // Opening quote at start of field
-        inQuotes = true
-        i++
-      } else if (char === delimiter) {
-        result.push(current)
-        current = ''
-        i++
-      } else {
-        current += char
-        i++
-      }
-    }
-  }
-
-  result.push(current)
-  return result
-}
-
-const KNOWN_VALUES: Record<string, unknown> = {
-  null: null,
-  undefined: undefined,
-  true: true,
-  false: false,
-}
-
-function detectKnownValue(trimmed: string): { known: true; value: unknown } | { known: false } {
-  if (Object.prototype.hasOwnProperty.call(KNOWN_VALUES, trimmed)) {
-    return { known: true, value: KNOWN_VALUES[trimmed] }
-  }
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return { known: true, value: Number(trimmed) }
-  return { known: false }
-}
-
-/**
- * Parse a value string into its typed representation.
- * When fromTabular=true, quotes have already been handled by parseDelimitedRow,
- * so skip quote-stripping and preserve the exact string (including spaces).
- */
-function parseValue(str: string, fromTabular = false): unknown {
-  const trimmed = str.trim()
-
-  const detected = detectKnownValue(trimmed)
-  if (detected.known) return detected.value
-
-  if (!fromTabular && trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed.slice(1, -1)
-  }
-
-  // For tabular cells, return the raw string from parseDelimitedRow
-  // (which already handled quote removal and unescaping)
-  return fromTabular ? str : trimmed
-}
-
-/**
- * Compare JSON vs TOON sizes
- */
-export function compareSizes(data: unknown): {
-  jsonSize: number
-  toonSize: number
-  savings: number
-  savingsPercent: string
-} {
-  const jsonStr = JSON.stringify(data)
-  const toonStr = jsonToToon(data)
-
-  const jsonSize = new TextEncoder().encode(jsonStr).length
-  const toonSize = new TextEncoder().encode(toonStr).length
-  const savings = jsonSize - toonSize
-
-  return {
-    jsonSize,
-    toonSize,
-    savings,
-    savingsPercent: `${((savings / jsonSize) * 100).toFixed(1)}%`,
-  }
-}
-
-/**
- * Estimate token count (rough approximation)
- * Uses ~4 chars per token as a rough estimate
- */
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4)
-}
-
-/**
- * Compare token usage between JSON and TOON
- */
-export function compareTokens(data: unknown): {
-  jsonTokens: number
-  toonTokens: number
-  tokensSaved: number
-  savingsPercent: string
-} {
-  const jsonStr = JSON.stringify(data)
-  const toonStr = jsonToToon(data)
-
-  const jsonTokens = estimateTokens(jsonStr)
-  const toonTokens = estimateTokens(toonStr)
-  const tokensSaved = jsonTokens - toonTokens
-
-  return {
-    jsonTokens,
-    toonTokens,
-    tokensSaved,
-    savingsPercent: `${((tokensSaved / jsonTokens) * 100).toFixed(1)}%`,
-  }
-}
-
-async function convertJsonToToonFile(content: string, outputPath: string) {
-  const data = JSON.parse(content)
-  await Bun.write(outputPath, jsonToToon(data))
-  return { success: true, stats: compareSizes(data) }
-}
-
-async function convertToonToJsonFile(content: string, outputPath: string) {
-  const json = JSON.stringify(toonToJson(content), null, 2)
-  await Bun.write(outputPath, json)
-  return { success: true, stats: null }
-}
-
-const FILE_CONVERTERS = {
-  toToon: convertJsonToToonFile,
-  toJson: convertToonToJsonFile,
-}
-
-// File operations using Bun
-export async function convertFile(
-  inputPath: string,
-  outputPath: string,
-  direction: 'toToon' | 'toJson'
-): Promise<{ success: boolean; stats: ReturnType<typeof compareSizes> | null }> {
-  const inputFile = Bun.file(inputPath)
-  if (!(await inputFile.exists())) {
-    throw new Error(`Input file not found: ${inputPath}`)
-  }
-  const content = await inputFile.text()
-  return FILE_CONVERTERS[direction](content, outputPath)
-}
+// Re-export utility functions for backward compatibility
+export { compareSizes, estimateTokens, compareTokens, convertFile } from './toon-utils'
