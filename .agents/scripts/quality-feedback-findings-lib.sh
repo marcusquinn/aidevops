@@ -320,6 +320,74 @@ _filter_findings_by_head_files() {
 	return 0
 }
 
+# _check_empty_review_guard: return 0 (skip) when the PR has zero inline
+# comments AND every review body matches a negative-finding phrase (GH#18998).
+# This prevents noise issues from "no feedback" bot summaries that survive the
+# per-reviewer summary_only filter. Bypassed when include_positive is "true".
+# Arguments: $1=comments_json $2=reviews_json $3=pr_num $4=repo_slug
+# Returns: 0 if PR should be skipped, 1 if processing should continue
+_check_empty_review_guard() {
+	local comments="$1"
+	local reviews="$2"
+	local pr_num="$3"
+	local repo_slug="$4"
+
+	local total_inline_count
+	total_inline_count=$(printf '%s' "$comments" | jq 'length') || total_inline_count=0
+	[[ "$total_inline_count" -ne 0 ]] && return 1
+
+	local all_negative
+	all_negative=$(printf '%s' "$reviews" | jq '
+		if length == 0 then true
+		else
+			[.[] |
+			select(.body != null and (.body | length) > 0) |
+			.body |
+			test(
+				"no feedback|no review comments|no issues found|lgtm|looks good to me|" +
+				"nothing to flag|no further|no comments|nothing actionable|" +
+				"i have no (feedback|issues|comments|concerns)|" +
+				"no (issues|problems|concerns|suggestions|recommendations) (found|detected|identified)|" +
+				"(found|identified|detected) no (issues|problems|concerns|suggestions)";
+				"i")
+			] | all
+		end
+	') || all_negative="false"
+
+	if [[ "$all_negative" == "true" ]]; then
+		echo "[quality-feedback] skip: empty-review PR#${pr_num} in ${repo_slug} (0 inline comments, all summaries negative)" >&2
+		return 0
+	fi
+	return 1
+}
+
+# _log_debug_skipped_summaries: emit DEBUG-level lines for summary-only reviews
+# skipped during processing. No-op unless AIDEVOPS_DEBUG=1.
+# Arguments: $1=reviews_json $2=inline_counts_json
+_log_debug_skipped_summaries() {
+	local reviews="$1"
+	local inline_counts_json="$2"
+
+	[[ "${AIDEVOPS_DEBUG:-}" != "1" ]] && return 0
+
+	local skipped_summaries
+	skipped_summaries=$(printf '%s' "$reviews" | jq \
+		--argjson inline_counts "$inline_counts_json" '
+		[.[] |
+		select(.body != null and .body != "" and (.body | length) > 50) |
+		(.user.login) as $login |
+		select(
+			($inline_counts[$login] // 0) == 0 and
+			.state == "COMMENTED" and
+			($login | test("coderabbit|gemini|google|codacy|augment"; "i"))
+		) |
+		"[DEBUG] Skipped summary-only review: id=\(.id) login=\(.login // .user.login) state=\(.state) body_len=\(.body | length)"
+		] | .[]
+	' -r 2>/dev/null || true)
+	[[ -n "$skipped_summaries" ]] && printf '%s\n' "$skipped_summaries" >&2
+	return 0
+}
+
 #######################################
 # Scan a single merged PR for review feedback
 #
@@ -370,40 +438,12 @@ _scan_single_pr() {
 	') || inline_counts_json="{}"
 
 	# GH#18998: PR-level empty-review guard — bail out early when the PR has
-	# zero inline comments from ANY reviewer AND every review body matches a
-	# negative-finding phrase. This prevents noise issues from "no feedback"
-	# bot summaries that survive the per-reviewer summary_only filter (e.g.,
-	# when state=APPROVED instead of COMMENTED, or when the bot login does not
-	# match the reviewer regex but the body is clearly "no feedback").
-	# When --include-positive is set, this guard is bypassed for debugging.
+	# zero inline comments AND every review body matches a negative-finding phrase.
+	# Bypassed when --include-positive is set.
 	if [[ "$include_positive" != "true" ]]; then
-		local total_inline_count
-		total_inline_count=$(printf '%s' "$comments" | jq 'length') || total_inline_count=0
-
-		if [[ "$total_inline_count" -eq 0 ]]; then
-			local all_negative
-			all_negative=$(printf '%s' "$reviews" | jq '
-				if length == 0 then true
-				else
-					[.[] |
-					select(.body != null and (.body | length) > 0) |
-					.body |
-					test(
-						"no feedback|no review comments|no issues found|lgtm|looks good to me|" +
-						"nothing to flag|no further|no comments|nothing actionable|" +
-						"i have no (feedback|issues|comments|concerns)|" +
-						"no (issues|problems|concerns|suggestions|recommendations) (found|detected|identified)|" +
-						"(found|identified|detected) no (issues|problems|concerns|suggestions)";
-						"i")
-					] | all
-				end
-			') || all_negative="false"
-
-			if [[ "$all_negative" == "true" ]]; then
-				echo "[quality-feedback] skip: empty-review PR#${pr_num} in ${repo_slug} (0 inline comments, all summaries negative)" >&2
-				echo "[]"
-				return 0
-			fi
+		if _check_empty_review_guard "$comments" "$reviews" "$pr_num" "$repo_slug"; then
+			echo "[]"
+			return 0
 		fi
 	fi
 
@@ -414,23 +454,7 @@ _scan_single_pr() {
 		"$inline_counts_json" "$include_positive") || review_findings="[]"
 
 	# Log skipped summary-only reviews at DEBUG level for traceability
-	if [[ "${AIDEVOPS_DEBUG:-}" == "1" ]]; then
-		local skipped_summaries
-		skipped_summaries=$(printf '%s' "$reviews" | jq \
-			--argjson inline_counts "$inline_counts_json" '
-			[.[] |
-			select(.body != null and .body != "" and (.body | length) > 50) |
-			(.user.login) as $login |
-			select(
-				($inline_counts[$login] // 0) == 0 and
-				.state == "COMMENTED" and
-				($login | test("coderabbit|gemini|google|codacy|augment"; "i"))
-			) |
-			"[DEBUG] Skipped summary-only review: id=\(.id) login=\(.login // .user.login) state=\(.state) body_len=\(.body | length)"
-			] | .[]
-		' -r 2>/dev/null || true)
-		[[ -n "$skipped_summaries" ]] && printf '%s\n' "$skipped_summaries" >&2
-	fi
+	_log_debug_skipped_summaries "$reviews" "$inline_counts_json"
 
 	# Merge and deduplicate
 	local findings
