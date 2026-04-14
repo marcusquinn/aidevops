@@ -65,6 +65,30 @@ _large_file_gate_precheck_labels() {
 		return 1
 	fi
 
+	# t2088: Never gate parent-task / meta issues behind the large-file gate.
+	# Parent tasks are never dispatched directly — dispatch is unconditionally
+	# blocked by _is_assigned_check_parent_task() in dispatch-dedup-helper.sh
+	# (t1986). Applying needs-simplification to them creates confusing label
+	# churn: the label is re-added every cycle even after manual removal because
+	# the target file is still large, misleading maintainers into thinking
+	# simplification is the only remaining gate when in fact the parent-task
+	# block is permanent and independent of file size.
+	# If the label was already applied (e.g., before this fix), auto-clear it.
+	if [[ ",$issue_labels," == *",parent-task,"* ]] ||
+		[[ ",$issue_labels," == *",meta,"* ]]; then
+		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+			if gh issue edit "$issue_number" --repo "$repo_slug" \
+				--remove-label "needs-simplification" >/dev/null 2>&1; then
+				echo "[pulse-wrapper] Simplification gate auto-cleared for #${issue_number} (${repo_slug}) — issue is a parent-task/meta, never dispatched directly (t2088)" >>"$LOGFILE"
+			else
+				echo "[pulse-wrapper] WARN: failed to remove needs-simplification label from #${issue_number} (${repo_slug}); will retry next cycle (t2088)" >>"$LOGFILE"
+			fi
+		fi
+		# Always return 1 (don't gate) — parent tasks are never dispatched
+		# directly, regardless of whether the label removal succeeded.
+		return 1
+	fi
+
 	# Skip if already labeled (avoid re-checking every cycle).
 	# EXCEPTION (t1998): when called from _reevaluate_simplification_labels,
 	# force_recheck is "true" and we bypass this short-circuit. Without the
