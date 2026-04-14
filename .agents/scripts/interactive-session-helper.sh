@@ -122,12 +122,23 @@ _isc_gh_reachable() {
 
 # Check whether an issue already carries `status:in-review`. Returns 0 when
 # present, 1 when absent, 2 when the metadata lookup failed.
+#
+# NOTE on the jq query: the two-argument form `any(generator; condition)`
+# passed `.name` as the generator on `(.labels // [])`, which tries to
+# index the *array itself* with string "name" and raises
+# "Cannot index array with string". The single-argument form
+# `any(condition)` iterates over the array automatically, which is both
+# shorter and correct. This was a latent bug that masked the bug fixed
+# in GH#18786 — the jq error (exit 5) was swallowed by `>/dev/null 2>&1`
+# and the function always returned 1 ("label absent"), so the idempotency
+# branch was dead code even before the set -e exit propagation killed
+# the whole claim flow.
 _isc_has_in_review() {
 	local issue="$1"
 	local slug="$2"
 	local json
 	json=$(gh issue view "$issue" --repo "$slug" --json labels 2>/dev/null) || return 2
-	if printf '%s' "$json" | jq -e '(.labels // []) | any(.name; . == "status:in-review")' >/dev/null 2>&1; then
+	if printf '%s' "$json" | jq -e '(.labels // []) | any(.name == "status:in-review")' >/dev/null 2>&1; then
 		return 0
 	fi
 	return 1
@@ -262,15 +273,15 @@ _isc_cmd_claim() {
 		return 0
 	fi
 
-	# Idempotency: if already in-review, just refresh the stamp and exit
-	local had_label=1
-	_isc_has_in_review "$issue" "$slug"
-	local has_rc=$?
-	if [[ $has_rc -eq 0 ]]; then
-		had_label=0
-	fi
-
-	if [[ $had_label -eq 0 ]]; then
+	# Idempotency: if already in-review, just refresh the stamp and exit.
+	# NOTE: `_isc_has_in_review` legitimately returns non-zero ("label absent"
+	# = 1, "lookup failed" = 2). Under `set -e`, a bare call followed by
+	# `local rc=$?` capture kills this function before `rc=$?` runs — because
+	# the unchecked non-zero return propagates up through the parent function.
+	# Use a direct `if` conditional so the return is consumed by the branch,
+	# which `set -e` treats as a tested condition and does not propagate.
+	# Sibling bug class: GH#18770 (pulse self-check), GH#18784 (aidevops.sh getent).
+	if _isc_has_in_review "$issue" "$slug"; then
 		_isc_info "claim: #$issue already has status:in-review — refreshing stamp"
 		_isc_write_stamp "$issue" "$slug" "$worktree_path" "$user"
 		return 0
@@ -350,10 +361,14 @@ _isc_cmd_release() {
 		return 0
 	fi
 
-	# Idempotency: skip label work if not in-review
-	local has_rc
-	_isc_has_in_review "$issue" "$slug"
-	has_rc=$?
+	# Idempotency: skip label work if not in-review. `_isc_has_in_review`
+	# has three return states (0 = present, 1 = absent, 2 = lookup failed),
+	# so we need the actual rc — but a bare call under `set -e` propagates
+	# non-zero returns before `rc=$?` can capture them. Use `|| rc=$?` which
+	# is a tested condition that `set -e` does not propagate. Default to 0
+	# so the "present" branch (rc=0) falls through to the transition below.
+	local has_rc=0
+	_isc_has_in_review "$issue" "$slug" || has_rc=$?
 	if [[ $has_rc -eq 1 ]]; then
 		_isc_info "release: #$issue not in status:in-review — no-op"
 		return 0
@@ -363,7 +378,12 @@ _isc_cmd_release() {
 		return 0
 	fi
 
-	# Transition in-review -> available
+	# Transition in-review -> available. Build the flag list as a plain
+	# array and expand it with the `${arr[@]+"${arr[@]}"}` guard so an
+	# empty array doesn't trip `set -u` on bash 3.2 (macOS default). This
+	# is the idiom documented in reference/bash-compat.md "empty array
+	# expansion". Fourth latent bug found alongside GH#18786: previously
+	# masked because the broken jq query made this branch unreachable.
 	local -a extra_flags=()
 	if [[ $unassign -eq 1 ]]; then
 		local user
@@ -373,7 +393,7 @@ _isc_cmd_release() {
 		fi
 	fi
 
-	if set_issue_status "$issue" "$slug" "available" "${extra_flags[@]}" >/dev/null 2>&1; then
+	if set_issue_status "$issue" "$slug" "available" ${extra_flags[@]+"${extra_flags[@]}"} >/dev/null 2>&1; then
 		_isc_info "release: #$issue → status:available"
 		return 0
 	fi
@@ -552,31 +572,37 @@ EOF
 
 main() {
 	local cmd="${1:-help}"
+	local rc=0
 	shift || true
 
+	# `|| rc=$?` is the `set -e`-safe idiom for capturing subcommand exit
+	# codes. A bare call inside a case branch propagates non-zero returns
+	# out of main() before `return $?` runs (e.g. _isc_cmd_status returning
+	# 1 for "target issue not found"). Use a tested-condition capture so
+	# set -e treats the subcommand as a branch condition and leaves rc intact.
 	case "$cmd" in
 	claim)
-		_isc_cmd_claim "$@"
+		_isc_cmd_claim "$@" || rc=$?
 		;;
 	release)
-		_isc_cmd_release "$@"
+		_isc_cmd_release "$@" || rc=$?
 		;;
 	status)
-		_isc_cmd_status "$@"
+		_isc_cmd_status "$@" || rc=$?
 		;;
 	scan-stale)
-		_isc_cmd_scan_stale "$@"
+		_isc_cmd_scan_stale "$@" || rc=$?
 		;;
 	help | -h | --help)
-		_isc_cmd_help
+		_isc_cmd_help || rc=$?
 		;;
 	*)
 		_isc_err "unknown subcommand: $cmd"
-		_isc_cmd_help
+		_isc_cmd_help || true
 		return 2
 		;;
 	esac
-	return $?
+	return "$rc"
 }
 
 # Only run main when executed, not when sourced (allows tests to source and
