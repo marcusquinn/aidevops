@@ -1,12 +1,8 @@
-// higgsfield-api.mjs — Higgsfield Cloud API client (https://docs.higgsfield.ai)
-// Separate credit pool from web UI. Uses REST API with async queue pattern.
+// higgsfield-api.mjs — High-level Higgsfield Cloud API commands.
+// Wraps the low-level transport in higgsfield-api-client.mjs.
 // Auth: HF_API_KEY + HF_API_SECRET from credentials.sh
 // Imported by playwright-automator.mjs.
 
-import { readFileSync, existsSync } from 'fs';
-import { join, extname, basename } from 'path';
-import { homedir } from 'os';
-import { writeFileSync } from 'fs';
 import {
   getDefaultOutputDir,
   resolveOutputDir,
@@ -15,13 +11,36 @@ import {
   writeJsonSidecar,
 } from './higgsfield-common.mjs';
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+import {
+  API_BASE_URL,
+  loadApiCredentials,
+  requireApiCredentials,
+  apiRequest,
+  apiUploadFile,
+  apiDownloadFile,
+  apiPollStatus,
+} from './higgsfield-api-client.mjs';
 
-const API_BASE_URL = 'https://platform.higgsfield.ai';
-const API_POLL_INTERVAL_MS = 2000;
-const API_POLL_MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes max wait
+// Re-export low-level surface so existing callers (and tests) keep working.
+export {
+  API_BASE_URL,
+  loadApiCredentials,
+  requireApiCredentials,
+  apiRequest,
+  apiUploadFile,
+  apiDownloadFile,
+  apiPollStatus,
+};
+export {
+  apiExecuteFetch,
+  parseApiErrorDetail,
+  API_POLL_INTERVAL_MS,
+  API_POLL_MAX_WAIT_MS,
+} from './higgsfield-api-client.mjs';
+
+// ---------------------------------------------------------------------------
+// Model mapping
+// ---------------------------------------------------------------------------
 
 // Map CLI model slugs to Higgsfield API model IDs.
 // Verified 2026-02-10 by probing platform.higgsfield.ai.
@@ -52,160 +71,12 @@ const API_MODEL_MAP = {
   'seedream-edit':      'bytedance/seedream/v4/edit',
 };
 
-// ---------------------------------------------------------------------------
-// Credentials
-// ---------------------------------------------------------------------------
-
-export function loadApiCredentials() {
-  const credFile = join(homedir(), '.config', 'aidevops', 'credentials.sh');
-  if (!existsSync(credFile)) return null;
-  const content = readFileSync(credFile, 'utf-8');
-  const apiKey = content.match(/HF_API_KEY="([^"]+)"/)?.[1];
-  const apiSecret = content.match(/HF_API_SECRET="([^"]+)"/)?.[1];
-  if (!apiKey || !apiSecret) return null;
-  return { apiKey, apiSecret };
-}
-
-export function requireApiCredentials() {
-  const creds = loadApiCredentials();
-  if (!creds) throw new Error('API credentials not configured (HF_API_KEY/HF_API_SECRET in credentials.sh)');
-  return creds;
-}
-
-// ---------------------------------------------------------------------------
-// Core HTTP helpers
-// ---------------------------------------------------------------------------
-
-export async function apiExecuteFetch(url, fetchOpts, timeout) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  fetchOpts.signal = controller.signal;
-  try {
-    const response = await fetch(url, fetchOpts);
-    clearTimeout(timer);
-    return response;
-  } catch (err) {
-    clearTimeout(timer);
-    if (err.name === 'AbortError') throw new Error(`API request timed out after ${timeout}ms`);
-    throw err;
-  }
-}
-
-export function parseApiErrorDetail(text) {
-  try { return JSON.parse(text).detail || JSON.parse(text).message || text; } catch {}
-  return text;
-}
-
-export async function apiRequest(method, path, { body, apiKey, apiSecret, timeout = 90000 } = {}) {
-  const url = path.startsWith('http') ? path : `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
-  const headers = {
-    'Authorization': `Key ${apiKey}:${apiSecret}`,
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-    'User-Agent': 'higgsfield-automator/1.0',
-  };
-  const fetchOpts = { method, headers };
-  if (body) fetchOpts.body = JSON.stringify(body);
-
-  const retryableCodes = new Set([408, 429, 500, 502, 503, 504]);
-  let lastError;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const response = await apiExecuteFetch(url, fetchOpts, timeout);
-
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        if (retryableCodes.has(response.status) && attempt < 2) {
-          const delay = 200 * Math.pow(2, attempt);
-          console.log(`[api] Retrying ${method} ${path} (${response.status}) in ${delay}ms...`);
-          await new Promise(r => setTimeout(r, delay));
-          continue;
-        }
-        throw new Error(`API ${response.status}: ${parseApiErrorDetail(text)}`);
-      }
-      return await response.json();
-    } catch (err) {
-      lastError = err;
-      if (err.message.startsWith('API request timed out') || err.message.startsWith('API ')) throw err;
-      if (attempt < 2) {
-        await new Promise(r => setTimeout(r, 200 * Math.pow(2, attempt)));
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw lastError;
-}
-
-// ---------------------------------------------------------------------------
-// File upload / download
-// ---------------------------------------------------------------------------
-
-export async function apiUploadFile(filePath, creds) {
-  const { apiKey, apiSecret } = creds;
-  const ext = extname(filePath).toLowerCase();
-  const mimeMap = {
-    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-    '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mov': 'video/quicktime',
-  };
-  const contentType = mimeMap[ext] || 'application/octet-stream';
-
-  const { public_url, upload_url } = await apiRequest('POST', '/files/generate-upload-url', {
-    body: { content_type: contentType },
-    apiKey, apiSecret,
-  });
-
-  const fileData = readFileSync(filePath);
-  const uploadResp = await fetch(upload_url, {
-    method: 'PUT',
-    body: fileData,
-    headers: { 'Content-Type': contentType },
-  });
-  if (!uploadResp.ok) {
-    throw new Error(`File upload failed: ${uploadResp.status} ${await uploadResp.text().catch(() => '')}`);
-  }
-
-  console.log(`[api] Uploaded ${basename(filePath)} (${(fileData.length / 1024).toFixed(0)}KB) -> ${public_url}`);
-  return public_url;
-}
-
-export async function apiDownloadFile(url, outputPath) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  writeFileSync(outputPath, buffer);
-  return buffer.length;
-}
-
-// ---------------------------------------------------------------------------
-// Polling
-// ---------------------------------------------------------------------------
-
-export async function apiPollStatus(requestId, creds, { maxWait = API_POLL_MAX_WAIT_MS } = {}) {
-  const { apiKey, apiSecret } = creds;
-  const startTime = Date.now();
-  let delay = API_POLL_INTERVAL_MS;
-
-  while (Date.now() - startTime < maxWait) {
-    const data = await apiRequest('GET', `/requests/${requestId}/status`, { apiKey, apiSecret });
-    const status = data.status;
-
-    if (status === 'completed') return data;
-    if (status === 'failed') throw new Error(`Generation failed: ${data.error || 'unknown error'}`);
-    if (status === 'nsfw') throw new Error('Content flagged as NSFW (credits refunded)');
-
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-    process.stdout.write(`\r[api] Status: ${status} (${elapsed}s elapsed)...`);
-
-    await new Promise(r => setTimeout(r, delay));
-    delay = Math.min(delay + 1000, 5000);
-  }
-  throw new Error(`Generation timed out after ${maxWait / 1000}s`);
-}
-
-// ---------------------------------------------------------------------------
-// Shared submit+poll helper
-// ---------------------------------------------------------------------------
+const IMAGE_MODEL_KEYS = Object.keys(API_MODEL_MAP).filter(k =>
+  !k.includes('dop') && !k.includes('kling') && !k.includes('seedance')
+);
+const VIDEO_MODEL_KEYS = Object.keys(API_MODEL_MAP).filter(k =>
+  k.includes('dop') || k.includes('kling') || k.includes('seedance')
+);
 
 export function resolveApiModelId(slug, commandType) {
   if (!slug) return null;
@@ -217,6 +88,10 @@ export function resolveApiModelId(slug, commandType) {
 export function logApiPrompt(prompt) {
   if (prompt) console.log(`[api] Prompt: "${prompt.substring(0, 80)}${prompt.length > 80 ? '...' : ''}"`);
 }
+
+// ---------------------------------------------------------------------------
+// Shared submit+poll helper
+// ---------------------------------------------------------------------------
 
 export async function apiSubmitAndPoll(modelId, body, creds, options = {}) {
   if (options.dryRun) {
@@ -236,15 +111,20 @@ export async function apiSubmitAndPoll(modelId, body, creds, options = {}) {
 // Result download helpers
 // ---------------------------------------------------------------------------
 
+function buildApiTimestamp() {
+  return new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+}
+
 export async function apiDownloadImages(result, { modelSlug, modelId, options, sidecarExtra = {} }) {
   const baseOutput = options.output || getDefaultOutputDir(options);
   const outputDir = resolveOutputDir(baseOutput, options, 'images');
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+  const timestamp = buildApiTimestamp();
   const downloads = [];
+  const images = result.images || [];
 
-  for (let i = 0; i < (result.images || []).length; i++) {
-    const imgUrl = result.images[i].url;
-    const suffix = result.images.length > 1 ? `_${i + 1}` : '';
+  for (let i = 0; i < images.length; i++) {
+    const imgUrl = images[i].url;
+    const suffix = images.length > 1 ? `_${i + 1}` : '';
     const filename = `hf_api_${modelSlug}_${timestamp}${suffix}.png`;
     const outputPath = safeJoin(outputDir, sanitizePathSegment(filename, 'api-image.png'));
     const size = await apiDownloadFile(imgUrl, outputPath);
@@ -262,7 +142,7 @@ export async function apiDownloadVideo(result, { modelSlug, modelId, options, si
   if (!result.video?.url) throw new Error('API returned completed status but no video URL');
   const baseOutput = options.output || getDefaultOutputDir(options);
   const outputDir = resolveOutputDir(baseOutput, options, 'videos');
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+  const timestamp = buildApiTimestamp();
   const filename = `hf_api_${modelSlug}_${timestamp}.mp4`;
   const outputPath = safeJoin(outputDir, sanitizePathSegment(filename, 'api-video.mp4'));
   const size = await apiDownloadFile(result.video.url, outputPath);
@@ -278,22 +158,24 @@ export async function apiDownloadVideo(result, { modelSlug, modelId, options, si
 // High-level API commands
 // ---------------------------------------------------------------------------
 
+function buildImageApiBody(options) {
+  const body = { prompt: options.prompt };
+  if (options.aspect) body.aspect_ratio = options.aspect;
+  if (options.quality) body.resolution = options.quality;
+  if (options.seed !== undefined) body.seed = options.seed;
+  return body;
+}
+
 export async function apiGenerateImage(options = {}) {
   const creds = requireApiCredentials();
   const modelSlug = options.model || 'soul';
   const modelId = resolveApiModelId(modelSlug, 'image');
   if (!modelId) {
-    const imageModels = Object.keys(API_MODEL_MAP).filter(k =>
-      !k.includes('dop') && !k.includes('kling') && !k.includes('seedance')
-    );
-    throw new Error(`No API model mapping for slug '${modelSlug}'. Available: ${imageModels.join(', ')}`);
+    throw new Error(`No API model mapping for slug '${modelSlug}'. Available: ${IMAGE_MODEL_KEYS.join(', ')}`);
   }
   if (!options.prompt) throw new Error('--prompt is required for image generation');
 
-  const body = { prompt: options.prompt };
-  if (options.aspect) body.aspect_ratio = options.aspect;
-  if (options.quality) body.resolution = options.quality;
-  if (options.seed !== undefined) body.seed = options.seed;
+  const body = buildImageApiBody(options);
 
   console.log(`[api] Generating image via API: model=${modelId}`);
   logApiPrompt(options.prompt);
@@ -314,28 +196,35 @@ export async function apiGenerateImage(options = {}) {
   return { outputPaths: downloads, requestId: result.requestId };
 }
 
+async function resolveVideoSourceImage(options, creds) {
+  if (options.imageUrl) return options.imageUrl;
+  if (options.imageFile) {
+    console.log(`[api] Uploading source image: ${options.imageFile}`);
+    return apiUploadFile(options.imageFile, creds);
+  }
+  return null;
+}
+
+function buildVideoApiBody(options, imageUrl) {
+  const body = { image_url: imageUrl };
+  if (options.prompt) body.prompt = options.prompt;
+  if (options.duration) body.duration = parseInt(options.duration, 10);
+  if (options.aspect) body.aspect_ratio = options.aspect;
+  return body;
+}
+
 export async function apiGenerateVideo(options = {}) {
   const creds = requireApiCredentials();
   const modelSlug = options.model || 'dop-standard';
   const modelId = resolveApiModelId(modelSlug, 'video');
   if (!modelId) {
-    const videoModels = Object.keys(API_MODEL_MAP).filter(k =>
-      k.includes('dop') || k.includes('kling') || k.includes('seedance')
-    );
-    throw new Error(`No API model mapping for video slug '${modelSlug}'. Available: ${videoModels.join(', ')}`);
+    throw new Error(`No API model mapping for video slug '${modelSlug}'. Available: ${VIDEO_MODEL_KEYS.join(', ')}`);
   }
 
-  let imageUrl = options.imageUrl;
-  if (!imageUrl && options.imageFile) {
-    console.log(`[api] Uploading source image: ${options.imageFile}`);
-    imageUrl = await apiUploadFile(options.imageFile, creds);
-  }
+  const imageUrl = await resolveVideoSourceImage(options, creds);
   if (!imageUrl) throw new Error('--image-file or --image-url is required for API video generation');
 
-  const body = { image_url: imageUrl };
-  if (options.prompt) body.prompt = options.prompt;
-  if (options.duration) body.duration = parseInt(options.duration, 10);
-  if (options.aspect) body.aspect_ratio = options.aspect;
+  const body = buildVideoApiBody(options, imageUrl);
 
   console.log(`[api] Generating video via API: model=${modelId}`);
   logApiPrompt(options.prompt);
@@ -354,12 +243,22 @@ export async function apiGenerateVideo(options = {}) {
   return { outputPath, requestId: result.requestId };
 }
 
+function logApiStatusUnauthenticated() {
+  console.log('[api] No API credentials configured');
+  console.log('[api] Set HF_API_KEY and HF_API_SECRET in ~/.config/aidevops/credentials.sh');
+  console.log('[api] Get keys from: https://cloud.higgsfield.ai/api-keys');
+}
+
+function logApiStatusAuthenticated() {
+  console.log('[api] API credentials valid (authenticated)');
+  console.log('[api] Note: API uses separate credit pool from web UI subscription');
+  console.log('[api] Top up credits at: https://cloud.higgsfield.ai/credits');
+}
+
 export async function apiStatus() {
   const creds = loadApiCredentials();
   if (!creds) {
-    console.log('[api] No API credentials configured');
-    console.log('[api] Set HF_API_KEY and HF_API_SECRET in ~/.config/aidevops/credentials.sh');
-    console.log('[api] Get keys from: https://cloud.higgsfield.ai/api-keys');
+    logApiStatusUnauthenticated();
     return null;
   }
 
@@ -376,9 +275,7 @@ export async function apiStatus() {
       console.log('[api] ERROR: Invalid API credentials (401/403)');
       return { authenticated: false };
     }
-    console.log('[api] API credentials valid (authenticated)');
-    console.log('[api] Note: API uses separate credit pool from web UI subscription');
-    console.log('[api] Top up credits at: https://cloud.higgsfield.ai/credits');
+    logApiStatusAuthenticated();
     return { authenticated: true };
   } catch (err) {
     console.log(`[api] Connection error: ${err.message}`);

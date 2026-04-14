@@ -469,38 +469,52 @@ export async function extractVideoMetadata(page) {
   });
 }
 
-export function downloadVideoFromApiData(projectApiData, outputDir, combinedMeta, options) {
+function pickNewestCompletedCloudfrontJob(projectApiData) {
   for (const jobSet of projectApiData.job_sets) {
     for (const job of (jobSet.jobs || [])) {
       if (job.status !== 'completed' || !job.results?.raw?.url) continue;
-      const videoUrl = job.results.raw.url;
-      if (!videoUrl.includes('cloudfront.net')) continue;
-
-      const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
-      const savePath = safeJoin(outputDir, sanitizePathSegment(filename, 'video.mp4'));
-      try {
-        const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
-        if (httpCode === '200' && size > 10000) {
-          const result = finalizeDownload(savePath, {
-            command: 'video', type: 'video', ...combinedMeta,
-            strategy: 'api-interception', cloudFrontUrl: videoUrl,
-          }, outputDir, options);
-          if (!result.skipped) {
-            console.log(`Downloaded full-quality video (${(size / 1024 / 1024).toFixed(1)}MB, HTTP ${httpCode}): ${savePath}`);
-          }
-          return result.path;
-        } else if (httpCode === '200') {
-          console.log(`CloudFront returned ${httpCode} but file too small (${size}B), skipping: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
-        } else {
-          console.log(`CloudFront HTTP ${httpCode} for: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
-        }
-      } catch (curlErr) {
-        console.log(`CloudFront download error: ${curlErr.stderr || curlErr.message}`);
-      }
-      return null; // Only attempt the newest video
+      if (!job.results.raw.url.includes('cloudfront.net')) continue;
+      return job;
     }
   }
   return null;
+}
+
+function logCloudfrontDownloadOutcome(httpCode, size, videoUrl) {
+  const shortName = videoUrl.substring(videoUrl.lastIndexOf('/') + 1);
+  if (httpCode === '200') {
+    console.log(`CloudFront returned ${httpCode} but file too small (${size}B), skipping: ${shortName}`);
+  } else {
+    console.log(`CloudFront HTTP ${httpCode} for: ${shortName}`);
+  }
+}
+
+function tryCloudfrontDownload(videoUrl, outputDir, combinedMeta, options) {
+  const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
+  const savePath = safeJoin(outputDir, sanitizePathSegment(filename, 'video.mp4'));
+  try {
+    const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
+    if (httpCode === '200' && size > 10000) {
+      const result = finalizeDownload(savePath, {
+        command: 'video', type: 'video', ...combinedMeta,
+        strategy: 'api-interception', cloudFrontUrl: videoUrl,
+      }, outputDir, options);
+      if (!result.skipped) {
+        console.log(`Downloaded full-quality video (${(size / 1024 / 1024).toFixed(1)}MB, HTTP ${httpCode}): ${savePath}`);
+      }
+      return result.path;
+    }
+    logCloudfrontDownloadOutcome(httpCode, size, videoUrl);
+  } catch (curlErr) {
+    console.log(`CloudFront download error: ${curlErr.stderr || curlErr.message}`);
+  }
+  return null;
+}
+
+export function downloadVideoFromApiData(projectApiData, outputDir, combinedMeta, options) {
+  const job = pickNewestCompletedCloudfrontJob(projectApiData);
+  if (!job) return null;
+  return tryCloudfrontDownload(job.results.raw.url, outputDir, combinedMeta, options);
 }
 
 async function downloadVideoViaCdnFallback(page, outputDir, combinedMeta, options) {
@@ -814,83 +828,97 @@ async function pollLipsyncHistory(page, historyTab, existingHistoryCount, option
   return false;
 }
 
+async function selectLipsyncModel(page, model) {
+  if (!model) return;
+  console.log(`Selecting lipsync model: ${model}`);
+  const modelSelector = page.locator('button:has-text("Model"), [class*="model"]');
+  if (await modelSelector.count() === 0) return;
+  await modelSelector.first().click({ force: true });
+  await page.waitForTimeout(1000);
+  const modelOption = page.locator(`[role="option"]:has-text("${model}"), button:has-text("${model}")`);
+  if (await modelOption.count() > 0) {
+    await modelOption.first().click({ force: true });
+    await page.waitForTimeout(500);
+    console.log(`Selected model: ${model}`);
+  }
+}
+
+async function fillLipsyncPrompt(page, prompt) {
+  const textInput = page.locator('textarea, input[placeholder*="text" i], input[placeholder*="speak" i], input[placeholder*="say" i]');
+  if (await textInput.count() === 0) return;
+  await textInput.first().click({ force: true });
+  await page.waitForTimeout(300);
+  await textInput.first().fill(prompt, { force: true });
+  console.log(`Entered text: "${prompt}"`);
+}
+
+async function recordLipsyncHistoryBaseline(page, historyTab) {
+  if (await historyTab.count() === 0) return 0;
+  await historyTab.click({ force: true });
+  await page.waitForTimeout(1500);
+  const existingHistoryCount = await page.locator('main li').count();
+  console.log(`Existing History items: ${existingHistoryCount}`);
+  const createTab = page.locator('[role="tab"]:has-text("Create"), [role="tab"]:first-child');
+  if (await createTab.count() > 0) {
+    await createTab.first().click({ force: true });
+    await page.waitForTimeout(1000);
+  }
+  return existingHistoryCount;
+}
+
+async function downloadLipsyncResult(page, options, prompt, generationComplete) {
+  if (options.wait === false) return;
+  const baseOutput = options.output || getDefaultOutputDir(options);
+  const outputDir = resolveOutputDir(baseOutput, options, 'lipsync');
+  const meta = { model: options.model || 'lipsync', promptSnippet: prompt.substring(0, 80) };
+  const downloads = await downloadVideoFromHistory(page, outputDir, meta, options);
+  if (downloads.length > 0) {
+    console.log(`Lipsync video downloaded: ${downloads.join(', ')}`);
+  } else if (!generationComplete) {
+    console.log('Lipsync generation timed out and no completed video found. Try: download --model video');
+  }
+}
+
+async function runLipsyncPipeline(page, options, prompt) {
+  await page.goto(`${BASE_URL}/lipsync-studio`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(4000);
+  await dismissAllModals(page);
+  await debugScreenshot(page, 'lipsync-page');
+
+  await uploadLipsyncCharacter(page, options.imageFile);
+  await selectLipsyncModel(page, options.model);
+  await fillLipsyncPrompt(page, prompt);
+
+  const historyTab = page.locator('[role="tab"]:has-text("History")');
+  const existingHistoryCount = await recordLipsyncHistoryBaseline(page, historyTab);
+
+  await clickGenerate(page, 'lipsync');
+  await page.waitForTimeout(3000);
+  await debugScreenshot(page, 'lipsync-generate-clicked');
+
+  const generationComplete = await pollLipsyncHistory(page, historyTab, existingHistoryCount, options);
+
+  await page.waitForTimeout(2000);
+  await dismissAllModals(page);
+  await debugScreenshot(page, 'lipsync-result');
+
+  await downloadLipsyncResult(page, options, prompt, generationComplete);
+}
+
 export async function generateLipsync(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
   try {
     const prompt = options.prompt || 'Hello! Welcome to our channel. Today we have something amazing to show you.';
-
     console.log('Navigating to Lipsync Studio...');
-    await page.goto(`${BASE_URL}/lipsync-studio`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(4000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, 'lipsync-page');
 
     if (!options.imageFile) {
       console.log('WARNING: Lipsync requires a character image (--image-file)');
       await browser.close();
       return { success: false, error: 'Character image required. Use --image-file to provide one.' };
     }
-    await uploadLipsyncCharacter(page, options.imageFile);
 
-    if (options.model) {
-      console.log(`Selecting lipsync model: ${options.model}`);
-      const modelSelector = page.locator('button:has-text("Model"), [class*="model"]');
-      if (await modelSelector.count() > 0) {
-        await modelSelector.first().click({ force: true });
-        await page.waitForTimeout(1000);
-        const modelOption = page.locator(`[role="option"]:has-text("${options.model}"), button:has-text("${options.model}")`);
-        if (await modelOption.count() > 0) {
-          await modelOption.first().click({ force: true });
-          await page.waitForTimeout(500);
-          console.log(`Selected model: ${options.model}`);
-        }
-      }
-    }
-
-    const textInput = page.locator('textarea, input[placeholder*="text" i], input[placeholder*="speak" i], input[placeholder*="say" i]');
-    if (await textInput.count() > 0) {
-      await textInput.first().click({ force: true });
-      await page.waitForTimeout(300);
-      await textInput.first().fill(prompt, { force: true });
-      console.log(`Entered text: "${prompt}"`);
-    }
-
-    const historyTab = page.locator('[role="tab"]:has-text("History")');
-    let existingHistoryCount = 0;
-    if (await historyTab.count() > 0) {
-      await historyTab.click({ force: true });
-      await page.waitForTimeout(1500);
-      existingHistoryCount = await page.locator('main li').count();
-      console.log(`Existing History items: ${existingHistoryCount}`);
-      const createTab = page.locator('[role="tab"]:has-text("Create"), [role="tab"]:first-child');
-      if (await createTab.count() > 0) {
-        await createTab.first().click({ force: true });
-        await page.waitForTimeout(1000);
-      }
-    }
-
-    await clickGenerate(page, 'lipsync');
-    await page.waitForTimeout(3000);
-    await debugScreenshot(page, 'lipsync-generate-clicked');
-
-    const generationComplete = await pollLipsyncHistory(page, historyTab, existingHistoryCount, options);
-
-    await page.waitForTimeout(2000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, 'lipsync-result');
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'lipsync');
-      const meta = { model: options.model || 'lipsync', promptSnippet: prompt.substring(0, 80) };
-      const downloads = await downloadVideoFromHistory(page, outputDir, meta, options);
-      if (downloads.length > 0) {
-        console.log(`Lipsync video downloaded: ${downloads.join(', ')}`);
-      } else if (!generationComplete) {
-        console.log('Lipsync generation timed out and no completed video found. Try: download --model video');
-      }
-    }
+    await runLipsyncPipeline(page, options, prompt);
 
     console.log('Lipsync generation complete');
     await context.storageState({ path: STATE_FILE });
@@ -1079,44 +1107,87 @@ function scorePromptMatch(promptA, promptB) {
   return score;
 }
 
-export function matchJobSetsToSubmittedJobs(submittedJobs, completedJobSets, results) {
-  const matchedJobSetIds = new Set();
+function jobSetKey(jobSet) {
+  return jobSet.id || jobSet.prompt;
+}
 
+function findBestPromptMatch(job, completedJobSets, matchedJobSetIds) {
+  let bestMatch = null;
+  let bestScore = 0;
+  for (const jobSet of completedJobSets) {
+    if (matchedJobSetIds.has(jobSetKey(jobSet))) continue;
+    const score = scorePromptMatch(jobSet.prompt || '', job.promptPrefix || '');
+    if (score >= 20 && score > bestScore) {
+      bestMatch = jobSet;
+      bestScore = score;
+    }
+  }
+  return bestMatch;
+}
+
+function assignPromptMatches(submittedJobs, completedJobSets, results, matchedJobSetIds) {
   for (const job of submittedJobs) {
     if (results.has(job.sceneIndex)) continue;
-    let bestMatch = null;
-    let bestScore = 0;
-
-    for (const jobSet of completedJobSets) {
-      const jobSetId = jobSet.id || jobSet.prompt;
-      if (matchedJobSetIds.has(jobSetId)) continue;
-      const score = scorePromptMatch(jobSet.prompt || '', job.promptPrefix || '');
-      if (score >= 20 && score > bestScore) {
-        bestMatch = jobSet;
-        bestScore = score;
-      }
-    }
-
+    const bestMatch = findBestPromptMatch(job, completedJobSets, matchedJobSetIds);
     if (bestMatch) {
-      matchedJobSetIds.add(bestMatch.id || bestMatch.prompt);
+      matchedJobSetIds.add(jobSetKey(bestMatch));
       job._matchedJobSet = bestMatch;
       job._matchMethod = 'prompt';
     }
   }
+}
 
+function assignOrderFallbackMatches(submittedJobs, completedJobSets, results, matchedJobSetIds) {
   const unmatchedJobs = submittedJobs.filter(j => !results.has(j.sceneIndex) && !j._matchedJobSet);
-  if (unmatchedJobs.length > 0) {
-    const unmatchedJobSets = completedJobSets.filter(js => !matchedJobSetIds.has(js.id || js.prompt));
-    const reversedJobSets = [...unmatchedJobSets].reverse();
+  if (unmatchedJobs.length === 0) return;
 
-    for (let i = 0; i < unmatchedJobs.length && i < reversedJobSets.length; i++) {
-      const job = unmatchedJobs[i];
-      const jobSet = reversedJobSets[i];
-      matchedJobSetIds.add(jobSet.id || jobSet.prompt);
-      job._matchedJobSet = jobSet;
-      job._matchMethod = 'order';
-      console.log(`  Scene ${job.sceneIndex + 1}: order-based match (empty prompt fallback)`);
+  const unmatchedJobSets = completedJobSets.filter(js => !matchedJobSetIds.has(jobSetKey(js)));
+  const reversedJobSets = [...unmatchedJobSets].reverse();
+
+  const pairCount = Math.min(unmatchedJobs.length, reversedJobSets.length);
+  for (let i = 0; i < pairCount; i++) {
+    const job = unmatchedJobs[i];
+    const jobSet = reversedJobSets[i];
+    matchedJobSetIds.add(jobSetKey(jobSet));
+    job._matchedJobSet = jobSet;
+    job._matchMethod = 'order';
+    console.log(`  Scene ${job.sceneIndex + 1}: order-based match (empty prompt fallback)`);
+  }
+}
+
+export function matchJobSetsToSubmittedJobs(submittedJobs, completedJobSets, results) {
+  const matchedJobSetIds = new Set();
+  assignPromptMatches(submittedJobs, completedJobSets, results, matchedJobSetIds);
+  assignOrderFallbackMatches(submittedJobs, completedJobSets, results, matchedJobSetIds);
+}
+
+function findCompletedJobWithUrl(jobSet) {
+  for (const j of (jobSet.jobs || [])) {
+    if (j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net')) {
+      return j;
     }
+  }
+  return null;
+}
+
+function downloadSingleMatchedVideo(job, bestMatch, matchMethod, outputDir, results) {
+  const completedJob = findCompletedJobWithUrl(bestMatch);
+  if (!completedJob) return;
+
+  const videoUrl = completedJob.results.raw.url;
+  const meta = { model: job.model, promptSnippet: job.promptPrefix };
+  const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
+  const savePath = safeJoin(outputDir, sanitizePathSegment(filename, `scene-${job.sceneIndex + 1}.mp4`));
+
+  try {
+    const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
+    if (httpCode === '200' && size > 10000) {
+      console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(size / 1024 / 1024).toFixed(1)}MB) ${filename}`);
+      console.log(`    Match method: ${matchMethod}, prompt: "${(bestMatch.prompt || '(empty)').substring(0, 60)}"`);
+      results.set(job.sceneIndex, savePath);
+    }
+  } catch {
+    /* download failures are reported by the poller's missing-scenes log */
   }
 }
 
@@ -1128,23 +1199,7 @@ export function downloadMatchedVideos(submittedJobs, outputDir, results) {
     const matchMethod = job._matchMethod || 'prompt';
     delete job._matchedJobSet;
     delete job._matchMethod;
-
-    for (const j of (bestMatch.jobs || [])) {
-      if (j.status !== 'completed' || !j.results?.raw?.url?.includes('cloudfront.net')) continue;
-      const videoUrl = j.results.raw.url;
-      const meta = { model: job.model, promptSnippet: job.promptPrefix };
-      const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
-      const savePath = safeJoin(outputDir, sanitizePathSegment(filename, `scene-${job.sceneIndex + 1}.mp4`));
-      try {
-        const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
-        if (httpCode === '200' && size > 10000) {
-          console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(size / 1024 / 1024).toFixed(1)}MB) ${filename}`);
-          console.log(`    Match method: ${matchMethod}, prompt: "${(bestMatch.prompt || '(empty)').substring(0, 60)}"`);
-          results.set(job.sceneIndex, savePath);
-        }
-      } catch {}
-      break;
-    }
+    downloadSingleMatchedVideo(job, bestMatch, matchMethod, outputDir, results);
   }
 }
 

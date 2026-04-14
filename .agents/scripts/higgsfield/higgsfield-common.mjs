@@ -125,10 +125,16 @@ export function isUnlimitedModel(slug, commandType) {
 // Retry wrapper
 // ---------------------------------------------------------------------------
 
+const NON_RETRYABLE_ERROR_PATTERNS = [
+  'unsupported content',
+  'content policy',
+  'No assets found',
+  'not found',
+  'CREDIT_GUARD',
+];
+
 function isNonRetryableError(msg) {
-  return msg.includes('unsupported content') || msg.includes('content policy') ||
-    msg.includes('No assets found') || msg.includes('not found') ||
-    msg.includes('CREDIT_GUARD');
+  return NON_RETRYABLE_ERROR_PATTERNS.some(pattern => msg.includes(pattern));
 }
 
 export async function withRetry(fn, { maxRetries = 2, baseDelay = 3000, label = 'operation' } = {}) {
@@ -1186,28 +1192,51 @@ export function categoriseRoutes(links) {
   return routes;
 }
 
-export function diffRoutesAgainstCache(routes) {
-  const changes = [];
-  if (!existsSync(ROUTES_CACHE)) return changes;
+const DIFF_BUCKETS = [
+  { key: 'apps', label: 'APP' },
+  { key: 'image', label: 'IMAGE MODEL' },
+  { key: 'features', label: 'FEATURE' },
+];
+
+function collectAddedPaths(label, currentBucket, prevKeys) {
+  const added = [];
+  for (const path of Object.keys(currentBucket)) {
+    if (!prevKeys.has(path)) added.push(`NEW ${label}: ${path} → ${currentBucket[path]}`);
+  }
+  return added;
+}
+
+function collectRemovedApps(currentApps, prevAppKeys) {
+  const removed = [];
+  for (const path of prevAppKeys) {
+    if (!currentApps[path]) removed.push(`REMOVED APP: ${path}`);
+  }
+  return removed;
+}
+
+function diffBucket(prev, routes, { key, label }) {
+  const prevKeys = new Set(Object.keys(prev[key] || {}));
+  const changes = collectAddedPaths(label, routes[key], prevKeys);
+  if (key === 'apps') changes.push(...collectRemovedApps(routes.apps, prevKeys));
+  return changes;
+}
+
+function loadPreviousRoutes() {
+  if (!existsSync(ROUTES_CACHE)) return null;
   try {
-    const prev = JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
-    const diffBuckets = [
-      { key: 'apps', label: 'APP' },
-      { key: 'image', label: 'IMAGE MODEL' },
-      { key: 'features', label: 'FEATURE' },
-    ];
-    for (const { key, label } of diffBuckets) {
-      const prevKeys = new Set(Object.keys(prev[key] || {}));
-      for (const path of Object.keys(routes[key])) {
-        if (!prevKeys.has(path)) changes.push(`NEW ${label}: ${path} → ${routes[key][path]}`);
-      }
-      if (key === 'apps') {
-        for (const path of prevKeys) {
-          if (!routes.apps[path]) changes.push(`REMOVED APP: ${path}`);
-        }
-      }
-    }
-  } catch { /* first run or corrupt cache */ }
+    return JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
+  } catch {
+    return null; // first run or corrupt cache
+  }
+}
+
+export function diffRoutesAgainstCache(routes) {
+  const prev = loadPreviousRoutes();
+  if (!prev) return [];
+  const changes = [];
+  for (const bucket of DIFF_BUCKETS) {
+    changes.push(...diffBucket(prev, routes, bucket));
+  }
   return changes;
 }
 

@@ -351,76 +351,108 @@ async function reloadAndCheckImages(page, { elapsed, existingImageCount, peakQue
   return null;
 }
 
-export async function waitForImageGeneration(page, existingImageCount, queueBefore, options = {}) {
-  const timeout = options.timeout || 300000;
-  const startTime = Date.now();
-  const pollInterval = 5000;
-
+async function detectInitialQueueStart(page, queueBefore) {
   console.log('Waiting for generation to start...');
-  let detectedQueueCount = queueBefore;
   try {
     await page.waitForFunction(
       (prevQueueCount) => (document.body.innerText.match(/In queue/g) || []).length > prevQueueCount,
       queueBefore,
       { timeout: 15000, polling: 1000 }
     );
-    detectedQueueCount = await page.evaluate(() =>
+    const count = await page.evaluate(() =>
       (document.body.innerText.match(/In queue/g) || []).length
     );
-    console.log(`Generation started! ${detectedQueueCount} item(s) in queue`);
+    console.log(`Generation started! ${count} item(s) in queue`);
+    return count;
   } catch {
     console.log('Queue detection timed out - generation may have started differently');
+    return queueBefore;
+  }
+}
+
+async function readImageGenerationState(page) {
+  return page.evaluate((imgSelector) => {
+    const queueItems = (document.body.innerText.match(/In queue/g) || []).length;
+    const images = document.querySelectorAll(imgSelector).length;
+    const genBtns = [...document.querySelectorAll('button')].filter(b =>
+      b.textContent.includes('Generate') || b.textContent.includes('Unlimited')
+    );
+    const genBtn = genBtns[genBtns.length - 1];
+    const btnDisabled = genBtn ? (genBtn.disabled || genBtn.getAttribute('aria-disabled') === 'true') : false;
+    const btnText = genBtn ? genBtn.textContent.trim() : '';
+    const hasSpinner = document.querySelector('main svg[class*="animate"]') !== null ||
+                      document.querySelector('main [class*="spinner"]') !== null ||
+                      document.querySelector('main [class*="loading"]') !== null;
+    return { queueItems, images, btnDisabled, btnText, hasSpinner };
+  }, GENERATED_IMAGE_SELECTOR);
+}
+
+async function handleImageGenCompletion(page, state, ctx) {
+  const completeMsg = checkImageGenCompletion(state, ctx);
+  if (!completeMsg) return false;
+  console.log(completeMsg);
+  if (completeMsg.includes('button re-enabled')) await page.waitForTimeout(3000);
+  return true;
+}
+
+async function handleImageGenReload(page, ctx, reloadAttempted) {
+  if (reloadAttempted) return { done: false, attempted: reloadAttempted };
+  const reloadMsg = await reloadAndCheckImages(page, ctx);
+  if (reloadMsg) {
+    console.log(reloadMsg);
+    return { done: true, attempted: true };
+  }
+  const shouldMark = parseInt(ctx.elapsed, 10) >= 60 && ctx.peakQueue === ctx.queueBefore && !ctx.btnWasDisabled;
+  return { done: false, attempted: shouldMark };
+}
+
+async function pollImageGenerationCycle(page, loopState, fixed) {
+  const state = await readImageGenerationState(page);
+  if (state.queueItems > loopState.peakQueue) loopState.peakQueue = state.queueItems;
+  if (state.btnDisabled || state.hasSpinner) loopState.btnWasDisabled = true;
+
+  const elapsed = ((Date.now() - fixed.startTime) / 1000).toFixed(0);
+  console.log(`  ${elapsed}s: queue=${state.queueItems} images=${state.images} (peak=${loopState.peakQueue}) btn=${state.btnDisabled ? 'disabled' : 'enabled'}`);
+
+  const ctx = {
+    existingImageCount: fixed.existingImageCount,
+    queueBefore: fixed.queueBefore,
+    peakQueue: loopState.peakQueue,
+    btnWasDisabled: loopState.btnWasDisabled,
+    elapsed,
+  };
+
+  if (await handleImageGenCompletion(page, state, ctx)) return 'done';
+
+  if (!loopState.retryAttempted) {
+    loopState.retryAttempted = await retryGenerateIfStalled(page, { ...ctx, state });
   }
 
+  const reloadResult = await handleImageGenReload(page, ctx, loopState.reloadAttempted);
+  loopState.reloadAttempted = reloadResult.attempted;
+  return reloadResult.done ? 'done' : 'continue';
+}
+
+export async function waitForImageGeneration(page, existingImageCount, queueBefore, options = {}) {
+  const timeout = options.timeout || 300000;
+  const startTime = Date.now();
+  const pollInterval = 5000;
+
+  const detectedQueueCount = await detectInitialQueueStart(page, queueBefore);
   console.log(`Waiting up to ${timeout / 1000}s for generation to complete...`);
-  let peakQueue = Math.max(queueBefore, detectedQueueCount);
-  let retryAttempted = false;
-  let reloadAttempted = false;
-  let btnWasDisabled = false;
+
+  const fixed = { startTime, existingImageCount, queueBefore };
+  const loopState = {
+    peakQueue: Math.max(queueBefore, detectedQueueCount),
+    retryAttempted: false,
+    reloadAttempted: false,
+    btnWasDisabled: false,
+  };
 
   while (Date.now() - startTime < timeout) {
     await page.waitForTimeout(pollInterval);
-
-    const state = await page.evaluate((imgSelector) => {
-      const queueItems = (document.body.innerText.match(/In queue/g) || []).length;
-      const images = document.querySelectorAll(imgSelector).length;
-      const genBtns = [...document.querySelectorAll('button')].filter(b =>
-        b.textContent.includes('Generate') || b.textContent.includes('Unlimited')
-      );
-      const genBtn = genBtns[genBtns.length - 1];
-      const btnDisabled = genBtn ? (genBtn.disabled || genBtn.getAttribute('aria-disabled') === 'true') : false;
-      const btnText = genBtn ? genBtn.textContent.trim() : '';
-      const hasSpinner = document.querySelector('main svg[class*="animate"]') !== null ||
-                        document.querySelector('main [class*="spinner"]') !== null ||
-                        document.querySelector('main [class*="loading"]') !== null;
-      return { queueItems, images, btnDisabled, btnText, hasSpinner };
-    }, GENERATED_IMAGE_SELECTOR);
-
-    if (state.queueItems > peakQueue) peakQueue = state.queueItems;
-    if (state.btnDisabled || state.hasSpinner) btnWasDisabled = true;
-
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-    console.log(`  ${elapsed}s: queue=${state.queueItems} images=${state.images} (peak=${peakQueue}) btn=${state.btnDisabled ? 'disabled' : 'enabled'}`);
-
-    const ctx = { existingImageCount, queueBefore, peakQueue, btnWasDisabled, elapsed };
-    const completeMsg = checkImageGenCompletion(state, ctx);
-    if (completeMsg) {
-      console.log(completeMsg);
-      if (completeMsg.includes('button re-enabled')) await page.waitForTimeout(3000);
-      return true;
-    }
-
-    if (!retryAttempted) {
-      retryAttempted = await retryGenerateIfStalled(page, { ...ctx, state });
-    }
-
-    if (!reloadAttempted) {
-      const reloadMsg = await reloadAndCheckImages(page, ctx);
-      if (reloadMsg) { console.log(reloadMsg); return true; }
-      if (parseInt(elapsed, 10) >= 60 && peakQueue === queueBefore && !btnWasDisabled) {
-        reloadAttempted = true;
-      }
-    }
+    const status = await pollImageGenerationCycle(page, loopState, fixed);
+    if (status === 'done') return true;
   }
 
   console.log('Timeout waiting for generation. Some items may still be processing.');
