@@ -6907,7 +6907,7 @@
     ".agents/workflows/pulse.md": {
       "hash": "56ee27508114a708f99f97132fb0e2903fec69ef",
       "at": "2026-04-14T00:00:00Z",
-      "pr": 18116,
+      "pr": 18930,
       "passes": 3
     },
     ".agents/workflows/pulse-sweep.md": {
