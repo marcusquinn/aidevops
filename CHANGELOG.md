@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.30] - 2026-04-14
+
+### Changed
+
+- skip expensive prefetch for idle repos — reduce GraphQL consumption ~50% (#18985)
+- fail-loud on GraphQL rate-limit exhaustion in pulse prefetch (#18983)
+
+### Fixed
+
+- isolate dispatch_with_dedup in subshell to survive silent abort (GH#18804) (#18825)
+
 ## [3.8.29] - 2026-04-14
 
 ### Changed
