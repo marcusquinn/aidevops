@@ -872,6 +872,24 @@ cmd_commit_and_pr() {
 		return 1
 	}
 
+	# t2091: Guard against filing PRs on already-closed issues.
+	# A worker racing an interactive session may finish implementation after
+	# the issue was already resolved. Opening a PR against a closed issue
+	# creates noise, wastes review time, and can trigger duplicate closures.
+	# Applies to all modes (interactive and headless).
+	local _pre_pr_issue_state=""
+	_pre_pr_issue_state=$(gh issue view "$issue_number" --repo "$repo" \
+		--json state -q '.state' 2>/dev/null || echo "")
+	if [[ "$_pre_pr_issue_state" == "CLOSED" ]]; then
+		print_error "Aborting: issue #${issue_number} is already closed — not opening a duplicate PR (t2091)"
+		gh issue comment "$issue_number" --repo "$repo" \
+			--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+Worker aborted PR creation: issue #${issue_number} was already closed by the time this session completed implementation. No PR was opened.
+<!-- ops:end -->" \
+			2>/dev/null || true
+		return 1
+	fi
+
 	local pr_number=""
 	pr_number=$(_create_pr "$repo" "$pr_title" "$pr_body" "$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || return 1
 

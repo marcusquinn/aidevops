@@ -686,11 +686,20 @@ _is_assigned_check_cost_budget() {
 # is_assigned helper: compute the blocking assignees set.
 #
 # Walks the assignees list and filters out:
-#   - self_login (never blocks itself)
+#   - self_login when there is NO active claim (passive bookkeeping)
 #   - owner/maintainer if no active claim state (GH#18352 / t1961)
 #
 # Owner/maintainer is passive UNLESS _has_active_claim returned "true".
 # See _has_active_claim() for the full rule set.
+#
+# The self_login exemption is intentionally bypassed when active_claim
+# is "true". In a single-user setup the interactive user and the pulse
+# runner share the same GitHub login. Without this exception the pulse
+# skips the assignee (it looks like self) and ignores origin:interactive,
+# dispatching a duplicate worker. The exemption exists to prevent a runner
+# from blocking its own re-dispatch on a passively-bookmarked issue — that
+# use-case has no active claim label, so the guard is still satisfied.
+# (GH#18956 incident root cause — fixed in t2091.)
 #
 # Args:
 #   $1 = assignees (comma-separated login list)
@@ -715,7 +724,11 @@ _is_assigned_compute_blocking() {
 	local blocking_assignees=""
 	local assignee
 	for assignee in "${assignee_array[@]}"; do
-		if [[ -n "$self_login" && "$assignee" == "$self_login" ]]; then
+		# Self-login is passive UNLESS an active claim exists. When active_claim
+		# is "true" (status label OR origin:interactive), the assignment is
+		# intentional — skip the self-login exemption so the issue blocks
+		# re-dispatch even in single-user setups. (t2091)
+		if [[ -n "$self_login" && "$assignee" == "$self_login" && "$active_claim" != "true" ]]; then
 			continue
 		fi
 
