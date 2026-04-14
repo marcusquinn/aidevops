@@ -488,7 +488,13 @@ jobs:
   qlty-smells:
     name: Qlty Maintainability Smells
     runs-on: ubuntu-latest
-    # Only run on PRs — diff mode needs a comparison base
+    # Only run on PRs — diff mode needs a comparison base.
+    #
+    # NOTE (t2065, GH#18773): a richer per-rule / per-file regression
+    # gate lives in `.github/workflows/qlty-regression.yml`. That gate
+    # provides the PR comment with breakdowns, SARIF artifact upload,
+    # and the `ratchet-bump` label override. This job stays as a simple
+    # belt-and-braces check that leverages qlty's built-in diff mode.
     if: github.event_name == 'pull_request'
 
     steps:

@@ -1,0 +1,155 @@
+name: Qlty Regression Gate
+
+# t2065: block PRs that increase the total qlty smell count.
+#
+# Runs `qlty smells --all --sarif` against (a) the PR merge-base and
+# (b) the PR head, computes the total-count delta, and fails the check
+# when the PR introduces a net increase. Richer than the existing
+# `qlty-smells` job in `code-quality.yml` (which uses qlty's built-in
+# diff mode): this workflow provides per-rule and per-file breakdowns
+# in a PR comment, uploads SARIF artifacts, and supports a
+# `ratchet-bump` label override for justified increases.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-scope:
+    name: Detect PR scope
+    runs-on: ubuntu-latest
+    outputs:
+      should_scan: ${{ steps.scope.outputs.should_scan }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine scope
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          echo "Base: $BASE_SHA"
+          echo "Head: $HEAD_SHA"
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" || true)
+          if [ -z "$changed" ]; then
+            echo "No files changed; skipping qlty scan."
+            echo "should_scan=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf 'Changed files:\n%s\n' "$changed"
+          # Docs-only bypass: PR touches only markdown, todo/**, or non-workflow .github/ md
+          non_doc=$(printf '%s\n' "$changed" | grep -Ev \
+            -e '^([A-Za-z0-9_.-]*\.md)$' \
+            -e '^todo/' \
+            -e '^TODO\.md$' \
+            -e '^\.github/.*\.md$' \
+            || true)
+          if [ -z "$non_doc" ]; then
+            echo "Docs-only PR; skipping qlty scan."
+            echo "should_scan=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Non-doc files changed; running qlty scan."
+            echo "should_scan=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  qlty-diff:
+    name: Qlty Smell Regression
+    runs-on: ubuntu-latest
+    needs: detect-scope
+    if: needs.detect-scope.outputs.should_scan == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Qlty CLI
+        uses: qltysh/qlty-action/install@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0
+
+      - name: Run qlty regression diff
+        id: diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          .agents/scripts/qlty-regression-helper.sh \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --output-md /tmp/qlty-report.md \
+            --sarif-base /tmp/qlty-base.sarif \
+            --sarif-head /tmp/qlty-head.sarif
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          echo "---- report ----"
+          cat /tmp/qlty-report.md || true
+
+      - name: Upload SARIF artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qlty-sarif-${{ github.event.pull_request.number }}
+          path: |
+            /tmp/qlty-base.sarif
+            /tmp/qlty-head.sarif
+            /tmp/qlty-report.md
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Post PR comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          body_file=/tmp/qlty-report.md
+          if [ ! -s "$body_file" ]; then
+            echo "No report to post."
+            exit 0
+          fi
+          marker="<!-- qlty-regression-gate -->"
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            echo "Updating existing comment $existing"
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body=@"$body_file" >/dev/null 2>&1 || true
+          else
+            echo "Creating new comment"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$body_file" \
+              >/dev/null 2>&1 || true
+          fi
+
+      - name: Enforce gate
+        env:
+          HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'ratchet-bump') }}
+          EXIT_CODE: ${{ steps.diff.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          if [ "$EXIT_CODE" = "0" ]; then
+            echo "Qlty smell count: no regression."
+            exit 0
+          fi
+          if [ "$HAS_OVERRIDE" = "true" ]; then
+            echo "::warning::Qlty smell regression detected but 'ratchet-bump' label is set — allowing with warning."
+            exit 0
+          fi
+          echo "::error::Qlty smell regression detected (exit $EXIT_CODE). Add the 'ratchet-bump' label to override if justified."
+          exit 1
