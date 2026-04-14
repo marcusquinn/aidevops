@@ -238,6 +238,31 @@ _match_candidate_key() {
 # Returns: exit 0 if live duplicate found (prints DUPLICATE line),
 #          exit 1 if no match or stale entry (prints STALE line if stale)
 #######################################
+#######################################
+# _check_db_entry — checks local supervisor DB for prior dispatch claim.
+#
+# t2061 audit (2026-04-14):
+#   - Missing DB file: CALLER guards with [[ -f "$supervisor_db" ]] before calling.
+#     This function is not called when the DB file is absent.
+#   - Unreadable DB file / sqlite3 error: fail-OPEN via `2>/dev/null || true` on all
+#     sqlite3 SELECT calls. No match found = no prior claim = safe to dispatch.
+#     RATIONALE: This guard answers "is there a local active claim?". DB read failure
+#     means "no evidence of a local claim" — not "cannot determine". The authoritative
+#     cross-machine source is the GitHub API (is_assigned Layer 6). Fail-open here is
+#     correct; the is_assigned() gh API call provides the authoritative safety net.
+#   - jq: No jq calls in this function; all data access via sqlite3.
+#   - PID file race: fail-OPEN — no PID file / non-numeric content treated as stale.
+#     RATIONALE: PID absence = worker crashed without cleanup. Treating as stale is
+#     the correct recovery behaviour (matches GH#5662 design intent).
+#   - UPDATE tasks (cleanup): fail-OPEN via `2>/dev/null || true`.
+#     RATIONALE: Cleanup failure is non-fatal for the dedup decision. The entry
+#     will be reset on the next successful sqlite3 access.
+#
+# Classification: APPROPRIATELY fail-open. This is a LOCAL optimisation guard only.
+# The GitHub API layer (is_assigned) is the authoritative cross-machine dedup source.
+# Fail-open here keeps the queue moving when the local DB has transient issues.
+# t2061 audit (2026-04-14): see block comment above for full classification.
+#######################################
 _check_db_entry() {
 	local candidate_key="$1"
 	local supervisor_db="$2"
@@ -318,6 +343,27 @@ _check_db_entry() {
 }
 
 #######################################
+# is_duplicate — process-local dedup guard for title-based key matching.
+#
+# t2061 audit (2026-04-14):
+#   - extract_keys() failure (empty keys): fail-OPEN — return 1, allow dispatch.
+#     RATIONALE: No extractable dedup key means no dedup basis. The absence of
+#     a key is not a failure; it is the correct state for titles with no issue/PR/task
+#     reference. Fail-open is correct here.
+#   - list_running_keys() failure (empty running keys): fail-OPEN — no match found.
+#     RATIONALE: Local process list failure is non-fatal. The GitHub API layer
+#     (is_assigned) is the authoritative cross-machine guard.
+#   - _check_db_entry sqlite3 errors: fail-OPEN (see _check_db_entry audit above).
+#     RATIONALE: Same — this is a LOCAL guard. The is_assigned() gh API call is the
+#     authoritative dedup source for cross-machine correctness.
+#   - No direct jq calls in is_duplicate(); see _check_db_entry audit for sqlite3.
+#
+# Classification: APPROPRIATELY fail-open. This guard is LOCAL (process + DB).
+# Missing data = "no evidence of local duplication" not "cannot determine safety".
+# The is_assigned() guard (Layer 6) provides authoritative cross-machine protection.
+# t2061 audit (2026-04-14): see block comment above for full classification.
+#######################################
+#######################################
 # Check if a title's dedup keys overlap with any running worker.
 # Args: $1 = title of the item to be dispatched
 # Returns: exit 0 if duplicate found (do NOT dispatch),
@@ -327,6 +373,7 @@ _check_db_entry() {
 # GH#5662: When a supervisor DB match is found, the stored PID is verified
 # with kill -0 before returning exit 0. Dead PIDs cause the stale DB entry
 # to be reset to 'failed' and exit 1 is returned (safe to dispatch).
+# t2061 audit (2026-04-14): see block comment above — appropriately fail-open.
 #######################################
 is_duplicate() {
 	local title="$1"
@@ -408,6 +455,38 @@ _get_repo_maintainer() {
 }
 
 #######################################
+# _is_stale_assignment — stale assignment recovery guard (GH#15060).
+#
+# t2061 audit (2026-04-14):
+#   - gh API failure when fetching issue comments: HARDENED (was fail-OPEN).
+#     PRIOR behaviour: `|| comments_json="[]"` → empty comments → no dispatch comment
+#     found → treated as "stale, no recent activity" → _recover_stale_assignment()
+#     called → assignment cleared → dispatch ALLOWED.
+#     This was fail-OPEN in the wrong direction: a transient gh API error could clear
+#     a legitimate active claim and dispatch a duplicate worker — undoing is_assigned()'s
+#     protection which had already confirmed a blocking assignee exists.
+#     FIX APPLIED (t2061): Return 1 (not stale / uncertain) on gh API failure.
+#     The blocking assignment stays in place; the next pulse cycle retries with a
+#     fresh API call. A transient block is cheap (one missed dispatch cycle);
+#     a false "stale" recovery burns ~20K tokens on a duplicate worker.
+#   - jq failures on comments_json parsing (last_dispatch_ts, last_activity_ts):
+#     fail-OPEN via `2>/dev/null || ts=""`. Empty timestamps → "no dispatch comment"
+#     path → stale recovery → allow dispatch. Same theoretical risk as gh API failure.
+#     RATIONALE FOR LEAVING: These jq calls parse data from comments_json which we
+#     just validated as non-empty. jq failure on non-empty valid JSON is very unlikely
+#     (would require a malformed --jq filter in the gh command itself). The primary
+#     fix (gh API failure path above) covers the common failure mode. Future hardening
+#     of these jq calls is a separate task.
+#   - _ts_to_epoch() date parse failure: returns "0" → huge age → treated as stale.
+#     RATIONALE: Appropriately fail-open for individual timestamp parsing. A parse
+#     failure on one timestamp treats it as ancient, which prevents a single bad
+#     timestamp from permanently blocking stale recovery. A richer error handling
+#     strategy (skip the comment with the bad timestamp) is out of scope here.
+#
+# Classification: HARDENED (gh API failure path). See FIX APPLIED above.
+# t2061 audit (2026-04-14): see block comment above for full classification.
+#######################################
+#######################################
 # Stale assignment recovery (GH#15060)
 #
 # When an issue is assigned to a blocking user (another runner), check
@@ -442,6 +521,7 @@ _get_repo_maintainer() {
 #######################################
 STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-${DISPATCH_COMMENT_MAX_AGE:-600}}" # 10 min (GH#17549: aligned with DISPATCH_COMMENT_MAX_AGE; reduced from 30 min — crash recovery was too slow)
 
+# t2061 audit (2026-04-14): gh API failure path hardened — see block comment above.
 _is_stale_assignment() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -451,10 +531,18 @@ _is_stale_assignment() {
 	# overall activity timestamp. Use --paginate to catch all comments
 	# on issues with long histories, but cap with --jq to only extract
 	# what we need (timestamp + body snippet for matching).
-	local comments_json
+	local comments_json _gh_stale_rc=0
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--jq '[.[] | {created_at: .created_at, author: .user.login, body_start: (.body[:200])}] | sort_by(.created_at) | reverse' \
-		2>/dev/null) || comments_json="[]"
+		2>/dev/null) || _gh_stale_rc=$?
+
+	# t2061: fail-closed on gh API failure when checking staleness.
+	# Cannot determine if the blocking assignment is stale; treat as NOT stale
+	# (block dispatch). A transient block clears in the next pulse cycle;
+	# a false "stale" recovery could dispatch a duplicate worker.
+	if [[ "$_gh_stale_rc" -ne 0 || -z "$comments_json" ]]; then
+		return 1
+	fi
 
 	# Find the most recent dispatch/claim comment
 	# Matches: "Dispatching worker", "DISPATCH_CLAIM", "Worker (PID"
@@ -952,6 +1040,31 @@ _This is the cost-runaway fail-safe from t2007 (paired with t1986 parent-task gu
 }
 
 #######################################
+# _check_cost_budget — cost-per-issue circuit breaker (t2007).
+#
+# t2061 audit (2026-04-14):
+#   - _get_cost_budget_for_tier() failure (empty/non-numeric budget): fail-OPEN →
+#     return 1 (allow dispatch). RATIONALE: Cannot enforce a budget we cannot compute.
+#     Fail-open avoids a misconfigured tier from permanently blocking all dispatch.
+#   - _sum_issue_token_spend() failure: fail-OPEN via `|| return 1`. RATIONALE:
+#     This IS the intentional design per t2007: "Fail-open on aggregation errors so
+#     unrelated GitHub API hiccups don't starve the queue." The circuit breaker is a
+#     secondary safety measure; the queue must keep moving on API transients.
+#   - jq call for has-label idempotency check (line ~1016): fail-OPEN via
+#     `2>/dev/null || label_hit="false"`. RATIONALE: This jq call is in the
+#     "already exceeded budget" path — it is a side-effect optimisation only
+#     (avoids re-posting the circuit-breaker comment if already applied). Its failure
+#     does not affect the block/allow decision; the COST_BUDGET_EXCEEDED signal is
+#     emitted regardless of whether the idempotency check succeeds.
+#   - _apply_cost_breaker_side_effects() failure: fail-OPEN (side effects only).
+#     RATIONALE: gh comment and label operations failing do not change the block
+#     decision. The signal has already been emitted for the caller.
+#
+# Classification: APPROPRIATELY fail-open per t2007 design. The cost circuit
+# breaker prevents runaway token spend on undeliverable tasks; it should not
+# itself starve the queue. Fail-open on transient errors is intentional.
+#######################################
+#######################################
 # Check whether the cost-per-issue circuit breaker should fire for an issue.
 #
 # Aggregates token spend from all signature footers on the issue's comments
@@ -968,6 +1081,7 @@ _This is the cost-runaway fail-safe from t2007 (paired with t1986 parent-task gu
 # Returns:
 #   0 = breaker fired (block dispatch)
 #   1 = under budget OR aggregation failed (fail-open: allow dispatch)
+# t2061 audit (2026-04-14): see block comment above — appropriately fail-open per t2007.
 #######################################
 _check_cost_budget() {
 	local issue_number="$1"
@@ -1165,9 +1279,16 @@ _has_active_claim() {
 #######################################
 _is_assigned_check_parent_task() {
 	local meta_json="$1"
-	local parent_task_hit
+	local parent_task_hit _jq_rc=0
 	parent_task_hit=$(printf '%s' "$meta_json" |
-		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' | head -n 1 || true)
+		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' 2>/dev/null | head -n 1) || _jq_rc=$?
+	# t2061: fail-closed on internal jq failure — cannot determine if parent-task
+	# label is present. Emit GUARD_UNCERTAIN and block dispatch rather than
+	# silently allowing a parent-task issue to receive a dispatched worker.
+	if [[ "$_jq_rc" -ne 0 ]]; then
+		printf 'GUARD_UNCERTAIN (reason=jq-failure call=parent-task-check)\n'
+		return 0
+	fi
 	if [[ -n "$parent_task_hit" ]]; then
 		printf 'PARENT_TASK_BLOCKED (label=%s)\n' "$parent_task_hit"
 		return 0
@@ -1303,8 +1424,15 @@ is_assigned() {
 	fi
 
 	# Query GitHub for current assignees
-	local assignees
-	assignees=$(printf '%s' "$issue_meta_json" | jq -r '[.assignees[].login] | join(",")' 2>/dev/null) || assignees=""
+	local assignees _jq_assignees_rc=0
+	assignees=$(printf '%s' "$issue_meta_json" | jq -r '[.assignees[].login] | join(",")' 2>/dev/null) || _jq_assignees_rc=$?
+	# t2061: fail-closed on jq failure when extracting assignee logins.
+	# Cannot determine if blocking assignees exist; block dispatch.
+	if [[ "$_jq_assignees_rc" -ne 0 ]]; then
+		printf 'GUARD_UNCERTAIN (reason=jq-failure call=assignees-join issue=%s repo=%s)\n' \
+			"$issue_number" "$repo_slug"
+		return 0
+	fi
 
 	if [[ -z "$assignees" ]]; then
 		# No assignees — safe to dispatch
@@ -1544,6 +1672,25 @@ has_open_pr() {
 }
 
 #######################################
+# _is_dispatch_comment_active — TTL check for a single dispatch comment.
+#
+# t2061 audit (2026-04-14):
+#   - date parse failure on created_at: falls back to epoch 0 via the multi-stage
+#     fallback chain `date -u -d ... || TZ=UTC date -j ... || printf "0"`. With
+#     comment_epoch=0, age = now_epoch - 0 = a very large number → age >= max_age
+#     → return 1 (comment NOT active) → allow dispatch.
+#     RATIONALE: APPROPRIATELY fail-open for individual timestamp parsing. A dispatch
+#     comment is a short-lived signal (default 10-minute TTL). If we cannot parse
+#     the timestamp, treating the comment as expired is the safer option: it avoids a
+#     permanent dispatch block due to a bad timestamp, and the is_assigned() and
+#     _is_stale_assignment() guards provide additional protection.
+#   - No jq calls in this function; timestamp arithmetic only.
+#
+# Classification: APPROPRIATELY fail-open. The TTL check guards a brief in-flight
+# window; permanent blocks from unparseable timestamps would be worse than
+# occasional missed blocks. The is_assigned() layer provides authoritative protection.
+#######################################
+#######################################
 # Check whether a single dispatch comment is still active (within TTL and
 # backed by a live local worker process).
 #
@@ -1561,6 +1708,7 @@ has_open_pr() {
 #   $5 = max_age (seconds)
 # Returns: exit 0 if comment is active (blocks dispatch), exit 1 if stale/expired
 # Outputs: reason string on stdout when active
+# t2061 audit (2026-04-14): see block comment above — appropriately fail-open.
 #######################################
 _is_dispatch_comment_active() {
 	local created_at="$1"

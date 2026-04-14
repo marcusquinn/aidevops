@@ -159,6 +159,66 @@ else
 		"(rc=$rc output='$output')"
 fi
 
+# =============================================================================
+# t2061 Part 1 — internal jq failure cases
+# =============================================================================
+# These cases inject JSON that passes top-level parsing but fails on downstream
+# jq filter calls inside is_assigned(). They assert that the fail-closed
+# GUARD_UNCERTAIN signal is emitted instead of silently allowing dispatch.
+
+# write_stub_gh_success_api: stub that returns a given issue JSON on `gh issue view`
+# and passes through `gh api` calls (returns empty array for comments).
+write_stub_gh_success_api() {
+	local payload="$1"
+	cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+# Stub for t2061 — gh issue view returns payload, gh api returns empty array
+if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
+	printf '%s\n' '${payload}'
+	exit 0
+fi
+if [[ "\$1" == "api" ]]; then
+	printf '[]'
+	exit 0
+fi
+exit 1
+STUB
+	chmod +x "${STUB_DIR}/gh"
+}
+
+# =============================================================================
+# Case 5 — assignees field is wrong type → jq downstream failure → GUARD_UNCERTAIN
+# =============================================================================
+# Injects JSON where "assignees" is a string instead of an array. The top-level
+# JSON is valid (passes the gh API check and non-empty check). The downstream
+# jq filter `[.assignees[].login] | join(",")` fails on a string operand.
+# Expected: GUARD_UNCERTAIN (reason=jq-failure call=assignees-join), exit 0 (block)
+write_stub_gh_success_api '{"state":"OPEN","assignees":"invalid-not-an-array","labels":[{"name":"pulse"},{"name":"tier:standard"}]}'
+run_is_assigned 99994 "owner/repo"
+if [[ "$rc" -eq 0 && "$output" == *"GUARD_UNCERTAIN"* && "$output" == *"jq-failure"* ]]; then
+	print_result "t2061: assignees field wrong type → GUARD_UNCERTAIN (assignees-join jq failure)" 0
+else
+	print_result "t2061: assignees field wrong type → GUARD_UNCERTAIN (assignees-join jq failure)" 1 \
+		"(rc=$rc output='$output')"
+fi
+
+# =============================================================================
+# Case 6 — labels field is wrong type → parent-task check jq failure → GUARD_UNCERTAIN
+# =============================================================================
+# Injects JSON where "labels" is an object instead of an array. The top-level
+# JSON is valid (passes the gh API check). The jq filter inside
+# _is_assigned_check_parent_task() attempts `(.labels // [])[].name | select(...)`
+# on an object, which fails. Expected: GUARD_UNCERTAIN (reason=jq-failure
+# call=parent-task-check), exit 0 (block).
+write_stub_gh_success_api '{"state":"OPEN","assignees":[],"labels":{"invalid":"object-not-array"}}'
+run_is_assigned 99995 "owner/repo"
+if [[ "$rc" -eq 0 && "$output" == *"GUARD_UNCERTAIN"* && "$output" == *"jq-failure"* ]]; then
+	print_result "t2061: labels field wrong type → GUARD_UNCERTAIN (parent-task-check jq failure)" 0
+else
+	print_result "t2061: labels field wrong type → GUARD_UNCERTAIN (parent-task-check jq failure)" 1 \
+		"(rc=$rc output='$output')"
+fi
+
 export PATH="$OLD_PATH"
 
 # =============================================================================
