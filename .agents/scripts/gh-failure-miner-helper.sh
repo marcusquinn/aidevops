@@ -455,19 +455,38 @@ emit_event_json() {
 # The exclusion list uses substring matching so minor name variations are still caught.
 filter_failed_check_runs() {
 	local checks_json="$1"
-	printf '%s\n' "$checks_json" | jq '[.check_runs[] | select(
-		(
-			((.conclusion // "" | ascii_downcase) as $c |
-				["failure","cancelled","timed_out","startup_failure"] | index($c))
-			or
-			((.conclusion // "" | ascii_downcase) == "action_required"
-				and (.app.slug // "" | ascii_downcase) == "github-actions")
+	# Select failed/cancelled check runs, then deduplicate cancelled-only groups by name.
+	# When cancel-in-progress: true fires on multiple rapid events (label changes, synchronize),
+	# GitHub records N identical cancelled check runs for the same commit — one per workflow
+	# trigger. Without deduplication they exhaust the log-fetch budget (max_run_logs) and cause
+	# subsequent genuine failures to emit "signature_not_fetched" clusters. (GH#18978)
+	printf '%s\n' "$checks_json" | jq '
+		[.check_runs[] | select(
+			(
+				((.conclusion // "" | ascii_downcase) as $c |
+					["failure","cancelled","timed_out","startup_failure"] | index($c))
+				or
+				((.conclusion // "" | ascii_downcase) == "action_required"
+					and (.app.slug // "" | ascii_downcase) == "github-actions")
+			)
+			and
+			# Exclude policy gate checks — these fail by design when policy is not met,
+			# not because of a tooling defect. (GH#17831)
+			((.name // "") | ascii_downcase | test("maintainer.*review|maintainer.*gate|assignee.*gate") | not)
+		)]
+		# Deduplicate: for each check name where EVERY entry is cancelled (i.e. the job
+		# never ran in any attempt), keep only the latest-completed entry. This collapses
+		# N rapid-cancellation duplicates into one, preventing budget exhaustion.
+		| group_by(.name)
+		| map(
+			if all(.conclusion == "cancelled") and length > 1 then
+				[sort_by(.completed_at // "") | last]
+			else
+				.
+			end
 		)
-		and
-		# Exclude policy gate checks — these fail by design when policy is not met,
-		# not because of a tooling defect. (GH#17831)
-		((.name // "") | ascii_downcase | test("maintainer.*review|maintainer.*gate|assignee.*gate") | not)
-	)]'
+		| add // []
+	'
 	return 0
 }
 
@@ -503,7 +522,11 @@ process_failed_runs() {
 
 		local signature
 		signature=$(resolve_check_signature "$run_json" "$run_id" "$repo_slug" "$include_logs" "$run_logs_checked" "$max_run_logs")
-		if [[ "$include_logs" == "true" ]] && [[ -n "$run_id" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]]; then
+		# Only charge the log-fetch budget when a real log fetch was attempted.
+		# job_not_started (0-step cancelled jobs) short-circuit before fetching any
+		# logs — counting them exhausts the budget for genuine failures in other PRs.
+		# This is the root cause of the signature_not_fetched false-positive cluster (GH#18978).
+		if [[ "$include_logs" == "true" ]] && [[ -n "$run_id" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]] && [[ "$signature" != "job_not_started" ]]; then
 			run_logs_checked=$((run_logs_checked + 1))
 		fi
 
@@ -930,13 +953,17 @@ create_systemic_issues() {
 	done <<<"$infra_repos"
 
 	# --- Code-defect cluster pass ---
-	# Only process non-infra clusters. Exclude billing/job_not_started signatures.
+	# Only process non-infra clusters. Exclude known sentinel / expected-behaviour signatures:
+	# - "billing_outage": GitHub Actions billing exhausted — infrastructure, not code defect.
+	# - "job_not_started": job cancelled before any step ran (cancel-in-progress: true race).
+	# - "signature_not_fetched": log fetch budget exhausted — internal sentinel, not a real
+	#   error signature. Treating it as systemic creates false-positive issues (GH#18978).
 	local candidate_file
 	candidate_file=$(mktemp)
 	printf '%s\n' "$clusters_json" | jq --argjson min_count "$systemic_threshold" '[.[] | select(
 		.count >= $min_count
 		and (.is_infra // false) == false
-		and ((.signature // "") as $signature | ["billing_outage","job_not_started"] | index($signature) | not)
+		and ((.signature // "") as $signature | ["billing_outage","job_not_started","signature_not_fetched"] | index($signature) | not)
 	)]' >"$candidate_file"
 
 	local candidate_count
