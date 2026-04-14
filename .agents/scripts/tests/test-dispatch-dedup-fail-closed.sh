@@ -94,6 +94,29 @@ STUB
 	chmod +x "${STUB_DIR}/gh"
 }
 
+# write_stub_gh_issue_ok_comments_fail: stub gh that:
+#   - exits 0 for "gh issue view" with a payload containing blocking assignees
+#   - exits 1 for "gh api repos/.../comments" (comments endpoint failure)
+# This simulates the partial API degradation that GH#18816 addresses:
+# issue metadata is fetchable but the comments endpoint is down.
+write_stub_gh_issue_ok_comments_fail() {
+	local payload="$1"
+	cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+# Stub: issue view succeeds, comments api fails (GH#18816 test)
+if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
+	printf '%s\n' '${payload}'
+	exit 0
+fi
+if [[ "\$1" == "api" ]]; then
+	# Simulate comments endpoint failure (network error, rate limit, etc.)
+	exit 1
+fi
+exit 1
+STUB
+	chmod +x "${STUB_DIR}/gh"
+}
+
 OLD_PATH="$PATH"
 export PATH="${STUB_DIR}:${PATH}"
 
@@ -189,6 +212,28 @@ if [[ "$rc" -eq 0 && "$output" == *"GUARD_UNCERTAIN"* && "$output" == *"jq-failu
 	print_result "t2061: internal jq failure (assignees extract) → GUARD_UNCERTAIN, exit 0 (block)" 0
 else
 	print_result "t2061: internal jq failure (assignees extract) → GUARD_UNCERTAIN, exit 0 (block)" 1 \
+		"(rc=$rc output='$output')"
+fi
+
+# =============================================================================
+# Case 7 — _is_stale_assignment: comments API failure + blocking assignee
+#           → NOT stale (return 1, block dispatch) (GH#18816)
+# =============================================================================
+# Simulates: issue metadata fetch succeeds (blocking assignee present), but
+# the comments endpoint fails (network error, rate limit, partial degradation).
+# Prior to GH#18816: comments_json="[]" → treated as "no dispatch comment" →
+# stale recovery fired → is_assigned() returned 1 (allow dispatch) — a
+# spurious dispatch even if the original worker was actively running.
+# After GH#18816: fail-CLOSED → is_assigned() returns 0 (ASSIGNED, block).
+# The issue payload includes a non-self, non-owner assignee ("other-runner")
+# without an active claim label so _is_assigned_compute_blocking returns it
+# as blocking, reaching _is_stale_assignment.
+write_stub_gh_issue_ok_comments_fail '{"state":"OPEN","assignees":[{"login":"other-runner"}],"labels":[{"name":"pulse"},{"name":"tier:standard"}]}'
+run_is_assigned 99996 "owner/repo" "self-login"
+if [[ "$rc" -eq 0 && "$output" == *"ASSIGNED"* ]]; then
+	print_result "GH#18816: comments API fail + blocking assignee → ASSIGNED, exit 0 (block)" 0
+else
+	print_result "GH#18816: comments API fail + blocking assignee → ASSIGNED, exit 0 (block)" 1 \
 		"(rc=$rc output='$output')"
 fi
 

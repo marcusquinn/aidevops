@@ -501,33 +501,35 @@ _get_repo_maintainer() {
 #   exit 0 = stale assignment recovered (safe to dispatch)
 #   exit 1 = assignment is NOT stale (genuine active claim, block dispatch)
 #
-# t2061 audit (2026-04-14):
+# GH#18816 design call (2026-04-14): gh comments API failure path decision
 #
 # Error path classification for _is_stale_assignment:
 #
 #   gh api comments fetch failure (network, auth, rate limit):
-#     → comments_json="[]" → last_dispatch_ts="" and last_activity_ts=""
-#     → "No dispatch comment + no recent activity" branch
-#     → _recover_stale_assignment called → return 0 (stale, allow dispatch)
-#     → FAIL-OPEN (conditional): API failure defaults to "stale". The recovery
-#       write calls (_recover_stale_assignment) will also fail when the API is
-#       down, so no actual unassignment occurs, but is_assigned() receives
-#       return 0 and permits dispatch.
-#     → RATIONALE: this guard prevents permanent dispatch deadlock when workers
-#       crash without cleanup. Permanent deadlock (0 dispatches, all issues
-#       blocked forever) is a worse failure mode than a spurious extra dispatch.
-#       The parent-task and GUARD_UNCERTAIN guards (above this in the call chain)
-#       are the critical safety gates; _is_stale_assignment is a deadlock-recovery
-#       mechanism, not a security gate.
+#     → _comments_rc != 0 → return 1 (NOT stale, block dispatch)
+#     → FAIL-CLOSED: API failure cannot determine staleness. Block this cycle;
+#       the stale check fires again next pulse cycle when the API may be available.
+#     → RATIONALE: a transient API failure is not evidence that the assignment is
+#       stale. The production deadlock scenario (GH#15060: 370 issues orphaned) was
+#       caused by runners going OFFLINE — detectable by old timestamps on the NEXT
+#       working pulse cycle, not by comments API failures. Fail-CLOSED delays
+#       recovery by at most one pulse cycle (10 min); it does NOT prevent recovery.
+#       By contrast, fail-OPEN can dispatch a duplicate worker even when the original
+#       worker is actively running (e.g., worker dispatched 2 min ago, comments API
+#       blips, recovery fires, second worker dispatched to an issue with an active
+#       claim). GH#18816 closed this gap.
 #     → CONTEXT: is_assigned() already successfully fetched issue metadata before
 #       calling this function. An API failure here indicates a partial degradation
-#       (comments endpoint failing while the issue endpoint works). Treating the
-#       assignment as stale in this narrow case is the lesser evil.
+#       (comments endpoint failing while the issue endpoint works). "Unknown" is
+#       not "stale" — block until we know.
 #
 #   jq filter failures (test() regex error, type error on filter):
 #     → || last_dispatch_ts="" or || last_activity_ts="" fallbacks
-#     → same behaviour as gh API failure above
-#     → FAIL-OPEN INTENTIONAL: same rationale (deadlock prevention).
+#     → FAIL-OPEN INTENTIONAL: a jq type error on the timestamp extraction does not
+#       mean the dispatch comment does not exist; it means we cannot parse it.
+#       Treating an unreadable timestamp as absent would permanently block recovery
+#       for issues where the comment format changed. The conservative choice here is
+#       to keep the previous semantics (treat as no dispatch comment found).
 #
 #   _ts_to_epoch parse failure:
 #     → returns "0" (explicit echo "0" fallback in _ts_to_epoch)
@@ -535,10 +537,11 @@ _get_repo_maintainer() {
 #     → FAIL-OPEN INTENTIONAL: unreadable timestamp cannot prove recency.
 #       An unreadable dispatch timestamp should not permanently block dispatch.
 #
-# Summary: _is_stale_assignment is a deadlock-recovery function. Its
-# fail-open defaults prevent permanent orphaned-assignment deadlocks at
-# the cost of allowing rare spurious dispatches. This trade-off was
-# deliberately chosen in GH#15060 and GH#17549.
+# Summary: _is_stale_assignment is a deadlock-recovery function. The gh API
+# failure path is now fail-CLOSED (GH#18816) — API failure → block, not recover.
+# jq and timestamp parse failures remain fail-OPEN — these indicate format changes,
+# not absence of activity. This asymmetry is intentional: network unavailability
+# (transient) is distinct from parse errors (structural, affecting all timestamps).
 #######################################
 STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-${DISPATCH_COMMENT_MAX_AGE:-600}}" # 10 min (GH#17549: aligned with DISPATCH_COMMENT_MAX_AGE; reduced from 30 min — crash recovery was too slow)
 
@@ -551,10 +554,19 @@ _is_stale_assignment() {
 	# overall activity timestamp. Use --paginate to catch all comments
 	# on issues with long histories, but cap with --jq to only extract
 	# what we need (timestamp + body snippet for matching).
-	local comments_json
+	#
+	# GH#18816: fail-CLOSED on API failure. A transient gh error is NOT evidence
+	# that the assignment is stale — block this pulse cycle and retry next cycle.
+	local comments_json _comments_rc=0
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--jq '[.[] | {created_at: .created_at, author: .user.login, body_start: (.body[:200])}] | sort_by(.created_at) | reverse' \
-		2>/dev/null) || comments_json="[]"
+		2>/dev/null) || _comments_rc=$?
+
+	if [[ "$_comments_rc" -ne 0 ]]; then
+		# Cannot fetch comments — cannot determine staleness. Fail-CLOSED:
+		# keep the existing assignment protection for this pulse cycle.
+		return 1
+	fi
 
 	# Find the most recent dispatch/claim comment
 	# Matches: "Dispatching worker", "DISPATCH_CLAIM", "Worker (PID"
