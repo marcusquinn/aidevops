@@ -748,6 +748,28 @@ _dispatch_dedup_check_layers() {
 	target_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null)
 	target_title=$(printf '%s' "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
 
+	# GH#18987: Disk-space pre-check — refuse dispatch if /home filesystem
+	# has less than 5 GB available. Prevents cascading failures where workers
+	# create worktrees + node_modules that fill the volume entirely.
+	# Uses $HOME as the reference path (portable; covers Linux /home mounts).
+	local _avail_kb
+	_avail_kb=$(df "$HOME" 2>/dev/null | awk 'NR==2{print $4}')
+	if [[ -n "$_avail_kb" ]] && [[ "$_avail_kb" -lt 5242880 ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: disk space critical (${_avail_kb}KB avail on \$HOME filesystem, need 5242880KB/5G). Run: worktree-helper.sh clean --auto --force-merged" >>"$LOGFILE"
+		return 1
+	fi
+
+	# GH#18987: Worktree count cap — refuse dispatch when the repo has 200+
+	# registered git worktrees. At that scale, new worktrees risk consuming
+	# tens of GB; stale merged ones should be cleaned before adding more.
+	local _wt_count _wt_max
+	_wt_max="${AIDEVOPS_MAX_WORKTREES:-200}"
+	_wt_count=$(git -C "$repo_path" worktree list 2>/dev/null | wc -l | tr -d ' ')
+	if [[ -n "$_wt_count" ]] && [[ "$_wt_count" -ge "$_wt_max" ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: worktree count ${_wt_count} >= cap ${_wt_max}. Run: worktree-helper.sh clean --auto --force-merged" >>"$LOGFILE"
+		return 1
+	fi
+
 	if [[ "$target_state" != "OPEN" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: issue state is ${target_state:-unknown}" >>"$LOGFILE"
 		return 1
