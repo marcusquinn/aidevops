@@ -658,11 +658,19 @@ _resolve_pr_mergeable_status() {
 _pr_required_checks_pass() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local failing
+	local failing _gh_exit
+	# Separate declaration from assignment to preserve exit code (SC2181).
 	failing=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json statusCheckRollup \
 		--jq '[.statusCheckRollup[] | select(.conclusion == "FAILURE" or .conclusion == "TIMED_OUT")] | length' \
-		2>/dev/null) || failing="0"
+		2>/dev/null)
+	_gh_exit=$?
+	# Fail-closed: if the API call itself fails, skip the merge rather than
+	# silently allowing it (t2092 — --admin bypasses branch protection).
+	if [[ $_gh_exit -ne 0 ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — statusCheckRollup fetch failed (exit ${_gh_exit}) (t2092)" >>"$LOGFILE"
+		return 1
+	fi
 	if [[ "${failing:-0}" -gt 0 ]]; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — ${failing} required check(s) failing (t2092)" >>"$LOGFILE"
 		return 1
