@@ -428,9 +428,22 @@ _dff_process_candidate() {
 	model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
 	pulse_dispatch_debug_log "#${issue_number}: model_override=${model_override:-<auto>} — calling dispatch_with_dedup"
 
+	# GH#18804: isolate dispatch_with_dedup in an explicit subshell. The
+	# diagnostic logging in PR #18823 (later reverted by PR #18824 for
+	# complexity reasons) proved that the silent abort happens INSIDE
+	# dispatch_with_dedup — even when called via the set-e-safe `|| rc=$?`
+	# idiom. Wrapping the call in `(...)` creates a NEW subshell whose
+	# internal abort cannot propagate back to dispatch_deterministic_fill_floor.
+	# dispatch_with_dedup has no shared-variable contract with the caller —
+	# it only mutates GitHub state via `gh` API and fork-execs the worker
+	# via nohup, both of which survive subshell isolation. Same defensive
+	# pattern as GH#18770/GH#18794. The actual root cause inside
+	# dispatch_with_dedup is tracked in a follow-up issue.
 	local dispatch_rc=0
-	dispatch_with_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
-		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
+	(
+		dispatch_with_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
+			"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override"
+	) || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
 		return 1
