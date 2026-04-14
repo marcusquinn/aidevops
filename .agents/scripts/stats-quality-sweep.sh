@@ -220,12 +220,17 @@ _ensure_quality_issue() {
 #######################################
 # Load previous quality sweep state for a repo
 #
-# Reads gate_status and total_issues from the per-repo state file.
-# Returns defaults if no state file exists (first run).
+# Reads gate_status, total_issues, high_critical, and qlty_smells from the
+# per-repo state file. Returns defaults if no state file exists (first run).
+#
+# t2066: added qlty_smells as a 4th field so the sweep can render a smell-count
+# delta vs the previous sweep in the dashboard. Callers that only want the
+# first three fields still work because `IFS='|' read -r a b c` ignores
+# trailing fields.
 #
 # Arguments:
 #   $1 - repo slug
-# Output: "gate_status|total_issues|high_critical_count" to stdout
+# Output: "gate_status|total_issues|high_critical_count|qlty_smells" to stdout
 #######################################
 _load_sweep_state() {
 	local repo_slug="$1"
@@ -233,13 +238,85 @@ _load_sweep_state() {
 	local state_file="${QUALITY_SWEEP_STATE_DIR}/${slug_safe}.json"
 
 	if [[ -f "$state_file" ]]; then
-		local prev_gate prev_issues prev_high_critical
+		local prev_gate prev_issues prev_high_critical prev_qlty_smells
 		prev_gate=$(jq -r '.gate_status // "UNKNOWN"' "$state_file" 2>/dev/null || echo "UNKNOWN")
 		prev_issues=$(jq -r '.total_issues // 0' "$state_file" 2>/dev/null || echo "0")
 		prev_high_critical=$(jq -r '.high_critical_count // 0' "$state_file" 2>/dev/null || echo "0")
-		echo "${prev_gate}|${prev_issues}|${prev_high_critical}"
+		prev_qlty_smells=$(jq -r '.qlty_smells // 0' "$state_file" 2>/dev/null || echo "0")
+		echo "${prev_gate}|${prev_issues}|${prev_high_critical}|${prev_qlty_smells}"
 	else
-		echo "UNKNOWN|0|0"
+		echo "UNKNOWN|0|0|0"
+	fi
+	return 0
+}
+
+#######################################
+# Map a local qlty smell count to an A/B/C/D/F grade.
+#
+# Reads grade bucket thresholds from complexity-thresholds.conf so they are
+# ratchet-able the same way the shell complexity thresholds are. The grade
+# thresholds are UPPER BOUNDS (inclusive): a count <= QLTY_GRADE_A_MAX is A,
+# etc. Counts above QLTY_GRADE_D_MAX are F.
+#
+# t2066: this replaces the previous "parse grade out of the cloud badge SVG"
+# flow. The local SARIF smell count is deterministic, always available, and
+# already computed by the sweep — using the cloud badge as the primary grade
+# source was a telemetry antipattern (the badge 404s periodically, and lags).
+#
+# Arguments:
+#   $1 - smell count (integer)
+# Output: "A", "B", "C", "D", "F", or "UNKNOWN" to stdout
+#######################################
+_compute_qlty_grade_from_count() {
+	local smell_count="$1"
+
+	# Validate input — non-numeric values degrade to UNKNOWN rather than
+	# silently bucketing to A (which a straight comparison would do for
+	# empty strings under set -u).
+	if ! [[ "$smell_count" =~ ^[0-9]+$ ]]; then
+		printf '%s' "UNKNOWN"
+		return 0
+	fi
+
+	# Locate the config relative to this script so it works in deployed
+	# (~/.aidevops/agents/) and development (~/Git/aidevops/.agents/) trees.
+	local script_dir conf_file
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
+		printf '%s' "UNKNOWN"
+		return 0
+	}
+	conf_file="${script_dir}/../configs/complexity-thresholds.conf"
+	if [[ ! -f "$conf_file" ]]; then
+		printf '%s' "UNKNOWN"
+		return 0
+	fi
+
+	local a_max b_max c_max d_max
+	a_max=$(grep '^QLTY_GRADE_A_MAX=' "$conf_file" | cut -d= -f2)
+	b_max=$(grep '^QLTY_GRADE_B_MAX=' "$conf_file" | cut -d= -f2)
+	c_max=$(grep '^QLTY_GRADE_C_MAX=' "$conf_file" | cut -d= -f2)
+	d_max=$(grep '^QLTY_GRADE_D_MAX=' "$conf_file" | cut -d= -f2)
+
+	# Validate thresholds — any missing or non-numeric value degrades to UNKNOWN
+	# so we never silently use default 0 thresholds that would bucket everything
+	# into F.
+	for val in "$a_max" "$b_max" "$c_max" "$d_max"; do
+		if ! [[ "$val" =~ ^[0-9]+$ ]]; then
+			printf '%s' "UNKNOWN"
+			return 0
+		fi
+	done
+
+	if ((smell_count <= a_max)); then
+		printf '%s' "A"
+	elif ((smell_count <= b_max)); then
+		printf '%s' "B"
+	elif ((smell_count <= c_max)); then
+		printf '%s' "C"
+	elif ((smell_count <= d_max)); then
+		printf '%s' "D"
+	else
+		printf '%s' "F"
 	fi
 	return 0
 }
@@ -422,11 +499,21 @@ _sweep_shellcheck() {
 #######################################
 # Run Qlty CLI analysis on a repo.
 #
+# t2066: local SARIF smell count is the PRIMARY grade source. The Qlty Cloud
+# badge is fetched best-effort as secondary telemetry and appended to the
+# section only when it disagrees with the local grade (so the dashboard
+# surfaces the divergence when it exists, but does not pollute the common
+# case where they agree). The cloud badge is NEVER used as the primary grade
+# — it has been observed 404'ing in production, leaving the dashboard
+# reporting "Qlty grade UNKNOWN" while the local SARIF had the exact count
+# in hand.
+#
 # Arguments:
 #   $1 - repo slug
 #   $2 - repo path
 # Sets caller variables via stdout (pipe-delimited):
 #   qlty_section|qlty_smell_count|qlty_grade
+# where qlty_grade is the LOCAL-COMPUTED grade.
 #######################################
 _sweep_qlty() {
 	local repo_slug="$1"
@@ -466,9 +553,14 @@ _sweep_qlty() {
 		qlty_rules_breakdown=$(_sanitize_markdown "$qlty_rules_breakdown")
 		qlty_files_breakdown=$(_sanitize_markdown "$qlty_files_breakdown")
 
+		# t2066: compute grade from local count BEFORE building the section so
+		# we can put the authoritative grade into the markdown.
+		qlty_grade=$(_compute_qlty_grade_from_count "$qlty_smell_count")
+
 		qlty_section="### Qlty Maintainability
 
 - **Total smells**: ${qlty_smell_count}
+- **Grade (local, from count)**: ${qlty_grade}
 - **By rule (fix these for maximum grade improvement)**:
 ${qlty_rules_breakdown}
 - **Top files (highest smell density)**:
@@ -476,6 +568,9 @@ ${qlty_files_breakdown}
 "
 		if [[ "$qlty_smell_count" -eq 0 ]]; then
 			qlty_section="### Qlty Maintainability
+
+- **Total smells**: 0
+- **Grade (local, from count)**: ${qlty_grade}
 
 _No smells detected — clean codebase._
 "
@@ -487,15 +582,17 @@ _Qlty analysis returned empty or failed to parse._
 "
 	fi
 
-	# Fetch the Qlty Cloud badge grade (A/B/C/D/F) from the badge SVG.
-	# The grade is determined by Qlty Cloud's analysis (not local CLI),
-	# so we parse the badge colour which maps to the grade letter.
+	# Fetch the Qlty Cloud badge grade (best-effort secondary telemetry).
+	# Short timeout so a slow/unreachable badge doesn't stall the sweep.
+	# t2066: this is NO LONGER the primary grade source — it is only reported
+	# below if the badge is reachable AND disagrees with the local grade.
+	local cloud_grade="UNKNOWN"
 	local badge_svg
 	badge_svg=$(curl -sS --fail --connect-timeout 5 --max-time 10 \
 		"https://qlty.sh/gh/${repo_slug}/maintainability.svg" 2>/dev/null) || badge_svg=""
 	if [[ -n "$badge_svg" ]]; then
-		# Grade colour mapping from Qlty's badge palette
-		qlty_grade=$(python3 -c "
+		# Grade colour mapping from Qlty's badge palette.
+		cloud_grade=$(python3 -c "
 import sys, re
 svg = sys.stdin.read()
 colors = {'#22C55E':'A','#84CC16':'B','#EAB308':'C','#F97316':'D','#EF4444':'F'}
@@ -504,18 +601,25 @@ for c in re.findall(r'fill=\"(#[A-F0-9]+)\"', svg):
         print(colors[c])
         sys.exit(0)
 print('UNKNOWN')
-" <<<"$badge_svg" 2>/dev/null) || qlty_grade="UNKNOWN"
+" <<<"$badge_svg" 2>/dev/null) || cloud_grade="UNKNOWN"
 	fi
 
-	qlty_section="${qlty_section}
-- **Qlty Cloud grade**: ${qlty_grade}
+	# Only surface the cloud grade when it disagrees with the local grade.
+	# When they agree (the common case), omit the line to keep the section
+	# short. When they diverge, the line flags it as telemetry — not used
+	# as the primary grade.
+	if [[ "$cloud_grade" != "UNKNOWN" && "$cloud_grade" != "$qlty_grade" ]]; then
+		qlty_section="${qlty_section}
+- **Qlty Cloud grade (telemetry, diverges from local)**: ${cloud_grade}
 "
+	fi
 
 	# --- 2b. Simplification-debt bridge (code-simplifier pipeline) ---
 	# For files with high smell density, auto-create simplification-debt issues
 	# with needs-maintainer-review label. This bridges the daily sweep to the
 	# code-simplifier's human-gated dispatch pipeline (see code-simplifier.md).
-	# Max 3 issues per sweep to avoid flooding. Deduplicates against existing issues.
+	# Deduplicates against existing issues. Caps are tuned for throughput:
+	# see _create_simplification_issues for the numbers.
 	if [[ -n "$qlty_sarif" && "$qlty_smell_count" -gt 0 ]]; then
 		_create_simplification_issues "$repo_slug" "$qlty_sarif"
 	fi
@@ -981,6 +1085,18 @@ _run_sweep_tools() {
 	local sweep_total_issues=0
 	local sweep_high_critical=0
 
+	# t2066: capture previous smell count BEFORE running the sweep so we can
+	# render a delta (trend indicator) in the dashboard. The state file is
+	# written later by _save_sweep_state — we need to read it beforehand so
+	# the delta reflects the change since the previous sweep, not the change
+	# since a moment ago.
+	local prev_state prev_qlty_smells
+	prev_state=$(_load_sweep_state "$repo_slug")
+	# 4th field is the previous qlty_smells (added in t2066). Missing / first
+	# run returns "0" from _load_sweep_state's default.
+	prev_qlty_smells=$(awk -F'|' '{print $4}' <<<"$prev_state")
+	[[ "$prev_qlty_smells" =~ ^[0-9]+$ ]] || prev_qlty_smells=0
+
 	local shellcheck_section=""
 	shellcheck_section=$(_sweep_shellcheck "$repo_slug" "$repo_path")
 	[[ -n "$shellcheck_section" ]] && tool_count=$((tool_count + 1))
@@ -994,6 +1110,14 @@ _run_sweep_tools() {
 		qlty_smell_count="${qlty_remainder%%|*}"
 		qlty_grade="${qlty_remainder#*|}"
 		[[ -n "$qlty_section" ]] && tool_count=$((tool_count + 1))
+	fi
+
+	# t2066: compute smell delta vs previous sweep. Signed integer — positive
+	# means regression (more smells), negative means improvement. The caller
+	# renders the sign + trend arrow in the dashboard.
+	local qlty_smell_delta=0
+	if [[ "$qlty_smell_count" =~ ^[0-9]+$ ]]; then
+		qlty_smell_delta=$((qlty_smell_count - prev_qlty_smells))
 	fi
 
 	local sonar_section=""
@@ -1032,6 +1156,10 @@ _run_sweep_tools() {
 	printf '%s' "$qlty_section" >"${sections_dir}/qlty"
 	printf '%s' "$qlty_smell_count" >"${sections_dir}/qlty_smell_count"
 	printf '%s' "$qlty_grade" >"${sections_dir}/qlty_grade"
+	# t2066: smell delta and previous count — the dashboard reads these to
+	# render a trend indicator ("↓ -3", "↑ +7", "→ 0") next to the smell count.
+	printf '%s' "$qlty_smell_delta" >"${sections_dir}/qlty_smell_delta"
+	printf '%s' "$prev_qlty_smells" >"${sections_dir}/qlty_smell_count_prev"
 	printf '%s' "$sonar_section" >"${sections_dir}/sonar"
 	printf '%s' "$sweep_gate_status" >"${sections_dir}/sweep_gate_status"
 	printf '%s' "$sweep_total_issues" >"${sections_dir}/sweep_total_issues"
@@ -1068,6 +1196,7 @@ _quality_sweep_for_repo() {
 	fi
 
 	local tool_count shellcheck_section qlty_section qlty_smell_count qlty_grade
+	local qlty_smell_delta qlty_smell_count_prev
 	local sonar_section sweep_gate_status sweep_total_issues sweep_high_critical
 	local codacy_section coderabbit_section review_scan_section
 	tool_count=$(cat "${sections_dir}/tool_count" 2>/dev/null || echo 0)
@@ -1075,6 +1204,9 @@ _quality_sweep_for_repo() {
 	qlty_section=$(cat "${sections_dir}/qlty" 2>/dev/null || echo "")
 	qlty_smell_count=$(cat "${sections_dir}/qlty_smell_count" 2>/dev/null || echo 0)
 	qlty_grade=$(cat "${sections_dir}/qlty_grade" 2>/dev/null || echo UNKNOWN)
+	# t2066: smell delta + previous count for dashboard trend rendering
+	qlty_smell_delta=$(cat "${sections_dir}/qlty_smell_delta" 2>/dev/null || echo 0)
+	qlty_smell_count_prev=$(cat "${sections_dir}/qlty_smell_count_prev" 2>/dev/null || echo 0)
 	sonar_section=$(cat "${sections_dir}/sonar" 2>/dev/null || echo "")
 	sweep_gate_status=$(cat "${sections_dir}/sweep_gate_status" 2>/dev/null || echo UNKNOWN)
 	sweep_total_issues=$(cat "${sections_dir}/sweep_total_issues" 2>/dev/null || echo 0)
@@ -1092,7 +1224,8 @@ _quality_sweep_for_repo() {
 	# Update issue body dashboard first (best-effort — comment is secondary)
 	_update_quality_issue_body "$repo_slug" "$issue_number" \
 		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
-		"$now_iso" "$tool_count" "$qlty_smell_count" "$qlty_grade"
+		"$now_iso" "$tool_count" "$qlty_smell_count" "$qlty_grade" \
+		"$qlty_smell_delta" "$qlty_smell_count_prev"
 
 	# Post daily comment with full findings
 	local comment_body
@@ -1116,10 +1249,14 @@ _quality_sweep_for_repo() {
 #######################################
 # Build the simplification-debt issue body for a single file.
 #
+# t2066: rule breakdown is now surfaced as a bulleted list section (was
+# inline on a single line), so the worker can see which rule groups are
+# driving the smell count and prioritise the highest-count rules first.
+#
 # Arguments:
 #   $1 - file_path
 #   $2 - smell_count
-#   $3 - rule_breakdown
+#   $3 - rule_breakdown (comma-separated "rule: count" pairs from the caller)
 # Output: issue body markdown to stdout
 #######################################
 _build_simplification_issue_body() {
@@ -1127,13 +1264,34 @@ _build_simplification_issue_body() {
 	local smell_count="$2"
 	local rule_breakdown="$3"
 
+	# t2066: split the rule breakdown into a bulleted list so the reader can
+	# see the distribution at a glance. Input format is "rule1: N, rule2: M".
+	local rule_breakdown_list=""
+	if [[ -n "$rule_breakdown" && "$rule_breakdown" != "(could not parse)" ]]; then
+		local IFS_SAVE="$IFS"
+		IFS=','
+		local rule_entry
+		for rule_entry in $rule_breakdown; do
+			# Trim leading whitespace from each comma-separated entry
+			rule_entry="${rule_entry#"${rule_entry%%[![:space:]]*}"}"
+			rule_breakdown_list="${rule_breakdown_list}- \`${rule_entry}\`
+"
+		done
+		IFS="$IFS_SAVE"
+	else
+		rule_breakdown_list="- _(rule breakdown unavailable)_
+"
+	fi
+
 	cat <<BODY
 ## Qlty Maintainability — ${file_path}
 
 **Smells detected**: ${smell_count}
-**Rules**: ${rule_breakdown}
 
-This file was flagged by the daily quality sweep for high smell density. The smells are primarily function complexity, nested control flow, and return statement count — all reducible via extract-function refactoring.
+### Rule breakdown
+
+${rule_breakdown_list}
+This file was flagged by the daily quality sweep for high smell density. The smells are primarily function complexity, nested control flow, and return statement count — all reducible via extract-function refactoring. Prioritise the rules with the highest counts first; they give the biggest grade improvement per edit.
 
 ### Suggested approach
 
@@ -1148,6 +1306,10 @@ This file was flagged by the daily quality sweep for high smell density. The sme
 - Smell check: \`qlty smells ${file_path} --no-snippets --quiet\`
 - No public API changes
 
+### Tier
+
+This issue carries \`tier:thinking\` by default (t2066, GH#18774). Simplification refactors on high-complexity functions routinely exceed what Sonnet handles reliably, and Haiku cannot handle them at all. Downgrade the tier label only if you have verified the target functions are under cyclomatic 15.
+
 ---
 **To approve or decline**, comment on this issue:
 - \`approved\` — removes the review gate and queues for automated dispatch
@@ -1160,23 +1322,37 @@ BODY
 # Create simplification-debt issues for files with high Qlty smell density.
 # Bridges the daily quality sweep to the code-simplifier's human-gated
 # dispatch pipeline. Issues are created with simplification-debt +
-# needs-maintainer-review labels and assigned to the repo maintainer.
+# needs-maintainer-review + tier:thinking labels and assigned to the
+# repo maintainer.
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
 #   $2 - SARIF JSON string from qlty smells
 #
-# Behaviour:
-#   - Only creates issues for files with >5 smells
-#   - Max 3 new issues per sweep (rate limiting)
-#   - Deduplicates: skips files that already have an open simplification-debt issue
-#   - Issues follow the code-simplifier.md format (needs-maintainer-review gate)
+# Behaviour (t2066 retuned caps — throughput over trickle):
+#   - min_smells_threshold=3 (was 5): catch more medium-density files
+#   - max_issues_per_sweep=5 (was 3): the goal is throughput
+#   - total_open_cap=30 (was 200): the goal isn't backlog, it's flow;
+#     needs-maintainer-review already rate-limits human work
+#   - Default tier label: tier:thinking (Haiku can't refactor 70+ complexity,
+#     and per-user direction tier:thinking is the canonical opus label
+#     going forward)
+#   - Deduplicates: skips files that already have an open simplification-debt
+#     issue for the same file
+#   - Includes per-rule breakdown in the body (already computed per file —
+#     the old code dropped it into the title only)
 #######################################
 _create_simplification_issues() {
 	local repo_slug="$1"
 	local sarif_json="$2"
-	local max_issues_per_sweep=3
-	local min_smells_threshold=5
+	# t2066: retuned caps for throughput. The old values (5/3/200) were set for
+	# a world where simplification issues were a trickle. With the current
+	# ~109-smell baseline we need flow, not trickle — and the
+	# needs-maintainer-review gate already ensures human approval rate-limits
+	# actual dispatch. See GH#18774.
+	local max_issues_per_sweep=5
+	local min_smells_threshold=3
+	local total_open_cap=30
 	local issues_created=0
 
 	# Ensure required labels exist (gh issue create fails if labels are missing)
@@ -1189,13 +1365,20 @@ _create_simplification_issues() {
 	gh label create "source:quality-sweep" --repo "$repo_slug" \
 		--description "Auto-created by stats-functions.sh quality sweep" \
 		--color "C2E0C6" --force 2>/dev/null || true
+	# t2066: ensure the tier:thinking label exists. Simplification refactors
+	# typically involve decomposing functions at cyclomatic 25+ — Sonnet handles
+	# them poorly and Haiku cannot handle them at all. Default to the opus
+	# tier so the first dispatch attempt succeeds.
+	gh label create "tier:thinking" --repo "$repo_slug" \
+		--description "Opus-tier: architecture, deep reasoning, high-complexity refactors" \
+		--color "5319E7" 2>/dev/null || true
 
 	# Extract files with smell count > threshold, sorted by count descending
 	local high_smell_files
 	high_smell_files=$(echo "$sarif_json" | jq -r --argjson threshold "$min_smells_threshold" '
 		[.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri] |
 		group_by(.) | map({file: .[0], count: length}) |
-		[.[] | select(.count > $threshold)] | sort_by(-.count)[:10] |
+		[.[] | select(.count >= $threshold)] | sort_by(-.count)[:15] |
 		.[] | "\(.count)\t\(.file)"
 	' 2>/dev/null) || high_smell_files=""
 
@@ -1216,8 +1399,8 @@ _create_simplification_issues() {
 	local total_open
 	total_open=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%%/*}\", name:\"${repo_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
 		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
-	if [[ "${total_open:-0}" -ge 200 ]]; then
-		echo "[stats] Simplification issues: skipping — ${total_open} open (cap: 200)" >>"$LOGFILE"
+	if [[ "${total_open:-0}" -ge "$total_open_cap" ]]; then
+		echo "[stats] Simplification issues: skipping — ${total_open} open (cap: ${total_open_cap})" >>"$LOGFILE"
 		return 0
 	fi
 
@@ -1236,7 +1419,10 @@ _create_simplification_issues() {
 			continue
 		fi
 
-		# Build per-rule breakdown for this file
+		# Build per-rule breakdown for this file. Already computed in the sweep
+		# body above — we re-extract it here to feed it to the issue body
+		# template (t2066: surface the per-rule counts in the body, not just
+		# the aggregate smell count).
 		local rule_breakdown
 		rule_breakdown=$(echo "$sarif_json" | jq -r --arg fp "$file_path" '
 			[.runs[0].results[] |
@@ -1257,7 +1443,7 @@ _create_simplification_issues() {
 
 		if gh_create_issue --repo "$repo_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" --label "needs-maintainer-review" --label "source:quality-sweep" \
+			--label "simplification-debt" --label "needs-maintainer-review" --label "source:quality-sweep" --label "tier:thinking" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1; then
 			issues_created=$((issues_created + 1))
@@ -1266,7 +1452,7 @@ _create_simplification_issues() {
 
 	if [[ "$issues_created" -gt 0 ]]; then
 		qlty_section="${qlty_section}
-_Created ${issues_created} simplification-debt issue(s) for high-smell files (needs maintainer review)._
+_Created ${issues_created} simplification-debt issue(s) for high-smell files (needs maintainer review, tier:thinking)._
 "
 	fi
 
@@ -1581,6 +1767,10 @@ _gather_quality_issue_stats() {
 #
 # Pure formatting function — no API calls. All data pre-gathered by caller.
 #
+# t2066: added qlty_smell_delta and qlty_smell_count_prev so the dashboard
+# can render a trend indicator next to the smell count and the grade row
+# shows the grade is derived from the local count (not the cloud badge).
+#
 # Arguments:
 #   $1  - sweep_time
 #   $2  - repo_slug
@@ -1598,6 +1788,8 @@ _gather_quality_issue_stats() {
 #   $14 - prs_scanned_lifetime
 #   $15 - issues_created_lifetime
 #   $16 - bot_coverage_section
+#   $17 - qlty_smell_delta (signed int; positive = regression)
+#   $18 - qlty_smell_count_prev (previous sweep's smell count; 0 = first run)
 # Output: body markdown to stdout
 #######################################
 _build_quality_issue_body() {
@@ -1617,6 +1809,24 @@ _build_quality_issue_body() {
 	local prs_scanned_lifetime="${14}"
 	local issues_created_lifetime="${15}"
 	local bot_coverage_section="${16}"
+	local qlty_smell_delta="${17:-0}"
+	local qlty_smell_count_prev="${18:-0}"
+
+	# t2066: render smell-count trend indicator. The arrow is a simple
+	# visual cue; the signed value is authoritative. First-run case (prev=0,
+	# no history) shows "baseline" instead of an arrow so the reader knows
+	# the delta is meaningless until the second sweep lands.
+	local smell_trend=""
+	if [[ "$qlty_smell_count_prev" == "0" && "$qlty_smell_count" -gt 0 ]]; then
+		smell_trend="(baseline — no prior sweep)"
+	elif [[ "$qlty_smell_delta" == "0" ]]; then
+		smell_trend="→ 0 (unchanged)"
+	elif [[ "$qlty_smell_delta" =~ ^- ]]; then
+		# Negative delta = improvement
+		smell_trend="↓ ${qlty_smell_delta} (improved)"
+	else
+		smell_trend="↑ +${qlty_smell_delta} (regressed)"
+	fi
 
 	cat <<BODY
 ## Code Audit Routines
@@ -1632,8 +1842,8 @@ _build_quality_issue_body() {
 | --- | --- |
 | SonarCloud gate | ${gate_status} |
 | SonarCloud issues | ${total_issues} (${high_critical} high/critical) |
-| Qlty grade | ${qlty_grade} |
-| Qlty smells | ${qlty_smell_count} |
+| Qlty grade (local, from smell count) | ${qlty_grade} |
+| Qlty smells | ${qlty_smell_count} ${smell_trend} |
 
 ### Simplification
 
@@ -1703,15 +1913,17 @@ _update_quality_issue_title() {
 #   _update_quality_issue_title  — updates title if changed
 #
 # Arguments:
-#   $1 - repo slug
-#   $2 - issue number
-#   $3 - gate status (OK/ERROR/WARN/UNKNOWN)
-#   $4 - total SonarCloud issues
-#   $5 - high/critical count
-#   $6 - sweep timestamp (ISO)
-#   $7 - tool count
-#   $8 - qlty smell count (optional)
-#   $9 - qlty grade (optional)
+#   $1  - repo slug
+#   $2  - issue number
+#   $3  - gate status (OK/ERROR/WARN/UNKNOWN)
+#   $4  - total SonarCloud issues
+#   $5  - high/critical count
+#   $6  - sweep timestamp (ISO)
+#   $7  - tool count
+#   $8  - qlty smell count (optional)
+#   $9  - qlty grade (optional)
+#   $10 - qlty smell delta (optional, t2066; signed int)
+#   $11 - qlty smell count previous (optional, t2066; 0 = first run)
 #######################################
 _update_quality_issue_body() {
 	local repo_slug="$1"
@@ -1723,6 +1935,8 @@ _update_quality_issue_body() {
 	local tool_count="$7"
 	local qlty_smell_count="${8:-0}"
 	local qlty_grade="${9:-UNKNOWN}"
+	local qlty_smell_delta="${10:-0}"
+	local qlty_smell_count_prev="${11:-0}"
 
 	# Sanitize inputs to single-line values — prevents multi-line tool output
 	# (e.g., ShellCheck findings) from leaking into the dashboard table.
@@ -1731,10 +1945,15 @@ _update_quality_issue_body() {
 	high_critical="${high_critical%%$'\n'*}"
 	qlty_grade="${qlty_grade%%$'\n'*}"
 	qlty_smell_count="${qlty_smell_count%%$'\n'*}"
+	qlty_smell_delta="${qlty_smell_delta%%$'\n'*}"
+	qlty_smell_count_prev="${qlty_smell_count_prev%%$'\n'*}"
 	# Validate numeric fields — fall back to 0 if corrupted
 	[[ "$total_issues" =~ ^[0-9]+$ ]] || total_issues=0
 	[[ "$high_critical" =~ ^[0-9]+$ ]] || high_critical=0
 	[[ "$qlty_smell_count" =~ ^[0-9]+$ ]] || qlty_smell_count=0
+	# qlty_smell_delta is signed — allow optional leading minus
+	[[ "$qlty_smell_delta" =~ ^-?[0-9]+$ ]] || qlty_smell_delta=0
+	[[ "$qlty_smell_count_prev" =~ ^[0-9]+$ ]] || qlty_smell_count_prev=0
 
 	# Gather all stats via temp file (avoids subshell variable loss)
 	local stats_tmp
@@ -1763,7 +1982,8 @@ _update_quality_issue_body() {
 		"$gate_status" "$total_issues" "$high_critical" \
 		"$qlty_grade" "$qlty_smell_count" \
 		"$debt_open" "$debt_closed" "$simplified_count" "$debt_resolution_pct" \
-		"$prs_scanned_lifetime" "$issues_created_lifetime" "$bot_coverage_section")
+		"$prs_scanned_lifetime" "$issues_created_lifetime" "$bot_coverage_section" \
+		"$qlty_smell_delta" "$qlty_smell_count_prev")
 
 	# Update issue body — redirect stderr to log for debugging on failure
 	local edit_stderr
