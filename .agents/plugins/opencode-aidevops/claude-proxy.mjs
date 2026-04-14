@@ -133,7 +133,7 @@ function buildClaudeProviderModels(models) {
  */
 function buildClaudeProviderConfig(port, models) {
   return {
-    name: "Claude CLI (via aidevops proxy)",
+    name: "Claude CLI",
     npm: "@ai-sdk/openai-compatible",
     api: `http://127.0.0.1:${port}/v1`,
     models: buildClaudeProviderModels(models),

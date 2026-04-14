@@ -104,8 +104,11 @@ function registerAnthropicModels(config) {
       npm: "@ai-sdk/openai-compatible",
       api: "http://127.0.0.1:32125/v1",
     };
-  } else if (config.provider.claudecli.name === "Claude CLI (coming soon)") {
-    // Migrate legacy provider name
+  } else if (
+    config.provider.claudecli.name === "Claude CLI (coming soon)" ||
+    config.provider.claudecli.name === "Claude CLI (via aidevops proxy)"
+  ) {
+    // Migrate legacy provider names
     config.provider.claudecli.name = "Claude CLI";
   }
   if (!config.provider.claudecli.models) config.provider.claudecli.models = {};

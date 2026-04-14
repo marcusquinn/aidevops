@@ -88,12 +88,30 @@ export async function getAvailableAccounts() {
  * Build a child-process env that injects the OAuth token via
  * `CLAUDE_CODE_OAUTH_TOKEN` and strips any inherited `ANTHROPIC_API_KEY`
  * (which would otherwise win precedence in the Claude CLI).
+ *
+ * When `token` is null, the native CLI auth path is used: both
+ * `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are removed so the
+ * Claude CLI falls back to its own stored credentials (`~/.claude.json`).
  */
 export function buildChildEnvWithToken(token) {
   const childEnv = { ...process.env };
   delete childEnv.ANTHROPIC_API_KEY;
-  childEnv.CLAUDE_CODE_OAUTH_TOKEN = token;
+  if (token !== null) {
+    childEnv.CLAUDE_CODE_OAUTH_TOKEN = token;
+  } else {
+    delete childEnv.CLAUDE_CODE_OAUTH_TOKEN;
+  }
   return childEnv;
+}
+
+/**
+ * Synthetic "account" representing the Claude CLI's own stored credentials
+ * (`~/.claude.json`). Used as the final fallback when all OAuth pool accounts
+ * are rate-limited or unavailable. `token: null` signals `buildChildEnvWithToken`
+ * to clear injected credentials so the CLI uses its native auth.
+ */
+export function getNativeCliFallback() {
+  return { email: "native-cli-auth", token: null };
 }
 
 /**
