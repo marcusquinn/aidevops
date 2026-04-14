@@ -525,6 +525,75 @@ jobs:
           echo "No new code smells introduced"
         fi
 
+  # GH#18775 (t2067): absolute-threshold ratchet for the total qlty smell count.
+  # Complementary to the qlty-smells job above: that one enforces "no new smells
+  # in this PR" (per-PR delta); this one enforces "total count is bounded by
+  # QLTY_SMELL_THRESHOLD and monotonically decreases over time". First ratchet
+  # counter that covers non-shell files (Python/JS/TS/mjs). Auto-ratcheted down
+  # by ratchet-post-merge.yml when the count drops below threshold - 2.
+  qlty-smell-threshold:
+    name: Qlty Smell Threshold
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+    - name: Install Qlty CLI
+      uses: qltysh/qlty-action/install@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0
+
+    - name: Qlty smell threshold check
+      run: |
+        # Read threshold from config (GH#18775 — ratchetable smell counter)
+        THRESHOLD=0
+        if [ -f ".agents/configs/complexity-thresholds.conf" ]; then
+          val=$(grep '^QLTY_SMELL_THRESHOLD=' .agents/configs/complexity-thresholds.conf | cut -d= -f2 || true)
+          if [ -n "$val" ] && [ "$val" -eq "$val" ] 2>/dev/null; then
+            THRESHOLD=$val
+          fi
+        fi
+        if [ "$THRESHOLD" -eq 0 ]; then
+          echo "::warning::QLTY_SMELL_THRESHOLD not set in complexity-thresholds.conf — skipping check"
+          exit 0
+        fi
+
+        echo "Counting total qlty smells across all files..."
+        sarif=$(qlty smells --all --sarif --no-snippets --quiet 2>/dev/null || true)
+        if [ -z "$sarif" ]; then
+          echo "::error::Failed to run qlty smells (empty SARIF output)"
+          exit 1
+        fi
+
+        count=$(echo "$sarif" | jq '.runs[0].results | length')
+        if ! [ "$count" -eq "$count" ] 2>/dev/null; then
+          echo "::error::Failed to parse smell count from SARIF output"
+          exit 1
+        fi
+
+        echo ""
+        echo "Total qlty smells: $count"
+        echo "Threshold:         $THRESHOLD"
+        echo ""
+
+        if [ "$count" -gt "$THRESHOLD" ]; then
+          echo "::error::Qlty smell regression: $count smells exceeds threshold $THRESHOLD"
+          echo ""
+          echo "Per-rule breakdown:"
+          echo "$sarif" | jq -r '.runs[0].results | group_by(.ruleId) | map({rule: .[0].ruleId, count: length}) | sort_by(-.count) | .[] | "  \(.count)\t\(.rule)"'
+          echo ""
+          echo "Top 20 files by smell count:"
+          echo "$sarif" | jq -r '.runs[0].results | group_by(.locations[0].physicalLocation.artifactLocation.uri) | map({file: .[0].locations[0].physicalLocation.artifactLocation.uri, count: length}) | sort_by(-.count) | .[0:20] | .[] | "  \(.count)\t\(.file)"'
+          echo ""
+          echo "Fix options:"
+          echo "  1. Reduce smells in your PR (preferred) — run 'qlty smells --all' locally"
+          echo "  2. Justify a bump of QLTY_SMELL_THRESHOLD in complexity-thresholds.conf"
+          echo "     with a history entry in complexity-thresholds-history.md"
+          exit 1
+        fi
+
+        headroom=$((THRESHOLD - count))
+        echo "Within threshold ($headroom headroom)"
+
   sonarcloud:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest

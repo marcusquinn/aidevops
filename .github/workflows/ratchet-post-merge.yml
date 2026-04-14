@@ -1,0 +1,164 @@
+name: Ratchet Post-Merge
+
+# GH#18775 (t2067): post-merge auto-ratchet for QLTY_SMELL_THRESHOLD.
+# When a PR merges to main and the total qlty smell count drops below
+# `threshold - 2`, this workflow bumps the threshold down to `new_count + 2`
+# in a follow-up commit on main. Mirrors the shell-counter ratchet model:
+# monotonic decay, buffer of 2 absorbs formatting noise.
+#
+# Writes to main require SYNC_PAT (t2048) — GITHUB_TOKEN cannot bypass
+# required_pull_request_reviews on this branch protection. Falls back to
+# GITHUB_TOKEN (which will fail) only to produce a loud, visible error.
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'TODO.md'
+      - 'todo/**'
+      - 'README.md'
+      - 'CHANGELOG.md'
+      - '.agents/configs/complexity-thresholds.conf'
+      - '.agents/configs/complexity-thresholds-history.md'
+
+concurrency:
+  # Serialise ratchet attempts so two rapid merges don't race on the
+  # threshold file. Per-SHA groups would allow a stale ratchet to overwrite
+  # a newer one; a single shared group queues them.
+  group: ratchet-post-merge
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  ratchet-qlty-smells:
+    name: Ratchet QLTY_SMELL_THRESHOLD
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          fetch-depth: 1
+          # t2048: prefer SYNC_PAT (fine-grained PAT scoped to this repo,
+          # Contents: Read and write) to bypass branch protection via
+          # enforce_admins:false. Falls back to GITHUB_TOKEN which will be
+          # rejected — the rejection is the loud-failure signal for operators.
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Install Qlty CLI
+        uses: qltysh/qlty-action/install@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0
+
+      - name: Compute smell count and ratchet if reduced
+        env:
+          # t2048: expose secret presence as a boolean-ish env var. GitHub
+          # hides secret values from logs, but ${{ secrets.SYNC_PAT != '' }}
+          # evaluates to 'true' or 'false' at workflow-compile time and is
+          # safe to log.
+          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          conf=".agents/configs/complexity-thresholds.conf"
+          history=".agents/configs/complexity-thresholds-history.md"
+
+          if [ ! -f "$conf" ]; then
+            echo "::warning::$conf not found — skipping ratchet"
+            exit 0
+          fi
+
+          current=$(grep '^QLTY_SMELL_THRESHOLD=' "$conf" | cut -d= -f2 || true)
+          if [ -z "$current" ] || ! [ "$current" -eq "$current" ] 2>/dev/null; then
+            echo "::warning::QLTY_SMELL_THRESHOLD not set or non-numeric in $conf — skipping ratchet"
+            exit 0
+          fi
+
+          echo "Current threshold: $current"
+          echo "Computing current qlty smell count..."
+
+          sarif=$(qlty smells --all --sarif --no-snippets --quiet 2>/dev/null || true)
+          if [ -z "$sarif" ]; then
+            echo "::warning::qlty smells produced empty output — skipping ratchet"
+            exit 0
+          fi
+
+          count=$(echo "$sarif" | jq '.runs[0].results | length')
+          if ! [ "$count" -eq "$count" ] 2>/dev/null; then
+            echo "::warning::failed to parse smell count — skipping ratchet"
+            exit 0
+          fi
+
+          echo "Current smell count: $count"
+
+          new_threshold=$((count + 2))
+          if [ "$new_threshold" -ge "$current" ]; then
+            echo "No ratchet needed: new_threshold ($new_threshold) >= current ($current)"
+            exit 0
+          fi
+
+          delta=$((current - new_threshold))
+          echo "Ratcheting: $current → $new_threshold (reduction: $delta)"
+
+          # Derive trigger context (commit SHA, short commit subject) for the
+          # history entry — gives future operators a breadcrumb back to the PR
+          # that enabled the ratchet.
+          sha_short=$(git rev-parse --short HEAD)
+          commit_subject=$(git log -1 --format=%s | cut -c1-80)
+
+          # Update the config value in-place.
+          # sed -i requires a sentinel argument on BSD but not on GNU. CI is
+          # ubuntu-latest so GNU sed — plain -i is correct here.
+          sed -i "s/^QLTY_SMELL_THRESHOLD=.*/QLTY_SMELL_THRESHOLD=$new_threshold/" "$conf"
+
+          # Verify the change landed.
+          if ! grep -qE "^QLTY_SMELL_THRESHOLD=${new_threshold}\$" "$conf"; then
+            echo "::error::sed update of $conf failed — aborting ratchet"
+            exit 1
+          fi
+
+          # Append a history entry. The file already has a QLTY_SMELL_THRESHOLD
+          # History table — we find the last row and append a new row under it.
+          if grep -q '^## QLTY_SMELL_THRESHOLD History' "$history"; then
+            # Append a new table row at the end of the file. Works because the
+            # QLTY_SMELL_THRESHOLD section is the last section in the file.
+            printf '| %s | ratchet-post-merge | auto-ratchet after %s (\"%s\"): count %s + 2 buffer = %s (previously %s, reduction %s) |\n' \
+              "$new_threshold" "$sha_short" "$commit_subject" "$count" "$new_threshold" "$current" "$delta" \
+              >> "$history"
+          else
+            echo "::warning::QLTY_SMELL_THRESHOLD History section missing from $history — skipping history update"
+          fi
+
+          # Configure git identity.
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          # Log which credential path is active.
+          if [ -n "${SYNC_PAT_PRESENT:-}" ]; then
+            echo "::notice::Using SYNC_PAT for push (t2048 path)"
+          else
+            echo "::notice::Using GITHUB_TOKEN for push (pre-t2048 fallback — push will be rejected by branch protection)"
+          fi
+
+          git add "$conf" "$history"
+          git commit -m "chore: ratchet QLTY_SMELL_THRESHOLD ${current}→${new_threshold} (-${delta}) [skip ci]"
+
+          # Push with retry. [skip ci] on the commit prevents a workflow loop;
+          # paths-ignore on this file is a belt-and-braces second layer.
+          for i in 1 2 3; do
+            echo "Push attempt $i..."
+            git pull --rebase origin main || true
+            if git push; then
+              echo "Push succeeded on attempt $i"
+              exit 0
+            fi
+          done
+
+          echo "::warning::Failed to push ratchet update after 3 attempts — the ratchet did not land on main"
+          echo "::warning::Check branch protection bypass: SYNC_PAT must be a fine-grained PAT with Contents: Read and write"
+          # Do not fail the workflow — the ratchet is a nice-to-have, and
+          # failing the workflow only adds noise. The [skip ci] commit was
+          # already written locally; a later merge will re-trigger this.
+          exit 0

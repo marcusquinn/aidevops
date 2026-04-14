@@ -86,3 +86,18 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 |-------|----------|--------|
 | 69 | baseline (2026-04-04) | mostly namerefs in helper scripts |
 | 72 | GH#17830 | pre-existing regression on main — 71 violations vs threshold 69; email-delivery-test-helper.sh and memory-pressure-monitor.sh added namerefs/associative arrays after threshold was set. Adding 1 unit of headroom to unblock PRs; proper fix is to refactor those scripts |
+
+## QLTY_SMELL_THRESHOLD History
+
+Multi-language smell counter (GH#18775, t2067). Covers Python, JS/TS/mjs, and
+cyclomatic complexity via `qlty smells --all` SARIF output — the first ratchet
+counter that measures non-shell files. Enforced by the `qlty-smell-threshold`
+job in `.github/workflows/code-quality.yml`; auto-ratcheted down by
+`.github/workflows/ratchet-post-merge.yml` when the smell count drops below
+`threshold - 2`. Complementary to t2065's per-PR regression gate: t2065
+enforces "no net increase in this PR", t2067 enforces "total count is bounded
+and monotonically decreases".
+
+| Value | PR/Issue | Reason |
+|-------|----------|--------|
+| 111 | baseline (2026-04-14, GH#18775) | initial baseline: 109 actual smells + 2 buffer; qlty 0.619.0 reports 37 qlty:file-complexity, 26 qlty:identical-code, 26 qlty:function-complexity, 7 qlty:return-statements, 5 qlty:function-parameters, 4 qlty:nested-control-flow, 2 qlty:similar-code, 2 qlty:boolean-logic |
