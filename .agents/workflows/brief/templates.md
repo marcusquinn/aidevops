@@ -36,13 +36,13 @@ When creating issues via `gh issue create`, wrap the appropriate tier content in
 
 Always include a tier label: `tier:simple`, `tier:standard`, or `tier:thinking`.
 
-**Why "Done When" matters:** Workers that lack a concrete completion signal exhibit two failure modes: (1) stop after setup/exploration without implementing anything (observed on #17642, #17643), or (2) stop after PR creation without merging or posting closing comments. "Done When" gives the model a checklist to drive toward instead of an open-ended goal.
+**Why "Done When" matters:** Workers without a concrete completion signal fail in two ways: stop after exploration without implementing (#17642, #17643), or stop after PR creation without merging. "Done When" is the checklist that drives toward verified completion.
 
 ## Comment Templates
 
 ### Dispatch comment (pulse → worker)
 
-Use when the pulse dispatches a worker. Include enough context to avoid re-reading the full issue:
+For pulse-dispatched workers. Include enough context to avoid re-reading the full issue:
 
 ```markdown
 ## Dispatching: {issue_title}
@@ -84,15 +84,11 @@ _Killed by watchdog at {timestamp}_
 
 ### Escalation comment (cascade dispatch)
 
-See `templates/escalation-report-template.md`. Include:
-1. What was attempted (files read, code tried)
-2. Structured reason code (see the template taxonomy)
-3. Discoveries reusable by the next tier
-4. Brief gaps (what was missing or unclear)
+See `templates/escalation-report-template.md` for the full template and reason code taxonomy. Include: what was attempted, structured reason code, reusable discoveries, and brief gaps.
 
 ## PR Description Template
 
-Workers creating PRs use this structure. It serves the review bot and the human reviewer.
+Use for all worker-created PRs. Serves the review bot and human reviewer.
 
 ```markdown
 ## Summary
