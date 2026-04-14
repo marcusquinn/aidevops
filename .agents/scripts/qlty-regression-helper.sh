@@ -38,10 +38,14 @@ set -uo pipefail
 SCRIPT_NAME=$(basename "$0")
 TMP_DIR=""
 BASE_WORKTREE=""
+HEAD_WORKTREE=""
 
 cleanup() {
 	if [ -n "$BASE_WORKTREE" ] && [ -d "$BASE_WORKTREE" ]; then
 		git worktree remove --force "$BASE_WORKTREE" >/dev/null 2>&1 || true
+	fi
+	if [ -n "$HEAD_WORKTREE" ] && [ -d "$HEAD_WORKTREE" ]; then
+		git worktree remove --force "$HEAD_WORKTREE" >/dev/null 2>&1 || true
 	fi
 	if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
 		rm -rf "$TMP_DIR"
@@ -93,10 +97,12 @@ run_qlty_sarif() {
 	(cd "$_dir" && "$_qlty_bin" smells --all --sarif --no-snippets --quiet) \
 		>"$_out" 2>/dev/null || true
 	if [ ! -s "$_out" ]; then
-		die "qlty produced no output for $_dir"
+		log "ERROR: qlty produced no output for $_dir"
+		return 1
 	fi
 	if ! jq -e '.runs[0].results' "$_out" >/dev/null 2>&1; then
-		die "qlty output is not valid SARIF: $_out"
+		log "ERROR: qlty output is not valid SARIF: $_out"
+		return 1
 	fi
 	return 0
 }
@@ -235,23 +241,38 @@ DRY_RUN=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--base)
-		BASE="${2:-}"
+		if [ $# -lt 2 ] || [ "${2#-}" != "$2" ]; then
+			die "missing value for --base"
+		fi
+		BASE="$2"
 		shift 2
 		;;
 	--head)
-		HEAD="${2:-}"
+		if [ $# -lt 2 ] || [ "${2#-}" != "$2" ]; then
+			die "missing value for --head"
+		fi
+		HEAD="$2"
 		shift 2
 		;;
 	--output-md)
-		OUTPUT_MD="${2:-}"
+		if [ $# -lt 2 ] || [ "${2#-}" != "$2" ]; then
+			die "missing value for --output-md"
+		fi
+		OUTPUT_MD="$2"
 		shift 2
 		;;
 	--sarif-base)
-		SARIF_BASE="${2:-}"
+		if [ $# -lt 2 ] || [ "${2#-}" != "$2" ]; then
+			die "missing value for --sarif-base"
+		fi
+		SARIF_BASE="$2"
 		shift 2
 		;;
 	--sarif-head)
-		SARIF_HEAD="${2:-}"
+		if [ $# -lt 2 ] || [ "${2#-}" != "$2" ]; then
+			die "missing value for --sarif-head"
+		fi
+		SARIF_HEAD="$2"
 		shift 2
 		;;
 	--allow-increase)
@@ -321,8 +342,16 @@ else
 	BASE_SCAN_FAILED=0
 fi
 
+# Scan head in its own isolated worktree so the result is always the
+# ref at HEAD_SHA, not whatever happens to be in the working tree.
+HEAD_WORKTREE="$TMP_DIR/head-worktree"
+log "creating head worktree at $HEAD_SHA"
+if ! git worktree add --detach --force "$HEAD_WORKTREE" "$HEAD_SHA" >/dev/null 2>&1; then
+	die "failed to create head worktree for $HEAD_SHA"
+fi
+
 log "scanning head ($HEAD_SHA)"
-run_qlty_sarif "." "$_head_sarif"
+run_qlty_sarif "$HEAD_WORKTREE" "$_head_sarif"
 
 if [ "$BASE_SCAN_FAILED" -eq 1 ]; then
 	cp "$_head_sarif" "$_base_sarif"
