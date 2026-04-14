@@ -44,6 +44,22 @@ export function createOpenAIChunk(id, created, model, delta, finishReason = null
 }
 
 /**
+ * Tool-use input fields included in the status-feed summary, in display
+ * order. Each entry is `{ key, transform? }` — `transform` post-processes
+ * the raw string (e.g. truncation, prefixing). Adding a new tool just means
+ * appending an entry here.
+ */
+const TOOL_INPUT_SUMMARY_FIELDS = [
+  { key: "command" },                                          // Bash
+  { key: "filePath" },                                         // Read / Edit / Write
+  { key: "pattern" },                                          // Glob
+  { key: "regex" },                                            // Grep
+  { key: "description" },                                      // Bash / Task description
+  { key: "prompt", transform: (v) => v.slice(0, 120) },        // Task prompt (truncated)
+  { key: "subagent_type", transform: (v) => `type=${v}` },     // Task subagent type
+];
+
+/**
  * Summarise a tool-use input block into a short single-line label for the
  * status feed. Only the most informative fields are included to keep the
  * stream legible without leaking full prompts.
@@ -51,19 +67,11 @@ export function createOpenAIChunk(id, created, model, delta, finishReason = null
 function summarizeToolInput(input) {
   if (!input || typeof input !== "object") return "";
   const parts = [];
-  // Bash
-  if (typeof input.command === "string") parts.push(input.command);
-  // Read / Edit / Write
-  if (typeof input.filePath === "string") parts.push(input.filePath);
-  // Glob
-  if (typeof input.pattern === "string") parts.push(input.pattern);
-  // Grep
-  if (typeof input.regex === "string") parts.push(input.regex);
-  // Description (Bash, Task)
-  if (typeof input.description === "string") parts.push(input.description);
-  // Task / subagent
-  if (typeof input.prompt === "string") parts.push(input.prompt.slice(0, 120));
-  if (typeof input.subagent_type === "string") parts.push(`type=${input.subagent_type}`);
+  for (const { key, transform } of TOOL_INPUT_SUMMARY_FIELDS) {
+    const raw = input[key];
+    if (typeof raw !== "string") continue;
+    parts.push(transform ? transform(raw) : raw);
+  }
   return parts.filter(Boolean).join(" — ");
 }
 
@@ -168,6 +176,29 @@ function handleSystem(event, ctx) {
   }
 }
 
+/** Extract a printable preview from a tool_use_result payload. */
+function extractToolResultPreview(toolResult) {
+  if (Array.isArray(toolResult.content)) {
+    return toolResult.content.map((item) => item?.text).filter(Boolean).join(" ");
+  }
+  return toolResult.stdout || "";
+}
+
+/** Resolve the tool's friendly name via the dedup map of prior tool_use ids. */
+function resolveToolResultName(event, ctx) {
+  const toolUseId = event.message?.content?.[0]?.tool_use_id;
+  if (toolUseId && ctx.seenToolUseIds.has(toolUseId)) {
+    return ctx.seenToolUseIds.get(toolUseId);
+  }
+  return "unknown";
+}
+
+/** Both the result wrapper and the inner content can flag an error state. */
+function isToolResultError(event, toolResult) {
+  if (toolResult.is_error === true) return true;
+  return event.message?.content?.[0]?.is_error === true;
+}
+
 /**
  * user → tool_use_result preview line. Correlates the tool name via the
  * `tool_use_id` from the message content so the status line reads
@@ -178,15 +209,11 @@ function handleUserToolResult(event, ctx) {
   if (ctx.seenToolResults.has(event.uuid)) return;
   ctx.seenToolResults.add(event.uuid);
 
-  const toolResult = event.tool_use_result;
-  const toolUseId = event.message?.content?.[0]?.tool_use_id;
-  const toolName = (toolUseId && ctx.seenToolUseIds.get(toolUseId)) || "unknown";
-  const isError = toolResult.is_error === true || event.message?.content?.[0]?.is_error === true;
-  const preview = Array.isArray(toolResult.content)
-    ? toolResult.content.map((item) => item?.text).filter(Boolean).join(" ")
-    : (toolResult.stdout || "");
+  const preview = extractToolResultPreview(event.tool_use_result);
   if (!preview) return;
 
+  const toolName = resolveToolResultName(event, ctx);
+  const isError = isToolResultError(event, event.tool_use_result);
   const label = isError ? `Tool error: ${toolName}` : `Tool result: ${toolName}`;
   sendStatusLine(ctx, label, preview.slice(0, 500));
 }
@@ -195,13 +222,17 @@ function handleUserToolResult(event, ctx) {
 // Top-level event dispatcher
 // ---------------------------------------------------------------------------
 
-/** Lookup table: event.type → handler(event, ctx) */
-const EVENT_HANDLERS = {
-  stream_event: handleStreamEvent,
-  assistant: handleAssistant,
-  system: handleSystem,
-  user: handleUserToolResult,
-};
+/**
+ * Lookup table: event.type → handler(event, ctx). Stored as a Map (not a
+ * plain object) so the dispatcher uses safe `.get()` lookup instead of
+ * computed property access on a user-controlled key.
+ */
+const EVENT_HANDLERS = new Map([
+  ["stream_event", handleStreamEvent],
+  ["assistant", handleAssistant],
+  ["system", handleSystem],
+  ["user", handleUserToolResult],
+]);
 
 /**
  * Process a single parsed stream-json event and emit the corresponding
@@ -210,7 +241,8 @@ const EVENT_HANDLERS = {
  * proxy is intentionally permissive about new event types.
  */
 export function processStreamEvent(event, ctx) {
-  const handler = EVENT_HANDLERS[event?.type];
+  if (!event?.type) return;
+  const handler = EVENT_HANDLERS.get(event.type);
   if (handler) handler(event, ctx);
 }
 
