@@ -47,6 +47,7 @@
 #   - _simplification_backfill_update_entry_state           (helper, GH#18680)
 #   - _simplification_backfill_verify_remaining_smells      (helper, GH#18680)
 #   - _simplification_state_backfill_closed
+#   - _simplification_close_spurious_requeue_issues          (defensive, GH#18795)
 #
 # The three _simplification_backfill_* helpers were extracted from
 # _simplification_state_backfill_closed in GH#18680 to keep the orchestrator
@@ -54,6 +55,12 @@
 # (same args, same stdout, same state file mutations, same log lines) is
 # unchanged. All other function bodies remain byte-identical to the pre-
 # extraction (t2020) form.
+#
+# _simplification_close_spurious_requeue_issues (GH#18795) is a defensive
+# sweep that auto-closes any open re-queue issues whose title says
+# "0 smells remaining" AND whose target file currently has zero Qlty smells.
+# It catches stragglers from the pre-PR-#18848 grep-c bug and self-heals any
+# future regression of the same class.
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_SIMPLIFICATION_STATE_LOADED:-}" ]] && return 0
@@ -642,5 +649,127 @@ _simplification_state_backfill_closed() {
 		rm -f "$tmp_state"
 	fi
 	echo "$added"
+	return 0
+}
+
+# Defensive auto-close sweep for spurious "0 smells remaining" re-queue
+# issues (GH#18795). The pre-PR-#18848 grep-c bug in
+# _simplification_backfill_verify_remaining_smells produced literal "0\n0"
+# strings that failed the -eq 0 test and cascaded into re-queue issues for
+# files Qlty had already reported clean. PR #18848 fixed the bug, but
+# stragglers from before that fix landed lingered in the open backlog and
+# burned worker dispatches (#18796, #18797, #18798, #18799, #18809, #18829).
+#
+# This sweep runs each pulse cycle and closes any open re-queue issue where
+# BOTH conditions hold:
+#   1. The title contains "(pass N, ... 0 smells remaining)" — the
+#      diagnostic signature of the bug. Tolerates the "0\n0" newline-
+#      corrupted form by stripping whitespace before matching.
+#   2. The target file currently has zero Qlty smells per a fresh probe.
+#      The probe is the gate — if Qlty reports any smells the issue is
+#      legitimate (rare title coincidence) and is left open.
+#
+# Both conditions are required so a buggy title alone never auto-closes a
+# legitimate finding. The function is a no-op when Qlty is not installed.
+#
+# Arguments:
+#   $1 - repo_path      (absolute worktree path)
+#   $2 - aidevops_slug  (owner/repo for issue queries/closures)
+# Outputs:
+#   Integer count of issues closed to stdout.
+# Side effects:
+#   - One log line per close attempt (success or failure) to $LOGFILE.
+#   - Closes matching issues with reason "not planned" plus a rationale
+#     comment that links to PR #18848 (the original fix) and #18795 (the
+#     defensive sweep itself).
+# Returns: 0 always (advisory step; failures must not abort the surrounding
+#          state-refresh stage).
+_simplification_close_spurious_requeue_issues() {
+	local repo_path="$1"
+	local aidevops_slug="$2"
+	local closed=0
+
+	# Locate qlty CLI; bail silently if unavailable. The sweep is purely
+	# defensive — when Qlty is missing we cannot verify the smell count
+	# and must leave issues alone rather than risk closing a legitimate
+	# finding.
+	local qlty_cmd=""
+	if command -v qlty >/dev/null 2>&1; then
+		qlty_cmd="qlty"
+	elif [[ -x "${HOME}/.qlty/bin/qlty" ]]; then
+		qlty_cmd="${HOME}/.qlty/bin/qlty"
+	fi
+	[[ -z "$qlty_cmd" ]] && {
+		echo "0"
+		return 0
+	}
+
+	# Query open re-queue issues. The bug-corrupted titles contain a
+	# literal newline which `gh issue list --search` cannot match across,
+	# so we fetch all open simplification-debt issues and filter client-
+	# side. The list is bounded by SIMPLIFICATION_OPEN_CAP (~50 typical),
+	# so the cost is O(N) gh API calls in the worst case but typically 0.
+	local issues_json
+	issues_json=$(gh issue list --repo "$aidevops_slug" \
+		--label "simplification-debt" --state open \
+		--limit 100 --json number,title 2>/dev/null) || {
+		echo "0"
+		return 0
+	}
+	[[ -z "$issues_json" || "$issues_json" == "[]" ]] && {
+		echo "0"
+		return 0
+	}
+
+	while IFS= read -r row; do
+		[[ -z "$row" ]] && continue
+		local num title
+		num=$(echo "$row" | jq -r '.number') || continue
+		title=$(echo "$row" | jq -r '.title') || continue
+
+		# Strip whitespace (incl. embedded \n from the corrupted form)
+		# before pattern-matching. The diagnostic signature is the
+		# literal phrase "0 smells remaining" inside a "(pass N, ...)"
+		# parenthetical.
+		local stripped_title
+		stripped_title=$(printf '%s' "$title" | tr -d '[:space:]')
+		[[ ! "$stripped_title" =~ \(pass[0-9]+,0+smellsremaining\) ]] && continue
+
+		# Extract the file path from the title and verify Qlty currently
+		# reports zero smells before closing. Reuse the existing helper
+		# so any future title-format change stays consistent.
+		local file_path
+		file_path=$(_simplification_backfill_extract_file_path "$title")
+		[[ -z "$file_path" ]] && continue
+		[[ ! -f "${repo_path}/${file_path}" ]] && continue
+
+		# Probe Qlty using the same defensive count pattern as
+		# _simplification_backfill_verify_remaining_smells (the post-
+		# #18848 form). Anything other than a clean "0" leaves the
+		# issue open.
+		local current_smells
+		current_smells=$("$qlty_cmd" smells "${repo_path}/${file_path}" 2>/dev/null | { grep -c '^[^ ]' || true; })
+		current_smells=$(printf '%s' "$current_smells" | tr -d '[:space:]')
+		[[ ! "$current_smells" =~ ^[0-9]+$ ]] && current_smells=0
+		[[ "$current_smells" -ne 0 ]] && continue
+
+		# Both conditions hold: title says "0 smells remaining" AND the
+		# fresh probe confirms zero smells. Close as spurious.
+		local close_comment
+		close_comment="Auto-closed by simplification-state spurious-sweep (GH#18795).
+
+\`${file_path}\` currently has zero Qlty smells. This re-queue issue was generated by the pre-PR-#18848 \`grep -c\` bug in \`_simplification_backfill_verify_remaining_smells\` (\`pulse-simplification-state.sh\`) which produced a literal \`0\\n0\` string for files Qlty reported clean and then failed the \`-eq 0\` test. The bug is fixed in commit 625c6da5e (PR #18848); this sweep cleans up stragglers and self-heals any future regression of the same class."
+
+		if gh issue close "$num" --repo "$aidevops_slug" \
+			--reason "not planned" \
+			--comment "$close_comment" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] spurious-sweep: closed #${num} (${file_path}, 0 smells)" >>"$LOGFILE"
+			closed=$((closed + 1))
+		else
+			echo "[pulse-wrapper] spurious-sweep: failed to close #${num} (${file_path})" >>"$LOGFILE"
+		fi
+	done < <(echo "$issues_json" | jq -c '.[]')
+
+	echo "$closed"
 	return 0
 }

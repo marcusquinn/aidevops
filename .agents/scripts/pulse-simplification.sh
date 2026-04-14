@@ -1548,6 +1548,18 @@ _complexity_scan_state_refresh() {
 		state_updated=true
 	fi
 
+	# Defensive auto-close sweep for spurious "0 smells remaining" re-queue
+	# issues (GH#18795). Closes any stragglers from the pre-PR-#18848 bug
+	# and self-heals any future regression of the same class. Verifies the
+	# file is genuinely clean via Qlty before closing — never closes a
+	# legitimate finding even if its title coincidentally matches the
+	# spurious pattern. No-op when Qlty is not installed.
+	local spurious_closed
+	spurious_closed=$(_simplification_close_spurious_requeue_issues "$aidevops_path" "$aidevops_slug")
+	if [[ "${spurious_closed:-0}" -gt 0 ]]; then
+		echo "[pulse-wrapper] simplification-state: closed $spurious_closed spurious zero-smell re-queue issues (GH#18795)" >>"$LOGFILE"
+	fi
+
 	# Push state file if updated (planning data — direct to main)
 	if [[ "$state_updated" == true ]]; then
 		_simplification_state_push "$aidevops_path"

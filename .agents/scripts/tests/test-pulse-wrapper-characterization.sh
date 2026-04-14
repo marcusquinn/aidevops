@@ -196,6 +196,7 @@ readonly -a EXPECTED_FUNCTIONS=(
 	"_simplification_state_push"
 	"_create_requeue_issue"
 	"_simplification_state_backfill_closed"
+	"_simplification_close_spurious_requeue_issues"
 	"_complexity_scan_has_existing_issue"
 	"_complexity_scan_close_duplicate_issues_by_title"
 	"_complexity_scan_build_md_issue_body"
