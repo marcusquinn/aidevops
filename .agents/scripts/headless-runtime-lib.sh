@@ -1279,8 +1279,12 @@ _fast_fail_write_state() {
 			--arg reason "$reason" \
 			--argjson retry_after "$retry_after" \
 			--argjson backoff_secs "$new_backoff" \
-			'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs}' \
-			"$state_file" 2>/dev/null) || updated_state=""
+			--arg crash_type "${crash_type:-}" \
+			'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type}' \
+			"$state_file") || {
+			echo "Error: Failed to update $state_file" >&2
+			updated_state=""
+		}
 	else
 		updated_state=$(printf '{}' | jq --arg k "$key" \
 			--argjson count "$new_count" \
