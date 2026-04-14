@@ -65,6 +65,8 @@ export function getFrameworkPrompt() {
 // Agent file mapping + per-agent prompt cache
 // ---------------------------------------------------------------------------
 
+const AGENTS_DIR = join(homedir(), ".aidevops", "agents");
+
 /**
  * Map of known agent identifiers to their file names in ~/.aidevops/agents/.
  * The proxy selects an agent based on:
@@ -73,7 +75,7 @@ export function getFrameworkPrompt() {
  *      (e.g. `claudecli/seo/opus` → agent="seo")
  *   3. Default: "build-plus" (the primary interactive agent)
  */
-export const AGENT_FILES = {
+export const AGENT_FILES = Object.freeze({
   "build-plus": "build-plus.md",
   "automate": "automate.md",
   "seo": "seo.md",
@@ -81,10 +83,25 @@ export const AGENT_FILES = {
   "research": "research.md",
   "legal": "legal.md",
   "business": "business.md",
-};
+});
+
+/**
+ * Pre-resolved absolute path map. Built once at module load from the static
+ * AGENT_FILES allowlist, so `getAgentPrompt` never feeds user-controlled
+ * input into `path.join` / `fs.readFile` at runtime — the runtime lookup is
+ * a constant-key Map.get on the validated set.
+ */
+const AGENT_FILE_PATHS = new Map(
+  Object.entries(AGENT_FILES).map(([name, fileName]) => [name, join(AGENTS_DIR, fileName)]),
+);
 
 /** @type {Map<string, string>} agent name → cached prompt content */
 const _agentPromptCache = new Map();
+
+/** Resolve an arbitrary input to a known agent name (with fallback). */
+function normaliseAgentName(agentName) {
+  return agentName && AGENT_FILE_PATHS.has(agentName) ? agentName : "build-plus";
+}
 
 /**
  * Load the agent-specific prompt file. Falls back to build-plus.md.
@@ -92,10 +109,10 @@ const _agentPromptCache = new Map();
  * @returns {string}
  */
 export function getAgentPrompt(agentName) {
-  const name = agentName && AGENT_FILES[agentName] ? agentName : "build-plus";
+  const name = normaliseAgentName(agentName);
   if (_agentPromptCache.has(name)) return _agentPromptCache.get(name);
 
-  const filePath = join(homedir(), ".aidevops", "agents", AGENT_FILES[name]);
+  const filePath = AGENT_FILE_PATHS.get(name);
   let content = "";
   try {
     content = readFileSync(filePath, "utf-8").trim();
@@ -117,40 +134,59 @@ export function getAgentPrompt(agentName) {
  *
  * Mirrors the OpenCode pattern: MCPs disabled by default, enabled per-agent.
  */
-const AGENT_MCPS = {
-  "build-plus": ["context7"],
-  "seo": ["context7", "gsc", "dataforseo"],
-  "automate": ["context7"],
-  "content": ["context7"],
-  "research": ["context7"],
-};
+const AGENT_MCPS = new Map([
+  ["build-plus", ["context7"]],
+  ["seo", ["context7", "gsc", "dataforseo"]],
+  ["automate", ["context7"]],
+  ["content", ["context7"]],
+  ["research", ["context7"]],
+]);
 
 /**
  * MCP server definitions in Claude CLI --mcp-config format.
  * Only servers that might be needed per-agent are included here.
  * Claude CLI's global config (~/.claude.json) handles always-on MCPs.
  */
-function getMcpDefinition(name) {
-  const defs = {
-    context7: { command: "npx", args: ["-y", "@upstash/context7-mcp@latest"], type: "stdio" },
-    gsc: {
-      command: "/bin/bash",
-      args: ["-c", "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-~/.config/aidevops/gsc-credentials.json} npx -y mcp-server-gsc"],
-      type: "stdio",
-    },
-    dataforseo: {
-      command: "/bin/bash",
-      args: ["-c", "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD npx -y dataforseo-mcp-server"],
-      type: "stdio",
-    },
-    shadcn: { command: "npx", args: ["shadcn@latest", "mcp"], type: "stdio" },
-    playwright: { command: "npx", args: ["-y", "@playwright/mcp@latest"], type: "stdio" },
-  };
-  return defs[name] || null;
-}
+const MCP_DEFINITIONS = new Map([
+  ["context7", { command: "npx", args: ["-y", "@upstash/context7-mcp@latest"], type: "stdio" }],
+  ["gsc", {
+    command: "/bin/bash",
+    args: ["-c", "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-~/.config/aidevops/gsc-credentials.json} npx -y mcp-server-gsc"],
+    type: "stdio",
+  }],
+  ["dataforseo", {
+    command: "/bin/bash",
+    args: ["-c", "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD npx -y dataforseo-mcp-server"],
+    type: "stdio",
+  }],
+  ["shadcn", { command: "npx", args: ["shadcn@latest", "mcp"], type: "stdio" }],
+  ["playwright", { command: "npx", args: ["-y", "@playwright/mcp@latest"], type: "stdio" }],
+]);
+
+const MCP_CONFIG_DIR = join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+
+/**
+ * Pre-resolved per-agent config-file paths. Built once at module load from
+ * the static AGENT_MCPS allowlist so the runtime never feeds user input
+ * through `path.join` — the lookup is a constant-key Map.get on a
+ * pre-validated key set.
+ */
+const MCP_CONFIG_PATHS = new Map(
+  Array.from(AGENT_MCPS.keys()).map((name) => [name, join(MCP_CONFIG_DIR, `claude-cli-mcp-${name}.json`)]),
+);
 
 /** @type {Map<string, string>} agent name → path to generated MCP config file */
 const _mcpConfigFileCache = new Map();
+
+/** Build the `mcpServers` object for a list of MCP names, dropping unknowns. */
+function collectMcpServers(mcpNames) {
+  const mcpServers = {};
+  for (const mcpName of mcpNames) {
+    const def = MCP_DEFINITIONS.get(mcpName);
+    if (def) mcpServers[mcpName] = def;
+  }
+  return mcpServers;
+}
 
 /**
  * Generate a temporary MCP config JSON file for the given agent.
@@ -159,23 +195,17 @@ const _mcpConfigFileCache = new Map();
  * @returns {string | null}
  */
 export function getMcpConfigForAgent(agentName) {
-  const name = agentName && AGENT_MCPS[agentName] ? agentName : "build-plus";
-  const mcpNames = AGENT_MCPS[name];
+  const name = AGENT_MCPS.has(agentName) ? agentName : "build-plus";
+  const mcpNames = AGENT_MCPS.get(name);
   if (!mcpNames || mcpNames.length === 0) return null;
 
   if (_mcpConfigFileCache.has(name)) return _mcpConfigFileCache.get(name);
 
-  const mcpServers = {};
-  for (const mcpName of mcpNames) {
-    const def = getMcpDefinition(mcpName);
-    if (def) mcpServers[mcpName] = def;
-  }
-
+  const mcpServers = collectMcpServers(mcpNames);
   if (Object.keys(mcpServers).length === 0) return null;
 
-  const configDir = join(homedir(), ".aidevops", ".agent-workspace", "tmp");
-  mkdirSync(configDir, { recursive: true });
-  const configPath = join(configDir, `claude-cli-mcp-${name}.json`);
+  mkdirSync(MCP_CONFIG_DIR, { recursive: true });
+  const configPath = MCP_CONFIG_PATHS.get(name);
   writeFileSync(configPath, JSON.stringify({ mcpServers }, null, 2), "utf-8");
   _mcpConfigFileCache.set(name, configPath);
   console.error(`[aidevops] Claude proxy: generated MCP config for agent=${name} at ${configPath}`);
@@ -241,11 +271,30 @@ export function parseChatMessages(messages) {
 // Agent + model + effort resolution
 // ---------------------------------------------------------------------------
 
-const MODEL_ALIASES = {
-  haiku: "claude-haiku-4-5",
-  sonnet: "claude-sonnet-4-6",
-  opus: "claude-opus-4-6",
-};
+const MODEL_ALIASES = new Map([
+  ["haiku", "claude-haiku-4-5"],
+  ["sonnet", "claude-sonnet-4-6"],
+  ["opus", "claude-opus-4-6"],
+]);
+
+/**
+ * Decode an OpenCode `provider/agent/model` routing string into a
+ * `{ agentName, modelId }` pair. Returns nulls for missing components.
+ * Returns nulls for any non-routing input so the caller can fall through
+ * to header / default resolution.
+ */
+function parseRoutingModelKey(modelKey) {
+  if (typeof modelKey !== "string" || !modelKey.includes("/")) {
+    return { agentName: null, modelId: null };
+  }
+  const parts = modelKey.split("/");
+  const agentCandidate = parts.length >= 2 ? parts[1] : null;
+  const aliasSuffix = parts[parts.length - 1];
+  return {
+    agentName: agentCandidate && AGENT_FILE_PATHS.has(agentCandidate) ? agentCandidate : null,
+    modelId: MODEL_ALIASES.get(aliasSuffix) || null,
+  };
+}
 
 /**
  * Resolve the agent name + concrete model id from an OpenCode request.
@@ -253,19 +302,12 @@ const MODEL_ALIASES = {
  * suffix (e.g. `claudecli/seo/opus` → agent=seo, model=claude-opus-4-6).
  */
 export function resolveAgentAndModel(req, incoming) {
-  let agentName = req.headers.get("x-agent") || null;
-  let resolvedModel = incoming.model;
-
-  if (typeof incoming.model === "string" && incoming.model.includes("/")) {
-    const parts = incoming.model.split("/");
-    if (parts.length >= 2 && AGENT_FILES[parts[1]]) {
-      agentName = agentName || parts[1];
-    }
-    const modelSuffix = parts[parts.length - 1];
-    resolvedModel = MODEL_ALIASES[modelSuffix] || incoming.model;
-  }
-
-  return { agentName: agentName || "build-plus", resolvedModel };
+  const headerAgent = req.headers.get("x-agent") || null;
+  const routed = parseRoutingModelKey(incoming.model);
+  return {
+    agentName: headerAgent || routed.agentName || "build-plus",
+    resolvedModel: routed.modelId || incoming.model,
+  };
 }
 
 /** Extract the OpenAI-style reasoning_effort field if it's a known level. */
