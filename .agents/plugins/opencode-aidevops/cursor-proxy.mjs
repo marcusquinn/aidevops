@@ -229,9 +229,9 @@ export function getCursorProxyPort() {
  * @returns {Record<string, object>}
  */
 export function buildCursorProviderModels(models, port) {
-  const entries = {};
-  for (const model of models) {
-    entries[model.id] = {
+  return Object.fromEntries(models.map((model) => [
+    model.id,
+    {
       name: model.name,
       attachment: false,
       tool_call: false,
@@ -239,14 +239,10 @@ export function buildCursorProviderModels(models, port) {
       reasoning: model.reasoning || false,
       modalities: { input: ["text"], output: ["text"] },
       cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-      limit: {
-        context: model.contextWindow || 200000,
-        output: model.maxTokens || 64000,
-      },
+      limit: { context: model.contextWindow || 200000, output: model.maxTokens || 64000 },
       family: "cursor",
-    };
-  }
-  return entries;
+    },
+  ]));
 }
 
 /**
