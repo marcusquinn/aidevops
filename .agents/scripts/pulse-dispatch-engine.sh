@@ -191,6 +191,29 @@ _DFF_CANARY_CACHE=""
 _DFF_THROTTLE_CLEARED=0
 
 #######################################
+# Emit per-candidate debug output for the deterministic fill floor (GH#18804).
+#
+# Always writes to LOGFILE (so the operator sees it in pulse.log). When
+# PULSE_DEBUG is set to a truthy value, the message is prefixed with DEBUG:
+# and emitted unconditionally — useful for one-off operator runs that need
+# verbose per-candidate visibility into label state, dedup probes, and skip
+# decisions.
+#
+# Arguments:
+#   $1 - message body (plain text, no leading prefix)
+# Returns: 0 always
+#######################################
+pulse_dispatch_debug_log() {
+	local message="$1"
+	case "${PULSE_DEBUG:-}" in
+	1 | true | TRUE | yes | YES | on | ON)
+		echo "[pulse-wrapper] DFF DEBUG: ${message}" >>"$LOGFILE"
+		;;
+	esac
+	return 0
+}
+
+#######################################
 # Compute the dispatch capacity for this round.
 #
 # Stdout: "<max_workers> <active_workers> <available_slots>" on success.
@@ -267,7 +290,29 @@ _dff_should_skip_candidate() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	if check_terminal_blockers "$issue_number" "$repo_slug" >/dev/null 2>&1; then
+	pulse_dispatch_debug_log "evaluating skip checks for #${issue_number} (${repo_slug})"
+
+	# GH#18804: previously this call used `>/dev/null 2>&1` which suppressed
+	# the helper's own log lines AND, more dangerously, masked silent
+	# false-positive matches across every candidate in a round. The only
+	# observable symptom was `candidates=N` followed immediately by
+	# `Adaptive settle wait: 0 dispatches` with nothing between.
+	#
+	# The set -e-safe capture idiom here is REQUIRED, not stylistic:
+	# `_dff_should_skip_candidate` runs inside the dispatch loop, which
+	# itself runs inside the `dispatch_deterministic_fill_floor` subshell
+	# created by `fill_dispatched=$(dispatch_deterministic_fill_floor)`.
+	# Under `set -euo pipefail` an unguarded `if helper; then` is fine,
+	# but ANY internal capture or assignment that fails would abort the
+	# subshell silently. Capturing the rc explicitly keeps the failure
+	# mode visible in LOGFILE rather than swallowed by the outer `||`.
+	# Same bug class as GH#18770, GH#18784, GH#18786 — see
+	# `.agents/reference/bash-compat.md` pre-merge checklist item 4.
+	local terminal_rc=0
+	check_terminal_blockers "$issue_number" "$repo_slug" >>"$LOGFILE" 2>&1 || terminal_rc=$?
+	pulse_dispatch_debug_log "#${issue_number}: check_terminal_blockers rc=${terminal_rc}"
+	if [[ "$terminal_rc" -eq 0 ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — terminal blocker detected (check_terminal_blockers rc=0)" >>"$LOGFILE"
 		return 0
 	fi
 
@@ -282,6 +327,7 @@ _dff_should_skip_candidate() {
 	# and the current claim-task-id.sh stub marker.
 	local issue_body
 	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || issue_body=""
+	pulse_dispatch_debug_log "#${issue_number}: body length=${#issue_body}"
 	if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"
 		return 0
@@ -291,6 +337,7 @@ _dff_should_skip_candidate() {
 		return 0
 	fi
 
+	pulse_dispatch_debug_log "#${issue_number}: passed all skip checks — proceeding to dispatch"
 	return 1
 }
 
@@ -354,8 +401,20 @@ _dff_process_candidate() {
 	issue_url=$(printf '%s' "$candidate_json" | jq -r '.url // empty' 2>/dev/null)
 	issue_title=$(printf '%s' "$candidate_json" | jq -r '.title // empty' 2>/dev/null | tr '\n' ' ')
 	labels_csv=$(printf '%s' "$candidate_json" | jq -r '(.labels // []) | join(",")' 2>/dev/null)
-	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
-	[[ -n "$repo_slug" && -n "$repo_path" ]] || return 1
+
+	# GH#18804: previously the next two checks silently `return 1`-ed without
+	# logging. Operators saw `candidates=N` but no per-candidate skip lines,
+	# making malformed candidate JSON impossible to diagnose from pulse.log.
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: skipping malformed candidate — issue_number='${issue_number}' is not numeric (candidate_json prefix: ${candidate_json:0:120})" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ -z "$repo_slug" || -z "$repo_path" ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} — missing repo_slug='${repo_slug}' or repo_path='${repo_path}'" >>"$LOGFILE"
+		return 1
+	fi
+
+	pulse_dispatch_debug_log "processing #${issue_number} (${repo_slug}) labels=[${labels_csv}]"
 
 	if _dff_should_skip_candidate "$issue_number" "$repo_slug"; then
 		return 1
@@ -367,11 +426,13 @@ _dff_process_candidate() {
 		prompt="${prompt} (${issue_url})"
 	fi
 	model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
+	pulse_dispatch_debug_log "#${issue_number}: model_override=${model_override:-<auto>} — calling dispatch_with_dedup"
 
 	local dispatch_rc=0
 	dispatch_with_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
 		return 1
 	fi
 
@@ -379,7 +440,10 @@ _dff_process_candidate() {
 	_DFF_ROUND_DISPATCHED=$((_DFF_ROUND_DISPATCHED + 1))
 	_PULSE_LAST_LAUNCH_FAILURE=""
 
-	if ! check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1; then
+	local launch_rc=0
+	check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1 || launch_rc=$?
+	if [[ "$launch_rc" -ne 0 ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
 		_dff_record_launch_failure
 		return 1
 	fi
@@ -458,9 +522,23 @@ dispatch_deterministic_fill_floor() {
 
 	echo "[pulse-wrapper] Deterministic fill floor: available=${available_slots}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, candidates=${candidate_count}" >>"$LOGFILE"
 
-	local prepass_line triage_dispatched
-	prepass_line=$(_dff_run_prepasses "$available_slots")
+	# GH#18804: Guard the prepass capture against `set -e` kill propagating
+	# from nested helpers (dispatch_triage_reviews / dispatch_enrichment_workers
+	# can run gh/jq/MODEL_AVAILABILITY_HELPER subprocesses whose failures
+	# would otherwise abort this entire subshell silently — the `||` fallback
+	# keeps the function alive and surfaces the failure in pulse.log instead.
+	# Same set-e-in-subshell bug class as GH#18770. The fallback "$slots 0"
+	# preserves the pre-prepass slot count and assumes 0 triage dispatches.
+	local prepass_line=""
+	local triage_dispatched=0
+	if ! prepass_line=$(_dff_run_prepasses "$available_slots" 2>>"$LOGFILE"); then
+		echo "[pulse-wrapper] Deterministic fill floor: _dff_run_prepasses returned non-zero — assuming 0 triage/enrichment, full slot budget" >>"$LOGFILE"
+		prepass_line="${available_slots} 0"
+	fi
 	read -r available_slots triage_dispatched <<<"$prepass_line"
+	[[ "$available_slots" =~ ^[0-9]+$ ]] || available_slots=0
+	[[ "$triage_dispatched" =~ ^[0-9]+$ ]] || triage_dispatched=0
+	pulse_dispatch_debug_log "post-prepasses available_slots=${available_slots} triage_dispatched=${triage_dispatched}"
 
 	# Reset module-level round state before the dispatch loop (t1959).
 	_DFF_ROUND_DISPATCHED=0
@@ -479,9 +557,18 @@ dispatch_deterministic_fill_floor() {
 		echo "[pulse-wrapper] Dispatch throttle active: limiting implementation batch to 1 (runtime degraded)" >>"$LOGFILE"
 	fi
 
+	# GH#18804: fence-post log so operators can see the loop entered. Without
+	# this, a silent exit between the prepass capture and the loop body was
+	# indistinguishable from "everything was skipped" — both produced the
+	# same observable symptom (`Adaptive settle wait: 0 dispatches`).
+	echo "[pulse-wrapper] Deterministic fill floor: entering candidate loop with effective_slots=${_effective_slots}, candidates=${candidate_count}" >>"$LOGFILE"
+
+	local processed_count=0
 	while IFS= read -r candidate_json; do
 		[[ -n "$candidate_json" ]] || continue
+		processed_count=$((processed_count + 1))
 		if [[ "$dispatched_count" -ge "$_effective_slots" ]]; then
+			pulse_dispatch_debug_log "stopping early — dispatched_count=${dispatched_count} reached effective_slots=${_effective_slots}"
 			break
 		fi
 		if [[ -f "$STOP_FLAG" ]]; then
@@ -499,10 +586,11 @@ dispatch_deterministic_fill_floor() {
 		fi
 	done < <(printf '%s' "$candidates_json" | jq -c '.[]' 2>/dev/null)
 
+	pulse_dispatch_debug_log "loop exited — processed=${processed_count} dispatched=${dispatched_count}"
 	_dff_maybe_engage_throttle
 
 	local total_dispatched=$((dispatched_count + triage_dispatched))
-	echo "[pulse-wrapper] Deterministic fill floor complete: dispatched=${total_dispatched} (${triage_dispatched} triage + ${dispatched_count} implementation), target_available=${available_slots}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Deterministic fill floor complete: dispatched=${total_dispatched} (${triage_dispatched} triage + ${dispatched_count} implementation), processed=${processed_count}/${candidate_count}, target_available=${available_slots}" >>"$LOGFILE"
 	echo "$total_dispatched"
 	return 0
 }
