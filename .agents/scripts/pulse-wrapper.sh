@@ -1279,6 +1279,32 @@ _pulse_setup_dry_run_mode() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# _pulse_setup_canary_mode
+#
+# Phase 0 (GH#18790): --canary flag sets PULSE_CANARY_MODE=1 so main()
+# can short-circuit after acquire_instance_lock. This exercises:
+#   1. Script sourcing under set -euo pipefail (all top-level declarations)
+#   2. _pulse_handle_self_check — the exact function GH#18770 broke
+#   3. acquire_instance_lock — the next downstream function
+# and exits 0 without entering the pulse loop, dispatching workers, or
+# making any GitHub API calls.
+#
+# Scans "$@" for --canary (position-independent).
+# Exit code: always 0
+# ---------------------------------------------------------------------------
+_pulse_setup_canary_mode() {
+	local _can_arg
+	for _can_arg in "$@"; do
+		if [[ "$_can_arg" == "--canary" ]]; then
+			export PULSE_CANARY_MODE=1
+			break
+		fi
+	done
+	unset _can_arg
+	return 0
+}
+
 main() {
 	# GH#18670: declare this process as headless BEFORE anything else runs
 	# so every child shell stage sees AIDEVOPS_HEADLESS and
@@ -1307,6 +1333,7 @@ main() {
 	_pulse_handle_self_check "$@" || _sc_rc=$?
 	[[ "$_sc_rc" -ne 2 ]] && return "$_sc_rc"
 	_pulse_setup_dry_run_mode "$@"
+	_pulse_setup_canary_mode "$@"
 
 	# GH#4513: Acquire exclusive instance lock FIRST — before any other
 	# check. Uses mkdir atomicity as the ONLY primitive (POSIX-guaranteed,
@@ -1324,6 +1351,15 @@ main() {
 	trap 'release_instance_lock' EXIT
 
 	if ! acquire_instance_lock; then
+		return 0
+	fi
+
+	# --canary short-circuit (GH#18790): sourcing, _pulse_handle_self_check,
+	# and acquire_instance_lock have all passed cleanly. The EXIT trap releases
+	# the lock. Return 0 without entering the pulse loop, session gate, dedup,
+	# log rotation, or any side-effecting stage.
+	if [[ "${PULSE_CANARY_MODE:-0}" == "1" ]]; then
+		printf 'canary: ok (sourcing + _pulse_handle_self_check + acquire_instance_lock passed)\n'
 		return 0
 	fi
 
