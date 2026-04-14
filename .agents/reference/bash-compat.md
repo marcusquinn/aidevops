@@ -17,9 +17,22 @@ Regression pattern: a fix for one axis breaks the other. Recent production failu
 
 **Test both platforms before merging.** ShellCheck catches neither axis — manual review and regression tests required.
 
+## Automated Bash Upgrade (t2087 / GH#18950)
+
+The framework provides automated detection and upgrade to remove the macOS bash 3.2 foot-gun:
+
+- **`bash-upgrade-helper.sh`** — check/status/install/upgrade/path subcommands. Self-contained, no `shared-constants.sh` dependency (chicken-and-egg). Safe to run under bash 3.2.
+- **`shared-constants.sh` re-exec guard** — transparently re-execs the calling script under Homebrew bash when `${BASH_VERSINFO[0]} -lt 4`. Set by `/opt/homebrew/bin/bash` (M1/M2), `/usr/local/bin/bash` (Intel), or `/home/linuxbrew/.linuxbrew/bin/bash`. Guards against infinite loops via `AIDEVOPS_BASH_REEXECED=1`.
+- **`setup.sh` hook** — calls `bash-upgrade-helper.sh check` on every `aidevops update` run; emits an advisory if bash drifts behind Homebrew latest.
+- **`aidevops-update-check.sh` hook** — rate-limited (24h) advisory on session startup when bash < 4 is detected. Stamp file: `~/.aidevops/cache/bash-drift-advisory.stamp`.
+
+To upgrade: `bash-upgrade-helper.sh install` (macOS, requires Homebrew). After install, re-exec guard auto-detects it with no further action needed.
+
+Regression test: `.agents/scripts/tests/test-bash-reexec-guard.sh` (8 assertions; runnable under `/bin/bash` 3.2).
+
 ## Bash 3.2 Compatibility (macOS default shell)
 
-macOS ships bash 3.2.57. All shell scripts MUST work on this version.
+macOS ships bash 3.2.57. All shell scripts MUST work on this version unless protected by the re-exec guard above.
 Bash 4.0+ features silently crash or produce wrong results — no error message.
 Production failures: pulse dispatch, worktree cleanup, dataset helpers, routine scheduler.
 

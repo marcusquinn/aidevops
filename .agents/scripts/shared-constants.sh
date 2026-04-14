@@ -17,6 +17,25 @@
 _SHARED_CONSTANTS_LOADED=1
 
 # =============================================================================
+# Runtime re-exec guard — transparent bash upgrade on macOS (t2087 / GH#18950)
+# =============================================================================
+# macOS ships /bin/bash 3.2.57 (GPLv2 license; Apple cannot upgrade it).
+# When a script sources this file under bash < 4, we transparently re-exec
+# the calling script under a modern bash found via Homebrew candidate paths.
+# AIDEVOPS_BASH_REEXECED prevents infinite loops when no modern bash exists.
+# Bash 3.2 compatible: uses only indexed array access and POSIX comparisons.
+# shellcheck disable=SC2128  # BASH_SOURCE in sourced context is intentional
+if [[ ${BASH_VERSINFO[0]} -lt 4 && -z "${AIDEVOPS_BASH_REEXECED:-}" && -n "${BASH_SOURCE[1]:-}" ]]; then
+	for _aidevops_bash_candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash; do
+		if [[ -x "$_aidevops_bash_candidate" ]]; then
+			export AIDEVOPS_BASH_REEXECED=1
+			exec "$_aidevops_bash_candidate" "${BASH_SOURCE[1]}" "$@"
+		fi
+	done
+	unset _aidevops_bash_candidate
+fi
+
+# =============================================================================
 # Tool Version Pins
 # =============================================================================
 # Pin a tool to a specific version to prevent auto-upgrade to a broken release.

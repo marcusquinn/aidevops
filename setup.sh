@@ -825,6 +825,23 @@ _setup_print_header() {
 	return 0
 }
 
+# Check bash version and emit advisory / prompt install if bash < 4 (t2087).
+# Calls bash-upgrade-helper.sh if available; falls through silently if not.
+# Always exits 0 — never a blocking failure.
+_check_bash_upgrade_advisory() {
+	local helper
+	helper="${INSTALL_DIR}/.agents/scripts/bash-upgrade-helper.sh"
+	if [[ ! -x "$helper" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/bash-upgrade-helper.sh"
+	fi
+	if [[ ! -x "$helper" ]]; then
+		return 0
+	fi
+	# check subcommand emits advisory to stderr, always exits 0
+	"$helper" check 2>&1 || true
+	return 0
+}
+
 # GH#17769: Comment out deprecated model env vars in a single credentials file.
 _comment_out_deprecated_model_vars() {
 	local file="$1"
@@ -863,6 +880,8 @@ _setup_run_non_interactive() {
 	print_info "Non-interactive mode: deploying agents and running safe migrations only"
 	verify_location
 	check_requirements
+	# Check bash version drift (t2087): emit advisory if running bash < 4.
+	_check_bash_upgrade_advisory
 	# Run quality tool detection in non-interactive mode too (warn-only path).
 	check_quality_tools
 	check_python_upgrade_available
@@ -941,6 +960,8 @@ _setup_run_interactive() {
 	# Required steps (always run)
 	verify_location
 	check_requirements
+	# Check bash version drift (t2087): emit advisory + offer install if bash < 4.
+	_check_bash_upgrade_advisory
 
 	# Quality tools check (optional but recommended)
 	confirm_step "Check quality tools (shellcheck, shfmt)" && check_quality_tools

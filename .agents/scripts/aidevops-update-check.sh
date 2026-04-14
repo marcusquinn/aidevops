@@ -515,6 +515,62 @@ _check_signing() {
 }
 
 # -----------------------------------------------------------------------------
+# _check_bash_version_drift: emit rate-limited advisory when running bash < 4.
+# Rate-limited to once per 24 hours via a stamp file — avoids nagging every
+# interactive session startup. macOS ships bash 3.2.57; Homebrew installs 5+.
+# References: GH#18830, GH#18950 (t2087).
+# -----------------------------------------------------------------------------
+_check_bash_version_drift() {
+	local bash_major="${BASH_VERSINFO[0]:-0}"
+
+	# Only advisory when running bash < 4
+	if [[ "$bash_major" -ge 4 ]]; then
+		echo ""
+		return 0
+	fi
+
+	local stamp_file="$HOME/.aidevops/cache/bash-drift-advisory.stamp"
+	local cache_dir
+	cache_dir="$(dirname "$stamp_file")"
+
+	# Rate limit: emit at most once per 24 hours (1440 minutes)
+	if [[ -f "$stamp_file" ]]; then
+		local recent
+		recent=$(find "$stamp_file" -mmin -1440 2>/dev/null || echo "")
+		if [[ -n "$recent" ]]; then
+			echo ""
+			return 0
+		fi
+	fi
+
+	# Update stamp (create cache dir if needed)
+	mkdir -p "$cache_dir"
+	touch "$stamp_file"
+
+	# Build advisory message
+	local bash_ver modern_bash_path advisory
+	bash_ver="${BASH_VERSION:-unknown}"
+	modern_bash_path=""
+	local _candidate
+	for _candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash; do
+		if [[ -x "$_candidate" ]]; then
+			modern_bash_path="$_candidate"
+			break
+		fi
+	done
+	unset _candidate
+
+	if [[ -n "$modern_bash_path" ]]; then
+		advisory="bash drift: running bash $bash_ver (< 4); modern bash found at $modern_bash_path. Run: bash-upgrade-helper.sh install"
+	else
+		advisory="bash drift: running bash $bash_ver (< 4). Install modern bash: bash-upgrade-helper.sh install (requires Homebrew)"
+	fi
+
+	echo "$advisory"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # _refresh_oauth_tokens: pre-emptive background token refresh on session startup.
 # Refreshes any OAuth tokens expiring within 1 hour — catches tokens that
 # expired while the machine was off. Runs silently; failures are harmless.
@@ -580,7 +636,7 @@ main() {
 
 	local runtime_hint nudge_output session_warning security_posture
 	local secret_hygiene advisories_output contribution_watch origin_notice
-	local signing_nudge
+	local signing_nudge bash_drift
 	runtime_hint=$(_get_runtime_hint "$app_name")
 	nudge_output=$(_check_local_models "$script_dir")
 	session_warning=$(_check_session_count "$script_dir")
@@ -590,6 +646,7 @@ main() {
 	contribution_watch=$(_check_contribution_watch)
 	origin_notice=$(_check_origin)
 	signing_nudge=$(_check_signing)
+	bash_drift=$(_check_bash_version_drift)
 
 	[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
 	[[ -n "$nudge_output" ]] && echo "$nudge_output"
@@ -600,6 +657,7 @@ main() {
 	[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
 	[[ -n "$origin_notice" ]] && echo "$origin_notice"
 	[[ -n "$signing_nudge" ]] && echo "$signing_nudge"
+	[[ -n "$bash_drift" ]] && echo "$bash_drift"
 
 	_write_cache "$cache_dir" "$output" "$runtime_hint" "$nudge_output" \
 		"$session_warning" "$security_posture" "$secret_hygiene" \
