@@ -401,26 +401,6 @@ jobs:
               echo "Issue #$ISSUE_NUM has rejection label '$REJECTION_MATCH' — using 'Referenced by' instead of 'Completed via'"
             fi
 
-            # t2084: Unconditionally unlock the linked issue. The pulse locks
-            # issues at dispatch time (t1934, pulse-dispatch-core.sh:lock_issue_for_worker)
-            # to prevent contributor-edit races during worker execution. The
-            # symmetric unlock_issue_after_worker is only called by the pulse's
-            # own merge path (pulse-merge.sh:_handle_post_merge_actions). When
-            # a human merges the PR via the GitHub UI — or any third-party bot,
-            # auto-merge, or `gh pr merge` outside the pulse — the unlock never
-            # fires and the issue stays locked forever, which then crashes this
-            # very workflow on its `gh issue comment` call with
-            # `GraphQL: Unable to create comment because issue is locked`.
-            #
-            # PR-merge is the canonical "work is done, lock no longer needed"
-            # event regardless of who clicks merge, so unlock unconditionally
-            # here. Idempotent: gh issue unlock on an already-unlocked issue
-            # is a no-op. The IS_LOCKED check below remains as belt-and-braces
-            # in case unlock fails (e.g., insufficient permissions on a fork's
-            # pull_request_target token).
-            gh issue unlock "$ISSUE_NUM" --repo "$REPO" 2>/dev/null || \
-              echo "Note: unlock on #$ISSUE_NUM failed or was already unlocked"
-
             # Post closing comment if none exists from this PR
             # Check for both "Completed via" and "Referenced by" variants to avoid duplicates
             EXISTING_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
@@ -439,18 +419,10 @@ jobs:
                 COMMENT_BODY="Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
               fi
 
-              # Belt-and-braces: re-check lock state after the unconditional
-              # unlock above. If the unlock succeeded (the common case), this
-              # is false and we fall straight through to gh issue comment.
-              # If the unlock failed (rare — usually fork-PR token perms), we
-              # surface a loud warning and trip COMMENT_FAILED so the operator
-              # sees it in the workflow log without the whole step crashing.
-              # Pre-t2084 behaviour was to silently skip (still better than a
-              # crash, but invisible to operators).
+              # Check if issue is locked before attempting to comment (locked issues reject comments with exit 1)
               IS_LOCKED=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" --jq '.locked' 2>/dev/null || echo "false")
               if [[ "$IS_LOCKED" == "true" ]]; then
-                echo "Warning: issue #$ISSUE_NUM is still locked after unlock attempt — skipping closing comment (labels will still be updated). This indicates an unlock-permission failure; investigate."
-                COMMENT_FAILED=1
+                echo "Issue #$ISSUE_NUM is locked — skipping closing comment (labels will still be updated)"
               elif gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "$COMMENT_BODY"; then
                 echo "Posted closing comment on #$ISSUE_NUM"
               else
