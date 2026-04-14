@@ -367,32 +367,15 @@ fetch_file_refs_md() {
 # transient GitHub/jq failure would otherwise auto-close still-valid
 # follow-up issues on the next refresh run. See PR #18736 CodeRabbit
 # feedback for the original report.
-build_pr_followup_body() {
+# Render the header section of a PR follow-up body: overview, source
+# PR link, and the worker-is-triager three-outcome rules (Outcomes
+# A/B/C). Split out of build_pr_followup_body to keep every function
+# under the 100-line complexity threshold (GH#18801). The header is
+# static content driven only by ${repo}/${pr} — no findings data — so
+# the split is a clean seam.
+# Arguments: repo, pr
+_emit_pr_followup_body_header() {
 	local repo="$1" pr="$2"
-	local inline review file_refs refs_section
-	local inline_rc=0 review_rc=0 refs_rc=0
-	inline=$(fetch_inline_comments_md "$repo" "$pr") || inline_rc=$?
-	review=$(fetch_review_summaries_md "$repo" "$pr") || review_rc=$?
-	file_refs=$(fetch_file_refs_md "$repo" "$pr") || refs_rc=$?
-
-	# Any fetch error → refuse to produce a body. Callers get rc=2 and
-	# must log + skip (not close). This prevents closing valid issues on
-	# transient errors.
-	if [[ $inline_rc -ne 0 || $review_rc -ne 0 || $refs_rc -ne 0 ]]; then
-		log "build_pr_followup_body: fetch error for ${repo}#${pr} (inline=${inline_rc} review=${review_rc} refs=${refs_rc})"
-		return 2
-	fi
-
-	if [[ -z "$inline" && -z "$review" ]]; then
-		return 1
-	fi
-
-	if [[ -n "$file_refs" ]]; then
-		refs_section="$file_refs"
-	else
-		refs_section="- _(No file paths in inline comments — see PR review summaries below for context)_"
-	fi
-
 	cat <<MD
 ## Unaddressed review bot suggestions
 
@@ -466,6 +449,19 @@ ready-to-approve recommendation, not a blank task.
 > \`prompts/build.txt\` "Reasoning responsibility", the model does the
 > thinking and delivers a recommendation. Only escalate what is genuinely
 > a maintainer-only decision.
+MD
+	return 0
+}
+
+# Render the Worker Guidance + findings section of a PR follow-up body
+# (files to modify, implementation steps, verification, inline
+# comments, review summaries). Split out of build_pr_followup_body to
+# keep every function under the 100-line complexity threshold
+# (GH#18801). All findings data flows through here.
+# Arguments: refs_section, inline, review
+_emit_pr_followup_body_findings() {
+	local refs_section="$1" inline="$2" review="$3"
+	cat <<MD
 
 ### Worker Guidance
 
@@ -500,6 +496,44 @@ ${inline:-_(none)_}
 
 ${review:-_(none)_}
 MD
+	return 0
+}
+
+# Build the full PR follow-up issue body by fetching inline comments,
+# review summaries, and file refs, then composing the header and
+# findings sections. Returns:
+#   0  — body printed on stdout
+#   1  — no unresolved findings (caller should close any existing issue)
+#   2  — fetch error (caller must log + skip, NOT close)
+# Arguments: repo, pr
+build_pr_followup_body() {
+	local repo="$1" pr="$2"
+	local inline review file_refs refs_section
+	local inline_rc=0 review_rc=0 refs_rc=0
+	inline=$(fetch_inline_comments_md "$repo" "$pr") || inline_rc=$?
+	review=$(fetch_review_summaries_md "$repo" "$pr") || review_rc=$?
+	file_refs=$(fetch_file_refs_md "$repo" "$pr") || refs_rc=$?
+
+	# Any fetch error → refuse to produce a body. Callers get rc=2 and
+	# must log + skip (not close). This prevents closing valid issues on
+	# transient errors.
+	if [[ $inline_rc -ne 0 || $review_rc -ne 0 || $refs_rc -ne 0 ]]; then
+		log "build_pr_followup_body: fetch error for ${repo}#${pr} (inline=${inline_rc} review=${review_rc} refs=${refs_rc})"
+		return 2
+	fi
+
+	if [[ -z "$inline" && -z "$review" ]]; then
+		return 1
+	fi
+
+	if [[ -n "$file_refs" ]]; then
+		refs_section="$file_refs"
+	else
+		refs_section="- _(No file paths in inline comments — see PR review summaries below for context)_"
+	fi
+
+	_emit_pr_followup_body_header "$repo" "$pr"
+	_emit_pr_followup_body_findings "$refs_section" "$inline" "$review"
 	return 0
 }
 
@@ -628,6 +662,126 @@ do_scan() {
 # Why not just re-scan: issue_exists() in do_scan skips PRs that already
 # have an issue (any state), so a re-scan leaves the old body in place.
 # Refresh is the explicit path to rewrite existing bodies.
+# Close a review-followup issue whose source PR has no unresolved
+# findings (rc=1 from build_pr_followup_body). Split out of do_refresh
+# to keep it under the 100-line complexity threshold (GH#18801). In
+# dry-run mode, logs the intended close and returns 1 (=closed) so the
+# caller's counter still ticks the "would-close" category. Returns:
+#   1 — issue closed (or would be closed in dry-run)
+#   3 — close failed (counts as skipped)
+# Arguments: repo, issue_number, pr, dry_run
+_refresh_close_resolved_issue() {
+	local repo="$1" issue_number="$2" pr="$3" dry_run="$4"
+	local close_comment="All review findings on PR #${pr} are now resolved or outdated according to GitHub's review-thread state (isResolved or isOutdated == true). Closing as superseded by the GraphQL resolution filter.
+
+If any finding was missed, reopen this issue manually with a comment pointing at the specific thread — that feedback trains the next session on whether the filter needs tightening.
+
+_Refreshed by \`post-merge-review-scanner.sh refresh\` (t2054)._"
+
+	if [[ "$dry_run" == "true" ]]; then
+		log "[DRY-RUN] issue #${issue_number}: would close (PR #${pr} has no unresolved findings)"
+		return 1
+	fi
+	if gh issue close "$issue_number" --repo "$repo" \
+		--comment "$close_comment" >/dev/null 2>&1; then
+		log "issue #${issue_number}: closed (no unresolved findings on PR #${pr})"
+		return 1
+	fi
+	log "issue #${issue_number}: close failed"
+	return 3
+}
+
+# Process a single review-followup issue for refresh: extract source
+# PR, rebuild body, then close / update / skip as appropriate. Split
+# out of do_refresh to keep every function under the 100-line
+# complexity threshold (GH#18801). Returns a category code the caller
+# maps to counters:
+#   0 — body updated (or would update in dry-run)
+#   1 — issue closed (or would close in dry-run)
+#   2 — body unchanged, no action
+#   3 — skipped (malformed title, fetch error, empty body, edit failed)
+# Arguments: repo, issue_number, title, old_body_b64, dry_run
+_refresh_one_issue() {
+	local repo="$1" issue_number="$2" title="$3" old_body_b64="$4" dry_run="$5"
+
+	# Extract source PR number from title: "Review followup: PR #NNN — ..."
+	local pr
+	pr=$(printf '%s' "$title" | sed -n 's/^Review followup: PR #\([0-9][0-9]*\).*/\1/p')
+	if [[ -z "$pr" ]]; then
+		log "issue #${issue_number}: cannot extract PR number from title, skip"
+		return 3
+	fi
+
+	local new_body=""
+	local build_rc=0
+	new_body=$(build_pr_followup_body "$repo" "$pr") || build_rc=$?
+
+	# IMPORTANT (CodeRabbit CR on PR #18736): only close on the
+	# explicit no-findings sentinel (rc=1). Any other non-zero is a
+	# fetch error (rc=2) — log it and skip so we don't auto-close
+	# still-valid follow-up issues on transient GitHub/jq failures.
+	if [[ "$build_rc" -eq 2 ]]; then
+		log "issue #${issue_number}: fetch error building body for PR #${pr}, skip (will retry next refresh)"
+		return 3
+	fi
+
+	if [[ "$build_rc" -eq 1 ]]; then
+		local close_rc=0
+		_refresh_close_resolved_issue "$repo" "$issue_number" "$pr" "$dry_run" || close_rc=$?
+		return "$close_rc"
+	fi
+
+	# Paranoid guard: rc=0 but empty body should never happen if
+	# build_pr_followup_body is correct, but if it does, log it and
+	# skip rather than silently closing or silently updating with
+	# empty content.
+	if [[ -z "$new_body" ]]; then
+		log "issue #${issue_number}: inconsistent state (rc=0 but empty body) for PR #${pr}, skip"
+		return 3
+	fi
+
+	# Append signature footer to match create_issue output.
+	local new_body_with_sig
+	new_body_with_sig=$(append_sig_footer "$new_body")
+
+	# Decode old body for change detection.
+	local old_body=""
+	if [[ -n "$old_body_b64" ]]; then
+		old_body=$(printf '%s' "$old_body_b64" | base64 --decode 2>/dev/null || echo "")
+	fi
+
+	# Strip signature footer from old body before comparison (the
+	# footer embeds a timestamp / token count that changes every run,
+	# so comparing with it would always report "changed"). The sig
+	# helper emits a block starting with "<!-- aidevops:sig -->".
+	local old_body_stripped="${old_body%%<!-- aidevops:sig -->*}"
+	local new_body_stripped="${new_body_with_sig%%<!-- aidevops:sig -->*}"
+
+	if [[ "$new_body_stripped" == "$old_body_stripped" ]]; then
+		log "issue #${issue_number}: body unchanged, skip"
+		return 2
+	fi
+
+	if [[ "$dry_run" == "true" ]]; then
+		log "[DRY-RUN] issue #${issue_number}: would update body (old=${#old_body} new=${#new_body_with_sig} chars)"
+		return 0
+	fi
+
+	if gh issue edit "$issue_number" --repo "$repo" \
+		--body "$new_body_with_sig" >/dev/null 2>&1; then
+		log "issue #${issue_number}: body updated"
+		return 0
+	fi
+	log "issue #${issue_number}: edit failed"
+	return 3
+}
+
+# Refresh all open review-followup issues in a repo: rebuild each
+# body, update the issue when content changed, close when the source
+# PR has no unresolved findings, skip on errors. Idempotent and safe
+# under transient GitHub failures — see _refresh_one_issue for the
+# per-issue state machine.
+# Arguments: repo, dry_run
 do_refresh() {
 	local repo="$1" dry_run="$2"
 	log "Refreshing open review-followup issues in ${repo} (dry_run=${dry_run})"
@@ -650,100 +804,15 @@ do_refresh() {
 		[[ -z "$issue_number" ]] && continue
 		count=$((count + 1))
 
-		# Extract source PR number from title: "Review followup: PR #NNN — ..."
-		local pr
-		pr=$(printf '%s' "$title" | sed -n 's/^Review followup: PR #\([0-9][0-9]*\).*/\1/p')
-		if [[ -z "$pr" ]]; then
-			log "issue #${issue_number}: cannot extract PR number from title, skip"
-			skipped=$((skipped + 1))
-			continue
-		fi
-
-		local new_body=""
-		local build_rc=0
-		new_body=$(build_pr_followup_body "$repo" "$pr") || build_rc=$?
-
-		# IMPORTANT (CodeRabbit CR on PR #18736): only close on the
-		# explicit no-findings sentinel (rc=1). Any other non-zero is a
-		# fetch error (rc=2) — log it and skip so we don't auto-close
-		# still-valid follow-up issues on transient GitHub/jq failures.
-		if [[ "$build_rc" -eq 2 ]]; then
-			log "issue #${issue_number}: fetch error building body for PR #${pr}, skip (will retry next refresh)"
-			skipped=$((skipped + 1))
-			continue
-		fi
-
-		if [[ "$build_rc" -eq 1 ]]; then
-			# Explicit no-findings sentinel — all findings resolved or
-			# outdated. Safe to close the follow-up issue.
-			local close_comment="All review findings on PR #${pr} are now resolved or outdated according to GitHub's review-thread state (isResolved or isOutdated == true). Closing as superseded by the GraphQL resolution filter.
-
-If any finding was missed, reopen this issue manually with a comment pointing at the specific thread — that feedback trains the next session on whether the filter needs tightening.
-
-_Refreshed by \`post-merge-review-scanner.sh refresh\` (t2054)._"
-
-			if [[ "$dry_run" == "true" ]]; then
-				log "[DRY-RUN] issue #${issue_number}: would close (PR #${pr} has no unresolved findings)"
-			else
-				if gh issue close "$issue_number" --repo "$repo" \
-					--comment "$close_comment" >/dev/null 2>&1; then
-					log "issue #${issue_number}: closed (no unresolved findings on PR #${pr})"
-					closed=$((closed + 1))
-				else
-					log "issue #${issue_number}: close failed"
-					skipped=$((skipped + 1))
-				fi
-			fi
-			continue
-		fi
-
-		# Paranoid guard: rc=0 but empty body should never happen if
-		# build_pr_followup_body is correct, but if it does, log it and
-		# skip rather than silently closing or silently updating with
-		# empty content.
-		if [[ -z "$new_body" ]]; then
-			log "issue #${issue_number}: inconsistent state (rc=0 but empty body) for PR #${pr}, skip"
-			skipped=$((skipped + 1))
-			continue
-		fi
-
-		# Append signature footer to match create_issue output
-		local new_body_with_sig
-		new_body_with_sig=$(append_sig_footer "$new_body")
-
-		# Decode old body for change detection
-		local old_body=""
-		if [[ -n "$old_body_b64" ]]; then
-			old_body=$(printf '%s' "$old_body_b64" | base64 --decode 2>/dev/null || echo "")
-		fi
-
-		# Strip signature footer from old body before comparison (the
-		# footer embeds a timestamp / token count that changes every run,
-		# so comparing with it would always report "changed"). The sig
-		# helper emits a block starting with "<!-- aidevops:sig -->".
-		local old_body_stripped
-		old_body_stripped="${old_body%%<!-- aidevops:sig -->*}"
-		local new_body_stripped
-		new_body_stripped="${new_body_with_sig%%<!-- aidevops:sig -->*}"
-
-		if [[ "$new_body_stripped" == "$old_body_stripped" ]]; then
-			log "issue #${issue_number}: body unchanged, skip"
-			unchanged=$((unchanged + 1))
-			continue
-		fi
-
-		if [[ "$dry_run" == "true" ]]; then
-			log "[DRY-RUN] issue #${issue_number}: would update body (old=${#old_body} new=${#new_body_with_sig} chars)"
-		else
-			if gh issue edit "$issue_number" --repo "$repo" \
-				--body "$new_body_with_sig" >/dev/null 2>&1; then
-				log "issue #${issue_number}: body updated"
-				updated=$((updated + 1))
-			else
-				log "issue #${issue_number}: edit failed"
-				skipped=$((skipped + 1))
-			fi
-		fi
+		local rc=0
+		_refresh_one_issue "$repo" "$issue_number" "$title" \
+			"$old_body_b64" "$dry_run" || rc=$?
+		case "$rc" in
+		0) updated=$((updated + 1)) ;;
+		1) closed=$((closed + 1)) ;;
+		2) unchanged=$((unchanged + 1)) ;;
+		*) skipped=$((skipped + 1)) ;;
+		esac
 	done < <(printf '%s' "$issues_json" | jq -r '.[] | "\(.number)\t\(.title)\t\(.body // "" | @base64)"')
 
 	log "Refresh done. Processed: ${count}, updated: ${updated}, closed: ${closed}, unchanged: ${unchanged}, skipped: ${skipped}"
