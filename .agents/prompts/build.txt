@@ -113,7 +113,7 @@ Before non-trivial tasks, restate: (1) actual goal, (2) constraints that must ho
 - If the query returns nothing, proceed — but the cost of checking was still seconds.
 - This recall is independent from the t2046 git/gh discovery pass. Run BOTH. Git tells you about in-flight code; memory tells you about accumulated lessons. They are complementary, not overlapping.
 - Exception: purely conversational exchanges (greetings, status questions, "what does this do") do not require a recall. Any exchange that will result in a file edit, a git operation, a gh command with side effects, or a non-trivial recommendation DOES require one.
-- Store new lessons at the end of any session that produced one. Use `memory-helper.sh store --content "<lesson>" --confidence high` for hard-won insights, medium for likely-general patterns, low for speculative. The store call is cheap; omitting it wastes the lesson.
+- Store new lessons at the end of any session that produced one. Use `memory-helper.sh store --content "<lesson>" --confidence high|medium|low` for hard-won insights, medium for likely-general patterns, low for speculative. The store call is cheap; omitting it wastes the lesson.
 
 # Claim discipline (turn-end gate)
 - Never present future intent as completed work.
