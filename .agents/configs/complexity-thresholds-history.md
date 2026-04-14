@@ -52,6 +52,8 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 | 279 | GH#18912 | violations at threshold 272/272 (0 headroom); 272 violations + 7 headroom = 279; proximity guard (warn_at = 279-5 = 274) fires when violations exceed 274 (i.e., at 275), preventing saturation |
 | 274 | GH#18928 | ratcheted down — actual violations 272 + 2 buffer |
 | 279 | GH#18938 | proximity guard firing at 272/274 (2 headroom); 272 violations + 7 headroom = 279; proximity guard (warn_at = 279-5 = 274) fires when violations exceed 274 (i.e., at 275), preventing saturation |
+| 275 | GH#18949 | ratcheted down — actual violations 273 + 2 buffer |
+| 281 | GH#18994 | proximity guard firing at 274/275 (1 headroom); 274 violations + 7 headroom = 281; proximity guard (warn_at = 281-5 = 276) fires when violations exceed 276 (i.e., at 277), preventing saturation |
 
 ## FUNCTION_COMPLEXITY_THRESHOLD History
 
