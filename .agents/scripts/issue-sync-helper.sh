@@ -260,7 +260,7 @@ gh_create_label() {
 gh_find_issue_by_title() {
 	local repo="$1" prefix="$2" state="${3:-all}" limit="${4:-500}"
 	gh issue list --repo "$repo" --state "$state" --limit "$limit" \
-		--json number,title --jq "[.[] | select(.title | startswith(\"${prefix}\"))][0].number" 2>/dev/null || echo ""
+		--json number,title --jq "[.[] | select(.title | startswith(\"${prefix}\"))][0].number // empty" 2>/dev/null || echo ""
 }
 
 gh_find_merged_pr() {
@@ -779,7 +779,7 @@ _enrich_update_issue() {
 
 	if [[ "$FORCE_ENRICH" != "true" ]]; then
 		local current_body
-		current_body=$(gh issue view "$num" --repo "$repo" --json body -q .body 2>/dev/null || echo "")
+		current_body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""' 2>/dev/null || echo "")
 
 		# t2063: brief-file presence is the authoritative signal.
 		# Resolve project root from the shared PROJECT_ROOT variable if set
@@ -829,15 +829,16 @@ _enrich_update_issue() {
 # metadata, apply labels, update title/body. Outputs "ENRICHED" on success
 # so the caller can count enriched tasks via token matching.
 _enrich_process_task() {
-	local task_id="$1" repo="$2" todo_file="$3" project_root="$4"
-	local task_id_ere
-	task_id_ere=$(_escape_ere "$task_id")
-	local task_line
-	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
+	local task_id="$1" repo="$2" todo_file="$3" project_root="$4" task_line="${5:-}"
+	if [[ -z "$task_line" ]]; then
+		local task_id_ere
+		task_id_ere=$(_escape_ere "$task_id")
+		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
+	fi
 	local num
 	num=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 	[[ -z "$num" ]] && num=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 500)
-	[[ -z "$num" || "$num" == "null" ]] && {
+	[[ -z "$num" ]] && {
 		print_warning "$task_id: no issue found"
 		return 0
 	}
@@ -1010,9 +1011,9 @@ cmd_close() {
 		num=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 		if [[ -z "$num" ]]; then
 			num=$(gh_find_issue_by_title "$repo" "${target_task}:" "open" 500)
-			[[ -n "$num" && "$num" != "null" && "$DRY_RUN" != "true" ]] && add_gh_ref_to_todo "$target_task" "$num" "$todo_file"
+			[[ -n "$num" && "$DRY_RUN" != "true" ]] && add_gh_ref_to_todo "$target_task" "$num" "$todo_file"
 		fi
-		[[ -z "$num" || "$num" == "null" ]] && {
+		[[ -z "$num" ]] && {
 			print_info "$target_task: no matching issue"
 			return 0
 		}
@@ -1152,7 +1153,7 @@ cmd_reconcile() {
 		print_warning "MISMATCH: $tid ref:GH#$gh_ref -> '$it'"
 		local correct
 		correct=$(gh_find_issue_by_title "$repo" "${tid}:" "all" 500)
-		if [[ -n "$correct" && "$correct" != "null" && "$correct" != "$gh_ref" ]]; then
+		if [[ -n "$correct" && "$correct" != "$gh_ref" ]]; then
 			if [[ "$DRY_RUN" == "true" ]]; then
 				print_info "[DRY-RUN] Fix $tid: #$gh_ref -> #$correct"
 			else
