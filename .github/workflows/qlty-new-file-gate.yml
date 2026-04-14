@@ -1,0 +1,161 @@
+name: Qlty New-File Gate
+
+# t2068: block PRs that add brand-new source files shipping with any
+# qlty smells.
+#
+# Complements `qlty-regression.yml` (t2065):
+# - t2065 checks the *delta* across the whole tree and fails on a net
+#   increase — catches debt accumulating in files that already exist.
+# - t2068 (this workflow) scans *only newly-added files* and fails if
+#   any of them contain a single smell — catches the "mega-module
+#   lands already smelly and stays that way" failure mode.
+#
+# Override: apply the `new-file-smell-ok` label AND add a
+# `## New File Smell Justification` section to the PR body.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-new-files:
+    name: Detect new files
+    runs-on: ubuntu-latest
+    outputs:
+      has_new_source: ${{ steps.check.outputs.has_new_source }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Count new source files
+        id: check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          added=$(git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" || true)
+          if [ -z "$added" ]; then
+            echo "No added files; skipping new-file gate."
+            echo "has_new_source=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf 'Added files:\n%s\n' "$added"
+          # Coarse source-extension prefilter — identical in intent to
+          # is_source_file() in the helper, but implemented with a regex
+          # here so we can decide whether to spin up the qlty job at all.
+          src=$(printf '%s\n' "$added" | grep -E '\.(py|pyi|js|mjs|cjs|jsx|ts|tsx|sh|bash|zsh|rb|erb|go|rs|java|kt|swift|c|cpp|cc|cxx|h|hpp|php|ex|exs)$' || true)
+          if [ -z "$src" ]; then
+            echo "No new source files of recognised types; skipping."
+            echo "has_new_source=false" >> "$GITHUB_OUTPUT"
+          else
+            printf 'Candidate new source files:\n%s\n' "$src"
+            echo "has_new_source=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  scan:
+    name: Qlty New-File Smell Gate
+    runs-on: ubuntu-latest
+    needs: detect-new-files
+    if: needs.detect-new-files.outputs.has_new_source == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Qlty CLI
+        uses: qltysh/qlty-action/install@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0
+
+      - name: Run new-file gate helper
+        id: scan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          .agents/scripts/qlty-new-file-gate-helper.sh new-files \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --output-md /tmp/qlty-new-file-report.md \
+            --sarif /tmp/qlty-new-file.sarif
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          echo "---- report ----"
+          cat /tmp/qlty-new-file-report.md || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qlty-new-file-gate-${{ github.event.pull_request.number }}
+          path: |
+            /tmp/qlty-new-file-report.md
+            /tmp/qlty-new-file.sarif
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Post PR comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          body_file=/tmp/qlty-new-file-report.md
+          if [ ! -s "$body_file" ]; then
+            echo "No report to post."
+            exit 0
+          fi
+          marker="<!-- qlty-new-file-gate -->"
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            echo "Updating existing comment $existing"
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body=@"$body_file" >/dev/null 2>&1 || true
+          else
+            echo "Creating new comment"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$body_file" \
+              >/dev/null 2>&1 || true
+          fi
+
+      - name: Enforce gate
+        env:
+          HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'new-file-smell-ok') }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          if [ "$EXIT_CODE" = "0" ]; then
+            echo "Qlty new-file gate: no smells in new files."
+            exit 0
+          fi
+          if [ "$EXIT_CODE" != "1" ]; then
+            echo "::error::Helper exited with unexpected code: $EXIT_CODE"
+            exit 1
+          fi
+          if [ "$HAS_OVERRIDE" != "true" ]; then
+            echo "::error::New file(s) ship with qlty smells. Apply the 'new-file-smell-ok' label AND add a '## New File Smell Justification' section to the PR description to override."
+            exit 1
+          fi
+          # Override label is set — require the justification section in the body.
+          if printf '%s' "$PR_BODY" | grep -qE '^##+[[:space:]]+New File Smell Justification'; then
+            echo "::warning::Qlty new-file gate: smells detected but 'new-file-smell-ok' label + justification section present — allowing with warning."
+            exit 0
+          fi
+          echo "::error::'new-file-smell-ok' label is set but the PR description is missing a '## New File Smell Justification' section. Add the section with a rationale for why the new file(s) may legitimately ship with smells, then push again."
+          exit 1
