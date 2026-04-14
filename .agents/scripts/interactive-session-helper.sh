@@ -459,6 +459,112 @@ _isc_cmd_status() {
 }
 
 # -----------------------------------------------------------------------------
+# Internal helpers: closed-not-merged PR orphan scanning
+# -----------------------------------------------------------------------------
+
+# Compute a 14-day cutoff epoch.
+# Supports GNU date (Linux) and BSD date (macOS).
+_isc_compute_cutoff_epoch() {
+	local epoch
+	epoch=$(date -d '14 days ago' +%s 2>/dev/null ||
+		date -v-14d +%s 2>/dev/null ||
+		echo 0)
+	printf '%s' "$epoch"
+	return 0
+}
+
+# Fetch closed-not-merged PRs for a repo within the cutoff window.
+# $1: slug (owner/repo), $2: cutoff_epoch
+# Outputs: one line per PR, fields joined by \x01 (number|closedAt|title|branch|body).
+_isc_fetch_filtered_prs() {
+	local slug="$1"
+	local cutoff_epoch="$2"
+	local prs_raw
+	prs_raw=$(gh pr list --repo "$slug" --state closed --limit 50 \
+		--json number,title,headRefName,closedAt,mergedAt,body \
+		2>/dev/null || echo "[]")
+	[[ "$prs_raw" == "[]" || -z "$prs_raw" ]] && return 0
+	# shellcheck disable=SC2016  # $cutoff is a jq argjson var, not a shell expansion
+	printf '%s' "$prs_raw" | jq -r \
+		--argjson cutoff "$cutoff_epoch" \
+		'.[] | select(
+			.mergedAt == null and
+			.closedAt != null and
+			(.closedAt | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) >= $cutoff
+		) | [(.number | tostring), .closedAt, .title, (.headRefName // ""), .body] | join("\u0001")' \
+		2>/dev/null || true
+	return 0
+}
+
+# Extract issue numbers referenced by closing keywords in a PR body.
+# Reads PR body from stdin. Outputs one issue number per line.
+# Keywords matched: Resolves, Closes, Fixes, For (case-insensitive).
+_isc_extract_pr_linked_issues() {
+	grep -oiE '(resolves|closes|fixes|for) #[0-9]+' |
+		grep -oE '[0-9]+' 2>/dev/null || true
+	return 0
+}
+
+# Determine who closed a PR by checking for the deterministic merge pass marker.
+# $1: slug (owner/repo), $2: pr_number
+# Outputs: "deterministic merge pass (pulse-merge.sh) — HIGH severity" or "unknown".
+_isc_get_pr_closed_by() {
+	local slug="$1"
+	local pr_number="$2"
+	local pulse_match
+	pulse_match=$(gh api "repos/${slug}/issues/${pr_number}/comments" \
+		--jq '[.[] | select(.body | test("deterministic merge pass|pulse-merge"; "i"))] | length' \
+		2>/dev/null || echo "0")
+	if [[ "${pulse_match:-0}" -gt 0 ]]; then
+		printf 'deterministic merge pass (pulse-merge.sh) — HIGH severity'
+	else
+		printf 'unknown'
+	fi
+	return 0
+}
+
+# Check whether a PR branch still exists on origin.
+# $1: slug (owner/repo), $2: pr_branch (may be empty)
+# Outputs: "yes" or "no".
+_isc_pr_branch_on_origin() {
+	local slug="$1"
+	local pr_branch="$2"
+	if [[ -z "$pr_branch" ]]; then
+		printf 'no'
+		return 0
+	fi
+	if gh api "repos/${slug}/git/refs/heads/${pr_branch}" >/dev/null 2>&1; then
+		printf 'yes'
+	else
+		printf 'no'
+	fi
+	return 0
+}
+
+# Print one orphan PR/issue advisory entry to stdout.
+# Args: pr_number issue_num pr_title pr_branch branch_exists closed_by pr_closed_at slug
+_isc_print_orphan_pr_entry() {
+	local pr_number="$1"
+	local issue_num="$2"
+	local pr_title="$3"
+	local pr_branch="$4"
+	local branch_exists="$5"
+	local closed_by="$6"
+	local pr_closed_at="$7"
+	local slug="$8"
+	printf '  STALE: PR #%s (closed not merged) → issue #%s still OPEN\n' \
+		"$pr_number" "$issue_num"
+	printf '    Title:      %s\n' "$pr_title"
+	printf '    Branch:     %s (still on origin: %s)\n' \
+		"${pr_branch:-unknown}" "$branch_exists"
+	printf '    Closed by:  %s\n' "$closed_by"
+	printf '    Closed at:  %s\n' "$pr_closed_at"
+	printf '    Action:     gh pr reopen %s --repo %s\n' "$pr_number" "$slug"
+	printf '\n'
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # Internal: scan closed-not-merged PRs whose linked issue is still open
 # -----------------------------------------------------------------------------
 # For each pulse-enabled repo in repos.json:
@@ -483,64 +589,32 @@ _isc_scan_closed_pr_orphans() {
 	fi
 
 	local orphan_count=0
-
-	# Compute cutoff epoch (14 days ago). Support GNU date (Linux) and BSD date (macOS).
 	local cutoff_epoch
-	cutoff_epoch=$(date -d '14 days ago' +%s 2>/dev/null ||
-		date -v-14d +%s 2>/dev/null ||
-		echo 0)
+	cutoff_epoch=$(_isc_compute_cutoff_epoch)
 
 	local slug
 	while IFS= read -r slug; do
 		[[ -z "$slug" ]] && continue
 
-		# Fetch closed PRs (last 50). We'll filter mergedAt==null + date in jq.
-		local prs_raw
-		prs_raw=$(gh pr list --repo "$slug" --state closed --limit 50 \
-			--json number,title,headRefName,closedAt,mergedAt,body \
-			2>/dev/null || echo "[]")
-
-		[[ "$prs_raw" == "[]" || -z "$prs_raw" ]] && continue
-
-		# Extract closed-not-merged PRs within the 14-day window.
-		# Output: one line per PR as "number|closedAt|title|branch|body"
-		# Using a placeholder separator (\x01) to safely embed body newlines.
 		local pr_entries
-		# shellcheck disable=SC2016  # $cutoff is a shell var, used outside jq
-		pr_entries=$(printf '%s' "$prs_raw" | jq -r \
-			--argjson cutoff "$cutoff_epoch" \
-			'.[] | select(
-				.mergedAt == null and
-				.closedAt != null and
-				(.closedAt | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) >= $cutoff
-			) | [(.number | tostring), .closedAt, .title, (.headRefName // ""), .body] | join("\u0001")' \
-			2>/dev/null || true)
-
+		pr_entries=$(_isc_fetch_filtered_prs "$slug" "$cutoff_epoch")
 		[[ -z "$pr_entries" ]] && continue
 
-		# Process each matching PR
 		local pr_entry
 		while IFS= read -r pr_entry; do
 			[[ -z "$pr_entry" ]] && continue
 
-			# Parse fields (IFS=\x01 split)
 			local pr_number pr_closed_at pr_title pr_branch pr_body
 			IFS=$'\x01' read -r pr_number pr_closed_at pr_title pr_branch pr_body <<<"$pr_entry"
-
 			[[ -z "$pr_number" ]] && continue
 
-			# Extract issue numbers referenced in the PR body via closing keywords.
-			# Matches: Resolves #N, Closes #N, Fixes #N, For #N (case-insensitive).
 			local issue_nums=()
 			local raw_num
 			while IFS= read -r raw_num; do
 				[[ -z "$raw_num" ]] && continue
 				issue_nums+=("$raw_num")
-			done < <(printf '%s\n' "$pr_body" |
-				grep -oiE '(resolves|closes|fixes|for) #[0-9]+' |
-				grep -oE '[0-9]+' 2>/dev/null || true)
+			done < <(printf '%s\n' "$pr_body" | _isc_extract_pr_linked_issues)
 
-			# Check each linked issue's current state
 			local issue_num
 			for issue_num in "${issue_nums[@]+"${issue_nums[@]}"}"; do
 				[[ -z "$issue_num" ]] && continue
@@ -554,35 +628,12 @@ _isc_scan_closed_pr_orphans() {
 					if [[ $orphan_count -eq 0 ]]; then
 						printf '\nClosed-not-merged PRs with still-open linked issues:\n\n'
 					fi
-
-					# Detect if the close was by the deterministic merge pass.
-					# Match comment text containing the pulse-merge marker.
-					local closed_by="unknown"
-					local pulse_match
-					pulse_match=$(gh api "repos/${slug}/issues/${pr_number}/comments" \
-						--jq '[.[] | select(.body | test("deterministic merge pass|pulse-merge"; "i"))] | length' \
-						2>/dev/null || echo "0")
-					if [[ "${pulse_match:-0}" -gt 0 ]]; then
-						closed_by="deterministic merge pass (pulse-merge.sh) — HIGH severity"
-					fi
-
-					# Check if the branch still exists on origin.
-					local branch_exists="no"
-					if [[ -n "$pr_branch" ]]; then
-						if gh api "repos/${slug}/git/refs/heads/${pr_branch}" >/dev/null 2>&1; then
-							branch_exists="yes"
-						fi
-					fi
-
-					printf '  STALE: PR #%s (closed not merged) → issue #%s still OPEN\n' \
-						"$pr_number" "$issue_num"
-					printf '    Title:      %s\n' "$pr_title"
-					printf '    Branch:     %s (still on origin: %s)\n' \
-						"${pr_branch:-unknown}" "$branch_exists"
-					printf '    Closed by:  %s\n' "$closed_by"
-					printf '    Closed at:  %s\n' "$pr_closed_at"
-					printf '    Action:     gh pr reopen %s --repo %s\n' "$pr_number" "$slug"
-					printf '\n'
+					local closed_by branch_exists
+					closed_by=$(_isc_get_pr_closed_by "$slug" "$pr_number")
+					branch_exists=$(_isc_pr_branch_on_origin "$slug" "$pr_branch")
+					_isc_print_orphan_pr_entry \
+						"$pr_number" "$issue_num" "$pr_title" "$pr_branch" \
+						"$branch_exists" "$closed_by" "$pr_closed_at" "$slug"
 					orphan_count=$((orphan_count + 1))
 				fi
 			done
