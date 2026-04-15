@@ -206,6 +206,54 @@ _dlw_resolve_tier_and_model() {
 #
 # Arguments: issue_number, repo_path
 #######################################
+###############################################################################
+# Restore gitignored dependencies (node_modules) in a worktree.
+#
+# Git worktrees only contain tracked files. Directories like node_modules/
+# are gitignored, so they never appear in worktrees — even when the
+# canonical repo has them installed. If a project tool (e.g. .opencode/
+# tool/session-rename.ts) imports from node_modules, the runtime crashes
+# on startup: "Cannot find module '@opencode-ai/plugin'".
+#
+# This caused 100% worker failure rate: 15 of 27 open issues stuck in
+# dispatch-fail loops, 9 falsely escalated to tier:thinking. Workers
+# exited 0 with zero model activity because the tool-loading error
+# prevented the session from starting.
+#
+# Fix: after creating or resetting a worktree, copy node_modules from
+# the canonical repo for any directory that has a package.json tracked
+# in git. This is fast (cp -a), offline, and idempotent.
+#
+# Arguments: worktree_path, repo_path
+###############################################################################
+_dlw_restore_worktree_deps() {
+	local worktree_path="$1"
+	local repo_path="$2"
+
+	[[ -z "$worktree_path" || -z "$repo_path" ]] && return 0
+	[[ ! -d "$worktree_path" || ! -d "$repo_path" ]] && return 0
+
+	# Find directories in the worktree that have a package.json but are
+	# missing node_modules. Only check top-level and one level deep —
+	# deeper nesting is unlikely and find is expensive.
+	local _pkg_dir=""
+	while IFS= read -r _pkg_dir; do
+		local _dir=""
+		_dir=$(dirname "$_pkg_dir") || continue
+		local _rel_dir=""
+		_rel_dir="${_dir#"$worktree_path"}" || continue
+		# _rel_dir is now e.g. "/.opencode" or "" (for root package.json)
+		local _src_nm="${repo_path}${_rel_dir}/node_modules"
+		local _dst_nm="${worktree_path}${_rel_dir}/node_modules"
+		if [[ -d "$_src_nm" && ! -d "$_dst_nm" ]]; then
+			cp -a "$_src_nm" "$_dst_nm" 2>/dev/null || true
+			echo "[dispatch_with_dedup] Restored node_modules: ${_rel_dir:-/} ($(du -sh "$_dst_nm" 2>/dev/null | cut -f1))" >>"$LOGFILE"
+		fi
+	done < <(find "$worktree_path" -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" 2>/dev/null)
+
+	return 0
+}
+
 _dlw_precreate_worktree() {
 	local issue_number="$1"
 	local repo_path="$2"
@@ -244,6 +292,8 @@ _dlw_precreate_worktree() {
 		git -C "$_existing_path" reset --hard "origin/${_main_branch}" 2>/dev/null || true
 		_DLW_WORKTREE_PATH="$_existing_path"
 		_DLW_WORKTREE_BRANCH="$_existing_branch"
+		# Restore gitignored deps that git clean -fd just wiped
+		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
 		echo "[dispatch_with_dedup] Reusing existing worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
 		return 0
 	fi
@@ -267,6 +317,8 @@ _dlw_precreate_worktree() {
 	if [[ -n "$_path" && -d "$_path" ]]; then
 		_DLW_WORKTREE_PATH="$_path"
 		_DLW_WORKTREE_BRANCH="$_branch"
+		# Restore gitignored deps (node_modules) that git doesn't track
+		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
 		echo "[dispatch_with_dedup] Pre-created worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
 	else
 		# GH#18671: emit the raw extracted string on failure so future

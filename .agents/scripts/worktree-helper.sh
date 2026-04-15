@@ -687,6 +687,27 @@ cmd_add() {
 	# Register ownership (t189)
 	register_worktree "$path" "$branch"
 
+	# Restore gitignored dependencies (node_modules) from canonical repo.
+	# Git worktrees only contain tracked files — dirs in .gitignore are
+	# missing. If .opencode/tool/*.ts imports from node_modules, the
+	# runtime crashes on startup. See pulse-dispatch-worker-launch.sh
+	# _dlw_restore_worktree_deps for the full rationale.
+	local _repo_root=""
+	_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root=""
+	if [[ -n "$_repo_root" && -d "$path" ]]; then
+		local _pkg_file=""
+		while IFS= read -r _pkg_file; do
+			local _pdir="" _rel=""
+			_pdir=$(dirname "$_pkg_file") || continue
+			_rel="${_pdir#"$path"}"
+			local _src="${_repo_root}${_rel}/node_modules"
+			local _dst="${path}${_rel}/node_modules"
+			if [[ -d "$_src" && ! -d "$_dst" ]]; then
+				cp -a "$_src" "$_dst" 2>/dev/null || true
+			fi
+		done < <(find "$path" -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" 2>/dev/null)
+	fi
+
 	# t2057: interactive issue auto-claim. When the branch name encodes an
 	# issue number AND this is an interactive session, immediately apply
 	# status:in-review + self-assign so the pulse's dispatch-dedup guard
