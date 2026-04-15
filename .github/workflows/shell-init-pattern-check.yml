@@ -1,0 +1,146 @@
+name: Shell Init Pattern Gate
+
+# t2053 Phase 2: enforce canonical shell helper init patterns from
+# .agents/reference/shell-style-guide.md.
+#
+# Scans only .sh files CHANGED in the PR (Option A from the issue — diff-scoped)
+# so pre-existing violations on main do not block unrelated work. Phases 3–6
+# drain the known violation list file-by-file as each script migrates.
+#
+# Banned patterns detected:
+#   1. Unguarded top-level assignment to RED/GREEN/YELLOW/BLUE/PURPLE/CYAN/WHITE/NC
+#      (collides with `readonly` in shared-constants.sh under set -Eeuo pipefail)
+#   2. `readonly <canonical-name>=` outside shared-constants.sh
+#      (breaks on re-sourcing)
+#
+# Originating incident: GH#18702 — unguarded GREEN= in init-routines-helper.sh
+# collided with readonly GREEN, aborting setup.sh, breaking auto-update for 4 days.
+
+on:
+  pull_request:
+    paths:
+      - '.agents/scripts/**/*.sh'
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changed-sh:
+    name: Detect changed shell files
+    runs-on: ubuntu-latest
+    outputs:
+      has_sh_changes: ${{ steps.detect.outputs.has_sh_changes }}
+      changed_files: ${{ steps.detect.outputs.changed_files }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed .sh files under .agents/scripts/
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null \
+            | grep -E '^\.agents/scripts/.*\.sh$' || true)
+
+          if [ -z "$changed" ]; then
+            printf 'No .agents/scripts/**/*.sh files changed; skipping init-pattern check.\n'
+            echo "has_sh_changes=false" >> "$GITHUB_OUTPUT"
+            echo "changed_files=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          printf 'Changed shell files to scan:\n%s\n' "$changed"
+          echo "has_sh_changes=true" >> "$GITHUB_OUTPUT"
+          # Space-separated list for passing to the helper
+          {
+            printf 'changed_files='
+            printf '%s' "$changed" | tr '\n' ' '
+            printf '\n'
+          } >> "$GITHUB_OUTPUT"
+
+  scan:
+    name: Shell Init Pattern Check
+    runs-on: ubuntu-latest
+    needs: detect-changed-sh
+    if: needs.detect-changed-sh.outputs.has_sh_changes == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Make scanner executable
+        run: chmod +x .agents/scripts/shell-init-pattern-check.sh
+
+      - name: Run init-pattern scanner on changed files
+        id: scan
+        env:
+          CHANGED_FILES: ${{ needs.detect-changed-sh.outputs.changed_files }}
+        run: |
+          set +e
+          # shellcheck disable=SC2086
+          .agents/scripts/shell-init-pattern-check.sh --scan-files $CHANGED_FILES \
+            --fix-hint > /tmp/shell-init-pattern-report.txt 2>&1
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          printf '---- report ----\n'
+          cat /tmp/shell-init-pattern-report.txt || true
+
+      - name: Post PR comment on violation
+        if: steps.scan.outputs.exit_code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Build comment body from report, prepend header and style-guide link
+          {
+            printf '<!-- shell-init-pattern-gate -->\n'
+            printf '## Shell Init Pattern Gate: violations found\n\n'
+            printf 'The following changed files introduce banned shell init patterns.\n'
+            printf 'See [shell-style-guide.md](.agents/reference/shell-style-guide.md) for Pattern A/B/C.\n\n'
+            printf '```\n'
+            cat /tmp/shell-init-pattern-report.txt
+            printf '```\n'
+          } > /tmp/shell-init-pattern-comment.md
+
+          marker='<!-- shell-init-pattern-gate -->'
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body=@/tmp/shell-init-pattern-comment.md >/dev/null 2>&1 || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" \
+              --body-file /tmp/shell-init-pattern-comment.md >/dev/null 2>&1 || true
+          fi
+
+      - name: Enforce gate
+        env:
+          EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          if [ "$EXIT_CODE" = "0" ]; then
+            printf 'Shell init pattern gate: all changed files are clean.\n'
+            exit 0
+          fi
+          if [ "$EXIT_CODE" != "1" ]; then
+            printf '::error::Scanner exited with unexpected code: %s\n' "$EXIT_CODE"
+            exit 1
+          fi
+          printf '::error::Shell init pattern violations found in changed files.\n'
+          printf '::error::Fix with Pattern A (source shared-constants.sh) or Pattern B ([[ -z "${VAR+x}" ]] guard).\n'
+          printf '::error::Reference: .agents/reference/shell-style-guide.md\n'
+          exit 1
