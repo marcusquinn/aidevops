@@ -392,10 +392,10 @@ _invoke_opencode() {
 	# worker subshell.
 	local _watchdog_script="${SCRIPT_DIR}/worker-activity-watchdog.sh"
 	local watchdog_pid=""
-	local _stall_timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-300}"
-	[[ "$_stall_timeout" =~ ^[0-9]+$ ]] || _stall_timeout=300
-	local _phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-30}"
-	[[ "$_phase1_timeout" =~ ^[0-9]+$ ]] || _phase1_timeout=30
+	local _stall_timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-600}"
+	[[ "$_stall_timeout" =~ ^[0-9]+$ ]] || _stall_timeout=600
+	local _phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-60}"
+	[[ "$_phase1_timeout" =~ ^[0-9]+$ ]] || _phase1_timeout=60
 
 	if [[ -x "$_watchdog_script" ]]; then
 		nohup "$_watchdog_script" \

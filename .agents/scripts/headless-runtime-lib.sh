@@ -898,19 +898,19 @@ _run_activity_watchdog() {
 	local worker_pid="$2"
 	local exit_code_file="$3"
 	local session_key="${4:-}"
-	local stall_timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-300}"
-	[[ "$stall_timeout" =~ ^[0-9]+$ ]] || stall_timeout=300
+	local stall_timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-600}"
+	[[ "$stall_timeout" =~ ^[0-9]+$ ]] || stall_timeout=600
 
 	# GH#17549: Continuous activity watchdog.
 	#
-	# Phase 1 (fast, 0-30s): any output at all. Zero bytes = dead runtime.
+	# Phase 1 (fast, 0-60s): any output at all. Zero bytes = dead runtime.
 	# Phase 2 (continuous): monitors file growth. If the output file stops
 	#   growing for stall_timeout seconds, the worker is stalled -- kill it.
 	#
 	# Previous design (broken): returned 0 after first LLM activity event,
 	# never monitoring again. Workers that stalled mid-session were invisible.
-	local phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-30}"
-	[[ "$phase1_timeout" =~ ^[0-9]+$ ]] || phase1_timeout=30
+	local phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-60}"
+	[[ "$phase1_timeout" =~ ^[0-9]+$ ]] || phase1_timeout=60
 
 	local poll_interval=10
 	local phase1_passed=0

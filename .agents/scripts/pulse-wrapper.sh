@@ -261,20 +261,20 @@ fi
 #######################################
 # Configuration
 #######################################
-PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-900}"                                       # 15 min hard ceiling (was 60 min; deterministic fill floor handles dispatch every 2-min cycle)
-PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-600}"                                             # 10 min idle before kill (reduces false positives during active triage)
-PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-5}"                                   # CPU% below this = idle (0-100 scale)
-PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-600}"                                     # 10 min no log output = stuck (GH#2958)
-PULSE_COLD_START_TIMEOUT="${PULSE_COLD_START_TIMEOUT:-1200}"                                # 20 min grace before first output (prevents false early watchdog kills)
-PULSE_COLD_START_TIMEOUT_UNDERFILLED="${PULSE_COLD_START_TIMEOUT_UNDERFILLED:-600}"         # 10 min grace when below worker target to recover capacity faster
-PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT="${PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT:-900}" # 15 min stale-process cutoff when worker pool is underfilled
-PULSE_ACTIVE_REFILL_INTERVAL="${PULSE_ACTIVE_REFILL_INTERVAL:-120}"                         # Min seconds between wrapper-side refill attempts during an active pulse
-PULSE_ACTIVE_REFILL_IDLE_MIN="${PULSE_ACTIVE_REFILL_IDLE_MIN:-60}"                          # Idle seconds before wrapper-side refill may intervene during monitoring sleep
-PULSE_ACTIVE_REFILL_STALL_MIN="${PULSE_ACTIVE_REFILL_STALL_MIN:-120}"                       # Progress stall seconds before wrapper-side refill may intervene during an active pulse
-ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                                                    # 2 hours — kill orphans older than this
-ORPHAN_WORKTREE_GRACE_SECS="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"                            # 30 min grace for 0-commit worktrees with no open PR (t1884)
-RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-512}"                                               # 512 MB per worker (opencode headless is lightweight)
-RAM_RESERVE_MB="${RAM_RESERVE_MB:-6144}"                                                    # 6 GB reserved for OS + user apps
+PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-3600}"                                       # 60 min hard ceiling — workers need 10-20 min to solve issues; 15 min was killing active workers (GH#19166)
+PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-1800}"                                             # 30 min idle before kill — the per-worker activity watchdog (300s) is the real stall detector
+PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-2}"                                    # CPU% below this = idle (0-100 scale) — lowered from 5 to reduce false positives on I/O-bound work
+PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-1800}"                                     # 30 min no log output = stuck — was 10 min, killed workers mid-API-call
+PULSE_COLD_START_TIMEOUT="${PULSE_COLD_START_TIMEOUT:-1800}"                                 # 30 min grace before first output (opencode 1.4.x cold start takes longer)
+PULSE_COLD_START_TIMEOUT_UNDERFILLED="${PULSE_COLD_START_TIMEOUT_UNDERFILLED:-1200}"         # 20 min grace when below worker target
+PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT="${PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT:-3600}" # 60 min stale-process cutoff when worker pool is underfilled — was 15 min, same problem as PULSE_STALE_THRESHOLD
+PULSE_ACTIVE_REFILL_INTERVAL="${PULSE_ACTIVE_REFILL_INTERVAL:-120}"                          # Min seconds between wrapper-side refill attempts during an active pulse
+PULSE_ACTIVE_REFILL_IDLE_MIN="${PULSE_ACTIVE_REFILL_IDLE_MIN:-60}"                           # Idle seconds before wrapper-side refill may intervene during monitoring sleep
+PULSE_ACTIVE_REFILL_STALL_MIN="${PULSE_ACTIVE_REFILL_STALL_MIN:-120}"                        # Progress stall seconds before wrapper-side refill may intervene during an active pulse
+ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                                                     # 2 hours — kill orphans older than this
+ORPHAN_WORKTREE_GRACE_SECS="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"                             # 30 min grace for 0-commit worktrees with no open PR (t1884)
+RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-512}"                                                # 512 MB per worker (opencode headless is lightweight)
+RAM_RESERVE_MB="${RAM_RESERVE_MB:-6144}"                                                     # 6 GB reserved for OS + user apps
 # Compute sensible default cap from total RAM (not free RAM — that's volatile).
 # Formula: (total_ram_mb - reserve) / ram_per_worker, clamped to [4, 32].
 # This replaces the old static default of 8 which silently throttled capable machines (t1532).
@@ -1497,7 +1497,7 @@ STALLED_WORKER_MAX_LOG_BYTES="${STALLED_WORKER_MAX_LOG_BYTES:-500}" # just the s
 # Also kills the parent node launcher and grandparent zsh for each
 # stale .opencode process to fully reclaim the terminal tab.
 #######################################
-STALE_OPENCODE_MAX_AGE="${STALE_OPENCODE_MAX_AGE:-14400}" # 4 hours
+STALE_OPENCODE_MAX_AGE="${STALE_OPENCODE_MAX_AGE:-28800}" # 8 hours — was 4h, increased to avoid killing long-running complex tasks
 
 #######################################
 # Enrich failed issues with thinking-tier analysis before re-dispatch.
