@@ -34,9 +34,11 @@ mode: subagent
 Answer each question for `tier:simple`. If **any** answer is "no", use `tier:standard` or higher.
 
 - [ ] **2 or fewer files to modify?** (count the Files to Modify section below)
-- [ ] **Complete code blocks for every edit?** (exact oldString/newString, not skeletons)
-- [ ] **No judgment or design decisions?** (no "choose between", "design", "coordinate")
+- [ ] **Every target file under 500 lines?** (large files require codebase navigation — that is judgment work, not transcription)
+- [ ] **Exact `oldString`/`newString` for every edit?** (not skeletons, not descriptions of changes — literal copy-pasteable replacement blocks)
+- [ ] **No judgment or design decisions?** (no "choose between", "design", "coordinate", "compatible with")
 - [ ] **No error handling or fallback logic to design?** (no "graceful", "retry", "fallback")
+- [ ] **No cross-package or cross-module changes?** (no `packages/a/` + `packages/b/`, no changes spanning unrelated subsystems)
 - [ ] **Estimate 1h or less?**
 - [ ] **4 or fewer acceptance criteria?**
 
