@@ -1398,7 +1398,7 @@ _report_failure_to_fast_fail() {
 # --- Section 12: Canary + Version Pin ---
 
 CANARY_CACHE_TTL_SECONDS="${CANARY_CACHE_TTL_SECONDS:-1800}"
-CANARY_TIMEOUT_SECONDS="${CANARY_TIMEOUT_SECONDS:-20}"
+CANARY_TIMEOUT_SECONDS="${CANARY_TIMEOUT_SECONDS:-60}"
 
 #######################################
 # Version guard -- enforce OPENCODE_PINNED_VERSION before worker launch.
@@ -1479,14 +1479,40 @@ _run_canary_test() {
 		canary_attach_args=(--attach "$_canary_url" --password "$_canary_pass")
 	fi
 
+	# DB isolation for canary: give it a fresh temp DB so it does not open
+	# the shared opencode.db (which can be multi-GB with thousands of
+	# accumulated sessions). Without this, opencode startup against the
+	# shared DB takes >20s and the canary times out even when the model
+	# responds correctly. Same pattern workers already use (GH#17549).
+	local _canary_data_dir=""
+	_canary_data_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-canary-db.XXXXXX")
+	mkdir -p "${_canary_data_dir}/opencode"
+	# Copy auth.json so the canary has valid tokens
+	local _oc_auth="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"
+	if [[ -f "$_oc_auth" ]]; then
+		cp "$_oc_auth" "${_canary_data_dir}/opencode/auth.json" 2>/dev/null || true
+	fi
+
 	# perl alarm is the most portable macOS timeout mechanism
-	perl -e "alarm $CANARY_TIMEOUT_SECONDS; exec @ARGV" -- \
+	XDG_DATA_HOME="$_canary_data_dir" \
+		perl -e "alarm $CANARY_TIMEOUT_SECONDS; exec @ARGV" -- \
 		"$OPENCODE_BIN_DEFAULT" run "Reply with exactly: CANARY_OK" \
 		-m "$canary_model" --dir "${HOME}" \
 		${canary_attach_args[@]+"${canary_attach_args[@]}"} \
 		>"$canary_output" 2>&1 || canary_exit=$?
 
-	if [[ "$canary_exit" -eq 0 ]] && grep -q "CANARY_OK" "$canary_output" 2>/dev/null; then
+	# Clean up canary's isolated DB dir
+	rm -rf "$_canary_data_dir" 2>/dev/null || true
+
+	# Output-aware check: the model responding "CANARY_OK" is the real
+	# success signal. The exit code reflects process lifecycle (opencode
+	# cleanup time, signal handling) not model health. Previously this
+	# required exit=0 AND CANARY_OK, but opencode 1.4.x takes longer to
+	# shut down cleanly — the perl alarm kills it (exit=142/SIGALRM) even
+	# after the model has already responded. Checking output alone is safe
+	# because CANARY_OK can only appear if the model actually processed
+	# the prompt and generated a response.
+	if grep -q "CANARY_OK" "$canary_output" 2>/dev/null; then
 		# Cache the pass timestamp
 		mkdir -p "${STATE_DIR}" 2>/dev/null || true
 		date +%s >"$cache_file"
