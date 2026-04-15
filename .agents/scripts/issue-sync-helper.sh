@@ -115,6 +115,35 @@ _gh_edit_labels() {
 	[[ ${#args[@]} -gt 0 ]] && gh issue edit "$num" --repo "$repo" "${args[@]}" 2>/dev/null || true
 }
 
+# _tier_rank: emit numeric rank for a tier label (t2111).
+# Higher rank = more capable model. The ordering is the canonical one
+# defined in shared-constants.sh as ISSUE_TIER_LABEL_RANK (thinking >
+# standard > simple) and matches _resolve_worker_tier's max-wins pick
+# in pulse-dispatch-core.sh and _first_tier_in_rank_order's reconciler
+# pick in pulse-issue-reconcile.sh.
+#
+# A local case statement is used (rather than indexing ISSUE_TIER_LABEL_RANK)
+# because (a) it's O(1) without iteration, (b) it explicitly encodes the
+# numeric contract the ratchet rule relies on, and (c) the array treats
+# "thinking" as index 0 which would invert the comparison semantics here.
+#
+# Used by the ratchet rule in _apply_tier_label_replace to preserve cascade-
+# escalated tier labels that the brief file doesn't yet reflect.
+#
+# Arguments:
+#   $1 - tier label (e.g., tier:simple, tier:standard, tier:thinking)
+# Prints:
+#   0/1/2 for known tiers, -1 for unknown/empty
+_tier_rank() {
+	case "${1:-}" in
+	tier:simple) printf '0' ;;
+	tier:standard) printf '1' ;;
+	tier:thinking) printf '2' ;;
+	*) printf -- '-1' ;;
+	esac
+	return 0
+}
+
 # _apply_tier_label_replace: set the tier label on an issue, replacing any
 # existing tier:* labels. Avoids the collision class observed in t2012/t1997
 # where multiple tier:* labels could coexist when issue-sync added a new tier
@@ -124,6 +153,17 @@ _gh_edit_labels() {
 # Re-fetches current labels from gh to defend against stale upstream label
 # state (race window between view and edit). Two API calls per tier change is
 # acceptable; tier changes are infrequent.
+#
+# Ratchet rule (t2111, GH#19070): if the issue already carries a tier:* label
+# of higher rank than the incoming tier, this is a cascade-escalated issue
+# (escalate_issue_tier in worker-lifecycle-common.sh raised it above the
+# brief's declared tier after worker failures). In that case the function
+# MUST no-op — the brief is a FLOOR, the cascade is a CEILING, and the
+# ceiling wins. Without this guard, scheduled enrichment reverts every
+# escalation ~5 minutes after it fires, producing a tier:standard ->
+# tier:thinking -> tier:standard flip-flop that wastes dispatch cycles on
+# the same worker failure. See GH#19038 label event history for the
+# canonical symptom.
 #
 # Arguments:
 #   $1 - repo slug
@@ -143,6 +183,28 @@ _apply_tier_label_replace() {
 	local existing_tiers
 	existing_tiers=$(gh issue view "$num" --repo "$repo" --json labels \
 		--jq '[.labels[].name | select(startswith("tier:"))] | join(",")' 2>/dev/null || echo "")
+
+	# Ratchet rule (t2111): compute the max rank among existing tier:* labels
+	# and compare against the incoming tier. If the existing max outranks the
+	# incoming, this is a cascade-escalated issue — preserve it.
+	local new_rank
+	new_rank=$(_tier_rank "$new_tier")
+	if [[ -n "$existing_tiers" ]]; then
+		local _rmax=-1
+		local _saved_ifs="$IFS"
+		IFS=','
+		local _t _r
+		for _t in $existing_tiers; do
+			[[ -z "$_t" ]] && continue
+			_r=$(_tier_rank "$_t")
+			((_r > _rmax)) && _rmax=$_r
+		done
+		IFS="$_saved_ifs"
+		if ((_rmax > new_rank)); then
+			print_info "tier replace: preserving escalated tier on #$num (existing max rank $_rmax > incoming rank $new_rank for $new_tier) — ratchet rule, see t2111"
+			return 0
+		fi
+	fi
 
 	# Remove any existing tier labels that don't match the new one.
 	if [[ -n "$existing_tiers" ]]; then
