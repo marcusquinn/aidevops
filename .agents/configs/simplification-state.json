@@ -7295,10 +7295,10 @@
       "passes": 5
     },
     ".agents/scripts/pulse-simplification.sh": {
-      "hash": "6526ea37b9e0310576feb7d49e6e80718d3a42b9",
-      "at": "2026-04-14T20:17:00Z",
+      "hash": "99a6f574aa347e6451e56e0a25e16e5b997e9298",
+      "at": "2026-04-15T04:31:17Z",
       "pr": 18653,
-      "passes": 5
+      "passes": 6
     },
     ".agents/scripts/tests/test-consolidation-dispatch.sh": {
       "hash": "91298b9d37f3ac50fdc71bbddcba460188ff43ee",
