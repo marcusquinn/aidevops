@@ -44,9 +44,9 @@ set -Eeuo pipefail
 
 `${VAR+x}` distinguishes *unset* from *set-to-empty* — parent with `shared-constants.sh` wins; standalone picks up fallback. **Do not use `${VAR:-}`** — it treats set-to-empty as unset.
 
-### C — prefixed names (test harnesses and strictly-internal utilities)
+### C — prefixed names (test harnesses and strictly-internal utilities only)
 
-For test harnesses and strictly-internal utilities only. Prefix must be `TEST_`, `_<script_name>_`, or documented in `shared-constants.sh`:
+Prefix must be `TEST_`, `_<script_name>_`, or documented in `shared-constants.sh`:
 
 ```bash
 readonly TEST_RED=$'\033[0;31m'
@@ -54,29 +54,25 @@ readonly TEST_GREEN=$'\033[0;32m'
 readonly TEST_RESET=$'\033[0m'
 ```
 
-`readonly` safe — prefixed names don't collide. **Production helpers: use Pattern A or B** — inconsistent naming forces `TEST_RED`↔`RED` translation.
+`readonly` safe — prefixed names don't collide. **Production helpers: use Pattern A or B.**
 
 ## Banned patterns
 
-**Unguarded plain assignment** (collides with parent `readonly`):
+**Unguarded plain assignment** — collides with parent `readonly`. Fix: Pattern A or B.
 
 ```bash
 # BAD
 RED='\033[0;31m'
 ```
 
-Fix: Pattern A or B.
-
-**Unguarded `readonly` on canonical names** — breaks on re-sourcing:
+**Unguarded `readonly` on canonical names** — breaks on re-sourcing. Fix: Pattern B (production) or Pattern C with prefix (tests).
 
 ```bash
 # WORST
 readonly RED='\033[0;31m'
 ```
 
-Fix: Pattern B (production) or Pattern C with prefix (tests).
-
-**Coarse include-guard** (discouraged, allowed for backward compat):
+**Coarse include-guard** — discouraged, allowed for backward compat. All-or-nothing: colors partially undefined under `set -u` when parent set some without the sentinel; Pattern B handles each independently. Migrate opportunistically.
 
 ```bash
 if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]; then
@@ -84,8 +80,6 @@ if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]; then
     GREEN='\033[0;32m'
 fi
 ```
-
-Problem: all-or-nothing — colors partially undefined under `set -u` when parent set some without the sentinel. Pattern B handles each independently. Existing code may remain; migrate opportunistically.
 
 ## Canonical shared variables
 
