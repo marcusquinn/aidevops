@@ -25,14 +25,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Resolve repo/agents root — supports both:
-#   - git worktree layout:   $REPO/.agents/scripts/tests/ → $REPO/.agents/scripts/
-#   - deployed layout:       ~/.aidevops/agents/scripts/tests/ → ~/.aidevops/agents/scripts/
-# The test walks up one directory (from tests/ to scripts/) and looks for the
-# sibling files. If both layouts fail, it exits with a clear error.
+# Resolve repo/agents root by walking up one directory (from tests/ to scripts/).
+# A single relative-path step covers all supported layouts:
+#   - git worktree:  $REPO/.agents/scripts/tests/ → $REPO/.agents/scripts/
+#   - deployed:      ~/.aidevops/agents/scripts/tests/ → ~/.aidevops/agents/scripts/
+# If the sibling files are not found, the function exits with a clear error.
 _resolve_scripts_dir() {
 	local candidate
-	# Layout 1: git worktree
 	candidate="$(cd "$SCRIPT_DIR/.." && pwd)"
 	if [[ -f "$candidate/shared-constants.sh" ]] && [[ -f "$candidate/bash-upgrade-helper.sh" ]]; then
 		echo "$candidate"
