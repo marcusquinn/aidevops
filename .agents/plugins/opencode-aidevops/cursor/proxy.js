@@ -15,6 +15,7 @@ import {
 import {
   createBridgeStreamResponse, startBridge, handleToolResultResume, collectFullResponse,
 } from "./proxy-stream.js";
+import { jsonResponse, textResponse } from "../response-helpers.mjs";
 
 export { callCursorUnaryRpc };
 
@@ -84,7 +85,10 @@ function handleChatCompletion(body, accessToken) {
   const tools = body.tools ?? [];
   console.error(`[proxy] handleChatCompletion: model=${modelId}, tools=${tools.length}, userText=${(userText || '').slice(0, 80)}, toolResults=${toolResults.length}`);
   if (!userText && toolResults.length === 0) {
-    return new Response(JSON.stringify({ error: { message: "No user message found", type: "invalid_request_error" } }), { status: 400, headers: { "Content-Type": "application/json" } });
+    return jsonResponse(
+      { error: { message: "No user message found", type: "invalid_request_error" } },
+      { status: 400 },
+    );
   }
   const bridgeKey = deriveBridgeKey(modelId, body.messages);
   const activeBridge = activeBridges.get(bridgeKey);
@@ -121,11 +125,11 @@ async function handleNonStreamingResponse(payload, accessToken, modelId, bridgeK
   const message = { role: "assistant", content: result.text || "" };
   let finishReason = "stop";
   if (result.toolCalls && result.toolCalls.length > 0) { message.tool_calls = result.toolCalls; finishReason = "tool_calls"; }
-  return new Response(JSON.stringify({
+  return jsonResponse({
     id: completionId, object: "chat.completion", created, model: modelId,
     choices: [{ index: 0, message, finish_reason: finishReason }],
     usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-  }), { headers: { "Content-Type": "application/json" } });
+  });
 }
 
 async function handleChatCompletionsRequest(req) {
@@ -136,17 +140,20 @@ async function handleChatCompletionsRequest(req) {
     return handleChatCompletion(body, accessToken);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({ error: { message, type: "server_error", code: "internal_error" } }), { status: 500, headers: { "Content-Type": "application/json" } });
+    return jsonResponse(
+      { error: { message, type: "server_error", code: "internal_error" } },
+      { status: 500 },
+    );
   }
 }
 
 async function handleProxyFetch(req) {
   const url = new URL(req.url);
   if (req.method === "GET" && url.pathname === "/v1/models") {
-    return new Response(JSON.stringify({ object: "list", data: buildOpenAIModelList(proxyModels) }), { headers: { "Content-Type": "application/json" } });
+    return jsonResponse({ object: "list", data: buildOpenAIModelList(proxyModels) });
   }
   if (req.method === "POST" && url.pathname === "/v1/chat/completions") return handleChatCompletionsRequest(req);
-  return new Response("Not Found", { status: 404 });
+  return textResponse("Not Found", { status: 404 });
 }
 
 export function getProxyPort() { return proxyPort; }

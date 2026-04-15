@@ -5,6 +5,7 @@
 
 import { getAnthropicUserAgent } from "./oauth-pool.mjs";
 import { buildBillingHeader, serializeWithKeyOrder, loadCCHConstants, computeBodyHash } from "./provider-auth-cch.mjs";
+import { textResponse } from "./response-helpers.mjs";
 
 // ---------------------------------------------------------------------------
 // Tool name namespace
@@ -254,5 +255,5 @@ export function transformResponseStream(response) {
   const stream = new ReadableStream({
     pull: makeStreamPullHandler(reader, new TextDecoder(), new TextEncoder()),
   });
-  return new Response(stream, { status: response.status, statusText: response.statusText, headers: response.headers });
+  return textResponse(stream, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
