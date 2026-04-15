@@ -42,7 +42,7 @@ set -Eeuo pipefail
 
 `${VAR+x}` distinguishes *unset* from *set-to-empty* — parent with `shared-constants.sh` wins; standalone picks up fallback. **Do not use `${VAR:-}`** — it treats set-to-empty as unset.
 
-### C — prefixed names (test harnesses only)
+### C — prefixed names (test harnesses and strictly-internal utilities)
 
 For test harnesses and strictly-internal utilities only. Prefix must be `TEST_`, `_<script_name>_`, or documented in `shared-constants.sh`:
 
