@@ -26,10 +26,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 HELPER="${SCRIPT_DIR}/../task-decompose-helper.sh"
 
 # Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly CYAN='\033[0;36m'
+readonly TEST_RED='\033[0;31m'
+readonly TEST_GREEN='\033[0;32m'
+readonly TEST_YELLOW='\033[1;33m'
+readonly TEST_CYAN='\033[0;36m'
 readonly RESET='\033[0m'
 
 # Test counters
@@ -62,13 +62,13 @@ print_result() {
 	TESTS_RUN=$((TESTS_RUN + 1))
 
 	if [[ "$result" -eq 0 ]]; then
-		echo -e "${GREEN}PASS${RESET} $test_name"
+		echo -e "${TEST_GREEN}PASS${RESET} $test_name"
 		TESTS_PASSED=$((TESTS_PASSED + 1))
 	elif [[ "$result" -eq 2 ]]; then
-		echo -e "${YELLOW}SKIP${RESET} $test_name"
+		echo -e "${TEST_YELLOW}SKIP${RESET} $test_name"
 		TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
 	else
-		echo -e "${RED}FAIL${RESET} $test_name"
+		echo -e "${TEST_RED}FAIL${RESET} $test_name"
 		if [[ -n "$message" ]]; then
 			echo "       $message"
 		fi
@@ -454,9 +454,9 @@ test_classify_llm_real_tasks() {
 		kind=$(echo "$output" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 
 		if [[ "$kind" == "$expected" ]]; then
-			echo -e "  ${GREEN}OK${RESET} '${desc:0:60}...' -> $kind"
+			echo -e "  ${TEST_GREEN}OK${RESET} '${desc:0:60}...' -> $kind"
 		else
-			echo -e "  ${RED}MISMATCH${RESET} '${desc:0:60}...' -> $kind (expected $expected)"
+			echo -e "  ${TEST_RED}MISMATCH${RESET} '${desc:0:60}...' -> $kind (expected $expected)"
 			all_pass=false
 		fi
 
@@ -605,7 +605,7 @@ test_decompose_llm_quality() {
 
 	# exit_code 2 = API unavailable, heuristic used
 	if [[ "$exit_code" -eq 2 ]]; then
-		echo -e "  ${YELLOW}NOTE${RESET}: API unavailable, testing heuristic fallback quality"
+		echo -e "  ${TEST_YELLOW}NOTE${RESET}: API unavailable, testing heuristic fallback quality"
 	fi
 
 	if command -v jq &>/dev/null; then
@@ -643,7 +643,7 @@ test_decompose_llm_quality() {
 			print_result "decompose LLM: produces quality subtasks ($count items, $source)" 0
 			# Show the subtasks for inspection
 			echo "$output" | jq -r '.subtasks[].description' 2>/dev/null | while read -r line; do
-				echo -e "  ${CYAN}>${RESET} $line"
+				echo -e "  ${TEST_CYAN}>${RESET} $line"
 			done
 		else
 			print_result "decompose LLM: produces quality subtasks" 1 "count_ok=$count_ok quality_ok=$quality_ok output=$output"
@@ -667,7 +667,7 @@ test_decompose_llm_dependencies() {
 	# Heuristic fallback doesn't produce dependency edges — that's expected
 	if [[ "$exit_code" -eq 2 ]]; then
 		print_result "decompose LLM: dependency edges (heuristic fallback, no deps expected)" 0
-		echo -e "  ${YELLOW}NOTE${RESET}: API unavailable, heuristic doesn't produce dependency edges"
+		echo -e "  ${TEST_YELLOW}NOTE${RESET}: API unavailable, heuristic doesn't produce dependency edges"
 		return 0
 	fi
 
@@ -1113,20 +1113,20 @@ main() {
 	echo ""
 
 	if [[ "$WITH_LLM" == true ]]; then
-		echo -e "${CYAN}Mode: Full (with LLM tests)${RESET}"
+		echo -e "${TEST_CYAN}Mode: Full (with LLM tests)${RESET}"
 	else
-		echo -e "${CYAN}Mode: Heuristic only (use --with-llm for LLM tests)${RESET}"
+		echo -e "${TEST_CYAN}Mode: Heuristic only (use --with-llm for LLM tests)${RESET}"
 	fi
 	echo ""
 
 	# Check prerequisites
 	if [[ ! -x "$HELPER" ]]; then
-		echo -e "${RED}ERROR: Helper script not found or not executable: $HELPER${RESET}"
+		echo -e "${TEST_RED}ERROR: Helper script not found or not executable: $HELPER${RESET}"
 		return 1
 	fi
 
 	if ! command -v jq &>/dev/null; then
-		echo -e "${YELLOW}WARNING: jq not found, some tests will be skipped${RESET}"
+		echo -e "${TEST_YELLOW}WARNING: jq not found, some tests will be skipped${RESET}"
 	fi
 
 	setup
@@ -1140,7 +1140,7 @@ main() {
 
 	# Summary
 	echo "============================================="
-	echo -e " Results: ${GREEN}${TESTS_PASSED} passed${RESET}, ${RED}${TESTS_FAILED} failed${RESET}, ${YELLOW}${TESTS_SKIPPED} skipped${RESET} / ${TESTS_RUN} total"
+	echo -e " Results: ${TEST_GREEN}${TESTS_PASSED} passed${RESET}, ${TEST_RED}${TESTS_FAILED} failed${RESET}, ${TEST_YELLOW}${TESTS_SKIPPED} skipped${RESET} / ${TESTS_RUN} total"
 	echo "============================================="
 
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

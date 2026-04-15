@@ -21,9 +21,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 SCRIPTS_DIR="${SCRIPT_DIR}/.."
 
 # Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly NC='\033[0m'
+readonly TEST_RED='\033[0;31m'
+readonly TEST_GREEN='\033[0;32m'
+readonly TEST_RESET='\033[0m'
 
 # Test counters
 TESTS_RUN=0
@@ -45,10 +45,10 @@ print_result() {
 	TESTS_RUN=$((TESTS_RUN + 1))
 
 	if [[ "$result" -eq 0 ]]; then
-		echo -e "${GREEN}PASS${NC} $test_name"
+		echo -e "${TEST_GREEN}PASS${TEST_RESET} $test_name"
 		TESTS_PASSED=$((TESTS_PASSED + 1))
 	else
-		echo -e "${RED}FAIL${NC} $test_name"
+		echo -e "${TEST_RED}FAIL${TEST_RESET} $test_name"
 		[[ -n "$message" ]] && echo "       $message"
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
@@ -690,10 +690,10 @@ main() {
 	echo "================================================================"
 
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
-		echo -e "${RED}FAILED${NC}"
+		echo -e "${TEST_RED}FAILED${TEST_RESET}"
 		return 1
 	else
-		echo -e "${GREEN}ALL TESTS PASSED${NC}"
+		echo -e "${TEST_GREEN}ALL TESTS PASSED${TEST_RESET}"
 		return 0
 	fi
 }

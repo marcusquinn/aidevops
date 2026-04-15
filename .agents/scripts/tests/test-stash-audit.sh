@@ -18,9 +18,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 STASH_HELPER="${SCRIPT_DIR}/../stash-audit-helper.sh"
 
 # Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
+readonly TEST_RED='\033[0;31m'
+readonly TEST_GREEN='\033[0;32m'
+readonly TEST_YELLOW='\033[1;33m'
 readonly RESET='\033[0m'
 
 # Test counters
@@ -45,10 +45,10 @@ print_result() {
     TESTS_RUN=$((TESTS_RUN + 1))
     
     if [[ "$result" -eq 0 ]]; then
-        echo -e "${GREEN}✓${RESET} $test_name"
+        echo -e "${TEST_GREEN}✓${RESET} $test_name"
         TESTS_PASSED=$((TESTS_PASSED + 1))
     else
-        echo -e "${RED}✗${RESET} $test_name"
+        echo -e "${TEST_RED}✗${RESET} $test_name"
         if [[ -n "$message" ]]; then
             echo "  $message"
         fi
@@ -323,7 +323,7 @@ main() {
     
     # Check if stash helper exists
     if [[ ! -f "$STASH_HELPER" ]]; then
-        echo -e "${RED}Error: stash-audit-helper.sh not found at $STASH_HELPER${RESET}"
+        echo -e "${TEST_RED}Error: stash-audit-helper.sh not found at $STASH_HELPER${RESET}"
         return 1
     fi
     
@@ -353,9 +353,9 @@ main() {
     echo ""
     echo "========================================="
     echo "Tests run:    $TESTS_RUN"
-    echo -e "Tests passed: ${GREEN}$TESTS_PASSED${RESET}"
+    echo -e "Tests passed: ${TEST_GREEN}$TESTS_PASSED${RESET}"
     if [[ "$TESTS_FAILED" -gt 0 ]]; then
-        echo -e "Tests failed: ${RED}$TESTS_FAILED${RESET}"
+        echo -e "Tests failed: ${TEST_RED}$TESTS_FAILED${RESET}"
     else
         echo "Tests failed: $TESTS_FAILED"
     fi

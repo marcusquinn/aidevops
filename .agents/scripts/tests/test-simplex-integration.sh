@@ -20,10 +20,10 @@ HELPER="${SCRIPT_DIR}/../simplex-helper.sh"
 readonly HELPER
 
 # Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly CYAN='\033[0;36m'
+readonly TEST_RED='\033[0;31m'
+readonly TEST_GREEN='\033[0;32m'
+readonly TEST_YELLOW='\033[1;33m'
+readonly TEST_CYAN='\033[0;36m'
 readonly RESET='\033[0m'
 
 # Test counters
@@ -49,13 +49,13 @@ print_result() {
 	TESTS_RUN=$((TESTS_RUN + 1))
 
 	if [[ "$result" -eq 0 ]]; then
-		echo -e "${GREEN}PASS${RESET} $test_name"
+		echo -e "${TEST_GREEN}PASS${RESET} $test_name"
 		TESTS_PASSED=$((TESTS_PASSED + 1))
 	elif [[ "$result" -eq 2 ]]; then
-		echo -e "${YELLOW}SKIP${RESET} $test_name"
+		echo -e "${TEST_YELLOW}SKIP${RESET} $test_name"
 		TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
 	else
-		echo -e "${RED}FAIL${RESET} $test_name"
+		echo -e "${TEST_RED}FAIL${RESET} $test_name"
 		if [[ -n "$message" ]]; then
 			echo "       $message"
 		fi
@@ -83,7 +83,7 @@ assert_contains() {
 
 section_file_existence() {
 	echo ""
-	echo -e "${CYAN}=== File Existence Tests ===${RESET}"
+	echo -e "${TEST_CYAN}=== File Existence Tests ===${RESET}"
 
 	# simplex.md subagent doc
 	if [[ -f "${AGENTS_DIR}/services/communications/simplex.md" ]]; then
@@ -153,7 +153,7 @@ section_file_existence() {
 
 section_helper_script() {
 	echo ""
-	echo -e "${CYAN}=== simplex-helper.sh Tests ===${RESET}"
+	echo -e "${TEST_CYAN}=== simplex-helper.sh Tests ===${RESET}"
 
 	if [[ ! -f "$HELPER" ]]; then
 		print_result "helper script available" 1 "simplex-helper.sh not found"
@@ -223,7 +223,7 @@ section_helper_script() {
 
 section_subagent_index() {
 	echo ""
-	echo -e "${CYAN}=== Subagent Index Tests ===${RESET}"
+	echo -e "${TEST_CYAN}=== Subagent Index Tests ===${RESET}"
 
 	local index_file="${AGENTS_DIR}/subagent-index.toon"
 
@@ -262,7 +262,7 @@ section_subagent_index() {
 
 section_agents_md() {
 	echo ""
-	echo -e "${CYAN}=== AGENTS.md Tests ===${RESET}"
+	echo -e "${TEST_CYAN}=== AGENTS.md Tests ===${RESET}"
 
 	local agents_file="${AGENTS_DIR}/AGENTS.md"
 
@@ -301,7 +301,7 @@ section_agents_md() {
 
 section_markdown_structure() {
 	echo ""
-	echo -e "${CYAN}=== Markdown Structure Tests ===${RESET}"
+	echo -e "${TEST_CYAN}=== Markdown Structure Tests ===${RESET}"
 
 	local simplex_md="${AGENTS_DIR}/services/communications/simplex.md"
 
@@ -374,7 +374,7 @@ section_markdown_structure() {
 
 section_bot_framework() {
 	echo ""
-	echo -e "${CYAN}=== Bot Framework Scaffold Tests ===${RESET}"
+	echo -e "${TEST_CYAN}=== Bot Framework Scaffold Tests ===${RESET}"
 
 	local bot_dir="${AGENTS_DIR}/scripts/simplex-bot"
 
@@ -467,7 +467,7 @@ section_bot_framework() {
 
 section_shellcheck() {
 	echo ""
-	echo -e "${CYAN}=== ShellCheck Tests ===${RESET}"
+	echo -e "${TEST_CYAN}=== ShellCheck Tests ===${RESET}"
 
 	if ! command -v shellcheck &>/dev/null; then
 		print_result "shellcheck available" 2 "shellcheck not installed"
@@ -526,7 +526,7 @@ main() {
 
 	echo ""
 	echo "============================================="
-	echo -e "Results: ${GREEN}${TESTS_PASSED} passed${RESET}, ${RED}${TESTS_FAILED} failed${RESET}, ${YELLOW}${TESTS_SKIPPED} skipped${RESET} (${TESTS_RUN} total)"
+	echo -e "Results: ${TEST_GREEN}${TESTS_PASSED} passed${RESET}, ${TEST_RED}${TESTS_FAILED} failed${RESET}, ${TEST_YELLOW}${TESTS_SKIPPED} skipped${RESET} (${TESTS_RUN} total)"
 	echo "============================================="
 
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
