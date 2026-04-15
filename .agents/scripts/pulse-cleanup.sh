@@ -277,8 +277,12 @@ _evaluate_worktree_removal() {
 #   "overwhelmed": dirty files, OR issue-named branch with no commits.
 #                  Model attempted real work but couldn't produce commits.
 #                  Pattern: "read files, created worktree, couldn't close the loop".
-#   "no_work":     auto-named feature/auto-* branch with clean worktree.
+#   "no_work":     auto-named feature/auto-*-gh<N> branch with clean worktree.
 #                  Worker never got past setup — likely infra/transient.
+#
+# Since GH#19042, feature/auto-* branches include the issue number
+# (feature/auto-YYYYMMDD-HHMMSS-gh<N>), so the gh[-]?([0-9]+) regex
+# now matches them. Legacy branches without issue numbers are skipped.
 #
 # Args:
 #   $1 - wt_branch_age: branch name (non-empty; caller checks)
@@ -295,8 +299,9 @@ _record_orphan_crash_classification() {
 	if [[ "$wt_branch_age" =~ gh[-]?([0-9]+) ]]; then
 		orphan_issue_num="${BASH_REMATCH[1]}"
 	fi
-	# Auto-named branches without an embedded issue number can't be
-	# recovered — the worker never parsed the issue, nothing to clear.
+	# Branches without an embedded issue number can't be recovered.
+	# Since GH#19042, new feature/auto-* branches include gh<N>, but
+	# legacy ones (pre-fix) still lack it — skip those gracefully.
 	if [[ -z "$orphan_issue_num" ]]; then
 		return 0
 	fi
