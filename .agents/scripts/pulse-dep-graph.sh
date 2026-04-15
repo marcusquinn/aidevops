@@ -80,18 +80,19 @@ _dep_graph_process_issue_json() {
 		return 0
 	fi
 
-	# Extract task ID from title (e.g. "t1935: ..." → "1935")
+	# Extract task ID from title (e.g. "t1935: ..." → "1935", "t325.1: ..." → "325.1")
 	local task_id_in_title
-	task_id_in_title=$(printf '%s' "$title" | grep -oE '^t([0-9]+):' | grep -oE '[0-9]+' || true)
+	task_id_in_title=$(printf '%s' "$title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*:' | sed 's/^t//;s/:$//' || true)
 
 	# Extract blocked-by task IDs and issue numbers from body. Two-step
 	# parse tolerates both the markdown format emitted by
 	# brief-template.md (`**Blocked by:** ` + backtick-quoted IDs) and
 	# the bare TODO.md format (`blocked-by:tNNN,tMMM`). BSD/GNU portable
 	# via POSIX `[^[:cntrl:]]` (see t1983 / t2015 for history).
+	# Subtask decimal suffixes (t325.1) are preserved (GH#19165).
 	local blocker_lines blocker_tids blocker_nums
 	blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*' || true)
-	blocker_tids=$(printf '%s' "$blocker_lines" | grep -oE 't[0-9]+' | grep -oE '[0-9]+' || true)
+	blocker_tids=$(printf '%s' "$blocker_lines" | grep -oE 't[0-9]+(\.[0-9a-z]+)*' | sed 's/^t//' || true)
 	blocker_nums=$(printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true)
 
 	local tid_arr num_arr
@@ -160,17 +161,17 @@ _dep_graph_build_repo_data() {
 			($issue.title // "") as $title |
 			($issue.body // "") as $body |
 
-			# Extract task ID from title (e.g. "t1935: ..." -> "1935")
-			(if ($title | test("^t[0-9]+:"))
-			 then ($title | capture("^t(?<id>[0-9]+):").id)
+			# Extract task ID from title (e.g. "t1935: ..." -> "1935", "t325.1: ..." -> "325.1")
+			(if ($title | test("^t[0-9]+(\\.[0-9a-z]+)*:"))
+			 then ($title | capture("^t(?<id>[0-9]+(\\.[0-9a-z]+)*):").id)
 			 else ""
 			 end) as $tid |
 
 			# Extract all lines matching the blocked-by pattern (case-insensitive)
 			([$body | split("\n") | .[] | select(test("(?i)blocked[- ]by"))] | join(" ")) as $blocker_text |
 
-			# Extract tNNN task IDs from blocked-by text (capture group -> number only)
-			([$blocker_text | scan("t([0-9]+)") | .[0]] | unique) as $blocker_tids |
+			# Extract tNNN or tNNN.X task IDs from blocked-by text (GH#19165)
+			([$blocker_text | scan("t([0-9]+(\\.[0-9a-z]+)*)") | .[0]] | unique) as $blocker_tids |
 
 			# Extract #NNN issue numbers from blocked-by text (capture group -> number only)
 			([$blocker_text | scan("#([0-9]+)") | .[0]] | unique) as $blocker_nums |
@@ -570,7 +571,8 @@ refresh_blocked_status_from_graph() {
 # No NUL, no parser traps, trivially portable across bash versions.
 _blocked_by_extract_tids() {
 	local body="$1"
-	printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*t([0-9]+)' | grep -oE '[0-9]+' || true
+	# Capture full subtask ID including decimal suffix (e.g. t325.1 → 325.1)
+	printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*t[0-9]+(\.[0-9a-z]+)*' | grep -oE 't[0-9]+(\.[0-9a-z]+)*' | sed 's/^t//' || true
 }
 
 _blocked_by_extract_nums() {
