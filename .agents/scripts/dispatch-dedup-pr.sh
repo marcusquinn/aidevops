@@ -71,10 +71,11 @@ _has_open_pr_check_open_commits() {
 # race observed on issue #18779 → PR #18906 (a duplicate worker was
 # dispatched after PR #18906 was already open and waiting for review).
 #
-# Each candidate hit is post-filtered with the same exact regex Checks 2
-# and 3 use, to avoid GitHub full-text false positives (a PR mentioning
-# "v3.5.670" would otherwise falsely match issue #670 on the keyword
-# search alone).
+# Uses a single OR-consolidated search query instead of a per-keyword
+# loop to reduce GitHub API calls from up to 9 down to 1. Post-filters
+# with the same exact regex Checks 2 and 3 use, to avoid GitHub
+# full-text false positives (e.g. "v3.5.670" matching issue #670).
+# Fetches number+body in one request to avoid a separate gh pr view call.
 #
 # Args: $1 = issue number, $2 = repo slug
 # Returns: exit 0 if an open PR closes this issue (prints reason), exit 1 if none
@@ -83,39 +84,39 @@ _has_open_pr_check_open_body_keyword() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	local query pr_json pr_count pr_number
-	for keyword in close closes closed fix fixes fixed resolve resolves resolved; do
-		query="${keyword} #${issue_number} in:body"
-		pr_json=$(gh pr list --repo "$repo_slug" --state open --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
-		pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-		[[ "$pr_count" -eq 0 ]] && continue
+	# Single consolidated query replaces the 9-keyword loop (GH#19124)
+	local query
+	query="(close OR closes OR closed OR fix OR fixes OR fixed OR resolve OR resolves OR resolved) #${issue_number} in:body"
 
-		pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
-		if [[ -n "$pr_number" ]]; then
-			local pr_body
-			pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || pr_body=""
-			# Match: keyword + optional whitespace + #NNN or owner/repo#NNN followed by a non-word char or end
-			local close_pattern_open="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
-			if ! printf '%s' "$pr_body" | grep -iqE "$close_pattern_open"; then
-				continue
-			fi
-			printf 'open PR #%s closes issue #%s via "%s" keyword in body\n' "$pr_number" "$issue_number" "$keyword"
-		else
-			printf 'open PR closes issue #%s via "%s" keyword in body\n' "$issue_number" "$keyword"
+	local pr_json pr_count
+	pr_json=$(gh pr list --repo "$repo_slug" --state open --search "$query" --limit 1 --json number,body 2>/dev/null) || pr_json="[]"
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	[[ "$pr_count" -eq 0 ]] && return 1
+
+	local pr_number pr_body
+	pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
+	pr_body=$(printf '%s' "$pr_json" | jq -r '.[0].body // empty' 2>/dev/null)
+
+	if [[ -n "$pr_number" ]]; then
+		# Match: keyword + optional whitespace + #NNN or owner/repo#NNN followed by a non-word char or end
+		local close_pattern_open="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
+		if printf '%s' "$pr_body" | grep -iqE "$close_pattern_open"; then
+			printf 'open PR #%s closes issue #%s via keyword in body\n' "$pr_number" "$issue_number"
+			return 0
 		fi
-		return 0
-	done
+	fi
 	return 1
 }
 
 #######################################
 # has_open_pr Check 2: Merged PRs with closing-keyword in body.
 #
-# Loops through all closing keyword variants and searches merged PRs via
-# gh pr list --search. Post-filters each hit with an exact regex on the PR
-# body because GitHub search is full-text and a PR mentioning "v3.5.670"
-# would falsely match issue #670.
+# Uses a single OR-consolidated search query instead of a per-keyword
+# loop to reduce GitHub API calls from up to 9 down to 1. Post-filters
+# with the same exact regex Check 1b uses, to avoid GitHub full-text
+# false positives (e.g. "v3.5.670" matching issue #670).
+# Fetches number+body in one request to avoid a separate gh pr view call.
 #
 # Args: $1 = issue number, $2 = repo slug
 # Returns: exit 0 if a merged PR closes this issue (prints reason), exit 1 if none
@@ -124,29 +125,28 @@ _has_open_pr_check_merged_keywords() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	local query pr_json pr_count pr_number
-	for keyword in close closes closed fix fixes fixed resolve resolves resolved; do
-		query="${keyword} #${issue_number} in:body"
-		pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
-		pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-		[[ "$pr_count" -eq 0 ]] && continue
+	# Single consolidated query replaces the 9-keyword loop (GH#19124)
+	local query
+	query="(close OR closes OR closed OR fix OR fixes OR fixed OR resolve OR resolves OR resolved) #${issue_number} in:body"
 
-		pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
-		if [[ -n "$pr_number" ]]; then
-			local pr_body
-			pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || pr_body=""
-			# Match: keyword + optional whitespace + #NNN or owner/repo#NNN followed by a non-word char or end
-			local close_pattern_merged="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
-			if ! printf '%s' "$pr_body" | grep -iqE "$close_pattern_merged"; then
-				continue
-			fi
-			printf 'merged PR #%s references issue #%s via "%s" keyword\n' "$pr_number" "$issue_number" "$keyword"
-		else
-			printf 'merged PR references issue #%s via "%s" keyword\n' "$issue_number" "$keyword"
+	local pr_json pr_count
+	pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number,body 2>/dev/null) || pr_json="[]"
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	[[ "$pr_count" -eq 0 ]] && return 1
+
+	local pr_number pr_body
+	pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
+	pr_body=$(printf '%s' "$pr_json" | jq -r '.[0].body // empty' 2>/dev/null)
+
+	if [[ -n "$pr_number" ]]; then
+		# Match: keyword + optional whitespace + #NNN or owner/repo#NNN followed by a non-word char or end
+		local close_pattern_merged="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
+		if printf '%s' "$pr_body" | grep -iqE "$close_pattern_merged"; then
+			printf 'merged PR #%s references issue #%s via keyword\n' "$pr_number" "$issue_number"
+			return 0
 		fi
-		return 0
-	done
+	fi
 	return 1
 }
 
@@ -184,7 +184,8 @@ _has_open_pr_check_task_id_title() {
 
 	local query pr_json pr_count pr_number
 	query="${task_id} in:title"
-	pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
+	# Fetch number+body in one request to avoid a separate gh pr view call (GH#19124)
+	pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number,body 2>/dev/null) || pr_json="[]"
 	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 	[[ "$pr_count" -eq 0 ]] && return 1
@@ -195,13 +196,13 @@ _has_open_pr_check_task_id_title() {
 		return 0
 	fi
 
-	# Fetch the merged PR body and verify it contains a closing-keyword
-	# reference to OUR specific issue number. This mirrors the pattern in
-	# Check 2 and is the single source of truth for "this PR closed this
-	# issue": if GitHub would auto-close it, we block; otherwise we allow
-	# dispatch.
+	# Use the body already fetched in the initial gh pr list request and verify
+	# it contains a closing-keyword reference to OUR specific issue number.
+	# This mirrors the pattern in Check 2 and is the single source of truth for
+	# "this PR closed this issue": if GitHub would auto-close it, we block;
+	# otherwise we allow dispatch.
 	local merged_pr_body
-	merged_pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null) || merged_pr_body=""
+	merged_pr_body=$(printf '%s' "$pr_json" | jq -r '.[0].body // empty' 2>/dev/null)
 	local close_pattern_check3="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
 	if printf '%s' "$merged_pr_body" | grep -iqE "$close_pattern_check3"; then
 		printf 'merged PR #%s found by task id %s in title\n' "$pr_number" "$task_id"
