@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.41] - 2026-04-15
+
+### Changed
+
+- Maintenance: update simplification state registry
+- self-healing wrapper enforcement — pulse reconcile + CI gate + sub-issue body backfill (#19098)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- preserve subtask suffix in task-already-committed check (#19171)
+
 ## [3.8.40] - 2026-04-15
 
 ### Changed
