@@ -13,6 +13,7 @@ import { frameConnectMessage } from "./proxy-bridge.js";
 import { processServerMessage } from "./proxy-handlers.js";
 import { createConnectFrameParser, makeHeartbeatBytes, parseConnectEndStream } from "./proxy-messages.js";
 import { createThinkingTagFilter, createSSESenders, flushTagFilterToSSE, SSE_HEADERS } from "./proxy-sse.js";
+import { textResponse } from "../response-helpers.mjs";
 
 /** Merge blobStore entries into stored conversation state. */
 export function mergeBlobStoreIntoState(bridgeKey, blobStore, conversationStates) {
@@ -98,7 +99,7 @@ export function createBridgeStreamResponse(bridgeCtx, modelId, bridgeKey, proxyS
       });
     },
   });
-  return new Response(stream, { headers: SSE_HEADERS });
+  return textResponse(stream, { headers: SSE_HEADERS });
 }
 
 /** Resume a paused bridge by sending MCP results and continuing to stream. */
