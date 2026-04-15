@@ -1489,54 +1489,121 @@ _sync_blocked_by_for_task() {
 	return 0
 }
 
-# Sync parent-child (sub-issue) relationship for a subtask.
-# Detects if task_id has a dot (e.g., t1873.2) and sets the parent relationship.
+# Link a single child issue as a sub-issue of a parent issue.
+# Resolves task IDs to GitHub node IDs and calls the addSubIssue mutation.
 # Arguments:
-#   $1 - task_id
-#   $2 - todo_file path
-#   $3 - repo slug
-# Returns: "RELS:1" if set, "RELS:0" if skipped
-_sync_subtask_hierarchy_for_task() {
-	local task_id="$1" todo_file="$2" repo="$3"
+#   $1 - child_task_id
+#   $2 - parent_task_id
+#   $3 - todo_file path
+#   $4 - repo slug
+# Returns: 0 if linked (or would-link in dry-run), 1 if skipped
+_link_sub_issue_pair() {
+	local child_id="$1" parent_id="$2" todo_file="$3" repo="$4"
 
-	local parent_id
-	parent_id=$(detect_parent_task_id "$task_id")
-	[[ -z "$parent_id" ]] && return 0
-
-	# Resolve both task IDs to GitHub issue numbers
 	local child_gh_num
-	child_gh_num=$(resolve_task_gh_number "$task_id" "$todo_file")
+	child_gh_num=$(resolve_task_gh_number "$child_id" "$todo_file")
 	[[ -z "$child_gh_num" ]] && {
-		log_verbose "$task_id: no ref:GH# — skipping sub-issue"
-		return 0
+		log_verbose "$child_id: no ref:GH# — skipping sub-issue"
+		return 1
 	}
 	local parent_gh_num
 	parent_gh_num=$(resolve_task_gh_number "$parent_id" "$todo_file")
 	[[ -z "$parent_gh_num" ]] && {
-		log_verbose "$task_id: parent $parent_id has no ref:GH# — skipping sub-issue"
-		return 0
+		log_verbose "$child_id: parent $parent_id has no ref:GH# — skipping sub-issue"
+		return 1
 	}
 
-	# Resolve to node IDs
 	local child_node_id
 	child_node_id=$(_cached_node_id "$child_gh_num" "$repo")
-	[[ -z "$child_node_id" ]] && return 0
+	[[ -z "$child_node_id" ]] && return 1
 	local parent_node_id
 	parent_node_id=$(_cached_node_id "$parent_gh_num" "$repo")
-	[[ -z "$parent_node_id" ]] && return 0
+	[[ -z "$parent_node_id" ]] && return 1
 
 	if [[ "$DRY_RUN" == "true" ]]; then
-		print_info "[DRY-RUN] Would set #$child_gh_num as sub-issue of #$parent_gh_num ($task_id -> $parent_id)"
-		echo "RELS:1"
+		print_info "[DRY-RUN] Would set #$child_gh_num as sub-issue of #$parent_gh_num ($child_id -> $parent_id)"
 		return 0
 	fi
 
 	if _gh_add_sub_issue "$parent_node_id" "$child_node_id"; then
-		log_verbose "$task_id (#$child_gh_num) sub-issue of $parent_id (#$parent_gh_num) ✓"
-		echo "RELS:1"
-	else
-		echo "RELS:0"
+		log_verbose "$child_id (#$child_gh_num) sub-issue of $parent_id (#$parent_gh_num) ✓"
+		return 0
 	fi
+	return 1
+}
+
+# Check if a task ID has the #parent / #parent-task / #meta tag in TODO.md.
+# Arguments:
+#   $1 - task_id to check
+#   $2 - todo_file path
+# Returns: 0 if parent-tagged, 1 otherwise
+_is_parent_tagged_task() {
+	local task_id="$1" todo_file="$2"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+
+	local task_line
+	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
+	[[ -z "$task_line" ]] && return 1
+
+	# Check for #parent, #parent-task, or #meta tags
+	if echo "$task_line" | grep -qE '#parent\b|#parent-task\b|#meta\b'; then
+		return 0
+	fi
+	return 1
+}
+
+# Sync parent-child (sub-issue) relationships for a task.
+# Detects parent-child via two mechanisms:
+#   1. Dot-notation: t1873.2 → parent t1873
+#   2. blocked-by a #parent-tagged task: blocked-by:t2010 where t2010 has #parent tag
+# Arguments:
+#   $1 - task_id
+#   $2 - todo_file path
+#   $3 - repo slug
+# Returns: "RELS:N" with count of relationships set
+_sync_subtask_hierarchy_for_task() {
+	local task_id="$1" todo_file="$2" repo="$3"
+	local rels_set=0
+
+	# Method 1: Dot-notation (t1873.2 → parent t1873)
+	local dot_parent
+	dot_parent=$(detect_parent_task_id "$task_id")
+	if [[ -n "$dot_parent" ]]; then
+		_link_sub_issue_pair "$task_id" "$dot_parent" "$todo_file" "$repo" && rels_set=$((rels_set + 1))
+	fi
+
+	# Method 2: blocked-by a #parent-tagged task
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+	local task_line
+	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
+	if [[ -n "$task_line" ]]; then
+		local blocked_by=""
+		local parsed
+		parsed=$(parse_task_line "$task_line")
+		while IFS='=' read -r key value; do
+			[[ "$key" == "blocked_by" ]] && blocked_by="$value"
+		done <<<"$parsed"
+
+		if [[ -n "$blocked_by" ]]; then
+			local _saved_ifs="$IFS"
+			IFS=','
+			for dep_task_id in $blocked_by; do
+				dep_task_id="${dep_task_id// /}"
+				[[ -z "$dep_task_id" ]] && continue
+				# Skip if this is already the dot-notation parent (avoid duplicate)
+				[[ "$dep_task_id" == "$dot_parent" ]] && continue
+				# Only create sub-issue if the dependency is a parent-tagged task
+				if _is_parent_tagged_task "$dep_task_id" "$todo_file"; then
+					_link_sub_issue_pair "$task_id" "$dep_task_id" "$todo_file" "$repo" && rels_set=$((rels_set + 1))
+				fi
+			done
+			IFS="$_saved_ifs"
+		fi
+	fi
+
+	echo "RELS:$rels_set"
 	return 0
 }
 

@@ -953,6 +953,18 @@ create_github_issue() {
 	_auto_assign_issue "$issue_num" "$repo_path"
 	_interactive_session_auto_claim_new_task "$issue_num" "$repo_path"
 
+	# Sync parent-child and blocked-by relationships (GH#18735)
+	# The rich delegation path (issue-sync-helper.sh push) handles this
+	# automatically; the bare fallback needs an explicit call.
+	local task_id_for_rels=""
+	[[ "$title" =~ ^(t[0-9]+(\.[0-9]+)*) ]] && task_id_for_rels="${BASH_REMATCH[1]}"
+	if [[ -n "$task_id_for_rels" && -f "$repo_path/TODO.md" ]]; then
+		local sync_helper="${SCRIPT_DIR}/issue-sync-helper.sh"
+		if [[ -x "$sync_helper" ]]; then
+			"$sync_helper" relationships "$task_id_for_rels" >/dev/null 2>&1 || true
+		fi
+	fi
+
 	echo "$issue_num"
 	return 0
 }
