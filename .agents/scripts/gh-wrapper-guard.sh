@@ -141,6 +141,52 @@ _report_violation() {
 	fi
 }
 
+# _scan_file_diff: scan a `git diff -U0` stream on stdin for a single file
+# and report any violations inline via `_report_violation`. Prints the total
+# violation count on its own final line of stdout so callers can aggregate
+# without bash 4 namerefs (bash 3.2 compat — see .github/workflows/
+# code-quality.yml "Bash 3.2 Compatibility" gate).
+#
+# Arguments:
+#   $1 - file path (for reporting)
+# Stdin: `git diff -U0 -- <file>` output
+# Stdout: one "COUNT N" line; violations go to stdout via _report_violation
+_scan_file_diff() {
+	local file="$1"
+	local current_lineno=0
+	local hunk_state=""
+	local count=0
+	local line raw
+	while IFS= read -r line; do
+		if [[ "$line" == @@* ]]; then
+			local head_part="${line#*+}"
+			current_lineno="${head_part%%,*}"
+			current_lineno="${current_lineno%% *}"
+			hunk_state="in-hunk"
+			continue
+		fi
+		[[ "$hunk_state" != "in-hunk" ]] && continue
+		case "$line" in
+		+++*) continue ;;
+		-*) continue ;;
+		\ *)
+			current_lineno=$((current_lineno + 1))
+			continue
+			;;
+		+*) ;;
+		*) continue ;;
+		esac
+		raw="${line#+}"
+		if _line_is_violation "$line" && ! _is_allowlisted_line "$raw"; then
+			_report_violation "$file" "$current_lineno" "$raw"
+			count=$((count + 1))
+		fi
+		current_lineno=$((current_lineno + 1))
+	done
+	printf 'COUNT %s\n' "$count"
+	return 0
+}
+
 # check subcommand: scan added lines in a diff range.
 # Extracts `+` hunk lines per file via `git diff -U0` and flags violations
 # that aren't already allowlisted.
@@ -182,43 +228,19 @@ cmd_check() {
 	[[ -z "$files" ]] && return 0
 
 	local total_violations=0
-	local file
+	local file scan_out count
 	while IFS= read -r file; do
 		[[ -z "$file" ]] && continue
 		_is_excluded_file "$file" && continue
-
-		# Scan the diff hunks for added lines in this file. `git diff -U0`
-		# emits hunks with `@@` headers and `+` prefixes on new lines.
-		local hunk_state="" current_lineno=0
-		while IFS= read -r line; do
-			# Parse the hunk header to reset the line counter.
-			if [[ "$line" == @@* ]]; then
-				# Format: @@ -A,B +C,D @@ ... — we want C.
-				local head_part="${line#*+}"
-				current_lineno="${head_part%%,*}"
-				current_lineno="${current_lineno%% *}"
-				hunk_state="in-hunk"
-				continue
-			fi
-			[[ "$hunk_state" != "in-hunk" ]] && continue
-			# Only scan added lines (start with +, not ++ which is file header).
-			case "$line" in
-			+++*) continue ;;
-			-*) continue ;;
-			\ *) # context line — only exists if -U was not 0; advance anyway
-				current_lineno=$((current_lineno + 1))
-				continue
-				;;
-			+*)
-				local raw="${line#+}"
-				if _line_is_violation "$line" && ! _is_allowlisted_line "$raw"; then
-					_report_violation "$file" "$current_lineno" "$raw"
-					total_violations=$((total_violations + 1))
-				fi
-				current_lineno=$((current_lineno + 1))
-				;;
-			esac
-		done < <(git diff -U0 "${base}...${head}" -- "$file" 2>/dev/null || true)
+		# Scan the diff hunks for added lines in this file. The helper prints
+		# violation lines inline and a trailing "COUNT N" we parse.
+		scan_out=$(_scan_file_diff "$file" \
+			< <(git diff -U0 "${base}...${head}" -- "$file" 2>/dev/null || true))
+		# Emit violation lines (everything except the trailing COUNT).
+		printf '%s\n' "$scan_out" | grep -v '^COUNT ' || true
+		count=$(printf '%s\n' "$scan_out" | awk '/^COUNT /{print $2; exit}')
+		[[ -z "$count" ]] && count=0
+		total_violations=$((total_violations + count))
 	done <<<"$files"
 
 	if [[ "$total_violations" -gt 0 ]]; then
@@ -239,33 +261,16 @@ cmd_check_staged() {
 	[[ -z "$files" ]] && return 0
 
 	local total=0
-	local file
+	local file scan_out count
 	while IFS= read -r file; do
 		[[ -z "$file" ]] && continue
 		_is_excluded_file "$file" && continue
-		local hunk_state="" current_lineno=0
-		while IFS= read -r line; do
-			if [[ "$line" == @@* ]]; then
-				local head_part="${line#*+}"
-				current_lineno="${head_part%%,*}"
-				current_lineno="${current_lineno%% *}"
-				hunk_state="in-hunk"
-				continue
-			fi
-			[[ "$hunk_state" != "in-hunk" ]] && continue
-			case "$line" in
-			+++*) continue ;;
-			-*) continue ;;
-			+*)
-				local raw="${line#+}"
-				if _line_is_violation "$line" && ! _is_allowlisted_line "$raw"; then
-					_report_violation "$file" "$current_lineno" "$raw"
-					total=$((total + 1))
-				fi
-				current_lineno=$((current_lineno + 1))
-				;;
-			esac
-		done < <(git diff --cached -U0 -- "$file" 2>/dev/null || true)
+		scan_out=$(_scan_file_diff "$file" \
+			< <(git diff --cached -U0 -- "$file" 2>/dev/null || true))
+		printf '%s\n' "$scan_out" | grep -v '^COUNT ' || true
+		count=$(printf '%s\n' "$scan_out" | awk '/^COUNT /{print $2; exit}')
+		[[ -z "$count" ]] && count=0
+		total=$((total + count))
 	done <<<"$files"
 
 	if [[ "$total" -gt 0 ]]; then
