@@ -44,8 +44,8 @@ _SHARED_CONSTANTS_LOADED=1
 if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]] &&
 	[[ -z "${AIDEVOPS_BASH_REEXECED:-}" ]] &&
 	[[ -n "${BASH_SOURCE[1]:-}" ]]; then
-	for _aidevops_bash_candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash; do
-		if [[ -x "$_aidevops_bash_candidate" ]]; then
+	for _aidevops_bash_candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash "$(command -v bash 2>/dev/null || true)"; do
+		if [[ -n "$_aidevops_bash_candidate" && -f "$_aidevops_bash_candidate" && -x "$_aidevops_bash_candidate" && "$_aidevops_bash_candidate" != "/bin/bash" ]]; then
 			export AIDEVOPS_BASH_REEXECED=1
 			exec "$_aidevops_bash_candidate" "${BASH_SOURCE[1]}" "$@"
 		fi

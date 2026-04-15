@@ -171,8 +171,10 @@ _bu_dismiss_advisory_if_resolved() {
 	# Also remove from dismissed.txt if the user previously dismissed it;
 	# a fresh advisory should fire on next drift.
 	if [[ -f "$dismissed_file" ]] && grep -qxF "bash-3.2-upgrade" "$dismissed_file" 2>/dev/null; then
-		grep -vxF "bash-3.2-upgrade" "$dismissed_file" >"${dismissed_file}.tmp" 2>/dev/null || true
-		mv "${dismissed_file}.tmp" "$dismissed_file" 2>/dev/null || rm -f "${dismissed_file}.tmp"
+		grep -vxF "bash-3.2-upgrade" "$dismissed_file" >"${dismissed_file}.tmp" || true
+		if [[ -f "${dismissed_file}.tmp" ]]; then
+			mv "${dismissed_file}.tmp" "$dismissed_file" || rm -f "${dismissed_file}.tmp"
+		fi
 	fi
 	return 0
 }
