@@ -12,7 +12,7 @@ name: Qlty Regression Gate
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   pull-requests: write
@@ -39,8 +39,18 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
         run: |
           set -euo pipefail
+          # Guard: skip full re-scan when an unrelated label is applied.
+          # Applying labels like 'status:in-review' or 'origin:worker' would
+          # otherwise trigger a full Qlty scan. Only 'ratchet-bump' needs a rescan.
+          if [ "${EVENT_ACTION}" = "labeled" ] && [ "${LABEL_NAME}" != "ratchet-bump" ]; then
+            echo "Skipping: labeled event for '${LABEL_NAME}' is not 'ratchet-bump' — no rescan needed."
+            echo "should_scan=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           echo "Base: $BASE_SHA"
           echo "Head: $HEAD_SHA"
           changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" || true)
