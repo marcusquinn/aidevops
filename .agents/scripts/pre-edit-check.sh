@@ -45,6 +45,13 @@
 
 set -euo pipefail
 
+# Colors — sourced from shared-constants.sh (Pattern A, t2053.3)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=shared-constants.sh
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+# BOLD is not in shared-constants.sh — Pattern B fallback
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
+
 # =============================================================================
 # Fast-path for headless workers with pre-created worktrees
 # =============================================================================
@@ -392,12 +399,6 @@ if [[ -n "$CHECK_COMMAND" ]]; then
 		exit 0
 	fi
 fi
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-BOLD='\033[1m'
 
 # =============================================================================
 # Operation Verification (t1364.3)
