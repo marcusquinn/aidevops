@@ -50,6 +50,35 @@ const SSE_HEADERS = {
   Connection: "keep-alive",
 };
 
+// ---------------------------------------------------------------------------
+// Response helpers — cross-realm safety
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a JSON HTTP response. OpenCode's Bun plugin loader may rebind the
+ * `Response` constructor to a realm-local `_Response` class that Bun.serve
+ * rejects with "Expected a Response object, but received '_Response'".
+ *
+ * `Response.json()` (Fetch API static method, Bun ≥1.0) constructs the
+ * response through Bun's native internal path, bypassing the mismatch.
+ * Falls back to `new Response()` for runtimes without `Response.json()`.
+ */
+function jsonResponse(data, init = {}) {
+  if (typeof Response.json === "function") {
+    return Response.json(data, init);
+  }
+  return new Response(JSON.stringify(data), {
+    ...init,
+    headers: { "Content-Type": "application/json", ...init.headers },
+  });
+}
+
+/** Plain-text response (404, etc.). No cross-realm workaround needed — these
+ *  are simple enough that Bun.serve generally handles them. */
+function textResponse(body, init = {}) {
+  return new Response(body, init);
+}
+
 /** @type {ReturnType<Bun["serve"]> | null} */
 let proxyServer = null;
 /** @type {number | null} */
@@ -225,22 +254,18 @@ async function handleChatCompletions(req, directory) {
     // Thread the fetch Request's abort signal into the JSON path so client
     // disconnect terminates the child immediately (GH#18621 Finding 1).
     const result = await runClaudeJson(body, directory, req.signal);
-    return new Response(JSON.stringify(buildOpenAIResponse(body, result.content, result.usage)), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse(buildOpenAIResponse(body, result.content, result.usage));
   }
 
-  return new Response(streamClaudeResponse(body, directory), {
+  return textResponse(streamClaudeResponse(body, directory), {
     headers: SSE_HEADERS,
   });
 }
 
 function buildModelsListResponse() {
-  return new Response(JSON.stringify({
+  return jsonResponse({
     object: "list",
     data: getClaudeProxyModels().map((model) => ({ id: model.id, object: "model", owned_by: "claude-cli" })),
-  }), {
-    headers: { "Content-Type": "application/json" },
   });
 }
 
@@ -249,12 +274,10 @@ async function handleChatCompletionsWithErrorWrap(req, directory) {
     return await handleChatCompletions(req, directory);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({
-      error: { message, type: "server_error", code: "internal_error" },
-    }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse(
+      { error: { message, type: "server_error", code: "internal_error" } },
+      { status: 500 },
+    );
   }
 }
 
@@ -270,7 +293,7 @@ async function routeProxyRequest(req, directory) {
   if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
     return handleChatCompletionsWithErrorWrap(req, directory);
   }
-  return new Response("Not Found", { status: 404 });
+  return textResponse("Not Found", { status: 404 });
 }
 
 // ---------------------------------------------------------------------------
