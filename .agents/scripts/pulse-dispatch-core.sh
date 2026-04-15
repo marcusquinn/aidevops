@@ -38,6 +38,7 @@
 #   - pulse-dispatch-dedup-layers.sh    — 7-layer dedup chain + stale classifier
 #   - pulse-dispatch-large-file-gate.sh — large-file simplification gate
 #   - pulse-dispatch-worker-launch.sh   — worker launch helpers + orchestrator
+#   - dispatch-dedup-footprint.sh       — file-footprint overlap throttle (t2117)
 #
 # Pure move from pulse-wrapper.sh. Byte-identical function bodies.
 # Phase 12 post-gate simplification: _is_task_committed_to_main split into
@@ -58,6 +59,9 @@ source "${BASH_SOURCE[0]%/*}/pulse-dispatch-dedup-layers.sh"
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-large-file-gate.sh"
 # shellcheck source=pulse-dispatch-worker-launch.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-worker-launch.sh"
+# t2117/GH#19109: file-footprint overlap throttle
+# shellcheck source=dispatch-dedup-footprint.sh
+source "${BASH_SOURCE[0]%/*}/dispatch-dedup-footprint.sh"
 
 #######################################
 # Resolve the worker tier from issue labels. When multiple tier:* labels
@@ -823,6 +827,17 @@ _dispatch_dedup_check_layers() {
 	# shouldn't pay the complexity tax of navigating a 12,000-line file.
 	if _issue_targets_large_files "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$repo_path"; then
 		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: targets large file(s), simplification gate" >>"$LOGFILE"
+		return 1
+	fi
+
+	# t2117/GH#19109: File-footprint overlap throttle. If another in-flight
+	# worker is already modifying the same files, defer this dispatch to
+	# prevent CONFLICTING cascades. The check is cheap (cached per repo per
+	# cycle) and decays naturally when the blocking issue's status labels clear.
+	local _footprint_signal=""
+	_footprint_signal=$(_footprint_check_overlap "$issue_number" "$repo_slug" "$_dispatch_issue_body" 2>/dev/null) || true
+	if [[ -n "$_footprint_signal" ]]; then
+		echo "[dispatch_with_dedup] (t2117) Dispatch deferred for #${issue_number} in ${repo_slug}: ${_footprint_signal}" >>"$LOGFILE"
 		return 1
 	fi
 
