@@ -1,0 +1,116 @@
+name: Shell Init Pattern Check
+
+# t2053 Phase 2: CI lint gate that enforces canonical shell init patterns
+# from .agents/reference/shell-style-guide.md. Scans only PR-changed .sh
+# files so existing violations on main don't block (Option A from issue).
+#
+# Violations posted as a PR comment linking to the style guide.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.agents/scripts/**/*.sh'
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Shell Init Pattern Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed shell files
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- '.agents/scripts/**/*.sh' || true)
+          if [ -z "$changed" ]; then
+            echo "No .agents/scripts/**/*.sh files changed."
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf 'Changed shell files:\n%s\n' "$changed"
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+          # Write to file for the scan step
+          printf '%s\n' "$changed" > /tmp/changed-sh-files.txt
+
+      - name: Run shell init pattern check
+        if: steps.changed.outputs.has_files == 'true'
+        id: scan
+        run: |
+          set +e
+          files=$(cat /tmp/changed-sh-files.txt | tr '\n' ' ')
+          output=$(bash .agents/scripts/shell-init-pattern-check.sh --scan-files $files 2>&1)
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$output"
+          printf '%s\n' "$output" > /tmp/shell-init-report.txt
+
+      - name: Post PR comment on failure
+        if: steps.changed.outputs.has_files == 'true' && steps.scan.outputs.exit_code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          report=$(cat /tmp/shell-init-report.txt)
+          marker="<!-- shell-init-pattern-check -->"
+          body=$(cat <<EOF
+          ${marker}
+          ## Shell Init Pattern Violations
+
+          The following files have violations of the [shell init style guide](.agents/reference/shell-style-guide.md):
+
+          \`\`\`
+          ${report}
+          \`\`\`
+
+          **Fix:** Use Pattern A (source \`shared-constants.sh\`) or Pattern B (\`[[ -z "\${VAR+x}" ]] && VAR='...'\`).
+
+          Run \`shell-init-pattern-check.sh --fix-hint\` for remediation snippets.
+          EOF
+          )
+
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body="$body" >/dev/null 2>&1 || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body" \
+              >/dev/null 2>&1 || true
+          fi
+
+      - name: Enforce gate
+        if: steps.changed.outputs.has_files == 'true'
+        env:
+          EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          if [ "${EXIT_CODE:-0}" = "0" ]; then
+            echo "Shell init pattern check: clean."
+            exit 0
+          fi
+          if [ "$EXIT_CODE" = "1" ]; then
+            echo "::error::Shell init pattern violations found. See PR comment for details."
+            exit 1
+          fi
+          echo "::error::Shell init pattern check failed with unexpected exit code: $EXIT_CODE"
+          exit 1
