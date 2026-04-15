@@ -3735,31 +3735,124 @@ _dispatch_config() {
 	return 0
 }
 
-# Main entry point
-main() {
-	local command="${1:-help}"
-
-	# Auto-detect unregistered repo on any command (silent check)
+# Emit tip if the current directory has aidevops but isn't registered
+_main_check_unregistered() {
+	local command="$1"
 	local unregistered
 	unregistered=$(detect_unregistered_repo 2>/dev/null) || true
 	if [[ -n "$unregistered" && "$command" != "detect" && "$command" != "repos" ]]; then
 		echo -e "${YELLOW}[TIP]${NC} This project uses aidevops but isn't registered. Run: aidevops repos add"
 		echo ""
 	fi
+	return 0
+}
+
+# Warn when CLI and agents versions differ
+_main_check_version() {
+	local cli_version agents_version
+	cli_version=$(get_version)
+	[[ -f "$AGENTS_DIR/VERSION" ]] && agents_version=$(cat "$AGENTS_DIR/VERSION") || agents_version="not installed"
+	if [[ "$agents_version" == "not installed" ]]; then
+		echo -e "${YELLOW}[WARN]${NC} Agents not installed. Run: aidevops update"
+		echo ""
+	elif [[ "$cli_version" != "$agents_version" ]]; then
+		echo -e "${YELLOW}[WARN]${NC} Version mismatch - CLI: $cli_version, Agents: $agents_version"
+		echo -e "       Run: aidevops update"
+		echo ""
+	fi
+	return 0
+}
+
+# Route 'aidevops security [subcommand]' to appropriate helpers
+_cmd_security() {
+	case "${1:-}" in
+	"")
+		# No args: run ALL security checks (posture + hygiene + advisories)
+		echo ""
+		echo "Running full security assessment..."
+		echo "==================================="
+		echo ""
+		_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" status || true
+		echo ""
+		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" scan || true
+		;;
+	scan | scan-secrets | scan-pth | scan-deps | dismiss)
+		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
+		;;
+	hygiene)
+		shift
+		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "${@:-scan}"
+		;;
+	posture | setup)
+		shift || true
+		_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "${@:-setup}"
+		;;
+	status)
+		# Status shows both posture and hygiene summary
+		_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" status || true
+		echo ""
+		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" startup-check || true
+		;;
+	*)
+		_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "$@"
+		;;
+	esac
+	return 0
+}
+
+# Route 'aidevops client-format [subcommand]' to appropriate helpers
+_cmd_client_format() {
+	case "${1:-status}" in
+	extract | refresh)
+		_dispatch_helper "cch-extract.sh" "cch-extract.sh" --cache
+		;;
+	check | verify)
+		_dispatch_helper "cch-extract.sh" "cch-extract.sh" --verify
+		;;
+	canary | test)
+		shift || true
+		_dispatch_helper "cch-canary.sh" "cch-canary.sh" --verbose "$@"
+		;;
+	monitor)
+		shift || true
+		_dispatch_helper "cch-traffic-monitor.sh" "cch-traffic-monitor.sh" "$@"
+		;;
+	install-canary)
+		_dispatch_helper "cch-canary.sh" "cch-canary.sh" --install
+		;;
+	status | "")
+		echo ""
+		echo "Client request format alignment"
+		echo "==============================="
+		echo ""
+		_dispatch_helper "cch-extract.sh" "cch-extract.sh" --verify 2>&1 || true
+		echo ""
+		if [[ -f "$HOME/.aidevops/cch-constants.json" ]]; then
+			echo "Cached constants:"
+			cat "$HOME/.aidevops/cch-constants.json"
+		else
+			echo "No cached constants. Run: aidevops client-format extract"
+		fi
+		;;
+	*)
+		print_error "Unknown subcommand: $1"
+		echo "Usage: aidevops client-format [extract|check|canary|monitor|install-canary|status]"
+		exit 1
+		;;
+	esac
+	return 0
+}
+
+# Main entry point
+main() {
+	local command="${1:-help}"
+
+	# Auto-detect unregistered repo on any command (silent check)
+	_main_check_unregistered "$command"
 
 	# Check if agents need updating (skip for update command itself)
 	if [[ "$command" != "update" && "$command" != "upgrade" && "$command" != "u" ]]; then
-		local cli_version agents_version
-		cli_version=$(get_version)
-		[[ -f "$AGENTS_DIR/VERSION" ]] && agents_version=$(cat "$AGENTS_DIR/VERSION") || agents_version="not installed"
-		if [[ "$agents_version" == "not installed" ]]; then
-			echo -e "${YELLOW}[WARN]${NC} Agents not installed. Run: aidevops update"
-			echo ""
-		elif [[ "$cli_version" != "$agents_version" ]]; then
-			echo -e "${YELLOW}[WARN]${NC} Version mismatch - CLI: $cli_version, Agents: $agents_version"
-			echo -e "       Run: aidevops update"
-			echo ""
-		fi
+		_main_check_version
 	fi
 
 	shift || true
@@ -3778,84 +3871,12 @@ main() {
 	sources | agent-sources) _dispatch_helper "agent-sources-helper.sh" "agent-sources-helper.sh" "$@" ;;
 	plugin | plugins) cmd_plugin "$@" ;;
 	pulse) _dispatch_helper "pulse-session-helper.sh" "pulse-session-helper.sh" "$@" ;;
-	security)
-		case "${1:-}" in
-		"")
-			# No args: run ALL security checks (posture + hygiene + advisories)
-			echo ""
-			echo "Running full security assessment..."
-			echo "==================================="
-			echo ""
-			_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" status || true
-			echo ""
-			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" scan || true
-			;;
-		scan | scan-secrets | scan-pth | scan-deps | dismiss)
-			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
-			;;
-		hygiene)
-			shift
-			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "${@:-scan}"
-			;;
-		posture | setup)
-			shift || true
-			_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "${@:-setup}"
-			;;
-		status)
-			# Status shows both posture and hygiene summary
-			_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" status || true
-			echo ""
-			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" startup-check || true
-			;;
-		*)
-			_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "$@"
-			;;
-		esac
-		;;
+	security) _cmd_security "$@" ;;
 	doctor | doc) _dispatch_helper "doctor-helper.sh" "doctor-helper.sh" "$@" ;;
 	detect | scan) cmd_detect ;;
 	ip-check | ip_check) _dispatch_helper "ip-reputation-helper.sh" "ip-reputation-helper.sh" "$@" ;;
 	model-accounts-pool | map) _dispatch_helper "oauth-pool-helper.sh" "oauth-pool-helper.sh" "$@" ;;
-	client-format)
-		case "${1:-status}" in
-		extract | refresh)
-			_dispatch_helper "cch-extract.sh" "cch-extract.sh" --cache
-			;;
-		check | verify)
-			_dispatch_helper "cch-extract.sh" "cch-extract.sh" --verify
-			;;
-		canary | test)
-			shift || true
-			_dispatch_helper "cch-canary.sh" "cch-canary.sh" --verbose "$@"
-			;;
-		monitor)
-			shift || true
-			_dispatch_helper "cch-traffic-monitor.sh" "cch-traffic-monitor.sh" "$@"
-			;;
-		install-canary)
-			_dispatch_helper "cch-canary.sh" "cch-canary.sh" --install
-			;;
-		status | "")
-			echo ""
-			echo "Client request format alignment"
-			echo "==============================="
-			echo ""
-			_dispatch_helper "cch-extract.sh" "cch-extract.sh" --verify 2>&1 || true
-			echo ""
-			if [[ -f "$HOME/.aidevops/cch-constants.json" ]]; then
-				echo "Cached constants:"
-				cat "$HOME/.aidevops/cch-constants.json"
-			else
-				echo "No cached constants. Run: aidevops client-format extract"
-			fi
-			;;
-		*)
-			print_error "Unknown subcommand: $1"
-			echo "Usage: aidevops client-format [extract|check|canary|monitor|install-canary|status]"
-			exit 1
-			;;
-		esac
-		;;
+	client-format) _cmd_client_format "$@" ;;
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
 	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
 	approve) _dispatch_helper "approval-helper.sh" "approval-helper.sh" "$@" ;;
