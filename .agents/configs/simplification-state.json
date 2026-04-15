@@ -7409,10 +7409,10 @@
       "passes": 4
     },
     ".agents/scripts/pulse-dispatch-core.sh": {
-      "hash": "1a871d353be3730b86dc35b9a9218ba981f16e6d",
-      "at": "2026-04-14T20:37:48Z",
+      "hash": "f42840d3e213440b9bbb2283690918bb6618b3f4",
+      "at": "2026-04-15T04:52:20Z",
       "pr": 18832,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/stats-quality-sweep.sh": {
       "hash": "6fe05a80fbe9be2c6c0c56f40f40bd3b96f52bf1",
