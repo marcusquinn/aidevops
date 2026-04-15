@@ -7,7 +7,7 @@ Reference templates for GitHub-written content. Use `workflows/brief.md` for the
 
 ## Issue Body Template
 
-When creating issues via `gh issue create`, wrap the appropriate tier content in this structure:
+Wrap the appropriate tier content in this structure for `gh issue create`:
 
 ```markdown
 ## Description
@@ -36,13 +36,13 @@ When creating issues via `gh issue create`, wrap the appropriate tier content in
 
 Always include a tier label: `tier:simple`, `tier:standard`, or `tier:thinking`.
 
-**Why "Done When" matters:** Workers that lack a concrete completion signal exhibit two failure modes: (1) stop after setup/exploration without implementing anything (observed on #17642, #17643), or (2) stop after PR creation without merging or posting closing comments. "Done When" gives the model a checklist to drive toward instead of an open-ended goal.
+**Why "Done When" matters:** Workers without a concrete completion signal fail in two ways: (1) stop after exploration without implementing (#17642, #17643), or (2) stop after PR creation without completing closure steps (merge, closing comments). The checklist drives toward verified completion instead of an open-ended goal.
 
 ## Comment Templates
 
 ### Dispatch comment (pulse → worker)
 
-Use when the pulse dispatches a worker. Include enough context to avoid re-reading the full issue:
+For pulse-dispatched workers. Include enough context to avoid re-reading the full issue:
 
 ```markdown
 ## Dispatching: {issue_title}
@@ -62,7 +62,7 @@ _Dispatched by pulse at {timestamp}_
 
 ### Kill/timeout comment (watchdog → issue)
 
-Use when a worker is killed. Explain what happened and what the next worker should do differently:
+For killed workers. Explain what happened and guide the next attempt:
 
 ```markdown
 ## Worker killed: {reason}
@@ -92,7 +92,7 @@ See `templates/escalation-report-template.md`. Include:
 
 ## PR Description Template
 
-Workers creating PRs use this structure. It serves the review bot and the human reviewer.
+For all worker-created PRs. Serves review bots and human reviewers.
 
 ```markdown
 ## Summary
