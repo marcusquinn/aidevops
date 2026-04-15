@@ -112,6 +112,14 @@ Full guide: `.agents/aidevops/extension.md`. Naming conventions: `tools/build-ag
 
 **Security standards** (all services): API token validation, rate limiting awareness, secure credential storage, input validation, error message sanitization, audit logging, confirmation prompts for destructive operations.
 
+## Shell Helper Initialization
+
+All shell scripts under `.agents/scripts/**/*.sh` MUST follow the canonical shared-variable initialization pattern. Short rule: source `shared-constants.sh` OR guard fallbacks with `[[ -z "${VAR+x}" ]]`. Never declare `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, or `NC` at top level without a guard, and never `readonly` those names outside `shared-constants.sh` itself.
+
+Why the rule exists: PR #18728 fixed one instance of an unguarded re-assignment colliding with `readonly` in `shared-constants.sh`, which had killed `setup.sh` under `set -Eeuo pipefail` and broke auto-update for 4 days (GH#18702 primary, GH#18693 cascade victim). The same bug shape is latent in 18 other helpers today — this section exists to prevent the next occurrence.
+
+Full guide with Patterns A/B/C, banned patterns, audit data, and migration checklist: **`reference/shell-style-guide.md`**. CI enforcement ships in t2053 Phase 2 via `shell-init-pattern-check.sh`.
+
 ## Knowledge Organization Model
 
 The `.agents/` directory organizes knowledge along two axes: **strategy** (what to do) and **execution** (how to do it). Full conventions in `tools/build-agent/build-agent.md` "Folder Organization".

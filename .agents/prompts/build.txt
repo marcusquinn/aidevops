@@ -393,6 +393,7 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 
 # Quality Standards
 - ShellCheck zero violations. `local var="$1"` pattern. Explicit returns.
+- Shell helpers MUST source `shared-constants.sh` OR guard color/constant fallbacks with `[[ -z "${VAR+x}" ]] && VAR='…'`. Unguarded top-level assignments of shared variable names (`RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, `NC`) are forbidden; `readonly` on those names outside `shared-constants.sh` is forbidden. See `reference/shell-style-guide.md` (root cause: GH#18702/PR #18728).
 
 # Bash 3.2 Compatibility (macOS default)
 # Full rules: `reference/bash-compat.md`
