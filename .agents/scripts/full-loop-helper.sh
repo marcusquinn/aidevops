@@ -848,7 +848,11 @@ _post_merge_summary() {
 	return 0
 }
 
-# Label the linked issue as in-review, removing all sibling status labels (t2033).
+# Label the linked issue as in-review + self-assign, removing all sibling
+# status labels (t2033). Defence-in-depth for t2056/t2110: even if the
+# interactive-session-helper.sh claim was skipped or failed, the PR-open
+# path ensures the assignee is set — preventing the status:in-review +
+# zero-assignees degraded state that breaks dispatch dedup.
 # Arguments: issue_number, repo
 _label_issue_in_review() {
 	local issue_number="$1" repo="$2"
@@ -856,7 +860,15 @@ _label_issue_in_review() {
 	local issue_state=""
 	issue_state=$(gh issue view "$issue_number" --repo "$repo" --json state -q '.state' 2>/dev/null || echo "")
 	if [[ "$issue_state" == "OPEN" ]]; then
-		set_issue_status "$issue_number" "$repo" "in-review" >/dev/null 2>&1 || true
+		# Resolve the current gh user for self-assignment (best-effort)
+		local current_user=""
+		current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+		if [[ -n "$current_user" && "$current_user" != "null" ]]; then
+			set_issue_status "$issue_number" "$repo" "in-review" \
+				--add-assignee "$current_user" >/dev/null 2>&1 || true
+		else
+			set_issue_status "$issue_number" "$repo" "in-review" >/dev/null 2>&1 || true
+		fi
 	fi
 	return 0
 }
