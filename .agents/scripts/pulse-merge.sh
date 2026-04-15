@@ -827,6 +827,29 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 
 	# Close linked issue with the same closing comment
 	if [[ -n "$linked_issue" ]]; then
+		# t2099 / GH#19032: parent-task close guard. Parent roadmap issues must
+		# stay open until ALL phase children merge (t2046). The PR-body keyword
+		# guard (parent-task-keyword-guard.sh) prevents workers from writing
+		# Closes/Resolves/Fixes against a parent, and they instead use
+		# "For #NNN" / "Ref #NNN". BUT `_extract_linked_issue` also falls back
+		# to matching `GH#NNN:` in the PR title — which is the canonical PR
+		# title format for parent-task phase PRs. Without this check, every
+		# phase PR would silently close its parent on merge.
+		#
+		# Behaviour:
+		#   - Still post the closing comment (it doubles as a phase-merged
+		#     status update on the parent).
+		#   - SKIP the `gh issue close` call.
+		#   - SKIP fast_fail_reset and unlock (both tied to closing).
+		local _parent_task_guard=0
+		local _linked_labels
+		_linked_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
+			--jq '[.labels[].name] | join(",")' 2>/dev/null) || _linked_labels=""
+		if [[ ",${_linked_labels}," == *",parent-task,"* ]]; then
+			_parent_task_guard=1
+			echo "[pulse-wrapper] Deterministic merge: skipping close of parent-task issue #${linked_issue} (PR #${pr_number} is a phase child; parent stays open until all phases merge) — t2099/GH#19032" >>"$LOGFILE"
+		fi
+
 		# Dedup guard: skip if closing comment for this PR already exists (GH#18098).
 		local _dedup_count
 		_dedup_count=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments" \
@@ -839,11 +862,14 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 			gh issue comment "$linked_issue" --repo "$repo_slug" \
 				--body "$closing_comment" 2>/dev/null || true
 		fi
-		gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
-		# Reset fast-fail counter now that the issue is resolved (GH#2076)
-		fast_fail_reset "$linked_issue" "$repo_slug" || true
-		# t1934: Unlock the issue (locked at dispatch time)
-		unlock_issue_after_worker "$linked_issue" "$repo_slug"
+
+		if [[ "$_parent_task_guard" -eq 0 ]]; then
+			gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
+			# Reset fast-fail counter now that the issue is resolved (GH#2076)
+			fast_fail_reset "$linked_issue" "$repo_slug" || true
+			# t1934: Unlock the issue (locked at dispatch time)
+			unlock_issue_after_worker "$linked_issue" "$repo_slug"
+		fi
 	fi
 	return 0
 }
