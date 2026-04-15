@@ -965,6 +965,119 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 	return 0
 }
 
+# _merge_resolve_repo — resolve repo slug from argument or auto-detect from git remote.
+# Echoes the resolved repo slug. Returns 1 when detection fails.
+_merge_resolve_repo() {
+	local repo_arg="${1:-}"
+	if [[ -n "$repo_arg" ]]; then
+		printf '%s\n' "$repo_arg"
+		return 0
+	fi
+	local detected=""
+	detected=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
+	if [[ -z "$detected" ]]; then
+		print_error "Cannot detect repo. Pass REPO as second argument."
+		return 1
+	fi
+	printf '%s\n' "$detected"
+	return 0
+}
+
+# _merge_execute — attempt `gh pr merge` with optional --admin fallback on branch-protection errors.
+#
+# GH#18538: branch protection that requires an approving review rejects plain
+# `gh pr merge`. Workers share the owner's gh auth, so --admin works when the
+# authed user has admin rights. We only fall back to --admin when the caller
+# did not explicitly pass --admin or --auto (explicit intent is never overridden).
+#
+# GH#18731: --admin / --auto are explicit caller intents; when present, the
+# error-retry path is skipped entirely.
+#
+# Bash 3.2 note: `"${arr[@]}"` raises "unbound variable" under set -u when the
+# array is empty. The `${arr[@]+"${arr[@]}"}` form expands to zero words safely.
+#
+# Args: pr_number repo merge_method has_admin has_auto
+# Returns: 0 = merged or queued, 1 = failed
+_merge_execute() {
+	local pr_number="$1"
+	local repo="$2"
+	local merge_method="$3"
+	local has_admin="$4"
+	local has_auto="$5"
+
+	# Reconstruct flags array from boolean sentinels (avoids passing arrays across function calls).
+	local merge_flags=()
+	[[ "$has_admin" -eq 1 ]] && merge_flags+=("--admin")
+	[[ "$has_auto" -eq 1 ]] && merge_flags+=("--auto")
+
+	local merge_desc="$merge_method"
+	[[ ${#merge_flags[@]} -gt 0 ]] && merge_desc+=" ${merge_flags[*]}"
+	print_info "Merging PR #${pr_number} in ${repo} (${merge_desc})..."
+
+	# Capture output AND exit code under set -e. A bare assignment `out=$(cmd)`
+	# triggers errexit before `rc=$?` is reached; the if-form keeps both available.
+	# (GH#18538 follow-up to PR #18748 — the bare-assignment form shipped as a bug.)
+	local _merge_out="" _merge_rc=0
+	if _merge_out=$(gh pr merge "$pr_number" --repo "$repo" "$merge_method" ${merge_flags[@]+"${merge_flags[@]}"} 2>&1); then
+		_merge_rc=0
+	else
+		_merge_rc=$?
+	fi
+
+	if [[ $_merge_rc -ne 0 ]]; then
+		printf '%s\n' "$_merge_out"
+		# Only fall back to --admin when caller passed neither --admin nor --auto.
+		if [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
+			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
+			print_info "Branch protection blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
+			if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin 2>&1; then
+				print_success "PR #${pr_number} merged with --admin fallback"
+				return 0
+			else
+				print_error "Merge failed for PR #${pr_number} (even with --admin — maintainer gate or admin rights missing)"
+				return 1
+			fi
+		else
+			print_error "Merge failed for PR #${pr_number}"
+			return 1
+		fi
+	fi
+
+	printf '%s\n' "$_merge_out"
+	if [[ $has_auto -eq 1 ]]; then
+		print_success "PR #${pr_number} queued for auto-merge"
+	else
+		print_success "PR #${pr_number} merged successfully"
+	fi
+	return 0
+}
+
+# _merge_unlock_resources — unlock PR and linked issue after worker self-merge.
+#
+# t1934: Issues/PRs are locked at dispatch time to prevent prompt injection.
+# The worker merge path must unlock them — the pulse deterministic merge path
+# has its own unlock, but workers that self-merge bypass it.
+#
+# Args: pr_number repo
+_merge_unlock_resources() {
+	local pr_number="$1"
+	local repo="$2"
+
+	gh issue unlock "$pr_number" --repo "$repo" >/dev/null 2>&1 || true
+
+	# Find and unlock the issue linked via "Resolves/Closes/Fixes #NNN" in the PR body.
+	local _linked_issue=""
+	_linked_issue=$(gh pr view "$pr_number" --repo "$repo" --json body \
+		--jq '.body' 2>/dev/null |
+		grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
+		grep -oE '[0-9]+' | head -1) || _linked_issue=""
+	if [[ -n "$_linked_issue" && "$_linked_issue" =~ ^[0-9]+$ ]]; then
+		gh issue unlock "$_linked_issue" --repo "$repo" >/dev/null 2>&1 || true
+	fi
+
+	return 0
+}
+
 # Merge wrapper (GH#17541) — enforces review-bot-gate then merges.
 # Single command that replaces the multi-step protocol (wait + merge).
 # Workers call this instead of bare `gh pr merge`.
@@ -980,7 +1093,6 @@ cmd_merge() {
 	local pr_number="${1:-}"
 	local repo=""
 	local merge_method="--squash"
-	local merge_flags=()
 	local has_admin=0
 	local has_auto=0
 
@@ -991,20 +1103,16 @@ cmd_merge() {
 	shift
 
 	# Parse optional repo, merge method, and gh pass-through flags.
-	# --admin / --auto (GH#18731) pass straight through to `gh pr merge`
-	# so callers can control branch-protection escape hatches explicitly
-	# instead of relying on the error-retry fallback below.
+	# --admin / --auto (GH#18731) pass straight through to `gh pr merge`.
 	for arg in "$@"; do
 		case "$arg" in
 		--squash | --merge | --rebase)
 			merge_method="$arg"
 			;;
 		--admin)
-			merge_flags+=("$arg")
 			has_admin=1
 			;;
 		--auto)
-			merge_flags+=("$arg")
 			has_auto=1
 			;;
 		*)
@@ -1018,107 +1126,17 @@ cmd_merge() {
 		esac
 	done
 
-	# Auto-detect repo from git remote if not provided
-	if [[ -z "$repo" ]]; then
-		repo=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
-		if [[ -z "$repo" ]]; then
-			print_error "Cannot detect repo. Pass REPO as second argument."
-			return 1
-		fi
-	fi
+	repo=$(_merge_resolve_repo "$repo") || return 1
 
-	# Gate: enforce review-bot-gate before merge
+	# Gate: enforce review-bot-gate before merge.
 	cmd_pre_merge_gate "$pr_number" "$repo" || {
 		print_error "Merge blocked by review bot gate. Address bot findings or wait for reviews."
 		return 1
 	}
 
-	# Merge (no --delete-branch from inside worktree, per full-loop.md step 4.5)
-	#
-	# GH#18538: on repos without auto-merge enabled, branch protection that
-	# requires an approving review will reject plain `gh pr merge` with
-	# "the base branch policy prohibits the merge". Workers can't self-
-	# approve their own PRs, and the canonical repos in this framework
-	# merge via `--admin` as a matter of course — the owner/pulse runs as
-	# the same GitHub account as workers, so `--admin` works for them too
-	# (when the authenticated user has admin rights; GitHub rejects it
-	# otherwise and we surface the original error).
-	#
-	# GH#18731: callers can also pass --admin or --auto explicitly via
-	# $merge_flags. When they do, we skip the error-retry fallback below
-	# because the caller's intent is already explicit (retrying --admin
-	# when --admin was requested is a no-op; retrying --admin when --auto
-	# was requested would clobber the caller's queue-for-later intent).
-	#
-	# Strategy: try with whatever flags the caller passed (first attempt).
-	# On failure, if no explicit pass-through flag was given AND the error
-	# matches a branch-protection pattern, retry once with --admin. Any
-	# other failure is surfaced as-is (no blind --admin escalation).
-	local merge_desc="${merge_method}"
-	if [[ ${#merge_flags[@]} -gt 0 ]]; then
-		merge_desc+=" ${merge_flags[*]}"
-	fi
-	print_info "Merging PR #${pr_number} in ${repo} (${merge_desc})..."
-	# Capture output AND exit code under `set -e`. A bare assignment
-	# `_merge_out=$(failing_cmd)` triggers errexit before we reach
-	# `_merge_rc=$?`, so the function exits silently on the first plain-
-	# merge failure and the --admin fallback never runs. The if-form
-	# keeps both available. This is the GH#18538 follow-up to PR #18748,
-	# which shipped the bare-assignment form and was bug-verified
-	# end-to-end (the fallback only worked when run from a worktree with
-	# this fix applied locally before commit).
-	#
-	# Bash 3.2 gotcha: `"${merge_flags[@]}"` raises "unbound variable"
-	# when the array is empty under set -u on macOS default bash. Use
-	# the `${arr[@]+"${arr[@]}"}` form which expands to zero words when
-	# the array is unset or empty.
-	local _merge_out _merge_rc=0
-	if _merge_out=$(gh pr merge "$pr_number" --repo "$repo" "$merge_method" ${merge_flags[@]+"${merge_flags[@]}"} 2>&1); then
-		_merge_rc=0
-	else
-		_merge_rc=$?
-	fi
-	if [[ $_merge_rc -ne 0 ]]; then
-		printf '%s\n' "$_merge_out"
-		# Only fall back to --admin when the caller passed neither
-		# --admin nor --auto. Both carry explicit intent.
-		if [[ $has_admin -eq 0 && $has_auto -eq 0 ]] && printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
-			print_info "Branch protection blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
-			if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin 2>&1; then
-				print_success "PR #${pr_number} merged with --admin fallback"
-			else
-				print_error "Merge failed for PR #${pr_number} (even with --admin — maintainer gate or admin rights missing)"
-				return 1
-			fi
-		else
-			print_error "Merge failed for PR #${pr_number}"
-			return 1
-		fi
-	else
-		printf '%s\n' "$_merge_out"
-		if [[ $has_auto -eq 1 ]]; then
-			print_success "PR #${pr_number} queued for auto-merge"
-		else
-			print_success "PR #${pr_number} merged successfully"
-		fi
-	fi
+	_merge_execute "$pr_number" "$repo" "$merge_method" "$has_admin" "$has_auto" || return 1
 
-	# t1934: Unlock PR and linked issue after worker merge.
-	# Issues/PRs are locked at dispatch time to prevent prompt injection.
-	# The worker merge path must unlock them — otherwise they stay locked
-	# permanently (the pulse deterministic merge path has its own unlock,
-	# but workers that self-merge bypass it).
-	gh issue unlock "$pr_number" --repo "$repo" >/dev/null 2>&1 || true
-
-	# Find and unlock the linked issue (from PR body "Resolves #NNN")
-	local _linked_issue
-	_linked_issue=$(gh pr view "$pr_number" --repo "$repo" --json body \
-		--jq '.body' 2>/dev/null |
-		grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
-		grep -oE '[0-9]+' | head -1) || _linked_issue=""
-	if [[ -n "$_linked_issue" && "$_linked_issue" =~ ^[0-9]+$ ]]; then
-		gh issue unlock "$_linked_issue" --repo "$repo" >/dev/null 2>&1 || true
-	fi
+	_merge_unlock_resources "$pr_number" "$repo"
 
 	return 0
 }
