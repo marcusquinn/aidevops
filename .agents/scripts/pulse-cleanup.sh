@@ -49,6 +49,29 @@
 _PULSE_CLEANUP_LOADED=1
 
 #######################################
+# Move a path to system trash before permanent deletion (GH#19042).
+# Mirrors worktree-helper.sh trash_path() so Pass 2 orphan cleanup gets
+# the same recoverability as Pass 1 (which calls worktree-helper.sh clean).
+# Prefers: trash CLI (macOS Homebrew), gio trash (Linux), rm -rf fallback.
+# Args: $1=path to trash
+# Returns 0 on success, 1 on failure.
+#######################################
+_trash_or_remove() {
+	local target="$1"
+	[[ -z "$target" ]] && return 1
+	[[ ! -e "$target" ]] && return 0
+
+	if command -v trash >/dev/null 2>&1; then
+		trash "$target" 2>/dev/null && return 0
+	fi
+	if command -v gio >/dev/null 2>&1; then
+		gio trash "$target" 2>/dev/null && return 0
+	fi
+	rm -rf "$target" 2>/dev/null && return 0
+	return 1
+}
+
+#######################################
 # Pass 1 helper: remove worktrees for merged/closed PRs across ALL repos
 #
 # Iterates repos.json (.initialized_repos[]) and runs
@@ -396,8 +419,12 @@ _cleanup_single_worktree() {
 		_record_orphan_crash_classification "$wt_branch_age" "$dirty_count" "$repo_slug_age"
 	fi
 
-	# Step 5b: perform removal (worktree + local branch + remote ref)
-	git -C "$rp_age" worktree remove --force "$wt_path_age" 2>/dev/null || rm -rf "$wt_path_age"
+	# Step 5b: perform removal (trash worktree dir + deregister + branch cleanup)
+	# Move to trash first for recoverability (macOS: trash CLI, Linux: gio trash).
+	# Then deregister from git. Falls back to git worktree remove if trash fails.
+	_trash_or_remove "$wt_path_age" || git -C "$rp_age" worktree remove --force "$wt_path_age" 2>/dev/null || true
+	# Prune git's worktree registry for the now-missing directory
+	git -C "$rp_age" worktree prune 2>/dev/null || true
 	if [[ -n "$wt_branch_age" ]]; then
 		git -C "$rp_age" branch -D "$wt_branch_age" 2>/dev/null || true
 		git -C "$rp_age" push origin --delete "$wt_branch_age" 2>/dev/null || true
