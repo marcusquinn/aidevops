@@ -564,12 +564,10 @@ Show:
 }
 
 # -----------------------------------------------------------------------------
-# SEO commands: keyword-research, autocomplete-research,
-#               keyword-research-extended, webmaster-keywords, seo-fanout,
-#               seo-geo, seo-sro, seo-hallucination-defense,
-#               seo-agent-discovery, seo-ai-readiness, seo-ai-baseline
+# SEO keyword research commands: keyword-research, autocomplete-research,
+#                                 keyword-research-extended, webmaster-keywords
 # -----------------------------------------------------------------------------
-_generate_seo_commands() {
+_generate_seo_keyword_commands() {
 	maybe_write_command "keyword-research" \
 		"Keyword research with seed keyword expansion" \
 		'Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
@@ -612,6 +610,15 @@ Site URL: $ARGUMENTS
 Fetches keywords from Google Search Console and Bing Webmaster Tools,
 combines and deduplicates results, enriches with volume/difficulty data.'
 
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# SEO AI-search commands: seo-fanout, seo-geo, seo-sro,
+#                         seo-hallucination-defense, seo-agent-discovery,
+#                         seo-ai-readiness, seo-ai-baseline
+# -----------------------------------------------------------------------------
+_generate_seo_ai_commands() {
 	maybe_write_command "seo-fanout" \
 		"Run thematic query fan-out research for AI search coverage" \
 		'Read ~/.aidevops/agents/seo/query-fanout-research.md and follow its instructions.
@@ -669,6 +676,17 @@ Target: $ARGUMENTS
 
 Return a completed KPI baseline scorecard plus top remediation priorities and re-test cadence.'
 
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# SEO commands: wrapper over the two thematic sub-functions above.
+# Kept as a single entry point for callers; the split exists to keep each
+# helper under the 100-line shell complexity threshold (GH#19198 / t2125).
+# -----------------------------------------------------------------------------
+_generate_seo_commands() {
+	_generate_seo_keyword_commands
+	_generate_seo_ai_commands
 	return 0
 }
 
