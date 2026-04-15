@@ -184,28 +184,25 @@ _dlw_resolve_tier_and_model() {
 #   _DLW_WORKTREE_BRANCH  — branch name on success, empty on failure
 # Both are reset on entry so the orchestrator always sees the fresh state.
 #
-# The worktree is idempotent — if a previous worker already created it,
-# `worktree-helper.sh add` returns the existing path. On failure, the
-# worker falls back to creating its own via full-loop-helper.sh.
+# Issue-linked branch naming (GH#19042):
+#   Branch format: feature/auto-YYYYMMDD-HHMMSS-gh<issue_number>
+#   The -gh<N> suffix enables cleanup traceability (pulse-cleanup.sh
+#   regex gh[-]?([0-9]+)), dedup branch scanning, and worktree reuse.
+#   Previously branches were timestamp-only (feature/auto-YYYYMMDD-HHMMSS)
+#   making orphaned worktrees untraceable — 57 accumulated in 24h on one
+#   machine (2.2 GB wasted).
 #
-# GH#18671: worktree-helper.sh emits ANSI color codes on the "Path:" line.
-# The path-extraction grep `/[^ ]*Git/[^ ]*` matches up to the next
-# whitespace but ANSI reset sequences (\x1b[0m) contain no whitespace, so
-# the captured path ends up with a trailing `\x1b[0m` suffix. The subsequent
-# `[[ -d "$worker_worktree_path" ]]` check then fails because no such
-# directory exists — the REAL path is the same string without the reset
-# code. Result: pre-creation was silently marked "failed" on every dispatch,
-# the worktree was successfully created but orphaned (27 leftover
-# feature/auto-* directories observed in ~/Git/), the worker was launched
-# without WORKER_WORKTREE_PATH, and its self-setup path crashed in ~17s
-# with crash_type=no_work. That fed the t2008 stale-recovery escalation
-# path, which applied needs-maintainer-review after 2 failed attempts,
-# which then drained the dispatch queue to zero.
+# Reuse-before-create:
+#   Before creating a new worktree, scans existing worktrees for one
+#   already linked to this issue (branch contains gh<N>). If found,
+#   resets it to latest main and returns it — preventing accumulation
+#   of duplicate worktrees when the same issue is dispatched repeatedly.
 #
-# Fix: strip ANSI CSI sequences before the path grep so the captured string
-# is a clean filesystem path. The sed pattern matches the standard CSI form
-# ESC[ ... m. The $'...' quoting evaluates \x1b (ESC, 0x1B) at parse time
-# in bash.
+# On failure, the worker falls back to creating its own via
+# full-loop-helper.sh.
+#
+# GH#18671: ANSI stripping — strip CSI sequences from worktree-helper.sh
+# output before path extraction to avoid phantom directory suffixes.
 #
 # Arguments: issue_number, repo_path
 #######################################
@@ -220,9 +217,47 @@ _dlw_precreate_worktree() {
 		return 0
 	fi
 
-	# Derive branch name from timestamp (deterministic, collision-free)
+	# --- Reuse check: scan for an existing worktree for this issue ---
+	# Prevents accumulation of multiple dead worktrees when the same issue
+	# is dispatched repeatedly (GH#19042). Matches branch names containing
+	# gh<N> or gh-<N> (the pattern used by this function and cleanup regex).
+	local _existing_path="" _existing_branch=""
+	local _wt_line=""
+	while IFS= read -r _wt_line; do
+		local _wt_p="" _wt_b=""
+		_wt_p=$(printf '%s' "$_wt_line" | awk '{print $1}') || _wt_p=""
+		_wt_b=$(printf '%s' "$_wt_line" | awk '{print $3}' | sed 's/^\[//;s/\]$//') || _wt_b=""
+		# Match branches with embedded issue number: gh19014 or gh-19014
+		if [[ "$_wt_b" =~ gh-?${issue_number}([^0-9]|$) && -d "$_wt_p" ]]; then
+			_existing_path="$_wt_p"
+			_existing_branch="$_wt_b"
+			break
+		fi
+	done < <(git -C "$repo_path" worktree list 2>/dev/null)
+
+	if [[ -n "$_existing_path" ]]; then
+		# Reset to latest main so the worker starts from a clean base
+		git -C "$_existing_path" checkout -- . 2>/dev/null || true
+		git -C "$_existing_path" clean -fd 2>/dev/null || true
+		local _main_branch=""
+		_main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || _main_branch="main"
+		git -C "$_existing_path" reset --hard "origin/${_main_branch}" 2>/dev/null || true
+		_DLW_WORKTREE_PATH="$_existing_path"
+		_DLW_WORKTREE_BRANCH="$_existing_branch"
+		echo "[dispatch_with_dedup] Reusing existing worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
+		return 0
+	fi
+
+	# --- Create new worktree with issue-linked branch name ---
+	# Format: feature/auto-YYYYMMDD-HHMMSS-gh<N>
+	# The -gh<N> suffix enables:
+	#   1. pulse-cleanup.sh crash classification (regex: gh[-]?([0-9]+))
+	#   2. dispatch-dedup-layers.sh remote branch scan (regex: (t|gh-?)N)
+	#   3. Reuse check above on subsequent dispatches for the same issue
+	# Without it, orphaned worktrees are untraceable and accumulate (57
+	# observed on one machine in 24h, 2.2 GB wasted).
 	local _branch _wt_output=""
-	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)"
+	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)-gh${issue_number}"
 	# Run from repo_path — worktree-helper.sh uses git commands that need
 	# to be inside the repo. The pulse-wrapper's cwd is typically / (launchd).
 	_wt_output=$(cd "$repo_path" && "$_wt_helper" add "$_branch" 2>&1) || true
