@@ -36,6 +36,11 @@
 #   REVIEW_BOT_POLL_INTERVAL — Seconds between polls (default: 60)
 #   RATE_LIMIT_GRACE_SECONDS — How long to wait before passing rate-limited PRs
 #                              (default: 14400 = 4 hours). Set to 0 to disable.
+#   REVIEW_GATE_RATE_LIMIT_BEHAVIOR — Global default for rate-limited bots:
+#                              "pass" (default, exit 0) or "wait" (keep polling).
+#                              Override per-repo or per-tool in repos.json:
+#                              { "review_gate": { "rate_limit_behavior": "pass",
+#                                "tools": { "coderabbitai": { "rate_limit_behavior": "wait" } } } }
 #
 # t1382: https://github.com/marcusquinn/aidevops/issues/2735
 # GH#3827: Rate-limit grace period — pass gate after timeout when bots are
@@ -73,6 +78,11 @@ SKIP_LABEL="skip-review-gate"
 # Set RATE_LIMIT_GRACE_SECONDS=0 to disable (block indefinitely).
 RATE_LIMIT_GRACE_SECONDS="${RATE_LIMIT_GRACE_SECONDS:-1800}"
 
+# t2123: Global default for rate-limit behavior.
+# Values: "pass" (exit 0 immediately, current default) or "wait" (return WAITING).
+# Override per-repo or per-tool via repos.json review_gate config.
+REVIEW_GATE_RATE_LIMIT_BEHAVIOR="${REVIEW_GATE_RATE_LIMIT_BEHAVIOR:-pass}"
+
 # --- Functions ---
 
 usage() {
@@ -84,6 +94,68 @@ usage() {
 	echo "  list           List all bot comments found"
 	echo "  request-retry  Request review retry if bots were rate-limited (idempotent)"
 	echo "  batch-retry    Process all open PRs with 0 reviews, request retries (GH#3932)"
+	return 0
+}
+
+_get_rate_limit_behavior() {
+	# t2123: Resolve rate-limit behavior for a specific bot on a specific repo.
+	# Resolution order: per-tool > per-repo default > global env > hardcoded "pass".
+	#
+	# repos.json schema:
+	#   "review_gate": {
+	#     "rate_limit_behavior": "pass",        // per-repo default
+	#     "tools": {
+	#       "coderabbitai": { "rate_limit_behavior": "wait" }
+	#     }
+	#   }
+	local repo_slug="$1"
+	local bot_login="$2"
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+
+	# If repos.json doesn't exist, fall through to global default
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		# Try per-tool setting first
+		local per_tool=""
+		per_tool=$(jq -r --arg slug "$repo_slug" --arg bot "$bot_login" \
+			'.initialized_repos[] | select(.slug == $slug) | .review_gate.tools[$bot].rate_limit_behavior // empty' \
+			"$repos_json" 2>/dev/null) || per_tool=""
+		if [[ -n "$per_tool" ]]; then
+			printf '%s' "$per_tool"
+			return 0
+		fi
+
+		# Try per-repo default
+		local per_repo=""
+		per_repo=$(jq -r --arg slug "$repo_slug" \
+			'.initialized_repos[] | select(.slug == $slug) | .review_gate.rate_limit_behavior // empty' \
+			"$repos_json" 2>/dev/null) || per_repo=""
+		if [[ -n "$per_repo" ]]; then
+			printf '%s' "$per_repo"
+			return 0
+		fi
+	fi
+
+	# Fall through to global env (which defaults to "pass")
+	printf '%s' "$REVIEW_GATE_RATE_LIMIT_BEHAVIOR"
+	return 0
+}
+
+_should_pass_rate_limited() {
+	# t2123: Check if ALL rate-limited bots should pass (behavior=pass).
+	# If ANY bot is configured to "wait", return 1 (don't pass).
+	# $1 = repo slug, $2 = space-separated list of rate-limited bot logins
+	local repo_slug="$1"
+	local rate_limited_bots_str="$2"
+	local bot behavior
+
+	for bot in $rate_limited_bots_str; do
+		[[ -z "$bot" ]] && continue
+		behavior=$(_get_rate_limit_behavior "$repo_slug" "$bot")
+		if [[ "$behavior" == "wait" ]]; then
+			echo "Bot '${bot}' configured to wait on rate limit (review_gate config)" >&2
+			return 1
+		fi
+	done
 	return 0
 }
 
@@ -324,14 +396,25 @@ do_check() {
 		echo "Status check fallback: bots rate-limited but have SUCCESS status checks" >&2
 		return 0
 	elif [[ -n "$rate_limited_bots" ]]; then
-		# GH#17549: Bot posted a rate-limit notice — it's configured, it tried,
-		# but capacity is out of our control. Pass immediately. The bot will
-		# review post-merge when its rate limit resets. Waiting gains nothing
-		# when we can't influence the bot's rate limit.
-		echo "PASS_RATE_LIMITED"
-		echo "Bots are rate-limited (tried but capacity-constrained): ${rate_limited_bots}" >&2
-		echo "Passing gate — bot reviews will be addressed post-merge if needed." >&2
-		return 0
+		# GH#17549 + t2123: Bot posted a rate-limit notice — it's configured, it
+		# tried, but capacity is out of our control. Behavior is configurable:
+		# "pass" (default) exits 0 immediately; "wait" returns WAITING so the
+		# gate retry loop keeps polling. Note: bots do NOT review post-merge
+		# (CodeRabbit posts "Review failed — The pull request is closed" and
+		# stops). The daily quality sweep provides codebase-level coverage.
+		# Configure per-tool or per-repo via repos.json review_gate, or globally
+		# via REVIEW_GATE_RATE_LIMIT_BEHAVIOR env var.
+		if _should_pass_rate_limited "$repo" "$rate_limited_bots"; then
+			echo "PASS_RATE_LIMITED"
+			echo "Bots are rate-limited (tried but capacity-constrained): ${rate_limited_bots}" >&2
+			echo "Passing gate — configured to pass on rate limit (review_gate.rate_limit_behavior=pass)." >&2
+			return 0
+		else
+			echo "WAITING"
+			echo "Bots are rate-limited but configured to wait: ${rate_limited_bots}" >&2
+			echo "Gate will keep polling — set review_gate.rate_limit_behavior=pass to skip." >&2
+			return 1
+		fi
 	else
 		echo "WAITING"
 		echo "No review bots found yet. Known bots: ${KNOWN_BOTS[*]}" >&2
