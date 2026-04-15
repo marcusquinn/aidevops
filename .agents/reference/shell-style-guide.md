@@ -11,7 +11,7 @@ Canonical rules for `.agents/scripts/**/*.sh`: **source `shared-constants.sh` OR
 
 ### A — source `shared-constants.sh` (preferred)
 
-For scripts inside `.agents/scripts/` with a stable path to `shared-constants.sh`:
+Inside `.agents/scripts/` with stable path to `shared-constants.sh`:
 
 ```bash
 #!/usr/bin/env bash
@@ -28,7 +28,7 @@ Use `${RED}`, `${GREEN}`, etc. directly — no local declarations needed. Subdir
 
 ### B — granular `${VAR+x}` guard (fallback)
 
-For scripts runnable without `shared-constants.sh` (early bootstrap, standalone CLIs, `bash <(curl …)` distribution):
+Scripts without `shared-constants.sh` (early bootstrap, standalone CLIs, curl distribution):
 
 ```bash
 #!/usr/bin/env bash
@@ -54,13 +54,11 @@ readonly TEST_GREEN=$'\033[0;32m'
 readonly TEST_RESET=$'\033[0m'
 ```
 
-`readonly` is safe here — prefixed names don't collide with canonical set. **Do not use Pattern C in production helpers** — inconsistent naming forces readers to translate between `TEST_RED` and `RED`.
+`readonly` safe — prefixed names don't collide. **Production helpers: use Pattern A or B** — inconsistent naming forces `TEST_RED`↔`RED` translation.
 
 ## Banned patterns
 
-The lint gate (Phase 2) rejects these:
-
-**Unguarded plain assignment** — collides with `readonly` from `shared-constants.sh`:
+**Unguarded plain assignment** (collides with parent `readonly`):
 
 ```bash
 # BAD
@@ -87,7 +85,7 @@ if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]; then
 fi
 ```
 
-Problem: all-or-nothing — if parent set *some* colors without the sentinel, child skips fallback and colors are partially undefined under `set -u`. Pattern B handles each variable independently. Existing include-guard code may remain; migrate opportunistically.
+Problem: all-or-nothing — colors partially undefined under `set -u` when parent set some without the sentinel. Pattern B handles each independently. Existing code may remain; migrate opportunistically.
 
 ## Canonical shared variables
 
@@ -98,7 +96,7 @@ Problem: all-or-nothing — if parent set *some* colors without the sentinel, ch
 | `COLOR_RED`, `COLOR_GREEN`, `COLOR_YELLOW`, `COLOR_BLUE`, `COLOR_PURPLE`, `COLOR_CYAN`, `COLOR_WHITE`, `COLOR_RESET` | Canonical `COLOR_*` names (preferred in new code) |
 | `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, `NC` | Short-name aliases (still supported) |
 
-Colors not in `shared-constants.sh` (e.g., `MAGENTA`, `GRAY`, `BOLD`, `DIM`) are safe to declare locally but should follow Pattern B for consistency. New canonical colors → add to `shared-constants.sh` in a separate PR first.
+Non-canonical colors (e.g., `MAGENTA`, `GRAY`, `BOLD`, `DIM`) → declare locally with Pattern B. New canonical colors → add to `shared-constants.sh` first.
 
 ## Migration checklist
 
@@ -122,9 +120,7 @@ Colors not in `shared-constants.sh` (e.g., `MAGENTA`, `GRAY`, `BOLD`, `DIM`) are
 
 Of the 13 unguarded-readonly: 2 production (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`), 11 test harnesses.
 
-## Phased migration roadmap (t2053)
-
-Each phase ships as its own child task/PR (≤5 files per PR, t1422 quality-debt cap):
+## Phased migration roadmap (t2053) — each phase its own child task/PR (≤5 files, t1422 cap):
 
 1. **Phase 1** — Foundation: this guide + `prompts/build.txt` rule + `architecture.md` cross-ref.
 2. **Phase 2** — Lint gate: `shell-init-pattern-check.sh` + CI + unit test. Must land before Phase 3.
