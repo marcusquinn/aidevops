@@ -252,7 +252,8 @@ _recover_stale_assignment() {
 	if [[ -n "$_open_pr" ]]; then
 		# Open PR exists — counter resets; post a reset marker and allow normal recovery
 		gh issue comment "$issue_number" --repo "$repo_slug" \
-			--body "<!-- stale-recovery-tick:0 (reset: open PR #${_open_pr} detected) -->" \
+			--body "<!-- stale-recovery-tick:0 (reset: open PR #${_open_pr} detected) -->
+Stale recovery tick reset — open PR #${_open_pr} detected (t2008)" \
 			2>/dev/null || true
 	elif [[ "$_prior_ticks" -ge "$_threshold" ]]; then
 		# Threshold reached — escalate and bail out (no normal recovery)
@@ -262,7 +263,8 @@ _recover_stale_assignment() {
 		# Under threshold — increment tick counter, continue normal recovery
 		local _next_tick=$((_prior_ticks + 1))
 		gh issue comment "$issue_number" --repo "$repo_slug" \
-			--body "<!-- stale-recovery-tick:${_next_tick} -->" \
+			--body "<!-- stale-recovery-tick:${_next_tick} -->
+Stale recovery tick ${_next_tick}/${_threshold} (t2008)" \
 			2>/dev/null || true
 	fi
 	# ── End stale-recovery escalation check ──────────────────────────────
