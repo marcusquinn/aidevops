@@ -65,7 +65,6 @@ The lint gate (Phase 2) rejects these:
 ```bash
 # BAD
 RED='\033[0;31m'
-GREEN='\033[0;32m'
 ```
 
 Fix: Pattern A or B.
@@ -75,7 +74,6 @@ Fix: Pattern A or B.
 ```bash
 # WORST
 readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
 ```
 
 Fix: Pattern B (production) or Pattern C with prefix (tests).
@@ -130,9 +128,11 @@ Audit (2026-04-15): **18 scripts** with unguarded plain assignments and **2 prod
 | Include guard (`if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]`) | 6 | Safe but coarse | migrate |
 | Prefixed vars (`TEST_RED`, `C_GREEN`) | 50 | Safe (Pattern C) | normalise Phase 7 |
 
-Of the 13 unguarded-readonly, only 2 are production (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`); remaining 11 are test harnesses (bare `RED` instead of `TEST_RED`).
+Of the 13 unguarded-readonly: 2 production (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`), 11 test harnesses.
 
 ## Phased migration roadmap (t2053)
+
+Each phase ships as its own child task/PR (≤5 files per PR, t1422 quality-debt cap):
 
 1. **Phase 1** — Foundation: this guide + `prompts/build.txt` rule + `architecture.md` cross-ref.
 2. **Phase 2** — Lint gate: `shell-init-pattern-check.sh` + CI + unit test. Must land before Phase 3.
@@ -142,8 +142,6 @@ Of the 13 unguarded-readonly, only 2 are production (`sonarcloud-autofix.sh`, `c
 6. **Phase 6** — Eliminate banned `readonly`: `sonarcloud-autofix.sh`, `coderabbit-cli.sh`, `agent-sources-helper.sh` + test harness prefix normalisation. Final: zero violations.
 7. **Phase 7** — Prefixed-var normalisation (optional): consolidate `C_`, `LC_`, `TEST_` conventions.
 8. **Phase 8** — Extend to other shared-variable categories (optional): `SCRIPT_DIR`, `REPO_ROOT`, `set -E`, error-print helpers.
-
-Each phase ships as its own child task/PR, respecting t1422 quality-debt cap of ≤5 files per PR.
 
 ## Related
 
