@@ -1885,6 +1885,7 @@ _detect_parent_from_gh_state() {
 	# bold-markdown ("**Parent:** `tNNN`"), and either a task ID, a raw
 	# GitHub number ("#NNN"), or the aidevops GH#NNN notation.
 	local parent_ref
+	# shellcheck disable=SC2016  # sed regex contains literal backticks and asterisks, no expansion wanted
 	parent_ref=$(printf '%s\n' "$body" |
 		sed -nE 's/^[[:space:]]*\**Parent:\**[[:space:]]*`?(t[0-9]+|GH#[0-9]+|#[0-9]+)`?.*/\1/p' |
 		head -1 || true)
@@ -1908,6 +1909,7 @@ _detect_parent_from_gh_state() {
 	# blocker is required. Supports comma-separated multi-blocker lists; the
 	# first parent-tagged blocker wins.
 	local blocker_list
+	# shellcheck disable=SC2016  # sed regex contains literal backticks and asterisks, no expansion wanted
 	blocker_list=$(printf '%s\n' "$body" |
 		sed -nE 's/^[[:space:]]*\**Blocked by:\**[[:space:]]*`?([t0-9.,[:space:]]+)`?.*/\1/p' |
 		head -1 || true)
