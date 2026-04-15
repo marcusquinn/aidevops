@@ -8,13 +8,10 @@
 
 set -euo pipefail
 
-# Source shared constants (provides sed_inplace and other utilities)
+# Source shared constants (provides sed_inplace, canonical colors, and other utilities)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
-
-# Colors for output
-readonly PURPLE='\033[0;35m'
-readonly NC='\033[0m'
+# shellcheck source=shared-constants.sh
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
 
 print_header() { local msg="$1"; echo -e "${PURPLE}$msg${NC}"; return 0; }
 
