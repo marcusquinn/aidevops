@@ -100,13 +100,21 @@ EOF
 }
 
 # Check if a line is allowlisted — the marker must appear as an end-of-line
-# comment on the same line as the forbidden call.
+# comment on the same line as the forbidden call. "End-of-line" means every
+# character after the marker is whitespace; unrelated content after the
+# marker would let an early inline fragment suppress a live call on the
+# same logical line.
 _is_allowlisted_line() {
 	local line="$1"
 	case "$line" in
-	*"$ALLOWLIST_MARKER"*) return 0 ;;
+	*"$ALLOWLIST_MARKER"*) ;;
+	*) return 1 ;;
 	esac
-	return 1
+	# Strip everything up to and including the first occurrence of the
+	# marker; reject the line unless what remains is only whitespace.
+	local tail="${line#*"$ALLOWLIST_MARKER"}"
+	local stripped="${tail//[[:space:]]/}"
+	[[ -z "$stripped" ]]
 }
 
 # Check if a line matches the forbidden pattern (uses grep -E for portability).

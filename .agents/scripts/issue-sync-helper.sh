@@ -1803,12 +1803,19 @@ cmd_relationships() {
 _detect_parent_from_gh_state() {
 	local child_title="$1" child_body="$2" repo="$3"
 
-	# Method 1: dot-notation in title (tNNN.M: ... → parent tNNN)
+	# Method 1: dot-notation in title (tNNN(.NNN)+: ... → parent tNNN(.NNN)*).
+	# Handles arbitrary nesting depth: t2114.1 → t2114, t2114.1.2 → t2114.1.
+	# The immediate parent is the child ID with the trailing ".N" segment
+	# removed (matching how TODO.md and the rest of issue-sync treat task IDs
+	# as tNNN(.NNN)* trees).
 	local dot_child dot_parent_id
-	dot_child=$(printf '%s' "$child_title" | grep -oE '^t[0-9]+\.[0-9]+[a-z]?' | head -1 || echo "")
+	dot_child=$(printf '%s' "$child_title" | grep -oE '^t[0-9]+(\.[0-9]+)+[a-z]?' | head -1 || echo "")
 	if [[ -n "$dot_child" ]]; then
-		dot_parent_id="${dot_child%.*}"
-		if [[ -n "$dot_parent_id" && "$dot_parent_id" != "$dot_child" ]]; then
+		# Strip any trailing letter suffix (e.g. t2114.1a → t2114.1) then
+		# drop the last dotted segment to get the immediate parent.
+		local dot_child_numeric="${dot_child%[a-z]}"
+		dot_parent_id="${dot_child_numeric%.*}"
+		if [[ -n "$dot_parent_id" && "$dot_parent_id" != "$dot_child_numeric" ]]; then
 			local parent_num
 			parent_num=$(gh_find_issue_by_title "$repo" "${dot_parent_id}: " "all" 500)
 			if [[ -n "$parent_num" ]]; then
@@ -1818,8 +1825,9 @@ _detect_parent_from_gh_state() {
 		fi
 	fi
 
-	# Method 2: explicit "Parent: tNNN" body line (optionally dot-notation)
+	# Method 2: explicit "Parent: tNNN" body line (optionally dot-notation).
 	local parent_task_id
+	# shellcheck disable=SC2016  # backticks/markers in the regex are literal
 	parent_task_id=$(printf '%s' "$child_body" |
 		grep -oEm1 '^[[:space:]]*(\*\*)?[Pp]arent(\*\*)?[[:space:]]*:?[[:space:]]*`?t[0-9]+(\.[0-9]+)*`?' |
 		grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
@@ -1917,20 +1925,47 @@ cmd_backfill_sub_issues() {
 	}
 	local repo="$REPO_SLUG"
 
-	local issues_json
+	# Fail fast on gh errors — silently swallowing them turns an auth/network
+	# failure into a bogus "no candidates found" report, which then causes the
+	# pulse t2112 reconcile path to believe it has backfilled everything when
+	# in fact it has backfilled nothing.
+	local issues_json gh_stderr gh_rc
+	gh_stderr=$(mktemp) || {
+		print_error "backfill-sub-issues: mktemp failed"
+		return 1
+	}
 	if [[ -n "${TARGET_ISSUE_NUM:-}" ]]; then
 		# Single-issue mode — view and wrap as array for uniform processing
 		local single_json
 		single_json=$(gh issue view "$TARGET_ISSUE_NUM" --repo "$repo" \
-			--json number,title,body 2>/dev/null || echo "")
-		[[ -z "$single_json" || "$single_json" == "null" ]] && {
+			--json number,title,body 2>"$gh_stderr")
+		gh_rc=$?
+		if [[ "$gh_rc" -ne 0 ]]; then
+			print_error "backfill-sub-issues: gh issue view #${TARGET_ISSUE_NUM} failed in $repo (rc=${gh_rc})"
+			sed 's/^/  /' "$gh_stderr" >&2 || true
+			rm -f "$gh_stderr"
+			return 1
+		fi
+		rm -f "$gh_stderr"
+		if [[ -z "$single_json" || "$single_json" == "null" ]]; then
 			print_error "backfill-sub-issues: #$TARGET_ISSUE_NUM not found in $repo"
 			return 1
-		}
+		fi
 		issues_json="[$single_json]"
 	else
 		issues_json=$(gh issue list --repo "$repo" --state open \
-			--json number,title,body --limit 500 2>/dev/null || echo "[]")
+			--json number,title,body --limit 500 2>"$gh_stderr")
+		gh_rc=$?
+		if [[ "$gh_rc" -ne 0 ]]; then
+			print_error "backfill-sub-issues: gh issue list failed for $repo (rc=${gh_rc})"
+			sed 's/^/  /' "$gh_stderr" >&2 || true
+			rm -f "$gh_stderr"
+			return 1
+		fi
+		rm -f "$gh_stderr"
+		if [[ -z "$issues_json" || "$issues_json" == "null" ]]; then
+			issues_json="[]"
+		fi
 	fi
 
 	local total

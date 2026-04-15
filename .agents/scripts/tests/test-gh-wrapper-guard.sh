@@ -77,6 +77,7 @@ fi
 # ---------------------------------------------------------------------------
 # Test 2: bare `gh issue create` — violation, exit 1
 # ---------------------------------------------------------------------------
+# shellcheck disable=SC2016  # $(...) in the single-quoted string is intentional fixture text
 make_repo_and_run "$TEST_TMPDIR/t2" ".agents/scripts/bad-script.sh" \
 	'#!/usr/bin/env bash
 echo "base"' \
@@ -197,6 +198,7 @@ fi
 # ---------------------------------------------------------------------------
 # Test 8: non-matching file path outside .agents/scripts — not scanned
 # ---------------------------------------------------------------------------
+# shellcheck disable=SC2016  # backticks in the single-quoted fixture are intentional markdown
 make_repo_and_run "$TEST_TMPDIR/t8" "docs/example.md" \
 	'base docs' \
 	'# Example
@@ -204,6 +206,64 @@ Run `gh issue create --repo owner/repo` manually.'
 
 if [[ "$GUARD_RC" -ne 0 ]]; then
 	printf 'FAIL test 8 (docs/ path): expected exit 0, got %d\n' "$GUARD_RC"
+	failed=1
+fi
+
+# ---------------------------------------------------------------------------
+# Test 10: check-staged — staged violation in .agents/hooks/*.sh, pre-push
+# hook's local-enforcement path. Regression coverage for CR#8: the local
+# check-staged entry point was never exercised.
+# ---------------------------------------------------------------------------
+t_staged="$TEST_TMPDIR/t_staged"
+rm -rf "$t_staged"
+mkdir -p "$t_staged/.agents/hooks"
+(
+	cd "$t_staged" || exit 1
+	git init --quiet -b main
+	git config user.email "test@example.com"
+	git config user.name "Test"
+	printf '#!/usr/bin/env bash\necho "base"\n' >".agents/hooks/my-hook.sh"
+	git add .
+	git commit --quiet -m "base"
+	# Now stage a violation — raw gh issue create in a hook.
+	# shellcheck disable=SC2016  # literal fixture content, no expansion wanted
+	printf '#!/usr/bin/env bash\necho "base"\nresult=$(gh issue create --title foo --repo o/r)\n' >".agents/hooks/my-hook.sh"
+	git add .agents/hooks/my-hook.sh
+)
+staged_out=$(cd "$t_staged" && "$GUARD" check-staged 2>&1)
+staged_rc=$?
+if [[ "$staged_rc" -ne 1 ]]; then
+	printf 'FAIL test 10 (check-staged violation): expected exit 1, got %d\n' "$staged_rc"
+	printf '  out: %s\n' "$staged_out"
+	failed=1
+fi
+if [[ "$staged_out" != *"my-hook.sh"* ]]; then
+	printf 'FAIL test 10: expected staged report to mention my-hook.sh\n'
+	printf '  out: %s\n' "$staged_out"
+	failed=1
+fi
+
+# Test 10b: check-staged clean — no staged changes in scope
+t_staged_clean="$TEST_TMPDIR/t_staged_clean"
+rm -rf "$t_staged_clean"
+mkdir -p "$t_staged_clean/.agents/hooks"
+(
+	cd "$t_staged_clean" || exit 1
+	git init --quiet -b main
+	git config user.email "test@example.com"
+	git config user.name "Test"
+	printf '#!/usr/bin/env bash\necho "base"\n' >".agents/hooks/clean-hook.sh"
+	git add .
+	git commit --quiet -m "base"
+	# Stage a wrapper-compliant change
+	printf '#!/usr/bin/env bash\necho "base"\ngh_create_issue --repo o/r\n' >".agents/hooks/clean-hook.sh"
+	git add .agents/hooks/clean-hook.sh
+)
+clean_out=$(cd "$t_staged_clean" && "$GUARD" check-staged 2>&1)
+clean_rc=$?
+if [[ "$clean_rc" -ne 0 ]]; then
+	printf 'FAIL test 10b (check-staged clean): expected exit 0, got %d\n' "$clean_rc"
+	printf '  out: %s\n' "$clean_out"
 	failed=1
 fi
 

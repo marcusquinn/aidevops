@@ -294,6 +294,27 @@ if [[ "$got" != "200" ]]; then
 	failed=1
 fi
 
+# Method 2: explicit "Parent: tNNN" body line, non-dot child title — must
+# bypass Method 1 and hit the body parser. Regression coverage for CR#7.
+got=$(_detect_parent_from_gh_state "No dot here: a follow-up" "Parent: t325" "test/repo")
+if [[ "$got" != "100" ]]; then
+	printf 'FAIL: Parent: tNNN (Method 2) returned "%s", expected "100"\n' "$got"
+	failed=1
+fi
+
+# Method 1 multi-level: t325.2.3 must resolve to its immediate parent t325.2,
+# not the root t325. In the fixture, issue 2395 has title "t325.2: feat: types",
+# so gh_find_issue_by_title("t325.2: ") returns 2395. This is regression
+# coverage for CR#4 (multi-level dot-notation handling): the previous regex
+# `^t[0-9]+\.[0-9]+[a-z]?` matched only one dot segment, so t325.2.3 was
+# not recognised as a Method-1 candidate and nested sub-issues went
+# unbackfilled.
+got=$(_detect_parent_from_gh_state "t325.2.3: deeper child" "" "test/repo")
+if [[ "$got" != "2395" ]]; then
+	printf 'FAIL: multi-level dot-notation returned "%s", expected "2395" (parent t325.2)\n' "$got"
+	failed=1
+fi
+
 got=$(_detect_parent_from_gh_state "Unrelated title" "Just a body, no parent." "test/repo")
 if [[ -n "$got" ]]; then
 	printf 'FAIL: no-parent case returned "%s", expected empty\n' "$got"
@@ -331,6 +352,30 @@ if grep -Fq 'LINKED|' "$TRACE_FILE"; then
 	printf 'FAIL: dry-run produced LINKED mutations\n'
 	failed=1
 fi
+
+# -----------------------------------------------------------------------------
+# Single-issue mode (TARGET_ISSUE_NUM set). CR#7 regression coverage — the
+# single-issue `gh issue view` path was never exercised because the earlier
+# block always cleared TARGET_ISSUE_NUM. Serves one fixture via
+# FIXTURE_SINGLE_ISSUE to the stub's `gh issue view N --json number,title,body`
+# branch and asserts the parent link is written.
+# -----------------------------------------------------------------------------
+: >"$TRACE_FILE"
+export DRY_RUN="false"
+export FIXTURE_SINGLE_ISSUE='{"number":2395,"title":"t325.2: feat: types","body":"Parent: t325\nShared types module."}'
+export TARGET_ISSUE_NUM="2395"
+if ! cmd_backfill_sub_issues >"${TEST_TMPDIR}/single.out" 2>&1; then
+	printf 'FAIL: single-issue mode exited non-zero\n'
+	cat "${TEST_TMPDIR}/single.out"
+	failed=1
+fi
+if ! grep -Fq 'LINKED|parent=NODE_100|child=NODE_2395' "$TRACE_FILE"; then
+	printf 'FAIL: single-issue mode did not link #2395 to parent 100\n'
+	printf 'trace:\n'
+	cat "$TRACE_FILE"
+	failed=1
+fi
+unset TARGET_ISSUE_NUM FIXTURE_SINGLE_ISSUE
 
 if [[ "$failed" -eq 0 ]]; then
 	printf 'PASS: test-backfill-sub-issues — all assertions green\n'

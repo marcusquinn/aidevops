@@ -59,8 +59,8 @@ jobs:
           printf '%s\n' "$report"
           exit 0
 
-      - name: Post PR comment on failure
-        if: steps.guard.outputs.exit_code != '0'
+      - name: Post PR comment on policy violation
+        if: steps.guard.outputs.exit_code == '1'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -105,13 +105,33 @@ jobs:
           fi
           rm -f "$body_file"
 
+      - name: Report helper error
+        if: steps.guard.outputs.exit_code == '2'
+        env:
+          REPORT: ${{ steps.guard.outputs.report }}
+        run: |
+          echo "::warning::gh-wrapper-guard: helper reported exit 2 (usage/git error). This is NOT a policy violation — investigate the diff inputs (base/head SHAs, git fetch depth)."
+          printf 'helper output:\n%s\n' "$REPORT"
+
       - name: Enforce gate
         env:
           EXIT_CODE: ${{ steps.guard.outputs.exit_code }}
         run: |
-          if [ "$EXIT_CODE" = "0" ]; then
-            echo "gh-wrapper-guard: clean."
-            exit 0
-          fi
-          echo "::error::gh-wrapper-guard: violations found — see the PR comment for details. Append '# aidevops-allow: raw-gh-wrapper' for an audited exception."
-          exit 1
+          case "$EXIT_CODE" in
+            0)
+              echo "gh-wrapper-guard: clean."
+              exit 0
+              ;;
+            1)
+              echo "::error::gh-wrapper-guard: violations found — see the PR comment for details. Append '# aidevops-allow: raw-gh-wrapper' for an audited exception."
+              exit 1
+              ;;
+            2)
+              echo "::error::gh-wrapper-guard: helper returned exit 2 (usage/git error) — infrastructure failure, not a policy hit. See the helper output above."
+              exit 1
+              ;;
+            *)
+              echo "::error::gh-wrapper-guard: unexpected exit code '$EXIT_CODE'."
+              exit 1
+              ;;
+          esac

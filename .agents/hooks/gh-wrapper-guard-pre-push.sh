@@ -99,10 +99,22 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
 	out=$("$GUARD_HELPER" check --base "$base" --head "$local_sha" 2>&1)
 	rc=$?
 	set -e
-	if [[ "$rc" -ne 0 ]]; then
+	# Guard helper exit codes:
+	#   0 — clean (no violations)
+	#   1 — policy violations (block the push)
+	#   2 — usage/git error (fail-open: warn and allow, matching the
+	#       documented behaviour for diff/base-state failures)
+	case "$rc" in
+	0) : ;;
+	1)
 		violations_output+="${out}"$'\n'
 		total_violations=$((total_violations + 1))
-	fi
+		;;
+	2 | *)
+		_warn "guard helper returned rc=${rc} (infrastructure error) — allowing push"
+		_warn "${out}"
+		;;
+	esac
 done
 
 if [[ "$total_violations" -gt 0 ]]; then

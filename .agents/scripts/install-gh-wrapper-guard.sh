@@ -145,9 +145,27 @@ cmd_install() {
 	fi
 
 	if [[ -f "$hook_path" ]]; then
-		if grep -q "$HOOK_MARKER" "$hook_path" 2>/dev/null; then
-			print_info "gh-wrapper-guard already installed at $hook_path — updating"
-		elif grep -q "$PRIVACY_MARKER" "$hook_path" 2>/dev/null; then
+		local has_gh_marker=0 has_privacy_marker=0
+		grep -q "$HOOK_MARKER" "$hook_path" 2>/dev/null && has_gh_marker=1
+		grep -q "$PRIVACY_MARKER" "$hook_path" 2>/dev/null && has_privacy_marker=1
+
+		if [[ "$has_gh_marker" -eq 1 && "$has_privacy_marker" -eq 1 ]]; then
+			# Already a chain dispatcher — rewrite as chain to pick up any
+			# dispatcher updates without stripping the privacy guard.
+			print_info "chain dispatcher present — re-writing in chain form"
+			_write_chain "$hook_path"
+			print_success "refreshed gh-wrapper-guard + privacy-guard chain at $hook_path"
+			print_info "source hook: $source_hook"
+			print_info "bypass: GH_WRAPPER_GUARD_DISABLE=1 git push ...  (or git push --no-verify)"
+			return 0
+		elif [[ "$has_gh_marker" -eq 1 ]]; then
+			print_info "gh-wrapper-guard already installed at $hook_path — refreshing (standalone)"
+			_write_standalone "$hook_path"
+			print_success "refreshed gh-wrapper-guard at $hook_path"
+			print_info "source hook: $source_hook"
+			print_info "bypass: GH_WRAPPER_GUARD_DISABLE=1 git push ...  (or git push --no-verify)"
+			return 0
+		elif [[ "$has_privacy_marker" -eq 1 ]]; then
 			print_info "privacy-guard present — upgrading to chain dispatcher"
 			_write_chain "$hook_path"
 			print_success "installed gh-wrapper-guard + privacy-guard chain at $hook_path"

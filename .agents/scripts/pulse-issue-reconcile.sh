@@ -944,17 +944,20 @@ EOF
 			i=$((i + 1))
 			[[ -z "$num" ]] && continue
 
-			# Idempotency guard: check if the sentinel marker is already in
-			# any comment on this issue. If yes, skip — we've already
-			# backfilled it, and the label check above should have excluded
-			# it anyway. This is belt-and-braces for edge cases where a
-			# previous pass applied the comment but the labels were stripped.
+			# Idempotency guard for the mentorship comment only. A previous
+			# pass may have posted the comment already; we must not duplicate
+			# it. BUT if the labels were stripped since (rollback, manual
+			# edit, label schema reset), the issue still matches the
+			# labelless filter above and must be healed — the comment check
+			# used to short-circuit the entire repair, which stopped the
+			# "self-healing" pass from healing. Now it only suppresses the
+			# second comment.
 			local existing_comments
 			existing_comments=$(gh issue view "$num" --repo "$slug" \
 				--json comments --jq '[.comments[].body] | join("\n")' 2>/dev/null || echo "")
+			local comment_already_posted="false"
 			if [[ "$existing_comments" == *"$sentinel"* ]]; then
-				total_skipped=$((total_skipped + 1))
-				continue
+				comment_already_posted="true"
 			fi
 
 			# Extract hashtag labels from body. Match #token where token starts
@@ -1012,11 +1015,16 @@ EOF
 					>/dev/null 2>&1 || true
 			fi
 
-			# Post the mentorship comment with the sentinel marker.
-			gh issue comment "$num" --repo "$slug" --body "$comment_template" \
-				>/dev/null 2>&1 || true
-
-			echo "[pulse-wrapper] Labelless backfill: blessed #${num} in ${slug} — labels=${labels_csv}" >>"$LOGFILE"
+			# Post the mentorship comment with the sentinel marker — only if
+			# it hasn't already been posted on a prior pass. Labels may have
+			# been stripped and re-applied; the comment stays singleton.
+			if [[ "$comment_already_posted" == "false" ]]; then
+				gh issue comment "$num" --repo "$slug" --body "$comment_template" \
+					>/dev/null 2>&1 || true
+				echo "[pulse-wrapper] Labelless backfill: blessed #${num} in ${slug} — labels=${labels_csv}" >>"$LOGFILE"
+			else
+				echo "[pulse-wrapper] Labelless backfill: re-healed #${num} in ${slug} — labels=${labels_csv} (comment already present)" >>"$LOGFILE"
+			fi
 			total_fixed=$((total_fixed + 1))
 		done
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
