@@ -717,7 +717,9 @@ _create_consolidation_child_issue() {
 	printf '%s\n' "$child_body" >"$body_file"
 
 	local child_url
-	child_url=$(gh issue create --repo "$repo_slug" \
+	# t2115: Use gh_create_issue wrapper for origin label + signature auto-append.
+	# origin:worker is kept in --label for explicitness (wrapper deduplicates).
+	child_url=$(gh_create_issue --repo "$repo_slug" \
 		--title "consolidation-task: merge thread on #${issue_number} into single spec" \
 		--label "consolidation-task,auto-dispatch,origin:worker,tier:standard" \
 		--body-file "$body_file" 2>/dev/null) || child_url=""

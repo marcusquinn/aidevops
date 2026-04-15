@@ -795,6 +795,7 @@ _validate_worker_claim() {
 # Create the PR and print the PR number to stdout.
 # Arguments: repo, pr_title, pr_body, origin_label; extra_labels passed as remaining args.
 # Returns 1 on failure.
+# t2115: Uses gh_create_pr wrapper (shared-constants.sh) for origin label + signature auto-append.
 _create_pr() {
 	local repo="$1" pr_title="$2" pr_body="$3" origin_label="$4"
 	shift 4
@@ -802,7 +803,9 @@ _create_pr() {
 
 	print_info "Creating PR..."
 	local pr_url=""
-	local -a pr_cmd=(gh pr create --repo "$repo" --title "$pr_title" --body "$pr_body" --label "$origin_label")
+	# t2115: gh_create_pr auto-appends origin label and signature footer.
+	# The explicit --label "$origin_label" is kept for backward compat (GitHub deduplicates).
+	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body "$pr_body" --label "$origin_label")
 	for lbl in "${extra_labels[@]+"${extra_labels[@]}"}"; do
 		pr_cmd+=(--label "$lbl")
 	done
