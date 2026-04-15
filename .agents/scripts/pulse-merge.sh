@@ -762,8 +762,9 @@ _check_pr_merge_gates() {
 			local _cr_pr_labels
 			_cr_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
 				--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _cr_pr_labels=""
+			# Route if origin:worker present (origin:interactive may co-exist
+			# from issue inheritance — not a skip signal for worker PRs).
 			if [[ ",${_cr_pr_labels}," == *",origin:worker,"* &&
-				",${_cr_pr_labels}," != *",origin:interactive,"* &&
 				",${_cr_pr_labels}," != *",external-contributor,"* &&
 				",${_cr_pr_labels}," != *",review-routed-to-issue,"* ]]; then
 				_dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true
@@ -1018,8 +1019,9 @@ _process_single_ready_pr() {
 				local _conf_pr_labels
 				_conf_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
 					--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _conf_pr_labels=""
+				# Route if origin:worker is present (origin:interactive may
+				# co-exist from issue inheritance — not a skip signal).
 				if [[ ",${_conf_pr_labels}," == *",origin:worker,"* &&
-					",${_conf_pr_labels}," != *",origin:interactive,"* &&
 					",${_conf_pr_labels}," != *",conflict-feedback-routed,"* ]]; then
 					_dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$_conf_linked_issue" "$pr_title" || true
 					return 2
@@ -1049,8 +1051,10 @@ _process_single_ready_pr() {
 			local _ci_pr_labels
 			_ci_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
 				--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _ci_pr_labels=""
+			# Route if origin:worker is present. The origin:interactive label
+			# may also be present (inherited from issue), but the PR was created
+			# by a worker — use origin:worker as the routing signal.
 			if [[ ",${_ci_pr_labels}," == *",origin:worker,"* &&
-				",${_ci_pr_labels}," != *",origin:interactive,"* &&
 				",${_ci_pr_labels}," != *",ci-feedback-routed,"* ]]; then
 				_dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$_ci_linked_issue" || true
 			fi
