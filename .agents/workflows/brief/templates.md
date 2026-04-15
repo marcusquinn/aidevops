@@ -112,10 +112,7 @@ For all worker-created PRs. Serves review bots and human reviewers.
 Closes #{issue_number}
 ```
 
-**Rules** (from `prompts/build.txt` "Traceability"):
-- PR title: `{task-id}: {description}` — never bare descriptions
-- Exactly ONE `Closes #NNN` — for the issue the PR directly solves
-- Context references: use `Related: #NNN` or `See #NNN`, never `Closes`
+Follow traceability rules (`prompts/build.txt` "Traceability"): title as `{task-id}: {description}`, one `Closes #NNN`, context via `Related: #NNN`.
 
 ## Review Comment Template
 

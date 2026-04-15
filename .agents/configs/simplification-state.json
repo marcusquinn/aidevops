@@ -6839,10 +6839,10 @@
       "passes": 2
     },
     ".agents/workflows/brief/templates.md": {
-      "hash": "c166abe36a1995644cde568ec0472378cbba6ab7",
-      "at": "2026-04-09T07:32:16Z",
-      "pr": 17658,
-      "passes": 1
+      "hash": "20d5dd67ceb375fa51d23e443a8ef1b84288a36d",
+      "at": "2026-04-15T02:15:00Z",
+      "pr": 19030,
+      "passes": 2
     },
     ".agents/workflows/brief.md": {
       "hash": "72ad31f6f389a85966d857cc584fda2ce3c6f0c0",
