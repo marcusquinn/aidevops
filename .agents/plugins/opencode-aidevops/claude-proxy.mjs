@@ -38,6 +38,7 @@ import {
 } from "./claude-proxy-jsonpath.mjs";
 import { streamClaudeResponse } from "./claude-proxy-streaming.mjs";
 import { buildProviderModels } from "./proxy-provider-models.mjs";
+import { jsonResponse, textResponse } from "./response-helpers.mjs";
 
 const CLAUDE_PROXY_DEFAULT_PORT = parseInt(process.env.CLAUDE_PROXY_PORT || "32125", 10);
 const CLAUDE_PROVIDER_ID = "claudecli";
@@ -225,22 +226,18 @@ async function handleChatCompletions(req, directory) {
     // Thread the fetch Request's abort signal into the JSON path so client
     // disconnect terminates the child immediately (GH#18621 Finding 1).
     const result = await runClaudeJson(body, directory, req.signal);
-    return new Response(JSON.stringify(buildOpenAIResponse(body, result.content, result.usage)), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse(buildOpenAIResponse(body, result.content, result.usage));
   }
 
-  return new Response(streamClaudeResponse(body, directory), {
+  return textResponse(streamClaudeResponse(body, directory), {
     headers: SSE_HEADERS,
   });
 }
 
 function buildModelsListResponse() {
-  return new Response(JSON.stringify({
+  return jsonResponse({
     object: "list",
     data: getClaudeProxyModels().map((model) => ({ id: model.id, object: "model", owned_by: "claude-cli" })),
-  }), {
-    headers: { "Content-Type": "application/json" },
   });
 }
 
@@ -249,12 +246,10 @@ async function handleChatCompletionsWithErrorWrap(req, directory) {
     return await handleChatCompletions(req, directory);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({
-      error: { message, type: "server_error", code: "internal_error" },
-    }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse(
+      { error: { message, type: "server_error", code: "internal_error" } },
+      { status: 500 },
+    );
   }
 }
 
@@ -270,7 +265,7 @@ async function routeProxyRequest(req, directory) {
   if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
     return handleChatCompletionsWithErrorWrap(req, directory);
   }
-  return new Response("Not Found", { status: 404 });
+  return textResponse("Not Found", { status: 404 });
 }
 
 // ---------------------------------------------------------------------------

@@ -29,6 +29,7 @@ import { join } from "path";
 import { getAccounts, ensureValidToken, patchAccount } from "./oauth-pool.mjs";
 export { buildGoogleProviderModels, registerGoogleProvider, persistGoogleProvider, discoverGoogleModels } from "./google-proxy-config.mjs";
 import { persistGoogleProvider, discoverGoogleModels } from "./google-proxy-config.mjs";
+import { jsonResponse, textResponse } from "./response-helpers.mjs";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -214,9 +215,10 @@ async function forwardToGoogleApi(req, url) {
     accessToken = result.token;
     accountEmail = result.email;
   } catch (err) {
-    return new Response(JSON.stringify({
-      error: { message: `Google proxy: ${err.message}`, status: "UNAVAILABLE" },
-    }), { status: 503, headers: { "Content-Type": "application/json" } });
+    return jsonResponse(
+      { error: { message: `Google proxy: ${err.message}`, status: "UNAVAILABLE" } },
+      { status: 503 },
+    );
   }
 
   const forwardHeaders = buildGoogleForwardHeaders(req, accessToken);
@@ -236,7 +238,7 @@ async function forwardToGoogleApi(req, url) {
   }
 
   // Pipe the response back — preserves SSE streaming for streamGenerateContent
-  return new Response(response.body, {
+  return textResponse(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers: response.headers,
@@ -252,18 +254,17 @@ async function handleGoogleProxyFetch(req) {
   const url = new URL(req.url);
 
   if (url.pathname === "/health") {
-    return new Response(JSON.stringify({ status: "ok", provider: "google" }), {
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ status: "ok", provider: "google" });
   }
 
   try {
     return await forwardToGoogleApi(req, url);
   } catch (err) {
     console.error(`[aidevops] Google proxy: request error: ${err.message}`);
-    return new Response(JSON.stringify({
-      error: { message: `Google proxy error: ${err.message}`, status: "INTERNAL" },
-    }), { status: 502, headers: { "Content-Type": "application/json" } });
+    return jsonResponse(
+      { error: { message: `Google proxy error: ${err.message}`, status: "INTERNAL" } },
+      { status: 502 },
+    );
   }
 }
 
@@ -289,7 +290,7 @@ async function handleGoogleProxyFetch(req) {
 /** Bun.serve error handler for the Google proxy. */
 function handleGoogleProxyServerError(err) {
   console.error(`[aidevops] Google proxy: server error: ${err.message}`);
-  return new Response("Internal Server Error", { status: 500 });
+  return textResponse("Internal Server Error", { status: 500 });
 }
 
 /** Discover models and start proxy; throws on failure (caller wraps in try/catch). */
