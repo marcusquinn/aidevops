@@ -349,8 +349,39 @@ _install_supervisor_pulse() {
 # macOS: launchd plist invoking wrapper | Linux: cron entry invoking wrapper
 # The plist is ALWAYS regenerated on setup.sh to pick up config changes (env vars,
 # thresholds). Only the first-install prompt is gated on consent state.
+#######################################
+# t2119: Record the schedulers.sh template hash to the shared state
+# directory. auto-update-helper.sh's check_launchd_plist_drift compares
+# this against the current hash on every update cycle — whenever
+# schedulers.sh changes without a VERSION bump (PR #19079 scenario),
+# drift is detected and setup.sh --non-interactive is re-run to
+# regenerate the installed plists.
+#
+# Called from setup_supervisor_pulse unconditionally so the hash is
+# kept current on every setup.sh run, whether pulse is installed,
+# upgraded, or disabled. Whole-file hash is the simplest signal that
+# any plist-generating change has occurred.
+#######################################
+_schedulers_record_template_hash() {
+	local state_dir="$HOME/.aidevops/.agent-workspace/tmp"
+	mkdir -p "$state_dir" 2>/dev/null || return 0
+	local hash_file="$state_dir/schedulers-template-hash.state"
+	local schedulers_src="${BASH_SOURCE[0]:-}"
+	[[ -f "$schedulers_src" ]] || return 0
+	if command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$schedulers_src" 2>/dev/null | awk '{print $1}' >"$hash_file" 2>/dev/null || true
+	elif command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$schedulers_src" 2>/dev/null | awk '{print $1}' >"$hash_file" 2>/dev/null || true
+	fi
+	return 0
+}
+
 setup_supervisor_pulse() {
 	local _os="$1"
+
+	# Record template hash so auto-update can detect drift between
+	# schedulers.sh and the installed plists on macOS (t2119).
+	_schedulers_record_template_hash
 
 	# Ensure crontab has a global PATH= line (Linux only; macOS uses launchd env).
 	# Must run before any cron entries are installed so they inherit the PATH.
