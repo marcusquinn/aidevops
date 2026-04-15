@@ -198,6 +198,43 @@ _isc_delete_stamp() {
 	return 0
 }
 
+# Post a claim comment on the issue for audit trail visibility.
+# Mirrors worker dispatch comments but for interactive sessions.
+# Best-effort — all errors are swallowed so the caller never stalls.
+#
+# Arguments:
+#   $1 = issue number, $2 = repo slug, $3 = user login, $4 = worktree path
+_isc_post_claim_comment() {
+	local issue="$1"
+	local slug="$2"
+	local user="$3"
+	local worktree_path="$4"
+
+	local hostname
+	hostname=$(hostname 2>/dev/null || echo "unknown")
+	local worktree_note=""
+	if [[ -n "$worktree_path" ]]; then
+		worktree_note=" in \`${worktree_path##*/}\`"
+	fi
+
+	# <!-- ops:start --> / <!-- ops:end --> markers let the agent skip this
+	# comment when reading issue threads (see build.txt 8d).
+	local body
+	body=$(
+		cat <<EOF
+<!-- ops:start -->
+> Interactive session claimed by @${user}${worktree_note} on ${hostname}.
+> Pulse dispatch blocked via \`status:in-review\` + self-assignment.
+<!-- ops:end -->
+EOF
+	)
+
+	gh issue comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
+		_isc_warn "claim comment failed on #$issue — continuing (audit trail incomplete)"
+	}
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Subcommand: claim
 # -----------------------------------------------------------------------------
@@ -293,6 +330,9 @@ _isc_cmd_claim() {
 	if set_issue_status "$issue" "$slug" "in-review" --add-assignee "$user" >/dev/null 2>&1; then
 		_isc_info "claim: #$issue in $slug → status:in-review + assigned $user"
 		_isc_write_stamp "$issue" "$slug" "$worktree_path" "$user"
+		# Post a claim comment for audit trail visibility (like worker dispatch
+		# comments but for interactive sessions). Best-effort — swallow errors.
+		_isc_post_claim_comment "$issue" "$slug" "$user" "$worktree_path"
 		return 0
 	fi
 

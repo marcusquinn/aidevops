@@ -34,6 +34,7 @@ Extract first positional arg; if ` -- ` present, use suffix (t158). Resolve `t\d
 
 **Implementation context (t1901 — read BEFORE exploring):** Read the issue body. Look for "Worker Guidance" or "How" section — follow file paths, implementation steps, and verification commands directly. Read only referenced files. If absent, exit BLOCKED: "missing implementation context". Do NOT explore broadly to compensate.
 
+- **Interactive claim (t2056 — STRUCTURAL):** `full-loop-helper.sh start` automatically calls `interactive-session-helper.sh claim` for non-headless sessions when an issue number is present in the prompt. This applies `status:in-review` + self-assigns + posts a claim comment, blocking pulse dispatch for the entire window between start and PR creation. No agent action required; the helper handles it.
 - **Maintainer gate pre-check (GH#17810 — MANDATORY):** Verify issue lacks `needs-maintainer-review` and has an assignee. `full-loop-helper.sh start` enforces this — exit BLOCKED if either fails. Do NOT create a PR for an issue that will fail the CI maintainer gate.
 - **Decomposition (t1408.2):** Skip if `--no-decompose` or has subtasks. `task-decompose-helper.sh classify "$TASK_DESC"`. Composite headless → auto-decompose, exit `DECOMPOSED: ...`. Max depth 3.
 - **Claim (t1017):** Add `assignee:<identity> started:<ISO>` to TODO.md. Push rejection = claimed → **STOP**.

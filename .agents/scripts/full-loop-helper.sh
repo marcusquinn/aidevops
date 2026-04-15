@@ -236,6 +236,52 @@ _check_linked_issue_gate() {
 	return 0
 }
 
+# Interactive claim (t2056 hardening): structurally enforce issue ownership
+# when an interactive session starts a full-loop. Extracts issue number from
+# the prompt and calls interactive-session-helper.sh claim, which applies
+# status:in-review + self-assigns + posts a claim comment. This replaces
+# prompt-only enforcement that was missed in practice (GH#18775 incident).
+#
+# Skips silently when:
+#   - Headless mode (workers have their own dispatch claim)
+#   - No issue number in prompt
+#   - interactive-session-helper.sh not available
+#
+# Always returns 0 — claim failure is non-blocking (warn-and-continue).
+_auto_claim_interactive() {
+	local prompt="$1"
+
+	# Skip in headless — workers use dispatch claims, not interactive claims
+	if is_headless; then
+		return 0
+	fi
+
+	# Extract issue number (same pattern as _check_linked_issue_gate)
+	local issue_num
+	issue_num=$(echo "$prompt" | grep -oE '#[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+	if [[ -z "$issue_num" ]]; then
+		return 0
+	fi
+
+	# Resolve repo slug
+	local repo
+	repo=$(git remote get-url origin 2>/dev/null | sed -E 's|.*github\.com[:/]||;s|\.git$||' || true)
+	if [[ -z "$repo" ]]; then
+		return 0
+	fi
+
+	# Call the interactive claim helper — it handles offline, idempotency,
+	# self-assign, status label, stamp, and claim comment internally.
+	local helper="${SCRIPT_DIR}/interactive-session-helper.sh"
+	if [[ -x "$helper" ]]; then
+		"$helper" claim "$issue_num" "$repo" --worktree "$(pwd)" || true
+		print_info "Interactive claim: #${issue_num} in ${repo} — pulse dispatch blocked"
+	else
+		print_warning "interactive-session-helper.sh not found — skipping interactive claim"
+	fi
+	return 0
+}
+
 # Initialize option variables with defaults so set -u doesn't crash on
 # export when flags are not passed.
 _init_start_defaults() {
@@ -349,6 +395,12 @@ cmd_start() {
 	# .github/workflows/maintainer-gate.yml so workers fail fast locally
 	# instead of creating PRs that will always fail CI.
 	_check_linked_issue_gate "$prompt" || return 1
+
+	# Interactive claim (t2056 hardening): when not headless, automatically
+	# claim the linked issue so the pulse cannot dispatch a parallel worker
+	# during the window between start and PR creation. This closes the race
+	# that prompt-only enforcement missed (GH#18775 incident).
+	_auto_claim_interactive "$prompt"
 
 	printf "\n${BOLD}${BLUE}=== FULL DEVELOPMENT LOOP - STARTING ===${NC}\n  Task: %s\n  Branch: %s | Headless: %s\n\n" \
 		"$prompt" "$(get_current_branch)" "$HEADLESS"
