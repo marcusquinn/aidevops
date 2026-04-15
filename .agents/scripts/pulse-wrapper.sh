@@ -74,6 +74,31 @@ set -euo pipefail
 export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 
 #######################################
+# FD budget: raise soft limit to avoid exhaustion (GH#19044)
+#
+# The launchd plist inherits macOS default maxfiles (256 soft, unlimited
+# hard). The pulse sources ~20 modules and spawns gh/jq/git subprocesses
+# per repo per cycle — 256 FDs is structurally insufficient. Raise the
+# soft limit to 4096 (well within the hard limit) BEFORE sourcing any
+# modules or spawning any subprocesses.
+#
+# This is the primary fix for the FD exhaustion observed in GH#18787:
+#   pulse-simplification-state.sh: redirection error: cannot duplicate fd: Too many open files
+#
+# Defence-in-depth: setup-modules/schedulers.sh also sets
+# SoftResourceLimits.NumberOfFiles=4096 in the launchd plist, but the
+# ulimit raise here is the runtime safety net in case the plist is stale.
+#######################################
+ulimit -n 4096 2>/dev/null || ulimit -n 1024 2>/dev/null || true
+
+# Regression guard: assert FD budget is adequate. Log loudly if not.
+_pulse_fd_limit=$(ulimit -n 2>/dev/null || echo "256")
+if [[ "$_pulse_fd_limit" =~ ^[0-9]+$ ]] && [[ "$_pulse_fd_limit" -lt 1024 ]]; then
+	printf '[pulse-wrapper] WARNING: FD soft limit is %s (< 1024). Pulse may hit FD exhaustion. Run: ulimit -n 4096 or update the launchd plist SoftResourceLimits.NumberOfFiles (GH#19044)\n' "$_pulse_fd_limit" >&2
+fi
+unset _pulse_fd_limit
+
+#######################################
 # Startup jitter — desynchronise concurrent pulse instances
 #
 # When multiple runners share the same launchd interval (120s), their
