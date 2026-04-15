@@ -350,6 +350,70 @@ test_empty_diff_skipped() {
 	return 0
 }
 
+# ---------------------------------------------------------------
+# Test 6: gh issue view failure — no data-loss overwrite
+# When `gh issue view` returns non-zero, the function must skip
+# the edit entirely (fail-open without clobbering the issue body).
+# ---------------------------------------------------------------
+test_issue_view_failure_skipped() {
+	# Override gh stub to fail on `issue view`
+	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GH_ARGS_FILE}"
+
+case "${1:-} ${2:-}" in
+	"pr diff")
+		printf 'diff --git a/foo.sh b/foo.sh\n+added line\n'
+		exit 0
+		;;
+	"issue view")
+		exit 1
+		;;
+	"issue edit")
+		# Capture the --body argument
+		shift 2
+		shift
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+				--repo) shift; shift ;;
+				--body) shift; printf '%s' "$1" >"${GH_EDITED_BODY_FILE}"; shift ;;
+				*) shift ;;
+			esac
+		done
+		exit 0
+		;;
+	*)
+		exit 0
+		;;
+esac
+GHEOF
+	chmod +x "${TEST_ROOT}/bin/gh"
+
+	: >"$LOGFILE"
+	: >"$GH_DIFF_FILE"
+	printf 'diff --git a/foo.sh b/foo.sh\n+added line\n' >"$GH_DIFF_FILE"
+	: >"$GH_EDITED_BODY_FILE"
+
+	_carry_forward_pr_diff "88" "owner/repo" "22"
+
+	local edited_size
+	edited_size=$(wc -c <"$GH_EDITED_BODY_FILE")
+	if [[ "$edited_size" -ne 0 ]]; then
+		print_result "issue view failure: no issue edit (data loss guard)" 1 \
+			"Expected no gh issue edit when gh issue view fails"
+		return 0
+	fi
+
+	if ! grep -q "failed to fetch issue" "$LOGFILE"; then
+		print_result "issue view failure: error logged" 1 \
+			"Expected 'failed to fetch issue' in LOGFILE. Got: $(cat "$LOGFILE")"
+		return 0
+	fi
+
+	print_result "issue view failure: skipped edit to prevent data loss" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -364,6 +428,7 @@ main() {
 	test_size_cap_truncation
 	test_origin_interactive_skip_static
 	test_empty_diff_skipped
+	test_issue_view_failure_skipped
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

@@ -1614,9 +1614,15 @@ _carry_forward_pr_diff() {
 	fi
 
 	# --- Fetch current issue body ---
-	local current_body
+	# --- Fetch current issue body (fail-safe: skip on API error to prevent data loss) ---
+	local current_body fetch_rc
+	fetch_rc=0
 	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
+		--json body --jq '.body // ""' 2>/dev/null) || fetch_rc=$?
+	if [[ $fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] _carry_forward_pr_diff: failed to fetch issue #${linked_issue} body (exit ${fetch_rc}) — skipping to avoid data loss (t2118)" >>"$LOGFILE"
+		return 0
+	fi
 
 	# --- Idempotency guard ---
 	# Marker format: <!-- t2118:prior-worker-diff:PR<N> -->
