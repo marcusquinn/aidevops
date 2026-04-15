@@ -514,6 +514,7 @@ _install_pulse_launchd() {
 	# Write the plist (always regenerated to pick up config changes)
 	_generate_pulse_plist_content "$pulse_label" "$wrapper_script" "$opencode_bin" >"$pulse_plist"
 
+	# shell-portability: ignore next — _install_pulse_launchd is macOS-only (launchd)
 	if launchctl load "$pulse_plist"; then
 		if [[ "$_pulse_installed" == "true" ]]; then
 			print_info "Supervisor pulse updated (launchd config regenerated)"

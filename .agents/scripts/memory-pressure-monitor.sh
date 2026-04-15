@@ -1200,6 +1200,7 @@ EOF
 
 	# Load the plist
 	launchctl bootout "gui/$(id -u)" "${PLIST_PATH}" 2>/dev/null || true
+	# shell-portability: ignore next — memory-pressure-monitor is macOS-only (launchd)
 	launchctl bootstrap "gui/$(id -u)" "${PLIST_PATH}"
 
 	echo "Installed and loaded: ${LAUNCHD_LABEL}"

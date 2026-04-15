@@ -434,6 +434,7 @@ EOF
 
 	printf '[OK] Wrote launchd plist: %s\n' "$plist_path"
 	printf '[INFO] launchd schedule mapped from cron: %s\n' "$ROUTINE_SCHEDULE"
+	# shell-portability: ignore next — launchctl is in a string (printf format), not a command
 	printf '[INFO] Then load with: launchctl load %s\n' "$plist_path"
 	return 0
 }

@@ -1301,6 +1301,7 @@ check_pulse_canary() {
 
 	local sandbox rc output
 	sandbox=$(mktemp -d)
+	# shell-portability: ignore next — timeout: use _timeout_cmd wrapper (GH#18787)
 	output=$(
 		HOME="${sandbox}/home" \
 			FULL_LOOP_HEADLESS=1 \
@@ -1904,6 +1905,30 @@ _run_gate_checks_static() {
 	return $exit_code
 }
 
+check_shell_portability() {
+	echo -e "${BLUE}Checking Shell Portability (Linux/macOS command portability)...${NC}"
+
+	local scanner_script="${SCRIPT_DIR}/lint-shell-portability.sh"
+	if [[ ! -x "$scanner_script" ]]; then
+		print_warning "lint-shell-portability.sh not found at $scanner_script"
+		return 0
+	fi
+
+	local output violations=0
+	output=$(bash "$scanner_script" --summary 2>&1) || violations=1
+
+	if [[ "$violations" -eq 0 ]]; then
+		print_success "Shell portability: no unguarded platform-specific commands"
+	else
+		print_error "Shell portability: unguarded platform-specific commands found"
+		# Re-run without --summary to show details
+		bash "$scanner_script" 2>&1 || true
+		return 1
+	fi
+
+	return 0
+}
+
 # _run_gate_checks_complexity: run complexity and compatibility gates (bash32 through python).
 # Returns: 0 if all passed, 1 if any failed.
 _run_gate_checks_complexity() {
@@ -1911,6 +1936,11 @@ _run_gate_checks_complexity() {
 
 	if ! should_skip_gate "bash32-compat"; then
 		check_bash32_compat || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "shell-portability"; then
+		check_shell_portability || exit_code=1
 		echo ""
 	fi
 
