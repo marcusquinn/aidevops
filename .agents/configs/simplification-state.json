@@ -6432,7 +6432,7 @@
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "simplified_at": "2026-04-04T09:17:13Z",
       "issue": "GH#17250",
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
       "at": "2026-04-04T14:53:40Z",
       "passes": 1
     },
@@ -6941,10 +6941,10 @@
       "passes": 1
     },
     ".agents/workflows/full-loop.md": {
-      "hash": "7f5d11baa5324a3da964a513d27e5790b0bdea27",
-      "at": "2026-04-11T04:09:50Z",
-      "pr": 18130,
-      "passes": 1
+      "hash": "dda139893758fd40ed3195ea4cd58d4287c61bdc",
+      "at": "2026-04-15T02:35:00Z",
+      "pr": 19047,
+      "passes": 2
     },
     ".agents/scripts/commands/session-review.md": {
       "hash": "75539fb19f3e764a723d6534c6b2090709b3b423",

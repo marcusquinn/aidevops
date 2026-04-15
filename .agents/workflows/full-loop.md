@@ -32,10 +32,10 @@ Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NO
 
 Extract first positional arg; if ` -- ` present, use suffix (t158). Resolve `t\d+` via TODO.md or `gh issue list`. Extract issue number: `sed -En 's/.*[Ii]ssue[[:space:]]*#*([0-9]+).*/\1/p'`.
 
-**Implementation context (t1901 — read BEFORE exploring):** Read the issue body. Look for "Worker Guidance" or "How" section — follow file paths, implementation steps, and verification commands directly. Read only referenced files. If absent, exit BLOCKED: "missing implementation context". Do NOT explore broadly to compensate.
+**Implementation context (t1901):** Read issue body's "Worker Guidance"/"How" section — follow file paths, implementation steps, and verification commands directly. Read only referenced files. If absent, exit BLOCKED: "missing implementation context". Do NOT explore broadly to compensate.
 
 - **Interactive claim (t2056 — STRUCTURAL):** `full-loop-helper.sh start` automatically calls `interactive-session-helper.sh claim` for non-headless sessions when an issue number is present in the prompt. This applies `status:in-review` + self-assigns + posts a claim comment, blocking pulse dispatch for the entire window between start and PR creation. No agent action required; the helper handles it.
-- **Maintainer gate pre-check (GH#17810 — MANDATORY):** Verify issue lacks `needs-maintainer-review` and has an assignee. `full-loop-helper.sh start` enforces this — exit BLOCKED if either fails. Do NOT create a PR for an issue that will fail the CI maintainer gate.
+- **Maintainer gate pre-check (GH#17810 — MANDATORY):** Verify issue lacks `needs-maintainer-review` and has an assignee. `full-loop-helper.sh start` enforces this — exit BLOCKED if either fails.
 - **Decomposition (t1408.2):** Skip if `--no-decompose` or has subtasks. `task-decompose-helper.sh classify "$TASK_DESC"`. Composite headless → auto-decompose, exit `DECOMPOSED: ...`. Max depth 3.
 - **Claim (t1017):** Add `assignee:<identity> started:<ISO>` to TODO.md. Push rejection = claimed → **STOP**.
 - **Issue labels (t1343/#2452):** Guard: state must be `OPEN`. Set `status:in-progress`, remove stale labels. Lifecycle: `available` → `queued` → `in-progress` → `in-review` → `done`. Idempotent (t1687).
@@ -80,7 +80,7 @@ Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 | **Medium** | UI components, CSS, routes, config, env vars, DB queries | `runtime-verified` if dev env available; `self-assessed` otherwise |
 | **Low** | Docs, comments, types-only, test files, linter/CI config, agent prompts | `self-assessed` |
 
-Detection is intelligence. ANY critical pattern → entire PR requires `runtime-verified`. Critical/high + no runtime → **BLOCK**. Use `.aidevops/testing.json` if present. Record `## Runtime Testing` in PR body.
+ANY critical pattern → entire PR requires `runtime-verified`. Critical/high + no runtime → **BLOCK**. Use `.aidevops/testing.json` if present. Record `## Runtime Testing` in PR body.
 
 **Key rules:** Parallelism (t217) — use Task tool. CI (t1334) — `gh pr checks`, `gh run view --log`. Blast radius (t1422) — quality-debt PRs ≤5 files.
 
