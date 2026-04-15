@@ -1015,23 +1015,35 @@ _extract_linked_issue() {
 
 	# Match GitHub-native close keywords in the PR body only (case-insensitive).
 	# Matches: close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved.
-	# Does NOT match bare GH#NNN, "Related #NNN", or other non-closing references. (GH#18098)
-	local issue_num
-	issue_num=$(printf '%s' "$pr_body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+' | head -1 | grep -oE '[0-9]+')
-	if [[ -n "$issue_num" ]]; then
-		printf '%s' "$issue_num"
+	# Does NOT match bare GH#NNN, "Related #NNN", "For #NNN", "Ref #NNN", or other
+	# non-closing references. (GH#18098 + t2108)
+	#
+	# The body keyword is AUTHORITATIVE. The title fallback below only fires when
+	# the body has a closing keyword AND the title also names a number — it picks
+	# WHICH issue from the body matches when there are multiple. It is NEVER an
+	# override that creates a match where the body intentionally has none. (t2108)
+	local body_issue title_issue
+	body_issue=$(printf '%s' "$pr_body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+' | head -1 | grep -oE '[0-9]+')
+	title_issue=$(printf '%s' "$pr_title" | grep -oE 'GH#[0-9]+' | head -1 | grep -oE '[0-9]+')
+
+	# No closing keyword in the body → return empty. The PR is intentionally
+	# not closing any issue (planning-only PR, multi-PR roadmap, "For #NNN"
+	# reference, etc.). _handle_post_merge_actions will skip the close path
+	# when this returns empty. (t2108)
+	if [[ -z "$body_issue" ]]; then
 		return 0
 	fi
 
-	# Match: GH#NNN prefix in PR title only (format: "GH#NNN: description").
-	# Title-scoped: bare GH#NNN references anywhere in the PR body are intentionally
-	# excluded to avoid closing unrelated issues mentioned in "Related" sections. (GH#18098)
-	issue_num=$(printf '%s' "$pr_title" | grep -oE 'GH#[0-9]+' | head -1 | grep -oE '[0-9]+')
-	if [[ -n "$issue_num" ]]; then
-		printf '%s' "$issue_num"
+	# Body has a closing keyword. If the title also names a number, prefer the
+	# title-named issue when it differs from body_issue (matches the historical
+	# behaviour where the GH#NNN: title prefix is the primary identifier and
+	# the body may reference additional issues). When they match or the title
+	# has no number, return body_issue. (t2108)
+	if [[ -n "$title_issue" ]]; then
+		printf '%s' "$title_issue"
 		return 0
 	fi
-
+	printf '%s' "$body_issue"
 	return 0
 }
 
