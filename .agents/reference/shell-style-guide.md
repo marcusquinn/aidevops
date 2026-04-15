@@ -3,13 +3,11 @@
 
 # Shell Helper Style Guide
 
-Canonical rules for `.agents/scripts/**/*.sh`: **source `shared-constants.sh` OR use `[[ -z "${VAR+x}" ]]` guards**. Never declare `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, or `NC` at top level without a guard. Never `readonly` those names outside `shared-constants.sh`.
-
-Enforcement: `shell-init-pattern-check.sh` + CI workflow (Phase 2 of t2053). Rule in `prompts/build.txt` → Quality Standards.
+Canonical rules for `.agents/scripts/**/*.sh`: **source `shared-constants.sh` OR use `[[ -z "${VAR+x}" ]]` guards**. Never declare `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, or `NC` at top level without a guard. Never `readonly` those names outside `shared-constants.sh`. Enforcement: `shell-init-pattern-check.sh` + CI (Phase 2, t2053). Rule in `prompts/build.txt` → Quality Standards.
 
 ## Allowed patterns
 
-### Pattern A — Preferred: source `shared-constants.sh`
+### A — source `shared-constants.sh` (preferred)
 
 For scripts inside `.agents/scripts/` with a stable path to `shared-constants.sh`:
 
@@ -26,7 +24,7 @@ echo -e "${GREEN}[OK]${NC} sourced shared constants"
 
 Use `${RED}`, `${GREEN}`, etc. directly — no local declarations needed. Subdirectory scripts: `source "${SCRIPT_DIR}/../shared-constants.sh"`.
 
-### Pattern B — Fallback: granular `${VAR+x}` guard
+### B — granular `${VAR+x}` guard (fallback)
 
 For scripts runnable without `shared-constants.sh` (early bootstrap, standalone CLIs, `bash <(curl …)` distribution):
 
@@ -44,7 +42,7 @@ set -Eeuo pipefail
 
 `${VAR+x}` distinguishes *unset* from *set-to-empty* — parent with `shared-constants.sh` wins; standalone picks up fallback. **Do not use `${VAR:-}`** — it treats set-to-empty as unset.
 
-### Pattern C — Private internal: prefixed names
+### C — prefixed names (test harnesses only)
 
 For test harnesses and strictly-internal utilities only. Prefix must be `TEST_`, `_<script_name>_`, or documented in `shared-constants.sh`:
 
@@ -101,8 +99,6 @@ Problem: all-or-nothing — if parent set *some* colors without the sentinel, ch
 Colors not in `shared-constants.sh` (e.g., `MAGENTA`, `GRAY`, `BOLD`, `DIM`) are safe to declare locally but should follow Pattern B for consistency. New canonical colors → add to `shared-constants.sh` in a separate PR first.
 
 ## Migration checklist
-
-When converting a helper to Pattern A or B:
 
 1. Identify current pattern (plain, readonly, include-guard, or prefixed).
 2. Choose target — A (inside `.agents/scripts/`, stable path), B (standalone bootstrap), C (test harness only).
