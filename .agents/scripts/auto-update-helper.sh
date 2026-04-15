@@ -439,6 +439,95 @@ run_freshness_checks() {
 	check_tool_freshness
 	check_upstream_watch
 	check_venv_health
+	# t2119: closes the deployment gap where setup-modules/schedulers.sh
+	# gets updated in-place (via git pull) without a VERSION bump, so the
+	# "up to date" branch of cmd_check never re-runs setup.sh and the
+	# installed launchd plists stay stale. PR #19079 was invisible to
+	# users for hours for exactly this reason.
+	check_launchd_plist_drift
+}
+
+#######################################
+# t2119: Detect drift between the installed launchd plists and the
+# current setup-modules/schedulers.sh template, then auto-repair by
+# re-running setup.sh --non-interactive.
+#
+# Strategy: hash setup-modules/schedulers.sh itself and compare against
+# the hash recorded by the last setup.sh run. Whole-file hash is the
+# simplest signal that any plist-generating change has occurred (FD
+# limits, env vars, StartInterval, labels) — no per-plist hashing or
+# subshell sourcing needed, and it naturally covers every LaunchAgent
+# that schedulers.sh installs (supervisor-pulse, process-guard,
+# memory-pressure, etc.).
+#
+# Bootstrap case: when no stored hash exists, we treat the state as
+# drifted on first run. This self-heals existing installs that pre-date
+# t2119 without requiring a user action.
+#
+# Rate-limited to once per 6 hours so auto-update cycles don't
+# repeatedly run setup.sh — setup.sh is idempotent but does ~20
+# scheduler operations per run and isn't free.
+#
+# macOS only — systemd-user and cron paths don't have the same
+# deployment gap (setup.sh regenerates unit files on every run and
+# users typically restart them explicitly).
+#######################################
+check_launchd_plist_drift() {
+	[[ "$(uname -s)" == "Darwin" ]] || return 0
+
+	local state_dir="$HOME/.aidevops/.agent-workspace/tmp"
+	local check_stamp="$state_dir/plist-drift-check.stamp"
+	mkdir -p "$state_dir" 2>/dev/null || return 0
+
+	# Rate-limit to once per 6 hours. Overridable via env for tests and
+	# opt-out scenarios.
+	local drift_check_interval="${AIDEVOPS_PLIST_DRIFT_CHECK_INTERVAL:-21600}"
+	if [[ -f "$check_stamp" ]]; then
+		local last_check now
+		last_check=$(cat "$check_stamp" 2>/dev/null || echo 0)
+		now=$(date +%s)
+		if ((now - last_check < drift_check_interval)); then
+			return 0
+		fi
+	fi
+
+	local schedulers_src="$INSTALL_DIR/setup-modules/schedulers.sh"
+	local hash_state="$state_dir/schedulers-template-hash.state"
+
+	if [[ ! -f "$schedulers_src" ]]; then
+		date +%s >"$check_stamp"
+		return 0
+	fi
+
+	local current_hash
+	current_hash=$(shasum -a 256 "$schedulers_src" 2>/dev/null | awk '{print $1}')
+	if [[ -z "$current_hash" ]]; then
+		log_warn "Plist drift check: failed to hash $schedulers_src — skipping"
+		date +%s >"$check_stamp"
+		return 0
+	fi
+
+	local stored_hash=""
+	if [[ -f "$hash_state" ]]; then
+		stored_hash=$(cat "$hash_state" 2>/dev/null || echo "")
+	fi
+
+	if [[ -n "$stored_hash" && "$current_hash" == "$stored_hash" ]]; then
+		log_info "Plist drift check: template hash unchanged (${current_hash:0:12}) — no drift"
+		date +%s >"$check_stamp"
+		return 0
+	fi
+
+	log_info "Plist drift detected: stored='${stored_hash:-<none>}' current='${current_hash:0:12}' — running setup.sh --non-interactive to regenerate (t2119)"
+	local _setup_exit=0
+	bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1 || _setup_exit=$?
+	if [[ "$_setup_exit" -eq 0 ]]; then
+		log_info "Plist drift repaired via setup.sh --non-interactive (t2119)"
+	else
+		log_warn "Plist drift repair: setup.sh --non-interactive exited $_setup_exit"
+	fi
+	date +%s >"$check_stamp"
+	return 0
 }
 
 #######################################
