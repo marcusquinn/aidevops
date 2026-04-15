@@ -644,37 +644,53 @@ _resolve_pr_mergeable_status() {
 }
 
 #######################################
-# Fetch statusCheckRollup for a single PR and verify no required check
-# is in a FAILURE or TIMED_OUT state. Skips PRs with failing CI even
-# when the merge would use --admin (which bypasses branch protection).
+# Verify no branch-protection-required check on a PR is in a failed state.
+# Skips PRs with failing CI even when the merge would use --admin
+# (which bypasses branch protection).
 #
-# t2092: This is intentionally a per-PR call (not batch) — the GH#15060
-# lesson was about fetching statusCheckRollup for the ENTIRE open PR list
-# (expensive). Here we only fetch it once per PR that has already passed
-# the cheap MERGEABLE + gate checks, so the cost is bounded and paid only
-# when a merge would otherwise proceed.
+# t2092: Original implementation used `gh pr view --json statusCheckRollup`
+# and counted ANY FAILURE/TIMED_OUT conclusion. That over-counted:
+#   - Post-merge workflows (e.g. "Sync Issue Hygiene on PR Merge" which
+#     runs on push to main and is expected to fail under the t2029
+#     github-actions[bot] + protected main limitation)
+#   - Advisory / non-required checks outside branch protection
+#   - Stale entries from earlier head commits
+# Result: PRs were skipped even with all required checks green.
+#
+# t2104 (GH#19040): switch to `gh pr checks --required` which consults
+# branch protection and returns ONLY checks that gate the merge. The
+# `bucket` field normalises every state to one of:
+#   pass | fail | pending | cancel | skipping
+# We block on `fail` and `cancel`; allow `pass`, `pending`, `skipping`
+# (pending + skipping preserve the pre-t2104 semantics: --admin handles
+# them, and skipping means the check didn't run which isn't a failure).
+#
+# An empty result (no required checks defined in branch protection) is
+# treated as "nothing is failing" → merge allowed. Fail-closed on API
+# errors — a bubbling gh failure should never auto-merge.
 #
 # Arguments: $1=pr_number, $2=repo_slug
-# Returns: 0 if all checks pass/pending/neutral, 1 if any check failed
+# Returns: 0 if all required checks pass/pending/skipping, 1 if any failed
 #######################################
 _pr_required_checks_pass() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local failing _gh_exit
 	# Separate declaration from assignment to preserve exit code (SC2181).
-	failing=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json statusCheckRollup \
-		--jq '[.statusCheckRollup[] | select(.conclusion == "FAILURE" or .conclusion == "TIMED_OUT")] | length' \
+	failing=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json bucket \
+		--jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length' \
 		2>/dev/null)
 	_gh_exit=$?
 	# Fail-closed: if the API call itself fails, skip the merge rather than
 	# silently allowing it (t2092 — --admin bypasses branch protection).
 	if [[ $_gh_exit -ne 0 ]]; then
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — statusCheckRollup fetch failed (exit ${_gh_exit}) (t2092)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — required checks fetch failed (exit ${_gh_exit}) (t2104)" >>"$LOGFILE"
 		return 1
 	fi
-	if [[ "${failing:-0}" -gt 0 ]]; then
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — ${failing} required check(s) failing (t2092)" >>"$LOGFILE"
+	# Empty string = no required checks; normalise to 0.
+	[[ -z "$failing" ]] && failing=0
+	if [[ "$failing" -gt 0 ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — ${failing} required status check(s) failing (t2104)" >>"$LOGFILE"
 		return 1
 	fi
 	return 0
