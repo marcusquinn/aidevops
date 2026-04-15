@@ -919,16 +919,104 @@ gh_create_issue() {
 	# the t1970 auto-assign already applied on the claim-task-id.sh path so
 	# the maintainer gate's assignee check passes on first PR open for
 	# interactively-created issues.
+	local issue_output
 	if ! _gh_wrapper_args_have_assignee "$@"; then
 		local auto_assignee
 		auto_assignee=$(_gh_wrapper_auto_assignee)
 		if [[ -n "$auto_assignee" ]]; then
-			gh issue create "$@" --label "$origin_label" --assignee "$auto_assignee"
-			return $?
+			issue_output=$(gh issue create "$@" --label "$origin_label" --assignee "$auto_assignee")
+			local rc=$?
+			echo "$issue_output"
+			[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
+			return $rc
 		fi
 	fi
 
-	gh issue create "$@" --label "$origin_label"
+	issue_output=$(gh issue create "$@" --label "$origin_label")
+	local rc=$?
+	echo "$issue_output"
+	[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
+	return $rc
+}
+
+# GH#18735: auto-link newly created issues as sub-issues of their parent
+# when the title matches tNNN.M (dot-notation subtask pattern).
+# Non-blocking — errors are silently ignored so issue creation is never affected.
+# Arguments:
+#   $1 - issue URL output from gh issue create
+#   $2... - original args passed to gh issue create (to extract --title and --repo)
+_gh_auto_link_sub_issue() {
+	local issue_url="$1"
+	shift
+
+	# Extract --title from the original args
+	local title="" repo=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--title)
+			title="${2:-}"
+			shift
+			;;
+		--title=*) title="${1#--title=}" ;;
+		--repo)
+			repo="${2:-}"
+			shift
+			;;
+		--repo=*) repo="${1#--repo=}" ;;
+		*) ;;
+		esac
+		shift
+	done
+	[[ -z "$title" ]] && return 0
+
+	# Check if title starts with a dot-notation task ID (tNNN.M)
+	local child_task_id=""
+	if [[ "$title" =~ ^(t[0-9]+\.[0-9]+[a-z]?) ]]; then
+		child_task_id="${BASH_REMATCH[1]}"
+	else
+		return 0
+	fi
+
+	# Derive the parent task ID (strip last .segment)
+	local parent_task_id="${child_task_id%.*}"
+	[[ -z "$parent_task_id" || "$parent_task_id" == "$child_task_id" ]] && return 0
+
+	# Extract the child issue number from the URL
+	local child_num
+	child_num=$(echo "$issue_url" | grep -oE '[0-9]+$' || echo "")
+	[[ -z "$child_num" ]] && return 0
+
+	# Resolve repo slug (from --repo arg or current repo)
+	[[ -z "$repo" ]] && repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+	[[ -z "$repo" ]] && return 0
+
+	local owner="${repo%%/*}" name="${repo##*/}"
+
+	# Find the parent issue by searching for the task ID prefix in the title
+	local parent_num
+	parent_num=$(gh issue list --repo "$repo" --state all \
+		--search "${parent_task_id}: in:title" --json number,title --limit 5 2>/dev/null |
+		jq -r --arg prefix "${parent_task_id}: " \
+			'.[] | select(.title | startswith($prefix)) | .number // ""' 2>/dev/null |
+		head -1)
+	[[ -z "$parent_num" ]] && return 0
+
+	# Resolve both to node IDs and link
+	local parent_node child_node
+	parent_node=$(gh api graphql \
+		-f query='query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){issue(number:$num){id}}}' \
+		-f o="$owner" -f n="$name" -F num="$parent_num" \
+		--jq '.data.repository.issue.id' 2>/dev/null || echo "")
+	child_node=$(gh api graphql \
+		-f query='query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){issue(number:$num){id}}}' \
+		-f o="$owner" -f n="$name" -F num="$child_num" \
+		--jq '.data.repository.issue.id' 2>/dev/null || echo "")
+	[[ -z "$parent_node" || -z "$child_node" ]] && return 0
+
+	# Fire and forget — suppress all errors
+	gh api graphql -f query='mutation($p:ID!,$c:ID!){addSubIssue(input:{issueId:$p,subIssueId:$c}){issue{number}}}' \
+		-f p="$parent_node" -f c="$child_node" >/dev/null 2>&1 || true
+	return 0
 }
 
 gh_create_pr() {
