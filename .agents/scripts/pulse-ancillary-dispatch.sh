@@ -765,6 +765,10 @@ _dispatch_triage_review_worker() {
 	local model_flag=""
 	[[ -n "$resolved_model" ]] && model_flag="--model $resolved_model"
 
+	# t2089: Named pattern for canary-failure detection (see usage below).
+	# Centralised here so future canary exit messages only need one update.
+	local canary_failure_pattern='Canary test FAILED|Canary failed.*aborting dispatch'
+
 	# ── Launch sandboxed agent (no Bash, no gh, no network) ──
 	# t2019: We now pass `--agent triage-review` explicitly. Before this
 	# fix the flag was omitted, so:
@@ -827,7 +831,7 @@ _dispatch_triage_review_worker() {
 	# Infrastructure unavailability is NOT a triage failure: the issue itself
 	# is fine. Detect it early and route to a separate non-counting path.
 	local canary_failed="false"
-	if printf '%s' "$raw_sample" | grep -qE 'Canary test FAILED|Canary failed.*aborting dispatch' 2>/dev/null; then
+	if printf '%s' "$raw_sample" | grep -qE "$canary_failure_pattern" 2>/dev/null; then
 		canary_failed="true"
 		echo "[pulse-wrapper] Triage canary failed for #${issue_num} in ${repo_slug} — infrastructure unavailability, not a review failure (t2089)" >>"$LOGFILE"
 	fi

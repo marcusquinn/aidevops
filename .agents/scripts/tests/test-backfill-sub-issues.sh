@@ -1,387 +1,362 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# test-backfill-sub-issues.sh — coverage for cmd_backfill_sub_issues (t2114).
+#
+# test-backfill-sub-issues.sh — tests for t2114 (GH#19093)
+#
+# The `backfill-sub-issues` subcommand in issue-sync-helper.sh links a child
+# issue to its parent using GitHub state alone (title + body), without
+# consulting TODO.md or brief files. Three detection mechanisms cover the
+# common cases observed in the wild:
+#
+#   1. Dot-notation in title — "t1873.2: foo" → parent t1873 (resolved via
+#      `gh search issues` against the same repo).
+#   2. Explicit `Parent:` line in body — `Parent: tNNN` / `Parent: GH#NNN` /
+#      `Parent: #NNN`, including bold-markdown and backtick-quoted variants.
+#   3. `Blocked by: tNNN` where the referenced task carries the `parent-task`
+#      label on GitHub. This is the only case that requires the label check —
+#      it prevents peer-dependency blockers from being misread as parents.
+#
+# Test coverage:
+#   Class A — _detect_parent_from_gh_state
+#     1. Dot-notation title resolves to parent issue number
+#     2. `Parent: #NNN` returns the raw number directly
+#     3. `Parent: GH#NNN` returns the raw number
+#     4. `**Parent:** `tNNN`` (bold-markdown) resolves via gh search
+#     5. `Blocked by: tNNN` with parent-task label returns the parent
+#     6. `Blocked by: tNNN` WITHOUT parent-task label returns empty
+#     7. No detection signals returns empty
+#     8. Comma-separated `Blocked by:` — first parent-tagged blocker wins
+#
+#   Class B — cmd_backfill_sub_issues
+#     9. --issue N --dry-run prints "Would link" and does NOT call addSubIssue
+#    10. --issue N (no dry-run) calls addSubIssue mutation
+#    11. --issue N with no parent signal produces "Linked: 0"
 #
 # Strategy:
-#   1. Create a temp directory and install a `gh` stub on PATH that:
-#      - Responds to `gh issue list --json number,title,body` with canned JSON
-#        from a fixture variable.
-#      - Responds to `gh issue view N --json labels` to support the Method 4
-#        parent-task label check.
-#      - Responds to `gh issue list --search "tNNN: in:title"` for parent
-#        resolution (gh_find_issue_by_title calls this shape).
-#      - Responds to `gh api graphql` requests for resolve_gh_node_id and
-#        addSubIssue with canned responses and records the calls to a trace
-#        file so the test can assert which pairs were linked.
-#   2. Source issue-sync-helper.sh (it's guarded so main() does not execute
-#      when sourced).
-#   3. Invoke cmd_backfill_sub_issues against canned fixtures exercising all
-#      4 detection methods and assert the trace file contains the expected
-#      (parent, child) node pairs.
+#   - Install a stubbed `gh` binary on PATH. The stub inspects its arguments
+#     and returns canned JSON for `gh issue view`, `gh issue list`, and
+#     `gh search issues`. GraphQL mutations are recorded to a log and return
+#     a success payload. Label lookups consult an env-var allowlist.
+#   - Source issue-sync-helper.sh AFTER the stub is on PATH (the helper's
+#     internal PATH-reset at top-of-file is worked around by setting PATH
+#     both before and after the source).
 
 set -u
 
-# shellcheck disable=SC2155
-readonly TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck disable=SC2155
-readonly TEST_REPO_ROOT="$(cd "${TEST_DIR}/../../.." && pwd)"
-readonly HELPER="${TEST_REPO_ROOT}/.agents/scripts/issue-sync-helper.sh"
+# Use TEST_-prefixed color vars to avoid colliding with the readonly vars
+# defined by shared-constants.sh when the helper is sourced later.
+if [[ -t 1 ]]; then
+	TEST_GREEN=$'\033[0;32m'
+	TEST_RED=$'\033[0;31m'
+	TEST_BLUE=$'\033[0;34m'
+	TEST_NC=$'\033[0m'
+else
+	TEST_GREEN="" TEST_RED="" TEST_BLUE="" TEST_NC=""
+fi
 
-TEST_TMPDIR=$(mktemp -d /tmp/test-backfill-sub-issues.XXXXXX)
-trap 'rm -rf "$TEST_TMPDIR"' EXIT
+TESTS_RUN=0
+TESTS_FAILED=0
 
-TRACE_FILE="${TEST_TMPDIR}/gh-trace.log"
-: >"$TRACE_FILE"
-
-# -----------------------------------------------------------------------------
-# gh stub — canned responses driven by FIXTURE_ISSUES_JSON and FIXTURE_LABELS
-# -----------------------------------------------------------------------------
-mkdir -p "${TEST_TMPDIR}/bin"
-cat >"${TEST_TMPDIR}/bin/gh" <<'STUB'
-#!/usr/bin/env bash
-# gh stub for test-backfill-sub-issues.sh
-# shellcheck disable=SC2034
-set -u
-TRACE_FILE="${TRACE_FILE:-/dev/null}"
-printf 'gh %s\n' "$*" >>"$TRACE_FILE"
-
-# Parse --jq EXPR upfront so every branch can pipe raw JSON through it before
-# returning. Real `gh` applies --jq server-side; the stub mimics that with
-# jq on the raw response.
-_JQ_EXPR=""
-_prev=""
-for _arg in "$@"; do
-	if [[ "$_prev" == "--jq" ]]; then
-		_JQ_EXPR="$_arg"
-	fi
-	_prev="$_arg"
-done
-
-# _emit: print JSON, piping through jq if --jq was given. Matches real gh.
-_emit() {
-	local raw="$1"
-	if [[ -n "$_JQ_EXPR" ]]; then
-		printf '%s' "$raw" | jq -r "$_JQ_EXPR" 2>/dev/null || printf ''
-	else
-		printf '%s' "$raw"
-	fi
+pass() {
+	TESTS_RUN=$((TESTS_RUN + 1))
+	printf '  %sPASS%s %s\n' "$TEST_GREEN" "$TEST_NC" "$1"
+	return 0
 }
 
-cmd="${1:-}"
-sub="${2:-}"
-
-# gh repo view
-if [[ "$cmd" == "repo" && "$sub" == "view" ]]; then
-	printf 'test/repo\n'
-	exit 0
-fi
-
-# gh issue list ... --json ... [--jq EXPR]
-# Always returns the full fixture JSON; --jq (if present) is applied by _emit.
-# gh_find_issue_by_title passes a --jq filter that reduces to a single number;
-# cmd_backfill_sub_issues main iteration does not, so it gets the full list.
-if [[ "$cmd" == "issue" && "$sub" == "list" ]]; then
-	# Choose fixture: parent lookup (has --search style or --jq startswith) vs
-	# the main list. Both reuse FIXTURE_ISSUES_JSON, but gh_find_issue_by_title
-	# needs the parent titles too, so merge them.
-	if [[ -n "${FIXTURE_PARENT_TITLES:-}" ]]; then
-		# Build augmented array: fixture issues + parent title stubs
-		parent_json=$(printf '%s\n' "$FIXTURE_PARENT_TITLES" |
-			awk -F'|' 'NF==2 {printf "%s{\"number\": %s, \"title\": \"%sparent\"}", (NR>1?",":""), $2, $1}')
-		augmented_json=$(printf '%s' "${FIXTURE_ISSUES_JSON:-[]}" |
-			jq --argjson extras "[$parent_json]" '. + $extras' 2>/dev/null || printf '%s' "${FIXTURE_ISSUES_JSON:-[]}")
-		_emit "$augmented_json"
-	else
-		_emit "${FIXTURE_ISSUES_JSON:-[]}"
+fail() {
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	printf '  %sFAIL%s %s\n' "$TEST_RED" "$TEST_NC" "$1"
+	if [[ -n "${2:-}" ]]; then
+		printf '       %s\n' "$2"
 	fi
-	exit 0
+	return 0
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)" || exit 1
+HELPER="${SCRIPTS_DIR}/issue-sync-helper.sh"
+
+if [[ ! -f "$HELPER" ]]; then
+	printf 'test harness cannot find helper at %s\n' "$HELPER" >&2
+	exit 1
 fi
 
-# gh issue view N --json ...
-if [[ "$cmd" == "issue" && "$sub" == "view" ]]; then
-	issue_num="${3:-}"
-	# Find --json argument to decide what to return
-	want_json=0
-	json_fields=""
+TMP=$(mktemp -d -t t2114-backfill.XXXXXX)
+trap 'rm -rf "$TMP"' EXIT
+
+# -----------------------------------------------------------------------------
+# Stubbed gh binary
+# -----------------------------------------------------------------------------
+# The stub reads its argument pattern and emits canned JSON:
+#   gh issue view <N> ...    → uses GH_ISSUE_<N>_JSON env
+#   gh issue list ...        → uses GH_ISSUE_LIST_JSON env
+#   gh search issues <q> ... → uses GH_SEARCH_<q>_JSON env
+#   gh api graphql -f query=...addSubIssue...  → logged, success payload
+# Any --jq filter is honoured if jq is available.
+
+GH_LOG="${TMP}/gh.log"
+export GH_LOG
+: >"$GH_LOG"
+
+mkdir -p "${TMP}/bin"
+cat >"${TMP}/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GH_LOG:-/dev/null}"
+
+cmd1="${1:-}"
+cmd2="${2:-}"
+
+_emit() {
+	local payload="$1"
+	local jq_filter=""
+	local prev=""
 	for arg in "$@"; do
-		if [[ "$want_json" == 1 ]]; then
-			json_fields="$arg"
-			want_json=0
-		elif [[ "$arg" == "--json" ]]; then
-			want_json=1
-		fi
-	done
-
-	if [[ "$json_fields" == *"labels"* && "$json_fields" != *"number"* ]]; then
-		case ",${FIXTURE_PARENT_TASK_NUMS:-}," in
-		*",${issue_num},"*)
-			_emit '{"labels":[{"name":"parent-task"}]}'
-			;;
-		*)
-			_emit '{"labels":[]}'
-			;;
-		esac
-		exit 0
-	fi
-
-	if [[ "$json_fields" == *"number"* && "$json_fields" == *"title"* && "$json_fields" == *"body"* ]]; then
-		_emit "${FIXTURE_SINGLE_ISSUE:-null}"
-		exit 0
-	fi
-
-	_emit '{}'
-	exit 0
-fi
-
-# gh api graphql — resolve node IDs and addSubIssue mutation
-if [[ "$cmd" == "api" && "$sub" == "graphql" ]]; then
-	# Extract -F num=N from args
-	num=""
-	mutation=0
-	query_text=""
-	prev=""
-	for arg in "$@"; do
-		if [[ "$prev" == "-F" && "$arg" =~ ^num=([0-9]+)$ ]]; then
-			num="${BASH_REMATCH[1]}"
-		fi
-		if [[ "$prev" == "-f" && "$arg" =~ ^query= ]]; then
-			query_text="${arg#query=}"
+		if [[ "$prev" == "--jq" ]]; then
+			jq_filter="$arg"
 		fi
 		prev="$arg"
 	done
-	if [[ "$query_text" == *"addSubIssue"* ]]; then
-		# Record as a clean "MUTATION|parent=$parent|child=$child" line
-		parent_val=""
-		child_val=""
-		prev=""
-		for arg in "$@"; do
-			if [[ "$prev" == "-f" ]]; then
-				case "$arg" in
-				parent=*) parent_val="${arg#parent=}" ;;
-				child=*) child_val="${arg#child=}" ;;
-				esac
-			fi
-			prev="$arg"
-		done
-		printf 'LINKED|parent=%s|child=%s\n' "$parent_val" "$child_val" >>"$TRACE_FILE"
-		printf '{"data":{"addSubIssue":{"issue":{"number":1}}}}'
-		exit 0
+	if [[ -n "$jq_filter" ]] && command -v jq >/dev/null 2>&1; then
+		printf '%s\n' "$payload" | jq -r "$jq_filter"
+	else
+		printf '%s\n' "$payload"
 	fi
-	if [[ "$query_text" == *"issue(number"* ]]; then
-		# Node ID resolution — return canned "NODE_<num>" wrapped in the
-		# response schema; --jq (if given) will reduce to just the id.
-		_emit "$(printf '{"data":{"repository":{"issue":{"id":"NODE_%s"}}}}' "$num")"
-		exit 0
-	fi
-	_emit '{"data":{}}'
+}
+
+# gh issue view <N> ...
+if [[ "$cmd1" == "issue" && "$cmd2" == "view" ]]; then
+	num="${3:-}"
+	var="GH_ISSUE_${num}_JSON"
+	payload="${!var:-{\"title\":\"\",\"body\":\"\",\"labels\":[]}}"
+	_emit "$payload" "$@"
 	exit 0
 fi
 
-# Fallback
-printf '\n'
+# gh issue list ...
+if [[ "$cmd1" == "issue" && "$cmd2" == "list" ]]; then
+	payload="${GH_ISSUE_LIST_JSON:-[]}"
+	_emit "$payload" "$@"
+	exit 0
+fi
+
+# gh search issues <q> ...
+if [[ "$cmd1" == "search" && "$cmd2" == "issues" ]]; then
+	q="${3:-}"
+	var="GH_SEARCH_${q}_JSON"
+	payload="${!var:-[]}"
+	_emit "$payload" "$@"
+	exit 0
+fi
+
+# gh api graphql -f query=...
+if [[ "$cmd1" == "api" && "$cmd2" == "graphql" ]]; then
+	# Check the mutation name in the query body
+	for arg in "$@"; do
+		if [[ "$arg" == *"addSubIssue"* ]]; then
+			printf '%s\n' '{"data":{"addSubIssue":{"issue":{"number":1}}}}'
+			exit 0
+		fi
+		if [[ "$arg" == *"issue(number"* ]]; then
+			# resolve_gh_node_id query
+			printf '%s\n' 'NODE_STUB_ID'
+			exit 0
+		fi
+	done
+	printf '%s\n' '{}'
+	exit 0
+fi
+
+# gh auth status
+if [[ "$cmd1" == "auth" && "$cmd2" == "status" ]]; then
+	exit 0
+fi
+
+# Default: success, no output
 exit 0
 STUB
-chmod +x "${TEST_TMPDIR}/bin/gh"
-# NOTE: issue-sync-helper.sh prepends "/usr/local/bin:/usr/bin:/bin" to PATH
-# on source (line 29), which would shadow our stub. Symlink our stub into
-# /usr/local/bin is not portable; instead we install it at a path that the
-# helper's prepended PATH will resolve, by placing it in a directory we then
-# prepend AFTER sourcing. The cleanest fix is to override the `gh` command
-# with a bash function AFTER sourcing the helper — functions take precedence
-# over PATH lookups. We therefore define a `gh()` shell function below after
-# `source "$HELPER"` and leave PATH alone.
-export TRACE_FILE
+chmod +x "${TMP}/bin/gh"
 
-# -----------------------------------------------------------------------------
-# Test fixtures — three issues covering detection methods 1, 2, 3.
-# Method 4 (parent-task via blocked-by) is covered in a separate invocation.
-# -----------------------------------------------------------------------------
+# Put the stub first on PATH. Source the helper (which resets PATH internally),
+# then prepend again.
+export PATH="${TMP}/bin:${PATH}"
 
-# Parent issues on the repo:
-#   100: "t325: Exemplar Cases (parent)"
-#   101: "t500: Orchestration epic"
-#   200: "Already-linked parent"
-export FIXTURE_PARENT_TITLES='t325: |100
-t500: |101'
+# Stubs for functions called by _init_cmd — we short-circuit _init_cmd itself
+# for Class B by overriding it after sourcing, so these are just defence.
+print_warning() { :; }
+print_info() { printf '%s\n' "$*"; }
+print_error() { printf 'ERROR: %s\n' "$*" >&2; }
+print_success() { :; }
 
-# Fixture issue set — uses heredocs composed via jq for robust JSON.
-FIXTURE_ISSUES_JSON=$(
-	cat <<'JSON'
-[
-  {
-    "number": 2395,
-    "title": "t325.2: feat: types + anonymizer",
-    "body": "Shared types and LLM-based text anonymization module.\n\nBrief: `todo/tasks/t325.2-brief.md`\nParent: t325\nBlocked by: t325.1\n\n## Files\n- NEW: types.ts"
-  },
-  {
-    "number": 2396,
-    "title": "Follow-up: clarify anonymizer contract",
-    "body": "No parent reference in this one; detection must return empty.\n"
-  },
-  {
-    "number": 2397,
-    "title": "Hotfix: exemplar cache",
-    "body": "Parent: #200\nSome details here.\n"
-  }
-]
-JSON
-)
-export FIXTURE_ISSUES_JSON
-export FIXTURE_PARENT_TASK_NUMS=""
+# Minimal fake project root so _init_cmd's call to find_project_root works if
+# we ever let it run. For Class B we override _init_cmd directly.
+FAKE_PROJECT_ROOT="${TMP}/fake-project"
+mkdir -p "$FAKE_PROJECT_ROOT"
+: >"${FAKE_PROJECT_ROOT}/TODO.md"
 
-# -----------------------------------------------------------------------------
-# Load the helper and run cmd_backfill_sub_issues
-# -----------------------------------------------------------------------------
-# shellcheck disable=SC1090
-source "$HELPER" # main() is guarded by BASH_SOURCE check
+# shellcheck source=../issue-sync-helper.sh
+source "$HELPER" >/dev/null 2>&1 || true
+export PATH="${TMP}/bin:${PATH}"
 
-# Override `gh` as a bash function so it takes precedence over PATH lookups
-# (issue-sync-helper.sh prepends /usr/local/bin:/usr/bin:/bin on source).
-gh() {
-	"${TEST_TMPDIR}/bin/gh" "$@"
+# Override _init_cmd for Class B so it doesn't require a real git repo.
+_init_cmd() {
+	_CMD_ROOT="$FAKE_PROJECT_ROOT"
+	_CMD_REPO="owner/repo"
+	_CMD_TODO="${FAKE_PROJECT_ROOT}/TODO.md"
+	return 0
 }
-export -f gh
 
-export REPO_SLUG="test/repo"
-export DRY_RUN="false"
-unset TARGET_ISSUE_NUM
+printf '%sRunning backfill-sub-issues tests (t2114)%s\n' "$TEST_BLUE" "$TEST_NC"
 
-if ! cmd_backfill_sub_issues >"${TEST_TMPDIR}/cmd.out" 2>&1; then
-	printf 'FAIL: cmd_backfill_sub_issues exited non-zero\n'
-	cat "${TEST_TMPDIR}/cmd.out"
+# =============================================================================
+# Class A: _detect_parent_from_gh_state
+# =============================================================================
+
+# Parent t1873 lives at issue #100. t1873.2 lives at #200.
+export GH_SEARCH_t1873_JSON='[{"number":100,"title":"t1873: parent task"},{"number":200,"title":"t1873.2: child task"}]'
+# t1874 parent lives at #101 and carries the parent-task label.
+export GH_SEARCH_t1874_JSON='[{"number":101,"title":"t1874: parent with label"}]'
+# t1875 is a peer dependency (no parent-task label).
+export GH_SEARCH_t1875_JSON='[{"number":102,"title":"t1875: peer dependency"}]'
+# t1876 parent carrying parent-task label, used for multi-blocker test.
+export GH_SEARCH_t1876_JSON='[{"number":103,"title":"t1876: parent multi"}]'
+
+# Canned views for label lookups
+export GH_ISSUE_101_JSON='{"title":"t1874: parent with label","body":"","labels":[{"name":"parent-task"},{"name":"enhancement"}]}'
+export GH_ISSUE_102_JSON='{"title":"t1875: peer dependency","body":"","labels":[{"name":"bug"}]}'
+export GH_ISSUE_103_JSON='{"title":"t1876: parent multi","body":"","labels":[{"name":"parent-task"}]}'
+
+# ---- Test 1: dot-notation in title resolves via gh search ----
+result=$(_detect_parent_from_gh_state "t1873.2: child of 1873" "" "owner/repo")
+if [[ "$result" == "100" ]]; then
+	pass "dot-notation title resolves to parent issue number"
+else
+	fail "dot-notation title resolves to parent issue number" "got '$result'"
+fi
+
+# ---- Test 2: Parent: #NNN returns raw number ----
+result=$(_detect_parent_from_gh_state "child foo" "Some preamble
+Parent: #500
+More text" "owner/repo")
+if [[ "$result" == "500" ]]; then
+	pass "Parent: #NNN returns raw issue number"
+else
+	fail "Parent: #NNN returns raw issue number" "got '$result'"
+fi
+
+# ---- Test 3: Parent: GH#NNN returns raw number ----
+result=$(_detect_parent_from_gh_state "child foo" "Parent: GH#501" "owner/repo")
+if [[ "$result" == "501" ]]; then
+	pass "Parent: GH#NNN returns raw issue number"
+else
+	fail "Parent: GH#NNN returns raw issue number" "got '$result'"
+fi
+
+# ---- Test 4: **Parent:** `tNNN` (bold markdown) resolves via gh search ----
+result=$(_detect_parent_from_gh_state "child foo" "**Parent:** \`t1873\`" "owner/repo")
+if [[ "$result" == "100" ]]; then
+	pass "bold-markdown **Parent:** \`tNNN\` resolves via gh search"
+else
+	fail "bold-markdown **Parent:** \`tNNN\` resolves via gh search" "got '$result'"
+fi
+
+# ---- Test 5: Blocked by: tNNN with parent-task label ----
+result=$(_detect_parent_from_gh_state "child foo" "**Blocked by:** \`t1874\`" "owner/repo")
+if [[ "$result" == "101" ]]; then
+	pass "Blocked by: with parent-task label returns the parent"
+else
+	fail "Blocked by: with parent-task label returns the parent" "got '$result'"
+fi
+
+# ---- Test 6: Blocked by: tNNN WITHOUT parent-task label ----
+result=$(_detect_parent_from_gh_state "child foo" "Blocked by: t1875" "owner/repo")
+if [[ -z "$result" ]]; then
+	pass "Blocked by: without parent-task label returns empty"
+else
+	fail "Blocked by: without parent-task label returns empty" "got '$result'"
+fi
+
+# ---- Test 7: No detection signals ----
+result=$(_detect_parent_from_gh_state "plain title" "just a regular body with no parent reference" "owner/repo")
+if [[ -z "$result" ]]; then
+	pass "no detection signals returns empty"
+else
+	fail "no detection signals returns empty" "got '$result'"
+fi
+
+# ---- Test 8: comma-separated Blocked by: — first parent-tagged blocker wins ----
+result=$(_detect_parent_from_gh_state "child foo" "**Blocked by:** \`t1875,t1876\`" "owner/repo")
+if [[ "$result" == "103" ]]; then
+	pass "comma-separated Blocked by: picks the first parent-tagged blocker"
+else
+	fail "comma-separated Blocked by: picks the first parent-tagged blocker" "got '$result'"
+fi
+
+# =============================================================================
+# Class B: cmd_backfill_sub_issues
+# =============================================================================
+
+# Issue #200 is a t1873.2 child; _backfill_one_issue will detect parent #100.
+export GH_ISSUE_200_JSON='{"title":"t1873.2: child of 1873","body":"implementation","labels":[]}'
+# Issue #201 has no parent signal.
+export GH_ISSUE_201_JSON='{"title":"standalone task","body":"nothing here","labels":[]}'
+
+# ---- Test 9: --issue N --dry-run prints "Would link", does not mutate ----
+: >"$GH_LOG"
+DRY_RUN="true" cmd_backfill_sub_issues --issue 200 >"${TMP}/out.9" 2>&1 || true
+DRY_RUN="false"
+
+if grep -q 'Would link #200 as sub-issue of #100' "${TMP}/out.9"; then
+	if ! grep -q 'addSubIssue' "$GH_LOG"; then
+		pass "dry-run prints Would link and skips addSubIssue mutation"
+	else
+		fail "dry-run prints Would link and skips addSubIssue mutation" \
+			"unexpected addSubIssue in gh.log: $(tr '\n' '|' <"$GH_LOG" | head -c 200)"
+	fi
+else
+	fail "dry-run prints Would link and skips addSubIssue mutation" \
+		"missing 'Would link' in output: $(tr '\n' '|' <"${TMP}/out.9" | head -c 200)"
+fi
+
+# ---- Test 10: --issue N (no dry-run) calls addSubIssue ----
+: >"$GH_LOG"
+cmd_backfill_sub_issues --issue 200 >"${TMP}/out.10" 2>&1 || true
+
+if grep -q 'addSubIssue' "$GH_LOG"; then
+	pass "live run calls addSubIssue mutation for detected parent"
+else
+	fail "live run calls addSubIssue mutation for detected parent" \
+		"missing addSubIssue in gh.log: $(tr '\n' '|' <"$GH_LOG" | head -c 200)"
+fi
+
+# ---- Test 11: --issue N with no parent signal → Linked: 0 ----
+: >"$GH_LOG"
+cmd_backfill_sub_issues --issue 201 >"${TMP}/out.11" 2>&1 || true
+
+if grep -q 'Linked: 0' "${TMP}/out.11"; then
+	if ! grep -q 'addSubIssue' "$GH_LOG"; then
+		pass "no parent detected → Linked: 0, no mutation"
+	else
+		fail "no parent detected → Linked: 0, no mutation" \
+			"unexpected addSubIssue in gh.log"
+	fi
+else
+	fail "no parent detected → Linked: 0, no mutation" \
+		"missing 'Linked: 0' in output: $(tr '\n' '|' <"${TMP}/out.11" | head -c 200)"
+fi
+
+# =============================================================================
+# Summary
+# =============================================================================
+
+echo
+echo "============================================"
+printf 'Tests run:    %d\n' "$TESTS_RUN"
+printf 'Tests failed: %d\n' "$TESTS_FAILED"
+echo "============================================"
+
+if [[ "$TESTS_FAILED" -gt 0 ]]; then
 	exit 1
 fi
-
-# -----------------------------------------------------------------------------
-# Assertions on the trace file.
-# Expected mutations:
-#   LINKED|parent=NODE_100|child=NODE_2395  (method 1: dot-notation title → t325)
-#   LINKED|parent=NODE_200|child=NODE_2397  (method 3: Parent: #200)
-# Expected absent:
-#   LINKED|...|child=NODE_2396              (no parent detected)
-# -----------------------------------------------------------------------------
-failed=0
-assert_trace_contains() {
-	if ! grep -Fq -- "$1" "$TRACE_FILE"; then
-		printf 'FAIL: trace missing: %s\n' "$1"
-		failed=1
-	fi
-}
-assert_trace_absent() {
-	if grep -Fq -- "$1" "$TRACE_FILE"; then
-		printf 'FAIL: trace unexpectedly contains: %s\n' "$1"
-		failed=1
-	fi
-}
-
-assert_trace_contains 'LINKED|parent=NODE_100|child=NODE_2395'
-assert_trace_contains 'LINKED|parent=NODE_200|child=NODE_2397'
-assert_trace_absent 'child=NODE_2396'
-
-# -----------------------------------------------------------------------------
-# Direct _detect_parent_from_gh_state unit tests for each method.
-# -----------------------------------------------------------------------------
-got=$(_detect_parent_from_gh_state "t325.2: feat: types" "Parent: t325" "test/repo")
-if [[ "$got" != "100" ]]; then
-	printf 'FAIL: dot-notation title detection returned "%s", expected "100"\n' "$got"
-	failed=1
-fi
-
-got=$(_detect_parent_from_gh_state "Non-dot title" "Parent: #200" "test/repo")
-if [[ "$got" != "200" ]]; then
-	printf 'FAIL: Parent: #NNN detection returned "%s", expected "200"\n' "$got"
-	failed=1
-fi
-
-# Method 2: explicit "Parent: tNNN" body line, non-dot child title — must
-# bypass Method 1 and hit the body parser. Regression coverage for CR#7.
-got=$(_detect_parent_from_gh_state "No dot here: a follow-up" "Parent: t325" "test/repo")
-if [[ "$got" != "100" ]]; then
-	printf 'FAIL: Parent: tNNN (Method 2) returned "%s", expected "100"\n' "$got"
-	failed=1
-fi
-
-# Method 1 multi-level: t325.2.3 must resolve to its immediate parent t325.2,
-# not the root t325. In the fixture, issue 2395 has title "t325.2: feat: types",
-# so gh_find_issue_by_title("t325.2: ") returns 2395. This is regression
-# coverage for CR#4 (multi-level dot-notation handling): the previous regex
-# `^t[0-9]+\.[0-9]+[a-z]?` matched only one dot segment, so t325.2.3 was
-# not recognised as a Method-1 candidate and nested sub-issues went
-# unbackfilled.
-got=$(_detect_parent_from_gh_state "t325.2.3: deeper child" "" "test/repo")
-if [[ "$got" != "2395" ]]; then
-	printf 'FAIL: multi-level dot-notation returned "%s", expected "2395" (parent t325.2)\n' "$got"
-	failed=1
-fi
-
-got=$(_detect_parent_from_gh_state "Unrelated title" "Just a body, no parent." "test/repo")
-if [[ -n "$got" ]]; then
-	printf 'FAIL: no-parent case returned "%s", expected empty\n' "$got"
-	failed=1
-fi
-
-# Method 4: blocked-by a parent-tagged task
-export FIXTURE_PARENT_TASK_NUMS="101"
-got=$(_detect_parent_from_gh_state "t600: leaf task" "Blocked by: t500" "test/repo")
-if [[ "$got" != "101" ]]; then
-	printf 'FAIL: parent-task blocked-by detection returned "%s", expected "101"\n' "$got"
-	failed=1
-fi
-
-# Method 4 negative: blocked-by an issue that is NOT parent-tagged
-export FIXTURE_PARENT_TASK_NUMS=""
-got=$(_detect_parent_from_gh_state "t600: leaf task" "Blocked by: t500" "test/repo")
-if [[ -n "$got" ]]; then
-	printf 'FAIL: non-parent blocked-by returned "%s", expected empty\n' "$got"
-	failed=1
-fi
-
-# -----------------------------------------------------------------------------
-# --dry-run does not emit LINKED entries
-# -----------------------------------------------------------------------------
-: >"$TRACE_FILE"
-export DRY_RUN="true"
-export FIXTURE_PARENT_TASK_NUMS=""
-if ! cmd_backfill_sub_issues >"${TEST_TMPDIR}/dryrun.out" 2>&1; then
-	printf 'FAIL: dry-run exited non-zero\n'
-	cat "${TEST_TMPDIR}/dryrun.out"
-	exit 1
-fi
-if grep -Fq 'LINKED|' "$TRACE_FILE"; then
-	printf 'FAIL: dry-run produced LINKED mutations\n'
-	failed=1
-fi
-
-# -----------------------------------------------------------------------------
-# Single-issue mode (TARGET_ISSUE_NUM set). CR#7 regression coverage — the
-# single-issue `gh issue view` path was never exercised because the earlier
-# block always cleared TARGET_ISSUE_NUM. Serves one fixture via
-# FIXTURE_SINGLE_ISSUE to the stub's `gh issue view N --json number,title,body`
-# branch and asserts the parent link is written.
-# -----------------------------------------------------------------------------
-: >"$TRACE_FILE"
-export DRY_RUN="false"
-export FIXTURE_SINGLE_ISSUE='{"number":2395,"title":"t325.2: feat: types","body":"Parent: t325\nShared types module."}'
-export TARGET_ISSUE_NUM="2395"
-if ! cmd_backfill_sub_issues >"${TEST_TMPDIR}/single.out" 2>&1; then
-	printf 'FAIL: single-issue mode exited non-zero\n'
-	cat "${TEST_TMPDIR}/single.out"
-	failed=1
-fi
-if ! grep -Fq 'LINKED|parent=NODE_100|child=NODE_2395' "$TRACE_FILE"; then
-	printf 'FAIL: single-issue mode did not link #2395 to parent 100\n'
-	printf 'trace:\n'
-	cat "$TRACE_FILE"
-	failed=1
-fi
-unset TARGET_ISSUE_NUM FIXTURE_SINGLE_ISSUE
-
-if [[ "$failed" -eq 0 ]]; then
-	printf 'PASS: test-backfill-sub-issues — all assertions green\n'
-	exit 0
-fi
-printf '\nFAIL: test-backfill-sub-issues — see diagnostics above\n'
-printf '\n--- trace file ---\n'
-cat "$TRACE_FILE"
-exit 1
+exit 0

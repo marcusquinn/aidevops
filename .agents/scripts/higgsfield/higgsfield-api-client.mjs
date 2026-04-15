@@ -2,9 +2,11 @@
 // Holds: credential loading, fetch + retry, file upload/download, status polling.
 // High-level commands live in higgsfield-api.mjs.
 
-import { readFileSync, existsSync, writeFileSync } from 'fs';
+import { readFileSync, existsSync, createWriteStream, statSync } from 'fs';
 import { join, extname, basename } from 'path';
 import { homedir } from 'os';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -22,8 +24,8 @@ export function loadApiCredentials() {
   const credFile = join(homedir(), '.config', 'aidevops', 'credentials.sh');
   if (!existsSync(credFile)) return null;
   const content = readFileSync(credFile, 'utf-8');
-  const apiKey = content.match(/HF_API_KEY="([^"]+)"/)?.[1];
-  const apiSecret = content.match(/HF_API_SECRET="([^"]+)"/)?.[1];
+  const apiKey = content.match(/HF_API_KEY\s*=\s*["']([^"']+)["']/)?.[1];
+  const apiSecret = content.match(/HF_API_SECRET\s*=\s*["']([^"']+)["']/)?.[1];
   if (!apiKey || !apiSecret) return null;
   return { apiKey, apiSecret };
 }
@@ -54,7 +56,10 @@ export async function apiExecuteFetch(url, fetchOpts, timeout) {
 }
 
 export function parseApiErrorDetail(text) {
-  try { return JSON.parse(text).detail || JSON.parse(text).message || text; } catch {}
+  try {
+    const data = JSON.parse(text);
+    return data.detail || data.message || text;
+  } catch {}
   return text;
 }
 
@@ -166,9 +171,9 @@ export async function apiUploadFile(filePath, creds) {
 export async function apiDownloadFile(url, outputPath) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  writeFileSync(outputPath, buffer);
-  return buffer.length;
+  const dest = createWriteStream(outputPath);
+  await pipeline(Readable.fromWeb(response.body), dest);
+  return statSync(outputPath).size;
 }
 
 // ---------------------------------------------------------------------------

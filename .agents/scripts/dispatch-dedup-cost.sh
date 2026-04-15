@@ -108,10 +108,11 @@ _sum_issue_token_spend() {
 	fi
 
 	# Match signature footer patterns. The footer can take several shapes:
-	#   "spent 30,000 tokens"            (no time)
-	#   "spent 4m and 30,000 tokens"     (with session time)
-	#   "spent 1h 30m and 30,000 tokens" (with hours+minutes)
-	#   "has used 30,000 tokens"         (historical wording)
+	#   "spent 30,000 tokens"                  (no time)
+	#   "spent 4m and 30,000 tokens"           (with session time)
+	#   "spent 1h 30m and 30,000 tokens"       (with hours+minutes)
+	#   "spent 2d 3h 15m and 30,000 tokens"    (with days+hours+minutes)
+	#   "has used 30,000 tokens"               (historical wording)
 	#
 	# Strategy: collapse the optional "<time> and " infix so all variants
 	# reduce to "(spent|has used) N tokens", then extract N. The cumulative
@@ -120,7 +121,7 @@ _sum_issue_token_spend() {
 	# every time a new worker reports its own per-comment spend.
 	local raw_vals
 	raw_vals=$(printf '%s' "$bodies" |
-		sed -E 's/(spent )[0-9]+[dhms]( [0-9]+[mh])? and /\1/g' |
+		sed -E 's/(spent|has used) (.* and )?([0-9,]+ tokens)/\1 \3/g' |
 		grep -oE '(spent|has used) [0-9,]+ tokens' |
 		grep -oE '[0-9,]+' |
 		tr -d ',' || true)

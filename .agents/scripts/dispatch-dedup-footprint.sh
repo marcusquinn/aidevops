@@ -1,0 +1,256 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# dispatch-dedup-footprint.sh — File-footprint overlap throttle for dispatch (t2117/GH#19109)
+#
+# Prevents parallel dispatch of workers whose target file sets overlap.
+# When two issues both modify the same file, whichever PR merges first
+# invalidates the other (merge conflict or semantic conflict). The
+# update-branch salvage path (t2116) rescues trivial cases, but genuine
+# line-conflicting edits still cascade through CONFLICTING-close.
+#
+# This module is sourced by pulse-dispatch-core.sh. Depends on
+# shared-constants.sh being sourced first by the orchestrator.
+#
+# Functions:
+#   - _footprint_extract_paths    — parse file paths from issue body text
+#   - _footprint_get_inflight     — collect file footprints for all in-flight issues
+#   - _footprint_check_overlap    — check if a candidate's files overlap with in-flight
+#
+# Integration point: _dispatch_dedup_check_layers() in pulse-dispatch-core.sh
+# calls _footprint_check_overlap() after the large-file gate and before the
+# 7-layer dedup chain.
+#
+# Decay: natural — the check queries issues with active status labels
+# (status:in-progress, status:in-review, status:claimed). Once the blocking
+# issue's PR merges and labels clear, the overlap disappears.
+
+[[ -n "${_DISPATCH_DEDUP_FOOTPRINT_LOADED:-}" ]] && return 0
+_DISPATCH_DEDUP_FOOTPRINT_LOADED=1
+
+# Cache for in-flight footprints — built once per pulse cycle, not per candidate.
+# Keyed by repo_slug. Format: associative array of file→issue_number mappings.
+# Populated lazily on first call to _footprint_check_overlap for each repo.
+_FOOTPRINT_CACHE_REPO=""
+_FOOTPRINT_CACHE_DATA=""
+_FOOTPRINT_CACHE_EPOCH=0
+
+# Maximum age of the footprint cache in seconds. After this, rebuild.
+_FOOTPRINT_CACHE_TTL=120
+
+#######################################
+# Extract file paths from an issue body.
+#
+# Parses the same formats as the brief template's "Files to Modify" section:
+#   - `EDIT: path/to/file.sh:45-60` — existing file edit
+#   - `NEW: path/to/file.sh` — new file creation
+#   - Backtick-wrapped paths on list items: `- \`path/to/file.sh\``
+#   - Plain paths after "File:" prefix
+#
+# Strips line-number qualifiers (`:NNN` or `:START-END`) since we only care
+# about file-level overlap, not line-level.
+#
+# Args:
+#   $1 = issue body text
+# Output: one file path per line (sorted, unique, no line qualifiers)
+# Exit: always 0
+#######################################
+_footprint_extract_paths() {
+	local issue_body="$1"
+	[[ -n "$issue_body" ]] || return 0
+
+	local paths=""
+
+	# Pattern 1: EDIT:/NEW:/File: prefixed paths (brief template format)
+	local prefixed
+	prefixed=$(printf '%s' "$issue_body" | grep -oE '(EDIT|NEW|File):?\s+[`"]?[^`"[:space:],]+' 2>/dev/null |
+		sed 's/^[A-Z]*:*[[:space:]]*//' | sed 's/^[`"]//' | sed 's/[`"]*$//' | sort -u) || prefixed=""
+
+	# Pattern 2: Backtick-wrapped paths on list items (common in issue bodies)
+	# Match files with common source extensions
+	local backtick_paths
+	backtick_paths=$(printf '%s' "$issue_body" | grep -E '^\s*[-*]\s' 2>/dev/null |
+		grep -oE '`[^`]*\.(sh|py|js|ts|json|yml|yaml|md|conf|toml)[^`]*`' 2>/dev/null |
+		tr -d '`' | grep -v '^#' | sort -u) || backtick_paths=""
+
+	# Pattern 3: "Relevant files:" section — plain paths
+	local relevant_section
+	relevant_section=$(printf '%s' "$issue_body" | sed -n '/[Rr]elevant [Ff]iles/,/^$/p' 2>/dev/null |
+		grep -oE '[-]?\s*[`]?\.?[a-zA-Z][a-zA-Z0-9_./-]+\.(sh|py|js|ts|json|yml|yaml|md|conf|toml)[^`]*' 2>/dev/null |
+		sed 's/^[-[:space:]]*//' | tr -d '`' | sort -u) || relevant_section=""
+
+	# Combine all sources
+	paths=$(printf '%s\n%s\n%s' "$prefixed" "$backtick_paths" "$relevant_section" | sort -u | grep -v '^$' || true)
+
+	# Strip line-number qualifiers — we only care about file-level overlap
+	# Handles: file.sh:45, file.sh:45-60, file.sh:1477
+	printf '%s' "$paths" | sed 's/:[0-9]*\(-[0-9]*\)*$//' | sort -u | grep -v '^$' || true
+	return 0
+}
+
+#######################################
+# Get file footprints for all currently in-flight issues in a repo.
+#
+# "In-flight" = issue has an active status label (status:in-progress,
+# status:in-review, status:claimed) which indicates a worker is currently
+# processing it. Issues with status:queued are not yet dispatched and
+# don't count.
+#
+# Returns a newline-separated list of "file|issue_number" pairs.
+# Uses a TTL-based cache to avoid repeated API calls within a pulse cycle.
+#
+# Args:
+#   $1 = repo_slug (owner/repo)
+#   $2 = (optional) issue to exclude from results (the candidate itself)
+# Output: "file_path|issue_number" pairs, one per line
+# Exit: always 0
+#######################################
+_footprint_get_inflight() {
+	local repo_slug="$1"
+	local exclude_issue="${2:-}"
+
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	# Check cache validity
+	if [[ "$_FOOTPRINT_CACHE_REPO" == "$repo_slug" ]] &&
+		[[ -n "$_FOOTPRINT_CACHE_DATA" ]] &&
+		[[ $((now_epoch - _FOOTPRINT_CACHE_EPOCH)) -lt $_FOOTPRINT_CACHE_TTL ]]; then
+		# Cache hit — filter out excluded issue and return
+		# Use printf '%b' to expand \n sequences stored in cache
+		if [[ -n "$exclude_issue" ]]; then
+			printf '%b' "$_FOOTPRINT_CACHE_DATA" | grep -v "|${exclude_issue}$" | grep -v '^$' || true
+		else
+			printf '%b' "$_FOOTPRINT_CACHE_DATA" | grep -v '^$' || true
+		fi
+		return 0
+	fi
+
+	# Cache miss — rebuild
+	# Query for issues with active worker labels
+	local inflight_issues
+	inflight_issues=$(gh issue list --repo "$repo_slug" \
+		--label "status:in-progress" --state open \
+		--json number,body --limit 50 2>/dev/null) || inflight_issues="[]"
+
+	# Also include status:in-review (worker still running, PR opened)
+	local review_issues
+	review_issues=$(gh issue list --repo "$repo_slug" \
+		--label "status:in-review" --state open \
+		--json number,body --limit 50 2>/dev/null) || review_issues="[]"
+
+	# Also include status:claimed (just dispatched, worker starting)
+	local claimed_issues
+	claimed_issues=$(gh issue list --repo "$repo_slug" \
+		--label "status:claimed" --state open \
+		--json number,body --limit 50 2>/dev/null) || claimed_issues="[]"
+
+	# Merge all three lists into one (jq handles dedup by number)
+	local all_inflight
+	all_inflight=$(printf '%s\n%s\n%s' "$inflight_issues" "$review_issues" "$claimed_issues" |
+		jq -s 'add | unique_by(.number)' 2>/dev/null) || all_inflight="[]"
+
+	local issue_count
+	issue_count=$(printf '%s' "$all_inflight" | jq 'length' 2>/dev/null) || issue_count=0
+	[[ "$issue_count" =~ ^[0-9]+$ ]] || issue_count=0
+
+	local cache_data=""
+	local i=0
+	while [[ "$i" -lt "$issue_count" ]]; do
+		local num body paths
+		num=$(printf '%s' "$all_inflight" | jq -r ".[$i].number // empty" 2>/dev/null)
+		body=$(printf '%s' "$all_inflight" | jq -r ".[$i].body // empty" 2>/dev/null)
+
+		if [[ -n "$num" && -n "$body" ]]; then
+			paths=$(_footprint_extract_paths "$body")
+			if [[ -n "$paths" ]]; then
+				while IFS= read -r p; do
+					[[ -n "$p" ]] || continue
+					cache_data="${cache_data}${p}|${num}\n"
+				done <<<"$paths"
+			fi
+		fi
+		i=$((i + 1))
+	done
+
+	# Store in cache
+	_FOOTPRINT_CACHE_REPO="$repo_slug"
+	_FOOTPRINT_CACHE_DATA="$cache_data"
+	_FOOTPRINT_CACHE_EPOCH="$now_epoch"
+
+	# Return filtered result
+	if [[ -n "$exclude_issue" ]]; then
+		printf '%b' "$cache_data" | grep -v "|${exclude_issue}$" | grep -v '^$' || true
+	else
+		printf '%b' "$cache_data" | grep -v '^$' || true
+	fi
+	return 0
+}
+
+#######################################
+# Check if a candidate issue's file footprint overlaps with any in-flight issue.
+#
+# This is the main entry point called from _dispatch_dedup_check_layers.
+#
+# Args:
+#   $1 = issue_number (candidate being considered for dispatch)
+#   $2 = repo_slug (owner/repo)
+#   $3 = issue_body (body text of the candidate issue)
+# Output: on overlap, prints "FOOTPRINT_OVERLAP (issue=#<blocking> files=<list>)"
+# Exit:
+#   0 = overlap found (do NOT dispatch — defer one cycle)
+#   1 = no overlap (safe to dispatch)
+#######################################
+_footprint_check_overlap() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_body="$3"
+
+	[[ -n "$issue_body" ]] || return 1
+
+	# Extract candidate's file footprint
+	local candidate_files
+	candidate_files=$(_footprint_extract_paths "$issue_body")
+	[[ -n "$candidate_files" ]] || return 1
+
+	# Get in-flight footprints (excluding self)
+	local inflight_data
+	inflight_data=$(_footprint_get_inflight "$repo_slug" "$issue_number")
+	[[ -n "$inflight_data" ]] || return 1
+
+	# Check each candidate file against in-flight footprints
+	local overlapping_files=""
+	local blocking_issue=""
+	while IFS= read -r candidate_file; do
+		[[ -n "$candidate_file" ]] || continue
+
+		# Normalise: strip leading ./ or .agents/ for comparison
+		local norm_candidate
+		norm_candidate=$(printf '%s' "$candidate_file" | sed 's|^\./||' | sed 's|^\.agents/||')
+
+		# Check against each in-flight file
+		while IFS= read -r inflight_entry; do
+			[[ -n "$inflight_entry" ]] || continue
+			local inflight_file="${inflight_entry%|*}"
+			local inflight_issue="${inflight_entry##*|}"
+
+			local norm_inflight
+			norm_inflight=$(printf '%s' "$inflight_file" | sed 's|^\./||' | sed 's|^\.agents/||')
+
+			if [[ "$norm_candidate" == "$norm_inflight" ]]; then
+				overlapping_files="${overlapping_files}${candidate_file}, "
+				blocking_issue="$inflight_issue"
+				break
+			fi
+		done <<<"$inflight_data"
+	done <<<"$candidate_files"
+
+	if [[ -n "$overlapping_files" && -n "$blocking_issue" ]]; then
+		# Trim trailing ", "
+		overlapping_files="${overlapping_files%, }"
+		printf 'FOOTPRINT_OVERLAP (issue=#%s files=%s)\n' "$blocking_issue" "$overlapping_files"
+		return 0
+	fi
+
+	return 1
+}

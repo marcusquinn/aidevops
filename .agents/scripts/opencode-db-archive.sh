@@ -395,9 +395,13 @@ cmd_archive() {
 		local batch_count
 		batch_count=$(echo "$session_ids" | wc -l | tr -d ' ')
 
-		# Build the IN clause for this batch
+		# Build the IN clause for this batch.
+		# macOS BSD paste -s does not accept pipe input — only file args.
+		# Use tr + sed instead, which works portably on both macOS and Linux.
+		# The previous `paste -sd,` silently failed on macOS, preventing
+		# archival and bloating the DB to multi-GB (3232+ sessions).
 		local in_clause=""
-		in_clause=$(printf '%s\n' "$session_ids" | sed "s/.*/'&'/" | paste -sd,)
+		in_clause=$(printf '%s\n' "$session_ids" | sed "s/.*/'&'/" | tr '\n' ',' | sed 's/,$//')
 
 		# Single transaction: copy to archive then delete from active.
 		# ATTACH and DETACH are within the same sqlite3 invocation — the attachment

@@ -245,6 +245,8 @@ Not every task is code. Full routing table, rules, and dispatch examples: `refer
 
 Headless workers failing, stalling, or stuck in dispatch loops: `reference/worker-diagnostics.md`. Covers lifecycle (version guard → canary → dispatch → DB isolation → watchdog → recovery), architecture rationale, and a diagnostic quick reference.
 
+**Pre-dispatch validators** (GH#19118): Auto-generated issues carry a `<!-- aidevops:generator=<name> -->` marker. Before worker spawn, `pre-dispatch-validator-helper.sh validate <issue> <slug>` checks whether the premise still holds. Exit 10 closes the issue instead of dispatching. Architecture, bypass, and extension guide: `reference/pre-dispatch-validators.md`.
+
 ## Self-Improvement
 
 Every agent session should improve the system, not just complete its task. Full guidance: `reference/self-improvement.md`.

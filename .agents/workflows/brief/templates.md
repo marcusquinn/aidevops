@@ -3,11 +3,11 @@
 
 # Brief Composition Templates
 
-Reference templates for GitHub-written content. Use `workflows/brief.md` for the shared formatting rules; this file only defines the outer shells.
+Templates for GitHub-written content. Shared formatting rules: `workflows/brief.md`. This file defines the outer shells only.
 
 ## Issue Body Template
 
-Wrap the appropriate tier content in this structure for `gh issue create`:
+Wrap tier content in this structure for `gh issue create`:
 
 ```markdown
 ## Description
@@ -36,13 +36,13 @@ Wrap the appropriate tier content in this structure for `gh issue create`:
 
 Always include a tier label: `tier:simple`, `tier:standard`, or `tier:thinking`.
 
-**Why "Done When" matters:** Workers without a concrete completion signal fail in two ways: (1) stop after exploration without implementing (#17642, #17643), or (2) stop after PR creation without completing closure steps (merge, closing comments). The checklist drives toward verified completion instead of an open-ended goal.
+**Why "Done When":** Without concrete signals, workers stop after exploration (#17642, #17643) or after PR creation without closure (merge, closing comments). The checklist enforces verified completion.
 
 ## Comment Templates
 
 ### Dispatch comment (pulse → worker)
 
-For pulse-dispatched workers. Include enough context to avoid re-reading the full issue:
+Include enough context so workers skip re-reading the full issue:
 
 ```markdown
 ## Dispatching: {issue_title}
@@ -62,7 +62,7 @@ _Dispatched by pulse at {timestamp}_
 
 ### Kill/timeout comment (watchdog → issue)
 
-For killed workers. Explain what happened and guide the next attempt:
+Explain what happened and guide the next attempt:
 
 ```markdown
 ## Worker killed: {reason}
@@ -84,15 +84,11 @@ _Killed by watchdog at {timestamp}_
 
 ### Escalation comment (cascade dispatch)
 
-See `templates/escalation-report-template.md`. Include:
-1. What was attempted (files read, code tried)
-2. Structured reason code (see the template taxonomy)
-3. Discoveries reusable by the next tier
-4. Brief gaps (what was missing or unclear)
+Follow `templates/escalation-report-template.md` (covers: what was attempted, structured reason codes, reusable discoveries, and brief gaps).
 
 ## PR Description Template
 
-For all worker-created PRs. Serves review bots and human reviewers.
+For worker-created PRs. Serves review bots and human reviewers.
 
 ```markdown
 ## Summary

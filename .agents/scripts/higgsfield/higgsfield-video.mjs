@@ -490,7 +490,7 @@ function logCloudfrontDownloadOutcome(httpCode, size, videoUrl) {
 }
 
 function tryCloudfrontDownload(videoUrl, outputDir, combinedMeta, options) {
-  const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
+  const filename = buildDescriptiveFilename(combinedMeta, 'higgsfield-video.mp4', 0);
   const savePath = safeJoin(outputDir, sanitizePathSegment(filename, 'video.mp4'));
   try {
     const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
@@ -529,7 +529,7 @@ async function downloadVideoViaCdnFallback(page, outputDir, combinedMeta, option
 
   if (!videoSrc) return null;
 
-  const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
+  const filename = buildDescriptiveFilename(combinedMeta, 'higgsfield-video.mp4', 0);
   const savePath = safeJoin(outputDir, sanitizePathSegment(filename, 'video.mp4'));
   try {
     curlDownload(videoSrc, savePath);
@@ -1176,7 +1176,7 @@ function downloadSingleMatchedVideo(job, bestMatch, matchMethod, outputDir, resu
 
   const videoUrl = completedJob.results.raw.url;
   const meta = { model: job.model, promptSnippet: job.promptPrefix };
-  const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
+  const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}.mp4`, job.sceneIndex);
   const savePath = safeJoin(outputDir, sanitizePathSegment(filename, `scene-${job.sceneIndex + 1}.mp4`));
 
   try {

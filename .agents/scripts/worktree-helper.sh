@@ -631,6 +631,51 @@ _interactive_session_auto_claim() {
 	return 0
 }
 
+# Restore gitignored node_modules from the canonical repo into a new worktree.
+# Git worktrees only contain tracked files — dirs in .gitignore are missing.
+# If .opencode/tool/*.ts imports from node_modules the runtime crashes on
+# startup. See pulse-dispatch-worker-launch.sh _dlw_restore_worktree_deps.
+_restore_worktree_node_modules() {
+	local wt_path="$1"
+	local repo_root="$2"
+
+	[[ -n "$repo_root" && -d "$wt_path" ]] || return 0
+
+	local _pkg_file=""
+	while IFS= read -r _pkg_file; do
+		local _pdir="" _rel=""
+		_pdir=$(dirname "$_pkg_file") || continue
+		_rel="${_pdir#"$wt_path"}"
+		local _src="${repo_root}${_rel}/node_modules"
+		local _dst="${wt_path}${_rel}/node_modules"
+		if [[ -d "$_src" && ! -d "$_dst" ]]; then
+			cp -a "$_src" "$_dst" 2>/dev/null || true
+		fi
+	done < <(find "$wt_path" -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" 2>/dev/null)
+	return 0
+}
+
+# Print the success banner and editor hints after a worktree is created.
+_print_worktree_add_success() {
+	local wt_path="$1"
+	local branch="$2"
+
+	echo ""
+	echo -e "${GREEN}Worktree created successfully!${NC}"
+	echo ""
+	echo -e "Path: ${BOLD}$wt_path${NC}"
+	echo -e "Branch: ${BOLD}$branch${NC}"
+	echo ""
+	echo "To start working:"
+	echo "  cd $wt_path" || exit
+	echo ""
+	echo "Or open in a new terminal/editor:"
+	echo "  code $wt_path        # VS Code"
+	echo "  cursor $wt_path      # Cursor"
+	echo "  opencode $wt_path    # OpenCode"
+	return 0
+}
+
 cmd_add() {
 	local branch="${1:-}"
 	local path="${2:-}"
@@ -688,25 +733,9 @@ cmd_add() {
 	register_worktree "$path" "$branch"
 
 	# Restore gitignored dependencies (node_modules) from canonical repo.
-	# Git worktrees only contain tracked files — dirs in .gitignore are
-	# missing. If .opencode/tool/*.ts imports from node_modules, the
-	# runtime crashes on startup. See pulse-dispatch-worker-launch.sh
-	# _dlw_restore_worktree_deps for the full rationale.
 	local _repo_root=""
 	_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root=""
-	if [[ -n "$_repo_root" && -d "$path" ]]; then
-		local _pkg_file=""
-		while IFS= read -r _pkg_file; do
-			local _pdir="" _rel=""
-			_pdir=$(dirname "$_pkg_file") || continue
-			_rel="${_pdir#"$path"}"
-			local _src="${_repo_root}${_rel}/node_modules"
-			local _dst="${path}${_rel}/node_modules"
-			if [[ -d "$_src" && ! -d "$_dst" ]]; then
-				cp -a "$_src" "$_dst" 2>/dev/null || true
-			fi
-		done < <(find "$path" -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" 2>/dev/null)
-	fi
+	_restore_worktree_node_modules "$path" "$_repo_root"
 
 	# t2057: interactive issue auto-claim. When the branch name encodes an
 	# issue number AND this is an interactive session, immediately apply
@@ -717,19 +746,7 @@ cmd_add() {
 	# has been deployed to the running environment.
 	_interactive_session_auto_claim "$branch" "$path" || true
 
-	echo ""
-	echo -e "${GREEN}Worktree created successfully!${NC}"
-	echo ""
-	echo -e "Path: ${BOLD}$path${NC}"
-	echo -e "Branch: ${BOLD}$branch${NC}"
-	echo ""
-	echo "To start working:"
-	echo "  cd $path" || exit
-	echo ""
-	echo "Or open in a new terminal/editor:"
-	echo "  code $path        # VS Code"
-	echo "  cursor $path      # Cursor"
-	echo "  opencode $path    # OpenCode"
+	_print_worktree_add_success "$path" "$branch"
 
 	# Localdev integration (t1224.8): auto-create branch subdomain route
 	localdev_auto_branch "$branch"

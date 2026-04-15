@@ -78,6 +78,45 @@ _read_counter_at_ref() {
 }
 
 # ---------------------------------------------------------------------------
+# Resolve the current task counter by taking the MAX across multiple known-good
+# sources. .task-counter is monotonically increasing so max == most current.
+#
+# This prevents stale-worktree false positives: when a worktree is created
+# before a subsequent claim-task-id.sh run bumps the counter on origin/main,
+# the merge-base holds a stale value. Reading from origin/main tip directly
+# returns the authoritative counter, regardless of merge-base age.
+#
+# Returns the integer counter string (no newline), or empty string on failure.
+# ---------------------------------------------------------------------------
+_resolve_current_counter() {
+	local best=""
+	local val ref
+	# Priority sources, highest-freshness first. We take the MAX across all,
+	# not the first — .task-counter is monotonic so max == most current.
+	for ref in "origin/main" "origin/master" "main" "master" "HEAD"; do
+		if git rev-parse --verify "$ref" >/dev/null 2>&1; then
+			val=$(git show "${ref}:.task-counter" 2>/dev/null | tr -d '[:space:]')
+			if [[ "$val" =~ ^[0-9]+$ ]]; then
+				if [[ -z "$best" || "$val" -gt "$best" ]]; then
+					best="$val"
+				fi
+			fi
+		fi
+	done
+	# Also consider working copy (covers detached-HEAD / no-remote edge cases)
+	if [[ -f .task-counter ]]; then
+		val=$(tr -d '[:space:]' <.task-counter)
+		if [[ "$val" =~ ^[0-9]+$ ]]; then
+			if [[ -z "$best" || "$val" -gt "$best" ]]; then
+				best="$val"
+			fi
+		fi
+	fi
+	[[ -n "$best" ]] && printf '%s' "$best"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Determine the merge base between HEAD and the default branch (main/master).
 # Falls back to the root commit.
 # ---------------------------------------------------------------------------
@@ -200,14 +239,12 @@ _report_violations() {
 # Core check: given a commit message, check if any t\d+ reference is invented.
 # Args:
 #   $1 = full commit message text
-#   $2 = merge-base git ref (for reading .task-counter)
-#   $3 = commit subject (for display in errors), optional
+#   $2 = commit subject (for display in errors), optional
 # Returns 0 (clean), 1 (violation found), 2 (fail-open — skip).
 # ---------------------------------------------------------------------------
 _check_message() {
 	local msg="${1:-}"
-	local merge_base="${2:-}"
-	local subject="${3:-<unknown>}"
+	local subject="${2:-<unknown>}"
 
 	if [[ -z "$msg" ]]; then
 		_debug "Empty commit message — allowing"
@@ -228,13 +265,13 @@ _check_message() {
 	_debug "Found t-IDs: $(printf '%s' "$tids" | tr '\n' ' ')"
 
 	local counter=""
-	[[ -n "$merge_base" ]] && counter=$(_read_counter_at_ref "$merge_base")
+	counter=$(_resolve_current_counter)
 	if [[ -z "$counter" ]]; then
-		_warn ".task-counter not readable at merge base '${merge_base}' — fail-open"
+		_warn ".task-counter not readable from any source — fail-open"
 		return 2
 	fi
 
-	_debug "Merge-base counter value: $counter"
+	_debug "Current counter value: $counter"
 
 	local closing_issues
 	closing_issues=$(_extract_closing_issues "$msg")
@@ -296,12 +333,8 @@ _run_hook() {
 		return 0
 	fi
 
-	local merge_base
-	merge_base=$(_find_merge_base)
-	_debug "Merge base: $merge_base"
-
 	local rc
-	_check_message "$msg" "$merge_base" "$subject"
+	_check_message "$msg" "$subject"
 	rc=$?
 
 	if [[ "$rc" -eq 2 ]]; then
@@ -357,7 +390,7 @@ _run_check_pr() {
 		fi
 
 		local rc
-		_check_message "$commit_msg" "$merge_base" "$subject"
+		_check_message "$commit_msg" "$subject"
 		rc=$?
 		if [[ "$rc" -eq 1 ]]; then
 			printf '[task-id-guard][VIOLATION] commit %s\n' "$commit_hash" >&2

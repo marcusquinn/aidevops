@@ -329,7 +329,8 @@ Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched aga
 - Verify: \`wc -l ${lf_path}\` should be below ${LARGE_FILE_LINE_THRESHOLD}
 
 _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
-	_create_combined=$(gh issue create --repo "$repo_slug" \
+	# t2115: Use gh_create_issue wrapper for origin label + signature auto-append.
+	_create_combined=$(gh_create_issue --repo "$repo_slug" \
 		--title "simplification-debt: ${lf_path} exceeds ${LARGE_FILE_LINE_THRESHOLD} lines" \
 		--label "simplification-debt,auto-dispatch,origin:worker" \
 		--body "$_create_body" 2>&1) || true

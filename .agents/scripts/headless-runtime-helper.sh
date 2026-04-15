@@ -392,10 +392,10 @@ _invoke_opencode() {
 	# worker subshell.
 	local _watchdog_script="${SCRIPT_DIR}/worker-activity-watchdog.sh"
 	local watchdog_pid=""
-	local _stall_timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-300}"
-	[[ "$_stall_timeout" =~ ^[0-9]+$ ]] || _stall_timeout=300
-	local _phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-30}"
-	[[ "$_phase1_timeout" =~ ^[0-9]+$ ]] || _phase1_timeout=30
+	local _stall_timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-600}"
+	[[ "$_stall_timeout" =~ ^[0-9]+$ ]] || _stall_timeout=600
+	local _phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-60}"
+	[[ "$_phase1_timeout" =~ ^[0-9]+$ ]] || _phase1_timeout=60
 
 	if [[ -x "$_watchdog_script" ]]; then
 		nohup "$_watchdog_script" \
@@ -480,6 +480,93 @@ _invoke_claude() {
 # Result handling and run execution
 # =============================================================================
 
+#######################################
+# t2119: Preserve a worker output file on no_activity failure so operators
+# can diagnose why the runtime exited without ever producing JSON events.
+#
+# Before t2119, _handle_run_result unconditionally `rm -f "$output_file"`
+# on the no_activity path, erasing the only forensic evidence (opencode
+# stderr via tee, plugin startup log lines, sandbox exec trace). This
+# left the residual 30s failures observed in the t2116 session with zero
+# diagnostic surface.
+#
+# Strategy: move (not copy — keeps disk usage bounded) the output file
+# to ~/.aidevops/logs/worker-no-activity/<session>-<ts>.log. Size-cap
+# each preserved file to 256KB (worker output files rarely exceed this;
+# truncation is fine for forensic purposes). Retention-cap the directory
+# to the 50 most recent files so the log directory doesn't grow
+# unbounded on a looping failure.
+#
+# Best-effort throughout — a preservation failure must never propagate
+# into the caller's error-handling path. The goal is forensics, not
+# hard-guaranteed persistence.
+#
+# Args:
+#   $1 - output_file path
+#   $2 - session_key (e.g. issue-19114 or pulse)
+#   $3 - model (for filename disambiguation; slashes stripped)
+#######################################
+_preserve_no_activity_output() {
+	local output_file="$1"
+	local session_key="${2:-unknown}"
+	local model="${3:-unknown}"
+
+	if [[ -z "$output_file" || ! -f "$output_file" ]]; then
+		return 0
+	fi
+
+	local diag_dir="${HOME}/.aidevops/logs/worker-no-activity"
+	if ! mkdir -p "$diag_dir" 2>/dev/null; then
+		# Fall back to the original delete behaviour if the diagnostic
+		# directory can't be created — we must not keep tmp files around.
+		rm -f "$output_file" 2>/dev/null || true
+		return 0
+	fi
+
+	# Sanitize session + model for use in a filename.
+	local safe_session safe_model
+	safe_session=$(printf '%s' "$session_key" | tr '/ ' '__' | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
+	safe_model=$(printf '%s' "$model" | tr '/ ' '__' | tr -cd 'A-Za-z0-9._-' | cut -c1-32)
+	[[ -n "$safe_session" ]] || safe_session="unknown"
+	[[ -n "$safe_model" ]] || safe_model="unknown"
+
+	local ts
+	ts=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%s)
+	local dest="${diag_dir}/${ts}-${safe_session}-${safe_model}.log"
+
+	# Size-cap: take the first 256KB of the output. For the no_activity
+	# failure mode the interesting content (plugin init errors, opencode
+	# startup logs, migration output, auth refresh messages) always
+	# lands in the first few KB; anything past 256KB is noise.
+	local max_bytes=262144
+	if head -c "$max_bytes" "$output_file" >"$dest" 2>/dev/null; then
+		local orig_size
+		orig_size=$(wc -c <"$output_file" 2>/dev/null | tr -d ' ') || orig_size=0
+		if [[ "$orig_size" -gt "$max_bytes" ]]; then
+			printf '\n\n[...t2119 TRUNCATED at %d bytes, original %d bytes...]\n' \
+				"$max_bytes" "$orig_size" >>"$dest" 2>/dev/null || true
+		fi
+	fi
+
+	rm -f "$output_file" 2>/dev/null || true
+
+	# Retention cap: keep the 50 most recent preserved files.
+	# ls -t returns newest first; tail -n +51 selects everything beyond the cap.
+	# Using find -print0 | sort would be more robust but ls is enough for
+	# our flat directory of predictable filenames.
+	local keep=50
+	local prune_list
+	prune_list=$(cd "$diag_dir" 2>/dev/null && ls -1t -- *.log 2>/dev/null | tail -n +$((keep + 1))) || prune_list=""
+	if [[ -n "$prune_list" ]]; then
+		while IFS= read -r _victim; do
+			[[ -n "$_victim" ]] || continue
+			rm -f "${diag_dir}/${_victim}" 2>/dev/null || true
+		done <<<"$prune_list"
+	fi
+
+	return 0
+}
+
 # _handle_run_result: process output_file after opencode exits.
 # Args: exit_code output_file role provider session_key selected_model
 # Sets caller variable _run_failure_reason on failure.
@@ -507,8 +594,18 @@ _handle_run_result() {
 			# here falsely flags healthy providers as rate-limited, causing the
 			# pre-dispatch check to skip them and starve the worker pool.
 			# The activity watchdog (exit 124) handles genuine provider failures.
-			rm -f "$output_file"
-			print_warning "$selected_model returned exit 0 without any model activity (no backoff recorded — may be local issue)"
+			#
+			# t2119: preserve the output file for post-mortem forensics instead
+			# of deleting it. Workers that die in setup with exit 0 + no JSON
+			# events leave no other trace of WHY they died — not in observability
+			# DB (never reached the model), not in pulse.log, not in the
+			# session DB (never created one). The output file captured by tee is
+			# the only place plugin/runtime stderr lands. Moving it to a
+			# retention-capped diagnostics dir lets operators actually diagnose
+			# the residual 30s no_activity failures that the t2116-session
+			# plist-reload fix didn't fully resolve.
+			_preserve_no_activity_output "$output_file" "$session_key" "$selected_model"
+			print_warning "$selected_model returned exit 0 without any model activity (no backoff recorded — forensic copy preserved via t2119)"
 			return 75
 		fi
 		# Store session ID for potential continuation (before deleting output)

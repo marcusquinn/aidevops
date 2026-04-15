@@ -38,6 +38,7 @@
 #   - pulse-dispatch-dedup-layers.sh    — 7-layer dedup chain + stale classifier
 #   - pulse-dispatch-large-file-gate.sh — large-file simplification gate
 #   - pulse-dispatch-worker-launch.sh   — worker launch helpers + orchestrator
+#   - dispatch-dedup-footprint.sh       — file-footprint overlap throttle (t2117)
 #
 # Pure move from pulse-wrapper.sh. Byte-identical function bodies.
 # Phase 12 post-gate simplification: _is_task_committed_to_main split into
@@ -58,6 +59,9 @@ source "${BASH_SOURCE[0]%/*}/pulse-dispatch-dedup-layers.sh"
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-large-file-gate.sh"
 # shellcheck source=pulse-dispatch-worker-launch.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-worker-launch.sh"
+# t2117/GH#19109: file-footprint overlap throttle
+# shellcheck source=dispatch-dedup-footprint.sh
+source "${BASH_SOURCE[0]%/*}/dispatch-dedup-footprint.sh"
 
 #######################################
 # Resolve the worker tier from issue labels. When multiple tier:* labels
@@ -826,6 +830,17 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 
+	# t2117/GH#19109: File-footprint overlap throttle. If another in-flight
+	# worker is already modifying the same files, defer this dispatch to
+	# prevent CONFLICTING cascades. The check is cheap (cached per repo per
+	# cycle) and decays naturally when the blocking issue's status labels clear.
+	local _footprint_signal=""
+	_footprint_signal=$(_footprint_check_overlap "$issue_number" "$repo_slug" "$_dispatch_issue_body" 2>/dev/null) || true
+	if [[ -n "$_footprint_signal" ]]; then
+		echo "[dispatch_with_dedup] (t2117) Dispatch deferred for #${issue_number} in ${repo_slug}: ${_footprint_signal}" >>"$LOGFILE"
+		return 1
+	fi
+
 	# All 7 dedup layers — cannot be skipped
 	if check_dispatch_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" "$self_login"; then
 		echo "[dispatch_with_dedup] Dedup guard blocked #${issue_number} in ${repo_slug}" >>"$LOGFILE"
@@ -913,6 +928,21 @@ dispatch_with_dedup() {
 	# and issue-sync-helper.sh. Non-fatal — dispatch proceeds even if enrich fails.
 	_ensure_issue_body_has_brief "$issue_number" "$repo_slug" "$repo_path" "$issue_title"
 
+	# GH#19118: Pre-dispatch validator — runs after dedup, before worker spawn.
+	# Checks generator-tagged auto-generated issues to verify the premise is
+	# still true. Exit 0 = dispatch proceeds; exit 10 = premise falsified
+	# (issue already closed by validator); exit 20 = validator error (dispatch
+	# proceeds with warning). Never blocks on validator bugs.
+	_run_predispatch_validator "$issue_number" "$repo_slug"
+	local _validator_rc=$?
+	if [[ "$_validator_rc" -eq 10 ]]; then
+		echo "[dispatch_with_dedup] Pre-dispatch validator falsified premise for #${issue_number} in ${repo_slug} — issue closed, not dispatching" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "$_validator_rc" -eq 20 ]]; then
+		echo "[dispatch_with_dedup] Pre-dispatch validator error for #${issue_number} in ${repo_slug} (rc=${_validator_rc}) — proceeding with dispatch" >>"$LOGFILE"
+	fi
+
 	# All checks passed — launch the worker.
 	_dispatch_launch_worker \
 		"$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
@@ -984,6 +1014,38 @@ _ensure_issue_body_has_brief() {
 		}
 	fi
 	return 0
+}
+
+#######################################
+# GH#19118: Run the pre-dispatch validator for auto-generated issues.
+#
+# Delegates to pre-dispatch-validator-helper.sh validate <issue> <slug>.
+# Non-fatal wrapper: if the helper is missing or fails unexpectedly, logs
+# a warning and returns 0 (validator error semantics = dispatch proceeds).
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#
+# Exit codes:
+#   0  — dispatch proceeds (validator passed, unregistered generator, or helper missing)
+#   10 — premise falsified; caller must NOT dispatch (issue already closed by validator)
+#   20 — validator error; caller should log warning and continue dispatch
+#######################################
+_run_predispatch_validator() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local validator_helper
+	validator_helper="$(dirname "${BASH_SOURCE[0]}")/pre-dispatch-validator-helper.sh"
+	if [[ ! -x "$validator_helper" ]]; then
+		echo "[dispatch_with_dedup] GH#19118: pre-dispatch-validator-helper.sh not found — skipping (dispatch proceeds)" >>"$LOGFILE"
+		return 0
+	fi
+
+	local validator_rc=0
+	"$validator_helper" validate "$issue_number" "$repo_slug" >>"$LOGFILE" 2>&1 || validator_rc=$?
+	return "$validator_rc"
 }
 
 #######################################

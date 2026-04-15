@@ -205,7 +205,24 @@ function handleToolAfter(ctx, log, scriptsDir, input, output) {
 export function createQualityHooks(deps) {
   const { scriptsDir, logsDir } = deps;
   const qualityLogPath = join(logsDir, "quality-hooks.log");
-  const ctx = { scriptsDir, logsDir, qualityLogPath };
+  // t2120: qualityDetailLog (in quality-logging.mjs) reads ctx.detailLogPath
+  // and ctx.detailMaxBytes. Previously these were never populated here, so
+  // every call to logQualityGateResult → qualityDetailLog threw
+  // "path must be a string or a file descriptor" from appendFileSync(undefined)
+  // at quality-logging.mjs:86. The warning was swallowed by the catch block
+  // but `console.error` polluted every worker's stderr on every file write.
+  // It also meant real quality-gate diagnostics (shellcheck reports, markdown
+  // lint, secret scan details) were silently lost for every edit — the
+  // framework's own write-time quality discipline was invisible.
+  const detailLogPath = join(logsDir, "quality-hooks-detail.log");
+  const detailMaxBytes = 5 * 1024 * 1024; // 5MB before rotation
+  const ctx = {
+    scriptsDir,
+    logsDir,
+    qualityLogPath,
+    detailLogPath,
+    detailMaxBytes,
+  };
 
   function boundQualityLog(level, message) {
     qualityLog(logsDir, qualityLogPath, level, message);

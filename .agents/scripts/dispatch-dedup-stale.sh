@@ -366,10 +366,12 @@ _is_stale_assignment() {
 	fi
 
 	# Dispatch claim is old. Check if there's been any progress since.
-	local activity_age=0
+	local activity_age_msg="unknown"
 	if [[ -n "$last_activity_ts" ]]; then
+		local activity_epoch activity_age
 		activity_epoch=$(_ts_to_epoch "$last_activity_ts")
 		activity_age=$((now_epoch - activity_epoch))
+		activity_age_msg="${activity_age}s"
 		if [[ "$activity_age" -lt "$STALE_ASSIGNMENT_THRESHOLD_SECONDS" ]]; then
 			# Old dispatch but recent activity — worker may still be alive
 			return 1
@@ -378,6 +380,6 @@ _is_stale_assignment() {
 
 	# Both dispatch claim and last activity are older than threshold — stale
 	_recover_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees" \
-		"dispatch claim ${dispatch_age}s old, last activity ${activity_age}s old"
+		"dispatch claim ${dispatch_age}s old, last activity ${activity_age_msg} old"
 	return 0
 }

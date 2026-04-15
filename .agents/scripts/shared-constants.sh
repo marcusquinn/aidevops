@@ -44,8 +44,8 @@ _SHARED_CONSTANTS_LOADED=1
 if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]] &&
 	[[ -z "${AIDEVOPS_BASH_REEXECED:-}" ]] &&
 	[[ -n "${BASH_SOURCE[1]:-}" ]]; then
-	for _aidevops_bash_candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash; do
-		if [[ -x "$_aidevops_bash_candidate" ]]; then
+	for _aidevops_bash_candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash "$(command -v bash 2>/dev/null || true)"; do
+		if [[ -n "$_aidevops_bash_candidate" && -f "$_aidevops_bash_candidate" && -x "$_aidevops_bash_candidate" && "$_aidevops_bash_candidate" != "/bin/bash" ]]; then
 			export AIDEVOPS_BASH_REEXECED=1
 			exec "$_aidevops_bash_candidate" "${BASH_SOURCE[1]}" "$@"
 		fi
@@ -908,11 +908,86 @@ _gh_wrapper_auto_assignee() {
 	return 0
 }
 
+# t2115: Auto-append signature footer to --body/--body-file when missing.
+# Populates global _GH_WRAPPER_SIG_MODIFIED_ARGS with the (possibly modified) args.
+# Callers should invoke _gh_wrapper_auto_sig "$@" then
+#   set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+# Non-fatal: if signature generation fails, original args are preserved.
+_GH_WRAPPER_SIG_MODIFIED_ARGS=()
+_gh_wrapper_auto_sig() {
+	_GH_WRAPPER_SIG_MODIFIED_ARGS=("$@")
+	local sig_helper
+	sig_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-signature-helper.sh"
+	[[ -x "$sig_helper" ]] || return 0
+
+	local i=0 body_val="" body_idx=-1 is_eq_form=0
+	local body_file_val="" body_file_idx=-1 bf_is_eq=0
+	while [[ $i -lt ${#_GH_WRAPPER_SIG_MODIFIED_ARGS[@]} ]]; do
+		case "${_GH_WRAPPER_SIG_MODIFIED_ARGS[i]}" in
+		--body)
+			body_idx=$i
+			body_val="${_GH_WRAPPER_SIG_MODIFIED_ARGS[i + 1]:-}"
+			is_eq_form=0
+			;;
+		--body=*)
+			body_idx=$i
+			body_val="${_GH_WRAPPER_SIG_MODIFIED_ARGS[i]#--body=}"
+			is_eq_form=1
+			;;
+		--body-file)
+			body_file_idx=$i
+			body_file_val="${_GH_WRAPPER_SIG_MODIFIED_ARGS[i + 1]:-}"
+			bf_is_eq=0
+			;;
+		--body-file=*)
+			body_file_idx=$i
+			body_file_val="${_GH_WRAPPER_SIG_MODIFIED_ARGS[i]#--body-file=}"
+			bf_is_eq=1
+			;;
+		esac
+		i=$((i + 1))
+	done
+
+	# Handle --body case
+	if [[ $body_idx -ge 0 && -n "$body_val" ]]; then
+		# Already signed — skip
+		[[ "$body_val" == *"<!-- aidevops:sig -->"* ]] && return 0
+		local sig_footer
+		sig_footer=$("$sig_helper" footer --body "$body_val" 2>/dev/null || echo "")
+		[[ -z "$sig_footer" ]] && return 0
+		local new_body="${body_val}${sig_footer}"
+		if [[ "$is_eq_form" -eq 1 ]]; then
+			_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx]="--body=${new_body}"
+		else
+			_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx + 1]="$new_body"
+		fi
+		return 0
+	fi
+
+	# Handle --body-file case
+	if [[ $body_file_idx -ge 0 && -n "$body_file_val" && -f "$body_file_val" ]]; then
+		local file_content
+		file_content=$(<"$body_file_val") || return 0
+		[[ "$file_content" == *"<!-- aidevops:sig -->"* ]] && return 0
+		local sig_footer
+		sig_footer=$("$sig_helper" footer --body "$file_content" 2>/dev/null || echo "")
+		[[ -z "$sig_footer" ]] && return 0
+		printf '%s' "$sig_footer" >>"$body_file_val"
+		return 0
+	fi
+
+	return 0
+}
+
 gh_create_issue() {
 	local origin_label
 	origin_label=$(session_origin_label)
 	# Ensure labels exist on the target repo (once per repo per process)
 	_ensure_origin_labels_for_args "$@"
+
+	# t2115: auto-append signature footer when body lacks one
+	_gh_wrapper_auto_sig "$@"
+	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 
 	# t2028: auto-assign to the current user when the session is interactive
 	# and the caller did not pass an explicit --assignee. Reaches parity with
@@ -1023,6 +1098,11 @@ gh_create_pr() {
 	local origin_label
 	origin_label=$(session_origin_label)
 	_ensure_origin_labels_for_args "$@"
+
+	# t2115: auto-append signature footer when body lacks one
+	_gh_wrapper_auto_sig "$@"
+	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+
 	gh pr create "$@" --label "$origin_label"
 }
 

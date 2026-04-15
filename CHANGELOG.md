@@ -10,6 +10,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.39] - 2026-04-15
+
+### Added
+
+- add backfill-sub-issues subcommand (t2114) (#19167)
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- relax kill thresholds to let workers complete (#19168)
+
+## [3.8.38] - 2026-04-15
+
+### Added
+
+- pre-dispatch validator for auto-generated issues (GH#19118) (#19120)
+- dispatch throttle on overlapping file footprints (t2117) (#19117)
+
+### Changed
+
+- Maintenance: update simplification state registry
+- feat(worker-reliability): plist drift regen + no_work escalation guard + no_activity output preservation (#19159)
+- tighten shell-style-guide.md — remove redundant intro, compress prose (145 → 141 lines) (#19157)
+- tighten shell-style-guide.md — move Why section to top (149 → 145 lines) (#19155)
+- Maintenance: update simplification state registry
+- carry forward closed-CONFLICTING PR diff to linked issue (#19144)
+- simplification: tighten pre-dispatch-validators.md (136 → 134 lines) (#19153)
+- Maintenance: update simplification state registry
+- clarify Done When is a single section, not per-file reference (#19150)
+- fix review followup — stream downloads, flexible credential regex, single JSON parse, remove redundant Date.now in filenames, cache qlty sarif output (#19149)
+- GH#19119: simplification: tighten shell-style-guide.md (153 → 149 lines) (#19141)
+- fix review followup — consolidate PR body keyword loops, eliminate separate gh pr view calls, fix stale activity_age reporting (#19148)
+- Maintenance: update simplification state registry
+- simplify _resolve_scripts_dir comment — one check covers all layouts (#19145)
+- Refactor: extract canary failure regex into named local variable (GH#19122) (#19143)
+- Maintenance: update simplification state registry
+- simplification: tighten shell-style-guide.md (155 → 153 lines) (#19116)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- fix(pulse-merge): update-branch + NMR skip before CONFLICTING-close (#19107)
+- fix(task-id-guard): read counter from origin/main tip, not merge-base (#19078)
+- tighten shell-style-guide.md — reorder by importance, compress prose (#19101)
+- Maintenance: ratchet-down NESTING_DEPTH_THRESHOLD 280 → 279 (GH#19031) (#19104)
+- Refactor: tighten brief composition templates — compress prose, collapse escalation list (#19103)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- DB isolation + output-aware check + archival paste fix (#19166)
+- buffer stream chunks by newline in mcp prefix strip (#19164)
+- populate detailLogPath/detailMaxBytes in quality-hooks ctx (#19162)
+- broaden token-spend sed pattern to handle has-used prefix and any time format (GH#19137) (#19151)
+- harden bash re-exec guard and advisory dismiss (GH#19125) (#19146)
+- pull aidevops worktree fresh before ratchet-check (t2102) (#19108)
+- trigger qlty-regression on pull_request.labeled with label-name guards (#19077)
+
+## [3.8.37] - 2026-04-15
+
+### Changed
+
+- enforce signature footer in gh_create_issue and gh_create_pr wrappers (#19102)
+- refactor: reduce cmd_add() complexity in worktree-helper.sh (#19095)
+- tighten brief.md — fold headless section, compress tier default, drop redundant QR bullet (#19097)
+- Maintenance: update simplification state registry
+- migrate Tier 3 pulse/worker helpers to Pattern A (Phase 4) (#19090)
+
 ## [3.8.35] - 2026-04-15
 
 ### Changed

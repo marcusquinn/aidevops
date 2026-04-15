@@ -20,7 +20,6 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Single source of truth for all GitHub-written content — briefs, issue bodies, PR descriptions, comments, escalation reports
-- **Key principle**: Every piece of written output is mentorship for the next reader (human or model). Transfer the knowledge they need to succeed.
 - **Evidence**: 47-PR research corpus — 100% Haiku success with exact oldString/newString, 0% with descriptive prose.
 - **Template**: `templates/brief-template.md`
 - **Escalation template**: `templates/escalation-report-template.md`
@@ -45,7 +44,7 @@ Assess every work item against these empirical criteria (from 47-PR research):
 | **Judgment needed** | None — mechanical execution | Error recovery, approach selection | Design decisions, trade-offs |
 | **Examples** | Review feedback, config tweaks, quote fixes, docs additions | Bug fixes, refactors, feature impl | Architecture, security audits |
 
-**Default to `tier:standard`.** Only downgrade to `tier:simple` when the brief provides exact, copy-pasteable `oldString`/`newString` for every edit, the target file is under 500 lines, and no judgment or codebase exploration is required. See `reference/task-taxonomy.md` "tier:simple Disqualifiers" — if any disqualifier applies, use `tier:standard` or higher.
+**Default to `tier:standard`.** Downgrade to `tier:simple` only with exact `oldString`/`newString` for every edit, file <500 lines, no judgment required. Check `reference/task-taxonomy.md` "tier:simple Disqualifiers".
 
 ## The Mentorship Principle
 
@@ -63,13 +62,10 @@ Every piece of GitHub-written content mentors the next reader. Apply these check
 
 A dispatch comment that says "implement issue #42" teaches nothing. One that says "edit `src/auth.ts:45` — replace `([^0-9]|$)` with `\b` — verify with `shellcheck src/auth.ts`" enables tier:simple dispatch.
 
-## Headless Continuation Resilience
-
-Briefs consumed by headless workers must anticipate empty results, wrong paths, and ambiguous states. Every brief section should answer: "what does the worker do when this step produces nothing?" Mandatory requirements — completion signals, recovery paths, fallback patterns — see `brief/tier-standard.md`.
-
 ## How to Use This Agent
 
 - **Routing**: See `brief/routing.md` for when to use this agent (work item creation, comments, PR descriptions)
+- **Headless resilience**: Anticipate empty results, wrong paths, ambiguous states in headless briefs. Every step should answer "what if this returns nothing?" Details: `brief/tier-standard.md`
 - **Tier-specific formats**:
   - `tier:simple` → `brief/tier-simple.md` (prescriptive, exact code blocks)
   - `tier:standard` → `brief/tier-standard.md` (skeletons, judgment required)

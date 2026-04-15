@@ -4,7 +4,7 @@
 #
 # test-task-id-collision-guard.sh — Test harness for task-id-collision-guard.sh
 #
-# Covers all 7 acceptance criteria cases:
+# Covers all 8 acceptance criteria cases:
 #   1. Reject: t-ID > counter AND not in linked issue title
 #   2. Allow: t-ID ≤ counter (claimed)
 #   3. Allow: cross-reference confirmed via linked issue title
@@ -12,6 +12,7 @@
 #   5. Allow: fail-open on gh API failure / offline
 #   6. Allow (bypass): --no-verify / TASK_ID_GUARD_DISABLE=1
 #   7. CI mode: check-pr scans range and finds violations
+#   8. Allow: stale-worktree — t-IDs claimed after worktree creation (GH#19054)
 
 set -u
 
@@ -289,6 +290,86 @@ test_check_pr_mode() {
 }
 
 # ---------------------------------------------------------------------------
+# Case 8: Allow — stale-worktree scenario (GH#19054)
+#
+# Simulates the observed failure:
+#   1. Worktree created at main tip X (counter=10)
+#   2. Two more claims pushed to origin/main → counter=12
+#   3. Commit in the worktree references t11 and t12
+#
+# With the OLD guard: merge-base=X → counter=10 → t11,t12 > 10 → BLOCK (wrong)
+# With the NEW guard: _resolve_current_counter reads origin/main → 12 → ALLOW (correct)
+# ---------------------------------------------------------------------------
+test_stale_worktree_scenario() {
+	local name="case-8: allows t-IDs claimed after worktree creation (stale-worktree)"
+
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	# Create the "origin" repo with counter=10 on main
+	local base_repo="${tmpdir}/base"
+	mkdir -p "$base_repo"
+	git -C "$base_repo" init -q
+	git -C "$base_repo" config user.email "test@test.local"
+	git -C "$base_repo" config user.name "Test"
+	git -C "$base_repo" config commit.gpgsign false
+	git -C "$base_repo" config tag.gpgsign false
+	printf '10' >"${base_repo}/.task-counter"
+	git -C "$base_repo" add .task-counter
+	git -C "$base_repo" commit -q -m "init: counter=10"
+
+	# Clone to simulate a worktree created at counter=10
+	local work_repo="${tmpdir}/work"
+	git clone -q "$base_repo" "$work_repo" 2>/dev/null
+	git -C "$work_repo" config user.email "test@test.local"
+	git -C "$work_repo" config user.name "Test"
+	git -C "$work_repo" config commit.gpgsign false
+	git -C "$work_repo" config tag.gpgsign false
+
+	# Add a WIP commit to work_repo so HEAD diverges from origin/main
+	printf 'impl' >"${work_repo}/impl.txt"
+	git -C "$work_repo" add impl.txt
+	git -C "$work_repo" commit -q -m "wip: implementation placeholder"
+
+	# Simulate two more claim-task-id.sh runs on origin/main (counter → 11 → 12)
+	printf '11' >"${base_repo}/.task-counter"
+	git -C "$base_repo" add .task-counter
+	git -C "$base_repo" commit -q -m "chore: claim t11 — counter=11"
+	printf '12' >"${base_repo}/.task-counter"
+	git -C "$base_repo" add .task-counter
+	git -C "$base_repo" commit -q -m "chore: claim t12 — counter=12"
+
+	# Fetch so work_repo's origin/main reflects counter=12
+	git -C "$work_repo" fetch -q origin 2>/dev/null
+
+	# Write a commit message referencing t11 and t12 (both legitimately claimed)
+	local msg="feat(t2109): implement stale-worktree fix t11 t12"
+	local msg_file="${tmpdir}/COMMIT_EDITMSG"
+	printf '%s' "$msg" >"$msg_file"
+
+	# Stub gh to fail — guard must rely on counter comparison alone
+	local fake_bin="${tmpdir}/bin"
+	mkdir -p "$fake_bin"
+	printf '#!/usr/bin/env bash\nexit 1\n' >"${fake_bin}/gh"
+	chmod +x "${fake_bin}/gh"
+
+	local rc
+	PATH="${fake_bin}:$PATH" \
+		GIT_DIR="${work_repo}/.git" \
+		bash "$GUARD" "$msg_file" 2>/dev/null
+	rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 0 (t11,t12 ≤ origin/main counter 12), got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 main() {
@@ -301,6 +382,7 @@ main() {
 	test_bypass_env_var
 	test_skips_merge_commits
 	test_check_pr_mode
+	test_stale_worktree_scenario
 
 	printf '\n'
 	printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"

@@ -882,11 +882,24 @@ escalate_issue_tier() {
 	# context before escalating. If the body lacks file paths, the root cause
 	# is a vague issue — not model capability. Escalating wastes a more
 	# expensive model on the same exploration problem.
+	#
+	# t2119 guard: skip the body-quality gate entirely when crash_type is
+	# "no_work". In that case the worker died during infrastructure setup
+	# (FD exhaustion, plugin init crash, auth refresh race — see t2116
+	# session memory) BEFORE ever reading the brief. Blaming the brief in
+	# that case is a false positive that wrongly froze good issues like
+	# #19037, #19038, #19099, #19110 while the real cause was #19079 FD
+	# exhaustion. The body-quality gate only makes sense when the model
+	# actually engaged with the brief — i.e. `overwhelmed` or `partial`
+	# crash types, or unclassified failures where we at least have
+	# evidence the worker started a real session.
 	local issue_body
 	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json body --jq '.body // ""' 2>/dev/null) || issue_body=""
-	_escalate_body_quality_gate "$issue_number" "$repo_slug" \
-		"$failure_count" "$threshold" "$issue_body" || return 0
+	if [[ "$crash_type" != "no_work" ]]; then
+		_escalate_body_quality_gate "$issue_number" "$repo_slug" \
+			"$failure_count" "$threshold" "$issue_body" || return 0
+	fi
 
 	# Create next tier label (creates label if needed)
 	local label_desc=""
