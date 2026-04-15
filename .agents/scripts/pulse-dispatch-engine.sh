@@ -1173,6 +1173,13 @@ _preflight_ownership_reconcile() {
 	# status:available if not (needs re-evaluation by a worker).
 	run_stage_with_timeout "reconcile_stale_done_issues" "$PRE_RUN_STAGE_TIMEOUT" reconcile_stale_done_issues || true
 
+	# Backfill labelless aidevops-shaped issues (t2112). Heals issues that
+	# were created via bare `gh issue create` outside the `gh_create_issue`
+	# wrapper — applies origin/tier defaults + body-tag labels + sub-issue
+	# parent links + posts an idempotent mentorship comment. Invoked once
+	# per cycle, capped at 10 issues per repo.
+	run_stage_with_timeout "reconcile_labelless_aidevops_issues" "$PRE_RUN_STAGE_TIMEOUT" reconcile_labelless_aidevops_issues || true
+
 	# Auto-approve maintainer issues: remove needs-maintainer-review when
 	# the maintainer created or commented on the issue (GH#16842).
 	run_stage_with_timeout "auto_approve_maintainer_issues" "$PRE_RUN_STAGE_TIMEOUT" auto_approve_maintainer_issues || true

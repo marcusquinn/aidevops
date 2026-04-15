@@ -20,6 +20,7 @@
 #   - normalize_active_issue_assignments (coordinator — calls the three helpers above)
 #   - close_issues_with_merged_prs
 #   - reconcile_stale_done_issues
+#   - reconcile_labelless_aidevops_issues (t2112 — backfill labelless aidevops-shaped issues)
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_ISSUE_RECONCILE_LOADED:-}" ]] && return 0
@@ -844,6 +845,184 @@ reconcile_stale_done_issues() {
 
 	if [[ "$((total_closed + total_reset))" -gt 0 ]]; then
 		echo "[pulse-wrapper] Reconcile stale done issues: closed=${total_closed}, reset=${total_reset}" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
+# t2112: backfill labelless aidevops-shaped issues.
+#
+# Scans each pulse:true repo for open issues whose titles match the aidevops
+# shape (`^tNNN(\.NNN)*: ` or `^GH#NNN: `) but that have ZERO labels in any
+# aidevops namespace (origin:*, tier:*, status:*). Such issues were created
+# via a bare `gh issue create` call that bypassed the `gh_create_issue`
+# wrapper — they are invisible to the enrichment pipeline (which keys off
+# TODO.md entries) and unreachable by the dedup / dispatch guards.
+#
+# Backfill steps per candidate:
+#   1. Add `origin:worker` + `tier:standard` as conservative defaults. The
+#      origin label is the conservative choice: a labelless issue almost
+#      always signals automation, and if the creator was actually interactive
+#      they would have used the wrapper.
+#   2. Extract hashtag labels from the body (#tag on its own or end-of-line,
+#      3+ chars, not a pure number which would be an issue ref) and apply
+#      them via `ensure_labels_exist` + `gh issue edit --add-label`.
+#   3. Call `issue-sync-helper.sh backfill-sub-issues --repo SLUG --issue N`
+#      (t2114) to wire parent-child links from body parsing alone.
+#   4. Post a single idempotent mentorship comment guarded by the HTML
+#      sentinel marker `<!-- aidevops:labelless-backfill -->`. The comment
+#      tells the operator that the issue bypassed `gh_create_issue` and
+#      points them at the wrapper rule in `prompts/build.txt`.
+#
+# Hard cap: 10 issues per repo per cycle to limit API calls. Idempotent —
+# re-running does not re-label already-blessed issues or duplicate comments.
+#######################################
+reconcile_labelless_aidevops_issues() {
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	local issue_sync_helper="${HOME}/.aidevops/agents/scripts/issue-sync-helper.sh"
+	[[ -x "$issue_sync_helper" ]] || issue_sync_helper=""
+
+	# Sentinel marker — used to detect already-commented issues so the
+	# mentorship nudge is posted at most once per issue.
+	local sentinel='<!-- aidevops:labelless-backfill -->'
+
+	# Mentorship comment template. Explains the bypass, points at the rule,
+	# and lists the default labels that were applied.
+	local comment_template
+	comment_template=$(
+		cat <<EOF
+${sentinel}
+This issue was created via a bare \`gh issue create\` call that bypassed the \`gh_create_issue\` wrapper in \`shared-constants.sh\`. The framework's reconcile pass (\`reconcile_labelless_aidevops_issues\` in \`pulse-issue-reconcile.sh\`, t2112) has backfilled \`origin:worker\` + \`tier:standard\` as conservative defaults and extracted hashtag labels from the body.
+
+**Why this matters:** issues missing origin/tier labels are invisible to the dispatch-dedup guard and the label-reconciler. Without this backfill, the pulse would have left this issue unblessed forever.
+
+**Next time:** use \`gh_create_issue\` (defined in \`shared-constants.sh\`, sourced via the framework PATH) instead of bare \`gh issue create\`. The wrapper applies origin + auto-assign + sub-issue linking automatically. See \`prompts/build.txt\` → \"Origin labelling (MANDATORY)\".
+
+This comment is idempotent; the HTML sentinel prevents duplicates on subsequent pulse cycles.
+EOF
+	)
+
+	local total_fixed=0 total_skipped=0
+
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+
+		# Fetch up to 50 open issues per repo — the per-repo cap keeps API
+		# usage bounded. The filter below further narrows by title shape and
+		# empty-label set.
+		local issues_json
+		issues_json=$(gh issue list --repo "$slug" --state open \
+			--json number,title,body,labels --limit 50 2>/dev/null) || issues_json="[]"
+		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
+
+		# jq filter: title starts with tNNN(.NNN)*: OR GH#NNN:, AND no label
+		# in the aidevops namespaces. Cap at 10 candidates per repo per cycle.
+		local candidates
+		candidates=$(printf '%s' "$issues_json" | jq -c '
+			[.[] |
+			 select((.title | test("^(t[0-9]+(\\.[0-9]+)*|GH#[0-9]+): ")) and
+			        ((.labels // []) |
+			         map(.name) |
+			         map(select(test("^(origin:|tier:|status:)"))) |
+			         length == 0))
+			] | .[0:10]
+		' 2>/dev/null) || candidates="[]"
+
+		local cand_count
+		cand_count=$(printf '%s' "$candidates" | jq 'length' 2>/dev/null) || cand_count=0
+		[[ "$cand_count" -gt 0 ]] || continue
+
+		local i=0
+		while [[ "$i" -lt "$cand_count" ]]; do
+			local num title body
+			num=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].number // ""')
+			title=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].title // ""')
+			body=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].body // ""')
+			i=$((i + 1))
+			[[ -z "$num" ]] && continue
+
+			# Idempotency guard: check if the sentinel marker is already in
+			# any comment on this issue. If yes, skip — we've already
+			# backfilled it, and the label check above should have excluded
+			# it anyway. This is belt-and-braces for edge cases where a
+			# previous pass applied the comment but the labels were stripped.
+			local existing_comments
+			existing_comments=$(gh issue view "$num" --repo "$slug" \
+				--json comments --jq '[.comments[].body] | join("\n")' 2>/dev/null || echo "")
+			if [[ "$existing_comments" == *"$sentinel"* ]]; then
+				total_skipped=$((total_skipped + 1))
+				continue
+			fi
+
+			# Extract hashtag labels from body. Match #token where token starts
+			# with a letter and is 2+ chars (excludes #1234 issue refs but
+			# admits short tags like #ai or #ci). Bash 3.2 compatible —
+			# no PCRE lookaround.
+			local body_tags
+			body_tags=$(printf '%s\n' "$body" |
+				grep -oE '(^|[^A-Za-z0-9_])#[a-z][a-z0-9-]+' 2>/dev/null |
+				sed 's/^[^#]*#//' |
+				sort -u |
+				tr '\n' ',' |
+				sed 's/,$//' || echo "")
+
+			# Compose the label-add arg list. Origin + tier + any body tags.
+			local -a add_args=("--add-label" "origin:worker" "--add-label" "tier:standard")
+			if [[ -n "$body_tags" ]]; then
+				local _saved_ifs="$IFS"
+				IFS=','
+				local _t
+				for _t in $body_tags; do
+					[[ -z "$_t" ]] && continue
+					add_args+=("--add-label" "$_t")
+				done
+				IFS="$_saved_ifs"
+			fi
+
+			# Ensure all labels exist on the repo before applying them. The
+			# issue-sync-helper.sh ensure_labels_exist function does this
+			# idempotently; if it's not sourceable, fall back to gh label
+			# create --force (also idempotent).
+			local labels_csv="origin:worker,tier:standard"
+			[[ -n "$body_tags" ]] && labels_csv="${labels_csv},${body_tags}"
+			local _saved_ifs="$IFS"
+			IFS=','
+			local _lbl
+			for _lbl in $labels_csv; do
+				[[ -z "$_lbl" ]] && continue
+				gh label create "$_lbl" --repo "$slug" --color "EDEDED" \
+					--description "Auto-created by pulse labelless backfill (t2112)" \
+					--force >/dev/null 2>&1 || true
+			done
+			IFS="$_saved_ifs"
+
+			# Apply labels atomically.
+			if ! gh issue edit "$num" --repo "$slug" "${add_args[@]}" >/dev/null 2>&1; then
+				echo "[pulse-wrapper] Labelless backfill: failed to apply labels on #${num} in ${slug}" >>"$LOGFILE"
+				continue
+			fi
+
+			# Wire sub-issue parent link via the t2114 backfill subcommand.
+			# Non-fatal — the label backfill already succeeded.
+			if [[ -n "$issue_sync_helper" ]]; then
+				"$issue_sync_helper" backfill-sub-issues --repo "$slug" --issue "$num" \
+					>/dev/null 2>&1 || true
+			fi
+
+			# Post the mentorship comment with the sentinel marker.
+			gh issue comment "$num" --repo "$slug" --body "$comment_template" \
+				>/dev/null 2>&1 || true
+
+			echo "[pulse-wrapper] Labelless backfill: blessed #${num} in ${slug} — labels=${labels_csv}" >>"$LOGFILE"
+			total_fixed=$((total_fixed + 1))
+		done
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+
+	if [[ "$((total_fixed + total_skipped))" -gt 0 ]]; then
+		echo "[pulse-wrapper] Labelless backfill: fixed=${total_fixed}, skipped=${total_skipped}" >>"$LOGFILE"
 	fi
 
 	return 0
