@@ -6,7 +6,7 @@ Pre-dispatch validators run **after** dedup checks and **before** worker spawn f
 
 Auto-generated issues embed a hidden HTML comment marker extracted with `grep -oE '<!-- aidevops:generator=[a-z-]+ -->'`. Parsing titles or labels is rejected as brittle — markers survive editorial changes to human-visible fields.
 
-```
+```html
 <!-- aidevops:generator=<name> -->
 ```
 
@@ -96,6 +96,7 @@ Issue closed with `gh issue close --reason "not planned"`.
    ```
 
 4. **Register** in `_register_validators()`:
+
    ```bash
    _VALIDATOR_REGISTRY["my-generator"]="_validator_my_generator"
    ```
