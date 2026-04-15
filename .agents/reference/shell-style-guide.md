@@ -120,6 +120,18 @@ Non-canonical colors (e.g., `MAGENTA`, `GRAY`, `BOLD`, `DIM`) → declare locall
 
 Of the 13 unguarded-readonly: 2 production (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`), 11 test harnesses.
 
+### Phase 7c update (2026-04-15, GH#19068)
+
+Migrated 3 test harnesses with unguarded plain color assignments to Pattern C (`TEST_*` prefixed `readonly`):
+
+- `.agents/scripts/test-pr-task-check.sh` — `RED/GREEN/YELLOW/NC` → `TEST_RED/TEST_GREEN/TEST_YELLOW/TEST_RESET`
+- `.agents/scripts/test-task-id-collision.sh` — `RED/GREEN/YELLOW/BLUE/NC` → `TEST_RED/TEST_GREEN/TEST_YELLOW/TEST_BLUE/TEST_RESET`
+- `.agents/scripts/tests/test-encryption-git-roundtrip.sh` — `RED/GREEN/YELLOW/BLUE/NC` → `TEST_RED/TEST_GREEN/TEST_YELLOW/TEST_BLUE/TEST_RESET`
+
+Remaining violations at Phase 7c merge (28 plain + 14 readonly across 42 files) are tracked in open sibling phases:
+Phase 2 (lint gate), Phase 3 (Tier 1/2), Phase 5 (Tier 4), Phase 6 (banned readonly), Phase 7a/7b (test batches 1–2), Phase 8a/b/c (BOLD readonly).
+Zero-violation state will be reached when all sibling phases merge.
+
 ## Phased migration roadmap (t2053) — each phase its own child task/PR (≤5 files, t1422 cap):
 
 1. **Phase 1** — Foundation: this guide + `prompts/build.txt` rule + `architecture.md` cross-ref.
