@@ -218,12 +218,16 @@ _simplification_state_refresh() {
 		current_hash=$(git -C "$repo_path" hash-object "$full_path" 2>/dev/null) || continue
 		# Read hash and passes in a single jq call — spawning jq twice per file
 		# inside a loop is inefficient when the state file can have hundreds of entries (GH#18555).
-		local prev_passes
-		IFS=$'\t' read -r stored_hash prev_passes < <(
-			jq -r --arg fp "$fp" \
-				'.files[$fp] // {"hash": "", "passes": 0} | [(.hash // ""), (.passes // 0 | tostring)] | join("\t")' \
-				"$tmp_state" 2>/dev/null
-		)
+		# GH#19044: replaced process substitution (< <(jq ...)) with command
+		# substitution + here-string to avoid FD leaks in bash 3.2. Process
+		# substitution creates a /dev/fd entry per iteration that bash 3.2
+		# does not reliably close, exhausting the 256 FD soft limit after
+		# ~200 files.
+		local prev_passes _jq_result
+		_jq_result=$(jq -r --arg fp "$fp" \
+			'.files[$fp] // {"hash": "", "passes": 0} | [(.hash // ""), (.passes // 0 | tostring)] | join("\t")' \
+			"$tmp_state" 2>/dev/null) || _jq_result=""
+		IFS=$'\t' read -r stored_hash prev_passes <<<"$_jq_result"
 		[[ -n "$stored_hash" ]] || stored_hash=""
 		[[ "$prev_passes" =~ ^[0-9]+$ ]] || prev_passes=0
 
@@ -623,7 +627,11 @@ _simplification_state_backfill_closed() {
 		local title file_path issue_num
 
 		# Single jq pass for both fields — halves subprocess count per iteration.
-		IFS=$'\t' read -r title issue_num < <(printf '%s\n' "$issue" | jq -r '[.title // "", .number // ""] | @tsv')
+		# GH#19044: command substitution + here-string instead of process
+		# substitution to avoid FD leaks in bash 3.2.
+		local _issue_fields
+		_issue_fields=$(printf '%s\n' "$issue" | jq -r '[.title // "", .number // ""] | @tsv' 2>/dev/null) || _issue_fields=""
+		IFS=$'\t' read -r title issue_num <<<"$_issue_fields"
 		[[ -z "$title" || -z "$issue_num" ]] && continue
 
 		file_path=$(_simplification_backfill_extract_file_path "$title")

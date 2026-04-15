@@ -491,6 +491,11 @@ _generate_pulse_plist_content() {
 		<string>${PULSE_STALE_THRESHOLD_SECONDS}</string>
 		${_headless_xml_env}
 	</dict>
+	<key>SoftResourceLimits</key>
+	<dict>
+		<key>NumberOfFiles</key>
+		<integer>4096</integer>
+	</dict>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
