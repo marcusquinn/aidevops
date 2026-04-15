@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.34] - 2026-04-15
+
+### Changed
+
+- fix tier:simple default bias — default to tier:standard everywhere (#19059)
+
+### Fixed
+
+- add self-assign to _label_issue_in_review in full-loop-helper (#19060)
+- make stale-recovery tick comments visible on GitHub (#19058)
+
 ## [3.8.32] - 2026-04-15
 
 ### Changed
