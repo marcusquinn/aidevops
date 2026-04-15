@@ -52,7 +52,8 @@ jobs:
             // Safety guard: skip if this is an external bot PR from a fork
             // pull_request_target runs in base repo context, but we should not
             // process PRs from non-User accounts in forks
-            if (pr.head.repo.full_name !== pr.base.repo.full_name && pr.user.type !== 'User') {
+            const isFork = Boolean(pr.head.repo) && pr.head.repo.full_name !== pr.base.repo.full_name;
+            if (isFork && pr.user.type === 'Bot') {
               console.log(`External bot PR from fork — skipping linked-issue check`);
               await github.rest.repos.createCommitStatus({
                 owner: repo.owner,
