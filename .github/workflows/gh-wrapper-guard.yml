@@ -1,0 +1,115 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# GH Wrapper Guard (t2113)
+#
+# Blocks PRs that introduce raw `gh issue create` or `gh pr create` calls
+# in .agents/scripts/ or .agents/hooks/ shell scripts. These must use the
+# gh_create_issue / gh_create_pr wrappers (defined in shared-constants.sh)
+# to ensure origin labelling.
+#
+# Rule: prompts/build.txt → "Origin labelling (MANDATORY)"
+
+name: GH Wrapper Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.agents/scripts/**.sh'
+      - '.agents/hooks/**.sh'
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changed-sh:
+    name: Detect changed shell files
+    runs-on: ubuntu-latest
+    outputs:
+      has_sh_changes: ${{ steps.detect.outputs.has_sh_changes }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed .sh files
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null \
+            | grep -E '^\.agents/(scripts|hooks)/.*\.sh$' || true)
+          if [[ -z "$changed" ]]; then
+            printf 'No .agents .sh files changed; skipping wrapper guard.\n'
+            echo "has_sh_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf 'Shell files to scan:\n%s\n' "$changed"
+          echo "has_sh_changes=true" >> "$GITHUB_OUTPUT"
+
+  wrapper-guard:
+    name: GH wrapper guard scan
+    runs-on: ubuntu-latest
+    needs: detect-changed-sh
+    if: needs.detect-changed-sh.outputs.has_sh_changes == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Run wrapper guard
+        id: scan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          chmod +x .agents/scripts/gh-wrapper-guard.sh
+          output=$(bash .agents/scripts/gh-wrapper-guard.sh check --base "$BASE_SHA" 2>&1) || scan_rc=$?
+          scan_rc=${scan_rc:-0}
+
+          printf '%s\n' "$output"
+
+          if [[ "$scan_rc" -ne 0 ]]; then
+            printf '\n::error::Raw gh issue/pr create calls found in changed files.\n'
+            printf '::error::Use gh_create_issue / gh_create_pr wrappers instead.\n'
+            printf '::error::Rule: prompts/build.txt → "Origin labelling (MANDATORY)"\n'
+            printf '::error::Suppress: append "# aidevops-allow: raw-gh-wrapper" to the line.\n'
+            # Save output for PR comment
+            {
+              printf 'comment<<GH_WRAPPER_GUARD_EOF\n'
+              printf '### GH Wrapper Guard — violations found\n\n'
+              printf 'Raw `gh issue create` or `gh pr create` calls detected in added/modified lines.\n'
+              printf 'Use `gh_create_issue` / `gh_create_pr` wrappers instead (defined in `shared-constants.sh`).\n\n'
+              printf '**Rule:** `prompts/build.txt` → "Origin labelling (MANDATORY)"\n\n'
+              printf '```\n%s\n```\n\n' "$output"
+              printf 'To suppress a specific line, append `# aidevops-allow: raw-gh-wrapper`.\n'
+              printf 'GH_WRAPPER_GUARD_EOF\n'
+            } >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          printf '\nGH wrapper guard: clean.\n'
+
+      - name: Post PR comment on failure
+        if: failure() && steps.scan.outputs.comment != ''
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const body = `${{ steps.scan.outputs.comment }}`;
+            if (body) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
