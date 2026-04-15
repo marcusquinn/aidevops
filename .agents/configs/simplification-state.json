@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "03d5c5085f2069acc0dbf9912ab8c882a47cce10",
-      "at": "2026-04-15T03:32:06Z",
+      "hash": "d706944f28453b7e0eaac9a987895f2f5bae41cc",
+      "at": "2026-04-15T17:57:45Z",
       "pr": 19029,
-      "passes": 58
+      "passes": 59
     },
     "setup.sh": {
-      "hash": "2714942b9c4558eea31bf0ee4f8aec228fb88bbf",
-      "at": "2026-04-15T03:32:06Z",
-      "passes": 56,
+      "hash": "1d192d707245c0cb5207195258c5ccae94ce95e1",
+      "at": "2026-04-15T17:57:45Z",
+      "passes": 57,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -6863,10 +6863,10 @@
       "passes": 1
     },
     ".agents/scripts/opencode-db-archive.sh": {
-      "hash": "cdca52e4ea9af4b3248ea9fd4f417897081df98a",
-      "at": "2026-04-09T07:32:16Z",
+      "hash": "2d1b2a3c0aea737a80a7f2d53af6c6e5637b5732",
+      "at": "2026-04-15T17:57:19Z",
       "pr": 17584,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/generate-opencode-commands.sh": {
       "hash": "19ac53376024c9ffaf4cd651816b2c5c889eca53",
@@ -7343,10 +7343,10 @@
       "passes": 1
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "hash": "5dc43098a9ab81d0b042a55b639ac88a50bad942",
-      "at": "2026-04-14T07:25:45Z",
+      "hash": "f66422b0700d00c485d330e528fedee83190d16f",
+      "at": "2026-04-15T17:57:19Z",
       "pr": 18707,
-      "passes": 2
+      "passes": 3
     },
     ".agents/scripts/issue-sync-helper.sh": {
       "hash": "cf3e6f817fc1c1ee76562238c175acb3972e54c8",
