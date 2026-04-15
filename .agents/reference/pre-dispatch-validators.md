@@ -1,8 +1,6 @@
 # Pre-Dispatch Validators
 
-Pre-dispatch validators run **after** dedup checks and **before** worker spawn for auto-generated issues. They verify the issue premise is still true before a worker is dispatched — catching stale auto-generated issues deterministically rather than relying on model self-triage.
-
-This is Fix 3 of the [#19024 post-mortem](https://github.com/marcusquinn/aidevops/issues/19024). Fixes 1 and 2 (GH#19036, GH#19037) address the ratchet-down bug at its source; this adds a generalisable safety net for the whole class of "premise stale at dispatch time" failures.
+Pre-dispatch validators run **after** dedup checks and **before** worker spawn for auto-generated issues. They verify the issue premise is still true before dispatching — catching stale issues deterministically rather than relying on model self-triage. Fix 3 of the [GH#19024 post-mortem](https://github.com/marcusquinn/aidevops/issues/19024); Fixes 1+2 (GH#19036, GH#19037) address the ratchet-down bug at source; this adds a generalisable safety net for the "premise stale at dispatch time" failure class.
 
 ## Architecture
 
@@ -18,7 +16,7 @@ The validator extracts this marker with `grep -oE '<!-- aidevops:generator=[a-z-
 
 ### Registry
 
-`pre-dispatch-validator-helper.sh` maintains an internal registry (`_VALIDATOR_REGISTRY`) mapping generator names to validator functions. The registry is populated by `_register_validators()`. Unregistered generators fall through to exit 0 (dispatch proceeds).
+`pre-dispatch-validator-helper.sh` maintains an internal registry (`_VALIDATOR_REGISTRY`) mapping generator names to validator functions, populated by `_register_validators()`. Unregistered generators fall through to exit 0 (dispatch proceeds).
 
 ### Exit-code contract
 
@@ -30,7 +28,7 @@ The validator extracts this marker with `grep -oE '<!-- aidevops:generator=[a-z-
 
 ### Hook point
 
-The validator runs inside `dispatch_with_dedup()` in `pulse-dispatch-core.sh`, via `_run_predispatch_validator()`. Placement:
+The validator runs inside `dispatch_with_dedup()` in `pulse-dispatch-core.sh`, via `_run_predispatch_validator()`:
 
 ```
 _dispatch_dedup_check_layers()   ← all dedup gates
@@ -49,11 +47,11 @@ Set `AIDEVOPS_SKIP_PREDISPATCH_VALIDATOR=1` to skip all validators unconditional
 AIDEVOPS_SKIP_PREDISPATCH_VALIDATOR=1 ./pulse-wrapper.sh
 ```
 
-Intended use: emergency recovery when a validator has a bug that is blocking legitimate dispatches. The bypass is logged. Do not leave it set permanently — validators exist to prevent wasted worker sessions.
+Intended use: emergency recovery when a validator bug is blocking legitimate dispatches. The bypass is logged. Do not leave it set permanently.
 
 ## Closure comment format
 
-When a validator returns exit 10, the helper posts a comment of the form:
+When a validator returns exit 10, the helper posts:
 
 ```
 > Premise falsified. Pre-dispatch validator for generator `<name>` determined
