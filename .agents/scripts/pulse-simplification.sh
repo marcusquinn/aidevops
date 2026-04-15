@@ -1743,7 +1743,9 @@ grep -E 'FUNCTION_COMPLEXITY_THRESHOLD|NESTING_DEPTH_THRESHOLD|FILE_SIZE_THRESHO
 .agents/scripts/complexity-scan-helper.sh ratchet-check . 5
 # Confirm state file is NOT staged in the PR commit
 git diff --cached --name-only | grep -v 'simplification-state.json'
-\`\`\`" >/dev/null 2>&1 || true
+\`\`\`
+
+<!-- aidevops:generator=ratchet-down -->" >/dev/null 2>&1 || true
 		else
 			echo "[pulse-wrapper] ratchet-check: ratchet-down PR already open, skipping issue creation" >>"$LOGFILE"
 		fi
