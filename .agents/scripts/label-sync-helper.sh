@@ -162,37 +162,40 @@ ROUTINE_LABELS=(
 TAG_CAT_BUG="fix hotfix critical"
 
 # Category: Enhancement — teal
-TAG_CAT_ENHANCEMENT="feature"
+TAG_CAT_ENHANCEMENT="feature enhancement"
 
 # Category: DevOps/Infrastructure — light blue
-TAG_CAT_DEVOPS="ci git deploy infrastructure shell setup workflow devops release chore issue-sync"
+TAG_CAT_DEVOPS="ci git deploy deployment infrastructure shell setup workflow devops release chore issue-sync cli mcp headless bash-compat automation local-dev preflight changelog no-auto-dispatch brief retry decomposition upstream github bots pulse network hosting local-hosting cloudflare linux windows geo harness localhost bridge"
 
 # Category: Code Quality — lavender
-TAG_CAT_QUALITY="refactor testing quality cleanup verification shellcheck eslint prettier coderabbit sonarcloud auto-review code-quality qlty"
+TAG_CAT_QUALITY="refactor testing quality cleanup verification shellcheck eslint prettier coderabbit sonarcloud auto-review code-quality qlty test codacy code-review evaluation convention enforcement reliability efficiency"
 
 # Category: Security — peach
-TAG_CAT_SECURITY="security audit encryption"
+TAG_CAT_SECURITY="security audit encryption auth prompt-injection sandboxing sandbox opsec"
 
 # Category: UI/Frontend — mint green
-TAG_CAT_UI="ui ux dashboard browser mobile responsive navigation react chrome"
+TAG_CAT_UI="ui ux dashboard browser mobile responsive navigation react chrome browser-extension design"
 
 # Category: Backend/Data — butter yellow
-TAG_CAT_BACKEND="api db migration ingestion validation zod sdk hono rls algorithm scoring entry matching"
+TAG_CAT_BACKEND="api db database migration ingestion validation zod sdk hono rls algorithm scoring entry matching rag vector-search"
 
 # Category: Architecture — teal-gray
 TAG_CAT_ARCH="architecture orchestration platform multi-tenant multi-tenancy performance plan"
 
 # Category: Docs/Content — blue
-TAG_CAT_DOCS="content seo communications email voice video documents"
+TAG_CAT_DOCS="content seo communications email voice video documents document ocr audio"
 
 # Category: Research/Planning — pink
-TAG_CAT_RESEARCH="research investigation business"
+TAG_CAT_RESEARCH="research investigation business mission outreach entity product future"
 
 # Category: AI/Agent — purple
-TAG_CAT_AI="ai agent agents models skill skills plugin plugins self-healing self-improvement opencode higgsfield tools orchestration multi-model"
+TAG_CAT_AI="ai agent agents models skill skills plugin plugins self-healing self-improvement opencode higgsfield tools multi-model model-routing routing model-comparison memory session-miner context7 local-models anchor reference"
 
 # Category: Domain-specific — soft blue
-TAG_CAT_DOMAIN="wordpress cloudron matrix turbostarter accounting awards"
+TAG_CAT_DOMAIN="wordpress cloudron matrix turbostarter accounting awards payments deliverability"
+
+# Category: Observability/Monitoring — teal (reuses arch color)
+TAG_CAT_MONITORING="monitoring observability auto-update"
 
 # Map category name → hex color
 declare -A TAG_CATEGORY_COLORS=(
@@ -208,6 +211,7 @@ declare -A TAG_CATEGORY_COLORS=(
 	[research]="D876E3"
 	[ai]="7057FF"
 	[domain]="C5DEF5"
+	[monitoring]="BFDADC"
 	[default]="EDEDED"
 )
 
@@ -276,6 +280,10 @@ color_for_tag() {
 	}; done
 	for word in $TAG_CAT_DOMAIN; do [[ "$tag" == "$word" ]] && {
 		echo "${TAG_CATEGORY_COLORS[domain]}"
+		return 0
+	}; done
+	for word in $TAG_CAT_MONITORING; do [[ "$tag" == "$word" ]] && {
+		echo "${TAG_CATEGORY_COLORS[monitoring]}"
 		return 0
 	}; done
 
