@@ -17,16 +17,13 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=shared-constants.sh
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+
 AGENTS_DIR="${HOME}/.aidevops/agents"
 CUSTOM_DIR="${AGENTS_DIR}/custom"
 CONFIG_FILE="${AGENTS_DIR}/configs/agent-sources.json"
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
 
 # Print an informational message in blue
 info() {
