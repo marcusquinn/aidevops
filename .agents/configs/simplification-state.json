@@ -6821,10 +6821,10 @@
       "passes": 2
     },
     ".agents/workflows/brief/tier-standard.md": {
-      "hash": "a7b7a6193f46afab4ef570832c6cf2774241267c",
-      "at": "2026-04-14T09:37:48Z",
+      "hash": "ebc81028afe68e02bef6687b0ce0ce66e2ee622c",
+      "at": "2026-04-15T08:17:12Z",
       "pr": 18940,
-      "passes": 2
+      "passes": 3
     },
     ".agents/scripts/commands/optimize-tiers.md": {
       "hash": "066bd6b47e328dbd06fdda6e003d447d060aa816",
@@ -7421,10 +7421,10 @@
       "passes": 2
     },
     ".agents/scripts/shared-constants.sh": {
-      "hash": "7713166b727ec3acd3aad0571017d488fbf6cde0",
-      "at": "2026-04-15T03:31:35Z",
+      "hash": "316aa5a9199ef65e946ceee79b57f76cda430154",
+      "at": "2026-04-15T08:16:49Z",
       "pr": 18847,
-      "passes": 5
+      "passes": 6
     },
     ".agents/scripts/interactive-session-helper.sh": {
       "hash": "4a62f8f22b887223c9aa5c730d10f74d6350eef5",
