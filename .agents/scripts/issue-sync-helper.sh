@@ -334,9 +334,26 @@ gh_find_merged_pr() {
 ensure_labels_exist() {
 	local labels="$1" repo="$2"
 	[[ -z "$labels" || -z "$repo" ]] && return 0
+
+	# Source label-sync-helper for semantic tag colors (color_for_tag function).
+	# Falls back to EDEDED if the helper is not available.
+	local _label_helper="${SCRIPT_DIR}/label-sync-helper.sh"
+	if [[ -f "$_label_helper" ]] && ! declare -F color_for_tag >/dev/null 2>&1; then
+		# shellcheck source=label-sync-helper.sh
+		source "$_label_helper" 2>/dev/null || true
+	fi
+
 	local _saved_ifs="$IFS"
 	IFS=','
-	for lbl in $labels; do [[ -n "$lbl" ]] && gh_create_label "$repo" "$lbl" "EDEDED" "Auto-created from TODO.md tag"; done
+	for lbl in $labels; do
+		if [[ -n "$lbl" ]]; then
+			local _color="EDEDED"
+			if declare -F color_for_tag >/dev/null 2>&1; then
+				_color=$(color_for_tag "$lbl")
+			fi
+			gh_create_label "$repo" "$lbl" "$_color" "Auto-created from TODO.md tag"
+		fi
+	done
 	IFS="$_saved_ifs"
 }
 
