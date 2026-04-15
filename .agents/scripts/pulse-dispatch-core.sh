@@ -333,12 +333,13 @@ _task_id_in_recent_commits() {
 	local repo_path="$2"
 	local created_at="$3"
 
-	# Pattern 1: tNNN task ID from title (e.g., "t153: add dark mode")
+	# Pattern 1: tNNN or tNNN.X task ID from title (e.g., "t153: add dark mode", "t2053.2: shell init")
 	# Subject-only: body cross-references like "(t101)" must not match.
 	# grep -w enforces word boundaries — prevents t101 matching t1010.
+	# Subtask decimal suffix preserved (GH#19165) — t2053.2 must NOT match parent t2053 commits.
 	local -a subject_patterns=()
 	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+' | head -1) || task_id_match=""
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1) || task_id_match=""
 	if [[ -n "$task_id_match" ]]; then
 		subject_patterns+=("$task_id_match")
 	fi
@@ -455,9 +456,9 @@ _task_id_in_changed_files() {
 	local todo_content
 	todo_content=$(git -C "$repo_path" show origin/main:TODO.md 2>/dev/null) || return 1
 
-	# Check for tNNN completion marker: "- [x] tNNN ..."
+	# Check for tNNN or tNNN.X completion marker: "- [x] tNNN ..."
 	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+' | head -1) || task_id_match=""
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1) || task_id_match=""
 	if [[ -n "$task_id_match" ]]; then
 		if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\]\s+${task_id_match}(\s|$)"; then
 			echo "[pulse-wrapper] _task_id_in_changed_files: found completed '${task_id_match}' in TODO.md on origin/main" >>"$LOGFILE"
