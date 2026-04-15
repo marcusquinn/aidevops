@@ -242,7 +242,7 @@ RESOLVED_MODEL=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve
 # Pass: --model "$RESOLVED_MODEL"
 ```
 
-Precedence: (1) failure escalation (cascade: `tier:simple` → `tier:standard` → `tier:thinking`) > (2) issue labels (`tier:thinking` → opus, `tier:standard` → sonnet, `tier:simple` → haiku) > (3) bundle defaults > (4) omit (default round-robin). Backward compat: `tier:reasoning` accepted as alias for `tier:thinking`.
+Precedence: (1) failure escalation (cascade: `tier:simple` → `tier:standard` → `tier:thinking`) > (2) issue labels (`tier:thinking` → opus, `tier:standard` → sonnet, `tier:simple` → haiku) > (3) bundle defaults > (4) omit (default round-robin). See [Task Taxonomy](../reference/task-taxonomy.md) for tier purposes.
 
 ### Agent routing from labels
 
