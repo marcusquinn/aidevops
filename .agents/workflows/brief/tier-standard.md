@@ -44,7 +44,7 @@ export function handleAuth(req: Request): Response {
 
 ## Recovery paths (mandatory)
 
-Include a `### Done When` condition and fallback searches for each file/function reference — workers stop on first miss without them.
+Include a `### Done When` section to prevent indefinite exploration, and provide fallback searches for each file/function reference; workers stop on first miss without them.
 
 For each implementation step:
 
