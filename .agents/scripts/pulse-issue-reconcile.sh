@@ -851,6 +851,104 @@ reconcile_stale_done_issues() {
 }
 
 #######################################
+# Close open issues whose linked PR has already merged.
+#
+# Gap: _handle_post_merge_actions only closes issues when the PULSE merges
+# the PR. PRs merged by --admin (interactive sessions), GitHub merge button,
+# or any other mechanism leave the issue open. This reconciliation pass
+# catches those orphans.
+#
+# Scans open issues with active status labels (in-review, in-progress,
+# queued, available) and checks whether a merged PR references them via
+# `Resolves #N`, `Closes #N`, or `Fixes #N`. If found, closes the issue.
+#
+# Rate-limited: max 10 closes per cycle to avoid API abuse.
+#######################################
+reconcile_open_issues_with_merged_prs() {
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	local verify_helper="${HOME}/.aidevops/agents/scripts/verify-issue-close-helper.sh"
+	local total_closed=0
+	local max_closes=10
+
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		[[ "$total_closed" -lt "$max_closes" ]] || break
+
+		# Get open issues with status labels that suggest active work
+		local issues_json
+		issues_json=$(gh issue list --repo "$slug" --state open \
+			--json number,title --limit 30 2>/dev/null) || issues_json="[]"
+		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
+
+		local issue_count
+		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
+		[[ "$issue_count" -gt 0 ]] || continue
+
+		local i=0
+		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" ]]; do
+			local issue_num
+			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
+			i=$((i + 1))
+			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+
+			# Search for merged PRs that close this issue
+			local merged_pr_num=""
+			merged_pr_num=$(gh pr list --repo "$slug" --state merged \
+				--search "Resolves #${issue_num} OR Closes #${issue_num} OR Fixes #${issue_num}" \
+				--json number --jq '.[0].number // ""' --limit 1 2>/dev/null) || merged_pr_num=""
+			[[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]] || continue
+
+			# Verify the PR body actually contains the closing keyword for THIS issue
+			# (the search API can return false positives from comments/titles)
+			local pr_body
+			pr_body=$(gh pr view "$merged_pr_num" --repo "$slug" --json body --jq '.body // ""' 2>/dev/null) || pr_body=""
+			if ! printf '%s' "$pr_body" | grep -qiE "(Resolves|Closes|Fixes)\s+#${issue_num}\b"; then
+				continue
+			fi
+
+			# GH#17372: optional file-overlap verification
+			if [[ -x "$verify_helper" ]]; then
+				if ! "$verify_helper" check "$issue_num" "$merged_pr_num" "$slug" >/dev/null 2>&1; then
+					echo "[pulse-wrapper] Reconcile merged-PR: skipped close #${issue_num} in ${slug} — PR #${merged_pr_num} does not touch issue files (GH#17372)" >>"$LOGFILE"
+					continue
+				fi
+			fi
+
+			# Skip parent-task issues (closing a parent from a child PR is wrong)
+			local issue_labels
+			issue_labels=$(gh api "repos/${slug}/issues/${issue_num}" \
+				--jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+			if [[ "$issue_labels" == *"parent-task"* ]]; then
+				continue
+			fi
+
+			gh issue close "$issue_num" --repo "$slug" \
+				--comment "Closing: linked PR #${merged_pr_num} was already merged. Detected by reconcile pass." \
+				>/dev/null 2>&1 || continue
+
+			# Cleanup
+			if declare -F fast_fail_reset >/dev/null 2>&1; then
+				fast_fail_reset "$issue_num" "$slug" || true
+			fi
+			if declare -F unlock_issue_after_worker >/dev/null 2>&1; then
+				unlock_issue_after_worker "$issue_num" "$slug"
+			fi
+
+			echo "[pulse-wrapper] Reconcile merged-PR: closed #${issue_num} in ${slug} — merged PR #${merged_pr_num}" >>"$LOGFILE"
+			total_closed=$((total_closed + 1))
+		done
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+
+	if [[ "$total_closed" -gt 0 ]]; then
+		echo "[pulse-wrapper] Reconcile open issues with merged PRs: closed=${total_closed}" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
 # t2112: backfill labelless aidevops-shaped issues.
 #
 # Scans each pulse:true repo for open issues whose titles match the aidevops
