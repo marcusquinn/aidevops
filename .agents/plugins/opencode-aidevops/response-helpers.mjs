@@ -64,10 +64,34 @@ export function jsonResponse(data, init = {}) {
   if (typeof Response.json === "function") {
     return Response.json(data, init);
   }
-  return new Response(JSON.stringify(data), {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init.headers || {}) },
-  });
+  return jsonResponseFallback(data, init);
+}
+
+/**
+ * Fallback implementation of `jsonResponse` for runtimes without
+ * `Response.json()`. Exported for direct test coverage — tests can't force
+ * the fallback path at runtime because `Response.json` is a non-configurable
+ * property in Bun, so the fallback is tested by calling it directly.
+ *
+ * Uses the `Headers` constructor to accept every valid `HeadersInit` shape
+ * (plain object, `Headers` instance, or array of `[name, value]` tuples) —
+ * object spreading only works for the plain-object case and silently drops
+ * the others, which was a real bug in the first draft of this module
+ * (caught by Gemini Code Assist review on PR #19181). The default
+ * `Content-Type` is only applied when the caller hasn't set one, so
+ * callers can override with `application/vnd.api+json` etc. without being
+ * clobbered.
+ *
+ * @param {unknown} data
+ * @param {ResponseInit} [init]
+ * @returns {Response}
+ */
+export function jsonResponseFallback(data, init = {}) {
+  const headers = new Headers(init.headers || {});
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  return new Response(JSON.stringify(data), { ...init, headers });
 }
 
 /**

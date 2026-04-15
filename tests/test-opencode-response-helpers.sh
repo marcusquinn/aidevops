@@ -67,7 +67,7 @@ TMP_SCRIPT="$(mktemp -t response-helpers-test.XXXXXX.mjs)"
 trap 'rm -f "$TMP_SCRIPT"' EXIT
 
 cat >"$TMP_SCRIPT" <<EOF
-import { jsonResponse, textResponse } from "$PLUGIN_DIR/response-helpers.mjs";
+import { jsonResponse, jsonResponseFallback, textResponse } from "$PLUGIN_DIR/response-helpers.mjs";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -76,7 +76,7 @@ function assert(cond, msg) {
   }
 }
 
-// jsonResponse default
+// --- Native path (Response.json) -----------------------------------------
 {
   const r = jsonResponse({ hello: "world" });
   assert(r instanceof Response, "jsonResponse returns Response");
@@ -85,7 +85,6 @@ function assert(cond, msg) {
   assert(body.hello === "world", "round-trip data");
 }
 
-// jsonResponse with init
 {
   const r = jsonResponse({ error: "bad" }, { status: 503 });
   assert(r.status === 503, "custom status, got " + r.status);
@@ -93,7 +92,44 @@ function assert(cond, msg) {
   assert(body.error === "bad", "round-trip data with status");
 }
 
-// textResponse plain text
+// --- Fallback path (tested directly — Response.json is non-configurable
+//     in Bun so it can't be hidden at runtime). -----------------------------
+
+// 1. Plain object headers (the common case in this plugin)
+{
+  const r = jsonResponseFallback({ a: 1 }, { status: 418, headers: { "X-Custom": "teapot" } });
+  assert(r.status === 418, "fallback custom status");
+  assert(r.headers.get("X-Custom") === "teapot", "fallback preserves plain-object headers");
+  assert(r.headers.get("Content-Type") === "application/json", "fallback sets default Content-Type");
+  assert((await r.json()).a === 1, "fallback body round-trip");
+}
+
+// 2. Headers instance (Gemini review finding — raw spread drops these)
+{
+  const h = new Headers();
+  h.set("X-From-Headers", "1");
+  const r = jsonResponseFallback({ ok: true }, { headers: h });
+  assert(r.headers.get("X-From-Headers") === "1", "fallback preserves Headers instance");
+  assert(r.headers.get("Content-Type") === "application/json", "Headers instance + default CT");
+}
+
+// 3. Array-of-tuples headers (also valid HeadersInit — same root cause)
+{
+  const r = jsonResponseFallback({ ok: true }, {
+    headers: [["X-Tuple", "yes"], ["X-Another", "also"]],
+  });
+  assert(r.headers.get("X-Tuple") === "yes", "fallback preserves array headers (1)");
+  assert(r.headers.get("X-Another") === "also", "fallback preserves array headers (2)");
+  assert(r.headers.get("Content-Type") === "application/json", "array + default CT");
+}
+
+// 4. Caller-set Content-Type must NOT be overwritten
+{
+  const r = jsonResponseFallback("raw", { headers: { "Content-Type": "application/vnd.api+json" } });
+  assert(r.headers.get("Content-Type") === "application/vnd.api+json", "caller CT wins");
+}
+
+// --- textResponse --------------------------------------------------------
 {
   const r = textResponse("Not Found", { status: 404 });
   assert(r instanceof Response, "textResponse returns Response");
@@ -102,7 +138,6 @@ function assert(cond, msg) {
   assert(text === "Not Found", "textResponse body round-trips");
 }
 
-// textResponse with ReadableStream (streaming passthrough case)
 {
   const stream = new ReadableStream({
     start(ctrl) {
