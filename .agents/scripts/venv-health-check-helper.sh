@@ -29,8 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
-# BOLD is not in shared-constants.sh — define locally
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 

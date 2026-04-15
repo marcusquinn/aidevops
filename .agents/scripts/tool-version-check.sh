@@ -18,7 +18,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
 
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # Parse arguments
 AUTO_UPDATE=false

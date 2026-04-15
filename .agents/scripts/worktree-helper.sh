@@ -35,7 +35,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
 
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # nice — ownership registry functions are centralised in shared-constants.sh (t189):
 #   register_worktree, unregister_worktree, check_worktree_owner,
