@@ -949,6 +949,114 @@ reconcile_open_issues_with_merged_prs() {
 }
 
 #######################################
+# Close parent-task issues when all child issues are resolved.
+#
+# Parent-task issues block dispatch unconditionally — they exist as
+# planning trackers. When all their children are closed, the parent
+# should close automatically with a summary comment listing each child.
+#
+# Child detection: extracts #NNN references from the parent's body that
+# are NOT self-references. Checks each against GH API for closed state.
+# Only closes if ALL children are closed and there are at least 1.
+#
+# Max 5 closes per cycle to limit API usage.
+#######################################
+reconcile_completed_parent_tasks() {
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	local total_closed=0
+	local max_closes=5
+
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		[[ "$total_closed" -lt "$max_closes" ]] || break
+
+		local issues_json
+		issues_json=$(gh issue list --repo "$slug" --state open \
+			--label "parent-task" \
+			--json number,title,body --limit 10 2>/dev/null) || issues_json="[]"
+		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
+
+		local issue_count
+		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
+		[[ "$issue_count" -gt 0 ]] || continue
+
+		local i=0
+		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" ]]; do
+			local issue_num issue_title issue_body
+			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
+			issue_title=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].title // ""') || true
+			issue_body=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].body // ""') || true
+			i=$((i + 1))
+			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+
+			# Extract child issue numbers from body (#NNN patterns, excluding self)
+			local child_nums
+			child_nums=$(printf '%s' "$issue_body" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un | grep -v "^${issue_num}$") || child_nums=""
+			[[ -n "$child_nums" ]] || continue
+
+			# Check if ALL children are closed
+			local all_closed="true"
+			local child_summary=""
+			local child_count=0
+			while IFS= read -r child_num; do
+				[[ -n "$child_num" && "$child_num" =~ ^[0-9]+$ ]] || continue
+				local child_state child_title_line
+				child_state=$(gh api "repos/${slug}/issues/${child_num}" \
+					--jq '.state // "unknown"' 2>/dev/null) || child_state="unknown"
+				child_title_line=$(gh api "repos/${slug}/issues/${child_num}" \
+					--jq '.title // ""' 2>/dev/null) || child_title_line=""
+
+				# Skip references that aren't real child issues (PRs, external refs)
+				if [[ "$child_state" == "unknown" ]]; then
+					continue
+				fi
+
+				child_count=$((child_count + 1))
+				if [[ "$child_state" == "closed" ]]; then
+					child_summary="${child_summary}
+- #${child_num}: ${child_title_line} — ✅ CLOSED"
+				else
+					child_summary="${child_summary}
+- #${child_num}: ${child_title_line} — ⏳ OPEN"
+					all_closed="false"
+				fi
+			done <<<"$child_nums"
+
+			# Need at least 2 children to be a real parent (1 child = probably just a reference)
+			if [[ "$child_count" -lt 2 ]]; then
+				continue
+			fi
+
+			if [[ "$all_closed" != "true" ]]; then
+				continue
+			fi
+
+			# All children closed — close the parent
+			gh issue close "$issue_num" --repo "$slug" \
+				--comment "## All child tasks completed — closing parent tracker
+
+${child_summary}
+
+All ${child_count} child issues are resolved. Parent tracker closed automatically.
+
+_Detected by reconcile_completed_parent_tasks (pulse-issue-reconcile.sh)._" \
+				>/dev/null 2>&1 || continue
+
+			echo "[pulse-wrapper] Reconcile parent-task: closed #${issue_num} in ${slug} — all ${child_count} children closed" >>"$LOGFILE"
+			total_closed=$((total_closed + 1))
+		done
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+
+	if [[ "$total_closed" -gt 0 ]]; then
+		echo "[pulse-wrapper] Reconcile completed parent tasks: closed=${total_closed}" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
 # t2112: backfill labelless aidevops-shaped issues.
 #
 # Scans each pulse:true repo for open issues whose titles match the aidevops

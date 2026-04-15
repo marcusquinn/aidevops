@@ -1177,6 +1177,9 @@ _preflight_ownership_reconcile() {
 	# Catches issues left open after --admin merges, GitHub merge button, etc.
 	run_stage_with_timeout "reconcile_merged_pr_close" "$PRE_RUN_STAGE_TIMEOUT" reconcile_open_issues_with_merged_prs || true
 
+	# Close parent-task issues when all children are resolved.
+	run_stage_with_timeout "reconcile_parent_tasks" "$PRE_RUN_STAGE_TIMEOUT" reconcile_completed_parent_tasks || true
+
 	# Backfill labelless aidevops-shaped issues (t2112). Heals issues that
 	# were created via bare `gh issue create` outside the `gh_create_issue`
 	# wrapper — applies origin/tier defaults + body-tag labels + sub-issue
