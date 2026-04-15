@@ -36,7 +36,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
 
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 readonly RESET="$NC"            # Alias for NC from shared-constants.sh
 readonly STASH_AGE_THRESHOLD=30 # days
 

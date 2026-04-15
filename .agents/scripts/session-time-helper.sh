@@ -24,7 +24,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
 
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 readonly DIM='\033[2m'
 
 # Defaults

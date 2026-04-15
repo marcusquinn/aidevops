@@ -53,7 +53,7 @@ readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
 readonly DEFAULT_MODEL="anthropic/claude-sonnet-4-6"
 
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # Logging: uses shared log_* from shared-constants.sh with RUNNER prefix
 # shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions

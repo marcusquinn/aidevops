@@ -41,7 +41,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly CHECKPOINT_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
 readonly CHECKPOINT_FILE="${CHECKPOINT_DIR}/session-checkpoint.md"
 
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # Credential patterns to redact from checkpoint content.
 # Focused on secrets (API keys, tokens, passwords, connection strings).
