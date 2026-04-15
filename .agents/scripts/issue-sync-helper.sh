@@ -1773,12 +1773,276 @@ cmd_relationships() {
 	return 0
 }
 
+# =============================================================================
+# Backfill sub-issue links from GitHub state alone (t2114 — GH#19093)
+# =============================================================================
+# Unlike `cmd_relationships`, which is TODO-driven, and `_gh_auto_link_sub_issue`,
+# which is wrapper-driven, `cmd_backfill_sub_issues` operates purely on GitHub
+# state — title and body of each issue — without requiring a TODO entry or a
+# brief file. It closes the "issue already exists, no TODO, wrapper bypassed"
+# gap that leaves decomposition issues unlinked to their parents.
+#
+# Detection precedence (first match wins):
+#   1. Dot-notation in title — `^(t\d+)\.\d+: ` → parent `t\1` (resolved via
+#      gh search in the same repo). Used when a decomposition child was filed
+#      with the t<parent>.<n> convention.
+#   2. Explicit `Parent:` line in body — `Parent: tNNN` / `Parent: GH#NNN` /
+#      `Parent: #NNN`. Bold-markdown (`**Parent:**`) and backtick-quoted refs
+#      are accepted. Used when the filer names the parent directly.
+#   3. `Blocked by: tNNN` where the referenced task carries the `parent-task`
+#      label on GitHub. This is the only case where the parent-task label
+#      gates the detection — the label indicates the blocker is a roadmap
+#      parent, not a peer dependency.
+
+# Resolve a top-level task ID (e.g., t1873) to its GitHub issue number by
+# searching the repo. Matches only titles of the form "tNNN:" or "tNNN " —
+# subtasks like "tNNN.2:" are deliberately excluded so that parent resolution
+# can never return a sibling.
+#
+# Arguments:
+#   $1 - task_id (e.g., t1873)
+#   $2 - repo slug
+# Echo: issue number on stdout, empty if not found
+_resolve_task_id_via_gh_search() {
+	local task_id="$1" repo="$2"
+	[[ -z "$task_id" || -z "$repo" ]] && return 0
+	# Guard against accidental dotted IDs — caller should pass the top-level.
+	[[ "$task_id" == *.* ]] && {
+		task_id="${task_id%%.*}"
+	}
+
+	local matches
+	matches=$(gh search issues "$task_id" --repo "$repo" --state all \
+		--json number,title --limit 10 2>/dev/null || echo "[]")
+
+	local num
+	num=$(printf '%s' "$matches" | jq -r --arg tid "$task_id" \
+		'.[] | select(.title | test("^" + $tid + "([: ]|$)")) | .number' 2>/dev/null | head -1 || echo "")
+	echo "$num"
+	return 0
+}
+
+# Check whether an issue carries the `parent-task` label.
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Returns: 0 if labelled, 1 otherwise
+_issue_has_parent_task_label() {
+	local num="$1" repo="$2"
+	[[ -z "$num" || -z "$repo" ]] && return 1
+
+	local has
+	has=$(gh issue view "$num" --repo "$repo" --json labels \
+		--jq '[.labels[].name] | any(. == "parent-task")' 2>/dev/null || echo "false")
+	[[ "$has" == "true" ]] && return 0
+	return 1
+}
+
+# Detect a parent issue reference from an issue's title and body alone.
+# No TODO.md or brief file is consulted — this is the purely-GH-driven path.
+#
+# Arguments:
+#   $1 - issue title
+#   $2 - issue body
+#   $3 - repo slug
+# Echo: parent issue number on stdout, empty if no parent detected
+_detect_parent_from_gh_state() {
+	local title="$1" body="$2" repo="$3"
+	local parent_num=""
+
+	# Method 1: dot-notation in title — "t1873.2: description" → parent t1873
+	if [[ "$title" =~ ^(t[0-9]+)\.[0-9]+:[[:space:]] ]]; then
+		local dot_parent_tid="${BASH_REMATCH[1]}"
+		parent_num=$(_resolve_task_id_via_gh_search "$dot_parent_tid" "$repo")
+		if [[ -n "$parent_num" ]]; then
+			echo "$parent_num"
+			return 0
+		fi
+	fi
+
+	# Method 2: "Parent:" line in body. Accepts plain ("Parent: tNNN"),
+	# bold-markdown ("**Parent:** `tNNN`"), and either a task ID, a raw
+	# GitHub number ("#NNN"), or the aidevops GH#NNN notation.
+	local parent_ref
+	parent_ref=$(printf '%s\n' "$body" |
+		sed -nE 's/^[[:space:]]*\**Parent:\**[[:space:]]*`?(t[0-9]+|GH#[0-9]+|#[0-9]+)`?.*/\1/p' |
+		head -1 || true)
+	if [[ -n "$parent_ref" ]]; then
+		if [[ "$parent_ref" =~ ^#([0-9]+)$ ]]; then
+			echo "${BASH_REMATCH[1]}"
+			return 0
+		elif [[ "$parent_ref" =~ ^GH#([0-9]+)$ ]]; then
+			echo "${BASH_REMATCH[1]}"
+			return 0
+		elif [[ "$parent_ref" =~ ^(t[0-9]+)$ ]]; then
+			parent_num=$(_resolve_task_id_via_gh_search "${BASH_REMATCH[1]}" "$repo")
+			if [[ -n "$parent_num" ]]; then
+				echo "$parent_num"
+				return 0
+			fi
+		fi
+	fi
+
+	# Method 3: "Blocked by:" line listing task IDs; parent-task label on the
+	# blocker is required. Supports comma-separated multi-blocker lists; the
+	# first parent-tagged blocker wins.
+	local blocker_list
+	blocker_list=$(printf '%s\n' "$body" |
+		sed -nE 's/^[[:space:]]*\**Blocked by:\**[[:space:]]*`?([t0-9.,[:space:]]+)`?.*/\1/p' |
+		head -1 || true)
+	if [[ -n "$blocker_list" ]]; then
+		# Normalise separators so whitespace-tolerant input (comma or space)
+		# parses the same way.
+		local normalised="${blocker_list//,/ }"
+		local blocker_id
+		for blocker_id in $normalised; do
+			blocker_id="${blocker_id// /}"
+			[[ -z "$blocker_id" ]] && continue
+			[[ "$blocker_id" =~ ^t[0-9]+$ ]] || continue
+			local candidate
+			candidate=$(_resolve_task_id_via_gh_search "$blocker_id" "$repo")
+			[[ -z "$candidate" ]] && continue
+			if _issue_has_parent_task_label "$candidate" "$repo"; then
+				echo "$candidate"
+				return 0
+			fi
+		done
+	fi
+
+	return 0
+}
+
+# Link a single child issue as a sub-issue of a detected parent, operating
+# purely on GitHub state (title + body). Idempotent — `_gh_add_sub_issue`
+# suppresses duplicate-relationship errors.
+#
+# Arguments:
+#   $1 - child issue number
+#   $2 - repo slug
+# Returns: 0 on success/skip, 1 on unexpected failure
+# Echoes one of: "LINKED <child>:<parent>", "SKIPPED <child>", "DRY <child>:<parent>"
+_backfill_one_issue() {
+	local num="$1" repo="$2"
+	[[ -z "$num" || -z "$repo" ]] && {
+		echo "SKIPPED $num"
+		return 0
+	}
+
+	local meta
+	meta=$(gh issue view "$num" --repo "$repo" --json title,body 2>/dev/null || echo "{}")
+	local title body
+	title=$(printf '%s' "$meta" | jq -r '.title // ""' 2>/dev/null)
+	body=$(printf '%s' "$meta" | jq -r '.body // ""' 2>/dev/null)
+	if [[ -z "$title" ]]; then
+		echo "SKIPPED $num"
+		return 0
+	fi
+
+	local parent_num
+	parent_num=$(_detect_parent_from_gh_state "$title" "$body" "$repo")
+	if [[ -z "$parent_num" || "$parent_num" == "$num" ]]; then
+		echo "SKIPPED $num"
+		return 0
+	fi
+
+	if [[ "$DRY_RUN" == "true" ]]; then
+		print_info "[DRY-RUN] Would link #$num as sub-issue of #$parent_num"
+		echo "DRY $num:$parent_num"
+		return 0
+	fi
+
+	local child_node parent_node
+	child_node=$(_cached_node_id "$num" "$repo")
+	parent_node=$(_cached_node_id "$parent_num" "$repo")
+	if [[ -z "$child_node" || -z "$parent_node" ]]; then
+		log_verbose "#$num: could not resolve node IDs for $num / $parent_num"
+		echo "SKIPPED $num"
+		return 0
+	fi
+
+	if _gh_add_sub_issue "$parent_node" "$child_node"; then
+		log_verbose "#$num linked as sub-issue of #$parent_num ✓"
+		echo "LINKED $num:$parent_num"
+		return 0
+	fi
+	echo "SKIPPED $num"
+	return 0
+}
+
+# Backfill sub-issue parent-child links for issues in the current repo.
+# Detects parents from title/body only — no TODO.md or brief file required.
+#
+# Usage:
+#   cmd_backfill_sub_issues [--issue N]
+#
+# Without --issue, enumerates open issues in the repo (up to 500) and attempts
+# to link each one to its parent. With --issue, operates on a single issue —
+# this is the entry point used by the t2112 reconciler for one-issue backfill.
+cmd_backfill_sub_issues() {
+	local target_issue=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--issue)
+			target_issue="${2:-}"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	_init_cmd || return 1
+	local repo="$_CMD_REPO"
+
+	local issue_numbers=()
+	if [[ -n "$target_issue" ]]; then
+		issue_numbers=("$target_issue")
+	else
+		local list_json
+		list_json=$(gh issue list --repo "$repo" --state open --limit 500 \
+			--json number 2>/dev/null || echo "[]")
+		while IFS= read -r _num; do
+			[[ -n "$_num" ]] && issue_numbers+=("$_num")
+		done < <(printf '%s' "$list_json" | jq -r '.[].number' 2>/dev/null || true)
+	fi
+
+	local total="${#issue_numbers[@]}"
+	if [[ $total -eq 0 ]]; then
+		print_info "No issues to backfill in $repo"
+		return 0
+	fi
+
+	print_info "Backfilling sub-issue links for $total issue(s) in $repo"
+
+	local linked=0 skipped=0 processed=0
+	local _num result
+	for _num in "${issue_numbers[@]}"; do
+		processed=$((processed + 1))
+		if [[ $((processed % 25)) -eq 0 || $processed -eq $total ]]; then
+			printf "\r  Progress: %d/%d issues..." "$processed" "$total" >&2
+		fi
+		result=$(_backfill_one_issue "$_num" "$repo" | tail -1)
+		case "$result" in
+		LINKED*) linked=$((linked + 1)) ;;
+		DRY*) linked=$((linked + 1)) ;;
+		*) skipped=$((skipped + 1)) ;;
+		esac
+	done
+	[[ $total -gt 25 ]] && printf "\n" >&2
+
+	printf "\n=== Backfill Sub-Issues ===\nLinked: %d | Skipped: %d | Issues processed: %d\n" \
+		"$linked" "$skipped" "$total"
+	return 0
+}
+
 cmd_help() {
 	cat <<'EOF'
 Issue Sync Helper — stateless TODO.md <-> GitHub Issues sync via gh CLI.
 Usage: issue-sync-helper.sh [command] [options]
 Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reopen
-          reconcile | relationships [tNNN] | status | help
+          reconcile | relationships [tNNN] | backfill-sub-issues [--issue N]
+          status | help
 Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close; bypass enrich body-gate)
          --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
 
@@ -1795,6 +2059,15 @@ Relationships (t1889):
                          issue relationships. Without tNNN, processes all tasks
                          that have ref:GH# plus blocked-by:/blocks: or subtask IDs.
                          Use --dry-run to preview. Idempotent (skips existing).
+
+Sub-issue backfill (t2114):
+  backfill-sub-issues [--issue N] — link decomposition children to their
+                         parents using GitHub state alone (title + body). No
+                         TODO.md or brief file required. Detects parents via:
+                         (1) dot-notation title `tNNN.M: ...`, (2) `Parent: ...`
+                         line in body, (3) `Blocked by: tNNN` where the blocker
+                         carries the `parent-task` label. Idempotent; supports
+                         --dry-run.
 
 Note: Bulk push (no task ID) is CI-only by default to prevent duplicate issues.
       Use 'push <task_id>' for single tasks, or --force-push to override.
@@ -1841,6 +2114,13 @@ main() {
 	push) cmd_push "${positional_args[1]:-}" ;; enrich) cmd_enrich "${positional_args[1]:-}" ;;
 	pull) cmd_pull ;; close) cmd_close "${positional_args[1]:-}" ;; reopen) cmd_reopen ;;
 	reconcile) cmd_reconcile ;; relationships) cmd_relationships "${positional_args[1]:-}" ;;
+	backfill-sub-issues)
+		if [[ ${#positional_args[@]} -gt 1 ]]; then
+			cmd_backfill_sub_issues "${positional_args[@]:1}"
+		else
+			cmd_backfill_sub_issues
+		fi
+		;;
 	status) cmd_status ;; help) cmd_help ;;
 	*)
 		print_error "Unknown command: $command"
