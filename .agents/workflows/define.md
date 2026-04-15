@@ -30,10 +30,10 @@ Topic: $ARGUMENTS
 
 Also classify **agent domain** and **model tier** using `reference/task-taxonomy.md`. Include domain tag (e.g., `#seo`) in TODO.md entry and as GitHub label. Omit for code tasks.
 
-**Tier (cascade dispatch):** Default to `tier:simple` for review feedback and single-file fixes — Haiku succeeds when briefs provide exact code blocks; only escalate when judgment is required.
+**Tier (cascade dispatch):** Default to `tier:standard`. Only use `tier:simple` when the brief meets ALL disqualifier checks (see `reference/task-taxonomy.md` "tier:simple Disqualifiers"). The cascade model handles mis-classification, but defaulting too low wastes worker turns on guaranteed failures.
 
-- `tier:simple` — single-file, <100 lines, pattern-following. Brief MUST provide verbatim oldString/newString for every edit.
-- `tier:standard` — multi-file, structural refactoring, >100 lines, approach depends on reading codebase state.
+- `tier:simple` — single-file under 500 lines, <100 lines changed, pattern-following. Brief MUST provide verbatim `oldString`/`newString` for every edit. No judgment, no codebase exploration, no error handling to design.
+- `tier:standard` — bug fixes, refactors, feature implementation, multi-file or large-file edits. **Use when uncertain** — this is the default tier.
 - `tier:thinking` — architecture decisions, novel design, complex multi-system trade-offs, security audits.
 
 If task type is ambiguous, offer numbered options (1–5 matching table) with a recommendation.

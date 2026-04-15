@@ -1355,8 +1355,10 @@ _extract_tier_from_brief() {
 	return 0
 }
 
-# Validate tier:simple briefs have all checklist boxes checked.
-# If any box is unchecked, override to tier:standard and warn.
+# Validate tier:simple briefs have all checklist boxes checked AND contain
+# actual prescriptive content (oldString/newString blocks). Without
+# prescriptive content, Haiku cannot execute the task — it needs exact
+# copy-pasteable replacement blocks, not descriptions of what to change.
 # Arguments:
 #   $1 - brief file path
 #   $2 - selected tier label (e.g., "tier:simple")
@@ -1378,7 +1380,7 @@ _validate_tier_checklist() {
 		return 0
 	fi
 
-	# Count unchecked boxes in the tier checklist section
+	# Gate 1: Count unchecked boxes in the tier checklist section
 	# Pattern: lines between "### Tier checklist" and "**Selected tier:**"
 	local unchecked_count
 	unchecked_count=$(sed -n '/^### Tier checklist/,/^\*\*Selected tier/p' "$brief_path" |
@@ -1386,6 +1388,21 @@ _validate_tier_checklist() {
 
 	if [[ "$unchecked_count" -gt 0 ]]; then
 		echo "[WARN] tier:simple selected but $unchecked_count checklist box(es) unchecked in $brief_path — overriding to tier:standard" >&2
+		printf '%s' "tier:standard"
+		return 0
+	fi
+
+	# Gate 2: Verify the brief contains actual oldString/newString blocks.
+	# tier:simple requires exact, copy-pasteable replacement content — not
+	# descriptions of what to change. Without these markers, the task requires
+	# the worker to read surrounding code and invent the edit, which is
+	# judgment work (tier:standard). Matches both **oldString:** and
+	# ### Edit N: patterns from brief/tier-simple.md.
+	local has_prescriptive_content
+	has_prescriptive_content=$(grep -cE '^\*\*oldString:\*\*|^### Edit [0-9]+:' "$brief_path" || true)
+
+	if [[ "$has_prescriptive_content" -eq 0 ]]; then
+		echo "[WARN] tier:simple selected but brief lacks oldString/newString blocks in $brief_path — overriding to tier:standard (Haiku needs exact replacement content, not descriptions)" >&2
 		printf '%s' "tier:standard"
 		return 0
 	fi

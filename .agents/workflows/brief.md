@@ -45,7 +45,7 @@ Assess every work item against these empirical criteria (from 47-PR research):
 | **Judgment needed** | None — mechanical execution | Error recovery, approach selection | Design decisions, trade-offs |
 | **Examples** | Review feedback, config tweaks, quote fixes, docs additions | Bug fixes, refactors, feature impl | Architecture, security audits |
 
-**Default to `tier:simple` and verify the brief meets it.** Only escalate when the brief genuinely cannot provide exact code.
+**Default to `tier:standard`.** Only downgrade to `tier:simple` when the brief provides exact, copy-pasteable `oldString`/`newString` for every edit, the target file is under 500 lines, and no judgment or codebase exploration is required. See `reference/task-taxonomy.md` "tier:simple Disqualifiers" — if any disqualifier applies, use `tier:standard` or higher.
 
 ## The Mentorship Principle
 
