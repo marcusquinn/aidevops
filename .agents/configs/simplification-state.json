@@ -1754,9 +1754,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "hash": "cbbfdcd4cc2e91dd59b5250ca726f5d8fa50ab11",
-      "at": "2026-04-15T15:27:39Z",
-      "passes": 19,
+      "hash": "745f866b490b147cfd645167825a25e365e023b0",
+      "at": "2026-04-15T18:19:06Z",
+      "passes": 20,
       "pr": 15086
     },
     ".agents/scripts/issue-sync-lib.sh": {
@@ -1790,10 +1790,10 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "90cb0dea8fa49195884bb9426eb0872906fcfff2",
-      "at": "2026-04-15T02:32:29Z",
+      "hash": "4379d9476e81f959b147367c8182509210898641",
+      "at": "2026-04-15T18:19:07Z",
       "pr": 18689,
-      "passes": 13
+      "passes": 14
     },
     ".agents/scripts/schema-validator-helper.sh": {
       "hash": "91041cff94cedcf2b6e9fcaa8373cef9a77608bf",
@@ -5267,15 +5267,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "hash": "d706944f28453b7e0eaac9a987895f2f5bae41cc",
-      "at": "2026-04-15T17:57:45Z",
+      "hash": "206128aa64203677ac6bec8f3141f5c93d8e27bf",
+      "at": "2026-04-15T18:19:31Z",
       "pr": 19029,
-      "passes": 59
+      "passes": 60
     },
     "setup.sh": {
-      "hash": "1d192d707245c0cb5207195258c5ccae94ce95e1",
-      "at": "2026-04-15T17:57:45Z",
-      "passes": 57,
+      "hash": "66b84d0b3e82152a5a23f9edc3e6e32b1a4a9ed5",
+      "at": "2026-04-15T18:19:31Z",
+      "passes": 58,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7343,16 +7343,16 @@
       "passes": 1
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "hash": "f66422b0700d00c485d330e528fedee83190d16f",
-      "at": "2026-04-15T17:57:19Z",
+      "hash": "cdb4aa53f178687550d6ca7504c281b374b23eed",
+      "at": "2026-04-15T18:19:06Z",
       "pr": 18707,
-      "passes": 3
+      "passes": 4
     },
     ".agents/scripts/issue-sync-helper.sh": {
-      "hash": "cf3e6f817fc1c1ee76562238c175acb3972e54c8",
-      "at": "2026-04-15T03:00:31Z",
+      "hash": "d835d786fff07a843ffc5a11bc7c2745399e8fd8",
+      "at": "2026-04-15T18:19:06Z",
       "pr": 18706,
-      "passes": 6
+      "passes": 7
     },
     ".agents/scripts/pulse-fast-fail.sh": {
       "hash": "292f4dfd80d2cb97715a9bda1fe985b5cabf6c80",

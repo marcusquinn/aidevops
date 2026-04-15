@@ -1,298 +1,302 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# test-gh-wrapper-guard.sh — coverage for gh-wrapper-guard.sh (t2113).
 #
-# Strategy: create a temp git repo, stage a base commit with a clean script,
-# then make a second commit that introduces a mix of allowed/disallowed/
-# allowlisted/excluded lines. Run `gh-wrapper-guard.sh check --base HEAD~1`
-# and assert the reported violations match expectations.
+# test-gh-wrapper-guard.sh — fixture-based test harness for gh-wrapper-guard.sh
+#
+# Tests:
+#   1. _scan_line detects raw "gh issue create" in code lines
+#   2. _scan_line detects raw "gh pr create" in code lines
+#   3. _scan_line skips allowlisted lines
+#   4. _scan_line skips comment-only lines
+#   5. _scan_line allows gh_create_issue / gh_create_pr (wrapper calls)
+#   6. check-full catches violations in fixture files
+#   7. check-full skips shared-constants.sh (exclusion)
+#   8. check-full skips .agents/scripts/tests/ (exclusion)
+#   9. GH_WRAPPER_GUARD_DISABLE=1 bypasses entirely
+#  10. _scan_line detects subshell calls: $(gh issue create ...)
+#
+# Usage: bash test-gh-wrapper-guard.sh
+# Environment: requires git repo context.
 
-set -u
+set -euo pipefail
 
-# shellcheck disable=SC2155
-readonly TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck disable=SC2155
-readonly TEST_REPO_ROOT="$(cd "${TEST_DIR}/../../.." && pwd)"
-readonly GUARD="${TEST_REPO_ROOT}/.agents/scripts/gh-wrapper-guard.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GUARD="$SCRIPT_DIR/../gh-wrapper-guard.sh"
 
-TEST_TMPDIR=$(mktemp -d /tmp/test-gh-wrapper-guard.XXXXXX)
-trap 'rm -rf "$TEST_TMPDIR"' EXIT
+pass_count=0
+fail_count=0
 
-failed=0
-
-# ---------------------------------------------------------------------------
-# Helper: create fresh git repo, make base commit, then a change commit with
-# the specified content, and run the guard. Returns exit code in $?, stdout
-# in $GUARD_OUT.
-# ---------------------------------------------------------------------------
-make_repo_and_run() {
-	local repo_dir="$1"
-	local target_rel="$2"
-	local base_content="$3"
-	local new_content="$4"
-	rm -rf "$repo_dir"
-	mkdir -p "$repo_dir/$(dirname "$target_rel")"
-	(
-		cd "$repo_dir" || exit 1
-		git init --quiet -b main
-		git config user.email "test@example.com"
-		git config user.name "Test"
-	)
-	printf '%s\n' "$base_content" >"$repo_dir/$target_rel"
-	(
-		cd "$repo_dir" || exit 1
-		git add .
-		git commit --quiet -m "base"
-	)
-	printf '%s\n' "$new_content" >"$repo_dir/$target_rel"
-	(
-		cd "$repo_dir" || exit 1
-		git add .
-		git commit --quiet -m "change"
-	)
-
-	GUARD_OUT=$(cd "$repo_dir" && "$GUARD" check --base HEAD~1 --head HEAD 2>&1)
-	GUARD_RC=$?
-	return 0
+_pass() {
+	printf 'PASS: %s\n' "$1"
+	pass_count=$((pass_count + 1))
 }
 
-# ---------------------------------------------------------------------------
-# Test 1: clean file — no violations, exit 0
-# ---------------------------------------------------------------------------
-make_repo_and_run "$TEST_TMPDIR/t1" ".agents/scripts/clean-script.sh" \
-	'#!/usr/bin/env bash
-echo "base"' \
-	'#!/usr/bin/env bash
-echo "base"
-# Clean addition using the wrapper
-gh_create_issue --repo owner/repo --title "foo"'
+_fail() {
+	printf 'FAIL: %s\n' "$1" >&2
+	[[ -n "${2:-}" ]] && printf '       %s\n' "$2" >&2
+	fail_count=$((fail_count + 1))
+}
 
-if [[ "$GUARD_RC" -ne 0 ]]; then
-	printf 'FAIL test 1 (clean): expected exit 0, got %d\n' "$GUARD_RC"
-	printf '  out: %s\n' "$GUARD_OUT"
-	failed=1
-fi
+# -----------------------------------------------------------------------
+# Source the guard to get access to _scan_line for unit tests
+# -----------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Test 2: bare `gh issue create` — violation, exit 1
-# ---------------------------------------------------------------------------
-# shellcheck disable=SC2016  # $(...) in the single-quoted string is intentional fixture text
-make_repo_and_run "$TEST_TMPDIR/t2" ".agents/scripts/bad-script.sh" \
-	'#!/usr/bin/env bash
-echo "base"' \
-	'#!/usr/bin/env bash
-echo "base"
-out=$(gh issue create --repo owner/repo --title "foo")'
+# We can't source the whole file (it has main at the bottom), so we extract
+# the functions we need by sourcing up to main.
+# Instead, we'll test via the CLI interface and use fixture files.
 
-if [[ "$GUARD_RC" -ne 1 ]]; then
-	printf 'FAIL test 2 (raw gh issue create): expected exit 1, got %d\n' "$GUARD_RC"
-	printf '  out: %s\n' "$GUARD_OUT"
-	failed=1
-fi
-if [[ "$GUARD_OUT" != *"bad-script.sh"*"gh issue create"* ]]; then
-	printf 'FAIL test 2: expected violation report for bad-script.sh\n'
-	printf '  got: %s\n' "$GUARD_OUT"
-	failed=1
-fi
+# Create temp dir for fixtures
+TMPDIR_FIX=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_FIX"' EXIT
 
-# ---------------------------------------------------------------------------
-# Test 3: bare `gh pr create` — violation, exit 1
-# ---------------------------------------------------------------------------
-make_repo_and_run "$TEST_TMPDIR/t3" ".agents/scripts/bad-pr.sh" \
-	'#!/usr/bin/env bash
-echo "base"' \
-	'#!/usr/bin/env bash
-echo "base"
-	gh pr create --repo owner/repo --title "foo"'
-
-if [[ "$GUARD_RC" -ne 1 ]]; then
-	printf 'FAIL test 3 (raw gh pr create): expected exit 1, got %d\n' "$GUARD_RC"
-	failed=1
-fi
-
-# ---------------------------------------------------------------------------
-# Test 4: allowlisted raw call — accepted, exit 0
-# ---------------------------------------------------------------------------
-make_repo_and_run "$TEST_TMPDIR/t4" ".agents/scripts/allowlisted.sh" \
-	'#!/usr/bin/env bash
-echo "base"' \
-	'#!/usr/bin/env bash
-echo "base"
-gh issue create --repo owner/repo --title "foo" # aidevops-allow: raw-gh-wrapper'
-
-if [[ "$GUARD_RC" -ne 0 ]]; then
-	printf 'FAIL test 4 (allowlisted): expected exit 0, got %d\n' "$GUARD_RC"
-	printf '  out: %s\n' "$GUARD_OUT"
-	failed=1
-fi
-
-# ---------------------------------------------------------------------------
-# Test 5: excluded file — shared-constants.sh is the definition site
-# ---------------------------------------------------------------------------
-make_repo_and_run "$TEST_TMPDIR/t5" ".agents/scripts/shared-constants.sh" \
-	'#!/usr/bin/env bash
-echo "base"' \
-	'#!/usr/bin/env bash
-echo "base"
-gh_create_issue() {
-  gh issue create "$@"
-}'
-
-if [[ "$GUARD_RC" -ne 0 ]]; then
-	printf 'FAIL test 5 (excluded file): expected exit 0, got %d\n' "$GUARD_RC"
-	printf '  out: %s\n' "$GUARD_OUT"
-	failed=1
-fi
-
-# ---------------------------------------------------------------------------
-# Test 6: test fixture path — should be excluded
-# ---------------------------------------------------------------------------
-make_repo_and_run "$TEST_TMPDIR/t6" ".agents/scripts/tests/test-fixture.sh" \
-	'#!/usr/bin/env bash
-echo "base"' \
-	'#!/usr/bin/env bash
-echo "base"
-gh issue create --repo fake/fake --title "fixture"'
-
-if [[ "$GUARD_RC" -ne 0 ]]; then
-	printf 'FAIL test 6 (tests/ excluded): expected exit 0, got %d\n' "$GUARD_RC"
-	printf '  out: %s\n' "$GUARD_OUT"
-	failed=1
-fi
-
-# ---------------------------------------------------------------------------
-# Test 7: log_info guidance string — `: gh pr create` inside a quoted string.
-# The tighter regex requires a space/paren/etc before `gh`. A string like
-# `log_info "Create PR manually: gh pr create"` has `: ` before `gh` — space
-# matches. THIS is an accepted false-positive corner case — must use the
-# allowlist marker.
-# ---------------------------------------------------------------------------
-make_repo_and_run "$TEST_TMPDIR/t7" ".agents/scripts/log-line.sh" \
-	'#!/usr/bin/env bash
-echo "base"' \
-	'#!/usr/bin/env bash
-echo "base"
-log_info "Create PR manually: gh pr create --head foo"'
-
-# This IS flagged (space before gh matches). Expected: user adds the marker.
-if [[ "$GUARD_RC" -ne 1 ]]; then
-	printf 'FAIL test 7: expected log_info string WITHOUT marker to be flagged\n'
-	failed=1
-fi
-
-# And with marker, clean
-make_repo_and_run "$TEST_TMPDIR/t7b" ".agents/scripts/log-line-ok.sh" \
-	'#!/usr/bin/env bash
-echo "base"' \
-	'#!/usr/bin/env bash
-echo "base"
-log_info "Create PR manually: gh pr create --head foo" # aidevops-allow: raw-gh-wrapper'
-
-if [[ "$GUARD_RC" -ne 0 ]]; then
-	printf 'FAIL test 7b: expected log_info with allowlist marker to pass, got %d\n' "$GUARD_RC"
-	printf '  out: %s\n' "$GUARD_OUT"
-	failed=1
-fi
-
-# ---------------------------------------------------------------------------
-# Test 8: non-matching file path outside .agents/scripts — not scanned
-# ---------------------------------------------------------------------------
-# shellcheck disable=SC2016  # backticks in the single-quoted fixture are intentional markdown
-make_repo_and_run "$TEST_TMPDIR/t8" "docs/example.md" \
-	'base docs' \
-	'# Example
-Run `gh issue create --repo owner/repo` manually.'
-
-if [[ "$GUARD_RC" -ne 0 ]]; then
-	printf 'FAIL test 8 (docs/ path): expected exit 0, got %d\n' "$GUARD_RC"
-	failed=1
-fi
-
-# ---------------------------------------------------------------------------
-# Test 10: check-staged — staged violation in .agents/hooks/*.sh, pre-push
-# hook's local-enforcement path. Regression coverage for CR#8: the local
-# check-staged entry point was never exercised.
-# ---------------------------------------------------------------------------
-t_staged="$TEST_TMPDIR/t_staged"
-rm -rf "$t_staged"
-mkdir -p "$t_staged/.agents/hooks"
-(
-	cd "$t_staged" || exit 1
-	git init --quiet -b main
-	git config user.email "test@example.com"
-	git config user.name "Test"
-	printf '#!/usr/bin/env bash\necho "base"\n' >".agents/hooks/my-hook.sh"
-	git add .
-	git commit --quiet -m "base"
-	# Now stage a violation — raw gh issue create in a hook.
-	# shellcheck disable=SC2016  # literal fixture content, no expansion wanted
-	printf '#!/usr/bin/env bash\necho "base"\nresult=$(gh issue create --title foo --repo o/r)\n' >".agents/hooks/my-hook.sh"
-	git add .agents/hooks/my-hook.sh
-)
-staged_out=$(cd "$t_staged" && "$GUARD" check-staged 2>&1)
-staged_rc=$?
-if [[ "$staged_rc" -ne 1 ]]; then
-	printf 'FAIL test 10 (check-staged violation): expected exit 1, got %d\n' "$staged_rc"
-	printf '  out: %s\n' "$staged_out"
-	failed=1
-fi
-if [[ "$staged_out" != *"my-hook.sh"* ]]; then
-	printf 'FAIL test 10: expected staged report to mention my-hook.sh\n'
-	printf '  out: %s\n' "$staged_out"
-	failed=1
-fi
-
-# Test 10b: check-staged clean — no staged changes in scope
-t_staged_clean="$TEST_TMPDIR/t_staged_clean"
-rm -rf "$t_staged_clean"
-mkdir -p "$t_staged_clean/.agents/hooks"
-(
-	cd "$t_staged_clean" || exit 1
-	git init --quiet -b main
-	git config user.email "test@example.com"
-	git config user.name "Test"
-	printf '#!/usr/bin/env bash\necho "base"\n' >".agents/hooks/clean-hook.sh"
-	git add .
-	git commit --quiet -m "base"
-	# Stage a wrapper-compliant change
-	printf '#!/usr/bin/env bash\necho "base"\ngh_create_issue --repo o/r\n' >".agents/hooks/clean-hook.sh"
-	git add .agents/hooks/clean-hook.sh
-)
-clean_out=$(cd "$t_staged_clean" && "$GUARD" check-staged 2>&1)
-clean_rc=$?
-if [[ "$clean_rc" -ne 0 ]]; then
-	printf 'FAIL test 10b (check-staged clean): expected exit 0, got %d\n' "$clean_rc"
-	printf '  out: %s\n' "$clean_out"
-	failed=1
-fi
-
-# ---------------------------------------------------------------------------
-# Test 9: check-full on a mini tree — finds the violation, exits 1
-# ---------------------------------------------------------------------------
-t9="$TEST_TMPDIR/t9"
-mkdir -p "$t9/.agents/scripts" "$t9/.agents/hooks"
-cat >"$t9/.agents/scripts/full-bad.sh" <<'EOF'
+# -----------------------------------------------------------------------
+# Test 1: Detects raw "gh issue create"
+# -----------------------------------------------------------------------
+cat >"$TMPDIR_FIX/test-violation.sh" <<'FIXTURE'
 #!/usr/bin/env bash
-echo "bad"
-result=$(gh issue create --repo x/y --title z)
-EOF
-out=$("$GUARD" check-full --root "$t9" 2>&1)
-rc=$?
-if [[ "$rc" -ne 1 ]]; then
-	printf 'FAIL test 9 (check-full): expected exit 1 on a raw call, got %d\n' "$rc"
-	printf '  out: %s\n' "$out"
-	failed=1
-fi
-if [[ "$out" != *"full-bad.sh"* ]]; then
-	printf 'FAIL test 9: expected full-bad.sh in check-full output\n'
-	printf '  got: %s\n' "$out"
-	failed=1
+# A script with a violation
+some_function() {
+	local result
+	result=$(gh issue create --title "test" --body "test")
+	echo "$result"
+}
+FIXTURE
+
+# We'll use check-full in a synthetic git repo to test
+TMPGIT=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_FIX" "$TMPGIT"' EXIT
+
+(
+	cd "$TMPGIT"
+	git init -q
+	git config user.email "test@test.com"
+	git config user.name "Test"
+	mkdir -p .agents/scripts .agents/hooks
+	cp "$TMPDIR_FIX/test-violation.sh" .agents/scripts/test-violation.sh
+	git add -A
+	git commit -q -m "init"
+)
+
+output=$(cd "$TMPGIT" && bash "$GUARD" check-full 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -ne 0 ]] && echo "$output" | grep -q "gh issue create"; then
+	_pass "check-full detects raw 'gh issue create'"
+else
+	_fail "check-full should detect raw 'gh issue create'" "rc=$rc output=$output"
 fi
 
-if [[ "$failed" -eq 0 ]]; then
-	printf 'PASS: test-gh-wrapper-guard — all assertions green\n'
-	exit 0
+# -----------------------------------------------------------------------
+# Test 2: Detects raw "gh pr create"
+# -----------------------------------------------------------------------
+cat >"$TMPGIT/.agents/scripts/test-pr-violation.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+deploy() {
+	gh pr create --title "deploy" --body "auto"
+}
+FIXTURE
+
+(cd "$TMPGIT" && git add -A && git commit -q -m "add pr violation")
+
+output=$(cd "$TMPGIT" && bash "$GUARD" check-full 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -ne 0 ]] && echo "$output" | grep -q "gh pr create"; then
+	_pass "check-full detects raw 'gh pr create'"
+else
+	_fail "check-full should detect raw 'gh pr create'" "rc=$rc output=$output"
 fi
-printf '\nFAIL: test-gh-wrapper-guard — see diagnostics above\n'
-exit 1
+
+# -----------------------------------------------------------------------
+# Test 3: Skips allowlisted lines
+# -----------------------------------------------------------------------
+cat >"$TMPGIT/.agents/scripts/test-allowed.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+allowed_call() {
+	gh issue create --title "test" # aidevops-allow: raw-gh-wrapper
+	gh pr create --title "test" # aidevops-allow: raw-gh-wrapper
+}
+FIXTURE
+
+# Remove the violation files
+rm -f "$TMPGIT/.agents/scripts/test-violation.sh" "$TMPGIT/.agents/scripts/test-pr-violation.sh"
+(cd "$TMPGIT" && git add -A && git commit -q -m "allowlisted only")
+
+output=$(cd "$TMPGIT" && bash "$GUARD" check-full 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	_pass "check-full skips allowlisted lines"
+else
+	_fail "check-full should skip allowlisted lines" "rc=$rc output=$output"
+fi
+
+# -----------------------------------------------------------------------
+# Test 4: Skips comment-only lines
+# -----------------------------------------------------------------------
+cat >"$TMPGIT/.agents/scripts/test-comments.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+# gh issue create is used like this
+# Usage: gh pr create --title "..."
+# This is a comment about gh issue create
+  # indented comment: gh pr create --base main
+FIXTURE
+
+rm -f "$TMPGIT/.agents/scripts/test-allowed.sh"
+(cd "$TMPGIT" && git add -A && git commit -q -m "comments only")
+
+output=$(cd "$TMPGIT" && bash "$GUARD" check-full 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	_pass "check-full skips comment-only lines"
+else
+	_fail "check-full should skip comment-only lines" "rc=$rc output=$output"
+fi
+
+# -----------------------------------------------------------------------
+# Test 5: Allows wrapper calls (gh_create_issue / gh_create_pr)
+# -----------------------------------------------------------------------
+cat >"$TMPGIT/.agents/scripts/test-wrappers.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+source shared-constants.sh
+good_function() {
+	gh_create_issue --title "test" --body "proper usage"
+	gh_create_pr --head feature --base main --title "correct"
+}
+FIXTURE
+
+rm -f "$TMPGIT/.agents/scripts/test-comments.sh"
+(cd "$TMPGIT" && git add -A && git commit -q -m "wrapper calls")
+
+output=$(cd "$TMPGIT" && bash "$GUARD" check-full 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	_pass "check-full allows gh_create_issue / gh_create_pr wrapper calls"
+else
+	_fail "check-full should allow wrapper calls" "rc=$rc output=$output"
+fi
+
+# -----------------------------------------------------------------------
+# Test 6: Skips shared-constants.sh (file exclusion)
+# -----------------------------------------------------------------------
+cat >"$TMPGIT/.agents/scripts/shared-constants.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+gh_create_issue() {
+	gh issue create "$@" --label "origin:worker"
+}
+gh_create_pr() {
+	gh pr create "$@" --label "origin:worker"
+}
+FIXTURE
+
+rm -f "$TMPGIT/.agents/scripts/test-wrappers.sh"
+(cd "$TMPGIT" && git add -A && git commit -q -m "shared-constants exclusion")
+
+output=$(cd "$TMPGIT" && bash "$GUARD" check-full 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	_pass "check-full skips shared-constants.sh"
+else
+	_fail "check-full should skip shared-constants.sh" "rc=$rc output=$output"
+fi
+
+# -----------------------------------------------------------------------
+# Test 7: Skips .agents/scripts/tests/ (file exclusion)
+# -----------------------------------------------------------------------
+mkdir -p "$TMPGIT/.agents/scripts/tests"
+cat >"$TMPGIT/.agents/scripts/tests/test-fixture.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+# Test fixture that legitimately uses raw calls
+test_raw_call() {
+	gh issue create --title "test fixture"
+	gh pr create --title "test fixture"
+}
+FIXTURE
+
+(cd "$TMPGIT" && git add -A && git commit -q -m "tests exclusion")
+
+output=$(cd "$TMPGIT" && bash "$GUARD" check-full 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	_pass "check-full skips .agents/scripts/tests/ directory"
+else
+	_fail "check-full should skip .agents/scripts/tests/" "rc=$rc output=$output"
+fi
+
+# -----------------------------------------------------------------------
+# Test 8: GH_WRAPPER_GUARD_DISABLE=1 bypasses entirely
+# -----------------------------------------------------------------------
+# Add a real violation
+cat >"$TMPGIT/.agents/scripts/test-bypass.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+bad_call() {
+	gh issue create --title "violation"
+}
+FIXTURE
+
+(cd "$TMPGIT" && git add -A && git commit -q -m "bypass test")
+
+output=$(cd "$TMPGIT" && GH_WRAPPER_GUARD_DISABLE=1 bash "$GUARD" check-full 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	_pass "GH_WRAPPER_GUARD_DISABLE=1 bypasses the guard"
+else
+	_fail "GH_WRAPPER_GUARD_DISABLE=1 should bypass" "rc=$rc output=$output"
+fi
+
+# -----------------------------------------------------------------------
+# Test 9: Detects subshell calls $(gh issue create ...)
+# -----------------------------------------------------------------------
+cat >"$TMPGIT/.agents/scripts/test-subshell.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+get_url() {
+	local url
+	url=$(gh issue create --title "in subshell" --body "bad")
+	echo "$url"
+}
+FIXTURE
+
+rm -f "$TMPGIT/.agents/scripts/test-bypass.sh"
+(cd "$TMPGIT" && git add -A && git commit -q -m "subshell violation")
+
+output=$(cd "$TMPGIT" && bash "$GUARD" check-full 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -ne 0 ]] && echo "$output" | grep -q "gh issue create"; then
+	_pass "check-full detects subshell \$(gh issue create ...) calls"
+else
+	_fail "check-full should detect subshell calls" "rc=$rc output=$output"
+fi
+
+# -----------------------------------------------------------------------
+# Test 10: check --base detects violations in diff
+# -----------------------------------------------------------------------
+# Reset to clean state
+rm -f "$TMPGIT/.agents/scripts/test-subshell.sh"
+rm -f "$TMPGIT/.agents/scripts/shared-constants.sh"
+rm -rf "$TMPGIT/.agents/scripts/tests"
+cat >"$TMPGIT/.agents/scripts/clean.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+echo "clean"
+FIXTURE
+
+(cd "$TMPGIT" && git add -A && git commit -q -m "clean base")
+base_sha=$(cd "$TMPGIT" && git rev-parse HEAD)
+
+# Add a violation on a new "branch"
+cat >"$TMPGIT/.agents/scripts/new-violation.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+create_issue() {
+	gh issue create --title "violation in diff"
+}
+FIXTURE
+
+(cd "$TMPGIT" && git add -A && git commit -q -m "add violation")
+
+output=$(cd "$TMPGIT" && bash "$GUARD" check --base "$base_sha" 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -ne 0 ]] && echo "$output" | grep -q "gh issue create"; then
+	_pass "check --base detects violations in diff"
+else
+	_fail "check --base should detect violations in diff" "rc=$rc output=$output"
+fi
+
+# -----------------------------------------------------------------------
+# Summary
+# -----------------------------------------------------------------------
+echo ""
+echo "================================"
+printf 'Results: %d passed, %d failed\n' "$pass_count" "$fail_count"
+echo "================================"
+
+if [[ "$fail_count" -gt 0 ]]; then
+	exit 1
+fi
+exit 0

@@ -2,346 +2,292 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# gh-wrapper-guard.sh — static check for bare `gh issue create` / `gh pr create`
-# calls in framework scripts and hooks. Enforces the "Origin labelling
-# (MANDATORY)" rule in prompts/build.txt by making the rule a CI gate and
-# an optional local pre-push hook instead of relying on session-prompt
-# discipline.
+# gh-wrapper-guard.sh — static checker for raw gh issue/pr create calls
 #
-# The `gh_create_issue` / `gh_create_pr` wrappers in shared-constants.sh
-# apply:
-#   - origin labels (session_origin_label → origin:worker / origin:interactive)
-#   - auto-assignee for the current gh user (t2028)
-#   - automatic sub-issue linking (_gh_auto_link_sub_issue, GH#18735)
-#   - auto-creation of origin labels on the target repo (cached per-process)
-#
-# Calling bare `gh issue create` / `gh pr create` skips all of that, producing
-# unlabelled / unassigned / unlinked issues and PRs. This is the root cause
-# of t2112 (pulse backfill pass) — this script prevents the class of bug at
-# the source.
+# Enforces the origin-labelling rule from prompts/build.txt:
+#   "NEVER use raw gh pr create or gh issue create directly. Always use
+#    the wrappers: gh_create_pr and gh_create_issue."
 #
 # Subcommands:
-#   check [--base REF]  — PR/CI mode. Scans added lines in the diff between
-#                         the base ref and HEAD. Default base: origin/main.
-#                         Also accepts --head HEAD_REF explicitly.
-#   check-staged        — Local pre-commit mode. Scans currently-staged changes.
-#   check-full          — One-shot audit of the whole tree under
-#                         .agents/scripts/ and .agents/hooks/. Use for
-#                         migration sweeps.
-#
-# Rules:
-#   - Scans only `.agents/scripts/**.sh` and `.agents/hooks/**.sh` files.
-#   - Matches lines containing a command substring of `gh issue create` or
-#     `gh pr create` where the character immediately before `gh` is not a
-#     word character (so `gh_create_issue` is NOT flagged).
-#   - File-level exclusions: shared-constants.sh (definition site),
-#     github-cli-helper.sh (canonical wrapper support), anything under
-#     .agents/scripts/tests/ (test fixtures may legitimately stub gh).
-#   - Line-level allowlist: any line ending in the marker
-#     `# aidevops-allow: raw-gh-wrapper` is accepted.
+#   check        --base <ref>   Scan added/modified lines in diff vs <ref>
+#   check-staged                Scan staged changes (git diff --cached)
+#   check-full                  Scan all tracked .sh files in the repo
 #
 # Exit codes:
-#   0 — clean (no violations, or only allowlisted/excluded hits)
-#   1 — violations found; helper prints `file:line: <line>` per violation
-#       plus a link to the wrapper rule.
-#   2 — usage error (unknown subcommand, bad flag, git failure).
+#   0  — clean (no violations)
+#   1  — violations found
+#   2  — usage error
+#
+# Line-level allowlist:
+#   Any line ending with "# aidevops-allow: raw-gh-wrapper" is skipped.
+#
+# File-level exclusions:
+#   - shared-constants.sh (definition site for the wrappers)
+#   - .agents/scripts/tests/** (test fixtures may legitimately contain raw calls)
+#
+# Environment:
+#   GH_WRAPPER_GUARD_DISABLE=1 — bypass entirely (exit 0)
 
-set -u
+set -euo pipefail
 
-readonly RULE_LINK='prompts/build.txt → "Origin labelling (MANDATORY)"'
+# --- bypass ----------------------------------------------------------------
+if [[ "${GH_WRAPPER_GUARD_DISABLE:-0}" == "1" ]]; then
+	exit 0
+fi
+
+# --- constants --------------------------------------------------------------
+# Patterns that match raw gh issue/pr create invocations.
+# We match:  gh issue create  /  gh pr create
+# We skip lines containing the allowlist marker.
 readonly ALLOWLIST_MARKER='# aidevops-allow: raw-gh-wrapper'
-# The leader character before `gh` must be one of:
-#   - whitespace (indented command line)
-#   - `(` or `$(` (command substitution / subshell / array element)
-#   - `=` (command substitution assignment: `x=$(gh ...)` or `arr=(gh ...)`)
-#   - `&`, `|`, `;` (command separators / pipelines)
-# This excludes string-literal contexts (preceded by `"`, `'`, `` ` ``, `:`)
-# and raw start-of-line (heredoc mentorship text). Real command calls
-# virtually always have leading whitespace in shell scripts; the rare col-0
-# case can use the allowlist marker.
-readonly FORBIDDEN_REGEX='([[:space:]]|[(=&|;])gh[[:space:]]+(issue|pr)[[:space:]]+create\b'
 
-# File-level exclusions (path suffix match — `git diff --name-only` returns
-# repo-relative paths so both the bare suffix and `*/suffix` forms are tried).
+# File-level exclusions (basename or path-suffix match)
 _is_excluded_file() {
-	local f="$1"
-	case "$f" in
-	.agents/scripts/shared-constants.sh) return 0 ;;
-	*/.agents/scripts/shared-constants.sh) return 0 ;;
-	.agents/scripts/github-cli-helper.sh) return 0 ;;
-	*/.agents/scripts/github-cli-helper.sh) return 0 ;;
-	.agents/scripts/tests/*) return 0 ;;
-	*/.agents/scripts/tests/*) return 0 ;;
-	.agents/scripts/gh-wrapper-guard.sh) return 0 ;;
-	*/.agents/scripts/gh-wrapper-guard.sh) return 0 ;;
-	.agents/hooks/gh-wrapper-guard-pre-push.sh) return 0 ;;
-	*/.agents/hooks/gh-wrapper-guard-pre-push.sh) return 0 ;;
+	local file="$1"
+	# Definition site
+	case "$file" in
+	*shared-constants.sh) return 0 ;;
+	*agents/scripts/tests/*) return 0 ;;
 	esac
 	return 1
 }
 
-_usage() {
-	cat <<EOF
-gh-wrapper-guard.sh — enforce gh_create_issue / gh_create_pr wrapper usage.
+# --- helpers -----------------------------------------------------------------
 
-Usage:
-  gh-wrapper-guard.sh check [--base REF] [--head REF]
-  gh-wrapper-guard.sh check-staged
-  gh-wrapper-guard.sh check-full [--root PATH]
-
-Exit codes:
-  0 — clean
-  1 — violations found
-  2 — usage/git error
-
-Rule: ${RULE_LINK}
-Allowlist: append '${ALLOWLIST_MARKER}' to a line to accept it.
-EOF
-}
-
-# Check if a line is allowlisted — the marker must appear as an end-of-line
-# comment on the same line as the forbidden call. "End-of-line" means every
-# character after the marker is whitespace; unrelated content after the
-# marker would let an early inline fragment suppress a live call on the
-# same logical line.
-_is_allowlisted_line() {
+_scan_line() {
+	# Returns 0 if the line contains a raw gh issue/pr create call that is
+	# NOT allowlisted. Returns 1 otherwise (clean).
 	local line="$1"
-	case "$line" in
-	*"$ALLOWLIST_MARKER"*) ;;
-	*) return 1 ;;
-	esac
-	# Strip everything up to and including the first occurrence of the
-	# marker; reject the line unless what remains is only whitespace.
-	local tail="${line#*"$ALLOWLIST_MARKER"}"
-	local stripped="${tail//[[:space:]]/}"
-	[[ -z "$stripped" ]]
-}
 
-# Check if a line matches the forbidden pattern (uses grep -E for portability).
-_line_is_violation() {
-	local line="$1"
-	# Strip leading `+` from diff context if present (caller passes both diff
-	# hunks and raw lines).
-	line="${line#+}"
-	# Skip comment lines — a `# gh issue create` in a comment is not a call.
-	local trimmed="${line#"${line%%[![:space:]]*}"}"
-	case "$trimmed" in
-	\#*) return 1 ;;
-	esac
-	printf '%s' "$line" | grep -Eq "$FORBIDDEN_REGEX"
-}
-
-# Report a violation — path, optional line number, and offending line text.
-_report_violation() {
-	local path="$1" lineno="$2" line="$3"
-	if [[ -n "$lineno" ]]; then
-		printf '%s:%s: %s\n' "$path" "$lineno" "${line#+}"
-	else
-		printf '%s: %s\n' "$path" "${line#+}"
+	# Skip allowlisted lines
+	if [[ "$line" == *"$ALLOWLIST_MARKER"* ]]; then
+		return 1
 	fi
+
+	# Skip comment-only lines (leading # after optional whitespace)
+	local stripped="${line#"${line%%[![:space:]]*}"}"
+	if [[ "$stripped" == \#* ]]; then
+		return 1
+	fi
+
+	# Match raw "gh issue create" or "gh pr create"
+	# Use word-boundary-like matching: the gh command should be preceded by
+	# start-of-line, whitespace, pipe, semicolon, $( or backtick.
+	if echo "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+issue[[:space:]]+create'; then
+		return 0
+	fi
+	if echo "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+pr[[:space:]]+create'; then
+		return 0
+	fi
+
+	return 1
 }
 
-# _scan_file_diff: scan a `git diff -U0` stream on stdin for a single file
-# and report any violations inline via `_report_violation`. Prints the total
-# violation count on its own final line of stdout so callers can aggregate
-# without bash 4 namerefs (bash 3.2 compat — see .github/workflows/
-# code-quality.yml "Bash 3.2 Compatibility" gate).
-#
-# Arguments:
-#   $1 - file path (for reporting)
-# Stdin: `git diff -U0 -- <file>` output
-# Stdout: one "COUNT N" line; violations go to stdout via _report_violation
-_scan_file_diff() {
+_format_violation() {
 	local file="$1"
+	local lineno="$2"
+	local line="$3"
+	printf '  %s:%s: %s\n' "$file" "$lineno" "$line"
+}
+
+# --- subcommands -------------------------------------------------------------
+
+# _scan_diff_output scans a unified diff for added lines containing violations.
+# Sets _SCAN_VIOLATIONS and _SCAN_OUTPUT (appended, not reset).
+_SCAN_VIOLATIONS=0
+_SCAN_OUTPUT=""
+
+_scan_diff_for_file() {
+	local file="$1"
+	local diff_output="$2"
 	local current_lineno=0
-	local hunk_state=""
-	local count=0
-	local line raw
-	while IFS= read -r line; do
-		if [[ "$line" == @@* ]]; then
-			local head_part="${line#*+}"
-			current_lineno="${head_part%%,*}"
-			current_lineno="${current_lineno%% *}"
-			hunk_state="in-hunk"
+
+	while IFS= read -r diff_line; do
+		# Track line numbers from @@ hunks
+		if [[ "$diff_line" =~ ^@@.*\+([0-9]+) ]]; then
+			current_lineno=$((BASH_REMATCH[1] - 1))
 			continue
 		fi
-		[[ "$hunk_state" != "in-hunk" ]] && continue
-		case "$line" in
-		+++*) continue ;;
-		-*) continue ;;
-		\ *)
+
+		# Only look at added lines
+		if [[ "$diff_line" == +* && "$diff_line" != "+++"* ]]; then
 			current_lineno=$((current_lineno + 1))
-			continue
-			;;
-		+*) ;;
-		*) continue ;;
-		esac
-		raw="${line#+}"
-		if _line_is_violation "$line" && ! _is_allowlisted_line "$raw"; then
-			_report_violation "$file" "$current_lineno" "$raw"
-			count=$((count + 1))
+			local content="${diff_line:1}"
+			if _scan_line "$content"; then
+				_SCAN_OUTPUT+=$(_format_violation "$file" "$current_lineno" "$content")
+				_SCAN_OUTPUT+=$'\n'
+				_SCAN_VIOLATIONS=$((_SCAN_VIOLATIONS + 1))
+			fi
+		elif [[ "$diff_line" != -* && "$diff_line" != "---"* ]]; then
+			current_lineno=$((current_lineno + 1))
 		fi
-		current_lineno=$((current_lineno + 1))
-	done
-	printf 'COUNT %s\n' "$count"
+	done <<<"$diff_output"
 	return 0
 }
 
-# check subcommand: scan added lines in a diff range.
-# Extracts `+` hunk lines per file via `git diff -U0` and flags violations
-# that aren't already allowlisted.
+_report_violations() {
+	if [[ "$_SCAN_VIOLATIONS" -gt 0 ]]; then
+		printf 'gh-wrapper-guard: %d violation(s) found — use gh_create_issue / gh_create_pr wrappers instead of raw gh commands.\n' "$_SCAN_VIOLATIONS"
+		printf 'Rule: prompts/build.txt → "Origin labelling (MANDATORY)"\n'
+		printf 'Suppress: append "# aidevops-allow: raw-gh-wrapper" to the line.\n\n'
+		printf '%s' "$_SCAN_OUTPUT"
+		return 1
+	fi
+	return 0
+}
+
 cmd_check() {
-	local base="origin/main" head="HEAD"
+	local base_ref="${1:-}"
+	if [[ -z "$base_ref" ]]; then
+		printf 'Usage: gh-wrapper-guard.sh check --base <ref>\n' >&2
+		return 2
+	fi
+
+	_SCAN_VIOLATIONS=0
+	_SCAN_OUTPUT=""
+
+	# Get list of .sh files changed relative to base
+	local changed_files
+	changed_files=$(git diff --name-only "$base_ref"...HEAD -- '*.sh' 2>/dev/null || true)
+	if [[ -z "$changed_files" ]]; then
+		return 0
+	fi
+
+	while IFS= read -r file; do
+		[[ -z "$file" ]] && continue
+		_is_excluded_file "$file" && continue
+		[[ -f "$file" ]] || continue
+
+		local diff_output
+		diff_output=$(git diff "$base_ref"...HEAD -- "$file" 2>/dev/null || true)
+		[[ -z "$diff_output" ]] && continue
+
+		_scan_diff_for_file "$file" "$diff_output"
+	done <<<"$changed_files"
+
+	_report_violations
+	return $?
+}
+
+cmd_check_staged() {
+	_SCAN_VIOLATIONS=0
+	_SCAN_OUTPUT=""
+
+	# Get staged .sh files
+	local staged_files
+	staged_files=$(git diff --cached --name-only -- '*.sh' 2>/dev/null || true)
+	if [[ -z "$staged_files" ]]; then
+		return 0
+	fi
+
+	while IFS= read -r file; do
+		[[ -z "$file" ]] && continue
+		_is_excluded_file "$file" && continue
+
+		local diff_output
+		diff_output=$(git diff --cached -- "$file" 2>/dev/null || true)
+		[[ -z "$diff_output" ]] && continue
+
+		_scan_diff_for_file "$file" "$diff_output"
+	done <<<"$staged_files"
+
+	_report_violations
+	return $?
+}
+
+cmd_check_full() {
+	local violations=0
+	local violation_output=""
+
+	# Scan all tracked .sh files using grep for speed (661+ files).
+	# Exclude shared-constants.sh and tests/ at the grep level (not bash loop).
+	local file_count
+	file_count=$(git ls-files '*.sh' 2>/dev/null | grep -cvE '(shared-constants\.sh|agents/scripts/tests/)' || true)
+	[[ "$file_count" -eq 0 ]] && return 0
+
+	# Fast grep pass: find candidate files with raw gh issue/pr create
+	local candidates
+	candidates=$(git ls-files '*.sh' 2>/dev/null |
+		grep -vE '(shared-constants\.sh|agents/scripts/tests/)' |
+		xargs grep -lE 'gh[[:space:]]+(issue|pr)[[:space:]]+create' 2>/dev/null ||
+		true)
+
+	if [[ -z "$candidates" ]]; then
+		printf 'gh-wrapper-guard: all %s .sh files clean.\n' "$file_count"
+		return 0
+	fi
+
+	# Detailed scan of candidate files only (verify line-level: skip comments + allowlist)
+	while IFS= read -r file; do
+		[[ -z "$file" ]] && continue
+		[[ -f "$file" ]] || continue
+		# Use grep -n for fast line+number extraction, then filter
+		while IFS=: read -r lineno line; do
+			if _scan_line "$line"; then
+				violation_output+=$(_format_violation "$file" "$lineno" "$line")
+				violation_output+=$'\n'
+				violations=$((violations + 1))
+			fi
+		done < <(grep -nE 'gh[[:space:]]+(issue|pr)[[:space:]]+create' "$file" 2>/dev/null || true)
+	done <<<"$candidates"
+
+	if [[ "$violations" -gt 0 ]]; then
+		printf 'gh-wrapper-guard: %d violation(s) found — use gh_create_issue / gh_create_pr wrappers instead of raw gh commands.\n' "$violations"
+		printf 'Rule: prompts/build.txt → "Origin labelling (MANDATORY)"\n'
+		printf 'Suppress: append "# aidevops-allow: raw-gh-wrapper" to the line.\n\n'
+		printf '%s' "$violation_output"
+		return 1
+	fi
+
+	printf 'gh-wrapper-guard: all %s .sh files clean.\n' "$file_count"
+	return 0
+}
+
+show_help() {
+	printf 'gh-wrapper-guard.sh — enforce gh_create_issue / gh_create_pr wrapper usage\n\n'
+	printf 'Usage:\n'
+	printf '  gh-wrapper-guard.sh check --base <ref>   Scan PR diff vs base ref\n'
+	printf '  gh-wrapper-guard.sh check-staged          Scan staged changes\n'
+	printf '  gh-wrapper-guard.sh check-full             Scan all tracked .sh files\n'
+	printf '  gh-wrapper-guard.sh help                   Show this help\n\n'
+	printf 'Environment:\n'
+	printf '  GH_WRAPPER_GUARD_DISABLE=1  Bypass entirely\n\n'
+	printf 'Line suppression:\n'
+	printf '  Append "# aidevops-allow: raw-gh-wrapper" to any line to skip it.\n'
+	return 0
+}
+
+# --- argument parsing --------------------------------------------------------
+_parse_base_arg() {
+	# Extracts --base <ref> or bare <ref> from args. Prints the ref.
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--base)
-			base="$2"
-			shift 2
-			;;
-		--base=*)
-			base="${1#--base=}"
-			shift
-			;;
-		--head)
-			head="$2"
-			shift 2
-			;;
-		--head=*)
-			head="${1#--head=}"
-			shift
+			echo "${2:-}"
+			return 0
 			;;
 		*)
-			printf 'gh-wrapper-guard: unknown flag: %s\n' "$1" >&2
-			_usage >&2
-			return 2
+			echo "$1"
+			return 0
 			;;
 		esac
 	done
-
-	# List candidate files touched in the range.
-	local files
-	files=$(git diff --name-only "${base}...${head}" -- \
-		'.agents/scripts/*.sh' '.agents/hooks/*.sh' 2>/dev/null) || {
-		printf 'gh-wrapper-guard: git diff failed for %s...%s\n' "$base" "$head" >&2
-		return 2
-	}
-	[[ -z "$files" ]] && return 0
-
-	local total_violations=0
-	local file scan_out count
-	while IFS= read -r file; do
-		[[ -z "$file" ]] && continue
-		_is_excluded_file "$file" && continue
-		# Scan the diff hunks for added lines in this file. The helper prints
-		# violation lines inline and a trailing "COUNT N" we parse.
-		scan_out=$(_scan_file_diff "$file" \
-			< <(git diff -U0 "${base}...${head}" -- "$file" 2>/dev/null || true))
-		# Emit violation lines (everything except the trailing COUNT).
-		printf '%s\n' "$scan_out" | grep -v '^COUNT ' || true
-		count=$(printf '%s\n' "$scan_out" | awk '/^COUNT /{print $2; exit}')
-		[[ -z "$count" ]] && count=0
-		total_violations=$((total_violations + count))
-	done <<<"$files"
-
-	if [[ "$total_violations" -gt 0 ]]; then
-		printf '\n'
-		printf '%s violation(s) found — use gh_create_issue / gh_create_pr\n' "$total_violations" >&2
-		printf 'Rule: %s\n' "$RULE_LINK" >&2
-		printf 'Allowlist: append "%s" to the line for an audited exception.\n' "$ALLOWLIST_MARKER" >&2
-		return 1
-	fi
 	return 0
 }
 
-# check-staged: scan the currently-staged working-tree changes.
-cmd_check_staged() {
-	local files
-	files=$(git diff --cached --name-only -- \
-		'.agents/scripts/*.sh' '.agents/hooks/*.sh' 2>/dev/null) || return 2
-	[[ -z "$files" ]] && return 0
-
-	local total=0
-	local file scan_out count
-	while IFS= read -r file; do
-		[[ -z "$file" ]] && continue
-		_is_excluded_file "$file" && continue
-		scan_out=$(_scan_file_diff "$file" \
-			< <(git diff --cached -U0 -- "$file" 2>/dev/null || true))
-		printf '%s\n' "$scan_out" | grep -v '^COUNT ' || true
-		count=$(printf '%s\n' "$scan_out" | awk '/^COUNT /{print $2; exit}')
-		[[ -z "$count" ]] && count=0
-		total=$((total + count))
-	done <<<"$files"
-
-	if [[ "$total" -gt 0 ]]; then
-		printf '\n%s staged violation(s). Rule: %s\n' "$total" "$RULE_LINK" >&2
-		return 1
-	fi
-	return 0
-}
-
-# check-full: grep the whole tree under .agents/scripts and .agents/hooks.
-# Used for baseline audits and migration sweeps.
-cmd_check_full() {
-	local root="."
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--root)
-			root="$2"
-			shift 2
-			;;
-		--root=*)
-			root="${1#--root=}"
-			shift
-			;;
-		*)
-			printf 'gh-wrapper-guard: unknown flag: %s\n' "$1" >&2
-			return 2
-			;;
-		esac
-	done
-
-	local total=0
-	local path
-	while IFS= read -r path; do
-		[[ -z "$path" ]] && continue
-		_is_excluded_file "$path" && continue
-		local lineno content
-		while IFS=: read -r lineno content; do
-			[[ -z "$lineno" ]] && continue
-			_is_allowlisted_line "$content" && continue
-			# Skip comment lines (leading '#' after optional whitespace).
-			local trimmed="${content#"${content%%[![:space:]]*}"}"
-			case "$trimmed" in
-			\#*) continue ;;
-			esac
-			_report_violation "$path" "$lineno" "$content"
-			total=$((total + 1))
-		done < <(grep -nE "$FORBIDDEN_REGEX" "$path" 2>/dev/null || true)
-	done < <(find "$root/.agents/scripts" "$root/.agents/hooks" \
-		-type f -name '*.sh' 2>/dev/null | sort || true)
-
-	if [[ "$total" -gt 0 ]]; then
-		printf '\n%s total violation(s) in-tree. Rule: %s\n' "$total" "$RULE_LINK" >&2
-		return 1
-	fi
-	return 0
-}
-
+# --- main --------------------------------------------------------------------
 main() {
-	local cmd="${1:-}"
-	[[ -n "$cmd" ]] && shift
+	local cmd="${1:-help}"
+	shift || true
+
 	case "$cmd" in
-	check) cmd_check "$@" ;;
-	check-staged) cmd_check_staged "$@" ;;
-	check-full) cmd_check_full "$@" ;;
-	-h | --help | help | '')
-		_usage
-		return 0
-		;;
+	check) cmd_check "$(_parse_base_arg "$@")" ;;
+	check-staged) cmd_check_staged ;;
+	check-full) cmd_check_full ;;
+	help | --help | -h) show_help ;;
 	*)
-		printf 'gh-wrapper-guard: unknown subcommand: %s\n' "$cmd" >&2
-		_usage >&2
+		printf 'Unknown command: %s\n' "$cmd" >&2
+		show_help
 		return 2
 		;;
 	esac

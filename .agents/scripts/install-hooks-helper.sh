@@ -32,6 +32,10 @@ CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 HOOK_COMMAND="\$HOME/.aidevops/hooks/git_safety_guard.py"
 POST_HOOK_COMMAND="\$HOME/.aidevops/hooks/mcp_task_post_hook.py"
 
+# gh-wrapper-guard pre-push hook (t2113)
+GH_WRAPPER_GUARD_MARKER="# aidevops-gh-wrapper-guard"
+GH_WRAPPER_GUARD_DEPLOYED="$HOME/.aidevops/agents/hooks/gh-wrapper-guard-pre-push.sh"
+
 print_info() { printf "${BLUE}[INFO]${NC} %s\n" "$1"; }
 print_success() { printf "${GREEN}[OK]${NC} %s\n" "$1"; }
 print_warning() { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
@@ -55,6 +59,103 @@ find_source_hook() {
 		print_error "Source hook '$hook_name' not found in repo or deployed agents"
 		return 1
 	fi
+}
+
+# --- gh-wrapper-guard pre-push hook (t2113) ---
+
+_find_gh_wrapper_guard_hook() {
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	local repo_hook="$script_dir/../hooks/gh-wrapper-guard-pre-push.sh"
+	if [[ -f "$repo_hook" ]]; then
+		echo "$repo_hook"
+		return 0
+	fi
+	if [[ -f "$GH_WRAPPER_GUARD_DEPLOYED" ]]; then
+		echo "$GH_WRAPPER_GUARD_DEPLOYED"
+		return 0
+	fi
+	return 1
+}
+
+install_gh_wrapper_guard_hook() {
+	# Only install if we're in a git repo
+	local common_dir
+	common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+		print_warning "Not in a git repo — skipping gh-wrapper-guard pre-push hook"
+		return 0
+	}
+
+	local hook_path="${common_dir}/hooks/pre-push"
+	mkdir -p "$(dirname "$hook_path")"
+
+	local source_hook
+	if ! source_hook=$(_find_gh_wrapper_guard_hook); then
+		print_warning "gh-wrapper-guard-pre-push.sh not found — skipping"
+		return 0
+	fi
+
+	if [[ -f "$hook_path" ]]; then
+		if grep -q "$GH_WRAPPER_GUARD_MARKER" "$hook_path" 2>/dev/null; then
+			print_info "gh-wrapper-guard already in pre-push hook — updating"
+		elif grep -q "aidevops" "$hook_path" 2>/dev/null; then
+			# Existing aidevops hook (e.g. privacy-guard) — chain ours in
+			if ! grep -q "gh-wrapper-guard" "$hook_path" 2>/dev/null; then
+				# Append our guard call before the final exec/exit
+				# shellcheck disable=SC2016 # single quotes intentional — template content
+				{
+					printf '\n%s\n' "$GH_WRAPPER_GUARD_MARKER"
+					printf '# gh-wrapper-guard: blocks raw gh issue/pr create calls\n'
+					printf '_ghwg_hook=""\n'
+					printf 'if git_dir=$(git rev-parse --show-toplevel 2>/dev/null); then\n'
+					printf '  _ghwg_hook="${git_dir}/.agents/hooks/gh-wrapper-guard-pre-push.sh"\n'
+					printf 'fi\n'
+					printf 'if [[ -n "$_ghwg_hook" && -f "$_ghwg_hook" ]]; then\n'
+					printf '  "$_ghwg_hook" "$@" || exit $?\n'
+					printf 'elif [[ -f "%s" ]]; then\n' "$GH_WRAPPER_GUARD_DEPLOYED"
+					printf '  "%s" "$@" || exit $?\n' "$GH_WRAPPER_GUARD_DEPLOYED"
+					printf 'fi\n'
+				} >>"$hook_path"
+				print_success "chained gh-wrapper-guard into existing pre-push hook"
+			fi
+			return 0
+		else
+			print_warning "existing non-aidevops pre-push hook — cannot auto-install gh-wrapper-guard"
+			print_warning "  manually add: $source_hook \"\$@\" || exit \$?"
+			return 0
+		fi
+	fi
+
+	# No existing hook — only install if no privacy-guard installer would manage it
+	# Write a standalone dispatcher if no hook exists at all
+	if [[ ! -f "$hook_path" ]]; then
+		cat >"$hook_path" <<HOOKEOF
+#!/usr/bin/env bash
+$GH_WRAPPER_GUARD_MARKER
+# Managed by install-hooks-helper.sh — do not edit.
+# Dispatcher for gh-wrapper-guard pre-push hook.
+# Bypass with --no-verify or GH_WRAPPER_GUARD_DISABLE=1.
+
+set -u
+
+_ghwg_hook=""
+if git_dir=\$(git rev-parse --show-toplevel 2>/dev/null); then
+	_ghwg_hook="\${git_dir}/.agents/hooks/gh-wrapper-guard-pre-push.sh"
+fi
+_ghwg_deployed="$GH_WRAPPER_GUARD_DEPLOYED"
+
+if [[ -n "\$_ghwg_hook" && -f "\$_ghwg_hook" ]]; then
+	"\$_ghwg_hook" "\$@" || exit \$?
+elif [[ -f "\$_ghwg_deployed" ]]; then
+	"\$_ghwg_deployed" "\$@" || exit \$?
+else
+	printf '[gh-wrapper-guard][WARN] hook not found — allowing push\n' >&2
+fi
+HOOKEOF
+		chmod +x "$hook_path"
+		print_success "installed gh-wrapper-guard pre-push hook at $hook_path"
+	fi
+	return 0
 }
 
 install_hook() {
@@ -99,6 +200,10 @@ install_hook() {
 	echo "  rm -rf (non-temp paths)    git stash drop/clear"
 	echo ""
 	print_warning "Restart Claude Code for the hook to take effect"
+
+	# Also install the gh-wrapper-guard pre-push hook (t2113)
+	install_gh_wrapper_guard_hook
+
 	return 0
 }
 
@@ -369,6 +474,24 @@ sys.exit(1)
 		all_ok=false
 	fi
 
+	# Check gh-wrapper-guard pre-push hook (t2113)
+	echo ""
+	echo "GH Wrapper Guard (pre-push)"
+	echo "----------------------------"
+	local common_dir
+	if common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+		local hook_path="${common_dir}/hooks/pre-push"
+		if [[ -f "$hook_path" ]] && grep -q "$GH_WRAPPER_GUARD_MARKER" "$hook_path" 2>/dev/null; then
+			print_success "gh-wrapper-guard: installed in pre-push hook"
+		elif [[ -f "$hook_path" ]] && grep -q "gh-wrapper-guard" "$hook_path" 2>/dev/null; then
+			print_success "gh-wrapper-guard: chained in pre-push hook"
+		else
+			print_warning "gh-wrapper-guard: not installed (run: install-hooks-helper.sh install)"
+		fi
+	else
+		print_info "gh-wrapper-guard: not in a git repo — skipped"
+	fi
+
 	echo ""
 	if [[ "$all_ok" == "true" ]]; then
 		print_success "All checks passed - safety hooks are active"
@@ -464,6 +587,7 @@ show_help() {
 	echo "Installs to:"
 	echo "  ~/.aidevops/hooks/git_safety_guard.py"
 	echo "  ~/.claude/settings.json (PreToolUse hook config)"
+	echo "  .git/hooks/pre-push (gh-wrapper-guard, t2113)"
 	return 0
 }
 
