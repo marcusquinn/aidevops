@@ -449,7 +449,18 @@ auto_approve_maintainer_issues() {
 				gh issue edit "$issue_num" --repo "$slug" \
 					--remove-label "needs-maintainer-review" \
 					--add-label "auto-dispatch" >/dev/null 2>&1 || true
-				echo "[pulse-wrapper] Auto-approved #${issue_num} in ${slug} — ${approval_reason}" >>"$LOGFILE"
+				# Reset stale-recovery tick counter so stale-recovery doesn't
+				# immediately re-add NMR on the next cycle. The counter is stored
+				# as structured comments; posting tick:0 resets it. Without this,
+				# auto-approve and stale-recovery fight each cycle — approve removes
+				# NMR, stale-recovery re-adds it because the tick count is still
+				# above threshold. The maintainer/interactive session that triggered
+				# the approval is granting a fresh dispatch attempt.
+				gh issue comment "$issue_num" --repo "$slug" \
+					--body "<!-- stale-recovery-tick:0 (reset: auto-approved by maintainer — ${approval_reason}) -->
+Stale recovery tick reset — auto-approved (${approval_reason})" \
+					2>/dev/null || true
+				echo "[pulse-wrapper] Auto-approved #${issue_num} in ${slug} — ${approval_reason} (stale-recovery tick reset)" >>"$LOGFILE"
 				total_approved=$((total_approved + 1))
 			fi
 		done
