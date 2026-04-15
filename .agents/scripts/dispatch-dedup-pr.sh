@@ -71,11 +71,14 @@ _has_open_pr_check_open_commits() {
 # race observed on issue #18779 → PR #18906 (a duplicate worker was
 # dispatched after PR #18906 was already open and waiting for review).
 #
-# Uses a single OR-consolidated search query instead of a per-keyword
-# loop to reduce GitHub API calls from up to 9 down to 1. Post-filters
-# with the same exact regex Checks 2 and 3 use, to avoid GitHub
-# full-text false positives (e.g. "v3.5.670" matching issue #670).
-# Fetches number+body in one request to avoid a separate gh pr view call.
+# Fetches up to 20 candidate PRs in a single call and filters locally
+# with jq regex to avoid two failure modes from the prior --limit 1
+# approach: (a) a false-positive first result causing the real match to
+# be missed, and (b) unnecessary extra calls per keyword. The simpler
+# "#NNN in:body" query lets GitHub's full-text search find candidates;
+# the closing-keyword regex post-filter eliminates false positives such
+# as version strings ("v3.5.670" matching issue #670).
+# GH#19140 (review-followup on PR #18915).
 #
 # Args: $1 = issue number, $2 = repo slug
 # Returns: exit 0 if an open PR closes this issue (prints reason), exit 1 if none
@@ -84,27 +87,25 @@ _has_open_pr_check_open_body_keyword() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	# Single consolidated query replaces the 9-keyword loop (GH#19124)
-	local query
-	query="(close OR closes OR closed OR fix OR fixes OR fixed OR resolve OR resolves OR resolved) #${issue_number} in:body"
+	local pr_json match_pr
+	# Fetch up to 20 open PRs mentioning the issue in the body; body is
+	# included in this single request to avoid separate gh pr view calls.
+	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--search "#${issue_number} in:body" --limit 20 \
+		--json number,body 2>/dev/null) || pr_json="[]"
 
-	local pr_json pr_count
-	pr_json=$(gh pr list --repo "$repo_slug" --state open --search "$query" --limit 1 --json number,body 2>/dev/null) || pr_json="[]"
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-	[[ "$pr_count" -eq 0 ]] && return 1
+	# Match: closing keyword + optional whitespace + #NNN or owner/repo#NNN
+	# followed by a non-word char or end-of-string (GH#18641 semantics).
+	local close_pattern
+	close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
 
-	local pr_number pr_body
-	pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
-	pr_body=$(printf '%s' "$pr_json" | jq -r '.[0].body // empty' 2>/dev/null)
+	match_pr=$(printf '%s' "$pr_json" | jq -r --arg pattern "$close_pattern" \
+		'[.[] | select(.body // "" | test($pattern; "i"))] | .[0].number // empty' \
+		2>/dev/null) || match_pr=""
 
-	if [[ -n "$pr_number" ]]; then
-		# Match: keyword + optional whitespace + #NNN or owner/repo#NNN followed by a non-word char or end
-		local close_pattern_open="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
-		if printf '%s' "$pr_body" | grep -iqE "$close_pattern_open"; then
-			printf 'open PR #%s closes issue #%s via keyword in body\n' "$pr_number" "$issue_number"
-			return 0
-		fi
+	if [[ -n "$match_pr" ]]; then
+		printf 'open PR #%s closes issue #%s via keyword in body\n' "$match_pr" "$issue_number"
+		return 0
 	fi
 	return 1
 }
@@ -112,11 +113,13 @@ _has_open_pr_check_open_body_keyword() {
 #######################################
 # has_open_pr Check 2: Merged PRs with closing-keyword in body.
 #
-# Uses a single OR-consolidated search query instead of a per-keyword
-# loop to reduce GitHub API calls from up to 9 down to 1. Post-filters
-# with the same exact regex Check 1b uses, to avoid GitHub full-text
-# false positives (e.g. "v3.5.670" matching issue #670).
-# Fetches number+body in one request to avoid a separate gh pr view call.
+# Fetches up to 20 candidate PRs in a single call and filters locally
+# with jq regex, matching the same approach as Check 1b (GH#19140).
+# Avoids the --limit 1 correctness bug where a false-positive first
+# result from GitHub full-text search would mask the real matching PR.
+# The "#NNN in:body" query finds candidates; the closing-keyword regex
+# post-filter eliminates false positives (e.g. version strings like
+# "v3.5.670" matching issue #670).
 #
 # Args: $1 = issue number, $2 = repo slug
 # Returns: exit 0 if a merged PR closes this issue (prints reason), exit 1 if none
@@ -125,27 +128,25 @@ _has_open_pr_check_merged_keywords() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	# Single consolidated query replaces the 9-keyword loop (GH#19124)
-	local query
-	query="(close OR closes OR closed OR fix OR fixes OR fixed OR resolve OR resolves OR resolved) #${issue_number} in:body"
+	local pr_json match_pr
+	# Fetch up to 20 merged PRs mentioning the issue in the body; body is
+	# included in this single request to avoid separate gh pr view calls.
+	pr_json=$(gh pr list --repo "$repo_slug" --state merged \
+		--search "#${issue_number} in:body" --limit 20 \
+		--json number,body 2>/dev/null) || pr_json="[]"
 
-	local pr_json pr_count
-	pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number,body 2>/dev/null) || pr_json="[]"
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-	[[ "$pr_count" -eq 0 ]] && return 1
+	# Match: closing keyword + optional whitespace + #NNN or owner/repo#NNN
+	# followed by a non-word char or end-of-string (GH#18641 semantics).
+	local close_pattern
+	close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
 
-	local pr_number pr_body
-	pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
-	pr_body=$(printf '%s' "$pr_json" | jq -r '.[0].body // empty' 2>/dev/null)
+	match_pr=$(printf '%s' "$pr_json" | jq -r --arg pattern "$close_pattern" \
+		'[.[] | select(.body // "" | test($pattern; "i"))] | .[0].number // empty' \
+		2>/dev/null) || match_pr=""
 
-	if [[ -n "$pr_number" ]]; then
-		# Match: keyword + optional whitespace + #NNN or owner/repo#NNN followed by a non-word char or end
-		local close_pattern_merged="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
-		if printf '%s' "$pr_body" | grep -iqE "$close_pattern_merged"; then
-			printf 'merged PR #%s references issue #%s via keyword\n' "$pr_number" "$issue_number"
-			return 0
-		fi
+	if [[ -n "$match_pr" ]]; then
+		printf 'merged PR #%s references issue #%s via keyword\n' "$match_pr" "$issue_number"
+		return 0
 	fi
 	return 1
 }

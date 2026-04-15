@@ -155,16 +155,14 @@ set_gh_pr_view_fixtures() {
 }
 
 test_has_open_pr_detects_closing_keyword() {
-	set_gh_fixtures 'marcusquinn/aidevops|merged|closes #4527 in:body|[{"number":1145}]'
-	# Check 2 (body search) requires the PR body to contain a real closing
-	# keyword for the target issue — the helper re-fetches the body and
-	# post-filters with a regex to avoid GitHub full-text false positives.
-	set_gh_pr_view_fixtures '1145|body|Closes #4527. Implements the fix.'
+	# Check 2 (body search): fetch up to 20 PRs with "#N in:body" and
+	# filter locally. Body is included in the pr list JSON; no gh pr view call.
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#4527 in:body|[{"number":1145,"body":"Closes #4527. Implements the fix."}]'
 
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 4527 marcusquinn/aidevops 't4527: prevent duplicate dispatch'); then
 		case "$output" in
-		*'merged PR #1145 references issue #4527 via "closes" keyword'*)
+		*'merged PR #1145 references issue #4527 via keyword'*)
 			print_result "has-open-pr detects merged PR via closing keyword" 0
 			return 0
 			;;
@@ -181,8 +179,8 @@ test_has_open_pr_detects_task_id_fallback() {
 	# Check 3 (task-id title match) now requires the merged PR body to
 	# contain a closing-keyword reference to our specific issue number.
 	# Bare "#NNN" body references are no longer sufficient (GH#18641).
-	set_gh_fixtures 'marcusquinn/aidevops|merged|t063.1 in:title|[{"number":1059}]'
-	set_gh_pr_view_fixtures '1059|body|Closes #9999. The awardsapp duplicate-dispatch guard.'
+	# Body must be included in the pr list JSON (no separate gh pr view call).
+	set_gh_fixtures 'marcusquinn/aidevops|merged|t063.1 in:title|[{"number":1059,"body":"Closes #9999. The awardsapp duplicate-dispatch guard."}]'
 
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 9999 marcusquinn/aidevops 't063.1: fix awardsapp duplicate PR dispatch'); then
@@ -218,11 +216,8 @@ test_has_open_pr_returns_nonzero_without_match() {
 # must NOT treat `For #NNN` as dispatch-blocking evidence, otherwise every
 # brief PR permanently blocks dispatch on its own follow-up issue.
 test_has_open_pr_ignores_planning_for_reference() {
-	set_gh_fixtures 'marcusquinn/aidevops|merged|t2047 in:title|[{"number":18627}]'
-	set_gh_pr_view_fixtures '18627|body|Files the brief for **t2047**. Pure planning, no code changes.
-
-For #18624
-For #18599'
+	# Body is included in the pr list JSON (no separate gh pr view call).
+	set_gh_fixtures 'marcusquinn/aidevops|merged|t2047 in:title|[{"number":18627,"body":"Files the brief for **t2047**. Pure planning, no code changes.\n\nFor #18624\nFor #18599"}]'
 
 	if "$HELPER_SCRIPT" has-open-pr 18624 marcusquinn/aidevops 't2047: task-id collision guard'; then
 		print_result "has-open-pr ignores planning-only 'For #NNN' reference" 1 \
@@ -236,11 +231,8 @@ For #18599'
 
 # GH#18641: same convention with `Ref #NNN` phrasing must also be ignored.
 test_has_open_pr_ignores_planning_ref_reference() {
-	set_gh_fixtures 'marcusquinn/aidevops|merged|t2038 in:title|[{"number":18524}]'
-	set_gh_pr_view_fixtures '18524|body|Research brief for t2038.
-
-Ref #18521
-Ref #18522'
+	# Body is included in the pr list JSON (no separate gh pr view call).
+	set_gh_fixtures 'marcusquinn/aidevops|merged|t2038 in:title|[{"number":18524,"body":"Research brief for t2038.\n\nRef #18521\nRef #18522"}]'
 
 	if "$HELPER_SCRIPT" has-open-pr 18522 marcusquinn/aidevops 't2038: research branch protection bypass'; then
 		print_result "has-open-pr ignores planning-only 'Ref #NNN' reference" 1 \
@@ -256,11 +248,8 @@ Ref #18522'
 # issue AND a planning reference for ours must still NOT block dispatch on
 # ours — the closing keyword must match OUR issue number specifically.
 test_has_open_pr_requires_close_keyword_for_our_issue() {
-	set_gh_fixtures 'marcusquinn/aidevops|merged|t2037 in:title|[{"number":18524}]'
-	set_gh_pr_view_fixtures '18524|body|Files briefs.
-
-Closes #18521
-For #18522'
+	# Body is included in the pr list JSON (no separate gh pr view call).
+	set_gh_fixtures 'marcusquinn/aidevops|merged|t2037 in:title|[{"number":18524,"body":"Files briefs.\n\nCloses #18521\nFor #18522"}]'
 
 	if "$HELPER_SCRIPT" has-open-pr 18522 marcusquinn/aidevops 't2037: inline gate refactor'; then
 		print_result "has-open-pr requires close keyword for OUR issue, not another" 1 \
@@ -279,17 +268,14 @@ For #18522'
 # of which carries the closing keyword under the framework convention.
 # Trigger incident: cross-runner race on issue #18779 → PR #18906.
 test_has_open_pr_detects_open_body_closing_keyword() {
-	set_gh_fixtures 'marcusquinn/aidevops|open|resolves #18779 in:body|[{"number":18906}]'
-	# Single-line body — the test gh stub reads fixtures line-by-line, so
-	# multi-line bodies get truncated to the first line. Real PR bodies have
-	# the closing keyword somewhere in the body; the post-filter regex
-	# does not require it on the first line.
-	set_gh_pr_view_fixtures '18906|body|Resolves #18779. Decompose four interconnected opencode plugin files.'
+	# Check 1b: "#N in:body" search with body in the pr list JSON.
+	# No separate gh pr view call; jq filters locally with the closing regex.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#18779 in:body|[{"number":18906,"body":"Resolves #18779. Decompose four interconnected opencode plugin files."}]'
 
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 18779 marcusquinn/aidevops 't2071: decompose opencode plugin cluster'); then
 		case "$output" in
-		*'open PR #18906 closes issue #18779 via "resolves" keyword in body'*)
+		*'open PR #18906 closes issue #18779 via keyword in body'*)
 			print_result "has-open-pr detects OPEN PR via body closing keyword (t2085)" 0
 			return 0
 			;;
@@ -328,11 +314,11 @@ test_has_open_pr_ignores_open_body_planning_for_reference() {
 # on our issue. The post-filter regex must match OUR issue number
 # specifically. (Mirrors GH#18641 semantics for the open-state code path.)
 test_has_open_pr_requires_open_close_keyword_for_our_issue() {
-	# GitHub full-text search may match the keyword on a PR that closes a
-	# different issue. The fixture simulates a hit on the search but a body
-	# that closes #18999 instead of #18779. The post-filter must reject it.
-	set_gh_fixtures 'marcusquinn/aidevops|open|closes #18779 in:body|[{"number":18950}]'
-	set_gh_pr_view_fixtures '18950|body|Closes #18999. This PR is unrelated to #18779; the search just full-text matched.'
+	# GitHub full-text search may return a PR that mentions #18779 in context
+	# but closes a different issue. The fixture simulates this: body contains
+	# "Closes #18999" and references #18779 in passing. The jq post-filter
+	# must reject it because no closing keyword targets #18779 specifically.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#18779 in:body|[{"number":18950,"body":"Closes #18999. This PR is unrelated to #18779; the search just full-text matched."}]'
 
 	if "$HELPER_SCRIPT" has-open-pr 18779 marcusquinn/aidevops 't2071: opencode decomposition'; then
 		print_result "has-open-pr requires open-PR close keyword for OUR issue (t2085)" 1 \
@@ -347,8 +333,8 @@ test_has_open_pr_requires_open_close_keyword_for_our_issue() {
 # Existing collision case (GH#18041 / t1957) must still allow dispatch:
 # different task used the same ID, merged PR closes some unrelated issue.
 test_has_open_pr_allows_dispatch_on_task_id_collision() {
-	set_gh_fixtures 'marcusquinn/aidevops|merged|t500 in:title|[{"number":1200}]'
-	set_gh_pr_view_fixtures '1200|body|Closes #555. Unrelated work that reused task ID t500.'
+	# Body is included in the pr list JSON (no separate gh pr view call).
+	set_gh_fixtures 'marcusquinn/aidevops|merged|t500 in:title|[{"number":1200,"body":"Closes #555. Unrelated work that reused task ID t500."}]'
 
 	if "$HELPER_SCRIPT" has-open-pr 9999 marcusquinn/aidevops 't500: different work for issue #9999'; then
 		print_result "has-open-pr allows dispatch on task-id collision" 1 \
