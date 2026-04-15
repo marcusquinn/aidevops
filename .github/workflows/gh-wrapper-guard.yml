@@ -1,0 +1,117 @@
+name: GH Wrapper Guard
+
+# t2113: enforce gh_create_issue / gh_create_pr wrapper usage in framework
+# shell scripts. The wrappers apply origin labels, auto-assign, and sub-issue
+# linking — skipping them produces unlabelled, unassigned, unlinked issues
+# and PRs that the maintainer gate and dispatch-dedup cannot see.
+#
+# This workflow runs on PRs that touch `.agents/scripts/**.sh` or
+# `.agents/hooks/**.sh` and fails if any ADDED or MODIFIED line contains a
+# raw `gh issue create` or `gh pr create` call without the
+# `# aidevops-allow: raw-gh-wrapper` allowlist marker.
+#
+# Baseline in-tree offenders are NOT scanned — this gate only blocks new
+# regressions. Migration of pre-existing cases is tracked separately.
+
+on:
+  pull_request:
+    paths:
+      - ".agents/scripts/**.sh"
+      - ".agents/hooks/**.sh"
+      - ".agents/scripts/gh-wrapper-guard.sh"
+      - ".github/workflows/gh-wrapper-guard.yml"
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: gh wrapper guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Run guard
+        id: guard
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          report=$(.agents/scripts/gh-wrapper-guard.sh check \
+            --base "$BASE_SHA" --head "$HEAD_SHA" 2>&1)
+          exit_code=$?
+          set -e
+          {
+            echo "exit_code=$exit_code"
+            echo "report<<GUARDREPORT"
+            printf '%s\n' "$report"
+            echo "GUARDREPORT"
+          } >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$report"
+          exit 0
+
+      - name: Post PR comment on failure
+        if: steps.guard.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          REPORT: ${{ steps.guard.outputs.report }}
+        run: |
+          set -euo pipefail
+          marker="<!-- gh-wrapper-guard -->"
+          body_file=$(mktemp)
+          {
+            printf '%s\n\n' "$marker"
+            printf '## GH Wrapper Guard failed\n\n'
+            printf 'This PR adds one or more lines that call `gh issue create` or `gh pr create` directly instead of the `gh_create_issue` / `gh_create_pr` wrappers defined in `.agents/scripts/shared-constants.sh`.\n\n'
+            printf 'The wrappers apply:\n'
+            printf '- `origin:worker` / `origin:interactive` labels via `session_origin_label`\n'
+            printf '- auto-assignee for the current `gh` user (t2028)\n'
+            printf '- automatic sub-issue linking for `tNNN.M:` titles (GH#18735)\n\n'
+            printf 'Without them, issues and PRs arrive unblessed, invisible to the maintainer gate and the dispatch-dedup system.\n\n'
+            printf 'Rule: `prompts/build.txt` → "Origin labelling (MANDATORY)".\n\n'
+            printf '## Violations\n\n'
+            printf '```\n%s\n```\n\n' "$REPORT"
+            printf '## How to fix\n\n'
+            printf '1. Source `shared-constants.sh` in your script (most framework scripts already do).\n'
+            printf '2. Replace `gh issue create ...` with `gh_create_issue ...` (same flags).\n'
+            printf '3. Replace `gh pr create ...` with `gh_create_pr ...` (same flags).\n\n'
+            printf '## Audited exception\n\n'
+            printf 'If the call must stay raw (e.g., inside a helper that defines its own origin handling), append the end-of-line marker:\n\n'
+            printf '```bash\n'
+            printf 'gh issue create --repo ... # aidevops-allow: raw-gh-wrapper\n'
+            printf '```\n\n'
+            printf 'The marker makes the exception self-documenting and auditable.\n'
+          } >"$body_file"
+
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body=@"$body_file" >/dev/null 2>&1 || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$body_file" >/dev/null 2>&1 || true
+          fi
+          rm -f "$body_file"
+
+      - name: Enforce gate
+        env:
+          EXIT_CODE: ${{ steps.guard.outputs.exit_code }}
+        run: |
+          if [ "$EXIT_CODE" = "0" ]; then
+            echo "gh-wrapper-guard: clean."
+            exit 0
+          fi
+          echo "::error::gh-wrapper-guard: violations found — see the PR comment for details. Append '# aidevops-allow: raw-gh-wrapper' for an audited exception."
+          exit 1

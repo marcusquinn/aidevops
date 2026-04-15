@@ -1204,14 +1204,14 @@ _push_and_create_pr() {
 
 	if ! command -v gh &>/dev/null; then
 		log_warning "gh CLI not available — branch pushed but PR not created"
-		log_info "Create PR manually: gh pr create --head $branch_name"
+		log_info "Create PR manually: gh pr create --head $branch_name" # aidevops-allow: raw-gh-wrapper
 		return 0
 	fi
 
 	if ! gh auth status &>/dev/null; then
 		log_warning "gh auth unavailable — branch pushed but PR not created for $label"
 		log_info "Authenticate with: gh auth login"
-		log_info "Create PR manually: gh pr create --head $branch_name"
+		log_info "Create PR manually: gh pr create --head $branch_name" # aidevops-allow: raw-gh-wrapper
 		return 1
 	fi
 
@@ -1230,7 +1230,7 @@ _push_and_create_pr() {
 		--repo "$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo '')" \
 		2>&1) || {
 		log_error "Failed to create PR for $label: ${pr_create_output}"
-		log_info "Branch is pushed — create PR manually: gh pr create --head $branch_name"
+		log_info "Branch is pushed — create PR manually: gh pr create --head $branch_name" # aidevops-allow: raw-gh-wrapper
 		return 1
 	}
 
@@ -1608,13 +1608,13 @@ _create_batch_pr() {
 
 	if ! command -v gh &>/dev/null; then
 		log_warning "gh CLI not available — branch pushed but PR not created"
-		log_info "Create PR manually: gh pr create --head $branch_name"
+		log_info "Create PR manually: gh pr create --head $branch_name" # aidevops-allow: raw-gh-wrapper
 		return 0
 	fi
 	if ! gh auth status &>/dev/null; then
 		log_warning "gh auth unavailable — branch pushed but batch PR not created"
 		log_info "Authenticate with: gh auth login"
-		log_info "Create PR manually: gh pr create --head $branch_name"
+		log_info "Create PR manually: gh pr create --head $branch_name" # aidevops-allow: raw-gh-wrapper
 		return 1
 	fi
 
@@ -1664,7 +1664,7 @@ ${failed_note}
 	local pr_create_output
 	pr_create_output=$(gh_create_pr "${pr_create_args[@]}" 2>&1) || {
 		log_error "Failed to create batch PR: ${pr_create_output}"
-		log_info "Branch is pushed — create PR manually: gh pr create --head $branch_name"
+		log_info "Branch is pushed — create PR manually: gh pr create --head $branch_name" # aidevops-allow: raw-gh-wrapper
 		return 1
 	}
 	log_success "Batch PR created: $pr_create_output"

@@ -869,7 +869,7 @@ _compose_issue_body() {
 		log_error "No --description provided and no brief file found at todo/tasks/${task_id}-brief.md"
 		log_error "Issue creation skipped — create the issue after writing the brief:"
 		log_error "  issue-sync-helper.sh push ${task_id}"
-		log_error "  OR: gh issue create --title \"${title}\" --body \"<description>\""
+		log_error "  OR: gh issue create --title \"${title}\" --body \"<description>\"" # aidevops-allow: raw-gh-wrapper
 		echo ""
 		return 1
 	fi
