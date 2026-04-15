@@ -98,12 +98,14 @@ fi
 echo
 echo "=== 4. qlty smells in cluster ==="
 if command -v ~/.qlty/bin/qlty >/dev/null 2>&1; then
-	count=$(cd "$(git rev-parse --show-toplevel)" && ~/.qlty/bin/qlty smells --all --sarif --no-snippets --quiet 2>/dev/null |
-		jq '[.runs[0].results[] | select(.locations[0].physicalLocation.artifactLocation.uri | test("higgsfield/"))] | length')
-	echo "qlty smells in higgsfield/: $count"
-	if [ "$count" -gt 0 ]; then
-		cd "$(git rev-parse --show-toplevel)" && ~/.qlty/bin/qlty smells --all --sarif --no-snippets --quiet 2>/dev/null |
-			jq -r '.runs[0].results[] | select(.locations[0].physicalLocation.artifactLocation.uri | test("higgsfield/")) | "\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)\t\(.ruleId)\t\(.message.text)"'
+	sarif=$(cd "$(git rev-parse --show-toplevel)" && ~/.qlty/bin/qlty smells --all --sarif --no-snippets --quiet 2>/dev/null)
+	if [[ -n "$sarif" ]]; then
+		results=$(echo "$sarif" | jq '[.runs[0].results[] | select(.locations[0].physicalLocation.artifactLocation.uri | test("higgsfield/"))]')
+		count=$(echo "$results" | jq 'length')
+		echo "qlty smells in higgsfield/: ${count:-0}"
+		if [[ "${count:-0}" -gt 0 ]]; then
+			echo "$results" | jq -r '.[] | "\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)\t\(.ruleId)\t\(.message.text)"'
+		fi
 	fi
 fi
 
