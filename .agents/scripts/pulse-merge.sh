@@ -38,6 +38,7 @@
 #   - _extract_linked_issue
 #   - _extract_merge_summary
 #   - _close_conflicting_pr
+#   - _carry_forward_pr_diff                    (t2118)
 #   - _build_review_feedback_section           (t2093)
 #   - _dispatch_pr_fix_worker                   (t2093)
 #
@@ -1547,7 +1548,16 @@ _Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null 
 
 		echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title} (work already on main)" >>"$LOGFILE"
 	else
-		# Work NOT on main — use standard message but without the misleading
+		# Work NOT on main — carry forward the diff to the linked issue so the
+		# next worker can rebase/cherry-pick instead of re-deriving from scratch
+		# (t2118). Fail-open: any failure is logged and the close still proceeds.
+		local linked_issue_for_diff
+		linked_issue_for_diff=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue_for_diff=""
+		if [[ -n "$linked_issue_for_diff" && "$linked_issue_for_diff" =~ ^[0-9]+$ ]]; then
+			_carry_forward_pr_diff "$pr_number" "$repo_slug" "$linked_issue_for_diff" || true
+		fi
+
+		# Use standard message but without the misleading
 		# "remains open for re-attempt" phrasing (GH#17574)
 		gh pr close "$pr_number" --repo "$repo_slug" \
 			--comment "Closing — this PR has merge conflicts with the base branch. If the linked issue is still open, a worker will be dispatched to re-attempt with a fresh branch.
@@ -1555,6 +1565,100 @@ _Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null 
 _Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
 
 		echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title}" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Carry the diff of a closed-CONFLICTING PR forward to its linked issue
+# body so the next dispatched worker can rebase/cherry-pick instead of
+# re-deriving the solution from scratch (t2118).
+#
+# Idempotent: guarded by an HTML comment marker unique to each PR number.
+# Size-capped at 20KB — diffs above this are truncated with a note.
+# Fail-open: any gh API failure is logged and the function returns 0 so
+# the caller (_close_conflicting_pr) always proceeds with the close.
+#
+# Does NOT fire in the "work on main" path — only called from the
+# "work NOT on main" branch.
+#
+# Args:
+#   $1 - pr_number
+#   $2 - repo_slug  (owner/repo)
+#   $3 - linked_issue  (numeric issue number)
+#######################################
+_carry_forward_pr_diff() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 0
+
+	# --- Fetch the PR diff ---
+	local diff_content
+	diff_content=$(gh pr diff "$pr_number" --repo "$repo_slug" 2>/dev/null) || diff_content=""
+	if [[ -z "$diff_content" ]]; then
+		echo "[pulse-wrapper] _carry_forward_pr_diff: PR #${pr_number} diff is empty or unavailable — skipping (t2118)" >>"$LOGFILE"
+		return 0
+	fi
+
+	# --- Size-cap at 20KB (20480 bytes) ---
+	local size_cap=20480
+	local truncation_note=""
+	if [[ ${#diff_content} -gt $size_cap ]]; then
+		diff_content="${diff_content:0:$size_cap}"
+		truncation_note="
+... (truncated, full diff at PR #${pr_number})"
+	fi
+
+	# --- Fetch current issue body ---
+	# --- Fetch current issue body (fail-safe: skip on API error to prevent data loss) ---
+	local current_body fetch_rc
+	fetch_rc=0
+	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
+		--json body --jq '.body // ""' 2>/dev/null) || fetch_rc=$?
+	if [[ $fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] _carry_forward_pr_diff: failed to fetch issue #${linked_issue} body (exit ${fetch_rc}) — skipping to avoid data loss (t2118)" >>"$LOGFILE"
+		return 0
+	fi
+
+	# --- Idempotency guard ---
+	# Marker format: <!-- t2118:prior-worker-diff:PR<N> -->
+	local marker="<!-- t2118:prior-worker-diff:PR${pr_number} -->"
+	if printf '%s' "$current_body" | grep -qF "$marker"; then
+		echo "[pulse-wrapper] _carry_forward_pr_diff: issue #${linked_issue} already has diff marker for PR #${pr_number} — skipping (t2118)" >>"$LOGFILE"
+		return 0
+	fi
+
+	# --- Build the append section ---
+	local new_section
+	new_section="${marker}
+## Prior worker attempt (PR #${pr_number}, closed CONFLICTING)
+
+The following diff was produced by the prior worker before the PR was closed
+due to merge conflicts. The next worker should review this diff and
+rebase/apply it rather than re-deriving the solution from scratch.
+
+<details><summary>Diff from PR #${pr_number} (click to expand)</summary>
+
+\`\`\`diff
+${diff_content}${truncation_note}
+\`\`\`
+
+</details>"
+
+	local new_body
+	new_body="${current_body}
+
+${new_section}"
+
+	if gh issue edit "$linked_issue" --repo "$repo_slug" \
+		--body "$new_body" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _carry_forward_pr_diff: appended diff from PR #${pr_number} to issue #${linked_issue} in ${repo_slug} (t2118)" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] _carry_forward_pr_diff: failed to update issue #${linked_issue} body in ${repo_slug} — continuing with close (t2118)" >>"$LOGFILE"
 	fi
 	return 0
 }
