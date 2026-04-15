@@ -1,73 +1,30 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# stats-functions.sh - Statistics and health dashboard functions
+# stats-health-dashboard.sh - Per-repo pinned health issue dashboards
 #
-# Extracted from pulse-wrapper.sh (t1431) to separate stats concerns.
-# These functions are used exclusively by stats-wrapper.sh for:
-#   - Health issue dashboards (per-repo pinned issues)
-#   - Daily code quality sweeps (ShellCheck, Qlty, SonarCloud, Codacy, CodeRabbit)
-#   - Person-stats cache refresh
+# Extracted from stats-functions.sh via the phased decomposition plan:
+#   todo/plans/stats-functions-decomposition.md  (Phase 3)
 #
-# After t1429 separated stats into a separate cron process, these 12 functions
-# (~1600 lines, 41% of pulse-wrapper) were dead code from the pulse's perspective.
-# Extracting them reduces pulse-wrapper's blast radius and avoids stats-wrapper
-# sourcing the entire 3500-line pulse-wrapper just to access these functions.
+# This module is sourced by stats-functions.sh. It MUST NOT be executed
+# directly — it relies on the orchestrator having sourced:
+#   shared-constants.sh
+#   worker-lifecycle-common.sh
+# and having defined all stats-* configuration constants in the bootstrap
+# section of stats-functions.sh.
 #
-# Dependencies:
-#   - shared-constants.sh (sourced by caller)
-#   - worker-lifecycle-common.sh (sourced by caller)
-#   - gh CLI (GitHub API)
-#   - jq (JSON processing)
+# Dependencies on other stats modules:
+#   - stats-shared.sh (calls _get_runner_role)
+#
+# Globals read:
+#   - LOGFILE, REPOS_JSON, PERSON_STATS_INTERVAL, PERSON_STATS_LAST_RUN,
+#     PERSON_STATS_CACHE_DIR, SESSION_COUNT_WARN
+# Globals written:
+#   - none (stats modules write only to disk under ~/.aidevops/logs/)
 
 # Include guard — prevent double-sourcing
-[[ -n "${_STATS_FUNCTIONS_LOADED:-}" ]] && return 0
-_STATS_FUNCTIONS_LOADED=1
-
-#######################################
-# Configuration — stats-specific variables
-#
-# These were previously defined in pulse-wrapper.sh but are only used
-# by the functions in this file. Callers can override via environment.
-#######################################
-REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/stats.log}"
-QUALITY_SWEEP_INTERVAL="${QUALITY_SWEEP_INTERVAL:-86400}"
-PERSON_STATS_INTERVAL="${PERSON_STATS_INTERVAL:-3600}"
-QUALITY_SWEEP_LAST_RUN="${QUALITY_SWEEP_LAST_RUN:-${HOME}/.aidevops/logs/quality-sweep-last-run}"
-PERSON_STATS_LAST_RUN="${PERSON_STATS_LAST_RUN:-${HOME}/.aidevops/logs/person-stats-last-run}"
-PERSON_STATS_CACHE_DIR="${PERSON_STATS_CACHE_DIR:-${HOME}/.aidevops/logs}"
-QUALITY_SWEEP_STATE_DIR="${QUALITY_SWEEP_STATE_DIR:-${HOME}/.aidevops/logs/quality-sweep-state}"
-CODERABBIT_ISSUE_SPIKE="${CODERABBIT_ISSUE_SPIKE:-10}"
-SESSION_COUNT_WARN="${SESSION_COUNT_WARN:-5}"
-
-# Validate numeric config if _validate_int is available (from worker-lifecycle-common.sh)
-if type _validate_int &>/dev/null; then
-	QUALITY_SWEEP_INTERVAL=$(_validate_int QUALITY_SWEEP_INTERVAL "$QUALITY_SWEEP_INTERVAL" 86400)
-	PERSON_STATS_INTERVAL=$(_validate_int PERSON_STATS_INTERVAL "$PERSON_STATS_INTERVAL" 3600)
-	CODERABBIT_ISSUE_SPIKE=$(_validate_int CODERABBIT_ISSUE_SPIKE "$CODERABBIT_ISSUE_SPIKE" 10 1)
-	SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 5 1)
-fi
-
-#######################################
-# Module sourcing — extract sibling modules in dependency order.
-# This file is the orchestrator residual; function definitions live in the
-# extracted modules. Callers continue to source only stats-functions.sh.
-# Extraction plan: todo/plans/stats-functions-decomposition.md
-#######################################
-STATS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-
-# Phase 1: shared utility functions (slug validation, runner role)
-# shellcheck source=stats-shared.sh
-source "${STATS_SCRIPT_DIR}/stats-shared.sh"
-
-# Phase 2: daily code quality sweep (ShellCheck, Qlty, SonarCloud, Codacy, CodeRabbit)
-# shellcheck source=stats-quality-sweep.sh
-source "${STATS_SCRIPT_DIR}/stats-quality-sweep.sh"
-
-# Phase 3: health dashboard (per-repo pinned issues, person stats, system resources)
-# shellcheck source=stats-health-dashboard.sh
-source "${STATS_SCRIPT_DIR}/stats-health-dashboard.sh"
+[[ -n "${_STATS_HEALTH_DASHBOARD_LOADED:-}" ]] && return 0
+_STATS_HEALTH_DASHBOARD_LOADED=1
 
 #######################################
 # Find an existing health issue by cache, labels, or title search.
