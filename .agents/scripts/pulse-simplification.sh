@@ -1675,6 +1675,19 @@ _complexity_scan_ratchet_check() {
 	local aidevops_path="$2"
 	local aidevops_slug="$3"
 
+	# t2102: Pull aidevops worktree fresh before ratchet-check to avoid stale reads.
+	# If HEAD is not main, offline, or the pull fails, skip this cycle — never crash the pulse.
+	local current_branch
+	current_branch=$(git -C "$aidevops_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || current_branch=""
+	if [[ "$current_branch" != "main" ]]; then
+		echo "[pulse-wrapper] ratchet-check: skipping — aidevops worktree HEAD is '${current_branch}', not main" >>"$LOGFILE"
+		return 0
+	fi
+	if ! git -C "$aidevops_path" pull --ff-only origin main >>"$LOGFILE" 2>&1; then
+		echo "[pulse-wrapper] ratchet-check: skipping — git pull --ff-only failed (offline or conflict)" >>"$LOGFILE"
+		return 0
+	fi
+
 	# Phase 5: Ratchet-check — lower thresholds when simplification wins accumulate (t1913)
 	# Runs after backfill so closed issues are reflected in violation counts.
 	# Creates a chore/ratchet-down PR when gap >= 5 (default).
