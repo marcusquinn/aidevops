@@ -24,6 +24,8 @@ set -euo pipefail
 
 # --- Constants ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=shared-constants.sh
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 
 # Tabby config path (platform-aware)
@@ -32,13 +34,6 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 else
 	TABBY_CONFIG="${HOME}/.config/tabby-terminal/config.yaml"
 fi
-
-# --- Colours ---
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
 
 _info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 _success() { echo -e "${GREEN}[OK]${NC} $1"; }

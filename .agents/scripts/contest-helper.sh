@@ -29,13 +29,8 @@ SUPERVISOR_DB="${SUPERVISOR_DIR}/supervisor.db"
 # shellcheck disable=SC2034 # SCORING_DB used by _record_contest_scores
 SCORING_DB="${HOME}/.aidevops/.agent-workspace/response-scoring.db"
 
-# Colours
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
+# BOLD fallback — not in shared-constants.sh
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # Default contest models — top 3 from different providers for diversity
 DEFAULT_CONTEST_MODELS="anthropic/claude-opus-4-6,anthropic/claude-sonnet-4-6,google/gemini-2.5-pro"
