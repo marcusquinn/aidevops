@@ -42,8 +42,19 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
         run: |
           set -euo pipefail
+          # Guard: skip re-scan on label/unlabel events unrelated to 'new-file-smell-ok'.
+          # Only adding or removing 'new-file-smell-ok' warrants a rescan; other label
+          # changes (e.g. 'status:in-review', 'origin:worker') are noise.
+          if { [ "${EVENT_ACTION}" = "labeled" ] || [ "${EVENT_ACTION}" = "unlabeled" ]; } && \
+             [ "${LABEL_NAME}" != "new-file-smell-ok" ]; then
+            echo "Skipping: ${EVENT_ACTION} event for '${LABEL_NAME}' is not 'new-file-smell-ok' — no rescan needed."
+            echo "has_new_source=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           added=$(git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" || true)
           if [ -z "$added" ]; then
             echo "No added files; skipping new-file gate."
