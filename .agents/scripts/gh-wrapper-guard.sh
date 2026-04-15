@@ -92,6 +92,50 @@ _format_violation() {
 
 # --- subcommands -------------------------------------------------------------
 
+# _scan_diff_output scans a unified diff for added lines containing violations.
+# Sets _SCAN_VIOLATIONS and _SCAN_OUTPUT (appended, not reset).
+_SCAN_VIOLATIONS=0
+_SCAN_OUTPUT=""
+
+_scan_diff_for_file() {
+	local file="$1"
+	local diff_output="$2"
+	local current_lineno=0
+
+	while IFS= read -r diff_line; do
+		# Track line numbers from @@ hunks
+		if [[ "$diff_line" =~ ^@@.*\+([0-9]+) ]]; then
+			current_lineno=$((BASH_REMATCH[1] - 1))
+			continue
+		fi
+
+		# Only look at added lines
+		if [[ "$diff_line" == +* && "$diff_line" != "+++"* ]]; then
+			current_lineno=$((current_lineno + 1))
+			local content="${diff_line:1}"
+			if _scan_line "$content"; then
+				_SCAN_OUTPUT+=$(_format_violation "$file" "$current_lineno" "$content")
+				_SCAN_OUTPUT+=$'\n'
+				_SCAN_VIOLATIONS=$((_SCAN_VIOLATIONS + 1))
+			fi
+		elif [[ "$diff_line" != -* && "$diff_line" != "---"* ]]; then
+			current_lineno=$((current_lineno + 1))
+		fi
+	done <<<"$diff_output"
+	return 0
+}
+
+_report_violations() {
+	if [[ "$_SCAN_VIOLATIONS" -gt 0 ]]; then
+		printf 'gh-wrapper-guard: %d violation(s) found — use gh_create_issue / gh_create_pr wrappers instead of raw gh commands.\n' "$_SCAN_VIOLATIONS"
+		printf 'Rule: prompts/build.txt → "Origin labelling (MANDATORY)"\n'
+		printf 'Suppress: append "# aidevops-allow: raw-gh-wrapper" to the line.\n\n'
+		printf '%s' "$_SCAN_OUTPUT"
+		return 1
+	fi
+	return 0
+}
+
 cmd_check() {
 	local base_ref="${1:-}"
 	if [[ -z "$base_ref" ]]; then
@@ -99,8 +143,8 @@ cmd_check() {
 		return 2
 	fi
 
-	local violations=0
-	local violation_output=""
+	_SCAN_VIOLATIONS=0
+	_SCAN_OUTPUT=""
 
 	# Get list of .sh files changed relative to base
 	local changed_files
@@ -114,47 +158,20 @@ cmd_check() {
 		_is_excluded_file "$file" && continue
 		[[ -f "$file" ]] || continue
 
-		# Scan only added/modified lines (+ lines in unified diff)
 		local diff_output
 		diff_output=$(git diff "$base_ref"...HEAD -- "$file" 2>/dev/null || true)
 		[[ -z "$diff_output" ]] && continue
 
-		local current_lineno=0
-		while IFS= read -r diff_line; do
-			# Track line numbers from @@ hunks
-			if [[ "$diff_line" =~ ^@@.*\+([0-9]+) ]]; then
-				current_lineno=$((BASH_REMATCH[1] - 1))
-				continue
-			fi
-
-			# Only look at added lines
-			if [[ "$diff_line" == +* && "$diff_line" != "+++"* ]]; then
-				current_lineno=$((current_lineno + 1))
-				local content="${diff_line:1}"
-				if _scan_line "$content"; then
-					violation_output+=$(_format_violation "$file" "$current_lineno" "$content")
-					violation_output+=$'\n'
-					violations=$((violations + 1))
-				fi
-			elif [[ "$diff_line" != -* && "$diff_line" != "---"* ]]; then
-				current_lineno=$((current_lineno + 1))
-			fi
-		done <<<"$diff_output"
+		_scan_diff_for_file "$file" "$diff_output"
 	done <<<"$changed_files"
 
-	if [[ "$violations" -gt 0 ]]; then
-		printf 'gh-wrapper-guard: %d violation(s) found — use gh_create_issue / gh_create_pr wrappers instead of raw gh commands.\n' "$violations"
-		printf 'Rule: prompts/build.txt → "Origin labelling (MANDATORY)"\n'
-		printf 'Suppress: append "# aidevops-allow: raw-gh-wrapper" to the line.\n\n'
-		printf '%s' "$violation_output"
-		return 1
-	fi
-	return 0
+	_report_violations
+	return $?
 }
 
 cmd_check_staged() {
-	local violations=0
-	local violation_output=""
+	_SCAN_VIOLATIONS=0
+	_SCAN_OUTPUT=""
 
 	# Get staged .sh files
 	local staged_files
@@ -171,35 +188,11 @@ cmd_check_staged() {
 		diff_output=$(git diff --cached -- "$file" 2>/dev/null || true)
 		[[ -z "$diff_output" ]] && continue
 
-		local current_lineno=0
-		while IFS= read -r diff_line; do
-			if [[ "$diff_line" =~ ^@@.*\+([0-9]+) ]]; then
-				current_lineno=$((BASH_REMATCH[1] - 1))
-				continue
-			fi
-
-			if [[ "$diff_line" == +* && "$diff_line" != "+++"* ]]; then
-				current_lineno=$((current_lineno + 1))
-				local content="${diff_line:1}"
-				if _scan_line "$content"; then
-					violation_output+=$(_format_violation "$file" "$current_lineno" "$content")
-					violation_output+=$'\n'
-					violations=$((violations + 1))
-				fi
-			elif [[ "$diff_line" != -* && "$diff_line" != "---"* ]]; then
-				current_lineno=$((current_lineno + 1))
-			fi
-		done <<<"$diff_output"
+		_scan_diff_for_file "$file" "$diff_output"
 	done <<<"$staged_files"
 
-	if [[ "$violations" -gt 0 ]]; then
-		printf 'gh-wrapper-guard: %d violation(s) found — use gh_create_issue / gh_create_pr wrappers instead of raw gh commands.\n' "$violations"
-		printf 'Rule: prompts/build.txt → "Origin labelling (MANDATORY)"\n'
-		printf 'Suppress: append "# aidevops-allow: raw-gh-wrapper" to the line.\n\n'
-		printf '%s' "$violation_output"
-		return 1
-	fi
-	return 0
+	_report_violations
+	return $?
 }
 
 cmd_check_full() {
@@ -264,37 +257,34 @@ show_help() {
 	return 0
 }
 
+# --- argument parsing --------------------------------------------------------
+_parse_base_arg() {
+	# Extracts --base <ref> or bare <ref> from args. Prints the ref.
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--base)
+			echo "${2:-}"
+			return 0
+			;;
+		*)
+			echo "$1"
+			return 0
+			;;
+		esac
+	done
+	return 0
+}
+
 # --- main --------------------------------------------------------------------
 main() {
 	local cmd="${1:-help}"
 	shift || true
 
 	case "$cmd" in
-	check)
-		local base=""
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--base)
-				base="${2:-}"
-				shift 2
-				;;
-			*)
-				base="$1"
-				shift
-				;;
-			esac
-		done
-		cmd_check "$base"
-		;;
-	check-staged)
-		cmd_check_staged
-		;;
-	check-full)
-		cmd_check_full
-		;;
-	help | --help | -h)
-		show_help
-		;;
+	check) cmd_check "$(_parse_base_arg "$@")" ;;
+	check-staged) cmd_check_staged ;;
+	check-full) cmd_check_full ;;
+	help | --help | -h) show_help ;;
 	*)
 		printf 'Unknown command: %s\n' "$cmd" >&2
 		show_help
