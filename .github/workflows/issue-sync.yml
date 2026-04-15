@@ -456,6 +456,95 @@ jobs:
             echo "Warning: one or more closing comments could not be posted (see above). Label updates completed."
           fi
 
+      # ---------------------------------------------------------------
+      # Parent-task phase nudge (GH#18768 systemic fix)
+      # When a PR references a parent-task issue via "For #NNN" or
+      # "Ref #NNN", post a nudge comment on the parent listing remaining
+      # unchecked phases. This closes the gap where Phase N merges but
+      # nobody files the Phase N+1 child issue.
+      # ---------------------------------------------------------------
+      - name: Nudge parent-task issues with remaining phases
+        if: steps.extract.outputs.has_work == 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Extract "For #NNN" and "Ref #NNN" references (parent-task keywords)
+          # These are used instead of Closes/Fixes/Resolves for parent issues
+          PARENT_REFS=""
+          if [[ -n "$PR_BODY" ]]; then
+            PARENT_REFS=$(echo "$PR_BODY" | grep -oiE '(For|Ref)[[:space:]]+#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+          fi
+
+          if [[ -z "$PARENT_REFS" ]]; then
+            echo "No For/Ref parent references found — skipping parent nudge"
+            exit 0
+          fi
+
+          echo "Parent references found: $PARENT_REFS"
+
+          for PARENT_NUM in $PARENT_REFS; do
+            echo "--- Checking parent #$PARENT_NUM ---"
+
+            # Verify it has the parent-task label
+            HAS_PARENT_LABEL=$(gh api "repos/${REPO}/issues/${PARENT_NUM}" \
+              --jq '[.labels[].name] | if index("parent-task") then "true" else "false" end' 2>/dev/null || echo "false")
+
+            if [[ "$HAS_PARENT_LABEL" != "true" ]]; then
+              echo "Issue #$PARENT_NUM does not have parent-task label — skipping"
+              continue
+            fi
+
+            # Check issue is still open
+            PARENT_STATE=$(gh api "repos/${REPO}/issues/${PARENT_NUM}" --jq '.state' 2>/dev/null || echo "")
+            if [[ "$PARENT_STATE" != "open" ]]; then
+              echo "Issue #$PARENT_NUM is not open — skipping"
+              continue
+            fi
+
+            # Count remaining unchecked items in the issue body
+            PARENT_BODY=$(gh api "repos/${REPO}/issues/${PARENT_NUM}" --jq '.body // ""' 2>/dev/null || echo "")
+            UNCHECKED_COUNT=$(echo "$PARENT_BODY" | grep -cE '^\s*- \[ \]' || echo "0")
+            CHECKED_COUNT=$(echo "$PARENT_BODY" | grep -cE '^\s*- \[x\]' || echo "0")
+
+            if [[ "$UNCHECKED_COUNT" -eq 0 ]]; then
+              echo "All phases checked in #$PARENT_NUM — no nudge needed (may be ready to close)"
+              continue
+            fi
+
+            # Check if we already posted a nudge for this PR
+            EXISTING_NUDGE=$(gh api "repos/${REPO}/issues/${PARENT_NUM}/comments" \
+              --jq "[.[] | select(.body | test(\"phase-nudge-pr-${PR_NUMBER}\"))] | length" 2>/dev/null || echo "0")
+
+            if [[ "$EXISTING_NUDGE" != "0" ]]; then
+              echo "Nudge already posted on #$PARENT_NUM for PR #$PR_NUMBER — skipping"
+              continue
+            fi
+
+            # Extract the unchecked items for context
+            REMAINING_ITEMS=$(echo "$PARENT_BODY" | grep -E '^\s*- \[ \]' | sed 's/^[[:space:]]*/  /' | head -10 || true)
+
+            # Post the nudge
+            NUDGE_BODY="<!-- phase-nudge-pr-${PR_NUMBER} -->
+          ### Phase merged — ${UNCHECKED_COUNT} remaining
+
+          PR #${PR_NUMBER} (\`${PR_TITLE}\`) merged. Progress: **${CHECKED_COUNT} done, ${UNCHECKED_COUNT} remaining**.
+
+          Remaining items:
+          ${REMAINING_ITEMS}
+
+          **Next step:** file the next phase child issue (see decomposition plan in this issue's body)."
+
+            if gh issue comment "$PARENT_NUM" --repo "$REPO" --body "$NUDGE_BODY" 2>/dev/null; then
+              echo "Posted phase nudge on #$PARENT_NUM (${UNCHECKED_COUNT} phases remaining)"
+            else
+              echo "Warning: could not post nudge on #$PARENT_NUM"
+            fi
+          done
+
       - name: Checkout repo for TODO.md update
         if: steps.extract.outputs.task_id != ''
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
