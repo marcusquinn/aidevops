@@ -76,6 +76,8 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 | 30 | GH#18729 | ratcheted down — actual violations 28 + 2 buffer |
 | 23 | GH#18802 | ratcheted down — actual violations 21 + 2 buffer |
 | 26 | GH#18807 | pre-existing regression on main — 24 violations vs threshold 23; 24 violations + 2 buffer = 26 |
+| 29 | GH#18987 | pre-existing regression on main — 27 violations vs threshold 26; 27 violations + 2 buffer = 29 |
+| 26 | GH#19049 | ratcheted down — actual violations 24 + 2 buffer |
 
 ## FILE_SIZE_THRESHOLD History
 
@@ -90,6 +92,7 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 |-------|----------|--------|
 | 69 | baseline (2026-04-04) | mostly namerefs in helper scripts |
 | 72 | GH#17830 | pre-existing regression on main — 71 violations vs threshold 69; email-delivery-test-helper.sh and memory-pressure-monitor.sh added namerefs/associative arrays after threshold was set. Adding 1 unit of headroom to unblock PRs; proper fix is to refactor those scripts |
+| 75 | GH#19086 | pre-existing regression on main — 73 violations vs threshold 72; 73 violations + 2 buffer = 75 |
 
 ## QLTY_SMELL_THRESHOLD History
 
