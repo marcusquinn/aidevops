@@ -613,6 +613,43 @@ _merge_ready_prs_for_repo() {
 }
 
 #######################################
+# Attempt to fast-forward the PR's branch to the latest base branch head
+# via `gh pr update-branch`. GitHub's server-side merger will merge main
+# into the branch when the changes don't semantically conflict; this
+# salvages a large class of CONFLICTING PRs where the only issue is that
+# main advanced while the worker was finishing or waiting (t2116).
+#
+# Returns 0 on success (branch now up to date, caller should re-fetch
+# mergeable state), 1 on failure (true semantic conflict, caller should
+# fall through to the close path).
+#
+# Rate-limit considerations: one `gh pr update-branch` call per CONFLICTING
+# PR per merge cycle. No retry — the next pulse cycle will try again if
+# appropriate.
+#
+# Args: $1=pr_number, $2=repo_slug
+#######################################
+_attempt_pr_update_branch() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	local _ub_output _ub_exit
+	_ub_output=$(gh pr update-branch "$pr_number" --repo "$repo_slug" 2>&1)
+	_ub_exit=$?
+
+	if [[ $_ub_exit -eq 0 ]]; then
+		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — update-branch succeeded (t2116)" >>"$LOGFILE"
+		# Brief pause so GitHub recomputes mergeable state before the
+		# caller re-fetches it.
+		sleep 2
+		return 0
+	fi
+
+	echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — update-branch failed, falling through to close (t2116): ${_ub_output}" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
 # Resolve PR mergeable status, retrying once for UNKNOWN state.
 # Returns 0 if MERGEABLE, 1 if not (caller should skip this PR).
 # Args: $1=pr_number, $2=repo_slug, $3=current_mergeable_state
@@ -921,10 +958,59 @@ _process_single_ready_pr() {
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
 
-	# Close conflicting PRs — they can never be merged and block the queue
+	# CONFLICTING handling (t2116): before closing, attempt to salvage the
+	# PR via `gh pr update-branch` which fast-forwards the base branch into
+	# the PR's branch when the conflict is purely due to base advancement
+	# (common case: ratchet PRs on a file that other PRs also touched, docs
+	# simplifications on adjacent sections). If update-branch succeeds, the
+	# PR may now be MERGEABLE and we re-fetch its state so the normal merge
+	# path can take over in the same cycle.
+	#
+	# This reorders the original flow: we now also check the maintainer gate
+	# BEFORE closing, so PRs waiting on `needs-maintainer-review` are never
+	# discarded as CONFLICTING during their wait (previous behaviour punished
+	# maintainer review latency by throwing away worker work — see t2116
+	# post-mortem for PR #18988, #19083).
 	if [[ "$pr_mergeable" == "CONFLICTING" && "$PULSE_MERGE_CLOSE_CONFLICTING" == "true" ]]; then
-		_close_conflicting_pr "$pr_number" "$repo_slug" "$pr_title"
-		return 2
+		# Skip CONFLICTING-close entirely for PRs whose linked issue has
+		# needs-maintainer-review — they are parked legitimately waiting for
+		# a human and MUST NOT be auto-closed (t2116). Post the one-time
+		# rebase nudge so the maintainer has a visible signal.
+		local _t2116_linked_issue _t2116_issue_labels
+		_t2116_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
+		if [[ -n "$_t2116_linked_issue" ]]; then
+			_t2116_issue_labels=$(gh api "repos/${repo_slug}/issues/${_t2116_linked_issue}" \
+				--jq '[.labels[].name] | join(",")' 2>/dev/null) || _t2116_issue_labels=""
+			if [[ "$_t2116_issue_labels" == *"needs-maintainer-review"* ]]; then
+				echo "[pulse-wrapper] Merge pass: skipping CONFLICTING-close of PR #${pr_number} in ${repo_slug} — linked issue #${_t2116_linked_issue} has needs-maintainer-review (t2116)" >>"$LOGFILE"
+				_post_rebase_nudge_on_worker_conflicting "$pr_number" "$repo_slug" "" "" 2>/dev/null || true
+				return 1
+			fi
+		fi
+
+		# Attempt auto-rebase via gh pr update-branch. This is idempotent
+		# and cheap: on success the branch is fast-forwarded and the next
+		# mergeable re-fetch returns MERGEABLE; on failure (true semantic
+		# conflict) we fall through to the close path.
+		if _attempt_pr_update_branch "$pr_number" "$repo_slug"; then
+			# Re-fetch mergeable state after update-branch; GitHub needs a
+			# moment to recompute it. _resolve_pr_mergeable_status already
+			# has a UNKNOWN-retry loop so we reuse it.
+			local _refetched_mergeable
+			_refetched_mergeable=$(gh pr view "$pr_number" --repo "$repo_slug" \
+				--json mergeable --jq '.mergeable // "UNKNOWN"' 2>/dev/null) || _refetched_mergeable="UNKNOWN"
+			pr_mergeable="$_refetched_mergeable"
+			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — update-branch succeeded, refetched mergeable=${pr_mergeable} (t2116)" >>"$LOGFILE"
+			# If still CONFLICTING after a successful update-branch, the
+			# conflict is semantic and unsalvageable. Fall through to close.
+		fi
+
+		if [[ "$pr_mergeable" == "CONFLICTING" ]]; then
+			_close_conflicting_pr "$pr_number" "$repo_slug" "$pr_title"
+			return 2
+		fi
+		# Otherwise pr_mergeable is now MERGEABLE/UNKNOWN — continue through
+		# the normal merge path below.
 	fi
 
 	# Resolve UNKNOWN mergeable state with one retry; skip if not MERGEABLE
