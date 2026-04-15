@@ -106,19 +106,22 @@ Non-canonical colors (e.g., `MAGENTA`, `GRAY`, `BOLD`, `DIM`) → declare locall
 4. Test standalone (`bash ./the-script.sh --help`) and sourced (`setup.sh --non-interactive` or pulse). `shellcheck` must pass.
 5. Commit. Phase 2 lint gate (`shell-init-pattern-check.sh`) automates detection and PR enforcement.
 
-## Audit data (2026-04-15)
+## Audit data (2026-04-15, updated Phase 7c)
 
 529 files scanned, 337 source `shared-constants.sh`:
 
-| Pattern | Count | Safety | Fix |
-|---------|-------|--------|-----|
-| Unguarded plain (`GREEN='…'`) | 18 | **BROKEN** when parent has `readonly` | A or B |
-| Unguarded `readonly` on canonical names | 13 | **WORST** — breaks on re-sourcing | B (prod) or C (tests) |
+| Pattern | Count | Safety | Status |
+|---------|-------|--------|--------|
+| Unguarded plain (`GREEN='…'`) | 5 | **BROKEN** when parent has `readonly` | Blocked on Phase 3 PR #19183 |
+| Unguarded `readonly` on canonical names | 0 | **WORST** — breaks on re-sourcing | **DONE** (Phase 6) |
 | Granular guard (`[[ -z "${VAR+x}" ]] && VAR='…'`) | 24 | Safe (Pattern B) | — |
 | Include guard (`if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]`) | 6 | Safe but coarse | migrate |
-| Prefixed vars (`TEST_RED`, `C_GREEN`) | 50 | Safe (Pattern C) | normalise Phase 7 |
+| Prefixed vars (`TEST_RED`, `C_GREEN`) | 53 | Safe (Pattern C) | **DONE** (Phase 7a/7b/7c) |
 
-Of the 13 unguarded-readonly: 2 production (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`), 11 test harnesses.
+Remaining 5 unguarded-plain files (all production, covered by open Phase 3 PR #19183):
+`doctor-helper.sh`, `deploy-agents-on-merge.sh`, `install-hooks.sh`, `install-hooks-helper.sh`, `pre-edit-check.sh`.
+
+All test harnesses migrated to Pattern C (Phase 7 complete). All `readonly` violations eliminated (Phase 6 complete).
 
 ## Phased migration roadmap (t2053) — each phase its own child task/PR (≤5 files, t1422 cap):
 

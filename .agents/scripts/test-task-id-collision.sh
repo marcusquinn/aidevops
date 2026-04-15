@@ -35,33 +35,33 @@ trap cleanup_test EXIT
 
 mkdir -p "$TEST_DIR"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# Colors (Pattern C: prefixed to avoid collision with shared-constants.sh)
+TEST_RED='\033[0;31m'
+TEST_GREEN='\033[0;32m'
+TEST_YELLOW='\033[1;33m'
+TEST_BLUE='\033[0;34m'
+TEST_RESET='\033[0m'
 
 pass() {
-	echo -e "${GREEN}[PASS]${NC} $1"
+	echo -e "${TEST_GREEN}[PASS]${TEST_RESET} $1"
 	PASS=$((PASS + 1))
 	return 0
 }
 
 fail() {
-	echo -e "${RED}[FAIL]${NC} $1"
+	echo -e "${TEST_RED}[FAIL]${TEST_RESET} $1"
 	FAIL=$((FAIL + 1))
 	return 0
 }
 
 skip() {
-	echo -e "${YELLOW}[SKIP]${NC} $1"
+	echo -e "${TEST_YELLOW}[SKIP]${TEST_RESET} $1"
 	SKIP=$((SKIP + 1))
 	return 0
 }
 
 info() {
-	echo -e "${BLUE}[INFO]${NC} $1"
+	echo -e "${TEST_BLUE}[INFO]${TEST_RESET} $1"
 	return 0
 }
 
@@ -1086,9 +1086,9 @@ echo "============================================="
 echo "  Test Summary"
 echo "============================================="
 echo ""
-echo -e "  ${GREEN}PASS${NC}: $PASS"
-echo -e "  ${RED}FAIL${NC}: $FAIL"
-echo -e "  ${YELLOW}SKIP${NC}: $SKIP"
+echo -e "  ${TEST_GREEN}PASS${TEST_RESET}: $PASS"
+echo -e "  ${TEST_RED}FAIL${TEST_RESET}: $FAIL"
+echo -e "  ${TEST_YELLOW}SKIP${TEST_RESET}: $SKIP"
 echo ""
 
 TOTAL=$((PASS + FAIL + SKIP))
@@ -1096,9 +1096,9 @@ echo "  Total: $TOTAL tests"
 echo ""
 
 if [[ "$FAIL" -eq 0 ]]; then
-	echo -e "${GREEN}All tests passed!${NC}"
+	echo -e "${TEST_GREEN}All tests passed!${TEST_RESET}"
 	exit 0
 else
-	echo -e "${RED}$FAIL test(s) failed${NC}"
+	echo -e "${TEST_RED}$FAIL test(s) failed${TEST_RESET}"
 	exit 1
 fi
