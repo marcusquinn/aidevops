@@ -5,6 +5,8 @@
 
 Canonical rules for `.agents/scripts/**/*.sh`: **source `shared-constants.sh` OR use `[[ -z "${VAR+x}" ]]` guards**. Never declare `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, or `NC` at top level without a guard. Never `readonly` those names outside `shared-constants.sh`. Enforcement: `shell-init-pattern-check.sh` + CI (Phase 2, t2053). Rule in `prompts/build.txt` → Quality Standards.
 
+**Why this rule exists:** On 2026-04-09, `init-routines-helper.sh:22` assigned `GREEN='\033[0;32m'` at top level. `setup.sh` sources it after `shared-constants.sh` (which has `readonly GREEN`). Under `set -Eeuo pipefail`, the re-assignment fatally aborted `setup.sh`, silently skipping `setup_privacy_guard` and `setup_canonical_guard`. **Auto-update was broken for 4 days** (GH#18702, cascade: GH#18693). PR #18728 patched that script; this guide prevents recurrence. Audit (2026-04-15): **18 scripts** with unguarded plain assignments and **2 production scripts** (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`) using `readonly` — all latent repeats of the same outage.
+
 ## Allowed patterns
 
 ### A — source `shared-constants.sh` (preferred)
@@ -67,7 +69,7 @@ RED='\033[0;31m'
 
 Fix: Pattern A or B.
 
-**Unguarded `readonly` on canonical names** — breaks on re-sourcing even without `shared-constants.sh`:
+**Unguarded `readonly` on canonical names** — breaks on re-sourcing:
 
 ```bash
 # WORST
@@ -105,12 +107,6 @@ Colors not in `shared-constants.sh` (e.g., `MAGENTA`, `GRAY`, `BOLD`, `DIM`) are
 3. Replace unguarded assignments with chosen pattern block (after `set -Eeuo pipefail`, before functions).
 4. Test standalone (`bash ./the-script.sh --help`) and sourced (`setup.sh --non-interactive` or pulse). `shellcheck` must pass.
 5. Commit. Phase 2 lint gate (`shell-init-pattern-check.sh`) automates detection and PR enforcement.
-
-## Why this guide exists
-
-On 2026-04-09, `init-routines-helper.sh:22` assigned `GREEN='\033[0;32m'` at top level. `setup.sh` sources it after `shared-constants.sh` (which has `readonly GREEN`). Under `set -Eeuo pipefail`, the re-assignment fatally aborted `setup.sh`, silently skipping `setup_privacy_guard` and `setup_canonical_guard`. **Auto-update was broken for 4 days** (GH#18702, cascade: GH#18693). PR #18728 patched that script; this guide prevents recurrence.
-
-Audit (2026-04-15): **18 scripts** with unguarded plain assignments and **2 production scripts** (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`) using `readonly` — all latent repeats of the same outage.
 
 ## Audit data (2026-04-15)
 
