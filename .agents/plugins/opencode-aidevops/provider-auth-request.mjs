@@ -203,11 +203,44 @@ function stripMcpPrefix(text) {
   return text.replace(/"name"\s*:\s*"mcp__aidevops__([^"]+)"/g, '"name":"$1"');
 }
 
+// t2121: buffer incomplete SSE lines across chunk boundaries. The previous
+// implementation ran stripMcpPrefix() on each decoded chunk in isolation;
+// when Anthropic's SSE stream split a tool name across two chunks, neither
+// chunk matched the regex and the reassembled stream passed through to
+// OpenCode with the unstripped prefix, causing tool calls to be rejected
+// as "unavailable tool" — workers exited with no_activity at ~30s.
+//
+// SSE is line-delimited and Anthropic emits each event as a single-line
+// JSON `data: {...}\n` frame. JSON strings cannot contain literal newlines
+// so any "mcp__aidevops__XYZ" token is always on one line. Buffering up to
+// the last newline in the accumulated stream is provably safe: the regex
+// only runs against complete lines, and incomplete tails are carried into
+// the next chunk until their terminating newline arrives.
 function makeStreamPullHandler(reader, decoder, encoder) {
+  let pending = "";
   return async function pull(controller) {
-    const { done, value } = await reader.read();
-    if (done) { controller.close(); return; }
-    controller.enqueue(encoder.encode(stripMcpPrefix(decoder.decode(value, { stream: true }))));
+    // Loop over upstream reads until we emit a complete line (or EOF).
+    // ReadableStream spec requires pull() to enqueue-or-close before
+    // returning. On EOF we always enqueue+close: the terminal enqueue may
+    // carry a buffered partial-line tail (defensive — well-formed SSE
+    // ends on a newline so pending is typically empty) or an empty chunk.
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        const tail = pending;
+        pending = "";
+        controller.enqueue(encoder.encode(stripMcpPrefix(tail)));
+        controller.close();
+        return;
+      }
+      pending += decoder.decode(value, { stream: true });
+      const nl = pending.lastIndexOf("\n");
+      if (nl < 0) continue;
+      const emit = pending.slice(0, nl + 1);
+      pending = pending.slice(nl + 1);
+      controller.enqueue(encoder.encode(stripMcpPrefix(emit)));
+      return;
+    }
   };
 }
 
