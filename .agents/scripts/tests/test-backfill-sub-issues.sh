@@ -142,9 +142,15 @@ if [[ "$cmd1" == "issue" && "$cmd2" == "list" ]]; then
 fi
 
 # gh search issues <q> ...
+# Env var lookup: dots in task IDs become underscores because bash
+# identifiers cannot contain `.` — attempting indirect expansion with
+# `${!var}` on a dotted name aborts the shell with "invalid variable name".
+# So: always normalise dots to underscores before the lookup. Callers
+# expose fixtures as e.g. `GH_SEARCH_t1873_2_JSON` for task ID `t1873.2`.
 if [[ "$cmd1" == "search" && "$cmd2" == "issues" ]]; then
 	q="${3:-}"
-	var="GH_SEARCH_${q}_JSON"
+	q_safe="${q//./_}"
+	var="GH_SEARCH_${q_safe}_JSON"
 	payload="${!var:-[]}"
 	_emit "$payload" "$@"
 	exit 0
@@ -291,6 +297,26 @@ if [[ "$result" == "103" ]]; then
 	pass "comma-separated Blocked by: picks the first parent-tagged blocker"
 else
 	fail "comma-separated Blocked by: picks the first parent-tagged blocker" "got '$result'"
+fi
+
+# ---- Test 8a: multi-level dot-notation (regression coverage for CR#4) ----
+# A title of "t1873.2.1: ..." must resolve to the immediate parent t1873.2
+# (issue #200 in the fixture), NOT the root t1873 (#100). Previously the
+# helper's Method 1 regex anchored on `^(t[0-9]+)\.[0-9]+:[[:space:]]` which
+# failed to match the extra `.1` segment entirely, causing every multi-level
+# child to be reported as "no parent".
+#
+# The dotted fixture is exposed to the stub via a dot-to-underscore rewrite
+# (`GH_SEARCH_t1873_2_JSON`) because bash identifiers cannot contain `.`.
+# The helper's internal jq filter escapes dots before matching the title so
+# sibling collisions (e.g. `t18732:`) are rejected.
+export GH_SEARCH_t1873_2_JSON='[{"number":100,"title":"t1873: parent task"},{"number":200,"title":"t1873.2: child task"},{"number":301,"title":"t18732: totally unrelated"}]'
+result=$(_detect_parent_from_gh_state "t1873.2.1: deeper grandchild" "" "owner/repo")
+if [[ "$result" == "200" ]]; then
+	pass "multi-level dot-notation resolves to immediate parent (t1873.2.1 → t1873.2)"
+else
+	fail "multi-level dot-notation resolves to immediate parent (t1873.2.1 → t1873.2)" \
+		"got '$result' (expected 200)"
 fi
 
 # =============================================================================

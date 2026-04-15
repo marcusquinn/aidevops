@@ -1806,17 +1806,28 @@ cmd_relationships() {
 _resolve_task_id_via_gh_search() {
 	local task_id="$1" repo="$2"
 	[[ -z "$task_id" || -z "$repo" ]] && return 0
-	# Guard against accidental dotted IDs — caller should pass the top-level.
-	[[ "$task_id" == *.* ]] && {
-		task_id="${task_id%%.*}"
-	}
+	# Dotted IDs (e.g. t2114.1) are the legitimate parent of a deeper child
+	# like t2114.1.2. Previously the helper force-collapsed any dotted input
+	# to its top-level root, which made multi-level dot-notation parent
+	# resolution impossible — callers always got back t2114 instead of
+	# t2114.1. We now accept dotted IDs and escape the dots in the jq regex
+	# so the anchored match still rejects sibling subtasks (e.g. t2114.12).
 
 	local matches
+	# gh search is tokenised by whitespace; passing `t2114.1` still surfaces
+	# the right candidates because the dot is a separator in the search
+	# query. We filter strictly via jq below.
 	matches=$(gh search issues "$task_id" --repo "$repo" --state all \
 		--json number,title --limit 10 2>/dev/null || echo "[]")
 
+	# Escape dots for the jq regex so `t2114.1` does not accidentally match
+	# `t21141:` (where `.` would match any char in PCRE). Bash replacement
+	# `\\.` resolves to a literal `\.` (single backslash + dot) in the
+	# resulting string, which is what jq's test() needs to match a literal.
+	local tid_escaped="${task_id//./\\.}"
+
 	local num
-	num=$(printf '%s' "$matches" | jq -r --arg tid "$task_id" \
+	num=$(printf '%s' "$matches" | jq -r --arg tid "$tid_escaped" \
 		'.[] | select(.title | test("^" + $tid + "([: ]|$)")) | .number' 2>/dev/null | head -1 || echo "")
 	echo "$num"
 	return 0
@@ -1850,8 +1861,18 @@ _detect_parent_from_gh_state() {
 	local title="$1" body="$2" repo="$3"
 	local parent_num=""
 
-	# Method 1: dot-notation in title — "t1873.2: description" → parent t1873
-	if [[ "$title" =~ ^(t[0-9]+)\.[0-9]+:[[:space:]] ]]; then
+	# Method 1: dot-notation in title. Handles any depth of nesting:
+	#   t1873.2:       → parent t1873
+	#   t1873.2.1:     → parent t1873.2
+	#   t2114.1.3.7:   → parent t2114.1.3
+	# The previous single-level regex `^(t[0-9]+)\.[0-9]+:` silently dropped
+	# every multi-level child because the ":" anchor never matched past the
+	# first dotted segment.
+	#
+	# The regex captures the full dotted prefix up to — but excluding — the
+	# final ".N:" segment; _resolve_task_id_via_gh_search is tolerant of
+	# dotted IDs (it accepts intermediate levels as search targets).
+	if [[ "$title" =~ ^(t[0-9]+(\.[0-9]+)*)\.[0-9]+:[[:space:]] ]]; then
 		local dot_parent_tid="${BASH_REMATCH[1]}"
 		parent_num=$(_resolve_task_id_via_gh_search "$dot_parent_tid" "$repo")
 		if [[ -n "$parent_num" ]]; then
@@ -1999,9 +2020,27 @@ cmd_backfill_sub_issues() {
 	if [[ -n "$target_issue" ]]; then
 		issue_numbers=("$target_issue")
 	else
-		local list_json
+		# Fail fast on gh errors. Previously an auth/network failure turned
+		# into `[]` and the run reported "No issues to backfill" — success
+		# with no work done, which silently skipped every real candidate
+		# and made the pulse t2112 reconcile path believe it had already
+		# backfilled an unblessed issue. Any non-zero exit now aborts the
+		# command with a clear error and propagates the gh stderr.
+		local list_json list_err list_rc
+		list_err=$(mktemp) || {
+			print_error "backfill-sub-issues: mktemp failed"
+			return 1
+		}
 		list_json=$(gh issue list --repo "$repo" --state open --limit 500 \
-			--json number 2>/dev/null || echo "[]")
+			--json number 2>"$list_err")
+		list_rc=$?
+		if [[ "$list_rc" -ne 0 ]]; then
+			print_error "backfill-sub-issues: gh issue list failed for $repo (rc=${list_rc})"
+			sed 's/^/  /' "$list_err" >&2 || true
+			rm -f "$list_err"
+			return 1
+		fi
+		rm -f "$list_err"
 		while IFS= read -r _num; do
 			[[ -n "$_num" ]] && issue_numbers+=("$_num")
 		done < <(printf '%s' "$list_json" | jq -r '.[].number' 2>/dev/null || true)
