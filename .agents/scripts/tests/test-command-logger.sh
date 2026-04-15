@@ -16,9 +16,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 HELPER="${SCRIPT_DIR}/../command-logger-helper.sh"
 
 # Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
+readonly TEST_RED='\033[0;31m'
+readonly TEST_GREEN='\033[0;32m'
+readonly TEST_YELLOW='\033[1;33m'
 readonly RESET='\033[0m'
 
 # Test counters
@@ -46,10 +46,10 @@ print_result() {
 	TESTS_RUN=$((TESTS_RUN + 1))
 
 	if [[ "$result" -eq 0 ]]; then
-		echo -e "${GREEN}PASS${RESET} $test_name"
+		echo -e "${TEST_GREEN}PASS${RESET} $test_name"
 		TESTS_PASSED=$((TESTS_PASSED + 1))
 	else
-		echo -e "${RED}FAIL${RESET} $test_name"
+		echo -e "${TEST_RED}FAIL${RESET} $test_name"
 		if [[ -n "$message" ]]; then
 			echo "       $message"
 		fi

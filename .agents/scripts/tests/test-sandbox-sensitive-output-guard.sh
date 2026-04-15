@@ -7,8 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 HELPER="${SCRIPT_DIR}/../sandbox-exec-helper.sh"
 
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
+readonly TEST_RED='\033[0;31m'
+readonly TEST_GREEN='\033[0;32m'
 readonly RESET='\033[0m'
 
 TESTS_RUN=0
@@ -24,11 +24,11 @@ print_result() {
 	TESTS_RUN=$((TESTS_RUN + 1))
 
 	if [[ "$passed" -eq 0 ]]; then
-		printf '%bPASS%b %s\n' "$GREEN" "$RESET" "$test_name"
+		printf '%bPASS%b %s\n' "$TEST_GREEN" "$RESET" "$test_name"
 		return 0
 	fi
 
-	printf '%bFAIL%b %s\n' "$RED" "$RESET" "$test_name"
+	printf '%bFAIL%b %s\n' "$TEST_RED" "$RESET" "$test_name"
 	if [[ -n "$message" ]]; then
 		printf '       %s\n' "$message"
 	fi
