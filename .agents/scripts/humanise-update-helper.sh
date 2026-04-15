@@ -28,7 +28,7 @@ readonly CACHE_FILE="${CACHE_DIR}/humanizer-upstream.md"
 readonly CACHE_VERSION_FILE="${CACHE_DIR}/humanizer-version.txt"
 readonly CACHE_TTL=86400 # 24 hours in seconds
 
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # Get local version from subagent frontmatter
 get_local_version() {

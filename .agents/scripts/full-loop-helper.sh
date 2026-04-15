@@ -14,7 +14,7 @@ readonly SCRIPT_DIR
 readonly STATE_DIR=".agents/loop-state"
 readonly STATE_FILE="${STATE_DIR}/full-loop.local.state"
 readonly DEFAULT_MAX_TASK_ITERATIONS=50 DEFAULT_MAX_PREFLIGHT_ITERATIONS=5 DEFAULT_MAX_PR_ITERATIONS=20
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 HEADLESS="${FULL_LOOP_HEADLESS:-false}"
 _FG_PID_FILE=""

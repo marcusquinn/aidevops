@@ -39,7 +39,7 @@ readonly OPENCODE_INSECURE="${OPENCODE_INSECURE:-}"
 readonly DEFAULT_MODEL="anthropic/claude-sonnet-4-6"
 
 # shellcheck disable=SC2034  # CYAN reserved for future use
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # Logging: uses shared log_* from shared-constants.sh with CRON prefix
 # shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions

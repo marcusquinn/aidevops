@@ -54,7 +54,7 @@ readonly RUNNER_HELPER="$HOME/.aidevops/agents/scripts/runner-helper.sh"
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
 
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # Logging: uses shared log_* from shared-constants.sh with MATRIX prefix
 # shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions

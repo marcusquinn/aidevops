@@ -100,7 +100,7 @@ readonly OPENCODE_HOST="${OPENCODE_HOST:-localhost}"
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_URL="http://${OPENCODE_HOST}:${OPENCODE_PORT}" # NOSONAR - localhost dev server, no TLS needed
 
-readonly BOLD='\033[1m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 readonly DIM='\033[2m'
 
 # Logging: uses shared log_* from shared-constants.sh with TEST prefix
