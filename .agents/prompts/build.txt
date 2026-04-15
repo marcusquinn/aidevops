@@ -391,6 +391,11 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - `worktree-helper.sh remove` and `wt clean` move the worktree directory to system trash before deregistering from git. Accidental removal (e.g. by cleanup routines) is recoverable — restore from trash and `git worktree add` on the same branch.
 - If trash is unavailable, falls back to permanent `git worktree remove`.
 
+**Pulse restart after deploying pulse script fixes (MANDATORY):**
+- Bash processes load `source` files at startup only. Deploying updated `.sh` files to `~/.aidevops/agents/scripts/` does NOT affect a running pulse — it keeps using the old code in memory. This caused a multi-hour outage where v3.8.41 fixes were deployed but the pulse kept blocking issues with stale logic.
+- After deploying fixes to any sourced pulse script (`pulse-*.sh`, `dispatch-dedup-*.sh`, `headless-runtime-*.sh`, `worker-lifecycle-common.sh`, `pulse-nmr-approval.sh`), restart the pulse: `kill $(grep -oE '[0-9]+' ~/.aidevops/logs/pulse.pid | head -1) 2>/dev/null; sleep 3; nohup ~/.aidevops/agents/scripts/pulse-wrapper.sh >> ~/.aidevops/logs/pulse-wrapper.log 2>&1 &`
+- `setup.sh` and `aidevops update` handle this automatically via `_restart_pulse_if_running`. Interactive sessions deploying hotfixes via `cp` must restart manually.
+
 # Quality Standards
 - ShellCheck zero violations. `local var="$1"` pattern. Explicit returns.
 - Shell helpers MUST source `shared-constants.sh` OR guard color/constant fallbacks with `[[ -z "${VAR+x}" ]] && VAR='…'`. Unguarded top-level assignments of shared variable names (`RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, `NC`) are forbidden; `readonly` on those names outside `shared-constants.sh` is forbidden. See `reference/shell-style-guide.md` (root cause: GH#18702/PR #18728).

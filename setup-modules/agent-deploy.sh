@@ -8,6 +8,62 @@
 # Shell safety baseline
 set -Eeuo pipefail
 IFS=$'\n\t'
+
+#######################################
+# Restart the pulse process if it's running, so it picks up newly deployed
+# scripts. Bash processes source files at startup only — file changes on
+# disk don't affect a running process. The pulse is long-lived (hours/days)
+# so it would run stale code indefinitely without a restart.
+#
+# The pulse auto-restarts via launchd/cron, so killing it is safe. If no
+# auto-restart mechanism exists, we start it manually.
+#######################################
+_restart_pulse_if_running() {
+	local pid_file="${HOME}/.aidevops/logs/pulse.pid"
+	[[ -f "$pid_file" ]] || return 0
+
+	local pulse_pid=""
+	pulse_pid=$(grep -oE '[0-9]+' "$pid_file" | head -1) || return 0
+	[[ -n "$pulse_pid" ]] || return 0
+
+	# Check if the process is actually alive
+	if ! kill -0 "$pulse_pid" 2>/dev/null; then
+		return 0
+	fi
+
+	print_info "Restarting pulse (PID $pulse_pid) to load updated scripts..."
+	kill "$pulse_pid" 2>/dev/null || true
+
+	# Wait for it to die
+	local wait_count=0
+	while kill -0 "$pulse_pid" 2>/dev/null && [[ "$wait_count" -lt 10 ]]; do
+		sleep 1
+		wait_count=$((wait_count + 1))
+	done
+
+	# Give launchd/cron a moment to restart it
+	sleep 5
+
+	# Check if it auto-restarted
+	if [[ -f "$pid_file" ]]; then
+		local new_pid=""
+		new_pid=$(grep -oE '[0-9]+' "$pid_file" | head -1) || new_pid=""
+		if [[ -n "$new_pid" ]] && kill -0 "$new_pid" 2>/dev/null; then
+			print_success "Pulse restarted (new PID $new_pid)"
+			return 0
+		fi
+	fi
+
+	# No auto-restart — start it manually
+	local pulse_script="${HOME}/.aidevops/agents/scripts/pulse-wrapper.sh"
+	if [[ -x "$pulse_script" ]]; then
+		nohup "$pulse_script" >>"${HOME}/.aidevops/logs/pulse-wrapper.log" 2>&1 &
+		print_success "Pulse started manually (PID $!)"
+	else
+		print_warning "Pulse not restarted — $pulse_script not found"
+	fi
+	return 0
+}
 # shellcheck disable=SC2154  # rc is assigned by $? in the trap string
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
@@ -513,6 +569,14 @@ deploy_aidevops_agents() {
 
 	print_success "Deployed agents to $target_dir"
 	_deploy_agents_post_copy "$target_dir" "$repo_dir" "$source_dir" "$plugins_file"
+
+	# Restart pulse if running — bash processes load source files at startup
+	# and don't re-read them when files change on disk. Without a restart,
+	# fixes to pulse-*.sh, dispatch-dedup-*.sh, headless-runtime-*.sh, and
+	# other sourced scripts don't take effect until the next manual restart.
+	# This was the root cause of a multi-hour outage where deployed fixes
+	# were correct but the running pulse kept using old code in memory.
+	_restart_pulse_if_running
 
 	return 0
 }
