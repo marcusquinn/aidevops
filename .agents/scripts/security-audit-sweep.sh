@@ -26,14 +26,11 @@ readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 readonly POSTURE_HELPER="${SCRIPT_DIR}/security-posture-helper.sh"
 readonly VERSION="1.0.0"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+# Colors — sourced from shared-constants.sh (Pattern A)
+# shellcheck source=shared-constants.sh
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+# BOLD not in shared-constants.sh — Pattern B fallback
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # AI/LLM dependency patterns (npm, pip, cargo)
 readonly AI_DEPS_NPM='openai|anthropic|^ai$|@ai-sdk|langchain|@langchain|vercel.*ai|@stackone/defender|llama|ollama'
