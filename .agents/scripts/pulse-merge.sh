@@ -1007,6 +1007,24 @@ _process_single_ready_pr() {
 		fi
 
 		if [[ "$pr_mergeable" == "CONFLICTING" ]]; then
+			# Conflict resolution feedback: for worker PRs with a linked
+			# issue, route the conflict context to the issue body so the
+			# next worker can resolve it, instead of silently closing.
+			# Interactive PRs go through the existing close path (their
+			# humans own the conflict resolution).
+			local _conf_linked_issue
+			_conf_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
+			if [[ -n "$_conf_linked_issue" ]]; then
+				local _conf_pr_labels
+				_conf_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+					--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _conf_pr_labels=""
+				if [[ ",${_conf_pr_labels}," == *",origin:worker,"* &&
+					",${_conf_pr_labels}," != *",origin:interactive,"* &&
+					",${_conf_pr_labels}," != *",conflict-feedback-routed,"* ]]; then
+					_dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$_conf_linked_issue" "$pr_title" || true
+					return 2
+				fi
+			fi
 			_close_conflicting_pr "$pr_number" "$repo_slug" "$pr_title"
 			return 2
 		fi
@@ -1019,9 +1037,24 @@ _process_single_ready_pr() {
 		return 1
 	fi
 
-	# Skip PRs with failing required CI checks — --admin bypasses branch
-	# protection but we must not merge when checks are red (t2092).
+	# CI failure fix-up: when required checks fail on a worker PR with a
+	# linked issue, collect failing check details, append to issue body,
+	# close the PR, and set the issue to status:available for re-dispatch.
+	# The next worker sees the CI failure context and can fix it. Interactive
+	# PRs are left alone (their humans own the CI feedback loop).
 	if ! _pr_required_checks_pass "$pr_number" "$repo_slug"; then
+		local _ci_linked_issue
+		_ci_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
+		if [[ -n "$_ci_linked_issue" ]]; then
+			local _ci_pr_labels
+			_ci_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+				--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _ci_pr_labels=""
+			if [[ ",${_ci_pr_labels}," == *",origin:worker,"* &&
+				",${_ci_pr_labels}," != *",origin:interactive,"* &&
+				",${_ci_pr_labels}," != *",ci-feedback-routed,"* ]]; then
+				_dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$_ci_linked_issue" || true
+			fi
+		fi
 		return 1
 	fi
 
@@ -1729,6 +1762,225 @@ See the original PR for full context: https://github.com/${repo_slug}/pull/${pr_
 	if [[ -n "$inline_md" ]]; then
 		printf '### Inline comments (file:line citations)\n\n%s\n\n' "$inline_md"
 	fi
+	return 0
+}
+
+#######################################
+# Route CI failure feedback from a worker PR to its linked issue, close
+# the PR, and set the issue to status:available for re-dispatch.
+#
+# The next worker sees the failing check names, URLs, and context in the
+# issue body and can address the failures directly. This closes the gap
+# where worker PRs with red CI sit indefinitely — the merge pass skips
+# them (correctly), but nothing dispatches a fix worker.
+#
+# Same pattern as _dispatch_pr_fix_worker (t2093) but for CI failures
+# instead of review CHANGES_REQUESTED.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=linked_issue
+#######################################
+_dispatch_ci_fix_worker() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 0
+
+	# Create labels (idempotent, --force)
+	gh label create "ci-feedback-routed" --repo "$repo_slug" --color "E4E669" \
+		--description "Worker PR with failing CI routed to linked issue for re-dispatch" \
+		--force >/dev/null 2>&1 || true
+	gh label create "source:ci-feedback" --repo "$repo_slug" --color "FEF2C0" \
+		--description "Issue carries CI failure feedback routed from a closed worker PR" \
+		--force >/dev/null 2>&1 || true
+
+	# Collect failing checks: name, status, URL
+	local failing_checks
+	failing_checks=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
+		--json name,bucket,link \
+		--jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")
+			| "- **\(.name)**: \(.bucket) — [\(.link // "no link")](\(.link // ""))"]
+			| join("\n")' \
+		2>/dev/null) || failing_checks=""
+
+	if [[ -z "$failing_checks" ]]; then
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has failing checks but could not collect details — skipping routing" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Build the CI Failure Feedback section
+	local feedback_section
+	feedback_section="## CI Failure Feedback (from PR #${pr_number})
+
+The previous worker's PR #${pr_number} had failing required CI checks. The PR has been
+closed and this issue re-queued for dispatch. The next worker should address these failures.
+
+### Failing checks
+
+${failing_checks}
+
+### Worker guidance
+
+1. Check out a fresh branch from \`origin/main\` (do NOT reuse the old branch)
+2. Read the failing check URLs above for specific error messages
+3. Fix the issues in the code, not in the CI config
+4. Ensure all checks pass locally before pushing
+
+_Routed by deterministic merge pass (pulse-merge.sh)._"
+
+	# Append to issue body (marker-guarded for idempotency)
+	local current_body
+	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
+		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
+
+	local marker="<!-- ci-feedback:PR${pr_number} -->"
+	if printf '%s' "$current_body" | grep -qF "$marker"; then
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: issue #${linked_issue} already has CI feedback for PR #${pr_number} — skipping" >>"$LOGFILE"
+	else
+		local new_body="${current_body}
+
+${marker}
+${feedback_section}"
+		gh issue edit "$linked_issue" --repo "$repo_slug" \
+			--body "$new_body" >/dev/null 2>&1 || {
+			echo "[pulse-wrapper] _dispatch_ci_fix_worker: failed to update issue #${linked_issue} body — aborting" >>"$LOGFILE"
+			return 1
+		}
+	fi
+
+	# Transition issue to available for re-dispatch
+	if declare -F set_issue_status >/dev/null 2>&1; then
+		set_issue_status "$linked_issue" "$repo_slug" "available" \
+			--add-label "source:ci-feedback" >/dev/null 2>&1 || true
+	else
+		gh issue edit "$linked_issue" --repo "$repo_slug" \
+			--add-label "status:available" --add-label "source:ci-feedback" \
+			--remove-label "status:queued" --remove-label "status:in-progress" \
+			--remove-label "status:in-review" --remove-label "status:claimed" \
+			>/dev/null 2>&1 || true
+	fi
+
+	# Close the PR
+	gh pr close "$pr_number" --repo "$repo_slug" \
+		--comment "## CI failure feedback routed to issue #${linked_issue}
+
+This worker PR had failing required CI checks. The failure details have been appended
+to the linked issue body so the next worker can address them.
+
+Failing checks:
+${failing_checks}
+
+_Closed by deterministic merge pass (pulse-merge.sh)._" \
+		>/dev/null 2>&1 || true
+
+	gh pr edit "$pr_number" --repo "$repo_slug" \
+		--add-label "ci-feedback-routed" >/dev/null 2>&1 || true
+
+	echo "[pulse-wrapper] _dispatch_ci_fix_worker: routed CI failure feedback from PR #${pr_number} to issue #${linked_issue} in ${repo_slug}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Route merge conflict context from a worker PR to its linked issue, close
+# the PR, and set the issue to status:available for re-dispatch.
+#
+# Called when `gh pr update-branch` fails (true semantic conflict) on a
+# worker PR. The next worker gets the conflict context and the list of
+# conflicting files in its prompt.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=pr_title
+#######################################
+_dispatch_conflict_fix_worker() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local pr_title="$4"
+
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 0
+
+	# Create labels (idempotent, --force)
+	gh label create "conflict-feedback-routed" --repo "$repo_slug" --color "D4C5F9" \
+		--description "Worker PR with merge conflicts routed to linked issue for re-dispatch" \
+		--force >/dev/null 2>&1 || true
+	gh label create "source:conflict-feedback" --repo "$repo_slug" --color "E6D8FA" \
+		--description "Issue carries conflict context routed from a closed worker PR" \
+		--force >/dev/null 2>&1 || true
+
+	# Get the list of files changed in the PR (these are the conflict candidates)
+	local pr_files
+	pr_files=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json files --jq '[.files[].path] | join("\n")' 2>/dev/null) || pr_files="(could not fetch)"
+
+	local feedback_section
+	feedback_section="## Merge Conflict Feedback (from PR #${pr_number})
+
+The previous worker's PR #${pr_number} (\`${pr_title}\`) developed merge conflicts with
+\`main\` that could not be resolved by \`gh pr update-branch\` (server-side fast-forward).
+The conflicts are semantic — the same files were modified on both branches.
+
+### Files in the conflicting PR
+
+\`\`\`
+${pr_files}
+\`\`\`
+
+### Worker guidance
+
+1. Check out a fresh branch from \`origin/main\` (do NOT reuse the old PR's branch)
+2. Re-implement the changes on top of the current \`main\`
+3. The files listed above were modified by both this PR and concurrent merges — review \`main\` to understand what changed
+
+_Routed by deterministic merge pass (pulse-merge.sh)._"
+
+	# Append to issue body (marker-guarded)
+	local current_body
+	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
+		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
+
+	local marker="<!-- conflict-feedback:PR${pr_number} -->"
+	if printf '%s' "$current_body" | grep -qF "$marker"; then
+		echo "[pulse-wrapper] _dispatch_conflict_fix_worker: issue #${linked_issue} already has conflict feedback for PR #${pr_number} — skipping" >>"$LOGFILE"
+	else
+		local new_body="${current_body}
+
+${marker}
+${feedback_section}"
+		gh issue edit "$linked_issue" --repo "$repo_slug" \
+			--body "$new_body" >/dev/null 2>&1 || {
+			echo "[pulse-wrapper] _dispatch_conflict_fix_worker: failed to update issue #${linked_issue} body — aborting" >>"$LOGFILE"
+			return 1
+		}
+	fi
+
+	# Transition issue to available
+	if declare -F set_issue_status >/dev/null 2>&1; then
+		set_issue_status "$linked_issue" "$repo_slug" "available" \
+			--add-label "source:conflict-feedback" >/dev/null 2>&1 || true
+	else
+		gh issue edit "$linked_issue" --repo "$repo_slug" \
+			--add-label "status:available" --add-label "source:conflict-feedback" \
+			--remove-label "status:queued" --remove-label "status:in-progress" \
+			--remove-label "status:in-review" --remove-label "status:claimed" \
+			>/dev/null 2>&1 || true
+	fi
+
+	# Close the PR
+	gh pr close "$pr_number" --repo "$repo_slug" \
+		--comment "## Merge conflict feedback routed to issue #${linked_issue}
+
+This worker PR had semantic merge conflicts with \`main\` that \`update-branch\` could not resolve. The conflict context and file list have been appended to the linked issue body so the next worker can re-implement on top of current \`main\`.
+
+_Closed by deterministic merge pass (pulse-merge.sh)._" \
+		>/dev/null 2>&1 || true
+
+	gh pr edit "$pr_number" --repo "$repo_slug" \
+		--add-label "conflict-feedback-routed" >/dev/null 2>&1 || true
+
+	echo "[pulse-wrapper] _dispatch_conflict_fix_worker: routed conflict feedback from PR #${pr_number} to issue #${linked_issue} in ${repo_slug}" >>"$LOGFILE"
 	return 0
 }
 
