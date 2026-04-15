@@ -7556,5 +7556,20 @@
     "lines_after": 54,
     "action": "tightened",
     "issue": "GH#18711"
+  },
+  ".agents/reference/shell-style-guide.md": {
+    "hash": "1192d6d4979a50b9e579cd2e98224878a577eccc45e16e16be1bdecc8f053865",
+    "lines_before": 176,
+    "lines_after": 150,
+    "action": "tightened",
+    "issue": "GH#19048",
+    "status": "simplified"
+  },
+  ".agents/workflows/brief/templates.md": {
+    "hash": "c156f08487c03427add91d4589e8f35fbbfeb4e76144abc38cc9757ede31c734",
+    "lines": 140,
+    "status": "reviewed-appropriate",
+    "issue": "GH#19030",
+    "action": "no-change-needed"
   }
 }
