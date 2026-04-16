@@ -43,6 +43,9 @@ authorized_keys
 # Exception for pool_ops_token_utils (code module, not a credential)
 !.agents/scripts/oauth-pool-lib/pool_ops_token_utils.py
 
+# Exception for oauth-pool-token-endpoint (token endpoint fetch logic, not a credential)
+!.agents/plugins/opencode-aidevops/oauth-pool-token-endpoint.mjs
+
 # Exception for worker token helper (manages tokens, doesn't contain them)
 !.agents/scripts/worker-token-helper.sh
 !.agents/secretlint.md
