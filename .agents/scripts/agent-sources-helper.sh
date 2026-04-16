@@ -17,9 +17,9 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
-[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 AGENTS_DIR="${HOME}/.aidevops/agents"
 CUSTOM_DIR="${AGENTS_DIR}/custom"
