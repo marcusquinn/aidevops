@@ -64,6 +64,29 @@
 
 set -euo pipefail
 
+# --- Bash 3.2 re-exec self-heal (GH#19348, t2146) ----------------------------
+# This script uses `${var,,}` case conversion at lines ~463-466 (bash 4.0+)
+# to avoid `tr` subprocess forks in the pattern-matcher hot path. Running
+# under /bin/bash 3.2 on macOS the script aborts with "bad substitution"
+# before it can do any useful work. The associative-array maps at the old
+# lines 399/508 were already converted to sparse indexed arrays as a first
+# line of defense, but the case-conversion path is the showstopper.
+#
+# Sourcing shared-constants.sh triggers the framework-wide re-exec guard:
+# if this script is invoked under bash < 4 AND a modern bash is available
+# at /opt/homebrew/bin/bash, /usr/local/bin/bash, or linuxbrew, the guard
+# transparently re-execs this script under the modern bash. Transparent
+# self-heal; no behaviour change on bash 4+.
+#
+# If no modern bash is installed (user set AIDEVOPS_AUTO_UPGRADE_BASH=0),
+# the guard falls through and the script fails loudly on the first bash 4+
+# construct — the right signal for a configuration that deliberately opts
+# out of the upgrade path.
+_MEMPRESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit 1
+# shellcheck source=/dev/null
+source "${_MEMPRESS_DIR}/shared-constants.sh"
+unset _MEMPRESS_DIR
+
 # --- Configuration -----------------------------------------------------------
 
 readonly SCRIPT_NAME="memory-pressure-monitor"
@@ -395,14 +418,15 @@ _batch_get_process_ages() {
 	local ps_age_output
 	ps_age_output=$(ps -p "$pid_csv" -o pid=,etime= 2>/dev/null || true)
 
-	# Build a lookup from the ps output
-	local -A etime_map
+	# Build a PID→etime lookup. PIDs are numeric, so a sparse indexed array
+	# is a drop-in for an associative array and works on bash 3.2 (GH#19348).
+	local -a etime_map=()
 	local p_pid p_etime
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
 		read -r p_pid p_etime <<<"$line"
 		[[ "$p_pid" =~ ^[0-9]+$ ]] || continue
-		etime_map["$p_pid"]="${p_etime:-}"
+		etime_map[$p_pid]="${p_etime:-}"
 	done <<<"$ps_age_output"
 
 	# Convert etime strings to seconds for each requested PID
@@ -504,14 +528,16 @@ _resolve_ages_and_emit() {
 		return 0
 	fi
 
-	# Batch-fetch process ages for all matched PIDs in a single ps call
-	local -A age_map
+	# Batch-fetch process ages for all matched PIDs in a single ps call.
+	# PIDs are numeric, so a sparse indexed array replaces the associative
+	# array (bash 4.0+ only) with identical semantics on bash 3.2 (GH#19348).
+	local -a age_map=()
 	local age_line age_pid age_secs
 	while IFS= read -r age_line; do
 		[[ -z "$age_line" ]] && continue
 		read -r age_pid age_secs <<<"$age_line"
 		[[ "$age_pid" =~ ^[0-9]+$ ]] || continue
-		age_map["$age_pid"]="${age_secs:-0}"
+		age_map[$age_pid]="${age_secs:-0}"
 	done < <(_batch_get_process_ages "${seen_pids[@]}")
 
 	# Emit final rows with ages, then sort by RSS descending
