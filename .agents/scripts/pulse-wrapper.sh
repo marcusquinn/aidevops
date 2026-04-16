@@ -812,9 +812,11 @@ TRIAGE_MAX_RETRIES="${TRIAGE_MAX_RETRIES:-1}"
 #
 # Arguments: $1 issue_number, $2 repo_slug
 # Returns: 0 if consolidation is needed, 1 if not
+#
+# Defaults are owned by pulse-triage.sh (module-level := block) which is
+# sourced above. Declarations removed from here to eliminate duplicate-default
+# drift (t2143). Override via env before sourcing pulse-triage.sh if needed.
 #######################################
-ISSUE_CONSOLIDATION_COMMENT_THRESHOLD="${ISSUE_CONSOLIDATION_COMMENT_THRESHOLD:-2}"
-ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS="${ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS:-500}"
 
 #######################################
 # Large-file simplification gate: check if an issue body references

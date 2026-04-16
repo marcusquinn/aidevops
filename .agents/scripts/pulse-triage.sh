@@ -33,6 +33,14 @@
 [[ -n "${_PULSE_TRIAGE_LOADED:-}" ]] && return 0
 _PULSE_TRIAGE_LOADED=1
 
+# Module-level defaults — single source of truth for consolidation gate thresholds.
+# := form: env overrides set before sourcing this module still take effect;
+# these only apply when the variable is unset. Avoids duplicate-default drift
+# between pulse-wrapper.sh and inline guards. Aligns all call sites to the same
+# 500-char minimum and threshold=2, eliminating the 200-vs-500 mismatch.
+: "${ISSUE_CONSOLIDATION_COMMENT_THRESHOLD:=2}"
+: "${ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS:=500}"
+
 # Compute a content hash from issue body + human comments.
 # Excludes github-actions[bot] comments and our own triage reviews
 # (## Review: prefix) so that only author/contributor changes trigger
@@ -280,11 +288,9 @@ _issue_needs_consolidation() {
 		--paginate --jq '.' 2>/dev/null) || comments_json="[]"
 
 	local substantive_count=0
-	# Defensive defaults match pulse-wrapper.sh:816-817 source of truth.
-	# Guards against unset env when pulse-triage.sh is sourced standalone
-	# (tests, one-off scripts, future sourcing paths). Bash 5.x [[ N -ge "" ]]
-	# evaluates TRUE for any N, so unset threshold would silently break the gate.
-	local min_chars="${ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS:-500}"
+	# Defaults are set at module level (: "${VAR:=value}" block above).
+	# Bare $VAR reference is safe; the module-level block guarantees non-empty.
+	local min_chars="$ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS"
 	substantive_count=$(printf '%s' "$comments_json" | jq --argjson min "$min_chars" '
 		# Combine all operational-noise patterns into a single regex for efficiency
 		# (1 test() invocation per comment instead of 13).
@@ -310,7 +316,7 @@ _issue_needs_consolidation() {
 		)] | length
 	' 2>/dev/null) || substantive_count=0
 
-	if [[ "$substantive_count" -ge "${ISSUE_CONSOLIDATION_COMMENT_THRESHOLD:-2}" ]]; then
+	if [[ "$substantive_count" -ge "$ISSUE_CONSOLIDATION_COMMENT_THRESHOLD" ]]; then
 		return 0
 	fi
 
@@ -320,7 +326,7 @@ _issue_needs_consolidation() {
 	if [[ "$was_already_labeled" == "true" ]]; then
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--remove-label "needs-consolidation" >/dev/null 2>&1 || true
-		echo "[pulse-wrapper] Consolidation gate cleared for #${issue_number} (${repo_slug}) — substantive_count=${substantive_count} below threshold=${ISSUE_CONSOLIDATION_COMMENT_THRESHOLD:-2}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Consolidation gate cleared for #${issue_number} (${repo_slug}) — substantive_count=${substantive_count} below threshold=${ISSUE_CONSOLIDATION_COMMENT_THRESHOLD}" >>"$LOGFILE"
 	fi
 	return 1
 }
@@ -500,7 +506,7 @@ _consolidation_substantive_comments() {
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--paginate --jq '.' 2>/dev/null) || comments_json="[]"
 
-	local min_chars="${ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS:-200}"
+	local min_chars="$ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS"
 
 	printf '%s' "$comments_json" | jq --argjson min "$min_chars" '
 		[.[] | select(

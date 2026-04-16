@@ -147,6 +147,11 @@ teardown_test_env() {
 	TEST_ROOT=""
 	GH_LOG=""
 	unset GH_ISSUE_VIEW_LABELS GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON
+	# t2143: Reset the module-load guard so the next setup_test_env re-sources
+	# pulse-triage.sh and re-runs the := defaults block. Without this, the
+	# second test's `unset ISSUE_CONSOLIDATION_COMMENT_*` leaves the vars unset
+	# and the guard prevents re-initialization → unbound variable on bash -u.
+	unset _PULSE_TRIAGE_LOADED
 	return 0
 }
 
@@ -246,10 +251,46 @@ test_min_chars_default_filters_short_comments() {
 	return 0
 }
 
+# t2143: Verify that _consolidation_substantive_comments also uses the module
+# default min_chars=500, not the prior stale fallback of 200. A comment with
+# 350 chars (above 200 but below 500) must NOT be returned by the helper when
+# ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS is unset (module default=500 applies).
+test_substantive_comments_helper_uses_500_not_200() {
+	setup_test_env
+
+	# A comment between 200 and 500 chars — should be filtered by 500, not by 200.
+	# printf '%350s' '' | tr ' ' 'A' produces exactly 350 'A' characters.
+	local mid_body
+	mid_body=$(printf '%350s' '' | tr ' ' 'A') # exactly 350 chars: above 200, below 500
+	local comments_json
+	comments_json=$(jq -n --arg body "$mid_body" '[
+		{user: {login: "alice", type: "User"}, body: $body}
+	]')
+	GH_API_COMMENTS_JSON="$comments_json"
+	export GH_API_COMMENTS_JSON
+
+	local result
+	result=$(_consolidation_substantive_comments 123 "owner/repo" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$result" | jq 'length' 2>/dev/null) || count=0
+
+	# With min_chars=500 (module default), a 350-char comment is NOT substantive.
+	if [[ "$count" -eq 0 ]]; then
+		print_result "_consolidation_substantive_comments: 350-char comment filtered (module default=500, not stale 200)" 0
+	else
+		print_result "_consolidation_substantive_comments: 350-char comment filtered (module default=500, not stale 200)" 1 \
+			"expected count=0 (filtered by 500), got count=${count} — stale 200 fallback may still be in effect"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_below_threshold_returns_one
 	test_meets_threshold_returns_zero
 	test_min_chars_default_filters_short_comments
+	test_substantive_comments_helper_uses_500_not_200
 
 	echo
 	echo "============================================"
