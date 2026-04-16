@@ -393,7 +393,7 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 
 **Pulse restart after deploying pulse script fixes (MANDATORY):**
 - Bash processes load `source` files at startup only. Deploying updated `.sh` files to `~/.aidevops/agents/scripts/` does NOT affect a running pulse — it keeps using the old code in memory. This caused a multi-hour outage where v3.8.41 fixes were deployed but the pulse kept blocking issues with stale logic.
-- After deploying fixes to any sourced pulse script (`pulse-*.sh`, `dispatch-dedup-*.sh`, `headless-runtime-*.sh`, `worker-lifecycle-common.sh`, `pulse-nmr-approval.sh`), restart the pulse: `pkill -f pulse-wrapper.sh || true; sleep 3; nohup ~/.aidevops/agents/scripts/pulse-wrapper.sh >> ~/.aidevops/logs/pulse-wrapper.log 2>&1 &`
+- After deploying fixes to any sourced pulse script (`pulse-*.sh`, `dispatch-dedup-*.sh`, `headless-runtime-*.sh`, `worker-lifecycle-common.sh`, `pulse-nmr-approval.sh`), restart the pulse: `pkill -f "(^|/)pulse-wrapper\.sh( |$)" || true; sleep 3; nohup ~/.aidevops/agents/scripts/pulse-wrapper.sh >> ~/.aidevops/logs/pulse-wrapper.log 2>&1 &`
 - `setup.sh` and `aidevops update` handle this automatically via `_restart_pulse_if_running`. Interactive sessions deploying hotfixes via `cp` must restart manually.
 
 # Quality Standards

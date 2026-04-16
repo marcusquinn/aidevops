@@ -19,19 +19,26 @@ IFS=$'\n\t'
 # auto-restart mechanism exists, we start it manually.
 #######################################
 _restart_pulse_if_running() {
-	if ! pgrep -f pulse-wrapper.sh >/dev/null; then
+	# Anchor the pattern so it only matches the running script, not editors or
+	# grep commands that happen to contain "pulse-wrapper.sh" in their argv.
+	local pattern="(^|/)pulse-wrapper\\.sh( |$)"
+
+	if ! pgrep -f "$pattern" >/dev/null; then
 		# Not running, nothing to do
 		return 0
 	fi
 
 	local old_pid
-	old_pid=$(pgrep -f pulse-wrapper.sh | head -1)
+	old_pid=$(pgrep -f "$pattern" | tail -1)
+	if [[ -z "$old_pid" ]]; then
+		return 0
+	fi
 	print_info "Restarting pulse (PID $old_pid) to load updated scripts..."
-	pkill -f pulse-wrapper.sh || true
+	pkill -f "$pattern" || true
 
 	# Wait for it to die
 	local wait_count=0
-	while pgrep -f pulse-wrapper.sh >/dev/null && [[ "$wait_count" -lt 10 ]]; do
+	while pgrep -f "$pattern" >/dev/null && [[ "$wait_count" -lt 10 ]]; do
 		sleep 1
 		wait_count=$((wait_count + 1))
 	done
@@ -39,12 +46,15 @@ _restart_pulse_if_running() {
 	# Give launchd/cron a moment to restart it
 	sleep 5
 
-	# Check if it auto-restarted
-	if pgrep -f pulse-wrapper.sh >/dev/null; then
+	# Check if it auto-restarted with a different PID (guards against false
+	# success if the old process failed to terminate).
+	if pgrep -f "$pattern" >/dev/null; then
 		local new_pid
-		new_pid=$(pgrep -f pulse-wrapper.sh | head -1)
-		print_success "Pulse restarted (new PID $new_pid)"
-		return 0
+		new_pid=$(pgrep -f "$pattern" | tail -1)
+		if [[ -n "$new_pid" ]] && [[ "$new_pid" != "$old_pid" ]]; then
+			print_success "Pulse restarted (new PID $new_pid)"
+			return 0
+		fi
 	fi
 
 	# No auto-restart — start it manually
