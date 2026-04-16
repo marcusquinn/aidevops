@@ -129,7 +129,7 @@ main() {
 			print_info "Usage: $0 fix <file>"
 			exit 1
 		fi
-		apply_sonarcloud_fixes "$_arg2"
+		apply_sonarcloud_fixes "$2"
 		;;
 	"fix-all")
 		print_info "Applying fixes to all shell scripts with SonarCloud issues..."
