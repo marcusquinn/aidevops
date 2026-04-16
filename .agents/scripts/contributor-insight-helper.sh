@@ -192,38 +192,18 @@ _issue_exists() {
 
 # --- Main commands ---
 
-cmd_file() {
-	local dry_run=false
-	if [[ "${1:-}" == "--dry-run" ]]; then
-		dry_run=true
-		shift
-	fi
+# _CI_INSIGHT_CREATED: set to 1 by filing helpers when an issue is created or
+# would be created (dry-run). Callers must reset to 0 before each call.
+_CI_INSIGHT_CREATED=0
 
-	local compressed_file="${1:-}"
-	local target_slug="${2:-}"
+# _file_instruction_candidates — extract and file high-confidence instruction
+# candidates. Writes to stdout (dry-run: body; live: log). Sets
+# _CI_INSIGHT_CREATED=1 on success.
+_file_instruction_candidates() {
+	local compressed_file="$1" target_slug="$2"
+	local contributor_user="$3" dry_run="$4"
+	_CI_INSIGHT_CREATED=0
 
-	if [[ -z "$compressed_file" || -z "$target_slug" ]]; then
-		_ci_log ERROR "Usage: contributor-insight-helper.sh file [--dry-run] <compressed_signals.json> <target_slug>"
-		return 1
-	fi
-
-	if [[ ! -f "$compressed_file" ]]; then
-		_ci_log ERROR "Compressed signals file not found: ${compressed_file}"
-		return 1
-	fi
-
-	if ! command -v gh >/dev/null 2>&1; then
-		_ci_log ERROR "gh CLI not found"
-		return 1
-	fi
-
-	local contributor_user
-	contributor_user=$(gh api user --jq '.login' 2>/dev/null) || contributor_user="unknown"
-
-	local issues_created=0
-
-	# --- Instruction candidates ---
-	# Extract high-confidence candidates targeting build.txt or AGENTS.md
 	local candidates
 	candidates=$(jq -c '
 		[
@@ -238,34 +218,41 @@ cmd_file() {
 
 	local candidate_count
 	candidate_count=$(printf '%s' "$candidates" | jq -r 'length' 2>/dev/null) || candidate_count=0
+	[[ "$candidate_count" -gt 0 ]] || return 0
 
-	if [[ "$candidate_count" -gt 0 && "$issues_created" -lt "$MAX_ISSUES" ]]; then
-		local title="Contributor insight: ${candidate_count} instruction candidate(s) from ${contributor_user}"
-
-		if _issue_exists "$target_slug" "instruction candidate"; then
-			_ci_log INFO "Instruction candidates issue already exists — skipping"
-		else
-			local body
-			body=$(_compose_instruction_issue "$candidates" "$contributor_user")
-
-			if [[ "$dry_run" == true ]]; then
-				_ci_log INFO "DRY RUN: would create issue: ${title}"
-				printf '%s\n' "$body"
-			else
-				if gh_create_issue --repo "$target_slug" \
-					--title "$title" \
-					--body "$body" \
-					--label "contributor-insight" 2>/dev/null; then
-					_ci_log INFO "Created issue: ${title}"
-					issues_created=$((issues_created + 1))
-				else
-					_ci_log ERROR "Failed to create instruction candidates issue"
-				fi
-			fi
-		fi
+	local title="Contributor insight: ${candidate_count} instruction candidate(s) from ${contributor_user}"
+	if _issue_exists "$target_slug" "instruction candidate"; then
+		_ci_log INFO "Instruction candidates issue already exists — skipping"
+		return 0
 	fi
 
-	# --- Error patterns (high-frequency, cross-model) ---
+	local body
+	body=$(_compose_instruction_issue "$candidates" "$contributor_user")
+	if [[ "$dry_run" == true ]]; then
+		_ci_log INFO "DRY RUN: would create issue: ${title}"
+		printf '%s\n' "$body"
+		_CI_INSIGHT_CREATED=1
+		return 0
+	fi
+	if gh_create_issue --repo "$target_slug" \
+		--title "$title" --body "$body" \
+		--label "contributor-insight" 2>/dev/null; then
+		_ci_log INFO "Created issue: ${title}"
+		_CI_INSIGHT_CREATED=1
+	else
+		_ci_log ERROR "Failed to create instruction candidates issue"
+	fi
+	return 0
+}
+
+# _file_error_patterns — extract and file high-frequency cross-model error
+# patterns. Writes to stdout (dry-run: body; live: log). Sets
+# _CI_INSIGHT_CREATED=1 on success.
+_file_error_patterns() {
+	local compressed_file="$1" target_slug="$2"
+	local contributor_user="$3" dry_run="$4"
+	_CI_INSIGHT_CREATED=0
+
 	local error_patterns
 	error_patterns=$(jq -c '
 		[
@@ -278,31 +265,66 @@ cmd_file() {
 
 	local error_count
 	error_count=$(printf '%s' "$error_patterns" | jq -r 'length' 2>/dev/null) || error_count=0
+	[[ "$error_count" -gt 0 ]] || return 0
 
-	if [[ "$error_count" -gt 0 && "$issues_created" -lt "$MAX_ISSUES" ]]; then
-		local error_title="Contributor insight: ${error_count} recurring error pattern(s) from ${contributor_user}"
+	local error_title="Contributor insight: ${error_count} recurring error pattern(s) from ${contributor_user}"
+	if _issue_exists "$target_slug" "error pattern"; then
+		_ci_log INFO "Error patterns issue already exists — skipping"
+		return 0
+	fi
 
-		if _issue_exists "$target_slug" "error pattern"; then
-			_ci_log INFO "Error patterns issue already exists — skipping"
-		else
-			local error_body
-			error_body=$(_compose_error_pattern_issue "$error_patterns" "$contributor_user")
+	local error_body
+	error_body=$(_compose_error_pattern_issue "$error_patterns" "$contributor_user")
+	if [[ "$dry_run" == true ]]; then
+		_ci_log INFO "DRY RUN: would create issue: ${error_title}"
+		printf '%s\n' "$error_body"
+		_CI_INSIGHT_CREATED=1
+		return 0
+	fi
+	if gh_create_issue --repo "$target_slug" \
+		--title "$error_title" --body "$error_body" \
+		--label "contributor-insight" 2>/dev/null; then
+		_ci_log INFO "Created issue: ${error_title}"
+		_CI_INSIGHT_CREATED=1
+	else
+		_ci_log ERROR "Failed to create error patterns issue"
+	fi
+	return 0
+}
 
-			if [[ "$dry_run" == true ]]; then
-				_ci_log INFO "DRY RUN: would create issue: ${error_title}"
-				printf '%s\n' "$error_body"
-			else
-				if gh_create_issue --repo "$target_slug" \
-					--title "$error_title" \
-					--body "$error_body" \
-					--label "contributor-insight" 2>/dev/null; then
-					_ci_log INFO "Created issue: ${error_title}"
-					issues_created=$((issues_created + 1))
-				else
-					_ci_log ERROR "Failed to create error patterns issue"
-				fi
-			fi
-		fi
+cmd_file() {
+	local dry_run=false
+	if [[ "${1:-}" == "--dry-run" ]]; then
+		dry_run=true
+		shift
+	fi
+
+	local compressed_file="${1:-}" target_slug="${2:-}"
+	if [[ -z "$compressed_file" || -z "$target_slug" ]]; then
+		_ci_log ERROR "Usage: contributor-insight-helper.sh file [--dry-run] <compressed_signals.json> <target_slug>"
+		return 1
+	fi
+	if [[ ! -f "$compressed_file" ]]; then
+		_ci_log ERROR "Compressed signals file not found: ${compressed_file}"
+		return 1
+	fi
+	if ! command -v gh >/dev/null 2>&1; then
+		_ci_log ERROR "gh CLI not found"
+		return 1
+	fi
+
+	local contributor_user
+	contributor_user=$(gh api user --jq '.login' 2>/dev/null) || contributor_user="unknown"
+
+	local issues_created=0
+
+	if [[ "$issues_created" -lt "$MAX_ISSUES" ]]; then
+		_file_instruction_candidates "$compressed_file" "$target_slug" "$contributor_user" "$dry_run"
+		issues_created=$((issues_created + _CI_INSIGHT_CREATED))
+	fi
+	if [[ "$issues_created" -lt "$MAX_ISSUES" ]]; then
+		_file_error_patterns "$compressed_file" "$target_slug" "$contributor_user" "$dry_run"
+		issues_created=$((issues_created + _CI_INSIGHT_CREATED))
 	fi
 
 	_ci_log INFO "Complete: ${issues_created} issue(s) created (cap=${MAX_ISSUES})"
