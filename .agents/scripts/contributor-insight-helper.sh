@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # contributor-insight-helper.sh — File privacy-sanitized upstream issues from
 # session-miner output for contributor-role repos (t2147).
+# Uses gh_create_issue wrapper (shared-constants.sh) for origin labelling.
 #
 # When a contributor runs aidevops with a repo they don't own in repos.json
 # (role: contributor), the session-miner still runs locally and detects
