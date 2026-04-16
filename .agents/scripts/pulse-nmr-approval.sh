@@ -467,9 +467,14 @@ Auto-approved: ${approval_reason}. Stale recovery tick reset." \
 
 				gh issue edit "$issue_num" --repo "$slug" \
 					--remove-label "needs-maintainer-review" \
-					--add-label "auto-dispatch" >/dev/null 2>&1 || true
-				echo "[pulse-wrapper] Auto-approved #${issue_num} in ${slug} — ${approval_reason} (locked + approval marker + tick reset)" >>"$LOGFILE"
-				total_approved=$((total_approved + 1))
+					--add-label "auto-dispatch" >/dev/null 2>&1
+				local edit_exit=$?
+				if [[ "$edit_exit" -eq 0 ]]; then
+					echo "[pulse-wrapper] Auto-approved #${issue_num} in ${slug} — ${approval_reason} (locked + approval marker + tick reset)" >>"$LOGFILE"
+					total_approved=$((total_approved + 1))
+				else
+					echo "[pulse-wrapper] Auto-approve label update FAILED for #${issue_num} in ${slug} (exit: ${edit_exit}) — approval marker posted but labels unchanged" >>"$LOGFILE"
+				fi
 			fi
 		done
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.maintainer // (.slug | split("/")[0]))"' "$repos_json" 2>/dev/null)
