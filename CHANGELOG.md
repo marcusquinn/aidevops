@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.56] - 2026-04-16
+
+### Changed
+
+- fix(pulse): reconcile_completed_parent_tasks consults sub-issue graph before body regex (#19250)
+- add brief and TODO for voice-bridge/normalise-markdown test coverage (#19245)
+
 ## [3.8.55] - 2026-04-16
 
 ### Changed
