@@ -198,6 +198,74 @@ _isc_delete_stamp() {
 	return 0
 }
 
+# List stampless origin:interactive claims for a single repo (t2148).
+#
+# Detection rule: an issue is a "stampless interactive claim" when all of:
+#   - state: OPEN
+#   - .labels[] contains "origin:interactive"
+#   - .assignees[] contains runner_user
+#   - no matching stamp file exists at $(_isc_stamp_path issue slug)
+#
+# These are the zombie claims that block pulse dispatch forever:
+# `_has_active_claim()` (in dispatch-dedup-helper.sh) treats
+# `origin:interactive` as an active claim regardless of stamp state,
+# but `_isc_cmd_scan_stale` Phase 1 only iterates `$CLAIM_STAMP_DIR`
+# so stampless ones are invisible. Typical cause: `claim-task-id.sh`
+# auto-assigned runner on issue creation (per t1970 for maintainer-gate
+# protection), but the interactive session never ran the formal claim
+# flow, so no stamp was written.
+#
+# Args:
+#   $1 runner_user — GH login of current runner (from `gh api user`)
+#   $2 slug        — owner/repo
+# Stdout: newline-separated JSON lines `{"number":N,"updated_at":"...",
+#         "slug":"..."}` (one per stampless claim). Empty on failure.
+# Exit: 0 always (fail-open for discovery — a transient gh/jq error
+#       should not mask genuine claims on the next scan).
+_isc_list_stampless_interactive_claims() {
+	local runner_user="$1"
+	local slug="$2"
+
+	[[ -n "$runner_user" && -n "$slug" ]] || return 0
+
+	local json
+	json=$(gh issue list --repo "$slug" \
+		--assignee "$runner_user" \
+		--label origin:interactive \
+		--state open \
+		--json number,updatedAt \
+		--limit 200 2>/dev/null) || return 0
+
+	[[ -n "$json" && "$json" != "null" ]] || return 0
+
+	# Emit (number, updated_at) tuples; shell filters stampless.
+	local rows
+	rows=$(printf '%s' "$json" | jq -r '
+		.[] | "\(.number)\t\(.updatedAt)"
+	' 2>/dev/null) || return 0
+
+	[[ -n "$rows" ]] || return 0
+
+	local issue updated_at stamp
+	while IFS=$'\t' read -r issue updated_at; do
+		[[ "$issue" =~ ^[0-9]+$ ]] || continue
+		stamp=$(_isc_stamp_path "$issue" "$slug")
+		if [[ ! -f "$stamp" ]]; then
+			# Emit compact (single-line) JSON so callers can parse row-by-row
+			# via `while IFS= read -r row`. Pretty-printed multi-line output
+			# breaks line-based parsing (see t2148 Test 14 regression).
+			jq -nc \
+				--arg slug "$slug" \
+				--arg updated_at "$updated_at" \
+				--arg issue "$issue" \
+				'{number: ($issue | tonumber), updated_at: $updated_at, slug: $slug}' \
+				2>/dev/null || true
+		fi
+	done <<<"$rows"
+
+	return 0
+}
+
 # Post a claim comment on the issue for audit trail visibility.
 # Mirrors worker dispatch comments but for interactive sessions.
 # Best-effort — all errors are swallowed so the caller never stalls.
@@ -754,6 +822,53 @@ _isc_cmd_scan_stale() {
 		printf 'Total: %d stale claim(s). Release via `aidevops issue release <N>` or reclaim by `cd`-ing into the worktree.\n' "$stale_count"
 	fi
 
+	# --- Phase 1a: stampless origin:interactive claims (t2148) ---
+	# These are issues labeled origin:interactive + assigned to the current
+	# runner but with no matching stamp file. They block pulse dispatch
+	# indefinitely because `_has_active_claim` treats the label as a claim
+	# signal regardless of stamp state. Common cause: `claim-task-id.sh`
+	# auto-assigned on creation but the interactive session never called
+	# `claim` (t1970 auto-assignment + no follow-through).
+	printf '\nScanning for stampless interactive claims (origin:interactive + self-assigned + no stamp)...\n'
+	local repos_json_1a="${HOME}/.config/aidevops/repos.json"
+	local stampless_count=0
+	if [[ -f "$repos_json_1a" ]] && _isc_gh_reachable; then
+		local runner_user_1a
+		runner_user_1a=$(_isc_current_user)
+		if [[ -n "$runner_user_1a" ]]; then
+			local slug_1a
+			while IFS= read -r slug_1a; do
+				[[ -z "$slug_1a" ]] && continue
+
+				local row
+				while IFS= read -r row; do
+					[[ -z "$row" ]] && continue
+					local issue_num updated_at
+					issue_num=$(printf '%s' "$row" | jq -r '.number' 2>/dev/null)
+					updated_at=$(printf '%s' "$row" | jq -r '.updated_at' 2>/dev/null)
+					[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+
+					if [[ $stampless_count -eq 0 ]]; then
+						printf '\nStampless interactive claims (origin:interactive + assigned, no stamp):\n\n'
+					fi
+					printf '  #%s in %s\n' "$issue_num" "$slug_1a"
+					printf '    updated:  %s\n' "${updated_at:-unknown}"
+					printf '    release:  gh issue edit %s --repo %s --remove-assignee %s\n' \
+						"$issue_num" "$slug_1a" "$runner_user_1a"
+					printf '\n'
+					stampless_count=$((stampless_count + 1))
+				done < <(_isc_list_stampless_interactive_claims "$runner_user_1a" "$slug_1a" 2>/dev/null || true)
+			done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' \
+				"$repos_json_1a" 2>/dev/null || true)
+		fi
+	fi
+
+	if [[ $stampless_count -eq 0 ]]; then
+		printf 'No stampless interactive claims.\n'
+	else
+		printf 'Total: %d stampless claim(s). Unassign to unblock pulse dispatch, or leave for normalize auto-recovery (>24h).\n' "$stampless_count"
+	fi
+
 	# --- Phase 2: closed-not-merged PR orphan detection (cross-repo) ---
 	printf '\nScanning for closed-not-merged PRs with still-open linked issues...\n'
 	local orphan_count
@@ -787,12 +902,18 @@ USAGE:
       List active claims from the stamp directory, or check one issue.
 
   interactive-session-helper.sh scan-stale
-      Two-phase stale detection:
-      Phase 1 — Identify stamps with dead PID AND missing worktree path.
-                Does NOT auto-release — agent parses output and prompts user.
-      Phase 2 — Scan all pulse-enabled repos for closed-not-merged PRs
-                (last 14 days) whose linked issue is still OPEN. Surfaces
-                these as recovery candidates. Does NOT auto-reopen.
+      Three-phase stale detection:
+      Phase 1  — Identify stamps with dead PID AND missing worktree path.
+                 Does NOT auto-release — agent parses output and prompts user.
+      Phase 1a — Identify stampless origin:interactive + self-assigned
+                 issues (t2148). These block pulse dispatch forever
+                 because _has_active_claim treats the label as a claim
+                 regardless of stamp state. Does NOT auto-release —
+                 `normalize_active_issue_assignments` auto-recovers after
+                 24h; the agent can unassign immediately at session start.
+      Phase 2  — Scan all pulse-enabled repos for closed-not-merged PRs
+                 (last 14 days) whose linked issue is still OPEN. Surfaces
+                 these as recovery candidates. Does NOT auto-reopen.
 
   interactive-session-helper.sh help
       Print this message.

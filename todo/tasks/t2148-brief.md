@@ -104,39 +104,50 @@ bash ~/Git/aidevops-feature-t2148-scan-stale-stampless-interactive/.agents/scrip
 ## Acceptance Criteria
 
 - [ ] `_isc_list_stampless_interactive_claims` helper exists in interactive-session-helper.sh and emits one JSON line per matching issue.
+
   ```yaml
   verify:
     method: codebase
     pattern: "_isc_list_stampless_interactive_claims"
     path: ".agents/scripts/interactive-session-helper.sh"
   ```
+
 - [ ] `scan-stale` output includes a "Stampless interactive claims" section between Phase 1 and Phase 2.
+
   ```yaml
   verify:
     method: bash
     run: "grep -q 'Stampless' .agents/scripts/interactive-session-helper.sh"
   ```
+
 - [ ] `_normalize_unassign_stampless_interactive` exists in pulse-issue-reconcile.sh and is called from `normalize_active_issue_assignments`.
+
   ```yaml
   verify:
     method: codebase
     pattern: "_normalize_unassign_stampless_interactive"
     path: ".agents/scripts/pulse-issue-reconcile.sh"
   ```
+
 - [ ] `STAMPLESS_INTERACTIVE_AGE_THRESHOLD` defaults to 86400 seconds and is env-overridable.
+
   ```yaml
   verify:
     method: codebase
     pattern: "STAMPLESS_INTERACTIVE_AGE_THRESHOLD:-86400"
     path: ".agents/scripts/pulse-issue-reconcile.sh"
   ```
+
 - [ ] Test harness covers both positive (stampless → detected) and negative (stamp present → not listed) cases.
+
   ```yaml
   verify:
     method: bash
     run: "bash .agents/scripts/tests/test-interactive-session-claim.sh 2>&1 | grep -q 'scan-stale flags stampless'"
   ```
+
 - [ ] Shellcheck passes with zero violations on both modified helpers.
+
   ```yaml
   verify:
     method: bash

@@ -312,6 +312,103 @@ _normalize_unassign_stale() {
 }
 
 #######################################
+# (t2148) Auto-recover stampless origin:interactive claims.
+#
+# Closes the leak described on GH#19380: issues created during an
+# interactive session carry `origin:interactive` + owner assignee (per
+# claim-task-id.sh / t1970), but the session may never run
+# `interactive-session-helper.sh claim`. No stamp is written, so
+# `scan-stale` Phase 1 can't detect the claim, yet `_has_active_claim`
+# in dispatch-dedup-helper.sh treats the label alone as an active
+# claim — blocking pulse dispatch permanently until manual unassign.
+#
+# This pass finds issues with:
+#   - origin:interactive label
+#   - runner_user assigned
+#   - no matching stamp file in $HOME/.aidevops/.agent-workspace/interactive-claims/
+#   - updatedAt older than age_threshold_seconds
+#
+# Action: unassign runner_user. Leaves `origin:interactive` label intact
+# (it's historical fact about creation, not a live claim signal once
+# the assignee is cleared). Does NOT touch status labels — the combined
+# dedup rule (t1996) no longer blocks on label alone, so the pulse can
+# pick up the issue on the next cycle.
+#
+# Threshold rationale (24h default):
+#   - longer than status-based stale (1h) because there's no PID to
+#     verify liveness — we rely on time-based expiry alone
+#   - shorter than scan-stale Phase 2 (14d) because this is a more
+#     targeted signal (assignee + label + no stamp)
+#   - gives genuine long-running interactive work a full day before
+#     reclaim — override via STAMPLESS_INTERACTIVE_AGE_THRESHOLD env var
+#
+# Args:
+#   $1 runner_user            — GH login of current runner
+#   $2 repos_json             — path to repos.json
+#   $3 now_epoch              — current Unix timestamp (date +%s)
+#   $4 age_threshold_seconds  — minimum age before auto-unassign
+# Returns: 0 always (best-effort; logs summary to $LOGFILE)
+#######################################
+_normalize_unassign_stampless_interactive() {
+	local runner_user="$1"
+	local repos_json="$2"
+	local now_epoch="$3"
+	local age_threshold_seconds="$4"
+
+	local stamp_dir="${HOME}/.aidevops/.agent-workspace/interactive-claims"
+	local total_released=0
+
+	local cutoff=$((now_epoch - age_threshold_seconds))
+
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+
+		local json
+		json=$(gh issue list --repo "$slug" \
+			--assignee "$runner_user" \
+			--label origin:interactive \
+			--state open \
+			--json number,updatedAt \
+			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || json=""
+		[[ -n "$json" && "$json" != "null" ]] || continue
+
+		# Filter: updatedAt older than cutoff
+		local rows
+		rows=$(printf '%s' "$json" | jq -r --arg cutoff "$cutoff" '
+			[.[] | select(
+				(.updatedAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < ($cutoff | tonumber)
+			) | .number] | .[]
+		' 2>/dev/null) || rows=""
+		[[ -n "$rows" ]] || continue
+
+		# Flatten slug to stamp-file prefix: "owner/repo" → "owner-repo"
+		local slug_flat="${slug//\//-}"
+
+		local issue_num stamp
+		while IFS= read -r issue_num; do
+			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+			stamp="${stamp_dir}/${slug_flat}-${issue_num}.json"
+
+			# Skip if a stamp exists — a genuine interactive session
+			# is still responsible. scan-stale Phase 1 handles those
+			# via dead-PID + missing-worktree detection.
+			[[ -f "$stamp" ]] && continue
+
+			if gh issue edit "$issue_num" --repo "$slug" --remove-assignee "$runner_user" >/dev/null 2>&1; then
+				echo "[pulse-wrapper] Stampless interactive auto-release: unassigned ${runner_user} from #${issue_num} in ${slug} (>${age_threshold_seconds}s old, no stamp)" >>"$LOGFILE"
+				total_released=$((total_released + 1))
+			fi
+		done <<<"$rows"
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" 2>/dev/null || true)
+
+	if [[ "$total_released" -gt 0 ]]; then
+		echo "[pulse-wrapper] Stampless interactive cleanup: released ${total_released} issues for dispatch" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
 # (t2040 Phase 3 helper) Enforce label invariants across all open issues.
 #
 # Walks every open issue in every pulse-enabled repo and enforces:
@@ -631,6 +728,17 @@ normalize_active_issue_assignments() {
 
 	# Pass 2: reset stale assignments (active label, assignee present, no running worker)
 	_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
+
+	# Pass 2b (t2148): auto-recover stampless origin:interactive claims.
+	# Closes the leak where `claim-task-id.sh` auto-assigns on creation
+	# (per t1970) but the interactive session never runs the formal
+	# claim flow, leaving an `origin:interactive + assignee` pair that
+	# blocks pulse dispatch forever via `_has_active_claim`. The 24h
+	# threshold protects genuine long-running interactive work; shorter
+	# than `scan-stale` Phase 2 (14d) but longer than status-based
+	# stale recovery (1h) because there's no PID to verify liveness.
+	local stampless_age_threshold="${STAMPLESS_INTERACTIVE_AGE_THRESHOLD:-86400}"
+	_normalize_unassign_stampless_interactive "$runner_user" "$repos_json" "$now_epoch" "$stampless_age_threshold"
 
 	# Pass 3 (t2040): enforce label invariants (at most one status:*, at most one tier:*).
 	# Runs unconditionally on every cycle — the cost is bounded by

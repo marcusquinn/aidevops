@@ -106,6 +106,13 @@ issue)
 		# Log the edit flags (already captured in STUB_LOG above). Success.
 		exit 0
 		;;
+	list)
+		# t2148: emit a configurable JSON array for `gh issue list` calls.
+		# STUB_ISSUE_LIST_JSON is the verbatim payload to print; default to
+		# empty array so unrelated callers don't pick up unexpected issues.
+		printf '%s\n' "${STUB_ISSUE_LIST_JSON:-[]}"
+		exit 0
+		;;
 	esac
 	exit 0
 	;;
@@ -451,6 +458,84 @@ else
 	print_result "GH#18786: _isc_has_in_review jq query returns 0/1 correctly" 1 \
 		"(present_rc=$jq_present_rc, absent_rc=$jq_absent_rc, expected 0/1)"
 fi
+
+# =============================================================================
+# Test 12 — t2148: _isc_list_stampless_interactive_claims detects the zombie
+# claim state (origin:interactive + assignee + no stamp)
+# =============================================================================
+# Clean slate — no stamps in the dir
+rm -f "${claim_dir}"/*.json 2>/dev/null || true
+
+# Stub `gh issue list` to return two origin:interactive + assigned issues
+export STUB_ISSUE_LIST_JSON='[
+  {"number": 91001, "updatedAt": "2025-01-01T00:00:00Z"},
+  {"number": 91002, "updatedAt": "2025-01-01T00:00:00Z"}
+]'
+
+stampless_rows=$(_isc_list_stampless_interactive_claims testuser stamp/test 2>&1)
+stampless_rc=$?
+
+# Both should be listed (no stamps exist)
+if [[ $stampless_rc -eq 0 ]] &&
+	printf '%s' "$stampless_rows" | grep -q '"number":91001' &&
+	printf '%s' "$stampless_rows" | grep -q '"number":91002'; then
+	print_result "t2148: stampless primitive detects zombie claims (positive case)" 0
+else
+	print_result "t2148: stampless primitive detects zombie claims (positive case)" 1 \
+		"(rc=$stampless_rc, rows=${stampless_rows:0:200})"
+fi
+
+# =============================================================================
+# Test 13 — t2148: stampless primitive ignores issues with an existing stamp
+# =============================================================================
+# Write a stamp for 91001 — it must be excluded from the output
+jq -n '{
+	issue: 91001, slug: "stamp/test", worktree_path: "/tmp/x",
+	claimed_at: "2026-01-01T00:00:00Z", pid: 1, hostname: "h", user: "testuser"
+}' >"${claim_dir}/stamp-test-91001.json"
+
+stampless_rows2=$(_isc_list_stampless_interactive_claims testuser stamp/test 2>&1)
+stampless_rc2=$?
+
+# 91001 should be excluded (stamp present); 91002 should still be listed
+if [[ $stampless_rc2 -eq 0 ]] &&
+	! printf '%s' "$stampless_rows2" | grep -q '"number":91001' &&
+	printf '%s' "$stampless_rows2" | grep -q '"number":91002'; then
+	print_result "t2148: stampless primitive excludes stamped claims (negative case)" 0
+else
+	print_result "t2148: stampless primitive excludes stamped claims (negative case)" 1 \
+		"(rc=$stampless_rc2, rows=${stampless_rows2:0:200})"
+fi
+
+# =============================================================================
+# Test 14 — t2148: scan-stale Phase 1a surfaces stampless claims
+# =============================================================================
+# Populate a minimal repos.json so the Phase 1a loop has a repo to iterate.
+# Clean the stamp and let the stub re-emit both issues.
+rm -f "${claim_dir}/stamp-test-91001.json" 2>/dev/null || true
+repos_json="${HOME}/.config/aidevops/repos.json"
+mkdir -p "$(dirname "$repos_json")"
+jq -n '{
+	initialized_repos: [
+		{slug: "stamp/test", pulse: true, local_only: false}
+	]
+}' >"$repos_json"
+
+scan_out_1a=$(_isc_cmd_scan_stale 2>&1)
+scan_rc_1a=$?
+
+if [[ $scan_rc_1a -eq 0 ]] &&
+	printf '%s' "$scan_out_1a" | grep -q 'Stampless interactive claims' &&
+	printf '%s' "$scan_out_1a" | grep -q '#91001 in stamp/test'; then
+	print_result "t2148: scan-stale Phase 1a surfaces stampless claims" 0
+else
+	print_result "t2148: scan-stale Phase 1a surfaces stampless claims" 1 \
+		"(rc=$scan_rc_1a, out=$(printf '%s' "$scan_out_1a" | tr '\n' '|' | head -c 400))"
+fi
+
+# Reset to avoid polluting later tests if any are added below
+export STUB_ISSUE_LIST_JSON='[]'
+rm -f "$repos_json" 2>/dev/null || true
 
 # =============================================================================
 # Summary

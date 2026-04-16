@@ -209,6 +209,98 @@ else
 		"(should not have reset — log was fresh but edit was called)"
 fi
 
+# =============================================================================
+# Part 5 (t2148) — _normalize_unassign_stampless_interactive:
+# Positive case: origin:interactive + assigned + no stamp + updated >24h ago
+# → should call `gh issue edit --remove-assignee`.
+# =============================================================================
+# Reset gh stub to emit a stampless-interactive candidate (#555) updated long
+# ago. The helper filters on `updatedAt < (now - threshold)` server-side via jq.
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo '[{"number":555,"updatedAt":"2020-01-01T00:00:00Z"}]'
+    exit 0
+fi
+if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
+    echo "\$*" >> "${GH_EDIT_ARGS_FILE}"
+    exit 0
+fi
+exit 1
+STUB
+chmod +x "${STUB_DIR}/gh"
+
+# Ensure no stamp exists for #555 in the stamp dir convention used by the helper
+STAMP_DIR="${HOME}/.aidevops/.agent-workspace/interactive-claims"
+mkdir -p "$STAMP_DIR"
+rm -f "${STAMP_DIR}/owner-testrepo-555.json"
+
+rm -f "$GH_EDIT_ARGS_FILE"
+NOW_EPOCH_P5=$(date +%s)
+_normalize_unassign_stampless_interactive "testrunner" "$REPOS_JSON" "$NOW_EPOCH_P5" "86400"
+
+if [[ -f "$GH_EDIT_ARGS_FILE" ]] && grep -q -- "--remove-assignee testrunner" "$GH_EDIT_ARGS_FILE" &&
+	grep -q -- "issue edit 555" "$GH_EDIT_ARGS_FILE"; then
+	print_result "t2148: _normalize_unassign_stampless_interactive unassigns stampless claim >24h old" 0
+else
+	print_result "t2148: _normalize_unassign_stampless_interactive unassigns stampless claim >24h old" 1 \
+		"(edit args: $(cat "$GH_EDIT_ARGS_FILE" 2>/dev/null || echo 'file missing'))"
+fi
+
+# =============================================================================
+# Part 6 (t2148) — negative case: stamp present → do NOT unassign.
+# The stamp indicates a genuine interactive session owns the claim; scan-stale
+# Phase 1 handles these via dead-PID + missing-worktree detection.
+# =============================================================================
+# Write a stamp for #555 using the flattened slug convention
+jq -n '{
+	issue: 555, slug: "owner/testrepo", worktree_path: "/tmp/wt",
+	claimed_at: "2026-01-01T00:00:00Z", pid: 1, hostname: "h", user: "testrunner"
+}' >"${STAMP_DIR}/owner-testrepo-555.json"
+
+rm -f "$GH_EDIT_ARGS_FILE"
+_normalize_unassign_stampless_interactive "testrunner" "$REPOS_JSON" "$NOW_EPOCH_P5" "86400"
+
+if [[ ! -f "$GH_EDIT_ARGS_FILE" ]] || ! grep -q -- "--remove-assignee testrunner" "$GH_EDIT_ARGS_FILE"; then
+	print_result "t2148: stampless auto-recovery skips issues with a stamp file" 0
+else
+	print_result "t2148: stampless auto-recovery skips issues with a stamp file" 1 \
+		"(should not have unassigned — stamp exists but gh edit was called)"
+fi
+
+# Clean up
+rm -f "${STAMP_DIR}/owner-testrepo-555.json"
+
+# =============================================================================
+# Part 7 (t2148) — age-threshold guard: recently-updated issues are not touched
+# even when no stamp exists, to protect work just begun.
+# =============================================================================
+# Override stub to return a RECENT updatedAt (now, so it's younger than threshold)
+RECENT_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo "[{\"number\":556,\"updatedAt\":\"${RECENT_ISO}\"}]"
+    exit 0
+fi
+if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
+    echo "\$*" >> "${GH_EDIT_ARGS_FILE}"
+    exit 0
+fi
+exit 1
+STUB
+chmod +x "${STUB_DIR}/gh"
+
+rm -f "$GH_EDIT_ARGS_FILE"
+_normalize_unassign_stampless_interactive "testrunner" "$REPOS_JSON" "$NOW_EPOCH_P5" "86400"
+
+if [[ ! -f "$GH_EDIT_ARGS_FILE" ]] || ! grep -q -- "issue edit 556" "$GH_EDIT_ARGS_FILE"; then
+	print_result "t2148: stampless auto-recovery respects age threshold (recent → skip)" 0
+else
+	print_result "t2148: stampless auto-recovery respects age threshold (recent → skip)" 1 \
+		"(issue 556 was too recent but was unassigned anyway)"
+fi
+
 export PATH="$OLD_PATH"
 
 # =============================================================================
