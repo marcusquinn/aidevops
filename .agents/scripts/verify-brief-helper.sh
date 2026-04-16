@@ -76,8 +76,46 @@ _parse_verify_blocks() {
 				method=$(echo "$block_content" | grep -oE 'method:\s*\S+' | head -1 | sed 's/method:\s*//' || true)
 
 				# Extract run: value (everything after run: with surrounding quotes stripped)
+				# Handles inline strings and YAML block scalars (| or >)
 				local run_value=""
-				run_value=$(echo "$block_content" | { grep '^\s*run:' || true; } | head -1 | sed 's/^\s*run:\s*//' | sed 's/^"\(.*\)"$/\1/' | sed "s/^'\(.*\)'$/\1/" | sed 's/\\"/"/g')
+				local run_line=""
+				run_line=$(echo "$block_content" | { grep '^\s*run:' || true; } | head -1)
+				if [[ -n "$run_line" ]]; then
+					local raw_value=""
+					raw_value=$(echo "$run_line" | sed 's/^\s*run:\s*//')
+					# Detect YAML block scalar indicators (| or >)
+					if [[ "$raw_value" == "|" || "$raw_value" == ">" || "$raw_value" == "|-" || "$raw_value" == ">-" ]]; then
+						# Collect indented continuation lines after run:
+						# Join with "; " to produce a single-line bash command
+						local collecting=0
+						local multiline=""
+						while IFS= read -r bline; do
+							if [[ $collecting -eq 1 ]]; then
+								if echo "$bline" | grep -qE '^\s+'; then
+									# Strip common leading whitespace (up to 6 spaces)
+									local stripped=""
+									stripped=$(echo "$bline" | sed 's/^\s\{1,6\}//')
+									if [[ -n "$stripped" ]]; then
+										if [[ -n "$multiline" ]]; then
+											multiline="${multiline}; ${stripped}"
+										else
+											multiline="$stripped"
+										fi
+									fi
+								else
+									break
+								fi
+							fi
+							if echo "$bline" | grep -qE '^\s*run:'; then
+								collecting=1
+							fi
+						done <<<"$block_content"
+						run_value="$multiline"
+					else
+						# Inline value — strip surrounding quotes and unescape
+						run_value=$(echo "$raw_value" | sed 's/^"\(.*\)"$/\1/' | sed "s/^'\(.*\)'$/\1/" | sed 's/\\"/"/g')
+					fi
+				fi
 
 				# Extract prompt: value (for manual blocks)
 				local prompt_value=""

@@ -38,9 +38,10 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
+          # Match tNNN anywhere in the title (handles GH#NNN: tNNN: prefixes)
           TASK_ID=""
-          if echo "$PR_TITLE" | grep -qE '^t[0-9]+'; then
-            TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*')
+          if echo "$PR_TITLE" | grep -qE 't[0-9]+'; then
+            TASK_ID=$(echo "$PR_TITLE" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
           fi
           echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
 
@@ -51,13 +52,13 @@ jobs:
           fi
 
       # ---------------------------------------------------------------
-      # Step 2: Checkout main (post-merge state)
+      # Step 2: Checkout the exact merge commit (not the moving main ref)
       # ---------------------------------------------------------------
       - name: Checkout code
         if: steps.extract.outputs.task_id != ''
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
 
       # ---------------------------------------------------------------
       # Step 3: Check if brief exists and has verify blocks
