@@ -89,16 +89,25 @@ def subagent_ref_exists(agent_name, subagent_ref, agent_slug,
     return False
 
 
-def validate_subagent_refs(primary_agents, agents_dir, display_to_filename_fn):
+def validate_subagent_refs(primary_agents, agents_dir, display_to_filename_fn=None):
     """Validate subagent references against actual files.
 
     Args:
         primary_agents: Dict of agent display_name -> config.
         agents_dir: Path to agents directory.
         display_to_filename_fn: Function to convert display name to filename stem.
+            If None (default), imports agent_config.display_to_filename lazily.
+            The lazy import avoids a module-level circular import between
+            agent_config and subagent_validation (agent_config re-exports
+            validate_subagent_refs for backward compatibility).
 
     Returns list of (agent_display_name, subagent_ref) tuples for missing refs.
     """
+    if display_to_filename_fn is None:
+        # Lazy import to avoid circular dependency with agent_config at module load.
+        from agent_config import display_to_filename as _display_to_filename
+        display_to_filename_fn = _display_to_filename
+
     all_subagent_files, all_subagent_paths = collect_subagent_files(agents_dir)
     missing_refs = []
 
