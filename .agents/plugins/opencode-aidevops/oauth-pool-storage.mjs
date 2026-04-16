@@ -66,85 +66,73 @@ export function savePool(data) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Pool lock helpers (used only by withPoolLock)
+// ---------------------------------------------------------------------------
+
+const LOCK_DIR = POOL_LOCK_FILE + ".d";
+const OWNER_FILE = LOCK_DIR + "/owner";
+const LOCK_STALE_MS = 10000; // 10 s — sufficient for any normal pool operation
+
+/** Return true if the lock recorded in OWNER_FILE belongs to a dead or expired process. */
+function isLockStale() {
+  try {
+    const { pid, ts } = JSON.parse(readFileSync(OWNER_FILE, "utf-8"));
+    const processGone = (() => { try { process.kill(pid, 0); return false; } catch { return true; } })();
+    return processGone || (Date.now() - ts > LOCK_STALE_MS);
+  } catch {
+    return false; // unreadable — wait and retry
+  }
+}
+
+/** Remove a stale lock directory, ignoring races with other cleaners. */
+function removeStalelock() {
+  try { unlinkSync(OWNER_FILE); } catch { /* race */ }
+  try { rmdirSync(LOCK_DIR); } catch { /* race */ }
+}
+
+/** Release the lock only if we still own it, preventing removal of another process's lock. */
+function releaseLock() {
+  try {
+    const { pid } = JSON.parse(readFileSync(OWNER_FILE, "utf-8"));
+    if (pid !== process.pid) return;
+    try { unlinkSync(OWNER_FILE); } catch { /* ignore */ }
+    try { rmdirSync(LOCK_DIR); } catch { /* ignore */ }
+  } catch { /* lock dir already gone — that's fine */ }
+}
+
 /**
  * Execute a read-modify-write operation on the pool file with cross-process
- * advisory locking via atomic directory creation (mkdirSync is POSIX-atomic:
- * only one process can create the same directory; all others get EEXIST).
+ * advisory locking via atomic directory creation (mkdirSync is POSIX-atomic).
  *
- * An owner file (LOCK_DIR/owner) records { pid, ts } immediately after
- * acquiring the directory so stale locks left by crashed processes can be
- * detected and reclaimed: a lock is stale when the recorded process is no
- * longer alive (kill(pid, 0) throws) OR the recorded timestamp is older than
- * STALE_MS. Only the owning process removes its own lock on release.
- *
- * Uses Atomics.wait for a non-busy synchronous pause between retries so the
- * main thread is not burned during the spin. Times out after 5 s to avoid
- * indefinite deadlock.
+ * An owner file records { pid, ts } on acquisition; stale locks from crashed
+ * processes are reclaimed automatically. Times out after 5 s.
  *
  * @template T
  * @param {() => T} fn
  * @returns {T}
  */
 export function withPoolLock(fn) {
-  const dir = dirname(POOL_FILE);
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dirname(POOL_FILE), { recursive: true });
 
-  const LOCK_DIR = POOL_LOCK_FILE + ".d";
-  const OWNER_FILE = LOCK_DIR + "/owner";
-  const LOCK_MAX_WAIT_MS = 5000;
-  const STALE_MS = 10000; // 10 s: sufficient for any normal pool operation
-  const LOCK_POLL_MS = 50;
-  const deadline = Date.now() + LOCK_MAX_WAIT_MS;
+  const deadline = Date.now() + 5000;
   const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
 
-  // Acquire exclusive lock via atomic directory creation.
   while (true) {
     try {
-      mkdirSync(LOCK_DIR); // throws EEXIST if another process holds the lock
-      // Record ownership immediately so stale-lock detection can verify us.
+      mkdirSync(LOCK_DIR);
       writeFileSync(OWNER_FILE, JSON.stringify({ pid: process.pid, ts: Date.now() }), { mode: 0o600 });
-      break; // lock acquired
+      break;
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
-      if (Date.now() >= deadline) {
-        throw new Error("[aidevops] OAuth pool: timed out waiting for pool lock");
-      }
-
-      // Check whether the existing lock is stale (crashed owner).
-      try {
-        const ownerRaw = readFileSync(OWNER_FILE, "utf-8");
-        const { pid, ts } = JSON.parse(ownerRaw);
-        const processGone = (() => {
-          try { process.kill(pid, 0); return false; } catch { return true; }
-        })();
-        const expired = Date.now() - ts > STALE_MS;
-        if (processGone || expired) {
-          console.error(`[aidevops] OAuth pool: removing stale lock (pid=${pid}, age=${Date.now() - ts}ms)`);
-          try { unlinkSync(OWNER_FILE); } catch { /* race — another process may already be cleaning up */ }
-          try { rmdirSync(LOCK_DIR); } catch { /* race — same */ }
-          continue; // retry acquisition immediately
-        }
-      } catch { /* owner file missing or unreadable — wait and retry */ }
-
-      // Synchronous wait: Atomics.wait works in the Node.js main thread
-      Atomics.wait(sleepBuf, 0, 0, LOCK_POLL_MS);
+      if (Date.now() >= deadline) throw new Error("[aidevops] OAuth pool: timed out waiting for pool lock");
+      if (isLockStale()) { removeStalelock(); continue; }
+      Atomics.wait(sleepBuf, 0, 0, 50);
     }
   }
 
-  try {
-    return fn();
-  } finally {
-    // Only remove the lock if we still own it (guards against accidental
-    // removal of a freshly acquired lock by another process).
-    try {
-      const ownerRaw = readFileSync(OWNER_FILE, "utf-8");
-      const { pid } = JSON.parse(ownerRaw);
-      if (pid === process.pid) {
-        try { unlinkSync(OWNER_FILE); } catch { /* ignore */ }
-        try { rmdirSync(LOCK_DIR); } catch { /* ignore */ }
-      }
-    } catch { /* lock dir already gone — that's fine */ }
-  }
+  try { return fn(); }
+  finally { releaseLock(); }
 }
 
 // ---------------------------------------------------------------------------
