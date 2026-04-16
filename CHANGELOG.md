@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.55] - 2026-04-16
+
+### Changed
+
+- t2135: feat(ci): post-merge brief acceptance criteria verification (#19246)
+- plan qlty A-grade file-complexity campaign (6 tasks, 20 smells) (#19228)
+- refactor(misc-scripts): decompose voice-bridge/normalise-markdown/tabby-profile-sync (#19238)
+
+### Fixed
+
+- skip parent-task title-fallback hygiene + atomic status:done mutation (t2137) (#19248)
+
 ## [3.8.54] - 2026-04-16
 
 ### Changed
