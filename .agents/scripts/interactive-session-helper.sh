@@ -756,6 +756,67 @@ _isc_scan_closed_pr_orphans() {
 }
 
 # -----------------------------------------------------------------------------
+# scan-stale Phase 1a helper (t2148) — stampless interactive claims.
+# -----------------------------------------------------------------------------
+# Iterates pulse-enabled repos from repos.json, calls
+# _isc_list_stampless_interactive_claims per slug, prints findings to stdout.
+# Extracted from _isc_cmd_scan_stale to keep the coordinator under the
+# 100-line function cap enforced by the Complexity Analysis CI gate.
+#
+# Exit: 0 always.
+_isc_scan_stampless_phase() {
+	printf '\nScanning for stampless interactive claims (origin:interactive + self-assigned + no stamp)...\n'
+
+	local repos_json_1a="${HOME}/.config/aidevops/repos.json"
+	local stampless_count=0
+
+	if [[ ! -f "$repos_json_1a" ]] || ! _isc_gh_reachable; then
+		printf 'No stampless interactive claims.\n'
+		return 0
+	fi
+
+	local runner_user_1a
+	runner_user_1a=$(_isc_current_user)
+	if [[ -z "$runner_user_1a" ]]; then
+		printf 'No stampless interactive claims.\n'
+		return 0
+	fi
+
+	local slug_1a
+	while IFS= read -r slug_1a; do
+		[[ -z "$slug_1a" ]] && continue
+
+		local row
+		while IFS= read -r row; do
+			[[ -z "$row" ]] && continue
+			local issue_num updated_at
+			issue_num=$(printf '%s' "$row" | jq -r '.number' 2>/dev/null)
+			updated_at=$(printf '%s' "$row" | jq -r '.updated_at' 2>/dev/null)
+			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+
+			if [[ $stampless_count -eq 0 ]]; then
+				printf '\nStampless interactive claims (origin:interactive + assigned, no stamp):\n\n'
+			fi
+			printf '  #%s in %s\n' "$issue_num" "$slug_1a"
+			printf '    updated:  %s\n' "${updated_at:-unknown}"
+			printf '    release:  gh issue edit %s --repo %s --remove-assignee %s\n' \
+				"$issue_num" "$slug_1a" "$runner_user_1a"
+			printf '\n'
+			stampless_count=$((stampless_count + 1))
+		done < <(_isc_list_stampless_interactive_claims "$runner_user_1a" "$slug_1a" 2>/dev/null || true)
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' \
+		"$repos_json_1a" 2>/dev/null || true)
+
+	if [[ $stampless_count -eq 0 ]]; then
+		printf 'No stampless interactive claims.\n'
+	else
+		printf 'Total: %d stampless claim(s). Unassign to unblock pulse dispatch, or leave for normalize auto-recovery (>24h).\n' "$stampless_count"
+	fi
+
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # Subcommand: scan-stale
 # -----------------------------------------------------------------------------
 # For each stamp: check if the PID is alive AND the worktree path still
@@ -823,51 +884,9 @@ _isc_cmd_scan_stale() {
 	fi
 
 	# --- Phase 1a: stampless origin:interactive claims (t2148) ---
-	# These are issues labeled origin:interactive + assigned to the current
-	# runner but with no matching stamp file. They block pulse dispatch
-	# indefinitely because `_has_active_claim` treats the label as a claim
-	# signal regardless of stamp state. Common cause: `claim-task-id.sh`
-	# auto-assigned on creation but the interactive session never called
-	# `claim` (t1970 auto-assignment + no follow-through).
-	printf '\nScanning for stampless interactive claims (origin:interactive + self-assigned + no stamp)...\n'
-	local repos_json_1a="${HOME}/.config/aidevops/repos.json"
-	local stampless_count=0
-	if [[ -f "$repos_json_1a" ]] && _isc_gh_reachable; then
-		local runner_user_1a
-		runner_user_1a=$(_isc_current_user)
-		if [[ -n "$runner_user_1a" ]]; then
-			local slug_1a
-			while IFS= read -r slug_1a; do
-				[[ -z "$slug_1a" ]] && continue
-
-				local row
-				while IFS= read -r row; do
-					[[ -z "$row" ]] && continue
-					local issue_num updated_at
-					issue_num=$(printf '%s' "$row" | jq -r '.number' 2>/dev/null)
-					updated_at=$(printf '%s' "$row" | jq -r '.updated_at' 2>/dev/null)
-					[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
-
-					if [[ $stampless_count -eq 0 ]]; then
-						printf '\nStampless interactive claims (origin:interactive + assigned, no stamp):\n\n'
-					fi
-					printf '  #%s in %s\n' "$issue_num" "$slug_1a"
-					printf '    updated:  %s\n' "${updated_at:-unknown}"
-					printf '    release:  gh issue edit %s --repo %s --remove-assignee %s\n' \
-						"$issue_num" "$slug_1a" "$runner_user_1a"
-					printf '\n'
-					stampless_count=$((stampless_count + 1))
-				done < <(_isc_list_stampless_interactive_claims "$runner_user_1a" "$slug_1a" 2>/dev/null || true)
-			done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' \
-				"$repos_json_1a" 2>/dev/null || true)
-		fi
-	fi
-
-	if [[ $stampless_count -eq 0 ]]; then
-		printf 'No stampless interactive claims.\n'
-	else
-		printf 'Total: %d stampless claim(s). Unassign to unblock pulse dispatch, or leave for normalize auto-recovery (>24h).\n' "$stampless_count"
-	fi
+	# Extracted into a helper to keep this coordinator under the
+	# 100-line function cap (see Complexity Analysis CI gate).
+	_isc_scan_stampless_phase
 
 	# --- Phase 2: closed-not-merged PR orphan detection (cross-repo) ---
 	printf '\nScanning for closed-not-merged PRs with still-open linked issues...\n'
