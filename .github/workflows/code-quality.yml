@@ -63,6 +63,37 @@ jobs:
         fi
         echo "All shell scripts passed ShellCheck on ${{ matrix.os }}"
 
+    - name: Bash 3.2 syntax validation (macOS native)
+      if: runner.os == 'macOS'
+      run: |
+        # GH#19252: The macOS-shipped /bin/bash (3.2) parser rejects constructs
+        # that Bash 5 accepts silently — most notably heredoc-inside-$() like
+        # var=$(cat <<EOF ... EOF). This step catches them BEFORE merge.
+        # /bin/bash -n is a parse-only check (no execution), so it's safe and fast.
+        echo "Running /bin/bash (3.2) syntax check on all shell scripts..."
+        source .agents/scripts/lint-file-discovery.sh
+        lint_shell_files
+        errors=0
+        while IFS= read -r file; do
+          [ -n "$file" ] || continue
+          # Use if-condition to prevent set -e (GH Actions default) from
+          # aborting the loop on the first syntax error (CodeRabbit #19276).
+          if ! result=$(/bin/bash -n "$file" 2>&1); then
+            echo "FAIL $file"
+            echo "$result"
+            errors=$((errors + 1))
+          fi
+        done <<< "$LINT_SH_FILES"
+        if [ "$errors" -gt 0 ]; then
+          echo ""
+          echo "::error::$errors script(s) have Bash 3.2 syntax errors."
+          echo "::error::macOS launchd invokes scripts via /bin/bash (3.2)."
+          echo "::error::Common cause: heredoc inside \$() — use quoted string assignment instead."
+          echo "::error::Reference: .agents/reference/bash-compat.md"
+          exit 1
+        fi
+        echo "All shell scripts pass /bin/bash (3.2) syntax check."
+
     - name: Platform detection smoke test
       run: |
         echo "Testing platform-detect.sh on ${{ matrix.os }}..."
@@ -138,6 +169,22 @@ jobs:
               echo "FAIL $file:$line [nameref -- bash 4.3+]"
               violations=$((violations + 1))
             done <<< "$nameref"
+          fi
+
+          # Heredoc inside command substitution: $( cat <<EOF ... EOF )
+          # Bash 3.2 parser cannot handle heredocs inside $() — it fails with
+          # "unexpected EOF while looking for matching `)'" and silently corrupts
+          # all function definitions below the error point. This caused a multi-hour
+          # pulse outage (GH#19252, April 2026). Use quoted string assignment instead.
+          # Pattern: line ending with $( followed by cat << on the next line.
+          # Also catch inline: $(cat <<
+          heredoc_in_subshell=$(grep -nE '\$\(\s*cat\s*<<' "$file" 2>/dev/null \
+            | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+          if [ -n "$heredoc_in_subshell" ]; then
+            while IFS= read -r line; do
+              echo "FAIL $file:$line [heredoc inside \$() — breaks bash 3.2 parser. Use quoted string assignment]"
+              violations=$((violations + 1))
+            done <<< "$heredoc_in_subshell"
           fi
         done <<< "$LINT_SH_FILES"
 
