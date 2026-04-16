@@ -446,7 +446,7 @@ main() {
 
 	# Prerequisite check
 	if ! command -v jq &>/dev/null; then
-		echo -e "${TEST_RED}SKIP${RESET} jq not found — required for circuit breaker"
+		echo -e "${TEST_YELLOW}SKIP${RESET} jq not found — required for circuit breaker"
 		exit 1
 	fi
 

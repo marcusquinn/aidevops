@@ -18,7 +18,6 @@ HELPER="${SCRIPT_DIR}/../matterbridge-helper.sh"
 # Colors
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
-readonly TEST_YELLOW='\033[1;33m'
 readonly RESET='\033[0m'
 
 # Test counters
