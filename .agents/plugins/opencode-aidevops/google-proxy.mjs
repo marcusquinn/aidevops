@@ -27,27 +27,8 @@
 
 import { join } from "path";
 import { getAccounts, ensureValidToken, patchAccount } from "./oauth-pool.mjs";
+import { jsonResponse, textResponse } from "./response-helpers.mjs";
 export { buildGoogleProviderModels, registerGoogleProvider, persistGoogleProvider, discoverGoogleModels } from "./google-proxy-config.mjs";
-
-// ---------------------------------------------------------------------------
-// Response helpers — cross-realm safety (same as claude-proxy.mjs)
-// ---------------------------------------------------------------------------
-
-/** See claude-proxy.mjs for full rationale on the _Response type mismatch. */
-function jsonResponse(data, init = {}) {
-  if (typeof Response.json === "function") {
-    return Response.json(data, init);
-  }
-  return new Response(JSON.stringify(data), {
-    ...init,
-    headers: { "Content-Type": "application/json", ...init.headers },
-  });
-}
-
-function textResponse(body, init = {}) {
-  return new Response(body, init);
-}
-import { persistGoogleProvider, discoverGoogleModels } from "./google-proxy-config.mjs";
 
 // ---------------------------------------------------------------------------
 // Constants

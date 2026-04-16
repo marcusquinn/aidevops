@@ -38,6 +38,7 @@ import {
 } from "./claude-proxy-jsonpath.mjs";
 import { streamClaudeResponse } from "./claude-proxy-streaming.mjs";
 import { buildProviderModels } from "./proxy-provider-models.mjs";
+import { jsonResponse, textResponse } from "./response-helpers.mjs";
 
 const CLAUDE_PROXY_DEFAULT_PORT = parseInt(process.env.CLAUDE_PROXY_PORT || "32125", 10);
 const CLAUDE_PROVIDER_ID = "claudecli";
@@ -49,35 +50,6 @@ const SSE_HEADERS = {
   "Cache-Control": "no-cache",
   Connection: "keep-alive",
 };
-
-// ---------------------------------------------------------------------------
-// Response helpers — cross-realm safety
-// ---------------------------------------------------------------------------
-
-/**
- * Create a JSON HTTP response. OpenCode's Bun plugin loader may rebind the
- * `Response` constructor to a realm-local `_Response` class that Bun.serve
- * rejects with "Expected a Response object, but received '_Response'".
- *
- * `Response.json()` (Fetch API static method, Bun ≥1.0) constructs the
- * response through Bun's native internal path, bypassing the mismatch.
- * Falls back to `new Response()` for runtimes without `Response.json()`.
- */
-function jsonResponse(data, init = {}) {
-  if (typeof Response.json === "function") {
-    return Response.json(data, init);
-  }
-  return new Response(JSON.stringify(data), {
-    ...init,
-    headers: { "Content-Type": "application/json", ...init.headers },
-  });
-}
-
-/** Plain-text response (404, etc.). No cross-realm workaround needed — these
- *  are simple enough that Bun.serve generally handles them. */
-function textResponse(body, init = {}) {
-  return new Response(body, init);
-}
 
 /** @type {ReturnType<Bun["serve"]> | null} */
 let proxyServer = null;

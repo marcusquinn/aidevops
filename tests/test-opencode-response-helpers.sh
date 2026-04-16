@@ -54,12 +54,14 @@ fi
 if command -v node >/dev/null 2>&1; then
 	for f in \
 		"$PLUGIN_DIR/response-helpers.mjs" \
+		"$PLUGIN_DIR/claude-proxy.mjs" \
+		"$PLUGIN_DIR/google-proxy.mjs" \
 		"$PLUGIN_DIR/cursor/proxy.js" \
 		"$PLUGIN_DIR/cursor/proxy-stream.js" \
 		"$PLUGIN_DIR/provider-auth-request.mjs"; do
 		node --check "$f" || fail "node --check failed on $f"
 	done
-	pass "syntax check on response-helpers.mjs + 3 importers"
+	pass "syntax check on response-helpers.mjs + 5 importers"
 fi
 
 # --- 2. Runtime behaviour -------------------------------------------------
