@@ -114,23 +114,15 @@ _get_rate_limit_behavior() {
 
 	# If repos.json doesn't exist, fall through to global default
 	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
-		# Try per-tool setting first
-		local per_tool=""
-		per_tool=$(jq -r --arg slug "$repo_slug" --arg bot "$bot_login" \
-			'.initialized_repos[] | select(.slug == $slug) | .review_gate.tools[$bot].rate_limit_behavior // empty' \
-			"$repos_json" 2>/dev/null) || per_tool=""
-		if [[ -n "$per_tool" ]]; then
-			printf '%s' "$per_tool"
-			return 0
-		fi
-
-		# Try per-repo default
-		local per_repo=""
-		per_repo=$(jq -r --arg slug "$repo_slug" \
-			'.initialized_repos[] | select(.slug == $slug) | .review_gate.rate_limit_behavior // empty' \
-			"$repos_json" 2>/dev/null) || per_repo=""
-		if [[ -n "$per_repo" ]]; then
-			printf '%s' "$per_repo"
+		# Try per-tool or per-repo setting in a single jq pass.
+		# first() guards against duplicate slug entries in repos.json.
+		# stderr is not suppressed so JSON syntax errors surface during debugging.
+		local behavior=""
+		behavior=$(jq -r --arg slug "$repo_slug" --arg bot "$bot_login" \
+			'first(.initialized_repos[] | select(.slug == $slug)) | (.review_gate.tools[$bot].rate_limit_behavior // .review_gate.rate_limit_behavior // empty)' \
+			"$repos_json") || behavior=""
+		if [[ -n "$behavior" ]]; then
+			printf '%s' "$behavior"
 			return 0
 		fi
 	fi
