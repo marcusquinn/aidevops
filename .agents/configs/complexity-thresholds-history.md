@@ -62,6 +62,10 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 | 286 | GH#19086 | proximity guard firing at 279/279 (0 headroom); violations drifted from ratchet baseline 277 up to 279 on main as new helpers landed. 279 violations + 7 headroom = 286; proximity guard (warn_at = 286-5 = 281) fires when violations exceed 281 (i.e., at 282), preventing saturation. A ratchet-down fix would require reducing per-file max depth below 9 in multiple scripts — a larger refactor than the proximity warning justifies; follow the established bump-and-ratchet cadence |
 | 281 | GH#19204 (PR#19207) | ratcheted down — actual violations 279 + 2 buffer |
 | 286 | GH#19215 | proximity guard firing at 279/281 (2 headroom); 279 violations + 7 headroom = 286; proximity guard (warn_at = 286-5 = 281) fires when violations exceed 281 (i.e., at 282), preventing saturation |
+| 281 | GH#19235 | ratcheted down — actual violations 279 + 2 buffer |
+| 288 | GH#19288 | proximity guard firing at 281/281 (0 headroom); 281 violations + 7 headroom = 288; proximity guard (warn_at = 288-5 = 283) fires when violations exceed 283 (i.e., at 284), preventing saturation |
+| 283 | GH#19323 | ratcheted down — actual violations 281 + 2 buffer |
+| 288 | GH#19342 | proximity guard firing at 281/283 (2 headroom); 281 violations + 7 headroom = 288; proximity guard (warn_at = 288-5 = 283) fires when violations exceed 283 (i.e., at 284), preventing saturation |
 
 ## FUNCTION_COMPLEXITY_THRESHOLD History
 
