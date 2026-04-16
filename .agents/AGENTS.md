@@ -171,7 +171,7 @@ Set fields based on the repo's purpose:
 - `local_only: true` — no remote; skip all `gh` operations.
 - `priority` — `"tooling"` (infrastructure), `"product"` (user-facing), `"profile"` (docs-only).
 - `maintainer` — GitHub username. Used by code-simplifier and maintainer-gated workflows. Auto-detected from `gh api user`; falls back to slug owner.
-- `role` — `"maintainer"` or `"contributor"` (t2145). Controls which pulse scanners run against the repo. **Maintainer** (default for repos you own): all scanners (review-followup, quality-debt, simplification-debt, complexity scans). **Contributor** (default for repos owned by others): session-miner and memory-miner only — scanners that scrape repo data the maintainer already has are blocked to avoid NMR noise. Auto-detected from slug owner vs `gh api user` when omitted.
+- `role` — `"maintainer"` or `"contributor"` (t2145/t2147). Controls which pulse scanners run against the repo. **Maintainer** (default for repos you own): all scanners. **Contributor** (default for repos owned by others): session-miner insights only — the session-miner files sanitized `contributor-insight` issues upstream from instruction candidates and error patterns detected in the contributor's own sessions. Privacy: strips private repo slugs, local file paths, credentials, and email addresses. Auto-detected from slug owner vs `gh api user` when omitted.
 
 **Cross-repo task creation**: When creating a task in a *different* repo, follow the full workflow — not just the TODO edit:
 

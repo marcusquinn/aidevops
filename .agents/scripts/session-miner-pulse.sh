@@ -764,6 +764,8 @@ output_results() {
 		if [[ "${create_issues}" == true ]]; then
 			create_feedback_issues "${_feedback_actions_file}" "${dry_run}" || true
 		fi
+		# t2147: file contributor insights for contributor-role repos
+		file_contributor_insights "${dry_run}" || true
 		echo "--- Would log TODO suggestions to relevant repos ---"
 	else
 		echo "${summary}"
@@ -771,6 +773,8 @@ output_results() {
 		if [[ "${create_issues}" == true ]]; then
 			create_feedback_issues "${_feedback_actions_file}" "${dry_run}" || true
 		fi
+		# t2147: file contributor insights for contributor-role repos
+		file_contributor_insights "${dry_run}" || true
 		record_pulse
 		log_info "Pulse complete. Output: ${_output_dir}"
 		log_info "Compressed signals: ${_compressed_file}"
@@ -778,6 +782,63 @@ output_results() {
 		log_info "Feedback report: ${_feedback_report_file}"
 		log_info "Run 'opencode run --dir ~/Git/REPO --title \"Session miner analysis\" \"Analyse ${_compressed_file} against the current harness and suggest improvements\"' for deep analysis."
 	fi
+	return 0
+}
+
+# file_contributor_insights files sanitized upstream issues for repos where
+# the user is a contributor (role != maintainer). Uses compressed signals
+# from the current pulse run. Skips if no contributor-role repos found.
+# Arguments: $1 — dry_run (true/false)
+file_contributor_insights() {
+	local dry_run="$1"
+
+	local insight_helper="${SCRIPT_DIR}/contributor-insight-helper.sh"
+	if [[ ! -x "$insight_helper" ]]; then
+		return 0
+	fi
+
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	if [[ ! -f "$repos_json" ]]; then
+		return 0
+	fi
+
+	if ! command -v jq >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# Get current gh user for auto-detect
+	local gh_user
+	gh_user=$(gh api user --jq '.login' 2>/dev/null) || gh_user=""
+
+	# Find contributor-role repos (explicit or auto-detected)
+	local slug
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+
+		# Check explicit role first
+		local explicit_role
+		explicit_role=$(jq -r --arg s "$slug" '.initialized_repos[] | select(.slug == $s) | .role // ""' "$repos_json" 2>/dev/null) || explicit_role=""
+
+		local is_contributor=false
+		if [[ "$explicit_role" == "contributor" ]]; then
+			is_contributor=true
+		elif [[ -z "$explicit_role" && -n "$gh_user" ]]; then
+			# Auto-detect: different owner = contributor
+			local owner="${slug%%/*}"
+			if [[ "$owner" != "$gh_user" ]]; then
+				is_contributor=true
+			fi
+		fi
+
+		if [[ "$is_contributor" == true ]]; then
+			log_info "Filing contributor insights for ${slug}..."
+			local dr_flag=""
+			[[ "$dry_run" == true ]] && dr_flag="--dry-run"
+			# shellcheck disable=SC2086
+			"$insight_helper" file $dr_flag "${_compressed_file}" "$slug" 2>&1 || true
+		fi
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+
 	return 0
 }
 
