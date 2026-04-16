@@ -54,21 +54,21 @@ readonly TEST_RESET=$'\033[0m'
 
 pass() {
 	local msg="${1:-}"
-	echo -e "${TEST_GREEN}[PASS]${TEST_RESET} $msg"
+	printf "%s\n" "${TEST_GREEN}[PASS]${TEST_RESET} $msg"
 	PASS=$((PASS + 1))
 	return 0
 }
 
 fail() {
 	local msg="${1:-}"
-	echo -e "${TEST_RED}[FAIL]${TEST_RESET} $msg"
+	printf "%s\n" "${TEST_RED}[FAIL]${TEST_RESET} $msg"
 	FAIL=$((FAIL + 1))
 	return 0
 }
 
 skip() {
 	local msg="${1:-}"
-	echo -e "${TEST_YELLOW}[SKIP]${TEST_RESET} $msg"
+	printf "%s\n" "${TEST_YELLOW}[SKIP]${TEST_RESET} $msg"
 	SKIP=$((SKIP + 1))
 	return 0
 }
@@ -76,7 +76,7 @@ skip() {
 info() {
 	local msg="${1:-}"
 	if [[ "$VERBOSE" == "--verbose" ]]; then
-		echo -e "${TEST_BLUE}[INFO]${TEST_RESET} $msg"
+		printf "%s\n" "${TEST_BLUE}[INFO]${TEST_RESET} $msg"
 	fi
 	return 0
 }

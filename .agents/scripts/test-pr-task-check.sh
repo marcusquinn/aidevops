@@ -27,7 +27,7 @@ log() {
 }
 verbose() {
 	if [[ "$VERBOSE" == "--verbose" ]]; then
-		echo -e "  ${TEST_YELLOW}$1${TEST_RESET}"
+		printf "  %s\n" "${TEST_YELLOW}$1${TEST_RESET}"
 	fi
 	return 0
 }

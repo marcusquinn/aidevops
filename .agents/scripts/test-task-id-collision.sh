@@ -43,25 +43,29 @@ readonly TEST_BLUE=$'\033[0;34m'
 readonly TEST_RESET=$'\033[0m'
 
 pass() {
-	echo -e "${TEST_GREEN}[PASS]${TEST_RESET} $1"
+	local msg="$1"
+	printf "%s\n" "${TEST_GREEN}[PASS]${TEST_RESET} $msg"
 	PASS=$((PASS + 1))
 	return 0
 }
 
 fail() {
-	echo -e "${TEST_RED}[FAIL]${TEST_RESET} $1"
+	local msg="$1"
+	printf "%s\n" "${TEST_RED}[FAIL]${TEST_RESET} $msg"
 	FAIL=$((FAIL + 1))
 	return 0
 }
 
 skip() {
-	echo -e "${TEST_YELLOW}[SKIP]${TEST_RESET} $1"
+	local msg="$1"
+	printf "%s\n" "${TEST_YELLOW}[SKIP]${TEST_RESET} $msg"
 	SKIP=$((SKIP + 1))
 	return 0
 }
 
 info() {
-	echo -e "${TEST_BLUE}[INFO]${TEST_RESET} $1"
+	local msg="$1"
+	printf "%s\n" "${TEST_BLUE}[INFO]${TEST_RESET} $msg"
 	return 0
 }
 
