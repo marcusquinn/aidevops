@@ -43,7 +43,6 @@ test_ssh_key() {
 		"echo 'SSH_SUCCESS'" 2>/dev/null | grep -q "SSH_SUCCESS"
 
 	return $?
-	return 0
 }
 
 # Get working SSH key for a server
@@ -84,7 +83,6 @@ check_target_key_installed() {
 		"grep -q '$target_pub_key' ~/.ssh/authorized_keys" 2>/dev/null
 
 	return $?
-	return 0
 }
 
 # Install target key on server
@@ -99,6 +97,7 @@ install_target_key() {
 	local target_pub_key
 	target_pub_key=$(cat "${TARGET_KEY_PUB/\~/$HOME}")
 
+	local ssh_rc
 	# Add the key to authorized_keys
 	ssh -o ConnectTimeout=5 \
 		-o StrictHostKeyChecking=no \
@@ -106,9 +105,10 @@ install_target_key() {
 		-o LogLevel=ERROR \
 		-i "$working_key" \
 		"$username@$server_ip" \
-		"echo '$target_pub_key' >> ~/.ssh/authorized_keys && sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys" 2>/dev/null
+		"echo '$target_pub_key' >> ~/.ssh/authorized_keys && sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys"
+	ssh_rc=$?
 
-	if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "$working_key" "$username@$server_ip" "echo '$target_pub_key' >> ~/.ssh/authorized_keys && sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys" 2>/dev/null; then
+	if [[ $ssh_rc -eq 0 ]]; then
 		print_success "Target key installed on $server_ip"
 		return 0
 	else
