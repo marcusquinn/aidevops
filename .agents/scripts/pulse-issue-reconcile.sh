@@ -949,15 +949,48 @@ reconcile_open_issues_with_merged_prs() {
 }
 
 #######################################
+# Fetch sub-issue numbers via GitHub GraphQL (t2138).
+#
+# Uses the native `subIssues` relationship on the issue node. Returns
+# newline-separated child issue numbers on stdout. Empty output on any
+# failure, empty graph, or feature-not-enabled. Callers must treat empty
+# output as "fall back to body regex", NOT "no children" — the sub-issue
+# feature is a recent GitHub addition and legacy parents may link
+# children only via body text.
+#
+# Args: $1 = slug (owner/name), $2 = issue number
+#######################################
+_fetch_subissue_numbers() {
+	local slug="$1" issue_num="$2"
+	[[ "$slug" == */* ]] || return 0
+	[[ "$issue_num" =~ ^[0-9]+$ ]] || return 0
+
+	local owner="${slug%%/*}" name="${slug##*/}"
+	# shellcheck disable=SC2016  # GraphQL variable markers ($owner/$name/$number) are intentional literals, not bash expansions
+	gh api graphql \
+		-f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){subIssues(first:50){nodes{number state}}}}}' \
+		-F "owner=$owner" -F "name=$name" -F "number=$issue_num" \
+		--jq '.data.repository.issue.subIssues.nodes // [] | .[] | .number' 2>/dev/null || return 0
+	return 0
+}
+
+#######################################
 # Close parent-task issues when all child issues are resolved.
 #
 # Parent-task issues block dispatch unconditionally — they exist as
 # planning trackers. When all their children are closed, the parent
 # should close automatically with a summary comment listing each child.
 #
-# Child detection: extracts #NNN references from the parent's body that
-# are NOT self-references. Checks each against GH API for closed state.
-# Only closes if ALL children are closed and there are at least 1.
+# Child detection (t2138 — preference order):
+#   1. GitHub sub-issue graph (GraphQL `subIssues` field) — authoritative
+#      parent-child relationship when the parent was wired via
+#      `issue-sync-helper.sh backfill-sub-issues` or `_gh_add_sub_issue`.
+#   2. Body regex #NNN references (fallback for legacy parents with
+#      children listed only inline in the body).
+#
+# Either source must yield ≥2 children to avoid single-reference false
+# positives. Checks each against GH API for closed state; only closes
+# if ALL children are closed.
 #
 # Max 5 closes per cycle to limit API usage.
 #######################################
@@ -991,9 +1024,17 @@ reconcile_completed_parent_tasks() {
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
-			# Extract child issue numbers from body (#NNN patterns, excluding self)
-			local child_nums
-			child_nums=$(printf '%s' "$issue_body" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un | grep -v "^${issue_num}$") || child_nums=""
+			# t2138: prefer the sub-issue graph when non-empty; fall back to
+			# body regex for legacy parents that list children inline. Both
+			# paths filter out self-references and sort/dedupe uniformly.
+			local child_nums child_source="graph"
+			child_nums=$(_fetch_subissue_numbers "$slug" "$issue_num" | sort -un | grep -v "^${issue_num}$" | grep -v '^$' || true)
+			if [[ -z "$child_nums" ]]; then
+				# Fallback: extract child issue numbers from body (#NNN patterns,
+				# excluding self-references).
+				child_nums=$(printf '%s' "$issue_body" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un | grep -v "^${issue_num}$") || child_nums=""
+				child_source="body"
+			fi
 			[[ -n "$child_nums" ]] || continue
 
 			# Check if ALL children are closed
@@ -1044,7 +1085,7 @@ All ${child_count} child issues are resolved. Parent tracker closed automaticall
 _Detected by reconcile_completed_parent_tasks (pulse-issue-reconcile.sh)._" \
 				>/dev/null 2>&1 || continue
 
-			echo "[pulse-wrapper] Reconcile parent-task: closed #${issue_num} in ${slug} — all ${child_count} children closed" >>"$LOGFILE"
+			echo "[pulse-wrapper] Reconcile parent-task: closed #${issue_num} in ${slug} — all ${child_count} children closed (source=${child_source})" >>"$LOGFILE"
 			total_closed=$((total_closed + 1))
 		done
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
