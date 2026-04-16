@@ -79,8 +79,10 @@ async function handleAnthropicCallback(code, pkce, expectedState, email, client)
   const hashIdx = code.indexOf("#");
   const authCode = hashIdx >= 0 ? code.substring(0, hashIdx) : code;
   const returnedState = hashIdx >= 0 ? code.substring(hashIdx + 1) : undefined;
-  // Validate state when present (guards against CSRF in manual code-paste flows).
-  if (returnedState && returnedState !== expectedState) {
+  // Validate state when present. In manual code-paste flows the user may paste
+  // only the authorization code without the state fragment, so we accept absent
+  // state rather than failing valid flows. When state IS returned it must match.
+  if (returnedState !== undefined && returnedState !== expectedState) {
     console.error("[aidevops] OAuth pool: Anthropic state mismatch — possible CSRF");
     return { type: "failed" };
   }
@@ -170,7 +172,12 @@ async function handleCursorAuthorize(email, client) {
   });
 }
 
-async function handleGoogleCallback(code, pkce, email, client) {
+// expectedState is intentionally unused in the Google flow: Google's manual
+// code-paste flow only returns the authorization code (not code+state), so
+// state validation is not possible. The state nonce is still sent in the
+// authorize URL for CSRF protection at the redirect level.
+// eslint-disable-next-line no-unused-vars
+async function handleGoogleCallback(code, pkce, expectedState, email, client) {
   const authCode = code?.trim();
   if (!authCode || authCode.length < 5) return { type: "failed" };
   const result = await fetchGoogleTokenEndpoint(
@@ -334,7 +341,7 @@ export function createGooglePoolAuthHook(client) {
             "4. Paste the authorization code here: ",
           ].join("\n"),
           method: "code",
-          callback: (code) => handleGoogleCallback(code, pkce, email, client),
+          callback: (code) => handleGoogleCallback(code, pkce, state, email, client),
         };
       },
     }],
