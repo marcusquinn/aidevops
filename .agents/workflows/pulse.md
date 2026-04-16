@@ -258,7 +258,7 @@ RESOLVED_MODEL=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve
 dispatch_with_dedup NUMBER SLUG ... "$RESOLVED_MODEL"
 ```
 
-Precedence: (1) failure escalation (cascade: `tier:simple` → `tier:standard` → `tier:thinking`) > (2) issue labels (`tier:thinking` → opus, `tier:standard` → sonnet, `tier:simple` → haiku) > (3) **omit the 9th parameter** (runtime resolver selects). Backward compat: `tier:thinking` is alias for `tier:thinking`.
+Precedence: (1) failure escalation (cascade: `tier:simple` → `tier:standard` → `tier:thinking`) > (2) issue labels (`tier:thinking` → opus, `tier:standard` → sonnet, `tier:simple` → haiku) > (3) **omit the 9th parameter** (runtime resolver selects). See [Task Taxonomy](../reference/task-taxonomy.md) for tier purposes.
 
 ### Agent routing from labels
 
