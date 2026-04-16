@@ -114,12 +114,15 @@ function getClaudeProxyModels() {
     },
     {
       // Opus 4.7 — opt-in only. Framework defaults stay on 4.6.
-      // Context capped at 200K (not 1M API ceiling) due to MRCR v2 regression:
-      // 256K 91.9% -> 59.2%, 1M 78.3% -> 32.2%. See models-opus.md.
+      // Context capped at 250K (not 1M API ceiling) due to MRCR v2 regression
+      // past 200K (256K 91.9% -> 59.2%, 1M 78.3% -> 32.2%). The 250K limit
+      // is sized so OpenCode's 80% auto-compact threshold lands at the 200K
+      // reliability boundary, giving the full functional window before
+      // compaction. See models-opus.md.
       id: "claude-opus-4-7",
       name: "Claude Opus 4.7 (via Claude CLI)",
       reasoning: true,
-      contextWindow: 200000,
+      contextWindow: 250000,
       maxTokens: 64000,
     },
   ];

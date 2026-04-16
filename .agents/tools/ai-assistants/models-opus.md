@@ -63,7 +63,7 @@ Highest-capability tier for tasks where stronger reasoning materially changes th
 
 Available as `claude-opus-4-7` in the OpenCode model picker (released 2026-04-16). Not wired as the default for any tier — framework defaults remain on `claude-opus-4-6`. Opt in explicitly via `custom/configs/model-routing-table.json` if you want to route specific tiers or agents to 4.7.
 
-The framework registers 4.7 with a **200K context limit** even though the API accepts 1M, because the 1M window is functionally broken for retrieval tasks (see tradeoffs below).
+The framework registers 4.7 with a **250K context limit** even though the API accepts 1M, because the 1M window is functionally broken for retrieval tasks (see tradeoffs below). The 250K figure is sized so OpenCode's 80% auto-compact threshold triggers at the **200K reliability boundary** — sessions get the full still-functional window before compaction kicks in, instead of compacting prematurely at 160K (which is what an unaligned 200K cap produces).
 
 ### Tradeoffs vs 4.6
 

@@ -152,7 +152,7 @@ get_all_tier_patterns() {
 # Sources: Anthropic, OpenAI, Google official pricing pages.
 
 readonly MODEL_DATA="claude-opus-4-6|Anthropic|Claude Opus 4.6|200000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Architecture decisions, novel problems, complex multi-step reasoning
-claude-opus-4-7|Anthropic|Claude Opus 4.7|200000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Opt-in. Higher SWE-Bench but long-context regression (MRCR 256K 92%->59%, 1M 78%->32%) and +20-60% tokenizer cost vs 4.6 — framework defaults stay on 4.6
+claude-opus-4-7|Anthropic|Claude Opus 4.7|250000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Opt-in. Higher SWE-Bench but long-context regression (MRCR 256K 92%->59%, 1M 78%->32%) and +20-60% tokenizer cost vs 4.6 — framework defaults stay on 4.6. Cap is 250K so OpenCode's 80% auto-compact triggers at the 200K reliability boundary.
 claude-sonnet-4-6|Anthropic|Claude Sonnet 4.6|200000|3.00|15.00|medium|code,reasoning,vision,tools|Code implementation, review, most development tasks
 claude-haiku-4-5|Anthropic|Claude Haiku 4.5|200000|1.00|5.00|low|code,reasoning,vision,tools|Triage, classification, simple transforms, formatting
 gpt-4.1|OpenAI|GPT-4.1|1048576|2.00|8.00|medium|code,reasoning,vision,tools,search|Coding, instruction following, long context
