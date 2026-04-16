@@ -1,16 +1,10 @@
 # Pre-Dispatch Validators
 
-Pre-dispatch validators run **after** dedup checks and **before** worker spawn for auto-generated issues, verifying the premise is still true (GH#19118). Root causes: GH#19036, GH#19037; post-mortem: GH#19024.
+Run **after** dedup checks and **before** worker spawn for auto-generated issues, verifying the premise still holds (GH#19118). Root causes: GH#19036, GH#19037; post-mortem: GH#19024.
 
 ## Architecture
 
-Auto-generated issues embed a hidden marker parsed with `grep -oE '<!-- aidevops:generator=[a-z-]+ -->'`. Titles and labels are rejected (they change; markers survive). Format:
-
-```text
-<!-- aidevops:generator=<name> -->
-```
-
-`pre-dispatch-validator-helper.sh` maintains `_VALIDATOR_REGISTRY` (populated by `_register_validators()`). Unregistered generators exit 0.
+Auto-generated issues embed `<!-- aidevops:generator=<name> -->` in the body (parsed with grep — not title/labels, which change; markers survive). `pre-dispatch-validator-helper.sh` maintains `_VALIDATOR_REGISTRY` (populated by `_register_validators()`). Unregistered generators exit 0.
 
 ### Exit codes
 
@@ -52,7 +46,7 @@ Emergency recovery when a validator bug blocks legitimate dispatches. Bypass is 
 4. Empty output + any error → exit 20 (validator error)
 5. Otherwise → exit 0 (proposals available, dispatch)
 
-Without this, workers spawn only to find no ratchet-down work exists (GH#19024).
+Prevents workers spawning only to find no ratchet-down work exists (GH#19024).
 
 ## Adding a validator
 
