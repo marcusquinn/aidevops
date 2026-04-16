@@ -1,10 +1,10 @@
 # Pre-Dispatch Validators
 
-Runs **after** dedup checks and **before** worker spawn for auto-generated issues — verifies the premise still holds (GH#19118). Root causes: GH#19036, GH#19037; post-mortem: GH#19024.
+Runs **after** dedup checks and **before** worker spawn for auto-generated issues — verifies the premise still holds (GH#19118).
 
 ## Architecture
 
-Auto-generated issues embed `<!-- aidevops:generator=<name> -->` in the body (HTML comments survive title/label changes). `pre-dispatch-validator-helper.sh` maps generators to validators via `_VALIDATOR_REGISTRY` (populated by `_register_validators()`). Unregistered generators, missing helper, or unexpected exit code → exit 0 (dispatch proceeds).
+Auto-generated issues embed `<!-- aidevops:generator=<name> -->` in the body (HTML comments survive title/label changes). `pre-dispatch-validator-helper.sh` maps generators to validators via `_VALIDATOR_REGISTRY`. Unregistered generators, missing helper, or unexpected exit code → exit 0 (dispatch proceeds).
 
 ### Exit codes
 
@@ -76,4 +76,4 @@ bash .agents/scripts/tests/test-pre-dispatch-validator.sh
 - `pulse-dispatch-core.sh` — `dispatch_with_dedup`, `_run_predispatch_validator`
 - `pulse-simplification.sh` — `_complexity_scan_ratchet_check` (ratchet-down generator)
 - `reference/worker-diagnostics.md` — full worker lifecycle
-- GH#19118, GH#19024 (post-mortem), GH#19036, GH#19037
+- GH#19118 (feature), GH#19024 (post-mortem), GH#19036, GH#19037 (root causes)

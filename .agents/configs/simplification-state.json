@@ -13,10 +13,10 @@
   },
   ".agents/reference/pre-dispatch-validators.md": {
     "action": "tightened",
-    "hash": "fc3793612c26775ea0269868215c107f810447254ab2424e59bbe48558195a08",
-    "issue": "GH#19371",
+    "hash": "094ec74824cd93d17e4785197a7c9e6e047e5caca006a4f848e149805e3580f3",
+    "issue": "GH#19379",
     "lines_after": 79,
-    "lines_before": 82
+    "lines_before": 79
   },
   ".agents/services/hosting/cloudflare-platform-skill/ai-search-patterns.md": {
     "hash": "867d8ff77f341ac99f155db719644f2190031e9faa7e6668a79b05468b0eae0f",
@@ -5835,7 +5835,7 @@
       "pr": 17019
     },
     ".agents/tools/design/library/styles/corporate-traditional/02-colours.md": {
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
       "at": "2026-04-04T14:53:40Z",
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "issue": "GH#17250",
