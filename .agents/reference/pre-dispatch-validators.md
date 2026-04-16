@@ -1,10 +1,10 @@
 # Pre-Dispatch Validators
 
-Run **after** dedup checks and **before** worker spawn for auto-generated issues, verifying the premise still holds (GH#19118). Root causes: GH#19036, GH#19037; post-mortem: GH#19024.
+Runs **after** dedup checks and **before** worker spawn for auto-generated issues — verifies the premise still holds (GH#19118). Root causes: GH#19036, GH#19037; post-mortem: GH#19024.
 
 ## Architecture
 
-Auto-generated issues embed `<!-- aidevops:generator=<name> -->` in the body (parsed with grep — not title/labels, which change; markers survive). `pre-dispatch-validator-helper.sh` maintains `_VALIDATOR_REGISTRY` (populated by `_register_validators()`). Unregistered generators exit 0.
+Auto-generated issues embed `<!-- aidevops:generator=<name> -->` in the body (markers parsed with grep — survive title/label changes). `pre-dispatch-validator-helper.sh` maps generators to validators via `_VALIDATOR_REGISTRY` (populated by `_register_validators()`). Unregistered generators, missing helper, or unexpected exit code → exit 0 (dispatch proceeds).
 
 ### Exit codes
 
@@ -22,8 +22,6 @@ _ensure_issue_body_has_brief()   ← t2063 freshness guard
 _run_predispatch_validator()     ← GH#19118 ← HERE
 _dispatch_launch_worker()        ← worker spawn
 ```
-
-Non-fatal: missing helper or unexpected exit code → dispatch proceeds.
 
 ## Bypass
 
