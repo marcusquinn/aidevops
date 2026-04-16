@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.59] - 2026-04-16
+
+### Changed
+
+- Maintenance: mark t2141 complete (pr:#19315)
+- full-loop-helper merge auto-resolve --admin/--auto mutual exclusion (#19315)
+- route claude-proxy and google-proxy through shared response-helpers.mjs (#19320)
+- Maintenance: update simplification state registry
+- use null-safe iterator in _get_rate_limit_behavior jq filter (#19311)
+
+### Fixed
+
+- guard auto-approve log and counter behind edit exit code (#19318)
+- remove ineffective || return 1 from _generate_seo_commands (#19314)
+- escape regex dots in task_id_match for grep pattern safety (#19319)
+- propagate write failures through full call chain in generate-claude-commands.sh (#19317)
+- remove duplicate SSH command and unreachable returns in ssh-key-audit-helper.sh (#19316)
+- use exit 0 for jq SKIP in test-circuit-breaker.sh (#19313)
+- replace undefined $_arg2 with $2 in sonarcloud-autofix.sh fix command (#19312)
+
 ## [3.8.58] - 2026-04-16
 
 ### Changed
