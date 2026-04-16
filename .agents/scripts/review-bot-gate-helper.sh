@@ -168,7 +168,7 @@ _get_min_edit_lag() {
 			'first(.initialized_repos[] | select(.slug == $slug)) | (.review_gate.tools[$bot].min_edit_lag_seconds // .review_gate.min_edit_lag_seconds // empty)' \
 			"$repos_json" 2>/dev/null) || lag=""
 		# Reject non-integer or negative values silently (fall through to env).
-		if [[ -n "$lag" && "$lag" != "null" && "$lag" =~ ^[0-9]+$ ]]; then
+		if [[ -n "$lag" && "$lag" =~ ^[0-9]+$ ]]; then
 			printf '%s' "$lag"
 			return 0
 		fi

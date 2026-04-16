@@ -111,8 +111,8 @@ load_helper_functions() {
 	# `main "$@"` line removed.
 	local tmpfile
 	tmpfile=$(mktemp)
-	# Drop the final main invocation line (last non-empty line is `main "$@"`).
-	sed '$d' "$HELPER_SCRIPT" >"$tmpfile"
+	# Drop the final main invocation line using grep for robustness.
+	grep -v '^main "\$@"' "$HELPER_SCRIPT" >"$tmpfile"
 	# shellcheck disable=SC1090
 	source "$tmpfile"
 	rm -f "$tmpfile"
