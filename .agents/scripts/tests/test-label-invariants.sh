@@ -382,6 +382,106 @@ if [[ -f "$COUNTER_FILE" ]]; then
 fi
 
 # =============================================================================
+# Part 4 — issue-sync.yml workflow atomicity guard (t2137)
+# =============================================================================
+# The bash helper path (_mark_issue_done) and the GitHub Actions workflow
+# path (.github/workflows/issue-sync.yml `sync-on-pr-merge` job) both mutate
+# status:* labels on PR merge. t2040 fixed atomicity in the bash helper but
+# the workflow carried a duplicated non-atomic implementation (1 add call +
+# 7 remove calls in a loop = 8 sequential API calls = ~5s race window).
+# This guard parses the workflow yaml directly and asserts the status label
+# mutation block uses a single `gh issue edit` call with the full flag set.
+WORKFLOW_FILE="$(cd "${TEST_SCRIPTS_DIR}/../.." && pwd)/.github/workflows/issue-sync.yml"
+
+if [[ ! -f "$WORKFLOW_FILE" ]]; then
+	print_result "issue-sync.yml exists (for atomicity guard)" 1 "(not found at $WORKFLOW_FILE)"
+else
+	print_result "issue-sync.yml exists (for atomicity guard)" 0
+
+	# Extract the `Apply closing hygiene to linked issues` step body — from
+	# the step name to the next `- name:` line. awk handles this cleanly.
+	hygiene_block=$(awk '
+		/- name: Apply closing hygiene to linked issues/ { in_block=1 }
+		in_block && /^      - name:/ && !/Apply closing hygiene/ { in_block=0 }
+		in_block { print }
+	' "$WORKFLOW_FILE")
+
+	if [[ -z "$hygiene_block" ]]; then
+		print_result "found 'Apply closing hygiene' step in workflow" 1
+	else
+		print_result "found 'Apply closing hygiene' step in workflow" 0
+
+		# Count `gh issue edit` invocations inside the hygiene block. The atomic
+		# implementation has exactly ONE (the status:done mutation). Any more
+		# means the loop-of-remove-calls fossil has been reintroduced.
+		# Note: the multi-line `gh issue edit ... \` counts as one invocation.
+		edit_count=$(echo "$hygiene_block" | grep -cE '^[[:space:]]+gh issue edit[[:space:]]' || echo 0)
+		edit_count="${edit_count//[^0-9]/}"
+		edit_count="${edit_count:-0}"
+		if [[ "$edit_count" -eq 1 ]]; then
+			print_result "workflow status mutation is atomic (exactly 1 gh issue edit)" 0
+		else
+			print_result "workflow status mutation is atomic (exactly 1 gh issue edit)" 1 \
+				"(got $edit_count gh issue edit invocations in hygiene block)"
+		fi
+
+		# The single invocation must add status:done and remove every sibling.
+		# Check for the flags in the combined block (flags may span continuation lines).
+		if echo "$hygiene_block" | grep -q -- '--add-label "status:done"'; then
+			print_result "workflow hygiene adds status:done" 0
+		else
+			print_result "workflow hygiene adds status:done" 1
+		fi
+
+		missing_removals=""
+		for sibling in status:available status:queued status:claimed \
+			status:in-review status:in-progress status:blocked status:verify-failed; do
+			if ! echo "$hygiene_block" | grep -q -- "--remove-label \"$sibling\""; then
+				missing_removals="$missing_removals $sibling"
+			fi
+		done
+		if [[ -z "$missing_removals" ]]; then
+			print_result "workflow hygiene removes all sibling status labels" 0
+		else
+			print_result "workflow hygiene removes all sibling status labels" 1 \
+				"(missing:$missing_removals)"
+		fi
+
+		# Non-atomic fossil detection: a `for STALE_LABEL in status:*` loop with
+		# an internal `gh issue edit --remove-label` is the exact pattern that
+		# caused the drift. Reject any reintroduction.
+		if echo "$hygiene_block" | grep -qE 'for[[:space:]]+STALE_LABEL[[:space:]]+in[[:space:]]+"status:'; then
+			print_result "workflow hygiene has no STALE_LABEL remove-loop (fossil)" 1 \
+				"(the non-atomic loop pattern has been reintroduced)"
+		else
+			print_result "workflow hygiene has no STALE_LABEL remove-loop (fossil)" 0
+		fi
+	fi
+
+	# Parent-task title-fallback guard: the `Find issue by task ID (fallback)`
+	# step must probe the parent-task label and skip when present. Guards
+	# against the t2137 regression where planning PRs on parent-tasks
+	# incorrectly flipped the parent to status:done via title-matching.
+	find_block=$(awk '
+		/- name: Find issue by task ID \(fallback\)/ { in_block=1 }
+		in_block && /^      - name:/ && !/Find issue by task ID/ { in_block=0 }
+		in_block { print }
+	' "$WORKFLOW_FILE")
+
+	# Skip signature: parent-task label probe inside the find-issue step AND
+	# (within the same step) an `echo "found_issues="` that emits empty output
+	# when the probe matches. Both indicators together prove the skip path
+	# exists and is wired into GITHUB_OUTPUT correctly.
+	if echo "$find_block" | grep -qE 'parent-task' &&
+		echo "$find_block" | grep -qE 'echo[[:space:]]+"found_issues="'; then
+		print_result "find-issue step skips parent-task title-fallback matches (t2137)" 0
+	else
+		print_result "find-issue step skips parent-task title-fallback matches (t2137)" 1 \
+			"(expected parent-task label probe + empty found_issues emission)"
+	fi
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo

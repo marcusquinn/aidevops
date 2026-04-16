@@ -341,13 +341,26 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # If no explicit Closes #NNN in PR body, search for the issue by task ID in title
+          # If no explicit Closes #NNN in PR body, search for the issue by task ID in title.
+          # t2137: skip title-fallback matches on parent-task issues. Explicit
+          # Closes/Fixes/Resolves is respected (either a legitimate terminal-phase
+          # close or a maintainer override); title-matching alone is too weak a
+          # signal to flip a parent's status:done — it fires on every planning PR
+          # whose title shares the parent's task ID prefix (t2046 For/Ref
+          # convention makes this the common case).
           if [[ -z "$LINKED_ISSUES" ]]; then
             FOUND=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 \
               | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty')
             if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
-              echo "found_issues=$FOUND" >> "$GITHUB_OUTPUT"
-              echo "Found issue #$FOUND for task $TASK_ID"
+              # t2137: probe parent-task label before accepting the fallback match.
+              FOUND_LABELS=$(gh api "repos/${REPO}/issues/${FOUND}" --jq '[.labels[].name] | join(" ")' 2>/dev/null || echo "")
+              if echo "$FOUND_LABELS" | grep -qw "parent-task"; then
+                echo "found_issues=" >> "$GITHUB_OUTPUT"
+                echo "Found issue #$FOUND for task $TASK_ID is a parent-task — skipping title-fallback hygiene (use explicit Closes #NNN on the terminal-phase PR to close a parent)"
+              else
+                echo "found_issues=$FOUND" >> "$GITHUB_OUTPUT"
+                echo "Found issue #$FOUND for task $TASK_ID"
+              fi
             else
               echo "found_issues=" >> "$GITHUB_OUTPUT"
               echo "No issue found for task $TASK_ID"
@@ -440,16 +453,28 @@ jobs:
               continue
             fi
 
-            # Apply status:done label (create if needed)
+            # Apply status:done label atomically (create if needed).
+            # t2137: collapse add+remove into a single `gh issue edit` call so the
+            # labeled/unlabeled events are emitted together. The previous
+            # implementation issued 1 add + 7 remove calls in sequence (8
+            # round-trips over ~5s observed), which violated the t2040 atomicity
+            # contract and left a race window where the reconciler's
+            # label-invariant pass could see two status labels and pick the wrong
+            # survivor. The bash helper `_mark_issue_done` was fixed in t2040;
+            # this closes the drifted workflow copy.
             gh label create "status:done" --color "6F42C1" --description "Task is complete" --repo "$REPO" --force 2>/dev/null || true
-            gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "status:done" 2>/dev/null || true
+            gh issue edit "$ISSUE_NUM" --repo "$REPO" \
+              --add-label "status:done" \
+              --remove-label "status:available" \
+              --remove-label "status:queued" \
+              --remove-label "status:claimed" \
+              --remove-label "status:in-review" \
+              --remove-label "status:in-progress" \
+              --remove-label "status:blocked" \
+              --remove-label "status:verify-failed" \
+              2>/dev/null || true
 
-            # Remove stale status labels
-            for STALE_LABEL in "status:available" "status:queued" "status:claimed" "status:in-review" "status:in-progress" "status:blocked" "status:verify-failed"; do
-              gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$STALE_LABEL" 2>/dev/null || true
-            done
-
-            echo "Updated labels on #$ISSUE_NUM (added status:done, removed stale)"
+            echo "Updated labels on #$ISSUE_NUM atomically (added status:done, removed stale in one edit)"
           done
 
           if [[ "$COMMENT_FAILED" -eq 1 ]]; then
