@@ -452,22 +452,33 @@ REQUEUE_BODY_EOF
 # ---------------------------------------------------------------------------
 
 # Extract a repo-relative file path from a simplification issue title.
-# Handles titles in both forms produced by the complexity scanner:
-#   "simplification: tighten <path> (<N> lines)"
-#   "simplification: reduce function complexity in <path> (<N> functions ...)"
+# Handles titles in all three forms produced by the complexity scanner:
+#   "simplification: tighten agent doc <path> (<N> lines)"                        (no topic label)
+#   "simplification: tighten agent doc <topic> (<path>, <N> lines)"               (topic label — path in parens)
+#   "simplification: reduce function complexity in <path> (<N> functions ...)"    (function complexity)
 # Arguments:
 #   $1 - issue title (string)
 # Outputs:
 #   The first .md or .sh path found in the title, or empty if none.
 # Returns: 0 always (empty output on no match is a normal signal).
+#
+# GH#19370: the topic-label form wraps the path in "(<path>, <N> lines)". The
+# original character class excluded space/comma/close-paren but NOT open-paren,
+# so it captured "(.agents/…" with a leading "(". The subsequent
+# "[[ -f ${repo_path}/${file_path} ]] && continue" check in
+# _simplification_state_backfill_closed then silently skipped every
+# topic-labeled issue, so state never recorded these files and the scanner
+# re-flagged them on every cycle (observed: 8 thrash cycles on
+# shell-style-guide.md, 9 on pre-dispatch-validators.md over 2026-04-14…16).
+# The fix excludes open-paren too, so all three title forms extract cleanly.
 _simplification_backfill_extract_file_path() {
 	local title="$1"
 	# `|| true` swallows the pipefail that grep -o / head -1 raise when the
 	# regex does not match — the caller distinguishes "no path" via empty
 	# output, not exit code, so we must not propagate the failure.
-	# printf is safer than echo for arbitrary strings; regex drops the leading-
-	# dot requirement so root files like README.md are matched correctly.
-	printf '%s\n' "$title" | grep -oE '[^ ,)]+\.(md|sh)' | head -1 || true
+	# Character class excludes: space, comma, open-paren, close-paren.
+	# Open-paren exclusion is load-bearing — see GH#19370 rationale above.
+	printf '%s\n' "$title" | grep -oE '[^ ,()]+\.(md|sh)' | head -1 || true
 	return 0
 }
 
