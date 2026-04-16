@@ -36,7 +36,7 @@ import {
 } from "./oauth-pool-refresh.mjs";
 
 import {
-  generatePKCE, makeEmailPrompt, saveAccountAndInject,
+  generatePKCE, generateState, makeEmailPrompt, saveAccountAndInject,
   resolveEmailFromJWTClaims, resolveEmailFromEndpoint,
   extractOpenAIAccountId, acquireAuthCode, initCallbackServerSafe,
 } from "./oauth-pool-callback.mjs";
@@ -75,13 +75,20 @@ async function resolveAnthropicEmail(accessToken) {
 // Provider callback handlers
 // ---------------------------------------------------------------------------
 
-async function handleAnthropicCallback(code, pkce, email, client) {
+async function handleAnthropicCallback(code, pkce, expectedState, email, client) {
   const hashIdx = code.indexOf("#");
   const authCode = hashIdx >= 0 ? code.substring(0, hashIdx) : code;
-  const state = hashIdx >= 0 ? code.substring(hashIdx + 1) : undefined;
+  const returnedState = hashIdx >= 0 ? code.substring(hashIdx + 1) : undefined;
+  // Validate state when present. In manual code-paste flows the user may paste
+  // only the authorization code without the state fragment, so we accept absent
+  // state rather than failing valid flows. When state IS returned it must match.
+  if (returnedState !== undefined && returnedState !== expectedState) {
+    console.error("[aidevops] OAuth pool: Anthropic state mismatch — possible CSRF");
+    return { type: "failed" };
+  }
   const result = await fetchTokenEndpoint(
     JSON.stringify({
-      code: authCode, state, grant_type: "authorization_code",
+      code: authCode, state: returnedState, grant_type: "authorization_code",
       client_id: ANTHROPIC_CLIENT_ID, redirect_uri: ANTHROPIC_REDIRECT_URI,
       code_verifier: pkce.verifier,
     }),
@@ -165,7 +172,15 @@ async function handleCursorAuthorize(email, client) {
   });
 }
 
-async function handleGoogleCallback(code, pkce, email, client) {
+// NOTE: expectedState cannot be validated in this flow. GOOGLE_REDIRECT_URI is
+// the OOB (urn:ietf:wg:oauth:2.0:oob) redirect, which causes Google to display
+// the authorization code directly in the browser page rather than performing an
+// HTTP redirect. Because there is no redirect, the state nonce is never returned
+// to our process. We still include state in the authorize URL to prevent
+// redirect-level CSRF; the absence of callback-side validation is an inherent
+// limitation of the OOB grant type, not a fixable bug in this code.
+// eslint-disable-next-line no-unused-vars
+async function handleGoogleCallback(code, pkce, expectedState, email, client) {
   const authCode = code?.trim();
   if (!authCode || authCode.length < 5) return { type: "failed" };
   const result = await fetchGoogleTokenEndpoint(
@@ -213,6 +228,7 @@ export function createPoolAuthHook(client) {
       authorize: async (inputs) => {
         const email = inputs?.email || "unknown";
         const pkce = generatePKCE();
+        const state = generateState(); // separate nonce — pkce.verifier stays secret
         const url = new URL(ANTHROPIC_OAUTH_AUTHORIZE_URL);
         url.searchParams.set("code", "true");
         url.searchParams.set("client_id", ANTHROPIC_CLIENT_ID);
@@ -221,12 +237,12 @@ export function createPoolAuthHook(client) {
         url.searchParams.set("scope", ANTHROPIC_OAUTH_SCOPES);
         url.searchParams.set("code_challenge", pkce.challenge);
         url.searchParams.set("code_challenge_method", "S256");
-        url.searchParams.set("state", pkce.verifier);
+        url.searchParams.set("state", state);
         return {
           url: url.toString(),
           instructions: `Adding account: ${email}\nPaste the authorization code here: `,
           method: "code",
-          callback: (code) => handleAnthropicCallback(code, pkce, email, client),
+          callback: (code) => handleAnthropicCallback(code, pkce, state, email, client),
         };
       },
     }],
@@ -248,7 +264,8 @@ export function createOpenAIPoolAuthHook(client) {
       authorize: async (inputs) => {
         const email = inputs?.email || "unknown";
         const pkce = generatePKCE();
-        const cs = await initCallbackServerSafe();
+        const state = generateState(); // separate nonce — pkce.verifier stays secret
+        const cs = await initCallbackServerSafe(state);
         const url = new URL(OPENAI_OAUTH_AUTHORIZE_URL);
         url.searchParams.set("client_id", OPENAI_CLIENT_ID);
         url.searchParams.set("response_type", "code");
@@ -256,6 +273,7 @@ export function createOpenAIPoolAuthHook(client) {
         url.searchParams.set("scope", OPENAI_OAUTH_SCOPES);
         url.searchParams.set("code_challenge", pkce.challenge);
         url.searchParams.set("code_challenge_method", "S256");
+        url.searchParams.set("state", state);
         return {
           url: url.toString(),
           instructions: [
@@ -305,6 +323,7 @@ export function createGooglePoolAuthHook(client) {
       authorize: async (inputs) => {
         const email = inputs?.email || "unknown";
         const pkce = generatePKCE();
+        const state = generateState(); // separate nonce — pkce.verifier stays secret
         const url = new URL(GOOGLE_OAUTH_AUTHORIZE_URL);
         url.searchParams.set("client_id", GOOGLE_CLIENT_ID);
         url.searchParams.set("response_type", "code");
@@ -314,6 +333,7 @@ export function createGooglePoolAuthHook(client) {
         url.searchParams.set("code_challenge_method", "S256");
         url.searchParams.set("access_type", "offline");
         url.searchParams.set("prompt", "consent");
+        url.searchParams.set("state", state);
         return {
           url: url.toString(),
           instructions: [
@@ -324,7 +344,7 @@ export function createGooglePoolAuthHook(client) {
             "4. Paste the authorization code here: ",
           ].join("\n"),
           method: "code",
-          callback: (code) => handleGoogleCallback(code, pkce, email, client),
+          callback: (code) => handleGoogleCallback(code, pkce, state, email, client),
         };
       },
     }],

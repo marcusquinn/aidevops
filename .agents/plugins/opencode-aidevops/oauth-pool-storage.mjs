@@ -8,9 +8,8 @@
  */
 
 import {
-  readFileSync, writeFileSync, existsSync, mkdirSync,
-  openSync, closeSync, renameSync, chmodSync,
-  constants as fsConstants,
+  readFileSync, writeFileSync, existsSync, mkdirSync, rmdirSync, unlinkSync,
+  renameSync, chmodSync,
 } from "fs";
 import { dirname } from "path";
 import { POOL_FILE, POOL_LOCK_FILE } from "./oauth-pool-constants.mjs";
@@ -67,27 +66,73 @@ export function savePool(data) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Pool lock helpers (used only by withPoolLock)
+// ---------------------------------------------------------------------------
+
+const LOCK_DIR = POOL_LOCK_FILE + ".d";
+const OWNER_FILE = LOCK_DIR + "/owner";
+const LOCK_STALE_MS = 10000; // 10 s — sufficient for any normal pool operation
+
+/** Return true if the lock recorded in OWNER_FILE belongs to a dead or expired process. */
+function isLockStale() {
+  try {
+    const { pid, ts } = JSON.parse(readFileSync(OWNER_FILE, "utf-8"));
+    const processGone = (() => { try { process.kill(pid, 0); return false; } catch { return true; } })();
+    return processGone || (Date.now() - ts > LOCK_STALE_MS);
+  } catch {
+    return false; // unreadable — wait and retry
+  }
+}
+
+/** Remove a stale lock directory, ignoring races with other cleaners. */
+function removeStalelock() {
+  try { unlinkSync(OWNER_FILE); } catch { /* race */ }
+  try { rmdirSync(LOCK_DIR); } catch { /* race */ }
+}
+
+/** Release the lock only if we still own it, preventing removal of another process's lock. */
+function releaseLock() {
+  try {
+    const { pid } = JSON.parse(readFileSync(OWNER_FILE, "utf-8"));
+    if (pid !== process.pid) return;
+    try { unlinkSync(OWNER_FILE); } catch { /* ignore */ }
+    try { rmdirSync(LOCK_DIR); } catch { /* ignore */ }
+  } catch { /* lock dir already gone — that's fine */ }
+}
+
 /**
- * Execute a read-modify-write operation on the pool file with best-effort
- * cross-process coordination via an advisory lock file.
+ * Execute a read-modify-write operation on the pool file with cross-process
+ * advisory locking via atomic directory creation (mkdirSync is POSIX-atomic).
+ *
+ * An owner file records { pid, ts } on acquisition; stale locks from crashed
+ * processes are reclaimed automatically. Times out after 5 s.
  *
  * @template T
  * @param {() => T} fn
  * @returns {T}
  */
 export function withPoolLock(fn) {
-  const dir = dirname(POOL_FILE);
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dirname(POOL_FILE), { recursive: true });
 
-  let lockFd = -1;
-  try {
-    lockFd = openSync(POOL_LOCK_FILE, fsConstants.O_WRONLY | fsConstants.O_CREAT, 0o600);
-    return fn();
-  } finally {
-    if (lockFd >= 0) {
-      try { closeSync(lockFd); } catch { /* ignore */ }
+  const deadline = Date.now() + 5000;
+  const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+
+  while (true) {
+    try {
+      mkdirSync(LOCK_DIR);
+      writeFileSync(OWNER_FILE, JSON.stringify({ pid: process.pid, ts: Date.now() }), { mode: 0o600 });
+      break;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      if (Date.now() >= deadline) throw new Error("[aidevops] OAuth pool: timed out waiting for pool lock");
+      if (isLockStale()) { removeStalelock(); continue; }
+      Atomics.wait(sleepBuf, 0, 0, 50);
     }
   }
+
+  try { return fn(); }
+  finally { releaseLock(); }
 }
 
 // ---------------------------------------------------------------------------

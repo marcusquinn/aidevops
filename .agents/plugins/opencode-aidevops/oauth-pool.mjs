@@ -110,7 +110,7 @@ async function selectPoolAccount(provider, skipEmail) {
     if (await ensureValidToken(provider, c)) return c;
     console.error(`[aidevops] OAuth pool: skipping invalid ${provider} token for ${c.email}`);
   }
-  const fb = accounts.find(isAvailable);
+  const fb = accounts.find((a) => isAvailable(a) && a.email !== skipEmail);
   if (fb && await ensureValidToken(provider, fb)) return fb;
   return null;
 }
