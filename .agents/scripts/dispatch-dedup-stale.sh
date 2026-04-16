@@ -23,6 +23,15 @@
 STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-${DISPATCH_COMMENT_MAX_AGE:-600}}"
 
 #######################################
+# t2132: Separate threshold for interactive claims.
+# Interactive sessions routinely go 30-60+ minutes between actions on an issue
+# (writing briefs, reading code, thinking). The default 600s threshold designed
+# for headless workers was stripping interactive claims after 10 minutes.
+# Default: 7200s (2 hours).
+#######################################
+INTERACTIVE_STALE_THRESHOLD_SECONDS="${INTERACTIVE_STALE_THRESHOLD_SECONDS:-7200}"
+
+#######################################
 # Convert ISO 8601 timestamp to epoch seconds
 # Handles both "2026-03-31T23:59:07Z" and "2026-03-31T23:59:07+00:00" formats.
 # Bash 3.2 compatible (no date -d on macOS).
@@ -295,10 +304,43 @@ Stale recovery tick ${_next_tick}/${_threshold} (t2008)" \
 # GH#18816: gh comments API failure → fail-CLOSED (return 1, block dispatch).
 # jq and timestamp parse failures → fail-OPEN (unreadable ≠ stale).
 #######################################
+
+#######################################
+# t2132: Resolve the effective stale threshold for an issue.
+# Interactive sessions (origin:interactive label) use a longer threshold
+# because human-driven sessions routinely go 30-60+ minutes between actions.
+# Args: $1 = issue number, $2 = repo slug
+# Stdout: two lines — "is_interactive" ("true"/"false") then threshold (seconds)
+#######################################
+_resolve_stale_threshold() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local _issue_labels_json _labels_rc=0
+	_issue_labels_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name]' 2>/dev/null) || _labels_rc=$?
+
+	if [[ "$_labels_rc" -eq 0 && -n "$_issue_labels_json" ]]; then
+		if printf '%s' "$_issue_labels_json" | jq -e 'index("origin:interactive")' >/dev/null 2>&1; then
+			printf 'true\n%s\n' "$INTERACTIVE_STALE_THRESHOLD_SECONDS"
+			return 0
+		fi
+	fi
+	printf 'false\n%s\n' "$STALE_ASSIGNMENT_THRESHOLD_SECONDS"
+	return 0
+}
+
 _is_stale_assignment() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local blocking_assignees="$3"
+
+	# t2132 Fix A+C: resolve whether this is an interactive claim and which
+	# stale threshold to use. Extracted to _resolve_stale_threshold to keep
+	# this function under the 100-line complexity cap.
+	local _threshold_output is_interactive effective_threshold
+	_threshold_output=$(_resolve_stale_threshold "$issue_number" "$repo_slug")
+	is_interactive=$(printf '%s' "$_threshold_output" | head -1)
+	effective_threshold=$(printf '%s' "$_threshold_output" | tail -1)
 
 	# Fetch issue comments to find the most recent dispatch claim and
 	# overall activity timestamp. Use --paginate to catch all comments
@@ -318,14 +360,18 @@ _is_stale_assignment() {
 		return 1
 	fi
 
-	# Find the most recent dispatch/claim comment
-	# Matches: "Dispatching worker", "DISPATCH_CLAIM", "Worker (PID"
+	# t2132 Fix D: Find the most recent dispatch/claim comment.
+	# Matches worker dispatch patterns AND interactive session claim pattern.
+	# Previously only matched "Dispatching worker|DISPATCH_CLAIM|Worker (PID",
+	# which missed the interactive claim comment posted by
+	# interactive-session-helper.sh ("Interactive session claimed").
 	local last_dispatch_ts=""
 	last_dispatch_ts=$(printf '%s' "$comments_json" | jq -r '
 		[.[] | select(
 			(.body_start | test("Dispatching worker"; "i")) or
 			(.body_start | test("DISPATCH_CLAIM"; "i")) or
-			(.body_start | test("Worker \\(PID"; "i"))
+			(.body_start | test("Worker \\(PID"; "i")) or
+			(.body_start | test("Interactive session claimed"; "i"))
 		)] | first | .created_at // empty
 	' 2>/dev/null) || last_dispatch_ts=""
 
@@ -346,21 +392,21 @@ _is_stale_assignment() {
 		if [[ -n "$last_activity_ts" ]]; then
 			activity_epoch=$(_ts_to_epoch "$last_activity_ts")
 			local activity_age=$((now_epoch - activity_epoch))
-			if [[ "$activity_age" -lt "$STALE_ASSIGNMENT_THRESHOLD_SECONDS" ]]; then
+			if [[ "$activity_age" -lt "$effective_threshold" ]]; then
 				# Recent activity but no dispatch comment — could be manual work
 				return 1
 			fi
 		fi
 		# No dispatch comment AND no recent activity — stale
-		_recover_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees" "no dispatch claim comment found, no recent activity"
+		_recover_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees" "no dispatch claim comment found, no recent activity (threshold=${effective_threshold}s, interactive=${is_interactive})"
 		return 0
 	fi
 
-	# Dispatch comment exists — check its age
+	# Dispatch comment exists — check its age against the effective threshold
 	dispatch_epoch=$(_ts_to_epoch "$last_dispatch_ts")
 	local dispatch_age=$((now_epoch - dispatch_epoch))
 
-	if [[ "$dispatch_age" -lt "$STALE_ASSIGNMENT_THRESHOLD_SECONDS" ]]; then
+	if [[ "$dispatch_age" -lt "$effective_threshold" ]]; then
 		# Dispatch claim is recent (< threshold) — honour it
 		return 1
 	fi
@@ -372,7 +418,7 @@ _is_stale_assignment() {
 		activity_epoch=$(_ts_to_epoch "$last_activity_ts")
 		activity_age=$((now_epoch - activity_epoch))
 		activity_age_msg="${activity_age}s"
-		if [[ "$activity_age" -lt "$STALE_ASSIGNMENT_THRESHOLD_SECONDS" ]]; then
+		if [[ "$activity_age" -lt "$effective_threshold" ]]; then
 			# Old dispatch but recent activity — worker may still be alive
 			return 1
 		fi
@@ -380,6 +426,6 @@ _is_stale_assignment() {
 
 	# Both dispatch claim and last activity are older than threshold — stale
 	_recover_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees" \
-		"dispatch claim ${dispatch_age}s old, last activity ${activity_age_msg} old"
+		"dispatch claim ${dispatch_age}s old, last activity ${activity_age_msg} old (threshold=${effective_threshold}s, interactive=${is_interactive})"
 	return 0
 }

@@ -679,6 +679,16 @@ _lock_maintainer_issue_at_creation() {
 # claim and won't dispatch a parallel worker. Only fires for interactive
 # sessions — workers leave the status label to their own dispatch flow.
 #
+# t2132 Fix B: skip auto-claim when the task carries auto-dispatch labels.
+# When an interactive session creates a task intended for worker dispatch
+# (auto-dispatch label present), applying status:in-review + self-assign
+# directly contradicts the auto-dispatch intent — the pulse dedup guard
+# blocks dispatch on the very issue the user wanted workers to pick up.
+# The stale-recovery then strips the claim after 10 min, creating a race.
+# Fix: if TASK_LABELS contains "auto-dispatch", skip the auto-claim entirely.
+# The task will land with origin:interactive (provenance) but no status:in-review,
+# so the pulse can dispatch workers immediately.
+#
 # Non-blocking — all failure modes (helper missing, slug unresolvable, gh
 # offline) are swallowed. The Phase 1 AI-guidance rule in prompts/build.txt
 # is the primary enforcement layer; this is the code-level safety net.
@@ -690,6 +700,14 @@ _interactive_session_auto_claim_new_task() {
 	local origin
 	origin=$(detect_session_origin 2>/dev/null || echo "interactive")
 	if [[ "$origin" != "interactive" ]]; then
+		return 0
+	fi
+
+	# t2132 Fix B: skip auto-claim when task is intended for worker dispatch.
+	# TASK_LABELS is the module-level variable set by --labels parsing.
+	# Check both the variable and the issue's actual labels (belt-and-suspenders
+	# for cases where labels were applied via issue-sync rather than --labels).
+	if [[ "${TASK_LABELS:-}" == *"auto-dispatch"* ]]; then
 		return 0
 	fi
 
