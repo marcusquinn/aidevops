@@ -18,12 +18,9 @@
 #   - get_repo_owner_by_slug
 #   - get_repo_maintainer_by_slug
 #   - get_repo_priority_by_slug
+#   - get_repo_role_by_slug (t2145)
 #   - list_dispatchable_issue_candidates_json
 #   - list_dispatchable_issue_candidates
-#
-# This is a pure move from pulse-wrapper.sh. The function bodies are
-# byte-identical to their pre-extraction form. Any change must go in a
-# separate follow-up PR after the full decomposition (Phase 12) lands.
 
 # Include guard — prevent double-sourcing. pulse-wrapper.sh sources every
 # module unconditionally on start, and characterization tests re-source to
@@ -105,6 +102,61 @@ get_repo_priority_by_slug() {
 		repo_priority="tooling"
 	fi
 	printf '%s\n' "$repo_priority"
+	return 0
+}
+
+#######################################
+# Resolve repo role from repos.json
+#
+# Returns "maintainer" or "contributor". Resolution order:
+#   1. Explicit "role" field in repos.json entry
+#   2. Auto-detect: if slug owner matches the current gh user → maintainer
+#   3. Default: contributor (safe default — gates scanners rather than
+#      allowing them on repos we don't own)
+#
+# The role controls which pulse scanners run against the repo:
+#   - maintainer: all scanners (review-followup, quality-debt,
+#     simplification-debt, complexity scans)
+#   - contributor: session-miner and memory-miner only (data only the
+#     contributor has). Scanners that operate on repo data the maintainer
+#     already has are blocked to avoid NMR noise (t2145, GH#19341).
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+# Returns: role via stdout ("maintainer" or "contributor")
+#######################################
+get_repo_role_by_slug() {
+	local repo_slug="$1"
+	if [[ -z "$repo_slug" ]]; then
+		echo "contributor"
+		return 0
+	fi
+
+	# 1. Explicit role field in repos.json
+	if [[ -f "$REPOS_JSON" ]]; then
+		local explicit_role
+		explicit_role=$(jq -r --arg slug "$repo_slug" \
+			'.initialized_repos[] | select(.slug == $slug) | .role // ""' \
+			"$REPOS_JSON" 2>/dev/null | head -n 1) || explicit_role=""
+		if [[ "$explicit_role" == "maintainer" || "$explicit_role" == "contributor" ]]; then
+			printf '%s\n' "$explicit_role"
+			return 0
+		fi
+	fi
+
+	# 2. Auto-detect from slug owner vs current gh user.
+	# Cache the gh user for the process lifetime to avoid repeated API calls.
+	if [[ -z "${_CACHED_GH_USER:-}" ]]; then
+		_CACHED_GH_USER=$(gh api user --jq '.login' 2>/dev/null) || _CACHED_GH_USER=""
+	fi
+	local slug_owner="${repo_slug%%/*}"
+	if [[ -n "$_CACHED_GH_USER" && "$slug_owner" == "$_CACHED_GH_USER" ]]; then
+		echo "maintainer"
+		return 0
+	fi
+
+	# 3. Default: contributor (safe — blocks scanners on repos we don't own)
+	echo "contributor"
 	return 0
 }
 

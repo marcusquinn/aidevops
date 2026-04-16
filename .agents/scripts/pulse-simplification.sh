@@ -133,6 +133,14 @@ _coderabbit_review_check_interval() {
 #######################################
 run_daily_codebase_review() {
 	local aidevops_slug="marcusquinn/aidevops"
+
+	# t2145: CodeRabbit review triggers issue-creating scanners — maintainer-only.
+	local _cr_role
+	_cr_role=$(get_repo_role_by_slug "$aidevops_slug")
+	if [[ "$_cr_role" != "maintainer" ]]; then
+		return 0
+	fi
+
 	local now_epoch
 	now_epoch=$(date +%s)
 
@@ -220,12 +228,25 @@ _run_post_merge_review_scanner() {
 	fi
 
 	local total_repos=0
+	local skipped_contributor=0
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		# t2145: skip repos where the user is a contributor, not the maintainer.
+		# Scanners that scrape repo data (PR bot comments) duplicate what the
+		# maintainer's own pulse already sees, creating NMR noise.
+		local repo_role
+		repo_role=$(get_repo_role_by_slug "$slug")
+		if [[ "$repo_role" != "maintainer" ]]; then
+			skipped_contributor=$((skipped_contributor + 1))
+			continue
+		fi
 		total_repos=$((total_repos + 1))
 		echo "[pulse-wrapper] Post-merge scanner: scanning $slug" >>"$LOGFILE"
 		SCANNER_DAYS="${SCANNER_DAYS:-7}" "$scanner" scan "$slug" >>"$LOGFILE" 2>&1 || true
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+	if [[ "$skipped_contributor" -gt 0 ]]; then
+		echo "[pulse-wrapper] Post-merge scanner: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"$LOGFILE"
+	fi
 
 	printf '%s\n' "$now_epoch" >"$POST_MERGE_SCANNER_LAST_RUN"
 	echo "[pulse-wrapper] Post-merge scanner: completed ${total_repos} repo(s), next run in ~$((POST_MERGE_SCANNER_INTERVAL / 3600))h" >>"$LOGFILE"
@@ -1226,6 +1247,11 @@ run_simplification_dedup_cleanup() {
 	while IFS= read -r slug; do
 		[[ -z "$slug" ]] && continue
 		[[ "$total_closed" -ge "$batch_limit" ]] && break
+		# t2145: skip repos where the user is a contributor — simplification
+		# dedup cleanup is a maintainer-only operation.
+		local _dedup_role
+		_dedup_role=$(get_repo_role_by_slug "$slug")
+		[[ "$_dedup_role" != "maintainer" ]] && continue
 
 		# Use jq to extract file paths from titles and find duplicates server-side.
 		# Strategy: fetch issues sorted by number ascending (oldest first), extract
@@ -1765,6 +1791,14 @@ git diff --cached --name-only | grep -v 'simplification-state.json'
 run_weekly_complexity_scan() {
 	local repos_json="$REPOS_JSON"
 	local aidevops_slug="marcusquinn/aidevops"
+
+	# t2145: complexity scan creates simplification-debt issues — maintainer-only.
+	local _cs_role
+	_cs_role=$(get_repo_role_by_slug "$aidevops_slug")
+	if [[ "$_cs_role" != "maintainer" ]]; then
+		echo "[pulse-wrapper] Complexity scan skipped: role=$_cs_role for $aidevops_slug (t2145)" >>"$LOGFILE"
+		return 0
+	fi
 
 	local now_epoch
 	now_epoch=$(date +%s)
