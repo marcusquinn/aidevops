@@ -318,6 +318,78 @@ _clean_generated_subagents() {
 	return 0
 }
 
+# GH#19399 / t2149: Resolve basename collisions deterministically.
+#
+# Multiple source files with the same basename (e.g. `aidevops/architecture.md`
+# vs `tools/diagrams/mermaid-diagrams-skill/architecture.md`) previously fed
+# the parallel `xargs -P` write loop, where whichever subshell won the race
+# wrote the deployed stub. When the permissive sibling won, the sandboxed
+# source's `bash: false` / `webfetch: false` intent was silently lost.
+#
+# This function enumerates the same candidate set as the generator, groups by
+# basename, and emits one path per basename:
+#   - If any candidate declares `bash: false`, that one wins (restrictive
+#     default — preserves the sandbox the source maintainer expressed).
+#   - Otherwise the alphabetically-first path wins (deterministic tiebreak).
+#   - Every losing sibling is logged as a warning to stderr.
+#
+# Reads: AGENTS_DIR
+# Writes: NUL-delimited list of winning source paths to stdout
+#         Human-readable collision warnings to stderr
+# Bash 3.2 compatible (no associative arrays; uses sort/awk).
+_resolve_basename_collisions_for_generate() {
+	local tmpfile
+	tmpfile=$(mktemp 2>/dev/null || mktemp -t generate-runtime-config.XXXXXX)
+
+	# For each candidate source: record name, priority (0=restrictive, 1=permissive), path.
+	# Priority 0 wins via ascending sort.
+	find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f \
+		-not -path "*/loop-state/*" -not -name "*-skill.md" -print0 |
+		while IFS= read -r -d '' f; do
+			local name priority
+			name=$(basename "$f" .md)
+			[[ "$name" == "AGENTS" || "$name" == "README" ]] && continue
+			priority=1
+			if awk '/^---$/ { fm++; next } fm == 1 && /bash:[[:space:]]*false/ { print; exit } fm == 2 { exit }' "$f" 2>/dev/null | grep -q .; then
+				priority=0
+			fi
+			printf '%s\t%d\t%s\n' "$name" "$priority" "$f" >>"$tmpfile"
+		done
+
+	# Sort: name asc, priority asc (restrictive first), path asc (alphabetical tiebreak).
+	# Awk pass:
+	#   - First row per name wins; emit the path to stdout (NUL-delimited).
+	#   - Subsequent rows are collision losers.
+	#   - Only emit a warning when the sandbox bug class applies: the winner
+	#     has `bash: false` (priority 0) AND a loser doesn't, OR vice versa.
+	#     Collisions between equally-permissive sources are noise (e.g. the
+	#     numbered content files under tools/design/library/brands/*/*.md).
+	#
+	# Note on NUL emission: macOS awk (BSD, stock on Darwin) does NOT interpret
+	# `\0` or embed NUL bytes via `%s` in printf. We use `printf "%c", 0` which
+	# works on both GNU awk and macOS awk.
+	sort -t$'\t' -k1,1 -k2,2n -k3,3 "$tmpfile" | awk -F'\t' '
+		$1 != prev_name {
+			printf "%s", $3
+			printf "%c", 0
+			winner = $3
+			winner_priority = $2
+			prev_name = $1
+			next
+		}
+		{
+			# Warn only when sandbox-intent is mixed across the collision set.
+			if (winner_priority != $2) {
+				printf "[WARN] basename collision for %s: %s (bash:%s) loses to %s (bash:%s)\n", \
+					$1, $3, ($2 == 0 ? "false" : "default"), winner, (winner_priority == 0 ? "false" : "default") > "/dev/stderr"
+			}
+		}
+	'
+
+	rm -f "$tmpfile"
+	return 0
+}
+
 # Generate subagent markdown stubs for OpenCode
 _generate_subagents_opencode() {
 	local agent_dir="$1"
@@ -335,7 +407,9 @@ _generate_subagents_opencode() {
 	_ncpu=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 	local _parallel_jobs=$((_ncpu > 4 ? _ncpu : 4))
 	local subagent_count
-	subagent_count=$(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f -not -path "*/loop-state/*" -not -name "*-skill.md" -print0 |
+	# GH#19399: collision-resolver emits one path per basename (restrictive source wins).
+	# Warnings to stderr surface any collisions; they're not fatal.
+	subagent_count=$(_resolve_basename_collisions_for_generate |
 		xargs -0 -P "$_parallel_jobs" -I {} bash -c '_write_subagent_stub "$@"' _ {} |
 		awk '{sum+=$1} END {print sum+0}')
 
