@@ -966,11 +966,24 @@ _fetch_subissue_numbers() {
 	[[ "$issue_num" =~ ^[0-9]+$ ]] || return 0
 
 	local owner="${slug%%/*}" name="${slug##*/}"
+	# t2138: fetch pageInfo alongside nodes so we can fail-closed when
+	# hasNextPage is true. Partial child lists would silently let the
+	# reconciler close parents before the tail children are checked.
+	# The jq filter returns `PAGINATED` (non-numeric) when hasNextPage=true,
+	# which the caller treats as "empty" → falls back to body regex.
+	local graphql_result
 	# shellcheck disable=SC2016  # GraphQL variable markers ($owner/$name/$number) are intentional literals, not bash expansions
-	gh api graphql \
-		-f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){subIssues(first:50){nodes{number state}}}}}' \
+	graphql_result=$(gh api graphql \
+		-f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){subIssues(first:50){nodes{number state}pageInfo{hasNextPage}}}}}' \
 		-F "owner=$owner" -F "name=$name" -F "number=$issue_num" \
-		--jq '.data.repository.issue.subIssues.nodes // [] | .[] | .number' 2>/dev/null || return 0
+		--jq 'if (.data.repository.issue.subIssues.pageInfo.hasNextPage // false) then "PAGINATED" else (.data.repository.issue.subIssues.nodes // [] | .[] | .number) end' 2>/dev/null) || return 0
+
+	# Fail-closed guard: if hasNextPage, pretend we got nothing so the
+	# caller falls back to body regex (where pagination is not an issue).
+	if [[ "$graphql_result" == "PAGINATED" ]]; then
+		return 0
+	fi
+	printf '%s\n' "$graphql_result"
 	return 0
 }
 

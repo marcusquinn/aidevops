@@ -72,6 +72,19 @@ case "$1" in
 	api)
 		shift
 		if [[ "${1:-}" == "graphql" ]]; then
+			# Per-scenario override: non-zero exit simulates a GraphQL
+			# failure (auth, rate-limit, network). The helper under test
+			# must treat this as empty and fall back to body regex.
+			if [[ -n "${GH_GRAPHQL_EXIT_CODE:-}" ]]; then
+				exit "${GH_GRAPHQL_EXIT_CODE}"
+			fi
+			# Per-scenario override: hasNextPage=true makes the helper's
+			# jq filter emit "PAGINATED" which the helper maps to empty →
+			# body-regex fallback (fail-closed on partial child lists).
+			if [[ "${GH_GRAPHQL_HAS_NEXT_PAGE:-false}" == "true" ]]; then
+				printf '%s\n' "PAGINATED"
+				exit 0
+			fi
 			# Emit the subIssues nodes list. Matches the jq filter
 			# `.data.repository.issue.subIssues.nodes // [] | .[] | .number`
 			# that the helper uses to pull numbers.
@@ -314,6 +327,75 @@ if grep -q "api graphql" "$GH_CALLS"; then
 else
 	print_result "graph query is always attempted first" 1 \
 		"(expected 'api graphql' invocation; calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+fi
+
+# -----------------------------------------------------------------------------
+# Scenario 7 (CodeRabbit review feedback): GraphQL call fails hard (exit 1).
+# Legacy body-ref fallback MUST still close the parent. This mirrors the
+# empty-graph scenario but exercises the error-path branch in the helper.
+# -----------------------------------------------------------------------------
+reset_scenario
+set_parent_list 1000 "t1000: graphql-failure" \
+	"Body has #1001 and #1002 — graph is temporarily broken."
+set_child_states "1001:closed:child-x" "1002:closed:child-y"
+
+GH_GRAPHQL_EXIT_CODE=1 reconcile_completed_parent_tasks >/dev/null 2>&1
+
+if grep -q "issue close 1000" "$GH_CALLS"; then
+	print_result "graphql-error fallback: closes via body regex when GraphQL fails" 0
+else
+	print_result "graphql-error fallback: closes via body regex when GraphQL fails" 1 \
+		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+fi
+
+if grep -q "source=body" "$LOGFILE"; then
+	print_result "graphql-error fallback: log tags child_source=body" 0
+else
+	print_result "graphql-error fallback: log tags child_source=body" 1 \
+		"(log: $(cat "$LOGFILE"))"
+fi
+
+# -----------------------------------------------------------------------------
+# Scenario 8 (CodeRabbit review feedback): hasNextPage=true (parent has >50
+# children across pages). Helper MUST fail-closed — treat graph as empty and
+# fall back to body regex so we never close based on a partial child list.
+# -----------------------------------------------------------------------------
+reset_scenario
+set_parent_list 1100 "t1100: paginated" \
+	"Body has #1101 and #1102 as backstop refs."
+set_child_states "1101:closed:a" "1102:closed:b"
+
+GH_GRAPHQL_HAS_NEXT_PAGE=true reconcile_completed_parent_tasks >/dev/null 2>&1
+
+if grep -q "issue close 1100" "$GH_CALLS"; then
+	# Closed via body fallback (graph bailed out)
+	if grep -q "source=body" "$LOGFILE"; then
+		print_result "pagination fail-closed: graph bails, body fallback closes" 0
+	else
+		print_result "pagination fail-closed: graph bails, body fallback closes" 1 \
+			"(closed but source not 'body': $(cat "$LOGFILE"))"
+	fi
+else
+	print_result "pagination fail-closed: graph bails, body fallback closes" 1 \
+		"(expected close via body fallback; calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+fi
+
+# -----------------------------------------------------------------------------
+# Scenario 9: hasNextPage=true AND empty body → parent stays open (safe default).
+# The pagination guard must not cause a false negative close when no fallback
+# signal exists either.
+# -----------------------------------------------------------------------------
+reset_scenario
+set_parent_list 1200 "t1200: paginated-no-body" \
+	"Narrative only. No #NNN anywhere."
+
+GH_GRAPHQL_HAS_NEXT_PAGE=true reconcile_completed_parent_tasks >/dev/null 2>&1
+
+if grep -q "issue close 1200" "$GH_CALLS"; then
+	print_result "pagination fail-closed: no body refs = parent stays open" 1 \
+		"(unexpected close with paginated graph + empty body; calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+else
+	print_result "pagination fail-closed: no body refs = parent stays open" 0
 fi
 
 # -----------------------------------------------------------------------------
