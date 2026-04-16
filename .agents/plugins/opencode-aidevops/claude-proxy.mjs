@@ -112,6 +112,16 @@ function getClaudeProxyModels() {
       contextWindow: 1000000,
       maxTokens: 64000,
     },
+    {
+      // Opus 4.7 — opt-in only. Framework defaults stay on 4.6.
+      // Context capped at 200K (not 1M API ceiling) due to MRCR v2 regression:
+      // 256K 91.9% -> 59.2%, 1M 78.3% -> 32.2%. See models-opus.md.
+      id: "claude-opus-4-7",
+      name: "Claude Opus 4.7 (via Claude CLI)",
+      reasoning: true,
+      contextWindow: 200000,
+      maxTokens: 64000,
+    },
   ];
 }
 
