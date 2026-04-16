@@ -141,7 +141,7 @@ _get_rate_limit_behavior() {
 		# stderr is not suppressed so JSON syntax errors surface during debugging.
 		local behavior=""
 		behavior=$(jq -r --arg slug "$repo_slug" --arg bot "$bot_login" \
-			'first(.initialized_repos[] | select(.slug == $slug)) | (.review_gate.tools[$bot].rate_limit_behavior // .review_gate.rate_limit_behavior // empty)' \
+			'first(.initialized_repos[]? | select(.slug == $slug)) | (.review_gate.tools[$bot].rate_limit_behavior // .review_gate.rate_limit_behavior // empty)' \
 			"$repos_json") || behavior=""
 		if [[ -n "$behavior" ]]; then
 			printf '%s' "$behavior"
