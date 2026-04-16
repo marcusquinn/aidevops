@@ -2286,9 +2286,9 @@
       "pr": 17583
     },
     ".agents/scripts/generate-runtime-config.sh": {
-      "at": "2026-04-13T16:27:33Z",
-      "hash": "f1cc55085d4a477908d4d976c7f101cd37ec0348",
-      "passes": 5,
+      "at": "2026-04-16T22:17:04Z",
+      "hash": "70f5fa029b98989574dfad7c55eefc83b195e1ad",
+      "passes": 6,
       "pr": 15933
     },
     ".agents/scripts/gh-signature-helper.sh": {
@@ -7492,9 +7492,9 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-04-16T19:25:49Z",
-      "hash": "df997d54767af64c6afc8adb2dd03e6f138762a0",
-      "passes": 71,
+      "at": "2026-04-16T22:17:29Z",
+      "hash": "39016e9b3cdfa40c38174536839f3dcc09ba42c2",
+      "passes": 72,
       "pr": 19029
     },
     "setup-modules/agent-deploy.sh": {
@@ -7504,9 +7504,9 @@
       "pr": 19203
     },
     "setup.sh": {
-      "at": "2026-04-16T19:25:49Z",
-      "hash": "9d8b159588006978153fa2efba94d5f357fd7fbc",
-      "passes": 69,
+      "at": "2026-04-16T22:17:29Z",
+      "hash": "ac0b1949c0e16b87ec07c558c8f871d478eb354a",
+      "passes": 70,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
