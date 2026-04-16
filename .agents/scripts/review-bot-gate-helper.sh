@@ -57,16 +57,27 @@ KNOWN_BOTS=(
 	"copilot"
 )
 
-# Patterns that indicate a rate-limit or quota notice (not a real review).
-# Case-insensitive grep patterns — one per line.
-RATE_LIMIT_PATTERNS=(
+# Patterns that indicate a comment is NOT a real review. Includes rate-limit
+# / quota notices AND non-quota bot status messages ("Review failed", "Review
+# skipped", placeholder edits after the PR was closed). Case-insensitive grep
+# patterns — one per line.
+# t2139 (GH#19251): expanded from rate-limit-only to all known non-review
+# notices, after CodeRabbit "Review failed/skipped/closed-during-review"
+# messages were observed false-positive-classifying as real reviews.
+NON_REVIEW_PATTERNS=(
 	"rate limit exceeded"
 	"rate limited by coderabbit"
 	"daily quota limit"
 	"reached your daily quota"
 	"Please wait up to 24 hours"
 	"has exceeded the limit for the number of"
+	"Review failed"
+	"Review skipped"
+	"closed or merged during review"
+	"Auto reviews are limited"
 )
+# Backwards-compat alias for any callers/tests still referencing the old name.
+RATE_LIMIT_PATTERNS=("${NON_REVIEW_PATTERNS[@]}")
 
 SKIP_LABEL="skip-review-gate"
 
@@ -82,6 +93,17 @@ RATE_LIMIT_GRACE_SECONDS="${RATE_LIMIT_GRACE_SECONDS:-1800}"
 # Values: "pass" (exit 0 immediately, current default) or "wait" (return WAITING).
 # Override per-repo or per-tool via repos.json review_gate config.
 REVIEW_GATE_RATE_LIMIT_BEHAVIOR="${REVIEW_GATE_RATE_LIMIT_BEHAVIOR:-pass}"
+
+# t2139 (GH#19251): Minimum seconds a bot comment must have been "settled"
+# (either edited via updated_at > created_at, or simply old enough since
+# created_at) before it counts as a completed review. Defeats the two-phase
+# placeholder pattern where a bot posts an initial stub at ~14s and edits it
+# with the real review at ~90-120s. Default 30s — large enough to skip
+# Phase 1 placeholders, small enough not to block fast-completing bots.
+# Override per-repo or per-tool via repos.json review_gate config:
+#   { "review_gate": { "min_edit_lag_seconds": 30,
+#     "tools": { "coderabbitai": { "min_edit_lag_seconds": 60 } } } }
+REVIEW_BOT_MIN_EDIT_LAG_SECONDS="${REVIEW_BOT_MIN_EDIT_LAG_SECONDS:-30}"
 
 # --- Functions ---
 
@@ -130,6 +152,80 @@ _get_rate_limit_behavior() {
 	# Fall through to global env (which defaults to "pass")
 	printf '%s' "$REVIEW_GATE_RATE_LIMIT_BEHAVIOR"
 	return 0
+}
+
+_get_min_edit_lag() {
+	# t2139: Resolve minimum edit-lag seconds for a specific bot on a specific
+	# repo. Resolution order: per-tool > per-repo default > global env > 30.
+	# Mirrors _get_rate_limit_behavior — same repos.json schema, same precedence.
+	local repo_slug="$1"
+	local bot_login="$2"
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		local lag=""
+		lag=$(jq -r --arg slug "$repo_slug" --arg bot "$bot_login" \
+			'first(.initialized_repos[] | select(.slug == $slug)) | (.review_gate.tools[$bot].min_edit_lag_seconds // .review_gate.min_edit_lag_seconds // empty)' \
+			"$repos_json" 2>/dev/null) || lag=""
+		# Reject non-integer or negative values silently (fall through to env).
+		if [[ -n "$lag" && "$lag" != "null" && "$lag" =~ ^[0-9]+$ ]]; then
+			printf '%s' "$lag"
+			return 0
+		fi
+	fi
+
+	printf '%s' "$REVIEW_BOT_MIN_EDIT_LAG_SECONDS"
+	return 0
+}
+
+_to_epoch() {
+	# Cross-platform ISO-8601 → epoch (macOS BSD date vs GNU date). Returns 0
+	# on parse failure so callers can detect "unknown" and behave conservatively.
+	local iso="$1"
+	[[ -z "$iso" ]] && {
+		echo "0"
+		return 0
+	}
+	local epoch
+	epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null ||
+		date -d "$iso" +%s 2>/dev/null ||
+		echo "0")
+	echo "$epoch"
+	return 0
+}
+
+_comment_is_settled() {
+	# t2139: A comment is "settled" (final form, safe to classify as a real
+	# review) if EITHER:
+	#   (a) it has been edited (updated_at >= created_at + min_lag), OR
+	#   (b) it is old enough that the bot would have edited by now
+	#       (now - created_at >= min_lag).
+	# If timestamps are missing/unparseable (older API responses, network
+	# issues), be conservative: treat as settled — better to PASS the gate
+	# than block forever on missing data.
+	local created_at="$1"
+	local updated_at="$2"
+	local min_lag="$3"
+
+	# Missing inputs → conservative pass.
+	[[ -z "$created_at" ]] && return 0
+	[[ -z "$min_lag" || ! "$min_lag" =~ ^[0-9]+$ ]] && min_lag=30
+
+	local created_epoch updated_epoch now_epoch
+	created_epoch=$(_to_epoch "$created_at")
+	updated_epoch=$(_to_epoch "${updated_at:-$created_at}")
+	now_epoch=$(date +%s)
+
+	# Unparseable timestamps → conservative pass.
+	[[ "$created_epoch" -eq 0 ]] && return 0
+
+	local edit_delta=$((updated_epoch - created_epoch))
+	local age=$((now_epoch - created_epoch))
+
+	if [[ "$edit_delta" -ge "$min_lag" ]] || [[ "$age" -ge "$min_lag" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 _should_pass_rate_limited() {
@@ -208,12 +304,14 @@ get_all_bot_commenters() {
 		tr '[:upper:]' '[:lower:]' | sort -u | grep -v '^$' || true
 }
 
-is_rate_limit_comment() {
-	# Check if a comment body matches any known rate-limit/quota pattern.
-	# Returns 0 if the comment IS a rate-limit notice (not a real review).
+is_non_review_comment() {
+	# t2139: Check if a comment body matches any known non-review pattern
+	# (rate-limit/quota notices, "Review failed", "Review skipped", etc.).
+	# Returns 0 if the comment IS a non-review notice. Renamed from
+	# is_rate_limit_comment for accuracy — see NON_REVIEW_PATTERNS.
 	local body="$1"
 
-	for pattern in "${RATE_LIMIT_PATTERNS[@]}"; do
+	for pattern in "${NON_REVIEW_PATTERNS[@]}"; do
 		if echo "$body" | grep -qi "$pattern"; then
 			return 0
 		fi
@@ -221,18 +319,35 @@ is_rate_limit_comment() {
 	return 1
 }
 
+# Backwards-compat alias for any callers/tests still using the old name.
+is_rate_limit_comment() {
+	is_non_review_comment "$@"
+}
+
 bot_has_real_review() {
-	# Check if a bot has posted at least one comment that is NOT a rate-limit
-	# notice. Checks all three comment sources (reviews, issue comments,
-	# review comments). Returns 0 if a real review exists, 1 otherwise.
+	# t2139 (GH#19251): Check if a bot has posted at least one comment that
+	# is BOTH (a) not a known non-review notice AND (b) "settled" — meaning
+	# the comment has been edited (updated_at > created_at + min_lag) or is
+	# old enough that the bot would have edited by now (now - created_at >=
+	# min_lag). The age check is critical to defeat CodeRabbit's two-phase
+	# posting pattern, where Phase 1 is a placeholder posted at ~14s and
+	# Phase 2 is the edited final review at ~90-120s.
+	#
+	# Checks all three comment sources (reviews, issue comments, review
+	# comments). Returns 0 if a real, settled review exists, 1 otherwise.
 	local pr_number="$1"
 	local repo="$2"
 	local bot_login="$3"
 
+	local min_lag
+	# repo here is "owner/name" — same shape as repos.json slug.
+	min_lag=$(_get_min_edit_lag "$repo" "$bot_login")
+
 	# Build a jq filter that selects comments by this bot (case-insensitive)
-	# and base64-encodes each body so multi-line content stays on one line.
+	# and emits a TSV record of created_at \t updated_at \t base64(body).
+	# Reviews lack updated_at on some endpoints; default to created_at via //.
 	local jq_filter
-	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | .body | @base64"
+	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | [(.created_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
 
 	local api_endpoints=(
 		"repos/${repo}/pulls/${pr_number}/reviews"
@@ -240,22 +355,29 @@ bot_has_real_review() {
 		"repos/${repo}/pulls/${pr_number}/comments"
 	)
 
-	local endpoint encoded_bodies body
+	local endpoint records created_at updated_at encoded body
 	for endpoint in "${api_endpoints[@]}"; do
-		encoded_bodies=$(gh api "$endpoint" --paginate --jq "$jq_filter" || echo "")
-		if [[ -n "$encoded_bodies" ]]; then
-			while IFS= read -r encoded; do
-				[[ -z "$encoded" ]] && continue
-				body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
-				[[ -z "$body" ]] && continue
-				if ! is_rate_limit_comment "$body"; then
-					return 0
-				fi
-			done <<<"$encoded_bodies"
-		fi
+		records=$(gh api "$endpoint" --paginate --jq "$jq_filter" || echo "")
+		[[ -z "$records" ]] && continue
+		while IFS=$'\t' read -r created_at updated_at encoded; do
+			[[ -z "$encoded" ]] && continue
+			body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
+			[[ -z "$body" ]] && continue
+			# Phase 1: must not be a known non-review notice.
+			if is_non_review_comment "$body"; then
+				continue
+			fi
+			# Phase 2: must be settled. If not, this is likely a placeholder
+			# (e.g., CodeRabbit Phase 1) — wait for it to settle before
+			# classifying as a real review.
+			if ! _comment_is_settled "$created_at" "$updated_at" "$min_lag"; then
+				continue
+			fi
+			return 0
+		done <<<"$records"
 	done
 
-	# All comments from this bot were rate-limit notices (or empty)
+	# No comment from this bot passed both filters.
 	return 1
 }
 
@@ -453,6 +575,67 @@ do_wait() {
 	return 1
 }
 
+_classify_bot_state() {
+	# t2139: Distinguish "placeholder/not-yet-settled" from "rate-limited"
+	# vs "real-review". Returns one of:
+	#   real-review         — bot has a real, settled review
+	#   not-yet             — bot has comment(s) that are not non-review notices
+	#                         but are still in the placeholder window (Phase 1)
+	#   non-review-only     — every bot comment matched a NON_REVIEW_PATTERNS entry
+	#                         (rate-limited, "Review failed", "Review skipped", etc.)
+	#   no-comments         — bot has commented per get_all_bot_commenters but
+	#                         no comments are visible via the typed endpoints
+	#                         (rare race; treat as non-review-only)
+	local pr_number="$1"
+	local repo="$2"
+	local bot_login="$3"
+
+	local min_lag
+	min_lag=$(_get_min_edit_lag "$repo" "$bot_login")
+
+	local jq_filter
+	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | [(.created_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
+
+	local api_endpoints=(
+		"repos/${repo}/pulls/${pr_number}/reviews"
+		"repos/${repo}/issues/${pr_number}/comments"
+		"repos/${repo}/pulls/${pr_number}/comments"
+	)
+
+	local saw_any=0 saw_non_review=0 saw_placeholder=0
+	local endpoint records created_at updated_at encoded body
+	for endpoint in "${api_endpoints[@]}"; do
+		records=$(gh api "$endpoint" --paginate --jq "$jq_filter" || echo "")
+		[[ -z "$records" ]] && continue
+		while IFS=$'\t' read -r created_at updated_at encoded; do
+			[[ -z "$encoded" ]] && continue
+			body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
+			[[ -z "$body" ]] && continue
+			saw_any=1
+			if is_non_review_comment "$body"; then
+				saw_non_review=1
+				continue
+			fi
+			if _comment_is_settled "$created_at" "$updated_at" "$min_lag"; then
+				echo "real-review"
+				return 0
+			fi
+			saw_placeholder=1
+		done <<<"$records"
+	done
+
+	if [[ "$saw_placeholder" -eq 1 ]]; then
+		echo "not-yet"
+	elif [[ "$saw_non_review" -eq 1 ]]; then
+		echo "non-review-only"
+	elif [[ "$saw_any" -eq 0 ]]; then
+		echo "no-comments"
+	else
+		echo "non-review-only"
+	fi
+	return 0
+}
+
 do_list() {
 	local pr_number="$1"
 	local repo="$2"
@@ -469,14 +652,26 @@ do_list() {
 	echo "$result"
 	echo ""
 
-	# Show rate-limit status for each found bot
+	# t2139: Show classification per bot — disambiguate "not-yet" (placeholder)
+	# from "non-review-only" (rate-limit / failure / skip notice).
+	local state
 	for bot in "${KNOWN_BOTS[@]}"; do
 		if echo "$all_commenters" | grep -qi "$bot"; then
-			if bot_has_real_review "$pr_number" "$repo" "$bot"; then
+			state=$(_classify_bot_state "$pr_number" "$repo" "$bot")
+			case "$state" in
+			real-review)
 				echo "  ${bot}: real review"
-			else
-				echo "  ${bot}: rate-limited (no real review)"
-			fi
+				;;
+			not-yet)
+				echo "  ${bot}: not yet (placeholder — waiting for Phase 2 edit)"
+				;;
+			non-review-only)
+				echo "  ${bot}: rate-limited / no-review notice (no real review)"
+				;;
+			no-comments)
+				echo "  ${bot}: commented per index but body unavailable"
+				;;
+			esac
 		fi
 	done
 
