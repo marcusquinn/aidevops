@@ -293,11 +293,20 @@ _issue_needs_consolidation() {
 	local min_chars="$ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS"
 	substantive_count=$(printf '%s' "$comments_json" | jq --argjson min "$min_chars" '
 		# Combine all operational-noise patterns into a single regex for efficiency
-		# (1 test() invocation per comment instead of 13).
+		# (1 test() invocation per comment instead of 15).
+		#
+		# t2144: Added ^<!-- WORKER_SUPERSEDED and ^<!-- stale-recovery-tick
+		# patterns. Real recovery comment bodies start with these HTML comment
+		# markers, then contain "**Stale assignment recovered**" later in the
+		# body. The ^(\\*\\*)?Stale... anchor was therefore a no-op — 528-char
+		# recovery comments passed the filter, and two of them on any stuck
+		# issue falsely tripped the ISSUE_CONSOLIDATION_COMMENT_THRESHOLD=2 gate.
 		(
 			"DISPATCH_CLAIM nonce="
 			+ "|^(<!-- ops:start[^>]*-->\\s*)?Dispatching worker"
 			+ "|^<!-- (nmr-hold|aidevops-signed|ops:start|provenance:start)"
+			+ "|^<!-- WORKER_SUPERSEDED"
+			+ "|^<!-- stale-recovery-tick"
 			+ "|CLAIM_RELEASED reason="
 			+ "|^(Worker failed:|## Worker Watchdog Kill)"
 			+ "|^(\\*\\*)?Stale assignment recovered"
@@ -464,30 +473,76 @@ _reevaluate_simplification_labels() {
 }
 
 #######################################
-# t1982: Check whether an open consolidation-task child issue already
-# references this parent. Used by both _issue_needs_consolidation (as a
+# t1982/t2144: Check whether a consolidation-task child issue currently
+# "owns" this parent. Used by both _issue_needs_consolidation (as a
 # pre-filter) and _dispatch_issue_consolidation (as an idempotency guard)
 # so that repeat calls on the same parent do not create duplicate children.
+#
+# A child "owns" the parent if it is either:
+#   (a) currently open, OR
+#   (b) closed within the grace window (CONSOLIDATION_RECENT_CLOSE_GRACE_MIN
+#       minutes, default 30).
+#
+# The grace window exists because closing the consolidation-task child
+# and applying the `consolidated` label to the parent are separate steps —
+# the worker closes the child first, then updates the parent. Between
+# those two API calls the state is {child: closed, parent: still needs-
+# consolidation, no open child}. `_backfill_stale_consolidation_labels`
+# previously saw this as "no child, dispatch a new one" and re-fired,
+# cascading indefinitely (observed: #19321 → #19341 + #19367 cascade on
+# 2026-04-16 across two pulse runners). The grace window collapses that
+# race to a single cycle.
 #
 # Uses GitHub's `in:body` search over the consolidation-task label scope.
 # The child body always contains the literal token "Consolidation target: #NNN"
 # (see _compose_consolidation_child_body) which is the searchable anchor.
 #
-# Returns: 0 if an open child exists, 1 if none (or on lookup failure).
+# Args: $1=parent_num $2=repo_slug [$3=grace_minutes_override]
+# Returns: 0 if an open-or-recently-closed child exists, 1 otherwise.
 #######################################
 _consolidation_child_exists() {
 	local parent_num="$1"
 	local repo_slug="$2"
+	local grace_minutes="${3:-${CONSOLIDATION_RECENT_CLOSE_GRACE_MIN:-30}}"
 
 	[[ -n "$parent_num" && -n "$repo_slug" ]] || return 1
 
-	local child_count
-	child_count=$(gh issue list --repo "$repo_slug" --state open \
+	# Fast path: any open child immediately owns the parent.
+	local open_count
+	open_count=$(gh issue list --repo "$repo_slug" --state open \
 		--label "consolidation-task" \
 		--search "in:body \"Consolidation target: #${parent_num}\"" \
-		--json number --jq 'length' --limit 5 2>/dev/null) || child_count=0
-	[[ "$child_count" =~ ^[0-9]+$ ]] || child_count=0
-	[[ "$child_count" -gt 0 ]]
+		--json number --jq 'length' --limit 5 2>/dev/null) || open_count=0
+	[[ "$open_count" =~ ^[0-9]+$ ]] || open_count=0
+	if [[ "$open_count" -gt 0 ]]; then
+		return 0
+	fi
+
+	# No open child — check for a recently-closed one within the grace
+	# window. grace_minutes=0 disables the window (test hook).
+	[[ "$grace_minutes" =~ ^[0-9]+$ ]] || grace_minutes=30
+	if [[ "$grace_minutes" -eq 0 ]]; then
+		return 1
+	fi
+
+	# Prefer GNU date -d (Linux, coreutils); fall back to BSD date -v (macOS).
+	local cutoff_iso=""
+	cutoff_iso=$(date -u -d "${grace_minutes} minutes ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) || cutoff_iso=""
+	if [[ -z "$cutoff_iso" ]]; then
+		cutoff_iso=$(date -u -v-"${grace_minutes}"M +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) || cutoff_iso=""
+	fi
+	# If both date variants failed (highly unusual), fall back to open-only
+	# behaviour. This preserves pre-t2144 semantics rather than risking
+	# false negatives from a broken cutoff.
+	[[ -n "$cutoff_iso" ]] || return 1
+
+	local recent_closed_count
+	recent_closed_count=$(gh issue list --repo "$repo_slug" --state closed \
+		--label "consolidation-task" \
+		--search "in:body \"Consolidation target: #${parent_num}\" closed:>${cutoff_iso}" \
+		--json number --jq 'length' --limit 5 2>/dev/null) || recent_closed_count=0
+	[[ "$recent_closed_count" =~ ^[0-9]+$ ]] || recent_closed_count=0
+	[[ "$recent_closed_count" -gt 0 ]]
 }
 
 #######################################
@@ -508,6 +563,12 @@ _consolidation_substantive_comments() {
 
 	local min_chars="$ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS"
 
+	# t2144: Added ^<!-- WORKER_SUPERSEDED and ^<!-- stale-recovery-tick
+	# patterns here too — this helper is used by the dispatch path to compose
+	# the child issue body, so it must stay in lockstep with the predicate in
+	# _issue_needs_consolidation above. Divergence between the two filters
+	# would mean the child ISSUE shows WORKER_SUPERSEDED comments as
+	# "substantive" even though they can no longer trigger dispatch.
 	printf '%s' "$comments_json" | jq --argjson min "$min_chars" '
 		[.[] | select(
 			(.body | length) >= $min
@@ -515,6 +576,8 @@ _consolidation_substantive_comments() {
 			and (.body | test("DISPATCH_CLAIM nonce=") | not)
 			and (.body | test("^(<!-- ops:start[^>]*-->\\s*)?Dispatching worker") | not)
 			and (.body | test("^<!-- (nmr-hold|aidevops-signed|ops:start|provenance:start)") | not)
+			and (.body | test("^<!-- WORKER_SUPERSEDED") | not)
+			and (.body | test("^<!-- stale-recovery-tick") | not)
 			and (.body | test("CLAIM_RELEASED reason=") | not)
 			and (.body | test("^(Worker failed:|## Worker Watchdog Kill)") | not)
 			and (.body | test("^(\\*\\*)?Stale assignment recovered") | not)
@@ -870,28 +933,55 @@ _backfill_stale_consolidation_labels() {
 	[[ -f "$repos_json" ]] || return 0
 
 	local total_backfilled=0
+	local total_cleared_stale=0
 	while IFS='|' read -r slug rpath; do
 		[[ -n "$slug" ]] || continue
 		local issues_json
 		issues_json=$(gh issue list --repo "$slug" --state open \
 			--label "needs-consolidation" \
-			--json number --limit 50 2>/dev/null) || issues_json="[]"
+			--json number,labels --limit 50 2>/dev/null) || issues_json='[]'
 
-		while read -r num; do
+		while IFS='|' read -r num labels_csv; do
 			[[ "$num" =~ ^[0-9]+$ ]] || continue
-			# Skip if a child already exists — the dispatch path is
-			# already idempotent but short-circuiting saves API calls.
-			if _consolidation_child_exists "$num" "$slug"; then
+
+			# t2144 (A3): Defense in depth — skip and auto-clear if the
+			# parent already carries `consolidated`. _issue_needs_consolidation
+			# short-circuits on this label (line ~263), but that function
+			# won't clean up the stale `needs-consolidation` label if both
+			# are present; do it here explicitly.
+			if [[ ",${labels_csv}," == *",consolidated,"* ]]; then
+				gh issue edit "$num" --repo "$slug" \
+					--remove-label "needs-consolidation" >/dev/null 2>&1 || true
+				total_cleared_stale=$((total_cleared_stale + 1))
+				continue
+			fi
+
+			# t2144 (A2): Unify the dispatch guard. Prior to this, backfill
+			# ran a bare label-lookup + open-child-exists check and dispatched
+			# on anything that passed, bypassing the filter that
+			# _issue_needs_consolidation enforces on the main pre-dispatch
+			# path. The delegation here:
+			#   - auto-clears the label when the filter no longer triggers
+			#     (via the was_already_labeled branch inside the helper)
+			#   - short-circuits on an open or recently-closed child via
+			#     _consolidation_child_exists (now grace-windowed, A4)
+			#   - short-circuits on the `consolidated` label
+			# Net effect: backfill only dispatches when dispatch is actually
+			# warranted under the current filter, eliminating the cascade.
+			if ! _issue_needs_consolidation "$num" "$slug"; then
 				continue
 			fi
 			if _dispatch_issue_consolidation "$num" "$slug" "$rpath"; then
 				total_backfilled=$((total_backfilled + 1))
 			fi
-		done < <(printf '%s' "$issues_json" | jq -r '.[].number' 2>/dev/null)
+		done < <(printf '%s' "$issues_json" | jq -r '.[] | "\(.number)|\([.labels[].name] | join(","))"' 2>/dev/null)
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path // "")"' "$repos_json" 2>/dev/null)
 
 	if [[ "$total_backfilled" -gt 0 ]]; then
 		echo "[pulse-wrapper] Consolidation backfill: dispatched ${total_backfilled} stale consolidation child issue(s)" >>"$LOGFILE"
+	fi
+	if [[ "$total_cleared_stale" -gt 0 ]]; then
+		echo "[pulse-wrapper] Consolidation backfill: cleared ${total_cleared_stale} stale needs-consolidation label(s) on already-consolidated parents (t2144)" >>"$LOGFILE"
 	fi
 	return 0
 }
