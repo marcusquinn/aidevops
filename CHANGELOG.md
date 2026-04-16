@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.54] - 2026-04-16
+
+### Changed
+
+- protect override labels from worker self-application + plugin import check (#19242)
+
 ## [3.8.53] - 2026-04-16
 
 ### Changed
