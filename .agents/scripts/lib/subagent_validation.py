@@ -89,6 +89,37 @@ def subagent_ref_exists(agent_name, subagent_ref, agent_slug,
     return False
 
 
+def _resolve_display_to_filename_fn(fn):
+    """Return fn if provided, else lazy-import agent_config.display_to_filename.
+
+    The lazy import avoids a module-level circular dependency between
+    agent_config (which re-exports validate_subagent_refs for backward
+    compatibility) and subagent_validation.
+    """
+    if fn is not None:
+        return fn
+    from agent_config import display_to_filename as _display_to_filename
+    return _display_to_filename
+
+
+def _collect_missing_for_agent(display_name, agent_config, display_to_filename_fn,
+                               all_subagent_files, all_subagent_paths):
+    """Return list of (display_name, subagent_ref) missing refs for one agent."""
+    task_perms = agent_config.get('permission', {}).get('task', {})
+    if not task_perms:
+        return []
+
+    agent_slug = display_to_filename_fn(display_name)
+    missing = []
+    for subagent_name in task_perms:
+        if subagent_name == '*' or subagent_name in BUILTIN_SUBAGENTS:
+            continue
+        if not subagent_ref_exists(display_name, subagent_name, agent_slug,
+                                   all_subagent_files, all_subagent_paths):
+            missing.append((display_name, subagent_name))
+    return missing
+
+
 def validate_subagent_refs(primary_agents, agents_dir, display_to_filename_fn=None):
     """Validate subagent references against actual files.
 
@@ -96,33 +127,17 @@ def validate_subagent_refs(primary_agents, agents_dir, display_to_filename_fn=No
         primary_agents: Dict of agent display_name -> config.
         agents_dir: Path to agents directory.
         display_to_filename_fn: Function to convert display name to filename stem.
-            If None (default), imports agent_config.display_to_filename lazily.
-            The lazy import avoids a module-level circular import between
-            agent_config and subagent_validation (agent_config re-exports
-            validate_subagent_refs for backward compatibility).
+            If None (default), imports agent_config.display_to_filename lazily
+            (see _resolve_display_to_filename_fn for rationale).
 
     Returns list of (agent_display_name, subagent_ref) tuples for missing refs.
     """
-    if display_to_filename_fn is None:
-        # Lazy import to avoid circular dependency with agent_config at module load.
-        from agent_config import display_to_filename as _display_to_filename
-        display_to_filename_fn = _display_to_filename
-
+    resolved_fn = _resolve_display_to_filename_fn(display_to_filename_fn)
     all_subagent_files, all_subagent_paths = collect_subagent_files(agents_dir)
+
     missing_refs = []
-
     for display_name, agent_config in primary_agents.items():
-        task_perms = agent_config.get('permission', {}).get('task', {})
-        if not task_perms:
-            continue
-        agent_slug = display_to_filename_fn(display_name)
-        for subagent_name in task_perms:
-            if subagent_name == '*':
-                continue
-            if subagent_name in BUILTIN_SUBAGENTS:
-                continue
-            if not subagent_ref_exists(display_name, subagent_name, agent_slug,
-                                       all_subagent_files, all_subagent_paths):
-                missing_refs.append((display_name, subagent_name))
-
+        missing_refs.extend(_collect_missing_for_agent(
+            display_name, agent_config, resolved_fn,
+            all_subagent_files, all_subagent_paths))
     return missing_refs
