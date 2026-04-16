@@ -1,13 +1,16 @@
-// higgsfield-common.mjs — Shared constants, utilities, credit guard, browser helpers,
-// download/output organisation for the Higgsfield automation suite.
+// higgsfield-common.mjs — Shared constants, utilities, credit guard, CLI parsing,
+// retry wrapper, and batch infrastructure for the Higgsfield automation suite.
 // Imported by playwright-automator.mjs and the other focused module files.
+//
+// Browser helpers → higgsfield-browser.mjs
+// Output/download helpers → higgsfield-output.mjs
+// Discovery/login → higgsfield-discovery.mjs
+// (t2127 file-complexity decomposition)
 
-import { chromium } from 'playwright';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdirSync, statSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { join, basename, extname } from 'path';
 import { homedir } from 'os';
 import { execFileSync } from 'child_process';
-import { createHash } from 'crypto';
 
 // ---------------------------------------------------------------------------
 // Paths & Constants
@@ -213,26 +216,6 @@ export function curlDownload(url, savePath, { withHttpCode = false, timeout = 12
 }
 
 // ---------------------------------------------------------------------------
-// Credentials
-// ---------------------------------------------------------------------------
-
-export function loadCredentials() {
-  const credFile = join(homedir(), '.config', 'aidevops', 'credentials.sh');
-  if (!existsSync(credFile)) {
-    console.error('ERROR: Credentials file not found at', credFile);
-    process.exit(1);
-  }
-  const content = readFileSync(credFile, 'utf-8');
-  const user = content.match(/HIGGSFIELD_USER="([^"]+)"/)?.[1];
-  const pass = content.match(/HIGGSFIELD_PASS="([^"]+)"/)?.[1];
-  if (!user || !pass) {
-    console.error('ERROR: HIGGSFIELD_USER or HIGGSFIELD_PASS not found in credentials.sh');
-    process.exit(1);
-  }
-  return { user, pass };
-}
-
-// ---------------------------------------------------------------------------
 // CLI Argument Parsing
 // ---------------------------------------------------------------------------
 
@@ -414,567 +397,6 @@ export function checkCreditGuard(command, options = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Browser helpers
-// ---------------------------------------------------------------------------
-
-export function getDefaultOutputDir(options = {}) {
-  if (options.headless || (!process.stdout.isTTY && !options.headed)) {
-    return WORKSPACE_OUTPUT_DIR;
-  }
-  return USER_DOWNLOADS_DIR;
-}
-
-export async function launchBrowser(options = {}) {
-  const headless = options.headless !== undefined ? options.headless :
-                   options.headed ? false : true;
-
-  const launchOptions = {
-    headless,
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--no-sandbox',
-    ],
-    viewport: { width: 1440, height: 900 },
-  };
-
-  const ctxOptions = {
-    viewport: { width: 1440, height: 900 },
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-  };
-
-  const browser = await chromium.launch(launchOptions);
-  if (existsSync(STATE_FILE)) {
-    ctxOptions.storageState = STATE_FILE;
-  }
-  const context = await browser.newContext(ctxOptions);
-  const page = await context.newPage();
-  return { browser, context, page };
-}
-
-export async function withBrowser(options, fn) {
-  const { browser, context, page } = await launchBrowser(options);
-  try {
-    const result = await fn(page, context);
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
-    return result;
-  } catch (error) {
-    try { await browser.close(); } catch {}
-    throw error;
-  }
-}
-
-export async function navigateTo(page, path, { waitMs = 3000, timeout = 60000 } = {}) {
-  const url = path.startsWith('http') ? path : `${BASE_URL}${path}`;
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
-  await page.waitForTimeout(waitMs);
-  await dismissAllModals(page);
-}
-
-export async function debugScreenshot(page, name, { fullPage = false } = {}) {
-  const safeName = sanitizePathSegment(name, 'debug');
-  await page.screenshot({ path: safeJoin(STATE_DIR, `${safeName}.png`), fullPage });
-}
-
-export async function clickHistoryTab(page, { waitMs = 2000 } = {}) {
-  const historyTab = page.locator('[role="tab"]:has-text("History")');
-  if (await historyTab.count() > 0) {
-    await historyTab.click({ force: true });
-    await page.waitForTimeout(waitMs);
-  }
-  return historyTab;
-}
-
-export async function clickGenerate(page, label = '') {
-  const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply")');
-  if (await generateBtn.count() > 0) {
-    await generateBtn.last().click({ force: true });
-    console.log(`Clicked Generate${label ? ` for ${label}` : ''}`);
-    return true;
-  }
-  return false;
-}
-
-// ---------------------------------------------------------------------------
-// Modal dismissal
-// ---------------------------------------------------------------------------
-
-const KNOWN_INTERRUPTIONS_FILE = join(STATE_DIR, 'known-interruptions.json');
-
-export function loadKnownInterruptions() {
-  try {
-    if (existsSync(KNOWN_INTERRUPTIONS_FILE)) {
-      return JSON.parse(readFileSync(KNOWN_INTERRUPTIONS_FILE, 'utf-8'));
-    }
-  } catch {}
-  return { types: [] };
-}
-
-export function logNewInterruption(type, selector, detail) {
-  const data = loadKnownInterruptions();
-  const exists = data.types.some(t => t.type === type);
-  if (!exists) {
-    data.types.push({ type, selector, detail, firstSeen: new Date().toISOString() });
-    try {
-      writeFileSync(KNOWN_INTERRUPTIONS_FILE, JSON.stringify(data, null, 2));
-    } catch {}
-  }
-}
-
-export async function dismissModalsAndBanners(page) {
-  return page.evaluate(() => {
-    const dismissed = [];
-
-    document.querySelectorAll('.react-aria-ModalOverlay, [data-rac].react-aria-ModalOverlay')
-      .forEach(o => { o.remove(); dismissed.push('react-aria-modal'); });
-    document.querySelectorAll('button[aria-label="Dismiss"]')
-      .forEach(b => { b.click(); dismissed.push('dismiss-button'); });
-
-    for (const sel of ['[class*="cookie"]','[id*="cookie"]','[class*="consent"]','[id*="consent"]','[class*="gdpr"]','[id*="gdpr"]','[class*="CookieBanner"]']) {
-      document.querySelectorAll(sel).forEach(el => {
-        const ab = el.querySelector('button');
-        if (ab) { ab.click(); dismissed.push('cookie-accept'); }
-        else { el.remove(); dismissed.push('cookie-remove'); }
-      });
-    }
-
-    document.querySelectorAll('[role="alert"],[class*="toast"],[class*="Toast"],[class*="notification"],[class*="Notification"],[class*="snackbar"]')
-      .forEach(el => { const cb = el.querySelector('button'); if (cb) { cb.click(); dismissed.push('toast-close'); } });
-
-    document.querySelectorAll('[class*="tooltip"][class*="onboard"],[class*="tour"],[class*="walkthrough"],[class*="Popover"][class*="guide"]')
-      .forEach(el => { const sb = el.querySelector('button:last-child') || el.querySelector('button'); if (sb) { sb.click(); dismissed.push('onboarding-skip'); } else { el.remove(); dismissed.push('onboarding-remove'); } });
-
-    return dismissed;
-  });
-}
-
-export async function dismissOverlaysAndAgreements(page) {
-  return page.evaluate(() => {
-    const dismissed = [];
-
-    document.querySelectorAll('[class*="upgrade"],[class*="paywall"],[class*="subscribe"]')
-      .forEach(el => { if (el.style.position==='fixed'||el.style.position==='absolute'||getComputedStyle(el).position==='fixed') { el.remove(); dismissed.push('upgrade-overlay'); } });
-
-    document.querySelectorAll('[role="dialog"]').forEach(d => { const p=d.parentElement; if(p&&(p.classList.contains('react-aria-ModalOverlay')||getComputedStyle(p).position==='fixed')){p.remove();dismissed.push('generic-dialog');} });
-
-    document.querySelectorAll('main .size-full.flex.items-center.justify-center').forEach(el => { if(!el.querySelector('textarea,input,button[type="submit"],form')&&el.children.length<=2){el.remove();dismissed.push('loading-overlay');} });
-
-    document.querySelectorAll('[role="dialog"],dialog').forEach(dialog => {
-      const t=dialog.textContent||'';
-      if(t.includes('Media upload agreement')||t.includes('I agree, continue')||t.includes('terms of service')||t.includes('Terms of Service')){
-        for(const btn of dialog.querySelectorAll('button')){if(btn.textContent.includes('agree')||btn.textContent.includes('continue')||btn.textContent.includes('Accept')||btn.textContent.includes('OK')){btn.click();dismissed.push('media-upload-agreement');break;}}
-      }
-    });
-
-    if(document.body.style.overflow==='hidden'||document.body.style.pointerEvents==='none'){document.body.style.overflow='';document.body.style.pointerEvents='';dismissed.push('body-unlock');}
-
-    return dismissed;
-  });
-}
-
-async function tryDismissEscapeKey(page) {
-  const remaining = await page.evaluate(() =>
-    document.querySelectorAll('.react-aria-ModalOverlay').length
-  );
-  if (remaining === 0) return;
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
-  const afterEsc = await page.evaluate(() =>
-    document.querySelectorAll('.react-aria-ModalOverlay').length
-  );
-  if (afterEsc < remaining) {
-    console.log(`Escape dismissed ${remaining - afterEsc} more modal(s)`);
-  }
-}
-
-export async function dismissInterruptions(page) {
-  const part1 = await dismissModalsAndBanners(page);
-  const part2 = await dismissOverlaysAndAgreements(page);
-  const results = [...(Array.isArray(part1) ? part1 : []), ...(Array.isArray(part2) ? part2 : [])];
-
-  if (results.length > 0) {
-    console.log(`Cleared ${results.length} interruption(s): ${[...new Set(results)].join(', ')}`);
-    for (const type of new Set(results)) {
-      logNewInterruption(type, 'auto-detected', `Dismissed via comprehensive sweep`);
-    }
-  }
-
-  await tryDismissEscapeKey(page);
-  return results.length;
-}
-
-export async function dismissAllModals(page) {
-  let totalDismissed = 0;
-  for (let i = 0; i < 3; i++) {
-    const count = await dismissInterruptions(page);
-    totalDismissed += count;
-    if (count === 0) break;
-    await page.waitForTimeout(500);
-  }
-  return totalDismissed;
-}
-
-export async function forceCloseDialogs(page) {
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
-  const stillOpen = await page.locator('[role="dialog"]').count();
-  if (stillOpen === 0) return;
-  await page.evaluate(() => {
-    document.querySelectorAll('[role="dialog"]').forEach(d => {
-      const overlay = d.closest('.react-aria-ModalOverlay') || d.parentElement;
-      if (overlay) overlay.remove();
-      else d.remove();
-    });
-    document.body.style.overflow = '';
-    document.body.style.pointerEvents = '';
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Output organisation (project dirs, JSON sidecars, dedup)
-// ---------------------------------------------------------------------------
-
-export function resolveOutputDir(baseOutput, options = {}, type = 'misc') {
-  let dir = baseOutput;
-
-  if (options.project) {
-    const projectSlug = options.project
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
-    dir = safeJoin(baseOutput, projectSlug, type);
-  }
-
-  return ensureDir(dir);
-}
-
-export function inferOutputType(command, options = {}) {
-  const typeMap = {
-    image: 'images',
-    video: 'videos',
-    lipsync: 'lipsync',
-    pipeline: 'pipeline',
-    'seed-bracket': 'seed-brackets',
-    edit: 'edits',
-    inpaint: 'edits',
-    upscale: 'upscaled',
-    'cinema-studio': 'cinema',
-    'motion-control': 'videos',
-    'video-edit': 'videos',
-    storyboard: 'storyboards',
-    'vibe-motion': 'videos',
-    influencer: 'characters',
-    character: 'characters',
-    app: 'apps',
-    chain: 'chained',
-    'mixed-media': 'mixed-media',
-    'motion-preset': 'motion-presets',
-    feature: 'features',
-    download: options.model === 'video' ? 'videos' : 'images',
-  };
-  return typeMap[command] || 'misc';
-}
-
-export function writeJsonSidecar(filePath, metadata, options = {}) {
-  if (options.noSidecar) return;
-
-  const sidecarPath = `${filePath}.json`;
-  const sidecar = {
-    source: 'higgsfield-ui-automator',
-    version: '1.0',
-    timestamp: new Date().toISOString(),
-    file: basename(filePath),
-    ...metadata,
-  };
-
-  if (existsSync(filePath)) {
-    const stats = statSync(filePath);
-    sidecar.fileSize = stats.size;
-    sidecar.fileSizeHuman = stats.size > 1024 * 1024
-      ? `${(stats.size / 1024 / 1024).toFixed(1)}MB`
-      : `${(stats.size / 1024).toFixed(1)}KB`;
-  }
-
-  try {
-    writeFileSync(sidecarPath, JSON.stringify(sidecar, null, 2));
-  } catch (err) {
-    console.log(`[sidecar] Warning: could not write ${sidecarPath}: ${err.message}`);
-  }
-}
-
-export function computeFileHash(filePath) {
-  try {
-    const data = readFileSync(filePath);
-    return createHash('sha256').update(data).digest('hex');
-  } catch {
-    return null;
-  }
-}
-
-function loadDedupIndex(indexPath) {
-  if (!existsSync(indexPath)) return {};
-  try {
-    return JSON.parse(readFileSync(indexPath, 'utf-8'));
-  } catch {
-    return {};
-  }
-}
-
-export function checkDuplicate(filePath, outputDir, options = {}) {
-  if (options.noDedup) return null;
-
-  const hash = computeFileHash(filePath);
-  if (!hash) return null;
-
-  const indexPath = safeJoin(outputDir, '.dedup-index.json');
-  const index = loadDedupIndex(indexPath);
-
-  if (index[hash] && index[hash] !== basename(filePath)) {
-    const existingPath = safeJoin(outputDir, sanitizePathSegment(index[hash], 'unknown'));
-    if (existsSync(existingPath)) return existingPath;
-    delete index[hash];
-  }
-
-  index[hash] = basename(filePath);
-  try {
-    writeFileSync(indexPath, JSON.stringify(index, null, 2));
-  } catch { /* ignore write errors */ }
-
-  return null;
-}
-
-export function finalizeDownload(filePath, metadata, outputDir, options = {}) {
-  const duplicate = checkDuplicate(filePath, outputDir, options);
-  if (duplicate) {
-    console.log(`[dedup] Skipping duplicate: ${basename(filePath)} matches ${basename(duplicate)}`);
-    try { unlinkSync(filePath); } catch { /* ignore */ }
-    return { path: duplicate, duplicate: true, skipped: true };
-  }
-
-  writeJsonSidecar(filePath, metadata, options);
-  return { path: filePath, duplicate: false, skipped: false };
-}
-
-export function buildDescriptiveFilename(metadata, originalFilename, index) {
-  const parts = [];
-
-  if (metadata.model) parts.push(metadata.model.replace(/[^a-zA-Z0-9_-]/g, '_'));
-  if (metadata.promptSnippet) {
-    const snippet = metadata.promptSnippet
-      .substring(0, 40)
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_|_$/g, '');
-    if (snippet) parts.push(snippet);
-  }
-  if (index > 0) parts.push(String(index + 1));
-
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
-  parts.push(timestamp);
-
-  const ext = extname(originalFilename) || '.png';
-  const prefix = parts.length > 0 ? `hf_${parts.join('_')}` : `hf_${timestamp}`;
-  return `${prefix}${ext}`;
-}
-
-// ---------------------------------------------------------------------------
-// Image download helpers (used by image and download modules)
-// ---------------------------------------------------------------------------
-
-async function clickDownloadButton(page) {
-  const dlBtn = page.locator('[role="dialog"] button:has-text("Download"), dialog button:has-text("Download")');
-  if (await dlBtn.count() === 0) return null;
-  const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
-  await dlBtn.first().click({ force: true });
-  return downloadPromise;
-}
-
-export async function downloadImageViaDialog({ page, imgLocator, index, outputDir, extraMeta, options }) {
-  await imgLocator.click({ force: true });
-  await page.waitForTimeout(1500);
-
-  const dialog = page.locator('dialog, [role="dialog"]');
-  if (await dialog.count() === 0) return null;
-
-  const metadata = await extractDialogMetadata(page);
-  const download = await clickDownloadButton(page);
-
-  if (!download) {
-    await page.waitForTimeout(2000);
-    console.log(`Download button clicked but no download event for image ${index + 1} - trying CDN fallback`);
-    await forceCloseDialogs(page);
-    return null;
-  }
-
-  const origFilename = download.suggestedFilename() || `higgsfield-${Date.now()}-${index}.png`;
-  const descriptiveName = buildDescriptiveFilename(metadata, origFilename, index);
-  const savePath = safeJoin(outputDir, descriptiveName);
-  await download.saveAs(savePath);
-  const result = finalizeDownload(savePath, {
-    ...extraMeta, type: 'image', ...metadata, originalFilename: origFilename,
-  }, outputDir, options);
-
-  await forceCloseDialogs(page);
-  return result.skipped ? null : result.path;
-}
-
-async function extractCdnVideoUrls(page) {
-  return page.evaluate(() => {
-    const videos = document.querySelectorAll('video source[src], video[src]');
-    return [...videos].map(v => v.src || v.getAttribute('src')).filter(Boolean);
-  });
-}
-
-export async function downloadImagesByCDN(page, indices, outputDir, extraMeta, options) {
-  const downloaded = [];
-  const cdnUrls = await page.evaluate(({ idxList, imgSelector }) => {
-    const imgs = document.querySelectorAll(imgSelector);
-    const targets = idxList != null ? idxList : [...Array(imgs.length).keys()];
-    return targets.map(idx => {
-      const img = imgs[idx];
-      if (!img) return null;
-      const cfMatch = img.src.match(/(https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/[^\s]+)/);
-      return { url: cfMatch ? cfMatch[1] : img.src, idx };
-    }).filter(Boolean);
-  }, { idxList: indices, imgSelector: GENERATED_IMAGE_SELECTOR });
-
-  if (indices == null) {
-    const videoUrls = await extractCdnVideoUrls(page);
-    for (const url of videoUrls) {
-      cdnUrls.push({ url, idx: cdnUrls.length });
-    }
-  }
-
-  for (const { url, idx } of cdnUrls) {
-    const isVideo = url.includes('.mp4') || url.includes('video');
-    const ext = isVideo ? '.mp4' : '.webp';
-    const cdnMeta = { promptSnippet: 'cdn-fallback' };
-    const filename = buildDescriptiveFilename(cdnMeta, `higgsfield-cdn-${Date.now()}${ext}`, downloaded.length);
-    const savePath = safeJoin(outputDir, filename);
-    try {
-      execFileSync('curl', ['-sL', '-o', savePath, url], { timeout: 60000 });
-      const result = finalizeDownload(savePath, {
-        ...extraMeta, type: isVideo ? 'video' : 'image',
-        cdnUrl: url, strategy: 'cdn-fallback', imageIndex: idx,
-      }, outputDir, options);
-      if (!result.skipped) {
-        console.log(`Downloaded via CDN [${downloaded.length + 1}]: ${savePath}`);
-      }
-      downloaded.push(result.path);
-    } catch (curlErr) {
-      console.log(`CDN download failed for ${url}: ${curlErr.message}`);
-    }
-  }
-  return downloaded;
-}
-
-async function downloadImagesViaDialog(page, generatedImgs, toDownload, outputDir, options) {
-  const downloaded = [];
-  for (let i = 0; i < toDownload; i++) {
-    try {
-      const path = await downloadImageViaDialog({
-        page, imgLocator: generatedImgs.nth(i), index: i, outputDir,
-        extraMeta: { command: 'download' }, options,
-      });
-      if (path) {
-        console.log(`Downloaded [${i + 1}/${toDownload}]: ${path}`);
-        downloaded.push(path);
-      }
-    } catch (imgErr) {
-      console.log(`Error downloading image ${i + 1}: ${imgErr.message}`);
-    }
-  }
-  return downloaded;
-}
-
-export async function downloadLatestResult(page, outputDir, count = 4, options = {}) {
-  const downloaded = [];
-
-  try {
-    await dismissAllModals(page);
-
-    const generatedImgs = page.locator(GENERATED_IMAGE_SELECTOR);
-    const imgCount = await generatedImgs.count();
-    console.log(`Found ${imgCount} generated image(s) on page`);
-
-    if (imgCount > 0) {
-      const toDownload = count === 0 ? imgCount : Math.min(count, imgCount);
-      const dialogDownloads = await downloadImagesViaDialog(page, generatedImgs, toDownload, outputDir, options);
-      downloaded.push(...dialogDownloads);
-    }
-
-    if (downloaded.length === 0) {
-      console.log('Falling back to direct CDN URL extraction...');
-      const cdnDownloads = await downloadImagesByCDN(page, null, outputDir, { command: 'download' }, options);
-      downloaded.push(...(count === 0 ? cdnDownloads : cdnDownloads.slice(0, count)));
-    }
-
-    if (downloaded.length === 0) {
-      console.log('No downloadable content found');
-    } else {
-      console.log(`Successfully downloaded ${downloaded.length} file(s)`);
-    }
-
-    return downloaded.length === 1 ? downloaded[0] : downloaded;
-
-  } catch (error) {
-    console.log('Download attempt failed:', error.message);
-    return downloaded.length > 0 ? downloaded : null;
-  }
-}
-
-export async function downloadSpecificImages(page, outputDir, indices, options = {}) {
-  const downloaded = [];
-  const generatedImgs = page.locator(GENERATED_IMAGE_SELECTOR);
-
-  for (const idx of indices) {
-    try {
-      const path = await downloadImageViaDialog({
-        page, imgLocator: generatedImgs.nth(idx), index: downloaded.length, outputDir,
-        extraMeta: { command: 'image', imageIndex: idx }, options,
-      });
-      if (path) {
-        console.log(`Downloaded [${downloaded.length + 1}/${indices.length}]: ${path}`);
-        downloaded.push(path);
-      }
-    } catch (err) {
-      console.log(`Error downloading image at index ${idx}: ${err.message}`);
-    }
-  }
-
-  if (downloaded.length < indices.length) {
-    console.log(`Dialog download got ${downloaded.length}/${indices.length}, trying CDN fallback for remainder...`);
-    const cdnDownloads = await downloadImagesByCDN(page, indices.slice(downloaded.length), outputDir, { command: 'image' }, options);
-    downloaded.push(...cdnDownloads);
-  }
-
-  console.log(`Successfully downloaded ${downloaded.length} file(s)`);
-  return downloaded;
-}
-
-// ---------------------------------------------------------------------------
-// Dialog metadata extraction
-// ---------------------------------------------------------------------------
-
-export async function extractDialogMetadata(page) {
-  return page.evaluate(() => {
-    const dialog = document.querySelector('[role="dialog"], dialog');
-    if (!dialog) return {};
-
-    const metadata = {};
-
-    const textbox = dialog.querySelector('[role="textbox"], textarea');
-    if (textbox) metadata.promptSnippet = textbox.textContent?.trim()?.substring(0, 80);
-
-    const modelText = dialog.textContent || '';
-    const modelMatch = modelText.match(/Model:\s*([^\n]+)/i) || modelText.match(/via\s+([A-Z][^\n]+)/);
-    if (modelMatch) metadata.model = modelMatch[1].trim().substring(0, 40);
-
-    return metadata;
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Batch operations infrastructure
 // ---------------------------------------------------------------------------
 
@@ -1108,8 +530,74 @@ export function finalizeBatch({ type, batchState, results, startTime, outputDir,
 }
 
 // ---------------------------------------------------------------------------
+// Re-exports from decomposed modules (backward compatibility)
+// ---------------------------------------------------------------------------
+// These re-exports allow existing code that imports from higgsfield-common.mjs
+// to continue working without changes. New code should import from the
+// specific module directly.
+
+export {
+  getDefaultOutputDir,
+  launchBrowser,
+  withBrowser,
+  navigateTo,
+  debugScreenshot,
+  clickHistoryTab,
+  clickGenerate,
+  dismissAllModals,
+  forceCloseDialogs,
+  dismissInterruptions,
+  dismissModalsAndBanners,
+  dismissOverlaysAndAgreements,
+  loadKnownInterruptions,
+  logNewInterruption,
+} from './higgsfield-browser.mjs';
+
+export {
+  resolveOutputDir,
+  inferOutputType,
+  writeJsonSidecar,
+  computeFileHash,
+  checkDuplicate,
+  finalizeDownload,
+  buildDescriptiveFilename,
+  downloadImageViaDialog,
+  downloadImagesByCDN,
+  downloadLatestResult,
+  downloadSpecificImages,
+  extractDialogMetadata,
+} from './higgsfield-output.mjs';
+
+export {
+  loadCredentials,
+  login,
+  runDiscovery,
+  ensureDiscovery,
+  discoveryNeeded,
+  categoriseRoutes,
+  diffRoutesAgainstCache,
+  ROUTE_PREFIXES,
+  ACCOUNT_PREFIXES,
+  FEATURE_PREFIXES,
+  tryFillField,
+  tryClickSubmit,
+  isNonAuthUrl,
+} from './higgsfield-discovery.mjs';
+
+// ---------------------------------------------------------------------------
 // General generation result waiter (shared by multiple commands)
 // ---------------------------------------------------------------------------
+
+import {
+  getDefaultOutputDir,
+  dismissAllModals,
+  debugScreenshot,
+} from './higgsfield-browser.mjs';
+
+import {
+  resolveOutputDir,
+  downloadLatestResult,
+} from './higgsfield-output.mjs';
 
 async function pollForHistoryResult(page, historyTab) {
   await page.waitForTimeout(10000);
@@ -1152,355 +640,4 @@ export async function waitForGenerationResult(page, options, opts = {}) {
     const outputDir = resolveOutputDir(baseOutput, options, outputSubdir);
     await downloadLatestResult(page, outputDir, true, options);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Discovery
-// ---------------------------------------------------------------------------
-
-export const ROUTE_PREFIXES = [
-  { prefix: '/image/',              bucket: 'image' },
-  { prefix: '/create/',             bucket: 'video' },
-  { prefix: '/edit',                bucket: 'edit' },
-  { prefix: '/app/',                bucket: 'apps' },
-  { prefix: '/motion/',             bucket: 'motions' },
-  { prefix: '/mixed-media-presets/',bucket: 'mixed_media' },
-];
-
-export const ACCOUNT_PREFIXES = ['/asset/all', '/library/image', '/profile', '/pricing', '/auth/'];
-export const FEATURE_PREFIXES = [
-  '/cinema-studio', '/vibe-motion', '/lipsync-studio', '/character',
-  '/ai-influencer-studio', '/upscale', '/fashion-factory', '/chat',
-  '/ugc-factory', '/photodump-studio', '/storyboard-generator',
-  '/nano-banana-pro', '/seedream-4-5', '/kling', '/sora', '/wan', '/veo', '/minimax',
-];
-
-export function categoriseRoutes(links) {
-  const routes = { image: {}, video: {}, edit: {}, apps: {}, features: {}, account: {}, motions: {}, mixed_media: {}, other: {} };
-  for (const [path, label] of Object.entries(links)) {
-    const match = ROUTE_PREFIXES.find(r => path.startsWith(r.prefix));
-    if (match) {
-      routes[match.bucket][path] = label;
-    } else if (ACCOUNT_PREFIXES.some(p => path.startsWith(p))) {
-      routes.account[path] = label;
-    } else if (FEATURE_PREFIXES.some(p => path.startsWith(p))) {
-      routes.features[path] = label;
-    } else {
-      routes.other[path] = label;
-    }
-  }
-  return routes;
-}
-
-const DIFF_BUCKETS = [
-  { key: 'apps', label: 'APP' },
-  { key: 'image', label: 'IMAGE MODEL' },
-  { key: 'features', label: 'FEATURE' },
-];
-
-function collectAddedPaths(label, currentBucket, prevKeys) {
-  const added = [];
-  for (const path of Object.keys(currentBucket)) {
-    if (!prevKeys.has(path)) added.push(`NEW ${label}: ${path} → ${currentBucket[path]}`);
-  }
-  return added;
-}
-
-function collectRemovedApps(currentApps, prevAppKeys) {
-  const removed = [];
-  for (const path of prevAppKeys) {
-    if (!currentApps[path]) removed.push(`REMOVED APP: ${path}`);
-  }
-  return removed;
-}
-
-function diffBucket(prev, routes, { key, label }) {
-  const prevKeys = new Set(Object.keys(prev[key] || {}));
-  const changes = collectAddedPaths(label, routes[key], prevKeys);
-  if (key === 'apps') changes.push(...collectRemovedApps(routes.apps, prevKeys));
-  return changes;
-}
-
-function loadPreviousRoutes() {
-  if (!existsSync(ROUTES_CACHE)) return null;
-  try {
-    return JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
-  } catch {
-    return null; // first run or corrupt cache
-  }
-}
-
-export function diffRoutesAgainstCache(routes) {
-  const prev = loadPreviousRoutes();
-  if (!prev) return [];
-  const changes = [];
-  for (const bucket of DIFF_BUCKETS) {
-    changes.push(...diffBucket(prev, routes, bucket));
-  }
-  return changes;
-}
-
-export function discoveryNeeded() {
-  if (!existsSync(DISCOVERY_TIMESTAMP)) return true;
-  try {
-    const lastRun = parseInt(readFileSync(DISCOVERY_TIMESTAMP, 'utf-8').trim(), 10);
-    const ageHours = (Date.now() - lastRun) / (1000 * 60 * 60);
-    return ageHours > DISCOVERY_MAX_AGE_HOURS;
-  } catch {
-    return true;
-  }
-}
-
-async function scrapeDiscoveryLinks(page) {
-  return page.evaluate(() => {
-    const allLinks = [...document.querySelectorAll('a[href]')];
-    const map = {};
-    allLinks.forEach(a => {
-      const href = a.getAttribute('href');
-      let text = a.textContent?.trim()
-        .replace(/Your browser does not support the video\.\s*/g, '')
-        .replace(/\s+/g, ' ')
-        .substring(0, 80) || '';
-      if (href && href.startsWith('/') && !href.startsWith('//') && text) {
-        if (!map[href]) map[href] = text;
-      }
-    });
-    return map;
-  });
-}
-
-async function scrapeImageModels(page) {
-  await page.goto(`${BASE_URL}/image/soul`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(3000);
-  await dismissAllModals(page);
-  return page.evaluate(() => {
-    const modelBtns = [...document.querySelectorAll('button')].filter(b =>
-      b.textContent?.match(/soul|nano|seedream|flux|gpt|wan|kontext/i)
-    );
-    return modelBtns.map(b => b.textContent?.trim().substring(0, 60));
-  });
-}
-
-function logDiscoverySummary(links, routes, changes) {
-  console.log(`Discovery complete: ${Object.keys(links).length} paths found`);
-  console.log(`  Images: ${Object.keys(routes.image).length} models`);
-  console.log(`  Video: ${Object.keys(routes.video).length} tools`);
-  console.log(`  Apps: ${Object.keys(routes.apps).length} apps`);
-  console.log(`  Motions: ${Object.keys(routes.motions).length} presets`);
-  console.log(`  Features: ${Object.keys(routes.features).length} features`);
-  if (changes.length > 0) {
-    console.log(`\n  CHANGES since last discovery:`);
-    changes.forEach(c => console.log(`    ${c}`));
-  } else if (existsSync(ROUTES_CACHE)) {
-    console.log('  No changes since last discovery');
-  }
-}
-
-export async function runDiscovery(options = {}) {
-  console.log('Running site discovery (checking for new/changed features)...');
-  const { browser, context, page } = await launchBrowser({ ...options, headless: true });
-
-  try {
-    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(5000);
-    await dismissAllModals(page);
-
-    const links = await scrapeDiscoveryLinks(page);
-    const routes = categoriseRoutes(links);
-    const imageModels = await scrapeImageModels(page);
-    const changes = diffRoutesAgainstCache(routes);
-
-    const cacheData = {
-      ...routes,
-      _meta: {
-        timestamp: new Date().toISOString(),
-        totalPaths: Object.keys(links).length,
-        imageModelsOnPage: imageModels,
-        changes,
-      }
-    };
-    writeFileSync(ROUTES_CACHE, JSON.stringify(cacheData, null, 2));
-    writeFileSync(DISCOVERY_TIMESTAMP, String(Date.now()));
-
-    logDiscoverySummary(links, routes, changes);
-
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
-    return cacheData;
-
-  } catch (error) {
-    console.error('Discovery error:', error.message);
-    await browser.close();
-    return null;
-  }
-}
-
-export async function ensureDiscovery(options = {}) {
-  if (discoveryNeeded()) {
-    return await runDiscovery(options);
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Login
-// ---------------------------------------------------------------------------
-
-async function waitForLoginRedirect(page, options) {
-  try {
-    await page.waitForURL(isNonAuthUrl, { timeout: 30000 });
-    console.log('Login successful! Redirected to:', page.url());
-  } catch {
-    console.log('Still on auth page. Current URL:', page.url());
-    await debugScreenshot(page, 'login-result', { fullPage: true });
-
-    const errorText = await page.evaluate(() => {
-      const errors = document.querySelectorAll('[class*="error"], [class*="alert"], [role="alert"]');
-      return [...errors].map(e => e.textContent?.trim()).filter(Boolean).join('; ');
-    });
-    if (errorText) console.log('Error message:', errorText);
-
-    if (options.headed) {
-      console.log('Waiting 60s for manual login completion...');
-      try {
-        await page.waitForURL(isNonAuthUrl, { timeout: 60000 });
-        console.log('Login completed manually! URL:', page.url());
-      } catch {
-        console.log('Timeout. Saving current state anyway...');
-      }
-    }
-  }
-}
-
-async function performLoginSteps(page, user, pass) {
-  const emailSelectors = [
-    'input[type="email"]',
-    'input[name="email"]',
-    'input[placeholder*="email" i]',
-    'input[autocomplete="email"]',
-    'input[id*="email" i]',
-    'input:not([type="hidden"]):not([type="password"])',
-  ];
-
-  const emailFilled = await tryFillField(page, emailSelectors, user, 'Email');
-
-  if (!emailFilled) {
-    console.log('Could not find email field automatically');
-    const inputs = await page.evaluate(() => {
-      return [...document.querySelectorAll('input:not([type="hidden"])')].map(el => ({
-        type: el.type, name: el.name, id: el.id,
-        placeholder: el.placeholder, className: el.className.substring(0, 80),
-      }));
-    });
-    console.log('Visible inputs:', JSON.stringify(inputs, null, 2));
-  }
-
-  await page.waitForTimeout(1000);
-
-  const passwordSelectors = [
-    'input[type="password"]',
-    'input[name="password"]',
-    'input[placeholder*="password" i]',
-    'input[autocomplete="current-password"]',
-  ];
-
-  let passFilled = await tryFillField(page, passwordSelectors, pass, 'Password');
-  if (!passFilled) console.log('No password field found yet - may appear after email submission');
-
-  await page.waitForTimeout(500);
-
-  const submitSelectors = [
-    'button[type="submit"]',
-    'button:has-text("Sign in")',
-    'button:has-text("Log in")',
-    'button:has-text("Continue")',
-    'button:has-text("Next")',
-    'input[type="submit"]',
-  ];
-
-  const submitted = await tryClickSubmit(page, submitSelectors);
-  if (!submitted) {
-    console.log('No submit button found, trying Enter key...');
-    await page.keyboard.press('Enter');
-  }
-
-  await page.waitForTimeout(3000);
-  console.log('Current URL after submit:', page.url());
-
-  if (!passFilled) {
-    passFilled = await tryFillField(page, passwordSelectors, pass, 'Password (step 2)');
-    if (passFilled) await tryClickSubmit(page, submitSelectors);
-  }
-}
-
-export async function login(options = {}) {
-  const { user, pass } = loadCredentials();
-  const { browser, context, page } = await launchBrowser({ ...options, headed: true });
-
-  const loginUrl = `${BASE_URL}/auth/email/sign-in?rp=%2F`;
-  console.log(`Navigating to ${loginUrl}...`);
-  await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(5000);
-
-  const currentUrl = page.url();
-  if (!currentUrl.includes('login') && !currentUrl.includes('auth')) {
-    console.log('Already logged in! Saving state...');
-    await context.storageState({ path: STATE_FILE });
-    console.log(`Auth state saved to ${STATE_FILE}`);
-    await browser.close();
-    return;
-  }
-
-  await dismissAllModals(page);
-  await debugScreenshot(page, 'login-page', { fullPage: true });
-  console.log('Login page screenshot saved');
-
-  const ariaSnap = await page.locator('body').ariaSnapshot();
-  console.log('Page structure:', ariaSnap.substring(0, 2000));
-
-  await performLoginSteps(page, user, pass);
-
-  console.log('Waiting for login to complete...');
-  await waitForLoginRedirect(page, options);
-
-  await context.storageState({ path: STATE_FILE });
-  console.log(`Auth state saved to ${STATE_FILE}`);
-  await browser.close();
-}
-
-// Helper: try multiple selectors to fill a form field.
-export async function tryFillField(page, selectors, value, fieldName) {
-  for (const selector of selectors) {
-    const el = page.locator(selector);
-    const count = await el.count();
-    if (count > 0) {
-      console.log(`Found ${fieldName} field with selector: ${selector}${count > 1 ? ` (${count} matches)` : ''}`);
-      await el.first().click();
-      await page.waitForTimeout(300);
-      await el.first().fill(value);
-      console.log(`${fieldName} entered`);
-      return true;
-    }
-  }
-  return false;
-}
-
-// Helper: try multiple selectors to click a submit button.
-export async function tryClickSubmit(page, selectors) {
-  for (const selector of selectors) {
-    const el = page.locator(selector).filter({ hasNotText: /google|apple|discord/i });
-    const count = await el.count();
-    if (count > 0) {
-      console.log(`Clicking submit button: ${selector}`);
-      await el.first().click();
-      return true;
-    }
-  }
-  return false;
-}
-
-// Helper: check if URL is not an auth/login URL.
-export function isNonAuthUrl(url) {
-  const u = url.toString();
-  return !u.includes('/auth/') && !u.includes('/login');
 }
