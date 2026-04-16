@@ -58,23 +58,19 @@ readonly TEST_RESET=$'\033[0m'
 
 ## Banned patterns
 
-**Unguarded plain assignment** (collides with parent `readonly`):
+**Unguarded plain assignment** (collides with parent `readonly`) — fix: Pattern A or B.
 
 ```bash
 # BAD
 RED='\033[0;31m'
 ```
 
-Fix: Pattern A or B.
-
-**Unguarded `readonly` on canonical names** — breaks on re-sourcing:
+**Unguarded `readonly` on canonical names** — breaks on re-sourcing — fix: Pattern B (production) or Pattern C with prefix (tests).
 
 ```bash
 # WORST
 readonly RED='\033[0;31m'
 ```
-
-Fix: Pattern B (production) or Pattern C with prefix (tests).
 
 **Coarse include-guard** (discouraged, allowed for backward compat):
 
@@ -122,15 +118,9 @@ Of the 13 unguarded-readonly: 2 production (`sonarcloud-autofix.sh`, `coderabbit
 
 ### Phase 7c update (2026-04-15, GH#19068)
 
-Migrated 3 test harnesses with unguarded plain color assignments to Pattern C (`TEST_*` prefixed `readonly`):
+Migrated 3 test harnesses to Pattern C: `test-pr-task-check.sh`, `test-task-id-collision.sh`, `tests/test-encryption-git-roundtrip.sh` — `RED/GREEN/YELLOW/[BLUE/]NC` → `TEST_RED/TEST_GREEN/TEST_YELLOW/[TEST_BLUE/]TEST_RESET`.
 
-- `.agents/scripts/test-pr-task-check.sh` — `RED/GREEN/YELLOW/NC` → `TEST_RED/TEST_GREEN/TEST_YELLOW/TEST_RESET`
-- `.agents/scripts/test-task-id-collision.sh` — `RED/GREEN/YELLOW/BLUE/NC` → `TEST_RED/TEST_GREEN/TEST_YELLOW/TEST_BLUE/TEST_RESET`
-- `.agents/scripts/tests/test-encryption-git-roundtrip.sh` — `RED/GREEN/YELLOW/BLUE/NC` → `TEST_RED/TEST_GREEN/TEST_YELLOW/TEST_BLUE/TEST_RESET`
-
-Remaining violations at Phase 7c merge (28 plain + 14 readonly across 42 files) are tracked in open sibling phases:
-Phase 2 (lint gate), Phase 3 (Tier 1/2), Phase 5 (Tier 4), Phase 6 (banned readonly), Phase 7a/7b (test batches 1–2), Phase 8a/b/c (BOLD readonly).
-Zero-violation state will be reached when all sibling phases merge.
+Remaining at Phase 7c merge: 28 plain + 14 readonly across 42 files. Open sibling phases: 2 (lint gate), 3 (Tier 1/2), 5 (Tier 4), 6 (banned readonly), 7a/7b (test batches), 8a/b/c (BOLD readonly). Zero-violation on all-phase merge.
 
 ## Phased migration roadmap (t2053) — each phase its own child task/PR (≤5 files, t1422 cap):
 
