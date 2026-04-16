@@ -789,13 +789,28 @@ _check_pr_merge_gates() {
 	fi
 
 	# Maintainer-gate: skip if linked issue has needs-maintainer-review
+	# UNLESS the issue also has the approval marker comment
+	# (<!-- aidevops-signed-approval -->), which means the auto-approve
+	# already ran and the NMR label is transient — the CI workflow
+	# re-adds it within seconds of removal, creating a race with the
+	# merge pass. The approval marker is the source of truth; NMR label
+	# is the transient symptom of the CI workflow fighting the pulse.
 	if [[ -n "$linked_issue" ]]; then
 		local issue_labels
 		issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
 			--jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
 		if [[ "$issue_labels" == *"needs-maintainer-review"* ]]; then
-			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} has needs-maintainer-review" >>"$LOGFILE"
-			return 1
+			# Check if approval marker exists — if so, NMR is transient
+			local _has_approval_marker
+			_has_approval_marker=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments" \
+				--jq '[.[].body | select(contains("aidevops-signed-approval"))] | length' \
+				2>/dev/null) || _has_approval_marker=0
+			if [[ "$_has_approval_marker" -gt 0 ]]; then
+				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} has NMR but also approval marker — proceeding (NMR is transient)" >>"$LOGFILE"
+			else
+				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} has needs-maintainer-review (no approval marker)" >>"$LOGFILE"
+				return 1
+			fi
 		fi
 	fi
 
