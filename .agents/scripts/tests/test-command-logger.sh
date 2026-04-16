@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# shellcheck disable=SC2034,SC2016
+# shellcheck disable=SC2016
 
 # =============================================================================
 # Test Script for command-logger-helper.sh (t1412.5)
