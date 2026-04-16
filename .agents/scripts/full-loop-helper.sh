@@ -1091,6 +1091,10 @@ _merge_unlock_resources() {
 #            repos; skips the error-retry path since intent is explicit)
 #   --auto   pass --auto to gh pr merge (GH#18731 — queues auto-merge to
 #            run when required checks pass, rather than merging now)
+# Note: --admin and --auto are mutually exclusive at the gh CLI level
+# (GH#19310 / t2141). When both are passed, --admin wins (it already implies
+# "merge now", so --auto adds no value); --auto is dropped silently with an
+# informational message rather than failing the merge.
 # Exit codes: 0 = merged (or queued, with --auto), 1 = gate failed or merge failed
 cmd_merge() {
 	local pr_number="${1:-}"
@@ -1128,6 +1132,18 @@ cmd_merge() {
 			;;
 		esac
 	done
+
+	# GH#19310 (t2141): `gh pr merge` rejects --admin and --auto together with:
+	#   "specify only one of `--auto`, `--disable-auto`, or `--admin`"
+	# Resolve in favour of --admin: it already implies "merge now via owner
+	# override", so --auto (queue and wait) is functionally redundant when
+	# --admin is set. Silent resolution (with info message) is friendlier than
+	# erroring on an obvious-feeling combination of flags.
+	if [[ "$has_admin" -eq 1 && "$has_auto" -eq 1 ]]; then
+		print_info "Both --admin and --auto were specified; gh pr merge rejects this combination."
+		print_info "Resolving in favour of --admin (overrides branch protection now); dropping --auto."
+		has_auto=0
+	fi
 
 	repo=$(_merge_resolve_repo "$repo") || return 1
 
@@ -1170,6 +1186,9 @@ Commands:
                                 Gate-enforced merge (runs pre-merge-gate first).
                                 --admin / --auto pass through to gh pr merge
                                 for branch-protected personal-account repos (GH#18731).
+                                --admin and --auto are mutually exclusive at the
+                                gh CLI level; if both are given, --admin wins and
+                                --auto is dropped (GH#19310).
   help                          Show this help
 Options: --max-task-iterations N (50) | --max-preflight-iterations N (5)
   --max-pr-iterations N (20) | --skip-preflight | --skip-postflight
