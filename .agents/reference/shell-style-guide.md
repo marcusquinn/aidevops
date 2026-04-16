@@ -3,9 +3,36 @@
 
 # Shell Helper Style Guide
 
-Canonical rules for `.agents/scripts/**/*.sh`: **source `shared-constants.sh` OR use `[[ -z "${VAR+x}" ]]` guards**. Never assign `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, or `NC` at top level without a guard. Never `readonly` those names outside `shared-constants.sh`. Enforcement: `shell-init-pattern-check.sh` + CI (Phase 2, t2053). See `prompts/build.txt` → "Quality Standards".
+Canonical rules for `.agents/scripts/**/*.sh`: **source `shared-constants.sh` OR use `[[ -z "${VAR+x}" ]]` guards**. Never assign `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, or `NC` at top level without a guard. Never `readonly` those names outside `shared-constants.sh`. Enforcement: `shell-init-pattern-check.sh` + CI. See `prompts/build.txt` → "Quality Standards".
 
-**Incident rationale (GH#18702):** On 2026-04-09, `init-routines-helper.sh:22` had an unguarded `GREEN='\033[0;32m'`. `setup.sh` sources it after `shared-constants.sh` (which has `readonly GREEN`). Under `set -Eeuo pipefail`, the re-assignment fatally aborted `setup.sh`, silently skipping `setup_privacy_guard` and `setup_canonical_guard` — **auto-update broken for 4 days** (cascade: GH#18693, fixed: PR #18728). Audit 2026-04-15: **18 unguarded plain + 2 production `readonly` violators** (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`) — all latent repeats.
+**Incident rationale (GH#18702):** On 2026-04-09, `init-routines-helper.sh:22` had an unguarded `GREEN='\033[0;32m'`. `setup.sh` sources it after `shared-constants.sh` (which has `readonly GREEN`). Under `set -Eeuo pipefail`, the re-assignment fatally aborted `setup.sh`, silently skipping `setup_privacy_guard` and `setup_canonical_guard` — **auto-update broken for 4 days** (cascade: GH#18693, fixed: PR #18728).
+
+## Banned patterns
+
+**Unguarded plain assignment** (collides with parent `readonly`) → fix: Pattern A or B.
+
+```bash
+# BAD
+RED='\033[0;31m'
+```
+
+**Unguarded `readonly` on canonical names** (breaks on re-sourcing) → fix: Pattern B (production), C with prefix (tests).
+
+```bash
+# WORST
+readonly RED='\033[0;31m'
+```
+
+**Coarse include-guard** (allowed for backward compat; discouraged):
+
+```bash
+if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+fi
+```
+
+All-or-nothing: colors partially undefined under `set -u` when parent set some without the sentinel. Pattern B handles each independently. Migrate opportunistically.
 
 ## Allowed patterns
 
@@ -56,33 +83,6 @@ readonly TEST_RESET=$'\033[0m'
 
 `readonly` safe — prefixed names don't collide. **Production helpers: use Pattern A or B.**
 
-## Banned patterns
-
-**Unguarded plain assignment** (collides with parent `readonly`) → fix: Pattern A or B.
-
-```bash
-# BAD
-RED='\033[0;31m'
-```
-
-**Unguarded `readonly` on canonical names** (breaks on re-sourcing) → fix: Pattern B (production), C with prefix (tests).
-
-```bash
-# WORST
-readonly RED='\033[0;31m'
-```
-
-**Coarse include-guard** (allowed for backward compat; discouraged):
-
-```bash
-if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-fi
-```
-
-All-or-nothing: colors partially undefined under `set -u` when parent set some without the sentinel. Pattern B handles each independently. Migrate opportunistically.
-
 ## Canonical shared variables
 
 `shared-constants.sh` declares (all `readonly`):
@@ -100,36 +100,13 @@ Non-canonical colors (`MAGENTA`, `GRAY`, `BOLD`, `DIM`) → declare locally with
 2. Choose target — A (inside `.agents/scripts/`, stable path), B (standalone bootstrap), C (test harness only).
 3. Replace unguarded assignments with chosen pattern block (after `set -Eeuo pipefail`, before functions).
 4. Test standalone (`bash ./the-script.sh --help`) and sourced (`setup.sh --non-interactive`). `shellcheck` must pass.
-5. Commit. Phase 2 lint gate (`shell-init-pattern-check.sh`) automates detection and PR enforcement.
-
-## Audit data (2026-04-15) — 529 files scanned, 337 source `shared-constants.sh`
-
-| Pattern | Count | Safety | Fix |
-|---------|-------|--------|-----|
-| Unguarded plain (`GREEN='…'`) | 18 | **BROKEN** when parent has `readonly` | A or B |
-| Unguarded `readonly` on canonical names | 13 | **WORST** — breaks on re-sourcing | B (prod) or C (tests) |
-| Granular guard (`[[ -z "${VAR+x}" ]] && VAR='…'`) | 24 | Safe (Pattern B) | — |
-| Include guard (`if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]`) | 6 | Safe but coarse | migrate |
-| Prefixed vars (`TEST_RED`, `C_GREEN`) | 50 | Safe (Pattern C) | normalise Phase 7 |
-
-Of the 13 unguarded-readonly: 2 production (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`), 11 test harnesses. Phase 7c (GH#19068, 2026-04-15): migrated `test-pr-task-check.sh`, `test-task-id-collision.sh`, `tests/test-encryption-git-roundtrip.sh` to Pattern C. Remaining open: 28 plain + 14 readonly across 42 files (phases 2, 3, 5, 6, 7a/7b, 8a/b/c).
-
-## Phased migration roadmap (t2053) — each phase its own child task/PR (≤5 files, t1422 cap)
-
-1. **Phase 1** — Foundation: this guide + `prompts/build.txt` rule + `architecture.md` cross-ref.
-2. **Phase 2** — Lint gate: `shell-init-pattern-check.sh` + CI + unit test. Must land before Phase 3.
-3. **Phase 3** — Tier 1+2 (setup-chain): `install-hooks.sh`, `install-hooks-helper.sh`, `doctor-helper.sh`, `pre-edit-check.sh`, `setup/_routines.sh`.
-4. **Phase 4** — Tier 3 (pulse/worker): `stuck-detection-helper.sh`, `opus-review-helper.sh`, `secret-hygiene-helper.sh`, `security-audit-sweep.sh`, `deploy-agents-on-merge.sh`.
-5. **Phase 5** — Tier 4 (standalone): `design-preview-helper.sh`, `colormind-helper.sh`, `contest-helper.sh`, `tabby-helper.sh`, `ssh-key-audit-helper.sh`.
-6. **Phase 6** — Eliminate banned `readonly`: `sonarcloud-autofix.sh`, `coderabbit-cli.sh`, `agent-sources-helper.sh` + test harness prefix normalisation. Final: zero violations.
-7. **Phase 7** — Prefixed-var normalisation (optional): consolidate `C_`, `LC_`, `TEST_` conventions.
-8. **Phase 8** — Extend to other shared-variable categories (optional): `SCRIPT_DIR`, `REPO_ROOT`, `set -E`, error-print helpers.
+5. Commit. The lint gate (`shell-init-pattern-check.sh`) automates detection and PR enforcement.
 
 ## Related
 
 - **Originating incident**: PR #18728, GH#18702 (primary), GH#18693 (cascade)
-- **Parent task**: GH#18735 (t2053)
+- **Consolidation parent**: GH#18735 (t2053, closed — all phases complete as of PR #19180)
 - **Canonical source**: `.agents/scripts/shared-constants.sh`
-- **Prior art**: Pattern B: `watercrawl-helper.sh:58`, `security-helper.sh:22`, `routine-log-helper.sh:30`. Pattern A (include guard): `circuit-breaker-helper.sh:64-70`.
+- **Prior art**: Pattern B: `watercrawl-helper.sh:58`, `security-helper.sh:22`, `routine-log-helper.sh:30`. Include-guard: `circuit-breaker-helper.sh:64-70`.
 - **Build-time rule**: `prompts/build.txt` → "Quality Standards"
 - **Architecture pointer**: `aidevops/architecture.md` → "Shell Helper Initialization"
