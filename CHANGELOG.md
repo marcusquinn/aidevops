@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.60] - 2026-04-16
+
+### Changed
+
+- memory-pressure-monitor bash 3.2 compat + re-exec guard (#19353)
+- bump NESTING_DEPTH_THRESHOLD from 283 to 288 (#19352)
+- tighten pre-dispatch-validators.md agent doc (#19354)
+- Maintenance: bump BASH32_COMPAT_THRESHOLD 76→80 — absorb pre-existing drift (#19349)
+- Maintenance: mark t2142 complete (pr:#19344)
+- harden consolidation gate against unset threshold vars (#19344)
+- Maintenance: update simplification state registry
+- GH#19331: tighten pre-dispatch-validators.md (108→90 lines) (#19340)
+- register claude-opus-4-7 as opt-in model (#19325)
+- Maintenance: ratchet-down complexity thresholds (GH#19323) (#19328)
+- tighten pre-dispatch-validators.md (126→108 lines) (#19326)
+
+### Fixed
+
+- extend guarded BOLD pattern to DIM, RESET, and remove dead code (GH#19269) (#19306)
+- use anchored pgrep/pkill pattern and verify PID change on restart (#19327)
+
 ## [3.8.59] - 2026-04-16
 
 ### Changed
