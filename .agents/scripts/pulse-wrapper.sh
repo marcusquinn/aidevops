@@ -980,6 +980,7 @@ _pulse_execute_self_check() {
 		issue_has_required_approval
 		run_weekly_complexity_scan
 		get_repo_path_by_slug
+		get_repo_role_by_slug
 		dispatch_with_dedup
 		_triage_content_hash
 		normalize_count_output
