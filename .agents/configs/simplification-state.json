@@ -11,6 +11,13 @@
     "lines_after": 54,
     "lines_before": 58
   },
+  ".agents/reference/pre-dispatch-validators.md": {
+    "action": "tightened",
+    "hash": "fc3793612c26775ea0269868215c107f810447254ab2424e59bbe48558195a08",
+    "issue": "GH#19371",
+    "lines_after": 79,
+    "lines_before": 82
+  },
   ".agents/services/hosting/cloudflare-platform-skill/ai-search-patterns.md": {
     "hash": "867d8ff77f341ac99f155db719644f2190031e9faa7e6668a79b05468b0eae0f",
     "issue": "GH#17305",
@@ -5828,7 +5835,7 @@
       "pr": 17019
     },
     ".agents/tools/design/library/styles/corporate-traditional/02-colours.md": {
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
       "at": "2026-04-04T14:53:40Z",
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "issue": "GH#17250",
@@ -7490,6 +7497,12 @@
       "passes": 71,
       "pr": 19029
     },
+    "setup-modules/agent-deploy.sh": {
+      "at": "2026-04-16T18:00:14Z",
+      "hash": "46d74c0f0720a3deb8b01f9bab0f1cff7f2a8258",
+      "passes": 3,
+      "pr": 19203
+    },
     "setup.sh": {
       "at": "2026-04-16T19:25:49Z",
       "hash": "9d8b159588006978153fa2efba94d5f357fd7fbc",
@@ -7555,12 +7568,6 @@
       "hash": "89edb8ff09173143446da68fb9104c16ac400b1c",
       "passes": 1,
       "pr": 15470
-    },
-    "setup-modules/agent-deploy.sh": {
-      "hash": "46d74c0f0720a3deb8b01f9bab0f1cff7f2a8258",
-      "at": "2026-04-16T18:00:14Z",
-      "pr": 19203,
-      "passes": 3
     }
   },
   "setup-modules/agent-deploy.sh": {
