@@ -1,12 +1,8 @@
 # Pre-Dispatch Validators
 
-Runs **after** dedup checks and **before** worker spawn for auto-generated issues — verifies the premise still holds (GH#19118).
+Runs **after** dedup checks and **before** worker spawn for auto-generated issues — verifies the premise still holds (GH#19118). Issues embed `<!-- aidevops:generator=<name> -->` in the body (HTML comments survive title/label changes). `pre-dispatch-validator-helper.sh` maps generators to validators via `_VALIDATOR_REGISTRY`. Unregistered generators, missing helper, or unexpected exit code → exit 0 (dispatch proceeds).
 
-## Architecture
-
-Auto-generated issues embed `<!-- aidevops:generator=<name> -->` in the body (HTML comments survive title/label changes). `pre-dispatch-validator-helper.sh` maps generators to validators via `_VALIDATOR_REGISTRY`. Unregistered generators, missing helper, or unexpected exit code → exit 0 (dispatch proceeds).
-
-### Exit codes
+## Exit codes
 
 | Code | Meaning | Action |
 |------|---------|--------|
@@ -14,7 +10,7 @@ Auto-generated issues embed `<!-- aidevops:generator=<name> -->` in the body (HT
 | `10` | Premise falsified | Comment posted (`> Premise falsified`, citing GH#19118) + `gh issue close --reason "not planned"` |
 | `20` | Validator error | Warning logged; dispatch proceeds (never block on validator bugs) |
 
-### Hook point (`pulse-dispatch-core.sh`)
+## Hook point (`pulse-dispatch-core.sh`)
 
 ```text
 _dispatch_dedup_check_layers()   ← all dedup gates
