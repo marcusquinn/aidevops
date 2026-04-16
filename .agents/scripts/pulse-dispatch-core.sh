@@ -339,7 +339,7 @@ _task_id_in_recent_commits() {
 	# Subtask decimal suffix preserved (GH#19165) — t2053.2 must NOT match parent t2053 commits.
 	local -a subject_patterns=()
 	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1) || task_id_match=""
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1 | sed 's/[.]/\\./g') || task_id_match=""
 	if [[ -n "$task_id_match" ]]; then
 		subject_patterns+=("$task_id_match")
 	fi
@@ -458,7 +458,7 @@ _task_id_in_changed_files() {
 
 	# Check for tNNN or tNNN.X completion marker: "- [x] tNNN ..."
 	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1) || task_id_match=""
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1 | sed 's/[.]/\\./g') || task_id_match=""
 	if [[ -n "$task_id_match" ]]; then
 		if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\]\s+${task_id_match}(\s|$)"; then
 			echo "[pulse-wrapper] _task_id_in_changed_files: found completed '${task_id_match}' in TODO.md on origin/main" >>"$LOGFILE"
