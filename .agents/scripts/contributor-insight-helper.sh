@@ -251,7 +251,7 @@ cmd_file() {
 				_ci_log INFO "DRY RUN: would create issue: ${title}"
 				printf '%s\n' "$body"
 			else
-				if gh issue create --repo "$target_slug" \
+				if gh_create_issue --repo "$target_slug" \
 					--title "$title" \
 					--body "$body" \
 					--label "contributor-insight" 2>/dev/null; then
@@ -291,7 +291,7 @@ cmd_file() {
 				_ci_log INFO "DRY RUN: would create issue: ${error_title}"
 				printf '%s\n' "$error_body"
 			else
-				if gh issue create --repo "$target_slug" \
+				if gh_create_issue --repo "$target_slug" \
 					--title "$error_title" \
 					--body "$error_body" \
 					--label "contributor-insight" 2>/dev/null; then
