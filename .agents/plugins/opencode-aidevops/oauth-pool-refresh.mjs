@@ -55,9 +55,10 @@ export function decodeCursorJWT(token) {
 function readCursorStateDbValue(dbPath, key) {
   if (!/^[\w./:@-]+$/.test(key)) return null;
   try {
-    const result = execSync(
-      `sqlite3 "${dbPath}" "SELECT value FROM ItemTable WHERE key = '${key}'" 2>/dev/null`,
-      { encoding: "utf-8", timeout: 5000 },
+    const result = execFileSync(
+      "sqlite3",
+      [dbPath, `SELECT value FROM ItemTable WHERE key = '${key}'`],
+      { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] },
     ).trim();
     return result || null;
   } catch {

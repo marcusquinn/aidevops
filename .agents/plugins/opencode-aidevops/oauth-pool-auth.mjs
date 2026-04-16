@@ -36,7 +36,7 @@ import {
 } from "./oauth-pool-refresh.mjs";
 
 import {
-  generatePKCE, makeEmailPrompt, saveAccountAndInject,
+  generatePKCE, generateState, makeEmailPrompt, saveAccountAndInject,
   resolveEmailFromJWTClaims, resolveEmailFromEndpoint,
   extractOpenAIAccountId, acquireAuthCode, initCallbackServerSafe,
 } from "./oauth-pool-callback.mjs";
@@ -75,13 +75,18 @@ async function resolveAnthropicEmail(accessToken) {
 // Provider callback handlers
 // ---------------------------------------------------------------------------
 
-async function handleAnthropicCallback(code, pkce, email, client) {
+async function handleAnthropicCallback(code, pkce, expectedState, email, client) {
   const hashIdx = code.indexOf("#");
   const authCode = hashIdx >= 0 ? code.substring(0, hashIdx) : code;
-  const state = hashIdx >= 0 ? code.substring(hashIdx + 1) : undefined;
+  const returnedState = hashIdx >= 0 ? code.substring(hashIdx + 1) : undefined;
+  // Validate state when present (guards against CSRF in manual code-paste flows).
+  if (returnedState && returnedState !== expectedState) {
+    console.error("[aidevops] OAuth pool: Anthropic state mismatch — possible CSRF");
+    return { type: "failed" };
+  }
   const result = await fetchTokenEndpoint(
     JSON.stringify({
-      code: authCode, state, grant_type: "authorization_code",
+      code: authCode, state: returnedState, grant_type: "authorization_code",
       client_id: ANTHROPIC_CLIENT_ID, redirect_uri: ANTHROPIC_REDIRECT_URI,
       code_verifier: pkce.verifier,
     }),
@@ -213,6 +218,7 @@ export function createPoolAuthHook(client) {
       authorize: async (inputs) => {
         const email = inputs?.email || "unknown";
         const pkce = generatePKCE();
+        const state = generateState(); // separate nonce — pkce.verifier stays secret
         const url = new URL(ANTHROPIC_OAUTH_AUTHORIZE_URL);
         url.searchParams.set("code", "true");
         url.searchParams.set("client_id", ANTHROPIC_CLIENT_ID);
@@ -221,12 +227,12 @@ export function createPoolAuthHook(client) {
         url.searchParams.set("scope", ANTHROPIC_OAUTH_SCOPES);
         url.searchParams.set("code_challenge", pkce.challenge);
         url.searchParams.set("code_challenge_method", "S256");
-        url.searchParams.set("state", pkce.verifier);
+        url.searchParams.set("state", state);
         return {
           url: url.toString(),
           instructions: `Adding account: ${email}\nPaste the authorization code here: `,
           method: "code",
-          callback: (code) => handleAnthropicCallback(code, pkce, email, client),
+          callback: (code) => handleAnthropicCallback(code, pkce, state, email, client),
         };
       },
     }],
@@ -248,7 +254,8 @@ export function createOpenAIPoolAuthHook(client) {
       authorize: async (inputs) => {
         const email = inputs?.email || "unknown";
         const pkce = generatePKCE();
-        const cs = await initCallbackServerSafe();
+        const state = generateState(); // separate nonce — pkce.verifier stays secret
+        const cs = await initCallbackServerSafe(state);
         const url = new URL(OPENAI_OAUTH_AUTHORIZE_URL);
         url.searchParams.set("client_id", OPENAI_CLIENT_ID);
         url.searchParams.set("response_type", "code");
@@ -256,6 +263,7 @@ export function createOpenAIPoolAuthHook(client) {
         url.searchParams.set("scope", OPENAI_OAUTH_SCOPES);
         url.searchParams.set("code_challenge", pkce.challenge);
         url.searchParams.set("code_challenge_method", "S256");
+        url.searchParams.set("state", state);
         return {
           url: url.toString(),
           instructions: [
@@ -305,6 +313,7 @@ export function createGooglePoolAuthHook(client) {
       authorize: async (inputs) => {
         const email = inputs?.email || "unknown";
         const pkce = generatePKCE();
+        const state = generateState(); // separate nonce — pkce.verifier stays secret
         const url = new URL(GOOGLE_OAUTH_AUTHORIZE_URL);
         url.searchParams.set("client_id", GOOGLE_CLIENT_ID);
         url.searchParams.set("response_type", "code");
@@ -314,6 +323,7 @@ export function createGooglePoolAuthHook(client) {
         url.searchParams.set("code_challenge_method", "S256");
         url.searchParams.set("access_type", "offline");
         url.searchParams.set("prompt", "consent");
+        url.searchParams.set("state", state);
         return {
           url: url.toString(),
           instructions: [

@@ -8,9 +8,8 @@
  */
 
 import {
-  readFileSync, writeFileSync, existsSync, mkdirSync,
-  openSync, closeSync, renameSync, chmodSync,
-  constants as fsConstants,
+  readFileSync, writeFileSync, existsSync, mkdirSync, rmdirSync,
+  renameSync, chmodSync,
 } from "fs";
 import { dirname } from "path";
 import { POOL_FILE, POOL_LOCK_FILE } from "./oauth-pool-constants.mjs";
@@ -68,8 +67,13 @@ export function savePool(data) {
 }
 
 /**
- * Execute a read-modify-write operation on the pool file with best-effort
- * cross-process coordination via an advisory lock file.
+ * Execute a read-modify-write operation on the pool file with cross-process
+ * advisory locking via atomic directory creation (mkdirSync is POSIX-atomic:
+ * only one process can create the same directory; all others get EEXIST).
+ *
+ * Uses Atomics.wait for a non-busy synchronous pause between retries so the
+ * main thread is not burned during the spin. Times out after 5 s to avoid
+ * indefinite deadlock if a process crashes while holding the lock.
  *
  * @template T
  * @param {() => T} fn
@@ -79,14 +83,31 @@ export function withPoolLock(fn) {
   const dir = dirname(POOL_FILE);
   mkdirSync(dir, { recursive: true });
 
-  let lockFd = -1;
+  const LOCK_DIR = POOL_LOCK_FILE + ".d";
+  const LOCK_MAX_WAIT_MS = 5000;
+  const LOCK_POLL_MS = 50;
+  const deadline = Date.now() + LOCK_MAX_WAIT_MS;
+  const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+
+  // Acquire exclusive lock via atomic directory creation.
+  while (true) {
+    try {
+      mkdirSync(LOCK_DIR); // throws EEXIST if another process holds the lock
+      break;               // lock acquired
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      if (Date.now() >= deadline) {
+        throw new Error("[aidevops] OAuth pool: timed out waiting for pool lock");
+      }
+      // Synchronous wait: Atomics.wait works in the Node.js main thread
+      Atomics.wait(sleepBuf, 0, 0, LOCK_POLL_MS);
+    }
+  }
+
   try {
-    lockFd = openSync(POOL_LOCK_FILE, fsConstants.O_WRONLY | fsConstants.O_CREAT, 0o600);
     return fn();
   } finally {
-    if (lockFd >= 0) {
-      try { closeSync(lockFd); } catch { /* ignore */ }
-    }
+    try { rmdirSync(LOCK_DIR); } catch { /* ignore */ }
   }
 }
 

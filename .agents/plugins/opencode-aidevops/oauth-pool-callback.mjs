@@ -29,11 +29,21 @@ export function generatePKCE() {
   return { verifier, challenge };
 }
 
+/**
+ * Generate a cryptographically random OAuth state nonce.
+ * Use this as the `state` parameter in every authorize URL instead of
+ * reusing the PKCE verifier, which must remain secret.
+ * @returns {string}
+ */
+export function generateState() {
+  return randomBytes(32).toString("base64url");
+}
+
 // ---------------------------------------------------------------------------
 // OAuth callback server
 // ---------------------------------------------------------------------------
 
-export function startOAuthCallbackServer() {
+export function startOAuthCallbackServer(expectedState) {
   let resolveCode, rejectCode, server, timeoutId, resolveReady;
   const promise = new Promise((resolve, reject) => { resolveCode = resolve; rejectCode = reject; });
   const ready = new Promise((resolve) => { resolveReady = resolve; });
@@ -57,6 +67,20 @@ export function startOAuthCallbackServer() {
 
     const code = reqUrl.searchParams.get("code");
     const error = reqUrl.searchParams.get("error");
+
+    // Validate OAuth state to prevent CSRF / account-mixup attacks.
+    if (expectedState) {
+      const returnedState = reqUrl.searchParams.get("state");
+      if (returnedState !== expectedState) {
+        console.error("[aidevops] OAuth pool: state mismatch in callback — possible CSRF");
+        res.writeHead(400, { "Content-Type": "text/plain" });
+        res.end("State mismatch — authorization rejected");
+        cleanup();
+        rejectCode(new Error("OAuth state mismatch"));
+        return;
+      }
+    }
+
     if (error) {
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end(`<!DOCTYPE html><html><body><h2>Authorization Failed</h2><p>${escapeHtml(error)}</p><p>${escapeHtml(reqUrl.searchParams.get("error_description") || "")}</p><p>You can close this tab.</p></body></html>`);
@@ -193,9 +217,9 @@ export async function saveAccountAndInject(opts) {
 // Callback server helpers
 // ---------------------------------------------------------------------------
 
-export async function initCallbackServerSafe() {
+export async function initCallbackServerSafe(expectedState) {
   try {
-    const server = startOAuthCallbackServer();
+    const server = startOAuthCallbackServer(expectedState);
     const ready = await server.ready.catch(() => false);
     if (!ready) {
       console.error("[aidevops] OAuth pool: callback server failed -- manual code paste required");
