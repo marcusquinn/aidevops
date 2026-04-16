@@ -31,7 +31,7 @@ set -euo pipefail
 # Source shared constants (provides sed_inplace, canonical colors, and other utilities)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
-[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Common constants (ERROR_UNKNOWN_COMMAND is provided by shared-constants.sh)
 # Configuration constants (guarded against re-sourcing)
