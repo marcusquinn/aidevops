@@ -91,18 +91,29 @@ if [[ "$cmd1" == "issue" && "$cmd2" == "view" ]]; then
 fi
 
 if [[ "$cmd1" == "issue" && "$cmd2" == "list" ]]; then
-	# Parse --jq filter if present, so the stub emulates real gh output.
+	# Parse --jq and --state so the stub emulates real gh behaviour.
+	# t2144: added --state dispatch so tests can fixture open and closed
+	# child lists independently (grace-window regression tests).
 	jq_filter=""
+	state_arg="open"
+	prev_arg=""
 	for arg in "$@"; do
 		if [[ "$prev_arg" == "--jq" ]]; then
 			jq_filter="$arg"
 		fi
+		if [[ "$prev_arg" == "--state" ]]; then
+			state_arg="$arg"
+		fi
 		prev_arg="$arg"
 	done
+	list_json="${GH_ISSUE_LIST_CHILD_JSON:-[]}"
+	if [[ "$state_arg" == "closed" ]]; then
+		list_json="${GH_ISSUE_LIST_CHILD_CLOSED_JSON:-[]}"
+	fi
 	if [[ -n "$jq_filter" ]]; then
-		printf '%s\n' "${GH_ISSUE_LIST_CHILD_JSON:-[]}" | jq -r "$jq_filter"
+		printf '%s\n' "$list_json" | jq -r "$jq_filter"
 	else
-		printf '%s\n' "${GH_ISSUE_LIST_CHILD_JSON:-[]}"
+		printf '%s\n' "$list_json"
 	fi
 	exit 0
 fi
@@ -161,6 +172,16 @@ _setup_gh_stub_globals() {
 	# from pulse-wrapper.sh but the consolidation helpers are self-contained.
 	# shellcheck disable=SC1091
 	source "${REPO_ROOT}/.agents/scripts/pulse-triage.sh"
+
+	# t2144: stub the gh_create_issue wrapper (defined in shared-constants.sh,
+	# not sourced here) so _create_consolidation_child_issue actually reaches
+	# the stubbed `gh issue create` on PATH. Without this, the wrapper is
+	# undefined and the dispatch path silently fails — which has been a
+	# pre-existing test flake since t2115 introduced the wrapper. Mirrors
+	# the stub in tests/test-gh-wrapper-guard.sh.
+	gh_create_issue() {
+		gh issue create "$@"
+	}
 	return 0
 }
 
@@ -188,7 +209,8 @@ teardown_gh_stub() {
 	TEST_ROOT=""
 	GH_LOG=""
 	unset GH_ISSUE_VIEW_TITLE GH_ISSUE_VIEW_BODY GH_ISSUE_VIEW_LABELS
-	unset GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_CREATE_URL
+	unset GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON GH_ISSUE_CREATE_URL
+	unset CONSOLIDATION_RECENT_CLOSE_GRACE_MIN
 	return 0
 }
 
@@ -361,12 +383,183 @@ test_needs_consolidation_skips_with_child() {
 	return 0
 }
 
+# ----------------------------------------------------------------------
+# t2144 regression tests — consolidation cascade fix
+#
+# Reference evidence: GH#19347 (investigation), cascades observed on
+# 2026-04-16 where #19321 → #19341 + #19367 and #19275 → #19277 + #19359.
+# ----------------------------------------------------------------------
+
+# Fixture: two WORKER_SUPERSEDED comments of the exact length and shape
+# seen in production (#19321). Before t2144 these passed the filter
+# because the `^(\*\*)?Stale assignment recovered` anchor was a no-op —
+# bodies start with the `<!-- WORKER_SUPERSEDED ...` HTML marker.
+fixture_two_worker_superseded_comments() {
+	local pad='x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x'
+	local body1="<!-- WORKER_SUPERSEDED runners=marcusquinn ts=2026-04-16T17:06:24Z -->
+**Stale assignment recovered** — prior worker exited without updating status. ${pad}"
+	local body2="<!-- WORKER_SUPERSEDED runners=alex-solovyev ts=2026-04-16T17:35:29Z -->
+**Stale assignment recovered** — prior worker exited without updating status. ${pad}"
+	jq -n --arg b1 "$body1" --arg b2 "$body2" '
+		[
+			{"user": {"login": "marcusquinn", "type": "User"}, "created_at": "2026-04-16T17:06:25Z", "body": $b1},
+			{"user": {"login": "marcusquinn", "type": "User"}, "created_at": "2026-04-16T17:35:30Z", "body": $b2}
+		]
+	'
+}
+
+# Fixture: one stale-recovery-tick comment (62 chars — under min_chars 500
+# but we set min to 50 in the stub, so it would otherwise pass and count).
+fixture_stale_recovery_tick_comment() {
+	cat <<'JSON'
+[
+  {"user": {"login": "marcusquinn", "type": "User"}, "created_at": "2026-04-16T17:06:16Z", "body": "<!-- stale-recovery-tick:1 -->\nStale recovery tick 1/2 (t2008). This padding exists only so the body length clears the test-harness threshold of 50 chars without adding any real scope change."}
+]
+JSON
+}
+
+# t2144 A1 regression: WORKER_SUPERSEDED comments must NOT count as substantive.
+test_worker_superseded_comments_are_filtered() {
+	setup_gh_stub
+	# Restore production-realistic thresholds for this test. The default
+	# stub sets min_chars=50; WORKER_SUPERSEDED comments are ~530 chars so
+	# they'd pass the length gate at either setting. Threshold stays at 2.
+	export ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS=200
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard"
+	GH_API_COMMENTS_JSON=$(fixture_two_worker_superseded_comments)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+	export GH_ISSUE_VIEW_LABELS GH_API_COMMENTS_JSON
+	export GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON
+
+	# Before t2144 this returned 0 (needs consolidation) because two 530-char
+	# recovery comments passed the filter. After t2144 the ^<!-- WORKER_SUPERSEDED
+	# pattern filters them out, substantive_count drops to 0, and the helper
+	# returns 1 (no dispatch).
+	if _issue_needs_consolidation 19321 "marcusquinn/aidevops"; then
+		print_result "t2144: WORKER_SUPERSEDED comments are filtered (no false consolidation)" 1 \
+			"_issue_needs_consolidation returned 0 despite only WORKER_SUPERSEDED noise"
+	else
+		print_result "t2144: WORKER_SUPERSEDED comments are filtered (no false consolidation)" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+# t2144 A1 regression: stale-recovery-tick comments must NOT count.
+test_stale_recovery_tick_comments_are_filtered() {
+	setup_gh_stub
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard"
+	GH_API_COMMENTS_JSON=$(fixture_stale_recovery_tick_comment)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+	export GH_ISSUE_VIEW_LABELS GH_API_COMMENTS_JSON
+	export GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON
+
+	if _issue_needs_consolidation 19999 "marcusquinn/aidevops"; then
+		print_result "t2144: stale-recovery-tick comments are filtered" 1 \
+			"_issue_needs_consolidation returned 0 despite only stale-recovery-tick noise"
+	else
+		print_result "t2144: stale-recovery-tick comments are filtered" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+# t2144 A4 regression: a recently-closed child within the grace window
+# still "owns" the parent — _consolidation_child_exists must return 0.
+test_recently_closed_child_blocks_redispatch_within_grace() {
+	setup_gh_stub
+	# Child closed "now" — well inside the 30-min default window.
+	export GH_ISSUE_LIST_CHILD_JSON="[]"
+	export GH_ISSUE_LIST_CHILD_CLOSED_JSON='[{"number": 19341}]'
+
+	if _consolidation_child_exists 19321 "marcusquinn/aidevops"; then
+		print_result "t2144: recently-closed child blocks re-dispatch within grace window" 0
+	else
+		print_result "t2144: recently-closed child blocks re-dispatch within grace window" 1 \
+			"_consolidation_child_exists returned 1 despite recently-closed child"
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+# t2144 A4 regression: grace_minutes=0 disables the window — backward-compat
+# check that the legacy open-only semantics are reachable (no breakage for
+# callers that don't want the grace window).
+test_grace_zero_restores_open_only_semantics() {
+	setup_gh_stub
+	export GH_ISSUE_LIST_CHILD_JSON="[]"
+	export GH_ISSUE_LIST_CHILD_CLOSED_JSON='[{"number": 19341}]'
+
+	# Third arg 0 disables grace — closed child must not count.
+	if _consolidation_child_exists 19321 "marcusquinn/aidevops" 0; then
+		print_result "t2144: grace_minutes=0 ignores closed children" 1 \
+			"_consolidation_child_exists returned 0 with grace=0 despite only-closed child"
+	else
+		print_result "t2144: grace_minutes=0 ignores closed children" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+# t2144 A3 regression: backfill auto-clears `needs-consolidation` when the
+# parent also carries `consolidated` (race artefact) and does NOT dispatch.
+test_backfill_clears_stale_label_on_consolidated_parent() {
+	setup_gh_stub
+	# Open issue list returns one labelled parent that ALSO has consolidated.
+	export GH_ISSUE_LIST_CHILD_JSON='[{"number": 19321, "labels": [{"name": "needs-consolidation"}, {"name": "consolidated"}]}]'
+	export GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+
+	# repos.json with a single pulse-enabled repo pointing at our stub slug.
+	cat >"${TEST_ROOT}/repos.json" <<'JSON'
+{
+  "initialized_repos": [
+    {"slug": "marcusquinn/aidevops", "path": "/tmp/fake-path", "pulse": true}
+  ]
+}
+JSON
+	export REPOS_JSON="${TEST_ROOT}/repos.json"
+
+	_backfill_stale_consolidation_labels || true
+
+	# Verify: no `gh issue create` (no child dispatched).
+	if grep -q 'issue create' "$GH_LOG" 2>/dev/null; then
+		print_result "t2144: backfill skips dispatch on consolidated parent" 1 \
+			"gh issue create was invoked despite consolidated label"
+	else
+		print_result "t2144: backfill skips dispatch on consolidated parent" 0
+	fi
+
+	# Verify: `gh issue edit --remove-label needs-consolidation` was called.
+	if grep -qE 'issue edit .* --remove-label needs-consolidation' "$GH_LOG" 2>/dev/null; then
+		print_result "t2144: backfill auto-clears stale needs-consolidation label" 0
+	else
+		print_result "t2144: backfill auto-clears stale needs-consolidation label" 1 \
+			"expected remove-label call not found in gh log"
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
 main() {
 	test_dispatch_creates_child_issue
 	test_child_body_contains_parent_content_and_authors
 	test_dedup_skips_when_child_exists
 	test_consolidation_child_exists_detects_existing
 	test_needs_consolidation_skips_with_child
+
+	# t2144 regression suite
+	test_worker_superseded_comments_are_filtered
+	test_stale_recovery_tick_comments_are_filtered
+	test_recently_closed_child_blocks_redispatch_within_grace
+	test_grace_zero_restores_open_only_semantics
+	test_backfill_clears_stale_label_on_consolidated_parent
 
 	echo
 	echo "============================================"
