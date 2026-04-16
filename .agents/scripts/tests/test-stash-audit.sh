@@ -21,7 +21,7 @@ STASH_HELPER="${SCRIPT_DIR}/../stash-audit-helper.sh"
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
 readonly TEST_YELLOW='\033[1;33m'
-readonly RESET='\033[0m'
+readonly TEST_RESET='\033[0m'
 
 # Test counters
 TESTS_RUN=0
@@ -38,24 +38,24 @@ TESTS_FAILED=0
 #   0 always
 #######################################
 print_result() {
-    local test_name="$1"
-    local result="$2"
-    local message="${3:-}"
-    
-    TESTS_RUN=$((TESTS_RUN + 1))
-    
-    if [[ "$result" -eq 0 ]]; then
-        echo -e "${TEST_GREEN}✓${RESET} $test_name"
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-    else
-        echo -e "${TEST_RED}✗${RESET} $test_name"
-        if [[ -n "$message" ]]; then
-            echo "  $message"
-        fi
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-    fi
-    
-    return 0
+	local test_name="$1"
+	local result="$2"
+	local message="${3:-}"
+
+	TESTS_RUN=$((TESTS_RUN + 1))
+
+	if [[ "$result" -eq 0 ]]; then
+		echo -e "${TEST_GREEN}✓${TEST_RESET} $test_name"
+		TESTS_PASSED=$((TESTS_PASSED + 1))
+	else
+		echo -e "${TEST_RED}✗${TEST_RESET} $test_name"
+		if [[ -n "$message" ]]; then
+			echo "  $message"
+		fi
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+
+	return 0
 }
 
 #######################################
@@ -68,22 +68,22 @@ print_result() {
 #   Test repo path
 #######################################
 setup_test_repo() {
-    local test_repo
-    test_repo=$(mktemp -d)
-    
-    cd "$test_repo" || return 1
-    
-    git init -q
-    git config user.email "test@example.com"
-    git config user.name "Test User"
-    
-    # Create initial commit
-    echo "initial" > file1.txt
-    git add file1.txt
-    git commit -q -m "Initial commit"
-    
-    echo "$test_repo"
-    return 0
+	local test_repo
+	test_repo=$(mktemp -d)
+
+	cd "$test_repo" || return 1
+
+	git init -q
+	git config user.email "test@example.com"
+	git config user.name "Test User"
+
+	# Create initial commit
+	echo "initial" >file1.txt
+	git add file1.txt
+	git commit -q -m "Initial commit"
+
+	echo "$test_repo"
+	return 0
 }
 
 #######################################
@@ -94,13 +94,13 @@ setup_test_repo() {
 #   0 always
 #######################################
 cleanup_test_repo() {
-    local test_repo="$1"
-    
-    if [[ -d "$test_repo" ]]; then
-        rm -rf "$test_repo"
-    fi
-    
-    return 0
+	local test_repo="$1"
+
+	if [[ -d "$test_repo" ]]; then
+		rm -rf "$test_repo"
+	fi
+
+	return 0
 }
 
 #######################################
@@ -111,32 +111,32 @@ cleanup_test_repo() {
 #   0 on success, 1 on failure
 #######################################
 test_safe_to_drop() {
-    local test_repo
-    test_repo=$(setup_test_repo)
-    
-    cd "$test_repo" || return 1
-    
-    # Make a change and stash it
-    echo "change1" > file1.txt
-    git stash push -q -m "Test stash 1"
-    
-    # Apply the same change to HEAD
-    echo "change1" > file1.txt
-    git add file1.txt
-    git commit -q -m "Apply change"
-    
-    # Audit should classify as safe-to-drop
-    local output
-    output=$("$STASH_HELPER" audit --repo "$test_repo" 2>&1)
-    
-    local result=1
-    if echo "$output" | grep -q "safe-to-drop"; then
-        result=0
-    fi
-    
-    cleanup_test_repo "$test_repo"
-    
-    return $result
+	local test_repo
+	test_repo=$(setup_test_repo)
+
+	cd "$test_repo" || return 1
+
+	# Make a change and stash it
+	echo "change1" >file1.txt
+	git stash push -q -m "Test stash 1"
+
+	# Apply the same change to HEAD
+	echo "change1" >file1.txt
+	git add file1.txt
+	git commit -q -m "Apply change"
+
+	# Audit should classify as safe-to-drop
+	local output
+	output=$("$STASH_HELPER" audit --repo "$test_repo" 2>&1)
+
+	local result=1
+	if echo "$output" | grep -q "safe-to-drop"; then
+		result=0
+	fi
+
+	cleanup_test_repo "$test_repo"
+
+	return $result
 }
 
 #######################################
@@ -147,32 +147,32 @@ test_safe_to_drop() {
 #   0 on success, 1 on failure
 #######################################
 test_needs_review() {
-    local test_repo
-    test_repo=$(setup_test_repo)
-    
-    cd "$test_repo" || return 1
-    
-    # Make a change and stash it
-    echo "unique change" > file1.txt
-    git stash push -q -m "Test stash with unique changes"
-    
-    # Make a different change to HEAD
-    echo "different change" > file1.txt
-    git add file1.txt
-    git commit -q -m "Different change"
-    
-    # Audit should classify as needs-review
-    local output
-    output=$("$STASH_HELPER" audit --repo "$test_repo" 2>&1)
-    
-    local result=1
-    if echo "$output" | grep -q "needs-review"; then
-        result=0
-    fi
-    
-    cleanup_test_repo "$test_repo"
-    
-    return $result
+	local test_repo
+	test_repo=$(setup_test_repo)
+
+	cd "$test_repo" || return 1
+
+	# Make a change and stash it
+	echo "unique change" >file1.txt
+	git stash push -q -m "Test stash with unique changes"
+
+	# Make a different change to HEAD
+	echo "different change" >file1.txt
+	git add file1.txt
+	git commit -q -m "Different change"
+
+	# Audit should classify as needs-review
+	local output
+	output=$("$STASH_HELPER" audit --repo "$test_repo" 2>&1)
+
+	local result=1
+	if echo "$output" | grep -q "needs-review"; then
+		result=0
+	fi
+
+	cleanup_test_repo "$test_repo"
+
+	return $result
 }
 
 #######################################
@@ -183,27 +183,27 @@ test_needs_review() {
 #   0 on success, 1 on failure
 #######################################
 test_list() {
-    local test_repo
-    test_repo=$(setup_test_repo)
-    
-    cd "$test_repo" || return 1
-    
-    # Create a stash
-    echo "change" > file1.txt
-    git stash push -q -m "Test stash"
-    
-    # List should show the stash
-    local output
-    output=$("$STASH_HELPER" list --repo "$test_repo" 2>&1)
-    
-    local result=1
-    if echo "$output" | grep -q "Test stash"; then
-        result=0
-    fi
-    
-    cleanup_test_repo "$test_repo"
-    
-    return $result
+	local test_repo
+	test_repo=$(setup_test_repo)
+
+	cd "$test_repo" || return 1
+
+	# Create a stash
+	echo "change" >file1.txt
+	git stash push -q -m "Test stash"
+
+	# List should show the stash
+	local output
+	output=$("$STASH_HELPER" list --repo "$test_repo" 2>&1)
+
+	local result=1
+	if echo "$output" | grep -q "Test stash"; then
+		result=0
+	fi
+
+	cleanup_test_repo "$test_repo"
+
+	return $result
 }
 
 #######################################
@@ -214,35 +214,35 @@ test_list() {
 #   0 on success, 1 on failure
 #######################################
 test_auto_clean() {
-    local test_repo
-    test_repo=$(setup_test_repo)
-    
-    cd "$test_repo" || return 1
-    
-    # Create a safe-to-drop stash
-    echo "change1" > file1.txt
-    git stash push -q -m "Safe stash"
-    
-    # Apply the same change to HEAD
-    echo "change1" > file1.txt
-    git add file1.txt
-    git commit -q -m "Apply change"
-    
-    # Auto-clean should drop the stash
-    "$STASH_HELPER" auto-clean --repo "$test_repo" >/dev/null 2>&1
-    
-    # Verify stash was dropped
-    local stash_count
-    stash_count=$(git stash list | wc -l)
-    
-    local result=1
-    if [[ "$stash_count" -eq 0 ]]; then
-        result=0
-    fi
-    
-    cleanup_test_repo "$test_repo"
-    
-    return $result
+	local test_repo
+	test_repo=$(setup_test_repo)
+
+	cd "$test_repo" || return 1
+
+	# Create a safe-to-drop stash
+	echo "change1" >file1.txt
+	git stash push -q -m "Safe stash"
+
+	# Apply the same change to HEAD
+	echo "change1" >file1.txt
+	git add file1.txt
+	git commit -q -m "Apply change"
+
+	# Auto-clean should drop the stash
+	"$STASH_HELPER" auto-clean --repo "$test_repo" >/dev/null 2>&1
+
+	# Verify stash was dropped
+	local stash_count
+	stash_count=$(git stash list | wc -l)
+
+	local result=1
+	if [[ "$stash_count" -eq 0 ]]; then
+		result=0
+	fi
+
+	cleanup_test_repo "$test_repo"
+
+	return $result
 }
 
 #######################################
@@ -253,23 +253,23 @@ test_auto_clean() {
 #   0 on success, 1 on failure
 #######################################
 test_no_stashes() {
-    local test_repo
-    test_repo=$(setup_test_repo)
-    
-    cd "$test_repo" || return 1
-    
-    # Audit with no stashes should succeed
-    local output
-    output=$("$STASH_HELPER" audit --repo "$test_repo" 2>&1)
-    
-    local result=1
-    if echo "$output" | grep -q "No stashes found"; then
-        result=0
-    fi
-    
-    cleanup_test_repo "$test_repo"
-    
-    return $result
+	local test_repo
+	test_repo=$(setup_test_repo)
+
+	cd "$test_repo" || return 1
+
+	# Audit with no stashes should succeed
+	local output
+	output=$("$STASH_HELPER" audit --repo "$test_repo" 2>&1)
+
+	local result=1
+	if echo "$output" | grep -q "No stashes found"; then
+		result=0
+	fi
+
+	cleanup_test_repo "$test_repo"
+
+	return $result
 }
 
 #######################################
@@ -280,15 +280,15 @@ test_no_stashes() {
 #   0 on success, 1 on failure
 #######################################
 test_help() {
-    local output
-    output=$("$STASH_HELPER" help 2>&1)
-    
-    local result=1
-    if echo "$output" | grep -q "Usage:"; then
-        result=0
-    fi
-    
-    return $result
+	local output
+	output=$("$STASH_HELPER" help 2>&1)
+
+	local result=1
+	if echo "$output" | grep -q "Usage:"; then
+		result=0
+	fi
+
+	return $result
 }
 
 #######################################
@@ -299,15 +299,15 @@ test_help() {
 #   0 on success, 1 on failure
 #######################################
 test_invalid_repo() {
-    local output
-    output=$("$STASH_HELPER" audit --repo /nonexistent/path 2>&1 || true)
-    
-    local result=1
-    if echo "$output" | grep -q "does not exist"; then
-        result=0
-    fi
-    
-    return $result
+	local output
+	output=$("$STASH_HELPER" audit --repo /nonexistent/path 2>&1 || true)
+
+	local result=1
+	if echo "$output" | grep -q "does not exist"; then
+		result=0
+	fi
+
+	return $result
 }
 
 #######################################
@@ -318,57 +318,57 @@ test_invalid_repo() {
 #   0 if all tests pass, 1 otherwise
 #######################################
 main() {
-    echo "Running stash-audit-helper.sh tests..."
-    echo ""
-    
-    # Check if stash helper exists
-    if [[ ! -f "$STASH_HELPER" ]]; then
-        echo -e "${TEST_RED}Error: stash-audit-helper.sh not found at $STASH_HELPER${RESET}"
-        return 1
-    fi
-    
-    # Run tests
-    test_safe_to_drop
-    print_result "safe-to-drop classification" $?
-    
-    test_needs_review
-    print_result "needs-review classification" $?
-    
-    test_list
-    print_result "list command" $?
-    
-    test_auto_clean
-    print_result "auto-clean command" $?
-    
-    test_no_stashes
-    print_result "no stashes scenario" $?
-    
-    test_help
-    print_result "help command" $?
-    
-    test_invalid_repo
-    print_result "invalid repo path" $?
-    
-    # Print summary
-    echo ""
-    echo "========================================="
-    echo "Tests run:    $TESTS_RUN"
-    echo -e "Tests passed: ${TEST_GREEN}$TESTS_PASSED${RESET}"
-    if [[ "$TESTS_FAILED" -gt 0 ]]; then
-        echo -e "Tests failed: ${TEST_RED}$TESTS_FAILED${RESET}"
-    else
-        echo "Tests failed: $TESTS_FAILED"
-    fi
-    echo "========================================="
-    
-    if [[ "$TESTS_FAILED" -gt 0 ]]; then
-        return 1
-    fi
-    
-    return 0
+	echo "Running stash-audit-helper.sh tests..."
+	echo ""
+
+	# Check if stash helper exists
+	if [[ ! -f "$STASH_HELPER" ]]; then
+		echo -e "${TEST_RED}Error: stash-audit-helper.sh not found at $STASH_HELPER${TEST_RESET}"
+		return 1
+	fi
+
+	# Run tests
+	test_safe_to_drop
+	print_result "safe-to-drop classification" $?
+
+	test_needs_review
+	print_result "needs-review classification" $?
+
+	test_list
+	print_result "list command" $?
+
+	test_auto_clean
+	print_result "auto-clean command" $?
+
+	test_no_stashes
+	print_result "no stashes scenario" $?
+
+	test_help
+	print_result "help command" $?
+
+	test_invalid_repo
+	print_result "invalid repo path" $?
+
+	# Print summary
+	echo ""
+	echo "========================================="
+	echo "Tests run:    $TESTS_RUN"
+	echo -e "Tests passed: ${TEST_GREEN}$TESTS_PASSED${TEST_RESET}"
+	if [[ "$TESTS_FAILED" -gt 0 ]]; then
+		echo -e "Tests failed: ${TEST_RED}$TESTS_FAILED${TEST_RESET}"
+	else
+		echo "Tests failed: $TESTS_FAILED"
+	fi
+	echo "========================================="
+
+	if [[ "$TESTS_FAILED" -gt 0 ]]; then
+		return 1
+	fi
+
+	return 0
 }
 
 # Run main if executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
+	main "$@"
 fi
