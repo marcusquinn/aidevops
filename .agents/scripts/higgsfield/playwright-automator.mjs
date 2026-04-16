@@ -4,39 +4,51 @@
 // Part of AI DevOps Framework
 //
 // This file is the thin CLI dispatcher. All implementation is in focused modules:
-//   higgsfield-common.mjs  — constants, utilities, browser helpers, credit guard
-//   higgsfield-api.mjs     — Higgsfield Cloud API client
-//   higgsfield-image.mjs   — image generation (Playwright)
-//   higgsfield-video.mjs   — video generation, lipsync (Playwright)
-//   higgsfield-commands.mjs — pipeline, asset chain, misc commands, self-tests
+//   higgsfield-common.mjs        — constants, utilities, credit guard, CLI parsing
+//   higgsfield-browser.mjs       — browser launch, navigation, modal dismissal
+//   higgsfield-output.mjs        — output dirs, sidecars, dedup, image downloads
+//   higgsfield-discovery.mjs     — site discovery, login
+//   higgsfield-api.mjs           — Higgsfield Cloud API client
+//   higgsfield-image.mjs         — image generation (Playwright)
+//   higgsfield-video.mjs         — video generation, download (Playwright)
+//   higgsfield-lipsync.mjs       — lipsync generation (Playwright)
+//   higgsfield-commands.mjs      — misc UI commands (credits, apps, studio tools)
+//   higgsfield-asset-chain.mjs   — asset chain operations
+//   higgsfield-pipeline.mjs      — video production pipeline
+//   higgsfield-batch-video.mjs   — batch video/lipsync, download from history
+//   higgsfield-tests.mjs         — auth health check, smoke test, self-tests
 
 import {
   parseArgs,
   checkCreditGuard,
   withRetry,
+} from './higgsfield-common.mjs';
+
+import {
   ensureDiscovery,
   login,
   runDiscovery,
-} from './higgsfield-common.mjs';
+} from './higgsfield-discovery.mjs';
 
 import { generateImage, batchImage } from './higgsfield-image.mjs';
+import { generateVideo } from './higgsfield-video.mjs';
+import { generateLipsync } from './higgsfield-lipsync.mjs';
 import {
-  generateVideo,
-  generateLipsync,
   batchVideo,
   batchLipsync,
   downloadFromHistory,
-} from './higgsfield-video.mjs';
+} from './higgsfield-batch-video.mjs';
 import { apiGenerateImage, apiGenerateVideo, apiStatus } from './higgsfield-api.mjs';
+import { pipeline } from './higgsfield-pipeline.mjs';
+import { assetChain } from './higgsfield-asset-chain.mjs';
+import { authHealthCheck, smokeTest, runSelfTests } from './higgsfield-tests.mjs';
 import {
-  pipeline,
   seedBracket,
   useApp,
   screenshot,
   checkCredits,
   listAssets,
   manageAssets,
-  assetChain,
   mixedMediaPreset,
   motionPreset,
   cinemaStudio,
@@ -49,9 +61,6 @@ import {
   aiInfluencer,
   createCharacter,
   featurePage,
-  authHealthCheck,
-  smokeTest,
-  runSelfTests,
 } from './higgsfield-commands.mjs';
 
 // Run a command with API-first fallback to Playwright browser automation.

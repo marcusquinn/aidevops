@@ -1,20 +1,16 @@
 # Pre-Dispatch Validators
 
-Pre-dispatch validators run **after** dedup checks and **before** worker spawn for auto-generated issues. They verify the issue premise is still true before dispatching — catching stale issues deterministically rather than relying on model self-triage. Fix 3 of the [GH#19024 post-mortem](https://github.com/marcusquinn/aidevops/issues/19024); Fixes 1+2 (GH#19036, GH#19037) address the ratchet-down bug at source; this adds a generalisable safety net for the "premise stale at dispatch time" failure class.
+Pre-dispatch validators run **after** dedup checks and **before** worker spawn for auto-generated issues. They verify the issue premise is still true before dispatching — catching stale issues deterministically (GH#19118). Root causes in GH#19036, GH#19037; post-mortem GH#19024.
 
 ## Architecture
 
-### Generator identification
-
 Auto-generated issues embed a hidden HTML comment marker in their body:
 
-```
+```text
 <!-- aidevops:generator=<name> -->
 ```
 
-The validator extracts this marker with `grep -oE '<!-- aidevops:generator=[a-z-]+ -->'`. Parsing titles or labels is explicitly rejected as too brittle — markers are unambiguous and survive editorial changes to human-visible fields.
-
-### Registry
+Extracted with `grep -oE '<!-- aidevops:generator=[a-z-]+ -->'`; parsing titles or labels is rejected — markers survive editorial changes to human-visible fields.
 
 `pre-dispatch-validator-helper.sh` maintains an internal registry (`_VALIDATOR_REGISTRY`) mapping generator names to validator functions, populated by `_register_validators()`. Unregistered generators fall through to exit 0 (dispatch proceeds).
 
@@ -30,7 +26,7 @@ The validator extracts this marker with `grep -oE '<!-- aidevops:generator=[a-z-
 
 The validator runs inside `dispatch_with_dedup()` in `pulse-dispatch-core.sh`, via `_run_predispatch_validator()`:
 
-```
+```text
 _dispatch_dedup_check_layers()   ← all dedup gates
 _ensure_issue_body_has_brief()   ← t2063 freshness guard
 _run_predispatch_validator()     ← GH#19118 ← HERE
@@ -53,7 +49,7 @@ Intended use: emergency recovery when a validator bug is blocking legitimate dis
 
 When a validator returns exit 10, the helper posts:
 
-```
+```text
 > Premise falsified. Pre-dispatch validator for generator `<name>` determined
 > the issue premise is no longer true. The `<name>` check reports no actionable
 > work is available. Not dispatching a worker.
@@ -72,7 +68,6 @@ The issue is then closed with `gh issue close --reason "not planned"`.
 ### `ratchet-down`
 
 **Generator:** `_complexity_scan_ratchet_check` in `pulse-simplification.sh`
-
 **Marker:** `<!-- aidevops:generator=ratchet-down -->`
 
 **Logic:**
@@ -81,21 +76,21 @@ The issue is then closed with `gh issue close --reason "not planned"`.
 2. Run `complexity-scan-helper.sh ratchet-check <clone> 5`
 3. If output contains `No ratchet-down available` → exit 10 (premise falsified)
 4. Any other error with empty output → exit 20 (validator error)
-5. Otherwise → exit 0 (proposals available, dispatch)
-
-**Motivation:** The ratchet-down scan is computed at issue creation time. By dispatch time, simplification work may have already closed the gap. Without this validator, a worker is spawned, reads the complexity state, discovers no ratchet-down is possible, and exits silently — exactly the failure mode documented in the #19024 post-mortem.
+5. Otherwise → exit 0 (proposals available, dispatch) — without this check, workers are spawned only to discover no ratchet-down work exists (GH#19024 failure mode)
 
 ## How to add a new validator
 
-1. **Define the generator function** in `pulse-simplification.sh` or whichever script creates auto-generated issues for your generator type.
+1. **Define the generator function** in `pulse-simplification.sh` or the script that creates auto-generated issues.
 
 2. **Emit the marker** in the issue body template:
+
    ```bash
    # In the issue body string
    "...issue content...\n\n<!-- aidevops:generator=my-generator -->"
    ```
 
 3. **Implement the validator function** in `pre-dispatch-validator-helper.sh`:
+
    ```bash
    _validator_my_generator() {
        local slug="$1"
@@ -106,6 +101,7 @@ The issue is then closed with `gh issue close --reason "not planned"`.
    ```
 
 4. **Register the validator** in `_register_validators()`:
+
    ```bash
    _VALIDATOR_REGISTRY["my-generator"]="_validator_my_generator"
    ```
@@ -119,7 +115,6 @@ The issue is then closed with `gh issue close --reason "not planned"`.
 ```bash
 # Run the test harness
 bash .agents/scripts/tests/test-pre-dispatch-validator.sh
-
 # Manual smoke test (requires gh auth)
 .agents/scripts/pre-dispatch-validator-helper.sh validate <issue-number> marcusquinn/aidevops
 ```

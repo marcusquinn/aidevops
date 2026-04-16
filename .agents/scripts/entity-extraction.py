@@ -21,12 +21,22 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
+import os
 import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
+
+# Add lib directory to path for shared utilities
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
+from entity_cleaners import (
+    ENTITY_TYPES,
+    SPACY_LABEL_MAP,
+    clean_entity,
+    parse_llm_response,
+    extract_entities_regex,
+)
 
 from email_shared import (
     check_ollama,
@@ -35,31 +45,6 @@ from email_shared import (
     get_ollama_model,
     yaml_escape,
 )
-
-
-# ---------------------------------------------------------------------------
-# Entity type mapping
-# ---------------------------------------------------------------------------
-
-# spaCy NER label -> our entity type
-_SPACY_LABEL_MAP: dict[str, str] = {
-    "PERSON": "people",
-    "PER": "people",
-    "ORG": "organisations",
-    "GPE": "locations",       # geopolitical entities (cities, countries)
-    "LOC": "locations",       # non-GPE locations
-    "FAC": "locations",       # facilities (buildings, airports)
-    "DATE": "dates",
-    "TIME": "dates",
-    "MONEY": "financial",
-    "PRODUCT": "properties",  # products, objects
-    "WORK_OF_ART": "properties",
-    "EVENT": "events",
-    "NORP": "organisations",  # nationalities, religious/political groups
-}
-
-# Entity types we extract (ordered for frontmatter output)
-ENTITY_TYPES = ["people", "organisations", "properties", "locations", "dates"]
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +64,6 @@ def _get_spacy_model():
     """Load the best available spaCy model."""
     import spacy
 
-    # Try models in order of quality (largest first)
     for model_name in ["en_core_web_trf", "en_core_web_lg", "en_core_web_md", "en_core_web_sm"]:
         try:
             return spacy.load(model_name)
@@ -98,10 +82,8 @@ def extract_entities_spacy(text: str) -> dict[str, list[str]]:
     if nlp is None:
         raise RuntimeError("No spaCy model available. Install: python -m spacy download en_core_web_sm")
 
-    # spaCy has a max length; chunk if needed
     max_length = nlp.max_length
     if len(text) > max_length:
-        # Process in chunks, preserving sentence boundaries where possible
         chunks = [text[i:i + max_length] for i in range(0, len(text), max_length)]
     else:
         chunks = [text]
@@ -111,25 +93,18 @@ def extract_entities_spacy(text: str) -> dict[str, list[str]]:
     for chunk in chunks:
         doc = nlp(chunk)
         for ent in doc.ents:
-            entity_type = _SPACY_LABEL_MAP.get(ent.label_)
+            entity_type = SPACY_LABEL_MAP.get(ent.label_)
             if entity_type and entity_type in ENTITY_TYPES:
-                # Clean up the entity text
-                cleaned = _clean_entity(ent.text, entity_type)
+                cleaned = clean_entity(ent.text, entity_type)
                 if cleaned:
                     entities[entity_type].add(cleaned)
 
-    # Convert sets to sorted lists
     return {k: sorted(v) for k, v in entities.items() if v}
 
 
 # ---------------------------------------------------------------------------
 # Ollama LLM extraction (fallback)
 # ---------------------------------------------------------------------------
-
-# Ollama availability: delegated to email_shared
-_check_ollama = check_ollama
-_get_ollama_model = get_ollama_model
-
 
 _OLLAMA_PROMPT = """Extract named entities from the following email text. Return ONLY a JSON object with these keys:
 - "people": list of person names
@@ -157,11 +132,10 @@ def extract_entities_ollama(text: str) -> dict[str, list[str]]:
 
     Returns dict mapping entity type to list of unique entity strings.
     """
-    model = _get_ollama_model()
+    model = get_ollama_model()
     if model is None:
         raise RuntimeError("No Ollama model available. Install: ollama pull llama3.2")
 
-    # Truncate very long texts to avoid context overflow
     max_chars = 8000
     if len(text) > max_chars:
         text = text[:max_chars] + "\n[... truncated for extraction ...]"
@@ -177,146 +151,10 @@ def extract_entities_ollama(text: str) -> dict[str, list[str]]:
             raise RuntimeError(f"Ollama failed: {result.stderr}")
 
         response = result.stdout.strip()
-        return _parse_llm_response(response)
+        return parse_llm_response(response)
 
     except subprocess.TimeoutExpired:
         raise RuntimeError("Ollama timed out (120s)")
-
-
-def _extract_json_from_response(response: str) -> Optional[dict]:
-    """Extract and parse JSON from an LLM response string.
-
-    Handles markdown code blocks, bare JSON, and single-quote issues.
-    Returns parsed dict or None if parsing fails.
-    """
-    # LLMs sometimes wrap JSON in markdown code blocks
-    json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response, re.DOTALL)
-    if json_match:
-        response = json_match.group(1)
-
-    # Try to find JSON object boundaries
-    brace_start = response.find("{")
-    brace_end = response.rfind("}")
-    if brace_start != -1 and brace_end != -1:
-        response = response[brace_start:brace_end + 1]
-
-    try:
-        return json.loads(response)
-    except json.JSONDecodeError:
-        pass
-
-    # Last resort: try to fix common issues (single quotes)
-    response = response.replace("'", '"')
-    try:
-        return json.loads(response)
-    except json.JSONDecodeError:
-        return None
-
-
-def _validate_and_clean_entities(data: dict) -> dict[str, list[str]]:
-    """Validate and clean entity lists from parsed LLM output."""
-    entities: dict[str, list[str]] = {}
-    for entity_type in ENTITY_TYPES:
-        raw_list = data.get(entity_type)
-        if not isinstance(raw_list, list):
-            continue
-        cleaned = []
-        for item in raw_list:
-            if not isinstance(item, str):
-                continue
-            c = _clean_entity(item, entity_type)
-            if c and c not in cleaned:
-                cleaned.append(c)
-        if cleaned:
-            entities[entity_type] = cleaned
-    return entities
-
-
-def _parse_llm_response(response: str) -> dict[str, list[str]]:
-    """Parse LLM JSON response, handling common formatting issues."""
-    data = _extract_json_from_response(response)
-    if data is None:
-        return {}
-    return _validate_and_clean_entities(data)
-
-
-# ---------------------------------------------------------------------------
-# Regex-based extraction (minimal fallback)
-# ---------------------------------------------------------------------------
-
-# Common date patterns
-_DATE_PATTERNS = [
-    r'\b\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}\b',           # DD/MM/YYYY, MM-DD-YY
-    r'\b\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2}\b',              # YYYY-MM-DD
-    r'\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b',  # 14 Feb 2026
-    r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{2,4}\b',  # Feb 14, 2026
-    r'\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+\d{1,2}\s+\w+\s+\d{4}\b',  # Monday, 14 February 2026
-]
-
-# Email address pattern (to extract people from "Name <email>" patterns)
-_EMAIL_NAME_PATTERN = r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*<[^>]+>'
-
-
-def extract_entities_regex(text: str) -> dict[str, list[str]]:
-    """Minimal regex-based entity extraction as last-resort fallback.
-
-    Only extracts dates and email-header names reliably.
-    """
-    entities: dict[str, list[str]] = {}
-
-    # Extract dates
-    dates = set()
-    for pattern in _DATE_PATTERNS:
-        for match in re.finditer(pattern, text, re.IGNORECASE):
-            dates.add(match.group(0).strip())
-    if dates:
-        entities["dates"] = sorted(dates)
-
-    # Extract names from email header patterns (Name <email>)
-    people = set()
-    for match in re.finditer(_EMAIL_NAME_PATTERN, text):
-        name = match.group(1).strip()
-        if len(name) > 2 and name not in ("Re", "Fw", "Fwd"):
-            people.add(name)
-    if people:
-        entities["people"] = sorted(people)
-
-    return entities
-
-
-# ---------------------------------------------------------------------------
-# Entity cleaning
-# ---------------------------------------------------------------------------
-
-def _clean_entity(text: str, entity_type: str) -> str:
-    """Clean and normalise an extracted entity string."""
-    # Strip whitespace and common artifacts
-    text = text.strip()
-    text = re.sub(r'\s+', ' ', text)
-
-    # Remove markdown formatting
-    text = re.sub(r'[*_`~]', '', text)
-
-    # Remove leading/trailing punctuation (except for dates)
-    if entity_type != "dates":
-        text = text.strip('.,;:!?()[]{}"\'-')
-
-    # Skip very short or very long entities
-    if len(text) < 2 or len(text) > 200:
-        return ""
-
-    # Skip common false positives
-    _false_positives = {
-        "people": {"re", "fw", "fwd", "dear", "hi", "hello", "regards",
-                   "best", "thanks", "thank you", "sincerely", "cheers"},
-        "organisations": {"re", "fw", "fwd", "http", "https", "www",
-                         "gmail", "yahoo", "hotmail", "outlook"},
-        "locations": {"re", "fw", "fwd", "http", "https"},
-    }
-    if text.lower() in _false_positives.get(entity_type, set()):
-        return ""
-
-    return text
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +163,6 @@ def _clean_entity(text: str, entity_type: str) -> str:
 
 def _try_auto_extraction(text: str) -> dict[str, list[str]]:
     """Try extraction methods in order of quality: spaCy, Ollama, regex."""
-    # 1. spaCy (best quality, local, fast)
     if _check_spacy() and _get_spacy_model() is not None:
         try:
             result = extract_entities_spacy(text)
@@ -334,8 +171,7 @@ def _try_auto_extraction(text: str) -> dict[str, list[str]]:
         except Exception as e:
             print(f"spaCy extraction failed: {e}", file=sys.stderr)
 
-    # 2. Ollama (good quality, local, slower)
-    if _check_ollama():
+    if check_ollama():
         try:
             result = extract_entities_ollama(text)
             if result:
@@ -343,7 +179,6 @@ def _try_auto_extraction(text: str) -> dict[str, list[str]]:
         except Exception as e:
             print(f"Ollama extraction failed: {e}", file=sys.stderr)
 
-    # 3. Regex (minimal, always available)
     return extract_entities_regex(text)
 
 
@@ -356,16 +191,7 @@ _METHOD_DISPATCH: dict[str, Callable[[str], dict[str, list[str]]]] = {
 
 
 def extract_entities(text: str, method: str = "auto") -> dict[str, list[str]]:
-    """Extract entities from text using the specified method.
-
-    Args:
-        text: The text to extract entities from.
-        method: 'auto' (try spaCy, then Ollama, then regex),
-                'spacy', 'ollama', or 'regex'.
-
-    Returns:
-        Dict mapping entity type to list of entity strings.
-    """
+    """Extract entities from text using the specified method."""
     extractor = _METHOD_DISPATCH.get(method)
     if extractor is not None:
         return extractor(text)
@@ -377,18 +203,7 @@ def extract_entities(text: str, method: str = "auto") -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 
 def entities_to_yaml(entities: dict[str, list[str]], indent: int = 0) -> str:
-    """Convert entities dict to YAML frontmatter fragment.
-
-    Output format:
-        entities:
-          people:
-            - "John Smith"
-            - "Jane Doe"
-          organisations:
-            - "Acme Corp"
-          locations:
-            - "London"
-    """
+    """Convert entities dict to YAML frontmatter fragment."""
     prefix = " " * indent
     if not entities:
         return f"{prefix}entities: {{}}"
@@ -398,15 +213,10 @@ def entities_to_yaml(entities: dict[str, list[str]], indent: int = 0) -> str:
         if entity_type in entities and entities[entity_type]:
             lines.append(f"{prefix}  {entity_type}:")
             for entity in entities[entity_type]:
-                # YAML-escape the value
-                escaped = _yaml_escape_value(entity)
+                escaped = yaml_escape(entity)
                 lines.append(f"{prefix}    - {escaped}")
 
     return "\n".join(lines)
-
-
-# YAML escaping: delegated to email_shared
-_yaml_escape_value = yaml_escape
 
 
 def update_frontmatter(file_path: str, entities: dict[str, list[str]]) -> bool:
@@ -420,11 +230,9 @@ def update_frontmatter(file_path: str, entities: dict[str, list[str]]) -> bool:
 
     opener, fm_content, body = extract_frontmatter(content)
     if not opener:
-        # No frontmatter — can't add entities without it
         print(f"WARNING: No YAML frontmatter in {file_path}", file=sys.stderr)
         return False
 
-    # Remove existing entities: block from frontmatter
     fm_lines = fm_content.split("\n")
     new_fm_lines = []
     skip_block = False
@@ -433,17 +241,14 @@ def update_frontmatter(file_path: str, entities: dict[str, list[str]]) -> bool:
             skip_block = True
             continue
         if skip_block:
-            # Check if this line is still part of the entities block (indented)
             if line.startswith("  ") or line.startswith("\t"):
                 continue
             skip_block = False
         new_fm_lines.append(line)
 
-    # Add entities block
     entities_yaml = entities_to_yaml(entities)
     new_fm_lines.append(entities_yaml)
 
-    # Rebuild the file
     new_fm = "\n".join(new_fm_lines)
     new_content = f"---\n{new_fm}\n---{body}"
 

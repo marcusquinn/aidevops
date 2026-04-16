@@ -58,23 +58,19 @@ readonly TEST_RESET=$'\033[0m'
 
 ## Banned patterns
 
-**Unguarded plain assignment** (collides with parent `readonly`):
+**Unguarded plain assignment** (collides with parent `readonly`) — fix: Pattern A or B.
 
 ```bash
 # BAD
 RED='\033[0;31m'
 ```
 
-Fix: Pattern A or B.
-
-**Unguarded `readonly` on canonical names** — breaks on re-sourcing:
+**Unguarded `readonly` on canonical names** — breaks on re-sourcing — fix: Pattern B (production) or Pattern C with prefix (tests).
 
 ```bash
 # WORST
 readonly RED='\033[0;31m'
 ```
-
-Fix: Pattern B (production) or Pattern C with prefix (tests).
 
 **Coarse include-guard** (discouraged, allowed for backward compat):
 
@@ -106,9 +102,7 @@ Non-canonical colors (e.g., `MAGENTA`, `GRAY`, `BOLD`, `DIM`) → declare locall
 4. Test standalone (`bash ./the-script.sh --help`) and sourced (`setup.sh --non-interactive` or pulse). `shellcheck` must pass.
 5. Commit. Phase 2 lint gate (`shell-init-pattern-check.sh`) automates detection and PR enforcement.
 
-## Audit data (2026-04-15)
-
-529 files scanned, 337 source `shared-constants.sh`:
+## Audit data (2026-04-15) — 529 files scanned, 337 source `shared-constants.sh`
 
 | Pattern | Count | Safety | Fix |
 |---------|-------|--------|-----|
@@ -118,19 +112,7 @@ Non-canonical colors (e.g., `MAGENTA`, `GRAY`, `BOLD`, `DIM`) → declare locall
 | Include guard (`if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]`) | 6 | Safe but coarse | migrate |
 | Prefixed vars (`TEST_RED`, `C_GREEN`) | 50 | Safe (Pattern C) | normalise Phase 7 |
 
-Of the 13 unguarded-readonly: 2 production (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`), 11 test harnesses.
-
-### Phase 7c update (2026-04-15, GH#19068)
-
-Migrated 3 test harnesses with unguarded plain color assignments to Pattern C (`TEST_*` prefixed `readonly`):
-
-- `.agents/scripts/test-pr-task-check.sh` — `RED/GREEN/YELLOW/NC` → `TEST_RED/TEST_GREEN/TEST_YELLOW/TEST_RESET`
-- `.agents/scripts/test-task-id-collision.sh` — `RED/GREEN/YELLOW/BLUE/NC` → `TEST_RED/TEST_GREEN/TEST_YELLOW/TEST_BLUE/TEST_RESET`
-- `.agents/scripts/tests/test-encryption-git-roundtrip.sh` — `RED/GREEN/YELLOW/BLUE/NC` → `TEST_RED/TEST_GREEN/TEST_YELLOW/TEST_BLUE/TEST_RESET`
-
-Remaining violations at Phase 7c merge (28 plain + 14 readonly across 42 files) are tracked in open sibling phases:
-Phase 2 (lint gate), Phase 3 (Tier 1/2), Phase 5 (Tier 4), Phase 6 (banned readonly), Phase 7a/7b (test batches 1–2), Phase 8a/b/c (BOLD readonly).
-Zero-violation state will be reached when all sibling phases merge.
+Of the 13 unguarded-readonly: 2 production (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`), 11 test harnesses. Phase 7c (GH#19068, 2026-04-15): migrated `test-pr-task-check.sh`, `test-task-id-collision.sh`, `tests/test-encryption-git-roundtrip.sh` to Pattern C. Remaining open: 28 plain + 14 readonly across 42 files (phases 2, 3, 5, 6, 7a/7b, 8a/b/c).
 
 ## Phased migration roadmap (t2053) — each phase its own child task/PR (≤5 files, t1422 cap):
 

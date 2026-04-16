@@ -23,25 +23,23 @@ import re
 import yaml
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
-from collections import defaultdict
 import argparse
 
 
 def parse_frontmatter(content: str) -> Tuple[Optional[Dict], str]:
     """Extract YAML frontmatter and body from markdown content.
-    
+
     Returns: (frontmatter_dict, body_content)
     """
     if not content.startswith('---\n'):
         return None, content
-    
-    # Find the closing ---
+
     parts = content.split('\n---\n', 1)
     if len(parts) != 2:
         return None, content
-    
+
     try:
-        frontmatter = yaml.safe_load(parts[0][4:])  # Skip opening ---\n
+        frontmatter = yaml.safe_load(parts[0][4:])
         body = parts[1]
         return frontmatter, body
     except yaml.YAMLError:
@@ -54,20 +52,21 @@ def build_frontmatter_yaml(metadata: Dict) -> str:
     return f"---\n{yaml_str}---"
 
 
+# ---------------------------------------------------------------------------
+# Relationship finders
+# ---------------------------------------------------------------------------
+
 def find_attachments(md_file: Path, frontmatter: Dict) -> List[str]:
-    """Find attachment files referenced in frontmatter.
-    
-    Returns list of relative paths to attachment files.
-    """
+    """Find attachment files referenced in frontmatter."""
     att_field = frontmatter.get('attachments')
     if not isinstance(att_field, list):
         return []
-    
+
     base_name = md_file.stem
     attachments_dir = md_file.parent / f"{base_name}_attachments"
     if not attachments_dir.exists():
         return []
-    
+
     attachments = []
     for att_meta in att_field:
         if not isinstance(att_meta, dict) or 'filename' not in att_meta:
@@ -77,43 +76,37 @@ def find_attachments(md_file: Path, frontmatter: Dict) -> List[str]:
             continue
         rel_path = os.path.relpath(att_file, md_file.parent)
         attachments.append(rel_path)
-    
+
     return attachments
 
 
 def find_thread_siblings(md_file: Path, frontmatter: Dict, all_docs: Dict[Path, Dict]) -> Dict[str, Optional[str]]:
-    """Find previous and next emails in the same thread.
-    
-    Returns: {'previous': path_or_none, 'next': path_or_none}
-    """
+    """Find previous and next emails in the same thread."""
     siblings: Dict[str, Optional[str]] = {'previous': None, 'next': None}
-    
+
     thread_id = frontmatter.get('thread_id')
     thread_position = frontmatter.get('thread_position')
-    
+
     if not thread_id or not thread_position:
         return siblings
-    
-    # Find all docs in the same thread
+
     thread_docs = []
     for doc_path, doc_meta in all_docs.items():
         if doc_meta.get('thread_id') == thread_id:
             thread_docs.append((doc_path, doc_meta.get('thread_position', 0)))
-    
-    # Sort by thread_position
+
     thread_docs.sort(key=lambda x: x[1])
-    
-    # Find current position in sorted list
+
     for i, (doc_path, pos) in enumerate(thread_docs):
         if doc_path == md_file:
             if i > 0:
-                prev_path = thread_docs[i-1][0]
+                prev_path = thread_docs[i - 1][0]
                 siblings['previous'] = os.path.relpath(prev_path, md_file.parent)
             if i < len(thread_docs) - 1:
-                next_path = thread_docs[i+1][0]
+                next_path = thread_docs[i + 1][0]
                 siblings['next'] = os.path.relpath(next_path, md_file.parent)
             break
-    
+
     return siblings
 
 
@@ -127,27 +120,24 @@ def _flatten_entities(entities_dict: Dict) -> Set[str]:
 
 
 def find_entity_matches(md_file: Path, frontmatter: Dict, all_docs: Dict[Path, Dict], min_overlap: int = 1) -> List[Dict]:
-    """Find documents that mention the same entities.
-    
-    Returns: List of {'path': rel_path, 'entities': [shared_entities], 'title': doc_title}
-    """
+    """Find documents that mention the same entities."""
     current_entities = frontmatter.get('entities', {})
     if not current_entities or not isinstance(current_entities, dict):
         return []
-    
+
     current_entity_set = _flatten_entities(current_entities)
     if not current_entity_set:
         return []
-    
+
     matches = []
     for doc_path, doc_meta in all_docs.items():
         if doc_path == md_file:
             continue
-        
+
         doc_entities = doc_meta.get('entities', {})
         if not doc_entities or not isinstance(doc_entities, dict):
             continue
-        
+
         doc_entity_set = _flatten_entities(doc_entities)
         shared = current_entity_set & doc_entity_set
         if len(shared) >= min_overlap:
@@ -157,103 +147,118 @@ def find_entity_matches(md_file: Path, frontmatter: Dict, all_docs: Dict[Path, D
                 'entities': sorted(list(shared)),
                 'title': doc_meta.get('title', doc_path.stem)
             })
-    
+
     matches.sort(key=lambda x: len(x['entities']), reverse=True)
     return matches
 
 
-def build_navigation_section(related_docs: Dict, frontmatter: Dict) -> str:
-    """Build markdown navigation section from related_docs.
-    
-    Returns: Markdown string with navigation links.
-    """
-    sections = []
-    
-    # Attachments section
-    if related_docs.get('attachments'):
-        sections.append("### Attachments\n")
-        for att_path in related_docs['attachments']:
-            filename = Path(att_path).name
-            sections.append(f"- [{filename}]({att_path})\n")
-    
-    # Thread navigation section
+# ---------------------------------------------------------------------------
+# Navigation section builder
+# ---------------------------------------------------------------------------
+
+def _build_attachments_section(related_docs: Dict) -> List[str]:
+    """Build the attachments section of the navigation."""
+    if not related_docs.get('attachments'):
+        return []
+    lines = ["### Attachments\n"]
+    for att_path in related_docs['attachments']:
+        filename = Path(att_path).name
+        lines.append(f"- [{filename}]({att_path})\n")
+    return lines
+
+
+def _build_thread_section(related_docs: Dict) -> List[str]:
+    """Build the thread navigation section."""
     thread_siblings = related_docs.get('thread_siblings', {})
-    if thread_siblings.get('previous') or thread_siblings.get('next'):
-        sections.append("\n### Thread Navigation\n")
-        
-        if thread_siblings.get('previous'):
-            prev_path = thread_siblings['previous']
-            sections.append(f"- ← Previous: [{Path(prev_path).stem}]({prev_path})\n")
-        
-        if thread_siblings.get('next'):
-            next_path = thread_siblings['next']
-            sections.append(f"- → Next: [{Path(next_path).stem}]({next_path})\n")
-    
-    # Entity matches section
-    if related_docs.get('entity_matches'):
-        sections.append("\n### Related by Entities\n")
-        for match in related_docs['entity_matches'][:10]:  # Limit to top 10
-            path = match['path']
-            title = match['title']
-            entities = ', '.join(match['entities'][:5])  # Show first 5 entities
-            if len(match['entities']) > 5:
-                entities += f" (+{len(match['entities']) - 5} more)"
-            sections.append(f"- [{title}]({path}) ({entities})\n")
-    
+    if not thread_siblings.get('previous') and not thread_siblings.get('next'):
+        return []
+
+    lines = ["\n### Thread Navigation\n"]
+    if thread_siblings.get('previous'):
+        prev_path = thread_siblings['previous']
+        lines.append(f"- \u2190 Previous: [{Path(prev_path).stem}]({prev_path})\n")
+    if thread_siblings.get('next'):
+        next_path = thread_siblings['next']
+        lines.append(f"- \u2192 Next: [{Path(next_path).stem}]({next_path})\n")
+    return lines
+
+
+def _build_entity_matches_section(related_docs: Dict) -> List[str]:
+    """Build the entity matches section of the navigation."""
+    if not related_docs.get('entity_matches'):
+        return []
+    lines = ["\n### Related by Entities\n"]
+    for match in related_docs['entity_matches'][:10]:
+        path = match['path']
+        title = match['title']
+        entities = ', '.join(match['entities'][:5])
+        if len(match['entities']) > 5:
+            entities += f" (+{len(match['entities']) - 5} more)"
+        lines.append(f"- [{title}]({path}) ({entities})\n")
+    return lines
+
+
+def build_navigation_section(related_docs: Dict, frontmatter: Dict) -> str:
+    """Build markdown navigation section from related_docs."""
+    sections = []
+    sections.extend(_build_attachments_section(related_docs))
+    sections.extend(_build_thread_section(related_docs))
+    sections.extend(_build_entity_matches_section(related_docs))
+
     if not sections:
         return ""
-    
     return "\n---\n\n## Related Documents\n\n" + "".join(sections)
 
 
+# ---------------------------------------------------------------------------
+# Document scanning and updating
+# ---------------------------------------------------------------------------
+
 def scan_directory(directory: Path) -> Dict[Path, Dict]:
-    """Scan directory for markdown files and extract their frontmatter.
-    
-    Returns: Dict mapping file paths to frontmatter dicts.
-    """
+    """Scan directory for markdown files and extract their frontmatter."""
     all_docs = {}
-    
+
     for md_file in directory.rglob('*.md'):
         if not md_file.is_file():
             continue
-        
+
         try:
             with open(md_file, 'r', encoding='utf-8') as f:
                 content = f.read()
-            
+
             frontmatter, _ = parse_frontmatter(content)
             if frontmatter:
                 all_docs[md_file] = frontmatter
         except Exception as e:
             print(f"Warning: Failed to parse {md_file}: {e}", file=sys.stderr)
-    
+
     return all_docs
 
 
 def _collect_related_docs(md_file: Path, frontmatter: Dict, all_docs: Dict[Path, Dict]) -> Dict:
     """Collect all related document references for a markdown file."""
     related_docs: Dict = {}
-    
+
     attachments = find_attachments(md_file, frontmatter)
     if attachments:
         related_docs['attachments'] = attachments
-    
+
     thread_siblings = find_thread_siblings(md_file, frontmatter, all_docs)
     if thread_siblings['previous'] or thread_siblings['next']:
         related_docs['thread_siblings'] = thread_siblings
-    
+
     entity_matches = find_entity_matches(md_file, frontmatter, all_docs)
     if entity_matches:
         related_docs['entity_matches'] = entity_matches
-    
+
     return related_docs
 
 
 def _print_dry_run(md_file: Path, related_docs: Dict, navigation: str) -> None:
     """Print dry-run output for a file update."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"File: {md_file}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("Related docs that would be added:")
     print(yaml.dump(related_docs, default_flow_style=False, allow_unicode=True))
     print("\nNavigation section:")
@@ -273,48 +278,44 @@ def _write_updated_file(md_file: Path, new_content: str) -> bool:
 
 
 def add_related_docs(md_file: Path, all_docs: Optional[Dict[Path, Dict]] = None, dry_run: bool = False) -> bool:
-    """Add related_docs frontmatter and navigation links to a markdown file.
-    
-    Args:
-        md_file: Path to markdown file
-        all_docs: Optional pre-scanned dict of all documents (for batch processing)
-        dry_run: If True, print changes without writing
-    
-    Returns: True if file was modified, False otherwise
-    """
+    """Add related_docs frontmatter and navigation links to a markdown file."""
     try:
         with open(md_file, 'r', encoding='utf-8') as f:
             content = f.read()
     except Exception as e:
         print(f"Error reading {md_file}: {e}", file=sys.stderr)
         return False
-    
+
     frontmatter, body = parse_frontmatter(content)
     if not frontmatter:
         print(f"Skipping {md_file}: No frontmatter found", file=sys.stderr)
         return False
-    
+
     if all_docs is None:
         all_docs = scan_directory(md_file.parent)
-    
+
     related_docs = _collect_related_docs(md_file, frontmatter, all_docs)
     if not related_docs:
         print(f"No related documents found for {md_file}")
         return False
-    
+
     frontmatter['related_docs'] = related_docs
     body_clean = re.sub(r'\n---\n\n## Related Documents\n.*$', '', body, flags=re.DOTALL)
-    
+
     new_frontmatter = build_frontmatter_yaml(frontmatter)
     navigation = build_navigation_section(related_docs, frontmatter)
     new_content = f"{new_frontmatter}\n\n{body_clean.strip()}{navigation}\n"
-    
+
     if dry_run:
         _print_dry_run(md_file, related_docs, navigation)
         return True
-    
+
     return _write_updated_file(md_file, new_content)
 
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
@@ -324,9 +325,9 @@ def main():
     parser.add_argument('--directory', '-d', help='Process all markdown files in directory')
     parser.add_argument('--update-all', action='store_true', help='Update all markdown files in current directory')
     parser.add_argument('--dry-run', action='store_true', help='Show changes without writing files')
-    
+
     args = parser.parse_args()
-    
+
     # Determine target
     if args.update_all:
         target_dir = Path.cwd()
@@ -337,27 +338,26 @@ def main():
         if input_path.is_dir():
             target_dir = input_path
         else:
-            # Single file mode
             success = add_related_docs(input_path, dry_run=args.dry_run)
             sys.exit(0 if success else 1)
     else:
         parser.print_help()
         sys.exit(1)
-    
+
     # Batch mode: process directory
     if not target_dir.exists():
         print(f"Error: Directory not found: {target_dir}", file=sys.stderr)
         sys.exit(1)
-    
+
     print(f"Scanning directory: {target_dir}")
     all_docs = scan_directory(target_dir)
     print(f"Found {len(all_docs)} markdown files with frontmatter")
-    
+
     updated_count = 0
     for md_file in all_docs.keys():
         if add_related_docs(md_file, all_docs, dry_run=args.dry_run):
             updated_count += 1
-    
+
     print(f"\n{'Would update' if args.dry_run else 'Updated'} {updated_count} file(s)")
 
 

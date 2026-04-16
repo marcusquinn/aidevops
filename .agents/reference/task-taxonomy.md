@@ -42,7 +42,6 @@ Tiers route tasks to models with appropriate capability. The pulse resolves labe
 **Rules:**
 - Default to `tier:standard` when uncertain. Use `tier:simple` for prescriptive work, `tier:thinking` for deep reasoning.
 - **Cascade dispatch:** The pulse may start at `tier:simple` and escalate through `tier:standard` → `tier:thinking` if the worker fails. Each tier's attempt produces a structured escalation report (see `templates/escalation-report-template.md`) that gives the next tier pre-digested context.
-- **Backward compatibility:** `tier:thinking` is accepted as an alias for `tier:thinking` during transition. Scripts match both labels.
 
 ## Tier Assignment Validation
 

@@ -10,6 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.54] - 2026-04-16
+
+### Changed
+
+- protect override labels from worker self-application + plugin import check (#19242)
+
+## [3.8.53] - 2026-04-16
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.8.52] - 2026-04-16
+
+### Changed
+
+- fix interactive claims broken by stale-recovery + auto-claim conflation (#19237)
+- tighten shell-style-guide.md from 143 to 135 lines (#19240)
+- ratchet down NESTING_DEPTH_THRESHOLD 286→281 (actual 279 + 2 buffer) (#19239)
+- tighten pre-dispatch-validators.md from 134 to 129 lines (#19221)
+- refactor(email-pipeline): decompose email python cluster (#19230)
+- refactor(higgsfield): decompose commands/video/common/image into focused modules (#19232)
+- decompose doc/agent indexing python cluster into shared modules (#19233)
+- Maintenance: update simplification state registry
+
+## [3.8.51] - 2026-04-16
+
+### Changed
+
+- remove redundant backward-compat notes for tier:thinking rename (#19218)
+- tighten shell-style-guide.md prose (153 → 143 lines) (#19219)
+- fix(ci): linked-issue-check workflow fails with 403 on external contributor PRs (#19208)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- treat NMR as transient when approval marker exists (#19231)
+- bump NESTING_DEPTH_THRESHOLD 281→286 to restore headroom (GH#19215) (#19216)
+
 ## [3.8.50] - 2026-04-16
 
 ### Added
