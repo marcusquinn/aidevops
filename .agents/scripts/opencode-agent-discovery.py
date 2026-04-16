@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
 from discovery_utils import atomic_json_write
 from agent_config import (
     discover_primary_agents, validate_subagent_refs,
-    apply_disabled_agents,
+    apply_disabled_agents, display_to_filename,
 )
 from mcp_config import (
     apply_mcp_loading_policy, remove_deprecated_mcps,
@@ -36,7 +36,7 @@ except (OSError, json.JSONDecodeError) as e:
 primary_agents, sorted_agents, subagent_filtered_count = discover_primary_agents(agents_dir)
 
 # Validate subagent references
-missing_refs = validate_subagent_refs(primary_agents, agents_dir)
+missing_refs = validate_subagent_refs(primary_agents, agents_dir, display_to_filename)
 if missing_refs:
     for agent, ref in missing_refs:
         print(f"  Warning: {agent} references subagent '{ref}' but no {ref}.md found", file=sys.stderr)
