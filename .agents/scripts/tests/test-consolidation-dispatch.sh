@@ -408,12 +408,19 @@ fixture_two_worker_superseded_comments() {
 	'
 }
 
-# Fixture: one stale-recovery-tick comment (62 chars — under min_chars 500
-# but we set min to 50 in the stub, so it would otherwise pass and count).
-fixture_stale_recovery_tick_comment() {
+# Fixture: TWO stale-recovery-tick comments — both must be filtered.
+# CodeRabbit flagged (PR #19411): a single-comment fixture is vacuous
+# against THRESHOLD=2 — the test would pass even without the filter fix
+# because 1 comment never meets the threshold. Two comments that clear
+# min_chars BUT are filtered by the ^<!-- stale-recovery-tick prefix
+# exercise the filter directly: pre-t2144 they'd have counted as
+# substantive (substantive_count=2 == threshold=2 → dispatch); post-t2144
+# they're filtered out (substantive_count=0 < threshold → no dispatch).
+fixture_stale_recovery_tick_comments() {
 	cat <<'JSON'
 [
-  {"user": {"login": "marcusquinn", "type": "User"}, "created_at": "2026-04-16T17:06:16Z", "body": "<!-- stale-recovery-tick:1 -->\nStale recovery tick 1/2 (t2008). This padding exists only so the body length clears the test-harness threshold of 50 chars without adding any real scope change."}
+  {"user": {"login": "marcusquinn", "type": "User"}, "created_at": "2026-04-16T17:06:16Z", "body": "<!-- stale-recovery-tick:1 -->\nStale recovery tick 1/2 (t2008). This padding exists only so the body length clears the test-harness threshold of 50 chars without adding any real scope change."},
+  {"user": {"login": "marcusquinn", "type": "User"}, "created_at": "2026-04-16T17:21:30Z", "body": "<!-- stale-recovery-tick:2 -->\nStale recovery tick 2/2 (t2008). This padding exists only so the body length clears the test-harness threshold of 50 chars without adding any real scope change."}
 ]
 JSON
 }
@@ -451,7 +458,7 @@ test_worker_superseded_comments_are_filtered() {
 test_stale_recovery_tick_comments_are_filtered() {
 	setup_gh_stub
 	GH_ISSUE_VIEW_LABELS="bug,tier:standard"
-	GH_API_COMMENTS_JSON=$(fixture_stale_recovery_tick_comment)
+	GH_API_COMMENTS_JSON=$(fixture_stale_recovery_tick_comments)
 	GH_ISSUE_LIST_CHILD_JSON="[]"
 	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
 	export GH_ISSUE_VIEW_LABELS GH_API_COMMENTS_JSON
