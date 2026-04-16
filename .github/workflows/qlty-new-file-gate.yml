@@ -147,6 +147,7 @@ jobs:
       - name: Enforce gate
         env:
           HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'new-file-smell-ok') }}
+          AUTHOR_ASSOC: ${{ github.event.pull_request.author_association }}
           PR_BODY: ${{ github.event.pull_request.body }}
           EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
         run: |
@@ -160,12 +161,18 @@ jobs:
             exit 1
           fi
           if [ "$HAS_OVERRIDE" != "true" ]; then
-            echo "::error::New file(s) ship with qlty smells. Apply the 'new-file-smell-ok' label AND add a '## New File Smell Justification' section to the PR description to override."
+            echo "::error::New file(s) ship with qlty smells. Apply the 'new-file-smell-ok' label AND add a '## New File Smell Justification' section to the PR description to override (maintainer only)."
             exit 1
           fi
-          # Override label is set — require the justification section in the body.
+          # t2133: new-file-smell-ok requires maintainer (OWNER/MEMBER) authorship.
+          # Workers cannot self-override — prevents workers from gaming the gate.
+          if [ "$AUTHOR_ASSOC" != "OWNER" ] && [ "$AUTHOR_ASSOC" != "MEMBER" ]; then
+            echo "::error::New file(s) ship with qlty smells. 'new-file-smell-ok' override requires OWNER or MEMBER authorship (got: ${AUTHOR_ASSOC}). Ask a maintainer to apply the label if justified."
+            exit 1
+          fi
+          # Override label is set by maintainer — require the justification section in the body.
           if printf '%s' "$PR_BODY" | grep -qE '^##+[[:space:]]+New File Smell Justification'; then
-            echo "::warning::Qlty new-file gate: smells detected but 'new-file-smell-ok' label + justification section present — allowing with warning."
+            echo "::warning::Qlty new-file gate: smells detected but 'new-file-smell-ok' label + justification section present (maintainer override) — allowing with warning."
             exit 0
           fi
           echo "::error::'new-file-smell-ok' label is set but the PR description is missing a '## New File Smell Justification' section. Add the section with a rationale for why the new file(s) may legitimately ship with smells, then push again."
