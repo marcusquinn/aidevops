@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.61] - 2026-04-16
+
+### Changed
+
+- Maintenance: update simplification state registry
+- tighten pre-dispatch-validators.md prose (84→82 lines) (#19366)
+- add role:contributor guard to repos.json — gate scanners for non-maintainer instances (#19350)
+- add role:contributor guard to repos.json — gate scanners for non-maintainer instances (#19361)
+- propagate write failures through all domain command generators (#19362)
+- Maintenance: update simplification state registry
+- simplify null check in _get_min_edit_lag, harden test main-strip (#19360)
+
+### Fixed
+
+- use non-whitespace delimiter in merge-pass field extraction (#19357)
+
 ## [3.8.60] - 2026-04-16
 
 ### Changed
