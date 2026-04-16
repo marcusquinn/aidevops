@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.51] - 2026-04-16
+
+### Changed
+
+- remove redundant backward-compat notes for tier:thinking rename (#19218)
+- tighten shell-style-guide.md prose (153 → 143 lines) (#19219)
+- fix(ci): linked-issue-check workflow fails with 403 on external contributor PRs (#19208)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- treat NMR as transient when approval marker exists (#19231)
+- bump NESTING_DEPTH_THRESHOLD 281→286 to restore headroom (GH#19215) (#19216)
+
 ## [3.8.50] - 2026-04-16
 
 ### Added
