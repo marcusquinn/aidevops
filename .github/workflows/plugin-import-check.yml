@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# t2134: Import-resolution check for .mjs plugin files.
+# Catches broken import chains (like the oauth-pool-token-endpoint.mjs incident
+# in PR #19229) by actually loading each plugin entry point via Node.js.
+# node --check only verifies syntax, not that imports resolve.
+
+name: Plugin Import Check
+
+on:
+  pull_request:
+    paths:
+      - '.agents/plugins/**/*.mjs'
+
+concurrency:
+  group: plugin-import-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  import-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check plugin import resolution
+        run: |
+          set -euo pipefail
+          FAILED=0
+          # Find all plugin directories that contain .mjs files
+          for plugin_dir in .agents/plugins/*/; do
+            [ -d "$plugin_dir" ] || continue
+            # Find entry points: index.mjs or the main barrel file
+            for entry in "$plugin_dir"*.mjs; do
+              [ -f "$entry" ] || continue
+              echo "Checking import: $entry"
+              if node -e "import('./$entry').then(() => console.log('  OK: $entry')).catch(e => { console.error('  FAIL: $entry:', e.message); process.exit(1); })" 2>&1; then
+                :
+              else
+                FAILED=$((FAILED + 1))
+              fi
+            done
+          done
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo ""
+            echo "::error::$FAILED plugin file(s) have broken import chains. Every import must resolve to an existing file."
+            exit 1
+          fi
+          echo "All plugin imports resolve successfully."

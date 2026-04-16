@@ -150,6 +150,8 @@ jobs:
       - name: Enforce gate
         env:
           HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'ratchet-bump') }}
+          HAS_SIMPLIFICATION: ${{ contains(github.event.pull_request.labels.*.name, 'simplification') }}
+          AUTHOR_ASSOC: ${{ github.event.pull_request.author_association }}
           EXIT_CODE: ${{ steps.diff.outputs.exit_code }}
         run: |
           set -euo pipefail
@@ -158,8 +160,20 @@ jobs:
             exit 0
           fi
           if [ "$HAS_OVERRIDE" = "true" ]; then
-            echo "::warning::Qlty smell regression detected but 'ratchet-bump' label is set — allowing with warning."
+            # t2133: simplification PRs cannot use ratchet-bump — their goal is to reduce smells, not shift them.
+            if [ "$HAS_SIMPLIFICATION" = "true" ]; then
+              echo "::error::Qlty smell regression detected. 'ratchet-bump' is not allowed on PRs labeled 'simplification' — the goal is to reduce smells, not shift them. Remove the 'ratchet-bump' label and fix the regression."
+              exit 1
+            fi
+            # t2133: ratchet-bump requires maintainer (OWNER/MEMBER) authorship.
+            # Workers (COLLABORATOR/CONTRIBUTOR) cannot self-override — prevents
+            # workers from gaming the gate with plausible-sounding justifications.
+            if [ "$AUTHOR_ASSOC" != "OWNER" ] && [ "$AUTHOR_ASSOC" != "MEMBER" ]; then
+              echo "::error::Qlty smell regression detected. 'ratchet-bump' override requires OWNER or MEMBER authorship (got: ${AUTHOR_ASSOC}). Ask a maintainer to apply the label if the regression is justified."
+              exit 1
+            fi
+            echo "::warning::Qlty smell regression detected but 'ratchet-bump' label is set by maintainer — allowing with warning."
             exit 0
           fi
-          echo "::error::Qlty smell regression detected (exit $EXIT_CODE). Add the 'ratchet-bump' label to override if justified."
+          echo "::error::Qlty smell regression detected (exit $EXIT_CODE). Add the 'ratchet-bump' label to override if justified (maintainer only)."
           exit 1
