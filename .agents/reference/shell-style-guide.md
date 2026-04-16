@@ -3,9 +3,9 @@
 
 # Shell Helper Style Guide
 
-Canonical rules for `.agents/scripts/**/*.sh`: **source `shared-constants.sh` OR use `[[ -z "${VAR+x}" ]]` guards**. Never declare `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, or `NC` at top level without a guard. Never `readonly` those names outside `shared-constants.sh`. Enforcement: `shell-init-pattern-check.sh` + CI (Phase 2, t2053). Rule in `prompts/build.txt` → Quality Standards.
+Canonical rules for `.agents/scripts/**/*.sh`: **source `shared-constants.sh` OR use `[[ -z "${VAR+x}" ]]` guards**. Never assign `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, or `NC` at top level without a guard. Never `readonly` those names outside `shared-constants.sh`. Enforcement: `shell-init-pattern-check.sh` + CI (Phase 2, t2053). See `prompts/build.txt` → "Quality Standards".
 
-**Why this rule exists:** On 2026-04-09, `init-routines-helper.sh:22` assigned `GREEN='\033[0;32m'` at top level. `setup.sh` sources it after `shared-constants.sh` (which has `readonly GREEN`). Under `set -Eeuo pipefail`, the re-assignment fatally aborted `setup.sh`, silently skipping `setup_privacy_guard` and `setup_canonical_guard`. **Auto-update was broken for 4 days** (GH#18702, cascade: GH#18693). PR #18728 patched that script; this guide prevents recurrence. Audit (2026-04-15): **18 scripts** with unguarded plain assignments and **2 production scripts** (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`) using `readonly` — all latent repeats of the same outage.
+**Incident rationale (GH#18702):** On 2026-04-09, `init-routines-helper.sh:22` had an unguarded `GREEN='\033[0;32m'`. `setup.sh` sources it after `shared-constants.sh` (which has `readonly GREEN`). Under `set -Eeuo pipefail`, the re-assignment fatally aborted `setup.sh`, silently skipping `setup_privacy_guard` and `setup_canonical_guard` — **auto-update broken for 4 days** (cascade: GH#18693, fixed: PR #18728). Audit 2026-04-15: **18 unguarded plain + 2 production `readonly` violators** (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`) — all latent repeats.
 
 ## Allowed patterns
 
@@ -24,11 +24,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo -e "${GREEN}[OK]${NC} sourced shared constants"
 ```
 
-Use `${RED}`, `${GREEN}`, etc. directly — no local declarations needed. Subdirectory scripts: `source "${SCRIPT_DIR}/../shared-constants.sh"`.
+Use `${RED}`, `${GREEN}`, etc. directly. Subdirectory scripts: `source "${SCRIPT_DIR}/../shared-constants.sh"`.
 
 ### B — granular `${VAR+x}` guard (fallback)
 
-Scripts without `shared-constants.sh` (early bootstrap, standalone CLIs, curl distribution):
+Scripts without `shared-constants.sh` (early bootstrap, standalone CLIs, curl-distributed):
 
 ```bash
 #!/usr/bin/env bash
@@ -42,11 +42,11 @@ set -Eeuo pipefail
 [[ -z "${NC+x}" ]]     && NC='\033[0m'
 ```
 
-`${VAR+x}` distinguishes *unset* from *set-to-empty* — parent with `shared-constants.sh` wins; standalone picks up fallback. **Do not use `${VAR:-}`** — it treats set-to-empty as unset.
+`${VAR+x}` distinguishes *unset* from *set-to-empty* — parent `shared-constants.sh` wins; standalone picks up fallback. **Do not use `${VAR:-}`** — it treats set-to-empty as unset.
 
-### C — prefixed names (test harnesses and strictly-internal utilities)
+### C — prefixed names (test harnesses and strictly-internal utilities only)
 
-For test harnesses and strictly-internal utilities only. Prefix must be `TEST_`, `_<script_name>_`, or documented in `shared-constants.sh`:
+Prefix must be `TEST_`, `_<script_name>_`, or documented in `shared-constants.sh`:
 
 ```bash
 readonly TEST_RED=$'\033[0;31m'
@@ -54,25 +54,25 @@ readonly TEST_GREEN=$'\033[0;32m'
 readonly TEST_RESET=$'\033[0m'
 ```
 
-`readonly` safe — prefixed names don't collide. **Production helpers: use Pattern A or B** — inconsistent naming forces `TEST_RED`↔`RED` translation.
+`readonly` safe — prefixed names don't collide. **Production helpers: use Pattern A or B.**
 
 ## Banned patterns
 
-**Unguarded plain assignment** (collides with parent `readonly`) — fix: Pattern A or B.
+**Unguarded plain assignment** (collides with parent `readonly`) → fix: Pattern A or B.
 
 ```bash
 # BAD
 RED='\033[0;31m'
 ```
 
-**Unguarded `readonly` on canonical names** — breaks on re-sourcing — fix: Pattern B (production) or Pattern C with prefix (tests).
+**Unguarded `readonly` on canonical names** (breaks on re-sourcing) → fix: Pattern B (production), C with prefix (tests).
 
 ```bash
 # WORST
 readonly RED='\033[0;31m'
 ```
 
-**Coarse include-guard** (discouraged, allowed for backward compat):
+**Coarse include-guard** (allowed for backward compat; discouraged):
 
 ```bash
 if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]; then
@@ -81,7 +81,7 @@ if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]; then
 fi
 ```
 
-Problem: all-or-nothing — colors partially undefined under `set -u` when parent set some without the sentinel. Pattern B handles each independently. Existing code may remain; migrate opportunistically.
+All-or-nothing: colors partially undefined under `set -u` when parent set some without the sentinel. Pattern B handles each independently. Migrate opportunistically.
 
 ## Canonical shared variables
 
@@ -92,14 +92,14 @@ Problem: all-or-nothing — colors partially undefined under `set -u` when paren
 | `COLOR_RED`, `COLOR_GREEN`, `COLOR_YELLOW`, `COLOR_BLUE`, `COLOR_PURPLE`, `COLOR_CYAN`, `COLOR_WHITE`, `COLOR_RESET` | Canonical `COLOR_*` names (preferred in new code) |
 | `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, `NC` | Short-name aliases (still supported) |
 
-Non-canonical colors (e.g., `MAGENTA`, `GRAY`, `BOLD`, `DIM`) → declare locally with Pattern B. New canonical colors → add to `shared-constants.sh` first.
+Non-canonical colors (`MAGENTA`, `GRAY`, `BOLD`, `DIM`) → declare locally with Pattern B. New canonicals → add to `shared-constants.sh` first.
 
 ## Migration checklist
 
 1. Identify current pattern (plain, readonly, include-guard, or prefixed).
 2. Choose target — A (inside `.agents/scripts/`, stable path), B (standalone bootstrap), C (test harness only).
 3. Replace unguarded assignments with chosen pattern block (after `set -Eeuo pipefail`, before functions).
-4. Test standalone (`bash ./the-script.sh --help`) and sourced (`setup.sh --non-interactive` or pulse). `shellcheck` must pass.
+4. Test standalone (`bash ./the-script.sh --help`) and sourced (`setup.sh --non-interactive`). `shellcheck` must pass.
 5. Commit. Phase 2 lint gate (`shell-init-pattern-check.sh`) automates detection and PR enforcement.
 
 ## Audit data (2026-04-15) — 529 files scanned, 337 source `shared-constants.sh`
@@ -114,7 +114,7 @@ Non-canonical colors (e.g., `MAGENTA`, `GRAY`, `BOLD`, `DIM`) → declare locall
 
 Of the 13 unguarded-readonly: 2 production (`sonarcloud-autofix.sh`, `coderabbit-cli.sh`), 11 test harnesses. Phase 7c (GH#19068, 2026-04-15): migrated `test-pr-task-check.sh`, `test-task-id-collision.sh`, `tests/test-encryption-git-roundtrip.sh` to Pattern C. Remaining open: 28 plain + 14 readonly across 42 files (phases 2, 3, 5, 6, 7a/7b, 8a/b/c).
 
-## Phased migration roadmap (t2053) — each phase its own child task/PR (≤5 files, t1422 cap):
+## Phased migration roadmap (t2053) — each phase its own child task/PR (≤5 files, t1422 cap)
 
 1. **Phase 1** — Foundation: this guide + `prompts/build.txt` rule + `architecture.md` cross-ref.
 2. **Phase 2** — Lint gate: `shell-init-pattern-check.sh` + CI + unit test. Must land before Phase 3.
