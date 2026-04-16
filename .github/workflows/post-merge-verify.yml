@@ -1,0 +1,193 @@
+name: Post-Merge Brief Verification
+
+# t2135: After a PR merges to main, extract the task ID from the PR title,
+# locate the corresponding brief file, parse verify: YAML blocks from its
+# acceptance criteria, and run method:bash blocks. On any failure, open a
+# follow-up issue linking the merged PR and the failed criteria.
+#
+# This catches cases where a PR ships code that does not satisfy the
+# machine-checkable acceptance criteria defined in the brief.
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: post-merge-verify-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  verify-brief:
+    name: Verify Brief Acceptance Criteria
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # ---------------------------------------------------------------
+      # Step 1: Extract task ID from PR title (tNNN pattern)
+      # ---------------------------------------------------------------
+      - name: Extract task ID from PR title
+        id: extract
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          TASK_ID=""
+          if echo "$PR_TITLE" | grep -qE '^t[0-9]+'; then
+            TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*')
+          fi
+          echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
+
+          if [[ -z "$TASK_ID" ]]; then
+            echo "No task ID found in PR title — skipping brief verification."
+          else
+            echo "Task ID: $TASK_ID"
+          fi
+
+      # ---------------------------------------------------------------
+      # Step 2: Checkout main (post-merge state)
+      # ---------------------------------------------------------------
+      - name: Checkout code
+        if: steps.extract.outputs.task_id != ''
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+
+      # ---------------------------------------------------------------
+      # Step 3: Check if brief exists and has verify blocks
+      # ---------------------------------------------------------------
+      - name: Check brief exists
+        if: steps.extract.outputs.task_id != ''
+        id: brief
+        env:
+          TASK_ID: ${{ steps.extract.outputs.task_id }}
+        run: |
+          BRIEF_PATH="todo/tasks/${TASK_ID}-brief.md"
+          if [[ -f "$BRIEF_PATH" ]]; then
+            # Quick check: does the brief contain any verify: blocks?
+            if grep -q 'verify:' "$BRIEF_PATH"; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "path=$BRIEF_PATH" >> "$GITHUB_OUTPUT"
+              echo "Brief found at $BRIEF_PATH with verify blocks"
+            else
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              echo "Brief found at $BRIEF_PATH but contains no verify: blocks — skipping."
+            fi
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No brief found at $BRIEF_PATH — skipping."
+          fi
+
+      # ---------------------------------------------------------------
+      # Step 4: Run verify blocks
+      # ---------------------------------------------------------------
+      - name: Run verify blocks
+        if: steps.brief.outputs.exists == 'true'
+        id: verify
+        env:
+          BRIEF_PATH: ${{ steps.brief.outputs.path }}
+        shell: bash
+        run: |
+          set +e  # Capture exit code without failing the step
+          chmod +x .agents/scripts/verify-brief-helper.sh
+          .agents/scripts/verify-brief-helper.sh verify "$BRIEF_PATH" > /tmp/verify-output.txt 2>&1
+          EXIT_CODE=$?
+          set -e
+
+          cat /tmp/verify-output.txt
+
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+          # Use heredoc delimiter for multiline output
+          {
+            echo 'output<<VERIFY_HEREDOC_EOF'
+            cat /tmp/verify-output.txt
+            echo 'VERIFY_HEREDOC_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------
+      # Step 5: Post summary comment on the PR
+      # ---------------------------------------------------------------
+      - name: Post PR comment with results
+        if: steps.verify.outputs.exit_code != '' && steps.brief.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          EXIT_CODE: ${{ steps.verify.outputs.exit_code }}
+          VERIFY_OUTPUT: ${{ steps.verify.outputs.output }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ "$EXIT_CODE" == "0" ]]; then
+            STATUS="✅ All verify blocks passed"
+          else
+            STATUS="❌ One or more verify blocks failed"
+          fi
+
+          COMMENT_BODY="## Post-Merge Brief Verification
+
+          **Task:** ${TASK_ID} | **Status:** ${STATUS}
+
+          <details>
+          <summary>Verification output</summary>
+
+          \`\`\`
+          ${VERIFY_OUTPUT}
+          \`\`\`
+
+          </details>
+
+          Brief: \`todo/tasks/${TASK_ID}-brief.md\`"
+
+          # Dedent the heredoc content
+          COMMENT_BODY=$(echo "$COMMENT_BODY" | sed 's/^          //')
+
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT_BODY"
+
+      # ---------------------------------------------------------------
+      # Step 6: Create follow-up issue on failure
+      # ---------------------------------------------------------------
+      - name: Create follow-up issue on failure
+        if: steps.verify.outputs.exit_code != '0' && steps.verify.outputs.exit_code != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          VERIFY_OUTPUT: ${{ steps.verify.outputs.output }}
+          REPO: ${{ github.repository }}
+        run: |
+          TITLE="${TASK_ID}: post-merge brief verification failed"
+
+          BODY="## Post-Merge Verification Failure
+
+          PR #${PR_NUMBER} merged but one or more \`verify:\` acceptance criteria in \`todo/tasks/${TASK_ID}-brief.md\` failed.
+
+          ### Verification Output
+
+          \`\`\`
+          ${VERIFY_OUTPUT}
+          \`\`\`
+
+          ### Action Required
+
+          Review the failed criteria and either:
+          1. Fix the underlying issue in a follow-up PR
+          2. Update the brief if the criteria are no longer applicable
+
+          ---
+          <!-- aidevops:generator=post-merge-verify -->
+          Ref: PR #${PR_NUMBER} | Task: ${TASK_ID}"
+
+          # Dedent the heredoc content
+          BODY=$(echo "$BODY" | sed 's/^          //')
+
+          gh issue create --repo "$REPO" \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "quality-debt"
