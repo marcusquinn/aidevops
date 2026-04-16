@@ -76,8 +76,9 @@ jobs:
         errors=0
         while IFS= read -r file; do
           [ -n "$file" ] || continue
-          result=$(/bin/bash -n "$file" 2>&1)
-          if [ -n "$result" ]; then
+          # Use if-condition to prevent set -e (GH Actions default) from
+          # aborting the loop on the first syntax error (CodeRabbit #19276).
+          if ! result=$(/bin/bash -n "$file" 2>&1); then
             echo "FAIL $file"
             echo "$result"
             errors=$((errors + 1))
