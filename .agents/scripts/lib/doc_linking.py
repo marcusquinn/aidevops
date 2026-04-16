@@ -151,35 +151,8 @@ def build_thread_relationships(documents: list[Document]) -> None:
         _find_thread_siblings(doc, by_thread_id)
 
 
-def _count_shared_entities(doc: Document, by_entity: dict) -> dict:
-    """Count how many entities each other document shares with doc."""
-    doc_entities = doc.get_all_entities()
-    shared_counts: dict = defaultdict(int)
-    for entity in doc_entities:
-        for other in by_entity[entity]:
-            if other.path != doc.path:
-                shared_counts[other] += 1
-    return shared_counts
-
-
-def build_entity_relationships(documents: list[Document], min_shared: int = 2) -> None:
-    """Build relationships based on shared entities."""
-    by_entity: dict = defaultdict(list)
-
-    for doc in documents:
-        for entity in doc.get_all_entities():
-            by_entity[entity].append(doc)
-
-    for doc in documents:
-        if not doc.get_all_entities():
-            continue
-
-        shared_counts = _count_shared_entities(doc, by_entity)
-
-        for other, count in shared_counts.items():
-            if count >= min_shared:
-                rel_path = other.path.relative_to(doc.path.parent)
-                doc.related_docs["shared_entities"].append(str(rel_path))
+# Re-export entity relationships for backward compatibility
+from entity_relationships import build_entity_relationships  # noqa: F401
 
 
 def build_attachment_relationships(documents: list[Document]) -> None:

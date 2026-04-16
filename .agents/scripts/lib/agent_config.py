@@ -129,10 +129,6 @@ AGENT_MODEL_TIERS = {}
 # Files to skip (not primary agents)
 SKIP_FILES = {"AGENTS.md", "README.md", "configs/SKILL-SCAN-RESULTS.md"} | SKIP_PRIMARY_AGENTS
 
-# Built-in agent types (general, explore) don't have .md files
-BUILTIN_SUBAGENTS = {"general", "explore"}
-
-
 # =============================================================================
 # AGENT CONFIGURATION HELPERS
 # =============================================================================
@@ -244,82 +240,8 @@ def discover_primary_agents(agents_dir):
     return primary_agents, sorted_agents, subagent_filtered_count
 
 
-# =============================================================================
-# SUBAGENT VALIDATION
-# =============================================================================
-
-def _collect_subagent_files(agents_dir):
-    """Walk agents_dir and return (all_subagent_files, all_subagent_paths) sets."""
-    all_subagent_files = set()
-    all_subagent_paths = set()
-
-    for root, _, files in os.walk(agents_dir):
-        rel_root = os.path.relpath(root, agents_dir)
-        if rel_root == "." or "loop-state" in rel_root.split(os.sep):
-            continue
-        for f in files:
-            if not f.endswith(".md"):
-                continue
-            if f in {"AGENTS.md", "README.md"} or f.endswith("-skill.md"):
-                continue
-            full_path = os.path.join(root, f)
-            fm = parse_frontmatter(full_path)
-            if fm.get("mode") != "subagent":
-                continue
-
-            stem = os.path.splitext(f)[0]
-            rel_path = os.path.relpath(full_path, agents_dir)
-            rel_stem = os.path.splitext(rel_path)[0].replace(os.sep, "/")
-            all_subagent_files.add(stem)
-            all_subagent_paths.add(rel_stem)
-
-    return all_subagent_files, all_subagent_paths
-
-
-def subagent_ref_exists(agent_name, subagent_ref, all_subagent_files, all_subagent_paths):
-    """Check if a subagent reference resolves to an actual file."""
-    # Exact basename match
-    if subagent_ref in all_subagent_files:
-        return True
-
-    # Exact path from agents root
-    if subagent_ref in all_subagent_paths:
-        return True
-
-    # Agent-local relative path
-    agent_slug = display_to_filename(agent_name)
-    if f"{agent_slug}/{subagent_ref}" in all_subagent_paths:
-        return True
-
-    # Folder shorthand
-    if "/" in subagent_ref:
-        leaf = subagent_ref.rsplit("/", 1)[1]
-        if (f"{agent_slug}/{subagent_ref}/{leaf}" in all_subagent_paths
-                or f"{subagent_ref}/{leaf}" in all_subagent_paths):
-            return True
-
-    return False
-
-
-def validate_subagent_refs(primary_agents, agents_dir):
-    """Validate subagent references against actual files. Returns list of (agent, ref) missing."""
-    all_subagent_files, all_subagent_paths = _collect_subagent_files(agents_dir)
-    missing_refs = []
-
-    for display_name, agent_config in primary_agents.items():
-        task_perms = agent_config.get('permission', {}).get('task', {})
-        if not task_perms:
-            continue
-        for subagent_name in task_perms:
-            if subagent_name == '*':
-                continue
-            if subagent_name in BUILTIN_SUBAGENTS:
-                continue
-            if not subagent_ref_exists(display_name, subagent_name,
-                                       all_subagent_files, all_subagent_paths):
-                missing_refs.append((display_name, subagent_name))
-
-    return missing_refs
+# Re-export subagent validation for backward compatibility
+from subagent_validation import validate_subagent_refs  # noqa: F401
 
 
 # =============================================================================
