@@ -27,7 +27,7 @@ set -euo pipefail
 #   2 - Nothing to deploy (no changes detected)
 
 # Colors — sourced from shared-constants.sh (Pattern A, t2053.3)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
 
