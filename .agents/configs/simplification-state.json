@@ -408,9 +408,9 @@
       "pr": 18172
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "at": "2026-04-16T18:40:58Z",
-      "hash": "ae41e4b113ad30af91ec5753cd5880c336a483fe",
-      "passes": 19,
+      "at": "2026-04-16T20:28:03Z",
+      "hash": "7e29184ccfeb3c44b50a58eafb8f459f25ec9011",
+      "passes": 20,
       "pr": 17979
     },
     ".agents/content.md": {
@@ -5835,7 +5835,7 @@
       "pr": 17019
     },
     ".agents/tools/design/library/styles/corporate-traditional/02-colours.md": {
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
       "at": "2026-04-04T14:53:40Z",
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "issue": "GH#17250",
