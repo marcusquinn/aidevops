@@ -172,10 +172,13 @@ async function handleCursorAuthorize(email, client) {
   });
 }
 
-// expectedState is intentionally unused in the Google flow: Google's manual
-// code-paste flow only returns the authorization code (not code+state), so
-// state validation is not possible. The state nonce is still sent in the
-// authorize URL for CSRF protection at the redirect level.
+// NOTE: expectedState cannot be validated in this flow. GOOGLE_REDIRECT_URI is
+// the OOB (urn:ietf:wg:oauth:2.0:oob) redirect, which causes Google to display
+// the authorization code directly in the browser page rather than performing an
+// HTTP redirect. Because there is no redirect, the state nonce is never returned
+// to our process. We still include state in the authorize URL to prevent
+// redirect-level CSRF; the absence of callback-side validation is an inherent
+// limitation of the OOB grant type, not a fixable bug in this code.
 // eslint-disable-next-line no-unused-vars
 async function handleGoogleCallback(code, pkce, expectedState, email, client) {
   const authCode = code?.trim();
