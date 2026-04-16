@@ -247,7 +247,7 @@ If no specific file is provided, review the agents used in this session and prop
 4. Universal applicability (>80% of tasks)
 5. Duplicate detection across agents
 
-Follow the improvement proposal format from the agent-review instructions.'
+Follow the improvement proposal format from the agent-review instructions.' || return 1
 
 	maybe_write_command "preflight" \
 		"Run quality checks before version bump and release" \
@@ -259,7 +259,7 @@ This includes:
 1. Code quality checks (ShellCheck, SonarCloud, secrets scan)
 2. Markdown formatting validation
 3. Version consistency verification
-4. Git status check (clean working tree)'
+4. Git status check (clean working tree)' || return 1
 
 	maybe_write_command "postflight" \
 		"Check code audit feedback on latest push (branch or PR)" \
@@ -280,7 +280,7 @@ Target: $ARGUMENTS
 4. SonarCloud quality gate status
 5. Any blocking issues that need resolution
 
-Report findings and recommend next actions (fix issues, merge, etc.)'
+Report findings and recommend next actions (fix issues, merge, etc.)' || return 1
 
 	maybe_write_command "review-issue-pr" \
 		"Review external issue or PR - validate problem and evaluate solution" \
@@ -296,7 +296,7 @@ Review this issue or PR: $ARGUMENTS
 **Core questions to answer:**
 1. Is the issue real? (reproducible, not duplicate, actually a bug)
 2. Is this the best solution? (simplest approach, fixes root cause)
-3. Is the scope appropriate? (minimal changes, no scope creep)'
+3. Is the scope appropriate? (minimal changes, no scope creep)' || return 1
 
 	maybe_write_command "release" \
 		"Full release workflow with version bump, tag, and GitHub release" \
@@ -316,7 +316,7 @@ Release type: $ARGUMENTS (valid: major, minor, patch)
    ```
 4. Report the result with the GitHub release URL
 
-**CRITICAL**: Use only the single command above - it handles everything atomically.'
+**CRITICAL**: Use only the single command above - it handles everything atomically.' || return 1
 
 	maybe_write_command "version-bump" \
 		"Bump project version (major, minor, or patch)" \
@@ -329,7 +329,7 @@ Valid types: major, minor, patch
 This updates:
 1. VERSION file
 2. package.json (if exists)
-3. Other version references as configured'
+3. Other version references as configured' || return 1
 
 	maybe_write_command "changelog" \
 		"Update CHANGELOG.md following Keep a Changelog format" \
@@ -340,7 +340,7 @@ Action: $ARGUMENTS
 This maintains CHANGELOG.md with:
 - Unreleased section for pending changes
 - Version sections with dates
-- Categories: Added, Changed, Deprecated, Removed, Fixed, Security'
+- Categories: Added, Changed, Deprecated, Removed, Fixed, Security' || return 1
 
 	return 0
 }
@@ -364,7 +364,7 @@ This runs fast, offline checks:
 3. Pattern validation (return statements, positional parameters)
 4. Markdown formatting checks
 
-For remote auditing (CodeRabbit, Codacy, SonarCloud), use /code-audit-remote'
+For remote auditing (CodeRabbit, Codacy, SonarCloud), use /code-audit-remote' || return 1
 
 	maybe_write_command "code-audit-remote" \
 		"Run remote code auditing (CodeRabbit, Codacy, SonarCloud)" \
@@ -377,7 +377,7 @@ This calls external quality services:
 2. Codacy - Code quality analysis
 3. SonarCloud - Security and maintainability
 
-For local linting (fast, offline), use /linters-local first'
+For local linting (fast, offline), use /linters-local first' || return 1
 
 	maybe_write_command "code-standards" \
 		"Check code against documented quality standards" \
@@ -390,7 +390,7 @@ This validates against our documented standards:
 - S7679: Positional parameters assigned to locals
 - S1192: Constants for repeated strings
 - S1481: No unused variables
-- ShellCheck: Zero violations'
+- ShellCheck: Zero violations' || return 1
 
 	maybe_write_command "code-simplifier" \
 		"Simplify and refine code for clarity, consistency, and maintainability" \
@@ -406,7 +406,7 @@ Target: $ARGUMENTS
 **Key Principles:**
 - Preserve exact functionality
 - Clarity over brevity
-- Apply project standards'
+- Apply project standards' || return 1
 
 	return 0
 }
@@ -424,7 +424,7 @@ Feature: $ARGUMENTS
 This will:
 1. Create feature branch from main
 2. Set up development environment
-3. Guide feature implementation'
+3. Guide feature implementation' || return 1
 
 	maybe_write_command "bugfix" \
 		"Create and resolve a bugfix branch" \
@@ -435,7 +435,7 @@ Bug: $ARGUMENTS
 This will:
 1. Create bugfix branch
 2. Guide bug investigation
-3. Implement and test fix'
+3. Implement and test fix' || return 1
 
 	maybe_write_command "hotfix" \
 		"Urgent hotfix for critical production issues" \
@@ -446,7 +446,7 @@ Issue: $ARGUMENTS
 This will:
 1. Create hotfix branch from main/production
 2. Implement minimal fix
-3. Fast-track to release'
+3. Fast-track to release' || return 1
 
 	return 0
 }
@@ -464,7 +464,7 @@ _generate_utility_commands() {
 ```
 
 Parse the JSON output and present as markdown tables grouped by source.
-Security: Key values are NEVER displayed.'
+Security: Key values are NEVER displayed.' || return 1
 
 	maybe_write_command "log-time-spent" \
 		"Log time spent on a task in TODO.md" \
@@ -479,7 +479,7 @@ Arguments: $ARGUMENTS
 - `/log-time-spent t001 45m`
 - `/log-time-spent` (prompts for task and duration)
 
-**Duration formats:** 2h, 30m, 2h30m, 1.5h'
+**Duration formats:** 2h, 30m, 2h30m, 1.5h' || return 1
 
 	maybe_write_command "context" \
 		"Build token-efficient AI context for complex tasks" \
@@ -490,7 +490,7 @@ Context request: $ARGUMENTS
 This generates optimized context for AI assistants including:
 1. Relevant code snippets
 2. Architecture overview
-3. Dependencies and relationships'
+3. Dependencies and relationships' || return 1
 
 	maybe_write_command "create-pr" \
 		"Create PR from current branch with title and description" \
@@ -505,7 +505,7 @@ Additional context: $ARGUMENTS
 4. Generate PR title from branch name
 5. Generate PR description from commit messages and changed files
 6. Create PR using `gh pr create`
-7. Return PR URL'
+7. Return PR URL' || return 1
 
 	maybe_write_command "pr" \
 		"Alias for /create-pr - Create PR from current branch" \
@@ -513,7 +513,7 @@ Additional context: $ARGUMENTS
 
 Context: $ARGUMENTS
 
-Run /create-pr with the same arguments.'
+Run /create-pr with the same arguments.' || return 1
 
 	return 0
 }
@@ -532,7 +532,7 @@ Feature to document: $ARGUMENTS
 1. Ask 3-5 clarifying questions with numbered options (1A, 2B format)
 2. Generate PRD using template
 3. Save to todo/tasks/prd-{feature-slug}.md
-4. Offer to generate tasks with /generate-tasks'
+4. Offer to generate tasks with /generate-tasks' || return 1
 
 	maybe_write_command "generate-tasks" \
 		"Generate implementation tasks from a PRD" \
@@ -546,7 +546,7 @@ PRD or feature: $ARGUMENTS
 3. Generate parent tasks (Phase 1) and present to user
 4. Wait for user to say "Go"
 5. Generate sub-tasks (Phase 2)
-6. Save to todo/tasks/tasks-{feature-slug}.md'
+6. Save to todo/tasks/tasks-{feature-slug}.md' || return 1
 
 	maybe_write_command "plan-status" \
 		"Show active plans and TODO.md status" \
@@ -558,7 +558,7 @@ Show:
 1. In-progress tasks
 2. Top backlog items
 3. Active plans with progress
-4. Offer to work on a specific task'
+4. Offer to work on a specific task' || return 1
 
 	return 0
 }
@@ -685,8 +685,8 @@ Return a completed KPI baseline scorecard plus top remediation priorities and re
 # helper under the 100-line shell complexity threshold (GH#19198 / t2125).
 # -----------------------------------------------------------------------------
 _generate_seo_commands() {
-	_generate_seo_keyword_commands
-	_generate_seo_ai_commands
+	_generate_seo_keyword_commands || return 1
+	_generate_seo_ai_commands || return 1
 	return 0
 }
 
@@ -700,7 +700,7 @@ _generate_system_commands() {
 		"Interactive onboarding wizard - discover services, configure integrations" \
 		'Read ${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/onboarding.md and follow its Welcome Flow instructions to guide the user through setup. Do NOT repeat these instructions — go straight to the Welcome Flow conversation.
 
-Arguments: $ARGUMENTS'
+Arguments: $ARGUMENTS' || return 1
 
 	maybe_write_command "setup-aidevops" \
 		"Deploy latest aidevops agent changes locally" \
@@ -724,7 +724,7 @@ cd "$AIDEVOPS_REPO" && ./setup.sh || exit
 3. Regenerates agent configurations
 4. Copies VERSION file for version checks
 
-Arguments: $ARGUMENTS'
+Arguments: $ARGUMENTS' || return 1
 
 	maybe_write_command "ralph-loop" \
 		"Start iterative AI development loop (Ralph Wiggum technique)" \
@@ -745,7 +745,7 @@ Arguments: $ARGUMENTS
 3. You see your previous work in files and git history
 4. Iterate until completion or max iterations
 
-**Completion:** Output `<promise>YOUR_PHRASE</promise>` when done.'
+**Completion:** Output `<promise>YOUR_PHRASE</promise>` when done.' || return 1
 
 	maybe_write_command "cancel-ralph" \
 		"Cancel active Ralph Wiggum loop" \
@@ -757,7 +757,7 @@ Remove the state file to stop the loop:
 rm -f .agents/loop-state/ralph-loop.local.md .agents/loop-state/ralph-loop.local.state
 ```
 
-If no loop state file exists, no loop is active.'
+If no loop state file exists, no loop is active.' || return 1
 
 	maybe_write_command "ralph-status" \
 		"Show current Ralph loop status" \
@@ -769,7 +769,7 @@ Check the state file:
 cat .agents/loop-state/ralph-loop.local.md 2>/dev/null || echo "No active Ralph loop"
 ```
 
-Shows: active loop, iteration count, max iterations, completion promise, start time.'
+Shows: active loop, iteration count, max iterations, completion promise, start time.' || return 1
 
 	maybe_write_command "ralph-task" \
 		"Run Ralph loop for a task from TODO.md by ID" \
@@ -783,7 +783,7 @@ Task ID: $ARGUMENTS
 3. Set session title with format: "t042: Task description here"
 4. Start Ralph loop with extracted parameters
 
-**Usage:** `/ralph-task t042`'
+**Usage:** `/ralph-task t042`' || return 1
 
 	maybe_write_command "session-review" \
 		"Review session for completeness before ending" \
@@ -795,7 +795,7 @@ Review the current session for: $ARGUMENTS
 1. All objectives completed
 2. Workflow best practices followed
 3. Knowledge captured for future sessions
-4. Clear next steps identified'
+4. Clear next steps identified' || return 1
 
 	return 0
 }
