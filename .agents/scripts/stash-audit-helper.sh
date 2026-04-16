@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# shellcheck disable=SC2034,SC2155
 
 # =============================================================================
 # Git Stash Audit Helper Script
@@ -36,9 +35,8 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
 
-[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
-readonly RESET="$NC"            # Alias for NC from shared-constants.sh
-readonly STASH_AGE_THRESHOLD=30 # days
+[[ -z "${RESET+x}" ]] && RESET="$NC" # Alias for NC from shared-constants.sh
+readonly STASH_AGE_THRESHOLD=30      # days
 
 # Color constants are defined in shared-constants.sh
 

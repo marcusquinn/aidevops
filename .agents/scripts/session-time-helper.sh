@@ -25,7 +25,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 set -euo pipefail
 
 [[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
-readonly DIM='\033[2m'
+[[ -z "${DIM+x}" ]] && DIM='\033[2m'
 
 # Defaults
 CLAUDE_DIR="${HOME}/.claude"
