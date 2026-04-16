@@ -19,24 +19,19 @@ IFS=$'\n\t'
 # auto-restart mechanism exists, we start it manually.
 #######################################
 _restart_pulse_if_running() {
-	local pid_file="${HOME}/.aidevops/logs/pulse.pid"
-	[[ -f "$pid_file" ]] || return 0
-
-	local pulse_pid=""
-	pulse_pid=$(grep -oE '[0-9]+' "$pid_file" | head -1) || return 0
-	[[ -n "$pulse_pid" ]] || return 0
-
-	# Check if the process is actually alive
-	if ! kill -0 "$pulse_pid" 2>/dev/null; then
+	if ! pgrep -f pulse-wrapper.sh >/dev/null; then
+		# Not running, nothing to do
 		return 0
 	fi
 
-	print_info "Restarting pulse (PID $pulse_pid) to load updated scripts..."
-	kill "$pulse_pid" 2>/dev/null || true
+	local old_pid
+	old_pid=$(pgrep -f pulse-wrapper.sh | head -1)
+	print_info "Restarting pulse (PID $old_pid) to load updated scripts..."
+	pkill -f pulse-wrapper.sh || true
 
 	# Wait for it to die
 	local wait_count=0
-	while kill -0 "$pulse_pid" 2>/dev/null && [[ "$wait_count" -lt 10 ]]; do
+	while pgrep -f pulse-wrapper.sh >/dev/null && [[ "$wait_count" -lt 10 ]]; do
 		sleep 1
 		wait_count=$((wait_count + 1))
 	done
@@ -45,13 +40,11 @@ _restart_pulse_if_running() {
 	sleep 5
 
 	# Check if it auto-restarted
-	if [[ -f "$pid_file" ]]; then
-		local new_pid=""
-		new_pid=$(grep -oE '[0-9]+' "$pid_file" | head -1) || new_pid=""
-		if [[ -n "$new_pid" ]] && kill -0 "$new_pid" 2>/dev/null; then
-			print_success "Pulse restarted (new PID $new_pid)"
-			return 0
-		fi
+	if pgrep -f pulse-wrapper.sh >/dev/null; then
+		local new_pid
+		new_pid=$(pgrep -f pulse-wrapper.sh | head -1)
+		print_success "Pulse restarted (new PID $new_pid)"
+		return 0
 	fi
 
 	# No auto-restart — start it manually
