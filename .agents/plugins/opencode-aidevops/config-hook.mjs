@@ -42,6 +42,11 @@ const CLAUDE_MODEL_LIMITS = {
   "claude-sonnet-4-6": { context: 1000000, output: 64000 },
   "claude-opus-4-5":   { context:  200000, output: 64000 },
   "claude-opus-4-6":   { context: 1000000, output: 64000 },
+  // Opus 4.7 context intentionally capped at 200K (not the 1M API ceiling).
+  // Anthropic's own MRCR v2 8-needle data shows long-context retrieval collapse:
+  // 256K drops 91.9% -> 59.2%, 1M drops 78.3% -> 32.2%. Users opting into 4.7
+  // should stay inside the still-functional window. See models-opus.md "Opus 4.7 (opt-in)".
+  "claude-opus-4-7":   { context:  200000, output: 64000 },
 };
 
 /**
@@ -66,6 +71,7 @@ const ANTHROPIC_MODELS = buildClaudeModelMap({
   "claude-sonnet-4-6": "Claude Sonnet 4.6 (via aidevops)",
   "claude-opus-4-5":   "Claude Opus 4.5 (via aidevops)",
   "claude-opus-4-6":   "Claude Opus 4.6 (via aidevops)",
+  "claude-opus-4-7":   "Claude Opus 4.7 (via aidevops)",
 });
 
 /** Models registered under the claudecli provider (via Claude CLI proxy). */
@@ -75,6 +81,7 @@ const CLAUDECLI_MODELS = buildClaudeModelMap({
   "claude-sonnet-4-6": "Claude Sonnet 4.6 (via CLI)",
   "claude-opus-4-5":   "Claude Opus 4.5 (via CLI)",
   "claude-opus-4-6":   "Claude Opus 4.6 (via CLI)",
+  "claude-opus-4-7":   "Claude Opus 4.7 (via CLI)",
 });
 
 /**
