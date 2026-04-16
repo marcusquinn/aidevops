@@ -157,7 +157,7 @@ write_command() {
 		echo "---"
 		echo ""
 		echo "$body"
-	} >"$CLAUDE_COMMAND_DIR/$cmd_name.md"
+	} >"$CLAUDE_COMMAND_DIR/$cmd_name.md" || return 1
 
 	((++command_count))
 	echo -e "  ${GREEN}✓${NC} Created /$cmd_name"
@@ -182,7 +182,7 @@ maybe_write_command() {
 		[[ ! -f "$CLAUDE_COMMAND_DIR/$cmd_name.md" ]] || return 0
 	fi
 
-	write_command "$cmd_name" "$description" "$body"
+	write_command "$cmd_name" "$description" "$body" || return 1
 	return 0
 }
 
@@ -578,7 +578,7 @@ Keywords to research: $ARGUMENTS
 - `--provider dataforseo|serper|both`
 - `--locale us-en|uk-en|etc`
 - `--limit N`
-- `--csv` - Export to ~/Downloads/'
+- `--csv` - Export to ~/Downloads/' || return 1
 
 	maybe_write_command "autocomplete-research" \
 		"Google autocomplete long-tail keyword expansion" \
@@ -587,7 +587,7 @@ Keywords to research: $ARGUMENTS
 Seed keyword for autocomplete: $ARGUMENTS
 
 This uses DataForSEO or Serper autocomplete API to discover
-question-based and long-tail keywords.'
+question-based and long-tail keywords.' || return 1
 
 	maybe_write_command "keyword-research-extended" \
 		"Full SERP analysis with weakness detection and KeywordScore" \
@@ -599,7 +599,7 @@ Research target: $ARGUMENTS
 - Default: Full SERP analysis on keywords
 - `--domain example.com` - Keywords associated with domain'\''s niche
 - `--competitor example.com` - Exact keywords competitor ranks for
-- `--gap yourdomain.com,competitor.com` - Keywords they have that you don'\''t'
+- `--gap yourdomain.com,competitor.com` - Keywords they have that you don'\''t' || return 1
 
 	maybe_write_command "webmaster-keywords" \
 		"Keywords from GSC + Bing for your verified sites" \
@@ -608,7 +608,7 @@ Research target: $ARGUMENTS
 Site URL: $ARGUMENTS
 
 Fetches keywords from Google Search Console and Bing Webmaster Tools,
-combines and deduplicates results, enriches with volume/difficulty data.'
+combines and deduplicates results, enriches with volume/difficulty data.' || return 1
 
 	return 0
 }
@@ -625,7 +625,7 @@ _generate_seo_ai_commands() {
 
 Target: $ARGUMENTS
 
-Produce thematic branches, prioritized sub-queries, a page coverage matrix, and a remediation backlog.'
+Produce thematic branches, prioritized sub-queries, a page coverage matrix, and a remediation backlog.' || return 1
 
 	maybe_write_command "seo-geo" \
 		"Run GEO strategy workflow for AI search visibility" \
@@ -633,7 +633,7 @@ Produce thematic branches, prioritized sub-queries, a page coverage matrix, and 
 
 Target: $ARGUMENTS
 
-Deliverables: decision-criteria matrix, page-level coverage map, and prioritized retrieval-first improvements.'
+Deliverables: decision-criteria matrix, page-level coverage map, and prioritized retrieval-first improvements.' || return 1
 
 	maybe_write_command "seo-sro" \
 		"Run Selection Rate Optimization workflow for grounding snippets" \
@@ -641,7 +641,7 @@ Deliverables: decision-criteria matrix, page-level coverage map, and prioritized
 
 Target: $ARGUMENTS
 
-Deliverables: baseline snippet behavior, sentence/structure SRO fixes, and controlled re-test plan.'
+Deliverables: baseline snippet behavior, sentence/structure SRO fixes, and controlled re-test plan.' || return 1
 
 	maybe_write_command "seo-hallucination-defense" \
 		"Audit and reduce AI brand hallucination risk" \
@@ -649,7 +649,7 @@ Deliverables: baseline snippet behavior, sentence/structure SRO fixes, and contr
 
 Target: $ARGUMENTS
 
-Deliverables: critical fact inventory, contradiction report, and claim-evidence remediation priorities.'
+Deliverables: critical fact inventory, contradiction report, and claim-evidence remediation priorities.' || return 1
 
 	maybe_write_command "seo-agent-discovery" \
 		"Test AI agent discoverability across multi-turn tasks" \
@@ -657,7 +657,7 @@ Deliverables: critical fact inventory, contradiction report, and claim-evidence 
 
 Target: $ARGUMENTS
 
-Deliverables: discovery diagnostics, failure classification, and prioritized remediation.'
+Deliverables: discovery diagnostics, failure classification, and prioritized remediation.' || return 1
 
 	maybe_write_command "seo-ai-readiness" \
 		"Run end-to-end AI search readiness workflow" \
@@ -665,7 +665,7 @@ Deliverables: discovery diagnostics, failure classification, and prioritized rem
 
 Target: $ARGUMENTS
 
-Run chained phases: fan-out decomposition, GEO criteria alignment, SRO snippet optimization, hallucination defense, and agent discoverability validation.'
+Run chained phases: fan-out decomposition, GEO criteria alignment, SRO snippet optimization, hallucination defense, and agent discoverability validation.' || return 1
 
 	maybe_write_command "seo-ai-baseline" \
 		"Capture AI-search baseline metrics and output KPI scorecard" \
@@ -674,7 +674,7 @@ Read ~/.aidevops/agents/seo/ai-search-kpi-template.md and use its structure.
 
 Target: $ARGUMENTS
 
-Return a completed KPI baseline scorecard plus top remediation priorities and re-test cadence.'
+Return a completed KPI baseline scorecard plus top remediation priorities and re-test cadence.' || return 1
 
 	return 0
 }
