@@ -633,6 +633,46 @@ _auto_assign_issue() {
 	return 0
 }
 
+# Lock maintainer/worker-created issues at creation to prevent comment
+# prompt-injection. The approval marker (<!-- aidevops-signed-approval -->)
+# and other trusted sentinels are checked by CI workflows — if an attacker
+# could post a comment containing them, they could bypass security gates.
+# Locking at creation prevents this for the entire issue lifecycle.
+# External contributor issues are left unlocked for community discussion.
+_lock_maintainer_issue_at_creation() {
+	local issue_num="$1"
+	local repo_path="$2"
+
+	[[ -n "$issue_num" ]] || return 0
+
+	local slug
+	slug=$(git -C "$repo_path" remote get-url origin 2>/dev/null | sed 's|.*github\.com[:/]||;s|\.git$||' || echo "")
+	[[ -n "$slug" ]] || return 0
+
+	# Check if the current user is the repo owner or a collaborator
+	# with sufficient permissions. gh api user returns the authenticated
+	# user; we compare against the slug owner as a fast check.
+	local current_user
+	current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	local repo_owner="${slug%%/*}"
+
+	if [[ -n "$current_user" && "$current_user" == "$repo_owner" ]]; then
+		gh issue lock "$issue_num" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || true
+		return 0
+	fi
+
+	# For non-owner collaborators (worker bot accounts), check the
+	# session origin — worker-created issues should also be locked.
+	local origin
+	origin=$(session_origin_label 2>/dev/null || echo "")
+	if [[ "$origin" == "origin:worker" ]]; then
+		gh issue lock "$issue_num" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || true
+		return 0
+	fi
+
+	return 0
+}
+
 # t2057: interactive session auto-claim on new-task allocation.
 # After the issue is created and self-assigned, transition it to
 # status:in-review so the pulse dispatch-dedup guard treats it as an active
@@ -903,6 +943,7 @@ create_github_issue() {
 	if issue_num=$(_try_issue_sync_delegation "$title" "$repo_path"); then
 		_auto_assign_issue "$issue_num" "$repo_path"
 		_interactive_session_auto_claim_new_task "$issue_num" "$repo_path"
+		_lock_maintainer_issue_at_creation "$issue_num" "$repo_path"
 		echo "$issue_num"
 		return 0
 	fi
@@ -952,6 +993,12 @@ create_github_issue() {
 	# Auto-assign to current user to prevent duplicate dispatch
 	_auto_assign_issue "$issue_num" "$repo_path"
 	_interactive_session_auto_claim_new_task "$issue_num" "$repo_path"
+
+	# Lock maintainer/worker issues at creation to prevent comment
+	# prompt-injection. Issues created by the maintainer or their workers
+	# are implementation targets, not discussion threads. External
+	# contributor issues are left unlocked for community interaction.
+	_lock_maintainer_issue_at_creation "$issue_num" "$repo_path"
 
 	# Sync parent-child and blocked-by relationships (GH#18735)
 	# The rich delegation path (issue-sync-helper.sh push) handles this

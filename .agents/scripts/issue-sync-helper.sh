@@ -1930,10 +1930,23 @@ _detect_parent_from_gh_state() {
 				return 0
 			fi
 		done
+		fi
 	fi
 
+	# Lock maintainer/worker-created issues at creation to prevent
+	# comment prompt-injection across the entire issue lifecycle.
+	if [[ -n "$num" ]]; then
+		local _lock_owner="${repo%%/*}"
+		local _lock_user="${AIDEVOPS_SESSION_USER:-}"
+		[[ -z "$_lock_user" ]] && _lock_user=$(gh api user --jq '.login // ""' 2>/dev/null || echo "")
+		if [[ -n "$_lock_user" && "$_lock_user" == "$_lock_owner" ]] || \
+		   [[ "$origin_label" == "origin:worker" ]]; then
+			gh issue lock "$num" --repo "$repo" --reason "resolved" >/dev/null 2>&1 || true
+		fi
+	fi
 	return 0
 }
+
 
 # Link a single child issue as a sub-issue of a detected parent, operating
 # purely on GitHub state (title + body). Idempotent — `_gh_add_sub_issue`
