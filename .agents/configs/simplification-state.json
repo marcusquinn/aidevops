@@ -408,9 +408,9 @@
       "pr": 18172
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "at": "2026-04-16T21:15:53Z",
-      "hash": "fa36346a453bc14c7e822c96e853e94b9231eab8",
-      "passes": 21,
+      "at": "2026-04-16T22:50:19Z",
+      "hash": "7fb0d4492a97548179b2de2091957cc423aed8dc",
+      "passes": 22,
       "pr": 17979
     },
     ".agents/content.md": {
@@ -7492,9 +7492,9 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-04-16T22:17:29Z",
-      "hash": "39016e9b3cdfa40c38174536839f3dcc09ba42c2",
-      "passes": 72,
+      "at": "2026-04-16T22:35:35Z",
+      "hash": "8909f84547d716ece96fb7e52bbb3d9b2ed7b725",
+      "passes": 73,
       "pr": 19029
     },
     "setup-modules/agent-deploy.sh": {
@@ -7504,9 +7504,9 @@
       "pr": 19203
     },
     "setup.sh": {
-      "at": "2026-04-16T22:17:29Z",
-      "hash": "ac0b1949c0e16b87ec07c558c8f871d478eb354a",
-      "passes": 70,
+      "at": "2026-04-16T22:35:35Z",
+      "hash": "3ba5245b1d4b4d93f7f0e83be8ab62a1f4f7cbaf",
+      "passes": 71,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
