@@ -685,8 +685,8 @@ Return a completed KPI baseline scorecard plus top remediation priorities and re
 # helper under the 100-line shell complexity threshold (GH#19198 / t2125).
 # -----------------------------------------------------------------------------
 _generate_seo_commands() {
-	_generate_seo_keyword_commands || return 1
-	_generate_seo_ai_commands || return 1
+	_generate_seo_keyword_commands
+	_generate_seo_ai_commands
 	return 0
 }
 
