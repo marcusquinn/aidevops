@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.57] - 2026-04-16
+
+### Changed
+
+- fix(pulse): Bash 3.2 heredoc-in-$() breaks pulse dispatch (#19276)
+- add || exit guard to SCRIPT_DIR definitions in 4 scripts (#19305)
+- tighten pre-dispatch-validators.md prose (129→126 lines) (#19304)
+- tighten shell-style-guide.md prose (135 lines, 15 improvements) (#19303)
+- fix(opencode-aidevops): address CodeRabbit security findings from PR #19229 (#19254)
+- rename RESET to TEST_RESET in four test harnesses for consistency (#19289)
+- Maintenance: update simplification state registry
+- consolidate jq calls in _get_rate_limit_behavior into single pass (#19285)
+- fix SKIP color and remove unused TEST_YELLOW in 3 test harnesses (#19283)
+
+### Fixed
+
+- convert DIM/RESET to guarded assignments, remove unused BOLD (#19308)
+- replace echo -e with printf in test harness logging functions (GH#19271) (#19307)
+- bump NESTING_DEPTH_THRESHOLD 281→288 to restore headroom (GH#19288) (#19302)
+- use pgrep/pkill for robust pulse restart instead of PID file (#19287)
+- make shared-constants.sh sourcing mandatory in agent-sources-helper, coderabbit-cli, sonarcloud-autofix (#19284)
+- propagate failures in _generate_seo_commands wrapper (#19281)
+- address review bot suggestions from PR #19188 — SKIP color and unused TEST_YELLOW (#19282)
+- propagate helper failures in _generate_seo_commands wrapper (#19280)
+
 ## [3.8.56] - 2026-04-16
 
 ### Changed
