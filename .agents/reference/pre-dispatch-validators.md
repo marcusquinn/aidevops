@@ -4,7 +4,7 @@ Pre-dispatch validators run **after** dedup checks and **before** worker spawn f
 
 ## Architecture
 
-Auto-generated issues embed a hidden marker in their body — parsed with `grep -oE '<!-- aidevops:generator=[a-z-]+ -->'`. Parsing titles or labels is rejected; markers survive editorial changes to human-visible fields.
+Auto-generated issues embed a hidden marker — parsed with `grep -oE '<!-- aidevops:generator=[a-z-]+ -->'`. Parsing titles or labels is rejected; markers survive editorial changes to human-visible fields.
 
 ```text
 <!-- aidevops:generator=<name> -->
@@ -20,9 +20,7 @@ Auto-generated issues embed a hidden marker in their body — parsed with `grep 
 | `10` | Premise falsified — issue is stale | Rationale comment posted + issue closed as `not planned`; no worker |
 | `20` | Validator error | Warning logged; dispatch proceeds (never block on validator bugs) |
 
-### Hook point
-
-`_run_predispatch_validator()` in `dispatch_with_dedup()` (`pulse-dispatch-core.sh`):
+### Hook point in `dispatch_with_dedup()` (`pulse-dispatch-core.sh`)
 
 ```text
 _dispatch_dedup_check_layers()   ← all dedup gates
@@ -35,31 +33,15 @@ Non-fatal: if the helper is missing or returns an unexpected code, dispatch proc
 
 ## Bypass
 
-Set `AIDEVOPS_SKIP_PREDISPATCH_VALIDATOR=1` to skip all validators unconditionally:
-
 ```bash
 AIDEVOPS_SKIP_PREDISPATCH_VALIDATOR=1 ./pulse-wrapper.sh
 ```
 
-Emergency recovery when a validator bug is blocking legitimate dispatches. Bypass is logged. Do not leave set permanently.
+Emergency recovery when a validator bug blocks legitimate dispatches. Bypass is logged. Do not leave set permanently.
 
-## Closure comment format
+## On exit 10
 
-On exit 10, the helper posts:
-
-```text
-> Premise falsified. Pre-dispatch validator for generator `<name>` determined
-> the issue premise is no longer true. The `<name>` check reports no actionable
-> work is available. Not dispatching a worker.
-
-The issue was closed automatically by the pre-dispatch validator (GH#19118).
-If conditions change … a new issue will be created by the next pulse cycle.
-
----
-[signature footer]
-```
-
-Then closes with `gh issue close --reason "not planned"`.
+Posts a `> Premise falsified` blockquote naming the generator, noting no actionable work, and citing GH#19118. Closes with `gh issue close --reason "not planned"`. A new issue is created if conditions change on the next pulse cycle.
 
 ## Registered validators
 
@@ -76,9 +58,9 @@ Then closes with `gh issue close --reason "not planned"`.
 
 Without this check, workers spawn only to discover no ratchet-down work exists (GH#19024 failure mode).
 
-## How to add a new validator
+## Adding a validator
 
-1. **Define the generator function** in `pulse-simplification.sh` or the script that creates auto-generated issues.
+1. **Define the generator function** in `pulse-simplification.sh` or the issue-creation script.
 
 2. **Emit the marker** in the issue body template:
 
