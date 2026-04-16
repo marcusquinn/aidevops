@@ -80,6 +80,21 @@ Production failures: pulse dispatch, worktree cleanup, dataset helpers, routine 
 
 ## Subshell and command substitution traps
 
+- **Heredoc inside `$()`** — Bash 3.2 parser cannot handle heredocs inside command substitution. It fails with `unexpected EOF while looking for matching ')'` and silently corrupts all function definitions below the error point in the file. This caused a multi-hour pulse outage (GH#19252, April 2026). Use a quoted string assignment instead:
+
+  ```bash
+  # WRONG — breaks bash 3.2 parser
+  msg=$(cat <<EOF
+  Hello ${name}
+  EOF
+  )
+
+  # RIGHT — works on all bash versions
+  msg="Hello ${name}"
+  ```
+
+  CI gate: the `Bash 3.2 Compatibility` job greps for `$(cat <<` and the macOS `cross-platform-shellcheck` job runs `/bin/bash -n` (native 3.2 parser check) on all scripts.
+
 - `$()` captures ALL stdout — never mix `tee` or command output with exit code capture. Write exit codes to a temp file: `printf '%s' "$?" > "$exit_code_file"`
 - `local -a arr=()` inside `$()` — `local` in a subshell not inside a function is undefined in 3.2
 - `PIPESTATUS` — available in 3.2 but only for the immediately preceding pipeline. Capture immediately: `cmd1 | cmd2; local ps=("${PIPESTATUS[@]}")`

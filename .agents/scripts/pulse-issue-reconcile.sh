@@ -1157,18 +1157,16 @@ reconcile_labelless_aidevops_issues() {
 	local _raw_cmd="gh issue create"
 	local _wrap_cmd="gh_create_issue"
 	local comment_template
-	comment_template=$(
-		cat <<EOF
-${sentinel}
+	# Bash 3.2 compat: heredoc inside $() breaks the parser (unmatched paren).
+	# Use a plain double-quoted string assignment instead.
+	comment_template="${sentinel}
 This issue was created via a bare \`${_raw_cmd}\` call that bypassed the \`${_wrap_cmd}\` wrapper in \`shared-constants.sh\`. The framework's reconcile pass (\`reconcile_labelless_aidevops_issues\` in \`pulse-issue-reconcile.sh\`, t2112) has backfilled \`origin:worker\` + \`tier:standard\` as conservative defaults and extracted hashtag labels from the body.
 
 **Why this matters:** issues missing origin/tier labels are invisible to the dispatch-dedup guard and the label-reconciler. Without this backfill, the pulse would have left this issue unblessed forever.
 
 **Next time:** use \`${_wrap_cmd}\` (defined in \`shared-constants.sh\`, sourced via the framework PATH) instead of bare \`${_raw_cmd}\`. The wrapper applies origin + auto-assign + sub-issue linking automatically. See \`prompts/build.txt\` → \"Origin labelling (MANDATORY)\".
 
-This comment is idempotent; the HTML sentinel prevents duplicates on subsequent pulse cycles.
-EOF
-	)
+This comment is idempotent; the HTML sentinel prevents duplicates on subsequent pulse cycles."
 
 	local total_fixed=0 total_skipped=0
 
