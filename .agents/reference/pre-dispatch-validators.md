@@ -4,7 +4,7 @@ Runs **after** dedup checks and **before** worker spawn for auto-generated issue
 
 ## Architecture
 
-Auto-generated issues embed `<!-- aidevops:generator=<name> -->` in the body (markers parsed with grep — survive title/label changes). `pre-dispatch-validator-helper.sh` maps generators to validators via `_VALIDATOR_REGISTRY` (populated by `_register_validators()`). Unregistered generators, missing helper, or unexpected exit code → exit 0 (dispatch proceeds).
+Auto-generated issues embed `<!-- aidevops:generator=<name> -->` in the body (HTML comments survive title/label changes). `pre-dispatch-validator-helper.sh` maps generators to validators via `_VALIDATOR_REGISTRY` (populated by `_register_validators()`). Unregistered generators, missing helper, or unexpected exit code → exit 0 (dispatch proceeds).
 
 ### Exit codes
 
@@ -38,11 +38,8 @@ Emergency recovery when a validator bug blocks legitimate dispatches. Bypass is 
 **Generator:** `_complexity_scan_ratchet_check` in `pulse-simplification.sh`
 **Marker:** `<!-- aidevops:generator=ratchet-down -->`
 
-1. Clone target repo into `mktemp -d` (trap-cleaned)
-2. Run `complexity-scan-helper.sh ratchet-check <clone> 5`
-3. `No ratchet-down available` in output → exit 10 (falsified)
-4. Empty output + any error → exit 20 (validator error)
-5. Otherwise → exit 0 (proposals available, dispatch)
+1. Clone target repo into `mktemp -d` (trap-cleaned); run `complexity-scan-helper.sh ratchet-check <clone> 5`.
+2. `No ratchet-down available` in output → exit 10 (falsified); empty output + any error → exit 20; otherwise → exit 0.
 
 Prevents workers spawning only to find no ratchet-down work exists (GH#19024).
 
@@ -72,7 +69,7 @@ bash .agents/scripts/tests/test-pre-dispatch-validator.sh
 .agents/scripts/pre-dispatch-validator-helper.sh validate <issue-number> marcusquinn/aidevops
 ```
 
-`gh`, `git`, and `complexity-scan-helper.sh` are stubbed via `PATH` and `COMPLEXITY_SCAN_HELPER` — no network required.
+`gh`, `git`, and `complexity-scan-helper.sh` stubbed via `PATH` and `COMPLEXITY_SCAN_HELPER` — no network required.
 
 ## Related
 
