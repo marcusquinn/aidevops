@@ -446,11 +446,18 @@ auto_approve_maintainer_issues() {
 			fi
 
 			if [[ "$should_approve" == "true" ]]; then
+				# Lock the issue BEFORE posting the approval marker to prevent
+				# comment prompt-injection. The marker (<!-- aidevops-signed-approval -->)
+				# is trusted by maintainer-gate.yml — if an attacker could post a
+				# comment containing it, they could bypass the NMR gate. Locking
+				# ensures only collaborators can comment during the approval window.
+				# The issue stays locked through dispatch (t1934) and unlocks after
+				# the worker completes.
+				gh issue lock "$issue_num" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || true
+
 				# Post the approval marker BEFORE removing the label.
 				# maintainer-gate.yml checks for <!-- aidevops-signed-approval -->
 				# when NMR is removed — if the marker is missing, it re-adds NMR.
-				# Without this, the pulse and the CI workflow fight: pulse removes
-				# NMR, CI re-adds it (no signed approval found), infinite loop.
 				# Also resets the stale-recovery tick counter.
 				gh issue comment "$issue_num" --repo "$slug" \
 					--body "<!-- aidevops-signed-approval -->
@@ -461,7 +468,7 @@ Auto-approved: ${approval_reason}. Stale recovery tick reset." \
 				gh issue edit "$issue_num" --repo "$slug" \
 					--remove-label "needs-maintainer-review" \
 					--add-label "auto-dispatch" >/dev/null 2>&1 || true
-				echo "[pulse-wrapper] Auto-approved #${issue_num} in ${slug} — ${approval_reason} (approval marker + tick reset)" >>"$LOGFILE"
+				echo "[pulse-wrapper] Auto-approved #${issue_num} in ${slug} — ${approval_reason} (locked + approval marker + tick reset)" >>"$LOGFILE"
 				total_approved=$((total_approved + 1))
 			fi
 		done
