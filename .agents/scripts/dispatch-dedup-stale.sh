@@ -342,52 +342,49 @@ _resolve_stale_threshold() {
 	return 0
 }
 
+#######################################
+# t2153 (GH#19424): Age-floor guard. An issue cannot be "stale" if it is
+# itself younger than the staleness threshold. Without this guard, freshly
+# created issues with assignees but no comments yet (the common case for
+# issues created via issue-sync from TODO entries) fall through to
+# _recover_stale_assignment within seconds — both last_dispatch_ts and
+# last_activity_ts are empty, so the inner activity-age check is skipped
+# and _is_stale_assignment reports stale.
+#
+# Production case: #19414 was stale-recovered 4 min 53s after creation
+# despite carrying origin:interactive (threshold=7200s). The threshold was
+# never compared against issue age — only against (non-existent) comment
+# timestamps.
+#
+# Fail-open on missing/unparseable createdAt — the caller's downstream
+# fail-CLOSED stance (return 1, block dispatch) handles transient gh errors.
+#
+# Args: $1 = issue createdAt (ISO 8601, may be empty)
+#       $2 = effective threshold seconds
+#       $3 = now epoch
+# Returns: 0 if too young to be stale; 1 otherwise (caller continues).
+#######################################
+_issue_too_young_for_staleness() {
+	local issue_created_at="$1" effective_threshold="$2" now_epoch="$3"
+	[[ -z "$issue_created_at" ]] && return 1
+	local epoch
+	epoch=$(_ts_to_epoch "$issue_created_at")
+	[[ "$epoch" -le 0 ]] && return 1
+	[[ "$((now_epoch - epoch))" -lt "$effective_threshold" ]]
+}
+
 _is_stale_assignment() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local blocking_assignees="$3"
 
-	# t2132 Fix A+C: resolve whether this is an interactive claim and which
-	# stale threshold to use. Extracted to _resolve_stale_threshold to keep
-	# this function under the 100-line complexity cap.
-	#
-	# t2153 (GH#19424): _resolve_stale_threshold now also returns the issue's
-	# createdAt on the third line — used by the age-floor guard below.
-	local _threshold_output is_interactive effective_threshold issue_created_at
-	_threshold_output=$(_resolve_stale_threshold "$issue_number" "$repo_slug")
-	is_interactive=$(printf '%s' "$_threshold_output" | sed -n '1p')
-	effective_threshold=$(printf '%s' "$_threshold_output" | sed -n '2p')
-	issue_created_at=$(printf '%s' "$_threshold_output" | sed -n '3p')
-
-	# t2153 (GH#19424): Age-floor guard. An issue cannot be "stale" if it is
-	# itself younger than the staleness threshold. Without this guard, freshly
-	# created issues with assignees but no comments yet (the common case for
-	# issues created via issue-sync from TODO entries) fell through to
-	# _recover_stale_assignment within seconds — both last_dispatch_ts and
-	# last_activity_ts are empty, so the inner activity-age check below is
-	# skipped and the function reports stale.
-	#
-	# Production case: #19414 was stale-recovered 4 min 53s after creation
-	# despite carrying origin:interactive (threshold=7200s). The threshold was
-	# never compared against issue age — only against (non-existent) comment
-	# timestamps.
-	#
-	# Fail-open on missing/unparseable createdAt: the caller's existing
-	# fail-CLOSED stance on transient gh failures (return 1, block dispatch)
-	# already protects the assignment in that case.
-	local now_epoch
+	# t2132+t2153: resolve interactive flag, threshold, issue createdAt.
+	local is_interactive effective_threshold issue_created_at now_epoch
+	read -r is_interactive effective_threshold issue_created_at \
+		< <(_resolve_stale_threshold "$issue_number" "$repo_slug" | tr '\n' ' ')
 	now_epoch=$(date +%s)
-	if [[ -n "$issue_created_at" ]]; then
-		local issue_created_epoch issue_age
-		issue_created_epoch=$(_ts_to_epoch "$issue_created_at")
-		if [[ "$issue_created_epoch" -gt 0 ]]; then
-			issue_age=$((now_epoch - issue_created_epoch))
-			if [[ "$issue_age" -lt "$effective_threshold" ]]; then
-				# Issue is younger than the threshold itself — not stale.
-				return 1
-			fi
-		fi
-	fi
+	# t2153 age-floor guard: issue cannot be stale before it could signal.
+	_issue_too_young_for_staleness "$issue_created_at" "$effective_threshold" "$now_epoch" && return 1
 
 	# Fetch issue comments to find the most recent dispatch claim and
 	# overall activity timestamp. Use --paginate to catch all comments
