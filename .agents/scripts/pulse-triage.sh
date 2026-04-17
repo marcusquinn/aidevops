@@ -675,7 +675,10 @@ _consolidation_resolving_pr_exists() {
 		)] | length
 	' 2>/dev/null) || match_count=0
 	[[ "$match_count" =~ ^[0-9]+$ ]] || match_count=0
-	[[ "$match_count" -gt 0 ]]
+	if [[ "$match_count" -gt 0 ]]; then
+		return 0
+	fi
+	return 1
 }
 
 #######################################

@@ -74,11 +74,13 @@ _stub_parse_args() {
 		prev="$arg"
 	done
 	printf 'JQ=%s\nSTATE=%s\n' "$jq" "$state"
+	return 0
 }
 
 # _stub_emit: print $1 raw or piped through `jq -r $2` if filter non-empty.
 _stub_emit() {
 	if [[ -n "$2" ]]; then printf '%s\n' "$1" | jq -r "$2"; else printf '%s\n' "$1"; fi
+	return 0
 }
 
 case "${1:-}-${2:-}" in
