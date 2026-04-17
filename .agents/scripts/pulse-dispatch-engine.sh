@@ -149,7 +149,7 @@ build_ranked_dispatch_candidates_json() {
 					 elif (.labels | index("bug")) != null then 7000
 					 elif (.labels | index("enhancement")) != null then 6000
 					 elif (.labels | index("quality-debt")) != null then 5000
-					 elif (.labels | index("simplification-debt")) != null then 4000
+					 elif ((.labels | index("file-size-debt")) != null or (.labels | index("function-complexity-debt")) != null) then 4000
 					 else 3000 end)
 				)
 			}
@@ -1008,7 +1008,7 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 #   0. Instance lock (mkdir-based atomic — prevents concurrent pulses on macOS+Linux)
 #   1. Gate checks (consent, dedup)
 #   2. Cleanup (orphans, worktrees, stashes)
-#   2.5. Daily complexity scan — .sh functions + .md agent docs (creates simplification-debt issues)
+#   2.5. Daily complexity scan — .sh functions + .md agent docs (creates function-complexity-debt issues)
 #   3. Prefetch state (parallel gh API calls)
 #   4. Run pulse (LLM session — dispatch workers, merge PRs)
 #
@@ -1128,7 +1128,7 @@ _preflight_early_dispatch() {
 # even if any individual scan fails.
 #######################################
 _preflight_daily_scans() {
-	# Daily complexity scan (GH#5628): creates simplification-debt issues
+	# Daily complexity scan (GH#5628): creates function-complexity-debt issues
 	# for .sh files with complex functions and .md agent docs exceeding size
 	# threshold. Longest files first. Runs at most once per day.
 	run_stage_with_timeout "complexity_scan" "$PRE_RUN_STAGE_TIMEOUT" run_weekly_complexity_scan || true
@@ -1142,7 +1142,7 @@ _preflight_daily_scans() {
 	# Time-gated to 24h; scans all pulse-enabled repos via scanner's own dedup.
 	run_stage_with_timeout "post_merge_scanner" "$PRE_RUN_STAGE_TIMEOUT" _run_post_merge_review_scanner || true
 
-	# Daily dedup cleanup: close duplicate simplification-debt issues.
+	# Daily dedup cleanup: close duplicate function-complexity-debt issues.
 	# Runs after complexity scan so any new duplicates from this cycle are caught.
 	run_stage_with_timeout "dedup_cleanup" "$PRE_RUN_STAGE_TIMEOUT" run_simplification_dedup_cleanup || true
 

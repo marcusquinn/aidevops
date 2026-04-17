@@ -548,11 +548,13 @@ _reevaluate_stale_continuations() {
 			continue # definite stale, no wc -l needed
 		fi
 
-		# Parse path from title: "simplification-debt: <path> exceeds N lines"
+		# Parse path from title: "file-size-debt: <path> exceeds N lines"
+		# Also handles legacy "simplification-debt: <path> exceeds N lines" titles
+		# for backward compat during the label migration period.
 		local cont_title cont_file_path
 		cont_title=$(printf '%s' "$cont_info" | jq -r '.title // ""' 2>/dev/null) || cont_title=""
 		cont_file_path=$(printf '%s' "$cont_title" |
-			sed 's/^simplification-debt: //;s/ exceeds [0-9]* lines$//' 2>/dev/null) || cont_file_path=""
+			sed 's/^file-size-debt: //;s/^simplification-debt: //;s/ exceeds [0-9]* lines$//' 2>/dev/null) || cont_file_path=""
 		if [[ -z "$cont_file_path" || "$cont_file_path" == "$cont_title" ]]; then
 			all_stale="false"
 			break # Path unresolvable → conservative
@@ -1343,7 +1345,7 @@ _Automated by \`_dispatch_issue_consolidation()\` in \`pulse-triage.sh\` (t1982)
 #   See `_consolidation_lock_acquire` for the full protocol.
 #
 # Reference pattern: `_issue_targets_large_files` at pulse-dispatch-core.sh:685-757
-# which creates simplification-debt child issues the same way.
+# which creates file-size-debt child issues the same way.
 #######################################
 _dispatch_issue_consolidation() {
 	local issue_number="$1"

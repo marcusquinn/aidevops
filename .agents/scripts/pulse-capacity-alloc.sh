@@ -552,11 +552,11 @@ calculate_priority_allocations() {
 }
 
 #######################################
-# Count active debt workers for a repo (quality-debt + simplification-debt)
+# Count active debt workers for a repo (quality-debt + file-size-debt + function-complexity-debt)
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
-#   $2 - debt type: "quality-debt", "simplification-debt", or "all" (default: all)
+#   $2 - debt type: "quality-debt", "file-size-debt", "function-complexity-debt", or "all" (default: all)
 #
 # Outputs two lines: active_count queued_count
 # Exit code: always 0
@@ -572,18 +572,24 @@ count_debt_workers() {
 		active=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
 		queued=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
 		;;
-	simplification-debt)
-		active=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
-		queued=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+	file-size-debt)
+		active=$(gh issue list --repo "$repo_slug" --label "file-size-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		queued=$(gh issue list --repo "$repo_slug" --label "file-size-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		;;
+	function-complexity-debt)
+		active=$(gh issue list --repo "$repo_slug" --label "function-complexity-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		queued=$(gh issue list --repo "$repo_slug" --label "function-complexity-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
 		;;
 	all)
-		local qa_active qa_queued sd_active sd_queued
+		local qa_active qa_queued fsd_active fsd_queued fcd_active fcd_queued
 		qa_active=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
 		qa_queued=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
-		sd_active=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
-		sd_queued=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
-		active=$((qa_active + sd_active))
-		queued=$((qa_queued + sd_queued))
+		fsd_active=$(gh issue list --repo "$repo_slug" --label "file-size-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		fsd_queued=$(gh issue list --repo "$repo_slug" --label "file-size-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		fcd_active=$(gh issue list --repo "$repo_slug" --label "function-complexity-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		fcd_queued=$(gh issue list --repo "$repo_slug" --label "function-complexity-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		active=$((qa_active + fsd_active + fcd_active))
+		queued=$((qa_queued + fsd_queued + fcd_queued))
 		;;
 	esac
 

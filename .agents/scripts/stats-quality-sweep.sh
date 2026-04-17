@@ -42,7 +42,7 @@ _STATS_QUALITY_SWEEP_LOADED=1
 #   4. Codacy — via API if CODACY_API_TOKEN available
 #   5. SonarCloud — via API if sonar-project.properties exists
 #
-# The sweep creates simplification-debt issues directly (with
+# The sweep creates function-complexity-debt issues directly (with
 # source:quality-sweep label). The pulse LLM dispatches these as normal
 # work — it should NOT independently create issues for the same findings.
 # See GH#10308 for the sweep-pulse dedup contract.
@@ -614,8 +614,8 @@ print('UNKNOWN')
 "
 	fi
 
-	# --- 2b. Simplification-debt bridge (code-simplifier pipeline) ---
-	# For files with high smell density, auto-create simplification-debt issues
+	# --- 2b. Function-complexity-debt bridge (code-simplifier pipeline) ---
+	# For files with high smell density, auto-create function-complexity-debt issues
 	# with needs-maintainer-review label. This bridges the daily sweep to the
 	# code-simplifier's human-gated dispatch pipeline (see code-simplifier.md).
 	# Deduplicates against existing issues. Caps are tuned for throughput:
@@ -1247,7 +1247,7 @@ _quality_sweep_for_repo() {
 }
 
 #######################################
-# Build the simplification-debt issue body for a single file.
+# Build the function-complexity-debt issue body for a single file.
 #
 # t2066: rule breakdown is now surfaced as a bulleted list section (was
 # inline on a single line), so the worker can see which rule groups are
@@ -1319,9 +1319,9 @@ BODY
 }
 
 #######################################
-# Create simplification-debt issues for files with high Qlty smell density.
+# Create function-complexity-debt issues for files with high Qlty smell density.
 # Bridges the daily quality sweep to the code-simplifier's human-gated
-# dispatch pipeline. Issues are created with simplification-debt +
+# dispatch pipeline. Issues are created with function-complexity-debt +
 # needs-maintainer-review + tier:thinking labels and assigned to the
 # repo maintainer.
 #
@@ -1337,7 +1337,7 @@ BODY
 #   - Default tier label: tier:thinking (Haiku can't refactor 70+ complexity,
 #     and per-user direction tier:thinking is the canonical opus label
 #     going forward)
-#   - Deduplicates: skips files that already have an open simplification-debt
+#   - Deduplicates: skips files that already have an open function-complexity-debt
 #     issue for the same file
 #   - Includes per-rule breakdown in the body (already computed per file —
 #     the old code dropped it into the title only)
@@ -1356,9 +1356,9 @@ _create_simplification_issues() {
 	local issues_created=0
 
 	# Ensure required labels exist (gh issue create fails if labels are missing)
-	gh label create "simplification-debt" --repo "$repo_slug" \
-		--description "Code simplification opportunity (human-gated via code-simplifier)" \
-		--color "C5DEF5" 2>/dev/null || true
+	gh label create "function-complexity-debt" --repo "$repo_slug" \
+		--description "Functions exceed complexity threshold — needs refactoring before implementation can proceed" \
+		--color "E05D44" 2>/dev/null || true
 	gh label create "needs-maintainer-review" --repo "$repo_slug" \
 		--description "Requires maintainer approval before automated dispatch" \
 		--color "FBCA04" 2>/dev/null || true
@@ -1397,10 +1397,10 @@ _create_simplification_issues() {
 
 	# Total-open cap: stop creating when backlog is already large
 	local total_open
-	total_open=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%%/*}\", name:\"${repo_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
+	total_open=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%%/*}\", name:\"${repo_slug##*/}\") { issues(labels:[\"function-complexity-debt\"], states:OPEN) { totalCount } } }" \
 		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
 	if [[ "${total_open:-0}" -ge "$total_open_cap" ]]; then
-		echo "[stats] Simplification issues: skipping — ${total_open} open (cap: ${total_open_cap})" >>"$LOGFILE"
+		echo "[stats] Function-complexity-debt issues: skipping — ${total_open} open (cap: ${total_open_cap})" >>"$LOGFILE"
 		return 0
 	fi
 
@@ -1412,7 +1412,7 @@ _create_simplification_issues() {
 		# The file path is in the title, so searching by path is reliable.
 		local existing_count
 		existing_count=$(gh issue list --repo "$repo_slug" \
-			--label "simplification-debt" --state open \
+			--label "function-complexity-debt" --state open \
 			--search "in:title \"$file_path\"" \
 			--json number --jq 'length' 2>/dev/null) || existing_count="0"
 		if [[ "${existing_count:-0}" -gt 0 ]]; then
@@ -1443,7 +1443,7 @@ _create_simplification_issues() {
 
 		if gh_create_issue --repo "$repo_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" --label "needs-maintainer-review" --label "source:quality-sweep" --label "tier:thinking" \
+			--label "function-complexity-debt" --label "needs-maintainer-review" --label "source:quality-sweep" --label "tier:thinking" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1; then
 			issues_created=$((issues_created + 1))
@@ -1452,7 +1452,7 @@ _create_simplification_issues() {
 
 	if [[ "$issues_created" -gt 0 ]]; then
 		qlty_section="${qlty_section}
-_Created ${issues_created} simplification-debt issue(s) for high-smell files (needs maintainer review, tier:thinking)._
+_Created ${issues_created} function-complexity-debt issue(s) for high-smell files (needs maintainer review, tier:thinking)._
 "
 	fi
 

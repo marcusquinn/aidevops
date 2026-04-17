@@ -57,26 +57,29 @@ jobs:
               return;
             }
 
-            // GH#18197: simplification-debt issues are exclusively machine-generated.
-            // A non-maintainer creating one is either a mistake or an attempt to bypass
-            // the assignee gate. Strip the label and apply needs-maintainer-review.
+            // GH#18197: file-size-debt and function-complexity-debt issues are exclusively
+            // machine-generated. A non-maintainer creating one is either a mistake or an
+            // attempt to bypass the assignee gate. Strip the label and apply needs-maintainer-review.
             //
             // GH#18623: origin:worker is ALSO machine-only — strip it independently of
-            // simplification-debt. A non-maintainer opening an issue with only the
-            // origin:worker label would previously keep that label, since the stripping
-            // logic was nested inside the simplification-debt check.
+            // file-size-debt/function-complexity-debt. A non-maintainer opening an issue with
+            // only the origin:worker label would previously keep that label, since the stripping
+            // logic was nested inside the debt-label check.
             const issueLabels = (issue.labels || []).map(l => l.name);
-            if (issueLabels.includes('simplification-debt')) {
-              console.log(`Non-maintainer ${author} created issue with simplification-debt label — stripping label and gating`);
-              try {
-                await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: issue.number,
-                  name: 'simplification-debt'
-                });
-              } catch (e) {
-                // Label may not be present — fine
+            const debtLabels = ['file-size-debt', 'function-complexity-debt'];
+            for (const debtLabel of debtLabels) {
+              if (issueLabels.includes(debtLabel)) {
+                console.log(`Non-maintainer ${author} created issue with ${debtLabel} label — stripping label and gating`);
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issue.number,
+                    name: debtLabel
+                  });
+                } catch (e) {
+                  // Label may not be present — fine
+                }
               }
             }
             if (issueLabels.includes('origin:worker')) {
