@@ -63,21 +63,32 @@ _write_gh_stub_binary() {
 # bash 3.2 compatible — no ;;& fall-through.
 printf '%s\n' "$*" >>"${GH_LOG:-/dev/null}"
 
-cmd1="${1:-}"
-cmd2="${2:-}"
+# _stub_parse_args: scan argv for `--jq <filter>` and `--state <state>`,
+# emit them on stdout as `JQ=<f>;STATE=<s>` so the caller can eval. Empty
+# values when absent. Used by the issue-list and pr-list branches.
+_stub_parse_args() {
+	local prev="" jq="" state="open" arg
+	for arg in "$@"; do
+		[[ "$prev" == "--jq" ]] && jq="$arg"
+		[[ "$prev" == "--state" ]] && state="$arg"
+		prev="$arg"
+	done
+	printf 'JQ=%s\nSTATE=%s\n' "$jq" "$state"
+}
 
-if [[ "$cmd1" == "issue" && "$cmd2" == "view" ]]; then
+# _stub_emit: print $1 raw or piped through `jq -r $2` if filter non-empty.
+_stub_emit() {
+	if [[ -n "$2" ]]; then printf '%s\n' "$1" | jq -r "$2"; else printf '%s\n' "$1"; fi
+}
+
+case "${1:-}-${2:-}" in
+issue-view)
 	shift 2
 	local_json=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--json)
-			local_json="$2"
-			shift 2
-			;;
-		--jq)
-			shift 2
-			;;
+		--json) local_json="$2"; shift 2 ;;
+		--jq) shift 2 ;;
 		*) shift ;;
 		esac
 	done
@@ -87,83 +98,26 @@ if [[ "$cmd1" == "issue" && "$cmd2" == "view" ]]; then
 	labels) printf '%s\n' "${GH_ISSUE_VIEW_LABELS:-bug,tier:standard}" ;;
 	*) printf '\n' ;;
 	esac
-	exit 0
-fi
-
-if [[ "$cmd1" == "issue" && "$cmd2" == "list" ]]; then
-	# Parse --jq and --state so the stub emulates real gh behaviour.
-	# t2144: added --state dispatch so tests can fixture open and closed
-	# child lists independently (grace-window regression tests).
-	jq_filter=""
-	state_arg="open"
-	prev_arg=""
-	for arg in "$@"; do
-		if [[ "$prev_arg" == "--jq" ]]; then
-			jq_filter="$arg"
-		fi
-		if [[ "$prev_arg" == "--state" ]]; then
-			state_arg="$arg"
-		fi
-		prev_arg="$arg"
-	done
+	;;
+issue-list)
+	# t2144: --state dispatch so tests can fixture open and closed child
+	# lists independently (grace-window regression tests).
+	eval "$(_stub_parse_args "$@")"
 	list_json="${GH_ISSUE_LIST_CHILD_JSON:-[]}"
-	if [[ "$state_arg" == "closed" ]]; then
-		list_json="${GH_ISSUE_LIST_CHILD_CLOSED_JSON:-[]}"
-	fi
-	if [[ -n "$jq_filter" ]]; then
-		printf '%s\n' "$list_json" | jq -r "$jq_filter"
-	else
-		printf '%s\n' "$list_json"
-	fi
-	exit 0
-fi
-
-if [[ "$cmd1" == "issue" && "$cmd2" == "create" ]]; then
-	printf '%s\n' "${GH_ISSUE_CREATE_URL:-https://github.com/owner/repo/issues/999}"
-	exit 0
-fi
-
-if [[ "$cmd1" == "pr" && "$cmd2" == "list" ]]; then
-	# t2161: stub `gh pr list` for _consolidation_resolving_pr_exists.
-	# Drives off GH_PR_LIST_RESOLVING_JSON. Honours --jq if the caller
-	# uses it (current production caller does NOT — it asks for raw JSON
-	# and pipes through jq itself — so the no-jq branch is the hot path).
-	pr_jq_filter=""
-	pr_prev_arg=""
-	for pr_arg in "$@"; do
-		if [[ "$pr_prev_arg" == "--jq" ]]; then
-			pr_jq_filter="$pr_arg"
-		fi
-		pr_prev_arg="$pr_arg"
-	done
-	pr_list_json="${GH_PR_LIST_RESOLVING_JSON:-[]}"
-	if [[ -n "$pr_jq_filter" ]]; then
-		printf '%s\n' "$pr_list_json" | jq -r "$pr_jq_filter"
-	else
-		printf '%s\n' "$pr_list_json"
-	fi
-	exit 0
-fi
-
-if [[ "$cmd1" == "issue" && "$cmd2" == "edit" ]]; then
-	exit 0
-fi
-
-if [[ "$cmd1" == "issue" && "$cmd2" == "comment" ]]; then
-	exit 0
-fi
-
-if [[ "$cmd1" == "api" ]]; then
-	# gh api repos/owner/repo/issues/N/comments ...
-	printf '%s\n' "${GH_API_COMMENTS_JSON:-[]}"
-	exit 0
-fi
-
-if [[ "$cmd1" == "label" && "$cmd2" == "create" ]]; then
-	exit 0
-fi
-
-printf 'gh stub: unhandled: %s\n' "$*" >&2
+	[[ "$STATE" == "closed" ]] && list_json="${GH_ISSUE_LIST_CHILD_CLOSED_JSON:-[]}"
+	_stub_emit "$list_json" "$JQ"
+	;;
+pr-list)
+	# t2161: drives off GH_PR_LIST_RESOLVING_JSON. Honours --jq if used
+	# (current production caller does NOT — it pipes raw JSON through jq).
+	eval "$(_stub_parse_args "$@")"
+	_stub_emit "${GH_PR_LIST_RESOLVING_JSON:-[]}" "$JQ"
+	;;
+issue-create) printf '%s\n' "${GH_ISSUE_CREATE_URL:-https://github.com/owner/repo/issues/999}" ;;
+api-*) printf '%s\n' "${GH_API_COMMENTS_JSON:-[]}" ;;
+issue-edit | issue-comment | label-create) ;;
+*) printf 'gh stub: unhandled: %s\n' "$*" >&2 ;;
+esac
 exit 0
 STUB
 	chmod +x "${TEST_ROOT}/bin/gh"

@@ -273,6 +273,21 @@ _gh_idempotent_comment() {
 	return 0
 }
 
+# t2161: Idempotently remove the `needs-consolidation` label from an issue
+# and log the reason. Used by `_issue_needs_consolidation`'s two auto-clear
+# branches (in-flight resolving PR + post-filter substantive_count drop).
+# Extracted to keep the parent function under the per-function complexity
+# threshold. Args: $1=issue_number $2=repo_slug $3=reason (free-text).
+_clear_needs_consolidation_label() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local reason="$3"
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--remove-label "needs-consolidation" >/dev/null 2>&1 || true
+	echo "[pulse-wrapper] Consolidation gate cleared for #${issue_number} (${repo_slug}) — ${reason}" >>"$LOGFILE"
+	return 0
+}
+
 _issue_needs_consolidation() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -307,11 +322,9 @@ _issue_needs_consolidation() {
 	# any pre-existing needs-consolidation label so the issue can close
 	# cleanly when the PR merges.
 	if _consolidation_resolving_pr_exists "$issue_number" "$repo_slug"; then
-		if [[ "$was_already_labeled" == "true" ]]; then
-			gh issue edit "$issue_number" --repo "$repo_slug" \
-				--remove-label "needs-consolidation" >/dev/null 2>&1 || true
-			echo "[pulse-wrapper] Consolidation gate cleared for #${issue_number} (${repo_slug}) — in-flight resolving PR exists (t2161)" >>"$LOGFILE"
-		fi
+		[[ "$was_already_labeled" == "true" ]] &&
+			_clear_needs_consolidation_label "$issue_number" "$repo_slug" \
+				"in-flight resolving PR exists (t2161)"
 		return 1
 	fi
 
@@ -369,11 +382,9 @@ _issue_needs_consolidation() {
 	# Auto-clear: if the issue was previously labeled but no longer triggers
 	# (e.g., filter improvement excluded operational comments that were false
 	# positives), remove the label so it becomes dispatchable immediately.
-	if [[ "$was_already_labeled" == "true" ]]; then
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--remove-label "needs-consolidation" >/dev/null 2>&1 || true
-		echo "[pulse-wrapper] Consolidation gate cleared for #${issue_number} (${repo_slug}) — substantive_count=${substantive_count} below threshold=${ISSUE_CONSOLIDATION_COMMENT_THRESHOLD}" >>"$LOGFILE"
-	fi
+	[[ "$was_already_labeled" == "true" ]] &&
+		_clear_needs_consolidation_label "$issue_number" "$repo_slug" \
+			"substantive_count=${substantive_count} below threshold=${ISSUE_CONSOLIDATION_COMMENT_THRESHOLD}"
 	return 1
 }
 
