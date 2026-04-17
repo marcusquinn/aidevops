@@ -122,6 +122,7 @@ SYSTEM_LABELS=(
 	"already-fixed|E4E669|Already fixed by another change"
 	"needs-consolidation|FBCA04|Issue needs comment consolidation before dispatch"
 	"consolidation-task|C5DEF5|Task created from consolidated duplicate issues"
+	"consolidation-in-progress|CFD3D7|Another runner is creating a consolidation child issue (cross-runner advisory lock)"
 	"consolidated|BFD4F2|Original issue consolidated into a task"
 	"needs-simplification|FBCA04|File exceeds complexity threshold"
 	"simplification-debt|D93F0B|File complexity needs reduction"

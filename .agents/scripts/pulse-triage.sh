@@ -41,6 +41,27 @@ _PULSE_TRIAGE_LOADED=1
 : "${ISSUE_CONSOLIDATION_COMMENT_THRESHOLD:=2}"
 : "${ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS:=500}"
 
+# t2151: Cross-runner advisory lock TTL for consolidation dispatch. If a
+# `consolidation-in-progress` label stays applied longer than this many hours
+# without being naturally released (by successful child creation + release,
+# or by release-on-child-close), the backfill pass clears it. Prevents a
+# crashed runner from permanently wedging the parent behind a stale lock.
+#
+# Default 6h: long enough to absorb GitHub API outages, slow runners, and
+# operator intervention windows; short enough that a truly stuck lock gets
+# cleared within one working day rather than accumulating.
+#
+# t2151: Grace period after lock acquisition during which a re-check of
+# the comment-based tiebreaker is suppressed. The tiebreaker comment is
+# posted immediately after the label; a tight re-read racing against the
+# caller's own comment would see its own marker plus the competitor's and
+# pick a winner before either runner has flushed its child-creation API
+# call. 2s is comfortably longer than the single-writer path (label + comment
+# + child-create = ~0.3-0.8s in normal conditions) and short enough that
+# operator latency is imperceptible.
+: "${CONSOLIDATION_LOCK_TTL_HOURS:=6}"
+: "${CONSOLIDATION_LOCK_TIEBREAK_WAIT_SEC:=2}"
+
 # Compute a content hash from issue body + human comments.
 # Excludes github-actions[bot] comments and our own triage reviews
 # (## Review: prefix) so that only author/contributor changes trigger
@@ -473,15 +494,22 @@ _reevaluate_simplification_labels() {
 }
 
 #######################################
-# t1982/t2144: Check whether a consolidation-task child issue currently
+# t1982/t2144/t2151: Check whether a consolidation-task child issue currently
 # "owns" this parent. Used by both _issue_needs_consolidation (as a
 # pre-filter) and _dispatch_issue_consolidation (as an idempotency guard)
 # so that repeat calls on the same parent do not create duplicate children.
 #
-# A child "owns" the parent if it is either:
-#   (a) currently open, OR
-#   (b) closed within the grace window (CONSOLIDATION_RECENT_CLOSE_GRACE_MIN
-#       minutes, default 30).
+# A child "owns" the parent if ANY of:
+#   (a) a consolidation-task child is currently open, OR
+#   (b) a consolidation-task child closed within the grace window
+#       (CONSOLIDATION_RECENT_CLOSE_GRACE_MIN minutes, default 30), OR
+#   (c) (t2151) the parent carries the `consolidation-in-progress` label —
+#       another pulse runner is mid-way through creating a child right now.
+#
+# (a) and (b) cover single-runner cascades (t1982 / t2144).
+# (c) covers the cross-runner race window between "about to create child"
+# and "child exists on GitHub". See `_consolidation_lock_acquire` for the
+# lock protocol.
 #
 # The grace window exists because closing the consolidation-task child
 # and applying the `consolidated` label to the parent are separate steps —
@@ -498,7 +526,8 @@ _reevaluate_simplification_labels() {
 # (see _compose_consolidation_child_body) which is the searchable anchor.
 #
 # Args: $1=parent_num $2=repo_slug [$3=grace_minutes_override]
-# Returns: 0 if an open-or-recently-closed child exists, 1 otherwise.
+# Returns: 0 if an open-or-recently-closed child exists OR lock label is
+#          present, 1 otherwise.
 #######################################
 _consolidation_child_exists() {
 	local parent_num="$1"
@@ -515,6 +544,13 @@ _consolidation_child_exists() {
 		--json number --jq 'length' --limit 5 2>/dev/null) || open_count=0
 	[[ "$open_count" =~ ^[0-9]+$ ]] || open_count=0
 	if [[ "$open_count" -gt 0 ]]; then
+		return 0
+	fi
+
+	# t2151: lock label is a third blocking condition. A competing runner
+	# that has acquired (or is acquiring) the lock owns the parent for the
+	# duration of its critical section. Cheap — one label-read, no search.
+	if _consolidation_lock_label_present "$parent_num" "$repo_slug"; then
 		return 0
 	fi
 
@@ -766,7 +802,236 @@ _ensure_consolidation_labels() {
 		--repo "$repo_slug" \
 		--description "Issue superseded by a consolidated child" \
 		--color "0E8A16" --force 2>/dev/null || true
+	# t2151: cross-runner advisory lock for consolidation dispatch. Applied by
+	# `_consolidation_lock_acquire` before child issue creation; treated as an
+	# active-claim signal by `dispatch-dedup-helper.sh is-assigned` so unrelated
+	# dispatch paths can't sneak past during the write window.
+	gh label create "consolidation-in-progress" \
+		--repo "$repo_slug" \
+		--description "Another runner is creating a consolidation child issue (cross-runner advisory lock)" \
+		--color "CFD3D7" --force 2>/dev/null || true
 	return 0
+}
+
+#######################################
+# t2151: Cross-runner advisory lock — marker comment protocol.
+#
+# Two pulse runners on different hosts can hit the same parent issue within
+# the same consolidation window. Neither sees the other's in-flight gh writes
+# directly, so both pass local `_consolidation_child_exists` and both create
+# a child. Production evidence: parent #19321 → #19341 (marcusquinn) +
+# #19367 (alex-solovyev, 55 min later).
+#
+# Protocol:
+#   1. acquire: apply `consolidation-in-progress` label, post a signed
+#      marker comment (HTML-comment prefix + runner login + ISO timestamp),
+#      wait briefly for any competitor's marker to flush, re-read comments.
+#   2. tiebreak: if multiple markers are present, lexicographic actor-login
+#      comparison picks the single winner. Last-writer-loses when logins are
+#      identical is impossible here (GitHub logins are unique), but if the
+#      same runner somehow posts twice, the older comment wins.
+#   3. release: remove the label and delete our marker comment. Release
+#      happens after successful child creation OR on any failure path.
+#
+# Why a comment marker plus a label, not just the label?
+#   The label alone is not enough for tiebreaking: `gh issue edit --add-label`
+#   is idempotent — after both runners apply the label, we cannot tell from
+#   the label alone who "got there first". A comment with a unique marker
+#   body and a runner-specific signature gives us a deterministic tiebreaker
+#   that works under real concurrent-API-call conditions, and crucially
+#   leaves an audit trail of every lock attempt.
+#
+# Why not rely on `gh issue edit` being atomic?
+#   `--add-label X` is atomic at the API-call surface, but two runners calling
+#   it near-simultaneously both observe their own call as "the label didn't
+#   exist, now it does". GitHub doesn't return a "label was already present"
+#   signal on the REST API. Hence the marker-comment protocol.
+#######################################
+
+# t2151: generate the marker comment text for a lock acquisition.
+# Format: `<!-- consolidation-lock:runner=LOGIN ts=ISO8601 -->` on a single line.
+# The single-line HTML-comment prefix is the stable anchor that filter regexes
+# and grep-style tests can match without ambiguity.
+_consolidation_lock_marker_body() {
+	local self_login="$1"
+	local iso_ts="$2"
+	printf '<!-- consolidation-lock:runner=%s ts=%s -->\n_Cross-runner advisory lock acquired for consolidation dispatch (t2151). This comment will be removed when the lock is released._' \
+		"$self_login" "$iso_ts"
+	return 0
+}
+
+# t2151: fetch all lock marker comments on the parent. Returns a JSON array
+# of {id, login, created_at} objects to stdout, sorted by created_at ascending.
+# Empty array on API failure.
+_consolidation_lock_markers() {
+	local parent_num="$1"
+	local repo_slug="$2"
+	gh api "repos/${repo_slug}/issues/${parent_num}/comments" --paginate \
+		--jq '[.[] | select(.body | test("^<!-- consolidation-lock:runner=[A-Za-z0-9_-]+ ts="))
+			| {id: .id, body: .body, created_at: .created_at,
+				runner: (.body | capture("^<!-- consolidation-lock:runner=(?<r>[A-Za-z0-9_-]+)") | .r)}]
+			| sort_by(.created_at)' 2>/dev/null || printf '[]'
+	return 0
+}
+
+# t2151: determine self login — the current runner's GitHub login. Workers
+# and pulse runners authenticate via `gh auth login`; the login returned by
+# `gh api user` is the same one that appears in comment.user.login. Returns
+# empty on failure; callers MUST treat empty as "cannot acquire lock" and
+# skip dispatch rather than proceed blindly.
+_consolidation_lock_self_login() {
+	# Prefer an explicit override for tests.
+	if [[ -n "${CONSOLIDATION_LOCK_SELF_LOGIN_OVERRIDE:-}" ]]; then
+		printf '%s' "$CONSOLIDATION_LOCK_SELF_LOGIN_OVERRIDE"
+		return 0
+	fi
+	gh api user --jq '.login' 2>/dev/null || true
+	return 0
+}
+
+# t2151: determine if parent currently carries the lock label.
+# Args: $1=parent_num $2=repo_slug
+# Returns: 0 if label is present, 1 otherwise.
+_consolidation_lock_label_present() {
+	local parent_num="$1"
+	local repo_slug="$2"
+	local labels_csv
+	labels_csv=$(gh issue view "$parent_num" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || labels_csv=""
+	[[ ",${labels_csv}," == *",consolidation-in-progress,"* ]]
+}
+
+# t2151: release the lock — delete our marker comment(s) and remove the label
+# if no other runner's marker is present. Safe to call even if acquire failed
+# (idempotent). Never fails the caller — release best-effort.
+#
+# Args: $1=parent_num $2=repo_slug $3=self_login
+_consolidation_lock_release() {
+	local parent_num="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+
+	[[ -n "$parent_num" && -n "$repo_slug" ]] || return 0
+
+	local markers_json
+	markers_json=$(_consolidation_lock_markers "$parent_num" "$repo_slug")
+	[[ -n "$markers_json" ]] || markers_json="[]"
+
+	# Delete every marker that belongs to us.
+	local self_marker_ids
+	self_marker_ids=$(printf '%s' "$markers_json" |
+		jq -r --arg me "$self_login" '.[] | select(.runner == $me) | .id' 2>/dev/null) || self_marker_ids=""
+	local mid
+	while IFS= read -r mid; do
+		[[ -z "$mid" ]] && continue
+		gh api -X DELETE "repos/${repo_slug}/issues/comments/${mid}" >/dev/null 2>&1 || true
+	done <<<"$self_marker_ids"
+
+	# If no other runner's marker remains, drop the lock label. Otherwise a
+	# competing runner is still inside its own acquire/dispatch window — don't
+	# clear the label out from under them.
+	local other_count
+	other_count=$(printf '%s' "$markers_json" |
+		jq -r --arg me "$self_login" '[.[] | select(.runner != $me)] | length' 2>/dev/null) || other_count=0
+	[[ "$other_count" =~ ^[0-9]+$ ]] || other_count=0
+	if [[ "$other_count" -eq 0 ]]; then
+		gh issue edit "$parent_num" --repo "$repo_slug" \
+			--remove-label "consolidation-in-progress" >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
+# t2151: acquire the cross-runner lock. See protocol overview above.
+#
+# Args: $1=parent_num $2=repo_slug
+# Returns:
+#   0 — lock acquired, caller MUST proceed with child creation and
+#       call _consolidation_lock_release after (success or failure).
+#   1 — lock held by another runner or self_login unavailable; caller
+#       MUST skip dispatch.
+_consolidation_lock_acquire() {
+	local parent_num="$1"
+	local repo_slug="$2"
+
+	[[ -n "$parent_num" && -n "$repo_slug" ]] || return 1
+
+	local self_login
+	self_login=$(_consolidation_lock_self_login)
+	if [[ -z "$self_login" ]]; then
+		# Cannot lock without knowing our identity — fail-closed: block
+		# dispatch rather than create a duplicate. A transient `gh auth`
+		# issue self-heals within one pulse cycle at zero cost.
+		echo "[pulse-wrapper] Consolidation lock: gh api user failed for #${parent_num} in ${repo_slug} — skipping dispatch (fail-closed)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Apply label first — cheapest signal for the fast-path competitor
+	# who is about to call `_consolidation_child_exists`.
+	gh issue edit "$parent_num" --repo "$repo_slug" \
+		--add-label "consolidation-in-progress" >/dev/null 2>&1 || true
+
+	# Post our marker. Embed the current ISO timestamp.
+	local iso_ts
+	iso_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) || iso_ts=""
+	local marker_body
+	marker_body=$(_consolidation_lock_marker_body "$self_login" "$iso_ts")
+	gh issue comment "$parent_num" --repo "$repo_slug" \
+		--body "$marker_body" >/dev/null 2>&1 || {
+		# Comment post failed — can't tiebreak without our marker being
+		# visible. Roll back by clearing the label and skip dispatch.
+		gh issue edit "$parent_num" --repo "$repo_slug" \
+			--remove-label "consolidation-in-progress" >/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Consolidation lock: marker comment post failed for #${parent_num} in ${repo_slug} — rolled back label, skipping dispatch" >>"$LOGFILE"
+		return 1
+	}
+
+	# Give any concurrent competitor a short window to flush their marker.
+	# `sleep 0` on tiebreak_wait=0 is a no-op — used by unit tests.
+	local wait_sec="${CONSOLIDATION_LOCK_TIEBREAK_WAIT_SEC:-2}"
+	[[ "$wait_sec" =~ ^[0-9]+$ ]] || wait_sec=2
+	if [[ "$wait_sec" -gt 0 ]]; then
+		sleep "$wait_sec" 2>/dev/null || true
+	fi
+
+	# Re-read markers and tiebreak.
+	local markers_json
+	markers_json=$(_consolidation_lock_markers "$parent_num" "$repo_slug")
+	[[ -n "$markers_json" ]] || markers_json="[]"
+
+	# Count distinct runners. If only one (us), we won trivially.
+	local distinct_runners
+	distinct_runners=$(printf '%s' "$markers_json" |
+		jq -r '[.[].runner] | unique | length' 2>/dev/null) || distinct_runners=0
+	[[ "$distinct_runners" =~ ^[0-9]+$ ]] || distinct_runners=0
+
+	if [[ "$distinct_runners" -le 1 ]]; then
+		# No competing runner — we own the lock.
+		echo "[pulse-wrapper] Consolidation lock: acquired by ${self_login} on #${parent_num} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Tiebreak: lexicographically lowest login wins. Deterministic without
+	# relying on clock skew between runners.
+	local winner_login
+	winner_login=$(printf '%s' "$markers_json" |
+		jq -r '[.[].runner] | unique | sort | .[0]' 2>/dev/null) || winner_login=""
+
+	if [[ "$winner_login" == "$self_login" ]]; then
+		echo "[pulse-wrapper] Consolidation lock: won tiebreaker on #${parent_num} in ${repo_slug} (self=${self_login}, competitors=$(printf '%s' "$markers_json" | jq -r '[.[].runner] | unique | join(",")' 2>/dev/null))" >>"$LOGFILE"
+		return 0
+	fi
+
+	# We lost. Release our marker but leave the label (winner still needs it).
+	echo "[pulse-wrapper] Consolidation lock: lost tiebreaker on #${parent_num} in ${repo_slug} (self=${self_login}, winner=${winner_login}) — rolling back our marker" >>"$LOGFILE"
+	local self_marker_ids
+	self_marker_ids=$(printf '%s' "$markers_json" |
+		jq -r --arg me "$self_login" '.[] | select(.runner == $me) | .id' 2>/dev/null) || self_marker_ids=""
+	local mid
+	while IFS= read -r mid; do
+		[[ -z "$mid" ]] && continue
+		gh api -X DELETE "repos/${repo_slug}/issues/comments/${mid}" >/dev/null 2>&1 || true
+	done <<<"$self_marker_ids"
+	return 1
 }
 
 #######################################
@@ -840,13 +1105,20 @@ _Automated by \`_dispatch_issue_consolidation()\` in \`pulse-triage.sh\` (t1982)
 }
 
 #######################################
-# t1982: Dispatch a consolidation task for an issue with accumulated
+# t1982/t2151: Dispatch a consolidation task for an issue with accumulated
 # substantive comments. Creates a self-contained consolidation-task child
 # issue that the pulse will pick up on the next cycle. The child's body
 # contains the parent's title, body, and substantive comments inline so
 # the worker never needs to read the parent.
 #
-# Idempotent: returns 0 without creating anything if a child already exists.
+# Idempotent: returns 0 without creating anything if a child already exists
+# or if the cross-runner advisory lock is held by another runner.
+#
+# t2151 cross-runner coordination:
+#   Phase A (t2144) closed single-runner cascade vectors. This path adds
+#   the cross-runner guard: acquire `consolidation-in-progress` before
+#   creating the child, release on any exit path (success or failure).
+#   See `_consolidation_lock_acquire` for the full protocol.
 #
 # Reference pattern: `_issue_targets_large_files` at pulse-dispatch-core.sh:685-757
 # which creates simplification-debt child issues the same way.
@@ -861,12 +1133,30 @@ _dispatch_issue_consolidation() {
 
 	# Dedup: if an open consolidation-task already references this parent,
 	# just ensure the parent is flagged and return. Do NOT create a duplicate.
+	# t2151: _consolidation_child_exists also returns 0 when the lock label
+	# is present, so a competing runner's in-flight creation blocks us here
+	# before we ever touch the acquire path.
 	if _consolidation_child_exists "$issue_number" "$repo_slug"; then
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--add-label "needs-consolidation" 2>/dev/null || true
 		echo "[pulse-wrapper] Consolidation: child already exists for #${issue_number} in ${repo_slug}; flagged parent and returning" >>"$LOGFILE"
 		return 0
 	fi
+
+	# t2151: acquire the cross-runner advisory lock before any state changes
+	# that would be expensive or visible to cause a partial-state race.
+	# If we don't win the lock, another runner will create the child; we
+	# just need to flag the parent as needing consolidation and return.
+	if ! _consolidation_lock_acquire "$issue_number" "$repo_slug"; then
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--add-label "needs-consolidation" 2>/dev/null || true
+		echo "[pulse-wrapper] Consolidation: lock held by another runner for #${issue_number} in ${repo_slug}; flagged parent and yielding" >>"$LOGFILE"
+		return 0
+	fi
+
+	# From this point on, every exit path MUST call _consolidation_lock_release.
+	local self_login
+	self_login=$(_consolidation_lock_self_login)
 
 	# Fetch parent metadata.
 	local parent_title parent_body parent_labels
@@ -903,17 +1193,96 @@ _dispatch_issue_consolidation() {
 		# Still flag parent so it doesn't keep firing every cycle.
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--add-label "needs-consolidation" 2>/dev/null || true
+		# t2151: release the lock on failure too — otherwise TTL is the only
+		# way it clears, and another runner would be blocked for 6h.
+		_consolidation_lock_release "$issue_number" "$repo_slug" "$self_login"
 		return 1
 	fi
 
 	# Flag parent and post the idempotent pointer comment.
 	_post_consolidation_dispatch_comment "$issue_number" "$repo_slug" "$child_num" "$authors_csv"
+	# t2151: release the lock — the child now exists on GitHub and
+	# `_consolidation_child_exists` will block subsequent dispatches on
+	# its own, making the lock unnecessary past this point.
+	_consolidation_lock_release "$issue_number" "$repo_slug" "$self_login"
 	echo "[pulse-wrapper] Consolidation: flagged #${issue_number} in ${repo_slug}, dispatched child #${child_num}" >>"$LOGFILE"
 	return 0
 }
 
 #######################################
-# t1982: Backfill pass for stuck needs-consolidation issues.
+# t2151: Clear stale `consolidation-in-progress` lock labels whose oldest
+# lock-marker comment is older than CONSOLIDATION_LOCK_TTL_HOURS. Covers
+# the case where the runner that acquired the lock crashed or lost network
+# between `_consolidation_lock_acquire` and `_consolidation_lock_release`,
+# leaving the lock wedged.
+#
+# Called from _backfill_stale_consolidation_labels so every pulse cycle
+# sweeps all pulse-enabled repos for stuck locks at zero marginal cost.
+#
+# Args: $1=repo_slug, $2=issue_number
+# Returns: 0 if lock was cleared, 1 if lock was fresh (no action taken).
+# Side effect: emits a log line when clearing.
+#######################################
+_consolidation_ttl_sweep_one() {
+	local slug="$1"
+	local num="$2"
+	local ttl_hours="${CONSOLIDATION_LOCK_TTL_HOURS:-6}"
+	[[ "$ttl_hours" =~ ^[0-9]+$ ]] || ttl_hours=6
+
+	# Get the oldest lock-marker timestamp.
+	local markers_json
+	markers_json=$(_consolidation_lock_markers "$num" "$slug")
+	[[ -n "$markers_json" ]] || markers_json="[]"
+
+	local oldest_iso
+	oldest_iso=$(printf '%s' "$markers_json" |
+		jq -r '.[0].created_at // empty' 2>/dev/null) || oldest_iso=""
+
+	if [[ -z "$oldest_iso" ]]; then
+		# Label present but no marker comment — orphaned from a previous
+		# deploy or manual edit. Clear it as well (nothing to tiebreak).
+		gh issue edit "$num" --repo "$slug" \
+			--remove-label "consolidation-in-progress" >/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Consolidation lock TTL sweep: cleared orphan (no marker) on #${num} in ${slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Compute oldest-epoch. Prefer GNU date -d; fall back to BSD date -j.
+	local oldest_epoch=""
+	oldest_epoch=$(date -u -d "$oldest_iso" +'%s' 2>/dev/null) || oldest_epoch=""
+	if [[ -z "$oldest_epoch" ]]; then
+		oldest_epoch=$(TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$oldest_iso" +'%s' 2>/dev/null) || oldest_epoch=""
+	fi
+	# If date parsing fails entirely, fall-open (treat as fresh). A real
+	# stuck lock will trip on the NEXT pulse cycle once the comment-ISO
+	# parser recovers — preferable to false-clearing an in-flight lock.
+	[[ -n "$oldest_epoch" ]] || return 1
+
+	local now_epoch
+	now_epoch=$(date -u +'%s' 2>/dev/null) || now_epoch=0
+	local age_seconds=$((now_epoch - oldest_epoch))
+	local ttl_seconds=$((ttl_hours * 3600))
+
+	if [[ "$age_seconds" -lt "$ttl_seconds" ]]; then
+		return 1
+	fi
+
+	# Lock is stale — clear the label and delete ALL markers (nobody is
+	# coming back for them; the next dispatcher starts from scratch).
+	gh issue edit "$num" --repo "$slug" \
+		--remove-label "consolidation-in-progress" >/dev/null 2>&1 || true
+	local mid
+	while IFS= read -r mid; do
+		[[ -z "$mid" ]] && continue
+		gh api -X DELETE "repos/${slug}/issues/comments/${mid}" >/dev/null 2>&1 || true
+	done < <(printf '%s' "$markers_json" | jq -r '.[].id' 2>/dev/null)
+
+	echo "[pulse-wrapper] Consolidation lock TTL sweep: cleared stale lock on #${num} in ${slug} (age=${age_seconds}s, ttl=${ttl_seconds}s)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# t1982/t2151: Backfill pass for stuck needs-consolidation issues.
 #
 # The re-evaluation pass (_reevaluate_consolidation_labels) only *clears*
 # stale labels when the comment filter no longer triggers. Issues flagged
@@ -923,6 +1292,12 @@ _dispatch_issue_consolidation() {
 #
 # This pass sweeps every open needs-consolidation issue without a linked
 # consolidation-task child and dispatches one retroactively.
+#
+# t2151: Also sweeps every open `consolidation-in-progress` issue and
+# clears the lock label when the oldest lock-marker comment is older than
+# CONSOLIDATION_LOCK_TTL_HOURS (default 6h). Closes the "runner crashed
+# mid-dispatch" failure mode in which the lock would otherwise sit wedged
+# until a human notices.
 #
 # Runs every pulse cycle alongside _reevaluate_consolidation_labels.
 # Cheap: one gh issue list per repo + one child-exists lookup per labelled
@@ -934,8 +1309,27 @@ _backfill_stale_consolidation_labels() {
 
 	local total_backfilled=0
 	local total_cleared_stale=0
+	local total_locks_expired=0
 	while IFS='|' read -r slug rpath; do
 		[[ -n "$slug" ]] || continue
+
+		# t2151: TTL sweep for stuck `consolidation-in-progress` labels.
+		# Separate query from needs-consolidation because a lock can be held
+		# on a parent that already has both labels (lock was acquired before
+		# needs-consolidation was applied) or only the lock (acquire path
+		# where child creation failed after lock but before flag-parent).
+		local locked_issues_json
+		locked_issues_json=$(gh issue list --repo "$slug" --state open \
+			--label "consolidation-in-progress" \
+			--json number --limit 50 2>/dev/null) || locked_issues_json='[]'
+		local locked_num
+		while IFS= read -r locked_num; do
+			[[ "$locked_num" =~ ^[0-9]+$ ]] || continue
+			if _consolidation_ttl_sweep_one "$slug" "$locked_num"; then
+				total_locks_expired=$((total_locks_expired + 1))
+			fi
+		done < <(printf '%s' "$locked_issues_json" | jq -r '.[]?.number // ""' 2>/dev/null)
+
 		local issues_json
 		issues_json=$(gh issue list --repo "$slug" --state open \
 			--label "needs-consolidation" \
@@ -982,6 +1376,9 @@ _backfill_stale_consolidation_labels() {
 	fi
 	if [[ "$total_cleared_stale" -gt 0 ]]; then
 		echo "[pulse-wrapper] Consolidation backfill: cleared ${total_cleared_stale} stale needs-consolidation label(s) on already-consolidated parents (t2144)" >>"$LOGFILE"
+	fi
+	if [[ "$total_locks_expired" -gt 0 ]]; then
+		echo "[pulse-wrapper] Consolidation backfill: cleared ${total_locks_expired} stale consolidation-in-progress lock(s) (t2151 TTL)" >>"$LOGFILE"
 	fi
 	return 0
 }
