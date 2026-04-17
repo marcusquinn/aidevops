@@ -146,6 +146,7 @@ _large_file_gate_extract_paths() {
 	# which threw away the one piece of information needed to tell "targeted
 	# edit in a 30-line range" from "rewrite the whole 3000-line file".
 	local file_paths
+	# shellcheck disable=SC2016  # `\s` is grep-regex escape, not shell expansion.
 	file_paths=$(printf '%s' "$issue_body" | grep -oE '(EDIT|NEW|File):?\s+[`"]?\.?agents/scripts/[^`"[:space:],]+' 2>/dev/null |
 		sed 's/^[A-Z]*:*[[:space:]]*//' | sed 's/^[`"]//' | sed 's/[`"]*$//' | sort -u) || file_paths=""
 
@@ -173,6 +174,7 @@ _large_file_gate_extract_paths() {
 	#   - EDIT: `pulse-ancillary-dispatch.sh:221-253`
 	# should be parsed as "file + range", not stripped to bare "file".
 	local backtick_paths
+	# shellcheck disable=SC2016  # Backtick chars in regex are literals, not command subst.
 	backtick_paths=$(printf '%s' "$issue_body" | grep -E '^\s*[-*]\s+(EDIT|NEW|File):|^(EDIT|NEW|File):' 2>/dev/null |
 		grep -oE '`[^`]*\.(sh|py|js|ts)[^`]*`' 2>/dev/null |
 		tr -d '`' | grep -v '^#' | sort -u) || backtick_paths=""
@@ -267,121 +269,142 @@ _large_file_gate_evaluate_target() {
 }
 
 #######################################
-# Create a simplification-debt issue for one large-file target. Idempotent:
-# if an open simplification-debt issue already mentions the file, emit a
-# reference to it instead of creating a new one.
-#
-# t2021: `gh issue create` does NOT support --json; the issue number is
-# parsed from the issue URL on stdout. The `|| true` on the $() guards
-# against gh non-zero exits (label application failing server-side while
-# the issue still creates — see issue-sync-helper.sh:441-464, GH#15234).
-#
-# GH#18644: the `simplification-debt` label is created idempotently here
-# so first-use in a fresh repo doesn't fail.
-#
-# t2164: `repo_path` parameter added so the recently-closed continuation
-# branch (GH#18960) can verify the prior PR actually reduced the file
-# below threshold before declaring continuation. Without this check, a
-# closed simplification-debt issue whose PR did not shrink the file
-# (or even grew it) gets cited as "in flight" continuation, and the
-# parent stays held by the gate forever (or until the 30-day window
-# expires) with no real work scheduled.
-#
-# Arguments: lf_path, parent_issue, repo_slug, repo_path
-# Stdout: "#NNN (existing)" or "#NNN (new)" or
-#         "#NNN (recently-closed — continuation)" on success; empty on failure
-# Exit: 0 always (non-fatal; failure is logged)
+# t2164 helper — resolve a large-file path against the repo_path, checking
+# bare, .agents/-prefixed, and .-prefixed variants (mirrors
+# _large_file_gate_evaluate_target). Prints the resolved full path on stdout
+# and returns 0 when found; returns 1 and prints nothing otherwise.
 #######################################
-_large_file_gate_create_debt_issue() {
+_large_file_gate_resolve_full_path() {
 	local lf_path="$1"
-	local parent_issue="$2"
-	local repo_slug="$3"
-	local repo_path="${4:-}"
-	local _lf_basename
-	_lf_basename=$(basename "$lf_path")
+	local repo_path="$2"
+	if [[ -z "$repo_path" || ! -d "$repo_path" ]]; then
+		return 1
+	fi
+	if [[ -f "${repo_path}/${lf_path}" ]]; then
+		printf '%s' "${repo_path}/${lf_path}"
+		return 0
+	fi
+	if [[ -f "${repo_path}/.agents/${lf_path}" ]]; then
+		printf '%s' "${repo_path}/.agents/${lf_path}"
+		return 0
+	fi
+	if [[ -f "${repo_path}/.${lf_path}" ]]; then
+		printf '%s' "${repo_path}/.${lf_path}"
+		return 0
+	fi
+	return 1
+}
 
-	# Check if a simplification-debt issue already exists for this file
-	local _existing
-	_existing=$(gh issue list --repo "$repo_slug" --state open \
-		--label "simplification-debt" --search "$_lf_basename" \
-		--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _existing=""
-	if [[ -n "$_existing" ]]; then
-		printf '#%s (existing)' "$_existing"
+#######################################
+# t2164 — verify whether a closed simplification-debt issue's PR actually
+# reduced the file below threshold. Returns:
+#   0 — "continuation is valid" (file now under threshold OR measurement
+#       unavailable; caller should emit the continuation reference)
+#   1 — "continuation is phantom" (file still over threshold; caller should
+#       fall through to create a fresh debt issue, and this helper has
+#       already logged the skip to $LOGFILE)
+#
+# Arguments: existing_issue_num, lf_path, repo_path
+#######################################
+_large_file_gate_verify_prior_reduced_size() {
+	local existing_issue="$1"
+	local lf_path="$2"
+	local repo_path="$3"
+
+	local _verify_full_path
+	_verify_full_path=$(_large_file_gate_resolve_full_path "$lf_path" "$repo_path") || _verify_full_path=""
+
+	if [[ -z "$_verify_full_path" ]]; then
+		# Couldn't resolve path — preserve pre-t2164 behaviour: trust the
+		# closed-issue signal (safer than creating noisy duplicates when
+		# measurement is unavailable, e.g. running outside a checkout).
 		return 0
 	fi
 
-	# Check recently-closed simplification-debt issues for this file (GH#18960)
-	# If a partial-simplification PR merged and closed the debt issue recently,
-	# return a reference to it instead of re-filing an identical issue.
-	# Configurable via LFG_DEBT_REOPEN_DAYS (default 30).
+	local _verify_lines=0
+	_verify_lines=$(wc -l <"$_verify_full_path" 2>/dev/null | tr -d ' ') || _verify_lines=0
+
+	if [[ "$_verify_lines" -gt 0 && "$_verify_lines" -lt "$LARGE_FILE_LINE_THRESHOLD" ]]; then
+		# Prior PR genuinely reduced the file below threshold.
+		return 0
+	fi
+	if [[ "$_verify_lines" -ge "$LARGE_FILE_LINE_THRESHOLD" ]]; then
+		# File still over threshold — log the phantom-continuation skip
+		# so the gate's audit trail captures why a fresh issue is filed.
+		echo "[pulse-wrapper] Large-file gate: prior simplification-debt #${existing_issue} closed but ${lf_path} still ${_verify_lines} lines (threshold ${LARGE_FILE_LINE_THRESHOLD}); filing fresh debt issue (t2164)" >>"$LOGFILE"
+		return 1
+	fi
+	# wc -l returned 0 (empty file / read error) — treat same as unavailable.
+	return 0
+}
+
+#######################################
+# t2164 helper — find an open or recently-closed simplification-debt issue
+# that mentions `_lf_basename`. Prints "<state>:<number>" on stdout when
+# found (state is "open" or "closed"); prints nothing otherwise.
+#
+# State is emitted as a stdout prefix instead of via `printf -v` because the
+# caller invokes this helper in a command substitution `$(…)`, which runs in
+# a subshell — `printf -v` in the subshell cannot reach the caller's scope.
+# Encoding both values in stdout sidesteps the subshell boundary entirely.
+#
+# Arguments: repo_slug, lf_basename
+# Stdout: "open:12345", "closed:18706", or empty
+#######################################
+_large_file_gate_find_existing_debt_issue() {
+	local repo_slug="$1"
+	local lf_basename="$2"
+
+	local _open
+	_open=$(gh issue list --repo "$repo_slug" --state open \
+		--label "simplification-debt" --search "$lf_basename" \
+		--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _open=""
+	if [[ -n "$_open" ]]; then
+		printf 'open:%s' "$_open"
+		return 0
+	fi
+
 	local _reopen_days="${LFG_DEBT_REOPEN_DAYS:-30}"
 	local _recent_date
 	_recent_date=$(date -u "-v-${_reopen_days}d" "+%Y-%m-%d" 2>/dev/null ||
 		date -u -d "${_reopen_days} days ago" "+%Y-%m-%d" 2>/dev/null || true)
-	if [[ -n "$_recent_date" ]]; then
-		_existing=$(gh issue list --repo "$repo_slug" \
-			--state closed --label "simplification-debt" \
-			--search "$_lf_basename closed:>$_recent_date" \
-			--json number --jq '.[0].number // empty' \
-			--limit 5 2>/dev/null) || _existing=""
-	fi
-	if [[ -n "$_existing" ]]; then
-		# t2164: Verify the prior PR actually reduced the file below threshold.
-		# If the file is still over threshold, the prior simplification did
-		# not solve the file-size problem (e.g., function-complexity ticket
-		# closed by a PR that decomposed a function but added net lines —
-		# observed pattern: PR #18715 closed #18706 and grew the file by
-		# +29 lines). Treat the prior issue as "attempted but did not
-		# reduce file size" and fall through to file a fresh debt issue.
-		local _verify_lines=0
-		local _verify_full_path=""
-		if [[ -n "$repo_path" && -d "$repo_path" ]]; then
-			if [[ -f "${repo_path}/${lf_path}" ]]; then
-				_verify_full_path="${repo_path}/${lf_path}"
-			elif [[ -f "${repo_path}/.agents/${lf_path}" ]]; then
-				_verify_full_path="${repo_path}/.agents/${lf_path}"
-			elif [[ -f "${repo_path}/.${lf_path}" ]]; then
-				_verify_full_path="${repo_path}/.${lf_path}"
-			fi
-		fi
-		if [[ -n "$_verify_full_path" ]]; then
-			_verify_lines=$(wc -l <"$_verify_full_path" 2>/dev/null | tr -d ' ') || _verify_lines=0
-		fi
-		# Only short-circuit as continuation when we successfully measured
-		# AND the file is now under threshold. If repo_path is missing or
-		# wc -l failed, fall back to the pre-t2164 behaviour and trust the
-		# closed-issue signal (safer than creating noisy duplicate issues
-		# when measurement is unavailable).
-		if [[ "$_verify_lines" -gt 0 && "$_verify_lines" -lt "$LARGE_FILE_LINE_THRESHOLD" ]]; then
-			printf '#%s (recently-closed — continuation)' "$_existing"
-			return 0
-		fi
-		if [[ "$_verify_lines" -ge "$LARGE_FILE_LINE_THRESHOLD" ]]; then
-			# File still over threshold — log and fall through to create new issue.
-			# The new issue body (below) references the prior failed attempt.
-			echo "[pulse-wrapper] Large-file gate: prior simplification-debt #${_existing} closed but ${lf_path} still ${_verify_lines} lines (threshold ${LARGE_FILE_LINE_THRESHOLD}); filing fresh debt issue (t2164)" >>"$LOGFILE"
-		else
-			# Couldn't measure (no repo_path or file not on disk in this checkout)
-			# — preserve pre-t2164 behaviour: trust the closed-issue signal.
-			printf '#%s (recently-closed — continuation)' "$_existing"
-			return 0
-		fi
+	if [[ -z "$_recent_date" ]]; then
+		return 1
 	fi
 
-	# Capture _existing for the new-issue body so the prior failed attempt
-	# is discoverable in the gate's audit trail.
+	local _closed
+	_closed=$(gh issue list --repo "$repo_slug" \
+		--state closed --label "simplification-debt" \
+		--search "$lf_basename closed:>$_recent_date" \
+		--json number --jq '.[0].number // empty' \
+		--limit 5 2>/dev/null) || _closed=""
+	if [[ -n "$_closed" ]]; then
+		printf 'closed:%s' "$_closed"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# t2164 helper — create a fresh simplification-debt issue via gh_create_issue.
+# Prints "#NNN (new)" on success and empty on failure (gh failure is logged).
+# Accepts an optional `prior_attempt_issue` for the body's "Prior attempt"
+# footnote (t2164 phantom-continuation audit trail).
+#######################################
+_large_file_gate_file_new_debt_issue() {
+	local lf_path="$1"
+	local parent_issue="$2"
+	local repo_slug="$3"
+	local prior_attempt_issue="${4:-}"
+
 	local _prior_attempt_ref=""
-	if [[ -n "$_existing" ]]; then
+	if [[ -n "$prior_attempt_issue" ]]; then
 		_prior_attempt_ref="
 
-**Prior attempt:** #${_existing} closed without reducing file size below the ${LARGE_FILE_LINE_THRESHOLD}-line threshold (current size verified by gate). This issue is the file-size follow-up."
+**Prior attempt:** #${prior_attempt_issue} closed without reducing file size below the ${LARGE_FILE_LINE_THRESHOLD}-line threshold (current size verified by gate). This issue is the file-size follow-up."
 	fi
 
-	# GH#18644: ensure the `simplification-debt` label exists before the
-	# create call. Without this, a first-use of the gate in any repo that
-	# doesn't already have the label fails with "could not add label:
-	# 'simplification-debt' not found" and the whole gate becomes a no-op
-	# for that repo forever. gh label create is idempotent with --force.
+	# GH#18644: ensure the `simplification-debt` label exists before creation.
 	gh label create "simplification-debt" \
 		--repo "$repo_slug" \
 		--description "Target file needs simplification before implementation work can proceed" \
@@ -420,6 +443,74 @@ _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
 		# issue-sync-helper.sh style.
 		echo "[pulse-wrapper] WARN: failed to create simplification-debt issue for ${lf_path} (blocking #${parent_issue}): ${_create_combined:0:200}" >>"$LOGFILE"
 	fi
+	return 0
+}
+
+#######################################
+# Create a simplification-debt issue for one large-file target. Idempotent:
+# if an open simplification-debt issue already mentions the file, emit a
+# reference to it instead of creating a new one.
+#
+# t2021: `gh issue create` does NOT support --json; the issue number is
+# parsed from the issue URL on stdout. The `|| true` on the $() guards
+# against gh non-zero exits (label application failing server-side while
+# the issue still creates — see issue-sync-helper.sh:441-464, GH#15234).
+#
+# GH#18644: the `simplification-debt` label is created idempotently so
+# first-use in a fresh repo doesn't fail.
+#
+# t2164: `repo_path` parameter added so the recently-closed continuation
+# branch (GH#18960) can verify the prior PR actually reduced the file
+# below threshold before declaring continuation. Without this check, a
+# closed simplification-debt issue whose PR did not shrink the file
+# (or even grew it) gets cited as "in flight" continuation, and the
+# parent stays held by the gate forever (or until the 30-day window
+# expires) with no real work scheduled.
+#
+# Arguments: lf_path, parent_issue, repo_slug, repo_path
+# Stdout: "#NNN (existing)" or "#NNN (new)" or
+#         "#NNN (recently-closed — continuation)" on success; empty on failure
+# Exit: 0 always (non-fatal; failure is logged)
+#######################################
+_large_file_gate_create_debt_issue() {
+	local lf_path="$1"
+	local parent_issue="$2"
+	local repo_slug="$3"
+	local repo_path="${4:-}"
+	local _lf_basename
+	_lf_basename=$(basename "$lf_path")
+
+	# t2164: helper encodes state in stdout as "<state>:<number>" — subshell
+	# boundary prevents `printf -v` from crossing the command substitution.
+	local _existing_combined _existing _existing_state
+	_existing_combined=$(_large_file_gate_find_existing_debt_issue "$repo_slug" "$_lf_basename") || _existing_combined=""
+	if [[ -n "$_existing_combined" && "$_existing_combined" == *:* ]]; then
+		_existing_state="${_existing_combined%%:*}"
+		_existing="${_existing_combined#*:}"
+	else
+		_existing_state=""
+		_existing=""
+	fi
+
+	if [[ "$_existing_state" == "open" ]]; then
+		printf '#%s (existing)' "$_existing"
+		return 0
+	fi
+
+	if [[ "$_existing_state" == "closed" ]]; then
+		# t2164: verify the prior PR actually reduced file size before
+		# declaring continuation. Helper logs the skip when it fires.
+		if _large_file_gate_verify_prior_reduced_size "$_existing" "$lf_path" "$repo_path"; then
+			printf '#%s (recently-closed — continuation)' "$_existing"
+			return 0
+		fi
+		# Fall through: prior attempt did not reduce file size — file a
+		# fresh debt issue that references the failed prior attempt.
+		_large_file_gate_file_new_debt_issue "$lf_path" "$parent_issue" "$repo_slug" "$_existing"
+		return 0
+	fi
+
+	_large_file_gate_file_new_debt_issue "$lf_path" "$parent_issue" "$repo_slug" ""
 	return 0
 }
 
