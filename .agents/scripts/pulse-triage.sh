@@ -299,6 +299,22 @@ _issue_needs_consolidation() {
 		was_already_labeled=true
 	fi
 
+	# t2161: Defence-in-depth — if an open PR already resolves this parent
+	# (closing keyword + #N), the work is in flight. Skip consolidation
+	# regardless of substantive-comment count. This catches the cascade
+	# vector where version drift on a contributor runner re-introduces a
+	# stale filter (root cause of GH#19448 → #19469 → #19471). Auto-clear
+	# any pre-existing needs-consolidation label so the issue can close
+	# cleanly when the PR merges.
+	if _consolidation_resolving_pr_exists "$issue_number" "$repo_slug"; then
+		if [[ "$was_already_labeled" == "true" ]]; then
+			gh issue edit "$issue_number" --repo "$repo_slug" \
+				--remove-label "needs-consolidation" >/dev/null 2>&1 || true
+			echo "[pulse-wrapper] Consolidation gate cleared for #${issue_number} (${repo_slug}) — in-flight resolving PR exists (t2161)" >>"$LOGFILE"
+		fi
+		return 1
+	fi
+
 	# Count substantive comments (>MIN_CHARS, not from bots or dispatch machinery).
 	# Only human-authored scope-changing comments should count. Operational
 	# comments (dispatch claims, kill notices, crash reports, stale recovery,
@@ -579,6 +595,76 @@ _consolidation_child_exists() {
 		--json number --jq 'length' --limit 5 2>/dev/null) || recent_closed_count=0
 	[[ "$recent_closed_count" =~ ^[0-9]+$ ]] || recent_closed_count=0
 	[[ "$recent_closed_count" -gt 0 ]]
+}
+
+#######################################
+# t2161: Check whether an open PR with a GitHub-native closing keyword
+# referencing this parent issue is currently in-flight. Used as a safety
+# net by `_issue_needs_consolidation` and `_dispatch_issue_consolidation`
+# to prevent the cascade observed in GH#19448 → GH#19469 → GH#19471, where
+# version drift on a contributor runner caused a stale filter to falsely
+# trigger consolidation while a fix PR was already mergeable.
+#
+# Why this is needed AT ALL given t2144's filter fix:
+#   The substantive-comment filter is the right primary defence (it solves
+#   the cause: noise comments). This helper is a defence-in-depth safety
+#   net that holds even when:
+#     (a) a contributor runner is running pre-t2144 code,
+#     (b) a future filter regression slips through,
+#     (c) a new operational comment shape ships and drifts past the regex.
+#   In all three cases, the existence of an in-flight PR resolving the
+#   parent is a strong, runtime-checkable "the work is in progress, do
+#   not file a planning task on top of it" signal.
+#
+# Why "in-flight PR" is a stronger signal than "open PR":
+#   GitHub only auto-closes the issue when the PR MERGES, so an open PR
+#   with a closing keyword has not yet resolved the issue — but the work
+#   is committed, reviewable, and a consolidation child filed now would
+#   become noise the moment the PR merges (the issue closes within
+#   seconds of merge). Asymmetric cost: skipping consolidation when there
+#   is an in-flight fix is cheap and reversible (the next pulse cycle
+#   fires if the PR closes without merging); filing a duplicate child
+#   issue burns a worker session and pollutes the issue thread.
+#
+# Closing-keyword regex sourced from `_extract_linked_issue` in
+# pulse-merge.sh:1173 — matches GitHub's full close keyword list:
+# close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved
+# (case-insensitive). Bare `#NNN` references and `For #NNN` / `Ref #NNN`
+# references do NOT match — those are intentionally non-closing.
+#
+# Args: $1=parent_num $2=repo_slug
+# Returns: 0 if an open PR with a closing keyword referencing the parent
+#          exists, 1 otherwise (including network/parse errors — fail open
+#          so a misbehaving search never blocks legitimate consolidation).
+#######################################
+_consolidation_resolving_pr_exists() {
+	local parent_num="$1"
+	local repo_slug="$2"
+
+	[[ -n "$parent_num" && -n "$repo_slug" ]] || return 1
+
+	# Fast prefilter: GitHub search for open PRs that mention the parent
+	# anywhere in body. Cheap (one search hit, capped at 10 results) and
+	# scopes the regex match below to the small candidate set.
+	local prs_json
+	prs_json=$(gh pr list --repo "$repo_slug" --state open \
+		--search "in:body #${parent_num}" \
+		--json number,body --limit 10 2>/dev/null) || prs_json="[]"
+	[[ -n "$prs_json" ]] || prs_json="[]"
+
+	# Filter for GitHub-native closing keyword + #N (case-insensitive).
+	# Word boundary on the trailing # is enforced via the look-ahead
+	# `[^0-9]` (or end of string) so #${parent_num} does not match
+	# #${parent_num}1 / #${parent_num}99 etc.
+	local match_count
+	match_count=$(printf '%s' "$prs_json" | jq --arg n "$parent_num" '
+		[.[] | select(
+			(.body // "")
+			| test("(?i)\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[ \\t]+#" + $n + "\\b")
+		)] | length
+	' 2>/dev/null) || match_count=0
+	[[ "$match_count" =~ ^[0-9]+$ ]] || match_count=0
+	[[ "$match_count" -gt 0 ]]
 }
 
 #######################################
@@ -1130,6 +1216,19 @@ _dispatch_issue_consolidation() {
 
 	# Ensure labels exist on this repo up front. Idempotent (--force).
 	_ensure_consolidation_labels "$repo_slug"
+
+	# t2161: Safety net — skip dispatch if an open PR with a closing keyword
+	# already resolves this parent. Mirrors the same guard in
+	# _issue_needs_consolidation; checked here too because the dispatch path
+	# is reachable from _backfill_stale_consolidation_labels (which bypasses
+	# the gate) and from contributor runners on stale code where the gate
+	# may have been satisfied at flag time but a fix PR landed since.
+	# Cheaper than _consolidation_child_exists (one PR search vs two issue
+	# searches + label read) so it runs first.
+	if _consolidation_resolving_pr_exists "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] Consolidation: in-flight resolving PR exists for #${issue_number} in ${repo_slug}; skipping dispatch (t2161)" >>"$LOGFILE"
+		return 0
+	fi
 
 	# Dedup: if an open consolidation-task already references this parent,
 	# just ensure the parent is flagged and return. Do NOT create a duplicate.
