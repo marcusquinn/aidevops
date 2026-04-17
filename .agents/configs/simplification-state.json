@@ -2472,9 +2472,9 @@
       "pr": 18653
     },
     ".agents/scripts/pulse-triage.sh": {
-      "at": "2026-04-17T19:28:18Z",
-      "hash": "2fe37132a36688df5429340e54be5f8a15dc8658",
-      "passes": 12,
+      "at": "2026-04-17T19:46:04Z",
+      "hash": "c00a65e6bf79e3c2885c6630263a036eccf40569",
+      "passes": 13,
       "pr": 18655
     },
     ".agents/scripts/pulse-wrapper.sh": {
@@ -2568,9 +2568,9 @@
       "pr": 17549
     },
     ".agents/scripts/tests/test-consolidation-dispatch.sh": {
-      "at": "2026-04-17T02:39:49Z",
-      "hash": "4b8eba96eff261e0ef57e1d4b7a194e5a7608e6b",
-      "passes": 4,
+      "at": "2026-04-17T19:46:04Z",
+      "hash": "bb64a4095d88b645e060a2770d1f30df9ddd7dce",
+      "passes": 5,
       "pr": 18679
     },
     ".agents/scripts/tests/test-gh-signature-helper.sh": {
