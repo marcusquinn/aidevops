@@ -14,7 +14,7 @@ tools:
 
 # Transcript SEO
 
-Transcripts are the primary LLM retrieval signal for spoken-word content. An LLM cannot watch a video or listen to audio — it reads the transcript. A poorly corrected auto-caption is the single highest-leverage fix in video/audio SEO.
+Transcripts are the primary LLM retrieval signal for spoken-word content. A poorly corrected auto-caption is the single highest-leverage fix in video/audio SEO.
 
 ## Why Transcripts Matter
 
@@ -72,11 +72,11 @@ Marks transcript sections as high-priority for TTS and LLM extraction.
 }
 ```
 
-Use `cssSelector` (not `xpath`) — Google's TTS pipeline primarily uses CSS selectors. Mark paragraphs that contain direct, full-sentence answers to the primary search query.
+Use `cssSelector` (not `xpath`) — Google's TTS pipeline primarily uses CSS selectors. Target paragraphs containing direct, full-sentence answers to the primary search query.
 
 ## LLM Retrieval Optimisation
 
-LLMs retrieve by semantic similarity. Transcript paragraphs that match query intent in full sentences rank higher than bullet fragments.
+Transcript paragraphs that match query intent in full sentences rank higher than bullet fragments.
 
 | Anti-pattern | LLM retrieval impact | Fix |
 |--------------|---------------------|-----|
@@ -86,8 +86,6 @@ LLMs retrieve by semantic similarity. Transcript paragraphs that match query int
 | Duplicate auto-caption noise | Dilutes relevance | Correct captions before indexing |
 
 ## Cross-Format Reuse
-
-Transcripts enable repurposing with no additional content production:
 
 - **Blog post**: transcript → `seo/seo-write.md` article workflow
 - **FAQ schema**: extract Q&A pairs from transcript → `seo/video-schema.md`
