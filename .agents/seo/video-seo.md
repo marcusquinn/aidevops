@@ -15,7 +15,7 @@ tools:
 
 # Video SEO
 
-Video is a content atom that must rank across three surfaces simultaneously. Each surface has distinct ranking signals; a video optimised for only one surface leaves 66% of potential reach untapped.
+Video must rank across three surfaces simultaneously; optimising for only one leaves the other two untapped.
 
 ## Three-Surface Model
 
@@ -29,14 +29,9 @@ Video is a content atom that must rank across three surfaces simultaneously. Eac
 
 **Title**: Primary keyword in first 60 chars. "How to [do X] in [year]" outperforms generic labels.
 
-**Description** (first 150 chars shown in SERP):
+**Description** (first 150 chars shown in SERP): Primary keyword — value proposition. Include chapter timestamps inline: `0:00 Intro | 1:30 Topic 1 | 4:00 Topic 2`.
 
-```text
-[Primary keyword] — [value proposition in one sentence].
-Chapters: 0:00 Intro | 1:30 [Topic 1] | 4:00 [Topic 2]
-```
-
-**Chapters**: Add timestamps aligned to sub-queries (one chapter per audience question). Each chapter title is a standalone ranking signal for Key Moments.
+**Chapters**: Align timestamps to sub-queries (one chapter per audience question). Each chapter title is a standalone ranking signal for Key Moments.
 
 **Tags**: 5–10 only. Primary keyword first, then variants, then broad category. Stuffing reduces relevance weighting.
 
@@ -46,28 +41,21 @@ Chapters: 0:00 Intro | 1:30 [Topic 1] | 4:00 [Topic 2]
 
 Eligible when: video hosted on YouTube or with `VideoObject` + `Clip` schema. Google extracts chapters from description timestamps automatically; explicit `Clip` schema takes precedence.
 
+Key Moments schema — add `hasPart` to your `VideoObject`:
+
 ```json
-{
-  "@context": "https://schema.org",
-  "@type": "VideoObject",
-  "name": "How to Make Cold Brew Coffee",
-  "description": "Step-by-step guide with ratio science",
-  "thumbnailUrl": "https://example.com/cold-brew-thumb.jpg",
-  "uploadDate": "2026-01-15",
-  "duration": "PT8M30S",
-  "hasPart": [
-    {
-      "@type": "Clip",
-      "name": "Cold Brew Ratio",
-      "startOffset": 90,
-      "endOffset": 240,
-      "url": "https://youtu.be/VIDEO_ID?t=90"
-    }
-  ]
-}
+"hasPart": [
+  {
+    "@type": "Clip",
+    "name": "Cold Brew Ratio",
+    "startOffset": 90,
+    "endOffset": 240,
+    "url": "https://youtu.be/VIDEO_ID?t=90"
+  }
+]
 ```
 
-See `seo/video-schema.md` for complete schema reference.
+See `seo/video-schema.md` for complete VideoObject + Clip schema reference.
 
 ## LLM Answer Engine Optimisation
 
