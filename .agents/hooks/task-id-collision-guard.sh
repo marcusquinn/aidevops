@@ -287,7 +287,10 @@ _check_message() {
 			_debug "Non-numeric suffix for $tid — skipping"
 			continue
 		fi
-		if [[ "$num" -le "$counter" ]]; then
+		# Force base-10 (10#) so leading-zero IDs like "008", "068" don't trip
+		# bash's octal parser. Same root cause as the _compute_counter_seed bug
+		# in claim-task-id.sh — both fixed in this PR (GH#19620).
+		if ((10#$num <= 10#$counter)); then
 			_debug "$tid ≤ counter ($counter) — allowed"
 			continue
 		fi

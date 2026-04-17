@@ -343,8 +343,13 @@ _compute_counter_seed() {
 		if [[ -n "$todo_content" ]]; then
 			local highest
 			highest=$(get_highest_task_id "$todo_content")
-			if [[ "$highest" =~ ^[0-9]+$ ]] && [[ "$highest" -gt 0 ]]; then
-				seed=$((highest + 1))
+			# Force base-10 (10#) so leading-zero IDs like "068" don't trip
+			# bash's octal parser. Without this, repos that have any TODO entry
+			# with t008-t009 or t08x-t09x ranges fail counter bootstrap with
+			# "value too great for base (error token is "068")" on either the
+			# -gt test below or the arithmetic on the next line.
+			if [[ "$highest" =~ ^[0-9]+$ ]] && ((10#$highest > 0)); then
+				seed=$((10#$highest + 1))
 			fi
 		fi
 	fi
