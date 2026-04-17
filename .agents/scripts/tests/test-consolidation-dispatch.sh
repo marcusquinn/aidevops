@@ -123,6 +123,28 @@ if [[ "$cmd1" == "issue" && "$cmd2" == "create" ]]; then
 	exit 0
 fi
 
+if [[ "$cmd1" == "pr" && "$cmd2" == "list" ]]; then
+	# t2161: stub `gh pr list` for _consolidation_resolving_pr_exists.
+	# Drives off GH_PR_LIST_RESOLVING_JSON. Honours --jq if the caller
+	# uses it (current production caller does NOT — it asks for raw JSON
+	# and pipes through jq itself — so the no-jq branch is the hot path).
+	pr_jq_filter=""
+	pr_prev_arg=""
+	for pr_arg in "$@"; do
+		if [[ "$pr_prev_arg" == "--jq" ]]; then
+			pr_jq_filter="$pr_arg"
+		fi
+		pr_prev_arg="$pr_arg"
+	done
+	pr_list_json="${GH_PR_LIST_RESOLVING_JSON:-[]}"
+	if [[ -n "$pr_jq_filter" ]]; then
+		printf '%s\n' "$pr_list_json" | jq -r "$pr_jq_filter"
+	else
+		printf '%s\n' "$pr_list_json"
+	fi
+	exit 0
+fi
+
 if [[ "$cmd1" == "issue" && "$cmd2" == "edit" ]]; then
 	exit 0
 fi
@@ -210,6 +232,7 @@ teardown_gh_stub() {
 	GH_LOG=""
 	unset GH_ISSUE_VIEW_TITLE GH_ISSUE_VIEW_BODY GH_ISSUE_VIEW_LABELS
 	unset GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON GH_ISSUE_CREATE_URL
+	unset GH_PR_LIST_RESOLVING_JSON
 	unset CONSOLIDATION_RECENT_CLOSE_GRACE_MIN
 	return 0
 }
@@ -554,6 +577,143 @@ JSON
 	return 0
 }
 
+# ----------------------------------------------------------------------
+# t2161 regression tests — in-flight PR skip safety net
+#
+# Reference evidence: GH#19448 → #19469 → #19471 cascade on 2026-04-17.
+# A contributor runner on pre-t2144 code falsely tripped consolidation
+# on #19448 (THRESHOLD=2 satisfied by two ~530-char WORKER_SUPERSEDED
+# bodies that bypassed the stale `^(\*\*)?Stale assignment recovered`
+# anchor) while PR #19466 was already mergeable. Result: #19469 created;
+# the consolidation worker then created #19471 — 5 seconds AFTER #19466
+# merged. t2144 fixed the filter; t2161 adds defence-in-depth so the
+# cascade is blocked even if version drift re-introduces the regression.
+# ----------------------------------------------------------------------
+
+# Helper: PR list payload with one open PR whose body resolves the parent.
+fixture_open_pr_resolving() {
+	local parent_num="$1"
+	jq -n --arg n "$parent_num" '
+		[
+			{
+				"number": 19466,
+				"body": "## Summary\n\nFix the thing.\n\nResolves #" + $n + "\n\n## Testing\n..."
+			}
+		]
+	'
+}
+
+# Helper: PR list payload with one open PR that REFERENCES the parent
+# but does NOT use a closing keyword (e.g. "For #N", "Ref #N", bare `#N`).
+fixture_open_pr_non_closing() {
+	local parent_num="$1"
+	jq -n --arg n "$parent_num" '
+		[
+			{
+				"number": 19467,
+				"body": "## Summary\n\nDocs-only follow-up that mentions #" + $n + " for context.\n\nFor #" + $n + "\n\n## Testing\n..."
+			}
+		]
+	'
+}
+
+# t2161 A1 regression: helper returns 0 when an open PR has Resolves #N.
+test_resolving_pr_helper_detects_closing_keyword() {
+	setup_gh_stub
+	GH_PR_LIST_RESOLVING_JSON=$(fixture_open_pr_resolving 19448)
+	export GH_PR_LIST_RESOLVING_JSON
+
+	if _consolidation_resolving_pr_exists 19448 "marcusquinn/aidevops"; then
+		print_result "t2161: helper detects open PR with Resolves keyword" 0
+	else
+		print_result "t2161: helper detects open PR with Resolves keyword" 1 \
+			"_consolidation_resolving_pr_exists returned 1 with closing keyword present"
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+# t2161 A1 regression: helper returns 1 when only non-closing references exist.
+# `For #N`, `Ref #N`, and bare `#N` mentions must NOT be treated as resolving.
+test_resolving_pr_helper_ignores_non_closing_reference() {
+	setup_gh_stub
+	GH_PR_LIST_RESOLVING_JSON=$(fixture_open_pr_non_closing 19448)
+	export GH_PR_LIST_RESOLVING_JSON
+
+	if _consolidation_resolving_pr_exists 19448 "marcusquinn/aidevops"; then
+		print_result "t2161: helper ignores 'For #N' / bare '#N' references" 1 \
+			"_consolidation_resolving_pr_exists returned 0 for non-closing reference"
+	else
+		print_result "t2161: helper ignores 'For #N' / bare '#N' references" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+# t2161 A2 regression: _issue_needs_consolidation must skip dispatch when
+# an in-flight PR resolves the parent — even when the substantive-comment
+# count would otherwise meet the threshold. This is the GH#19448 cascade
+# scenario: pre-t2144 filter was satisfied (two WORKER_SUPERSEDED bodies
+# passed it), PR #19466 was open with `Resolves #19448` — t2161 must
+# block consolidation.
+test_needs_consolidation_skips_with_inflight_resolving_pr() {
+	setup_gh_stub
+	# Threshold-meeting fixture (would trip pre-t2144 filter), but t2161's
+	# in-flight PR check should fire first and override.
+	export ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS=200
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard"
+	GH_API_COMMENTS_JSON=$(fixture_two_worker_superseded_comments)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+	GH_PR_LIST_RESOLVING_JSON=$(fixture_open_pr_resolving 19448)
+	export GH_ISSUE_VIEW_LABELS GH_API_COMMENTS_JSON
+	export GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON
+	export GH_PR_LIST_RESOLVING_JSON
+
+	if _issue_needs_consolidation 19448 "marcusquinn/aidevops"; then
+		print_result "t2161: needs_consolidation skips when in-flight PR resolves parent" 1 \
+			"_issue_needs_consolidation returned 0 despite open PR with Resolves keyword"
+	else
+		print_result "t2161: needs_consolidation skips when in-flight PR resolves parent" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+# t2161 A2 regression: _dispatch_issue_consolidation must short-circuit
+# when an in-flight PR resolves the parent — even when no consolidation
+# child exists yet. Covers the path where _backfill_stale_consolidation_labels
+# bypasses the gate and reaches dispatch directly.
+test_dispatch_skips_with_inflight_resolving_pr() {
+	setup_gh_stub
+	GH_ISSUE_VIEW_TITLE="test: parent with mergeable fix in flight"
+	GH_ISSUE_VIEW_BODY="Original parent body."
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard,needs-consolidation"
+	GH_API_COMMENTS_JSON=$(fixture_two_substantive_comments)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+	GH_PR_LIST_RESOLVING_JSON=$(fixture_open_pr_resolving 19448)
+	GH_ISSUE_CREATE_URL="https://github.com/owner/repo/issues/SHOULD_NOT_BE_CALLED"
+	export GH_ISSUE_VIEW_TITLE GH_ISSUE_VIEW_BODY GH_ISSUE_VIEW_LABELS
+	export GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON
+	export GH_PR_LIST_RESOLVING_JSON GH_ISSUE_CREATE_URL
+
+	_dispatch_issue_consolidation 19448 "marcusquinn/aidevops" "/tmp/fake-path" || true
+
+	if grep -q 'issue create' "$GH_LOG" 2>/dev/null; then
+		print_result "t2161: dispatch skips child creation when in-flight PR resolves parent" 1 \
+			"gh issue create was invoked despite open PR with Resolves keyword"
+	else
+		print_result "t2161: dispatch skips child creation when in-flight PR resolves parent" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
 main() {
 	test_dispatch_creates_child_issue
 	test_child_body_contains_parent_content_and_authors
@@ -567,6 +727,12 @@ main() {
 	test_recently_closed_child_blocks_redispatch_within_grace
 	test_grace_zero_restores_open_only_semantics
 	test_backfill_clears_stale_label_on_consolidated_parent
+
+	# t2161 regression suite
+	test_resolving_pr_helper_detects_closing_keyword
+	test_resolving_pr_helper_ignores_non_closing_reference
+	test_needs_consolidation_skips_with_inflight_resolving_pr
+	test_dispatch_skips_with_inflight_resolving_pr
 
 	echo
 	echo "============================================"
