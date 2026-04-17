@@ -5835,7 +5835,7 @@
       "pr": 17019
     },
     ".agents/tools/design/library/styles/corporate-traditional/02-colours.md": {
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
       "at": "2026-04-04T14:53:40Z",
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "issue": "GH#17250",
@@ -7585,6 +7585,24 @@
       "hash": "a13a53c49a0bb67c640682bee85ec6eca8c9338a",
       "at": "2026-04-17T01:31:14Z",
       "pr": 19458,
+      "passes": 1
+    },
+    ".agents/seo/transcript-seo.md": {
+      "hash": "2c4e0152edc7ded235523ccf1337c2406180cacd",
+      "at": "2026-04-17T04:31:22Z",
+      "pr": 19505,
+      "passes": 1
+    },
+    ".agents/seo/video-seo.md": {
+      "hash": "a304b4efad33cedaae19f33637f516d77211b892",
+      "at": "2026-04-17T04:31:22Z",
+      "pr": 19504,
+      "passes": 1
+    },
+    ".agents/seo/video-schema.md": {
+      "hash": "10ac555efaea19e6c9bf9d468d9902284960a4b5",
+      "at": "2026-04-17T04:31:22Z",
+      "pr": 19503,
       "passes": 1
     }
   },
