@@ -537,6 +537,38 @@ _push_build_task_list() {
 	return 0
 }
 
+# _push_auto_assign_interactive: self-assign issue to the current user when
+# origin is interactive and the task is NOT flagged for worker dispatch.
+# t2157: skips assignment when auto-dispatch is in all_labels — the user said
+# "let a worker handle it"; assigning the pusher creates the blocking combo
+# (origin:interactive + assigned + active status) per GH#18352/t1996.
+# t1970: eliminates the race where Maintainer Gate fires before self-assign.
+# t1984: uses AIDEVOPS_SESSION_USER when set (workflow env → github.actor).
+_push_auto_assign_interactive() {
+	local num="$1" repo="$2" all_labels="$3"
+	# t2157: skip when auto-dispatch tag present — issue is worker-owned
+	if [[ ",${all_labels}," == *",auto-dispatch,"* ]]; then
+		print_info "Skipping auto-assign for #${num} — auto-dispatch entry is worker-owned (t2157)"
+		return 0
+	fi
+	local current_user="${AIDEVOPS_SESSION_USER:-}"
+	if [[ -z "$current_user" ]]; then
+		# GH#18591: cache gh api user to avoid repeated API calls in loops.
+		if [[ -z "${_CACHED_GH_USER:-}" ]]; then
+			_CACHED_GH_USER=$(gh api user --jq '.login // ""' 2>/dev/null || echo "")
+		fi
+		current_user="$_CACHED_GH_USER"
+	fi
+	if [[ -n "$current_user" ]]; then
+		if gh issue edit "$num" --repo "$repo" --add-assignee "$current_user" >/dev/null 2>&1; then
+			print_info "Auto-assigned #${num} to @${current_user} (origin:interactive)"
+		else
+			print_warning "Could not self-assign #${num} — assign manually to unblock Maintainer Gate"
+		fi
+	fi
+	return 0
+}
+
 # _push_create_issue: create a GitHub issue for task_id with race-condition guard.
 # Sets _PUSH_CREATED_NUM on success (empty on failure/skip).
 # Returns 0=created, 1=skipped (race), 2=error.
@@ -600,50 +632,10 @@ _push_create_issue() {
 	num=$(echo "$url" | grep -oE '[0-9]+$' || echo "")
 	[[ -n "$num" ]] && _PUSH_CREATED_NUM="$num"
 
-	# t1970: Auto-assign to current gh user when the session origin is
-	# interactive and no explicit assignee was set. This eliminates the race
-	# where the Maintainer Gate workflow runs before the user has a chance
-	# to self-assign — CI fires on the created issue within seconds, and
-	# re-running the workflow after a manual assign is extra friction.
-	#
-	# t1984: In the `Sync TODO.md → GitHub Issues` workflow, `gh api user`
-	# resolves to `github-actions[bot]` (the GITHUB_TOKEN identity), not the
-	# human pusher. The workflow sets AIDEVOPS_SESSION_ORIGIN=interactive
-	# AND AIDEVOPS_SESSION_USER=<github.actor> to override both the origin
-	# detection and the assignee target. Falls back to `gh api user` when
-	# the env var is unset (normal local interactive usage).
-	#
-	# Worker-origin issues are NOT auto-assigned here — they follow the
-	# existing dispatch flow (`status:claimed` + pulse-managed assignment).
-	if [[ -n "$num" && -z "$assignee" && "$origin_label" == "origin:interactive" ]]; then
-		# t2157: auto-dispatch tasks are worker-owned — skip self-assign to
-		# avoid the dispatch-blocking combo (origin:interactive + assigned +
-		# active status) that GH#18352/t1996 treats as blocking. The user
-		# said "let a worker handle it"; assigning the pusher contradicts
-		# that intent and leaves the issue stranded until manual release or
-		# the 24h STAMPLESS_INTERACTIVE_AGE_THRESHOLD safety net (t2148).
-		if [[ ",${all_labels}," == *",auto-dispatch,"* ]]; then
-			print_info "Skipping auto-assign for #${num} — auto-dispatch entry is worker-owned (t2157)"
-		else
-			local current_user="${AIDEVOPS_SESSION_USER:-}"
-			if [[ -z "$current_user" ]]; then
-				# GH#18591: cache gh api user result to avoid repeated API calls when
-				# processing multiple tasks in a loop. Use .login // "" so a null
-				# login field yields an empty string rather than the literal "null".
-				if [[ -z "${_CACHED_GH_USER:-}" ]]; then
-					_CACHED_GH_USER=$(gh api user --jq '.login // ""' 2>/dev/null || echo "")
-				fi
-				current_user="$_CACHED_GH_USER"
-			fi
-			if [[ -n "$current_user" ]]; then
-				if gh issue edit "$num" --repo "$repo" --add-assignee "$current_user" >/dev/null 2>&1; then
-					print_info "Auto-assigned #${num} to @${current_user} (origin:interactive)"
-				else
-					print_warning "Could not self-assign #${num} — assign manually to unblock Maintainer Gate"
-				fi
-			fi
-		fi
-	fi
+	# t1970/t1984/t2157: auto-assign interactive origin issues (not auto-dispatch).
+	# Worker issues follow status:claimed + pulse-managed assignment instead.
+	[[ -n "$num" && -z "$assignee" && "$origin_label" == "origin:interactive" ]] &&
+		_push_auto_assign_interactive "$num" "$repo" "$all_labels"
 
 	# Lock maintainer/worker-created issues at creation to prevent
 	# comment prompt-injection across the entire issue lifecycle.
