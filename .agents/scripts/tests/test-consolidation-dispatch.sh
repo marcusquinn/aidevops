@@ -639,6 +639,47 @@ test_needs_consolidation_skips_with_inflight_resolving_pr() {
 	return 0
 }
 
+# t2152 regression: a single github-actions[bot] comment (type: "Bot", 216 chars)
+# at near-creation time must NOT trigger consolidation. Reproduces GH#19415
+# (issue #19275 was falsely labeled needs-consolidation with only one bot
+# comment). Root cause: pre-t2142 code had no defensive defaults on
+# ISSUE_CONSOLIDATION_COMMENT_THRESHOLD — on Bash 5.x, [[ 0 -ge "" ]]
+# evaluates TRUE, silently opening the gate for ALL issues.
+# This test verifies the current code filters the bot comment correctly
+# via both .user.type != "Bot" AND body length < min_chars.
+fixture_single_bot_comment_near_creation() {
+	cat <<'JSON'
+[
+  {"user": {"login": "github-actions[bot]", "type": "Bot"}, "created_at": "2026-04-16T11:36:26Z", "body": "<!-- origin-worker-protection-notice -->\nThe `origin:worker` label was removed automatically. This label is reserved for issues created by the automation pipeline and cannot be applied by non-maintainer contributors."}
+]
+JSON
+}
+
+test_single_bot_comment_does_not_trigger_consolidation() {
+	setup_gh_stub
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard,review-followup"
+	GH_API_COMMENTS_JSON=$(fixture_single_bot_comment_near_creation)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+	GH_PR_LIST_RESOLVING_JSON="[]"
+	export GH_ISSUE_VIEW_LABELS GH_API_COMMENTS_JSON
+	export GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON
+	export GH_PR_LIST_RESOLVING_JSON
+
+	# The single 216-char github-actions[bot] comment (type: Bot) must be
+	# excluded by the .user.type != "Bot" filter. substantive_count should
+	# be 0, well below threshold=2 → function must return 1.
+	if _issue_needs_consolidation 19275 "marcusquinn/aidevops"; then
+		print_result "t2152: single bot comment at near-creation time does not trigger consolidation (GH#19415)" 1 \
+			"_issue_needs_consolidation returned 0 despite only a single github-actions[bot] comment"
+	else
+		print_result "t2152: single bot comment at near-creation time does not trigger consolidation (GH#19415)" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
 # t2161 A2 regression: _dispatch_issue_consolidation must short-circuit
 # when an in-flight PR resolves the parent — even when no consolidation
 # child exists yet. Covers the path where _backfill_stale_consolidation_labels
@@ -683,6 +724,9 @@ main() {
 	test_recently_closed_child_blocks_redispatch_within_grace
 	test_grace_zero_restores_open_only_semantics
 	test_backfill_clears_stale_label_on_consolidated_parent
+
+	# t2152 regression (GH#19415): single bot comment must not trigger
+	test_single_bot_comment_does_not_trigger_consolidation
 
 	# t2161 regression suite
 	test_resolving_pr_helper_detects_closing_keyword

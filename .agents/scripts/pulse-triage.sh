@@ -1356,9 +1356,10 @@ _dispatch_issue_consolidation() {
 	# t2161: Safety net — skip dispatch if an open PR with a closing keyword
 	# already resolves this parent. Mirrors the same guard in
 	# _issue_needs_consolidation; checked here too because the dispatch path
-	# is reachable from _backfill_stale_consolidation_labels (which bypasses
-	# the gate) and from contributor runners on stale code where the gate
+	# is reachable from contributor runners on stale code where the gate
 	# may have been satisfied at flag time but a fix PR landed since.
+	# (Note: _backfill_stale_consolidation_labels has called the gate since
+	# t2144/A2. This defence-in-depth remains for cross-runner version drift.)
 	# Cheaper than _consolidation_child_exists (one PR search vs two issue
 	# searches + label read) so it runs first.
 	if _consolidation_resolving_pr_exists "$issue_number" "$repo_slug"; then
