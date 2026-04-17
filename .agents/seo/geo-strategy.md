@@ -86,3 +86,5 @@ AI models query G2, Capterra, and TrustRadius as a validation stage after extrac
 - `query-fanout-research.md` for sub-query and theme decomposition
 - `ai-hallucination-defense.md` for contradiction and claim-evidence audits
 - `keyword-research.md` for demand and intent validation
+- `video-seo.md` — video as a GEO content atom; LLM surface retrieval via transcript
+- `transcript-seo.md` — transcript paragraphs as GEO snippet candidates

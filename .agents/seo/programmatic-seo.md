@@ -137,3 +137,5 @@ For each {modifier} in data_source:
 **Don't use**: <20 variations (write individual pages), no unique data per variation (consolidate), variations have no search volume.
 
 **Post-launch**: Track indexation via GSC (`google-search-console.md`); monitor soft 404s/crawl errors; ranking progress per cluster; watch for cannibalization (`ranking-opportunities.md`); review engagement metrics.
+
+**Video content hubs at scale**: Use `seo/video-schema.md` to template `VideoObject` + `Clip` schema across large video libraries. Pair with `seo/transcript-seo.md` for per-page transcript embedding.

@@ -59,3 +59,4 @@ Report: scores → Publishing Readiness (Y/N) → Priority Actions (Critical/Hig
 - Uses `seo/dataforseo.md` (SERP data)
 - Works with `seo/eeat-score.md` (validation)
 - Informs `content/meta-creator.md` (meta)
+- Analyse video transcript as article input: `seo/transcript-seo.md`

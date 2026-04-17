@@ -82,5 +82,6 @@ curl -sL "https://example.com" \
 - `seo/debug-opengraph.md` - Open Graph meta tag validation
 - `seo/site-crawler.md` - Bulk structured data auditing
 - `tools/browser/playwright.md` - Browser automation for JS-rendered pages
+- `seo/video-schema.md` - VideoObject, Clip, Speakable, and FAQPage schema for video rich results
 
 <!-- AI-CONTEXT-END -->
