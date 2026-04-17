@@ -342,7 +342,8 @@ scan_dir_bash32_compat() {
 			true)
 		while IFS= read -r _match; do
 			[ -n "$_match" ] || continue
-			_line_num=$(printf '%s' "$_match" | cut -d: -f1)
+			# Parameter expansion avoids spawning cut per-match.
+			_line_num="${_match%%:*}"
 			printf '%s\tbackslash-tn:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
 		done <<<"$_matches"
 
@@ -351,7 +352,7 @@ scan_dir_bash32_compat() {
 			grep -vE '^[0-9]+:[[:space:]]*#' || true)
 		while IFS= read -r _match; do
 			[ -n "$_match" ] || continue
-			_line_num=$(printf '%s' "$_match" | cut -d: -f1)
+			_line_num="${_match%%:*}"
 			printf '%s\tassoc-array:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
 		done <<<"$_matches"
 
@@ -360,7 +361,7 @@ scan_dir_bash32_compat() {
 			grep -vE '^[0-9]+:[[:space:]]*#' || true)
 		while IFS= read -r _match; do
 			[ -n "$_match" ] || continue
-			_line_num=$(printf '%s' "$_match" | cut -d: -f1)
+			_line_num="${_match%%:*}"
 			printf '%s\tnameref:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
 		done <<<"$_matches"
 
@@ -373,7 +374,7 @@ scan_dir_bash32_compat() {
 			grep -vE '^[0-9]+:[[:space:]]*#' || true)
 		while IFS= read -r _match; do
 			[ -n "$_match" ] || continue
-			_line_num=$(printf '%s' "$_match" | cut -d: -f1)
+			_line_num="${_match%%:*}"
 			printf '%s\theredoc-in-subshell:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
 		done <<<"$_matches"
 	done <<<"$_sh_files"
