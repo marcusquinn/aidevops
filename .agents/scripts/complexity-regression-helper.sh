@@ -302,7 +302,11 @@ scan_dir_file_size() {
 # Identity key: (file, '<pattern>:<line>'). (t2171)
 #
 # Self-skip: linters-local.sh grep patterns contain the forbidden strings
-# as search targets, not as bash code.
+# as search targets, not as bash code. This helper's own regex literals are
+# also defused by escaping (Pattern 1's \\[tn] does not self-match, Pattern 4's
+# \$\([[:space:]] doesn't line up with the source's escape form) but we skip
+# this file explicitly as belt-and-braces against future edits that reformat
+# the regex strings. See CodeRabbit review on PR #19592.
 # ---------------------------------------------------------------------------
 scan_dir_bash32_compat() {
 	local _dir="$1"
@@ -319,11 +323,15 @@ scan_dir_bash32_compat() {
 	_result_file=$(_open_result_file "$_out")
 
 	local _file _rel_file _basename _matches _line_num
-	local _self_skip="linters-local.sh"
+	# Files whose source contains the forbidden-construct strings as search
+	# targets or regex literals, not as executable code.
+	local _self_skip_patterns="linters-local.sh complexity-regression-helper.sh complexity-scan-helper.sh"
 	while IFS= read -r _file; do
 		[ -n "$_file" ] || continue
 		_basename=$(basename "$_file")
-		[ "$_basename" = "$_self_skip" ] && continue
+		case " $_self_skip_patterns " in
+		*" $_basename "*) continue ;;
+		esac
 		[ -f "$_file" ] || continue
 		_rel_file="${_file#"${_dir}/"}"
 
@@ -358,7 +366,10 @@ scan_dir_bash32_compat() {
 
 		# Pattern 4: Heredoc inside $() — breaks macOS /bin/bash 3.2 parser.
 		# (GH#19252, t2171 regression gate.)
-		_matches=$(grep -nE '\$\(\s*cat\s*<<' "$_file" 2>/dev/null |
+		# POSIX [[:space:]] instead of \s — \s is GNU-only and fails silently
+		# on BSD grep (macOS default). CI runs GNU grep, but pre-push and
+		# local runs need to produce the same results.
+		_matches=$(grep -nE '\$\([[:space:]]*cat[[:space:]]*<<' "$_file" 2>/dev/null |
 			grep -vE '^[0-9]+:[[:space:]]*#' || true)
 		while IFS= read -r _match; do
 			[ -n "$_match" ] || continue

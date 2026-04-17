@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# test-complexity-regression-helper.sh — Unit tests for complexity-regression-helper.sh (t2159)
+# test-complexity-regression-helper.sh — Unit tests for complexity-regression-helper.sh (t2159, t2171)
 #
 # Tests:
-#   1. clean-to-clean: no violations at base or head → exit 0
-#   2. clean-to-new:   no violations at base, new 100+ line function at head → exit 1
-#   3. stable:         existing violation at base unchanged at head → exit 0 (not new)
-#   4. growing:        existing violation at base grows at head → exit 0 (still not new)
-#   5. multi-file:     two new violations in different files → exit 1
-#   6. dry-run:        --dry-run scans current tree and exits 0 regardless
+#   1.  clean-to-clean:              no violations at base or head → exit 0
+#   2.  clean-to-new:                no violations at base, new 100+ line function at head → exit 1
+#   3.  stable:                      existing violation at base unchanged at head → exit 0 (not new)
+#   4.  growing:                     existing violation at base grows at head → exit 0 (still not new)
+#   5.  multi-file:                  two new violations in different files → exit 1
+#   6.  dry-run:                     --dry-run scans current tree and exits 0 regardless
+#   7.  nesting-depth clean-to-new:  new file with depth 10 → exit 1 (t2171)
+#   8.  nesting-depth stable:        pre-existing deep file unchanged → exit 0 (t2171)
+#   9.  file-size clean-to-new:      new 2000-line .sh → exit 1 (t2171)
+#   10. file-size stable:            pre-existing 2000-line file unchanged → exit 0 (t2171)
+#   11. bash32-compat clean-to-new:  new associative-array declaration → exit 1 (t2171)
+#   12. bash32-compat stable:        pre-existing nameref unchanged → exit 0 (t2171)
 
 set -euo pipefail
 

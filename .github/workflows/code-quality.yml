@@ -465,7 +465,10 @@ jobs:
 
         # Post PR comment with report (update existing if present).
         if [ -s /tmp/complexity-report.md ] && [ -n "${PR_NUMBER}" ]; then
-          marker="<!-- complexity-regression-gate -->"
+          # t2171: marker must be metric-suffixed to match write_report's
+          # per-metric marker. Without the suffix, contains() never finds the
+          # existing comment and every push appends a new one.
+          marker="<!-- complexity-regression-gate:function-complexity -->"
           existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
             --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
             2>/dev/null || true)
