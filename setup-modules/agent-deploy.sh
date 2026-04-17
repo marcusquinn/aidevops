@@ -600,6 +600,18 @@ deploy_aidevops_agents() {
 	# were correct but the running pulse kept using old code in memory.
 	_restart_pulse_if_running
 
+	# Write deployed-SHA stamp so aidevops-update-check.sh can detect
+	# script drift between this deploy and future canonical-repo commits.
+	# Written AFTER pulse restart so the stamp reflects a fully-applied deploy.
+	# t2156: enables auto-redeploy when local commits land between releases.
+	local deployed_sha
+	deployed_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || echo "")
+	if [[ -n "$deployed_sha" ]]; then
+		local aidevops_dir="${HOME}/.aidevops"
+		mkdir -p "$aidevops_dir"
+		printf '%s\n' "$deployed_sha" >"${aidevops_dir}/.deployed-sha"
+	fi
+
 	return 0
 }
 

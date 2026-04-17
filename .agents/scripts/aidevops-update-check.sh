@@ -396,6 +396,80 @@ _check_contribution_watch() {
 }
 
 # -----------------------------------------------------------------------------
+# _check_script_drift: detect SHA drift between deployed agents and canonical
+# repo HEAD. Triggers a silent background redeploy when framework code files
+# (scripts/, agents/, workflows/, prompts/, hooks/) have changed since the last
+# deploy. Doc-only drift (reference/, templates/, todo/, *.md) is skipped.
+# t2156: automating the manual "cp + restart pulse" workaround that was needed
+# after 3bbe31f36 merged but the production pulse kept using stale code for 90+
+# minutes — see GH#19432–19443 blast radius.
+# Returns: notification string (empty if in-sync, missing prereqs, or docs-only).
+# -----------------------------------------------------------------------------
+_check_script_drift() {
+	# Allow test override via env var; default to canonical installation path.
+	local framework_repo="${AIDEVOPS_FRAMEWORK_REPO:-$HOME/Git/aidevops}"
+	local stamp_file="$HOME/.aidevops/.deployed-sha"
+
+	# Prerequisites: framework repo must be a git repo and stamp file must exist.
+	# Missing stamp = never deployed via new flow; skip silently until next deploy.
+	if [[ ! -d "$framework_repo/.git" ]] || [[ ! -f "$stamp_file" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local deployed_sha current_sha
+	deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
+	current_sha=$(git -C "$framework_repo" rev-parse HEAD 2>/dev/null) || current_sha=""
+
+	# In-sync, or couldn't read either SHA — nothing to do.
+	if [[ -z "$deployed_sha" ]] || [[ -z "$current_sha" ]] || [[ "$deployed_sha" == "$current_sha" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# List files that changed between the deployed commit and HEAD.
+	local changed_files
+	changed_files=$(git -C "$framework_repo" diff --name-only "$deployed_sha" "$current_sha" 2>/dev/null) || changed_files=""
+
+	if [[ -z "$changed_files" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Check if any framework code files changed.
+	# Doc-only drift (reference/, templates/, todo/, plain *.md) is intentionally
+	# skipped — those don't affect runtime behaviour and don't warrant a redeploy.
+	local has_code_drift=0
+	while IFS= read -r filepath; do
+		case "$filepath" in
+		.agents/scripts/* | .agents/agents/* | .agents/workflows/* | .agents/prompts/* | .agents/hooks/*)
+			has_code_drift=1
+			break
+			;;
+		esac
+	done <<<"$changed_files"
+
+	if [[ "$has_code_drift" -eq 0 ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Framework code drift detected.
+	# setup.sh --non-interactive deploys, writes .deployed-sha, and restarts the
+	# pulse — no manual stamp update or pulse restart needed here.
+	local setup_script="$framework_repo/setup.sh"
+	if [[ ! -x "$setup_script" ]]; then
+		echo "Script drift detected (${deployed_sha:0:7}→${current_sha:0:7}) but setup.sh not executable — run: cd ~/Git/aidevops && ./setup.sh --non-interactive"
+		return 0
+	fi
+
+	echo "Script drift detected (${deployed_sha:0:7}→${current_sha:0:7}). Redeploying in background..."
+	(bash "$setup_script" --non-interactive >/dev/null 2>&1) &
+
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # _write_cache: persist session greeting to cache for agents without Bash.
 # -----------------------------------------------------------------------------
 _write_cache() {
@@ -635,7 +709,7 @@ main() {
 
 	local runtime_hint nudge_output session_warning security_posture
 	local secret_hygiene advisories_output contribution_watch origin_notice
-	local signing_nudge
+	local signing_nudge script_drift
 	runtime_hint=$(_get_runtime_hint "$app_name")
 	nudge_output=$(_check_local_models "$script_dir")
 	session_warning=$(_check_session_count "$script_dir")
@@ -647,6 +721,8 @@ main() {
 	signing_nudge=$(_check_signing)
 	local pulse_health
 	pulse_health=$(_check_pulse_health)
+	# t2156: detect deployed-script drift and trigger silent background redeploy.
+	script_drift=$(_check_script_drift)
 
 	[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
 	[[ -n "$nudge_output" ]] && echo "$nudge_output"
@@ -658,6 +734,7 @@ main() {
 	[[ -n "$origin_notice" ]] && echo "$origin_notice"
 	[[ -n "$signing_nudge" ]] && echo "$signing_nudge"
 	[[ -n "$pulse_health" ]] && echo "$pulse_health"
+	[[ -n "$script_drift" ]] && echo "$script_drift"
 
 	_write_cache "$cache_dir" "$output" "$runtime_hint" "$nudge_output" \
 		"$session_warning" "$security_posture" "$secret_hygiene" \
