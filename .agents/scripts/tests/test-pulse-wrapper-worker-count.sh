@@ -245,7 +245,7 @@ test_list_dispatchable_candidates_default_open_except_needs_labels() {
 	GH_ISSUE_LIST_JSON='[
 	  {"number":1,"title":"unassigned","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"priority:high"}]},
 	  {"number":2,"title":"owner assigned","updatedAt":"2026-03-31T00:01:00Z","assignees":[{"login":"owner"}],"labels":[{"name":"quality-debt"}]},
-	  {"number":3,"title":"maintainer assigned","updatedAt":"2026-03-31T00:02:00Z","assignees":[{"login":"maintainer-bot"}],"labels":[{"name":"simplification-debt"}]},
+	  {"number":3,"title":"maintainer assigned","updatedAt":"2026-03-31T00:02:00Z","assignees":[{"login":"maintainer-bot"}],"labels":[{"name":"file-size-debt"}]},
 	  {"number":4,"title":"runner assigned","updatedAt":"2026-03-31T00:03:00Z","assignees":[{"login":"other-runner"}],"labels":[{"name":"priority:high"}]},
 	  {"number":5,"title":"owner queued","updatedAt":"2026-03-31T00:04:00Z","assignees":[{"login":"owner"}],"labels":[{"name":"status:queued"}]},
 	  {"number":6,"title":"needs review","updatedAt":"2026-03-31T00:05:00Z","assignees":[],"labels":[{"name":"needs-maintainer-review"}]},

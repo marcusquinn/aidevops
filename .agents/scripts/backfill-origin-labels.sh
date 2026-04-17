@@ -9,7 +9,7 @@
 #
 # Heuristics (applied in order, first match wins):
 #   1. Already labelled origin:worker or origin:interactive → skip
-#   2. Has label: simplification-debt, source:quality-sweep, source:ci-failure-miner,
+#   2. Has label: file-size-debt, function-complexity-debt, source:quality-sweep, source:ci-failure-miner,
 #      source:review-scanner, source:circuit-breaker, source:health-dashboard,
 #      source:mission-validation, circuit-breaker → origin:worker
 #   3. Has label: status:queued → origin:worker
@@ -41,7 +41,8 @@ BATCH_SIZE=100
 
 # Worker-indicative labels (any of these → origin:worker)
 WORKER_LABELS=(
-	"simplification-debt"
+	"file-size-debt"
+	"function-complexity-debt"
 	"source:quality-sweep"
 	"source:ci-failure-miner"
 	"source:review-scanner"

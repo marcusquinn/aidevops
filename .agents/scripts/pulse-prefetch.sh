@@ -917,7 +917,7 @@ _prefetch_repo_issues() {
 	if [[ "$sweep_tracked_count" -gt 0 ]]; then
 		echo "### Already Tracked by Quality Sweep ($sweep_tracked_count)"
 		echo "_These issues were auto-created by the quality sweep or review feedback pipeline._"
-		echo "_DO NOT create new issues for findings already covered below. Dispatch these as normal quality-debt/simplification-debt work._"
+		echo "_DO NOT create new issues for findings already covered below. Dispatch these as normal quality-debt/file-size-debt/function-complexity-debt work._"
 		echo "$sweep_tracked_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)]"'
 		echo ""
 	fi

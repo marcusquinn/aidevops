@@ -764,14 +764,14 @@ JSON
 		if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
 			if [[ "${4:-}" == "marcusquinn/aidevops" ]]; then
 				printf '%s\n' '[
-				  {"number":7001,"title":"tooling simplification","url":"https://github.com/marcusquinn/aidevops/issues/7001","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"simplification-debt"}]},
+				  {"number":7001,"title":"tooling simplification","url":"https://github.com/marcusquinn/aidevops/issues/7001","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"file-size-debt"}]},
 				  {"number":7002,"title":"tooling bug","url":"https://github.com/marcusquinn/aidevops/issues/7002","updatedAt":"2026-03-31T00:01:00Z","assignees":[],"labels":[{"name":"bug"}]}
 				]'
 				return 0
 			fi
 			if [[ "${4:-}" == "awardsapp/awardsapp" ]]; then
 				printf '%s\n' '[
-				  {"number":8001,"title":"product simplification","url":"https://github.com/awardsapp/awardsapp/issues/8001","updatedAt":"2026-03-31T00:02:00Z","assignees":[],"labels":[{"name":"simplification-debt"}]}
+				  {"number":8001,"title":"product simplification","url":"https://github.com/awardsapp/awardsapp/issues/8001","updatedAt":"2026-03-31T00:02:00Z","assignees":[],"labels":[{"name":"function-complexity-debt"}]}
 				]'
 				return 0
 			fi
@@ -823,8 +823,8 @@ test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity() {
 	build_ranked_dispatch_candidates_json() {
 		printf '%s\n' '[
 		  {"number":9101,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9101","title":"candidate one","labels":["bug"],"updatedAt":"2026-03-31T00:00:00Z","score":8000},
-		  {"number":9102,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9102","title":"candidate two","labels":["simplification-debt","tier:simple"],"updatedAt":"2026-03-31T00:01:00Z","score":4000},
-		  {"number":9103,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9103","title":"candidate three","labels":["simplification-debt"],"updatedAt":"2026-03-31T00:02:00Z","score":4000}
+		  {"number":9102,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9102","title":"candidate two","labels":["file-size-debt","tier:simple"],"updatedAt":"2026-03-31T00:01:00Z","score":4000},
+		  {"number":9103,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9103","title":"candidate three","labels":["function-complexity-debt"],"updatedAt":"2026-03-31T00:02:00Z","score":4000}
 		]'
 	}
 	get_max_workers_target() { echo 2; }

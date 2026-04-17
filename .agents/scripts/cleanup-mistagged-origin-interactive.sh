@@ -14,7 +14,8 @@
 #   - source:review-scanner
 #   - consolidated
 #   - consolidation-task
-#   - simplification-debt
+#   - file-size-debt
+#   - function-complexity-debt
 #   - code-quality
 #   - recheck-simplicity
 #
@@ -47,7 +48,8 @@ readonly PULSE_SIGNATURE_LABELS=(
 	"source:review-scanner"
 	"consolidated"
 	"consolidation-task"
-	"simplification-debt"
+	"file-size-debt"
+	"function-complexity-debt"
 	"code-quality"
 	"recheck-simplicity"
 )

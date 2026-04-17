@@ -198,7 +198,7 @@ test_pattern_rejects_legitimate_nonzero_count() {
 }
 
 test_pattern_rejects_unrelated_title() {
-	local title="simplification-debt: .agents/scripts/shared-constants.sh exceeds 2000 lines"
+	local title="file-size-debt: .agents/scripts/shared-constants.sh exceeds 2000 lines"
 	if ! match_spurious_title "$title"; then
 		print_result "pattern: rejects unrelated 'exceeds 2000 lines' title" 0
 	else
@@ -304,7 +304,7 @@ test_skips_unrelated_titles() {
 	install_fake_qlty
 	# Mix of unrelated titles — none should be closed.
 	local issues='[
-		{"number":99003,"title":"simplification-debt: .agents/scripts/clean.sh exceeds 2000 lines"},
+		{"number":99003,"title":"file-size-debt: .agents/scripts/clean.sh exceeds 2000 lines"},
 		{"number":99004,"title":"simplification: reduce function complexity in .agents/scripts/clean.sh (2 functions >100 lines)"}
 	]'
 	install_fake_gh "$issues"

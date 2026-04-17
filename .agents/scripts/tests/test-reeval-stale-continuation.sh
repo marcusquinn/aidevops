@@ -294,7 +294,7 @@ assert_eq \
 reset_state
 GH_COMMENTS_JSON=$(make_gate_comments "#42 (recently-closed — continuation)")
 # gh issue view #42 returns state=OPEN
-GH_VIEW_JSON='{"state":"OPEN","labels":[],"title":"simplification-debt: large-over.sh exceeds 2000 lines"}'
+GH_VIEW_JSON='{"state":"OPEN","labels":[],"title":"file-size-debt: large-over.sh exceeds 2000 lines"}'
 rc=0
 _reevaluate_stale_continuations "100" "owner/repo" "$TMP" || rc=$?
 assert_eq \
@@ -307,7 +307,7 @@ assert_eq \
 # ---- Test 6: closed + simplification-incomplete → label cleared (no wc-l) ----
 reset_state
 GH_COMMENTS_JSON=$(make_gate_comments "#43 (recently-closed — continuation)")
-GH_VIEW_JSON='{"state":"CLOSED","labels":[{"name":"simplification-incomplete"}],"title":"simplification-debt: large-over.sh exceeds 2000 lines"}'
+GH_VIEW_JSON='{"state":"CLOSED","labels":[{"name":"simplification-incomplete"}],"title":"file-size-debt: large-over.sh exceeds 2000 lines"}'
 rc=0
 _reevaluate_stale_continuations "100" "owner/repo" "$TMP" || rc=$?
 assert_eq \
@@ -322,7 +322,7 @@ reset_state
 GH_COMMENTS_JSON=$(make_gate_comments "#44 (recently-closed — continuation)")
 GH_VIEW_JSON=$(jq -cn \
 	--arg path "${OVER_BASENAME}" \
-	'{"state":"CLOSED","labels":[],"title": ("simplification-debt: " + $path + " exceeds 2000 lines")}')
+	'{"state":"CLOSED","labels":[],"title": ("file-size-debt: " + $path + " exceeds 2000 lines")}')
 rc=0
 _reevaluate_stale_continuations "100" "owner/repo" "$TMP" || rc=$?
 assert_eq \
@@ -337,7 +337,7 @@ reset_state
 GH_COMMENTS_JSON=$(make_gate_comments "#45 (recently-closed — continuation)")
 GH_VIEW_JSON=$(jq -cn \
 	--arg path "${UNDER_BASENAME}" \
-	'{"state":"CLOSED","labels":[],"title": ("simplification-debt: " + $path + " exceeds 2000 lines")}')
+	'{"state":"CLOSED","labels":[],"title": ("file-size-debt: " + $path + " exceeds 2000 lines")}')
 rc=0
 _reevaluate_stale_continuations "100" "owner/repo" "$TMP" || rc=$?
 assert_eq \
@@ -391,10 +391,10 @@ gh() {
 		local resp
 		if ((_t9_call % 2 == 1)); then
 			resp=$(jq -cn --arg p "$OVER_BASENAME" \
-				'{"state":"CLOSED","labels":[],"title":("simplification-debt: "+$p+" exceeds 2000 lines")}')
+				'{"state":"CLOSED","labels":[],"title":("file-size-debt: "+$p+" exceeds 2000 lines")}')
 		else
 			resp=$(jq -cn --arg p "$OVER_BASENAME2" \
-				'{"state":"CLOSED","labels":[],"title":("simplification-debt: "+$p+" exceeds 2000 lines")}')
+				'{"state":"CLOSED","labels":[],"title":("file-size-debt: "+$p+" exceeds 2000 lines")}')
 		fi
 		if [[ -n "$jq_filter" ]]; then
 			printf '%s\n' "$resp" | jq -r "$jq_filter" 2>/dev/null
@@ -488,7 +488,7 @@ gh() {
 reset_state
 GH_COMMENTS_JSON=$(make_gate_comments "#48 (recently-closed — continuation), #49 (recently-closed — continuation)")
 # Both view calls return OPEN → first citation valid → should short-circuit
-GH_VIEW_JSON='{"state":"OPEN","labels":[],"title":"simplification-debt: large-over.sh exceeds 2000 lines"}'
+GH_VIEW_JSON='{"state":"OPEN","labels":[],"title":"file-size-debt: large-over.sh exceeds 2000 lines"}'
 rc=0
 _reevaluate_stale_continuations "100" "owner/repo" "$TMP" || rc=$?
 assert_eq \

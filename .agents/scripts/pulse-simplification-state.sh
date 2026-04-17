@@ -346,7 +346,7 @@ _simplification_state_push() {
 	return 0
 }
 
-# Create a follow-up simplification-debt issue when Qlty smells persist after
+# Create a follow-up function-complexity-debt issue when Qlty smells persist after
 # a simplification PR merges (t1912). Each re-queue creates a NEW issue (not a
 # reopen) for a clean audit trail of each pass.
 #
@@ -422,7 +422,7 @@ REQUEUE_BODY_EOF
 	# shellcheck disable=SC2086
 	created_number=$(gh_create_issue --repo "$aidevops_slug" \
 		--title "$issue_title" \
-		--label "simplification-debt" --label "$tier_label" --label "auto-dispatch" \
+		--label "function-complexity-debt" --label "$tier_label" --label "auto-dispatch" \
 		--body "$issue_body" 2>/dev/null | grep -oE '[0-9]+$') || {
 		echo "[pulse-wrapper] _create_requeue_issue: failed to create re-queue issue for ${file_path}" >>"$LOGFILE"
 		return 1
@@ -535,8 +535,8 @@ _simplification_backfill_update_entry_state() {
 # Side effects:
 #   - Writes one line to $LOGFILE describing the outcome (clean / re-queued
 #     / skipped duplicate) when Qlty is available.
-#   - May call _create_requeue_issue (defined earlier in this file) to open
-#     a follow-up simplification-debt issue.
+	#   - May call _create_requeue_issue (defined earlier in this file) to open
+	#     a follow-up function-complexity-debt issue.
 # Returns: 0 always (this is an advisory step; failures should not abort
 #          the surrounding backfill loop).
 _simplification_backfill_verify_remaining_smells() {
@@ -589,7 +589,7 @@ _simplification_backfill_verify_remaining_smells() {
 	return 0
 }
 
-# Main backfill orchestrator. Scans recently-closed simplification-debt
+# Main backfill orchestrator. Scans recently-closed function-complexity-debt
 # issues, records any whose underlying file has drifted from the known
 # state, and (via _simplification_backfill_verify_remaining_smells) opens
 # follow-up issues when Qlty smells persist post-merge.
@@ -614,10 +614,10 @@ _simplification_state_backfill_closed() {
 	# avoid a date(1) subprocess per issue iteration.
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-	# Fetch recently closed simplification issues (last 7 days, max 50).
+	# Fetch recently closed function-complexity-debt issues (last 7 days, max 50).
 	local closed_issues
 	closed_issues=$(gh issue list --repo "$aidevops_slug" \
-		--label "simplification-debt" --state closed \
+		--label "function-complexity-debt" --state closed \
 		--limit 50 --json number,title,closedAt 2>/dev/null) || {
 		echo "0"
 		return 0
@@ -732,12 +732,12 @@ _simplification_close_spurious_requeue_issues() {
 
 	# Query open re-queue issues. The bug-corrupted titles contain a
 	# literal newline which `gh issue list --search` cannot match across,
-	# so we fetch all open simplification-debt issues and filter client-
+	# so we fetch all open function-complexity-debt issues and filter client-
 	# side. The list is bounded by SIMPLIFICATION_OPEN_CAP (~50 typical),
 	# so the cost is O(N) gh API calls in the worst case but typically 0.
 	local issues_json
 	issues_json=$(gh issue list --repo "$aidevops_slug" \
-		--label "simplification-debt" --state open \
+		--label "function-complexity-debt" --state open \
 		--limit 100 --json number,title 2>/dev/null) || {
 		echo "0"
 		return 0

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# pulse-dispatch-large-file-gate.sh — Large-file simplification gate — blocks dispatch when issue targets files exceeding LARGE_FILE_LINE_THRESHOLD and creates simplification-debt issues.
+# pulse-dispatch-large-file-gate.sh — Large-file simplification gate — blocks dispatch when issue targets files exceeding LARGE_FILE_LINE_THRESHOLD and creates file-size-debt issues.
 #
 # Extracted from pulse-dispatch-core.sh (GH#18832) to bring that file
 # below the 2000-line simplification gate.
@@ -46,11 +46,14 @@ _large_file_gate_precheck_labels() {
 	local force_recheck="$4"
 
 	# GH#18042: Never gate simplification tasks behind the large-file gate.
-	# Issues tagged "simplification" or "simplification-debt" exist to reduce
-	# the file — blocking them creates a deadlock where the file can never be
-	# simplified because the simplification issue is held by the gate.
+	# Issues tagged "simplification", "file-size-debt", or "function-complexity-debt"
+	# exist to reduce the file — blocking them creates a deadlock where the file
+	# can never be simplified because the simplification issue is held by the gate.
+	# "simplification-debt" kept for backward compat during label migration.
 	# If the label was already applied (e.g., before this fix), auto-clear it.
 	if [[ ",$issue_labels," == *",simplification,"* ]] ||
+		[[ ",$issue_labels," == *",file-size-debt,"* ]] ||
+		[[ ",$issue_labels," == *",function-complexity-debt,"* ]] ||
 		[[ ",$issue_labels," == *",simplification-debt,"* ]]; then
 		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
 			if gh issue edit "$issue_number" --repo "$repo_slug" \
@@ -296,7 +299,7 @@ _large_file_gate_resolve_full_path() {
 }
 
 #######################################
-# t2164 — verify whether a closed simplification-debt issue's PR actually
+# t2164 — verify whether a closed file-size-debt issue's PR actually
 # reduced the file below threshold. Returns:
 #   0 — "continuation is valid" (file now under threshold OR measurement
 #       unavailable; caller should emit the continuation reference)
@@ -352,7 +355,7 @@ _large_file_gate_verify_prior_reduced_size() {
 	if [[ "$_verify_lines" -ge "$LARGE_FILE_LINE_THRESHOLD" ]]; then
 		# File still over threshold — log the phantom-continuation skip
 		# so the gate's audit trail captures why a fresh issue is filed.
-		echo "[pulse-wrapper] Large-file gate: prior simplification-debt #${existing_issue} closed but ${lf_path} still ${_verify_lines} lines (threshold ${LARGE_FILE_LINE_THRESHOLD}); filing fresh debt issue (t2164)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Large-file gate: prior file-size-debt #${existing_issue} closed but ${lf_path} still ${_verify_lines} lines (threshold ${LARGE_FILE_LINE_THRESHOLD}); filing fresh debt issue (t2164)" >>"$LOGFILE"
 		return 1
 	fi
 	# wc -l returned 0 (empty file / read error) — treat same as unavailable.
@@ -360,7 +363,7 @@ _large_file_gate_verify_prior_reduced_size() {
 }
 
 #######################################
-# t2164 helper — find an open or recently-closed simplification-debt issue
+# t2164 helper — find an open or recently-closed file-size-debt issue
 # that mentions `_lf_basename`. Prints "<state>:<number>" on stdout when
 # found (state is "open" or "closed"); prints nothing otherwise.
 #
@@ -378,7 +381,7 @@ _large_file_gate_find_existing_debt_issue() {
 
 	local _open
 	_open=$(gh issue list --repo "$repo_slug" --state open \
-		--label "simplification-debt" --search "$lf_basename" \
+		--label "file-size-debt" --search "$lf_basename" \
 		--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _open=""
 	if [[ -n "$_open" ]]; then
 		printf 'open:%s' "$_open"
@@ -395,7 +398,7 @@ _large_file_gate_find_existing_debt_issue() {
 
 	local _closed
 	_closed=$(gh issue list --repo "$repo_slug" \
-		--state closed --label "simplification-debt" \
+		--state closed --label "file-size-debt" \
 		--search "$lf_basename closed:>$_recent_date" \
 		--json number --jq '.[0].number // empty' \
 		--limit 5 2>/dev/null) || _closed=""
@@ -407,7 +410,7 @@ _large_file_gate_find_existing_debt_issue() {
 }
 
 #######################################
-# t2164 helper — create a fresh simplification-debt issue via gh_create_issue.
+# t2164 helper — create a fresh file-size-debt issue via gh_create_issue.
 # Prints "#NNN (new)" on success and empty on failure (gh failure is logged).
 # Accepts an optional `prior_attempt_issue` for the body's "Prior attempt"
 # footnote (t2164 phantom-continuation audit trail).
@@ -425,10 +428,10 @@ _large_file_gate_file_new_debt_issue() {
 **Prior attempt:** #${prior_attempt_issue} closed without reducing file size below the ${LARGE_FILE_LINE_THRESHOLD}-line threshold (current size verified by gate). This issue is the file-size follow-up."
 	fi
 
-	# GH#18644: ensure the `simplification-debt` label exists before creation.
-	gh label create "simplification-debt" \
+	# GH#18644: ensure the `file-size-debt` label exists before creation.
+	gh label create "file-size-debt" \
 		--repo "$repo_slug" \
-		--description "Target file needs simplification before implementation work can proceed" \
+		--description "Target file exceeds the line-count threshold and needs splitting before implementation can proceed" \
 		--color "D93F0B" \
 		--force 2>/dev/null || true
 
@@ -448,8 +451,8 @@ Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched aga
 _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
 	# t2115: Use gh_create_issue wrapper for origin label + signature auto-append.
 	_create_combined=$(gh_create_issue --repo "$repo_slug" \
-		--title "simplification-debt: ${lf_path} exceeds ${LARGE_FILE_LINE_THRESHOLD} lines" \
-		--label "simplification-debt,auto-dispatch,origin:worker" \
+		--title "file-size-debt: ${lf_path} exceeds ${LARGE_FILE_LINE_THRESHOLD} lines" \
+		--label "file-size-debt,auto-dispatch,origin:worker" \
 		--body "$_create_body" 2>&1) || true
 	_new_num=$(printf '%s' "$_create_combined" |
 		grep -oE 'https://github\.com/[^ ]+/issues/[0-9]+' |
@@ -457,19 +460,19 @@ _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
 		grep -oE '[0-9]+$' || true)
 	if [[ -n "$_new_num" ]]; then
 		printf '#%s (new)' "$_new_num"
-		echo "[pulse-wrapper] Created simplification-debt issue #${_new_num} for ${lf_path} (blocking #${parent_issue})" >>"$LOGFILE"
+		echo "[pulse-wrapper] Created file-size-debt issue #${_new_num} for ${lf_path} (blocking #${parent_issue})" >>"$LOGFILE"
 	else
 		# Log the gh failure so the next cycle's operator can see why
 		# the gate "created" nothing. 200-char truncation matches
 		# issue-sync-helper.sh style.
-		echo "[pulse-wrapper] WARN: failed to create simplification-debt issue for ${lf_path} (blocking #${parent_issue}): ${_create_combined:0:200}" >>"$LOGFILE"
+		echo "[pulse-wrapper] WARN: failed to create file-size-debt issue for ${lf_path} (blocking #${parent_issue}): ${_create_combined:0:200}" >>"$LOGFILE"
 	fi
 	return 0
 }
 
 #######################################
-# Create a simplification-debt issue for one large-file target. Idempotent:
-# if an open simplification-debt issue already mentions the file, emit a
+# Create a file-size-debt issue for one large-file target. Idempotent:
+# if an open file-size-debt issue already mentions the file, emit a
 # reference to it instead of creating a new one.
 #
 # t2021: `gh issue create` does NOT support --json; the issue number is
@@ -477,13 +480,13 @@ _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
 # against gh non-zero exits (label application failing server-side while
 # the issue still creates — see issue-sync-helper.sh:441-464, GH#15234).
 #
-# GH#18644: the `simplification-debt` label is created idempotently so
+# GH#18644: the `file-size-debt` label is created idempotently so
 # first-use in a fresh repo doesn't fail.
 #
 # t2164: `repo_path` parameter added so the recently-closed continuation
 # branch (GH#18960) can verify the prior PR actually reduced the file
 # below threshold before declaring continuation. Without this check, a
-# closed simplification-debt issue whose PR did not shrink the file
+# closed file-size-debt issue whose PR did not shrink the file
 # (or even grew it) gets cited as "in flight" continuation, and the
 # parent stays held by the gate forever (or until the 30-day window
 # expires) with no real work scheduled.
@@ -540,7 +543,7 @@ _large_file_gate_create_debt_issue() {
 
 #######################################
 # Apply the large-file gate: add `needs-simplification` label to the parent
-# issue, create one simplification-debt issue per large file (dedup-aware),
+# issue, create one file-size-debt issue per large file (dedup-aware),
 # and post the gate comment on the parent issue.
 #
 # t2164: `repo_path` parameter added so the per-file debt-issue creator can
@@ -572,9 +575,9 @@ _large_file_gate_apply() {
 
 	large_files_display="${large_files_display%, }"
 
-	# Create simplification-debt issues for each large file immediately
+	# Create file-size-debt issues for each large file immediately
 	# (don't wait for the daily complexity scan). Dedup: skip if an open
-	# simplification-debt issue already mentions this file.
+	# file-size-debt issue already mentions this file.
 	local _created_issues=""
 	local _lf_path _debt_ref
 	while IFS= read -r _lf_path; do

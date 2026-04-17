@@ -303,7 +303,7 @@ _complexity_scan_tree_changed() {
 # Check if the daily LLM sweep is due and debt is stalled.
 # The LLM sweep fires when:
 #   1. COMPLEXITY_LLM_SWEEP_INTERVAL has elapsed since last sweep, AND
-#   2. The open simplification-debt count has not decreased since last check
+#   2. The open function-complexity-debt count has not decreased since last check
 # Arguments: $1 - now_epoch, $2 - aidevops_slug
 # Returns: 0 if sweep is due, 1 if not due
 _complexity_llm_sweep_due() {
@@ -324,7 +324,7 @@ _complexity_llm_sweep_due() {
 	# Fetch current open debt count
 	local current_count
 	current_count=$(gh api graphql \
-		-f query="query { repository(owner:\"${aidevops_slug%%/*}\", name:\"${aidevops_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
+		-f query="query { repository(owner:\"${aidevops_slug%%/*}\", name:\"${aidevops_slug##*/}\") { issues(labels:[\"function-complexity-debt\"], states:OPEN) { totalCount } } }" \
 		--jq '.data.repository.issues.totalCount' 2>/dev/null) || current_count=""
 	[[ "$current_count" =~ ^[0-9]+$ ]] || return 1
 
@@ -354,11 +354,11 @@ _complexity_llm_sweep_due() {
 	fi
 
 	# GH#17536: Skip sweep when all remaining debt issues are already dispatched.
-	# If every open simplification-debt issue (excluding sweep meta-issues) has
+	# If every open function-complexity-debt issue (excluding sweep meta-issues) has
 	# status:queued or status:in-progress, the pipeline is working — no sweep needed.
 	local dispatched_count
 	dispatched_count=$(gh issue list --repo "$aidevops_slug" \
-		--label "simplification-debt" --state open \
+		--label "function-complexity-debt" --state open \
 		--json number,title,labels --jq '
 		[.[] | select(.title | test("stalled|LLM sweep") | not)] |
 		if length == 0 then 0
@@ -367,7 +367,7 @@ _complexity_llm_sweep_due() {
 		end' 2>/dev/null) || dispatched_count=""
 	local actionable_count
 	actionable_count=$(gh issue list --repo "$aidevops_slug" \
-		--label "simplification-debt" --state open \
+		--label "function-complexity-debt" --state open \
 		--json number,title --jq '[.[] | select(.title | test("stalled|LLM sweep") | not)] | length' 2>/dev/null) || actionable_count=""
 	if [[ "$actionable_count" =~ ^[0-9]+$ && "$dispatched_count" =~ ^[0-9]+$ && "$actionable_count" -gt 0 && "$dispatched_count" -ge "$actionable_count" ]]; then
 		echo "[pulse-wrapper] Complexity LLM sweep: all ${actionable_count} debt issues are dispatched — sweep not needed" >>"$LOGFILE"
@@ -392,7 +392,7 @@ _complexity_run_llm_sweep() {
 	# Both sweep code paths use different title patterns — check both.
 	local sweep_exists
 	sweep_exists=$(gh issue list --repo "$aidevops_slug" \
-		--label "simplification-debt" --state open \
+		--label "function-complexity-debt" --state open \
 		--search "in:title \"simplification debt stalled\"" \
 		--json number --jq 'length' 2>/dev/null) || sweep_exists="0"
 	if [[ "${sweep_exists:-0}" -gt 0 ]]; then
@@ -409,20 +409,20 @@ _complexity_run_llm_sweep() {
 	local sweep_body
 	sweep_body="## Simplification debt stall — LLM sweep (automated, GH#15285)
 
-**Open simplification-debt issues:** ${current_count:-unknown}
+**Open function-complexity-debt issues:** ${current_count:-unknown}
 
 The simplification debt count has not decreased in the last $((COMPLEXITY_LLM_SWEEP_INTERVAL / 3600))h. This issue is a prompt for the LLM to review the current state and suggest approach adjustments.
 
 ### Questions to investigate
 
-1. Are the open simplification-debt issues actionable? Check for issues that are blocked, stale, or need maintainer review.
-2. Are workers dispatching on simplification-debt issues? Check recent pulse logs for dispatch activity.
+1. Are the open function-complexity-debt issues actionable? Check for issues that are blocked, stale, or need maintainer review.
+2. Are workers dispatching on function-complexity-debt issues? Check recent pulse logs for dispatch activity.
 3. Is the open cap (500) being hit? If so, consider raising it or closing stale issues.
 4. Are there systemic blockers (e.g., all remaining issues require architectural decisions)?
 
 ### Suggested actions
 
-- Review the oldest 10 open simplification-debt issues and close any that are no longer relevant.
+- Review the oldest 10 open function-complexity-debt issues and close any that are no longer relevant.
 - Check if \`tier:simple\` and \`tier:standard\` issues are being dispatched — if not, verify the pulse is routing them correctly.
 - If debt is growing, consider lowering \`COMPLEXITY_MD_MIN_LINES\` or \`COMPLEXITY_FILE_VIOLATION_THRESHOLD\` to catch more candidates.
 
@@ -452,7 +452,7 @@ This is an automated stall-detection sweep. The LLM should review the actual iss
 	# on other runners, producing audit trail gaps.
 	if gh_create_issue --repo "$aidevops_slug" \
 		--title "perf: simplification debt stalled — LLM sweep needed ($(date -u +%Y-%m-%d))" \
-		--label "simplification-debt" $sweep_review_label --label "tier:thinking" \
+		--label "function-complexity-debt" $sweep_review_label --label "tier:thinking" \
 		--body "$sweep_body" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] Complexity LLM sweep: created stall-review issue" >>"$LOGFILE"
 	else
@@ -657,12 +657,12 @@ _complexity_scan_extract_md_topic_label() {
 	return 0
 }
 
-# Check if an open simplification-debt issue already exists for a given file.
+# Check if an open function-complexity-debt issue already exists for a given file.
 #
 # Uses GitHub search API via `gh issue list --search` to query server-side,
 # avoiding the --limit 200 cap that caused duplicate issues (GH#10783).
 # Previous approach fetched 200 issues locally and checked with jq, but with
-# 3000+ open simplification-debt issues, most were invisible to the dedup check.
+# 3000+ open function-complexity-debt issues, most were invisible to the dedup check.
 #
 # Arguments:
 #   $1 - repo_slug (owner/repo for gh commands)
@@ -678,7 +678,7 @@ _complexity_scan_has_existing_issue() {
 	# not limited by --limit pagination. The file path is always in the title.
 	local match_count
 	match_count=$(gh issue list --repo "$repo_slug" \
-		--label "simplification-debt" --state open \
+		--label "function-complexity-debt" --state open \
 		--search "in:title \"$issue_key\"" \
 		--json number --jq 'length' 2>/dev/null) || match_count="0"
 	if [[ "${match_count:-0}" -gt 0 ]]; then
@@ -688,7 +688,7 @@ _complexity_scan_has_existing_issue() {
 	# Fallback: search in issue body for the structured **File:** field.
 	# This catches issues where the title format differs (e.g., Qlty issues).
 	match_count=$(gh issue list --repo "$repo_slug" \
-		--label "simplification-debt" --state open \
+		--label "function-complexity-debt" --state open \
 		--search "\"$issue_key\" in:body" \
 		--json number --jq 'length' 2>/dev/null) || match_count="0"
 
@@ -699,7 +699,7 @@ _complexity_scan_has_existing_issue() {
 	return 1
 }
 
-# Close open duplicate simplification-debt issues for an exact title.
+# Close open duplicate function-complexity-debt issues for an exact title.
 #
 # This is a post-create race repair for cross-machine TOCTOU collisions:
 # two runners can both pass pre-create dedup checks, then both create the
@@ -717,7 +717,7 @@ _complexity_scan_close_duplicate_issues_by_title() {
 
 	local issue_numbers=""
 	if ! issue_numbers=$(T="$issue_title" gh issue list --repo "$repo_slug" \
-		--label "simplification-debt" --state open \
+		--label "function-complexity-debt" --state open \
 		--search "in:title \"${issue_title}\"" \
 		--limit 100 --json number,title \
 		--jq 'map(select(.title == env.T) | .number) | sort | .[]'); then
@@ -754,7 +754,7 @@ _complexity_scan_close_duplicate_issues_by_title() {
 	done <<<"$issue_numbers"
 
 	if [[ "$closed_count" -gt 0 ]]; then
-		echo "[pulse-wrapper] Complexity scan: closed ${closed_count} duplicate simplification-debt issue(s) for title: ${issue_title}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Complexity scan: closed ${closed_count} duplicate function-complexity-debt issue(s) for title: ${issue_title}" >>"$LOGFILE"
 	fi
 
 	return 0
@@ -821,7 +821,7 @@ ISSUE_BODY_EOF
 	return 0
 }
 
-# Check if the open simplification-debt issue backlog exceeds the cap.
+# Check if the open function-complexity-debt issue backlog exceeds the cap.
 # Arguments: $1 - aidevops_slug, $2 - cap (default 100), $3 - log_prefix
 # Exit codes: 0 = under cap (safe to create), 1 = at/over cap (skip)
 _complexity_scan_check_open_cap() {
@@ -830,10 +830,10 @@ _complexity_scan_check_open_cap() {
 	local log_prefix="${3:-Complexity scan}"
 
 	local total_open
-	total_open=$(gh api graphql -f query="query { repository(owner:\"${aidevops_slug%%/*}\", name:\"${aidevops_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
+	total_open=$(gh api graphql -f query="query { repository(owner:\"${aidevops_slug%%/*}\", name:\"${aidevops_slug##*/}\") { issues(labels:[\"function-complexity-debt\"], states:OPEN) { totalCount } } }" \
 		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
 	if [[ "${total_open:-0}" -ge "$cap" ]]; then
-		echo "[pulse-wrapper] ${log_prefix}: skipping — ${total_open} open simplification-debt issues (cap: ${cap})" >>"$LOGFILE"
+		echo "[pulse-wrapper] ${log_prefix}: skipping — ${total_open} open function-complexity-debt issues (cap: ${cap})" >>"$LOGFILE"
 		return 1
 	fi
 	return 0
@@ -977,13 +977,13 @@ _complexity_scan_process_single_md_file() {
 		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" $review_label --label "tier:standard" --label "recheck-simplicity" \
+			--label "function-complexity-debt" $review_label --label "tier:standard" --label "recheck-simplicity" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	else
 		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" $review_label --label "tier:standard" \
+			--label "function-complexity-debt" $review_label --label "tier:standard" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	fi
 
@@ -1144,7 +1144,7 @@ _complexity_scan_sh_create_issue() {
 	# shellcheck disable=SC2086
 	if gh_create_issue --repo "$aidevops_slug" \
 		--title "$issue_title" \
-		--label "simplification-debt" $review_label_sh \
+		--label "function-complexity-debt" $review_label_sh \
 		--body "$issue_body" >/dev/null 2>&1; then
 		_complexity_scan_close_duplicate_issues_by_title "$aidevops_slug" "$issue_title"
 		echo "[pulse-wrapper] Complexity scan: created issue for ${file_path} (${violation_count} violations)" >>"$LOGFILE"
@@ -1206,9 +1206,9 @@ _complexity_scan_create_issues() {
 }
 
 #######################################
-# Close duplicate simplification-debt issues across pulse-enabled repos.
+# Close duplicate function-complexity-debt issues across pulse-enabled repos.
 #
-# For each repo, fetches open simplification-debt issues and groups by
+# For each repo, fetches open function-complexity-debt issues and groups by
 # file path extracted from the title. When multiple issues exist for the
 # same file, keeps the newest and closes the rest as "not planned".
 #
@@ -1259,7 +1259,7 @@ run_simplification_dedup_cleanup() {
 		# last (newest) issue number from each group as duplicates to close.
 		local dupe_numbers
 		dupe_numbers=$(gh issue list --repo "$slug" \
-			--label "simplification-debt" --state open \
+			--label "function-complexity-debt" --state open \
 			--limit 500 --json number,title \
 			--jq '
 				sort_by(.number) |
@@ -1283,7 +1283,7 @@ run_simplification_dedup_cleanup() {
 			[[ -z "$dupe_num" ]] && continue
 			[[ "$total_closed" -ge "$batch_limit" ]] && break
 			if gh issue close "$dupe_num" --repo "$slug" --reason "not planned" \
-				--comment "Auto-closing duplicate: another simplification-debt issue exists for this file. Keeping the newest." \
+				--comment "Auto-closing duplicate: another function-complexity-debt issue exists for this file. Keeping the newest." \
 				>/dev/null 2>&1; then
 				total_closed=$((total_closed + 1))
 			fi
@@ -1292,7 +1292,7 @@ run_simplification_dedup_cleanup() {
 
 	echo "$now_epoch" >"$DEDUP_CLEANUP_LAST_RUN"
 	if [[ "$total_closed" -gt 0 ]]; then
-		echo "[pulse-wrapper] Dedup cleanup: closed ${total_closed} duplicate simplification-debt issue(s)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dedup cleanup: closed ${total_closed} duplicate function-complexity-debt issue(s)" >>"$LOGFILE"
 	fi
 	return 0
 }
@@ -1444,7 +1444,7 @@ _complexity_scan_permission_gate() {
 
 	# Permission gate: only admin users may create simplification issues.
 	# write/maintain collaborators are excluded — they could otherwise use
-	# bot-created simplification-debt issues to bypass the maintainer assignee
+	# bot-created function-complexity-debt issues to bypass the maintainer assignee
 	# gate (GH#16786, GH#18197). On personal repos, admin = repo owner only.
 	local current_user
 	current_user=$(gh api user --jq '.login' 2>/dev/null) || current_user=""
@@ -1640,29 +1640,29 @@ _complexity_scan_sweep_check() {
 		# Create a one-off issue for the LLM sweep if none exists (t1855: check both title patterns)
 		local sweep_issue_exists
 		sweep_issue_exists=$(gh issue list --repo "$aidevops_slug" \
-			--label "simplification-debt" --state open \
+			--label "function-complexity-debt" --state open \
 			--search "in:title \"simplification debt stalled\" OR in:title \"LLM complexity sweep\"" \
 			--json number --jq 'length' 2>/dev/null) || sweep_issue_exists="0"
 		if [[ "${sweep_issue_exists:-0}" -eq 0 ]]; then
 			local sweep_reason
 			sweep_reason=$(echo "$sweep_result" | cut -d'|' -f2)
 			gh_create_issue --repo "$aidevops_slug" \
-				--title "LLM complexity sweep: review stalled simplification debt" \
-				--label "simplification-debt" --label "auto-dispatch" --label "tier:thinking" \
+				--title "LLM complexity sweep: review stalled function-complexity debt" \
+				--label "function-complexity-debt" --label "auto-dispatch" --label "tier:thinking" \
 				--body "## Daily LLM sweep (automated, GH#15285)
 
 **Trigger:** ${sweep_reason}
 
-The deterministic complexity scan detected that simplification debt has not decreased in the configured stall window. An LLM-powered deep review is needed to:
+The deterministic complexity scan detected that function-complexity debt has not decreased in the configured stall window. An LLM-powered deep review is needed to:
 
-1. Identify why existing simplification issues are not being resolved
+1. Identify why existing function-complexity-debt issues are not being resolved
 2. Re-prioritize the backlog based on actual impact
 3. Close issues that are no longer relevant (files deleted, already simplified)
 4. Suggest new decomposition strategies for stuck files
 
 ### Scope
 
-Review all open \`simplification-debt\` issues and the current \`simplification-state.json\`. Focus on the top 10 largest files first." >/dev/null 2>&1 || true
+Review all open \`function-complexity-debt\` issues and the current \`simplification-state.json\`. Focus on the top 10 largest files first." >/dev/null 2>&1 || true
 			"$scan_helper" sweep-done 2>>"$LOGFILE" || true
 		fi
 	fi
@@ -1704,7 +1704,7 @@ run_weekly_complexity_scan() {
 	local repos_json="$REPOS_JSON"
 	local aidevops_slug="marcusquinn/aidevops"
 
-	# t2145: complexity scan creates simplification-debt issues — maintainer-only.
+	# t2145: complexity scan creates function-complexity-debt issues — maintainer-only.
 	local _cs_role
 	_cs_role=$(get_repo_role_by_slug "$aidevops_slug")
 	if [[ "$_cs_role" != "maintainer" ]]; then

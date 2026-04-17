@@ -698,7 +698,7 @@ cmd_sweep_check() {
 
 	# Check 2: Has debt count stalled?
 	local current_debt=0
-	current_debt=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%%/*}\", name:\"${repo_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
+	current_debt=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%%/*}\", name:\"${repo_slug##*/}\") { issues(labels:[\"function-complexity-debt\"], states:OPEN) { totalCount } } }" \
 		--jq '.data.repository.issues.totalCount' 2>/dev/null) || current_debt=0
 
 	if [[ -f "$SWEEP_DEBT_SNAPSHOT" ]]; then
@@ -730,7 +730,7 @@ cmd_sweep_check() {
 					since_date=$(date -u -r "$((now_epoch - stall_seconds))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) ||
 					since_date=""
 				if [[ -n "$since_date" ]]; then
-					recent_closures=$(gh api graphql -f query="query { search(query:\"repo:${repo_slug} label:simplification-debt is:issue is:closed closed:>${since_date}\", type:ISSUE) { issueCount } }" \
+					recent_closures=$(gh api graphql -f query="query { search(query:\"repo:${repo_slug} label:function-complexity-debt is:issue is:closed closed:>${since_date}\", type:ISSUE) { issueCount } }" \
 						--jq '.data.search.issueCount' 2>/dev/null) || recent_closures=0
 					[[ "$recent_closures" =~ ^[0-9]+$ ]] || recent_closures=0
 				fi

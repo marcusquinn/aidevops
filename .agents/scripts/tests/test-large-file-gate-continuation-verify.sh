@@ -6,14 +6,14 @@
 #
 # `_large_file_gate_create_debt_issue()` in pulse-dispatch-large-file-gate.sh
 # previously short-circuited as "recently-closed — continuation" whenever a
-# closed simplification-debt issue mentioned the file's basename within the
+# closed file-size-debt issue mentioned the file's basename within the
 # 30-day reopen window (GH#18960). This had no outcome verification: a
-# closed function-complexity issue whose merge PR did NOT reduce the file
+# closed function-complexity-debt issue whose merge PR did NOT reduce the file
 # below the file-size threshold would be cited as in-flight continuation,
 # permanently stranding the file behind the gate.
 #
 # Concrete failure (GH#19415):
-#   - simplification-debt #18706 ("reduce function complexity in
+#   - function-complexity-debt #18706 ("reduce function complexity in
 #     issue-sync-helper.sh, 1 functions >100 lines") closed by PR #18715,
 #     which decomposed cmd_enrich() but added net +29 lines (file went
 #     from ~2165 to 2194 lines).
@@ -97,10 +97,10 @@ gh() {
 	printf '%s\n' "gh $*" >>"$GH_CALLS_LOG"
 
 	# Pattern-match on the args we care about.
-	# Open simplification-debt search:
-	#   gh issue list --repo X --state open --label simplification-debt --search ...
-	# Closed simplification-debt search:
-	#   gh issue list --repo X --state closed --label simplification-debt --search ...
+	# Open file-size-debt search:
+	#   gh issue list --repo X --state open --label file-size-debt --search ...
+	# Closed file-size-debt search:
+	#   gh issue list --repo X --state closed --label file-size-debt --search ...
 	local saw_open="false" saw_closed="false"
 	local arg
 	for arg in "$@"; do
@@ -202,7 +202,7 @@ assert_eq \
 	"$out"
 assert_contains \
 	"file-over-threshold path logs the prior-attempt skip" \
-	"prior simplification-debt #18706 closed but over.sh still 2050 lines" \
+	"prior file-size-debt #18706 closed but over.sh still 2050 lines" \
 	"$(cat "$LOGFILE")"
 
 # ---- Test 3 — closed exists, no repo_path → backward-compat continuation ----

@@ -116,7 +116,7 @@ get_repo_priority_by_slug() {
 #
 # The role controls which pulse scanners run against the repo:
 #   - maintainer: all scanners (review-followup, quality-debt,
-#     simplification-debt, complexity scans)
+#     file-size-debt, function-complexity-debt, complexity scans)
 #   - contributor: session-miner and memory-miner only (data only the
 #     contributor has). Scanners that operate on repo data the maintainer
 #     already has are blocked to avoid NMR noise (t2145, GH#19341).
