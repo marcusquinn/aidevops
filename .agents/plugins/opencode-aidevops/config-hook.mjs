@@ -42,11 +42,13 @@ const CLAUDE_MODEL_LIMITS = {
   "claude-sonnet-4-6": { context: 1000000, output: 64000 },
   "claude-opus-4-5":   { context:  200000, output: 64000 },
   "claude-opus-4-6":   { context: 1000000, output: 64000 },
-  // Opus 4.7 context intentionally capped at 200K (not the 1M API ceiling).
-  // Anthropic's own MRCR v2 8-needle data shows long-context retrieval collapse:
-  // 256K drops 91.9% -> 59.2%, 1M drops 78.3% -> 32.2%. Users opting into 4.7
-  // should stay inside the still-functional window. See models-opus.md "Opus 4.7 (opt-in)".
-  "claude-opus-4-7":   { context:  200000, output: 64000 },
+  // Opus 4.7 context capped at 250K (not the 1M API ceiling). Anthropic's own
+  // MRCR v2 8-needle data shows long-context retrieval collapse past 200K
+  // (256K: 91.9% -> 59.2%, 1M: 78.3% -> 32.2%). Setting the limit to 250K lets
+  // OpenCode's 80% auto-compact threshold trigger right at the 200K reliability
+  // boundary -- users get the full functional window before compaction kicks in,
+  // instead of compacting at 160K (80% of a 200K cap). See models-opus.md.
+  "claude-opus-4-7":   { context:  250000, output: 64000 },
 };
 
 /**
