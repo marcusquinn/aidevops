@@ -46,7 +46,7 @@ schema-validator-helper.sh status                            # check install
 
 Use during Technical SEO Audit (`seo-audit-skill.md` → "Tools Referenced > Free Tools > Schema Validator").
 
-Complementary: `seo/schema-markup.md` (templates, t092) · `seo/seo-audit-skill.md` · Google Rich Results Test (t084)
+Complementary: `seo/schema-markup.md` (templates, t092) · `seo/seo-audit-skill.md` · `seo/video-schema.md` (video-specific JSON-LD playbook) · Google Rich Results Test (t084)
 
 ## Troubleshooting
 

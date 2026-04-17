@@ -181,6 +181,18 @@ Analyze with `tools/vision/image-understanding.md`:
 | **Category** | Correct YouTube category selected |
 | **Language** | Correct language and caption settings |
 
+## Multi-Surface Optimization
+
+YouTube is one of three surfaces a video can rank on. The other two — Google web search (video carousels, Key Moments) and LLM answer engines (ChatGPT, Perplexity, Gemini, Claude) — use different signals. Optimizing only for YouTube leaves 2/3 of discovery on the table.
+
+| Surface | Primary signal | What YouTube optimizer covers | What it doesn't — see these agents |
+|---------|----------------|-------------------------------|------------------------------------|
+| YouTube search + browse | CTR, watch time, session duration | Title/tags/description/thumbnail/hook | - |
+| Google video carousels | `VideoObject` schema on a canonical host page, transcripts in HTML, Key Moments via `Clip`/`SeekToAction` | Partial (timestamps in description) | `seo/video-schema.md` (required for rich results), `seo/transcript-seo.md` (transcript page structure) |
+| LLM answer engines | Transcript text + schema + surrounding body copy (LLMs do not watch video) | None | `seo/video-seo.md` (three-surface strategy), `seo/transcript-seo.md` (accuracy >=95%, spoken-keyword cadence, named entities) |
+
+Practical: use the YouTube description's first 150 chars for CTR and the rest of the description field + canonical host page for LLM retrieval. YouTube description caps at 5000 chars — short videos should still ship a 1500-3000-char description dense with named entities, not a 200-char teaser.
+
 ## Memory Integration
 
 ```bash
@@ -206,3 +218,6 @@ memory-helper.sh recall --namespace youtube-patterns "title"
 - `seo/meta-creator.md` — General meta title/description patterns
 - `tools/vision/image-understanding.md` — Thumbnail analysis
 - `tools/vision/image-generation.md` — Thumbnail generation
+- `seo/video-seo.md` — Three-surface optimization (YouTube + Google + LLM)
+- `seo/transcript-seo.md` — Description-as-transcript cadence; published transcript pages for LLM retrieval
+- `seo/video-schema.md` — `VideoObject`/`Clip`/`Speakable` JSON-LD for embed pages on sites you control

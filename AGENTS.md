@@ -34,7 +34,7 @@ Completion self-check: see `prompts/build.txt` "Completion and quality disciplin
 
 ## Contributing
 
-See `.agents/aidevops/` for framework development guidance:
+See `.agents/` for framework development guidance:
 
 | File | Purpose |
 |------|---------|
@@ -42,8 +42,8 @@ See `.agents/aidevops/` for framework development guidance:
 | `tools/build-agent/agent-review.md` | Reviewing and improving agents |
 | `tools/build-mcp/build-mcp.md` | MCP server development |
 | `tools/mcp-toolkit/mcporter.md` | MCP runtime toolkit (discover, call, generate CLIs) |
-| `architecture.md` | Framework structure |
-| `setup.md` | AI guide to setup.sh |
+| `aidevops/architecture.md` | Framework structure |
+| `aidevops/setup.md` | AI guide to setup.sh |
 
 ## Agent Design Principles
 

@@ -27,6 +27,9 @@ subagents:
   - image-seo
   - moondream
   - upscale
+  - video-seo
+  - transcript-seo
+  - video-schema
   - content-analyzer
   - seo-optimizer
   - keyword-mapper
@@ -61,7 +64,7 @@ subagents:
 - **Technical**: `site-crawler` (links, meta, redirects) | `screaming-frog` (SEO Spider CLI) | `contentking` (real-time monitoring) | `pagespeed`
 - **Content**: `content-analyzer` (readability, keywords, quality) | `seo-optimizer` (on-page audit) | `eeat-score` (7 criteria, 1-10) | `programmatic-seo` (pages at scale)
 - **AI search**: `geo-strategy` (criteria extraction, retrieval-first) | `sro-grounding` (snippet selection) | `ai-hallucination-defense` (claim-evidence audits) | `ai-agent-discovery` (discoverability) | `ai-search-readiness` (end-to-end orchestration)
-- **Media/debug**: `image-seo` (alt text, Moondream) | `upscale` | `moondream` | `rich-results` (browser automation) | `debug-opengraph` | `debug-favicon`
+- **Media/debug**: `image-seo` (alt text, Moondream) | `upscale` | `moondream` | `video-seo` (three-surface: YouTube + Google + LLMs) | `transcript-seo` (captions/transcripts as LLM retrieval signal) | `video-schema` (`VideoObject`/`Clip`/`Speakable` JSON-LD) | `rich-results` (browser automation) | `debug-opengraph` | `debug-favicon`
 - **Export**: `data-export` (GSC, Bing, Ahrefs, DataForSEO → TOON) | `gsc-sitemaps` (Playwright submission)
 
 **Content analysis** ([SEO Machine](https://github.com/TheCraigHewitt/seomachine)): `seo-content-analyzer.py {analyze|readability|keywords|quality|intent} <file|query> [--keyword "kw"]`

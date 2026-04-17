@@ -112,3 +112,6 @@ memory-helper.sh recall --namespace youtube "competitor analysis"
 | `seo.md` | Deep keyword research, SERP analysis, backlink data |
 | `content.md` | General content writing, video production (Remotion, HeyGen), cross-platform promotion |
 | `research.md` | Broad web research beyond YouTube |
+| `seo/video-seo.md` | Three-surface strategy (YouTube + Google video carousel + LLM citation). Covers what YouTube-native optimization alone misses |
+| `seo/transcript-seo.md` | Caption accuracy targets, spoken-keyword cadence, named-entity discipline — applies to YouTube auto-captions AND any transcript published on your own site |
+| `seo/video-schema.md` | `VideoObject`/`Clip`/`Speakable` JSON-LD for when video is embedded on a canonical page you control (not just YouTube) |

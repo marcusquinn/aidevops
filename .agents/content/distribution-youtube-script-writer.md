@@ -28,6 +28,7 @@ Before writing, work through:
 2. Why would someone watch past 30 seconds — what tension or promise holds them?
 3. What does the viewer already know — where does this video meet them?
 4. What would make this indistinguishable from the last 10 videos on this topic — and how do we avoid that?
+5. Which target keyword and 3-5 named entities (people, products, places, specs, years) must be SPOKEN — not just on-screen — in the first 60 seconds? Captions are the primary LLM retrieval signal for video (`seo/transcript-seo.md`); entities only appearing in B-roll text do not make it into the caption track and are invisible to AI search.
 
 ## Script Structure
 

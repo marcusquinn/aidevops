@@ -20,6 +20,8 @@ model: sonnet
 
 **Critical Rules**: Hook in first 1-3s (pattern interrupt or immediate value) · Fast cuts (1-3s max) · 9:16 aspect ratio · 60s sweet spot (15-90s range) · Trending sounds · Captions required (80%+ watch without sound) · No watermarks (cross-posting penalties)
 
+**Keyword strategy — MUST differ from long-form**: 67% of creators reuse the same target keyword across Shorts and long-form — this halves performance on both. Shorts are a discovery surface; long-form is a depth surface. Use the Short to target a broader, higher-volume query ("best AI video tools") and the long-form to target a narrower, higher-intent query ("Sora 2 Pro vs Veo 3.1 pricing comparison"). Link from Short to long-form in description. See `seo/video-seo.md` "Shorts vs long-form" for the keyword-differentiation framework.
+
 **Platform Pacing**:
 
 | Platform | Optimal Length | Cut Speed | Sound Strategy | Cadence | Peak Times (local) |

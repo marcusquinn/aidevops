@@ -52,6 +52,9 @@ Run a complete, high-signal workflow to improve AI search citations and answer q
 | Citation stability | Variance in citation frequency over repeated runs |
 | Site-query readiness | % of priority pages retrievable via `site:yourdomain.com [category]` |
 | Third-party profile currency | % of review platform profiles updated within last 90 days |
+| Video transcript coverage | % of embedded/hosted videos with >=95% accurate transcripts published as on-page HTML (`seo/transcript-seo.md`) |
+| Video schema coverage | % of video-bearing pages with valid `VideoObject` JSON-LD (`seo/video-schema.md`) |
+| Video criteria alignment | % of videos whose transcript, description, and surrounding body text cover the decision criteria for the target intent |
 
 ## Prioritization Rules
 

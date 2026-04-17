@@ -42,6 +42,14 @@ Content Type?
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-Production SEO Note
+
+LLMs and Google do not watch video — they read the transcript, `VideoObject` JSON-LD on the host page, and surrounding body text. Every production decision that affects the spoken track (script, voice, pacing, on-screen-only reveals) is also an SEO decision. Before generating:
+
+- Target keyword and 3-5 named entities (products, people, specs, years) must be SPOKEN, not just shown in B-roll text (`seo/transcript-seo.md`).
+- Plan the canonical host page for the video (if not YouTube-only) and what `VideoObject`/`Clip` schema it will carry (`seo/video-schema.md`).
+- Three-surface optimization overview: `seo/video-seo.md` (YouTube / Google video carousels / LLM answer engines).
+
 ## Chapters
 
 | # | Chapter | Description |

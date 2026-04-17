@@ -144,6 +144,7 @@ content-fanout-helper.sh run <plan-file>    # Execute (also: channels, status, e
 | Video | `content/video-higgsfield.md`, `tools/video/video-prompt-design.md`, t200 Veo Meta Framework |
 | Voice | `tools/voice/speech-to-speech.md`, `voice-helper.sh` |
 | SEO/Blog | `seo/`, `content/seo-writer.md`, `content/editor.md`, `content/meta-creator.md`, `content/internal-linker.md` |
+| Video SEO | `seo/video-seo.md` (YouTube/Google/LLM three-surface model), `seo/transcript-seo.md` (accuracy, spoken-keyword cadence), `seo/video-schema.md` (`VideoObject`/`Clip`/`Speakable` JSON-LD) |
 | Social | `content/social-bird.md` (X), `content/social-linkedin.md`, `content/social-reddit.md` |
 | Email | `content/marketing-sales.md` (FluentCRM), `content/distribution-email.md` |
 | Analysis | `seo-content-analyzer.py analyze article.md --keyword "target keyword"` |

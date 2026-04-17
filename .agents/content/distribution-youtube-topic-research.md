@@ -174,6 +174,7 @@ youtube-helper.sh transcript VIDEO_ID_3
 | **Mistakes** | "5 [topic] mistakes everyone makes" | How-to niches |
 | **Hidden/secret** | "[Topic] features nobody talks about" | Tech, tools, platforms |
 | **Cost breakdown** | "The real cost of [thing]" | Finance, lifestyle, business |
+| **Question-framed** | "How does [X] actually work?" / "Is [X] worth it in 2026?" | Any topic — doubles as an LLM citation magnet. AI answer engines preferentially cite videos whose title/transcript literally answers a user question. Pair with a transcript page (`seo/transcript-seo.md`) for compounding returns. |
 
 ### Step 3: Generate Unique Angles
 

@@ -80,9 +80,14 @@ AI models query G2, Capterra, and TrustRadius as a validation stage after extrac
 - Respond to reviews — AI models may extract vendor responses as support quality evidence
 - Monitor profiles quarterly; add TrustRadius, PeerSpot, or vertical-specific sites where G2/Capterra coverage is thin
 
+### Video assets
+
+LLMs don't watch video — they read transcripts, `VideoObject` JSON-LD, and on-page text surrounding the embed. A video without a published transcript, schema, and descriptive body text is invisible to AI search regardless of watch time or YouTube ranking. Treat each video on a canonical page as three retrieval signals: accurate transcript (>=95%, published as HTML), `VideoObject` schema with `description`/`uploadDate`/`duration`/`thumbnailUrl`, and named-entity/criteria-matched body text around it. See `seo/video-seo.md`, `seo/transcript-seo.md`, `seo/video-schema.md`.
+
 ## Related Subagents
 
 - `sro-grounding.md` for snippet selection and grounding optimization
 - `query-fanout-research.md` for sub-query and theme decomposition
 - `ai-hallucination-defense.md` for contradiction and claim-evidence audits
 - `keyword-research.md` for demand and intent validation
+- `video-seo.md` / `transcript-seo.md` / `video-schema.md` when target pages embed or host video — transcripts + schema are the primary LLM retrieval signal for video content. Also applies when audio is a proof asset for a GEO intent
