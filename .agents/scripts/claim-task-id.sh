@@ -306,6 +306,29 @@ get_highest_task_id() {
 	echo "$highest"
 }
 
+# Check if a task ID already appears in TODO.md (any status: active or completed).
+# Used to detect .task-counter drift: IDs the counter thinks are unclaimed may
+# already exist as historical TODO entries (GH#19454).
+#
+# Args:
+#   $1 — numeric task ID without the "t" prefix (e.g. 2155, not "t2155")
+#   $2 — repo path (default: current directory)
+# Returns: 0 if the ID exists in TODO.md, 1 if not found
+_id_exists_in_todo() {
+	local id_num="$1"
+	local repo_path="${2:-$PWD}"
+	local todo_file="${repo_path}/TODO.md"
+
+	[[ -f "$todo_file" ]] || return 1
+
+	# Match "- [ ] tNNN" or "- [x] tNNN" (zero-padded variant included via 0*)
+	if grep -qE "^[[:space:]]*-[[:space:]]\[[[:space:]xX]\][[:space:]]t0*${id_num}([[:space:]]|$)" "$todo_file"; then
+		return 0
+	fi
+
+	return 1
+}
+
 # Compute seed value for .task-counter bootstrap from TODO.md (or default 1).
 # Reads TODO.md from the repo root; falls back to 1 if not found or empty.
 # Returns the seed value (highest task ID + 1, minimum 1).
@@ -575,6 +598,60 @@ allocate_online() {
 
 	log_error "Failed to allocate after ${CAS_MAX_RETRIES} attempts"
 	return 1
+}
+
+# Online allocation with TODO.md historical-collision avoidance (GH#19454).
+# Wraps allocate_online() with a skip-and-retry loop: when the CAS claims an ID
+# that already appears in TODO.md (completed or active), the counter has already
+# been advanced past it — log the skip and retry with the next ID.
+#
+# Each skip burns one CAS commit (a git push). Defensive cap: 100 sequential
+# skips abort with an error requiring manual counter repair.
+#
+# Args:
+#   $1 — repo_path
+#   $2 — count (number of consecutive IDs to allocate)
+# Returns:
+#   0 — first clean first_id echoed to stdout
+#   1 — hard error (allocation failed or 100-skip cap exceeded)
+_allocate_online_with_collision_check() {
+	local repo_path="$1"
+	local count="$2"
+	local max_skips=100
+	local total_skips=0
+
+	while true; do
+		local first_id=""
+		if ! first_id=$(allocate_online "$repo_path" "$count"); then
+			return 1
+		fi
+
+		# Check every ID in the batch against TODO.md
+		local collision_id=""
+		local i
+		for ((i = 0; i < count; i++)); do
+			local check_id=$((first_id + i))
+			if _id_exists_in_todo "$check_id" "$repo_path"; then
+				collision_id="$check_id"
+				break
+			fi
+		done
+
+		if [[ -z "$collision_id" ]]; then
+			echo "$first_id"
+			return 0
+		fi
+
+		total_skips=$((total_skips + 1))
+		log_info "TODO.md collision: t$(printf '%03d' "$collision_id") already exists — skipping (${total_skips}/${max_skips})"
+
+		if [[ $total_skips -ge $max_skips ]]; then
+			log_error "TODO.md collision guard: exhausted ${max_skips} skip attempts"
+			log_error ".task-counter is severely out of sync with TODO.md"
+			log_error "Manual fix: check TODO.md and .task-counter on ${REMOTE_NAME}/${COUNTER_BRANCH}"
+			return 1
+		fi
+	done
 }
 
 # Offline allocation (with safety offset)
@@ -1142,7 +1219,7 @@ _main_resolve_allocation() {
 			return 0
 		fi
 
-		if first_id_out=$(allocate_online "$REPO_PATH" "$ALLOC_COUNT"); then
+		if first_id_out=$(_allocate_online_with_collision_check "$REPO_PATH" "$ALLOC_COUNT"); then
 			log_success "Allocated task ID: $(printf 't%03d' "$first_id_out")"
 		else
 			log_warn "Online allocation failed, falling back to offline mode"
