@@ -168,18 +168,27 @@ export function loadAgentIndex(agentsDir, readIfExists) {
   const content = readIfExists(indexPath);
   if (!content) return loadAgentsFallback(agentsDir);
 
-  const subagentMatch = content.match(
-    /<!--TOON:subagents\[\d+\]\{[^}]+\}:\n([\s\S]*?)-->/,
-  );
-  if (!subagentMatch) return loadAgentsFallback(agentsDir);
-
-  const agents = parseToonSubagentBlock(subagentMatch[1]);
+  // Only register top-level agents (agent picker entries), not leaf
+  // subagents. OpenCode 1.4.8 evaluates permissions per-agent at startup;
+  // 900+ agents causes multi-minute hangs. Subagent routing is handled
+  // internally by the primary agent via the Task tool — no need to register
+  // every leaf file as a selectable agent.
+  const agents = [];
 
   const topLevelMatch = content.match(
     /<!--TOON:agents\[\d+\]\{[^}]+\}:\n([\s\S]*?)-->/,
   );
   if (topLevelMatch) {
     parseTopLevelAgents(topLevelMatch[1], agents);
+  }
+
+  // If no top-level block found, fall back to minimal subagent set
+  if (agents.length === 0) {
+    const subagentMatch = content.match(
+      /<!--TOON:subagents\[\d+\]\{[^}]+\}:\n([\s\S]*?)-->/,
+    );
+    if (!subagentMatch) return loadAgentsFallback(agentsDir);
+    return parseToonSubagentBlock(subagentMatch[1]);
   }
 
   return agents;
