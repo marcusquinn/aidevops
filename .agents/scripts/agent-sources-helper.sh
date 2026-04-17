@@ -60,6 +60,9 @@ show_help() {
 	echo "  agent-sources-helper.sh remove <name>     Remove a source config"
 	echo "  agent-sources-helper.sh list              List configured sources"
 	echo "  agent-sources-helper.sh status            Show sync status"
+	echo "  agent-sources-helper.sh cleanup-broken-symlinks"
+	echo "                                            Remove dangling symlinks from"
+	echo "                                            OpenCode runtime dirs (self-heal)"
 	echo "  agent-sources-helper.sh help              Show this help"
 	echo ""
 	echo "Private repos must contain a .agents/ directory with agent folders."
@@ -234,6 +237,9 @@ cmd_add() {
 	done
 	info "Found ${agent_count} agent(s) in .agents/"
 
+	# Self-heal any pre-existing broken symlinks so the new source starts clean.
+	cleanup_broken_command_symlinks
+
 	# Offer to sync
 	echo ""
 	info "Run 'agent-sources-helper.sh sync' to deploy agents to custom/"
@@ -274,11 +280,62 @@ cmd_remove() {
 
 	# Clean up symlinks before removing config
 	cleanup_source_symlinks "${name}"
+	# Also sweep any other broken symlinks that may have accumulated. The name-match
+	# cleanup above only catches symlinks whose target path contains "${name}"; this
+	# catches dangling symlinks from previously-removed sources, manual `rm`s, etc.
+	cleanup_broken_command_symlinks
 
 	remove_source_from_config "${name}"
 	success "Removed source: ${name}"
 	info "Synced agents in custom/${name}/ were NOT deleted. Remove manually if needed:"
 	echo "  rm -rf ${CUSTOM_DIR}/${name}/"
+	return 0
+}
+
+# Remove dangling symlinks from OpenCode runtime directories (t2172).
+#
+# OpenCode parses ~/.config/opencode/{command,agent,skills,tool}/ at session
+# start. A single broken symlink in any of those paths causes the splash screen
+# to fail with "Failed to parse command ..." and blocks new sessions entirely.
+# Private-agent-source symlinks created by `sync_slash_commands` / `sync_primary_agent`
+# become orphans when a user deletes, moves, or renames the source directory
+# outside of `agent-sources-helper.sh remove` — which is an easy mistake to make.
+#
+# This helper is the self-heal: iterate each runtime dir, find `-L && ! -e`
+# entries (symlink with missing target), and `rm -f` them. Always safe — it
+# never touches regular files or symlinks that still resolve.
+#
+# Called from: `cmd_sync`, `cmd_add`, `cmd_remove`, the `cleanup-broken-symlinks`
+# subcommand (invoked by `aidevops update` and session-start update-check as
+# fail-open self-heal), and any future entry point that creates runtime symlinks.
+cleanup_broken_command_symlinks() {
+	local -a opencode_dirs=(
+		"${HOME}/.config/opencode/command"
+		"${HOME}/.config/opencode/agent"
+		"${HOME}/.config/opencode/skills"
+		"${HOME}/.config/opencode/tool"
+	)
+
+	local removed=0
+	local dir link target
+	for dir in "${opencode_dirs[@]}"; do
+		[[ -d "${dir}" ]] || continue
+		# maxdepth 3 covers: command/*.md (depth 1), skills/<skill>/SKILL.md (depth 2),
+		# and any hypothetical deeper layouts without walking node_modules/.
+		while IFS= read -r link; do
+			# -L && ! -e: symlink whose target does not exist. Regular files and
+			# symlinks with valid targets are ignored.
+			[[ -L "${link}" && ! -e "${link}" ]] || continue
+			target="$(readlink "${link}" 2>/dev/null || echo '?')"
+			info "  Removed broken symlink: ${link#"${HOME}/"} -> ${target}"
+			rm -f "${link}"
+			((++removed))
+		done < <(find "${dir}" -maxdepth 3 -type l 2>/dev/null)
+	done
+
+	if [[ ${removed} -gt 0 ]]; then
+		success "Removed ${removed} broken OpenCode runtime symlink(s)"
+	fi
 	return 0
 }
 
@@ -509,6 +566,11 @@ cmd_sync() {
 	[[ ${total_primary} -gt 0 ]] && summary="${summary}, ${total_primary} primary agent(s)"
 	[[ ${total_commands} -gt 0 ]] && summary="${summary}, ${total_commands} slash command(s)"
 	success "${summary}"
+
+	# Self-heal: remove any orphaned symlinks from sources that were deleted
+	# outside this helper (e.g., user `rm -rf`'d their private clone). Left
+	# unchecked, these block OpenCode session start with "Failed to parse command".
+	cleanup_broken_command_symlinks
 	return 0
 }
 
@@ -619,6 +681,9 @@ main() {
 		;;
 	status)
 		cmd_status
+		;;
+	cleanup-broken-symlinks)
+		cleanup_broken_command_symlinks
 		;;
 	help | --help | -h)
 		show_help

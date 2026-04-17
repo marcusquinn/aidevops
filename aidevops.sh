@@ -1009,6 +1009,17 @@ cmd_update() {
 	_update_check_homebrew
 	_update_check_planning
 	_update_check_tools
+
+	# Self-heal broken OpenCode runtime symlinks (t2172). A single dangling
+	# symlink in ~/.config/opencode/{command,agent,skills,tool}/ blocks new
+	# OpenCode sessions with "Failed to parse command ...". Running on every
+	# update is cheap (find+rm on 4 small dirs) and catches orphans left
+	# behind when users delete private agent source clones without going
+	# through `agent-sources-helper.sh remove`. Fail-open — must never
+	# break the update cron.
+	local sym_helper="${HOME}/.aidevops/agents/scripts/agent-sources-helper.sh"
+	[[ -x "$sym_helper" ]] && "$sym_helper" cleanup-broken-symlinks >/dev/null 2>&1 || true
+
 	return 0
 }
 # Uninstall helpers (extracted for complexity reduction)
