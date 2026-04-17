@@ -80,60 +80,44 @@ print_result() {
 #   GH_ISSUE_CREATE_URL          — URL echoed by `gh issue create` on success
 # =============================================================================
 
-_write_gh_stub_binary() {
-	[[ -n "${TEST_ROOT:-}" ]] || {
-		printf 'Error: TEST_ROOT is not set\n' >&2
-		return 1
-	}
-	mkdir -p "${TEST_ROOT}/bin"
-	cat >"${TEST_ROOT}/bin/gh" <<'STUB'
+# _append_gh_stub_header — shebang + log-every-invocation + cmd1/cmd2 extract.
+_append_gh_stub_header() {
+	cat >>"${TEST_ROOT}/bin/gh" <<'STUB_HDR'
 #!/usr/bin/env bash
 # bash 3.2 compatible capable gh stub for t2151 tests.
 printf '%s\n' "$*" >>"${GH_LOG:-/dev/null}"
 
 cmd1="${1:-}"
 cmd2="${2:-}"
+STUB_HDR
+}
 
-# ---------------- gh api user ----------------
+# _append_gh_stub_api — API branches (user lookup, DELETE comment, fetch).
+# Lock-markers fetch is distinguished from the generic comments fetch by
+# checking whether the caller's --jq filter references the lock marker regex.
+_append_gh_stub_api() {
+	cat >>"${TEST_ROOT}/bin/gh" <<'STUB_API'
+
 if [[ "$cmd1" == "api" && "$cmd2" == "user" ]]; then
 	printf '%s\n' "${GH_SELF_LOGIN:-testuser}"
 	exit 0
 fi
 
-# ---------------- gh api -X DELETE repos/.../issues/comments/ID ----------------
 if [[ "$cmd1" == "api" && "$cmd2" == "-X" && "${3:-}" == "DELETE" ]]; then
-	# Just log and succeed — tests verify via gh.log.
 	exit 0
 fi
 
-# ---------------- gh api repos/.../issues/N/comments ----------------
-# Used by both the generic comments fetch (filtered via --jq from caller)
-# and by the lock-markers helper (filtered via --jq for the marker shape).
-# We return GH_LOCK_MARKERS_JSON when the --jq filter contains
-# "consolidation-lock:", otherwise GH_API_COMMENTS_JSON. Callers pass their
-# own --jq expression; we shell out to jq to apply it to the selected JSON.
 if [[ "$cmd1" == "api" ]]; then
-	jq_filter=""
-	prev=""
+	jq_filter=""; prev=""
 	for arg in "$@"; do
-		if [[ "$prev" == "--jq" ]]; then
-			jq_filter="$arg"
-		fi
+		if [[ "$prev" == "--jq" ]]; then jq_filter="$arg"; fi
 		prev="$arg"
 	done
-	# Lock-markers query — path includes /issues/N/comments AND the filter
-	# matches the marker regex.
 	if printf '%s' "$jq_filter" | grep -q 'consolidation-lock'; then
 		src_json="${GH_LOCK_MARKERS_JSON:-[]}"
-		if [[ -n "$jq_filter" ]]; then
-			printf '%s\n' "$src_json" | jq -r "$jq_filter"
-		else
-			printf '%s\n' "$src_json"
-		fi
-		exit 0
+	else
+		src_json="${GH_API_COMMENTS_JSON:-[]}"
 	fi
-	# Generic comments fetch (e.g. substantive-comment scan).
-	src_json="${GH_API_COMMENTS_JSON:-[]}"
 	if [[ -n "$jq_filter" ]]; then
 		printf '%s\n' "$src_json" | jq -r "$jq_filter"
 	else
@@ -141,20 +125,20 @@ if [[ "$cmd1" == "api" ]]; then
 	fi
 	exit 0
 fi
+STUB_API
+}
 
-# ---------------- gh issue view --json labels ----------------
+# _append_gh_stub_issue — `gh issue view / list / create / edit / comment`
+# plus `gh label create`.
+_append_gh_stub_issue() {
+	cat >>"${TEST_ROOT}/bin/gh" <<'STUB_ISSUE'
+
 if [[ "$cmd1" == "issue" && "$cmd2" == "view" ]]; then
-	shift 2
-	local_json=""
+	shift 2; local_json=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--json)
-			local_json="$2"
-			shift 2
-			;;
-		--jq)
-			shift 2
-			;;
+		--json) local_json="$2"; shift 2 ;;
+		--jq) shift 2 ;;
 		*) shift ;;
 		esac
 	done
@@ -167,12 +151,8 @@ if [[ "$cmd1" == "issue" && "$cmd2" == "view" ]]; then
 	exit 0
 fi
 
-# ---------------- gh issue list ----------------
 if [[ "$cmd1" == "issue" && "$cmd2" == "list" ]]; then
-	jq_filter=""
-	state_arg="open"
-	label_arg=""
-	prev=""
+	jq_filter=""; state_arg="open"; label_arg=""; prev=""
 	for arg in "$@"; do
 		if [[ "$prev" == "--jq" ]]; then jq_filter="$arg"; fi
 		if [[ "$prev" == "--state" ]]; then state_arg="$arg"; fi
@@ -180,9 +160,7 @@ if [[ "$cmd1" == "issue" && "$cmd2" == "list" ]]; then
 		prev="$arg"
 	done
 	case "$label_arg" in
-	consolidation-in-progress)
-		src_json="${GH_ISSUE_LIST_LOCK_JSON:-[]}"
-		;;
+	consolidation-in-progress) src_json="${GH_ISSUE_LIST_LOCK_JSON:-[]}" ;;
 	consolidation-task)
 		if [[ "$state_arg" == "closed" ]]; then
 			src_json="${GH_ISSUE_LIST_CHILD_CLOSED_JSON:-[]}"
@@ -190,12 +168,8 @@ if [[ "$cmd1" == "issue" && "$cmd2" == "list" ]]; then
 			src_json="${GH_ISSUE_LIST_CHILD_JSON:-[]}"
 		fi
 		;;
-	needs-consolidation)
-		src_json="${GH_ISSUE_LIST_NEEDS_JSON:-[]}"
-		;;
-	*)
-		src_json="[]"
-		;;
+	needs-consolidation) src_json="${GH_ISSUE_LIST_NEEDS_JSON:-[]}" ;;
+	*) src_json="[]" ;;
 	esac
 	if [[ -n "$jq_filter" ]]; then
 		printf '%s\n' "$src_json" | jq -r "$jq_filter"
@@ -205,7 +179,6 @@ if [[ "$cmd1" == "issue" && "$cmd2" == "list" ]]; then
 	exit 0
 fi
 
-# ---------------- gh issue create / edit / comment / label ----------------
 if [[ "$cmd1" == "issue" && "$cmd2" == "create" ]]; then
 	printf '%s\n' "${GH_ISSUE_CREATE_URL:-https://github.com/owner/repo/issues/999}"
 	exit 0
@@ -216,7 +189,22 @@ if [[ "$cmd1" == "label" && "$cmd2" == "create" ]]; then exit 0; fi
 
 printf 'gh stub: unhandled: %s\n' "$*" >&2
 exit 0
-STUB
+STUB_ISSUE
+}
+
+# _write_gh_stub_binary — orchestrator: stitch the header/api/issue sections
+# together. Split across three append-helpers to keep every function under
+# 100 lines (required by the complexity gate in code-quality.yml).
+_write_gh_stub_binary() {
+	[[ -n "${TEST_ROOT:-}" ]] || {
+		printf 'Error: TEST_ROOT is not set\n' >&2
+		return 1
+	}
+	mkdir -p "${TEST_ROOT}/bin"
+	: >"${TEST_ROOT}/bin/gh"
+	_append_gh_stub_header
+	_append_gh_stub_api
+	_append_gh_stub_issue
 	chmod +x "${TEST_ROOT}/bin/gh"
 	return 0
 }
