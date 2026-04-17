@@ -616,21 +616,31 @@ _push_create_issue() {
 	# Worker-origin issues are NOT auto-assigned here — they follow the
 	# existing dispatch flow (`status:claimed` + pulse-managed assignment).
 	if [[ -n "$num" && -z "$assignee" && "$origin_label" == "origin:interactive" ]]; then
-		local current_user="${AIDEVOPS_SESSION_USER:-}"
-		if [[ -z "$current_user" ]]; then
-			# GH#18591: cache gh api user result to avoid repeated API calls when
-			# processing multiple tasks in a loop. Use .login // "" so a null
-			# login field yields an empty string rather than the literal "null".
-			if [[ -z "${_CACHED_GH_USER:-}" ]]; then
-				_CACHED_GH_USER=$(gh api user --jq '.login // ""' 2>/dev/null || echo "")
+		# t2157: auto-dispatch tasks are worker-owned — skip self-assign to
+		# avoid the dispatch-blocking combo (origin:interactive + assigned +
+		# active status) that GH#18352/t1996 treats as blocking. The user
+		# said "let a worker handle it"; assigning the pusher contradicts
+		# that intent and leaves the issue stranded until manual release or
+		# the 24h STAMPLESS_INTERACTIVE_AGE_THRESHOLD safety net (t2148).
+		if [[ ",${all_labels}," == *",auto-dispatch,"* ]]; then
+			print_info "Skipping auto-assign for #${num} — auto-dispatch entry is worker-owned (t2157)"
+		else
+			local current_user="${AIDEVOPS_SESSION_USER:-}"
+			if [[ -z "$current_user" ]]; then
+				# GH#18591: cache gh api user result to avoid repeated API calls when
+				# processing multiple tasks in a loop. Use .login // "" so a null
+				# login field yields an empty string rather than the literal "null".
+				if [[ -z "${_CACHED_GH_USER:-}" ]]; then
+					_CACHED_GH_USER=$(gh api user --jq '.login // ""' 2>/dev/null || echo "")
+				fi
+				current_user="$_CACHED_GH_USER"
 			fi
-			current_user="$_CACHED_GH_USER"
-		fi
-		if [[ -n "$current_user" ]]; then
-			if gh issue edit "$num" --repo "$repo" --add-assignee "$current_user" >/dev/null 2>&1; then
-				print_info "Auto-assigned #${num} to @${current_user} (origin:interactive)"
-			else
-				print_warning "Could not self-assign #${num} — assign manually to unblock Maintainer Gate"
+			if [[ -n "$current_user" ]]; then
+				if gh issue edit "$num" --repo "$repo" --add-assignee "$current_user" >/dev/null 2>&1; then
+					print_info "Auto-assigned #${num} to @${current_user} (origin:interactive)"
+				else
+					print_warning "Could not self-assign #${num} — assign manually to unblock Maintainer Gate"
+				fi
 			fi
 		fi
 	fi
