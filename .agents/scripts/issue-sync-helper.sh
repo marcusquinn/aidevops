@@ -6,9 +6,12 @@
 # Keep this exception aligned with issue #2610 and t135.14 standardization context.
 # shellcheck disable=SC2155
 # =============================================================================
-# aidevops Issue Sync Helper (Simplified)
+# aidevops Issue Sync Helper
 # =============================================================================
 # Stateless bi-directional sync between TODO.md and GitHub Issues via gh CLI.
+#
+# Relationship sync (blocked-by, sub-issues) extracted to
+# issue-sync-relationships.sh (GH#19502).
 #
 # Removed in t1337.4 refactor (2,405 → ~600 lines):
 #   - SQLite supervisor DB / cross-repo guards (stateless now)
