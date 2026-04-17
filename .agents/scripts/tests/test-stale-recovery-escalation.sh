@@ -147,7 +147,7 @@ fi
 if grep -q "^issue comment" "$GH_CALLS_FILE" 2>/dev/null; then
 	print_result "Tick 1: tick comment call posted" 0
 else
-	print_result "Tick 1: tick comment call posted" 1 "(gh calls: $(cat "$GH_CALLS_FILE" 2>/dev/null | head -5))"
+	print_result "Tick 1: tick comment call posted" 1 "(gh calls: $(head -5 "$GH_CALLS_FILE" 2>/dev/null))"
 fi
 
 # =============================================================================
@@ -185,7 +185,7 @@ fi
 if grep -q "needs-maintainer-review" "$GH_CALLS_FILE" 2>/dev/null; then
 	print_result "Escalation: needs-maintainer-review label applied" 0
 else
-	print_result "Escalation: needs-maintainer-review label applied" 1 "(gh calls: $(cat "$GH_CALLS_FILE" 2>/dev/null | head -10))"
+	print_result "Escalation: needs-maintainer-review label applied" 1 "(gh calls: $(head -10 "$GH_CALLS_FILE" 2>/dev/null))"
 fi
 
 # status:available must NOT be --add-label'd in escalation path
@@ -219,7 +219,7 @@ fi
 if grep -q "^issue comment" "$GH_CALLS_FILE" 2>/dev/null; then
 	print_result "Reset path: reset comment call made" 0
 else
-	print_result "Reset path: reset comment call made" 1 "(gh calls: $(cat "$GH_CALLS_FILE" 2>/dev/null | head -5))"
+	print_result "Reset path: reset comment call made" 1 "(gh calls: $(head -5 "$GH_CALLS_FILE" 2>/dev/null))"
 fi
 
 # =============================================================================
