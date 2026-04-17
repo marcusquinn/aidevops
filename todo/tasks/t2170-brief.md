@@ -32,9 +32,66 @@ Fix E breaks the deadlock by adding a proactive re-evaluation in `pulse-triage.s
 
 ## How
 
+### Root-cause finding (added 2026-04-17, verified empirically on GH#19415)
+
+Investigation during t2164 merge confirmed a SECOND, simpler bug in the
+auto-clear path that compounds the Fix E scope below. **This is the PRIMARY
+bug to fix; the continuation-comment parsing below is secondary.**
+
+**The bug:** `_issue_targets_large_files` in `pulse-dispatch-large-file-gate.sh`
+at **line 654** does `[[ -n "$all_paths" ]] || return 1` — early-return when
+path extraction is empty — BEFORE the auto-clear path at lines 682-684.
+
+After Fix A (t2164) the extractor correctly returns empty for bodies with
+no `EDIT:`/`NEW:`/`File:` intent markers (verified on GH#19415 body post-fix).
+That means when `_reevaluate_simplification_labels` calls
+`_issue_targets_large_files` with `force_recheck=true`:
+
+1. precheck passes (force_recheck bypasses the "skip if labeled" guard)
+2. `_large_file_gate_extract_paths` returns EMPTY (correct, per Fix A)
+3. line 654 early-returns 1 — **never reaches line 682-684 auto-clear**
+4. `_post_simplification_gate_cleared_comment` posts the "CLEARED" comment
+   (misleading — label wasn't actually cleared)
+5. **Label stays stuck indefinitely**
+
+Empirical evidence: GH#19415 received the CLEARED comment at 2026-04-17T03:38:43Z
+but the `needs-simplification` label persisted until manually removed during t2164
+post-merge verification. 17 minutes of zero label events after pulse restart
+confirmed extractor fix works (no more re-application) but the stale label
+required human intervention to clear.
+
+**Minimal fix (MANDATORY for this PR):**
+
+In `pulse-dispatch-large-file-gate.sh` at line 654, replace:
+
+```bash
+all_paths=$(_large_file_gate_extract_paths "$issue_body")
+[[ -n "$all_paths" ]] || return 1
+```
+
+with:
+
+```bash
+all_paths=$(_large_file_gate_extract_paths "$issue_body")
+if [[ -z "$all_paths" ]]; then
+    # No paths in body — if already labeled, auto-clear (stale label from
+    # pre-Fix-A gate application that matched context-ref backtick paths).
+    if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+        _large_file_gate_clear_stale_label "$issue_number" "$repo_slug"
+    fi
+    return 1
+fi
+```
+
+This closes the gap for ALL issues where:
+- pre-Fix-A gate fired incorrectly on a body with no edit-intent markers
+- OR body was edited after labeling to remove intent markers
+- OR gate fired then threshold bumped up so no paths are cited anymore
+
 ### Files to modify
 
-- **EDIT:** `.agents/scripts/pulse-triage.sh:450-491` (`_reevaluate_simplification_labels`)
+- **EDIT:** `.agents/scripts/pulse-dispatch-large-file-gate.sh:654` (primary bug above — simple 4-line replacement)
+- **EDIT:** `.agents/scripts/pulse-triage.sh:450-491` (`_reevaluate_simplification_labels` — SECONDARY continuation-comment parsing enhancement, ships in same PR)
   - After confirming the issue still carries `needs-simplification`, fetch the gate's sticky comment:
     - `gh issue view N --repo REPO --comments --json comments --jq '.comments[] | select(.body | contains("<!-- large-file-gate -->")) | .body'`
     - If no gate comment, preserve existing behaviour (return without clearing)
@@ -77,14 +134,15 @@ bash .agents/scripts/pulse-triage.sh --reeval-only 19415
 
 ## Acceptance criteria
 
+- [ ] **PRIMARY:** `_issue_targets_large_files` auto-clears `needs-simplification` when extraction is empty AND issue is labeled (line 654 fix)
+- [ ] **PRIMARY:** Regression test: stub empty-body issue labeled `needs-simplification`, assert label cleared after one reeval cycle
 - [ ] `_reevaluate_simplification_labels` parses gate sticky comment for continuation refs
 - [ ] Stale continuations (closed + over-threshold) trigger label clearance
 - [ ] Valid continuations (closed + under-threshold) preserve label
 - [ ] Open continuations preserve label (work in progress signal)
 - [ ] `simplification-incomplete` label (from Fix D) short-circuits the `wc -l` check
 - [ ] Missing gate comment preserves label (safe fallback)
-- [ ] Regression tests cover all 5 cases above
-- [ ] Manual reeval against GH#19415 correctly clears (if still labeled post-t2164)
+- [ ] Regression tests cover all 5 continuation cases above
 
 ## Out of scope
 
