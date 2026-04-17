@@ -257,6 +257,8 @@ format_context() {
 		echo "1M"
 	elif [[ "$ctx" -ge 500000 ]]; then
 		echo "512K"
+	elif [[ "$ctx" -ge 250000 ]]; then
+		echo "250K"
 	elif [[ "$ctx" -ge 200000 ]]; then
 		echo "200K"
 	elif [[ "$ctx" -ge 131072 ]]; then
