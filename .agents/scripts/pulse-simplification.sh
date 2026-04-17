@@ -1414,50 +1414,25 @@ done | sort -rn | head -20
 # Returns: 0 always (best-effort)
 #######################################
 _check_ci_nesting_threshold_proximity() {
-	local aidevops_path="$1"
-	local aidevops_slug="$2"
-	local maintainer="$3"
-	local buffer=5
-
-	local threshold
-	threshold=$(_check_ci_nesting_read_threshold "$aidevops_path")
-
-	local violations
-	violations=$(_check_ci_nesting_count_violations "$aidevops_path")
-	if [[ -z "$violations" ]]; then
-		return 0
+	# t2171 / GH#19585: retired. The proximity scanner was filing duplicate
+	# "CI nesting threshold proximity: N/M violations" issues every ~45min
+	# (observed: GH#19526-19582, 11 iterations in 7h) because the ratchet-down
+	# + CI-bump loop kept oscillating the threshold just inside the buffer.
+	#
+	# Replacement: the nesting-depth step in code-quality.yml now calls
+	# complexity-regression-helper.sh with --metric nesting-depth, blocking
+	# only on NEW violations (set difference) and treating the total count
+	# as a non-blocking warning. No threshold to tune, no treadmill to ratchet.
+	#
+	# Helper functions (_check_ci_nesting_read_threshold, _count_violations,
+	# _build_issue_body) are preserved so the characterization test at
+	# tests/test-pulse-wrapper-characterization.sh:208 still finds them.
+	local _unused_aidevops_path="${1:-}"
+	local _unused_aidevops_slug="${2:-}"
+	local _unused_maintainer="${3:-}"
+	if [[ -n "${LOGFILE:-}" ]]; then
+		echo "[pulse-wrapper] _check_ci_nesting_threshold_proximity: retired (t2171/GH#19585) — CI regression gate replaces this" >>"$LOGFILE"
 	fi
-
-	local warn_at=$((threshold - buffer))
-	if [[ "$violations" -le "$warn_at" ]]; then
-		echo "[pulse-wrapper] CI nesting threshold proximity: ${violations}/${threshold} violations (buffer: ${buffer}) — OK" >>"$LOGFILE"
-		return 0
-	fi
-
-	echo "[pulse-wrapper] CI nesting threshold proximity: ${violations}/${threshold} violations — within ${buffer} of threshold, creating warning issue" >>"$LOGFILE"
-
-	# Check for existing open warning issue to avoid duplicates
-	local existing
-	existing=$(gh issue list --repo "$aidevops_slug" \
-		--state open \
-		--search "in:title \"CI nesting threshold proximity\"" \
-		--json number --jq 'length' 2>/dev/null) || existing="0"
-	if [[ "${existing:-0}" -gt 0 ]]; then
-		echo "[pulse-wrapper] CI nesting threshold proximity: warning issue already exists — skipping" >>"$LOGFILE"
-		return 0
-	fi
-
-	local headroom=$((threshold - violations))
-	local issue_body
-	issue_body=$(_check_ci_nesting_build_issue_body "$violations" "$threshold" "$headroom" "$buffer")
-
-	# t1955: Don't self-assign — let dispatch_with_dedup handle assignment.
-	gh_create_issue --repo "$aidevops_slug" \
-		--title "CI nesting threshold proximity: ${violations}/${threshold} violations (${headroom} headroom)" \
-		--label "bug" --label "auto-dispatch" --label "tier:standard" \
-		--body "$issue_body" >/dev/null 2>&1 || true
-
-	echo "[pulse-wrapper] CI nesting threshold proximity: warning issue created (${violations}/${threshold})" >>"$LOGFILE"
 	return 0
 }
 
@@ -1694,89 +1669,26 @@ Review all open \`simplification-debt\` issues and the current \`simplification-
 	return 0
 }
 
-# _complexity_scan_ratchet_check — ratchet-down thresholds when wins accumulate (Phase 5, t1913, t2001)
-# Creates a chore issue when gap between violations and threshold reaches >= 5.
+# _complexity_scan_ratchet_check — retired in t2171 (GH#19585).
+#
+# Historical purpose (Phase 5, t1913): file a chore issue to ratchet-down
+# complexity thresholds when violations dropped >=5 below the current value.
+# In practice, the ratchet-check + CI-bump-up cycle formed a treadmill: each
+# cleanup PR triggered a ratchet-down PR, each CI near-miss triggered a
+# threshold bump, and the two oscillated forever (observed: BASH32 threshold
+# bouncing 74↔78, NESTING threshold cycling 285→290→285).
+#
+# Replacement: code-quality.yml now runs complexity-regression-helper.sh with
+# per-metric regression gates (function-complexity, nesting-depth, file-size,
+# bash32-compat). PRs fail only for NEW violations; totals are non-blocking
+# warnings. Thresholds in complexity-thresholds.conf remain as targets for
+# the simplification routine but are no longer part of the CI gate contract.
 _complexity_scan_ratchet_check() {
-	local scan_helper="$1"
-	local aidevops_path="$2"
-	local aidevops_slug="$3"
-
-	# t2102: Pull aidevops worktree fresh before ratchet-check to avoid stale reads.
-	# If HEAD is not main, offline, or the pull fails, skip this cycle — never crash the pulse.
-	local current_branch
-	current_branch=$(git -C "$aidevops_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || current_branch=""
-	if [[ "$current_branch" != "main" ]]; then
-		echo "[pulse-wrapper] ratchet-check: skipping — aidevops worktree HEAD is '${current_branch}', not main" >>"$LOGFILE"
-		return 0
-	fi
-	if ! git -C "$aidevops_path" pull --ff-only origin main >>"$LOGFILE" 2>&1; then
-		echo "[pulse-wrapper] ratchet-check: skipping — git pull --ff-only failed (offline or conflict)" >>"$LOGFILE"
-		return 0
-	fi
-
-	# Phase 5: Ratchet-check — lower thresholds when simplification wins accumulate (t1913)
-	# Runs after backfill so closed issues are reflected in violation counts.
-	# Creates a chore/ratchet-down PR when gap >= 5 (default).
-	local ratchet_output
-	ratchet_output=$("$scan_helper" ratchet-check "$aidevops_path" 2>>"$LOGFILE") || true
-	if [[ -n "$ratchet_output" ]]; then
-		echo "[pulse-wrapper] ratchet-check: proposals available" >>"$LOGFILE"
-		echo "$ratchet_output" >>"$LOGFILE"
-		# t2089: Check if a ratchet-down PR already exists to avoid duplicates.
-		# The search uses "ratchet-down" as a keyword rather than the exact
-		# legacy issue title "chore: ratchet-down complexity thresholds" because
-		# worker-created PRs use the format "GH#NNN: chore: ratchet-down
-		# THRESHOLD_NAME X→Y" — the old exact-match search never found those,
-		# causing duplicate PRs every cycle (observed: #18944 and #18946).
-		# The keyword search covers both the issue title and the per-threshold PR format.
-		local ratchet_pr_exists
-		ratchet_pr_exists=$(gh pr list --repo "$aidevops_slug" \
-			--state open \
-			--search "ratchet-down in:title" \
-			--json number --jq 'length' 2>/dev/null) || ratchet_pr_exists="0"
-		if [[ "${ratchet_pr_exists:-0}" -eq 0 ]]; then
-			echo "[pulse-wrapper] ratchet-check: creating ratchet-down issue (t1913)" >>"$LOGFILE"
-			gh_create_issue --repo "$aidevops_slug" \
-				--title "chore: ratchet-down complexity thresholds" \
-				--label "code-quality" --label "auto-dispatch" --label "tier:standard" \
-				--body "## Automated ratchet-down (t1913)
-
-Simplification wins have accumulated. The following thresholds can be lowered:
-
-\`\`\`
-${ratchet_output}
-\`\`\`
-
-### Worker Guidance
-
-**Files to Modify:**
-- \`EDIT: .agents/configs/complexity-thresholds.conf\` — lower the thresholds listed above
-
-**Do NOT modify:**
-- \`.agents/configs/simplification-state.json\` — this is a maintenance registry updated by the pulse on \`main\` only. Including it in a focused ratchet-down PR causes diff noise across hundreds of unrelated entries and increases merge-conflict surface (GH#18622). The pulse refreshes it automatically after the PR merges. If it appears modified in your worktree, do not \`git add\` it.
-
-**Implementation Steps:**
-1. For each proposed threshold, update the value in \`complexity-thresholds.conf\`
-2. Add a ratchet-down comment above the updated value documenting the change (e.g., \`# Ratcheted down to NNN (GH#NNNN): actual violations NNN + 2 buffer\`)
-3. Do NOT remove existing bump history comments — they are the audit trail
-4. Verify the state file is NOT staged before committing: \`git diff --cached --name-only | grep -v simplification-state\`
-
-**Verification:**
-\`\`\`bash
-# Confirm thresholds updated
-grep -E 'FUNCTION_COMPLEXITY_THRESHOLD|NESTING_DEPTH_THRESHOLD|FILE_SIZE_THRESHOLD|BASH32_COMPAT_THRESHOLD' .agents/configs/complexity-thresholds.conf
-# Confirm CI would pass with new values
-.agents/scripts/complexity-scan-helper.sh ratchet-check . 5
-# Confirm state file is NOT staged in the PR commit
-git diff --cached --name-only | grep -v 'simplification-state.json'
-\`\`\`
-
-<!-- aidevops:generator=ratchet-down -->" >/dev/null 2>&1 || true
-		else
-			echo "[pulse-wrapper] ratchet-check: ratchet-down PR already open, skipping issue creation" >>"$LOGFILE"
-		fi
-	else
-		echo "[pulse-wrapper] ratchet-check: no ratchet-down available (thresholds already tight)" >>"$LOGFILE"
+	local _unused_scan_helper="${1:-}"
+	local _unused_aidevops_path="${2:-}"
+	local _unused_aidevops_slug="${3:-}"
+	if [[ -n "${LOGFILE:-}" ]]; then
+		echo "[pulse-wrapper] _complexity_scan_ratchet_check: retired (t2171/GH#19585) — per-metric regression gates replace the threshold treadmill" >>"$LOGFILE"
 	fi
 	return 0
 }

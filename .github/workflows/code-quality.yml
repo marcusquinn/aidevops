@@ -101,104 +101,115 @@ jobs:
         echo "Platform detection: OK"
 
   # Bash 3.2 compatibility: catches "\n"/"\t" in double-quoted strings and other
-  # bash 4+ constructs that break on macOS default bash (GH#17371)
+  # bash 4+ constructs that break on macOS default bash (GH#17371).
+  # t2171: per-violation regression model replaces total-count-vs-threshold
+  # (GH#19585). Retires the bump-and-ratchet treadmill that churned 74↔78.
   bash32-compat:
     name: Bash 3.2 Compatibility
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
 
     steps:
     - name: Checkout code
       uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      with:
+        fetch-depth: 0
 
     - name: Bash 3.2 compatibility check
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'complexity-bump-ok') }}
+        EVENT_NAME: ${{ github.event_name }}
+        GH_TOKEN: ${{ github.token }}
       run: |
-        echo "Checking Bash 3.2 compatibility across all shell scripts..."
+        set -euo pipefail
 
-        # Source shared file-discovery helper (single source of truth for exclusions)
-        source .agents/scripts/lint-file-discovery.sh
-        lint_shell_files
-
-        # Read threshold from config file (GH#17371 — ratchetable like other checks)
+        # --- Non-blocking warning: total violation count ---
         THRESHOLD=69
         if [ -f ".agents/configs/complexity-thresholds.conf" ]; then
-          val=$(grep '^BASH32_COMPAT_THRESHOLD=' .agents/configs/complexity-thresholds.conf | cut -d= -f2 || true)
+          val=$(grep '^BASH32_COMPAT_THRESHOLD=' .agents/configs/complexity-thresholds.conf \
+            | cut -d= -f2 || true)
           if [ -n "$val" ] && [ "$val" -eq "$val" ] 2>/dev/null; then
             THRESHOLD=$val
           fi
         fi
 
-        violations=0
-        # Self-skip: linters-local.sh grep patterns contain the forbidden strings
-        # as search targets, not as bash code.
-        self_skip="linters-local.sh"
+        echo "Scanning Bash 3.2 compatibility violations..."
+        total_out=$(.agents/scripts/complexity-regression-helper.sh check --dry-run \
+          --metric bash32-compat 2>/dev/null \
+          | grep '^Total violations' || echo "Total violations (bash32): unknown")
+        echo "$total_out"
 
-        while IFS= read -r file; do
-          [ -n "$file" ] || continue
-          basename_file=$(basename "$file")
-          [ "$basename_file" = "$self_skip" ] && continue
-          [ -f "$file" ] || continue
+        total=$(echo "$total_out" | grep -oE '[0-9]+$' || echo "0")
+        if [ "$total" -gt "$THRESHOLD" ]; then
+          echo "::warning::Bash 3.2 compat total: $total violations (threshold: $THRESHOLD). See simplification routine."
+        else
+          echo "Within simplification threshold ($THRESHOLD)"
+        fi
 
-          # "\t" or "\n" in string concatenation (likely wants $'\t' or $'\n')
-          # Only flag += or = assignments, not awk/sed/printf/echo -e/python contexts
-          matches=$(grep -nE '\+="\\[tn]|="\\[tn]' "$file" 2>/dev/null \
-            | grep -vE '^[0-9]+:[[:space:]]*#' \
-            | grep -vE 'awk|sed|printf|echo.*-e|python|f\.write|gsub|join|split|print |replace|coords|excerpt|delimiter|regex|pattern' \
-            || true)
-          if [ -n "$matches" ]; then
-            while IFS= read -r line; do
-              echo "FAIL $file:$line [\"\\t\"/\"\\n\" — use \$'\\t' or \$'\\n' for actual whitespace]"
-              violations=$((violations + 1))
-            done <<< "$matches"
-          fi
+        # --- Blocking gate: per-violation regression check (PRs only) ---
+        if [ "${EVENT_NAME}" != "pull_request" ]; then
+          echo "Push event: skipping regression diff (no PR base). Total count warning above is advisory."
+          exit 0
+        fi
 
-          # Associative arrays (bash 4.0+)
-          assoc=$(grep -nE '^[[:space:]]*(declare|local|typeset)[[:space:]]+-A[[:space:]]' "$file" 2>/dev/null \
-            | grep -vE '^[0-9]+:[[:space:]]*#' || true)
-          if [ -n "$assoc" ]; then
-            while IFS= read -r line; do
-              echo "FAIL $file:$line [associative array — bash 4.0+]"
-              violations=$((violations + 1))
-            done <<< "$assoc"
-          fi
+        if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
+          echo "No base SHA available; skipping regression check."
+          exit 0
+        fi
 
-          # Namerefs (bash 4.3+)
-          nameref=$(grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-n[[:space:]]' "$file" 2>/dev/null \
-            | grep -vE '^[0-9]+:[[:space:]]*#' || true)
-          if [ -n "$nameref" ]; then
-            while IFS= read -r line; do
-              echo "FAIL $file:$line [nameref -- bash 4.3+]"
-              violations=$((violations + 1))
-            done <<< "$nameref"
-          fi
-
-          # Heredoc inside command substitution: $( cat <<EOF ... EOF )
-          # Bash 3.2 parser cannot handle heredocs inside $() — it fails with
-          # "unexpected EOF while looking for matching `)'" and silently corrupts
-          # all function definitions below the error point. This caused a multi-hour
-          # pulse outage (GH#19252, April 2026). Use quoted string assignment instead.
-          # Pattern: line ending with $( followed by cat << on the next line.
-          # Also catch inline: $(cat <<
-          heredoc_in_subshell=$(grep -nE '\$\(\s*cat\s*<<' "$file" 2>/dev/null \
-            | grep -vE '^[0-9]+:[[:space:]]*#' || true)
-          if [ -n "$heredoc_in_subshell" ]; then
-            while IFS= read -r line; do
-              echo "FAIL $file:$line [heredoc inside \$() — breaks bash 3.2 parser. Use quoted string assignment]"
-              violations=$((violations + 1))
-            done <<< "$heredoc_in_subshell"
-          fi
-        done <<< "$LINT_SH_FILES"
+        MERGE_BASE=$(git merge-base "${HEAD_SHA}" "${BASE_SHA}" 2>/dev/null || echo "")
+        if [ -z "${MERGE_BASE}" ]; then
+          echo "Could not compute merge-base; falling back to base SHA."
+          MERGE_BASE="${BASE_SHA}"
+        fi
 
         echo ""
-        echo "Bash 3.2 compatibility violations: $violations"
-        # Threshold from .agents/configs/complexity-thresholds.conf (GH#17371).
-        # Reduce after each batch of bash32-compat cleanup PRs merges.
-        if [ "$violations" -gt "$THRESHOLD" ]; then
-          echo "::error::Bash 3.2 compatibility regression: $violations violations (threshold: $THRESHOLD)"
-          echo "macOS ships bash 3.2 — these constructs will break on macOS."
-          echo "See .agents/reference/bash-compat.md for alternatives."
-          exit 1
+        echo "Running per-violation bash32 regression check (merge-base: ${MERGE_BASE:0:7} head: ${HEAD_SHA:0:7})..."
+
+        set +e
+        .agents/scripts/complexity-regression-helper.sh check \
+          --metric bash32-compat \
+          --base "${MERGE_BASE}" \
+          --head "${HEAD_SHA}" \
+          --output-md /tmp/bash32-report.md
+        REGRESSION_EXIT=$?
+        set -e
+
+        if [ -s /tmp/bash32-report.md ] && [ -n "${PR_NUMBER}" ]; then
+          marker="<!-- complexity-regression-gate:bash32-compat -->"
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body=@/tmp/bash32-report.md >/dev/null 2>&1 || true
+          else
+            gh pr comment "${PR_NUMBER}" --repo "${REPO}" \
+              --body-file /tmp/bash32-report.md >/dev/null 2>&1 || true
+          fi
         fi
-        echo "Within threshold ($THRESHOLD)"
+
+        if [ "${REGRESSION_EXIT}" -eq 0 ]; then
+          echo "No new Bash 3.2 compatibility violations."
+          exit 0
+        fi
+
+        if [ "${HAS_OVERRIDE}" = "true" ]; then
+          echo "::warning::New bash32 violations detected but 'complexity-bump-ok' label is set — allowing with warning."
+          exit 0
+        fi
+
+        echo "::error::New Bash 3.2 compatibility violations introduced in this PR."
+        echo "macOS ships bash 3.2 — these constructs will break there."
+        echo "See .agents/reference/bash-compat.md for alternatives, or add"
+        echo "the 'complexity-bump-ok' label with a '## Complexity Bump Justification' section to override."
+        exit 1
 
   framework-validation:
     name: Framework Validation
@@ -482,83 +493,195 @@ jobs:
         exit 1
 
     - name: Shell nesting depth
+      # t2171: per-file regression model replaces total-count-vs-threshold.
+      # PRs fail only when they introduce NEW nesting-depth violations (set
+      # difference B-A), not for pre-existing debt in base. The raw count is
+      # reported as a non-blocking warning feeding the simplification routine.
+      # Replaces the pulse "proximity scanner" that was filing duplicate
+      # threshold-bump issues every 45 min (GH#19526-19582).
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'complexity-bump-ok') }}
+        EVENT_NAME: ${{ github.event_name }}
+        GH_TOKEN: ${{ github.token }}
       run: |
-        source .agents/scripts/lint-file-discovery.sh
-        lint_shell_files
+        set -euo pipefail
 
-        # Read threshold from config file (GH#5628 — ratchetable thresholds)
+        # --- Non-blocking warning: total violation count ---
         THRESHOLD=260
         if [ -f ".agents/configs/complexity-thresholds.conf" ]; then
-          val=$(grep '^NESTING_DEPTH_THRESHOLD=' .agents/configs/complexity-thresholds.conf | cut -d= -f2 || true)
+          val=$(grep '^NESTING_DEPTH_THRESHOLD=' .agents/configs/complexity-thresholds.conf \
+            | cut -d= -f2 || true)
           if [ -n "$val" ] && [ "$val" -eq "$val" ] 2>/dev/null; then
             THRESHOLD=$val
           fi
         fi
 
-        echo "Checking shell nesting depth (>8 levels = blocking)..."
-        violations=0
-        while IFS= read -r file; do
-          [ -n "$file" ] || continue
-          max_depth=$(awk '
-            BEGIN { depth=0; max_depth=0 }
-            /^[[:space:]]*#/ { next }
-            /[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if(depth>max_depth) max_depth=depth }
-            /[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
-            END { print max_depth }
-          ' "$file")
-          if [ "$max_depth" -gt 8 ]; then
-            echo "BLOCK $file: nesting depth $max_depth"
-            violations=$((violations + 1))
-          fi
-        done <<< "$LINT_SH_FILES"
+        echo "Scanning shell nesting depth (>8 levels)..."
+        total_out=$(.agents/scripts/complexity-regression-helper.sh check --dry-run \
+          --metric nesting-depth 2>/dev/null \
+          | grep '^Total violations' || echo "Total violations (nesting): unknown")
+        echo "$total_out"
+
+        total=$(echo "$total_out" | grep -oE '[0-9]+$' || echo "0")
+        if [ "$total" -gt "$THRESHOLD" ]; then
+          echo "::warning::Nesting depth total: $total violations (threshold: $THRESHOLD). See simplification routine."
+        else
+          echo "Within simplification threshold ($THRESHOLD)"
+        fi
+
+        # --- Blocking gate: per-file regression check (PRs only) ---
+        if [ "${EVENT_NAME}" != "pull_request" ]; then
+          echo "Push event: skipping regression diff (no PR base). Total count warning above is advisory."
+          exit 0
+        fi
+
+        if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
+          echo "No base SHA available; skipping regression check."
+          exit 0
+        fi
+
+        MERGE_BASE=$(git merge-base "${HEAD_SHA}" "${BASE_SHA}" 2>/dev/null || echo "")
+        if [ -z "${MERGE_BASE}" ]; then
+          echo "Could not compute merge-base; falling back to base SHA."
+          MERGE_BASE="${BASE_SHA}"
+        fi
 
         echo ""
-        echo "Blocking violations (>8 depth): $violations"
-        # Threshold from .agents/configs/complexity-thresholds.conf (GH#5628).
-        # Reduce after each batch of simplification-debt PRs merges.
-        if [ "$violations" -gt "$THRESHOLD" ]; then
-          echo "::error::Nesting depth regression: $violations violations (threshold: $THRESHOLD)"
-          exit 1
+        echo "Running per-file nesting regression check (merge-base: ${MERGE_BASE:0:7} head: ${HEAD_SHA:0:7})..."
+
+        set +e
+        .agents/scripts/complexity-regression-helper.sh check \
+          --metric nesting-depth \
+          --base "${MERGE_BASE}" \
+          --head "${HEAD_SHA}" \
+          --output-md /tmp/nesting-report.md
+        REGRESSION_EXIT=$?
+        set -e
+
+        if [ -s /tmp/nesting-report.md ] && [ -n "${PR_NUMBER}" ]; then
+          marker="<!-- complexity-regression-gate:nesting-depth -->"
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body=@/tmp/nesting-report.md >/dev/null 2>&1 || true
+          else
+            gh pr comment "${PR_NUMBER}" --repo "${REPO}" \
+              --body-file /tmp/nesting-report.md >/dev/null 2>&1 || true
+          fi
         fi
-        echo "Within threshold ($THRESHOLD)"
+
+        if [ "${REGRESSION_EXIT}" -eq 0 ]; then
+          echo "No new nesting depth violations."
+          exit 0
+        fi
+
+        if [ "${HAS_OVERRIDE}" = "true" ]; then
+          echo "::warning::New nesting depth violations detected but 'complexity-bump-ok' label is set — allowing with warning."
+          exit 0
+        fi
+
+        echo "::error::New shell nesting depth violations introduced in this PR. Add the 'complexity-bump-ok' label with a '## Complexity Bump Justification' section to override."
+        exit 1
 
     - name: File size check
+      # t2171: per-file regression model replaces total-count-vs-threshold.
+      # PRs fail only when they introduce NEW >1500-line files, not for
+      # pre-existing debt in base. Raw count is non-blocking warning.
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'complexity-bump-ok') }}
+        EVENT_NAME: ${{ github.event_name }}
+        GH_TOKEN: ${{ github.token }}
       run: |
-        source .agents/scripts/lint-file-discovery.sh
-        lint_shell_files
-        lint_python_files
+        set -euo pipefail
 
-        # Read threshold from config file (GH#5628 — ratchetable thresholds)
+        # --- Non-blocking warning: total violation count ---
         THRESHOLD=40
         if [ -f ".agents/configs/complexity-thresholds.conf" ]; then
-          val=$(grep '^FILE_SIZE_THRESHOLD=' .agents/configs/complexity-thresholds.conf | cut -d= -f2 || true)
+          val=$(grep '^FILE_SIZE_THRESHOLD=' .agents/configs/complexity-thresholds.conf \
+            | cut -d= -f2 || true)
           if [ -n "$val" ] && [ "$val" -eq "$val" ] 2>/dev/null; then
             THRESHOLD=$val
           fi
         fi
 
-        echo "Checking file sizes (>1500 lines = blocking)..."
-        violations=0
-        for file_list in "$LINT_SH_FILES" "$LINT_PY_FILES"; do
-          while IFS= read -r file; do
-            [ -n "$file" ] || continue
-            lc=$(wc -l < "$file")
-            if [ "$lc" -gt 1500 ]; then
-              echo "BLOCK $file: $lc lines"
-              violations=$((violations + 1))
-            fi
-          done <<< "$file_list"
-        done
+        echo "Scanning file sizes (>1500 lines)..."
+        total_out=$(.agents/scripts/complexity-regression-helper.sh check --dry-run \
+          --metric file-size 2>/dev/null \
+          | grep '^Total violations' || echo "Total violations (file-size): unknown")
+        echo "$total_out"
+
+        total=$(echo "$total_out" | grep -oE '[0-9]+$' || echo "0")
+        if [ "$total" -gt "$THRESHOLD" ]; then
+          echo "::warning::File size total: $total violations (threshold: $THRESHOLD). See simplification routine."
+        else
+          echo "Within simplification threshold ($THRESHOLD)"
+        fi
+
+        # --- Blocking gate: per-file regression check (PRs only) ---
+        if [ "${EVENT_NAME}" != "pull_request" ]; then
+          echo "Push event: skipping regression diff (no PR base). Total count warning above is advisory."
+          exit 0
+        fi
+
+        if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
+          echo "No base SHA available; skipping regression check."
+          exit 0
+        fi
+
+        MERGE_BASE=$(git merge-base "${HEAD_SHA}" "${BASE_SHA}" 2>/dev/null || echo "")
+        if [ -z "${MERGE_BASE}" ]; then
+          echo "Could not compute merge-base; falling back to base SHA."
+          MERGE_BASE="${BASE_SHA}"
+        fi
 
         echo ""
-        echo "Blocking violations (>1500 lines): $violations"
-        # Threshold from .agents/configs/complexity-thresholds.conf (GH#5628).
-        # Reduce after each batch of simplification-debt PRs merges.
-        if [ "$violations" -gt "$THRESHOLD" ]; then
-          echo "::error::File size regression: $violations violations (threshold: $THRESHOLD)"
-          exit 1
+        echo "Running per-file size regression check (merge-base: ${MERGE_BASE:0:7} head: ${HEAD_SHA:0:7})..."
+
+        set +e
+        .agents/scripts/complexity-regression-helper.sh check \
+          --metric file-size \
+          --base "${MERGE_BASE}" \
+          --head "${HEAD_SHA}" \
+          --output-md /tmp/file-size-report.md
+        REGRESSION_EXIT=$?
+        set -e
+
+        if [ -s /tmp/file-size-report.md ] && [ -n "${PR_NUMBER}" ]; then
+          marker="<!-- complexity-regression-gate:file-size -->"
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body=@/tmp/file-size-report.md >/dev/null 2>&1 || true
+          else
+            gh pr comment "${PR_NUMBER}" --repo "${REPO}" \
+              --body-file /tmp/file-size-report.md >/dev/null 2>&1 || true
+          fi
         fi
-        echo "Within threshold ($THRESHOLD)"
+
+        if [ "${REGRESSION_EXIT}" -eq 0 ]; then
+          echo "No new file size violations."
+          exit 0
+        fi
+
+        if [ "${HAS_OVERRIDE}" = "true" ]; then
+          echo "::warning::New file size violations detected but 'complexity-bump-ok' label is set — allowing with warning."
+          exit 0
+        fi
+
+        echo "::error::New file size violations introduced in this PR. Add the 'complexity-bump-ok' label with a '## Complexity Bump Justification' section to override."
+        exit 1
 
     - name: Python cyclomatic complexity (Lizard)
       run: |

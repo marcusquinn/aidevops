@@ -2,25 +2,45 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# complexity-regression-helper.sh — CI regression gate for shell function complexity (t2159)
+# complexity-regression-helper.sh — CI regression gate for complexity metrics (t2159, t2171)
 #
-# Scans shell functions >100 lines at PR base and head, computes the
-# set difference (new violations only), and emits a markdown report.
-# Exits 1 only when the PR introduces NEW violations — not for total
-# drift already present in the base.
+# Scans complexity violations at PR base and head, computes the set difference
+# (new violations only), and emits a markdown report. Exits 1 only when the PR
+# introduces NEW violations — not for total drift already present in the base.
+#
+# Supported metrics (--metric flag, default: function-complexity):
+#
+#   function-complexity  — shell functions >100 body lines.
+#                          Key: (file, function_name); value: line count.
+#                          (Originally t2159; back-compat default.)
+#
+#   nesting-depth        — shell files with max nesting depth >8.
+#                          Key: (file, 'NEST'); value: max depth.
+#                          (t2171; replaces pulse-simplification.sh proximity scanner.)
+#
+#   file-size            — .sh and .py files over 1500 lines.
+#                          Key: (file, 'SIZE'); value: line count.
+#                          (t2171)
+#
+#   bash32-compat        — bash 4+ constructs in .sh files that break on macOS 3.2.
+#                          Patterns: \t/\n escapes, associative arrays, namerefs,
+#                          heredoc-inside-$().
+#                          Key: (file, '<pattern>:<line>'); value: 1.
+#                          (t2171)
 #
 # Subcommands:
-#   scan  <dir> [--output <file>]
-#         Scan all .sh files in <dir> for functions >100 lines.
+#   scan  <dir> [--output <file>] [--metric <name>]
+#         Scan <dir> for violations of <metric>.
 #         Output: one line per violation, tab-separated:
-#           <relative-file>\t<function-name>\t<line-count>
+#           <relative-file>\t<identifier>\t<value>
 #
 #   diff  --base-file <scan-file> --head-file <scan-file>
 #         [--output-md <file>] [--base-sha <sha>] [--head-sha <sha>]
+#         [--metric <name>]
 #         Compute the set difference and produce a markdown report.
 #
 #   check --base <sha> [--head <sha>] [--output-md <file>]
-#         [--allow-increase] [--dry-run]
+#         [--allow-increase] [--dry-run] [--metric <name>]
 #         Full regression check using git worktrees. Main entry point.
 #
 # Exit codes:
@@ -62,52 +82,112 @@ die() {
 }
 
 usage() {
-	sed -n '4,42p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '4,49p' "$0" | sed 's/^# \{0,1\}//'
 	return 0
 }
 
 # ---------------------------------------------------------------------------
-# scan_dir <dir> [<output-file>]
+# _collect_files <dir> <extensions>
 #
-# Scan all .sh files in <dir> for shell functions >100 lines.
-# Output format (per violation): <relative-file>\t<function-name>\t<line-count>
-# If <output-file> is given, write there; otherwise write to stdout.
+# Emit newline-separated ABSOLUTE paths of all tracked files under <dir> whose
+# extension matches one of <extensions> (space-separated, e.g. "sh" or "sh py").
+#
+# Uses `git ls-files` against <dir> (must be a git worktree), mirroring the CI
+# discovery in .agents/scripts/lint-file-discovery.sh — single source of truth
+# for the _archive/ exclusion. Keeps this helper's counts in parity with the
+# CI warning steps (nesting/file-size/bash32) so PR comments don't diverge
+# from the non-blocking warnings that the pulse also consumes.
+#
+# Why not find: find includes untracked files (drafts, build artifacts) which
+# the CI does not scan. Parity with CI requires git-based discovery.
 # ---------------------------------------------------------------------------
-scan_dir() {
+_collect_files() {
+	local _dir="$1"
+	local _exts="$2"
+	local _ext _pattern
+	local _output=""
+
+	# Primary path: git ls-files for CI parity with lint-file-discovery.sh.
+	if git -C "$_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		for _ext in $_exts; do
+			_pattern="*.${_ext}"
+			local _chunk
+			_chunk=$(git -C "$_dir" ls-files "$_pattern" 2>/dev/null |
+				grep -Ev '_archive/' || true)
+			if [ -n "$_chunk" ]; then
+				if [ -z "$_output" ]; then
+					_output="$_chunk"
+				else
+					_output=$(printf '%s\n%s' "$_output" "$_chunk")
+				fi
+			fi
+		done
+		if [ -n "$_output" ]; then
+			printf '%s\n' "$_output" | awk -v d="$_dir" 'NF{print d "/" $0}' | sort -u
+			return 0
+		fi
+	fi
+
+	# Fallback: find-based discovery for non-git dirs (test fixtures, ad-hoc
+	# scans). Matches the same _archive/ exclusion.
+	local _find_args=()
+	for _ext in $_exts; do
+		if [ "${#_find_args[@]}" -eq 0 ]; then
+			_find_args+=(-name "*.${_ext}")
+		else
+			_find_args+=(-o -name "*.${_ext}")
+		fi
+	done
+
+	find "$_dir" \( "${_find_args[@]}" \) \
+		-not -path '*/_archive/*' \
+		-not -path '*/.git/*' 2>/dev/null | sort -u
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _open_result_file <out-file>  — truncate or point to stdout
+# Writes the chosen path to stdout so callers can capture it.
+# ---------------------------------------------------------------------------
+_open_result_file() {
+	local _out="$1"
+	if [ -n "$_out" ]; then
+		: >"$_out"
+		printf '%s' "$_out"
+	else
+		printf '/dev/stdout'
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# scan_dir_function_complexity <dir> [<out-file>]
+#
+# Shell functions >100 body lines. Output: <file>\t<fname>\t<lines>.
+# Identity key: (file, fname). Originally t2159.
+# ---------------------------------------------------------------------------
+scan_dir_function_complexity() {
 	local _dir="$1"
 	local _out="${2:-}"
 
-	# Collect all .sh files, excluding _archive/ dirs.
-	# Works in both git-worktree contexts (where ls-files may not reflect
-	# an arbitrary checkout) and plain directory scans.
 	local _sh_files
-	_sh_files=$(find "$_dir" -name '*.sh' -not -path '*/_archive/*' \
-		-not -path '*/.git/*' 2>/dev/null | sort)
-
+	_sh_files=$(_collect_files "$_dir" "sh")
 	if [ -z "$_sh_files" ]; then
 		log "WARN: no .sh files found in $_dir"
-		if [ -n "$_out" ]; then
-			: >"$_out"
-		fi
+		[ -n "$_out" ] && : >"$_out"
 		return 0
 	fi
 
 	local _result_file
-	if [ -n "$_out" ]; then
-		_result_file="$_out"
-		: >"$_result_file"
-	else
-		_result_file="/dev/stdout"
-	fi
+	_result_file=$(_open_result_file "$_out")
 
 	local _file _rel_file _awk_result
 	while IFS= read -r _file; do
 		[ -n "$_file" ] || continue
-		# Compute path relative to the scanned dir.
 		_rel_file="${_file#"${_dir}/"}"
-		# Use the same AWK pattern as code-quality.yml:391-404.
+		# Matches code-quality.yml:391-404 AWK.
 		# Detects top-level functions of the form:  name() {
-		# and closes on a bare } line.  Output: <file>\t<fname>\t<lines>
+		# and closes on a bare } line.
 		_awk_result=$(awk -v relfile="$_rel_file" '
 			/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ {
 				fname = $1
@@ -124,13 +204,233 @@ scan_dir() {
 			}
 		' "$_file" 2>/dev/null || true)
 
-		if [ -n "$_awk_result" ] && [ -n "$_out" ]; then
+		if [ -n "$_awk_result" ]; then
 			printf '%s\n' "$_awk_result" >>"$_result_file"
-		elif [ -n "$_awk_result" ]; then
-			printf '%s\n' "$_awk_result"
 		fi
 	done <<<"$_sh_files"
 
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# scan_dir_nesting_depth <dir> [<out-file>]
+#
+# Shell files with global max nesting depth >8. Output: <file>\tNEST\t<depth>.
+# Identity key: (file, 'NEST'). (t2171)
+#
+# Uses the same global-counter AWK pattern as code-quality.yml:502-508 — it
+# does NOT reset depth at function boundaries, matching the existing CI gate.
+# ---------------------------------------------------------------------------
+scan_dir_nesting_depth() {
+	local _dir="$1"
+	local _out="${2:-}"
+
+	local _sh_files
+	_sh_files=$(_collect_files "$_dir" "sh")
+	if [ -z "$_sh_files" ]; then
+		[ -n "$_out" ] && : >"$_out"
+		return 0
+	fi
+
+	local _result_file
+	_result_file=$(_open_result_file "$_out")
+
+	local _file _rel_file _max_depth
+	while IFS= read -r _file; do
+		[ -n "$_file" ] || continue
+		_rel_file="${_file#"${_dir}/"}"
+		_max_depth=$(awk '
+			BEGIN { depth=0; max_depth=0 }
+			/^[[:space:]]*#/ { next }
+			/[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if(depth>max_depth) max_depth=depth }
+			/[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
+			END { print max_depth }
+		' "$_file" 2>/dev/null || echo 0)
+
+		if [ "${_max_depth:-0}" -gt 8 ] 2>/dev/null; then
+			printf '%s\tNEST\t%s\n' "$_rel_file" "$_max_depth" >>"$_result_file"
+		fi
+	done <<<"$_sh_files"
+
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# scan_dir_file_size <dir> [<out-file>]
+#
+# .sh and .py files over 1500 lines. Output: <file>\tSIZE\t<lines>.
+# Identity key: (file, 'SIZE'). (t2171)
+# ---------------------------------------------------------------------------
+scan_dir_file_size() {
+	local _dir="$1"
+	local _out="${2:-}"
+
+	local _files
+	_files=$(_collect_files "$_dir" "sh py")
+	if [ -z "$_files" ]; then
+		[ -n "$_out" ] && : >"$_out"
+		return 0
+	fi
+
+	local _result_file
+	_result_file=$(_open_result_file "$_out")
+
+	local _file _rel_file _lc
+	while IFS= read -r _file; do
+		[ -n "$_file" ] || continue
+		_rel_file="${_file#"${_dir}/"}"
+		_lc=$(wc -l <"$_file" 2>/dev/null | tr -d ' ')
+		if [ "${_lc:-0}" -gt 1500 ] 2>/dev/null; then
+			printf '%s\tSIZE\t%s\n' "$_rel_file" "$_lc" >>"$_result_file"
+		fi
+	done <<<"$_files"
+
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# scan_dir_bash32_compat <dir> [<out-file>]
+#
+# Shell files containing bash 4+ constructs that break on macOS /bin/bash 3.2.
+# Patterns (match code-quality.yml:141-188):
+#   - backslash-tn:        "\t" or "\n" in += or = string assignments
+#   - assoc-array:         declare/local/typeset -A
+#   - nameref:             declare/local -n
+#   - heredoc-in-subshell: $(cat <<...)
+#
+# Output: <file>\t<pattern>:<line>\t1  (one row per match).
+# Identity key: (file, '<pattern>:<line>'). (t2171)
+#
+# Self-skip: linters-local.sh grep patterns contain the forbidden strings
+# as search targets, not as bash code.
+# ---------------------------------------------------------------------------
+scan_dir_bash32_compat() {
+	local _dir="$1"
+	local _out="${2:-}"
+
+	local _sh_files
+	_sh_files=$(_collect_files "$_dir" "sh")
+	if [ -z "$_sh_files" ]; then
+		[ -n "$_out" ] && : >"$_out"
+		return 0
+	fi
+
+	local _result_file
+	_result_file=$(_open_result_file "$_out")
+
+	local _file _rel_file _basename _matches _line_num
+	local _self_skip="linters-local.sh"
+	while IFS= read -r _file; do
+		[ -n "$_file" ] || continue
+		_basename=$(basename "$_file")
+		[ "$_basename" = "$_self_skip" ] && continue
+		[ -f "$_file" ] || continue
+		_rel_file="${_file#"${_dir}/"}"
+
+		# Pattern 1: \t / \n in += or = assignments (excluding comments + contextual words)
+		_matches=$(grep -nE '\+="\\[tn]|="\\[tn]' "$_file" 2>/dev/null |
+			grep -vE '^[0-9]+:[[:space:]]*#' |
+			grep -vE 'awk|sed|printf|echo.*-e|python|f\.write|gsub|join|split|print |replace|coords|excerpt|delimiter|regex|pattern' ||
+			true)
+		while IFS= read -r _match; do
+			[ -n "$_match" ] || continue
+			_line_num=$(printf '%s' "$_match" | cut -d: -f1)
+			printf '%s\tbackslash-tn:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
+		done <<<"$_matches"
+
+		# Pattern 2: Associative arrays (bash 4.0+)
+		_matches=$(grep -nE '^[[:space:]]*(declare|local|typeset)[[:space:]]+-A[[:space:]]' "$_file" 2>/dev/null |
+			grep -vE '^[0-9]+:[[:space:]]*#' || true)
+		while IFS= read -r _match; do
+			[ -n "$_match" ] || continue
+			_line_num=$(printf '%s' "$_match" | cut -d: -f1)
+			printf '%s\tassoc-array:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
+		done <<<"$_matches"
+
+		# Pattern 3: Namerefs (bash 4.3+)
+		_matches=$(grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-n[[:space:]]' "$_file" 2>/dev/null |
+			grep -vE '^[0-9]+:[[:space:]]*#' || true)
+		while IFS= read -r _match; do
+			[ -n "$_match" ] || continue
+			_line_num=$(printf '%s' "$_match" | cut -d: -f1)
+			printf '%s\tnameref:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
+		done <<<"$_matches"
+
+		# Pattern 4: Heredoc inside $() — breaks macOS /bin/bash 3.2 parser.
+		# (GH#19252, t2171 regression gate.)
+		_matches=$(grep -nE '\$\(\s*cat\s*<<' "$_file" 2>/dev/null |
+			grep -vE '^[0-9]+:[[:space:]]*#' || true)
+		while IFS= read -r _match; do
+			[ -n "$_match" ] || continue
+			_line_num=$(printf '%s' "$_match" | cut -d: -f1)
+			printf '%s\theredoc-in-subshell:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
+		done <<<"$_matches"
+	done <<<"$_sh_files"
+
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# scan_dir <dir> [<output-file>] [<metric>]
+#
+# Dispatcher: routes to the metric-specific scanner. Default metric is
+# function-complexity (back-compat with t2159).
+# ---------------------------------------------------------------------------
+scan_dir() {
+	local _dir="$1"
+	local _out="${2:-}"
+	local _metric="${3:-function-complexity}"
+
+	case "$_metric" in
+	function-complexity) scan_dir_function_complexity "$_dir" "$_out" ;;
+	nesting-depth) scan_dir_nesting_depth "$_dir" "$_out" ;;
+	file-size) scan_dir_file_size "$_dir" "$_out" ;;
+	bash32-compat) scan_dir_bash32_compat "$_dir" "$_out" ;;
+	*) die "unknown metric: $_metric (valid: function-complexity, nesting-depth, file-size, bash32-compat)" ;;
+	esac
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# metric_title <metric>  — human-readable label for reports/logs
+# ---------------------------------------------------------------------------
+metric_title() {
+	case "$1" in
+	function-complexity) printf 'Shell Function Complexity' ;;
+	nesting-depth) printf 'Shell Nesting Depth' ;;
+	file-size) printf 'File Size' ;;
+	bash32-compat) printf 'Bash 3.2 Compatibility' ;;
+	*) printf 'Complexity' ;;
+	esac
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# metric_unit <metric>  — "violations" plus short subject (for report text)
+# ---------------------------------------------------------------------------
+metric_unit() {
+	case "$1" in
+	function-complexity) printf 'function(s) >100 lines' ;;
+	nesting-depth) printf 'file(s) with nesting depth >8' ;;
+	file-size) printf 'file(s) >1500 lines' ;;
+	bash32-compat) printf 'bash 3.2-incompatible construct(s)' ;;
+	*) printf 'violation(s)' ;;
+	esac
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# metric_column_headers <metric>  — Markdown table headers for "new violations"
+# Echoes a pipe-delimited header row the report can inject verbatim.
+# ---------------------------------------------------------------------------
+metric_column_headers() {
+	case "$1" in
+	function-complexity) printf '| File | Function | Lines |\n|---|---|---:|\n' ;;
+	nesting-depth) printf '| File | Metric | Max Depth |\n|---|---|---:|\n' ;;
+	file-size) printf '| File | Metric | Lines |\n|---|---|---:|\n' ;;
+	bash32-compat) printf '| File | Pattern:Line | Count |\n|---|---|---:|\n' ;;
+	*) printf '| File | Key | Value |\n|---|---|---:|\n' ;;
+	esac
 	return 0
 }
 
@@ -178,7 +478,11 @@ compute_new_violations() {
 
 # ---------------------------------------------------------------------------
 # write_report <new-count> <base-total> <head-total>
-#              <new-violations-file> <base-sha> <head-sha> <out-md>
+#              <new-violations-file> <base-sha> <head-sha> <out-md> [<metric>]
+#
+# Produces a metric-aware markdown report. The marker comment at the end is
+# metric-specific so the CI workflow can upsert the correct PR comment per
+# metric without the four gates stomping on each other's reports.
 # ---------------------------------------------------------------------------
 write_report() {
 	local _new_count="$1"
@@ -188,31 +492,37 @@ write_report() {
 	local _base_sha="$5"
 	local _head_sha="$6"
 	local _out="$7"
+	local _metric="${8:-function-complexity}"
+
+	local _title _unit _headers
+	_title=$(metric_title "$_metric")
+	_unit=$(metric_unit "$_metric")
+	_headers=$(metric_column_headers "$_metric")
 
 	local _verdict
 	if [ "$_new_count" -gt 0 ]; then
-		_verdict="❌ **Regression** — this PR introduces $_new_count NEW function complexity violation(s)."
+		_verdict="❌ **Regression** — this PR introduces $_new_count NEW ${_unit}."
 	else
-		_verdict="✅ **No regression** — no new function complexity violations."
+		_verdict="✅ **No regression** — no new ${_unit}."
 	fi
 
 	{
-		printf '## Shell Function Complexity Regression Gate\n\n'
+		printf '## %s Regression Gate\n\n' "$_title"
 		printf '%s\n\n' "$_verdict"
 		# shellcheck disable=SC2016
 		printf '| Metric | Base (`%s`) | Head (`%s`) |\n' \
 			"${_base_sha:0:7}" "${_head_sha:0:7}"
 		printf '|---|---:|---:|\n'
-		printf '| Total violations (>100 lines) | %s | %s |\n\n' \
-			"$_base_total" "$_head_total"
+		printf '| Total %s | %s | %s |\n\n' \
+			"$_unit" "$_base_total" "$_head_total"
 
 		if [ "$_new_count" -gt 0 ]; then
 			printf '### New violations\n\n'
-			printf '| File | Function | Lines |\n|---|---|---:|\n'
-			while IFS=$'\t' read -r _file _fname _lines; do
-				[ -n "$_file" ] || continue
+			printf '%s' "$_headers"
+			while IFS=$'\t' read -r _col1 _col2 _col3; do
+				[ -n "$_col1" ] || continue
 				# shellcheck disable=SC2016
-				printf '| `%s` | `%s` | %s |\n' "$_file" "$_fname" "$_lines"
+				printf '| `%s` | `%s` | %s |\n' "$_col1" "$_col2" "$_col3"
 			done <"$_new_file"
 			printf '\n'
 			# shellcheck disable=SC2016
@@ -221,7 +531,8 @@ write_report() {
 			printf '> and include a `## Complexity Bump Justification` section in the PR description.\n'
 		fi
 
-		printf '\n<!-- complexity-regression-gate -->\n'
+		# Metric-specific marker so the workflow can upsert independently per metric.
+		printf '\n<!-- complexity-regression-gate:%s -->\n' "$_metric"
 	} >"$_out"
 
 	return 0
@@ -233,12 +544,18 @@ write_report() {
 cmd_scan() {
 	local _dir=""
 	local _out=""
+	local _metric="function-complexity"
 
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--output)
 			[ $# -ge 2 ] || die "missing value for --output"
 			_out="$2"
+			shift 2
+			;;
+		--metric)
+			[ $# -ge 2 ] || die "missing value for --metric"
+			_metric="$2"
 			shift 2
 			;;
 		-h | --help)
@@ -259,7 +576,7 @@ cmd_scan() {
 	[ -n "$_dir" ] || die "scan: <dir> argument required"
 	[ -d "$_dir" ] || die "scan: directory not found: $_dir"
 
-	scan_dir "$_dir" "$_out"
+	scan_dir "$_dir" "$_out" "$_metric"
 	return 0
 }
 
@@ -272,6 +589,7 @@ cmd_diff() {
 	local _output_md=""
 	local _base_sha="unknown"
 	local _head_sha="unknown"
+	local _metric="function-complexity"
 
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -300,6 +618,11 @@ cmd_diff() {
 			_head_sha="$2"
 			shift 2
 			;;
+		--metric)
+			[ $# -ge 2 ] || die "missing value for --metric"
+			_metric="$2"
+			shift 2
+			;;
 		-h | --help)
 			usage
 			exit 0
@@ -323,11 +646,11 @@ cmd_diff() {
 	_base_total=$(violation_count "$_base_file")
 	_head_total=$(violation_count "$_head_file")
 
-	log "base: $_base_total  head: $_head_total  new: $_new_count"
+	log "[$_metric] base: $_base_total  head: $_head_total  new: $_new_count"
 
 	if [ -n "$_output_md" ]; then
 		write_report "$_new_count" "$_base_total" "$_head_total" \
-			"$_new_file" "$_base_sha" "$_head_sha" "$_output_md"
+			"$_new_file" "$_base_sha" "$_head_sha" "$_output_md" "$_metric"
 		log "report written to $_output_md"
 	fi
 
@@ -341,16 +664,18 @@ cmd_diff() {
 }
 
 # ---------------------------------------------------------------------------
-# _check_dry_run — scan current tree, report total count, exit 0 always
+# _check_dry_run <metric> — scan current tree, report total count, exit 0 always
 # ---------------------------------------------------------------------------
 _check_dry_run() {
+	local _metric="${1:-function-complexity}"
 	TMP_DIR=$(mktemp -d)
 	local _head_scan="$TMP_DIR/head.tsv"
-	log "dry-run: scanning current tree"
-	scan_dir "." "$_head_scan"
-	local _count
+	log "[$_metric] dry-run: scanning current tree"
+	scan_dir "." "$_head_scan" "$_metric"
+	local _count _unit
 	_count=$(violation_count "$_head_scan")
-	printf 'Total violations (>100 lines): %s\n' "$_count"
+	_unit=$(metric_unit "$_metric")
+	printf 'Total violations (%s): %s\n' "$_unit" "$_count"
 	if [ "$_count" -gt 0 ]; then
 		printf '\nViolations:\n'
 		cat "$_head_scan"
@@ -359,7 +684,7 @@ _check_dry_run() {
 }
 
 # ---------------------------------------------------------------------------
-# _check_regression <base_sha> <head_sha> <output_md> <allow_increase>
+# _check_regression <base_sha> <head_sha> <output_md> <allow_increase> [<metric>]
 # Scan base+head via worktrees, compute diff, optionally write report.
 # Exits 0 (no regression), 1 (regression), or 2 (error).
 # ---------------------------------------------------------------------------
@@ -368,6 +693,7 @@ _check_regression() {
 	local _head_sha="$2"
 	local _output_md="$3"
 	local _allow_increase="$4"
+	local _metric="${5:-function-complexity}"
 
 	TMP_DIR=$(mktemp -d)
 	local _base_scan="$TMP_DIR/base.tsv"
@@ -375,20 +701,20 @@ _check_regression() {
 	local _new_file="$TMP_DIR/new-violations.tsv"
 
 	BASE_WORKTREE="$TMP_DIR/base-worktree"
-	log "creating base worktree at ${_base_sha:0:7}"
+	log "[$_metric] creating base worktree at ${_base_sha:0:7}"
 	if ! git worktree add --detach --force "$BASE_WORKTREE" "$_base_sha" >/dev/null 2>&1; then
 		die "failed to create base worktree for $_base_sha"
 	fi
-	log "scanning base (${_base_sha:0:7})"
-	scan_dir "$BASE_WORKTREE" "$_base_scan"
+	log "[$_metric] scanning base (${_base_sha:0:7})"
+	scan_dir "$BASE_WORKTREE" "$_base_scan" "$_metric"
 
 	HEAD_WORKTREE="$TMP_DIR/head-worktree"
-	log "creating head worktree at ${_head_sha:0:7}"
+	log "[$_metric] creating head worktree at ${_head_sha:0:7}"
 	if ! git worktree add --detach --force "$HEAD_WORKTREE" "$_head_sha" >/dev/null 2>&1; then
 		die "failed to create head worktree for $_head_sha"
 	fi
-	log "scanning head (${_head_sha:0:7})"
-	scan_dir "$HEAD_WORKTREE" "$_head_scan"
+	log "[$_metric] scanning head (${_head_sha:0:7})"
+	scan_dir "$HEAD_WORKTREE" "$_head_scan" "$_metric"
 
 	compute_new_violations "$_base_scan" "$_head_scan" "$_new_file"
 
@@ -397,23 +723,23 @@ _check_regression() {
 	_base_total=$(violation_count "$_base_scan")
 	_head_total=$(violation_count "$_head_scan")
 
-	log "base: $_base_total  head: $_head_total  new: $_new_count"
+	log "[$_metric] base: $_base_total  head: $_head_total  new: $_new_count"
 
 	if [ -n "$_output_md" ]; then
 		write_report "$_new_count" "$_base_total" "$_head_total" \
-			"$_new_file" "$_base_sha" "$_head_sha" "$_output_md"
+			"$_new_file" "$_base_sha" "$_head_sha" "$_output_md" "$_metric"
 		log "report written to $_output_md"
 	fi
 
 	if [ "$_new_count" -gt 0 ] && [ "$_allow_increase" -eq 0 ]; then
-		log "REGRESSION: $_new_count new violation(s)"
+		log "[$_metric] REGRESSION: $_new_count new violation(s)"
 		exit 1
 	fi
 
 	if [ "$_new_count" -gt 0 ]; then
-		log "new violations detected but --allow-increase is set"
+		log "[$_metric] new violations detected but --allow-increase is set"
 	else
-		log "no new violations"
+		log "[$_metric] no new violations"
 	fi
 	exit 0
 }
@@ -427,6 +753,7 @@ cmd_check() {
 	local _output_md=""
 	local _allow_increase=0
 	local _dry_run=0
+	local _metric="function-complexity"
 
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -453,6 +780,11 @@ cmd_check() {
 			_dry_run=1
 			shift
 			;;
+		--metric)
+			[ $# -ge 2 ] || die "missing value for --metric"
+			_metric="$2"
+			shift 2
+			;;
 		-h | --help)
 			usage
 			exit 0
@@ -461,7 +793,7 @@ cmd_check() {
 		esac
 	done
 
-	[ "$_dry_run" -eq 1 ] && _check_dry_run
+	[ "$_dry_run" -eq 1 ] && _check_dry_run "$_metric"
 
 	[ -n "$_base" ] || die "check: --base <sha> is required (use --dry-run to scan current tree)"
 
@@ -476,7 +808,7 @@ cmd_check() {
 	_base_sha=$(git rev-parse "$_base")
 	_head_sha=$(git rev-parse "$_head")
 
-	_check_regression "$_base_sha" "$_head_sha" "$_output_md" "$_allow_increase"
+	_check_regression "$_base_sha" "$_head_sha" "$_output_md" "$_allow_increase" "$_metric"
 }
 
 # ===========================================================================
