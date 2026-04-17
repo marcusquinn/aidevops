@@ -384,6 +384,29 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - Skip approval instruction comments (wrapped in `<!-- provenance:start/end -->`). Workers are dispatched AFTER approval — the instructions are irrelevant.
 - From issue threads, focus on: the issue body (implementation context), and any comments containing code suggestions or error reports.
 
+# 10. Stale-symptom investigations (runtime debugging, t2036)
+# When investigating pulse, agent, or worker behaviour from logs,
+# timeouts, or failed dispatches, the DEPLOYED copy at
+# `~/.aidevops/agents/scripts/<file>` may differ from source at
+# `~/Git/aidevops/.agents/scripts/<file>`. The pulse executes the
+# deployed copy; reading source-as-truth can waste hours on a bug
+# that was already fixed before the symptoms occurred.
+- Before reading source for runtime investigation: compare deployed mtime to source commit:
+  `ls -la ~/.aidevops/agents/scripts/<file>` vs
+  `git -C ~/Git/aidevops log -1 --format='%ai' -- .agents/scripts/<file>`.
+  If they differ, establish whether you're reading the deployed version,
+  the in-flight source, or somewhere between.
+- When symptom timestamps in logs predate the deployed file mtime,
+  the symptom is historical — it reflects pre-deploy behaviour. Verify
+  the symptom still reproduces against the current deploy before
+  filing an investigation issue.
+- Scope: source-only debugging is fine for design, refactoring, and new
+  code. This rule applies to runtime diagnostics rooted in logs/artifacts.
+- Related: "Pre-implementation discovery (t2046)" — complementary rule for
+  checking git log before WRITING new code. Both check "is the world what I
+  think it is?"; this one fires during investigation, t2046 fires before
+  implementation.
+
 **Pre-edit rules:**
 - Before ANY file modification: run `pre-edit-check.sh`
 - Exit 0=proceed, 1=STOP (main), 2=create worktree, 3=warn off-main
