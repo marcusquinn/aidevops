@@ -27,6 +27,9 @@
 #
 # Part of aidevops framework: https://aidevops.sh
 
+# Apply strict mode only when executed directly (not when sourced — would affect caller)
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
+
 # Include guard — prevents double-loading when sourced from multiple paths.
 [[ -n "${_ISSUE_SYNC_RELATIONSHIPS_LOADED:-}" ]] && return 0
 _ISSUE_SYNC_RELATIONSHIPS_LOADED=1
