@@ -431,12 +431,22 @@ jobs:
           exit 0
         fi
 
+        # Use the merge-base (common ancestor of PR head and base branch) so
+        # that commits landing on main after the PR was branched do not produce
+        # false-positive regressions.  This mirrors the t2159 design decision:
+        # "recommend merge-base origin/main HEAD (handles PR rebases correctly)".
+        MERGE_BASE=$(git merge-base "${HEAD_SHA}" "${BASE_SHA}" 2>/dev/null || echo "")
+        if [ -z "${MERGE_BASE}" ]; then
+          echo "Could not compute merge-base; falling back to base SHA."
+          MERGE_BASE="${BASE_SHA}"
+        fi
+
         echo ""
-        echo "Running per-function regression check (base: ${BASE_SHA:0:7} head: ${HEAD_SHA:0:7})..."
+        echo "Running per-function regression check (merge-base: ${MERGE_BASE:0:7} head: ${HEAD_SHA:0:7})..."
 
         set +e
         .agents/scripts/complexity-regression-helper.sh check \
-          --base "${BASE_SHA}" \
+          --base "${MERGE_BASE}" \
           --head "${HEAD_SHA}" \
           --output-md /tmp/complexity-report.md
         REGRESSION_EXIT=$?
