@@ -474,12 +474,150 @@ _Automated by \`_post_simplification_gate_cleared_comment()\` in pulse-triage.sh
 }
 
 #######################################
+# t2170 Fix E (secondary): Check if ALL continuation citations in the
+# large-file gate sticky comment are stale. Called when
+# _issue_targets_large_files returned 0 (file still targeted) to detect
+# deadlocked issues where phantom continuations prevent fresh gate
+# re-evaluation.
+#
+# A continuation citation is stale when:
+#   - The cited issue is CLOSED, AND one of:
+#     (a) it carries `simplification-incomplete` (Fix D, t2169) — file
+#         never simplified; short-circuits the wc -l check.
+#     (b) _large_file_gate_verify_prior_reduced_size confirms file is
+#         still over threshold.
+#   - If the cited issue is OPEN → valid (work in progress), preserve.
+#   - If the issue or its path is unresolvable → conservative: preserve.
+#
+# When ALL citations are stale the label is removed so the next dispatch
+# cycle re-fires the gate fresh (which, post-Fix-A/B, files a new debt
+# issue instead of re-citing the phantom).
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug
+#   $3 - repo_path
+# Returns: 0 (cleared label), 1 (preserved label)
+#######################################
+_reevaluate_stale_continuations() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+
+	# Fetch the gate's sticky comment from this issue. The marker is the
+	# same heading used by _large_file_gate_apply/_gh_idempotent_comment.
+	local gate_comment
+	# Use map+.[0] instead of .[]+head-1 so the full multi-line body is
+	# captured (head -1 would truncate to just the heading line, losing
+	# the "Simplification issues:" continuation references below it).
+	gate_comment=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--comments --json comments \
+		--jq '.comments | map(select(.body | contains("## Large File Simplification Gate"))) | .[0].body // empty' \
+		2>/dev/null) || gate_comment=""
+
+	# No gate comment → preserve label (safe fallback: can't determine state)
+	[[ -n "$gate_comment" ]] || return 1
+
+	# Extract continuation issue numbers from the comment.
+	# Format: **Simplification issues:** #NNN (recently-closed — continuation), ...
+	# We only care about the "recently-closed — continuation" entries; open
+	# "existing" or "new" entries don't cause the deadlock this fix targets.
+	local continuation_nums
+	continuation_nums=$(printf '%s' "$gate_comment" |
+		grep -oE '#[0-9]+ \(recently-closed' |
+		grep -oE '[0-9]+') || continuation_nums=""
+
+	# No continuation citations → label was not set due to phantom continuation;
+	# nothing for this function to resolve.
+	[[ -n "$continuation_nums" ]] || return 1
+
+	local all_stale="true"
+	local cont_num
+	while IFS= read -r cont_num; do
+		[[ "$cont_num" =~ ^[0-9]+$ ]] || continue
+
+		local cont_info cont_state cont_labels
+		cont_info=$(gh issue view "$cont_num" --repo "$repo_slug" \
+			--json state,labels,title 2>/dev/null) || cont_info=""
+
+		if [[ -z "$cont_info" ]]; then
+			# Unresolvable → conservative, preserve label
+			all_stale="false"
+			break
+		fi
+
+		cont_state=$(printf '%s' "$cont_info" | jq -r '.state // "OPEN"' 2>/dev/null)
+
+		if [[ "${cont_state^^}" != "CLOSED" ]]; then
+			# Open → work in progress, preserve label
+			all_stale="false"
+			break
+		fi
+
+		# Closed — check if stale via simplification-incomplete short-circuit
+		# (Fix D, t2169) or via file-size verification.
+		cont_labels=$(printf '%s' "$cont_info" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || cont_labels=""
+
+		if [[ ",$cont_labels," == *",simplification-incomplete,"* ]]; then
+			# simplification-incomplete present → definite stale, no wc -l needed
+			continue
+		fi
+
+		# No simplification-incomplete label: parse file path from issue title.
+		# Debt issue title format: "simplification-debt: <path> exceeds N lines"
+		local cont_title cont_file_path
+		cont_title=$(printf '%s' "$cont_info" | jq -r '.title // ""' 2>/dev/null) || cont_title=""
+		cont_file_path=$(printf '%s' "$cont_title" |
+			sed 's/^simplification-debt: //;s/ exceeds [0-9]* lines$//' 2>/dev/null) || cont_file_path=""
+
+		if [[ -z "$cont_file_path" || "$cont_file_path" == "$cont_title" ]]; then
+			# Couldn't extract path — unresolvable, conservative: preserve
+			all_stale="false"
+			break
+		fi
+
+		# _large_file_gate_verify_prior_reduced_size is defined in
+		# pulse-dispatch-large-file-gate.sh, which is sourced before
+		# pulse-triage.sh in pulse-wrapper.sh. Guard defensively.
+		if ! declare -F _large_file_gate_verify_prior_reduced_size >/dev/null 2>&1; then
+			# Function unavailable → conservative, preserve label
+			all_stale="false"
+			break
+		fi
+
+		# Returns 0 when file is now under threshold (prior work was effective),
+		# 1 when file is still over threshold (citation is stale/phantom).
+		if _large_file_gate_verify_prior_reduced_size \
+			"$cont_num" "$cont_file_path" "$repo_path"; then
+			# File reduced below threshold → continuation was valid
+			all_stale="false"
+			break
+		fi
+		# else: file still over threshold → citation is stale; continue loop
+	done < <(printf '%s\n' "$continuation_nums")
+
+	if [[ "$all_stale" == "true" ]]; then
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--remove-label "needs-simplification" >/dev/null 2>&1 || true
+		echo "[pulse-triage] Cleared stale needs-simplification on #${issue_number} (all cited continuations phantom; next dispatch will re-evaluate the gate)" >>"$LOGFILE"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Re-evaluate needs-simplification labeled issues across pulse repos.
 # Same pattern as _reevaluate_consolidation_labels: issues filtered out
 # by the needs-* exclusion never reach dispatch_with_dedup, so the
 # auto-clear at the end of _issue_targets_large_files can't fire.
 # This pass re-evaluates them and clears the label when the file is
 # now excluded (lockfile, JSON config) or below threshold.
+#
+# t2170 Fix E (secondary): also runs _reevaluate_stale_continuations when
+# _issue_targets_large_files returns 0 (file still targeted). This covers
+# the deadlock where phantom continuation citations block the gate from
+# re-firing and creating a fresh (accurate) debt issue.
 #######################################
 _reevaluate_simplification_labels() {
 	local repos_json="$REPOS_JSON"
@@ -510,6 +648,15 @@ _reevaluate_simplification_labels() {
 				# t2042: post follow-up "CLEARED" comment so the original
 				# "Held from dispatch" comment doesn't mislead readers.
 				_post_simplification_gate_cleared_comment "$num" "$slug"
+			else
+				# t2170 Fix E (secondary): file still targets large files but
+				# check if ALL cited continuation issues are stale/phantom.
+				# Clears the label so the next dispatch cycle re-evaluates
+				# the gate fresh — breaking the deadlock where a phantom
+				# continuation blocks new accurate debt issue creation.
+				if _reevaluate_stale_continuations "$num" "$slug" "$rpath"; then
+					total_cleared=$((total_cleared + 1))
+				fi
 			fi
 		done < <(printf '%s' "$issues_json" | jq -r '.[]?.number // ""')
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)

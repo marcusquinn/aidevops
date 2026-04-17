@@ -651,7 +651,20 @@ _issue_targets_large_files() {
 
 	local all_paths
 	all_paths=$(_large_file_gate_extract_paths "$issue_body")
-	[[ -n "$all_paths" ]] || return 1
+	if [[ -z "$all_paths" ]]; then
+		# t2170 Fix E (primary): No paths in body — if already labeled, auto-clear
+		# (stale label from pre-Fix-A gate application that matched context-ref
+		# backtick paths). Closes the gap for issues where Fix A now correctly
+		# returns empty but the early-return prevented reaching the auto-clear
+		# at lines 682-684. Empirical evidence: GH#19415 received a CLEARED
+		# comment but the label persisted; 17 min of zero label events after
+		# pulse restart confirmed the extractor fix worked but the stale label
+		# required human intervention to clear.
+		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+			_large_file_gate_clear_stale_label "$issue_number" "$repo_slug"
+		fi
+		return 1
+	fi
 
 	local found_large=false
 	local large_files=""
