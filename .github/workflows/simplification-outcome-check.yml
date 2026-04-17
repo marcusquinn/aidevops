@@ -1,0 +1,215 @@
+name: Simplification Outcome Check
+
+# t2169: Verify that merged PRs claiming to resolve file-size-debt issues
+# actually reduced the target file below the threshold (2000 lines).
+#
+# Trigger: pull_request_target on closed events (fires after merge).
+#
+# Workflow:
+#   1. Parse PR body for closing keywords (Closes/Resolves/Fixes #N).
+#   2. Check if the cited issue carries the `file-size-debt` label.
+#      If not, no-op — this check is only for simplification-debt work.
+#   3. Extract the target file path from the issue body
+#      (format: "Simplify `path/to/file`").
+#   4. Checkout the merged commit and measure the file with wc -l.
+#   5. If still >= 2000 lines: reopen the issue, apply
+#      `simplification-incomplete`, and comment on both the PR and issue.
+#
+# Evidence: PR #18715 closed #18706 (issue-sync-helper.sh, 2165 lines)
+# while adding net +29 lines (2194 lines). This workflow would have
+# caught and reopened the issue immediately.
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: read
+
+env:
+  LARGE_FILE_LINE_THRESHOLD: 2000
+
+jobs:
+  outcome-check:
+    name: Simplification Outcome Check
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Extract cited issue number from PR body
+        id: extract
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          # Parse closing keywords: Closes/Resolves/Fixes #N (case-insensitive)
+          ISSUE_NUM=$(printf '%s' "$PR_BODY" | \
+            grep -iEo '(closes|resolves|fixes)[[:space:]]+#[0-9]+' | \
+            head -1 | \
+            grep -oE '[0-9]+$' || true)
+
+          if [[ -z "$ISSUE_NUM" ]]; then
+            echo "No closing keyword found in PR body — not applicable."
+            echo "applicable=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Found closing keyword referencing issue #${ISSUE_NUM}"
+          echo "issue_num=${ISSUE_NUM}" >> "$GITHUB_OUTPUT"
+          echo "applicable=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check issue has file-size-debt label
+        id: check-label
+        if: steps.extract.outputs.applicable == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ steps.extract.outputs.issue_num }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          LABELS=$(gh issue view "$ISSUE_NUM" --repo "$REPO" \
+            --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || true)
+
+          echo "Issue #${ISSUE_NUM} labels: ${LABELS}"
+
+          if [[ ",$LABELS," != *",file-size-debt,"* ]] && \
+             [[ ",$LABELS," != *",simplification-debt,"* ]]; then
+            echo "Issue #${ISSUE_NUM} does not have file-size-debt or simplification-debt label — not applicable."
+            echo "applicable=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Issue has file-size-debt/simplification-debt label — proceeding."
+          echo "applicable=true" >> "$GITHUB_OUTPUT"
+
+      - name: Extract target file path from issue body
+        id: extract-path
+        if: steps.check-label.outputs.applicable == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ steps.extract.outputs.issue_num }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          ISSUE_BODY=$(gh issue view "$ISSUE_NUM" --repo "$REPO" \
+            --json body --jq '.body' 2>/dev/null || true)
+
+          # Issue body format (set by _large_file_gate_file_new_debt_issue):
+          #   ## What
+          #   Simplify `path/to/file.sh` — currently over 2000 lines.
+          TARGET_FILE=$(printf '%s' "$ISSUE_BODY" | \
+            grep -oE 'Simplify `[^`]+`' | \
+            head -1 | \
+            sed "s/Simplify \`//;s/\`//" || true)
+
+          if [[ -z "$TARGET_FILE" ]]; then
+            echo "Could not extract target file path from issue #${ISSUE_NUM} body — skipping measurement."
+            echo "applicable=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Target file: ${TARGET_FILE}"
+          echo "target_file=${TARGET_FILE}" >> "$GITHUB_OUTPUT"
+          echo "applicable=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout merged commit
+        if: steps.extract-path.outputs.applicable == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Measure file line count
+        id: measure
+        if: steps.extract-path.outputs.applicable == 'true'
+        env:
+          TARGET_FILE: ${{ steps.extract-path.outputs.target_file }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f "$TARGET_FILE" ]]; then
+            echo "File '${TARGET_FILE}' not found in merged commit — skipping measurement."
+            echo "applicable=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LINES=$(wc -l < "$TARGET_FILE" | tr -d ' ')
+          echo "File ${TARGET_FILE}: ${LINES} lines"
+          echo "lines=${LINES}" >> "$GITHUB_OUTPUT"
+          echo "applicable=true" >> "$GITHUB_OUTPUT"
+
+      - name: Reopen issue and comment when file still over threshold
+        if: >-
+          steps.measure.outputs.applicable == 'true' &&
+          steps.measure.outputs.lines != '' &&
+          fromJSON(steps.measure.outputs.lines) >= fromJSON(env.LARGE_FILE_LINE_THRESHOLD)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUM: ${{ steps.extract.outputs.issue_num }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TARGET_FILE: ${{ steps.extract-path.outputs.target_file }}
+          LINES: ${{ steps.measure.outputs.lines }}
+        run: |
+          set -euo pipefail
+
+          echo "File ${TARGET_FILE} still ${LINES} lines (threshold ${LARGE_FILE_LINE_THRESHOLD}). Taking action."
+
+          # Create the label idempotently (--force prevents failure if it exists)
+          gh label create "simplification-incomplete" \
+            --repo "$REPO" \
+            --description "PR merged without reducing file below the line threshold" \
+            --color "B60205" \
+            --force 2>/dev/null || true
+
+          # Reopen the issue
+          gh issue reopen "$ISSUE_NUM" --repo "$REPO" || true
+
+          # Apply the simplification-incomplete label
+          gh issue edit "$ISSUE_NUM" \
+            --repo "$REPO" \
+            --add-label "simplification-incomplete" || true
+
+          # Write issue comment to a file to avoid YAML/shell quoting issues
+          cat > /tmp/issue-comment.md << 'COMMENT_EOF'
+          ## Simplification Outcome: Incomplete
+          COMMENT_EOF
+          # Append dynamic content separately
+          printf '\nPR #%s was merged claiming to resolve this issue, but the target file `%s` is still **%s lines** (threshold: %s).\n' \
+            "$PR_NUMBER" "$TARGET_FILE" "$LINES" "$LARGE_FILE_LINE_THRESHOLD" >> /tmp/issue-comment.md
+          printf '\nThe issue has been reopened automatically. The `simplification-incomplete` label has been applied so the large-file gate can short-circuit on re-evaluation without re-running `wc -l`.\n' \
+            >> /tmp/issue-comment.md
+          printf '\n**Action required:** A follow-up PR must reduce `%s` below %s lines before the parent issue can proceed.\n' \
+            "$TARGET_FILE" "$LARGE_FILE_LINE_THRESHOLD" >> /tmp/issue-comment.md
+          printf '\n*Generated by Simplification Outcome Check workflow (t2169)*\n' \
+            >> /tmp/issue-comment.md
+
+          gh issue comment "$ISSUE_NUM" \
+            --repo "$REPO" \
+            --body-file /tmp/issue-comment.md || true
+
+          # Comment on the PR to notify the author
+          gh pr comment "$PR_NUMBER" \
+            --repo "$REPO" \
+            --body "**Simplification Outcome Check failed.** The target file \`${TARGET_FILE}\` is still **${LINES} lines** after this PR merged (threshold: ${LARGE_FILE_LINE_THRESHOLD}). Issue #${ISSUE_NUM} has been reopened with label \`simplification-incomplete\`. A follow-up PR is required to actually reduce the file below the threshold. *Generated by Simplification Outcome Check workflow (t2169)*" || true
+
+          echo "Done: reopened #${ISSUE_NUM} and applied simplification-incomplete label."
+
+      - name: Log no-op when file is under threshold
+        if: >-
+          steps.measure.outputs.applicable == 'true' &&
+          steps.measure.outputs.lines != '' &&
+          fromJSON(steps.measure.outputs.lines) < fromJSON(env.LARGE_FILE_LINE_THRESHOLD)
+        env:
+          TARGET_FILE: ${{ steps.extract-path.outputs.target_file }}
+          LINES: ${{ steps.measure.outputs.lines }}
+          ISSUE_NUM: ${{ steps.extract.outputs.issue_num }}
+        run: |
+          echo "Simplification outcome: PASS. ${TARGET_FILE} is now ${LINES} lines (threshold ${LARGE_FILE_LINE_THRESHOLD})."
+          echo "Issue #${ISSUE_NUM} was legitimately resolved."

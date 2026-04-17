@@ -304,12 +304,33 @@ _large_file_gate_resolve_full_path() {
 #       fall through to create a fresh debt issue, and this helper has
 #       already logged the skip to $LOGFILE)
 #
-# Arguments: existing_issue_num, lf_path, repo_path
+# t2169: When the issue carries the `simplification-incomplete` label
+# (applied by the Simplification Outcome Check workflow when a merged PR
+# left the file over threshold), short-circuit immediately with return 1
+# without running wc -l. The label is definitive evidence of an incomplete
+# simplification — the wc -l would reach the same conclusion but this
+# path is faster and avoids a disk read on every gate evaluation.
+#
+# Arguments: existing_issue_num, lf_path, repo_path, repo_slug (optional)
 #######################################
 _large_file_gate_verify_prior_reduced_size() {
 	local existing_issue="$1"
 	local lf_path="$2"
 	local repo_path="$3"
+	local repo_slug="${4:-}"
+
+	# t2169: short-circuit on simplification-incomplete label — definitive
+	# evidence that the prior merged PR did not reduce the file below threshold.
+	# Skip wc -l entirely when the label is present.
+	if [[ -n "$repo_slug" && -n "$existing_issue" ]]; then
+		local _sc_labels=""
+		_sc_labels=$(gh issue view "$existing_issue" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _sc_labels=""
+		if [[ ",$_sc_labels," == *",simplification-incomplete,"* ]]; then
+			echo "[pulse-wrapper] Large-file gate: prior issue #${existing_issue} has simplification-incomplete label; filing fresh debt (outcome-check short-circuit) (t2169)" >>"$LOGFILE"
+			return 1
+		fi
+	fi
 
 	local _verify_full_path
 	_verify_full_path=$(_large_file_gate_resolve_full_path "$lf_path" "$repo_path") || _verify_full_path=""
@@ -500,7 +521,10 @@ _large_file_gate_create_debt_issue() {
 	if [[ "$_existing_state" == "closed" ]]; then
 		# t2164: verify the prior PR actually reduced file size before
 		# declaring continuation. Helper logs the skip when it fires.
-		if _large_file_gate_verify_prior_reduced_size "$_existing" "$lf_path" "$repo_path"; then
+		# t2169: pass repo_slug so the helper can short-circuit on the
+		# simplification-incomplete label (set by Simplification Outcome
+		# Check workflow) without needing a wc -l measurement.
+		if _large_file_gate_verify_prior_reduced_size "$_existing" "$lf_path" "$repo_path" "$repo_slug"; then
 			printf '#%s (recently-closed — continuation)' "$_existing"
 			return 0
 		fi
