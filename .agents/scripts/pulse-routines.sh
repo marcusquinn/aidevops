@@ -209,8 +209,14 @@ evaluate_routines() {
 			fi
 
 			# Extract repeat: field
+			# Use a variable to hold the regex so bash does not misparse the
+			# literal ')' inside the character class [^)] as the closing '))'
+			# of the [[ ]] compound.  The alternation handles cron(min hr …)
+			# which contains spaces inside the parentheses — a plain
+			# [^[:space:]]+ regex truncates at the first space (bug t2160).
 			local repeat_expr=""
-			if [[ "$line" =~ repeat:([^[:space:]]+) ]]; then
+			local _re_repeat='repeat:(cron\([^)]*\)|[^[:space:]]+)'
+			if [[ "$line" =~ $_re_repeat ]]; then
 				repeat_expr="${BASH_REMATCH[1]}"
 			else
 				continue
