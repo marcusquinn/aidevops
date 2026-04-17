@@ -90,6 +90,36 @@ _pulse_gh_err_is_rate_limit() {
 }
 
 #######################################
+# Verify live GraphQL rate limit before committing to rate-limit abort.
+#
+# Cross-checks the classifier's signal against a non-cached query path
+# (rateLimit query, not SearchType_enumValues introspection). Defends
+# against gh CLI cache poisoning (stale RATE_LIMIT response from a prior
+# transient budget exhaustion) keeping the pulse stuck for hours.
+#
+# GH#19622: observed 2026-04-17 — a single 1322-byte poisoned cache file
+# caused a 5h 32min pulse stall. Live GraphQL budget was 4898/5000 the
+# entire time; the classifier had no way to tell.
+#
+# Returns:
+#   0 if rate-limit signal is corroborated (remaining below threshold)
+#   1 if signal appears stale (remaining healthy — suspected cache poison)
+#
+# Arguments:
+#   $1 - remaining threshold below which the signal is trusted (default 100)
+#######################################
+_pulse_verify_rate_limit_live() {
+	local threshold="${1:-100}"
+	local remaining
+	# rateLimit query does not hit the --label/--search introspection cache.
+	# Failure modes: network error, auth error — treat as "can't verify, trust classifier".
+	remaining=$(gh api graphql -f query='{rateLimit{remaining}}' --jq '.data.rateLimit.remaining' 2>/dev/null) || return 0
+	[[ -z "$remaining" || ! "$remaining" =~ ^[0-9]+$ ]] && return 0
+	[[ "$remaining" -lt "$threshold" ]] && return 0
+	return 1
+}
+
+#######################################
 # Mark the current cycle as rate-limited.
 #
 # Writes a timestamp + context line to the flag file. Idempotent — if the
@@ -103,6 +133,16 @@ _pulse_gh_err_is_rate_limit() {
 _pulse_mark_rate_limited() {
 	local context="$1"
 	local ts
+	# GH#19622: sanity-check before trusting classifier signal. Defends
+	# against gh CLI cache poisoning where a stale RATE_LIMIT response
+	# keeps pulse aborting for hours after actual budget reset.
+	# _pulse_verify_rate_limit_live returns 1 when budget is healthy (suspected poison).
+	if ! _pulse_verify_rate_limit_live 100; then
+		echo "[pulse-wrapper] WARNING: rate-limit classifier matched for ${context} but live probe shows healthy budget — suspected gh cache poisoning, continuing cycle" >>"$LOGFILE"
+		echo "[pulse-wrapper] HINT: check for poisoned cache entries with: find ~/.cache/gh -type f -exec grep -l graphql_rate_limit {} +" >>"$LOGFILE"
+		return 0  # Do NOT set flag; let cycle continue.
+	fi
+	# Original behaviour: commit the flag.
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	mkdir -p "$(dirname "$PULSE_RATE_LIMIT_FLAG")" 2>/dev/null || true
 	printf '%s %s\n' "$ts" "$context" >>"$PULSE_RATE_LIMIT_FLAG"
