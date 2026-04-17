@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.65] - 2026-04-17
+
+### Changed
+
+- skip consolidation when in-flight PR resolves parent (#19477)
+- adopt opencode upstream prompt patterns into build.txt (#19479)
+- Maintenance: update simplification state registry
+
 ## [3.8.64] - 2026-04-17
 
 ### Added
