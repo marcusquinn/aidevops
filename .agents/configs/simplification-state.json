@@ -5835,7 +5835,7 @@
       "pr": 17019
     },
     ".agents/tools/design/library/styles/corporate-traditional/02-colours.md": {
-      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94→28 lines)",
+      "action": "consolidated 6 group tables + CSS block into single unified table with CSS variable column (94\u219228 lines)",
       "at": "2026-04-04T14:53:40Z",
       "hash": "476c989fca56149f90f1eefc2b02cafdc5a6e0d5",
       "issue": "GH#17250",
@@ -7592,5 +7592,12 @@
     "hash": "c95a514b4e3a08d298efad5476f8ed723a42590bc0f32b251de4a626e7c61ac6",
     "note": "Extracted _atomic_stage_and_deploy_agents() from deploy_aidevops_agents() (GH#19203)",
     "status": "simplified"
+  },
+  ".agents/seo/video-seo.md": {
+    "action": "tightened",
+    "hash": "b6d25537d82c9c0b0285525efb19d3c587c3ea328cee085181a15c2aa43fc050",
+    "issue": "GH#19504",
+    "lines_after": 97,
+    "lines_before": 109
   }
 }
