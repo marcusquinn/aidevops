@@ -489,7 +489,11 @@ _get_repo_maintainer() {
 #   - a lifecycle status label is set: status:queued, status:in-progress,
 #     status:in-review, or status:claimed, OR
 #   - the origin:interactive label is present (a live human session is
-#     driving the work regardless of status label state)
+#     driving the work regardless of status label state), OR
+#   - the consolidation-in-progress label is present (t2151 — a cross-
+#     runner advisory lock held by a pulse runner that is mid-way through
+#     creating a consolidation-task child issue; treat as an active claim
+#     so unrelated dispatch paths can't sneak past during the write window)
 #
 # Extracted from is_assigned() to keep that function under the 100-line
 # complexity cap after GH#18352 expanded the active-claim signal set
@@ -514,7 +518,7 @@ _has_active_claim() {
 	local issue_meta_json="$1"
 	local result
 	result=$(printf '%s' "$issue_meta_json" | jq -r '
-		.labels? // [] | any(.[].name; . == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed" or . == "origin:interactive")
+		.labels? // [] | any(.[].name; . == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed" or . == "origin:interactive" or . == "consolidation-in-progress")
 	' 2>/dev/null) || result="false"
 	[[ "$result" == "true" || "$result" == "false" ]] || result="false"
 	printf '%s' "$result"
