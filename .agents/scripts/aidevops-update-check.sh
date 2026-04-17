@@ -742,6 +742,13 @@ main() {
 
 	_refresh_oauth_tokens
 
+	# t2172: Self-heal broken OpenCode runtime symlinks at session start.
+	# Belt-and-braces alongside the `aidevops update` cron path — covers
+	# users who haven't yet pulled the latest update but start a new session.
+	# Fail-open: must NEVER block session start or produce output.
+	local sym_helper="${script_dir}/agent-sources-helper.sh"
+	[[ -x "$sym_helper" ]] && "$sym_helper" cleanup-broken-symlinks >/dev/null 2>&1 || true
+
 	return 0
 }
 
