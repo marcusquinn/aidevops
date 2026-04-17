@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.68] - 2026-04-17
+
+### Changed
+
+- extract relationships & backfill into issue-sync-relationships.sh (#19613)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2172 complete (pr:#19612 testing:runtime-verified)
+
 ## [3.8.67] - 2026-04-17
 
 ### Changed
