@@ -535,7 +535,8 @@ _reevaluate_stale_continuations() {
 		fi
 
 		cont_state=$(printf '%s' "$cont_info" | jq -r '.state // "OPEN"' 2>/dev/null)
-		if [[ "${cont_state^^}" != "CLOSED" ]]; then
+		cont_state_upper=$(printf '%s' "$cont_state" | tr '[:lower:]' '[:upper:]')
+		if [[ "$cont_state_upper" != "CLOSED" ]]; then
 			all_stale="false"
 			break # Open → work in progress
 		fi
