@@ -10,6 +10,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.64] - 2026-04-17
+
+### Added
+
+- cross-check TODO.md historical IDs at allocation (GH#19454) (#19461)
+
+### Changed
+
+- raise claude-opus-4-7 context cap to 250K (align with OpenCode 80% auto-compact) (#19428)
+- Maintenance: bump NESTING_DEPTH_THRESHOLD to 289 (GH#19472) (#19475)
+- Maintenance: update simplification state registry
+- chore: ratchet-down complexity thresholds (#19466)
+- Maintenance: update simplification state registry
+- Maintenance: sync TODO completion for t2159 and t2160 (#19470)
+- Maintenance: update simplification state registry
+- Maintenance: t2160 — file pulse-routines cron-extraction bugfix brief (#19467)
+- fix(pulse-routines): cron schedule extraction truncates at first space (#19468)
+- Maintenance: sync TODO completions (t2156/t2157/t2158) (#19464)
+- feat(ci): per-function complexity regression check (#19463)
+- feat(aidevops-update-check): detect deployed-script drift, hot-redeploy (#19462)
+- Tests: split gh-stub writer into three <100-line helpers (complexity gate) (#19455)
+- Maintenance: t2156/t2157/t2158 — file systemic fix briefs (deployment gap, zombie auto-assign, claim-task-id collision) (#19456)
+- fix(issue-sync-helper): skip auto-assign when #auto-dispatch present (#19460)
+- Maintenance: bump FUNCTION_COMPLEXITY_THRESHOLD 28→31 (GH#19452 drift) (#19457)
+- Maintenance: update simplification state registry
+- add cross-runner advisory lock for consolidation dispatch (Phase B) (#19450)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2006 complete (pr:#18540) — work already merged 2026-04-13 (#19446)
+- Maintenance: mark t2153 complete (pr:#19429) (#19437)
+- Maintenance: bump NESTING_DEPTH_THRESHOLD 283→288 (GH#19430) (#19439)
+- fix(dispatch-dedup-stale): age-floor guard prevents stale recovery on fresh issues (#19429)
+- Maintenance: ratchet-down complexity thresholds (GH#19423) (#19425)
+- Maintenance: update simplification state registry
+- Maintenance: bump NESTING_DEPTH_THRESHOLD to 288 for GH#19419 (#19421)
+- Maintenance: update simplification state registry
+- Maintenance: ratchet down NESTING_DEPTH_THRESHOLD 288→283 (GH#19412) (#19418)
+- Maintenance: add t2151 (Phase B) + t2152 (initial-label investigation) follow-up briefs (#19416)
+- Maintenance: mark t2144 complete (pr:#19411)
+- fix consolidation-task cascade (filter regex + backfill guard + grace window) (#19411)
+- Maintenance: update simplification state registry
+- Maintenance: bump NESTING_DEPTH_THRESHOLD to 288 (GH#19405) (#19409)
+- Maintenance: ratchet-down BASH32_COMPAT_THRESHOLD 78→74 (GH#19397) (#19408)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- fix SC2002 shellcheck violations in test-stale-recovery-escalation.sh (#19449)
+- bump BASH32_COMPAT_THRESHOLD 74→78 (GH#19423 post-merge correction) (#19426)
+
 ## [3.8.63] - 2026-04-16
 
 ### Changed
