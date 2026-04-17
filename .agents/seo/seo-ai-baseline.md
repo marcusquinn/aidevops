@@ -44,3 +44,4 @@ Target: $ARGUMENTS
 - `seo/ai-search-readiness.md`
 - `seo/ai-search-kpi-template.md`
 - `commands/seo-ai-readiness.md`
+- `seo/video-seo.md` — include video AI surface metrics in baseline scorecard

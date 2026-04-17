@@ -33,3 +33,4 @@ Target: $ARGUMENTS
 - `seo/geo-strategy.md`
 - `commands/seo-sro.md`
 - `commands/seo-fanout.md`
+- `seo/transcript-seo.md` — transcript paragraphs as GEO snippet candidates for video/audio content

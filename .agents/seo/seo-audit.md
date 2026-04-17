@@ -33,6 +33,7 @@ Read audit framework files before analysis:
 - `seo/seo-audit-skill/aeo-geo-patterns.md`
 
 Gather baseline data using lightweight fetches:
+
 ```bash
 # robots.txt, sitemap, and homepage meta
 curl -s "https://$DOMAIN/robots.txt"
@@ -48,6 +49,7 @@ Use browser automation only for rendering/field data (Core Web Vitals, Structure
 Audit in priority order. Record status, evidence, impact, and next action. Focus on ranked issues.
 
 **Report Structure:**
+
 ```markdown
 ## SEO Audit Report: [DOMAIN]
 **Date:** YYYY-MM-DD | **Scope:** [scope]
@@ -96,3 +98,4 @@ Audit in priority order. Record status, evidence, impact, and next action. Focus
 - `seo/google-search-console.md` — GSC integration
 - `seo/dataforseo.md` — DataForSEO API
 - `commands/performance.md` — Performance audit command
+- `seo/video-seo.md` — video optimisation checklist (YouTube + Key Moments + LLM surfaces)

@@ -40,3 +40,4 @@ Target: $ARGUMENTS
 - `commands/seo-sro.md`
 - `commands/seo-hallucination-defense.md`
 - `commands/seo-agent-discovery.md`
+- `seo/video-seo.md` — video readiness for LLM answer engine surfaces

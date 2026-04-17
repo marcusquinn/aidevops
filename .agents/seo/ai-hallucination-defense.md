@@ -43,3 +43,4 @@ Prevent misinformation by fixing contradictions and weakly-supported claims in s
 - `geo-strategy.md` — criteria and retrieval planning
 - `sro-grounding.md` — snippet survivability
 - `ai-agent-discovery.md` — autonomous discoverability checks
+- `transcript-seo.md` — video/audio transcripts as canonical fact sources for claim verification
