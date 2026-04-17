@@ -447,10 +447,15 @@ SCRIPT=~/.aidevops/agents/scripts/dispatch-dedup-helper.sh
 
 | Reference | What it fixed |
 |---|---|
+| GH#6696 | Layer 1 dispatch ledger — catches workers in 10–15 min pre-PR gap |
 | GH#6891 | Layer 6 cross-machine assignee guard (original) |
+| GH#10521 | Maintainer passive assignment starvation — combined-signal rule origin |
 | GH#11086 | Layer 7 claim comment as mandatory code path (not LLM-instructed) |
 | GH#11141 | Layer 5 cross-machine dispatch comment |
 | GH#17503 | Token cost runaway with multiple runners (stale-recovery loop evidence) |
 | GH#18352 (t1961) | `origin:interactive` blocks pulse dispatch on owner-assigned issues |
+| GH#18356 | Parent-task dispatch loop incident — t1962 parent dispatched with opus-4-6 |
+| GH#18367 | Interactive-claim race incident — pulse dispatched while interactive session active |
 | GH#18371 (PR#18374, t1970) | Interactive-claim race via push path missing auto-assign |
 | GH#18399 (PR#18419, t1986) | Parent-task 4-hole fix + test harness |
+| GH#18458 | Fail-open dedup bug — jq null-handling allowed dispatch to parent-task issues |
