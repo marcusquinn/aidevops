@@ -408,9 +408,9 @@
       "pr": 18172
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "at": "2026-04-17T02:21:39Z",
-      "hash": "d6cf89e7810d4ebc756a7741eba98714cb71e720",
-      "passes": 25,
+      "at": "2026-04-17T03:32:31Z",
+      "hash": "c93adb8c34e9e83c3a9a215f8bd328e85abbdf8a",
+      "passes": 26,
       "pr": 17979
     },
     ".agents/content.md": {
@@ -2126,9 +2126,9 @@
       "pr": 15502
     },
     ".agents/scripts/commands/seo-audit.md": {
-      "at": "2026-04-02T03:11:11Z",
-      "hash": "e04729ef8d0f40b30efc59f9914d8ec420218efa",
-      "passes": 1,
+      "at": "2026-04-17T03:32:40Z",
+      "hash": "3eaeed51aef3dd8d4d6e9f233d88e07b88d44c85",
+      "passes": 2,
       "pr": 15477
     },
     ".agents/scripts/commands/seo-optimize.md": {
@@ -2680,9 +2680,9 @@
       "pr": 15532
     },
     ".agents/seo/content-analyzer.md": {
-      "at": "2026-04-02T04:56:49Z",
-      "hash": "1de62234174d8c6c0f62dd304458405b652eaf35",
-      "passes": 1,
+      "at": "2026-04-17T03:32:43Z",
+      "hash": "cf762dfb4febc96476e8ac1af07dc854ac6b15e0",
+      "passes": 2,
       "pr": 15478
     },
     ".agents/seo/contentking.md": {
@@ -2734,9 +2734,9 @@
       "pr": 12181
     },
     ".agents/seo/geo-strategy.md": {
-      "at": "2026-04-03T20:00:32Z",
-      "hash": "c1018d8590e58e3fd4852c1014fa58de1320d3cf",
-      "passes": 3,
+      "at": "2026-04-17T03:32:43Z",
+      "hash": "3cca7dbf25792d6a5c8c415b44581e8f3fe5d9e7",
+      "passes": 4,
       "pr": "pending"
     },
     ".agents/seo/google-search-console.md": {
@@ -2787,9 +2787,9 @@
       "pr": 11350
     },
     ".agents/seo/programmatic-seo.md": {
-      "at": "2026-04-02T21:20:03Z",
-      "hash": "0df348b7b8ba74ca274dbe32a43e3404c21d3a3b",
-      "passes": 2,
+      "at": "2026-04-17T03:32:44Z",
+      "hash": "305f243d91488425b2a7f1b15d404af3c0e6c772",
+      "passes": 3,
       "pr": 13301
     },
     ".agents/seo/query-fanout-research.md": {
@@ -2805,15 +2805,15 @@
       "pr": 16713
     },
     ".agents/seo/rich-results.md": {
-      "at": "2026-04-02T22:44:04Z",
-      "hash": "68907e4d92d42466ef2285b68d75d6c6f8b10f31",
-      "passes": 1,
+      "at": "2026-04-17T03:32:44Z",
+      "hash": "d85f27df5ea8990f621afe7397de95360e40ed4f",
+      "passes": 2,
       "pr": 15665
     },
     ".agents/seo/schema-validator.md": {
-      "at": "2026-04-03T19:14:46Z",
-      "hash": "b9d51a4ed48477ce7053839e3a9561dc9cdaaca5",
-      "passes": 1,
+      "at": "2026-04-17T03:32:44Z",
+      "hash": "ab8f1d7cdd0cad02e8ad1ecd4403c30c6fb7f3fc",
+      "passes": 2,
       "pr": 16757
     },
     ".agents/seo/semrush.md": {
@@ -2853,9 +2853,9 @@
       "pr": 13444
     },
     ".agents/seo/seo-audit.md": {
-      "at": "2026-04-11T13:54:28Z",
-      "hash": "e04729ef8d0f40b30efc59f9914d8ec420218efa",
-      "passes": 1,
+      "at": "2026-04-17T03:32:44Z",
+      "hash": "3eaeed51aef3dd8d4d6e9f233d88e07b88d44c85",
+      "passes": 2,
       "pr": 18210
     },
     ".agents/seo/seo-optimizer.md": {
@@ -7486,9 +7486,9 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-04-17T02:40:13Z",
-      "hash": "4c4500a037d159eb6474baeeb5bb67fcefec2266",
-      "passes": 33,
+      "at": "2026-04-17T03:33:14Z",
+      "hash": "a088003522d9bdec60e1e16fe3285c84d361b15b",
+      "passes": 34,
       "pr": 15490
     },
     "aidevops.sh": {
