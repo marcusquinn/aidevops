@@ -597,7 +597,7 @@ fixture_open_pr_resolving() {
 		[
 			{
 				"number": 19466,
-				"body": "## Summary\n\nFix the thing.\n\nResolves #" + $n + "\n\n## Testing\n..."
+				"body": ("## Summary\n\nFix the thing.\n\nResolves #" + $n + "\n\n## Testing\n...")
 			}
 		]
 	'
@@ -611,7 +611,7 @@ fixture_open_pr_non_closing() {
 		[
 			{
 				"number": 19467,
-				"body": "## Summary\n\nDocs-only follow-up that mentions #" + $n + " for context.\n\nFor #" + $n + "\n\n## Testing\n..."
+				"body": ("## Summary\n\nDocs-only follow-up that mentions #" + $n + " for context.\n\nFor #" + $n + "\n\n## Testing\n...")
 			}
 		]
 	'
