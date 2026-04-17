@@ -408,9 +408,9 @@
       "pr": 18172
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "at": "2026-04-17T14:30:32Z",
-      "hash": "1711dad558a356db17e64b697cf58eeb9c75a087",
-      "passes": 37,
+      "at": "2026-04-17T15:55:32Z",
+      "hash": "9a67ed7a1c20b8b5c5c720183c60e8b882eaec36",
+      "passes": 38,
       "pr": 17979
     },
     ".agents/content.md": {
@@ -2466,9 +2466,9 @@
       "pr": 18680
     },
     ".agents/scripts/pulse-simplification.sh": {
-      "at": "2026-04-16T19:05:41Z",
-      "hash": "c2d7dcc9f37820d664d5a1444e70daaf2f60cdd4",
-      "passes": 8,
+      "at": "2026-04-17T15:55:43Z",
+      "hash": "731b6d49e3cbb80aa327034b9ed413caf6001bd1",
+      "passes": 9,
       "pr": 18653
     },
     ".agents/scripts/pulse-triage.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-04-17T03:33:14Z",
-      "hash": "a088003522d9bdec60e1e16fe3285c84d361b15b",
-      "passes": 34,
+      "at": "2026-04-17T15:56:08Z",
+      "hash": "1b23b7d8162cc2c73f6b45a72f6722423302553b",
+      "passes": 35,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-04-17T02:40:13Z",
-      "hash": "545a9967e052231c49910197741a59cfc82fbdc6",
-      "passes": 75,
+      "at": "2026-04-17T15:56:09Z",
+      "hash": "5749808d09ddfc2e64f56ae3a514f1232ce7bf9a",
+      "passes": 76,
       "pr": 19029
     },
     "setup-modules/agent-deploy.sh": {
@@ -7504,9 +7504,9 @@
       "pr": 19203
     },
     "setup.sh": {
-      "at": "2026-04-17T02:40:13Z",
-      "hash": "fd411d0daa75d2a1705b5cfeb6d6607329434024",
-      "passes": 73,
+      "at": "2026-04-17T15:56:09Z",
+      "hash": "2e7262fb7d6deba999555f3b379ad30f9683fdf2",
+      "passes": 74,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
