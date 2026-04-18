@@ -10,6 +10,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.71] - 2026-04-18
+
+### Added
+
+- add complexity-regression pre-push guard and generalize installer (t2198) (#19710)
+
+### Changed
+
+- force base-10 in _resolve_current_counter octal-trap comparisons (#19709)
+- fix PATH ordering and clear AIDEVOPS_BASH_REEXECED env leak (#19707)
+- Documentation: sync cloudron skill files with upstream git.cloudron.io/docs/skills (t2213) (#19708)
+- correct observability.md falsified Tool.execute OTEL root cause and upstream link (#19705)
+- document NMR auto-approval forces auto-dispatch label on maintainer-authored issues (#19704)
+- Maintenance: update simplification state registry
+- install pre-commit hook, biome.json, document Codacy auto-fix anti-pattern (#19683)
+- file Linux worker launch failure diagnosis task for alex-solovyev (#19680)
+- trim INTENT_PARAM_SCHEMA description to reduce per-request token cost (#19676)
+- fix Effect.runPromise terminology and session-introspect-helper.sh naming in observability.md (#19677)
+- fix trap chaining, fixed-string dedup, and --issue validation in issue-sync-relationships.sh (#19674)
+- fix regex to detect combined flag patterns in assoc-array and nameref detection (#19675)
+- Maintenance: update simplification state registry
+- declare agent__intent on tool schemas so Anthropic preserves it (#19663)
+- document opencode run-mode Tool.execute OTEL span gap (#19662)
+- Maintenance: update simplification state registry
+- Maintenance: add t2187 backlog entry + brief (opencode run mode Tool.execute span gap) (#19661)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2186 complete (pr:#19659)
+- fix(headless): include OTEL_* in sandbox passthrough for worker trace export (#19659)
+- fix bash re-exec guard BASH_SOURCE stack walk + plist modern bash (#19656)
+- Maintenance: update simplification state registry
+- feat(pulse-merge): coderabbit-nits-ok label to auto-dismiss CR-only CHANGES_REQUESTED reviews (#19653)
+- tighten observability.md prose (150→143 lines) (#19655)
+- tighten opencode-maintenance.md (163→140 lines) (#19654)
+- fix(pulse-routines): silence unrecognised schedule expression noise (#19652)
+- Maintenance: mark t2184 complete (pr:#19651)
+- fix(observability): capture duration_ms + metadata in tool_calls INSERT (#19651)
+- Maintenance: update simplification state registry
+
 ## [3.8.70] - 2026-04-18
 
 ### Changed
