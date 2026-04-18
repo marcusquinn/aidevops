@@ -126,9 +126,7 @@ const INTENT_PARAM_NAME = "agent__intent";
 const INTENT_PARAM_SCHEMA = Object.freeze({
   type: "string",
   description:
-    "Intent tracing (observability). One sentence in present participle form describing " +
-    "your intent for this tool call (e.g., \"Reading the file to understand the existing schema\"). " +
-    "No trailing period. Stripped before tool execution — used only for debugging and audit trails.",
+    "Intent tracing: one sentence in present participle form describing your intent for this tool call (no trailing period).",
 });
 
 /**
