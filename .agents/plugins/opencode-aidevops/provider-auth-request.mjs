@@ -116,6 +116,64 @@ function prefixToolNames(tools) {
   });
 }
 
+/**
+ * Intent tracing field name — must match INTENT_FIELD in intent-tracing.mjs.
+ * Duplicated here (not imported) because this module runs inside the
+ * request-transform hot path and must have no module-graph surprises.
+ */
+const INTENT_PARAM_NAME = "agent__intent";
+
+const INTENT_PARAM_SCHEMA = Object.freeze({
+  type: "string",
+  description:
+    "Intent tracing (observability). One sentence in present participle form describing " +
+    "your intent for this tool call (e.g., \"Reading the file to understand the existing schema\"). " +
+    "No trailing period. Stripped before tool execution — used only for debugging and audit trails.",
+});
+
+/**
+ * Inject agent__intent as an optional property on every tool's input_schema.
+ *
+ * Anthropic's Messages API validates tool-call arguments against each tool's
+ * declared input_schema and strips unknown properties before delivering the
+ * tool_use block to the client. Without this declaration, the system-prompt
+ * instruction to "include agent__intent" is honored by the LLM but dropped
+ * by the API before reaching opencode's tool.execute.before hook — which is
+ * why plugins/opencode-aidevops/intent-tracing.mjs sees empty args for every
+ * Anthropic toolu_* call.
+ *
+ * OpenAI preserves unknown tool-arg properties, so call_* IDs kept working.
+ * This fix is Anthropic-only (which is what this provider-auth module runs).
+ *
+ * Keep additive: never modify `required`; never touch tools that lack a
+ * standard JSON-Schema `type: "object"` input_schema; never overwrite an
+ * existing `agent__intent` property (a future tool might legitimately use
+ * that name for its own purposes).
+ *
+ * @param {Array<any>} tools
+ * @returns {Array<any>}
+ */
+export function injectIntentParameter(tools) {
+  return tools.map((tool) => {
+    const schema = tool?.input_schema;
+    if (!schema || schema.type !== "object") return tool;
+    const properties = schema.properties ?? {};
+    if (Object.prototype.hasOwnProperty.call(properties, INTENT_PARAM_NAME)) {
+      return tool;
+    }
+    return {
+      ...tool,
+      input_schema: {
+        ...schema,
+        properties: {
+          ...properties,
+          [INTENT_PARAM_NAME]: INTENT_PARAM_SCHEMA,
+        },
+      },
+    };
+  });
+}
+
 function prefixToolUseBlocks(messages) {
   return messages.map((msg) => {
     if (!msg.content || !Array.isArray(msg.content)) return msg;
@@ -144,7 +202,10 @@ function applyBodyTransforms(parsed) {
   );
   parsed.system.unshift({ type: "text", text: billingText });
   parsed.system = sanitizeSystemPrompt(parsed.system);
-  if (Array.isArray(parsed.tools)) parsed.tools = prefixToolNames(parsed.tools);
+  if (Array.isArray(parsed.tools)) {
+    parsed.tools = prefixToolNames(parsed.tools);
+    parsed.tools = injectIntentParameter(parsed.tools);
+  }
   if (Array.isArray(parsed.messages)) parsed.messages = prefixToolUseBlocks(parsed.messages);
   if (isAdaptiveThinkingModel(parsed.model)) {
     if (!parsed.thinking || parsed.thinking.type !== "adaptive") parsed.thinking = { type: "adaptive" };
