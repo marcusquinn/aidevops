@@ -130,7 +130,7 @@ every tool is wrapped via
 `.pipe(Effect.orDie, Effect.withSpan("Tool.execute", { attributes: attrs }))`.
 It simply does not appear in the OTEL export in `run` mode.
 
-**What is NOT the cause** (falsified against `sst/opencode` source on
+**What is NOT the cause** (falsified against `anomalyco/opencode` source on
 2026-04-18 as part of t2212):
 
 - NOT an `AsyncLocalStorageContextManager` gap. `packages/opencode/src/effect/observability.ts`
@@ -192,16 +192,16 @@ accepted**: rely on plugin SQLite for per-tool observability in `run`
 mode. Re-evaluate if opencode fixes the span gap upstream or if a
 future version exposes a tracer handle to plugins.
 
-**Upstream status:** the active opencode upstream is `sst/opencode`
+**Upstream status:** the active opencode upstream is `anomalyco/opencode`
 (not archived, default branch `dev`, Bun-compiled TypeScript, public
 issue tracker active, verified 2026-04-18 via `gh api`). A separate,
 legacy Go codebase exists at `opencode-ai/opencode` (archived, last
 push 2025-09-18) — that is NOT the same project as the v1.4.x
 Bun-compiled TypeScript binary users actually run. The span gap may
-be resolved in a future `sst/opencode` release if a contributor lands
+be resolved in a future `anomalyco/opencode` release if a contributor lands
 an explicit span-export in the tool execution path or the AI SDK
 switches to a span-preserving execution model. File OTEL-related
-issues at `https://github.com/sst/opencode/issues`; monitor release
+issues at `https://github.com/anomalyco/opencode/issues`; monitor release
 notes there for changes.
 
 ## Verifying the OTEL integration
