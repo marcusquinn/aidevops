@@ -16,7 +16,7 @@
 
 During v3.8.71 release, the pre-commit hook rejected `chore(release): bump version to 3.8.71`:
 
-```
+```text
 [ERROR] Direct positional parameter usage in aidevops.sh
 64:print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 65:print_success() { echo -e "${GREEN}[OK]${NC} $1"; }

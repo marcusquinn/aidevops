@@ -16,7 +16,7 @@ Wrap `curl` calls in `.agents/scripts/validate-version-consistency.sh` in a retr
 
 During PR #19715 CI on 2026-04-18, the Version Consistency Check failed with:
 
-```
+```text
 curl: (22) The requested URL returned error: 504
 ❌ Version Validation: FAILED
 Version inconsistencies detected. Please fix before merging.
