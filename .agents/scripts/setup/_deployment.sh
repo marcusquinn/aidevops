@@ -81,8 +81,22 @@ deploy_aidevops_agents() {
 		return 1
 	}
 
-	# Set permissions on scripts
+	# Set permissions on scripts and bin shims
 	chmod +x "${target_dir}/scripts/"*.sh 2>/dev/null || true
+	chmod +x "${target_dir}/bin/"* 2>/dev/null || true
+
+	# t2199: Symlink bin shims into ~/.aidevops/bin/ for PATH discoverability.
+	# ~/.aidevops/bin/ is already on PATH (managed by setup.sh shell-env).
+	if [[ -d "${target_dir}/bin" ]]; then
+		mkdir -p "${HOME}/.aidevops/bin"
+		local shim
+		for shim in "${target_dir}/bin/"*; do
+			[[ -f "$shim" ]] || continue
+			local shim_name
+			shim_name="$(basename "$shim")"
+			ln -sf "$shim" "${HOME}/.aidevops/bin/${shim_name}"
+		done
+	fi
 
 	echo "[deploy] Deployed agents to ${target_dir} ($(find "$target_dir" -type f | wc -l | tr -d ' ') files)"
 	return 0

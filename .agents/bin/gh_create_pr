@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# Thin PATH shim for gh_create_pr (t2199).
+# Sources shared-constants.sh and calls the gh_create_pr wrapper function
+# so that `origin:interactive` / `origin:worker` labels are always applied.
+#
+# This makes the wrapper discoverable via `type gh_create_pr` in any shell
+# — including agent tool-invocation shells that don't source shared-constants.sh.
+
+set -euo pipefail
+
+# Resolve shared-constants.sh: prefer repo-local (worktree), then deployed.
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" 2>/dev/null && pwd)" || true
+_SHARED_CONSTANTS=""
+if [[ -n "${_SCRIPT_DIR:-}" && -f "${_SCRIPT_DIR}/shared-constants.sh" ]]; then
+	_SHARED_CONSTANTS="${_SCRIPT_DIR}/shared-constants.sh"
+elif [[ -f "${HOME}/.aidevops/agents/scripts/shared-constants.sh" ]]; then
+	_SHARED_CONSTANTS="${HOME}/.aidevops/agents/scripts/shared-constants.sh"
+fi
+
+if [[ -z "$_SHARED_CONSTANTS" ]]; then
+	echo "[ERROR] gh_create_pr: shared-constants.sh not found" >&2
+	exit 1
+fi
+
+# shellcheck disable=SC1090  # dynamic path resolved at runtime
+source "$_SHARED_CONSTANTS"
+
+gh_create_pr "$@"
