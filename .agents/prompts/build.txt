@@ -507,6 +507,7 @@ Never apply AI tool suggestions without independent verification. AI reviewers h
   - Dedents content inside fenced code blocks, breaking indentation-sensitive languages.
   - Flips emphasis markers inconsistently (`*foo*` ↔ `_foo_`) mid-document.
 - Required flow: read the Codacy finding, navigate to `file:line` yourself, apply the fix by hand with Edit/Write. Run `shellcheck` / `markdownlint-cli2` / `biome check` locally to confirm the issue is actually resolved.
+- Worked example — Codacy reports MD040 (fenced code block missing language) on `docs/guide.md:42`: open `docs/guide.md`, read the surrounding context, add the correct language tag (`bash`, `json`, `text` — NOT whatever Codacy guessed), then run `npx --yes markdownlint-cli2 docs/guide.md` and confirm MD040 is gone without introducing new findings.
 - Tool-native configs (`.bandit`, `biome.json`, `.markdownlint.json`, `.shellcheckrc`) ARE respected by Codacy — disable a noisy rule at the source instead of hand-fixing every occurrence of a false positive.
 
 # Model-Specific Reinforcements

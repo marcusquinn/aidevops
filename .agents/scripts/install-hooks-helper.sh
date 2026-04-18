@@ -197,8 +197,11 @@ install_pre_commit_hook() {
 	if [[ -f "$hook_path" ]]; then
 		if grep -q "$PRE_COMMIT_MARKER" "$hook_path" 2>/dev/null; then
 			print_info "pre-commit hook already installed — refreshing dispatcher"
-		elif grep -q "aidevops" "$hook_path" 2>/dev/null; then
-			# Existing aidevops-managed pre-commit hook — chain ours in
+		elif grep -qE "^#[[:space:]]*aidevops-[a-z-]+" "$hook_path" 2>/dev/null; then
+			# Existing aidevops-managed pre-commit hook — chain ours in.
+			# Detection: a sibling aidevops marker line (e.g. the gh-wrapper-guard
+			# marker if we ever share pre-commit) rather than bare mentions of
+			# "aidevops" in comments/paths, which could false-match.
 			if ! grep -q "pre-commit-hook.sh" "$hook_path" 2>/dev/null; then
 				# shellcheck disable=SC2016 # single quotes intentional — template content
 				{
