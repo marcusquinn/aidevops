@@ -493,14 +493,57 @@ ON CONFLICT(session_id) DO UPDATE SET
 }
 
 /**
+ * Build the INSERT SQL for a tool_calls row. Pure function — no DB access,
+ * no global state — so it is exhaustively testable without sqlite3.
+ *
+ * Column order must stay aligned with the `tool_calls` CREATE TABLE in
+ * initDatabase(). If you add or reorder columns there, update this
+ * builder and its test suite (test-observability-tool-calls.mjs) in the
+ * same commit.
+ *
+ * @param {object} args
+ * @param {string} args.sessionID
+ * @param {string} args.callID
+ * @param {string} args.toolName
+ * @param {string | null | undefined} args.intent
+ * @param {0 | 1} args.isSuccess
+ * @param {number | null | undefined} args.durationMs - Elapsed ms, or null/undefined to store SQL NULL
+ * @param {object | null | undefined} args.metadata - Raw metadata object; JSON-stringified before escape
+ * @returns {string} INSERT statement ready for sqliteExec
+ */
+export function buildToolCallInsertSql({ sessionID, callID, toolName, intent, isSuccess, durationMs, metadata }) {
+  const durationSql = (durationMs !== null && durationMs !== undefined)
+    ? String(durationMs)
+    : "NULL";
+  // sqlEscape(null) returns the literal string "NULL" — we exploit that
+  // so the metadata column renders as SQL NULL when metadata is absent.
+  const metadataValue = (metadata !== null && metadata !== undefined)
+    ? JSON.stringify(metadata)
+    : null;
+
+  return `INSERT INTO tool_calls (
+    session_id, call_id, tool_name, intent, success, duration_ms, metadata
+  ) VALUES (
+    ${sqlEscape(sessionID)},
+    ${sqlEscape(callID)},
+    ${sqlEscape(toolName)},
+    ${sqlEscape(intent || null)},
+    ${isSuccess},
+    ${durationSql},
+    ${sqlEscape(metadataValue)}
+  );`;
+}
+
+/**
  * Record a tool call from the tool.execute.after hook.
  * Increments the in-memory counter and writes to the tool_calls table.
  *
  * @param {object} input - { tool, sessionID, callID, args }
  * @param {object} output - { title, output, metadata }
  * @param {string | undefined} intent - LLM-provided intent string (from agent__intent field)
+ * @param {number | null | undefined} [durationMs] - Elapsed milliseconds from tool.execute.before (t2184)
  */
-export function recordToolCall(input, output, intent) {
+export function recordToolCall(input, output, intent, durationMs) {
   if (!dbReady) return;
 
   const toolName = input.tool || "";
@@ -531,16 +574,15 @@ export function recordToolCall(input, output, intent) {
     !outputText.includes("FAILED") &&
     !outputText.includes("Error:") ? 1 : 0;
 
-  const sql = `INSERT INTO tool_calls (
-    session_id, call_id, tool_name, intent, success, metadata
-  ) VALUES (
-    ${sqlEscape(sessionID)},
-    ${sqlEscape(callID)},
-    ${sqlEscape(toolName)},
-    ${sqlEscape(intent || null)},
-    ${isSuccess},
-    NULL
-  );`;
+  const sql = buildToolCallInsertSql({
+    sessionID,
+    callID,
+    toolName,
+    intent,
+    isSuccess,
+    durationMs,
+    metadata: output?.metadata,
+  });
 
   sqliteExec(sql);
 }
