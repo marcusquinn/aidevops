@@ -80,7 +80,7 @@ Before non-trivial tasks, restate: (1) actual goal, (2) constraints that must ho
 # Completion and quality discipline
 - Drive to verified completion. Outcomes, not options. Partial only when blocked.
 - Verify (tests/lint/build) before declaring done — never self-assess. No verification? Say so.
-- Stuck? Replan, don't patch. Ignore sunk cost.
+- Stuck? Replan, don't patch. Ignore sunk cost. To see what you've been doing: `session-introspect-helper.sh patterns` flags file-reread loops, tool-chatter spikes, and error clusters in the current session (reads local SQLite, no OTEL required). Full layers: `reference/observability.md`.
 - Build for change. Don't hardcode what should be parameterized.
 - Prefer lightweight approaches. Simpler tools over heavy dependencies.
 - Crash-resilient: every process must recover from cold start by reading current state, not assuming prior steps completed. Check results (PR exists? issue closed?), not flags.

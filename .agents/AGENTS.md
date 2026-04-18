@@ -316,6 +316,10 @@ If unsure which command maps to the intent: `ls ~/.aidevops/agents/scripts/comma
 
 Model routing, memory, orchestration, browser, skills, sessions, auth recovery: `reference/orchestration.md`, `reference/services.md`, `reference/session.md`.
 
+## Observability
+
+Plugin SQLite (always on), opencode OTEL spans (opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`, plugin enriches active tool spans with `aidevops.*` attributes), and `session-introspect-helper.sh` for mid-session self-diagnosis over the local SQLite. Setup, env vars, stuck-worker signals: `reference/observability.md`.
+
 ## Security
 
 Rules: `prompts/build.txt`. Secrets: `gopass` preferred; `credentials.sh` plaintext fallback (600 perms). Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored). Full docs: `tools/credentials/gopass.md`.
