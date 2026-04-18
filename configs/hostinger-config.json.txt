@@ -4,15 +4,15 @@
       "server": "server-hostname-or-ip",
       "port": 65002,
       "username": "u123456789",
-      "password_file": "~/.ssh/hostinger_password",
+      "ssh_identity_file": "~/.ssh/hostinger_ed25519",
       "domain_path": "/domains/example.com/public_html",
-      "description": "Main website"
+      "description": "Main website (SSH key auth — recommended)"
     },
     "blog.example.com": {
       "server": "server-hostname-or-ip",
       "port": 65002,
       "username": "u123456789",
-      "password_file": "~/.ssh/hostinger_password",
+      "ssh_identity_file": "~/.ssh/hostinger_ed25519",
       "domain_path": "/domains/blog.example.com/public_html",
       "description": "Company blog"
     },
@@ -22,13 +22,13 @@
       "username": "u123456789",
       "password_file": "~/.ssh/hostinger_password",
       "domain_path": "/domains/shop.example.com/public_html",
-      "description": "Online store"
+      "description": "Online store (password auth fallback example)"
     },
     "api.example.com": {
       "server": "server-hostname-or-ip",
       "port": 65002,
       "username": "u123456789",
-      "password_file": "~/.ssh/hostinger_password",
+      "ssh_identity_file": "~/.ssh/hostinger_ed25519",
       "domain_path": "/domains/api.example.com/public_html",
       "description": "API backend"
     },
@@ -36,7 +36,7 @@
       "server": "server-hostname-or-ip",
       "port": 65002,
       "username": "u123456789",
-      "password_file": "~/.ssh/hostinger_password",
+      "ssh_identity_file": "~/.ssh/hostinger_ed25519",
       "domain_path": "/domains/docs.example.com/public_html",
       "description": "Documentation site"
     }
@@ -49,6 +49,7 @@
     "server": "server-hostname-or-ip",
     "port": 65002,
     "username": "u123456789",
+    "ssh_identity_file": "~/.ssh/hostinger_ed25519",
     "password_file": "~/.ssh/hostinger_password"
   }
 }
