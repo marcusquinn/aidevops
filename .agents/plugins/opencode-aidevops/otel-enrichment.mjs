@@ -5,6 +5,15 @@
 // the AsyncLocalStorage context manager so nested code (our plugin hooks
 // included) observes the active span via @opentelemetry/api's `trace.getActiveSpan()`.
 //
+// KNOWN LIMITATION (t2187, 2026-04-18): in `run` mode (opencode v1.4.11),
+// the Tool.execute span is defined in the Effect-TS pipeline but does not
+// propagate to OTEL. The AI SDK's Promise-based tool execution boundary
+// breaks the AsyncLocalStorageContextManager context, so getActiveSpan()
+// returns undefined for every tool call in headless run mode. Outer
+// orchestration spans (Config.*, Session.*, etc.) are unaffected.
+// Plugin-side SQLite recording is independent and works in all modes.
+// See reference/observability.md "Known limitation: run mode" for details.
+//
 // This module offers a dynamic, fail-soft path to enrich that span with
 // aidevops-specific attributes (intent, task_id, session_origin, runtime)
 // WITHOUT adding @opentelemetry/api as a hard dependency. If the module
