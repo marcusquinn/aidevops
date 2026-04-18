@@ -28,6 +28,7 @@ r909|x|Screen time snapshot|repeat:cron(0 */6 * * *)|~10s|scripts/screen-time-he
 r910|x|Skills sync — refresh agent skills|repeat:cron(*/5 * * * *)|~15s|bin/aidevops-skills-sync|script
 r911|x|OAuth token refresh|repeat:cron(*/30 * * * *)|~10s|scripts/oauth-pool-helper.sh refresh|script
 r912|x|Dashboard server|repeat:persistent|~0s|server/index.ts|service
+r913|x|Weekly opencode DB maintenance|repeat:weekly(sun@04:00)|~2m|scripts/opencode-db-maintenance-helper.sh auto|script
 ENTRIES
 	return 0
 }
@@ -644,6 +645,103 @@ $(_scheduler_row_calendar "$os" "KeepAlive: true" "com.aidevops.dashboard" "sh.a
 
 - Browser: \`http://localhost:<port>\` — dashboard UI
 - ${status_cmd}
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
+describe_r913() {
+	local os="${1:-darwin}"
+	cat <<EOF
+# r913: Weekly opencode DB maintenance
+
+## Overview
+
+Periodic SQLite maintenance for the opencode session database
+(\`~/.local/share/opencode/opencode.db\`) to reduce "database is locked"
+errors under concurrent session load.
+
+opencode stores session state in SQLite with WAL journaling. Each process
+opens multiple DB connections (read-pool + writer), so even a single TUI
+already creates multi-writer contention at the SQLite layer. As the DB
+grows (1 GB+ is common for active users), individual write transactions
+exceed the compiled busy_timeout (5s) and surface as session-halting
+\`SQLITE_BUSY\` errors.
+
+This routine cannot fix the architectural problem — that requires upstream
+changes in opencode (tracked in anomalyco/opencode #21215, #20935, #21579).
+It DOES minimise lock-hold time by keeping the DB compact and the WAL
+truncated.
+
+## Schedule
+
+| Field | Value |
+|-------|-------|
+| Frequency | Weekly, Sunday 04:00 local |
+| Type | script |
+| Expected duration | ~2 minutes (when VACUUM runs) |
+| Script | \`scripts/opencode-db-maintenance-helper.sh auto\` |
+$(_scheduler_row_calendar "$os" "StartCalendarInterval: Weekday=0, Hour=4, Minute=0" "sh.aidevops.opencode-db-maintenance" "sh.aidevops.opencode-db-maintenance")
+
+## What it does
+
+1. Checks if opencode is installed (\`~/.local/share/opencode/opencode.db\` exists)
+   — silent no-op if not, so users who don't use opencode see no errors
+2. Refuses to run if any opencode processes are active (safety)
+3. Runs \`PRAGMA wal_checkpoint(TRUNCATE)\` — folds pending writes into main DB
+4. Runs \`PRAGMA optimize\` — refreshes query planner statistics
+5. Runs \`VACUUM\` if free-page fraction >10% or DB larger than 500 MB
+6. Records outcome in state file for throttling next run
+
+## Safety
+
+- **Never runs with active opencode processes** — maintenance requires
+  exclusive DB access. If the Sunday 04:00 slot has live sessions, the
+  run is skipped with a log entry.
+- **Throttled** — \`auto\` mode skips if the last successful run was less
+  than 6 days ago (\`AUTO_MIN_SECONDS_BETWEEN\`).
+- **No data loss** — VACUUM rewrites the DB file but preserves all rows.
+  Failure mid-VACUUM is recovered by SQLite's journal.
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| \`VACUUM_FREELIST_THRESHOLD\` | 0.10 | Fraction of free pages triggering VACUUM |
+| \`FORCE_VACUUM_SIZE_MB\` | 500 | Always VACUUM above this size (MB) |
+| \`AUTO_MIN_SECONDS_BETWEEN\` | 518400 | Seconds between auto runs (6 days) |
+
+## Manual invocation
+
+\`\`\`bash
+# See current DB stats without mutating:
+opencode-db-maintenance-helper.sh report
+
+# Dry check — is maintenance safe to run now?
+opencode-db-maintenance-helper.sh check
+
+# Run now (only if no opencode sessions active):
+opencode-db-maintenance-helper.sh maintain
+
+# Run now even with active sessions (risks SQLITE_BUSY in those sessions):
+opencode-db-maintenance-helper.sh maintain --force
+\`\`\`
+
+## What to check
+
+- \`~/.aidevops/.agent-workspace/work/opencode-maintenance/last-run.json\` —
+  last run outcome, duration, bytes reclaimed
+- \`~/.aidevops/.agent-workspace/work/opencode-maintenance/maintenance.log\` —
+  run history
+$(_diag_commands "$os" "sh.aidevops.opencode-db-maintenance" "sh.aidevops.opencode-db-maintenance")
+- \`opencode-db-maintenance-helper.sh report\` — current DB state
+
+## Related upstream issues
+
+- anomalyco/opencode #21215 — SQLITE_BUSY on concurrent sessions
+- anomalyco/opencode #21000 — Bash tool hangs on massive output, locks DB
+- anomalyco/opencode #20935 — Per-session-tree sharding (architectural fix)
+- anomalyco/opencode #21579 — Harden per-session SQLite sharding (PR)
 $(_platform_footnote "$os")
 EOF
 	return 0
