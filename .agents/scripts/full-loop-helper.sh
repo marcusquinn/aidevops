@@ -692,11 +692,41 @@ _rebase_and_push() {
 	return 0
 }
 
+# t2242: Check if a given issue has the parent-task label.
+# Modelled on parent-task-keyword-guard.sh:76 _is_parent_task.
+# Args: $1=issue_number $2=repo_slug
+# Returns: 0 if parent-task/meta label present, 1 if not, 2 on gh failure
+_issue_has_parent_task_label() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local labels_json=""
+	local gh_rc=0
+	labels_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json labels 2>/dev/null) || gh_rc=$?
+
+	if [[ "$gh_rc" -ne 0 || -z "$labels_json" ]]; then
+		# gh API failure — cannot determine. Return 2 (uncertain).
+		return 2
+	fi
+
+	local hit=""
+	hit=$(printf '%s' "$labels_json" |
+		jq -r '(.labels // [])[].name | select(. == "parent-task" or . == "meta")' | head -n 1 || true)
+
+	if [[ -n "$hit" ]]; then
+		return 0
+	fi
+	return 1
+}
+
 # Build the PR body string and print it to stdout.
-# Arguments: issue_number, summary_what, summary_testing, files_changed, sig_footer
+# Arguments: issue_number, summary_what, summary_testing, files_changed,
+#            sig_footer, closing_keyword (default: Resolves)
 _build_pr_body() {
 	local issue_number="$1" summary_what="$2" summary_testing="$3"
 	local files_changed="$4" sig_footer="$5"
+	local closing_keyword="${6:-Resolves}"
 
 	printf '%s\n' "## Summary
 
@@ -711,7 +741,7 @@ ${files_changed:-See diff}
 - **Risk level:** Low (agent prompts / infrastructure scripts)
 - **Verification:** ${summary_testing:-shellcheck clean, self-assessed}
 
-Resolves #${issue_number}
+${closing_keyword} #${issue_number}
 
 ${sig_footer}"
 	return 0
@@ -909,8 +939,18 @@ cmd_commit_and_pr() {
 	local files_changed=""
 	files_changed=$(git diff --name-only origin/main..HEAD 2>/dev/null | tr '\n' ', ' | sed 's/,$//' || echo "")
 
+	# t2242: Determine closing keyword — auto-swap Resolves to For when linked
+	# issue has parent-task label, unless --allow-parent-close overrides.
+	local closing_keyword="Resolves"
+	if [[ "$allow_parent_close" -eq 1 ]]; then
+		closing_keyword="Resolves"
+	elif _issue_has_parent_task_label "$issue_number" "$repo"; then
+		closing_keyword="For"
+		print_info "Issue #${issue_number} has parent-task label — using 'For' keyword (t2242)"
+	fi
+
 	local pr_body=""
-	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer")
+	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword")
 
 	# t2046: parent-task keyword guard — prevent Resolves/Closes/Fixes on
 	# parent-task issues. The parent must stay open until all phase children merge.
