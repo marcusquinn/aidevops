@@ -1493,9 +1493,31 @@ _run_canary_test() {
 		cp "$_oc_auth" "${_canary_data_dir}/opencode/auth.json" 2>/dev/null || true
 	fi
 
-	# perl alarm is the most portable macOS timeout mechanism
+	# Process-tree timeout: the `opencode` npm distribution ships a Node.js
+	# wrapper (#!/usr/bin/env node) that spawns the Go binary (.opencode)
+	# as a child via child_process.spawnSync. A `perl alarm` only delivers
+	# SIGALRM to the direct child (the Node wrapper); the Go grandchild
+	# does NOT inherit the ITIMER_REAL and survives the alarm, orphaning
+	# into the pulse service cgroup with PPID=systemd. `timeout(1)` puts
+	# the whole invocation in a new process group and, on firing, signals
+	# the entire group (SIGTERM, then SIGKILL after --kill-after grace),
+	# catching the grandchild too. (GH#19623)
+	local _canary_timeout_cmd=()
+	if command -v timeout >/dev/null 2>&1; then
+		# GNU coreutils timeout (Linux default; macOS via `brew install coreutils`)
+		_canary_timeout_cmd=(timeout --kill-after=5s "${CANARY_TIMEOUT_SECONDS}s")
+	elif command -v gtimeout >/dev/null 2>&1; then
+		# macOS with coreutils installed as gtimeout
+		_canary_timeout_cmd=(gtimeout --kill-after=5s "${CANARY_TIMEOUT_SECONDS}s")
+	else
+		# Last-resort fallback: perl alarm. Does NOT reap the Go grandchild
+		# when opencode is installed via npm; install coreutils
+		# (`brew install coreutils`) for clean behaviour.
+		_canary_timeout_cmd=(perl -e "alarm $CANARY_TIMEOUT_SECONDS; exec @ARGV" --)
+	fi
+
 	XDG_DATA_HOME="$_canary_data_dir" \
-		perl -e "alarm $CANARY_TIMEOUT_SECONDS; exec @ARGV" -- \
+		"${_canary_timeout_cmd[@]}" \
 		"$OPENCODE_BIN_DEFAULT" run "Reply with exactly: CANARY_OK" \
 		-m "$canary_model" --dir "${HOME}" \
 		${canary_attach_args[@]+"${canary_attach_args[@]}"} \
@@ -1508,10 +1530,11 @@ _run_canary_test() {
 	# success signal. The exit code reflects process lifecycle (opencode
 	# cleanup time, signal handling) not model health. Previously this
 	# required exit=0 AND CANARY_OK, but opencode 1.4.x takes longer to
-	# shut down cleanly — the perl alarm kills it (exit=142/SIGALRM) even
-	# after the model has already responded. Checking output alone is safe
-	# because CANARY_OK can only appear if the model actually processed
-	# the prompt and generated a response.
+	# shut down cleanly — the timeout mechanism kills it (exit=124/SIGTERM
+	# or 137/SIGKILL on Linux; exit=142/SIGALRM on perl-alarm fallback)
+	# even after the model has already responded. Checking output alone is
+	# safe because CANARY_OK can only appear if the model actually
+	# processed the prompt and generated a response.
 	if grep -q "CANARY_OK" "$canary_output" 2>/dev/null; then
 		# Cache the pass timestamp
 		mkdir -p "${STATE_DIR}" 2>/dev/null || true
