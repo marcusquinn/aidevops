@@ -41,6 +41,7 @@
 #   - _carry_forward_pr_diff                    (t2118)
 #   - _build_review_feedback_section           (t2093)
 #   - _dispatch_pr_fix_worker                   (t2093)
+#   - _pulse_merge_dismiss_coderabbit_nits      (t2179)
 #
 # This was originally a pure move from pulse-wrapper.sh. Later additions
 # (rebase nudges GH#18650/GH#18815, review-feedback routing t2093) live
@@ -682,6 +683,58 @@ _resolve_pr_mergeable_status() {
 }
 
 #######################################
+# Auto-dismiss CodeRabbit-only CHANGES_REQUESTED reviews when the
+# coderabbit-nits-ok PR label has been applied by a maintainer (t2179).
+#
+# Enumerates all CHANGES_REQUESTED reviews on the PR. If any reviewer is
+# NOT coderabbitai[bot], returns 1 immediately — human reviewers are never
+# auto-dismissed. Otherwise dismisses each CodeRabbit review via the GitHub
+# reviews/dismissals API and returns 0.
+#
+# Returns: 0 if all CR reviews dismissed (or none existed)
+#          1 if a non-CR human review is blocking dismissal
+#
+# Arguments: $1=pr_number, $2=repo_slug
+#######################################
+_pulse_merge_dismiss_coderabbit_nits() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local reviews_json review_count has_human ids review_id
+
+	# Fetch all CHANGES_REQUESTED reviews as id+login pairs.
+	reviews_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
+		--jq '[.[] | select(.state=="CHANGES_REQUESTED") | {id: .id, login: .user.login}]' \
+		2>/dev/null) || reviews_json="[]"
+
+	# No CHANGES_REQUESTED reviews — nothing to dismiss, safe to proceed.
+	review_count=$(printf '%s' "$reviews_json" | jq 'length' 2>/dev/null) || review_count=0
+	if [[ "$review_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	# If any CHANGES_REQUESTED reviewer is not coderabbitai[bot], bail immediately.
+	# Human reviewers are never auto-dismissed regardless of the label.
+	has_human=$(printf '%s' "$reviews_json" | \
+		jq -r '[.[] | select(.login != "coderabbitai[bot]")] | length' 2>/dev/null) || has_human=0
+	if [[ "$has_human" -gt 0 ]]; then
+		return 1
+	fi
+
+	# All CHANGES_REQUESTED reviews are from coderabbitai[bot] — dismiss each.
+	ids=$(printf '%s' "$reviews_json" | jq -r '.[].id' 2>/dev/null) || ids=""
+	while IFS= read -r review_id; do
+		[[ -z "$review_id" ]] && continue
+		gh api -X PUT \
+			"repos/${repo_slug}/pulls/${pr_number}/reviews/${review_id}/dismissals" \
+			-f message="Auto-dismissed: coderabbit-nits-ok label applied by maintainer (PR #${pr_number})" \
+			>/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — dismissed CodeRabbit review ${review_id} (t2179)" >>"$LOGFILE"
+	done <<<"$ids"
+
+	return 0
+}
+
+#######################################
 # Verify no branch-protection-required check on a PR is in a failed state.
 # Skips PRs with failing CI even when the merge would use --admin
 # (which bypasses branch protection).
@@ -757,21 +810,42 @@ _check_pr_merge_gates() {
 	# cycle picks the issue up with fresh context. Interactive PRs are
 	# always left alone (their humans own the feedback loop); external
 	# contributors go through their own crypto-approval flow.
+	#
+	# t2179: coderabbit-nits-ok override — if the maintainer applied the
+	# label and EVERY CHANGES_REQUESTED reviewer is coderabbitai[bot],
+	# auto-dismiss those reviews and fall through to the next gate. If any
+	# human reviewer is also blocking, the label is ignored.
 	if [[ "$pr_review" == "CHANGES_REQUESTED" ]]; then
-		if [[ -n "$linked_issue" ]]; then
-			local _cr_pr_labels
-			_cr_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
-				--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _cr_pr_labels=""
-			# Route if origin:worker present (origin:interactive may co-exist
-			# from issue inheritance — not a skip signal for worker PRs).
-			if [[ ",${_cr_pr_labels}," == *",origin:worker,"* &&
-				",${_cr_pr_labels}," != *",external-contributor,"* &&
-				",${_cr_pr_labels}," != *",review-routed-to-issue,"* ]]; then
-				_dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true
+		# Fetch labels once — reused by both the nits-ok check and the
+		# worker-routing block below.
+		local _cr_pr_labels
+		_cr_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _cr_pr_labels=""
+
+		# t2179: coderabbit-nits-ok path.
+		if [[ ",${_cr_pr_labels}," == *",coderabbit-nits-ok,"* ]]; then
+			if _pulse_merge_dismiss_coderabbit_nits "$pr_number" "$repo_slug"; then
+				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — auto-dismissed CodeRabbit-only CHANGES_REQUESTED reviews (coderabbit-nits-ok label) (t2179)" >>"$LOGFILE"
+				# Fall through to the next gate — do NOT return 1.
+			else
+				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — coderabbit-nits-ok label present but human reviewer also blocking (t2179)" >>"$LOGFILE"
+				return 1
 			fi
+		else
+			# No coderabbit-nits-ok label — route worker-authored PRs for fix
+			# dispatch and skip the merge.
+			if [[ -n "$linked_issue" ]]; then
+				# Route if origin:worker present (origin:interactive may co-exist
+				# from issue inheritance — not a skip signal for worker PRs).
+				if [[ ",${_cr_pr_labels}," == *",origin:worker,"* &&
+					",${_cr_pr_labels}," != *",external-contributor,"* &&
+					",${_cr_pr_labels}," != *",review-routed-to-issue,"* ]]; then
+					_dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true
+				fi
+			fi
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision=CHANGES_REQUESTED" >>"$LOGFILE"
+			return 1
 		fi
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision=CHANGES_REQUESTED" >>"$LOGFILE"
-		return 1
 	fi
 
 	# Skip external contributor PRs (non-collaborator)
