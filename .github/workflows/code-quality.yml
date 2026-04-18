@@ -897,3 +897,48 @@ jobs:
         echo "   Codacy: https://app.codacy.com/gh/marcusquinn/aidevops"
         echo ""
         echo "Code Quality Pipeline: COMPLETE"
+
+  markdownlint:
+    name: Markdown Lint
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: '20'
+
+    - name: Get changed markdown files
+      id: changed
+      run: |
+        base="${{ github.event.pull_request.base.sha }}"
+        head="${{ github.event.pull_request.head.sha }}"
+        files=$(git diff --name-only --diff-filter=ACM "$base" "$head" -- '*.md' | tr '\n' ' ')
+        echo "files=$files" >> "$GITHUB_OUTPUT"
+
+    - name: Run markdownlint-cli2
+      if: steps.changed.outputs.files != ''
+      run: npx --yes markdownlint-cli2@0.22.0 ${{ steps.changed.outputs.files }}
+
+  biome:
+    name: Biome CI
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: '20'
+
+    - name: Run biome ci
+      run: npx --yes @biomejs/biome@2.4.12 ci .
