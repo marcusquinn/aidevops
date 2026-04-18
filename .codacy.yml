@@ -53,3 +53,22 @@ exclude_paths:
   - ".agents/scripts/higgsfield/higgsfield-image.mjs"
   - ".agents/scripts/higgsfield/higgsfield-video.mjs"
   - ".agents/scripts/higgsfield/higgsfield-commands.mjs"
+  # Archived task briefs (t2178, GH#19636): point-in-time audit records of what
+  # was thought at the time a task was planned. We don't rewrite old briefs —
+  # they're immutable history. Codacy's markdownlint routinely suggests edits
+  # that would actively corrupt their content: joining function identifiers
+  # across whitespace (e.g. `extract _has_active_claim` → `extract_has_active_claim`),
+  # breaking GitHub issue refs (e.g. `#19222` → `# 19222`), eating spaces in
+  # math expressions (`0.95 * (1 - ...)` → `0.95 *(1 - ...)`), mixing emphasis
+  # markers, dedenting code-block content out of its fence, and more. Keeping
+  # these files out of Codacy stops the noise at source. ~428 files, ~55K LOC.
+  - "todo/tasks/**"
+  # Brand design reference library (t2178, GH#19636): heavily-prose markdown
+  # documenting third-party brand guidelines (ClickHouse, NVIDIA, etc.). Not
+  # executable code; style rules like "no trailing space after heading" produce
+  # noise without value on reference material. ~269 files, ~15.8K LOC.
+  - ".agents/tools/design/library/brands/**"
+  # Cloudflare platform skill docs (t2178, GH#19636): 188 prose-heavy markdown
+  # files describing Cloudflare product behaviour. Same category as the brand
+  # library — skill reference material, not source code. ~12.6K LOC.
+  - ".agents/services/hosting/cloudflare-platform-skill/**"
