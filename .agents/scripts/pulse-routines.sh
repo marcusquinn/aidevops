@@ -195,14 +195,17 @@ evaluate_routines() {
 
 		# Extract enabled routine lines: [x] rNNN ... repeat:EXPR
 		# Pattern: - [x] rNNN description repeat:expression [run:script] [agent:name]
+		# Selector requires r[0-9]+ immediately after [x] to prevent t-prefix task
+		# descriptions that mention repeat: from false-matching (bug t2175).
 		local line
 		while IFS= read -r line; do
 			# Skip disabled routines ([ ] prefix)
 			[[ "$line" =~ ^[[:space:]]*-[[:space:]]\[x\] ]] || continue
 
-			# Extract routine ID (rNNN)
+			# Extract routine ID (rNNN) — anchored to immediately after [x] so that
+			# r-prefixed IDs mentioned in task descriptions cannot produce a false match.
 			local routine_id=""
-			if [[ "$line" =~ (r[0-9]+) ]]; then
+			if [[ "$line" =~ ^[[:space:]]*-[[:space:]]\[x\][[:space:]]+(r[0-9]+) ]]; then
 				routine_id="${BASH_REMATCH[1]}"
 			else
 				continue
@@ -219,6 +222,12 @@ evaluate_routines() {
 			if [[ "$line" =~ $_re_repeat ]]; then
 				repeat_expr="${BASH_REMATCH[1]}"
 			else
+				continue
+			fi
+
+			# Persistent: lifecycle-managed externally (launchd/systemd/supervisor).
+			# The pulse never schedules these — skip silently (bug t2175).
+			if [[ "$repeat_expr" == "persistent" ]]; then
 				continue
 			fi
 
@@ -247,7 +256,7 @@ evaluate_routines() {
 				_routine_execute "$routine_id" "$description" "$run_script" "$agent_name" "$repo_path"
 				routines_dispatched=$((routines_dispatched + 1))
 			fi
-		done < <(grep -E '^\s*-\s*\[x\].*repeat:' "$todo_file" 2>/dev/null || true)
+		done < <(grep -E '^\s*-\s*\[x\][[:space:]]+r[0-9]+[[:space:]].*repeat:' "$todo_file" 2>/dev/null || true)
 
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null || true)
 
