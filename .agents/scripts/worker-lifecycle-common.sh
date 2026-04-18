@@ -54,7 +54,7 @@ _opencode_db_path() {
 #######################################
 # Extract session title from a worker command line
 # Arguments:
-#   $1 - command line string
+#   cmd - command line string
 # Returns: session title or empty string via stdout
 #
 # Logic extracted to worker_lifecycle_extract_title.py (GH#17561).
@@ -77,7 +77,7 @@ _extract_session_title() {
 #######################################
 # Validate preconditions for session tail evidence collection
 # Arguments:
-#   $1 - worker command line
+#   cmd - worker command line
 # Outputs: "db_path|session_title" on success, or "none|<reason>" on failure
 # Returns: 0 always (caller checks output prefix)
 #######################################
@@ -128,10 +128,10 @@ _run_session_tail_python() {
 #######################################
 # Set env vars and invoke the session tail Python script
 # Arguments:
-#   $1 - db_path
-#   $2 - session_title
-#   $3 - timeout_seconds
-#   $4 - part_limit
+#   db_path
+#   session_title
+#   timeout_seconds
+#   part_limit
 # Returns: "classification|summary" via stdout
 #######################################
 _query_session_tail() {
@@ -151,9 +151,9 @@ _query_session_tail() {
 #######################################
 # Summarise the recent OpenCode transcript tail for a worker session
 # Arguments:
-#   $1 - worker command line
-#   $2 - recent activity timeout seconds
-#   $3 - maximum parts to inspect (optional, default: 8)
+#   arg1 - worker command line
+#   arg2 - recent activity timeout seconds
+#   arg3 - maximum parts to inspect (optional, default: 8)
 # Returns: "classification|summary" where classification is one of
 #   active, provider-waiting, stalled, none
 #######################################
@@ -184,7 +184,7 @@ _get_session_tail_evidence() {
 #######################################
 # Kill a process and all its children (macOS-compatible)
 # Arguments:
-#   $1 - PID to kill
+#   arg1 - PID to kill
 #######################################
 _kill_tree() {
 	local pid="$1"
@@ -200,7 +200,7 @@ _kill_tree() {
 #######################################
 # Force kill a process and all its children
 # Arguments:
-#   $1 - PID to kill
+#   arg1 - PID to kill
 #######################################
 _force_kill_tree() {
 	local pid="$1"
@@ -215,7 +215,7 @@ _force_kill_tree() {
 #######################################
 # Get process age in seconds
 # Arguments:
-#   $1 - PID
+#   arg1 - PID
 # Returns: elapsed seconds via stdout
 #######################################
 _get_process_age() {
@@ -274,7 +274,7 @@ _get_process_age() {
 # Returns 0 if the process doesn't exist or ps fails.
 #
 # Arguments:
-#   $1 - PID
+#   arg1 - PID
 # Returns: integer CPU percentage via stdout
 #######################################
 _get_pid_cpu() {
@@ -298,7 +298,7 @@ _get_pid_cpu() {
 # level (e.g., node -> shell -> language-server).
 #
 # Arguments:
-#   $1 - PID
+#   arg1 - PID
 # Returns: integer CPU percentage via stdout (0-N, summed across cores)
 #######################################
 _get_process_tree_cpu() {
@@ -335,7 +335,7 @@ _get_process_tree_cpu() {
 #######################################
 # Extract the --title value from an opencode command line
 # Arguments:
-#   $1 - command line string
+#   arg1 - command line string
 # Returns: session title via stdout, or empty string if absent
 #######################################
 _extract_session_title_from_cmd() {
@@ -347,7 +347,7 @@ _extract_session_title_from_cmd() {
 #######################################
 # Resolve OpenCode session ID from a worker command line
 # Arguments:
-#   $1 - command line string
+#   arg1 - command line string
 # Returns: session id via stdout, or empty string
 #######################################
 _resolve_session_id_from_cmd() {
@@ -389,8 +389,8 @@ _resolve_session_id_from_cmd() {
 #######################################
 # Count recent OpenCode messages for sessions matching a title fragment
 # Arguments:
-#   $1 - title fragment (task ID or session title)
-#   $2 - recent window in seconds
+#   arg1 - title fragment (task ID or session title)
+#   arg2 - recent window in seconds
 # Returns: integer count via stdout
 #######################################
 _count_recent_opencode_messages() {
@@ -426,10 +426,10 @@ _count_recent_opencode_messages() {
 #######################################
 # Summarise recent worker transcript/output evidence for stall diagnosis
 # Arguments:
-#   $1 - session title fragment (task ID or exact title)
-#   $2 - log file path (optional)
-#   $3 - recent window in seconds
-#   $4 - number of log lines to inspect
+#   arg1 - session title fragment (task ID or exact title)
+#   arg2 - log file path (optional)
+#   arg3 - recent window in seconds
+#   arg4 - number of log lines to inspect
 # Returns: tab-separated "recent_count<TAB>classification<TAB>excerpt"
 #######################################
 _collect_worker_stall_evidence() {
@@ -490,10 +490,10 @@ _sanitize_log_field() {
 # like "a[$(cmd)]" would execute arbitrary commands.
 #
 # Arguments:
-#   $1 - variable name (for error messages)
-#   $2 - value to validate
-#   $3 - default value if invalid
-#   $4 - minimum value (optional, default: 0)
+#   arg1 - variable name (for error messages)
+#   arg2 - value to validate
+#   arg3 - default value if invalid
+#   arg4 - minimum value (optional, default: 0)
 # Returns: validated integer via stdout
 #######################################
 _validate_int() {
@@ -520,8 +520,8 @@ _validate_int() {
 #######################################
 # Count commits in a worktree since a given number of seconds ago (GH#17078)
 # Arguments:
-#   $1 - worktree directory path
-#   $2 - elapsed seconds (time window for git log)
+#   arg1 - worktree directory path
+#   arg2 - elapsed seconds (time window for git log)
 # Returns: integer commit count via stdout
 #######################################
 _count_worker_commits() {
@@ -542,8 +542,8 @@ _count_worker_commits() {
 #######################################
 # Count session messages from the OpenCode DB for a worker (GH#17078)
 # Arguments:
-#   $1 - worker command line
-#   $2 - elapsed seconds (time window for message query)
+#   arg1 - worker command line
+#   arg2 - elapsed seconds (time window for message query)
 # Output: "available|<count>" or "unavailable|0"
 #   "available" means the DB was found and queried
 #   "unavailable" means no DB — caller must return n/a (GH#11278)
@@ -583,11 +583,11 @@ _count_worker_messages() {
 #######################################
 # Determine the struggle flag from ratio/commit/elapsed metrics (GH#17078)
 # Arguments:
-#   $1 - ratio (messages / max(1, commits))
-#   $2 - commits count
-#   $3 - elapsed seconds
-#   $4 - min elapsed seconds threshold
-#   $5 - ratio threshold for "struggling"
+#   arg1 - ratio (messages / max(1, commits))
+#   arg2 - commits count
+#   arg3 - elapsed seconds
+#   arg4 - min elapsed seconds threshold
+#   arg5 - ratio threshold for "struggling"
 # Returns: flag string ("", "struggling", or "thrashing") via stdout
 #######################################
 _determine_struggle_flag() {
@@ -619,9 +619,9 @@ _determine_struggle_flag() {
 # signal — the supervisor LLM decides what to do with it.
 #
 # Arguments:
-#   $1 - worker PID
-#   $2 - worker elapsed seconds
-#   $3 - worker command line
+#   arg1 - worker PID
+#   arg2 - worker elapsed seconds
+#   arg3 - worker command line
 # Output: "ratio|commits|messages|flag" to stdout
 #   flag: "" (normal), "struggling", or "thrashing"
 #######################################
@@ -679,7 +679,7 @@ _compute_struggle_ratio() {
 #######################################
 # Format seconds into human-readable duration
 # Arguments:
-#   $1 - seconds
+#   arg1 - seconds
 # Returns: formatted string via stdout (e.g., "2h 15m", "45m 30s")
 #######################################
 _format_duration() {
@@ -740,11 +740,11 @@ list_active_worker_processes() {
 # Body quality gate for escalate_issue_tier (GH#17561)
 # Returns 0 if escalation should proceed, 1 if blocked (posts diagnostic comment).
 # Arguments:
-#   $1 - issue number
-#   $2 - repo slug
-#   $3 - failure count
-#   $4 - threshold
-#   $5 - issue body text
+#   arg1 - issue number
+#   arg2 - repo slug
+#   arg3 - failure count
+#   arg4 - threshold
+#   arg5 - issue body text
 #######################################
 _escalate_body_quality_gate() {
 	local issue_number="$1"
@@ -757,7 +757,8 @@ _escalate_body_quality_gate() {
 	[[ -n "$issue_body" ]] || return 0
 
 	# Check for file path indicators: paths with extensions, EDIT:/NEW: prefixes,
-	# backtick-quoted paths, or "Files to Modify" section headers
+	# backtick-quoted paths, or "Files to Modify" section headers.
+	# shellcheck disable=SC2016 # pattern is literal regex; no variable expansion intended
 	if echo "$issue_body" | grep -qE '(EDIT:|NEW:|`[a-zA-Z0-9_./-]+\.[a-z]+`|Files to Modify|## How|\.sh:|\.py:|\.ts:|\.js:|\.md:)'; then
 		return 0
 	fi
@@ -801,11 +802,11 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 # tier starts with accumulated context, not from zero.
 #
 # Arguments:
-#   $1 - issue number
-#   $2 - repo slug (owner/repo)
-#   $3 - failure count (current fast-fail count AFTER increment)
-#   $4 - kill/failure reason (for the comment)
-#   $5 - crash type: "overwhelmed" | "no_work" | "partial" | "" (optional)
+#   arg1 - issue number
+#   arg2 - repo slug (owner/repo)
+#   arg3 - failure count (current fast-fail count AFTER increment)
+#   arg4 - kill/failure reason (for the comment)
+#   arg5 - crash type: "overwhelmed" | "no_work" | "partial" | "" (optional)
 # Returns: 0 always (best-effort, never fatal)
 #######################################
 ESCALATION_FAILURE_THRESHOLD="${ESCALATION_FAILURE_THRESHOLD:-2}"
@@ -851,11 +852,31 @@ escalate_issue_tier() {
 	local next_label=""
 	local remove_label=""
 
-	# Determine current tier — tier:thinking is the canonical opus-tier label
+	# Check for model:opus-4-7 override label first — signals a previous
+	# cascade step already escalated from opus-4.6 to opus-4.7 within
+	# tier:thinking (t2239). When both tier:thinking AND model:opus-4-7
+	# are present, the cascade is exhausted — hand off to NMR.
+	local has_opus_47_label=false
+	case ",$current_labels," in
+	*,model:opus-4-7,*) has_opus_47_label=true ;;
+	esac
+
+	# Determine current tier — tier:thinking is the canonical opus-tier label.
+	# Within tier:thinking there is a further rung: opus-4.6 (default) →
+	# opus-4.7 (via model:opus-4-7 label override) → NMR (t2239).
 	case ",$current_labels," in
 	*,tier:thinking,*)
-		# Already at highest auto-escalation tier
-		return 0
+		if [[ "$has_opus_47_label" == "true" ]]; then
+			# Already escalated to opus-4.7 within tier:thinking — terminal
+			return 0
+		fi
+		# tier:thinking on opus-4.6 → add model:opus-4-7 override.
+		# Keep the tier:thinking label for history; the model: override
+		# takes precedence in pulse-model-routing.sh label resolution.
+		current_tier="thinking (opus-4.6)"
+		next_tier="thinking (opus-4.7)"
+		next_label="model:opus-4-7"
+		remove_label=""
 		;;
 	*,tier:standard,*)
 		current_tier="standard"
@@ -912,6 +933,15 @@ escalate_issue_tier() {
 	tier:standard)
 		label_desc="Route to sonnet-tier model for dispatch"
 		label_color="0E8A16"
+		;;
+	model:opus-4-7)
+		# Model-override label (t2239). Takes precedence over tier:*
+		# labels in pulse-model-routing.sh resolve_dispatch_model_for_labels.
+		# Applied either by the cascade (after opus-4.6 exhausts its retries
+		# at tier:thinking) or manually by maintainers to jump straight to
+		# opus-4.7 for short-context high-reasoning tasks.
+		label_desc="Override: route dispatch to claude-opus-4-7 (wins over tier:*)"
+		label_color="0075CA"
 		;;
 	esac
 

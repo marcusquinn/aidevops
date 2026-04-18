@@ -151,8 +151,8 @@ get_all_tier_patterns() {
 # Prices in USD per 1M tokens. Last updated: 2026-04-16.
 # Sources: Anthropic, OpenAI, Google official pricing pages.
 
-readonly MODEL_DATA="claude-opus-4-6|Anthropic|Claude Opus 4.6|200000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Architecture decisions, novel problems, complex multi-step reasoning
-claude-opus-4-7|Anthropic|Claude Opus 4.7|250000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Opt-in. Higher SWE-Bench but long-context regression (MRCR 256K 92%->59%, 1M 78%->32%) and +20-60% tokenizer cost vs 4.6 — framework defaults stay on 4.6. Cap is 250K so OpenCode's 80% auto-compact triggers at the 200K reliability boundary.
+readonly MODEL_DATA="claude-opus-4-6|Anthropic|Claude Opus 4.6|1000000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Architecture decisions, novel problems, complex multi-step reasoning. 1M context, 800K auto-compact. Framework default for tier:thinking and the cascade's penultimate rung.
+claude-opus-4-7|Anthropic|Claude Opus 4.7|250000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Top auto-escalation rung above 4.6 AND opt-in via model:opus-4-7 label. Better at long-running agentic coherence than 4.6; worse at cold long-context retrieval (MRCR 256K 92%->59%, 1M 78%->32%). +20-60% tokenizer cost on English prompts. 250K cap lets OpenCode's 80% auto-compact trigger at the 200K reliability boundary.
 claude-sonnet-4-6|Anthropic|Claude Sonnet 4.6|200000|3.00|15.00|medium|code,reasoning,vision,tools|Code implementation, review, most development tasks
 claude-haiku-4-5|Anthropic|Claude Haiku 4.5|200000|1.00|5.00|low|code,reasoning,vision,tools|Triage, classification, simple transforms, formatting
 gpt-4.1|OpenAI|GPT-4.1|1048576|2.00|8.00|medium|code,reasoning,vision,tools,search|Coding, instruction following, long context
@@ -801,7 +801,7 @@ INSTRUCTIONS
 
 # Parse winner, task_type, and reasoning from judge JSON.
 # Outputs three lines: winner, task_type, reasoning.
-# Args: $1=judge_json $2=err_log
+# Args: judge_json err_log
 _judge_parse_json_fields() {
 	local judge_json="$1"
 	local err_log="$2"
@@ -818,7 +818,7 @@ print(r)
 }
 
 # Sanitize task_type against known allowlist; echoes validated value.
-# Args: $1=task_type
+# Args: task_type
 _judge_validate_task_type() {
 	local task_type="$1"
 	local -a valid_task_types=(general code review analysis debug refactor test docs security)
@@ -834,7 +834,7 @@ _judge_validate_task_type() {
 }
 
 # Sanitize winner against models_with_output list; echoes validated value or empty.
-# Args: $1=winner $2+=models_with_output
+# Args: winner models_with_output...
 _judge_validate_winner() {
 	local winner="$1"
 	shift
@@ -854,7 +854,7 @@ _judge_validate_winner() {
 }
 
 # Append per-model score args to score_args array from judge JSON.
-# Args: $1=judge_json $2=err_log $3+=models_with_output
+# Args: arg1=judge_json arg2=err_log arg3+=models_with_output
 # Outputs one line per model: "--model M --correctness C ..."
 _judge_build_score_args() {
 	local judge_json="$1"
@@ -888,16 +888,16 @@ print(s.get('correctness', 0), s.get('completeness', 0), s.get('quality', 0), s.
 # Defined before cmd_cross_review (its caller) for readability.
 #
 # Args:
-#   $1 - original prompt
-#   $2 - models_str (comma-separated)
-#   $3 - output_dir
-#   $4 - judge_model tier
-#   $5 - prompt_version (may be empty)
-#   $6 - prompt_file (may be empty)
-#   $7+ - model_names array
+#   arg1 - original prompt
+#   arg2 - models_str (comma-separated)
+#   arg3 - output_dir
+#   arg4 - judge_model tier
+#   arg5 - prompt_version (may be empty)
+#   arg6 - prompt_file (may be empty)
+#   arg7+ - model_names array
 # Record judge scores: parse JSON, build score_args, call cmd_score.
-# Args: $1=judge_json $2=judge_err_log $3=original_prompt $4=task_type $5=winner
-#       $6=judge_model $7=prompt_version $8=prompt_file $9+=models_with_output
+# Args: arg1=judge_json arg2=judge_err_log arg3=original_prompt arg4=task_type arg5=winner
+#       arg6=judge_model arg7=prompt_version arg8=prompt_file arg9+=models_with_output
 _judge_record_scores() {
 	local judge_json="$1"
 	local judge_err_log="$2"
@@ -1149,7 +1149,7 @@ _cross_review_show_diff() {
 }
 
 # Dispatch one model in a subshell for cross-review; writes result to output_dir.
-# Args: $1=runner_helper $2=runner_name $3=model_tier $4=prompt $5=review_timeout $6=workdir $7=output_dir
+# Args: arg1=runner_helper arg2=runner_name arg3=model_tier arg4=prompt arg5=review_timeout arg6=workdir arg7=output_dir
 _cross_review_dispatch_one() {
 	local runner_helper="$1"
 	local runner_name="$2"
@@ -1187,7 +1187,7 @@ _cross_review_dispatch_one() {
 }
 
 # Wait for parallel pids and report per-model status.
-# Args: $1=output_dir; remaining args alternate: pid model_name ...
+# Args: arg1=output_dir; remaining args alternate: pid model_name ...
 # Outputs count of failures to stdout as last line "failed=N".
 _cross_review_wait_results() {
 	local output_dir="$1"
@@ -1302,7 +1302,7 @@ cmd_cross_review() {
 
 # Dispatch all models in parallel and wait for completion.
 # Populates the nameref array with validated model names.
-# Args: $1=runner_helper $2=prompt $3=timeout $4=workdir $5=output_dir $6=nameref_array $7+=model_array
+# Args: arg1=runner_helper arg2=prompt arg3=timeout arg4=workdir arg5=output_dir arg6=nameref_array arg7+=model_array
 _cross_review_dispatch_all() {
 	local runner_helper="$1"
 	local prompt="$2"
@@ -1713,7 +1713,7 @@ _discover_check_provider() {
 }
 
 # Scan all providers and print/collect status.
-# Args: $1=probe_flag $2=list_flag $3=json_flag
+# Args: arg1=probe_flag arg2=list_flag arg3=json_flag
 # Outputs: "total|available|models" on last line for caller to parse.
 _discover_scan_providers() {
 	local probe_flag="$1"
@@ -1950,8 +1950,8 @@ SQL
 #        [--model "gpt-4.1" --correctness 8 ...]
 
 # Flush current model state into entries array (nameref).
-# Args: $1=nameref:entries $2=model $3=correct $4=complete $5=quality
-#       $6=clarity $7=adherence $8=latency $9=tokens $10=strengths $11=weaknesses $12=response
+# Args: arg1=nameref:entries arg2=model arg3=correct arg4=complete arg5=quality
+#       arg6=clarity arg7=adherence arg8=latency arg9=tokens arg10=strengths arg11=weaknesses arg12=response
 _score_flush_model() {
 	local -n _sf_entries="$1"
 	local model="$2" correct="$3" complete="$4" quality="$5"
@@ -1964,7 +1964,7 @@ _score_flush_model() {
 }
 
 # Parse score CLI arguments into named namerefs and entries array.
-# Args: $1...$7 = namerefs (task type eval winner pv pf entries), then remaining argv
+# Args: arg1...arg7 = namerefs (task type eval winner pv pf entries), then remaining argv
 _score_parse_args() {
 	local -n _spa_task="$1"
 	local -n _spa_type="$2"
@@ -2178,7 +2178,7 @@ cmd_score() {
 
 # Insert a comparison record and its per-model scores into RESULTS_DB.
 # Echoes the new comparison ID on success.
-# Args: $1=task $2=task_type $3=evaluator $4=winner $5=prompt_version $6=prompt_file $7+=model_entries
+# Args: arg1=task arg2=task_type arg3=evaluator arg4=winner arg5=prompt_version arg6=prompt_file arg7+=model_entries
 _score_insert_comparison() {
 	local task="$1"
 	local task_type="$2"
@@ -2229,7 +2229,7 @@ _score_insert_comparison() {
 }
 
 # Display a formatted score summary table for model_entries.
-# Args: $1=winner $2+=model_entries
+# Args: arg1=winner arg2+=model_entries
 _score_display_table() {
 	local winner="$1"
 	shift
@@ -2424,7 +2424,7 @@ readonly BENCH_RESULTS_FILE="${BENCH_RESULTS_DIR}/bench-results.jsonl"
 
 # Resolve a provider API key value for use in curl calls.
 # Uses the same resolution chain as check_provider_key but returns the value.
-# Arguments: $1 — env var name (e.g. ANTHROPIC_API_KEY)
+# Arguments: arg1 — env var name (e.g. ANTHROPIC_API_KEY)
 # Output: key value on stdout
 # Returns: 0 if found, 1 if not
 _resolve_key_value() {
@@ -2520,11 +2520,11 @@ _api_model_string() {
 
 # Call a single model API and capture response + metrics.
 # Arguments:
-#   $1 — model_id (from MODEL_DATA)
-#   $2 — prompt text
-#   $3 — max_tokens
-#   $4 — output directory for result files
-# Output: writes result JSON to $4/$model_id.json
+#   arg1 — model_id (from MODEL_DATA)
+#   arg2 — prompt text
+#   arg3 — max_tokens
+#   arg4 — output directory for result files
+# Output: writes result JSON to arg4/$model_id.json
 # Returns: 0 on success, 1 on failure
 # Make API call to a model provider
 # Args: provider, api_model, api_key, escaped_prompt, max_tokens, raw_file
@@ -2593,7 +2593,7 @@ _bench_api_call() {
 }
 
 # Escape a prompt string for embedding in a JSON payload.
-# Args: $1=prompt text
+# Args: arg1=prompt text
 # Output: JSON-encoded string (with surrounding quotes)
 _bench_escape_prompt() {
 	local prompt="$1"
@@ -2606,7 +2606,7 @@ _bench_escape_prompt() {
 }
 
 # Parse a raw provider API response into a normalized JSON result file.
-# Args: $1=provider $2=actual_id $3=latency_ms $4=http_code $5=raw_file $6=result_file
+# Args: arg1=provider arg2=actual_id arg3=latency_ms arg4=http_code arg5=raw_file arg6=result_file
 _bench_parse_response() {
 	local provider="$1"
 	local actual_id="$2"
@@ -2736,7 +2736,7 @@ _bench_call_model() {
 }
 
 # Calculate cost from token counts and model pricing
-# Arguments: $1=model_id $2=tokens_in $3=tokens_out
+# Arguments: arg1=model_id arg2=tokens_in arg3=tokens_out
 # Output: cost as decimal string
 _calc_bench_cost() {
 	local model_id="$1"
@@ -2800,7 +2800,7 @@ _store_bench_result() {
 }
 
 # LLM-as-judge scoring for bench results
-# Arguments: $1=prompt $2=output_dir (contains model result files)
+# Arguments: arg1=prompt arg2=output_dir (contains model result files)
 # Output: model_id|score lines on stdout
 _bench_judge_score() {
 	local original_prompt="$1"
@@ -3219,7 +3219,7 @@ cmd_bench() {
 }
 
 # Run one prompt across all models, display results, and store them.
-# Args: $1=prompt $2=prompt_label $3=max_tokens $4=judge_flag $5=prompt_version $6+=valid_models
+# Args: arg1=prompt arg2=prompt_label arg3=max_tokens arg4=judge_flag arg5=prompt_version arg6+=valid_models
 _bench_run_prompt() {
 	local p="$1"
 	local prompt_label="$2"

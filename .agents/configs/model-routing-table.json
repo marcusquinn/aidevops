@@ -3,6 +3,7 @@
   "_docs": "See .agents/tools/context/model-routing.md for routing rules, .agents/tools/ai-assistants/fallback-chains.md for integration.",
   "_agentic_note": "codex/code-completion models (gpt-5.3-codex, gpt-5.4-codex) are NOT agentic — zero tool calls observed (GH#17669). Never use them for headless worker dispatch. Only general-purpose models support agentic workflows.",
   "_defaults": "Claude models are the default primary for all tiers. Non-Anthropic providers are opt-in fallbacks — add them in custom/configs/model-routing-table.json to change the order or enable another provider locally. The first model in each tier's array is the primary; subsequent entries are tried in order when the primary is unavailable.",
+  "_model_overrides": "Model-override labels (model:*) bypass tier resolution and route directly to a specific model. Currently supported: `model:opus-4-7` → claude-opus-4-7. Applied manually by maintainers for intent-driven routing, or automatically by the cascade (worker-lifecycle-common.sh::escalate_issue_tier) as the top rung above tier:thinking. Resolution lives in pulse-model-routing.sh::resolve_dispatch_model_for_labels. Guidance: tools/ai-assistants/models-opus.md §Opus 4.7. Cascade rule: tier:thinking (opus-4.6) → tier:thinking + model:opus-4-7 (opus-4.7) → NMR (t2239).",
 
   "tiers": {
     "local":  { "models": ["anthropic/claude-haiku-4-5"], "cost": 0 },
