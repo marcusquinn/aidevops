@@ -833,13 +833,21 @@ _check_pr_merge_gates() {
 			fi
 		else
 			# No coderabbit-nits-ok label — route worker-authored PRs for fix
-			# dispatch and skip the merge.
-			if [[ -n "$linked_issue" ]]; then
+			# dispatch and skip the merge. t2189: also route idle-interactive
+			# PRs via origin:worker-takeover handover when the human has
+			# demonstrably walked away.
+			if [[ -n "$linked_issue" ]] \
+				&& [[ ",${_cr_pr_labels}," != *",external-contributor,"* ]] \
+				&& [[ ",${_cr_pr_labels}," != *",review-routed-to-issue,"* ]] \
+				&& [[ ",${_cr_pr_labels}," != *",no-takeover,"* ]]; then
 				# Route if origin:worker present (origin:interactive may co-exist
 				# from issue inheritance — not a skip signal for worker PRs).
-				if [[ ",${_cr_pr_labels}," == *",origin:worker,"* &&
-					",${_cr_pr_labels}," != *",external-contributor,"* &&
-					",${_cr_pr_labels}," != *",review-routed-to-issue,"* ]]; then
+				if [[ ",${_cr_pr_labels}," == *",origin:worker,"* ]] \
+					|| [[ ",${_cr_pr_labels}," == *",origin:worker-takeover,"* ]]; then
+					_dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true
+				elif [[ ",${_cr_pr_labels}," == *",origin:interactive,"* ]] \
+					&& _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
+					_interactive_pr_trigger_handover "$pr_number" "$repo_slug" || true
 					_dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true
 				fi
 			fi
@@ -1108,20 +1116,29 @@ _process_single_ready_pr() {
 			# Conflict resolution feedback: for worker PRs with a linked
 			# issue, route the conflict context to the issue body so the
 			# next worker can resolve it, instead of silently closing.
-			# Interactive PRs go through the existing close path (their
-			# humans own the conflict resolution).
+			# Interactive PRs are protected — the existing close path (with
+			# one-time rebase nudge) handles them — UNLESS they're stale per
+			# t2189, in which case they're handed over to the worker pipeline.
 			local _conf_linked_issue
 			_conf_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
 			if [[ -n "$_conf_linked_issue" ]]; then
 				local _conf_pr_labels
 				_conf_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
 					--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _conf_pr_labels=""
-				# Route if origin:worker is present (origin:interactive may
-				# co-exist from issue inheritance — not a skip signal).
-				if [[ ",${_conf_pr_labels}," == *",origin:worker,"* &&
-					",${_conf_pr_labels}," != *",conflict-feedback-routed,"* ]]; then
-					_dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$_conf_linked_issue" "$pr_title" || true
-					return 2
+				# Route if origin:worker or origin:worker-takeover is present.
+				# origin:interactive may co-exist from issue inheritance — not a skip signal.
+				if [[ ",${_conf_pr_labels}," != *",conflict-feedback-routed,"* ]] \
+					&& [[ ",${_conf_pr_labels}," != *",no-takeover,"* ]]; then
+					if [[ ",${_conf_pr_labels}," == *",origin:worker,"* ]] \
+						|| [[ ",${_conf_pr_labels}," == *",origin:worker-takeover,"* ]]; then
+						_dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$_conf_linked_issue" "$pr_title" || true
+						return 2
+					elif [[ ",${_conf_pr_labels}," == *",origin:interactive,"* ]] \
+						&& _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
+						_interactive_pr_trigger_handover "$pr_number" "$repo_slug" || true
+						_dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$_conf_linked_issue" "$pr_title" || true
+						return 2
+					fi
 				fi
 			fi
 			_close_conflicting_pr "$pr_number" "$repo_slug" "$pr_title"
@@ -1139,8 +1156,10 @@ _process_single_ready_pr() {
 	# CI failure fix-up: when required checks fail on a worker PR with a
 	# linked issue, collect failing check details, append to issue body,
 	# close the PR, and set the issue to status:available for re-dispatch.
-	# The next worker sees the CI failure context and can fix it. Interactive
-	# PRs are left alone (their humans own the CI feedback loop).
+	# The next worker sees the CI failure context and can fix it. t2189:
+	# idle interactive PRs are handed over via origin:worker-takeover and
+	# then routed through the same pipeline — human session must be gone
+	# (no status, no claim stamp, >24h idle) for handover to fire.
 	if ! _pr_required_checks_pass "$pr_number" "$repo_slug"; then
 		local _ci_linked_issue
 		_ci_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
@@ -1148,12 +1167,18 @@ _process_single_ready_pr() {
 			local _ci_pr_labels
 			_ci_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
 				--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _ci_pr_labels=""
-			# Route if origin:worker is present. The origin:interactive label
-			# may also be present (inherited from issue), but the PR was created
-			# by a worker — use origin:worker as the routing signal.
-			if [[ ",${_ci_pr_labels}," == *",origin:worker,"* &&
-				",${_ci_pr_labels}," != *",ci-feedback-routed,"* ]]; then
-				_dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$_ci_linked_issue" || true
+			# Route if origin:worker or origin:worker-takeover is present.
+			# origin:interactive may co-exist (inherited from issue) — not a skip signal.
+			if [[ ",${_ci_pr_labels}," != *",ci-feedback-routed,"* ]] \
+				&& [[ ",${_ci_pr_labels}," != *",no-takeover,"* ]]; then
+				if [[ ",${_ci_pr_labels}," == *",origin:worker,"* ]] \
+					|| [[ ",${_ci_pr_labels}," == *",origin:worker-takeover,"* ]]; then
+					_dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$_ci_linked_issue" || true
+				elif [[ ",${_ci_pr_labels}," == *",origin:interactive,"* ]] \
+					&& _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
+					_interactive_pr_trigger_handover "$pr_number" "$repo_slug" || true
+					_dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$_ci_linked_issue" || true
+				fi
 			fi
 		fi
 		return 1
@@ -1396,6 +1421,175 @@ Every pulse cycle the deterministic merge pass evaluates open PRs and auto-close
 <sub>Posted automatically by \`pulse-merge.sh\` (GH#18650 / Fix 4 of the 2026-04-13 dispatch-unblocker pass).</sub>"
 
 	_gh_idempotent_comment "$pr_number" "$repo_slug" "$marker" "$nudge_body" "pr" || true
+	return 0
+}
+
+#######################################
+# t2189: Detect whether an origin:interactive PR is idle enough to hand
+# over to the worker pipeline.
+#
+# The existing rebase-nudge (_post_rebase_nudge_on_interactive_conflicting)
+# covers CONFLICTING state passively — it comments once and leaves the PR
+# untouched. Interactive PRs with failing required checks (like a complexity
+# regression) have no automated rescue path because the three routing gates
+# at pulse-merge.sh:840, :1121, :1154 all require `origin:worker`.
+#
+# This helper is the staleness detector. When it returns 0, the caller
+# triggers handover (add `origin:worker-takeover` label + explanation
+# comment) and then routes through the existing worker-PR pipelines.
+#
+# Combined signal — ALL must hold for a stale handover-eligible PR:
+#   1. PR has origin:interactive label
+#   2. Linked issue has NO active status label (status:queued, in-progress,
+#      in-review, claimed) — an active status means a human is driving it
+#   3. No live claim stamp file in $CLAIM_STAMP_DIR for the linked issue
+#      (session is gone; no interactive-session-helper.sh claim active)
+#   4. PR updatedAt older than AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS (24h)
+#   5. Linked issue is open (don't touch PRs whose issue was already closed)
+#
+# Env controls:
+#   AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE — off | detect | enforce (default: detect)
+#     off:     returns 1 unconditionally (feature disabled)
+#     detect:  evaluates signal and logs would-handover decisions; still returns signal
+#     enforce: evaluates signal and returns it; caller acts
+#   AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS — age threshold hours, default 24
+#
+# Args: $1 = pr_number, $2 = repo_slug
+# Returns: 0 if stale (handover-eligible), 1 otherwise
+# Side effect: logs "would-handover" line to $LOGFILE when mode=detect and stale
+#######################################
+_interactive_pr_is_stale() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-detect}"
+	[[ "$mode" == "off" ]] && return 1
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
+
+	# Fetch PR metadata once
+	local pr_meta
+	pr_meta=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json labels,updatedAt 2>/dev/null) || return 1
+
+	# Gate 1: must have origin:interactive
+	printf '%s' "$pr_meta" | jq -e \
+		'.labels | map(.name) | index("origin:interactive")' \
+		>/dev/null 2>&1 || return 1
+
+	# Gate 4: age threshold (check before any other gh calls — cheapest filter)
+	local threshold_hours updated_at now_epoch updated_epoch pr_age_hours
+	threshold_hours="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS:-24}"
+	updated_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
+	[[ -z "$updated_at" ]] && return 1
+	now_epoch=$(date +%s)
+	# Portable epoch parse — GNU date first (Linux CI), BSD date fallback (macOS)
+	updated_epoch=$(date -d "$updated_at" +%s 2>/dev/null) || \
+		updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s 2>/dev/null) || \
+		return 1
+	pr_age_hours=$(( (now_epoch - updated_epoch) / 3600 ))
+	[[ "$pr_age_hours" -lt "$threshold_hours" ]] && return 1
+
+	# Gate 2 + 5: resolve linked issue, verify open, check status labels
+	local linked_issue
+	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
+	[[ -z "$linked_issue" ]] && return 1
+	local issue_meta
+	issue_meta=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
+		--jq '{state, labels: [.labels[].name]}' 2>/dev/null) || return 1
+	printf '%s' "$issue_meta" | jq -e '.state == "open"' >/dev/null 2>&1 || return 1
+	printf '%s' "$issue_meta" | jq -e \
+		'.labels | any(. == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed")' \
+		>/dev/null 2>&1 && return 1
+
+	# Gate 3: no live claim stamp (session gone)
+	# Stamp path: $CLAIM_STAMP_DIR/${flattened_slug}-${issue}.json
+	# See interactive-session-helper.sh:91 for the canonical pattern.
+	local slug_flat stamp_path
+	slug_flat="${repo_slug//\//-}"
+	stamp_path="${CLAIM_STAMP_DIR:-$HOME/.aidevops/.agent-workspace/interactive-claims}/${slug_flat}-${linked_issue}.json"
+	[[ -f "$stamp_path" ]] && return 1
+
+	# All gates passed — PR is stale. Log in detect mode.
+	if [[ "$mode" == "detect" ]]; then
+		echo "[pulse-wrapper] would-handover: PR #${pr_number} in ${repo_slug} (idle ${pr_age_hours}h >= ${threshold_hours}h, linked issue #${linked_issue})" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# t2189: Trigger handover of an idle interactive PR to the worker pipeline.
+#
+# Idempotent — applies the `origin:worker-takeover` label and posts ONE
+# marker-guarded comment. Second call short-circuits on the existing label.
+# The `origin:interactive` label is NOT removed (origin history is append-only;
+# worker-takeover is an additive routing signal).
+#
+# Mode gating:
+#   off | detect: no-op (caller is expected to guard too, but belt+braces)
+#   enforce:      apply label + post comment
+#
+# Fail-open: all gh failures are logged, never propagate. A failed label
+# application just means the routing gate won't pick up this PR — next
+# pulse cycle retries.
+#
+# Args: $1 = pr_number, $2 = repo_slug
+# Returns: 0 always
+#######################################
+_interactive_pr_trigger_handover() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-detect}"
+	[[ "$mode" != "enforce" ]] && return 0
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
+
+	# Idempotence short-circuit: label already present → nothing to do
+	local has_label
+	has_label=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels \
+		--jq '[.labels[].name] | index("origin:worker-takeover") // empty' 2>/dev/null)
+	if [[ -n "$has_label" && "$has_label" != "null" ]]; then
+		return 0
+	fi
+
+	# Apply label (fail-open — log if it fails)
+	if ! gh issue edit "$pr_number" --repo "$repo_slug" \
+		--add-label "origin:worker-takeover" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _interactive_pr_trigger_handover: failed to add origin:worker-takeover on PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+	fi
+
+	# Post one-time handover comment via _gh_idempotent_comment
+	if declare -F _gh_idempotent_comment >/dev/null 2>&1; then
+		local marker="<!-- pulse-interactive-handover -->"
+		local threshold="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS:-24}"
+		local body
+		body="${marker}
+## Worker takeover — no interactive session activity for ${threshold}h
+
+This \`origin:interactive\` PR has been idle past the handover threshold. The pulse is now routing it through the worker pipeline to drive it to merge:
+
+- CI failures → routed to linked issue for worker re-dispatch
+- Merge conflicts → routed to linked issue for worker re-dispatch
+- Review feedback → routed to linked issue for worker re-dispatch
+- Once all required checks pass: auto-approved + admin-merged (collaborator author only)
+
+### Reclaiming interactively
+
+If you return and want to drive this PR yourself, run in a terminal (not a chat session):
+
+\`\`\`bash
+gh issue edit ${pr_number} --repo ${repo_slug} --remove-label origin:worker-takeover
+interactive-session-helper.sh claim <linked-issue-number> ${repo_slug}
+\`\`\`
+
+Any worker mid-flight will self-terminate on the next pulse cycle (combined assignee + status signal via \`dispatch-dedup-helper.sh\`).
+
+### Opting out permanently
+
+Add the \`no-takeover\` label to this PR at any time. The routing gates will skip it.
+
+<sub>Posted once per PR by \`pulse-merge.sh\` (t2189).</sub>"
+		_gh_idempotent_comment "$pr_number" "$repo_slug" "$marker" "$body" "pr" || true
+	fi
+
+	echo "[pulse-wrapper] handover: PR #${pr_number} in ${repo_slug} handed over to worker pipeline (t2189)" >>"$LOGFILE"
 	return 0
 }
 
