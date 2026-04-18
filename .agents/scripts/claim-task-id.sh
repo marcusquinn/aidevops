@@ -38,9 +38,10 @@
 #   CLI flags --remote and --counter-branch override .aidevops.json values.
 #
 # Exit codes:
-#   0 - Success (outputs: task_id=tNNN ref=GH#NNN or GL#NNN)
-#   1 - Error (network failure, git error, etc.)
-#   2 - Offline fallback used (outputs: task_id=tNNN ref=offline)
+#   0  - Success (outputs: task_id=tNNN ref=GH#NNN or GL#NNN)
+#   1  - Error (network failure, git error, etc.)
+#   2  - Offline fallback used (outputs: task_id=tNNN ref=offline)
+#   10 - User declined claim after duplicate warning (interactive TTY only, t2180)
 #
 # Algorithm (CAS loop — compare-and-swap via git push):
 #   1. git fetch <remote> <counter_branch>
@@ -1375,6 +1376,175 @@ _main_output_results() {
 	return 0
 }
 
+# Pre-claim discovery pass (t2180).
+# Runs before atomic ID allocation to surface similar in-flight or recently-merged PRs.
+# Prevents duplicate work (concrete evidence: PR #19494 duplicated merged PR #19495,
+# costing ~30 min of session time + 10 CI runs).
+#
+# Args:
+#   $1 — title   (the --title value passed to claim-task-id.sh)
+#   $2 — repo_slug (e.g. "marcusquinn/aidevops")
+#
+# Returns:
+#   0  — no relevant hits, or user confirmed (interactive), or non-interactive (warns + proceeds)
+#   10 — user declined claim after duplicate warning (interactive TTY only)
+#
+# Fail-open on: gh not installed, unauthenticated, jq not installed, network error.
+# Skip when:    NO_ISSUE=true, OFFLINE_MODE=true, DRY_RUN=true, or title empty.
+#
+# Configuration:
+#   AIDEVOPS_CLAIM_DEDUP_DAYS  (default 14) — recency window for merged PRs.
+#
+# Test hooks (unit tests only — not for production use):
+#   _AIDEVOPS_CLAIM_TEST_IS_TTY    "1" → force interactive path even in non-TTY test runner
+#   _AIDEVOPS_CLAIM_TEST_ANSWER    "y" or "n" → override the user's prompt answer
+_pre_claim_discovery_pass() {
+	local title="$1"
+	local repo_slug="$2"
+	local dedup_days="${AIDEVOPS_CLAIM_DEDUP_DAYS:-14}"
+
+	# Fail-open gates — any missing dependency aborts silently
+	[[ -z "$title" || -z "$repo_slug" ]] && return 0
+	command -v gh &>/dev/null || return 0
+	command -v jq &>/dev/null || return 0
+	gh auth status &>/dev/null 2>&1 || return 0
+
+	# --- Keyword extraction ---
+	# Lowercase and strip non-alphanumeric, filter short tokens and stop words,
+	# sort by length descending (longer = more discriminating), take top 4.
+	local stop=" feat fix chore add update remove delete get set the for to a an with from into via of at on in by and or is are was not use uses using new be do did does its it "
+	local sanitized
+	sanitized=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' ' ')
+
+	local -a keywords=()
+	local -a raw_tokens=()
+	# Split sanitized string on whitespace into array (avoids SC2086 glob risk)
+	IFS=' ' read -ra raw_tokens <<< "$sanitized"
+	local token
+	for token in "${raw_tokens[@]}"; do
+		[[ -z "$token" ]] && continue
+		[[ ${#token} -lt 4 ]] && continue
+		[[ "$stop" == *" ${token} "* ]] && continue
+		keywords+=("$token")
+	done
+
+	[[ ${#keywords[@]} -eq 0 ]] && return 0
+
+	# Bubble-sort by length descending
+	local n="${#keywords[@]}"
+	local i j nxt tmp_kw
+	for ((i = 0; i < n - 1; i++)); do
+		for ((j = 0; j < n - i - 1; j++)); do
+			nxt=$((j + 1))
+			if [[ ${#keywords[$j]} -lt ${#keywords[$nxt]} ]]; then
+				tmp_kw="${keywords[$j]}"
+				keywords[$j]="${keywords[$nxt]}"
+				keywords[$nxt]="$tmp_kw"
+			fi
+		done
+	done
+
+	# Top 4 keywords joined with " OR " for GitHub's OR search semantics
+	local -a top_kw=()
+	local k
+	for ((k = 0; k < n && k < 4; k++)); do
+		top_kw+=("${keywords[$k]}")
+	done
+
+	local query
+	query=$(printf '%s OR ' "${top_kw[@]}")
+	query="${query% OR }"  # strip trailing " OR "
+
+	# --- GitHub PR search ---
+	local gh_output=""
+	gh_output=$(gh pr list --repo "$repo_slug" --state all \
+		--search "$query" --limit 5 \
+		--json number,title,state,mergedAt,createdAt 2>/dev/null) || return 0
+	[[ -z "$gh_output" || "$gh_output" == "[]" ]] && return 0
+
+	# --- Filter: relevance (>= 2 keyword overlap) + recency ---
+	local now_epoch cutoff_epoch
+	now_epoch=$(date +%s 2>/dev/null || echo "0")
+	cutoff_epoch=$((now_epoch - dedup_days * 86400))
+
+	local -a relevant_hits=()
+	local pr_num pr_title pr_state pr_merged_at
+
+	while IFS='|' read -r pr_num pr_title pr_state pr_merged_at; do
+		[[ -z "$pr_num" ]] && continue
+
+		# Skip CLOSED (not merged) PRs
+		[[ "$pr_state" == "CLOSED" ]] && continue
+
+		# Recency filter for MERGED PRs
+		if [[ "$pr_state" == "MERGED" && -n "$pr_merged_at" ]]; then
+			local merged_epoch=0
+			merged_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pr_merged_at" +%s 2>/dev/null) \
+				|| merged_epoch=$(date --date="$pr_merged_at" +%s 2>/dev/null) \
+				|| true
+			if [[ "$merged_epoch" -gt 0 && "$merged_epoch" -lt "$cutoff_epoch" ]]; then
+				continue
+			fi
+		fi
+
+		# Relevance: >= 2 keywords from top_kw must appear in the hit title
+		local pr_lower overlap kw
+		pr_lower=$(printf '%s' "$pr_title" | tr '[:upper:]' '[:lower:]')
+		overlap=0
+		for kw in "${top_kw[@]}"; do
+			[[ "$pr_lower" == *"$kw"* ]] && overlap=$((overlap + 1))
+		done
+		[[ $overlap -lt 2 ]] && continue
+
+		local display_date="${pr_merged_at:-open}"
+		relevant_hits+=("#${pr_num} [${pr_state}] ${pr_title}  (${display_date})")
+	done < <(printf '%s' "$gh_output" | jq -r '.[] | "\(.number)|\(.title)|\(.state)|\(.mergedAt // "")"')
+
+	[[ ${#relevant_hits[@]} -eq 0 ]] && return 0
+
+	# --- TTY detection (test-overridable) ---
+	local is_tty=false
+	if [[ "${_AIDEVOPS_CLAIM_TEST_IS_TTY:-0}" == "1" ]]; then
+		is_tty=true
+	elif [[ -t 0 && -t 1 ]]; then
+		is_tty=true
+	fi
+
+	local hit_count="${#relevant_hits[@]}"
+	local max_show=3
+
+	if [[ "$is_tty" == "true" ]]; then
+		# Interactive: numbered list + Y/N prompt (default N = safe)
+		printf '\n[claim-task-id] WARNING: Found %d similar PR(s) — please check before claiming a new task ID:\n' "$hit_count" >&2
+		local h
+		for ((h = 0; h < hit_count && h < max_show; h++)); do
+			printf '  \xe2\x80\xa2 %s\n' "${relevant_hits[$h]}" >&2
+		done
+		printf '\nContinue claiming a new ID? [y/N]: ' >&2
+
+		# Test hook: supply answer without real TTY interaction
+		local answer="${_AIDEVOPS_CLAIM_TEST_ANSWER:-}"
+		if [[ -z "$answer" ]]; then
+			IFS= read -r answer </dev/tty 2>/dev/null || answer="n"
+		fi
+		local answer_lower
+		answer_lower=$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')
+
+		if [[ "$answer_lower" != "y" && "$answer_lower" != "yes" ]]; then
+			printf '[claim-task-id] Claim aborted — verify the PRs above before proceeding.\n' >&2
+			return 10
+		fi
+	else
+		# Non-interactive: structured stderr warnings, proceed (workers can't answer prompts)
+		local h
+		for ((h = 0; h < hit_count && h < max_show; h++)); do
+			printf '[claim-task-id] WARN: similar PR found: %s\n' "${relevant_hits[$h]}" >&2
+		done
+	fi
+
+	return 0
+}
+
 # Main execution
 main() {
 	parse_args "$@"
@@ -1390,6 +1560,21 @@ main() {
 	# Framework routing guard: warn if title looks like a framework issue
 	# but we're not in the aidevops repo (GH#5149)
 	check_framework_routing "$TASK_TITLE" "$REPO_PATH"
+
+	# Pre-claim discovery pass: surface similar in-flight or recently-merged PRs (t2180).
+	# Skipped when --no-issue, --offline, --dry-run, or title is absent (batch mode).
+	if [[ "$NO_ISSUE" == "false" && "$OFFLINE_MODE" == "false" && "$DRY_RUN" == "false" && -n "$TASK_TITLE" ]]; then
+		local _disc_slug=""
+		_disc_slug=$(git -C "$REPO_PATH" remote get-url "$REMOTE_NAME" 2>/dev/null \
+			| sed 's|.*github\.com[:/]||;s|\.git$||' || true)
+		if [[ -n "$_disc_slug" ]]; then
+			local _disc_rc=0
+			_pre_claim_discovery_pass "$TASK_TITLE" "$_disc_slug" || _disc_rc=$?
+			if [[ $_disc_rc -eq 10 ]]; then
+				return 10
+			fi
+		fi
+	fi
 
 	log_info "Using remote: ${REMOTE_NAME}, counter branch: ${COUNTER_BRANCH}"
 
