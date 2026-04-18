@@ -55,7 +55,7 @@ The existing HTML comment block ends with:
      Leaf (non-parent) issue PRs: use `Resolves #NNN` or `Closes #NNN` as normal. -->
 ```
 
-Insert the new block immediately AFTER that line (still within the ` _Conventions_` section, but outside the existing HTML comment — so it becomes a second comment block sitting directly below the first).
+Insert the new block immediately AFTER that line (still within the `_Conventions_` section, but outside the existing HTML comment — so it becomes a second comment block sitting directly below the first).
 
 ### Step 2: Add the planning-PR collision warning
 
