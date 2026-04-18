@@ -113,17 +113,85 @@ Stuck-worker thresholds (informational):
 
 The helper exposes data for course-correction; it does not kill the session.
 
+## Known limitation: `run` mode does not emit per-tool OTEL spans (t2187)
+
+**Verified against:** opencode v1.4.11 (Bun-compiled), Jaeger all-in-one,
+2026-04-18. 471 spans / 108 unique operations observed; zero `Tool.execute`
+spans among them.
+
+**What works in `run` mode:** outer orchestration spans — `Config.*`,
+`FileSystem.*`, `Session.*`, `ToolRegistry.*`, `Auth.*`, `SessionPrompt.*`,
+`Git.*`, `Npm.*`, `Bus.*`. These confirm the `@effect/opentelemetry` bridge
+and `OTLPTraceExporter` are active.
+
+**What is missing:** per-tool-call `Tool.execute` spans. The span IS defined
+in the opencode source (`Effect.withSpan("Tool.execute", {attributes})`),
+but it does not appear in the OTEL export in `run` mode.
+
+**Root cause:** opencode uses Effect-TS internally. Tool execution is
+wrapped in `withSpan("Tool.execute")` inside the Effect pipeline, which
+the `@effect/opentelemetry` bridge should convert to OTEL spans. However,
+in `run` mode the AI SDK drives tool execution by calling an `execute()`
+function that returns a `Promise`. The tool's Effect code re-enters via
+`Effect.promise(Effect.gen(...))` — a Promise boundary that creates a
+new async context. The `AsyncLocalStorageContextManager` that
+`@effect/opentelemetry` relies on does not propagate the parent span
+across this Effect → Promise → Effect transition, so the `Tool.execute`
+span is either orphaned or never exported.
+
+The outer orchestration spans work because they run on the main Effect
+fiber where the OTEL tracer layer is provided. Tool execution runs inside
+the AI SDK's Promise-based callback chain, which exits and re-enters the
+Effect runtime without the tracer context.
+
+**Classification:** architectural consequence (outcome (a) from the
+t2187 brief). Not a config flag to toggle, not a simple bug — it is
+a structural gap in how `run` mode integrates with the AI SDK's
+tool interface.
+
+**Impact on aidevops plugin:** the plugin's `enrichActiveSpan()` in
+`otel-enrichment.mjs` calls `trace.getActiveSpan()` inside
+`tool.execute.before` / `tool.execute.after` hooks. When opencode
+does not create a `Tool.execute` span, `getActiveSpan()` returns
+`undefined` and the enrichment silently no-ops. The `aidevops.*`
+attributes (`intent`, `task_id`, `session_origin`, `runtime`) are
+therefore invisible in OTEL traces for headless `run` mode sessions.
+Plugin-side SQLite (`tool_calls` table) is unaffected — it records
+independently of OTEL.
+
+**Decision on plugin-owned fallback spans:** creating plugin-owned
+spans when opencode does not provide one would produce orphan traces
+under a separate service name (`opencode-aidevops`), disconnected
+from the Session/Config trace tree. The cost of implementation is low
+but the value is marginal — orphan spans without parent context are
+hard to correlate in Jaeger/Tempo and do not meaningfully improve the
+audit trail over what plugin SQLite already provides. **Status quo
+accepted**: rely on plugin SQLite for per-tool observability in `run`
+mode. Re-evaluate if opencode fixes the span gap upstream or if a
+future version exposes a tracer handle to plugins.
+
+**Upstream status:** the `opencode-ai/opencode` GitHub repo is archived
+(legacy Go codebase). The current v1.4.x is Bun-compiled TypeScript
+distributed via npm; no public issue tracker for the TypeScript version
+was identified as of 2026-04-18. The span gap may be resolved in a
+future release if the AI SDK integration switches to a span-preserving
+execution model. Monitor opencode release notes for OTEL changes.
+
 ## Verifying the OTEL integration
 
 After pointing opencode at a collector and restarting:
 
 1. Run any tool call in opencode (e.g. `ls`).
-2. Check the collector received an `opencode.tool.*` span.
-3. Expand the span's attributes — verify both opencode-native keys
-   (`session.id`, `message.id`) and aidevops-specific keys
-   (`aidevops.intent`, `aidevops.task_id`, …) are present.
+2. Check the collector received spans (look for `Config.*`,
+   `Session.*`, `ToolRegistry.*` — these confirm the bridge works).
+3. Expand a span's attributes — verify opencode-native keys
+   (`session.id`, `message.id`) are present.
+4. Check for `aidevops.*` attributes. **In TUI/server mode**, these
+   should appear on `Tool.execute` spans. **In `run` mode**, they
+   will be absent due to the known limitation above — verify via
+   plugin SQLite instead (`observability-helper.sh recent 10`).
 
-If aidevops attributes are missing:
+If aidevops attributes are missing in a mode where they should work:
 
 - Verify the plugin loaded: `AIDEVOPS_PLUGIN_DEBUG=1 opencode run ...`
   should emit `[aidevops]` startup lines.
