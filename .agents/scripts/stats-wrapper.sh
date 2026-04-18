@@ -16,7 +16,7 @@ set -euo pipefail
 #######################################
 # PATH normalisation — same as pulse-wrapper.sh
 #######################################
-export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin:${PATH}"
 
 # Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
 # in zsh (MCP shell environment). See GH#3931.

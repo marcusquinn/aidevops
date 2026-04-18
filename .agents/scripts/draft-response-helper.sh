@@ -42,7 +42,7 @@
 set -euo pipefail
 
 # PATH normalisation for launchd/MCP environments
-export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin:${PATH}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 

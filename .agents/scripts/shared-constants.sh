@@ -78,6 +78,22 @@ if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]] &&
 	# update-check, rate-limited to 24h).
 fi
 
+# t2201: Clear AIDEVOPS_BASH_REEXECED once we are stably on bash 4+. The
+# re-exec guard exports this flag before `exec` to prevent its own
+# infinite loop, but without this cleanup the flag persists in the
+# environment of every child process. If any child is then spawned
+# under /bin/bash 3.2 (e.g. an explicit `/bin/bash script.sh` call, or
+# PATH mis-ordering that resolves `#!/usr/bin/env bash` to 3.2), THAT
+# child's guard sees AIDEVOPS_BASH_REEXECED=1 and short-circuits the
+# re-exec — leaving the grandchild running bash 3.2 and hitting any
+# bash 4+ construct as a runtime error. Clearing the flag only when
+# BASH_VERSINFO[0] >= 4 preserves the anti-infinite-loop property for
+# the fallthrough branch (no modern bash found, still on 3.2) while
+# ensuring fresh subprocess invocations get a clean guard decision.
+if [[ "${BASH_VERSINFO[0]:-0}" -ge 4 ]]; then
+	unset AIDEVOPS_BASH_REEXECED
+fi
+
 # =============================================================================
 # Tool Version Pins
 # =============================================================================

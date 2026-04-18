@@ -143,13 +143,15 @@ shellcheck .agents/scripts/shared-constants.sh .agents/scripts/pulse-wrapper.sh 
     run: "/opt/homebrew/bin/bash -c 'source .agents/scripts/shared-constants.sh; [[ -z \"${AIDEVOPS_BASH_REEXECED:-}\" ]]'"
   ```
 
-- [ ] Direct reproduction (the pre-fix failure mode) no longer produces `declare: -A: invalid option`.
+- [ ] Realistic post-fix reproduction: a bash 4+ parent that sources shared-constants.sh then spawns `/bin/bash` grandchild does NOT produce `declare: -A: invalid option` — because the parent cleared the flag, the grandchild's guard fires cleanly and re-execs under modern bash.
 
   ```yaml
   verify:
     method: bash
-    run: "/opt/homebrew/bin/bash -c 'export AIDEVOPS_BASH_REEXECED=1; /bin/bash .agents/scripts/pre-dispatch-validator-helper.sh help 2>&1' | grep -q 'declare: -A' && exit 1 || exit 0"
+    run: "/opt/homebrew/bin/bash -c 'source .agents/scripts/shared-constants.sh; /bin/bash .agents/scripts/pre-dispatch-validator-helper.sh help 2>&1' | grep -q 'declare: -A' && exit 1 || exit 0"
   ```
+
+  **Not applicable: "manually pre-set flag → /bin/bash <script>" scenario.** Pre-setting `AIDEVOPS_BASH_REEXECED=1` manually and invoking `/bin/bash <script>` directly triggers the guard's anti-infinite-loop short-circuit by design (it protects against the case where a modern-bash candidate path is itself a broken bash-3.2 symlink). The t2201 fix addresses the upstream *env-var leak* from a successful bash-4 ancestor to its `/bin/bash` grandchildren; it does not (and cannot, without reintroducing loop risk) change the guard's behaviour when a caller explicitly sets the flag.
 
 - [ ] Regression test `test-bash-reexec-guard.sh` includes a case for `AIDEVOPS_BASH_REEXECED` env-var leakage and passes it.
 

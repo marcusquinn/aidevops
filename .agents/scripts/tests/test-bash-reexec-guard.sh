@@ -17,6 +17,9 @@
 #   7. AIDEVOPS_BASH_REEXECED=1 prevents re-exec (loop guard)
 #   8. No `$'\0'` in parameter expansion (GH#18830 regression) — sanity
 #      check that the earlier class fix is still in place
+#   9. (t2201) AIDEVOPS_BASH_REEXECED is UNSET after source on bash 4+,
+#      so grandchildren do not inherit a stale "already re-exec'd" flag
+#      and can make a fresh guard decision.
 #
 # Usage: bash test-bash-reexec-guard.sh
 # Environment: works under bash 3.2 AND bash 4+.
@@ -369,9 +372,76 @@ else
 fi
 
 # -----------------------------------------------------------------------
+# Test 15 (t2201): AIDEVOPS_BASH_REEXECED env-var leak from parent to
+# grandchild. When a bash 4+ process sources shared-constants.sh, the
+# flag MUST be cleared so /bin/bash grandchildren can make a fresh guard
+# decision (re-exec to bash 4+) instead of inheriting a stale "already
+# re-exec'd" signal and short-circuiting to 3.2 execution.
+#
+# Pre-fix symptom: pulse-wrapper.sh on bash 5 spawned a subprocess via
+# `#!/usr/bin/env bash` that resolved to /bin/bash 3.2 (because of the
+# PATH ordering also fixed in t2201). That /bin/bash child inherited
+# AIDEVOPS_BASH_REEXECED=1 from the pulse process's re-exec, saw the
+# flag set, skipped re-exec, and hit `declare -A` as a runtime error.
+# -----------------------------------------------------------------------
+if [[ -n "$modern_path" ]]; then
+	# 15a: direct check — bash 4+ must unset the flag after source.
+	direct_output="$(AIDEVOPS_BASH_REEXECED=1 "$modern_path" -c "source '$SHARED'; echo \"after_source=\${AIDEVOPS_BASH_REEXECED:-UNSET}\"" 2>&1 || true)"
+	if [[ "$direct_output" == *"after_source=UNSET"* ]]; then
+		_pass "env-var leak: bash 4+ unsets AIDEVOPS_BASH_REEXECED after source (t2201)"
+	else
+		_fail "env-var leak: bash 4+ did not unset AIDEVOPS_BASH_REEXECED" \
+			"output: $direct_output"
+	fi
+
+	# 15b: derivative check — grandchild spawned from a bash 4+ parent
+	# does NOT inherit the flag, so when it lands on /bin/bash 3.2 it
+	# can re-exec correctly. Only meaningful if /bin/bash is actually
+	# bash 3.x on this system.
+	if [[ "$current_major" -lt 4 ]]; then
+		TMP_GRANDCHILD="$(mktemp -t "aidevops-test-grandchild.XXXXXX")" || {
+			_fail "mktemp for grandchild failed"
+			TMP_GRANDCHILD=""
+		}
+		if [[ -n "$TMP_GRANDCHILD" ]]; then
+			# Append grandchild to the cleanup trap
+			trap 'rm -f "$TMP_SCRIPT" "${TMP_INTERMEDIATE:-}" "${TMP_TOP:-}" "$TMP_NOBASH" "${TMP_GRANDCHILD:-}"' EXIT
+
+			cat >"$TMP_GRANDCHILD" <<GRANDCHILD_EOF
+#!/bin/bash
+# Grandchild: invoked from a bash 4+ parent that previously sourced
+# shared-constants.sh (and therefore cleared the flag per t2201).
+# Guard should fire and re-exec under modern bash.
+# shellcheck source=/dev/null
+source "$SHARED"
+echo "grandchild_bash=\${BASH_VERSINFO[0]}"
+echo "grandchild_reexeced=\${AIDEVOPS_BASH_REEXECED:-UNSET}"
+GRANDCHILD_EOF
+			chmod +x "$TMP_GRANDCHILD"
+
+			# Pre-set the flag. Bash 4+ parent sources shared-constants.sh
+			# (must unset). Then invokes /bin/bash on the grandchild — the
+			# grandchild should NOT see the inherited flag, and its guard
+			# should fire to re-exec under modern bash.
+			leak_output="$(AIDEVOPS_BASH_REEXECED=1 "$modern_path" -c "source '$SHARED'; /bin/bash '$TMP_GRANDCHILD'" 2>&1 || true)"
+			if [[ "$leak_output" == *"grandchild_bash=4"* ]] || [[ "$leak_output" == *"grandchild_bash=5"* ]]; then
+				_pass "env-var leak: grandchild re-execs correctly after parent clears flag (t2201)"
+			else
+				_fail "env-var leak: grandchild stayed on bash 3.2 (flag leaked to grandchild)" \
+					"output: $leak_output"
+			fi
+		fi
+	else
+		printf 'SKIP: env-var leak grandchild test (/bin/bash is already >= 4)\n'
+	fi
+else
+	printf 'SKIP: env-var leak test (no modern bash available)\n'
+fi
+
+# -----------------------------------------------------------------------
 printf '\nResults: %d passed, %d failed\n' "$pass_count" "$fail_count"
 if [[ "$fail_count" -gt 0 ]]; then
 	exit 1
 fi
-printf 'GH#18950 (t2087) + GH#18965 (t2094) + GH#19632 (t2176) regression test: all checks pass.\n'
+printf 'GH#18950 (t2087) + GH#18965 (t2094) + GH#19632 (t2176) + t2201 regression test: all checks pass.\n'
 exit 0

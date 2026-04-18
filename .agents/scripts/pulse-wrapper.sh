@@ -71,7 +71,7 @@ set -euo pipefail
 # and other standard directories, causing `env bash` to fail. Ensure
 # essential directories are always present.
 #######################################
-export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin:${PATH}"
 
 #######################################
 # FD budget: raise soft limit to avoid exhaustion (GH#19044)
