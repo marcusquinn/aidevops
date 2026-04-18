@@ -73,32 +73,31 @@ get_changed_ranges() {
 	_diff_output=$(git diff --unified=0 "$_base" "$_head" -- $_pattern 2>/dev/null) || true
 
 	local _current_file=""
-	while IFS= read -r _line; do
-		# Match "+++ b/path/to/file"
-		case "$_line" in
-		"+++ b/"*)
-			_current_file="${_line#'+++ b/'}"
-			;;
-		"@@ "*)
-			# Parse @@ -old +new_start,new_count @@ or @@ -old +new_start @@
-			local _plus_part _start _count _end
-			_plus_part=$(printf '%s' "$_line" | grep -oE '\+[0-9]+(,[0-9]+)?' | head -1)
-			_start="${_plus_part#+}"
-			if printf '%s' "$_start" | grep -q ','; then
-				_count="${_start#*,}"
-				_start="${_start%%,*}"
-			else
+	{
+		while IFS= read -r _line; do
+			# Match "+++ b/path/to/file"
+			case "$_line" in
+			"+++ b/"*)
+				_current_file="${_line#'+++ b/'}"
+				;;
+			"@@ "*)
+				# Parse @@ -old +new_start,new_count @@ or @@ -old +new_start @@
+				local _plus_part _start _count _end
+				_plus_part=$(printf '%s' "$_line" | grep -oE '\+[0-9]+(,[0-9]+)?' | head -1)
+				_start="${_plus_part#+}"
 				_count=1
-			fi
-			# Skip deletion-only hunks (count=0)
-			if [ "$_count" -eq 0 ] 2>/dev/null; then
-				continue
-			fi
-			_end=$((_start + _count - 1))
-			printf '%s:%d:%d\n' "$_current_file" "$_start" "$_end"
-			;;
-		esac
-	done <<< "$_diff_output"
+				if printf '%s' "$_start" | grep -q ','; then
+					_count="${_start#*,}"
+					_start="${_start%%,*}"
+				fi
+				# Skip deletion-only hunks (count=0)
+				[ "$_count" -eq 0 ] 2>/dev/null && continue
+				_end=$((_start + _count - 1))
+				printf '%s:%d:%d\n' "$_current_file" "$_start" "$_end"
+				;;
+			esac
+		done
+	} <<< "$_diff_output"
 	return 0
 }
 
@@ -114,20 +113,22 @@ is_in_changed_range() {
 		return 1
 	fi
 
-	while IFS= read -r _range; do
-		[ -n "$_range" ] || continue
-		local _rfile _rest _rstart _rend
-		_rfile="${_range%%:*}"
-		_rest="${_range#*:}"
-		_rstart="${_rest%%:*}"
-		_rend="${_rest#*:}"
+	{
+		while IFS= read -r _range; do
+			[ -n "$_range" ] || continue
+			local _rfile _rest _rstart _rend
+			_rfile="${_range%%:*}"
+			_rest="${_range#*:}"
+			_rstart="${_rest%%:*}"
+			_rend="${_rest#*:}"
 
-		if [ "$_file" = "$_rfile" ] &&
-			[ "$_line" -ge "$_rstart" ] 2>/dev/null &&
-			[ "$_line" -le "$_rend" ] 2>/dev/null; then
-			return 0
-		fi
-	done <<< "$_ranges"
+			if [ "$_file" = "$_rfile" ] &&
+				[ "$_line" -ge "$_rstart" ] 2>/dev/null &&
+				[ "$_line" -le "$_rend" ] 2>/dev/null; then
+				return 0
+			fi
+		done
+	} <<< "$_ranges"
 	return 1
 }
 
@@ -176,27 +177,27 @@ run_markdownlint() {
 	local _new_count=0
 	local _total_count=0
 
-	while IFS= read -r _violation; do
-		[ -n "$_violation" ] || continue
-		# Skip non-violation lines (info headers, blank lines, etc.)
-		# Violations match: path:number or path:number:number
-		if ! printf '%s' "$_violation" | grep -qE '^[^:]+:[0-9]+'; then
-			continue
-		fi
+	{
+		while IFS= read -r _violation; do
+			[ -n "$_violation" ] || continue
+			# Skip non-violation lines (info headers, blank lines, etc.)
+			# Violations match: path:number or path:number:number
+			printf '%s' "$_violation" | grep -qE '^[^:]+:[0-9]+' || continue
 
-		_total_count=$((_total_count + 1))
+			_total_count=$((_total_count + 1))
 
-		# Extract file and line number
-		local _vfile _vline
-		_vfile=$(printf '%s' "$_violation" | cut -d: -f1)
-		_vline=$(printf '%s' "$_violation" | cut -d: -f2)
+			# Extract file and line number
+			local _vfile _vline
+			_vfile=$(printf '%s' "$_violation" | cut -d: -f1)
+			_vline=$(printf '%s' "$_violation" | cut -d: -f2)
 
-		if is_in_changed_range "$_vfile" "$_vline" "$_ranges"; then
-			_new_violations="${_new_violations}${_violation}
+			if is_in_changed_range "$_vfile" "$_vline" "$_ranges"; then
+				_new_violations="${_new_violations}${_violation}
 "
-			_new_count=$((_new_count + 1))
-		fi
-	done <<< "$_lint_output"
+				_new_count=$((_new_count + 1))
+			fi
+		done
+	} <<< "$_lint_output"
 
 	log "Total violations in changed files: $_total_count"
 	log "New violations (in changed lines): $_new_count"
@@ -294,12 +295,12 @@ run_biome() {
 	# Count violations at base (only in changed files that exist at base)
 	local _base_count=0
 	local _base_file_list=""
-	while IFS= read -r _f; do
-		[ -n "$_f" ] || continue
-		if [ -f "${BASE_WORKTREE}/${_f}" ]; then
-			_base_file_list="${_base_file_list} ${_f}"
-		fi
-	done <<< "$_changed_files"
+	{
+		while IFS= read -r _f; do
+			[ -n "$_f" ] || continue
+			[ -f "${BASE_WORKTREE}/${_f}" ] && _base_file_list="${_base_file_list} ${_f}"
+		done
+	} <<< "$_changed_files"
 
 	if [ -n "$_base_file_list" ]; then
 		local _base_output
@@ -312,12 +313,12 @@ run_biome() {
 	# Count violations at head
 	local _head_count=0
 	local _head_file_list=""
-	while IFS= read -r _f; do
-		[ -n "$_f" ] || continue
-		if [ -f "$_f" ]; then
-			_head_file_list="${_head_file_list} ${_f}"
-		fi
-	done <<< "$_changed_files"
+	{
+		while IFS= read -r _f; do
+			[ -n "$_f" ] || continue
+			[ -f "$_f" ] && _head_file_list="${_head_file_list} ${_f}"
+		done
+	} <<< "$_changed_files"
 
 	if [ -n "$_head_file_list" ]; then
 		local _head_output
