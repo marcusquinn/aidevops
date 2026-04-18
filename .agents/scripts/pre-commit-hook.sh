@@ -5,6 +5,7 @@
 # Install with: cp .agents/scripts/pre-commit-hook.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck disable=SC1091  # shared-constants.sh is deployed alongside at runtime
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
@@ -17,7 +18,26 @@ get_modified_shell_files() {
 	return 0
 }
 
-# Validate that TODO.md doesn't have duplicate task IDs
+# Validate that this commit does not INTRODUCE new duplicate task IDs in TODO.md.
+#
+# Design (t2209):
+#   1. Task IDs are extracted only from real task-list entries — lines that
+#      start (after optional leading whitespace) with "- [ ] tNNN" or
+#      "- [x] tNNN". This excludes doc examples ("- `t001` - Top-level task")
+#      and prose mentions that embed "- [ ] tNNN" inside backticks or
+#      parentheses. Subtask IDs like t123.1.2 are captured by (\.[0-9]+)*.
+#   2. The check is DIFF-AWARE. TODO.md on main has historical duplicate
+#      IDs (e.g. t131 and t1056 were both claimed twice under old
+#      workflows). Those cannot be renamed without breaking issue and PR
+#      back-references. We compare staged-state duplicates against
+#      HEAD-state duplicates and only fail on IDs that are NEW duplicates
+#      introduced by the current commit.
+#
+# Behaviour:
+#   - Historical duplicate present in HEAD, still present in staged → pass.
+#   - New task-list entry whose ID already appears elsewhere → fail.
+#   - Two new task-list entries with the same ID in one commit → fail.
+#   - TODO.md doesn't exist in HEAD (first commit) → any duplicate fails.
 validate_duplicate_task_ids() {
 	# Only check if TODO.md is staged
 	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
@@ -30,19 +50,31 @@ validate_duplicate_task_ids() {
 		return 0
 	fi
 
-	# Extract all task IDs (including subtasks like t123.1)
-	local task_ids
-	task_ids=$(echo "$staged_todo" | grep -oE '\bt[0-9]+(\.[0-9]+)*\b' | sort)
+	local head_todo
+	head_todo=$(git show HEAD:TODO.md 2>/dev/null || true)
 
-	# Check for duplicates
-	local duplicates
-	duplicates=$(echo "$task_ids" | uniq -d)
+	local staged_dupes head_dupes new_dupes
+	staged_dupes=$(printf '%s\n' "$staged_todo" \
+		| sed -nE 's/^[[:space:]]*- \[[ x]\][[:space:]]+(t[0-9]+(\.[0-9]+)*).*/\1/p' \
+		| sort | uniq -d)
+	head_dupes=$(printf '%s\n' "$head_todo" \
+		| sed -nE 's/^[[:space:]]*- \[[ x]\][[:space:]]+(t[0-9]+(\.[0-9]+)*).*/\1/p' \
+		| sort | uniq -d)
 
-	if [[ -n "$duplicates" ]]; then
-		print_error "Duplicate task IDs found in TODO.md:"
-		echo "$duplicates" | while read -r dup; do
-			print_error "  - $dup"
-		done
+	# IDs duplicated in staged that were NOT already duplicated in HEAD =
+	# newly introduced collisions. `comm -23` emits lines unique to the
+	# first sorted input — exactly what we want.
+	new_dupes=$(comm -23 \
+		<(printf '%s\n' "$staged_dupes") \
+		<(printf '%s\n' "$head_dupes") \
+		| grep -v '^$' || true)
+
+	if [[ -n "$new_dupes" ]]; then
+		print_error "New duplicate task IDs introduced in TODO.md:"
+		while read -r dup; do
+			[[ -n "$dup" ]] && print_error "  - $dup"
+		done <<< "$new_dupes"
+		print_error "Historical duplicates in main are tolerated; this commit adds a NEW collision."
 		return 1
 	fi
 
