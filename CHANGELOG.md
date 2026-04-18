@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.69] - 2026-04-18
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: mark t2177 complete (pr:#19635)
+- SYNC_PAT — scope + visibility + actionable error (#19489)
+- feat(opencode-plugin): OTEL span enrichment + session-introspect helper (#19635)
+- exclude archived briefs + design/skill docs from Codacy; hide Codacy badge (#19637)
+- feat(opencode): weekly DB maintenance routine (r913) for SQLite lock mitigation (#19630)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- fix(routine-schedule): recognise 'persistent' as a valid schedule type (#19628)
+- Maintenance: update simplification state registry
+- fix(pulse): add live GraphQL budget probe to defeat cache-poisoning false positives (#19626)
+- add TODO entry for pulse rate-limit cache-poisoning defense (ref GH#19622) (#19625)
+- Maintenance: update simplification state registry
+- fix(large-file-gate): split overloaded simplification-debt into file-size-debt + function-complexity-debt (#19619)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- force base-10 to handle octal-trap IDs (GH#19620) (#19621)
+- replace perl alarm with timeout(1) to reap Go grandchild on Linux (GH#19623) (#19627)
+- document root cause + regression test for false needs-consolidation on single bot comment (t2152) (#19618)
+- replace bash4+ uppercase substitution with tr for bash 3.2 compat (#19617)
+- revert BASH32_COMPAT_THRESHOLD to 78 and consolidate treadmill audit trail (#19616)
+
 ## [3.8.68] - 2026-04-17
 
 ### Changed
