@@ -130,7 +130,7 @@ assert_contains "patterns: shows session ID"         "$out" "sess-A"
 assert_contains "patterns: shows total calls"        "$out" "9 total"
 assert_contains "patterns: shows error count"        "$out" "2 error"
 assert_contains "patterns: flags file-reread loop"   "$out" "/repo/b.sh"
-assert_contains "patterns: hint on reread loops"     "$out" "re-reading"
+assert_contains "patterns: hint on reread loops"     "$out" "re-read loop"
 
 printf '\n%s=== errors ===%s\n' "$GREEN" "$NC"
 out=$("$HELPER" errors 2>&1) || true

@@ -43,6 +43,21 @@ async function loadTraceApi() {
 }
 
 /**
+ * Filter out undefined/null/empty-string values so we don't leak
+ * empty keys through to the trace sink.
+ *
+ * @param {Record<string, any>} attrs
+ * @returns {Record<string, string | number | boolean>}
+ */
+function cleanAttributes(attrs) {
+  const cleaned = {};
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v !== undefined && v !== null && v !== "") cleaned[k] = v;
+  }
+  return cleaned;
+}
+
+/**
  * Enrich the currently-active OTEL span with aidevops attributes.
  *
  * Safe to call from every tool hook — when OTEL is not active, the span
@@ -54,17 +69,12 @@ async function loadTraceApi() {
  * @returns {Promise<boolean>} true when an attribute was applied
  */
 export async function enrichActiveSpan(attrs) {
-  if (!attrs || typeof attrs !== "object") return false;
-  const api = await loadTraceApi();
-  if (!api) return false;
   try {
-    const span = api.getActiveSpan?.();
+    if (!attrs || typeof attrs !== "object") return false;
+    const api = await loadTraceApi();
+    const span = api?.getActiveSpan?.();
     if (!span || typeof span.setAttributes !== "function") return false;
-    // Filter out undefined/null so we don't leak empty keys to the sink.
-    const cleaned = {};
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v !== undefined && v !== null && v !== "") cleaned[k] = v;
-    }
+    const cleaned = cleanAttributes(attrs);
     if (Object.keys(cleaned).length === 0) return false;
     span.setAttributes(cleaned);
     return true;
@@ -121,17 +131,24 @@ export function detectTaskId(cwd) {
 }
 
 /**
+ * Env vars that, when any is non-empty, indicate a headless worker
+ * session. Mirrors the convention used by the pre-edit check.
+ */
+const HEADLESS_ENV_VARS = [
+  "FULL_LOOP_HEADLESS",
+  "AIDEVOPS_HEADLESS",
+  "OPENCODE_HEADLESS",
+  "CLAUDE_HEADLESS",
+  "GITHUB_ACTIONS",
+];
+
+/**
  * Detect whether the current session is running headless (worker) or
- * interactive. Mirrors the env-var convention used by the pre-edit check.
+ * interactive.
  *
  * @returns {"worker" | "interactive"}
  */
 export function detectSessionOrigin() {
-  const headless =
-    process.env.FULL_LOOP_HEADLESS ||
-    process.env.AIDEVOPS_HEADLESS ||
-    process.env.OPENCODE_HEADLESS ||
-    process.env.CLAUDE_HEADLESS ||
-    process.env.GITHUB_ACTIONS;
+  const headless = HEADLESS_ENV_VARS.some((v) => process.env[v]);
   return headless ? "worker" : "interactive";
 }

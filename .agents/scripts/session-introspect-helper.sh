@@ -193,7 +193,7 @@ _recent_table() {
 
 _recent_json() {
 	local db="$1" sid="$2" query="$3"
-	command -v jq >/dev/null 2>&1 || { print_error "jq required for --json"; return 1; }
+	command -v jq >/dev/null 2>&1 || { print_error "jq required with --json"; return 1; }
 	local rows; rows=$(sqlite3 -separator '|' "$db" "$query" || true)
 	printf '%s' "$rows" | jq -R -s --arg session "$sid" '
 		split("\n") | map(select(length > 0) | split("|") | {
@@ -309,7 +309,7 @@ _patterns_table() {
 			[[ -z "$path" ]] && continue
 			printf '  %4sx  %s\n' "$n" "$path"
 		done <<<"$rereads"
-		printf '\nHint: if you are stuck, you may be re-reading the same file.\n'
+		printf '\nHint: a re-read loop suggests you may be stuck.\n'
 		printf '      Try: git diff, git status, or break out of the loop.\n'
 	else
 		printf '  (none detected)\n'
@@ -320,7 +320,7 @@ _patterns_table() {
 _patterns_json() {
 	local sid="$1" total="$2" errors="$3" first_ts="$4" last_ts="$5"
 	local avg_dur="$6" rate="$7" by_tool="$8" rereads="$9"
-	command -v jq >/dev/null 2>&1 || { print_error "jq required for --json"; return 1; }
+	command -v jq >/dev/null 2>&1 || { print_error "jq required with --json"; return 1; }
 	local by_tool_json
 	by_tool_json=$(printf '%s' "$by_tool" | jq -R -s '
 		split("\n") | map(select(length > 0) | split("|") | {
@@ -379,7 +379,7 @@ cmd_errors() {
 		LIMIT ${limit};
 	"
 	if [[ "$json_flag" == "true" ]]; then
-		command -v jq >/dev/null 2>&1 || { print_error "jq required for --json"; return 1; }
+		command -v jq >/dev/null 2>&1 || { print_error "jq required with --json"; return 1; }
 		sqlite3 -separator '|' "$db" "$query" | jq -R -s --arg sid "$sid" '
 			split("\n") | map(select(length > 0) | split("|") | {
 				timestamp: .[0], tool: .[1], intent: .[2],
@@ -420,7 +420,7 @@ cmd_sessions() {
 		LIMIT ${limit};
 	"
 	if [[ "$json_flag" == "true" ]]; then
-		command -v jq >/dev/null 2>&1 || { print_error "jq required for --json"; return 1; }
+		command -v jq >/dev/null 2>&1 || { print_error "jq required with --json"; return 1; }
 		sqlite3 -separator '|' "$db" "$query" | jq -R -s '
 			split("\n") | map(select(length > 0) | split("|") | {
 				session: .[0],
@@ -446,13 +446,13 @@ cmd_sessions() {
 
 cmd_help() {
 	cat <<'EOF'
-session-introspect-helper.sh — mid-session self-diagnosis for the opencode worker
+session-introspect-helper.sh — mid-session self-diagnosis over opencode observability SQLite
 
 USAGE:
     session-introspect-helper.sh <command> [options]
 
 COMMANDS:
-    recent [N]       Last N tool calls for current session (default 20)
+    recent [N]       Last N tool calls in the current session (default 20)
     patterns         Tool distribution, file-reread loops, error rate, calls/min
     errors [N]       Last N failed tool calls with intent (default 10)
     sessions [N]     Recent N sessions with request/cost summary (default 10)
@@ -462,13 +462,13 @@ FLAGS (all commands):
     --session <id>   Explicit session_id (default: most-recent in DB)
     --db <path>      DB path override
     --json           Machine-readable output
-    --since <N>      Restrict to last N minutes of session
+    --since <N>      Restrict output to last N minutes of the session
 
 ENVIRONMENT:
     AIDEVOPS_INTROSPECT_DB   DB path (takes precedence over --db and default)
 
 EXAMPLES:
-    # "What have I been doing for the last 5 minutes?"
+    # "What have I been doing in the last 5 minutes?"
     session-introspect-helper.sh recent 30 --since 5
 
     # "Am I stuck in a file-reread loop?"
