@@ -110,12 +110,37 @@ validate_positional_parameters() {
 	print_info "Validating positional parameters..."
 
 	for file in "$@"; do
-		# Exclude currency/pricing patterns: $[1-9] followed by digit, decimal, comma,
-		# slash (e.g. $28/mo, $1.99, $1,000), pipe (markdown table cell), or common
-		# currency/pricing unit words (per, mo, month, flat, etc.).
 		if [[ -f "$file" ]]; then
 			local violations_output
-			violations_output=$(grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | grep -vE '\$[1-9][0-9.,/]' | grep -vE '\$[1-9]\s*\|' | grep -vE '\$[1-9]\s+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\b') || true
+			# Use awk to strip single-quoted segments and comments before scanning.
+			# This prevents false positives on:
+			#   - awk field references: awk '$1 >= 3' (not shell positional params)
+			#   - doc comments: # Arguments: $1=name (comments aren't executed)
+			# Exclusion patterns (currency, local assignments, pipes, pricing words)
+			# are preserved from the original grep pipeline.
+			# shellcheck disable=SC2016  # $1, $[1-9] etc. are awk regex literals, not shell expansions
+			violations_output=$(awk '
+			{
+				line = $0
+				# Strip single-quoted segments — shell does not expand $ inside single quotes,
+				# so awk field refs like awk '"'"'$1 >= 3'"'"' are not positional params.
+				# \047 is octal for single-quote (avoids shell quoting issues).
+				gsub(/\047[^\047]*\047/, "", line)
+				# Skip pure comment lines (after stripping quoted content)
+				if (line ~ /^[[:space:]]*#/) next
+				# Strip inline comments
+				sub(/[[:space:]]+#.*/, "", line)
+				# Skip lines with local var assignments (proper usage pattern)
+				if (line ~ /local[[:space:]].*=.*\$[1-9]/) next
+				# Skip currency/pricing patterns: $N followed by digit, decimal, comma, slash
+				if (line ~ /\$[1-9][0-9.,\/]/) next
+				# Skip markdown table cells: $N followed by pipe
+				if (line ~ /\$[1-9][[:space:]]*\|/) next
+				# Skip pricing unit words
+				if (line ~ /\$[1-9][[:space:]]+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)/) next
+				# After stripping, if $[1-9] is still present, flag as violation
+				if (line ~ /\$[1-9]/) print NR ": " $0
+			}' "$file") || true
 			if [[ -n "$violations_output" ]]; then
 				print_error "Direct positional parameter usage in $file"
 				echo "$violations_output" | head -3
