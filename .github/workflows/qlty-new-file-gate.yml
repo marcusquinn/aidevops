@@ -16,6 +16,18 @@ name: Qlty New-File Gate
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
+    # t2220: suppress concurrency-cancellation cascade on docs-only PRs.
+    # `gh pr create --label "a,b,c,d"` fires one `labeled` event per label
+    # after the initial `opened`; each event triggers a new run that
+    # cancels the in-flight one via `cancel-in-progress: true`. Docs-only
+    # PRs observed 15+ cancelled runs per workflow, which `gh pr checks`
+    # then surfaces as `fail` (it displays `cancelled` conclusions as
+    # `fail` in its TSV output). Filtering docs-only at the trigger
+    # level prevents the cascade entirely. In-workflow `detect-new-files`
+    # still runs for mixed PRs as a belt-and-suspenders check.
+    paths-ignore:
+      - '**/*.md'
+      - 'todo/**'
 
 permissions:
   pull-requests: write
