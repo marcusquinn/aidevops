@@ -90,15 +90,17 @@ if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_privacy_guard.sh"
 	# shellcheck disable=SC1091
+	source "$SETUP_MODULES_DIR/_complexity_guard.sh"
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_task_id_guard.sh"
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_canonical_guard.sh"
 fi
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+print_info() { local _m="$1"; echo -e "${BLUE}[INFO]${NC} $_m"; return 0; }
+print_success() { local _m="$1"; echo -e "${GREEN}[SUCCESS]${NC} $_m"; return 0; }
+print_warning() { local _m="$1"; echo -e "${YELLOW}[WARNING]${NC} $_m"; return 0; }
+print_error() { local _m="$1"; echo -e "${RED}[ERROR]${NC} $_m"; return 0; }
 
 # Source shared-constants for config support (is_feature_enabled / config_enabled)
 # Try repo-local first, then deployed location
@@ -245,9 +247,9 @@ _launchd_install_if_changed() {
 
 # Detect whether a scheduler is already installed via launchd, cron, or systemd.
 # Optionally migrates legacy launchd labels / cron entries to launchd on macOS.
-# Args: $1=scheduler_name, $2=launchd_label, $3=legacy_launchd_label,
-#       $4=cron_marker, $5=migrate_script, $6=migrate_arg, $7=migrate_hint
-#       $8=systemd_unit (optional — base name without .timer suffix, e.g. "aidevops-supervisor-pulse")
+# Args: arg1=scheduler_name, arg2=launchd_label, arg3=legacy_launchd_label,
+#       arg4=cron_marker, arg5=migrate_script, arg6=migrate_arg, arg7=migrate_hint
+#       arg8=systemd_unit (optional — base name without .timer suffix, e.g. "aidevops-supervisor-pulse")
 _scheduler_detect_installed() {
 	local scheduler_name="$1"
 	local launchd_label="$2"
@@ -317,7 +319,7 @@ _should_setup_noninteractive_supervisor_pulse() {
 # Generic non-interactive scheduler detection (GH#17695 Finding B).
 # Returns 0 if the named scheduler is already installed on any backend,
 # meaning it should be regenerated during non-interactive setup.
-# Args: $1=name $2=launchd_label $3=cron_marker $4=systemd_unit
+# Args: arg1=name arg2=launchd_label arg3=cron_marker arg4=systemd_unit
 _should_setup_noninteractive_scheduler() {
 	local name="$1"
 	local launchd_label="$2"
@@ -739,7 +741,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/post-setup.sh"
 
 parse_args() {
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local _opt="$1"
+		case "$_opt" in
 		--clean)
 			CLEAN_MODE=true
 			shift
@@ -774,7 +777,7 @@ parse_args() {
 			exit 0
 			;;
 		*)
-			print_error "Unknown option: $1"
+			print_error "Unknown option: $_opt"
 			echo "Use --help for usage information"
 			exit 1
 			;;
@@ -957,6 +960,10 @@ _setup_run_non_interactive() {
 	# repo so TODO/todo/README/ISSUE_TEMPLATE pushes to public GitHub repos
 	# are scanned for private slug leaks (t1968).
 	setup_privacy_guard
+	# Install/refresh the complexity-regression pre-push hook in every
+	# initialized repo so pushes that introduce new function-complexity,
+	# nesting-depth, or file-size violations are caught before CI (t2198).
+	setup_complexity_guard
 	# Install/refresh the canonical-on-main post-checkout hook in every
 	# initialized repo so branch switches away from main in the canonical
 	# directory are warned against (t1995). Complements pre-edit-check.sh's
