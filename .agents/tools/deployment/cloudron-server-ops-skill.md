@@ -103,7 +103,7 @@ cloudron sync pull --app <app> /app/data/ ./local --delete   # also delete local
 cloudron sync push --app <app> ./local/ /app/data --force    # remove files blocking directory creation
 ```
 
-Trailing slash on the source syncs its contents; without it, the directory itself is placed inside the destination (rsync convention). `--delete` removes files present only on the destination side. `--force` removes files blocking directory creation.
+Trailing slash on the source syncs its contents; without it, the directory itself is placed inside the destination (`rsync` convention). `--delete` removes files present only on the destination side. `--force` removes files blocking directory creation.
 
 **Rule of thumb:** for directory transfers, prefer `cloudron sync`; keep `cloudron push`/`pull` for one-off file copy and stream-oriented use cases.
 
