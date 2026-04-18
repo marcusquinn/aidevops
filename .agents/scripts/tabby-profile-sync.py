@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -30,6 +30,58 @@ from tabby_yaml_helpers import (
     extract_group_id,
     insert_profiles_block,
 )
+
+
+def is_linked_worktree(repo_path: str) -> bool:
+    """Return True iff ``repo_path`` is a linked git worktree (not the main one).
+
+    Deterministic replacement for the old string-heuristic that tried to guess
+    worktrees from the basename pattern ``repo.branch-name``. That heuristic
+    broke whenever the repo name itself contained a dot (domain-like names such
+    as ``wpallstars.com`` / ``example.io``) or when a worktree branch did not
+    start with one of the six hard-coded prefixes.
+
+    Detection rule: a linked worktree's ``git rev-parse --git-common-dir``
+    resolves to the *main* repo's ``.git`` directory, while the worktree's own
+    ``git rev-parse --git-dir`` resolves to ``<main>/.git/worktrees/<name>``.
+    For the main checkout (or any non-worktree clone) those two paths collapse
+    to the same ``.git`` directory. Comparing absolute paths gives a
+    heuristic-free answer that works for any repo name, branch name, or future
+    worktree convention.
+
+    Returns False on non-git paths or on any git invocation error — the caller
+    treats those as "not a worktree" so normal repos are never excluded.
+    """
+    git_dir = _run_git(repo_path, "rev-parse", "--git-dir")
+    common_dir = _run_git(repo_path, "rev-parse", "--git-common-dir")
+    if not git_dir or not common_dir:
+        return False
+
+    def _absolute(path: str) -> str:
+        # git may return a relative path (e.g. ``.git``) — resolve against
+        # ``repo_path`` so we always compare absolute paths.
+        if not os.path.isabs(path):
+            path = os.path.join(repo_path, path)
+        return os.path.realpath(path)
+
+    return _absolute(git_dir) != _absolute(common_dir)
+
+
+def _run_git(cwd: str, *args: str) -> str:
+    """Run ``git -C <cwd> <args...>`` and return stripped stdout, or ``""``."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
 
 
 def profile_name_from_path(repo_path: str) -> str:
@@ -125,7 +177,19 @@ def ensure_groups_section(config_text: str, group_id: str) -> str:
 
 
 def get_repos(repos_json_path: str) -> list[dict]:
-    """Load repos from repos.json, filtering to those suitable for profiles."""
+    """Load repos from repos.json, filtering to those suitable for profiles.
+
+    Excludes:
+    - entries without a ``path`` field
+    - paths that don't exist on disk
+    - linked git worktrees (detected via :func:`is_linked_worktree`)
+
+    Worktrees are excluded because each worktree shares its parent repo's
+    purpose; creating a separate Tabby profile per branch would multiply
+    entries every time a branch is checked out. The canonical repo's profile
+    is sufficient — users ``cd`` into worktrees from the canonical terminal
+    when they need them.
+    """
     with open(repos_json_path) as f:
         data = json.load(f)
 
@@ -133,23 +197,13 @@ def get_repos(repos_json_path: str) -> list[dict]:
     result = []
     for repo in repos:
         path = repo.get("path", "")
-        # Skip repos without a path
         if not path:
             continue
-        # Expand ~ in path
         path = os.path.expanduser(path)
-        # Skip repos that don't exist on disk
         if not os.path.isdir(path):
             continue
-        # Skip worktree paths (contain dots suggesting branch names like repo.feature-name)
-        basename = os.path.basename(path)
-        if "." in basename and "-" in basename.split(".", 1)[1]:
-            # Heuristic: worktrees have patterns like "repo.feature-branch-name"
-            # But repos like "essentials.com" are valid — check if it looks like a branch
-            after_dot = basename.split(".", 1)[1]
-            if "/" in after_dot or after_dot.startswith(("feature-", "bugfix-", "hotfix-",
-                                                          "refactor-", "chore-", "experiment-")):
-                continue
+        if is_linked_worktree(path):
+            continue
         result.append({"path": path, "name": profile_name_from_path(path), "repo": repo})
     return result
 

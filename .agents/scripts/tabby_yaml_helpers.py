@@ -27,13 +27,94 @@ def save_yaml(path: str, content: str) -> None:
         f.write(content)
 
 
+_CWD_LINE_RE = re.compile(r"^(?P<indent>\s+)cwd:\s*(?P<value>.*)$")
+
+
+def _parse_block_scalar(
+    lines: list[str], start_idx: int, parent_indent: int, style: str
+) -> tuple[str, int]:
+    """Parse a YAML block scalar (folded ``>`` or literal ``|``).
+
+    Starts at the line AFTER the ``cwd: >-`` (or ``|-``, ``>``, ``|``) header.
+    Consumes indented continuation lines until a line dedents back to or below
+    ``parent_indent``.
+
+    Returns ``(joined_value, next_line_idx)``.
+
+    - Folded (``>``): continuation lines are joined with single spaces.
+    - Literal (``|``): continuation lines are joined with newlines.
+
+    Chomping indicators (``-`` strip, ``+`` keep) affect trailing newlines,
+    but since we only use the value as a path we strip whitespace regardless.
+    """
+    collected: list[str] = []
+    i = start_idx
+    while i < len(lines):
+        line = lines[i]
+        # Blank lines are part of the block; preserve only for literal style.
+        if not line.strip():
+            if style == "|" and collected:
+                collected.append("")
+            i += 1
+            continue
+        # Measure the leading whitespace of this line.
+        stripped = line.lstrip(" \t")
+        line_indent = len(line) - len(stripped)
+        if line_indent <= parent_indent:
+            break
+        collected.append(stripped.rstrip())
+        i += 1
+
+    if style == ">":
+        value = " ".join(collected)
+    else:
+        value = "\n".join(collected)
+    return value.strip(), i
+
+
 def extract_existing_cwds(config_text: str) -> set[str]:
-    """Extract all cwd paths from existing profiles."""
-    cwds = set()
-    # Match cwd: lines in profile blocks
-    for match in re.finditer(r"^\s+cwd:\s+(.+)$", config_text, re.MULTILINE):
-        cwd = match.group(1).strip().strip("'\"")
-        cwds.add(cwd)
+    """Extract all cwd paths from existing profiles.
+
+    Handles three YAML scalar forms that Tabby emits:
+
+    1. Inline plain or quoted: ``cwd: /path`` / ``cwd: '/path'``.
+    2. Folded block scalar: ``cwd: >-`` followed by an indented path on the
+       next line. Tabby rewrites long paths into this form whenever it
+       re-saves the config via its GUI.
+    3. Literal block scalar: ``cwd: |-`` followed by an indented path.
+
+    Missing any of (2) or (3) causes duplicate profile generation on every
+    sync because the dedup check fails to recognise the existing path.
+    """
+    cwds: set[str] = set()
+    lines = config_text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        match = _CWD_LINE_RE.match(line)
+        if not match:
+            i += 1
+            continue
+
+        parent_indent = len(match.group("indent"))
+        value = match.group("value").strip()
+
+        # Block scalar header? ``>``, ``>-``, ``>+``, ``|``, ``|-``, ``|+``.
+        if value and value[0] in (">", "|"):
+            style = value[0]
+            folded_value, next_i = _parse_block_scalar(
+                lines, i + 1, parent_indent, style
+            )
+            if folded_value:
+                cwds.add(folded_value)
+            i = next_i
+            continue
+
+        # Inline form (plain or quoted). Empty value means malformed — skip.
+        if value:
+            cwds.add(value.strip("'\""))
+        i += 1
+
     return cwds
 
 
