@@ -348,7 +348,7 @@ scan_dir_bash32_compat() {
 		done <<<"$_matches"
 
 		# Pattern 2: Associative arrays (bash 4.0+)
-		_matches=$(grep -nE '^[[:space:]]*(declare|local|typeset)[[:space:]]+-A[[:space:]]' "$_file" 2>/dev/null |
+		_matches=$(grep -nE '^[[:space:]]*(declare|local|typeset)[[:space:]]+-[a-zA-Z]*A[a-zA-Z]*[[:space:]]' "$_file" 2>/dev/null |
 			grep -vE '^[0-9]+:[[:space:]]*#' || true)
 		while IFS= read -r _match; do
 			[ -n "$_match" ] || continue
@@ -357,7 +357,7 @@ scan_dir_bash32_compat() {
 		done <<<"$_matches"
 
 		# Pattern 3: Namerefs (bash 4.3+)
-		_matches=$(grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-n[[:space:]]' "$_file" 2>/dev/null |
+		_matches=$(grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-[a-zA-Z]*n[a-zA-Z]*[[:space:]]' "$_file" 2>/dev/null |
 			grep -vE '^[0-9]+:[[:space:]]*#' || true)
 		while IFS= read -r _match; do
 			[ -n "$_match" ] || continue
