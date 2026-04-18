@@ -370,6 +370,28 @@ test_stale_worktree_scenario() {
 }
 
 # ---------------------------------------------------------------------------
+# Case 9: Allow — leading-zero .task-counter doesn't trigger octal crash
+# (GH#19667: _resolve_current_counter octal-trap symmetry fix)
+# ---------------------------------------------------------------------------
+test_octal_trap_leading_zero_counter() {
+	local name="case-9: allows t-ID ≤ leading-zero counter (octal-trap in _resolve_current_counter)"
+	# Counter written as "09" — was read by _resolve_current_counter via
+	# [[ "$val" -gt "$best" ]] which triggers bash's octal parser on the
+	# second comparison iteration (when $best is already "09").
+	# After the fix: ((10#$val > 10#$best)) forces decimal, so 9 ≤ 9 → allowed.
+	local msg="feat: implement GH#19667 t9"
+	local rc
+	_run_with_counter "$msg" "09"
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 0 (t9 ≤ counter 09 in base-10), got $rc (likely octal crash)"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 main() {
@@ -383,6 +405,7 @@ main() {
 	test_skips_merge_commits
 	test_check_pr_mode
 	test_stale_worktree_scenario
+	test_octal_trap_leading_zero_counter
 
 	printf '\n'
 	printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"

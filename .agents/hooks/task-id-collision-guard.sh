@@ -97,7 +97,10 @@ _resolve_current_counter() {
 		if git rev-parse --verify "$ref" >/dev/null 2>&1; then
 			val=$(git show "${ref}:.task-counter" 2>/dev/null | tr -d '[:space:]')
 			if [[ "$val" =~ ^[0-9]+$ ]]; then
-				if [[ -z "$best" || "$val" -gt "$best" ]]; then
+				# Force base-10 (10#) so leading-zero values like "008" don't trip
+				# bash's octal parser — same root cause as the line 290 comparison
+				# fixed in GH#19620. The ^[0-9]+$ guard above makes 10# safe.
+				if [[ -z "$best" ]] || ((10#$val > 10#$best)); then
 					best="$val"
 				fi
 			fi
@@ -107,7 +110,8 @@ _resolve_current_counter() {
 	if [[ -f .task-counter ]]; then
 		val=$(tr -d '[:space:]' <.task-counter)
 		if [[ "$val" =~ ^[0-9]+$ ]]; then
-			if [[ -z "$best" || "$val" -gt "$best" ]]; then
+			# Force base-10 (10#) — same octal-trap fix as above.
+			if [[ -z "$best" ]] || ((10#$val > 10#$best)); then
 				best="$val"
 			fi
 		fi
