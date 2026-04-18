@@ -124,25 +124,47 @@ spans among them.
 `Git.*`, `Npm.*`, `Bus.*`. These confirm the `@effect/opentelemetry` bridge
 and `OTLPTraceExporter` are active.
 
-**What is missing:** per-tool-call `Tool.execute` spans. The span IS defined
-in the opencode source (`Effect.withSpan("Tool.execute", {attributes})`),
-but it does not appear in the OTEL export in `run` mode.
+**What is missing:** per-tool-call `Tool.execute` spans. The span IS
+declared in opencode source at `packages/opencode/src/tool/tool.ts` —
+every tool is wrapped via
+`.pipe(Effect.orDie, Effect.withSpan("Tool.execute", { attributes: attrs }))`.
+It simply does not appear in the OTEL export in `run` mode.
 
-**Root cause:** opencode uses Effect-TS internally. Tool execution is
-wrapped in `withSpan("Tool.execute")` inside the Effect pipeline, which
-the `@effect/opentelemetry` bridge should convert to OTEL spans. However,
-in `run` mode the AI SDK drives tool execution by calling an `execute()`
-function that returns a `Promise`. The tool's Effect code re-enters via
-`Effect.runPromise(Effect.gen(...))` — a Promise boundary that creates a
-new async context. The `AsyncLocalStorageContextManager` that
-`@effect/opentelemetry` relies on does not propagate the parent span
-across this Effect → Promise → Effect transition, so the `Tool.execute`
-span is either orphaned or never exported.
+**What is NOT the cause** (falsified against `sst/opencode` source on
+2026-04-18 as part of t2212):
 
-The outer orchestration spans work because they run on the main Effect
-fiber where the OTEL tracer layer is provided. Tool execution runs inside
-the AI SDK's Promise-based callback chain, which exits and re-enters the
-Effect runtime without the tracer context.
+- NOT an `AsyncLocalStorageContextManager` gap. `packages/opencode/src/effect/observability.ts`
+  explicitly installs one via `context.setGlobalContextManager(mgr)` with
+  an in-source comment stating the intent is "so non-Effect code (like
+  the AI SDK) that calls `tracer.startActiveSpan()` relies on
+  `context.active()` to find the parent span" — opencode ships with
+  the fix for the exact bridging mechanism earlier drafts of this doc
+  blamed. (PR #19677 had already corrected the `Effect.promise` →
+  `Effect.runPromise` terminology; t2212 retires the underlying
+  attribution that `runPromise` was still somehow the culprit.)
+- NOT a Promise-boundary issue. The tool invocation path in
+  `packages/opencode/src/session/prompt.ts::resolveTools()` uses
+  `run.promise(Effect.gen(...))` where `run` comes from
+  `EffectBridge.make()` in `packages/opencode/src/effect/bridge.ts`.
+  The bridge's `promise` calls `Effect.runPromise(wrap(effect))` with
+  `wrap = attach(effect).pipe(Effect.provide(ctx))` — the outer Effect
+  context (including the tracer layer) IS provided to the inner effect.
+  Empirical counter-evidence observable in the local Jaeger: `Plugin.trigger`,
+  `Plugin.list`, `Plugin.init`, and `Plugin.state` spans ALL appear and
+  go through the same bridge as `Tool.execute`. If the bridge were the
+  root cause, they would all be missing — they are not.
+
+**What IS the cause:** not yet identified. Candidate hypotheses for
+future investigation: (a) the `Effect.withSpan("Tool.execute")`
+attach point interacts specifically with `Effect.orDie` and the AI
+SDK's `tool({ execute })` Promise contract in a way plugin-trigger
+spans do not; (b) the Tool.execute span lifetime ends before OTEL's
+`BatchSpanProcessor` flushes because the AI SDK moves on without
+awaiting span completion; (c) a tracer-layer lookup difference
+between how `Effect.withSpan` resolves inside the tool-level Effect
+vs the plugin-level Effect. These are specific enough to be testable
+by someone reading opencode internals; they are not specific enough
+to edit today.
 
 **Classification:** architectural consequence (outcome (a) from the
 t2187 brief). Not a config flag to toggle, not a simple bug — it is
@@ -170,12 +192,17 @@ accepted**: rely on plugin SQLite for per-tool observability in `run`
 mode. Re-evaluate if opencode fixes the span gap upstream or if a
 future version exposes a tracer handle to plugins.
 
-**Upstream status:** the `opencode-ai/opencode` GitHub repo is archived
-(legacy Go codebase). The current v1.4.x is Bun-compiled TypeScript
-distributed via npm; no public issue tracker for the TypeScript version
-was identified as of 2026-04-18. The span gap may be resolved in a
-future release if the AI SDK integration switches to a span-preserving
-execution model. Monitor opencode release notes for OTEL changes.
+**Upstream status:** the active opencode upstream is `sst/opencode`
+(not archived, default branch `dev`, Bun-compiled TypeScript, public
+issue tracker active, verified 2026-04-18 via `gh api`). A separate,
+legacy Go codebase exists at `opencode-ai/opencode` (archived, last
+push 2025-09-18) — that is NOT the same project as the v1.4.x
+Bun-compiled TypeScript binary users actually run. The span gap may
+be resolved in a future `sst/opencode` release if a contributor lands
+an explicit span-export in the tool execution path or the AI SDK
+switches to a span-preserving execution model. File OTEL-related
+issues at `https://github.com/sst/opencode/issues`; monitor release
+notes there for changes.
 
 ## Verifying the OTEL integration
 
