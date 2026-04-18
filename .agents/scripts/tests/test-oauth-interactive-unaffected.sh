@@ -90,34 +90,47 @@ cat >"$TMP/shared/opencode/auth.json" <<'JSON'
 JSON
 chmod 600 "$TMP/shared/opencode/auth.json"
 
-# The isolated auth — starts as a copy of shared, with the rate-limited
-# account. The pre-dispatch rotation should rewrite this file only.
-cp "$TMP/shared/opencode/auth.json" "$TMP/isolated/opencode/auth.json"
-# Swap isolated to the rate-limited account so rotation triggers.
-tmpfile=$(mktemp)
-jq '.anthropic.email = "marcusquinn@mac.com"' "$TMP/isolated/opencode/auth.json" >"$tmpfile"
-mv "$tmpfile" "$TMP/isolated/opencode/auth.json"
+# The isolated auth — production shape (access-only, no email) because
+# build_auth_entry drops email on every rotation. This is the shape every
+# worker inherits after the first rotation, and the shape the original
+# t2249 PR failed to match, silently defeating rotation for every worker
+# except the first one. The cooldown-marked account is identified by its
+# access token in the pool.
+cat >"$TMP/isolated/opencode/auth.json" <<'JSON'
+{
+  "anthropic": {
+    "type": "oauth",
+    "access": "PROD-access-marcusquinn-at-mac-com",
+    "refresh": "PROD-refresh-marcusquinn-at-mac-com",
+    "expires": 0
+  }
+}
+JSON
 
-# Shared pool: marcusquinn@mac.com has active cooldown.
+# Shared pool: the cooldown-marked account carries both email AND access
+# so either lookup path would resolve it. The rotation path exercised
+# here is access-token match (because isolated has no email).
 cat >"$TMP/pool.json" <<JSON
 {
   "anthropic": [
-    {"email": "marcusquinn@mac.com", "cooldownUntil": $(($(date +%s) * 1000 + 60000)), "status": "rate_limited", "priority": 10},
-    {"email": "healthy@example.com", "cooldownUntil": 0, "status": "available", "priority": 1}
+    {"email": "marcusquinn@mac.com", "access": "PROD-access-marcusquinn-at-mac-com", "cooldownUntil": $(($(date +%s) * 1000 + 60000)), "status": "rate_limited", "priority": 10},
+    {"email": "healthy@example.com", "access": "healthy-access-token", "cooldownUntil": 0, "status": "available", "priority": 1}
   ]
 }
 JSON
 
 # Stub oauth-pool-helper that rotates the isolated file only. Crucially,
 # it writes ONLY to "${XDG_DATA_HOME}/opencode/auth.json" — the same path
-# the real helper resolves to with the t2249 XDG-aware line.
+# the real helper resolves to with the t2249 XDG-aware line. Mirrors
+# build_auth_entry: writes type/access/refresh/expires and no email.
 cat >"$TMP/bin/oauth-pool-helper.sh" <<'STUB'
 #!/usr/bin/env bash
 set -u
 target="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"
 if [[ "${1:-}" == "rotate" && "${2:-}" == "anthropic" && -f "$target" ]]; then
 	tmpfile=$(mktemp)
-	jq '.anthropic.email = "healthy@example.com" | .anthropic.access = "ROTATED-access"' "$target" >"$tmpfile"
+	jq '.anthropic = {type: "oauth", access: "healthy-access-token", refresh: "healthy-refresh", expires: 0}' \
+		"$target" >"$tmpfile"
 	mv "$tmpfile" "$target"
 fi
 exit 0
@@ -158,12 +171,16 @@ else
 fi
 
 # --- Test 3: rotation actually updated the isolated file -------------------
+#
+# Post-rotation shape mirrors build_auth_entry — no email field. The
+# proof-of-rotation is the access-token change, not an email change.
 
-new_email=$(jq -r '.anthropic.email' "$TMP/isolated/opencode/auth.json")
-if [[ "$rc" -eq 0 && "$new_email" == "healthy@example.com" ]]; then
-	pass "isolated auth.json was rotated to healthy account (email=$new_email, rc=$rc)"
+new_access=$(jq -r '.anthropic.access' "$TMP/isolated/opencode/auth.json")
+post_has_email=$(jq -r '.anthropic | has("email")' "$TMP/isolated/opencode/auth.json")
+if [[ "$rc" -eq 0 && "$new_access" == "healthy-access-token" && "$post_has_email" == "false" ]]; then
+	pass "isolated auth.json was rotated via access-token match, post-rotation shape drops email (access=${new_access:0:20}, has_email=$post_has_email, rc=$rc)"
 else
-	fail "isolated auth.json was NOT rotated as expected (rc=$rc, email=$new_email)"
+	fail "isolated auth.json was NOT rotated as expected (rc=$rc, access=$new_access, has_email=$post_has_email)"
 fi
 
 # --- Test 4: the real oauth-pool-helper.sh's OPENCODE_AUTH_FILE with XDG set

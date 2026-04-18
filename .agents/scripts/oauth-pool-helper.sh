@@ -1800,6 +1800,9 @@ Examples:
 Notes:
   - Pool file: ~/.aidevops/oauth-pool.json (600 permissions)
   - Auth file: ~/.local/share/opencode/auth.json (written by rotate)
+  - Auth file override: set XDG_DATA_HOME=<dir> to rotate
+    $XDG_DATA_HOME/opencode/auth.json instead. Used by headless workers
+    so per-worker rotation cannot corrupt the interactive session auth (t2249).
   - After adding/rotating an account, restart OpenCode to use the new token
   - Expired tokens auto-refresh on rotate; use 'refresh' to refresh manually
   - If refresh fails, re-auth with 'add' using the same email

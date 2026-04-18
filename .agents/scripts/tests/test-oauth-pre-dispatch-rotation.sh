@@ -95,14 +95,34 @@ make_fixture() {
 	#   $TMP/bin/invocation.log            (stub call log)
 	#
 	# $1 = cooldownUntil_ms for marcusquinn@mac.com in the shared pool
+	# $2 = shape: "with-email" (default, pre-rotation auth — email+access)
+	#            "access-only" (post-rotation auth — no email, access only;
+	#             mirrors build_auth_entry's output in oauth-pool-lib/_common.py)
 	local cooldown_ms="$1"
+	local shape="${2:-with-email}"
 	local tmp
 	tmp=$(mktemp -d "${TMPDIR:-/tmp}/t2249-rotation-test.XXXXXX")
 
 	mkdir -p "$tmp/isolated/opencode" "$tmp/bin"
 
-	# Isolated auth has marcusquinn@mac.com as current account.
-	cat >"$tmp/isolated/opencode/auth.json" <<'JSON'
+	# Isolated auth represents what the worker inherits. The "with-email"
+	# shape is what the current interactive auth.json looks like when it
+	# was copied to the isolated dir at worker startup. The "access-only"
+	# shape is what build_auth_entry writes on every rotation thereafter —
+	# this is the production shape that the original t2249 PR missed.
+	if [[ "$shape" == "access-only" ]]; then
+		cat >"$tmp/isolated/opencode/auth.json" <<'JSON'
+{
+  "anthropic": {
+    "type": "oauth",
+    "access": "PROD-rotated-access-token-abc123",
+    "refresh": "PROD-rotated-refresh-token-xyz789",
+    "expires": 0
+  }
+}
+JSON
+	else
+		cat >"$tmp/isolated/opencode/auth.json" <<'JSON'
 {
   "anthropic": {
     "type": "oauth",
@@ -112,19 +132,26 @@ make_fixture() {
   }
 }
 JSON
+	fi
 
-	# Shared pool: marcusquinn@mac.com with cooldown, healthy@example.com available.
+	# Shared pool: the cooldown-marked account carries BOTH email and the
+	# access token so both lookup paths in _maybe_rotate_isolated_auth can
+	# resolve it. Real pool entries persist email; auth.json entries don't.
 	cat >"$tmp/pool.json" <<JSON
 {
   "anthropic": [
-    {"email": "marcusquinn@mac.com", "cooldownUntil": ${cooldown_ms}, "status": "rate_limited", "priority": 10},
-    {"email": "healthy@example.com", "cooldownUntil": 0, "status": "available", "priority": 1}
+    {"email": "marcusquinn@mac.com", "access": "PROD-rotated-access-token-abc123", "cooldownUntil": ${cooldown_ms}, "status": "rate_limited", "priority": 10},
+    {"email": "healthy@example.com", "access": "healthy-access-token", "cooldownUntil": 0, "status": "available", "priority": 1}
   ]
 }
 JSON
 
 	# Stub helper: records args to a log, and on `rotate anthropic` rewrites
-	# the isolated auth.json's email to the healthy account.
+	# the isolated auth.json to the healthy account. Mirrors build_auth_entry
+	# in oauth-pool-lib/_common.py — writes {type, access, refresh, expires}
+	# and drops email. The post-rotation shape is ALWAYS access-only
+	# regardless of the pre-rotation shape, so the next pre-dispatch check
+	# on this isolated file will have to match via access token.
 	cat >"$tmp/bin/oauth-pool-helper.sh" <<'STUB'
 #!/usr/bin/env bash
 set -u
@@ -133,7 +160,8 @@ if [[ "${1:-}" == "rotate" && "${2:-}" == "anthropic" ]]; then
 	target="${XDG_DATA_HOME}/opencode/auth.json"
 	if [[ -f "$target" ]]; then
 		tmpfile=$(mktemp)
-		jq '.anthropic.email = "healthy@example.com"' "$target" >"$tmpfile" && mv "$tmpfile" "$target"
+		jq '.anthropic = {type: "oauth", access: "healthy-access-token", refresh: "healthy-refresh", expires: 0}' \
+			"$target" >"$tmpfile" && mv "$tmpfile" "$target"
 	fi
 fi
 exit 0
@@ -146,9 +174,9 @@ STUB
 
 now_ms() { printf '%s' "$(($(date +%s) * 1000))"; }
 
-# --- Test 1: cooldown in the future → rotation fires -------------------------
+# --- Test 1: cooldown in the future, with-email shape → rotation fires ------
 
-fixture=$(make_fixture "$(($(now_ms) + 60000))") # cooldown 60s in the future
+fixture=$(make_fixture "$(($(now_ms) + 60000))" "with-email") # cooldown 60s in the future
 export OAUTH_POOL_HELPER="$fixture/bin/oauth-pool-helper.sh"
 export AIDEVOPS_OAUTH_POOL_FILE="$fixture/pool.json"
 export STUB_LOG="$fixture/bin/invocation.log"
@@ -156,20 +184,20 @@ export STUB_LOG="$fixture/bin/invocation.log"
 _maybe_rotate_isolated_auth "$fixture/isolated/opencode/auth.json" "anthropic"
 rc=$?
 
-final_email=$(jq -r '.anthropic.email' "$fixture/isolated/opencode/auth.json" 2>/dev/null || echo "")
+final_access=$(jq -r '.anthropic.access' "$fixture/isolated/opencode/auth.json" 2>/dev/null || echo "")
 stub_calls=$(wc -l <"$STUB_LOG" | tr -d ' ')
 
-if [[ "$rc" -eq 0 && "$final_email" == "healthy@example.com" && "$stub_calls" -ge 1 ]]; then
-	pass "cooldown-active → rotation invoked and isolated auth email changed (rc=$rc, email=$final_email, calls=$stub_calls)"
+if [[ "$rc" -eq 0 && "$final_access" == "healthy-access-token" && "$stub_calls" -ge 1 ]]; then
+	pass "cooldown-active + email-shape → rotation invoked, access token updated (rc=$rc, access=${final_access:0:20}, calls=$stub_calls)"
 else
-	fail "cooldown-active expectations not met (rc=$rc, email=$final_email, calls=$stub_calls)"
+	fail "cooldown-active + email-shape expectations not met (rc=$rc, access=$final_access, calls=$stub_calls)"
 	cat "$STUB_LOG" 2>/dev/null | sed 's/^/    log: /' || true
 fi
 rm -rf "$fixture"
 
 # --- Test 2: cooldown in the past → no rotation -----------------------------
 
-fixture=$(make_fixture "0") # cooldown cleared
+fixture=$(make_fixture "0" "with-email") # cooldown cleared
 export OAUTH_POOL_HELPER="$fixture/bin/oauth-pool-helper.sh"
 export AIDEVOPS_OAUTH_POOL_FILE="$fixture/pool.json"
 export STUB_LOG="$fixture/bin/invocation.log"
@@ -220,6 +248,71 @@ if [[ "$rc" -eq 0 && "$stub_calls" -eq 0 ]]; then
 	pass "missing-isolated-auth → silent noop (rc=$rc, calls=$stub_calls)"
 else
 	fail "missing-isolated-auth should be silent noop (rc=$rc, calls=$stub_calls)"
+fi
+rm -rf "$fixture"
+
+# --- Test 5: production shape (access-only, no email) → rotation fires -----
+#
+# This is the canonical t2249 regression: after any prior rotation,
+# build_auth_entry drops the email field from auth.json. The pre-dispatch
+# rotation check must still be able to resolve the current account via its
+# access token and rotate away from a cooldown-marked entry. Without this
+# path, the rotation returns early on the bail-out guard that used to read
+# `[[ -n "$current_email" ]] || return 0` and the worker dispatches into the
+# same dead account it was already assigned — reproducing the 2026-04-18
+# cascade production failure.
+
+fixture=$(make_fixture "$(($(now_ms) + 60000))" "access-only") # production shape
+export OAUTH_POOL_HELPER="$fixture/bin/oauth-pool-helper.sh"
+export AIDEVOPS_OAUTH_POOL_FILE="$fixture/pool.json"
+export STUB_LOG="$fixture/bin/invocation.log"
+
+_maybe_rotate_isolated_auth "$fixture/isolated/opencode/auth.json" "anthropic"
+rc=$?
+
+# Pre-rotation isolated auth had access="PROD-rotated-access-token-abc123"
+# and no email. Pool entry for that access was in cooldown. Stub rotates
+# to access="healthy-access-token".
+final_access=$(jq -r '.anthropic.access' "$fixture/isolated/opencode/auth.json" 2>/dev/null || echo "")
+final_has_email=$(jq -r '.anthropic | has("email")' "$fixture/isolated/opencode/auth.json" 2>/dev/null || echo "false")
+stub_calls=$(wc -l <"$STUB_LOG" | tr -d ' ')
+
+if [[ "$rc" -eq 0 && "$final_access" == "healthy-access-token" && "$final_has_email" == "false" && "$stub_calls" -ge 1 ]]; then
+	pass "access-only shape + cooldown → access-token match drove rotation, post-rotation shape matches build_auth_entry (rc=$rc, access=${final_access:0:20}, has_email=$final_has_email, calls=$stub_calls)"
+else
+	fail "access-only shape expectations not met (rc=$rc, access=$final_access, has_email=$final_has_email, calls=$stub_calls)"
+	cat "$STUB_LOG" 2>/dev/null | sed 's/^/    log: /' || true
+fi
+rm -rf "$fixture"
+
+# --- Test 6: access-only shape + unknown access token → silent noop --------
+#
+# Guards against a worker whose isolated auth carries an access token that
+# is NOT in the pool (e.g. manually-edited auth, stale copy from a test
+# account never registered). Without a pool match there is no cooldown to
+# check, so rotation must be skipped rather than attempted against random
+# data.
+
+fixture=$(make_fixture "$(($(now_ms) + 60000))" "access-only")
+# Overwrite isolated auth with an access token that does NOT appear in pool
+tmpfile=$(mktemp)
+jq '.anthropic.access = "UNKNOWN-access-not-in-pool"' \
+	"$fixture/isolated/opencode/auth.json" >"$tmpfile" \
+	&& mv "$tmpfile" "$fixture/isolated/opencode/auth.json"
+export OAUTH_POOL_HELPER="$fixture/bin/oauth-pool-helper.sh"
+export AIDEVOPS_OAUTH_POOL_FILE="$fixture/pool.json"
+export STUB_LOG="$fixture/bin/invocation.log"
+
+_maybe_rotate_isolated_auth "$fixture/isolated/opencode/auth.json" "anthropic"
+rc=$?
+
+stub_calls=$(wc -l <"$STUB_LOG" | tr -d ' ')
+unchanged_access=$(jq -r '.anthropic.access' "$fixture/isolated/opencode/auth.json" 2>/dev/null || echo "")
+
+if [[ "$rc" -eq 0 && "$stub_calls" -eq 0 && "$unchanged_access" == "UNKNOWN-access-not-in-pool" ]]; then
+	pass "access-only shape + unknown-access → silent noop, no rotation (rc=$rc, access=${unchanged_access:0:24}, calls=$stub_calls)"
+else
+	fail "unknown-access expectations not met (rc=$rc, access=$unchanged_access, calls=$stub_calls)"
 fi
 rm -rf "$fixture"
 

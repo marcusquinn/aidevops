@@ -22,10 +22,12 @@ get_modified_shell_files() {
 #
 # Design (t2209):
 #   1. Task IDs are extracted only from real task-list entries — lines that
-#      start (after optional leading whitespace) with "- [ ] tNNN" or
-#      "- [x] tNNN". This excludes doc examples ("- `t001` - Top-level task")
-#      and prose mentions that embed "- [ ] tNNN" inside backticks or
-#      parentheses. Subtask IDs like t123.1.2 are captured by (\.[0-9]+)*.
+#      start (after optional leading whitespace) with "- [ ] tNNN",
+#      "- [x] tNNN", or "- [-] tNNN" (declined). Routine IDs (rNNN) under
+#      ## Routines are also matched. This excludes doc examples
+#      ("- `t001` - Top-level task") and prose mentions that embed
+#      "- [ ] tNNN" inside backticks or parentheses.
+#      Subtask IDs like t123.1.2 are captured by (\.[0-9]+)*.
 #   2. The check is DIFF-AWARE. TODO.md on main has historical duplicate
 #      IDs (e.g. t131 and t1056 were both claimed twice under old
 #      workflows). Those cannot be renamed without breaking issue and PR
@@ -55,10 +57,10 @@ validate_duplicate_task_ids() {
 
 	local staged_dupes head_dupes new_dupes
 	staged_dupes=$(printf '%s\n' "$staged_todo" \
-		| sed -nE 's/^[[:space:]]*- \[[ x]\][[:space:]]+(t[0-9]+(\.[0-9]+)*).*/\1/p' \
+		| sed -nE 's/^[[:space:]]*- \[[ x-]\][[:space:]]+([tr][0-9]+(\.[0-9]+)*).*/\1/p' \
 		| sort | uniq -d)
 	head_dupes=$(printf '%s\n' "$head_todo" \
-		| sed -nE 's/^[[:space:]]*- \[[ x]\][[:space:]]+(t[0-9]+(\.[0-9]+)*).*/\1/p' \
+		| sed -nE 's/^[[:space:]]*- \[[ x-]\][[:space:]]+([tr][0-9]+(\.[0-9]+)*).*/\1/p' \
 		| sort | uniq -d)
 
 	# IDs duplicated in staged that were NOT already duplicated in HEAD =

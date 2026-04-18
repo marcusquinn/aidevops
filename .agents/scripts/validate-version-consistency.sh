@@ -38,6 +38,32 @@ compute_sha256() {
 	return 0
 }
 
+# fetch_with_retry <url>
+# Retries up to 3 times with exponential backoff (5s, 10s, 20s).
+# Streams response body to stdout on success; logs attempts to stderr.
+# Safe for binary data (no variable capture).
+fetch_with_retry() {
+	local url="$1"
+	local attempt=0
+	local max_attempts=3
+	local delay=5
+
+	while [[ $attempt -lt $max_attempts ]]; do
+		if curl -fsSL --max-time 30 "$url" 2>/dev/null; then
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		if [[ $attempt -lt $max_attempts ]]; then
+			print_warning "curl attempt $attempt/$max_attempts failed for $url — retrying in ${delay}s" >&2
+			sleep "$delay"
+			delay=$((delay * 2))
+		fi
+	done
+
+	print_error "Failed to fetch $url after $max_attempts attempts" >&2
+	return 1
+}
+
 # Check VERSION file consistency
 # Arguments: expected_version
 # Outputs: increments _vc_errors on mismatch
@@ -185,7 +211,7 @@ _check_homebrew_formula() {
 	formula_tag="v${formula_version}"
 	if git rev-parse -q --verify "refs/tags/${formula_tag}" >/dev/null 2>&1 || git ls-remote -q --exit-code --tags origin "refs/tags/${formula_tag}" >/dev/null 2>&1; then
 		local release_sha
-		release_sha=$(curl -fsSL "https://github.com/marcusquinn/aidevops/archive/refs/tags/${formula_tag}.tar.gz" | compute_sha256 | cut -d' ' -f1)
+		release_sha=$(fetch_with_retry "https://github.com/marcusquinn/aidevops/archive/refs/tags/${formula_tag}.tar.gz" | compute_sha256 | cut -d' ' -f1)
 		if [[ -z "$release_sha" ]]; then
 			print_error "homebrew/aidevops.rb checksum lookup failed for ${formula_tag}"
 			_vc_errors=$((_vc_errors + 1))
