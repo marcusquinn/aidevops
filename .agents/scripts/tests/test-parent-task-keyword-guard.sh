@@ -198,6 +198,55 @@ else
 		"(rc=$guard_rc output='$guard_output')"
 fi
 
+# =============================================================================
+# Case 6 — inline code span with Resolves → ignore (exit 0, no false positive)
+# =============================================================================
+# Covers t2243: retrospective prose like "helper refused `Resolves #123` per rule"
+# must NOT trigger the guard. The keyword is inside backticks — GitHub itself
+# would not auto-close on merge.
+write_stub_gh_parent "18458"
+# shellcheck disable=SC2016
+# SC2016: single quotes intentional — backticks are literal test fixture chars.
+run_check_body 'prose `Resolves #18458` more prose — this is retrospective text.' --strict
+
+if [[ "$guard_rc" -eq 0 ]]; then
+	print_result "Resolves in inline code span → exit 0 (no false positive)" 0
+else
+	print_result "Resolves in inline code span → exit 0 (no false positive)" 1 \
+		"(rc=$guard_rc output='$guard_output')"
+fi
+
+# =============================================================================
+# Case 7 — fenced code block with Resolves → ignore (exit 0, no false positive)
+# =============================================================================
+write_stub_gh_parent "18458"
+# shellcheck disable=SC2016
+# SC2016: single quotes inside printf intentional — backticks are literal fixture chars.
+run_check_body "$(printf 'Some prose.\n\n```\nResolves #18458\n```\n\nMore prose.')" --strict
+
+if [[ "$guard_rc" -eq 0 ]]; then
+	print_result "Resolves in fenced code block → exit 0 (no false positive)" 0
+else
+	print_result "Resolves in fenced code block → exit 0 (no false positive)" 1 \
+		"(rc=$guard_rc output='$guard_output')"
+fi
+
+# =============================================================================
+# Case 8 — plain-text Resolves on parent still detected (regression guard)
+# =============================================================================
+# Ensure that stripping code spans does not accidentally suppress a real keyword.
+write_stub_gh_parent "18458"
+run_check_body "Resolves #18458
+
+This is a plain-text closing keyword and MUST still be flagged." --strict
+
+if [[ "$guard_rc" -eq 2 ]]; then
+	print_result "Plain-text Resolves on parent still blocked after strip (regression)" 0
+else
+	print_result "Plain-text Resolves on parent still blocked after strip (regression)" 1 \
+		"(rc=$guard_rc output='$guard_output')"
+fi
+
 export PATH="$OLD_PATH"
 
 # =============================================================================
