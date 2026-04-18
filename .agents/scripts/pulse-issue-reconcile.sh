@@ -1344,7 +1344,11 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 				sed 's/,$//' || echo "")
 
 			# Compose the label-add arg list. Origin + tier + any body tags.
-			local -a add_args=("--add-label" "origin:worker" "--add-label" "tier:standard")
+			# t2200: origin label mutual exclusion — remove sibling origin labels.
+			local -a add_args=("--add-label" "origin:worker"
+				"--remove-label" "origin:interactive"
+				"--remove-label" "origin:worker-takeover"
+				"--add-label" "tier:standard")
 			if [[ -n "$body_tags" ]]; then
 				local _saved_ifs="$IFS"
 				IFS=','
@@ -1360,6 +1364,8 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 			# issue-sync-helper.sh ensure_labels_exist function does this
 			# idempotently; if it's not sourceable, fall back to gh label
 			# create --force (also idempotent).
+			# t2200: ensure origin labels exist for mutual-exclusion remove-labels.
+			ensure_origin_labels_exist "$slug" 2>/dev/null || true
 			local labels_csv="origin:worker,tier:standard"
 			[[ -n "$body_tags" ]] && labels_csv="${labels_csv},${body_tags}"
 			local _saved_ifs="$IFS"

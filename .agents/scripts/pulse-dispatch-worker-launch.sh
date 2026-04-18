@@ -83,7 +83,12 @@ _dlw_assign_and_label() {
 	local self_login="$3"
 	local issue_meta_json="$4"
 
-	local -a _extra_flags=(--add-assignee "$self_login" --add-label "origin:worker")
+	# t2200: origin label mutual exclusion — add origin:worker and remove
+	# sibling origin labels atomically in the same gh issue edit call.
+	local -a _extra_flags=(--add-assignee "$self_login"
+		--add-label "origin:worker"
+		--remove-label "origin:interactive"
+		--remove-label "origin:worker-takeover")
 	local _prev_login
 	while IFS= read -r _prev_login; do
 		[[ -n "$_prev_login" && "$_prev_login" != "$self_login" ]] && _extra_flags+=(--remove-assignee "$_prev_login")
