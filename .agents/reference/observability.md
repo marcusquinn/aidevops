@@ -3,9 +3,7 @@
 
 # Observability
 
-aidevops observes the opencode runtime through three complementary layers.
-Each is independently useful; together they cover cost tracking, execution
-forensics, and mid-session self-diagnosis.
+Three complementary layers — cost tracking, execution forensics, and mid-session self-diagnosis. Each is independently useful; together they cover full agent activity.
 
 ## Layers
 
@@ -40,7 +38,7 @@ The opencode-aidevops plugin shell-env hook forwards these variables to
 every subprocess opencode spawns — headless workers and helper scripts
 inherit the trace endpoint without per-script plumbing.
 
-The plugin also enriches each active tool span with aidevops attributes
+The plugin enriches each active tool span with aidevops attributes
 via `@opentelemetry/api` (dynamic import, no-op when absent):
 
 | Attribute                   | Value                                    |
@@ -60,11 +58,9 @@ semantic conventions (which opencode already populates as `session.id`,
 `session-introspect-helper.sh` reads the plugin SQLite directly — no OTEL
 required — and surfaces stuck-worker anti-patterns for the current session.
 
-See "Self-diagnosis" below.
-
 ## Running a local OTLP collector
 
-Any OTLP HTTP sink works. Interim options:
+Any OTLP HTTP sink works:
 
 - **kit motel** — the dedicated opencode/aidevops OTel TUI, still maturing
   (tweeted preview 2026-04). Check the opencode repo for install docs when
@@ -85,9 +81,8 @@ the session. No further aidevops configuration is needed.
 
 ## Self-diagnosis
 
-When a worker appears stuck (token burn, repeated tool calls, silent hang),
-the running session can inspect its own activity with
-`session-introspect-helper.sh`. Works offline, reads local SQLite only.
+`session-introspect-helper.sh` diagnoses stuck workers offline — reads local
+SQLite, no OTEL required:
 
 ```bash
 # What have I been doing?
@@ -116,8 +111,7 @@ Stuck-worker thresholds (informational):
 | Same file read          | > 3× / session| Re-read loop                         |
 | Consecutive errors      | 3+ on same tool | Not learning from feedback        |
 
-The helper does not kill the session — it exposes the data the running
-session (or a watching operator) can use to course-correct.
+The helper exposes data for course-correction; it does not kill the session.
 
 ## Verifying the OTEL integration
 
@@ -125,9 +119,9 @@ After pointing opencode at a collector and restarting:
 
 1. Run any tool call in opencode (e.g. `ls`).
 2. Check the collector received an `opencode.tool.*` span.
-3. Expand the span's attributes — you should see both opencode-native
-   keys (`session.id`, `message.id`) and aidevops-specific keys
-   (`aidevops.intent`, `aidevops.task_id`, …).
+3. Expand the span's attributes — verify both opencode-native keys
+   (`session.id`, `message.id`) and aidevops-specific keys
+   (`aidevops.intent`, `aidevops.task_id`, …) are present.
 
 If aidevops attributes are missing:
 
@@ -136,8 +130,7 @@ If aidevops attributes are missing:
 - Verify `@opentelemetry/api` is resolvable from the plugin's load path
   (opencode bundles it as a transitive dependency).
 - The enrichment path fails silent by design — a plugin error never
-  breaks tool execution — so check opencode's stderr for SDK warnings
-  if attributes aren't appearing despite the plugin being active.
+  breaks tool execution. Check opencode's stderr for SDK warnings.
 
 ## Relationship to other observability tooling
 
