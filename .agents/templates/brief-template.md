@@ -65,7 +65,16 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
      If you wrote `Resolves` and the parent auto-closed, reopen it manually with
      a comment explaining the convention.
 
-     Leaf (non-parent) issue PRs: use `Resolves #NNN` or `Closes #NNN` as normal. -->
+     Leaf (non-parent) issue PRs: use `Resolves #NNN` or `Closes #NNN` as normal.
+
+     MARKDOWN DOES NOT SHIELD KEYWORDS (t2204). pulse-merge's extraction regex
+     is a plain grep on the raw PR body — backticks, code fences, blockquotes,
+     HTML comments, and link text all let the keyword through. Writing
+     `Closes #NNN` in backticks as reference text ("the fix PR will use
+     `Closes #NNN`") still auto-closes the issue on merge. Rephrase to avoid
+     the literal keyword+hash+number sequence: "will use a closing keyword",
+     "will resolve with a Closes-hash-NNN", or split the `#` from the number.
+     Canonical foot-gun: t2190 session PR #19680. -->
 
 {If this task is for a `parent-task`-labeled issue, confirm: PR body will use `For #NNN`, not `Resolves`.}
 {If leaf task: use `Resolves #NNN` as normal — delete this section or leave it blank.}

@@ -313,6 +313,15 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
   NEVER use `Closes`/`Fixes` in commits that only touch TODO.md or todo/*.
 - **Code fix commit messages** may use `Fixes #NNN` — auto-closes when merged to
   the default branch. The dedup system checks commit messages to detect in-progress work.
+- **Markdown formatting is INVISIBLE to the extraction regex (t2204).** `_extract_linked_issue`
+  in `pulse-merge.sh` runs a plain `grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+'`
+  against the raw PR body. Backticks, code fences, blockquotes, HTML comments, and link
+  text DO NOT shield closing keywords from the match. Writing `` `Closes #NNN` `` (as
+  reference text), `> Resolves #NNN` (in a quote), or `[Fixes #NNN](url)` (as link text)
+  in a planning-PR body will auto-close the issue on merge — the regex sees the literal
+  string, not the formatting. If you must reference a closing keyword in narrative prose,
+  rephrase: "the fix PR will use a closing keyword", "will resolve with a Closes-keyword",
+  or split the `#` from the number. Canonical foot-gun: t2190 session PR #19680.
 - Every dispatched task MUST have a GitHub issue. Issue number in TODO.md as `ref:GH#NNN`.
 
 # 9. Worker-Ready Implementation Context (t1900 — MANDATORY)
@@ -406,6 +415,31 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
   checking git log before WRITING new code. Both check "is the world what I
   think it is?"; this one fires during investigation, t2046 fires before
   implementation.
+
+# 11. Attribution before verification (t2204 — MANDATORY before publishing blame)
+# When an incident appears to match a bug described in TODO.md, an open issue,
+# or a recent commit message, READ the cited function body before publishing an
+# attribution. Symptom-level pattern match is a hypothesis, not a diagnosis.
+# Published attribution compounds the error: it lands as noise on the issue
+# thread, trains the next session to trust pattern-matching over code-reading,
+# and requires a correction comment to retract. Canonical failure: t2190
+# session attributed an auto-close to the t2108 bug in a public comment;
+# t2108's fix had merged 3 days earlier and was working correctly — the close
+# fired because the publishing session's own PR body contained the literal
+# closing keyword (see the markdown foot-gun bullet in "Traceability" above).
+- "This looks like t<NNN>" is a hypothesis. It belongs in your notes.
+- "This was caused by t<NNN>" is a diagnosis. It belongs in a public comment
+  (gh issue comment, gh pr comment, issue close body, escalation report) ONLY
+  after you have (a) located the cited function/line, (b) read the body, and
+  (c) confirmed the actual behaviour matches your hypothesis.
+- Internal drafting, TODO entries, and private notes can name suspected bugs
+  freely — the rule fires at the publish step, not the hypothesis step.
+- Scope: applies to attributions blaming a specific task ID, issue number, PR,
+  or commit. Generic "this seems to be a pulse-merge edge case" is fine without
+  code-level verification; "this is the t2108 bug" is not.
+- Related: "Scientific reasoning" (hypothesis framing), "Claim discipline"
+  (proof artifacts), Section 10 (stale symptoms vs deployed file mtime).
+  This rule sits alongside, not inside, any of them.
 
 **Pre-edit rules:**
 - Before ANY file modification: run `pre-edit-check.sh`
