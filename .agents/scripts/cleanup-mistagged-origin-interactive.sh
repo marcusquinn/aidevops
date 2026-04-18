@@ -185,10 +185,9 @@ fix_issue() {
 		return 0
 	fi
 
+	# t2200: use set_origin_label for mutual exclusion instead of raw flags.
 	# Expand unassign_flags safely when empty (bash 3.2 set -u compat).
-	if gh issue edit "$issue_number" --repo "$repo" \
-		--remove-label "origin:interactive" \
-		--add-label "origin:worker" \
+	if set_origin_label "$issue_number" "$repo" "worker" \
 		${unassign_flags[@]+"${unassign_flags[@]}"} >/dev/null 2>&1; then
 		printf '  FIXED:   %s\n' "$action_summary"
 		return 0

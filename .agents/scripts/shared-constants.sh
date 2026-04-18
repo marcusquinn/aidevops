@@ -1181,7 +1181,124 @@ ensure_origin_labels_exist() {
 	gh label create "origin:interactive" --repo "$repo" \
 		--description "Created by interactive user session" \
 		--color "BFD4F2" 2>/dev/null || true
+	gh label create "origin:worker-takeover" --repo "$repo" \
+		--description "Worker took over from interactive session" \
+		--color "D4C5F9" 2>/dev/null || true
 	return 0
+}
+
+# =============================================================================
+# Origin Label Mutual Exclusion (t2200)
+# =============================================================================
+# origin:interactive, origin:worker, and origin:worker-takeover are mutually
+# exclusive — an issue was created by exactly one session type. Setting one
+# must atomically remove the other two so downstream consumers
+# (dispatch-dedup, maintainer gate, pulse-merge routing) can rely on
+# single-label semantics without checking for impossible combinations.
+#
+# Background: #19638 accumulated BOTH origin:interactive AND origin:worker
+# because edit sites added one without removing the other. The status-label
+# state machine (set_issue_status, t2033) solved the identical problem for
+# status:* labels — this mirrors that pattern for origin:* labels.
+
+# Canonical list of mutually-exclusive origin:* labels.
+ORIGIN_LABELS=("interactive" "worker" "worker-takeover")
+
+#######################################
+# Transition an issue or PR to an origin:* label atomically (t2200).
+#
+# Removes every sibling origin:* label in a single `gh issue edit` call,
+# then adds the target. This is the ONLY sanctioned way to change an
+# existing issue/PR's origin label — ad-hoc --add-label/--remove-label
+# calls must go through this helper so the mutual-exclusion invariant
+# is enforced centrally.
+#
+# For new issues/PRs (gh_create_issue, gh_create_pr), the wrappers pass
+# a single --label origin:* at creation time, so there is nothing to
+# remove. This helper is for post-creation edits only.
+#
+# Args:
+#   $1 — issue/PR number
+#   $2 — repo slug (owner/repo)
+#   $3 — new origin: one of interactive|worker|worker-takeover
+#   $4 — (optional) --pr to edit a PR instead of an issue (default: issue)
+#   $@ — additional gh edit flags passed through verbatim (e.g.,
+#        --add-assignee, --remove-assignee, --add-label "other-label")
+#
+# Returns:
+#   0 on gh success
+#   1 on gh failure
+#   2 on invalid origin argument (caller bug)
+#
+# Example:
+#   set_origin_label 19638 owner/repo worker
+#   set_origin_label 19638 owner/repo interactive --pr
+#   set_origin_label 19638 owner/repo worker \
+#       --add-assignee "$worker_login"
+#######################################
+set_origin_label() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local new_origin="$3"
+	shift 3
+
+	# Validate inputs
+	if [[ -z "$issue_num" || -z "$repo_slug" || -z "$new_origin" ]]; then
+		printf 'set_origin_label: issue_num, repo_slug, and new_origin are required\n' >&2
+		return 2
+	fi
+
+	# Check for --pr flag in remaining args
+	local gh_cmd="issue"
+	local -a extra_flags=()
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--pr)
+			gh_cmd="pr"
+			shift
+			;;
+		*)
+			extra_flags+=("$1")
+			shift
+			;;
+		esac
+	done
+
+	# Validate target origin
+	local _valid=0
+	local _origin
+	for _origin in "${ORIGIN_LABELS[@]}"; do
+		[[ "$_origin" == "$new_origin" ]] && {
+			_valid=1
+			break
+		}
+	done
+	if [[ "$_valid" -eq 0 ]]; then
+		printf 'set_origin_label: invalid origin "%s" (valid: %s)\n' \
+			"$new_origin" "${ORIGIN_LABELS[*]}" >&2
+		return 2
+	fi
+
+	# Ensure labels exist (cached per-process per-repo so this is cheap)
+	ensure_origin_labels_exist "$repo_slug" || true
+
+	# Build flag list: add target, remove all siblings.
+	local -a _flags=()
+	local _label
+	for _label in "${ORIGIN_LABELS[@]}"; do
+		if [[ "$_label" == "$new_origin" ]]; then
+			_flags+=(--add-label "origin:${_label}")
+		else
+			_flags+=(--remove-label "origin:${_label}")
+		fi
+	done
+
+	# Pass through any extra flags the caller wants to apply in the same edit
+	if [[ ${#extra_flags[@]} -gt 0 ]]; then
+		_flags+=("${extra_flags[@]}")
+	fi
+
+	gh "$gh_cmd" edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
 }
 
 # =============================================================================
