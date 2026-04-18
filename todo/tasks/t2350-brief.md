@@ -33,7 +33,7 @@ Add a pulse-stage scanner that detects DIRTY PRs and takes one of two actions ba
 
 ### Detection
 
-```
+```bash
 gh pr list --state open --json number,mergeStateStatus,updatedAt,author,labels,files \
   --jq '.[] | select(.mergeStateStatus == "DIRTY")'
 ```
@@ -90,4 +90,3 @@ Action:
 
 - PR #19696 (rebased manually during this session) — canonical eligible-for-auto-rebase case.
 - PRs #19754, #19703 (closed manually during this session) — canonical eligible-for-auto-close case.
-

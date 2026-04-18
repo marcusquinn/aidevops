@@ -79,4 +79,3 @@ For each repo in `repos.json`:
 - Existing `worktree-helper.sh clean --auto --force-merged` handles the cleanup mechanics — this task only schedules and gates it.
 - `pulse-simplification.sh` is the cadence-gated template to copy.
 - Canonical repo was 2 commits behind origin at 2026-04-18 21:30 UTC — caught manually during board-clearing session.
-

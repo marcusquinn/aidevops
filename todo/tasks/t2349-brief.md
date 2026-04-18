@@ -41,7 +41,7 @@ The child-side detection at `issue-sync-relationships.sh:619` shows the exact sh
 
 ### Extraction regex candidate
 
-```
+```bash
 rg -oE '^[[:space:]]*-[^-]*#([0-9]+)' | sed -E 's/.*#([0-9]+).*/\1/'
 ```
 
@@ -75,4 +75,3 @@ Run parent-side backfill from the existing pulse reconcile phase `pulse-issue-re
 - GH#19762 / t2244 (parent) — the `_try_close_parent_tracker` bug that misfires when the sub-issue graph is empty; this task addresses the upstream "graph is empty" root cause by populating it.
 - GH#19093 / t2114 — original backfill-sub-issues feature (child-side detection); this task is the Phase 2 extension.
 - Canonical parents needing this fix: #19734 (v3.8.71 retrospective, 7 children), #19736 (harness self-inflicted CI failure class, 4 children). Already wired manually during the filing session — test by running backfill and confirming idempotence.
-
