@@ -1866,6 +1866,62 @@ setup_oauth_token_refresh() {
 	return 0
 }
 
+# Setup opencode DB maintenance scheduler (r913, t2183).
+# Runs weekly (Sun 04:00 local) to checkpoint/optimize/vacuum opencode.db.
+# The helper self-noops on missing DB, so installing unconditionally is safe —
+# a non-opencode machine wakes up weekly, sees no DB, exits 0 silently.
+#
+# Platform split (mirrors the pattern for token-refresh):
+#   macOS    — helper owns its plist generation via cmd_install (Approach B).
+#   Linux    — _install_scheduler_linux with cron `0 4 * * 0` + systemd
+#              OnCalendar `Sun *-*-* 04:00:00` for accurate wall-clock firing.
+#   Windows  — TODO(t2183-followup): opencode on Windows is rare and the
+#              helper self-noops on missing DB, so leaving unscheduled is
+#              low-risk for this iteration.
+setup_opencode_db_maintenance() {
+	local ocdbm_script="$HOME/.aidevops/agents/scripts/opencode-db-maintenance-helper.sh"
+	if ! [[ -x "$ocdbm_script" ]]; then
+		return 0
+	fi
+
+	local ocdbm_log_dir="$HOME/.aidevops/.agent-workspace/logs"
+	mkdir -p "$ocdbm_log_dir"
+
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		# Helper owns its own plist generation (Approach B, like repo-sync).
+		# Quiet the helper's multi-line output and emit one consolidated line
+		# to match the style of setup_profile_readme / setup_oauth_token_refresh.
+		if bash "$ocdbm_script" install >/dev/null 2>&1; then
+			print_info "OpenCode DB maintenance enabled (launchd, weekly Sun 04:00)"
+		else
+			print_warning "Failed to install opencode DB maintenance LaunchAgent"
+		fi
+	elif _is_windows; then
+		# Windows scheduling deferred — helper self-noops on missing DB so
+		# the cost of leaving unscheduled is ~0 until opencode lands on
+		# Windows in quantity.
+		return 0
+	else
+		# Linux / WSL: prefer systemd user timer, fall back to cron.
+		# Weekly Sunday 04:00 local — cron: `0 4 * * 0`; systemd OnCalendar
+		# ensures wall-clock firing even across suspends/reboots.
+		_install_scheduler_linux \
+			"aidevops-opencode-db-maintenance" \
+			"aidevops: opencode-db-maintenance" \
+			"0 4 * * 0" \
+			"\"${ocdbm_script}\" auto" \
+			"604800" \
+			"${ocdbm_log_dir}/opencode-db-maintenance.log" \
+			"" \
+			"OpenCode DB maintenance enabled (weekly Sun 04:00)" \
+			"Failed to install opencode DB maintenance scheduler" \
+			"false" \
+			"true" \
+			"Sun *-*-* 04:00:00"
+	fi
+	return 0
+}
+
 # Setup repo-sync scheduler if not already installed.
 # Keeps local git repos up to date with daily ff-only pulls.
 # Respects config: aidevops config set orchestration.repo_sync false
