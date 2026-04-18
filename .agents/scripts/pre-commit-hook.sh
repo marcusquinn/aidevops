@@ -90,9 +90,9 @@ validate_return_statements() {
 		if [[ -f "$file" ]]; then
 			# Check for functions without return statements
 			local functions
-			functions=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {" "$file" || echo "0")
+			functions=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {" "$file" || true)
 			local returns
-			returns=$(grep -c "return [01]" "$file" || echo "0")
+			returns=$(grep -c "return [01]" "$file" || true)
 
 			if [[ $functions -gt 0 && $returns -lt $functions ]]; then
 				print_error "Missing return statements in $file"
@@ -136,7 +136,7 @@ validate_string_literals() {
 		if [[ -f "$file" ]]; then
 			# Check for repeated string literals
 			local repeated
-			repeated=$(grep -o '"[^"]*"' "$file" | sort | uniq -c | awk '$1 >= 3' | wc -l || echo "0")
+			repeated=$(grep -o '"[^"]*"' "$file" | sort | uniq -c | awk '$1 >= 3' | wc -l || true)
 
 			if [[ $repeated -gt 0 ]]; then
 				print_warning "Repeated string literals in $file (consider using constants)"
