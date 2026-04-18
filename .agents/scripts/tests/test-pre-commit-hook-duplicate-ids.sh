@@ -50,6 +50,7 @@ print_result() {
 		printf '%sFAIL%s %s %s\n' "$TEST_RED" "$TEST_RESET" "$name" "$extra"
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
+	return 0
 }
 
 # Sandbox HOME so sourcing the hook is side-effect-free. The hook sources
@@ -124,6 +125,7 @@ run_case() {
 		set -e
 		echo "rc=${rc}"
 	)
+	return 0
 }
 
 assert_pass() {
@@ -136,6 +138,7 @@ assert_pass() {
 	else
 		print_result "$name" 1 "expected pass, got rc=$rc; output: $output"
 	fi
+	return 0
 }
 
 assert_fail() {
@@ -152,6 +155,7 @@ assert_fail() {
 		return
 	fi
 	print_result "$name" 0
+	return 0
 }
 
 # =============================================================================
@@ -287,6 +291,32 @@ assert_fail \
 	"" \
 	"$FIXTURE_SUBTASK_DUPE" \
 	"t600.1"
+
+# Case 10 (t2222): declined task colliding with active task — must fail.
+# `- [-]` is the declined checkbox per TODO.md ## Format. A declined task
+# re-using an active task's ID is a real collision.
+FIXTURE_DECLINED_DUPE='## Ready
+- [-] t500 Declined version of this task
+- [ ] t500 Active version reusing same ID
+'
+assert_fail \
+	"declined task (- [-]) colliding with active task fails" \
+	"" \
+	"$FIXTURE_DECLINED_DUPE" \
+	"t500"
+
+# Case 11 (t2222): routine IDs (r-prefix) duplicated — must fail.
+# Routine entries under ## Routines use `r001`, `r002`, etc. Two
+# routines with the same r-ID is a collision.
+FIXTURE_ROUTINE_DUPE='## Routines
+- [ ] r099 First routine
+- [x] r099 Second routine reusing same ID
+'
+assert_fail \
+	"duplicate routine ID (r099) fails" \
+	"" \
+	"$FIXTURE_ROUTINE_DUPE" \
+	"r099"
 
 # =============================================================================
 # Summary
