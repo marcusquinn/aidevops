@@ -764,7 +764,11 @@ build_sandbox_passthrough_csv() {
 		# workers causes them to attach to the pulse's session instead of
 		# creating independent sessions (GH#6668). Exclude it explicitly.
 		OPENCODE_PID) ;;
-		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENAI_* | ANTHROPIC_* | GOOGLE_* | OPENCODE_* | CLAUDE_* | XDG_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*)
+		# OTEL_* is passed through so headless workers under the sandbox
+		# can export OTLP traces when OTEL_EXPORTER_OTLP_ENDPOINT is set.
+		# Without this, opencode never initialises its OTLP exporter and
+		# all aidevops.* plugin span enrichment is silently dropped (t2186).
+		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENAI_* | ANTHROPIC_* | GOOGLE_* | OPENCODE_* | CLAUDE_* | XDG_* | OTEL_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*)
 			if [[ "$seen_names" == *" ${name} "* ]]; then
 				continue
 			fi
