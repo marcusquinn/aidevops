@@ -11,7 +11,7 @@
 #
 # Modes:
 #   Default (commit-msg hook):
-#     Called with $1 = path to the commit message file.
+#     Called with arg1 = path to the commit message file.
 #     Exits 0 (allow) or 1 (reject with actionable error).
 #
 #   check-pr <PR_NUMBER>:
@@ -45,17 +45,20 @@ fi
 # ---------------------------------------------------------------------------
 
 _debug() {
-	[[ "${TASK_ID_GUARD_DEBUG:-0}" == "1" ]] && printf '[task-id-guard][DEBUG] %s\n' "$1" >&2
+	local msg="$1"
+	[[ "${TASK_ID_GUARD_DEBUG:-0}" == "1" ]] && printf '[task-id-guard][DEBUG] %s\n' "$msg" >&2
 	return 0
 }
 
 _warn() {
-	printf '[task-id-guard][WARN] %s\n' "$1" >&2
+	local msg="$1"
+	printf '[task-id-guard][WARN] %s\n' "$msg" >&2
 	return 0
 }
 
 _info() {
-	printf '[task-id-guard][INFO] %s\n' "$1" >&2
+	local msg="$1"
+	printf '[task-id-guard][INFO] %s\n' "$msg" >&2
 	return 0
 }
 
@@ -167,8 +170,8 @@ _extract_closing_issues() {
 # ---------------------------------------------------------------------------
 # Cross-reference a single t-ID against closing issues via the gh API.
 # Args:
-#   $1 = tid (e.g. "t2047")
-#   $2 = newline-separated closing issue numbers
+#   arg1 = tid (e.g. "t2047")
+#   arg2 = newline-separated closing issue numbers
 # Returns:
 #   0 = confirmed (title of at least one linked issue contains the t-ID)
 #   1 = not confirmed (violation)
@@ -221,8 +224,8 @@ _verify_tid_via_issues() {
 # ---------------------------------------------------------------------------
 # Print the violation block to stderr.
 # Args:
-#   $1 = violations string (printf %b-formatted lines)
-#   $2 = commit subject (for display)
+#   arg1 = violations string (printf %b-formatted lines)
+#   arg2 = commit subject (for display)
 # ---------------------------------------------------------------------------
 _report_violations() {
 	local violations="${1:-}"
@@ -242,8 +245,8 @@ _report_violations() {
 # ---------------------------------------------------------------------------
 # Core check: given a commit message, check if any t\d+ reference is invented.
 # Args:
-#   $1 = full commit message text
-#   $2 = commit subject (for display in errors), optional
+#   arg1 = full commit message text
+#   arg2 = commit subject (for display in errors), optional
 # Returns 0 (clean), 1 (violation found), 2 (fail-open — skip).
 # ---------------------------------------------------------------------------
 _check_message() {
@@ -320,7 +323,7 @@ _check_message() {
 
 # ---------------------------------------------------------------------------
 # Commit-msg hook mode (default).
-# $1 = path to commit message file
+# arg1 = path to commit message file
 # ---------------------------------------------------------------------------
 _run_hook() {
 	local msg_file="${1:-}"
@@ -430,7 +433,7 @@ main() {
 		return 0
 		;;
 	*)
-		# Default: commit-msg hook mode. $1 is the message file path.
+		# Default: commit-msg hook mode. First arg is the message file path.
 		_run_hook "${1:-}"
 		return $?
 		;;
