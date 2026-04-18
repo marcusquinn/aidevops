@@ -28,7 +28,13 @@ IFS=$'\n\t'
 # ---------------------------------------------------------------------------
 
 POOL_FILE="${HOME}/.aidevops/oauth-pool.json"
-OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
+# t2249: XDG-aware auth path. Resolves to the isolated per-worker auth.json
+# when called from a headless worker context (XDG_DATA_HOME set by
+# headless-runtime-helper.sh invoke_opencode), and to the shared interactive
+# file otherwise. This is what makes rotate safe for concurrent interactive +
+# headless usage: rotation from a worker targets the worker's isolated file,
+# never the shared interactive auth.json.
+OPENCODE_AUTH_FILE="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/auth.json"
 
 # Companion Python library for complex operations (extracted to reduce nesting depth)
 POOL_OPS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oauth-pool-lib/pool_ops.py"
