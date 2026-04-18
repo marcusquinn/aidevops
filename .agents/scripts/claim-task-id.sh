@@ -695,9 +695,25 @@ allocate_offline() {
 # Auto-assign a newly created issue to the current GitHub user.
 # Prevents duplicate dispatch when multiple machines/pulses are running.
 # Non-blocking — assignment failure doesn't fail issue creation.
+#
+# t2218: skip self-assign when the task carries auto-dispatch labels.
+# Mirrors the t2157 carve-out in issue-sync-helper.sh::_push_auto_assign_interactive.
+# When an interactive session creates a task intended for worker dispatch
+# (auto-dispatch label present), self-assigning the pusher creates the
+# (origin:interactive + assignee) combo that GH#18352/t1996 dedup-blocks
+# the pulse from dispatching a worker. Skip the assignment so the pulse
+# can dispatch immediately; the issue retains origin:interactive for
+# provenance.
 _auto_assign_issue() {
 	local issue_num="$1"
 	local repo_path="$2"
+
+	# t2218: skip when auto-dispatch tag present — issue is worker-owned.
+	# TASK_LABELS is the module-level variable set by --labels parsing.
+	if [[ ",${TASK_LABELS:-}," == *",auto-dispatch,"* ]]; then
+		log_info "Skipping auto-assign for #${issue_num} — auto-dispatch entry is worker-owned (t2218)"
+		return 0
+	fi
 
 	local current_user
 	current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
