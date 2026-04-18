@@ -31,6 +31,19 @@ resolve_dispatch_model_for_labels() {
 	local tier=""
 	local resolved_model=""
 
+	# Model-override labels take precedence over tier:* labels (t2239).
+	# These route directly to a specific model, bypassing the tier → model
+	# resolution in model-availability-helper.sh. Applied either by the
+	# cascade (after opus-4.6 exhausts its retries at tier:thinking) or
+	# manually by maintainers for intent-driven routing. See
+	# tools/ai-assistants/models-opus.md for the when-to-apply guidance.
+	case ",${labels_csv}," in
+	*,model:opus-4-7,*)
+		printf '%s' "anthropic/claude-opus-4-7"
+		return 0
+		;;
+	esac
+
 	# Tier label resolution — tier:thinking is the canonical opus-tier label
 	case ",${labels_csv}," in
 	*,tier:thinking,*) tier="opus" ;;
