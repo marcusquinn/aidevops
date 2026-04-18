@@ -34,6 +34,10 @@ POST_HOOK_COMMAND="\$HOME/.aidevops/hooks/mcp_task_post_hook.py"
 GH_WRAPPER_GUARD_MARKER="# aidevops-gh-wrapper-guard"
 GH_WRAPPER_GUARD_DEPLOYED="$HOME/.aidevops/agents/hooks/gh-wrapper-guard-pre-push.sh"
 
+# pre-commit quality-validation hook (t2191)
+PRE_COMMIT_MARKER="# aidevops-pre-commit-hook"
+PRE_COMMIT_DEPLOYED="$HOME/.aidevops/agents/scripts/pre-commit-hook.sh"
+
 print_info() { printf "${BLUE}[INFO]${NC} %s\n" "$1"; }
 print_success() { printf "${GREEN}[OK]${NC} %s\n" "$1"; }
 print_warning() { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
@@ -156,6 +160,102 @@ HOOKEOF
 	return 0
 }
 
+# --- pre-commit quality-validation hook (t2191) ---
+
+_find_pre_commit_hook() {
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	local repo_hook="$script_dir/pre-commit-hook.sh"
+	if [[ -f "$repo_hook" ]]; then
+		echo "$repo_hook"
+		return 0
+	fi
+	if [[ -f "$PRE_COMMIT_DEPLOYED" ]]; then
+		echo "$PRE_COMMIT_DEPLOYED"
+		return 0
+	fi
+	return 1
+}
+
+install_pre_commit_hook() {
+	# Only install if we're in a git repo
+	local common_dir
+	common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+		print_warning "Not in a git repo — skipping pre-commit quality hook"
+		return 0
+	}
+
+	local hook_path="${common_dir}/hooks/pre-commit"
+	mkdir -p "$(dirname "$hook_path")"
+
+	local source_hook
+	if ! source_hook=$(_find_pre_commit_hook); then
+		print_warning "pre-commit-hook.sh not found — skipping"
+		return 0
+	fi
+
+	if [[ -f "$hook_path" ]]; then
+		if grep -q "$PRE_COMMIT_MARKER" "$hook_path" 2>/dev/null; then
+			print_info "pre-commit hook already installed — refreshing dispatcher"
+		elif grep -q "aidevops" "$hook_path" 2>/dev/null; then
+			# Existing aidevops-managed pre-commit hook — chain ours in
+			if ! grep -q "pre-commit-hook.sh" "$hook_path" 2>/dev/null; then
+				# shellcheck disable=SC2016 # single quotes intentional — template content
+				{
+					printf '\n%s\n' "$PRE_COMMIT_MARKER"
+					printf '# pre-commit-hook: shellcheck, TODO.md validation, secretlint\n'
+					printf '_pch_hook=""\n'
+					printf 'if git_dir=$(git rev-parse --show-toplevel 2>/dev/null); then\n'
+					printf '  _pch_hook="${git_dir}/.agents/scripts/pre-commit-hook.sh"\n'
+					printf 'fi\n'
+					printf 'if [[ -n "$_pch_hook" && -f "$_pch_hook" ]]; then\n'
+					printf '  "$_pch_hook" "$@" || exit $?\n'
+					printf 'elif [[ -f "%s" ]]; then\n' "$PRE_COMMIT_DEPLOYED"
+					printf '  "%s" "$@" || exit $?\n' "$PRE_COMMIT_DEPLOYED"
+					printf 'fi\n'
+				} >>"$hook_path"
+				print_success "chained pre-commit-hook into existing pre-commit hook"
+			fi
+			return 0
+		else
+			print_warning "existing non-aidevops pre-commit hook — cannot auto-install"
+			print_warning "  manually add: $source_hook \"\$@\" || exit \$?"
+			return 0
+		fi
+	fi
+
+	# Write a dispatcher that prefers the in-repo copy (so script updates
+	# propagate without re-running this installer) and falls back to the
+	# deployed copy when no repo checkout is available.
+	cat >"$hook_path" <<HOOKEOF
+#!/usr/bin/env bash
+$PRE_COMMIT_MARKER
+# Managed by install-hooks-helper.sh — do not edit.
+# Dispatcher for pre-commit quality validation (shellcheck, TODO.md,
+# secretlint, root-file allowlist, task-completion proof-log).
+# Bypass: git commit --no-verify
+
+set -u
+
+_pch_hook=""
+if git_dir=\$(git rev-parse --show-toplevel 2>/dev/null); then
+	_pch_hook="\${git_dir}/.agents/scripts/pre-commit-hook.sh"
+fi
+_pch_deployed="$PRE_COMMIT_DEPLOYED"
+
+if [[ -n "\$_pch_hook" && -f "\$_pch_hook" ]]; then
+	"\$_pch_hook" "\$@" || exit \$?
+elif [[ -f "\$_pch_deployed" ]]; then
+	"\$_pch_deployed" "\$@" || exit \$?
+else
+	printf '[pre-commit-hook][WARN] hook not found — allowing commit\n' >&2
+fi
+HOOKEOF
+	chmod +x "$hook_path"
+	print_success "installed pre-commit quality hook at $hook_path"
+	return 0
+}
+
 install_hook() {
 	print_info "Installing Claude Code safety hooks..."
 
@@ -201,6 +301,9 @@ install_hook() {
 
 	# Also install the gh-wrapper-guard pre-push hook (t2113)
 	install_gh_wrapper_guard_hook
+
+	# Also install the pre-commit quality-validation hook (t2191)
+	install_pre_commit_hook
 
 	return 0
 }
@@ -490,6 +593,23 @@ sys.exit(1)
 		print_info "gh-wrapper-guard: not in a git repo — skipped"
 	fi
 
+	# Check pre-commit quality hook (t2191)
+	echo ""
+	echo "Pre-commit Quality Hook"
+	echo "------------------------"
+	if common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+		local pc_hook_path="${common_dir}/hooks/pre-commit"
+		if [[ -f "$pc_hook_path" ]] && grep -q "$PRE_COMMIT_MARKER" "$pc_hook_path" 2>/dev/null; then
+			print_success "pre-commit-hook: installed"
+		elif [[ -f "$pc_hook_path" ]] && grep -q "pre-commit-hook.sh" "$pc_hook_path" 2>/dev/null; then
+			print_success "pre-commit-hook: chained in pre-commit hook"
+		else
+			print_warning "pre-commit-hook: not installed (run: install-hooks-helper.sh install)"
+		fi
+	else
+		print_info "pre-commit-hook: not in a git repo — skipped"
+	fi
+
 	echo ""
 	if [[ "$all_ok" == "true" ]]; then
 		print_success "All checks passed - safety hooks are active"
@@ -586,6 +706,7 @@ show_help() {
 	echo "  ~/.aidevops/hooks/git_safety_guard.py"
 	echo "  ~/.claude/settings.json (PreToolUse hook config)"
 	echo "  .git/hooks/pre-push (gh-wrapper-guard, t2113)"
+	echo "  .git/hooks/pre-commit (quality-validation, t2191)"
 	return 0
 }
 

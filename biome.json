@@ -1,0 +1,40 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.12/schema.json",
+	"files": {
+		"ignoreUnknown": true,
+		"includes": [
+			"**",
+			"!**/node_modules/**",
+			"!**/.git/**",
+			"!**/dist/**",
+			"!**/build/**",
+			"!**/coverage/**",
+			"!todo/tasks/**",
+			"!.agents/plugins/opencode-aidevops/**",
+			"!.agents/tools/design/library/brands/**",
+			"!.agents/services/hosting/cloudflare-platform-skill/**"
+		]
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"correctness": {
+				"useQwikValidLexicalScope": "off"
+			}
+		}
+	},
+	"formatter": {
+		"enabled": false
+	},
+	"javascript": {
+		"formatter": {
+			"enabled": false
+		}
+	},
+	"json": {
+		"formatter": {
+			"enabled": false
+		}
+	}
+}

@@ -450,10 +450,12 @@ _init_root_file_allowlist() {
 		"CHANGELOG.md" "LICENSE" "CODE_OF_CONDUCT.md" "CONTRIBUTING.md"
 		"SECURITY.md" "TERMS.md" "MODELS.md" "VERSION"
 		# Config files (dotfiles)
-		".gitignore" ".codacy.yml" ".codefactor.yml" ".coderabbit.yaml"
+		".bandit" ".gitignore" ".codacy.yml" ".codefactor.yml" ".coderabbit.yaml"
 		".markdownlint-cli2.jsonc" ".markdownlint.json" ".markdownlintignore"
 		".qlty/qlty.toml" ".qlty.toml" ".qltyignore" ".repomixignore"
 		".secretlintignore" ".secretlintrc.json"
+		# Tool configs (non-dotfile)
+		"biome.json"
 		# Build/package files
 		"package.json" "bun.lock" "requirements.txt" "requirements-lock.txt"
 		# Scripts

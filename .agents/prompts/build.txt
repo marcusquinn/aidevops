@@ -494,6 +494,21 @@ Short, concise, GitHub-flavored markdown. Numbered options for prompts.
 # AI Suggestion Verification
 Never apply AI tool suggestions without independent verification. AI reviewers hallucinate.
 
+# Codacy auto-fix diffs — NEVER apply verbatim (t2191)
+# Observed in t2178: Codacy's one-click "Apply fix" / "AutoFix" diffs
+# corrupt markdown and code in ways a human reviewer catches immediately
+# but a bulk-apply session won't. Treat Codacy suggestions as hints
+# pointing at a location, NOT as patches to land.
+- Concrete failure modes observed when applying Codacy diffs verbatim:
+  - Joins function identifiers and keywords across whitespace (`foo bar` → `foobar`).
+  - Breaks GitHub issue/PR references (`#19222` → `# 19222`, losing the autolink).
+  - Mangles UTF-8 em-dashes and other multi-byte chars (`—` → `â`).
+  - Misinterprets inline math expressions, eating spaces around operators.
+  - Dedents content inside fenced code blocks, breaking indentation-sensitive languages.
+  - Flips emphasis markers inconsistently (`*foo*` ↔ `_foo_`) mid-document.
+- Required flow: read the Codacy finding, navigate to `file:line` yourself, apply the fix by hand with Edit/Write. Run `shellcheck` / `markdownlint-cli2` / `biome check` locally to confirm the issue is actually resolved.
+- Tool-native configs (`.bandit`, `biome.json`, `.markdownlint.json`, `.shellcheckrc`) ARE respected by Codacy — disable a noisy rule at the source instead of hand-fixing every occurrence of a false positive.
+
 # Model-Specific Reinforcements
 - Follow project conventions — check imports, configs, neighbouring files.
 - Verify libraries exist in package.json/Cargo.toml before using.
