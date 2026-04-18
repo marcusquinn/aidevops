@@ -120,6 +120,24 @@ When multiple pulse runners are operating across machines, single-worker diagnos
 remain valid. For cross-runner race conditions, stale-recovery loops, and new runner setup,
 see `reference/cross-runner-coordination.md`.
 
+## `gh pr checks` cancelled-vs-fail
+
+`gh pr checks` renders the GitHub Actions `cancelled` conclusion as
+`fail` in its TSV/default output. Only `success` becomes `pass`; all
+of `cancelled`, `timed_out`, `action_required`, `failure` collapse to
+`fail`.
+
+Before assuming a PR is broken, run:
+
+```bash
+gh api repos/OWNER/REPO/actions/runs -f branch=BRANCH \
+  -q '.workflow_runs[] | [.conclusion, .name] | @tsv'
+```
+
+If all "fail"s are `cancelled`, the CI is not actually broken — a
+concurrency cascade (or manual cancel) produced them. See parent
+#19736 for the cascade class.
+
 ## Recovery Checklist
 
 When workers are failing systemically:

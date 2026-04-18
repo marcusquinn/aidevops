@@ -478,6 +478,23 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - After editing code: run relevant linter before next edit. Shell: `shellcheck`. MD: `markdownlint-cli2`.
 - Fix immediately, don't batch for commit time.
 
+# Gate design — ratchet, not absolute (t2228 class)
+# Any new pre-commit validator or CI gate MUST be ratchet-based: baseline
+# the violation count at activation, block only on regressions. Absolute-
+# count gating traps pre-existing debt every time a legacy file is
+# touched, wasting worker context tokens on unrelated cleanup.
+#
+# Exception: security/credentials checks (secrets, hardcoded tokens,
+# dangerous commands) are absolute — a new violation is a P1 regardless
+# of baseline. Classify explicitly in the validator.
+#
+# `print_warning` output MUST NOT increment the violation counter. If a
+# finding is "warning", it means "inform, do not block" — returning a
+# non-zero count from a warning path is a lie to the caller.
+#
+# Patterns to copy: `.agents/scripts/qlty-regression-helper.sh` (t2065),
+# `.agents/scripts/qlty-new-file-gate-helper.sh` (t2068).
+
 # Self-modifying tooling test discipline (GH#18538 / t2062)
 # When you edit a script that's part of the test/verification loop you'll
 # subsequently invoke (e.g., `full-loop-helper.sh`, `pre-edit-check.sh`,
