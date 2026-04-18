@@ -173,7 +173,7 @@ _tier_rank() {
 #   $2 - issue number
 #   $3 - new tier label (e.g., tier:standard)
 _apply_tier_label_replace() {
-	local repo="$1" num="$2" new_tier="$3"
+	local repo="$1" num="$2" new_tier="$3" current_labels_csv="${4:-}"
 	[[ -z "$repo" || -z "$num" || -z "$new_tier" ]] && return 0
 
 	# Validate the new tier matches the expected pattern — refuse to push
@@ -183,9 +183,25 @@ _apply_tier_label_replace() {
 		return 0
 	fi
 
+	# t2165: accept pre-fetched labels CSV to avoid a redundant gh issue view.
+	# Fall back to fetching when unset — preserves isolated-test behaviour.
 	local existing_tiers
-	existing_tiers=$(gh issue view "$num" --repo "$repo" --json labels \
-		--jq '[.labels[].name | select(startswith("tier:"))] | join(",")' 2>/dev/null || echo "")
+	if [[ -n "$current_labels_csv" ]]; then
+		existing_tiers=""
+		local _saved_ifs_t="$IFS"
+		IFS=','
+		local _lbl_t
+		for _lbl_t in $current_labels_csv; do
+			[[ -z "$_lbl_t" ]] && continue
+			case "$_lbl_t" in
+			tier:*) existing_tiers="${existing_tiers:+$existing_tiers,}$_lbl_t" ;;
+			esac
+		done
+		IFS="$_saved_ifs_t"
+	else
+		existing_tiers=$(gh issue view "$num" --repo "$repo" --json labels \
+			--jq '[.labels[].name | select(startswith("tier:"))] | join(",")' 2>/dev/null || echo "")
+	fi
 
 	# Ratchet rule (t2111): compute the max rank among existing tier:* labels
 	# and compare against the incoming tier. If the existing max outranks the
@@ -276,10 +292,13 @@ _is_tag_derived_label() {
 #   $2 - issue number
 #   $3 - desired labels (comma-separated, already mapped via map_tags_to_labels)
 _reconcile_labels() {
-	local repo="$1" num="$2" desired_labels="$3"
-	local current_labels
-	current_labels=$(gh issue view "$num" --repo "$repo" --json labels \
-		--jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+	local repo="$1" num="$2" desired_labels="$3" current_labels="${4:-}"
+	# t2165: accept pre-fetched labels CSV to avoid a redundant gh issue view.
+	# Fall back to fetching when unset — preserves isolated-test behaviour.
+	if [[ -z "$current_labels" ]]; then
+		current_labels=$(gh issue view "$num" --repo "$repo" --json labels \
+			--jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+	fi
 	[[ -z "$current_labels" ]] && return 0
 
 	local to_remove=""
@@ -825,27 +844,61 @@ _enrich_build_task_list() {
 # add_ok gates reconciliation to avoid destructive removal after transient API
 # failures (GH#17402 CR fix).
 _enrich_apply_labels() {
-	local repo="$1" num="$2" labels="$3" tier_label="$4"
+	local repo="$1" num="$2" labels="$3" tier_label="$4" current_labels_csv="${5:-}"
 	local add_ok=true
 	if [[ -n "$labels" ]]; then
 		ensure_labels_exist "$labels" "$repo"
-		# Build add args and check exit status — _gh_edit_labels masks failures
-		# via || true, so we call gh issue edit directly here.
-		local -a add_args=()
-		local _saved_ifs_add="$IFS"
-		IFS=','
-		for _lbl in $labels; do [[ -n "$_lbl" ]] && add_args+=("--add-label" "$_lbl"); done
-		IFS="$_saved_ifs_add"
-		if [[ ${#add_args[@]} -gt 0 ]]; then
-			gh issue edit "$num" --repo "$repo" "${add_args[@]}" 2>/dev/null || add_ok=false
+		# t2165: skip the add API call when every desired label is already
+		# present in the issue's current labels. gh issue edit --add-label
+		# is idempotent but still round-trips ~1.5s per task; at ~145 open
+		# tasks this is the bulk of the 10-minute enrich budget.
+		local all_present=false
+		if [[ -n "$current_labels_csv" ]]; then
+			all_present=true
+			local _saved_ifs_chk="$IFS"
+			IFS=','
+			local _lbl_chk _found_chk
+			for _lbl_chk in $labels; do
+				[[ -z "$_lbl_chk" ]] && continue
+				_found_chk=false
+				local _saved_ifs_in="$IFS"
+				IFS=','
+				local _existing
+				for _existing in $current_labels_csv; do
+					if [[ "$_existing" == "$_lbl_chk" ]]; then
+						_found_chk=true
+						break
+					fi
+				done
+				IFS="$_saved_ifs_in"
+				if [[ "$_found_chk" != "true" ]]; then
+					all_present=false
+					break
+				fi
+			done
+			IFS="$_saved_ifs_chk"
+		fi
+		if [[ "$all_present" != "true" ]]; then
+			# Build add args and check exit status — _gh_edit_labels masks failures
+			# via || true, so we call gh issue edit directly here.
+			local -a add_args=()
+			local _saved_ifs_add="$IFS"
+			IFS=','
+			for _lbl in $labels; do [[ -n "$_lbl" ]] && add_args+=("--add-label" "$_lbl"); done
+			IFS="$_saved_ifs_add"
+			if [[ ${#add_args[@]} -gt 0 ]]; then
+				gh issue edit "$num" --repo "$repo" "${add_args[@]}" 2>/dev/null || add_ok=false
+			fi
 		fi
 	fi
 	# Reconcile: remove tag-derived labels no longer in desired set (GH#17402).
-	[[ "$add_ok" == "true" ]] && _reconcile_labels "$repo" "$num" "$labels"
+	# t2165: forward the pre-fetched labels so _reconcile_labels skips its
+	# own gh issue view call when we already have the state.
+	[[ "$add_ok" == "true" ]] && _reconcile_labels "$repo" "$num" "$labels" "$current_labels_csv"
 	# Apply tier label via replace-not-append — protected-prefix rule prevents
 	# _reconcile_labels from cleaning up stale tier:* labels on its own.
 	if [[ -n "$tier_label" ]]; then
-		_apply_tier_label_replace "$repo" "$num" "$tier_label"
+		_apply_tier_label_replace "$repo" "$num" "$tier_label" "$current_labels_csv"
 	fi
 	return 0
 }
@@ -871,11 +924,16 @@ _enrich_apply_labels() {
 # Returns 0 on successful edit, 1 on failure.
 _enrich_update_issue() {
 	local repo="$1" num="$2" task_id="$3" title="$4" body="$5"
+	# t2165: accept pre-fetched current_title/current_body as optional 6th/7th
+	# args. When present, skip the per-helper gh issue view call. Fall back to
+	# fetching when empty — preserves isolated-test behaviour.
+	local current_title="${6:-}" current_body="${7:-}"
 	local do_body_update=true
 
 	if [[ "$FORCE_ENRICH" != "true" ]]; then
-		local current_body
-		current_body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""' 2>/dev/null || echo "")
+		if [[ -z "$current_body" ]]; then
+			current_body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""' 2>/dev/null || echo "")
+		fi
 
 		# t2063: brief-file presence is the authoritative signal.
 		# Resolve project root from the shared PROJECT_ROOT variable if set
@@ -912,6 +970,14 @@ _enrich_update_issue() {
 		fi
 		print_error "Failed to enrich body on #$num ($task_id)"
 		return 1
+	fi
+	# t2165: when the title also already matches, skip the title-only API
+	# call entirely. The previous implementation always issued at least one
+	# gh issue edit per task even when nothing had changed — on a
+	# steady-state TODO.md this was the dominant per-task cost.
+	if [[ -n "$current_title" && "$current_title" == "$title" ]]; then
+		print_info "Title unchanged on #$num ($task_id), skipping API call"
+		return 0
 	fi
 	# Still update title even when body is preserved/skipped (GH#18411).
 	if gh issue edit "$num" --repo "$repo" --title "$title" 2>/dev/null; then
@@ -971,8 +1037,23 @@ _enrich_process_task() {
 		return 0
 	fi
 
-	_enrich_apply_labels "$repo" "$num" "$labels" "$tier_label"
-	if _enrich_update_issue "$repo" "$num" "$task_id" "$title" "$body"; then
+	# t2165: fetch title, body, and labels in a single gh issue view call and
+	# forward to helpers. Each helper used to issue its own view+edit pair;
+	# in steady state most of those calls produced no change but still cost
+	# ~1.5s each. At ~145 open tasks × 4-5 calls each the work exceeded the
+	# sync-on-push 10-minute cap. Forwarding pre-fetched state collapses the
+	# per-task read cost to one call and lets each helper skip writes whose
+	# target value already matches.
+	local _state_json current_title="" current_body="" current_labels_csv=""
+	_state_json=$(gh issue view "$num" --repo "$repo" --json title,body,labels 2>/dev/null || echo "")
+	if [[ -n "$_state_json" ]]; then
+		current_title=$(echo "$_state_json" | jq -r '.title // ""' 2>/dev/null || echo "")
+		current_body=$(echo "$_state_json" | jq -r '.body // ""' 2>/dev/null || echo "")
+		current_labels_csv=$(echo "$_state_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+	fi
+
+	_enrich_apply_labels "$repo" "$num" "$labels" "$tier_label" "$current_labels_csv"
+	if _enrich_update_issue "$repo" "$num" "$task_id" "$title" "$body" "$current_title" "$current_body"; then
 		print_success "Enriched #$num ($task_id)"
 		# Sync relationships (blocked-by, sub-issues) after enrichment (t1889)
 		sync_relationships_for_task "$task_id" "$todo_file" "$repo"

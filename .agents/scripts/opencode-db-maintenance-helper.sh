@@ -38,6 +38,12 @@
 #   auto                 — run maintenance only if safe (no active processes);
 #                          used by the r913 weekly routine. Silent no-op if
 #                          opencode is not installed.
+#   install              — macOS only: install/refresh LaunchAgent for weekly
+#                          auto-run on Sun 04:00 local (t2183). Linux install
+#                          is handled by setup-modules/schedulers.sh directly.
+#   uninstall            — macOS only: remove LaunchAgent. Idempotent.
+#   status               — report scheduler install state (launchd on macOS,
+#                          systemd/cron on Linux).
 #   help                 — show this help
 #
 # Usage:
@@ -91,6 +97,15 @@ readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 : "${FORCE_VACUUM_SIZE_MB:=500}"
 # AUTO_MIN_SECONDS_BETWEEN: skip auto run if last run was within N seconds (default 6 days)
 : "${AUTO_MIN_SECONDS_BETWEEN:=518400}"
+
+# Scheduler (macOS launchd) — used by cmd_install / cmd_uninstall / cmd_status.
+# Linux systemd/cron install is handled by setup-modules/schedulers.sh
+# (setup_opencode_db_maintenance → _install_scheduler_linux).
+readonly LAUNCHD_LABEL="sh.aidevops.opencode-db-maintenance"
+readonly LAUNCHD_DIR="${HOME}/Library/LaunchAgents"
+readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
+readonly SCHEDULER_LOG_DIR="${HOME}/.aidevops/.agent-workspace/logs"
+readonly SCHEDULER_LOG_FILE="${SCHEDULER_LOG_DIR}/opencode-db-maintenance.log"
 
 # -----------------------------------------------------------------------------
 # Output helpers (fallback if shared-constants didn't provide them)
@@ -576,6 +591,198 @@ cmd_auto() {
 }
 
 # -----------------------------------------------------------------------------
+# Subcommand: install / uninstall / status (macOS launchd scheduler, t2183)
+# -----------------------------------------------------------------------------
+# Helper owns its plist generation (Approach B, mirrors repo-sync-helper.sh).
+# Linux systemd/cron install is handled by setup-modules/schedulers.sh calling
+# _install_scheduler_linux — these subcommands are macOS-only; on Linux they
+# print an info message and exit 0 (success, nothing to do here).
+
+# _is_macos — 0 on Darwin
+_is_macos() {
+	[[ "$(uname -s)" == "Darwin" ]]
+}
+
+# _launchd_is_loaded — 0 if our LaunchAgent is listed
+# SIGPIPE-safe under set -o pipefail (t1265): capture to variable first
+_launchd_is_loaded() {
+	local output
+	output=$(launchctl list 2>/dev/null) || true
+	echo "$output" | grep -qF "$LAUNCHD_LABEL"
+}
+
+# _resolve_self_path — emit the path that launchd should exec.
+# Prefer the deployed copy at ~/.aidevops/agents/scripts/ so the LaunchAgent
+# survives repo moves. Fall back to the running script's dir when the deployed
+# copy is missing (first-install from a checkout).
+_resolve_self_path() {
+	local deployed="${HOME}/.aidevops/agents/scripts/opencode-db-maintenance-helper.sh"
+	if [[ -f "$deployed" ]]; then
+		printf '%s' "$deployed"
+	else
+		printf '%s' "${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
+	fi
+}
+
+# _generate_plist_content <self_path>
+# Emit the LaunchAgent plist XML for the r913 weekly schedule.
+# Uses StartCalendarInterval (not StartInterval) with Weekday=0 (Sunday),
+# Hour=4, Minute=0 — matches the routine's declared "weekly(sun@04:00)".
+_generate_plist_content() {
+	local self_path="$1"
+	cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${LAUNCHD_LABEL}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>${self_path}</string>
+		<string>auto</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Weekday</key>
+		<integer>0</integer>
+		<key>Hour</key>
+		<integer>4</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>${SCHEDULER_LOG_FILE}</string>
+	<key>StandardErrorPath</key>
+	<string>${SCHEDULER_LOG_FILE}</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>${HOME}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+EOF
+}
+
+cmd_install() {
+	if ! _is_macos; then
+		print_info "install: Linux scheduling is handled by setup-modules/schedulers.sh (systemd/cron)"
+		print_info "This helper's install subcommand is macOS-only — exiting cleanly"
+		return 0
+	fi
+
+	mkdir -p "$LAUNCHD_DIR" "$SCHEDULER_LOG_DIR"
+
+	local self_path new_content
+	self_path=$(_resolve_self_path)
+	new_content=$(_generate_plist_content "$self_path")
+
+	# Content-diff: skip reload if identical and already loaded (same semantics
+	# as _launchd_install_if_changed in setup.sh).
+	if [[ -f "$LAUNCHD_PLIST" ]] && _launchd_is_loaded; then
+		local existing
+		existing=$(cat "$LAUNCHD_PLIST" 2>/dev/null || echo "")
+		if [[ "$existing" == "$new_content" ]]; then
+			print_info "Already installed with identical config ($LAUNCHD_LABEL)"
+			return 0
+		fi
+	fi
+
+	# Unload before replacing plist (avoid stale config)
+	if _launchd_is_loaded; then
+		launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+	fi
+
+	printf '%s\n' "$new_content" >"$LAUNCHD_PLIST"
+	if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
+		print_success "opencode DB maintenance scheduled (weekly, Sun 04:00 local)"
+		print_info "  Label:  $LAUNCHD_LABEL"
+		print_info "  Plist:  $LAUNCHD_PLIST"
+		print_info "  Script: $self_path"
+		print_info "  Logs:   $SCHEDULER_LOG_FILE"
+		_log INFO "install: LaunchAgent loaded ($LAUNCHD_LABEL → $self_path)"
+	else
+		print_error "Failed to load LaunchAgent: $LAUNCHD_LABEL"
+		_log ERROR "install: launchctl load failed"
+		return 1
+	fi
+	return 0
+}
+
+cmd_uninstall() {
+	if ! _is_macos; then
+		print_info "uninstall: Linux scheduling is handled by setup-modules/schedulers.sh"
+		return 0
+	fi
+
+	local changed=false
+	if _launchd_is_loaded; then
+		launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+		changed=true
+	fi
+	if [[ -f "$LAUNCHD_PLIST" ]]; then
+		rm -f "$LAUNCHD_PLIST"
+		changed=true
+	fi
+
+	if [[ "$changed" == true ]]; then
+		print_success "LaunchAgent removed ($LAUNCHD_LABEL)"
+		_log INFO "uninstall: LaunchAgent removed"
+	else
+		print_info "Not installed (nothing to remove)"
+	fi
+	return 0
+}
+
+cmd_status() {
+	local installed=false
+	if _is_macos; then
+		if _launchd_is_loaded; then
+			print_success "macOS LaunchAgent loaded: $LAUNCHD_LABEL"
+			installed=true
+		fi
+		if [[ -f "$LAUNCHD_PLIST" ]]; then
+			print_info "  Plist: $LAUNCHD_PLIST"
+		fi
+	fi
+
+	if command -v systemctl >/dev/null 2>&1 &&
+		systemctl --user is-enabled aidevops-opencode-db-maintenance.timer >/dev/null 2>&1; then
+		print_success "Linux systemd timer enabled: aidevops-opencode-db-maintenance.timer"
+		installed=true
+	fi
+
+	if command -v crontab >/dev/null 2>&1 &&
+		crontab -l 2>/dev/null | grep -qF "aidevops: opencode-db-maintenance"; then
+		print_success "Cron entry installed"
+		installed=true
+	fi
+
+	if [[ "$installed" == false ]]; then
+		print_info "Scheduler not installed (run: opencode-db-maintenance-helper.sh install)"
+	fi
+
+	if [[ -f "$SCHEDULER_LOG_FILE" ]]; then
+		print_info "  Log:   $SCHEDULER_LOG_FILE"
+	fi
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # Usage
 # -----------------------------------------------------------------------------
 
@@ -593,6 +800,10 @@ Subcommands:
                          unless --force is passed (may cause session errors).
   auto                   Safe mode for scheduled use (r913). Silent no-op when
                          opencode not installed; throttles rapid re-runs.
+  install                macOS: install/refresh LaunchAgent (weekly Sun 04:00).
+                         Linux: no-op (handled by setup-modules/schedulers.sh).
+  uninstall              macOS: remove LaunchAgent. Idempotent.
+  status                 Report scheduler state (launchd/systemd/cron).
   help                   This help
 
 What maintenance does:
@@ -636,6 +847,9 @@ main() {
 	report) cmd_report "$@" ;;
 	maintain | run) cmd_maintain "$@" ;;
 	auto) cmd_auto "$@" ;;
+	install) cmd_install "$@" ;;
+	uninstall) cmd_uninstall "$@" ;;
+	status) cmd_status "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
 		print_error "Unknown subcommand: $sub"

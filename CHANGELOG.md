@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.70] - 2026-04-18
+
+### Changed
+
+- wire r913 opencode DB maintenance into platform scheduler (#19650)
+- fix issue-sync enrich 10-minute timeout (#19487)
+- Maintenance: mark t2181 complete (pr:#19644)
+- fix(otel-enrichment): detectTaskId regex for .type- and -type- worktree paths (#19644)
+- Maintenance: trim Codacy noise — disable Prospector/PMD, skip Bandit B404, exclude opencode plugin (#19647)
+- Maintenance: update simplification state registry
+- Maintenance: t2179 + t2180 — pulse-merge coderabbit-nits-ok label + claim-task-id pre-claim discovery (#19640)
+
 ## [3.8.69] - 2026-04-18
 
 ### Changed

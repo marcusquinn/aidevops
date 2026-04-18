@@ -32,7 +32,13 @@ jobs:
     name: Sync TODO.md → GitHub Issues
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # t2165: bumped 10 → 20 as an independent safety net alongside the
+    # issue-sync-helper.sh enrich optimisation. At ~145 open ref:GH# tasks the
+    # pre-t2165 helper needed ~18 min and the 10-min cap cancelled the
+    # downstream TODO.md push step (run 24544622121 on the t2162 merge was
+    # the trigger). Post-t2165 the steady-state cost is ~3-4 min, but the
+    # bump gives headroom for cold-cache runs and large backlog days.
+    timeout-minutes: 20
     concurrency:
       group: issue-sync-push-${{ github.ref }}
       cancel-in-progress: false  # GH#15234 Fix 3: false prevents orphaned issues from cancelled runs

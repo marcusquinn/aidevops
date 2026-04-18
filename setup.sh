@@ -12,7 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.8.69
+# Version: 3.8.70
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -1131,6 +1131,9 @@ _setup_post_setup_steps() {
 		if _should_setup_noninteractive_scheduler "OAuth token refresh" "sh.aidevops.token-refresh" "aidevops: token-refresh" "aidevops-token-refresh"; then
 			setup_oauth_token_refresh
 		fi
+		# opencode DB maintenance (r913, t2183). Helper self-noops on missing
+		# DB — safe to install unconditionally in non-interactive mode too.
+		setup_opencode_db_maintenance
 		# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
 		migrate_cron_to_systemd
 		setup_tabby
@@ -1150,6 +1153,7 @@ _setup_post_setup_steps() {
 	setup_draft_responses
 	setup_profile_readme
 	setup_oauth_token_refresh
+	setup_opencode_db_maintenance
 	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
 	migrate_cron_to_systemd
 	setup_tabby
