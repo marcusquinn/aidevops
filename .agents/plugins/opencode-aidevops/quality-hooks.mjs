@@ -10,6 +10,7 @@ import { join } from "path";
 import { recordToolCall } from "./observability.mjs";
 import { extractAndStoreIntent, consumeIntent } from "./intent-tracing.mjs";
 import { qualityLog, runFileQualityGate } from "./quality-logging.mjs";
+import { enrichActiveSpan, detectTaskId, detectSessionOrigin } from "./otel-enrichment.mjs";
 
 // Re-export for consumers that import from this module
 export { scanForSecrets } from "./quality-logging.mjs";
@@ -153,12 +154,25 @@ function recordChildSubagent(taskId, scriptsDir, log) {
  */
 function handleToolBefore(ctx, log, input, output) {
   const callID = input.callID || "";
+  let intent = "";
   if (callID && output.args) {
-    const intent = extractAndStoreIntent(callID, output.args);
+    intent = extractAndStoreIntent(callID, output.args) || "";
     if (intent) {
       log("INFO", `Intent [${input.tool}] callID=${callID}: ${intent}`);
     }
   }
+
+  // OTEL span enrichment (t2177) — attaches aidevops attributes to opencode's
+  // active tool span when OTEL is enabled. Async fire-and-forget; errors
+  // swallowed inside enrichActiveSpan to isolate the host tool from OTEL SDK
+  // failures.
+  enrichActiveSpan({
+    "aidevops.intent": intent,
+    "aidevops.tool_name": input.tool || "",
+    "aidevops.task_id": detectTaskId(),
+    "aidevops.session_origin": detectSessionOrigin(),
+    "aidevops.runtime": "opencode",
+  }).catch(() => {});
 
   if (isBashTool(input.tool)) {
     checkSignatureFooterGate(output.args?.command || "", log);

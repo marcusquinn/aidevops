@@ -53,5 +53,25 @@ export function createShellEnvHook(deps) {
     if (version) {
       output.env.AIDEVOPS_VERSION = version;
     }
+
+    // OTEL env passthrough (t2177) — propagate OpenTelemetry config so
+    // subprocesses spawned by opencode (headless workers, helper scripts,
+    // nested shells) inherit the same trace endpoint. opencode itself reads
+    // these from its own process.env; we forward them to shell subprocesses
+    // which otherwise wouldn't see them across the Bun→Node→bash boundary.
+    // No-op when the user hasn't configured OTEL.
+    const OTEL_VARS = [
+      "OTEL_EXPORTER_OTLP_ENDPOINT",
+      "OTEL_EXPORTER_OTLP_HEADERS",
+      "OTEL_EXPORTER_OTLP_PROTOCOL",
+      "OTEL_SERVICE_NAME",
+      "OTEL_RESOURCE_ATTRIBUTES",
+    ];
+    for (const key of OTEL_VARS) {
+      const value = process.env[key];
+      if (value && !output.env[key]) {
+        output.env[key] = value;
+      }
+    }
   };
 }
