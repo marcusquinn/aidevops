@@ -1,0 +1,34 @@
+[ROUTINE AVAILABLE] Weekly OpenCode DB Maintenance (r913, April 2026)
+
+  If you use OpenCode and occasionally see "database is locked" errors
+  that halt your session mid-turn, this routine addresses it.
+
+  Root cause (anomalyco/opencode #21215, #21000, #20935): opencode's
+  SQLite session DB can grow to 1+ GB. Each opencode process opens
+  multiple connections, so even a single TUI is multi-writer at the
+  SQLite layer. Long writes exceed the 5s busy_timeout and surface
+  as session-halting lock errors.
+
+  The new r913 routine (weekly Sunday 04:00) runs wal_checkpoint,
+  PRAGMA optimize, and a conditional VACUUM to keep the DB compact
+  and the WAL truncated — shorter lock windows, fewer failures.
+
+  For NEW aidevops installs: r913 is seeded automatically.
+
+  For EXISTING installs (you already have a routines repo), enable it:
+
+    cd ~/Git/aidevops-routines   # or your private routines repo path
+    # Add to TODO.md under "## Core Routines":
+    - [x] r913 Weekly opencode DB maintenance repeat:weekly(sun@04:00) ~2m run:scripts/opencode-db-maintenance-helper.sh auto
+
+  Or run it ad-hoc any time:
+
+    opencode-db-maintenance-helper.sh report    # current DB stats
+    opencode-db-maintenance-helper.sh check     # preflight
+    opencode-db-maintenance-helper.sh maintain  # run once (close TUIs first)
+
+  Dismiss this advisory once enabled:
+
+    aidevops security dismiss opencode-db-maintenance-2026-04
+
+  Upstream tracking: https://github.com/anomalyco/opencode/issues/21215
