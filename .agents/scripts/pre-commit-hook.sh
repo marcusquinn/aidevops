@@ -159,13 +159,13 @@ validate_string_literals() {
 
 	for file in "$@"; do
 		if [[ -f "$file" ]]; then
-			# Check for repeated string literals
+			# Check for repeated string literals (skip empty, short <4 chars, and numeric-only)
 			local repeated
-			repeated=$(grep -o '"[^"]*"' "$file" | sort | uniq -c | awk '$1 >= 3' | wc -l || true)
+			repeated=$(grep -oE '"[^"]{4,}"' "$file" | grep -vE '^"[0-9]+\.?[0-9]*"$' | sort | uniq -c | awk '$1 >= 3' | wc -l || true)
 
 			if [[ $repeated -gt 0 ]]; then
 				print_warning "Repeated string literals in $file (consider using constants)"
-				grep -o '"[^"]*"' "$file" | sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
+				grep -oE '"[^"]{4,}"' "$file" | grep -vE '^"[0-9]+\.?[0-9]*"$' | sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
 				((++violations))
 			fi
 		fi
