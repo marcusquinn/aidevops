@@ -38,6 +38,9 @@ GH_WRAPPER_GUARD_DEPLOYED="$HOME/.aidevops/agents/hooks/gh-wrapper-guard-pre-pus
 PRE_COMMIT_MARKER="# aidevops-pre-commit-hook"
 PRE_COMMIT_DEPLOYED="$HOME/.aidevops/agents/scripts/pre-commit-hook.sh"
 
+# pre-push quality-validation hook (t2207) — slow network checks split from pre-commit
+PRE_PUSH_QUALITY_MARKER="# aidevops-pre-push-quality-hook"
+
 print_info() { printf "${BLUE}[INFO]${NC} %s\n" "$1"; }
 print_success() { printf "${GREEN}[OK]${NC} %s\n" "$1"; }
 print_warning() { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
@@ -206,15 +209,15 @@ install_pre_commit_hook() {
 				# shellcheck disable=SC2016 # single quotes intentional — template content
 				{
 					printf '\n%s\n' "$PRE_COMMIT_MARKER"
-					printf '# pre-commit-hook: shellcheck, TODO.md validation, secretlint\n'
+					printf '# pre-commit-hook: shellcheck, TODO.md validation (t2207: fast path only)\n'
 					printf '_pch_hook=""\n'
 					printf 'if git_dir=$(git rev-parse --show-toplevel 2>/dev/null); then\n'
 					printf '  _pch_hook="${git_dir}/.agents/scripts/pre-commit-hook.sh"\n'
 					printf 'fi\n'
 					printf 'if [[ -n "$_pch_hook" && -f "$_pch_hook" ]]; then\n'
-					printf '  "$_pch_hook" "$@" || exit $?\n'
+					printf '  HOOK_MODE=pre-commit "$_pch_hook" "$@" || exit $?\n'
 					printf 'elif [[ -f "%s" ]]; then\n' "$PRE_COMMIT_DEPLOYED"
-					printf '  "%s" "$@" || exit $?\n' "$PRE_COMMIT_DEPLOYED"
+					printf '  HOOK_MODE=pre-commit "%s" "$@" || exit $?\n' "$PRE_COMMIT_DEPLOYED"
 					printf 'fi\n'
 				} >>"$hook_path"
 				print_success "chained pre-commit-hook into existing pre-commit hook"
@@ -235,7 +238,8 @@ install_pre_commit_hook() {
 $PRE_COMMIT_MARKER
 # Managed by install-hooks-helper.sh — do not edit.
 # Dispatcher for pre-commit quality validation (shellcheck, TODO.md,
-# secretlint, root-file allowlist, task-completion proof-log).
+# root-file allowlist, task-completion proof-log).
+# Slow checks (secretlint, SonarCloud, CodeRabbit) moved to pre-push (t2207).
 # Bypass: git commit --no-verify
 
 set -u
@@ -247,15 +251,89 @@ fi
 _pch_deployed="$PRE_COMMIT_DEPLOYED"
 
 if [[ -n "\$_pch_hook" && -f "\$_pch_hook" ]]; then
-	"\$_pch_hook" "\$@" || exit \$?
+	HOOK_MODE=pre-commit "\$_pch_hook" "\$@" || exit \$?
 elif [[ -f "\$_pch_deployed" ]]; then
-	"\$_pch_deployed" "\$@" || exit \$?
+	HOOK_MODE=pre-commit "\$_pch_deployed" "\$@" || exit \$?
 else
 	printf '[pre-commit-hook][WARN] hook not found — allowing commit\n' >&2
 fi
 HOOKEOF
 	chmod +x "$hook_path"
 	print_success "installed pre-commit quality hook at $hook_path"
+	return 0
+}
+
+# --- pre-push quality-validation hook (t2207) ---
+# Chains into the existing pre-push hook alongside gh-wrapper-guard and privacy-guard.
+# Calls pre-commit-hook.sh with HOOK_MODE=pre-push for slow network checks.
+
+install_pre_push_quality_hook() {
+	# Only install if we're in a git repo
+	local common_dir
+	common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+		print_warning "Not in a git repo — skipping pre-push quality hook"
+		return 0
+	}
+
+	local hook_path="${common_dir}/hooks/pre-push"
+	mkdir -p "$(dirname "$hook_path")"
+
+	local source_hook
+	if ! source_hook=$(_find_pre_commit_hook); then
+		print_warning "pre-commit-hook.sh not found — skipping pre-push quality hook"
+		return 0
+	fi
+
+	if [[ -f "$hook_path" ]]; then
+		if grep -q "$PRE_PUSH_QUALITY_MARKER" "$hook_path" 2>/dev/null; then
+			print_info "pre-push quality hook already installed — skipping"
+			return 0
+		fi
+		# Existing hook (e.g. gh-wrapper-guard, privacy-guard) — chain ours in
+		# shellcheck disable=SC2016 # single quotes intentional — template content
+		{
+			printf '\n%s\n' "$PRE_PUSH_QUALITY_MARKER"
+			printf '# pre-push quality checks: secretlint, SonarCloud, CodeRabbit CLI (t2207)\n'
+			printf '_ppq_hook=""\n'
+			printf 'if git_dir=$(git rev-parse --show-toplevel 2>/dev/null); then\n'
+			printf '  _ppq_hook="${git_dir}/.agents/scripts/pre-commit-hook.sh"\n'
+			printf 'fi\n'
+			printf 'if [[ -n "$_ppq_hook" && -f "$_ppq_hook" ]]; then\n'
+			printf '  HOOK_MODE=pre-push "$_ppq_hook" "$@" || exit $?\n'
+			printf 'elif [[ -f "%s" ]]; then\n' "$PRE_COMMIT_DEPLOYED"
+			printf '  HOOK_MODE=pre-push "%s" "$@" || exit $?\n' "$PRE_COMMIT_DEPLOYED"
+			printf 'fi\n'
+		} >>"$hook_path"
+		print_success "chained pre-push quality hook into existing pre-push hook"
+		return 0
+	fi
+
+	# No existing hook — write a standalone dispatcher
+	cat >"$hook_path" <<HOOKEOF
+#!/usr/bin/env bash
+$PRE_PUSH_QUALITY_MARKER
+# Managed by install-hooks-helper.sh — do not edit.
+# Dispatcher for pre-push quality validation (secretlint, SonarCloud, CodeRabbit).
+# Bypass: git push --no-verify
+
+set -u
+
+_ppq_hook=""
+if git_dir=\$(git rev-parse --show-toplevel 2>/dev/null); then
+	_ppq_hook="\${git_dir}/.agents/scripts/pre-commit-hook.sh"
+fi
+_ppq_deployed="$PRE_COMMIT_DEPLOYED"
+
+if [[ -n "\$_ppq_hook" && -f "\$_ppq_hook" ]]; then
+	HOOK_MODE=pre-push "\$_ppq_hook" "\$@" || exit \$?
+elif [[ -f "\$_ppq_deployed" ]]; then
+	HOOK_MODE=pre-push "\$_ppq_deployed" "\$@" || exit \$?
+else
+	printf '[pre-push-quality][WARN] hook not found — allowing push\n' >&2
+fi
+HOOKEOF
+	chmod +x "$hook_path"
+	print_success "installed pre-push quality hook at $hook_path"
 	return 0
 }
 
@@ -307,6 +385,9 @@ install_hook() {
 
 	# Also install the pre-commit quality-validation hook (t2191)
 	install_pre_commit_hook
+
+	# Also install the pre-push quality-validation hook (t2207)
+	install_pre_push_quality_hook
 
 	return 0
 }
@@ -613,6 +694,23 @@ sys.exit(1)
 		print_info "pre-commit-hook: not in a git repo — skipped"
 	fi
 
+	# Check pre-push quality hook (t2207)
+	echo ""
+	echo "Pre-push Quality Hook (t2207)"
+	echo "------------------------------"
+	if common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+		local pp_hook_path="${common_dir}/hooks/pre-push"
+		if [[ -f "$pp_hook_path" ]] && grep -q "$PRE_PUSH_QUALITY_MARKER" "$pp_hook_path" 2>/dev/null; then
+			print_success "pre-push-quality-hook: installed"
+		elif [[ -f "$pp_hook_path" ]] && grep -q "HOOK_MODE=pre-push" "$pp_hook_path" 2>/dev/null; then
+			print_success "pre-push-quality-hook: chained in pre-push hook"
+		else
+			print_warning "pre-push-quality-hook: not installed (run: install-hooks-helper.sh install)"
+		fi
+	else
+		print_info "pre-push-quality-hook: not in a git repo — skipped"
+	fi
+
 	echo ""
 	if [[ "$all_ok" == "true" ]]; then
 		print_success "All checks passed - safety hooks are active"
@@ -708,8 +806,8 @@ show_help() {
 	echo "Installs to:"
 	echo "  ~/.aidevops/hooks/git_safety_guard.py"
 	echo "  ~/.claude/settings.json (PreToolUse hook config)"
-	echo "  .git/hooks/pre-push (gh-wrapper-guard, t2113)"
-	echo "  .git/hooks/pre-commit (quality-validation, t2191)"
+	echo "  .git/hooks/pre-push (gh-wrapper-guard t2113, quality-validation t2207)"
+	echo "  .git/hooks/pre-commit (fast quality-validation, t2191+t2207)"
 	return 0
 }
 
