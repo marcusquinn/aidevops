@@ -43,7 +43,6 @@ SANDBOX=$(mktemp -d)
 trap 'rm -rf "$SANDBOX"' EXIT
 
 export XDG_DATA_HOME="$SANDBOX/data"
-export HOME_BACKUP="${HOME}"
 
 OPENCODE_DIR="$XDG_DATA_HOME/opencode"
 mkdir -p "$OPENCODE_DIR"

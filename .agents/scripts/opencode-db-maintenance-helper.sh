@@ -139,9 +139,23 @@ _sqlite_available() {
 }
 
 # _opencode_process_count — number of running opencode processes
+# Combines two signals to cover Homebrew, manual, and npm-installed builds:
+#   1. pgrep against a broad regex that matches "opencode", ".opencode",
+#      and path-prefixed variants like opencode-ai/bin/.opencode.
+#   2. lsof against the DB file to catch any process holding it open,
+#      even if argv doesn't contain the word "opencode" (e.g. via a
+#      renamed binary).
+# Deduplicates by PID so a process matched by both methods is counted once.
 _opencode_process_count() {
+	local pids=""
 	# shellcheck disable=SC2009
-	pgrep -f "opencode-ai/bin/\.opencode" 2>/dev/null | wc -l | tr -d ' '
+	pids=$(pgrep -f '(^|/)\.?opencode($|[[:space:]])' 2>/dev/null || true)
+	if [[ -f "$OPENCODE_DB" ]] && command -v lsof >/dev/null 2>&1; then
+		local lsof_pids
+		lsof_pids=$(lsof "$OPENCODE_DB" 2>/dev/null | awk 'NR>1 {print $2}' || true)
+		pids=$(printf '%s\n%s\n' "$pids" "$lsof_pids")
+	fi
+	printf '%s\n' "$pids" | awk 'NF' | sort -u | wc -l | tr -d ' '
 }
 
 # _db_size_bytes <path> — portable file-size getter
@@ -160,17 +174,24 @@ _db_size_bytes() {
 	fi
 }
 
-# _db_size_human <bytes>
+# _db_size_human <bytes> — portable human-readable byte formatter.
+# Uses integer math with a fixed-point split so it works without bc.
 _db_size_human() {
 	local bytes="$1"
 	if [[ "$bytes" -lt 1024 ]]; then
 		echo "${bytes} B"
 	elif [[ "$bytes" -lt 1048576 ]]; then
-		printf '%.1f KB\n' "$(echo "scale=1; $bytes / 1024" | bc -l 2>/dev/null || echo "$bytes")"
+		# KB, 1 decimal: bytes*10/1024 → tenths of KB
+		local tenths=$((bytes * 10 / 1024))
+		printf '%d.%d KB\n' "$((tenths / 10))" "$((tenths % 10))"
 	elif [[ "$bytes" -lt 1073741824 ]]; then
-		printf '%.1f MB\n' "$(echo "scale=1; $bytes / 1048576" | bc -l 2>/dev/null || echo "$bytes")"
+		# MB, 1 decimal
+		local tenths=$((bytes * 10 / 1048576))
+		printf '%d.%d MB\n' "$((tenths / 10))" "$((tenths % 10))"
 	else
-		printf '%.2f GB\n' "$(echo "scale=2; $bytes / 1073741824" | bc -l 2>/dev/null || echo "$bytes")"
+		# GB, 2 decimals
+		local hundredths=$((bytes * 100 / 1073741824))
+		printf '%d.%02d GB\n' "$((hundredths / 100))" "$((hundredths % 100))"
 	fi
 }
 
@@ -407,9 +428,10 @@ _maintain_run_steps() {
 
 	if [[ "$do_vacuum" == true ]]; then
 		print_info "Step 3/3: VACUUM (DB ${size_mb} MB, ${freelist_count}/${page_count} free pages)..."
-		if ! sqlite3 "$OPENCODE_DB" "VACUUM;" 2>&1; then
-			print_error "VACUUM failed"
-			_log ERROR "VACUUM failed"
+		local vacuum_err
+		if ! vacuum_err=$(sqlite3 "$OPENCODE_DB" "VACUUM;" 2>&1); then
+			print_error "VACUUM failed: ${vacuum_err}"
+			_log ERROR "VACUUM failed: ${vacuum_err}"
 			step_failures=$((step_failures + 1))
 		fi
 	else
@@ -519,7 +541,12 @@ cmd_auto() {
 	# Throttle: skip if last run was recent
 	if [[ -f "$STATE_FILE" ]]; then
 		local last_ts_str last_epoch now_epoch delta
-		last_ts_str=$(grep -Eo '"timestamp":\s*"[^"]+"' "$STATE_FILE" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || true)
+		if command -v jq >/dev/null 2>&1; then
+			last_ts_str=$(jq -r '.timestamp // empty' "$STATE_FILE" 2>/dev/null || true)
+		else
+			last_ts_str=$(grep -Eo '"timestamp":[[:space:]]*"[^"]+"' "$STATE_FILE" 2>/dev/null |
+				sed 's/.*"\([^"]*\)"$/\1/' || true)
+		fi
 		if [[ -n "$last_ts_str" ]]; then
 			# Try GNU date first, then BSD date
 			last_epoch=$(date -u -d "$last_ts_str" +%s 2>/dev/null ||
@@ -535,8 +562,17 @@ cmd_auto() {
 		fi
 	fi
 
-	# Delegate to maintain without --force (respects active processes)
-	cmd_maintain --auto
+	# Delegate to maintain without --force (respects active processes).
+	# Exit 2 = "opencode is running, skipping" — this is expected state for
+	# a scheduled routine, not a failure. Translate to exit 0 so the
+	# scheduler doesn't flag it as a failed run.
+	local rc=0
+	cmd_maintain --auto || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		_log INFO "auto: skipped — opencode active"
+		return 0
+	fi
+	return "$rc"
 }
 
 # -----------------------------------------------------------------------------

@@ -607,6 +607,49 @@ EOF
 	return 0
 }
 
+describe_r912() {
+	local os="${1:-darwin}"
+	local status_cmd
+	if [[ "$os" == "darwin" ]]; then
+		status_cmd="\`launchctl list | grep dashboard\` — process status"
+	else
+		status_cmd="\`systemctl --user status sh.aidevops.dashboard\` — service status"
+	fi
+	cat <<EOF
+# r912: Dashboard server
+
+## Overview
+
+Persistent web dashboard providing a real-time view of aidevops operations —
+repo health, worker status, routine metrics, and task progress.
+
+## Schedule
+
+| Field | Value |
+|-------|-------|
+| Frequency | Persistent (always running) |
+| Type | service |
+| Expected duration | Continuous |
+| Script | \`server/index.ts\` |
+$(_scheduler_row_calendar "$os" "KeepAlive: true" "com.aidevops.dashboard" "sh.aidevops.dashboard")
+
+## What it does
+
+1. Serves a web UI on localhost
+2. Aggregates data from repos.json, routine state, worker sessions
+3. Displays real-time worker activity and pulse dispatch status
+4. Shows routine execution history and health metrics
+5. Provides quick links to GitHub issues and PRs
+
+## What to check
+
+- Browser: \`http://localhost:<port>\` — dashboard UI
+- ${status_cmd}
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
 describe_r913() {
 	local os="${1:-darwin}"
 	cat <<EOF
@@ -699,49 +742,6 @@ $(_diag_commands "$os" "sh.aidevops.opencode-db-maintenance" "sh.aidevops.openco
 - anomalyco/opencode #21000 — Bash tool hangs on massive output, locks DB
 - anomalyco/opencode #20935 — Per-session-tree sharding (architectural fix)
 - anomalyco/opencode #21579 — Harden per-session SQLite sharding (PR)
-$(_platform_footnote "$os")
-EOF
-	return 0
-}
-
-describe_r912() {
-	local os="${1:-darwin}"
-	local status_cmd
-	if [[ "$os" == "darwin" ]]; then
-		status_cmd="\`launchctl list | grep dashboard\` — process status"
-	else
-		status_cmd="\`systemctl --user status sh.aidevops.dashboard\` — service status"
-	fi
-	cat <<EOF
-# r912: Dashboard server
-
-## Overview
-
-Persistent web dashboard providing a real-time view of aidevops operations —
-repo health, worker status, routine metrics, and task progress.
-
-## Schedule
-
-| Field | Value |
-|-------|-------|
-| Frequency | Persistent (always running) |
-| Type | service |
-| Expected duration | Continuous |
-| Script | \`server/index.ts\` |
-$(_scheduler_row_calendar "$os" "KeepAlive: true" "com.aidevops.dashboard" "sh.aidevops.dashboard")
-
-## What it does
-
-1. Serves a web UI on localhost
-2. Aggregates data from repos.json, routine state, worker sessions
-3. Displays real-time worker activity and pulse dispatch status
-4. Shows routine execution history and health metrics
-5. Provides quick links to GitHub issues and PRs
-
-## What to check
-
-- Browser: \`http://localhost:<port>\` — dashboard UI
-- ${status_cmd}
 $(_platform_footnote "$os")
 EOF
 	return 0

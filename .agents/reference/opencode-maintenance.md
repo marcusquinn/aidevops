@@ -63,7 +63,7 @@ opencode-db-maintenance-helper.sh help
 
 ### Sample output
 
-```
+```text
 == OpenCode DB Report ==
 
   Path:          /Users/alice/.local/share/opencode/opencode.db
