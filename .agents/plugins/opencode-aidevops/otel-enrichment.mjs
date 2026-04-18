@@ -107,11 +107,20 @@ export function otelEnabled() {
  * Detect the current aidevops task ID from the environment.
  *
  * Resolution order:
- *   1. AIDEVOPS_TASK_ID env var (set by full-loop-helper when dispatched)
- *   2. Worktree branch name parsed from cwd — patterns:
- *        feature/t1234-...   → t1234
- *        feature/gh-19634-...→ GH#19634
- *      Otherwise returns empty string.
+ *   1. AIDEVOPS_TASK_ID env var (set by full-loop-helper when dispatched).
+ *      Must match /^(t\d+|GH#\d+)$/ — malformed values fall through to #2.
+ *   2. Worktree/branch path parsed from cwd — any canonical shape:
+ *        ~/Git/<repo>.feature-t1234-...     → t1234    (wt default, dot-separated)
+ *        ~/Git/<repo>-feature-t1234-...     → t1234    (wt legacy, dash-separated)
+ *        /path/to/worktrees/feature/t1234-… → t1234    (git worktree default)
+ *        ~/Git/<repo>.bugfix-gh-19634-...   → GH#19634 (dot separator, GH form)
+ *      Returns "" when no token matches.
+ *
+ * The regex accepts any non-alphanumeric separator before the task ID
+ * (`.`, `-`, `/`, or start-of-string) to work across all worktree
+ * conventions without assuming which one is active. False-positive guard:
+ * `t` must be followed by digits; the word `testing` and names like
+ * `patient123` do not trigger a match.
  *
  * @param {string} [cwd] - Process working directory (default: process.cwd())
  * @returns {string} Task ID like "t1234" or "GH#19634", or "" when unknown
@@ -121,11 +130,12 @@ export function detectTaskId(cwd) {
   if (envId && /^(t\d+|GH#\d+)$/.test(envId)) return envId;
 
   const dir = cwd || process.cwd();
-  // Worktree naming: ~/Git/<repo>.<type>-<name> or ~/Git/<repo>-<type>-<name>
-  // Branch pattern: <type>/t1234-desc or <type>/gh-19634-desc
-  const tMatch = dir.match(/\/[a-z]+[-/]t(\d+)(?:-|$|\/)/i);
+  // Any non-alphanumeric separator (or start of string) before the token.
+  // Trailing group keeps false-positive guard (`t` must be followed by digits,
+  // which must be followed by another separator or end of string).
+  const tMatch = dir.match(/(?:^|[^a-z0-9])t(\d+)(?:[-/]|$)/i);
   if (tMatch) return `t${tMatch[1]}`;
-  const ghMatch = dir.match(/\/[a-z]+[-/]gh-(\d+)(?:-|$|\/)/i);
+  const ghMatch = dir.match(/(?:^|[^a-z0-9])gh-(\d+)(?:[-/]|$)/i);
   if (ghMatch) return `GH#${ghMatch[1]}`;
   return "";
 }
