@@ -1,0 +1,450 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# install-pre-push-guards.sh — Install aidevops git pre-push hooks (t2198).
+#
+# Manages two pre-push guards in the current repository:
+#   - privacy-guard      blocks pushes leaking private repo slugs
+#   - complexity-guard   blocks pushes introducing complexity regressions
+#
+# Usage:
+#   install-pre-push-guards.sh install [--guard <name>]
+#         Install (or refresh) guard(s). --guard: privacy|complexity|all (default: all)
+#
+#   install-pre-push-guards.sh uninstall [--guard <name>]
+#         Remove guard entry/entries. --guard: privacy|complexity|all (default: all)
+#
+#   install-pre-push-guards.sh status
+#         Report which guards are present and their hook source locations.
+#
+# The installer writes .git/hooks/pre-push targeting `git rev-parse
+# --git-common-dir` so worktrees share the hook with the parent repo.
+#
+# Existing hooks NOT managed by aidevops are refused and left untouched.
+#
+# Runtime bypass per-guard:
+#   PRIVACY_GUARD_DISABLE=1       skip privacy check for this push
+#   COMPLEXITY_GUARD_DISABLE=1    skip complexity check for this push
+#   git push --no-verify          skip all hooks
+
+set -euo pipefail
+
+# Guard against unguarded shared-constants name collisions.
+[[ -z "${RED+x}" ]]    && RED=$'\033[0;31m'
+[[ -z "${GREEN+x}" ]]  && GREEN=$'\033[0;32m'
+[[ -z "${YELLOW+x}" ]] && YELLOW=$'\033[1;33m'
+[[ -z "${BLUE+x}" ]]   && BLUE=$'\033[0;34m'
+[[ -z "${NC+x}" ]]     && NC=$'\033[0m'
+
+print_info() {
+	local _m="$1"
+	printf '%s[INFO]%s %s\n' "$BLUE" "$NC" "$_m"
+	return 0
+}
+print_success() {
+	local _m="$1"
+	printf '%s[OK]%s %s\n' "$GREEN" "$NC" "$_m"
+	return 0
+}
+print_warning() {
+	local _m="$1"
+	printf '%s[WARN]%s %s\n' "$YELLOW" "$NC" "$_m" >&2
+	return 0
+}
+print_error() {
+	local _m="$1"
+	printf '%s[ERROR]%s %s\n' "$RED" "$NC" "$_m" >&2
+	return 0
+}
+
+# Marker strings embedded in the managed hook file — used for detect/update.
+HOOK_MARKER_MANAGED="# aidevops-pre-push-guards"
+HOOK_MARKER_PRIVACY="# guard:privacy"
+HOOK_MARKER_COMPLEXITY="# guard:complexity"
+
+DEPLOYED_PRIVACY_HOOK="$HOME/.aidevops/agents/hooks/privacy-guard-pre-push.sh"
+DEPLOYED_COMPLEXITY_HOOK="$HOME/.aidevops/agents/hooks/complexity-regression-pre-push.sh"
+
+#######################################
+# Resolve the script's own directory (symlink-safe).
+#######################################
+_script_dir() {
+	local _src="${BASH_SOURCE[0]}"
+	while [[ -L "$_src" ]]; do
+		local _dir
+		_dir=$(cd -P "$(dirname "$_src")" && pwd)
+		_src=$(readlink "$_src")
+		[[ "$_src" != /* ]] && _src="$_dir/$_src"
+	done
+	cd -P "$(dirname "$_src")" && pwd
+	return 0
+}
+
+#######################################
+# Find the source hook file for a named guard.
+# Prints path on stdout; returns 1 if not found.
+#######################################
+_find_hook_src() {
+	local _guard="$1"
+	local _sd
+	_sd=$(_script_dir)
+	local _repo_hook="" _deployed_hook=""
+	case "$_guard" in
+	privacy)
+		_repo_hook="${_sd}/../hooks/privacy-guard-pre-push.sh"
+		_deployed_hook="$DEPLOYED_PRIVACY_HOOK"
+		;;
+	complexity)
+		_repo_hook="${_sd}/../hooks/complexity-regression-pre-push.sh"
+		_deployed_hook="$DEPLOYED_COMPLEXITY_HOOK"
+		;;
+	*)
+		print_error "_find_hook_src: unknown guard: $_guard"
+		return 1
+		;;
+	esac
+	if [[ -f "$_repo_hook" ]]; then
+		printf '%s' "$_repo_hook"
+		return 0
+	fi
+	if [[ -f "$_deployed_hook" ]]; then
+		printf '%s' "$_deployed_hook"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Resolve the common git dir (shared across worktrees).
+#######################################
+_git_common_dir() {
+	git rev-parse --git-common-dir 2>/dev/null || {
+		print_error "not a git repository"
+		return 1
+	}
+	return 0
+}
+
+#######################################
+# Return the canonical hook file path.
+#######################################
+_hook_path() {
+	local _cdir
+	_cdir=$(_git_common_dir) || return 1
+	printf '%s/hooks/pre-push' "$_cdir"
+	return 0
+}
+
+#######################################
+# True if the hook at the path is managed by us.
+# Recognises both the current multi-guard marker and the legacy single-guard
+# marker from install-privacy-guard.sh (for seamless migration).
+#######################################
+_hook_is_managed() {
+	local _p="$1"
+	# Current marker (install-pre-push-guards.sh dispatcher)
+	grep -q "$HOOK_MARKER_MANAGED" "$_p" 2>/dev/null && return 0
+	# Legacy marker from old install-privacy-guard.sh single-guard dispatcher
+	grep -q "# aidevops-privacy-guard" "$_p" 2>/dev/null && return 0
+	return 1
+}
+
+#######################################
+# Write (or rewrite) the dispatcher hook.
+# Args: _hook_path _inc_privacy(0|1) _inc_complexity(0|1)
+#
+# The generated script reads all stdin once, then pipes it to each
+# installed guard hook. Each guard receives (remote_name, remote_url)
+# as positional args, matching the git pre-push protocol.
+#######################################
+_write_dispatcher() {
+	local _hook_path="$1"
+	local _inc_privacy="$2"
+	local _inc_complexity="$3"
+
+	mkdir -p "$(dirname "$_hook_path")"
+
+	# Write the fixed header (single-quoted heredoc = no expansion)
+	cat >"$_hook_path" <<'HOOK_HEADER'
+#!/usr/bin/env bash
+# aidevops-pre-push-guards
+# Managed by .agents/scripts/install-pre-push-guards.sh — do not edit.
+# Chains installed aidevops pre-push guards in order.
+# Bypass all:  git push --no-verify
+# Bypass each: PRIVACY_GUARD_DISABLE=1  or  COMPLEXITY_GUARD_DISABLE=1
+
+set -u
+
+_git_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+_exit_code=0
+
+# Read all ref lines from stdin once; each guard gets a replay.
+_stdin_data=$(cat)
+
+HOOK_HEADER
+
+	# Append guard blocks with path expansion (unquoted heredocs)
+	if [[ "$_inc_privacy" -eq 1 ]]; then
+		cat >>"$_hook_path" <<PRIVACY_BLOCK
+# guard:privacy
+_privacy_hook=""
+if [[ -n "\$_git_root" && -f "\${_git_root}/.agents/hooks/privacy-guard-pre-push.sh" ]]; then
+  _privacy_hook="\${_git_root}/.agents/hooks/privacy-guard-pre-push.sh"
+elif [[ -f "${DEPLOYED_PRIVACY_HOOK}" ]]; then
+  _privacy_hook="${DEPLOYED_PRIVACY_HOOK}"
+fi
+if [[ -n "\$_privacy_hook" ]]; then
+  printf '%s\n' "\$_stdin_data" | "\$_privacy_hook" "\$@" || _exit_code=\$?
+else
+  printf '[pre-push][WARN] privacy hook not found -- skipping\n' >&2
+fi
+
+PRIVACY_BLOCK
+	fi
+
+	if [[ "$_inc_complexity" -eq 1 ]]; then
+		cat >>"$_hook_path" <<COMPLEXITY_BLOCK
+# guard:complexity
+_complexity_hook=""
+if [[ -n "\$_git_root" && -f "\${_git_root}/.agents/hooks/complexity-regression-pre-push.sh" ]]; then
+  _complexity_hook="\${_git_root}/.agents/hooks/complexity-regression-pre-push.sh"
+elif [[ -f "${DEPLOYED_COMPLEXITY_HOOK}" ]]; then
+  _complexity_hook="${DEPLOYED_COMPLEXITY_HOOK}"
+fi
+if [[ -n "\$_complexity_hook" ]]; then
+  printf '%s\n' "\$_stdin_data" | "\$_complexity_hook" "\$@" || _exit_code=\$?
+else
+  printf '[pre-push][WARN] complexity hook not found -- skipping\n' >&2
+fi
+
+COMPLEXITY_BLOCK
+	fi
+
+	# Single-quoted to write literal $-vars into the generated script (not expand here)
+	# shellcheck disable=SC2016
+	printf 'exit "$_exit_code"\n' >>"$_hook_path"
+	chmod +x "$_hook_path"
+	return 0
+}
+
+#######################################
+# cmd_install — install or refresh guard(s)
+#######################################
+cmd_install() {
+	local _guard_filter="all"
+	while [[ $# -gt 0 ]]; do
+		local _opt="$1"
+		case "$_opt" in
+		--guard)
+			[[ $# -ge 2 ]] || { print_error "missing value for --guard"; return 1; }
+			local _val="$2"
+			_guard_filter="$_val"
+			shift 2
+			;;
+		*) print_error "install: unknown argument: $_opt"; return 1 ;;
+		esac
+	done
+
+	local _hook_path
+	_hook_path=$(_hook_path) || return 1
+
+	# Refuse to overwrite unmanaged hooks
+	if [[ -f "$_hook_path" ]] && ! _hook_is_managed "$_hook_path"; then
+		print_error "existing pre-push hook at $_hook_path is NOT managed by aidevops"
+		print_error "Refusing to overwrite. To chain manually, add to your hook:"
+		print_error "  \${REPO}/.agents/hooks/privacy-guard-pre-push.sh \"\$@\" < /dev/stdin"
+		print_error "  \${REPO}/.agents/hooks/complexity-regression-pre-push.sh \"\$@\" < /dev/stdin"
+		return 1
+	fi
+
+	# Determine which guards are currently in the hook
+	local _cur_privacy=0 _cur_complexity=0
+	if [[ -f "$_hook_path" ]]; then
+		grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _cur_privacy=1
+		grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _cur_complexity=1
+	fi
+
+	# Determine which guards to add based on filter
+	local _want_privacy=0 _want_complexity=0
+	case "$_guard_filter" in
+	all)        _want_privacy=1; _want_complexity=1 ;;
+	privacy)    _want_privacy=1 ;;
+	complexity) _want_complexity=1 ;;
+	*)
+		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity)"
+		return 1
+		;;
+	esac
+
+	# Merge: keep existing + add requested
+	local _inc_privacy=0 _inc_complexity=0
+	[[ "$_cur_privacy" -eq 1 || "$_want_privacy" -eq 1 ]] && _inc_privacy=1
+	[[ "$_cur_complexity" -eq 1 || "$_want_complexity" -eq 1 ]] && _inc_complexity=1
+
+	# Verify sources exist; warn and omit guards whose source is missing
+	local _installed_list=""
+	if [[ "$_inc_privacy" -eq 1 ]]; then
+		if _find_hook_src privacy >/dev/null 2>&1; then
+			_installed_list="${_installed_list}privacy "
+		else
+			print_warning "privacy hook source not found — omitting privacy guard"
+			_inc_privacy=0
+		fi
+	fi
+	if [[ "$_inc_complexity" -eq 1 ]]; then
+		if _find_hook_src complexity >/dev/null 2>&1; then
+			_installed_list="${_installed_list}complexity "
+		else
+			print_warning "complexity hook source not found — omitting complexity guard"
+			_inc_complexity=0
+		fi
+	fi
+
+	if [[ "$_inc_privacy" -eq 0 && "$_inc_complexity" -eq 0 ]]; then
+		print_warning "no guards to install (sources not found)"
+		return 0
+	fi
+
+	_write_dispatcher "$_hook_path" "$_inc_privacy" "$_inc_complexity"
+	print_success "installed pre-push guards: ${_installed_list% }"
+	print_info "hook: $_hook_path"
+	print_info "bypass all: git push --no-verify"
+	print_info "bypass individual: PRIVACY_GUARD_DISABLE=1 or COMPLEXITY_GUARD_DISABLE=1"
+	return 0
+}
+
+#######################################
+# cmd_uninstall — remove the managed hook (or a single guard from it)
+#######################################
+cmd_uninstall() {
+	local _guard_filter="all"
+	while [[ $# -gt 0 ]]; do
+		local _opt="$1"
+		case "$_opt" in
+		--guard)
+			[[ $# -ge 2 ]] || { print_error "missing value for --guard"; return 1; }
+			local _val="$2"
+			_guard_filter="$_val"
+			shift 2
+			;;
+		*) print_error "uninstall: unknown argument: $_opt"; return 1 ;;
+		esac
+	done
+
+	local _hook_path
+	_hook_path=$(_hook_path) || return 1
+
+	if [[ ! -f "$_hook_path" ]]; then
+		print_info "no pre-push hook installed"
+		return 0
+	fi
+
+	if ! _hook_is_managed "$_hook_path"; then
+		print_warning "hook at $_hook_path is NOT managed by aidevops — leaving it alone"
+		return 1
+	fi
+
+	if [[ "$_guard_filter" == "all" ]]; then
+		rm -f "$_hook_path"
+		print_success "removed pre-push hook"
+		return 0
+	fi
+
+	# Remove one guard: read current state, rebuild without the removed guard
+	local _cur_privacy=0 _cur_complexity=0
+	grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _cur_privacy=1
+	grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _cur_complexity=1
+
+	case "$_guard_filter" in
+	privacy)    _cur_privacy=0 ;;
+	complexity) _cur_complexity=0 ;;
+	*)
+		print_error "unknown guard: $_guard_filter"
+		return 1
+		;;
+	esac
+
+	if [[ "$_cur_privacy" -eq 0 && "$_cur_complexity" -eq 0 ]]; then
+		rm -f "$_hook_path"
+		print_success "removed last guard — hook deleted"
+	else
+		_write_dispatcher "$_hook_path" "$_cur_privacy" "$_cur_complexity"
+		print_success "removed $_guard_filter guard from hook"
+	fi
+	return 0
+}
+
+#######################################
+# cmd_status — report hook state
+#######################################
+cmd_status() {
+	local _hook_path
+	_hook_path=$(_hook_path) || return 1
+
+	if [[ ! -f "$_hook_path" ]]; then
+		printf 'pre-push hook: NOT INSTALLED\n'
+		return 0
+	fi
+
+	if ! _hook_is_managed "$_hook_path"; then
+		printf 'pre-push hook: installed (unknown manager — not managed by aidevops)\n'
+		printf '  path: %s\n' "$_hook_path"
+		return 0
+	fi
+
+	printf 'pre-push hook: installed (aidevops managed)\n'
+	printf '  path: %s\n' "$_hook_path"
+
+	local _has_privacy=0 _has_complexity=0
+	grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _has_privacy=1
+	grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _has_complexity=1
+
+	if [[ "$_has_privacy" -eq 1 ]]; then
+		local _src=""
+		_src=$(_find_hook_src privacy 2>/dev/null || true)
+		if [[ -n "$_src" ]]; then
+			printf '  guard privacy:    ENABLED  (%s)\n' "$_src"
+		else
+			printf '  guard privacy:    ENABLED  (source not found — will fail-open)\n'
+		fi
+	else
+		printf '  guard privacy:    not installed\n'
+	fi
+
+	if [[ "$_has_complexity" -eq 1 ]]; then
+		local _src=""
+		_src=$(_find_hook_src complexity 2>/dev/null || true)
+		if [[ -n "$_src" ]]; then
+			printf '  guard complexity: ENABLED  (%s)\n' "$_src"
+		else
+			printf '  guard complexity: ENABLED  (source not found — will fail-open)\n'
+		fi
+	else
+		printf '  guard complexity: not installed\n'
+	fi
+	return 0
+}
+
+#######################################
+# main
+#######################################
+main() {
+	local _cmd="${1:-install}"
+	shift || true
+	case "$_cmd" in
+	install)   cmd_install "$@" ;;
+	uninstall) cmd_uninstall "$@" ;;
+	status)    cmd_status "$@" ;;
+	help | --help | -h)
+		sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+		;;
+	*)
+		print_error "unknown command: $_cmd"
+		return 1
+		;;
+	esac
+	return 0
+}
+
+main "$@"
