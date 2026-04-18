@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # routine-schedule-helper.sh — Deterministic schedule parser for routine evaluation
 #
-# Supports: daily(@HH:MM), weekly(day@HH:MM), monthly(N@HH:MM), cron(5-field-expr)
+# Supports: daily(@HH:MM), weekly(day@HH:MM), monthly(N@HH:MM), cron(5-field-expr), persistent
 # Pure bash date arithmetic, no external deps beyond `date`.
 #
 # Commands:
@@ -170,6 +170,12 @@ _parse_expression() {
 		return 0
 	fi
 
+	# Persistent: lifecycle-managed externally (systemd/launchd), never due via pulse
+	if [[ "$expr" == "persistent" ]]; then
+		printf 'persistent'
+		return 0
+	fi
+
 	printf '%s\n' "ERROR: unrecognised schedule expression '$expr'" >&2
 	return 1
 }
@@ -262,10 +268,11 @@ _schedule_interval_seconds() {
 	local sched_type="$1"
 
 	case "$sched_type" in
-	daily) printf '%d' 86400 ;;     # 24 hours
-	weekly) printf '%d' 604800 ;;   # 7 days
-	monthly) printf '%d' 2592000 ;; # 30 days (approximate)
-	cron) printf '%d' 60 ;;         # 1 minute (cron granularity)
+	daily) printf '%d' 86400 ;;        # 24 hours
+	weekly) printf '%d' 604800 ;;      # 7 days
+	monthly) printf '%d' 2592000 ;;    # 30 days (approximate)
+	cron) printf '%d' 60 ;;            # 1 minute (cron granularity)
+	persistent) printf '%d' 2147483647 ;; # max int — never due via interval check
 	*)
 		printf '%d' 86400
 		;;
@@ -294,6 +301,11 @@ cmd_is_due() {
 
 	local sched_type
 	sched_type=$(printf '%s' "$parsed" | awk '{print $1}')
+
+	# Persistent services are lifecycle-managed externally — never due via pulse
+	if [[ "$sched_type" == "persistent" ]]; then
+		return 1
+	fi
 
 	local now_epoch
 	now_epoch=$(_now_epoch)
@@ -501,6 +513,9 @@ cmd_next_run() {
 		_epoch_to_iso "$next_epoch"
 		printf '\n'
 		;;
+	persistent)
+		printf 'never\n'
+		;;
 	*)
 		printf '%s\n' "ERROR: unknown schedule type '$sched_type'" >&2
 		return 2
@@ -551,6 +566,9 @@ cmd_parse() {
 		local cron_fields
 		cron_fields=$(printf '%s' "$parsed" | sed 's/^cron //')
 		printf 'type=cron fields=%s\n' "$cron_fields"
+		;;
+	persistent)
+		printf 'type=persistent lifecycle=external\n'
 		;;
 	*)
 		printf '%s\n' "ERROR: unknown type '$sched_type'" >&2
@@ -605,6 +623,7 @@ main() {
 		printf '%s\n' "  weekly(day@HH:MM)       Run weekly on day at time (UTC)" >&2
 		printf '%s\n' "  monthly(N@HH:MM)        Run monthly on day N at time (UTC)" >&2
 		printf '%s\n' "  cron(min hour dom mon dow)  Standard 5-field cron expression" >&2
+		printf '%s\n' "  persistent              Externally managed (systemd/launchd), never due via pulse" >&2
 		return 2
 		;;
 	esac
