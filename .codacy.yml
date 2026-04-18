@@ -21,6 +21,26 @@
 #   rationale so the setting is not silently reverted to 0 in the dashboard.
 #   API endpoint: PUT /api/v3/organizations/gh/marcusquinn/repositories/aidevops/settings/quality/pull-requests
 #   Current value: {"issueThreshold":{"threshold":10,"minimumSeverity":"Warning"}}
+#
+# Noise-trim rationale (t2182, GH#19645):
+# - prospector disabled: aggregates Pylint + Bandit with extra pydocstyle noise.
+#   pydocstyle alone contributed 305 findings, most from mutually-exclusive rules
+#   (D213 vs D212, D203 vs D211) and numpy-style `----` section underlines we do
+#   not use. Pylint (36 findings) and Bandit (56 findings) run as first-class
+#   tools, so the real signal is preserved.
+# - pmd disabled: PMD's ECMAScript ruleset duplicates ESLint; UnnecessaryBlock
+#   (26 findings) is stylistic preference, not a defect.
+# - Bandit_B404 (`import subprocess` module-existence warning) is suppressed via
+#   .bandit in repo root (Codacy respects tool-native configs).
+#
+# UI-only gap (not fixable via config file):
+# - Semgrep_bash.lang.security.ifs-tampering.ifs-tampering fires 62 times on
+#   legitimate `local IFS=':'` / `IFS=$' \t\n'` / `IFS="$saved_ifs"` idioms.
+#   Per-repo pattern disable is not exposed in the Codacy API (only GET), and
+#   tool-native Semgrep config is not respected by Codacy's Opengrep engine.
+#   To clear these, disable the pattern manually in the Codacy UI at
+#   https://app.codacy.com/gh/marcusquinn/organizations/coding-standards
+#   → Default coding standard → Opengrep → search "ifs-tampering" → uncheck.
 
 ---
 engines:
@@ -34,6 +54,11 @@ engines:
     enabled: true
   eslint:
     enabled: true
+  # Disabled engines (t2182, GH#19645) — see rationale in header comment.
+  prospector:
+    enabled: false
+  pmd:
+    enabled: false
 
 exclude_paths:
   # Archived code is versioned for reference but not actively maintained.
@@ -72,3 +97,11 @@ exclude_paths:
   # files describing Cloudflare product behaviour. Same category as the brand
   # library — skill reference material, not source code. ~12.6K LOC.
   - ".agents/services/hosting/cloudflare-platform-skill/**"
+  # OpenCode plugin sandbox (t2182, GH#19645): .mjs files running inside
+  # OpenCode's plugin host. Semgrep's JS path-traversal and child-process
+  # rules fire on framework-controlled paths (~75 findings: detect-non-literal
+  # -fs-filename, path-join-resolve-traversal, detect-child-process, unsafe-
+  # dynamic-method). The paths are not attacker-controlled — they are sourced
+  # from our own config, task IDs, and session metadata. Excluding the dir
+  # stops the noise; genuine review of plugin changes happens in PR review.
+  - ".agents/plugins/opencode-aidevops/**"

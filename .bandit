@@ -1,0 +1,20 @@
+# Bandit configuration (t2182, GH#19645)
+#
+# Codacy respects tool-native config files when present in the repo root.
+# This file skips Bandit B404 globally:
+#
+# B404 ("Consider possible security implications associated with the
+# subprocess module") fires on every `import subprocess` regardless of
+# how the module is used. It is a module-existence warning, not a usage
+# warning. Framework scripts legitimately need subprocess to shell out
+# to git, gh, jq, etc. The real risks Bandit catches are:
+#   - B602 subprocess-popen-with-shell-equals-true (kept — real risk)
+#   - B603 subprocess-without-shell-equals-true (kept — false-positive prone
+#     but some real uses; severity Warning means non-fatal)
+#   - B605 start-process-with-a-shell (kept — real risk)
+#   - B606 start-process-with-no-shell (kept — real risk)
+#   - B607 start-process-with-partial-path (kept — real risk)
+# So we only skip B404 specifically, not all subprocess-related rules.
+
+skips:
+  - B404
