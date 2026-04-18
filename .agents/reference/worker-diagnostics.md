@@ -13,7 +13,7 @@ Reference for diagnosing headless worker failures. Workers are OpenCode instance
 
 ## Worker Lifecycle
 
-```
+```text
 Pulse cycle (every 2 min)
   → Version guard (enforce OPENCODE_PINNED_VERSION)
   → Canary smoke test (cached 30 min)
@@ -37,6 +37,7 @@ Pulse cycle (every 2 min)
 **Fix**: Each worker gets its own DB via `XDG_DATA_HOME=/tmp/aidevops-worker-auth.XXXXXX`. After completion, `_merge_worker_db()` copies session/message rows back to the shared DB using `ATTACH DATABASE` + `INSERT OR IGNORE` with a 5s timeout.
 
 **Diagnostic**: If workers stall at `step_start` with no API errors, check:
+
 ```bash
 # Are isolated dirs being created?
 ls -d /tmp/aidevops-worker-auth.* 2>/dev/null || ls -d "$TMPDIR"/aidevops-worker-auth.* 2>/dev/null
@@ -51,6 +52,7 @@ grep 'OPENCODE_DB' ~/.aidevops/agents/scripts/headless-runtime-helper.sh
 **Fix**: Watchdog launched as a standalone process that outlives the worker subshell.
 
 **Diagnostic**: If workers stall past the 300s timeout:
+
 ```bash
 # Are watchdog processes alive?
 ps aux | grep 'worker-activity-watchdog\|activity_watchdog' | grep -v grep
@@ -69,6 +71,7 @@ gh api repos/<slug>/issues/<num>/comments --jq '.[] | select(.body | test("CLAIM
 4. Version guard runs on every dispatch (not cached)
 
 **Diagnostic**: If no workers dispatch at all:
+
 ```bash
 # Check canary cache
 cat ~/.aidevops/.agent-workspace/headless-runtime/canary-last-pass
@@ -119,6 +122,24 @@ gh api notifications --jq '.[0:5] | .[] | "\(.updated_at[0:16]) \(.subject.type)
 When multiple pulse runners are operating across machines, single-worker diagnostics above
 remain valid. For cross-runner race conditions, stale-recovery loops, and new runner setup,
 see `reference/cross-runner-coordination.md`.
+
+## `gh pr checks` cancelled-vs-fail
+
+`gh pr checks` renders the GitHub Actions `cancelled` conclusion as
+`fail` in its TSV/default output. Only `success` becomes `pass`; all
+of `cancelled`, `timed_out`, `action_required`, `failure` collapse to
+`fail`.
+
+Before assuming a PR is broken, run:
+
+```bash
+gh api repos/OWNER/REPO/actions/runs -f branch=BRANCH \
+  -q '.workflow_runs[] | [.conclusion, .name] | @tsv'
+```
+
+If all "fail"s are `cancelled`, the CI is not actually broken — a
+concurrency cascade (or manual cancel) produced them. See parent issue
+GH#19736 for the cascade class.
 
 ## Recovery Checklist
 
