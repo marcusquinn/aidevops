@@ -133,7 +133,7 @@ wrapped in `withSpan("Tool.execute")` inside the Effect pipeline, which
 the `@effect/opentelemetry` bridge should convert to OTEL spans. However,
 in `run` mode the AI SDK drives tool execution by calling an `execute()`
 function that returns a `Promise`. The tool's Effect code re-enters via
-`Effect.promise(Effect.gen(...))` — a Promise boundary that creates a
+`Effect.runPromise(Effect.gen(...))` — a Promise boundary that creates a
 new async context. The `AsyncLocalStorageContextManager` that
 `@effect/opentelemetry` relies on does not propagate the parent span
 across this Effect → Promise → Effect transition, so the `Tool.execute`
@@ -189,7 +189,7 @@ After pointing opencode at a collector and restarting:
 4. Check for `aidevops.*` attributes. **In TUI/server mode**, these
    should appear on `Tool.execute` spans. **In `run` mode**, they
    will be absent due to the known limitation above — verify via
-   plugin SQLite instead (`observability-helper.sh recent 10`).
+   plugin SQLite instead (`session-introspect-helper.sh recent 10`).
 
 If aidevops attributes are missing in a mode where they should work:
 
