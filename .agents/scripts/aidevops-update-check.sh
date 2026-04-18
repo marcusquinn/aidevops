@@ -498,6 +498,78 @@ _write_cache() {
 }
 
 # -----------------------------------------------------------------------------
+# _detect_stuck_index_conflict: detect unmerged 3-way merge state in canonical
+# repos on session start (t2245, GH#19763).
+# A stuck unmerged index (stages 1/2/3 present, no MERGE_HEAD) silently blocks
+# git pull --ff-only. Scans each registered repo in repos.json for this state.
+# Returns: advisory string (empty if all repos clean or prereqs missing).
+# -----------------------------------------------------------------------------
+_detect_stuck_index_conflict() {
+	local repos_json="$HOME/.config/aidevops/repos.json"
+
+	# Prerequisites: repos.json must exist and jq must be available
+	if [[ ! -f "$repos_json" ]] || ! command -v jq &>/dev/null; then
+		echo ""
+		return 0
+	fi
+
+	local findings=""
+	local repo_path repo_name unmerged_files head_sha remote_sha
+
+	while IFS='|' read -r repo_path repo_name; do
+		[[ -z "$repo_path" ]] && continue
+		# Expand ~ to $HOME (repos.json may contain unexpanded tildes)
+		repo_path="${repo_path/#\~/$HOME}"
+		[[ -d "$repo_path/.git" ]] || continue
+
+		# Check for unmerged entries in the index
+		unmerged_files=$(git -C "$repo_path" ls-files --unmerged 2>/dev/null) || unmerged_files=""
+		[[ -z "$unmerged_files" ]] && continue
+
+		# We have unmerged files — check if there's an active merge/rebase
+		# operation. If MERGE_HEAD or REBASE_HEAD exists, the user has an
+		# in-progress operation (not "stuck") — skip silently.
+		if [[ -f "$repo_path/.git/MERGE_HEAD" ]] || [[ -f "$repo_path/.git/REBASE_HEAD" ]] || [[ -d "$repo_path/.git/rebase-merge" ]] || [[ -d "$repo_path/.git/rebase-apply" ]]; then
+			continue
+		fi
+
+		# Extract just the file names from the unmerged listing (deduplicate
+		# since each file appears once per stage: base/ours/theirs).
+		local file_list
+		file_list=$(echo "$unmerged_files" | awk '{print $NF}' | sort -u | head -5)
+		local file_count
+		file_count=$(echo "$unmerged_files" | awk '{print $NF}' | sort -u | wc -l | tr -d ' ')
+
+		# Determine safe remediation: if HEAD matches origin/main, a hard
+		# reset is safe; otherwise manual inspection is needed.
+		local remediation
+		head_sha=$(git -C "$repo_path" rev-parse HEAD 2>/dev/null) || head_sha=""
+		remote_sha=$(git -C "$repo_path" rev-parse origin/main 2>/dev/null) || remote_sha=""
+
+		if [[ -n "$head_sha" && -n "$remote_sha" && "$head_sha" == "$remote_sha" ]]; then
+			remediation="HEAD matches origin/main — safe to run: git -C ${repo_path} reset --hard HEAD"
+		else
+			remediation="HEAD differs from origin/main — inspect manually: git -C ${repo_path} status"
+		fi
+
+		local entry
+		entry=$(printf 'Stuck merge state in %s (%s file(s): %s). %s' \
+			"$repo_name" "$file_count" \
+			"$(echo "$file_list" | tr '\n' ',' | sed 's/,$//')" \
+			"$remediation")
+
+		if [[ -n "$findings" ]]; then
+			findings=$(printf '%s\n%s' "$findings" "$entry")
+		else
+			findings="$entry"
+		fi
+	done < <(jq -r '.initialized_repos[]? | select(.local_only != true) | "\(.path)|\(.slug // .path)"' "$repos_json" 2>/dev/null)
+
+	echo "$findings"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # _check_origin: verify framework provenance and notify on forks.
 # Checks if the installed framework repo's git remote matches the canonical
 # origin. Emits a helpful notice for fork users so they can check upstream
@@ -651,6 +723,62 @@ _refresh_oauth_tokens() {
 	return 0
 }
 
+# -----------------------------------------------------------------------------
+# _run_session_advisories: collect and emit all session-start advisories.
+# Extracted from main() to keep function complexity under 100 lines.
+# Args: $1=script_dir, $2=app_name, $3=cache_dir, $4=output (version line)
+# -----------------------------------------------------------------------------
+_run_session_advisories() {
+	local script_dir="$1" app_name="$2" cache_dir="$3" output="$4"
+
+	local runtime_hint nudge_output session_warning security_posture
+	local secret_hygiene advisories_output contribution_watch origin_notice
+	local signing_nudge script_drift stuck_index
+	runtime_hint=$(_get_runtime_hint "$app_name")
+	nudge_output=$(_check_local_models "$script_dir")
+	session_warning=$(_check_session_count "$script_dir")
+	security_posture=$(_check_security_posture "$script_dir")
+	secret_hygiene=$(_check_secret_hygiene "$script_dir")
+	advisories_output=$(_check_advisories)
+	contribution_watch=$(_check_contribution_watch)
+	origin_notice=$(_check_origin)
+	signing_nudge=$(_check_signing)
+	local pulse_health
+	pulse_health=$(_check_pulse_health)
+	# t2156: detect deployed-script drift and trigger silent background redeploy.
+	script_drift=$(_check_script_drift)
+	# t2245: detect stuck 3-way merge state in canonical repos.
+	stuck_index=$(_detect_stuck_index_conflict)
+
+	[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
+	[[ -n "$nudge_output" ]] && echo "$nudge_output"
+	[[ -n "$session_warning" ]] && echo "$session_warning"
+	[[ -n "$security_posture" ]] && echo "$security_posture"
+	[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
+	[[ -n "$advisories_output" ]] && echo "$advisories_output"
+	[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
+	[[ -n "$origin_notice" ]] && echo "$origin_notice"
+	[[ -n "$signing_nudge" ]] && echo "$signing_nudge"
+	[[ -n "$pulse_health" ]] && echo "$pulse_health"
+	[[ -n "$script_drift" ]] && echo "$script_drift"
+	[[ -n "$stuck_index" ]] && echo "$stuck_index"
+
+	_write_cache "$cache_dir" "$output" "$runtime_hint" "$nudge_output" \
+		"$session_warning" "$security_posture" "$secret_hygiene" \
+		"$advisories_output" "$contribution_watch"
+
+	_refresh_oauth_tokens
+
+	# t2172: Self-heal broken OpenCode runtime symlinks at session start.
+	# Belt-and-braces alongside the `aidevops update` cron path — covers
+	# users who haven't yet pulled the latest update but start a new session.
+	# Fail-open: must NEVER block session start or produce output.
+	local sym_helper="${script_dir}/agent-sources-helper.sh"
+	[[ -x "$sym_helper" ]] && "$sym_helper" cleanup-broken-symlinks >/dev/null 2>&1 || true
+
+	return 0
+}
+
 main() {
 	# In headless/non-interactive mode, skip the network call entirely.
 	# This is the #1 fix for "update check kills non-interactive sessions".
@@ -707,47 +835,7 @@ main() {
 		"${script_dir}/bash-upgrade-helper.sh" ensure --yes --quiet 2>/dev/null || true
 	fi
 
-	local runtime_hint nudge_output session_warning security_posture
-	local secret_hygiene advisories_output contribution_watch origin_notice
-	local signing_nudge script_drift
-	runtime_hint=$(_get_runtime_hint "$app_name")
-	nudge_output=$(_check_local_models "$script_dir")
-	session_warning=$(_check_session_count "$script_dir")
-	security_posture=$(_check_security_posture "$script_dir")
-	secret_hygiene=$(_check_secret_hygiene "$script_dir")
-	advisories_output=$(_check_advisories)
-	contribution_watch=$(_check_contribution_watch)
-	origin_notice=$(_check_origin)
-	signing_nudge=$(_check_signing)
-	local pulse_health
-	pulse_health=$(_check_pulse_health)
-	# t2156: detect deployed-script drift and trigger silent background redeploy.
-	script_drift=$(_check_script_drift)
-
-	[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
-	[[ -n "$nudge_output" ]] && echo "$nudge_output"
-	[[ -n "$session_warning" ]] && echo "$session_warning"
-	[[ -n "$security_posture" ]] && echo "$security_posture"
-	[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
-	[[ -n "$advisories_output" ]] && echo "$advisories_output"
-	[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
-	[[ -n "$origin_notice" ]] && echo "$origin_notice"
-	[[ -n "$signing_nudge" ]] && echo "$signing_nudge"
-	[[ -n "$pulse_health" ]] && echo "$pulse_health"
-	[[ -n "$script_drift" ]] && echo "$script_drift"
-
-	_write_cache "$cache_dir" "$output" "$runtime_hint" "$nudge_output" \
-		"$session_warning" "$security_posture" "$secret_hygiene" \
-		"$advisories_output" "$contribution_watch"
-
-	_refresh_oauth_tokens
-
-	# t2172: Self-heal broken OpenCode runtime symlinks at session start.
-	# Belt-and-braces alongside the `aidevops update` cron path — covers
-	# users who haven't yet pulled the latest update but start a new session.
-	# Fail-open: must NEVER block session start or produce output.
-	local sym_helper="${script_dir}/agent-sources-helper.sh"
-	[[ -x "$sym_helper" ]] && "$sym_helper" cleanup-broken-symlinks >/dev/null 2>&1 || true
+	_run_session_advisories "$script_dir" "$app_name" "$cache_dir" "$output"
 
 	return 0
 }
