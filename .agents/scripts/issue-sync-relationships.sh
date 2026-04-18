@@ -47,9 +47,12 @@ _NODE_ID_CACHE_FILE=""
 
 _init_node_id_cache() {
 	if [[ -z "$_NODE_ID_CACHE_FILE" ]]; then
-		_NODE_ID_CACHE_FILE=$(mktemp /tmp/aidevops-node-cache.XXXXXX)
+		_NODE_ID_CACHE_FILE=$(mktemp "${TMPDIR:-/tmp}/aidevops-node-cache.XXXXXX")
+		# Chain onto any existing EXIT trap rather than replacing it.
+		local _prev_trap
+		_prev_trap=$(trap -p EXIT | sed -E "s/^trap -- '(.*)' EXIT$/\1/")
 		# shellcheck disable=SC2064
-		trap "rm -f '$_NODE_ID_CACHE_FILE'" EXIT
+		trap "rm -f '$_NODE_ID_CACHE_FILE'${_prev_trap:+; $_prev_trap}" EXIT
 	fi
 	return 0
 }
@@ -405,7 +408,7 @@ cmd_relationships() {
 	local unique_tasks=()
 	local t
 	for t in "${tasks[@]}"; do
-		if ! echo "$seen_list" | grep -qx "$t"; then
+		if ! printf '%s' "$seen_list" | grep -Fxq -- "$t"; then
 			unique_tasks+=("$t")
 			seen_list="${seen_list}${t}"$'\n'
 		fi
@@ -675,7 +678,11 @@ cmd_backfill_sub_issues() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--issue)
-			target_issue="${2:-}"
+			if [[ -z "${2:-}" ]]; then
+				print_error "backfill-sub-issues: --issue requires an issue number"
+				return 1
+			fi
+			target_issue="$2"
 			shift 2
 			;;
 		*)
