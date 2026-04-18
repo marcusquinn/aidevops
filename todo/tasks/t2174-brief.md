@@ -38,9 +38,10 @@ The architectural fix (sharding, retry-with-backoff) lives upstream in anomalyco
 - `NEW: .agents/scripts/opencode-db-maintenance-helper.sh` — the helper with subcommands `check`, `report`, `maintain [--force]`, `auto`, `help`. Models on `.agents/scripts/worktree-helper.sh` style and uses shared-constants.sh for colours.
 - `NEW: .agents/scripts/tests/test-opencode-db-maintenance.sh` — sandbox-based tests (synthetic SQLite DB in tmp dir via XDG_DATA_HOME redirect). 11 assertions.
 - `EDIT: .agents/scripts/routines/core-routines.sh` — two changes: append r913 line in `get_core_routine_entries`, add `describe_r913()` function mirroring the existing r906 (calendar-scheduled) pattern.
-- `NEW: .agents/advisories/opencode-db-maintenance-2026-04.advisory` — alerts existing users (whose routines repos predate r913) to add the routine manually.
 - `NEW: .agents/reference/opencode-maintenance.md` — user-facing docs covering the problem, the routine, subcommands, config, safety, and what we can't fix from outside opencode.
 - `EDIT: TODO.md` — add t2174 entry with `ref:GH#<NNN>`.
+
+No advisory file — `aidevops update`'s existing `_create_core_routine_issues` path (non-interactive setup → `setup_routines` → `detect_and_create_all` → `init_personal` → `_create_core_routine_issues`) is idempotent and seeds every core routine's tracking issue into the user's routines repo, including newly-added ones like r913. Existing users get r913 automatically on the next auto-update; no user action required.
 
 ### Implementation Steps
 
@@ -85,7 +86,6 @@ bash -c "source .agents/scripts/routines/core-routines.sh && get_core_routine_en
 - [x] `describe_r913` is defined and outputs markdown for both darwin and linux
 - [x] Helper is a silent no-op when opencode is not installed (exit 0, no output on `auto`)
 - [x] Helper refuses `maintain` when opencode processes are active without `--force` (exit 2)
-- [x] Advisory file exists for existing users who won't get r913 seeded automatically
 - [x] Reference doc explains the problem, mitigation, and architectural limits
 
 ## Context & Decisions
@@ -94,6 +94,7 @@ bash -c "source .agents/scripts/routines/core-routines.sh && get_core_routine_en
 - **Process-active refusal is the default.** VACUUM conflicts with live writers. Defaulting to refuse-unless-forced prevents the maintenance routine from itself causing the errors it's trying to reduce.
 - **VACUUM is conditional.** VACUUM rewrites the whole DB file — expensive on 1+ GB databases. Triggering only when fragmentation is meaningful (>10% free pages) or size is large (>500 MB) keeps the routine cheap for users whose DBs never get big.
 - **We cannot fix `busy_timeout` externally.** PRAGMAs are per-connection in SQLite; only opencode's own code can set them at connection open. The reference doc documents this boundary so users don't expect the routine to solve problems it can't.
+- **No advisory — auto-update already handles it.** `aidevops update`'s non-interactive path runs `_create_core_routine_issues` idempotently on every update, so existing users get r913's tracking issue seeded automatically. Advisories are only needed for changes that require manual user action; adding a new core routine doesn't.
 - **Upstream PR work is complementary, not a replacement.** The user already filed anomalyco/opencode#21215; the routine is a holding pattern until sharding lands.
 
 ## Relevant Files
