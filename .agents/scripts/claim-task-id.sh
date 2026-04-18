@@ -72,6 +72,16 @@
 #   - If .task-counter doesn't exist, initialize from TODO.md highest ID
 #   - First run creates .task-counter and commits to <remote>/<counter_branch>
 #
+# Concurrent load / rebase safety (t2229):
+#   Under concurrent load, branches forked before other sessions claimed IDs
+#   carry a stale .task-counter. On PR merge, the stale value would overwrite
+#   the current one — silently duplicating IDs. Three defences:
+#     1. .gitattributes merge=ours (non-squash merges)
+#     2. .github/workflows/counter-monotonic.yml CI check (all merge strategies)
+#     3. full-loop-helper.sh _rebase_and_push auto-resets drifted counter
+#   Always rebase onto origin/main before pushing a branch that touched
+#   .task-counter: `git fetch origin main && git rebase origin/main`
+#
 # Platform detection:
 #   - Checks git remote URL for github.com, gitlab.com, gitea
 #   - Uses gh CLI for GitHub, glab CLI for GitLab

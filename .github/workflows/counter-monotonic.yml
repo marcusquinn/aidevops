@@ -1,0 +1,86 @@
+name: Counter Monotonic Check
+
+# Blocks PR merges that would regress .task-counter below the base branch value.
+# This prevents silent task-ID collisions caused by stale-base rebases (t2229).
+#
+# How it works:
+#   - On PRs touching .task-counter, compares the PR's value to the base branch.
+#   - If the PR value is lower, the check fails with an actionable error message.
+#   - The fix is always: rebase onto latest base and re-push.
+#
+# Layer 2 of the t2229 three-layer defence:
+#   Layer 1: .gitattributes merge=ours (non-squash merges only)
+#   Layer 2: This CI check (all merge strategies)
+#   Layer 3: full-loop-helper.sh auto-reset (pre-push correction)
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.task-counter']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  counter-monotonic:
+    name: Counter Monotonic Guard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+
+      - name: Compare counter values
+        run: |
+          BASE_REF="origin/${{ github.base_ref }}"
+
+          # Read base branch counter
+          if ! BASE=$(git show "${BASE_REF}:.task-counter" 2>/dev/null); then
+            echo "::notice::.task-counter does not exist on ${BASE_REF} — skipping monotonicity check"
+            exit 0
+          fi
+
+          # Read PR head counter
+          if [[ ! -f .task-counter ]]; then
+            echo "::error::.task-counter missing from PR head — this file must not be deleted"
+            exit 1
+          fi
+          HEAD=$(cat .task-counter)
+
+          # Sanitise: strip whitespace, enforce numeric (base-10)
+          BASE=$(echo "$BASE" | tr -d '[:space:]')
+          HEAD=$(echo "$HEAD" | tr -d '[:space:]')
+
+          if ! [[ "$BASE" =~ ^[0-9]+$ ]]; then
+            echo "::warning::Base .task-counter is not a valid integer ('${BASE}') — skipping check"
+            exit 0
+          fi
+          if ! [[ "$HEAD" =~ ^[0-9]+$ ]]; then
+            echo "::error::PR .task-counter is not a valid integer ('${HEAD}')"
+            exit 1
+          fi
+
+          # Force base-10 comparison (prevents octal trap with leading zeros)
+          if [[ "$((10#$HEAD))" -lt "$((10#$BASE))" ]]; then
+            echo ""
+            echo "::error::PR regresses .task-counter: ${BASE} → ${HEAD}"
+            echo ""
+            echo "This PR would rewind .task-counter from ${BASE} to ${HEAD},"
+            echo "causing claim-task-id.sh to re-allocate already-used task IDs."
+            echo ""
+            echo "Fix: rebase your branch onto the latest base branch and re-push:"
+            echo "  git fetch origin main && git rebase origin/main && git push --force-with-lease"
+            echo ""
+            echo "If the counter was intentionally lowered (should never happen),"
+            echo "close this PR and file a new one with an explanation."
+            exit 1
+          fi
+
+          echo "counter: ${BASE} → ${HEAD} (monotonic — OK)"

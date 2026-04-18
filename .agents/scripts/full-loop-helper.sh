@@ -684,6 +684,25 @@ _rebase_and_push() {
 		return 1
 	fi
 
+	# t2229 Layer 3: auto-reset .task-counter if rebase picked up a stale value.
+	# After rebase, the branch may carry a counter lower than origin/main's
+	# current value (race: main advanced between rebase-base and push).
+	# Reset to origin/main's value to prevent silent regression on merge.
+	if [[ -f .task-counter ]]; then
+		local branch_counter="" base_counter=""
+		branch_counter=$(cat .task-counter 2>/dev/null | tr -d '[:space:]') || true
+		base_counter=$(git show origin/main:.task-counter 2>/dev/null | tr -d '[:space:]') || true
+		if [[ -n "$branch_counter" && -n "$base_counter" ]] \
+			&& [[ "$branch_counter" =~ ^[0-9]+$ ]] \
+			&& [[ "$base_counter" =~ ^[0-9]+$ ]] \
+			&& [[ "$((10#$branch_counter))" -lt "$((10#$base_counter))" ]]; then
+			print_info "Auto-resetting .task-counter: ${branch_counter} → ${base_counter} (base drifted during rebase)"
+			echo "$base_counter" > .task-counter
+			git add .task-counter
+			git commit -m "chore: reset .task-counter to origin/main value (t2229 race prevention)" --no-verify
+		fi
+	fi
+
 	print_info "Pushing to origin/${branch}..."
 	if ! git push -u origin "$branch" --force-with-lease 2>/dev/null; then
 		print_error "Push failed. Check remote state and retry."
