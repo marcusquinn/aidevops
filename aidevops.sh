@@ -61,11 +61,31 @@ _timeout_cmd() {
 	fi
 }
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-print_header() { echo -e "${BOLD}${CYAN}$1${NC}"; }
+print_info() {
+	local msg="$1"
+	echo -e "${BLUE}[INFO]${NC} $msg"
+	return 0
+}
+print_success() {
+	local msg="$1"
+	echo -e "${GREEN}[OK]${NC} $msg"
+	return 0
+}
+print_warning() {
+	local msg="$1"
+	echo -e "${YELLOW}[WARN]${NC} $msg"
+	return 0
+}
+print_error() {
+	local msg="$1"
+	echo -e "${RED}[ERROR]${NC} $msg"
+	return 0
+}
+print_header() {
+	local msg="$1"
+	echo -e "${BOLD}${CYAN}$msg${NC}"
+	return 0
+}
 
 # Get current version
 get_version() {
@@ -106,17 +126,20 @@ get_public_release_tag() {
 
 # Check if a command exists
 check_cmd() {
-	command -v "$1" >/dev/null 2>&1
+	local cmd="$1"
+	command -v "$cmd" >/dev/null 2>&1
 }
 
 # Check if a directory exists
 check_dir() {
-	[[ -d "$1" ]]
+	local dir="$1"
+	[[ -d "$dir" ]]
 }
 
 # Check if a file exists
 check_file() {
-	[[ -f "$1" ]]
+	local file="$1"
+	[[ -f "$file" ]]
 }
 
 # Ensure file ends with a trailing newline (prevents malformed appends)
@@ -268,6 +291,61 @@ _compute_repo_registration_defaults() {
 	return 0
 }
 
+# Resolve a worktree path to its canonical main-worktree path, if applicable.
+# Usage: resolve_canonical_repo_path <path>
+# Prints the canonical path to stdout. If the input is already the main
+# worktree, a non-git path, or git is unavailable, prints the input unchanged.
+#
+# Why this exists: `find ~/Git -name .aidevops.json` in auto-discovery and
+# similar scans pick up .aidevops.json files that exist in linked worktrees
+# (because worktrees inherit the working tree contents), and without this
+# guard each worktree gets registered as a separate repo. That's what caused
+# tabby-profile-sync to emit a profile for a worktree directory.
+resolve_canonical_repo_path() {
+	local input_path="$1"
+	local common_dir
+	common_dir=$(git -C "$input_path" rev-parse --git-common-dir 2>/dev/null) || {
+		printf '%s\n' "$input_path"
+		return 0
+	}
+	local own_git_dir
+	own_git_dir=$(git -C "$input_path" rev-parse --git-dir 2>/dev/null) || {
+		printf '%s\n' "$input_path"
+		return 0
+	}
+
+	# Resolve both to absolute paths for a reliable comparison.
+	# git -C <path> returns paths relative to <path> when they are relative.
+	local common_abs own_abs
+	if [[ "$common_dir" = /* ]]; then
+		common_abs=$(cd "$common_dir" 2>/dev/null && pwd -P)
+	else
+		common_abs=$(cd "$input_path/$common_dir" 2>/dev/null && pwd -P)
+	fi
+	if [[ "$own_git_dir" = /* ]]; then
+		own_abs=$(cd "$own_git_dir" 2>/dev/null && pwd -P)
+	else
+		own_abs=$(cd "$input_path/$own_git_dir" 2>/dev/null && pwd -P)
+	fi
+
+	if [[ -z "$common_abs" || -z "$own_abs" || "$common_abs" == "$own_abs" ]]; then
+		# Main worktree or degraded resolution — pass through.
+		printf '%s\n' "$input_path"
+		return 0
+	fi
+
+	# Linked worktree — ask git for the main worktree's working tree path.
+	local main_path
+	main_path=$(git -C "$input_path" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2; exit}')
+	if [[ -n "$main_path" && "$main_path" != "$input_path" && -d "$main_path" ]]; then
+		printf '%s\n' "$main_path"
+		return 0
+	fi
+
+	printf '%s\n' "$input_path"
+	return 0
+}
+
 # Register a repo in repos.json
 # Usage: register_repo <path> <version> <features>
 register_repo() {
@@ -281,6 +359,20 @@ register_repo() {
 	if ! repo_path=$(cd "$repo_path" 2>/dev/null && pwd -P); then
 		print_warning "Cannot access path: $repo_path"
 		return 1
+	fi
+
+	# Resolve linked worktrees to their canonical main-worktree path.
+	# Every registration path (cmd_init, auto-discovery, scan) runs through
+	# register_repo, so the guard here catches all of them — not just the
+	# cmd_init path that previously checked only when WORKTREE_PATH was set.
+	local canonical_path
+	canonical_path=$(resolve_canonical_repo_path "$repo_path")
+	if [[ -n "$canonical_path" && "$canonical_path" != "$repo_path" ]]; then
+		print_info "Resolved worktree to canonical repo: $repo_path → $canonical_path"
+		if ! repo_path=$(cd "$canonical_path" 2>/dev/null && pwd -P); then
+			print_warning "Cannot access canonical path: $canonical_path"
+			return 1
+		fi
 	fi
 
 	if ! command -v jq &>/dev/null; then

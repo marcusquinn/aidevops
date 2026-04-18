@@ -308,6 +308,62 @@ cleanup_stale_bun_opencode() {
 # by the 4-layer role resolution in stats-functions.sh.
 #
 # Gated by a flag file so it runs exactly once per install.
+cleanup_worktree_entries_in_repos_json() {
+	# t2250: `find ~/Git -name .aidevops.json` during auto-discovery picks up
+	# files that exist inside linked worktrees (because worktrees inherit the
+	# working tree). Before the register_repo guard, each worktree ended up as
+	# a separate entry in repos.json — confusing tabby-profile-sync, pulse,
+	# cross-repo tooling, and anything that enumerates `initialized_repos`.
+	#
+	# One-shot migration: scan `initialized_repos[].path`, detect entries that
+	# are linked worktrees (git rev-parse --git-dir != --git-common-dir), and
+	# remove them. Safe to re-run; a flag file suppresses re-execution once
+	# the cleanup has been done on this machine.
+	local flag_file="${HOME}/.aidevops/logs/.migrated-worktree-repos-json-t2250"
+	[[ -f "$flag_file" ]] && return 0
+
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	[[ -f "$repos_json" ]] || return 0
+
+	command -v jq &>/dev/null || return 0
+	command -v git &>/dev/null || return 0
+
+	local stale_paths=()
+	local path git_dir common_dir
+
+	while IFS= read -r path; do
+		[[ -n "$path" && -d "$path" ]] || continue
+		git_dir=$(git -C "$path" rev-parse --git-dir 2>/dev/null) || continue
+		common_dir=$(git -C "$path" rev-parse --git-common-dir 2>/dev/null) || continue
+		# Normalise to absolute paths for comparison.
+		[[ "$git_dir" = /* ]] || git_dir="$path/$git_dir"
+		[[ "$common_dir" = /* ]] || common_dir="$path/$common_dir"
+		git_dir=$(cd "$git_dir" 2>/dev/null && pwd -P) || git_dir=""
+		common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P) || common_dir=""
+		if [[ -n "$git_dir" && -n "$common_dir" && "$git_dir" != "$common_dir" ]]; then
+			stale_paths+=("$path")
+		fi
+	done < <(jq -r '.initialized_repos[].path // empty' "$repos_json" 2>/dev/null)
+
+	if [[ ${#stale_paths[@]} -gt 0 ]]; then
+		local temp_file="${repos_json}.tmp"
+		local paths_json
+		paths_json=$(printf '%s\n' "${stale_paths[@]}" | jq -R . | jq -s .)
+		jq --argjson stale "$paths_json" \
+			'.initialized_repos |= map(select(.path as $p | ($stale | index($p)) | not))' \
+			"$repos_json" >"$temp_file" && mv "$temp_file" "$repos_json"
+		print_info "Removed ${#stale_paths[@]} worktree entry/entries from repos.json (t2250):"
+		local p
+		for p in "${stale_paths[@]}"; do
+			print_info "  - $p"
+		done
+	fi
+
+	mkdir -p "$(dirname "$flag_file")"
+	date -u +"%Y-%m-%dT%H:%M:%SZ" >"$flag_file"
+	return 0
+}
+
 cleanup_stale_health_issue_caches() {
 	local flag_file="${HOME}/.aidevops/logs/.migrated-health-issue-caches-t1929"
 	[[ -f "$flag_file" ]] && return 0

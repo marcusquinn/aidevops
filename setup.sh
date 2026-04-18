@@ -915,6 +915,7 @@ _setup_run_non_interactive() {
 	cleanup_deprecated_mcps
 	cleanup_stale_bun_opencode
 	cleanup_stale_health_issue_caches
+	cleanup_worktree_entries_in_repos_json
 	_cleanup_legacy_model_config
 	validate_opencode_config
 	deploy_aidevops_agents
@@ -1031,6 +1032,7 @@ _setup_run_interactive() {
 	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
 	cleanup_stale_health_issue_caches
+	cleanup_worktree_entries_in_repos_json
 	_cleanup_legacy_model_config
 	confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
 	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
