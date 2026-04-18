@@ -82,7 +82,7 @@ jobs:
           fetch-depth: 1
 
       - name: Run OpenCode
-        uses: sst/opencode/github@latest
+        uses: anomalyco/opencode/github@latest
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
@@ -95,7 +95,7 @@ jobs:
 ## Configuration
 
 ```yaml
-- uses: sst/opencode/github@latest
+- uses: anomalyco/opencode/github@latest
   with:
     model: anthropic/claude-sonnet-4-6  # Required
     agent: build                                # Optional: agent to use
