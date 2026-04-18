@@ -38,6 +38,12 @@ jobs:
   detect-scope:
     name: Detect PR scope
     runs-on: ubuntu-latest
+    # t2231: fast-fail gate — skip entirely when a labeled event is unrelated to
+    # 'ratchet-bump'. Cascade still fires N workflow runs on bulk label application,
+    # but each one exits in ~3s with no checkout cost — no "cancelled" surface.
+    if: >-
+      github.event.action != 'labeled' ||
+      github.event.label.name == 'ratchet-bump'
     outputs:
       should_scan: ${{ steps.scope.outputs.should_scan }}
     steps:
