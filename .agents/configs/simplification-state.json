@@ -2316,9 +2316,9 @@
       "pr": 18843
     },
     ".agents/scripts/issue-sync-helper.sh": {
-      "at": "2026-04-17T18:37:54Z",
-      "hash": "71dced0869b1bb37cd03f069abeb83058ffb2eee",
-      "passes": 12,
+      "at": "2026-04-18T05:04:08Z",
+      "hash": "4adb6934312de791dfa05152ce0441dd9c19fac8",
+      "passes": 13,
       "pr": 18706
     },
     ".agents/scripts/issue-sync-lib.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-04-18T04:44:02Z",
-      "hash": "3e4f22b64593857ce32703fba6edf87cfe6fcb07",
-      "passes": 40,
+      "at": "2026-04-18T05:04:47Z",
+      "hash": "a42b185c0c3200b515f9d89ff54960a74a276bb9",
+      "passes": 41,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-04-18T04:44:02Z",
-      "hash": "ebe7f8c27500fe9c5f20912af90c917572f437c1",
-      "passes": 79,
+      "at": "2026-04-18T05:04:47Z",
+      "hash": "d6740a8c1de29585da28fa8df9c73ca694a5cde4",
+      "passes": 80,
       "pr": 19029
     },
     "setup-modules/agent-deploy.sh": {
@@ -7504,9 +7504,9 @@
       "pr": 19203
     },
     "setup.sh": {
-      "at": "2026-04-18T04:44:02Z",
-      "hash": "3074e786eee081b2605f8aa21496c50942ba06c8",
-      "passes": 77,
+      "at": "2026-04-18T05:04:47Z",
+      "hash": "f54c467e544fd2c47d12aeaa9d5156310fd23a61",
+      "passes": 78,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
