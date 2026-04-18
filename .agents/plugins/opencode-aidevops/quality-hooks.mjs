@@ -9,6 +9,7 @@ import { execSync, execFile } from "child_process";
 import { join } from "path";
 import { recordToolCall } from "./observability.mjs";
 import { extractAndStoreIntent, consumeIntent } from "./intent-tracing.mjs";
+import { recordToolStart, consumeToolDuration } from "./timing-tracing.mjs";
 import { qualityLog, runFileQualityGate } from "./quality-logging.mjs";
 import { enrichActiveSpan, detectTaskId, detectSessionOrigin } from "./otel-enrichment.mjs";
 
@@ -162,6 +163,10 @@ function handleToolBefore(ctx, log, input, output) {
     }
   }
 
+  // t2184: pair with tool.execute.after to compute duration_ms for the
+  // tool_calls INSERT. recordToolStart no-ops on empty callID.
+  recordToolStart(callID);
+
   // OTEL span enrichment (t2177) — attaches aidevops attributes to opencode's
   // active tool span when OTEL is enabled. Async fire-and-forget; errors
   // swallowed inside enrichActiveSpan to isolate the host tool from OTEL SDK
@@ -209,7 +214,10 @@ function handleToolAfter(ctx, log, scriptsDir, input, output) {
   }
 
   const intent = consumeIntent(input.callID || "");
-  recordToolCall(input, output, intent);
+  // t2184: consumeToolDuration returns null when the callID wasn't paired
+  // (e.g., hook race on plugin reload) — recordToolCall emits SQL NULL.
+  const durationMs = consumeToolDuration(input.callID || "");
+  recordToolCall(input, output, intent, durationMs);
 
   if (toolName === "mcp_task" || toolName === "task") {
     recordChildSubagent(output?.metadata?.task_id || "", scriptsDir, log);
