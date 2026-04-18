@@ -22,9 +22,9 @@ tools:
 - **Type**: Shared/VPS/Cloud hosting, budget-friendly
 - **API**: REST at `https://developers.hostinger.com`
 - **Auth**: Bearer token in `~/.config/aidevops/credentials.sh` as `HOSTINGER_API_TOKEN`
-- **SSH**: Port 65002, password auth (no SSH keys on shared)
+- **SSH**: Port 65002, key auth (recommended) or password auth; framework prefers key when `ssh_identity_file` is configured
 - **Panel**: Custom hPanel
-- **No MCP required** — uses curl for API, sshpass for SSH
+- **No MCP required** — uses curl for API, ssh for key auth or sshpass for password auth
 
 <!-- AI-CONTEXT-END -->
 
@@ -45,21 +45,26 @@ Config structure:
       "server": "server-hostname-or-ip",
       "port": 65002,
       "username": "u123456789",
-      "password_file": "~/.ssh/hostinger_password",
+      "ssh_identity_file": "~/.ssh/hostinger_ed25519",
       "domain_path": "/domains/example.com/public_html",
       "description": "Main website"
     }
   },
   "default_settings": {
     "port": 65002,
-    "username_pattern": "u[0-9]+",
-    "password_authentication": true,
-    "ssh_keys_supported": false
+    "username_pattern": "u[0-9]+"
   }
 }
 ```
 
-Password file setup:
+SSH key setup (recommended):
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/hostinger_ed25519
+# Upload ~/.ssh/hostinger_ed25519.pub via hPanel → SSH Keys
+```
+
+Password file setup (fallback):
 
 ```bash
 echo 'your-hostinger-password' > ~/.ssh/hostinger_password
@@ -86,8 +91,8 @@ sudo apt-get install sshpass  # Linux
 
 ## Security
 
+- SSH key auth is recommended; set `ssh_identity_file` in site config (e.g. `~/.ssh/hostinger_ed25519`)
 - Store passwords in files with 600 permissions; never commit them
-- SSH keys not supported on shared hosting — password auth only
 - Port 65002 (non-standard); be aware of concurrent connection limits
 
 Set web file permissions:

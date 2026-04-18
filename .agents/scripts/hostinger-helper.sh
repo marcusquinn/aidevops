@@ -65,29 +65,38 @@ connect_site() {
     local port
     local username
     local password_file
+    local ssh_identity_file
     local domain_path
     server=$(jq -r ".sites.$site.server" "$CONFIG_FILE")
     port=$(jq -r ".sites.$site.port" "$CONFIG_FILE")
     username=$(jq -r ".sites.$site.username" "$CONFIG_FILE")
-    password_file=$(jq -r ".sites.$site.password_file" "$CONFIG_FILE")
+    password_file=$(jq -r ".sites.$site.password_file // empty" "$CONFIG_FILE")
+    ssh_identity_file=$(jq -r ".sites.$site.ssh_identity_file // empty" "$CONFIG_FILE")
     domain_path=$(jq -r ".sites.$site.domain_path" "$CONFIG_FILE")
-    
+
     if [[ "$server" == "null" ]]; then
         print_error "Site not found: $site"
         list_sites
         exit 1
     fi
-    
+
     print_info "Connecting to $site..."
-    
-    # Check if password file exists
+
+    # Prefer SSH key auth if configured (Hostinger recommends it)
+    if [[ -n "$ssh_identity_file" ]]; then
+        local expanded_identity="${ssh_identity_file/#\~/$HOME}"
+        ssh -i "$expanded_identity" -p "$port" "$username@$server" -t "cd $domain_path && bash" || exit
+        return 0
+    fi
+
+    # Fallback: sshpass with password file (backward compatible)
     password_file="${password_file/\~/$HOME}"
     if [[ ! -f "$password_file" ]]; then
         print_error "Password file not found: $password_file"
         print_info "Create password file: echo 'your-password' > $password_file && chmod 600 $password_file"
         exit 1
     fi
-    
+
     # Connect with sshpass
     sshpass -f "$password_file" ssh -p "$port" "$username@$server" -t "cd $domain_path && bash" || exit
     return 0
@@ -109,21 +118,31 @@ exec_on_site() {
     local port
     local username
     local password_file
+    local ssh_identity_file
     local domain_path
     server=$(jq -r ".sites.$site.server" "$CONFIG_FILE")
     port=$(jq -r ".sites.$site.port" "$CONFIG_FILE")
     username=$(jq -r ".sites.$site.username" "$CONFIG_FILE")
-    password_file=$(jq -r ".sites.$site.password_file" "$CONFIG_FILE")
+    password_file=$(jq -r ".sites.$site.password_file // empty" "$CONFIG_FILE")
+    ssh_identity_file=$(jq -r ".sites.$site.ssh_identity_file // empty" "$CONFIG_FILE")
     domain_path=$(jq -r ".sites.$site.domain_path" "$CONFIG_FILE")
-    
+
     if [[ "$server" == "null" ]]; then
         print_error "Site not found: $site"
         exit 1
     fi
-    
-    password_file="${password_file/\~/$HOME}"
+
     print_info "Executing '$command' on $site..."
-    
+
+    # Prefer SSH key auth if configured (Hostinger recommends it)
+    if [[ -n "$ssh_identity_file" ]]; then
+        local expanded_identity="${ssh_identity_file/#\~/$HOME}"
+        ssh -i "$expanded_identity" -p "$port" "$username@$server" "cd $domain_path && $command" || exit
+        return 0
+    fi
+
+    # Fallback: sshpass with password file (backward compatible)
+    password_file="${password_file/\~/$HOME}"
     sshpass -f "$password_file" ssh -p "$port" "$username@$server" "cd $domain_path && $command" || exit
     return 0
 }

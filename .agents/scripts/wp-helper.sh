@@ -320,7 +320,12 @@ execute_wp_via_ssh() {
 		return $?
 		;;
 	hostinger | closte)
-		# Hostinger/Closte - sshpass with password file
+		# Prefer SSH key auth if configured (Hostinger supports and recommends it)
+		if [[ -n "$ssh_identity_file" ]]; then
+			ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "$remote_cmd"
+			return $?
+		fi
+		# Fallback: sshpass with password file (backward compatible for password-auth users)
 		check_sshpass
 		local expanded_password_file
 		if [[ -n "$password_file" ]]; then
@@ -347,7 +352,7 @@ execute_wp_via_ssh() {
 			print_info "Fix with: chmod 600 $expanded_password_file"
 		fi
 
-		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "$remote_cmd"
+		sshpass -f "$expanded_password_file" ssh -n -p "$ssh_port" "${ssh_user}@${ssh_host}" "$remote_cmd"
 		return $?
 		;;
 	hetzner | cloudways | cloudron)
