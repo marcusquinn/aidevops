@@ -87,7 +87,7 @@ Score both axes before writing code. Initial packaging is ~25% of effort; SSO, u
 
 ## Base Image
 
-**Always `FROM cloudron/base:5.0.0`.** Never start from upstream images — monolithic images bundle databases, reverse proxies, and init systems that conflict with Cloudron (e.g., docassemble: 25 symlinks, 15-20 min boot). Read upstream `docker-compose.yml` for dependencies, then install on `cloudron/base` via package manager.
+**Always `FROM cloudron/base:5.0.0@sha256:04fd70dbd8ad6149c19de39e35718e024417c3e01dc9c6637eaf4a41ec4e596c`.** The final stage MUST use the SHA-pinned `cloudron/base` — platform tooling (file manager, web terminal, log viewer) depends on utilities in this image. Never start from upstream images — monolithic images bundle databases, reverse proxies, and init systems that conflict with Cloudron (e.g., docassemble: 25 symlinks, 15-20 min boot). Read upstream `docker-compose.yml` for dependencies, then install on `cloudron/base` via package manager. Current SHA tracked at [hub.docker.com/r/cloudron/base/tags](https://hub.docker.com/r/cloudron/base/tags) and in `cloudron-app-packaging-skill.md`.
 
 **Multi-stage builds**: Only when build toolchain is exotic. Build in upstream image, `COPY --from` artifacts into final `cloudron/base` stage. **Alpine/musl warning**: musl-compiled binaries won't run on `cloudron/base` (Ubuntu/glibc) — always use glibc builder stage.
 
@@ -101,7 +101,7 @@ Run DB migrations on each start. `localstorage` is MANDATORY for persistent data
 
 **Memory limits** (`memoryLimit` in bytes: 256MB=268435456, 512MB=536870912, 1GB=1073741824): Static/PHP 128-256 MB, Node/Go/Rust 256-512 MB, PHP+workers/Python/Ruby 512-768 MB, Java/JVM 1024+ MB.
 
-**Dynamic worker count from memory limit**:
+**Dynamic worker count from memory limit** (matches upstream Cloudron skill: 1 worker per 150 MB, clamped 1-8):
 
 ```bash
 if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
@@ -110,8 +110,9 @@ if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
 else
     mem=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
 fi
-workers=$(( mem / 1024 / 1024 / 128 ))  # 1 worker per 128MB
-[[ $workers -lt 1 ]] && workers=1
+workers=$(( mem / 1024 / 1024 / 150 ))      # 1 worker per 150MB
+workers=$(( workers > 8 ? 8 : workers ))    # cap at 8
+workers=$(( workers < 1 ? 1 : workers ))    # floor at 1
 ```
 
 **TCP/UDP ports**: Declare in `tcpPorts` manifest field; exposed as env vars (e.g., `XMPP_C2S_PORT`). Apps handle their own TLS termination.

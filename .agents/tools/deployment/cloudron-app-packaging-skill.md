@@ -52,7 +52,7 @@ Cloudron apps are Docker images plus `CloudronManifest.json`, with a readonly ro
 Use `Dockerfile`, `Dockerfile.cloudron`, or `cloudron/Dockerfile`. See `cloudron-app-packaging.md` "Dockerfile Patterns" for stack-specific variants.
 
 ```dockerfile
-FROM cloudron/base:5.0.0@sha256:...
+FROM cloudron/base:5.0.0@sha256:04fd70dbd8ad6149c19de39e35718e024417c3e01dc9c6637eaf4a41ec4e596c
 RUN mkdir -p /app/code
 WORKDIR /app/code
 COPY . /app/code/
@@ -60,6 +60,8 @@ RUN ln -sf /run/app/config.json /app/code/config.json
 RUN chmod +x /app/code/start.sh
 CMD [ "/app/code/start.sh" ]
 ```
+
+**Base image requirement:** the final stage MUST use the SHA-pinned `cloudron/base:5.0.0` tag above. Platform tooling (file manager, web terminal, log viewer) depends on utilities provided by this base image. Multi-stage builds are fine for compilation, but the final stage always lands on pinned `cloudron/base`. Current SHA tracked at [hub.docker.com/r/cloudron/base/tags](https://hub.docker.com/r/cloudron/base/tags).
 
 ### `start.sh` Conventions
 
@@ -83,6 +85,19 @@ CMD [ "/app/code/start.sh" ]
   "manifestVersion": 2
 }
 ```
+
+Common fields beyond the minimum:
+
+| Field | Purpose |
+|-------|---------|
+| `memoryLimit` | Max memory in bytes (default 256 MB) |
+| `tcpPorts` / `udpPorts` | Non-HTTP port bindings exposed to the user |
+| `httpPorts` | Additional HTTP services on secondary domains |
+| `multiDomain` | Enable alias domains |
+| `optionalSso` | Allow install without user management |
+| `configurePath` | Admin panel path shown in dashboard |
+| `postInstallMessage` | Markdown shown after install (supports `<sso>`/`<nosso>` tags) |
+| `minBoxVersion` | Minimum platform version required |
 
 Full field reference: [manifest-ref.md](cloudron-app-packaging-skill/manifest-ref.md).
 
