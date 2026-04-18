@@ -313,24 +313,20 @@ cmd_report() {
 # Runs wal_checkpoint(TRUNCATE) → PRAGMA optimize → optional VACUUM.
 # Aborts with exit 2 if opencode processes are active, unless --force.
 
-cmd_maintain() {
-	local force=false
-	local is_auto=false
-	local arg
-	for arg in "$@"; do
-		case "$arg" in
-		--force) force=true ;;
-		--auto) is_auto=true ;;
-		esac
-	done
+# _maintain_preflight <force:bool> <is_auto:bool>
+# Validates environment before maintenance. Returns 0 to proceed, other
+# codes to exit cmd_maintain with (handled by caller).
+_maintain_preflight() {
+	local force="$1"
+	local is_auto="$2"
 
 	if ! _opencode_installed; then
 		if [[ "$is_auto" == true ]]; then
 			_log INFO "auto: opencode not installed — no-op"
-			return 0
+			return 100
 		fi
 		print_info "opencode not installed — nothing to maintain"
-		return 0
+		return 100
 	fi
 
 	if ! _sqlite_available; then
@@ -344,24 +340,47 @@ cmd_maintain() {
 		if [[ "$force" == true ]]; then
 			print_warning "$n opencode process(es) active — running anyway (--force)"
 			_log WARN "--force: proceeding with $n active processes"
-		else
-			print_warning "$n opencode process(es) currently active"
-			print_info "Close all opencode TUIs first, or re-run with --force (may cause session errors)"
-			_log INFO "refused: $n active processes (no --force)"
-			return 2
+			return 0
+		fi
+		print_warning "$n opencode process(es) currently active"
+		print_info "Close all opencode TUIs first, or re-run with --force (may cause session errors)"
+		_log INFO "refused: $n active processes (no --force)"
+		return 2
+	fi
+	return 0
+}
+
+# _maintain_should_vacuum <before_bytes>
+# Echoes "true"/"false" based on size and freelist thresholds.
+_maintain_should_vacuum() {
+	local before_bytes="$1"
+	local freelist_count page_count size_mb
+	freelist_count=$(_pragma "$OPENCODE_DB" "freelist_count")
+	page_count=$(_pragma "$OPENCODE_DB" "page_count")
+	size_mb=$((before_bytes / 1048576))
+
+	if [[ "$page_count" -gt 0 ]]; then
+		local pct_num pct_threshold
+		# Integer math to avoid bc dependency in comparison
+		pct_num=$((freelist_count * 100))
+		pct_threshold=$(echo "${VACUUM_FREELIST_THRESHOLD} * 100" | awk '{printf "%d", $1}')
+		if [[ $((pct_num / page_count)) -ge "$pct_threshold" ]]; then
+			printf '%s %s %s %s' true "$freelist_count" "$page_count" "$size_mb"
+			return 0
 		fi
 	fi
+	if [[ "$size_mb" -ge "$FORCE_VACUUM_SIZE_MB" ]]; then
+		printf '%s %s %s %s' true "$freelist_count" "$page_count" "$size_mb"
+		return 0
+	fi
+	printf '%s %s %s %s' false "$freelist_count" "$page_count" "$size_mb"
+	return 0
+}
 
-	local start_epoch
-	start_epoch=$(date +%s)
-	local before_bytes
-	before_bytes=$(_db_size_bytes "$OPENCODE_DB")
-	local before_wal
-	before_wal=$(_db_size_bytes "$OPENCODE_WAL")
-
-	print_info "Starting maintenance (DB: $(_db_size_human "$before_bytes"), WAL: $(_db_size_human "$before_wal"))"
-	_log INFO "start: db=${before_bytes} wal=${before_wal}"
-
+# _maintain_run_steps <before_bytes>
+# Runs the three SQLite maintenance steps. Echoes "step_failures vacuum_ran".
+_maintain_run_steps() {
+	local before_bytes="$1"
 	local step_failures=0
 
 	# Step 1: Truncate WAL — fold pending writes back into main DB and shrink the WAL file.
@@ -381,26 +400,10 @@ cmd_maintain() {
 	fi
 
 	# Step 3: VACUUM only if needed — it rewrites the entire DB.
-	# Skip if: free-page fraction below threshold AND DB under force-vacuum size.
-	local do_vacuum=false
-	local freelist_count page_count
-	freelist_count=$(_pragma "$OPENCODE_DB" "freelist_count")
-	page_count=$(_pragma "$OPENCODE_DB" "page_count")
-	local size_mb
-	size_mb=$((before_bytes / 1048576))
-
-	if [[ "$page_count" -gt 0 ]]; then
-		local pct_num pct_threshold
-		# Use integer math to avoid bc dependency in comparison
-		pct_num=$((freelist_count * 100))
-		pct_threshold=$(echo "${VACUUM_FREELIST_THRESHOLD} * 100" | awk '{printf "%d", $1}')
-		if [[ $((pct_num / page_count)) -ge "$pct_threshold" ]]; then
-			do_vacuum=true
-		fi
-	fi
-	if [[ "$size_mb" -ge "$FORCE_VACUUM_SIZE_MB" ]]; then
-		do_vacuum=true
-	fi
+	local vacuum_decision
+	vacuum_decision=$(_maintain_should_vacuum "$before_bytes")
+	local do_vacuum freelist_count page_count size_mb
+	read -r do_vacuum freelist_count page_count size_mb <<<"$vacuum_decision"
 
 	if [[ "$do_vacuum" == true ]]; then
 		print_info "Step 3/3: VACUUM (DB ${size_mb} MB, ${freelist_count}/${page_count} free pages)..."
@@ -413,16 +416,20 @@ cmd_maintain() {
 		print_info "Step 3/3: VACUUM skipped (low fragmentation: ${freelist_count}/${page_count} free pages, ${size_mb} MB < ${FORCE_VACUUM_SIZE_MB} MB)"
 	fi
 
-	local end_epoch
-	end_epoch=$(date +%s)
-	local after_bytes
-	after_bytes=$(_db_size_bytes "$OPENCODE_DB")
-	local after_wal
-	after_wal=$(_db_size_bytes "$OPENCODE_WAL")
-	local duration=$((end_epoch - start_epoch))
-	local reclaimed=$((before_bytes - after_bytes))
+	printf '%s %s' "$step_failures" "$do_vacuum"
+}
 
-	# Record state
+# _maintain_write_state <before_bytes> <after_bytes> <before_wal> <after_wal> <duration> <do_vacuum> <step_failures>
+# Writes last-run.json and prints the summary.
+_maintain_write_state() {
+	local before_bytes="$1"
+	local after_bytes="$2"
+	local before_wal="$3"
+	local after_wal="$4"
+	local duration="$5"
+	local do_vacuum="$6"
+	local step_failures="$7"
+	local reclaimed=$((before_bytes - after_bytes))
 	local outcome="success"
 	[[ "$step_failures" -gt 0 ]] && outcome="partial"
 
@@ -446,6 +453,48 @@ EOF
 	print_info "DB:  $(_db_size_human "$before_bytes") → $(_db_size_human "$after_bytes") (reclaimed $(_db_size_human "$reclaimed"))"
 	print_info "WAL: $(_db_size_human "$before_wal") → $(_db_size_human "$after_wal")"
 	_log INFO "done: outcome=$outcome duration=${duration}s reclaimed=${reclaimed} step_failures=${step_failures}"
+	return 0
+}
+
+cmd_maintain() {
+	local force=false
+	local is_auto=false
+	local arg
+	for arg in "$@"; do
+		case "$arg" in
+		--force) force=true ;;
+		--auto) is_auto=true ;;
+		esac
+	done
+
+	_maintain_preflight "$force" "$is_auto"
+	local rc=$?
+	# 100 = clean no-op (opencode not installed)
+	[[ "$rc" -eq 100 ]] && return 0
+	# Any other non-zero = error, propagate
+	[[ "$rc" -ne 0 ]] && return "$rc"
+
+	local start_epoch before_bytes before_wal
+	start_epoch=$(date +%s)
+	before_bytes=$(_db_size_bytes "$OPENCODE_DB")
+	before_wal=$(_db_size_bytes "$OPENCODE_WAL")
+
+	print_info "Starting maintenance (DB: $(_db_size_human "$before_bytes"), WAL: $(_db_size_human "$before_wal"))"
+	_log INFO "start: db=${before_bytes} wal=${before_wal}"
+
+	local steps_result
+	steps_result=$(_maintain_run_steps "$before_bytes")
+	local step_failures do_vacuum
+	read -r step_failures do_vacuum <<<"$steps_result"
+
+	local end_epoch after_bytes after_wal duration
+	end_epoch=$(date +%s)
+	after_bytes=$(_db_size_bytes "$OPENCODE_DB")
+	after_wal=$(_db_size_bytes "$OPENCODE_WAL")
+	duration=$((end_epoch - start_epoch))
+
+	_maintain_write_state "$before_bytes" "$after_bytes" "$before_wal" "$after_wal" \
+		"$duration" "$do_vacuum" "$step_failures"
 
 	if [[ "$step_failures" -gt 0 ]]; then
 		return 10
