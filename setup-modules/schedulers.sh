@@ -9,6 +9,30 @@
 # Keep pulse workers alive long enough for opus-tier dispatches.
 PULSE_STALE_THRESHOLD_SECONDS=1800
 
+# Resolve the modern bash binary path for use in launchd ProgramArguments.
+# Launchd bypasses the shebang when ProgramArguments specifies an explicit
+# interpreter, so we must resolve the path at plist generation time.
+# Falls back to /bin/bash if no modern bash is available (the re-exec guard
+# in shared-constants.sh provides defense-in-depth). (GH#19632 / t2176)
+_resolve_modern_bash() {
+	local candidate
+	for candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash; do
+		if [[ -x "$candidate" ]]; then
+			# Verify it's actually bash 4+
+			local ver
+			ver=$("$candidate" -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null) || continue
+			if [[ "${ver:-0}" -ge 4 ]]; then
+				printf '%s' "$candidate"
+				return 0
+			fi
+		fi
+	done
+	# No modern bash found — fall back to /bin/bash. The re-exec guard in
+	# shared-constants.sh handles this case at runtime.
+	printf '%s' "/bin/bash"
+	return 0
+}
+
 # Shell safety baseline
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -490,6 +514,11 @@ _generate_pulse_plist_content() {
 	local _headless_xml_env
 	_headless_xml_env=$(_build_pulse_headless_env_xml)
 
+	# Resolve modern bash for ProgramArguments — launchd bypasses shebangs
+	# when an explicit interpreter is specified. (GH#19632 / t2176)
+	local _xml_bash_bin
+	_xml_bash_bin=$(_xml_escape "$(_resolve_modern_bash)")
+
 	cat <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -499,7 +528,7 @@ _generate_pulse_plist_content() {
 	<string>${pulse_label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
+		<string>${_xml_bash_bin}</string>
 		<string>${_xml_wrapper_script}</string>
 	</array>
 	<key>StartInterval</key>
@@ -941,7 +970,7 @@ setup_stats_wrapper() {
 	<string>${stats_label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
 		<string>${_xml_stats_script}</string>
 	</array>
 	<key>StartInterval</key>
@@ -1040,7 +1069,7 @@ setup_failure_miner() {
 	<string>${miner_label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
 		<string>${_xml_miner_script}</string>
 		<string>create-issues</string>
 		<string>--since-hours</string>
@@ -1137,7 +1166,7 @@ setup_process_guard() {
 	<string>${guard_label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
 		<string>${_xml_guard_script}</string>
 		<string>kill-runaways</string>
 	</array>
@@ -1232,7 +1261,7 @@ setup_memory_pressure_monitor() {
 	<string>${monitor_label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
 		<string>${_xml_monitor_script}</string>
 	</array>
 	<key>StartInterval</key>
@@ -1320,7 +1349,7 @@ setup_screen_time_snapshot() {
 	<string>${st_label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
 		<string>${_xml_st_script}</string>
 		<string>snapshot</string>
 	</array>
@@ -1425,7 +1454,7 @@ _install_cw_launchd() {
 	<string>${cw_label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
 		<string>${_xml_cw_script}</string>
 		<string>scan</string>
 	</array>
@@ -1587,7 +1616,7 @@ _install_profile_readme_launchd() {
 	<string>${pr_label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
 		<string>${_xml_pr_script}</string>
 		<string>update</string>
 	</array>
@@ -1793,7 +1822,7 @@ _install_token_refresh_launchd() {
 	<string>${tr_label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
 		<string>-c</string>
 		<string>&quot;${_xml_tr_script}&quot; refresh anthropic; &quot;${_xml_tr_script}&quot; refresh openai</string>
 	</array>

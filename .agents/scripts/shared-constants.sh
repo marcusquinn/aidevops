@@ -38,19 +38,40 @@ _SHARED_CONSTANTS_LOADED=1
 #     it's the detector that this guard queries.
 #   - AIDEVOPS_BASH_REEXECED=1 is set before exec to prevent infinite
 #     loops if a symlink points at the wrong binary.
-#   - BASH_SOURCE[1] is the calling script; if unset, we're being
+#   - BASH_SOURCE[1] is the immediate caller; if unset, we're being
 #     executed directly (e.g., `bash shared-constants.sh`) and skip
-#     the guard.
+#     the guard. The guard walks the BASH_SOURCE stack to find the
+#     OUTERMOST caller (the top-level script) rather than using [1],
+#     so the re-exec targets the correct entry point even when sourced
+#     via intermediate helpers (GH#19632 / t2176).
 if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]] &&
 	[[ -z "${AIDEVOPS_BASH_REEXECED:-}" ]] &&
 	[[ -n "${BASH_SOURCE[1]:-}" ]]; then
-	for _aidevops_bash_candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash "$(command -v bash 2>/dev/null || true)"; do
-		if [[ -n "$_aidevops_bash_candidate" && -f "$_aidevops_bash_candidate" && -x "$_aidevops_bash_candidate" && "$_aidevops_bash_candidate" != "/bin/bash" ]]; then
-			export AIDEVOPS_BASH_REEXECED=1
-			exec "$_aidevops_bash_candidate" "${BASH_SOURCE[1]}" "$@"
-		fi
+	# Walk BASH_SOURCE[] to find the outermost caller, not just
+	# BASH_SOURCE[1] (the immediate caller). When sourced via an
+	# intermediate helper (e.g. pulse-wrapper→config-helper→shared-constants),
+	# BASH_SOURCE[1] points to the intermediate, and exec-ing it would
+	# replace the top-level script with a standalone run of the helper.
+	# The outermost caller is the last element in the BASH_SOURCE array.
+	# Bash 3.2 does not support negative indices (${arr[-1]}), so iterate.
+	# (GH#19632 / t2176)
+	_aidevops_top_caller=""
+	for _aidevops_src in "${BASH_SOURCE[@]}"; do
+		_aidevops_top_caller="$_aidevops_src"
 	done
-	unset _aidevops_bash_candidate
+	unset _aidevops_src
+	# Safety: skip if outermost caller is this file itself (direct execution
+	# of shared-constants.sh, which has no useful main).
+	if [[ "$_aidevops_top_caller" != "${BASH_SOURCE[0]}" ]]; then
+		for _aidevops_bash_candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash "$(command -v bash 2>/dev/null || true)"; do
+			if [[ -n "$_aidevops_bash_candidate" && -f "$_aidevops_bash_candidate" && -x "$_aidevops_bash_candidate" && "$_aidevops_bash_candidate" != "/bin/bash" ]]; then
+				export AIDEVOPS_BASH_REEXECED=1
+				exec "$_aidevops_bash_candidate" "$_aidevops_top_caller" "$@"
+			fi
+		done
+		unset _aidevops_bash_candidate
+	fi
+	unset _aidevops_top_caller
 	# Fall through: no modern bash found. The calling script will run
 	# on bash 3.2 and may hit compat bugs. The aidevops update check
 	# will surface an advisory on the next cycle (bash-upgrade-helper.sh

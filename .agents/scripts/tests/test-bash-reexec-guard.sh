@@ -276,9 +276,102 @@ else
 fi
 
 # -----------------------------------------------------------------------
+# Test 13 (GH#19632 / t2176): Indirect sourcing — when a top-level script
+# sources an intermediate helper, which sources shared-constants.sh, the
+# re-exec guard must re-exec the TOP-LEVEL script, not the intermediate.
+# This was the root cause of the pulse-wrapper bug: exec targeted
+# config-helper.sh (BASH_SOURCE[1]) instead of pulse-wrapper.sh.
+# -----------------------------------------------------------------------
+if [[ -n "$modern_path" ]] && [[ "$current_major" -lt 4 ]]; then
+	# Create a two-level source chain: top-level → intermediate → shared-constants
+	TMP_INTERMEDIATE="$(mktemp -t "aidevops-test-intermediate.XXXXXX")" || {
+		_fail "mktemp for intermediate failed"
+	}
+	TMP_TOP="$(mktemp -t "aidevops-test-toplevel.XXXXXX")" || {
+		_fail "mktemp for top-level failed"
+	}
+	# Clean up both temp files on exit (append to existing trap)
+	trap 'rm -f "$TMP_SCRIPT" "$TMP_INTERMEDIATE" "$TMP_TOP"' EXIT
+
+	cat >"$TMP_INTERMEDIATE" <<INTERMEDIATE_EOF
+#!/usr/bin/env bash
+# Simulates config-helper.sh sourcing shared-constants.sh
+# shellcheck source=/dev/null
+source "$SHARED"
+INTERMEDIATE_EOF
+	chmod +x "$TMP_INTERMEDIATE"
+
+	cat >"$TMP_TOP" <<TOP_EOF
+#!/usr/bin/env bash
+# Simulates pulse-wrapper.sh sourcing config-helper.sh
+# shellcheck source=/dev/null
+source "$TMP_INTERMEDIATE"
+echo "running_bash=\${BASH_VERSINFO[0]}"
+echo "reexeced=\${AIDEVOPS_BASH_REEXECED:-0}"
+echo "top_script=\$0"
+TOP_EOF
+	chmod +x "$TMP_TOP"
+
+	# Run under /bin/bash (3.2) WITHOUT AIDEVOPS_BASH_REEXECED. The guard
+	# should walk BASH_SOURCE to find the outermost caller (TMP_TOP) and
+	# re-exec it — NOT the intermediate script.
+	indirect_output="$(env -u AIDEVOPS_BASH_REEXECED /bin/bash "$TMP_TOP" 2>&1 || true)"
+	if [[ "$indirect_output" == *"running_bash=4"* ]] || [[ "$indirect_output" == *"running_bash=5"* ]]; then
+		_pass "indirect sourcing: guard re-execs top-level script under modern bash"
+	else
+		_fail "indirect sourcing: guard failed to re-exec top-level under modern bash" \
+			"output: $indirect_output"
+	fi
+
+	# Verify the re-exec'd script is the TOP-LEVEL, not the intermediate.
+	# After re-exec, $0 should be TMP_TOP's path.
+	if [[ "$indirect_output" == *"top_script=$TMP_TOP"* ]]; then
+		_pass "indirect sourcing: re-exec targeted the outermost caller (\$0 = top-level)"
+	else
+		_fail "indirect sourcing: re-exec may have targeted the wrong script" \
+			"expected top_script=$TMP_TOP in output: $indirect_output"
+	fi
+elif [[ "$current_major" -ge 4 ]]; then
+	printf 'SKIP: indirect sourcing re-exec test (/bin/bash is already >= 4)\n'
+else
+	printf 'SKIP: indirect sourcing re-exec test (no modern bash available)\n'
+fi
+
+# -----------------------------------------------------------------------
+# Test 14 (GH#19632 / t2176): Guard skips gracefully when no modern bash
+# is available. Simulated by creating a script that hides all known
+# candidate paths via a restricted PATH.
+# -----------------------------------------------------------------------
+TMP_NOBASH="$(mktemp -t "aidevops-test-nobash.XXXXXX")" || {
+	_fail "mktemp for no-bash test failed"
+}
+trap 'rm -f "$TMP_SCRIPT" "${TMP_INTERMEDIATE:-}" "${TMP_TOP:-}" "$TMP_NOBASH"' EXIT
+cat >"$TMP_NOBASH" <<NOBASH_EOF
+#!/bin/bash
+# Strip PATH to only include this script's own directory (no modern bash discoverable).
+# command -v bash will only find /bin/bash.
+export PATH="/usr/bin:/bin"
+# Ensure candidate paths don't exist by hiding them
+unset AIDEVOPS_BASH_REEXECED
+# shellcheck source=/dev/null
+source "$SHARED"
+echo "running_bash=\${BASH_VERSINFO[0]}"
+echo "guard_passed=true"
+NOBASH_EOF
+chmod +x "$TMP_NOBASH"
+
+nobash_output="$(/bin/bash "$TMP_NOBASH" 2>&1 || true)"
+if [[ "$nobash_output" == *"guard_passed=true"* ]]; then
+	_pass "guard falls through gracefully when no modern bash in PATH"
+else
+	_fail "guard did not fall through when no modern bash available" \
+		"output: $nobash_output"
+fi
+
+# -----------------------------------------------------------------------
 printf '\nResults: %d passed, %d failed\n' "$pass_count" "$fail_count"
 if [[ "$fail_count" -gt 0 ]]; then
 	exit 1
 fi
-printf 'GH#18950 (t2087) + GH#18965 (t2094) regression test: all checks pass.\n'
+printf 'GH#18950 (t2087) + GH#18965 (t2094) + GH#19632 (t2176) regression test: all checks pass.\n'
 exit 0

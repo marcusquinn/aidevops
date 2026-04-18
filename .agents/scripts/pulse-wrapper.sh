@@ -145,10 +145,15 @@ PULSE_START_EPOCH=$(date +%s)
 # resolves correctly whether the script is executed directly (bash) or sourced
 # from zsh. See GH#3931.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || return 2>/dev/null || exit
-# shellcheck source=/dev/null
-source "${SCRIPT_DIR}/config-helper.sh" 2>/dev/null || true
+# Source shared-constants.sh BEFORE config-helper.sh so the bash 4+ re-exec
+# guard (t2087/t2176) fires at BASH_SOURCE depth 1, where the outermost caller
+# is unambiguously pulse-wrapper.sh. If config-helper.sh is sourced first and it
+# sources shared-constants.sh, the guard would see the intermediate helper at
+# BASH_SOURCE[1] and re-exec the wrong script. (GH#19632)
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/config-helper.sh" 2>/dev/null || true
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 
