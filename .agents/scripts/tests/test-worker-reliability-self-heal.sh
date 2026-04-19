@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression tests for t2119 worker reliability self-heal bundle:
+# Regression tests for t2119 + t2387 worker reliability self-heal bundle:
 #
 #   Part A — check_launchd_plist_drift:
 #     - No drift: stored hash matches current schedulers.sh hash → no-op.
@@ -10,9 +10,15 @@
 #     - Bootstrap: no stored hash → treated as drift (self-heals pre-t2119 installs).
 #     - Rate limit: stamp newer than interval → skipped without work.
 #
-#   Part B — escalate_issue_tier body-quality gate skip:
+#   Part B — escalate_issue_tier no_work skipping (t2119 + t2387):
 #     - When crash_type="no_work", _escalate_body_quality_gate must NOT be
 #       called regardless of body content (structural assertion on source).
+#     - When crash_type="no_work", the entire tier cascade must be skipped
+#       via an early return BEFORE any `gh issue edit` tier-mutation line
+#       (t2387). The early-return block must call
+#       _log_no_work_skip_escalation so operators get a diagnostic comment.
+#     - _log_no_work_skip_escalation must exist and emit the
+#       <!-- no-work-escalation-skip --> marker.
 #
 #   Part C — _preserve_no_activity_output:
 #     - Moves the output file to the diagnostics dir instead of deleting.
@@ -231,8 +237,23 @@ test_drift_stores_stamp_after_run() {
 
 # -----------------------------------------------------------------
 # Part B — escalation skip for no_work crash_type
-# Structural assertion: the guard comparing crash_type must appear
-# before the _escalate_body_quality_gate call in escalate_issue_tier.
+#
+# Two structural assertions covering two related guards:
+#
+# 1. test_escalate_skips_body_gate_on_no_work (t2119 + t2387)
+#    There must be a no_work-aware guard somewhere in escalate_issue_tier
+#    that fires before _escalate_body_quality_gate runs. Originally this
+#    was an inline `!=` guard at the body-gate call site (t2119). t2387
+#    replaced it with an earlier `==` short-circuit that returns before
+#    the gate is reached. Either form satisfies the invariant "no_work
+#    crashes never invoke the body-gate" — so the regex accepts both.
+#
+# 2. test_escalate_skips_tier_cascade_on_no_work (t2387)
+#    There must be an early-return for crash_type=="no_work" that fires
+#    BEFORE any tier label mutation (the `gh issue edit ... --add-label`
+#    line), so no_work crashes never cascade the tier. This is the
+#    actual behavioural guarantee t2387 adds — the body-gate assertion
+#    above is a weaker invariant that happens to follow from it.
 # -----------------------------------------------------------------
 
 test_escalate_skips_body_gate_on_no_work() {
@@ -248,10 +269,13 @@ test_escalate_skips_body_gate_on_no_work() {
 		return 0
 	fi
 
-	# Assertion 1: the function contains a no_work guard before the gate call
+	# Assertion 1: the function contains a no_work guard before the gate call.
+	# Accept either the old t2119 inline `!=` form or the t2387 early-return
+	# `==` form — both satisfy the invariant that no_work never invokes the
+	# body-gate.
 	local guard_pos gate_pos
 	# shellcheck disable=SC2016  # matching literal source text, not expanding
-	guard_pos=$(printf '%s\n' "$fn_src" | grep -n '"\$crash_type" != "no_work"' | head -1 | cut -d: -f1)
+	guard_pos=$(printf '%s\n' "$fn_src" | grep -nE '"\$crash_type" (!=|==) "no_work"' | head -1 | cut -d: -f1)
 	gate_pos=$(printf '%s\n' "$fn_src" | grep -n '_escalate_body_quality_gate' | head -1 | cut -d: -f1)
 
 	if [[ -z "$guard_pos" || -z "$gate_pos" ]]; then
@@ -268,6 +292,93 @@ test_escalate_skips_body_gate_on_no_work() {
 	fi
 
 	print_result "escalate: no_work guard present (structural)" 0
+	return 0
+}
+
+test_escalate_skips_tier_cascade_on_no_work() {
+	# Extract escalate_issue_tier function source
+	local fn_src
+	fn_src=$(awk '
+		/^escalate_issue_tier\(\) \{/,/^}$/ { print }
+	' "$LIFECYCLE_SCRIPT")
+
+	if [[ -z "$fn_src" ]]; then
+		print_result "escalate: no_work tier-cascade skip (t2387)" 1 \
+			"could not extract escalate_issue_tier"
+		return 0
+	fi
+
+	# Assertion 1: the function contains an `== "no_work"` early-return guard.
+	# This is the specific t2387 short-circuit — distinguished from the
+	# original t2119 inline `!= "no_work"` guard.
+	local early_return_pos
+	# shellcheck disable=SC2016  # matching literal source text, not expanding
+	early_return_pos=$(printf '%s\n' "$fn_src" | grep -n '"\$crash_type" == "no_work"' | head -1 | cut -d: -f1)
+
+	if [[ -z "$early_return_pos" ]]; then
+		print_result "escalate: no_work tier-cascade skip (t2387)" 1 \
+			"early-return guard 'crash_type == \"no_work\"' not found"
+		return 0
+	fi
+
+	# Assertion 2: the early return must precede the tier-mutation line.
+	# The canonical tier-mutation signal is the `gh issue edit ... --add-label`
+	# call that swaps tier labels.
+	local tier_mutation_pos
+	tier_mutation_pos=$(printf '%s\n' "$fn_src" | grep -n 'gh issue edit' | head -1 | cut -d: -f1)
+
+	if [[ -z "$tier_mutation_pos" ]]; then
+		print_result "escalate: no_work tier-cascade skip (t2387)" 1 \
+			"tier mutation line ('gh issue edit') not found — cannot verify ordering"
+		return 0
+	fi
+
+	if [[ "$early_return_pos" -ge "$tier_mutation_pos" ]]; then
+		print_result "escalate: no_work tier-cascade skip (t2387)" 1 \
+			"early-return at line ${early_return_pos} must precede tier mutation at line ${tier_mutation_pos}"
+		return 0
+	fi
+
+	# Assertion 3: the early-return block calls _log_no_work_skip_escalation
+	# (the diagnostic helper) before returning, so operators see the skip.
+	local helper_call_pos
+	helper_call_pos=$(printf '%s\n' "$fn_src" | grep -n '_log_no_work_skip_escalation' | head -1 | cut -d: -f1)
+	if [[ -z "$helper_call_pos" ]]; then
+		print_result "escalate: no_work tier-cascade skip (t2387)" 1 \
+			"early-return block does not call _log_no_work_skip_escalation"
+		return 0
+	fi
+
+	# The helper call must be between the early-return guard and the tier mutation
+	if [[ "$helper_call_pos" -le "$early_return_pos" ]] || [[ "$helper_call_pos" -ge "$tier_mutation_pos" ]]; then
+		print_result "escalate: no_work tier-cascade skip (t2387)" 1 \
+			"helper call at ${helper_call_pos} not between guard ${early_return_pos} and mutation ${tier_mutation_pos}"
+		return 0
+	fi
+
+	print_result "escalate: no_work tier-cascade skip (t2387)" 0
+	return 0
+}
+
+test_log_no_work_skip_escalation_helper_exists() {
+	# The helper _log_no_work_skip_escalation must exist as a function
+	# definition in worker-lifecycle-common.sh. This guards against the
+	# guard-only form being added without the accompanying helper.
+	if ! grep -qE '^_log_no_work_skip_escalation\(\) \{' "$LIFECYCLE_SCRIPT"; then
+		print_result "escalate: _log_no_work_skip_escalation helper defined" 1 \
+			"function definition not found in $LIFECYCLE_SCRIPT"
+		return 0
+	fi
+
+	# The helper must emit the <!-- no-work-escalation-skip --> marker so
+	# idempotency checks and operator searches can find it.
+	if ! grep -q 'no-work-escalation-skip' "$LIFECYCLE_SCRIPT"; then
+		print_result "escalate: _log_no_work_skip_escalation helper defined" 1 \
+			"marker 'no-work-escalation-skip' not found"
+		return 0
+	fi
+
+	print_result "escalate: _log_no_work_skip_escalation helper defined" 0
 	return 0
 }
 
@@ -416,8 +527,10 @@ main() {
 	test_drift_rate_limit_suppresses_check
 	test_drift_stores_stamp_after_run
 
-	# Part B: structural assertion
+	# Part B: structural assertions for no_work escalation skipping
 	test_escalate_skips_body_gate_on_no_work
+	test_escalate_skips_tier_cascade_on_no_work
+	test_log_no_work_skip_escalation_helper_exists
 
 	# Part C: preserve tests — clean out any pollution from Part A first
 	rm -rf "${HOME}/.aidevops/logs/worker-no-activity" 2>/dev/null || true
