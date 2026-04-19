@@ -99,11 +99,13 @@ test_parallel_all_pass() {
 	    exit 0
 	fi
 	trap 'rm -rf "$_parallel_tmpdir"' EXIT
+	_pids=()
 	for _i in "${!METRICS[@]}"; do
 	    _metric="${METRICS[$_i]}"
 	    ( "$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" > "${_parallel_tmpdir}/${_i}.out" 2>&1; printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc" ) &
+	    _pids+=($!)
 	done
-	wait
+	wait "${_pids[@]}"
 	for _i in "${!METRICS[@]}"; do
 	    helper_rc=$(cat "${_parallel_tmpdir}/${_i}.rc" 2>/dev/null || echo "0")
 	    case "$helper_rc" in
@@ -158,11 +160,13 @@ test_parallel_one_fail() {
 	    exit 0
 	fi
 	trap 'rm -rf "$_parallel_tmpdir"' EXIT
+	_pids=()
 	for _i in "${!METRICS[@]}"; do
 	    _metric="${METRICS[$_i]}"
 	    ( "$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" > "${_parallel_tmpdir}/${_i}.out" 2>&1; printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc" ) &
+	    _pids+=($!)
 	done
-	wait
+	wait "${_pids[@]}"
 	for _i in "${!METRICS[@]}"; do
 	    helper_rc=$(cat "${_parallel_tmpdir}/${_i}.rc" 2>/dev/null || echo "0")
 	    helper_output=$(cat "${_parallel_tmpdir}/${_i}.out" 2>/dev/null || echo "")
@@ -224,11 +228,13 @@ test_parallel_output_order() {
 	exit_code=0
 	_parallel_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/complexity-guard.XXXXXX")
 	trap 'rm -rf "$_parallel_tmpdir"' EXIT
+	_pids=()
 	for _i in "${!METRICS[@]}"; do
 	    _metric="${METRICS[$_i]}"
 	    ( "$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" > "${_parallel_tmpdir}/${_i}.out" 2>&1; printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc" ) &
+	    _pids+=($!)
 	done
-	wait
+	wait "${_pids[@]}"
 	for _i in "${!METRICS[@]}"; do
 	    helper_rc=$(cat "${_parallel_tmpdir}/${_i}.rc" 2>/dev/null || echo "0")
 	    helper_output=$(cat "${_parallel_tmpdir}/${_i}.out" 2>/dev/null || echo "")
@@ -303,12 +309,14 @@ test_parallel_debug_output() {
 	exit_code=0
 	_parallel_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/complexity-guard.XXXXXX")
 	trap 'rm -rf "$_parallel_tmpdir"' EXIT
+	_pids=()
 	for _i in "${!METRICS[@]}"; do
 	    _metric="${METRICS[$_i]}"
 	    [[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "launching metric: $_metric (parallel)"
 	    ( "$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" > "${_parallel_tmpdir}/${_i}.out" 2>&1; printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc" ) &
+	    _pids+=($!)
 	done
-	wait
+	wait "${_pids[@]}"
 	exit 0
 	WRAPPER_EOF
 	chmod +x "$wrapper"
@@ -392,11 +400,13 @@ test_parallel_helper_exit2() {
 	exit_code=0
 	_parallel_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/complexity-guard.XXXXXX")
 	trap 'rm -rf "$_parallel_tmpdir"' EXIT
+	_pids=()
 	for _i in "${!METRICS[@]}"; do
 	    _metric="${METRICS[$_i]}"
 	    ( "$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" > "${_parallel_tmpdir}/${_i}.out" 2>&1; printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc" ) &
+	    _pids+=($!)
 	done
-	wait
+	wait "${_pids[@]}"
 	for _i in "${!METRICS[@]}"; do
 	    _metric="${METRICS[$_i]}"
 	    helper_rc=$(cat "${_parallel_tmpdir}/${_i}.rc" 2>/dev/null || echo "0")

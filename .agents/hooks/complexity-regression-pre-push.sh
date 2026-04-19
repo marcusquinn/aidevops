@@ -66,7 +66,10 @@ HOOK_DIR=$(_resolve_self_dir)
 HELPER_REPO="${HOOK_DIR}/../scripts/complexity-regression-helper.sh"
 HELPER_DEPLOYED="${HOME}/.aidevops/agents/scripts/complexity-regression-helper.sh"
 
-if [[ -f "$HELPER_REPO" ]]; then
+# Allow env var override for testing (GH#19921: enables tests to inject a stub)
+if [[ -n "${COMPLEXITY_HELPER:-}" && -x "$COMPLEXITY_HELPER" ]]; then
+	: # Use the env-provided helper
+elif [[ -f "$HELPER_REPO" ]]; then
 	COMPLEXITY_HELPER="$HELPER_REPO"
 elif [[ -f "$HELPER_DEPLOYED" ]]; then
 	COMPLEXITY_HELPER="$HELPER_DEPLOYED"
@@ -134,7 +137,10 @@ if [[ -z "$_parallel_tmpdir" || ! -d "$_parallel_tmpdir" ]]; then
 fi
 trap 'rm -rf "$_parallel_tmpdir"' EXIT
 
-# Launch all metric checks in parallel
+# Launch all metric checks in parallel, tracking PIDs explicitly (GH#19921).
+# Explicit PID tracking avoids waiting on unrelated background processes if
+# this script is ever sourced or expanded.
+_pids=()
 for _i in "${!METRICS[@]}"; do
 	_metric="${METRICS[$_i]}"
 	[[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "launching metric: $_metric (parallel)"
@@ -143,10 +149,11 @@ for _i in "${!METRICS[@]}"; do
 			> "${_parallel_tmpdir}/${_i}.out" 2>&1
 		printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc"
 	) &
+	_pids+=($!)
 done
 
-# Wait for all parallel checks to complete
-wait
+# Wait for the specific background jobs we launched
+wait "${_pids[@]}"
 
 # Process results in original metric order (preserves output format)
 for _i in "${!METRICS[@]}"; do
