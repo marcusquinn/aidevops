@@ -951,6 +951,14 @@ dispatch_with_dedup() {
 	# and issue-sync-helper.sh. Non-fatal — dispatch proceeds even if enrich fails.
 	_ensure_issue_body_has_brief "$issue_number" "$repo_slug" "$repo_path" "$issue_title"
 
+	# t2389: tier:simple body-shape check — auto-downgrade mis-tiered briefs.
+	# Non-blocking: inspects the issue body for 4 high-precision tier:simple
+	# disqualifiers (>2 files, estimate >1h, >4 acceptance criteria, judgment
+	# keywords) and swaps tier:simple → tier:standard + posts feedback on hit.
+	# Always returns 0. Dispatch proceeds at the corrected tier on hit, or
+	# unchanged tier on miss. See .agents/reference/task-taxonomy.md.
+	_run_tier_simple_body_shape_check "$issue_number" "$repo_slug"
+
 	# GH#19118: Pre-dispatch validator — runs after dedup, before worker spawn.
 	# Checks generator-tagged auto-generated issues to verify the premise is
 	# still true. Exit 0 = dispatch proceeds; exit 10 = premise falsified
@@ -1114,6 +1122,42 @@ _run_predispatch_validator() {
 	local validator_rc=0
 	"$validator_helper" validate "$issue_number" "$repo_slug" >>"$LOGFILE" 2>&1 || validator_rc=$?
 	return "$validator_rc"
+}
+
+#######################################
+# t2389: tier:simple body-shape check wrapper (GH#19929).
+#
+# Invokes tier-simple-body-shape-helper.sh on any issue tagged tier:simple;
+# the helper auto-downgrades to tier:standard + posts a feedback comment
+# when the body contains a disqualifier from reference/task-taxonomy.md
+# "Tier Assignment Validation". Non-blocking by design — always exits 0
+# from the helper's perspective (dispatch always proceeds, at whatever
+# tier the labels now indicate).
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#
+# Exit codes:
+#   0 — always (non-blocking by design)
+#######################################
+_run_tier_simple_body_shape_check() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local check_helper
+	check_helper="$(dirname "${BASH_SOURCE[0]}")/tier-simple-body-shape-helper.sh"
+	if [[ ! -x "$check_helper" ]]; then
+		# Helper missing is non-fatal — just log and continue. The dispatch
+		# pipeline must never block on a missing optional helper.
+		echo "[dispatch_with_dedup] t2389: tier-simple-body-shape-helper.sh not found — skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Always pass regardless of helper exit code. The helper itself is
+	# documented non-blocking, but this wrapper is defensive.
+	"$check_helper" check "$issue_number" "$repo_slug" >>"$LOGFILE" 2>&1 || true
+	return 0
 }
 
 #######################################

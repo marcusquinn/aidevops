@@ -103,6 +103,25 @@ Before assigning a tier, verify these in order. Stop at the first failure:
 
 See `templates/brief-template.md` "Tier checklist" for the structured version used during task creation.
 
+### Server-side enforcement (t2389)
+
+Creation-time discipline is primary; `tier-simple-body-shape-helper.sh` is defence-in-depth. The helper runs between `_ensure_issue_body_has_brief` and `_run_predispatch_validator` in `pulse-dispatch-core.sh::dispatch_with_dedup` and inspects any `tier:simple`-labelled issue for four **high-precision** disqualifiers:
+
+| # | Check | Trigger |
+|---|-------|---------|
+| 1 | File count | `NEW:` / `EDIT:` markers OR file-path bullets under `## Files to modify` / `## How` > 2 |
+| 4 | Estimate | `~Nh` / `~Nm` / `~Nd` token resolves to > 60 minutes (1d = 8h) |
+| 6 | Acceptance criteria | `- [ ]` / `- [x]` checkboxes inside `## Acceptance` (or `## Acceptance criteria`) > 4 |
+| 7 | Judgment keywords | case-insensitive match for `graceful degradation`, `fallback`, `retry logic`, `conditional logic`, `coordinate`, `design a`, `design the`, `architecture`, `trade-off`, `strategy` — excluding signature footer, provenance markers, and the brief's own `## Tier checklist` section |
+
+On hit the helper swaps `tier:simple` → `tier:standard` and posts an idempotent feedback comment (marker: `<!-- tier-simple-auto-downgrade -->`) explaining the disqualifier. **Non-blocking** — dispatch always proceeds, at the corrected tier on hit or at `tier:simple` otherwise. The worker never sees the mis-tier.
+
+The helper enforces only rows 1, 4, 6, 7 from the disqualifier table — rows 2, 3, 5, 8, 9 (skeleton code, conditional logic, error handling, cross-package changes, large-file + no verbatim) require fuzzier heuristics that risk false positives and remain a task-creation-time discipline item.
+
+Bypass (emergency recovery): `AIDEVOPS_SKIP_TIER_VALIDATOR=1`.
+
+Tests: `.agents/scripts/tests/test-tier-simple-body-shape.sh` (18 fixture cases covering every disqualifier + negative cases for the section-scoped exclusions).
+
 ## Cascade Dispatch Model
 
 Instead of classifying tasks to the "correct" tier upfront, the cascade model starts cheap and escalates with knowledge:
