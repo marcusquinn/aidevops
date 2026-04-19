@@ -185,6 +185,7 @@ scan_dir_function_complexity() {
 	local _file _rel_file _awk_result
 	while IFS= read -r _file; do
 		[ -n "$_file" ] || continue
+		[ -f "$_file" ] || continue
 		_rel_file="${_file#"${_dir}/"}"
 		# Matches code-quality.yml:391-404 AWK.
 		# Detects top-level functions of the form:  name() {
@@ -239,6 +240,7 @@ scan_dir_nesting_depth() {
 	local _file _rel_file _max_depth
 	while IFS= read -r _file; do
 		[ -n "$_file" ] || continue
+		[ -f "$_file" ] || continue
 		_rel_file="${_file#"${_dir}/"}"
 		_max_depth=$(awk '
 			BEGIN { depth=0; max_depth=0 }
@@ -279,6 +281,7 @@ scan_dir_file_size() {
 	local _file _rel_file _lc
 	while IFS= read -r _file; do
 		[ -n "$_file" ] || continue
+		[ -f "$_file" ] || continue
 		_rel_file="${_file#"${_dir}/"}"
 		_lc=$(wc -l <"$_file" 2>/dev/null | tr -d ' ')
 		if [ "${_lc:-0}" -gt 1500 ] 2>/dev/null; then
