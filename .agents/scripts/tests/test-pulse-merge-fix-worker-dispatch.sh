@@ -381,6 +381,86 @@ test_dispatch_clears_in_progress_labels_as_fallback() {
 	return 0
 }
 
+# ---------------------------------------------------------------
+# t2383 Fix 5: _dispatch_pr_fix_worker skips body edit on issue view failure
+# When `gh issue view` fails, the function must NOT proceed to
+# `gh issue edit` (which would clobber the body with only the feedback).
+# ---------------------------------------------------------------
+test_dispatch_skips_body_edit_on_issue_view_failure() {
+	reset_mock_state
+
+	# Override gh stub to fail on `issue view`
+	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
+
+_all_args=("$@")
+_subcmd="${1:-} ${2:-}"
+
+case "$_subcmd" in
+"label create") exit 0 ;;
+"pr view") exit 0 ;;
+"pr close" | "pr edit") exit 0 ;;
+"issue view") exit 1 ;;
+"issue edit")
+	# Should NOT be reached — if it is, the test fails
+	printf 'CLOBBERED' >"${TEST_ROOT}/clobber-marker.txt"
+	exit 0
+	;;
+esac
+
+if [[ "${1:-}" == "api" ]]; then
+	_jq_filter=""
+	for _i in "${!_all_args[@]}"; do
+		if [[ "${_all_args[$_i]}" == "--jq" ]]; then
+			_jq_filter="${_all_args[$((_i + 1))]:-}"
+			break
+		fi
+	done
+	if [[ "$*" == *"/pulls/"*"/reviews"* ]]; then
+		if [[ -n "$_jq_filter" ]]; then
+			jq "$_jq_filter" <"${TEST_ROOT}/reviews.json"
+		else
+			cat "${TEST_ROOT}/reviews.json"
+		fi
+		exit 0
+	fi
+	if [[ "$*" == *"/pulls/"*"/comments"* ]]; then
+		if [[ -n "$_jq_filter" ]]; then
+			jq "$_jq_filter" <"${TEST_ROOT}/comments.json"
+		else
+			cat "${TEST_ROOT}/comments.json"
+		fi
+		exit 0
+	fi
+fi
+exit 0
+GHEOF
+	chmod +x "${TEST_ROOT}/bin/gh"
+
+	: >"$GH_LOG"
+	: >"$LOGFILE"
+	rm -f "${TEST_ROOT}/clobber-marker.txt"
+
+	_dispatch_pr_fix_worker "100" "owner/repo" "42"
+
+	# The clobber marker should NOT exist (issue edit should not have been called)
+	if [[ -f "${TEST_ROOT}/clobber-marker.txt" ]]; then
+		print_result "t2383: dispatch skips body edit on issue view failure" 1 \
+			"gh issue edit was called after gh issue view failure — data loss risk"
+		return 0
+	fi
+
+	if ! grep -q "failed to fetch issue.*body.*skipping body edit.*prevent data loss" "$LOGFILE"; then
+		print_result "t2383: dispatch logs skip reason on issue view failure" 1 \
+			"Expected data-loss prevention log. Got: $(cat "$LOGFILE")"
+		return 0
+	fi
+
+	print_result "t2383: dispatch skips body edit on issue view failure (data loss guard)" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -397,6 +477,7 @@ main() {
 	test_dispatch_noop_when_no_substantive_feedback
 	test_dispatch_noop_on_invalid_inputs
 	test_dispatch_clears_in_progress_labels_as_fallback
+	test_dispatch_skips_body_edit_on_issue_view_failure
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

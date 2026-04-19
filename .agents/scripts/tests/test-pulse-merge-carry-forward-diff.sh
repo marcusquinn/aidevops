@@ -414,6 +414,80 @@ GHEOF
 	return 0
 }
 
+# ---------------------------------------------------------------
+# Test 7: t2383 Fix 4 — diff containing triple backticks uses dynamic fence
+# A diff that modifies markdown files can contain ``` runs.
+# The carry-forward function must use a fence longer than the longest
+# backtick run in the diff content so rendering is not corrupted.
+# ---------------------------------------------------------------
+test_dynamic_fence_with_triple_backticks() {
+	install_gh_stub
+	: >"$LOGFILE"
+
+	# Create a diff that contains triple backticks (common in markdown diffs)
+	local diff_with_backticks
+	diff_with_backticks='diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,5 +1,8 @@
+ # My Project
+ 
++```bash
++echo "hello world"
++```
++
+ Some text here.'
+	printf '%s' "$diff_with_backticks" >"$GH_DIFF_FILE"
+	printf 'Existing issue body.' >"$GH_ISSUE_BODY_FILE"
+	: >"$GH_EDITED_BODY_FILE"
+
+	_carry_forward_pr_diff "50" "owner/repo" "30"
+
+	local edited
+	edited=$(cat "$GH_EDITED_BODY_FILE")
+
+	# The fence in the output must be longer than the 3-backtick runs in the diff.
+	# So we expect at least ```` (4 backticks) as the fence.
+	if printf '%s' "$edited" | grep -qE '^\`{4,}diff$'; then
+		print_result "dynamic fence: uses 4+ backtick fence for diff with triple backticks" 0
+	else
+		# Check if the old static fence is still there (regression)
+		if printf '%s' "$edited" | grep -qE '^\`{3}diff$'; then
+			print_result "dynamic fence: uses 4+ backtick fence" 1 \
+				"Still using 3-backtick fence — dynamic fence not applied"
+		else
+			print_result "dynamic fence: uses 4+ backtick fence" 1 \
+				"Could not find fence line in output. Body: ${edited:0:500}"
+		fi
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------
+# Test 8: t2383 Fix 4 — diff without backticks keeps standard 3-fence
+# ---------------------------------------------------------------
+test_standard_fence_without_backticks() {
+	install_gh_stub
+	: >"$LOGFILE"
+	printf 'diff --git a/foo.sh b/foo.sh\n+added line\n' >"$GH_DIFF_FILE"
+	printf 'Existing issue body.' >"$GH_ISSUE_BODY_FILE"
+	: >"$GH_EDITED_BODY_FILE"
+
+	_carry_forward_pr_diff "51" "owner/repo" "31"
+
+	local edited
+	edited=$(cat "$GH_EDITED_BODY_FILE")
+
+	# Standard diff without backticks should use exactly 3-backtick fence
+	if printf '%s' "$edited" | grep -qE '^\`{3}diff$'; then
+		print_result "standard fence: 3-backtick fence for plain diff" 0
+	else
+		print_result "standard fence: 3-backtick fence for plain diff" 1 \
+			"Expected 3-backtick fence. Body: ${edited:0:500}"
+	fi
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -429,6 +503,8 @@ main() {
 	test_origin_interactive_skip_static
 	test_empty_diff_skipped
 	test_issue_view_failure_skipped
+	test_dynamic_fence_with_triple_backticks
+	test_standard_fence_without_backticks
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

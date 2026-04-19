@@ -161,6 +161,13 @@ _interactive_pr_is_stale() {
 	# Gate 4: age threshold (check before any other gh calls — cheapest filter)
 	local threshold_hours updated_at now_epoch updated_epoch pr_age_hours
 	threshold_hours="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS:-24}"
+	# t2383 Fix 2: validate threshold is a positive integer before arithmetic.
+	# A non-numeric value (e.g. "24h", empty, negative) triggers bash
+	# "value too great for base" and silently breaks stale detection.
+	if [[ ! "$threshold_hours" =~ ^[0-9]+$ ]] || [[ "$threshold_hours" -eq 0 ]]; then
+		echo "[pulse-wrapper] _interactive_pr_is_stale: invalid AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS='${threshold_hours}' — must be a positive integer, returning not-stale (t2383)" >>"$LOGFILE"
+		return 1
+	fi
 	updated_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
 	[[ -z "$updated_at" ]] && return 1
 	now_epoch=$(date +%s)
@@ -225,10 +232,20 @@ _interactive_pr_trigger_handover() {
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
 
 	# Idempotence short-circuit: label already present → nothing to do
-	local has_label
-	has_label=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels \
-		--jq '[.labels[].name] | index("origin:worker-takeover") // empty' 2>/dev/null)
-	if [[ -n "$has_label" && "$has_label" != "null" ]]; then
+	local pr_labels_json
+	pr_labels_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels \
+		--jq '[.labels[].name]' 2>/dev/null) || pr_labels_json="[]"
+	[[ -n "$pr_labels_json" ]] || pr_labels_json="[]"
+
+	if printf '%s' "$pr_labels_json" | jq -e 'index("origin:worker-takeover")' >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# t2383 Fix 1: honour no-takeover opt-out label before applying handover.
+	# The handover comment promises "Add the no-takeover label to this PR at
+	# any time. The routing gates will skip it." — enforce that promise here.
+	if printf '%s' "$pr_labels_json" | jq -e 'index("no-takeover")' >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _interactive_pr_trigger_handover: PR #${pr_number} in ${repo_slug} has no-takeover label — skipping handover (t2383)" >>"$LOGFILE"
 		return 0
 	fi
 
@@ -452,10 +469,20 @@ _close_conflicting_pr() {
 	# sessions. The task-ID-on-main heuristic produces false positives when
 	# multiple PRs share a task ID (incremental work on the same issue).
 	# Maintainers decide what is redundant — the pulse must not auto-close their work.
-	local pr_labels
+	#
+	# t2383 Fix 3: fail CLOSED on label read failure — if we can't read labels,
+	# we might be about to close a protected origin:interactive PR. Also use
+	# grep -Fxq (exact line match) not grep -q (substring) so labels like
+	# "origin:interactive-fork" don't false-match "origin:interactive".
+	local pr_labels label_fetch_rc
+	label_fetch_rc=0
 	pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json labels --jq '.labels[].name' 2>/dev/null || true)
-	if printf '%s' "$pr_labels" | grep -q 'origin:interactive'; then
+		--json labels --jq '.labels[].name' 2>/dev/null) || label_fetch_rc=$?
+	if [[ $label_fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] _close_conflicting_pr: failed to fetch labels for PR #${pr_number} in ${repo_slug} (exit ${label_fetch_rc}) — skipping close to protect potential origin:interactive PR (t2383)" >>"$LOGFILE"
+		return 0
+	fi
+	if printf '%s\n' "$pr_labels" | grep -Fxq 'origin:interactive'; then
 		echo "[pulse-wrapper] Deterministic merge: skipping auto-close of origin:interactive PR #${pr_number} — maintainer session work is never auto-closed" >>"$LOGFILE"
 		# GH#18650 (Fix 4): post a one-time rebase nudge so the maintainer
 		# has a visible signal that their CONFLICTING PR needs manual
@@ -644,6 +671,23 @@ _carry_forward_pr_diff() {
 	fi
 
 	# --- Build the append section ---
+	# t2383 Fix 4: compute dynamic fence length. PR diffs can contain triple
+	# backticks (markdown/docs changes). A fixed ``` fence would break rendering
+	# and corrupt the worker handoff. Scan for the longest backtick run in the
+	# diff and use one more than that.
+	local fence_len=3
+	local longest_run
+	longest_run=$(printf '%s' "$diff_content" | grep -oE '\`{3,}' | awk '{ if (length > max) max = length } END { print max+0 }') || longest_run=0
+	[[ "$longest_run" =~ ^[0-9]+$ ]] || longest_run=0
+	if [[ "$longest_run" -ge "$fence_len" ]]; then
+		fence_len=$((longest_run + 1))
+	fi
+	local fence=""
+	local _i
+	for (( _i=0; _i<fence_len; _i++ )); do
+		fence="${fence}\`"
+	done
+
 	local new_section
 	new_section="${marker}
 ## Prior worker attempt (PR #${pr_number}, closed CONFLICTING)
@@ -654,9 +698,9 @@ rebase/apply it rather than re-deriving the solution from scratch.
 
 <details><summary>Diff from PR #${pr_number} (click to expand)</summary>
 
-\`\`\`diff
+${fence}diff
 ${diff_content}${truncation_note}
-\`\`\`
+${fence}
 
 </details>"
 

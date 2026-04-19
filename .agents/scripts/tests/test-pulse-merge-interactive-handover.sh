@@ -319,6 +319,105 @@ test_J_enforce_is_idempotent_when_label_already_present() {
 }
 
 # =============================================================================
+# t2383 Fix 1: no-takeover label opt-out halts handover trigger
+# =============================================================================
+
+test_K_no_takeover_label_blocks_handover() {
+	reset_mock_state
+	# Add no-takeover to the PR labels
+	printf 'origin:interactive,no-takeover' >"${TEST_ROOT}/labels.txt"
+	: >"${TEST_ROOT}/idempotent-comments.log"
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_trigger_handover "100" "owner/repo"
+	# Should NOT call issue edit to add the label
+	if grep -q "issue edit.*--add-label.*origin:worker-takeover" "$GH_LOG"; then
+		print_result "K: no-takeover label blocks handover label application" 1 \
+			"Unexpected label add call: $(cat "$GH_LOG")"
+		return 0
+	fi
+	# Should NOT post a comment
+	if [[ -s "${TEST_ROOT}/idempotent-comments.log" ]]; then
+		print_result "K: no-takeover label blocks handover comment" 1 "Unexpected comment call"
+		return 0
+	fi
+	# Should have a log entry about the skip
+	if ! grep -q "no-takeover label.*skipping handover" "$LOGFILE"; then
+		print_result "K: no-takeover label logs skip reason" 1 \
+			"Expected 'no-takeover label' skip message in LOGFILE. Got: $(cat "$LOGFILE")"
+		return 0
+	fi
+	print_result "K: no-takeover label halts handover trigger" 0
+	return 0
+}
+
+# =============================================================================
+# t2383 Fix 2: invalid HOURS value returns not-stale safely
+# =============================================================================
+
+test_L_invalid_hours_returns_not_stale() {
+	reset_mock_state
+	# "24h" is non-numeric — should not crash bash arithmetic
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS="24h" \
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
+		_interactive_pr_is_stale "100" "owner/repo"
+	local rc=$?
+	if [[ "$rc" -ne 1 ]]; then
+		print_result "L: invalid HOURS ('24h') returns not-stale" 1 "Expected 1, got $rc"
+		return 0
+	fi
+	if ! grep -q "invalid AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS" "$LOGFILE"; then
+		print_result "L: invalid HOURS logs validation error" 1 \
+			"Expected validation error in LOGFILE. Got: $(cat "$LOGFILE")"
+		return 0
+	fi
+	print_result "L: invalid HOURS returns not-stale with log message" 0
+	return 0
+}
+
+test_L2_zero_hours_returns_not_stale() {
+	reset_mock_state
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS="0" \
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
+		_interactive_pr_is_stale "100" "owner/repo"
+	local rc=$?
+	if [[ "$rc" -ne 1 ]]; then
+		print_result "L2: zero HOURS returns not-stale" 1 "Expected 1, got $rc"
+		return 0
+	fi
+	print_result "L2: zero HOURS returns not-stale" 0
+	return 0
+}
+
+test_L3_empty_hours_uses_default_24() {
+	reset_mock_state
+	# Empty HOURS triggers bash's :- default substitution to "24", which is valid.
+	# The PR is 48h old (reset_mock_state default), so it should return stale (0).
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS="" \
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
+		_interactive_pr_is_stale "100" "owner/repo"
+	local rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "L3: empty HOURS falls back to default 24 (stale)" 1 "Expected 0 (stale), got $rc"
+		return 0
+	fi
+	print_result "L3: empty HOURS falls back to default 24 (stale)" 0
+	return 0
+}
+
+test_L4_negative_hours_returns_not_stale() {
+	reset_mock_state
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS="-5" \
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
+		_interactive_pr_is_stale "100" "owner/repo"
+	local rc=$?
+	if [[ "$rc" -ne 1 ]]; then
+		print_result "L4: negative HOURS returns not-stale" 1 "Expected 1, got $rc"
+		return 0
+	fi
+	print_result "L4: negative HOURS returns not-stale" 0
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -350,6 +449,11 @@ main() {
 	test_H_mode_detect_is_noop
 	test_I_mode_enforce_applies_label_and_posts_comment
 	test_J_enforce_is_idempotent_when_label_already_present
+	test_K_no_takeover_label_blocks_handover
+	test_L_invalid_hours_returns_not_stale
+	test_L2_zero_hours_returns_not_stale
+	test_L3_empty_hours_uses_default_24
+	test_L4_negative_hours_returns_not_stale
 
 	printf '\n=== %d test(s), %d failure(s) ===\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

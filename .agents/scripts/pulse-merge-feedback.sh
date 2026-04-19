@@ -172,9 +172,16 @@ ${failing_checks}
 _Routed by deterministic merge pass (pulse-merge.sh)._"
 
 	# Append to issue body (marker-guarded for idempotency)
-	local current_body
+	# t2383 Fix 5: fail-safe — skip body edit when issue fetch fails to prevent
+	# clobbering the issue body with only the routed-feedback section.
+	local current_body ci_fetch_rc
+	ci_fetch_rc=0
 	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
+		--json body --jq '.body // ""' 2>/dev/null) || ci_fetch_rc=$?
+	if [[ $ci_fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: failed to fetch issue #${linked_issue} body (exit ${ci_fetch_rc}) — skipping body edit to prevent data loss (t2383)" >>"$LOGFILE"
+		return 0
+	fi
 
 	local marker="<!-- ci-feedback:PR${pr_number} -->"
 	if printf '%s' "$current_body" | grep -qF "$marker"; then
@@ -278,9 +285,16 @@ ${pr_files}
 _Routed by deterministic merge pass (pulse-merge.sh)._"
 
 	# Append to issue body (marker-guarded)
-	local current_body
+	# t2383 Fix 5: fail-safe — skip body edit when issue fetch fails to prevent
+	# clobbering the issue body with only the routed-feedback section.
+	local current_body conflict_fetch_rc
+	conflict_fetch_rc=0
 	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
+		--json body --jq '.body // ""' 2>/dev/null) || conflict_fetch_rc=$?
+	if [[ $conflict_fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] _dispatch_conflict_fix_worker: failed to fetch issue #${linked_issue} body (exit ${conflict_fetch_rc}) — skipping body edit to prevent data loss (t2383)" >>"$LOGFILE"
+		return 0
+	fi
 
 	local marker="<!-- conflict-feedback:PR${pr_number} -->"
 	if printf '%s' "$current_body" | grep -qF "$marker"; then
@@ -414,9 +428,16 @@ _dispatch_pr_fix_worker() {
 	fi
 
 	# --- Append to linked issue body (marker-guarded for idempotency) ---
-	local current_body
+	# t2383 Fix 5: fail-safe — skip body edit when issue fetch fails to prevent
+	# clobbering the issue body with only the routed-feedback section.
+	local current_body review_fetch_rc
+	review_fetch_rc=0
 	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
+		--json body --jq '.body // ""' 2>/dev/null) || review_fetch_rc=$?
+	if [[ $review_fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] _dispatch_pr_fix_worker: failed to fetch issue #${linked_issue} body (exit ${review_fetch_rc}) — skipping body edit to prevent data loss (t2383)" >>"$LOGFILE"
+		return 0
+	fi
 
 	local marker="<!-- t2093:review-feedback:PR${pr_number} -->"
 	local body_updated="false"
