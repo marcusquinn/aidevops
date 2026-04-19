@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# ShellCheck RC Parity Check (GH#19877)
+#
+# Verifies that every `disable=SCNNNN` directive in the root `.shellcheckrc`
+# is also present in `.agents/scripts/.shellcheckrc`. ShellCheck's rcfile
+# auto-discovery stops at the first match walking up from the linted file,
+# so the scripts-dir rcfile takes precedence for all 255+ scripts in that
+# subtree. A missing disable silently re-enables warnings and blocks PRs.
+#
+# Discovery: PR #19876 (t2377) — SC1091 drift blocked unrelated files.
+# Required status check: add "shellcheckrc-parity" to branch protection.
+
+name: ShellCheck RC Parity
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.shellcheckrc'
+      - '.agents/scripts/.shellcheckrc'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity-check:
+    name: ShellCheck RC Parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Check disable parity
+        run: |
+          ROOT_RC=".shellcheckrc"
+          SCRIPTS_RC=".agents/scripts/.shellcheckrc"
+
+          if [[ ! -f "$ROOT_RC" ]]; then
+            echo "::error::Root .shellcheckrc not found"
+            exit 1
+          fi
+          if [[ ! -f "$SCRIPTS_RC" ]]; then
+            echo "::error::Scripts-dir .shellcheckrc not found"
+            exit 1
+          fi
+
+          # Extract disable= lines
+          root_disables=$(grep -E '^disable=SC[0-9]+' "$ROOT_RC" | sort)
+          scripts_disables=$(grep -E '^disable=SC[0-9]+' "$SCRIPTS_RC" | sort)
+
+          missing=""
+          while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if ! grep -qF "$line" <<<"$scripts_disables"; then
+              missing="${missing}  ${line}\n"
+            fi
+          done <<<"$root_disables"
+
+          if [[ -n "$missing" ]]; then
+            echo "::error::Scripts-dir .shellcheckrc is missing disables from root .shellcheckrc"
+            echo ""
+            echo "Missing directives (add these to .agents/scripts/.shellcheckrc):"
+            echo -e "$missing"
+            echo ""
+            echo "ShellCheck only reads ONE .shellcheckrc per file — the first found"
+            echo "walking up from the file's directory. Scripts in .agents/scripts/ use"
+            echo "the scripts-dir rcfile, not root. Missing disables silently re-enable"
+            echo "warnings and block PRs with spurious findings."
+            echo ""
+            echo "Root .shellcheckrc disables:"
+            echo "$root_disables"
+            echo ""
+            echo "Scripts-dir .shellcheckrc disables:"
+            echo "$scripts_disables"
+            exit 1
+          fi
+
+          echo "✓ All root disables present in scripts-dir rcfile"
+
+          # Advisory: report scripts-dir-only disables (allowed, but noteworthy)
+          scripts_only=""
+          while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if ! grep -qF "$line" <<<"$root_disables"; then
+              scripts_only="${scripts_only}  ${line}\n"
+            fi
+          done <<<"$scripts_disables"
+
+          if [[ -n "$scripts_only" ]]; then
+            echo ""
+            echo "::notice::Scripts-dir-only disables (allowed, for reference):"
+            echo -e "$scripts_only"
+          fi

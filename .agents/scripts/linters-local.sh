@@ -576,6 +576,52 @@ run_shellcheck() {
 	return 0
 }
 
+# Check shellcheckrc parity (GH#19877)
+# Verifies that every disable= directive in root .shellcheckrc is also
+# present in .agents/scripts/.shellcheckrc. ShellCheck's rcfile discovery
+# stops at the first match walking up, so the scripts-dir rcfile takes
+# precedence and must carry all root disables.
+check_shellcheckrc_parity() {
+	echo -e "${BLUE}Checking ShellCheck RC Parity...${NC}"
+
+	local root_rc=".shellcheckrc"
+	local scripts_rc=".agents/scripts/.shellcheckrc"
+
+	if [[ ! -f "$root_rc" ]]; then
+		print_warning "shellcheckrc parity: root .shellcheckrc not found"
+		return 0
+	fi
+	if [[ ! -f "$scripts_rc" ]]; then
+		print_warning "shellcheckrc parity: scripts-dir .shellcheckrc not found"
+		return 0
+	fi
+
+	local root_disables scripts_disables
+	root_disables=$(grep -E '^disable=SC[0-9]+' "$root_rc" | sort)
+	scripts_disables=$(grep -E '^disable=SC[0-9]+' "$scripts_rc" | sort)
+
+	local missing=""
+	local code
+	while IFS= read -r code; do
+		[[ -z "$code" ]] && continue
+		if ! grep -qF "$code" <<<"$scripts_disables"; then
+			missing="${missing}  ${code}\n"
+		fi
+	done <<<"$root_disables"
+
+	if [[ -n "$missing" ]]; then
+		print_error "shellcheckrc parity: scripts-dir rcfile is missing disables from root"
+		echo -e "  Missing directives (add to .agents/scripts/.shellcheckrc):"
+		echo -e "$missing"
+		echo "  ShellCheck only reads ONE .shellcheckrc — the first found walking up."
+		echo "  Scripts in .agents/scripts/ use the scripts-dir rcfile, not root."
+		return 1
+	fi
+
+	print_success "shellcheckrc parity: all root disables present in scripts-dir rcfile"
+	return 0
+}
+
 # Check for secrets in codebase
 check_secrets() {
 	echo -e "${BLUE}Checking for Exposed Secrets (Secretlint)...${NC}"
@@ -1864,6 +1910,11 @@ _run_gate_checks_static() {
 
 	if ! should_skip_gate "shellcheck"; then
 		run_shellcheck || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "shellcheckrc-parity"; then
+		check_shellcheckrc_parity || exit_code=1
 		echo ""
 	fi
 
