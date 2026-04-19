@@ -236,6 +236,9 @@ source "${SCRIPT_DIR}/pulse-ancillary-dispatch.sh"
 # GH#19949: canonical-repo fast-forward + stale worktree sweep (30min cadence).
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-canonical-maintenance.sh"
+# t2350 (GH#19948): DIRTY-PR sweep runs every 30min after the merge pass.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-dirty-pr-sweep.sh"
 
 #######################################
 # SSH agent integration for commit signing (t1882)
@@ -1028,6 +1031,7 @@ _pulse_execute_self_check() {
 		_dispatch_ci_fix_worker
 		_dispatch_conflict_fix_worker
 		run_canonical_maintenance
+		dirty_pr_sweep_all_repos
 	)
 	for _sc_fn in "${_sc_expected_fns[@]}"; do
 		if ! declare -F "$_sc_fn" >/dev/null 2>&1; then
@@ -1074,6 +1078,7 @@ _pulse_execute_self_check() {
 		_PULSE_QUALITY_DEBT_LOADED
 		_PULSE_ANCILLARY_DISPATCH_LOADED
 		_PULSE_CANONICAL_MAINTENANCE_LOADED
+		_PULSE_DIRTY_PR_SWEEP_LOADED
 	)
 	local _sc_guard _sc_val
 	# The `${array[@]+"${array[@]}"}` pattern is safe under `set -u`
@@ -1131,6 +1136,18 @@ _pulse_run_deterministic_pipeline() {
 	# LLM failed to execute merge steps or the prefetch showed 0 PRs.
 	run_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
 		merge_ready_prs_all_repos || true
+
+	# t2350 (GH#19948): DIRTY-PR sweep — auto-rebase young + TODO-only conflicts,
+	# auto-close stale abandoned PRs, escalate anything else. Internally gated
+	# on DIRTY_PR_SWEEP_INTERVAL (default 30min) so this is cheap to call every
+	# cycle. Runs AFTER merge pass so we never sweep a PR that was already
+	# about to be merged. Failures are non-fatal — the sweep is advisory.
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared — skipping dirty-pr-sweep" >>"$LOGFILE"
+	else
+		run_stage_with_timeout "dirty_pr_sweep" "$PRE_RUN_STAGE_TIMEOUT" \
+			dirty_pr_sweep_all_repos || true
+	fi
 	# Accumulate health counters written by merge_ready_prs_all_repos (GH#18571, GH#15107).
 	# The function runs in a subshell via run_stage_with_timeout, so variable
 	# updates are lost. Read the temp file it writes and accumulate here.
