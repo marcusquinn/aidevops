@@ -45,15 +45,21 @@ reviews:
       - "dependabot[bot]"
       - "renovate[bot]"
     # GH#17671 post-mortem: external-contributor PRs must always be reviewed,
-    # even when rate-limited. The "!no-review" exclusion filter skips PRs that
-    # are explicitly opted out. Positive labels (without "!") act as inclusion
-    # filters — they restrict reviews to only PRs with those labels, which would
-    # disable reviews for all internal PRs. Do NOT add "external-contributor"
-    # here; use path_filters or path_instructions to apply stricter review rules
-    # to external-contributor PRs instead. GH#17904: removed "external-contributor"
-    # positive label that was inadvertently disabling internal PR reviews.
+    # even when rate-limited. GH#17904: removed "external-contributor" positive
+    # label that was inadvertently disabling internal PR reviews (positive-only
+    # filters restrict to matching PRs only).
+    #
+    # GH#19770: CodeRabbit treats negative-only label filters as "include nothing"
+    # rather than "include all" (observed on PR #19764: skipped with "only excluded
+    # labels are configured"). Schema description says ['!wip'] reviews all PRs
+    # except wip, but runtime behaviour contradicts this. Fix: add explicit wildcard
+    # positive include "*" + negative exclude "!no-review" — Option A from the
+    # t2246 brief. This restores "review everything unless tagged no-review" intent
+    # without GH#17904 regression (wildcard includes external-contributor PRs too).
+    # Do NOT remove the "*" entry — reverting to negative-only breaks auto-review.
     labels:
-      - "!no-review"
+      - "*"           # include all PRs (positive include required — see GH#19770)
+      - "!no-review"  # except those explicitly opted out
 
   # Request changes for critical issues — this is the setting that controls
   # whether CodeRabbit submits formal APPROVED/CHANGES_REQUESTED reviews.
