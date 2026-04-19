@@ -614,20 +614,29 @@ _detect_parent_from_gh_state() {
 # Arguments:
 #   $1 - child issue number
 #   $2 - repo slug
+#   $3 - (optional) pre-fetched title — avoids redundant gh API call
+#   $4 - (optional) pre-fetched body — must be provided alongside $3
 # Returns: 0 on success/skip, 1 on unexpected failure
 # Echoes one of: "LINKED <child>:<parent>", "SKIPPED <child>", "DRY <child>:<parent>"
 _backfill_one_issue() {
-	local num="$1" repo="$2"
+	local num="$1" repo="$2" prefetched_title="${3:-}" prefetched_body="${4:-}"
 	[[ -z "$num" || -z "$repo" ]] && {
 		echo "SKIPPED $num"
 		return 0
 	}
 
-	local meta
-	meta=$(gh issue view "$num" --repo "$repo" --json title,body 2>/dev/null || echo "{}")
+	# Accept optional pre-fetched title/body to avoid redundant API calls
+	# when called from cmd_backfill_sub_issues outer loop (GH#19942).
 	local title body
-	title=$(printf '%s' "$meta" | jq -r '.title // ""' 2>/dev/null)
-	body=$(printf '%s' "$meta" | jq -r '.body // ""' 2>/dev/null)
+	if [[ -n "$prefetched_title" ]]; then
+		title="$prefetched_title"
+		body="$prefetched_body"
+	else
+		local meta
+		meta=$(gh issue view "$num" --repo "$repo" --json title,body 2>/dev/null || echo "{}")
+		title=$(printf '%s' "$meta" | jq -r '.title // ""' 2>/dev/null)
+		body=$(printf '%s' "$meta" | jq -r '.body // ""' 2>/dev/null)
+	fi
 	if [[ -z "$title" ]]; then
 		echo "SKIPPED $num"
 		return 0
@@ -661,6 +670,155 @@ _backfill_one_issue() {
 		return 0
 	fi
 	echo "SKIPPED $num"
+	return 0
+}
+
+# =============================================================================
+# Parent-Side Detection — Umbrella-Style Parent-Task Backfill (GH#19942)
+# =============================================================================
+# Extends backfill-sub-issues with parent-side detection: when an issue carries
+# the `parent-task` label, parse its body for a children section and link every
+# referenced child as a sub-issue. Complements the existing child-side path
+# that detects parents from child title/body.
+
+# Extract the children section from an issue body. Matches headings:
+#   ## Children, ## Child Issues, ## Sub-issues, ## Phases
+# (case-insensitive). Returns content from the heading to the next ## heading
+# or end of body.
+#
+# Arguments:
+#   $1 - issue body text
+# Echo: section content (may be empty if no matching heading found)
+_extract_children_section() {
+	local body="$1"
+	[[ -z "$body" ]] && return 0
+
+	printf '%s\n' "$body" | awk '
+		BEGIN { in_section = 0 }
+		{
+			lower = tolower($0)
+			if (lower ~ /^##[[:space:]]+(children|child issues|sub-issues|phases)/) {
+				in_section = 1
+				next
+			}
+			if (/^##[[:space:]]/) {
+				if (in_section) exit
+			}
+			if (in_section) print
+		}
+	'
+	return 0
+}
+
+# Extract child issue references from a children section. Only matches #NNN
+# and GH#NNN references on lines starting with list markers (-, +, *) or
+# table cell delimiters (|) to avoid false positives from prose mentions.
+#
+# Arguments:
+#   $1 - children section text (output of _extract_children_section)
+# Echo: one issue number per line (deduplicated, sorted numerically)
+_extract_child_references() {
+	local section="$1"
+	[[ -z "$section" ]] && return 0
+
+	printf '%s\n' "$section" |
+		grep -E '^[[:space:]]*[-+*|]' |
+		grep -oE '(GH)?#[0-9]+' |
+		sed -E 's/^(GH)?#//' |
+		sort -un
+	return 0
+}
+
+# Link children listed in a parent-task issue's body section. Parses the body
+# for a ## Children (or alias) heading and links every #NNN reference found
+# in list items or table cells within that section.
+#
+# Arguments:
+#   $1 - parent issue number
+#   $2 - repo slug
+#   $3 - issue body (pre-fetched to avoid redundant API calls)
+# Echo: "PARENT_LINKED <num>:<count>" or "PARENT_DRY <num>:<count>" or
+#       "PARENT_SKIPPED <num>:0"
+# Returns: 0 always (errors are logged, not propagated)
+_backfill_parent_children() {
+	local num="$1" repo="$2" body="$3"
+	local _skip_tag="PARENT_SKIPPED"
+
+	[[ -z "$num" || -z "$repo" ]] && {
+		echo "${_skip_tag} ${num:-0}:0"
+		return 0
+	}
+
+	local children_section
+	children_section=$(_extract_children_section "$body")
+	if [[ -z "$children_section" ]]; then
+		log_verbose "#$num: no children section found in body"
+		echo "${_skip_tag} $num:0"
+		return 0
+	fi
+
+	local child_nums_raw
+	child_nums_raw=$(_extract_child_references "$children_section")
+	if [[ -z "$child_nums_raw" ]]; then
+		log_verbose "#$num: children section present but no issue references found"
+		echo "${_skip_tag} $num:0"
+		return 0
+	fi
+
+	# Read into array (bash 3.2 compatible — no mapfile)
+	local child_nums=()
+	local _cn
+	while IFS= read -r _cn; do
+		[[ -n "$_cn" ]] && child_nums+=("$_cn")
+	done <<< "$child_nums_raw"
+
+	if [[ ${#child_nums[@]} -eq 0 ]]; then
+		echo "${_skip_tag} $num:0"
+		return 0
+	fi
+
+	local linked=0
+	local parent_node=""
+	local _link_desc="sub-issue of #$num (parent-side)"
+
+	for _cn in "${child_nums[@]}"; do
+		# Skip self-references
+		[[ "$_cn" == "$num" ]] && continue
+
+		if [[ "$DRY_RUN" == "true" ]]; then
+			print_info "[DRY-RUN] Would link #$_cn as ${_link_desc}"
+			linked=$((linked + 1))
+			continue
+		fi
+
+		# Lazy-resolve parent node ID (once, on first real link)
+		if [[ -z "$parent_node" ]]; then
+			parent_node=$(_cached_node_id "$num" "$repo")
+			if [[ -z "$parent_node" ]]; then
+				log_verbose "#$num: could not resolve parent node ID"
+				echo "${_skip_tag} $num:0"
+				return 0
+			fi
+		fi
+
+		local child_node
+		child_node=$(_cached_node_id "$_cn" "$repo")
+		if [[ -z "$child_node" ]]; then
+			log_verbose "#$_cn: could not resolve child node ID for parent #$num"
+			continue
+		fi
+
+		if _gh_add_sub_issue "$parent_node" "$child_node"; then
+			log_verbose "#$_cn linked as ${_link_desc}"
+			linked=$((linked + 1))
+		fi
+	done
+
+	if [[ "$DRY_RUN" == "true" ]]; then
+		echo "PARENT_DRY $num:$linked"
+	else
+		echo "PARENT_LINKED $num:$linked"
+	fi
 	return 0
 }
 
@@ -733,16 +891,35 @@ cmd_backfill_sub_issues() {
 	print_info "Backfilling sub-issue links for $total issue(s) in $repo"
 
 	local linked=0 skipped=0 processed=0
-	local _num result
+	local _num result meta _title _body _has_parent _pcount
 	for _num in "${issue_numbers[@]}"; do
 		processed=$((processed + 1))
 		if [[ $((processed % 25)) -eq 0 || $processed -eq $total ]]; then
 			printf "\r  Progress: %d/%d issues..." "$processed" "$total" >&2
 		fi
-		result=$(_backfill_one_issue "$_num" "$repo" | tail -1)
+
+		# Pre-fetch issue data (title, body, labels) for routing (GH#19942).
+		# A single API call per issue avoids double-fetch in both paths.
+		meta=$(gh issue view "$_num" --repo "$repo" --json title,body,labels 2>/dev/null || echo "{}")
+		_title=$(printf '%s' "$meta" | jq -r '.title // ""' 2>/dev/null)
+		_body=$(printf '%s' "$meta" | jq -r '.body // ""' 2>/dev/null)
+		_has_parent=$(printf '%s' "$meta" | jq -r '[.labels[].name] | any(. == "parent-task")' 2>/dev/null || echo "false")
+
+		if [[ "$_has_parent" == "true" ]]; then
+			# Parent-side: parse body for children section and link downward
+			result=$(_backfill_parent_children "$_num" "$repo" "$_body" | tail -1)
+		else
+			# Child-side: detect parent from title/body and link upward
+			result=$(_backfill_one_issue "$_num" "$repo" "$_title" "$_body" | tail -1)
+		fi
+
 		case "$result" in
 		LINKED*) linked=$((linked + 1)) ;;
 		DRY*) linked=$((linked + 1)) ;;
+		PARENT_LINKED*|PARENT_DRY*)
+			_pcount="${result##*:}"
+			linked=$((linked + _pcount))
+			;;
 		*) skipped=$((skipped + 1)) ;;
 		esac
 	done

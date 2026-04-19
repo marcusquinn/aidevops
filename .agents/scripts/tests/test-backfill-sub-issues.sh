@@ -129,7 +129,13 @@ _emit() {
 if [[ "$cmd1" == "issue" && "$cmd2" == "view" ]]; then
 	num="${3:-}"
 	var="GH_ISSUE_${num}_JSON"
-	payload="${!var:-{\"title\":\"\",\"body\":\"\",\"labels\":[]}}"
+	# Avoid ${!var:-{...}} — bash indirect expansion has a brace-matching
+	# bug that appends an extra } when the variable IS set and the default
+	# contains { (GH#19942 test discovery).
+	payload="${!var}"
+	if [[ -z "$payload" ]]; then
+		payload='{"title":"","body":"","labels":[]}'
+	fi
 	_emit "$payload" "$@"
 	exit 0
 fi
@@ -212,6 +218,14 @@ _init_cmd() {
 	_CMD_TODO="${FAKE_PROJECT_ROOT}/TODO.md"
 	return 0
 }
+
+# Pre-initialize node ID cache to prevent EXIT trap chaining.
+# _init_node_id_cache's trap chains the parent's EXIT trap into subshells;
+# on bash 5.x, subshells inherit EXIT traps, so when $(cmd | tail -1) exits,
+# the chained trap fires and deletes $TMP prematurely. Pre-initializing the
+# cache file skips the trap setup entirely (the guard checks -z).
+_NODE_ID_CACHE_FILE="${TMP}/node_cache"
+: >"$_NODE_ID_CACHE_FILE"
 
 printf '%sRunning backfill-sub-issues tests (t2114)%s\n' "$TEST_BLUE" "$TEST_NC"
 
@@ -370,6 +384,166 @@ if grep -q 'Linked: 0' "${TMP}/out.11"; then
 else
 	fail "no parent detected → Linked: 0, no mutation" \
 		"missing 'Linked: 0' in output: $(tr '\n' '|' <"${TMP}/out.11" | head -c 200)"
+fi
+
+# =============================================================================
+# Class C: Parent-side detection — _extract_children_section,
+#           _extract_child_references, _backfill_parent_children (GH#19942)
+# =============================================================================
+
+printf '\n%sRunning parent-side detection tests (GH#19942)%s\n' "$TEST_BLUE" "$TEST_NC"
+
+# ---- Test 12: _extract_children_section extracts ## Children section ----
+_test_body_12="## Summary
+Some overview text
+
+## Children
+
+- #301 — first child
+- #302 — second child
+| LOW | t2350 | #303 | third child |
+
+## Related
+
+See #9999 in prose"
+
+section_12=$(_extract_children_section "$_test_body_12")
+if printf '%s' "$section_12" | grep -q '#301' && printf '%s' "$section_12" | grep -q '#303'; then
+	if ! printf '%s' "$section_12" | grep -q '#9999'; then
+		pass "_extract_children_section extracts ## Children, excludes ## Related"
+	else
+		fail "_extract_children_section extracts ## Children, excludes ## Related" \
+			"section leaked #9999 from ## Related"
+	fi
+else
+	fail "_extract_children_section extracts ## Children, excludes ## Related" \
+		"section missing expected references: $(printf '%s' "$section_12" | tr '\n' '|' | head -c 200)"
+fi
+
+# ---- Test 13: _extract_children_section matches aliases (case-insensitive) ----
+_test_body_13="## sub-issues
+
+- #401 — sub one
+- #402 — sub two"
+
+section_13=$(_extract_children_section "$_test_body_13")
+if printf '%s' "$section_13" | grep -q '#401'; then
+	pass "_extract_children_section matches ## sub-issues alias (case-insensitive)"
+else
+	fail "_extract_children_section matches ## sub-issues alias (case-insensitive)" \
+		"got: $(printf '%s' "$section_13" | tr '\n' '|' | head -c 200)"
+fi
+
+# ---- Test 14: _extract_child_references extracts list and table refs ----
+_test_section_14="
+- #301 — first child
+- t2350 / #302 — second child
+| LOW | t2350 | #303 | third child |
+| --- | --- | --- | --- |
+some prose with #9999 that is not in a list or table"
+
+refs_14=$(_extract_child_references "$_test_section_14")
+if printf '%s\n' "$refs_14" | grep -q '^301$' && \
+   printf '%s\n' "$refs_14" | grep -q '^302$' && \
+   printf '%s\n' "$refs_14" | grep -q '^303$'; then
+	if ! printf '%s\n' "$refs_14" | grep -q '^9999$'; then
+		pass "_extract_child_references extracts list/table refs, rejects prose"
+	else
+		fail "_extract_child_references extracts list/table refs, rejects prose" \
+			"extracted #9999 from prose line"
+	fi
+else
+	fail "_extract_child_references extracts list/table refs, rejects prose" \
+		"missing expected refs: $(printf '%s' "$refs_14" | tr '\n' ',' | head -c 200)"
+fi
+
+# ---- Test 15: _extract_child_references handles GH#NNN format ----
+_test_section_15="- GH#501 — issue with GH prefix
+- #502 — normal ref"
+
+refs_15=$(_extract_child_references "$_test_section_15")
+if printf '%s\n' "$refs_15" | grep -q '^501$' && \
+   printf '%s\n' "$refs_15" | grep -q '^502$'; then
+	pass "_extract_child_references handles GH#NNN format"
+else
+	fail "_extract_child_references handles GH#NNN format" \
+		"got: $(printf '%s' "$refs_15" | tr '\n' ',' | head -c 200)"
+fi
+
+# ---- Test 16: cmd_backfill_sub_issues with parent-task issue (dry-run) ----
+# Umbrella parent #300 with ## Children section listing 3 children
+export GH_ISSUE_300_JSON='{"title":"t2349: umbrella parent","body":"## Summary\nOverview\n\n## Children\n\n- #301 — first child\n- #302 — second child\n| LOW | t2350 | #303 | third child |\n\nSee #9999 in prose","labels":[{"name":"parent-task"},{"name":"enhancement"}]}'
+export GH_ISSUE_301_JSON='{"title":"t2349.1: first child","body":"","labels":[]}'
+export GH_ISSUE_302_JSON='{"title":"t2349.2: second child","body":"","labels":[]}'
+export GH_ISSUE_303_JSON='{"title":"t2350: third child","body":"","labels":[]}'
+
+: >"$GH_LOG"
+DRY_RUN="true" cmd_backfill_sub_issues --issue 300 >"${TMP}/out.16" 2>&1 || true
+DRY_RUN="false"
+
+# Should report 3 children would be linked
+count_16=$(grep -c 'Would link.*sub-issue of #300 (parent-side)' "${TMP}/out.16" 2>/dev/null) || count_16=0
+if [[ "$count_16" -eq 3 ]]; then
+	if ! grep -q 'addSubIssue' "$GH_LOG"; then
+		pass "parent-side dry-run reports 3 children, no mutation"
+	else
+		fail "parent-side dry-run reports 3 children, no mutation" \
+			"unexpected addSubIssue in gh.log"
+	fi
+else
+	fail "parent-side dry-run reports 3 children, no mutation" \
+		"expected 3 'Would link' lines, got $count_16; output: $(tr '\n' '|' <"${TMP}/out.16" | head -c 300)"
+fi
+
+# ---- Test 17: cmd_backfill_sub_issues with parent-task issue (live) ----
+: >"$GH_LOG"
+cmd_backfill_sub_issues --issue 300 >"${TMP}/out.17" 2>&1 || true
+
+add_count_17=$(grep -c 'addSubIssue' "$GH_LOG" 2>/dev/null) || add_count_17=0
+if [[ "$add_count_17" -eq 3 ]]; then
+	pass "parent-side live run calls addSubIssue 3 times"
+else
+	fail "parent-side live run calls addSubIssue 3 times" \
+		"expected 3 addSubIssue calls, got $add_count_17; log: $(tr '\n' '|' <"$GH_LOG" | head -c 300)"
+fi
+
+# ---- Test 18: prose #NNN outside ## Children does NOT produce false link ----
+# The body has "See #9999 in prose" outside the Children section
+if ! grep -q '9999' "$GH_LOG"; then
+	pass "prose #9999 outside Children section not linked"
+else
+	fail "prose #9999 outside Children section not linked" \
+		"found 9999 reference in gh.log (false positive)"
+fi
+
+# ---- Test 19: parent-task issue without ## Children section → Linked: 0 ----
+export GH_ISSUE_304_JSON='{"title":"t2351: parent no children","body":"Just a regular parent\n\nSee #305 in prose","labels":[{"name":"parent-task"}]}'
+
+: >"$GH_LOG"
+cmd_backfill_sub_issues --issue 304 >"${TMP}/out.19" 2>&1 || true
+
+if grep -q 'Linked: 0' "${TMP}/out.19"; then
+	if ! grep -q 'addSubIssue' "$GH_LOG"; then
+		pass "parent-task without Children section → Linked: 0, no mutation"
+	else
+		fail "parent-task without Children section → Linked: 0, no mutation" \
+			"unexpected addSubIssue in gh.log"
+	fi
+else
+	fail "parent-task without Children section → Linked: 0, no mutation" \
+		"missing 'Linked: 0' in output: $(tr '\n' '|' <"${TMP}/out.19" | head -c 200)"
+fi
+
+# ---- Test 20: existing child-side detection still works with pre-fetched data ----
+# Issue #200 is a t1873.2 child (set up in Class B fixtures above)
+: >"$GH_LOG"
+cmd_backfill_sub_issues --issue 200 >"${TMP}/out.20" 2>&1 || true
+
+if grep -q 'addSubIssue' "$GH_LOG"; then
+	pass "child-side detection still works through pre-fetch routing (regression)"
+else
+	fail "child-side detection still works through pre-fetch routing (regression)" \
+		"missing addSubIssue in gh.log: $(tr '\n' '|' <"$GH_LOG" | head -c 200)"
 fi
 
 # =============================================================================

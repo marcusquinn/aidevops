@@ -1594,14 +1594,20 @@ Relationships (t1889):
                          that have ref:GH# plus blocked-by:/blocks: or subtask IDs.
                          Use --dry-run to preview. Idempotent (skips existing).
 
-Sub-issue backfill (t2114):
-  backfill-sub-issues [--issue N] — link decomposition children to their
-                         parents using GitHub state alone (title + body). No
-                         TODO.md or brief file required. Detects parents via:
+Sub-issue backfill (t2114, GH#19942):
+  backfill-sub-issues [--issue N] — link parent-child issue relationships
+                         using GitHub state alone (title + body + labels). No
+                         TODO.md or brief file required. Two detection paths:
+                         Child-side (existing): detects parents via
                          (1) dot-notation title `tNNN.M: ...`, (2) `Parent: ...`
                          line in body, (3) `Blocked by: tNNN` where the blocker
-                         carries the `parent-task` label. Idempotent; supports
-                         --dry-run.
+                         carries the `parent-task` label.
+                         Parent-side (GH#19942): when an issue carries the
+                         `parent-task` label, parses its body for a ## Children
+                         section (aliases: ## Child Issues, ## Sub-issues,
+                         ## Phases) and links every #NNN / GH#NNN reference in
+                         list items or table cells as a sub-issue.
+                         Idempotent; supports --dry-run.
 
 Note: Bulk push (no task ID) is CI-only by default to prevent duplicate issues.
       Use 'push <task_id>' for single tasks, or --force-push to override.
