@@ -1017,6 +1017,8 @@ _pulse_execute_self_check() {
 		_pulse_setup_dry_run_mode
 		_pulse_run_deterministic_pipeline
 		_pulse_maybe_run_llm_supervisor
+		_carry_forward_pr_diff
+		_dispatch_pr_fix_worker
 	)
 	for _sc_fn in "${_sc_expected_fns[@]}"; do
 		if ! declare -F "$_sc_fn" >/dev/null 2>&1; then
@@ -1034,6 +1036,7 @@ _pulse_execute_self_check() {
 	# Phase 8 (t1976, GH#18387): triage cluster (10 fns)
 	# Phase 9 (t1977, GH#18389): dispatch-core + dispatch-engine (26 fns)
 	# Phase 10 (t1978, GH#18391): quality-debt + ancillary-dispatch (FINAL — clears 2K gate)
+	# GH#19836: pulse-merge.sh further split into three modules (conflict + feedback extracted).
 	local _sc_expected_guards=(
 		_PULSE_MODEL_ROUTING_LOADED
 		_PULSE_INSTANCE_LOCK_LOADED
@@ -1049,6 +1052,8 @@ _pulse_execute_self_check() {
 		_PULSE_WATCHDOG_LOADED
 		_PULSE_CAPACITY_ALLOC_LOADED
 		_PULSE_MERGE_LOADED
+		_PULSE_MERGE_CONFLICT_LOADED
+		_PULSE_MERGE_FEEDBACK_LOADED
 		_PULSE_CLEANUP_LOADED
 		_PULSE_ISSUE_RECONCILE_LOADED
 		_PULSE_SIMPLIFICATION_LOADED

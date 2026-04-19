@@ -13,13 +13,14 @@
 # sources against call graphs — the plan chose co-extraction as simpler.
 #
 # In GH#19836 the module was further trimmed by extracting two downstream
-# clusters that are called AFTER the gate checks fire and never call back
-# into pr-gates or merge-core:
+# clusters. They are sourced by pulse-wrapper.sh AFTER pulse-merge.sh so
+# they can depend on shared merge helpers (e.g. _extract_linked_issue)
+# while merge-core/pr-gates do not require them at source time — the
+# dependency is one-way (downstream → core), never the reverse:
 #   - pulse-merge-conflict.sh — conflict handling, interactive handover,
 #     carry-forward diff, rebase nudges
 #   - pulse-merge-feedback.sh — CI/conflict/review feedback routing to
 #     linked issues with PR close
-# Both are sourced by pulse-wrapper.sh immediately after pulse-merge.sh.
 # Bash's lazy function resolution handles the runtime cross-module calls
 # (e.g., _check_pr_merge_gates → _dispatch_pr_fix_worker) without issue.
 #
