@@ -1,0 +1,28 @@
+# dispatch-override.conf — runtime overrides for cross-runner dispatch coordination
+#
+# Copy to ~/.config/aidevops/dispatch-override.conf and edit.
+#
+# This file is sourced by dispatch-claim-helper.sh to filter DISPATCH_CLAIM
+# comments from specific peer runners. Useful when a peer is known to be
+# degraded — e.g., running stale code, fast-failing every dispatch, or
+# version-skewed after a hotfix — and their stale claim comments are
+# poisoning cross-runner dispatch for the full 1800s TTL.
+#
+# Self-correcting: once the peer recovers, remove them from the list. For
+# automated management based on worker success-rate comparison, see t2401
+# (supervisor-dashboard-driven auto-override).
+#
+# Safety: the filter is UNIDIRECTIONAL. If only your runner filters the peer,
+# your dispatch wins the claim race and the peer backs off normally (no
+# double-dispatch). If BOTH runners filter each other, double-dispatch is
+# possible — intended for temporary, unilateral use during peer-degraded
+# incidents, not mutual escalation.
+
+# Space-separated list of runner GitHub logins whose DISPATCH_CLAIM comments
+# should be ignored. Comma separators are also accepted.
+# Example: DISPATCH_CLAIM_IGNORE_RUNNERS="stale-peer1 stale-peer2"
+DISPATCH_CLAIM_IGNORE_RUNNERS=""
+
+# Master switch for the override. Set to false to keep the config file in
+# place but temporarily respect all claims (useful during testing).
+DISPATCH_OVERRIDE_ENABLED=true

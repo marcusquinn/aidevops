@@ -54,6 +54,30 @@ DISPATCH_CLAIM_SELF_RECLAIM_AGE="${DISPATCH_CLAIM_SELF_RECLAIM_AGE:-30}"
 # Plain text format: visible in rendered GitHub issue view.
 CLAIM_MARKER="DISPATCH_CLAIM"
 
+# t2399: Runtime override for cross-runner dispatch coordination.
+#
+# Allows a local runner to ignore DISPATCH_CLAIMs from specific peer runners
+# when the peer is known to be degraded (running stale code, fast-failing,
+# version-skewed). Self-correcting: once the peer recovers, remove from the
+# list (or let the long-term stats-based auto-override in t2401 manage it).
+#
+# Config file (optional, user-level): ~/.config/aidevops/dispatch-override.conf
+#   DISPATCH_CLAIM_IGNORE_RUNNERS="login1 login2"  # space or comma separated
+#   DISPATCH_OVERRIDE_ENABLED=true                 # default true when config exists
+#
+# Safety: filter is UNIDIRECTIONAL — if only one runner filters the other, the
+# filtered runner's claim-race still honours the filterer's claim (normal
+# dedup behaviour). If BOTH runners filter each other, double-dispatch is
+# possible. Intended for temporary, unilateral use during peer-degraded
+# incidents.
+DISPATCH_OVERRIDE_CONF="${DISPATCH_OVERRIDE_CONF:-${HOME}/.config/aidevops/dispatch-override.conf}"
+DISPATCH_CLAIM_IGNORE_RUNNERS="${DISPATCH_CLAIM_IGNORE_RUNNERS:-}"
+DISPATCH_OVERRIDE_ENABLED="${DISPATCH_OVERRIDE_ENABLED:-true}"
+if [[ -r "$DISPATCH_OVERRIDE_CONF" ]]; then
+	# shellcheck disable=SC1090
+	source "$DISPATCH_OVERRIDE_CONF" 2>/dev/null || true
+fi
+
 #######################################
 # Generate a unique nonce for this claim attempt.
 # Uses /dev/urandom for uniqueness; falls back to date+PID.
@@ -253,6 +277,60 @@ _fetch_claims() {
 		echo "Error: failed to parse claim comments" >&2
 		return 1
 	}
+
+	# t2400: Apply runtime override filter (extracted to keep _fetch_claims
+	# under the 100-line complexity threshold — same behaviour, separate fn).
+	parsed=$(_apply_ignore_filter "$parsed" "$issue_number" "$repo_slug")
+
+	printf '%s' "$parsed"
+	return 0
+}
+
+#######################################
+# t2400: Filter out DISPATCH_CLAIM entries authored by runners listed in
+# DISPATCH_CLAIM_IGNORE_RUNNERS. No-op when override is disabled or list is empty.
+# Emits a stderr log line when filter actually strips claims so operators
+# can audit active overrides.
+#
+# Args:
+#   $1 = parsed claims JSON array (from _fetch_claims parse step)
+#   $2 = issue number (for log context)
+#   $3 = repo slug (for log context)
+# Returns:
+#   Filtered claims JSON on stdout. Fails safe — returns input unchanged
+#   on any jq error.
+#######################################
+_apply_ignore_filter() {
+	local parsed="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+
+	if [[ "$DISPATCH_OVERRIDE_ENABLED" != "true" ]] || [[ -z "$DISPATCH_CLAIM_IGNORE_RUNNERS" ]]; then
+		printf '%s' "$parsed"
+		return 0
+	fi
+
+	local ignored_json
+	# Normalise the ignore list (accept space OR comma separators) → JSON array
+	ignored_json=$(printf '%s' "$DISPATCH_CLAIM_IGNORE_RUNNERS" | tr ',' ' ' | tr -s ' ' '\n' | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || ignored_json="[]"
+	if [[ "$ignored_json" == "[]" ]]; then
+		printf '%s' "$parsed"
+		return 0
+	fi
+
+	local pre_count post_count filtered_parsed
+	pre_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
+	filtered_parsed=$(printf '%s' "$parsed" | jq -c --argjson ignored "$ignored_json" '
+		map(select(.runner as $r | $ignored | index($r) | not))
+	' 2>/dev/null)
+	if [[ -n "$filtered_parsed" ]]; then
+		parsed="$filtered_parsed"
+	fi
+	post_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
+	if [[ "$pre_count" -gt "$post_count" ]]; then
+		printf '[dispatch-claim-helper] Filtered %d claim(s) from ignored runners (%s) on #%s in %s\n' \
+			"$((pre_count - post_count))" "$DISPATCH_CLAIM_IGNORE_RUNNERS" "$issue_number" "$repo_slug" >&2
+	fi
 
 	printf '%s' "$parsed"
 	return 0
