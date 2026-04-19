@@ -168,7 +168,9 @@ validate_string_literals() {
 			if [[ $repeated -gt 0 ]]; then
 				print_warning "Repeated string literals in $file (consider using constants)"
 				grep -oE '"[^"]{4,}"' "$file" | grep -vE '^"[0-9]+\.?[0-9]*"$' | sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
-				((++violations))
+				# print_warning is advisory — do NOT increment violations counter
+				# (AGENTS.md "Gate design — ratchet, not absolute (t2228 class)"):
+				# test files legitimately repeat assertion strings; this should inform, not block.
 			fi
 		fi
 	done
