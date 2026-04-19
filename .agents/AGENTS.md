@@ -246,6 +246,8 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Task-ID collision guard (t2047):** t-IDs in commit subjects MUST be claimed via `claim-task-id.sh`. The commit-msg hook (`install-task-id-guard.sh install`) enforces this client-side; the CI check (`.github/workflows/task-id-collision-check.yml`) enforces it server-side for commits authored outside the hook.
 
+**Workflow Cascade Lint (t2229):** A PR check that detects cascade-vulnerable workflow patterns in `.github/workflows/*.yml`. Flags workflows that combine cascade-prone event types (`labeled`, `unlabeled`, `assigned`, etc.) with `cancel-in-progress: true` without mitigation (`paths-ignore`/`paths` filter or job-level `event.action` guard). Workflow: `.github/workflows/workflow-cascade-lint.yml`. Helper: `.agents/scripts/workflow-cascade-lint.sh`. Override: apply the `workflow-cascade-ok` label AND add a `## Cascade Lint Justification` section to the PR body. Local smoke test: `.agents/scripts/workflow-cascade-lint.sh --dry-run`.
+
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 
 ---
