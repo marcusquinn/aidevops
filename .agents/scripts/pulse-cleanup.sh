@@ -665,6 +665,29 @@ reap_zombie_workers() {
 #   $2 - repo slug
 #   $3 - failure reason string (for logs)
 #######################################
+
+# t2394 helper: post CLAIM_RELEASED so cross-runner dedup immediately re-opens
+# the issue for dispatch instead of waiting for the 30-min DISPATCH_CLAIM TTL
+# to expire. Without this, a fast-failing worker leaves a stale claim comment
+# that poisons cross-runner coordination for up to 1800s per failure — the
+# local state (assignee, status label) is already reset but the claim comment
+# is authoritative for peer runners. Mirrors the pattern in
+# worker-activity-watchdog.sh:222 and headless-runtime-failure.sh:59 — those
+# paths already post CLAIM_RELEASED; the launch-failure recovery path was the
+# missing coverage.
+_post_launch_recovery_claim_released() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local failure_reason="$4"
+
+	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--method POST \
+		--field body="CLAIM_RELEASED reason=launch_recovery:${failure_reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		>/dev/null 2>&1 || true
+	return 0
+}
+
 recover_failed_launch_state() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -733,6 +756,9 @@ recover_failed_launch_state() {
 		set_issue_status "$issue_number" "$repo_slug" "available" \
 			--remove-assignee "$self_login" >/dev/null 2>&1 || true
 	fi
+
+	# t2394: Invalidate stale cross-runner claims immediately (see helper below).
+	_post_launch_recovery_claim_released "$issue_number" "$repo_slug" "$self_login" "$failure_reason"
 
 	# t1934: Unlock issue and linked PRs (locked at dispatch time)
 	unlock_issue_after_worker "$issue_number" "$repo_slug"
