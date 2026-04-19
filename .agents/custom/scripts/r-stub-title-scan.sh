@@ -130,7 +130,10 @@ _load_seen_cache() {
     pruned=$(jq --argjson cutoff "$cutoff" \
         'to_entries | map(select(.value >= $cutoff)) | from_entries' \
         "$SEEN_CACHE" 2>/dev/null) || pruned='{}'
-    echo "$pruned" > "$SEEN_CACHE"
+    echo "$pruned" > "${SEEN_CACHE}.tmp" && mv "${SEEN_CACHE}.tmp" "$SEEN_CACHE" || {
+        _log "ERROR" "Failed to write pruned cache to ${SEEN_CACHE}"
+        return 1
+    }
     return 0
 }
 
@@ -153,7 +156,10 @@ _mark_seen() {
         _log "WARN" "Failed to update seen cache for ${key}"
         return 1
     }
-    echo "$updated" > "$SEEN_CACHE"
+    echo "$updated" > "${SEEN_CACHE}.tmp" && mv "${SEEN_CACHE}.tmp" "$SEEN_CACHE" || {
+        _log "ERROR" "Failed to write updated cache to ${SEEN_CACHE}"
+        return 1
+    }
     return 0
 }
 
@@ -161,8 +167,8 @@ _mark_seen() {
 _get_pulse_repos() {
     [[ -n "${STUB_SCAN_REPOS:-}" ]] && { echo "$STUB_SCAN_REPOS" | tr ',' '\n'; return 0; }
     [[ -f "$REPOS_JSON" ]] || { _log "ERROR" "repos.json not found at ${REPOS_JSON}"; return 1; }
-    jq -r '.initialized_repos[] | select(.pulse == true) | select(.local_only != true) | .slug' \
-        "$REPOS_JSON" 2>/dev/null
+    jq -r '.initialized_repos[]? | select(.pulse == true) | select(.local_only != true) | .slug' \
+        "$REPOS_JSON" || true
     return 0
 }
 
