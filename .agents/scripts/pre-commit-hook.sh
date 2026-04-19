@@ -143,8 +143,8 @@ validate_return_statements() {
 			local head_content head_funcs head_returns head_missing=0
 			head_content=$(_get_head_content "$file")
 			if [[ -n "$head_content" ]]; then
-				head_funcs=$(printf '%s\n' "$head_content" | grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {" || true)
-				head_returns=$(printf '%s\n' "$head_content" | grep -c "return [01]" || true)
+				head_funcs=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {" <<< "$head_content" || true)
+				head_returns=$(grep -c "return [01]" <<< "$head_content" || true)
 				if ((head_funcs > 0 && head_returns < head_funcs)); then
 					head_missing=$((head_funcs - head_returns))
 				fi
@@ -312,6 +312,11 @@ validate_string_literals() {
 
 run_shellcheck() {
 	local violations=0
+
+	if ! command -v shellcheck &>/dev/null; then
+		print_warning "shellcheck not found — skipping ShellCheck validation"
+		return 0
+	fi
 
 	print_info "Running ShellCheck validation (ratchet)..."
 
