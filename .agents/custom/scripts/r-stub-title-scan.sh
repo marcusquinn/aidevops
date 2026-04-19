@@ -88,10 +88,12 @@ _log() {
     local ts
     ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     echo "[${ts}] [${level}] ${msg}" >> "$LOGFILE"
+    # All console output goes to stderr so callers can capture function
+    # return values via $(...) without log lines leaking into stdout.
     case "$level" in
         ERROR) echo -e "${RED}[${level}]${NC} ${msg}" >&2 ;;
         WARN)  echo -e "${YELLOW}[${level}]${NC} ${msg}" >&2 ;;
-        *)     echo -e "${GREEN}[${level}]${NC} ${msg}" ;;
+        *)     echo -e "${GREEN}[${level}]${NC} ${msg}" >&2 ;;
     esac
     return 0
 }
