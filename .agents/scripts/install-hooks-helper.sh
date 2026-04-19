@@ -20,7 +20,7 @@ set -euo pipefail
 
 # Colors — sourced from shared-constants.sh (Pattern A, t2053.3)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-# shellcheck source=shared-constants.sh
+# shellcheck source=shared-constants.sh disable=SC1091
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
 
 HOOKS_DIR="$HOME/.aidevops/hooks"
@@ -41,10 +41,22 @@ PRE_COMMIT_DEPLOYED="$HOME/.aidevops/agents/scripts/pre-commit-hook.sh"
 # pre-push quality-validation hook (t2207) — slow network checks split from pre-commit
 PRE_PUSH_QUALITY_MARKER="# aidevops-pre-push-quality-hook"
 
-print_info() { printf "${BLUE}[INFO]${NC} %s\n" "$1"; }
-print_success() { printf "${GREEN}[OK]${NC} %s\n" "$1"; }
-print_warning() { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
-print_error() { printf "${RED}[ERROR]${NC} %s\n" "$1"; }
+print_info() {
+	local msg="$1"
+	printf "${BLUE}[INFO]${NC} %s\n" "$msg"
+}
+print_success() {
+	local msg="$1"
+	printf "${GREEN}[OK]${NC} %s\n" "$msg"
+}
+print_warning() {
+	local msg="$1"
+	printf "${YELLOW}[WARN]${NC} %s\n" "$msg"
+}
+print_error() {
+	local msg="$1"
+	printf "${RED}[ERROR]${NC} %s\n" "$msg"
+}
 
 # Find the source hook script (repo .agents/hooks/ or deployed ~/.aidevops/agents/hooks/)
 find_source_hook() {
@@ -608,37 +620,41 @@ os.rename(tmp, path)
 	return 0
 }
 
-check_status() {
-	local all_ok=true
+# Individual status check helpers — extracted from check_status to keep the
+# aggregator under the 100-line complexity threshold (t2207).
+# Each returns 0 when the check passes, 1 when it fails; informational checks
+# that never contribute to overall fail state (git-hook installation checks)
+# always return 0.
 
-	echo "Claude Code Safety Hooks Status"
-	echo "================================"
-
-	# Check hook script
+_check_status_hook_script() {
 	if [[ -f "$HOOK_SCRIPT" ]]; then
 		print_success "Hook script: $HOOK_SCRIPT"
 		if [[ -x "$HOOK_SCRIPT" ]]; then
 			print_success "  Executable: yes"
-		else
-			print_warning "  Executable: no (run: chmod +x $HOOK_SCRIPT)"
-			all_ok=false
+			return 0
 		fi
-	else
-		print_error "Hook script: not installed"
-		all_ok=false
+		print_warning "  Executable: no (run: chmod +x $HOOK_SCRIPT)"
+		return 1
 	fi
+	print_error "Hook script: not installed"
+	return 1
+}
 
-	# Check Python
+_check_status_python() {
 	if command -v python3 &>/dev/null; then
 		print_success "Python 3: $(python3 --version 2>&1)"
-	else
-		print_error "Python 3: not found"
-		all_ok=false
+		return 0
 	fi
+	print_error "Python 3: not found"
+	return 1
+}
 
-	# Check Claude settings
-	if [[ -f "$CLAUDE_SETTINGS" ]]; then
-		if python3 -c "
+_check_status_claude_settings() {
+	if [[ ! -f "$CLAUDE_SETTINGS" ]]; then
+		print_error "Claude settings: $CLAUDE_SETTINGS not found"
+		return 1
+	fi
+	if python3 -c "
 import json, sys
 with open('$CLAUDE_SETTINGS') as f:
     d = json.load(f)
@@ -649,67 +665,88 @@ for h in hooks:
             sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
-			print_success "Claude settings: hook configured"
-		else
-			print_warning "Claude settings: exists but hook not configured"
-			all_ok=false
-		fi
-	else
-		print_error "Claude settings: $CLAUDE_SETTINGS not found"
-		all_ok=false
+		print_success "Claude settings: hook configured"
+		return 0
 	fi
+	print_warning "Claude settings: exists but hook not configured"
+	return 1
+}
 
-	# Check gh-wrapper-guard pre-push hook (t2113)
+_check_status_gh_wrapper_guard() {
+	local common_dir hook_path
+	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+		print_info "gh-wrapper-guard: not in a git repo — skipped"
+		return 0
+	fi
+	hook_path="${common_dir}/hooks/pre-push"
+	if [[ -f "$hook_path" ]] && grep -q "$GH_WRAPPER_GUARD_MARKER" "$hook_path" 2>/dev/null; then
+		print_success "gh-wrapper-guard: installed in pre-push hook"
+	elif [[ -f "$hook_path" ]] && grep -q "gh-wrapper-guard" "$hook_path" 2>/dev/null; then
+		print_success "gh-wrapper-guard: chained in pre-push hook"
+	else
+		print_warning "gh-wrapper-guard: not installed (run: install-hooks-helper.sh install)"
+	fi
+	return 0
+}
+
+_check_status_precommit_hook() {
+	local common_dir pc_hook_path
+	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+		print_info "pre-commit-hook: not in a git repo — skipped"
+		return 0
+	fi
+	pc_hook_path="${common_dir}/hooks/pre-commit"
+	if [[ -f "$pc_hook_path" ]] && grep -q "$PRE_COMMIT_MARKER" "$pc_hook_path" 2>/dev/null; then
+		print_success "pre-commit-hook: installed"
+	elif [[ -f "$pc_hook_path" ]] && grep -q "pre-commit-hook.sh" "$pc_hook_path" 2>/dev/null; then
+		print_success "pre-commit-hook: chained in pre-commit hook"
+	else
+		print_warning "pre-commit-hook: not installed (run: install-hooks-helper.sh install)"
+	fi
+	return 0
+}
+
+_check_status_prepush_quality_hook() {
+	local common_dir pp_hook_path
+	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+		print_info "pre-push-quality-hook: not in a git repo — skipped"
+		return 0
+	fi
+	pp_hook_path="${common_dir}/hooks/pre-push"
+	if [[ -f "$pp_hook_path" ]] && grep -q "$PRE_PUSH_QUALITY_MARKER" "$pp_hook_path" 2>/dev/null; then
+		print_success "pre-push-quality-hook: installed"
+	elif [[ -f "$pp_hook_path" ]] && grep -q "HOOK_MODE=pre-push" "$pp_hook_path" 2>/dev/null; then
+		print_success "pre-push-quality-hook: chained in pre-push hook"
+	else
+		print_warning "pre-push-quality-hook: not installed (run: install-hooks-helper.sh install)"
+	fi
+	return 0
+}
+
+check_status() {
+	local all_ok=true
+
+	echo "Claude Code Safety Hooks Status"
+	echo "================================"
+
+	_check_status_hook_script || all_ok=false
+	_check_status_python || all_ok=false
+	_check_status_claude_settings || all_ok=false
+
 	echo ""
 	echo "GH Wrapper Guard (pre-push)"
 	echo "----------------------------"
-	local common_dir
-	if common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
-		local hook_path="${common_dir}/hooks/pre-push"
-		if [[ -f "$hook_path" ]] && grep -q "$GH_WRAPPER_GUARD_MARKER" "$hook_path" 2>/dev/null; then
-			print_success "gh-wrapper-guard: installed in pre-push hook"
-		elif [[ -f "$hook_path" ]] && grep -q "gh-wrapper-guard" "$hook_path" 2>/dev/null; then
-			print_success "gh-wrapper-guard: chained in pre-push hook"
-		else
-			print_warning "gh-wrapper-guard: not installed (run: install-hooks-helper.sh install)"
-		fi
-	else
-		print_info "gh-wrapper-guard: not in a git repo — skipped"
-	fi
+	_check_status_gh_wrapper_guard
 
-	# Check pre-commit quality hook (t2191)
 	echo ""
 	echo "Pre-commit Quality Hook"
 	echo "------------------------"
-	if common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
-		local pc_hook_path="${common_dir}/hooks/pre-commit"
-		if [[ -f "$pc_hook_path" ]] && grep -q "$PRE_COMMIT_MARKER" "$pc_hook_path" 2>/dev/null; then
-			print_success "pre-commit-hook: installed"
-		elif [[ -f "$pc_hook_path" ]] && grep -q "pre-commit-hook.sh" "$pc_hook_path" 2>/dev/null; then
-			print_success "pre-commit-hook: chained in pre-commit hook"
-		else
-			print_warning "pre-commit-hook: not installed (run: install-hooks-helper.sh install)"
-		fi
-	else
-		print_info "pre-commit-hook: not in a git repo — skipped"
-	fi
+	_check_status_precommit_hook
 
-	# Check pre-push quality hook (t2207)
 	echo ""
 	echo "Pre-push Quality Hook (t2207)"
 	echo "------------------------------"
-	if common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
-		local pp_hook_path="${common_dir}/hooks/pre-push"
-		if [[ -f "$pp_hook_path" ]] && grep -q "$PRE_PUSH_QUALITY_MARKER" "$pp_hook_path" 2>/dev/null; then
-			print_success "pre-push-quality-hook: installed"
-		elif [[ -f "$pp_hook_path" ]] && grep -q "HOOK_MODE=pre-push" "$pp_hook_path" 2>/dev/null; then
-			print_success "pre-push-quality-hook: chained in pre-push hook"
-		else
-			print_warning "pre-push-quality-hook: not installed (run: install-hooks-helper.sh install)"
-		fi
-	else
-		print_info "pre-push-quality-hook: not in a git repo — skipped"
-	fi
+	_check_status_prepush_quality_hook
 
 	echo ""
 	if [[ "$all_ok" == "true" ]]; then
@@ -812,14 +849,15 @@ show_help() {
 }
 
 # Main
-case "${1:-install}" in
+cmd="${1:-install}"
+case "$cmd" in
 install) install_hook ;;
 uninstall) uninstall_hook ;;
 status) check_status ;;
 test) test_hook ;;
 help | --help | -h) show_help ;;
 *)
-	print_error "Unknown command: $1"
+	print_error "Unknown command: $cmd"
 	show_help
 	exit 1
 	;;
