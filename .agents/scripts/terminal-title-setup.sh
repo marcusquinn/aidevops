@@ -18,6 +18,7 @@
 #   help       Show this help message
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
@@ -150,13 +151,19 @@ check_and_fix_tabby() {
 generate_zsh_omz_integration() {
 	cat <<'EOF'
 # Sync terminal tab title with git repo/branch (works with Oh-My-Zsh)
-# Falls back to directory when not in a git repo
+# Falls back to directory when not in a git repo.
+# Skips default branches (main/master/HEAD) so the precmd hook does not
+# clobber meaningful session titles when the canonical repo sits on main (t2252).
 _aidevops_terminal_title() {
     local title=""
     if git rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
         local repo branch
         repo=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")
         branch=$(git branch --show-current 2>/dev/null)
+        # Guard: do nothing on default branches (t2252)
+        case "$branch" in
+            ""|HEAD|main|master) return 0 ;;
+        esac
         if [[ -n "$repo" ]] && [[ -n "$branch" ]]; then
             title="${repo}/${branch}"
         elif [[ -n "$repo" ]]; then
@@ -180,13 +187,19 @@ EOF
 
 generate_zsh_plain_integration() {
 	cat <<'EOF'
-# Sync terminal tab title with git repo/branch
+# Sync terminal tab title with git repo/branch.
+# Skips default branches (main/master/HEAD) so the precmd hook does not
+# clobber meaningful session titles when the canonical repo sits on main (t2252).
 _aidevops_terminal_title() {
     local title=""
     if git rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
         local repo branch
         repo=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")
         branch=$(git branch --show-current 2>/dev/null)
+        # Guard: do nothing on default branches (t2252)
+        case "$branch" in
+            ""|HEAD|main|master) return 0 ;;
+        esac
         if [[ -n "$repo" ]] && [[ -n "$branch" ]]; then
             title="${repo}/${branch}"
         elif [[ -n "$repo" ]]; then
@@ -207,13 +220,19 @@ EOF
 
 generate_bash_integration() {
 	cat <<'EOF'
-# Sync terminal tab title with git repo/branch
+# Sync terminal tab title with git repo/branch.
+# Skips default branches (main/master/HEAD) so the PROMPT_COMMAND hook does
+# not clobber meaningful session titles when the canonical repo sits on main (t2252).
 _aidevops_terminal_title() {
     local title=""
     if git rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
         local repo branch
         repo=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")
         branch=$(git branch --show-current 2>/dev/null)
+        # Guard: do nothing on default branches (t2252)
+        case "$branch" in
+            ""|HEAD|main|master) return 0 ;;
+        esac
         if [[ -n "$repo" ]] && [[ -n "$branch" ]]; then
             title="${repo}/${branch}"
         elif [[ -n "$repo" ]]; then
@@ -237,11 +256,18 @@ EOF
 
 generate_fish_integration() {
 	cat <<'EOF'
-# Sync terminal tab title with git repo/branch
+# Sync terminal tab title with git repo/branch.
+# Skips default branches (main/master/HEAD) so the fish_prompt hook does not
+# clobber meaningful session titles when the canonical repo sits on main (t2252).
 function _aidevops_terminal_title --on-event fish_prompt
     if git rev-parse --is-inside-work-tree &>/dev/null 2>&1
         set -l repo (basename (git rev-parse --show-toplevel 2>/dev/null))
         set -l branch (git branch --show-current 2>/dev/null)
+        # Guard: do nothing on default branches (t2252)
+        switch "$branch"
+            case "" HEAD main master
+                return 0
+        end
         if test -n "$repo" -a -n "$branch"
             printf '\033]0;%s/%s\007' $repo $branch
         else if test -n "$repo"
