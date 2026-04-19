@@ -436,7 +436,9 @@ _large_file_gate_file_new_debt_issue() {
 		--force 2>/dev/null || true
 
 	local _new_num _create_body _create_combined
-	_create_body="## What
+	_create_body="<!-- aidevops:generator=large-file-simplification-gate cited_file=${lf_path} threshold=${LARGE_FILE_LINE_THRESHOLD} -->
+
+## What
 Simplify \`${lf_path}\` — currently over ${LARGE_FILE_LINE_THRESHOLD} lines. Break into smaller, focused modules.
 
 ## Why

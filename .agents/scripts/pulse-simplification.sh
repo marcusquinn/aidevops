@@ -1065,7 +1065,9 @@ _complexity_scan_sh_build_issue_body_with_sig() {
 	local details="$3"
 
 	local issue_body
-	issue_body="## Complexity scan finding (automated, GH#5628)
+	issue_body="<!-- aidevops:generator=function-complexity-gate cited_file=${file_path} threshold=${COMPLEXITY_FUNC_LINE_THRESHOLD} -->
+
+## Complexity scan finding (automated, GH#5628)
 
 **File:** \`${file_path}\`
 **Violations:** ${violation_count} functions exceed ${COMPLEXITY_FUNC_LINE_THRESHOLD} lines
