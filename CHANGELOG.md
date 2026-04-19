@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.78] - 2026-04-19
+
+### Added
+
+- auto-append signature footer to all gh issue/pr comment wrappers (t2393) (#19953)
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- qualify shell-specific advice for multi-language scanners (#19945)
+- pass self_login to is-assigned, avoid redundant API fetch, use parameter expansion (GH#19922) (#19950)
+
 ## [3.8.77] - 2026-04-19
 
 ### Changed
