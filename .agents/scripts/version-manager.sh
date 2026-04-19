@@ -1306,7 +1306,11 @@ commit_version_changes() {
 		return 0
 	fi
 
-	if git commit -m "chore(release): bump version to $version"; then
+	# Version-bump commits contain only version-string updates — content is
+	# internally controlled by this script. Pre-commit quality gates run in
+	# CI on every other path. Skip the local hook here to avoid false positives
+	# on pre-existing code that the release commit didn't touch (t2237).
+	if git commit --no-verify -m "chore(release): bump version to $version"; then
 		print_success "Committed version changes"
 		return 0
 	else
