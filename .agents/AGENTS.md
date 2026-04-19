@@ -261,6 +261,8 @@ Pre-t2386 the two automation cases were conflated, producing the #19756 infinite
 
 **Complexity Bump Override (t2370):** The `complexity-bump-ok` label overrides the complexity regression gates in `code-quality.yml` (nesting-depth, file-size, function-complexity, bash32-compat). Workers and maintainers may self-apply this label when the PR body contains a validated `## Complexity Bump Justification` section with: (1) at least one `file:line` reference citing the scanner evidence, and (2) at least one numeric measurement (`base=N, head=M, new=K` or similar). Workflow: `.github/workflows/complexity-bump-justification-check.yml` — triggers on `labeled` event, validates the section, and removes the label with a remediation comment if justification is incomplete. This mirrors the `new-file-smell-ok` + justification-section pattern. Primary use case: file splits that trigger nesting-depth false positives from identity-key changes (see `reference/large-file-split.md` section 4.1).
 
+**Workflow Cascade Vulnerability Lint (t2229):** `.github/workflows/workflow-cascade-lint.yml` flags PRs that modify workflows containing the cascade-vulnerable combination: label-like event types (`labeled`, `unlabeled`, `assigned`, etc.) + `cancel-in-progress: true` + no mitigation (`paths-ignore` or event-action guard). See t2220 for the failure mode (15 cancelled runs in ~2s). Helper: `.agents/scripts/workflow-cascade-lint.sh` (supports `--dry-run` for local checks). Override: apply `workflow-cascade-ok` label AND add a `## Workflow Cascade Justification` section to the PR body.
+
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 
 ---

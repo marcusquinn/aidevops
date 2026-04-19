@@ -1,0 +1,130 @@
+name: Workflow Cascade Lint
+
+# t2229: CI gate that detects cascade-vulnerable workflow configurations.
+#
+# Flags any .github/workflows/*.yml that combines label-like event types
+# (labeled, unlabeled, assigned, etc.) with cancel-in-progress: true and
+# no mitigation (paths-ignore or event-action guard).
+#
+# See t2220 for the failure mode this prevents.
+#
+# Override: apply the `workflow-cascade-ok` label AND add a
+# `## Workflow Cascade Justification` section to the PR body.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/**'
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Cascade Vulnerability Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed workflow files
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- '.github/workflows/*.yml' || true)
+          if [ -z "$changed" ]; then
+            echo "No workflow files changed."
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf 'Changed workflow files:\n%s\n' "$changed"
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$changed" > /tmp/changed-workflows.txt
+
+      - name: Run cascade vulnerability lint
+        if: steps.changed.outputs.has_files == 'true'
+        id: scan
+        run: |
+          set +e
+          files=$(cat /tmp/changed-workflows.txt | tr '\n' ' ')
+          # shellcheck disable=SC2086
+          output=$(bash .agents/scripts/workflow-cascade-lint.sh \
+            --output-md /tmp/cascade-lint-report.md \
+            $files 2>&1)
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$output"
+
+      - name: Post PR comment
+        if: steps.changed.outputs.has_files == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          body_file=/tmp/cascade-lint-report.md
+          if [ ! -s "$body_file" ]; then
+            echo "No report to post."
+            exit 0
+          fi
+          marker="<!-- workflow-cascade-lint -->"
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            echo "Updating existing comment $existing"
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body=@"$body_file" >/dev/null 2>&1 || true
+          else
+            echo "Creating new comment"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$body_file" \
+              >/dev/null 2>&1 || true
+          fi
+
+      - name: Enforce gate
+        if: steps.changed.outputs.has_files == 'true'
+        env:
+          HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'workflow-cascade-ok') }}
+          AUTHOR_ASSOC: ${{ github.event.pull_request.author_association }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          if [ "${EXIT_CODE:-0}" = "0" ]; then
+            echo "Workflow cascade lint: no vulnerable workflows in changed files."
+            exit 0
+          fi
+          if [ "$EXIT_CODE" != "1" ]; then
+            echo "::error::Linter exited with unexpected code: $EXIT_CODE"
+            exit 1
+          fi
+          # Check for override label + justification section
+          if [ "$HAS_OVERRIDE" != "true" ]; then
+            echo "::error::Cascade-vulnerable workflow(s) detected. Apply the 'workflow-cascade-ok' label AND add a '## Workflow Cascade Justification' section to the PR description to override."
+            exit 1
+          fi
+          # Override requires OWNER or MEMBER authorship
+          if [ "$AUTHOR_ASSOC" != "OWNER" ] && [ "$AUTHOR_ASSOC" != "MEMBER" ]; then
+            echo "::error::'workflow-cascade-ok' override requires OWNER or MEMBER authorship (got: ${AUTHOR_ASSOC})."
+            exit 1
+          fi
+          # Require justification section in PR body
+          if printf '%s' "$PR_BODY" | grep -qE '^##+[[:space:]]+Workflow Cascade Justification'; then
+            echo "::warning::Cascade-vulnerable workflow(s) detected but 'workflow-cascade-ok' label + justification present (maintainer override) — allowing with warning."
+            exit 0
+          fi
+          echo "::error::'workflow-cascade-ok' label is set but PR description is missing a '## Workflow Cascade Justification' section."
+          exit 1
