@@ -167,7 +167,7 @@ export interface GroupInfo {
 /** Bot command handler function */
 export type CommandHandler = (
   ctx: CommandContext,
-) => Promise<string | void>;
+) => Promise<string | undefined>;
 
 /** Context passed to command handlers */
 export interface CommandContext {

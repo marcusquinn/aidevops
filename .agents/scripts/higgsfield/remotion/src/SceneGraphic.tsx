@@ -1,4 +1,4 @@
-import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, spring } from "remotion";
+import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import type { SceneGraphicProps } from "./types";
 
 // Renders a static title card / graphic that can be:

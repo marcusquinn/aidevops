@@ -2,32 +2,23 @@
 // upscale, storyboard, vibe, influencer, character, feature, presets) for Higgsfield.
 // Extracted from higgsfield-commands.mjs (t2127 file-complexity decomposition).
 
-import { readFileSync, existsSync } from 'fs';
-import { join, basename, dirname } from 'path';
-import { fileURLToPath } from 'url';
-
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  clickGenerate,
+  debugScreenshot,
+  dismissAllModals,
+  launchBrowser,
+} from './higgsfield-browser.mjs';
 import {
   BASE_URL,
-  STATE_FILE,
-  ROUTES_CACHE,
   GENERATED_IMAGE_SELECTOR,
+  ROUTES_CACHE,
+  STATE_FILE,
   waitForGenerationResult,
 } from './higgsfield-common.mjs';
 
-import {
-  launchBrowser,
-  withBrowser,
-  navigateTo,
-  dismissAllModals,
-  debugScreenshot,
-  clickGenerate,
-  getDefaultOutputDir,
-} from './higgsfield-browser.mjs';
-
-import {
-  resolveOutputDir,
-  downloadLatestResult,
-} from './higgsfield-output.mjs';
 
 // ─── Shared command helpers ────────────────────────────────────────────────────
 
@@ -124,6 +115,7 @@ function listMotionPresets() {
   const motions = cache.motions || {};
   const names = Object.keys(motions);
   console.log(`Available motion presets (${names.length}):`);
+  // biome-ignore lint/suspicious/useIterableCallbackReturn: forEach for logging
   names.slice(0, 50).forEach(n => console.log(`  ${n} → ${motions[n]}`));
   if (names.length > 50) console.log(`  ... and ${names.length - 50} more`);
 }

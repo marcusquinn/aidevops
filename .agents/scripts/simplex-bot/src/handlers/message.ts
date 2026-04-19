@@ -7,6 +7,7 @@
  * Reference: t1327.1 research, section 4.2 (Message Event Structure)
  */
 
+import type { SessionStore } from "../session";
 import type {
   ChatItem,
   CommandDefinition,
@@ -14,8 +15,7 @@ import type {
   GroupInfo,
   NewChatItemsEvent,
 } from "../types";
-import type { SessionStore } from "../session";
-import { checkCommandPermission, buildCommandContext, executeCommand } from "./command-executor";
+import { buildCommandContext, checkCommandPermission, executeCommand } from "./command-executor";
 
 /** Logger interface */
 interface Logger {
@@ -51,7 +51,7 @@ export interface MessageHandlerDeps {
 }
 
 // Re-export command execution utilities for external consumers
-export { checkCommandPermission, buildCommandContext, executeCommand } from "./command-executor";
+export { buildCommandContext, checkCommandPermission, executeCommand } from "./command-executor";
 
 /**
  * Handle newChatItems event.

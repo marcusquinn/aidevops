@@ -20,6 +20,25 @@
  * Reference: t1327.4 bot framework specification
  */
 
+import { ApprovalManager } from "./approval";
+import { BUILTIN_COMMANDS, getApprovalManager, setApprovalManager } from "./commands";
+import {
+  handleBotRemovedFromGroup,
+  handleBusinessRequest,
+  handleContactConnected,
+  handleContactRequest,
+  handleFileComplete,
+  handleFileReady,
+  handleGroupInvitation,
+  handleMemberConnected,
+  handleMemberJoined,
+  handleNewChatItems,
+  handleNonTextMessage,
+} from "./handlers";
+import { formatLeakWarning, redactLeaks, scanForLeaks } from "./leak-detector";
+import { Logger } from "./logger";
+import { CommandRouter } from "./router";
+import { SessionStore } from "./session";
 import type {
   BotConfig,
   ChatItem,
@@ -27,32 +46,10 @@ import type {
   ContactInfo,
   ExecApprovalConfig,
   GroupInfo,
-  NewChatItemsEvent,
   SimplexCommand,
   SimplexEvent,
   SimplexResponse,
 } from "./types";
-import { DEFAULT_BOT_CONFIG, DEFAULT_EXEC_APPROVAL_CONFIG } from "./types";
-import { BUILTIN_COMMANDS, getApprovalManager, setApprovalManager } from "./commands";
-import { ApprovalManager } from "./approval";
-import { scanForLeaks, redactLeaks, formatLeakWarning } from "./leak-detector";
-import { loadConfig } from "./config";
-import { SessionStore } from "./session";
-import { Logger } from "./logger";
-import { CommandRouter } from "./router";
-import {
-  handleContactConnected,
-  handleContactRequest,
-  handleBusinessRequest,
-  handleNewChatItems,
-  handleGroupInvitation,
-  handleMemberJoined,
-  handleBotRemovedFromGroup,
-  handleMemberConnected,
-  handleFileReady,
-  handleFileComplete,
-  handleNonTextMessage,
-} from "./handlers";
 
 // Re-export for consumers that import from this module
 export { Logger } from "./logger";
@@ -287,6 +284,7 @@ export class SimplexAdapter {
     };
 
     // Handler map: event type → [handler function, deps object]
+    // biome-ignore lint/complexity/noBannedTypes: handler map uses generic callable type
     const handlers: Record<string, [Function, unknown]> = {
       newChatItems: [handleNewChatItems, messageDeps],
       contactConnected: [handleContactConnected, contactDeps],

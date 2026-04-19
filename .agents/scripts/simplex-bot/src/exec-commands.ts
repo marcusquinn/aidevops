@@ -3,8 +3,8 @@
  * Extracted from commands.ts to reduce file-level complexity.
  */
 
-import type { CommandContext, CommandDefinition } from "./types";
 import { ApprovalManager, executeShellCommand } from "./approval";
+import type { CommandContext, CommandDefinition } from "./types";
 
 let approvalManager = new ApprovalManager();
 
@@ -37,14 +37,14 @@ export const runCommand: CommandDefinition = {
 
     switch (classification) {
       case "blocked":
-        return "BLOCKED: This command matches a blocked pattern and cannot be executed.\\nCommand: " + command;
+        return `BLOCKED: This command matches a blocked pattern and cannot be executed.\\nCommand: ${command}`;
 
       case "allowed": {
         const result = await executeShellCommand(command);
         const lines = ["Executed (allowlisted):", ""];
         if (result.stdout) lines.push(result.stdout);
-        if (result.stderr) lines.push("stderr: " + result.stderr);
-        lines.push("", "Exit code: " + result.exitCode);
+        if (result.stderr) lines.push(`stderr: ${result.stderr}`);
+        lines.push("", `Exit code: ${result.exitCode}`);
         return lines.join("\\n");
       }
 
@@ -52,11 +52,11 @@ export const runCommand: CommandDefinition = {
         const request = approvalManager.createRequest(command, contactId, contactName, ctx.reply);
         return [
           "Approval required for command execution.",
-          "", "Command: " + command,
-          "Request ID: " + request.id,
-          "Timeout: " + approvalManager.formatTimeout(),
-          "", "To approve:  /approve " + request.id,
-          "To reject:   /reject " + request.id,
+          "", `Command: ${command}`,
+          `Request ID: ${request.id}`,
+          `Timeout: ${approvalManager.formatTimeout()}`,
+          "", `To approve:  /approve ${request.id}`,
+          `To reject:   /reject ${request.id}`,
           "To list all: /pending",
         ].join("\\n");
       }
@@ -79,16 +79,16 @@ export const approveCommand: CommandDefinition = {
     const request = approvalManager.approve(requestId, contactId);
     if (!request) {
       const existing = approvalManager.getRequest(requestId);
-      if (existing) return "Request [" + requestId + "] is no longer pending (state: " + existing.state + ").";
-      return "No pending request found with ID: " + requestId;
+      if (existing) return `Request [${requestId}] is no longer pending (state: ${existing.state}).`;
+      return `No pending request found with ID: ${requestId}`;
     }
 
-    await ctx.reply("Approved. Executing: " + request.command);
+    await ctx.reply(`Approved. Executing: ${request.command}`);
     const result = await executeShellCommand(request.command);
-    const lines = ["Result for [" + requestId + "]:", ""];
+    const lines = [`Result for [${requestId}]:`, ""];
     if (result.stdout) lines.push(result.stdout);
-    if (result.stderr) lines.push("stderr: " + result.stderr);
-    lines.push("", "Exit code: " + result.exitCode);
+    if (result.stderr) lines.push(`stderr: ${result.stderr}`);
+    lines.push("", `Exit code: ${result.exitCode}`);
     return lines.join("\\n");
   },
 };
@@ -102,8 +102,8 @@ export const rejectCommand: CommandDefinition = {
     const requestId = ctx.args[0];
     if (!requestId) return "Usage: /reject [request-id]";
     const request = approvalManager.reject(requestId);
-    if (!request) return "No pending request found with ID: " + requestId;
-    return "Rejected command [" + requestId + "]: " + request.command;
+    if (!request) return `No pending request found with ID: ${requestId}`;
+    return `Rejected command [${requestId}]: ${request.command}`;
   },
 };
 
@@ -120,7 +120,7 @@ export const pendingCommand: CommandDefinition = {
     const lines = ["Pending approval requests:", ""];
     for (const req of requests) {
       const ageSeconds = Math.round((Date.now() - req.createdAt) / 1000);
-      lines.push("[" + req.id + "] " + req.command + " (" + ageSeconds + "s ago)");
+      lines.push(`[${req.id}] ${req.command} (${ageSeconds}s ago)`);
     }
     lines.push("", "Use /approve <id> or /reject <id> to respond.");
     return lines.join("\\n");

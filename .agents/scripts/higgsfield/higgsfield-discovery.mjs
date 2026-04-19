@@ -2,24 +2,21 @@
 // the Higgsfield automation suite.
 // Extracted from higgsfield-common.mjs (t2127 file-complexity decomposition).
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
-
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import {
+  debugScreenshot,
+  dismissAllModals,
+  launchBrowser,
+} from './higgsfield-browser.mjs';
 import {
   BASE_URL,
-  STATE_FILE,
-  STATE_DIR,
-  ROUTES_CACHE,
-  DISCOVERY_TIMESTAMP,
   DISCOVERY_MAX_AGE_HOURS,
+  DISCOVERY_TIMESTAMP,
+  ROUTES_CACHE,
+  STATE_FILE,
 } from './higgsfield-common.mjs';
-
-import {
-  launchBrowser,
-  dismissAllModals,
-  debugScreenshot,
-} from './higgsfield-browser.mjs';
 
 // ---------------------------------------------------------------------------
 // Credentials (only used by login)
@@ -144,11 +141,11 @@ async function scrapeDiscoveryLinks(page) {
     const map = {};
     allLinks.forEach(a => {
       const href = a.getAttribute('href');
-      let text = a.textContent?.trim()
+      const text = a.textContent?.trim()
         .replace(/Your browser does not support the video\.\s*/g, '')
         .replace(/\s+/g, ' ')
         .substring(0, 80) || '';
-      if (href && href.startsWith('/') && !href.startsWith('//') && text) {
+      if (href?.startsWith('/') && !href.startsWith('//') && text) {
         if (!map[href]) map[href] = text;
       }
     });
@@ -177,6 +174,7 @@ function logDiscoverySummary(links, routes, changes) {
   console.log(`  Features: ${Object.keys(routes.features).length} features`);
   if (changes.length > 0) {
     console.log(`\n  CHANGES since last discovery:`);
+    // biome-ignore lint/suspicious/useIterableCallbackReturn: forEach for logging
     changes.forEach(c => console.log(`    ${c}`));
   } else if (existsSync(ROUTES_CACHE)) {
     console.log('  No changes since last discovery');

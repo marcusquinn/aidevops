@@ -10,11 +10,11 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { homedir } from "node:os";
+import { resolve } from "node:path";
+import { VALID_LOG_LEVELS, validateParsedConfig, warnUnknownKeys } from "./config-validation";
 import type { BotConfig } from "./types";
 import { DEFAULT_BOT_CONFIG } from "./types";
-import { VALID_LOG_LEVELS, warnUnknownKeys, validateParsedConfig } from "./config-validation";
 
 /** Path to the config file */
 const CONFIG_PATH = resolve(
@@ -26,11 +26,11 @@ const CONFIG_PATH = resolve(
 export {
   isValidPositiveNumber,
   removeInvalid,
-  validatePort,
   validateLogLevel,
   validateNumericFields,
-  warnUnknownKeys,
   validateParsedConfig,
+  validatePort,
+  warnUnknownKeys,
 } from "./config-validation";
 
 /**

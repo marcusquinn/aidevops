@@ -2,29 +2,24 @@
 // for the Higgsfield automation suite.
 // Extracted from higgsfield-commands.mjs (t2127 file-complexity decomposition).
 
-import { readFileSync, writeFileSync, existsSync, statSync } from 'fs';
-
-import {
-  BASE_URL,
-  STATE_FILE,
-  ROUTES_CACHE,
-  CREDITS_CACHE_FILE,
-  UNLIMITED_MODELS,
-  UNLIMITED_SLUGS,
-  getUnlimitedModelForCommand,
-  isUnlimitedModel,
-  estimateCreditCost,
-  checkCreditGuard,
-  getCachedCredits,
-  saveCreditCache,
-  parseArgs,
-} from './higgsfield-common.mjs';
-
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import {
   launchBrowser,
-  dismissAllModals,
-  debugScreenshot,
 } from './higgsfield-browser.mjs';
+import {
+  BASE_URL,
+  CREDITS_CACHE_FILE,
+  checkCreditGuard,
+  estimateCreditCost,
+  getUnlimitedModelForCommand,
+  isUnlimitedModel,
+  parseArgs,
+  ROUTES_CACHE,
+  STATE_FILE,
+  saveCreditCache,
+  UNLIMITED_MODELS,
+  UNLIMITED_SLUGS,
+} from './higgsfield-common.mjs';
 
 // ─── Auth Health Check & Smoke Test ──────────────────────────────────────────
 

@@ -9,11 +9,10 @@
 
 import { describe, expect, test } from "bun:test";
 import {
-  shannonEntropy,
-  scanForLeaks,
-  redactLeaks,
   formatLeakWarning,
-  LEAK_PATTERNS,
+  redactLeaks,
+  scanForLeaks,
+  shannonEntropy,
 } from "./leak-detector";
 import type { LeakDetectionConfig } from "./types";
 

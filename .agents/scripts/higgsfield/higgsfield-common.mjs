@@ -7,10 +7,10 @@
 // Discovery/login → higgsfield-discovery.mjs
 // (t2127 file-complexity decomposition)
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'fs';
-import { join, basename, extname } from 'path';
-import { homedir } from 'os';
-import { execFileSync } from 'child_process';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, extname, join } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Paths & Constants
@@ -101,7 +101,7 @@ if (!existsSync(STATE_DIR)) {
 
 export function getUnlimitedModelForCommand(commandType) {
   const cache = getCachedCredits();
-  if (!cache || !cache.unlimitedModels || cache.unlimitedModels.length === 0) return null;
+  if (!cache?.unlimitedModels || cache.unlimitedModels.length === 0) return null;
 
   const activeNames = new Set(cache.unlimitedModels.map(m => m.model));
   const candidates = Object.entries(UNLIMITED_MODELS)
@@ -118,7 +118,7 @@ export function isUnlimitedModel(slug, commandType) {
   if (!UNLIMITED_SLUGS.has(key)) return false;
 
   const cache = getCachedCredits();
-  if (!cache || !cache.unlimitedModels) return false;
+  if (!cache?.unlimitedModels) return false;
 
   const activeNames = new Set(cache.unlimitedModels.map(m => m.model));
   return UNLIMITED_SLUGS.get(key).some(name => activeNames.has(name));
@@ -150,7 +150,7 @@ export async function withRetry(fn, { maxRetries = 2, baseDelay = 3000, label = 
       const msg = error.message || String(error);
       if (isNonRetryableError(msg)) throw error;
       if (attempt < maxRetries) {
-        const delay = baseDelay * Math.pow(2, attempt);
+        const delay = baseDelay * 2 ** attempt;
         console.log(`[retry] ${label} failed (attempt ${attempt + 1}/${maxRetries + 1}): ${msg}`);
         console.log(`[retry] Waiting ${delay / 1000}s before retry...`);
         await new Promise(resolve => setTimeout(resolve, delay));
@@ -382,7 +382,7 @@ export function checkCreditGuard(command, options = {}) {
   }
 
   const remaining = parseInt(cached.remaining, 10);
-  if (isNaN(remaining)) return;
+  if (Number.isNaN(remaining)) return;
 
   if (remaining < estimated) {
     throw new Error(
@@ -400,61 +400,60 @@ export function checkCreditGuard(command, options = {}) {
 // Re-exports from decomposed modules (backward compatibility)
 // ---------------------------------------------------------------------------
 
+
 export {
-  getDefaultOutputDir,
-  launchBrowser,
-  withBrowser,
-  navigateTo,
-  debugScreenshot,
-  clickHistoryTab,
+  finalizeBatch,
+  initBatch,
+  loadBatchManifest,
+  loadBatchState,
+  runBatchJob,
+  runWithConcurrency,
+  saveBatchState,
+  waitForGenerationResult,
+} from './higgsfield-batch-infra.mjs';
+export {
   clickGenerate,
+  clickHistoryTab,
+  debugScreenshot,
   dismissAllModals,
-  forceCloseDialogs,
   dismissInterruptions,
   dismissModalsAndBanners,
   dismissOverlaysAndAgreements,
+  forceCloseDialogs,
+  getDefaultOutputDir,
+  launchBrowser,
   loadKnownInterruptions,
   logNewInterruption,
+  navigateTo,
+  withBrowser,
 } from './higgsfield-browser.mjs';
 
 export {
-  resolveOutputDir,
-  inferOutputType,
-  writeJsonSidecar,
-  computeFileHash,
-  checkDuplicate,
-  finalizeDownload,
+  ACCOUNT_PREFIXES,
+  categoriseRoutes,
+  diffRoutesAgainstCache,
+  discoveryNeeded,
+  ensureDiscovery,
+  FEATURE_PREFIXES,
+  isNonAuthUrl,
+  loadCredentials,
+  login,
+  ROUTE_PREFIXES,
+  runDiscovery,
+  tryClickSubmit,
+  tryFillField,
+} from './higgsfield-discovery.mjs';
+export {
   buildDescriptiveFilename,
-  downloadImageViaDialog,
+  checkDuplicate,
+  computeFileHash,
   downloadImagesByCDN,
+  downloadImageViaDialog,
   downloadLatestResult,
   downloadSpecificImages,
   extractDialogMetadata,
+  finalizeDownload,
+  inferOutputType,
+  resolveOutputDir,
+  writeJsonSidecar,
 } from './higgsfield-output.mjs';
-
-export {
-  loadCredentials,
-  login,
-  runDiscovery,
-  ensureDiscovery,
-  discoveryNeeded,
-  categoriseRoutes,
-  diffRoutesAgainstCache,
-  ROUTE_PREFIXES,
-  ACCOUNT_PREFIXES,
-  FEATURE_PREFIXES,
-  tryFillField,
-  tryClickSubmit,
-  isNonAuthUrl,
-} from './higgsfield-discovery.mjs';
-
-export {
-  loadBatchManifest,
-  saveBatchState,
-  loadBatchState,
-  runWithConcurrency,
-  initBatch,
-  runBatchJob,
-  finalizeBatch,
-  waitForGenerationResult,
-} from './higgsfield-batch-infra.mjs';

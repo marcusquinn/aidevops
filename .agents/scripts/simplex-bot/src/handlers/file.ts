@@ -9,12 +9,12 @@
  * Reference: t1327.1 research, section 4.1 (Essential Events for Bots)
  */
 
+import type { SessionStore } from "../session";
 import type {
   ChatItem,
-  SimplexEvent,
   FileEvent,
+  SimplexEvent,
 } from "../types";
-import type { SessionStore } from "../session";
 
 /** Logger interface */
 interface Logger {
@@ -200,6 +200,6 @@ function formatFileSize(bytes: number): string {
     Math.floor(Math.log(bytes) / Math.log(1024)),
     units.length - 1,
   );
-  const size = bytes / Math.pow(1024, i);
+  const size = bytes / 1024 ** i;
   return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }

@@ -2,11 +2,11 @@
 // Holds: credential loading, fetch + retry, file upload/download, status polling.
 // High-level commands live in higgsfield-api.mjs.
 
-import { readFileSync, existsSync, createWriteStream, statSync } from 'fs';
-import { join, extname, basename } from 'path';
-import { homedir } from 'os';
-import { Readable } from 'stream';
-import { pipeline } from 'stream/promises';
+import { createWriteStream, existsSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, extname, join } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -81,7 +81,7 @@ function buildApiHeaders(apiKey, apiSecret) {
 }
 
 function backoffDelayMs(attempt) {
-  return 200 * Math.pow(2, attempt);
+  return 200 * 2 ** attempt;
 }
 
 async function sleep(ms) {

@@ -4,27 +4,24 @@
  * Re-exports all event handlers for clean imports.
  */
 
+export type { ContactHandlerDeps } from "./contact";
 export {
+  handleBusinessRequest,
   handleContactConnected,
   handleContactRequest,
-  handleBusinessRequest,
 } from "./contact";
-export type { ContactHandlerDeps } from "./contact";
-
-export { handleNewChatItems } from "./message";
-export type { MessageHandlerDeps } from "./message";
-
+export type { FileHandlerDeps } from "./file";
 export {
-  handleGroupInvitation,
-  handleMemberJoined,
-  handleBotRemovedFromGroup,
-  handleMemberConnected,
-} from "./group";
-export type { GroupHandlerDeps } from "./group";
-
-export {
-  handleFileReady,
   handleFileComplete,
+  handleFileReady,
   handleNonTextMessage,
 } from "./file";
-export type { FileHandlerDeps } from "./file";
+export type { GroupHandlerDeps } from "./group";
+export {
+  handleBotRemovedFromGroup,
+  handleGroupInvitation,
+  handleMemberConnected,
+  handleMemberJoined,
+} from "./group";
+export type { MessageHandlerDeps } from "./message";
+export { handleNewChatItems } from "./message";

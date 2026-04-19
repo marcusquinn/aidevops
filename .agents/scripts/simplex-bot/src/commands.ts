@@ -9,13 +9,14 @@
  */
 
 import { resolve } from "node:path";
-import type { CommandContext, CommandDefinition } from "./types";
 import pkg from "../package.json";
+import type { CommandContext, CommandDefinition } from "./types";
 
 // Re-export exec approval manager from extracted module
-export { setApprovalManager, getApprovalManager } from "./exec-commands";
-import {
-  runCommand, approveCommand, rejectCommand, pendingCommand,
+export { getApprovalManager, setApprovalManager } from "./exec-commands";
+
+import {approveCommand, pendingCommand,rejectCommand, 
+  runCommand, 
 } from "./exec-commands";
 
 // =============================================================================
@@ -55,7 +56,7 @@ const statusCommand: CommandDefinition = {
       const exitCode = await proc.exited;
       if (exitCode !== 0) {
         const detail = stderrText.trim();
-        return "Failed to get aidevops status." + (detail ? ` Error: ${detail}` : " Is aidevops installed?");
+        return `Failed to get aidevops status.${detail ? ` Error: ${detail}` : " Is aidevops installed?"}`;
       }
       return output.trim() || "aidevops is running (no output)";
     } catch {
@@ -108,17 +109,17 @@ const tasksCommand: CommandDefinition = {
 
       if (exitCode === 0) {
         const count = output.trim();
-        return "Open tasks: " + count + "\n\nUse /task <description> to create a new task.";
+        return `Open tasks: ${count}\n\nUse /task <description> to create a new task.`;
       } else if (exitCode === 1) {
         // grep returns 1 when no lines match — not an error
         return "Open tasks: 0\n\nUse /task <description> to create a new task.";
       } else {
         // grep returns >1 for actual errors (file not found, permission denied)
-        console.error("[tasksCommand] grep failed (exit " + exitCode + "): " + stderrOutput);
+        console.error(`[tasksCommand] grep failed (exit ${exitCode}): ${stderrOutput}`);
         return "Could not read TODO.md";
       }
     } catch (err) {
-      return "Could not read TODO.md: " + String(err);
+      return `Could not read TODO.md: ${String(err)}`;
     }
   },
 };
@@ -161,7 +162,7 @@ const versionCommand: CommandDefinition = {
   groupEnabled: true,
   dmEnabled: true,
   handler: async (_ctx: CommandContext): Promise<string> => {
-    return "aidevops SimpleX Bot v" + pkg.version;
+    return `aidevops SimpleX Bot v${pkg.version}`;
   },
 };
 
@@ -202,7 +203,7 @@ const roleCommand: CommandDefinition = {
     }
     const validRoles = ["observer", "author", "member", "moderator", "admin"];
     if (!validRoles.includes(role.toLowerCase())) {
-      return "Valid roles: " + validRoles.join(", ");
+      return `Valid roles: ${validRoles.join(", ")}`;
     }
     return (
       "Role change: " + user + " → " + role + "\n\n" +

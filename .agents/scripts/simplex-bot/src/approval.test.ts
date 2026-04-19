@@ -5,9 +5,8 @@
  * Run: bun test
  */
 
-import { describe, expect, test, beforeEach, mock } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { ApprovalManager } from "./approval";
-import type { ExecApprovalConfig } from "./types";
 import { DEFAULT_EXEC_APPROVAL_CONFIG } from "./types";
 
 describe("ApprovalManager", () => {
@@ -94,7 +93,7 @@ describe("ApprovalManager", () => {
       const req = manager.createRequest("docker ps", 1, "alice", noopReply);
       const approved = manager.approve(req.id, 1);
       expect(approved).not.toBeNull();
-      expect(approved!.state).toBe("approved");
+      expect(approved?.state).toBe("approved");
     });
 
     test("rejects approval from a different contact", () => {
@@ -120,7 +119,7 @@ describe("ApprovalManager", () => {
       const req = manager.createRequest("docker ps", 1, "alice", noopReply);
       const rejected = manager.reject(req.id);
       expect(rejected).not.toBeNull();
-      expect(rejected!.state).toBe("rejected");
+      expect(rejected?.state).toBe("rejected");
     });
 
     test("returns null for non-existent request", () => {

@@ -1,21 +1,9 @@
 // Daemon lifecycle — per-tab CDP daemon process management.
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { existsSync, readFileSync, unlinkSync, } from 'node:fs';
 import net from 'node:net';
-import {
-  DAEMON_CONNECT_DELAY_MS,
-  DAEMON_CONNECT_RETRIES,
-  IDLE_TIMEOUT_MS,
-  IS_WINDOWS,
-  PAGES_CACHE,
-  cleanupStaleSocket,
-  resolvePrefix,
-  sleep,
-  socketPath,
-} from './constants.mjs';
 import { CDPClient } from './cdp-client.mjs';
-import { getWsUrl } from './connection.mjs';
 import {
   browserVersionStr,
   clickStr,
@@ -31,6 +19,18 @@ import {
   snapshotStr,
   typeStr,
 } from './commands.mjs';
+import { getWsUrl } from './connection.mjs';
+import {
+  cleanupStaleSocket,
+  DAEMON_CONNECT_DELAY_MS,
+  DAEMON_CONNECT_RETRIES,
+  IDLE_TIMEOUT_MS,
+  IS_WINDOWS,
+  PAGES_CACHE,
+  resolvePrefix,
+  sleep,
+  socketPath,
+} from './constants.mjs';
 
 // --- Daemon command registry ---
 

@@ -12,9 +12,9 @@
 // =============================================================================
 
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Import from the extracted guards module — it has no runtime-injected
 // dependencies so it loads cleanly under `bun run` without the OpenCode

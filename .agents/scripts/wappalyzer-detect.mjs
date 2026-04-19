@@ -54,7 +54,7 @@ const url = args[0];
 // Validate URL
 try {
   new URL(url);
-} catch (error) {
+} catch (_error) {
   console.error(`Invalid URL: ${url}`);
   process.exit(1);
 }

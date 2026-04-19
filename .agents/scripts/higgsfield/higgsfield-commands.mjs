@@ -8,40 +8,35 @@
 // Tests → higgsfield-tests.mjs
 // (t2127 file-complexity decomposition)
 
-import {
-  BASE_URL,
-  STATE_DIR,
-  GENERATED_IMAGE_SELECTOR,
-  getUnlimitedModelForCommand,
-  ensureDir,
-  safeJoin,
-} from './higgsfield-common.mjs';
 
 import {
+  debugScreenshot,
+  dismissAllModals,
   getDefaultOutputDir,
   launchBrowser,
-  withBrowser,
   navigateTo,
-  dismissAllModals,
-  debugScreenshot,
+  withBrowser,
 } from './higgsfield-browser.mjs';
-
 import {
-  resolveOutputDir,
+  BASE_URL,
+  ensureDir,
+  GENERATED_IMAGE_SELECTOR,
+  getUnlimitedModelForCommand,
+  STATE_DIR,
+  safeJoin,
+  saveCreditCache,
+} from './higgsfield-common.mjs';
+import { generateImage } from './higgsfield-image.mjs';
+import {
   downloadLatestResult,
+  resolveOutputDir,
 } from './higgsfield-output.mjs';
 
 import {
-  saveCreditCache,
-} from './higgsfield-common.mjs';
-
-import { generateImage } from './higgsfield-image.mjs';
-
-import {
-  uploadFileToPage,
   fillPromptField,
   navigateAndDismiss,
   saveStateAndClose,
+  uploadFileToPage,
 } from './higgsfield-studio-commands.mjs';
 
 // ─── Misc Commands ────────────────────────────────────────────────────────────
@@ -271,7 +266,7 @@ export async function seedBracket(options = {}) {
   console.log(`\nReview the images in ${outputDir} and note the best seeds.`);
   console.log(`Then use --seed <number> with your chosen seed for consistent results.`);
 
-  const { writeFileSync } = await import('fs');
+  const { writeFileSync } = await import('node:fs');
   const manifest = {
     prompt, model,
     seeds: results.map(r => ({ seed: r.seed, success: r.success })),

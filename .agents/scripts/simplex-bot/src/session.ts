@@ -10,8 +10,8 @@
 
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
+import { resolve } from "node:path";
 
 /** Default data directory for bot state */
 const DEFAULT_DATA_DIR = resolve(
@@ -136,6 +136,7 @@ export class SessionStore {
       )
       .run(id, chatType, chatId, displayName);
 
+    // biome-ignore lint/style/noNonNullAssertion: row guaranteed to exist after INSERT
     return this.db
       .query<Session, [string]>("SELECT * FROM sessions WHERE id = ?")
       .get(id)!;

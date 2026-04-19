@@ -1,8 +1,8 @@
-import React from "react";
-import { AbsoluteFill, Sequence, useVideoConfig, OffthreadVideo, staticFile } from "remotion";
-import { TransitionSeries, linearTiming } from "@remotion/transitions";
-import { fade } from "@remotion/transitions/fade";
 import { Audio } from "@remotion/media";
+import { linearTiming, TransitionSeries } from "@remotion/transitions";
+import { fade } from "@remotion/transitions/fade";
+import type React from "react";
+import { AbsoluteFill, OffthreadVideo, Sequence, staticFile, useVideoConfig } from "remotion";
 import { CaptionOverlay } from "./CaptionOverlay";
 import type { BriefProps, CaptionEntry } from "./types";
 
@@ -17,9 +17,9 @@ function toVideoSrc(path: string): string {
 }
 
 export const FullVideo: React.FC<BriefProps> = ({
-  title,
+  title: _title,
   scenes,
-  aspect,
+  aspect: _aspect,
   captions,
   sceneVideos,
   transitionStyle = "fade",
@@ -51,6 +51,7 @@ export const FullVideo: React.FC<BriefProps> = ({
 
             const elements: React.ReactNode[] = [
               <TransitionSeries.Sequence
+                // biome-ignore lint/suspicious/noArrayIndexKey: scenes lack stable IDs
                 key={`scene-${i}`}
                 durationInFrames={sceneDurationFrames}
               >
@@ -75,6 +76,7 @@ export const FullVideo: React.FC<BriefProps> = ({
             if (i < sceneVideos.length - 1) {
               elements.push(
                 <TransitionSeries.Transition
+                  // biome-ignore lint/suspicious/noArrayIndexKey: scenes lack stable IDs
                   key={`transition-${i}`}
                   presentation={fade()}
                   timing={linearTiming({ durationInFrames: transitionDuration })}
@@ -110,6 +112,7 @@ export const FullVideo: React.FC<BriefProps> = ({
 
         return (
           <Sequence
+            // biome-ignore lint/suspicious/noArrayIndexKey: scenes lack stable IDs
             key={`scene-${i}`}
             from={from}
             durationInFrames={sceneDurationFrames}

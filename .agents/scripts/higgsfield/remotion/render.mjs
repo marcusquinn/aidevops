@@ -5,8 +5,8 @@
 //   node render.mjs --still --text "Title" --aspect 9:16 --output title.png
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync, copyFileSync, mkdirSync, realpathSync } from "node:fs";
-import { resolve, dirname, join, basename } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -43,7 +43,7 @@ function copyMusicToPublic(brief, briefPath, publicDir) {
   // Resolve symlinks to prevent symlink-based directory escapes
   const musicRealPath = realpathSync(musicAbsPath);
   const projectDir = resolve(__dirname, "..", "..");
-  if (!musicRealPath.startsWith(briefDir + "/") && !musicRealPath.startsWith(projectDir + "/")) {
+  if (!musicRealPath.startsWith(`${briefDir}/`) && !musicRealPath.startsWith(`${projectDir}/`)) {
     console.warn(
       `Warning: music path "${musicRealPath}" resolves outside the brief directory ` +
       `("${briefDir}") and project directory ("${projectDir}"), skipping for security`
