@@ -1990,3 +1990,43 @@ setup_repo_sync() {
 	fi
 	return 0
 }
+
+# Setup r914 repo-aidevops-health scheduler if not already installed.
+# Daily drift keeper for repos.json: bumps stale .aidevops.json versions
+# and surfaces missing-folder / no-init drift for human triage.
+# Respects config: aidevops config set orchestration.repo_aidevops_health false
+setup_repo_aidevops_health() {
+	local repo_health_script="$HOME/.aidevops/agents/scripts/repo-aidevops-health-helper.sh"
+	if ! [[ -x "$repo_health_script" ]] || ! is_feature_enabled repo_aidevops_health 2>/dev/null; then
+		return 0
+	fi
+
+	local _repo_health_installed=false
+	if _launchd_has_agent "sh.aidevops.repo-aidevops-health"; then
+		_repo_health_installed=true
+	elif crontab -l 2>/dev/null | grep -qF "aidevops-repo-aidevops-health"; then
+		_repo_health_installed=true
+	elif command -v systemctl >/dev/null 2>&1 &&
+		systemctl --user is-enabled "aidevops-repo-aidevops-health.timer" >/dev/null 2>&1; then
+		_repo_health_installed=true
+	fi
+	if [[ "$_repo_health_installed" == "false" ]]; then
+		if [[ "$NON_INTERACTIVE" == "true" ]]; then
+			bash "$repo_health_script" enable >/dev/null 2>&1 || true
+			print_info "r914 repo-aidevops-health enabled (daily @03:30). Disable: aidevops repo-aidevops-health disable"
+		else
+			echo ""
+			echo "r914 keeps \`.aidevops.json\` versions current across all registered"
+			echo "repos and surfaces registry drift (missing folders, unregistered git"
+			echo "repos) for human triage. Runs daily at 03:30."
+			echo ""
+			setup_prompt enable_repo_health "Enable daily r914 repo-aidevops-health? [Y/n]: " "Y"
+			if [[ "$enable_repo_health" =~ ^[Yy]?$ || -z "$enable_repo_health" ]]; then
+				bash "$repo_health_script" enable
+			else
+				print_info "Skipped. Enable later: aidevops repo-aidevops-health enable"
+			fi
+		fi
+	fi
+	return 0
+}

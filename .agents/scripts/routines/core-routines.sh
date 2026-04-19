@@ -29,6 +29,7 @@ r910|x|Skills sync — refresh agent skills|repeat:cron(*/5 * * * *)|~15s|bin/ai
 r911|x|OAuth token refresh|repeat:cron(*/30 * * * *)|~10s|scripts/oauth-pool-helper.sh refresh|script
 r912|x|Dashboard server|repeat:persistent|~0s|server/index.ts|service
 r913|x|Weekly opencode DB maintenance|repeat:weekly(sun@04:00)|~2m|scripts/opencode-db-maintenance-helper.sh auto|script
+r914|x|Repo aidevops health — bump stale .aidevops.json, detect drift|repeat:daily(@03:30)|~2m|scripts/repo-aidevops-health-helper.sh run|script
 ENTRIES
 	return 0
 }
@@ -742,6 +743,71 @@ $(_diag_commands "$os" "sh.aidevops.opencode-db-maintenance" "sh.aidevops.openco
 - anomalyco/opencode #21000 — Bash tool hangs on massive output, locks DB
 - anomalyco/opencode #20935 — Per-session-tree sharding (architectural fix)
 - anomalyco/opencode #21579 — Harden per-session SQLite sharding (PR)
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
+describe_r914() {
+	local os="${1:-darwin}"
+	cat <<EOF
+# r914: Repo aidevops health keeper
+
+## Overview
+
+Daily drift-keeper for the \`~/.config/aidevops/repos.json\` registry.
+
+Three drift classes are silent by default — they only surface when someone
+audits by hand. r914 closes that gap:
+
+1. **Stale-version bump** (autonomous, safe). Repos whose \`.aidevops.json\`
+   is older than the currently-installed framework get a one-commit version
+   bump on their default branch.
+2. **Missing-folder detection** (human-gated). Registry entries pointing at
+   deleted folders are surfaced as \`needs-maintainer-review\` issues for
+   re-clone / removal / archival.
+3. **No-init detection** (human-gated). Git repos in \`git_parent_dirs[]\`
+   that are not in \`initialized_repos[]\` and have no \`.aidevops.json\`
+   or \`.aidevops-skip\` marker are surfaced the same way.
+
+## Schedule
+
+| Field | Value |
+|-------|-------|
+| Frequency | Daily at 03:30 |
+| Type | script |
+| Expected duration | ~2 minutes (depends on repo count) |
+| Script | \`scripts/repo-aidevops-health-helper.sh run\` |
+$(_scheduler_row_calendar "$os" "StartCalendarInterval: Hour=3, Minute=30" "sh.aidevops.repo-aidevops-health" "sh.aidevops.repo-aidevops-health")
+
+## What it does
+
+1. Reads \`~/.config/aidevops/repos.json\` and the current framework \`VERSION\`.
+2. For each \`initialized_repos[]\` entry whose path exists and \`.aidevops.json\`
+   is older than the installed framework: rewrite with \`jq\`, commit on the
+   default branch with message \`chore: bump .aidevops.json to v<new> (r914)\`,
+   push (skipped when \`local_only: true\`).
+3. For each entry whose path is missing and not \`archived: true\`: flag for
+   human triage (MVP logs only; issue filing in follow-up).
+4. For each untracked git repo in \`git_parent_dirs[]\` without a
+   \`.aidevops-skip\` marker or \`.aidevops.json\`: flag for human triage.
+
+## Safety rails
+
+- Skips any repo with uncommitted changes (\`git status --porcelain\`).
+- Skips repos not on their default branch (no branch-switching).
+- Atomic \`jq\` rewrite with \`mktemp\` + \`mv\` — never edits JSON with \`sed\`.
+- Dry-run mode via \`AIDEVOPS_REPO_HEALTH_DRY_RUN=1\` (detect-only).
+- Disable via \`aidevops config set orchestration.repo_aidevops_health false\`
+  or \`AIDEVOPS_REPO_HEALTH=false\` in the environment.
+
+## What to check
+
+$(_diag_commands "$os" "sh.aidevops.repo-aidevops-health" "sh.aidevops.repo-aidevops-health")
+- \`~/.aidevops/logs/repo-aidevops-health.log\` — per-run detections and commits.
+- \`~/.aidevops/cache/repo-aidevops-health-state.json\` — last run summary.
+- \`.aidevops/agents/VERSION\` — current framework version (bump target).
+- Drift issues on \`marcusquinn/aidevops\` labelled \`repos-drift\` or \`no-init\`.
 $(_platform_footnote "$os")
 EOF
 	return 0
