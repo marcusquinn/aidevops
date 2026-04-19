@@ -124,6 +124,38 @@ validate_duplicate_task_ids() {
 	return 0
 }
 
+# Validate that a staged .task-counter is not regressing compared to HEAD.
+#
+# Scenarios:
+#   - .task-counter not staged        -> skip (pass)
+#   - Staged value == HEAD value      -> pass (no-op / merge)
+#   - Staged value >  HEAD value      -> pass (new claim)
+#   - Staged value <  HEAD value      -> FAIL (stale worktree regression)
+#   - Non-numeric in either           -> skip (first-commit or legacy)
+validate_task_counter_monotonic() {
+	if ! git diff --cached --name-only | grep -q '^\.task-counter$'; then
+		return 0
+	fi
+
+	local staged_value head_value
+	staged_value=$(git show :.task-counter 2>/dev/null | tr -d '[:space:]')
+	head_value=$(git show HEAD:.task-counter 2>/dev/null | tr -d '[:space:]')
+
+	[[ "$staged_value" =~ ^[0-9]+$ ]] || return 0
+	[[ "$head_value" =~ ^[0-9]+$ ]] || return 0
+
+	if (( staged_value < head_value )); then
+		print_error ".task-counter regression detected:"
+		print_error "  HEAD value:   $head_value"
+		print_error "  Staged value: $staged_value"
+		print_error ""
+		print_error "This is almost always a stale worktree overwriting main's counter."
+		print_error "Fix: git checkout origin/main -- .task-counter"
+		return 1
+	fi
+	return 0
+}
+
 validate_return_statements() {
 	local violations=0
 
@@ -783,6 +815,12 @@ main_pre_commit() {
 	# Always run TODO.md validation (even if no shell files changed)
 	validate_duplicate_task_ids || {
 		print_error "Commit rejected: duplicate task IDs"
+		exit 1
+	}
+	echo ""
+
+	validate_task_counter_monotonic || {
+		print_error "Commit rejected: .task-counter regression"
 		exit 1
 	}
 	echo ""
