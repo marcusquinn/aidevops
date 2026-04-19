@@ -86,6 +86,7 @@ for the classified tier. Load on demand — do not inline the format rules.
 - `templates/brief-template.md` — Full task brief template (for `/define`, `/new-task`)
 - `templates/escalation-report-template.md` — Failure report format for cascade dispatch
 - `reference/task-taxonomy.md` — Tier definitions, cascade model, escalation reasons
+- `reference/large-file-split.md` — Playbook for shell library splits (scanner-filed issues, PR body template)
 - `tools/build-agent/build-agent.md` — "Designing tier-aware output" section
 - `tools/code-review/code-simplifier.md` — Primary consumer for simplification issues
 - `prompts/build.txt` — Traceability rules, signature footer, PR title format

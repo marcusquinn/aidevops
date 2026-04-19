@@ -246,6 +246,8 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Task-ID collision guard (t2047):** t-IDs in commit subjects MUST be claimed via `claim-task-id.sh`. The commit-msg hook (`install-task-id-guard.sh install`) enforces this client-side; the CI check (`.github/workflows/task-id-collision-check.yml`) enforces it server-side for commits authored outside the hook.
 
+**Large-file splits (t2368):** When splitting a shell library into sub-libraries (responding to `file-size-debt`, `function-complexity`, or `nesting-depth` scanner issues), read `reference/large-file-split.md` first. It covers the canonical orchestrator + sub-library pattern, identity-key preservation rules, known CI false-positive classes, pre-commit hook gotchas, and a complete PR body template. A worker reading only this doc + the scanner-filed issue body can complete a split PR end-to-end without re-discovering any lesson.
+
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 
 ---
