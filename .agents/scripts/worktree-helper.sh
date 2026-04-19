@@ -14,7 +14,7 @@
 #   worktree-helper.sh <command> [options]
 #
 # Commands:
-#   add <branch> [path]    Create worktree for branch (auto-names path)
+#   add <branch> [path] [--issue NNN]  Create worktree for branch (auto-names path)
 #   list                   List all worktrees with status
 #   remove <path|branch>   Remove a worktree
 #   status                 Show current worktree info
@@ -552,21 +552,26 @@ _remove_show_owner_error() {
 # issue while the interactive session owns it.
 #
 # Branch name patterns accepted:
-#   <prefix>/gh<NNN>-<rest>     e.g., bugfix/gh18700-foo
-#   <prefix>/t<NNN>-<rest>      e.g., feature/t2057-phase2-wire
-#   <prefix>/gh<NNN>_<rest>     (underscore separator)
+#   <prefix>/gh<NNN>-<rest>       e.g., bugfix/gh18700-foo
+#   <prefix>/t<NNN>-<rest>        e.g., feature/t2057-phase2-wire
+#   <prefix>/gh<NNN>_<rest>       (underscore separator)
 #   <prefix>/t<NNN>_<rest>
+#   <prefix>/auto-*-gh<NNN>       e.g., feature/auto-20260419-061301-gh19803
 #
-# Note: t<NNN> references a task ID and its linked GitHub issue may differ
-# from NNN. When the branch encodes only a t-ID, we resolve the linked issue
-# number via todo/tasks/<taskid>-brief.md ref:GH#NNN when possible; otherwise
-# the claim is skipped (the task-id path doesn't map to a GH issue reliably).
-# The gh<NNN> path is unambiguous.
+# Issue resolution priority (t2260):
+#   1. Explicit --issue NNN arg (highest precedence, unambiguous)
+#   2. gh<NNN> from branch name (unambiguous)
+#   3. t<NNN> from branch name → ref:GH#NNN in TODO.md entry (structured field)
+#
+# t2260: brief-body scanning REMOVED — greedy #NNN regex on free-form text
+# grabbed historical issue references (e.g. #15114 in a Context section)
+# instead of the task's intended issue. Only structured sources are used now.
 #
 # All failure modes are non-blocking — worktree creation proceeds regardless.
 _interactive_session_auto_claim() {
 	local branch="$1"
 	local worktree_path="$2"
+	local explicit_issue="${3:-}"  # t2260: --issue NNN takes highest precedence
 
 	# Only engage for interactive sessions — workers handle their own
 	# claim flow via dispatch-dedup-helper.sh at dispatch time.
@@ -578,23 +583,41 @@ _interactive_session_auto_claim() {
 		return 0
 	fi
 
-	# Parse issue number from branch. Accept gh<N> unambiguously; skip
-	# t<N>-only branches for now (ambiguous without the todo/tasks lookup).
 	local issue_num=""
-	if [[ "$branch" =~ /gh([0-9]+)[-_] ]]; then
-		issue_num="${BASH_REMATCH[1]}"
+
+	# t2260: Priority 1 — explicit --issue arg (unambiguous, highest precedence)
+	if [[ -n "$explicit_issue" ]]; then
+		issue_num="$explicit_issue"
 	fi
+
+	# Priority 2 — gh<NNN> from branch name (unambiguous)
 	if [[ -z "$issue_num" ]]; then
-		# t<N> branch — attempt to resolve the linked issue from the brief file
+		if [[ "$branch" =~ /gh([0-9]+)[-_] ]]; then
+			issue_num="${BASH_REMATCH[1]}"
+		# t2260: also match auto-dispatch branch pattern: auto-*-gh<NNN>
+		elif [[ "$branch" =~ -gh([0-9]+)$ ]]; then
+			issue_num="${BASH_REMATCH[1]}"
+		fi
+	fi
+
+	# Priority 3 — t<NNN> from branch → structured ref:GH#NNN in TODO.md
+	# t2260: ONLY reads the structured ref:GH#NNN field from the task's own
+	# TODO.md line. Does NOT scan brief bodies (too weak — free-form text
+	# contains historical issue references that produce false matches).
+	if [[ -z "$issue_num" ]]; then
 		local task_id=""
 		if [[ "$branch" =~ /(t[0-9]+)[-_] ]]; then
 			task_id="${BASH_REMATCH[1]}"
 		fi
 		if [[ -n "$task_id" ]]; then
-			local brief_file
-			brief_file=$(git rev-parse --show-toplevel 2>/dev/null)/todo/tasks/"${task_id}"-brief.md
-			if [[ -f "$brief_file" ]]; then
-				issue_num=$(grep -oE 'GH#[0-9]+|#[0-9]+' "$brief_file" | grep -oE '[0-9]+' | head -1 || true)
+			local repo_root=""
+			repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+			if [[ -n "$repo_root" && -f "$repo_root/TODO.md" ]]; then
+				# Match ONLY the structured ref:GH#NNN field on the task's TODO line
+				issue_num=$(grep -E "^- \[.\] ${task_id}\b" "$repo_root/TODO.md" \
+					| grep -oE 'ref:GH#[0-9]+' \
+					| grep -oE '[0-9]+' \
+					| head -1 || true)
 			fi
 		fi
 	fi
@@ -604,7 +627,7 @@ _interactive_session_auto_claim() {
 	fi
 
 	# Resolve the repo slug from the git remote
-	local slug
+	local slug=""
 	slug=$(git -C "$worktree_path" remote get-url origin 2>/dev/null |
 		sed 's|.*github\.com[:/]||;s|\.git$||' || echo "")
 	if [[ -z "$slug" ]]; then
@@ -676,15 +699,58 @@ _print_worktree_add_success() {
 	return 0
 }
 
-cmd_add() {
-	local branch="${1:-}"
-	local path="${2:-}"
-
-	if [[ -z "$branch" ]]; then
+# Parse cmd_add arguments: positional (branch, path) + optional --issue NNN.
+# Sets global _ADD_BRANCH, _ADD_PATH, _ADD_ISSUE. Returns 1 on parse error.
+# Extracted from cmd_add (t2260) to keep function bodies under 100 lines.
+_parse_cmd_add_args() {
+	_ADD_BRANCH=""
+	_ADD_PATH=""
+	_ADD_ISSUE=""
+	local _arg=""
+	while [[ $# -gt 0 ]]; do
+		_arg="$1"
+		case "$_arg" in
+			--issue)
+				local _next="${2:-}"
+				if [[ -z "$_next" ]]; then
+					echo -e "${RED}Error: --issue requires a number${NC}"
+					return 1
+				fi
+				_ADD_ISSUE="$_next"
+				shift 2
+				;;
+			--issue=*)
+				_ADD_ISSUE="${_arg#--issue=}"
+				shift
+				;;
+			-*)
+				echo -e "${RED}Error: Unknown option: $_arg${NC}"
+				echo "Usage: worktree-helper.sh add <branch> [path] [--issue NNN]"
+				return 1
+				;;
+			*)
+				if [[ -z "$_ADD_BRANCH" ]]; then
+					_ADD_BRANCH="$_arg"
+				elif [[ -z "$_ADD_PATH" ]]; then
+					_ADD_PATH="$_arg"
+				fi
+				shift
+				;;
+		esac
+	done
+	if [[ -z "$_ADD_BRANCH" ]]; then
 		echo -e "${RED}Error: Branch name required${NC}"
-		echo "Usage: worktree-helper.sh add <branch> [path]"
+		echo "Usage: worktree-helper.sh add <branch> [path] [--issue NNN]"
 		return 1
 	fi
+	return 0
+}
+
+cmd_add() {
+	_parse_cmd_add_args "$@" || return 1
+	local branch="$_ADD_BRANCH"
+	local path="$_ADD_PATH"
+	local explicit_issue="$_ADD_ISSUE"  # t2260: --issue NNN for unambiguous claim
 
 	# t2235: Detect self-invented task ID variants (e.g. t2213b, t2213-2, t2213.fix)
 	# Task IDs come ONLY from claim-task-id.sh. For follow-ups, claim a fresh ID.
@@ -756,7 +822,8 @@ cmd_add() {
 	# contract in prompts/build.txt covers the fallback path. Guard on
 	# helper presence so the worktree create works even before Phase 1
 	# has been deployed to the running environment.
-	_interactive_session_auto_claim "$branch" "$path" || true
+	# t2260: pass explicit --issue arg if provided for unambiguous claim.
+	_interactive_session_auto_claim "$branch" "$path" "$explicit_issue" || true
 
 	_print_worktree_add_success "$path" "$branch"
 
@@ -1595,8 +1662,10 @@ OVERVIEW
   - Quick context switching without stashing
 
 COMMANDS
-  add <branch> [path]    Create worktree for branch
+  add <branch> [path] [--issue NNN]
+                         Create worktree for branch
                          Path auto-generated as ~/Git/{repo}-{branch-slug}
+                         --issue NNN: explicit issue number for auto-claim (t2260)
 
   list                   List all worktrees with status
 
