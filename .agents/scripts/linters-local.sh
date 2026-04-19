@@ -597,14 +597,14 @@ check_shellcheckrc_parity() {
 	fi
 
 	local root_disables scripts_disables
-	root_disables=$(grep -E '^disable=SC[0-9]+' "$root_rc" | sort)
-	scripts_disables=$(grep -E '^disable=SC[0-9]+' "$scripts_rc" | sort)
+	root_disables=$(grep -E '^disable=SC[0-9]+' "$root_rc" | sort || true)
+	scripts_disables=$(grep -E '^disable=SC[0-9]+' "$scripts_rc" | sort || true)
 
 	local missing=""
 	local code
 	while IFS= read -r code; do
 		[[ -z "$code" ]] && continue
-		if ! grep -qF "$code" <<<"$scripts_disables"; then
+		if ! grep -qxF "$code" <<<"$scripts_disables"; then
 			missing="${missing}  ${code}\n"
 		fi
 	done <<<"$root_disables"

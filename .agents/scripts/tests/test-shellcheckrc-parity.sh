@@ -93,7 +93,7 @@ check_parity() {
 	local code
 	while IFS= read -r code; do
 		[[ -z "$code" ]] && continue
-		if ! grep -qF "$code" <<<"$scripts_disables"; then
+		if ! grep -qxF "$code" <<<"$scripts_disables"; then
 			missing="${missing}${code}
 "
 		fi
