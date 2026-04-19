@@ -150,7 +150,7 @@ Every `elif` chain inflates the counter permanently.
 simplification issues may self-apply the `complexity-bump-ok` label. The
 `.github/workflows/complexity-bump-justification-check.yml` workflow triggers
 on the `labeled` event and validates that the PR body contains the required
-justification section with a `file:line` reference and a numeric measurement.
+justification section with at least one `file:line` reference and a numeric measurement.
 If validation fails, the workflow removes the label and posts a remediation
 comment explaining what is missing. The label only sticks when the
 justification is complete -- no maintainer intervention required for
