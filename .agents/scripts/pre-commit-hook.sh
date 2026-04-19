@@ -599,7 +599,12 @@ validate_repo_root_files() {
 	return 0
 }
 
-main() {
+# --- Split hook entry points (t2207) ---
+# pre-commit: fast local checks only (target <5s)
+# pre-push:   slower network-dependent checks (secretlint, SonarCloud, CodeRabbit)
+# Single script, mode selected by HOOK_MODE env var or $(basename "$0").
+
+main_pre_commit() {
 	echo -e "${BLUE}Pre-commit Quality Validation${NC}"
 	echo -e "${BLUE}================================${NC}"
 
@@ -632,7 +637,8 @@ main() {
 	done < <(get_modified_shell_files)
 
 	if [[ ${#modified_files[@]} -eq 0 ]]; then
-		print_info "No shell files modified, skipping quality checks"
+		print_info "No shell files modified, skipping shell quality checks"
+		print_success "Pre-commit checks passed."
 		return 0
 	fi
 
@@ -642,7 +648,7 @@ main() {
 
 	local total_violations=0
 
-	# Run validation checks
+	# Run local validation checks (fast — no network calls)
 	validate_return_statements "${modified_files[@]}" || ((total_violations += $?))
 	echo ""
 
@@ -655,29 +661,12 @@ main() {
 	run_shellcheck "${modified_files[@]}" || ((total_violations += $?))
 	echo ""
 
-	check_secrets || ((total_violations += $?))
-	echo ""
-
-	check_quality_standards
-	echo ""
-
-	# Optional CodeRabbit CLI review (if available)
-	if [[ -f ".agents/scripts/coderabbit-cli.sh" ]] && command -v coderabbit &>/dev/null; then
-		print_info "🤖 Running CodeRabbit CLI review..."
-		if bash .agents/scripts/coderabbit-cli.sh review >/dev/null 2>&1; then
-			print_success "CodeRabbit CLI review completed"
-		else
-			print_info "CodeRabbit CLI review skipped (setup required)"
-		fi
-		echo ""
-	fi
-
 	# Final decision
 	if [[ $total_violations -eq 0 ]]; then
-		print_success "🎉 All quality checks passed! Commit approved."
+		print_success "Pre-commit checks passed."
 		return 0
 	else
-		print_error "❌ Quality violations detected ($total_violations total)"
+		print_error "Quality violations detected ($total_violations total)"
 		echo ""
 		print_info "To fix issues automatically, run:"
 		print_info "  ./.agents/scripts/quality-fix.sh"
@@ -690,6 +679,63 @@ main() {
 
 		return 1
 	fi
+}
+
+main_pre_push() {
+	echo -e "${BLUE}Pre-push Quality Validation${NC}"
+	echo -e "${BLUE}================================${NC}"
+
+	local total_violations=0
+
+	check_secrets || ((total_violations += $?))
+	echo ""
+
+	check_quality_standards
+	echo ""
+
+	# Optional CodeRabbit CLI review (if available)
+	if [[ -f ".agents/scripts/coderabbit-cli.sh" ]] && command -v coderabbit &>/dev/null; then
+		print_info "Running CodeRabbit CLI review..."
+		if bash .agents/scripts/coderabbit-cli.sh review >/dev/null 2>&1; then
+			print_success "CodeRabbit CLI review completed"
+		else
+			print_info "CodeRabbit CLI review skipped (setup required)"
+		fi
+		echo ""
+	fi
+
+	# Final decision
+	if [[ $total_violations -eq 0 ]]; then
+		print_success "Pre-push checks passed."
+		return 0
+	else
+		print_error "Quality violations detected ($total_violations total)"
+		echo ""
+		print_info "To bypass this check (not recommended), use:"
+		print_info "  git push --no-verify"
+
+		return 1
+	fi
+}
+
+main() {
+	local mode="${HOOK_MODE:-}"
+	if [[ -z "$mode" ]]; then
+		case "$(basename "$0")" in
+		pre-commit) mode="pre-commit" ;;
+		pre-push) mode="pre-push" ;;
+		*) mode="pre-commit" ;; # default for direct CLI invocation
+		esac
+	fi
+	case "$mode" in
+	pre-commit) main_pre_commit "$@" ;;
+	pre-push) main_pre_push "$@" ;;
+	all) main_pre_commit "$@" && main_pre_push "$@" ;;
+	*)
+		print_error "Unknown HOOK_MODE: $mode"
+		return 1
+		;;
+	esac
 }
 
 main "$@"
