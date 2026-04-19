@@ -7,10 +7,11 @@
 # Installs Claude Code PreToolUse hooks to block destructive git/filesystem commands
 #
 # Usage:
-#   install-hooks-helper.sh install   # Install hooks (default)
-#   install-hooks-helper.sh uninstall # Remove hooks
-#   install-hooks-helper.sh status    # Check installation status
-#   install-hooks-helper.sh test      # Run hook self-test
+#   install-hooks-helper.sh install              # Install hooks (default)
+#   install-hooks-helper.sh install --force-install  # Install, bypass validator preflight
+#   install-hooks-helper.sh uninstall            # Remove hooks
+#   install-hooks-helper.sh status               # Check installation status
+#   install-hooks-helper.sh test                 # Run hook self-test
 #
 # Installs to:
 #   ~/.aidevops/hooks/git_safety_guard.py  (hook script)
@@ -349,7 +350,114 @@ HOOKEOF
 	return 0
 }
 
+# --- Pre-install validator dry-run (t2226) ---
+# Runs all validate_* functions from pre-commit-hook.sh against HEAD state.
+# If any validator fails a no-op commit, the hook is buggy and would strand
+# the repo — abort before installing.
+
+_dry_run_validators() {
+	local hook_source="$1"
+	local force_install="${2:-false}"
+
+	print_info "Running pre-install validator dry-run against HEAD..."
+
+	# Find the pre-commit-hook.sh source
+	local pch_source
+	pch_source=$(_find_pre_commit_hook) || {
+		print_warning "pre-commit-hook.sh not found — skipping validator preflight"
+		return 0
+	}
+
+	# Enumerate validator functions from the hook source
+	local validators=()
+	while IFS= read -r fn; do
+		[[ -n "$fn" ]] && validators+=("$fn")
+	done < <(grep -oE 'validate_[a-z_]+\(\)' "$pch_source" | sed 's/()//' | sort -u)
+
+	if [[ ${#validators[@]} -eq 0 ]]; then
+		print_warning "No validate_* functions found in $pch_source — skipping preflight"
+		return 0
+	fi
+
+	print_info "Found ${#validators[@]} validators: ${validators[*]}"
+
+	# Gather a representative sample of tracked .sh files for file-arg validators.
+	# Use git ls-files from the repo root for consistent paths.
+	local repo_root
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root="."
+	local shell_files=()
+	while IFS= read -r f; do
+		[[ -n "$f" ]] && shell_files+=("$f")
+	done < <(git -C "$repo_root" ls-files '*.sh' 2>/dev/null | head -20)
+
+	# Validators that accept file arguments (iterate over "$@" internally).
+	# All others are no-arg (check staged state, which is empty for dry-run → pass).
+	local file_arg_validators="validate_return_statements validate_positional_parameters validate_string_literals"
+
+	local failed_validators=()
+
+	for validator in "${validators[@]}"; do
+		local exit_code=0
+		# Run each validator in a subshell that sources the hook but skips main()
+		if [[ " $file_arg_validators " == *" $validator "* ]]; then
+			# File-arg validator: pass tracked shell files
+			if [[ ${#shell_files[@]} -gt 0 ]]; then
+				(
+					# Source everything except the final main "$@" call
+					# shellcheck disable=SC1090
+					eval "$(sed '$ { /^main "\$@"$/d; }' "$pch_source")"
+					"$validator" "${shell_files[@]}"
+				) >/dev/null 2>&1 || exit_code=$?
+			fi
+		else
+			# No-arg validator: call directly (nothing staged → trivial pass)
+			(
+				# shellcheck disable=SC1090
+				eval "$(sed '$ { /^main "\$@"$/d; }' "$pch_source")"
+				"$validator"
+			) >/dev/null 2>&1 || exit_code=$?
+		fi
+
+		if [[ $exit_code -ne 0 ]]; then
+			failed_validators+=("$validator")
+			print_error "  FAIL: $validator (exit $exit_code)"
+		else
+			print_success "  PASS: $validator"
+		fi
+	done
+
+	if [[ ${#failed_validators[@]} -gt 0 ]]; then
+		echo ""
+		if [[ "$force_install" == "true" ]]; then
+			print_warning "Bypassing validator preflight (--force-install)."
+			print_warning "Failing validators: ${failed_validators[*]}"
+			print_warning "The installed hook may reject commits until these are fixed."
+			return 0
+		fi
+		print_error "Validator preflight failed — ${#failed_validators[@]} validator(s) fail against current HEAD:"
+		for v in "${failed_validators[@]}"; do
+			print_error "  - $v"
+		done
+		echo ""
+		print_error "Installing the hook would strand this repo (commits rejected until fixed)."
+		print_info "Fix the validator(s) first, or re-run with --force-install to bypass:"
+		print_info "  install-hooks-helper.sh install --force-install"
+		return 1
+	fi
+
+	print_success "All ${#validators[@]} validators pass against HEAD — safe to install"
+	return 0
+}
+
 install_hook() {
+	local force_install="false"
+	local arg
+	for arg in "$@"; do
+		case "$arg" in
+		--force-install) force_install="true" ;;
+		esac
+	done
+
 	print_info "Installing Claude Code safety hooks..."
 
 	# Check Python is available
@@ -363,6 +471,9 @@ install_hook() {
 	source_hook=$(find_source_hook) || return 1
 	local source_post_hook
 	source_post_hook=$(find_source_hook "mcp_task_post_hook.py") || return 1
+
+	# Pre-install validator dry-run (t2226): abort if validators fail HEAD state
+	_dry_run_validators "$source_hook" "$force_install" || return 1
 
 	# Create hooks directory
 	mkdir -p "$HOOKS_DIR"
@@ -834,11 +945,12 @@ show_help() {
 	echo "Usage: install-hooks-helper.sh [command]"
 	echo ""
 	echo "Commands:"
-	echo "  install     Install safety hooks (default)"
-	echo "  uninstall   Remove safety hooks"
-	echo "  status      Check installation status"
-	echo "  test        Run hook self-test"
-	echo "  help        Show this help"
+	echo "  install               Install safety hooks (default)"
+	echo "  install --force-install  Bypass validator preflight check"
+	echo "  uninstall             Remove safety hooks"
+	echo "  status                Check installation status"
+	echo "  test                  Run hook self-test"
+	echo "  help                  Show this help"
 	echo ""
 	echo "Installs to:"
 	echo "  ~/.aidevops/hooks/git_safety_guard.py"
@@ -850,8 +962,9 @@ show_help() {
 
 # Main
 cmd="${1:-install}"
+shift || true
 case "$cmd" in
-install) install_hook ;;
+install) install_hook "$@" ;;
 uninstall) uninstall_hook ;;
 status) check_status ;;
 test) test_hook ;;
