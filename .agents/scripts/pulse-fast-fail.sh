@@ -26,6 +26,8 @@
 #   - _fast_fail_record_locked
 #   - fast_fail_reset
 #   - _fast_fail_reset_locked
+#   - fast_fail_age_out       (t2397 — age-based auto-recovery for HARD STOP'd issues)
+#   - _fast_fail_age_out_locked
 #   - fast_fail_is_skipped
 #   - fast_fail_prune_expired
 #   - _fast_fail_prune_expired_locked
@@ -442,6 +444,93 @@ _fast_fail_reset_locked() {
 	updated_state=$(printf '%s' "$state" | jq --arg k "$key" 'del(.[$k])' 2>/dev/null) || return 0
 	_ff_save "$updated_state"
 	echo "[pulse-wrapper] fast_fail_reset: #${issue_number} (${repo_slug}) counter cleared" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Auto-reset the fast-fail counter when an issue has been HARD STOP'd for
+# longer than FAST_FAIL_AGE_OUT_SECONDS with no new failures (quiet period).
+# Called BEFORE fast_fail_is_skipped in the dispatch loop so permanently-stuck
+# issues auto-recover once the transient root cause is resolved upstream.
+#
+# Only acts on issues at or above FAST_FAIL_AGE_OUT_MIN_COUNT (same as the
+# HARD STOP threshold). Issues below the threshold are dispatching normally
+# under backoff and should not be interfered with.
+#
+# Safety ceiling (t2397): after FAST_FAIL_AGE_OUT_MAX_RESETS consecutive
+# auto-resets without a successful dispatch, applies needs-maintainer-review
+# to prevent infinite token burn on genuinely broken issues.
+#
+# Arguments: $1 issue_number, $2 repo_slug
+#######################################
+fast_fail_age_out() {
+	_ff_with_lock _fast_fail_age_out_locked "$@" || return 0
+	return 0
+}
+
+_fast_fail_age_out_locked() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+
+	local key now state
+	key=$(_ff_key "$issue_number" "$repo_slug")
+	now=$(date +%s)
+	state=$(_ff_load)
+
+	local existing_ts existing_count existing_reset_count
+	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
+	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
+	existing_reset_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].reset_count // 0' 2>/dev/null) || existing_reset_count=0
+	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
+	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
+	[[ "$existing_reset_count" =~ ^[0-9]+$ ]] || existing_reset_count=0
+
+	# Only age-out issues at or above the HARD STOP threshold.
+	local min_count="${FAST_FAIL_AGE_OUT_MIN_COUNT:-${FAST_FAIL_SKIP_THRESHOLD:-5}}"
+	if [[ "$existing_count" -lt "$min_count" ]]; then
+		return 0
+	fi
+
+	# Quiet-period check: last failure must be >= AGE_OUT_SECONDS ago.
+	local age_out_secs="${FAST_FAIL_AGE_OUT_SECONDS:-86400}"
+	local age
+	age=$((now - existing_ts))
+	if [[ "$age" -lt "$age_out_secs" ]]; then
+		return 0
+	fi
+
+	local hours
+	hours=$((age / 3600))
+	local new_reset_count
+	new_reset_count=$((existing_reset_count + 1))
+	local max_resets="${FAST_FAIL_AGE_OUT_MAX_RESETS:-3}"
+
+	# Safety ceiling: after max_resets consecutive auto-resets, escalate to maintainer.
+	if [[ "$new_reset_count" -gt "$max_resets" ]]; then
+		echo "[pulse-wrapper] fast_fail_age_out: #${issue_number} (${repo_slug}) exceeded ${max_resets} auto-resets without success — applying needs-maintainer-review" >>"$LOGFILE"
+		gh issue edit "$issue_number" --repo "$repo_slug" --add-label "needs-maintainer-review" >>"$LOGFILE" 2>&1 || true
+		return 0
+	fi
+
+	# Reset counter: count=0, retry_after=0, record reset metadata for audit.
+	local updated_state
+	updated_state=$(printf '%s' "$state" | jq \
+		--arg k "$key" \
+		--argjson ts "$now" \
+		--argjson rcount "$new_reset_count" \
+		'.[$k].count = 0 | .[$k].retry_after = 0 | .[$k].last_reset_ts = $ts | .[$k].reset_count = $rcount' \
+		2>/dev/null) || return 0
+	_ff_save "$updated_state"
+	echo "[pulse-wrapper] fast_fail_age_out: reset #${issue_number} (${repo_slug}) count from ${existing_count} to 0 (last failure ${hours}h ago, auto-reset #${new_reset_count}/${max_resets})" >>"$LOGFILE"
+
+	# Post an issue comment so operators see when auto-recovery fires.
+	local comment_body
+	comment_body=$(printf '<!-- fast-fail-age-out:%s -->\nFast-fail counter auto-reset after %sh quiet period (auto-reset #%s of max %s); pulse will retry dispatch.' \
+		"$new_reset_count" "$hours" "$new_reset_count" "$max_resets")
+	gh issue comment "$issue_number" --repo "$repo_slug" --body "$comment_body" >>"$LOGFILE" 2>&1 || true
 	return 0
 }
 
