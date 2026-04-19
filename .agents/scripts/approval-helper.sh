@@ -23,6 +23,18 @@
 
 set -euo pipefail
 
+# Source shared-constants for gh_issue_comment / gh_pr_comment wrappers (t2393).
+# PR #19953 replaced raw `gh issue comment` / `gh pr comment` calls with these
+# wrappers to auto-append the t2393 signature footer, but this helper was
+# missed in the sourcing sweep (t2408 / GH#19997). Under `sudo aidevops
+# approve issue|pr`, the unbound wrappers produced `command not found` and
+# blocked every approval. Conditional `[[ -f ]] && source` mirrors the
+# circuit-breaker-helper.sh:29-32 pattern: fail-open if the shared file is
+# missing on a partial install rather than hard-crashing the approval flow.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=shared-constants.sh
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+
 # Resolve the real user's home directory, handling sudo env_reset on Linux.
 # Under sudo on Linux, HOME is reset to /root/ by env_reset; SUDO_USER holds
 # the original username. getent passwd is the canonical resolver on Linux.
