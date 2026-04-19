@@ -25,8 +25,9 @@
 #   bash32-compat        — bash 4+ constructs in .sh files that break on macOS 3.2.
 #                          Patterns: \t/\n escapes, associative arrays, namerefs,
 #                          heredoc-inside-$().
-#                          Key: (file, '<pattern>:<line>'); value: 1.
-#                          (t2171)
+#                          Key: (file, '<pattern>'); value: count per (file, pattern).
+#                          (t2171; keying fixed in t2248 — was line-keyed, caused
+#                          spurious regressions on line-shift edits.)
 #
 # Subcommands:
 #   scan  <dir> [--output <file>] [--metric <name>]
@@ -298,8 +299,10 @@ scan_dir_file_size() {
 #   - nameref:             declare/local -n
 #   - heredoc-in-subshell: $(cat <<...)
 #
-# Output: <file>\t<pattern>:<line>\t1  (one row per match).
-# Identity key: (file, '<pattern>:<line>'). (t2171)
+# Output: <file>\t<pattern>\t<count>  (one row per unique file+pattern).
+# Identity key: (file, '<pattern>'). Count is the number of matches per
+# (file, pattern) — robust to line shifts, unlike the original line-keyed
+# format (t2171 → t2248).
 #
 # Self-skip: linters-local.sh grep patterns contain the forbidden strings
 # as search targets, not as bash code. This helper's own regex literals are
@@ -322,7 +325,7 @@ scan_dir_bash32_compat() {
 	local _result_file
 	_result_file=$(_open_result_file "$_out")
 
-	local _file _rel_file _basename _matches _line_num
+	local _file _rel_file _basename _matches _count
 	# Files whose source contains the forbidden-construct strings as search
 	# targets or regex literals, not as executable code.
 	local _self_skip_patterns="linters-local.sh complexity-regression-helper.sh complexity-scan-helper.sh"
@@ -336,47 +339,41 @@ scan_dir_bash32_compat() {
 		_rel_file="${_file#"${_dir}/"}"
 
 		# Pattern 1: \t / \n in += or = assignments (excluding comments + contextual words)
-		_matches=$(grep -nE '\+="\\[tn]|="\\[tn]' "$_file" 2>/dev/null |
+		_matches=$(grep -cE '\+="\\[tn]|="\\[tn]' "$_file" 2>/dev/null || true)
+		# Subtract comment lines and contextual false positives from the raw count.
+		# Re-run with line filtering to get the accurate count.
+		_count=$(grep -nE '\+="\\[tn]|="\\[tn]' "$_file" 2>/dev/null |
 			grep -vE '^[0-9]+:[[:space:]]*#' |
-			grep -vE 'awk|sed|printf|echo.*-e|python|f\.write|gsub|join|split|print |replace|coords|excerpt|delimiter|regex|pattern' ||
+			grep -cvE 'awk|sed|printf|echo.*-e|python|f\.write|gsub|join|split|print |replace|coords|excerpt|delimiter|regex|pattern' ||
 			true)
-		while IFS= read -r _match; do
-			[ -n "$_match" ] || continue
-			# Parameter expansion avoids spawning cut per-match.
-			_line_num="${_match%%:*}"
-			printf '%s\tbackslash-tn:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
-		done <<<"$_matches"
+		if [ "$_count" -gt 0 ]; then
+			printf '%s\tbackslash-tn\t%s\n' "$_rel_file" "$_count" >>"$_result_file"
+		fi
 
 		# Pattern 2: Associative arrays (bash 4.0+)
-		_matches=$(grep -nE '^[[:space:]]*(declare|local|typeset)[[:space:]]+-[a-zA-Z]*A[a-zA-Z]*[[:space:]]' "$_file" 2>/dev/null |
-			grep -vE '^[0-9]+:[[:space:]]*#' || true)
-		while IFS= read -r _match; do
-			[ -n "$_match" ] || continue
-			_line_num="${_match%%:*}"
-			printf '%s\tassoc-array:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
-		done <<<"$_matches"
+		_count=$(grep -nE '^[[:space:]]*(declare|local|typeset)[[:space:]]+-[a-zA-Z]*A[a-zA-Z]*[[:space:]]' "$_file" 2>/dev/null |
+			grep -cvE '^[0-9]+:[[:space:]]*#' || true)
+		if [ "$_count" -gt 0 ]; then
+			printf '%s\tassoc-array\t%s\n' "$_rel_file" "$_count" >>"$_result_file"
+		fi
 
 		# Pattern 3: Namerefs (bash 4.3+)
-		_matches=$(grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-[a-zA-Z]*n[a-zA-Z]*[[:space:]]' "$_file" 2>/dev/null |
-			grep -vE '^[0-9]+:[[:space:]]*#' || true)
-		while IFS= read -r _match; do
-			[ -n "$_match" ] || continue
-			_line_num="${_match%%:*}"
-			printf '%s\tnameref:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
-		done <<<"$_matches"
+		_count=$(grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-[a-zA-Z]*n[a-zA-Z]*[[:space:]]' "$_file" 2>/dev/null |
+			grep -cvE '^[0-9]+:[[:space:]]*#' || true)
+		if [ "$_count" -gt 0 ]; then
+			printf '%s\tnameref\t%s\n' "$_rel_file" "$_count" >>"$_result_file"
+		fi
 
 		# Pattern 4: Heredoc inside $() — breaks macOS /bin/bash 3.2 parser.
 		# (GH#19252, t2171 regression gate.)
 		# POSIX [[:space:]] instead of \s — \s is GNU-only and fails silently
 		# on BSD grep (macOS default). CI runs GNU grep, but pre-push and
 		# local runs need to produce the same results.
-		_matches=$(grep -nE '\$\([[:space:]]*cat[[:space:]]*<<' "$_file" 2>/dev/null |
-			grep -vE '^[0-9]+:[[:space:]]*#' || true)
-		while IFS= read -r _match; do
-			[ -n "$_match" ] || continue
-			_line_num="${_match%%:*}"
-			printf '%s\theredoc-in-subshell:%s\t1\n' "$_rel_file" "$_line_num" >>"$_result_file"
-		done <<<"$_matches"
+		_count=$(grep -nE '\$\([[:space:]]*cat[[:space:]]*<<' "$_file" 2>/dev/null |
+			grep -cvE '^[0-9]+:[[:space:]]*#' || true)
+		if [ "$_count" -gt 0 ]; then
+			printf '%s\theredoc-in-subshell\t%s\n' "$_rel_file" "$_count" >>"$_result_file"
+		fi
 	done <<<"$_sh_files"
 
 	return 0
@@ -407,7 +404,8 @@ scan_dir() {
 # metric_title <metric>  — human-readable label for reports/logs
 # ---------------------------------------------------------------------------
 metric_title() {
-	case "$1" in
+	local _metric="$1"
+	case "$_metric" in
 	function-complexity) printf 'Shell Function Complexity' ;;
 	nesting-depth) printf 'Shell Nesting Depth' ;;
 	file-size) printf 'File Size' ;;
@@ -421,7 +419,8 @@ metric_title() {
 # metric_unit <metric>  — "violations" plus short subject (for report text)
 # ---------------------------------------------------------------------------
 metric_unit() {
-	case "$1" in
+	local _metric="$1"
+	case "$_metric" in
 	function-complexity) printf 'function(s) >100 lines' ;;
 	nesting-depth) printf 'file(s) with nesting depth >8' ;;
 	file-size) printf 'file(s) >1500 lines' ;;
@@ -436,11 +435,12 @@ metric_unit() {
 # Echoes a pipe-delimited header row the report can inject verbatim.
 # ---------------------------------------------------------------------------
 metric_column_headers() {
-	case "$1" in
+	local _metric="$1"
+	case "$_metric" in
 	function-complexity) printf '| File | Function | Lines |\n|---|---|---:|\n' ;;
 	nesting-depth) printf '| File | Metric | Max Depth |\n|---|---|---:|\n' ;;
 	file-size) printf '| File | Metric | Lines |\n|---|---|---:|\n' ;;
-	bash32-compat) printf '| File | Pattern:Line | Count |\n|---|---|---:|\n' ;;
+	bash32-compat) printf '| File | Pattern | New (+) |\n|---|---|---:|\n' ;;
 	*) printf '| File | Key | Value |\n|---|---|---:|\n' ;;
 	esac
 	return 0
@@ -456,6 +456,55 @@ violation_count() {
 		return 0
 	fi
 	wc -l <"$_f" | tr -d ' '
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# violation_count_summed <scan-file>  — sum of 3rd column (count field)
+# Used for count-aggregated metrics (bash32-compat) where each row
+# represents multiple violations: <file>\t<pattern>\t<count>.
+# ---------------------------------------------------------------------------
+violation_count_summed() {
+	local _f="$1"
+	if [ ! -s "$_f" ]; then
+		printf '0'
+		return 0
+	fi
+	awk -F '\t' '{sum+=$3} END{print sum+0}' "$_f"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# compute_new_violations_counted <base-file> <head-file> <out-file>
+#
+# Count-based diff for metrics where value = count of occurrences per key.
+# For each (file, pattern) in head, computes:
+#   new = max(0, head_count - base_count)
+# Writes rows with new > 0 to <out-file>.
+# Output: <file>\t<pattern>\t<new_count>
+# (t2248: replaces set-diff for bash32-compat metric.)
+# ---------------------------------------------------------------------------
+compute_new_violations_counted() {
+	local _base="$1"
+	local _head="$2"
+	local _out="$3"
+	: >"$_out"
+
+	while IFS=$'\t' read -r _file _pattern _head_count; do
+		[ -n "$_file" ] || continue
+		local _base_count=0
+		local _base_val
+		_base_val=$(awk -F '\t' -v f="$_file" -v p="$_pattern" \
+			'$1==f && $2==p {print $3; exit}' "$_base" 2>/dev/null || true)
+		if [ -n "$_base_val" ]; then
+			_base_count="$_base_val"
+		fi
+		local _new_count=$((_head_count - _base_count))
+		if [ "$_new_count" -gt 0 ]; then
+			printf '%s\t%s\t%s\n' "$_file" "$_pattern" "$_new_count" >>"$_out"
+		fi
+	done <"$_head"
+
 	return 0
 }
 
@@ -489,12 +538,56 @@ compute_new_violations() {
 }
 
 # ---------------------------------------------------------------------------
+# _bash32_grep_expr <pattern-name>
+# Returns the grep -E expression for a bash32-compat pattern name.
+# Used by write_report to enumerate current line numbers at report time.
+# ---------------------------------------------------------------------------
+_bash32_grep_expr() {
+	local _p="$1"
+	case "$_p" in
+	backslash-tn) printf '%s' '\+="\\[tn]|="\\[tn]' ;;
+	assoc-array) printf '%s' '^[[:space:]]*(declare|local|typeset)[[:space:]]+-[a-zA-Z]*A[a-zA-Z]*[[:space:]]' ;;
+	nameref) printf '%s' '^[[:space:]]*(declare|local)[[:space:]]+-[a-zA-Z]*n[a-zA-Z]*[[:space:]]' ;;
+	heredoc-in-subshell) printf '%s' '\$\([[:space:]]*cat[[:space:]]*<<' ;;
+	*) printf '' ;;
+	esac
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _bash32_current_lines <head-dir> <rel-file> <pattern-name>
+# Enumerates current line numbers of a bash32 pattern in the head tree.
+# Returns comma-separated line numbers (e.g. "45,67,89").
+# ---------------------------------------------------------------------------
+_bash32_current_lines() {
+	local _dir="$1"
+	local _rel="$2"
+	local _pat="$3"
+	local _expr
+	_expr=$(_bash32_grep_expr "$_pat")
+	if [ -z "$_expr" ] || [ ! -f "${_dir}/${_rel}" ]; then
+		printf ''
+		return 0
+	fi
+	local _lines
+	_lines=$(grep -nE "$_expr" "${_dir}/${_rel}" 2>/dev/null |
+		grep -vE '^[0-9]+:[[:space:]]*#' |
+		awk -F: '{printf "%s%s", (NR>1?",":""), $1}' || true)
+	printf '%s' "$_lines"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # write_report <new-count> <base-total> <head-total>
-#              <new-violations-file> <base-sha> <head-sha> <out-md> [<metric>]
+#              <new-violations-file> <base-sha> <head-sha> <out-md>
+#              [<metric>] [<head-dir>]
 #
 # Produces a metric-aware markdown report. The marker comment at the end is
 # metric-specific so the CI workflow can upsert the correct PR comment per
 # metric without the four gates stomping on each other's reports.
+#
+# For bash32-compat: if <head-dir> is provided, enumerates current line
+# numbers as context (not part of the diff key). (t2248)
 # ---------------------------------------------------------------------------
 write_report() {
 	local _new_count="$1"
@@ -505,6 +598,7 @@ write_report() {
 	local _head_sha="$6"
 	local _out="$7"
 	local _metric="${8:-function-complexity}"
+	local _head_dir="${9:-}"
 
 	local _title _unit _headers
 	_title=$(metric_title "$_metric")
@@ -537,6 +631,22 @@ write_report() {
 				printf '| `%s` | `%s` | %s |\n' "$_col1" "$_col2" "$_col3"
 			done <"$_new_file"
 			printf '\n'
+
+			# For bash32-compat: enumerate current line numbers as context
+			if [ "$_metric" = "bash32-compat" ] && [ -n "$_head_dir" ] && [ -d "$_head_dir" ]; then
+				printf '<details>\n<summary>Current locations (reference only — not used for regression detection)</summary>\n\n'
+				while IFS=$'\t' read -r _col1 _col2 _col3; do
+					[ -n "$_col1" ] || continue
+					local _lines
+					_lines=$(_bash32_current_lines "$_head_dir" "$_col1" "$_col2")
+					if [ -n "$_lines" ]; then
+						# shellcheck disable=SC2016
+						printf '- `%s` %s: lines %s\n' "$_col1" "$_col2" "$_lines"
+					fi
+				done <"$_new_file"
+				printf '\n</details>\n\n'
+			fi
+
 			# shellcheck disable=SC2016
 			printf '> To override (with justification), add the `complexity-bump-ok` label to this PR\n'
 			# shellcheck disable=SC2016
@@ -651,12 +761,18 @@ cmd_diff() {
 	TMP_DIR=$(mktemp -d)
 	local _new_file="$TMP_DIR/new-violations.tsv"
 
-	compute_new_violations "$_base_file" "$_head_file" "$_new_file"
-
 	local _new_count _base_total _head_total
-	_new_count=$(violation_count "$_new_file")
-	_base_total=$(violation_count "$_base_file")
-	_head_total=$(violation_count "$_head_file")
+	if [ "$_metric" = "bash32-compat" ]; then
+		compute_new_violations_counted "$_base_file" "$_head_file" "$_new_file"
+		_new_count=$(violation_count_summed "$_new_file")
+		_base_total=$(violation_count_summed "$_base_file")
+		_head_total=$(violation_count_summed "$_head_file")
+	else
+		compute_new_violations "$_base_file" "$_head_file" "$_new_file"
+		_new_count=$(violation_count "$_new_file")
+		_base_total=$(violation_count "$_base_file")
+		_head_total=$(violation_count "$_head_file")
+	fi
 
 	log "[$_metric] base: $_base_total  head: $_head_total  new: $_new_count"
 
@@ -685,7 +801,11 @@ _check_dry_run() {
 	log "[$_metric] dry-run: scanning current tree"
 	scan_dir "." "$_head_scan" "$_metric"
 	local _count _unit
-	_count=$(violation_count "$_head_scan")
+	if [ "$_metric" = "bash32-compat" ]; then
+		_count=$(violation_count_summed "$_head_scan")
+	else
+		_count=$(violation_count "$_head_scan")
+	fi
 	_unit=$(metric_unit "$_metric")
 	printf 'Total violations (%s): %s\n' "$_unit" "$_count"
 	if [ "$_count" -gt 0 ]; then
@@ -728,18 +848,24 @@ _check_regression() {
 	log "[$_metric] scanning head (${_head_sha:0:7})"
 	scan_dir "$HEAD_WORKTREE" "$_head_scan" "$_metric"
 
-	compute_new_violations "$_base_scan" "$_head_scan" "$_new_file"
-
 	local _new_count _base_total _head_total
-	_new_count=$(violation_count "$_new_file")
-	_base_total=$(violation_count "$_base_scan")
-	_head_total=$(violation_count "$_head_scan")
+	if [ "$_metric" = "bash32-compat" ]; then
+		compute_new_violations_counted "$_base_scan" "$_head_scan" "$_new_file"
+		_new_count=$(violation_count_summed "$_new_file")
+		_base_total=$(violation_count_summed "$_base_scan")
+		_head_total=$(violation_count_summed "$_head_scan")
+	else
+		compute_new_violations "$_base_scan" "$_head_scan" "$_new_file"
+		_new_count=$(violation_count "$_new_file")
+		_base_total=$(violation_count "$_base_scan")
+		_head_total=$(violation_count "$_head_scan")
+	fi
 
 	log "[$_metric] base: $_base_total  head: $_head_total  new: $_new_count"
 
 	if [ -n "$_output_md" ]; then
 		write_report "$_new_count" "$_base_total" "$_head_total" \
-			"$_new_file" "$_base_sha" "$_head_sha" "$_output_md" "$_metric"
+			"$_new_file" "$_base_sha" "$_head_sha" "$_output_md" "$_metric" "$HEAD_WORKTREE"
 		log "report written to $_output_md"
 	fi
 
