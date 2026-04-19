@@ -15,16 +15,29 @@
 #
 # Functions in this module (in source order):
 #   - _normalize_reassign_self           (Phase 12: orphaned active issue → self-assign)
-#   - _normalize_clear_status_labels     (Phase 12: reset one stale issue's labels/assignee)
-#   - _normalize_unassign_stale          (Phase 12: detect + reset stale assignments)
-#   - normalize_active_issue_assignments (coordinator — calls the three helpers above)
+#   - normalize_active_issue_assignments (coordinator — calls stale-recovery helpers)
 #   - close_issues_with_merged_prs
 #   - reconcile_stale_done_issues
 #   - reconcile_labelless_aidevops_issues (t2112 — backfill labelless aidevops-shaped issues)
+#
+# Stale-recovery helpers (extracted to pulse-issue-reconcile-stale.sh in t2375
+# to keep this file below the 1500-line complexity gate):
+#   - _normalize_clear_status_labels     (Phase 12: reset one stale issue's labels/assignee)
+#   - _normalize_stale_get_dispatch_info (Phase 12: read PID/timestamp/runner from dispatch comment)
+#   - _normalize_stale_should_skip_reset (Phase 12 + t1933 + t2375: gate reset decision)
+#   - _normalize_unassign_stale          (Phase 12: detect + reset stale assignments)
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_ISSUE_RECONCILE_LOADED:-}" ]] && return 0
 _PULSE_ISSUE_RECONCILE_LOADED=1
+
+# t2375: stale-recovery subsystem extracted to keep this file below the 1500-
+# line complexity gate. SCRIPT_DIR is set by pulse-wrapper.sh when sourced by
+# the orchestrator; fall back to BASH_SOURCE-derived path when sourced directly
+# (e.g., from tests/test-issue-reconcile.sh).
+_PIR_SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)}"
+# shellcheck source=/dev/null
+source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-stale.sh"
 
 #######################################
 # (Phase 12 helper) Assign runner to orphaned active issues.
@@ -101,239 +114,6 @@ _normalize_reassign_self() {
 	if [[ "$total_checked" -gt 0 ]]; then
 		echo "[pulse-wrapper] Assignment normalization: assigned ${total_assigned}/${total_checked} active unassigned issues to ${runner_user} (skipped_claimed=${total_skipped_claimed})" >>"$LOGFILE"
 	fi
-
-	return 0
-}
-
-#######################################
-# (Phase 12 helper) Reset a single stale issue's labels and assignee.
-#
-# Removes the active dispatch labels (status:queued, status:in-progress)
-# and the runner's assignee from one issue, then marks it status:available
-# so the deterministic fill floor can re-dispatch it.
-#
-# Called by _normalize_unassign_stale once it has confirmed that no worker
-# process is actively handling the issue.
-#
-# Args:
-#   $1 issue_num   — numeric GitHub issue number
-#   $2 slug        — owner/repo
-#   $3 runner_user — GH login to remove as assignee
-# Returns: 0 on gh success, non-zero on gh failure
-#######################################
-_normalize_clear_status_labels() {
-	local issue_num="$1"
-	local slug="$2"
-	local runner_user="$3"
-
-	# t2033: atomic transition to status:available, clearing all sibling
-	# core status labels in one edit (not just queued/in-progress).
-	set_issue_status "$issue_num" "$slug" "available" \
-		--remove-assignee "$runner_user" >/dev/null 2>&1
-	return $?
-}
-
-#######################################
-# (Phase 12 helper) Read the Worker PID and dispatch timestamp from the most
-# recent dispatch comment on a GitHub issue.
-#
-# Outputs two lines to stdout: the Worker PID (blank if not found) followed by
-# the ISO-8601 created_at timestamp (blank if not found). Uses a single gh api
-# call with jq to avoid multiple round-trips.
-#
-# Args:
-#   $1 slug       — owner/repo
-#   $2 stale_num  — numeric GitHub issue number
-# Returns: 0 always (best-effort)
-#######################################
-_normalize_stale_get_dispatch_info() {
-	local slug="$1"
-	local stale_num="$2"
-
-	local dispatch_pid=""
-	local dispatch_created_at=""
-
-	# The || true prevents set -e from exiting if gh api returns no comments.
-	{
-		IFS= read -r dispatch_pid
-		IFS= read -r dispatch_created_at
-	} < <(gh api "repos/${slug}/issues/${stale_num}/comments" \
-		--jq '[.[] | select(.body | contains("Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") // {pid: ""} | .pid), (.created_at | sub("\\.[0-9]+Z$"; "Z"))) else empty end' \
-		2>/dev/null) || true
-
-	printf '%s\n%s\n' "$dispatch_pid" "$dispatch_created_at"
-	return 0
-}
-
-#######################################
-# (Phase 12 helper) Decide whether a stale-assigned issue should be skipped
-# (worker still active) or reset (worker gone).
-#
-# Applies three checks in order:
-#   1. Local pgrep — is any process referencing this issue number still running?
-#   2. Cross-runner PID guard (t1933) — PID absent locally but dispatch comment
-#      still within WORKER_MAX_RUNTIME, suggesting the worker is on another machine.
-#   3. Worker log recency — was the worker log written in the last 10 minutes?
-#
-# Returns: 0 = skip (worker still active), 1 = reset (worker gone)
-#
-# Args:
-#   $1 stale_num               — numeric GitHub issue number
-#   $2 slug                    — owner/repo
-#   $3 now_epoch               — current Unix timestamp (date +%s)
-#   $4 cross_runner_max_runtime — seconds before cross-runner dispatch expires
-#######################################
-_normalize_stale_should_skip_reset() {
-	local stale_num="$1"
-	local slug="$2"
-	local now_epoch="$3"
-	local cross_runner_max_runtime="$4"
-
-	# Check 1: local worker process still referencing this issue
-	if pgrep -f "pulse-reconcile.*[^0-9]${stale_num}([^0-9]|$)" >/dev/null 2>&1 || pgrep -f "#${stale_num}([^0-9]|$)" >/dev/null 2>&1; then
-		return 0
-	fi
-
-	# Read dispatch PID and timestamp from the most recent dispatch comment
-	local dispatch_info dispatch_pid dispatch_created_at
-	dispatch_info=$(_normalize_stale_get_dispatch_info "$slug" "$stale_num")
-	dispatch_pid=$(printf '%s\n' "$dispatch_info" | head -1)
-	dispatch_created_at=$(printf '%s\n' "$dispatch_info" | tail -1)
-
-	local dispatch_comment_age=0
-	if [[ -n "$dispatch_created_at" ]]; then
-		local dispatch_epoch
-		dispatch_epoch=$(date -u -d "$dispatch_created_at" '+%s' 2>/dev/null ||
-			TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$dispatch_created_at" '+%s' 2>/dev/null ||
-			echo "0")
-		if [[ "$dispatch_epoch" -gt 0 ]]; then
-			dispatch_comment_age=$((now_epoch - dispatch_epoch))
-		fi
-	fi
-
-	# Check 2: t1933 cross-runner guard — PID absent locally but within max_runtime
-	if [[ -n "$dispatch_pid" ]] && [[ "$dispatch_pid" =~ ^[0-9]+$ ]]; then
-		if ! ps -p "$dispatch_pid" >/dev/null 2>&1; then
-			# PID not running locally — could be cross-runner dispatch.
-			# Only reset if the dispatch comment has aged beyond WORKER_MAX_RUNTIME.
-			if [[ "$dispatch_comment_age" -lt "$cross_runner_max_runtime" ]]; then
-				echo "[pulse-wrapper] Stale assignment skip (cross-runner guard): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not local, comment age ${dispatch_comment_age}s < max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
-				return 0
-			fi
-			echo "[pulse-wrapper] Stale assignment reset (cross-runner expired): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not local, comment age ${dispatch_comment_age}s >= max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
-		fi
-	fi
-
-	# Check 3: worker log recency — log written in last 10 min means worker may still be active
-	local safe_slug_check
-	safe_slug_check=$(printf '%s' "$slug" | tr '/:' '--')
-	local worker_log="/tmp/pulse-${safe_slug_check}-${stale_num}.log"
-	if [[ -f "$worker_log" ]]; then
-		local log_mtime
-		# Linux stat -c first (stat -f '%m' on macOS outputs file info in a different format)
-		log_mtime=$(stat -c '%Y' "$worker_log" 2>/dev/null || stat -f '%m' "$worker_log" 2>/dev/null) || log_mtime=0
-		if [[ $((now_epoch - log_mtime)) -lt 600 ]]; then
-			return 0
-		fi
-	fi
-
-	return 1
-}
-
-#######################################
-# (Phase 12) Detect and reset stale runner assignments.
-#
-# Pass 2 of normalize_active_issue_assignments: find issues assigned to
-# runner_user with status:queued/in-progress whose updatedAt is older than
-# STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS (default 600s = 10 min), verify
-# no worker process is handling them (via _normalize_stale_should_skip_reset),
-# and reset via _normalize_clear_status_labels so they can be re-dispatched.
-#
-# t2372: outer time filter lowered from 3600s (1h) to 600s (10 min) so this
-# proactive sweep matches the reactive _is_stale_assignment threshold in
-# dispatch-dedup-stale.sh. Previously a worker that died between dispatch
-# and PR creation stayed assigned for ~60 min before this sweep would even
-# consider it as a candidate, because the issue's updatedAt (the dispatch
-# comment timestamp) was still within the 1h window. The reactive path
-# (Layer 6 dedup) only fires when the pulse retries dispatching the same
-# issue, which may not happen for hours under queue pressure.
-#
-# Inner safeguards in _normalize_stale_should_skip_reset still protect
-# live workers (local pgrep, dispatch comment PID liveness with
-# WORKER_MAX_RUNTIME cross-runner guard, worker log mtime <600s). Lowering
-# the outer filter expands the candidate set; the inner guards still gate
-# the actual reset. Override via env var:
-#
-#   STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS=N (default 600)
-#
-# t1933: PID-based checks are local-only. In multi-runner setups, a worker
-# dispatched by another machine is invisible to pgrep on this machine.
-# Gate PID checks on runner identity: if the dispatch comment's Worker PID
-# is not running locally, fall back to WORKER_MAX_RUNTIME time-based expiry
-# before resetting. This prevents false recovery of cross-runner dispatches.
-#
-# Args:
-#   $1 runner_user              — GH login of the current runner
-#   $2 repos_json               — path to repos.json
-#   $3 now_epoch                — current Unix timestamp (date +%s)
-#   $4 cross_runner_max_runtime — seconds before a cross-runner dispatch is
-#                                  considered expired (default: WORKER_MAX_RUNTIME)
-# Returns: 0 always (best-effort; logs summary to $LOGFILE)
-#######################################
-_normalize_unassign_stale() {
-	local runner_user="$1"
-	local repos_json="$2"
-	local now_epoch="$3"
-	local cross_runner_max_runtime="$4"
-
-	# t2372: tunable outer-filter age. Default matches the reactive
-	# STALE_ASSIGNMENT_THRESHOLD_SECONDS=600 in dispatch-dedup-stale.sh so
-	# proactive (this sweep) and reactive (Layer 6 dedup) paths agree on
-	# what "stale" means for workers. Validate as int; fall back to 600.
-	local _stale_threshold="${STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS:-600}"
-	[[ "$_stale_threshold" =~ ^[0-9]+$ ]] || _stale_threshold=600
-
-	local total_reset=0
-	local total_candidates=0
-
-	while IFS= read -r slug; do
-		[[ -n "$slug" ]] || continue
-
-		# Find issues assigned to runner_user with active-dispatch labels
-		local stale_json
-		stale_json=$(gh issue list --repo "$slug" --assignee "$runner_user" --state open \
-			--json number,labels,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || stale_json=""
-		[[ -n "$stale_json" && "$stale_json" != "null" ]] || continue
-
-		# Filter: has status:queued or status:in-progress, updatedAt older than _stale_threshold
-		local stale_issues
-		stale_issues=$(printf '%s' "$stale_json" | jq -r --arg cutoff "$((now_epoch - _stale_threshold))" '
-			[.[] | select(
-				((.labels | map(.name)) | (index("status:queued") or index("status:in-progress")))
-				and ((.updatedAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < ($cutoff | tonumber))
-			) | .number] | .[]
-		' 2>/dev/null) || stale_issues=""
-		[[ -n "$stale_issues" ]] || continue
-
-		local stale_num
-		while IFS= read -r stale_num; do
-			[[ "$stale_num" =~ ^[0-9]+$ ]] || continue
-			total_candidates=$((total_candidates + 1))
-
-			if _normalize_stale_should_skip_reset "$stale_num" "$slug" "$now_epoch" "$cross_runner_max_runtime"; then
-				continue
-			fi
-
-			# No active worker and all guards passed — reset for re-dispatch
-			echo "[pulse-wrapper] Stale assignment reset: #${stale_num} in ${slug} — assigned to ${runner_user} with active label but no worker process" >>"$LOGFILE"
-			_normalize_clear_status_labels "$stale_num" "$slug" "$runner_user" || true
-			total_reset=$((total_reset + 1))
-		done <<<"$stale_issues"
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
-
-	# t2372: always log scan summary so silent runs are visible in pulse log
-	# and operators can confirm the sweep is firing per-cycle.
-	echo "[pulse-wrapper] Stale assignment scan: threshold=${_stale_threshold}s candidates=${total_candidates} reset=${total_reset}" >>"$LOGFILE"
 
 	return 0
 }

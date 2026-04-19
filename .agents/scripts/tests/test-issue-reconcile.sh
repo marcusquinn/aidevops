@@ -393,6 +393,170 @@ else
 fi
 unset STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS
 
+# =============================================================================
+# Part 11 (t2375) — Cross-machine dispatch (runner != self_login) fresh:
+# reset MUST be skipped even when PID=1 (init, guaranteed to be running
+# locally). This is the PID-collision protection — without t2375 the old
+# code would have checked `ps -p 1` (succeeds), exited the cross-runner
+# branch, fallen through to Check 3 (no local log), and fired the reset.
+#
+# Stubs:
+#   gh issue list → stale candidate #12377 (status:queued, old updatedAt)
+#   gh api        → dispatch info pid=1, runner=other-machine,
+#                    comment_ts=2020-01-01T00:10:00Z (5 min before now)
+#
+# Harness:
+#   now_epoch = NOW_EPOCH_15MIN = 1577837700 (2020-01-01T00:15:00Z)
+#   cross_runner_max_runtime = 10800 (3h)
+#   comment age = 300s, well under WORKER_MAX_RUNTIME → PROTECT.
+#
+# Expected: _normalize_clear_status_labels is NOT invoked for #12377.
+# =============================================================================
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo '[{"number":12377,"labels":[{"name":"status:queued"}],"updatedAt":"2020-01-01T00:00:00Z"}]'
+    exit 0
+fi
+if [[ "\$1" == "api" ]]; then
+    printf '1\n2020-01-01T00:10:00Z\nother-machine\n'
+    exit 0
+fi
+if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
+    echo "\$*" >> "${GH_EDIT_ARGS_FILE}"
+    exit 0
+fi
+exit 1
+STUB
+chmod +x "${STUB_DIR}/gh"
+
+rm -f "/tmp/pulse-owner-testrepo-12377.log"
+rm -f "$GH_EDIT_ARGS_FILE"
+unset STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS
+_normalize_unassign_stale "testrunner" "$REPOS_JSON" "$NOW_EPOCH_15MIN" "10800"
+
+if [[ ! -f "$GH_EDIT_ARGS_FILE" ]] || ! grep -q -- "issue edit 12377" "$GH_EDIT_ARGS_FILE"; then
+	print_result "t2375: cross-machine worker (runner=other-machine, fresh) skipped despite PID collision (PID=1)" 0
+else
+	print_result "t2375: cross-machine worker (runner=other-machine, fresh) skipped despite PID collision (PID=1)" 1 \
+		"(expected skip; reset fired; edit args: $(cat "$GH_EDIT_ARGS_FILE"))"
+fi
+
+# =============================================================================
+# Part 12 (t2375) — Cross-machine dispatch (runner != self_login) expired:
+# comment age >= WORKER_MAX_RUNTIME → reset fires. Confirms time-based
+# expiry still works for cross-machine dispatches beyond their normal
+# runtime envelope.
+#
+# Stubs: same as Part 11 but comment_ts=2019-12-31T20:00:00Z (4h ago).
+# =============================================================================
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo '[{"number":12378,"labels":[{"name":"status:queued"}],"updatedAt":"2020-01-01T00:00:00Z"}]'
+    exit 0
+fi
+if [[ "\$1" == "api" ]]; then
+    printf '1\n2019-12-31T20:00:00Z\nother-machine\n'
+    exit 0
+fi
+if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
+    echo "\$*" >> "${GH_EDIT_ARGS_FILE}"
+    exit 0
+fi
+exit 1
+STUB
+chmod +x "${STUB_DIR}/gh"
+
+rm -f "/tmp/pulse-owner-testrepo-12378.log"
+rm -f "$GH_EDIT_ARGS_FILE"
+_normalize_unassign_stale "testrunner" "$REPOS_JSON" "$NOW_EPOCH_15MIN" "10800"
+
+if [[ -f "$GH_EDIT_ARGS_FILE" ]] &&
+	grep -q -- "--remove-assignee testrunner" "$GH_EDIT_ARGS_FILE" &&
+	grep -q -- "issue edit 12378" "$GH_EDIT_ARGS_FILE"; then
+	print_result "t2375: cross-machine worker (runner=other-machine, 4h-old) reset (WORKER_MAX_RUNTIME expiry)" 0
+else
+	print_result "t2375: cross-machine worker (runner=other-machine, 4h-old) reset (WORKER_MAX_RUNTIME expiry)" 1 \
+		"(expected reset; edit args: $(cat "$GH_EDIT_ARGS_FILE" 2>/dev/null || echo 'file missing'))"
+fi
+
+# =============================================================================
+# Part 13 (t2375) — Legacy dispatch (runner empty, PID present):
+# fail-CLOSED. We cannot verify ownership, so skip reset rather than
+# potentially steal a live cross-machine worker's assignment. This
+# protects us during the rollout window before all active dispatch
+# comments carry the **Runner** field.
+#
+# Stubs: gh api emits PID=12345 with empty runner line.
+# =============================================================================
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo '[{"number":12379,"labels":[{"name":"status:queued"}],"updatedAt":"2020-01-01T00:00:00Z"}]'
+    exit 0
+fi
+if [[ "\$1" == "api" ]]; then
+    # Legacy dispatch comment — PID present, Runner field absent.
+    printf '12345\n2020-01-01T00:10:00Z\n\n'
+    exit 0
+fi
+if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
+    echo "\$*" >> "${GH_EDIT_ARGS_FILE}"
+    exit 0
+fi
+exit 1
+STUB
+chmod +x "${STUB_DIR}/gh"
+
+rm -f "/tmp/pulse-owner-testrepo-12379.log"
+rm -f "$GH_EDIT_ARGS_FILE"
+_normalize_unassign_stale "testrunner" "$REPOS_JSON" "$NOW_EPOCH_15MIN" "10800"
+
+if [[ ! -f "$GH_EDIT_ARGS_FILE" ]] || ! grep -q -- "issue edit 12379" "$GH_EDIT_ARGS_FILE"; then
+	print_result "t2375: legacy dispatch (no Runner line) fail-closed — skipped" 0
+else
+	print_result "t2375: legacy dispatch (no Runner line) fail-closed — skipped" 1 \
+		"(expected skip; reset fired; edit args: $(cat "$GH_EDIT_ARGS_FILE"))"
+fi
+
+# =============================================================================
+# Part 14 (t2375) — gh api failure: fail-CLOSED (skip reset).
+# Mirrors the reactive-path stance in dispatch-dedup-stale.sh:401-405.
+# A transient gh api failure is NOT evidence of staleness — keep the
+# existing assignment protected for this pulse cycle.
+#
+# Stubs: gh api exits non-zero.
+# =============================================================================
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo '[{"number":12380,"labels":[{"name":"status:queued"}],"updatedAt":"2020-01-01T00:00:00Z"}]'
+    exit 0
+fi
+if [[ "\$1" == "api" ]]; then
+    # Simulate gh api failure (rate limit, network, auth etc.)
+    exit 1
+fi
+if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
+    echo "\$*" >> "${GH_EDIT_ARGS_FILE}"
+    exit 0
+fi
+exit 1
+STUB
+chmod +x "${STUB_DIR}/gh"
+
+rm -f "/tmp/pulse-owner-testrepo-12380.log"
+rm -f "$GH_EDIT_ARGS_FILE"
+_normalize_unassign_stale "testrunner" "$REPOS_JSON" "$NOW_EPOCH_15MIN" "10800"
+
+if [[ ! -f "$GH_EDIT_ARGS_FILE" ]] || ! grep -q -- "issue edit 12380" "$GH_EDIT_ARGS_FILE"; then
+	print_result "t2375: gh api failure fail-closed — skipped" 0
+else
+	print_result "t2375: gh api failure fail-closed — skipped" 1 \
+		"(expected skip; reset fired despite gh api error; edit args: $(cat "$GH_EDIT_ARGS_FILE"))"
+fi
+
 export PATH="$OLD_PATH"
 
 # =============================================================================
