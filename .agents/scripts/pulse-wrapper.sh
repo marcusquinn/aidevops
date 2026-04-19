@@ -1019,6 +1019,11 @@ _pulse_execute_self_check() {
 		_pulse_maybe_run_llm_supervisor
 		_carry_forward_pr_diff
 		_dispatch_pr_fix_worker
+		_close_conflicting_pr
+		_interactive_pr_is_stale
+		_interactive_pr_trigger_handover
+		_dispatch_ci_fix_worker
+		_dispatch_conflict_fix_worker
 	)
 	for _sc_fn in "${_sc_expected_fns[@]}"; do
 		if ! declare -F "$_sc_fn" >/dev/null 2>&1; then
