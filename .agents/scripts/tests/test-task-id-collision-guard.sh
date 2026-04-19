@@ -4,7 +4,7 @@
 #
 # test-task-id-collision-guard.sh — Test harness for task-id-collision-guard.sh
 #
-# Covers all 12 acceptance criteria cases:
+# Covers all 14 acceptance criteria cases:
 #   1. Reject: t-ID > counter AND not in linked issue title
 #   2. Allow: t-ID ≤ counter (claimed)
 #   3. Allow: cross-reference confirmed via linked issue title
@@ -17,6 +17,8 @@
 #  10. Allow: Ref #NNN where linked issue title contains the t-ID (GH#19783)
 #  11. Allow: For #NNN where linked issue title contains the t-ID (GH#19783)
 #  12. Reject: Ref #NNN where linked issue title does NOT contain the t-ID (GH#19783)
+#  13. Reject: PR title tNNN not in any commit AND not confirmed via linked issue (GH#19987)
+#  14. Allow: PR title tNNN confirmed via PR body Resolves #NNN with matching issue title (GH#19987)
 
 set -u
 
@@ -534,6 +536,161 @@ test_ref_keyword_without_matching_title() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: run check-pr mode with a mocked gh that returns a specific PR
+# title and body, plus optional issue view responses.
+#
+# The mock gh reads its return values from environment variables at runtime,
+# so special characters in titles/bodies are handled safely.
+#
+# Args:
+#   arg1 = pr_num       (PR number to pass to check-pr, e.g. 9999)
+#   arg2 = counter_val  (.task-counter value, e.g. "100")
+#   arg3 = pr_title     (value gh returns for the PR title)
+#   arg4 = pr_body      (value gh returns for the PR body; may contain Resolves)
+#   arg5 = issue_num    (issue number the mock gh.issue view handles; optional)
+#   arg6 = issue_title  (title the mock gh returns for that issue; optional)
+# Returns the exit code of the guard.
+# ---------------------------------------------------------------------------
+_run_check_pr_with_pr_title() {
+	local pr_num="${1:-9999}"
+	local counter_val="${2:-100}"
+	local pr_title="${3:-}"
+	local pr_body="${4:-}"
+	local issue_num="${5:-}"
+	local issue_title="${6:-}"
+
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	# Base repo with .task-counter
+	local base_repo="${tmpdir}/base"
+	mkdir -p "$base_repo"
+	git -C "$base_repo" init -q
+	git -C "$base_repo" config user.email "test@test.local"
+	git -C "$base_repo" config user.name "Test"
+	git -C "$base_repo" config commit.gpgsign false
+	git -C "$base_repo" config tag.gpgsign false
+	printf '%s' "$counter_val" >"${base_repo}/.task-counter"
+	git -C "$base_repo" add .task-counter
+	git -C "$base_repo" commit -q -m "init"
+
+	local work_repo="${tmpdir}/work"
+	git clone -q "$base_repo" "$work_repo" 2>/dev/null
+	git -C "$work_repo" config user.email "test@test.local"
+	git -C "$work_repo" config user.name "Test"
+	git -C "$work_repo" config commit.gpgsign false
+	git -C "$work_repo" config tag.gpgsign false
+
+	# A clean commit with NO tNNN reference — simulates a worker commit that
+	# never called claim-task-id.sh but the PR title carries the t-ID.
+	printf 'change' >"${work_repo}/change.txt"
+	git -C "$work_repo" add change.txt
+	git -C "$work_repo" commit -q -m "feat(issue-sync): parent-side detection for umbrella-style parent-task backfill"
+
+	# Mock gh reads return values from env vars set at invocation time.
+	# Using a single-quoted heredoc delimiter ('GHEOF') so that the env var
+	# references inside are literal strings — they expand at mock runtime.
+	local fake_bin="${tmpdir}/bin"
+	mkdir -p "$fake_bin"
+	cat >"${fake_bin}/gh" <<'GHEOF'
+#!/usr/bin/env bash
+# Mock gh for PR title test.
+# GH_MOCK_PR_TITLE, GH_MOCK_PR_BODY, GH_MOCK_ISSUE_NUM, GH_MOCK_ISSUE_TITLE
+# are set in the outer environment when the guard is invoked.
+if [[ "$1" == "pr" && "$2" == "view" ]]; then
+	for arg in "$@"; do
+		if [[ "$arg" == ".title" ]]; then
+			printf '%s\n' "${GH_MOCK_PR_TITLE:-}"
+			exit 0
+		fi
+		if [[ "$arg" == ".body" ]]; then
+			printf '%s\n' "${GH_MOCK_PR_BODY:-}"
+			exit 0
+		fi
+	done
+fi
+if [[ "$1" == "issue" && "$2" == "view" ]]; then
+	expected="${GH_MOCK_ISSUE_NUM:-__none__}"
+	for arg in "$@"; do
+		if [[ "$arg" == "$expected" ]]; then
+			printf '%s\n' "${GH_MOCK_ISSUE_TITLE:-}"
+			exit 0
+		fi
+	done
+	exit 1
+fi
+exit 1
+GHEOF
+	chmod +x "${fake_bin}/gh"
+
+	local rc
+	PATH="${fake_bin}:$PATH" \
+		GIT_DIR="${work_repo}/.git" \
+		GH_MOCK_PR_TITLE="$pr_title" \
+		GH_MOCK_PR_BODY="$pr_body" \
+		GH_MOCK_ISSUE_NUM="$issue_num" \
+		GH_MOCK_ISSUE_TITLE="$issue_title" \
+		bash "$GUARD" check-pr "$pr_num" 2>/dev/null
+	rc=$?
+	return "$rc"
+}
+
+# ---------------------------------------------------------------------------
+# Case 13: Reject — PR title tNNN not in any commit AND not confirmed via issue
+# (GH#19987: gap in check-pr where title t-ID was invisible to the guard)
+# ---------------------------------------------------------------------------
+test_check_pr_rejects_invented_tid_in_title() {
+	local name="case-13: check-pr blocks PR title tNNN absent from commits and unconfirmed via issue"
+	# Counter = 100; single commit has no tNNN reference.
+	# PR title advertises t9999 (> counter); PR body has no Resolves footer.
+	# Expected: exit 1 — invented t-ID in title should be blocked.
+	local rc
+	_run_check_pr_with_pr_title \
+		"9999" \
+		"100" \
+		"t9999: feat(issue-sync): invented title ID" \
+		"" \
+		"" \
+		""
+	rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 1 (invented tNNN in PR title blocked), got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Case 14: Allow — PR title tNNN confirmed via PR body Resolves #NNN
+# where the linked issue title contains the same t-ID (GH#19987).
+# This validates that the title+body concatenation gives _check_message
+# the cross-reference context it needs to allow a legitimate PR.
+# ---------------------------------------------------------------------------
+test_check_pr_allows_pr_title_tid_confirmed_via_body() {
+	local name="case-14: check-pr allows PR title tNNN when PR body Resolves #NNN with matching issue title"
+	# Counter = 100; t9999 > counter BUT Resolves #42 links to an issue
+	# whose title starts with t9999 — confirming the ID was legitimately claimed.
+	local rc
+	_run_check_pr_with_pr_title \
+		"9999" \
+		"100" \
+		"t9999: feat(issue-sync): legitimate claimed title ID" \
+		"Resolves #42" \
+		"42" \
+		"t9999: feat(issue-sync): legitimate claimed title ID"
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 0 (PR title tNNN confirmed via body Resolves + issue title), got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 main() {
@@ -551,6 +708,8 @@ main() {
 	test_ref_keyword_with_matching_title
 	test_for_keyword_with_matching_title
 	test_ref_keyword_without_matching_title
+	test_check_pr_rejects_invented_tid_in_title
+	test_check_pr_allows_pr_title_tid_confirmed_via_body
 
 	printf '\n'
 	printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"
