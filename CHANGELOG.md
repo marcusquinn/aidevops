@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.77] - 2026-04-19
+
+### Changed
+
+- OAuth probe returns healthy without HTTP for opencode auth (#19947)
+- Maintenance: update simplification state registry
+- fix doc ordering and phrasing from review-followup on PR #19896 (#19931)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- fix(issue-sync): range-syntax PR title guard for TODO auto-complete (#19939)
+- apply gemini review suggestions from PR #19907 followup (#19933)
+- fix(stats): export AIDEVOPS_HEADLESS in stats-wrapper.sh main() to unblock quality-debt dispatch (#19932)
+
+### Fixed
+
+- harden shellcheckrc parity grep against set -e exit and prefix false positives (#19941)
+- address Gemini review feedback on pre-commit-hook.sh ratchet validators (#19935)
+- reduce _infer_init_scope I/O — single jq pass + pass is_local_only from caller (#19938)
+
 ## [3.8.76] - 2026-04-19
 
 ### Changed
