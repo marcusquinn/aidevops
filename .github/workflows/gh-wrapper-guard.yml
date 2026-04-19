@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# GH Wrapper Guard (t2113)
+# GH Wrapper Guard (t2113 + GH#19857)
 #
-# Blocks PRs that introduce raw `gh issue create` or `gh pr create` calls
-# in .agents/scripts/ or .agents/hooks/ shell scripts. These must use the
-# gh_create_issue / gh_create_pr wrappers (defined in shared-constants.sh)
-# to ensure origin labelling.
+# Blocks PRs that introduce:
+#   1. Raw `gh issue create` or `gh pr create` calls — must use
+#      gh_create_issue / gh_create_pr wrappers (origin labelling).
+#   2. Raw `gh issue edit --title/--body` or `gh pr edit --title/--body`
+#      calls — must use gh_issue_edit_safe / gh_pr_edit_safe wrappers
+#      (empty title/body safety invariant, GH#19857).
 #
-# Rule: prompts/build.txt → "Origin labelling (MANDATORY)"
+# Rules: prompts/build.txt → "Origin labelling (MANDATORY)" + GH#19857
 
 name: GH Wrapper Guard
 
@@ -80,17 +82,19 @@ jobs:
           printf '%s\n' "$output"
 
           if [[ "$scan_rc" -ne 0 ]]; then
-            printf '\n::error::Raw gh issue/pr create calls found in changed files.\n'
-            printf '::error::Use gh_create_issue / gh_create_pr wrappers instead.\n'
-            printf '::error::Rule: prompts/build.txt → "Origin labelling (MANDATORY)"\n'
+            printf '\n::error::Raw gh issue/pr create or edit --title/--body calls found in changed files.\n'
+            printf '::error::Create: use gh_create_issue / gh_create_pr wrappers.\n'
+            printf '::error::Edit: use gh_issue_edit_safe / gh_pr_edit_safe wrappers.\n'
             printf '::error::Suppress: append "# aidevops-allow: raw-gh-wrapper" to the line.\n'
             # Save output for PR comment
             {
               printf 'comment<<GH_WRAPPER_GUARD_EOF\n'
               printf '### GH Wrapper Guard — violations found\n\n'
-              printf 'Raw `gh issue create` or `gh pr create` calls detected in added/modified lines.\n'
-              printf 'Use `gh_create_issue` / `gh_create_pr` wrappers instead (defined in `shared-constants.sh`).\n\n'
-              printf '**Rule:** `prompts/build.txt` → "Origin labelling (MANDATORY)"\n\n'
+              printf 'Raw `gh issue/pr create` or `gh issue/pr edit --title/--body` calls detected in added/modified lines.\n'
+              printf 'Use safe wrappers defined in `shared-constants.sh`:\n'
+              printf '- **Create:** `gh_create_issue` / `gh_create_pr`\n'
+              printf '- **Edit:** `gh_issue_edit_safe` / `gh_pr_edit_safe`\n\n'
+              printf '**Rules:** Origin labelling (t2113) + edit safety invariant (GH#19857)\n\n'
               printf '```\n%s\n```\n\n' "$output"
               printf 'To suppress a specific line, append `# aidevops-allow: raw-gh-wrapper`.\n'
               printf 'GH_WRAPPER_GUARD_EOF\n'

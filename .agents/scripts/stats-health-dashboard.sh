@@ -656,7 +656,7 @@ _update_health_issue_title() {
 	local new_stats="${health_title% at [0-9][0-9]:[0-9][0-9] UTC}"
 	if [[ "$current_stats" != "$new_stats" ]]; then
 		local title_edit_stderr
-		title_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" 2>&1 >/dev/null)
+		title_edit_stderr=$(gh_issue_edit_safe "$health_issue_number" --repo "$repo_slug" --title "$health_title" 2>&1 >/dev/null)
 		local title_edit_exit_code=$?
 		if [[ $title_edit_exit_code -ne 0 ]]; then
 			echo "[stats] Health issue: failed to update title for #${health_issue_number}: ${title_edit_stderr}" >>"$LOGFILE"

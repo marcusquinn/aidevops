@@ -1017,6 +1017,12 @@ _gh_wrapper_auto_sig() {
 }
 
 gh_create_issue() {
+	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
+	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "gh issue create" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+
 	local origin_label
 	origin_label=$(session_origin_label)
 	# Ensure labels exist on the target repo (once per repo per process)
@@ -1132,6 +1138,12 @@ _gh_auto_link_sub_issue() {
 }
 
 gh_create_pr() {
+	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
+	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "gh pr create" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+
 	local origin_label
 	origin_label=$(session_origin_label)
 	_ensure_origin_labels_for_args "$@"
@@ -1185,6 +1197,178 @@ ensure_origin_labels_exist() {
 		--description "Worker took over from interactive session" \
 		--color "D4C5F9" 2>/dev/null || true
 	return 0
+}
+
+# =============================================================================
+# Safe gh Edit Wrappers (GH#19857)
+# =============================================================================
+# Framework-wide safety invariant: no code path may invoke gh issue edit or
+# gh pr edit with an empty title or empty body — under any condition, including
+# FORCE_* override flags. The check lives here so ALL call sites go through it.
+#
+# This mirrors the gh_create_issue / gh_create_pr pattern (origin labelling +
+# signing) but for DESTRUCTIVE edits rather than creation.
+#
+# Validation rules:
+#   Title: MUST be non-empty after trimming whitespace. Bare task-ID stubs
+#          like "tNNN: " or "GH#NNN: " (nothing after the prefix) are rejected.
+#   Body:  MUST be non-empty after trimming when --body is present.
+#          --body-file /dev/null and --body "" are rejected.
+#   Override: NO env var bypasses this. This is the hard invariant.
+#
+# Usage (drop-in replacements for gh issue edit / gh pr edit):
+#   gh_issue_edit_safe 123 --repo owner/repo --title "t001: Fix bug" --body "..."
+#   gh_pr_edit_safe 456 --repo owner/repo --title "t001: Fix bug"
+
+# Internal: rejection reason for the most recent _gh_validate_edit_args call.
+_GH_EDIT_REJECTION_REASON=""
+
+#######################################
+# Internal: validate --title and --body/--body-file args.
+# Returns 0 if valid, 1 if rejected (with stderr message + _GH_EDIT_REJECTION_REASON).
+# Args: the full argument list that would be passed to gh issue/pr edit.
+#######################################
+_gh_validate_edit_args() {
+	_GH_EDIT_REJECTION_REASON=""
+	local i=0 title_val="" has_title=0 body_val="" has_body=0
+	local body_file_val="" has_body_file=0
+	local -a args=("$@")
+
+	while [[ $i -lt ${#args[@]} ]]; do
+		case "${args[i]}" in
+		--title)
+			has_title=1
+			title_val="${args[i + 1]:-}"
+			i=$((i + 1))
+			;;
+		--title=*)
+			has_title=1
+			title_val="${args[i]#--title=}"
+			;;
+		--body)
+			has_body=1
+			body_val="${args[i + 1]:-}"
+			i=$((i + 1))
+			;;
+		--body=*)
+			has_body=1
+			body_val="${args[i]#--body=}"
+			;;
+		--body-file)
+			has_body_file=1
+			body_file_val="${args[i + 1]:-}"
+			i=$((i + 1))
+			;;
+		--body-file=*)
+			has_body_file=1
+			body_file_val="${args[i]#--body-file=}"
+			;;
+		*) ;;
+		esac
+		i=$((i + 1))
+	done
+
+	# Validate title if present
+	if [[ "$has_title" -eq 1 ]]; then
+		local trimmed_title
+		trimmed_title=$(printf '%s' "$title_val" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		if [[ -z "$trimmed_title" ]]; then
+			_GH_EDIT_REJECTION_REASON="empty title (after trimming whitespace)"
+			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
+		# Reject bare task-ID stubs: "tNNN: " or "GH#NNN: " with nothing after
+		if [[ "$trimmed_title" =~ ^(t[0-9]+|GH#[0-9]+):[[:space:]]*$ ]]; then
+			_GH_EDIT_REJECTION_REASON="stub title '${trimmed_title}' (task-ID prefix with no description)"
+			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
+	fi
+
+	# Validate body if present
+	if [[ "$has_body" -eq 1 ]]; then
+		local trimmed_body
+		trimmed_body=$(printf '%s' "$body_val" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		if [[ -z "$trimmed_body" ]]; then
+			_GH_EDIT_REJECTION_REASON="empty body (after trimming whitespace)"
+			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
+	fi
+
+	# Validate body-file if present
+	if [[ "$has_body_file" -eq 1 ]]; then
+		if [[ "$body_file_val" == "/dev/null" ]]; then
+			_GH_EDIT_REJECTION_REASON="body-file is /dev/null (would clear body)"
+			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
+		if [[ -f "$body_file_val" ]]; then
+			local file_size
+			file_size=$(wc -c <"$body_file_val" 2>/dev/null || echo "0")
+			file_size=$(echo "$file_size" | tr -d '[:space:]')
+			if [[ "$file_size" -eq 0 ]]; then
+				_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' is empty"
+				printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+				return 1
+			fi
+		fi
+	fi
+
+	return 0
+}
+
+#######################################
+# Internal: audit-log a safety rejection.
+# Non-fatal — if audit-log-helper.sh is unavailable, the stderr message
+# from _gh_validate_edit_args is still emitted.
+# Args:
+#   $1 — operation name (e.g. "gh issue edit")
+#   $2 — rejection reason
+#   $3..N — original command args (truncated to 500 chars for the log)
+#######################################
+_gh_edit_audit_rejection() {
+	local operation="$1"
+	local reason="$2"
+	shift 2
+	local context
+	context=$(printf '%q ' "$@" | head -c 500)
+	local audit_helper
+	audit_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/audit-log-helper.sh"
+	if [[ -x "$audit_helper" ]]; then
+		"$audit_helper" log operation.block \
+			"gh_edit_safety: ${operation} rejected — ${reason}. Context: ${context}" \
+			2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
+# gh_issue_edit_safe — drop-in replacement for gh issue edit.
+# Validates --title/--body before delegating. Rejects empty/stub values.
+# All arguments are forwarded to gh issue edit on success.
+# Returns 1 with stderr message on validation failure.
+#######################################
+gh_issue_edit_safe() {
+	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "gh issue edit" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+	gh issue edit "$@"
+}
+
+#######################################
+# gh_pr_edit_safe — drop-in replacement for gh pr edit.
+# Validates --title/--body before delegating. Rejects empty/stub values.
+# All arguments are forwarded to gh pr edit on success.
+# Returns 1 with stderr message on validation failure.
+#######################################
+gh_pr_edit_safe() {
+	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "gh pr edit" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+	gh pr edit "$@"
 }
 
 # =============================================================================

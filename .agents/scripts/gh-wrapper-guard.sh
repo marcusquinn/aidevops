@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# gh-wrapper-guard.sh — static checker for raw gh issue/pr create calls
+# gh-wrapper-guard.sh — static checker for raw gh issue/pr create AND edit calls
 #
-# Enforces the origin-labelling rule from prompts/build.txt:
-#   "NEVER use raw gh pr create or gh issue create directly. Always use
-#    the wrappers: gh_create_pr and gh_create_issue."
+# Enforces two rules from prompts/build.txt:
+#   1. Origin labelling: "NEVER use raw gh pr create or gh issue create directly.
+#      Always use the wrappers: gh_create_pr and gh_create_issue."
+#   2. Edit safety (GH#19857): "NEVER use raw gh issue edit / gh pr edit with
+#      --title or --body. Always use gh_issue_edit_safe / gh_pr_edit_safe."
 #
 # Subcommands:
 #   check        --base <ref>   Scan added/modified lines in diff vs <ref>
@@ -80,6 +82,17 @@ _scan_line() {
 		return 0
 	fi
 
+	# GH#19857: Match raw "gh issue edit" or "gh pr edit" with --title or --body.
+	# Label-only edits (no --title/--body) are fine without the safe wrapper.
+	if echo "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+issue[[:space:]]+edit' &&
+		echo "$line" | grep -qE '\-\-title\b|\-\-body\b|\-\-body-file\b'; then
+		return 0
+	fi
+	if echo "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+pr[[:space:]]+edit' &&
+		echo "$line" | grep -qE '\-\-title\b|\-\-body\b|\-\-body-file\b'; then
+		return 0
+	fi
+
 	return 1
 }
 
@@ -127,8 +140,9 @@ _scan_diff_for_file() {
 
 _report_violations() {
 	if [[ "$_SCAN_VIOLATIONS" -gt 0 ]]; then
-		printf 'gh-wrapper-guard: %d violation(s) found — use gh_create_issue / gh_create_pr wrappers instead of raw gh commands.\n' "$_SCAN_VIOLATIONS"
-		printf 'Rule: prompts/build.txt → "Origin labelling (MANDATORY)"\n'
+		printf 'gh-wrapper-guard: %d violation(s) found — use safe wrappers instead of raw gh commands.\n' "$_SCAN_VIOLATIONS"
+		printf 'Create: gh_create_issue / gh_create_pr. Edit: gh_issue_edit_safe / gh_pr_edit_safe.\n'
+		printf 'Rule: prompts/build.txt → "Origin labelling" + GH#19857 (edit safety invariant)\n'
 		printf 'Suppress: append "# aidevops-allow: raw-gh-wrapper" to the line.\n\n'
 		printf '%s' "$_SCAN_OUTPUT"
 		return 1
@@ -205,11 +219,11 @@ cmd_check_full() {
 	file_count=$(git ls-files '*.sh' 2>/dev/null | grep -cvE '(shared-constants\.sh|agents/scripts/tests/)' || true)
 	[[ "$file_count" -eq 0 ]] && return 0
 
-	# Fast grep pass: find candidate files with raw gh issue/pr create
+	# Fast grep pass: find candidate files with raw gh issue/pr create or edit
 	local candidates
 	candidates=$(git ls-files '*.sh' 2>/dev/null |
 		grep -vE '(shared-constants\.sh|agents/scripts/tests/)' |
-		xargs grep -lE 'gh[[:space:]]+(issue|pr)[[:space:]]+create' 2>/dev/null ||
+		xargs grep -lE 'gh[[:space:]]+(issue|pr)[[:space:]]+(create|edit)' 2>/dev/null ||
 		true)
 
 	if [[ -z "$candidates" ]]; then
@@ -228,12 +242,13 @@ cmd_check_full() {
 				violation_output+=$'\n'
 				violations=$((violations + 1))
 			fi
-		done < <(grep -nE 'gh[[:space:]]+(issue|pr)[[:space:]]+create' "$file" 2>/dev/null || true)
+		done < <(grep -nE 'gh[[:space:]]+(issue|pr)[[:space:]]+(create|edit)' "$file" 2>/dev/null || true)
 	done <<<"$candidates"
 
 	if [[ "$violations" -gt 0 ]]; then
-		printf 'gh-wrapper-guard: %d violation(s) found — use gh_create_issue / gh_create_pr wrappers instead of raw gh commands.\n' "$violations"
-		printf 'Rule: prompts/build.txt → "Origin labelling (MANDATORY)"\n'
+		printf 'gh-wrapper-guard: %d violation(s) found — use safe wrappers instead of raw gh commands.\n' "$violations"
+		printf 'Create: gh_create_issue / gh_create_pr. Edit: gh_issue_edit_safe / gh_pr_edit_safe.\n'
+		printf 'Rule: prompts/build.txt → "Origin labelling" + GH#19857 (edit safety invariant)\n'
 		printf 'Suppress: append "# aidevops-allow: raw-gh-wrapper" to the line.\n\n'
 		printf '%s' "$violation_output"
 		return 1
@@ -244,7 +259,7 @@ cmd_check_full() {
 }
 
 show_help() {
-	printf 'gh-wrapper-guard.sh — enforce gh_create_issue / gh_create_pr wrapper usage\n\n'
+	printf 'gh-wrapper-guard.sh — enforce safe gh wrapper usage (create + edit)\n\n'
 	printf 'Usage:\n'
 	printf '  gh-wrapper-guard.sh check --base <ref>   Scan PR diff vs base ref\n'
 	printf '  gh-wrapper-guard.sh check-staged          Scan staged changes\n'

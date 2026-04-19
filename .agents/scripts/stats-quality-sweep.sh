@@ -1903,7 +1903,7 @@ _update_quality_issue_title() {
 	local current_title
 	current_title=$(gh issue view "$issue_number" --repo "$repo_slug" --json title --jq '.title' 2>>"$LOGFILE" || echo "")
 	if [[ "$current_title" != "$quality_title" ]]; then
-		gh issue edit "$issue_number" --repo "$repo_slug" --title "$quality_title" 2>>"$LOGFILE" >/dev/null || true
+		gh_issue_edit_safe "$issue_number" --repo "$repo_slug" --title "$quality_title" 2>>"$LOGFILE" >/dev/null || true
 	fi
 	return 0
 }
@@ -1995,7 +1995,7 @@ _update_quality_issue_body() {
 
 	# Update issue body — redirect stderr to log for debugging on failure
 	local edit_stderr
-	edit_stderr=$(gh issue edit "$issue_number" --repo "$repo_slug" --body "$body" 2>&1 >/dev/null) || {
+	edit_stderr=$(gh_issue_edit_safe "$issue_number" --repo "$repo_slug" --body "$body" 2>&1 >/dev/null) || {
 		echo "[stats] Quality sweep: failed to update body on #${issue_number} in ${repo_slug}: ${edit_stderr}" >>"$LOGFILE"
 		return 0
 	}
