@@ -270,10 +270,14 @@ _is_protected_label() {
 	status:* | origin:* | tier:* | source:*) return 0 ;;
 	esac
 	# Exact-match protected labels
+	# GH#19856: added no-auto-dispatch and no-takeover — these are coordination
+	# signals set by explicit user/session action and must survive enrich.
 	case "$lbl" in
 	persistent | needs-maintainer-review | not-planned | duplicate | wontfix | \
 		already-fixed | "good first issue" | "help wanted" | \
-		parent-task | meta | auto-dispatch)
+		parent-task | meta | auto-dispatch | no-auto-dispatch | no-takeover | \
+		consolidation-in-progress | coderabbit-nits-ok | ratchet-bump | \
+		new-file-smell-ok)
 		return 0
 		;;
 	esac
@@ -1028,6 +1032,28 @@ _enrich_update_issue() {
 	return 1
 }
 
+# _enrich_check_active_claim: GH#19856 cross-runner dedup guard for the enrich
+# path. Before ANY destructive enrich operation (labels, title, body), check if
+# another runner holds an active claim on this issue. Returns 0 if an active
+# claim is detected (caller should abort enrich), 1 if safe to proceed.
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+#   $3 - task_id (for logging)
+_enrich_check_active_claim() {
+	local num="$1" repo="$2" task_id="$3"
+	local _dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	if [[ -x "$_dedup_helper" ]]; then
+		local _dedup_result=""
+		_dedup_result=$("$_dedup_helper" is-assigned "$num" "$repo" 2>/dev/null) || true
+		if [[ -n "$_dedup_result" ]]; then
+			print_warning "Skipping enrich for #$num ($task_id) — active claim detected: $_dedup_result (GH#19856)"
+			return 0
+		fi
+	fi
+	return 1
+}
+
 # _enrich_process_task: enrich a single task — resolve issue number, parse
 # metadata, apply labels, update title/body. Outputs "ENRICHED" on success
 # so the caller can count enriched tasks via token matching.
@@ -1107,6 +1133,12 @@ _enrich_process_task() {
 		current_title=$(echo "$_state_json" | jq -r '.title // ""' 2>/dev/null || echo "")
 		current_body=$(echo "$_state_json" | jq -r '.body // ""' 2>/dev/null || echo "")
 		current_labels_csv=$(echo "$_state_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+	fi
+
+	# GH#19856: cross-runner dedup guard — abort if another runner holds
+	# an active claim. See _enrich_check_active_claim for the full rationale.
+	if _enrich_check_active_claim "$num" "$repo" "$task_id"; then
+		return 0
 	fi
 
 	_enrich_apply_labels "$repo" "$num" "$labels" "$tier_label" "$current_labels_csv"

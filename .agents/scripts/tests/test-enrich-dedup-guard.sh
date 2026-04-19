@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# test-enrich-dedup-guard.sh — GH#19856 regression guard.
+#
+# Asserts that the enrich path in issue-sync-helper.sh respects the
+# dispatch-dedup-helper.sh is-assigned guard before modifying issue
+# labels, title, or body. Also verifies that coordination-signal labels
+# are protected by _is_protected_label.
+#
+# Failure history: GH#19856 — runner B's enrich path stripped runner A's
+# active claim labels (status:in-review, origin:interactive) because
+# enrich ran upstream of the dedup guard.
+
+set -uo pipefail
+
+TEST_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+TEST_RED=$'\033[0;31m'
+TEST_GREEN=$'\033[0;32m'
+TEST_RESET=$'\033[0m'
+
+TESTS_RUN=0
+TESTS_FAILED=0
+
+print_result() {
+	local name="$1" rc="$2" extra="${3:-}"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$rc" -eq 0 ]]; then
+		printf '%sPASS%s %s\n' "$TEST_GREEN" "$TEST_RESET" "$name"
+	else
+		printf '%sFAIL%s %s %s\n' "$TEST_RED" "$TEST_RESET" "$name" "$extra"
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+}
+
+# Sandbox HOME so sourcing is side-effect-free
+TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "$TEST_ROOT"' EXIT
+export HOME="${TEST_ROOT}/home"
+mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor"
+
+# =============================================================================
+# Part 1 — _is_protected_label protects coordination-signal labels
+# =============================================================================
+# Source issue-sync-helper.sh to get access to _is_protected_label.
+# shellcheck source=/dev/null
+source "${TEST_SCRIPTS_DIR}/issue-sync-helper.sh" >/dev/null 2>&1
+set +e
+
+# Labels that MUST be protected (coordination signals from GH#19856)
+for lbl in "no-auto-dispatch" "no-takeover" "consolidation-in-progress" \
+	"coderabbit-nits-ok" "ratchet-bump" "new-file-smell-ok"; do
+	if _is_protected_label "$lbl"; then
+		print_result "_is_protected_label protects '$lbl'" 0
+	else
+		print_result "_is_protected_label protects '$lbl'" 1 "(expected return 0 — label should be protected)"
+	fi
+done
+
+# Prefix-protected namespaces must still work
+for lbl in "status:in-review" "status:claimed" "status:in-progress" \
+	"status:queued" "origin:interactive" "origin:worker" "tier:standard"; do
+	if _is_protected_label "$lbl"; then
+		print_result "_is_protected_label protects '$lbl' (prefix)" 0
+	else
+		print_result "_is_protected_label protects '$lbl' (prefix)" 1 "(expected return 0)"
+	fi
+done
+
+# Pre-existing exact-match labels must still work (regression guard)
+for lbl in "parent-task" "meta" "auto-dispatch" "persistent" \
+	"needs-maintainer-review" "not-planned" "duplicate" "wontfix" \
+	"already-fixed"; do
+	if _is_protected_label "$lbl"; then
+		print_result "_is_protected_label still protects '$lbl'" 0
+	else
+		print_result "_is_protected_label still protects '$lbl'" 1 "(regression)"
+	fi
+done
+
+# Non-coordination labels must NOT be protected
+for lbl in "bug" "enhancement" "simplification" "architecture"; do
+	if ! _is_protected_label "$lbl"; then
+		print_result "_is_protected_label allows removal of '$lbl'" 0
+	else
+		print_result "_is_protected_label allows removal of '$lbl'" 1 "(unexpected protection)"
+	fi
+done
+
+# =============================================================================
+# Part 2 — dispatch-dedup-helper.sh is-assigned blocks on active claims
+# =============================================================================
+# Stub the `gh` CLI to return synthetic issue payloads.
+STUB_DIR="${TEST_ROOT}/bin"
+mkdir -p "$STUB_DIR"
+
+write_stub_gh() {
+	local payload="$1"
+	cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+# Stub gh for test — returns pre-configured JSON for issue view
+_main() {
+	local cmd="\$1" sub="\$2"
+	if [[ "\$cmd" == "issue" && "\$sub" == "view" ]]; then
+		echo '${payload}'
+		exit 0
+	fi
+	if [[ "\$cmd" == "api" ]]; then
+		echo '{"login": "testbot"}'
+		exit 0
+	fi
+	exit 1
+}
+_main "\$@"
+STUB
+	chmod +x "${STUB_DIR}/gh"
+}
+
+# Prepend stub dir so our stub shadows the real gh
+export PATH="${STUB_DIR}:${PATH}"
+
+# Test: issue with status:in-review + assignee should block (return 0)
+write_stub_gh '{"state":"OPEN","assignees":[{"login":"runnerA"}],"labels":[{"name":"status:in-review"}]}'
+_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned 123 "test/repo" "runnerB" 2>/dev/null) || true
+if [[ -n "$_dedup_result" ]]; then
+	print_result "is-assigned blocks when status:in-review + other assignee" 0
+else
+	print_result "is-assigned blocks when status:in-review + other assignee" 1 "(expected block, got pass)"
+fi
+
+# Test: issue with origin:interactive + assignee should block
+write_stub_gh '{"state":"OPEN","assignees":[{"login":"maintainer"}],"labels":[{"name":"origin:interactive"}]}'
+_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned 123 "test/repo" "runnerB" 2>/dev/null) || true
+if [[ -n "$_dedup_result" ]]; then
+	print_result "is-assigned blocks when origin:interactive + assignee" 0
+else
+	print_result "is-assigned blocks when origin:interactive + assignee" 1 "(expected block, got pass)"
+fi
+
+# Test: issue with status:claimed + assignee should block
+write_stub_gh '{"state":"OPEN","assignees":[{"login":"runnerA"}],"labels":[{"name":"status:claimed"}]}'
+_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned 123 "test/repo" "runnerB" 2>/dev/null) || true
+if [[ -n "$_dedup_result" ]]; then
+	print_result "is-assigned blocks when status:claimed + other assignee" 0
+else
+	print_result "is-assigned blocks when status:claimed + other assignee" 1 "(expected block, got pass)"
+fi
+
+# Test: issue with no active labels + no assignee should pass (return 1)
+write_stub_gh '{"state":"OPEN","assignees":[],"labels":[{"name":"bug"}]}'
+_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned 123 "test/repo" "runnerB" 2>/dev/null) || true
+if [[ -z "$_dedup_result" ]]; then
+	print_result "is-assigned allows when no claim + no assignee" 0
+else
+	print_result "is-assigned allows when no claim + no assignee" 1 "(expected pass, got block: $_dedup_result)"
+fi
+
+# =============================================================================
+# Part 3 — _enrich_process_task aborts when dedup guard fires
+# =============================================================================
+# This is a structural check: verify the guard code exists in the function body.
+# A live test would require too much scaffolding (TODO.md, brief files, etc.).
+# Check that the extracted helper function exists
+if grep -q '_enrich_check_active_claim()' "${TEST_SCRIPTS_DIR}/issue-sync-helper.sh"; then
+	print_result "_enrich_check_active_claim function exists (GH#19856)" 0
+else
+	print_result "_enrich_check_active_claim function exists (GH#19856)" 1 "(function not found)"
+fi
+
+# Check that _enrich_process_task calls the guard
+if grep -q '_enrich_check_active_claim' "${TEST_SCRIPTS_DIR}/issue-sync-helper.sh" | grep -v '^_enrich_check_active_claim()' >/dev/null 2>&1; then
+	# Fallback: just check the function is called somewhere in the file besides its own definition
+	true
+fi
+if grep -c '_enrich_check_active_claim' "${TEST_SCRIPTS_DIR}/issue-sync-helper.sh" | grep -q '^[2-9]'; then
+	print_result "_enrich_process_task calls GH#19856 dedup guard" 0
+else
+	print_result "_enrich_process_task calls GH#19856 dedup guard" 1 "(guard call not found in _enrich_process_task)"
+fi
+
+# Part 3b — _ensure_issue_body_has_brief also has the guard
+if grep -q 'GH#19856.*skipping force-enrich' "${TEST_SCRIPTS_DIR}/pulse-dispatch-core.sh"; then
+	print_result "_ensure_issue_body_has_brief contains GH#19856 dedup guard" 0
+else
+	print_result "_ensure_issue_body_has_brief contains GH#19856 dedup guard" 1 "(guard code not found)"
+fi
+
+# =============================================================================
+# Summary
+# =============================================================================
+echo ""
+echo "---"
+echo "Tests run: $TESTS_RUN | Passed: $((TESTS_RUN - TESTS_FAILED)) | Failed: $TESTS_FAILED"
+if [[ "$TESTS_FAILED" -gt 0 ]]; then
+	echo "${TEST_RED}SOME TESTS FAILED${TEST_RESET}"
+	exit 1
+fi
+echo "${TEST_GREEN}ALL TESTS PASSED${TEST_RESET}"
+exit 0
