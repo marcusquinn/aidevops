@@ -793,6 +793,77 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 }
 
 #######################################
+# Post an idempotent diagnostic comment when tier escalation is skipped
+# because the worker crashed with crash_type=no_work (infrastructure
+# failure — FD exhaustion, plugin init crash, branch naming race, auth
+# refresh race). Tier escalation is the wrong response to infra failures:
+# a more expensive model cannot fix an FD leak. We keep the issue at its
+# current tier, let the next retry attempt run cheaply after the infra
+# issue resolves, and rely on the existing circuit breakers to apply NMR
+# on cost/staleness thresholds if retries keep failing.
+#
+# Idempotent: checks for a prior comment with the marker
+# <!-- no-work-escalation-skip --> and skips if present, so a cascade of
+# consecutive no_work failures doesn't spam the issue with duplicates.
+#
+# Arguments:
+#   arg1 - issue number
+#   arg2 - repo slug (owner/repo)
+#   arg3 - failure count (for context)
+#   arg4 - kill/failure reason (sanitised)
+# Returns: 0 always (best-effort, never fatal)
+#######################################
+_log_no_work_skip_escalation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local failure_count="$3"
+	local reason="${4:-worker_exited_before_reading_brief}"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+
+	local marker='<!-- no-work-escalation-skip -->'
+
+	# Idempotency check: skip if a prior comment already carries the marker.
+	# Best-effort — if gh api fails, fall through and post (better to repeat
+	# once than to lose the diagnostic entirely).
+	local existing=""
+	existing=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
+		2>/dev/null) || existing=""
+	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
+		# Already posted once — nothing more to do. Still emit a one-line
+		# log so operators can track the skip rate if they're tailing logs.
+		printf '[worker-lifecycle][t2387] no_work skip-escalation already recorded for #%s (%s, count=%s)\n' \
+			"$issue_number" "$repo_slug" "$failure_count" >&2 || true
+		return 0
+	fi
+
+	local safe_reason
+	safe_reason=$(_sanitize_markdown "$reason")
+
+	local comment_body="${marker}
+## Tier Escalation Skipped: Infrastructure Failure (no_work)
+
+**Trigger:** ${failure_count} worker failure(s) classified as \`no_work\` — the worker exited during setup without reading any target files.
+**Action:** Tier escalation **skipped**. The issue stays at its current tier so the next retry can succeed cheaply once the infrastructure issue resolves.
+**Reason:** ${safe_reason}
+
+**Why no cascade:** \`no_work\` means the worker never engaged with the brief — it crashed during runtime setup (FD exhaustion, plugin init failure, branch naming race, auth refresh race). A more expensive model cannot fix an infrastructure problem it never reached. Cascading to \`tier:thinking\` would burn opus tokens on a problem sonnet (or haiku) will handle once the infra clears.
+
+If \`no_work\` crashes continue, the existing circuit breakers (\`cost-circuit-breaker-helper.sh\`, \`dispatch-dedup-stale.sh\`, stale-recovery) will apply \`needs-maintainer-review\` on their own thresholds with markers that \`_nmr_application_is_circuit_breaker_trip\` (t2386) recognises, so auto-approval will correctly preserve the NMR.
+
+_Automated by \`escalate_issue_tier()\` no_work skip (t2387) in worker-lifecycle-common.sh_"
+
+	gh issue comment "$issue_number" --repo "$repo_slug" \
+		--body "$comment_body" 2>/dev/null || true
+
+	printf '[worker-lifecycle][t2387] no_work skip-escalation posted for #%s (%s, count=%s)\n' \
+		"$issue_number" "$repo_slug" "$failure_count" >&2 || true
+	return 0
+}
+
+#######################################
 # Escalate issue model tier after repeated worker failures.
 #
 # Cascade escalation: tier:simple → tier:standard → tier:thinking.
@@ -800,8 +871,12 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 #   - "overwhelmed": model read files, attempted work, but couldn't complete
 #     → escalate immediately (threshold=1). Retrying at the same tier wastes
 #     tokens on the same complexity the model already failed on.
-#   - "no_work": infrastructure failure, setup crash, branch naming failure
-#     → use default threshold (2). Transient issues may resolve on retry.
+#   - "no_work": infrastructure failure (FD exhaustion, plugin init crash,
+#     auth refresh race). **Short-circuits BEFORE tier cascade** (t2387) —
+#     a more expensive model cannot fix infrastructure. Keeps the issue
+#     at its current tier and posts a diagnostic comment via
+#     _log_no_work_skip_escalation; existing circuit breakers apply NMR
+#     on cost/staleness thresholds if retries persist.
 #   - "partial" / other: default threshold (2). Model got partway, may
 #     succeed with a continuation or fresh attempt.
 #
@@ -846,6 +921,26 @@ escalate_issue_tier() {
 	fi
 	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=2
 	[[ "$threshold" -ge 1 ]] || threshold=2
+
+	# t2387: no_work crashes are infrastructure failures (FD exhaustion,
+	# plugin init crash, branch naming race, auth refresh race — see t2116
+	# session memory). Tier escalation is the wrong response: a more
+	# expensive model cannot fix an FD leak or an auth race. Skip the
+	# cascade entirely and keep the issue at its current tier so the
+	# next retry can succeed cheaply once the infra issue resolves. If
+	# retries keep failing, the existing circuit-breaker helpers
+	# (cost-circuit-breaker, dispatch-dedup-stale, stale-recovery) apply
+	# NMR on their own thresholds using markers that t2386
+	# _nmr_application_is_circuit_breaker_trip recognises, so auto-approval
+	# preserves the NMR correctly. This early return also subsumes the
+	# t2119 body-quality-gate skip — the later gate call becomes
+	# unreachable on no_work crashes, so the original inline != guard is
+	# no longer needed there.
+	if [[ "$crash_type" == "no_work" ]]; then
+		_log_no_work_skip_escalation "$issue_number" "$repo_slug" \
+			"$failure_count" "$reason"
+		return 0
+	fi
 
 	# Only escalate at the threshold boundary (not on every subsequent failure)
 	if [[ "$failure_count" -ne "$threshold" ]]; then
@@ -914,23 +1009,18 @@ escalate_issue_tier() {
 	# is a vague issue — not model capability. Escalating wastes a more
 	# expensive model on the same exploration problem.
 	#
-	# t2119 guard: skip the body-quality gate entirely when crash_type is
-	# "no_work". In that case the worker died during infrastructure setup
-	# (FD exhaustion, plugin init crash, auth refresh race — see t2116
-	# session memory) BEFORE ever reading the brief. Blaming the brief in
-	# that case is a false positive that wrongly froze good issues like
-	# #19037, #19038, #19099, #19110 while the real cause was #19079 FD
-	# exhaustion. The body-quality gate only makes sense when the model
-	# actually engaged with the brief — i.e. `overwhelmed` or `partial`
-	# crash types, or unclassified failures where we at least have
-	# evidence the worker started a real session.
+	# Note: t2119 originally added an inline `crash_type != "no_work"` guard
+	# here so no_work crashes would bypass the body-gate. That guard was
+	# removed by t2387 when the entire function gained an earlier
+	# `crash_type == "no_work"` short-circuit that returns before reaching
+	# this point — so only overwhelmed / partial / unclassified reach here,
+	# and every path through the function that gets here wants the gate
+	# evaluated.
 	local issue_body
 	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json body --jq '.body // ""' 2>/dev/null) || issue_body=""
-	if [[ "$crash_type" != "no_work" ]]; then
-		_escalate_body_quality_gate "$issue_number" "$repo_slug" \
-			"$failure_count" "$threshold" "$issue_body" || return 0
-	fi
+	_escalate_body_quality_gate "$issue_number" "$repo_slug" \
+		"$failure_count" "$threshold" "$issue_body" || return 0
 
 	# Create next tier label (creates label if needed)
 	local label_desc=""
@@ -980,13 +1070,14 @@ escalate_issue_tier() {
 	overwhelmed)
 		crash_type_label="**Crash type:** \`overwhelmed\` — model read target files and attempted implementation but could not produce commits. Immediate escalation triggered (threshold=1)."
 		;;
-	no_work)
-		crash_type_label="**Crash type:** \`no_work\` — worker exited during setup without reading target files. Likely infrastructure/transient failure."
-		;;
 	partial)
 		crash_type_label="**Crash type:** \`partial\` — worker produced commits but could not complete the PR lifecycle."
 		;;
 	esac
+	# Note: t2387 removed the `no_work` case here because that crash_type
+	# short-circuits at the top of escalate_issue_tier and never reaches
+	# the comment-posting path. Infrastructure failures get their own
+	# diagnostic comment via _log_no_work_skip_escalation instead.
 	local comment_body="## Cascade Tier Escalation: tier:${current_tier} → tier:${next_tier}
 
 **Trigger:** ${failure_count} consecutive worker failures at \`tier:${current_tier}\` (threshold: ${threshold})
