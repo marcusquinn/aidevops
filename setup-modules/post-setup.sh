@@ -37,6 +37,16 @@ setup_auto_update() {
 			# Non-interactive: enable silently
 			bash "$auto_update_script" enable >/dev/null 2>&1 || true
 			print_info "Auto-update enabled (every 10 min). Disable: aidevops auto-update disable"
+			# On Linux systemd, advise about linger without running sudo automatically.
+			if [[ "$(uname -s)" == "Linux" ]] && [[ "${USER:-}" != "root" ]] \
+				&& command -v loginctl &>/dev/null; then
+				local _linger_state
+				_linger_state=$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)
+				if [[ "$_linger_state" != "yes" ]]; then
+					echo "[INFO] Linux systemd: enable linger so auto-update runs when logged out:" >&2
+					echo "[INFO]   sudo loginctl enable-linger $USER" >&2
+				fi
+			fi
 		else
 			echo ""
 			echo "Auto-update keeps aidevops current by checking every 10 minutes."
@@ -45,6 +55,29 @@ setup_auto_update() {
 			setup_prompt enable_auto "Enable auto-update? [Y/n]: " "Y"
 			if [[ "$enable_auto" =~ ^[Yy]?$ ]]; then
 				bash "$auto_update_script" enable
+				# On Linux systemd hosts, offer to enable linger so the timer survives logout.
+				# Skip for root (irrelevant), WSL/container (loginctl may be absent or stub),
+				# and when the backend didn't resolve to systemd.
+				if [[ "$(uname -s)" == "Linux" ]] \
+					&& [[ "${USER:-}" != "root" ]] \
+					&& command -v loginctl &>/dev/null \
+					&& systemctl --user is-enabled aidevops-auto-update.timer &>/dev/null 2>&1; then
+					local _linger_state
+					_linger_state=$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)
+					if [[ "$_linger_state" != "yes" ]]; then
+						echo ""
+						echo "Without linger, the auto-update timer stops when you log out."
+						echo "On servers and headless hosts, linger is almost always required."
+						local enable_linger=""
+					setup_prompt enable_linger "Enable linger so auto-update runs when logged out? Requires sudo. [Y/n]: " "Y"
+						if [[ "$enable_linger" =~ ^[Yy]?$ ]]; then
+							sudo loginctl enable-linger "$USER"
+							print_success "Linger enabled for $USER"
+						else
+							print_info "Skipped. Enable later: sudo loginctl enable-linger $USER"
+						fi
+					fi
+				fi
 			else
 				print_info "Skipped. Enable later: aidevops auto-update enable"
 			fi

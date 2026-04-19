@@ -1687,6 +1687,22 @@ WantedBy=timers.target
 	echo ""
 	echo "  Disable with: aidevops auto-update disable"
 	echo "  Check now:    aidevops auto-update check"
+	echo ""
+	# Check linger state so the timer survives logout on headless/server Linux hosts.
+	# Skip for root (linger irrelevant) and when loginctl is absent (containers).
+	if [[ "${USER:-}" != "root" ]] && command -v loginctl &>/dev/null; then
+		local _linger_state _linger_cmd
+		_linger_state=$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)
+		_linger_cmd="sudo loginctl enable-linger $USER"
+		if [[ "$_linger_state" == "yes" ]]; then
+			echo -e "  Linger:    ${GREEN}enabled${NC} (timer runs when logged out)"
+		elif [[ "$_linger_state" == "no" ]]; then
+			echo -e "  Linger:    ${YELLOW}disabled${NC} — timer stops when you log out" >&2
+			echo -e "  ${YELLOW}  Enable with: ${_linger_cmd}${NC}" >&2
+		else
+			echo -e "  Linger:    ${YELLOW}unknown${NC} — run: ${_linger_cmd}" >&2
+		fi
+	fi
 	return 0
 }
 
@@ -1921,6 +1937,31 @@ _cmd_status_scheduler() {
 		if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
 			echo -e "  ${YELLOW}Note: legacy cron entry found — run 'aidevops auto-update disable && enable' to migrate${NC}"
 		fi
+	elif [[ "$backend" == systemd ]]; then
+		# Linux systemd user timer status
+		echo -e "  Scheduler: systemd user timer"
+		if systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" &>/dev/null; then
+			local _timer_active
+			_timer_active=$(systemctl --user is-active "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
+			echo -e "  Status:    ${GREEN}enabled${NC}"
+			echo "  Unit:      ${SYSTEMD_UNIT_NAME}.timer"
+			echo "  Active:    ${_timer_active:-unknown}"
+		else
+			echo -e "  Status:    ${YELLOW}disabled${NC}"
+		fi
+		# Linger row — required for timer to survive logout
+		if [[ "${USER:-}" != "root" ]] && command -v loginctl &>/dev/null; then
+			local _linger_state _linger_cmd
+			_linger_state=$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)
+			_linger_cmd="sudo loginctl enable-linger $USER"
+			if [[ "$_linger_state" == "yes" ]]; then
+				echo -e "  Linger:    ${GREEN}yes${NC}"
+			elif [[ "$_linger_state" == "no" ]]; then
+				echo -e "  Linger:    ${YELLOW}no${NC} — timer stops on logout; fix: ${_linger_cmd}"
+			else
+				echo -e "  Linger:    ${YELLOW}unknown${NC} — run: ${_linger_cmd}"
+			fi
+		fi
 	else
 		# Linux: show cron status
 		if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
@@ -2116,6 +2157,10 @@ SCHEDULER BACKENDS:
     macOS:  launchd LaunchAgent (~/Library/LaunchAgents/com.aidevops.aidevops-auto-update.plist)
             - Native macOS scheduler, survives reboots without cron
             - Auto-migrates existing cron entries on first 'enable'
+    Linux (systemd): systemd user timer (aidevops-auto-update.timer)
+            - Requires loginctl enable-linger $USER to run when logged out
+            - Without linger, the timer stops when your last session ends
+            - See 'aidevops auto-update status' for current linger state
     Linux:  cron (crontab entry with # aidevops-auto-update marker)
 
 HOW IT WORKS:
