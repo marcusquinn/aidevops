@@ -21,6 +21,12 @@ external-sources=false
 # Inherit the same disable rules as root .shellcheckrc
 # (ShellCheck only reads ONE .shellcheckrc — the first found — so we must
 # duplicate the disables here rather than inheriting from root)
+#
+# SC1091: "Not following: ... was not specified as input" — disabled globally
+#         in root .shellcheckrc; must duplicate here since external-sources=false
+#         (above) triggers SC1091 even with per-site source= directives.
+#         See GH#19805, root .shellcheckrc header for the full backstory.
+disable=SC1091
 disable=SC2329
 disable=SC2317
 disable=SC2034
