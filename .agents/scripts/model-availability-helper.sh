@@ -426,36 +426,30 @@ resolve_api_key() {
 		fi
 	fi
 
-	# Source 4: OpenCode OAuth auth.json (t1927)
-	# The headless runtime authenticates via OAuth tokens in auth.json, not
-	# env vars. Check for a non-empty, non-expired access token for this
-	# provider. This is a read-only check — we don't refresh tokens here.
+	# Source 4: OpenCode auth.json (t1927, t2392)
+	# The headless runtime authenticates via OAuth tokens or API keys stored
+	# in auth.json, not env vars. This is a read-only check — we don't
+	# refresh tokens here.
+	#
+	# t2392: for OAuth-typed entries, ALWAYS return the synthetic marker
+	# `oauth-refresh-available` regardless of access-token expiry. The raw
+	# OAuth access token (prefix `sk-ant-oat01-`) cannot be used with the
+	# Anthropic probe's `x-api-key` header — that header expects static
+	# `sk-ant-api03-` keys. OAuth requires `Authorization: Bearer` and a
+	# live OAuth session. The marker makes the probe record healthy and
+	# skip HTTP; workers authenticate via the opencode runtime's own
+	# OAuth flow, which handles refresh at session start.
 	local auth_file="${HOME}/.local/share/opencode/auth.json"
 	if [[ -f "$auth_file" ]]; then
-		local access_token expires_at now_ms
-		access_token=$(jq -r --arg p "$provider" '.[$p].access // empty' "$auth_file" 2>/dev/null) || access_token=""
-		if [[ -n "$access_token" ]]; then
-			# Check expiry (milliseconds since epoch)
-			expires_at=$(jq -r --arg p "$provider" '.[$p].expires // 0' "$auth_file" 2>/dev/null) || expires_at=0
-			now_ms=$(date +%s)000 # approximate — good enough for probe
-			if [[ "$expires_at" -gt "$now_ms" ]] 2>/dev/null; then
-				echo "$access_token"
-				return 0
-			fi
-			# Token expired but refresh token may exist — the OpenCode
-			# runtime handles refresh at session start. For probe purposes,
-			# if a refresh token exists, report the provider as available.
-			local refresh_token
-			refresh_token=$(jq -r --arg p "$provider" '.[$p].refresh // empty' "$auth_file" 2>/dev/null) || refresh_token=""
-			if [[ -n "$refresh_token" ]]; then
-				# Return a synthetic marker so the probe knows auth exists
-				# but the actual token will be refreshed by the runtime.
-				# The probe can't refresh — it's a read-only check.
-				echo "oauth-refresh-available"
-				return 0
-			fi
+		local auth_type
+		auth_type=$(jq -r --arg p "$provider" '.[$p].type // empty' "$auth_file" 2>/dev/null) || auth_type=""
+		if [[ "$auth_type" == "oauth" ]]; then
+			# OAuth entry: presence of the entry means the runtime can
+			# authenticate. Probe records healthy and skips HTTP.
+			echo "oauth-refresh-available"
+			return 0
 		fi
-		# Also check for API key type entries (e.g., opencode provider)
+		# API-key type entries (e.g., opencode, claudecli providers)
 		local api_key_entry
 		api_key_entry=$(jq -r --arg p "$provider" '.[$p].key // empty' "$auth_file" 2>/dev/null) || api_key_entry=""
 		if [[ -n "$api_key_entry" ]]; then
@@ -894,6 +888,21 @@ _probe_resolve_and_validate_key() {
 		[[ "$quiet" != "true" ]] && print_warning "$provider: API key resolved but empty"
 		_record_health "$provider" "no_key" 0 0 "API key resolved but empty" 0
 		return 3
+	fi
+
+	# t2392 defensive: if the resolved value is an Anthropic OAuth access
+	# token (prefix `sk-ant-oat01-`) — e.g. a user exported ANTHROPIC_API_KEY
+	# directly from auth.json — it CANNOT be used with the x-api-key probe
+	# header (which expects static `sk-ant-api03-` keys). Treat it like the
+	# oauth-refresh-available marker: record healthy, skip HTTP. Workers use
+	# the opencode runtime's OAuth flow, which handles refresh at session
+	# start. This is belt-and-braces on top of the resolve_api_key fix —
+	# catches the case where an OAuth token reaches this function through
+	# env/gopass/credentials.sh sources instead of auth.json.
+	if [[ "$provider" == "anthropic" && "$api_key" == sk-ant-oat01-* ]]; then
+		[[ "$quiet" != "true" ]] && print_success "$provider: OAuth access token detected (skipping HTTP probe)"
+		_record_health "$provider" "healthy" 0 0 "OAuth access token detected" 0
+		return 100
 	fi
 
 	# t1927: OAuth refresh-only tokens — the access token is expired but a
