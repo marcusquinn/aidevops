@@ -1106,14 +1106,38 @@ _fetch_subissue_numbers() {
 #   1. GitHub sub-issue graph (GraphQL `subIssues` field) — authoritative
 #      parent-child relationship when the parent was wired via
 #      `issue-sync-helper.sh backfill-sub-issues` or `_gh_add_sub_issue`.
-#   2. Body regex #NNN references (fallback for legacy parents with
-#      children listed only inline in the body).
+#   2. Body section regex (t2244 — fallback for legacy parents with
+#      children listed under a dedicated heading). Requires a
+#      `## Children`, `## Sub-tasks`, or `## Child issues` heading in
+#      the parent body. Only #NNN references WITHIN that section (up to
+#      the next ## heading) are treated as children. Prose #NNN mentions
+#      elsewhere in the body are ignored — this prevents premature close
+#      when a parent cites historical issues as context.
 #
 # Either source must yield ≥2 children to avoid single-reference false
 # positives. Checks each against GH API for closed state; only closes
 # if ALL children are closed.
 #
 # Max 5 closes per cycle to limit API usage.
+# t2244: extract the ## Children / ## Sub-tasks / ## Child issues section from
+# a parent issue body. Returns ONLY the text between that heading and the next
+# ## heading (or EOF). Returns empty if no matching heading found — caller must
+# treat empty as "no declared children in body" and skip the body-regex path.
+# This prevents prose #NNN mentions (e.g., "triggered by #19708") from being
+# misread as child references and causing premature parent close.
+_extract_children_section() {
+	local body="$1"
+	printf '%s' "$body" | awk '
+		BEGIN { in_section = 0 }
+		/^##[[:space:]]+(Children|Child [Ii]ssues|Sub-?[Tt]asks)[[:space:]]*$/ {
+			in_section = 1; next
+		}
+		in_section && /^##[[:space:]]/ { exit }
+		in_section { print }
+	'
+	return 0
+}
+
 #######################################
 # t2138: extract per-parent close logic. Keeps reconcile_completed_parent_tasks
 # under the 100-line shell-complexity threshold and makes the close decision
@@ -1193,12 +1217,18 @@ reconcile_completed_parent_tasks() {
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
 			# t2138: prefer the sub-issue graph when non-empty; fall back to
-			# body regex for legacy parents that list children inline.
+			# body section regex for legacy parents that list children under
+			# a dedicated heading (t2244: ## Children / ## Sub-tasks / ## Child issues).
+			# Prose #NNN mentions outside this section are NOT treated as children.
 			local child_nums child_source="graph"
 			child_nums=$(_fetch_subissue_numbers "$slug" "$issue_num" | sort -un | grep -v "^${issue_num}$" | grep -v '^$' || true)
 			if [[ -z "$child_nums" ]]; then
-				child_nums=$(printf '%s' "$issue_body" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un | grep -v "^${issue_num}$") || child_nums=""
-				child_source="body"
+				local children_section
+				children_section=$(_extract_children_section "$issue_body")
+				if [[ -n "$children_section" ]]; then
+					child_nums=$(printf '%s' "$children_section" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un | grep -v "^${issue_num}$") || child_nums=""
+					child_source="body"
+				fi
 			fi
 			[[ -n "$child_nums" ]] || continue
 
