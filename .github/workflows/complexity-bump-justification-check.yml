@@ -1,0 +1,139 @@
+name: Complexity Bump Justification Check
+
+# t2370: Validates that the `complexity-bump-ok` label is accompanied by a
+# `## Complexity Bump Justification` section in the PR body with at least
+# one file:line reference and one numeric measurement.
+#
+# This is the enforcement layer that makes it safe for workers to self-apply
+# the label: the validator strips it if the justification is missing or
+# insufficient. Mirrors the `new-file-smell-ok` + justification-section
+# pattern from qlty-new-file-gate.yml.
+#
+# Trigger: `pull_request_target` on `labeled` — only fires when a label is
+# added, not on every push. Uses `pull_request_target` because:
+# 1. We only read event metadata (PR body, labels) — never checkout PR code
+# 2. We need write access to remove labels and post comments on fork PRs
+#
+# On fail: removes the label and posts a remediation comment.
+# On pass: label stays; code-quality.yml complexity gates accept it.
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+jobs:
+  validate-justification:
+    name: Complexity Bump Justification
+    # Only run when the specific label is applied
+    if: github.event.label.name == 'complexity-bump-ok'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Validate justification section
+        id: validate
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          MISSING=""
+
+          # Check 1: PR body contains a ## Complexity Bump Justification heading
+          if ! printf '%s' "$PR_BODY" | grep -qE '^##+[[:space:]]+Complexity Bump Justification'; then
+            MISSING="${MISSING}- Missing \`## Complexity Bump Justification\` section in PR body\n"
+          fi
+
+          # Check 2: At least one file:line reference (e.g. helper.sh:225, src/lib.ts:42)
+          if ! printf '%s' "$PR_BODY" | grep -qE '[a-zA-Z0-9_/.-]+:[0-9]+'; then
+            MISSING="${MISSING}- Missing file:line reference (e.g. \`complexity-regression-helper.sh:225\`)\n"
+          fi
+
+          # Check 3: At least one numeric measurement
+          # Matches patterns like: depth=83, base=5, head=8, max_depth=83,
+          # violations: 3, new=2, or bare numbers in measurement context
+          if ! printf '%s' "$PR_BODY" | grep -qiE '(depth|base|head|max_depth|nesting|violations?|count|total|new|lines?|score)\s*[=:]\s*[0-9]+'; then
+            MISSING="${MISSING}- Missing numeric measurement (e.g. \`base=5, head=8, new=3\` or \`max_depth=83\`)\n"
+          fi
+
+          if [ -n "$MISSING" ]; then
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            # Write missing items to file for the comment step
+            printf '%b' "$MISSING" > /tmp/missing-items.txt
+            echo "::error::Complexity bump justification is incomplete. See PR comment."
+          else
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+            echo "Justification section validated: has heading, file:line reference, and numeric measurement."
+          fi
+
+      - name: Remove label and post remediation comment on failure
+        if: steps.validate.outputs.valid == 'false'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Remove the label — justification is insufficient
+          gh pr edit "$PR_NUMBER" --repo "$REPO" \
+            --remove-label "complexity-bump-ok" 2>/dev/null || true
+
+          MISSING=$(cat /tmp/missing-items.txt)
+
+          # Post or update a remediation comment
+          MARKER="<!-- complexity-bump-justification-check -->"
+          BODY="${MARKER}
+          **Complexity Bump Justification: INCOMPLETE**
+
+          The \`complexity-bump-ok\` label was removed because the PR body is missing required justification:
+
+          ${MISSING}
+
+          **To re-apply the label**, update the PR body with a \`## Complexity Bump Justification\` section containing:
+
+          1. **Scanner evidence** — at least one \`file:line\` reference showing where the complexity comes from
+          2. **Numeric measurement** — at least one metric (e.g. \`base=5, head=8, new=3\` or \`max_depth=83\`)
+          3. **Explanation** — why the violations are acceptable (e.g. identity-key artifacts from a file split, not real nesting increases)
+
+          **Example section:**
+          \`\`\`markdown
+          ## Complexity Bump Justification
+
+          \`complexity-bump-ok\` label applied. The nesting-depth scanner reports 3 new
+          violations from the file-split identity-key change at
+          \`complexity-regression-helper.sh:225\`. Measurements: base=5, head=8, new=3.
+          Per-function nesting is unchanged — the function-complexity metric confirms
+          base=12, head=12, new=0.
+          \`\`\`
+
+          Then re-apply the \`complexity-bump-ok\` label. This check will re-run automatically.
+
+          _See [\`reference/large-file-split.md\`](/.agents/reference/large-file-split.md) section 4.1 for full documentation._"
+
+          # Check for existing comment, update or create
+          EXISTING=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"complexity-bump-justification-check\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+
+          if [ -n "$EXISTING" ]; then
+            echo "Updating existing comment $EXISTING"
+            gh api "repos/${REPO}/issues/comments/${EXISTING}" \
+              --method PATCH -F body="$BODY" >/dev/null 2>&1 || true
+          else
+            echo "Creating new comment"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$BODY" \
+              >/dev/null 2>&1 || true
+          fi
+
+      - name: Gate result
+        if: steps.validate.outputs.valid == 'false'
+        run: |
+          echo "::error::complexity-bump-ok label removed — justification incomplete. See PR comment."
+          exit 1

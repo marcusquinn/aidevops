@@ -146,6 +146,17 @@ Every `elif` chain inflates the counter permanently.
    - The measurement (`base=N, head=M, new=K`)
    - Explanation that the new violations are identity-key artifacts, not real nesting increases.
 
+**Worker self-apply (t2370):** Workers dispatched against file-split or
+simplification issues may self-apply the `complexity-bump-ok` label. The
+`.github/workflows/complexity-bump-justification-check.yml` workflow triggers
+on the `labeled` event and validates that the PR body contains the required
+justification section with a `file:line` reference and a numeric measurement.
+If validation fails, the workflow removes the label and posts a remediation
+comment explaining what is missing. The label only sticks when the
+justification is complete -- no maintainer intervention required for
+legitimate splits. This mirrors the `new-file-smell-ok` + justification-section
+pattern from `qlty-new-file-gate.yml`.
+
 ### 4.2 Pre-push complexity guard
 
 The client-side `complexity-regression-pre-push.sh` hook rejects on the same
