@@ -298,9 +298,13 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 # self-assignment + conversation lock + audit comment.
 - Release is YOUR responsibility, not the user's. When the user signals
   completion ("ship it", "I'm done", "moving on", "let a worker take over"),
-  when they switch to a different issue, or when a PR they opened merges,
-  call `interactive-session-helper.sh release <N> <slug>`. Never make the
-  user type a release command.
+  or when they switch to a different issue, call
+  `interactive-session-helper.sh release <N> <slug>`. Never make the user
+  type a release command. **PR merge auto-release (t2413):** when
+  `pulse-merge.sh` merges an `origin:interactive` PR with a `Resolves #NNN`
+  link and a claim stamp exists, `_release_interactive_claim_on_merge` fires
+  automatically — no manual release required on merge. Manual release is
+  still needed for task abandonment or mid-stream task switches.
 - On every interactive session start, run
   `interactive-session-helper.sh scan-stale` and, if any dead claims surface,
   prompt the user to release them. Act on confirmation.

@@ -49,6 +49,7 @@
 #   - _pulse_merge_dismiss_coderabbit_nits      (t2179)
 #   - _pr_required_checks_pass
 #   - _check_pr_merge_gates
+#   - _release_interactive_claim_on_merge  (t2413)
 #   - _handle_post_merge_actions
 #   - _process_single_ready_pr
 #   - _is_collaborator_author
@@ -889,6 +890,60 @@ _route_pr_to_fix_worker() {
 }
 
 #######################################
+# Auto-release an interactive claim on the linked issue after a successful
+# PR merge. t2413: closes the "release is the agent's responsibility" loop
+# for PR merges. AGENTS.md states "when a PR they opened merges" as a
+# release trigger — this hook fires that trigger from the merge pass itself
+# so the agent does not have to remember to call release after every merge.
+#
+# Guards (short-circuits cleanly on any):
+#   1. linked_issue is empty — no issue linked to the merged PR.
+#   2. PR does not carry origin:interactive label — worker PRs manage their
+#      own lifecycle via worker-lifecycle-common.sh; do not interfere.
+#   3. No claim stamp exists for the issue — no active interactive session
+#      was tracking it; release is a no-op and API calls are unnecessary.
+#
+# Release failure is logged but does NOT propagate — release is best-effort
+# hygiene and must never block the merge completion path.
+# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=pr_labels (optional)
+#######################################
+_release_interactive_claim_on_merge() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local pr_labels="${4:-}"
+
+	# Guard 1: no linked issue → nothing to release
+	[[ -z "$linked_issue" ]] && return 0
+
+	# Guard 2: fetch labels if not provided by caller
+	if [[ -z "$pr_labels" ]]; then
+		pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels=""
+	fi
+
+	# Guard 3: only fire for origin:interactive PRs — worker PRs handle their
+	# own lifecycle, external contributor PRs have no interactive claim stamp
+	[[ ",${pr_labels}," == *",origin:interactive,"* ]] || return 0
+
+	# Guard 4: only fire when a claim stamp exists — avoids spurious
+	# interactive-session-helper.sh invocations on every origin:interactive merge
+	local _stamp_base="${CLAIM_STAMP_DIR:-${HOME}/.aidevops/.agent-workspace/interactive-claims}"
+	local _stamp_file="${_stamp_base}/${repo_slug//\//-}-${linked_issue}.json"
+	[[ -f "$_stamp_file" ]] || return 0
+
+	echo "[pulse-wrapper] Merge pass: auto-releasing interactive claim on ${repo_slug}#${linked_issue} (PR #${pr_number} merged) — t2413" >>"$LOGFILE"
+	local _isc_helper="${AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/interactive-session-helper.sh"
+	if [[ -x "$_isc_helper" ]]; then
+		"$_isc_helper" release "$linked_issue" "$repo_slug" >>"$LOGFILE" 2>&1 || \
+			echo "[pulse-wrapper] Merge pass: interactive claim release failed for ${repo_slug}#${linked_issue} — non-fatal (t2413)" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] Merge pass: interactive-session-helper.sh not found/not executable at ${_isc_helper} — skipping release for ${repo_slug}#${linked_issue} (t2413)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
 # Run all merge-eligibility gate checks for a single PR.
 # Returns 0 if all gates pass (PR may proceed to merge).
 # Returns 1 if any gate fails (PR should be skipped).
@@ -1108,6 +1163,11 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 			unlock_issue_after_worker "$linked_issue" "$repo_slug"
 		fi
 	fi
+
+	# Auto-release interactive claim if one exists for this issue (t2413).
+	# Handles the "when a PR they opened merges" release trigger from AGENTS.md
+	# so the agent does not have to remember to call release after every merge.
+	_release_interactive_claim_on_merge "$pr_number" "$repo_slug" "$linked_issue"
 	return 0
 }
 
