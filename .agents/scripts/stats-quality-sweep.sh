@@ -1284,6 +1284,8 @@ _build_simplification_issue_body() {
 	fi
 
 	cat <<BODY
+<!-- aidevops:generator=function-complexity-sweep cited_file=${file_path} smell_count=${smell_count} -->
+
 ## Qlty Maintainability — ${file_path}
 
 **Smells detected**: ${smell_count}
@@ -1299,6 +1301,12 @@ This file was flagged by the daily quality sweep for high smell density. The sme
 2. Extract helper functions to reduce per-function complexity below the threshold (~17)
 3. Verify with \`qlty smells ${file_path}\` after each change
 4. No behavior changes — pure structural refactoring
+
+**Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for shell-lib splits — sections 2-3 cover the canonical split pattern and identity-key preservation; section 5 covers pre-commit hook gotchas).
+
+**Precedent in this repo:** \`issue-sync-helper.sh\` + \`issue-sync-lib.sh\` (simple split) and \`headless-runtime-lib.sh\` + sub-libraries (complex split). Copy the include-guard and SCRIPT_DIR-fallback pattern from the simple precedent.
+
+**Expected CI gate overrides:** If this refactoring splits functions into new files, the PR may trigger complexity or smell regression gates. Apply the \`ratchet-bump\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing the Qlty smell reduction. See the playbook section 4 (Known CI False-Positive Classes).
 
 ### Verification
 
