@@ -176,7 +176,10 @@ Layers execute in order; the first match blocks dispatch.
 **Design rationale:** Layers 1–2 are local (no API calls) to catch the common
 case. Layers 3–6 use read-only GitHub API calls, adding latency only when local
 checks pass. Layer 7 is write-heavy (posts a comment, waits for consensus
-window) and is last.
+window) and is last. **Layer 6 also guards the enrich path** (GH#19856): both
+`_enrich_process_task` and `_ensure_issue_body_has_brief` call `is-assigned`
+before any `gh issue edit` to prevent one runner's enrich from overwriting
+another runner's active claim.
 
 **Layer 6 combined-signal rule** prevents starvation: a repo owner/maintainer
 passively assigned to an issue for bookkeeping does not block dispatch unless
@@ -275,6 +278,39 @@ version. The version guard (`headless-runtime-helper.sh`) checks
 `OPENCODE_PINNED_VERSION` before each dispatch but does not check the aidevops
 framework version itself. Run `aidevops update` on all machines before bringing
 up a new session.
+
+### 4.5 Enrich-Path Claim Override (GH#19856, fixed companion to t2377)
+
+**Timeline:** Runner A claims issue (applies `status:in-review` +
+self-assignment via `interactive-session-helper.sh claim`). Runner B's pulse
+cycle fires and processes the same issue through the enrich path
+(`_enrich_process_task` in `issue-sync-helper.sh`). The enrich path ran
+upstream of the dispatch dedup guard (`dispatch-dedup-helper.sh is-assigned`),
+so it overwrote the title, body, and labels set by runner A — including the
+`status:in-review` and `origin:interactive` labels that formed the active claim
+signal.
+
+**Root cause:** The enrich path (`_enrich_process_task` and
+`_ensure_issue_body_has_brief`) did not consult the dedup guard before calling
+`gh issue edit`. The dispatch path already checked `is-assigned` before
+launching a worker, but the enrich step ran between metadata fetch and dispatch,
+creating a TOCTOU window where one runner's claim was invisible to another
+runner's enrich cycle.
+
+**Evidence:** GitHub timeline events on `#19779` showed `alex-solovyev` (runner
+B) re-wiping the title AND stripping `status:available` and `origin:interactive`
+labels 74 seconds after `marcusquinn` (runner A) restored them.
+
+**Resolution:** Both `_enrich_process_task` (issue-sync-helper.sh) and
+`_ensure_issue_body_has_brief` (pulse-dispatch-core.sh) now call
+`dispatch-dedup-helper.sh is-assigned` before any `gh issue edit` operation. If
+an active claim is detected from another runner, the enrich is skipped with a
+warning log entry. Additionally, `_is_protected_label` was expanded to protect
+coordination-signal labels (`no-auto-dispatch`, `no-takeover`,
+`consolidation-in-progress`, `coderabbit-nits-ok`, `ratchet-bump`,
+`new-file-smell-ok`) from being stripped by label reconciliation.
+
+**Test coverage:** `tests/test-enrich-dedup-guard.sh` (32 assertions).
 
 ---
 

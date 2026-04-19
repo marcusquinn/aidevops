@@ -1051,6 +1051,21 @@ _ensure_issue_body_has_brief() {
 		fi
 	fi
 
+	# GH#19856: cross-runner dedup guard — before force-enriching, verify no
+	# other runner holds an active claim. Even though dispatch_with_dedup
+	# runs its dedup check upstream, this guard catches TOCTOU races where
+	# another runner claims between the dedup check and the enrich call.
+	local dedup_helper
+	dedup_helper="$(dirname "${BASH_SOURCE[0]}")/dispatch-dedup-helper.sh"
+	if [[ -x "$dedup_helper" ]]; then
+		local _dedup_out=""
+		_dedup_out=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" 2>/dev/null) || true
+		if [[ -n "$_dedup_out" ]]; then
+			echo "[dispatch_with_dedup] GH#19856: skipping force-enrich for #${issue_number} — active claim: ${_dedup_out}" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
 	# Brief exists but body is a stub — force-enrich before worker sees it.
 	# Run enrich from the repo_path so `find_project_root` resolves correctly,
 	# and pass REPO_SLUG + FORCE_ENRICH via env so the helper skips the body
