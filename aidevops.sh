@@ -291,6 +291,91 @@ _compute_repo_registration_defaults() {
 	return 0
 }
 
+# Infer the init_scope for a repo when not explicitly set.
+# Priority: .aidevops.json > repos.json entry > context inference.
+# Returns one of: minimal, standard, public
+# Usage: _infer_init_scope <project_root>
+_infer_init_scope() {
+	local project_root="$1"
+
+	# 1. Check .aidevops.json
+	if [[ -f "$project_root/.aidevops.json" ]]; then
+		local json_scope
+		json_scope=$(jq -r '.init_scope // empty' "$project_root/.aidevops.json" 2>/dev/null || echo "")
+		if [[ -n "$json_scope" ]]; then
+			echo "$json_scope"
+			return 0
+		fi
+	fi
+
+	# 2. Check repos.json entry
+	if command -v jq &>/dev/null && [[ -f "${REPOS_FILE:-$HOME/.config/aidevops/repos.json}" ]]; then
+		local repos_file="${REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
+		local canonical_path
+		canonical_path=$(cd "$project_root" 2>/dev/null && pwd -P) || canonical_path="$project_root"
+		local repo_scope
+		repo_scope=$(jq -r --arg path "$canonical_path" \
+			'(.initialized_repos[] | select(.path == $path) | .init_scope) // empty' \
+			"$repos_file" 2>/dev/null || echo "")
+		if [[ -n "$repo_scope" ]]; then
+			echo "$repo_scope"
+			return 0
+		fi
+	fi
+
+	# 3. Context inference
+	# local_only or no remote → minimal
+	if ! git -C "$project_root" remote get-url origin &>/dev/null 2>&1; then
+		echo "minimal"
+		return 0
+	fi
+
+	# Check repos.json for local_only flag
+	if command -v jq &>/dev/null && [[ -f "${REPOS_FILE:-$HOME/.config/aidevops/repos.json}" ]]; then
+		local repos_file="${REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
+		local canonical_path
+		canonical_path=$(cd "$project_root" 2>/dev/null && pwd -P) || canonical_path="$project_root"
+		local is_local
+		is_local=$(jq -r --arg path "$canonical_path" \
+			'(.initialized_repos[] | select(.path == $path) | .local_only) // false' \
+			"$repos_file" 2>/dev/null || echo "false")
+		if [[ "$is_local" == "true" ]]; then
+			echo "minimal"
+			return 0
+		fi
+	fi
+
+	# Default: standard (backward compatible)
+	echo "standard"
+	return 0
+}
+
+# Check whether a given scope level includes a feature tier.
+# Scope hierarchy: minimal < standard < public
+# Usage: _scope_includes <current_scope> <required_level>
+# Returns 0 (true) if current_scope >= required_level, 1 (false) otherwise.
+_scope_includes() {
+	local current="$1"
+	local required="$2"
+
+	# Map scope to numeric level
+	local current_level=0 required_level=0
+	case "$current" in
+		minimal)  current_level=0 ;;
+		standard) current_level=1 ;;
+		public)   current_level=2 ;;
+		*)        current_level=1 ;; # unknown defaults to standard
+	esac
+	case "$required" in
+		minimal)  required_level=0 ;;
+		standard) required_level=1 ;;
+		public)   required_level=2 ;;
+		*)        required_level=1 ;;
+	esac
+
+	[[ $current_level -ge $required_level ]]
+}
+
 # Resolve a worktree path to its canonical main-worktree path, if applicable.
 # Usage: resolve_canonical_repo_path <path>
 # Prints the canonical path to stdout. If the input is already the main
@@ -402,13 +487,18 @@ register_repo() {
 	local DEFAULT_PRIORITY=""
 	eval "$(_compute_repo_registration_defaults "$repo_path" "$slug" "$is_local_only" "$maintainer")"
 
+	# Infer default init_scope for new registrations
+	local default_init_scope
+	default_init_scope=$(_infer_init_scope "$repo_path")
+
 	# Check if repo already registered
 	if jq -e --arg path "$repo_path" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
-		# Update existing entry, preserving pulse/priority/local_only/maintainer if already set
+		# Update existing entry, preserving pulse/priority/local_only/maintainer/init_scope if already set
 		local temp_file="${REPOS_FILE}.tmp"
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 			--arg slug "$slug" --argjson local_only "$is_local_only" --arg maintainer "$maintainer" \
 			--argjson pulse_default "$DEFAULT_PULSE" --arg priority_default "$DEFAULT_PRIORITY" \
+			--arg init_scope_default "$default_init_scope" \
 			'(.initialized_repos[] | select(.path == $path)) |= (
 				. + {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
 				| if $slug != "" then .slug = $slug else . end
@@ -416,15 +506,16 @@ register_repo() {
 				| if .pulse == null then .pulse = (if $local_only then false else $pulse_default end) else . end
 				| if (.priority == null or .priority == "") and $priority_default != "" then .priority = $priority_default else . end
 				| if (.maintainer == null or .maintainer == "") and $maintainer != "" then .maintainer = $maintainer else . end
+				| if (.init_scope == null or .init_scope == "") then .init_scope = $init_scope_default else . end
 			)' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	else
-		# Add new entry with slug, defaults, and maintainer
+		# Add new entry with slug, defaults, maintainer, and init_scope
 		local temp_file="${REPOS_FILE}.tmp"
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 			--arg slug "$slug" --arg maintainer "$maintainer" \
 			--argjson local_only "$is_local_only" --argjson pulse_default "$DEFAULT_PULSE" \
-			--arg priority_default "$DEFAULT_PRIORITY" \
+			--arg priority_default "$DEFAULT_PRIORITY" --arg init_scope "$default_init_scope" \
 			'.initialized_repos += [(
 				{
 					path: $path,
@@ -432,6 +523,7 @@ register_repo() {
 					version: $version,
 					features: ($features | split(",")),
 					pulse: $pulse_default,
+					init_scope: $init_scope,
 					initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
 				}
 				| if $slug != "" then . + {slug: $slug} else . end
@@ -1269,6 +1361,7 @@ COCEOF
 # Creates: README.md, LICENCE, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
 scaffold_repo_courtesy_files() {
 	local project_root="$1"
+	local scope="${2:-standard}" # Default to standard for backward compatibility
 	local created=0
 	local repo_name
 	repo_name=$(basename "$project_root")
@@ -1276,21 +1369,28 @@ scaffold_repo_courtesy_files() {
 	author_name=$(git -C "$project_root" config user.name 2>/dev/null || echo "")
 	local current_year
 	current_year=$(date +%Y)
-	print_info "Checking repo courtesy files..."
-	if [[ ! -f "$project_root/README.md" ]]; then
-		local rc="# $repo_name"
-		if [[ -f "$project_root/.aidevops.json" ]]; then
-			local desc
-			desc=$(jq -r '.description // empty' "$project_root/.aidevops.json" 2>/dev/null || echo "")
-			[[ -n "$desc" ]] && rc="$rc"$'\n\n'"$desc"
+	print_info "Checking repo courtesy files (scope: $scope)..."
+
+	# README.md: requires "standard" scope
+	if _scope_includes "$scope" "standard"; then
+		if [[ ! -f "$project_root/README.md" ]]; then
+			local rc="# $repo_name"
+			if [[ -f "$project_root/.aidevops.json" ]]; then
+				local desc
+				desc=$(jq -r '.description // empty' "$project_root/.aidevops.json" 2>/dev/null || echo "")
+				[[ -n "$desc" ]] && rc="$rc"$'\n\n'"$desc"
+			fi
+			{ [[ -f "$project_root/LICENCE" ]] || [[ -f "$project_root/LICENSE" ]]; } && rc="$rc"$'\n\n'"## Licence"$'\n\n'"See [LICENCE](LICENCE) for details."
+			printf '%s\n' "$rc" >"$project_root/README.md"
+			((++created))
 		fi
-		{ [[ -f "$project_root/LICENCE" ]] || [[ -f "$project_root/LICENSE" ]]; } && rc="$rc"$'\n\n'"## Licence"$'\n\n'"See [LICENCE](LICENCE) for details."
-		printf '%s\n' "$rc" >"$project_root/README.md"
-		((++created))
 	fi
-	if [[ ! -f "$project_root/LICENCE" ]] && [[ ! -f "$project_root/LICENSE" ]]; then
-		local lh="${author_name:-$(whoami)}"
-		cat >"$project_root/LICENCE" <<LICEOF
+
+	# LICENCE: requires "public" scope
+	if _scope_includes "$scope" "public"; then
+		if [[ ! -f "$project_root/LICENCE" ]] && [[ ! -f "$project_root/LICENSE" ]]; then
+			local lh="${author_name:-$(whoami)}"
+			cat >"$project_root/LICENCE" <<LICEOF
 MIT License
 
 Copyright (c) $current_year $lh
@@ -1313,10 +1413,14 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 LICEOF
-		((++created))
+			((++created))
+		fi
 	fi
-	if [[ ! -f "$project_root/CHANGELOG.md" ]]; then
-		cat >"$project_root/CHANGELOG.md" <<'CHEOF'
+
+	# CHANGELOG.md: requires "public" scope
+	if _scope_includes "$scope" "public"; then
+		if [[ ! -f "$project_root/CHANGELOG.md" ]]; then
+			cat >"$project_root/CHANGELOG.md" <<'CHEOF'
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -1326,11 +1430,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 CHEOF
-		((++created))
+			((++created))
+		fi
 	fi
-	_scaffold_contributing "$project_root" "$repo_name" && ((++created))
-	_scaffold_security "$project_root" && ((++created))
-	_scaffold_coc "$project_root" && ((++created))
+
+	# CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md: require "public" scope
+	if _scope_includes "$scope" "public"; then
+		_scaffold_contributing "$project_root" "$repo_name" && ((++created))
+		_scaffold_security "$project_root" && ((++created))
+		_scaffold_coc "$project_root" && ((++created))
+	fi
+
 	[[ $created -gt 0 ]] && print_success "Created $created repo courtesy file(s) (README, LICENCE, CHANGELOG, etc.)" || print_info "Repo courtesy files already exist"
 	return 0
 }
@@ -1671,6 +1781,75 @@ _init_scaffold_commands_symlinks() {
 	return 0
 }
 
+# Scaffold optional files gated by init_scope (t2265).
+# Extracted from cmd_init to reduce nesting depth and function length.
+# Usage: _init_scaffold_scope_gated_files <project_root> <init_scope> <repo_name>
+_init_scaffold_scope_gated_files() {
+	local project_root="$1"
+	local init_scope="$2"
+	local repo_name="$3"
+
+	# Collaborator pointer files — require standard scope
+	if _scope_includes "$init_scope" "standard"; then
+		local pointer_content="Read AGENTS.md for all project context and instructions."
+		local pointer_files=(".cursorrules" ".windsurfrules" ".clinerules" ".github/copilot-instructions.md")
+		local pointer_created=0
+		local pf
+		for pf in "${pointer_files[@]}"; do
+			local pf_path="$project_root/$pf"
+			if [[ ! -f "$pf_path" ]]; then
+				mkdir -p "$(dirname "$pf_path")"
+				echo "$pointer_content" >"$pf_path"
+				((++pointer_created))
+			fi
+		done
+		if [[ $pointer_created -gt 0 ]]; then
+			print_success "Created $pointer_created collaborator pointer file(s) (.cursorrules, etc.)"
+		else
+			print_info "Collaborator pointer files already exist"
+		fi
+	else
+		print_info "Collaborator pointer files skipped (init_scope: $init_scope)"
+	fi
+
+	# DESIGN.md — requires standard scope
+	if _scope_includes "$init_scope" "standard"; then
+		if [[ ! -f "$project_root/DESIGN.md" ]]; then
+			local design_template="$AGENTS_DIR/templates/DESIGN.md.template"
+			if [[ -f "$design_template" ]]; then
+				sed "s/{Project Name}/$repo_name/g" "$design_template" >"$project_root/DESIGN.md"
+				print_success "Created DESIGN.md (design system skeleton — populate with tools/design/design-md.md)"
+			fi
+		else
+			print_info "DESIGN.md already exists, skipping"
+		fi
+	else
+		print_info "DESIGN.md skipped (init_scope: $init_scope)"
+	fi
+
+	# Courtesy files (README, LICENCE, CHANGELOG, etc.) — scope handled internally
+	scaffold_repo_courtesy_files "$project_root" "$init_scope"
+
+	# MODELS.md — requires standard scope
+	if _scope_includes "$init_scope" "standard"; then
+		local generate_models_script="$AGENTS_DIR/scripts/generate-models-md.sh"
+		if [[ -x "$generate_models_script" ]] && command -v sqlite3 &>/dev/null; then
+			print_info "Generating MODELS.md (model performance leaderboard)..."
+			if "$generate_models_script" --output "$project_root/MODELS.md" --repo-path "$project_root" --quiet 2>/dev/null; then
+				print_success "Created MODELS.md (per-repo model leaderboard)"
+			else
+				print_warning "MODELS.md generation failed (will be populated as tasks run)"
+			fi
+		else
+			print_info "MODELS.md skipped (sqlite3 or generate script not available)"
+		fi
+	else
+		print_info "MODELS.md skipped (init_scope: $init_scope)"
+	fi
+
+	return 0
+}
+
 # Init command - initialize aidevops in a project
 cmd_init() {
 	local features="${1:-all}"
@@ -1711,6 +1890,12 @@ cmd_init() {
 		esac
 	done
 
+	# Determine init_scope: minimal | standard | public
+	# Infer from context when not set; user can override via repos.json or .aidevops.json
+	local init_scope
+	init_scope=$(_infer_init_scope "$project_root")
+	print_info "Init scope: $init_scope (controls which scaffolding files are created)"
+
 	# Create .aidevops.json config
 	local config_file="$project_root/.aidevops.json"
 	local aidevops_version
@@ -1721,6 +1906,7 @@ cmd_init() {
 {
   "version": "$aidevops_version",
   "initialized": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "init_scope": "$init_scope",
   "features": {
     "planning": $enable_planning,
     "git_workflow": $enable_git_workflow,
@@ -2196,51 +2382,10 @@ GITATTRSEOF
 		fi
 	fi
 
-	# Generate collaborator pointer files (lightweight AGENTS.md references)
-	local pointer_content="Read AGENTS.md for all project context and instructions."
-	local pointer_files=(".cursorrules" ".windsurfrules" ".clinerules" ".github/copilot-instructions.md")
-	local pointer_created=0
-	for pf in "${pointer_files[@]}"; do
-		local pf_path="$project_root/$pf"
-		if [[ ! -f "$pf_path" ]]; then
-			mkdir -p "$(dirname "$pf_path")"
-			echo "$pointer_content" >"$pf_path"
-			((++pointer_created))
-		fi
-	done
-	if [[ $pointer_created -gt 0 ]]; then
-		print_success "Created $pointer_created collaborator pointer file(s) (.cursorrules, etc.)"
-	else
-		print_info "Collaborator pointer files already exist"
-	fi
-
-	# Seed DESIGN.md template (AI-readable design system skeleton)
-	if [[ ! -f "$project_root/DESIGN.md" ]]; then
-		local design_template="$AGENTS_DIR/templates/DESIGN.md.template"
-		if [[ -f "$design_template" ]]; then
-			# Replace {Project Name} with the repo name
-			sed "s/{Project Name}/$repo_name/g" "$design_template" >"$project_root/DESIGN.md"
-			print_success "Created DESIGN.md (design system skeleton — populate with tools/design/design-md.md)"
-		fi
-	else
-		print_info "DESIGN.md already exists, skipping"
-	fi
-
-	# Scaffold repo courtesy files (README, LICENCE, CHANGELOG, etc.)
-	scaffold_repo_courtesy_files "$project_root"
-
-	# Generate MODELS.md (per-repo model performance leaderboard, t1129)
-	local generate_models_script="$AGENTS_DIR/scripts/generate-models-md.sh"
-	if [[ -x "$generate_models_script" ]] && command -v sqlite3 &>/dev/null; then
-		print_info "Generating MODELS.md (model performance leaderboard)..."
-		if "$generate_models_script" --output "$project_root/MODELS.md" --repo-path "$project_root" --quiet 2>/dev/null; then
-			print_success "Created MODELS.md (per-repo model leaderboard)"
-		else
-			print_warning "MODELS.md generation failed (will be populated as tasks run)"
-		fi
-	else
-		print_info "MODELS.md skipped (sqlite3 or generate script not available)"
-	fi
+	# Scaffold optional files gated by init_scope (collaborator pointers,
+	# DESIGN.md, courtesy files, MODELS.md). Extracted to reduce cmd_init
+	# nesting depth and function length (t2265).
+	_init_scaffold_scope_gated_files "$project_root" "$init_scope" "$repo_name"
 
 	# Run security posture assessment if enabled (t1412.11)
 	if [[ "$enable_security" == "true" ]]; then
@@ -2325,7 +2470,7 @@ GITATTRSEOF
 	fi
 
 	echo ""
-	print_success "AI DevOps initialized!"
+	print_success "AI DevOps initialized! (scope: $init_scope)"
 	echo ""
 	echo "Enabled features:"
 	[[ "$enable_planning" == "true" ]] && echo "  ✓ Planning (TODO.md, PLANS.md)"
