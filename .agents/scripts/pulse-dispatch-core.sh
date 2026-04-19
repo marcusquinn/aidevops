@@ -282,6 +282,21 @@ _unlock_linked_prs() {
 # (subject-line prefix + path-based), and prints the count of real
 # implementation commits to stdout.
 #
+# Planning-only path allowlist (t2379, GH#19863):
+#   - TODO.md / todo/**           — task entries and briefs
+#   - AGENTS.md / .agents/AGENTS.md — agent guides
+#   - docs/** / */docs/**         — documentation
+#   - .task-counter               — CAS counter file touched by
+#                                   claim-task-id.sh on every ID allocation.
+#                                   Without this, a planning PR that
+#                                   touches TODO.md + brief + .task-counter
+#                                   is misclassified as implementation and
+#                                   permanently blocks future dispatch via
+#                                   the main-commit dedup false positive
+#                                   (GH#17574). Root cause of the t2366
+#                                   r914 task getting stuck after its
+#                                   plan-filing PR #19819 merged.
+#
 # Args:
 #   $1 - repo_path (local path to the repo)
 # Stdin: one commit hash per line
@@ -297,7 +312,7 @@ _count_impl_commits() {
 		while IFS= read -r touched_path_inner; do
 			[[ -z "$touched_path_inner" ]] && continue
 			case "$touched_path_inner" in
-			TODO.md | todo/* | AGENTS.md | .agents/AGENTS.md | */docs/* | docs/*) ;;
+			TODO.md | todo/* | AGENTS.md | .agents/AGENTS.md | */docs/* | docs/* | .task-counter) ;;
 			*)
 				is_planning_only_inner=false
 				break
@@ -360,10 +375,17 @@ _task_id_in_recent_commits() {
 		local match_count=0
 		# Fetch all commits as "HASH SUBJECT", filter planning subjects, then
 		# grep -w for word-boundary match on the subject portion only.
+		#
+		# Subject exclusions (t2379, GH#19863):
+		#   - chore: claim        — claim-task-id.sh counter bump commits
+		#   - chore: mark tNNN complete — task-complete-helper.sh bookkeeping
+		#       commits written by issue-sync.yml after ANY PR merge. Touch
+		#       TODO.md only, but belt+braces against future regressions.
+		#   - plan: / pNN:        — explicit planning prefixes
 		match_count=$(_count_impl_commits "$repo_path" < <(
 			git -C "$repo_path" log origin/main --since="$created_at" \
 				--format='%H %s' |
-				grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
+				grep -vE '^[0-9a-f]+ (chore: claim|chore: mark t[0-9]+ complete|plan:|p[0-9]+:)' |
 				grep -wE "$pattern" |
 				cut -d' ' -f1 || true
 		))
