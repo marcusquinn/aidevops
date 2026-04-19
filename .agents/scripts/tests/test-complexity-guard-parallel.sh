@@ -77,45 +77,9 @@ test_parallel_all_pass() {
 	printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_helper"
 	chmod +x "$fake_helper"
 
-	# Run the hook with the fake helper, simulating a push
-	# We override COMPLEXITY_HELPER by patching the hook's resolution
-	local hook_copy="$TEST_ROOT/hook-copy.sh"
-	cp "$HOOK" "$hook_copy"
-	chmod +x "$hook_copy"
-
-	# Inject our fake helper path and skip the git merge-base (provide BASE_SHA)
-	local wrapper="$TEST_ROOT/run-hook.sh"
-	cat > "$wrapper" <<-'WRAPPER_EOF'
-	#!/usr/bin/env bash
-	set -u
-	GUARD_NAME="complexity-guard"
-	_log() { local _level="$1"; local _msg="$2"; printf '[%s][%s] %s\n' "$GUARD_NAME" "$_level" "$_msg" >&2; return 0; }
-	: "${COMPLEXITY_HELPER:?COMPLEXITY_HELPER env var required}"
-	BASE_SHA="abc1234"
-	METRICS=("function-complexity" "nesting-depth" "file-size")
-	exit_code=0
-	_parallel_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/complexity-guard.XXXXXX")
-	if [[ -z "$_parallel_tmpdir" || ! -d "$_parallel_tmpdir" ]]; then
-	    exit 0
-	fi
-	trap 'rm -rf "$_parallel_tmpdir"' EXIT
-	for _i in "${!METRICS[@]}"; do
-	    _metric="${METRICS[$_i]}"
-	    ( "$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" > "${_parallel_tmpdir}/${_i}.out" 2>&1; printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc" ) &
-	done
-	wait
-	for _i in "${!METRICS[@]}"; do
-	    helper_rc=$(cat "${_parallel_tmpdir}/${_i}.rc" 2>/dev/null || echo "0")
-	    case "$helper_rc" in
-	    0) ;; 1) exit_code=1 ;; *) ;;
-	    esac
-	done
-	exit "$exit_code"
-	WRAPPER_EOF
-	chmod +x "$wrapper"
-
-	local output rc=0
-	output=$(COMPLEXITY_HELPER="$fake_helper" "$wrapper" 2>&1) || rc=$?
+	local rc=0
+	COMPLEXITY_HELPER="$fake_helper" COMPLEXITY_GUARD_BASE_SHA="abc1234" \
+		bash "$HOOK" 2>&1 || rc=$?
 
 	print_result "parallel-all-pass" "$([[ $rc -eq 0 ]] && echo 0 || echo 1)" \
 		"expected exit 0, got $rc"
@@ -129,7 +93,7 @@ test_parallel_all_pass() {
 test_parallel_one_fail() {
 	setup
 
-	# Helper that fails for nesting-depth (metric index 1), passes for others
+	# Helper that fails for nesting-depth, passes for others
 	local fake_helper="$TEST_ROOT/fake-helper-fail.sh"
 	cat > "$fake_helper" <<-'EOF'
 	#!/usr/bin/env bash
@@ -143,46 +107,11 @@ test_parallel_one_fail() {
 	EOF
 	chmod +x "$fake_helper"
 
-	local wrapper="$TEST_ROOT/run-hook-fail.sh"
-	cat > "$wrapper" <<-'WRAPPER_EOF'
-	#!/usr/bin/env bash
-	set -u
-	GUARD_NAME="complexity-guard"
-	_log() { local _level="$1"; local _msg="$2"; printf '[%s][%s] %s\n' "$GUARD_NAME" "$_level" "$_msg" >&2; return 0; }
-	: "${COMPLEXITY_HELPER:?COMPLEXITY_HELPER env var required}"
-	BASE_SHA="abc1234"
-	METRICS=("function-complexity" "nesting-depth" "file-size")
-	exit_code=0
-	_parallel_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/complexity-guard.XXXXXX")
-	if [[ -z "$_parallel_tmpdir" || ! -d "$_parallel_tmpdir" ]]; then
-	    exit 0
-	fi
-	trap 'rm -rf "$_parallel_tmpdir"' EXIT
-	for _i in "${!METRICS[@]}"; do
-	    _metric="${METRICS[$_i]}"
-	    ( "$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" > "${_parallel_tmpdir}/${_i}.out" 2>&1; printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc" ) &
-	done
-	wait
-	for _i in "${!METRICS[@]}"; do
-	    helper_rc=$(cat "${_parallel_tmpdir}/${_i}.rc" 2>/dev/null || echo "0")
-	    helper_output=$(cat "${_parallel_tmpdir}/${_i}.out" 2>/dev/null || echo "")
-	    case "$helper_rc" in
-	    0) ;; 1) exit_code=1; printf '%s\n' "$helper_output" ;;  *) ;;
-	    esac
-	done
-	exit "$exit_code"
-	WRAPPER_EOF
-	chmod +x "$wrapper"
+	local rc=0
+	COMPLEXITY_HELPER="$fake_helper" COMPLEXITY_GUARD_BASE_SHA="abc1234" \
+		bash "$HOOK" 2>&1 || rc=$?
 
-	local output rc=0
-	output=$(COMPLEXITY_HELPER="$fake_helper" "$wrapper" 2>&1) || rc=$?
-
-	local fail=0
-	if [[ $rc -ne 1 ]]; then
-		fail=1
-	fi
-
-	print_result "parallel-one-fail" "$fail" \
+	print_result "parallel-one-fail" "$([[ $rc -eq 1 ]] && echo 0 || echo 1)" \
 		"expected exit 1, got $rc"
 	teardown
 	return 0
@@ -194,7 +123,7 @@ test_parallel_one_fail() {
 test_parallel_output_order() {
 	setup
 
-	# Helper that echoes the metric name — all exit 1 to produce output
+	# Helper that echoes the metric name — all exit 1 to produce ordered output
 	local fake_helper="$TEST_ROOT/fake-helper-order.sh"
 	cat > "$fake_helper" <<-'EOF'
 	#!/usr/bin/env bash
@@ -212,36 +141,9 @@ test_parallel_output_order() {
 	EOF
 	chmod +x "$fake_helper"
 
-	local wrapper="$TEST_ROOT/run-hook-order.sh"
-	cat > "$wrapper" <<-'WRAPPER_EOF'
-	#!/usr/bin/env bash
-	set -u
-	GUARD_NAME="complexity-guard"
-	_log() { local _level="$1"; local _msg="$2"; return 0; }
-	: "${COMPLEXITY_HELPER:?COMPLEXITY_HELPER env var required}"
-	BASE_SHA="abc1234"
-	METRICS=("function-complexity" "nesting-depth" "file-size")
-	exit_code=0
-	_parallel_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/complexity-guard.XXXXXX")
-	trap 'rm -rf "$_parallel_tmpdir"' EXIT
-	for _i in "${!METRICS[@]}"; do
-	    _metric="${METRICS[$_i]}"
-	    ( "$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" > "${_parallel_tmpdir}/${_i}.out" 2>&1; printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc" ) &
-	done
-	wait
-	for _i in "${!METRICS[@]}"; do
-	    helper_rc=$(cat "${_parallel_tmpdir}/${_i}.rc" 2>/dev/null || echo "0")
-	    helper_output=$(cat "${_parallel_tmpdir}/${_i}.out" 2>/dev/null || echo "")
-	    case "$helper_rc" in
-	    1) printf '%s\n' "$helper_output"; exit_code=1 ;; *) ;;
-	    esac
-	done
-	exit "$exit_code"
-	WRAPPER_EOF
-	chmod +x "$wrapper"
-
 	local output rc=0
-	output=$(COMPLEXITY_HELPER="$fake_helper" "$wrapper" 2>&1) || rc=$?
+	output=$(COMPLEXITY_HELPER="$fake_helper" COMPLEXITY_GUARD_BASE_SHA="abc1234" \
+		bash "$HOOK" 2>&1) || rc=$?
 
 	# Verify order: function-complexity before nesting-depth before file-size
 	local fc_pos nd_pos fs_pos
@@ -290,31 +192,9 @@ test_parallel_debug_output() {
 	printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_helper"
 	chmod +x "$fake_helper"
 
-	local wrapper="$TEST_ROOT/run-hook-debug.sh"
-	cat > "$wrapper" <<-'WRAPPER_EOF'
-	#!/usr/bin/env bash
-	set -u
-	COMPLEXITY_GUARD_DEBUG=1
-	GUARD_NAME="complexity-guard"
-	_log() { local _level="$1"; local _msg="$2"; printf '[%s][%s] %s\n' "$GUARD_NAME" "$_level" "$_msg" >&2; return 0; }
-	: "${COMPLEXITY_HELPER:?COMPLEXITY_HELPER env var required}"
-	BASE_SHA="abc1234"
-	METRICS=("function-complexity" "nesting-depth" "file-size")
-	exit_code=0
-	_parallel_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/complexity-guard.XXXXXX")
-	trap 'rm -rf "$_parallel_tmpdir"' EXIT
-	for _i in "${!METRICS[@]}"; do
-	    _metric="${METRICS[$_i]}"
-	    [[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "launching metric: $_metric (parallel)"
-	    ( "$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" > "${_parallel_tmpdir}/${_i}.out" 2>&1; printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc" ) &
-	done
-	wait
-	exit 0
-	WRAPPER_EOF
-	chmod +x "$wrapper"
-
 	local output rc=0
-	output=$(COMPLEXITY_HELPER="$fake_helper" "$wrapper" 2>&1) || rc=$?
+	output=$(COMPLEXITY_HELPER="$fake_helper" COMPLEXITY_GUARD_BASE_SHA="abc1234" \
+		COMPLEXITY_GUARD_DEBUG=1 bash "$HOOK" 2>&1) || rc=$?
 
 	local fail=0
 	if ! printf '%s' "$output" | grep -q "parallel"; then
@@ -380,36 +260,9 @@ test_parallel_helper_exit2() {
 	printf '#!/usr/bin/env bash\nexit 2\n' > "$fake_helper"
 	chmod +x "$fake_helper"
 
-	local wrapper="$TEST_ROOT/run-hook-exit2.sh"
-	cat > "$wrapper" <<-'WRAPPER_EOF'
-	#!/usr/bin/env bash
-	set -u
-	GUARD_NAME="complexity-guard"
-	_log() { local _level="$1"; local _msg="$2"; printf '[%s][%s] %s\n' "$GUARD_NAME" "$_level" "$_msg" >&2; return 0; }
-	: "${COMPLEXITY_HELPER:?COMPLEXITY_HELPER env var required}"
-	BASE_SHA="abc1234"
-	METRICS=("function-complexity" "nesting-depth" "file-size")
-	exit_code=0
-	_parallel_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/complexity-guard.XXXXXX")
-	trap 'rm -rf "$_parallel_tmpdir"' EXIT
-	for _i in "${!METRICS[@]}"; do
-	    _metric="${METRICS[$_i]}"
-	    ( "$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" > "${_parallel_tmpdir}/${_i}.out" 2>&1; printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc" ) &
-	done
-	wait
-	for _i in "${!METRICS[@]}"; do
-	    _metric="${METRICS[$_i]}"
-	    helper_rc=$(cat "${_parallel_tmpdir}/${_i}.rc" 2>/dev/null || echo "0")
-	    case "$helper_rc" in
-	    0) ;; 1) exit_code=1 ;; 2) _log WARN "[$_metric] helper invocation error (exit 2) — fail-open" ;; *) ;;
-	    esac
-	done
-	exit "$exit_code"
-	WRAPPER_EOF
-	chmod +x "$wrapper"
-
 	local output rc=0
-	output=$(COMPLEXITY_HELPER="$fake_helper" "$wrapper" 2>&1) || rc=$?
+	output=$(COMPLEXITY_HELPER="$fake_helper" COMPLEXITY_GUARD_BASE_SHA="abc1234" \
+		bash "$HOOK" 2>&1) || rc=$?
 
 	local fail=0
 	# exit 2 should be fail-open → exit 0

@@ -22,8 +22,10 @@
 # Exit 0 = allow push. Exit 1 = block push.
 #
 # Environment:
-#   COMPLEXITY_GUARD_DISABLE=1  — bypass for this invocation (same as --no-verify)
-#   COMPLEXITY_GUARD_DEBUG=1    — verbose stderr trace
+#   COMPLEXITY_GUARD_DISABLE=1        — bypass for this invocation (same as --no-verify)
+#   COMPLEXITY_GUARD_DEBUG=1          — verbose stderr trace
+#   COMPLEXITY_HELPER=/path/to/bin    — override helper resolution (for testing)
+#   COMPLEXITY_GUARD_BASE_SHA=<sha>   — override merge-base SHA (for testing)
 #
 # Fail-open cases (exit 0 with warning):
 #   - complexity-regression-helper.sh not found
@@ -63,18 +65,22 @@ _resolve_self_dir() {
 }
 
 HOOK_DIR=$(_resolve_self_dir)
-HELPER_REPO="${HOOK_DIR}/../scripts/complexity-regression-helper.sh"
-HELPER_DEPLOYED="${HOME}/.aidevops/agents/scripts/complexity-regression-helper.sh"
 
-if [[ -f "$HELPER_REPO" ]]; then
-	COMPLEXITY_HELPER="$HELPER_REPO"
-elif [[ -f "$HELPER_DEPLOYED" ]]; then
-	COMPLEXITY_HELPER="$HELPER_DEPLOYED"
-else
-	_log WARN "complexity-regression-helper.sh not found — fail-open"
-	_log WARN "  checked: $HELPER_REPO"
-	_log WARN "  checked: $HELPER_DEPLOYED"
-	exit 0
+# Allow env override for testing (COMPLEXITY_HELPER=... bash hook.sh)
+if [[ -z "${COMPLEXITY_HELPER:-}" ]]; then
+	HELPER_REPO="${HOOK_DIR}/../scripts/complexity-regression-helper.sh"
+	HELPER_DEPLOYED="${HOME}/.aidevops/agents/scripts/complexity-regression-helper.sh"
+
+	if [[ -f "$HELPER_REPO" ]]; then
+		COMPLEXITY_HELPER="$HELPER_REPO"
+	elif [[ -f "$HELPER_DEPLOYED" ]]; then
+		COMPLEXITY_HELPER="$HELPER_DEPLOYED"
+	else
+		_log WARN "complexity-regression-helper.sh not found — fail-open"
+		_log WARN "  checked: $HELPER_REPO"
+		_log WARN "  checked: $HELPER_DEPLOYED"
+		exit 0
+	fi
 fi
 
 [[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "helper: $COMPLEXITY_HELPER"
@@ -106,8 +112,8 @@ _resolve_base_sha() {
 	return 1
 }
 
-BASE_SHA=""
-if ! BASE_SHA=$(_resolve_base_sha); then
+BASE_SHA="${COMPLEXITY_GUARD_BASE_SHA:-}"
+if [[ -z "$BASE_SHA" ]] && ! BASE_SHA=$(_resolve_base_sha); then
 	_log WARN "cannot determine merge-base (offline or no upstream?) — fail-open"
 	exit 0
 fi
@@ -134,7 +140,8 @@ if [[ -z "$_parallel_tmpdir" || ! -d "$_parallel_tmpdir" ]]; then
 fi
 trap 'rm -rf "$_parallel_tmpdir"' EXIT
 
-# Launch all metric checks in parallel
+# Launch all metric checks in parallel, tracking PIDs for explicit synchronisation
+_pids=()
 for _i in "${!METRICS[@]}"; do
 	_metric="${METRICS[$_i]}"
 	[[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "launching metric: $_metric (parallel)"
@@ -143,10 +150,11 @@ for _i in "${!METRICS[@]}"; do
 			> "${_parallel_tmpdir}/${_i}.out" 2>&1
 		printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc"
 	) &
+	_pids+=($!)
 done
 
-# Wait for all parallel checks to complete
-wait
+# Wait only for the PIDs we launched (prevents waiting for unrelated background jobs)
+wait "${_pids[@]}"
 
 # Process results in original metric order (preserves output format)
 for _i in "${!METRICS[@]}"; do
