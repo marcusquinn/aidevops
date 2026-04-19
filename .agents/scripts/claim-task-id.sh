@@ -111,7 +111,13 @@ TASK_LABELS=""
 REPO_PATH="$PWD"
 ALLOC_COUNT=1
 OFFLINE_OFFSET=100
-CAS_MAX_RETRIES=10
+CAS_MAX_RETRIES=${CAS_MAX_RETRIES:-30}
+# When true (default), CAS retry exhaustion in online mode is fatal — does NOT
+# silently fall through to allocate_offline with +100 offset.  The offline path
+# exists for genuinely-offline scenarios (no network, explicit --offline flag),
+# not for contention failures on a reachable remote.  Set to 0 to restore the
+# legacy silent-fallback behaviour.
+CAS_EXHAUSTION_FATAL=${CAS_EXHAUSTION_FATAL:-1}
 COUNTER_FILE=".task-counter"
 # Remote and branch — defaults; overridden by .aidevops.json and/or CLI flags
 REMOTE_NAME="origin"
@@ -625,11 +631,13 @@ allocate_online() {
 
 		if [[ $attempt -gt 1 ]]; then
 			log_info "Retry attempt ${attempt}/${CAS_MAX_RETRIES}..."
-			# Brief backoff: 0.1s * attempt, capped at 1.0s, plus jitter to avoid thundering herd
-			local capped=$((attempt > 10 ? 10 : attempt))
+			# Exponential-ish backoff: 0.1s * attempt (uncapped) + jitter.
+			# At attempt 10 → ~1.0-1.3s; attempt 20 → ~2.0-2.3s; attempt 30 → ~3.0-3.3s.
+			# The old cap at 1.0s was too short to outlast sustained main-branch pushes
+			# from issue-sync.yml and simplification-state commits (GH#19880).
 			local jitter_ms=$((RANDOM % 300))
 			local backoff
-			backoff=$(awk "BEGIN {printf \"%.1f\", $capped * 0.1 + $jitter_ms / 1000}")
+			backoff=$(awk "BEGIN {printf \"%.1f\", $attempt * 0.1 + $jitter_ms / 1000}")
 			sleep "$backoff" 2>/dev/null || true
 		fi
 
@@ -1296,7 +1304,15 @@ _main_resolve_allocation() {
 		if first_id_out=$(_allocate_online_with_collision_check "$REPO_PATH" "$ALLOC_COUNT"); then
 			log_success "Allocated task ID: $(printf 't%03d' "$first_id_out")"
 		else
-			log_warn "Online allocation failed, falling back to offline mode"
+			if [[ "$CAS_EXHAUSTION_FATAL" == "1" ]]; then
+				log_error "CAS_EXHAUSTED: online allocation failed after ${CAS_MAX_RETRIES} attempts"
+				log_error "This is a contention failure, not an offline scenario."
+				log_error "The remote is reachable but concurrent pushes (issue-sync.yml, simplification-state,"
+				log_error "merge commits) outpaced the retry budget.  Recovery: wait a few seconds and retry,"
+				log_error "or set CAS_EXHAUSTION_FATAL=0 to restore the legacy +${OFFLINE_OFFSET} offset fallback."
+				return 1
+			fi
+			log_warn "Online allocation failed, falling back to offline mode (CAS_EXHAUSTION_FATAL=0)"
 			is_offline_out="true"
 		fi
 	else
