@@ -148,6 +148,19 @@ check_stats_dedup() {
 # Main
 #######################################
 main() {
+	# GH#19913: declare this process as headless BEFORE anything else runs
+	# so every child shell stage sees AIDEVOPS_HEADLESS and
+	# detect_session_origin() returns "worker". Mirrors the GH#18670 fix in
+	# pulse-wrapper.sh:1369. Without this, _sweep_review_scanner ->
+	# quality-feedback-helper.sh -> _create_new_quality_debt_issue ->
+	# gh_create_issue -> session_origin_label() defaults to
+	# "origin:interactive" and _gh_wrapper_auto_assignee assigns the
+	# runner, which trips GH#18352's dispatch-dedup guard and strands every
+	# quality-debt issue the 15-min stats sweep creates. Scoped to main()
+	# so callers sourcing stats-wrapper.sh for testing do not inherit the
+	# env var (same scoping guarantee as pulse-wrapper.sh).
+	export AIDEVOPS_HEADLESS=true
+
 	#######################################
 	# --self-check mode (t2044 Phase 0 -- plan section 5.2)
 	#
