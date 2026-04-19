@@ -54,29 +54,39 @@ DISPATCH_CLAIM_SELF_RECLAIM_AGE="${DISPATCH_CLAIM_SELF_RECLAIM_AGE:-30}"
 # Plain text format: visible in rendered GitHub issue view.
 CLAIM_MARKER="DISPATCH_CLAIM"
 
-# t2399: Runtime override for cross-runner dispatch coordination.
+# t2399/t2401: Runtime override for cross-runner dispatch coordination.
 #
 # Allows a local runner to ignore DISPATCH_CLAIMs from specific peer runners
-# when the peer is known to be degraded (running stale code, fast-failing,
-# version-skewed). Self-correcting: once the peer recovers, remove from the
-# list (or let the long-term stats-based auto-override in t2401 manage it).
+# or from runners running framework versions older than a configured floor.
+# Both filters are self-correcting: once the peer recovers or upgrades, the
+# filter auto-sunsets (version filter) or the operator removes the login
+# (t2399 login-gated filter).
 #
 # Config file (optional, user-level): ~/.config/aidevops/dispatch-override.conf
 #   DISPATCH_CLAIM_IGNORE_RUNNERS="login1 login2"  # space or comma separated
+#   DISPATCH_CLAIM_MIN_VERSION="3.8.78"            # semver floor; older claims ignored
 #   DISPATCH_OVERRIDE_ENABLED=true                 # default true when config exists
 #
-# Safety: filter is UNIDIRECTIONAL — if only one runner filters the other, the
-# filtered runner's claim-race still honours the filterer's claim (normal
+# Version field (t2401): claim bodies include version=X.Y.Z sourced from
+# ~/.aidevops/agents/VERSION. Legacy claims (pre-t2401) have no version field
+# and are treated as "unknown" — below any configured floor.
+#
+# Safety: filters are UNIDIRECTIONAL — if only one runner filters the other,
+# the filtered runner's claim-race still honours the filterer's claim (normal
 # dedup behaviour). If BOTH runners filter each other, double-dispatch is
 # possible. Intended for temporary, unilateral use during peer-degraded
 # incidents.
 DISPATCH_OVERRIDE_CONF="${DISPATCH_OVERRIDE_CONF:-${HOME}/.config/aidevops/dispatch-override.conf}"
 DISPATCH_CLAIM_IGNORE_RUNNERS="${DISPATCH_CLAIM_IGNORE_RUNNERS:-}"
+DISPATCH_CLAIM_MIN_VERSION="${DISPATCH_CLAIM_MIN_VERSION:-}"
 DISPATCH_OVERRIDE_ENABLED="${DISPATCH_OVERRIDE_ENABLED:-true}"
 if [[ -r "$DISPATCH_OVERRIDE_CONF" ]]; then
 	# shellcheck disable=SC1090
 	source "$DISPATCH_OVERRIDE_CONF" 2>/dev/null || true
 fi
+
+# t2401: Framework VERSION file location. Override for tests.
+AIDEVOPS_VERSION_FILE="${AIDEVOPS_VERSION_FILE:-${HOME}/.aidevops/agents/VERSION}"
 
 #######################################
 # Generate a unique nonce for this claim attempt.
@@ -139,6 +149,24 @@ _resolve_runner() {
 }
 
 #######################################
+# t2401: Resolve the framework version from AIDEVOPS_VERSION_FILE.
+# Returns: semver string on stdout, "unknown" when file is missing/empty.
+# Always exit 0 — claim emission must never fail on a missing VERSION file.
+#######################################
+_resolve_version() {
+	if [[ -r "$AIDEVOPS_VERSION_FILE" ]]; then
+		local ver
+		ver=$(head -n1 "$AIDEVOPS_VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
+		if [[ -n "$ver" ]]; then
+			printf '%s' "$ver"
+			return 0
+		fi
+	fi
+	printf '%s' "unknown"
+	return 0
+}
+
+#######################################
 # Post a claim comment on a GitHub issue.
 # The comment is plain text — visible in rendered view.
 #
@@ -159,8 +187,12 @@ _post_claim() {
 	local nonce="$4"
 	local ts="$5"
 
+	# t2401: include framework version so peers can filter claims from older runners.
+	local version
+	version=$(_resolve_version)
+
 	local body
-	body="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE}"
+	body="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version}"
 
 	local comment_id
 	comment_id=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
@@ -255,16 +287,19 @@ _fetch_claims() {
 		return 0
 	fi
 
-	# Parse claim fields from comment bodies and filter by max age
+	# Parse claim fields from comment bodies and filter by max age.
+	# t2401: version is an optional trailing field; legacy pre-t2401 claims
+	# lack it and parse as "unknown".
 	local parsed
 	parsed=$(printf '%s' "$claims_only" | jq -c --argjson now "$now_epoch" --argjson max_age "$DISPATCH_CLAIM_MAX_AGE" '
 		[.[] |
-			(.body | capture("nonce=(?<nonce>[^ ]+) runner=(?<runner>[^ ]+) ts=(?<ts>[^ ]+)")) as $fields |
+			(.body | capture("nonce=(?<nonce>[^ ]+) runner=(?<runner>[^ ]+) ts=(?<ts>[^ ]+)(?: max_age_s=[^ ]+)?(?: version=(?<version>[^ ]+))?")) as $fields |
 			{
 				id: .id,
 				nonce: $fields.nonce,
 				runner: $fields.runner,
 				ts: $fields.ts,
+				version: ($fields.version // "unknown"),
 				created_at: .created_at,
 				created_epoch: (.created_at | fromdateiso8601? // 0)
 			}
@@ -287,10 +322,93 @@ _fetch_claims() {
 }
 
 #######################################
-# t2400: Filter out DISPATCH_CLAIM entries authored by runners listed in
-# DISPATCH_CLAIM_IGNORE_RUNNERS. No-op when override is disabled or list is empty.
-# Emits a stderr log line when filter actually strips claims so operators
-# can audit active overrides.
+# t2401: Semver comparison — is $1 strictly less than $2?
+# Args: $1 = version (e.g., "3.8.78"), $2 = floor (e.g., "3.9.0")
+# Returns: exit 0 = version < floor (below), exit 1 = version >= floor
+# "unknown" or empty version is always below floor.
+#######################################
+_version_below() {
+	local version="${1:-}"
+	local floor="${2:-}"
+
+	# Treat missing/unknown as below any configured floor
+	if [[ -z "$version" || "$version" == "unknown" ]]; then
+		return 0
+	fi
+
+	# Equal versions are not strictly below
+	if [[ "$version" == "$floor" ]]; then
+		return 1
+	fi
+
+	# sort -V puts smaller semver first. If $version is first, it's below $floor.
+	local first
+	first=$(printf '%s\n%s\n' "$version" "$floor" | sort -V | head -n1)
+	if [[ "$first" == "$version" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# t2401: Filter out claim entries whose version is below DISPATCH_CLAIM_MIN_VERSION.
+# Legacy claims parsed as "unknown" are always filtered out when a floor is set.
+#
+# Args:
+#   $1 = parsed claims JSON array
+#   $2 = min version floor (semver)
+# Returns:
+#   Filtered JSON on stdout. Fails safe — returns input unchanged on jq error.
+#######################################
+_filter_below_version() {
+	local parsed="$1"
+	local floor="$2"
+
+	# Collect IDs of claims strictly below the floor.
+	local below_ids=""
+	local claim_rows
+	claim_rows=$(printf '%s' "$parsed" | jq -r '.[] | [.id, (.version // "unknown")] | @tsv' 2>/dev/null) || return 0
+
+	local id version
+	while IFS=$'\t' read -r id version; do
+		[[ -z "$id" ]] && continue
+		if _version_below "$version" "$floor"; then
+			below_ids+="${id}"$'\n'
+		fi
+	done <<<"$claim_rows"
+
+	if [[ -z "$below_ids" ]]; then
+		printf '%s' "$parsed"
+		return 0
+	fi
+
+	local below_json
+	below_json=$(printf '%s' "$below_ids" | jq -Rsc 'split("\n") | map(select(length > 0)) | map(tonumber)' 2>/dev/null) || {
+		printf '%s' "$parsed"
+		return 0
+	}
+
+	local filtered
+	filtered=$(printf '%s' "$parsed" | jq -c --argjson below "$below_json" '
+		map(select((.id as $i | $below | index($i)) | not))
+	' 2>/dev/null) || {
+		printf '%s' "$parsed"
+		return 0
+	}
+	printf '%s' "$filtered"
+	return 0
+}
+
+#######################################
+# t2400/t2401: Apply runtime override filters to parsed claims.
+#
+# Two composable filters:
+#   - Login filter (t2400): DISPATCH_CLAIM_IGNORE_RUNNERS strips named logins.
+#   - Version filter (t2401): DISPATCH_CLAIM_MIN_VERSION strips claims whose
+#     version field is below the semver floor (including legacy "unknown").
+#
+# Filters are no-op when override is disabled or both lists/floors are empty.
+# Emits a stderr log line when any claims are stripped, for operator audit.
 #
 # Args:
 #   $1 = parsed claims JSON array (from _fetch_claims parse step)
@@ -305,31 +423,47 @@ _apply_ignore_filter() {
 	local issue_number="$2"
 	local repo_slug="$3"
 
-	if [[ "$DISPATCH_OVERRIDE_ENABLED" != "true" ]] || [[ -z "$DISPATCH_CLAIM_IGNORE_RUNNERS" ]]; then
+	if [[ "$DISPATCH_OVERRIDE_ENABLED" != "true" ]]; then
 		printf '%s' "$parsed"
 		return 0
 	fi
 
-	local ignored_json
-	# Normalise the ignore list (accept space OR comma separators) → JSON array
-	ignored_json=$(printf '%s' "$DISPATCH_CLAIM_IGNORE_RUNNERS" | tr ',' ' ' | tr -s ' ' '\n' | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || ignored_json="[]"
-	if [[ "$ignored_json" == "[]" ]]; then
+	# Both filters empty → no-op fast path
+	if [[ -z "$DISPATCH_CLAIM_IGNORE_RUNNERS" && -z "$DISPATCH_CLAIM_MIN_VERSION" ]]; then
 		printf '%s' "$parsed"
 		return 0
 	fi
 
-	local pre_count post_count filtered_parsed
+	local pre_count
 	pre_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
-	filtered_parsed=$(printf '%s' "$parsed" | jq -c --argjson ignored "$ignored_json" '
-		map(select(.runner as $r | $ignored | index($r) | not))
-	' 2>/dev/null)
-	if [[ -n "$filtered_parsed" ]]; then
-		parsed="$filtered_parsed"
+
+	# Login filter (t2400)
+	if [[ -n "$DISPATCH_CLAIM_IGNORE_RUNNERS" ]]; then
+		local ignored_json
+		# Normalise the ignore list (accept space OR comma separators) → JSON array
+		ignored_json=$(printf '%s' "$DISPATCH_CLAIM_IGNORE_RUNNERS" | tr ',' ' ' | tr -s ' ' '\n' | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || ignored_json="[]"
+		if [[ "$ignored_json" != "[]" ]]; then
+			local filtered_login
+			filtered_login=$(printf '%s' "$parsed" | jq -c --argjson ignored "$ignored_json" '
+				map(select(.runner as $r | $ignored | index($r) | not))
+			' 2>/dev/null)
+			if [[ -n "$filtered_login" ]]; then
+				parsed="$filtered_login"
+			fi
+		fi
 	fi
+
+	# Version filter (t2401)
+	if [[ -n "$DISPATCH_CLAIM_MIN_VERSION" ]]; then
+		parsed=$(_filter_below_version "$parsed" "$DISPATCH_CLAIM_MIN_VERSION")
+	fi
+
+	local post_count
 	post_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
 	if [[ "$pre_count" -gt "$post_count" ]]; then
-		printf '[dispatch-claim-helper] Filtered %d claim(s) from ignored runners (%s) on #%s in %s\n' \
-			"$((pre_count - post_count))" "$DISPATCH_CLAIM_IGNORE_RUNNERS" "$issue_number" "$repo_slug" >&2
+		printf '[dispatch-claim-helper] Filtered %d claim(s) on #%s in %s (ignore_runners=%s min_version=%s)\n' \
+			"$((pre_count - post_count))" "$issue_number" "$repo_slug" \
+			"${DISPATCH_CLAIM_IGNORE_RUNNERS:-none}" "${DISPATCH_CLAIM_MIN_VERSION:-none}" >&2
 	fi
 
 	printf '%s' "$parsed"
