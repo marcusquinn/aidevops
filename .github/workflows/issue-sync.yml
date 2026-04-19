@@ -383,6 +383,14 @@ jobs:
           fi
           echo "linked_issues=$LINKED_ISSUES" >> "$GITHUB_OUTPUT"
 
+          # t2219: Collect 'For #NNN' and 'Ref #NNN' references (planning convention t2046)
+          # These are explicit signals that the PR is NOT closing the referenced issue.
+          FOR_REF_ISSUES=""
+          if [[ -n "$PR_BODY" ]]; then
+            FOR_REF_ISSUES=$(echo "$PR_BODY" | grep -oiE '(for|ref)[[:space:]]*#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+          fi
+          echo "for_ref_issues=$FOR_REF_ISSUES" >> "$GITHUB_OUTPUT"
+
           # Determine if we have anything to process
           if [[ -n "$TASK_ID" || -n "$LINKED_ISSUES" ]]; then
             echo "has_work=true" >> "$GITHUB_OUTPUT"
@@ -390,7 +398,7 @@ jobs:
             echo "has_work=false" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "PR #$PR_NUMBER: task_id=$TASK_ID linked_issues=$LINKED_ISSUES"
+          echo "PR #$PR_NUMBER: task_id=$TASK_ID linked_issues=$LINKED_ISSUES for_ref_issues=$FOR_REF_ISSUES"
 
       - name: Find issue by task ID (fallback)
         id: find-issue
@@ -398,6 +406,7 @@ jobs:
         env:
           TASK_ID: ${{ steps.extract.outputs.task_id }}
           LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          FOR_REF_ISSUES: ${{ steps.extract.outputs.for_ref_issues }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -417,6 +426,13 @@ jobs:
               if echo "$FOUND_LABELS" | grep -qw "parent-task"; then
                 echo "found_issues=" >> "$GITHUB_OUTPUT"
                 echo "Found issue #$FOUND for task $TASK_ID is a parent-task — skipping title-fallback hygiene (use explicit Closes #NNN on the terminal-phase PR to close a parent)"
+              # t2219: skip title-fallback when the issue was explicitly referenced
+              # via 'For #NNN' or 'Ref #NNN' in the PR body. The t2046 planning
+              # convention says these references mean "this PR does NOT close that
+              # issue" — extend the same semantics to status:done auto-application.
+              elif [[ " $FOR_REF_ISSUES " == *" $FOUND "* ]]; then
+                echo "found_issues=" >> "$GITHUB_OUTPUT"
+                echo "Found issue #$FOUND for task $TASK_ID is referenced via For/Ref in PR body — skipping title-fallback hygiene (t2219)"
               else
                 echo "found_issues=$FOUND" >> "$GITHUB_OUTPUT"
                 echo "Found issue #$FOUND for task $TASK_ID"
