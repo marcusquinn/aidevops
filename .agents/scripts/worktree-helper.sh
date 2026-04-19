@@ -686,6 +686,18 @@ cmd_add() {
 		return 1
 	fi
 
+	# t2235: Detect self-invented task ID variants (e.g. t2213b, t2213-2, t2213.fix)
+	# Task IDs come ONLY from claim-task-id.sh. For follow-ups, claim a fresh ID.
+	if [[ "$branch" =~ t[0-9]+[a-z]($|[-_/]) ]] || [[ "$branch" =~ t[0-9]+[-._][0-9]+($|[-_/]) ]]; then
+		print_warning "Branch name contains a non-claimed task ID variant ($branch)."
+		print_warning "Task IDs come ONLY from claim-task-id.sh. For follow-ups, claim a fresh ID."
+		if [[ -t 0 ]]; then # interactive
+			read -rp "Continue with this branch name anyway? [y/N] " confirm
+			[[ "$confirm" =~ ^[Yy]$ ]] || return 1
+		fi
+		# headless: warn only, don't block (could be legitimate in rare cases)
+	fi
+
 	# Check if we're in a git repo
 	if [[ -z "$(get_repo_root)" ]]; then
 		echo -e "${RED}Error: Not in a git repository${NC}"
