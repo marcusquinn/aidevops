@@ -134,34 +134,52 @@ _normalize_clear_status_labels() {
 }
 
 #######################################
-# (Phase 12 helper) Read the Worker PID and dispatch timestamp from the most
-# recent dispatch comment on a GitHub issue.
+# (Phase 12 helper) Read the Worker PID, dispatch timestamp, and owning
+# runner login from the most recent `Dispatching worker` comment on an issue.
 #
-# Outputs two lines to stdout: the Worker PID (blank if not found) followed by
-# the ISO-8601 created_at timestamp (blank if not found). Uses a single gh api
-# call with jq to avoid multiple round-trips.
+# t2375: also parses the `**Runner**: <login>` field so the caller can gate
+# cross-machine detection on runner identity rather than local PID presence.
+# See pulse-dispatch-worker-launch.sh:463-470 for the comment format.
+#
+# Outputs three lines to stdout: Worker PID, ISO-8601 created_at, runner
+# login. Each is blank if the field is missing from the comment (or no
+# dispatch comment exists). All three lines may legitimately be empty on
+# success — the caller distinguishes by checking which fields are populated.
 #
 # Args:
 #   $1 slug       — owner/repo
 #   $2 stale_num  — numeric GitHub issue number
-# Returns: 0 always (best-effort)
+# Returns: 0 on success (even if no dispatch comment found);
+#          1 on gh api failure (caller should fail-CLOSED — skip reset).
 #######################################
 _normalize_stale_get_dispatch_info() {
 	local slug="$1"
 	local stale_num="$2"
 
+	# t2375: capture gh output + exit code separately so we can distinguish
+	# "no dispatch comment" (empty output, rc=0) from "gh api failure"
+	# (rc!=0). The reactive path in dispatch-dedup-stale.sh:401-405 fails
+	# CLOSED on the same signal; match that stance here.
+	local gh_output
+	local gh_rc=0
+	gh_output=$(gh api "repos/${slug}/issues/${stale_num}/comments" \
+		--jq '[.[] | select(.body | contains("Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") // {pid: ""} | .pid), (.created_at | sub("\\.[0-9]+Z$"; "Z")), (.body | capture("\\*\\*Runner\\*\\*: (?<runner>[A-Za-z0-9][A-Za-z0-9-]*)") // {runner: ""} | .runner)) else empty end' \
+		2>/dev/null) || gh_rc=$?
+
+	if [[ "$gh_rc" -ne 0 ]]; then
+		return 1
+	fi
+
 	local dispatch_pid=""
 	local dispatch_created_at=""
-
-	# The || true prevents set -e from exiting if gh api returns no comments.
+	local dispatch_runner=""
 	{
 		IFS= read -r dispatch_pid
 		IFS= read -r dispatch_created_at
-	} < <(gh api "repos/${slug}/issues/${stale_num}/comments" \
-		--jq '[.[] | select(.body | contains("Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") // {pid: ""} | .pid), (.created_at | sub("\\.[0-9]+Z$"; "Z"))) else empty end' \
-		2>/dev/null) || true
+		IFS= read -r dispatch_runner
+	} <<<"$gh_output"
 
-	printf '%s\n%s\n' "$dispatch_pid" "$dispatch_created_at"
+	printf '%s\n%s\n%s\n' "$dispatch_pid" "$dispatch_created_at" "$dispatch_runner"
 	return 0
 }
 
@@ -169,36 +187,60 @@ _normalize_stale_get_dispatch_info() {
 # (Phase 12 helper) Decide whether a stale-assigned issue should be skipped
 # (worker still active) or reset (worker gone).
 #
-# Applies three checks in order:
+# Applies checks in order:
 #   1. Local pgrep — is any process referencing this issue number still running?
-#   2. Cross-runner PID guard (t1933) — PID absent locally but dispatch comment
-#      still within WORKER_MAX_RUNTIME, suggesting the worker is on another machine.
-#   3. Worker log recency — was the worker log written in the last 10 minutes?
+#   2. Dispatch-comment ownership gate (t1933 + t2375):
+#        - gh-api failure to fetch dispatch info → fail-CLOSED (skip).
+#        - dispatch_runner != self_login → cross-machine worker. Skip `ps -p`
+#          (PID collisions across machines are meaningless); apply time-based
+#          expiry against WORKER_MAX_RUNTIME.
+#        - dispatch_runner == self_login → local worker; use `ps -p` against
+#          the recorded Worker PID.
+#        - dispatch_runner empty but dispatch_pid present → legacy format,
+#          fail-CLOSED (cannot verify ownership).
+#   3. Worker log recency — local log written in last 10 min (local workers only).
 #
-# Returns: 0 = skip (worker still active), 1 = reset (worker gone)
+# Returns: 0 = skip (worker still active or unverifiable), 1 = reset (worker gone)
 #
 # Args:
-#   $1 stale_num               — numeric GitHub issue number
-#   $2 slug                    — owner/repo
-#   $3 now_epoch               — current Unix timestamp (date +%s)
+#   $1 stale_num                — numeric GitHub issue number
+#   $2 slug                     — owner/repo
+#   $3 now_epoch                — current Unix timestamp (date +%s)
 #   $4 cross_runner_max_runtime — seconds before cross-runner dispatch expires
+#   $5 self_login               — GH login of this runner (for identity gate)
 #######################################
 _normalize_stale_should_skip_reset() {
 	local stale_num="$1"
 	local slug="$2"
 	local now_epoch="$3"
 	local cross_runner_max_runtime="$4"
+	local self_login="$5"
 
 	# Check 1: local worker process still referencing this issue
 	if pgrep -f "pulse-reconcile.*[^0-9]${stale_num}([^0-9]|$)" >/dev/null 2>&1 || pgrep -f "#${stale_num}([^0-9]|$)" >/dev/null 2>&1; then
 		return 0
 	fi
 
-	# Read dispatch PID and timestamp from the most recent dispatch comment
-	local dispatch_info dispatch_pid dispatch_created_at
-	dispatch_info=$(_normalize_stale_get_dispatch_info "$slug" "$stale_num")
-	dispatch_pid=$(printf '%s\n' "$dispatch_info" | head -1)
-	dispatch_created_at=$(printf '%s\n' "$dispatch_info" | tail -1)
+	# t2375: Read dispatch PID, timestamp, and runner from the most recent
+	# dispatch comment. Fail-CLOSED on gh api error — match the reactive-path
+	# stance in dispatch-dedup-stale.sh:401-405. A transient gh failure is
+	# not evidence of staleness.
+	local dispatch_info
+	local dispatch_info_rc=0
+	dispatch_info=$(_normalize_stale_get_dispatch_info "$slug" "$stale_num") || dispatch_info_rc=$?
+	if [[ "$dispatch_info_rc" -ne 0 ]]; then
+		echo "[pulse-wrapper] Stale assignment skip (gh-api fail-closed): #${stale_num} in ${slug} — cannot fetch dispatch info" >>"$LOGFILE"
+		return 0
+	fi
+
+	local dispatch_pid=""
+	local dispatch_created_at=""
+	local dispatch_runner=""
+	{
+		IFS= read -r dispatch_pid
+		IFS= read -r dispatch_created_at
+		IFS= read -r dispatch_runner
+	} <<<"$dispatch_info"
 
 	local dispatch_comment_age=0
 	if [[ -n "$dispatch_created_at" ]]; then
@@ -211,16 +253,34 @@ _normalize_stale_should_skip_reset() {
 		fi
 	fi
 
-	# Check 2: t1933 cross-runner guard — PID absent locally but within max_runtime
+	# Check 2: t1933 + t2375 dispatch-ownership gate.
 	if [[ -n "$dispatch_pid" ]] && [[ "$dispatch_pid" =~ ^[0-9]+$ ]]; then
-		if ! ps -p "$dispatch_pid" >/dev/null 2>&1; then
-			# PID not running locally — could be cross-runner dispatch.
-			# Only reset if the dispatch comment has aged beyond WORKER_MAX_RUNTIME.
+		if [[ -z "$dispatch_runner" ]]; then
+			# t2375 fail-closed: legacy dispatch comment without **Runner**
+			# line. Cannot verify ownership, so skip reset — safer than
+			# potentially stealing a live cross-machine worker's assignment.
+			echo "[pulse-wrapper] Stale assignment skip (fail-closed legacy format): #${stale_num} in ${slug} — dispatch comment predates Runner field, cannot verify ownership" >>"$LOGFILE"
+			return 0
+		fi
+
+		if [[ "$dispatch_runner" != "$self_login" ]]; then
+			# t2375 cross-machine branch: dispatch came from another runner.
+			# PID collision is meaningless across machines — skip `ps -p`
+			# and rely on time-based expiry against WORKER_MAX_RUNTIME.
 			if [[ "$dispatch_comment_age" -lt "$cross_runner_max_runtime" ]]; then
-				echo "[pulse-wrapper] Stale assignment skip (cross-runner guard): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not local, comment age ${dispatch_comment_age}s < max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
+				echo "[pulse-wrapper] Stale assignment skip (cross-runner guard): #${stale_num} in ${slug} — runner=${dispatch_runner} != self=${self_login}, comment age ${dispatch_comment_age}s < max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
 				return 0
 			fi
-			echo "[pulse-wrapper] Stale assignment reset (cross-runner expired): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not local, comment age ${dispatch_comment_age}s >= max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
+			echo "[pulse-wrapper] Stale assignment reset (cross-runner expired): #${stale_num} in ${slug} — runner=${dispatch_runner} != self=${self_login}, comment age ${dispatch_comment_age}s >= max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
+			# Fall through — reset fires (return 1 below unless Check 3 catches a stray local log).
+		else
+			# t1933 local branch: dispatch_runner == self_login. PID check
+			# is authoritative here. If our own PID is still running, skip;
+			# otherwise fall through to Check 3 (local log) and reset.
+			if ps -p "$dispatch_pid" >/dev/null 2>&1; then
+				return 0
+			fi
+			echo "[pulse-wrapper] Stale assignment reset candidate (local worker gone): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not running, comment age ${dispatch_comment_age}s" >>"$LOGFILE"
 		fi
 	fi
 
@@ -259,18 +319,21 @@ _normalize_stale_should_skip_reset() {
 # issue, which may not happen for hours under queue pressure.
 #
 # Inner safeguards in _normalize_stale_should_skip_reset still protect
-# live workers (local pgrep, dispatch comment PID liveness with
-# WORKER_MAX_RUNTIME cross-runner guard, worker log mtime <600s). Lowering
+# live workers (local pgrep, dispatch-comment ownership gate with
+# WORKER_MAX_RUNTIME cross-runner expiry, worker log mtime <600s). Lowering
 # the outer filter expands the candidate set; the inner guards still gate
 # the actual reset. Override via env var:
 #
 #   STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS=N (default 600)
 #
-# t1933: PID-based checks are local-only. In multi-runner setups, a worker
-# dispatched by another machine is invisible to pgrep on this machine.
-# Gate PID checks on runner identity: if the dispatch comment's Worker PID
-# is not running locally, fall back to WORKER_MAX_RUNTIME time-based expiry
-# before resetting. This prevents false recovery of cross-runner dispatches.
+# t1933 + t2375: cross-runner safety is gated on the dispatch comment's
+# `**Runner**: <login>` field. When dispatch_runner != self_login, the
+# sweep skips local `ps -p` entirely (PID collisions across machines are
+# meaningless) and relies on time-based expiry against
+# WORKER_MAX_RUNTIME. When dispatch_runner == self_login, local PID and
+# log checks are authoritative. Legacy dispatch comments without a
+# `**Runner**` line and gh-api failures both fail CLOSED (skip reset) —
+# matches the reactive path in dispatch-dedup-stale.sh:401-405.
 #
 # Args:
 #   $1 runner_user              — GH login of the current runner
@@ -320,7 +383,7 @@ _normalize_unassign_stale() {
 			[[ "$stale_num" =~ ^[0-9]+$ ]] || continue
 			total_candidates=$((total_candidates + 1))
 
-			if _normalize_stale_should_skip_reset "$stale_num" "$slug" "$now_epoch" "$cross_runner_max_runtime"; then
+			if _normalize_stale_should_skip_reset "$stale_num" "$slug" "$now_epoch" "$cross_runner_max_runtime" "$runner_user"; then
 				continue
 			fi
 
