@@ -46,7 +46,7 @@ fi
 - **PR titles must include the task ID (t318.2).** Use `<task-id>: <description>`.
   - `tNNN` for TODO tasks, e.g. `t318.2: Verify supervisor worker PRs include task ID`
   - `GH#NNN` for GitHub issues, e.g. `GH#12455: tighten hashline-edit-format.md`
-  - Never use `qd-`, bare numbers, or `t` + a GitHub issue number. CI and the supervisor validate this.
+  - Never use `qd-`, bare numbers, or `t` + a GitHub issue number. Never invent suffixes/variants (`t2213b`, `t2213-2`, `t2213.fix`). Task IDs come ONLY from `claim-task-id.sh`; for follow-ups, claim a fresh ID. CI and the supervisor validate this.
 
 ## 2. Spend tokens where they change outcomes
 

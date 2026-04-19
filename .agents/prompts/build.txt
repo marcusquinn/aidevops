@@ -303,6 +303,7 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 
 **Traceability (MANDATORY):**
 - PR title MUST have task ID (`{task-id}: {description}`). No exceptions.
+- NEVER invent task ID suffixes or variants — `t2213b`, `t2213-2`, `t2213.fix`, `t2213-followup` are all forbidden. Task IDs come EXCLUSIVELY from `claim-task-id.sh` output. For follow-up work on a merged task, claim a FRESH task ID via `claim-task-id.sh` — don't extend the old one. NEVER prefix `--title` with a `tNNN:` when calling `claim-task-id.sh` — always let the helper inject the claimed ID. Titles must describe the work, not assert an ID.
 - **PR bodies MUST use `Resolves #NNN`** to link the PR to its issue. GitHub only
   creates the sidebar "Development" link (PR↔issue) when the PR body contains a closing
   keyword (`Closes`, `Fixes`, `Resolves`). Without it, the audit trail is broken — you
