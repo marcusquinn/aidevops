@@ -56,6 +56,8 @@ declare -A _VALIDATOR_REGISTRY=()
 
 _register_validators() {
 	_VALIDATOR_REGISTRY["ratchet-down"]="_validator_ratchet_down"
+	_VALIDATOR_REGISTRY["large-file-simplification-gate"]="_validator_large_file_simplification_gate"
+	_VALIDATOR_REGISTRY["function-complexity-gate"]="_validator_function_complexity_gate"
 	return 0
 }
 
@@ -110,6 +112,107 @@ _validator_ratchet_down() {
 }
 
 # ---------------------------------------------------------------------------
+# Large-file simplification gate validator (t2367)
+#
+# Re-measures the cited file against current HEAD. If the file is now below
+# the threshold, the premise is falsified — the debt was resolved before the
+# worker could be dispatched.
+#
+# Expects CITED_FILE and CITED_THRESHOLD to be set by cmd_validate() after
+# parsing the marker attributes.
+# ---------------------------------------------------------------------------
+_validator_large_file_simplification_gate() {
+	local slug="$1"
+
+	if [[ -z "${CITED_FILE:-}" || -z "${CITED_THRESHOLD:-}" ]]; then
+		_log "WARN" "large-file-simplification-gate validator: missing cited_file or threshold in marker"
+		return 20
+	fi
+
+	_log "INFO" "large-file-simplification-gate validator: re-measuring ${CITED_FILE} (threshold=${CITED_THRESHOLD})"
+
+	# Clone repo into scratch dir for a fresh read against HEAD
+	local clone_url
+	clone_url="https://github.com/${slug}.git"
+
+	if ! git clone --depth 1 --quiet "$clone_url" "${SCRATCH_DIR}/repo" 2>/dev/null; then
+		_log "WARN" "large-file-simplification-gate validator: git clone failed for ${slug}"
+		return 20
+	fi
+
+	local target_file="${SCRATCH_DIR}/repo/${CITED_FILE}"
+	if [[ ! -f "$target_file" ]]; then
+		_log "INFO" "large-file-simplification-gate validator: file ${CITED_FILE} no longer exists — premise falsified"
+		VALIDATOR_RATIONALE="File \`${CITED_FILE}\` no longer exists on HEAD. Premise falsified. Not dispatching."
+		return 10
+	fi
+
+	local line_count
+	line_count=$(wc -l < "$target_file" 2>/dev/null | tr -d ' ') || line_count=0
+
+	if [[ "$line_count" -lt "$CITED_THRESHOLD" ]]; then
+		_log "INFO" "large-file-simplification-gate validator: ${CITED_FILE} is now ${line_count} lines (threshold ${CITED_THRESHOLD}) — premise falsified"
+		VALIDATOR_RATIONALE="File \`${CITED_FILE}\` is now ${line_count} lines, below the ${CITED_THRESHOLD}-line threshold. Premise falsified. Not dispatching."
+		return 10
+	fi
+
+	_log "INFO" "large-file-simplification-gate validator: ${CITED_FILE} is still ${line_count} lines (threshold ${CITED_THRESHOLD}) — premise holds"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Function-complexity gate validator (t2367)
+#
+# Re-measures function complexity in the cited file. If no functions exceed
+# the threshold, the premise is falsified.
+#
+# Expects CITED_FILE and CITED_THRESHOLD to be set by cmd_validate().
+# ---------------------------------------------------------------------------
+_validator_function_complexity_gate() {
+	local slug="$1"
+
+	if [[ -z "${CITED_FILE:-}" || -z "${CITED_THRESHOLD:-}" ]]; then
+		_log "WARN" "function-complexity-gate validator: missing cited_file or threshold in marker"
+		return 20
+	fi
+
+	_log "INFO" "function-complexity-gate validator: re-measuring ${CITED_FILE} (threshold=${CITED_THRESHOLD})"
+
+	# Clone repo into scratch dir for a fresh read against HEAD
+	local clone_url
+	clone_url="https://github.com/${slug}.git"
+
+	if ! git clone --depth 1 --quiet "$clone_url" "${SCRATCH_DIR}/repo" 2>/dev/null; then
+		_log "WARN" "function-complexity-gate validator: git clone failed for ${slug}"
+		return 20
+	fi
+
+	local target_file="${SCRATCH_DIR}/repo/${CITED_FILE}"
+	if [[ ! -f "$target_file" ]]; then
+		_log "INFO" "function-complexity-gate validator: file ${CITED_FILE} no longer exists — premise falsified"
+		VALIDATOR_RATIONALE="File \`${CITED_FILE}\` no longer exists on HEAD. Premise falsified. Not dispatching."
+		return 10
+	fi
+
+	# Count functions exceeding the threshold (same awk as complexity-scan-helper.sh)
+	local violation_count
+	violation_count=$(awk -v threshold="$CITED_THRESHOLD" '
+		/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
+		fname && /^\}$/ { lines=NR-start; if(lines+0>threshold+0) count++; fname="" }
+		END { print count+0 }
+	' "$target_file" 2>/dev/null) || violation_count=0
+
+	if [[ "$violation_count" -eq 0 ]]; then
+		_log "INFO" "function-complexity-gate validator: no functions exceed ${CITED_THRESHOLD} lines in ${CITED_FILE} — premise falsified"
+		VALIDATOR_RATIONALE="File \`${CITED_FILE}\` has 0 functions exceeding ${CITED_THRESHOLD} lines on HEAD. Premise falsified. Not dispatching."
+		return 10
+	fi
+
+	_log "INFO" "function-complexity-gate validator: ${violation_count} function(s) still exceed ${CITED_THRESHOLD} lines in ${CITED_FILE} — premise holds"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Compose and post the falsified-premise closure comment, then close the issue.
 # ---------------------------------------------------------------------------
 _close_with_rationale() {
@@ -122,12 +225,15 @@ _close_with_rationale() {
 		sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer --issue "${slug}#${issue_number}" 2>/dev/null || true)
 	fi
 
+	# Use specific validator rationale if available, otherwise generic message
+	local rationale_detail="${VALIDATOR_RATIONALE:-The \`${generator}\` check reports no actionable work is available.}"
+
 	local comment_body
 	comment_body=$(
 		cat <<EOF
-> Premise falsified. Pre-dispatch validator for generator \`${generator}\` determined the issue premise is no longer true. The \`${generator}\` check reports no actionable work is available. Not dispatching a worker.
+> Premise falsified. Pre-dispatch validator for generator \`${generator}\` determined the issue premise is no longer true. ${rationale_detail} Not dispatching a worker.
 
-The issue was closed automatically by the pre-dispatch validator (GH#19118). If conditions change and ratchet-down proposals become available again, a new issue will be created by the next pulse cycle.
+The issue was closed automatically by the pre-dispatch validator (GH#19118, t2367). If conditions change, a new issue will be created by the next pulse cycle.
 
 ${sig_footer}
 EOF
@@ -179,17 +285,25 @@ cmd_validate() {
 		return 20
 	}
 
-	# Extract generator marker
+	# Extract generator marker (supports both simple and attributed forms):
+	#   <!-- aidevops:generator=<name> -->
+	#   <!-- aidevops:generator=<name> cited_file=<path> threshold=<N> -->
+	local generator_line
+	generator_line=$(printf '%s' "$issue_body" | grep -oE '<!-- aidevops:generator=[a-z0-9_-]+[^>]*-->' | head -1) || generator_line=""
+
 	local generator
-	generator=$(printf '%s' "$issue_body" | grep -oE '<!-- aidevops:generator=[a-z-]+ -->' | head -1 |
-		sed 's/<!-- aidevops:generator=//;s/ -->//' 2>/dev/null) || generator=""
+	generator=$(printf '%s' "$generator_line" | sed 's/<!-- aidevops:generator=//;s/ .*//' 2>/dev/null) || generator=""
 
 	if [[ -z "$generator" ]]; then
 		_log "INFO" "#${issue_number}: no generator marker found — unregistered generator, dispatch proceeds"
 		return 0
 	fi
 
-	_log "INFO" "#${issue_number}: generator=${generator}"
+	# Extract optional attributes: cited_file and threshold
+	CITED_FILE=$(printf '%s' "$generator_line" | grep -oE 'cited_file=[^ >]+' | sed 's/cited_file=//' 2>/dev/null) || CITED_FILE=""
+	CITED_THRESHOLD=$(printf '%s' "$generator_line" | grep -oE 'threshold=[0-9]+' | sed 's/threshold=//' 2>/dev/null) || CITED_THRESHOLD=""
+
+	_log "INFO" "#${issue_number}: generator=${generator} cited_file=${CITED_FILE:-<none>} threshold=${CITED_THRESHOLD:-<none>}"
 
 	# Look up validator
 	_register_validators
@@ -207,7 +321,9 @@ cmd_validate() {
 	# shellcheck disable=SC2064
 	trap "rm -rf '${SCRATCH_DIR}'" EXIT
 
-	# Run validator
+	# Run validator (VALIDATOR_RATIONALE may be set by the validator for
+	# specific evidence in the closure comment)
+	VALIDATOR_RATIONALE=""
 	local validator_rc=0
 	"$validator_fn" "$slug" || validator_rc=$?
 
