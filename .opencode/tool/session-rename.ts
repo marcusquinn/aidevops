@@ -2,6 +2,10 @@ import { tool } from "@opencode-ai/plugin"
 import { Database } from "bun:sqlite"
 import { homedir } from "os"
 import { join } from "path"
+import { isDefaultBranchTitle, isTitleOverwritable } from "./session-rename-guards"
+
+// Re-export so the tool file stays the canonical import site.
+export { isDefaultBranchTitle, isTitleOverwritable }
 
 /**
  * Resolve the OpenCode SQLite database path.
@@ -50,6 +54,58 @@ function renameSession(sessionID: string, title: string): { success: boolean; me
   }
 }
 
+/**
+ * Guarded branch-sync rename: skips default branch names and preserves
+ * meaningful existing titles. Returns structured outcome so the caller
+ * (tool export) can format user-facing text.
+ */
+export function syncSessionWithBranch(
+  sessionID: string,
+  branch: string,
+): { outcome: "renamed" | "skipped" | "error"; message: string } {
+  // Guard 1: never write default branch names as session titles.
+  if (isDefaultBranchTitle(branch)) {
+    return {
+      outcome: "skipped",
+      message: `Skipping session rename: '${branch}' is not a meaningful title`,
+    }
+  }
+
+  const dbPath = getDbPath()
+
+  try {
+    const db = new Database(dbPath)
+    try {
+      // Guard 2: do not clobber a meaningful existing title.
+      if (!isTitleOverwritable(db, sessionID)) {
+        return {
+          outcome: "skipped",
+          message: "Skipping session rename: session already has a meaningful title",
+        }
+      }
+
+      const nowMs = Date.now()
+      const result = db.run(
+        "UPDATE session SET title = ?, time_updated = ? WHERE id = ?",
+        [branch, nowMs, sessionID],
+      )
+
+      if (result.changes === 0) {
+        return { outcome: "error", message: `Session ${sessionID} not found in database` }
+      }
+
+      return { outcome: "renamed", message: branch }
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    return {
+      outcome: "error",
+      message: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
 export default tool({
   description:
     "Rename the current session to a new title. Use this after creating a git branch to sync the session name with the branch name.",
@@ -62,6 +118,9 @@ export default tool({
     const { sessionID } = context
     const { title } = args
 
+    // Explicit rename is a manual override — no guards. Matches the
+    // session-rename-helper.sh contract where `rename` is unguarded but
+    // `sync-branch` enforces the meaningful-title invariants (t2039/t2252).
     const result = renameSession(sessionID, title)
 
     if (result.success) {
@@ -71,7 +130,9 @@ export default tool({
   },
 })
 
-// Also export a tool that syncs with the current git branch
+// Also export a tool that syncs with the current git branch.
+// This path IS guarded — auto-compaction and routine syncs from a canonical
+// repo on main must not clobber meaningful titles (t2252).
 export const sync_branch = tool({
   description:
     "Rename the current session to match the current git branch name. Call this after creating or switching branches.",
@@ -92,11 +153,15 @@ export const sync_branch = tool({
       return "No branch checked out (detached HEAD state or not a git repository)"
     }
 
-    const result = renameSession(sessionID, branch)
+    const result = syncSessionWithBranch(sessionID, branch)
 
-    if (result.success) {
-      return `Session synced with branch: ${result.message}`
+    switch (result.outcome) {
+      case "renamed":
+        return `Session synced with branch: ${result.message}`
+      case "skipped":
+        return result.message
+      case "error":
+        return `Failed to sync session with branch: ${result.message}`
     }
-    return `Failed to sync session with branch: ${result.message}`
   },
 })
