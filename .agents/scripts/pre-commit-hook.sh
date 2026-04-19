@@ -12,6 +12,47 @@ set -euo pipefail
 
 # Color codes for output
 
+# --- Ratchet helpers (t2230) --------------------------------------------------
+# Quality validators compare the staged file's violation count against its HEAD
+# count and only block on INCREASE. This mirrors the pattern used by
+# qlty-regression-helper.sh (t2065) and qlty-new-file-gate-helper.sh (t2068):
+# blocks new debt without trapping authors on pre-existing legacy violations.
+#
+# SECURITY EXCEPTION: check_secrets remains absolute-count — a newly introduced
+# hardcoded credential is a CVE-class event regardless of pre-existing state.
+# Per AGENTS.md "Gate design — ratchet, not absolute (t2228 class)":
+# "security/credentials checks are absolute — a new violation is P1 regardless."
+
+# Return file content at HEAD for a given path. Prints empty output for new
+# files or when HEAD does not yet exist (first commit). Always exits 0 so the
+# callers can `head_content=$(_get_head_content "$file")` without tripping
+# `set -e`.
+_get_head_content() {
+	local _file="$1"
+	git show "HEAD:$_file" 2>/dev/null || true
+	return 0
+}
+
+# Materialize HEAD content of a file into a temp file with the same basename
+# (so shellcheck can pick up shebang + extension cues). Prints the temp path
+# on stdout; caller is responsible for removing the containing directory.
+# Returns 1 with empty stdout when there is no HEAD version (new file).
+_make_head_temp() {
+	local _file="$1"
+	local _head_content
+	_head_content=$(_get_head_content "$_file")
+	if [[ -z "$_head_content" ]]; then
+		return 1
+	fi
+	local _tmpdir _tmpfile _base
+	_tmpdir=$(mktemp -d) || return 1
+	_base=$(basename "$_file")
+	_tmpfile="$_tmpdir/$_base"
+	printf '%s\n' "$_head_content" >"$_tmpfile"
+	printf '%s\n' "$_tmpfile"
+	return 0
+}
+
 # Get list of modified shell files
 get_modified_shell_files() {
 	git diff --cached --name-only --diff-filter=ACM | grep '\.sh$' || true
@@ -86,19 +127,34 @@ validate_duplicate_task_ids() {
 validate_return_statements() {
 	local violations=0
 
-	print_info "Validating return statements..."
+	print_info "Validating return statements (ratchet)..."
 
 	for file in "$@"; do
 		if [[ -f "$file" ]]; then
-			# Check for functions without return statements
-			local functions
-			functions=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {" "$file" || true)
-			local returns
-			returns=$(grep -c "return [01]" "$file" || true)
+			# Count missing-return functions in staged version.
+			local staged_funcs staged_returns staged_missing=0
+			staged_funcs=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {" "$file" || true)
+			staged_returns=$(grep -c "return [01]" "$file" || true)
+			if ((staged_funcs > 0 && staged_returns < staged_funcs)); then
+				staged_missing=$((staged_funcs - staged_returns))
+			fi
 
-			if [[ $functions -gt 0 && $returns -lt $functions ]]; then
-				print_error "Missing return statements in $file"
+			# Count missing-return functions in HEAD version (if file exists).
+			local head_content head_funcs head_returns head_missing=0
+			head_content=$(_get_head_content "$file")
+			if [[ -n "$head_content" ]]; then
+				head_funcs=$(printf '%s\n' "$head_content" | grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {" || true)
+				head_returns=$(printf '%s\n' "$head_content" | grep -c "return [01]" || true)
+				if ((head_funcs > 0 && head_returns < head_funcs)); then
+					head_missing=$((head_funcs - head_returns))
+				fi
+			fi
+
+			if ((staged_missing > head_missing)); then
+				print_error "NEW missing return statements in $file (new: $((staged_missing - head_missing)), pre-existing: $head_missing)"
 				((++violations))
+			elif ((staged_missing > 0)); then
+				print_warning "Pre-existing missing returns in $file: $staged_missing (not blocking)"
 			fi
 		fi
 	done
@@ -109,44 +165,65 @@ validate_return_statements() {
 validate_positional_parameters() {
 	local violations=0
 
-	print_info "Validating positional parameters..."
+	print_info "Validating positional parameters (ratchet)..."
+
+	# Shared awk script — extracted so we can run it over both staged content
+	# (the on-disk file) and HEAD content (piped from git show).
+	# shellcheck disable=SC2016  # $1, $[1-9] etc. are awk regex literals, not shell expansions
+	local _awk_script='
+	{
+		line = $0
+		# Strip single-quoted segments — shell does not expand $ inside single quotes,
+		# so awk field refs like awk '"'"'$1 >= 3'"'"' are not positional params.
+		# \047 is octal for single-quote (avoids shell quoting issues).
+		gsub(/\047[^\047]*\047/, "", line)
+		# Skip pure comment lines (after stripping quoted content)
+		if (line ~ /^[[:space:]]*#/) next
+		# Strip inline comments
+		sub(/[[:space:]]+#.*/, "", line)
+		# Skip lines with local var assignments (proper usage pattern)
+		if (line ~ /local[[:space:]].*=.*\$[1-9]/) next
+		# Skip currency/pricing patterns: $N followed by digit, decimal, comma, slash
+		if (line ~ /\$[1-9][0-9.,\/]/) next
+		# Skip markdown table cells: $N followed by pipe
+		if (line ~ /\$[1-9][[:space:]]*\|/) next
+		# Skip pricing unit words
+		if (line ~ /\$[1-9][[:space:]]+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)/) next
+		# After stripping, if $[1-9] is still present, flag as violation
+		if (line ~ /\$[1-9]/) print NR ": " $0
+	}'
 
 	for file in "$@"; do
+		# Skip test files — fixtures deliberately inject bare positional
+		# parameter usage to exercise the validator. See validate_string_literals
+		# for the same rationale.
+		if [[ "$file" == *"/tests/"* ]] || [[ "$(basename "$file")" == test-*.sh ]]; then
+			continue
+		fi
+
 		if [[ -f "$file" ]]; then
-			local violations_output
-			# Use awk to strip single-quoted segments and comments before scanning.
-			# This prevents false positives on:
-			#   - awk field references: awk '$1 >= 3' (not shell positional params)
-			#   - doc comments: # Arguments: $1=name (comments aren't executed)
-			# Exclusion patterns (currency, local assignments, pipes, pricing words)
-			# are preserved from the original grep pipeline.
-			# shellcheck disable=SC2016  # $1, $[1-9] etc. are awk regex literals, not shell expansions
-			violations_output=$(awk '
-			{
-				line = $0
-				# Strip single-quoted segments — shell does not expand $ inside single quotes,
-				# so awk field refs like awk '"'"'$1 >= 3'"'"' are not positional params.
-				# \047 is octal for single-quote (avoids shell quoting issues).
-				gsub(/\047[^\047]*\047/, "", line)
-				# Skip pure comment lines (after stripping quoted content)
-				if (line ~ /^[[:space:]]*#/) next
-				# Strip inline comments
-				sub(/[[:space:]]+#.*/, "", line)
-				# Skip lines with local var assignments (proper usage pattern)
-				if (line ~ /local[[:space:]].*=.*\$[1-9]/) next
-				# Skip currency/pricing patterns: $N followed by digit, decimal, comma, slash
-				if (line ~ /\$[1-9][0-9.,\/]/) next
-				# Skip markdown table cells: $N followed by pipe
-				if (line ~ /\$[1-9][[:space:]]*\|/) next
-				# Skip pricing unit words
-				if (line ~ /\$[1-9][[:space:]]+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)/) next
-				# After stripping, if $[1-9] is still present, flag as violation
-				if (line ~ /\$[1-9]/) print NR ": " $0
-			}' "$file") || true
-			if [[ -n "$violations_output" ]]; then
-				print_error "Direct positional parameter usage in $file"
-				echo "$violations_output" | head -3
+			local staged_output head_output
+			local staged_count=0 head_count=0
+			staged_output=$(awk "$_awk_script" "$file" 2>/dev/null || true)
+			if [[ -n "$staged_output" ]]; then
+				staged_count=$(printf '%s\n' "$staged_output" | wc -l | tr -d ' ')
+			fi
+
+			local head_content
+			head_content=$(_get_head_content "$file")
+			if [[ -n "$head_content" ]]; then
+				head_output=$(printf '%s\n' "$head_content" | awk "$_awk_script" 2>/dev/null || true)
+				if [[ -n "$head_output" ]]; then
+					head_count=$(printf '%s\n' "$head_output" | wc -l | tr -d ' ')
+				fi
+			fi
+
+			if ((staged_count > head_count)); then
+				print_error "NEW direct positional parameter usage in $file (new: $((staged_count - head_count)), pre-existing: $head_count)"
+				echo "$staged_output" | head -3
 				((++violations))
+			elif ((staged_count > 0)); then
+				print_warning "Pre-existing positional parameter usage in $file: $staged_count (not blocking)"
 			fi
 		fi
 	done
@@ -154,27 +231,78 @@ validate_positional_parameters() {
 	return $violations
 }
 
+# Extract the distinct-repeated-literal detection pipeline into a single helper
+# so the patterns are defined once. Keeps validate_string_literals from
+# dogfooding itself (4× repeated literal regexes in-source).
+# Reads content on stdin, prints "<count>" of distinct literals repeated ≥3×.
+_count_repeated_literals() {
+	local _ext_literal='"[^"]{4,}"'
+	local _ext_numeric='^"[0-9]+\.?[0-9]*"$'
+	local _ext_varref='^"\$'
+	grep -v '^\s*#' |
+		grep -oE "$_ext_literal" |
+		grep -vE "$_ext_numeric" |
+		grep -vE "$_ext_varref" |
+		sort | uniq -c | awk '$1 >= 3' | wc -l | tr -d ' '
+	return 0
+}
+
+# Same pipeline but prints the top-3 "count: literal" display form.
+_show_repeated_literals() {
+	local _ext_literal='"[^"]{4,}"'
+	local _ext_numeric='^"[0-9]+\.?[0-9]*"$'
+	local _ext_varref='^"\$'
+	grep -v '^\s*#' |
+		grep -oE "$_ext_literal" |
+		grep -vE "$_ext_numeric" |
+		grep -vE "$_ext_varref" |
+		sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
+	return 0
+}
+
 validate_string_literals() {
 	local violations=0
 
-	print_info "Validating string literals..."
+	print_info "Validating string literals (ratchet)..."
 
 	for file in "$@"; do
+		# Skip test files — fixtures legitimately repeat assertion strings
+		# and sample inputs to exercise the patterns they verify. Blocking
+		# these produces false positives that force test authors to obscure
+		# their fixtures.
+		if [[ "$file" == *"/tests/"* ]] || [[ "$(basename "$file")" == test-*.sh ]]; then
+			continue
+		fi
+
 		if [[ -f "$file" ]]; then
-			# Check for repeated string literals in code lines only.
+			# Count DISTINCT literals repeated >= 3 times in code lines.
 			# Exclusions (false-positive classes):
 			#   - Comment-only lines (^\s*#) — documentation, not code
 			#   - Numeric strings ("123", "3.14") — version numbers, counts
-			#   - Shell variable references ("$var", "${var}") — proper quoting, not literals
-			local repeated
-			repeated=$(grep -v '^\s*#' "$file" | grep -oE '"[^"]{4,}"' | grep -vE '^"[0-9]+\.?[0-9]*"$' | grep -vE '^"\$' | sort | uniq -c | awk '$1 >= 3' | wc -l || true)
+			#   - Shell variable references ("$var", "${var}") — interpolations, not literals
+			#   - Strings shorter than 4 chars — covers "", "$1", "$@", "$?" etc.
+			local staged_repeated head_repeated=0
+			staged_repeated=$(<"$file" _count_repeated_literals)
+			[[ -z "$staged_repeated" ]] && staged_repeated=0
 
-			if [[ $repeated -gt 0 ]]; then
-				print_warning "Repeated string literals in $file (consider using constants)"
-				grep -v '^\s*#' "$file" | grep -oE '"[^"]{4,}"' | grep -vE '^"[0-9]+\.?[0-9]*"$' | grep -vE '^"\$' | sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
-				# print_warning is advisory — do NOT increment violations counter
-				# (AGENTS.md "Gate design — ratchet, not absolute (t2228 class)"):
-				# test files legitimately repeat assertion strings; this should inform, not block.
+			local head_content
+			head_content=$(_get_head_content "$file")
+			if [[ -n "$head_content" ]]; then
+				head_repeated=$(printf '%s\n' "$head_content" | _count_repeated_literals)
+				[[ -z "$head_repeated" ]] && head_repeated=0
+			fi
+
+			if ((staged_repeated > head_repeated)); then
+				# NEW repeated literals introduced by this commit — ratchet blocks.
+				print_error "NEW repeated string literals in $file (new: $((staged_repeated - head_repeated)), pre-existing: $head_repeated)"
+				<"$file" _show_repeated_literals
+				((++violations))
+			elif ((staged_repeated > 0)); then
+				# Pre-existing debt — advisory only, never blocks. Test fixtures
+				# legitimately repeat assertion strings; maintenance commits must
+				# not be trapped by legacy files they merely touch.
+				print_warning "Pre-existing repeated string literals in $file: $staged_repeated distinct literal(s) (not blocking)"
+				<"$file" _show_repeated_literals
 			fi
 		fi
 	done
@@ -185,12 +313,39 @@ validate_string_literals() {
 run_shellcheck() {
 	local violations=0
 
-	print_info "Running ShellCheck validation..."
+	print_info "Running ShellCheck validation (ratchet)..."
 
+	# ShellCheck regressions are quality debt, not CVE-class — ratchet applies.
+	# New files with ANY findings still block (head_count=0 → staged_count > 0
+	# is a strict increase). Files that already carried findings on main can be
+	# touched without paying down their legacy debt in the same commit.
 	for file in "$@"; do
-		if [[ -f "$file" ]] && ! shellcheck "$file"; then
-			print_error "ShellCheck violations in $file"
+		if [[ ! -f "$file" ]]; then
+			continue
+		fi
+
+		# Count staged-file findings (gcc format: one finding per line).
+		local staged_count head_count=0
+		staged_count=$(shellcheck -f gcc "$file" 2>/dev/null | grep -c ':[[:space:]]' || true)
+		[[ -z "$staged_count" ]] && staged_count=0
+
+		# Count HEAD findings by materializing the content into a temp file
+		# that preserves the basename (so shellcheck uses shebang/ext heuristics).
+		local head_tmp head_dir
+		if head_tmp=$(_make_head_temp "$file"); then
+			head_dir=$(dirname "$head_tmp")
+			head_count=$(shellcheck -f gcc "$head_tmp" 2>/dev/null | grep -c ':[[:space:]]' || true)
+			[[ -z "$head_count" ]] && head_count=0
+			rm -rf "$head_dir"
+		fi
+
+		if ((staged_count > head_count)); then
+			print_error "NEW ShellCheck violations in $file (new: $((staged_count - head_count)), pre-existing: $head_count)"
+			# Re-run for full-detail output so the author can fix the new findings.
+			shellcheck "$file" || true
 			((++violations))
+		elif ((staged_count > 0)); then
+			print_warning "Pre-existing ShellCheck violations in $file: $staged_count (not blocking)"
 		fi
 	done
 
@@ -198,11 +353,15 @@ run_shellcheck() {
 }
 
 check_secrets() {
+	# SECURITY EXCEPTION (t2230, AGENTS.md "Gate design — ratchet, not absolute"):
+	# Credential/secret detection is ABSOLUTE-COUNT by design. A newly exposed
+	# secret is a CVE-class event regardless of pre-existing state. Do NOT
+	# convert this validator to ratchet semantics.
 	local violations=0
 	local secrets_clean_msg="No secrets detected in staged files"
 	local secrets_found_msg="Potential secrets detected in staged files!"
 
-	print_info "Checking for exposed secrets (Secretlint)..."
+	print_info "Checking for exposed secrets (Secretlint, absolute-count security gate)..."
 
 	# Get staged files
 	local staged_files
