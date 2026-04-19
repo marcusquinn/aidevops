@@ -1302,9 +1302,9 @@ This file was flagged by the daily quality sweep for high smell density. The sme
 3. Verify with \`qlty smells ${file_path}\` after each change
 4. No behavior changes — pure structural refactoring
 
-**Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for shell-lib splits — sections 2-3 cover the canonical split pattern and identity-key preservation; section 5 covers pre-commit hook gotchas).
+**Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for file splits — sections 2-3 cover the canonical split pattern and identity-key preservation; section 5 covers pre-commit hook gotchas).
 
-**Precedent in this repo:** \`issue-sync-helper.sh\` + \`issue-sync-lib.sh\` (simple split) and \`headless-runtime-lib.sh\` + sub-libraries (complex split). Copy the include-guard and SCRIPT_DIR-fallback pattern from the simple precedent.
+**Precedent in this repo:** \`issue-sync-helper.sh\` + \`issue-sync-lib.sh\` (simple split) and \`headless-runtime-lib.sh\` + sub-libraries (complex split). For shell scripts, copy the include-guard and SCRIPT_DIR-fallback pattern from the simple precedent.
 
 **Expected CI gate overrides:** If this refactoring splits functions into new files, the PR may trigger complexity or smell regression gates. Apply the \`ratchet-bump\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing the Qlty smell reduction. See the playbook section 4 (Known CI False-Positive Classes).
 

@@ -809,7 +809,7 @@ Tighten and restructure this agent doc. Follow \`tools/build-agent/build-agent.m
 
 **Precedent in this repo:** \`issue-sync-helper.sh\` + \`issue-sync-lib.sh\` (simple split) and \`headless-runtime-lib.sh\` + sub-libraries (complex split). For agent docs, see existing chapter-file splits in \`.agents/reference/\`.
 
-**Expected CI gate overrides:** If this PR triggers a complexity regression from restructured files, apply the \`complexity-bump-ok\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing scanner evidence.
+**Expected CI gate overrides:** If this PR triggers a complexity regression from restructured files, apply the \`complexity-bump-ok\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing scanner evidence. See the playbook section 4 (Known CI False-Positive Classes).
 
 ### Verification
 

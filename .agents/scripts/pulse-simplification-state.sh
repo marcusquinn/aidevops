@@ -405,11 +405,11 @@ Review issue #${prev_issue_num} for what the previous attempt accomplished and w
 2. Address the flagged complexity — reduce function length, extract helpers, simplify control flow
 3. Verify: \`~/.qlty/bin/qlty smells --all 2>&1 | grep '${file_path}' | grep -c . | grep -q '^0$'\` (report \`SKIP\` if Qlty unavailable)${escalation_note}
 
-**Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for shell-lib splits — covers orchestrator pattern, identity-key preservation, and PR body template).
+**Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for file splits — covers orchestrator pattern, identity-key preservation, and PR body template).
 
-**Precedent in this repo:** \`issue-sync-helper.sh\` + \`issue-sync-lib.sh\` (simple split) and \`headless-runtime-lib.sh\` + sub-libraries (complex split). Copy the include-guard and SCRIPT_DIR-fallback pattern from the simple precedent.
+**Precedent in this repo:** \`issue-sync-helper.sh\` + \`issue-sync-lib.sh\` (simple split) and \`headless-runtime-lib.sh\` + sub-libraries (complex split). For shell scripts, copy the include-guard and SCRIPT_DIR-fallback pattern from the simple precedent.
 
-**Expected CI gate overrides:** This PR may trigger a complexity regression from function extraction. Apply the \`complexity-bump-ok\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing scanner evidence.
+**Expected CI gate overrides:** This PR may trigger a complexity regression from function extraction. Apply the \`complexity-bump-ok\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing scanner evidence. See the playbook section 4 (Known CI False-Positive Classes).
 
 ### Verification
 
