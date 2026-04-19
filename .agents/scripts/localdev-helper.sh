@@ -633,13 +633,40 @@ is_port_in_use() {
 }
 
 # Auto-assign next available port in 3100-3999 range
+# Optimised: single lsof batch query + single registry read replaces
+# up to 900 per-port lsof calls (t2261).
 assign_port() {
+	# 1. Read the registry ONCE, extract all registered ports (apps + branches)
+	local registry
+	registry="$(read_ports_registry)"
+	local registered_ports=""
+	if command -v jq >/dev/null 2>&1; then
+		registered_ports="$(echo "$registry" | jq -r '
+			[.apps[] | .port, (.branches // {} | .[].port)] | .[] | tostring
+		' 2>/dev/null)"
+	else
+		# Fallback: grep all port values from the JSON
+		registered_ports="$(echo "$registry" | grep -oE '"port": *[0-9]+' | grep -oE '[0-9]+')"
+	fi
+
+	# 2. Batch-query OS listening ports in the range (single lsof call)
+	local os_ports=""
+	if command -v lsof >/dev/null 2>&1; then
+		os_ports="$(lsof -iTCP:"${PORT_RANGE_START}"-"${PORT_RANGE_END}" -sTCP:LISTEN -nP 2>/dev/null \
+			| awk 'NR>1{split($9,a,":"); print a[length(a)]}')"
+	fi
+
+	# 3. Build a comma-delimited lookup string for O(1) bash pattern matching
+	local busy_set
+	busy_set=",$(printf '%s\n%s' "$registered_ports" "$os_ports" | sort -un | tr '\n' ','),"
+
+	# 4. Find first available port (pure bash — no process forks in the loop)
 	local port="$PORT_RANGE_START"
 	while [[ "$port" -le "$PORT_RANGE_END" ]]; do
-		if ! is_port_registered "$port" && ! is_port_in_use "$port"; then
-			echo "$port"
-			return 0
-		fi
+		case "$busy_set" in
+			*",$port,"*) ;; # port is busy, skip
+			*) echo "$port"; return 0 ;;
+		esac
 		port=$((port + 1))
 	done
 	print_error "No available ports in range $PORT_RANGE_START-$PORT_RANGE_END"
@@ -1084,7 +1111,8 @@ cmd_add() {
 # Parse cmd_run options; sets name_override, port_override, set_host, cmd_args via caller's locals
 _cmd_run_parse_args() {
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local arg="$1"
+		case "$arg" in
 		--name)
 			name_override="${2:-}"
 			if [[ -z "$name_override" ]]; then
@@ -1111,7 +1139,7 @@ _cmd_run_parse_args() {
 			break
 			;;
 		-*)
-			print_error "Unknown option: $1"
+			print_error "Unknown option: $arg"
 			print_info "Usage: localdev run [--name <name>] [--port <port>] [--no-host] <command...>"
 			return 1
 			;;
