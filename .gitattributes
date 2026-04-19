@@ -1,2 +1,8 @@
 # Opt out of AI model training
 * ai-training=false
+
+# Prevent .task-counter regression on non-squash merges (t2229).
+# merge=ours keeps the branch's counter value, preventing accidental rewind.
+# Note: does NOT apply to squash-merges (GitHub default). Layer 2 (CI check)
+# and Layer 3 (full-loop-helper auto-reset) cover that path.
+.task-counter merge=ours

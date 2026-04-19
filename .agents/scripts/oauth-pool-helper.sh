@@ -28,7 +28,13 @@ IFS=$'\n\t'
 # ---------------------------------------------------------------------------
 
 POOL_FILE="${HOME}/.aidevops/oauth-pool.json"
-OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
+# t2249: XDG-aware auth path. Resolves to the isolated per-worker auth.json
+# when called from a headless worker context (XDG_DATA_HOME set by
+# headless-runtime-helper.sh invoke_opencode), and to the shared interactive
+# file otherwise. This is what makes rotate safe for concurrent interactive +
+# headless usage: rotation from a worker targets the worker's isolated file,
+# never the shared interactive auth.json.
+OPENCODE_AUTH_FILE="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/auth.json"
 
 # Companion Python library for complex operations (extracted to reduce nesting depth)
 POOL_OPS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oauth-pool-lib/pool_ops.py"
@@ -1794,6 +1800,9 @@ Examples:
 Notes:
   - Pool file: ~/.aidevops/oauth-pool.json (600 permissions)
   - Auth file: ~/.local/share/opencode/auth.json (written by rotate)
+  - Auth file override: set XDG_DATA_HOME=<dir> to rotate
+    $XDG_DATA_HOME/opencode/auth.json instead. Used by headless workers
+    so per-worker rotation cannot corrupt the interactive session auth (t2249).
   - After adding/rotating an account, restart OpenCode to use the new token
   - Expired tokens auto-refresh on rotate; use 'refresh' to refresh manually
   - If refresh fails, re-auth with 'add' using the same email

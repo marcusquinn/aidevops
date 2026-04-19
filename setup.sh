@@ -12,7 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.8.71
+# Version: 3.8.72
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -915,6 +915,7 @@ _setup_run_non_interactive() {
 	cleanup_deprecated_mcps
 	cleanup_stale_bun_opencode
 	cleanup_stale_health_issue_caches
+	cleanup_worktree_entries_in_repos_json
 	_cleanup_legacy_model_config
 	validate_opencode_config
 	deploy_aidevops_agents
@@ -1030,8 +1031,8 @@ _setup_run_interactive() {
 	confirm_step "Backfill GitHub issue relationships (blocked-by, sub-issues)" && backfill_issue_relationships
 	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
-	cleanup_stale_health_issue_caches
-	_cleanup_legacy_model_config
+	# Silent one-shot migrations (idempotent, flag-guarded — no prompt needed).
+	cleanup_stale_health_issue_caches; cleanup_worktree_entries_in_repos_json; _cleanup_legacy_model_config
 	confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
 	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift

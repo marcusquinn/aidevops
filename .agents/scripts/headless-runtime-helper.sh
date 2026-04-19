@@ -283,6 +283,99 @@ _validate_run_args() {
 # Runtime invocation — OpenCode and Claude CLI
 # =============================================================================
 
+# _maybe_rotate_isolated_auth: pre-dispatch OAuth rotation check for headless workers (t2249).
+#
+# When the account copied into the isolated auth.json is currently in
+# cooldown per the SHARED pool metadata (recorded by a prior worker's
+# mark-failure), rotate the isolated file to a healthy account BEFORE
+# opencode spawns. This prevents wasted dispatches on known-dead accounts.
+#
+# Safe because OPENCODE_AUTH_FILE in oauth-pool-helper.sh is now
+# XDG_DATA_HOME-aware (t2249): rotate writes to the ISOLATED file,
+# not the shared interactive auth.json.
+#
+# Args: $1 = absolute path to the isolated auth.json
+#       $2 = provider (e.g., "anthropic")
+# Returns: 0 always — best-effort; rotation failure must not block dispatch.
+_maybe_rotate_isolated_auth() {
+	local isolated_auth="$1"
+	local provider="$2"
+	local pool_file="${AIDEVOPS_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
+	local oauth_helper="${OAUTH_POOL_HELPER:-${HOME}/.aidevops/agents/scripts/oauth-pool-helper.sh}"
+
+	# Skip silently when prerequisites are missing (jq, pool, isolated auth, helper).
+	command -v jq >/dev/null 2>&1 || return 0
+	[[ -f "$isolated_auth" ]] || return 0
+	[[ -f "$pool_file" ]] || return 0
+	[[ -x "$oauth_helper" ]] || return 0
+
+	# Extract BOTH the email and access token currently written in the
+	# isolated auth for this provider. build_auth_entry (in
+	# oauth-pool-lib/_common.py) writes only {type, refresh, access, expires}
+	# on rotation — NOT email. So after the first rotation, the isolated
+	# auth.json has no email field and the previous email-only lookup here
+	# returned early, defeating the rotation on every subsequent dispatch.
+	# (CodeRabbit review #4135227617, verified against live production
+	# ~/.local/share/opencode/auth.json 2026-04-19.)
+	local current_email current_access
+	current_email=$(jq -r --arg p "$provider" '.[$p].email // empty' "$isolated_auth" 2>/dev/null || true)
+	current_access=$(jq -r --arg p "$provider" '.[$p].access // empty' "$isolated_auth" 2>/dev/null || true)
+	[[ -n "$current_email" || -n "$current_access" ]] || return 0
+
+	# Look up the account in the shared pool. Try email first (most common —
+	# interactive auth with email was copied to isolated at worker startup).
+	# Fall back to access-token match when email is absent (isolated auth
+	# was already rotated at least once, dropping email per build_auth_entry).
+	local pool_match=""
+	if [[ -n "$current_email" ]]; then
+		pool_match=$(jq -c --arg p "$provider" --arg e "$current_email" \
+			'.[$p] | map(select(.email == $e)) | .[0] // empty' "$pool_file" 2>/dev/null || true)
+	fi
+	if [[ -z "$pool_match" && -n "$current_access" ]]; then
+		pool_match=$(jq -c --arg p "$provider" --arg a "$current_access" \
+			'.[$p] | map(select(.access == $a)) | .[0] // empty' "$pool_file" 2>/dev/null || true)
+	fi
+	[[ -n "$pool_match" ]] || return 0
+
+	local cooldown_until now_ms identity_label
+	cooldown_until=$(printf '%s' "$pool_match" | jq -r '.cooldownUntil // 0' 2>/dev/null || echo 0)
+	[[ -n "$cooldown_until" ]] || cooldown_until=0
+	# Log-friendly identity: prefer email, fall back to a short access-token
+	# fingerprint. Never log full access tokens (they are secrets).
+	if [[ -n "$current_email" ]]; then
+		identity_label="$current_email"
+	else
+		identity_label="access=${current_access:0:8}…"
+	fi
+	now_ms=$(($(date +%s) * 1000))
+
+	# Only rotate when cooldown is still active (in the future).
+	if [[ "$cooldown_until" -gt "$now_ms" ]]; then
+		local isolated_dir
+		isolated_dir="$(dirname "$(dirname "$isolated_auth")")"
+		print_info "[lifecycle] pre_dispatch_rotate: ${provider} account=${identity_label} in cooldown; rotating isolated auth (dir=${isolated_dir})"
+		# XDG_DATA_HOME is already exported by caller; passing it explicitly here
+		# makes the intent explicit in logs and protects against env stripping.
+		if XDG_DATA_HOME="$isolated_dir" "$oauth_helper" rotate "$provider" >/dev/null 2>&1; then
+			local new_email new_access new_label
+			new_email=$(jq -r --arg p "$provider" '.[$p].email // empty' "$isolated_auth" 2>/dev/null || echo "")
+			new_access=$(jq -r --arg p "$provider" '.[$p].access // empty' "$isolated_auth" 2>/dev/null || echo "")
+			if [[ -n "$new_email" ]]; then
+				new_label="$new_email"
+			elif [[ -n "$new_access" ]]; then
+				new_label="access=${new_access:0:8}…"
+			else
+				new_label="unknown"
+			fi
+			print_info "[lifecycle] pre_dispatch_rotate: ${provider} ${identity_label} -> ${new_label}"
+		else
+			print_warning "[lifecycle] pre_dispatch_rotate failed for ${provider}; continuing with current account"
+		fi
+	fi
+
+	return 0
+}
+
 # _invoke_opencode: run the opencode command (with or without sandbox) and capture output.
 # Args: output_file exit_code_file cmd_args (null-delimited, read from stdin via process sub)
 # Caller passes the cmd array elements as positional args after the two file args.
@@ -332,6 +425,24 @@ _invoke_opencode() {
 		# with zero API errors. Session stats are sacrificed for reliability.
 		export XDG_DATA_HOME="$isolated_data_dir"
 		print_info "[lifecycle] db_isolated dir=$isolated_data_dir pid=$$"
+
+		# t2249: Pre-dispatch OAuth pool check. If the account copied into the
+		# isolated auth.json is in cooldown per shared pool metadata (recorded
+		# by a prior worker's mark-failure), rotate the isolated file to a
+		# healthy account BEFORE opencode spawns. Best-effort: failure here
+		# must not block dispatch — opencode will then retry via its normal
+		# backoff path. Only runs when isolation is active (XDG_DATA_HOME is
+		# set above), so this cannot corrupt a shared interactive auth.json.
+		#
+		# Provider is resolved from the caller's selected_model (set on
+		# _invoke_provider by _execute_run_attempt). Hardcoding "anthropic"
+		# here would skip rotation for openai/google/cursor workers, so they
+		# would still burn dispatches on cooldown-marked accounts in those
+		# pools. Defaulting to "anthropic" keeps legacy callers (tests,
+		# diagnostics) working when _invoke_provider is unset.
+		if [[ -f "${isolated_data_dir}/opencode/auth.json" ]]; then
+			_maybe_rotate_isolated_auth "${isolated_data_dir}/opencode/auth.json" "${_invoke_provider:-anthropic}"
+		fi
 	fi
 
 	# Run in subshell to avoid fragile set +e/set -e toggling (GH#4225).
@@ -775,6 +886,11 @@ _execute_run_attempt() {
 	# so claim release can identify the issue. Module-level var avoids changing
 	# _invoke_opencode's interface which is shared with _invoke_claude.
 	_invoke_session_key="$session_key"
+	# t2249: expose provider to _invoke_opencode → _maybe_rotate_isolated_auth
+	# so non-anthropic workers (openai/cursor/google) also benefit from pre-
+	# dispatch rotation against their own pool entries. Same rationale as
+	# _invoke_session_key above: keep _invoke_opencode's arg list stable.
+	_invoke_provider="$provider"
 
 	print_info "[lifecycle] worker_start session=$session_key model=$selected_model runtime=$runtime pid=$$"
 

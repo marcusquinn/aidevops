@@ -302,20 +302,18 @@ attempt_pool_recovery() {
 	local reason="$2"
 	local details_file="$3"
 
-	# CRITICAL SAFETY GUARD: oauth-pool-helper.sh rotate OVERWRITES the shared
-	# auth file (~/.local/share/opencode/auth.json) which is used by BOTH
-	# interactive sessions AND headless workers. When a headless worker triggers
-	# rotation, it kills the user's interactive session by swapping the token
-	# out from under it. The user must then Esc+Esc, manually rotate in a
-	# terminal, and type "continue" to recover.
+	# t2249: oauth-pool-helper.sh is now XDG_DATA_HOME-aware, so rotation from
+	# a headless worker targets the worker's ISOLATED auth.json
+	# (${XDG_DATA_HOME}/opencode/auth.json), not the shared interactive file.
+	# The original "rotate kills interactive session" hazard is structurally
+	# resolved.
 	#
-	# Fix: headless workers NEVER call pool rotation. They only record the
-	# backoff so the pre-dispatch check skips the dead provider on the next
-	# cycle. Token rotation is an INTERACTIVE-ONLY operation -- the user
-	# decides when to switch accounts.
-	#
-	# The mark-failure call below is safe (only updates the pool JSON metadata,
-	# does not touch auth.json). The rotate call is the dangerous one.
+	# Mid-run rotation is still skipped here because opencode caches OAuth
+	# access tokens in memory for the active session — rewriting auth.json
+	# mid-run does NOT invalidate those cached tokens. The useful signal is
+	# mark-failure below: it updates shared pool metadata so the pre-dispatch
+	# check in invoke_opencode will rotate the NEXT worker to a healthy
+	# account. This is how cascade dispatches recover from rate_limit.
 	case "$provider" in
 	anthropic | openai | cursor | google) ;;
 	*)
@@ -345,13 +343,15 @@ attempt_pool_recovery() {
 		esac
 	fi
 
-	# Safe: mark the account as failed in pool metadata (no auth file mutation)
+	# Safe: mark the account as failed in pool metadata. Pre-dispatch rotation
+	# in invoke_opencode reads this metadata to route the NEXT worker away.
 	"$OAUTH_POOL_HELPER" mark-failure "$provider" "$reason" "$retry_seconds" >/dev/null 2>&1 || true
 
-	# DANGEROUS: rotate rewrites the shared auth.json -- SKIP for headless workers.
-	# Only record backoff so the pre-dispatch check routes to the other provider.
-	# Interactive sessions handle rotation explicitly via `oauth-pool-helper.sh rotate`.
-	print_warning "${provider} ${reason} detected; recorded backoff (rotation skipped -- interactive-only)"
+	# t2249: mid-run rotation intentionally skipped — opencode caches OAuth
+	# tokens in memory, so rewriting auth.json mid-run has no effect on the
+	# already-running model call. The NEXT worker's pre-dispatch check picks
+	# up the mark-failure above and rotates the isolated auth before spawn.
+	print_warning "${provider} ${reason} detected; recorded backoff (in-flight rotation no-op — opencode token cache)"
 	return 1
 }
 

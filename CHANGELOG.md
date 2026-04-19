@@ -10,6 +10,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.72] - 2026-04-19
+
+### Added
+
+- auto-swap Resolves to For for parent-task issues in _build_pr_body (t2242) (#19794)
+- enforce mutual exclusion of origin:interactive/worker/worker-takeover (t2200) (#19731)
+
+### Changed
+
+- tabby-profile-sync: parse folded YAML, detect worktrees via git (#19793)
+- add curl retry-with-backoff to validate-version-consistency.sh (#19791)
+- add ratchet gate rule and gh pr checks cancelled-vs-fail note
+- briefs for self-healing pulse framework improvements (#19781)
+- Maintenance: update simplification state registry
+- document origin:interactive auto-merge window (#19776)
+- prevent closing-keyword auto-close and unverified attribution (#19696)
+- fix validate_string_literals over-counting empty and short strings (#19775)
+- fix(pre-commit): eliminate positional parameter false positives on awk and comments (#19772)
+- Maintenance: add ref:GH#19774 to t2248 entry
+- fix(pre-commit): replace grep -c || echo "0" with || true to prevent multiline arithmetic errors (#19769)
+- add shell test-harness template encoding set-e and local pitfalls (#19768)
+- wire up Hostinger SSH key auth in wp-helper, hostinger-helper, docs, and template (#19767)
+- Maintenance: mark t2239 complete (pr:#19759)
+- Add opus-4.7 as top auto-escalation rung + model:opus-4-7 opt-in label (#19759)
+- Maintenance: update simplification state registry
+- feat(interactive-session-helper): post-merge subcommand for auto-heal after planning PR merge (#19766)
+- file 7 framework improvement briefs (v3.8.71 lifecycle retrospective) (#19758)
+- plan t2225 + t2227 + t2234 — intrinsic harness improvements for planning-PR incidents (#19745)
+- feat(pulse-merge): idle interactive PR handover to worker pipeline (#19682)
+- ci: add markdownlint-cli2 and biome CI jobs to code-quality.yml (#19711)
+- brief — macOS-specific briefs fail Ubuntu AC verification (planning-only) (#19725)
+- Maintenance: update simplification state registry
+- correct opencode upstream slug to anomalyco/opencode in docs and configs (#19728)
+- add paths-ignore to Qlty workflows to suppress docs-only cancelled-as-fail noise (#19726)
+- fix(pre-commit): make TODO.md duplicate-ID check diff-aware (#19712)
+
+### Fixed
+
+- extend pre-commit duplicate-ID check to declined tasks and routine IDs (#19789)
+- add t2157-style auto-dispatch carve-out to _auto_assign_issue (t2218) (#19788)
+- prevent duplicate task IDs under concurrent CAS invocation (GH#19689) (#19765)
+
 ## [3.8.71] - 2026-04-18
 
 ### Added

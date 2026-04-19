@@ -57,13 +57,29 @@ _CLOSE_KEYWORD_PATTERN='[Cc][Ll][Oo][Ss][Ee][Ss]|[Rr][Ee][Ss][Oo][Ll][Vv][Ee][Ss
 # Helpers
 # =============================================================================
 
+# _strip_code_spans: read stdin, strip markdown code blocks and inline spans,
+# write stdout. Bash 3.2 compatible.
+# Fenced blocks (``` ... ```) are removed via an awk state machine.
+# Inline code spans (`...`) are removed via sed.
+# shellcheck disable=SC2016
+# SC2016: single quotes in the sed pattern are intentional — backticks are
+# literal sed regex characters, not shell variable/command-substitution syntax.
+_strip_code_spans() {
+	awk 'BEGIN{in_fence=0} /^[[:space:]]*```/{in_fence = !in_fence; next} !in_fence' |
+		sed 's/`[^`]*`//g'
+	return 0
+}
+
 # _extract_closing_refs: parse a PR body (stdin) and output one issue number
 # per line for each closing-keyword reference found.
 # Handles both `#NNN` and `OWNER/REPO#NNN` formats.
+# Code spans and fenced blocks are stripped first so that keywords inside
+# backticks (e.g. `Resolves #N`) do not produce false positives.
 _extract_closing_refs() {
 	# Use grep + sed for Bash 3.2 compat (no perl regex in bash natively).
 	# Pattern: keyword (space or nothing) (#NNN or owner/repo#NNN)
-	grep -oiE "(Closes|Resolves|Fixes)[[:space:]]+(([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)?#[0-9]+)" |
+	_strip_code_spans |
+		grep -oiE "(Closes|Resolves|Fixes)[[:space:]]+(([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)?#[0-9]+)" |
 		grep -oE '#[0-9]+' |
 		tr -d '#' |
 		sort -un

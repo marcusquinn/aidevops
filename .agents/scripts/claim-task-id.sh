@@ -72,6 +72,16 @@
 #   - If .task-counter doesn't exist, initialize from TODO.md highest ID
 #   - First run creates .task-counter and commits to <remote>/<counter_branch>
 #
+# Concurrent load / rebase safety (t2229):
+#   Under concurrent load, branches forked before other sessions claimed IDs
+#   carry a stale .task-counter. On PR merge, the stale value would overwrite
+#   the current one — silently duplicating IDs. Three defences:
+#     1. .gitattributes merge=ours (non-squash merges)
+#     2. .github/workflows/counter-monotonic.yml CI check (all merge strategies)
+#     3. full-loop-helper.sh _rebase_and_push auto-resets drifted counter
+#   Always rebase onto origin/main before pushing a branch that touched
+#   .task-counter: `git fetch origin main && git rebase origin/main`
+#
 # Platform detection:
 #   - Checks git remote URL for github.com, gitlab.com, gitea
 #   - Uses gh CLI for GitHub, glab CLI for GitLab
@@ -738,9 +748,25 @@ allocate_offline() {
 # Auto-assign a newly created issue to the current GitHub user.
 # Prevents duplicate dispatch when multiple machines/pulses are running.
 # Non-blocking — assignment failure doesn't fail issue creation.
+#
+# t2218: skip self-assign when the task carries auto-dispatch labels.
+# Mirrors the t2157 carve-out in issue-sync-helper.sh::_push_auto_assign_interactive.
+# When an interactive session creates a task intended for worker dispatch
+# (auto-dispatch label present), self-assigning the pusher creates the
+# (origin:interactive + assignee) combo that GH#18352/t1996 dedup-blocks
+# the pulse from dispatching a worker. Skip the assignment so the pulse
+# can dispatch immediately; the issue retains origin:interactive for
+# provenance.
 _auto_assign_issue() {
 	local issue_num="$1"
 	local repo_path="$2"
+
+	# t2218: skip when auto-dispatch tag present — issue is worker-owned.
+	# TASK_LABELS is the module-level variable set by --labels parsing.
+	if [[ ",${TASK_LABELS:-}," == *",auto-dispatch,"* ]]; then
+		log_info "Skipping auto-assign for #${issue_num} — auto-dispatch entry is worker-owned (t2218)"
+		return 0
+	fi
 
 	local current_user
 	current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")

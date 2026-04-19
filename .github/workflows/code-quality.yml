@@ -898,10 +898,17 @@ jobs:
         echo ""
         echo "Code Quality Pipeline: COMPLETE"
 
+  # t2241: markdownlint scoped to changed-line ranges.
+  # Lints changed markdown files but only fails on violations whose line
+  # numbers fall inside hunks changed by the PR. Pre-existing violations
+  # in unchanged lines are ignored (ratchet semantics).
   markdownlint:
     name: Markdown Lint
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+      contents: read
 
     steps:
     - name: Checkout code
@@ -914,31 +921,136 @@ jobs:
       with:
         node-version: '20'
 
-    - name: Get changed markdown files
-      id: changed
+    - name: Markdownlint (changed-line scoped)
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'lint-baseline-ok') }}
+        GH_TOKEN: ${{ github.token }}
       run: |
-        base="${{ github.event.pull_request.base.sha }}"
-        head="${{ github.event.pull_request.head.sha }}"
-        files=$(git diff --name-only --diff-filter=ACM "$base" "$head" -- '*.md' | tr '\n' ' ')
-        echo "files=$files" >> "$GITHUB_OUTPUT"
+        set -euo pipefail
 
-    - name: Run markdownlint-cli2
-      if: steps.changed.outputs.files != ''
-      run: npx --yes markdownlint-cli2@0.22.0 ${{ steps.changed.outputs.files }}
+        MERGE_BASE=$(git merge-base "${HEAD_SHA}" "${BASE_SHA}" 2>/dev/null || echo "")
+        if [ -z "${MERGE_BASE}" ]; then
+          MERGE_BASE="${BASE_SHA}"
+        fi
 
+        echo "Running markdownlint (changed-line scoped, merge-base: ${MERGE_BASE:0:7} head: ${HEAD_SHA:0:7})..."
+
+        set +e
+        .agents/scripts/markdownlint-diff-helper.sh \
+          --base "${MERGE_BASE}" \
+          --head "${HEAD_SHA}" \
+          --output-md /tmp/markdownlint-report.md
+        GATE_EXIT=$?
+        set -e
+
+        # Post/update PR comment with report
+        if [ -s /tmp/markdownlint-report.md ] && [ -n "${PR_NUMBER}" ]; then
+          marker="<!-- markdownlint-diff-gate -->"
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body=@/tmp/markdownlint-report.md >/dev/null 2>&1 || true
+          else
+            gh pr comment "${PR_NUMBER}" --repo "${REPO}" \
+              --body-file /tmp/markdownlint-report.md >/dev/null 2>&1 || true
+          fi
+        fi
+
+        if [ "${GATE_EXIT}" -eq 0 ]; then
+          echo "No new markdownlint violations in changed lines."
+          exit 0
+        fi
+
+        if [ "${HAS_OVERRIDE}" = "true" ]; then
+          echo "::warning::New markdownlint violations detected but 'lint-baseline-ok' label is set — allowing with warning."
+          exit 0
+        fi
+
+        echo "::error::New markdownlint violations introduced in changed lines of this PR."
+        echo "Fix the violations above, or add the 'lint-baseline-ok' label to override."
+        exit 1
+
+  # t2241: biome scoped via baseline diff.
+  # Counts biome lint violations at the PR merge-base and at HEAD,
+  # fails only when the PR introduces a net increase. Pre-existing
+  # violations are tolerated (ratchet semantics, mirrors t2065 qlty gate).
   biome:
     name: Biome CI
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+      contents: read
 
     steps:
     - name: Checkout code
       uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      with:
+        fetch-depth: 0
 
     - name: Set up Node.js
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
         node-version: '20'
 
-    - name: Run biome ci
-      run: npx --yes @biomejs/biome@2.4.12 ci .
+    - name: Biome lint (baseline diff)
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'lint-baseline-ok') }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        MERGE_BASE=$(git merge-base "${HEAD_SHA}" "${BASE_SHA}" 2>/dev/null || echo "")
+        if [ -z "${MERGE_BASE}" ]; then
+          MERGE_BASE="${BASE_SHA}"
+        fi
+
+        echo "Running biome lint (baseline diff, merge-base: ${MERGE_BASE:0:7} head: ${HEAD_SHA:0:7})..."
+
+        set +e
+        .agents/scripts/markdownlint-diff-helper.sh \
+          --mode biome \
+          --base "${MERGE_BASE}" \
+          --head "${HEAD_SHA}" \
+          --output-md /tmp/biome-report.md
+        GATE_EXIT=$?
+        set -e
+
+        # Post/update PR comment with report
+        if [ -s /tmp/biome-report.md ] && [ -n "${PR_NUMBER}" ]; then
+          marker="<!-- biome-diff-gate -->"
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body=@/tmp/biome-report.md >/dev/null 2>&1 || true
+          else
+            gh pr comment "${PR_NUMBER}" --repo "${REPO}" \
+              --body-file /tmp/biome-report.md >/dev/null 2>&1 || true
+          fi
+        fi
+
+        if [ "${GATE_EXIT}" -eq 0 ]; then
+          echo "No new biome violations."
+          exit 0
+        fi
+
+        if [ "${HAS_OVERRIDE}" = "true" ]; then
+          echo "::warning::New biome violations detected but 'lint-baseline-ok' label is set — allowing with warning."
+          exit 0
+        fi
+
+        echo "::error::New biome lint violations introduced in this PR."
+        echo "Fix the violations, or add the 'lint-baseline-ok' label to override."
+        exit 1
