@@ -1155,6 +1155,29 @@ gh_create_pr() {
 	gh pr create "$@" --label "$origin_label"
 }
 
+# t2393: auto-append signature footer on all `gh issue comment` posts.
+# Thin wrapper mirroring gh_create_issue/gh_create_pr — invokes
+# _gh_wrapper_auto_sig on --body/--body-file before delegating to the
+# underlying gh command. No origin-label or assignee logic (creation-only
+# concerns); comments just need the runtime/version/model/token sig so
+# operators and pulse readers can diagnose which session posted them.
+# Dedup: _gh_wrapper_auto_sig skips bodies already containing the
+# <!-- aidevops:sig --> marker, so callers that build their own footer
+# are not double-signed.
+gh_issue_comment() {
+	_gh_wrapper_auto_sig "$@"
+	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+	gh issue comment "$@"
+	return $?
+}
+
+gh_pr_comment() {
+	_gh_wrapper_auto_sig "$@"
+	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+	gh pr comment "$@"
+	return $?
+}
+
 # Internal: extract --repo from args and ensure labels exist (cached per repo).
 _ORIGIN_LABELS_ENSURED=""
 _ensure_origin_labels_for_args() {

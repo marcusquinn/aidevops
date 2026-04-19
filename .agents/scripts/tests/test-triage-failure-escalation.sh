@@ -67,6 +67,17 @@ teardown_test_env() {
 	return 0
 }
 
+# Stub the t2393 comment wrappers so _post_triage_escalation_comment's
+# `gh_issue_comment` call reaches the test's gh mock. The real wrappers live
+# in shared-constants.sh, which this test doesn't source — it extracts
+# only the helpers under test from pulse-ancillary-dispatch.sh. Delegating
+# to `gh issue comment` preserves the pre-t2393 test contract.
+# shellcheck disable=SC2317
+gh_issue_comment() { gh issue comment "$@" && return 0 || return 1; }
+# shellcheck disable=SC2317
+gh_pr_comment() { gh pr comment "$@" && return 0 || return 1; }
+export -f gh_issue_comment gh_pr_comment
+
 # Mock `gh` that records every call and serves canned responses
 # based on the MOCK_* knobs.
 gh() {

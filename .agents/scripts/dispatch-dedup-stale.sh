@@ -146,7 +146,7 @@ _stale_recovery_escalate() {
 	set_issue_status "$issue_number" "$repo_slug" "" "${_esc_extra[@]}" || true
 
 	# Post escalation comment explaining the suspension
-	gh issue comment "$issue_number" --repo "$repo_slug" \
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
 		--body "<!-- stale-recovery-tick:escalated (threshold=${_threshold}) -->
 **Stale recovery threshold reached** (t2008)
 
@@ -205,7 +205,7 @@ _stale_recovery_apply() {
 
 	local _now_ts
 	_now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	gh issue comment "$issue_number" --repo "$repo_slug" \
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
 		--body "<!-- WORKER_SUPERSEDED runners=${stale_assignees} ts=${_now_ts} -->
 **Stale assignment recovered** (GH#15060)
 
@@ -260,7 +260,7 @@ _recover_stale_assignment() {
 
 	if [[ -n "$_open_pr" ]]; then
 		# Open PR exists — counter resets; post a reset marker and allow normal recovery
-		gh issue comment "$issue_number" --repo "$repo_slug" \
+		gh_issue_comment "$issue_number" --repo "$repo_slug" \
 			--body "<!-- stale-recovery-tick:0 (reset: open PR #${_open_pr} detected) -->
 Stale recovery tick reset — open PR #${_open_pr} detected (t2008)" \
 			2>/dev/null || true
@@ -271,7 +271,7 @@ Stale recovery tick reset — open PR #${_open_pr} detected (t2008)" \
 	else
 		# Under threshold — increment tick counter, continue normal recovery
 		local _next_tick=$((_prior_ticks + 1))
-		gh issue comment "$issue_number" --repo "$repo_slug" \
+		gh_issue_comment "$issue_number" --repo "$repo_slug" \
 			--body "<!-- stale-recovery-tick:${_next_tick} -->
 Stale recovery tick ${_next_tick}/${_threshold} (t2008)" \
 			2>/dev/null || true

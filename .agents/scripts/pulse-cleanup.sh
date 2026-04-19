@@ -346,7 +346,7 @@ _record_orphan_crash_classification() {
 	# the dispatch comment blocks re-dispatch for the full TTL even though
 	# the worker is dead. "Worker failed" is a recognised completion
 	# signal in dispatch-dedup-helper.sh has_dispatch_comment().
-	gh issue comment "$orphan_issue_num" --repo "$repo_slug_age" \
+	gh_issue_comment "$orphan_issue_num" --repo "$repo_slug_age" \
 		--body "Worker failed: orphan worktree detected (crash_type=${orphan_crash_type}, 0 commits). Cleared for re-dispatch." \
 		>/dev/null 2>&1 || true
 

@@ -1587,9 +1587,9 @@ _approve_post_comment() {
 	local post_output
 	local post_exit=0
 	if [[ "$item_type" == "pr" ]]; then
-		post_output=$(gh pr comment "$item_number" --repo "$repo_slug" --body-file "$body_path" 2>&1) || post_exit=$?
+		post_output=$(gh_pr_comment "$item_number" --repo "$repo_slug" --body-file "$body_path" 2>&1) || post_exit=$?
 	else
-		post_output=$(gh issue comment "$item_number" --repo "$repo_slug" --body-file "$body_path" 2>&1) || post_exit=$?
+		post_output=$(gh_issue_comment "$item_number" --repo "$repo_slug" --body-file "$body_path" 2>&1) || post_exit=$?
 	fi
 
 	if [[ "$post_exit" -ne 0 ]]; then
@@ -1888,9 +1888,9 @@ _process_approved_post_reply() {
 
 	local post_output post_exit=0
 	if [[ "$source_type" == "pull" ]]; then
-		post_output=$(gh pr comment "$source_number" --repo "$source_repo" --body-file "$tmp_body" 2>&1) || post_exit=$?
+		post_output=$(gh_pr_comment "$source_number" --repo "$source_repo" --body-file "$tmp_body" 2>&1) || post_exit=$?
 	else
-		post_output=$(gh issue comment "$source_number" --repo "$source_repo" --body-file "$tmp_body" 2>&1) || post_exit=$?
+		post_output=$(gh_issue_comment "$source_number" --repo "$source_repo" --body-file "$tmp_body" 2>&1) || post_exit=$?
 	fi
 	rm -f "$tmp_body"
 

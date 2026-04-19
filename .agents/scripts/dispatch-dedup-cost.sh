@@ -175,7 +175,7 @@ _apply_cost_breaker_side_effects() {
 	local _spent_k=$((spent / 1000))
 	local _budget_k=$((budget / 1000))
 
-	gh issue comment "$issue_number" --repo "$repo_slug" \
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
 		--body "<!-- cost-circuit-breaker:fired tier=${tier} spent=${spent} budget=${budget} -->
 🛑 **Cost circuit breaker fired** (t2007)
 

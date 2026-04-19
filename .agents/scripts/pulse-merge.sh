@@ -139,7 +139,7 @@ check_external_contributor_pr() {
 	# Both API calls succeeded AND neither label nor comment exists.
 	if [[ "$do_post" == "--post" ]]; then
 		# Safe to post — this is the only code path that creates a comment.
-		gh pr comment "$pr_number" --repo "$repo_slug" \
+			gh_pr_comment "$pr_number" --repo "$repo_slug" \
 			--body "This PR is from an external contributor (@${pr_author}). Auto-merge is disabled for external PRs — a maintainer must review and approve manually.
 
 External contributor PRs have two requirements before they can merge:
@@ -159,7 +159,7 @@ External contributor PRs have two requirements before they can merge:
 		local linked_for_check
 		linked_for_check=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_for_check=""
 		if [[ -z "$linked_for_check" ]]; then
-			gh pr comment "$pr_number" --repo "$repo_slug" \
+		gh_pr_comment "$pr_number" --repo "$repo_slug" \
 				--body "**Missing linked issue.** This PR has no linked issue. External contributor PRs require a linked issue before they can be considered for merge. Add \`Resolves #NNN\` to the PR body (or use \`GH#NNN:\` in the title), then ensure that issue has been cryptographically approved by a maintainer (\`sudo aidevops approve issue NNN\`)." || true
 			echo "[pulse-wrapper] check_external_contributor_pr: PR #$pr_number in $repo_slug has no linked issue — posted missing-linked-issue comment" >>"$LOGFILE"
 		fi
@@ -255,7 +255,7 @@ check_permission_failure_pr() {
 	fi
 
 	# Safe to post — no existing comment and API call succeeded
-	gh pr comment "$pr_number" --repo "$repo_slug" \
+	gh_pr_comment "$pr_number" --repo "$repo_slug" \
 		--body "Permission check failed for this PR (HTTP ${http_status} from collaborator permission API). Unable to determine if @${pr_author} is a maintainer or external contributor. **A maintainer must review and merge this PR manually.** This is a fail-closed safety measure — the pulse will not auto-merge until the permission API succeeds." || true
 
 	echo "[pulse-wrapper] check_permission_failure_pr: posted permission-failure comment on PR #$pr_number in $repo_slug (HTTP $http_status)" >>"$LOGFILE"
@@ -493,7 +493,7 @@ check_workflow_merge_guard() {
 	fi
 
 	# Post comment explaining the issue
-	gh pr comment "$pr_number" --repo "$repo_slug" \
+	gh_pr_comment "$pr_number" --repo "$repo_slug" \
 		--body "**Cannot auto-merge: workflow scope required** (GH#3934)
 
 This PR modifies \`.github/workflows/\` files but the GitHub OAuth token used by the pulse lacks the \`workflow\` scope. GitHub requires this scope to merge PRs that modify workflow files.
@@ -1058,7 +1058,7 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 	closing_comment="${closing_comment}${_merge_sig_footer}"
 
 	# Post closing comment on PR; unlock the merged PR (t1934)
-	gh pr comment "$pr_number" --repo "$repo_slug" \
+	gh_pr_comment "$pr_number" --repo "$repo_slug" \
 		--body "$closing_comment" 2>/dev/null || true
 	unlock_issue_after_worker "$pr_number" "$repo_slug"
 
@@ -1096,7 +1096,7 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 		if [[ "$_dedup_count" -gt 0 ]]; then
 			echo "[pulse-wrapper] Deterministic merge: skipped duplicate closing comment on #${linked_issue} — PR #${pr_number} already referenced in existing comment (GH#18098)" >>"$LOGFILE"
 		else
-			gh issue comment "$linked_issue" --repo "$repo_slug" \
+			gh_issue_comment "$linked_issue" --repo "$repo_slug" \
 				--body "$closing_comment" 2>/dev/null || true
 		fi
 

@@ -168,7 +168,7 @@ run_daily_codebase_review() {
 	echo "[pulse-wrapper] Posting daily CodeRabbit full codebase review request on #${CODERABBIT_REVIEW_ISSUE} (GH#17640)..." >>"$LOGFILE"
 
 	# Post the review trigger comment
-	if gh issue comment "$CODERABBIT_REVIEW_ISSUE" \
+	if gh_issue_comment "$CODERABBIT_REVIEW_ISSUE" \
 		--repo "$aidevops_slug" \
 		--body "@coderabbitai Please run a full codebase review" 2>>"$LOGFILE"; then
 		# Update timestamp only on successful post

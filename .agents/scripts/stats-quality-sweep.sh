@@ -1236,7 +1236,7 @@ _quality_sweep_for_repo() {
 
 	local comment_stderr=""
 	local comment_posted=false
-	comment_stderr=$(gh issue comment "$issue_number" --repo "$repo_slug" --body "$comment_body" 2>&1 >/dev/null) && comment_posted=true || {
+	comment_stderr=$(gh_issue_comment "$issue_number" --repo "$repo_slug" --body "$comment_body" 2>&1 >/dev/null) && comment_posted=true || {
 		echo "[stats] Quality sweep: failed to post comment on #${issue_number} in ${repo_slug}: ${comment_stderr}" >>"$LOGFILE"
 	}
 

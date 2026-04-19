@@ -204,6 +204,105 @@ assert_contains "title preserved" "--title My Title" "$result"
 assert_contains "label preserved" "--label enhancement" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Test 8 (t2393): gh_issue_comment and gh_pr_comment wrappers exist
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 8: gh_issue_comment and gh_pr_comment wrappers are defined"
+if declare -F gh_issue_comment >/dev/null 2>&1; then
+	echo "  PASS: gh_issue_comment is defined"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: gh_issue_comment is not defined"
+	FAIL=$((FAIL + 1))
+fi
+if declare -F gh_pr_comment >/dev/null 2>&1; then
+	echo "  PASS: gh_pr_comment is defined"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: gh_pr_comment is not defined"
+	FAIL=$((FAIL + 1))
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 9 (t2393): stub gh and verify gh_issue_comment appends sig, delegates
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 9 (t2393): gh_issue_comment appends sig and delegates to gh"
+# Install a PATH-shadowing gh stub that records argv to a file.
+STUB_DIR="${TMPDIR_TEST}/stub-bin"
+mkdir -p "$STUB_DIR"
+cat >"${STUB_DIR}/gh" <<'STUB'
+#!/usr/bin/env bash
+# Record "argv" to a captured-args file for assertions.
+printf '%s\n' "$@" >"${GH_STUB_ARGS_FILE:-/dev/null}"
+# Simulate success.
+exit 0
+STUB
+chmod +x "${STUB_DIR}/gh"
+export PATH="${STUB_DIR}:$PATH"
+export GH_STUB_ARGS_FILE="${TMPDIR_TEST}/gh-args.txt"
+
+: >"$GH_STUB_ARGS_FILE"
+gh_issue_comment 19951 --repo "owner/repo" --body "Issue comment body"
+captured=$(<"$GH_STUB_ARGS_FILE")
+assert_contains "gh received issue verb" "issue" "$captured"
+assert_contains "gh received comment verb" "comment" "$captured"
+assert_contains "gh received repo slug" "owner/repo" "$captured"
+assert_contains "gh received body with signature" "<!-- aidevops:sig -->" "$captured"
+assert_contains "gh received original content" "Issue comment body" "$captured"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 10 (t2393): gh_pr_comment delegates and dedups when body already signed
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 10 (t2393): gh_pr_comment dedups when body already signed"
+pre_signed_body="PR comment body
+<!-- aidevops:sig -->
+---
+already signed"
+: >"$GH_STUB_ARGS_FILE"
+gh_pr_comment 19999 --repo "owner/repo" --body "$pre_signed_body"
+captured=$(<"$GH_STUB_ARGS_FILE")
+assert_contains "gh received pr verb" "pr" "$captured"
+assert_contains "gh received comment verb (pr)" "comment" "$captured"
+# Count occurrences of the sig marker in the captured body
+marker_count=$(grep -c 'aidevops:sig' <<<"$captured" || true)
+assert_eq "marker appears exactly once (no double-sign)" "1" "$marker_count"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 11 (t2393): gh_issue_comment with --body-file appends sig to file
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 11 (t2393): gh_issue_comment --body-file appends sig to file"
+bf="${TMPDIR_TEST}/issue-body.md"
+printf 'Body from file content' >"$bf"
+: >"$GH_STUB_ARGS_FILE"
+gh_issue_comment 19951 --repo "owner/repo" --body-file "$bf"
+file_content=$(<"$bf")
+assert_contains "file got signature footer" "<!-- aidevops:sig -->" "$file_content"
+assert_contains "file still has original content" "Body from file content" "$file_content"
+captured=$(<"$GH_STUB_ARGS_FILE")
+assert_contains "gh received --body-file flag" "--body-file" "$captured"
+assert_contains "gh received body-file path" "$bf" "$captured"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 12 (t2393): exit code from gh is propagated through the wrapper
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 12 (t2393): wrapper propagates gh exit code"
+# Replace the stub with one that exits 42
+cat >"${STUB_DIR}/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"${GH_STUB_ARGS_FILE:-/dev/null}"
+exit 42
+STUB
+chmod +x "${STUB_DIR}/gh"
+
+rc=0
+gh_pr_comment 19999 --repo "owner/repo" --body "test" || rc=$?
+assert_eq "exit code 42 propagated from gh through gh_pr_comment" "42" "$rc"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""

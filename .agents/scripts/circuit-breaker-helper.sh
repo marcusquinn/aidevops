@@ -589,7 +589,7 @@ _cb_update_existing_issue() {
 	local last_failure_reason="$5"
 	local now="$6"
 
-	gh issue comment "$existing_issue" \
+	gh_issue_comment "$existing_issue" \
 		--repo "$repo_slug" \
 		--body "### Circuit breaker re-tripped at ${now}
 

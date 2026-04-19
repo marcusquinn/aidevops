@@ -240,7 +240,7 @@ EOF
 	)
 
 	# Post rationale comment
-	gh issue comment "$issue_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1 ||
+	gh_issue_comment "$issue_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1 ||
 		_log "WARN" "Failed to post rationale comment on #${issue_number}"
 
 	# Close the issue with reason "not planned"

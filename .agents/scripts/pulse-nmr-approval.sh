@@ -524,7 +524,7 @@ auto_approve_maintainer_issues() {
 				# maintainer-gate.yml checks for <!-- aidevops-signed-approval -->
 				# when NMR is removed — if the marker is missing, it re-adds NMR.
 				# Also resets the stale-recovery tick counter.
-				gh issue comment "$issue_num" --repo "$slug" \
+				gh_issue_comment "$issue_num" --repo "$slug" \
 					--body "<!-- aidevops-signed-approval -->
 <!-- stale-recovery-tick:0 (reset: auto-approved by maintainer — ${approval_reason}) -->
 Auto-approved: ${approval_reason}. Stale recovery tick reset." \

@@ -1119,7 +1119,7 @@ loop_handle_workflow_push_failure() {
 	fi
 
 	# Post fallback comment
-	gh issue comment "$issue_number" --repo "$repo_slug" \
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
 		--body "**Worker push failed: missing \`workflow\` scope** (t1540)
 
 Branch \`$branch\` modifies \`.github/workflows/\` files but the GitHub OAuth token lacks the \`workflow\` scope. The implementation is complete locally but could not be pushed.

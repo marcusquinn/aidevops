@@ -91,6 +91,17 @@ export -f set_issue_status
 # shellcheck disable=SC1090
 source "$RECONCILE_SRC"
 
+# Stub the t2393 comment wrappers so reconcile_labelless_aidevops_issues's
+# `gh_issue_comment` call reaches the test's gh mock. The real wrappers live
+# in shared-constants.sh, which this test doesn't source (it deliberately
+# minimises dependencies). Delegating to `gh issue comment` preserves the
+# pre-t2393 test contract — the mock still records the same trace lines.
+# shellcheck disable=SC2317
+gh_issue_comment() { gh issue comment "$@" && return 0 || return 1; }
+# shellcheck disable=SC2317
+gh_pr_comment() { gh pr comment "$@" && return 0 || return 1; }
+export -f gh_issue_comment gh_pr_comment
+
 # Override `gh` as a shell function AFTER sourcing.
 # shellcheck disable=SC2317
 gh() {

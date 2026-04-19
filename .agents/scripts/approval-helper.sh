@@ -393,7 +393,7 @@ _post_issue_approval_updates() {
 		# window that exists for issues. Without locking, non-collaborators can
 		# add comments to an approved PR between approval and merge, potentially
 		# influencing automated review or merge decisions.
-		gh pr comment "$target_number" --repo "$slug" \
+		gh_pr_comment "$target_number" --repo "$slug" \
 			--body "This PR has been approved by a maintainer and is now locked for review." \
 			>/dev/null 2>&1 || true
 		# Note: GitHub does not support locking PRs via gh CLI directly (only issues).
@@ -439,12 +439,12 @@ _approve_target() {
 	rm -f "$sig_file"
 
 	if [[ "$target_type" == "issue" ]]; then
-		if ! gh issue comment "$target_number" --repo "$slug" --body "$comment_body"; then
+		if ! gh_issue_comment "$target_number" --repo "$slug" --body "$comment_body"; then
 			_print_error "Failed to post approval comment on issue #$target_number"
 			return 1
 		fi
 	else
-		if ! gh pr comment "$target_number" --repo "$slug" --body "$comment_body"; then
+		if ! gh_pr_comment "$target_number" --repo "$slug" --body "$comment_body"; then
 			_print_error "Failed to post approval comment on PR #$target_number"
 			return 1
 		fi

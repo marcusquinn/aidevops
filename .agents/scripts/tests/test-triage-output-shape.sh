@@ -71,6 +71,15 @@ teardown_test_env() {
 	return 0
 }
 
+# Stub the t2393 comment wrappers so production code calling
+# `gh_issue_comment` / `gh_pr_comment` reaches the mock below. The real
+# wrappers live in shared-constants.sh, which this test doesn't source.
+# shellcheck disable=SC2317
+gh_issue_comment() { gh issue comment "$@" && return 0 || return 1; }
+# shellcheck disable=SC2317
+gh_pr_comment() { gh pr comment "$@" && return 0 || return 1; }
+export -f gh_issue_comment gh_pr_comment
+
 # Mock gh that records calls. Every call returns success so the
 # dispatch path can complete without real network access.
 gh() {

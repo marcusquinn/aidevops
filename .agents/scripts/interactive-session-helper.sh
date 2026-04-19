@@ -309,7 +309,7 @@ _isc_post_claim_comment() {
 EOF
 	)
 
-	gh issue comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
+	gh_issue_comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
 		_isc_warn "claim comment failed on #$issue — continuing (audit trail incomplete)"
 	}
 	return 0
@@ -530,7 +530,7 @@ _isc_cmd_lockdown() {
 	local body
 	# shellcheck disable=SC2016 # backticks are intentional markdown formatting
 	body="$(printf '<!-- lockdown-marker -->\n**Lockdown applied** by `%s` (interactive session).\n\nThis issue is under active human investigation. All pulse operations (dispatch, enrich, completion-sweep) are blocked via `no-auto-dispatch` + `status:in-review` + conversation lock.\n\nTo release: `interactive-session-helper.sh unlock %s %s`' "$user" "$issue" "$slug")"
-	gh issue comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
+	gh_issue_comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
 		_isc_warn "lockdown: audit comment failed on #$issue — continuing"
 	}
 
@@ -631,7 +631,7 @@ _isc_cmd_unlock() {
 	local body
 	# shellcheck disable=SC2016 # backticks are intentional markdown formatting
 	body="$(printf '<!-- unlock-marker -->\n**Lockdown released** by `%s`. Issue returned to normal pulse operation.' "${user:-unknown}")"
-	gh issue comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
+	gh_issue_comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
 		_isc_warn "unlock: audit comment failed on #$issue — continuing"
 	}
 
@@ -1191,7 +1191,7 @@ _isc_post_merge_heal_status_done() {
 			--remove-label "status:done" \
 			--add-label "status:available" >/dev/null 2>&1 || continue
 
-		gh issue comment "$issue_num" --repo "$slug" --body \
+		gh_issue_comment "$issue_num" --repo "$slug" --body \
 			"Reset \`status:done\` → \`status:available\` — PR #${pr_number} referenced this via \`For\`/\`Ref\` (planning convention), not \`Closes\`/\`Resolves\`. Workaround for [t2219](../issues/19719) (\`issue-sync.yml\` title-fallback false-positive)." \
 			>/dev/null 2>&1 || true
 
@@ -1248,7 +1248,7 @@ _isc_post_merge_heal_stale_self_assign() {
 		_isc_info "post-merge: healing stale self-assignment on #$issue_num (t2218, author=$pr_author)"
 		gh issue edit "$issue_num" --repo "$slug" --remove-assignee "$pr_author" >/dev/null 2>&1 || continue
 
-		gh issue comment "$issue_num" --repo "$slug" --body \
+		gh_issue_comment "$issue_num" --repo "$slug" --body \
 			"Unassigned @${pr_author} — this issue has \`auto-dispatch\` and should be pulse-dispatched to a worker. Workaround for [t2218](../issues/19718) (\`claim-task-id.sh\` missing t2157 carve-out in \`_auto_assign_issue\`)." \
 			>/dev/null 2>&1 || true
 

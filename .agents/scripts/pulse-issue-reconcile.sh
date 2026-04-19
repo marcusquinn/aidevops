@@ -1018,7 +1018,7 @@ See \`.agents/AGENTS.md\` → \"Parent / meta tasks\" (t1986 / t2211) for the fu
 
 _Automated by \`_post_parent_decomposition_nudge\` in \`pulse-issue-reconcile.sh\` (t2388). Posted once per issue via the \`<!-- parent-needs-decomposition -->\` marker; re-runs are no-ops._"
 
-	gh issue comment "$parent_num" --repo "$slug" \
+	gh_issue_comment "$parent_num" --repo "$slug" \
 		--body "$comment_body" >/dev/null 2>&1 || return 1
 
 	echo "[pulse-wrapper] Reconcile parent-task: nudge posted for #${parent_num} in ${slug} (no children filed)" >>"$LOGFILE"
@@ -1331,7 +1331,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 			# it hasn't already been posted on a prior pass. Labels may have
 			# been stripped and re-applied; the comment stays singleton.
 			if [[ "$comment_already_posted" == "false" ]]; then
-				gh issue comment "$num" --repo "$slug" --body "$comment_template" \
+				gh_issue_comment "$num" --repo "$slug" --body "$comment_template" \
 					>/dev/null 2>&1 || true
 				echo "[pulse-wrapper] Labelless backfill: blessed #${num} in ${slug} — labels=${labels_csv}" >>"$LOGFILE"
 			else

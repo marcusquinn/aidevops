@@ -917,7 +917,7 @@ ${destination_text}
 _Automated by \`worker-watchdog.sh\` (t1419)_"
 	comment_body=$(_sanitize_markdown "$comment_body")
 
-	if gh issue comment "$issue_number" --repo "$repo_slug" --body "$comment_body" 2>>"$LOG_FILE"; then
+	if gh_issue_comment "$issue_number" --repo "$repo_slug" --body "$comment_body" 2>>"$LOG_FILE"; then
 		log_msg "Posted kill comment on ${repo_slug}#${issue_number}"
 	else
 		log_msg "Failed to post comment on ${repo_slug}#${issue_number}"

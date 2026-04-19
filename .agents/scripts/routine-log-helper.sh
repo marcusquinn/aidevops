@@ -817,7 +817,7 @@ cmd_notable() {
 ${footer}"
 	fi
 
-	if gh issue comment "$issue_number" --repo "$repo_slug" --body "$comment_body" &>/dev/null; then
+	if gh_issue_comment "$issue_number" --repo "$repo_slug" --body "$comment_body" &>/dev/null; then
 		_log_success "Posted notable event on issue #${issue_number}: ${event}"
 	else
 		_log_error "Failed to post notable event on issue #${issue_number}"

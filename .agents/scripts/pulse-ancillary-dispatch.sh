@@ -145,7 +145,7 @@ The pulse attempted to post an automated triage review on this issue **${attempt
 }${footer:-}
 ESCALATION_EOF
 
-	if gh issue comment "$issue_num" --repo "$repo_slug" --body-file "$body_file" >/dev/null 2>&1; then
+	if gh_issue_comment "$issue_num" --repo "$repo_slug" --body-file "$body_file" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] Posted triage escalation comment on #${issue_num} in ${repo_slug} (reason: ${failure_reason}, attempts: ${attempts})" >>"$LOGFILE"
 	else
 		echo "[pulse-wrapper] Failed to post triage escalation comment on #${issue_num} in ${repo_slug}" >>"$LOGFILE"
@@ -635,7 +635,7 @@ _extract_and_post_triage_review() {
 					"infra-markers-after-extraction" "$output_chars" "$raw_sample"
 				printf 'FAILED:infra-markers-after-extraction\n'
 			else
-				gh issue comment "$issue_num" --repo "$repo_slug" \
+				gh_issue_comment "$issue_num" --repo "$repo_slug" \
 					--body "$clean_review" >/dev/null 2>&1 || true
 				echo "[pulse-wrapper] Posted sandboxed triage review for #${issue_num} in ${repo_slug} (${output_chars} extracted chars)" >>"$LOGFILE"
 				printf 'POSTED\n'
@@ -975,7 +975,7 @@ relabel_needs_info_replies() {
 		gh issue edit "$issue_num" --repo "$repo_slug" \
 			--remove-label "status:needs-info" \
 			--add-label "needs-maintainer-review" 2>/dev/null || true
-		gh issue comment "$issue_num" --repo "$repo_slug" \
+		gh_issue_comment "$issue_num" --repo "$repo_slug" \
 			--body "Contributor replied to the information request. Relabeled to \`needs-maintainer-review\` for re-evaluation." \
 			2>/dev/null || true
 	done < <(sed -n 's/^replied|//p' "$state_file" 2>/dev/null || true)

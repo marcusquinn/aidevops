@@ -892,7 +892,7 @@ _post_merge_summary() {
 - **Testing**: ${summary_testing:-shellcheck clean, self-assessed}
 - **Key decisions**: ${summary_decisions:-none}"
 
-	if gh pr comment "$pr_number" --repo "$repo" --body "$merge_summary" >/dev/null 2>&1; then
+	if gh_pr_comment "$pr_number" --repo "$repo" --body "$merge_summary" >/dev/null 2>&1; then
 		print_success "Merge summary comment posted on PR #${pr_number}"
 	else
 		print_warning "Failed to post merge summary comment — post it manually"
@@ -1008,7 +1008,7 @@ cmd_commit_and_pr() {
 		--json state -q '.state' 2>/dev/null || echo "")
 	if [[ "$_pre_pr_issue_state" == "CLOSED" ]]; then
 		print_error "Aborting: issue #${issue_number} is already closed — not opening a duplicate PR (t2091)"
-		gh issue comment "$issue_number" --repo "$repo" \
+		gh_issue_comment "$issue_number" --repo "$repo" \
 			--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 Worker aborted PR creation: issue #${issue_number} was already closed by the time this session completed implementation. No PR was opened.
 <!-- ops:end -->" \
@@ -1083,7 +1083,7 @@ ${original_error}
 <!-- ops:end -->
 ${_sig_footer}"
 
-	if gh pr comment "$pr_number" --repo "$repo" --body "$_admin_comment" >/dev/null 2>&1; then
+	if gh_pr_comment "$pr_number" --repo "$repo" --body "$_admin_comment" >/dev/null 2>&1; then
 		print_info "Admin-merge fallback comment posted on PR #${pr_number}"
 	else
 		print_warning "Failed to post admin-merge fallback comment on PR #${pr_number}"

@@ -787,7 +787,7 @@ Workers fail when they must explore the entire codebase to find what to change. 
 - Verification command
 
 _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-lifecycle-common.sh_"
-	gh issue comment "$issue_number" --repo "$repo_slug" \
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
 		--body "$diag_body" 2>/dev/null || true
 	return 1
 }
@@ -855,7 +855,7 @@ If \`no_work\` crashes continue, the existing circuit breakers (\`cost-circuit-b
 
 _Automated by \`escalate_issue_tier()\` no_work skip (t2387) in worker-lifecycle-common.sh_"
 
-	gh issue comment "$issue_number" --repo "$repo_slug" \
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
 		--body "$comment_body" 2>/dev/null || true
 
 	printf '[worker-lifecycle][t2387] no_work skip-escalation posted for #%s (%s, count=%s)\n' \
@@ -1091,7 +1091,7 @@ The next worker should review prior attempt comments on this issue for context o
 
 _Automated by \`escalate_issue_tier()\` cascade dispatch in worker-lifecycle-common.sh_"
 
-	gh issue comment "$issue_number" --repo "$repo_slug" \
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
 		--body "$comment_body" 2>/dev/null || true
 
 	# Record escalation in tier telemetry

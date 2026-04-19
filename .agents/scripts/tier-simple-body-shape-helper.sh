@@ -288,7 +288,7 @@ The worker is still dispatching — just at the appropriate tier. See \`.agents/
 
 _Automated by \`tier-simple-body-shape-helper.sh\` (t2389). Posted once per issue via the \`${marker}\` marker; re-runs are no-ops._"
 
-	gh issue comment "$issue_num" --repo "$slug" --body "$comment_body" \
+	gh_issue_comment "$issue_num" --repo "$slug" --body "$comment_body" \
 		>/dev/null 2>&1 || _log "WARN" "feedback comment post failed on #${issue_num} — label swap still applied"
 
 	return 0

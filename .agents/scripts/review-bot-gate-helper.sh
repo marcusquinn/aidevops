@@ -48,6 +48,13 @@
 
 set -euo pipefail
 
+# t2393: source shared-constants.sh for the gh_pr_comment wrapper (sig footer).
+# Non-fatal: if the file is missing (e.g. deployed layout drift), fall through
+# to raw `gh pr comment`.
+_RBG_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=/dev/null
+[[ -r "${_RBG_SCRIPT_DIR}/shared-constants.sh" ]] && source "${_RBG_SCRIPT_DIR}/shared-constants.sh" || true
+
 # Known review bot login patterns (lowercase, without [bot] suffix for matching)
 KNOWN_BOTS=(
 	"coderabbitai"
@@ -779,7 +786,7 @@ do_request_retry() {
 Review bots were rate-limited when this PR was created (affected: ${rate_limited_bots% }). Requesting a review retry."
 
 	# go for it — safe to request retry since we already checked idempotency
-	if gh pr comment "$pr_number" --repo "$repo" --body "$comment_body" >/dev/null 2>&1; then
+	if gh_pr_comment "$pr_number" --repo "$repo" --body "$comment_body" >/dev/null 2>&1; then
 		echo "REQUESTED"
 		echo "Requested review retry on PR #${pr_number} (rate-limited bots: ${rate_limited_bots% })." >&2
 		return 0

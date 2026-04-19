@@ -261,11 +261,12 @@ _gh_idempotent_comment() {
 	fi
 
 	# Marker not found — safe to post
+	# t2393: route through gh_{issue,pr}_comment wrappers for sig footer.
 	if [[ "$entity_type" == "pr" ]]; then
-		gh pr comment "$entity_number" --repo "$repo_slug" \
+		gh_pr_comment "$entity_number" --repo "$repo_slug" \
 			--body "$comment_body" 2>/dev/null || true
 	else
-		gh issue comment "$entity_number" --repo "$repo_slug" \
+		gh_issue_comment "$entity_number" --repo "$repo_slug" \
 			--body "$comment_body" 2>/dev/null || true
 	fi
 
@@ -1199,7 +1200,7 @@ _consolidation_lock_acquire() {
 	iso_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) || iso_ts=""
 	local marker_body
 	marker_body=$(_consolidation_lock_marker_body "$self_login" "$iso_ts")
-	gh issue comment "$parent_num" --repo "$repo_slug" \
+	gh_issue_comment "$parent_num" --repo "$repo_slug" \
 		--body "$marker_body" >/dev/null 2>&1 || {
 		# Comment post failed — can't tiebreak without our marker being
 		# visible. Roll back by clearing the label and skip dispatch.
