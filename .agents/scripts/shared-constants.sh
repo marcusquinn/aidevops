@@ -914,6 +914,34 @@ _gh_wrapper_args_have_assignee() {
 	return 1
 }
 
+# t2406: Internal — check if argv contains a specific label in any --label arg.
+# Supports comma-separated label lists (e.g. --label "bug,auto-dispatch").
+# Used by gh_create_issue to apply the t2157 auto-dispatch skip logic.
+# Returns 0 if the label is found, 1 otherwise.
+_gh_wrapper_args_have_label() {
+	local needle="$1"
+	shift
+	while [[ $# -gt 0 ]]; do
+		local cur="$1"
+		local label_val=""
+		case "$cur" in
+		--label)
+			local next_val="${2:-}"
+			label_val="$next_val"
+			shift
+			;;
+		--label=*)
+			label_val="${cur#--label=}"
+			;;
+		esac
+		if [[ -n "$label_val" && ",${label_val}," == *",${needle},"* ]]; then
+			return 0
+		fi
+		shift
+	done
+	return 1
+}
+
 # t2028: Internal — determine the auto-assignee for a newly-created issue.
 # Returns empty string when the session is worker-origin, when the user
 # lookup fails, or when there is otherwise nothing to assign. Callers must
@@ -1037,16 +1065,26 @@ gh_create_issue() {
 	# the t1970 auto-assign already applied on the claim-task-id.sh path so
 	# the maintainer gate's assignee check passes on first PR open for
 	# interactively-created issues.
+	# t2406: skip self-assignment when auto-dispatch label is present (t2157).
+	# The origin:interactive label is still applied (t2200 — origin and
+	# assignment are independent axes).
 	local issue_output
 	if ! _gh_wrapper_args_have_assignee "$@"; then
-		local auto_assignee
-		auto_assignee=$(_gh_wrapper_auto_assignee)
-		if [[ -n "$auto_assignee" ]]; then
-			issue_output=$(gh issue create "$@" --label "$origin_label" --assignee "$auto_assignee")
-			local rc=$?
-			echo "$issue_output"
-			[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
-			return $rc
+		if _gh_wrapper_args_have_label "auto-dispatch" "$@"; then
+			# t2157/t2406: auto-dispatch means "let a worker handle this" —
+			# skip self-assignment. Mirrors issue-sync-helper.sh
+			# _push_auto_assign_interactive() skip logic.
+			print_info "[INFO] auto-dispatch label present — skipping self-assignment per t2157"
+		else
+			local auto_assignee
+			auto_assignee=$(_gh_wrapper_auto_assignee)
+			if [[ -n "$auto_assignee" ]]; then
+				issue_output=$(gh issue create "$@" --label "$origin_label" --assignee "$auto_assignee")
+				local rc=$?
+				echo "$issue_output"
+				[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
+				return $rc
+			fi
 		fi
 	fi
 
