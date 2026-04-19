@@ -41,6 +41,7 @@ print_result() {
 		printf '%sFAIL%s %s %s\n' "$TEST_RED" "$TEST_RESET" "$name" "$extra"
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -300,6 +301,97 @@ else
 	print_result "t2148: stampless auto-recovery respects age threshold (recent → skip)" 1 \
 		"(issue 556 was too recent but was unassigned anyway)"
 fi
+
+# =============================================================================
+# Part 8 (t2372) — _normalize_unassign_stale: default threshold (600s) resets
+# an issue whose updatedAt is older than the cutoff.
+#
+# Stubs:
+#   gh issue list  → one candidate (#12301) with a fixed updatedAt of
+#                    2020-01-01T00:00:00Z (epoch 1577836800).
+#   gh api ...     → [] (no dispatch comment, so inner skip check 2 is inert).
+#
+# Harness:
+#   now_epoch = 1577836800 + 900  (makes the issue appear 15 min "old")
+#   default STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS = 600 (10 min)
+#   → cutoff = 1577837700 - 600 = 1577837100; updatedAt < cutoff → INCLUDED.
+#   No worker log exists → inner skip check 3 is inert.
+#   High issue number (12301) → pgrep pattern won't match local processes.
+#
+# Expected: _normalize_clear_status_labels is invoked, emitting
+# `gh issue edit 12301 ... --remove-assignee testrunner`.
+# =============================================================================
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo '[{"number":12301,"labels":[{"name":"status:queued"}],"updatedAt":"2020-01-01T00:00:00Z"}]'
+    exit 0
+fi
+if [[ "\$1" == "api" ]]; then
+    echo '[]'
+    exit 0
+fi
+if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
+    echo "\$*" >> "${GH_EDIT_ARGS_FILE}"
+    exit 0
+fi
+exit 1
+STUB
+chmod +x "${STUB_DIR}/gh"
+
+# Guarantee no worker log exists for #12301 so inner skip check 3 is inert.
+rm -f "/tmp/pulse-owner-testrepo-12301.log"
+
+rm -f "$GH_EDIT_ARGS_FILE"
+unset STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS
+NOW_EPOCH_15MIN=1577837700  # 2020-01-01T00:00:00Z + 900s
+_normalize_unassign_stale "testrunner" "$REPOS_JSON" "$NOW_EPOCH_15MIN" "10800"
+
+if [[ -f "$GH_EDIT_ARGS_FILE" ]] &&
+	grep -q -- "--remove-assignee testrunner" "$GH_EDIT_ARGS_FILE" &&
+	grep -q -- "issue edit 12301" "$GH_EDIT_ARGS_FILE"; then
+	print_result "t2372: default 600s threshold resets issue with updatedAt 15 min ago" 0
+else
+	print_result "t2372: default 600s threshold resets issue with updatedAt 15 min ago" 1 \
+		"(edit args: $(cat "$GH_EDIT_ARGS_FILE" 2>/dev/null || echo 'file missing'))"
+fi
+
+# =============================================================================
+# Part 9 (t2372) — _normalize_unassign_stale: default threshold (600s) skips
+# an issue whose updatedAt is newer than the cutoff.
+#
+# Same stub output, but now_epoch = updatedAt + 300s, so the issue is 5 min
+# "old" — younger than the 10 min default cutoff. The jq filter excludes it
+# server-side; _normalize_clear_status_labels is never invoked.
+# =============================================================================
+rm -f "$GH_EDIT_ARGS_FILE"
+unset STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS
+NOW_EPOCH_5MIN=1577837100  # 2020-01-01T00:00:00Z + 300s
+_normalize_unassign_stale "testrunner" "$REPOS_JSON" "$NOW_EPOCH_5MIN" "10800"
+
+if [[ ! -f "$GH_EDIT_ARGS_FILE" ]] || ! grep -q -- "issue edit 12301" "$GH_EDIT_ARGS_FILE"; then
+	print_result "t2372: default 600s threshold skips issue with updatedAt 5 min ago" 0
+else
+	print_result "t2372: default 600s threshold skips issue with updatedAt 5 min ago" 1 \
+		"(issue was too young but was reset anyway; edit args: $(cat "$GH_EDIT_ARGS_FILE"))"
+fi
+
+# =============================================================================
+# Part 10 (t2372) — STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS env var override:
+# with threshold set to 1800s (30 min), a 15-min-old issue is now younger
+# than the cutoff and should NOT be reset. Proves the env hook works.
+# =============================================================================
+rm -f "$GH_EDIT_ARGS_FILE"
+export STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS=1800
+_normalize_unassign_stale "testrunner" "$REPOS_JSON" "$NOW_EPOCH_15MIN" "10800"
+
+if [[ ! -f "$GH_EDIT_ARGS_FILE" ]] || ! grep -q -- "issue edit 12301" "$GH_EDIT_ARGS_FILE"; then
+	print_result "t2372: STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS=1800 excludes 15-min-old issue" 0
+else
+	print_result "t2372: STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS=1800 excludes 15-min-old issue" 1 \
+		"(override set but issue was still reset; edit args: $(cat "$GH_EDIT_ARGS_FILE"))"
+fi
+unset STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS
 
 export PATH="$OLD_PATH"
 
