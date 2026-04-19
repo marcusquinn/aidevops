@@ -161,13 +161,17 @@ validate_string_literals() {
 
 	for file in "$@"; do
 		if [[ -f "$file" ]]; then
-			# Check for repeated string literals (skip empty, short <4 chars, and numeric-only)
+			# Check for repeated string literals in code lines only.
+			# Exclusions (false-positive classes):
+			#   - Comment-only lines (^\s*#) — documentation, not code
+			#   - Numeric strings ("123", "3.14") — version numbers, counts
+			#   - Shell variable references ("$var", "${var}") — proper quoting, not literals
 			local repeated
-			repeated=$(grep -oE '"[^"]{4,}"' "$file" | grep -vE '^"[0-9]+\.?[0-9]*"$' | sort | uniq -c | awk '$1 >= 3' | wc -l || true)
+			repeated=$(grep -v '^\s*#' "$file" | grep -oE '"[^"]{4,}"' | grep -vE '^"[0-9]+\.?[0-9]*"$' | grep -vE '^"\$' | sort | uniq -c | awk '$1 >= 3' | wc -l || true)
 
 			if [[ $repeated -gt 0 ]]; then
 				print_warning "Repeated string literals in $file (consider using constants)"
-				grep -oE '"[^"]{4,}"' "$file" | grep -vE '^"[0-9]+\.?[0-9]*"$' | sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
+				grep -v '^\s*#' "$file" | grep -oE '"[^"]{4,}"' | grep -vE '^"[0-9]+\.?[0-9]*"$' | grep -vE '^"\$' | sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
 				((++violations))
 			fi
 		fi
@@ -193,6 +197,8 @@ run_shellcheck() {
 
 check_secrets() {
 	local violations=0
+	local secrets_clean_msg="No secrets detected in staged files"
+	local secrets_found_msg="Potential secrets detected in staged files!"
 
 	print_info "Checking for exposed secrets (Secretlint)..."
 
@@ -208,9 +214,9 @@ check_secrets() {
 	# Check if secretlint is available
 	if command -v secretlint &>/dev/null; then
 		if echo "$staged_files" | xargs secretlint --format compact 2>/dev/null; then
-			print_success "No secrets detected in staged files"
+			print_success "$secrets_clean_msg"
 		else
-			print_error "Potential secrets detected in staged files!"
+			print_error "$secrets_found_msg"
 			print_info "Review the findings and either:"
 			print_info "  1. Remove the secrets from your code"
 			print_info "  2. Add to .secretlintignore if false positive"
@@ -219,16 +225,16 @@ check_secrets() {
 		fi
 	elif [[ -f "node_modules/.bin/secretlint" ]]; then
 		if echo "$staged_files" | xargs ./node_modules/.bin/secretlint --format compact 2>/dev/null; then
-			print_success "No secrets detected in staged files"
+			print_success "$secrets_clean_msg"
 		else
-			print_error "Potential secrets detected in staged files!"
+			print_error "$secrets_found_msg"
 			((++violations))
 		fi
 	elif command -v npx &>/dev/null && [[ -f ".secretlintrc.json" ]]; then
 		if echo "$staged_files" | xargs npx secretlint --format compact 2>/dev/null; then
-			print_success "No secrets detected in staged files"
+			print_success "$secrets_clean_msg"
 		else
-			print_error "Potential secrets detected in staged files!"
+			print_error "$secrets_found_msg"
 			((++violations))
 		fi
 	else
