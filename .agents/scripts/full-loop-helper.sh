@@ -1045,6 +1045,63 @@ _merge_resolve_repo() {
 	return 0
 }
 
+# _signal_admin_merge_fallback — post PR comment, audit log, and label after --admin fallback merge.
+#
+# t2247: When `_merge_execute` falls back to `--admin` because branch protection
+# blocked a plain merge, this function records three signaling artifacts so the
+# fallback is visible at PR level (not just in session logs).
+#
+# Args: pr_number repo merge_method original_error_output
+# Returns: 0 always (signaling failures are non-fatal — the merge already succeeded)
+_signal_admin_merge_fallback() {
+	local pr_number="$1"
+	local repo="$2"
+	local merge_method="$3"
+	local original_error="$4"
+
+	# (a) PR comment with error context, ops markers, and remediation
+	local _sig_footer=""
+	_sig_footer=$(gh-signature-helper.sh footer --model "${AIDEVOPS_MODEL:-unknown}" 2>/dev/null) || _sig_footer=""
+
+	local _admin_comment="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+## Admin Merge Fallback (t2247)
+
+Branch protection blocked the plain \`gh pr merge\` for PR #${pr_number}. The merge succeeded using \`--admin\` fallback (per GH#18538 — workers share the maintainer's \`gh auth\`).
+
+**Merge method:** \`${merge_method}\`
+
+<details>
+<summary>Original branch-protection error</summary>
+
+\`\`\`text
+${original_error}
+\`\`\`
+
+</details>
+
+**Remediation:** If this bypass was unintended, revert with \`gh pr revert ${pr_number} --repo ${repo}\` and investigate why review bots did not approve.
+<!-- ops:end -->
+${_sig_footer}"
+
+	if gh pr comment "$pr_number" --repo "$repo" --body "$_admin_comment" >/dev/null 2>&1; then
+		print_info "Admin-merge fallback comment posted on PR #${pr_number}"
+	else
+		print_warning "Failed to post admin-merge fallback comment on PR #${pr_number}"
+	fi
+
+	# (b) Audit log entry
+	if command -v audit-log-helper.sh >/dev/null 2>&1; then
+		audit-log-helper.sh log merge-admin-fallback \
+			"PR #${pr_number} in ${repo} — ${merge_method} — branch protection blocked plain merge" \
+			2>/dev/null || true
+	fi
+
+	# (c) admin-merge label for cross-PR filtering
+	gh pr edit "$pr_number" --repo "$repo" --add-label "admin-merge" 2>/dev/null || true
+
+	return 0
+}
+
 # _merge_execute — attempt `gh pr merge` with optional --admin fallback on branch-protection errors.
 #
 # GH#18538: branch protection that requires an approving review rejects plain
@@ -1094,6 +1151,11 @@ _merge_execute() {
 			print_info "Branch protection blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
 			if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin 2>&1; then
 				print_success "PR #${pr_number} merged with --admin fallback"
+				# t2247: Signal that admin-merge fallback was used — three artifacts:
+				# (a) PR comment with error context + remediation
+				# (b) Audit log entry
+				# (c) admin-merge label for cross-PR filtering
+				_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out"
 				return 0
 			else
 				print_error "Merge failed for PR #${pr_number} (even with --admin — maintainer gate or admin rights missing)"
