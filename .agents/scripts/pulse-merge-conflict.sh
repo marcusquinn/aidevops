@@ -232,9 +232,16 @@ _interactive_pr_trigger_handover() {
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
 
 	# Idempotence short-circuit: label already present → nothing to do
-	local pr_labels_json
+	# Fail CLOSED on label fetch failure — if we can't verify labels, we might
+	# miss a no-takeover opt-out. Consistent with _close_conflicting_pr (t2383).
+	local pr_labels_json label_fetch_rc
+	label_fetch_rc=0
 	pr_labels_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels \
-		--jq '[.labels[].name]' 2>/dev/null) || pr_labels_json="[]"
+		--jq '[.labels[].name]' 2>/dev/null) || label_fetch_rc=$?
+	if [[ $label_fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] _interactive_pr_trigger_handover: failed to fetch labels for PR #${pr_number} in ${repo_slug} (exit ${label_fetch_rc}) — skipping handover to honor potential no-takeover label (t2383)" >>"$LOGFILE"
+		return 0
+	fi
 	[[ -n "$pr_labels_json" ]] || pr_labels_json="[]"
 
 	if printf '%s' "$pr_labels_json" | jq -e 'index("origin:worker-takeover")' >/dev/null 2>&1; then
