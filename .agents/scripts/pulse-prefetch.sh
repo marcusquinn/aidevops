@@ -119,7 +119,8 @@ source "${SCRIPT_DIR}/pulse-prefetch-secondary.sh"
 #######################################
 _prefetch_repo_issues() {
 	local slug="$1"
-	local cache_entry="${2:-{}}"
+	local cache_entry="${2:-}"
+	[[ -n "$cache_entry" ]] || cache_entry="{}"
 	local sweep_mode="${3:-full}"
 
 	# Issues (include assignees for dispatch dedup)

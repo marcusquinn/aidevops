@@ -172,7 +172,8 @@ _prefetch_prs_format_output() {
 
 _prefetch_repo_prs() {
 	local slug="$1"
-	local cache_entry="${2:-{}}"
+	local cache_entry="${2:-}"
+	[[ -n "$cache_entry" ]] || cache_entry="{}"
 	local sweep_mode="${3:-full}"
 
 	# PRs (createdAt included for daily PR cap — GH#3821)
