@@ -294,9 +294,11 @@ _compute_repo_registration_defaults() {
 # Infer the init_scope for a repo when not explicitly set.
 # Priority: .aidevops.json > repos.json entry > context inference.
 # Returns one of: minimal, standard, public
-# Usage: _infer_init_scope <project_root>
+# Usage: _infer_init_scope <project_root> [is_local_only]
+# Pass is_local_only="true" when the caller already has it to avoid redundant I/O.
 _infer_init_scope() {
 	local project_root="$1"
+	local is_local_only="${2:-}"
 
 	# 1. Check .aidevops.json
 	if [[ -f "$project_root/.aidevops.json" ]]; then
@@ -308,41 +310,37 @@ _infer_init_scope() {
 		fi
 	fi
 
-	# 2. Check repos.json entry
+	# 2. Check repos.json entry — single jq pass reads both init_scope and local_only
 	if command -v jq &>/dev/null && [[ -f "${REPOS_FILE:-$HOME/.config/aidevops/repos.json}" ]]; then
 		local repos_file="${REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
 		local canonical_path
 		canonical_path=$(cd "$project_root" 2>/dev/null && pwd -P) || canonical_path="$project_root"
-		local repo_scope
-		repo_scope=$(jq -r --arg path "$canonical_path" \
-			'(.initialized_repos[] | select(.path == $path) | .init_scope) // empty' \
-			"$repos_file" 2>/dev/null || echo "")
-		if [[ -n "$repo_scope" ]]; then
-			echo "$repo_scope"
-			return 0
+		local repo_data
+		repo_data=$(jq -r --arg path "$canonical_path" \
+			'.initialized_repos[] | select(.path == $path) | "\(.init_scope // "")|\(.local_only // "false")"' \
+			"$repos_file" 2>/dev/null | head -n 1 || echo "")
+		if [[ -n "$repo_data" ]]; then
+			local repo_scope="${repo_data%|*}"
+			local repo_local="${repo_data#*|}"
+			if [[ -n "$repo_scope" ]]; then
+				echo "$repo_scope"
+				return 0
+			fi
+			# Repo found but no explicit scope — pick up local_only for context inference below
+			[[ -z "$is_local_only" ]] && is_local_only="$repo_local"
 		fi
 	fi
 
 	# 3. Context inference
-	# local_only or no remote → minimal
-	if ! git -C "$project_root" remote get-url origin &>/dev/null 2>&1; then
+	# Use pre-computed is_local_only when available; fall back to git remote check
+	if [[ "$is_local_only" == "true" ]]; then
 		echo "minimal"
 		return 0
 	fi
 
-	# Check repos.json for local_only flag
-	if command -v jq &>/dev/null && [[ -f "${REPOS_FILE:-$HOME/.config/aidevops/repos.json}" ]]; then
-		local repos_file="${REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
-		local canonical_path
-		canonical_path=$(cd "$project_root" 2>/dev/null && pwd -P) || canonical_path="$project_root"
-		local is_local
-		is_local=$(jq -r --arg path "$canonical_path" \
-			'(.initialized_repos[] | select(.path == $path) | .local_only) // false' \
-			"$repos_file" 2>/dev/null || echo "false")
-		if [[ "$is_local" == "true" ]]; then
-			echo "minimal"
-			return 0
-		fi
+	if ! git -C "$project_root" remote get-url origin &>/dev/null 2>&1; then
+		echo "minimal"
+		return 0
 	fi
 
 	# Default: standard (backward compatible)
@@ -487,9 +485,9 @@ register_repo() {
 	local DEFAULT_PRIORITY=""
 	eval "$(_compute_repo_registration_defaults "$repo_path" "$slug" "$is_local_only" "$maintainer")"
 
-	# Infer default init_scope for new registrations
+	# Infer default init_scope; pass is_local_only (already computed) to skip redundant I/O
 	local default_init_scope
-	default_init_scope=$(_infer_init_scope "$repo_path")
+	default_init_scope=$(_infer_init_scope "$repo_path" "$is_local_only")
 
 	# Check if repo already registered
 	if jq -e --arg path "$repo_path" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
