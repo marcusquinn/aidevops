@@ -312,6 +312,7 @@ _config_env_map() {
 	updates.upstream_watch_hours) echo "AIDEVOPS_UPSTREAM_WATCH_HOURS" ;;
 	orchestration.supervisor_pulse) echo "AIDEVOPS_SUPERVISOR_PULSE" ;;
 	orchestration.repo_sync) echo "AIDEVOPS_REPO_SYNC" ;;
+	orchestration.repo_aidevops_health) echo "AIDEVOPS_REPO_HEALTH" ;;
 	orchestration.max_workers_cap) echo "AIDEVOPS_MAX_WORKERS_CAP" ;;
 	orchestration.quality_debt_cap_pct) echo "AIDEVOPS_QUALITY_DEBT_CAP_PCT" ;;
 	*) echo "" ;;
@@ -383,6 +384,7 @@ _legacy_key_to_dotpath() {
 	manage_claude_config) echo "integrations.manage_claude_config" ;;
 	supervisor_pulse) echo "orchestration.supervisor_pulse" ;;
 	repo_sync) echo "orchestration.repo_sync" ;;
+	repo_aidevops_health) echo "orchestration.repo_aidevops_health" ;;
 	session_greeting) echo "ui.session_greeting" ;;
 	safety_hooks) echo "safety.hooks_enabled" ;;
 	shell_aliases) echo "ui.shell_aliases" ;;

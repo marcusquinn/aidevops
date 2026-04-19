@@ -1133,6 +1133,8 @@ _setup_post_setup_steps() {
 		fi
 		# Repo sync handles non-interactive mode internally (systemd detection fixed in GH#17861)
 		setup_repo_sync
+		# r914 repo-aidevops-health — daily drift keeper (t2366)
+		setup_repo_aidevops_health
 		if _should_setup_noninteractive_scheduler "Profile README" "sh.aidevops.profile-readme-update" "aidevops: profile-readme-update" "aidevops-profile-readme-update"; then
 			setup_profile_readme
 		fi
@@ -1154,6 +1156,8 @@ _setup_post_setup_steps() {
 	setup_stats_wrapper "${PULSE_ENABLED:-}"
 	setup_failure_miner "${PULSE_ENABLED:-}"
 	setup_repo_sync
+	# r914 repo-aidevops-health — daily drift keeper (t2366)
+	setup_repo_aidevops_health
 	setup_process_guard
 	setup_memory_pressure_monitor
 	setup_screen_time_snapshot

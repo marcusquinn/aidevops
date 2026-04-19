@@ -102,6 +102,11 @@
     // Env override: AIDEVOPS_REPO_SYNC
     "repo_sync": true,
 
+    // r914 — Daily drift keeper for repos.json. Bumps stale .aidevops.json
+    // versions and surfaces missing-folder / no-init drift for human triage.
+    // Schedule: daily @03:30. Env override: AIDEVOPS_REPO_HEALTH.
+    "repo_aidevops_health": true,
+
     // Monitor external issues/PRs for new activity needing reply.
     // Auto-seeds on first setup, then scans hourly via launchd/cron.
     // Read-only (GitHub Notifications API), no autonomous replies.
