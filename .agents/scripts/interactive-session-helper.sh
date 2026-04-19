@@ -9,6 +9,15 @@
 # so the pulse's dispatch-dedup guard (`dispatch-dedup-helper.sh is-assigned`)
 # will not dispatch a parallel worker.
 #
+# SCOPE LIMITATION (GH#19861):
+#   `claim` blocks the pulse's DISPATCH path only. It does NOT block:
+#   - The enrich path (pulse-enrich.sh) — may overwrite issue title/body/labels
+#   - The completion-sweep path — may strip status labels
+#   - Any other non-dispatch pulse operation that modifies label/title/body state
+#   If you need protection against ALL pulse modifications (e.g., investigating
+#   a pulse bug), use `lockdown` instead — it applies `no-auto-dispatch` +
+#   `status:in-review` + self-assignment + conversation lock + audit comment.
+#
 # Why reuse status:in-review rather than a new label:
 #   - `_has_active_claim` in dispatch-dedup-helper.sh already treats it as an
 #     active claim that blocks dispatch.
@@ -31,6 +40,8 @@
 # Usage:
 #   interactive-session-helper.sh claim <issue> <slug> [--worktree PATH]
 #   interactive-session-helper.sh release <issue> <slug> [--unassign]
+#   interactive-session-helper.sh lockdown <issue> <slug> [--worktree PATH]
+#   interactive-session-helper.sh unlock <issue> <slug> [--unassign]
 #   interactive-session-helper.sh status [<issue>]
 #   interactive-session-helper.sh scan-stale
 #   interactive-session-helper.sh post-merge <pr_number> [<slug>]
@@ -309,6 +320,10 @@ EOF
 # -----------------------------------------------------------------------------
 # Apply status:in-review, self-assign, and write a stamp.
 #
+# SCOPE: blocks pulse DISPATCH only. Does NOT block enrich, completion-sweep,
+# or other non-dispatch pulse operations that modify issue state. For full
+# insulation from all pulse paths, use `lockdown` instead. (GH#19861)
+#
 # Arguments:
 #   $1 = issue number
 #   $2 = repo slug (owner/repo)
@@ -328,13 +343,14 @@ _isc_cmd_claim() {
 
 	# Parse positional + flags
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local arg="$1"
+		case "$arg" in
 		--worktree)
 			worktree_path="${2:-}"
 			shift 2
 			;;
 		--worktree=*)
-			worktree_path="${1#--worktree=}"
+			worktree_path="${arg#--worktree=}"
 			shift
 			;;
 		-h | --help)
@@ -343,11 +359,11 @@ _isc_cmd_claim() {
 			;;
 		*)
 			if [[ -z "$issue" ]]; then
-				issue="$1"
+				issue="$arg"
 			elif [[ -z "$slug" ]]; then
-				slug="$1"
+				slug="$arg"
 			else
-				_isc_warn "unexpected argument: $1 (ignored)"
+				_isc_warn "unexpected argument: $arg (ignored)"
 			fi
 			shift
 			;;
@@ -411,6 +427,219 @@ _isc_cmd_claim() {
 }
 
 # -----------------------------------------------------------------------------
+# Subcommand: lockdown (GH#19861)
+# -----------------------------------------------------------------------------
+# Stricter protection than `claim`. Applies ALL of:
+#   1. `no-auto-dispatch` label — blocks the pulse enrich path from modifying
+#      issue state and prevents any auto-dispatch.
+#   2. `status:in-review` + self-assignment — blocks pulse dispatch (same as claim).
+#   3. GitHub conversation lock — prevents non-collaborator edits.
+#   4. Audit-trail comment — visible marker explaining the lockdown.
+#   5. Crash-recovery stamp — same as claim.
+#
+# Use this when investigating a pulse bug or when you need maximum insulation
+# from ALL pulse operations, not just dispatch.
+#
+# Arguments:
+#   $1 = issue number
+#   $2 = repo slug (owner/repo)
+#   [--worktree PATH] = optional worktree path to record in the stamp
+#
+# Exit: 0 always (warn-and-continue contract).
+_isc_cmd_lockdown() {
+	local issue="" slug="" worktree_path=""
+
+	# Parse positional + flags
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--worktree)
+			worktree_path="${2:-}"
+			shift 2
+			;;
+		--worktree=*)
+			worktree_path="${arg#--worktree=}"
+			shift
+			;;
+		-h | --help)
+			_isc_cmd_help
+			return 0
+			;;
+		*)
+			if [[ -z "$issue" ]]; then
+				issue="$arg"
+			elif [[ -z "$slug" ]]; then
+				slug="$arg"
+			else
+				_isc_warn "unexpected argument: $arg (ignored)"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$issue" || -z "$slug" ]]; then
+		_isc_err "lockdown: <issue> and <slug> are required"
+		_isc_err "usage: interactive-session-helper.sh lockdown <issue> <slug> [--worktree PATH]"
+		return 2
+	fi
+
+	if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
+		_isc_err "lockdown: <issue> must be numeric (got: $issue)"
+		return 2
+	fi
+
+	# Offline gate
+	if ! _isc_gh_reachable; then
+		_isc_warn "gh offline or not authenticated — skipping lockdown on #$issue ($slug)"
+		return 0
+	fi
+
+	local user
+	user=$(_isc_current_user)
+	if [[ -z "$user" ]]; then
+		_isc_warn "could not resolve gh user login — skipping lockdown on #$issue"
+		return 0
+	fi
+
+	# Step 1: Apply status:in-review + self-assign (same as claim)
+	if set_issue_status "$issue" "$slug" "in-review" --add-assignee "$user" >/dev/null 2>&1; then
+		_isc_info "lockdown: #$issue → status:in-review + assigned $user"
+	else
+		_isc_warn "lockdown: status transition failed on #$issue — continuing"
+	fi
+
+	# Step 2: Apply no-auto-dispatch label (blocks enrich + dispatch paths)
+	if gh issue edit "$issue" --repo "$slug" --add-label "no-auto-dispatch" >/dev/null 2>&1; then
+		_isc_info "lockdown: #$issue → no-auto-dispatch label applied"
+	else
+		_isc_warn "lockdown: could not apply no-auto-dispatch label on #$issue"
+	fi
+
+	# Step 3: Lock the conversation
+	if gh issue lock "$issue" --repo "$slug" --reason "resolved" >/dev/null 2>&1; then
+		_isc_info "lockdown: #$issue → conversation locked"
+	else
+		_isc_warn "lockdown: could not lock conversation on #$issue — continuing"
+	fi
+
+	# Step 4: Write crash-recovery stamp
+	_isc_write_stamp "$issue" "$slug" "$worktree_path" "$user"
+
+	# Step 5: Post audit-trail comment
+	local body
+	# shellcheck disable=SC2016 # backticks are intentional markdown formatting
+	body="$(printf '<!-- lockdown-marker -->\n**Lockdown applied** by `%s` (interactive session).\n\nThis issue is under active human investigation. All pulse operations (dispatch, enrich, completion-sweep) are blocked via `no-auto-dispatch` + `status:in-review` + conversation lock.\n\nTo release: `interactive-session-helper.sh unlock %s %s`' "$user" "$issue" "$slug")"
+	gh issue comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
+		_isc_warn "lockdown: audit comment failed on #$issue — continuing"
+	}
+
+	_isc_info "lockdown: #$issue in $slug fully locked down"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Subcommand: unlock (GH#19861)
+# -----------------------------------------------------------------------------
+# Reverse a lockdown: remove no-auto-dispatch, transition to available,
+# unlock conversation, delete stamp.
+#
+# Arguments:
+#   $1 = issue number
+#   $2 = repo slug (owner/repo)
+#   [--unassign] = also remove self from assignees
+#
+# Exit: 0 always.
+_isc_cmd_unlock() {
+	local issue="" slug="" unassign=0
+
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--unassign)
+			unassign=1
+			shift
+			;;
+		-h | --help)
+			_isc_cmd_help
+			return 0
+			;;
+		*)
+			if [[ -z "$issue" ]]; then
+				issue="$arg"
+			elif [[ -z "$slug" ]]; then
+				slug="$arg"
+			else
+				_isc_warn "unexpected argument: $arg (ignored)"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$issue" || -z "$slug" ]]; then
+		_isc_err "unlock: <issue> and <slug> are required"
+		return 2
+	fi
+
+	if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
+		_isc_err "unlock: <issue> must be numeric (got: $issue)"
+		return 2
+	fi
+
+	# Delete local stamp regardless of gh state
+	_isc_delete_stamp "$issue" "$slug"
+
+	if ! _isc_gh_reachable; then
+		_isc_warn "gh offline — stamp deleted locally, lockdown unchanged on #$issue"
+		return 0
+	fi
+
+	# Step 1: Unlock conversation
+	if gh issue unlock "$issue" --repo "$slug" >/dev/null 2>&1; then
+		_isc_info "unlock: #$issue → conversation unlocked"
+	else
+		_isc_warn "unlock: could not unlock conversation on #$issue — continuing"
+	fi
+
+	# Step 2: Remove no-auto-dispatch label
+	if gh issue edit "$issue" --repo "$slug" --remove-label "no-auto-dispatch" >/dev/null 2>&1; then
+		_isc_info "unlock: #$issue → no-auto-dispatch label removed"
+	else
+		_isc_warn "unlock: could not remove no-auto-dispatch label on #$issue"
+	fi
+
+	# Step 3: Transition status:in-review -> status:available
+	local -a extra_flags=()
+	if [[ $unassign -eq 1 ]]; then
+		local user
+		user=$(_isc_current_user)
+		if [[ -n "$user" ]]; then
+			extra_flags+=(--remove-assignee "$user")
+		fi
+	fi
+
+	if set_issue_status "$issue" "$slug" "available" ${extra_flags[@]+"${extra_flags[@]}"} >/dev/null 2>&1; then
+		_isc_info "unlock: #$issue → status:available"
+	else
+		_isc_warn "unlock: status transition failed on #$issue"
+	fi
+
+	# Step 4: Post audit comment
+	local user
+	user=$(_isc_current_user) || true
+	local body
+	# shellcheck disable=SC2016 # backticks are intentional markdown formatting
+	body="$(printf '<!-- unlock-marker -->\n**Lockdown released** by `%s`. Issue returned to normal pulse operation.' "${user:-unknown}")"
+	gh issue comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
+		_isc_warn "unlock: audit comment failed on #$issue — continuing"
+	}
+
+	_isc_info "unlock: #$issue in $slug fully unlocked"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # Subcommand: release
 # -----------------------------------------------------------------------------
 # Transition status:in-review -> status:available and delete the stamp.
@@ -430,7 +659,8 @@ _isc_cmd_release() {
 	local issue="" slug="" unassign=0
 
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local arg="$1"
+		case "$arg" in
 		--unassign)
 			unassign=1
 			shift
@@ -441,11 +671,11 @@ _isc_cmd_release() {
 			;;
 		*)
 			if [[ -z "$issue" ]]; then
-				issue="$1"
+				issue="$arg"
 			elif [[ -z "$slug" ]]; then
-				slug="$1"
+				slug="$arg"
 			else
-				_isc_warn "unexpected argument: $1 (ignored)"
+				_isc_warn "unexpected argument: $arg (ignored)"
 			fi
 			shift
 			;;
@@ -1034,18 +1264,19 @@ _isc_cmd_post_merge() {
 	local pr_number="" slug=""
 
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local arg="$1"
+		case "$arg" in
 		-h | --help)
 			_isc_cmd_help
 			return 0
 			;;
 		*)
 			if [[ -z "$pr_number" ]]; then
-				pr_number="$1"
+				pr_number="$arg"
 			elif [[ -z "$slug" ]]; then
-				slug="$1"
+				slug="$arg"
 			else
-				_isc_warn "post-merge: unexpected argument: $1 (ignored)"
+				_isc_warn "post-merge: unexpected argument: $arg (ignored)"
 			fi
 			shift
 			;;
@@ -1136,6 +1367,18 @@ USAGE:
       Transition status:in-review → status:available, delete stamp.
       Idempotent. --unassign also removes self from assignees.
 
+  interactive-session-helper.sh lockdown <issue> <slug> [--worktree PATH]
+      Stricter than claim: blocks ALL pulse paths, not just dispatch.
+      Applies: no-auto-dispatch + status:in-review + self-assign +
+      conversation lock + audit comment + crash-recovery stamp.
+      Use when investigating pulse bugs or need maximum insulation.
+      Reverse with: unlock <issue> <slug>
+
+  interactive-session-helper.sh unlock <issue> <slug> [--unassign]
+      Reverse a lockdown: remove no-auto-dispatch, transition to
+      status:available, unlock conversation, delete stamp, post audit.
+      --unassign also removes self from assignees.
+
   interactive-session-helper.sh status [<issue>]
       List active claims from the stamp directory, or check one issue.
 
@@ -1172,6 +1415,10 @@ CONTRACT:
   ownership"). Users should never need to invoke it directly — the agent
   claims on engage and releases on signal.
 
+  SCOPE: `claim` blocks pulse DISPATCH only (GH#19861). It does NOT block
+  enrich, completion-sweep, or other non-dispatch pulse operations. For full
+  insulation from all pulse paths, use `lockdown` instead.
+
   Slug format: owner/repo (e.g., marcusquinn/aidevops).
 
 STAMP DIRECTORY:
@@ -1197,6 +1444,12 @@ main() {
 	case "$cmd" in
 	claim)
 		_isc_cmd_claim "$@" || rc=$?
+		;;
+	lockdown)
+		_isc_cmd_lockdown "$@" || rc=$?
+		;;
+	unlock)
+		_isc_cmd_unlock "$@" || rc=$?
 		;;
 	release)
 		_isc_cmd_release "$@" || rc=$?

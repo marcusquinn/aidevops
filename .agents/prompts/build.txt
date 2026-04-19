@@ -287,6 +287,15 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 # for blocking parallel pulse dispatch on an issue you are working on
 # interactively. Do not skip it; do not assume `origin:interactive` alone is
 # enough (it only marks creation-time origin, not active session ownership).
+#
+# SCOPE LIMITATION (GH#19861): `claim` blocks the pulse's DISPATCH path
+# only. It does NOT block the enrich path (which may overwrite issue
+# title/body/labels), the completion-sweep path (which may strip status
+# labels), or any other non-dispatch pulse operation. If you are
+# investigating a pulse bug or need maximum insulation from all pulse
+# modifications, use `interactive-session-helper.sh lockdown <N> <slug>`
+# instead — it applies `no-auto-dispatch` + `status:in-review` +
+# self-assignment + conversation lock + audit comment.
 - Release is YOUR responsibility, not the user's. When the user signals
   completion ("ship it", "I'm done", "moving on", "let a worker take over"),
   when they switch to a different issue, or when a PR they opened merges,

@@ -210,6 +210,8 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Interactive issue ownership (MANDATORY — AI-driven, t2056):** When an interactive session engages with a GitHub issue — opening a worktree for it, claiming a new task, or identifying an existing issue to work on — the agent MUST immediately call `interactive-session-helper.sh claim <N> <slug>`. This applies `status:in-review` + self-assignment, which the pulse's dispatch-dedup guard (`_has_active_claim`) already honours as a block. Unlike `origin:interactive` (which only marks creation-time origin), this is the session-ownership signal for picking up *any* issue mid-lifecycle.
 
+  **Scope limitation (GH#19861):** `claim` blocks the pulse's **dispatch** path only. It does NOT block the enrich path (which may overwrite issue title/body/labels), the completion-sweep path (which may strip status labels), or any other non-dispatch pulse operation. For full insulation from all pulse modifications (e.g., investigating a pulse bug), use `interactive-session-helper.sh lockdown <N> <slug>` instead — it applies `no-auto-dispatch` + `status:in-review` + self-assignment + conversation lock + audit comment.
+
 - **Release is the agent's responsibility**, not the user's. Call `interactive-session-helper.sh release <N> <slug>` when the user signals completion ("done", "ship it", "moving on", "let a worker take over"), when they switch to a different issue, or when a PR they opened merges. The user should never need to type a release command.
 - **Session start:** run `interactive-session-helper.sh scan-stale` and act on any findings:
   - Phase 1 (dead claims): if stamps with dead PID and missing worktree surface, prompt user to release them.
