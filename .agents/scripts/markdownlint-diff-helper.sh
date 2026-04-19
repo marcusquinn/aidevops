@@ -307,7 +307,12 @@ run_biome() {
 		# shellcheck disable=SC2086
 		_base_output=$(cd "$BASE_WORKTREE" && npx --yes @biomejs/biome@2.4.12 lint \
 			--reporter=github --max-diagnostics=9999 $_base_file_list 2>&1) || true
-		_base_count=$(printf '%s' "$_base_output" | grep -c '^::error' 2>/dev/null || echo "0")
+		# t2376: use `|| true` not `|| echo "0"` — grep -c always outputs a
+		# count (including "0" for no matches) and exits 1 when no matches.
+		# The old `|| echo "0"` appended a second "0" on no-match, producing
+		# "0\n0" which broke the arithmetic at the _delta line below.
+		_base_count=$(printf '%s' "$_base_output" | grep -c '^::error' 2>/dev/null || true)
+		_base_count="${_base_count:-0}"
 	fi
 
 	# Count violations at head
@@ -325,7 +330,9 @@ run_biome() {
 		# shellcheck disable=SC2086
 		_head_output=$(npx --yes @biomejs/biome@2.4.12 lint \
 			--reporter=github --max-diagnostics=9999 $_head_file_list 2>&1) || true
-		_head_count=$(printf '%s' "$_head_output" | grep -c '^::error' 2>/dev/null || echo "0")
+		# t2376: see matching comment on _base_count above.
+		_head_count=$(printf '%s' "$_head_output" | grep -c '^::error' 2>/dev/null || true)
+		_head_count="${_head_count:-0}"
 	fi
 
 	local _delta=$((_head_count - _base_count))
@@ -392,29 +399,36 @@ main() {
 	local _head="HEAD"
 	local _output_md=""
 	local _mode="markdownlint"
-	local _arg
 
+	# t2376: pre-commit `validate_positional_parameters` only exempts the
+	# `local var=$N` form (combined declaration+assignment). Inline `local`
+	# inside the loop satisfies it without changing semantics — bash treats
+	# repeated `local` in the same scope as a re-init.
 	while [ $# -gt 0 ]; do
-		_arg="$1"
+		local _arg="$1"
 		case "$_arg" in
 		--base)
 			if [ $# -lt 2 ]; then die "missing value for --base"; fi
-			_base="$2"
+			local _val_base="$2"
+			_base="$_val_base"
 			shift 2
 			;;
 		--head)
 			if [ $# -lt 2 ]; then die "missing value for --head"; fi
-			_head="$2"
+			local _val_head="$2"
+			_head="$_val_head"
 			shift 2
 			;;
 		--output-md)
 			if [ $# -lt 2 ]; then die "missing value for --output-md"; fi
-			_output_md="$2"
+			local _val_out="$2"
+			_output_md="$_val_out"
 			shift 2
 			;;
 		--mode)
 			if [ $# -lt 2 ]; then die "missing value for --mode"; fi
-			_mode="$2"
+			local _val_mode="$2"
+			_mode="$_val_mode"
 			shift 2
 			;;
 		-h | --help)
