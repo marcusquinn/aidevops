@@ -21,7 +21,11 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# GH#19836: functions are split across two modules now.
+#   _interactive_pr_is_stale + _interactive_pr_trigger_handover → pulse-merge-conflict.sh
+#   _extract_linked_issue                                        → pulse-merge.sh (still)
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+CONFLICT_SCRIPT="${SCRIPT_DIR}/../pulse-merge-conflict.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -112,18 +116,18 @@ teardown_test_env() {
 # Extract helpers under test and eval them in this shell.
 define_helpers_under_test() {
 	local is_stale_src
-	is_stale_src=$(awk '/^_interactive_pr_is_stale\(\) \{/,/^\}$/ { print }' "$MERGE_SCRIPT")
+	is_stale_src=$(awk '/^_interactive_pr_is_stale\(\) \{/,/^\}$/ { print }' "$CONFLICT_SCRIPT")
 	if [[ -z "$is_stale_src" ]]; then
-		printf 'ERROR: could not extract _interactive_pr_is_stale from %s\n' "$MERGE_SCRIPT" >&2
+		printf 'ERROR: could not extract _interactive_pr_is_stale from %s\n' "$CONFLICT_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
 	eval "$is_stale_src"
 
 	local handover_src
-	handover_src=$(awk '/^_interactive_pr_trigger_handover\(\) \{/,/^\}$/ { print }' "$MERGE_SCRIPT")
+	handover_src=$(awk '/^_interactive_pr_trigger_handover\(\) \{/,/^\}$/ { print }' "$CONFLICT_SCRIPT")
 	if [[ -z "$handover_src" ]]; then
-		printf 'ERROR: could not extract _interactive_pr_trigger_handover from %s\n' "$MERGE_SCRIPT" >&2
+		printf 'ERROR: could not extract _interactive_pr_trigger_handover from %s\n' "$CONFLICT_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
@@ -321,6 +325,10 @@ test_J_enforce_is_idempotent_when_label_already_present() {
 main() {
 	if [[ ! -f "$MERGE_SCRIPT" ]]; then
 		printf 'ERROR: pulse-merge.sh not found at %s\n' "$MERGE_SCRIPT" >&2
+		exit 1
+	fi
+	if [[ ! -f "$CONFLICT_SCRIPT" ]]; then
+		printf 'ERROR: pulse-merge-conflict.sh not found at %s\n' "$CONFLICT_SCRIPT" >&2
 		exit 1
 	fi
 

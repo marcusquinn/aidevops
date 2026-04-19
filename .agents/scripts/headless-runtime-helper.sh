@@ -1052,9 +1052,20 @@ _cmd_run_finish() {
 	local session_key="$1"
 	local ledger_status="$2"
 
-	# Release the dispatch claim on failure so the issue is immediately
-	# available for re-dispatch (next 2-min pulse cycle) instead of
-	# waiting for the 10-min TTL to expire.
+	# Release the dispatch claim so the issue is immediately available for
+	# re-dispatch (next 2-min pulse cycle) instead of waiting for the
+	# 30-min DISPATCH_COMMENT_MAX_AGE TTL to expire.
+	#
+	# Both success and failure paths post CLAIM_RELEASED — completion signal
+	# consistency matters (GH#19836 follow-up). On success, the worker may
+	# have exited without creating a PR (e.g., premise falsified and issue
+	# closed, or worker completed an out-of-PR action). Relying only on
+	# "PR with Closes #" or MERGE_SUMMARY to clear the claim leaves a 30-min
+	# dead-zone where the issue is stuck with no audit trail. The
+	# dispatch-dedup guard already treats any CLAIM_RELEASED as authoritative
+	# (dispatch-dedup-helper.sh:1044), so this is safe — if a worker DID
+	# create a PR with Closes, the PR-based dedup signal still wins and the
+	# CLAIM_RELEASED comment is redundant operational metadata.
 	if [[ "$ledger_status" == "fail" ]]; then
 		_release_dispatch_claim "$session_key" "worker_failed"
 
@@ -1088,6 +1099,13 @@ _cmd_run_finish() {
 		# the orphaned assignment. Uses the failure reason from the retry
 		# loop if available, otherwise defaults to "worker_failed".
 		_report_failure_to_fast_fail "$session_key" "${_run_failure_reason:-worker_failed}" "$crash_type"
+	else
+		# Success path: post CLAIM_RELEASED with reason=worker_complete so
+		# the audit trail on the issue thread shows the full lifecycle
+		# (DISPATCH_CLAIM → CLAIM_RELEASED) even when no PR was created.
+		# Non-fatal if the API call fails — the pulse will eventually GC
+		# the claim via the TTL path.
+		_release_dispatch_claim "$session_key" "worker_complete"
 	fi
 
 	_update_dispatch_ledger "$session_key" "$ledger_status"

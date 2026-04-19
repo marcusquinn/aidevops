@@ -190,8 +190,17 @@ source "${SCRIPT_DIR}/pulse-watchdog.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-capacity-alloc.sh"
 # Phase 4 (t1972, GH#18378): pr-gates + merge cycle co-extracted into one module.
+# GH#19836: further split — downstream conflict + feedback clusters into separate
+# modules. Source order matters: pulse-merge.sh first (defines the dispatcher
+# callers), then the two downstream modules. Bash's lazy function resolution
+# handles the runtime cross-module calls (e.g., _check_pr_merge_gates →
+# _dispatch_pr_fix_worker in pulse-merge-feedback.sh) without issue.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-merge.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-merge-conflict.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-merge-feedback.sh"
 # Phase 5 (t1973, GH#18380): cleanup + issue-reconcile extracted into two modules.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-cleanup.sh"
