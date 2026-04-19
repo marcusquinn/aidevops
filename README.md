@@ -52,13 +52,7 @@ The result: an AI operations platform that manages projects across every busines
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=marcusquinn_aidevops&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=marcusquinn_aidevops)
 [![CodeFactor](https://www.codefactor.io/repository/github/marcusquinn/aidevops/badge)](https://www.codefactor.io/repository/github/marcusquinn/aidevops)
 [![Maintainability](https://qlty.sh/gh/marcusquinn/projects/aidevops/maintainability.svg)](https://qlty.sh/gh/marcusquinn/projects/aidevops)
-<!-- Codacy badge temporarily hidden (t2178, GH#19636): Codacy's analyzer dropped
-     ~370K LOC from its index between 2026-04-16 and 2026-04-17 (532K → 162K)
-     while issue count stayed flat, collapsing the displayed grade from A to E
-     despite zero matching repo change. Same signature as prior self-healing
-     glitches on 2026-03-26 and 2026-03-31. SonarCloud, CodeFactor, and qlty.sh
-     still show A. Restore this line once Codacy re-indexes:
-     [![Codacy Badge](https://app.codacy.com/project/badge/Grade/2b1adbd66c454dae92234341e801b984)](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade) -->
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/2b1adbd66c454dae92234341e801b984)](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![CodeRabbit](https://img.shields.io/badge/CodeRabbit-AI%20Reviews-FF570A?logo=coderabbit&logoColor=white)](https://coderabbit.ai)
 
 <!-- License & Legal -->
