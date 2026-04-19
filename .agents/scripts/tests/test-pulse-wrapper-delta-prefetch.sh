@@ -111,7 +111,10 @@ _prefetch_needs_full_sweep() {
 	fi
 	local last_epoch now_epoch
 	# GH#17699: TZ=UTC required — macOS date interprets input as local time
-	last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_full_sweep" "+%s" 2>/dev/null) || last_epoch=0
+	# Cross-platform: try macOS date -j first, then GNU date -d
+	last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_full_sweep" "+%s" 2>/dev/null) \
+		|| last_epoch=$(TZ=UTC date -d "${last_full_sweep/T/ }" "+%s" 2>/dev/null) \
+		|| last_epoch=0
 	now_epoch=$(date -u +%s)
 	local age=$((now_epoch - last_epoch))
 	if [[ "$age" -ge "$PULSE_PREFETCH_FULL_SWEEP_INTERVAL" ]]; then
@@ -173,9 +176,11 @@ test_needs_full_sweep_no_entry() {
 }
 
 test_needs_full_sweep_stale() {
-	# 25 hours ago — macOS date -v syntax
+	# 25 hours ago — try macOS date -v first, then GNU date -d, then fixed fallback
 	local stale_ts
-	stale_ts=$(date -u -v-25H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || stale_ts="2026-03-31T11:00:00Z"
+	stale_ts=$(date -u -v-25H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) \
+		|| stale_ts=$(date -u -d '25 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) \
+		|| stale_ts="2026-03-31T11:00:00Z"
 	local entry
 	entry=$(jq -n --arg ts "$stale_ts" '{last_full_sweep: $ts}')
 	if _prefetch_needs_full_sweep "$entry"; then
@@ -188,8 +193,12 @@ test_needs_full_sweep_stale() {
 
 test_needs_full_sweep_recent() {
 	# 1 hour ago — should NOT need full sweep
+	# Try macOS date -v first, then GNU date -d; never fall back to current time
+	# (current time would make last_epoch=0 on Linux when date -j also fails, causing false positive)
 	local recent_ts
-	recent_ts=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || recent_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	recent_ts=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) \
+		|| recent_ts=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) \
+		|| recent_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	local entry
 	entry=$(jq -n --arg ts "$recent_ts" '{last_full_sweep: $ts}')
 	if _prefetch_needs_full_sweep "$entry"; then
