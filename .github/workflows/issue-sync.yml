@@ -391,6 +391,21 @@ jobs:
           fi
           echo "for_ref_issues=$FOR_REF_ISSUES" >> "$GITHUB_OUTPUT"
 
+          # t2391 / GH#19825: Detect range-syntax PR titles (tNNN..tNNN or
+          # tNNN, tNNN). These signal multi-task planning PRs — the pulse's
+          # auto-complete would match only the first task ID and mark it [x]
+          # which is always wrong. Downstream steps consume this flag and
+          # skip auto-complete regardless of body keywords (belt-and-braces
+          # per issue Case D: body `Closes #NNN` + range-syntax title must
+          # still skip TODO update).
+          RANGE_SYNTAX=""
+          if echo "$PR_TITLE" | grep -qE '^t[0-9]+\.\.t[0-9]+'; then
+            RANGE_SYNTAX="true"
+          elif echo "$PR_TITLE" | grep -qE '^t[0-9]+,[[:space:]]*t[0-9]+'; then
+            RANGE_SYNTAX="true"
+          fi
+          echo "range_syntax=$RANGE_SYNTAX" >> "$GITHUB_OUTPUT"
+
           # Determine if we have anything to process
           if [[ -n "$TASK_ID" || -n "$LINKED_ISSUES" ]]; then
             echo "has_work=true" >> "$GITHUB_OUTPUT"
@@ -398,7 +413,7 @@ jobs:
             echo "has_work=false" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "PR #$PR_NUMBER: task_id=$TASK_ID linked_issues=$LINKED_ISSUES for_ref_issues=$FOR_REF_ISSUES"
+          echo "PR #$PR_NUMBER: task_id=$TASK_ID linked_issues=$LINKED_ISSUES for_ref_issues=$FOR_REF_ISSUES range_syntax=$RANGE_SYNTAX"
 
       - name: Find issue by task ID (fallback)
         id: find-issue
@@ -671,6 +686,11 @@ jobs:
           # implementation work is not complete.
           LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
           FOR_REF_ISSUES: ${{ steps.extract.outputs.for_ref_issues }}
+          # t2391 / GH#19825: range-syntax PR titles (tNNN..tNNN or
+          # tNNN, tNNN) signal multi-task planning PRs and must skip the
+          # TODO auto-complete entirely, even if the body contains closing
+          # keywords. See the guard at the top of the run block.
+          RANGE_SYNTAX: ${{ steps.extract.outputs.range_syntax }}
           # t2034: gh CLI needs GH_TOKEN explicitly — without it, the t2029
           # `gh pr comment` fallback (posted when the TODO.md push is rejected
           # by branch protection) silently fails because gh has no auth.
@@ -691,6 +711,21 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+
+          # t2391 / GH#19825: Skip TODO.md proof-log for range-syntax titled PRs.
+          # Titles like `t2259..t2264: plan …` or `t2259, t2260: plan …` signal
+          # multi-task planning PRs. The auto-complete regex only captures the
+          # FIRST task ID, so marking it [x] is always wrong — the other tasks
+          # in the range never had implementation code shipped. This guard
+          # fires regardless of body keywords (belt-and-braces per issue Case D:
+          # even if the body contains `Closes #NNN`, the range-syntax title
+          # wins). The title-fallback path in `Find issue by task ID` (line 403)
+          # is separately gated by For/Ref (t2219) and parent-task (t2137);
+          # its status:done behaviour is out of scope for this guard.
+          if [[ "${RANGE_SYNTAX:-}" == "true" ]]; then
+            echo "::notice::PR title uses range-syntax (tNNN..tNNN or tNNN, tNNN) — skipping TODO.md proof-log (planning-only multi-task PR, GH#19825)"
+            exit 0
+          fi
 
           # GH#19782 / t2252: Skip TODO.md proof-log for planning-only PRs.
           # When the PR body uses only For/Ref references (t2046 planning
