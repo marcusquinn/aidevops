@@ -233,6 +233,9 @@ source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
 source "${SCRIPT_DIR}/pulse-quality-debt.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-ancillary-dispatch.sh"
+# GH#19949: canonical-repo fast-forward + stale worktree sweep (30min cadence).
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-canonical-maintenance.sh"
 
 #######################################
 # SSH agent integration for commit signing (t1882)
@@ -1024,6 +1027,7 @@ _pulse_execute_self_check() {
 		_interactive_pr_trigger_handover
 		_dispatch_ci_fix_worker
 		_dispatch_conflict_fix_worker
+		run_canonical_maintenance
 	)
 	for _sc_fn in "${_sc_expected_fns[@]}"; do
 		if ! declare -F "$_sc_fn" >/dev/null 2>&1; then
@@ -1069,6 +1073,7 @@ _pulse_execute_self_check() {
 		_PULSE_DISPATCH_ENGINE_LOADED
 		_PULSE_QUALITY_DEBT_LOADED
 		_PULSE_ANCILLARY_DISPATCH_LOADED
+		_PULSE_CANONICAL_MAINTENANCE_LOADED
 	)
 	local _sc_guard _sc_val
 	# The `${array[@]+"${array[@]}"}` pattern is safe under `set -u`
@@ -1177,6 +1182,17 @@ _pulse_run_deterministic_pipeline() {
 	else
 		run_stage_with_timeout "evaluate_routines" "$PRE_RUN_STAGE_TIMEOUT" \
 			evaluate_routines || true
+	fi
+
+	# GH#19949: Canonical-repo fast-forward + stale worktree sweep.
+	# Cadence-gated (~30 min) — the function's internal cadence check skips
+	# if too soon. Runs after routine evaluation and before health snapshot
+	# so the snapshot reflects the maintenance outcome.
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared — skipping canonical maintenance" >>"$LOGFILE"
+	else
+		run_stage_with_timeout "canonical_maintenance" "$PRE_RUN_STAGE_TIMEOUT" \
+			run_canonical_maintenance || true
 	fi
 
 	# Write structured health snapshot for instant diagnosis (GH#15107)

@@ -1,0 +1,372 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# pulse-canonical-maintenance.sh — Periodic canonical-repo fast-forward and stale worktree sweep.
+#
+# GH#19949: consolidated pulse stage combining two housekeeping tasks:
+#   1. Fast-forward canonical repos to origin/main (avoids stale main)
+#   2. Sweep stale worktrees whose branches are merged or PRs are closed
+#
+# Cadence: ~30 min (1800s), not per-cycle. Both operations are deterministic
+# and safe — fail-open on dirty trees, skip on active sessions, per-repo timeout.
+#
+# This module is sourced by pulse-wrapper.sh. It MUST NOT be executed
+# directly — it relies on the orchestrator having sourced:
+#   shared-constants.sh
+#   worker-lifecycle-common.sh
+# and having defined all PULSE_* configuration constants in the bootstrap section.
+#
+# Functions in this module (in source order):
+#   - _canonical_maintenance_run_with_timeout
+#   - _canonical_maintenance_check_cadence
+#   - _canonical_maintenance_has_active_session
+#   - _canonical_maintenance_audit_log
+#   - _canonical_ff_should_skip_repo
+#   - _canonical_ff_single_repo
+#   - _canonical_fast_forward
+#   - _stale_worktree_sweep_single_repo
+#   - _stale_worktree_sweep
+#   - run_canonical_maintenance
+
+# Include guard — prevent double-sourcing.
+[[ -n "${_PULSE_CANONICAL_MAINTENANCE_LOADED:-}" ]] && return 0
+_PULSE_CANONICAL_MAINTENANCE_LOADED=1
+
+# ---------------------------------------------------------------------------
+# _canonical_maintenance_run_with_timeout
+#
+# Runs a command with a timeout, falling back to running directly if the
+# `timeout` utility is not available (common on stock macOS without coreutils).
+# Arguments: $1 - timeout_seconds, $2.. - command and args
+# ---------------------------------------------------------------------------
+_canonical_maintenance_run_with_timeout() {
+	local timeout_seconds="$1"
+	shift
+	if command -v timeout &>/dev/null; then
+		timeout "$timeout_seconds" "$@"
+	else
+		"$@"
+	fi
+	return $?
+}
+
+# ---------------------------------------------------------------------------
+# Configuration constants (overridable via env)
+# ---------------------------------------------------------------------------
+CANONICAL_MAINTENANCE_CADENCE="${CANONICAL_MAINTENANCE_CADENCE:-1800}"       # 30 min
+CANONICAL_MAINTENANCE_LAST_RUN="${CANONICAL_MAINTENANCE_LAST_RUN:-${HOME}/.aidevops/.agent-workspace/pulse-canonical-maintenance-last-run}"
+CANONICAL_MAINTENANCE_TIMEOUT="${CANONICAL_MAINTENANCE_TIMEOUT:-60}"         # 60s per-repo hard timeout
+CANONICAL_MAINTENANCE_CLAIM_STAMP_DIR="${CANONICAL_MAINTENANCE_CLAIM_STAMP_DIR:-${HOME}/.aidevops/.agent-workspace/interactive-claims}"
+CANONICAL_MAINTENANCE_DEFAULT_BRANCH="${CANONICAL_MAINTENANCE_DEFAULT_BRANCH:-main}"  # fallback when symbolic-ref fails
+
+# ---------------------------------------------------------------------------
+# _canonical_maintenance_check_cadence
+#
+# Returns 0 if enough time has elapsed since the last run, 1 otherwise.
+# Arguments: $1 - now_epoch (current epoch seconds)
+# ---------------------------------------------------------------------------
+_canonical_maintenance_check_cadence() {
+	local now_epoch="$1"
+	if [[ ! -f "$CANONICAL_MAINTENANCE_LAST_RUN" ]]; then
+		return 0
+	fi
+	local last_run
+	last_run=$(cat "$CANONICAL_MAINTENANCE_LAST_RUN" 2>/dev/null || echo "0")
+	[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
+	local elapsed=$((now_epoch - last_run))
+	if [[ "$elapsed" -lt "$CANONICAL_MAINTENANCE_CADENCE" ]]; then
+		local remaining_min=$(((CANONICAL_MAINTENANCE_CADENCE - elapsed) / 60))
+		echo "[pulse-canonical-maintenance] Not due yet (${remaining_min}m remaining)" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _canonical_maintenance_has_active_session
+#
+# Check whether a repo has an active interactive session claim stamp.
+# Arguments: $1 - repo_path
+# Returns: 0 if an active session is detected (skip this repo), 1 if safe.
+# ---------------------------------------------------------------------------
+_canonical_maintenance_has_active_session() {
+	local repo_path="$1"
+	local stamp_dir="$CANONICAL_MAINTENANCE_CLAIM_STAMP_DIR"
+	[[ -d "$stamp_dir" ]] || return 1
+
+	local stamp
+	for stamp in "$stamp_dir"/*.json; do
+		[[ -f "$stamp" ]] || continue
+		local stamp_worktree=""
+		stamp_worktree=$(jq -r '.worktree // ""' "$stamp" 2>/dev/null) || continue
+		if [[ -n "$stamp_worktree" ]] && [[ "$stamp_worktree" == "$repo_path"* ]]; then
+			local stamp_pid=""
+			stamp_pid=$(jq -r '.pid // ""' "$stamp" 2>/dev/null) || continue
+			if [[ -n "$stamp_pid" ]] && [[ "$stamp_pid" =~ ^[0-9]+$ ]] && kill -0 "$stamp_pid" 2>/dev/null; then
+				return 0
+			fi
+		fi
+	done
+	return 1
+}
+
+# ---------------------------------------------------------------------------
+# _canonical_maintenance_audit_log
+#
+# Emit an audit log entry if the helper is available.
+# Arguments: $1 - message
+# ---------------------------------------------------------------------------
+_canonical_maintenance_audit_log() {
+	local message="$1"
+	local _audit_helper="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}/audit-log-helper.sh"
+	[[ -x "$_audit_helper" ]] && "$_audit_helper" log config.change "$message" 2>/dev/null || true
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _canonical_ff_should_skip_repo
+#
+# Pre-flight checks for a single repo. Returns 0 if the repo should be
+# skipped, 1 if it's safe to fast-forward. Prints skip reason to LOGFILE.
+# Arguments: $1 - repo_path
+# ---------------------------------------------------------------------------
+_canonical_ff_should_skip_repo() {
+	local repo_path="$1"
+
+	# Skip if dirty tree
+	local porcelain_output=""
+	porcelain_output=$(git -C "$repo_path" status --porcelain 2>/dev/null) || return 0
+	if [[ -n "$porcelain_output" ]]; then
+		echo "[pulse-canonical-maintenance] Skipping ${repo_path} — dirty tree" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+
+	# Skip if non-empty stash
+	local stash_output=""
+	stash_output=$(git -C "$repo_path" stash list 2>/dev/null) || stash_output=""
+	if [[ -n "$stash_output" ]]; then
+		echo "[pulse-canonical-maintenance] Skipping ${repo_path} — non-empty stash" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+
+	# Skip if active session
+	if _canonical_maintenance_has_active_session "$repo_path"; then
+		echo "[pulse-canonical-maintenance] Skipping ${repo_path} — active session detected" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+
+	# Skip if not on the default branch
+	local main_branch
+	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="$CANONICAL_MAINTENANCE_DEFAULT_BRANCH"
+	[[ -z "$main_branch" ]] && main_branch="$CANONICAL_MAINTENANCE_DEFAULT_BRANCH"
+	local current_branch
+	current_branch=$(git -C "$repo_path" branch --show-current 2>/dev/null) || current_branch=""
+	if [[ "$current_branch" != "$main_branch" ]]; then
+		echo "[pulse-canonical-maintenance] Skipping ${repo_path} — not on ${main_branch} (on ${current_branch})" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+
+	# All checks passed — do not skip
+	return 1
+}
+
+# ---------------------------------------------------------------------------
+# _canonical_ff_single_repo
+#
+# Fast-forward a single repo. Called from the per-repo loop in
+# _canonical_fast_forward. Returns 0=fast-forwarded, 1=skipped/failed.
+# Arguments: $1 - repo_path, $2 - dry_run ("1" or "0")
+# ---------------------------------------------------------------------------
+_canonical_ff_single_repo() {
+	local repo_path="$1"
+	local dry_run="$2"
+
+	# Determine default branch
+	local main_branch
+	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="$CANONICAL_MAINTENANCE_DEFAULT_BRANCH"
+	[[ -z "$main_branch" ]] && main_branch="$CANONICAL_MAINTENANCE_DEFAULT_BRANCH"
+
+	# Fetch origin
+	if [[ "$dry_run" == "1" ]]; then
+		echo "[DRY_RUN] Would fetch origin for ${repo_path}"
+	else
+		_canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" git -C "$repo_path" fetch origin --prune --quiet 2>/dev/null || {
+			echo "[pulse-canonical-maintenance] Fetch failed/timed out for ${repo_path}" >>"${LOGFILE:-/dev/null}"
+			return 1
+		}
+	fi
+
+	# Check commits behind
+	local behind_count=0
+	behind_count=$(git -C "$repo_path" rev-list --count "HEAD..origin/${main_branch}" 2>/dev/null) || behind_count=0
+	[[ "$behind_count" =~ ^[0-9]+$ ]] || behind_count=0
+	if [[ "$behind_count" -eq 0 ]]; then
+		echo "[pulse-canonical-maintenance] ${repo_path} — already up to date" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+
+	# Fast-forward
+	if [[ "$dry_run" == "1" ]]; then
+		echo "[DRY_RUN] Would fast-forward ${repo_path} (${behind_count} commits behind)"
+		return 0
+	fi
+
+	if _canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" git -C "$repo_path" pull --ff-only "origin" "$main_branch" 2>/dev/null; then
+		echo "[pulse-canonical-maintenance] Fast-forwarded ${repo_path} by ${behind_count} commits" >>"${LOGFILE:-/dev/null}"
+		_canonical_maintenance_audit_log "canonical-maintenance: fast-forwarded ${repo_path} by ${behind_count} commits"
+		return 0
+	fi
+
+	echo "[pulse-canonical-maintenance] Fast-forward failed for ${repo_path} (non-ff divergence?)" >>"${LOGFILE:-/dev/null}"
+	return 1
+}
+
+# ---------------------------------------------------------------------------
+# _canonical_fast_forward
+#
+# For each pulse-enabled, non-local_only repo in repos.json, run pre-flight
+# checks and fast-forward if behind origin.
+# Arguments: $1 - dry_run ("1" for dry run, "0" for real)
+# Returns: 0 always (fail-open per repo)
+# ---------------------------------------------------------------------------
+_canonical_fast_forward() {
+	local dry_run="${1:-0}"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	[[ -f "$repos_json" ]] && command -v jq &>/dev/null || return 0
+
+	local -a _repo_list=()
+	mapfile -t _repo_list < <(jq -r '.initialized_repos[] | select((.pulse // false) == true) | select((.local_only // false) == false) | .path // ""' "$repos_json" 2>/dev/null)
+
+	local repo_path ff_count=0 skip_count=0
+	for repo_path in "${_repo_list[@]}"; do
+		[[ -z "$repo_path" ]] && continue
+		[[ ! -d "$repo_path/.git" ]] && continue
+
+		if _canonical_ff_should_skip_repo "$repo_path"; then
+			skip_count=$((skip_count + 1))
+			continue
+		fi
+
+		if _canonical_ff_single_repo "$repo_path" "$dry_run"; then
+			ff_count=$((ff_count + 1))
+		fi
+	done
+
+	echo "[pulse-canonical-maintenance] Fast-forward pass: ${ff_count} repos updated, ${skip_count} skipped" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _stale_worktree_sweep_single_repo
+#
+# Sweep stale worktrees for a single repo.
+# Arguments: $1 - repo_path, $2 - dry_run, $3 - worktree_helper path
+# Outputs: number of removed worktrees to stdout
+# Returns: 0 always
+# ---------------------------------------------------------------------------
+_stale_worktree_sweep_single_repo() {
+	local repo_path="$1"
+	local dry_run="$2"
+	local worktree_helper="$3"
+	local _wt_prefix="^worktree "
+
+	if [[ "$dry_run" == "1" ]]; then
+		local wt_count=0
+		wt_count=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | grep -c "$_wt_prefix" || echo "0")
+		[[ "$wt_count" -gt 0 ]] && wt_count=$((wt_count - 1))
+		echo "[DRY_RUN] Would sweep worktrees for ${repo_path} (${wt_count} linked worktrees)"
+		printf '0'
+		return 0
+	fi
+
+	local before_count=0
+	before_count=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | grep -c "$_wt_prefix" || echo "0")
+
+	if ! _canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" "$worktree_helper" clean --auto --force-merged 2>/dev/null; then
+		echo "[pulse-canonical-maintenance] Worktree sweep timed out for ${repo_path}" >>"${LOGFILE:-/dev/null}"
+		printf '0'
+		return 0
+	fi
+
+	local after_count=0
+	after_count=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | grep -c "$_wt_prefix" || echo "0")
+	local removed=$((before_count - after_count))
+	if [[ "$removed" -gt 0 ]]; then
+		echo "[pulse-canonical-maintenance] Swept ${removed} worktrees for ${repo_path}" >>"${LOGFILE:-/dev/null}"
+		_canonical_maintenance_audit_log "canonical-maintenance: swept ${removed} worktrees for ${repo_path}"
+	fi
+	printf '%d' "$removed"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _stale_worktree_sweep
+#
+# For each pulse-enabled, non-local_only repo: invoke worktree-helper.sh
+# clean --auto --force-merged with a per-repo hard timeout.
+# Arguments: $1 - dry_run ("1" for dry run, "0" for real)
+# Returns: 0 always (fail-open per repo)
+# ---------------------------------------------------------------------------
+_stale_worktree_sweep() {
+	local dry_run="${1:-0}"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	[[ -f "$repos_json" ]] && command -v jq &>/dev/null || return 0
+
+	local worktree_helper="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}/worktree-helper.sh"
+	if [[ ! -x "$worktree_helper" ]]; then
+		echo "[pulse-canonical-maintenance] worktree-helper.sh not found or not executable" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+
+	local -a _repo_list=()
+	mapfile -t _repo_list < <(jq -r '.initialized_repos[] | select((.pulse // false) == true) | select((.local_only // false) == false) | .path // ""' "$repos_json" 2>/dev/null)
+
+	local repo_path sweep_count=0
+	for repo_path in "${_repo_list[@]}"; do
+		[[ -z "$repo_path" ]] && continue
+		[[ ! -d "$repo_path/.git" ]] && continue
+		local removed=0
+		removed=$(_stale_worktree_sweep_single_repo "$repo_path" "$dry_run" "$worktree_helper")
+		sweep_count=$((sweep_count + removed))
+	done
+
+	echo "[pulse-canonical-maintenance] Worktree sweep: ${sweep_count} total removed" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# run_canonical_maintenance
+#
+# Top-level entry point called from the deterministic pipeline.
+# Checks cadence, runs both passes, writes cadence state file.
+# Arguments: none (reads --dry-run from $1 if called directly)
+# Returns: 0 always
+# ---------------------------------------------------------------------------
+run_canonical_maintenance() {
+	local dry_run=0
+	if [[ "${1:-}" == "--dry-run" ]]; then
+		dry_run=1
+	fi
+
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	# Cadence gate (skip in dry-run mode to always show output)
+	if [[ "$dry_run" -eq 0 ]] && ! _canonical_maintenance_check_cadence "$now_epoch"; then
+		return 0
+	fi
+
+	echo "[pulse-canonical-maintenance] Starting canonical maintenance pass" >>"${LOGFILE:-/dev/null}"
+
+	_canonical_fast_forward "$dry_run"
+	_stale_worktree_sweep "$dry_run"
+
+	# Update cadence state file
+	if [[ "$dry_run" -eq 0 ]]; then
+		mkdir -p "$(dirname "$CANONICAL_MAINTENANCE_LAST_RUN")" 2>/dev/null || true
+		echo "$now_epoch" >"$CANONICAL_MAINTENANCE_LAST_RUN"
+	fi
+
+	echo "[pulse-canonical-maintenance] Canonical maintenance pass complete" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
