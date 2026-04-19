@@ -65,6 +65,7 @@ readonly CAT_REVIEW_BOT_GATE="review_bot_gate"
 readonly CAT_DEPENDENCIES="dependencies"
 readonly CAT_COLLABORATORS="collaborators"
 readonly CAT_REPO_SECURITY="repo_security"
+readonly CAT_SYNC_PAT="sync_pat"
 
 # Counters
 FINDINGS_CRITICAL=0
@@ -75,24 +76,28 @@ FINDINGS_PASS=0
 # Collected findings for JSON output
 FINDINGS_JSON="[]"
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+print_info() { local msg="$1"; echo -e "${BLUE}[INFO]${NC} $msg"; }
 print_pass() {
-	echo -e "${GREEN}[PASS]${NC} $1"
+	local msg="$1"
+	echo -e "${GREEN}[PASS]${NC} $msg"
 	((++FINDINGS_PASS))
 }
 print_warn() {
-	echo -e "${YELLOW}[WARN]${NC} $1"
+	local msg="$1"
+	echo -e "${YELLOW}[WARN]${NC} $msg"
 	((++FINDINGS_WARNING))
 }
 print_crit() {
-	echo -e "${RED}[CRIT]${NC} $1"
+	local msg="$1"
+	echo -e "${RED}[CRIT]${NC} $msg"
 	((++FINDINGS_CRITICAL))
 }
 print_skip() {
-	echo -e "${CYAN}[SKIP]${NC} $1"
+	local msg="$1"
+	echo -e "${CYAN}[SKIP]${NC} $msg"
 	((++FINDINGS_INFO))
 }
-print_header() { echo -e "\n${BOLD}${CYAN}$1${NC}"; }
+print_header() { local msg="$1"; echo -e "\n${BOLD}${CYAN}$msg${NC}"; }
 
 # Add a finding to the JSON array
 # Usage: add_finding <severity> <category> <message>
@@ -609,6 +614,176 @@ check_repo_security() {
 	return 0
 }
 
+# Phase 7: SYNC_PAT detection helpers (t2374)
+
+# Emit a SYNC_PAT advisory file for a repo that needs it.
+# Usage: _emit_sync_pat_advisory <slug> <slug_sanitised> <advisory_file> <required_reviews>
+_emit_sync_pat_advisory() {
+	local slug="$1"
+	local slug_sanitised="$2"
+	local advisory_file="$3"
+	local required_reviews="$4"
+
+	local advisory_dir
+	advisory_dir="$(dirname "$advisory_file")"
+	mkdir -p "$advisory_dir"
+
+	cat >"$advisory_file" <<ADVISORY_EOF
+[ADVISORY] SYNC_PAT not set for ${slug}
+
+This repo uses issue-sync.yml + branch protection requiring ${required_reviews} approving review(s).
+Without SYNC_PAT, TODO.md auto-completion silently fails on PR merge
+(github-actions[bot] cannot push to a branch-protected default branch).
+
+To fix (run in a separate terminal, NOT in AI chat):
+
+1. Create a fine-grained PAT in GitHub UI:
+   Settings > Developer settings > Personal access tokens > Fine-grained
+   > Only selected repositories > ${slug}
+   > Contents: Read and write
+
+2. Set the secret:
+   gh secret set SYNC_PAT --repo ${slug}
+   (interactive prompt — safer than --body which lands in shell history)
+
+Verify:
+   gh secret list --repo ${slug} | grep SYNC_PAT
+
+Dismiss once fixed:
+   aidevops security dismiss sync-pat-${slug_sanitised}
+
+See AGENTS.md "Known limitation — issue-sync TODO auto-completion" for background.
+ADVISORY_EOF
+
+	print_info "  Advisory written to: $advisory_file"
+	return 0
+}
+
+# Check whether a repo requires SYNC_PAT based on workflow + branch protection.
+# Returns via stdout: "needed" | "not_needed" | "skip"
+# Side effect: prints findings and cleans stale advisories.
+# Usage: _check_sync_pat_need <repo_path> <slug> <advisory_file>
+_check_sync_pat_need() {
+	local repo_path="$1"
+	local slug="$2"
+	local advisory_file="$3"
+
+	# Step 1: Does the repo use issue-sync.yml?
+	if ! gh api "repos/${slug}/contents/.github/workflows/issue-sync.yml" &>/dev/null 2>&1; then
+		print_pass "No issue-sync.yml — SYNC_PAT not needed for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No issue-sync.yml in $slug"
+		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+		echo "not_needed"
+		return 0
+	fi
+
+	# Step 2: Does the repo have branch protection requiring PR reviews?
+	local default_branch
+	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || true
+	default_branch="${default_branch:-main}"
+
+	local protection_json
+	protection_json=$(gh api "repos/${slug}/branches/${default_branch}/protection" 2>/dev/null) || true
+
+	if [[ -z "$protection_json" || "$protection_json" == *"Not Found"* || "$protection_json" == *"Branch not protected"* ]]; then
+		print_pass "No branch protection — SYNC_PAT not needed for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No branch protection in $slug"
+		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+		echo "not_needed"
+		return 0
+	fi
+
+	local required_reviews
+	required_reviews=$(echo "$protection_json" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null) || required_reviews="0"
+
+	if [[ "$required_reviews" -eq 0 ]]; then
+		print_pass "PR reviews not required — SYNC_PAT not needed for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No review requirement in $slug"
+		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+		echo "not_needed"
+		return 0
+	fi
+
+	# Step 3: Is SYNC_PAT set?
+	local secret_check
+	secret_check=$(gh secret list --repo "$slug" --json name -q '.[] | select(.name == "SYNC_PAT") | .name' 2>/dev/null) || true
+
+	if [[ -n "$secret_check" ]]; then
+		print_pass "SYNC_PAT is set for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "SYNC_PAT set for $slug"
+		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+		echo "not_needed"
+		return 0
+	fi
+
+	# Needs SYNC_PAT — return the required_reviews count for advisory
+	echo "needed:${required_reviews}"
+	return 0
+}
+
+# Phase 7: Check SYNC_PAT secret for repos using issue-sync.yml (t2374)
+# Detects repos that need SYNC_PAT but don't have it set, and emits
+# per-repo advisories via ~/.aidevops/advisories/sync-pat-<slug>.advisory.
+check_sync_pat() {
+	local repo_path="$1"
+
+	print_header "Phase 7: SYNC_PAT Detection (issue-sync)"
+
+	# Need gh CLI
+	if ! command -v gh &>/dev/null; then
+		print_skip "GitHub CLI (gh) not installed — cannot check SYNC_PAT"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "gh CLI not available"
+		return 0
+	fi
+
+	# Need authenticated gh — fail open on auth failure
+	if ! gh auth status &>/dev/null 2>&1; then
+		print_skip "gh not authenticated — SYNC_PAT check skipped"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "gh not authenticated"
+		return 0
+	fi
+
+	local slug
+	if ! slug=$(resolve_slug "$repo_path"); then
+		print_skip "No GitHub remote — SYNC_PAT check skipped"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "No GitHub remote"
+		return 0
+	fi
+
+	local slug_sanitised
+	slug_sanitised="${slug//\//-}"
+
+	local advisory_dir="$HOME/.aidevops/advisories"
+	local advisory_file="$advisory_dir/sync-pat-${slug_sanitised}.advisory"
+	local dismissed_file="$advisory_dir/.dismissed-sync-pat-${slug_sanitised}"
+
+	# If already dismissed, skip silently
+	if [[ -f "$dismissed_file" ]]; then
+		print_pass "SYNC_PAT advisory dismissed for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "Advisory dismissed for $slug"
+		return 0
+	fi
+
+	# Check need via helper
+	local need_result
+	need_result=$(_check_sync_pat_need "$repo_path" "$slug" "$advisory_file")
+
+	if [[ "$need_result" == "not_needed" ]]; then
+		return 0
+	fi
+
+	# Extract required_reviews count from "needed:<N>" result
+	local required_reviews
+	required_reviews="${need_result#needed:}"
+
+	print_warn "SYNC_PAT not set for $slug — TODO.md auto-completion will silently fail on PR merge"
+	add_finding "$SEVERITY_WARNING" "$CAT_SYNC_PAT" "SYNC_PAT not set for $slug"
+
+	_emit_sync_pat_advisory "$slug" "$slug_sanitised" "$advisory_file" "$required_reviews"
+
+	return 0
+}
+
 # Store security posture in .aidevops.json
 store_posture() {
 	local repo_path="$1"
@@ -755,6 +930,7 @@ run_all_checks() {
 	check_dependencies "$repo_path"
 	check_collaborators "$repo_path"
 	check_repo_security "$repo_path"
+	check_sync_pat "$repo_path"
 	print_report
 
 	return 0
@@ -1334,6 +1510,7 @@ Per-repo checks (check/audit/store):
   4. Dependency vulnerabilities (npm/pip/cargo audit)
   5. Collaborator access levels (per-repo, never cached)
   6. Repository security basics (SECURITY.md, .gitignore, secrets)
+  7. SYNC_PAT detection for repos using issue-sync.yml (t2374)
 
 User-level checks (startup-check/setup/status):
   1. Prompt injection patterns (YAML file present and <30d old)
