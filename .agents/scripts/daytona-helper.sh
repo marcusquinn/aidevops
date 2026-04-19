@@ -133,7 +133,8 @@ api_get() {
 
 api_post() {
 	local path="$1"
-	local body="${2:-{}}"
+	local body="${2:-}"
+	[[ -n "$body" ]] || body="{}"
 	local api_key
 	api_key="$(get_api_key)" || return 1
 

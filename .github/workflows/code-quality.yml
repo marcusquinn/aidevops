@@ -364,6 +364,27 @@ jobs:
         bash .agents/scripts/tests/test-pulse-wrapper-canary.sh
         echo "Pulse wrapper canary test passed"
 
+    - name: Bash Expansion Pattern Guard (GH#19966)
+      run: |
+        # Guard against the ${N:-{}} expansion bug: bash reads "${2:-{}" as the
+        # expansion (default="{") and appends the trailing "}" as a literal,
+        # corrupting non-empty args with a spurious trailing }. Use the
+        # explicit-fallback idiom instead: "${2:-}" then [[ -n "$x" ]] || x="{}".
+        echo "Checking for buggy \${N:-{}} bash parameter expansion pattern..."
+        if rg -n '\$\{[0-9]+:-\{\}\}' .agents/scripts/ --type sh \
+             --glob '!.agents/scripts/tests/**' 2>/dev/null; then
+          echo ""
+          echo "ERROR: Found \${N:-{}} expansion(s) above. Replace with the"
+          echo "       explicit-fallback idiom (GH#19966):"
+          echo "         local x=\"\${N:-}\""
+          echo "         [[ -n \"\$x\" ]] || x=\"{}\""
+          exit 1
+        fi
+        echo "No \${N:-{}} expansion patterns found."
+        echo "Delta prefetch regression tests..."
+        bash .agents/scripts/tests/test-pulse-wrapper-delta-prefetch.sh
+        echo "Delta prefetch regression tests passed"
+
   complexity-check:
     # IMPORTANT: This job's `name:` is a required status check on main (GH#18393).
     # Renaming it requires updating branch protection: gh api -X PATCH
