@@ -485,6 +485,121 @@ _gather_health_stats() {
 }
 
 #######################################
+# Format the Worker Success Rate section markdown.
+#
+# Produces a two-row table showing 24h and 7d rates plus a parseable
+# HTML comment so fleet-health-helper.sh (t2408) can extract values
+# without re-running stats queries.
+#
+# Arguments:
+#   $1 - rate_24h   (display string: "X% (M/T)" or "—")
+#   $2 - rate_7d    (display string: "X% (M/T)" or "—")
+#   $3 - total_24h  (numeric total run count for 24h window)
+#   $4 - total_7d   (numeric total run count for 7d window)
+# Output: markdown block to stdout
+#######################################
+_format_worker_rate_section() {
+	local rate_24h="$1"
+	local rate_7d="$2"
+	local total_24h="$3"
+	local total_7d="$4"
+	printf '| Window | Success Rate |\n| --- | --- |\n| 24h | %s |\n| 7d | %s |\n\n<!-- worker-success-rate: 24h_total=%s 7d_total=%s -->' \
+		"$rate_24h" "$rate_7d" "$total_24h" "$total_7d"
+	return 0
+}
+
+#######################################
+# Compute worker success rates for a given time window.
+#
+# Queries merged and closed-unmerged worker PRs across all pulse repos
+# and counts watchdog kills (exit_code=124) from the headless-runtime
+# metrics file. Fails open: gh errors count as 0; missing metrics file
+# skips kill counting.
+#
+# Minimum-sample floor: when total_count < 5 the rate is reported as
+# "—" (sentinel) per the t2402 §4 specification.
+#
+# Arguments:
+#   $1 - runner_login  (GitHub username of the runner)
+#   $2 - window_hours  (look-back window in hours, e.g. 24 or 168)
+# Output: "<merged_count>\t<total_count>\t<rate_display>" to stdout
+#   where rate_display is "X% (M/T)" when total >= 5, else "—"
+#######################################
+_compute_worker_success_rates() {
+	local runner_login="$1"
+	local window_hours="$2"
+	local _iso_fmt="%Y-%m-%dT%H:%M:%SZ"
+	local window_epoch window_start
+	if [[ "$(uname)" == "Darwin" ]]; then
+		window_epoch=$(date -u -v-"${window_hours}"H +"%s")
+		window_start=$(date -u -v-"${window_hours}"H +"$_iso_fmt")
+	else
+		window_epoch=$(date -u -d "${window_hours} hours ago" +"%s")
+		window_start=$(date -u -d "${window_hours} hours ago" +"$_iso_fmt")
+	fi
+	local merged_count=0 closed_unmerged_count=0 killed_count=0
+	local repos_file="${HOME}/.config/aidevops/repos.json"
+	if [[ -f "$repos_file" ]]; then
+		local slug
+		while IFS= read -r slug; do
+			[[ -z "$slug" ]] && continue
+			local m cu
+			m=$(gh search prs \
+				--repo "$slug" \
+				--author "$runner_login" \
+				--label "origin:worker" \
+				--merged \
+				--created ">${window_start}" \
+				--json number \
+				--jq 'length' \
+				--limit 500 2>/dev/null || echo "0")
+			merged_count=$(( merged_count + ${m:-0} ))
+			cu=$(gh search prs \
+				--repo "$slug" \
+				--author "$runner_login" \
+				--label "origin:worker" \
+				--state closed \
+				--created ">${window_start}" \
+				--json mergedAt \
+				--jq '[.[] | select(.mergedAt == null)] | length' \
+				--limit 500 2>/dev/null || echo "0")
+			closed_unmerged_count=$(( closed_unmerged_count + ${cu:-0} ))
+		done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only != true)) | .slug' "$repos_file" 2>/dev/null)
+	fi
+	local metrics_file="${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl"
+	if [[ -f "$metrics_file" ]]; then
+		killed_count=$(METRICS_PATH="$metrics_file" EPOCH="$window_epoch" \
+			python3 - 2>/dev/null <<'PY'
+import json, os
+metrics_path = os.environ["METRICS_PATH"]
+epoch = int(os.environ["EPOCH"])
+count = 0
+with open(metrics_path) as f:
+    for line in f:
+        try:
+            d = json.loads(line)
+            if d.get("ts", 0) >= epoch and d.get("exit_code") == 124:
+                count += 1
+        except Exception:
+            pass
+print(count)
+PY
+		)
+		killed_count="${killed_count:-0}"
+	fi
+	local total_count=$(( merged_count + closed_unmerged_count + killed_count ))
+	local rate_display
+	if [[ "$total_count" -lt 5 ]]; then
+		rate_display="—"
+	else
+		local rate_int=$(( 100 * merged_count / total_count ))
+		rate_display="${rate_int}% (${merged_count}/${total_count})"
+	fi
+	printf '%d\t%d\t%s\n' "$merged_count" "$total_count" "$rate_display"
+	return 0
+}
+
+#######################################
 # Build the health issue body markdown.
 #
 # Arguments:
@@ -515,6 +630,10 @@ _gather_health_stats() {
 #   $25 - sys_memory
 #   $26 - sys_procs
 #   $27 - runner_role
+#   $28 - worker_success_rate_24h  (display string: "X% (M/T)" or "—")
+#   $29 - worker_success_rate_7d   (display string: "X% (M/T)" or "—")
+#   $30 - worker_total_runs_24h    (numeric total run count for 24h window)
+#   $31 - worker_total_runs_7d     (numeric total run count for 7d window)
 # Output: body markdown to stdout
 #######################################
 _build_health_issue_body() {
@@ -545,6 +664,11 @@ _build_health_issue_body() {
 	local sys_memory="${25}"
 	local sys_procs="${26}"
 	local runner_role="${27}"
+	local worker_success_rate_24h="${28}" worker_success_rate_7d="${29}"
+	local worker_total_runs_24h="${30}" worker_total_runs_7d="${31}"
+	local _worker_rate_section; _worker_rate_section=$(_format_worker_rate_section \
+		"$worker_success_rate_24h" "$worker_success_rate_7d" \
+		"$worker_total_runs_24h" "$worker_total_runs_7d")
 
 	cat <<BODY
 ## Queue Health Dashboard
@@ -572,6 +696,10 @@ ${prs_md}
 ### Active Workers
 
 ${workers_md}
+
+### Worker Success Rate
+
+${_worker_rate_section}
 
 ### GitHub activity on this project (last 30 days)
 
@@ -790,6 +918,16 @@ _assemble_health_issue_body() {
 	session_time_md=$(_gather_session_time_for_repo "$repo_path")
 	person_stats_md=$(_read_person_stats_cache "$slug_safe")
 
+	local sr24h_raw sr7d_raw
+	sr24h_raw=$(_compute_worker_success_rates "$runner_user" "24")
+	sr7d_raw=$(_compute_worker_success_rates "$runner_user" "168")
+	local worker_success_rate_24h worker_total_runs_24h
+	worker_success_rate_24h=$(printf '%s' "$sr24h_raw" | cut -f3)
+	worker_total_runs_24h=$(printf '%s' "$sr24h_raw" | cut -f2)
+	local worker_success_rate_7d worker_total_runs_7d
+	worker_success_rate_7d=$(printf '%s' "$sr7d_raw" | cut -f3)
+	worker_total_runs_7d=$(printf '%s' "$sr7d_raw" | cut -f2)
+
 	_build_health_issue_body \
 		"$now_iso" "$role_display" "$runner_user" "$repo_slug" \
 		"$pr_count" "$assigned_issue_count" "$total_issue_count" \
@@ -800,7 +938,9 @@ _assemble_health_issue_body() {
 		"$session_time_md" "$cross_repo_session_time_md" \
 		"$activity_md" "$cross_repo_md" \
 		"$sys_load_ratio" "$sys_cpu_cores" "$sys_load_1m" "$sys_load_5m" \
-		"$sys_memory" "$sys_procs" "$runner_role"
+		"$sys_memory" "$sys_procs" "$runner_role" \
+		"$worker_success_rate_24h" "$worker_success_rate_7d" \
+		"$worker_total_runs_24h" "$worker_total_runs_7d"
 	return 0
 }
 
