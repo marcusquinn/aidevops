@@ -664,6 +664,13 @@ jobs:
         env:
           TASK_ID: ${{ steps.extract.outputs.task_id }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          # GH#19782 / t2252: pass For/Ref and closing-keyword issue lists
+          # so the proof-log step can distinguish planning-only PRs from
+          # implementation PRs. Planning PRs (For/Ref only, no Closes/Fixes/
+          # Resolves) must NOT mark the TODO entry [x] — the task's
+          # implementation work is not complete.
+          LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          FOR_REF_ISSUES: ${{ steps.extract.outputs.for_ref_issues }}
           # t2034: gh CLI needs GH_TOKEN explicitly — without it, the t2029
           # `gh pr comment` fallback (posted when the TODO.md push is rejected
           # by branch protection) silently fails because gh has no auth.
@@ -684,6 +691,21 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+
+          # GH#19782 / t2252: Skip TODO.md proof-log for planning-only PRs.
+          # When the PR body uses only For/Ref references (t2046 planning
+          # convention) without any closing keywords (Closes/Fixes/Resolves),
+          # the PR is a planning reference — the task's implementation work
+          # is not complete. Marking the TODO entry [x] here would:
+          #   (a) falsely declare the task done in TODO.md
+          #   (b) trigger sync-on-push → issue-sync-helper.sh close on the
+          #       next TODO.md push cycle, applying status:done to the issue
+          # The title-fallback path (issue status:done) was separately fixed
+          # in t2219 (PR #19820). This guard closes the TODO.md path.
+          if [[ -z "${LINKED_ISSUES:-}" ]] && [[ -n "${FOR_REF_ISSUES:-}" ]]; then
+            echo "::notice::PR body uses For/Ref references only (no closing keywords) — skipping TODO.md proof-log (planning-only PR, GH#19782)"
+            exit 0
+          fi
 
           # t2048: log which credential path is active so operators can tell
           # at a glance whether the PAT is wired up. t2166 promoted the
