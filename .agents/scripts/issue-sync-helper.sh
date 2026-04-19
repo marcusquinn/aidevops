@@ -1010,7 +1010,7 @@ _enrich_update_issue() {
 	fi
 
 	if [[ "$do_body_update" == "true" ]]; then
-		if gh issue edit "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
+		if gh_issue_edit_safe "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
 			return 0
 		fi
 		print_error "Failed to enrich body on #$num ($task_id)"
@@ -1025,7 +1025,7 @@ _enrich_update_issue() {
 		return 0
 	fi
 	# Still update title even when body is preserved/skipped (GH#18411).
-	if gh issue edit "$num" --repo "$repo" --title "$title" 2>/dev/null; then
+	if gh_issue_edit_safe "$num" --repo "$repo" --title "$title" 2>/dev/null; then
 		return 0
 	fi
 	print_error "Failed to enrich title on #$num ($task_id)"

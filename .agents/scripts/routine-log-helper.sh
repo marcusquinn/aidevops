@@ -579,7 +579,7 @@ _update_tracking_issue() {
 		"$period_summary")
 
 	# Update issue description
-	if gh issue edit "$issue_number" --repo "$repo_slug" --body "$new_body" &>/dev/null; then
+	if gh_issue_edit_safe "$issue_number" --repo "$repo_slug" --body "$new_body" &>/dev/null; then
 		_log_success "Updated issue #${issue_number} for ${routine_id} (${status}, ${duration}s)"
 	else
 		_log_error "Failed to update issue #${issue_number} for ${routine_id}"
@@ -738,7 +738,7 @@ cmd_refresh_description() {
 		"$period_summary")
 
 	# Push updated body to GitHub
-	if gh issue edit "$issue_number" --repo "$repo_slug" --body "$new_body" &>/dev/null; then
+	if gh_issue_edit_safe "$issue_number" --repo "$repo_slug" --body "$new_body" &>/dev/null; then
 		_log_success "Refreshed description for issue #${issue_number} (${routine_id}) — no run entry recorded"
 	else
 		_log_error "Failed to refresh issue #${issue_number} for ${routine_id}"

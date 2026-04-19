@@ -317,7 +317,7 @@ _update_notification_draft() {
 		{ print }
 	')
 
-	gh issue edit "$issue_number" --repo "$slug" --body "$new_body" >/dev/null 2>&1 || {
+	gh_issue_edit_safe "$issue_number" --repo "$slug" --body "$new_body" >/dev/null 2>&1 || {
 		_log_warn "Failed to update notification issue #${issue_number} body"
 		return 1
 	}
