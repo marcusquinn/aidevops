@@ -115,26 +115,53 @@ fi
 [[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "base SHA: ${BASE_SHA:0:7}"
 
 # ---------------------------------------------------------------------------
-# Run the check for each metric. Accumulate exit codes; fail loudly on any
-# regression; fail-open on helper invocation errors (exit 2).
+# Run the check for each metric IN PARALLEL. Accumulate exit codes; fail
+# loudly on any regression; fail-open on helper invocation errors (exit 2).
+#
+# Parallelization (t2381): all 3 metric checks run concurrently via background
+# subshells, reducing wall-clock time from ~3min to ~1min (the slowest single
+# check). Results are collected via temp files and processed in order so output
+# format is identical to the sequential version.
 # ---------------------------------------------------------------------------
 METRICS=("function-complexity" "nesting-depth" "file-size")
 exit_code=0
 
-for metric in "${METRICS[@]}"; do
-	[[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "checking metric: $metric"
+# Create temp dir for parallel result collection
+_parallel_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/complexity-guard.XXXXXX")
+if [[ -z "$_parallel_tmpdir" || ! -d "$_parallel_tmpdir" ]]; then
+	_log WARN "failed to create temp dir for parallel checks — fail-open"
+	exit 0
+fi
+trap 'rm -rf "$_parallel_tmpdir"' EXIT
 
-	helper_output=$("$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$metric" 2>&1)
-	helper_rc=$?
+# Launch all metric checks in parallel
+for _i in "${!METRICS[@]}"; do
+	_metric="${METRICS[$_i]}"
+	[[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "launching metric: $_metric (parallel)"
+	(
+		"$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" \
+			> "${_parallel_tmpdir}/${_i}.out" 2>&1
+		printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc"
+	) &
+done
+
+# Wait for all parallel checks to complete
+wait
+
+# Process results in original metric order (preserves output format)
+for _i in "${!METRICS[@]}"; do
+	_metric="${METRICS[$_i]}"
+	helper_rc=$(cat "${_parallel_tmpdir}/${_i}.rc" 2>/dev/null || echo "0")
+	helper_output=$(cat "${_parallel_tmpdir}/${_i}.out" 2>/dev/null || echo "")
 
 	case "$helper_rc" in
 	0)
-		[[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "[$metric] no new violations"
+		[[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "[$_metric] no new violations"
 		;;
 	1)
 		# New violations detected — extract the REGRESSION summary line(s) for display
 		regression_lines=$(printf '%s\n' "$helper_output" | grep "REGRESSION:" || true)
-		printf '\n[%s][BLOCK] Push introduces new %s violation(s):\n' "$GUARD_NAME" "$metric" >&2
+		printf '\n[%s][BLOCK] Push introduces new %s violation(s):\n' "$GUARD_NAME" "$_metric" >&2
 		printf '\n' >&2
 		if [[ -n "$regression_lines" ]]; then
 			printf '%s\n' "$regression_lines" >&2
@@ -142,7 +169,7 @@ for metric in "${METRICS[@]}"; do
 		printf '%s\n' "$helper_output" | grep -v "^\[complexity" >&2 || true
 		printf '\n' >&2
 		printf '  Thresholds:\n' >&2
-		case "$metric" in
+		case "$_metric" in
 		function-complexity) printf '    function-complexity: shell functions must be <= 100 lines\n' >&2 ;;
 		nesting-depth)       printf '    nesting-depth: shell files must have max nesting depth <= 8\n' >&2 ;;
 		file-size)           printf '    file-size: .sh/.py files must be <= 1500 lines\n' >&2 ;;
@@ -156,11 +183,11 @@ for metric in "${METRICS[@]}"; do
 		;;
 	2)
 		# Helper invocation error — fail-open so a broken env doesn't block all pushes
-		_log WARN "[$metric] helper invocation error (exit 2) — fail-open"
+		_log WARN "[$_metric] helper invocation error (exit 2) — fail-open"
 		[[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && printf '%s\n' "$helper_output" >&2
 		;;
 	*)
-		_log WARN "[$metric] unexpected exit code $helper_rc — fail-open"
+		_log WARN "[$_metric] unexpected exit code $helper_rc — fail-open"
 		;;
 	esac
 done
