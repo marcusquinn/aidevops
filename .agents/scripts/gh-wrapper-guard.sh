@@ -75,21 +75,21 @@ _scan_line() {
 	# Match raw "gh issue create" or "gh pr create"
 	# Use word-boundary-like matching: the gh command should be preceded by
 	# start-of-line, whitespace, pipe, semicolon, $( or backtick.
-	if echo "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+issue[[:space:]]+create'; then
+	if printf '%s\n' "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+issue[[:space:]]+create'; then
 		return 0
 	fi
-	if echo "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+pr[[:space:]]+create'; then
+	if printf '%s\n' "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+pr[[:space:]]+create'; then
 		return 0
 	fi
 
 	# GH#19857: Match raw "gh issue edit" or "gh pr edit" with --title or --body.
 	# Label-only edits (no --title/--body) are fine without the safe wrapper.
-	if echo "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+issue[[:space:]]+edit' &&
-		echo "$line" | grep -qE '\-\-title\b|\-\-body\b|\-\-body-file\b'; then
+	if printf '%s\n' "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+issue[[:space:]]+edit' &&
+		printf '%s\n' "$line" | grep -qE '\-\-title\b|\-\-body\b|\-\-body-file\b'; then
 		return 0
 	fi
-	if echo "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+pr[[:space:]]+edit' &&
-		echo "$line" | grep -qE '\-\-title\b|\-\-body\b|\-\-body-file\b'; then
+	if printf '%s\n' "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+pr[[:space:]]+edit' &&
+		printf '%s\n' "$line" | grep -qE '\-\-title\b|\-\-body\b|\-\-body-file\b'; then
 		return 0
 	fi
 
@@ -221,9 +221,9 @@ cmd_check_full() {
 
 	# Fast grep pass: find candidate files with raw gh issue/pr create or edit
 	local candidates
-	candidates=$(git ls-files '*.sh' 2>/dev/null |
-		grep -vE '(shared-constants\.sh|agents/scripts/tests/)' |
-		xargs grep -lE 'gh[[:space:]]+(issue|pr)[[:space:]]+(create|edit)' 2>/dev/null ||
+	candidates=$(git ls-files -z '*.sh' 2>/dev/null |
+		grep -zvE '(shared-constants\.sh|agents/scripts/tests/)' |
+		xargs -0 grep -lE 'gh[[:space:]]+(issue|pr)[[:space:]]+(create|edit)' ||
 		true)
 
 	if [[ -z "$candidates" ]]; then

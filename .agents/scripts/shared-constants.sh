@@ -1271,7 +1271,8 @@ _gh_validate_edit_args() {
 	# Validate title if present
 	if [[ "$has_title" -eq 1 ]]; then
 		local trimmed_title
-		trimmed_title=$(printf '%s' "$title_val" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		trimmed_title="${title_val#"${title_val%%[![:space:]]*}"}"
+		trimmed_title="${trimmed_title%"${trimmed_title##*[![:space:]]}"}"
 		if [[ -z "$trimmed_title" ]]; then
 			_GH_EDIT_REJECTION_REASON="empty title (after trimming whitespace)"
 			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
@@ -1288,7 +1289,8 @@ _gh_validate_edit_args() {
 	# Validate body if present
 	if [[ "$has_body" -eq 1 ]]; then
 		local trimmed_body
-		trimmed_body=$(printf '%s' "$body_val" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		trimmed_body="${body_val#"${body_val%%[![:space:]]*}"}"
+		trimmed_body="${trimmed_body%"${trimmed_body##*[![:space:]]}"}"
 		if [[ -z "$trimmed_body" ]]; then
 			_GH_EDIT_REJECTION_REASON="empty body (after trimming whitespace)"
 			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
