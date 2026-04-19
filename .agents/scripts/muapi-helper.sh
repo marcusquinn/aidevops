@@ -683,7 +683,9 @@ submit_specialized() {
 	local endpoint="$1"
 	local image_url="$2"
 	shift 2
-	local extra_payload="${1:-{}}"
+	# GH#19936: "${1:-{}}" bash expansion foot-gun — use explicit fallback instead.
+	local extra_payload="${1:-}"
+	[[ -n "$extra_payload" ]] || extra_payload="{}"
 	local poll_interval="${2:-${DEFAULT_POLL_INTERVAL}}"
 	local timeout="${3:-${DEFAULT_TIMEOUT}}"
 	local output_file="${4:-}"

@@ -133,7 +133,9 @@ api_get() {
 
 api_post() {
 	local path="$1"
-	local body="${2:-{}}"
+	# GH#19936: "${2:-{}}" bash expansion foot-gun — use explicit fallback instead.
+	local body="${2:-}"
+	[[ -n "$body" ]] || body="{}"
 	local api_key
 	api_key="$(get_api_key)" || return 1
 

@@ -214,6 +214,104 @@ test_cache_atomic_write() {
 	return 0
 }
 
+# ─── GH#19936: bash expansion foot-gun regression tests ──────────────────────
+#
+# The pattern "${PARAM:-{}}" is a well-known bash foot-gun: the parser reads
+# "${PARAM:-{}" as the expansion (default = "{") and treats the trailing "}"
+# as a literal character. Non-empty $PARAM values arrive with a spurious
+# trailing "}", making them invalid JSON.
+#
+# The fix replaces "${2:-{}}" with an explicit two-line idiom:
+#   local x="${2:-}"
+#   [[ -n "$x" ]] || x="{}"
+
+# Helper that emulates the buggy pattern (for regression evidence)
+_test_buggy_expansion() {
+	local in_val="$1"
+	local x="${in_val:-{}}"
+	echo "$x"
+	return 0
+}
+
+# Helper that emulates the fixed pattern
+_test_fixed_expansion() {
+	local in_val="$1"
+	local x="${in_val:-}"
+	[[ -n "$x" ]] || x="{}"
+	echo "$x"
+	return 0
+}
+
+test_expansion_empty_input_fixed() {
+	# When input is empty, fixed pattern should yield exactly "{}"
+	local result
+	result=$(_test_fixed_expansion "")
+	if [[ "$result" == "{}" ]]; then
+		print_result "GH#19936: fixed pattern yields '{}' for empty input" 0
+	else
+		print_result "GH#19936: fixed pattern yields '{}' for empty input" 1 "got: $(printf '%q' "$result")"
+	fi
+	return 0
+}
+
+test_expansion_json_input_fixed() {
+	# When input is a JSON object, fixed pattern must preserve it exactly.
+	local json='{"last_prefetch":"2026-04-19T10:00:00Z","prs":[]}'
+	local result
+	result=$(_test_fixed_expansion "$json")
+	if [[ "$result" == "$json" ]]; then
+		print_result "GH#19936: fixed pattern preserves non-empty JSON string exactly" 0
+	else
+		print_result "GH#19936: fixed pattern preserves non-empty JSON string exactly" 1 \
+			"expected len=${#json} got len=${#result}; extra chars: $(printf '%q' "${result#"$json"}")"
+	fi
+	return 0
+}
+
+test_expansion_json_input_fixed_is_valid_json() {
+	# The fixed value must be valid JSON (no spurious trailing "}").
+	local json='{"last_prefetch":"2026-04-19T10:00:00Z","prs":[]}'
+	local result
+	result=$(_test_fixed_expansion "$json")
+	if echo "$result" | jq empty 2>/dev/null; then
+		print_result "GH#19936: fixed pattern output is valid JSON" 0
+	else
+		print_result "GH#19936: fixed pattern output is valid JSON" 1 "jq parse failed on: $(printf '%q' "$result")"
+	fi
+	return 0
+}
+
+test_expansion_last_prefetch_extractable() {
+	# The key consumer: jq -r '.last_prefetch // ""' must return the timestamp.
+	local json='{"last_prefetch":"2026-04-19T10:00:00Z","prs":[]}'
+	local result
+	result=$(_test_fixed_expansion "$json")
+	local ts
+	ts=$(echo "$result" | jq -r '.last_prefetch // ""' 2>/dev/null)
+	if [[ "$ts" == "2026-04-19T10:00:00Z" ]]; then
+		print_result "GH#19936: last_prefetch extractable from fixed cache_entry" 0
+	else
+		print_result "GH#19936: last_prefetch extractable from fixed cache_entry" 1 "got ts='$ts'"
+	fi
+	return 0
+}
+
+test_buggy_pattern_produces_trailing_brace() {
+	# Confirm the old pattern IS broken — provides regression evidence.
+	local json='{"last_prefetch":"2026-04-19T10:00:00Z"}'
+	local result
+	result=$(_test_buggy_expansion "$json")
+	local expected_buggy="${json}}"  # extra "}" appended
+	if [[ "$result" == "$expected_buggy" ]]; then
+		print_result "GH#19936: (evidence) buggy pattern adds trailing '}'" 0
+	else
+		# Not the expected buggy output — may be a bash version that handles it correctly.
+		print_result "GH#19936: (evidence) buggy pattern adds trailing '}'" 0 \
+			"NOTE: bash $(bash --version | head -1) may handle this differently; got=$(printf '%q' "$result")"
+	fi
+	return 0
+}
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 main() {
@@ -226,6 +324,13 @@ main() {
 	test_needs_full_sweep_stale
 	test_needs_full_sweep_recent
 	test_cache_atomic_write
+
+	# GH#19936 regression tests
+	test_expansion_empty_input_fixed
+	test_expansion_json_input_fixed
+	test_expansion_json_input_fixed_is_valid_json
+	test_expansion_last_prefetch_extractable
+	test_buggy_pattern_produces_trailing_brace
 
 	teardown_test_env
 

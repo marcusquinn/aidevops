@@ -617,7 +617,12 @@ $todo_in_progress
 loop_create_receipt() {
 	local receipt_type="$1"
 	local outcome="$2"
-	local evidence="${3:-{}}"
+	# GH#19936: "${3:-{}}" bash expansion foot-gun — use explicit fallback instead.
+	# The existing jq-empty guard below catches invalid JSON, but the foot-gun
+	# means a non-empty caller value arrives with a spurious trailing "}" that
+	# causes the guard to fire and silently discard real evidence.
+	local evidence="${3:-}"
+	[[ -n "$evidence" ]] || evidence="{}"
 
 	# Validate evidence is valid JSON, fallback to empty object
 	if ! echo "$evidence" | jq empty 2>/dev/null; then

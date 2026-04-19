@@ -689,7 +689,12 @@ _prefetch_prs_format_output() {
 
 _prefetch_repo_prs() {
 	local slug="$1"
-	local cache_entry="${2:-{}}"
+	# GH#19936: "${2:-{}}" is a bash expansion foot-gun — the parser reads
+	# "${2:-{}" as the expansion (default = "{") and treats the trailing "}"
+	# as a literal, producing cache_entry with a spurious trailing "}" when $2
+	# is non-empty. Every downstream jq call fails, forcing a full sweep.
+	local cache_entry="${2:-}"
+	[[ -n "$cache_entry" ]] || cache_entry="{}"
 	local sweep_mode="${3:-full}"
 
 	# PRs (createdAt included for daily PR cap — GH#3821)
@@ -885,7 +890,9 @@ _prefetch_issues_try_delta() {
 
 _prefetch_repo_issues() {
 	local slug="$1"
-	local cache_entry="${2:-{}}"
+	# GH#19936: same bash expansion foot-gun as _prefetch_repo_prs — see comment there.
+	local cache_entry="${2:-}"
+	[[ -n "$cache_entry" ]] || cache_entry="{}"
 	local sweep_mode="${3:-full}"
 
 	# Issues (include assignees for dispatch dedup)
