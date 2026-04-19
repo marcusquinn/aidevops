@@ -277,13 +277,17 @@ jobs:
             fi
 
             # Check 2: no assignee
-            # Exempt only when BOTH conditions hold (GH#6623, GH#18197):
-            #   a) Issue was created by github-actions[bot] — immutable, cannot be spoofed
-            #   b) PR author is OWNER or MEMBER (maintainer-tier only).
+            # Exempt when BOTH conditions hold (GH#6623, GH#18197, GH#19956):
+            #   1) PR author is OWNER or MEMBER (maintainer-tier only).
             #      COLLABORATOR is excluded — write-access contributors must have the
             #      issue explicitly assigned before their PR passes the gate.
             #      On personal repos there are no MEMBERs, so effectively OWNER-only.
-            # Either condition alone is insufficient.
+            #   2) AND one of:
+            #      a) Issue was created by github-actions[bot] — immutable, cannot be spoofed, OR
+            #      b) Issue carries a source:* automation label (non-spoofable — only the
+            #         pulse process running with the repo owner's token can apply these
+            #         labels at issue-creation time; contributors cannot self-label).
+            # Neither the PR author check nor the origin signal alone is sufficient.
             if [[ -z "$ASSIGNEES" ]]; then
               PR_AUTHOR_IS_MAINTAINER=false
               if [[ "$PR_AUTHOR_ASSOCIATION" == "OWNER" ]] || \
@@ -291,12 +295,24 @@ jobs:
                 PR_AUTHOR_IS_MAINTAINER=true
               fi
 
-              if [[ "$ISSUE_AUTHOR" == "github-actions[bot]" ]] && [[ "$PR_AUTHOR_IS_MAINTAINER" == "true" ]]; then
-                echo "EXEMPT: Issue #$ISSUE_NUM created by github-actions[bot] and PR author is maintainer (OWNER/MEMBER) — assignee check skipped"
+              HAS_AUTOMATION_LABEL=false
+              for automation_label in \
+                "source:review-scanner" "source:review-feedback" "source:ci-feedback" \
+                "source:ci-failure-miner" "source:conflict-feedback" "source:quality-debt" \
+                "source:post-merge-review-scanner"; do
+                if echo "$LABELS" | grep -qxF "$automation_label"; then
+                  HAS_AUTOMATION_LABEL=true
+                  break
+                fi
+              done
+
+              if [[ "$PR_AUTHOR_IS_MAINTAINER" == "true" ]] && \
+                 { [[ "$ISSUE_AUTHOR" == "github-actions[bot]" ]] || [[ "$HAS_AUTOMATION_LABEL" == "true" ]]; }; then
+                echo "EXEMPT: Issue #$ISSUE_NUM (issue_author=$ISSUE_AUTHOR, automation_label=$HAS_AUTOMATION_LABEL, pr_author=$PR_AUTHOR_ASSOCIATION) — assignee check skipped"
               else
                 BLOCKED=true
                 REASONS="${REASONS}Issue #${ISSUE_NUM} has no assignee — an issue must be assigned before work begins.\n"
-                echo "BLOCKED: Issue #$ISSUE_NUM has no assignee (issue_author=$ISSUE_AUTHOR, pr_author_association=$PR_AUTHOR_ASSOCIATION)"
+                echo "BLOCKED: Issue #$ISSUE_NUM has no assignee (issue_author=$ISSUE_AUTHOR, automation_label=$HAS_AUTOMATION_LABEL, pr_author_association=$PR_AUTHOR_ASSOCIATION)"
               fi
             fi
           done
