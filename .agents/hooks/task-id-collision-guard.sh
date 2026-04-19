@@ -157,12 +157,15 @@ _extract_tids() {
 }
 
 # ---------------------------------------------------------------------------
-# Extract issue numbers from Resolves|Closes|Fixes footer lines.
+# Extract issue numbers from Resolves|Closes|Fixes|Ref|For footer lines.
+# Accepts both closing keywords (Resolves, Closes, Fixes) and non-closing
+# reference keywords (Ref, For) — the downstream title-match verification
+# is unchanged, so adding Ref/For doesn't weaken the safety check.
 # Outputs one per line.
 # ---------------------------------------------------------------------------
 _extract_closing_issues() {
 	local text="${1:-}"
-	printf '%s' "$text" | grep -iE '(Resolves|Closes|Fixes)[[:space:]]+#[0-9]+' |
+	printf '%s' "$text" | grep -iE '(Resolves|Closes|Fixes|Ref|For)[[:space:]]+#[0-9]+' |
 		grep -oE '#[0-9]+' | tr -d '#' | sort -u
 	return 0
 }
@@ -182,7 +185,7 @@ _verify_tid_via_issues() {
 	local closing_issues="${2:-}"
 
 	if [[ -z "$closing_issues" ]]; then
-		_debug "$tid: no closing issues — marking as violation"
+		_debug "$tid: no linked issues (Resolves/Closes/Fixes/Ref/For) — marking as violation"
 		return 1
 	fi
 
@@ -236,7 +239,7 @@ _report_violations() {
 	printf '  To fix:\n' >&2
 	printf '    1. Remove the t-ID from the commit subject/body, OR\n' >&2
 	printf '    2. Claim the ID first: claim-task-id.sh --title "..." → then use the allocated ID, OR\n' >&2
-	printf '    3. If cross-referencing another person'"'"'s task, add "Resolves/Closes/Fixes #NNN" footer\n' >&2
+	printf '    3. If cross-referencing another person'"'"'s task, add "Resolves/Closes/Fixes/Ref/For #NNN" footer\n' >&2
 	printf '       where the linked issue title contains the t-ID.\n' >&2
 	printf '  Bypass (sets audit trail): TASK_ID_GUARD_DISABLE=1 git commit ...  or git commit --no-verify\n\n' >&2
 	return 0

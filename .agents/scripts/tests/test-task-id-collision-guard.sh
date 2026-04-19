@@ -4,7 +4,7 @@
 #
 # test-task-id-collision-guard.sh — Test harness for task-id-collision-guard.sh
 #
-# Covers all 8 acceptance criteria cases:
+# Covers all 12 acceptance criteria cases:
 #   1. Reject: t-ID > counter AND not in linked issue title
 #   2. Allow: t-ID ≤ counter (claimed)
 #   3. Allow: cross-reference confirmed via linked issue title
@@ -13,6 +13,10 @@
 #   6. Allow (bypass): --no-verify / TASK_ID_GUARD_DISABLE=1
 #   7. CI mode: check-pr scans range and finds violations
 #   8. Allow: stale-worktree — t-IDs claimed after worktree creation (GH#19054)
+#   9. Allow: leading-zero .task-counter doesn't trigger octal crash (GH#19667)
+#  10. Allow: Ref #NNN where linked issue title contains the t-ID (GH#19783)
+#  11. Allow: For #NNN where linked issue title contains the t-ID (GH#19783)
+#  12. Reject: Ref #NNN where linked issue title does NOT contain the t-ID (GH#19783)
 
 set -u
 
@@ -392,6 +396,144 @@ test_octal_trap_leading_zero_counter() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: run the guard with a mocked gh CLI that returns a known issue title.
+# Args:
+#   msg         = commit message text
+#   counter_val = .task-counter value
+#   issue_num   = issue number the mock gh should respond to
+#   issue_title = title the mock gh returns for that issue
+# ---------------------------------------------------------------------------
+_run_with_mock_gh_title() {
+	local msg="${1:-}"
+	local counter_val="${2:-10}"
+	local issue_num="${3:-}"
+	local issue_title="${4:-}"
+
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	# Create base git repo
+	local base_repo="${tmpdir}/base"
+	mkdir -p "$base_repo"
+	git -C "$base_repo" init -q
+	git -C "$base_repo" config user.email "test@test.local"
+	git -C "$base_repo" config user.name "Test"
+	git -C "$base_repo" config commit.gpgsign false
+	git -C "$base_repo" config tag.gpgsign false
+	printf '%s' "$counter_val" >"${base_repo}/.task-counter"
+	git -C "$base_repo" add .task-counter
+	git -C "$base_repo" commit -q -m "init"
+
+	local work_repo="${tmpdir}/work"
+	git clone -q "$base_repo" "$work_repo" 2>/dev/null
+	git -C "$work_repo" config user.email "test@test.local"
+	git -C "$work_repo" config user.name "Test"
+	git -C "$work_repo" config commit.gpgsign false
+	git -C "$work_repo" config tag.gpgsign false
+
+	printf 'change' >"${work_repo}/change.txt"
+	git -C "$work_repo" add change.txt
+	git -C "$work_repo" commit -q -m "wip"
+
+	local msg_file="${tmpdir}/COMMIT_EDITMSG"
+	printf '%s' "$msg" >"$msg_file"
+
+	# Mock gh: return the supplied title as JSON when queried for the given issue_num
+	local fake_bin="${tmpdir}/bin"
+	mkdir -p "$fake_bin"
+	cat >"${fake_bin}/gh" <<GHEOF
+#!/usr/bin/env bash
+# Mock gh for test: responds to "gh issue view <N> --json title --jq .title"
+# Scan all arguments for a numeric token matching the expected issue number.
+found=0
+for arg in "\$@"; do
+    if [[ "\$arg" == "${issue_num}" ]]; then
+        found=1
+        break
+    fi
+done
+if [[ "\$found" == "1" ]]; then
+    printf '%s\n' "${issue_title}"
+    exit 0
+fi
+exit 1
+GHEOF
+	chmod +x "${fake_bin}/gh"
+
+	local rc
+	PATH="${fake_bin}:$PATH" \
+		GIT_DIR="${work_repo}/.git" \
+		bash "$GUARD" "$msg_file" 2>/dev/null
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# ---------------------------------------------------------------------------
+# Case 10: Allow — Ref #NNN where issue title contains the t-ID
+# (AC1 from issue #19783)
+# ---------------------------------------------------------------------------
+test_ref_keyword_with_matching_title() {
+	local name="case-10: allows Ref #NNN when linked issue title contains the t-ID"
+	# Counter = 100; t99999 > counter; but Ref footer links to issue 42 whose
+	# title contains t99999, confirming the ID was legitimately claimed.
+	local msg
+	msg=$(printf 't99999: brief for self-healing improvement\n\nRef #42')
+	local rc
+	_run_with_mock_gh_title "$msg" "100" "42" "t99999: feat(issue-sync): detect umbrella-style parent-tasks"
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 0 (Ref #NNN confirmed via issue title), got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Case 11: Allow — For #NNN where issue title contains the t-ID
+# (AC2 from issue #19783)
+# ---------------------------------------------------------------------------
+test_for_keyword_with_matching_title() {
+	local name="case-11: allows For #NNN when linked issue title contains the t-ID"
+	local msg
+	msg=$(printf 't99999: add brief for parent-task phase\n\nFor #42')
+	local rc
+	_run_with_mock_gh_title "$msg" "100" "42" "t99999: parent-task phase-1 planning"
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 0 (For #NNN confirmed via issue title), got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Case 12: Reject — Ref #NNN where issue title does NOT contain the t-ID
+# (AC3 from issue #19783 — regression guard)
+# ---------------------------------------------------------------------------
+test_ref_keyword_without_matching_title() {
+	local name="case-12: rejects Ref #NNN when linked issue title does NOT contain the t-ID"
+	# t99999 > counter; Ref footer points to issue 42 whose title is unrelated
+	local msg
+	msg=$(printf 't99999: some commit\n\nRef #42')
+	local rc
+	_run_with_mock_gh_title "$msg" "100" "42" "chore: unrelated task with no matching ID"
+	rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 1 (Ref with non-matching title still blocked), got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 main() {
@@ -406,6 +548,9 @@ main() {
 	test_check_pr_mode
 	test_stale_worktree_scenario
 	test_octal_trap_leading_zero_counter
+	test_ref_keyword_with_matching_title
+	test_for_keyword_with_matching_title
+	test_ref_keyword_without_matching_title
 
 	printf '\n'
 	printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"
