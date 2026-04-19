@@ -895,6 +895,29 @@ _cleanup_legacy_model_config() {
 	return 0
 }
 
+# Deploy auto-hotfix.conf template to user-level configs if not already present.
+# The template ships in .agents/configs/; this copies to ~/.aidevops/configs/
+# where user edits survive `aidevops update`. Existing user config is preserved.
+_deploy_hotfix_config() {
+	local source_conf="${INSTALL_DIR:-.}/.agents/configs/auto-hotfix.conf"
+	local target_dir="$HOME/.aidevops/configs"
+	local target_conf="$target_dir/auto-hotfix.conf"
+
+	if [[ ! -f "$source_conf" ]]; then
+		return 0
+	fi
+
+	# Only deploy if the user doesn't have one yet (preserve user edits)
+	if [[ -f "$target_conf" ]]; then
+		return 0
+	fi
+
+	mkdir -p "$target_dir"
+	cp "$source_conf" "$target_conf"
+	chmod 600 "$target_conf"
+	return 0
+}
+
 # Non-interactive path: deploy agents and run safe migrations only (no prompts).
 _setup_run_non_interactive() {
 	print_info "Non-interactive mode: deploying agents and running safe migrations only"
@@ -919,6 +942,7 @@ _setup_run_non_interactive() {
 	_cleanup_legacy_model_config
 	validate_opencode_config
 	deploy_aidevops_agents
+	_deploy_hotfix_config
 	sync_agent_sources
 	install_aidevops_cli
 	setup_shellcheck_wrapper
@@ -1036,7 +1060,7 @@ _setup_run_interactive() {
 	confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
 	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
-	confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
+	confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && { deploy_aidevops_agents; _deploy_hotfix_config; }
 	confirm_step "Sync agents from private repositories" && sync_agent_sources
 	confirm_step "Set up routines repo (private repo for recurring operational jobs)" && setup_routines
 	is_feature_enabled safety_hooks 2>/dev/null && confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks

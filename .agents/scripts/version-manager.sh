@@ -1457,6 +1457,89 @@ create_github_release() {
 	return 0
 }
 
+# Verify current user is a maintainer (repo OWNER or MEMBER) for hotfix releases.
+# Returns 0 if the user is authorized, 1 otherwise.
+_verify_maintainer_identity() {
+	if ! command -v gh &>/dev/null || ! gh auth status &>/dev/null; then
+		print_error "hotfix release requires GitHub CLI authentication (gh auth login)"
+		return 1
+	fi
+
+	local remote_url slug current_user user_association
+	remote_url=$(git remote get-url origin 2>/dev/null || echo "")
+	slug=$(printf '%s' "$remote_url" | sed 's|.*github\.com[:/]||;s|\.git$||')
+
+	if [[ -z "$slug" ]]; then
+		print_error "Cannot determine repo slug from origin remote"
+		return 1
+	fi
+
+	current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	if [[ -z "$current_user" ]]; then
+		print_error "Cannot determine current GitHub user"
+		return 1
+	fi
+
+	# Check repo collaboration level — OWNER and MEMBER can push hotfixes
+	user_association=$(gh api "repos/${slug}/collaborators/${current_user}/permission" --jq '.role_name' 2>/dev/null || echo "")
+
+	case "$user_association" in
+	admin | maintain | write)
+		return 0
+		;;
+	*)
+		# Fallback: check if the user is the repo owner (slug prefix matches)
+		local repo_owner="${slug%%/*}"
+		if [[ "$current_user" == "$repo_owner" ]]; then
+			return 0
+		fi
+		print_error "hotfix release requires maintainer identity (current: ${current_user}, role: ${user_association:-unknown})"
+		return 1
+		;;
+	esac
+}
+
+# Create a hotfix signal tag alongside the normal release tag.
+# The hotfix tag triggers accelerated polling on remote runners.
+# Arguments: version (e.g. "3.8.79")
+_create_hotfix_tag() {
+	local version="$1"
+	local hotfix_tag="hotfix-v${version}"
+
+	cd "$REPO_ROOT" || return 1
+
+	# Check for existing hotfix tag
+	if git show-ref --tags "$hotfix_tag" &>/dev/null; then
+		print_warning "Hotfix tag $hotfix_tag already exists locally — skipping"
+		return 0
+	fi
+
+	local remote_tag_exit=0
+	git ls-remote -q --exit-code --tags origin "refs/tags/$hotfix_tag" >/dev/null 2>&1 || remote_tag_exit=$?
+	if [ $remote_tag_exit -eq 0 ]; then
+		print_warning "Hotfix tag $hotfix_tag already exists on remote — skipping"
+		return 0
+	fi
+
+	if git tag -a "$hotfix_tag" -m "Hotfix signal: v${version} — triggers immediate runner propagation"; then
+		print_success "Created hotfix signal tag: $hotfix_tag"
+	else
+		print_error "Failed to create hotfix signal tag"
+		return 1
+	fi
+
+	# Push the hotfix tag (the release tag is pushed by push_changes;
+	# the hotfix tag needs a separate push since --tags only pushes
+	# tags that point to reachable commits, which this one does).
+	if git push origin "$hotfix_tag" 2>/dev/null; then
+		print_success "Pushed hotfix signal tag: $hotfix_tag"
+	else
+		print_warning "Failed to push hotfix signal tag (non-blocking)"
+		# Non-blocking: the release itself succeeded, just the signal is delayed
+	fi
+	return 0
+}
+
 run_post_release_agent_sync() {
 	local sync_repo_root="${AIDEVOPS_SYNC_REPO_ROOT:-$REPO_ROOT}"
 	local remote_url
@@ -1706,6 +1789,41 @@ _release_execute() {
 	return 0
 }
 
+# Show release plan without executing (--dry-run).
+# Args: bump_type hotfix_flag force_flag skip_preflight
+_release_dry_run() {
+	local bump_type="$1"
+	local hotfix_flag="$2"
+	local force_flag="$3"
+	local skip_preflight="$4"
+
+	local current_version
+	current_version=$(get_current_version)
+	# Compute planned version without writing to VERSION file
+	local dr_major dr_minor dr_patch planned_version
+	IFS='.' read -r dr_major dr_minor dr_patch <<<"$current_version"
+	case "$bump_type" in
+	"major") dr_major=$((dr_major + 1)); dr_minor=0; dr_patch=0 ;;
+	"minor") dr_minor=$((dr_minor + 1)); dr_patch=0 ;;
+	"patch") dr_patch=$((dr_patch + 1)) ;;
+	esac
+	planned_version="${dr_major}.${dr_minor}.${dr_patch}"
+	print_info "=== DRY RUN: Release Plan ==="
+	print_info "  Current version: $current_version"
+	print_info "  Planned version: $planned_version"
+	print_info "  Bump type: $bump_type"
+	print_info "  Tags: v${planned_version}"
+	if [[ "$hotfix_flag" -eq 1 ]]; then
+		print_info "  Hotfix tag: hotfix-v${planned_version}"
+		print_info "  Runners with auto_hotfix_accept=true will pull within ~5 minutes"
+		print_info "  Runners with auto_hotfix_accept=false will see a session banner"
+	fi
+	print_info "  Force: $( [[ "$force_flag" -eq 1 ]] && echo "yes" || echo "no" )"
+	print_info "  Skip preflight: $( [[ "$skip_preflight" -eq 1 ]] && echo "yes" || echo "no" )"
+	print_info "=== DRY RUN: No changes made ==="
+	return 0
+}
+
 # Handle the "release" action: full release pipeline.
 # Arguments: bump_type [flags...] (all positional args from main, starting at $1=bump_type)
 _main_release() {
@@ -1718,23 +1836,40 @@ _main_release() {
 	fi
 
 	# Parse flags (can be in any order after bump_type)
-	local force_flag=""
-	local skip_preflight=""
-	local allow_dirty=""
+	local force_flag=0 skip_preflight=0 allow_dirty=0 hotfix_flag=0 dry_run=0
 	for arg in "$@"; do
 		case "$arg" in
-		"--force") force_flag="--force" ;;
-		"--skip-preflight") skip_preflight="--skip-preflight" ;;
-		"--allow-dirty") allow_dirty="--allow-dirty" ;;
+		"--force") force_flag=1 ;;
+		"--skip-preflight") skip_preflight=1 ;;
+		"--allow-dirty") allow_dirty=1 ;;
+		"--hotfix") hotfix_flag=1 ;;
+		"--dry-run") dry_run=1 ;;
 		*) ;; # Ignore unknown flags
 		esac
 	done
 
+	# Hotfix releases are restricted to patch bumps and require maintainer identity
+	if [[ "$hotfix_flag" -eq 1 ]]; then
+		if [[ "$bump_type" != "patch" ]]; then
+			print_error "Hotfix releases can only be patch bumps (got: $bump_type)"
+			exit 1
+		fi
+		if ! _verify_maintainer_identity; then
+			exit 1
+		fi
+		print_info "Hotfix mode: this release will signal immediate runner propagation"
+	fi
+
+	if [[ "$dry_run" -eq 1 ]]; then
+		_release_dry_run "$bump_type" "$hotfix_flag" "$force_flag" "$skip_preflight"
+		return 0
+	fi
+
 	print_info "Creating release with $bump_type version bump..."
 
-	# Verify local branch is in sync with remote (prevents post-squash-merge failures)
+	# Verify local branch is in sync with remote
 	if ! verify_remote_sync "main"; then
-		if [[ "$force_flag" != "--force" ]]; then
+		if [[ "$force_flag" -eq 0 ]]; then
 			print_error "Cannot release when local/remote are out of sync."
 			print_info "Use --force to bypass (not recommended)"
 			exit 1
@@ -1744,10 +1879,10 @@ _main_release() {
 	fi
 
 	# Check for uncommitted changes
-	if [[ "$allow_dirty" != "--allow-dirty" ]]; then
+	if [[ "$allow_dirty" -eq 0 ]]; then
 		if ! check_working_tree_clean; then
 			print_error "Cannot release with uncommitted changes."
-			print_info "Commit your changes first, or use --allow-dirty to bypass (not recommended)"
+			print_info "Commit your changes first, or use --allow-dirty to bypass"
 			exit 1
 		fi
 	else
@@ -1755,22 +1890,29 @@ _main_release() {
 	fi
 
 	# Run preflight checks unless skipped
-	if [[ "$skip_preflight" != "--skip-preflight" ]]; then
+	if [[ "$skip_preflight" -eq 0 ]]; then
 		if ! run_preflight_checks "$bump_type"; then
-			print_error "Preflight checks failed. Fix issues or use --skip-preflight to bypass."
+			print_error "Preflight checks failed. Fix issues or use --skip-preflight."
 			exit 1
 		fi
 	else
 		print_warning "Skipping preflight checks with --skip-preflight"
 	fi
 
-	_release_check_changelog "$force_flag"
+	local force_arg=""
+	if [[ "$force_flag" -eq 1 ]]; then
+		force_arg="--force"
+	fi
+	_release_check_changelog "$force_arg"
 
 	local new_version
 	new_version=$(bump_version "$bump_type")
 
 	if [[ $? -eq 0 ]]; then
 		_release_execute "$bump_type" "$new_version"
+		if [[ "$hotfix_flag" -eq 1 ]]; then
+			_create_hotfix_tag "$new_version"
+		fi
 	else
 		exit 1
 	fi
@@ -1789,6 +1931,7 @@ _main_usage() {
 	echo "  tag                           Create git tag for current version"
 	echo "  github-release                Create GitHub release for current version"
 	echo "  release [major|minor|patch]   Bump version, update files, create tag and GitHub release"
+	echo "  release patch --hotfix       Patch release with hotfix signal for immediate runner propagation"
 	echo "  preflight [major|minor|patch] Run release preflight checks only"
 	echo "  validate                      Validate version consistency across all files"
 	echo "  changelog-check               Check CHANGELOG.md has entry for current version"
@@ -1799,6 +1942,8 @@ _main_usage() {
 	echo "Options:"
 	echo "  --force                       Bypass changelog check (use with release)"
 	echo "  --skip-preflight              Bypass quality checks (use with release)"
+	echo "  --hotfix                      Signal hotfix for immediate runner propagation (patch only)"
+	echo "  --dry-run                     Show release plan without executing (use with release)"
 	echo ""
 	echo "Examples:"
 	echo "  $0 get"
@@ -1807,6 +1952,8 @@ _main_usage() {
 	echo "  $0 release minor --force"
 	echo "  $0 release patch --skip-preflight"
 	echo "  $0 release patch --force --skip-preflight"
+	echo "  $0 release patch --hotfix"
+	echo "  $0 release patch --hotfix --dry-run"
 	echo "  $0 github-release"
 	echo "  $0 validate"
 	echo "  $0 changelog-check"

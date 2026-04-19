@@ -396,6 +396,155 @@ _check_contribution_watch() {
 }
 
 # -----------------------------------------------------------------------------
+# _check_hotfix_available: poll for hotfix-v* tags newer than the deployed version.
+# Uses a shorter interval (5 minutes) than the regular update check (~24h).
+# Reads auto_hotfix_accept from ~/.aidevops/configs/auto-hotfix.conf.
+# Returns: hotfix notification string, or empty if no hotfix or not due for check.
+# -----------------------------------------------------------------------------
+# _hotfix_auto_apply: pull latest code, redeploy, and optionally restart pulse.
+# Called by _check_hotfix_available when auto_hotfix_accept=true.
+# Args: $1=agents_dir, $2=hotfix_version, $3=auto_restart_pulse ("true"|"false")
+_hotfix_auto_apply() {
+	local agents_dir="$1"
+	local hotfix_version="$2"
+	local auto_restart_pulse="$3"
+	local framework_repo="${AIDEVOPS_FRAMEWORK_REPO:-$HOME/Git/aidevops}"
+	local setup_script="${framework_repo}/setup.sh"
+
+	echo "Hotfix v${hotfix_version} available — auto-applying (auto_hotfix_accept=true)..."
+
+	if [[ ! -d "$framework_repo/.git" ]]; then
+		return 0
+	fi
+
+	# Pull latest and redeploy
+	(
+		cd "$framework_repo" || exit 1
+		git pull --ff-only origin main >/dev/null 2>&1
+		if [[ -x "$setup_script" ]]; then
+			bash "$setup_script" --non-interactive >/dev/null 2>&1
+		fi
+	) &
+	local hotfix_pid=$!
+	wait "$hotfix_pid" 2>/dev/null || true
+
+	# Restart pulse if configured
+	if [[ "$auto_restart_pulse" == "true" ]]; then
+		local pulse_pattern="(^|/)pulse-wrapper\\.sh( |\$)"
+		if pgrep -f "$pulse_pattern" >/dev/null 2>&1; then
+			pkill -f "$pulse_pattern" 2>/dev/null || true
+			sleep 3
+			local pulse_script="${agents_dir}/agents/scripts/pulse-wrapper.sh"
+			if [[ -x "$pulse_script" ]]; then
+				nohup "$pulse_script" >>"${agents_dir}/logs/pulse-wrapper.log" 2>&1 &
+			fi
+		fi
+	fi
+	return 0
+}
+
+# _hotfix_resolve_slug: determine the repo slug for hotfix tag polling.
+# Returns the slug on stdout; empty string if undeterminable.
+_hotfix_resolve_slug() {
+	local framework_repo="${AIDEVOPS_FRAMEWORK_REPO:-$HOME/Git/aidevops}"
+	local remote_url slug
+	if [[ -d "$framework_repo/.git" ]]; then
+		remote_url=$(git -C "$framework_repo" remote get-url origin 2>/dev/null || echo "")
+		slug=$(printf '%s' "$remote_url" | sed 's|.*github\.com[:/]||;s|\.git$||')
+	fi
+	if [[ -z "${slug:-}" ]]; then
+		slug="marcusquinn/aidevops"
+	fi
+	echo "$slug"
+	return 0
+}
+
+_check_hotfix_available() {
+	local current_version="$1"
+	local agents_dir="${AIDEVOPS_DIR:-$HOME/.aidevops}"
+	# User-level override first, then deployed default
+	local hotfix_conf="$agents_dir/configs/auto-hotfix.conf"
+	if [[ ! -f "$hotfix_conf" ]]; then
+		hotfix_conf="$agents_dir/agents/configs/auto-hotfix.conf"
+	fi
+	local hotfix_cache_dir="$agents_dir/cache"
+	local hotfix_stamp="$hotfix_cache_dir/hotfix-last-check"
+	local hotfix_poll_interval=300 # 5 minutes
+
+	# Test override: skip rate-limit and force the banner check
+	if [[ "${AIDEVOPS_FORCE_HOTFIX_BANNER:-}" == "1" ]]; then
+		hotfix_poll_interval=0
+	fi
+
+	# Rate-limit: only check every 5 minutes
+	if [[ -f "$hotfix_stamp" ]]; then
+		local stamp_mtime now_epoch age_seconds
+		# Portable mtime: try GNU stat, fall back to BSD stat
+		stamp_mtime=$(stat -c '%Y' "$hotfix_stamp" 2>/dev/null || stat -f '%m' "$hotfix_stamp" 2>/dev/null) || stamp_mtime=0
+		now_epoch=$(date +%s)
+		age_seconds=$((now_epoch - stamp_mtime))
+		if [[ "$age_seconds" -lt "$hotfix_poll_interval" ]]; then
+			echo ""
+			return 0
+		fi
+	fi
+
+	# Update the stamp (create cache dir if needed)
+	mkdir -p "$hotfix_cache_dir"
+	touch "$hotfix_stamp"
+
+	# Requires gh CLI for tag listing
+	if ! command -v gh &>/dev/null || ! gh auth status &>/dev/null 2>&1; then
+		echo ""
+		return 0
+	fi
+
+	local slug
+	slug=$(_hotfix_resolve_slug)
+
+	# Fetch the latest hotfix tag from the remote repo
+	local latest_hotfix_tag latest_hotfix_version
+	latest_hotfix_tag=$(gh api "repos/${slug}/tags" --jq '[.[] | select(.name | startswith("hotfix-v"))] | sort_by(.name) | last | .name // empty' 2>/dev/null || echo "")
+
+	if [[ -z "$latest_hotfix_tag" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Extract version from hotfix tag (e.g., "hotfix-v3.8.79" -> "3.8.79")
+	latest_hotfix_version="${latest_hotfix_tag#hotfix-v}"
+
+	# Compare: only signal if hotfix is newer than current
+	if [[ "$latest_hotfix_version" == "$current_version" ]]; then
+		echo ""
+		return 0
+	fi
+	local newer
+	newer=$(printf '%s\n%s\n' "$current_version" "$latest_hotfix_version" | sort -V | tail -1)
+	if [[ "$newer" != "$latest_hotfix_version" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Read auto-hotfix config
+	local auto_accept="false"
+	local auto_restart_pulse="true"
+	if [[ -f "$hotfix_conf" ]]; then
+		auto_accept=$(grep -E '^auto_hotfix_accept=' "$hotfix_conf" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]' || echo "false")
+		auto_restart_pulse=$(grep -E '^auto_hotfix_restart_pulse=' "$hotfix_conf" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]' || echo "true")
+	fi
+
+	if [[ "$auto_accept" == "true" ]]; then
+		_hotfix_auto_apply "$agents_dir" "$latest_hotfix_version" "$auto_restart_pulse"
+		return 0
+	fi
+
+	# Manual mode: emit banner for the session greeting
+	echo "Hotfix available: v${latest_hotfix_version} (current: v${current_version}). Run 'aidevops update' to apply, or set auto_hotfix_accept=true in ${hotfix_conf}"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # _check_script_drift: detect SHA drift between deployed agents and canonical
 # repo HEAD. Triggers a silent background redeploy when framework code files
 # (scripts/, agents/, workflows/, prompts/, hooks/) have changed since the last
@@ -726,14 +875,16 @@ _refresh_oauth_tokens() {
 # -----------------------------------------------------------------------------
 # _run_session_advisories: collect and emit all session-start advisories.
 # Extracted from main() to keep function complexity under 100 lines.
-# Args: $1=script_dir, $2=app_name, $3=cache_dir, $4=output (version line)
+# Args: $1=script_dir, $2=app_name, $3=cache_dir, $4=output (version line),
+#       $5=current_version
 # -----------------------------------------------------------------------------
 _run_session_advisories() {
 	local script_dir="$1" app_name="$2" cache_dir="$3" output="$4"
+	local current_version="${5:-}"
 
 	local runtime_hint nudge_output session_warning security_posture
 	local secret_hygiene advisories_output contribution_watch origin_notice
-	local signing_nudge script_drift stuck_index
+	local signing_nudge script_drift stuck_index hotfix_notice
 	runtime_hint=$(_get_runtime_hint "$app_name")
 	nudge_output=$(_check_local_models "$script_dir")
 	session_warning=$(_check_session_count "$script_dir")
@@ -749,6 +900,12 @@ _run_session_advisories() {
 	script_drift=$(_check_script_drift)
 	# t2245: detect stuck 3-way merge state in canonical repos.
 	stuck_index=$(_detect_stuck_index_conflict)
+	# t2398: check for hotfix signal tags requiring immediate runner propagation.
+	if [[ -n "$current_version" ]]; then
+		hotfix_notice=$(_check_hotfix_available "$current_version")
+	else
+		hotfix_notice=""
+	fi
 
 	[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
 	[[ -n "$nudge_output" ]] && echo "$nudge_output"
@@ -762,6 +919,7 @@ _run_session_advisories() {
 	[[ -n "$pulse_health" ]] && echo "$pulse_health"
 	[[ -n "$script_drift" ]] && echo "$script_drift"
 	[[ -n "$stuck_index" ]] && echo "$stuck_index"
+	[[ -n "${hotfix_notice:-}" ]] && echo "$hotfix_notice"
 
 	_write_cache "$cache_dir" "$output" "$runtime_hint" "$nudge_output" \
 		"$session_warning" "$security_posture" "$secret_hygiene" \
@@ -835,7 +993,7 @@ main() {
 		"${script_dir}/bash-upgrade-helper.sh" ensure --yes --quiet 2>/dev/null || true
 	fi
 
-	_run_session_advisories "$script_dir" "$app_name" "$cache_dir" "$output"
+	_run_session_advisories "$script_dir" "$app_name" "$cache_dir" "$output" "$current"
 
 	return 0
 }
