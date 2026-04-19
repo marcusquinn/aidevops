@@ -383,6 +383,16 @@ jobs:
           fi
           echo "linked_issues=$LINKED_ISSUES" >> "$GITHUB_OUTPUT"
 
+          # t2252: Collect non-closing references (For #NNN, Ref #NNN).
+          # These indicate the PR is related to but NOT completing the issue.
+          # Planning-only PRs (briefs) conventionally use For/Ref instead of
+          # Closes/Fixes/Resolves to keep the parent issue open.
+          NON_CLOSING_REFS=""
+          if [[ -n "$PR_BODY" ]]; then
+            NON_CLOSING_REFS=$(echo "$PR_BODY" | grep -oiE '(for|ref)[[:space:]]+#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+          fi
+          echo "non_closing_refs=$NON_CLOSING_REFS" >> "$GITHUB_OUTPUT"
+
           # Determine if we have anything to process
           if [[ -n "$TASK_ID" || -n "$LINKED_ISSUES" ]]; then
             echo "has_work=true" >> "$GITHUB_OUTPUT"
@@ -390,7 +400,48 @@ jobs:
             echo "has_work=false" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "PR #$PR_NUMBER: task_id=$TASK_ID linked_issues=$LINKED_ISSUES"
+          echo "PR #$PR_NUMBER: task_id=$TASK_ID linked_issues=$LINKED_ISSUES non_closing_refs=$NON_CLOSING_REFS"
+
+      # t2252: Detect planning-only PRs (only brief files changed).
+      # Planning-only PRs should not trigger auto-completion via the
+      # title-fallback path. Explicit closing keywords (Closes/Fixes/Resolves)
+      # are still honoured even for planning-only PRs.
+      - name: Detect planning-only PR (t2252)
+        id: planning-check
+        if: steps.extract.outputs.has_work == 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Fetch the list of files changed by this PR
+          CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename' 2>/dev/null || true)
+
+          if [[ -z "$CHANGED_FILES" ]]; then
+            echo "planning_only=false" >> "$GITHUB_OUTPUT"
+            echo "Could not fetch PR files — assuming non-planning PR"
+            exit 0
+          fi
+
+          # Check if ALL changed files are planning artifacts:
+          # - todo/tasks/*-brief.md (task briefs)
+          # - todo/PLANS.md (plan registry)
+          # - TODO.md (task list updates)
+          IS_PLANNING=true
+          while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            if ! echo "$file" | grep -qE '^(todo/tasks/.*-brief\.md|todo/PLANS\.md|TODO\.md)$'; then
+              IS_PLANNING=false
+              break
+            fi
+          done <<< "$CHANGED_FILES"
+
+          echo "planning_only=$IS_PLANNING" >> "$GITHUB_OUTPUT"
+          if [[ "$IS_PLANNING" == "true" ]]; then
+            echo "PR #$PR_NUMBER is planning-only (only brief/planning files changed) — title-fallback auto-completion will be skipped"
+          else
+            echo "PR #$PR_NUMBER modifies implementation files — standard auto-completion applies"
+          fi
 
       - name: Find issue by task ID (fallback)
         id: find-issue
@@ -398,6 +449,8 @@ jobs:
         env:
           TASK_ID: ${{ steps.extract.outputs.task_id }}
           LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          NON_CLOSING_REFS: ${{ steps.extract.outputs.non_closing_refs }}
+          PLANNING_ONLY: ${{ steps.planning-check.outputs.planning_only }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -409,9 +462,28 @@ jobs:
           # whose title shares the parent's task ID prefix (t2046 For/Ref
           # convention makes this the common case).
           if [[ -z "$LINKED_ISSUES" ]]; then
+            # t2252: Skip title-fallback entirely for planning-only PRs.
+            # These PRs only add brief/planning files and should never trigger
+            # auto-completion. If the author intended to close an issue, they
+            # would use Closes/Fixes/Resolves in the PR body.
+            if [[ "$PLANNING_ONLY" == "true" ]]; then
+              echo "found_issues=" >> "$GITHUB_OUTPUT"
+              echo "Planning-only PR detected — skipping title-fallback auto-completion"
+              exit 0
+            fi
+
             FOUND=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 \
               | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty')
             if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
+              # t2252: Check if the found issue is explicitly referenced with a
+              # non-closing keyword (For/Ref) in the PR body. If so, the PR
+              # author deliberately chose not to close it — respect that intent.
+              if echo " $NON_CLOSING_REFS " | grep -q " $FOUND "; then
+                echo "found_issues=" >> "$GITHUB_OUTPUT"
+                echo "Issue #$FOUND is referenced via For/Ref (non-closing) in PR body — skipping title-fallback auto-completion"
+                exit 0
+              fi
+
               # t2137: probe parent-task label before accepting the fallback match.
               FOUND_LABELS=$(gh api "repos/${REPO}/issues/${FOUND}" --jq '[.labels[].name] | join(" ")' 2>/dev/null || echo "")
               if echo "$FOUND_LABELS" | grep -qw "parent-task"; then
@@ -644,7 +716,12 @@ jobs:
           token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Update TODO.md proof-log
-        if: steps.extract.outputs.task_id != ''
+        # t2252: Skip proof-log for planning-only PRs unless they have explicit
+        # closing keywords. A planning-only PR (briefs only) should not mark
+        # the task complete — the implementation is still pending.
+        if: >-
+          steps.extract.outputs.task_id != '' &&
+          (steps.planning-check.outputs.planning_only != 'true' || steps.extract.outputs.linked_issues != '')
         env:
           TASK_ID: ${{ steps.extract.outputs.task_id }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -781,7 +858,10 @@ jobs:
           fi
 
       - name: Sync PLANS.md status from TODO.md completions
-        if: steps.extract.outputs.task_id != ''
+        # t2252: Same gate as proof-log — skip for planning-only PRs without closing keywords.
+        if: >-
+          steps.extract.outputs.task_id != '' &&
+          (steps.planning-check.outputs.planning_only != 'true' || steps.extract.outputs.linked_issues != '')
         env:
           TASK_ID: ${{ steps.extract.outputs.task_id }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
