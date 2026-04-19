@@ -447,8 +447,14 @@ Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched aga
 ## How
 - EDIT: \`${lf_path}\`
 - Extract cohesive function groups into separate files
-- Keep a thin orchestrator in the original file that sources/imports the extracted modules
+- Keep a thin orchestrator in the original file that sources the extracted modules
 - Verify: \`wc -l ${lf_path}\` should be below ${LARGE_FILE_LINE_THRESHOLD}
+
+**Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for shell-lib splits, covers identity-key preservation, CI false-positives, and PR body template).
+
+**Precedent in this repo:** \`issue-sync-helper.sh\` + \`issue-sync-lib.sh\` (simple split) and \`headless-runtime-lib.sh\` + sub-libraries (complex split). Copy the include-guard and SCRIPT_DIR-fallback pattern from the simple precedent.
+
+**Expected CI gate overrides:** This PR will likely trigger a complexity regression from the file-split identity-key change. Apply the \`complexity-bump-ok\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing scanner evidence. See the playbook section 4 (Known CI False-Positive Classes).
 
 _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
 	# t2115: Use gh_create_issue wrapper for origin label + signature auto-append.
