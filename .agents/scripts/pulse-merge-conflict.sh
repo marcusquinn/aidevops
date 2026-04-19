@@ -158,9 +158,22 @@ _interactive_pr_is_stale() {
 		'.labels | map(.name) | index("origin:interactive")' \
 		>/dev/null 2>&1 || return 1
 
+	# Gate 1b (GH#19864): honor no-takeover label — opt-out for maintainers
+	if printf '%s' "$pr_meta" | jq -e \
+		'.labels | map(.name) | index("no-takeover")' \
+		>/dev/null 2>&1; then
+		echo "[pulse-merge-conflict] _interactive_pr_is_stale: PR #${pr_number} has no-takeover label — skipping handover (GH#19864)" >>"$LOGFILE"
+		return 1
+	fi
+
 	# Gate 4: age threshold (check before any other gh calls — cheapest filter)
 	local threshold_hours updated_at now_epoch updated_epoch pr_age_hours
 	threshold_hours="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS:-24}"
+	# GH#19864: validate threshold is a non-negative integer; fallback to 24 on bad input
+	if ! [[ "$threshold_hours" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-merge-conflict] _interactive_pr_is_stale: invalid AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS='${threshold_hours}' — falling back to 24 (GH#19864)" >>"$LOGFILE"
+		threshold_hours=24
+	fi
 	updated_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
 	[[ -z "$updated_at" ]] && return 1
 	now_epoch=$(date +%s)
@@ -452,10 +465,15 @@ _close_conflicting_pr() {
 	# sessions. The task-ID-on-main heuristic produces false positives when
 	# multiple PRs share a task ID (incremental work on the same issue).
 	# Maintainers decide what is redundant — the pulse must not auto-close their work.
-	local pr_labels
+	local pr_labels pr_view_rc=0
 	pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json labels --jq '.labels[].name' 2>/dev/null || true)
-	if printf '%s' "$pr_labels" | grep -q 'origin:interactive'; then
+		--json labels --jq '.labels[].name' 2>/dev/null) || pr_view_rc=$?
+	if [[ $pr_view_rc -ne 0 ]]; then
+		echo "[pulse-merge-conflict] _close_conflicting_pr: gh pr view failed for PR #${pr_number} (exit ${pr_view_rc}) — skipping auto-close to avoid acting on incomplete data (GH#19864)" >>"$LOGFILE"
+		return 0
+	fi
+	# GH#19864: use fixed-string line-anchored match to avoid substring false positives
+	if printf '%s\n' "$pr_labels" | grep -qxF 'origin:interactive'; then
 		echo "[pulse-wrapper] Deterministic merge: skipping auto-close of origin:interactive PR #${pr_number} — maintainer session work is never auto-closed" >>"$LOGFILE"
 		# GH#18650 (Fix 4): post a one-time rebase nudge so the maintainer
 		# has a visible signal that their CONFLICTING PR needs manual
@@ -644,6 +662,15 @@ _carry_forward_pr_diff() {
 	fi
 
 	# --- Build the append section ---
+	# GH#19864: compute a dynamic fence length so embedded backtick runs in
+	# diff_content cannot break the code block.
+	local fence='```'
+	local longest_run
+	longest_run=$(printf '%s' "$diff_content" | grep -oE '\`{3,}' | awk '{ if (length > m) m = length } END { print m+0 }')
+	if [[ "${longest_run:-0}" -ge 3 ]]; then
+		fence=$(printf '%*s' "$((longest_run + 1))" '' | tr ' ' '`')
+	fi
+
 	local new_section
 	new_section="${marker}
 ## Prior worker attempt (PR #${pr_number}, closed CONFLICTING)
@@ -654,9 +681,9 @@ rebase/apply it rather than re-deriving the solution from scratch.
 
 <details><summary>Diff from PR #${pr_number} (click to expand)</summary>
 
-\`\`\`diff
+${fence}diff
 ${diff_content}${truncation_note}
-\`\`\`
+${fence}
 
 </details>"
 

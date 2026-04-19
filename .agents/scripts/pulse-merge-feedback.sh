@@ -172,9 +172,14 @@ ${failing_checks}
 _Routed by deterministic merge pass (pulse-merge.sh)._"
 
 	# Append to issue body (marker-guarded for idempotency)
-	local current_body
+	# GH#19864: capture exit status to avoid clobbering the issue body on fetch failure
+	local current_body fetch_rc=0
 	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
+		--json body --jq '.body // ""' 2>/dev/null) || fetch_rc=$?
+	if [[ $fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: failed to fetch issue #${linked_issue} body (exit ${fetch_rc}) — skipping edit to avoid data loss (GH#19864)" >>"$LOGFILE"
+		return 1
+	fi
 
 	local marker="<!-- ci-feedback:PR${pr_number} -->"
 	if printf '%s' "$current_body" | grep -qF "$marker"; then
@@ -278,9 +283,14 @@ ${pr_files}
 _Routed by deterministic merge pass (pulse-merge.sh)._"
 
 	# Append to issue body (marker-guarded)
-	local current_body
+	# GH#19864: capture exit status to avoid clobbering the issue body on fetch failure
+	local current_body fetch_rc=0
 	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
+		--json body --jq '.body // ""' 2>/dev/null) || fetch_rc=$?
+	if [[ $fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] _dispatch_conflict_fix_worker: failed to fetch issue #${linked_issue} body (exit ${fetch_rc}) — skipping edit to avoid data loss (GH#19864)" >>"$LOGFILE"
+		return 1
+	fi
 
 	local marker="<!-- conflict-feedback:PR${pr_number} -->"
 	if printf '%s' "$current_body" | grep -qF "$marker"; then
@@ -414,9 +424,14 @@ _dispatch_pr_fix_worker() {
 	fi
 
 	# --- Append to linked issue body (marker-guarded for idempotency) ---
-	local current_body
+	# GH#19864: capture exit status to avoid clobbering the issue body on fetch failure
+	local current_body fetch_rc=0
 	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
+		--json body --jq '.body // ""' 2>/dev/null) || fetch_rc=$?
+	if [[ $fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] _dispatch_pr_fix_worker: failed to fetch issue #${linked_issue} body (exit ${fetch_rc}) — skipping edit to avoid data loss (GH#19864)" >>"$LOGFILE"
+		return 1
+	fi
 
 	local marker="<!-- t2093:review-feedback:PR${pr_number} -->"
 	local body_updated="false"

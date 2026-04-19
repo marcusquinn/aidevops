@@ -16,15 +16,22 @@
 # clusters that are called after the gate checks fire. They are sourced
 # by pulse-wrapper.sh AFTER pulse-merge.sh so they can use shared merge
 # helpers such as _extract_linked_issue, while Bash lazy resolution keeps
-# the runtime cross-module calls safe. The dependency is one-way only
-# (downstream → core); merge-core/pr-gates do not require the downstream
-# modules at source time:
+# the runtime cross-module calls safe.
+#
+# Dependency direction (one-way only — GH#19864 clarification):
+#   pulse-merge-conflict.sh  ──depends on──▶  pulse-merge.sh (this file)
+#   pulse-merge-feedback.sh  ──depends on──▶  pulse-merge.sh (this file)
+#   pulse-merge.sh does NOT call any function defined in the downstream
+#   modules at source time. At runtime, _check_pr_merge_gates dispatches
+#   to downstream functions (e.g. _dispatch_pr_fix_worker in feedback,
+#   _close_conflicting_pr in conflict), but these are resolved lazily by
+#   Bash at call time — after all three modules have been sourced.
+#
+# Downstream modules:
 #   - pulse-merge-conflict.sh — conflict handling, interactive handover,
 #     carry-forward diff, rebase nudges
 #   - pulse-merge-feedback.sh — CI/conflict/review feedback routing to
 #     linked issues with PR close
-# Example cross-module call: _check_pr_merge_gates (merge-core) →
-# _dispatch_pr_fix_worker (feedback) is resolved at invocation time.
 #
 # This module is sourced by pulse-wrapper.sh. It MUST NOT be executed
 # directly — it relies on the orchestrator having sourced:
