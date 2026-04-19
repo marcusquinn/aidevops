@@ -244,9 +244,27 @@ _normalize_stale_should_skip_reset() {
 # (Phase 12) Detect and reset stale runner assignments.
 #
 # Pass 2 of normalize_active_issue_assignments: find issues assigned to
-# runner_user with status:queued/in-progress that have been idle for >1h,
-# verify no worker process is handling them (via _normalize_stale_should_skip_reset),
+# runner_user with status:queued/in-progress whose updatedAt is older than
+# STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS (default 600s = 10 min), verify
+# no worker process is handling them (via _normalize_stale_should_skip_reset),
 # and reset via _normalize_clear_status_labels so they can be re-dispatched.
+#
+# t2372: outer time filter lowered from 3600s (1h) to 600s (10 min) so this
+# proactive sweep matches the reactive _is_stale_assignment threshold in
+# dispatch-dedup-stale.sh. Previously a worker that died between dispatch
+# and PR creation stayed assigned for ~60 min before this sweep would even
+# consider it as a candidate, because the issue's updatedAt (the dispatch
+# comment timestamp) was still within the 1h window. The reactive path
+# (Layer 6 dedup) only fires when the pulse retries dispatching the same
+# issue, which may not happen for hours under queue pressure.
+#
+# Inner safeguards in _normalize_stale_should_skip_reset still protect
+# live workers (local pgrep, dispatch comment PID liveness with
+# WORKER_MAX_RUNTIME cross-runner guard, worker log mtime <600s). Lowering
+# the outer filter expands the candidate set; the inner guards still gate
+# the actual reset. Override via env var:
+#
+#   STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS=N (default 600)
 #
 # t1933: PID-based checks are local-only. In multi-runner setups, a worker
 # dispatched by another machine is invisible to pgrep on this machine.
@@ -268,7 +286,15 @@ _normalize_unassign_stale() {
 	local now_epoch="$3"
 	local cross_runner_max_runtime="$4"
 
+	# t2372: tunable outer-filter age. Default matches the reactive
+	# STALE_ASSIGNMENT_THRESHOLD_SECONDS=600 in dispatch-dedup-stale.sh so
+	# proactive (this sweep) and reactive (Layer 6 dedup) paths agree on
+	# what "stale" means for workers. Validate as int; fall back to 600.
+	local _stale_threshold="${STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS:-600}"
+	[[ "$_stale_threshold" =~ ^[0-9]+$ ]] || _stale_threshold=600
+
 	local total_reset=0
+	local total_candidates=0
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
@@ -279,9 +305,9 @@ _normalize_unassign_stale() {
 			--json number,labels,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || stale_json=""
 		[[ -n "$stale_json" && "$stale_json" != "null" ]] || continue
 
-		# Filter: has status:queued or status:in-progress, updated >1h ago
+		# Filter: has status:queued or status:in-progress, updatedAt older than _stale_threshold
 		local stale_issues
-		stale_issues=$(printf '%s' "$stale_json" | jq -r --arg cutoff "$((now_epoch - 3600))" '
+		stale_issues=$(printf '%s' "$stale_json" | jq -r --arg cutoff "$((now_epoch - _stale_threshold))" '
 			[.[] | select(
 				((.labels | map(.name)) | (index("status:queued") or index("status:in-progress")))
 				and ((.updatedAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < ($cutoff | tonumber))
@@ -292,6 +318,7 @@ _normalize_unassign_stale() {
 		local stale_num
 		while IFS= read -r stale_num; do
 			[[ "$stale_num" =~ ^[0-9]+$ ]] || continue
+			total_candidates=$((total_candidates + 1))
 
 			if _normalize_stale_should_skip_reset "$stale_num" "$slug" "$now_epoch" "$cross_runner_max_runtime"; then
 				continue
@@ -304,9 +331,9 @@ _normalize_unassign_stale() {
 		done <<<"$stale_issues"
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
-	if [[ "$total_reset" -gt 0 ]]; then
-		echo "[pulse-wrapper] Stale assignment cleanup: reset ${total_reset} issues for re-dispatch" >>"$LOGFILE"
-	fi
+	# t2372: always log scan summary so silent runs are visible in pulse log
+	# and operators can confirm the sweep is firing per-cycle.
+	echo "[pulse-wrapper] Stale assignment scan: threshold=${_stale_threshold}s candidates=${total_candidates} reset=${total_reset}" >>"$LOGFILE"
 
 	return 0
 }
