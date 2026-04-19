@@ -788,6 +788,95 @@ _pr_required_checks_pass() {
 }
 
 #######################################
+# Route a PR to the appropriate fix worker based on origin label and kind.
+#
+# Consolidates the shared routing pattern used by the review, conflict, and CI
+# gates. Each gate checks exclusion labels, then dispatches worker-origin PRs
+# directly and hands over stale interactive PRs before dispatch.
+#
+# Args:
+#   $1 = pr_number
+#   $2 = repo_slug
+#   $3 = linked_issue (empty string → no routing possible)
+#   $4 = kind          (review | conflict | ci)
+#   $5 = pr_labels     (optional — comma-separated; fetched if empty)
+#   $6 = pr_title      (optional — passed to conflict dispatch)
+#
+# Returns: 0 if dispatched, 1 if not routable (no match or excluded)
+#
+# Design: case-statement dispatch over kind — no dynamic function calls.
+# Per-kind return semantics are handled by the CALLER, not here.
+# t2203 — extracted from three inline blocks in _check_pr_merge_gates
+# and _process_single_ready_pr.
+#######################################
+_route_pr_to_fix_worker() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local kind="$4"
+	local pr_labels="${5:-}"
+	local pr_title="${6:-}"
+
+	# No linked issue → nothing to route to
+	[[ -z "$linked_issue" ]] && return 1
+
+	# Fetch labels if not provided by caller
+	if [[ -z "$pr_labels" ]]; then
+		pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels=""
+	fi
+
+	# Kind-specific "already routed" exclusion label
+	local routed_label
+	case "$kind" in
+		review)   routed_label="review-routed-to-issue" ;;
+		conflict) routed_label="conflict-feedback-routed" ;;
+		ci)       routed_label="ci-feedback-routed" ;;
+		*)
+			echo "[pulse-wrapper] _route_pr_to_fix_worker: unknown kind '${kind}'" >>"$LOGFILE"
+			return 1
+			;;
+	esac
+
+	# Check exclusion labels — already routed or no-takeover
+	if [[ ",${pr_labels}," == *",${routed_label},"* ]] \
+		|| [[ ",${pr_labels}," == *",no-takeover,"* ]]; then
+		return 1
+	fi
+
+	# Review gate has an additional exclusion for external contributors
+	if [[ "$kind" == "review" ]] && [[ ",${pr_labels}," == *",external-contributor,"* ]]; then
+		return 1
+	fi
+
+	# Worker-origin PRs: dispatch directly
+	if [[ ",${pr_labels}," == *",origin:worker,"* ]] \
+		|| [[ ",${pr_labels}," == *",origin:worker-takeover,"* ]]; then
+		case "$kind" in
+			review)   _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
+			conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || true ;;
+			ci)       _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
+		esac
+		return 0
+	fi
+
+	# Stale interactive PRs: handover first, then dispatch
+	if [[ ",${pr_labels}," == *",origin:interactive,"* ]] \
+		&& _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
+		_interactive_pr_trigger_handover "$pr_number" "$repo_slug" || true
+		case "$kind" in
+			review)   _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
+			conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || true ;;
+			ci)       _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
+		esac
+		return 0
+	fi
+
+	# Not routable (no matching origin label or not stale)
+	return 1
+}
+
+#######################################
 # Run all merge-eligibility gate checks for a single PR.
 # Returns 0 if all gates pass (PR may proceed to merge).
 # Returns 1 if any gate fails (PR should be skipped).
@@ -833,24 +922,8 @@ _check_pr_merge_gates() {
 			fi
 		else
 			# No coderabbit-nits-ok label — route worker-authored PRs for fix
-			# dispatch and skip the merge. t2189: also route idle-interactive
-			# PRs via origin:worker-takeover handover when the human has
-			# demonstrably walked away.
-			if [[ -n "$linked_issue" ]] \
-				&& [[ ",${_cr_pr_labels}," != *",external-contributor,"* ]] \
-				&& [[ ",${_cr_pr_labels}," != *",review-routed-to-issue,"* ]] \
-				&& [[ ",${_cr_pr_labels}," != *",no-takeover,"* ]]; then
-				# Route if origin:worker present (origin:interactive may co-exist
-				# from issue inheritance — not a skip signal for worker PRs).
-				if [[ ",${_cr_pr_labels}," == *",origin:worker,"* ]] \
-					|| [[ ",${_cr_pr_labels}," == *",origin:worker-takeover,"* ]]; then
-					_dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true
-				elif [[ ",${_cr_pr_labels}," == *",origin:interactive,"* ]] \
-					&& _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
-					_interactive_pr_trigger_handover "$pr_number" "$repo_slug" || true
-					_dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true
-				fi
-			fi
+			# dispatch and skip the merge (t2203: consolidated in helper).
+			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "review" "$_cr_pr_labels" || true
 			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision=CHANGES_REQUESTED" >>"$LOGFILE"
 			return 1
 		fi
@@ -1113,33 +1186,13 @@ _process_single_ready_pr() {
 		fi
 
 		if [[ "$pr_mergeable" == "CONFLICTING" ]]; then
-			# Conflict resolution feedback: for worker PRs with a linked
-			# issue, route the conflict context to the issue body so the
-			# next worker can resolve it, instead of silently closing.
-			# Interactive PRs are protected — the existing close path (with
-			# one-time rebase nudge) handles them — UNLESS they're stale per
-			# t2189, in which case they're handed over to the worker pipeline.
+			# Conflict resolution feedback: route worker PRs to fix worker
+			# (t2203: consolidated in helper). If routed, return 2 to skip
+			# the close path; otherwise fall through to _close_conflicting_pr.
 			local _conf_linked_issue
 			_conf_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
-			if [[ -n "$_conf_linked_issue" ]]; then
-				local _conf_pr_labels
-				_conf_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
-					--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _conf_pr_labels=""
-				# Route if origin:worker or origin:worker-takeover is present.
-				# origin:interactive may co-exist from issue inheritance — not a skip signal.
-				if [[ ",${_conf_pr_labels}," != *",conflict-feedback-routed,"* ]] \
-					&& [[ ",${_conf_pr_labels}," != *",no-takeover,"* ]]; then
-					if [[ ",${_conf_pr_labels}," == *",origin:worker,"* ]] \
-						|| [[ ",${_conf_pr_labels}," == *",origin:worker-takeover,"* ]]; then
-						_dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$_conf_linked_issue" "$pr_title" || true
-						return 2
-					elif [[ ",${_conf_pr_labels}," == *",origin:interactive,"* ]] \
-						&& _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
-						_interactive_pr_trigger_handover "$pr_number" "$repo_slug" || true
-						_dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$_conf_linked_issue" "$pr_title" || true
-						return 2
-					fi
-				fi
+			if _route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_conf_linked_issue" "conflict" "" "$pr_title"; then
+				return 2
 			fi
 			_close_conflicting_pr "$pr_number" "$repo_slug" "$pr_title"
 			return 2
@@ -1161,26 +1214,10 @@ _process_single_ready_pr() {
 	# then routed through the same pipeline — human session must be gone
 	# (no status, no claim stamp, >24h idle) for handover to fire.
 	if ! _pr_required_checks_pass "$pr_number" "$repo_slug"; then
+		# CI failure: route to fix worker if applicable (t2203: consolidated).
 		local _ci_linked_issue
 		_ci_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
-		if [[ -n "$_ci_linked_issue" ]]; then
-			local _ci_pr_labels
-			_ci_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
-				--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _ci_pr_labels=""
-			# Route if origin:worker or origin:worker-takeover is present.
-			# origin:interactive may co-exist (inherited from issue) — not a skip signal.
-			if [[ ",${_ci_pr_labels}," != *",ci-feedback-routed,"* ]] \
-				&& [[ ",${_ci_pr_labels}," != *",no-takeover,"* ]]; then
-				if [[ ",${_ci_pr_labels}," == *",origin:worker,"* ]] \
-					|| [[ ",${_ci_pr_labels}," == *",origin:worker-takeover,"* ]]; then
-					_dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$_ci_linked_issue" || true
-				elif [[ ",${_ci_pr_labels}," == *",origin:interactive,"* ]] \
-					&& _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
-					_interactive_pr_trigger_handover "$pr_number" "$repo_slug" || true
-					_dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$_ci_linked_issue" || true
-				fi
-			fi
-		fi
+		_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_ci_linked_issue" "ci" || true
 		return 1
 	fi
 
