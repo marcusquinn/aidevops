@@ -992,11 +992,41 @@ _ensure_issue_body_has_brief() {
 	local brief_file="${repo_path}/todo/tasks/${task_id}-brief.md"
 	[[ ! -f "$brief_file" ]] && return 0
 
-	# Check if body already contains the inline markers
+	# Check if body already has substantial content (framework-synced markers OR
+	# an externally-composed brief-style body).
+	# Layer 4 (t2377): the narrow marker check mis-classified externally-
+	# composed bodies as stubs. #19778/#19779/#19780 had "## What" / "## Why" /
+	# "## How" bodies ~5KB each; the old check treated them as stubs and
+	# force-enriched them into emptiness.
 	local current_body
 	current_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body -q .body 2>/dev/null || echo "")
 	if [[ "$current_body" == *"## Task Brief"* ]] || [[ "$current_body" == *"## Worker Guidance"* ]]; then
 		return 0
+	fi
+	# Brief-template-style headings count as substantial content too (layer 4).
+	if [[ "$current_body" == *"## What"* ]] && [[ "$current_body" == *"## How"* ]]; then
+		return 0
+	fi
+	# Fallback length heuristic: 500+ chars is unlikely to be a stub (layer 4).
+	# Real stubs from claim-task-id.sh are <200 chars.
+	if [[ ${#current_body} -ge 500 ]]; then
+		return 0
+	fi
+
+	# Layer 5 (t2377): refuse to force-enrich when the task has a brief on disk
+	# but no TODO.md entry. This combination makes compose_issue_body fail, and
+	# the resulting empty body previously destroyed the issue content. The
+	# correct behaviour in this case is: leave the existing (externally-
+	# composed) body alone; the worker will read the brief from disk directly.
+	local todo_file="${repo_path}/TODO.md"
+	if [[ -f "$todo_file" ]]; then
+		local task_id_ere
+		# shellcheck disable=SC2016  # $ inside single quotes is a literal regex metachar, not a shell expansion
+		task_id_ere=$(printf '%s' "$task_id" | sed 's/[].[\*^$()+?{|]/\\&/g')
+		if ! grep -qE "^[[:space:]]*- \[.\] ${task_id_ere}( |$)" "$todo_file" 2>/dev/null; then
+			echo "[dispatch_with_dedup] t2377: issue #${issue_number} has brief but no TODO.md entry; skipping force-enrich (safe: worker will read brief from disk)" >>"$LOGFILE"
+			return 0
+		fi
 	fi
 
 	# Brief exists but body is a stub — force-enrich before worker sees it.

@@ -51,7 +51,8 @@ FORCE_ENRICH="${FORCE_ENRICH:-false}"
 REPO_SLUG=""
 
 log_verbose() {
-	[[ "$VERBOSE" == "true" ]] && print_info "$1"
+	local msg="$1"
+	[[ "$VERBOSE" == "true" ]] && print_info "$msg"
 	return 0
 }
 
@@ -92,11 +93,20 @@ _init_cmd() {
 
 _build_title() {
 	local task_id="$1" description="$2"
+	# Layer 3 (t2377): refuse stub titles. When description is empty, the
+	# pre-fix behaviour emitted "tNNN: " (task ID + colon + trailing space)
+	# which _enrich_update_issue then wrote to the issue, destroying the
+	# real title (#19778/#19779/#19780). Fail loudly so the caller sees it.
+	if [[ -z "$description" ]]; then
+		print_error "_build_title: refusing to emit stub title for ${task_id} — description is empty (t2377)"
+		return 1
+	fi
 	if [[ "$description" == *" — "* ]]; then
 		echo "${task_id}: ${description%% — *}"
 	elif [[ ${#description} -gt 80 ]]; then
 		echo "${task_id}: ${description:0:77}..."
 	else echo "${task_id}: ${description}"; fi
+	return 0
 }
 
 # =============================================================================
@@ -676,6 +686,23 @@ _push_create_issue() {
 # _push_process_task: process a single task_id — skip if existing/completed,
 # parse metadata, dry-run or create issue. Updates created/skipped counters
 # via stdout tokens "CREATED" or "SKIPPED" for the caller to count.
+# GH#18041 (t1957): Collision detection — warn if a merged PR already uses
+# this task ID. This catches task ID reuse (counter reset, fabricated IDs)
+# before the issue is created, preventing permanent dispatch blocks.
+# Extracted from _push_process_task to keep that function under the 100-line
+# complexity gate (t2377 refactor).
+_push_warn_if_task_id_collides() {
+	local repo="$1" task_id="$2"
+	local collision_pr
+	collision_pr=$(gh_find_merged_pr "$repo" "$task_id")
+	if [[ -n "$collision_pr" ]]; then
+		local collision_num="${collision_pr%%|*}"
+		local collision_url="${collision_pr#*|}"
+		print_warning "TASK ID COLLISION: ${task_id} already used by merged PR #${collision_num} (${collision_url}). This issue will be blocked by the dedup guard. Re-ID the task with claim-task-id.sh."
+	fi
+	return 0
+}
+
 _push_process_task() {
 	local task_id="$1" repo="$2" todo_file="$3" project_root="$4"
 	log_verbose "Processing $task_id..."
@@ -719,7 +746,11 @@ _push_process_task() {
 	local assignee
 	assignee=$(echo "$parsed" | grep '^assignee=' | cut -d= -f2-)
 	local title
-	title=$(_build_title "$task_id" "$description")
+	if ! title=$(_build_title "$task_id" "$description"); then
+		print_error "Skipping push for $task_id — empty description; fix TODO entry before retrying (t2377)"
+		echo "SKIPPED"
+		return 0
+	fi
 	local labels
 	labels=$(map_tags_to_labels "$tags")
 
@@ -736,17 +767,7 @@ _push_process_task() {
 	local body
 	body=$(compose_issue_body "$task_id" "$project_root")
 
-	# GH#18041 (t1957): Collision detection — warn if a merged PR already uses
-	# this task ID. This catches task ID reuse (counter reset, fabricated IDs)
-	# before the issue is created, preventing permanent dispatch blocks.
-	local collision_pr
-	collision_pr=$(gh_find_merged_pr "$repo" "$task_id")
-	if [[ -n "$collision_pr" ]]; then
-		local collision_num collision_url
-		collision_num="${collision_pr%%|*}"
-		collision_url="${collision_pr#*|}"
-		print_warning "TASK ID COLLISION: ${task_id} already used by merged PR #${collision_num} (${collision_url}). This issue will be blocked by the dedup guard. Re-ID the task with claim-task-id.sh."
-	fi
+	_push_warn_if_task_id_collides "$repo" "$task_id"
 
 	if [[ "$DRY_RUN" == "true" ]]; then
 		print_info "[DRY-RUN] Would create: $title"
@@ -930,6 +951,26 @@ _enrich_update_issue() {
 	local current_title="${6:-}" current_body="${7:-}"
 	local do_body_update=true
 
+	# Layer 2 (t2377): never-delete invariant. Regardless of FORCE_ENRICH or any
+	# other env override, refuse to write an empty title or empty body. These
+	# are never a legitimate target state — `gh issue edit --title "" --body ""`
+	# is pure data loss (observed on #19778/#19779/#19780). This guard runs
+	# BEFORE any FORCE_ENRICH bypass and cannot be disabled.
+	if [[ -z "$title" ]]; then
+		print_error "_enrich_update_issue refused empty title for #$num ($task_id) — data loss guard (t2377)"
+		return 1
+	fi
+	if [[ -z "$body" ]]; then
+		print_error "_enrich_update_issue refused empty body for #$num ($task_id) — data loss guard (t2377)"
+		return 1
+	fi
+	# Layer 2 (t2377): stub title ("tNNN: " or "tNNN:  " with trailing whitespace)
+	# is the symptom seen on #19778/#19779/#19780. Refuse even when non-empty.
+	if [[ "$title" =~ ^t[0-9]+:[[:space:]]*$ ]]; then
+		print_error "_enrich_update_issue refused stub title '$title' for #$num ($task_id) — data loss guard (t2377)"
+		return 1
+	fi
+
 	if [[ "$FORCE_ENRICH" != "true" ]]; then
 		if [[ -z "$current_body" ]]; then
 			current_body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""' 2>/dev/null || echo "")
@@ -1025,9 +1066,25 @@ _enrich_process_task() {
 	fi
 
 	local title
-	title=$(_build_title "$task_id" "$desc")
+	if ! title=$(_build_title "$task_id" "$desc"); then
+		# Layer 3 follow-up (t2377): _build_title refused stub "tNNN: "
+		# emission because description is empty. This is the t2377 data-loss
+		# symptom — skip the enrich rather than forward an invalid title.
+		print_error "Skipping enrich for $task_id — empty description; fix TODO entry before retrying (t2377)"
+		return 0
+	fi
 	local body
-	body=$(compose_issue_body "$task_id" "$project_root")
+	local _compose_rc=0
+	body=$(compose_issue_body "$task_id" "$project_root") || _compose_rc=$?
+	# Layer 1 (t2377): composition failure = no authoritative body available.
+	# Skip the enrich entirely rather than emit an empty body. Previous
+	# behaviour allowed empty body to reach _enrich_update_issue which, under
+	# FORCE_ENRICH=true, executed `gh issue edit --body ""` and DESTROYED
+	# the issue's original content (data loss: #19778/#19779/#19780).
+	if [[ $_compose_rc -ne 0 || -z "$body" ]]; then
+		print_error "Skipping enrich for $task_id — compose_issue_body failed (rc=$_compose_rc). Task ID is not in TODO.md; fix the TODO entry or remove the brief file (t2377)."
+		return 0
+	fi
 
 	if [[ "$DRY_RUN" == "true" ]]; then
 		local _dry_tier_msg=""
@@ -1510,9 +1567,10 @@ EOF
 main() {
 	local command="" positional_args=()
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local arg="$1" val="${2:-}"
+		case "$arg" in
 		--repo)
-			REPO_SLUG="$2"
+			REPO_SLUG="$val"
 			shift 2
 			;;
 		--dry-run)
@@ -1537,7 +1595,7 @@ main() {
 			return 0
 			;;
 		*)
-			positional_args+=("$1")
+			positional_args+=("$arg")
 			shift
 			;;
 		esac
