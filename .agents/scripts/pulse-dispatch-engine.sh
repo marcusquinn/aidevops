@@ -316,6 +316,12 @@ _dff_should_skip_candidate() {
 		return 0
 	fi
 
+	# t2397: Age-out HARD STOP'd issues that have been quiet for >=24h so
+	# transient failures (model availability, CI flakes, stale framework bugs)
+	# don't permanently strand issues. Called before fast_fail_is_skipped so
+	# a just-reset counter allows dispatch in the same cycle.
+	fast_fail_age_out "$issue_number" "$repo_slug" || true
+
 	if fast_fail_is_skipped "$issue_number" "$repo_slug"; then
 		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — fast-fail threshold reached" >>"$LOGFILE"
 		return 0
