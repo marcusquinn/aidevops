@@ -460,6 +460,16 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - Loop mode: `pre-edit-check.sh --loop-mode --task "description"`
 - NEVER revert others' changes without explicit user request
 
+**Hook self-block bootstrap (MANDATORY protocol).** If a pre-commit validator blocks its own fix:
+
+1. Verify the block is caused by the validator being fixed — not a separate validator bug masking it.
+2. Ask the user for explicit `--no-verify` authorization, citing the canonical "hook-fixes-itself" scenario and the specific validator.
+3. Include a regression test in the same PR that covers the specific bug pattern — without it, the fix ships untested.
+4. Authorization does NOT extend to subsequent commits. Each self-blocking class gets its own explicit authorization.
+5. File sibling validator bugs discovered during the session as separate issues with `blocked-by:<this-PR-task>` until the base fix lands.
+
+See also `reference/pre-commit-hooks.md` for the full playbook and `prompts/build.txt` §"Stale-symptom investigations" (t2036) for the runtime-debugging analogue.
+
 **Post-edit commit rule (data loss prevention):**
 - After each logical change (one tool call or one coherent multi-file edit): `git add -A && git commit -m "wip: <brief description>"`.
 - Commit at the end of each tool call — do not defer across multiple unrelated edits.
