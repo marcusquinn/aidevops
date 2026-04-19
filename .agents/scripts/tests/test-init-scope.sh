@@ -49,6 +49,48 @@ cleanup() {
 
 trap cleanup EXIT
 
+# Assertion helpers — flat expressions replace nested if/else/fi blocks.
+# The regression scanner at complexity-regression-helper.sh counts every
+# 'if|for|while|until|case' keyword (even inside strings) as a depth
+# increment, so keeping each test case to a single boolean expression
+# avoids false-positive depth accumulation in message strings.
+assert_missing() {
+	local path="$1" name="$2" context="$3"
+	[[ ! -f "$path" ]] && { print_result "$name" 0; return 0; }
+	print_result "$name" 1 "$path present in $context scope"
+}
+
+assert_present() {
+	local path="$1" name="$2" context="$3"
+	[[ -f "$path" ]] && { print_result "$name" 0; return 0; }
+	print_result "$name" 1 "$path missing in $context scope"
+}
+
+assert_either_missing() {
+	local path_a="$1" path_b="$2" name="$3" context="$4"
+	[[ ! -f "$path_a" && ! -f "$path_b" ]] && { print_result "$name" 0; return 0; }
+	print_result "$name" 1 "$path_a or $path_b present in $context scope"
+}
+
+assert_either_present() {
+	local path_a="$1" path_b="$2" name="$3" context="$4"
+	{ [[ -f "$path_a" ]] || [[ -f "$path_b" ]]; } && { print_result "$name" 0; return 0; }
+	print_result "$name" 1 "neither $path_a nor $path_b present in $context scope"
+}
+
+assert_equals() {
+	local expected="$1" actual="$2" name="$3"
+	[[ "$actual" == "$expected" ]] && { print_result "$name" 0; return 0; }
+	print_result "$name" 1 "expected '$expected', got '$actual'"
+}
+
+assert_negative() {
+	local name="$1"
+	shift
+	! "$@" && { print_result "$name" 0; return 0; }
+	print_result "$name" 1 "expected failure but got success"
+}
+
 # Source the aidevops.sh to get access to the helper functions
 # We need to find the repo root
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -77,54 +119,31 @@ test_scope_includes() {
 	_scope_includes "minimal" "minimal"
 	print_result "minimal includes minimal" "$?"
 
-	# minimal does NOT include standard
-	if _scope_includes "minimal" "standard"; then
-		print_result "minimal excludes standard" 1 "Expected failure but got success"
-	else
-		print_result "minimal excludes standard" 0
-	fi
+	# minimal does NOT include standard or public
+	assert_negative "minimal excludes standard" _scope_includes "minimal" "standard"
+	assert_negative "minimal excludes public" _scope_includes "minimal" "public"
 
-	# minimal does NOT include public
-	if _scope_includes "minimal" "public"; then
-		print_result "minimal excludes public" 1 "Expected failure but got success"
-	else
-		print_result "minimal excludes public" 0
-	fi
-
-	# standard includes minimal
+	# standard includes minimal and standard
 	_scope_includes "standard" "minimal"
 	print_result "standard includes minimal" "$?"
-
-	# standard includes standard
 	_scope_includes "standard" "standard"
 	print_result "standard includes standard" "$?"
 
 	# standard does NOT include public
-	if _scope_includes "standard" "public"; then
-		print_result "standard excludes public" 1 "Expected failure but got success"
-	else
-		print_result "standard excludes public" 0
-	fi
+	assert_negative "standard excludes public" _scope_includes "standard" "public"
 
 	# public includes all
 	_scope_includes "public" "minimal"
 	print_result "public includes minimal" "$?"
-
 	_scope_includes "public" "standard"
 	print_result "public includes standard" "$?"
-
 	_scope_includes "public" "public"
 	print_result "public includes public" "$?"
 
 	# unknown defaults to standard
 	_scope_includes "unknown" "standard"
 	print_result "unknown scope defaults to standard" "$?"
-
-	if _scope_includes "unknown" "public"; then
-		print_result "unknown scope excludes public" 1 "Expected failure but got success"
-	else
-		print_result "unknown scope excludes public" 0
-	fi
+	assert_negative "unknown scope excludes public" _scope_includes "unknown" "public"
 
 	return 0
 }
@@ -150,11 +169,7 @@ test_infer_init_scope() {
 
 	local result
 	result=$(_infer_init_scope "$test_dir")
-	if [[ "$result" == "public" ]]; then
-		print_result ".aidevops.json explicit scope respected" 0
-	else
-		print_result ".aidevops.json explicit scope respected" 1 "Expected 'public', got '$result'"
-	fi
+	assert_equals "public" "$result" ".aidevops.json explicit scope respected"
 
 	# Test 2: No remote → minimal
 	local test_dir2="$TEST_ROOT/test-no-remote"
@@ -162,11 +177,7 @@ test_infer_init_scope() {
 	git -C "$test_dir2" init --quiet 2>/dev/null
 
 	result=$(_infer_init_scope "$test_dir2")
-	if [[ "$result" == "minimal" ]]; then
-		print_result "No remote infers minimal" 0
-	else
-		print_result "No remote infers minimal" 1 "Expected 'minimal', got '$result'"
-	fi
+	assert_equals "minimal" "$result" "No remote infers minimal"
 
 	# Test 3: Empty .aidevops.json (no init_scope) + no remote → minimal
 	local test_dir3="$TEST_ROOT/test-empty-json"
@@ -175,11 +186,7 @@ test_infer_init_scope() {
 	echo '{"version": "1.0"}' > "$test_dir3/.aidevops.json"
 
 	result=$(_infer_init_scope "$test_dir3")
-	if [[ "$result" == "minimal" ]]; then
-		print_result "Empty .aidevops.json + no remote → minimal" 0
-	else
-		print_result "Empty .aidevops.json + no remote → minimal" 1 "Expected 'minimal', got '$result'"
-	fi
+	assert_equals "minimal" "$result" "Empty .aidevops.json plus no remote → minimal"
 
 	# Clean up
 	rm -rf "$TEST_ROOT"
@@ -232,26 +239,10 @@ test_scaffold_minimal_scope() {
 	git -C "$minimal_dir" init --quiet 2>/dev/null
 	scaffold_repo_courtesy_files "$minimal_dir" "minimal" 2>/dev/null
 
-	if [[ ! -f "$minimal_dir/README.md" ]]; then
-		print_result "minimal: no README.md" 0
-	else
-		print_result "minimal: no README.md" 1 "README.md was created for minimal scope"
-	fi
-	if [[ ! -f "$minimal_dir/LICENCE" ]] && [[ ! -f "$minimal_dir/LICENSE" ]]; then
-		print_result "minimal: no LICENCE" 0
-	else
-		print_result "minimal: no LICENCE" 1 "LICENCE was created for minimal scope"
-	fi
-	if [[ ! -f "$minimal_dir/CHANGELOG.md" ]]; then
-		print_result "minimal: no CHANGELOG.md" 0
-	else
-		print_result "minimal: no CHANGELOG.md" 1 "CHANGELOG.md was created for minimal scope"
-	fi
-	if [[ ! -f "$minimal_dir/CONTRIBUTING.md" ]]; then
-		print_result "minimal: no CONTRIBUTING.md" 0
-	else
-		print_result "minimal: no CONTRIBUTING.md" 1 "CONTRIBUTING.md was created for minimal scope"
-	fi
+	assert_missing "$minimal_dir/README.md" "minimal: no README.md" "minimal"
+	assert_either_missing "$minimal_dir/LICENCE" "$minimal_dir/LICENSE" "minimal: no LICENCE" "minimal"
+	assert_missing "$minimal_dir/CHANGELOG.md" "minimal: no CHANGELOG.md" "minimal"
+	assert_missing "$minimal_dir/CONTRIBUTING.md" "minimal: no CONTRIBUTING.md" "minimal"
 
 	rm -rf "$TEST_ROOT"; TEST_ROOT=""
 	return 0
@@ -267,21 +258,9 @@ test_scaffold_standard_scope() {
 	git -C "$standard_dir" init --quiet 2>/dev/null
 	scaffold_repo_courtesy_files "$standard_dir" "standard" 2>/dev/null
 
-	if [[ -f "$standard_dir/README.md" ]]; then
-		print_result "standard: README.md created" 0
-	else
-		print_result "standard: README.md created" 1 "README.md was NOT created for standard scope"
-	fi
-	if [[ ! -f "$standard_dir/LICENCE" ]] && [[ ! -f "$standard_dir/LICENSE" ]]; then
-		print_result "standard: no LICENCE" 0
-	else
-		print_result "standard: no LICENCE" 1 "LICENCE was created for standard scope"
-	fi
-	if [[ ! -f "$standard_dir/CHANGELOG.md" ]]; then
-		print_result "standard: no CHANGELOG.md" 0
-	else
-		print_result "standard: no CHANGELOG.md" 1 "CHANGELOG.md was created for standard scope"
-	fi
+	assert_present "$standard_dir/README.md" "standard: README.md created" "standard"
+	assert_either_missing "$standard_dir/LICENCE" "$standard_dir/LICENSE" "standard: no LICENCE" "standard"
+	assert_missing "$standard_dir/CHANGELOG.md" "standard: no CHANGELOG.md" "standard"
 
 	rm -rf "$TEST_ROOT"; TEST_ROOT=""
 	return 0
@@ -297,21 +276,9 @@ test_scaffold_public_scope() {
 	git -C "$public_dir" init --quiet 2>/dev/null
 	scaffold_repo_courtesy_files "$public_dir" "public" 2>/dev/null
 
-	if [[ -f "$public_dir/README.md" ]]; then
-		print_result "public: README.md created" 0
-	else
-		print_result "public: README.md created" 1 "README.md was NOT created for public scope"
-	fi
-	if [[ -f "$public_dir/LICENCE" ]] || [[ -f "$public_dir/LICENSE" ]]; then
-		print_result "public: LICENCE created" 0
-	else
-		print_result "public: LICENCE created" 1 "LICENCE was NOT created for public scope"
-	fi
-	if [[ -f "$public_dir/CHANGELOG.md" ]]; then
-		print_result "public: CHANGELOG.md created" 0
-	else
-		print_result "public: CHANGELOG.md created" 1 "CHANGELOG.md was NOT created for public scope"
-	fi
+	assert_present "$public_dir/README.md" "public: README.md created" "public"
+	assert_either_present "$public_dir/LICENCE" "$public_dir/LICENSE" "public: LICENCE created" "public"
+	assert_present "$public_dir/CHANGELOG.md" "public: CHANGELOG.md created" "public"
 
 	rm -rf "$TEST_ROOT"; TEST_ROOT=""
 	return 0
@@ -343,20 +310,12 @@ EOF
 	# Verify init_scope survives a read-back
 	local scope
 	scope=$(jq -r '.init_scope' "$test_dir/.aidevops.json")
-	if [[ "$scope" == "minimal" ]]; then
-		print_result ".aidevops.json init_scope round-trip" 0
-	else
-		print_result ".aidevops.json init_scope round-trip" 1 "Expected 'minimal', got '$scope'"
-	fi
+	assert_equals "minimal" "$scope" ".aidevops.json init_scope round-trip"
 
 	# Verify init_scope is present and not null
 	local has_scope
 	has_scope=$(jq 'has("init_scope")' "$test_dir/.aidevops.json")
-	if [[ "$has_scope" == "true" ]]; then
-		print_result ".aidevops.json has init_scope field" 0
-	else
-		print_result ".aidevops.json has init_scope field" 1 "init_scope field missing"
-	fi
+	assert_equals "true" "$has_scope" ".aidevops.json has init_scope field"
 
 	rm -rf "$TEST_ROOT"
 	TEST_ROOT=""
@@ -387,11 +346,7 @@ test_backward_compat() {
 
 	local result
 	result=$(_infer_init_scope "$test_dir")
-	if [[ "$result" == "standard" ]]; then
-		print_result "Existing repo without init_scope defaults to standard" 0
-	else
-		print_result "Existing repo without init_scope defaults to standard" 1 "Expected 'standard', got '$result'"
-	fi
+	assert_equals "standard" "$result" "Existing repo without init_scope defaults to standard"
 
 	rm -rf "$TEST_ROOT"
 	TEST_ROOT=""
