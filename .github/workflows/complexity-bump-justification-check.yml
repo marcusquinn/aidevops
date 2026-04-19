@@ -1,0 +1,145 @@
+name: Complexity Bump Justification Check
+
+# t2370: validate that a PR body contains a well-formed justification section
+# before allowing the `complexity-bump-ok` label to persist.
+#
+# Mirrors the `new-file-smell-ok` justification pattern in
+# `qlty-new-file-gate.yml`, but runs as a standalone label-event workflow
+# so that workers can self-apply the label when their PR body contains
+# scanner evidence. The existing `code-quality.yml` gates trust the label
+# presence — this workflow enforces the evidence quality at label-apply time.
+#
+# On fail: removes the label and posts a remediation comment.
+# On pass: label stays, and the code-quality.yml gates accept it.
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  validate:
+    # Only fire when the specific label is applied.
+    if: github.event.label.name == 'complexity-bump-ok'
+    name: Validate Complexity Bump Justification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate justification section
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          marker="<!-- complexity-bump-justification-check -->"
+          errors=()
+
+          # --- Check 1: H2 section header exists ---
+          has_section=false
+          if printf '%s' "$PR_BODY" | grep -qE '^##+[[:space:]]+Complexity Bump Justification'; then
+            has_section=true
+          fi
+          if [ "$has_section" = "false" ]; then
+            errors+=("Missing \`## Complexity Bump Justification\` section header in PR description.")
+          fi
+
+          # --- Check 2: At least one file:line reference ---
+          # Matches patterns like `file.sh:42`, `path/to/file.py:100`, `src/mod.ts:7`
+          has_file_line=false
+          if printf '%s' "$PR_BODY" | grep -qE '[A-Za-z0-9_./-]+\.[A-Za-z0-9]+:[0-9]+'; then
+            has_file_line=true
+          fi
+          if [ "$has_file_line" = "false" ]; then
+            errors+=("Missing file:line reference (e.g. \`scripts/helper.sh:42\`). Cite at least one specific location.")
+          fi
+
+          # --- Check 3: At least one numeric measurement ---
+          # Matches patterns like "depth=8", "base=283", "head=285", "lines: 1500",
+          # "violations: 3", or bare numbers in context like "nesting depth 8"
+          has_measurement=false
+          if printf '%s' "$PR_BODY" | grep -qE '(depth|base|head|lines|violations|count|threshold|score|size|complexity)[=: ]+[0-9]'; then
+            has_measurement=true
+          fi
+          # Fallback: any digit sequence of 2+ digits near a measurement-like word
+          if [ "$has_measurement" = "false" ]; then
+            if printf '%s' "$PR_BODY" | grep -qE '[0-9]{2,}[[:space:]]*(lines|violations|depth|functions|files)'; then
+              has_measurement=true
+            fi
+          fi
+          if [ "$has_measurement" = "false" ]; then
+            errors+=("Missing numeric measurement (e.g. \`depth=8\`, \`base=283 head=285\`). Include scanner evidence.")
+          fi
+
+          # --- All checks passed ---
+          if [ ${#errors[@]} -eq 0 ]; then
+            echo "Complexity Bump Justification validated: section present, file:line reference found, measurement found."
+            # Clean up any previous remediation comment
+            existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+              2>/dev/null || true)
+            if [ -n "$existing" ]; then
+              gh api "repos/${REPO}/issues/comments/${existing}" --method DELETE >/dev/null 2>&1 || true
+            fi
+            exit 0
+          fi
+
+          # --- Validation failed: remove label and post remediation comment ---
+          echo "::error::Complexity Bump Justification validation failed."
+
+          # Remove the label so the code-quality gates don't see it
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label "complexity-bump-ok" || true
+
+          # Build remediation comment
+          body="${marker}"
+          body+=$'\n'"## Complexity Bump Justification — validation failed"
+          body+=$'\n'
+          body+=$'\n'"The \`complexity-bump-ok\` label was removed because the PR description is missing required evidence."
+          body+=$'\n'
+          body+=$'\n'"### What's missing"
+          body+=$'\n'
+          for err in "${errors[@]}"; do
+            body+=$'\n'"- ${err}"
+          done
+          body+=$'\n'
+          body+=$'\n'"### How to fix"
+          body+=$'\n'
+          body+=$'\n'"Add a \`## Complexity Bump Justification\` section to your PR description with:"
+          body+=$'\n'"1. **File:line references** — which files and lines trigger the complexity gate"
+          body+=$'\n'"2. **Numeric measurements** — scanner output showing base vs head metrics"
+          body+=$'\n'"3. **Rationale** — why the complexity increase is justified (e.g. file split, necessary logic)"
+          body+=$'\n'
+          body+=$'\n'"Example:"
+          body+=$'\n'
+          body+=$'\n'"\`\`\`markdown"
+          body+=$'\n'"## Complexity Bump Justification"
+          body+=$'\n'
+          body+=$'\n'"This PR splits pulse-wrapper.sh into focused modules. The extracted files"
+          body+=$'\n'"inherit nesting from the original structure."
+          body+=$'\n'
+          body+=$'\n'"- pulse-dispatch-lib.sh:145 — dispatch_with_dedup nesting depth=6 (inherited)"
+          body+=$'\n'"- base=283 violations, head=285 violations (net +2 from split identity change)"
+          body+=$'\n'"\`\`\`"
+          body+=$'\n'
+          body+=$'\n'"Once the section is complete, re-apply the \`complexity-bump-ok\` label."
+          body+=$'\n'
+          body+=$'\n'"---"
+          body+=$'\n'"*Auto-validated by .github/workflows/complexity-bump-justification-check.yml (t2370)*"
+
+          # Upsert the comment (replace existing or create new)
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            echo "$body" | gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body=@- >/dev/null 2>&1 || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body" >/dev/null 2>&1 || true
+          fi
+
+          # Fail the check so it's visible in PR checks
+          exit 1
