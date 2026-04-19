@@ -1317,18 +1317,51 @@ commit_version_changes() {
 
 # Function to push changes and tags
 push_changes() {
+	local version="$1" # version string, e.g. "3.8.71"
+	local tag_name="v$version"
 	cd "$REPO_ROOT" || exit 1
 
-	print_info "Pushing changes to remote..."
+	local attempt=0 max_attempts=10 delay=2
+	while [[ $attempt -lt $max_attempts ]]; do
+		attempt=$((attempt + 1))
+		print_info "Pushing changes to remote (attempt $attempt/$max_attempts)..."
 
-	# Use --atomic to ensure commit and tag are pushed together (all-or-nothing)
-	if git push --atomic origin main --tags; then
-		print_success "Pushed changes and tags to remote"
-		return 0
-	else
-		print_error "Failed to push to remote"
-		return 1
-	fi
+		# Use --atomic to ensure commit and tag are pushed together (all-or-nothing)
+		if git push --atomic origin main --tags 2>/dev/null; then
+			print_success "Pushed changes and tags to remote"
+			return 0
+		fi
+
+		# Non-fast-forward: rebase and retry
+		print_info "Push failed (conflict). Fetching and rebasing..."
+		if ! git fetch origin main --quiet; then
+			print_error "Fetch failed, cannot retry"
+			return 1
+		fi
+
+		if ! git rebase origin/main; then
+			print_error "Rebase conflict, manual intervention needed"
+			git rebase --abort 2>/dev/null || true
+			return 1
+		fi
+
+		# Tag must be recreated on the new HEAD after rebase
+		if git show-ref --tags "$tag_name" &>/dev/null; then
+			print_info "Recreating tag $tag_name on rebased HEAD..."
+			git tag -d "$tag_name"
+			git tag -a "$tag_name" -m "$tag_name"
+		fi
+
+		if [[ $attempt -lt $max_attempts ]]; then
+			sleep "$delay"
+			delay=$((delay * 2))
+			[[ $delay -gt 60 ]] && delay=60
+		fi
+	done
+
+	print_error "Failed to push after $max_attempts attempts. Manual recovery needed."
+	print_info "Current SHA: $(git rev-parse HEAD), remote SHA: $(git rev-parse origin/main)"
+	return 1
 }
 
 # Function to create git tag
@@ -1633,7 +1666,7 @@ _release_execute() {
 			print_error "Aborting release: tag creation failed (see above for diagnosis)"
 			exit 1
 		fi
-		if ! push_changes; then
+		if ! push_changes "$new_version"; then
 			# --atomic push failed: tag was NOT pushed to remote.
 			# Check whether a concurrent run already pushed the tag before rolling back.
 			# Note: --exit-code returns 2 when ref not found; capture exit code to
