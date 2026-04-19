@@ -12,9 +12,12 @@
 #   3. Pre-declaration of `complexity-bump-ok` / `ratchet-bump` label + `Complexity Bump Justification` section
 #   4. The `<!-- aidevops:generator=... -->` marker for pre-dispatch validators
 #
-# Tests both gates:
-#   - `pulse-dispatch-large-file-gate.sh` (file-size-debt bodies)
-#   - `stats-quality-sweep.sh` (_build_simplification_issue_body for function-complexity-debt)
+# Tests all five scanner body templates:
+#   Part 1: `pulse-dispatch-large-file-gate.sh` (file-size-debt bodies)
+#   Part 2: `stats-quality-sweep.sh` (_build_simplification_issue_body)
+#   Part 3: `pulse-simplification.sh` SH body (_complexity_scan_sh_build_issue_body_with_sig)
+#   Part 4: `pulse-simplification.sh` MD body (_complexity_scan_build_md_issue_body)
+#   Part 5: `pulse-simplification-state.sh` requeue body (_create_requeue_issue)
 #
 # Cross-references: GH#19828 / t2371, GH#19699 (the too-thin body),
 # t2368 (large-file-split.md playbook), t2367 (generator marker).
@@ -24,6 +27,8 @@ set -uo pipefail
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 GATE_SCRIPT="${SCRIPT_DIR_TEST}/../pulse-dispatch-large-file-gate.sh"
 SWEEP_SCRIPT="${SCRIPT_DIR_TEST}/../stats-quality-sweep.sh"
+SIMPLIFICATION_SCRIPT="${SCRIPT_DIR_TEST}/../pulse-simplification.sh"
+REQUEUE_SCRIPT="${SCRIPT_DIR_TEST}/../pulse-simplification-state.sh"
 
 if [[ -t 1 ]]; then
 	TEST_GREEN=$'\033[0;32m'
@@ -178,6 +183,115 @@ assert_contains \
 	"complexity-sweep: headless-runtime-lib.sh complex precedent" \
 	"$sweep_body_section" \
 	"headless-runtime-lib.sh"
+
+######################################################################
+# Part 3: SH complexity scanner body (pulse-simplification.sh)
+#
+# _complexity_scan_sh_build_issue_body_with_sig builds the body as a
+# local variable. Extract the function body from source.
+######################################################################
+
+printf '\n%s\n\n' '--- Part 3: SH function-complexity body ---'
+
+sh_body_section=$(sed -n '/_complexity_scan_sh_build_issue_body_with_sig()/,/^}$/p' "$SIMPLIFICATION_SCRIPT")
+
+# Test 3.1: Generator marker
+assert_contains \
+	"sh-complexity: generator marker present" \
+	"$sh_body_section" \
+	"aidevops:generator=function-complexity-gate"
+
+# Test 3.2: Playbook link
+assert_contains \
+	"sh-complexity: playbook reference" \
+	"$sh_body_section" \
+	"large-file-split.md"
+
+# Test 3.3: Precedent citation
+assert_contains \
+	"sh-complexity: issue-sync-helper.sh precedent" \
+	"$sh_body_section" \
+	"issue-sync-helper.sh"
+
+# Test 3.4: CI override label
+assert_contains \
+	"sh-complexity: complexity-bump-ok label mention" \
+	"$sh_body_section" \
+	"complexity-bump-ok"
+
+# Test 3.5: Justification section
+assert_contains \
+	"sh-complexity: Complexity Bump Justification section mention" \
+	"$sh_body_section" \
+	"Complexity Bump Justification"
+
+######################################################################
+# Part 4: MD agent doc body (pulse-simplification.sh)
+#
+# _complexity_scan_build_md_issue_body outputs via heredoc.
+######################################################################
+
+printf '\n%s\n\n' '--- Part 4: MD agent doc body ---'
+
+md_body_section=$(sed -n '/_complexity_scan_build_md_issue_body()/,/^}$/p' "$SIMPLIFICATION_SCRIPT")
+
+# Test 4.1: Generator marker
+assert_contains \
+	"md-simplification: generator marker present" \
+	"$md_body_section" \
+	"aidevops:generator=function-complexity-gate"
+
+# Test 4.2: Playbook link
+assert_contains \
+	"md-simplification: playbook reference" \
+	"$md_body_section" \
+	"large-file-split.md"
+
+# Test 4.3: Precedent citation
+assert_contains \
+	"md-simplification: issue-sync-helper.sh precedent" \
+	"$md_body_section" \
+	"issue-sync-helper.sh"
+
+# Test 4.4: CI override label
+assert_contains \
+	"md-simplification: complexity-bump-ok label mention" \
+	"$md_body_section" \
+	"complexity-bump-ok"
+
+######################################################################
+# Part 5: Requeue body (pulse-simplification-state.sh)
+#
+# _create_requeue_issue calls gh_create_issue. Extract from source.
+######################################################################
+
+printf '\n%s\n\n' '--- Part 5: Requeue body ---'
+
+requeue_body_section=$(sed -n '/_create_requeue_issue()/,/^}$/p' "$REQUEUE_SCRIPT")
+
+# Test 5.1: Generator marker
+assert_contains \
+	"requeue: generator marker present" \
+	"$requeue_body_section" \
+	"aidevops:generator=function-complexity-gate"
+
+# Test 5.2: Playbook link
+assert_contains \
+	"requeue: playbook reference" \
+	"$requeue_body_section" \
+	"large-file-split.md"
+
+# Test 5.3: Precedent citation
+assert_contains \
+	"requeue: issue-sync-helper.sh precedent" \
+	"$requeue_body_section" \
+	"issue-sync-helper.sh"
+
+# Test 5.4: CI override label
+assert_contains \
+	"requeue: complexity-bump-ok label mention" \
+	"$requeue_body_section" \
+	"complexity-bump-ok"
 
 ######################################################################
 # Summary

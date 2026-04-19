@@ -384,6 +384,8 @@ This file has been through ${pass_count} simplification passes but ${remaining_s
 	# closing the command substitution. macOS ships Bash 3.2 by default.
 	local issue_body
 	IFS= read -r -d '' issue_body <<REQUEUE_BODY_EOF || true
+<!-- aidevops:generator=function-complexity-gate cited_file=${file_path} threshold=${COMPLEXITY_FUNC_LINE_THRESHOLD:-100} -->
+
 ## Post-merge smell verification (automated — t1912)
 
 **File:** \`${file_path}\`
@@ -402,6 +404,12 @@ Review issue #${prev_issue_num} for what the previous attempt accomplished and w
 1. Run \`~/.qlty/bin/qlty smells --all "${file_path}"\` to identify the specific remaining smells
 2. Address the flagged complexity — reduce function length, extract helpers, simplify control flow
 3. Verify: \`~/.qlty/bin/qlty smells --all 2>&1 | grep '${file_path}' | grep -c . | grep -q '^0$'\` (report \`SKIP\` if Qlty unavailable)${escalation_note}
+
+**Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for shell-lib splits — covers orchestrator pattern, identity-key preservation, and PR body template).
+
+**Precedent in this repo:** \`issue-sync-helper.sh\` + \`issue-sync-lib.sh\` (simple split) and \`headless-runtime-lib.sh\` + sub-libraries (complex split). Copy the include-guard and SCRIPT_DIR-fallback pattern from the simple precedent.
+
+**Expected CI gate overrides:** This PR may trigger a complexity regression from function extraction. Apply the \`complexity-bump-ok\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing scanner evidence.
 
 ### Verification
 

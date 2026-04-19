@@ -772,6 +772,8 @@ _complexity_scan_build_md_issue_body() {
 	local topic_label="$3"
 
 	cat <<ISSUE_BODY_EOF
+<!-- aidevops:generator=function-complexity-gate cited_file=${file_path} threshold=${COMPLEXITY_MD_LINE_THRESHOLD:-500} -->
+
 ## Agent doc simplification (automated scan)
 
 **File:** \`${file_path}\`
@@ -800,6 +802,14 @@ Tighten and restructure this agent doc. Follow \`tools/build-agent/build-agent.m
 2. **Replace the original with a slim index** (~100-200 lines) — table of contents with one-line descriptions and file pointers
 3. **Zero content loss** — every line moves to a chapter file, nothing is deleted or compressed
 4. **Reconcile existing chapter files** — if partial splits already exist, deduplicate and keep the most complete version
+
+### Worker guidance
+
+**Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for splits — covers orchestrator pattern, identity-key preservation, and PR body template).
+
+**Precedent in this repo:** \`issue-sync-helper.sh\` + \`issue-sync-lib.sh\` (simple split) and \`headless-runtime-lib.sh\` + sub-libraries (complex split). For agent docs, see existing chapter-file splits in \`.agents/reference/\`.
+
+**Expected CI gate overrides:** If this PR triggers a complexity regression from restructured files, apply the \`complexity-bump-ok\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing scanner evidence.
 
 ### Verification
 
@@ -1081,6 +1091,12 @@ ${details}
 ### Proposed action
 
 Break down the listed functions into smaller, focused helper functions. Each function should ideally be under ${COMPLEXITY_FUNC_LINE_THRESHOLD} lines.
+
+**Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for shell-lib splits — covers orchestrator pattern, identity-key preservation, and PR body template).
+
+**Precedent in this repo:** \`issue-sync-helper.sh\` + \`issue-sync-lib.sh\` (simple split) and \`headless-runtime-lib.sh\` + sub-libraries (complex split). Copy the include-guard and SCRIPT_DIR-fallback pattern from the simple precedent.
+
+**Expected CI gate overrides:** This PR may trigger a complexity regression from function extraction. Apply the \`complexity-bump-ok\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing scanner evidence. See the playbook section 4 (Known CI False-Positive Classes).
 
 ### Verification
 
