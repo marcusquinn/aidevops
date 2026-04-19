@@ -1884,8 +1884,8 @@ cmd_disable() {
 }
 
 #######################################
-# Print scheduler section of status output (launchd or cron)
-# Args: $1 = backend ("launchd" or "cron")
+# Print scheduler section of status output (launchd, systemd, or cron)
+# Args: $1 = backend ("launchd", "systemd", or "cron")
 #######################################
 _cmd_status_scheduler() {
 	local backend="$1"
@@ -1916,6 +1916,37 @@ _cmd_status_scheduler() {
 			if [[ -f "$LAUNCHD_PLIST" ]]; then
 				echo "  Plist:     $LAUNCHD_PLIST (exists but not loaded)"
 			fi
+		fi
+		# Also check for any lingering cron entry
+		if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
+			echo -e "  ${YELLOW}Note: legacy cron entry found — run 'aidevops auto-update disable && enable' to migrate${NC}"
+		fi
+	elif [[ "$backend" != "cron" ]]; then
+		# Linux: show systemd user timer status (backend is "systemd" or future variant)
+		if ! command -v systemctl &>/dev/null; then
+			echo -e "  Scheduler: systemd (not available on this host)"
+		else
+			local enabled_state
+			enabled_state=$(systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || echo "unknown")
+			local timer_props next_elapse last_trigger
+			timer_props=$(systemctl --user show -p NextElapse,LastTriggerUSec "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
+			next_elapse=$(echo "$timer_props" | grep '^NextElapse=' | cut -d= -f2-)
+			last_trigger=$(echo "$timer_props" | grep '^LastTriggerUSec=' | cut -d= -f2-)
+			echo -e "  Scheduler: systemd (user timer)"
+			if [[ "$enabled_state" == "enabled" ]] || [[ "$enabled_state" == "enabled-runtime" ]]; then
+				echo -e "  Status:    ${GREEN}${enabled_state}${NC}"
+			else
+				echo -e "  Status:    ${YELLOW}${enabled_state}${NC}"
+			fi
+			echo "  Unit:      ${SYSTEMD_UNIT_NAME}.timer"
+			if [[ -n "$next_elapse" ]] && [[ "$next_elapse" != "0" ]]; then
+				echo "  Next fire: $next_elapse"
+			fi
+			if [[ -n "$last_trigger" ]] && [[ "$last_trigger" != "0" ]]; then
+				echo "  Last fire: $last_trigger"
+			fi
+			echo "  Timer:     ${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
+			echo "  Service:   ${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
 		fi
 		# Also check for any lingering cron entry
 		if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
@@ -2116,7 +2147,9 @@ SCHEDULER BACKENDS:
     macOS:  launchd LaunchAgent (~/Library/LaunchAgents/com.aidevops.aidevops-auto-update.plist)
             - Native macOS scheduler, survives reboots without cron
             - Auto-migrates existing cron entries on first 'enable'
-    Linux:  cron (crontab entry with # aidevops-auto-update marker)
+    Linux:  systemd user timer preferred (~/.config/systemd/user/aidevops-auto-update.timer)
+            - Falls back to cron when systemctl --user is unavailable
+    Linux:  cron fallback (crontab entry with # aidevops-auto-update marker)
 
 HOW IT WORKS:
     1. Scheduler runs 'auto-update-helper.sh check' every 10 minutes

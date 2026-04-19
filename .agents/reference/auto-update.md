@@ -7,7 +7,12 @@ Polls GitHub every 10 min; runs `aidevops update` on new version. Safe during ac
 
 **CLI**: `aidevops auto-update [enable|disable|status|check|logs]`
 
-**Scheduler**: macOS launchd (`~/Library/LaunchAgents/com.aidevops.auto-update.plist`); Linux cron. Auto-migrates existing cron on macOS.
+**Scheduler**: Three backends depending on platform:
+- **macOS**: launchd LaunchAgent (`~/Library/LaunchAgents/com.aidevops.aidevops-auto-update.plist`). Auto-migrates existing cron entries on first `enable`.
+- **Linux (preferred)**: systemd user timer (`~/.config/systemd/user/aidevops-auto-update.timer` + `.service`). Selected by `_detect_linux_scheduler` when `systemctl --user` is available — this is the default on most modern Linux desktops and servers.
+- **Linux (fallback)**: cron (crontab entry with `# aidevops-auto-update` marker). Used when `systemctl --user` is unavailable (e.g., containers without systemd).
+
+Note: linger configuration (enabling systemd user services to run without an active login session) is a separate concern — see t2404 once it lands.
 
 **Disable**: `aidevops auto-update disable`, `"auto_update": false` in settings.json, or `AIDEVOPS_AUTO_UPDATE=false`. Priority: env > settings.json > default (`true`). **Logs**: `~/.aidevops/logs/auto-update.log`
 
