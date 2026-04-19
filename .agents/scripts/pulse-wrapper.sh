@@ -190,8 +190,17 @@ source "${SCRIPT_DIR}/pulse-watchdog.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-capacity-alloc.sh"
 # Phase 4 (t1972, GH#18378): pr-gates + merge cycle co-extracted into one module.
+# GH#19836: further split — downstream conflict + feedback clusters into separate
+# modules. Source order matters: pulse-merge.sh first (defines the dispatcher
+# callers), then the two downstream modules. Bash's lazy function resolution
+# handles the runtime cross-module calls (e.g., _check_pr_merge_gates →
+# _dispatch_pr_fix_worker in pulse-merge-feedback.sh) without issue.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-merge.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-merge-conflict.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-merge-feedback.sh"
 # Phase 5 (t1973, GH#18380): cleanup + issue-reconcile extracted into two modules.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-cleanup.sh"
@@ -1008,6 +1017,13 @@ _pulse_execute_self_check() {
 		_pulse_setup_dry_run_mode
 		_pulse_run_deterministic_pipeline
 		_pulse_maybe_run_llm_supervisor
+		_carry_forward_pr_diff
+		_dispatch_pr_fix_worker
+		_close_conflicting_pr
+		_interactive_pr_is_stale
+		_interactive_pr_trigger_handover
+		_dispatch_ci_fix_worker
+		_dispatch_conflict_fix_worker
 	)
 	for _sc_fn in "${_sc_expected_fns[@]}"; do
 		if ! declare -F "$_sc_fn" >/dev/null 2>&1; then
@@ -1025,6 +1041,7 @@ _pulse_execute_self_check() {
 	# Phase 8 (t1976, GH#18387): triage cluster (10 fns)
 	# Phase 9 (t1977, GH#18389): dispatch-core + dispatch-engine (26 fns)
 	# Phase 10 (t1978, GH#18391): quality-debt + ancillary-dispatch (FINAL — clears 2K gate)
+	# GH#19836: pulse-merge.sh further split into three modules (conflict + feedback extracted).
 	local _sc_expected_guards=(
 		_PULSE_MODEL_ROUTING_LOADED
 		_PULSE_INSTANCE_LOCK_LOADED
@@ -1040,6 +1057,8 @@ _pulse_execute_self_check() {
 		_PULSE_WATCHDOG_LOADED
 		_PULSE_CAPACITY_ALLOC_LOADED
 		_PULSE_MERGE_LOADED
+		_PULSE_MERGE_CONFLICT_LOADED
+		_PULSE_MERGE_FEEDBACK_LOADED
 		_PULSE_CLEANUP_LOADED
 		_PULSE_ISSUE_RECONCILE_LOADED
 		_PULSE_SIMPLIFICATION_LOADED

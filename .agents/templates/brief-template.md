@@ -76,6 +76,28 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
      "will resolve with a Closes-hash-NNN", or split the `#` from the number.
      Canonical foot-gun: t2190 session PR #19680. -->
 
+<!-- TODO(t2219): delete this comment block once t2219 (GH#19719) merges.
+
+     **Planning PR title-collision warning (active until t2219 ships).**
+
+     If this task spawns a PR that (a) references future-work issues via
+     `For #NNN` or `Ref #NNN` (not `Closes/Fixes/Resolves`) AND (b) has a
+     title starting with a `tNNN:` that matches any of those referenced
+     issues' title prefixes, the `issue-sync.yml::sync-on-pr-merge`
+     title-fallback at lines 412-414 will apply `status:done` to the
+     matching issue on merge — a false positive. The t2137 carve-out
+     only protects `parent-task` issues; normal `tier:standard`/`simple`
+     issues are vulnerable.
+
+     Reproductions: PR #19701 (title `t2206:`) falsely closed #19692
+     (title `t2206:`); PR #19724 (title `t2218:`) falsely closed #19718
+     (title `t2218:`).
+
+     **Workaround:** after merging such a PR, run
+     `interactive-session-helper.sh post-merge <PR>` (t2225) which heals
+     this automatically. If t2225 has not landed yet, manually:
+     `gh issue edit <N> --repo <slug> --remove-label status:done --add-label status:available`. -->
+
 {If this task is for a `parent-task`-labeled issue, confirm: PR body will use `For #NNN`, not `Resolves`.}
 {If leaf task: use `Resolves #NNN` as normal — delete this section or leave it blank.}
 

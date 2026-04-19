@@ -22,7 +22,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge-conflict.sh"  # GH#19836: _carry_forward_pr_diff extracted here
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'

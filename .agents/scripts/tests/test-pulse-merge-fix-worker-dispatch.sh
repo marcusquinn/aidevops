@@ -16,7 +16,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge-feedback.sh"  # GH#19836: feedback-routing helpers extracted here
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
