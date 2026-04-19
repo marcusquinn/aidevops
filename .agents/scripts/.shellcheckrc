@@ -21,6 +21,15 @@ external-sources=false
 # Inherit the same disable rules as root .shellcheckrc
 # (ShellCheck only reads ONE .shellcheckrc — the first found — so we must
 # duplicate the disables here rather than inheriting from root)
+#
+# SC1091 ("Not following: … was not specified as input") is disabled here for
+# parity with the root .shellcheckrc — without this line, every script in this
+# directory that uses `source "${SCRIPT_DIR}/foo.sh"` gets flagged on every
+# pre-commit run, even though the root rcfile intentionally disables it.
+# Drift between this file and the root rcfile caused t2377's PR to be blocked
+# by pre-existing debt in unrelated files; adding the disable here restores
+# the intended parity documented by the file header above.
+disable=SC1091
 disable=SC2329
 disable=SC2317
 disable=SC2034
