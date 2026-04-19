@@ -245,28 +245,29 @@ issue_has_required_approval() {
 }
 
 #######################################
-# GH#18671 (Fix 6b): Check whether an NMR label application on an issue
-# was accompanied by a pulse automation signature — a comment posted
-# immediately after (or within a ~60-second window of) the label event
-# that identifies the automated escalation path.
+# GH#18671 / t2386: Check whether an NMR label application on an issue
+# corresponds to a *creation-time automation default* — a marker that
+# means "the pulse applied NMR by default, not because retries failed."
+# Creation defaults are safe to auto-clear so the issue can dispatch.
 #
-# Without this check, `_nmr_applied_by_maintainer` treats every NMR
-# application by the maintainer's GitHub token as a manual hold, even
-# when it was the t2008 stale-recovery circuit breaker, the t2007 cost
-# circuit breaker, or the GH#18538 review-scanner default-NMR path.
-# That is the direct cause of the "NMR drain" where workers crash in
-# ~17s during setup (pre-creation bug, Fix 6a), get stale-recovered,
-# hit the threshold, and are escalated to NMR. The maintainer never
-# touched the label, but auto_approve skips them because
-# _nmr_applied_by_maintainer returns true, and the issues stay blocked
-# until the human manually runs `sudo aidevops approve issue NNN`.
+# This function used to also match circuit-breaker trip markers
+# (stale-recovery-tick:escalated, cost-circuit-breaker:fired,
+# circuit-breaker-escalated). That was a design bug: it caused
+# auto_approve_maintainer_issues to strip NMR from breaker-tripped
+# issues immediately, re-dispatch the worker, let it fail again, and
+# re-trip the breaker — an infinite loop. #19756 burned ~30 worker
+# sessions and fired 22 watchdog kills + 5 auto-approve cycles in one
+# afternoon before the loop was diagnosed.
 #
-# Automation signatures detected (all are idempotent markers the pulse
-# leaves when it applies NMR via an escalation path):
-#   - <!-- stale-recovery-tick:escalated   — t2008 stale recovery
-#   - <!-- cost-circuit-breaker:fired      — t2007 cost circuit breaker
-#   - <!-- circuit-breaker-escalated       — legacy fast-fail alias
-#   - <!-- source:review-scanner           — GH#18538 scanner default NMR
+# Breaker trip detection now lives in `_nmr_application_is_circuit_breaker_trip`
+# below. `_nmr_applied_by_maintainer` consults both helpers and routes
+# breaker trips to "preserve NMR" while still auto-clearing
+# creation defaults. See t2386 brief and `prompts/build.txt`
+# "Cryptographic issue/PR approval" for the split semantics.
+#
+# Creation-default signatures detected:
+#   - <!-- source:review-scanner            — GH#18538 scanner default NMR (comment marker)
+#   - review-followup / source:review-scanner labels on issue itself
 #
 # Args:
 #   $1 - issue_num  : GitHub issue number
@@ -274,8 +275,8 @@ issue_has_required_approval() {
 #   $3 - label_at   : ISO8601 timestamp when NMR label was applied
 #
 # Exit codes:
-#   0 - automation signature found (NMR was auto-applied, safe to clear)
-#   1 - no automation signature (NMR was likely a manual hold)
+#   0 - creation-default signature found (NMR is a scanner default, safe to auto-clear)
+#   1 - no creation-default signature (NMR is either manual or a breaker trip)
 #######################################
 _nmr_application_has_automation_signature() {
 	local issue_num="$1"
@@ -285,17 +286,14 @@ _nmr_application_has_automation_signature() {
 	[[ -n "$issue_num" && -n "$slug" && -n "$label_at" ]] || return 1
 
 	# Fetch all issue comments once. Filter in jq to any comment posted
-	# within a 60-second window of the label event AND containing a known
-	# automation marker. The 60s window is generous for API latency between
-	# the label API call and the follow-up comment post, while still tight
-	# enough to exclude unrelated maintainer activity.
-	#
-	# Window math: label_at - 5s ≤ comment.created_at ≤ label_at + 60s.
-	# Lower bound covers the case where the comment was posted first and
-	# the label application was slightly delayed (rare but observed).
+	# within a 60-second window of the label event AND containing a
+	# creation-default marker. Window math: label_at - 5s ≤
+	# comment.created_at ≤ label_at + 60s (lower bound covers the API
+	# latency race where the comment posts before the label API call
+	# completes).
 	local has_signature
 	has_signature=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate \
-		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"stale-recovery-tick:escalated|cost-circuit-breaker:fired|circuit-breaker-escalated|source:review-scanner\"))] | length" \
+		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"source:review-scanner\"))] | length" \
 		2>/dev/null) || has_signature=0
 	[[ "$has_signature" =~ ^[0-9]+$ ]] || has_signature=0
 
@@ -308,7 +306,7 @@ _nmr_application_has_automation_signature() {
 	# post-merge-review-scanner.sh, GH#18538). These issues apply NMR at
 	# creation via the scanner's SCANNER_NEEDS_REVIEW=true default, which
 	# does not necessarily emit a post-label comment marker. The label
-	# presence itself is the automation signature.
+	# presence itself is the creation-default signature.
 	local has_bot_label
 	has_bot_label=$(gh api "repos/${slug}/issues/${issue_num}" \
 		--jq '[.labels[].name] | map(select(. == "review-followup" or . == "source:review-scanner")) | length' \
@@ -323,27 +321,84 @@ _nmr_application_has_automation_signature() {
 }
 
 #######################################
-# Check if the needs-maintainer-review label was most recently applied
-# by the maintainer themselves (indicating a manual hold).
+# t2386: Check whether an NMR label application corresponds to a
+# circuit-breaker trip — one of the automated safety mechanisms that
+# STOPS further dispatch when a retry limit has been exceeded or a
+# cost budget has been exhausted.
 #
-# GH#18671 (Fix 6b): the pulse runs as the maintainer's GitHub token, so
-# `actor.login == maintainer` matches both human manual label actions
-# AND automated escalation paths (t2007 cost circuit breaker, t2008
-# stale-recovery, GH#18538 scanner default-NMR). This function now
-# consults `_nmr_application_has_automation_signature` — if the label
-# event has an adjacent automation marker comment (or the issue itself
-# carries bot-cleanup labels), it classifies as automation-applied and
-# returns 1 so `auto_approve_maintainer_issues` can clear the label.
+# Breaker trips MUST preserve NMR. auto_approve_maintainer_issues
+# skips issues with a breaker-trip signature, leaving NMR in place
+# until a human runs `sudo aidevops approve issue <N>` after reviewing
+# why the breaker tripped. This is the safety mechanism whose defeat
+# caused the #19756 infinite-loop incident.
+#
+# Breaker-trip signatures detected:
+#   - <!-- stale-recovery-tick:escalated   — t2008 stale recovery (retry limit)
+#   - <!-- cost-circuit-breaker:fired      — t2007 cost circuit breaker (budget)
+#   - <!-- circuit-breaker-escalated       — legacy fast-fail alias
+#
+# Args:
+#   $1 - issue_num  : GitHub issue number
+#   $2 - slug       : repo slug (owner/repo)
+#   $3 - label_at   : ISO8601 timestamp when NMR label was applied
+#
+# Exit codes:
+#   0 - breaker-trip signature found (NMR must be preserved)
+#   1 - no breaker-trip signature
+#######################################
+_nmr_application_is_circuit_breaker_trip() {
+	local issue_num="$1"
+	local slug="$2"
+	local label_at="$3"
+
+	[[ -n "$issue_num" && -n "$slug" && -n "$label_at" ]] || return 1
+
+	# Same ±60s window as _nmr_application_has_automation_signature —
+	# breaker helpers (dispatch-dedup-stale.sh, dispatch-dedup-cost.sh)
+	# post the marker comment immediately after applying the NMR label,
+	# so the two events are always co-temporal.
+	local has_breaker_trip
+	has_breaker_trip=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate \
+		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"stale-recovery-tick:escalated|cost-circuit-breaker:fired|circuit-breaker-escalated\"))] | length" \
+		2>/dev/null) || has_breaker_trip=0
+	[[ "$has_breaker_trip" =~ ^[0-9]+$ ]] || has_breaker_trip=0
+
+	if [[ "$has_breaker_trip" -gt 0 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
+# Check if the needs-maintainer-review label was most recently applied
+# by the maintainer themselves (indicating a manual hold), OR by a
+# circuit breaker trip (which must be treated as a hold even though
+# the token actor is the maintainer).
+#
+# GH#18671 / t2386: the pulse runs as the maintainer's GitHub token,
+# so `actor.login == maintainer` matches all three cases:
+#   1. Human maintainer clicks the label (manual hold)
+#   2. Pulse scanner applies default NMR at creation (auto-clear OK)
+#   3. Circuit breaker trips (t2007 cost / t2008 stale) — MUST preserve
+#
+# Cases 1 and 3 are both "preserve NMR" (return 0); case 2 is
+# "auto-clear OK" (return 1). The split is driven by the two companion
+# helpers `_nmr_application_has_automation_signature` (creation
+# defaults) and `_nmr_application_is_circuit_breaker_trip` (breaker
+# trips). See t2386 brief for the #19756 infinite-loop incident that
+# motivated the split.
 #
 # Arguments:
 #   $1 - issue_num  : GitHub issue number
 #   $2 - slug       : repo slug (owner/repo)
 #   $3 - maintainer : maintainer GitHub login
 #
-# Returns 0 if the maintainer applied NMR AND no automation signature
-#           is present (genuine manual hold — do NOT auto-approve).
-# Returns 1 if NMR was applied by automation, the actor is unknown, or
-#           the label event is paired with an automation marker.
+# Returns 0 if the maintainer applied NMR AND no creation-default
+#           signature is present (manual hold or breaker trip — do NOT
+#           auto-approve).
+# Returns 1 if NMR was applied by a scanner default or the actor is
+#           unknown (auto-approve OK).
 #######################################
 _nmr_applied_by_maintainer() {
 	local issue_num="$1"
@@ -366,12 +421,22 @@ _nmr_applied_by_maintainer() {
 		return 1
 	fi
 
-	# Actor matches the maintainer — but is this a real manual action or
-	# the pulse running as the maintainer's token? Check for automation
-	# signature adjacent to the label event.
-	if [[ -n "$nmr_at" ]] && _nmr_application_has_automation_signature "$issue_num" "$slug" "$nmr_at"; then
-		echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — actor=${maintainer} but automation signature detected — classifying as automation-applied (GH#18671)" >>"$LOGFILE"
-		return 1
+	# Actor matches the maintainer. Three possibilities:
+	#   1. Creation-default signature (scanner applied NMR at creation
+	#      time) → auto-approve OK, return 1.
+	#   2. Circuit-breaker trip signature (t2007/t2008 fired) →
+	#      PRESERVE NMR, return 0 with distinct log line so operators
+	#      see it was a breaker trip, not a manual hold.
+	#   3. No signature → genuine manual hold, return 0.
+	if [[ -n "$nmr_at" ]]; then
+		if _nmr_application_has_automation_signature "$issue_num" "$slug" "$nmr_at"; then
+			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — actor=${maintainer} but creation-default signature detected — classifying as automation-applied (GH#18671)" >>"$LOGFILE"
+			return 1
+		fi
+		if _nmr_application_is_circuit_breaker_trip "$issue_num" "$slug" "$nmr_at"; then
+			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — circuit breaker tripped — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num}' (t2386)" >>"$LOGFILE"
+			return 0
+		fi
 	fi
 
 	return 0
