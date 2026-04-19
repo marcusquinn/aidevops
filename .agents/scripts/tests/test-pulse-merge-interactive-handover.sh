@@ -350,6 +350,51 @@ test_K_no_takeover_label_blocks_handover() {
 }
 
 # =============================================================================
+# t2380: no-takeover label blocks stale detection (not just trigger)
+# =============================================================================
+
+test_K2_no_takeover_label_blocks_stale_detection() {
+	reset_mock_state
+	# Add no-takeover to the PR labels — stale check should bail early
+	printf 'origin:interactive,no-takeover' >"${TEST_ROOT}/labels.txt"
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale "100" "owner/repo"
+	local rc=$?
+	if [[ "$rc" -ne 1 ]]; then
+		print_result "K2: no-takeover label returns not-stale in _interactive_pr_is_stale" 1 "Expected 1, got $rc"
+		return 0
+	fi
+	# Should have a log entry about the skip
+	if ! grep -q "no-takeover label.*returning not-stale" "$LOGFILE"; then
+		print_result "K2: no-takeover label logs skip reason in stale check" 1 \
+			"Expected 'no-takeover label' skip message in LOGFILE. Got: $(cat "$LOGFILE")"
+		return 0
+	fi
+	print_result "K2: no-takeover label blocks stale detection" 0
+	return 0
+}
+
+test_K3_no_takeover_in_detect_mode_returns_not_stale() {
+	reset_mock_state
+	# Verify the no-takeover check also works in detect mode (not just enforce)
+	printf 'origin:interactive,no-takeover' >"${TEST_ROOT}/labels.txt"
+	: >"$LOGFILE"
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=detect _interactive_pr_is_stale "100" "owner/repo"
+	local rc=$?
+	if [[ "$rc" -ne 1 ]]; then
+		print_result "K3: no-takeover in detect mode returns not-stale" 1 "Expected 1, got $rc"
+		return 0
+	fi
+	# Should NOT log "would-handover" — the no-takeover check fires before the log
+	if grep -q "would-handover" "$LOGFILE"; then
+		print_result "K3: no-takeover in detect mode skips would-handover log" 1 \
+			"Unexpected 'would-handover' in LOGFILE"
+		return 0
+	fi
+	print_result "K3: no-takeover in detect mode returns not-stale without would-handover log" 0
+	return 0
+}
+
+# =============================================================================
 # t2383 Fix 2: invalid HOURS value returns not-stale safely
 # =============================================================================
 
@@ -450,6 +495,8 @@ main() {
 	test_I_mode_enforce_applies_label_and_posts_comment
 	test_J_enforce_is_idempotent_when_label_already_present
 	test_K_no_takeover_label_blocks_handover
+	test_K2_no_takeover_label_blocks_stale_detection
+	test_K3_no_takeover_in_detect_mode_returns_not_stale
 	test_L_invalid_hours_returns_not_stale
 	test_L2_zero_hours_returns_not_stale
 	test_L3_empty_hours_uses_default_24
