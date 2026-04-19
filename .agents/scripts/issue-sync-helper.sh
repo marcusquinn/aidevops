@@ -1040,12 +1040,21 @@ _enrich_update_issue() {
 #   $1 - issue number
 #   $2 - repo slug (owner/repo)
 #   $3 - task_id (for logging)
+#   $4 - (optional) pre-fetched issue JSON (forwarded via ISSUE_META_JSON to
+#        is_assigned to avoid a redundant gh issue view call; GH#19922)
 _enrich_check_active_claim() {
-	local num="$1" repo="$2" task_id="$3"
+	local num="$1" repo="$2" task_id="$3" pre_fetched_json="${4:-}"
 	local _dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$_dedup_helper" ]]; then
+		# GH#19922: resolve runner login so is-assigned can apply the self-login
+		# exemption — without it the runner blocks its own enrichment when it is
+		# also an assignee (e.g. single-user setups).
+		local _user="${AIDEVOPS_SESSION_USER:-}"
+		[[ -z "$_user" ]] && _user=$(gh api user --jq '.login // ""' 2>/dev/null || echo "")
 		local _dedup_result=""
-		_dedup_result=$("$_dedup_helper" is-assigned "$num" "$repo" 2>/dev/null) || true
+		# GH#19922: pass pre-fetched JSON via ISSUE_META_JSON env var to avoid
+		# a redundant gh issue view call inside is_assigned().
+		_dedup_result=$(ISSUE_META_JSON="$pre_fetched_json" "$_dedup_helper" is-assigned "$num" "$repo" "$_user" 2>/dev/null) || true
 		if [[ -n "$_dedup_result" ]]; then
 			print_warning "Skipping enrich for #$num ($task_id) — active claim detected: $_dedup_result (GH#19856)"
 			return 0
@@ -1128,7 +1137,9 @@ _enrich_process_task() {
 	# per-task read cost to one call and lets each helper skip writes whose
 	# target value already matches.
 	local _state_json current_title="" current_body="" current_labels_csv=""
-	_state_json=$(gh issue view "$num" --repo "$repo" --json title,body,labels 2>/dev/null || echo "")
+	# GH#19922: include state,assignees so the pre-fetched JSON can be forwarded
+	# to _enrich_check_active_claim → is_assigned(), avoiding a redundant API call.
+	_state_json=$(gh issue view "$num" --repo "$repo" --json title,body,labels,state,assignees 2>/dev/null || echo "")
 	if [[ -n "$_state_json" ]]; then
 		current_title=$(echo "$_state_json" | jq -r '.title // ""' 2>/dev/null || echo "")
 		current_body=$(echo "$_state_json" | jq -r '.body // ""' 2>/dev/null || echo "")
@@ -1137,7 +1148,8 @@ _enrich_process_task() {
 
 	# GH#19856: cross-runner dedup guard — abort if another runner holds
 	# an active claim. See _enrich_check_active_claim for the full rationale.
-	if _enrich_check_active_claim "$num" "$repo" "$task_id"; then
+	# GH#19922: pass _state_json so is_assigned() skips a redundant gh issue view.
+	if _enrich_check_active_claim "$num" "$repo" "$task_id" "$_state_json"; then
 		return 0
 	fi
 

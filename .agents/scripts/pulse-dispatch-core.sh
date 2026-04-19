@@ -1064,10 +1064,13 @@ _ensure_issue_body_has_brief() {
 	# runs its dedup check upstream, this guard catches TOCTOU races where
 	# another runner claims between the dedup check and the enrich call.
 	local dedup_helper
-	dedup_helper="$(dirname "${BASH_SOURCE[0]}")/dispatch-dedup-helper.sh"
+	# GH#19922: use parameter expansion instead of external dirname command.
+	dedup_helper="${BASH_SOURCE[0]%/*}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]]; then
 		local _dedup_out=""
-		_dedup_out=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" 2>/dev/null) || true
+		# GH#19922: pass AIDEVOPS_SESSION_USER as self_login so the runner
+		# does not block its own enrichment via the self-login exemption.
+		_dedup_out=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "${AIDEVOPS_SESSION_USER:-}" 2>/dev/null) || true
 		if [[ -n "$_dedup_out" ]]; then
 			echo "[dispatch_with_dedup] GH#19856: skipping force-enrich for #${issue_number} — active claim: ${_dedup_out}" >>"$LOGFILE"
 			return 0

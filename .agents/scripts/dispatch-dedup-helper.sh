@@ -769,9 +769,19 @@ is_assigned() {
 		return 1
 	fi
 
+	# GH#19922: accept pre-fetched JSON via ISSUE_META_JSON env var to avoid
+	# a redundant gh issue view call when the caller already has the metadata
+	# (e.g. the enrich path in issue-sync-helper.sh which fetches state in
+	# _enrich_process_task and forwards it through _enrich_check_active_claim).
+	# The pre-fetched JSON must contain at least assignees and labels fields.
 	local issue_meta_json gh_rc=0
-	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json state,assignees,labels 2>/dev/null) || gh_rc=$?
+	if [[ -n "${ISSUE_META_JSON:-}" ]] \
+		&& printf '%s' "$ISSUE_META_JSON" | jq -e '.assignees and .labels' >/dev/null 2>&1; then
+		issue_meta_json="$ISSUE_META_JSON"
+	else
+		issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+			--json state,assignees,labels 2>/dev/null) || gh_rc=$?
+	fi
 
 	# t2046: fail-closed on gh API failure. When we cannot fetch issue metadata
 	# (network error, auth failure, rate limit, issue not found), we cannot
