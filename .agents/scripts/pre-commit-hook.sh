@@ -111,6 +111,14 @@ validate_positional_parameters() {
 
 	print_info "Validating positional parameters..."
 
+	# Ratchet gate (t2384): compare current count per-file against a recorded
+	# baseline. Block only on REGRESSIONS (current > baseline), not on
+	# pre-existing debt. Follows the pattern from qlty-regression-helper.sh
+	# (t2065) and AGENTS.md "Gate design — ratchet, not absolute" (t2228).
+	local repo_root
+	repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
+	local baseline_file="${repo_root}/.agents/configs/positional-params-baseline.json"
+
 	for file in "$@"; do
 		if [[ -f "$file" ]]; then
 			local violations_output
@@ -143,10 +151,31 @@ validate_positional_parameters() {
 				# After stripping, if $[1-9] is still present, flag as violation
 				if (line ~ /\$[1-9]/) print NR ": " $0
 			}' "$file") || true
+
 			if [[ -n "$violations_output" ]]; then
-				print_error "Direct positional parameter usage in $file"
-				echo "$violations_output" | head -3
-				((++violations))
+				local current_count
+				current_count=$(echo "$violations_output" | wc -l | tr -d ' ')
+				local baseline_count=0
+
+				# Look up baseline for this file (default 0 = new file, any violation blocks)
+				if [[ -f "$baseline_file" ]] && command -v jq &>/dev/null; then
+					local _bl
+					_bl=$(jq -r --arg f "$file" '.files[$f] // 0' "$baseline_file" 2>/dev/null) || _bl=0
+					baseline_count="${_bl}"
+				fi
+
+				if [[ "$current_count" -gt "$baseline_count" ]]; then
+					local new_violations=$((current_count - baseline_count))
+					print_error "Positional parameter regression in $file (+${new_violations} new, ${current_count} total vs ${baseline_count} baseline)"
+					echo "$violations_output" | head -3
+					((++violations))
+				elif [[ "$current_count" -lt "$baseline_count" ]]; then
+					# Improvement — count went down. Inform but do not block.
+					print_info "Positional parameters improved in $file (${current_count} vs ${baseline_count} baseline — consider updating baseline)"
+				else
+					# At baseline — pre-existing debt, do not block.
+					print_info "Positional parameters at baseline in $file (${current_count} pre-existing)"
+				fi
 			fi
 		fi
 	done
