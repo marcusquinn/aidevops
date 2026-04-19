@@ -38,9 +38,10 @@
 #   CLI flags --remote and --counter-branch override .aidevops.json values.
 #
 # Exit codes:
-#   0 - Success (outputs: task_id=tNNN ref=GH#NNN or GL#NNN)
-#   1 - Error (network failure, git error, etc.)
-#   2 - Offline fallback used (outputs: task_id=tNNN ref=offline)
+#   0  - Success (outputs: task_id=tNNN ref=GH#NNN or GL#NNN)
+#   1  - Error (network failure, git error, etc.)
+#   2  - Offline fallback used (outputs: task_id=tNNN ref=offline)
+#   10 - User declined claim after duplicate warning (interactive TTY only, t2180)
 #
 # Algorithm (CAS loop — compare-and-swap via git push):
 #   1. git fetch <remote> <counter_branch>
@@ -1460,6 +1461,170 @@ _main_output_results() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# Pre-claim discovery pass (t2180) — decomposed into 5 helpers.
+#
+# Runs before atomic ID allocation to surface similar in-flight or
+# recently-merged PRs. Prevents duplicate work (concrete evidence: PR #19494
+# duplicated merged PR #19495, costing ~30 min of session time + 10 CI runs).
+#
+# Decomposition keeps every function ≤30 lines so the complexity-regression
+# pre-push hook stays green. Prior attempt (PR #19658) bundled all logic in
+# one ~170-line function that tripped the gate.
+#
+# Env vars:
+#   AIDEVOPS_CLAIM_DEDUP_DAYS   recency window for merged PRs (default 14)
+#
+# Test hooks (for test-claim-task-id-discovery.sh only):
+#   _AIDEVOPS_CLAIM_TEST_IS_TTY  "1" → force interactive path in non-TTY tests
+#   _AIDEVOPS_CLAIM_TEST_ANSWER  "y"/"n" → override user prompt answer
+# ---------------------------------------------------------------------------
+
+# _pc_sanitize_keywords — extract keywords from task title.
+# Emits up to 4 keywords on stdout, one per line, length-sorted descending
+# (longer tokens are more discriminating in search).
+# Stop-words and tokens <4 chars are dropped.
+_pc_sanitize_keywords() {
+	local title="$1"
+	local stop=" feat fix chore add update remove delete get set the for to a an with from into via of at on in by and or is are was not use uses using new be do did does its it "
+	local sanitized
+	sanitized=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' ' ')
+	local -a raw_tokens=()
+	IFS=' ' read -ra raw_tokens <<<"$sanitized"
+	local -a kw=()
+	local t
+	for t in "${raw_tokens[@]}"; do
+		[[ -z "$t" || ${#t} -lt 4 ]] && continue
+		[[ "$stop" == *" ${t} "* ]] && continue
+		kw+=("$t")
+	done
+	[[ ${#kw[@]} -eq 0 ]] && return 0
+	local w
+	for w in "${kw[@]}"; do
+		printf '%s\t%s\n' "${#w}" "$w"
+	done | sort -k1,1nr | head -n 4 | cut -f2-
+	return 0
+}
+
+# _pc_search_related_prs — run gh pr list with OR query across keywords.
+# Args: $1 repo_slug, $2 newline-separated keywords.
+# Emits raw JSON array on stdout. Returns 0 on success, non-zero on gh error.
+_pc_search_related_prs() {
+	local repo_slug="$1"
+	local keywords_nl="$2"
+	local -a kws=()
+	local line
+	while IFS= read -r line; do
+		[[ -n "$line" ]] && kws+=("$line")
+	done <<<"$keywords_nl"
+	[[ ${#kws[@]} -eq 0 ]] && return 1
+	local query
+	query=$(printf '%s OR ' "${kws[@]}")
+	query="${query% OR }"
+	gh pr list --repo "$repo_slug" --state all \
+		--search "$query" --limit 5 \
+		--json number,title,state,mergedAt,createdAt 2>/dev/null
+	return $?
+}
+
+# _pc_filter_relevant_prs — apply recency + keyword-overlap filter.
+# Args: $1 raw JSON, $2 newline keywords, $3 dedup_days.
+# Emits formatted hit lines: "#NNN [STATE] title  (date)".
+_pc_filter_relevant_prs() {
+	local raw_json="$1"
+	local keywords_nl="$2"
+	local dedup_days="$3"
+	local now_epoch cutoff_epoch
+	now_epoch=$(date +%s 2>/dev/null || echo "0")
+	cutoff_epoch=$((now_epoch - dedup_days * 86400))
+	local pr_num pr_title pr_state pr_merged_at
+	while IFS='|' read -r pr_num pr_title pr_state pr_merged_at; do
+		[[ -z "$pr_num" || "$pr_state" == "CLOSED" ]] && continue
+		if [[ "$pr_state" == "MERGED" && -n "$pr_merged_at" ]]; then
+			local merged_epoch=0
+			merged_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pr_merged_at" +%s 2>/dev/null) \
+				|| merged_epoch=$(date --date="$pr_merged_at" +%s 2>/dev/null) \
+				|| true
+			[[ "$merged_epoch" -gt 0 && "$merged_epoch" -lt "$cutoff_epoch" ]] && continue
+		fi
+		local pr_lower overlap=0 kw
+		pr_lower=$(printf '%s' "$pr_title" | tr '[:upper:]' '[:lower:]')
+		while IFS= read -r kw; do
+			[[ -z "$kw" ]] && continue
+			[[ "$pr_lower" == *"$kw"* ]] && overlap=$((overlap + 1))
+		done <<<"$keywords_nl"
+		[[ $overlap -lt 2 ]] && continue
+		printf '#%s [%s] %s  (%s)\n' "$pr_num" "$pr_state" "$pr_title" "${pr_merged_at:-open}"
+	done < <(printf '%s' "$raw_json" | jq -r '.[] | "\(.number)|\(.title)|\(.state)|\(.mergedAt // "")"')
+	return 0
+}
+
+# _pc_prompt_or_warn — interactive Y/N prompt or non-interactive stderr warns.
+# Args: $1 newline-separated hit lines.
+# Returns: 0 to proceed, 10 if interactive user declined.
+_pc_prompt_or_warn() {
+	local hits_nl="$1"
+	[[ -z "$hits_nl" ]] && return 0
+	local -a hits=()
+	local line
+	while IFS= read -r line; do
+		[[ -n "$line" ]] && hits+=("$line")
+	done <<<"$hits_nl"
+	[[ ${#hits[@]} -eq 0 ]] && return 0
+	local is_tty=false
+	if [[ "${_AIDEVOPS_CLAIM_TEST_IS_TTY:-0}" == "1" ]]; then
+		is_tty=true
+	elif [[ -t 0 && -t 1 ]]; then
+		is_tty=true
+	fi
+	local hit_count="${#hits[@]}" max_show=3 h
+	if [[ "$is_tty" == "true" ]]; then
+		printf '\n[claim-task-id] WARNING: Found %d similar PR(s) — please check before claiming a new task ID:\n' "$hit_count" >&2
+		for ((h = 0; h < hit_count && h < max_show; h++)); do
+			printf '  \xe2\x80\xa2 %s\n' "${hits[$h]}" >&2
+		done
+		printf '\nContinue claiming a new ID? [y/N]: ' >&2
+		local answer="${_AIDEVOPS_CLAIM_TEST_ANSWER:-}"
+		[[ -z "$answer" ]] && { IFS= read -r answer </dev/tty 2>/dev/null || answer="n"; }
+		local ans_lower
+		ans_lower=$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')
+		if [[ "$ans_lower" != "y" && "$ans_lower" != "yes" ]]; then
+			printf '[claim-task-id] Claim aborted — verify the PRs above before proceeding.\n' >&2
+			return 10
+		fi
+	else
+		for ((h = 0; h < hit_count && h < max_show; h++)); do
+			printf '[claim-task-id] WARN: similar PR found: %s\n' "${hits[$h]}" >&2
+		done
+	fi
+	return 0
+}
+
+# _pre_claim_discovery_pass — orchestrator.
+# Args: $1 title, $2 repo_slug.
+# Returns: 0 (proceed) or 10 (user declined, interactive only).
+# Fail-open: any missing dep (gh, jq, auth) short-circuits to 0.
+_pre_claim_discovery_pass() {
+	local title="$1"
+	local repo_slug="$2"
+	local dedup_days="${AIDEVOPS_CLAIM_DEDUP_DAYS:-14}"
+	[[ -z "$title" || -z "$repo_slug" ]] && return 0
+	command -v gh >/dev/null 2>&1 || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	gh auth status >/dev/null 2>&1 || return 0
+	local keywords
+	keywords=$(_pc_sanitize_keywords "$title")
+	[[ -z "$keywords" ]] && return 0
+	local raw_json
+	raw_json=$(_pc_search_related_prs "$repo_slug" "$keywords") || return 0
+	[[ -z "$raw_json" || "$raw_json" == "[]" ]] && return 0
+	local hits
+	hits=$(_pc_filter_relevant_prs "$raw_json" "$keywords" "$dedup_days")
+	[[ -z "$hits" ]] && return 0
+	_pc_prompt_or_warn "$hits"
+	return $?
+}
+
 # Main execution
 main() {
 	parse_args "$@"
@@ -1475,6 +1640,22 @@ main() {
 	# Framework routing guard: warn if title looks like a framework issue
 	# but we're not in the aidevops repo (GH#5149)
 	check_framework_routing "$TASK_TITLE" "$REPO_PATH"
+
+	# Pre-claim discovery pass (t2180): surface similar in-flight or
+	# recently-merged PRs before allocation. Skipped in batch (--no-issue),
+	# offline, dry-run, or when no title is supplied.
+	if [[ "$NO_ISSUE" == "false" && "$OFFLINE_MODE" == "false" && "$DRY_RUN" == "false" && -n "$TASK_TITLE" ]]; then
+		local _disc_slug=""
+		_disc_slug=$(git -C "$REPO_PATH" remote get-url "$REMOTE_NAME" 2>/dev/null \
+			| sed 's|.*github\.com[:/]||;s|\.git$||' || true)
+		if [[ -n "$_disc_slug" ]]; then
+			local _disc_rc=0
+			_pre_claim_discovery_pass "$TASK_TITLE" "$_disc_slug" || _disc_rc=$?
+			if [[ $_disc_rc -eq 10 ]]; then
+				return 10
+			fi
+		fi
+	fi
 
 	log_info "Using remote: ${REMOTE_NAME}, counter branch: ${COUNTER_BRANCH}"
 
