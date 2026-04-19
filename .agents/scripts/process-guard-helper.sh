@@ -218,7 +218,8 @@ cmd_scan() {
 	echo ""
 	echo "--- Interactive Sessions ---"
 	local session_count
-	session_count=$(ps axo tty,command | awk '
+	# t2190: ps axwwo to avoid Linux procps command truncation defeating the awk regex.
+	session_count=$(ps axwwo tty,command | awk '
 		/(\.(opencode|claude)|opencode-ai|claude-ai)/ && !/awk/ && $1 != "?" && $1 != "??" { count++ }
 		END { print count + 0 }
 	') || session_count=0
@@ -311,7 +312,8 @@ cmd_kill_runaways() {
 #######################################
 cmd_sessions() {
 	local session_count
-	session_count=$(ps axo tty,command | awk '
+	# t2190: ps axwwo to avoid Linux procps command truncation.
+	session_count=$(ps axwwo tty,command | awk '
 		/(\.(opencode|claude)|opencode-ai|claude-ai)/ && !/awk/ && $1 != "?" && $1 != "??" { count++ }
 		END { print count + 0 }
 	') || session_count=0
@@ -370,7 +372,8 @@ cmd_status() {
 	done < <(_list_ai_processes)
 
 	local session_count
-	session_count=$(ps axo tty,command | awk '
+	# t2190: ps axwwo to avoid Linux procps command truncation.
+	session_count=$(ps axwwo tty,command | awk '
 		/(\.(opencode|claude)|opencode-ai|claude-ai)/ && !/awk/ && $1 != "?" && $1 != "??" { count++ }
 		END { print count + 0 }
 	') || session_count=0

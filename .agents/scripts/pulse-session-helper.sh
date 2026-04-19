@@ -86,7 +86,7 @@ is_session_active() {
 #######################################
 count_workers() {
 	local count
-	count=$(ps axo command | grep '[/]full-loop' | grep -c '\.opencode') || count=0
+	count=$(ps axwwo command | grep '[/]full-loop' | grep -c '\.opencode') || count=0
 	echo "$count"
 	return 0
 }
@@ -391,7 +391,7 @@ _stop_force_kill_workers() {
 			kill "$pid" 2>/dev/null || true
 			killed=$((killed + 1))
 		fi
-	done < <(ps axo pid,command | grep '[/]full-loop' | grep '\.opencode')
+	done < <(ps axwwo pid,command | grep '[/]full-loop' | grep '\.opencode')
 
 	if [[ "$killed" -gt 0 ]]; then
 		print_info "Sent SIGTERM to ${killed} worker(s)"
@@ -402,7 +402,7 @@ _stop_force_kill_workers() {
 		if [[ "$remaining" -gt 0 ]]; then
 			print_warning "${remaining} worker(s) still running after SIGTERM"
 			echo "  They will finish their current operation and exit."
-			echo "  Force kill with: kill -9 \$(ps axo pid,command | grep '[/]full-loop' | grep '\\.opencode' | awk '{print \$1}')"
+			echo "  Force kill with: kill -9 \$(ps axwwo pid,command | grep '[/]full-loop' | grep '\\.opencode' | awk '{print \$1}')"
 		else
 			print_success "All workers stopped"
 		fi
@@ -649,7 +649,7 @@ _status_print_worker_details() {
 		echo -e "${BOLD}Active Workers${NC}"
 		echo "──────────────"
 		echo ""
-		ps axo pid,etime,command | grep '[/]full-loop' | grep '\.opencode' | while IFS= read -r line; do
+		ps axwwo pid,etime,command | grep '[/]full-loop' | grep '\.opencode' | while IFS= read -r line; do
 			local w_pid w_etime w_cmd
 			read -r w_pid w_etime w_cmd <<<"$line"
 

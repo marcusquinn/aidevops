@@ -732,7 +732,17 @@ list_active_worker_processes() {
 	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	local awk_script="${script_dir}/list_active_workers.awk"
 	# Awk logic extracted to list_active_workers.awk (GH#17561)
-	ps axo pid,stat,etime,command | awk -f "$awk_script"
+	# t2190: use `axww` (unlimited line width) so Linux procps doesn't
+	# truncate the command column to the detected terminal width (~80
+	# cols when piped). Worker commands contain the full HEADLESS_
+	# CONTINUATION_CONTRACT_V6 prompt (5000+ chars); without `ww`, the
+	# awk match on `/full-loop`, `--role worker`, `--session-key issue-NNN`,
+	# and `--dir <path>` all fail — has_worker_for_repo_issue returns
+	# false within the 35s grace window, recover_failed_launch_state
+	# unassigns the worker, and every dispatch cycle loops on the same
+	# issue. macOS BSD ps already emits full commands; `ww` is harmless
+	# there (and also supported).
+	ps axwwo pid,stat,etime,command | awk -f "$awk_script"
 	return 0
 }
 
@@ -1030,7 +1040,8 @@ check_session_count() {
 
 	# Count opencode processes with a real TTY (interactive sessions).
 	# Filter both '?' (Linux) and '??' (macOS) headless TTY entries.
-	interactive_count=$(ps axo tty,command | awk '
+	# t2190: ps axwwo so the awk regex isn't defeated by Linux procps truncation.
+	interactive_count=$(ps axwwo tty,command | awk '
 		/(\.(opencode|claude)|opencode-ai|claude-ai)/ && !/awk/ && $1 != "?" && $1 != "??" { count++ }
 		END { print count + 0 }
 	') || interactive_count=0

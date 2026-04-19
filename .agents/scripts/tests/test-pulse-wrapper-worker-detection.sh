@@ -71,11 +71,32 @@ set_ps_fixture() {
 }
 
 ps() {
+	# t2190: record the exact flags used so tests can assert that
+	# worker-detection paths always call ps with unlimited width (`ww`).
+	# Must write to a file, not a variable — `ps` is typically invoked in
+	# a pipe (e.g. `ps axwwo ... | awk ...`), which runs in a subshell
+	# whose variable mutations never propagate back to the parent.
+	if [[ -n "${PS_INVOCATION_LOG_FILE:-}" ]]; then
+		printf '%s\n' "${1:-}" >>"$PS_INVOCATION_LOG_FILE" 2>/dev/null || true
+	fi
+
+	# t2190: canonical path — ps axwwo (unlimited width; works on BSD and procps).
+	if [[ "${1:-}" == "axwwo" && "${2:-}" == "pid,stat,etime,command" ]]; then
+		cat "$PS_FIXTURE_FILE"
+		return 0
+	fi
+	if [[ "${1:-}" == "axwwo" && "${2:-}" == "pid,etime,command" ]]; then
+		cat "$PS_FIXTURE_FILE"
+		return 0
+	fi
+	# Backward compat: pre-t2190 callers used `axo` — intercept so the test
+	# still feeds the fixture (but a new t2190 regression test asserts zero
+	# bare-`axo` calls; leaving this here only prevents a collateral test
+	# breakage if a call site is missed during conversion).
 	if [[ "${1:-}" == "axo" && "${2:-}" == "pid,stat,etime,command" ]]; then
 		cat "$PS_FIXTURE_FILE"
 		return 0
 	fi
-	# Backward compat: also intercept old format for any tests not yet updated
 	if [[ "${1:-}" == "axo" && "${2:-}" == "pid,etime,command" ]]; then
 		cat "$PS_FIXTURE_FILE"
 		return 0
@@ -1062,6 +1083,67 @@ test_active_pulse_refill_dispatches_when_underfilled_and_idle() {
 	return 0
 }
 
+test_worker_detection_uses_unlimited_width_ps_flag() {
+	# t2190: Linux procps truncates the command column to the detected
+	# terminal width (~80 cols) when ps output is piped. Worker commands
+	# carry the full HEADLESS_CONTINUATION_CONTRACT_V6 prompt (5000+ chars),
+	# so substrings needed by list_active_workers.awk (`--role worker`,
+	# `/full-loop`, `--session-key issue-NNN`, `--dir <path>`) end up past
+	# position 80 and get stripped. The awk regex then fails to match,
+	# has_worker_for_repo_issue returns false within the 35s grace window,
+	# and recover_failed_launch_state unassigns the worker — every dispatch
+	# cycle loops on the same issue.
+	#
+	# Fix: all ps invocations in worker-detection paths must pass `ww`
+	# (axwwo = unlimited width; works on both BSD ps and procps).
+	#
+	# This test asserts the canonical invocation form at runtime.
+	# NB: Must rely on list_active_worker_processes directly, not
+	# count_active_workers — earlier tests `unset -f count_active_workers`
+	# as part of their teardown, so by the time this test runs the
+	# wrapper is gone but the lower-level function is still defined.
+	local log_file="${TEST_ROOT}/ps-invocations.log"
+	: >"$log_file"
+	PS_INVOCATION_LOG_FILE="$log_file"
+	export PS_INVOCATION_LOG_FILE
+
+	set_ps_fixture "100 S 00:10 bash /Users/test/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-2190 --dir /tmp/aidevops --title Issue #2190 --prompt-file /tmp/pulse-2190.prompt"
+
+	local output
+	output=$(list_active_worker_processes)
+	local count
+	count=$(printf '%s\n' "$output" | grep -c '^100 ' || true)
+
+	local invocations
+	invocations=$(tr '\n' ',' <"$log_file" | sed 's/,$//')
+
+	unset PS_INVOCATION_LOG_FILE
+
+	# Must have at least one axwwo invocation.
+	if ! grep -qxE 'axwwo' "$log_file"; then
+		print_result "worker-detection calls ps with unlimited-width flag (t2190)" 1 \
+			"Expected at least one 'ps axwwo' call, got: ${invocations:-<empty>}"
+		return 0
+	fi
+
+	# Must have zero bare axo invocations (Linux truncation foot-gun).
+	if grep -qxE 'axo' "$log_file"; then
+		print_result "worker-detection calls ps with unlimited-width flag (t2190)" 1 \
+			"Regression: found bare 'ps axo' call — Linux procps will truncate. Use 'ps axwwo'. Log: ${invocations}"
+		return 0
+	fi
+
+	# And the fixture should have been detected as a worker.
+	if [[ "$count" != "1" ]]; then
+		print_result "worker-detection calls ps with unlimited-width flag (t2190)" 1 \
+			"Expected 1 worker detected (PID 100), got ${count}. list output: ${output}"
+		return 0
+	fi
+
+	print_result "worker-detection calls ps with unlimited-width flag (t2190)" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -1091,6 +1173,7 @@ main() {
 	test_dispatch_deterministic_fill_floor_ignores_noisy_count_output
 	test_active_pulse_refill_skips_without_idle_or_stall_signal
 	test_active_pulse_refill_dispatches_when_underfilled_and_idle
+	test_worker_detection_uses_unlimited_width_ps_flag
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

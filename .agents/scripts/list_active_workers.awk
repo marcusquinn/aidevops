@@ -5,7 +5,10 @@
 # Extracted from list_active_worker_processes() in worker-lifecycle-common.sh
 # to reduce shell nesting depth (GH#17561).
 #
-# Input: ps axo pid,stat,etime,command output
+# Input: ps axwwo pid,stat,etime,command output (t2190: `ww` keeps Linux
+# procps from truncating the command column to the terminal width when piped,
+# which would strip --role worker, /full-loop, --session-key issue-NNN, and
+# --dir <path> substrings past position 80 and defeat the patterns below).
 # Output: one line per logical worker: "pid etime command..."
 #
 # Deduplication key: issue_number|worktree_dir

@@ -845,7 +845,7 @@ cleanup_stalled_workers() {
 
 		echo "[pulse-wrapper] Killed stalled worker PID $pid (issue #${issue_num}, model=${worker_model:-unknown}, age=${age_seconds}s, log=${log_size}B) — provider likely rate-limited" >>"$LOGFILE"
 
-	done < <(ps axo pid,etime,%cpu,rss,command | grep '[.]opencode run' | grep -v grep)
+	done < <(ps axwwo pid,etime,%cpu,rss,command | grep '[.]opencode run' | grep -v grep)
 
 	if [[ "$killed" -gt 0 ]]; then
 		echo "[pulse-wrapper] cleanup_stalled_workers: killed ${killed} stalled workers (freed ~${freed_mb}MB)" >>"$LOGFILE"
@@ -893,7 +893,7 @@ cleanup_orphans() {
 		kill "$pid" 2>/dev/null || true
 		killed=$((killed + 1))
 		total_mb=$((total_mb + mb))
-	done < <(ps axo pid,tty,etime,rss,command | grep '[.]opencode' | grep -v 'bash-language-server')
+	done < <(ps axwwo pid,tty,etime,rss,command | grep '[.]opencode' | grep -v 'bash-language-server')
 
 	# Also kill orphaned node launchers (parent of .opencode processes)
 	while IFS= read -r line; do
@@ -917,7 +917,7 @@ cleanup_orphans() {
 		local mb=$((rss / 1024))
 		killed=$((killed + 1))
 		total_mb=$((total_mb + mb))
-	done < <(ps axo pid,tty,etime,rss,command | grep 'node.*opencode' | grep -v '[.]opencode')
+	done < <(ps axwwo pid,tty,etime,rss,command | grep 'node.*opencode' | grep -v '[.]opencode')
 
 	if [[ "$killed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Cleaned up $killed orphaned opencode processes (freed ~${total_mb}MB)" >>"$LOGFILE"
@@ -1005,7 +1005,7 @@ cleanup_stale_opencode() {
 		fi
 		killed=$((killed + 1))
 		total_mb=$((total_mb + mb))
-	done < <(ps axo pid,%cpu,rss,command | awk '$0 ~ /[.]opencode/ && $0 !~ /bash-language-server/ { print $1, $2, $3 }')
+	done < <(ps axwwo pid,%cpu,rss,command | awk '$0 ~ /[.]opencode/ && $0 !~ /bash-language-server/ { print $1, $2, $3 }')
 
 	if [[ "$killed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Cleaned up $killed stale headless opencode workers (freed ~${total_mb}MB)" >>"$LOGFILE"

@@ -234,7 +234,7 @@ find_workers() {
 
 		# Output: PID|ELAPSED|COMMAND
 		echo "${pid}|${elapsed_seconds}|${cmd}"
-	done < <(ps axo pid,command | grep "$grep_pattern" | grep '/full-loop' || true)
+	done < <(ps axwwo pid,command | grep "$grep_pattern" | grep '/full-loop' || true)
 
 	return 0
 }

@@ -240,7 +240,8 @@ parse_budget_table() {
 
 count_active_workers() {
 	local count
-	count=$(ps axo command 2>/dev/null | grep -c '/full-loop' | tr -d ' ') || count=0
+	# t2190: ps axwwo to avoid Linux procps ~80-col truncation of full-loop marker.
+	count=$(ps axwwo command 2>/dev/null | grep -c '/full-loop' | tr -d ' ') || count=0
 	# Subtract grep itself
 	count=$((count > 0 ? count - 1 : 0))
 	echo "$count"
@@ -248,7 +249,8 @@ count_active_workers() {
 }
 
 get_active_workers() {
-	ps axo pid,etime,command 2>/dev/null | grep '/full-loop' | grep -v grep || true
+	# t2190: ps axwwo to avoid Linux procps ~80-col truncation of full-loop marker.
+	ps axwwo pid,etime,command 2>/dev/null | grep '/full-loop' | grep -v grep || true
 	return 0
 }
 

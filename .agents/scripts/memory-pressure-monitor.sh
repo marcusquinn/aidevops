@@ -564,7 +564,9 @@ _resolve_ages_and_emit() {
 _collect_monitored_processes() {
 	# Collect all processes once, then filter by pattern against basename
 	local ps_output
-	ps_output=$(ps axo pid=,rss=,command= 2>/dev/null || true)
+	# t2190: ps axwwo to avoid Linux procps truncating the command column, which
+	# otherwise strips the pattern-matching substring from worker commands.
+	ps_output=$(ps axwwo pid=,rss=,command= 2>/dev/null || true)
 
 	# Track PIDs we've already emitted to avoid duplicates from overlapping patterns
 	local -a seen_pids=()
@@ -618,7 +620,8 @@ _collect_monitored_processes() {
 _count_interactive_sessions() {
 	local count=0
 	local ps_output
-	ps_output=$(ps axo pid=,tty=,command= 2>/dev/null | grep -iE "(opencode|claude)" | grep -v "grep" | grep -v "run " || true)
+	# t2190: ps axwwo to avoid Linux procps truncating the command column.
+	ps_output=$(ps axwwo pid=,tty=,command= 2>/dev/null | grep -iE "(opencode|claude)" | grep -v "grep" | grep -v "run " || true)
 
 	while read -r _ tty _; do
 		# Parse with read builtin — avoids spawning echo/awk subshells per line
