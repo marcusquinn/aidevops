@@ -12,7 +12,21 @@ Polls GitHub every 10 min; runs `aidevops update` on new version. Safe during ac
 - **Linux (preferred)**: systemd user timer (`~/.config/systemd/user/aidevops-auto-update.timer` + `.service`). Selected by `_detect_linux_scheduler` when `systemctl --user` is available — this is the default on most modern Linux desktops and servers.
 - **Linux (fallback)**: cron (crontab entry with `# aidevops-auto-update` marker). Used when `systemctl --user` is unavailable (e.g., containers without systemd).
 
-Note: linger configuration (enabling systemd user services to run without an active login session) is a separate concern — see t2404 once it lands.
+## Linux systemd: logout persistence (linger)
+
+On Linux hosts using the systemd backend, the auto-update timer runs inside the **user** systemd manager. By default, the user manager stops when your last session ends — taking the timer with it.
+
+**When you need linger**: always on servers and headless hosts where you SSH in, run `aidevops auto-update enable`, then log out. Without linger, the timer fires only while you're logged in.
+
+**When you don't need it**: laptops or desktops where a graphical session is always running.
+
+**Enable once** (requires sudo):
+
+```bash
+sudo loginctl enable-linger $USER
+```
+
+Check current state: `aidevops auto-update status` shows a `Linger: yes|no` row on systemd hosts.
 
 **Disable**: `aidevops auto-update disable`, `"auto_update": false` in settings.json, or `AIDEVOPS_AUTO_UPDATE=false`. Priority: env > settings.json > default (`true`). **Logs**: `~/.aidevops/logs/auto-update.log`
 
