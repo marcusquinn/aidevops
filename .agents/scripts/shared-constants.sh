@@ -1413,6 +1413,25 @@ gh_pr_edit_safe() {
 # Canonical list of mutually-exclusive origin:* labels.
 ORIGIN_LABELS=("interactive" "worker" "worker-takeover")
 
+# (t2396) Labels applied by pulse-merge-feedback.sh when routing a failed/
+# conflicted/review-feedback PR back to its parent issue for re-dispatch.
+# Used by _normalize_reassign_self to detect feedback-routed status:available
+# issues that need runner self-assignment restored.
+FEEDBACK_ROUTED_LABELS=(
+	"source:ci-feedback"
+	"source:conflict-feedback"
+	"source:review-feedback"
+)
+
+# (t2396) HTML comment markers injected into issue bodies by
+# pulse-merge-feedback.sh when routing feedback. Presence of any marker
+# indicates the issue has been through at least one dispatch+feedback cycle.
+FEEDBACK_ROUTED_MARKERS=(
+	"<!-- ci-feedback:PR"
+	"<!-- conflict-feedback:PR"
+	"<!-- review-followup:PR"
+)
+
 #######################################
 # Transition an issue or PR to an origin:* label atomically (t2200).
 #

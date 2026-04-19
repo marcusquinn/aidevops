@@ -14,6 +14,7 @@
 # section.
 #
 # Functions in this module (in source order):
+#   - _normalize_get_feedback_routed_rows (t2396: find feedback-routed available issues)
 #   - _normalize_reassign_self           (Phase 12: orphaned active issue → self-assign)
 #   - normalize_active_issue_assignments (coordinator — calls stale-recovery helpers)
 #   - close_issues_with_merged_prs
@@ -47,12 +48,71 @@ source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-stale.sh"
 # and self-assign this runner. Includes the t1996 dedup guard to prevent
 # the two-runner simultaneous-assign stuck state.
 #
+# Pass 2 (t2396): also covers status:available + origin:worker issues that
+# were routed back by pulse-merge-feedback.sh (delegated to
+# _normalize_get_feedback_routed_rows).
+#
 # Args:
 #   $1 runner_user        — GH login of the current runner
 #   $2 repos_json         — path to repos.json
 #   $3 dedup_helper       — path to dispatch-dedup-helper.sh (may be absent)
 # Returns: 0 always (best-effort; logs summary to $LOGFILE)
 #######################################
+# (t2396 helper) Find feedback-routed status:available worker issues.
+#
+# Scans the pre-fetched issue JSON for status:available + origin:worker
+# issues with no assignees that have either a feedback label
+# (source:ci-feedback, source:conflict-feedback, source:review-feedback)
+# or a feedback body marker (<!-- ci-feedback:PR..., etc.).
+#
+# Outputs issue numbers (one per line) to stdout.
+#
+# Args:
+#   $1 issue_rows_json — JSON from gh issue list (number,assignees,labels)
+#   $2 slug            — repo slug for body-marker lookups
+# Returns: 0 always
+#######################################
+_normalize_get_feedback_routed_rows() {
+	local issue_rows_json="$1"
+	local slug="$2"
+
+	# Single jq pass outputs "number|has_label" pairs. Issues with a
+	# feedback label qualify directly; those without need a body check.
+	local _avail_candidates=""
+	_avail_candidates=$(printf '%s' "$issue_rows_json" | jq -r '
+		.[] | select(
+			(.labels | map(.name) as $n |
+				($n | index("status:available")) and ($n | index("origin:worker"))
+			) and ((.assignees | length) == 0)
+		) | [
+			.number,
+			(if (.labels | map(.name) | (index("source:ci-feedback") or index("source:conflict-feedback") or index("source:review-feedback")))
+			 then "1" else "0" end)
+		] | join("|")
+	' 2>/dev/null) || _avail_candidates=""
+
+	[[ -n "$_avail_candidates" ]] || return 0
+
+	local _pair _cand_num _has_label _cand_body
+	while IFS= read -r _pair; do
+		_cand_num="${_pair%%|*}"
+		_has_label="${_pair##*|}"
+		[[ "$_cand_num" =~ ^[0-9]+$ ]] || continue
+
+		if [[ "$_has_label" == "1" ]]; then
+			echo "$_cand_num"
+		else
+			# No feedback label — check body for markers
+			_cand_body=$(gh issue view "$_cand_num" --repo "$slug" --json body --jq '.body' 2>/dev/null) || _cand_body=""
+			if printf '%s' "$_cand_body" | grep -qE '<!-- (ci-feedback|conflict-feedback|review-followup):PR'; then
+				echo "$_cand_num"
+			fi
+		fi
+	done <<<"$_avail_candidates"
+
+	return 0
+}
+
 _normalize_reassign_self() {
 	local runner_user="$1"
 	local repos_json="$2"
@@ -76,29 +136,28 @@ _normalize_reassign_self() {
 			continue
 		fi
 		rm -f "$issue_rows_err"
+
+		# Pass 1: status:queued or status:in-progress with no assignees (original)
 		local issue_rows
 		issue_rows=$(printf '%s' "$issue_rows_json" | jq -r '.[] | select(((.labels | map(.name) | index("status:queued")) or (.labels | map(.name) | index("status:in-progress"))) and ((.assignees | length) == 0)) | .number' 2>/dev/null) || issue_rows=""
-		[[ -n "$issue_rows" ]] || continue
+
+		# Pass 2 (t2396): status:available + origin:worker + feedback-routed
+		local feedback_rows=""
+		feedback_rows=$(_normalize_get_feedback_routed_rows "$issue_rows_json" "$slug")
+
+		# Merge Pass 1 + Pass 2 rows (dedup via sort -u)
+		local all_rows=""
+		all_rows=$(printf '%s\n%s' "$issue_rows" "$feedback_rows" | grep -E '^[0-9]+$' | sort -u -n) || all_rows=""
+		[[ -n "$all_rows" ]] || continue
 
 		while IFS= read -r issue_number; do
 			[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
 			total_checked=$((total_checked + 1))
 
-			# t1996: Guard against the multi-runner assignment race. Two runners
-			# may both observe the same "status:queued, no assignee" issue in
-			# their batch queries and race to self-assign. Without this check,
-			# both succeed and the issue ends up with two assignees — each runner
-			# sees the other as blocking, so neither can dispatch, and the issue
-			# sits stuck until stale recovery clears it (up to 1h).
-			#
-			# Checking is_assigned() here re-reads the live issue state. If
-			# another runner has already claimed it (exit 0 = assigned to other),
-			# skip this issue and let that runner's pulse handle dispatch.
-			# If still unassigned (exit 1 = safe), proceed with self-assignment.
+			# t1996: Guard against the multi-runner assignment race.
 			if [[ -x "$dedup_helper" ]]; then
 				local _is_assigned_output=""
 				if _is_assigned_output=$("$dedup_helper" is-assigned "$issue_number" "$slug" "$runner_user" 2>/dev/null); then
-					# Another runner already claimed this issue — skip reconcile
 					echo "[pulse-wrapper] Assignment normalization: skipping #${issue_number} in ${slug} — already claimed by another runner (${_is_assigned_output})" >>"$LOGFILE"
 					total_skipped_claimed=$((total_skipped_claimed + 1))
 					continue
@@ -108,7 +167,7 @@ _normalize_reassign_self() {
 			if gh issue edit "$issue_number" --repo "$slug" --add-assignee "$runner_user" >/dev/null 2>&1; then
 				total_assigned=$((total_assigned + 1))
 			fi
-		done <<<"$issue_rows"
+		done <<<"$all_rows"
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
 	if [[ "$total_checked" -gt 0 ]]; then
