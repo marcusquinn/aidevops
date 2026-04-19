@@ -48,11 +48,11 @@ async function run() {
   output += decoder.decode();
 
   if (output.includes("mcp__aidevops__")) {
-    console.log("FAIL_PREFIX_PRESENT " + JSON.stringify(output));
+    console.log(`FAIL_PREFIX_PRESENT ${JSON.stringify(output)}`);
     process.exit(1);
   }
   if (!output.includes('"name":"grep"')) {
-    console.log("FAIL_NAME_MISSING " + JSON.stringify(output));
+    console.log(`FAIL_NAME_MISSING ${JSON.stringify(output)}`);
     process.exit(2);
   }
   console.log("OK");
@@ -60,6 +60,6 @@ async function run() {
 }
 
 run().catch((e) => {
-  console.log("ERROR " + e.message);
+  console.log(`ERROR ${e.message}`);
   process.exit(3);
 });

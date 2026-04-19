@@ -3,6 +3,16 @@
 // Auth: HF_API_KEY + HF_API_SECRET from credentials.sh
 // Imported by playwright-automator.mjs.
 
+
+import {
+  API_BASE_URL,
+  apiDownloadFile,
+  apiPollStatus,
+  apiRequest,
+  apiUploadFile,
+  loadApiCredentials,
+  requireApiCredentials,
+} from './higgsfield-api-client.mjs';
 import {
   getDefaultOutputDir,
   resolveOutputDir,
@@ -11,32 +21,22 @@ import {
   writeJsonSidecar,
 } from './higgsfield-common.mjs';
 
-import {
-  API_BASE_URL,
-  loadApiCredentials,
-  requireApiCredentials,
-  apiRequest,
-  apiUploadFile,
-  apiDownloadFile,
-  apiPollStatus,
+export {
+  API_POLL_INTERVAL_MS,
+  API_POLL_MAX_WAIT_MS,
+  apiExecuteFetch,
+  parseApiErrorDetail,
 } from './higgsfield-api-client.mjs';
-
 // Re-export low-level surface so existing callers (and tests) keep working.
 export {
   API_BASE_URL,
-  loadApiCredentials,
-  requireApiCredentials,
-  apiRequest,
-  apiUploadFile,
   apiDownloadFile,
   apiPollStatus,
+  apiRequest,
+  apiUploadFile,
+  loadApiCredentials,
+  requireApiCredentials,
 };
-export {
-  apiExecuteFetch,
-  parseApiErrorDetail,
-  API_POLL_INTERVAL_MS,
-  API_POLL_MAX_WAIT_MS,
-} from './higgsfield-api-client.mjs';
 
 // ---------------------------------------------------------------------------
 // Model mapping

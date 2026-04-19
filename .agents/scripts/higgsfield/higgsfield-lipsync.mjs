@@ -1,20 +1,20 @@
 // higgsfield-lipsync.mjs — Lipsync generation via the Higgsfield web UI.
 // Extracted from higgsfield-video.mjs (t2127 file-complexity decomposition).
 
-import {
-  BASE_URL,
-  STATE_FILE,
-  STATE_DIR,
-  safeJoin,
-} from './higgsfield-common.mjs';
 
 import {
-  launchBrowser,
-  dismissAllModals,
-  debugScreenshot,
   clickGenerate,
+  debugScreenshot,
+  dismissAllModals,
   getDefaultOutputDir,
+  launchBrowser,
 } from './higgsfield-browser.mjs';
+import {
+  BASE_URL,
+  STATE_DIR,
+  STATE_FILE,
+  safeJoin,
+} from './higgsfield-common.mjs';
 
 import {
   resolveOutputDir,

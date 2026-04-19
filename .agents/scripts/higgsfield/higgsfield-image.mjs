@@ -4,29 +4,29 @@
 
 import {
   BASE_URL,
-  STATE_FILE,
-  STATE_DIR,
+  debugScreenshot,
+  dismissAllModals,
+  downloadSpecificImages,
+  finalizeBatch,
   GENERATED_IMAGE_SELECTOR,
   getDefaultOutputDir,
   getUnlimitedModelForCommand,
+  initBatch,
   isUnlimitedModel,
   launchBrowser,
-  dismissAllModals,
-  debugScreenshot,
   resolveOutputDir,
-  safeJoin,
-  downloadSpecificImages,
-  withRetry,
   runBatchJob,
   runWithConcurrency,
-  initBatch,
-  finalizeBatch,
+  STATE_DIR,
+  STATE_FILE,
+  safeJoin,
 } from './higgsfield-common.mjs';
 
 import {
   clickAndVerifyGenerate,
   waitForImageGeneration,
 } from './higgsfield-image-helpers.mjs';
+
 export { clickAndVerifyGenerate, waitForImageGeneration };
 
 // ---------------------------------------------------------------------------

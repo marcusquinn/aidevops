@@ -2,30 +2,27 @@
 // Chain actions (animate, inpaint, upscale, relight, etc.) on existing assets.
 // Extracted from higgsfield-commands.mjs (t2127 file-complexity decomposition).
 
-import { basename } from 'path';
+import { basename } from 'node:path';
 
 import {
-  launchBrowser,
-  navigateTo,
-  dismissAllModals,
   debugScreenshot,
+  dismissAllModals,
   forceCloseDialogs,
   getDefaultOutputDir,
+  launchBrowser,
+  navigateTo,
 } from './higgsfield-browser.mjs';
-
-import {
-  resolveOutputDir,
-  downloadLatestResult,
-} from './higgsfield-output.mjs';
-
 import {
   BASE_URL,
-  STATE_FILE,
+  curlDownload,
   GENERATED_IMAGE_SELECTOR,
   safeJoin,
   sanitizePathSegment,
-  curlDownload,
 } from './higgsfield-common.mjs';
+import {
+  downloadLatestResult,
+  resolveOutputDir,
+} from './higgsfield-output.mjs';
 
 import { downloadVideoFromHistory } from './higgsfield-video.mjs';
 

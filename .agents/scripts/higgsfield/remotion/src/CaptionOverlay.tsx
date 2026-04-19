@@ -1,12 +1,12 @@
 import {
-  useCurrentFrame,
-  useVideoConfig,
+  AbsoluteFill,
   interpolate,
   spring,
-  AbsoluteFill,
+  useCurrentFrame,
+  useVideoConfig,
 } from "remotion";
-import type { CaptionOverlayProps } from "./types";
 import { CAPTION_STYLES, getPositionStyle } from "./styles";
+import type { CaptionOverlayProps } from "./types";
 
 // Typewriter: reveal characters one by one
 function TypewriterText({ text, style }: { text: string; style: typeof CAPTION_STYLES["typewriter"] }) {
@@ -51,6 +51,7 @@ function HighlightText({ text, style }: { text: string; style: typeof CAPTION_ST
         const isActive = i <= activeWordIndex;
         return (
           <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: word segments are static text, no stable ID
             key={i}
             style={{
               fontFamily: style.fontFamily,

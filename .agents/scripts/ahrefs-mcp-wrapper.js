@@ -22,17 +22,17 @@
  * but the bash wrapper pattern is simpler and handles the env var issue.
  */
 
-const { spawn } = require('child_process');
+const { spawn } = require('node:child_process');
 
 // Find npx command - try common locations
 const findNpx = () => {
-  const fs = require('fs');
+  const fs = require('node:fs');
   const paths = [
     '/opt/homebrew/bin/npx',
     '/usr/local/bin/npx',
     '/usr/bin/npx',
-    process.env.HOME + '/.nvm/versions/node/v20/bin/npx',
-    process.env.HOME + '/.nvm/versions/node/v18/bin/npx',
+    `${process.env.HOME}/.nvm/versions/node/v20/bin/npx`,
+    `${process.env.HOME}/.nvm/versions/node/v18/bin/npx`,
   ];
   for (const p of paths) {
     if (fs.existsSync(p)) return p;
@@ -71,6 +71,7 @@ const fixSchemaForOpenAI = (obj, path = '', fixCount = { items: 0, additionalPro
   
   // Handle arrays (JSON arrays, not schema arrays)
   if (Array.isArray(obj)) {
+    // biome-ignore lint/suspicious/useIterableCallbackReturn: forEach callback, return value unused
     obj.forEach((item, idx) => fixSchemaForOpenAI(item, `${path}[${idx}]`, fixCount));
     return;
   }
@@ -112,6 +113,7 @@ server.stdout.on('data', (data) => {
   buffer += data.toString();
   
   let newlineIndex;
+  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic buffered-line parsing loop
   while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
     const line = buffer.slice(0, newlineIndex);
     buffer = buffer.slice(newlineIndex + 1);
@@ -123,7 +125,7 @@ server.stdout.on('data', (data) => {
       
       // Intercept tool list response to patch schema - handle various response formats
       let tools = null;
-      if (msg.result && msg.result.tools) {
+      if (msg.result?.tools) {
         tools = msg.result.tools;
       } else if (msg.result && Array.isArray(msg.result)) {
         // Some MCP servers return tools directly as array

@@ -2,49 +2,46 @@
 // and download operations for the Higgsfield automation suite.
 // Extracted from higgsfield-video.mjs (t2127 file-complexity decomposition).
 
+
+import {
+  clickHistoryTab,
+  dismissAllModals,
+  getDefaultOutputDir,
+  launchBrowser,
+  navigateTo,
+  withBrowser,
+} from './higgsfield-browser.mjs';
 import {
   BASE_URL,
-  STATE_FILE,
-  ensureDir,
-  safeJoin,
-  sanitizePathSegment,
   curlDownload,
+  ensureDir,
+  finalizeBatch,
+  initBatch,
   runBatchJob,
   runWithConcurrency,
-  initBatch,
-  finalizeBatch,
+  STATE_FILE,
+  safeJoin,
+  sanitizePathSegment,
   saveBatchState,
 } from './higgsfield-common.mjs';
-
+import { generateLipsync } from './higgsfield-lipsync.mjs';
 import {
-  launchBrowser,
-  withBrowser,
-  dismissAllModals,
-  clickHistoryTab,
-  navigateTo,
-  getDefaultOutputDir,
-} from './higgsfield-browser.mjs';
-
-import {
-  resolveOutputDir,
   buildDescriptiveFilename,
   downloadLatestResult,
+  resolveOutputDir,
 } from './higgsfield-output.mjs';
-
 // NOTE: VIDEO_MODEL_NAME_MAP, removeExistingStartFrame, tryUploadViaButton,
 // tryUploadViaStartFrameArea, and findModelButtonInDropdown are currently
 // internal to higgsfield-video.mjs and need to be exported from there for
 // this import to work.
 import {
-  VIDEO_MODEL_NAME_MAP,
+  downloadVideoFromHistory,
+  findModelButtonInDropdown,
   removeExistingStartFrame,
   tryUploadViaButton,
   tryUploadViaStartFrameArea,
-  findModelButtonInDropdown,
-  downloadVideoFromHistory,
+  VIDEO_MODEL_NAME_MAP,
 } from './higgsfield-video.mjs';
-
-import { generateLipsync } from './higgsfield-lipsync.mjs';
 
 // ---------------------------------------------------------------------------
 // Batch video submission helpers
@@ -158,7 +155,7 @@ function countJobStatuses(submittedJobs, historyItems, results) {
       job.promptPrefix.substring(0, 40).includes(h.promptText.substring(0, 40))
     );
     if (match && !match.isProcessing) completedThisPoll++;
-    else if (match && match.isProcessing) processingCount++;
+    else if (match?.isProcessing) processingCount++;
   }
 
   return { completedThisPoll, processingCount };
@@ -322,7 +319,7 @@ export async function pollAndDownloadVideos(page, submittedJobs, outputDir, time
   const pollInterval = 15000;
 
   console.log(`Polling for ${submittedJobs.length} video(s) (timeout: ${timeout / 1000}s)...`);
-  const historyTab = await clickHistoryTab(page);
+  const _historyTab = await clickHistoryTab(page);
 
   while (Date.now() - startTime < timeout && results.size < submittedJobs.length) {
     await page.waitForTimeout(pollInterval);

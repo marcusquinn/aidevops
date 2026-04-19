@@ -2,23 +2,20 @@
 // filename building, and image download helpers for the Higgsfield automation suite.
 // Extracted from higgsfield-common.mjs (t2127 file-complexity decomposition).
 
-import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync } from 'fs';
-import { basename, extname } from 'path';
-import { execFileSync } from 'child_process';
-import { createHash } from 'crypto';
-
-import {
-  GENERATED_IMAGE_SELECTOR,
-  ensureDir,
-  safeJoin,
-  sanitizePathSegment,
-} from './higgsfield-common.mjs';
-
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, extname } from 'node:path';
 import {
   dismissAllModals,
   forceCloseDialogs,
-  getDefaultOutputDir,
 } from './higgsfield-browser.mjs';
+import {
+  ensureDir,
+  GENERATED_IMAGE_SELECTOR,
+  safeJoin,
+  sanitizePathSegment,
+} from './higgsfield-common.mjs';
 
 // ---------------------------------------------------------------------------
 // Output organisation (project dirs, JSON sidecars, dedup)

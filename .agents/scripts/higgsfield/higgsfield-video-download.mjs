@@ -2,18 +2,18 @@
 // project API polling) for the Higgsfield automation suite.
 // Extracted from higgsfield-video.mjs (t2127 file-complexity decomposition).
 
-import {
-  safeJoin,
-  sanitizePathSegment,
-  curlDownload,
-  ensureDir,
-} from './higgsfield-common.mjs';
 
 import {
-  dismissAllModals,
-  debugScreenshot,
   clickHistoryTab,
+  debugScreenshot,
+  dismissAllModals,
 } from './higgsfield-browser.mjs';
+import {
+  curlDownload,
+  ensureDir,
+  safeJoin,
+  sanitizePathSegment,
+} from './higgsfield-common.mjs';
 
 import {
   buildDescriptiveFilename,

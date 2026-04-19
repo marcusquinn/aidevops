@@ -2,32 +2,29 @@
 // Orchestrates image generation → video animation → lipsync → assembly.
 // Extracted from higgsfield-commands.mjs (t2127 file-complexity decomposition).
 
-import { readFileSync, writeFileSync, existsSync, copyFileSync, unlinkSync } from 'fs';
-import { dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { execFileSync } from 'child_process';
-
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
-  STATE_FILE,
+  getDefaultOutputDir,
+  launchBrowser,
+} from './higgsfield-browser.mjs';
+import {
   ensureDir,
   findNewestFile,
   findNewestFileMatching,
+  getUnlimitedModelForCommand,
+  STATE_FILE,
   safeJoin,
   sanitizePathSegment,
-  getUnlimitedModelForCommand,
 } from './higgsfield-common.mjs';
-
-import {
-  launchBrowser,
-  getDefaultOutputDir,
-} from './higgsfield-browser.mjs';
 
 import { generateImage } from './higgsfield-image.mjs';
 import {
   generateLipsync,
-  downloadVideoFromHistory,
-  submitVideoJobOnPage,
   pollAndDownloadVideos,
+  submitVideoJobOnPage,
 } from './higgsfield-video.mjs';
 
 // ─── Pipeline ─────────────────────────────────────────────────────────────────

@@ -5,38 +5,35 @@
 // Batch video/lipsync → higgsfield-batch-video.mjs
 // (t2127 file-complexity decomposition)
 
+
+import {
+  debugScreenshot,
+  dismissAllModals,
+  getDefaultOutputDir,
+  launchBrowser,
+} from './higgsfield-browser.mjs';
 import {
   BASE_URL,
-  STATE_FILE,
-  STATE_DIR,
   getUnlimitedModelForCommand,
   isUnlimitedModel,
+  STATE_DIR,
+  STATE_FILE,
   safeJoin,
 } from './higgsfield-common.mjs';
 
 import {
-  launchBrowser,
-  navigateTo,
-  dismissAllModals,
-  debugScreenshot,
-  clickHistoryTab,
-  getDefaultOutputDir,
-} from './higgsfield-browser.mjs';
-
-import {
   resolveOutputDir,
-  downloadLatestResult,
 } from './higgsfield-output.mjs';
 
 import { downloadVideoFromHistory } from './higgsfield-video-download.mjs';
-export { downloadVideoFromHistory };
 
 export {
-  extractVideoMetadata,
   downloadVideoFromApiData,
   evaluateNewestJobStatus,
+  extractVideoMetadata,
   fetchProjectApiWithPolling,
 } from './higgsfield-video-download.mjs';
+export { downloadVideoFromHistory };
 
 // ---------------------------------------------------------------------------
 // Video model mapping

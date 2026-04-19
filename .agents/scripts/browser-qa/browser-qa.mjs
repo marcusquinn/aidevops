@@ -20,9 +20,9 @@
 //   --format <type>        Output format: json, summary (default: summary)
 //   --help                 Show help
 
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
-import { join } from 'path';
 
 // ============================================================================
 // CLI Argument Parsing
@@ -50,8 +50,8 @@ const ARG_HANDLERS = new Map([
   ['--flows', (o, a, i) => { o.flows = a[++i]; return i; }],
   ['--timeout', (o, a, i) => { o.timeout = parseInt(a[++i], 10); return i; }],
   ['--viewport', (o, a, i) => { const p = a[++i].split('x'); o.viewportWidth = parseInt(p[0], 10); o.viewportHeight = parseInt(p[1], 10); return i; }],
-  ['--check-links', (o, a, i) => { o.checkLinks = true; return i; }],
-  ['--no-check-links', (o, a, i) => { o.checkLinks = false; return i; }],
+  ['--check-links', (o, _a, i) => { o.checkLinks = true; return i; }],
+  ['--no-check-links', (o, _a, i) => { o.checkLinks = false; return i; }],
   ['--max-links', (o, a, i) => { o.maxLinks = parseInt(a[++i], 10); return i; }],
   ['--format', (o, a, i) => { o.format = a[++i]; return i; }],
   ['--help', () => { printUsage(); process.exit(0); }],
@@ -134,7 +134,7 @@ function attachErrorListeners(page) {
   const errors = { consoleErrors: [], networkErrors: [] };
   page.on('console', (msg) => { if (msg.type() === 'error') errors.consoleErrors.push(msg.text()); });
   page.on('pageerror', (err) => errors.consoleErrors.push(`Uncaught: ${err.message}`));
-  page.on('requestfailed', (req) => errors.networkErrors.push(`${req.method()} ${req.url()} — ${(req.failure() || {}).errorText || 'unknown'}`));
+  page.on('requestfailed', (req) => errors.networkErrors.push(`${req.method()} ${req.url()} — ${req.failure()?.errorText || 'unknown'}`));
   return errors;
 }
 
@@ -152,7 +152,7 @@ async function navigatePage(page, url, timeout) {
 
 /** Take a screenshot. Returns the path, or null on failure. */
 async function captureScreenshot(page, url, outputDir, suffix) {
-  const path = join(outputDir, sanitizeFilename(url) + (suffix || '') + '.png');
+  const path = join(outputDir, `${sanitizeFilename(url) + (suffix || '')}.png`);
   try { await page.screenshot({ path, fullPage: true }); return path; } catch { return null; }
 }
 
@@ -164,7 +164,7 @@ async function extractPageData(page, result) {
   result.title = await page.title();
   const bodyText = await page.evaluate(() => document.body ? document.body.innerText.trim() : '');
   if (bodyText.length < 10) { result.isEmpty = true; result.passed = false; result.failures.push(`Page appears empty (body text: ${bodyText.length} chars)`); }
-  const errorIndicators = await page.evaluate(DETECT_ERRORS_SCRIPT + '()');
+  const errorIndicators = await page.evaluate(`${DETECT_ERRORS_SCRIPT}()`);
   if (errorIndicators.length > 0) { result.hasErrorState = true; result.passed = false; result.failures.push(`Error state detected: ${errorIndicators.join(', ')}`); }
   try { result.ariaSnapshot = await page.locator('body').ariaSnapshot({ timeout: 5000 }); } catch { result.ariaSnapshot = null; }
 }
@@ -217,7 +217,7 @@ async function headCheckLink(page, link) {
  * Uses HEAD requests to avoid downloading full pages.
  */
 async function checkPageLinks(page, maxLinks) {
-  const links = await page.evaluate(COLLECT_LINKS_SCRIPT + `(${maxLinks})`);
+  const links = await page.evaluate(`${COLLECT_LINKS_SCRIPT}(${maxLinks})`);
   return Promise.all(links.map((link) => headCheckLink(page, link)));
 }
 
@@ -226,7 +226,7 @@ function sanitizeFilename(url) {
   try {
     const parsed = new URL(url);
     const path = parsed.pathname.replace(/\//g, '_').replace(/^_/, '');
-    return (parsed.hostname + '_' + (path || 'index')).replace(/[^a-zA-Z0-9_.-]/g, '_');
+    return (`${parsed.hostname}_${path || 'index'}`).replace(/[^a-zA-Z0-9_.-]/g, '_');
   } catch {
     return url.replace(/[^a-zA-Z0-9_.-]/g, '_').substring(0, 100);
   }

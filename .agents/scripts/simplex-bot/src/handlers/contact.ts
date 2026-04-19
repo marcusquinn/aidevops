@@ -9,14 +9,14 @@
  * Reference: t1327.1 research, section 4.1 (Essential Events for Bots)
  */
 
+import type { SessionStore } from "../session";
 import type {
   BotConfig,
+  BusinessRequestEvent,
   ContactConnectedEvent,
   ContactRequestEvent,
-  BusinessRequestEvent,
   SimplexEvent,
 } from "../types";
-import type { SessionStore } from "../session";
 
 /** Logger interface (matches the Logger class in index.ts) */
 interface Logger {

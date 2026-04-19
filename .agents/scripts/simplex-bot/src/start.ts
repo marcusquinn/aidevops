@@ -3,8 +3,8 @@
  * Extracted from index.ts to reduce file-level complexity.
  */
 
-import { SimplexAdapter } from "./index";
 import { loadConfig } from "./config";
+import { SimplexAdapter } from "./index";
 
 async function main(): Promise<void> {
   const config = loadConfig();

@@ -11,7 +11,6 @@
  */
 
 import type {
-  ApprovalState,
   ExecApprovalConfig,
   ExecClassification,
   PendingApproval,
@@ -299,5 +298,5 @@ function truncateOutput(text: string, maxLength: number = 2000): string {
   if (trimmed.length <= maxLength) {
     return trimmed;
   }
-  return trimmed.substring(0, maxLength) + "\n... (truncated)";
+  return `${trimmed.substring(0, maxLength)}\n... (truncated)`;
 }

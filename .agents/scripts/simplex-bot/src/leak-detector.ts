@@ -95,7 +95,7 @@ export const LEAK_PATTERNS: ReadonlyArray<{
   // --- Chat/messaging tokens ---
   {
     name: "slack_token",
-    pattern: /\b(xox[bpors]-[0-9A-Za-z\-]{10,})\b/g,
+    pattern: /\b(xox[bpors]-[0-9A-Za-z-]{10,})\b/g,
     description: "Slack bot/user/app token",
   },
   {
@@ -178,6 +178,7 @@ function detectPatternLeaks(
     pattern.lastIndex = 0;
 
     let match: RegExpExecArray | null;
+    // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex exec loop
     while ((match = pattern.exec(text)) !== null) {
       const value = match[1] ?? match[0];
 
@@ -210,6 +211,7 @@ function detectHighEntropyTokens(
   const matches: LeakMatch[] = [];
   const tokenRegex = new RegExp(`[A-Za-z0-9_\\-/.+=]{${minTokenLength},}`, "g");
   let tokenMatch: RegExpExecArray | null;
+  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex exec loop
   while ((tokenMatch = tokenRegex.exec(text)) !== null) {
     const token = tokenMatch[0];
     const index = tokenMatch.index;

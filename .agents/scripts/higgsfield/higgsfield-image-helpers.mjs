@@ -2,14 +2,13 @@
 // helpers for the Higgsfield automation suite.
 // Extracted from higgsfield-image.mjs (t2127 file-complexity decomposition).
 
-import {
-  GENERATED_IMAGE_SELECTOR,
-} from './higgsfield-common.mjs';
 
 import {
   dismissAllModals,
-  debugScreenshot,
 } from './higgsfield-browser.mjs';
+import {
+  GENERATED_IMAGE_SELECTOR,
+} from './higgsfield-common.mjs';
 
 // ---------------------------------------------------------------------------
 // Generation detection helpers
@@ -39,7 +38,7 @@ export async function clickAndVerifyGenerate(page, queueBefore, existingImageCou
   }
 
   await page.waitForTimeout(3000);
-  const postClickState = await page.evaluate(({ prevQueue, prevImages, imgSelector }) => {
+  const postClickState = await page.evaluate(({ prevQueue: _prevQueue, prevImages: _prevImages, imgSelector }) => {
     const queueNow = (document.body.innerText.match(/In queue/g) || []).length;
     const imagesNow = document.querySelectorAll(imgSelector).length;
     const hasGeneratingIndicator = document.body.innerText.includes('Generating') ||

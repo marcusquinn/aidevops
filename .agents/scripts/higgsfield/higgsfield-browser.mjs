@@ -2,19 +2,18 @@
 // page interaction helpers for the Higgsfield automation suite.
 // Extracted from higgsfield-common.mjs (t2127 file-complexity decomposition).
 
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
 
 import {
   BASE_URL,
-  STATE_FILE,
   STATE_DIR,
-  WORKSPACE_OUTPUT_DIR,
-  USER_DOWNLOADS_DIR,
-  sanitizePathSegment,
+  STATE_FILE,
   safeJoin,
+  sanitizePathSegment,
+  USER_DOWNLOADS_DIR,
+  WORKSPACE_OUTPUT_DIR,
 } from './higgsfield-common.mjs';
 
 // ---------------------------------------------------------------------------
@@ -30,7 +29,8 @@ export function getDefaultOutputDir(options = {}) {
 
 export async function launchBrowser(options = {}) {
   const headless = options.headless !== undefined ? options.headless :
-                   options.headed ? false : true;
+                   !
+                   options.headed;
 
   const launchOptions = {
     headless,

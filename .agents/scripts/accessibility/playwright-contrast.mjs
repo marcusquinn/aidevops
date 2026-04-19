@@ -219,7 +219,7 @@ function formatMarkdown(results, level) {
     lines.push(`### Failing Elements`, '', `| Element | Ratio | Required | FG | BG | Size | WCAG |`, `|---------|-------|----------|----|----|------|------|`);
     for (const f of failures) {
       const { threshold, criterion } = getLevel(f, level);
-      const sel = f.selector.length > 40 ? f.selector.substring(0, 37) + '...' : f.selector;
+      const sel = f.selector.length > 40 ? `${f.selector.substring(0, 37)}...` : f.selector;
       lines.push(`| \`${sel}\` | ${f.ratio}:1 | ${threshold}:1 | ${f.foreground} | ${f.background} | ${f.fontSize} ${f.fontWeight}${f.isLargeText ? ' (L)' : ''} | SC ${criterion} |`);
     }
     lines.push('');

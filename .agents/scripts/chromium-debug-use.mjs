@@ -6,10 +6,10 @@
 // Uses raw CDP over WebSocket with Node 22+ built-in WebSocket support.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { PAGES_CACHE, resolvePrefix } from './chromium-debug-use-lib/constants.mjs';
 import { CDPClient } from './chromium-debug-use-lib/cdp-client.mjs';
-import { getWsUrl } from './chromium-debug-use-lib/connection.mjs';
 import { browserVersionStr, formatPageList, getPages } from './chromium-debug-use-lib/commands.mjs';
+import { getWsUrl } from './chromium-debug-use-lib/connection.mjs';
+import { PAGES_CACHE, resolvePrefix } from './chromium-debug-use-lib/constants.mjs';
 import { getOrStartTabDaemon, runDaemon, sendCommand, stopDaemons } from './chromium-debug-use-lib/daemon.mjs';
 
 const USAGE = `chromium-debug-use - lightweight Chromium DevTools Protocol CLI

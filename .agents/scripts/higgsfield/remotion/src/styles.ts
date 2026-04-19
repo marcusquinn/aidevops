@@ -2,7 +2,7 @@
 // Each style defines font, colors, animation, and background treatment
 
 import type { CSSProperties } from "react";
-import type { CaptionStyle, CaptionPosition } from "./types";
+import type { CaptionPosition, CaptionStyle } from "./types";
 
 export interface CaptionStyleConfig {
   fontFamily: string;
@@ -104,7 +104,6 @@ export function getPositionStyle(
         justifyContent: "center",
         alignItems: "center",
       };
-    case "bottom":
     default:
       return {
         bottom: margin,

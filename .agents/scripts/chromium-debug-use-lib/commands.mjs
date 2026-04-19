@@ -3,6 +3,7 @@
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CACHE_DIR, MIN_TARGET_PREFIX_LEN, NAVIGATION_TIMEOUT_MS, sleep } from './constants.mjs';
+
 export { snapshotStr } from './accessibility.mjs';
 
 export async function getPages(cdp) {

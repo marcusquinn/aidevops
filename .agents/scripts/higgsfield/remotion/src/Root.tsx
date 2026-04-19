@@ -1,14 +1,14 @@
-import React from "react";
-import { Composition, Still } from "remotion";
 import { loadFont as loadBangers } from "@remotion/google-fonts/Bangers";
-import { loadFont as loadInter } from "@remotion/google-fonts/Inter";
-import { loadFont as loadOswald } from "@remotion/google-fonts/Oswald";
-import { loadFont as loadMontserrat } from "@remotion/google-fonts/Montserrat";
 import { loadFont as loadIBMPlexMono } from "@remotion/google-fonts/IBMPlexMono";
+import { loadFont as loadInter } from "@remotion/google-fonts/Inter";
+import { loadFont as loadMontserrat } from "@remotion/google-fonts/Montserrat";
+import { loadFont as loadOswald } from "@remotion/google-fonts/Oswald";
+import type React from "react";
+import { Composition, Still } from "remotion";
 import { FullVideo } from "./FullVideo";
 import { SceneGraphic } from "./SceneGraphic";
-import { ASPECT_DIMENSIONS } from "./types";
 import type { BriefProps, SceneGraphicProps } from "./types";
+import { ASPECT_DIMENSIONS } from "./types";
 
 // Load only needed font weights/subsets to minimize network requests
 loadBangers("normal", { weights: ["400"], subsets: ["latin"] });
@@ -44,8 +44,10 @@ const defaultGraphicProps: SceneGraphicProps = {
   fontFamily: "Inter",
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Remotion v4 Composition requires Zod schema as first type arg; we use runtime props instead
+// Remotion v4 Composition requires Zod schema as first type arg; we use runtime props instead
+// biome-ignore lint/suspicious/noExplicitAny: Remotion v4 typing workaround
 const AnyFullVideo = FullVideo as any;
+// biome-ignore lint/suspicious/noExplicitAny: Remotion v4 typing workaround
 const AnySceneGraphic = SceneGraphic as any;
 
 // Calculate duration and dimensions from actual props (handles --props override)
@@ -85,6 +87,7 @@ export const RemotionRoot: React.FC = () => {
       <Composition
         id="FullVideo"
         component={AnyFullVideo}
+        // biome-ignore lint/suspicious/noExplicitAny: Remotion v4 typing workaround
         calculateMetadata={calculateVideoMetadata as any}
         durationInFrames={defaultFrames}
         fps={FPS}
@@ -104,6 +107,7 @@ export const RemotionRoot: React.FC = () => {
       <Composition
         id="FullVideo-16x9"
         component={AnyFullVideo}
+        // biome-ignore lint/suspicious/noExplicitAny: Remotion v4 typing workaround
         calculateMetadata={calculateVideoMetadata as any}
         durationInFrames={defaultFrames}
         fps={FPS}
@@ -114,6 +118,7 @@ export const RemotionRoot: React.FC = () => {
       <Composition
         id="FullVideo-1x1"
         component={AnyFullVideo}
+        // biome-ignore lint/suspicious/noExplicitAny: Remotion v4 typing workaround
         calculateMetadata={calculateVideoMetadata as any}
         durationInFrames={defaultFrames}
         fps={FPS}

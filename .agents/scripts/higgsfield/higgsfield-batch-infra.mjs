@@ -2,24 +2,22 @@
 // waiter for the Higgsfield automation suite.
 // Extracted from higgsfield-common.mjs (t2127 file-complexity decomposition).
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import {
-  GENERATED_IMAGE_SELECTOR,
+  debugScreenshot,
+  dismissAllModals,
+  getDefaultOutputDir,
+} from './higgsfield-browser.mjs';
+import {
   ensureDir,
+  GENERATED_IMAGE_SELECTOR,
   safeJoin,
   withRetry,
 } from './higgsfield-common.mjs';
 
 import {
-  getDefaultOutputDir,
-  dismissAllModals,
-  debugScreenshot,
-} from './higgsfield-browser.mjs';
-
-import {
-  resolveOutputDir,
   downloadLatestResult,
+  resolveOutputDir,
 } from './higgsfield-output.mjs';
 
 // ---------------------------------------------------------------------------
@@ -79,7 +77,7 @@ export async function runWithConcurrency(tasks, concurrency) {
   return results;
 }
 
-function loadResumeState(options, outputDir, type) {
+function loadResumeState(options, outputDir, _type) {
   let completedIndices = new Set();
   if (options.resume) {
     const prevState = loadBatchState(outputDir);
@@ -148,6 +146,7 @@ export function finalizeBatch({ type, batchState, results, startTime, outputDir,
 
   if (failed > 0) {
     console.log(`\nFailed jobs:`);
+    // biome-ignore lint/suspicious/useIterableCallbackReturn: forEach for logging
     batchState.failed.forEach(f => console.log(`  [${f.index + 1}] ${f.error}`));
     console.log(`\nTo retry failed jobs: add --resume flag`);
   }
@@ -172,7 +171,7 @@ export async function waitForGenerationResult(page, options, opts = {}) {
     label = 'generation',
     outputSubdir = 'output',
     defaultTimeout = 180000,
-    isVideo = false,
+    isVideo: _isVideo = false,
     useHistoryPoll = false,
   } = opts;
   const timeout = options.timeout || defaultTimeout;
