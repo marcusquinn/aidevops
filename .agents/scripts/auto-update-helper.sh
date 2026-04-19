@@ -1689,20 +1689,7 @@ WantedBy=timers.target
 	echo "  Check now:    aidevops auto-update check"
 	echo ""
 	# Check linger state so the timer survives logout on headless/server Linux hosts.
-	# Skip for root (linger irrelevant) and when loginctl is absent (containers).
-	if [[ "${USER:-}" != "root" ]] && command -v loginctl &>/dev/null; then
-		local _linger_state _linger_cmd
-		_linger_state=$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)
-		_linger_cmd="sudo loginctl enable-linger $USER"
-		if [[ "$_linger_state" == "yes" ]]; then
-			echo -e "  Linger:    ${GREEN}enabled${NC} (timer runs when logged out)"
-		elif [[ "$_linger_state" == "no" ]]; then
-			echo -e "  Linger:    ${YELLOW}disabled${NC} — timer stops when you log out" >&2
-			echo -e "  ${YELLOW}  Enable with: ${_linger_cmd}${NC}" >&2
-		else
-			echo -e "  Linger:    ${YELLOW}unknown${NC} — run: ${_linger_cmd}" >&2
-		fi
-	fi
+	_print_linger_status
 	return 0
 }
 
@@ -1900,6 +1887,29 @@ cmd_disable() {
 }
 
 #######################################
+# Print linger status row for systemd user timer.
+# Linger allows the user manager to keep running after logout.
+# Skips silently when loginctl is absent (containers) or when user is root.
+# Args: none. Reads $USER from environment.
+# Returns: 0
+#######################################
+_print_linger_status() {
+	[[ "${USER:-}" == "root" ]] && return 0
+	command -v loginctl &>/dev/null || return 0
+	local _linger_state _linger_cmd
+	_linger_state=$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)
+	_linger_cmd="sudo loginctl enable-linger $USER"
+	if [[ "$_linger_state" == "yes" ]]; then
+		echo -e "  Linger:    ${GREEN}yes${NC}"
+	elif [[ "$_linger_state" == "no" ]]; then
+		echo -e "  Linger:    ${YELLOW}no${NC} — timer stops on logout; fix: ${_linger_cmd}"
+	else
+		echo -e "  Linger:    ${YELLOW}unknown${NC} — run: ${_linger_cmd}"
+	fi
+	return 0
+}
+
+#######################################
 # Print scheduler section of status output (launchd, systemd, or cron)
 # Args: $1 = backend ("launchd", "systemd", or "cron")
 #######################################
@@ -1963,19 +1973,7 @@ _cmd_status_scheduler() {
 			fi
 			echo "  Timer:     ${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
 			echo "  Service:   ${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
-			# Linger row — required for timer to survive logout
-			if [[ "${USER:-}" != "root" ]] && command -v loginctl &>/dev/null; then
-				local _linger_state _linger_cmd
-				_linger_state=$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)
-				_linger_cmd="sudo loginctl enable-linger $USER"
-				if [[ "$_linger_state" == "yes" ]]; then
-					echo -e "  Linger:    ${GREEN}yes${NC}"
-				elif [[ "$_linger_state" == "no" ]]; then
-					echo -e "  Linger:    ${YELLOW}no${NC} — timer stops on logout; fix: ${_linger_cmd}"
-				else
-					echo -e "  Linger:    ${YELLOW}unknown${NC} — run: ${_linger_cmd}"
-				fi
-			fi
+			_print_linger_status
 		fi
 		# Also check for any lingering cron entry
 		if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
