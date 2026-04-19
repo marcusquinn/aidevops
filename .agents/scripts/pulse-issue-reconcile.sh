@@ -946,6 +946,86 @@ _extract_children_section() {
 }
 
 #######################################
+# t2388: post an idempotent decomposition-nudge comment on a parent-task
+# issue that has zero filed children. Without this, undecomposed parents
+# sit silently forever — the parent-task label blocks dispatch, no
+# children exist to do the work, and no signal surfaces to the maintainer.
+#
+# Idempotent via the <!-- parent-needs-decomposition --> marker: re-runs
+# skip any parent already nudged. The marker is checked via the issue
+# comments API before posting; if already present, returns 1 (no-op).
+#
+# Arguments:
+#   arg1 - repo slug (owner/repo)
+#   arg2 - parent issue number
+#   arg3 - parent title (for the comment body)
+# Returns: 0 if the nudge was posted, 1 if skipped (marker present or
+# comment failed).
+#######################################
+_post_parent_decomposition_nudge() {
+	local slug="$1"
+	local parent_num="$2"
+	local parent_title="${3:-}"
+
+	[[ -n "$slug" ]] || return 1
+	[[ "$parent_num" =~ ^[0-9]+$ ]] || return 1
+
+	local marker='<!-- parent-needs-decomposition -->'
+
+	# Idempotency check: skip if marker already present in any comment.
+	# Best-effort — if the API fails we fall through to posting, which
+	# is better than missing the nudge entirely. A one-time duplicate
+	# on a transient API error is harmless.
+	local existing=""
+	existing=$(gh api "repos/${slug}/issues/${parent_num}/comments" \
+		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
+		2>/dev/null) || existing=""
+	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
+		return 1
+	fi
+
+	# Sanitise title for safe markdown embed.
+	local safe_title="$parent_title"
+	safe_title="${safe_title//\`/}"
+
+	local comment_body="${marker}
+## Parent Task Needs Decomposition
+
+This issue carries the \`parent-task\` label, which unconditionally blocks pulse dispatch (see \`dispatch-dedup-helper.sh\` → \`PARENT_TASK_BLOCKED\`). It also has **zero filed children** — no \`## Children\`, \`## Sub-tasks\`, or \`## Child issues\` section with \`#NNNN\` references, and no GraphQL sub-issue graph.
+
+Under these two conditions the issue cannot make progress on its own. Workers won't pick it up (dispatch blocked), no completion sweep can fire (no children to check), and nothing else nudges it forward. Without decomposition it will sit here silently forever.
+
+**Two paths forward — pick one:**
+
+1. **Decompose into children.** File the specific implementation tasks as separate issues, then edit this parent body to include a section like:
+
+   \`\`\`
+   ## Children
+
+   - t2XXX / #NNNN — first specific task
+   - t2YYY / #MMMM — second specific task
+   \`\`\`
+
+   The next pulse cycle will detect the children via \`reconcile_completed_parent_tasks\` and auto-close this parent once all listed children are closed.
+
+2. **Drop the parent-task label.** If this issue is actually a single unit of work (not a roadmap tracker), remove the \`parent-task\` label so the pulse can dispatch it directly:
+
+   \`\`\`
+   gh issue edit ${parent_num} --repo ${slug} --remove-label parent-task
+   \`\`\`
+
+See \`.agents/AGENTS.md\` → \"Parent / meta tasks\" (t1986 / t2211) for the full rule. Parent-task is for epics and roadmap trackers that will never be implemented as a single unit — only their children will.
+
+_Automated by \`_post_parent_decomposition_nudge\` in \`pulse-issue-reconcile.sh\` (t2388). Posted once per issue via the \`<!-- parent-needs-decomposition -->\` marker; re-runs are no-ops._"
+
+	gh issue comment "$parent_num" --repo "$slug" \
+		--body "$comment_body" >/dev/null 2>&1 || return 1
+
+	echo "[pulse-wrapper] Reconcile parent-task: nudge posted for #${parent_num} in ${slug} (no children filed)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # t2138: extract per-parent close logic. Keeps reconcile_completed_parent_tasks
 # under the 100-line shell-complexity threshold and makes the close decision
 # independently testable. Returns 0 if the parent was closed, 1 if skipped
@@ -1000,10 +1080,12 @@ reconcile_completed_parent_tasks() {
 
 	local total_closed=0
 	local max_closes=5
+	local total_nudged=0
+	local max_nudges=5
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
-		[[ "$total_closed" -lt "$max_closes" ]] || break
+		[[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" ]] || break
 
 		local issues_json
 		issues_json=$(gh issue list --repo "$slug" --state open \
@@ -1016,10 +1098,11 @@ reconcile_completed_parent_tasks() {
 		[[ "$issue_count" -gt 0 ]] || continue
 
 		local i=0
-		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" ]]; do
-			local issue_num issue_body
+		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" ]]; do
+			local issue_num issue_body issue_title
 			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
 			issue_body=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].body // ""') || true
+			issue_title=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].title // ""') || true
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
@@ -1037,16 +1120,31 @@ reconcile_completed_parent_tasks() {
 					child_source="body"
 				fi
 			fi
-			[[ -n "$child_nums" ]] || continue
 
-			if _try_close_parent_tracker "$slug" "$issue_num" "$child_nums" "$child_source"; then
+			# t2388: parent-task with zero filed children is a decomposition
+			# silent-stuck state. Dispatch is blocked by parent-task label,
+			# completion sweep has nothing to sweep, nothing nudges it
+			# forward. Post a one-time decomposition nudge (idempotent via
+			# the <!-- parent-needs-decomposition --> marker) so the
+			# maintainer can either decompose into children or drop the
+			# parent-task label.
+			if [[ -z "$child_nums" ]]; then
+				if [[ "$total_nudged" -lt "$max_nudges" ]]; then
+					if _post_parent_decomposition_nudge "$slug" "$issue_num" "$issue_title"; then
+						total_nudged=$((total_nudged + 1))
+					fi
+				fi
+				continue
+			fi
+
+			if [[ "$total_closed" -lt "$max_closes" ]] && _try_close_parent_tracker "$slug" "$issue_num" "$child_nums" "$child_source"; then
 				total_closed=$((total_closed + 1))
 			fi
 		done
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
-	if [[ "$total_closed" -gt 0 ]]; then
-		echo "[pulse-wrapper] Reconcile completed parent tasks: closed=${total_closed}" >>"$LOGFILE"
+	if [[ "$total_closed" -gt 0 || "$total_nudged" -gt 0 ]]; then
+		echo "[pulse-wrapper] Reconcile completed parent tasks: closed=${total_closed} nudged=${total_nudged}" >>"$LOGFILE"
 	fi
 
 	return 0
