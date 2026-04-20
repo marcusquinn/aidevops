@@ -815,14 +815,45 @@ clear_active_status_on_release() {
 		;;
 	esac
 
+	# Defensive: if an open linked PR exists for this issue, preserve the
+	# worker's assignee and status:in-review. The PR pipeline owns final
+	# cleanup on merge (see pulse-merge.sh::_release_interactive_claim_on_merge
+	# for the interactive mirror). Stripping them here strands the PR in
+	# maintainer-gate Job 1 Check 2 because the assignee check fires
+	# after CLAIM_RELEASED but before PR merge. We still remove queued,
+	# claimed, and in-progress — those never outlive the worker process.
+	# GH#20195/t2451: closes the trust-gate loop where worker PRs on
+	# owner-authored origin:worker issues stall indefinitely.
+	#
+	# Closing-keyword regex matches pulse-merge.sh::_extract_linked_issue
+	# character-for-character (case-insensitive) so behaviour is consistent
+	# across the merge path and the release path. Do NOT widen this to
+	# `Ref` or `For` — those are planning references that MUST NOT block
+	# assignee cleanup (see t2046).
+	local has_open_linked_pr=false
+	local linked_prs_json=""
+	linked_prs_json=$(gh pr list --repo "$repo_slug" --state open \
+		--search "#${issue_num} in:body" \
+		--json number,body --limit 20 2>/dev/null || true)
+	if [[ -z "$linked_prs_json" ]]; then
+		linked_prs_json="[]"
+	fi
+	if printf '%s' "$linked_prs_json" | jq -e --arg num "$issue_num" \
+		'[.[] | select((.body // "") | test("(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]*#" + $num + "\\b"; "i"))] | length > 0' \
+		>/dev/null 2>&1; then
+		has_open_linked_pr=true
+	fi
+
 	local -a _flags=()
 	_flags+=(--remove-label "status:queued")
 	_flags+=(--remove-label "status:claimed")
 	_flags+=(--remove-label "status:in-progress")
-	_flags+=(--remove-label "status:in-review")
 
-	if [[ -n "$worker_login" ]]; then
-		_flags+=(--remove-assignee "$worker_login")
+	if [[ "$has_open_linked_pr" != "true" ]]; then
+		_flags+=(--remove-label "status:in-review")
+		if [[ -n "$worker_login" ]]; then
+			_flags+=(--remove-assignee "$worker_login")
+		fi
 	fi
 
 	gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null || return 1

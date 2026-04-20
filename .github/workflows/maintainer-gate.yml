@@ -64,6 +64,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAINTAINER_GATE_DEBUG: ${{ vars.MAINTAINER_GATE_DEBUG || 'false' }}
         run: |
@@ -277,7 +278,7 @@ jobs:
             fi
 
             # Check 2: no assignee
-            # Exempt when BOTH conditions hold (GH#6623, GH#18197, GH#19956):
+            # Exempt when BOTH conditions hold (GH#6623, GH#18197, GH#19956, GH#20195):
             #   1) PR author is OWNER or MEMBER (maintainer-tier only).
             #      COLLABORATOR is excluded — write-access contributors must have the
             #      issue explicitly assigned before their PR passes the gate.
@@ -286,8 +287,23 @@ jobs:
             #      a) Issue was created by github-actions[bot] — immutable, cannot be spoofed, OR
             #      b) Issue carries a source:* automation label (non-spoofable — only the
             #         pulse process running with the repo owner's token can apply these
-            #         labels at issue-creation time; contributors cannot self-label).
+            #         labels at issue-creation time; contributors cannot self-label), OR
+            #      c) Issue carries origin:worker or origin:interactive AND the issue
+            #         author is the repo owner or github-actions[bot] AND no non-
+            #         maintainer comments exist (t2451/GH#20195).
             # Neither the PR author check nor the origin signal alone is sufficient.
+            #
+            # t2451/GH#20195 rationale: the pulse creates issues as the repo owner
+            # (not github-actions[bot]) and tags them origin:worker. Until this
+            # widening, such issues only passed the gate if an assignee was
+            # explicitly set — but the worker's CLAIM_RELEASED path strips the
+            # assignee when the worker exits, stranding PRs at maintainer-gate.
+            # origin:worker is bot/owner-only (Job 5 of this workflow enforces it),
+            # so its presence is a non-forgeable trust signal. The non-maintainer
+            # comment guard adds defence-in-depth: if an external contributor has
+            # commented on the issue, drop back to the normal gate — an external
+            # comment could contain prompt-injection content that altered the
+            # worker's behaviour.
             if [[ -z "$ASSIGNEES" ]]; then
               PR_AUTHOR_IS_MAINTAINER=false
               if [[ "$PR_AUTHOR_ASSOCIATION" == "OWNER" ]] || \
@@ -306,13 +322,39 @@ jobs:
                 fi
               done
 
+              # t2451/GH#20195: trusted-origin-label exemption with defence-in-depth
+              HAS_TRUSTED_ORIGIN_LABEL=false
+              if echo "$LABELS" | grep -qxF 'origin:worker' || \
+                 echo "$LABELS" | grep -qxF 'origin:interactive'; then
+                if [[ "$ISSUE_AUTHOR" == "github-actions[bot]" ]] || \
+                   { [[ -n "$REPO_OWNER" ]] && [[ "$ISSUE_AUTHOR" == "$REPO_OWNER" ]]; }; then
+                  # Defence-in-depth: deny trust if any non-maintainer has commented.
+                  # Comments with author_association == CONTRIBUTOR or NONE are from
+                  # external users who could have injected prompt content that
+                  # altered worker behaviour. The source:* and bot-author paths
+                  # above are NOT subject to this check — source:* labels are
+                  # applied by the pulse itself (not user comments), and bot-
+                  # authored issues have a narrower attack surface.
+                  NON_MAINT_COMMENTS=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
+                    --jq '[.[] | select(.author_association == "NONE" or .author_association == "CONTRIBUTOR")] | length' \
+                    2>/dev/null || echo "0")
+                  if [[ "$NON_MAINT_COMMENTS" == "0" ]]; then
+                    HAS_TRUSTED_ORIGIN_LABEL=true
+                  else
+                    echo "INFO: Issue #$ISSUE_NUM has trusted origin label but $NON_MAINT_COMMENTS non-maintainer comment(s) — trust denied (defence-in-depth)"
+                  fi
+                fi
+              fi
+
               if [[ "$PR_AUTHOR_IS_MAINTAINER" == "true" ]] && \
-                 { [[ "$ISSUE_AUTHOR" == "github-actions[bot]" ]] || [[ "$HAS_AUTOMATION_LABEL" == "true" ]]; }; then
-                echo "EXEMPT: Issue #$ISSUE_NUM (issue_author=$ISSUE_AUTHOR, automation_label=$HAS_AUTOMATION_LABEL, pr_author=$PR_AUTHOR_ASSOCIATION) — assignee check skipped"
+                 { [[ "$ISSUE_AUTHOR" == "github-actions[bot]" ]] || \
+                   [[ "$HAS_AUTOMATION_LABEL" == "true" ]] || \
+                   [[ "$HAS_TRUSTED_ORIGIN_LABEL" == "true" ]]; }; then
+                echo "EXEMPT: Issue #$ISSUE_NUM (issue_author=$ISSUE_AUTHOR, automation_label=$HAS_AUTOMATION_LABEL, trusted_origin=$HAS_TRUSTED_ORIGIN_LABEL, pr_author=$PR_AUTHOR_ASSOCIATION) — assignee check skipped"
               else
                 BLOCKED=true
                 REASONS="${REASONS}Issue #${ISSUE_NUM} has no assignee — an issue must be assigned before work begins.\n"
-                echo "BLOCKED: Issue #$ISSUE_NUM has no assignee (issue_author=$ISSUE_AUTHOR, automation_label=$HAS_AUTOMATION_LABEL, pr_author_association=$PR_AUTHOR_ASSOCIATION)"
+                echo "BLOCKED: Issue #$ISSUE_NUM has no assignee (issue_author=$ISSUE_AUTHOR, automation_label=$HAS_AUTOMATION_LABEL, trusted_origin=$HAS_TRUSTED_ORIGIN_LABEL, pr_author_association=$PR_AUTHOR_ASSOCIATION)"
               fi
             fi
           done
@@ -495,6 +537,7 @@ jobs:
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Issue #$ISSUE_NUMBER updated (labels/assignee) — checking for linked PRs"
@@ -569,6 +612,48 @@ jobs:
                   -f description="origin:interactive by maintainer — implied approval (Job 3 exemption)" \
                   2>/dev/null || true
                 continue
+              fi
+            fi
+
+            # -----------------------------------------------------------------
+            # t2451/GH#20195: origin:worker — skip pending + rerun when the
+            # linked issue is trusted (owner- or bot-authored) AND has no
+            # non-maintainer comments. Mirrors Job 1's HAS_TRUSTED_ORIGIN_LABEL
+            # exemption so Job 3 doesn't post a transient "pending" that
+            # clobbers a prior Job 1 success.
+            #
+            # Why here and not in Job 1 only: Job 3 posts a pending status
+            # before triggering the rerun. Even when Job 1 will eventually
+            # pass, the pending window breaks branch-protection merge
+            # acceptance. The skip short-circuits that window for PRs the
+            # gate will definitely pass.
+            # -----------------------------------------------------------------
+            if printf '%s' "$PR_LABELS_J3" | grep -q 'origin:worker'; then
+              if [[ "$PR_AUTHOR_ASSOC_J3" == "OWNER" ]] || \
+                 [[ "$PR_AUTHOR_ASSOC_J3" == "MEMBER" ]]; then
+                ISSUE_DATA_J3=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" \
+                  --jq '{author: .user.login}' 2>/dev/null || true)
+                ISSUE_AUTHOR_J3=$(printf '%s' "$ISSUE_DATA_J3" | jq -r '.author // empty' 2>/dev/null || true)
+                ISSUE_TRUSTED_J3=false
+                if [[ "$ISSUE_AUTHOR_J3" == "github-actions[bot]" ]] || \
+                   { [[ -n "$REPO_OWNER" ]] && [[ "$ISSUE_AUTHOR_J3" == "$REPO_OWNER" ]]; }; then
+                  NON_MAINT_COMMENTS_J3=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+                    --jq '[.[] | select(.author_association == "NONE" or .author_association == "CONTRIBUTOR")] | length' \
+                    2>/dev/null || echo "0")
+                  if [[ "$NON_MAINT_COMMENTS_J3" == "0" ]]; then
+                    ISSUE_TRUSTED_J3=true
+                  fi
+                fi
+                if [[ "$ISSUE_TRUSTED_J3" == "true" ]]; then
+                  echo "SKIP rerun: PR #$PR_NUM has origin:worker, trusted issue author ($ISSUE_AUTHOR_J3), no non-maintainer comments — posting success, no Job 1 rerun needed (t2451)"
+                  gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                    --method POST \
+                    -f state=success \
+                    -f context="maintainer-gate" \
+                    -f description="origin:worker on trusted issue — implied approval (Job 3 exemption, t2451)" \
+                    2>/dev/null || true
+                  continue
+                fi
               fi
             fi
 
