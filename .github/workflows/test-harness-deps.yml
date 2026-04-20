@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# t2431 — Test-harness dependency guard
+#
+# Ensures:
+#  Layer 3: No test file under .agents/scripts/tests/ uses a bare
+#           `cp shared-constants.sh` outside of the central helper
+#           .agents/scripts/tests/lib/test-helpers.sh. Bare copies are the
+#           exact pattern that left test-gh-wrapper-auto-sig.sh and
+#           test-comment-wrapper-marker-dedup.sh silently green after
+#           PR #20037 split out shared-gh-wrappers.sh.
+#
+#  Layer 4: The helper's sibling-discovery regex still matches the
+#           source-directive syntax used in shared-constants.sh. If a
+#           future rewrite of shared-constants.sh uses a different
+#           syntax (e.g., `. ./sibling.sh` instead of `source "${_SC_SELF%/*}/sibling.sh"`),
+#           the helper would silently return zero deps and every test
+#           using it would regress to the silent-green state. This check
+#           fails loudly when that happens.
+#
+# Also runs the two previously-broken tests end-to-end so a regression in
+# the helper itself is caught immediately (rather than waiting for those
+# tests to be flipped back to "bare cp" behaviour elsewhere).
+
+name: Test Harness Deps (t2431)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".agents/scripts/shared-constants.sh"
+      - ".agents/scripts/shared-gh-wrappers.sh"
+      - ".agents/scripts/shared-feature-toggles.sh"
+      - ".agents/scripts/shared-constants-deps-check.sh"
+      - ".agents/scripts/tests/lib/test-helpers.sh"
+      - ".agents/scripts/tests/test-gh-wrapper-auto-sig.sh"
+      - ".agents/scripts/tests/test-comment-wrapper-marker-dedup.sh"
+      - ".agents/scripts/tests/test-test-helpers.sh"
+      - ".github/workflows/test-harness-deps.yml"
+  pull_request:
+    paths:
+      - ".agents/scripts/shared-constants.sh"
+      - ".agents/scripts/shared-gh-wrappers.sh"
+      - ".agents/scripts/shared-feature-toggles.sh"
+      - ".agents/scripts/shared-constants-deps-check.sh"
+      - ".agents/scripts/tests/lib/test-helpers.sh"
+      - ".agents/scripts/tests/test-gh-wrapper-auto-sig.sh"
+      - ".agents/scripts/tests/test-comment-wrapper-marker-dedup.sh"
+      - ".agents/scripts/tests/test-test-helpers.sh"
+      - ".github/workflows/test-harness-deps.yml"
+      - ".agents/scripts/tests/**/*.sh"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: shared-constants deps guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Layer 3 + Layer 4 deps check
+        run: |
+          bash .agents/scripts/shared-constants-deps-check.sh
+
+      - name: Run test-helpers meta-test
+        run: |
+          bash .agents/scripts/tests/test-test-helpers.sh
+
+      - name: Run test-gh-wrapper-auto-sig (must assert, not silently skip)
+        run: |
+          output=$(bash .agents/scripts/tests/test-gh-wrapper-auto-sig.sh)
+          echo "$output"
+          # Guard against the silent-green regression: the test MUST emit
+          # at least one "PASS:" line. If it exits 0 with zero assertions,
+          # fail this job — that is the exact failure mode t2431 addresses.
+          if ! printf '%s' "$output" | grep -q "PASS:"; then
+            echo "::error::test-gh-wrapper-auto-sig.sh ran to completion but emitted zero PASS lines." >&2
+            echo "::error::This is the silent-green regression class (t2431)." >&2
+            exit 1
+          fi
+
+      - name: Run test-comment-wrapper-marker-dedup (must assert, not silently skip)
+        run: |
+          output=$(bash .agents/scripts/tests/test-comment-wrapper-marker-dedup.sh)
+          echo "$output"
+          if ! printf '%s' "$output" | grep -q "PASS:"; then
+            echo "::error::test-comment-wrapper-marker-dedup.sh ran to completion but emitted zero PASS lines." >&2
+            echo "::error::This is the silent-green regression class (t2431)." >&2
+            exit 1
+          fi

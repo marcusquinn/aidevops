@@ -12,6 +12,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 PARENT_DIR="${SCRIPT_DIR}/.."
 
+# Pull in _test_copy_shared_deps / _test_source_shared_deps (t2431).
+# Without this, copying only shared-constants.sh into a tmpdir causes the
+# transitive `source "${_SC_SELF%/*}/shared-gh-wrappers.sh"` directive to
+# fail, leaving every assertion below silently skipped.
+# shellcheck source=./lib/test-helpers.sh
+source "${SCRIPT_DIR}/lib/test-helpers.sh"
+
 PASS=0
 FAIL=0
 
@@ -90,15 +97,12 @@ exit 0
 STUB
 chmod +x "${TMPDIR_TEST}/gh-signature-helper.sh"
 
-# Copy shared-constants.sh to the temp dir so BASH_SOURCE resolves the stub
-cp "${PARENT_DIR}/shared-constants.sh" "${TMPDIR_TEST}/shared-constants.sh"
-
-# Source with include guard reset to force reload
-unset _SHARED_CONSTANTS_LOADED
-# Prevent the re-exec guard from running by pretending we're already on bash 4+
-export AIDEVOPS_BASH_REEXECED=1
-# shellcheck source=/dev/null
-source "${TMPDIR_TEST}/shared-constants.sh"
+# Copy shared-constants.sh AND every sub-library it sources (shared-gh-wrappers.sh,
+# shared-feature-toggles.sh, ...) to the temp dir. BASH_SOURCE in the copy then
+# resolves the stub gh-signature-helper.sh AND every chained `source` directive.
+# Use _test_copy_shared_deps rather than a bare `cp shared-constants.sh` (t2431).
+_test_copy_shared_deps "$PARENT_DIR" "$TMPDIR_TEST" || exit 1
+_test_source_shared_deps "$TMPDIR_TEST" || exit 1
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 1: --body without signature gets footer appended

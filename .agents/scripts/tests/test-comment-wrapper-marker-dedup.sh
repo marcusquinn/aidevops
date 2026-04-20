@@ -22,6 +22,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 PARENT_DIR="${SCRIPT_DIR}/.."
 
+# Pull in _test_copy_shared_deps / _test_source_shared_deps (t2431). See
+# lib/test-helpers.sh for the "copy shared-constants.sh + siblings" rationale.
+# shellcheck source=./lib/test-helpers.sh
+source "${SCRIPT_DIR}/lib/test-helpers.sh"
+
 PASS=0
 FAIL=0
 
@@ -83,7 +88,9 @@ exit 0
 STUB
 chmod +x "${TMPDIR_TEST}/gh-signature-helper.sh"
 
-cp "${PARENT_DIR}/shared-constants.sh" "${TMPDIR_TEST}/shared-constants.sh"
+# Copy shared-constants.sh AND every sibling it sources (shared-gh-wrappers.sh,
+# shared-feature-toggles.sh, ...) — see .agents/scripts/tests/lib/test-helpers.sh.
+_test_copy_shared_deps "$PARENT_DIR" "$TMPDIR_TEST" || exit 1
 
 STUB_DIR="${TMPDIR_TEST}/stub-bin"
 mkdir -p "$STUB_DIR"
@@ -119,10 +126,7 @@ chmod +x "${STUB_DIR}/gh"
 export PATH="${STUB_DIR}:$PATH"
 export GH_STUB_BODY_FILE="${TMPDIR_TEST}/gh-body.txt"
 
-unset _SHARED_CONSTANTS_LOADED
-export AIDEVOPS_BASH_REEXECED=1
-# shellcheck source=/dev/null
-source "${TMPDIR_TEST}/shared-constants.sh"
+_test_source_shared_deps "$TMPDIR_TEST" || exit 1
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Scenario 1: marker at the top of --body, wrapper appends sig, grep still finds
