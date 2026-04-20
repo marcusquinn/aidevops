@@ -109,17 +109,32 @@ while IFS=' ' read -r _lr _ls _rr _rs; do
 	_all_refs+=("$_lr $_ls $_rr $_rs")
 done
 
+# Determine default remote branch once for merge-base fallback (GH#20177).
+# Mirrors the pattern in complexity-regression-pre-push.sh:_compute_baseline.
+# Priority: origin/HEAD (repo-configured) → origin/main → origin/master → HEAD.
+_default_remote_head=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+	| sed 's@^refs/remotes/origin/@origin/@')
+if [[ -z "$_default_remote_head" ]]; then
+	for _candidate in origin/main origin/master; do
+		git rev-parse --verify "$_candidate" >/dev/null 2>&1 \
+			&& { _default_remote_head="$_candidate"; break; }
+	done
+fi
+[[ -z "$_default_remote_head" ]] && _default_remote_head="HEAD"
+
 _watchlist_present=0
 for _ref_entry in "${_all_refs[@]}"; do
 	read -r _lr _ls _rr _rs <<<"$_ref_entry"
 	[[ -z "$_ls" ]] && continue
 	[[ "$_ls" =~ ^0+$ ]] && continue
-	# Determine base for diff: use remote sha when known, merge-base otherwise
+	# Determine base for diff: use remote sha when known, merge-base otherwise.
+	# Use the ref's own local SHA ($_ls) instead of HEAD so multi-ref pushes
+	# compute the correct base for each ref being pushed (GH#20177).
 	_base=""
 	if [[ -n "$_rs" ]] && ! [[ "$_rs" =~ ^0+$ ]]; then
 		_base="$_rs"
 	else
-		_base=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
+		_base=$(git merge-base "$_ls" "$_default_remote_head" 2>/dev/null || echo "")
 	fi
 	[[ -z "$_base" ]] && _watchlist_present=1 && break
 	if git diff --name-only "$_base" "$_ls" 2>/dev/null \
