@@ -1,0 +1,1028 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# =============================================================================
+# Shared GitHub CLI Wrappers -- Session Origin, Label Management, Safe Edits
+# =============================================================================
+# GitHub-related functions extracted from shared-constants.sh to keep that
+# file under the 2000-line file-size-debt threshold.
+#
+# Covers:
+#   - GitHub token workflow scope check (gh_token_has_workflow_scope)
+#   - Workflow file detection (files_include_workflow_changes)
+#   - Session origin detection (detect_session_origin, session_origin_label)
+#   - Origin-label-aware gh create wrappers (gh_create_issue, gh_create_pr)
+#   - Comment wrappers (gh_issue_comment, gh_pr_comment)
+#   - Safe edit wrappers (gh_issue_edit_safe, gh_pr_edit_safe)
+#   - Origin label mutual exclusion (set_origin_label, ensure_origin_labels_exist)
+#   - Issue status label state machine (set_issue_status, ensure_status_labels_exist)
+#
+# Usage: source "${SCRIPT_DIR}/shared-gh-wrappers.sh"
+#
+# Dependencies:
+#   - shared-constants.sh (print_shared_error, print_shared_info, etc.)
+#   - bash 4+, gh CLI, jq
+#
+# NOTE: This file is sourced BY shared-constants.sh, so all print_* and other
+# utility functions from shared-constants.sh are already in scope at load time.
+# If sourcing this file standalone (e.g. in tests), source shared-constants.sh first.
+#
+# Part of aidevops framework: https://aidevops.sh
+
+# Apply strict mode only when executed directly (not when sourced)
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
+
+# Include guard
+[[ -n "${_SHARED_GH_WRAPPERS_LOADED:-}" ]] && return 0
+_SHARED_GH_WRAPPERS_LOADED=1
+
+# =============================================================================
+# GitHub Token Workflow Scope Check (t1540)
+# =============================================================================
+# Reusable function to check if the current gh token has the `workflow` scope.
+# Without this scope, git push and gh pr merge fail for branches that modify
+# .github/workflows/ files. The error is:
+#   "refusing to allow an OAuth App to create or update workflow without workflow scope"
+#
+# Usage:
+#   if ! gh_token_has_workflow_scope; then
+#       echo "Missing workflow scope — run: gh auth refresh -s workflow"
+#   fi
+#
+# Returns: 0 if token has workflow scope, 1 if missing, 2 if unable to check
+
+gh_token_has_workflow_scope() {
+	if ! command -v gh &>/dev/null; then
+		return 2
+	fi
+
+	local auth_output
+	auth_output=$(gh auth status 2>&1) || return 2
+
+	# gh auth status outputs scopes in various formats depending on version:
+	#   Token scopes: 'admin:public_key', 'gist', 'read:org', 'repo', 'workflow'
+	#   Token scopes: admin:public_key, gist, read:org, repo, workflow
+	if echo "$auth_output" | grep -q "'workflow'"; then
+		return 0
+	fi
+	if echo "$auth_output" | grep -qiE 'Token scopes:.*workflow'; then
+		return 0
+	fi
+
+	return 1
+}
+
+# Check if a set of file paths includes .github/workflows/ changes.
+# Accepts file paths on stdin (one per line) or as arguments.
+#
+# Usage:
+#   git diff --name-only HEAD~1 | files_include_workflow_changes
+#   files_include_workflow_changes ".github/workflows/ci.yml" "src/main.sh"
+#
+# Returns: 0 if workflow files found, 1 if not
+files_include_workflow_changes() {
+	if [[ $# -gt 0 ]]; then
+		# Check arguments
+		local f
+		for f in "$@"; do
+			if [[ "$f" == .github/workflows/* ]]; then
+				return 0
+			fi
+		done
+		return 1
+	fi
+
+	# Check stdin
+	local line
+	while IFS= read -r line; do
+		if [[ "$line" == .github/workflows/* ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# =============================================================================
+# Session Origin Detection
+# =============================================================================
+# Detects whether the current session is a headless worker or interactive user.
+# Used to tag issues, TODOs, and PRs with origin:worker or origin:interactive.
+#
+# Design: inverted logic — detect known headless signals, default to interactive.
+# AI coding tools (OpenCode, Claude Code, Cursor, Kiro, Codex, Windsurf, etc.)
+# all run bash tools without a TTY, so TTY presence is not a reliable signal.
+# The headless dispatch infrastructure sets explicit env vars; everything else
+# is a user session.
+#
+# Known headless signals (exhaustive — add new ones here as dispatch infra grows):
+#   FULL_LOOP_HEADLESS=true   — pulse supervisor dispatch
+#   AIDEVOPS_HEADLESS=true    — headless-runtime-helper.sh
+#   OPENCODE_HEADLESS=true    — OpenCode headless mode
+#   GITHUB_ACTIONS=true       — CI environment
+#
+# Default: interactive — covers all AI coding tools without runtime-specific checks.
+#
+# Usage:
+#   local origin; origin=$(detect_session_origin)
+#   # Returns: "worker" or "interactive"
+#
+#   local label; label=$(session_origin_label)
+#   # Returns: "origin:worker" or "origin:interactive"
+
+detect_session_origin() {
+	# t1984: Explicit override via AIDEVOPS_SESSION_ORIGIN takes precedence
+	# over the headless auto-detection. Used by the sync-todo-to-issues
+	# workflow to mark issues created from human-triggered TODO.md pushes
+	# as origin:interactive rather than origin:worker, so the t1970 auto-
+	# assign path fires and the Maintainer Gate doesn't block downstream PRs.
+	case "${AIDEVOPS_SESSION_ORIGIN:-}" in
+	interactive)
+		echo "interactive"
+		return 0
+		;;
+	worker)
+		echo "worker"
+		return 0
+		;;
+	esac
+
+	# Known headless signals — set by dispatch infrastructure only.
+	# If none of these are set, the session is interactive by default.
+	if [[ "${FULL_LOOP_HEADLESS:-}" == "true" ]]; then
+		echo "worker"
+		return 0
+	fi
+	if [[ "${AIDEVOPS_HEADLESS:-}" == "true" ]]; then
+		echo "worker"
+		return 0
+	fi
+	if [[ "${OPENCODE_HEADLESS:-}" == "true" ]]; then
+		echo "worker"
+		return 0
+	fi
+	if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+		echo "worker"
+		return 0
+	fi
+	# Default: interactive.
+	# Covers all AI coding tools (OpenCode, Claude Code, Cursor, Kiro, Codex,
+	# Windsurf, Gemini CLI, Kimi CLI, etc.) without needing runtime-specific
+	# env var checks. TTY presence is NOT checked — it is unreliable for all
+	# AI coding tools which run bash tools without a TTY.
+	echo "interactive"
+	return 0
+}
+
+# Returns the GitHub label string for the current session origin.
+# Usage: local label; label=$(session_origin_label)
+session_origin_label() {
+	local origin
+	origin=$(detect_session_origin)
+	echo "origin:${origin}"
+	return 0
+}
+
+# =============================================================================
+# Origin-Label-Aware gh Wrappers (t1756)
+# =============================================================================
+# Every gh issue/pr create call MUST use these wrappers to ensure the session
+# origin label (origin:worker or origin:interactive) is always applied.
+# GitHub deduplicates labels, so callers that already pass --label origin:*
+# will not get duplicates.
+#
+# Usage (drop-in replacement for gh issue create / gh pr create):
+#   gh_create_issue --repo owner/repo --title "..." --label "bug" --body "..."
+#   gh_create_pr --head branch --base main --title "..." --body "..."
+#
+# These forward all arguments to gh and append --label <origin>.
+
+# t2028: Internal — check if argv already contains an --assignee flag.
+# Used by gh_create_issue to avoid overriding caller-supplied assignees.
+_gh_wrapper_args_have_assignee() {
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--assignee | --assignee=*)
+			return 0
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+	return 1
+}
+
+# t2406: Internal — check if argv contains a specific label in any --label arg.
+# Supports comma-separated label lists (e.g. --label "bug,auto-dispatch").
+# Used by gh_create_issue to apply the t2157 auto-dispatch skip logic.
+# Returns 0 if the label is found, 1 otherwise.
+_gh_wrapper_args_have_label() {
+	local needle="$1"
+	shift
+	while [[ $# -gt 0 ]]; do
+		local cur="$1"
+		local label_val=""
+		case "$cur" in
+		--label)
+			local next_val="${2:-}"
+			label_val="$next_val"
+			shift
+			;;
+		--label=*)
+			label_val="${cur#--label=}"
+			;;
+		esac
+		if [[ -n "$label_val" && ",${label_val}," == *",${needle},"* ]]; then
+			return 0
+		fi
+		shift
+	done
+	return 1
+}
+
+# t2028: Internal — determine the auto-assignee for a newly-created issue.
+# Returns empty string when the session is worker-origin, when the user
+# lookup fails, or when there is otherwise nothing to assign. Callers must
+# treat empty as "skip assignment". Non-fatal: all failure modes echo empty.
+#
+# Mirrors the _auto_assign_issue logic at claim-task-id.sh:607 (t1970) so
+# the direct gh_create_issue path reaches assignee-gate parity with the
+# claim-task-id.sh path.
+_gh_wrapper_auto_assignee() {
+	local origin
+	origin=$(detect_session_origin)
+	if [[ "$origin" != "interactive" ]]; then
+		return 0
+	fi
+	# t1984 override: sync-todo-to-issues workflow sets AIDEVOPS_SESSION_USER
+	# to github.actor when the commit author is human. Prefer that explicit
+	# signal over `gh api user`, which would return github-actions[bot]
+	# inside a workflow run.
+	if [[ -n "${AIDEVOPS_SESSION_USER:-}" ]]; then
+		printf '%s' "$AIDEVOPS_SESSION_USER"
+		return 0
+	fi
+	local current_user
+	current_user=$(gh api user --jq '.login' 2>/dev/null || true)
+	if [[ -z "$current_user" ]] || [[ "$current_user" == "null" ]]; then
+		return 0
+	fi
+	printf '%s' "$current_user"
+	return 0
+}
+
+# t2115: Auto-append signature footer to --body/--body-file when missing.
+# Populates global _GH_WRAPPER_SIG_MODIFIED_ARGS with the (possibly modified) args.
+# Callers should invoke _gh_wrapper_auto_sig "$@" then
+#   set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+# Non-fatal: if signature generation fails, original args are preserved.
+_GH_WRAPPER_SIG_MODIFIED_ARGS=()
+_gh_wrapper_auto_sig() {
+	_GH_WRAPPER_SIG_MODIFIED_ARGS=("$@")
+	local sig_helper
+	sig_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-signature-helper.sh"
+	[[ -x "$sig_helper" ]] || return 0
+
+	local i=0 body_val="" body_idx=-1 is_eq_form=0
+	local body_file_val="" body_file_idx=-1 bf_is_eq=0
+	while [[ $i -lt ${#_GH_WRAPPER_SIG_MODIFIED_ARGS[@]} ]]; do
+		case "${_GH_WRAPPER_SIG_MODIFIED_ARGS[i]}" in
+		--body)
+			body_idx=$i
+			body_val="${_GH_WRAPPER_SIG_MODIFIED_ARGS[i + 1]:-}"
+			is_eq_form=0
+			;;
+		--body=*)
+			body_idx=$i
+			body_val="${_GH_WRAPPER_SIG_MODIFIED_ARGS[i]#--body=}"
+			is_eq_form=1
+			;;
+		--body-file)
+			body_file_idx=$i
+			body_file_val="${_GH_WRAPPER_SIG_MODIFIED_ARGS[i + 1]:-}"
+			bf_is_eq=0
+			;;
+		--body-file=*)
+			body_file_idx=$i
+			body_file_val="${_GH_WRAPPER_SIG_MODIFIED_ARGS[i]#--body-file=}"
+			bf_is_eq=1
+			;;
+		esac
+		i=$((i + 1))
+	done
+
+	# Handle --body case
+	if [[ $body_idx -ge 0 && -n "$body_val" ]]; then
+		# Already signed — skip
+		[[ "$body_val" == *"<!-- aidevops:sig -->"* ]] && return 0
+		local sig_footer
+		sig_footer=$("$sig_helper" footer --body "$body_val" 2>/dev/null || echo "")
+		[[ -z "$sig_footer" ]] && return 0
+		local new_body="${body_val}${sig_footer}"
+		if [[ "$is_eq_form" -eq 1 ]]; then
+			_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx]="--body=${new_body}"
+		else
+			_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx + 1]="$new_body"
+		fi
+		return 0
+	fi
+
+	# Handle --body-file case
+	if [[ $body_file_idx -ge 0 && -n "$body_file_val" && -f "$body_file_val" ]]; then
+		local file_content
+		file_content=$(<"$body_file_val") || return 0
+		[[ "$file_content" == *"<!-- aidevops:sig -->"* ]] && return 0
+		local sig_footer
+		sig_footer=$("$sig_helper" footer --body "$file_content" 2>/dev/null || echo "")
+		[[ -z "$sig_footer" ]] && return 0
+		printf '%s' "$sig_footer" >>"$body_file_val"
+		return 0
+	fi
+
+	return 0
+}
+
+gh_create_issue() {
+	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
+	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "gh issue create" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+
+	local origin_label
+	origin_label=$(session_origin_label)
+	# Ensure labels exist on the target repo (once per repo per process)
+	_ensure_origin_labels_for_args "$@"
+
+	# t2115: auto-append signature footer when body lacks one
+	_gh_wrapper_auto_sig "$@"
+	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+
+	# t2028: auto-assign to the current user when the session is interactive
+	# and the caller did not pass an explicit --assignee. Reaches parity with
+	# the t1970 auto-assign already applied on the claim-task-id.sh path so
+	# the maintainer gate's assignee check passes on first PR open for
+	# interactively-created issues.
+	# t2406: skip self-assignment when auto-dispatch label is present (t2157).
+	# The origin:interactive label is still applied (t2200 — origin and
+	# assignment are independent axes).
+	local issue_output
+	if ! _gh_wrapper_args_have_assignee "$@"; then
+		if _gh_wrapper_args_have_label "auto-dispatch" "$@"; then
+			# t2157/t2406: auto-dispatch means "let a worker handle this" —
+			# skip self-assignment. Mirrors issue-sync-helper.sh
+			# _push_auto_assign_interactive() skip logic.
+			print_info "[INFO] auto-dispatch label present — skipping self-assignment per t2157"
+		else
+			local auto_assignee
+			auto_assignee=$(_gh_wrapper_auto_assignee)
+			if [[ -n "$auto_assignee" ]]; then
+				issue_output=$(gh issue create "$@" --label "$origin_label" --assignee "$auto_assignee")
+				local rc=$?
+				echo "$issue_output"
+				[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
+				return $rc
+			fi
+		fi
+	fi
+
+	issue_output=$(gh issue create "$@" --label "$origin_label")
+	local rc=$?
+	echo "$issue_output"
+	[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
+	return $rc
+}
+
+# GH#18735: auto-link newly created issues as sub-issues of their parent
+# when the title matches tNNN.M (dot-notation subtask pattern).
+# Non-blocking — errors are silently ignored so issue creation is never affected.
+# Arguments:
+#   $1 - issue URL output from gh issue create
+#   $2... - original args passed to gh issue create (to extract --title and --repo)
+_gh_auto_link_sub_issue() {
+	local issue_url="$1"
+	shift
+
+	# Extract --title from the original args
+	local title="" repo=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--title)
+			title="${2:-}"
+			shift
+			;;
+		--title=*) title="${1#--title=}" ;;
+		--repo)
+			repo="${2:-}"
+			shift
+			;;
+		--repo=*) repo="${1#--repo=}" ;;
+		*) ;;
+		esac
+		shift
+	done
+	[[ -z "$title" ]] && return 0
+
+	# Check if title starts with a dot-notation task ID (tNNN.M)
+	local child_task_id=""
+	if [[ "$title" =~ ^(t[0-9]+\.[0-9]+[a-z]?) ]]; then
+		child_task_id="${BASH_REMATCH[1]}"
+	else
+		return 0
+	fi
+
+	# Derive the parent task ID (strip last .segment)
+	local parent_task_id="${child_task_id%.*}"
+	[[ -z "$parent_task_id" || "$parent_task_id" == "$child_task_id" ]] && return 0
+
+	# Extract the child issue number from the URL
+	local child_num
+	child_num=$(echo "$issue_url" | grep -oE '[0-9]+$' || echo "")
+	[[ -z "$child_num" ]] && return 0
+
+	# Resolve repo slug (from --repo arg or current repo)
+	[[ -z "$repo" ]] && repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+	[[ -z "$repo" ]] && return 0
+
+	local owner="${repo%%/*}" name="${repo##*/}"
+
+	# Find the parent issue by searching for the task ID prefix in the title
+	local parent_num
+	parent_num=$(gh issue list --repo "$repo" --state all \
+		--search "${parent_task_id}: in:title" --json number,title --limit 5 2>/dev/null |
+		jq -r --arg prefix "${parent_task_id}: " \
+			'.[] | select(.title | startswith($prefix)) | .number // ""' 2>/dev/null |
+		head -1)
+	[[ -z "$parent_num" ]] && return 0
+
+	# Resolve both to node IDs and link
+	local parent_node child_node
+	parent_node=$(gh api graphql \
+		-f query='query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){issue(number:$num){id}}}' \
+		-f o="$owner" -f n="$name" -F num="$parent_num" \
+		--jq '.data.repository.issue.id' 2>/dev/null || echo "")
+	child_node=$(gh api graphql \
+		-f query='query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){issue(number:$num){id}}}' \
+		-f o="$owner" -f n="$name" -F num="$child_num" \
+		--jq '.data.repository.issue.id' 2>/dev/null || echo "")
+	[[ -z "$parent_node" || -z "$child_node" ]] && return 0
+
+	# Fire and forget — suppress all errors
+	gh api graphql -f query='mutation($p:ID!,$c:ID!){addSubIssue(input:{issueId:$p,subIssueId:$c}){issue{number}}}' \
+		-f p="$parent_node" -f c="$child_node" >/dev/null 2>&1 || true
+	return 0
+}
+
+gh_create_pr() {
+	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
+	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "gh pr create" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+
+	local origin_label
+	origin_label=$(session_origin_label)
+	_ensure_origin_labels_for_args "$@"
+
+	# t2115: auto-append signature footer when body lacks one
+	_gh_wrapper_auto_sig "$@"
+	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+
+	gh pr create "$@" --label "$origin_label"
+}
+
+# t2393: auto-append signature footer on all `gh issue comment` posts.
+# Thin wrapper mirroring gh_create_issue/gh_create_pr — invokes
+# _gh_wrapper_auto_sig on --body/--body-file before delegating to the
+# underlying gh command. No origin-label or assignee logic (creation-only
+# concerns); comments just need the runtime/version/model/token sig so
+# operators and pulse readers can diagnose which session posted them.
+# Dedup: _gh_wrapper_auto_sig skips bodies already containing the
+# <!-- aidevops:sig --> marker, so callers that build their own footer
+# are not double-signed.
+gh_issue_comment() {
+	_gh_wrapper_auto_sig "$@"
+	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+	gh issue comment "$@"
+	return $?
+}
+
+gh_pr_comment() {
+	_gh_wrapper_auto_sig "$@"
+	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+	gh pr comment "$@"
+	return $?
+}
+
+# Internal: extract --repo from args and ensure labels exist (cached per repo).
+_ORIGIN_LABELS_ENSURED=""
+_ensure_origin_labels_for_args() {
+	local repo=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--repo)
+			repo="${2:-}"
+			break
+			;;
+		--repo=*)
+			repo="${1#--repo=}"
+			break
+			;;
+		*) shift ;;
+		esac
+	done
+	[[ -z "$repo" ]] && return 0
+	# Skip if already ensured for this repo in this process
+	case ",$_ORIGIN_LABELS_ENSURED," in
+	*",$repo,"*) return 0 ;;
+	esac
+	ensure_origin_labels_exist "$repo"
+	_ORIGIN_LABELS_ENSURED="${_ORIGIN_LABELS_ENSURED:+$_ORIGIN_LABELS_ENSURED,}$repo"
+	return 0
+}
+
+# Ensure origin labels exist on a repo (idempotent).
+# Usage: ensure_origin_labels_exist "owner/repo"
+ensure_origin_labels_exist() {
+	local repo="$1"
+	[[ -z "$repo" ]] && return 1
+	gh label create "origin:worker" --repo "$repo" \
+		--description "Created by headless/pulse worker session" \
+		--color "C5DEF5" 2>/dev/null || true
+	gh label create "origin:interactive" --repo "$repo" \
+		--description "Created by interactive user session" \
+		--color "BFD4F2" 2>/dev/null || true
+	gh label create "origin:worker-takeover" --repo "$repo" \
+		--description "Worker took over from interactive session" \
+		--color "D4C5F9" 2>/dev/null || true
+	return 0
+}
+
+# =============================================================================
+# Safe gh Edit Wrappers (GH#19857)
+# =============================================================================
+# Framework-wide safety invariant: no code path may invoke gh issue edit or
+# gh pr edit with an empty title or empty body — under any condition, including
+# FORCE_* override flags. The check lives here so ALL call sites go through it.
+#
+# This mirrors the gh_create_issue / gh_create_pr pattern (origin labelling +
+# signing) but for DESTRUCTIVE edits rather than creation.
+#
+# Validation rules:
+#   Title: MUST be non-empty after trimming whitespace. Bare task-ID stubs
+#          like "tNNN: " or "GH#NNN: " (nothing after the prefix) are rejected.
+#   Body:  MUST be non-empty after trimming when --body is present.
+#          --body-file /dev/null and --body "" are rejected.
+#   Override: NO env var bypasses this. This is the hard invariant.
+#
+# Usage (drop-in replacements for gh issue edit / gh pr edit):
+#   gh_issue_edit_safe 123 --repo owner/repo --title "t001: Fix bug" --body "..."
+#   gh_pr_edit_safe 456 --repo owner/repo --title "t001: Fix bug"
+
+# Internal: rejection reason for the most recent _gh_validate_edit_args call.
+_GH_EDIT_REJECTION_REASON=""
+
+#######################################
+# Internal: validate --title and --body/--body-file args.
+# Returns 0 if valid, 1 if rejected (with stderr message + _GH_EDIT_REJECTION_REASON).
+# Args: the full argument list that would be passed to gh issue/pr edit.
+#######################################
+_gh_validate_edit_args() {
+	_GH_EDIT_REJECTION_REASON=""
+	local i=0 title_val="" has_title=0 body_val="" has_body=0
+	local body_file_val="" has_body_file=0
+	local -a args=("$@")
+
+	while [[ $i -lt ${#args[@]} ]]; do
+		case "${args[i]}" in
+		--title)
+			has_title=1
+			title_val="${args[i + 1]:-}"
+			i=$((i + 1))
+			;;
+		--title=*)
+			has_title=1
+			title_val="${args[i]#--title=}"
+			;;
+		--body)
+			has_body=1
+			body_val="${args[i + 1]:-}"
+			i=$((i + 1))
+			;;
+		--body=*)
+			has_body=1
+			body_val="${args[i]#--body=}"
+			;;
+		--body-file)
+			has_body_file=1
+			body_file_val="${args[i + 1]:-}"
+			i=$((i + 1))
+			;;
+		--body-file=*)
+			has_body_file=1
+			body_file_val="${args[i]#--body-file=}"
+			;;
+		*) ;;
+		esac
+		i=$((i + 1))
+	done
+
+	# Validate title if present
+	if [[ "$has_title" -eq 1 ]]; then
+		local trimmed_title
+		trimmed_title="${title_val#"${title_val%%[![:space:]]*}"}"
+		trimmed_title="${trimmed_title%"${trimmed_title##*[![:space:]]}"}"
+		if [[ -z "$trimmed_title" ]]; then
+			_GH_EDIT_REJECTION_REASON="empty title (after trimming whitespace)"
+			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
+		# Reject bare task-ID stubs: "tNNN: " or "GH#NNN: " with nothing after
+		if [[ "$trimmed_title" =~ ^(t[0-9]+|GH#[0-9]+):[[:space:]]*$ ]]; then
+			_GH_EDIT_REJECTION_REASON="stub title '${trimmed_title}' (task-ID prefix with no description)"
+			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
+	fi
+
+	# Validate body if present
+	if [[ "$has_body" -eq 1 ]]; then
+		local trimmed_body
+		trimmed_body="${body_val#"${body_val%%[![:space:]]*}"}"
+		trimmed_body="${trimmed_body%"${trimmed_body##*[![:space:]]}"}"
+		if [[ -z "$trimmed_body" ]]; then
+			_GH_EDIT_REJECTION_REASON="empty body (after trimming whitespace)"
+			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
+	fi
+
+	# Validate body-file if present
+	if [[ "$has_body_file" -eq 1 ]]; then
+		if [[ "$body_file_val" == "/dev/null" ]]; then
+			_GH_EDIT_REJECTION_REASON="body-file is /dev/null (would clear body)"
+			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
+		if [[ -f "$body_file_val" ]]; then
+			local file_size
+			file_size=$(wc -c <"$body_file_val" 2>/dev/null || echo "0")
+			file_size=$(echo "$file_size" | tr -d '[:space:]')
+			if [[ "$file_size" -eq 0 ]]; then
+				_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' is empty"
+				printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+				return 1
+			fi
+		fi
+	fi
+
+	return 0
+}
+
+#######################################
+# Internal: audit-log a safety rejection.
+# Non-fatal — if audit-log-helper.sh is unavailable, the stderr message
+# from _gh_validate_edit_args is still emitted.
+# Args:
+#   $1 — operation name (e.g. "gh issue edit")
+#   $2 — rejection reason
+#   $3..N — original command args (truncated to 500 chars for the log)
+#######################################
+_gh_edit_audit_rejection() {
+	local operation="$1"
+	local reason="$2"
+	shift 2
+	local context
+	context=$(printf '%q ' "$@" | head -c 500)
+	local audit_helper
+	audit_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/audit-log-helper.sh"
+	if [[ -x "$audit_helper" ]]; then
+		"$audit_helper" log operation.block \
+			"gh_edit_safety: ${operation} rejected — ${reason}. Context: ${context}" \
+			2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
+# gh_issue_edit_safe — drop-in replacement for gh issue edit.
+# Validates --title/--body before delegating. Rejects empty/stub values.
+# All arguments are forwarded to gh issue edit on success.
+# Returns 1 with stderr message on validation failure.
+#######################################
+gh_issue_edit_safe() {
+	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "gh issue edit" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+	gh issue edit "$@"
+}
+
+#######################################
+# gh_pr_edit_safe — drop-in replacement for gh pr edit.
+# Validates --title/--body before delegating. Rejects empty/stub values.
+# All arguments are forwarded to gh pr edit on success.
+# Returns 1 with stderr message on validation failure.
+#######################################
+gh_pr_edit_safe() {
+	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "gh pr edit" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+	gh pr edit "$@"
+}
+
+# =============================================================================
+# Origin Label Mutual Exclusion (t2200)
+# =============================================================================
+# origin:interactive, origin:worker, and origin:worker-takeover are mutually
+# exclusive — an issue was created by exactly one session type. Setting one
+# must atomically remove the other two so downstream consumers
+# (dispatch-dedup, maintainer gate, pulse-merge routing) can rely on
+# single-label semantics without checking for impossible combinations.
+#
+# Background: #19638 accumulated BOTH origin:interactive AND origin:worker
+# because edit sites added one without removing the other. The status-label
+# state machine (set_issue_status, t2033) solved the identical problem for
+# status:* labels — this mirrors that pattern for origin:* labels.
+
+# Canonical list of mutually-exclusive origin:* labels.
+ORIGIN_LABELS=("interactive" "worker" "worker-takeover")
+
+# (t2396) Labels applied by pulse-merge-feedback.sh when routing a failed/
+# conflicted/review-feedback PR back to its parent issue for re-dispatch.
+# Used by _normalize_reassign_self to detect feedback-routed status:available
+# issues that need runner self-assignment restored.
+FEEDBACK_ROUTED_LABELS=(
+	"source:ci-feedback"
+	"source:conflict-feedback"
+	"source:review-feedback"
+)
+
+# (t2396) HTML comment markers injected into issue bodies by
+# pulse-merge-feedback.sh when routing feedback. Presence of any marker
+# indicates the issue has been through at least one dispatch+feedback cycle.
+FEEDBACK_ROUTED_MARKERS=(
+	"<!-- ci-feedback:PR"
+	"<!-- conflict-feedback:PR"
+	"<!-- review-followup:PR"
+)
+
+#######################################
+# Transition an issue or PR to an origin:* label atomically (t2200).
+#
+# Removes every sibling origin:* label in a single `gh issue edit` call,
+# then adds the target. This is the ONLY sanctioned way to change an
+# existing issue/PR's origin label — ad-hoc --add-label/--remove-label
+# calls must go through this helper so the mutual-exclusion invariant
+# is enforced centrally.
+#
+# For new issues/PRs (gh_create_issue, gh_create_pr), the wrappers pass
+# a single --label origin:* at creation time, so there is nothing to
+# remove. This helper is for post-creation edits only.
+#
+# Args:
+#   $1 — issue/PR number
+#   $2 — repo slug (owner/repo)
+#   $3 — new origin: one of interactive|worker|worker-takeover
+#   $4 — (optional) --pr to edit a PR instead of an issue (default: issue)
+#   $@ — additional gh edit flags passed through verbatim (e.g.,
+#        --add-assignee, --remove-assignee, --add-label "other-label")
+#
+# Returns:
+#   0 on gh success
+#   1 on gh failure
+#   2 on invalid origin argument (caller bug)
+#
+# Example:
+#   set_origin_label 19638 owner/repo worker
+#   set_origin_label 19638 owner/repo interactive --pr
+#   set_origin_label 19638 owner/repo worker \
+#       --add-assignee "$worker_login"
+#######################################
+set_origin_label() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local new_origin="$3"
+	shift 3
+
+	# Validate inputs
+	if [[ -z "$issue_num" || -z "$repo_slug" || -z "$new_origin" ]]; then
+		printf 'set_origin_label: issue_num, repo_slug, and new_origin are required\n' >&2
+		return 2
+	fi
+
+	# Check for --pr flag in remaining args
+	local gh_cmd="issue"
+	local -a extra_flags=()
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--pr)
+			gh_cmd="pr"
+			shift
+			;;
+		*)
+			extra_flags+=("$1")
+			shift
+			;;
+		esac
+	done
+
+	# Validate target origin
+	local _valid=0
+	local _origin
+	for _origin in "${ORIGIN_LABELS[@]}"; do
+		[[ "$_origin" == "$new_origin" ]] && {
+			_valid=1
+			break
+		}
+	done
+	if [[ "$_valid" -eq 0 ]]; then
+		printf 'set_origin_label: invalid origin "%s" (valid: %s)\n' \
+			"$new_origin" "${ORIGIN_LABELS[*]}" >&2
+		return 2
+	fi
+
+	# Ensure labels exist (cached per-process per-repo so this is cheap)
+	ensure_origin_labels_exist "$repo_slug" || true
+
+	# Build flag list: add target, remove all siblings.
+	local -a _flags=()
+	local _label
+	for _label in "${ORIGIN_LABELS[@]}"; do
+		if [[ "$_label" == "$new_origin" ]]; then
+			_flags+=(--add-label "origin:${_label}")
+		else
+			_flags+=(--remove-label "origin:${_label}")
+		fi
+	done
+
+	# Pass through any extra flags the caller wants to apply in the same edit
+	if [[ ${#extra_flags[@]} -gt 0 ]]; then
+		_flags+=("${extra_flags[@]}")
+	fi
+
+	gh "$gh_cmd" edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
+}
+
+# =============================================================================
+# Issue Status Label State Machine (t2033)
+# =============================================================================
+# aidevops models issue lifecycle as a set of mutually-exclusive `status:*`
+# labels. Every transition must atomically remove siblings so the state is
+# always consistent — audit queries like `gh issue list --label status:*`
+# can only be trusted if no issue ever carries two status labels at once.
+#
+# Background: #18444, #18454, #18455 all accumulated both `status:available`
+# and `status:queued` because `_dispatch_launch_worker` added `queued` without
+# removing `available`. t2008 stale-recovery escalation failed to fire as a
+# result. Root cause: 8+ call sites constructed their own --add-label /
+# --remove-label flags, with several forgetting one or more siblings.
+#
+# Canonical core lifecycle (managed here):
+#   available → queued → claimed → in-progress → in-review → done
+#                                   ↓
+#                                blocked (waiting on dependency)
+#
+# Exception labels (NOT managed here — out-of-band signals):
+#   status:needs-info, status:verify-failed, status:stale,
+#   status:needs-testing, status:orphaned
+# These are set/cleared by separate workflows and do not participate in
+# the core dispatch lifecycle enforced by this helper.
+
+# Canonical ordered list of mutually-exclusive core status:* labels.
+# When transitioning, all siblings of the target must be removed atomically.
+# Order matches the lifecycle flow for human readability; the helper treats
+# them as an unordered set. Elements are quoted because "done" is a bash
+# reserved word (SC1010).
+ISSUE_STATUS_LABELS=("available" "queued" "claimed" "in-progress" "in-review" "done" "blocked")
+
+# t2040: precedence order for label-invariant reconciliation. First match wins
+# when picking the survivor from a multi-label pollution event. `done` is
+# terminal — always preserved if present. This guards against data loss in any
+# future code path that isn't fully atomic: if an issue transiently ends up
+# with both `in-review` and `done`, the reconciler MUST keep `done`.
+# Consumed by `_normalize_label_invariants` in pulse-issue-reconcile.sh.
+ISSUE_STATUS_LABEL_PRECEDENCE=("done" "in-review" "in-progress" "queued" "claimed" "available" "blocked")
+
+# t2040: tier label rank for invariant reconciliation. Must match the rank
+# order in .github/workflows/dedup-tier-labels.yml — reconciler and GH Action
+# must pick the same survivor so they're idempotent with each other.
+ISSUE_TIER_LABEL_RANK=("thinking" "standard" "simple")
+
+# Ensure all core status:* labels exist on a repo (idempotent, cached per-process).
+# The helper relies on --remove-label being idempotent for *unset* labels (gh
+# returns exit 0 when a label exists in the repo but isn't applied to the issue),
+# but fails hard when a label doesn't exist in the repo at all. Pre-creating
+# them once per repo per process closes that gap.
+#
+# Usage: ensure_status_labels_exist "owner/repo"
+_STATUS_LABELS_ENSURED=""
+ensure_status_labels_exist() {
+	local repo="$1"
+	[[ -z "$repo" ]] && return 1
+	# Skip if already ensured for this repo in this process
+	case ",${_STATUS_LABELS_ENSURED}," in
+	*",${repo},"*) return 0 ;;
+	esac
+
+	# Colors roughly follow GitHub's default palette for lifecycle states.
+	gh label create "status:available" --repo "$repo" \
+		--description "Task is available for claiming" --color "0E8A16" --force 2>/dev/null || true
+	gh label create "status:queued" --repo "$repo" \
+		--description "Worker dispatched, not yet started" --color "FBCA04" --force 2>/dev/null || true
+	gh label create "status:claimed" --repo "$repo" \
+		--description "Interactive session claimed this task" --color "F9D0C4" --force 2>/dev/null || true
+	gh label create "status:in-progress" --repo "$repo" \
+		--description "Worker actively running" --color "1D76DB" --force 2>/dev/null || true
+	gh label create "status:in-review" --repo "$repo" \
+		--description "PR open, awaiting review/merge" --color "5319E7" --force 2>/dev/null || true
+	gh label create "status:done" --repo "$repo" \
+		--description "Task is complete" --color "6F42C1" --force 2>/dev/null || true
+	gh label create "status:blocked" --repo "$repo" \
+		--description "Waiting on blocker task" --color "D93F0B" --force 2>/dev/null || true
+
+	_STATUS_LABELS_ENSURED="${_STATUS_LABELS_ENSURED:+${_STATUS_LABELS_ENSURED},}${repo}"
+	return 0
+}
+
+#######################################
+# Transition an issue to a status:* label atomically (t2033).
+#
+# Removes every sibling core status:* label in a single `gh issue edit` call,
+# then adds the target. This is the ONLY sanctioned way to change an issue's
+# status label — ad-hoc --add-label/--remove-label calls must go through
+# this helper so the status state machine is enforced centrally.
+#
+# Args:
+#   $1 — issue number
+#   $2 — repo slug (owner/repo)
+#   $3 — new status: one of available|queued|claimed|in-progress|in-review|done|blocked
+#        OR empty string to clear all core status labels without adding one
+#        (used by stale-recovery escalation which applies needs-maintainer-review
+#        instead of a core status)
+#   $@ — additional gh issue edit flags passed through verbatim (e.g.,
+#        --add-assignee, --remove-assignee, --add-label "other-non-status-label")
+#
+# Returns:
+#   0 on gh success (including idempotent no-op cases)
+#   1 on gh failure (logged; callers typically ignore with || true to match
+#     the existing convention for best-effort label operations)
+#   2 on invalid status argument (caller bug — not suppressed)
+#
+# Example:
+#   set_issue_status 18444 owner/repo queued \
+#       --add-assignee "$worker_login" \
+#       --add-label "origin:worker"
+#
+#   set_issue_status 18444 owner/repo "" \
+#       --add-label "needs-maintainer-review"
+#######################################
+set_issue_status() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local new_status="$3"
+	shift 3
+
+	# Validate inputs
+	if [[ -z "$issue_num" || -z "$repo_slug" ]]; then
+		printf 'set_issue_status: issue_num and repo_slug are required\n' >&2
+		return 2
+	fi
+
+	# Validate target status (empty is allowed = clear only)
+	if [[ -n "$new_status" ]]; then
+		local _valid=0
+		local _status
+		for _status in "${ISSUE_STATUS_LABELS[@]}"; do
+			[[ "$_status" == "$new_status" ]] && {
+				_valid=1
+				break
+			}
+		done
+		if [[ "$_valid" -eq 0 ]]; then
+			printf 'set_issue_status: invalid status "%s" (valid: %s)\n' \
+				"$new_status" "${ISSUE_STATUS_LABELS[*]}" >&2
+			return 2
+		fi
+	fi
+
+	# Ensure labels exist (cached per-process per-repo so this is cheap)
+	ensure_status_labels_exist "$repo_slug" || true
+
+	# Build flag list: remove all core status labels, add target if non-empty.
+	local -a _flags=()
+	local _label
+	for _label in "${ISSUE_STATUS_LABELS[@]}"; do
+		if [[ "$_label" == "$new_status" ]]; then
+			_flags+=(--add-label "status:${_label}")
+		else
+			_flags+=(--remove-label "status:${_label}")
+		fi
+	done
+
+	# Pass through any extra flags the caller wants to apply in the same edit
+	_flags+=("$@")
+
+	gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
+}
