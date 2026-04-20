@@ -261,7 +261,7 @@ Published benchmarks (Cohere 10M dataset, 16 vCPU / 64GB, INT8): 1-5ms search la
 Naive "embed-query → cosine-topK → return" collapses on multi-domain queries because they carry implicit filters (jurisdiction, date, document type) and require routing across multiple collections. Agentic retrieval replaces the single-vector lookup with a three-stage reasoning loop — this loop is **not Weaviate-specific**: any LLM + any vector store implements it.
 
 1. **Schema inspection** — reasoning layer reads available collections/namespaces and their metadata fields before routing. Example: a legal corpus exposes `contracts_operational`, `caselaw_ca`, `statutes_regulations`.
-2. **Sub-query planning** — decomposes a natural-language question into multiple filtered retrievals. Example: "2024 MSA cure periods in California" → 3 sub-queries across `contracts_operational` (type=MSA, field=cure\_period, date≥2024) + `statutes_regulations` (jurisdiction=CA).
+2. **Sub-query planning** — decomposes a natural-language question into multiple filtered retrievals. Example: "2024 MSA cure periods in California" → sub-queries across `contracts_operational` (type=MSA, field=cure\_period, date≥2024) + `statutes_regulations` (jurisdiction=CA).
 3. **Rerank sub-agent** — after parallel retrieval, a second-pass LLM call (often a cheaper/faster model) scores and re-orders candidates before answer synthesis.
 
 | Decision | Guidance |
@@ -282,9 +282,9 @@ Plain-text embeddings lose signature blocks, stamps, tables, and redaction boxes
 | Single-vector (default) | Baseline | Baseline | Text-dominant docs |
 | ColBERT late interaction | +15-30% on phrase/token-level lookups | ~10x (token-per-vector) | Legal discovery, precision-critical lookups |
 | ModernVBERT / visual transformer | Captures table cells, signatures, redaction boxes | ~10-15x | Forms, financial filings, stamped PDFs |
-| Muvera FDE compression | ColBERT recall, 32x storage reduction | ~3x vs single-vector | ColBERT at production scale |
+| Muvera FDE compression | ColBERT recall, ~3x storage reduction | ~3x vs single-vector | ColBERT at production scale |
 
-**Muvera** (Fixed-Dimensional Encoding) compresses multivectors into a single fixed-size vector while preserving late-interaction recall within ~1-2% at 32x storage reduction. This makes ColBERT-scale retrieval feasible at production cost by eliminating the ~10x storage premium over single-vector models.
+**Muvera** (Fixed-Dimensional Encoding) compresses multivectors into a single fixed-size vector while preserving late-interaction recall within ~1-2% at ~3x storage reduction vs single-vector. This makes ColBERT-scale retrieval feasible at production cost by eliminating most of the ~10x storage premium over single-vector models.
 
 **When to pay the cost**: Legal discovery, financial filings, and forms-heavy corpora where signatures, stamps, or table structure determine the correct answer. Text-dominant corpora (plain contracts, statutes, meeting notes) get negligible recall gain and should stay on single-vector.
 
