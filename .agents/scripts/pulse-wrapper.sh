@@ -1220,6 +1220,26 @@ _pulse_run_deterministic_pipeline() {
 			run_canonical_maintenance || true
 	fi
 
+	# t2418 (GH#20016): Dashboard freshness watchdog. Detects when the
+	# supervisor health dashboard issue has not been refreshed within the
+	# threshold (default 48h) and files a `review-followup` + `priority:high`
+	# alert. Cadence-gated internally (default 1h) so this is cheap to call
+	# every cycle. Non-fatal — failures (gh offline, no dashboards cached)
+	# log and return 0.
+	#
+	# Structure note: two single-arm `if`s (early-return pattern) rather than
+	# `if ... elif ...` because the nesting-depth AWK counter in
+	# code-quality.yml mis-counts `elif` as opening a new nesting level (the
+	# loose regex `(if|for|while|until|case)` matches `if ` inside `elif `).
+	local _dfc_script="${SCRIPT_DIR}/dashboard-freshness-check.sh"
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared — skipping dashboard freshness check" >>"$LOGFILE"
+	fi
+	if [[ ! -f "$STOP_FLAG" && -x "$_dfc_script" ]]; then
+		run_stage_with_timeout "dashboard_freshness_check" "$PRE_RUN_STAGE_TIMEOUT" \
+			bash "$_dfc_script" scan || true
+	fi
+
 	# Write structured health snapshot for instant diagnosis (GH#15107)
 	write_pulse_health_file || true
 

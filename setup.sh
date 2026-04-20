@@ -341,6 +341,33 @@ _should_setup_noninteractive_scheduler() {
 	return 1
 }
 
+# Stats-wrapper is a REQUIRED dependency of the supervisor pulse — the pulse
+# delegates all health dashboard + quality sweep work to it (t1429). If the
+# supervisor pulse is installed or consented, stats-wrapper must also be
+# installed, even on first-time non-interactive runs. Without this escape
+# hatch, auto-update on a fresh machine installs the pulse but not the
+# stats-wrapper, leaving the health dashboard permanently stale (t2418,
+# GH#20016 — canonical 11-day staleness on #10944 on 2026-04-20).
+_should_setup_noninteractive_stats_wrapper() {
+	if _should_setup_noninteractive_scheduler \
+		"Stats wrapper" \
+		"com.aidevops.aidevops-stats-wrapper" \
+		"aidevops: stats-wrapper" \
+		"aidevops-stats-wrapper"; then
+		return 0
+	fi
+
+	# Pulse-dependency escape hatch: install stats-wrapper whenever the
+	# supervisor pulse is (or will be) enabled. Pulse itself also honours
+	# config consent in the non-interactive path, so following its gate
+	# keeps the two schedulers in lockstep.
+	if _should_setup_noninteractive_supervisor_pulse; then
+		return 0
+	fi
+
+	return 1
+}
+
 # Spinner for long-running operations
 # Usage: run_with_spinner "Installing package..." command arg1 arg2
 run_with_spinner() {
@@ -1136,8 +1163,10 @@ _setup_post_setup_steps() {
 		if _should_setup_noninteractive_supervisor_pulse; then
 			setup_supervisor_pulse "$os"
 		fi
-		# Regenerate other schedulers if already installed (GH#17695 Finding B)
-		if _should_setup_noninteractive_scheduler "Stats wrapper" "com.aidevops.aidevops-stats-wrapper" "aidevops: stats-wrapper" "aidevops-stats-wrapper"; then
+		# Regenerate other schedulers if already installed (GH#17695 Finding B).
+		# Stats wrapper is a pulse dependency — also install on first run when
+		# the supervisor pulse is consented (t2418, GH#20016).
+		if _should_setup_noninteractive_stats_wrapper; then
 			setup_stats_wrapper "${PULSE_ENABLED:-}"
 		fi
 		if _should_setup_noninteractive_scheduler "Failure miner" "sh.aidevops.routine-gh-failure-miner" "aidevops: gh-failure-miner" "aidevops-gh-failure-miner"; then
