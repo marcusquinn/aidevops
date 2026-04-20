@@ -468,8 +468,35 @@ _process_one_batch_title() {
 	local task_id="${alloc_out%%|*}"
 	local task_ref="${alloc_out#*|}"
 
-	_create_stub_brief "$task_id" "$title" "$task_ref" "$repo_path" ||
-		log_warn "Brief creation failed for $task_id — continuing"
+	# (t2417) If the linked issue body is worker-ready, write a minimal stub
+	# linking to the issue instead of the full template brief. In headless/
+	# batch mode, default to skip (stub). The readiness helper scores the
+	# body against known heading sets (4-of-7 threshold).
+	local _brief_written=false
+	local _readiness_helper="$SCRIPT_DIR/brief-readiness-helper.sh"
+	if [[ -x "$_readiness_helper" && -n "$task_ref" && "$task_ref" != "offline" ]]; then
+		local _issue_num="${task_ref#GH#}"
+		local _slug=""
+		_slug=$(git -C "$repo_path" remote get-url origin 2>/dev/null \
+			| sed -E 's#.*github\.com[:/]##; s/\.git$//' || true)
+		if [[ -n "$_slug" && -n "$_issue_num" ]]; then
+			local _body=""
+			_body=$(gh issue view "$_issue_num" --repo "$_slug" --json body --jq '.body' 2>/dev/null) || true
+			if [[ -n "$_body" ]]; then
+				local _rout=""
+				_rout=$("$_readiness_helper" check --body "$_body" 2>/dev/null) || true
+				if printf '%s\n' "$_rout" | grep -q 'WORKER_READY=true'; then
+					log_info "$task_id: issue #${_issue_num} body is worker-ready — writing stub brief"
+					"$_readiness_helper" stub "$task_id" "$_issue_num" "$_slug" "$repo_path" 2>/dev/null || true
+					_brief_written=true
+				fi
+			fi
+		fi
+	fi
+	if [[ "$_brief_written" != "true" ]]; then
+		_create_stub_brief "$task_id" "$title" "$task_ref" "$repo_path" ||
+			log_warn "Brief creation failed for $task_id — continuing"
+	fi
 
 	_append_todo_entry "$task_id" "$title" "$task_ref" "$todo_file" ||
 		log_warn "TODO entry failed for $task_id — continuing"

@@ -81,6 +81,8 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 - **Task briefs:** Every task must have `todo/tasks/{task_id}-brief.md` (via `/define` or `/new-task`). A task without a brief is undevelopable because it loses the implementation context needed for autonomous execution. See `workflows/plans.md` and `scripts/commands/new-task.md`.
 
+**Worker-ready issue body heuristic (t2417):** Before creating a full brief, `/define`, `/new-task`, and `task-brief-helper.sh` check whether the linked issue body is already worker-ready — i.e., it contains 4+ of the 7 known heading signals (`## Task`, `## Why`, `## How`, `## Acceptance`, `## What`, `## Session Origin`, `## Files to modify`). When the issue body is worker-ready, the brief file is either skipped (headless default) or replaced with a stub that links to the issue as the canonical brief. This prevents brief/issue body duplication and the collision surface it creates (see GH#20015). Helper: `scripts/brief-readiness-helper.sh`. Threshold override: `BRIEF_READINESS_THRESHOLD` env var.
+
 **Brief composition**: All GitHub-written content (issue bodies, PR descriptions, comments, escalation reports) follows `workflows/brief.md` — the centralised formatting workflow.
 
 **Model tiers**: Use GitHub labels to set the model tier. The pulse reads these labels for tier routing, not `model:` in `TODO.md`. See `reference/task-taxonomy.md`. **Brief quality determines which model tier can execute** — never assign a tier without verifying the brief meets that tier's prerequisites:

@@ -68,6 +68,13 @@ fi
 
 ### Step 3: Create Task Brief (MANDATORY)
 
+**Worker-ready issue body detection (t2417):** Before writing a full brief, check if the linked issue already has a worker-ready body (contains 4+ of: `## Task`, `## Why`, `## How`, `## Acceptance`, `## What`, `## Session Origin`, `## Files to modify`). Use `brief-readiness-helper.sh check <issue-number> <slug>` to detect. If the body is worker-ready:
+
+- **Headless mode:** skip the full brief and write a stub linking to the issue (`brief-readiness-helper.sh stub <task-id> <issue> <slug>`). Default behaviour.
+- **Interactive mode:** offer the user a choice: (1) skip brief, point to issue (recommended), (2) stub brief linking to issue, (3) full brief anyway.
+
+This prevents redundant brief files when the issue body already carries all the context a worker needs.
+
 Every task MUST have a brief at `todo/tasks/{task_id}-brief.md`. Use `templates/brief-template.md`, formatted per `workflows/brief.md`. Required sections:
 
 | Section | Content |

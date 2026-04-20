@@ -1,0 +1,155 @@
+name: Planning PR Redundancy Check
+
+# t2417: Advisory check that detects when a PR contains a brief file
+# (todo/tasks/*-brief.md) whose content is >=80% similar to the linked
+# issue body. Posts an advisory comment — NOT a blocker.
+#
+# Purpose: catch planning PRs where the brief duplicates the issue body,
+# suggesting the brief should be a stub instead (or skipped entirely).
+#
+# Trigger: pull_request on opened/synchronize, only when brief files change.
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'todo/tasks/*-brief.md'
+
+jobs:
+  check-redundancy:
+    name: Brief Redundancy Advisory
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+      contents: read
+      issues: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect redundant briefs
+        id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Find brief files added or modified in this PR
+          BRIEF_FILES=$(git diff --name-only HEAD~1..HEAD -- 'todo/tasks/*-brief.md' 2>/dev/null || true)
+          if [[ -z "$BRIEF_FILES" ]]; then
+            echo "No brief files changed in this PR"
+            echo "redundant=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          REDUNDANT_BRIEFS=""
+
+          while IFS= read -r brief_path; do
+            [[ -z "$brief_path" ]] && continue
+            [[ ! -f "$brief_path" ]] && continue
+
+            # Extract task ID from filename (e.g., t1234-brief.md -> t1234)
+            task_id=$(basename "$brief_path" | sed 's/-brief\.md$//')
+
+            # Find linked issue number from the brief or PR body
+            issue_num=""
+
+            # Try extracting from the brief file itself (stub briefs have issue URLs)
+            issue_num=$(grep -oE 'issues/([0-9]+)' "$brief_path" | head -1 | sed 's|issues/||' || true)
+
+            # Try from PR body (Resolves #NNN, For #NNN, Ref #NNN)
+            if [[ -z "$issue_num" ]]; then
+              issue_num=$(printf '%s' "$PR_BODY" | grep -oiE '(close[ds]?|fix(es|ed)?|resolve[ds]?|for|ref)\s+#([0-9]+)' | head -1 | grep -oE '[0-9]+' || true)
+            fi
+
+            if [[ -z "$issue_num" ]]; then
+              echo "No linked issue found for $brief_path — skipping"
+              continue
+            fi
+
+            # Fetch issue body
+            issue_body=$(gh issue view "$issue_num" --repo "$REPO" --json body --jq '.body' 2>/dev/null || true)
+            if [[ -z "$issue_body" ]]; then
+              echo "Could not fetch issue #$issue_num body — skipping"
+              continue
+            fi
+
+            # Normalise both texts and compute line-level similarity
+            brief_content=$(cat "$brief_path")
+            norm_issue=$(printf '%s\n' "$issue_body" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g' | tr '[:upper:]' '[:lower:]' | grep -v '^$' || true)
+            norm_brief=$(printf '%s\n' "$brief_content" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g' | tr '[:upper:]' '[:lower:]' | grep -v '^$' || true)
+
+            total_lines=0
+            matching_lines=0
+            while IFS= read -r line; do
+              # Skip very short lines
+              [[ ${#line} -lt 10 ]] && continue
+              total_lines=$((total_lines + 1))
+              if printf '%s\n' "$norm_issue" | grep -qF "$line"; then
+                matching_lines=$((matching_lines + 1))
+              fi
+            done <<< "$norm_brief"
+
+            similarity=0
+            if [[ $total_lines -gt 0 ]]; then
+              similarity=$(( (matching_lines * 100) / total_lines ))
+            fi
+
+            echo "$brief_path: ${similarity}% similar to issue #${issue_num} (${matching_lines}/${total_lines} lines)"
+
+            if [[ $similarity -ge 80 ]]; then
+              REDUNDANT_BRIEFS="${REDUNDANT_BRIEFS}\n- \`${brief_path}\` is **${similarity}%** similar to issue #${issue_num}"
+            fi
+          done <<< "$BRIEF_FILES"
+
+          if [[ -n "$REDUNDANT_BRIEFS" ]]; then
+            echo "redundant=true" >> "$GITHUB_OUTPUT"
+            # Write to file for the comment step (avoids env var escaping)
+            printf '%b' "$REDUNDANT_BRIEFS" > /tmp/redundant-briefs.txt
+          else
+            echo "redundant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post advisory comment
+        if: steps.detect.outputs.redundant == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Check for existing advisory comment to avoid duplicates
+          EXISTING=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select(.body | test("planning-pr-redundancy-check"))] | length' 2>/dev/null || echo "0")
+
+          if [[ "$EXISTING" != "0" ]]; then
+            echo "Advisory comment already exists — skipping"
+            exit 0
+          fi
+
+          REDUNDANT_BRIEFS=$(cat /tmp/redundant-briefs.txt)
+
+          COMMENT_BODY="<!-- planning-pr-redundancy-check -->
+          ## Brief Redundancy Advisory (t2417)
+
+          The following brief file(s) in this PR have **≥80% content overlap** with their linked issue body:
+
+          ${REDUNDANT_BRIEFS}
+
+          When the issue body already contains all required sections (Task/What, Why, How, Acceptance, Files to modify), a separate brief file duplicates content and creates collision surface.
+
+          **Consider:**
+          1. Replace with a stub brief linking to the issue (\`brief-readiness-helper.sh stub <task-id> <issue> <slug>\`)
+          2. Keep the brief only if it contains session-specific context not in the issue body
+
+          *This is an advisory — not a blocker.*"
+
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT_BODY"

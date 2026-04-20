@@ -612,6 +612,36 @@ generate_brief() {
 	validate_task_id "$task_id" || return 1
 	mkdir -p "$project_root/todo/tasks"
 
+	# Step 0 (t2417): Check if a linked issue body is already worker-ready.
+	# If so, write a stub brief linking to the issue instead of duplicating
+	# its content. The readiness helper scores the body against known heading
+	# sets (4-of-7 threshold) — see brief-readiness-helper.sh for details.
+	local _readiness_helper="$SCRIPT_DIR/brief-readiness-helper.sh"
+	if [[ -x "$_readiness_helper" ]]; then
+		# Extract issue number from TODO.md ref:GH#NNN for this task
+		local _issue_ref=""
+		_issue_ref=$(grep -E "^\s*- \[.\] ${task_id} " "$project_root/TODO.md" 2>/dev/null \
+			| grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || true)
+		if [[ -n "$_issue_ref" ]]; then
+			local _slug=""
+			_slug=$(git -C "$project_root" remote get-url origin 2>/dev/null \
+				| sed -E 's#.*github\.com[:/]##; s/\.git$//' || true)
+			if [[ -n "$_slug" ]]; then
+				local _body=""
+				_body=$(gh issue view "$_issue_ref" --repo "$_slug" --json body --jq '.body' 2>/dev/null) || true
+				if [[ -n "$_body" ]]; then
+					local _readiness_output=""
+					_readiness_output=$("$_readiness_helper" check --body "$_body" 2>/dev/null) || true
+					if printf '%s\n' "$_readiness_output" | grep -q 'WORKER_READY=true'; then
+						log_info "$task_id: linked issue #${_issue_ref} body is worker-ready — writing stub brief"
+						"$_readiness_helper" stub "$task_id" "$_issue_ref" "$_slug" "$project_root" 2>/dev/null || true
+						return 0
+					fi
+				fi
+			fi
+		fi
+	fi
+
 	# Step 1: Resolve commit
 	local commit="" commit_date="" commit_author="" commit_msg="" commit_epoch=""
 	while IFS='=' read -r key value; do

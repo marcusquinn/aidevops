@@ -72,6 +72,14 @@ Before generating: "Do I know enough to predict what a code review would reject?
 
 ### Step 5: Generate Brief
 
+**Worker-ready issue body detection (t2417):** If the task has a linked issue (from `$ARGUMENTS` or a prior `/new-task` allocation), check `brief-readiness-helper.sh check <issue-number> <slug>` before generating. If the issue body is already worker-ready (4+ known headings), offer:
+
+1. Skip brief — point to issue as canonical brief (recommended)
+2. Stub brief — minimal file linking to issue + session-specific context
+3. Full brief anyway
+
+In headless mode, default to option 1 (skip). See `scripts/brief-readiness-helper.sh` for the scoring logic.
+
 Read `templates/brief-template.md` and format using `workflows/brief.md` for the classified tier. Populate from interview answers:
 
 | Interview Data | Brief Section |
@@ -107,10 +115,11 @@ When `--headless` or `$ARGUMENTS` contains ` -- ` (supervisor dispatch), skip in
 
 1. Auto-classify task type from description
 2. Apply default assumptions for that type
-3. Generate brief with `Created by: ai-supervisor` in Origin
-4. Write to `todo/tasks/{task_id}-brief.md`
-5. Add `#worker` tag to TODO.md entry
-6. No confirmation — save immediately
+3. **(t2417) Check worker-readiness** — if linked issue body scores 4+ on the heading heuristic, write a stub brief linking to the issue instead of generating a full brief. Default: skip.
+4. Generate brief with `Created by: ai-supervisor` in Origin (only if step 3 did not skip)
+5. Write to `todo/tasks/{task_id}-brief.md`
+6. Add `#worker` tag to TODO.md entry
+7. No confirmation — save immediately
 
 ## Related
 
