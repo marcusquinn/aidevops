@@ -158,6 +158,15 @@ _interactive_pr_is_stale() {
 		'.labels | map(.name) | index("origin:interactive")' \
 		>/dev/null 2>&1 || return 1
 
+	# Gate 1b (GH#19864): honor no-takeover label — opt-out for maintainers
+	# who want to keep an idle PR out of the worker pipeline.
+	if printf '%s' "$pr_meta" | jq -e \
+		'.labels | map(.name) | index("no-takeover")' \
+		>/dev/null 2>&1; then
+		echo "[pulse-merge-conflict] _interactive_pr_is_stale: PR #${pr_number} has no-takeover label — skipping handover (GH#19864)" >>"$LOGFILE"
+		return 1
+	fi
+
 	# Gate 4: age threshold (check before any other gh calls — cheapest filter)
 	local threshold_hours updated_at now_epoch updated_epoch pr_age_hours
 	threshold_hours="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS:-24}"

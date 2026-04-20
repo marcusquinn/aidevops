@@ -256,6 +256,26 @@ test_G_mode_detect_logs_and_returns_stale() {
 	return 0
 }
 
+test_G2_no_takeover_label_returns_not_stale() {
+	reset_mock_state
+	# Add no-takeover to the PR labels — staleness check should short-circuit
+	printf 'origin:interactive,no-takeover' >"${TEST_ROOT}/labels.txt"
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale "100" "owner/repo"
+	local rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		print_result "G2: no-takeover label returns not-stale from _interactive_pr_is_stale (GH#19864)" 0
+	else
+		print_result "G2: no-takeover label returns not-stale from _interactive_pr_is_stale (GH#19864)" 1 "Expected 1, got $rc"
+	fi
+	# Verify log message
+	if ! grep -q "no-takeover label.*skipping handover" "$LOGFILE"; then
+		print_result "G2: no-takeover label logs skip reason" 1 \
+			"Expected 'no-takeover label' skip message in LOGFILE. Got: $(cat "$LOGFILE")"
+		return 0
+	fi
+	return 0
+}
+
 # =============================================================================
 # Tests — _interactive_pr_trigger_handover
 # =============================================================================
@@ -446,6 +466,7 @@ main() {
 	test_E_missing_origin_interactive_returns_not_stale
 	test_F_mode_off_returns_not_stale_unconditionally
 	test_G_mode_detect_logs_and_returns_stale
+	test_G2_no_takeover_label_returns_not_stale
 	test_H_mode_detect_is_noop
 	test_I_mode_enforce_applies_label_and_posts_comment
 	test_J_enforce_is_idempotent_when_label_already_present
