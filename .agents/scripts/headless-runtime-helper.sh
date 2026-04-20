@@ -485,6 +485,9 @@ _invoke_opencode() {
 			fi
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		else
+			if [[ "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" == "1" ]]; then
+				print_info "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 — using bare timeout (no privilege isolation) (GH#20146 audit)"
+			fi
 			timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		fi
@@ -580,6 +583,9 @@ _invoke_claude() {
 			fi
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		else
+			if [[ "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" == "1" ]]; then
+				print_info "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 — using bare exec (no privilege isolation) (GH#20146 audit)"
+			fi
 			"${cmd[@]}" 2>&1 | tee "$output_file"
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		fi

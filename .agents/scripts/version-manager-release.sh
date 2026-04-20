@@ -83,6 +83,9 @@ create_git_tag() {
 	# Opt-out via AIDEVOPS_VM_SKIP_BUMP_VERIFY=1 for maintainer recovery flows
 	# that intentionally tag non-bump commits (e.g., annotated release sync
 	# tags). Default is strict.
+	if [[ "${AIDEVOPS_VM_SKIP_BUMP_VERIFY:-0}" == "1" ]]; then
+		print_info "AIDEVOPS_VM_SKIP_BUMP_VERIFY=1 — bypassing bump-commit verification for v$version (GH#20146 audit)"
+	fi
 	if [[ "${AIDEVOPS_VM_SKIP_BUMP_VERIFY:-0}" != "1" ]]; then
 		if ! _verify_bump_commit_at_ref HEAD "$version"; then
 			print_error "Aborting tag creation: HEAD is not the bump commit for v$version"
