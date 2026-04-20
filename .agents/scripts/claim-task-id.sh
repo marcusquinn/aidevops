@@ -49,7 +49,8 @@
 #   3. Claim IDs: 1048 to 1048+count-1
 #   4. Write 1048+count to .task-counter
 #   5. git commit .task-counter && git push <remote> HEAD:<counter_branch>
-#   6. If push fails (conflict) → retry from step 1 (max 10 attempts)
+#   6. If push fails (conflict) → retry from step 1 (max CAS_MAX_RETRIES attempts,
+#      default 30, with CAS_WALL_TIMEOUT_S wall-clock cap, default 30s — GH#20137)
 #   7. On success, create GitHub/GitLab issue per ID (optional, non-blocking)
 #
 # The .task-counter file is the single source of truth for the next
@@ -113,6 +114,13 @@ REPO_PATH="$PWD"
 ALLOC_COUNT=1
 OFFLINE_OFFSET=100
 CAS_MAX_RETRIES=${CAS_MAX_RETRIES:-30}
+# Wall-clock timeout for the entire CAS retry loop (seconds).  If the loop
+# exceeds this, it aborts regardless of how many retries remain.  Prevents
+# 180s+ hangs under concurrent-worker contention (GH#20137).
+CAS_WALL_TIMEOUT_S=${CAS_WALL_TIMEOUT_S:-30}
+# Per-git-command timeout (seconds).  Wraps git fetch/push in the CAS path
+# to prevent indefinite hangs on index.lock contention or network stalls.
+CAS_GIT_CMD_TIMEOUT_S=${CAS_GIT_CMD_TIMEOUT_S:-10}
 # When true (default), CAS retry exhaustion in online mode is fatal — does NOT
 # silently fall through to allocate_offline with +100 offset.  The offline path
 # exists for genuinely-offline scenarios (no network, explicit --offline flag),
@@ -556,7 +564,14 @@ _cas_fetch_and_pin() {
 
 	cd "$repo_path" || return 1
 
-	if ! git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null; then
+	# GH#20137: set git-native network timeouts to prevent indefinite hangs.
+	# GIT_HTTP_LOW_SPEED_LIMIT=1000 + GIT_HTTP_LOW_SPEED_TIME=CAS_GIT_CMD_TIMEOUT_S
+	# tells git to abort if HTTP transfer drops below 1KB/s for N seconds.
+	# These only affect HTTP(S) transport; local/SSH transports don't hang on
+	# network I/O.  index.lock contention is caught by the wall-clock timeout
+	# in allocate_online().
+	if ! GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME="$CAS_GIT_CMD_TIMEOUT_S" \
+		git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null; then
 		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}"
 	fi
 
@@ -573,7 +588,8 @@ _cas_fetch_and_pin() {
 		log_info "Counter missing/invalid — attempting auto-bootstrap (GH#6569)"
 		local bootstrap_result
 		bootstrap_result=$(bootstrap_remote_counter "$repo_path") || true
-		git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
+		GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME="$CAS_GIT_CMD_TIMEOUT_S" \
+			git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
 		pinned_sha=$(git rev-parse "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null) || {
 			log_error "BOOTSTRAP_COUNTER_FAILED: cannot resolve ref after bootstrap"
 			return 1
@@ -618,13 +634,19 @@ _cas_build_and_push() {
 		return 1
 	}
 
-	if ! git push "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" 2>/dev/null; then
+	# GH#20137: set git-native HTTP timeouts to prevent indefinite hangs on slow
+	# networks.  index.lock contention is caught by the wall-clock timeout in
+	# allocate_online().
+	if ! GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME="$CAS_GIT_CMD_TIMEOUT_S" \
+		git push "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" 2>/dev/null; then
 		log_warn "Push failed (conflict — another session claimed an ID)"
-		git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
+		GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME="$CAS_GIT_CMD_TIMEOUT_S" \
+			git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
 		return 2
 	fi
 
-	git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
+	GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME="$CAS_GIT_CMD_TIMEOUT_S" \
+		git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
 	return 0
 }
 
@@ -672,25 +694,41 @@ allocate_counter_cas() {
 	return 0
 }
 
-# Online allocation with CAS retry loop
+# Online allocation with CAS retry loop.
+# GH#20137: enforces a wall-clock timeout (CAS_WALL_TIMEOUT_S, default 30s)
+# in addition to the retry count.  Under concurrent-worker contention, each
+# git fetch/push can take several seconds due to index.lock waits; without
+# a wall-clock cap the loop could run for 180s+ (30 retries × 6s each).
+# The backoff is capped at 2.0s to keep retries tight within the budget.
 allocate_online() {
 	local repo_path="$1"
 	local count="$2"
 	local attempt=0
 	local first_id=""
+	local start_epoch
+	start_epoch=$(date +%s)
 
 	while [[ $attempt -lt $CAS_MAX_RETRIES ]]; do
+		# GH#20137: wall-clock timeout — abort if we've exceeded CAS_WALL_TIMEOUT_S
+		local now_epoch
+		now_epoch=$(date +%s)
+		local elapsed=$(( now_epoch - start_epoch ))
+		if [[ $elapsed -ge $CAS_WALL_TIMEOUT_S ]]; then
+			log_error "CAS wall-clock timeout after ${elapsed}s (limit=${CAS_WALL_TIMEOUT_S}s, attempt=${attempt}/${CAS_MAX_RETRIES})"
+			return 1
+		fi
+
 		attempt=$((attempt + 1))
 
 		if [[ $attempt -gt 1 ]]; then
-			log_info "Retry attempt ${attempt}/${CAS_MAX_RETRIES}..."
-			# Exponential-ish backoff: 0.1s * attempt (uncapped) + jitter.
-			# At attempt 10 → ~1.0-1.3s; attempt 20 → ~2.0-2.3s; attempt 30 → ~3.0-3.3s.
-			# The old cap at 1.0s was too short to outlast sustained main-branch pushes
-			# from issue-sync.yml and simplification-state commits (GH#19880).
+			log_info "Retry attempt ${attempt}/${CAS_MAX_RETRIES} (${elapsed}s elapsed)..."
+			# Exponential-ish backoff: 0.1s * attempt + jitter, CAPPED at 2.0s.
+			# The cap prevents late retries from consuming too much of the wall-clock
+			# budget (GH#20137).  Previous uncapped backoff at attempt 30 was ~3.3s,
+			# leaving <7s for the actual git operations.
 			local jitter_ms=$((RANDOM % 300))
 			local backoff
-			backoff=$(awk "BEGIN {printf \"%.1f\", $attempt * 0.1 + $jitter_ms / 1000}")
+			backoff=$(awk "BEGIN {v=$attempt * 0.1 + $jitter_ms / 1000; printf \"%.1f\", (v > 2.0 ? 2.0 : v)}")
 			sleep "$backoff" 2>/dev/null || true
 		fi
 
@@ -700,7 +738,7 @@ allocate_online() {
 		case $cas_result in
 		0)
 			# go for it — CAS succeeded on this attempt
-			log_success "Claimed $(printf 't%03d' "$first_id") (attempt ${attempt})"
+			log_success "Claimed $(printf 't%03d' "$first_id") (attempt ${attempt}, ${elapsed}s)"
 			echo "$first_id"
 			return 0
 			;;
@@ -797,8 +835,17 @@ allocate_offline() {
 	local last_id=$((first_id + count - 1))
 	local new_counter=$((first_id + count))
 
-	# Update local counter (no push)
+	# Update local counter and commit locally (no push).
+	# GH#20137: previous version left .task-counter dirty in the working tree.
+	# Committing locally ensures clean working tree and survives session
+	# interruption.  Reconciliation still required when back online.
 	echo "$new_counter" >"${repo_path}/${COUNTER_FILE}"
+	(
+		cd "$repo_path" || exit 1
+		git add "$COUNTER_FILE" 2>/dev/null || true
+		git commit -m "chore: offline claim $(printf 't%03d' "$first_id")..$(printf 't%03d' "$last_id") [offline]" \
+			--no-verify 2>/dev/null || true
+	)
 
 	log_warn "Allocated $(printf 't%03d' "$first_id") with offset (reconcile when back online)"
 
