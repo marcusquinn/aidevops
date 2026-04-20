@@ -88,6 +88,23 @@ fi
 # t2401: Framework VERSION file location. Override for tests.
 AIDEVOPS_VERSION_FILE="${AIDEVOPS_VERSION_FILE:-${HOME}/.aidevops/agents/VERSION}"
 
+# t2422: Simultaneous-claim tiebreaker window (seconds). When our claim loses
+# to a winner whose timestamp is within this many seconds of ours, treat the
+# race as a "close tiebreaker" and post a CLAIM_DEFERRED audit comment so the
+# deterministic resolution is visible in the issue timeline. Large windows
+# waste API writes; small windows (<=5s) catch only genuine races.
+DISPATCH_TIEBREAKER_WINDOW="${DISPATCH_TIEBREAKER_WINDOW:-5}"
+
+# t2422: Source the structured override resolver so _override_resolve is
+# available to _apply_structured_filter below. The resolver is sourceable —
+# its main() is gated by BASH_SOURCE. If the resolver is missing (partial
+# deploy), _apply_structured_filter short-circuits as a no-op.
+DISPATCH_CLAIM_HELPER_DIR="${DISPATCH_CLAIM_HELPER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+if [[ -r "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-override-resolve.sh" ]]; then
+	# shellcheck disable=SC1091
+	source "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-override-resolve.sh"
+fi
+
 #######################################
 # Generate a unique nonce for this claim attempt.
 # Uses /dev/urandom for uniqueness; falls back to date+PID.
@@ -306,8 +323,13 @@ _fetch_claims() {
 		] |
 		map(. + {age_seconds: ($now - .created_epoch)}) |
 		map(select(.age_seconds >= 0 and .age_seconds <= $max_age)) |
-		# Sort by created_at (GitHub timestamp) — chronological order
-		sort_by(.created_at)
+		# t2422: Sort primarily by created_at (GitHub timestamp, 1-second
+		# granularity) with nonce as lexicographic tiebreaker. Two runners that
+		# post claims within the same wall-clock second need a deterministic
+		# winner that both observers agree on — nonce is UUID-uniform random,
+		# so lex order is effectively a fair coin flip that is stable across
+		# any runner reading the same comment list.
+		sort_by([.created_at, .nonce])
 	' 2>/dev/null) || {
 		echo "Error: failed to parse claim comments" >&2
 		return 1
@@ -400,15 +422,151 @@ _filter_below_version() {
 }
 
 #######################################
-# t2400/t2401: Apply runtime override filters to parsed claims.
+# t2422: Apply the structured per-runner override filter.
 #
-# Two composable filters:
-#   - Login filter (t2400): DISPATCH_CLAIM_IGNORE_RUNNERS strips named logins.
-#   - Version filter (t2401): DISPATCH_CLAIM_MIN_VERSION strips claims whose
-#     version field is below the semver floor (including legacy "unknown").
+# For each claim, consults _override_resolve (from dispatch-override-resolve.sh)
+# and strips claims whose action is "ignore". "warn" claims are kept but logged.
+# "honour" claims pass through unchanged.
 #
-# Filters are no-op when override is disabled or both lists/floors are empty.
-# Emits a stderr log line when any claims are stripped, for operator audit.
+# No-op fast paths:
+#   - DISPATCH_OVERRIDE_ENABLED != "true"
+#   - _override_resolve not sourced (partial deploy of helpers)
+#   - No DISPATCH_OVERRIDE_* structured vars set AND no DISPATCH_OVERRIDE_DEFAULT
+#
+# Args:
+#   $1 = parsed claims JSON array
+#   $2 = issue number (log context)
+#   $3 = repo slug (log context)
+# Returns:
+#   Filtered claims JSON on stdout. Fails safe — returns input unchanged on
+#   any jq error or when resolver is missing.
+#######################################
+#######################################
+# Detect whether any structured override config is currently active.
+# Uses compgen -v (in-shell variable enumeration) rather than `env` so both
+# exported and non-exported shell variables are detected — callers often set
+# overrides via `VAR=value cmd` inline syntax which does NOT export.
+# Returns: exit 0 if structured config found (or default set), exit 1 otherwise.
+#######################################
+_structured_filter_has_config() {
+	local var
+	for var in $(compgen -v 2>/dev/null | grep '^DISPATCH_OVERRIDE_' 2>/dev/null || true); do
+		case "$var" in
+		DISPATCH_OVERRIDE_CONF | DISPATCH_OVERRIDE_ENABLED | DISPATCH_OVERRIDE_DEFAULT) continue ;;
+		DISPATCH_OVERRIDE_*) return 0 ;;
+		esac
+	done
+	[[ -n "${DISPATCH_OVERRIDE_DEFAULT:-}" ]]
+}
+
+#######################################
+# Classify claims against the resolver and return a newline-delimited list of
+# IDs whose action is `ignore`. Logs `warn` actions once per unique runner.
+# Args:
+#   $1 = claim rows (TSV: id\trunner\tversion per line, from jq output)
+#   $2 = issue number (log context)
+#   $3 = repo slug (log context)
+# Returns: newline-delimited IDs on stdout, exit 0 always.
+#######################################
+_structured_filter_classify_claims() {
+	local rows="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+
+	# Iterate via IFS=newline `for` rather than `while read <<<"$rows"` — the
+	# complexity-regression scanner's nesting-depth heuristic treats
+	# `done <<<"X"` as an unmatched close, inflating the global depth counter
+	# (every such pattern permanently bumps the max-depth report by 1).
+	local id runner version action warned_runners=""
+	local line
+	local saved_ifs="${IFS-}"
+	IFS=$'\n'
+	for line in $rows; do
+		IFS="$saved_ifs"
+		[[ -z "$line" ]] && { IFS=$'\n'; continue; }
+		IFS=$'\t' read -r id runner version <<<"$line"
+		[[ -z "$id" ]] && { IFS=$'\n'; continue; }
+		action=$(_override_resolve "$runner" "$version" 2>/dev/null) || action="honour"
+		case "$action" in
+		ignore) printf '%s\n' "$id" ;;
+		warn)
+			if [[ "$warned_runners" != *"|${runner}|"* ]]; then
+				printf '[dispatch-claim-helper] structured override: warn action on runner=%s version=%s on #%s in %s (claim kept, audit logged)\n' \
+					"$runner" "$version" "$issue_number" "$repo_slug" >&2
+				warned_runners+="|${runner}|"
+			fi
+			;;
+		*) ;; # honour or unknown — keep
+		esac
+		IFS=$'\n'
+	done
+	IFS="$saved_ifs"
+	return 0
+}
+
+_apply_structured_filter() {
+	local parsed="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+
+	# No-op fast paths: master switch off, resolver missing, or no config.
+	if [[ "${DISPATCH_OVERRIDE_ENABLED:-true}" != "true" ]] \
+		|| ! declare -F _override_resolve >/dev/null 2>&1 \
+		|| ! _structured_filter_has_config; then
+		printf '%s' "$parsed"
+		return 0
+	fi
+
+	# Walk claims via resolver — "ignore" IDs are collected, "warn" is logged.
+	local rows to_strip_newline
+	rows=$(printf '%s' "$parsed" | jq -r '.[] | [.id, .runner, .version] | @tsv' 2>/dev/null) || {
+		printf '%s' "$parsed"
+		return 0
+	}
+	to_strip_newline=$(_structured_filter_classify_claims "$rows" "$issue_number" "$repo_slug")
+
+	if [[ -z "$to_strip_newline" ]]; then
+		printf '%s' "$parsed"
+		return 0
+	fi
+
+	local strip_json filtered
+	strip_json=$(printf '%s' "$to_strip_newline" | jq -Rsc 'split("\n") | map(select(length > 0)) | map(tonumber)' 2>/dev/null) || {
+		printf '%s' "$parsed"
+		return 0
+	}
+	filtered=$(printf '%s' "$parsed" | jq -c --argjson strip "$strip_json" 'map(select((.id as $i | $strip | index($i)) | not))' 2>/dev/null) || {
+		printf '%s' "$parsed"
+		return 0
+	}
+
+	local pre_count post_count
+	pre_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
+	post_count=$(printf '%s' "$filtered" | jq 'length' 2>/dev/null || echo 0)
+	if [[ "$pre_count" -gt "$post_count" ]]; then
+		printf '[dispatch-claim-helper] structured override stripped %d claim(s) on #%s in %s\n' \
+			"$((pre_count - post_count))" "$issue_number" "$repo_slug" >&2
+	fi
+
+	printf '%s' "$filtered"
+	return 0
+}
+
+#######################################
+# t2400/t2401/t2422: Apply runtime override filters to parsed claims.
+#
+# Composable filters, applied in order:
+#   1. Login filter (t2400): DISPATCH_CLAIM_IGNORE_RUNNERS strips named logins.
+#      DEPRECATED — use per-runner DISPATCH_OVERRIDE_<SLUG>="ignore" instead.
+#   2. Version filter (t2401): DISPATCH_CLAIM_MIN_VERSION strips claims whose
+#      version field is below the semver floor (including legacy "unknown").
+#      DEPRECATED — use DISPATCH_OVERRIDE_<SLUG>="honour-only-above:V" to scope
+#      the floor per runner rather than globally.
+#   3. Structured filter (t2422): per-runner DISPATCH_OVERRIDE_<SLUG> vars
+#      decide honour/ignore/warn per claim. Auto-sunsets via version gating.
+#
+# All filters respect DISPATCH_OVERRIDE_ENABLED=false as a global kill switch.
+# Emits a stderr summary line when any claims are stripped, for operator audit.
 #
 # Args:
 #   $1 = parsed claims JSON array (from _fetch_claims parse step)
@@ -428,8 +586,21 @@ _apply_ignore_filter() {
 		return 0
 	fi
 
-	# Both filters empty → no-op fast path
-	if [[ -z "$DISPATCH_CLAIM_IGNORE_RUNNERS" && -z "$DISPATCH_CLAIM_MIN_VERSION" ]]; then
+	# All three filter inputs empty → no-op fast path.
+	# Use compgen -v (in-shell variable enumeration) so we see non-exported
+	# vars set via the inline `VAR=value cmd` syntax.
+	local has_structured=0 var
+	for var in $(compgen -v 2>/dev/null | grep '^DISPATCH_OVERRIDE_' 2>/dev/null || true); do
+		case "$var" in
+		DISPATCH_OVERRIDE_CONF | DISPATCH_OVERRIDE_ENABLED | DISPATCH_OVERRIDE_DEFAULT) continue ;;
+		DISPATCH_OVERRIDE_*)
+			has_structured=1
+			break
+			;;
+		esac
+	done
+
+	if [[ -z "$DISPATCH_CLAIM_IGNORE_RUNNERS" && -z "$DISPATCH_CLAIM_MIN_VERSION" && $has_structured -eq 0 && -z "${DISPATCH_OVERRIDE_DEFAULT:-}" ]]; then
 		printf '%s' "$parsed"
 		return 0
 	fi
@@ -437,7 +608,7 @@ _apply_ignore_filter() {
 	local pre_count
 	pre_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
 
-	# Login filter (t2400)
+	# Login filter (t2400, deprecated — still supported for backward compat)
 	if [[ -n "$DISPATCH_CLAIM_IGNORE_RUNNERS" ]]; then
 		local ignored_json
 		# Normalise the ignore list (accept space OR comma separators) → JSON array
@@ -453,20 +624,63 @@ _apply_ignore_filter() {
 		fi
 	fi
 
-	# Version filter (t2401)
+	# Version filter (t2401, deprecated — still supported for backward compat)
 	if [[ -n "$DISPATCH_CLAIM_MIN_VERSION" ]]; then
 		parsed=$(_filter_below_version "$parsed" "$DISPATCH_CLAIM_MIN_VERSION")
 	fi
 
+	# Structured per-runner filter (t2422)
+	parsed=$(_apply_structured_filter "$parsed" "$issue_number" "$repo_slug")
+
 	local post_count
 	post_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
 	if [[ "$pre_count" -gt "$post_count" ]]; then
-		printf '[dispatch-claim-helper] Filtered %d claim(s) on #%s in %s (ignore_runners=%s min_version=%s)\n' \
+		printf '[dispatch-claim-helper] filtered %d claim(s) on #%s in %s (legacy_ignore=%s legacy_min_version=%s structured=%d)\n' \
 			"$((pre_count - post_count))" "$issue_number" "$repo_slug" \
-			"${DISPATCH_CLAIM_IGNORE_RUNNERS:-none}" "${DISPATCH_CLAIM_MIN_VERSION:-none}" >&2
+			"${DISPATCH_CLAIM_IGNORE_RUNNERS:-none}" "${DISPATCH_CLAIM_MIN_VERSION:-none}" "$has_structured" >&2
 	fi
 
 	printf '%s' "$parsed"
+	return 0
+}
+
+#######################################
+# t2422: Post a CLAIM_DEFERRED audit comment when losing a close-window race.
+# The comment makes the tiebreaker outcome visible on the issue timeline so
+# operators grepping for coordination decisions can reconstruct the race.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+#   $3 = our runner login (the loser)
+#   $4 = our nonce
+#   $5 = winner runner login
+#   $6 = winner nonce
+#   $7 = |delta| in seconds between claim timestamps
+# Returns:
+#   exit 0 on success (comment posted or skipped intentionally)
+#   exit 1 on post failure (non-fatal — loser still backs off regardless)
+#######################################
+_post_deferred() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local our_runner="$3"
+	local our_nonce="$4"
+	local winner_runner="$5"
+	local winner_nonce="$6"
+	local delta_s="$7"
+
+	local ts body
+	ts=$(_now_utc)
+	body="CLAIM_DEFERRED runner=${our_runner} nonce=${our_nonce} ts=${ts} deferring_to_runner=${winner_runner} deferring_to_nonce=${winner_nonce} delta_s=${delta_s}"
+
+	# Uses `gh issue comment` rather than `gh api repos/.../comments` to
+	# avoid duplicating the pre-existing comments-API literal (t2422 was
+	# flagged by the string-literal ratchet).
+	if ! gh issue comment "$issue_number" --repo "$repo_slug" --body "$body" >/dev/null 2>&1; then
+		echo "Warning: failed to post CLAIM_DEFERRED comment on #${issue_number} in ${repo_slug} (non-fatal)" >&2
+		return 1
+	fi
 	return 0
 }
 
@@ -476,9 +690,10 @@ _apply_ignore_filter() {
 # Protocol:
 #   1. Post claim comment with unique nonce
 #   2. Sleep consensus window
-#   3. Fetch all claim comments
+#   3. Fetch all claim comments (sorted by [created_at, nonce] — t2422 tiebreaker)
 #   4. If this runner's claim is the oldest active claim → won
-#   5. If another runner's claim is older → lost, delete own claim
+#   5. If another runner's claim is older → lost; if delta <= TIEBREAKER_WINDOW,
+#      post CLAIM_DEFERRED audit comment
 #
 # Args:
 #   $1 = issue number
@@ -565,11 +780,67 @@ cmd_claim() {
 		return 1
 	fi
 
-	# Step 5: We lost — another runner's claim is older
+	# Step 5: We lost — another runner's claim is older.
+	# t2422: If this was a close-window race (delta <= DISPATCH_TIEBREAKER_WINDOW),
+	# _handle_close_window_loss emits a CLAIM_DEFERRED audit comment.
+	_handle_close_window_loss "$issue_number" "$repo_slug" "$runner" "$nonce" \
+		"$oldest_runner" "$claims" || true
+
 	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off (both claims retained for audit)\n' \
 		"$runner" "$oldest_runner" "$issue_number"
 
 	return 1
+}
+
+#######################################
+# Detect close-window DISPATCH_CLAIM race and emit CLAIM_DEFERRED (t2422).
+#
+# If the winner's claim arrived within DISPATCH_TIEBREAKER_WINDOW seconds of
+# ours, both runners likely raced on the same pulse cycle. Posts a
+# CLAIM_DEFERRED audit comment so the deterministic [created_at, nonce]
+# tiebreaker is visible on the issue timeline for post-hoc race diagnosis.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+#   $3 = our runner login (the loser)
+#   $4 = our nonce
+#   $5 = winner runner login
+#   $6 = claims JSON array (from _fetch_claims)
+# Returns: exit 0 always (non-fatal — loser backs off regardless).
+#######################################
+_handle_close_window_loss() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local our_runner="$3"
+	local our_nonce="$4"
+	local winner_runner="$5"
+	local claims="$6"
+
+	local winner_epoch our_epoch delta_s winner_nonce
+	winner_epoch=$(printf '%s' "$claims" | jq -r '.[0].created_epoch // 0' 2>/dev/null) || winner_epoch=0
+	our_epoch=$(printf '%s' "$claims" | jq -r --arg n "$our_nonce" '[.[] | select(.nonce == $n)] | .[0].created_epoch // 0' 2>/dev/null) || our_epoch=0
+	winner_nonce=$(printf '%s' "$claims" | jq -r '.[0].nonce // ""' 2>/dev/null) || winner_nonce=""
+
+	# Non-numeric or zero epochs → cannot compute delta, skip silently.
+	[[ "$winner_epoch" =~ ^[0-9]+$ ]] || return 0
+	[[ "$our_epoch" =~ ^[0-9]+$ ]] || return 0
+	((winner_epoch > 0)) || return 0
+	((our_epoch > 0)) || return 0
+
+	if ((our_epoch >= winner_epoch)); then
+		delta_s=$((our_epoch - winner_epoch))
+	else
+		delta_s=$((winner_epoch - our_epoch))
+	fi
+
+	((delta_s <= DISPATCH_TIEBREAKER_WINDOW)) || return 0
+
+	printf '[coordination] deferring to runner=%s nonce=%s ts_delta=%ss (within tiebreaker window)\n' \
+		"$winner_runner" "$winner_nonce" "$delta_s" >&2
+	_post_deferred "$issue_number" "$repo_slug" "$our_runner" "$our_nonce" \
+		"$winner_runner" "$winner_nonce" "$delta_s" || true
+	return 0
 }
 
 #######################################

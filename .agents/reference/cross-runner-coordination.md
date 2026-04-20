@@ -107,15 +107,27 @@ Used by the maintainer gate and audit trail; not a dedup signal on its own.
 
 ### 2.4 Dispatch Comments
 
-Runners post `DISPATCH_CLAIM nonce=<UUID>` comments before launching a worker
-(Layer 7). After posting, the runner sleeps `DISPATCH_CLAIM_WINDOW` seconds
-(default 8s), re-reads comments, and yields if another runner's claim is older.
-**Oldest claim wins.** This is the final cross-machine safety net — two runners
-simultaneously passing Layers 1–6 both post claims; only one proceeds.
+Runners post `DISPATCH_CLAIM nonce=<UUID> runner=<login> version=<semver>`
+comments before launching a worker (Layer 7). After posting, the runner sleeps
+`DISPATCH_CLAIM_WINDOW` seconds (default 8s), re-reads comments, and yields if
+another runner's claim sorts first. The sort key is
+`(created_at_epoch, nonce_lexical)` — oldest timestamp wins, nonce lex-sort
+breaks ties for simultaneous posts. This deterministic tiebreaker (t2422)
+ensures both runners observe the same winner regardless of which one re-reads
+comments first.
 
 The claim comment survives beyond the claim window, letting Layer 5
 (`has-dispatch-comment`) block re-dispatch in future pulse cycles while the
 issue stays open and the PR is unmerged.
+
+**Close-window deferrals (t2422):** When a losing runner's claim lost by only
+`DISPATCH_TIEBREAKER_WINDOW` seconds (default 5s), it posts a `CLAIM_DEFERRED`
+audit comment identifying the winner before releasing. This captures the
+coordination event for post-hoc diagnosis — without it, close-window races
+appeared as silent `CLAIM_RELEASED` pairs with no causal link visible in the
+comment stream. Format: `CLAIM_DEFERRED runner=<self> nonce=<self-nonce>
+ts=<ISO8601> deferring_to_runner=<winner> deferring_to_nonce=<winner-nonce>
+delta_s=<integer>`.
 
 **Failure mode (GH#11086):** Before Layer 7 was code-enforced, the claim step
 was an LLM-instructed step in `pulse.md` that runners could skip. Two runners
@@ -312,6 +324,31 @@ coordination-signal labels (`no-auto-dispatch`, `no-takeover`,
 
 **Test coverage:** `tests/test-enrich-dedup-guard.sh` (32 assertions).
 
+### 4.6 Simultaneous DISPATCH_CLAIM Race (fixed t2422)
+
+**Pattern:** Two runners pass Layers 1–6 together and post `DISPATCH_CLAIM`
+comments within the `DISPATCH_CLAIM_WINDOW` (default 8s). Both re-read the
+comment thread during the claim window and must independently arrive at the
+same winner.
+
+**Pre-t2422 failure:** The loser computation was `jq 'sort_by(.created_at)[0]`,
+which tiebreaks on insertion order within the returned array — non-deterministic
+across observers when two comments share a `created_at` second. Worst-case
+observed on a busy pulse cycle: runner A saw itself as the winner (its own
+claim sorted first), runner B independently saw itself as the winner (same
+second, different jq view), both proceeded, double-dispatch.
+
+**Resolution:** Sort key extended to `sort_by([.created_at, .nonce])` — nonce
+is a UUID generated per-claim, so the lex-sort is deterministic and
+observer-independent. Both runners compute the same winner regardless of which
+comment their jq instance returned first. Additionally, `CLAIM_DEFERRED`
+comments now trail close-window losses (§2.4) so the audit trail shows which
+runner yielded to which.
+
+**Test coverage:** `tests/test-cross-runner-coordination.sh` (44 assertions —
+Test 14 covers the tiebreaker, Test 15 covers `CLAIM_DEFERRED` body format,
+Test 16 covers the `delta_s` window arithmetic).
+
 ---
 
 ## 5. New Runner Setup
@@ -465,7 +502,125 @@ SCRIPT=~/.aidevops/agents/scripts/dispatch-dedup-helper.sh
 
 ---
 
-## 7. See Also
+## 8. Structured Runner Overrides (t2422)
+
+The flat `DISPATCH_CLAIM_IGNORE_RUNNERS` list (t2400) and the global
+`DISPATCH_CLAIM_MIN_VERSION` floor (t2401) each addressed one slice of the
+cross-runner skew problem:
+
+- **t2400** let a healthy runner ignore a peer whose code predated a known bug
+  — but the list stayed in place indefinitely once the peer upgraded.
+- **t2401** let all runners ignore any claim below a given framework version
+  — but a single runner stuck at an old version blocked every other peer.
+
+Neither mechanism could express "ignore alex-solovyev's claims until their
+framework catches up to 3.8.78, then resume honouring them" — the most common
+real-world case. t2422 replaces both with **structured per-runner overrides**
+that encode intent at per-login granularity and auto-sunset on peer upgrade.
+
+### 8.1 Config Format
+
+Config file: `~/.config/aidevops/dispatch-override.conf` (sourced by
+`dispatch-claim-helper.sh` when present).
+
+```bash
+# Master switch (default: true)
+DISPATCH_OVERRIDE_ENABLED=true
+
+# Default action for runners not explicitly listed (default: honour)
+DISPATCH_OVERRIDE_DEFAULT=honour
+
+# Per-runner actions. Variable name: DISPATCH_OVERRIDE_<LOGIN>
+# where <LOGIN> is UPPER_WITH_UNDERSCORES (dash/dot/@ → _).
+# Action keywords:
+#   honour                  — accept the claim (same as default)
+#   ignore                  — strip the claim from consideration
+#   warn                    — accept, but emit [coordination] warning to stderr
+#   honour-only-above:V     — strip claims below version V; honour V and above
+#   ignore-below:V          — synonym of honour-only-above:V
+DISPATCH_OVERRIDE_ALEX_SOLOVYEV="honour-only-above:3.8.78"
+DISPATCH_OVERRIDE_GITHUB_ACTIONS="honour"
+DISPATCH_OVERRIDE_OLD_BOT="ignore"
+```
+
+### 8.2 Slug Normalisation
+
+The resolver (`dispatch-override-resolve.sh resolve-action <login> <version>`)
+normalises logins to `UPPER_WITH_UNDERSCORES`:
+
+- `alex-solovyev` → `ALEX_SOLOVYEV`
+- `bot.user` → `BOT_USER`
+- `user@example.com` → `USER_EXAMPLE_COM`
+
+This lets the config be written with standard bash variable names while still
+accepting arbitrary GitHub logins.
+
+### 8.3 Auto-Sunset Semantics
+
+`honour-only-above:V` is the recommended action when documenting a known bug
+fix in a specific peer version. Once the peer upgrades past `V`, the override
+no longer strips their claims — no config edit required. This eliminates the
+"left a legacy ignore in place for six months" failure mode observed with
+t2400.
+
+Version comparison uses `sort -V` (GNU semver ordering): `3.8.100 > 3.8.78`,
+`3.8.78 == 3.8.78`, empty/missing version is treated as below any floor.
+
+### 8.4 Deprecation Path for Flat Ignore List
+
+The flat `DISPATCH_CLAIM_IGNORE_RUNNERS` variable is **deprecated but still
+honoured** for backward compatibility. A one-time hint appears in the
+`check-legacy` subcommand output when the variable is set:
+
+```text
+DISPATCH_CLAIM_IGNORE_RUNNERS is deprecated (t2422). Migrate to structured
+DISPATCH_OVERRIDE_<LOGIN> entries — see dispatch-override.conf.txt for the
+template.
+```
+
+Both filters compose: when `DISPATCH_CLAIM_IGNORE_RUNNERS="alice"` and
+`DISPATCH_OVERRIDE_BOB="ignore"` are both set, claims from both alice and bob
+are stripped. The global `DISPATCH_CLAIM_MIN_VERSION` floor from t2401 also
+continues to apply. Flat → structured → version-floor run in sequence in
+`_apply_ignore_filter`.
+
+### 8.5 Disabling the Whole Mechanism
+
+`DISPATCH_OVERRIDE_ENABLED=false` is the emergency master switch —
+short-circuits to "honour everything" regardless of any `DISPATCH_OVERRIDE_*`
+or legacy variables. Use this to restore pre-t2400 behaviour without editing
+the per-runner config (e.g., while diagnosing a suspected override bug).
+
+### 8.6 Implementation
+
+- `dispatch-override-resolve.sh resolve-action <login> <version> [config]` —
+  returns one of `honour|ignore|warn|strip:<reason>` on stdout.
+- `dispatch-override-resolve.sh check-legacy [config]` — exit 0 if legacy
+  `DISPATCH_CLAIM_IGNORE_RUNNERS` is set (with hint to stderr); exit 1 if not.
+- `dispatch-claim-helper.sh` sources the resolver on first filter call and
+  composes structured + legacy filters in `_apply_ignore_filter`.
+
+### 8.7 Diagnosis
+
+```bash
+# What action would be applied to alex-solovyev's claim on version 3.8.77?
+~/.aidevops/agents/scripts/dispatch-override-resolve.sh resolve-action \
+  alex-solovyev 3.8.77
+# → strip:version-below-floor (3.8.77 < 3.8.78)
+
+# And on 3.8.78?
+~/.aidevops/agents/scripts/dispatch-override-resolve.sh resolve-action \
+  alex-solovyev 3.8.78
+# → honour
+
+# Is the legacy flat list still in use anywhere?
+~/.aidevops/agents/scripts/dispatch-override-resolve.sh check-legacy
+# → exit 0 with hint if set; exit 1 if clean
+```
+
+---
+
+## 9. See Also
 
 - `reference/worker-diagnostics.md` — single-runner worker lifecycle, DB
   isolation, watchdog, canary, recovery checklist
@@ -495,3 +650,7 @@ SCRIPT=~/.aidevops/agents/scripts/dispatch-dedup-helper.sh
 | GH#18371 (PR#18374, t1970) | Interactive-claim race via push path missing auto-assign |
 | GH#18399 (PR#18419, t1986) | Parent-task 4-hole fix + test harness |
 | GH#18458 | Fail-open dedup bug — jq null-handling allowed dispatch to parent-task issues |
+| GH#19955 (t2394) | Cross-runner CLAIM_VOID invalidation for fast-failing workers |
+| GH#19924 (t2400) | Flat `DISPATCH_CLAIM_IGNORE_RUNNERS` for per-login skip (deprecated by t2422) |
+| GH#19995 (t2401) | Global `DISPATCH_CLAIM_MIN_VERSION` version floor + version field in claim body |
+| GH#20028 (t2422) | Structured per-runner overrides with auto-sunset + deterministic tiebreaker + `CLAIM_DEFERRED` |

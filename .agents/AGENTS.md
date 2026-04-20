@@ -244,6 +244,8 @@ Note: only direct children are retargeted by the helpers; grandchildren are hand
 
 **Pulse scope (t1405):** `PULSE_SCOPE_REPOS` limits code changes. Issues allowed anywhere. Empty/unset = no restriction.
 
+**Cross-runner overrides (t2422):** Per-runner claim filtering lives in `~/.config/aidevops/dispatch-override.conf` (structured `DISPATCH_OVERRIDE_<LOGIN>=honour|ignore|warn|honour-only-above:V`). Preferred over the deprecated flat `DISPATCH_CLAIM_IGNORE_RUNNERS` — structured overrides auto-sunset on peer upgrade and compose with the global `DISPATCH_CLAIM_MIN_VERSION` floor. Simultaneous-claim races are resolved via deterministic `sort_by([.created_at, .nonce])` tiebreaker; close-window losses (<=`DISPATCH_TIEBREAKER_WINDOW`, default 5s) emit `CLAIM_DEFERRED` audit comments. Full config grammar and diagnosis in `reference/cross-runner-coordination.md` §8.
+
 **External Repo Issue/PR Submission (t1407):** Check templates and CONTRIBUTING.md first. Bots auto-close non-conforming submissions. Full guide: `reference/external-repo-submissions.md`.
 
 **Git-readiness:** Non-git project with ongoing development? Flag: "No git tracking. Consider `git init` + `aidevops init`."
