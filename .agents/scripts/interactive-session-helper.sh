@@ -987,6 +987,39 @@ _isc_scan_closed_pr_orphans() {
 }
 
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# _isc_release_claim_by_stamp_path (t2414) — release a claim given a stamp path.
+# -----------------------------------------------------------------------------
+# Extracts issue+slug from the stamp JSON and delegates to `_isc_cmd_release`
+# which handles stamp deletion and label transition atomically. Used by the
+# Phase 1 auto-release path in `_isc_scan_dead_stamps_phase`.
+# Fail-open: missing stamp, unparseable JSON, or missing fields → warn+skip.
+#
+# Args:
+#   $1 stamp_path — absolute path to the .json stamp file
+#
+# Exit: 0 always.
+_isc_release_claim_by_stamp_path() {
+	local stamp_path="$1"
+
+	[[ -f "$stamp_path" ]] || return 0
+
+	local r_issue r_slug
+	r_issue=$(jq -r '.issue // empty' "$stamp_path" 2>/dev/null || echo "")
+	r_slug=$(jq -r '.slug // empty' "$stamp_path" 2>/dev/null || echo "")
+
+	if [[ -z "$r_issue" || -z "$r_slug" ]]; then
+		_isc_warn "_isc_release_claim_by_stamp_path: stamp missing issue/slug — deleting: $stamp_path"
+		rm -f "$stamp_path" 2>/dev/null || true
+		return 0
+	fi
+
+	# Delegate to canonical release flow: stamp deletion + label transition.
+	# _isc_cmd_release is idempotent and fail-open on offline gh.
+	_isc_cmd_release "$r_issue" "$r_slug"
+	return 0
+}
+
 # scan-stale Phase 1a helper (t2148) — stampless interactive claims.
 # -----------------------------------------------------------------------------
 # Iterates pulse-enabled repos from repos.json, calls
@@ -1047,20 +1080,25 @@ _isc_scan_stampless_phase() {
 	return 0
 }
 
+# scan-stale Phase 1 helper (t2414) — stamp-based stale claim detection.
 # -----------------------------------------------------------------------------
-# Subcommand: scan-stale
-# -----------------------------------------------------------------------------
-# For each stamp: check if the PID is alive AND the worktree path still
-# exists. Print a human-readable advisory. Also scans for closed-not-merged
-# PRs whose linked issue is still open (cross-repo visibility gap).
-# Does NOT auto-release or auto-reopen — the agent is expected to parse the
-# output and prompt the user.
+# Iterates $CLAIM_STAMP_DIR. For each local-hostname stamp with dead PID AND
+# missing worktree: either auto-releases (when auto_release_flag==1) or prints
+# a report advisory. Skips stamps with a live PID or existing worktree.
+# Extracted from _isc_cmd_scan_stale to keep the coordinator under the
+# 100-line function cap (Complexity Analysis CI gate).
+#
+# Args:
+#   $1 auto_release_flag — "1" to auto-release, "0" for report-only
 #
 # Exit: 0 always.
-_isc_cmd_scan_stale() {
+_isc_scan_dead_stamps_phase() {
+	local auto_release_flag="${1:-0}"
 	local stale_count=0
+	local auto_released=0
+	local local_host
+	local_host=$(hostname 2>/dev/null || echo "unknown")
 
-	# --- Phase 1: stamp-based stale claim detection ---
 	if [[ -d "$CLAIM_STAMP_DIR" ]]; then
 		local stamp
 		for stamp in "$CLAIM_STAMP_DIR"/*.json; do
@@ -1071,52 +1109,91 @@ _isc_cmd_scan_stale() {
 			worktree=$(jq -r '.worktree_path // empty' "$stamp" 2>/dev/null || echo "")
 			pid=$(jq -r '.pid // empty' "$stamp" 2>/dev/null || echo "")
 			hostname=$(jq -r '.hostname // empty' "$stamp" 2>/dev/null || echo "")
-
 			[[ -z "$issue" || -z "$slug" ]] && continue
-
-			# Only consider stamps from the current hostname — cross-machine
-			# stamps can't be verified and we don't want to surface them as stale.
-			local local_host
-			local_host=$(hostname 2>/dev/null || echo "unknown")
-			if [[ "$hostname" != "$local_host" ]]; then
-				continue
-			fi
+			# Only consider current-hostname stamps — cross-machine stamps
+			# can't have their PID verified and must not be surfaced as stale.
+			[[ "$hostname" == "$local_host" ]] || continue
 
 			local pid_alive=0
-			if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-				pid_alive=1
-			fi
+			[[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && pid_alive=1
 
 			local worktree_exists=0
-			if [[ -n "$worktree" && -d "$worktree" ]]; then
-				worktree_exists=1
-			fi
+			[[ -n "$worktree" && -d "$worktree" ]] && worktree_exists=1
 
 			if [[ $pid_alive -eq 0 && $worktree_exists -eq 0 ]]; then
-				if [[ $stale_count -eq 0 ]]; then
-					printf 'Stale interactive claims (dead PID and missing worktree):\n'
+				if [[ "$auto_release_flag" == "1" ]]; then
+					_isc_info "[scan-stale] auto-releasing dead stamp: $(basename "$stamp")"
+					_isc_release_claim_by_stamp_path "$stamp" >/dev/null 2>&1 || true
+					auto_released=$((auto_released + 1))
+				else
+					[[ $stale_count -eq 0 ]] && printf 'Stale interactive claims (dead PID and missing worktree):\n\n'
+					printf '  #%s in %s\n' "$issue" "$slug"
+					printf '    worktree: %s (missing)\n' "${worktree:-unknown}"
+					printf '    pid:      %s (dead)\n' "${pid:-unknown}"
+					printf '    release:  aidevops issue release %s\n' "$issue"
 					printf '\n'
+					stale_count=$((stale_count + 1))
 				fi
-				printf '  #%s in %s\n' "$issue" "$slug"
-				printf '    worktree: %s (missing)\n' "${worktree:-unknown}"
-				printf '    pid:      %s (dead)\n' "${pid:-unknown}"
-				printf '    release:  aidevops issue release %s\n' "$issue"
-				printf '\n'
-				stale_count=$((stale_count + 1))
 			fi
 		done
 	fi
 
-	if [[ $stale_count -eq 0 ]]; then
-		printf 'No stale interactive claims.\n'
+	if [[ "$auto_release_flag" == "1" ]]; then
+		if [[ $auto_released -eq 0 ]]; then
+			printf 'No stale interactive claims.\n'
+		else
+			_isc_info "[scan-stale] Phase 1 auto-released $auto_released stamp(s)."
+			printf 'Phase 1: auto-released %d dead stamp(s) (dead PID + missing worktree).\n' "$auto_released"
+		fi
 	else
-		# shellcheck disable=SC2016  # backticks are literal text, not command substitution
-		printf 'Total: %d stale claim(s). Release via `aidevops issue release <N>` or reclaim by `cd`-ing into the worktree.\n' "$stale_count"
+		if [[ $stale_count -eq 0 ]]; then
+			printf 'No stale interactive claims.\n'
+		else
+			# shellcheck disable=SC2016  # backticks are literal text, not command substitution
+			printf 'Total: %d stale claim(s). Release via `aidevops issue release <N>` or reclaim by `cd`-ing into the worktree.\n' "$stale_count"
+		fi
+	fi
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Subcommand: scan-stale
+# -----------------------------------------------------------------------------
+# Three-phase stale detection coordinator. Phase 1 (t2414): auto-releases dead
+# stamps (dead PID + missing worktree) when running in an interactive TTY.
+# Phase 1a: report-only (stampless origin:interactive claims).
+# Phase 2: report-only (closed-not-merged PR orphans).
+#
+# Arguments:
+#   [--auto-release]    — force Phase 1 auto-release on (overrides env/TTY)
+#   [--no-auto-release] — force Phase 1 auto-release off (overrides env/TTY)
+#
+# Env: AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0|1 — overrides TTY detection.
+#
+# Exit: 0 always.
+_isc_cmd_scan_stale() {
+	# --- auto-release flag resolution (t2414) ---
+	# Priority: explicit flag > env var > TTY detection > default OFF.
+	local auto_release_flag=""
+	while [[ $# -gt 0 ]]; do
+		local _arg="$1"
+		case "$_arg" in
+		--auto-release) auto_release_flag=1 ; shift ;;
+		--no-auto-release) auto_release_flag=0 ; shift ;;
+		*) shift ;;
+		esac
+	done
+	if [[ -z "$auto_release_flag" && -n "${AIDEVOPS_SCAN_STALE_AUTO_RELEASE:-}" ]]; then
+		auto_release_flag="${AIDEVOPS_SCAN_STALE_AUTO_RELEASE}"
+	fi
+	if [[ -z "$auto_release_flag" ]]; then
+		[[ -t 0 && -t 1 ]] && auto_release_flag=1 || auto_release_flag=0
 	fi
 
+	# --- Phase 1: stamp-based stale claim detection (extracted for line-cap) ---
+	_isc_scan_dead_stamps_phase "$auto_release_flag"
+
 	# --- Phase 1a: stampless origin:interactive claims (t2148) ---
-	# Extracted into a helper to keep this coordinator under the
-	# 100-line function cap (see Complexity Analysis CI gate).
 	_isc_scan_stampless_phase
 
 	# --- Phase 2: closed-not-merged PR orphan detection (cross-repo) ---
@@ -1128,7 +1205,6 @@ _isc_cmd_scan_stale() {
 	else
 		printf 'Total: %d closed-not-merged PR orphan(s). Review the above — do NOT auto-reopen without verifying the close was unintentional.\n' "$orphan_count"
 	fi
-
 	return 0
 }
 
@@ -1382,10 +1458,14 @@ USAGE:
   interactive-session-helper.sh status [<issue>]
       List active claims from the stamp directory, or check one issue.
 
-  interactive-session-helper.sh scan-stale
+  interactive-session-helper.sh scan-stale [--auto-release | --no-auto-release]
       Three-phase stale detection:
       Phase 1  — Identify stamps with dead PID AND missing worktree path.
-                 Does NOT auto-release — agent parses output and prompts user.
+                 Auto-releases when BOTH conditions hold (t2414). Default: ON
+                 when stdin+stdout are TTYs (interactive session), OFF otherwise.
+                 Override: --auto-release / --no-auto-release flags, or
+                 AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0|1 env var.
+                 Live PID or existing worktree: stamp is NEVER touched.
       Phase 1a — Identify stampless origin:interactive + self-assigned
                  issues (t2148). These block pulse dispatch forever
                  because _has_active_claim treats the label as a claim
