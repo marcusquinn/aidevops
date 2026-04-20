@@ -110,7 +110,7 @@ depending on the metric.
 |--------|-------------|-------------|--------|
 | `function-complexity` | `(file, fname)` | Moving a >100-line function to a new file re-registers it as a **new** violation. | Functions over 100 lines **MUST stay in the original file**. Example: `_run_canary_test` stayed in `headless-runtime-lib.sh` (PR #19821). |
 | `file-size` | `(file)` | Splitting automatically resolves the original file's violation. New sub-files are typically under the threshold. | No special action needed. |
-| `nesting-depth` | `(file, 'NEST')` | Splitting into new files creates new `(newfile, 'NEST')` keys. Expect `+N new` regressions. | This is a **known false positive** -- see section 4. Override with `complexity-bump-ok` label. |
+| `nesting-depth` | `(file, 'NEST')` | Splitting into new files creates new `(newfile, 'NEST')` keys. With the shfmt-based scanner (t2430), reported depths are accurate per-function measurements, so `+N new` regressions reflect real nesting. | Review each new violation. If real nesting >8 exists, refactor the function. The `complexity-bump-ok` label is available as a last resort. |
 | `bash32-compat` | `(construct)` | Splitting is neutral -- the construct identity doesn't include the file. | No special action needed. |
 
 **Critical rule**: before splitting, run `complexity-regression-helper.sh check`
@@ -119,43 +119,32 @@ target file. Those functions stay put.
 
 ## 4. Known CI False-Positive Classes on Splits
 
-### 4.1 Nesting-depth scanner
+### 4.1 Nesting-depth scanner (t2430 — rewritten)
 
-`scan_dir_nesting_depth` at `complexity-regression-helper.sh:225-256` is a
-global `elif`-counting AWK, not a real nesting metric:
+As of t2430, `scan_dir_nesting_depth` uses a `shfmt --to-json` AST walker
+(`scanners/nesting-depth.sh`) that computes accurate per-function nesting
+depth. The four false-positive classes from the old AWK scanner are
+eliminated by construction:
 
-```awk
-/[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; ... }
-/[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
-```
+1. **elif** — AST represents elif as nested IfClause in `.Else`; walker
+   treats as same depth (not double-counted).
+2. **Prose keywords** — string content is not tokenized as control flow.
+3. **`done <<<"$x"`** — WhileClause closes normally regardless of redirect.
+4. **Global counter** — FuncDecl nodes provide natural per-function reset.
 
-The open-regex matches `elif` because `elif` contains the literal substring
-`if` preceded by optional whitespace. Each `elif` increments `depth` but
-has no corresponding close, so `if/elif/elif/fi` opens +3 but only closes -1.
-Every `elif` chain inflates the counter permanently.
+**Verification**: `headless-runtime-lib.sh` now scores `max_depth=4` (real
+max per-function depth), down from the old AWK's `max_depth=83`.
 
-**Evidence**: the pre-split `headless-runtime-lib.sh` (2107 lines) scored
-`max_depth=83` -- physically impossible; bash has no code path that nests
-83 levels deep.
+**Implication for file splits**: nesting-depth regressions on file splits
+now reflect real nesting. If a split creates `+N new` nesting violations,
+the functions genuinely nest >8 levels deep and should be refactored. The
+`complexity-bump-ok` override is still available as a last resort but
+should rarely be needed for nesting-depth specifically.
 
-**Override procedure**:
-
-1. Apply the `complexity-bump-ok` label to the PR.
-2. Add a `## Complexity Bump Justification` section to the PR body with:
-   - The scanner evidence (file:line ref showing the `elif` pattern)
-   - The measurement (`base=N, head=M, new=K`)
-   - Explanation that the new violations are identity-key artifacts, not real nesting increases.
-
-**Worker self-apply (t2370):** Workers dispatched against file-split or
-simplification issues may self-apply the `complexity-bump-ok` label. The
-`.github/workflows/complexity-bump-justification-check.yml` workflow triggers
-on the `labeled` event and validates that the PR body contains the required
-justification section with at least one `file:line` reference and a numeric measurement.
-If validation fails, the workflow removes the label and posts a remediation
-comment explaining what is missing. The label only sticks when the
-justification is complete -- no maintainer intervention required for
-legitimate splits. This mirrors the `new-file-smell-ok` + justification-section
-pattern from `qlty-new-file-gate.yml`.
+**Graceful degradation**: when `shfmt` is unavailable, the scanner falls
+back to the legacy AWK with a warning on stderr. The AWK fallback retains
+all four false-positive classes — environments without `shfmt` should use
+`COMPLEXITY_GUARD_DISABLE=1` for known false positives.
 
 ### 4.2 Pre-push complexity guard
 
@@ -254,31 +243,23 @@ cannot be statically followed without `-x`).
   - `file-size`: base=<N>, head=<N>, **new=0**
   - `function-complexity`: base=<N>, head=<N>, **new=0**
   - `bash32-compat`: base=<N>, head=<N>, **new=0**
-  - `nesting-depth`: base=<N>, head=<N>, new=<K> -- see justification below
+  - `nesting-depth`: base=<N>, head=<N>, new=<K> -- <if K>0, document the functions and their real depth>
 
 ## Complexity Bump Justification
 
-**`complexity-bump-ok` label applied.** The nesting-depth scanner reports <K>
-new violations solely because the `(file, 'NEST')` identity key changes when
-code moves to freshly-named files. The metric is not real nesting depth.
+> **Note (t2430):** As of t2430, the nesting-depth scanner uses a shfmt AST
+> walker that measures real per-function depth. Nesting-depth regressions on
+> file splits now reflect genuine nesting. If new=0, delete this section. If
+> new>0, document the specific functions and their real depth below.
 
-**Evidence that the scanner is not measuring real nesting:**
+**`complexity-bump-ok` label applied.** The following functions have nesting
+depth >8 and are candidates for refactoring in a follow-up task:
 
-- `scan_dir_nesting_depth` in `complexity-regression-helper.sh:225-256` is a
-  single global AWK counter that increments on any line matching
-  `/[[:space:]]*(if|for|while|until|case)[[:space:]]/` and decrements on
-  `fi|done|esac`. It has no function scoping.
-- The open-regex also matches the literal string `if` in `elif`. Each `elif`
-  chain inflates the counter permanently.
-- `origin/main`'s current `<original-file>` scans as **max_depth=<N>** --
-  physically impossible; bash has no code path that nests <N> levels deep.
-- Per-function nesting is unchanged. The `function-complexity` metric confirms
-  `base=<N> head=<N> new=0`.
+- `<function_name>` in `<file>`: depth=<N> (reason: <brief explanation>)
 
-**Pre-existing debt moved, not introduced:** all the `elif`-chain patterns
-that trip the scanner were already in the <N>-line file. The split relocates
-them, it does not create them. Apply `complexity-bump-ok` per the documented
-override procedure.
+**Pre-existing depth moved, not introduced:** these functions had the same
+nesting depth in the original file. The split relocates them without
+changing their structure.
 
 ## Related
 
@@ -326,7 +307,7 @@ Expected results for a well-executed split:
 - `file-size`: `new=0` (original >threshold file cleared)
 - `function-complexity`: `new=0` (large functions stayed in original file)
 - `bash32-compat`: `new=0` (splitting is neutral)
-- `nesting-depth`: `new>=0` (document any `new>0` in PR body per section 4.1)
+- `nesting-depth`: `new>=0` (with the shfmt scanner (t2430), any `new>0` reflects real per-function depth >8; refactor or document per section 4.1)
 
 ### 7.4 Pre-push dry run
 
