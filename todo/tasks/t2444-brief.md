@@ -16,7 +16,7 @@ Prerequisite for the scope-guard pre-push hook (t2445). Workers declare intended
 
 ## How
 
-- EDIT: `.agents/templates/brief-template.md` — add `## Files Scope` section after `## Files to Modify`
+- EDIT: `.agents/templates/brief-template.md` — add `## Files Scope` section after `## Files to Modify` (format: markdown list of relative paths, one path or glob per list item); document the format requirement in a `## Critical Rules` callout within the section so the scope-guard parser has a stable, explicit contract
 
 ## Acceptance
 

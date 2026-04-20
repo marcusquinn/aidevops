@@ -20,9 +20,9 @@ Prevents silent rebase-introduced scope creep (the root cause of #19808).
 
 ## Acceptance
 
-- Hook blocks out-of-scope files, passes in-scope files
+- Hook blocks out-of-scope files, passes in-scope files, and prevents path traversal (resolved real path must be within repo root)
 - `SCOPE_GUARD_DISABLE=1` bypass works
-- Missing brief = fail-open
+- Missing brief = fail-open; Missing `## Files Scope` section in existing brief = fail-closed
 - `shellcheck` passes
 
 ## Tier
