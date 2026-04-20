@@ -226,6 +226,16 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Traceability and signature footer:** Hard rules in `prompts/build.txt` (sections "Traceability" and "#8 Signature footer"). Link both sides when closing (issue→PR, PR→issue). Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
 
+**Stacked PRs (t2412):** Stacked PRs (`--base feature/<other-branch>`) are retargeted to the default branch before the parent merges. This is automatic in `pulse-merge.sh` (`_retarget_stacked_children`) and `full-loop-helper.sh merge` (`_retarget_stacked_children_interactive`). For bare `gh pr merge` calls, run this retarget manually before merging:
+
+```bash
+# Retarget all open PRs stacked on <head-ref> before merging
+gh pr list --base <head-ref> --state open --json number -q '.[].number' \
+  | xargs -I{} gh pr edit {} --base main
+```
+
+Note: only direct children are retargeted by the helpers; grandchildren are handled when their own parent merges.
+
 **Parent-task PR keyword rule (t2046 — MANDATORY).** When a PR delivers ANY work for a `parent-task`-labeled issue — including the initial plan-filing PR — use `For #NNN` or `Ref #NNN` in the PR body, NEVER `Closes`/`Resolves`/`Fixes`. The parent issue must stay open until ALL phase children merge; only the final phase PR uses `Closes #NNN`. `full-loop-helper.sh commit-and-pr` enforces this automatically (see `.github/workflows/parent-task-keyword-check.yml`). For leaf (non-parent) issues, use `Resolves #NNN` as normal. See `templates/brief-template.md` "PR Conventions" for the full rule.
 
 **Self-improvement routing (t1541):** Framework-level tasks → `framework-routing-helper.sh log-framework-issue`. Project tasks → current repo. Framework tasks in project repos are invisible to maintainers.

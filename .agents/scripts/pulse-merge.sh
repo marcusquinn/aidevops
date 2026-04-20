@@ -1112,6 +1112,48 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 }
 
 #######################################
+# Retarget any open PRs that are stacked on the head branch of a PR
+# that is about to be merged (and its branch deleted). GitHub auto-closes
+# stacked children when their base branch disappears; retargeting to main
+# before the delete prevents the auto-close.
+#
+# Limitation: only direct children are retargeted. Grandchildren are
+# naturally handled when their own parent PR merges and retargets them.
+#
+# Args:
+#   $1 - parent PR number (the PR being merged)
+#   $2 - repo slug
+# Returns: 0 always (errors are non-fatal)
+#######################################
+_retarget_stacked_children() {
+	local parent_pr_number="$1"
+	local repo_slug="$2"
+	local parent_head_ref
+	parent_head_ref=$(gh pr view "$parent_pr_number" --repo "$repo_slug" --json headRefName -q '.headRefName' 2>/dev/null) || parent_head_ref=""
+	if [[ -z "$parent_head_ref" ]]; then
+		return 0
+	fi
+
+	local children
+	children=$(gh pr list --repo "$repo_slug" --base "$parent_head_ref" --state open --json number -q '.[].number' 2>/dev/null) || children=""
+	if [[ -z "$children" ]]; then
+		return 0
+	fi
+
+	local default_branch
+	default_branch=$(gh repo view "$repo_slug" --json defaultBranchRef -q '.defaultBranchRef.name' 2>/dev/null || true)
+	default_branch="${default_branch:-main}"
+
+	local child
+	while IFS= read -r child; do
+		[[ -z "$child" ]] && continue
+		echo "[pulse-merge] retargeting stacked PR #${child} from '${parent_head_ref}' to '${default_branch}' before deleting parent PR #${parent_pr_number} branch (t2412)" >>"$LOGFILE"
+		gh pr edit "$child" --repo "$repo_slug" --base "$default_branch" 2>&1 | tee -a "$LOGFILE" || true
+	done <<<"$children"
+	return 0
+}
+
+#######################################
 # Process a single PR end-to-end: gate checks, merge attempt,
 # conflict detection, and closing comment posting.
 #
@@ -1249,6 +1291,12 @@ _process_single_ready_pr() {
 	# Extract merge summary: MERGE_SUMMARY comment → PR body → generic fallback
 	local merge_summary
 	merge_summary=$(_extract_merge_summary "$pr_number" "$repo_slug")
+
+	# Retarget any open PRs stacked on this branch before --delete-branch
+	# kills their base. GitHub auto-closes children without warning when their
+	# base branch disappears; retargeting to the default branch prevents this.
+	# (t2412 / GH#20005)
+	_retarget_stacked_children "$pr_number" "$repo_slug"
 
 	# Merge
 	local merge_output _merge_exit

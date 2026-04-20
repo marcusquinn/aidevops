@@ -1202,6 +1202,44 @@ _merge_unlock_resources() {
 	return 0
 }
 
+# _retarget_stacked_children_interactive — retarget open PRs stacked on the
+# head branch of the PR that is about to be merged. GitHub auto-closes stacked
+# children when their base branch disappears after the delete-on-merge step.
+# This runs before every interactive merge (cmd_merge). The pulse equivalent
+# is _retarget_stacked_children in pulse-merge.sh. (t2412 / GH#20005)
+#
+# Limitation: only direct children are retargeted; grandchildren are handled
+# when their own parent merges and fires this function in turn.
+#
+# Args: pr_number repo
+_retarget_stacked_children_interactive() {
+	local pr_number="$1"
+	local repo="$2"
+	local parent_head_ref
+	parent_head_ref=$(gh pr view "$pr_number" --repo "$repo" --json headRefName -q '.headRefName' 2>/dev/null) || parent_head_ref=""
+	if [[ -z "$parent_head_ref" ]]; then
+		return 0
+	fi
+
+	local children
+	children=$(gh pr list --repo "$repo" --base "$parent_head_ref" --state open --json number -q '.[].number' 2>/dev/null) || children=""
+	if [[ -z "$children" ]]; then
+		return 0
+	fi
+
+	local default_branch
+	default_branch=$(gh repo view "$repo" --json defaultBranchRef -q '.defaultBranchRef.name' 2>/dev/null || true)
+	default_branch="${default_branch:-main}"
+
+	local child
+	while IFS= read -r child; do
+		[[ -z "$child" ]] && continue
+		print_info "Retargeting stacked PR #${child} from '${parent_head_ref}' to '${default_branch}' before merging PR #${pr_number} (t2412)"
+		gh pr edit "$child" --repo "$repo" --base "$default_branch" 2>&1 || true
+	done <<<"$children"
+	return 0
+}
+
 # Merge wrapper (GH#17541) — enforces review-bot-gate then merges.
 # Single command that replaces the multi-step protocol (wait + merge).
 # Workers call this instead of bare `gh pr merge`.
@@ -1273,6 +1311,12 @@ cmd_merge() {
 		print_error "Merge blocked by review bot gate. Address bot findings or wait for reviews."
 		return 1
 	}
+
+	# Retarget any open PRs stacked on this branch before the head branch is
+	# deleted post-merge. GitHub auto-closes stacked children when their base
+	# branch disappears; retargeting to the default branch prevents this.
+	# (t2412 / GH#20005)
+	_retarget_stacked_children_interactive "$pr_number" "$repo"
 
 	_merge_execute "$pr_number" "$repo" "$merge_method" "$has_admin" "$has_auto" || return 1
 
