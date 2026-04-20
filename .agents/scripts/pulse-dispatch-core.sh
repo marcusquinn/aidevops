@@ -39,6 +39,8 @@
 #   - pulse-dispatch-large-file-gate.sh — large-file simplification gate
 #   - pulse-dispatch-worker-launch.sh   — worker launch helpers + orchestrator
 #   - dispatch-dedup-footprint.sh       — file-footprint overlap throttle (t2117)
+#   - pre-dispatch-eligibility-helper.sh — generic eligibility gate: CLOSED, status:done, recent-merge (t2424)
+#   - pulse-stats-helper.sh             — operational counters: pre_dispatch_aborts_24h (t2424)
 #
 # Pure move from pulse-wrapper.sh. Byte-identical function bodies.
 # Phase 12 post-gate simplification: _is_task_committed_to_main split into
@@ -62,6 +64,12 @@ source "${BASH_SOURCE[0]%/*}/pulse-dispatch-worker-launch.sh"
 # t2117/GH#19109: file-footprint overlap throttle
 # shellcheck source=dispatch-dedup-footprint.sh
 source "${BASH_SOURCE[0]%/*}/dispatch-dedup-footprint.sh"
+# t2424/GH#20030: generic pre-dispatch eligibility gate (CLOSED, status:done, recent-merge)
+# shellcheck source=pre-dispatch-eligibility-helper.sh
+source "${BASH_SOURCE[0]%/*}/pre-dispatch-eligibility-helper.sh"
+# t2424/GH#20030: pulse operational counters (pre_dispatch_aborts_24h)
+# shellcheck source=pulse-stats-helper.sh
+source "${BASH_SOURCE[0]%/*}/pulse-stats-helper.sh"
 
 #######################################
 # Resolve the worker tier from issue labels. When multiple tier:* labels
@@ -807,6 +815,14 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 
+	# t2424/GH#20030: resolved-status label check (defence-in-depth alongside eligibility gate).
+	# status:done and status:resolved signal already-completed work. Checking here (in the
+	# dedup layers) catches these before the more expensive eligibility check fires.
+	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | (index("status:done") or index("status:resolved"))' >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: status:done or status:resolved label present (t2424)" >>"$LOGFILE"
+		return 1
+	fi
+
 	# t1894/GH#18648: Cryptographic approval gate (ever-NMR) with
 	# review-followup exemption for bot-generated cleanup issues.
 	if _check_nmr_approval_gate "$issue_number" "$repo_slug" "$issue_meta_json"; then
@@ -870,6 +886,46 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 
+	return 0
+}
+
+#######################################
+# t2424/GH#20030: Run the generic pre-dispatch eligibility gate and
+# translate its exit codes into a simple 0=proceed, 1=abort contract
+# for dispatch_with_dedup. Keeps dispatch_with_dedup short.
+#
+# Gate exit codes (from _run_predispatch_eligibility_check):
+#   0  — eligible; proceed
+#   2  — CLOSED state; abort
+#   3  — status:done/resolved label; abort
+#   4  — linked PR merged in recent window; abort
+#   20 — gh API error; fail-open (proceed with warning)
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug
+#   $3 - issue_meta_json (pre-fetched; forwarded via ISSUE_META_JSON to avoid duplicate gh calls)
+#
+# Exit codes:
+#   0 — dispatch should proceed
+#   1 — dispatch aborted (gate found issue ineligible)
+#######################################
+_run_eligibility_gate_or_abort() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_meta_json="$3"
+
+	local rc=0
+	ISSUE_META_JSON="$issue_meta_json" \
+		_run_predispatch_eligibility_check "$issue_number" "$repo_slug" || rc=$?
+
+	if [[ "$rc" -ne 0 && "$rc" -ne 20 ]]; then
+		echo "[dispatch_with_dedup] t2424: Pre-dispatch eligibility gate aborted #${issue_number} in ${repo_slug} (rc=${rc}) — not dispatching" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "$rc" -eq 20 ]]; then
+		echo "[dispatch_with_dedup] t2424: Eligibility gate API error for #${issue_number} (rc=20) — fail-open, proceeding" >>"$LOGFILE"
+	fi
 	return 0
 }
 
@@ -972,6 +1028,11 @@ dispatch_with_dedup() {
 	fi
 	if [[ "$_validator_rc" -eq 20 ]]; then
 		echo "[dispatch_with_dedup] Pre-dispatch validator error for #${issue_number} in ${repo_slug} (rc=${_validator_rc}) — proceeding with dispatch" >>"$LOGFILE"
+	fi
+
+	# t2424/GH#20030: Generic eligibility gate — final check BEFORE worker spawn.
+	if ! _run_eligibility_gate_or_abort "$issue_number" "$repo_slug" "$issue_meta_json"; then
+		return 1
 	fi
 
 	# All checks passed — launch the worker.

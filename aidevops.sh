@@ -878,6 +878,13 @@ cmd_status() {
 		print_warning "Commit signing not configured — run: aidevops signing setup"
 	fi
 	echo ""
+	# t2424/GH#20030: Pulse operational counters (pre-dispatch aborts, etc.)
+	local stats_helper="$AGENTS_DIR/scripts/pulse-stats-helper.sh"
+	if [[ -x "$stats_helper" ]]; then
+		print_header "Pulse Stats"
+		"$stats_helper" status 2>/dev/null || print_info "  (no stats recorded yet)"
+		echo ""
+	fi
 }
 
 # Update helpers (extracted for complexity reduction)

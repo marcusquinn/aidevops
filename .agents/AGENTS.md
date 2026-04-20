@@ -301,6 +301,8 @@ Headless workers failing, stalling, or stuck in dispatch loops: `reference/worke
 
 **Pre-dispatch validators** (GH#19118): Auto-generated issues carry a `<!-- aidevops:generator=<name> -->` marker. Before worker spawn, `pre-dispatch-validator-helper.sh validate <issue> <slug>` checks whether the premise still holds. Exit 10 closes the issue instead of dispatching. Architecture, bypass, and extension guide: `reference/pre-dispatch-validators.md`.
 
+**Pre-dispatch eligibility gate (t2424, GH#20030):** Complementary to the generator-specific validators, `pre-dispatch-eligibility-helper.sh` runs a set of GENERIC checks against every candidate issue in the final layer of `dispatch_with_dedup` — after all dedup/claim/validator layers pass, but before the worker is spawned. It catches issues that are already resolved (CLOSED state, `status:done` or `status:resolved` label, linked PR merged in the last 5 minutes) and aborts the dispatch. Each abort increments `pre_dispatch_aborts` in `~/.aidevops/logs/pulse-stats.json` so the counter is visible via `aidevops status`. Fail-open on API errors (logs a warning, allows dispatch to proceed). Emergency bypass: `AIDEVOPS_SKIP_PREDISPATCH_ELIGIBILITY=1`. Merge window override: `AIDEVOPS_PREDISPATCH_RECENT_MERGE_WINDOW=<seconds>` (default 300). Rationale: each `no_work` dispatch costs $0.05–$0.25 in auth+model tokens; the gate prevents waste on issues the pulse would otherwise pick up from a stale prefetch cache. Test coverage: `.agents/scripts/tests/test-pre-dispatch-eligibility.sh`.
+
 ## Self-Improvement
 
 Every agent session should improve the system, not just complete its task. Full guidance: `reference/self-improvement.md`.
