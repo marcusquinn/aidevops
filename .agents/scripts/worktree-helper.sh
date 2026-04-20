@@ -573,10 +573,16 @@ _interactive_session_auto_claim() {
 	local worktree_path="$2"
 	local explicit_issue="${3:-}"  # t2260: --issue NNN takes highest precedence
 
+	# Opt-out for scripted bulk worktree operations (AIDEVOPS_SKIP_AUTO_CLAIM=1).
+	if [[ "${AIDEVOPS_SKIP_AUTO_CLAIM:-}" == "1" ]]; then
+		return 0
+	fi
+
 	# Only engage for interactive sessions — workers handle their own
 	# claim flow via dispatch-dedup-helper.sh at dispatch time.
 	if [[ -n "${FULL_LOOP_HEADLESS:-}" ]] || [[ -n "${AIDEVOPS_HEADLESS:-}" ]] ||
-		[[ -n "${OPENCODE_HEADLESS:-}" ]] || [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+		[[ -n "${OPENCODE_HEADLESS:-}" ]] || [[ -n "${Claude_HEADLESS:-}" ]] ||
+		[[ -n "${GITHUB_ACTIONS:-}" ]]; then
 		return 0
 	fi
 	if [[ "${AIDEVOPS_SESSION_ORIGIN:-}" == "worker" ]]; then

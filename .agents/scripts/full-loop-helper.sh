@@ -252,6 +252,11 @@ _check_linked_issue_gate() {
 _auto_claim_interactive() {
 	local prompt="$1"
 
+	# Opt-out for scripted bulk operations (AIDEVOPS_SKIP_AUTO_CLAIM=1).
+	if [[ "${AIDEVOPS_SKIP_AUTO_CLAIM:-}" == "1" ]]; then
+		return 0
+	fi
+
 	# Skip in headless — workers use dispatch claims, not interactive claims
 	if is_headless; then
 		return 0
