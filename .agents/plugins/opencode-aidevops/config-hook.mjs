@@ -12,6 +12,7 @@ import { getCursorProxyPort, registerCursorProvider } from "./cursor-proxy.mjs";
 import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
 import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDrift } from "./version-tracking.mjs";
+import { CLAUDE_MODEL_LIMITS } from "./model-limits.mjs";
 
 /**
  * Shared model definition template for Claude models managed by aidevops.
@@ -31,30 +32,14 @@ function claudeModelDef(overrides) {
 }
 
 /**
- * Single source of truth for Claude model limits (GH#18621 Finding 5).
- * Both ANTHROPIC_MODELS and CLAUDECLI_MODELS derive their `limit` from here so
- * the transport metadata stays consistent no matter which provider
- * registration path runs first.
- */
-const CLAUDE_MODEL_LIMITS = {
-  "claude-haiku-4-5":  { context: 1000000, output: 32000 },
-  "claude-sonnet-4-5": { context:  200000, output: 64000 },
-  "claude-sonnet-4-6": { context: 1000000, output: 64000 },
-  "claude-opus-4-5":   { context:  200000, output: 64000 },
-  "claude-opus-4-6":   { context: 1000000, output: 64000 },
-  // Opus 4.7 context capped at 250K (not the 1M API ceiling). Anthropic's own
-  // MRCR v2 8-needle data shows long-context retrieval collapse past 200K
-  // (256K: 91.9% -> 59.2%, 1M: 78.3% -> 32.2%). Setting the limit to 250K lets
-  // OpenCode's 80% auto-compact threshold trigger right at the 200K reliability
-  // boundary -- users get the full functional window before compaction kicks in,
-  // instead of compacting at 160K (80% of a 200K cap). See models-opus.md.
-  "claude-opus-4-7":   { context:  250000, output: 64000 },
-};
-
-/**
  * Build a provider model map from CLAUDE_MODEL_LIMITS with provider-specific
  * display names. Preserves backward compatibility with the previous
  * ANTHROPIC_MODELS / CLAUDECLI_MODELS shapes.
+ *
+ * Note: CLAUDE_MODEL_LIMITS lives in `model-limits.mjs` so claude-proxy.mjs
+ * (the Claude CLI proxy provider drift-copy that previously hardcoded the
+ * same numbers) can share it. See model-limits.mjs for the env-var override
+ * (AIDEVOPS_OPUS_47_CONTEXT) and the MRCR rationale.
  * @param {Record<string,string>} names - model id → display name
  * @returns {Record<string,object>}
  */

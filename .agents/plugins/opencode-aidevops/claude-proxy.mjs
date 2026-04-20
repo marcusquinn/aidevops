@@ -39,6 +39,7 @@ import {
 import { streamClaudeResponse } from "./claude-proxy-streaming.mjs";
 import { buildProviderModels } from "./proxy-provider-models.mjs";
 import { jsonResponse, textResponse } from "./response-helpers.mjs";
+import { CLAUDE_MODEL_LIMITS } from "./model-limits.mjs";
 
 const CLAUDE_PROXY_DEFAULT_PORT = parseInt(process.env.CLAUDE_PROXY_PORT || "32125", 10);
 const CLAUDE_PROVIDER_ID = "claudecli";
@@ -114,16 +115,18 @@ function getClaudeProxyModels() {
     },
     {
       // Opus 4.7 — opt-in only. Framework defaults stay on 4.6.
-      // Context capped at 250K (not 1M API ceiling) due to MRCR v2 regression
+      // Context default 250K (not 1M API ceiling) due to MRCR v2 regression
       // past 200K (256K 91.9% -> 59.2%, 1M 78.3% -> 32.2%). The 250K limit
       // is sized so OpenCode's 80% auto-compact threshold lands at the 200K
       // reliability boundary, giving the full functional window before
-      // compaction. See models-opus.md.
+      // compaction. Context value is sourced from model-limits.mjs so the
+      // AIDEVOPS_OPUS_47_CONTEXT env-var override (t2435) flows through here
+      // too. See models-opus.md.
       id: "claude-opus-4-7",
       name: "Claude Opus 4.7 (via Claude CLI)",
       reasoning: true,
-      contextWindow: 250000,
-      maxTokens: 64000,
+      contextWindow: CLAUDE_MODEL_LIMITS["claude-opus-4-7"].context,
+      maxTokens: CLAUDE_MODEL_LIMITS["claude-opus-4-7"].output,
     },
   ];
 }

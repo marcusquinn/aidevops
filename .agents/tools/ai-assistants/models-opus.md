@@ -85,6 +85,47 @@ Sessions get the full still-functional window before compaction kicks in,
 instead of compacting prematurely at 160K (what an unaligned 200K cap
 produces).
 
+#### User override: `AIDEVOPS_OPUS_47_CONTEXT` (t2435)
+
+The 250K cap is the right *default*, but it is not the right value for every
+user. If you want to opt into a larger context (up to the 1M API ceiling),
+set the env var before launching OpenCode/Claude Code:
+
+```bash
+# Use the full 1M API ceiling
+export AIDEVOPS_OPUS_47_CONTEXT=1000000
+
+# Or a custom value somewhere between
+export AIDEVOPS_OPUS_47_CONTEXT=500000
+```
+
+Both the built-in `anthropic` provider (via the OAuth pool) and the
+`claudecli` provider read this value via the shared `model-limits.mjs`
+helper, so OpenCode's 80% auto-compact threshold moves with it
+(e.g. 1000000 → ~800K compaction trigger).
+
+**Validation:**
+
+- Unset / empty / non-numeric / `<=0` → default 250000 (silent for unset/empty;
+  warned at plugin init for invalid values).
+- `> 1000000` → clamped to the 1M API ceiling, with a warning.
+- Otherwise → the integer is used verbatim, with an MRCR-collapse warning at
+  plugin init so the cost is visible in your logs.
+
+**Tradeoffs you accept by overriding:**
+
+- MRCR v2 8-needle retrieval drops from 91.9% (256K) → 59.2% (256K, 4.7) →
+  32.2% (1M, 4.7). Your worker may "lose the plot" mid-session as the cold
+  context grows beyond the reliability boundary.
+- 4.7's tokenizer adds 20-60% to English token counts at identical pricing.
+  A 1M-token session costs 1.2-1.6x what the same content would cost on 4.6.
+- Default behaviour is unchanged for all other Claude models — the override
+  is opus-4-7-only.
+
+If you set this and find sessions degrading, unset the env var (or reduce
+the value) and restart OpenCode. The cap exists for a reason; treat the
+override as a calibrated experiment, not a free upgrade.
+
 ### When to apply `model:opus-4-7`
 
 - **Short brief + high-reasoning task.** Architecture calls, security

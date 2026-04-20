@@ -347,6 +347,8 @@ User references past work ("remember when...")? Search progressively: memory rec
 
 Preserve on compaction: (1) task IDs+states, (2) batch/concurrency, (3) worktree+branch, (4) PR numbers, (5) next 3 actions, (6) blockers, (7) key paths. Checkpoint: `~/.aidevops/.agent-workspace/tmp/session-checkpoint.md`.
 
+**Opus 4.7 context override (t2435):** the framework registers `claude-opus-4-7` with a 250K context cap by default — sized so OpenCode's 80% auto-compact triggers at the 200K MRCR reliability boundary. To opt into a larger window (up to the 1M API ceiling), set `AIDEVOPS_OPUS_47_CONTEXT=<integer>` before launching OpenCode/Claude Code. The plugin warns at init when the override is active so the MRCR-collapse tradeoff is visible in logs. See `tools/ai-assistants/models-opus.md` "User override" for the full validation matrix and tradeoffs.
+
 ## Slash Command Resolution
 
 When a user invokes a slash command (`/runners`, `/full-loop`, `/routine`, etc.) or provides input that clearly maps to one, resolve the command doc in this order:
