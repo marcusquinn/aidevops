@@ -523,6 +523,9 @@ _do_close() {
 		[[ -z "$task_with_notes" ]] && task_with_notes="$task_line"
 	fi
 
+	if [[ "$FORCE_CLOSE" == "true" ]]; then
+		print_info "FORCE_CLOSE active — bypassing evidence check for #$issue_number ($task_id) (GH#20146 audit)"
+	fi
 	if [[ "$FORCE_CLOSE" != "true" ]] && ! _has_evidence "$task_with_notes" "$task_id" "$repo"; then
 		print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field"
 		return 1
@@ -833,6 +836,9 @@ cmd_push() {
 		print_info "Use 'issue-sync-helper.sh push <task_id>' for single tasks, or --force-push to override"
 		return 0
 	fi
+	if [[ "$FORCE_PUSH" == "true" && -z "$target_task" ]]; then
+		print_info "FORCE_PUSH active — bypassing CI-only gate for bulk push (GH#20146 audit)"
+	fi
 
 	local tasks=()
 	while IFS= read -r tid; do
@@ -985,6 +991,9 @@ _enrich_update_issue() {
 		return 1
 	fi
 
+	if [[ "$FORCE_ENRICH" == "true" ]]; then
+		print_info "FORCE_ENRICH active — skipping content-preservation gate for #$num ($task_id) (GH#20146 audit)"
+	fi
 	if [[ "$FORCE_ENRICH" != "true" ]]; then
 		if [[ -z "$current_body" ]]; then
 			current_body=$(gh issue view "$num" --repo "$repo" --json body -q '.body // ""' 2>/dev/null || echo "")

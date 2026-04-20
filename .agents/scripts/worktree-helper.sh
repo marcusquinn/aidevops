@@ -585,6 +585,7 @@ _interactive_session_auto_claim() {
 	fi
 	# Opt-out for scripted bulk worktree operations
 	if [[ -n "${AIDEVOPS_SKIP_AUTO_CLAIM:-}" ]]; then
+		print_info "AIDEVOPS_SKIP_AUTO_CLAIM set — skipping worktree auto-claim (GH#20146 audit)"
 		return 0
 	fi
 

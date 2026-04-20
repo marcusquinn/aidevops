@@ -1326,7 +1326,10 @@ check_framework_routing() {
 
 	# Skip if no title (batch mode) or if explicitly suppressed
 	[[ -z "$title" ]] && return 0
-	[[ "${SKIP_FRAMEWORK_ROUTING_CHECK:-}" == "true" ]] && return 0
+	if [[ "${SKIP_FRAMEWORK_ROUTING_CHECK:-}" == "true" ]]; then
+		log_info "SKIP_FRAMEWORK_ROUTING_CHECK=true — suppressing framework routing warning for: $title (GH#20146 audit)"
+		return 0
+	fi
 
 	# Check if we're already in the aidevops repo — no routing needed
 	local remote_url

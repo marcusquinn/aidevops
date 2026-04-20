@@ -233,6 +233,8 @@ _cs_normalize_nfkc() {
 	fi
 
 	if [[ "$CONTENT_SCANNER_SKIP_NORMALIZE" == "true" ]]; then
+		# Log to stderr so the bypass is auditable without corrupting stdout output
+		printf '[content-scanner][INFO] CONTENT_SCANNER_SKIP_NORMALIZE=true — skipping NFKC normalization (reduces injection evasion resistance) (GH#20146 audit)\n' >&2
 		if [[ "$has_input_arg" == "true" ]]; then
 			printf '%s%s' "$input_content" "$_CS_NORMALIZE_SENTINEL"
 		else
