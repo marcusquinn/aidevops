@@ -324,9 +324,9 @@
       "pr": 18224
     },
     ".agents/commands/aidevops-legal.md": {
-      "at": "2026-04-11T17:01:18Z",
-      "hash": "278f1357743e4be7e4c36b0cc98cb3022db7130f",
-      "passes": 3,
+      "at": "2026-04-20T14:52:14Z",
+      "hash": "0b02fd4f00b5c914f3e03f794d0635c064337ae9",
+      "passes": 4,
       "pr": 18227
     },
     ".agents/commands/aidevops-marketing-sales.md": {
@@ -336,9 +336,9 @@
       "pr": 18161
     },
     ".agents/commands/aidevops-research.md": {
-      "at": "2026-04-11T17:01:18Z",
-      "hash": "e30f6a29668b78be4808c38b12913ffaa49e6562",
-      "passes": 2,
+      "at": "2026-04-20T14:52:14Z",
+      "hash": "b1eed13557aa797958714b002d7b7f5d62c95d89",
+      "passes": 3,
       "pr": 18272
     },
     ".agents/commands/aidevops-seo.md": {
@@ -384,9 +384,9 @@
       "pr": 18292
     },
     ".agents/commands/legal.md": {
-      "at": "2026-04-11T17:01:18Z",
-      "hash": "278f1357743e4be7e4c36b0cc98cb3022db7130f",
-      "passes": 2,
+      "at": "2026-04-20T14:52:15Z",
+      "hash": "0b02fd4f00b5c914f3e03f794d0635c064337ae9",
+      "passes": 3,
       "pr": 18226
     },
     ".agents/commands/marketing-sales.md": {
@@ -396,9 +396,9 @@
       "pr": 18159
     },
     ".agents/commands/research.md": {
-      "at": "2026-04-11T17:01:19Z",
-      "hash": "e30f6a29668b78be4808c38b12913ffaa49e6562",
-      "passes": 2,
+      "at": "2026-04-20T14:52:15Z",
+      "hash": "b1eed13557aa797958714b002d7b7f5d62c95d89",
+      "passes": 3,
       "pr": 18271
     },
     ".agents/commands/seo.md": {
@@ -826,9 +826,9 @@
       "pr": 18718
     },
     ".agents/legal.md": {
-      "at": "2026-04-11T17:01:20Z",
-      "hash": "278f1357743e4be7e4c36b0cc98cb3022db7130f",
-      "passes": 3,
+      "at": "2026-04-20T14:52:18Z",
+      "hash": "0b02fd4f00b5c914f3e03f794d0635c064337ae9",
+      "passes": 4,
       "pr": 16526
     },
     ".agents/marketing-sales.md": {
@@ -1808,9 +1808,9 @@
       "pr": 17659
     },
     ".agents/research.md": {
-      "at": "2026-04-11T17:01:23Z",
-      "hash": "e30f6a29668b78be4808c38b12913ffaa49e6562",
-      "passes": 3,
+      "at": "2026-04-20T14:52:24Z",
+      "hash": "b1eed13557aa797958714b002d7b7f5d62c95d89",
+      "passes": 4,
       "pr": 14996
     },
     ".agents/scripts/anti-detect-helper.sh": {
@@ -2316,9 +2316,9 @@
       "pr": 18843
     },
     ".agents/scripts/issue-sync-helper.sh": {
-      "at": "2026-04-20T00:51:23Z",
-      "hash": "2de3e65d8681c55efd74d63f890dacdecf9344f6",
-      "passes": 17,
+      "at": "2026-04-20T14:52:27Z",
+      "hash": "bc827bdc59e2313c3c6533748b8ad6cc8a2512ac",
+      "passes": 18,
       "pr": 18706
     },
     ".agents/scripts/issue-sync-lib.sh": {
