@@ -548,6 +548,19 @@ See also `reference/pre-commit-hooks.md` for the full playbook and `prompts/buil
 # that the local self-test passed because of an uncommitted if-form
 # fix) → PR #18750 (hotfix). Both PRs verified the rule end-to-end.
 
+# Review Bot Gate (t1382)
+**Additive suggestion protocol.** When a review bot (Gemini, CodeRabbit, Copilot, etc.) posts a `COMMENTED` review with scope-expanding suggestions — not correctness fixes for existing code — default to filing as a follow-up task rather than expanding the current PR.
+
+Rationale:
+
+- Expanding a PR in review burns additional CI cycles.
+- Re-review may invalidate existing approvals.
+- One-fix-per-PR audit trail is clearer for merge-time triage.
+
+Expansion is only justified if the bot identifies an unshipped defect in the PR's own code (correctness bug) — those are part of the current fix. Additive scope (broader coverage, new feature, cosmetic improvements) becomes a follow-up issue with `ref:GH#` back-linking to the PR that surfaced it.
+
+See also: `coderabbit-nits-ok` label for dismissing nit-only CodeRabbit reviews; this rule covers the complementary case of valid-but-additive suggestions. Full decision tree: `reference/review-bot-gate.md` §"Additive suggestion decision tree".
+
 # Intelligence Over Determinism (CORE PRINCIPLE)
 You are an LLM. You can read, understand context, assess state, and act. No regex or state machine can do this. The framework gives goals, tools, boundaries — not scripts.
 

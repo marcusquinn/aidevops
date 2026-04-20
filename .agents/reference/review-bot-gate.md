@@ -31,3 +31,26 @@ Workers MUST use `full-loop-helper.sh merge` — direct `gh pr merge` bypasses t
 - ALWAYS read bot reviews before merging. Address critical/security findings; note non-critical suggestions for follow-up.
 - PASS_RATE_LIMITED means bots are rate-limited but the PR exceeded the grace period (default 4h). Safe to merge — bot reviews will arrive later and can be addressed in follow-up PRs. Use `request-retry` to trigger a re-review once rate limits clear.
 - When many PRs are rate-limited simultaneously, use `request-retry` on the highest-priority PRs first. Stagger retries to avoid re-triggering rate limits.
+
+## Additive suggestion decision tree
+
+When a review bot comments with a suggestion that isn't a correctness issue in the PR's own code:
+
+1. **Is the suggestion a correctness fix for code introduced by this PR?**
+   - Yes → expand the PR, add a commit, re-request review.
+   - No → go to 2.
+
+2. **Is the suggestion adding coverage, generality, new behaviour, or cosmetic improvements?**
+   - Yes → file as follow-up task with `ref:GH#<current-PR>`.
+   - No → skip (may be a nit; see `coderabbit-nits-ok` rule in `prompts/build.txt` §"Review Bot Gate").
+
+3. **File follow-up via:**
+   - Claim task ID (`claim-task-id.sh`).
+   - Write brief in the current planning worktree.
+   - File issue with worker-ready body + `Source: review comment on PR #<N> by @<bot>` citation.
+
+### Example
+
+PR #19712 (t2209) Gemini review suggested extending the duplicate-ID regex to cover declined tasks and routine IDs. This is additive (broader coverage), not a correctness fix for the PR's shipped behaviour. Filed as t2222 / #19723.
+
+See also: `prompts/build.txt` §"Review Bot Gate (t1382)" for the authoritative rule and rationale.
