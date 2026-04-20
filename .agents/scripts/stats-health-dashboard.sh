@@ -544,22 +544,22 @@ _compute_worker_success_rates() {
 		while IFS= read -r slug; do
 			[[ -z "$slug" ]] && continue
 			local m cu
-			m=$(gh search prs \
+			m=$(gh pr list \
 				--repo "$slug" \
 				--author "$runner_login" \
 				--label "origin:worker" \
-				--merged \
-				--created ">${window_start}" \
+				--state merged \
+				--search "created:>${window_start}" \
 				--json number \
 				--jq 'length' \
 				--limit 500 2>/dev/null || echo "0")
 			merged_count=$(( merged_count + ${m:-0} ))
-			cu=$(gh search prs \
+			cu=$(gh pr list \
 				--repo "$slug" \
 				--author "$runner_login" \
 				--label "origin:worker" \
 				--state closed \
-				--created ">${window_start}" \
+				--search "created:>${window_start}" \
 				--json mergedAt \
 				--jq '[.[] | select(.mergedAt == null)] | length' \
 				--limit 500 2>/dev/null || echo "0")
