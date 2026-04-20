@@ -435,9 +435,11 @@ _prefetch_single_repo_idle_skip() {
 	echo ""
 
 	# Replay cached issue sections using same filter logic as _prefetch_repo_issues
-	local _disp_json _sweep_json _disp_count _sweep_count
-	_disp_json=$(echo "$_cached_issues" | jq -c '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("needs-maintainer-review") or index("routine-tracking") or index("on hold") or index("blocked")) | not) | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")) | not)]' 2>/dev/null) || _disp_json="[]"
-	_sweep_json=$(echo "$_cached_issues" | jq -c '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("needs-maintainer-review") or index("routine-tracking") or index("on hold") or index("blocked")) | not) | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")))]' 2>/dev/null) || _sweep_json="[]"
+	# GH#20048: shared helper replaces inline jq non-task filter
+	local _filtered_cached _disp_json _sweep_json _disp_count _sweep_count
+	_filtered_cached=$(echo "$_cached_issues" | _filter_non_task_issues)
+	_disp_json=$(echo "$_filtered_cached" | jq -c '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")) | not)]' 2>/dev/null) || _disp_json="[]"
+	_sweep_json=$(echo "$_filtered_cached" | jq -c '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")))]' 2>/dev/null) || _sweep_json="[]"
 	_disp_count=$(echo "$_disp_json" | jq 'length' 2>/dev/null) || _disp_count=0
 	_sweep_count=$(echo "$_sweep_json" | jq 'length' 2>/dev/null) || _sweep_count=0
 

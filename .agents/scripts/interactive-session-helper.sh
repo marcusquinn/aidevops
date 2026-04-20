@@ -245,10 +245,15 @@ _isc_list_stampless_interactive_claims() {
 		--assignee "$runner_user" \
 		--label origin:interactive \
 		--state open \
-		--json number,updatedAt \
+		--json number,updatedAt,labels \
 		--limit 200 2>/dev/null) || return 0
 
 	[[ -n "$json" && "$json" != "null" ]] || return 0
+
+	# GH#20048: filter out non-task issues (routine-tracking, supervisor, etc.)
+	# before the stampless scan so they are never surfaced as false positives.
+	json=$(printf '%s' "$json" | _filter_non_task_issues) || return 0
+	[[ -n "$json" && "$json" != "[]" ]] || return 0
 
 	# Emit (number, updated_at) tuples; shell filters stampless.
 	local rows

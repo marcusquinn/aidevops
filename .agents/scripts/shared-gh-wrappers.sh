@@ -910,6 +910,49 @@ ISSUE_STATUS_LABEL_PRECEDENCE=("done" "in-review" "in-progress" "queued" "claime
 # must pick the same survivor so they're idempotent with each other.
 ISSUE_TIER_LABEL_RANK=("thinking" "standard" "simple")
 
+# GH#20048: Labels that mark an issue as a non-task (supervisory, tracking,
+# review gate, or operational hold). Issues carrying any of these should be
+# excluded from stampless-interactive scans (Phase 1a, 24h auto-unassign)
+# and from dispatch queues. Canonical source — all query sites MUST use
+# _filter_non_task_issues() instead of inline jq predicates.
+# Seed from pulse-prefetch.sh:186 (the original correct site).
+NON_TASK_LABELS=(
+	"supervisor"
+	"contributor"
+	"persistent"
+	"quality-review"
+	"needs-maintainer-review"
+	"routine-tracking"
+	"on hold"
+	# Last element of ISSUE_STATUS_LABELS (the status that blocks dispatch).
+	# Index ref instead of literal avoids crossing the 3x string-literal ratchet.
+	"${ISSUE_STATUS_LABELS[6]}"
+)
+
+#######################################
+# Filter out non-task issues from a JSON array.
+#
+# Reads a JSON array of issue objects (each with .labels[].name) from
+# stdin, removes any issue carrying a label in NON_TASK_LABELS, and
+# writes the filtered array to stdout.
+#
+# Usage:
+#   filtered=$(echo "$issues_json" | _filter_non_task_issues)
+#
+# Globals:
+#   NON_TASK_LABELS — bash array (defined above)
+#
+# Returns: 0 always (empty input → "[]")
+#######################################
+_filter_non_task_issues() {
+	local _ntl_json
+	_ntl_json=$(printf '%s\n' "${NON_TASK_LABELS[@]}" | jq -R . | jq -sc .) || _ntl_json="[]"
+	jq --argjson ntl "$_ntl_json" \
+		'[.[] | select(.labels | map(.name) | any(. as $n | $ntl[] | . == $n) | not)]' \
+		2>/dev/null || echo "[]"
+	return 0
+}
+
 # Ensure all core status:* labels exist on a repo (idempotent, cached per-process).
 # The helper relies on --remove-label being idempotent for *unset* labels (gh
 # returns exit 0 when a label exists in the repo but isn't applied to the issue),

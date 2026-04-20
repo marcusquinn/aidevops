@@ -234,9 +234,14 @@ _normalize_unassign_stampless_interactive() {
 			--assignee "$runner_user" \
 			--label origin:interactive \
 			--state open \
-			--json number,updatedAt \
+			--json number,updatedAt,labels \
 			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || json=""
 		[[ -n "$json" && "$json" != "null" ]] || continue
+
+		# GH#20048: filter out non-task issues (routine-tracking, supervisor, etc.)
+		# before the age cutoff so they are never auto-unassigned.
+		json=$(printf '%s' "$json" | _filter_non_task_issues) || json=""
+		[[ -n "$json" && "$json" != "[]" ]] || continue
 
 		# Filter: updatedAt older than cutoff
 		local rows
