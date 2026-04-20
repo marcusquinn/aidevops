@@ -827,11 +827,19 @@ _sum_issue_tokens() {
 		return 0
 	fi
 
-	# Fetch all comments by this user, extract token counts from signature footers
-	# Patterns: "spent 1,234 tokens" (current) and "has used 1,234 tokens" (older)
+	# Fetch comments by this user, excluding interactive-session footers, and
+	# extract token counts from remaining signature footers.
+	# Patterns: "spent 1,234 tokens" (current) and "has used 1,234 tokens" (older).
+	# The interactive-session filter prevents the cumulative-tokens display in
+	# new footers from counting the same user's maintainer triage/review
+	# activity toward per-issue spend (t2425 / GH#20047). Mirrors the filter
+	# applied in dispatch-dedup-cost.sh::_sum_issue_token_spend.
 	local token_values
 	token_values=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--paginate --jq ".[] | select(.user.login == \"${gh_user}\") | .body" 2>/dev/null |
+		--paginate --jq ".[]
+			| select(.user.login == \"${gh_user}\")
+			| select((.body // \"\") | contains(\"with the user in an interactive session\") | not)
+			| .body" 2>/dev/null |
 		grep -oE '(spent|has used) [0-9,]+ tokens' |
 		grep -oE '[0-9,]+' |
 		tr -d ',' || echo "")
