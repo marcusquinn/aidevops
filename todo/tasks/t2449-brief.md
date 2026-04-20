@@ -1,5 +1,12 @@
 # t2449: Symmetric auto-merge for maintainer-briefed origin:worker PRs
 
+## Pre-flight
+
+- [x] Memory recall: `pulse-merge auto-merge worker briefed` -> 0 hits — no prior lessons on this topic
+- [x] Discovery pass: 8 commits touch target files (`pulse-merge.sh`) since 2026-04-18; t2411 (PR #20103) landed the `origin:interactive` auto-merge gate that this task extends
+- [x] File refs verified: `pulse-merge.sh`, `pulse-nmr-approval.sh`, `review-bot-gate.md`, `AGENTS.md` all present at HEAD
+- [x] Tier: `tier:thinking` — disqualifier check clean (trust model change, composes with 3+ security gates, no existing pattern to copy)
+
 ## Session Origin
 
 Filed from interactive session during post-merge monitoring of t2443 (PR #20158, `fix(pulse): unwrap preflight_daily_scans so each scanner gets independent timeout budget`).
@@ -161,6 +168,35 @@ fi
 
 **NOT `tier:standard`** because: the trust-chain equivalence argument needs careful analysis; naive extension of the interactive path (copy-paste with new label check) is WRONG and would miss the NMR crypto-vs-auto gate, opening a bypass vector.
 
+## PR Conventions
+
+This issue is NOT `parent-task`. When implementing, the PR should use `Resolves #20164` as normal. The implementation PR title will be `t2449: symmetric auto-merge for maintainer-briefed origin:worker PRs`.
+
+## Context & Decisions
+
+Key decisions from the filing session:
+
+- **Sibling function, not extension**: the `origin:worker` auto-merge path is a clean sibling of the `origin:interactive` path, NOT an extension. This was a deliberate design decision to keep the two gates independently disableable and independently modifiable. Mixing them creates coupling that makes either path hard to reason about in isolation.
+- **Cryptographic approval as the NMR clearance signal**: the pulse's `auto_approve_maintainer_issues` uses the same GitHub token as the pulse itself. If auto-approval were accepted as the NMR clearance for auto-merge purposes, the entire chain (file issue -> auto-approve NMR -> dispatch worker -> auto-merge PR) would have zero human touchpoints. The SSH-signed cryptographic approval (`sudo aidevops approve issue N`) is the only signal that provably required a human with root access.
+- **Worker-takeover explicitly excluded**: takeover PRs represent a human-authored attempt that went stale and was rescued by the pulse. The trust model is different from "maintainer briefed from scratch" — auto-merging a takeover would bypass the scrutiny the stale human work deserves.
+- **Feature flag defaulting ON**: the 48h validation window with `AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=0` as rollback was chosen over defaulting OFF because the entire point is reducing merge friction. Starting OFF would require a second PR to flip it, adding ceremony.
+- **Approach A (sibling function) chosen over B (extending existing function with `origin:worker` label check)**: B was rejected because the NMR crypto-vs-auto gate does not exist in the interactive path and bolting it on would add dead-code complexity to a path that doesn't need it.
+
+## Dependencies
+
+- **Blocked by:** None — all prerequisites (t2411 interactive auto-merge, t2386 NMR automation-signature split, t2123/t2139 review-bot-gate) are already merged.
+- **Blocks:** None directly — but landing this unblocks fully autonomous end-to-end worker dispatch (brief -> issue -> dispatch -> implement -> PR -> merge) without human merge clicks.
+- **External:** None. Consumes existing GitHub API signals (issue author association, review state, check status) and existing framework signals (NMR crypto-approval comments, review-bot-gate).
+
+## Estimate Breakdown
+
+| Phase | Time | Notes |
+|-------|------|-------|
+| Research/read | 30m | Read `_attempt_interactive_auto_merge` in pulse-merge.sh (~340 lines), `pulse-nmr-approval.sh` crypto-approval detection, `review-bot-gate-helper.sh` composition point |
+| Implementation | 2h | New sibling function + feature flag + audit logging + AGENTS.md + review-bot-gate.md + build.txt updates |
+| Testing | 1h | 10-case regression test harness + dry-run validation |
+| **Total** | **~3.5h** | |
+
 ## Related
 
 - **t2411** — original `origin:interactive` auto-merge (structural model)
@@ -169,6 +205,16 @@ fi
 - **t2448 / #20163** — ai-approved admin-only hardening (complementary trust-model work filed in same session)
 - **t2386** — NMR automation-signature split: the split between "creation-default" NMR (cleared) and "circuit-breaker-trip" NMR (preserved) is what makes the cryptographic-vs-auto approval distinction viable
 - **pulse-merge.sh `_release_interactive_claim_on_merge`** — existing lifecycle hook pattern; a `_release_worker_claim_on_merge` sibling may be needed if worker PRs hold claim stamps
+
+## Relevant Files
+
+- `.agents/scripts/pulse-merge.sh:1015-1355` — `_attempt_interactive_auto_merge` (structural template to mirror)
+- `.agents/scripts/pulse-merge-lib.sh` — shared pulse-merge utilities
+- `.agents/scripts/pulse-nmr-approval.sh:468-470` — `auto_approve_maintainer_issues` (the auto-approval path that must NOT count as legitimate clearance)
+- `.agents/scripts/approve-helper.sh` — cryptographic approval implementation (SSH-signed comments)
+- `.agents/scripts/review-bot-gate-helper.sh` — bot review gate (prerequisite check)
+- `.agents/scripts/shared-constants.sh` — `ORIGIN_LABELS`, `set_origin_label` (label handling patterns)
+- `.agents/scripts/tests/test-pulse-merge-interactive-auto-merge.sh` — existing test harness for interactive auto-merge (pattern to mirror)
 
 ## Deferred — DO NOT dispatch without maintainer approval
 
