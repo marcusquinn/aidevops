@@ -8,7 +8,8 @@
 # windows can be computed without a separate cron sweep.
 #
 # Supported counters (initial set):
-#   pre_dispatch_aborts — pre-dispatch eligibility gate aborted dispatch
+#   pre_dispatch_aborts                — pre-dispatch eligibility gate aborted dispatch (all gates)
+#   pre_dispatch_aborts_recent_commit  — aborts caused by gate 4 (recent closing commit on default branch)
 #
 # The `aidevops status` command reads this file via `pulse_stats_get_24h`
 # to show operator-visible churn metrics.

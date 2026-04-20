@@ -4,15 +4,18 @@
 # test-pre-dispatch-eligibility.sh — Regression tests for pre-dispatch-eligibility-helper.sh (t2424, GH#20030)
 #
 # Tests:
-#   test_closed_issue_blocked          — CLOSED state → exit 2
-#   test_status_done_blocked           — status:done label → exit 3
-#   test_status_resolved_blocked       — status:resolved label → exit 3
-#   test_recent_merge_blocked          — linked PR merged <5 min ago → exit 4
-#   test_eligible_open_no_labels       — OPEN, no blocking labels → exit 0 (happy path)
-#   test_eligible_open_with_queued     — OPEN, status:queued (not blocking) → exit 0
-#   test_api_error_fail_open           — gh API failure → exit 20 (fail-open)
-#   test_bypass_env_var                — AIDEVOPS_SKIP_PREDISPATCH_ELIGIBILITY=1 → exit 0
-#   test_prefetched_json_reused        — ISSUE_META_JSON avoids extra gh call for gates 1+2
+#   test_closed_issue_blocked                      — CLOSED state → exit 2
+#   test_status_done_blocked                       — status:done label → exit 3
+#   test_status_resolved_blocked                   — status:resolved label → exit 3
+#   test_recent_merge_blocked                      — linked PR merged <5 min ago → exit 4
+#   test_eligible_open_no_labels                   — OPEN, no blocking labels → exit 0 (happy path)
+#   test_eligible_open_with_queued                 — OPEN, status:queued (not blocking) → exit 0
+#   test_api_error_fail_open                       — gh API failure → exit 20 (fail-open)
+#   test_bypass_env_var                            — AIDEVOPS_SKIP_PREDISPATCH_ELIGIBILITY=1 → exit 0
+#   test_prefetched_json_reused                    — ISSUE_META_JSON avoids extra gh call for gates 1+2
+#   test_recent_commit_closes_issue_blocked        — recent commit closes this issue → exit 5
+#   test_recent_commit_ref_not_blocked             — Ref #NNN commit (not closing keyword) → exit 0
+#   test_recent_commit_different_issue_not_blocked — recent commit closes a different issue → exit 0
 
 set -euo pipefail
 
@@ -126,6 +129,80 @@ create_gh_stub_failing() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 printf 'gh: API error\n' >&2
+exit 1
+GHEOF
+	chmod +x "${TEST_ROOT}/bin/gh"
+	return 0
+}
+
+#######################################
+# Create a gh stub that supports Gate 4 (recent commit) testing.
+# Routes API calls by path pattern so each gate gets the right data.
+#
+# Args:
+#   $1 - state ("OPEN" or "CLOSED")
+#   $2 - label_name (bare label string or "")
+#   $3 - commit_message (the message of a single recent commit, or "")
+#
+# Routes:
+#   gh issue view           → issue JSON (state + labels)
+#   gh api *timeline*       → [] (no recent merges — ensures gate 3 passes)
+#   gh api *commits*        → single-commit array with the given message (or [])
+#   gh api repos/<slug>     → {"default_branch":"main"}
+#######################################
+create_gh_stub_with_commits() {
+	local state="$1"
+	local label_name="${2:-}"
+	local commit_message="${3:-}"
+
+	# Write issue JSON data.
+	local issue_data_file="${TEST_ROOT}/issue_data.json"
+	local labels_json="[]"
+	if [[ -n "$label_name" ]]; then
+		labels_json="[{\"name\":\"${label_name}\"}]"
+	fi
+	printf '{"state":"%s","labels":%s,"closedAt":""}\n' \
+		"$state" "$labels_json" >"$issue_data_file"
+
+	# Write commits JSON data (one commit with the given message, or empty).
+	local commits_data_file="${TEST_ROOT}/commits_data.json"
+	if [[ -n "$commit_message" ]]; then
+		# Escape any double-quotes in the message for embedding in JSON.
+		local escaped_msg="${commit_message//\"/\\\"}"
+		printf '[{"commit":{"message":"%s"}}]\n' "$escaped_msg" >"$commits_data_file"
+	else
+		printf '[]\n' >"$commits_data_file"
+	fi
+
+	cat >"${TEST_ROOT}/bin/gh" <<GHEOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+# gh issue view <num> --repo <slug> --json state,labels,closedAt
+if [[ "\${1:-}" == "issue" && "\${2:-}" == "view" ]]; then
+	cat "${issue_data_file}"
+	exit 0
+fi
+
+if [[ "\${1:-}" == "api" ]]; then
+	case "\${2:-}" in
+		*"commits"*)
+			# Gate 4: recent commits endpoint
+			cat "${commits_data_file}"
+			;;
+		*"timeline"*)
+			# Gate 3: timeline endpoint — return empty (no recent merges)
+			printf '[]\n'
+			;;
+		*)
+			# Repo info endpoint (default branch lookup)
+			printf '{"default_branch":"main"}\n'
+			;;
+	esac
+	exit 0
+fi
+
+printf 'unsupported gh invocation: %s\n' "\$*" >&2
 exit 1
 GHEOF
 	chmod +x "${TEST_ROOT}/bin/gh"
@@ -306,6 +383,60 @@ test_prefetched_json_reused() {
 	return 0
 }
 
+# Test 10: Recent commit closes this issue → exit 5 (happy path for gate 4)
+test_recent_commit_closes_issue_blocked() {
+	setup_test_env
+
+	# Commit message uses a closing keyword ("closes") referencing issue 12345.
+	create_gh_stub_with_commits "OPEN" "status:queued" "closes #12345"
+
+	local rc=0
+	"$HELPER_SCRIPT" check 12345 "owner/repo" >/dev/null 2>&1 || rc=$?
+
+	local fail=0
+	[[ "$rc" -eq 5 ]] || fail=1
+	print_result "test_recent_commit_closes_issue_blocked" "$fail" "expected exit 5, got ${rc}"
+
+	teardown_test_env
+	return 0
+}
+
+# Test 11: Recent commit uses "Ref #NNN" (planning reference, not closing keyword) → exit 0
+test_recent_commit_ref_not_blocked() {
+	setup_test_env
+
+	# "Ref #12345" is a planning reference — must NOT trigger gate 4.
+	create_gh_stub_with_commits "OPEN" "" "Ref #12345 update planning notes"
+
+	local rc=0
+	"$HELPER_SCRIPT" check 12345 "owner/repo" >/dev/null 2>&1 || rc=$?
+
+	local fail=0
+	[[ "$rc" -eq 0 ]] || fail=1
+	print_result "test_recent_commit_ref_not_blocked" "$fail" "expected exit 0 for Ref commit, got ${rc}"
+
+	teardown_test_env
+	return 0
+}
+
+# Test 12: Recent commit closes a DIFFERENT issue → exit 0
+test_recent_commit_different_issue_not_blocked() {
+	setup_test_env
+
+	# Commit closes issue 99999, NOT the candidate issue 12345.
+	create_gh_stub_with_commits "OPEN" "" "fixes #99999"
+
+	local rc=0
+	"$HELPER_SCRIPT" check 12345 "owner/repo" >/dev/null 2>&1 || rc=$?
+
+	local fail=0
+	[[ "$rc" -eq 0 ]] || fail=1
+	print_result "test_recent_commit_different_issue_not_blocked" "$fail" "expected exit 0 for different issue, got ${rc}"
+
+	teardown_test_env
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -327,6 +458,9 @@ main() {
 	test_api_error_fail_open
 	test_bypass_env_var
 	test_prefetched_json_reused
+	test_recent_commit_closes_issue_blocked
+	test_recent_commit_ref_not_blocked
+	test_recent_commit_different_issue_not_blocked
 
 	echo ""
 	echo "---"
