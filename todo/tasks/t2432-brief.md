@@ -189,7 +189,7 @@ aidevops status | grep -q "pre_dispatch_aborts_recent_commit"
 
 ## Dependencies
 
-- **Blocked by:** Trigger condition — ≥1 `no_work skip-escalation` event/week rolling 4-week window after PR #20064 deploys.
+- **Blocked by:** Trigger condition — observed ≥1 `no_work skip-escalation` events in the pulse log since PR #20064 deployed. Checked whenever the maintainer chooses; no deadline.
 - **Blocks:** Nothing directly. The 3-check gate deployed in t2424 is sufficient until the trigger fires.
 - **External:** None. Implementation is self-contained within `.agents/scripts/`.
 
