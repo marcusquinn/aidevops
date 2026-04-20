@@ -576,10 +576,15 @@ _interactive_session_auto_claim() {
 	# Only engage for interactive sessions — workers handle their own
 	# claim flow via dispatch-dedup-helper.sh at dispatch time.
 	if [[ -n "${FULL_LOOP_HEADLESS:-}" ]] || [[ -n "${AIDEVOPS_HEADLESS:-}" ]] ||
-		[[ -n "${OPENCODE_HEADLESS:-}" ]] || [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+		[[ -n "${Claude_HEADLESS:-}" ]] || [[ -n "${OPENCODE_HEADLESS:-}" ]] ||
+		[[ -n "${GITHUB_ACTIONS:-}" ]]; then
 		return 0
 	fi
 	if [[ "${AIDEVOPS_SESSION_ORIGIN:-}" == "worker" ]]; then
+		return 0
+	fi
+	# Opt-out for scripted bulk worktree operations
+	if [[ -n "${AIDEVOPS_SKIP_AUTO_CLAIM:-}" ]]; then
 		return 0
 	fi
 

@@ -256,6 +256,10 @@ _auto_claim_interactive() {
 	if is_headless; then
 		return 0
 	fi
+	# Opt-out for scripted bulk worktree operations
+	if [[ -n "${AIDEVOPS_SKIP_AUTO_CLAIM:-}" ]]; then
+		return 0
+	fi
 
 	# Extract issue number (same pattern as _check_linked_issue_gate)
 	local issue_num
