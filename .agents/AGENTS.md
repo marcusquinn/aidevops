@@ -108,7 +108,18 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 **`origin:interactive` implies maintainer approval**: PRs tagged `origin:interactive` pass the maintainer gate automatically when the PR author is `OWNER` or `MEMBER` — the maintainer was present and directing the work. No separate `sudo aidevops approve` is needed. Contributors (`COLLABORATOR`) with `origin:interactive` still go through the normal gate — the label alone is not sufficient. The pulse also never auto-closes `origin:interactive` PRs via the deterministic merge pass, even if the task ID appears in recent commits (incremental work on the same issue is legitimate).
 
-**Auto-merge timing**: PRs tagged `origin:interactive` from `OWNER`/`MEMBER` authors merge as soon as all required checks pass — typically 4-10 minutes depending on CI fleet. Review bots (gemini-code-assist, coderabbitai) post within ~1-3 minutes. If you need to fold bot nits into the same PR, use ONE of:
+**Auto-merge timing (t2411)**: `pulse-merge.sh` auto-merges `origin:interactive` PRs from `OWNER`/`MEMBER` authors (admin/maintain repo permission) as soon as all of the following conditions hold simultaneously:
+
+1. Label `origin:interactive` is present on the PR.
+2. PR author has `admin` or `maintain` permission (`OWNER` or `MEMBER`). Contributors with `write` permission still go through the normal review-bot gate.
+3. All required CI status checks are `pass` or `skipping` — no failing or cancelled checks.
+4. No `CHANGES_REQUESTED` review from a human reviewer.
+5. PR is NOT a draft (`isDraft: false`).
+6. PR does NOT have the `hold-for-review` label (opt-out for when you want bot reviews to settle first).
+
+When all criteria are met, the pulse bypasses the review-bot gate and merges with `--admin`. Typical time from push to merge: 4-10 minutes (CI fleet). Audit log line: `[pulse-merge] auto-merged origin:interactive PR #N (author=<login>, role=owner-or-member)`.
+
+To delay auto-merge until bot reviews complete: apply the `hold-for-review` label before pushing, or use one of:
 
 - **Run `review-bot-gate-helper.sh check <PR>` before pushing** — streams current bot feedback. Push when ready.
 - **Open as draft** — `gh pr create --draft`, wait for bot reviews to settle, `gh pr ready <PR>` when content is final.

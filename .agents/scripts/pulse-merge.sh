@@ -52,6 +52,7 @@
 #   - _handle_post_merge_actions
 #   - _process_single_ready_pr
 #   - _is_collaborator_author
+#   - _is_owner_or_member_author         (t2411)
 #   - _extract_linked_issue
 #   - _extract_merge_summary
 #
@@ -999,6 +1000,48 @@ _check_pr_merge_gates() {
 		fi
 	fi
 
+	# ── origin:interactive OWNER/MEMBER fast-merge path (t2411) ──
+	# PRs tagged origin:interactive from OWNER/MEMBER authors (admin/maintain
+	# permission) bypass the review bot gate and merge as soon as all other
+	# gates pass (CI green, no human CHANGES_REQUESTED, not draft, no
+	# hold-for-review opt-out label). The maintainer was present and reviewing
+	# the work — waiting for bots to settle would strand PRs overnight.
+	#
+	# This path is narrower than _is_collaborator_author: "write" permission
+	# (external contributors) still goes through the normal bot gate.
+	local _int_labels="" _int_is_draft=""
+	local _int_pr_info
+	_int_pr_info=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json labels,isDraft \
+		--jq '{labels: ([.labels[].name] | join(",")), isDraft: .isDraft}' \
+		2>/dev/null) || _int_pr_info=""
+	if [[ -n "$_int_pr_info" ]]; then
+		_int_labels=$(printf '%s' "$_int_pr_info" | jq -r '.labels // ""' 2>/dev/null) || _int_labels=""
+		_int_is_draft=$(printf '%s' "$_int_pr_info" | jq -r '.isDraft' 2>/dev/null) || _int_is_draft=""
+	fi
+	# Wrap once to avoid repeated ",${_int_labels}," literal (ratchet).
+	local _int_lw=",${_int_labels},"
+
+	if [[ "$_int_lw" == *",origin:interactive,"* ]]; then
+		# Draft PRs are never auto-merged — the author has explicitly marked
+		# the work as unfinished.
+		if [[ "$_int_is_draft" == true ]]; then
+			echo "[pulse-merge] Merge pass: skipping PR #${pr_number} in ${repo_slug} — origin:interactive PR is draft (t2411)" >>"$LOGFILE"
+			return 1
+		fi
+		# hold-for-review opt-out: maintainer wants bot reviews to settle
+		# before merge (e.g., added during the review bot window deliberately).
+		if [[ "$_int_lw" == *",hold-for-review,"* ]]; then
+			echo "[pulse-merge] Merge pass: skipping PR #${pr_number} in ${repo_slug} — origin:interactive PR has hold-for-review label (t2411)" >>"$LOGFILE"
+			return 1
+		fi
+		# OWNER/MEMBER check (admin or maintain permission only — not plain write).
+		if _is_owner_or_member_author "$pr_author" "$repo_slug"; then
+			echo "[pulse-merge] auto-merged origin:interactive PR #${pr_number} in ${repo_slug} (author=${pr_author}, role=owner-or-member) — bypassing review bot gate (t2411)" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
 	# ── Review bot gate (GH#17490) ──
 	# --admin bypasses branch protection; enforce in code (see review-bot-gate-helper.sh).
 	local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
@@ -1276,13 +1319,42 @@ _process_single_ready_pr() {
 _is_collaborator_author() {
 	local author="$1"
 	local repo_slug="$2"
+	# Use local var to avoid repeated literal (ratchet compliance, mirrors
+	# the same pattern in _is_owner_or_member_author).
+	local _collab_url="repos/${repo_slug}/collaborators/${author}/permission"
 	local perm_response
-	perm_response=$(gh api -i "repos/${repo_slug}/collaborators/${author}/permission" 2>/dev/null | head -1)
+	perm_response=$(gh api -i "$_collab_url" 2>/dev/null | head -1)
 	if [[ "$perm_response" == *"200"* ]]; then
 		local perm
-		perm=$(gh api "repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission' 2>/dev/null)
+		perm=$(gh api "$_collab_url" --jq '.permission' 2>/dev/null)
 		case "$perm" in
 		admin | maintain | write) return 0 ;;
+		esac
+	fi
+	return 1
+}
+
+#######################################
+# Check if a PR author is an OWNER or MEMBER (admin/maintain permission only).
+# Stricter than _is_collaborator_author — excludes plain "write" (contributors).
+# Used by the origin:interactive fast-merge path (t2411) to ensure only
+# repo owners and maintainers bypass the review bot gate.
+#
+# Args: $1=author login, $2=repo slug
+# Returns: 0=owner or member, 1=contributor/external/error
+#######################################
+_is_owner_or_member_author() {
+	local author="$1"
+	local repo_slug="$2"
+	# Use local var to avoid repeated literal (matches _is_collaborator_author pattern).
+	local _collab_url="repos/${repo_slug}/collaborators/${author}/permission"
+	local perm_response
+	perm_response=$(gh api -i "$_collab_url" 2>/dev/null | head -1)
+	if [[ "$perm_response" == *"200"* ]]; then
+		local perm
+		perm=$(gh api "$_collab_url" --jq '.permission' 2>/dev/null)
+		case "$perm" in
+		admin | maintain) return 0 ;;
 		esac
 	fi
 	return 1
