@@ -44,7 +44,7 @@ Linear "embed-query → cosine-topK → return" collapses on legal questions bec
 What is the research task?
 ├── Deep Q&A over ONE long document (>50 pages, structured ToC)?
 │     → PageIndex (vectorless, reasoning-over-tree, 98.7% on FinanceBench)
-│     → ~/.aidevops/agents/tools/context/pageindex.md
+│     → ../context/pageindex.md
 │
 ├── Keyword-exhaustive review (term sheet search, named-entity scan)?
 │     → rg/grep over extracted text + SQLite FTS5 for ranked recall
@@ -102,7 +102,7 @@ Legal citations are load-bearing. Apply these rules in every ask-mode response:
 1. **Every assertion traces to a retrieved chunk**. No chunk → no claim. Say "not found" instead of speculating.
 2. **Page/line citations come from chunk metadata, never from the LLM**. The LLM formats, the metadata supplies. Verify post-generation: every `[p.N]` in output must appear in retrieved `page` fields.
 3. **Jurisdiction banners**. Opinions without a `jurisdiction` field are untagged; never rank them as authoritative. Warn the user.
-4. **Currency caveat**. Corpus retrieval returns what was ingested, not what is currently in force. Any "binding" / "precedent" claim requires a live shepardising / KeyCite / CanLII-Connects check — surface this as a follow-up step, not as implicit trust.
+4. **Currency caveat**. Corpus retrieval returns what was ingested, not what is currently in force. Any "binding" / "precedent" claim requires a live Shepardizing / KeyCite / CanLII-Connects check — surface this as a follow-up step, not as implicit trust.
 5. **Pincite discipline**. "See Smith v. Jones, 123 F.3d 456" without the pincite is a drafting smell. The retriever should return the paragraph-level citation; carry it through.
 
 ## When to Scale Beyond File-Based
@@ -123,12 +123,12 @@ See [`tools/database/vector-search.md`](../database/vector-search.md) for the fu
 
 Every operation is CLI/chat-driven; no GUI is required at any step.
 
-1. **Ingest**: `mineru` / `pandoc` for PDFs → chunked text (see `tools/conversion/`, `tools/document/`). OCR first for scanned filings (`tools/ocr/`).
-2. **Index**: `zvec.create_and_open(path=f"/data/matters/{matter_id}/{collection}")` per collection; attach metadata on every chunk.
+1. **Ingest**: [`mineru`](../conversion/mineru.md) / [`pandoc`](../conversion/pandoc.md) for PDFs → chunked text. OCR first for scanned filings ([`tools/ocr/overview.md`](../ocr/overview.md)).
+2. **Index**: `zvec.create_and_open(path=f"~/.aidevops/.agent-workspace/work/{matter_id}/{collection}")` per collection (framework-standard persistent path); attach metadata on every chunk.
 3. **Query**: agent receives natural-language question → decomposes into (collection route, filters, sub-queries) → executes parallel searches → reranks → cites.
 4. **Deliver**: inline answer in chat with `[doc_id, p.N]` citations; full retrieved chunks available on request; export to `todo/research/{matter_id}/{question-slug}.md` for persistent matter notes.
 
-For long-running matters, persist the index to `~/.aidevops/.agent-workspace/work/{matter_id}/` (framework-standard persistent path) and version-control the ingestion manifest in the matter's repo.
+Version-control the ingestion manifest (document list, chunk strategy, embedding model ID) in the matter's repo so re-indexing is reproducible.
 
 ## Gotchas
 
