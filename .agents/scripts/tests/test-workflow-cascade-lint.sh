@@ -47,12 +47,7 @@ print_result() {
 	return 0
 }
 
-setup_test_env() {
-	TEST_ROOT=$(mktemp -d)
-	mkdir -p "${TEST_ROOT}/fixtures"
-	export TEST_ROOT
-
-	# ── Fixture: vulnerable (labeled + cancel-in-progress, no mitigation) ──
+_create_fixture_vulnerable() {
 	cat > "${TEST_ROOT}/fixtures/vulnerable.yml" << 'YAML'
 name: Vulnerable Workflow
 on:
@@ -71,8 +66,10 @@ jobs:
       - name: Do work
         run: echo "Working"
 YAML
+	return 0
+}
 
-	# ── Fixture: vulnerable PR (labeled in pull_request types) ──
+_create_fixture_vulnerable_pr() {
 	cat > "${TEST_ROOT}/fixtures/vulnerable-pr.yml" << 'YAML'
 name: Vulnerable PR Workflow
 on:
@@ -87,8 +84,10 @@ jobs:
     steps:
       - run: echo "Checking"
 YAML
+	return 0
+}
 
-	# ── Fixture: mitigated with paths-ignore ──
+_create_fixture_mitigated_paths_ignore() {
 	cat > "${TEST_ROOT}/fixtures/mitigated-paths-ignore.yml" << 'YAML'
 name: Mitigated With Paths Ignore
 on:
@@ -106,8 +105,10 @@ jobs:
     steps:
       - run: echo "Scanning"
 YAML
+	return 0
+}
 
-	# ── Fixture: mitigated with event-action guard (job-level if) ──
+_create_fixture_mitigated_action_guard() {
 	cat > "${TEST_ROOT}/fixtures/mitigated-action-guard.yml" << 'YAML'
 name: Mitigated With Action Guard
 on:
@@ -123,8 +124,10 @@ jobs:
     steps:
       - run: echo "Checking"
 YAML
+	return 0
+}
 
-	# ── Fixture: safe (no labeled trigger) ──
+_create_fixture_safe_no_labeled() {
 	cat > "${TEST_ROOT}/fixtures/safe-no-labeled.yml" << 'YAML'
 name: Safe No Labeled
 on:
@@ -139,8 +142,10 @@ jobs:
     steps:
       - run: echo "Checking"
 YAML
+	return 0
+}
 
-	# ── Fixture: safe (no cancel-in-progress) ──
+_create_fixture_safe_no_cancel() {
 	cat > "${TEST_ROOT}/fixtures/safe-no-cancel.yml" << 'YAML'
 name: Safe No Cancel
 on:
@@ -154,8 +159,10 @@ jobs:
     steps:
       - run: echo "Checking"
 YAML
+	return 0
+}
 
-	# ── Fixture: multi-line types form ──
+_create_fixture_vulnerable_multiline() {
 	cat > "${TEST_ROOT}/fixtures/vulnerable-multiline.yml" << 'YAML'
 name: Vulnerable Multiline Types
 on:
@@ -173,8 +180,10 @@ jobs:
     steps:
       - run: echo "Checking"
 YAML
+	return 0
+}
 
-	# ── Fixture: mitigated with step-level EVENT_ACTION guard ──
+_create_fixture_mitigated_step_guard() {
 	cat > "${TEST_ROOT}/fixtures/mitigated-step-guard.yml" << 'YAML'
 name: Mitigated Step Guard
 on:
@@ -198,6 +207,22 @@ jobs:
             exit 0
           fi
 YAML
+	return 0
+}
+
+setup_test_env() {
+	TEST_ROOT=$(mktemp -d)
+	mkdir -p "${TEST_ROOT}/fixtures"
+	export TEST_ROOT
+
+	_create_fixture_vulnerable
+	_create_fixture_vulnerable_pr
+	_create_fixture_mitigated_paths_ignore
+	_create_fixture_mitigated_action_guard
+	_create_fixture_safe_no_labeled
+	_create_fixture_safe_no_cancel
+	_create_fixture_vulnerable_multiline
+	_create_fixture_mitigated_step_guard
 
 	return 0
 }
