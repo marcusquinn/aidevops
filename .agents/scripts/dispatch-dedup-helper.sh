@@ -687,6 +687,67 @@ _is_assigned_check_cost_budget() {
 }
 
 #######################################
+# t2436: is_assigned helper — hydration window grace period (Approach B).
+#
+# Labels applied by the asynchronous issue-sync workflow (issue-sync.yml)
+# may not yet be present on an issue that was just created. The window
+# between issue creation and the subsequent TODO.md push + workflow run
+# is adversarial in multi-runner fleets: a peer runner can see an issue
+# missing parent-task (not yet synced) and dispatch a worker on it.
+#
+# This check adds a configurable grace period (default 30s) during which
+# newly created issues are skipped. It is a secondary safety net — the
+# primary fix is applying labels synchronously at creation time (see
+# _scan_todo_labels_for_task in claim-task-id.sh and
+# _gh_wrapper_derive_todo_labels in shared-gh-wrappers.sh).
+#
+# Fail-open:
+#   - If DISPATCH_HYDRATION_WINDOW_S=0, the check is disabled.
+#   - If createdAt is absent from meta_json (pre-fetched JSON may lack it),
+#     the check returns 1 (allow dispatch to continue).
+#   - If date parsing fails on either platform, fail-open.
+#
+# Env:
+#   DISPATCH_HYDRATION_WINDOW_S  grace period in seconds (default 30, 0=off)
+#
+# Args: $1 = issue metadata JSON (must include createdAt field)
+#        $2 = issue number (for log output)
+#        $3 = repo slug (for log output)
+# Returns: exit 0 (block) if issue is within grace period + prints signal,
+#          exit 1 (allow) if old enough or data unavailable
+#######################################
+_is_assigned_check_hydration_window() {
+	local meta_json="$1"
+	local issue_number="${2:-unknown}"
+	local repo_slug="${3:-unknown}"
+
+	local window="${DISPATCH_HYDRATION_WINDOW_S:-30}"
+	[[ "$window" -le 0 ]] && return 1  # disabled
+
+	local created_at _jq_rc=0
+	created_at=$(printf '%s' "$meta_json" | jq -r '.createdAt // ""' 2>/dev/null) || _jq_rc=$?
+	# Fail-open: missing or unparseable JSON → allow dispatch
+	[[ "$_jq_rc" -ne 0 || -z "$created_at" ]] && return 1
+
+	local now_epoch=0 created_epoch=0
+	now_epoch=$(date -u '+%s' 2>/dev/null || echo "0")
+	# Support both GNU date (-d) and BSD date (-j -f)
+	created_epoch=$(date -u -d "$created_at" '+%s' 2>/dev/null ||
+		TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$created_at" '+%s' 2>/dev/null || echo "0")
+
+	# Fail-open: cannot parse timestamps
+	[[ "$now_epoch" -eq 0 || "$created_epoch" -eq 0 ]] && return 1
+
+	local age_s=$(( now_epoch - created_epoch ))
+	if [[ "$age_s" -lt "$window" ]]; then
+		printf 'HYDRATION_WINDOW (issue=%s repo=%s age=%ss window=%ss — labels may not be synced yet)\n' \
+			"$issue_number" "$repo_slug" "$age_s" "$window"
+		return 0  # block dispatch
+	fi
+	return 1  # old enough — allow normal dispatch checks to continue
+}
+
+#######################################
 # is_assigned helper: compute the blocking assignees set.
 #
 # Walks the assignees list and filters out:
@@ -779,8 +840,11 @@ is_assigned() {
 		&& printf '%s' "$ISSUE_META_JSON" | jq -e '.assignees and .labels' >/dev/null 2>&1; then
 		issue_meta_json="$ISSUE_META_JSON"
 	else
+		# t2436: include createdAt for the hydration window check (Approach B safety net).
+		# Existing callers that pass ISSUE_META_JSON without createdAt will skip that
+		# check (fail-open), which is correct — the primary fix is label sync at creation.
 		issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
-			--json state,assignees,labels 2>/dev/null) || gh_rc=$?
+			--json state,assignees,labels,createdAt 2>/dev/null) || gh_rc=$?
 	fi
 
 	# t2046: fail-closed on gh API failure. When we cannot fetch issue metadata
@@ -801,6 +865,14 @@ is_assigned() {
 
 	# t2007: cost-per-issue circuit breaker.
 	if _is_assigned_check_cost_budget "$issue_number" "$repo_slug" "$issue_meta_json"; then
+		return 0
+	fi
+
+	# t2436: Hydration window — skip dispatch for recently-created issues.
+	# Secondary safety net for the label-sync race window. Primary fix is
+	# synchronous label application at creation (claim-task-id.sh / gh_create_issue).
+	# Env: DISPATCH_HYDRATION_WINDOW_S (default 30, 0=disabled).
+	if _is_assigned_check_hydration_window "$issue_meta_json" "$issue_number" "$repo_slug"; then
 		return 0
 	fi
 
