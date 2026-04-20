@@ -1227,208 +1227,22 @@ get_provider_from_model() {
 }
 
 # =============================================================================
-# Configuration Loader (issue #2730 — JSONC config system)
+# Configuration Loader & Feature Toggles -- extracted module
 # =============================================================================
-# Loads user-configurable settings from JSONC config files:
-#   1. Defaults file (shipped with aidevops, overwritten on update)
-#      ~/.aidevops/agents/configs/aidevops.defaults.jsonc
-#   2. User overrides (~/.config/aidevops/config.jsonc)
-#   3. Environment variables (highest priority)
-#
-# Requires jq for JSONC parsing. Falls back to legacy .conf if jq unavailable.
-#
-# Scripts check config via:
-#   config_get <dotpath> [default]       — get any config value
-#   config_enabled <dotpath>             — check boolean config
-#   get_feature_toggle <key> [default]   — backward-compatible (flat key)
-#   is_feature_enabled <key>             — backward-compatible (flat key)
+# Functions: get_feature_toggle, is_feature_enabled, _load_config, _ft_env_map,
+#            _load_feature_toggles_legacy.
+# Variables: FEATURE_TOGGLES_DEFAULTS, FEATURE_TOGGLES_USER,
+#            _AIDEVOPS_CONFIG_MODE (populated on load).
+# Sources config-helper.sh and runtime-registry.sh transitively.
+# Extracted to shared-feature-toggles.sh (t2427, GH#20063) to keep this file
+# < 2000 lines. See shared-feature-toggles.sh for full documentation.
+# Sourcing this sub-library auto-invokes _load_config at its tail — no explicit
+# call needed here.
 
-# Source config-helper.sh (provides _jsonc_get, config_get, config_enabled, etc.)
-# IMPORTANT: source=/dev/null tells ShellCheck NOT to follow this source directive.
-# Without it, ShellCheck follows the cycle shared-constants.sh → config-helper.sh →
-# shared-constants.sh infinitely, consuming exponential memory (7-14 GB observed).
-# The include guard (_SHARED_CONSTANTS_LOADED at line 14) prevents infinite recursion
-# at execution time, but ShellCheck is a static analyzer and ignores runtime guards.
-# GH#3981: https://github.com/marcusquinn/aidevops/issues/3981
-# Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
-# in zsh (the MCP shell environment). Without this guard, sourcing from zsh
-# with set -u (nounset) fails with "BASH_SOURCE[0]: parameter not set". See GH#4904.
 _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
-_CONFIG_HELPER="${_SC_SELF%/*}/config-helper.sh"
-if [[ -r "$_CONFIG_HELPER" ]]; then
-	# shellcheck source=/dev/null
-	source "$_CONFIG_HELPER"
-fi
-
-# Source runtime registry (t1665.1) — central data source for all AI CLI runtimes
-_RUNTIME_REGISTRY="${_SC_SELF%/*}/runtime-registry.sh"
-if [[ -r "$_RUNTIME_REGISTRY" ]]; then
-	# shellcheck source=/dev/null
-	source "$_RUNTIME_REGISTRY"
-fi
-
-# Legacy paths (kept for backward compatibility and migration)
-FEATURE_TOGGLES_DEFAULTS="${HOME}/.aidevops/agents/configs/feature-toggles.conf.defaults"
-FEATURE_TOGGLES_USER="${HOME}/.config/aidevops/feature-toggles.conf"
-
-# Map from legacy toggle key to environment variable name.
-# Used by both the new JSONC system and the legacy fallback.
-_ft_env_map() {
-	local key="$1"
-	case "$key" in
-	auto_update) echo "AIDEVOPS_AUTO_UPDATE" ;;
-	update_interval) echo "AIDEVOPS_UPDATE_INTERVAL" ;;
-	skill_auto_update) echo "AIDEVOPS_SKILL_AUTO_UPDATE" ;;
-	skill_freshness_hours) echo "AIDEVOPS_SKILL_FRESHNESS_HOURS" ;;
-	tool_auto_update) echo "AIDEVOPS_TOOL_AUTO_UPDATE" ;;
-	tool_freshness_hours) echo "AIDEVOPS_TOOL_FRESHNESS_HOURS" ;;
-	tool_idle_hours) echo "AIDEVOPS_TOOL_IDLE_HOURS" ;;
-	supervisor_pulse) echo "AIDEVOPS_SUPERVISOR_PULSE" ;;
-	repo_sync) echo "AIDEVOPS_REPO_SYNC" ;;
-	repo_aidevops_health) echo "AIDEVOPS_REPO_HEALTH" ;;
-	openclaw_auto_update) echo "AIDEVOPS_OPENCLAW_AUTO_UPDATE" ;;
-	openclaw_freshness_hours) echo "AIDEVOPS_OPENCLAW_FRESHNESS_HOURS" ;;
-	upstream_watch) echo "AIDEVOPS_UPSTREAM_WATCH" ;;
-	upstream_watch_hours) echo "AIDEVOPS_UPSTREAM_WATCH_HOURS" ;;
-	max_interactive_sessions) echo "AIDEVOPS_MAX_SESSIONS" ;;
-	*) echo "" ;;
-	esac
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# Legacy fallback: load from .conf files when jq is not available
-# ---------------------------------------------------------------------------
-_load_feature_toggles_legacy() {
-	if [[ -r "$FEATURE_TOGGLES_DEFAULTS" ]]; then
-		local line key value
-		while IFS= read -r line || [[ -n "$line" ]]; do
-			[[ -z "$line" || "$line" == \#* ]] && continue
-			key="${line%%=*}"
-			value="${line#*=}"
-			[[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || continue
-			printf -v "_FT_${key}" '%s' "$value"
-		done <"$FEATURE_TOGGLES_DEFAULTS"
-	fi
-
-	if [[ -r "$FEATURE_TOGGLES_USER" ]]; then
-		local line key value
-		while IFS= read -r line || [[ -n "$line" ]]; do
-			[[ -z "$line" || "$line" == \#* ]] && continue
-			key="${line%%=*}"
-			value="${line#*=}"
-			[[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || continue
-			printf -v "_FT_${key}" '%s' "$value"
-		done <"$FEATURE_TOGGLES_USER"
-	fi
-
-	local toggle_keys="auto_update update_interval skill_auto_update skill_freshness_hours tool_auto_update tool_freshness_hours tool_idle_hours supervisor_pulse repo_sync repo_aidevops_health openclaw_auto_update openclaw_freshness_hours upstream_watch upstream_watch_hours max_interactive_sessions manage_opencode_config manage_claude_config session_greeting safety_hooks shell_aliases onboarding_prompt"
-	local tk env_var env_val
-	for tk in $toggle_keys; do
-		env_var=$(_ft_env_map "$tk")
-		if [[ -n "$env_var" ]]; then
-			env_val="${!env_var:-}"
-			if [[ -n "$env_val" ]]; then
-				printf -v "_FT_${tk}" '%s' "$env_val"
-			fi
-		fi
-	done
-
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# Detect which config system to use and load accordingly
-# ---------------------------------------------------------------------------
-_AIDEVOPS_CONFIG_MODE=""
-
-_load_config() {
-	# Prefer JSONC if jq is available, defaults file exists, AND config-helper.sh
-	# functions (config_get/config_enabled) are loaded. Without the functions,
-	# having jq + defaults is not enough — callers would fail at runtime.
-	local jsonc_defaults="${JSONC_DEFAULTS:-${HOME}/.aidevops/agents/configs/aidevops.defaults.jsonc}"
-	if command -v jq &>/dev/null && [[ -r "$jsonc_defaults" ]] &&
-		type config_get &>/dev/null && type config_enabled &>/dev/null; then
-		_AIDEVOPS_CONFIG_MODE="jsonc"
-		# config-helper.sh functions are already available via source above
-		# Auto-migrate legacy .conf if it exists and no JSONC user config yet
-		local jsonc_user="${JSONC_USER:-${HOME}/.config/aidevops/config.jsonc}"
-		if [[ -f "$FEATURE_TOGGLES_USER" && ! -f "$jsonc_user" ]]; then
-			if type _migrate_conf_to_jsonc &>/dev/null; then
-				if ! _migrate_conf_to_jsonc; then
-					echo "[WARN] Auto-migration from legacy config failed. Run 'aidevops config migrate' manually." >&2
-				fi
-			fi
-		fi
-	else
-		_AIDEVOPS_CONFIG_MODE="legacy"
-		_load_feature_toggles_legacy
-	fi
-
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# Backward-compatible API: get_feature_toggle / is_feature_enabled
-# These accept flat legacy keys (e.g. "auto_update") and route to the
-# appropriate backend (JSONC or legacy .conf).
-# ---------------------------------------------------------------------------
-
-# Get a feature toggle / config value.
-# Usage: get_feature_toggle <key> [default]
-# Accepts both legacy flat keys and new dotpath keys.
-get_feature_toggle() {
-	local key="$1"
-	local default="${2:-}"
-
-	if [[ "$_AIDEVOPS_CONFIG_MODE" == "jsonc" ]]; then
-		# Map legacy key to dotpath if needed
-		local dotpath
-		if type _legacy_key_to_dotpath &>/dev/null; then
-			dotpath=$(_legacy_key_to_dotpath "$key")
-		else
-			dotpath="$key"
-		fi
-		config_get "$dotpath" "$default"
-	else
-		# Legacy mode: read from _FT_* variables
-		local var_name="_FT_${key}"
-		local value="${!var_name:-}"
-		if [[ -n "$value" ]]; then
-			echo "$value"
-		else
-			echo "$default"
-		fi
-	fi
-	return 0
-}
-
-# Check if a feature toggle / config boolean is enabled (true).
-# Usage: if is_feature_enabled auto_update; then ...
-is_feature_enabled() {
-	local key="$1"
-
-	if [[ "$_AIDEVOPS_CONFIG_MODE" == "jsonc" ]]; then
-		local dotpath
-		if type _legacy_key_to_dotpath &>/dev/null; then
-			dotpath=$(_legacy_key_to_dotpath "$key")
-		else
-			dotpath="$key"
-		fi
-		config_enabled "$dotpath"
-		return $?
-	else
-		local value
-		value="$(get_feature_toggle "$key" "true")"
-		local lower
-		lower=$(echo "$value" | tr '[:upper:]' '[:lower:]')
-		[[ "$lower" == "true" ]]
-		return $?
-	fi
-}
-
-# Load config immediately when shared-constants.sh is sourced
-_load_config
+# shellcheck source=./shared-feature-toggles.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _SC_SELF
+source "${_SC_SELF%/*}/shared-feature-toggles.sh"
 
 # This ensures all constants are available when this file is sourced
 export CONTENT_TYPE_JSON CONTENT_TYPE_FORM USER_AGENT
