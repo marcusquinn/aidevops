@@ -449,38 +449,119 @@ Earlier versions of \`_close_conflicting_pr\` would have auto-closed this PR wit
 }
 
 #######################################
-# Close a conflicting PR with audit comment.
+# Helpers for _close_conflicting_pr (t2438, GH#20060).
 #
-# GH#17574: Before saying "remains open for re-attempt", check if the
-# work has already landed on main (via the linked issue's task ID in
-# recent commits). If yes, close the linked issue too and say so —
-# the misleading "remains open for re-attempt" comment was itself a
-# dispatch trigger that caused a third redundant worker in the
-# observed incident.
+# The orchestrator `_close_conflicting_pr` below is composed of these
+# helpers to keep every piece under the 100-line function-complexity
+# threshold. Module-level globals use the `_CCPR_*` prefix — bash 3.2
+# has no `local -n` namerefs, so helpers that need to return multiple
+# values do so by side effect on shared state. The orchestrator resets
+# the globals before each invocation.
 #
-# GH#18815: The task-ID grep alone produced a false positive in PR
-# #18760, where a planning PR (`plan(t2059, t2060): file follow-ups`)
-# was mistaken for an implementation PR. The fix requires file overlap
-# between the closing PR and the matching commit before claiming the
-# work landed. On overlap miss or lookup failure, the PR is left open
-# and a one-time rebase nudge is posted.
-#
-# Args: $1=PR number, $2=repo slug, $3=PR title
+# _CCPR_MATCHING_SHA / _CCPR_MATCHING_SUBJECT  — set by
+#   _find_task_id_match_on_main. Empty on no-match or fetch error.
+# _CCPR_WORK_ON_MAIN / _CCPR_MERGING_PR         — set by
+#   _close_conflicting_pr_classify_landed. The orchestrator reads them
+#   after the classifier returns to choose the close path.
 #######################################
-_close_conflicting_pr() {
+
+#######################################
+# Parse the trailing `(#NNN)` squash-merge suffix from a commit subject.
+# Outputs the PR number to stdout. Emits nothing (exit 0) if no match —
+# non-squash merges and direct pushes legitimately have no suffix, so
+# this is not an error condition.
+#
+# Args: $1 = commit subject line
+#######################################
+_parse_squash_merge_pr() {
+	local subject="$1"
+	[[ -n "$subject" ]] || return 0
+	printf '%s' "$subject" |
+		grep -oE '\(#[0-9]+\)$' |
+		grep -oE '[0-9]+' | head -1 || true
+	return 0
+}
+
+#######################################
+# Find the most recent commit on the default branch whose subject
+# contains the given task ID as a word-boundary-delimited token.
+#
+# Sets module globals:
+#   _CCPR_MATCHING_SHA      - full SHA of the matching commit, or empty
+#   _CCPR_MATCHING_SUBJECT  - subject line of the matching commit, or empty
+#
+# Fail-open: any fetch failure or missing match leaves both globals
+# empty and returns 0. The caller distinguishes no-match from match via
+# the globals, not the return code.
+#
+# Args: $1 = repo_slug, $2 = task_id
+#######################################
+_find_task_id_match_on_main() {
+	local repo_slug="$1"
+	local task_id="$2"
+
+	_CCPR_MATCHING_SHA=""
+	_CCPR_MATCHING_SUBJECT=""
+
+	[[ -n "$repo_slug" && -n "$task_id" ]] || return 0
+
+	# GH#18815: Fetch (sha, subject) pairs as JSON instead of subjects
+	# only, so the file-overlap verification step can look up the
+	# matching commit's files via `gh api repos/.../commits/SHA`.
+	local commits_json
+	commits_json=$(gh api "repos/${repo_slug}/commits" \
+		--method GET -f per_page=50 \
+		--jq '[.[] | {sha: .sha, subject: (.commit.message | split("\n")[0])}]' \
+		2>/dev/null) || commits_json=""
+	[[ -n "$commits_json" && "$commits_json" != "null" ]] || return 0
+
+	# Use jq with a regex test for word-boundary matching on the
+	# subject. `first // empty` returns the first match or an empty
+	# string when nothing matches — distinguishable from a malformed
+	# JSON response.
+	local matching_obj
+	matching_obj=$(printf '%s' "$commits_json" |
+		jq -c --arg tid "$task_id" '
+			[.[] | select(.subject | test("(^|[^a-zA-Z0-9])" + $tid + "([^a-zA-Z0-9]|$)"; "i"))] | first // empty
+		' 2>/dev/null) || matching_obj=""
+	[[ -n "$matching_obj" && "$matching_obj" != "null" ]] || return 0
+
+	_CCPR_MATCHING_SHA=$(printf '%s' "$matching_obj" | jq -r '.sha // empty' 2>/dev/null) || _CCPR_MATCHING_SHA=""
+	_CCPR_MATCHING_SUBJECT=$(printf '%s' "$matching_obj" | jq -r '.subject // empty' 2>/dev/null) || _CCPR_MATCHING_SUBJECT=""
+	return 0
+}
+
+#######################################
+# Gate 1 of _close_conflicting_pr: origin:interactive protection.
+#
+# Fetches the PR's labels with fail-CLOSED semantics. If the label
+# fetch fails, or if origin:interactive is present, the caller must
+# NOT close the PR.
+#
+# GH#18285 post-mortem: origin:interactive PRs are created during
+# maintainer sessions. The task-ID-on-main heuristic produces false
+# positives when multiple PRs share a task ID (incremental work on
+# the same issue). Maintainers decide what is redundant — the pulse
+# must not auto-close their work.
+#
+# t2383 Fix 3: fail CLOSED on label read failure — if we can't read
+# labels, we might be about to close a protected origin:interactive
+# PR. Also use `grep -Fxq` (exact line match) not `grep -q`
+# (substring) so labels like "origin:interactive-fork" don't
+# false-match "origin:interactive".
+#
+# Args: $1 = pr_number, $2 = repo_slug
+# Returns:
+#   0 — caller must return 0 without closing (fetch failed or
+#       origin:interactive)
+#   1 — safe to proceed with close logic
+# Side effects: posts rebase nudge via
+#   _post_rebase_nudge_on_interactive_conflicting on origin:interactive
+#######################################
+_close_conflicting_pr_check_interactive_guard() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local pr_title="$3"
 
-	# GH#18285 post-mortem: origin:interactive PRs are created during maintainer
-	# sessions. The task-ID-on-main heuristic produces false positives when
-	# multiple PRs share a task ID (incremental work on the same issue).
-	# Maintainers decide what is redundant — the pulse must not auto-close their work.
-	#
-	# t2383 Fix 3: fail CLOSED on label read failure — if we can't read labels,
-	# we might be about to close a protected origin:interactive PR. Also use
-	# grep -Fxq (exact line match) not grep -q (substring) so labels like
-	# "origin:interactive-fork" don't false-match "origin:interactive".
 	local pr_labels label_fetch_rc
 	label_fetch_rc=0
 	pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
@@ -491,125 +572,218 @@ _close_conflicting_pr() {
 	fi
 	if printf '%s\n' "$pr_labels" | grep -Fxq 'origin:interactive'; then
 		echo "[pulse-wrapper] Deterministic merge: skipping auto-close of origin:interactive PR #${pr_number} — maintainer session work is never auto-closed" >>"$LOGFILE"
-		# GH#18650 (Fix 4): post a one-time rebase nudge so the maintainer
-		# has a visible signal that their CONFLICTING PR needs manual
-		# attention. Without this, interactive CONFLICTING PRs rot
-		# silently — the pulse log keeps skipping them every cycle but
-		# the maintainer never sees the signal.
+		# GH#18650 (Fix 4): post a one-time rebase nudge so the
+		# maintainer has a visible signal that their CONFLICTING PR
+		# needs manual attention. Without this, interactive
+		# CONFLICTING PRs rot silently — the pulse log keeps skipping
+		# them every cycle but the maintainer never sees the signal.
 		_post_rebase_nudge_on_interactive_conflicting "$pr_number" "$repo_slug"
 		return 0
 	fi
+	return 1
+}
 
-	# GH#17574 / t2032: Check if the work is already on the default branch.
-	# Extract task ID from PR title (e.g., "t153: add dark mode" → "t153")
-	# and search recent commits on the default branch. When found, also try
-	# to extract the merging PR number from the squash-merge suffix "(#NNN)"
-	# on the matching commit subject, so the close comment can cite the
-	# actual audit trail instead of claiming the work was "committed directly
-	# to main" (which is misleading when the common case is a sibling PR).
-	#
-	# GH#18815: Fetch (sha, subject) pairs as JSON instead of subjects only,
-	# so the file-overlap verification step can look up the matching commit's
-	# files via `gh api repos/.../commits/SHA`.
-	local work_on_main="false"
-	local merging_pr=""
-	local task_id_from_pr
-	task_id_from_pr=$(printf '%s' "$pr_title" | grep -oE '^(t[0-9]+|GH#[0-9]+)' | head -1) || task_id_from_pr=""
+#######################################
+# Gate 2 of _close_conflicting_pr: classify whether the work has
+# already landed on main.
+#
+# Uses the task ID extracted from the PR title to search recent
+# commits on the default branch, then verifies file overlap before
+# concluding the work is a genuine duplicate.
+#
+# Sets module globals:
+#   _CCPR_WORK_ON_MAIN  - "true" or "false"
+#   _CCPR_MERGING_PR    - squash-merge PR number (empty when unparseable)
+#
+# Return codes:
+#   0 — classification complete; caller consults _CCPR_WORK_ON_MAIN
+#   2 — false-positive detected (task-ID match without file overlap, or
+#       file-lookup failure). Rebase nudge already posted; caller must
+#       return 0 without closing the PR.
+#
+# GH#18815: The task-ID grep alone produced a false positive in PR
+# #18760 where a planning PR (`plan(t2059, t2060): file follow-ups`)
+# was mistaken for an implementation PR. File-overlap verification is
+# the guard against that class of error.
+#
+# Args: $1 = pr_number, $2 = repo_slug, $3 = task_id (may be empty)
+#######################################
+_close_conflicting_pr_classify_landed() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local task_id="$3"
 
-	if [[ -n "$task_id_from_pr" ]]; then
-		local commits_json
-		commits_json=$(gh api "repos/${repo_slug}/commits" \
-			--method GET -f per_page=50 \
-			--jq '[.[] | {sha: .sha, subject: (.commit.message | split("\n")[0])}]' \
-			2>/dev/null) || commits_json=""
+	_CCPR_WORK_ON_MAIN="false"
+	_CCPR_MERGING_PR=""
 
-		local matching_sha=""
-		local matching_subject=""
-		if [[ -n "$commits_json" && "$commits_json" != "null" ]]; then
-			# Use jq with a regex test for word-boundary matching on the subject.
-			# `first // empty` returns the first match or an empty string when
-			# nothing matches — distinguishable from a malformed JSON response.
-			local matching_obj
-			matching_obj=$(printf '%s' "$commits_json" |
-				jq -c --arg tid "$task_id_from_pr" '
-					[.[] | select(.subject | test("(^|[^a-zA-Z0-9])" + $tid + "([^a-zA-Z0-9]|$)"; "i"))] | first // empty
-				' 2>/dev/null) || matching_obj=""
-			if [[ -n "$matching_obj" && "$matching_obj" != "null" ]]; then
-				matching_sha=$(printf '%s' "$matching_obj" | jq -r '.sha // empty' 2>/dev/null) || matching_sha=""
-				matching_subject=$(printf '%s' "$matching_obj" | jq -r '.subject // empty' 2>/dev/null) || matching_subject=""
-			fi
-		fi
+	[[ -n "$task_id" ]] || return 0
 
-		if [[ -n "$matching_sha" ]]; then
-			# GH#18815: Verify the matching commit and the closing PR share
-			# at least one non-planning file. The task-ID grep alone produced
-			# false positives when a planning PR (e.g., 'plan(t2060): file
-			# follow-ups') was merged before the implementation PR — the
-			# regex matched the planning subject and the implementation PR
-			# was wrongly auto-closed (PR #18760 incident, 2026-04-14).
-			if _verify_pr_overlaps_commit "$pr_number" "$repo_slug" "$matching_sha"; then
-				work_on_main="true"
-				# Parse trailing "(#NNN)" from the matching commit's subject.
-				# Non-squash merges won't have this suffix — that's fine, we
-				# just omit the parenthetical from the close comment.
-				merging_pr=$(printf '%s' "$matching_subject" |
-					grep -oE '\(#[0-9]+\)$' |
-					grep -oE '[0-9]+' | head -1) || merging_pr=""
-			else
-				# Task ID matched but file footprints don't overlap, OR file
-				# lookup failed (network error, missing API permissions). Fail
-				# CLOSED — leave the PR open and post a one-time rebase nudge.
-				# Better to leave a stuck PR than to discard real work.
-				local matching_pr_for_nudge=""
-				matching_pr_for_nudge=$(printf '%s' "$matching_subject" |
-					grep -oE '\(#[0-9]+\)$' |
-					grep -oE '[0-9]+' | head -1) || matching_pr_for_nudge=""
+	_find_task_id_match_on_main "$repo_slug" "$task_id"
+	[[ -n "$_CCPR_MATCHING_SHA" ]] || return 0
 
-				echo "[pulse-wrapper] Deterministic merge: task ID match for ${task_id_from_pr} in commit ${matching_sha:0:8} has no implementation file overlap with PR #${pr_number} — false-positive heuristic, leaving PR open for rebase (GH#18815)" >>"$LOGFILE"
-				_post_rebase_nudge_on_worker_conflicting "$pr_number" "$repo_slug" "$task_id_from_pr" "$matching_pr_for_nudge"
-				return 0
-			fi
-		fi
+	# GH#18815: Verify the matching commit and the closing PR share
+	# at least one non-planning file. The task-ID grep alone produced
+	# false positives when a planning PR (e.g., 'plan(t2060): file
+	# follow-ups') was merged before the implementation PR — the
+	# regex matched the planning subject and the implementation PR
+	# was wrongly auto-closed (PR #18760 incident, 2026-04-14).
+	if _verify_pr_overlaps_commit "$pr_number" "$repo_slug" "$_CCPR_MATCHING_SHA"; then
+		_CCPR_WORK_ON_MAIN="true"
+		# Parse trailing "(#NNN)" from the matching commit's
+		# subject. Non-squash merges won't have this suffix — that's
+		# fine, we just omit the parenthetical from the close
+		# comment.
+		_CCPR_MERGING_PR=$(_parse_squash_merge_pr "$_CCPR_MATCHING_SUBJECT") || _CCPR_MERGING_PR=""
+		return 0
 	fi
 
-	if [[ "$work_on_main" == "true" ]]; then
-		# Work is already on main — close PR with accurate message.
-		# Cite the merging PR number when we could parse one.
-		local landed_via=""
-		if [[ -n "$merging_pr" ]]; then
-			landed_via=" (via PR #${merging_pr})"
-		fi
-		gh pr close "$pr_number" --repo "$repo_slug" \
-			--comment "Closing — this PR has merge conflicts with the base branch. The work for this task (\`${task_id_from_pr}\`) has already landed on main${landed_via}, so no re-attempt is needed.
+	# Task ID matched but file footprints don't overlap, OR file
+	# lookup failed (network error, missing API permissions). Fail
+	# CLOSED — leave the PR open and post a one-time rebase nudge.
+	# Better to leave a stuck PR than to discard real work.
+	local matching_pr_for_nudge
+	matching_pr_for_nudge=$(_parse_squash_merge_pr "$_CCPR_MATCHING_SUBJECT") || matching_pr_for_nudge=""
+
+	echo "[pulse-wrapper] Deterministic merge: task ID match for ${task_id} in commit ${_CCPR_MATCHING_SHA:0:8} has no implementation file overlap with PR #${pr_number} — false-positive heuristic, leaving PR open for rebase (GH#18815)" >>"$LOGFILE"
+	_post_rebase_nudge_on_worker_conflicting "$pr_number" "$repo_slug" "$task_id" "$matching_pr_for_nudge"
+	return 2
+}
+
+#######################################
+# Close the PR with the "work has already landed on main" wording.
+# Cites the merging PR via `(via PR #NNN)` when one was parsed from
+# the matching commit's squash-merge suffix; otherwise omits the
+# parenthetical.
+#
+# GH#17642: Does NOT close the linked issue — closing a conflicting
+# PR is safe (PRs are cheap), but closing the ISSUE based on a commit
+# search has too many false positives. The issue stays open for
+# re-dispatch with a fresh branch.
+#
+# Args: $1 = pr_number, $2 = repo_slug, $3 = pr_title, $4 = task_id,
+#       $5 = merging_pr (may be empty)
+#######################################
+_close_conflicting_pr_comment_landed() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_title="$3"
+	local task_id="$4"
+	local merging_pr="$5"
+
+	local landed_via=""
+	if [[ -n "$merging_pr" ]]; then
+		landed_via=" (via PR #${merging_pr})"
+	fi
+	gh pr close "$pr_number" --repo "$repo_slug" \
+		--comment "Closing — this PR has merge conflicts with the base branch. The work for this task (\`${task_id}\`) has already landed on main${landed_via}, so no re-attempt is needed.
 
 _Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null || true
 
-		# GH#17642: Do NOT auto-close the linked issue. Closing a conflicting
-		# PR is safe (PRs are cheap), but closing the ISSUE based on a commit
-		# search has too many false positives. The issue stays open for
-		# re-dispatch with a fresh branch. Only the verified merge-pass
-		# (which checks for an actually-merged PR) should close issues.
-		echo "[pulse-wrapper] Deterministic merge: conflicting PR #${pr_number} closed, linked issue left open for re-dispatch (GH#17642)" >>"$LOGFILE"
+	# GH#17642: Do NOT auto-close the linked issue. Closing a
+	# conflicting PR is safe (PRs are cheap), but closing the ISSUE
+	# based on a commit search has too many false positives. The
+	# issue stays open for re-dispatch with a fresh branch. Only the
+	# verified merge-pass (which checks for an actually-merged PR)
+	# should close issues.
+	echo "[pulse-wrapper] Deterministic merge: conflicting PR #${pr_number} closed, linked issue left open for re-dispatch (GH#17642)" >>"$LOGFILE"
 
-		echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title} (work already on main)" >>"$LOGFILE"
-	else
-		# Work NOT on main — carry forward the diff to the linked issue so the
-		# next worker can rebase/cherry-pick instead of re-deriving from scratch
-		# (t2118). Fail-open: any failure is logged and the close still proceeds.
-		local linked_issue_for_diff
-		linked_issue_for_diff=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue_for_diff=""
-		if [[ -n "$linked_issue_for_diff" && "$linked_issue_for_diff" =~ ^[0-9]+$ ]]; then
-			_carry_forward_pr_diff "$pr_number" "$repo_slug" "$linked_issue_for_diff" || true
-		fi
+	echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title} (work already on main)" >>"$LOGFILE"
+	return 0
+}
 
-		# Use standard message but without the misleading
-		# "remains open for re-attempt" phrasing (GH#17574)
-		gh pr close "$pr_number" --repo "$repo_slug" \
-			--comment "Closing — this PR has merge conflicts with the base branch. If the linked issue is still open, a worker will be dispatched to re-attempt with a fresh branch.
+#######################################
+# Carry the PR diff forward to the linked issue body (t2118) and
+# close the PR with the "re-attempt with a fresh branch" wording.
+#
+# Fail-open: the carry-forward call is best-effort. The close still
+# proceeds even if the diff append fails.
+#
+# Args: $1 = pr_number, $2 = repo_slug, $3 = pr_title
+#######################################
+_close_conflicting_pr_comment_not_landed() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_title="$3"
+
+	# Work NOT on main — carry forward the diff to the linked issue
+	# so the next worker can rebase/cherry-pick instead of
+	# re-deriving from scratch (t2118). Fail-open: any failure is
+	# logged and the close still proceeds.
+	local linked_issue_for_diff
+	linked_issue_for_diff=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue_for_diff=""
+	if [[ -n "$linked_issue_for_diff" && "$linked_issue_for_diff" =~ ^[0-9]+$ ]]; then
+		_carry_forward_pr_diff "$pr_number" "$repo_slug" "$linked_issue_for_diff" || true
+	fi
+
+	# Use standard message but without the misleading
+	# "remains open for re-attempt" phrasing (GH#17574).
+	gh pr close "$pr_number" --repo "$repo_slug" \
+		--comment "Closing — this PR has merge conflicts with the base branch. If the linked issue is still open, a worker will be dispatched to re-attempt with a fresh branch.
 
 _Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
 
-		echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Close a conflicting PR with audit comment.
+#
+# GH#17574: Before saying "remains open for re-attempt", check if
+# the work has already landed on main (via the linked issue's task
+# ID in recent commits). If yes, close the PR with a message
+# referencing the audit trail.
+#
+# GH#18815: The task-ID grep alone produced a false positive in PR
+# #18760, where a planning PR (`plan(t2059, t2060): file
+# follow-ups`) was mistaken for an implementation PR. The fix
+# requires file overlap between the closing PR and the matching
+# commit before claiming the work landed. On overlap miss or
+# lookup failure, the PR is left open and a one-time rebase nudge
+# is posted.
+#
+# t2438 / GH#20060: decomposed into helpers to keep this function
+# under the 100-line function-complexity threshold. The orchestrator
+# below is a thin driver — each gate is its own helper so the
+# control flow reads top-to-bottom without nested conditionals.
+#
+# Args: $1=PR number, $2=repo slug, $3=PR title
+#######################################
+_close_conflicting_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_title="$3"
+
+	# Gate 1: origin:interactive protection (with fail-CLOSED label
+	# fetch). Returns 0 (action taken / skipped) means the caller
+	# must NOT close this PR.
+	if _close_conflicting_pr_check_interactive_guard "$pr_number" "$repo_slug"; then
+		return 0
+	fi
+
+	# Gate 2: classify whether the work has already landed on main.
+	# GH#17574 / t2032: Check if the work is already on the default
+	# branch. Extract task ID from PR title (e.g., "t153: add dark
+	# mode" → "t153") so the classifier can search recent commits
+	# with a word-boundary-safe regex.
+	local task_id_from_pr
+	task_id_from_pr=$(printf '%s' "$pr_title" | grep -oE '^(t[0-9]+|GH#[0-9]+)' | head -1) || task_id_from_pr=""
+
+	local classify_rc=0
+	_close_conflicting_pr_classify_landed "$pr_number" "$repo_slug" "$task_id_from_pr" || classify_rc=$?
+	# Return code 2 means a false-positive was detected and the
+	# rebase nudge was already posted. Leave the PR open.
+	[[ $classify_rc -eq 2 ]] && return 0
+
+	# Gate 3: close the PR with the wording appropriate to the
+	# classified state.
+	if [[ "$_CCPR_WORK_ON_MAIN" == "true" ]]; then
+		_close_conflicting_pr_comment_landed \
+			"$pr_number" "$repo_slug" "$pr_title" \
+			"$task_id_from_pr" "$_CCPR_MERGING_PR"
+	else
+		_close_conflicting_pr_comment_not_landed \
+			"$pr_number" "$repo_slug" "$pr_title"
 	fi
 	return 0
 }

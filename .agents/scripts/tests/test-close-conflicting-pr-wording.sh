@@ -168,30 +168,56 @@ teardown_sandbox() {
 	return 0
 }
 
-# Source the helpers under test from pulse-merge.sh in isolation. The
-# parent module is sourced by pulse-wrapper.sh and depends on bootstrap
+# Source the helpers under test from pulse-merge-conflict.sh in isolation.
+# The parent module is sourced by pulse-wrapper.sh and depends on bootstrap
 # state, so we extract just the function bodies into a temp file and
 # source that.
+#
+# GH#19836: These helpers were extracted from pulse-merge.sh to
+# pulse-merge-conflict.sh in PR #19842 (conflict-handling cluster).
 load_functions_under_test() {
 	local repo_root
 	repo_root=$(cd "$(dirname "$0")/../../.." && pwd)
-	local src="${repo_root}/.agents/scripts/pulse-merge.sh"
+	local src="${repo_root}/.agents/scripts/pulse-merge-conflict.sh"
 	local tmp_fn="${TEST_ROOT}/pulse-merge-funcs.sh"
 
 	# Extract these functions in order:
+	#   _post_rebase_nudge_on_interactive_conflicting (label-fetch fail path)
 	#   _is_planning_path_for_overlap
 	#   _verify_pr_overlaps_commit
 	#   _post_rebase_nudge_on_worker_conflicting
-	#   _close_conflicting_pr
+	#   _parse_squash_merge_pr                         (t2438)
+	#   _find_task_id_match_on_main                    (t2438)
+	#   _close_conflicting_pr_check_interactive_guard  (t2438)
+	#   _close_conflicting_pr_classify_landed          (t2438)
+	#   _close_conflicting_pr_comment_landed           (t2438)
+	#   _close_conflicting_pr_comment_not_landed       (t2438)
+	#   _close_conflicting_pr                          (orchestrator)
 	# Each definition uses tab-indented bodies with a column-0 "}" closer.
 	awk '
-		/^_is_planning_path_for_overlap\(\) \{$/    { fn=1 }
-		/^_verify_pr_overlaps_commit\(\) \{$/        { fn=1 }
-		/^_post_rebase_nudge_on_worker_conflicting\(\) \{$/ { fn=1 }
-		/^_close_conflicting_pr\(\) \{$/             { fn=1 }
+		/^_post_rebase_nudge_on_interactive_conflicting\(\) \{$/ { fn=1 }
+		/^_is_planning_path_for_overlap\(\) \{$/                 { fn=1 }
+		/^_verify_pr_overlaps_commit\(\) \{$/                     { fn=1 }
+		/^_post_rebase_nudge_on_worker_conflicting\(\) \{$/       { fn=1 }
+		/^_parse_squash_merge_pr\(\) \{$/                         { fn=1 }
+		/^_find_task_id_match_on_main\(\) \{$/                    { fn=1 }
+		/^_close_conflicting_pr_check_interactive_guard\(\) \{$/  { fn=1 }
+		/^_close_conflicting_pr_classify_landed\(\) \{$/          { fn=1 }
+		/^_close_conflicting_pr_comment_landed\(\) \{$/           { fn=1 }
+		/^_close_conflicting_pr_comment_not_landed\(\) \{$/       { fn=1 }
+		/^_close_conflicting_pr\(\) \{$/                          { fn=1 }
 		fn { print }
 		fn && /^\}$/ { fn=0 }
 	' "$src" >"$tmp_fn"
+
+	# _carry_forward_pr_diff is called by the "not-landed" branch; stub it
+	# so the carry-forward side effect doesn't try to hit gh during tests.
+	# The stubbed gh would satisfy it too, but declaring the function
+	# explicitly keeps the test hermetic.
+	cat >>"$tmp_fn" <<'STUB_EOF'
+_carry_forward_pr_diff() { return 0; }
+_extract_linked_issue() { return 0; }
+STUB_EOF
 
 	# shellcheck source=/dev/null
 	source "$tmp_fn"
