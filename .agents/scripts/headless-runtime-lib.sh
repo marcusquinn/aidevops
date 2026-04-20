@@ -740,21 +740,29 @@ _acquire_session_lock() {
 	local lock_file="${LOCK_DIR}/${safe_key}.pid"
 
 	if [[ -f "$lock_file" ]]; then
-		local existing_pid
-		existing_pid=$(cat "$lock_file" 2>/dev/null) || existing_pid=""
+		# t2421: format is "pid|argv_hash" — parse both fields (backward-compat with bare pid)
+		local existing_raw existing_pid existing_hash
+		existing_raw=$(cat "$lock_file" 2>/dev/null) || existing_raw=""
+		existing_pid="${existing_raw%%|*}"
+		existing_hash="${existing_raw#*|}"
+		[[ "$existing_hash" == "$existing_pid" ]] && existing_hash=""  # no | separator = legacy format
 		if [[ -n "$existing_pid" ]] && [[ "$existing_pid" =~ ^[0-9]+$ ]]; then
-			if kill -0 "$existing_pid" 2>/dev/null; then
-				# Live process exists -- duplicate dispatch
-				print_warning "Duplicate dispatch blocked: session-key '${lock_session_key}' already has active worker PID ${existing_pid} (GH#6538)"
+			# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse
+			if _is_process_alive_and_matches "$existing_pid" "${WORKER_PROCESS_PATTERN:-}" "$existing_hash"; then
+				# Live worker process exists -- duplicate dispatch
+				print_warning "Duplicate dispatch blocked: session-key '${lock_session_key}' already has active worker PID ${existing_pid} (GH#6538/t2421)"
 				return 1
 			fi
-			# PID is dead -- stale lock, clean up and proceed
+			# PID is dead or reused by unrelated process -- stale lock, clean up and proceed
 		fi
 		rm -f "$lock_file"
 	fi
 
 	# nice -- lock acquired, this session key is ours
-	printf '%s' "$$" >"$lock_file"
+	# t2421: store pid|argv_hash for PID-reuse-resistant liveness checks
+	local _hrl_argv_hash=""
+	_hrl_argv_hash=$(_compute_argv_hash "$$" 2>/dev/null || echo "")
+	printf '%s|%s' "$$" "$_hrl_argv_hash" >"$lock_file"
 	return 0
 }
 

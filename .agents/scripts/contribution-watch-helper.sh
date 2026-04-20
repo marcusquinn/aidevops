@@ -165,7 +165,9 @@ _is_scan_running() {
 
 	local old_pid
 	old_pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
-	if [[ -n "$old_pid" ]] && [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
+	# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse
+	if [[ -n "$old_pid" ]] && [[ "$old_pid" =~ ^[0-9]+$ ]] && \
+	   _is_process_alive_and_matches "$old_pid" "contribution-watch-helper"; then
 		return 0
 	fi
 

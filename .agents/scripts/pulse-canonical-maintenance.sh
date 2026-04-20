@@ -102,7 +102,11 @@ _canonical_maintenance_has_active_session() {
 		if [[ -n "$stamp_worktree" ]] && [[ "$stamp_worktree" == "$repo_path"* ]]; then
 			local stamp_pid=""
 			stamp_pid=$(jq -r '.pid // ""' "$stamp" 2>/dev/null) || continue
-			if [[ -n "$stamp_pid" ]] && [[ "$stamp_pid" =~ ^[0-9]+$ ]] && kill -0 "$stamp_pid" 2>/dev/null; then
+			# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse.
+			local stamp_hash=""
+			stamp_hash=$(jq -r '.owner_argv_hash // empty' "$stamp" 2>/dev/null || echo "")
+			if [[ -n "$stamp_pid" ]] && [[ "$stamp_pid" =~ ^[0-9]+$ ]] && \
+			   _is_process_alive_and_matches "$stamp_pid" "${WORKER_PROCESS_PATTERN:-}" "$stamp_hash"; then
 				return 0
 			fi
 		fi

@@ -176,6 +176,11 @@ _isc_write_stamp() {
 	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	hostname=$(hostname 2>/dev/null || echo "unknown")
 
+	# t2421: compute argv hash for PID-reuse-resistant liveness checks.
+	# Stored in the stamp so scan-stale can verify PID identity later.
+	local argv_hash=""
+	argv_hash=$(_compute_argv_hash "$$" 2>/dev/null || echo "")
+
 	# Escape user-supplied fields via jq's string literals to avoid JSON injection
 	jq -n \
 		--arg issue "$issue" \
@@ -185,6 +190,7 @@ _isc_write_stamp() {
 		--arg pid "$$" \
 		--arg hostname "$hostname" \
 		--arg user "$user" \
+		--arg argv_hash "$argv_hash" \
 		'{
 			issue: ($issue | tonumber),
 			slug: $slug,
@@ -192,7 +198,8 @@ _isc_write_stamp() {
 			claimed_at: $claimed_at,
 			pid: ($pid | tonumber),
 			hostname: $hostname,
-			user: $user
+			user: $user,
+			owner_argv_hash: $argv_hash
 		}' >"$stamp_file" 2>/dev/null || {
 		_isc_warn "failed to write stamp: $stamp_file"
 		return 0
@@ -1120,7 +1127,13 @@ _isc_scan_dead_stamps_phase() {
 			[[ "$hostname" == "$local_host" ]] || continue
 
 			local pid_alive=0
-			[[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && pid_alive=1
+			# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse.
+			# Read stored argv hash from stamp for higher precision.
+			local stored_hash
+			stored_hash=$(jq -r '.owner_argv_hash // empty' "$stamp" 2>/dev/null || echo "")
+			if [[ -n "$pid" ]] && _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash"; then
+				pid_alive=1
+			fi
 
 			local worktree_exists=0
 			[[ -n "$worktree" && -d "$worktree" ]] && worktree_exists=1

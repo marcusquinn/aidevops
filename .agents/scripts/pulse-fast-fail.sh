@@ -151,18 +151,25 @@ _ff_with_lock() {
 		fi
 		# Stale lock detection: read the owner PID stored in the lock directory.
 		# If that process is no longer running, the lock is orphaned — clear it.
-		local _ff_owner_pid
-		_ff_owner_pid=$(cat "${lock_dir}/owner.pid" 2>/dev/null || true)
-		if [[ -n "$_ff_owner_pid" ]] && ! kill -0 "$_ff_owner_pid" 2>/dev/null; then
-			echo "[pulse-wrapper] _ff_with_lock: clearing stale lock (owner PID ${_ff_owner_pid} gone)" >>"$LOGFILE"
+		# t2421: format is "pid|argv_hash" — parse both fields.
+		local _ff_owner_raw _ff_owner_pid _ff_owner_hash
+		_ff_owner_raw=$(cat "${lock_dir}/owner.pid" 2>/dev/null || true)
+		_ff_owner_pid="${_ff_owner_raw%%|*}"
+		_ff_owner_hash="${_ff_owner_raw#*|}"
+		[[ "$_ff_owner_hash" == "$_ff_owner_pid" ]] && _ff_owner_hash=""  # no | separator = legacy format
+		# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse
+		if [[ -n "$_ff_owner_pid" ]] && ! _is_process_alive_and_matches "$_ff_owner_pid" "${PULSE_PROCESS_PATTERN:-}" "$_ff_owner_hash"; then
+			echo "[pulse-wrapper] _ff_with_lock: clearing stale lock (owner PID ${_ff_owner_pid} gone or reused, t2421)" >>"$LOGFILE"
 			rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
 			rmdir "$lock_dir" 2>/dev/null || true
 			continue
 		fi
 		sleep 0.1
 	done
-	# Record owner PID inside lock directory so retrying callers can detect staleness.
-	printf '%s\n' "$$" >"${lock_dir}/owner.pid" 2>/dev/null || true
+	# Record owner PID (and argv hash for t2421 PID-reuse detection) inside lock directory.
+	local _ff_argv_hash=""
+	_ff_argv_hash=$(_compute_argv_hash "$$" 2>/dev/null || echo "")
+	printf '%s|%s\n' "$$" "$_ff_argv_hash" >"${lock_dir}/owner.pid" 2>/dev/null || true
 	local rc=0
 	"$@" || rc=$?
 	rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
