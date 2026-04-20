@@ -679,6 +679,121 @@ map_tags_to_labels() {
 	return 0
 }
 
+# t2442: Check whether a parent-task issue body carries any of the
+# decomposition markers that the reconciler understands. Pure string
+# check — no I/O, no side effects.
+#
+# A body is considered "decomposition-ready" if it contains any of:
+#   - `## Children` / `## Child issues` / `## Sub-tasks` heading
+#     (matches _extract_children_section in pulse-issue-reconcile.sh)
+#   - `## Phase` heading (phase-decomposed roadmap)
+#   - Narrow prose patterns matched by _extract_children_from_prose:
+#     `Phase N #NNNN`, `filed as #NNNN`, `tracks #NNNN`, `blocked by #NNNN`
+#
+# Exit 0: body has at least one marker — parent-task is usable as-is,
+# no warning needed.
+# Exit 1: body has no markers — parent-task will be invisible to the
+# reconciler's children-detection paths AND the decomposition nudge
+# will fire next cycle. Caller should post a one-time warning.
+#
+# Arguments:
+#   $1 - parent issue body text
+_parent_body_has_phase_markers() {
+	local body="$1"
+	[[ -n "$body" ]] || return 1
+
+	# Fast path — any recognised heading is sufficient. Ordered by frequency
+	# observed in the aidevops backlog (## Children most common).
+	if printf '%s' "$body" | grep -qE '^##[[:space:]]+(Children|Child [Ii]ssues|Sub-?[Tt]asks|Phases?)[[:space:]]*$' 2>/dev/null; then
+		return 0
+	fi
+
+	# Prose patterns — must match _extract_children_from_prose's contract
+	# byte-for-byte so this check and the reconciler agree on what counts.
+	if printf '%s' "$body" | grep -qE '([Pp]hase[[:space:]]+[0-9]+[^#]*#[0-9]+|[Ff]iled[[:space:]]+as[[:space:]]*#[0-9]+|[Tt]racks[[:space:]]+#[0-9]+|[Bb]locked[[:space:]]-?[[:space:]]*by[[:space:]]*:?[[:space:]]*#[0-9]+)' 2>/dev/null; then
+		return 0
+	fi
+
+	return 1
+}
+
+# t2442: Post an idempotent warning comment on a newly-created issue that
+# was labelled `parent-task` but whose body has no decomposition markers.
+# This closes the loop between label application (which is now synchronous
+# via t2436) and the downstream reconciler — without markers, the
+# reconciler will nudge-then-escalate over 7+ days; we surface the problem
+# at CREATION time so the maintainer can either add markers, drop the
+# label, or decompose immediately.
+#
+# Non-blocking — this is a nudge, not a gate. The issue is already
+# created; the comment is informational.
+#
+# Idempotent via the `<!-- parent-task-no-phase-markers -->` marker.
+# Re-runs (e.g. from a follow-up issue edit that re-fires the warn path)
+# are no-ops.
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - issue number (must exist)
+# Returns: 0 if comment posted, 1 if skipped (marker present, missing
+# args, or API failure — all non-fatal).
+_post_parent_task_no_markers_warning() {
+	local slug="$1"
+	local issue_num="$2"
+
+	[[ -n "$slug" ]] || return 1
+	[[ "$issue_num" =~ ^[0-9]+$ ]] || return 1
+
+	local marker='<!-- parent-task-no-phase-markers -->'
+
+	# Idempotency check — skip if already commented. Best-effort on API
+	# failure: fall through to post a potentially-duplicate comment
+	# rather than silently dropping the warning.
+	local existing=""
+	existing=$(gh api "repos/${slug}/issues/${issue_num}/comments" \
+		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
+		2>/dev/null) || existing=""
+	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
+		return 1
+	fi
+
+	local comment_body="${marker}
+## Parent-task label applied — body has no decomposition markers
+
+This issue was just labelled \`parent-task\`, which **blocks pulse dispatch unconditionally** (see \`dispatch-dedup-helper.sh\` → \`PARENT_TASK_BLOCKED\`). The body does not currently include any of the markers the pulse's reconciler understands:
+
+- \`## Children\` / \`## Child issues\` / \`## Sub-tasks\` heading with \`#NNNN\` references
+- \`## Phase\` heading
+- Prose patterns like \`Phase 1 split out as #NNNN\`, \`filed as #NNNN\`, \`tracks #NNNN\`, \`Blocked by: #NNNN\`
+
+Without at least one of these, this issue will:
+
+1. Sit blocked (no worker can pick it up).
+2. Receive a decomposition nudge on the next pulse cycle (\`<!-- parent-needs-decomposition -->\`).
+3. Escalate to \`needs-maintainer-review\` after 7 days if still unresolved (t2442).
+4. Be picked up by the auto-decomposer scanner after 24h if the nudge sits (t2442) — a \`tier:thinking\` worker will be dispatched to propose a decomposition plan.
+
+**Quick fixes — pick one:**
+
+1. **Add phase markers** by editing this body. Even a single \`## Phases\` heading with a short list is enough.
+2. **Drop the parent-task label** if this is actually a single unit of work:
+
+   \`\`\`
+   gh issue edit ${issue_num} --repo ${slug} --remove-label parent-task
+   \`\`\`
+
+3. **Let the auto-decomposer handle it** — do nothing. The scanner will dispatch a decomposition worker in ~24h.
+
+See \`.agents/AGENTS.md\` → \"Parent / meta tasks\" (t1986 / t2442) for the full rule. Parent-task is for epics and roadmap trackers that will never be implemented as a single unit — only their children will.
+
+_Automated by \`_post_parent_task_no_markers_warning\` in \`issue-sync-lib.sh\` (t2442). Posted once per issue via the \`${marker}\` marker; re-runs are no-ops._"
+
+	gh issue comment "$issue_num" --repo "$slug" \
+		--body "$comment_body" >/dev/null 2>&1 || return 1
+
+	return 0
+}
+
 # =============================================================================
 # Compose — Issue Body
 # =============================================================================

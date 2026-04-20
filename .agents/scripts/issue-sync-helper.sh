@@ -794,6 +794,16 @@ _push_process_task() {
 		add_gh_ref_to_todo "$task_id" "$_PUSH_CREATED_NUM" "$todo_file"
 		# Sync relationships (blocked-by, sub-issues) after creation (t1889)
 		sync_relationships_for_task "$task_id" "$todo_file" "$repo"
+		# t2442: if the applied labels include `parent-task` AND the body
+		# has no decomposition markers, post a one-time warning. This
+		# surfaces the no-phase-markers state at creation time — before
+		# the 24h nudge + 7d escalation cascade wastes pulse cycles.
+		# Non-blocking: the issue was already created successfully, this
+		# is pure advisory. Failure is silent (try/true).
+		if [[ ",${labels}," == *",parent-task,"* ]] && \
+			! _parent_body_has_phase_markers "$body"; then
+			_post_parent_task_no_markers_warning "$repo" "$_PUSH_CREATED_NUM" || true
+		fi
 		echo "CREATED"
 	elif [[ $rc -eq 1 ]]; then
 		echo "SKIPPED"

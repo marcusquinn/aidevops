@@ -1168,12 +1168,24 @@ create_github_issue() {
 
 	cd "$repo_path" || return 1
 
+	# t2442: resolve repo slug once — used both by the delegation path
+	# and the bare-fallback path for the parent-task warn call. Must run
+	# BEFORE delegation because the delegation branch returns early.
+	local _slug_for_warn=""
+	_slug_for_warn=$(git -C "$repo_path" remote get-url "${REMOTE_NAME:-origin}" 2>/dev/null \
+		| sed 's|.*github\.com[:/]||;s|\.git$||' || true)
+
 	# Try rich delegation first (t1324)
 	local issue_num
 	if issue_num=$(_try_issue_sync_delegation "$title" "$repo_path"); then
 		_auto_assign_issue "$issue_num" "$repo_path"
 		_interactive_session_auto_claim_new_task "$issue_num" "$repo_path"
 		_lock_maintainer_issue_at_creation "$issue_num" "$repo_path"
+		# t2442: warn if parent-task label applied but body has no markers.
+		# The delegation path creates the issue via issue-sync-helper.sh
+		# cmd_push which ALREADY fires this warn — so we skip here to
+		# avoid duplicate comments. The bare-fallback path below runs the
+		# warn unconditionally because it uses `gh issue create` directly.
 		echo "$issue_num"
 		return 0
 	fi
@@ -1239,6 +1251,20 @@ create_github_issue() {
 		local sync_helper="${SCRIPT_DIR}/issue-sync-helper.sh"
 		if [[ -x "$sync_helper" ]]; then
 			"$sync_helper" relationships "$task_id_for_rels" >/dev/null 2>&1 || true
+		fi
+	fi
+
+	# t2442: post the parent-task no-markers warning if this issue was
+	# created with the `parent-task` label but the body lacks phase/children
+	# markers. Only fires on the bare-fallback path; the delegation path
+	# above runs the warn inside issue-sync-helper.sh cmd_push.
+	# Non-blocking: failure is silent (try/true).
+	if [[ -n "$_slug_for_warn" && ",${labels}," == *",parent-task,"* ]]; then
+		if declare -F _parent_body_has_phase_markers >/dev/null 2>&1 && \
+			declare -F _post_parent_task_no_markers_warning >/dev/null 2>&1; then
+			if ! _parent_body_has_phase_markers "$body"; then
+				_post_parent_task_no_markers_warning "$_slug_for_warn" "$issue_num" || true
+			fi
 		fi
 	fi
 
