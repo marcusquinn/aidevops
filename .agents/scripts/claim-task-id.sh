@@ -1229,6 +1229,58 @@ _compose_issue_body() {
 #   $5 - repo_path
 #
 # Returns 0 always (non-fatal; the issue is already created).
+# _insert_todo_line FILE LINE
+# Write LINE into FILE at the end of the ## Backlog section, or at EOF.
+# Extracted from _ensure_todo_entry_written to keep function bodies <=100 lines.
+_insert_todo_line() {
+	local todo_file="$1"
+	local todo_line="$2"
+
+	local backlog_start
+	backlog_start=$(grep -nE '^## Backlog[[:space:]]*$' "$todo_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
+
+	local tmp
+	tmp=$(mktemp)
+	if [[ -n "$backlog_start" ]]; then
+		local next_heading
+		next_heading=$(awk -v s="$backlog_start" 'NR > s && /^## / {print NR; exit}' "$todo_file" 2>/dev/null || true)
+		if [[ -z "$next_heading" ]]; then
+			# Backlog is the last section — insert before trailing blank lines.
+			awk -v line="$todo_line" '
+				{ lines[NR] = $0 }
+				END {
+					last = NR
+					while (last > 0 && lines[last] == "") last--
+					for (i = 1; i <= last; i++) print lines[i]
+					print line
+					for (i = last + 1; i <= NR; i++) print lines[i]
+				}
+			' "$todo_file" >"$tmp"
+		else
+			# Insert just before the next heading.
+			awk -v nh="$next_heading" -v line="$todo_line" '
+				NR == nh { print line; print "" }
+				{ print }
+			' "$todo_file" >"$tmp"
+		fi
+	else
+		# No Backlog section — append at EOF.
+		cat "$todo_file" >"$tmp"
+		printf '\n%s\n' "$todo_line" >>"$tmp"
+	fi
+
+	if [[ -s "$tmp" ]]; then
+		mv "$tmp" "$todo_file"
+	else
+		rm -f "$tmp"
+	fi
+	return 0
+}
+
+# _ensure_todo_entry_written TASK_ID ISSUE_NUM DESCRIPTION LABELS REPO_PATH
+# Idempotently appends a TODO.md entry after verified GitHub issue creation.
+# Fixes the t2548 orphan gap where both create_github_issue() paths created
+# issues without writing a corresponding TODO.md line.
 _ensure_todo_entry_written() {
 	local task_id="$1"
 	local issue_num="$2"
@@ -1247,8 +1299,8 @@ _ensure_todo_entry_written() {
 		task_id_ere="$task_id"
 	fi
 
-	# Fast path: entry already exists (normal /new-task flow). Delegate
-	# to add_gh_ref_to_todo which is idempotent on the ref stamp.
+	# Fast path: entry already exists. Delegate to add_gh_ref_to_todo
+	# which idempotently stamps the ref:GH#NNN if missing.
 	if grep -qE "^[[:space:]]*- \[.\] ${task_id_ere}( |$)" "$todo_file"; then
 		if declare -F add_gh_ref_to_todo >/dev/null 2>&1; then
 			add_gh_ref_to_todo "$task_id" "$issue_num" "$todo_file" 2>/dev/null || true
@@ -1256,8 +1308,8 @@ _ensure_todo_entry_written() {
 		return 0
 	fi
 
-	# Build the tag suffix from labels (skip reserved-prefix labels that
-	# are applied server-side by issue-sync / pulse, not authored in TODO).
+	# Build tag suffix from labels (skip reserved-prefix labels applied
+	# server-side by issue-sync / pulse, not authored in TODO).
 	local tags_str=""
 	if [[ -n "$labels" ]]; then
 		local _saved_ifs="$IFS"
@@ -1269,8 +1321,7 @@ _ensure_todo_entry_written() {
 			[[ -z "$label" ]] && continue
 			case "$label" in
 			status:* | tier:* | origin:* | dispatched:* | implemented:* | aidevops:*)
-				continue
-				;;
+				continue ;;
 			bug) tags_str="${tags_str:+${tags_str} }#bug" ;;
 			enhancement) tags_str="${tags_str:+${tags_str} }#feat" ;;
 			*) tags_str="${tags_str:+${tags_str} }#${label}" ;;
@@ -1279,67 +1330,18 @@ _ensure_todo_entry_written() {
 		IFS="$_saved_ifs"
 	fi
 
-	# Squash newlines/tabs in description to a single line
+	# Build the TODO line.
 	local safe_desc
 	safe_desc=$(printf '%s' "$description" | tr '\n\t' '  ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
 	[[ -z "$safe_desc" ]] && safe_desc="(no description)"
-
 	local todo_line="- [ ] ${task_id} ${safe_desc}"
 	[[ -n "$tags_str" ]] && todo_line="${todo_line} ${tags_str}"
 	todo_line="${todo_line} ref:GH#${issue_num}"
 
-	# Insertion point: end of `## Backlog` section (before the next `## `
-	# heading or EOF). Falls back to EOF append if `## Backlog` missing.
-	# `|| true` because grep/awk exit non-zero on no-match under pipefail.
-	local backlog_start
-	backlog_start=$(grep -nE '^## Backlog[[:space:]]*$' "$todo_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
+	_insert_todo_line "$todo_file" "$todo_line"
 
-	local tmp
-	tmp=$(mktemp)
-	if [[ -n "$backlog_start" ]]; then
-		# Find next ## heading after backlog_start (or EOF).
-		local next_heading
-		next_heading=$(awk -v s="$backlog_start" 'NR > s && /^## / {print NR; exit}' "$todo_file" 2>/dev/null || true)
-		if [[ -z "$next_heading" ]]; then
-			# Backlog is the last section — insert before any trailing
-			# blank line, else append.
-			awk -v line="$todo_line" '
-				{ lines[NR] = $0 }
-				END {
-					last = NR
-					while (last > 0 && lines[last] == "") last--
-					for (i = 1; i <= last; i++) print lines[i]
-					print line
-					for (i = last + 1; i <= NR; i++) print lines[i]
-				}
-			' "$todo_file" >"$tmp"
-		else
-			# Insert just before the next heading's preceding blank line.
-			awk -v nh="$next_heading" -v line="$todo_line" '
-				NR == nh {
-					# Walk back through any buffered blank lines before the heading
-					# and print the new entry before them so the visual block stays
-					# with Backlog.
-					# Simpler: print new line, then a blank, then the heading block.
-					print line
-					print ""
-				}
-				{ print }
-			' "$todo_file" >"$tmp"
-		fi
-	else
-		# No Backlog section — append with a leading blank line separator.
-		cat "$todo_file" >"$tmp"
-		printf '\n%s\n' "$todo_line" >>"$tmp"
-	fi
-
-	if [[ -s "$tmp" ]]; then
-		mv "$tmp" "$todo_file"
-		if declare -F log_info >/dev/null 2>&1; then
-			log_info "Appended TODO entry for ${task_id} (ref:GH#${issue_num})"
-		fi
-	else
-		rm -f "$tmp"
+	if declare -F log_info >/dev/null 2>&1; then
+		log_info "Appended TODO entry for ${task_id} (ref:GH#${issue_num})"
 	fi
 	return 0
 }
