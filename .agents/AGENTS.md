@@ -199,7 +199,7 @@ Set fields based on the repo's purpose:
 
 Full rules: `reference/planning-detail.md`
 
-For multi-runner coordination (concurrent pulse runners across machines), see `reference/cross-runner-coordination.md`.
+For multi-runner coordination (concurrent pulse runners across machines), see `reference/cross-runner-coordination.md`. Key features (t2422): structured per-runner versioned overrides (`dispatch-override-resolve.sh`), deterministic tiebreaker for simultaneous claims, `CLAIM_DEFERRED` audit trail. Config: `~/.config/aidevops/dispatch-override.conf`.
 
 ## Git Workflow
 

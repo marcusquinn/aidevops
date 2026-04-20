@@ -35,9 +35,18 @@
 
 set -euo pipefail
 
+# Resolve co-located override resolver (t2422)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+OVERRIDE_RESOLVER="${SCRIPT_DIR}/dispatch-override-resolve.sh"
+
 # Consensus window — how long to wait after posting a claim before checking
 # who won. Must be long enough for GitHub API propagation across runners.
 DISPATCH_CLAIM_WINDOW="${DISPATCH_CLAIM_WINDOW:-8}"
+
+# t2422: Tiebreaker window (seconds). When two claims land within this window,
+# a deterministic tiebreaker (ts strict-less → nonce lexicographic) is applied
+# instead of relying on GitHub's comment ordering alone.
+DISPATCH_CLAIM_TIEBREAKER_WINDOW="${DISPATCH_CLAIM_TIEBREAKER_WINDOW:-5}"
 
 # Maximum age (seconds) of a claim comment to consider it active.
 # Claims older than this are stale and ignored by the lock check.
@@ -87,6 +96,18 @@ fi
 
 # t2401: Framework VERSION file location. Override for tests.
 AIDEVOPS_VERSION_FILE="${AIDEVOPS_VERSION_FILE:-${HOME}/.aidevops/agents/VERSION}"
+
+#######################################
+# Build the GitHub API endpoint for issue comments.
+# Args: $1 = repo slug, $2 = issue number
+# Returns: endpoint path on stdout
+#######################################
+_comments_endpoint() {
+	local slug="$1"
+	local num="$2"
+	printf 'repos/%s/issues/%s/comments' "$slug" "$num"
+	return 0
+}
 
 #######################################
 # Generate a unique nonce for this claim attempt.
@@ -195,7 +216,7 @@ _post_claim() {
 	body="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version}"
 
 	local comment_id
-	comment_id=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+	comment_id=$(gh api "$(_comments_endpoint "$repo_slug" "$issue_number")" \
 		--method POST \
 		--field body="$body" \
 		--jq '.id' 2>/dev/null) || {
@@ -251,7 +272,7 @@ _fetch_claims() {
 	# A CLAIM_RELEASED comment posted after the most recent DISPATCH_CLAIM
 	# invalidates all prior claims (the worker died or completed).
 	local comments_json
-	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+	comments_json=$(gh api "$(_comments_endpoint "$repo_slug" "$issue_number")" \
 		--jq '[.[] | select(.body | test("'"${CLAIM_MARKER}"' nonce=|CLAIM_RELEASED")) | {id: .id, body: .body, created_at: .created_at}]' \
 		2>/dev/null) || {
 		echo "Error: failed to fetch comments for #${issue_number} in ${repo_slug}" >&2
@@ -400,15 +421,16 @@ _filter_below_version() {
 }
 
 #######################################
-# t2400/t2401: Apply runtime override filters to parsed claims.
+# t2400/t2401/t2422: Apply runtime override filters to parsed claims.
 #
-# Two composable filters:
+# t2422 upgrade: uses dispatch-override-resolve.sh for structured per-runner
+# resolution (honour | ignore | warn). Falls back to inline legacy logic when
+# the resolver is not available.
+#
+# Legacy composable filters (deprecated, still functional with warning):
 #   - Login filter (t2400): DISPATCH_CLAIM_IGNORE_RUNNERS strips named logins.
 #   - Version filter (t2401): DISPATCH_CLAIM_MIN_VERSION strips claims whose
 #     version field is below the semver floor (including legacy "unknown").
-#
-# Filters are no-op when override is disabled or both lists/floors are empty.
-# Emits a stderr log line when any claims are stripped, for operator audit.
 #
 # Args:
 #   $1 = parsed claims JSON array (from _fetch_claims parse step)
@@ -428,45 +450,158 @@ _apply_ignore_filter() {
 		return 0
 	fi
 
-	# Both filters empty → no-op fast path
-	if [[ -z "$DISPATCH_CLAIM_IGNORE_RUNNERS" && -z "$DISPATCH_CLAIM_MIN_VERSION" ]]; then
-		printf '%s' "$parsed"
-		return 0
-	fi
-
 	local pre_count
 	pre_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
 
-	# Login filter (t2400)
-	if [[ -n "$DISPATCH_CLAIM_IGNORE_RUNNERS" ]]; then
-		local ignored_json
-		# Normalise the ignore list (accept space OR comma separators) → JSON array
-		ignored_json=$(printf '%s' "$DISPATCH_CLAIM_IGNORE_RUNNERS" | tr ',' ' ' | tr -s ' ' '\n' | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || ignored_json="[]"
-		if [[ "$ignored_json" != "[]" ]]; then
-			local filtered_login
-			filtered_login=$(printf '%s' "$parsed" | jq -c --argjson ignored "$ignored_json" '
-				map(select(.runner as $r | $ignored | index($r) | not))
-			' 2>/dev/null)
-			if [[ -n "$filtered_login" ]]; then
-				parsed="$filtered_login"
+	# t2422: Use structured resolver if available
+	if [[ -x "$OVERRIDE_RESOLVER" ]]; then
+		local claim_rows result_arr="["
+		claim_rows=$(printf '%s' "$parsed" | jq -r '.[] | [(.id | tostring), .runner, (.version // "unknown")] | @tsv' 2>/dev/null) || {
+			printf '%s' "$parsed"
+			return 0
+		}
+
+		local first=1
+		local claim_id runner version action
+		while IFS=$'\t' read -r claim_id runner version; do
+			[[ -z "$claim_id" ]] && continue
+			action=$("$OVERRIDE_RESOLVER" resolve "$runner" "$version" 2>/dev/null) || action="honour"
+
+			if [[ "$action" == "ignore" ]]; then
+				printf '[dispatch-claim-helper] Structured override: ignoring claim id=%s runner=%s version=%s on #%s in %s\n' \
+					"$claim_id" "$runner" "$version" "$issue_number" "$repo_slug" >&2
+				continue
+			fi
+
+			if [[ "$action" == "warn" ]]; then
+				printf '[dispatch-claim-helper] Structured override: warning for claim runner=%s version=%s on #%s in %s (honouring with warning)\n' \
+					"$runner" "$version" "$issue_number" "$repo_slug" >&2
+			fi
+
+			# honour or warn: keep the claim
+			local claim_json
+			claim_json=$(printf '%s' "$parsed" | jq -c --argjson cid "$claim_id" '.[] | select(.id == $cid)' 2>/dev/null) || continue
+			if [[ "$first" -eq 1 ]]; then
+				first=0
+			else
+				result_arr+=","
+			fi
+			result_arr+="$claim_json"
+		done <<<"$claim_rows"
+		result_arr+="]"
+		parsed="$result_arr"
+	else
+		# Fallback: legacy inline filter logic (t2400/t2401)
+		# Both filters empty → no-op fast path
+		if [[ -z "$DISPATCH_CLAIM_IGNORE_RUNNERS" && -z "$DISPATCH_CLAIM_MIN_VERSION" ]]; then
+			printf '%s' "$parsed"
+			return 0
+		fi
+
+		# Login filter (t2400, deprecated)
+		if [[ -n "$DISPATCH_CLAIM_IGNORE_RUNNERS" ]]; then
+			local ignored_json
+			ignored_json=$(printf '%s' "$DISPATCH_CLAIM_IGNORE_RUNNERS" | tr ',' ' ' | tr -s ' ' '\n' | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || ignored_json="[]"
+			if [[ "$ignored_json" != "[]" ]]; then
+				local filtered_login
+				filtered_login=$(printf '%s' "$parsed" | jq -c --argjson ignored "$ignored_json" '
+					map(select(.runner as $r | $ignored | index($r) | not))
+				' 2>/dev/null)
+				if [[ -n "$filtered_login" ]]; then
+					parsed="$filtered_login"
+				fi
 			fi
 		fi
-	fi
 
-	# Version filter (t2401)
-	if [[ -n "$DISPATCH_CLAIM_MIN_VERSION" ]]; then
-		parsed=$(_filter_below_version "$parsed" "$DISPATCH_CLAIM_MIN_VERSION")
+		# Version filter (t2401, deprecated)
+		if [[ -n "$DISPATCH_CLAIM_MIN_VERSION" ]]; then
+			parsed=$(_filter_below_version "$parsed" "$DISPATCH_CLAIM_MIN_VERSION")
+		fi
 	fi
 
 	local post_count
 	post_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
 	if [[ "$pre_count" -gt "$post_count" ]]; then
-		printf '[dispatch-claim-helper] Filtered %d claim(s) on #%s in %s (ignore_runners=%s min_version=%s)\n' \
-			"$((pre_count - post_count))" "$issue_number" "$repo_slug" \
-			"${DISPATCH_CLAIM_IGNORE_RUNNERS:-none}" "${DISPATCH_CLAIM_MIN_VERSION:-none}" >&2
+		printf '[dispatch-claim-helper] Filtered %d claim(s) on #%s in %s\n' \
+			"$((pre_count - post_count))" "$issue_number" "$repo_slug" >&2
 	fi
 
 	printf '%s' "$parsed"
+	return 0
+}
+
+#######################################
+# t2422: Post a CLAIM_DEFERRED audit comment when the tiebreaker
+# determines this runner should back off.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+#   $3 = our runner login
+#   $4 = our nonce
+#   $5 = winner runner login
+#   $6 = winner nonce
+#   $7 = winner ts
+# Returns: exit 0 (best-effort, non-fatal)
+#######################################
+_post_claim_deferred() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local our_runner="$3"
+	local our_nonce="$4"
+	local winner_runner="$5"
+	local winner_nonce="$6"
+	local winner_ts="$7"
+
+	local body
+	body="CLAIM_DEFERRED runner=${our_runner} nonce=${our_nonce} ts=$(_now_utc) deferring_to=${winner_runner} winner_nonce=${winner_nonce} winner_ts=${winner_ts}"
+
+	gh api "$(_comments_endpoint "$repo_slug" "$issue_number")" \
+		--method POST \
+		--field body="$body" \
+		--jq '.id' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# t2422: Deterministic tiebreaker for simultaneous claims.
+# When two claims land within DISPATCH_CLAIM_TIEBREAKER_WINDOW seconds,
+# the winner is determined by:
+#   1. Strict-less ts (ISO 8601 string comparison — works because format is fixed)
+#   2. Tie on ts → lexicographic nonce comparison (lower wins)
+#
+# Args:
+#   $1 = our ts (ISO 8601)
+#   $2 = our nonce
+#   $3 = their ts (ISO 8601)
+#   $4 = their nonce
+# Returns:
+#   exit 0 = we win
+#   exit 1 = we lose
+#######################################
+_tiebreaker() {
+	local our_ts="$1"
+	local our_nonce="$2"
+	local their_ts="$3"
+	local their_nonce="$4"
+
+	# Compare ts — strict-less wins
+	if [[ "$our_ts" < "$their_ts" ]]; then
+		return 0
+	fi
+	if [[ "$our_ts" > "$their_ts" ]]; then
+		return 1
+	fi
+
+	# Tie on ts — compare nonce lexicographically (lower wins)
+	if [[ "$our_nonce" < "$their_nonce" ]]; then
+		return 0
+	fi
+	if [[ "$our_nonce" > "$their_nonce" ]]; then
+		return 1
+	fi
+
+	# Identical nonce (shouldn't happen) — we win by default
 	return 0
 }
 
@@ -478,7 +613,10 @@ _apply_ignore_filter() {
 #   2. Sleep consensus window
 #   3. Fetch all claim comments
 #   4. If this runner's claim is the oldest active claim → won
-#   5. If another runner's claim is older → lost, delete own claim
+#   4a. t2422: If claims are simultaneous (within tiebreaker window),
+#       apply deterministic tiebreaker (ts → nonce). Loser posts
+#       CLAIM_DEFERRED comment.
+#   5. If another runner's claim is older → lost
 #
 # Args:
 #   $1 = issue number
@@ -540,9 +678,10 @@ cmd_claim() {
 	fi
 
 	# Step 4: Check if our claim is the oldest
-	local oldest_nonce oldest_runner oldest_age_seconds
+	local oldest_nonce oldest_runner oldest_ts oldest_age_seconds
 	oldest_nonce=$(printf '%s' "$claims" | jq -r '.[0].nonce // ""' 2>/dev/null) || oldest_nonce=""
 	oldest_runner=$(printf '%s' "$claims" | jq -r '.[0].runner // "unknown"' 2>/dev/null) || oldest_runner="unknown"
+	oldest_ts=$(printf '%s' "$claims" | jq -r '.[0].ts // ""' 2>/dev/null) || oldest_ts=""
 	oldest_age_seconds=$(printf '%s' "$claims" | jq -r '.[0].age_seconds // 0' 2>/dev/null) || oldest_age_seconds=0
 
 	if [[ "$oldest_nonce" == "$nonce" ]]; then
@@ -565,7 +704,43 @@ cmd_claim() {
 		return 1
 	fi
 
-	# Step 5: We lost — another runner's claim is older
+	# t2422 Step 4a: Simultaneous claim tiebreaker.
+	# If our claim and the oldest are within DISPATCH_CLAIM_TIEBREAKER_WINDOW
+	# seconds, apply deterministic tiebreaker instead of pure oldest-wins.
+	# This handles clock skew and sub-second race conditions.
+	local our_entry_ts our_entry_epoch oldest_entry_epoch time_diff
+	our_entry_ts=$(printf '%s' "$claims" | jq -r --arg n "$nonce" '.[] | select(.nonce == $n) | .ts // ""' 2>/dev/null) || our_entry_ts="$ts"
+	our_entry_epoch=$(_iso_to_epoch "${our_entry_ts:-$ts}")
+	oldest_entry_epoch=$(_iso_to_epoch "${oldest_ts:-}")
+	time_diff=$(( our_entry_epoch - oldest_entry_epoch ))
+	# Absolute value
+	if [[ "$time_diff" -lt 0 ]]; then
+		time_diff=$(( -time_diff ))
+	fi
+
+	if [[ "$time_diff" -le "$DISPATCH_CLAIM_TIEBREAKER_WINDOW" ]] && [[ "$claim_count" -gt 1 ]]; then
+		# Simultaneous claims detected — apply tiebreaker
+		printf '[coordination] Simultaneous claims detected (diff=%ds, window=%ds) on #%s — applying tiebreaker\n' \
+			"$time_diff" "$DISPATCH_CLAIM_TIEBREAKER_WINDOW" "$issue_number" >&2
+
+		if _tiebreaker "$ts" "$nonce" "$oldest_ts" "$oldest_nonce"; then
+			# We won the tiebreaker
+			printf 'CLAIM_WON_TIEBREAKER: runner=%s nonce=%s issue=#%s (beat %s via tiebreaker)\n' \
+				"$runner" "$nonce" "$issue_number" "$oldest_runner"
+			return 0
+		fi
+
+		# We lost the tiebreaker — post CLAIM_DEFERRED for audit trail
+		printf '[coordination] deferring to runner=%s nonce=%s ts=%s on issue #%s\n' \
+			"$oldest_runner" "$oldest_nonce" "$oldest_ts" "$issue_number" >&2
+		_post_claim_deferred "$issue_number" "$repo_slug" "$runner" "$nonce" \
+			"$oldest_runner" "$oldest_nonce" "$oldest_ts"
+		printf 'CLAIM_DEFERRED: runner=%s lost tiebreaker to %s on issue #%s — CLAIM_DEFERRED comment posted\n' \
+			"$runner" "$oldest_runner" "$issue_number"
+		return 1
+	fi
+
+	# Step 5: We lost — another runner's claim is clearly older (outside tiebreaker window)
 	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off (both claims retained for audit)\n' \
 		"$runner" "$oldest_runner" "$issue_number"
 

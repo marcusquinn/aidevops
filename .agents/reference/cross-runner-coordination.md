@@ -465,7 +465,109 @@ SCRIPT=~/.aidevops/agents/scripts/dispatch-dedup-helper.sh
 
 ---
 
-## 7. See Also
+## 7. Structured Dispatch Overrides (t2422)
+
+Prior to t2422, cross-runner claim filtering used two flat mechanisms:
+`DISPATCH_CLAIM_IGNORE_RUNNERS` (login list) and `DISPATCH_CLAIM_MIN_VERSION`
+(global version floor). These are now **deprecated** in favour of structured
+per-runner overrides that are version-aware and self-sunsetting.
+
+### 7.1 Config Format
+
+In `~/.config/aidevops/dispatch-override.conf`:
+
+```bash
+# Structured per-runner override (t2422):
+DISPATCH_OVERRIDE_ALEX_SOLOVYEV="honour-only-above:3.8.78"
+DISPATCH_OVERRIDE_STALE_PEER="ignore"
+DISPATCH_OVERRIDE_FLAKY_RUNNER="warn"
+DISPATCH_OVERRIDE_DEFAULT="honour"  # fallback for unlisted runners
+```
+
+**Actions:**
+
+| Action | Meaning |
+|---|---|
+| `honour` | Always respect claims from this runner (default) |
+| `ignore` | Always discard claims from this runner |
+| `honour-only-above:V` | Ignore claims with version < V; auto-sunsets when peer upgrades |
+| `warn` | Respect claims but emit a warning in the pulse log |
+
+The login is uppercased with hyphens→underscores for the env var name
+(e.g., `alex-solovyev` → `DISPATCH_OVERRIDE_ALEX_SOLOVYEV`).
+
+### 7.2 Resolution Order
+
+`dispatch-override-resolve.sh resolve <runner> <version>` resolves in order:
+
+1. Master switch (`DISPATCH_OVERRIDE_ENABLED=false` → `honour` for all)
+2. Structured per-runner (`DISPATCH_OVERRIDE_<LOGIN>`)
+3. Legacy flat list (`DISPATCH_CLAIM_IGNORE_RUNNERS`) — deprecated, emits warning
+4. Legacy version floor (`DISPATCH_CLAIM_MIN_VERSION`) — deprecated, emits warning
+5. Default action (`DISPATCH_OVERRIDE_DEFAULT`, defaults to `honour`)
+
+### 7.3 Migration from Flat Format
+
+Run `dispatch-override-resolve.sh check-deprecated` to see migration hints:
+
+```bash
+$ dispatch-override-resolve.sh check-deprecated
+[DEPRECATED] DISPATCH_CLAIM_IGNORE_RUNNERS="alex-solovyev"
+  Migrate to: DISPATCH_OVERRIDE_ALEX_SOLOVYEV="ignore"
+[DEPRECATED] DISPATCH_CLAIM_MIN_VERSION="3.8.78"
+  Migrate to per-runner entries: DISPATCH_OVERRIDE_<RUNNER>="honour-only-above:3.8.78"
+```
+
+The flat format continues to work during the one-release grace period but emits
+deprecation warnings on every resolution. After the grace period, the flat
+variables will be ignored entirely.
+
+---
+
+## 8. Simultaneous Claim Tiebreaker (t2422)
+
+When two runners post DISPATCH_CLAIM comments within
+`DISPATCH_CLAIM_TIEBREAKER_WINDOW` seconds (default 5s) of each other, the
+standard "oldest wins" rule can be ambiguous due to clock skew or same-second
+timestamps. The tiebreaker resolves this deterministically:
+
+1. **Compare `ts` (ISO 8601 string comparison)** — the claim with the
+   strictly earlier timestamp wins. Because the format is fixed-width
+   (`YYYY-MM-DDTHH:MM:SSZ`), lexicographic comparison is correct.
+
+2. **Tie on `ts` → compare `nonce` lexicographically** — the claim with
+   the lower nonce wins. Since nonces are random hex strings, this is
+   effectively a coin flip, but it's deterministic: both runners
+   independently compute the same result.
+
+3. **Loser posts `CLAIM_DEFERRED`** — an audit comment recording the
+   deferral decision:
+
+   ```
+   CLAIM_DEFERRED runner=alice nonce=abc123 ts=2026-04-20T00:00:05Z
+     deferring_to=bob winner_nonce=def456 winner_ts=2026-04-20T00:00:03Z
+   ```
+
+   This is visible in the issue timeline and survives for diagnosis.
+
+### Env Controls
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DISPATCH_CLAIM_TIEBREAKER_WINDOW` | `5` | Max seconds between claims to trigger tiebreaker |
+| `DISPATCH_CLAIM_WINDOW` | `8` | Consensus window (sleep after posting, before checking) |
+
+### Diagnosis
+
+```bash
+# Find CLAIM_DEFERRED comments on an issue
+gh api repos/<slug>/issues/<num>/comments \
+  --jq '.[] | select(.body | test("CLAIM_DEFERRED")) | "\(.created_at): \(.body[0:120])"'
+```
+
+---
+
+## 9. See Also
 
 - `reference/worker-diagnostics.md` — single-runner worker lifecycle, DB
   isolation, watchdog, canary, recovery checklist
@@ -473,8 +575,12 @@ SCRIPT=~/.aidevops/agents/scripts/dispatch-dedup-helper.sh
 - `AGENTS.md` "Session origin labels" — `origin:interactive` implications
 - `AGENTS.md` "General dedup rule — combined signal (t1996)"
 - `AGENTS.md` "Parent / meta tasks (#parent tag, t1986)"
+- `scripts/dispatch-claim-helper.sh` — claim protocol with tiebreaker (t2422)
+- `scripts/dispatch-override-resolve.sh` — structured override resolver (t2422)
 - `scripts/dispatch-dedup-helper.sh` — implementation of Layers 3–7
 - `scripts/pulse-dispatch-core.sh` — `check_dispatch_dedup()` orchestration
+- `scripts/tests/test-cross-runner-coordination.sh` — t2422 regression suite
+- `scripts/tests/test-dispatch-override.sh` — t2399/t2400/t2401 override tests
 - `scripts/tests/test-parent-task-guard.sh` — regression coverage for t1986
 - `scripts/tests/test-dispatch-dedup-multi-operator.sh` — multi-operator dedup
   assertions
@@ -495,3 +601,4 @@ SCRIPT=~/.aidevops/agents/scripts/dispatch-dedup-helper.sh
 | GH#18371 (PR#18374, t1970) | Interactive-claim race via push path missing auto-assign |
 | GH#18399 (PR#18419, t1986) | Parent-task 4-hole fix + test harness |
 | GH#18458 | Fail-open dedup bug — jq null-handling allowed dispatch to parent-task issues |
+| GH#20028 (t2422) | Structured overrides + simultaneous claim tiebreaker |
