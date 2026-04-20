@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.86] - 2026-04-21
+
+### Changed
+
+- Maintenance: mark t2451 complete (pr:#20202 completed:2026-04-20) [skip ci]
+- close trust-gate loop + preserve PR assignee on CLAIM_RELEASED (#20202)
+- Maintenance: update simplification state registry
+- gh-audit-log-helper.sh + wrapper integration + anomaly scanner (v2) (#20193)
+
+### Fixed
+
+- use git -c flags for http timeouts instead of ineffective env vars (#20196)
+- use ref local SHA and dynamic default branch in privacy guard; expose git push stderr (#20189)
+
 ## [3.8.84] - 2026-04-20
 
 ### Changed
