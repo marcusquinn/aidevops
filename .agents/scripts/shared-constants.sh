@@ -878,210 +878,24 @@ _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # =============================================================================
 
 # =============================================================================
-# Model tier resolution (t132.7)
-# Shared function for resolving tier names to full provider/model strings.
-# Used by runner-helper.sh, cron-helper.sh, cron-dispatch.sh.
-# Tries: 1) fallback-chain-helper.sh (availability-aware)
-#         2) Static mapping (always works)
+# Model Tier Resolution & Pricing -- extracted module
 # =============================================================================
+# Functions: resolve_model_tier, detect_ai_backends, get_model_pricing,
+#            get_provider_from_model, _load_model_pricing_json.
+# Variables: _MODEL_PRICING_JSON, _MODEL_PRICING_JSON_LOADED (cached on first
+#            get_model_pricing call).
+# Reads .agents/configs/model-pricing.json via jq when available (single source
+# of truth shared with observability.mjs); falls back to a hardcoded case
+# statement for the no-jq path.
+# Extracted to shared-model-tier.sh (t2440, GH#20089) to keep this file below
+# the file-size-debt ratchet (1500 lines). Mirrors the Phase 1 split precedent
+# (shared-feature-toggles.sh, t2427, PR #20063). See shared-model-tier.sh for
+# full documentation.
 
-#######################################
-# Resolve a model tier name to a full provider/model string (t132.7)
-# Accepts both tier names (haiku, sonnet, opus, flash, pro, grok, coding, eval, health)
-# and full provider/model strings (passed through unchanged).
-# Returns the resolved model string on stdout.
-#######################################
-resolve_model_tier() {
-	local tier="${1:-coding}"
-
-	# If already a full provider/model string (contains /), return as-is
-	if [[ "$tier" == *"/"* ]]; then
-		echo "$tier"
-		return 0
-	fi
-
-	# Try fallback-chain-helper.sh for availability-aware resolution
-	# Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
-	# in zsh (the MCP shell environment). The :-$0 fallback ensures SCRIPT_DIR
-	# resolves correctly whether sourced from bash or zsh. See GH#4904.
-	local _sc_self="${BASH_SOURCE[0]:-${0:-}}"
-	local chain_helper="${_sc_self%/*}/fallback-chain-helper.sh"
-	if [[ -x "$chain_helper" ]]; then
-		local resolved
-		resolved=$("$chain_helper" resolve "$tier" --quiet 2>/dev/null) || true
-		if [[ -n "$resolved" ]]; then
-			echo "$resolved"
-			return 0
-		fi
-	fi
-
-	# Static fallback: map tier names to concrete models
-	case "$tier" in
-	opus | coding)
-		echo "anthropic/claude-opus-4-6"
-		;;
-	sonnet | eval)
-		echo "anthropic/claude-sonnet-4-6"
-		;;
-	haiku | health)
-		echo "anthropic/claude-haiku-4-5"
-		;;
-	flash)
-		echo "google/gemini-2.5-flash"
-		;;
-	pro)
-		echo "google/gemini-2.5-pro"
-		;;
-	grok)
-		echo "xai/grok-3"
-		;;
-	*)
-		# Unknown tier — return as-is (may be a model name without provider)
-		echo "$tier"
-		;;
-	esac
-
-	return 0
-}
-
-#######################################
-# Detect available AI CLI backends (t132.7, t1665.5)
-# Returns a newline-separated list of available backend runtime IDs.
-# Delegates to runtime-registry.sh rt_detect_installed().
-#######################################
-detect_ai_backends() {
-	# Use runtime registry if loaded (t1665.5)
-	if type rt_detect_installed &>/dev/null; then
-		local installed
-		installed=$(rt_detect_installed) || true
-		if [[ -z "$installed" ]]; then
-			echo "none"
-			return 1
-		fi
-		echo "$installed"
-		return 0
-	fi
-
-	# Fallback: hardcoded check (registry not loaded)
-	local -a backends=()
-	if command -v opencode &>/dev/null; then
-		backends+=("opencode")
-	fi
-	if command -v claude &>/dev/null; then
-		backends+=("claude")
-	fi
-	if [[ ${#backends[@]} -eq 0 ]]; then
-		echo "none"
-		return 1
-	fi
-	printf '%s\n' "${backends[@]}"
-	return 0
-}
-
-# =============================================================================
-# Model Pricing & Provider Detection (consolidated from t1337.2)
-# =============================================================================
-# Single source of truth: .agents/configs/model-pricing.json
-# Also consumed by observability.mjs (OpenCode plugin).
-# Pricing: per 1M tokens — input|output|cache_read|cache_write.
-# Budget-tracker uses only input|output; observability uses all four.
-#
-# Falls back to hardcoded case statement if jq or the JSON file is unavailable.
-
-# Cache for JSON-loaded pricing (avoids re-reading the file on every call)
-_MODEL_PRICING_JSON=""
-_MODEL_PRICING_JSON_LOADED=""
-
-# Load model-pricing.json into the cache variable.
-# Called once on first get_model_pricing() invocation.
-_load_model_pricing_json() {
-	_MODEL_PRICING_JSON_LOADED="attempted"
-	local json_file
-	# Try repo-relative path first (works in dev), then deployed path
-	# Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
-	# in zsh (the MCP shell environment). See GH#4904.
-	local script_dir="${BASH_SOURCE[0]:-${0:-}}"
-	script_dir="${script_dir%/*}"
-	for json_file in \
-		"${script_dir}/../configs/model-pricing.json" \
-		"${HOME}/.aidevops/agents/configs/model-pricing.json"; do
-		if [[ -r "$json_file" ]] && command -v jq &>/dev/null; then
-			_MODEL_PRICING_JSON=$(cat "$json_file" 2>/dev/null) || _MODEL_PRICING_JSON=""
-			if [[ -n "$_MODEL_PRICING_JSON" ]]; then
-				return 0
-			fi
-		fi
-	done
-	return 1
-}
-
-get_model_pricing() {
-	local model="$1"
-
-	# Try JSON source first (single source of truth)
-	if [[ -z "$_MODEL_PRICING_JSON_LOADED" ]]; then
-		_load_model_pricing_json
-	fi
-
-	if [[ -n "$_MODEL_PRICING_JSON" ]]; then
-		local ms="${model#*/}"
-		ms="${ms%%-202*}"
-		ms=$(echo "$ms" | tr '[:upper:]' '[:lower:]')
-		# Search for a matching key in the JSON models object
-		local result
-		result=$(echo "$_MODEL_PRICING_JSON" | jq -r --arg ms "$ms" '
-			.models | to_entries[] |
-			select(.key as $k | $ms | contains($k)) |
-			"\(.value.input)|\(.value.output)|\(.value.cache_read)|\(.value.cache_write)"
-		' 2>/dev/null | head -1)
-		if [[ -n "$result" ]]; then
-			echo "$result"
-			return 0
-		fi
-		# No match — return default from JSON
-		result=$(echo "$_MODEL_PRICING_JSON" | jq -r '
-			"\(.default.input)|\(.default.output)|\(.default.cache_read)|\(.default.cache_write)"
-		' 2>/dev/null)
-		if [[ -n "$result" && "$result" != "null|null|null|null" ]]; then
-			echo "$result"
-			return 0
-		fi
-	fi
-
-	# Hardcoded fallback (no jq or JSON file unavailable)
-	local ms="${model#*/}"
-	ms="${ms%%-202*}"
-	case "$ms" in
-	*opus-4* | *claude-opus*) echo "15.0|75.0|1.50|18.75" ;;
-	*sonnet-4* | *claude-sonnet*) echo "3.0|15.0|0.30|3.75" ;;
-	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.80|4.0|0.08|1.0" ;;
-	*gpt-4.1-mini*) echo "0.40|1.60|0.10|0.40" ;;
-	*gpt-4.1*) echo "2.0|8.0|0.50|2.0" ;;
-	*o3*) echo "10.0|40.0|2.50|10.0" ;;
-	*o4-mini*) echo "1.10|4.40|0.275|1.10" ;;
-	*gemini-2.5-pro*) echo "1.25|10.0|0.3125|2.50" ;;
-	*gemini-2.5-flash*) echo "0.15|0.60|0.0375|0.15" ;;
-	*gemini-3-pro*) echo "1.25|10.0|0.3125|2.50" ;;
-	*gemini-3-flash*) echo "0.10|0.40|0.025|0.10" ;;
-	*deepseek-r1*) echo "0.55|2.19|0.14|0.55" ;;
-	*deepseek-v3*) echo "0.27|1.10|0.07|0.27" ;;
-	*) echo "3.0|15.0|0.30|3.75" ;;
-	esac
-	return 0
-}
-
-get_provider_from_model() {
-	local model="$1"
-	case "$model" in
-	claude-* | anthropic/*) echo "anthropic" ;;
-	gpt-* | openai/*) echo "openai" ;;
-	gemini-* | google/*) echo "google" ;;
-	deepseek-* | deepseek/*) echo "deepseek" ;;
-	grok-* | xai/*) echo "xai" ;;
-	*) echo "unknown" ;;
-	esac
-	return 0
-}
+_SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
+# shellcheck source=./shared-model-tier.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _SC_SELF
+source "${_SC_SELF%/*}/shared-model-tier.sh"
 
 # =============================================================================
 # Configuration Loader & Feature Toggles -- extracted module
