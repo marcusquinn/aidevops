@@ -160,12 +160,16 @@ _parse_files_scope() {
 	return $?
 }
 
-# Collect scope patterns into an array
-mapfile -t SCOPE_PATTERNS < <(_parse_files_scope "$BRIEF_FILE")
-parse_rc=${PIPESTATUS[0]}
+# Collect scope patterns into an array (Bash 3.2-compatible; no mapfile)
+_raw_scope=$(_parse_files_scope "$BRIEF_FILE")
+parse_rc=$?
+SCOPE_PATTERNS=()
+if [[ $parse_rc -eq 0 ]] && [[ -n "$_raw_scope" ]]; then
+	while IFS= read -r _line; do
+		SCOPE_PATTERNS+=("$_line")
+	done <<< "$_raw_scope"
+fi
 
-# Bash 3.2 compat: mapfile may not exist; pipestatus might not reflect _parse_files_scope exit.
-# Re-check section presence via grep to be safe.
 if ! grep -q "^## Files Scope" "$BRIEF_FILE" 2>/dev/null; then
 	_log WARN "brief has no '## Files Scope' section — fail-open"
 	exit 0
@@ -209,23 +213,27 @@ _file_in_scope() {
 # Mirrors the approach in complexity-regression-pre-push.sh (GH#20045).
 # ---------------------------------------------------------------------------
 _compute_baseline() {
-	local default_remote_head baseline
-	default_remote_head=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
-		| sed 's@^refs/remotes/origin/@origin/@')
+	local _remote="${1:-origin}"
+	local default_remote_head
+	local baseline
+	default_remote_head=$(git symbolic-ref "refs/remotes/$_remote/HEAD" 2>/dev/null \
+		| sed "s@^refs/remotes/$_remote/@@")
 	if [[ -z "$default_remote_head" ]]; then
-		for candidate in origin/main origin/master; do
+		for candidate in "$_remote/main" "$_remote/master"; do
 			git rev-parse --verify "$candidate" >/dev/null 2>&1 \
 				&& { default_remote_head="$candidate"; break; }
 		done
 	fi
 	if [[ -z "$default_remote_head" ]]; then
-		printf '[%s] warning: no origin HEAD resolved; falling back to @{u}\n' \
-			"$GUARD_NAME" >&2
-		git merge-base HEAD '@{u}' 2>/dev/null
-		return 0
+		printf '[%s] warning: no %s HEAD resolved; falling back to @{u}\n' \
+			"$GUARD_NAME" "$_remote" >&2
+		git merge-base HEAD '@{u}'
+		return $?
 	fi
 	baseline=$(git merge-base HEAD "$default_remote_head" 2>/dev/null)
-	if [[ -z "$baseline" ]]; then
+	local rc
+	rc=$?
+	if [[ $rc -ne 0 ]] || [[ -z "$baseline" ]]; then
 		baseline="$default_remote_head"
 	fi
 	printf '%s\n' "$baseline"
@@ -252,7 +260,7 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
 	if [[ -n "$remote_sha" ]] && ! [[ "$remote_sha" =~ ^0+$ ]]; then
 		base_sha="$remote_sha"
 	else
-		base_sha=$(_compute_baseline)
+		base_sha=$(_compute_baseline "$remote_name")
 	fi
 
 	if [[ -z "$base_sha" ]]; then
@@ -262,8 +270,14 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
 
 	_dbg "checking $local_ref: base=${base_sha:0:7} head=${local_sha:0:7}"
 
-	# Get the list of changed files in this push
-	mapfile -t changed_files < <(git diff --name-only "$base_sha" "$local_sha" 2>/dev/null)
+	# Get the list of changed files in this push (Bash 3.2-compatible; no mapfile)
+	_raw_changed=$(git diff --name-only "$base_sha" "$local_sha" 2>/dev/null)
+	changed_files=()
+	if [[ -n "$_raw_changed" ]]; then
+		while IFS= read -r _f; do
+			changed_files+=("$_f")
+		done <<< "$_raw_changed"
+	fi
 
 	if [[ "${#changed_files[@]}" -eq 0 ]]; then
 		_dbg "no changed files for $local_ref"
