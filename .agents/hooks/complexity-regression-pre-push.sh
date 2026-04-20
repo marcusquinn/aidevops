@@ -83,34 +83,51 @@ fi
 [[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "helper: $COMPLEXITY_HELPER"
 
 # ---------------------------------------------------------------------------
-# Determine the base SHA for the regression check.
-# 1. git merge-base HEAD @{u}  — when upstream branch is set and reachable
-# 2. git merge-base HEAD origin/main  — fallback
-# 3. fail-open                 — when neither resolves (new repo, offline, etc.)
+# Determine the base SHA for the regression check (GH#20045).
+# Uses the default remote branch rather than @{u} to avoid false-positives
+# after a rebase. After rebase, @{u} points at the feature branch's own
+# remote — not the merge target — so merge-base HEAD @{u} returns an
+# outdated commit making every change since look "new" to the scanner.
+#
+# Priority:
+# 1. git symbolic-ref refs/remotes/origin/HEAD  (repo-configured default)
+# 2. origin/main  (conventional default)
+# 3. origin/master  (legacy default)
+# 4. @{u}  (last resort — warns to stderr; exotic repos with non-standard remotes)
+# 5. fail-open  — when nothing resolves (new repo, offline, etc.)
 # ---------------------------------------------------------------------------
-_resolve_base_sha() {
-	local _base
-	# Try upstream tracking branch first
-	if _base=$(git merge-base HEAD "@{u}" 2>/dev/null) && [[ -n "$_base" ]]; then
-		printf '%s' "$_base"
-		return 0
+_compute_baseline() {
+	local default_remote_head baseline
+	# Try origin/HEAD first (repo-configured default branch)
+	default_remote_head=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+		| sed 's@^refs/remotes/origin/@origin/@')
+	if [[ -z "$default_remote_head" ]]; then
+		# Fallback: try origin/main, then origin/master
+		for candidate in origin/main origin/master; do
+			git rev-parse --verify "$candidate" >/dev/null 2>&1 \
+				&& { default_remote_head="$candidate"; break; }
+		done
 	fi
-	# Fall back to origin/main
-	if git fetch origin main --quiet 2>/dev/null && \
-		_base=$(git merge-base HEAD origin/main 2>/dev/null) && [[ -n "$_base" ]]; then
-		printf '%s' "$_base"
-		return 0
+	if [[ -z "$default_remote_head" ]]; then
+		# Last resort: old behaviour (warn)
+		printf '[%s] warning: no origin HEAD resolved; falling back to @{u}\n' \
+			"$GUARD_NAME" >&2
+		git merge-base HEAD '@{u}' 2>/dev/null
+		return
 	fi
-	# Try without fetch (offline)
-	if _base=$(git merge-base HEAD origin/main 2>/dev/null) && [[ -n "$_base" ]]; then
-		printf '%s' "$_base"
-		return 0
+	# Happy path: merge-base against default remote head
+	baseline=$(git merge-base HEAD "$default_remote_head" 2>/dev/null)
+	if [[ -z "$baseline" ]]; then
+		printf '[%s] warning: no merge-base with %s; using %s as base\n' \
+			"$GUARD_NAME" "$default_remote_head" "$default_remote_head" >&2
+		baseline="$default_remote_head"
 	fi
-	return 1
+	printf '%s\n' "$baseline"
+	return 0
 }
 
 BASE_SHA=""
-if ! BASE_SHA=$(_resolve_base_sha); then
+if ! BASE_SHA=$(_compute_baseline) || [[ -z "$BASE_SHA" ]]; then
 	_log WARN "cannot determine merge-base (offline or no upstream?) — fail-open"
 	exit 0
 fi
