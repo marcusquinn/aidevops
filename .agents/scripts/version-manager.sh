@@ -1289,7 +1289,59 @@ auto_mark_tasks_complete() {
 	return 0
 }
 
-# Function to commit version changes
+# Expected commit subject for a release bump commit at "$version".
+# Single source of truth — used by commit creation and by every downstream
+# verification gate (post-commit, post-rebase, pre-tag, pre-push).
+_bump_commit_subject() {
+	local version="$1"
+	printf 'chore(release): bump version to %s\n' "$version"
+}
+
+# Verify that a specific git ref (SHA, tag, HEAD) resolves to a commit whose
+# subject line matches the expected bump-commit subject for the given version.
+#
+# Usage: _verify_bump_commit_at_ref <ref> <version>
+# Returns: 0 on match, 1 on mismatch (with diagnostic output).
+#
+# This is the canonical guard that prevents the t2437/GH#20073 foot-gun: a
+# rebase (or any history-rewriting operation) silently drops the bump commit,
+# HEAD ends up at origin/main, and a subsequent retag-of-HEAD places the
+# release tag on the wrong commit. Every code path that creates a tag or
+# assumes HEAD is the bump commit MUST call this first.
+_verify_bump_commit_at_ref() {
+	local ref="$1"
+	local version="$2"
+	local expected actual resolved_sha
+
+	expected=$(_bump_commit_subject "$version")
+
+	resolved_sha=$(git rev-parse --verify "${ref}^{commit}" 2>/dev/null)
+	if [[ -z "$resolved_sha" ]]; then
+		print_error "Bump-commit verification failed: ref '$ref' does not resolve to a commit"
+		return 1
+	fi
+
+	actual=$(git log -1 --format='%s' "$resolved_sha" 2>/dev/null)
+	if [[ "$actual" != "$expected" ]]; then
+		print_error "Bump-commit verification failed for ref '$ref' ($resolved_sha)"
+		print_error "  Expected subject: $expected"
+		print_error "  Actual subject:   ${actual:-<empty>}"
+		return 1
+	fi
+	return 0
+}
+
+# Exit code 2 used by commit_version_changes to distinguish "nothing staged"
+# from "commit succeeded" (0). Callers that expect a new bump commit on HEAD
+# must treat exit 2 as fatal — see _release_execute (t2437/GH#20073).
+readonly VERSION_MANAGER_NO_CHANGES_EXIT=2
+
+# Function to commit version changes.
+# Returns: 0 on successful commit, 1 on commit failure,
+# VERSION_MANAGER_NO_CHANGES_EXIT (2) when there was nothing to stage.
+# The 0-vs-2 split is load-bearing: _release_execute treats 2 as a fatal
+# pre-tag condition because it means the VERSION bump never reached the
+# index and retagging HEAD would place the tag on a non-bump commit.
 commit_version_changes() {
 	local version="$1"
 
@@ -1303,14 +1355,16 @@ commit_version_changes() {
 	# Check if there are changes to commit
 	if git diff --cached --quiet; then
 		print_info "No version changes to commit"
-		return 0
+		return "$VERSION_MANAGER_NO_CHANGES_EXIT"
 	fi
 
 	# Version-bump commits contain only version-string updates — content is
 	# internally controlled by this script. Pre-commit quality gates run in
 	# CI on every other path. Skip the local hook here to avoid false positives
 	# on pre-existing code that the release commit didn't touch (t2237).
-	if git commit --no-verify -m "chore(release): bump version to $version"; then
+	local commit_subject
+	commit_subject=$(_bump_commit_subject "$version")
+	if git commit --no-verify -m "$commit_subject"; then
 		print_success "Committed version changes"
 		return 0
 	else
@@ -1349,7 +1403,29 @@ push_changes() {
 			return 1
 		fi
 
-		# Tag must be recreated on the new HEAD after rebase
+		# CRITICAL (t2437/GH#20073): Verify the rebase did NOT silently drop our
+		# bump commit before retagging HEAD. A rebase can lose the bump commit
+		# without a conflict if (a) Git treats it as already applied (duplicate
+		# patch upstream), (b) an interactive rebase drops it, or (c) the remote
+		# fast-forwards past it in a way that makes our commit empty. In every
+		# such case, HEAD becomes origin/main and retagging HEAD would place
+		# the release tag on the wrong commit — exactly the symptom observed
+		# in the broken v3.8.82 release (GH#20073).
+		if ! _verify_bump_commit_at_ref HEAD "$version"; then
+			print_error "Rebase silently dropped the bump commit for v$version"
+			print_info "HEAD is now $(git rev-parse HEAD), not a bump-version commit"
+			print_info "Recovery:"
+			print_info "  1. Inspect: git log --oneline origin/main..HEAD"
+			print_info "  2. Reset local branch: git reset --hard origin/main"
+			print_info "  3. Delete local tag: git tag -d $tag_name"
+			print_info "  4. Re-run: $0 release <bump-type>"
+			# Clean up the stale local tag to avoid divergence on next attempt.
+			git tag -d "$tag_name" 2>/dev/null || true
+			return 1
+		fi
+
+		# Tag must be recreated on the new HEAD after rebase (HEAD has been
+		# verified above to be the bump commit for $version).
 		if git show-ref --tags "$tag_name" &>/dev/null; then
 			print_info "Recreating tag $tag_name on rebased HEAD..."
 			git tag -d "$tag_name"
@@ -1401,6 +1477,26 @@ create_git_tag() {
 		print_info "  git fetch --tags && git show $tag_name"
 		print_info "  gh release view $tag_name"
 		return 1
+	fi
+
+	# t2437/GH#20073: Final guard before `git tag` — HEAD must be the bump
+	# commit for $version. This catches any residual case where an upstream
+	# caller skipped its own post-commit/post-rebase verification, or called
+	# create_git_tag directly (e.g., standalone `version-manager.sh tag`).
+	# Opt-out via AIDEVOPS_VM_SKIP_BUMP_VERIFY=1 for maintainer recovery flows
+	# that intentionally tag non-bump commits (e.g., annotated release sync
+	# tags). Default is strict.
+	if [[ "${AIDEVOPS_VM_SKIP_BUMP_VERIFY:-0}" != "1" ]]; then
+		if ! _verify_bump_commit_at_ref HEAD "$version"; then
+			print_error "Aborting tag creation: HEAD is not the bump commit for v$version"
+			print_info "The tag would land on the wrong commit (this is exactly the"
+			print_info "GH#20073 foot-gun). Inspect and recover:"
+			print_info "  git log -1 --format='%H %s'   # current HEAD"
+			print_info "  git log --oneline -5          # recent history"
+			print_info "Override only if you truly need to tag a non-bump commit:"
+			print_info "  AIDEVOPS_VM_SKIP_BUMP_VERIFY=1 $0 tag"
+			return 1
+		fi
 	fi
 
 	if git tag -a "$tag_name" -m "Release $tag_name - AI DevOps Framework"; then
@@ -1748,7 +1844,41 @@ _release_execute() {
 	print_info "Validating version consistency..."
 	if validate_version_consistency "$new_version"; then
 		print_success "Version validation passed"
-		commit_version_changes "$new_version"
+
+		# t2437/GH#20073: distinguish "commit made" (0), "commit failed" (1),
+		# and "nothing staged" (VERSION_MANAGER_NO_CHANGES_EXIT=2). The
+		# pre-fix code treated 0 and 2 as identical, so a silently-skipped
+		# commit led to tagging HEAD (which was not a bump commit).
+		local commit_rc=0
+		commit_version_changes "$new_version" || commit_rc=$?
+		case "$commit_rc" in
+		0) ;;
+		"$VERSION_MANAGER_NO_CHANGES_EXIT")
+			print_error "Aborting release: no version changes were staged (commit skipped)"
+			print_info "This usually means update_version_in_files wrote no changes — diagnose with:"
+			print_info "  git status && git diff VERSION CHANGELOG.md"
+			print_info "Fix the upstream update and re-run: $0 release $bump_type"
+			exit 1
+			;;
+		*)
+			print_error "Aborting release: commit_version_changes failed (rc=$commit_rc)"
+			exit 1
+			;;
+		esac
+
+		# Defence-in-depth: even if the commit appeared to succeed, confirm
+		# HEAD is actually the bump commit before we tag it. This catches
+		# any edge case where the commit landed on a different branch or a
+		# pre-commit hook amended it to a different subject.
+		if ! _verify_bump_commit_at_ref HEAD "$new_version"; then
+			print_error "Aborting release: HEAD is not the bump commit for v$new_version"
+			print_info "Something between update_version_in_files and commit_version_changes"
+			print_info "corrupted the intended commit. Recovery:"
+			print_info "  git log --oneline -5   # inspect recent history"
+			print_info "  git reset --hard origin/main && $0 release $bump_type"
+			exit 1
+		fi
+
 		if ! create_git_tag "$new_version"; then
 			print_error "Aborting release: tag creation failed (see above for diagnosis)"
 			exit 1
