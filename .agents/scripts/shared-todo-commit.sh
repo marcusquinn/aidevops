@@ -108,8 +108,9 @@ _todo_acquire_lock() {
 		if [[ -f "$TODO_LOCK_PATH/pid" ]]; then
 			local lock_pid
 			lock_pid=$(cat "$TODO_LOCK_PATH/pid" 2>/dev/null || echo "")
-			if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-				echo "[todo_lock] Removing stale lock (PID $lock_pid dead)" >>"$log_target"
+			# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse
+			if [[ -n "$lock_pid" ]] && ! _is_process_alive_and_matches "$lock_pid" "${FRAMEWORK_PROCESS_PATTERN:-}"; then
+				echo "[todo_lock] Removing stale lock (PID $lock_pid dead or reused, t2421)" >>"$log_target"
 				rm -rf "$TODO_LOCK_PATH"
 				continue
 			fi

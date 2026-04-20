@@ -332,19 +332,20 @@ _check_db_entry() {
 	[[ -f "$pid_file" ]] && stored_pid=$(cat "$pid_file" 2>/dev/null || true)
 
 	if [[ -n "$stored_pid" ]] && [[ "$stored_pid" =~ ^[0-9]+$ ]]; then
-		if ! kill -0 "$stored_pid" 2>/dev/null; then
-			# Process is dead — stale DB entry; reset and allow dispatch
+		# t2421: command-aware liveness check — bare kill -0 lies on macOS PID reuse
+		if ! _is_process_alive_and_matches "$stored_pid" "${WORKER_PROCESS_PATTERN:-}"; then
+			# Process is dead or PID was reused by an unrelated process — stale DB entry
 			sqlite3 "$supervisor_db" "
 				UPDATE tasks SET status = 'failed',
-				  error = 'stale: PID ${stored_pid} not running (GH#5662)',
+				  error = 'stale: PID ${stored_pid} not running or reused (GH#5662/t2421)',
 				  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 				WHERE id = '$(printf '%s' "$db_match" | sed "s/'/''/g")';
 			" 2>/dev/null || true
-			printf 'STALE: key=%s task %s PID %s is dead — entry reset, safe to dispatch\n' \
+			printf 'STALE: key=%s task %s PID %s is dead or reused — entry reset, safe to dispatch\n' \
 				"$candidate_key" "$db_match" "$stored_pid"
 			return 1
 		fi
-		# PID is alive — genuine duplicate
+		# PID is alive AND command matches expected worker pattern — genuine duplicate
 		printf 'DUPLICATE: key=%s already active in supervisor DB (task %s PID %s)\n' \
 			"$candidate_key" "$db_match" "$stored_pid"
 		return 0

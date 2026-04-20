@@ -273,8 +273,9 @@ acquire_lock() {
 		if [[ -f "$LOCK_FILE/pid" ]]; then
 			local lock_pid
 			lock_pid=$(cat "$LOCK_FILE/pid" 2>/dev/null || echo "")
-			if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-				log_warn "Removing stale lock (PID $lock_pid dead)"
+			# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse
+			if [[ -n "$lock_pid" ]] && ! _is_process_alive_and_matches "$lock_pid" "${FRAMEWORK_PROCESS_PATTERN:-}"; then
+				log_warn "Removing stale lock (PID $lock_pid dead or reused, t2421)"
 				rm -rf "$LOCK_FILE"
 				continue
 			fi

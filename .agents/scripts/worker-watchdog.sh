@@ -1429,7 +1429,8 @@ _cleanup_stale_tracking_files() {
 		[[ -f "$tracking_file" ]] || continue
 		local tracked_pid
 		tracked_pid=$(basename "$tracking_file" | sed 's/^idle-//;s/^stall-//;s/^grace-//')
-		if [[ "$tracked_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$tracked_pid" 2>/dev/null; then
+		# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse
+		if [[ "$tracked_pid" =~ ^[0-9]+$ ]] && ! _is_process_alive_and_matches "$tracked_pid" "${WORKER_PROCESS_PATTERN:-}"; then
 			rm -f "$tracking_file" 2>/dev/null || true
 		fi
 	done

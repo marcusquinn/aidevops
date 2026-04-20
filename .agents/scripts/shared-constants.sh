@@ -878,6 +878,96 @@ _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # =============================================================================
 
 # =============================================================================
+# PID Liveness — command-aware process checks (t2421, GH#20027)
+# =============================================================================
+# Bare `kill -0 <PID>` lies when macOS recycles PIDs (wraps at 99999).
+# These helpers verify the PID is alive AND its command matches what we expect.
+#
+# Constants: WORKER_PROCESS_PATTERN, PULSE_PROCESS_PATTERN, FRAMEWORK_PROCESS_PATTERN
+# Functions: _compute_argv_hash, _is_process_alive_and_matches
+# =============================================================================
+
+# Expected command patterns for PID-owner verification.
+# Used by _is_process_alive_and_matches to distinguish real workers from
+# PID-reuse impostors (e.g., "Brave Browser Helper (Renderer)").
+[[ -z "${WORKER_PROCESS_PATTERN+x}" ]] && WORKER_PROCESS_PATTERN='opencode|claude|Claude'
+[[ -z "${PULSE_PROCESS_PATTERN+x}" ]] && PULSE_PROCESS_PATTERN='pulse-wrapper'
+[[ -z "${FRAMEWORK_PROCESS_PATTERN+x}" ]] && FRAMEWORK_PROCESS_PATTERN='opencode|claude|Claude|pulse|aidevops|headless-runtime'
+
+#######################################
+# Compute a short hash of a process's command line.
+# Portable across macOS (shasum) and Linux (sha256sum).
+# Args: $1 = PID (defaults to $$)
+# Outputs: 12-char hex hash on stdout, or empty string on failure.
+# Returns: 0 on success, 1 on failure.
+#######################################
+_compute_argv_hash() {
+	local pid="${1:-$$}"
+	local cmd
+	cmd=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
+	[[ -z "$cmd" ]] && return 1
+	local hash
+	if command -v shasum >/dev/null 2>&1; then
+		hash=$(printf '%s' "$cmd" | shasum -a 256 2>/dev/null | cut -c1-12)
+	elif command -v sha256sum >/dev/null 2>&1; then
+		hash=$(printf '%s' "$cmd" | sha256sum 2>/dev/null | cut -c1-12)
+	else
+		# Fallback: no hash tool available, return empty (callers skip hash check)
+		return 1
+	fi
+	[[ -n "$hash" ]] && printf '%s' "$hash" && return 0
+	return 1
+}
+
+#######################################
+# Check that a PID is alive AND its command matches expected pattern.
+# Replaces bare `kill -0` checks that are vulnerable to PID reuse on macOS.
+#
+# Args:
+#   $1 = PID to check
+#   $2 = regex pattern (e.g., "opencode|claude"). If empty, falls back to
+#        bare kill -0 (backward-compatible for callers that don't know
+#        the expected command).
+#   $3 = (optional) stored argv hash. If provided and non-empty, the
+#        current process command hash must match. This catches PID reuse
+#        even when the new process name happens to match the pattern
+#        (e.g., two different claude sessions).
+#
+# Returns: 0 if alive and matches, 1 otherwise.
+#######################################
+_is_process_alive_and_matches() {
+	local pid="$1"
+	local pattern="${2:-}"
+	local stored_hash="${3:-}"
+
+	# Basic validation
+	[[ -z "$pid" ]] && return 1
+	[[ "$pid" == "0" ]] && return 1
+	[[ "$pid" =~ ^[0-9]+$ ]] || return 1
+
+	# Step 1: is the PID alive at all?
+	kill -0 "$pid" 2>/dev/null || return 1
+
+	# Step 2: does the command match the expected pattern?
+	if [[ -n "$pattern" ]]; then
+		local cmd
+		cmd=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
+		[[ -z "$cmd" ]] && return 1
+		printf '%s' "$cmd" | grep -qE "$pattern" || return 1
+	fi
+
+	# Step 3: if a stored hash was provided, verify it matches
+	if [[ -n "$stored_hash" ]]; then
+		local current_hash
+		current_hash=$(_compute_argv_hash "$pid") || return 0  # no hash tool = skip check
+		[[ -z "$current_hash" ]] && return 0  # can't compute = optimistic pass
+		[[ "$stored_hash" == "$current_hash" ]] || return 1
+	fi
+
+	return 0
+}
+
+# =============================================================================
 # Model Tier Resolution & Pricing -- extracted module
 # =============================================================================
 # Functions: resolve_model_tier, detect_ai_backends, get_model_pricing,
