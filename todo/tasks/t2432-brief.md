@@ -36,12 +36,12 @@ Deliverables:
 **Trigger condition (implement only if true):**
 
 ```bash
-# Run monthly or when investigating pulse churn:
+# Run whenever investigating pulse churn — no schedule, no deadline:
 grep -c "no_work skip-escalation" ~/.aidevops/logs/pulse-wrapper.log \
-  | awk -v threshold=4 '{if ($1/4 >= 1) print "TRIGGER: " $1 " events in ~4 weeks (" $1/4 " per week)"}'
+  | awk '{ if ($1 >= 1) print "TRIGGER: " $1 " events observed — implementation justified"; else print "Below threshold: " $1 " events — leave in backlog" }'
 ```
 
-**Trigger semantics:** ≥1 `no_work skip-escalation` event per week on a rolling 4-week window, AFTER the 3-check gate has been deployed for at least 4 weeks. If the rate is <1/week, the 3-check gate is sufficient and this task should be deferred further or closed as `wontfix`.
+**Trigger semantics:** observed ≥1 `no_work skip-escalation` events in the pulse log since the 3-check gate deployed. Measured whenever the maintainer chooses to check — there is no deadline, no expiry, and no auto-close. If the rate stays low, the issue sits in backlog indefinitely. The issue only closes on explicit maintainer decision (e.g., the 3-check gate's churn profile is acceptable as-is, or the underlying churn pattern has been addressed differently). Project attention is variable; absence of observation is not evidence the task is unwanted.
 
 **Why the 3-check gate may be sufficient:**
 
