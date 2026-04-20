@@ -92,8 +92,8 @@ assert_grep \
 	"$ENGINE"
 
 assert_grep \
-	"6: fast_fail_prune_expired is called directly (lightweight, no stage timeout needed)" \
-	'fast_fail_prune_expired \|\| true' \
+	"6: fast_fail_prune_expired has independent run_stage_with_timeout" \
+	'run_stage_with_timeout "fast_fail_prune_expired".*fast_fail_prune_expired' \
 	"$ENGINE"
 
 # --- The shared-budget wrapper must NOT exist ---
