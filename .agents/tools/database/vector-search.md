@@ -254,6 +254,42 @@ Published benchmarks (Cohere 10M dataset, 16 vCPU / 64GB, INT8): 1-5ms search la
 
 **AMD Zen 2 incompatibility**: Tested with zvec 0.2.0 (`manylinux_2_28_x86_64` wheel), Python 3.12.3 — `Illegal instruction` (exit 132) on AMD Ryzen 9 3900 (Zen 2). Precompiled binary likely requires AVX-512; Zen 2 has AVX2 only. Use pgvector or a hosted alternative on AMD Ryzen/EPYC Zen 2 servers. Intel w/ AVX-512 and macOS ARM64 expected OK.
 
+## Advanced Retrieval Patterns
+
+### Agentic Retrieval (DB-Agnostic)
+
+Naive "embed-query → cosine-topK → return" collapses on multi-domain queries because they carry implicit filters (jurisdiction, date, document type) and require routing across multiple collections. Agentic retrieval replaces the single-vector lookup with a three-stage reasoning loop — this loop is **not Weaviate-specific**: any LLM + any vector store implements it.
+
+1. **Schema inspection** — reasoning layer reads available collections/namespaces and their metadata fields before routing. Example: a legal corpus exposes `contracts_operational`, `caselaw_ca`, `statutes_regulations`.
+2. **Sub-query planning** — decomposes a natural-language question into multiple filtered retrievals. Example: "2024 MSA cure periods in California" → 3 sub-queries across `contracts_operational` (type=MSA, field=cure\_period, date≥2024) + `statutes_regulations` (jurisdiction=CA).
+3. **Rerank sub-agent** — after parallel retrieval, a second-pass LLM call (often a cheaper/faster model) scores and re-orders candidates before answer synthesis.
+
+| Decision | Guidance |
+|----------|----------|
+| Default start | zvec + LLM reasoning loop — no managed service, no per-query cost |
+| Escalate to Weaviate Query Agent | Only when managed-service ops reduction justifies Cloud pricing and vendor lock-in |
+| Single-collection corpus | Agentic routing adds overhead with no recall gain — skip it |
+| Cross-collection required | Metadata fields on every chunk are the prerequisite; without them routing degrades to guessing |
+
+Concrete legal application: [`tools/legal/legal-research.md`](../legal/legal-research.md) — multi-collection schema, routing signals, and privilege metadata required to make agentic retrieval audit-safe.
+
+### Multivector Models and Muvera Compression (Visual Documents)
+
+Plain-text embeddings lose signature blocks, stamps, tables, and redaction boxes in legal/financial PDFs. When documents have visual structure that determines the correct answer — form fields, table cells, page stamps — text-only pipelines silently lose recall on those elements.
+
+| Approach | Recall gain | Storage cost | When to use |
+|----------|------------|-------------|-------------|
+| Single-vector (default) | Baseline | Baseline | Text-dominant docs |
+| ColBERT late interaction | +15-30% on phrase/token-level lookups | ~10x (token-per-vector) | Legal discovery, precision-critical lookups |
+| ModernVBERT / visual transformer | Captures table cells, signatures, redaction boxes | ~10-15x | Forms, financial filings, stamped PDFs |
+| Muvera FDE compression | ColBERT recall, 32x storage reduction | ~3x vs single-vector | ColBERT at production scale |
+
+**Muvera** (Fixed-Dimensional Encoding) compresses multivectors into a single fixed-size vector while preserving late-interaction recall within ~1-2% at 32x storage reduction. This makes ColBERT-scale retrieval feasible at production cost by eliminating the ~10x storage premium over single-vector models.
+
+**When to pay the cost**: Legal discovery, financial filings, and forms-heavy corpora where signatures, stamps, or table structure determine the correct answer. Text-dominant corpora (plain contracts, statutes, meeting notes) get negligible recall gain and should stay on single-vector.
+
+Both patterns are backend-agnostic — pgvector, Qdrant, Weaviate, and zvec all support them. The retrieval approach is independent of the vector database. See [`tools/legal/legal-research.md`](../legal/legal-research.md) for a concrete legal-domain application.
+
 ## Gotchas
 
 **zvec-specific:**
