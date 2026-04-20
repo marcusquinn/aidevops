@@ -65,6 +65,18 @@ _release_dispatch_claim() {
 		print_warning "Failed to post CLAIM_RELEASED on #${issue_number} (non-fatal)"
 	}
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
+
+	# t2420: clear active-lifecycle status labels + worker assignment so the
+	# pulse's combined-signal dedup guard (t1996) doesn't treat the issue
+	# as active after release. Without this, orphan labels pin the issue
+	# as "active" for the full 30-min TTL even though no worker holds the
+	# claim, blocking re-dispatch. Preserves terminal states (done, blocked)
+	# set by authoritative paths. Defensive skip if origin:interactive.
+	# Non-fatal: failure does not block the release comment path.
+	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
+		clear_active_status_on_release "$issue_number" "$repo_slug" "$(whoami)" \
+			|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
+	fi
 	return 0
 }
 
