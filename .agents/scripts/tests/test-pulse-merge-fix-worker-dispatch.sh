@@ -166,28 +166,36 @@ teardown_test_env() {
 
 # Extract helpers under test and eval them in this shell. Same pattern
 # as test-pulse-merge-rebase-nudge.sh.
+#
+# GH#20057: _dispatch_pr_fix_worker now delegates to three shared helpers
+# (_append_feedback_to_issue, _transition_issue_for_redispatch,
+# _close_and_label_feedback_pr). All four must be eval'd into the test shell
+# for the dispatch tests to reach their assertions.
 define_helpers_under_test() {
-	local build_src
-	build_src=$(awk '
-		/^_build_review_feedback_section\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$build_src" ]]; then
-		printf 'ERROR: could not extract _build_review_feedback_section from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090
-	eval "$build_src"
-
-	local dispatch_src
-	dispatch_src=$(awk '
-		/^_dispatch_pr_fix_worker\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$dispatch_src" ]]; then
-		printf 'ERROR: could not extract _dispatch_pr_fix_worker from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090
-	eval "$dispatch_src"
+	local fn fn_src
+	# Functions to extract, in source order. _build_review_feedback_section
+	# is used by the "build section" tests; the three shared helpers are
+	# required by the refactored _dispatch_pr_fix_worker body.
+	local fns=(
+		_build_review_feedback_section
+		_append_feedback_to_issue
+		_transition_issue_for_redispatch
+		_close_and_label_feedback_pr
+		_dispatch_pr_fix_worker
+	)
+	for fn in "${fns[@]}"; do
+		fn_src=$(awk -v name="$fn" '
+			$0 ~ "^" name "\\(\\) \\{" { capture = 1 }
+			capture { print }
+			capture && /^}$/ { capture = 0; exit }
+		' "$MERGE_SCRIPT")
+		if [[ -z "$fn_src" ]]; then
+			printf 'ERROR: could not extract %s from %s\n' "$fn" "$MERGE_SCRIPT" >&2
+			return 1
+		fi
+		# shellcheck disable=SC1090
+		eval "$fn_src"
+	done
 	return 0
 }
 

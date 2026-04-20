@@ -147,7 +147,10 @@ _append_feedback_to_issue() {
 	fi
 
 	if printf '%s' "$current_body" | grep -qF "$marker"; then
-		echo "[pulse-wrapper] ${caller}: issue #${linked_issue} already has feedback marker for this PR — skipping" >>"$LOGFILE"
+		# Keep the "routed feedback marker" phrase stable for operator log
+		# greps and regression tests (GH#20057): the pre-split dispatch
+		# functions all logged a variant of "already has … feedback …".
+		echo "[pulse-wrapper] ${caller}: issue #${linked_issue} already has routed feedback marker for this PR — skipping" >>"$LOGFILE"
 		return 0
 	fi
 
