@@ -1729,6 +1729,80 @@ set_issue_status() {
 	gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
 }
 
+#######################################
+# Clear active-lifecycle status labels on dispatch claim release (t2420).
+#
+# Removes only the four ACTIVE status labels (queued, claimed, in-progress,
+# in-review) and optionally the worker's assignment. PRESERVES terminal
+# states (done, blocked) and the eligible state (available) — those are set
+# by authoritative paths (PR merge, blocker triage, explicit re-queue) and
+# must survive a worker's claim release.
+#
+# Why not set_issue_status "" ? Because it would strip status:done set by
+# the PR merge path if the CLAIM_RELEASED comment races ahead — a worker
+# that succeeds, creates a PR, the PR merges (setting status:done), and
+# then the worker's EXIT trap fires CLAIM_RELEASED would regress the state.
+# This helper is the targeted, race-safe alternative.
+#
+# Why not just skip label cleanup entirely? Because without it, orphan
+# labels pin an issue as "active" even though no worker holds the claim,
+# blocking pulse re-dispatch via the t1996 combined-signal guard
+# (active-status + assignee = block). Observed in production: #19864 and
+# #19738 were both pinned status:queued/claimed for 40+ minutes after
+# worker completion, with dead PIDs (one case was PID 11742 reused by
+# Brave Browser — see t2421).
+#
+# Defensive: skips entirely if origin:interactive is present. Workers
+# should never hold the claim on interactive issues (dispatch-dedup
+# blocks that), but if we find one, we never touch interactive-session
+# ownership state (t2056).
+#
+# Args:
+#   $1 — issue number
+#   $2 — repo slug (owner/repo)
+#   $3 — worker login to remove as assignee (optional; empty = no assignee change)
+#
+# Returns:
+#   0 on success, including idempotent no-ops and defensive skips
+#   1 on gh failure (logged by gh to stderr; suppressed here)
+#
+# Example:
+#   clear_active_status_on_release 20026 marcusquinn/aidevops "$(whoami)"
+#######################################
+clear_active_status_on_release() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local worker_login="${3:-}"
+
+	if [[ -z "$issue_num" || -z "$repo_slug" ]]; then
+		return 0
+	fi
+
+	# Defensive: don't touch interactive-session-owned issues.
+	# A single fetch is cheap — only fires on claim release, not hot path.
+	local labels_json=""
+	labels_json=$(gh issue view "$issue_num" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || labels_json=""
+	case ",${labels_json}," in
+	*,origin:interactive,*)
+		return 0
+		;;
+	esac
+
+	local -a _flags=()
+	_flags+=(--remove-label "status:queued")
+	_flags+=(--remove-label "status:claimed")
+	_flags+=(--remove-label "status:in-progress")
+	_flags+=(--remove-label "status:in-review")
+
+	if [[ -n "$worker_login" ]]; then
+		_flags+=(--remove-assignee "$worker_login")
+	fi
+
+	gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null || return 1
+	return 0
+}
+
 # =============================================================================
 # TODO.md Serialized Commit+Push
 # =============================================================================
