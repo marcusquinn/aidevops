@@ -81,6 +81,8 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 - **Task briefs:** Every task must have `todo/tasks/{task_id}-brief.md` (via `/define` or `/new-task`). A task without a brief is undevelopable because it loses the implementation context needed for autonomous execution. See `workflows/plans.md` and `scripts/commands/new-task.md`.
 
+- **`## Files Scope` field:** The brief template includes a `## Files Scope` section where the author declares the file paths (glob patterns supported) that the task is allowed to modify. The scope-guard pre-push hook (`scope-guard-pre-push.sh`) reads this list and blocks pushes that touch files outside the declared scope, preventing accidental scope-leak during rebase or implementation drift. One path or glob per `- ` line.
+
 **Worker-ready issue body heuristic (t2417):** Before creating a full brief, `/define`, `/new-task`, and `task-brief-helper.sh` check whether the linked issue body is already worker-ready — i.e., it contains 4+ of the 7 known heading signals (`## Task`, `## Why`, `## How`, `## Acceptance`, `## What`, `## Session Origin`, `## Files to modify`). When the issue body is worker-ready, the brief file is either skipped (headless default) or replaced with a stub that links to the issue as the canonical brief. This prevents brief/issue body duplication and the collision surface it creates (see GH#20015). Helper: `scripts/brief-readiness-helper.sh`. Threshold override: `BRIEF_READINESS_THRESHOLD` env var.
 
 **Brief composition**: All GitHub-written content (issue bodies, PR descriptions, comments, escalation reports) follows `workflows/brief.md` — the centralised formatting workflow.
