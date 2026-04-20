@@ -553,6 +553,9 @@ _build_health_issue_body() {
 **${role_display}**: \`${runner_user}\`
 **Repo**: \`${repo_slug}\`
 
+<!-- aidevops:dashboard-freshness -->
+last_refresh: ${now_iso}
+
 ### Summary
 
 | Metric | Count |

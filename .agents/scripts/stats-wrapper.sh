@@ -145,6 +145,28 @@ check_stats_dedup() {
 }
 
 #######################################
+# Exit trap handler — t2418 Phase B
+#
+# The pre-t2418 script only removed the pidfile on EXIT. Under
+# `set -euo pipefail`, any failing command produced a silent non-zero exit
+# with no operator-visible record of what broke. Dashboard staleness
+# could persist for weeks (see #20016: 11-day gap on #10944). This trap
+# emits HEALTH-DASHBOARD-FAIL with the exit code so
+# `tail ~/.aidevops/logs/stats.log` surfaces the failure immediately.
+#
+# Defined at file scope (not inside main) so main() stays under the
+# 100-line function-complexity gate and the trap can be tested directly.
+#######################################
+_stats_wrapper_on_exit() {
+	local ec=$?
+	rm -f "$STATS_PIDFILE" 2>/dev/null || true
+	if [[ "$ec" -ne 0 ]]; then
+		echo "[stats-wrapper] HEALTH-DASHBOARD-FAIL exit=${ec} at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STATS_LOGFILE"
+	fi
+	return "$ec"
+}
+
+#######################################
 # Main
 #######################################
 main() {
@@ -218,7 +240,10 @@ main() {
 	fi
 
 	echo "$$ $(date +%s)" >"$STATS_PIDFILE"
-	trap 'rm -f "$STATS_PIDFILE"' EXIT
+
+	# t2418 Phase B: trap handler defined at file scope — see
+	# _stats_wrapper_on_exit above for rationale.
+	trap '_stats_wrapper_on_exit' EXIT
 
 	echo "[stats-wrapper] Starting at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STATS_LOGFILE"
 
