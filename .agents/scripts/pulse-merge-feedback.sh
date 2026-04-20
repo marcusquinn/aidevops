@@ -231,6 +231,63 @@ _Closed by deterministic merge pass (pulse-merge.sh)._" \
 }
 
 #######################################
+# Build the conflict-feedback Markdown section for a closed-conflict PR.
+#
+# Produces the "## Merge Conflict Feedback" block appended to the linked
+# issue body. Leads with cherry-pick-first guidance (t2426) — the prior
+# worker's commit is usually correct-but-stale, so cherry-picking onto a
+# fresh branch off current `main` is ~10x cheaper than rewriting.
+#
+# Extracted from _dispatch_conflict_fix_worker to keep that function under
+# the 100-line threshold (function-complexity gate).
+#
+# Args: $1=pr_number, $2=pr_title, $3=pr_files, $4=pr_head_sha
+# Stdout: the rendered section
+#######################################
+_build_conflict_feedback_section() {
+	local pr_number="$1"
+	local pr_title="$2"
+	local pr_files="$3"
+	local pr_head_sha="$4"
+
+	cat <<-EOF
+		## Merge Conflict Feedback (from PR #${pr_number})
+
+		The previous worker's PR #${pr_number} (\`${pr_title}\`) developed merge conflicts with
+		\`main\` that could not be resolved by \`gh pr update-branch\` (server-side fast-forward).
+		The conflicts are semantic — the same files were modified on both branches.
+
+		### Files in the conflicting PR
+
+		\`\`\`
+		${pr_files}
+		\`\`\`
+
+		### Worker guidance
+
+		The prior PR's head commit is \`${pr_head_sha:-<lookup via gh pr view ${pr_number} --json headRefOid>}\`. Before re-implementing, **try cherry-pick first** — it's ~10x cheaper than rewriting and usually works because the prior implementation was correct, just stale:
+
+		1. **Cherry-pick onto a fresh branch off current \`main\`**:
+
+		   \`\`\`bash
+		   git fetch origin pull/${pr_number}/head:recovered-${pr_number}
+		   git checkout -b fresh-branch origin/main
+		   git cherry-pick ${pr_head_sha:-<head-sha>}
+		   # run tests — if clean, proceed to PR
+		   \`\`\`
+
+		2. **If cherry-pick surfaces conflicts**, resolve them. The conflict surface IS the semantic overlap between the two branches — resolve those specific hunks rather than rewriting untouched logic.
+
+		3. **Only rewrite from scratch** if the prior approach was rejected in review. Check PR #${pr_number}'s review comments for \`CHANGES_REQUESTED\` or rejection keywords before assuming the approach was wrong.
+
+		Do NOT reuse the old PR's branch directly — always cherry-pick onto a fresh branch off current \`main\`.
+
+		_Routed by deterministic merge pass (pulse-merge.sh)._
+	EOF
+	return 0
+}
+
+#######################################
 # Route merge conflict context from a worker PR to its linked issue, close
 # the PR, and set the issue to status:available for re-dispatch.
 #
@@ -263,26 +320,14 @@ _dispatch_conflict_fix_worker() {
 	pr_files=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json files --jq '[.files[].path] | join("\n")' 2>/dev/null) || pr_files="(could not fetch)"
 
+	# Get the closed PR's head commit SHA (t2426) — reachable for ≥30 days after close
+	# and lets the next worker cherry-pick instead of rewriting from scratch.
+	local pr_head_sha
+	pr_head_sha=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_head_sha=""
+
 	local feedback_section
-	feedback_section="## Merge Conflict Feedback (from PR #${pr_number})
-
-The previous worker's PR #${pr_number} (\`${pr_title}\`) developed merge conflicts with
-\`main\` that could not be resolved by \`gh pr update-branch\` (server-side fast-forward).
-The conflicts are semantic — the same files were modified on both branches.
-
-### Files in the conflicting PR
-
-\`\`\`
-${pr_files}
-\`\`\`
-
-### Worker guidance
-
-1. Check out a fresh branch from \`origin/main\` (do NOT reuse the old PR's branch)
-2. Re-implement the changes on top of the current \`main\`
-3. The files listed above were modified by both this PR and concurrent merges — review \`main\` to understand what changed
-
-_Routed by deterministic merge pass (pulse-merge.sh)._"
+	feedback_section=$(_build_conflict_feedback_section "$pr_number" "$pr_title" "$pr_files" "$pr_head_sha")
 
 	# Append to issue body (marker-guarded)
 	# t2383 Fix 5: fail-safe — skip body edit when issue fetch fails to prevent
