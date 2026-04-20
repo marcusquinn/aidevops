@@ -766,9 +766,44 @@ jobs:
           echo "DENIED: $ACTOR is not in the allowlist — reversing origin:worker label $ACTION"
 
           if [[ "$ACTION" == "labeled" ]]; then
-            # Non-allowlisted actor added the label — remove it
-            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label "origin:worker"
-            NOTICE="The \`origin:worker\` label was removed automatically. This label is reserved for issues created by the automation pipeline and cannot be applied by non-maintainer contributors."
+            # Non-allowlisted actor added the label. Fetch the issue author's
+            # association to decide the remediation (t2450). For external
+            # contributors, stripping `origin:worker` alone isn't enough —
+            # the `tier:*` label the labelless-backfill applies alongside it
+            # (pulse-issue-reconcile.sh::reconcile_labelless_aidevops_issues)
+            # is what actually makes the issue dispatchable. We must also
+            # strip `tier:*` and apply `needs-maintainer-review` to close
+            # the full gating gap. Reference: #20180, #20184.
+            ISSUE_AUTHOR_ASSOC=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" \
+              --jq '.author_association // "NONE"' 2>/dev/null || echo "NONE")
+
+            # External-contributor classes. Fail-closed: unknown values are
+            # treated as external. The cost of false-positive external is
+            # one NMR review; the cost of the opposite is the #20180 bug.
+            EXTERNAL_AUTHOR="true"
+            case "$ISSUE_AUTHOR_ASSOC" in
+              OWNER|MEMBER|COLLABORATOR) EXTERNAL_AUTHOR="false" ;;
+            esac
+
+            if [[ "$EXTERNAL_AUTHOR" == "true" ]]; then
+              # External-authored — strip origin:worker AND all tier:*
+              # labels, and apply needs-maintainer-review. Single gh edit
+              # call for atomicity; --remove-label is a no-op when the
+              # label isn't present, so listing all three tiers is safe.
+              gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
+                --remove-label "origin:worker" \
+                --remove-label "tier:simple" \
+                --remove-label "tier:standard" \
+                --remove-label "tier:thinking" \
+                --add-label "needs-maintainer-review"
+              NOTICE="The \`origin:worker\` and \`tier:*\` labels were removed and \`needs-maintainer-review\` applied automatically. This issue was filed by an external contributor (\`author_association=${ISSUE_AUTHOR_ASSOC}\`) and must pass maintainer review before a worker can be dispatched. Maintainers: review the proposal, then either claim a fresh internal task via \`claim-task-id.sh\` or approve cryptographically with \`sudo aidevops approve issue ${ISSUE_NUMBER}\`."
+            else
+              # Internal-authored but actor non-allowlisted — just strip
+              # origin:worker. The tier:* label is valid on internally
+              # authored issues; no NMR needed.
+              gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label "origin:worker"
+              NOTICE="The \`origin:worker\` label was removed automatically. This label is reserved for issues created by the automation pipeline and cannot be applied by non-maintainer contributors."
+            fi
           else
             # Non-allowlisted actor removed the label — re-apply it only if
             # the issue was authored by the bot OR the repo owner (both
