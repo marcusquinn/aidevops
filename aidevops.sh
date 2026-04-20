@@ -2592,44 +2592,118 @@ _upgrade_check_version() {
 	fi
 }
 
+# t2434: Extract lines under "## <section>" until the next "## " header.
+# Skips ## Format block entirely (its content is documentation, not tasks).
+# Skips fenced code blocks.
+# Exact-match on the section header — no regex escaping concerns.
+_extract_todo_section() {
+	local file="$1" section="$2"
+	awk -v target="## $section" '
+		/^## Format/ { in_format=1; next }
+		in_format && /^## / { in_format=0 }
+		in_format { next }
+		/^```/ { in_codeblock = !in_codeblock; next }
+		in_codeblock { next }
+		$0 == target { found=1; next }
+		found && /^## / { exit }
+		found
+	' "$file" 2>/dev/null || echo ""
+}
+
+# t2434: Filter stdin, removing only the literal Format-block placeholder IDs
+# (tXXX, tYYY, tZZZ). Real-world repos have historic IDs that don't follow the
+# strict t<digits> shape (e.g. "t059b", "t043-merge" from awardsapp) — we must
+# preserve those. A blocklist is safer than an allowlist here: extraction
+# already skips the Format section, so the filter is a secondary guard rather
+# than primary validation.
+_filter_todo_placeholders() {
+	awk '
+		!/^- \[[ x-]\] t/ { print; next }
+		{
+			id = $0
+			sub(/^- \[[ x-]\] /, "", id)
+			sub(/ .*/, "", id)
+			if (id == "tXXX" || id == "tYYY" || id == "tZZZ") next
+			print
+		}
+	'
+}
+
+# t2434: Insert content_file into target_file immediately after the closing
+# "-->" of the named TOON marker block (<!--TOON:<tag>...-->).
+# Idempotent only in the sense that each call inserts once per marker; repeated
+# calls would stack insertions. Intended to be called once per tag per upgrade.
+_insert_after_toon_marker() {
+	local target_file="$1" toon_tag="$2" content_file="$3"
+	local temp_file="${target_file}.insert"
+	local marker_open="<!--TOON:${toon_tag}"
+	local in_marker=false
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ "$line" == *"$marker_open"* ]] && in_marker=true
+		if [[ "$in_marker" == true && "$line" == "-->" ]]; then
+			echo "$line"
+			echo ""
+			cat "$content_file"
+			in_marker=false
+			continue
+		fi
+		echo "$line"
+	done <"$target_file" >"$temp_file"
+	mv "$temp_file" "$target_file"
+}
+
+# t2434: Preserve each of the 6 task sections into $workdir/<tag>.txt for
+# later re-insertion after the template is applied. Placeholder filter runs
+# per section so Format-block tXXX-style examples never reach the new file.
+_upgrade_todo_preserve_sections() {
+	local todo_file="$1" workdir="$2"
+	local sections=("Ready" "Backlog" "In Progress" "In Review" "Done" "Declined")
+	local tags=("ready" "backlog" "in_progress" "in_review" "done" "declined")
+	local i=0
+	while [[ $i -lt ${#sections[@]} ]]; do
+		local section="${sections[$i]}" tag="${tags[$i]}"
+		local content
+		content=$(_extract_todo_section "$todo_file" "$section")
+		if [[ -n "$content" ]]; then
+			content=$(printf '%s\n' "$content" | _filter_todo_placeholders)
+			[[ -n "$content" ]] && printf '%s\n' "$content" >"$workdir/${tag}.txt"
+		fi
+		i=$((i + 1))
+	done
+	return 0
+}
+
+# t2434: Re-insert preserved section content after its matching TOON marker
+# in the freshly-applied new template. Caller is responsible for counting
+# merged tasks from the final file — keeping count out of the hot loop avoids
+# subshell/arithmetic edge cases under `set -u` when content contains `GH#`-
+# style IDs that don't match a naive `t[0-9]` count pattern.
+_upgrade_todo_reinsert_sections() {
+	local todo_file="$1" workdir="$2"
+	local tags=("ready" "backlog" "in_progress" "in_review" "done" "declined")
+	local tag content_file
+	for tag in "${tags[@]}"; do
+		content_file="$workdir/${tag}.txt"
+		[[ -f "$content_file" && -s "$content_file" ]] || continue
+		grep -q "<!--TOON:${tag}" "$todo_file" || continue
+		_insert_after_toon_marker "$todo_file" "$tag" "$content_file"
+	done
+	return 0
+}
+
+# t2434: Upgrade TODO.md to the latest TOON-enhanced template, preserving
+# tasks from all 6 sections (Ready, Backlog, In Progress, In Review, Done,
+# Declined). Prior behaviour (GH#20077) only preserved Backlog and silently
+# dropped the other 5 sections into TODO.md.bak, losing audit-trail data.
 _upgrade_todo() {
 	local todo_file="$1" todo_template="$2" backup="$3"
 	print_info "Upgrading TODO.md..."
-	local existing_tasks=""
+	local workdir=""
+	workdir=$(mktemp -d)
+	# shellcheck disable=SC2064  # intentional $workdir expansion at trap-set time
+	trap "rm -rf \"${workdir}\"" RETURN
 	if [[ -f "$todo_file" ]]; then
-		# Extract everything under ## Backlog (tasks AND ### subsection headers)
-		# until the next ## header or EOF — preserves semantic grouping.
-		# GH#17804: Skip ## Format section and filter out template placeholder IDs
-		# (tXXX, tYYY, tZZZ) that are documentation examples, not real tasks.
-		existing_tasks=$(awk '
-			# Section-aware: track when inside ## Format to skip its content
-			/^## Format/ { in_format=1; next }
-			in_format && /^## / { in_format=0 }
-			in_format { next }
-			# Also skip content inside markdown code blocks (``` fenced blocks)
-			/^```/ { in_codeblock = !in_codeblock; next }
-			in_codeblock { next }
-			# Extract from ## Backlog to next ## header
-			/^## Backlog/ { found=1; next }
-			found && /^## / { exit }
-			found
-		' "$todo_file" 2>/dev/null || echo "")
-		# GH#17804: Filter out lines with non-numeric task IDs (template placeholders
-		# like tXXX, tYYY, tZZZ). Real task IDs match t<digits> or t<digits>.<digits>.
-		if [[ -n "$existing_tasks" ]]; then
-			existing_tasks=$(printf '%s\n' "$existing_tasks" | awk '
-				# Keep non-task lines (subsection headers, comments, blank lines)
-				!/^- \[[ x-]\] t/ { print; next }
-				# For task lines: extract the ID and validate it is numeric
-				{
-					id = $0
-					sub(/^- \[[ x-]\] /, "", id)
-					sub(/ .*/, "", id)
-					# Valid IDs: t followed by digits, optionally .digits (subtasks)
-					if (id ~ /^t[0-9]+(\.[0-9]+)*$/) print
-				}
-			')
-		fi
+		_upgrade_todo_preserve_sections "$todo_file" "$workdir"
 		[[ "$backup" == "true" ]] && {
 			cp "$todo_file" "${todo_file}.bak"
 			print_success "Backup created: TODO.md.bak"
@@ -2643,27 +2717,11 @@ _upgrade_todo() {
 		cp "$todo_template" "$todo_file"
 	fi
 	sed_inplace "s/{{DATE}}/$(date +%Y-%m-%d)/" "$todo_file" 2>/dev/null || true
-	if [[ -n "$existing_tasks" ]] && grep -q "<!--TOON:backlog" "$todo_file"; then
-		local temp_file="${todo_file}.merge" tasks_file
-		tasks_file=$(mktemp)
-		trap 'rm -f "${tasks_file:-}"' RETURN
-		printf '%s\n' "$existing_tasks" >"$tasks_file"
-		local in_backlog=false
-		while IFS= read -r line || [[ -n "$line" ]]; do
-			[[ "$line" == *"<!--TOON:backlog"* ]] && in_backlog=true
-			if [[ "$in_backlog" == true && "$line" == "-->" ]]; then
-				echo "$line"
-				echo ""
-				cat "$tasks_file"
-				in_backlog=false
-				continue
-			fi
-			echo "$line"
-		done <"$todo_file" >"$temp_file"
-		rm -f "$tasks_file"
-		mv "$temp_file" "$todo_file"
-		print_success "Merged existing tasks into Backlog"
-	fi
+	_upgrade_todo_reinsert_sections "$todo_file" "$workdir"
+	local merged=0
+	merged=$(grep -cE '^- \[[ x-]\] (t[0-9]|GH#[0-9])' "$todo_file" 2>/dev/null || true)
+	merged="${merged:-0}"
+	[[ "$merged" -gt 0 ]] && print_success "Merged $merged existing task(s) across sections"
 	print_success "TODO.md upgraded to TOON-enhanced template"
 	return 0
 }
