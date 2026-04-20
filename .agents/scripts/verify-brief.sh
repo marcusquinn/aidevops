@@ -59,6 +59,11 @@ SKIP_COUNT=0
 UNVERIFIED_COUNT=0
 TOTAL_CRITERIA=0
 
+# Status constants (avoid repeated string literals)
+STATUS_PASS="pass"
+STATUS_FAIL="fail"
+STATUS_SKIP="skip"
+
 # Results array (for JSON output)
 declare -a RESULTS=()
 
@@ -73,6 +78,166 @@ log_debug() { [[ "$VERBOSE" == "true" ]] && echo -e "${CYAN}[DEBUG]${NC} $*" >&2
 # Show help
 show_help() {
 	grep '^#' "$0" | grep -v '#!/usr/bin/env' | sed 's/^# //' | sed 's/^#//'
+	return 0
+}
+
+# Validate Pre-flight block presence and completeness.
+# Checks that the brief contains a "## Pre-flight" section with all 4
+# required checkboxes populated (not placeholder text).
+# Returns 0 if valid, 1 if missing/incomplete, 2 if section absent.
+validate_preflight() {
+	local brief_file="$1"
+	local in_preflight=false
+	local found_section=false
+	local checked_count=0
+	local unchecked_count=0
+	local total_boxes=0
+	local has_memory=false
+	local has_discovery=false
+	local has_filerefs=false
+	local has_tier=false
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		# Detect Pre-flight section
+		if [[ "$line" =~ ^##[[:space:]]+Pre-flight ]]; then
+			in_preflight=true
+			found_section=true
+			continue
+		fi
+
+		# Detect next section (exit preflight parsing)
+		if [[ "$in_preflight" == "true" && "$line" =~ ^##[[:space:]] && ! "$line" =~ Pre-flight ]]; then
+			break
+		fi
+
+		if [[ "$in_preflight" != "true" ]]; then
+			continue
+		fi
+
+		# Skip HTML comments
+		[[ "$line" =~ ^[[:space:]]*\<!-- ]] && continue
+
+		# Detect checkbox lines
+		if [[ "$line" =~ ^[[:space:]]*-[[:space:]]\[([[:space:]x])\][[:space:]](.+)$ ]]; then
+			local check_state="${BASH_REMATCH[1]}"
+			local check_text="${BASH_REMATCH[2]}"
+			total_boxes=$((total_boxes + 1))
+
+			if [[ "$check_state" == "x" ]]; then
+				checked_count=$((checked_count + 1))
+			else
+				unchecked_count=$((unchecked_count + 1))
+			fi
+
+			# Identify which check this is and verify it's populated (not template placeholder)
+			if [[ "$check_text" =~ ^Memory[[:space:]]recall ]]; then
+				has_memory=true
+				# Reject if still contains placeholder markers
+				if [[ "$check_text" =~ \<query\> || "$check_text" =~ \<N\>[[:space:]]hits ]]; then
+					log_fail "Pre-flight: Memory recall still contains placeholder text"
+					unchecked_count=$((unchecked_count + 1))
+					checked_count=$((checked_count > 0 ? checked_count - 1 : 0))
+				fi
+			elif [[ "$check_text" =~ ^Discovery[[:space:]]pass ]]; then
+				has_discovery=true
+				if [[ "$check_text" =~ \<N\>[[:space:]]commits || "$check_text" =~ \<date\> ]]; then
+					log_fail "Pre-flight: Discovery pass still contains placeholder text"
+					unchecked_count=$((unchecked_count + 1))
+					checked_count=$((checked_count > 0 ? checked_count - 1 : 0))
+				fi
+			elif [[ "$check_text" =~ ^File[[:space:]]refs ]]; then
+				has_filerefs=true
+				if [[ "$check_text" =~ \<N\>[[:space:]]refs[[:space:]]checked ]]; then
+					log_fail "Pre-flight: File refs still contains placeholder text"
+					unchecked_count=$((unchecked_count + 1))
+					checked_count=$((checked_count > 0 ? checked_count - 1 : 0))
+				fi
+			elif [[ "$check_text" =~ ^Tier: ]]; then
+				has_tier=true
+				if [[ "$check_text" =~ \<tier\> ]]; then
+					log_fail "Pre-flight: Tier still contains placeholder text"
+					unchecked_count=$((unchecked_count + 1))
+					checked_count=$((checked_count > 0 ? checked_count - 1 : 0))
+				fi
+			fi
+		fi
+	done <"$brief_file"
+
+	if [[ "$found_section" != "true" ]]; then
+		log_fail "Pre-flight section missing from brief"
+		return 2
+	fi
+
+	# Check all 4 required items are present
+	local missing=""
+	[[ "$has_memory" != "true" ]] && missing="${missing}memory recall, "
+	[[ "$has_discovery" != "true" ]] && missing="${missing}discovery pass, "
+	[[ "$has_filerefs" != "true" ]] && missing="${missing}file refs, "
+	[[ "$has_tier" != "true" ]] && missing="${missing}tier check, "
+
+	if [[ -n "$missing" ]]; then
+		missing="${missing%, }"
+		log_fail "Pre-flight missing required items: $missing"
+		return 1
+	fi
+
+	if [[ $unchecked_count -gt 0 ]]; then
+		log_warn "Pre-flight: $unchecked_count of $total_boxes items unchecked or contain placeholders"
+		return 1
+	fi
+
+	log_pass "Pre-flight: all $total_boxes items populated"
+	return 0
+}
+
+# Validate tier assignment against file count in Worker Guidance / Files to Modify.
+# If the brief claims tier:simple but lists >2 files, flag as invalid.
+# Returns 0 if valid or no tier claim, 1 if mis-tiered.
+validate_tier_file_count() {
+	local brief_file="$1"
+	local claimed_tier=""
+	local file_count=0
+	local in_files_section=false
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		# Extract tier from Pre-flight or Tier section
+		if [[ "$line" =~ Tier:[[:space:]]*\`?tier:([a-z]+) ]]; then
+			claimed_tier="${BASH_REMATCH[1]}"
+		fi
+		# Also check Selected tier line
+		if [[ "$line" =~ Selected[[:space:]]tier.*tier:([a-z]+) ]]; then
+			claimed_tier="${BASH_REMATCH[1]}"
+		fi
+
+		# Detect Files to Modify section
+		if [[ "$line" =~ ^###[[:space:]]+Files[[:space:]]to[[:space:]]Modify ]]; then
+			in_files_section=true
+			continue
+		fi
+
+		# Detect next section
+		if [[ "$in_files_section" == "true" && "$line" =~ ^### ]]; then
+			in_files_section=false
+			continue
+		fi
+
+		# Count file entries (lines starting with - ` or - NEW: or - EDIT:)
+		if [[ "$in_files_section" == "true" ]]; then
+			if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+(NEW:|EDIT:|\`) ]]; then
+				file_count=$((file_count + 1))
+			fi
+		fi
+	done <"$brief_file"
+
+	if [[ "$claimed_tier" == "simple" && $file_count -gt 2 ]]; then
+		log_fail "Tier mismatch: brief claims tier:simple but lists $file_count files (max 2 for tier:simple)"
+		return 1
+	fi
+
+	if [[ -n "$claimed_tier" && $file_count -gt 0 ]]; then
+		log_debug "Tier validation: tier:$claimed_tier with $file_count file(s) — OK"
+	fi
+
 	return 0
 }
 
@@ -793,7 +958,7 @@ process_criterion() {
 	if ! parse_verify_yaml "$yaml"; then
 		FAIL_COUNT=$((FAIL_COUNT + 1))
 		log_fail "$criterion (invalid verify block)"
-		add_result "$criterion" "fail" "unknown" "Invalid verify block"
+		add_result "$criterion" "$STATUS_FAIL" "unknown" "Invalid verify block"
 		return 0
 	fi
 
@@ -835,17 +1000,17 @@ process_criterion() {
 	0)
 		PASS_COUNT=$((PASS_COUNT + 1))
 		log_pass "$criterion"
-		add_result "$criterion" "pass" "$V_METHOD" ""
+		add_result "$criterion" "$STATUS_PASS" "$V_METHOD" ""
 		;;
 	3)
 		# Skip (subagent/manual)
 		SKIP_COUNT=$((SKIP_COUNT + 1))
-		add_result "$criterion" "skip" "$V_METHOD" "Requires human/AI review"
+		add_result "$criterion" "$STATUS_SKIP" "$V_METHOD" "Requires human/AI review"
 		;;
 	*)
 		FAIL_COUNT=$((FAIL_COUNT + 1))
 		log_fail "$criterion"
-		add_result "$criterion" "fail" "$V_METHOD" "Exit code: $rc"
+		add_result "$criterion" "$STATUS_FAIL" "$V_METHOD" "Exit code: $rc"
 		;;
 	esac
 
@@ -867,20 +1032,54 @@ main() {
 		log_info "DRY RUN — parsing only, no execution"
 	fi
 
+	# --- Pre-flight block validation ---
+	local preflight_rc=0
+	log_info "--- Pre-flight Block ---"
+	if [[ "$DRY_RUN" == "true" ]]; then
+		log_info "  [preflight] Checking Pre-flight section presence and completeness"
+	else
+		validate_preflight "$BRIEF_FILE" || preflight_rc=$?
+		if [[ $preflight_rc -ne 0 ]]; then
+			FAIL_COUNT=$((FAIL_COUNT + 1))
+			TOTAL_CRITERIA=$((TOTAL_CRITERIA + 1))
+			add_result "Pre-flight block completeness" "$STATUS_FAIL" "preflight" "Exit code: $preflight_rc"
+		else
+			PASS_COUNT=$((PASS_COUNT + 1))
+			TOTAL_CRITERIA=$((TOTAL_CRITERIA + 1))
+			add_result "Pre-flight block completeness" "$STATUS_PASS" "preflight" ""
+		fi
+	fi
+
+	# --- Tier-file-count cross-validation ---
+	local tier_rc=0
+	if [[ "$DRY_RUN" == "true" ]]; then
+		log_info "  [tier] Checking tier vs file count consistency"
+	else
+		validate_tier_file_count "$BRIEF_FILE" || tier_rc=$?
+		if [[ $tier_rc -ne 0 ]]; then
+			FAIL_COUNT=$((FAIL_COUNT + 1))
+			TOTAL_CRITERIA=$((TOTAL_CRITERIA + 1))
+			add_result "Tier-file-count consistency" "$STATUS_FAIL" "tier" "tier:simple with >2 files"
+		else
+			PASS_COUNT=$((PASS_COUNT + 1))
+			TOTAL_CRITERIA=$((TOTAL_CRITERIA + 1))
+			add_result "Tier-file-count consistency" "$STATUS_PASS" "tier" ""
+		fi
+	fi
+
 	# Parse the brief file into parallel arrays
 	parse_brief "$BRIEF_FILE"
 
 	local count=${#CRITERIA_TEXT[@]}
 	if [[ $count -eq 0 ]]; then
 		log_info "No acceptance criteria found"
-		return 0
+	else
+		# Process each criterion
+		local i
+		for ((i = 0; i < count; i++)); do
+			process_criterion "${CRITERIA_TEXT[$i]}" "${CRITERIA_YAML[$i]}"
+		done
 	fi
-
-	# Process each criterion
-	local i
-	for ((i = 0; i < count; i++)); do
-		process_criterion "${CRITERIA_TEXT[$i]}" "${CRITERIA_YAML[$i]}"
-	done
 
 	# Summary
 	echo "" >&2

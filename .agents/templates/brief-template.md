@@ -6,6 +6,17 @@ mode: subagent
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # {task_id}: {Title}
 
+## Pre-flight (auto-populated by briefing workflow)
+
+<!-- MANDATORY — workflows/brief.md "Pre-composition checks" populates these.
+     verify-brief.sh rejects briefs with unchecked Pre-flight boxes.
+     Each checkbox documents that the check was performed and what it found. -->
+
+- [ ] Memory recall: `<query>` -> `<N>` hits | no results
+- [ ] Discovery pass: `<N>` commits / `<N>` merged PRs / `<N>` open PRs touch target files since `<date>`
+- [ ] File refs verified: `<N>` refs checked, all present | `<N>` missing (list)
+- [ ] Tier: `<tier>` -- disqualifier check clean | disqualified from `<tier>` because `<reason>`
+
 ## Origin
 
 - **Created:** {YYYY-MM-DD}

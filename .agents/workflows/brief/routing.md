@@ -27,6 +27,28 @@ When to use this agent for structured GitHub content.
 | Workers (on completion) | PR description | Summary + linked issue + verification evidence |
 | Workers (on failure) | Escalation comment | What was tried, where it stuck, brief gaps |
 
+## Already-Shipped Detection
+
+When the pre-composition discovery pass (see `workflows/brief.md` "Pre-composition checks") surfaces a **merged PR** that touched the exact target files:
+
+| Signal | Action |
+|--------|--------|
+| Merged PR fixes the same bug/gap | Close the issue with a pointer: `Duplicate of #NNN (merged <date>). Verified against HEAD — symptom no longer reproduces.` |
+| Merged PR partially addresses | File a narrower follow-up task scoped only to the remaining gap. Reference the merged PR in the brief. |
+| Merged PR is unrelated (coincidental file overlap) | Proceed with brief composition. Note the overlap in the brief's Context section to save the worker re-checking. |
+
+## In-Flight Collision Detection
+
+When the discovery pass surfaces an **open PR** on the same target files:
+
+| Signal | Action |
+|--------|--------|
+| Open PR covers the same scope | Post a comment on the open PR with the new requirement. Do NOT file a duplicate task. |
+| Open PR partially overlaps | Coordinate: file the new task with a `blocked-by:` reference to the open PR, or scope the new task to non-overlapping files. |
+| Open PR is unrelated (coincidental file overlap) | Proceed. Note the in-flight PR in the brief's Context section. |
+
+Both detection paths are mandatory when the discovery pass returns hits. Skipping them is how duplicate PRs get filed (see t2046 "Pre-implementation discovery" for the root cause and evidence).
+
 ## PR descriptions
 
 | Creator | Content type | What this agent provides |

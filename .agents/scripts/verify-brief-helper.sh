@@ -25,9 +25,10 @@ _usage() {
 Usage: verify-brief-helper.sh <command> [brief-path]
 
 Commands:
-  verify <path>   Run all method:bash verify blocks from the brief
-  list   <path>   List verify blocks without executing
-  help             Show this help
+  verify          <path>   Run all method:bash verify blocks from the brief
+  list            <path>   List verify blocks without executing
+  check-preflight <path>   Validate Pre-flight block presence and completeness
+  help                     Show this help
 EOF
 	return 0
 }
@@ -39,6 +40,8 @@ _log() {
 	printf '[%s] %s\n' "$level" "$msg" >&2
 	return 0
 }
+
+_ERR_BRIEF_NOT_FOUND="Brief not found:"
 
 # ---------------------------------------------------------------------------
 # Parse verify blocks from a brief markdown file
@@ -149,7 +152,7 @@ _cmd_list() {
 	local brief_path="$1"
 
 	if [[ ! -f "$brief_path" ]]; then
-		_log "ERROR" "Brief not found: $brief_path"
+		_log "ERROR" "$_ERR_BRIEF_NOT_FOUND $brief_path"
 		return 2
 	fi
 
@@ -175,7 +178,7 @@ _cmd_verify() {
 	local brief_path="$1"
 
 	if [[ ! -f "$brief_path" ]]; then
-		_log "ERROR" "Brief not found: $brief_path"
+		_log "ERROR" "$_ERR_BRIEF_NOT_FOUND $brief_path"
 		return 2
 	fi
 
@@ -245,6 +248,108 @@ _cmd_verify() {
 }
 
 # ---------------------------------------------------------------------------
+# Pre-flight validation
+# ---------------------------------------------------------------------------
+
+_cmd_check_preflight() {
+	local brief_path="$1"
+
+	if [[ ! -f "$brief_path" ]]; then
+		_log "ERROR" "$_ERR_BRIEF_NOT_FOUND $brief_path"
+		return 2
+	fi
+
+	local in_preflight=0
+	local found_section=0
+	local total_boxes=0
+	local populated_count=0
+	local placeholder_count=0
+	local has_memory=0
+	local has_discovery=0
+	local has_filerefs=0
+	local has_tier=0
+
+	while IFS= read -r line; do
+		# Detect Pre-flight section
+		if echo "$line" | grep -qE '^##[[:space:]]+Pre-flight'; then
+			in_preflight=1
+			found_section=1
+			continue
+		fi
+
+		# Detect next section
+		if [[ $in_preflight -eq 1 ]] && echo "$line" | grep -qE '^##[[:space:]]' && ! echo "$line" | grep -qE 'Pre-flight'; then
+			break
+		fi
+
+		[[ $in_preflight -eq 0 ]] && continue
+
+		# Skip HTML comments
+		echo "$line" | grep -qE '^\s*<!--' && continue
+
+		# Detect checkbox lines
+		if echo "$line" | grep -qE '^\s*-\s+\[[[:space:]x]\]'; then
+			total_boxes=$((total_boxes + 1))
+
+			if echo "$line" | grep -qiE 'Memory[[:space:]]+recall'; then
+				has_memory=1
+				if echo "$line" | grep -qE '<query>|<N>[[:space:]]hits'; then
+					placeholder_count=$((placeholder_count + 1))
+				else
+					populated_count=$((populated_count + 1))
+				fi
+			elif echo "$line" | grep -qiE 'Discovery[[:space:]]+pass'; then
+				has_discovery=1
+				if echo "$line" | grep -qE '<N>[[:space:]]commits|<date>'; then
+					placeholder_count=$((placeholder_count + 1))
+				else
+					populated_count=$((populated_count + 1))
+				fi
+			elif echo "$line" | grep -qiE 'File[[:space:]]+refs'; then
+				has_filerefs=1
+				if echo "$line" | grep -qE '<N>[[:space:]]refs[[:space:]]checked'; then
+					placeholder_count=$((placeholder_count + 1))
+				else
+					populated_count=$((populated_count + 1))
+				fi
+			elif echo "$line" | grep -qiE '^[[:space:]]*-[[:space:]]+\[[[:space:]x]\][[:space:]]+Tier:'; then
+				has_tier=1
+				if echo "$line" | grep -qE '<tier>'; then
+					placeholder_count=$((placeholder_count + 1))
+				else
+					populated_count=$((populated_count + 1))
+				fi
+			fi
+		fi
+	done <"$brief_path"
+
+	if [[ $found_section -eq 0 ]]; then
+		printf 'FAIL  Pre-flight section missing from brief\n'
+		return 1
+	fi
+
+	local missing=""
+	[[ $has_memory -eq 0 ]] && missing="${missing}memory recall, "
+	[[ $has_discovery -eq 0 ]] && missing="${missing}discovery pass, "
+	[[ $has_filerefs -eq 0 ]] && missing="${missing}file refs, "
+	[[ $has_tier -eq 0 ]] && missing="${missing}tier check, "
+
+	if [[ -n "$missing" ]]; then
+		missing="${missing%, }"
+		printf 'FAIL  Pre-flight missing required items: %s\n' "$missing"
+		return 1
+	fi
+
+	if [[ $placeholder_count -gt 0 ]]; then
+		printf 'FAIL  Pre-flight: %d of %d items still contain placeholder text\n' "$placeholder_count" "$total_boxes"
+		return 1
+	fi
+
+	printf 'PASS  Pre-flight: %d/%d items populated\n' "$populated_count" "$total_boxes"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -252,20 +357,29 @@ main() {
 	local cmd="${1:-help}"
 	shift || true
 
+	local brief_path="${1:-}"
+
 	case "$cmd" in
 	verify)
-		if [[ $# -lt 1 ]]; then
+		if [[ -z "$brief_path" ]]; then
 			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh verify <path>"
 			return 2
 		fi
-		_cmd_verify "$1"
+		_cmd_verify "$brief_path"
 		;;
 	list)
-		if [[ $# -lt 1 ]]; then
+		if [[ -z "$brief_path" ]]; then
 			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh list <path>"
 			return 2
 		fi
-		_cmd_list "$1"
+		_cmd_list "$brief_path"
+		;;
+	check-preflight)
+		if [[ -z "$brief_path" ]]; then
+			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh check-preflight <path>"
+			return 2
+		fi
+		_cmd_check_preflight "$brief_path"
 		;;
 	help | --help | -h)
 		_usage

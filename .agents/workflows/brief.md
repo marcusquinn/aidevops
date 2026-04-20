@@ -27,6 +27,69 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-Composition Checks (MANDATORY)
+
+Before composing any brief that will result in code changes, perform these checks in order. Skipping them causes duplicate work, phantom references, and mis-tiered dispatches (see GH#17832-17835, t2046, t2050 for prior evidence).
+
+### 1. Memory recall (t2050)
+
+```bash
+memory-helper.sh recall --query "<1-3 keyword phrase from task>" --limit 5
+```
+
+Surface accumulated lessons from prior sessions. Read any results before proceeding — they may reveal that the approach was tried before, that a specific pattern failed, or that a related fix already landed.
+
+### 2. Discovery pass (t2046)
+
+For any brief that targets code changes, run all three queries:
+
+```bash
+# Recent commits on target files
+git log --since="<issue-age + 2h>" --oneline -- <target-files>
+
+# Recently merged PRs in the same problem space
+gh pr list --state merged --search "<keywords>" --limit 5
+
+# Open PRs that may collide
+gh pr list --state open --search "<keywords>" --limit 5
+```
+
+**If any query surfaces a hit on the exact target files:**
+
+- STOP and verify whether the task is still valid.
+- If a merged PR already addresses the problem, route to a close-with-pointer comment (see `brief/routing.md` "Already-shipped detection") instead of filing a new task.
+- If an open PR is in-flight on the same files, route to a comment on that PR instead of creating a parallel effort.
+
+### 3. File:line verification
+
+For every file reference in the draft brief, confirm the reference exists and the content matches the claim:
+
+```bash
+# Verify file exists
+git ls-files <path>
+
+# Verify line content matches
+sed -n '<line>p' <path>
+```
+
+Briefs with phantom line refs waste worker cycles. A worker dispatched against a nonexistent `file:line` burns tokens navigating before discovering the reference is wrong (see GH#17832-17835).
+
+### 4. Tier disqualifier check
+
+Cross-check the draft brief against `reference/task-taxonomy.md` "Tier Assignment Validation" disqualifiers BEFORE choosing a tier. The server-side `tier-simple-body-shape-helper.sh` (t2389) auto-downgrades mis-tiered `tier:simple` issues, but catching mis-classification at composition time is cheaper than a failed dispatch + cascade escalation.
+
+### 5. Self-assignment awareness
+
+If filing via `gh_create_issue` with `auto-dispatch` label, plan to unassign immediately after:
+
+```bash
+gh issue edit <N> --repo <slug> --remove-assignee <user>
+```
+
+The wrapper currently self-assigns in violation of t2157 (tracked as t2406 / GH#19991). Until the fix merges, manual unassign is required to prevent dispatch-blocking.
+
+---
+
 ## Core Rule
 
 **The brief IS the product.** A vague brief dispatched to Opus wastes more money than a prescriptive brief dispatched to Haiku. Invest the effort in the brief, not the worker.
