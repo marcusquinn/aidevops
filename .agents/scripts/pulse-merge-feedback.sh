@@ -26,7 +26,12 @@
 #
 # Functions in this module (in source order):
 #   - _build_review_feedback_section      (t2093)
+#   - _append_feedback_to_issue           (GH#20057, shared helper)
+#   - _transition_issue_for_redispatch    (GH#20057, shared helper)
+#   - _close_and_label_feedback_pr        (GH#20057, shared helper)
+#   - _build_ci_feedback_section          (GH#20057, extracted builder)
 #   - _dispatch_ci_fix_worker             (t2093 follow-up)
+#   - _build_conflict_feedback_section    (t2426, extracted builder)
 #   - _dispatch_conflict_fix_worker       (t2093 follow-up)
 #   - _dispatch_pr_fix_worker             (t2093)
 #
@@ -107,6 +112,147 @@ See the original PR for full context: https://github.com/${repo_slug}/pull/${pr_
 }
 
 #######################################
+# Append a feedback section to a linked issue body, guarded by a marker
+# comment for idempotency and with a t2383 fail-safe against body
+# clobbering when the issue fetch fails.
+#
+# Shared by _dispatch_ci_fix_worker, _dispatch_conflict_fix_worker, and
+# _dispatch_pr_fix_worker.
+#
+# Args:
+#   $1 - linked_issue  (issue number)
+#   $2 - repo_slug     (owner/repo)
+#   $3 - marker        (HTML comment marker string)
+#   $4 - feedback_section (markdown to append)
+#   $5 - caller        (calling function name, for log messages)
+#
+# Returns: 0 on success or skip (already present), 1 on failure.
+#######################################
+_append_feedback_to_issue() {
+	local linked_issue="$1"
+	local repo_slug="$2"
+	local marker="$3"
+	local feedback_section="$4"
+	local caller="$5"
+
+	# t2383 Fix 5: fail-safe — skip body edit when issue fetch fails to
+	# prevent clobbering the issue body with only the routed-feedback section.
+	local current_body fetch_rc
+	fetch_rc=0
+	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
+		--json body --jq '.body // ""' 2>/dev/null) || fetch_rc=$?
+	if [[ $fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] ${caller}: failed to fetch issue #${linked_issue} body (exit ${fetch_rc}) — skipping body edit to prevent data loss (t2383)" >>"$LOGFILE"
+		return 1
+	fi
+
+	if printf '%s' "$current_body" | grep -qF "$marker"; then
+		echo "[pulse-wrapper] ${caller}: issue #${linked_issue} already has feedback marker for this PR — skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	local new_body="${current_body}
+
+${marker}
+${feedback_section}"
+	gh issue edit "$linked_issue" --repo "$repo_slug" \
+		--body "$new_body" >/dev/null 2>&1 || {
+		echo "[pulse-wrapper] ${caller}: failed to update issue #${linked_issue} body — aborting" >>"$LOGFILE"
+		return 1
+	}
+	return 0
+}
+
+#######################################
+# Transition a linked issue to status:available and add a source label
+# so the dispatch queue can re-pick the work.
+#
+# Uses set_issue_status when available (atomically clears other status
+# labels), falls back to direct gh label ops in degraded environments.
+#
+# Args:
+#   $1 - linked_issue  (issue number)
+#   $2 - repo_slug     (owner/repo)
+#   $3 - source_label  (e.g. "source:ci-feedback")
+#######################################
+_transition_issue_for_redispatch() {
+	local linked_issue="$1"
+	local repo_slug="$2"
+	local source_label="$3"
+
+	if declare -F set_issue_status >/dev/null 2>&1; then
+		set_issue_status "$linked_issue" "$repo_slug" "available" \
+			--add-label "$source_label" >/dev/null 2>&1 || true
+	else
+		gh issue edit "$linked_issue" --repo "$repo_slug" \
+			--add-label "status:available" --add-label "$source_label" \
+			--remove-label "status:queued" --remove-label "status:in-progress" \
+			--remove-label "status:in-review" --remove-label "status:claimed" \
+			>/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
+#######################################
+# Close a feedback-routed PR with an explanatory comment and apply an
+# idempotency label.
+#
+# Args:
+#   $1 - pr_number
+#   $2 - repo_slug
+#   $3 - close_comment  (markdown body for the close comment)
+#   $4 - label          (e.g. "ci-feedback-routed")
+#######################################
+_close_and_label_feedback_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local close_comment="$3"
+	local label="$4"
+
+	gh pr close "$pr_number" --repo "$repo_slug" \
+		--comment "$close_comment" >/dev/null 2>&1 || true
+	gh pr edit "$pr_number" --repo "$repo_slug" \
+		--add-label "$label" >/dev/null 2>&1 || true
+	return 0
+}
+
+#######################################
+# Build the markdown "CI Failure Feedback" section for routing to a
+# linked issue.
+#
+# Args:
+#   $1 - pr_number
+#   $2 - failing_checks  (markdown list of failing check names/URLs)
+#
+# Output: markdown section on stdout.
+#######################################
+_build_ci_feedback_section() {
+	local pr_number="$1"
+	local failing_checks="$2"
+
+	cat <<-EOF
+		## CI Failure Feedback (from PR #${pr_number})
+
+		The previous worker's PR #${pr_number} had failing required CI checks. The PR has been
+		closed and this issue re-queued for dispatch. The next worker should address these failures.
+
+		### Failing checks
+
+		${failing_checks}
+
+		### Worker guidance
+
+		1. Check out a fresh branch from \`origin/main\` (do NOT reuse the old branch)
+		2. Read the failing check URLs above for specific error messages
+		3. Fix the issues in the code, not in the CI config
+		4. Ensure all checks pass locally before pushing
+
+		_Routed by deterministic merge pass (pulse-merge.sh)._
+	EOF
+	return 0
+}
+
+#######################################
 # Route CI failure feedback from a worker PR to its linked issue, close
 # the PR, and set the issue to status:available for re-dispatch.
 #
@@ -153,66 +299,19 @@ _dispatch_ci_fix_worker() {
 
 	# Build the CI Failure Feedback section
 	local feedback_section
-	feedback_section="## CI Failure Feedback (from PR #${pr_number})
+	feedback_section=$(_build_ci_feedback_section "$pr_number" "$failing_checks")
 
-The previous worker's PR #${pr_number} had failing required CI checks. The PR has been
-closed and this issue re-queued for dispatch. The next worker should address these failures.
-
-### Failing checks
-
-${failing_checks}
-
-### Worker guidance
-
-1. Check out a fresh branch from \`origin/main\` (do NOT reuse the old branch)
-2. Read the failing check URLs above for specific error messages
-3. Fix the issues in the code, not in the CI config
-4. Ensure all checks pass locally before pushing
-
-_Routed by deterministic merge pass (pulse-merge.sh)._"
-
-	# Append to issue body (marker-guarded for idempotency)
-	# t2383 Fix 5: fail-safe — skip body edit when issue fetch fails to prevent
-	# clobbering the issue body with only the routed-feedback section.
-	local current_body ci_fetch_rc
-	ci_fetch_rc=0
-	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || ci_fetch_rc=$?
-	if [[ $ci_fetch_rc -ne 0 ]]; then
-		echo "[pulse-wrapper] _dispatch_ci_fix_worker: failed to fetch issue #${linked_issue} body (exit ${ci_fetch_rc}) — skipping body edit to prevent data loss (t2383)" >>"$LOGFILE"
-		return 0
-	fi
-
+	# Append to issue body (marker-guarded, t2383 fail-safe)
 	local marker="<!-- ci-feedback:PR${pr_number} -->"
-	if printf '%s' "$current_body" | grep -qF "$marker"; then
-		echo "[pulse-wrapper] _dispatch_ci_fix_worker: issue #${linked_issue} already has CI feedback for PR #${pr_number} — skipping" >>"$LOGFILE"
-	else
-		local new_body="${current_body}
-
-${marker}
-${feedback_section}"
-		gh issue edit "$linked_issue" --repo "$repo_slug" \
-			--body "$new_body" >/dev/null 2>&1 || {
-			echo "[pulse-wrapper] _dispatch_ci_fix_worker: failed to update issue #${linked_issue} body — aborting" >>"$LOGFILE"
-			return 1
-		}
-	fi
+	_append_feedback_to_issue "$linked_issue" "$repo_slug" "$marker" \
+		"$feedback_section" "_dispatch_ci_fix_worker" || return 0
 
 	# Transition issue to available for re-dispatch
-	if declare -F set_issue_status >/dev/null 2>&1; then
-		set_issue_status "$linked_issue" "$repo_slug" "available" \
-			--add-label "source:ci-feedback" >/dev/null 2>&1 || true
-	else
-		gh issue edit "$linked_issue" --repo "$repo_slug" \
-			--add-label "status:available" --add-label "source:ci-feedback" \
-			--remove-label "status:queued" --remove-label "status:in-progress" \
-			--remove-label "status:in-review" --remove-label "status:claimed" \
-			>/dev/null 2>&1 || true
-	fi
+	_transition_issue_for_redispatch "$linked_issue" "$repo_slug" "source:ci-feedback"
 
-	# Close the PR
-	gh pr close "$pr_number" --repo "$repo_slug" \
-		--comment "## CI failure feedback routed to issue #${linked_issue}
+	# Close the PR with feedback summary
+	_close_and_label_feedback_pr "$pr_number" "$repo_slug" \
+		"## CI failure feedback routed to issue #${linked_issue}
 
 This worker PR had failing required CI checks. The failure details have been appended
 to the linked issue body so the next worker can address them.
@@ -221,10 +320,7 @@ Failing checks:
 ${failing_checks}
 
 _Closed by deterministic merge pass (pulse-merge.sh)._" \
-		>/dev/null 2>&1 || true
-
-	gh pr edit "$pr_number" --repo "$repo_slug" \
-		--add-label "ci-feedback-routed" >/dev/null 2>&1 || true
+		"ci-feedback-routed"
 
 	echo "[pulse-wrapper] _dispatch_ci_fix_worker: routed CI failure feedback from PR #${pr_number} to issue #${linked_issue} in ${repo_slug}" >>"$LOGFILE"
 	return 0
@@ -320,7 +416,7 @@ _dispatch_conflict_fix_worker() {
 	pr_files=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json files --jq '[.files[].path] | join("\n")' 2>/dev/null) || pr_files="(could not fetch)"
 
-	# Get the closed PR's head commit SHA (t2426) — reachable for ≥30 days after close
+	# Get the closed PR's head commit SHA (t2426) — reachable for >=30 days after close
 	# and lets the next worker cherry-pick instead of rewriting from scratch.
 	local pr_head_sha
 	pr_head_sha=$(gh pr view "$pr_number" --repo "$repo_slug" \
@@ -329,56 +425,22 @@ _dispatch_conflict_fix_worker() {
 	local feedback_section
 	feedback_section=$(_build_conflict_feedback_section "$pr_number" "$pr_title" "$pr_files" "$pr_head_sha")
 
-	# Append to issue body (marker-guarded)
-	# t2383 Fix 5: fail-safe — skip body edit when issue fetch fails to prevent
-	# clobbering the issue body with only the routed-feedback section.
-	local current_body conflict_fetch_rc
-	conflict_fetch_rc=0
-	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || conflict_fetch_rc=$?
-	if [[ $conflict_fetch_rc -ne 0 ]]; then
-		echo "[pulse-wrapper] _dispatch_conflict_fix_worker: failed to fetch issue #${linked_issue} body (exit ${conflict_fetch_rc}) — skipping body edit to prevent data loss (t2383)" >>"$LOGFILE"
-		return 0
-	fi
-
+	# Append to issue body (marker-guarded, t2383 fail-safe)
 	local marker="<!-- conflict-feedback:PR${pr_number} -->"
-	if printf '%s' "$current_body" | grep -qF "$marker"; then
-		echo "[pulse-wrapper] _dispatch_conflict_fix_worker: issue #${linked_issue} already has conflict feedback for PR #${pr_number} — skipping" >>"$LOGFILE"
-	else
-		local new_body="${current_body}
+	_append_feedback_to_issue "$linked_issue" "$repo_slug" "$marker" \
+		"$feedback_section" "_dispatch_conflict_fix_worker" || return 0
 
-${marker}
-${feedback_section}"
-		gh issue edit "$linked_issue" --repo "$repo_slug" \
-			--body "$new_body" >/dev/null 2>&1 || {
-			echo "[pulse-wrapper] _dispatch_conflict_fix_worker: failed to update issue #${linked_issue} body — aborting" >>"$LOGFILE"
-			return 1
-		}
-	fi
+	# Transition issue to available for re-dispatch
+	_transition_issue_for_redispatch "$linked_issue" "$repo_slug" "source:conflict-feedback"
 
-	# Transition issue to available
-	if declare -F set_issue_status >/dev/null 2>&1; then
-		set_issue_status "$linked_issue" "$repo_slug" "available" \
-			--add-label "source:conflict-feedback" >/dev/null 2>&1 || true
-	else
-		gh issue edit "$linked_issue" --repo "$repo_slug" \
-			--add-label "status:available" --add-label "source:conflict-feedback" \
-			--remove-label "status:queued" --remove-label "status:in-progress" \
-			--remove-label "status:in-review" --remove-label "status:claimed" \
-			>/dev/null 2>&1 || true
-	fi
-
-	# Close the PR
-	gh pr close "$pr_number" --repo "$repo_slug" \
-		--comment "## Merge conflict feedback routed to issue #${linked_issue}
+	# Close the PR with conflict context
+	_close_and_label_feedback_pr "$pr_number" "$repo_slug" \
+		"## Merge conflict feedback routed to issue #${linked_issue}
 
 This worker PR had semantic merge conflicts with \`main\` that \`update-branch\` could not resolve. The conflict context and file list have been appended to the linked issue body so the next worker can re-implement on top of current \`main\`.
 
 _Closed by deterministic merge pass (pulse-merge.sh)._" \
-		>/dev/null 2>&1 || true
-
-	gh pr edit "$pr_number" --repo "$repo_slug" \
-		--add-label "conflict-feedback-routed" >/dev/null 2>&1 || true
+		"conflict-feedback-routed"
 
 	echo "[pulse-wrapper] _dispatch_conflict_fix_worker: routed conflict feedback from PR #${pr_number} to issue #${linked_issue} in ${repo_slug}" >>"$LOGFILE"
 	return 0
@@ -472,59 +534,13 @@ _dispatch_pr_fix_worker() {
 		return 0
 	fi
 
-	# --- Append to linked issue body (marker-guarded for idempotency) ---
-	# t2383 Fix 5: fail-safe — skip body edit when issue fetch fails to prevent
-	# clobbering the issue body with only the routed-feedback section.
-	local current_body review_fetch_rc
-	review_fetch_rc=0
-	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || review_fetch_rc=$?
-	if [[ $review_fetch_rc -ne 0 ]]; then
-		echo "[pulse-wrapper] _dispatch_pr_fix_worker: failed to fetch issue #${linked_issue} body (exit ${review_fetch_rc}) — skipping body edit to prevent data loss (t2383)" >>"$LOGFILE"
-		return 0
-	fi
-
+	# --- Append to linked issue body (marker-guarded, t2383 fail-safe) ---
 	local marker="<!-- t2093:review-feedback:PR${pr_number} -->"
-	local body_updated="false"
-	if printf '%s' "$current_body" | grep -qF "$marker"; then
-		echo "[pulse-wrapper] _dispatch_pr_fix_worker: issue #${linked_issue} in ${repo_slug} already has routed feedback marker for PR #${pr_number} — skipping body update (t2093)" >>"$LOGFILE"
-		body_updated="true"
-	else
-		local new_body
-		new_body="${current_body}
+	_append_feedback_to_issue "$linked_issue" "$repo_slug" "$marker" \
+		"$feedback_section" "_dispatch_pr_fix_worker" || return 0
 
-${marker}
-${feedback_section}"
-		if gh issue edit "$linked_issue" --repo "$repo_slug" \
-			--body "$new_body" >/dev/null 2>&1; then
-			body_updated="true"
-		else
-			echo "[pulse-wrapper] _dispatch_pr_fix_worker: failed to update issue #${linked_issue} body in ${repo_slug} — aborting routing for PR #${pr_number} (t2093)" >>"$LOGFILE"
-			return 1
-		fi
-	fi
-
-	# --- Transition issue status to `available` so it re-enters the
-	# dispatch queue. set_issue_status atomically clears queued/in-progress/
-	# in-review/claimed and adds status:available. Pass-through flag adds
-	# the source:review-feedback marker. ---
-	if declare -F set_issue_status >/dev/null 2>&1; then
-		set_issue_status "$linked_issue" "$repo_slug" "available" \
-			--add-label "source:review-feedback" >/dev/null 2>&1 || true
-	else
-		# Fallback for standalone tests / degraded environments: best-effort
-		# direct label ops. set_issue_status is always present in real
-		# pulse-wrapper.sh runs because shared-constants.sh is sourced at
-		# bootstrap — see the include chain in pulse-wrapper.sh.
-		gh issue edit "$linked_issue" --repo "$repo_slug" \
-			--add-label "status:available" \
-			--add-label "source:review-feedback" \
-			--remove-label "status:queued" \
-			--remove-label "status:in-progress" \
-			--remove-label "status:in-review" \
-			--remove-label "status:claimed" \
-			>/dev/null 2>&1 || true
-	fi
+	# --- Transition issue status to available for re-dispatch ---
+	_transition_issue_for_redispatch "$linked_issue" "$repo_slug" "source:review-feedback"
 
 	# --- Close the stuck PR with explanatory comment ---
 	local close_comment
@@ -546,15 +562,12 @@ open a fresh PR against issue #${linked_issue}.
 
 _Closed by deterministic merge pass (pulse-merge.sh, t2093)._"
 
-	gh pr close "$pr_number" --repo "$repo_slug" \
-		--comment "$close_comment" >/dev/null 2>&1 || true
-
 	# Mark the PR as routed so any racing merge-pass re-read (via cached
 	# listing) skips re-processing. This is belt-and-suspenders — closed
 	# PRs are already excluded from the merge cycle's open-PR query.
-	gh pr edit "$pr_number" --repo "$repo_slug" \
-		--add-label "review-routed-to-issue" >/dev/null 2>&1 || true
+	_close_and_label_feedback_pr "$pr_number" "$repo_slug" \
+		"$close_comment" "review-routed-to-issue"
 
-	echo "[pulse-wrapper] _dispatch_pr_fix_worker: routed review feedback from PR #${pr_number} to issue #${linked_issue} in ${repo_slug} (body_updated=${body_updated}, t2093)" >>"$LOGFILE"
+	echo "[pulse-wrapper] _dispatch_pr_fix_worker: routed review feedback from PR #${pr_number} to issue #${linked_issue} in ${repo_slug} (t2093)" >>"$LOGFILE"
 	return 0
 }
