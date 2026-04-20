@@ -41,6 +41,14 @@ jobs:
   detect-new-files:
     name: Detect new files
     runs-on: ubuntu-latest
+    # t2231: fast-fail gate — skip entirely when a labeled event is unrelated to
+    # 'new-file-smell-ok'. Cascade still fires N workflow runs on bulk label
+    # application, but each one exits in ~3s with no checkout cost — no
+    # "cancelled" surface. unlabeled non-relevant events are handled by the
+    # shell guard inside the step (inherited from t2068).
+    if: >-
+      github.event.action != 'labeled' ||
+      github.event.label.name == 'new-file-smell-ok'
     outputs:
       has_new_source: ${{ steps.check.outputs.has_new_source }}
     steps:

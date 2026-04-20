@@ -30,7 +30,14 @@ permissions:
 jobs:
   post-hold-guidance:
     name: Post Hold Guidance
-    if: github.event.label.name == 'needs-maintainer-review'
+    # t2231: canonical fast-fail gate pattern — skip when action is 'labeled' for
+    # any label other than 'needs-maintainer-review'. Since this workflow only
+    # triggers on issues.types: [labeled], github.event.action is always 'labeled',
+    # making the first clause always false; the guard is written in canonical form
+    # for consistency and to satisfy the t2229 linter.
+    if: >-
+      github.event.action != 'labeled' ||
+      github.event.label.name == 'needs-maintainer-review'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     concurrency:
