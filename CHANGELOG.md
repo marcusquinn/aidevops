@@ -10,6 +10,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.79] - 2026-04-20
+
+### Added
+
+- upgrade briefing agent with pre-composition checks and pre-flight validation (t2409) (#20049)
+- pulse stage timing + force-reclaim stale mkdir locks (GH#20025) (#20046)
+- clear active status labels on CLAIM_RELEASED (t2420) (#20038)
+- auto-release interactive claim on PR merge (t2413) (#20031)
+- extend _normalize_reassign_self to cover status:available feedback-routed worker issues (#19994)
+- parent-side detection for umbrella-style parent-task backfill (GH#19942) (#19981)
+
+### Changed
+
+- add fast-fail gate to 3 cascade-vulnerable workflows (#20006)
+- Maintenance: update simplification state registry
+- auto-release Phase 1 dead stamps in scan-stale (#20033)
+- split shared-constants.sh — extract gh wrappers into shared-gh-wrappers.sh (#20037)
+- detect worker-ready issue bodies and skip redundant brief creation (#20040)
+- retarget stacked PRs before base-branch merge to prevent auto-close (#20036)
+- upgrade log-issue-aidevops agent for worker-ready issue/PR drafting (#20034)
+- Maintenance: mark t2229 complete (pr:#20022 completed:2026-04-19) [skip ci]
+- add CI workflow cascade-vulnerability linter (#20022)
+- Maintenance: mark t2225 complete (pr:#20019 completed:2026-04-19) [skip ci]
+- fix(gh_create_issue): skip self-assignment when auto-dispatch label present (#20017)
+- fix(task-id-guard): scan PR title for invented t-IDs in check-pr mode (#20009)
+- Maintenance: mark t2227 complete (pr:#20000 completed:2026-04-19) [skip ci]
+- docs(agents-md): correct t2157 auto-dispatch carve-out paragraph to note claim-task-id.sh gap (#20000)
+- fix(approval): source shared-constants.sh for comment wrappers (#20002)
+- Maintenance: mark t2398 complete (pr:#19998 completed:2026-04-19) [skip ci]
+- feat(deploy): post-release hot-deploy trigger for framework-critical script fixes (#19998)
+- Maintenance: mark t2228 complete (pr:#19999 completed:2026-04-19) [skip ci]
+- Add task-counter monotonic guard to pre-commit hook (#19999)
+- Maintenance: mark t2401 complete (pr:#19993 completed:2026-04-19) [skip ci]
+- add version field to DISPATCH_CLAIM body for version-gated filter (#19993)
+- Maintenance: mark t2397 complete (pr:#19995 completed:2026-04-19) [skip ci]
+- feat(fast-fail): age-out HARD STOP counter to auto-recover permanently-blocked issues (#19995)
+- Maintenance: mark t2396 complete (pr:#19994 completed:2026-04-19) [skip ci]
+- feat(auto-update): loginctl enable-linger guidance for Linux systemd (#19990)
+- tactical override + CLAIM_RELEASED on launch failure (fixes cross-runner dispatch starvation, t2394/t2400) (#19965)
+- Maintenance: mark t2395 complete (pr:#19989 completed:2026-04-19) [skip ci]
+- fix ${N:-{}} bash expansion bug in pulse-prefetch and 3 helpers (#19986)
+- t2350: add pulse-dirty-pr-sweep scanner for stale DIRTY PRs (#19980)
+- fix(auto-update): Linux systemd status branch + help/reference doc refresh (#19984)
+- Maintenance: mark t2208 complete (pr:#19979 completed:2026-04-19) [skip ci]
+- restore Codacy badge (grade: A all categories) (#19979)
+- split pulse-prefetch.sh into 3 focused sub-libraries (#19973)
+- add pulse canonical-repo fast-forward + stale worktree sweep stage (#19974)
+
+### Fixed
+
+- cmd_status returns exit 0 regardless of drift state (#20020)
+- extend assignee-exemption to cover source:* automation-authored issues (#19989)
+- fail-closed label fetch in _interactive_pr_trigger_handover (#19972)
+- use explicit PID tracking for parallel wait and add COMPLEXITY_HELPER env override (GH#19921) (#19954)
+- atomic cache writes + defensive jq in stub-title scanner (#19961)
+
 ## [3.8.78] - 2026-04-19
 
 ### Added
