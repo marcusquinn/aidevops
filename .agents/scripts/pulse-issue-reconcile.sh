@@ -984,6 +984,15 @@ _fetch_subissue_numbers() {
 #      the next ## heading) are treated as children. Prose #NNN mentions
 #      elsewhere in the body are ignored — this prevents premature close
 #      when a parent cites historical issues as context.
+#   3. Narrow prose patterns (t2442 — fallback for legacy parents that
+#      were partially decomposed but never got a Children heading).
+#      ONLY matches pre-defined phrase shapes (e.g. "Phase N ... #NNNN",
+#      "filed as #NNNN", "tracks #NNNN", "blocked by: #NNNN"). Does NOT
+#      match bare `#NNN` mentions — the t2244 lesson (CodeRabbit review
+#      of #19810) explicitly disqualified that class of false-positive.
+#      Added so that genuine parent-task trackers like #19969 which list
+#      phases in prose (e.g. "Phase 1 split out as #19996") can close
+#      naturally once all phase issues resolve.
 #
 # Either source must yield ≥2 children to avoid single-reference false
 # positives. Checks each against GH API for closed state; only closes
@@ -1006,6 +1015,76 @@ _extract_children_section() {
 		in_section && /^##[[:space:]]/ { exit }
 		in_section { print }
 	'
+	return 0
+}
+
+#######################################
+# t2442: extract child issue numbers from narrow prose patterns.
+#
+# DELIBERATELY narrow — t2244 (CodeRabbit review of PR #19810) explicitly
+# disqualified "any #NNN mention = child" matching after the #19734
+# incident where that logic closed parent trackers prematurely by
+# mistaking context refs for children. This helper only matches four
+# phrase shapes that unambiguously declare a child relationship:
+#
+#   1. `Phase N <anything> #NNNN` — e.g. "Phase 1 split out as #19996"
+#   2. `filed as #NNNN`           — "Phase 2 was filed as #20001"
+#   3. `tracks #NNNN`              — "tracks #19808 and #19858"
+#   4. `[Bb]locked by:? #NNNN`     — "Blocked by: #42"
+#
+# Bare `#NNNN` mentions in prose (e.g. "triggered by #19708", "cf. #12345",
+# "closes #17", "see #42") are intentionally NOT matched. The heuristic
+# is: these four verbs-of-parenthood are rare in prose about ANYTHING
+# ELSE, so the false-positive rate is low and the false-negative cost
+# (parent stays open one more cycle until nudge fires, harmless) is
+# acceptable.
+#
+# Called as a THIRD fallback in reconcile_completed_parent_tasks after
+# the GraphQL subIssues graph AND the ## Children heading extraction
+# both come back empty. Never mutates the parent body.
+#
+# Arguments:
+#   arg1 - parent issue body text
+# Outputs: one child issue number per line, deduplicated, sorted. Empty
+#          output = no matches (caller must treat as "no children from
+#          prose" and skip to the nudge/escalation path).
+# Returns: always 0.
+#######################################
+_extract_children_from_prose() {
+	local body="$1"
+	[[ -n "$body" ]] || return 0
+
+	# Four narrow patterns. POSIX ERE only (grep -E) so macOS bash 3.2 compat.
+	# We collect matches then extract the numeric portion.
+	#   - phase-ref:  "Phase 1 split out as #19996", "Phase 2 — #20001"
+	#   - filed-as:   "filed as #N", "was filed as #N"
+	#   - tracks:     "tracks #N"
+	#   - blocked-by: "blocked by: #N", "Blocked by #N", "blocked-by: #N"
+	#
+	# Each pattern independently captures the #NNNN token; we union the
+	# results via sort -u. Anchors `(^|[^a-zA-Z0-9_])` and `([^a-zA-Z0-9_]|$)`
+	# prevent matches inside words (e.g. "hashtracks" or "#Nfiled").
+	local patterns=(
+		'([Pp]hase[[:space:]]+[0-9]+[^#]*#[0-9]+)'
+		'([Ff]iled[[:space:]]+as[[:space:]]*#[0-9]+)'
+		'([Tt]racks[[:space:]]+#[0-9]+)'
+		'([Bb]locked[[:space:]]-?[[:space:]]*by[[:space:]]*:?[[:space:]]*#[0-9]+)'
+	)
+
+	local all_matches=""
+	local pat
+	for pat in "${patterns[@]}"; do
+		local hits
+		hits=$(printf '%s' "$body" | grep -oE "$pat" 2>/dev/null || true)
+		[[ -n "$hits" ]] || continue
+		all_matches="${all_matches}${hits}"$'\n'
+	done
+
+	[[ -n "$all_matches" ]] || return 0
+
+	# Extract the trailing #NNNN from each matched phrase, strip the `#`,
+	# drop anything that isn't a clean positive integer, deduplicate.
+	printf '%s' "$all_matches" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un
 	return 0
 }
 
@@ -1090,6 +1169,137 @@ _Automated by \`_post_parent_decomposition_nudge\` in \`pulse-issue-reconcile.sh
 }
 
 #######################################
+# t2442: Compute the age (in hours) of the existing nudge comment on a
+# parent-task issue. Used by the escalation path to gate "nudge has sat
+# unactioned for long enough that we escalate".
+#
+# Walks comments for the `<!-- parent-needs-decomposition -->` marker,
+# returns the age in HOURS as an integer on stdout. Returns empty output
+# (exit 0) if no such comment exists OR if the API call fails — the
+# caller MUST treat empty as "do not escalate" (fail-closed — without a
+# nudge there is no signal to escalate on, and API-unavailable should
+# never open new comments).
+#
+# Arguments:
+#   arg1 - repo slug
+#   arg2 - parent issue number
+# Outputs: integer hours (e.g. "168") or empty string on no-nudge/failure.
+#######################################
+_compute_parent_nudge_age_hours() {
+	local slug="$1"
+	local parent_num="$2"
+
+	[[ -n "$slug" && "$parent_num" =~ ^[0-9]+$ ]] || return 0
+
+	local nudge_created_at
+	nudge_created_at=$(gh api "repos/${slug}/issues/${parent_num}/comments" \
+		--jq '[.[] | select(.body | contains("<!-- parent-needs-decomposition -->")) | .created_at] | first // ""' \
+		2>/dev/null) || nudge_created_at=""
+	[[ -n "$nudge_created_at" ]] || return 0
+
+	# Convert ISO-8601 to epoch. macOS `date` needs -j -f; GNU `date` uses -d.
+	local nudge_epoch now_epoch
+	if date --version >/dev/null 2>&1; then
+		nudge_epoch=$(date -d "$nudge_created_at" +%s 2>/dev/null || echo "")
+	else
+		nudge_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$nudge_created_at" +%s 2>/dev/null || echo "")
+	fi
+	[[ "$nudge_epoch" =~ ^[0-9]+$ ]] || return 0
+
+	now_epoch=$(date +%s)
+	local age_seconds=$((now_epoch - nudge_epoch))
+	[[ "$age_seconds" -ge 0 ]] || return 0
+
+	printf '%d\n' "$((age_seconds / 3600))"
+	return 0
+}
+
+#######################################
+# t2442: post an escalation comment on a parent-task issue whose nudge
+# has sat unactioned for >=7 days AND no auto-decomposer child issue is
+# tracking the work. This closes the "nudge black hole" — without this
+# step, a parent with a prior nudge would sit blocked forever because
+# the nudge marker-idempotency keeps firing no-op forever.
+#
+# Behaviour:
+#   1. Idempotency — if the <!-- parent-needs-decomposition-escalated -->
+#      marker is already present in any comment, returns 1 (no-op).
+#   2. Applies `needs-maintainer-review` so the issue surfaces in the
+#      maintainer's review queue on next interactive session start.
+#   3. The comment body must explicitly list the four paths forward
+#      (decompose / drop label / close / file children). This is the
+#      final AI-advisory touch before the maintainer decides.
+#
+# Argument contract matches _post_parent_decomposition_nudge so the
+# two helpers are drop-in compatible in the reconcile call site.
+#
+# Arguments:
+#   arg1 - repo slug
+#   arg2 - parent issue number
+#   arg3 - parent title
+# Returns: 0 if escalation posted, 1 if skipped (marker present, missing
+# args, or API failure).
+#######################################
+_post_parent_decomposition_escalation() {
+	local slug="$1"
+	local parent_num="$2"
+	local parent_title="${3:-}"
+
+	[[ -n "$slug" ]] || return 1
+	[[ "$parent_num" =~ ^[0-9]+$ ]] || return 1
+
+	local marker='<!-- parent-needs-decomposition-escalated -->'
+
+	# Idempotency check: skip if marker already present in any comment.
+	# Best-effort: on API failure, fall through to posting. A transient
+	# duplicate is harmless; missing an escalation entirely is worse.
+	local existing=""
+	existing=$(gh api "repos/${slug}/issues/${parent_num}/comments" \
+		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
+		2>/dev/null) || existing=""
+	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
+		return 1
+	fi
+
+	local safe_title="$parent_title"
+	safe_title="${safe_title//\`/}"
+
+	local comment_body="${marker}
+## Parent Task Decomposition — Escalation
+
+The decomposition nudge on this issue has been open for **7+ days** with no action. This issue still carries \`parent-task\` (dispatch blocked), still has zero filed children, and no auto-decompose worker issue is tracking it. Applying \`needs-maintainer-review\` so it surfaces in the maintainer queue.
+
+**Paths forward — pick one:**
+
+1. **Decompose into children.** File the specific implementation tasks as separate issues, then edit this parent body to add a \`## Children\` section listing them. Next pulse cycle will detect them via \`reconcile_completed_parent_tasks\`.
+
+2. **Drop the parent-task label.** If this is actually a single unit of work (not a roadmap tracker):
+
+   \`\`\`
+   gh issue edit ${parent_num} --repo ${slug} --remove-label parent-task
+   \`\`\`
+
+3. **Close the issue.** If the work is no longer needed or has been superseded.
+
+4. **Let the auto-decomposer handle it.** If you want a \`tier:thinking\` worker to propose a decomposition plan automatically, remove the \`needs-maintainer-review\` label — the next pulse cycle will file a \`<!-- aidevops:generator=auto-decompose -->\` issue that dispatches a worker to decompose this parent.
+
+See \`.agents/AGENTS.md\` → \"Parent / meta tasks\" (t1986 / t2211 / t2442) for the full rule.
+
+_Automated by \`_post_parent_decomposition_escalation\` in \`pulse-issue-reconcile.sh\` (t2442). Posted once per issue via the \`<!-- parent-needs-decomposition-escalated -->\` marker; re-runs are no-ops._"
+
+	# Apply needs-maintainer-review label. Non-fatal — if it fails we still
+	# want the comment posted so the maintainer sees the escalation.
+	gh issue edit "$parent_num" --repo "$slug" \
+		--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
+
+	gh_issue_comment "$parent_num" --repo "$slug" \
+		--body "$comment_body" >/dev/null 2>&1 || return 1
+
+	echo "[pulse-wrapper] Reconcile parent-task: escalation posted for #${parent_num} in ${slug} (nudge >=7d unactioned)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # t2138: extract per-parent close logic. Keeps reconcile_completed_parent_tasks
 # under the 100-line shell-complexity threshold and makes the close decision
 # independently testable. Returns 0 if the parent was closed, 1 if skipped
@@ -1146,10 +1356,18 @@ reconcile_completed_parent_tasks() {
 	local max_closes=5
 	local total_nudged=0
 	local max_nudges=5
+	# t2442: escalation is rarer than nudging — bound tighter. 3 per cycle
+	# is enough to avoid review-queue spam while still making progress.
+	local total_escalated=0
+	local max_escalations=3
+	# t2442: parent-task escalation threshold — nudge must have sat for
+	# at least this many hours with zero children before we escalate.
+	# 7 days = 168 hours. Override via env for tests / incident response.
+	local escalation_threshold_hours="${PARENT_DECOMPOSITION_ESCALATION_HOURS:-168}"
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
-		[[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" ]] || break
+		[[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" || "$total_escalated" -lt "$max_escalations" ]] || break
 
 		local issues_json
 		issues_json=$(gh issue list --repo "$slug" --state open \
@@ -1162,7 +1380,7 @@ reconcile_completed_parent_tasks() {
 		[[ "$issue_count" -gt 0 ]] || continue
 
 		local i=0
-		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" ]]; do
+		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" || "$total_escalated" -lt "$max_escalations" ]]; do
 			local issue_num issue_body issue_title
 			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
 			issue_body=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].body // ""') || true
@@ -1174,6 +1392,9 @@ reconcile_completed_parent_tasks() {
 			# body section regex for legacy parents that list children under
 			# a dedicated heading (t2244: ## Children / ## Sub-tasks / ## Child issues).
 			# Prose #NNN mentions outside this section are NOT treated as children.
+			# t2442: third fallback — narrow prose patterns (Phase N #NNNN /
+			# filed as #NNNN / tracks #NNNN / Blocked by #NNNN). Bare #NNN is
+			# still NOT treated as a child reference (t2244 preserved).
 			local child_nums child_source="graph"
 			child_nums=$(_fetch_subissue_numbers "$slug" "$issue_num" | sort -un | grep -v "^${issue_num}$" | grep -v '^$' || true)
 			if [[ -z "$child_nums" ]]; then
@@ -1184,6 +1405,14 @@ reconcile_completed_parent_tasks() {
 					child_source="body"
 				fi
 			fi
+			if [[ -z "$child_nums" ]]; then
+				local prose_children
+				prose_children=$(_extract_children_from_prose "$issue_body" | grep -v "^${issue_num}$" || true)
+				if [[ -n "$prose_children" ]]; then
+					child_nums="$prose_children"
+					child_source="prose"
+				fi
+			fi
 
 			# t2388: parent-task with zero filed children is a decomposition
 			# silent-stuck state. Dispatch is blocked by parent-task label,
@@ -1192,10 +1421,29 @@ reconcile_completed_parent_tasks() {
 			# the <!-- parent-needs-decomposition --> marker) so the
 			# maintainer can either decompose into children or drop the
 			# parent-task label.
+			#
+			# t2442: if the nudge has already been posted and has sat for
+			# the escalation threshold, escalate via
+			# _post_parent_decomposition_escalation (applies
+			# needs-maintainer-review + posts a one-time escalation
+			# comment with the four paths forward). The nudge helper's
+			# idempotency marker means it returns 1 after the first cycle;
+			# we need the separate escalation path so the maintainer
+			# actually sees the issue in their review queue.
 			if [[ -z "$child_nums" ]]; then
 				if [[ "$total_nudged" -lt "$max_nudges" ]]; then
 					if _post_parent_decomposition_nudge "$slug" "$issue_num" "$issue_title"; then
 						total_nudged=$((total_nudged + 1))
+					fi
+				fi
+				if [[ "$total_escalated" -lt "$max_escalations" ]]; then
+					local _nudge_age_hours
+					_nudge_age_hours=$(_compute_parent_nudge_age_hours "$slug" "$issue_num")
+					if [[ "$_nudge_age_hours" =~ ^[0-9]+$ ]] && \
+						[[ "$_nudge_age_hours" -ge "$escalation_threshold_hours" ]]; then
+						if _post_parent_decomposition_escalation "$slug" "$issue_num" "$issue_title"; then
+							total_escalated=$((total_escalated + 1))
+						fi
 					fi
 				fi
 				continue
@@ -1207,8 +1455,8 @@ reconcile_completed_parent_tasks() {
 		done
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
-	if [[ "$total_closed" -gt 0 || "$total_nudged" -gt 0 ]]; then
-		echo "[pulse-wrapper] Reconcile completed parent tasks: closed=${total_closed} nudged=${total_nudged}" >>"$LOGFILE"
+	if [[ "$total_closed" -gt 0 || "$total_nudged" -gt 0 || "$total_escalated" -gt 0 ]]; then
+		echo "[pulse-wrapper] Reconcile completed parent tasks: closed=${total_closed} nudged=${total_nudged} escalated=${total_escalated}" >>"$LOGFILE"
 	fi
 
 	return 0
