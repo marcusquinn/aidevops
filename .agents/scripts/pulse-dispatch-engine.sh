@@ -1134,44 +1134,10 @@ _preflight_early_dispatch() {
 	return 0
 }
 
-#######################################
-# Daily maintenance scans: complexity scan, CodeRabbit review, post-merge
-# scanner, dedup cleanup, fast-fail prune. All non-fatal — pulse proceeds
-# even if any individual scan fails.
-#######################################
-_preflight_daily_scans() {
-	# Daily complexity scan (GH#5628): creates function-complexity-debt issues
-	# for .sh files with complex functions and .md agent docs exceeding size
-	# threshold. Longest files first. Runs at most once per day.
-	run_stage_with_timeout "complexity_scan" "$PRE_RUN_STAGE_TIMEOUT" run_weekly_complexity_scan || true
-
-	# Daily full codebase review via CodeRabbit (GH#17640): posts a review
-	# trigger on issue #2632 once per 24h. Uses simple timestamp gate.
-	run_stage_with_timeout "coderabbit_review" "$PRE_RUN_STAGE_TIMEOUT" run_daily_codebase_review || true
-
-	# Daily post-merge review scanner (t1993): ingests inline AI bot review
-	# comments from recently merged PRs into review-followup issues.
-	# Time-gated to 24h; scans all pulse-enabled repos via scanner's own dedup.
-	run_stage_with_timeout "post_merge_scanner" "$PRE_RUN_STAGE_TIMEOUT" _run_post_merge_review_scanner || true
-
-	# Daily auto-decomposer scanner (t2442): files worker-ready tier:thinking
-	# issues for parent-task issues whose <!-- parent-needs-decomposition -->
-	# nudge has aged ≥24h without a human response. Closes the parent-task
-	# dispatch black hole — before t2442 the reconciler's nudge was advisory-
-	# only, so a parent-task with no children could sit forever.
-	# Time-gated to 24h; scans only maintainer-role repos; idempotent via
-	# auto-decomposer-scanner.sh's title + source:auto-decomposer dedup.
-	run_stage_with_timeout "auto_decomposer_scanner" "$PRE_RUN_STAGE_TIMEOUT" _run_auto_decomposer_scanner || true
-
-	# Daily dedup cleanup: close duplicate function-complexity-debt issues.
-	# Runs after complexity scan so any new duplicates from this cycle are caught.
-	run_stage_with_timeout "dedup_cleanup" "$PRE_RUN_STAGE_TIMEOUT" run_simplification_dedup_cleanup || true
-
-	# Prune expired fast-fail counter entries (t1888).
-	# Lightweight — just reads and rewrites a small JSON file.
-	fast_fail_prune_expired || true
-	return 0
-}
+# t2443: _preflight_daily_scans() was removed here. Its children (complexity_scan,
+# coderabbit_review, post_merge_scanner, auto_decomposer_scanner, dedup_cleanup,
+# fast_fail_prune_expired) are now promoted to top-level stages in
+# _run_preflight_stages() with independent timeouts. See the call site below.
 
 #######################################
 # Ownership normalization + issue reconciliation stages.
@@ -1271,13 +1237,13 @@ _run_preflight_stages() {
 	# t1425, t1482: Write SETUP sentinel during pre-flight stages.
 	echo "SETUP:$$" >"$PIDFILE"
 
-	# GH#20025 Phase B: Wrap each preflight group in run_stage_with_timeout
-	# so that individual groups that overrun are killed without blocking
-	# the entire pulse cycle. Each group gets its own budget; the total
-	# cannot exceed the cycle window. _preflight_cleanup_and_ledger and
-	# _preflight_daily_scans already wrap their internal stages with
-	# run_stage_with_timeout, but the group function itself can hang on
-	# code between those calls (API calls, JSON parsing, etc.).
+	# GH#20025 Phase B + t2443: Each preflight stage wrapped in
+	# run_stage_with_timeout so overruns are killed without blocking
+	# the entire pulse cycle. Daily scans (complexity, coderabbit,
+	# post-merge, auto-decomposer, dedup, fast-fail prune) were
+	# previously grouped in _preflight_daily_scans() with a shared
+	# budget — t2443 promoted them to independent top-level stages
+	# so one slow scanner cannot starve downstream scanners.
 	local _pflt_timeout="${PREFLIGHT_GROUP_TIMEOUT:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
 
 	run_stage_with_timeout "preflight_cleanup_and_ledger" "$_pflt_timeout" \
@@ -1286,8 +1252,17 @@ _run_preflight_stages() {
 		_preflight_capacity_and_labels || true
 	run_stage_with_timeout "preflight_early_dispatch" "$_pflt_timeout" \
 		_preflight_early_dispatch || true
-	run_stage_with_timeout "preflight_daily_scans" "$_pflt_timeout" \
-		_preflight_daily_scans || true
+	# t2443: Daily scans promoted to independent top-level stages so each
+	# scanner gets its own timeout budget. Previously wrapped in a single
+	# _preflight_daily_scans() group with a shared 600s budget — a slow
+	# complexity_scan (200-340s) would starve downstream scanners
+	# (auto_decomposer, post_merge, dedup) from ever running.
+	run_stage_with_timeout "complexity_scan" "$_pflt_timeout" run_weekly_complexity_scan || true
+	run_stage_with_timeout "coderabbit_review" "$_pflt_timeout" run_daily_codebase_review || true
+	run_stage_with_timeout "post_merge_scanner" "$_pflt_timeout" _run_post_merge_review_scanner || true
+	run_stage_with_timeout "auto_decomposer_scanner" "$_pflt_timeout" _run_auto_decomposer_scanner || true
+	run_stage_with_timeout "dedup_cleanup" "$_pflt_timeout" run_simplification_dedup_cleanup || true
+	fast_fail_prune_expired || true
 	run_stage_with_timeout "preflight_ownership_reconcile" "$_pflt_timeout" \
 		_preflight_ownership_reconcile || true
 	# prefetch_and_scope is the only preflight stage whose failure aborts
