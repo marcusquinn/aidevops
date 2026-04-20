@@ -703,8 +703,10 @@ _parent_body_has_phase_markers() {
 	[[ -n "$body" ]] || return 1
 
 	# Fast path — any recognised heading is sufficient. Ordered by frequency
-	# observed in the aidevops backlog (## Children most common).
-	if printf '%s' "$body" | grep -qE '^##[[:space:]]+(Children|Child [Ii]ssues|Sub-?[Tt]asks|Phases?)[[:space:]]*$' 2>/dev/null; then
+	# observed in the aidevops backlog (## Children most common). Accepts
+	# both `## Phases` (singular-sub-list style) and `## Phase N[: ...]`
+	# (per-phase subsection style).
+	if printf '%s' "$body" | grep -qE '^##[[:space:]]+(Children|Child [Ii]ssues|Sub-?[Tt]asks|Phases?([[:space:]]+.*)?)[[:space:]]*$' 2>/dev/null; then
 		return 0
 	fi
 
