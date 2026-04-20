@@ -2418,9 +2418,9 @@
       "pr": 18832
     },
     ".agents/scripts/pulse-dispatch-engine.sh": {
-      "at": "2026-04-20T17:08:35Z",
-      "hash": "ff2bd59db6c338f34c44266b8ca33ca0a7564ee0",
-      "passes": 11,
+      "at": "2026-04-20T18:31:30Z",
+      "hash": "4f864ab665eb3c81243af9cbf2608577e1428ba8",
+      "passes": 12,
       "pr": 18799
     },
     ".agents/scripts/pulse-fast-fail.sh": {
