@@ -214,8 +214,9 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
 
 <!-- Declares the file paths this task is allowed to modify.
      The scope-guard pre-push hook (scope-guard-pre-push.sh) reads this list
-     and blocks pushes that include files outside the declared scope.
-     Glob patterns are supported (e.g. `.agents/hooks/*.sh`).
+     and blocks pushes that include files outside the declared scope,
+     preventing accidental scope-leak during rebase or implementation drift.
+     Glob patterns are supported (e.g., `.agents/hooks/*.sh`).
      One path or glob pattern per `- ` line. -->
 
 - `{path/to/file-or-glob}`
