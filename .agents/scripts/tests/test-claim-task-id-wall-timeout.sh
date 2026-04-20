@@ -98,7 +98,7 @@ test_timeout_constants_exist() {
 # Test 2: source check — git fetch/push in CAS path wrapped with timeout
 # ---------------------------------------------------------------------------
 test_git_commands_have_timeout() {
-	local name="source check: git fetch/push in CAS path have HTTP timeout env vars"
+	local name="source check: git fetch/push in CAS path have http.lowSpeedTime configuration"
 
 	local fetch_body
 	fetch_body=$(sed -n '/^_cas_fetch_and_pin()/,/^}/p' "$CLAIM_SCRIPT")
@@ -107,8 +107,8 @@ test_git_commands_have_timeout() {
 		return 0
 	fi
 
-	if ! echo "$fetch_body" | grep -q 'GIT_HTTP_LOW_SPEED_TIME'; then
-		fail "$name" "git fetch in _cas_fetch_and_pin missing GIT_HTTP_LOW_SPEED_TIME"
+	if ! echo "$fetch_body" | grep -q 'http.lowSpeedTime'; then
+		fail "$name" "git fetch in _cas_fetch_and_pin missing http.lowSpeedTime configuration"
 		return 0
 	fi
 
@@ -119,8 +119,8 @@ test_git_commands_have_timeout() {
 		return 0
 	fi
 
-	if ! echo "$push_body" | grep -q 'GIT_HTTP_LOW_SPEED_TIME'; then
-		fail "$name" "git push in _cas_build_and_push missing GIT_HTTP_LOW_SPEED_TIME"
+	if ! echo "$push_body" | grep -q 'http.lowSpeedTime'; then
+		fail "$name" "git push in _cas_build_and_push missing http.lowSpeedTime configuration"
 		return 0
 	fi
 

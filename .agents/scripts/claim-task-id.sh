@@ -564,14 +564,15 @@ _cas_fetch_and_pin() {
 
 	cd "$repo_path" || return 1
 
-	# GH#20137: set git-native network timeouts to prevent indefinite hangs.
-	# GIT_HTTP_LOW_SPEED_LIMIT=1000 + GIT_HTTP_LOW_SPEED_TIME=CAS_GIT_CMD_TIMEOUT_S
+	# GH#20137: set git-native HTTP timeouts to prevent indefinite hangs.
+	# http.lowSpeedLimit=1000 + http.lowSpeedTime=CAS_GIT_CMD_TIMEOUT_S
 	# tells git to abort if HTTP transfer drops below 1KB/s for N seconds.
 	# These only affect HTTP(S) transport; local/SSH transports don't hang on
 	# network I/O.  index.lock contention is caught by the wall-clock timeout
-	# in allocate_online().
-	if ! GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME="$CAS_GIT_CMD_TIMEOUT_S" \
-		git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null; then
+	# in allocate_online().  Pass via -c so git actually reads them (env vars
+	# GIT_HTTP_LOW_SPEED_LIMIT/TIME are not recognised by git).
+	if ! git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH"; then
 		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}"
 	fi
 
@@ -588,8 +589,8 @@ _cas_fetch_and_pin() {
 		log_info "Counter missing/invalid — attempting auto-bootstrap (GH#6569)"
 		local bootstrap_result
 		bootstrap_result=$(bootstrap_remote_counter "$repo_path") || true
-		GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME="$CAS_GIT_CMD_TIMEOUT_S" \
-			git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
+		git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+			fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" || true
 		pinned_sha=$(git rev-parse "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null) || {
 			log_error "BOOTSTRAP_COUNTER_FAILED: cannot resolve ref after bootstrap"
 			return 1
@@ -636,17 +637,18 @@ _cas_build_and_push() {
 
 	# GH#20137: set git-native HTTP timeouts to prevent indefinite hangs on slow
 	# networks.  index.lock contention is caught by the wall-clock timeout in
-	# allocate_online().
-	if ! GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME="$CAS_GIT_CMD_TIMEOUT_S" \
-		git push "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" 2>/dev/null; then
+	# allocate_online().  Pass via -c so git actually reads them (env vars
+	# GIT_HTTP_LOW_SPEED_LIMIT/TIME are not recognised by git).
+	if ! git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+		push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}"; then
 		log_warn "Push failed (conflict — another session claimed an ID)"
-		GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME="$CAS_GIT_CMD_TIMEOUT_S" \
-			git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
+		git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+			fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" || true
 		return 2
 	fi
 
-	GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME="$CAS_GIT_CMD_TIMEOUT_S" \
-		git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
+	git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" || true
 	return 0
 }
 
@@ -842,9 +844,11 @@ allocate_offline() {
 	echo "$new_counter" >"${repo_path}/${COUNTER_FILE}"
 	(
 		cd "$repo_path" || exit 1
-		git add "$COUNTER_FILE" 2>/dev/null || true
-		git commit -m "chore: offline claim $(printf 't%03d' "$first_id")..$(printf 't%03d' "$last_id") [offline]" \
-			--no-verify 2>/dev/null || true
+		git add "$COUNTER_FILE" || true
+		GIT_AUTHOR_NAME="aidevops" GIT_AUTHOR_EMAIL="aidevops@local" \
+		GIT_COMMITTER_NAME="aidevops" GIT_COMMITTER_EMAIL="aidevops@local" \
+		git commit -q -m "chore: offline claim $(printf 't%03d' "$first_id")..$(printf 't%03d' "$last_id") [offline]" \
+			--no-verify --no-gpg-sign "$COUNTER_FILE" || true
 	)
 
 	log_warn "Allocated $(printf 't%03d' "$first_id") with offset (reconcile when back online)"
