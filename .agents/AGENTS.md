@@ -110,7 +110,20 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 **`origin:interactive` implies maintainer approval**: PRs tagged `origin:interactive` pass the maintainer gate automatically when the PR author is `OWNER` or `MEMBER` — the maintainer was present and directing the work. No separate `sudo aidevops approve` is needed. Contributors (`COLLABORATOR`) with `origin:interactive` still go through the normal gate — the label alone is not sufficient. The pulse also never auto-closes `origin:interactive` PRs via the deterministic merge pass, even if the task ID appears in recent commits (incremental work on the same issue is legitimate).
 
-**Auto-merge timing**: PRs tagged `origin:interactive` from `OWNER`/`MEMBER` authors merge as soon as all required checks pass — typically 4-10 minutes depending on CI fleet. Review bots (gemini-code-assist, coderabbitai) post within ~1-3 minutes. If you need to fold bot nits into the same PR, use ONE of:
+**Auto-merge timing (t2411)**: `pulse-merge.sh` automatically merges `origin:interactive` PRs from `OWNER`/`MEMBER` authors once ALL of the following criteria hold:
+
+1. PR carries the `origin:interactive` label.
+2. PR author has `admin` or `maintain` permission on the repo (OWNER or org MEMBER — write-only COLLABORATORs go through the normal review gate instead).
+3. All required status checks PASS or SKIPPED.
+4. No `CHANGES_REQUESTED` review from a human reviewer.
+5. PR is **not a draft** — convert to ready (`gh pr ready <PR>`) before the pulse picks it up.
+6. PR does **not** carry the `hold-for-review` label — apply this label to opt out of auto-merge when you want manual review before landing.
+
+Merge typically happens within one pulse cycle (4-10 minutes) after all checks go green. Review bots (gemini-code-assist, coderabbitai) post within ~1-3 minutes. An audit log line is written for each auto-merge: `[pulse-merge] auto-merged origin:interactive PR #N (author=<login>, role=<role>)`.
+
+To **opt out** of auto-merge on a specific PR: apply the `hold-for-review` label. Remove it when you are ready to let the pulse merge.
+
+If you need to fold bot nits into the same PR, use ONE of:
 
 - **Run `review-bot-gate-helper.sh check <PR>` before pushing** — streams current bot feedback. Push when ready.
 - **Open as draft** — `gh pr create --draft`, wait for bot reviews to settle, `gh pr ready <PR>` when content is final.
