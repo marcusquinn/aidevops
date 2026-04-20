@@ -9,6 +9,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 |--------|-------------|
 | Business | `business.md`, `business/company-runners.md` |
 | Planning | `workflows/plans.md`, `scripts/commands/define.md`, `tools/task-management/beads.md` |
+| Legal | `legal.md`, `tools/legal/legal-research.md` |
 | Code quality | `tools/code-review/code-standards.md` |
 | Git/PRs/Releases | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `workflows/release.md` |
 | Documents/PDF | `tools/document/document-creation.md`, `tools/pdf/overview.md`, `tools/conversion/pandoc.md` |

@@ -12,6 +12,8 @@ subagents:
   - outscraper
   # Summarization
   - summarize
+  # Domain-specific corpus research
+  - tools/legal/legal-research
   # Built-in
   - general
   - explore

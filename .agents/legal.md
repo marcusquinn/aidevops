@@ -3,6 +3,8 @@ name: legal
 description: Legal compliance, case management, and litigation support - contracts, policies, regulatory guidance, case building, deposition analysis
 mode: subagent
 subagents:
+  # Legal-specific research
+  - tools/legal/legal-research
   # Research
   - context7
   - crawl4ai

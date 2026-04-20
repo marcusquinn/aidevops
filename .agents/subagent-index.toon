@@ -20,7 +20,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[108]{folder,purpose,key_files}:
+<!--TOON:subagents[109]{folder,purpose,key_files}:
 aidevops/,aidevops subagents,add-new-mcp-to-aidevops|agent-sources|api-integrations|architecture|claude-flow-comparison|configs|docs|extension|graduated-learnings|mcp-integrations|mcp-troubleshooting|memory-patterns|onboarding|orchestration-analysis|plugins|providers|recommendations|requirements|resources|security|security-requirements|self-improving-agents|service-links|services|setup|supervisor-module-map|troubleshooting
 content/,content subagents,content-calendar|context-templates|distribution-blog|distribution-email|distribution-podcast|distribution-short-form|distribution-social|distribution-youtube-channel-intel|distribution-youtube|distribution-youtube-optimizer|distribution-youtube-pipeline|distribution-youtube-readme|distribution-youtube-script-writer|distribution-youtube-topic-research|editor|guidelines
 content/heygen-skill/,content/heygen-skill subagents,rules-assets|rules-authentication|rules-avatars|rules-backgrounds|rules-captions|rules-dimensions|rules-photo-avatars|rules-quota|rules-remotion-integration|rules-scripts|rules-streaming-avatars|rules-templates|rules-text-overlays|rules-video-agent|rules-video-generation|rules-video-status|rules-video-translation|rules-voices|rules-webhooks
@@ -94,6 +94,7 @@ tools/git/,tools/git subagents,authentication|conflict-resolution|gitea-cli|gith
 tools/,tools subagents,git
 tools/git/,tools/git subagents,opencode-github|opencode-github-security|opencode-gitlab|worktrunk
 tools/infrastructure/,tools/infrastructure subagents,cloudflare-ai|cloud-gpu|fireworks|nearai|nvidia-cloud|together
+tools/legal/,tools/legal subagents,legal-research
 tools/local-models/,tools/local-models subagents,huggingface|local-models
 tools/mcp/,tools/mcp subagents,cloudflare-code-mode
 tools/mcp-toolkit/,tools/mcp-toolkit subagents,mcporter
