@@ -72,9 +72,48 @@ _handle_existing_lock() {
 	lock_pid=$(_read_lock_pid)
 
 	if [[ -n "$lock_pid" ]] && [[ "$lock_pid" =~ ^[0-9]+$ ]] && ps -p "$lock_pid" >/dev/null 2>&1; then
-		# Lock owner is alive — genuine concurrent instance
+		# Lock owner PID is alive — but is it actually a pulse-wrapper?
+		# GH#20025 Phase C: PID reuse guard + age-based force-reclaim.
 		local lock_age
 		lock_age=$(_get_process_age "$lock_pid")
+		local owner_cmd=""
+		owner_cmd=$(ps -p "$lock_pid" -o command= 2>/dev/null || echo "")
+
+		# Check 1: PID reuse — if the process is NOT a pulse-wrapper,
+		# the original owner died and the PID was reused by an unrelated
+		# process. Reclaim immediately.
+		if [[ "$owner_cmd" != *"pulse-wrapper"* ]]; then
+			echo "[pulse-wrapper] FORCE-RECLAIMED stale lock from PID ${lock_pid} (age ${lock_age}s, owner_cmd='${owner_cmd%%' '*}') — PID reused by non-pulse process (GH#20025)" >>"$WRAPPER_LOGFILE"
+			rm -rf "$LOCKDIR" 2>/dev/null || true
+			if ! mkdir "$LOCKDIR" 2>/dev/null; then
+				echo "[pulse-wrapper] Lost mkdir lock race after PID-reuse reclaim" >>"$WRAPPER_LOGFILE"
+				return 1
+			fi
+			return 0
+		fi
+
+		# Check 2: Age-based force-reclaim — if a genuine pulse-wrapper
+		# has been holding the lock for longer than PULSE_LOCK_MAX_AGE_S
+		# (default 1800s = 30min), it is hung. A healthy pulse cycle
+		# completes in <5 min; 30+ min means the process is stuck.
+		# Kill the stuck owner and reclaim.
+		local max_age="${PULSE_LOCK_MAX_AGE_S:-1800}"
+		if [[ "$lock_age" -gt "$max_age" ]]; then
+			echo "[pulse-wrapper] FORCE-RECLAIMED stale lock from PID ${lock_pid} (age ${lock_age}s > ceiling ${max_age}s, owner_cmd='${owner_cmd%%' '*}') — killing hung owner (GH#20025)" >>"$WRAPPER_LOGFILE"
+			_kill_tree "$lock_pid" || true
+			sleep 2
+			if kill -0 "$lock_pid" 2>/dev/null; then
+				_force_kill_tree "$lock_pid" || true
+			fi
+			rm -rf "$LOCKDIR" 2>/dev/null || true
+			if ! mkdir "$LOCKDIR" 2>/dev/null; then
+				echo "[pulse-wrapper] Lost mkdir lock race after age-ceiling reclaim" >>"$WRAPPER_LOGFILE"
+				return 1
+			fi
+			return 0
+		fi
+
+		# Lock owner is genuinely alive and within time limits
 		echo "[pulse-wrapper] Another pulse instance holds the mkdir lock (PID ${lock_pid}, age ${lock_age}s) — exiting immediately (GH#4513)" >>"$WRAPPER_LOGFILE"
 		return 1
 	fi

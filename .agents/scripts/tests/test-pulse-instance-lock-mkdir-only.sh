@@ -202,25 +202,35 @@ test_stale_lock_recovery() {
 
 #######################################
 # Test 3: live concurrent owner blocks acquisition — a PID file containing
-# our own PID (which is alive by definition) must block re-acquisition.
+# a live pulse-wrapper-named process must block re-acquisition.
 #
 # This exercises the "lock owner is alive" branch of acquire_instance_lock.
-# We cannot easily spawn a real peer bash process that holds the lock and
-# stays alive long enough to observe, so we use our own PID as a stand-in
-# for "a live process that holds the lock". This is a slight fudge — the
-# real contention scenario is another bash PID — but the code path is the
-# same: `ps -p "$lock_pid"` returns success for any live PID including
-# our own, and acquire_instance_lock returns 1.
+# GH#20025 added PID-reuse detection: `ps -o command=` must contain
+# "pulse-wrapper" for the process to be treated as a genuine pulse owner.
+# A bare sleep or unrelated PID is treated as PID reuse and reclaimed.
+# We launch a real background script named "pulse-wrapper.sh" to satisfy
+# the command-name check.
 #######################################
 test_live_concurrent_owner() {
 	reset_state
 
-	# Manually create a lock dir owned by our own (live) PID
+	# Launch a background process whose ps command= contains "pulse-wrapper"
+	local fake_script="${TEST_ROOT}/pulse-wrapper.sh"
+	cat >"$fake_script" <<'FAKEOF'
+#!/usr/bin/env bash
+exec sleep 60
+FAKEOF
+	chmod +x "$fake_script"
+	"$fake_script" &
+	local fake_pid=$!
+
+	# Manually create a lock dir owned by the fake pulse-wrapper PID
 	mkdir -p "$LOCKDIR"
-	echo "$$" >"${LOCKDIR}/pid"
+	echo "$fake_pid" >"${LOCKDIR}/pid"
 	_LOCK_OWNED=false # we didn't go through acquire_instance_lock
 
-	# acquire_instance_lock should see the PID is alive and return 1
+	# acquire_instance_lock should see the PID is alive + is a pulse-wrapper
+	# and return 1
 	local rc=0
 	acquire_instance_lock || rc=$?
 	assert_equals "live owner: acquire_instance_lock returns 1" "1" "$rc"
@@ -235,7 +245,9 @@ test_live_concurrent_owner() {
 	# _LOCK_OWNED must still be false (we didn't acquire)
 	assert_equals "live owner: _LOCK_OWNED remains false" "false" "$_LOCK_OWNED"
 
-	# Clean up for next test
+	# Clean up
+	kill "$fake_pid" 2>/dev/null || true
+	wait "$fake_pid" 2>/dev/null || true
 	rm -rf "$LOCKDIR"
 	return 0
 }

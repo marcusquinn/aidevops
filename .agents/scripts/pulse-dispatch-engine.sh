@@ -1256,12 +1256,31 @@ _run_preflight_stages() {
 	# t1425, t1482: Write SETUP sentinel during pre-flight stages.
 	echo "SETUP:$$" >"$PIDFILE"
 
-	_preflight_cleanup_and_ledger
-	_preflight_capacity_and_labels
-	_preflight_early_dispatch
-	_preflight_daily_scans
-	_preflight_ownership_reconcile
-	_preflight_prefetch_and_scope || return 1
+	# GH#20025 Phase B: Wrap each preflight group in run_stage_with_timeout
+	# so that individual groups that overrun are killed without blocking
+	# the entire pulse cycle. Each group gets its own budget; the total
+	# cannot exceed the cycle window. _preflight_cleanup_and_ledger and
+	# _preflight_daily_scans already wrap their internal stages with
+	# run_stage_with_timeout, but the group function itself can hang on
+	# code between those calls (API calls, JSON parsing, etc.).
+	local _pflt_timeout="${PREFLIGHT_GROUP_TIMEOUT:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+
+	run_stage_with_timeout "preflight_cleanup_and_ledger" "$_pflt_timeout" \
+		_preflight_cleanup_and_ledger || true
+	run_stage_with_timeout "preflight_capacity_and_labels" "$_pflt_timeout" \
+		_preflight_capacity_and_labels || true
+	run_stage_with_timeout "preflight_early_dispatch" "$_pflt_timeout" \
+		_preflight_early_dispatch || true
+	run_stage_with_timeout "preflight_daily_scans" "$_pflt_timeout" \
+		_preflight_daily_scans || true
+	run_stage_with_timeout "preflight_ownership_reconcile" "$_pflt_timeout" \
+		_preflight_ownership_reconcile || true
+	# prefetch_and_scope is the only preflight stage whose failure aborts
+	# the cycle — preserve the non-zero return so main() skips run_pulse().
+	if ! run_stage_with_timeout "preflight_prefetch_and_scope" "$_pflt_timeout" \
+		_preflight_prefetch_and_scope; then
+		return 1
+	fi
 	return 0
 }
 
