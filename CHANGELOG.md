@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.84] - 2026-04-20
+
+### Changed
+
+- decompose setup_test_env into per-fixture helpers (#20087)
+- restore TODO entry to backlog + strip last rolling-4-week ref (#20085)
+- fix(upgrade-planning): preserve tasks across all 6 sections (#20083)
+- brief — #parent tag not synchronously mapped to parent-task label at issue creation (#20082)
+- drop auto-close-as-wontfix from deferred trigger (GH#20072) (#20080)
+
 ## [3.8.83] - 2026-04-20
 
 ### Added
