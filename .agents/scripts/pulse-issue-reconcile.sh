@@ -1538,6 +1538,26 @@ This issue was created via a bare \`${_raw_cmd}\` call that bypassed the \`${_wr
 
 This comment is idempotent; the HTML sentinel prevents duplicates on subsequent pulse cycles."
 
+	# External-contributor mentorship comment (t2450). Used when the issue
+	# author's authorAssociation is outside {OWNER, MEMBER, COLLABORATOR}.
+	# Distinct sentinel so the idempotency check never conflates internal and
+	# external paths — an issue that started as external and was later
+	# converted to internal (e.g., author added as collaborator + re-backfill)
+	# will still receive the internal nudge on its next eligible pass.
+	local external_sentinel='<!-- aidevops:labelless-backfill-external -->'
+	local external_comment_template
+	external_comment_template="${external_sentinel}
+Thanks for filing this issue. Because it was created by a contributor outside the maintainer team, the framework's reconcile pass (\`reconcile_labelless_aidevops_issues\` in \`pulse-issue-reconcile.sh\`, t2450) has applied \`needs-maintainer-review\` and extracted hashtag labels from the body — but intentionally withheld the \`origin:*\` and \`tier:*\` labels that would otherwise make this issue dispatchable to an automated worker.
+
+**What happens next:** a maintainer will triage this issue and either
+
+- approve it cryptographically with \`sudo aidevops approve issue <N>\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
+- claim a fresh internal task ID via \`claim-task-id.sh\` and file a maintainer-authored follow-up that credits you as reporter.
+
+**Why this gate exists:** the aidevops pulse auto-dispatches workers on issues that carry maintainer-trust labels. For issues from contributors outside the maintainer team, a human in the loop catches injection attempts, scope/trust mismatches, and speculative work the pulse shouldn't burn a worker on. This is a soft gate, not a rejection — the content of the issue has not been judged.
+
+This comment is idempotent; the HTML sentinel prevents duplicates on subsequent pulse cycles."
+
 	local total_fixed=0 total_skipped=0
 
 	while IFS= read -r slug; do
@@ -1577,6 +1597,34 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 			i=$((i + 1))
 			[[ -z "$num" ]] && continue
 
+			# Fetch authorAssociation for this candidate. This field is not
+			# exposed by `gh issue list --json` (verified 2026-04-20: available
+			# fields are number, title, body, labels, author, ... but not
+			# authorAssociation), so we fetch it per-candidate via the REST
+			# API. Bounded by the 10-candidates-per-repo-per-cycle cap.
+			#
+			# t2450: fail-closed — unknown association → treat as external.
+			# The cost of a false-positive "external" is one NMR review; the
+			# cost of the opposite (dispatching a worker on unverified content)
+			# was the #20180 foot-gun this fix was written to close.
+			local assoc
+			assoc=$(gh api "repos/${slug}/issues/${num}" \
+				--jq '.author_association // "NONE"' 2>/dev/null || echo "NONE")
+			local is_external="true"
+			case "$assoc" in
+				OWNER | MEMBER | COLLABORATOR) is_external="false" ;;
+			esac
+
+			# Choose the sentinel for the idempotency check. An issue whose
+			# author was reclassified between passes (rare: e.g., invited to
+			# the team after filing) will see a different sentinel and may
+			# get a second comment. That's acceptable — the labels diverge
+			# too, so a second nudge explaining the new regime is useful.
+			local check_sentinel="$sentinel"
+			if [[ "$is_external" == "true" ]]; then
+				check_sentinel="$external_sentinel"
+			fi
+
 			# Idempotency guard for the mentorship comment only. A previous
 			# pass may have posted the comment already; we must not duplicate
 			# it. BUT if the labels were stripped since (rollback, manual
@@ -1589,7 +1637,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 			existing_comments=$(gh issue view "$num" --repo "$slug" \
 				--json comments --jq '[.comments[].body] | join("\n")' 2>/dev/null || echo "")
 			local comment_already_posted="false"
-			if [[ "$existing_comments" == *"$sentinel"* ]]; then
+			if [[ "$existing_comments" == *"$check_sentinel"* ]]; then
 				comment_already_posted="true"
 			fi
 
@@ -1597,6 +1645,9 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 			# with a letter and is 2+ chars (excludes #1234 issue refs but
 			# admits short tags like #ai or #ci). Bash 3.2 compatible —
 			# no PCRE lookaround.
+			#
+			# Body tags apply to BOTH external and internal paths — they
+			# are intent signals (e.g., #bug, #security), not trust signals.
 			local body_tags
 			body_tags=$(printf '%s\n' "$body" |
 				grep -oE '(^|[^A-Za-z0-9_])#[a-z][a-z0-9-]+' 2>/dev/null |
@@ -1605,12 +1656,35 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 				tr '\n' ',' |
 				sed 's/,$//' || echo "")
 
-			# Compose the label-add arg list. Origin + tier + any body tags.
-			# t2200: origin label mutual exclusion — remove sibling origin labels.
-			local -a add_args=("--add-label" "origin:worker"
-				"--remove-label" "origin:interactive"
-				"--remove-label" "origin:worker-takeover"
-				"--add-label" "tier:standard")
+			# Compose the label-add arg list. Branches on author association
+			# (t2450):
+			#
+			# - Internal (OWNER/MEMBER/COLLABORATOR): origin:worker + tier:standard
+			#   + body tags (existing t2112 behaviour).
+			#
+			# - External (CONTRIBUTOR, NONE, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER,
+			#   MANNEQUIN, and any unknown value via fail-closed default):
+			#   needs-maintainer-review + body tags ONLY. No origin:*, no
+			#   tier:* — withholding these makes the issue undispatchable
+			#   until a maintainer approves.
+			#
+			# t2200: origin label mutual exclusion — on the internal path
+			# we remove sibling origin labels to keep the invariant.
+			local -a add_args
+			local labels_csv
+			local comment_template_use
+			if [[ "$is_external" == "true" ]]; then
+				add_args=("--add-label" "needs-maintainer-review")
+				labels_csv="needs-maintainer-review"
+				comment_template_use="$external_comment_template"
+			else
+				add_args=("--add-label" "origin:worker"
+					"--remove-label" "origin:interactive"
+					"--remove-label" "origin:worker-takeover"
+					"--add-label" "tier:standard")
+				labels_csv="origin:worker,tier:standard"
+				comment_template_use="$comment_template"
+			fi
 			if [[ -n "$body_tags" ]]; then
 				local _saved_ifs="$IFS"
 				IFS=','
@@ -1620,16 +1694,16 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 					add_args+=("--add-label" "$_t")
 				done
 				IFS="$_saved_ifs"
+				labels_csv="${labels_csv},${body_tags}"
 			fi
 
 			# Ensure all labels exist on the repo before applying them. The
 			# issue-sync-helper.sh ensure_labels_exist function does this
 			# idempotently; if it's not sourceable, fall back to gh label
 			# create --force (also idempotent).
-			# t2200: ensure origin labels exist for mutual-exclusion remove-labels.
+			# t2200: ensure origin labels exist for mutual-exclusion remove-labels
+			# (only relevant on the internal path, but cheap to always run).
 			ensure_origin_labels_exist "$slug" 2>/dev/null || true
-			local labels_csv="origin:worker,tier:standard"
-			[[ -n "$body_tags" ]] && labels_csv="${labels_csv},${body_tags}"
 			local _saved_ifs="$IFS"
 			IFS=','
 			local _lbl
@@ -1648,21 +1722,23 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 			fi
 
 			# Wire sub-issue parent link via the t2114 backfill subcommand.
-			# Non-fatal — the label backfill already succeeded.
+			# Non-fatal — the label backfill already succeeded. Applies to
+			# both paths; sub-issue linkage is about structure, not trust.
 			if [[ -n "$issue_sync_helper" ]]; then
 				"$issue_sync_helper" backfill-sub-issues --repo "$slug" --issue "$num" \
 					>/dev/null 2>&1 || true
 			fi
 
-			# Post the mentorship comment with the sentinel marker — only if
-			# it hasn't already been posted on a prior pass. Labels may have
-			# been stripped and re-applied; the comment stays singleton.
+			# Post the mentorship comment with the association-appropriate
+			# sentinel — only if it hasn't already been posted on a prior
+			# pass. Labels may have been stripped and re-applied; the comment
+			# stays singleton per (issue, association-class).
 			if [[ "$comment_already_posted" == "false" ]]; then
-				gh_issue_comment "$num" --repo "$slug" --body "$comment_template" \
+				gh_issue_comment "$num" --repo "$slug" --body "$comment_template_use" \
 					>/dev/null 2>&1 || true
-				echo "[pulse-wrapper] Labelless backfill: blessed #${num} in ${slug} — labels=${labels_csv}" >>"$LOGFILE"
+				echo "[pulse-wrapper] Labelless backfill: blessed #${num} in ${slug} — assoc=${assoc}, labels=${labels_csv}" >>"$LOGFILE"
 			else
-				echo "[pulse-wrapper] Labelless backfill: re-healed #${num} in ${slug} — labels=${labels_csv} (comment already present)" >>"$LOGFILE"
+				echo "[pulse-wrapper] Labelless backfill: re-healed #${num} in ${slug} — assoc=${assoc}, labels=${labels_csv} (comment already present)" >>"$LOGFILE"
 			fi
 			total_fixed=$((total_fixed + 1))
 		done
