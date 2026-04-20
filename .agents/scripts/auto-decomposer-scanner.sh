@@ -75,9 +75,9 @@ _nudge_age_hours() {
 	local repo="$1"
 	local issue_num="$2"
 	local created_at
-	created_at=$(gh issue view "$issue_num" --repo "$repo" --json comments \
-		--jq '[.comments[] | select(.body | contains("<!-- parent-needs-decomposition -->")) | .createdAt] | first // ""' \
-		2>/dev/null || echo "")
+	created_at=$(gh api --paginate "repos/${repo}/issues/${issue_num}/comments" \
+		--jq '[.[] | select(.body | contains("<!-- parent-needs-decomposition -->")) | .created_at] | first // ""' \
+		|| echo "")
 	if [[ -z "$created_at" ]]; then
 		printf ''
 		return 0

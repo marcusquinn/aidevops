@@ -712,7 +712,7 @@ _parent_body_has_phase_markers() {
 
 	# Prose patterns — must match _extract_children_from_prose's contract
 	# byte-for-byte so this check and the reconciler agree on what counts.
-	if printf '%s' "$body" | grep -qE '([Pp]hase[[:space:]]+[0-9]+[^#]*#[0-9]+|[Ff]iled[[:space:]]+as[[:space:]]*#[0-9]+|[Tt]racks[[:space:]]+#[0-9]+|[Bb]locked[[:space:]]-?[[:space:]]*by[[:space:]]*:?[[:space:]]*#[0-9]+)' 2>/dev/null; then
+	if printf '%s' "$body" | grep -qE '(^|[^a-zA-Z0-9_])([Pp]hase[[:space:]]+[0-9]+[^#]*#[0-9]+|[Ff]iled[[:space:]]+as[[:space:]]*#[0-9]+|[Tt]racks[[:space:]]+#[0-9]+|[Bb]locked[[:space:]]-?[[:space:]]*by[[:space:]]*:?[[:space:]]*#[0-9]+)'; then
 		return 0
 	fi
 
