@@ -117,6 +117,23 @@ rotate_pulse_log() {
 		done
 	fi
 
+	# GH#20025: Rotate stage timings log alongside the main log.
+	# Simpler rotation: just truncate when over 1MB (one TSV line ≈ 80 bytes,
+	# so 1MB ≈ 12,500 entries ≈ weeks of data). Archive the old content first.
+	if [[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]] && [[ -f "$PULSE_STAGE_TIMINGS_LOG" ]]; then
+		local timings_size=0
+		timings_size=$(stat -f %z "$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || wc -c <"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || echo "0")
+		timings_size="${timings_size//[[:space:]]/}"
+		[[ "$timings_size" =~ ^[0-9]+$ ]] || timings_size=0
+		if [[ "$timings_size" -gt 1048576 ]]; then
+			local timings_archive="${PULSE_LOG_ARCHIVE_DIR}/pulse-stage-timings-${ts}.log.gz"
+			if gzip -c "$PULSE_STAGE_TIMINGS_LOG" >"$timings_archive" 2>/dev/null; then
+				: >"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
+				echo "[pulse-wrapper] rotate_pulse_log: rotated stage-timings ${timings_size}B → $(basename "$timings_archive")" >>"$WRAPPER_LOGFILE"
+			fi
+		fi
+	fi
+
 	return 0
 }
 

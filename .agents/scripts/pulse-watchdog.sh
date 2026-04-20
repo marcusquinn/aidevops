@@ -214,6 +214,15 @@ run_stage_with_timeout() {
 				_force_kill_tree "$stage_pid" || true
 			fi
 			wait "$stage_pid" 2>/dev/null || true
+			# GH#20025: Log timeout to structured timing log
+			if [[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]]; then
+				printf '%s\t%s\t%d\t%d\t%d\n' \
+					"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+					"$stage_name" \
+					"$elapsed" \
+					124 \
+					"$$" >>"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
+			fi
 			return 124
 		fi
 		sleep 2
@@ -221,14 +230,27 @@ run_stage_with_timeout() {
 
 	wait "$stage_pid"
 	local stage_status=$?
+	local stage_end
+	stage_end=$(date +%s)
+	local stage_duration=$((stage_end - stage_start))
+
+	# GH#20025: Append structured timing record to dedicated log for analysis.
+	# Format: ISO-timestamp \t stage_name \t duration_seconds \t exit_code \t pid
+	if [[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]]; then
+		printf '%s\t%s\t%d\t%d\t%d\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+			"$stage_name" \
+			"$stage_duration" \
+			"$stage_status" \
+			"$$" >>"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
+	fi
+
 	if [[ "$stage_status" -ne 0 ]]; then
-		echo "[pulse-wrapper] Stage failed: ${stage_name} exited with ${stage_status}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Stage failed: ${stage_name} exited with ${stage_status} (${stage_duration}s)" >>"$LOGFILE"
 		return "$stage_status"
 	fi
 
-	local stage_end
-	stage_end=$(date +%s)
-	echo "[pulse-wrapper] Stage complete: ${stage_name} (${stage_status}, $((stage_end - stage_start))s)" >>"$LOGFILE"
+	echo "[pulse-wrapper] Stage complete: ${stage_name} (${stage_status}, ${stage_duration}s)" >>"$LOGFILE"
 	return 0
 }
 
