@@ -253,15 +253,22 @@ FOOTER
 
 # File the anomaly issue on the target repo.
 # Args: issue_repo title body_file
-# Preserves gh stderr so transient auth/network failures are diagnosable
-# (gemini feedback on PR #20153).
+# Uses gh_create_issue (from shared-gh-wrappers.sh) per the framework rule
+# that all issue/PR creation goes through a wrapper. Preserves gh stderr so
+# transient auth/network failures are diagnosable (gemini feedback on PR #20153).
 _cmd_scan_file_issue() {
 	local issue_repo="$1" title="$2" body_file="$3"
 	local issue_url gh_stderr_file
 	gh_stderr_file="$(mktemp -t gh-audit-anomaly.XXXXXX)" || gh_stderr_file=""
 
+	if ! command -v gh_create_issue &>/dev/null; then
+		_ga_warn "gh_create_issue wrapper not available — shared-constants.sh likely not sourced"
+		[[ -n "$gh_stderr_file" ]] && rm -f "$gh_stderr_file"
+		return 1
+	fi
+
 	if [[ -n "$gh_stderr_file" ]]; then
-		issue_url=$(gh issue create \
+		issue_url=$(gh_create_issue \
 			--repo "$issue_repo" \
 			--title "$title" \
 			--body-file "$body_file" \
@@ -276,7 +283,7 @@ _cmd_scan_file_issue() {
 		rm -f "$gh_stderr_file"
 	else
 		# No tmp file available — run without stderr capture but still surface failure.
-		issue_url=$(gh issue create \
+		issue_url=$(gh_create_issue \
 			--repo "$issue_repo" \
 			--title "$title" \
 			--body-file "$body_file" \
