@@ -25,6 +25,7 @@
 #
 # File-level exclusions:
 #   - shared-constants.sh (definition site for the wrappers)
+#   - shared-gh-wrappers.sh (extracted sub-library sourced from shared-constants.sh)
 #   - .agents/scripts/tests/** (test fixtures may legitimately contain raw calls)
 #
 # Environment:
@@ -46,9 +47,13 @@ readonly ALLOWLIST_MARKER='# aidevops-allow: raw-gh-wrapper'
 # File-level exclusions (basename or path-suffix match)
 _is_excluded_file() {
 	local file="$1"
-	# Definition site
+	# Definition sites — shared-gh-wrappers.sh is the extracted sub-library
+	# that contains the actual wrapper implementations (gh_create_issue, etc.)
+	# sourced from shared-constants.sh. Both must be excluded because they
+	# contain intentional raw gh calls inside the wrapper function bodies.
 	case "$file" in
 	*shared-constants.sh) return 0 ;;
+	*shared-gh-wrappers.sh) return 0 ;;
 	*agents/scripts/tests/*) return 0 ;;
 	esac
 	return 1
