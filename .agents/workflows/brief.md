@@ -27,6 +27,61 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-composition Checks (MANDATORY)
+
+Before composing any brief, issue body, or PR description that will result in code changes, perform ALL of the following checks. These consolidate three mandatory rules from `prompts/build.txt` (t2046, t2050, GH#17832-17835) into the briefing workflow.
+
+### 1. Memory recall (t2050)
+
+```bash
+memory-helper.sh recall --query "<1-3 keyword phrase from task>" --limit 5
+```
+
+Surface accumulated lessons from prior sessions. Read any hits BEFORE drafting the brief — a lesson that says "skipped discovery pass, duplicated 500 lines" tells you exactly what to do differently.
+
+### 2. Discovery pass (t2046)
+
+For any brief that targets specific files, run:
+
+```bash
+git log --since="<issue-age + 2h>" --oneline -- <target-files>
+gh pr list --state merged --search "<keywords>" --limit 5
+gh pr list --state open --search "<keywords>" --limit 5
+```
+
+**If any result touches the target files**: STOP. Re-assess whether the task is still valid. Route to "Already-shipped" or "In-flight collision" (see `brief/routing.md`).
+
+### 3. File:line verification (GH#17832-17835)
+
+For every file reference in the brief, confirm it exists and the content matches:
+
+```bash
+git ls-files <path>           # verify file exists
+sed -n '<line>p' <path>       # verify line content matches claim
+```
+
+Briefs with phantom line references waste worker cycles. Every `file:line` claim must be verified against the current `HEAD` before filing.
+
+### 4. Tier disqualifier check
+
+Cross-check the draft brief against `reference/task-taxonomy.md` "Tier Assignment Validation" disqualifiers BEFORE choosing a tier. Server-side `tier-simple-body-shape-helper.sh` (t2389) catches some mis-tiers at dispatch, but catching at composition time is cheaper.
+
+Quick disqualifiers for `tier:simple`:
+- More than 2 files → `tier:standard`
+- Any target file >500 lines without exact `oldString`/`newString` → `tier:standard`
+- Judgment keywords (design, choose, coordinate, graceful, retry, fallback) → `tier:standard`
+- Estimate >1h or >4 acceptance criteria → `tier:standard`
+
+### 5. Self-assignment awareness (t2406)
+
+If filing via `gh_create_issue` with `auto-dispatch` label, plan to unassign immediately after:
+
+```bash
+gh issue edit <N> --repo <slug> --remove-assignee <user>
+```
+
+The wrapper currently self-assigns in violation of t2157. Until t2406/GH#19991 merges, manual unassign is required to avoid dispatch-blocking.
+
 ## Core Rule
 
 **The brief IS the product.** A vague brief dispatched to Opus wastes more money than a prescriptive brief dispatched to Haiku. Invest the effort in the brief, not the worker.

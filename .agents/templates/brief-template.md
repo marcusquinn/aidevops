@@ -6,6 +6,19 @@ mode: subagent
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # {task_id}: {Title}
 
+## Pre-flight (auto-populated by briefing workflow)
+
+<!-- MANDATORY (t2409): The briefing workflow populates these checkboxes during
+     composition. verify-brief.sh rejects briefs with unchecked Pre-flight boxes.
+     Each checkbox records that a specific pre-composition check was performed
+     and what it found. This is the audit trail that prevents reality-blind,
+     collision-blind, and phantom-ref briefs from reaching workers. -->
+
+- [ ] Memory recall: `<query>` → `<N>` hits — `<one-line skim summary or "no relevant lessons">`
+- [ ] Discovery pass: `<N>` commits / `<N>` merged PRs / `<N>` open PRs touch target files in last 48h
+- [ ] File refs verified: `<N>` refs checked, all present at HEAD
+- [ ] Tier: `<tier>` — disqualifier check clean (`<1-line rationale>`)
+
 ## Origin
 
 - **Created:** {YYYY-MM-DD}
