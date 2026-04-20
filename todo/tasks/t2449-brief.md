@@ -97,12 +97,20 @@ We need the **cryptographic approval signal** specifically. Detection logic:
 
 ```bash
 # Has the linked issue's NMR ever been cleared, and if so, was it crypto?
-if gh api "repos/$REPO/issues/$ISSUE/comments" \
-    --jq '.[] | select(.body | test("aidevops:approval-signature:")) | .id' | head -1 >/dev/null; then
+# Single API call extracts both flags via jq any() to avoid the head -1 >/dev/null
+# pitfall (head exits 0 on empty input, making the if always-true).
+# strings filter guards against null .body values from the GitHub API.
+read -r has_crypto has_auto < <(gh api "repos/$REPO/issues/$ISSUE/comments" --jq '
+  [
+    (any(.[] | .body | strings; contains("aidevops:approval-signature:"))),
+    (any(.[] | .body | strings; contains("auto-approved-maintainer-issue")))
+  ] | @tsv
+')
+
+if [[ "$has_crypto" == "true" ]]; then
   # Crypto approval comment exists → legitimate clearance
   nmr_gate_pass=true
-elif gh api "repos/$REPO/issues/$ISSUE/comments" \
-    --jq '.[] | select(.body | test("auto-approved-maintainer-issue")) | .id' | head -1 >/dev/null; then
+elif [[ "$has_auto" == "true" ]]; then
   # Auto-approval fired → NOT a legitimate clearance for auto-merge purposes
   nmr_gate_pass=false
 else
