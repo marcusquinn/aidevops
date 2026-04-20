@@ -264,55 +264,93 @@ test_size_cap_truncation() {
 # Verify _close_conflicting_pr returns 0 early for origin:interactive PRs
 # (the carry-forward call must live in the "work NOT on main" else branch,
 # which is never reached by origin:interactive PRs).
+#
+# t2438 / GH#20060: _close_conflicting_pr was decomposed into an
+# orchestrator plus six helpers:
+#   - _close_conflicting_pr_check_interactive_guard  (origin:interactive
+#     check; called as Gate 1)
+#   - _close_conflicting_pr_comment_not_landed       (contains the
+#     _carry_forward_pr_diff call; only called on the "not landed" branch)
+# The structural invariants are asserted on the orchestrator's call
+# order and on the helpers' bodies.
 # ---------------------------------------------------------------
 test_origin_interactive_skip_static() {
-	# Extract _close_conflicting_pr and verify:
-	# a) the origin:interactive early return exists before the carry-forward call
-	# b) the _carry_forward_pr_diff call is inside the "else" (work NOT on main) branch
-	local fn_src
-	fn_src=$(awk '
+	local orch_src guard_src not_landed_src
+	orch_src=$(awk '
 		/^_close_conflicting_pr\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
+	guard_src=$(awk '
+		/^_close_conflicting_pr_check_interactive_guard\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	not_landed_src=$(awk '
+		/^_close_conflicting_pr_comment_not_landed\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
 
-	if [[ -z "$fn_src" ]]; then
-		print_result "origin:interactive skip: static structure" 1 \
+	if [[ -z "$orch_src" ]]; then
+		print_result "origin:interactive skip: orchestrator extractable" 1 \
 			"Could not extract _close_conflicting_pr from $MERGE_SCRIPT"
 		return 0
 	fi
-
-	# The origin:interactive early return must exist
-	if ! printf '%s' "$fn_src" | grep -q 'origin:interactive'; then
-		print_result "origin:interactive skip: early return guard present" 1 \
-			"_close_conflicting_pr missing origin:interactive guard"
+	if [[ -z "$guard_src" ]]; then
+		print_result "origin:interactive skip: guard helper extractable" 1 \
+			"Could not extract _close_conflicting_pr_check_interactive_guard from $MERGE_SCRIPT"
+		return 0
+	fi
+	if [[ -z "$not_landed_src" ]]; then
+		print_result "origin:interactive skip: not-landed helper extractable" 1 \
+			"Could not extract _close_conflicting_pr_comment_not_landed from $MERGE_SCRIPT"
 		return 0
 	fi
 
-	# The carry-forward call must be present
-	if ! printf '%s' "$fn_src" | grep -q '_carry_forward_pr_diff'; then
-		print_result "origin:interactive skip: carry-forward call present" 1 \
-			"_close_conflicting_pr missing _carry_forward_pr_diff call"
+	# The guard helper must contain the origin:interactive check itself
+	if ! printf '%s' "$guard_src" | grep -q 'origin:interactive'; then
+		print_result "origin:interactive skip: guard contains label check" 1 \
+			"_close_conflicting_pr_check_interactive_guard missing origin:interactive check"
 		return 0
 	fi
 
-	# origin:interactive return must appear BEFORE the carry-forward call
-	local interactive_pos carry_pos
-	interactive_pos=$(printf '%s\n' "$fn_src" | grep -n 'origin:interactive' | head -1 | cut -d: -f1)
-	carry_pos=$(printf '%s\n' "$fn_src" | grep -n '_carry_forward_pr_diff' | head -1 | cut -d: -f1)
-
-	if [[ -z "$interactive_pos" || -z "$carry_pos" ]] || [[ "$interactive_pos" -ge "$carry_pos" ]]; then
-		print_result "origin:interactive skip: guard before carry-forward" 1 \
-			"origin:interactive guard (line ${interactive_pos}) must be before carry-forward (line ${carry_pos})"
+	# The not-landed helper must contain the carry-forward call
+	if ! printf '%s' "$not_landed_src" | grep -q '_carry_forward_pr_diff'; then
+		print_result "origin:interactive skip: not-landed helper contains carry-forward" 1 \
+			"_close_conflicting_pr_comment_not_landed missing _carry_forward_pr_diff call"
 		return 0
 	fi
 
-	# The carry-forward must NOT be in the "work on main" branch.
-	# Verify by checking that "work_on_main == true" block ends before the carry-forward.
-	# We look for the else clause that separates "work on main" from "work NOT on main".
+	# The orchestrator must call the guard BEFORE the not-landed helper —
+	# this preserves the original "origin:interactive check runs before
+	# carry-forward" invariant through the decomposition.
+	local guard_pos not_landed_pos
+	guard_pos=$(printf '%s\n' "$orch_src" |
+		grep -n '_close_conflicting_pr_check_interactive_guard' |
+		head -1 | cut -d: -f1)
+	not_landed_pos=$(printf '%s\n' "$orch_src" |
+		grep -n '_close_conflicting_pr_comment_not_landed' |
+		head -1 | cut -d: -f1)
+
+	if [[ -z "$guard_pos" ]]; then
+		print_result "origin:interactive skip: orchestrator calls guard" 1 \
+			"Orchestrator missing _close_conflicting_pr_check_interactive_guard call"
+		return 0
+	fi
+	if [[ -z "$not_landed_pos" ]]; then
+		print_result "origin:interactive skip: orchestrator calls not-landed helper" 1 \
+			"Orchestrator missing _close_conflicting_pr_comment_not_landed call"
+		return 0
+	fi
+	if [[ "$guard_pos" -ge "$not_landed_pos" ]]; then
+		print_result "origin:interactive skip: guard before not-landed helper" 1 \
+			"Guard call (line ${guard_pos}) must precede not-landed helper call (line ${not_landed_pos})"
+		return 0
+	fi
+
+	# The not-landed helper call must be in the "else" branch of the
+	# orchestrator's work-on-main conditional — i.e. after the last `else`.
 	local else_pos
-	else_pos=$(printf '%s\n' "$fn_src" | grep -n '^\s*else$' | tail -1 | cut -d: -f1)
-	if [[ -n "$else_pos" && -n "$carry_pos" ]] && [[ "$carry_pos" -le "$else_pos" ]]; then
-		print_result "origin:interactive skip: carry-forward in NOT-on-main branch" 1 \
-			"carry-forward (line ${carry_pos}) appears before the else branch (line ${else_pos})"
+	else_pos=$(printf '%s\n' "$orch_src" |
+		grep -nE '^[[:space:]]*else$' | tail -1 | cut -d: -f1)
+	if [[ -n "$else_pos" && "$not_landed_pos" -le "$else_pos" ]]; then
+		print_result "origin:interactive skip: not-landed helper in else branch" 1 \
+			"not-landed helper call (line ${not_landed_pos}) must appear after the orchestrator's final else (line ${else_pos})"
 		return 0
 	fi
 
