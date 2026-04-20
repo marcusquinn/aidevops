@@ -1336,6 +1336,52 @@ _verify_bump_commit_at_ref() {
 # must treat exit 2 as fatal — see _release_execute (t2437/GH#20073).
 readonly VERSION_MANAGER_NO_CHANGES_EXIT=2
 
+# Run commit_version_changes with strict return-code semantics and verify
+# that HEAD ended up as the expected bump commit afterward.
+#
+# Usage: _release_commit_and_verify_bump <version> <bump_type>
+# Returns: 0 on success; 1 on any failure (error already printed).
+#
+# Extracted from _release_execute to keep that function under 100 body lines
+# while preserving the t2437/GH#20073 guard semantics. This is the canonical
+# release-path commit-and-verify sequence; do not inline it elsewhere.
+_release_commit_and_verify_bump() {
+	local version="$1"
+	local bump_type="$2"
+	local commit_rc=0
+
+	commit_version_changes "$version" || commit_rc=$?
+	case "$commit_rc" in
+	0) ;;
+	"$VERSION_MANAGER_NO_CHANGES_EXIT")
+		print_error "Aborting release: no version changes were staged (commit skipped)"
+		print_info "This usually means update_version_in_files wrote no changes — diagnose with:"
+		print_info "  git status && git diff VERSION CHANGELOG.md"
+		print_info "Fix the upstream update and re-run: $0 release $bump_type"
+		return 1
+		;;
+	*)
+		print_error "Aborting release: commit_version_changes failed (rc=$commit_rc)"
+		return 1
+		;;
+	esac
+
+	# Defence-in-depth: even if the commit appeared to succeed, confirm
+	# HEAD is actually the bump commit before the caller tags it. This
+	# catches any edge case where the commit landed on a different branch
+	# or a pre-commit hook amended it to a different subject.
+	if ! _verify_bump_commit_at_ref HEAD "$version"; then
+		print_error "Aborting release: HEAD is not the bump commit for v$version"
+		print_info "Something between update_version_in_files and commit_version_changes"
+		print_info "corrupted the intended commit. Recovery:"
+		print_info "  git log --oneline -5   # inspect recent history"
+		print_info "  git reset --hard origin/main && $0 release $bump_type"
+		return 1
+	fi
+
+	return 0
+}
+
 # Function to commit version changes.
 # Returns: 0 on successful commit, 1 on commit failure,
 # VERSION_MANAGER_NO_CHANGES_EXIT (2) when there was nothing to stage.
@@ -1845,37 +1891,8 @@ _release_execute() {
 	if validate_version_consistency "$new_version"; then
 		print_success "Version validation passed"
 
-		# t2437/GH#20073: distinguish "commit made" (0), "commit failed" (1),
-		# and "nothing staged" (VERSION_MANAGER_NO_CHANGES_EXIT=2). The
-		# pre-fix code treated 0 and 2 as identical, so a silently-skipped
-		# commit led to tagging HEAD (which was not a bump commit).
-		local commit_rc=0
-		commit_version_changes "$new_version" || commit_rc=$?
-		case "$commit_rc" in
-		0) ;;
-		"$VERSION_MANAGER_NO_CHANGES_EXIT")
-			print_error "Aborting release: no version changes were staged (commit skipped)"
-			print_info "This usually means update_version_in_files wrote no changes — diagnose with:"
-			print_info "  git status && git diff VERSION CHANGELOG.md"
-			print_info "Fix the upstream update and re-run: $0 release $bump_type"
-			exit 1
-			;;
-		*)
-			print_error "Aborting release: commit_version_changes failed (rc=$commit_rc)"
-			exit 1
-			;;
-		esac
-
-		# Defence-in-depth: even if the commit appeared to succeed, confirm
-		# HEAD is actually the bump commit before we tag it. This catches
-		# any edge case where the commit landed on a different branch or a
-		# pre-commit hook amended it to a different subject.
-		if ! _verify_bump_commit_at_ref HEAD "$new_version"; then
-			print_error "Aborting release: HEAD is not the bump commit for v$new_version"
-			print_info "Something between update_version_in_files and commit_version_changes"
-			print_info "corrupted the intended commit. Recovery:"
-			print_info "  git log --oneline -5   # inspect recent history"
-			print_info "  git reset --hard origin/main && $0 release $bump_type"
+		# t2437/GH#20073: commit the bump, verify HEAD is the bump commit.
+		if ! _release_commit_and_verify_bump "$new_version" "$bump_type"; then
 			exit 1
 		fi
 
