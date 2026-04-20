@@ -473,22 +473,34 @@ _structured_filter_classify_claims() {
 	local issue_number="$2"
 	local repo_slug="$3"
 
+	# Iterate via IFS=newline `for` rather than `while read <<<"$rows"` — the
+	# complexity-regression scanner's nesting-depth heuristic treats
+	# `done <<<"X"` as an unmatched close, inflating the global depth counter
+	# (every such pattern permanently bumps the max-depth report by 1).
 	local id runner version action warned_runners=""
-	while IFS=$'\t' read -r id runner version; do
-		[[ -z "$id" ]] && continue
+	local line
+	local saved_ifs="${IFS-}"
+	IFS=$'\n'
+	for line in $rows; do
+		IFS="$saved_ifs"
+		[[ -z "$line" ]] && { IFS=$'\n'; continue; }
+		IFS=$'\t' read -r id runner version <<<"$line"
+		[[ -z "$id" ]] && { IFS=$'\n'; continue; }
 		action=$(_override_resolve "$runner" "$version" 2>/dev/null) || action="honour"
 		case "$action" in
 		ignore) printf '%s\n' "$id" ;;
 		warn)
 			if [[ "$warned_runners" != *"|${runner}|"* ]]; then
-				printf '[dispatch-claim-helper] structured override: warn action for runner=%s version=%s on #%s in %s (claim kept, audit logged)\n' \
+				printf '[dispatch-claim-helper] structured override: warn action on runner=%s version=%s on #%s in %s (claim kept, audit logged)\n' \
 					"$runner" "$version" "$issue_number" "$repo_slug" >&2
 				warned_runners+="|${runner}|"
 			fi
 			;;
 		*) ;; # honour or unknown — keep
 		esac
-	done <<<"$rows"
+		IFS=$'\n'
+	done
+	IFS="$saved_ifs"
 	return 0
 }
 
