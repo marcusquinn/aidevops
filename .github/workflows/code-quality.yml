@@ -410,6 +410,17 @@ jobs:
       run: |
         pip install lizard pyflakes
 
+    - name: Install shfmt (for nesting-depth AST scanner, GH#20105)
+      # scanners/nesting-depth.sh uses `shfmt --to-json` + jq to walk the bash
+      # AST. Without shfmt it falls back to the legacy AWK scanner (which has
+      # the four false-positive classes the GH#20105 rewrite fixed). Ubuntu
+      # 22.04+ ships shfmt in the default apt repos; --to-json is stable since
+      # v3.0.0 so the packaged version is fine.
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y shfmt
+        shfmt --version
+
     - name: Shell function complexity
       # t2159: per-function regression model replaces total-count-vs-threshold.
       # PRs fail only when they introduce NEW violations (set difference B-A),

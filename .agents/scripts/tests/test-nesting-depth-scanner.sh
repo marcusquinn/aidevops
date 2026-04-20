@@ -294,6 +294,103 @@ EOF
 	return 0
 }
 
+test_batch_stdin_order_preservation() {
+	printf 'Test: --batch-stdin preserves input order (9,0,1 scrambled)\n'
+
+	# Fixture: depth=0 (empty function body)
+	cat <<'EOF' >"$TMP_DIR/batch_zero.sh"
+#!/bin/bash
+noop() {
+  return 0
+}
+EOF
+
+	# Fixture: depth=1 (single if)
+	cat <<'EOF' >"$TMP_DIR/batch_one.sh"
+#!/bin/bash
+check() {
+  if [ -n "$1" ]; then
+    echo "yes"
+  fi
+  return 0
+}
+EOF
+
+	# Fixture: depth=9 (nine nested ifs — unambiguous for both shfmt and AWK)
+	{
+		printf '#!/bin/bash\n'
+		printf 'd9() {\n'
+		printf '  if true; then\n'
+		printf '    if true; then\n'
+		printf '      if true; then\n'
+		printf '        if true; then\n'
+		printf '          if true; then\n'
+		printf '            if true; then\n'
+		printf '              if true; then\n'
+		printf '                if true; then\n'
+		printf '                  if true; then\n'
+		printf '                    echo "depth9"\n'
+		printf '                  fi\n'
+		printf '                fi\n'
+		printf '              fi\n'
+		printf '            fi\n'
+		printf '          fi\n'
+		printf '        fi\n'
+		printf '      fi\n'
+		printf '    fi\n'
+		printf '  fi\n'
+		printf '  return 0\n'
+		printf '}\n'
+	} >"$TMP_DIR/batch_nine.sh"
+
+	# Input in scrambled order: nine(9), zero(0), one(1)
+	local _output
+	_output=$(printf '%s\n%s\n%s\n' \
+		"$TMP_DIR/batch_nine.sh" \
+		"$TMP_DIR/batch_zero.sh" \
+		"$TMP_DIR/batch_one.sh" \
+		| "$SCANNER" --batch-stdin 2>/dev/null)
+
+	# Extract depths from tab-separated output lines
+	local _d1 _d2 _d3 _p1 _p2 _p3
+	_d1=$(printf '%s\n' "$_output" | awk 'NR==1{print $2}' FS=$'\t')
+	_d2=$(printf '%s\n' "$_output" | awk 'NR==2{print $2}' FS=$'\t')
+	_d3=$(printf '%s\n' "$_output" | awk 'NR==3{print $2}' FS=$'\t')
+	_p1=$(printf '%s\n' "$_output" | awk 'NR==1{print $1}' FS=$'\t')
+	_p2=$(printf '%s\n' "$_output" | awk 'NR==2{print $1}' FS=$'\t')
+	_p3=$(printf '%s\n' "$_output" | awk 'NR==3{print $1}' FS=$'\t')
+
+	# Assert depths in order: 9, 0, 1
+	if [ "${_d1:-}" = "9" ] && [ "${_d2:-}" = "0" ] && [ "${_d3:-}" = "1" ]; then
+		PASS=$((PASS + 1))
+		if [ "$VERBOSE" = "--verbose" ]; then
+			printf '  PASS: batch depths in order (9,0,1)\n'
+		fi
+	else
+		FAIL=$((FAIL + 1))
+		printf '  FAIL: batch depths out of order (expected 9,0,1; got %s,%s,%s)\n' \
+			"${_d1:-?}" "${_d2:-?}" "${_d3:-?}"
+	fi
+
+	# Assert paths in input order: nine, zero, one
+	if [ "${_p1:-}" = "$TMP_DIR/batch_nine.sh" ] && \
+	   [ "${_p2:-}" = "$TMP_DIR/batch_zero.sh" ] && \
+	   [ "${_p3:-}" = "$TMP_DIR/batch_one.sh" ]; then
+		PASS=$((PASS + 1))
+		if [ "$VERBOSE" = "--verbose" ]; then
+			printf '  PASS: batch paths in input order\n'
+		fi
+	else
+		FAIL=$((FAIL + 1))
+		printf '  FAIL: batch paths not in input order\n'
+		printf '    expected: %s / %s / %s\n' \
+			"$TMP_DIR/batch_nine.sh" "$TMP_DIR/batch_zero.sh" "$TMP_DIR/batch_one.sh"
+		printf '    got:      %s / %s / %s\n' \
+			"${_p1:-?}" "${_p2:-?}" "${_p3:-?}"
+	fi
+	return 0
+}
+
 test_headless_runtime_lib() {
 	printf 'Test: headless-runtime-lib.sh — depth <=12 (sanity)\n'
 	local _hrlib
@@ -345,6 +442,7 @@ main() {
 	test_empty_file
 	test_top_level_code
 	test_awk_fallback
+	test_batch_stdin_order_preservation
 	test_headless_runtime_lib
 
 	printf '\n--- Results: %d passed, %d failed ---\n' "$PASS" "$FAIL"
