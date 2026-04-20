@@ -84,33 +84,63 @@ fi
 
 # ---------------------------------------------------------------------------
 # Determine the base SHA for the regression check.
-# 1. git merge-base HEAD @{u}  — when upstream branch is set and reachable
-# 2. git merge-base HEAD origin/main  — fallback
-# 3. fail-open                 — when neither resolves (new repo, offline, etc.)
+# Priority:
+# 1. git merge-base HEAD <origin/HEAD>  — repo-configured default branch
+# 2. git merge-base HEAD origin/main    — conventional default branch name
+# 3. git merge-base HEAD origin/master  — legacy default branch name
+# 4. git merge-base HEAD @{u}           — last resort; warns (stale after rebase)
+# 5. fail-open                          — when nothing resolves
+#
+# @{u} is intentionally de-prioritised: after a rebase onto updated main,
+# @{u} still points at the old remote HEAD of the feature branch, making
+# every commit since the merge-point look "new" to the scanner and triggering
+# spurious block messages (GH#20014 / t2416).
 # ---------------------------------------------------------------------------
-_resolve_base_sha() {
-	local _base
-	# Try upstream tracking branch first
-	if _base=$(git merge-base HEAD "@{u}" 2>/dev/null) && [[ -n "$_base" ]]; then
-		printf '%s' "$_base"
+_compute_baseline() {
+	local default_remote_head baseline
+
+	# 1. Try origin/HEAD (repo-configured default branch)
+	default_remote_head=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+		| sed 's@^refs/remotes/origin/@origin/@')
+	if [[ -n "$default_remote_head" ]]; then
+		if baseline=$(git merge-base HEAD "$default_remote_head" 2>/dev/null) \
+				&& [[ -n "$baseline" ]]; then
+			printf '%s' "$baseline"
+			return 0
+		fi
+		# known ref but no common ancestor (e.g. unrelated histories) — use ref directly
+		printf '%s' "$default_remote_head"
 		return 0
 	fi
-	# Fall back to origin/main
-	if git fetch origin main --quiet 2>/dev/null && \
-		_base=$(git merge-base HEAD origin/main 2>/dev/null) && [[ -n "$_base" ]]; then
-		printf '%s' "$_base"
+
+	# 2 & 3. Try origin/main then origin/master
+	local _candidate
+	for _candidate in origin/main origin/master; do
+		if git rev-parse --verify "$_candidate" >/dev/null 2>&1; then
+			if baseline=$(git merge-base HEAD "$_candidate" 2>/dev/null) \
+					&& [[ -n "$baseline" ]]; then
+				printf '%s' "$baseline"
+				return 0
+			fi
+			# ref resolvable but no common ancestor — use ref directly as base
+			printf '%s' "$_candidate"
+			return 0
+		fi
+	done
+
+	# 4. Last resort: @{u} — may be stale after rebase; warn and try
+	printf '[%s] warning: no origin/HEAD, origin/main, or origin/master found; falling back to @{u} (may be stale after rebase)\n' \
+		"$GUARD_NAME" >&2
+	if baseline=$(git merge-base HEAD '@{u}' 2>/dev/null) && [[ -n "$baseline" ]]; then
+		printf '%s' "$baseline"
 		return 0
 	fi
-	# Try without fetch (offline)
-	if _base=$(git merge-base HEAD origin/main 2>/dev/null) && [[ -n "$_base" ]]; then
-		printf '%s' "$_base"
-		return 0
-	fi
+
 	return 1
 }
 
 BASE_SHA=""
-if ! BASE_SHA=$(_resolve_base_sha); then
+if ! BASE_SHA=$(_compute_baseline); then
 	_log WARN "cannot determine merge-base (offline or no upstream?) — fail-open"
 	exit 0
 fi
