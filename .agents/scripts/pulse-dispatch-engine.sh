@@ -1262,7 +1262,7 @@ _run_preflight_stages() {
 	run_stage_with_timeout "post_merge_scanner" "$_pflt_timeout" _run_post_merge_review_scanner || true
 	run_stage_with_timeout "auto_decomposer_scanner" "$_pflt_timeout" _run_auto_decomposer_scanner || true
 	run_stage_with_timeout "dedup_cleanup" "$_pflt_timeout" run_simplification_dedup_cleanup || true
-	fast_fail_prune_expired || true
+	run_stage_with_timeout "fast_fail_prune_expired" "$_pflt_timeout" fast_fail_prune_expired || true
 	run_stage_with_timeout "preflight_ownership_reconcile" "$_pflt_timeout" \
 		_preflight_ownership_reconcile || true
 	# prefetch_and_scope is the only preflight stage whose failure aborts
