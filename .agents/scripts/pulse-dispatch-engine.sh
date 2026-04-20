@@ -1154,6 +1154,15 @@ _preflight_daily_scans() {
 	# Time-gated to 24h; scans all pulse-enabled repos via scanner's own dedup.
 	run_stage_with_timeout "post_merge_scanner" "$PRE_RUN_STAGE_TIMEOUT" _run_post_merge_review_scanner || true
 
+	# Daily auto-decomposer scanner (t2442): files worker-ready tier:thinking
+	# issues for parent-task issues whose <!-- parent-needs-decomposition -->
+	# nudge has aged ≥24h without a human response. Closes the parent-task
+	# dispatch black hole — before t2442 the reconciler's nudge was advisory-
+	# only, so a parent-task with no children could sit forever.
+	# Time-gated to 24h; scans only maintainer-role repos; idempotent via
+	# auto-decomposer-scanner.sh's title + source:auto-decomposer dedup.
+	run_stage_with_timeout "auto_decomposer_scanner" "$PRE_RUN_STAGE_TIMEOUT" _run_auto_decomposer_scanner || true
+
 	# Daily dedup cleanup: close duplicate function-complexity-debt issues.
 	# Runs after complexity scan so any new duplicates from this cycle are caught.
 	run_stage_with_timeout "dedup_cleanup" "$PRE_RUN_STAGE_TIMEOUT" run_simplification_dedup_cleanup || true

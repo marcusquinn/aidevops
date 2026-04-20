@@ -96,6 +96,18 @@ _complexity_scan_check_interval() {
 	return 0
 }
 
+# Emit the list of pulse-enabled, non-local-only slugs from the given
+# repos.json path, one per line. Extracted from _run_post_merge_review_scanner
+# et al. so new scanner wrappers don't duplicate the jq filter (t2442).
+# Arguments: $1 - repos_json path
+# Outputs: newline-separated slugs on stdout
+_pulse_enabled_repo_slugs() {
+	local repos_json="$1"
+	[[ -f "$repos_json" ]] || return 0
+	jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null || true
+	return 0
+}
+
 # Check if the daily CodeRabbit codebase review interval has elapsed.
 # Models on _complexity_scan_check_interval which has never regressed (GH#17640).
 # Arguments: $1 - now_epoch (current epoch seconds)
@@ -243,13 +255,85 @@ _run_post_merge_review_scanner() {
 		total_repos=$((total_repos + 1))
 		echo "[pulse-wrapper] Post-merge scanner: scanning $slug" >>"$LOGFILE"
 		SCANNER_DAYS="${SCANNER_DAYS:-7}" "$scanner" scan "$slug" >>"$LOGFILE" 2>&1 || true
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+	done < <(_pulse_enabled_repo_slugs "$repos_json")
 	if [[ "$skipped_contributor" -gt 0 ]]; then
 		echo "[pulse-wrapper] Post-merge scanner: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"$LOGFILE"
 	fi
 
 	printf '%s\n' "$now_epoch" >"$POST_MERGE_SCANNER_LAST_RUN"
 	echo "[pulse-wrapper] Post-merge scanner: completed ${total_repos} repo(s), next run in ~$((POST_MERGE_SCANNER_INTERVAL / 3600))h" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Daily auto-decomposer scanner (t2442).
+#
+# Scans pulse-enabled (maintainer-role) repos for parent-task issues
+# whose <!-- parent-needs-decomposition --> nudge has aged ≥24h without
+# a human response, and files worker-ready tier:thinking issues asking
+# the dispatched worker to decompose the parent into child issues.
+#
+# Closes the pre-t2442 dispatch black hole: before this, a parent-task
+# with no children could sit forever because the `parent-task` label
+# blocks dispatch unconditionally, but the reconciler's nudge comment
+# was advisory-only.
+#
+# Idempotent via auto-decomposer-scanner.sh's title + source:auto-decomposer
+# label dedup — re-runs skip parents that already have a decompose issue
+# in any state.
+#
+# Time-gated to run at most once per AUTO_DECOMPOSER_INTERVAL (default 24h).
+# Reference pattern: _run_post_merge_review_scanner.
+#######################################
+_run_auto_decomposer_scanner() {
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	# Time gate: skip if last run was within the interval
+	if [[ -f "$AUTO_DECOMPOSER_LAST_RUN" ]]; then
+		local last_run
+		last_run=$(cat "$AUTO_DECOMPOSER_LAST_RUN" 2>/dev/null || echo "0")
+		[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
+		local elapsed=$((now_epoch - last_run))
+		if [[ "$elapsed" -lt "$AUTO_DECOMPOSER_INTERVAL" ]]; then
+			return 0
+		fi
+	fi
+
+	local scanner="${SCRIPT_DIR}/auto-decomposer-scanner.sh"
+	if [[ ! -x "$scanner" ]]; then
+		echo "[pulse-wrapper] Auto-decomposer: helper not found or not executable: $scanner" >>"$LOGFILE"
+		return 0
+	fi
+
+	local repos_json="$REPOS_JSON"
+	if [[ ! -f "$repos_json" ]]; then
+		return 0
+	fi
+
+	local total_repos=0
+	local skipped_contributor=0
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		# t2145 parity with post-merge-review-scanner: skip contributor-role
+		# repos. The auto-decomposer creates issues directly; we only want
+		# that in repos where the user is the maintainer.
+		local repo_role
+		repo_role=$(get_repo_role_by_slug "$slug")
+		if [[ "$repo_role" != "maintainer" ]]; then
+			skipped_contributor=$((skipped_contributor + 1))
+			continue
+		fi
+		total_repos=$((total_repos + 1))
+		echo "[pulse-wrapper] Auto-decomposer: scanning $slug" >>"$LOGFILE"
+		"$scanner" scan "$slug" >>"$LOGFILE" 2>&1 || true
+	done < <(_pulse_enabled_repo_slugs "$repos_json")
+	if [[ "$skipped_contributor" -gt 0 ]]; then
+		echo "[pulse-wrapper] Auto-decomposer: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"$LOGFILE"
+	fi
+
+	printf '%s\n' "$now_epoch" >"$AUTO_DECOMPOSER_LAST_RUN"
+	echo "[pulse-wrapper] Auto-decomposer: completed ${total_repos} repo(s), next run in ~$((AUTO_DECOMPOSER_INTERVAL / 3600))h" >>"$LOGFILE"
 	return 0
 }
 
@@ -1256,7 +1340,7 @@ run_simplification_dedup_cleanup() {
 	fi
 
 	local repo_slugs
-	repo_slugs=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null) || repo_slugs=""
+	repo_slugs=$(_pulse_enabled_repo_slugs "$repos_json") || repo_slugs=""
 	[[ -z "$repo_slugs" ]] && return 0
 
 	local total_closed=0
