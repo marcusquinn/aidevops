@@ -82,6 +82,10 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 2.0,todo-md+toon+beads,2025-12-21T16:00:00Z
 -->
 
+## Routines
+
+- [x] r-gh-audit-scan Scan gh-audit.log for anomalies repeat:daily(@09:00) run:scripts/gh-audit-anomaly-helper.sh scan
+
 ## Ready
 
 Tasks with no open blockers - ready to work on. Use `/ready` to refresh this list.
