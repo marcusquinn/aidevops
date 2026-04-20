@@ -135,6 +135,20 @@ fi
 [[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "base SHA: ${BASE_SHA:0:7}"
 
 # ---------------------------------------------------------------------------
+# Fast-path: doc-only push (no shell or Python files modified) — skip all
+# complexity checks. The metrics (function-complexity, nesting-depth,
+# file-size) only apply to .sh and .py files. Scanning on markdown/TOON/txt-
+# only diffs wastes ~1-3 minutes (3 parallel metric checks) with zero benefit.
+# ---------------------------------------------------------------------------
+_changed_source=$(git diff --name-only "$BASE_SHA" HEAD 2>/dev/null \
+	| grep -E '\.(sh|py)$' || true)
+if [[ -z "$_changed_source" ]]; then
+	_log INFO "doc-only push (no .sh/.py files modified) — complexity checks skipped"
+	exit 0
+fi
+[[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "source files modified: $(printf '%s\n' "$_changed_source" | wc -l | tr -d ' ') .sh/.py file(s)"
+
+# ---------------------------------------------------------------------------
 # Run the check for each metric IN PARALLEL. Accumulate exit codes; fail
 # loudly on any regression; fail-open on helper invocation errors (exit 2).
 #

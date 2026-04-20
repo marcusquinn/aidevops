@@ -563,9 +563,11 @@ cmd_pre_merge_gate() {
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
 # Workers and interactive sessions both use this — no parallel logic.
 #
-# Usage: full-loop-helper.sh commit-and-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--decisions <notes>] [--label <label>...] [--allow-parent-close]
+# Usage: full-loop-helper.sh commit-and-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--decisions <notes>] [--label <label>...] [--allow-parent-close] [--skip-hooks]
 # Exit codes: 0 = PR created (prints PR number to stdout), 1 = failure
 # --allow-parent-close: skip the parent-task keyword guard (final-phase PR only)
+# --skip-hooks: pass --no-verify to git push (bypasses pre-push hooks). Use for doc-only PRs
+#   after manually verifying no secrets/private-slugs in the diff. See GH#20138.
 #
 # On rebase conflict: returns 1 with instructions. Caller must resolve and retry.
 # On push failure: returns 1. Caller should check remote state.
@@ -609,6 +611,12 @@ _parse_commit_and_pr_args() {
 			;;
 		--allow-parent-close)
 			allow_parent_close=1
+			shift
+			;;
+		--skip-hooks)
+			# Pass --no-verify to git push. Use for doc-only PRs when hooks
+			# have been manually verified clean. See GH#20138.
+			skip_hooks=1
 			shift
 			;;
 		*)
@@ -675,9 +683,11 @@ _stage_and_commit() {
 }
 
 # Rebase onto origin/main and force-push the current branch.
+# Args: $1=branch $2=skip_hooks (0|1, optional, default 0)
 # Returns 1 on rebase conflict or push failure.
 _rebase_and_push() {
 	local branch="$1"
+	local skip_hooks="${2:-0}"
 
 	print_info "Rebasing onto origin/main..."
 	if ! git fetch origin main --quiet 2>/dev/null; then
@@ -709,8 +719,34 @@ _rebase_and_push() {
 	fi
 
 	print_info "Pushing to origin/${branch}..."
-	if ! git push -u origin "$branch" --force-with-lease 2>/dev/null; then
-		print_error "Push failed. Check remote state and retry."
+
+	# GH#20138: 60s push timeout to detect pre-push hook hangs. Pre-push hooks
+	# (privacy-guard, complexity-regression) can stall on network I/O or when
+	# scanning large repos. If push exceeds 60s, print an actionable advisory
+	# and return 1 so the caller can retry with --skip-hooks.
+	# Fast-path: both hooks now exit early on doc-only diffs (<1s), so the
+	# 60s timeout is a safety net for edge cases, not a normal code path.
+	local push_timeout=60
+	local _push_args=(-u origin "$branch" --force-with-lease)
+	[[ "$skip_hooks" == "1" ]] && _push_args+=(--no-verify)
+
+	local push_rc=0
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$push_timeout" git push "${_push_args[@]}" 2>/dev/null || push_rc=$?
+	else
+		git push "${_push_args[@]}" 2>/dev/null || push_rc=$?
+	fi
+
+	if [[ "$push_rc" -eq 124 ]]; then
+		# timeout(1) exits 124 on SIGTERM
+		print_error "Push timed out after ${push_timeout}s — likely a pre-push hook stalling."
+		print_error "Diagnose: PRIVACY_GUARD_DEBUG=1 COMPLEXITY_GUARD_DEBUG=1 git push ${_push_args[*]}"
+		print_error "Bypass (doc-only diff, no secrets): git push ${_push_args[*]} --no-verify"
+		print_error "  or rerun: full-loop-helper.sh commit-and-pr ... --skip-hooks"
+		print_error "See reference/pre-push-guards.md for diagnosis steps."
+		return 1
+	elif [[ "$push_rc" -ne 0 ]]; then
+		print_error "Push failed (exit ${push_rc}). Check remote state and retry."
 		return 1
 	fi
 	return 0
@@ -934,6 +970,7 @@ cmd_commit_and_pr() {
 	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
 	local -a extra_labels=()
 	local allow_parent_close=0
+	local skip_hooks=0
 
 	_parse_commit_and_pr_args "$@" || return 1
 
@@ -942,7 +979,7 @@ cmd_commit_and_pr() {
 	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
 
 	_stage_and_commit "$commit_message" || return 1
-	_rebase_and_push "$branch" || return 1
+	_rebase_and_push "$branch" "$skip_hooks" || return 1
 
 	# Build PR metadata
 	if [[ -z "$pr_title" ]]; then
@@ -1364,6 +1401,7 @@ Commands:
   cancel                        Cancel active loop
   logs [N]                      Show last N log lines (default: 50)
   commit-and-pr --issue N --message "msg"  Stage, commit, rebase, push, create PR, post merge summary
+                [--skip-hooks]             Pass --no-verify to git push (doc-only PRs, GH#20138)
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
   merge <PR> [REPO] [--squash|--merge|--rebase] [--admin] [--auto]
                                 Gate-enforced merge (runs pre-merge-gate first).

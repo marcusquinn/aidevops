@@ -96,9 +96,50 @@ if [[ ! -s "$slugs_file" ]]; then
 	exit 0
 fi
 
-# Walk each ref in the push
+# ---------------------------------------------------------------------------
+# Fast-path: read all refs from stdin first (stdin is a one-shot stream),
+# then check if any watchlist files appear in the diff. The privacy guard
+# only scans TODO.md, todo/**, README.md, and .github/ISSUE_TEMPLATE/** —
+# a doc-only push that touches none of these is safe regardless of slug
+# content elsewhere. Skipping the per-ref scan saves ~1-3s of gh API
+# calls and grep on repos with no private-slug risk in non-watchlist files.
+# ---------------------------------------------------------------------------
+_all_refs=()
+while IFS=' ' read -r _lr _ls _rr _rs; do
+	_all_refs+=("$_lr $_ls $_rr $_rs")
+done
+
+_watchlist_present=0
+for _ref_entry in "${_all_refs[@]}"; do
+	read -r _lr _ls _rr _rs <<<"$_ref_entry"
+	[[ -z "$_ls" ]] && continue
+	[[ "$_ls" =~ ^0+$ ]] && continue
+	# Determine base for diff: use remote sha when known, merge-base otherwise
+	_base=""
+	if [[ -n "$_rs" ]] && ! [[ "$_rs" =~ ^0+$ ]]; then
+		_base="$_rs"
+	else
+		_base=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
+	fi
+	[[ -z "$_base" ]] && _watchlist_present=1 && break
+	if git diff --name-only "$_base" "$_ls" 2>/dev/null \
+		| grep -qE '^(TODO\.md|README\.md|todo/|\.github/ISSUE_TEMPLATE/)'; then
+		_watchlist_present=1
+		break
+	fi
+done
+
+if [[ "$_watchlist_present" -eq 0 ]]; then
+	[[ "${PRIVACY_GUARD_DEBUG:-0}" == "1" ]] && privacy_log INFO "no watchlist files (TODO.md, todo/**, README.md, .github/ISSUE_TEMPLATE/**) in push diff — privacy scan skipped"
+	exit 0
+fi
+
+[[ "${PRIVACY_GUARD_DEBUG:-0}" == "1" ]] && privacy_log INFO "watchlist files present — scanning diff for private slugs"
+
+# Walk each ref in the push (re-iterate over collected refs)
 exit_code=0
-while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+for _ref_entry in "${_all_refs[@]}"; do
+	read -r local_ref local_sha remote_ref remote_sha <<<"$_ref_entry"
 	[[ -z "$local_sha" ]] && continue
 	# Branch deletion (local_sha is zeros) — nothing to scan
 	if [[ "$local_sha" =~ ^0+$ ]]; then
