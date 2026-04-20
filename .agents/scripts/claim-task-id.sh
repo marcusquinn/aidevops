@@ -266,6 +266,58 @@ parse_args() {
 			log_info "Auto-extracted labels from title: $TASK_LABELS"
 		fi
 	fi
+
+	# t2436: Normalise tag aliases via map_tags_to_labels so that callers
+	# passing --labels "parent" get "parent-task" (not a bare "parent" label).
+	# map_tags_to_labels is sourced from issue-sync-lib.sh at top of this file.
+	# 2>/dev/null || true: silently swallows command-not-found if lib unavailable.
+	if [[ -n "$TASK_LABELS" ]]; then
+		local _normalised_labels=""
+		_normalised_labels=$(map_tags_to_labels "$TASK_LABELS" 2>/dev/null) || true
+		[[ -n "$_normalised_labels" ]] && TASK_LABELS="$_normalised_labels"
+	fi
+}
+
+# t2436: Scan TODO.md for the task entry matching task_id and derive
+# creation-time labels from its tags. Closes the race window where
+# parent-task (and other protected labels) would otherwise only be applied
+# by the asynchronous issue-sync workflow triggered on a TODO.md push.
+#
+# Called after the task ID is allocated (so it is present in TODO.md when
+# the maintainer pre-wrote the entry before claiming) and before issue
+# creation. Non-blocking — returns empty string on any failure.
+#
+# Arguments:
+#   $1 - task_id (e.g. t2436)
+#   $2 - repo_path
+# Outputs comma-separated label names on stdout. Empty if not found or no tags.
+_scan_todo_labels_for_task() {
+	local task_id="$1"
+	local repo_path="$2"
+	local todo_file="${repo_path}/TODO.md"
+
+	[[ -z "$task_id" || ! -f "$todo_file" ]] && return 0
+
+	# Find the task line matching the task ID (active or completed).
+	# The pattern anchors to the start of the line to avoid matching
+	# sub-task IDs (e.g. t2436.1) as the parent t2436.
+	local task_line
+	task_line=$(grep -m1 -E "^[[:space:]]*-[[:space:]]\[.\][[:space:]]*${task_id}([[:space:]]|\.|$)" \
+		"$todo_file" 2>/dev/null || echo "")
+	[[ -z "$task_line" ]] && return 0
+
+	# Extract hashtags — mirrors parse_task_line() in issue-sync-lib.sh.
+	local tags
+	tags=$(printf '%s' "$task_line" | grep -oE '#[a-z][a-z0-9-]*' | tr '\n' ',' | sed 's/,$//')
+	[[ -z "$tags" ]] && return 0
+
+	# Convert tags to labels via the shared resolver.
+	# map_tags_to_labels() is sourced from issue-sync-lib.sh at top of this file.
+	# 2>/dev/null || true: silently swallows command-not-found if lib unavailable.
+	local derived_labels=""
+	derived_labels=$(map_tags_to_labels "$tags" 2>/dev/null) || true
+	[[ -n "$derived_labels" ]] && echo "$derived_labels"
+	return 0
 }
 
 # Detect git platform from remote URL
@@ -1685,6 +1737,25 @@ main() {
 	local is_offline="$_alloc_is_offline"
 
 	# --- Create issues AFTER IDs are secured (optional, non-blocking) ---
+
+	# t2436: Enrich TASK_LABELS with tags derived from the TODO.md entry for
+	# the allocated task ID. When the maintainer pre-writes the TODO entry
+	# before running claim-task-id.sh (e.g. "- [ ] t2436 desc #parent"),
+	# this ensures protected labels like parent-task are applied at creation
+	# time rather than waiting for the asynchronous issue-sync workflow.
+	# Non-blocking: failure to find the entry leaves TASK_LABELS unchanged.
+	if [[ "$NO_ISSUE" == "false" ]] && [[ "$is_offline" == "false" ]]; then
+		local _task_id_for_scan
+		printf -v _task_id_for_scan 't%03d' "$first_id"
+		local _todo_derived_labels=""
+		_todo_derived_labels=$(_scan_todo_labels_for_task "$_task_id_for_scan" "$REPO_PATH") || true
+		if [[ -n "$_todo_derived_labels" ]]; then
+			TASK_LABELS="${TASK_LABELS:+${TASK_LABELS},}${_todo_derived_labels}"
+			# Deduplicate merged label set
+			TASK_LABELS=$(printf '%s' "$TASK_LABELS" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+			log_info "t2436: Derived labels from TODO.md tags for ${_task_id_for_scan}: ${_todo_derived_labels}"
+		fi
+	fi
 
 	local _issue_ref_prefix="" _issue_has_any="" _issue_first_num="" _issue_nums_csv=""
 	if [[ "$NO_ISSUE" == "false" ]] && [[ "$is_offline" == "false" ]] && [[ "$platform" != "unknown" ]]; then

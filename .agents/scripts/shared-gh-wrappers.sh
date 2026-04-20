@@ -342,6 +342,86 @@ _gh_wrapper_auto_sig() {
 	return 0
 }
 
+# t2436: Extract the tNNN task ID from a --title "tNNN: ..." argument.
+# Also accepts an explicit --todo-task-id tNNN flag (callers that know the ID).
+# Returns the task ID (e.g., "t2436") or empty string on stdout. Non-blocking.
+_gh_wrapper_extract_task_id_from_title() {
+	local i=0 todo_task_id="" title_task_id=""
+	local -a _args=("$@")
+	while [[ $i -lt ${#_args[@]} ]]; do
+		case "${_args[$i]}" in
+		--todo-task-id)
+			((i++)) || true
+			[[ $i -lt ${#_args[@]} ]] && todo_task_id="${_args[$i]:-}"
+			;;
+		--title)
+			((i++)) || true
+			if [[ $i -lt ${#_args[@]} && "${_args[$i]:-}" =~ ^(t[0-9]+): ]]; then
+				title_task_id="${BASH_REMATCH[1]}"
+			fi
+			;;
+		--title=*)
+			local _tval="${_args[$i]#--title=}"
+			if [[ "$_tval" =~ ^(t[0-9]+): ]]; then
+				title_task_id="${BASH_REMATCH[1]}"
+			fi
+			;;
+		esac
+		((i++)) || true
+	done
+	# Explicit flag wins over title auto-detection
+	echo "${todo_task_id:-$title_task_id}"
+	return 0
+}
+
+# t2436: Derive labels from TODO.md tags for a given task ID.
+# Scans the current working directory's TODO.md (or the repo containing it)
+# for the task entry and maps its tags to canonical GitHub labels via
+# map_tags_to_labels() from issue-sync-lib.sh.
+#
+# This closes the race window between issue creation and the asynchronous
+# issue-sync workflow trigger: protected labels like parent-task are applied
+# at creation time rather than seconds later.
+#
+# Non-blocking: returns empty on any failure (missing TODO.md, no task found,
+# lib unavailable). Never errors — callers ignore empty return value.
+_gh_wrapper_derive_todo_labels() {
+	local task_id="$1"
+	[[ -z "$task_id" ]] && return 0
+
+	local todo_file="${PWD}/TODO.md"
+	[[ ! -f "$todo_file" ]] && return 0
+
+	# Find the task line matching the task ID
+	local task_line
+	task_line=$(grep -m1 -E "^[[:space:]]*-[[:space:]]\[.\][[:space:]]*${task_id}([[:space:]]|\.|$)" \
+		"$todo_file" 2>/dev/null || echo "")
+	[[ -z "$task_line" ]] && return 0
+
+	# Extract hashtags — mirrors parse_task_line() in issue-sync-lib.sh
+	local tags
+	tags=$(printf '%s' "$task_line" | grep -oE '#[a-z][a-z0-9-]*' | tr '\n' ',' | sed 's/,$//')
+	[[ -z "$tags" ]] && return 0
+
+	# Lazy-source issue-sync-lib.sh for map_tags_to_labels if not yet loaded.
+	# Guarded with include-flag to prevent double-sourcing in scripts that
+	# already have issue-sync-lib.sh in scope (e.g. claim-task-id.sh).
+	if [[ "$(type -t map_tags_to_labels 2>/dev/null)" != "function" ]]; then
+		local _gh_w_script_dir
+		_gh_w_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || true
+		local _gh_w_lib="${_gh_w_script_dir}/issue-sync-lib.sh"
+		# shellcheck source=/dev/null
+		[[ -f "$_gh_w_lib" ]] && source "$_gh_w_lib" 2>/dev/null || true
+	fi
+
+	if [[ "$(type -t map_tags_to_labels 2>/dev/null)" == "function" ]]; then
+		local derived_labels
+		derived_labels=$(map_tags_to_labels "$tags") || true
+		[[ -n "$derived_labels" ]] && echo "$derived_labels"
+	fi
+	return 0
+}
+
 gh_create_issue() {
 	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
 	if ! _gh_validate_edit_args "$@"; then
@@ -357,6 +437,42 @@ gh_create_issue() {
 	# t2115: auto-append signature footer when body lacks one
 	_gh_wrapper_auto_sig "$@"
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+
+	# t2436: Derive creation-time labels from TODO.md tags for the task ID
+	# embedded in the --title "tNNN: ..." arg (or via explicit --todo-task-id).
+	# This ensures protected labels like parent-task are applied synchronously
+	# at issue creation, closing the race window where async issue-sync would
+	# apply them only after a subsequent TODO.md push.
+	# Strip --todo-task-id from args since it is not a native gh flag.
+	local _todo_task_id=""
+	_todo_task_id=$(_gh_wrapper_extract_task_id_from_title "$@") || true
+
+	# Filter --todo-task-id and its value out of the arg list
+	local -a _gh_ci_filtered_args=()
+	local _gh_ci_skip_next=false
+	local _gh_ci_arg
+	for _gh_ci_arg in "$@"; do
+		if [[ "$_gh_ci_skip_next" == "true" ]]; then
+			_gh_ci_skip_next=false
+			continue
+		fi
+		if [[ "$_gh_ci_arg" == "--todo-task-id" ]]; then
+			_gh_ci_skip_next=true
+			continue
+		fi
+		_gh_ci_filtered_args+=("$_gh_ci_arg")
+	done
+	set -- "${_gh_ci_filtered_args[@]}"
+
+	local -a _todo_label_args=()
+	if [[ -n "$_todo_task_id" ]]; then
+		local _todo_derived_labels=""
+		_todo_derived_labels=$(_gh_wrapper_derive_todo_labels "$_todo_task_id") || true
+		if [[ -n "$_todo_derived_labels" ]]; then
+			print_info "[INFO] t2436: Derived labels from TODO.md for ${_todo_task_id}: ${_todo_derived_labels}"
+			_todo_label_args=(--label "$_todo_derived_labels")
+		fi
+	fi
 
 	# t2028: auto-assign to the current user when the session is interactive
 	# and the caller did not pass an explicit --assignee. Reaches parity with
@@ -377,7 +493,7 @@ gh_create_issue() {
 			local auto_assignee
 			auto_assignee=$(_gh_wrapper_auto_assignee)
 			if [[ -n "$auto_assignee" ]]; then
-				issue_output=$(gh issue create "$@" --label "$origin_label" --assignee "$auto_assignee")
+				issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" --label "$origin_label" --assignee "$auto_assignee")
 				local rc=$?
 				echo "$issue_output"
 				[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
@@ -386,7 +502,7 @@ gh_create_issue() {
 		fi
 	fi
 
-	issue_output=$(gh issue create "$@" --label "$origin_label")
+	issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" --label "$origin_label")
 	local rc=$?
 	echo "$issue_output"
 	[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
