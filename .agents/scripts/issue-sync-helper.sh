@@ -1032,6 +1032,65 @@ _enrich_update_issue() {
 	return 1
 }
 
+# _enrich_check_rate_limit: probe GitHub GraphQL rate limit before the enrich
+# loop. If remaining points are below ENRICH_RATE_LIMIT_THRESHOLD (default 250),
+# emit a ::warning:: with the reset time and return 0 (caller should skip the
+# enrich step entirely). Returns 1 if rate limit is healthy (proceed).
+#
+# Approach B from GH#20129. At 0 remaining, calling gh issue view 192 times
+# produces 162 GUARD_UNCERTAIN warnings with zero value — this probe detects
+# the exhausted state before the loop and avoids the wasted calls.
+_enrich_check_rate_limit() {
+	local threshold="${ENRICH_RATE_LIMIT_THRESHOLD:-250}"
+	local _rl_json _rl_remaining _rl_reset _rc=0
+	_rl_json=$(gh api rate_limit 2>/dev/null) || _rc=$?
+	# Fail-open: if rate_limit probe itself fails, proceed with the enrich.
+	[[ $_rc -ne 0 || -z "$_rl_json" ]] && return 1
+	_rl_remaining=$(printf '%s' "$_rl_json" | jq -r '.resources.graphql.remaining // 9999' 2>/dev/null || echo "9999")
+	if [[ "$_rl_remaining" -ge "$threshold" ]]; then
+		return 1  # healthy — proceed
+	fi
+	_rl_reset=$(printf '%s' "$_rl_json" | jq -r '.resources.graphql.reset // 0' 2>/dev/null || echo "0")
+	local _reset_time
+	_reset_time=$(date -d "@${_rl_reset}" '+%H:%M:%SZ' 2>/dev/null \
+		|| TZ=UTC date -r "$_rl_reset" '+%H:%M:%SZ' 2>/dev/null \
+		|| echo "unknown")
+	echo "::warning::GraphQL rate-limit too low for enrich, skipping this cycle (remaining=${_rl_remaining}, reset=${_reset_time}, threshold=${threshold}) — GH#20129"
+	return 0  # tell caller to skip
+}
+
+# _enrich_prefetch_issues_map: fetch all open issues in one batch call and
+# write the JSON array to a temp file. Sets ENRICH_PREFETCH_FILE to the path.
+# Returns 0 on success, 1 on failure (caller should fall back to per-task calls).
+#
+# Approach A from GH#20129. One GraphQL call returning N issues costs far fewer
+# rate-limit points than N individual gh issue view calls.
+_enrich_prefetch_issues_map() {
+	local repo="$1"
+	local _limit="${ENRICH_PREFETCH_LIMIT:-500}"
+	local _rc=0
+	local _result
+	_result=$(gh issue list --repo "$repo" --state open \
+		--json number,title,body,labels,state,assignees \
+		--limit "$_limit" 2>/dev/null) || _rc=$?
+	if [[ $_rc -ne 0 || -z "$_result" || "$_result" == "[]" ]]; then
+		print_warning "Batch prefetch failed (rc=$_rc), falling back to per-task gh issue view (GH#20129)"
+		return 1
+	fi
+	# Write to temp file so the enrich loop can read it per-task without
+	# passing a large string through every subshell invocation.
+	ENRICH_PREFETCH_FILE=$(mktemp /tmp/enrich-prefetch-XXXXXX.json 2>/dev/null || echo "")
+	if [[ -z "$ENRICH_PREFETCH_FILE" ]]; then
+		return 1
+	fi
+	printf '%s' "$_result" >"$ENRICH_PREFETCH_FILE"
+	local _count
+	_count=$(printf '%s' "$_result" | jq 'length' 2>/dev/null || echo "?")
+	print_info "Batch prefetched ${_count} open issues for enrich (GH#20129)"
+	export ENRICH_PREFETCH_FILE
+	return 0
+}
+
 # _enrich_check_active_claim: GH#19856 cross-runner dedup guard for the enrich
 # path. Before ANY destructive enrich operation (labels, title, body), check if
 # another runner holds an active claim on this issue. Returns 0 if an active
@@ -1137,9 +1196,20 @@ _enrich_process_task() {
 	# per-task read cost to one call and lets each helper skip writes whose
 	# target value already matches.
 	local _state_json current_title="" current_body="" current_labels_csv=""
+	# GH#20129: use batch-prefetched JSON when available to avoid per-task API
+	# calls. ENRICH_PREFETCH_FILE is set by cmd_enrich before the loop via
+	# _enrich_prefetch_issues_map. The prefetch includes all fields needed:
+	# title, body, labels, state, assignees.
+	if [[ -n "${ENRICH_PREFETCH_FILE:-}" && -f "$ENRICH_PREFETCH_FILE" && -n "$num" ]]; then
+		_state_json=$(jq -c --argjson n "$num" '.[] | select(.number == $n)' \
+			"$ENRICH_PREFETCH_FILE" 2>/dev/null || echo "")
+	fi
+	# Fall back to per-task API call on cache miss or prefetch unavailability.
 	# GH#19922: include state,assignees so the pre-fetched JSON can be forwarded
 	# to _enrich_check_active_claim → is_assigned(), avoiding a redundant API call.
-	_state_json=$(gh issue view "$num" --repo "$repo" --json title,body,labels,state,assignees 2>/dev/null || echo "")
+	if [[ -z "$_state_json" ]]; then
+		_state_json=$(gh issue view "$num" --repo "$repo" --json title,body,labels,state,assignees 2>/dev/null || echo "")
+	fi
 	if [[ -n "$_state_json" ]]; then
 		current_title=$(echo "$_state_json" | jq -r '.title // ""' 2>/dev/null || echo "")
 		current_body=$(echo "$_state_json" | jq -r '.body // ""' 2>/dev/null || echo "")
@@ -1178,6 +1248,28 @@ cmd_enrich() {
 	}
 	print_info "Enriching ${#tasks[@]} issue(s) in $repo"
 
+	# GH#20129 Approach B: rate-limit probe — skip the entire enrich step if the
+	# GraphQL bucket is below threshold (default 250). Avoids 162 GUARD_UNCERTAIN
+	# warnings when the rate limit was exhausted before the loop started.
+	# Skipped for single-task enrichment (target_task set) — the per-task call
+	# is the cheapest path when enriching only one issue.
+	if [[ -z "$target_task" ]] && _enrich_check_rate_limit; then
+		return 0
+	fi
+
+	# GH#20129 Approach A: batch prefetch — issue ONE gh issue list call for all
+	# open issues instead of per-task gh issue view calls. The prefetch JSON is
+	# written to a temp file and referenced via ENRICH_PREFETCH_FILE. Each call
+	# to _enrich_process_task reads from the file, falling back to per-task view
+	# only on cache miss (e.g. issues not in the open list).
+	local _prefetch_ok=false
+	ENRICH_PREFETCH_FILE=""
+	if [[ -z "$target_task" ]]; then
+		if _enrich_prefetch_issues_map "$repo"; then
+			_prefetch_ok=true
+		fi
+	fi
+
 	local enriched=0
 	for task_id in "${tasks[@]}"; do
 		local result
@@ -1185,6 +1277,12 @@ cmd_enrich() {
 		[[ "$result" == *"ENRICHED"* ]] && enriched=$((enriched + 1))
 	done
 	print_info "Enrich complete: $enriched updated"
+
+	# Clean up prefetch temp file
+	if [[ "$_prefetch_ok" == "true" && -n "${ENRICH_PREFETCH_FILE:-}" && -f "$ENRICH_PREFETCH_FILE" ]]; then
+		rm -f "$ENRICH_PREFETCH_FILE" 2>/dev/null || true
+		ENRICH_PREFETCH_FILE=""
+	fi
 	return 0
 }
 
