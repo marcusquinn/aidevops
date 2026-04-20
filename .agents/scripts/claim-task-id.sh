@@ -1203,15 +1203,161 @@ _compose_issue_body() {
 	return 0
 }
 
+# t2548: Ensure TODO.md has an entry for the task after a verified issue
+# creation. Closes the orphan-task-id gap: `claim-task-id.sh` used to create
+# GitHub issues (via delegation OR bare `gh issue create` fallback) without
+# ever appending a TODO entry when the task ID wasn't already present —
+# `_push_process_task` in `issue-sync-helper.sh` silently returns when
+# `target_task` is not found in TODO.md, leaving the issue untracked.
+#
+# Fix strategy (Option A — append-after-verified-creation):
+#   - Idempotent: if `- [.] <task_id>` already in TODO.md, delegate to
+#     `add_gh_ref_to_todo` (which is also idempotent on the ref stamp).
+#   - Otherwise append `- [ ] <task_id> <description> <tags> ref:GH#<num>`
+#     to the end of the `## Backlog` section (falls back to EOF if absent).
+#   - Labels with `status:`, `tier:`, `origin:`, `dispatched:`, `implemented:`
+#     prefixes are skipped — they are not tags in the TODO-file format.
+#
+# Only fires when the issue creation verifiably succeeded, so the invariant
+# "TODO entry exists ⟹ GitHub issue exists" is preserved.
+#
+# Arguments:
+#   $1 - task_id (e.g. t2548)
+#   $2 - issue_number (integer, no `#`)
+#   $3 - description (single-line; newlines/tabs squashed to spaces)
+#   $4 - labels (CSV from --labels; empty allowed)
+#   $5 - repo_path
+#
+# Returns 0 always (non-fatal; the issue is already created).
+_ensure_todo_entry_written() {
+	local task_id="$1"
+	local issue_num="$2"
+	local description="$3"
+	local labels="$4"
+	local repo_path="$5"
+
+	local todo_file="${repo_path}/TODO.md"
+	[[ -f "$todo_file" ]] || return 0
+	[[ -n "$task_id" && -n "$issue_num" ]] || return 0
+
+	local task_id_ere
+	if declare -F _escape_ere >/dev/null 2>&1; then
+		task_id_ere=$(_escape_ere "$task_id")
+	else
+		task_id_ere="$task_id"
+	fi
+
+	# Fast path: entry already exists (normal /new-task flow). Delegate
+	# to add_gh_ref_to_todo which is idempotent on the ref stamp.
+	if grep -qE "^[[:space:]]*- \[.\] ${task_id_ere}( |$)" "$todo_file"; then
+		if declare -F add_gh_ref_to_todo >/dev/null 2>&1; then
+			add_gh_ref_to_todo "$task_id" "$issue_num" "$todo_file" 2>/dev/null || true
+		fi
+		return 0
+	fi
+
+	# Build the tag suffix from labels (skip reserved-prefix labels that
+	# are applied server-side by issue-sync / pulse, not authored in TODO).
+	local tags_str=""
+	if [[ -n "$labels" ]]; then
+		local _saved_ifs="$IFS"
+		IFS=','
+		local label
+		for label in $labels; do
+			label="${label#"${label%%[![:space:]]*}"}"
+			label="${label%"${label##*[![:space:]]}"}"
+			[[ -z "$label" ]] && continue
+			case "$label" in
+			status:* | tier:* | origin:* | dispatched:* | implemented:* | aidevops:*)
+				continue
+				;;
+			bug) tags_str="${tags_str:+${tags_str} }#bug" ;;
+			enhancement) tags_str="${tags_str:+${tags_str} }#feat" ;;
+			*) tags_str="${tags_str:+${tags_str} }#${label}" ;;
+			esac
+		done
+		IFS="$_saved_ifs"
+	fi
+
+	# Squash newlines/tabs in description to a single line
+	local safe_desc
+	safe_desc=$(printf '%s' "$description" | tr '\n\t' '  ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+	[[ -z "$safe_desc" ]] && safe_desc="(no description)"
+
+	local todo_line="- [ ] ${task_id} ${safe_desc}"
+	[[ -n "$tags_str" ]] && todo_line="${todo_line} ${tags_str}"
+	todo_line="${todo_line} ref:GH#${issue_num}"
+
+	# Insertion point: end of `## Backlog` section (before the next `## `
+	# heading or EOF). Falls back to EOF append if `## Backlog` missing.
+	# `|| true` because grep/awk exit non-zero on no-match under pipefail.
+	local backlog_start
+	backlog_start=$(grep -nE '^## Backlog[[:space:]]*$' "$todo_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
+
+	local tmp
+	tmp=$(mktemp)
+	if [[ -n "$backlog_start" ]]; then
+		# Find next ## heading after backlog_start (or EOF).
+		local next_heading
+		next_heading=$(awk -v s="$backlog_start" 'NR > s && /^## / {print NR; exit}' "$todo_file" 2>/dev/null || true)
+		if [[ -z "$next_heading" ]]; then
+			# Backlog is the last section — insert before any trailing
+			# blank line, else append.
+			awk -v line="$todo_line" '
+				{ lines[NR] = $0 }
+				END {
+					last = NR
+					while (last > 0 && lines[last] == "") last--
+					for (i = 1; i <= last; i++) print lines[i]
+					print line
+					for (i = last + 1; i <= NR; i++) print lines[i]
+				}
+			' "$todo_file" >"$tmp"
+		else
+			# Insert just before the next heading's preceding blank line.
+			awk -v nh="$next_heading" -v line="$todo_line" '
+				NR == nh {
+					# Walk back through any buffered blank lines before the heading
+					# and print the new entry before them so the visual block stays
+					# with Backlog.
+					# Simpler: print new line, then a blank, then the heading block.
+					print line
+					print ""
+				}
+				{ print }
+			' "$todo_file" >"$tmp"
+		fi
+	else
+		# No Backlog section — append with a leading blank line separator.
+		cat "$todo_file" >"$tmp"
+		printf '\n%s\n' "$todo_line" >>"$tmp"
+	fi
+
+	if [[ -s "$tmp" ]]; then
+		mv "$tmp" "$todo_file"
+		if declare -F log_info >/dev/null 2>&1; then
+			log_info "Appended TODO entry for ${task_id} (ref:GH#${issue_num})"
+		fi
+	else
+		rm -f "$tmp"
+	fi
+	return 0
+}
+
 # Create GitHub issue (post-allocation, non-blocking)
 # t1324: Delegates to issue-sync-helper.sh push when available for rich
 # issue bodies, proper labels (including auto-dispatch), and duplicate
 # detection. Falls back to bare gh issue create if helper not found.
+# t2548: Guarantees TODO.md entry after verified issue creation on both paths.
 create_github_issue() {
 	local title="$1"
 	local description="$2"
 	local labels="$3"
 	local repo_path="$4"
+
+	# t2548: extract task_id once for TODO-entry writes on both paths.
+	local _task_id_for_todo=""
+	[[ "$title" =~ ^(t[0-9]+(\.[0-9]+)*) ]] && _task_id_for_todo="${BASH_REMATCH[1]}"
 
 	cd "$repo_path" || return 1
 
@@ -1228,6 +1374,11 @@ create_github_issue() {
 		_auto_assign_issue "$issue_num" "$repo_path"
 		_interactive_session_auto_claim_new_task "$issue_num" "$repo_path"
 		_lock_maintainer_issue_at_creation "$issue_num" "$repo_path"
+		# t2548: ensure TODO.md has the entry. On the delegation path
+		# push's `_push_process_task` returns SKIPPED silently when the
+		# task line is missing — issue is created but TODO never written.
+		# This call closes that gap idempotently.
+		_ensure_todo_entry_written "$_task_id_for_todo" "$issue_num" "$description" "$labels" "$repo_path"
 		# t2442: warn if parent-task label applied but body has no markers.
 		# The delegation path creates the issue via issue-sync-helper.sh
 		# cmd_push which ALREADY fires this warn — so we skip here to
@@ -1314,6 +1465,12 @@ create_github_issue() {
 			fi
 		fi
 	fi
+
+	# t2548: ensure TODO.md has an entry for this task. The bare-fallback
+	# path creates the issue via `gh issue create` directly and never goes
+	# through issue-sync-helper.sh, so _push_process_task never runs and
+	# the TODO entry is never written. This call closes that gap idempotently.
+	_ensure_todo_entry_written "$_task_id_for_todo" "$issue_num" "$description" "$labels" "$repo_path"
 
 	echo "$issue_num"
 	return 0
