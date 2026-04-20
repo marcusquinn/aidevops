@@ -752,8 +752,12 @@ _post_parent_task_no_markers_warning() {
 	# failure: fall through to post a potentially-duplicate comment
 	# rather than silently dropping the warning.
 	local existing=""
-	existing=$(gh api "repos/${slug}/issues/${issue_num}/comments" \
-		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
+	# --paginate + --slurp: comments API caps at 30/page; without this the
+	# marker dedup check would return zero for parents with >30 comments,
+	# causing duplicate warnings. --slurp makes jq receive the pages as an
+	# array-of-arrays which the double-iteration [.[] | .[] | ...] flattens.
+	existing=$(gh api --paginate "repos/${slug}/issues/${issue_num}/comments" --slurp \
+		--jq "[.[] | .[] | select(.body | contains(\"${marker}\"))] | length" \
 		2>/dev/null) || existing=""
 	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
 		return 1

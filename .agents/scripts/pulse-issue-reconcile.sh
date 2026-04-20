@@ -1119,9 +1119,14 @@ _post_parent_decomposition_nudge() {
 	# Best-effort — if the API fails we fall through to posting, which
 	# is better than missing the nudge entirely. A one-time duplicate
 	# on a transient API error is harmless.
+	# --paginate + --slurp ensures we read the FULL comment history; without
+	# it the default page size is 30 and the marker may be missed on long-
+	# running parents, causing duplicate comments. --slurp makes jq receive
+	# the page array stream as a single array-of-arrays which we flatten.
 	local existing=""
-	existing=$(gh api "repos/${slug}/issues/${parent_num}/comments" \
-		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
+	existing=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
+		--slurp \
+		--jq "[.[] | .[] | select(.body | contains(\"${marker}\"))] | length" \
 		2>/dev/null) || existing=""
 	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
 		return 1
@@ -1191,9 +1196,14 @@ _compute_parent_nudge_age_hours() {
 
 	[[ -n "$slug" && "$parent_num" =~ ^[0-9]+$ ]] || return 0
 
+	# --paginate + --slurp: same rationale as the idempotency checks above.
+	# The nudge marker may live on page 2+ for long-running parents; without
+	# pagination the age check would always return empty for them and the
+	# 7-day escalation gate would never fire.
 	local nudge_created_at
-	nudge_created_at=$(gh api "repos/${slug}/issues/${parent_num}/comments" \
-		--jq '[.[] | select(.body | contains("<!-- parent-needs-decomposition -->")) | .created_at] | first // ""' \
+	nudge_created_at=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
+		--slurp \
+		--jq '[.[] | .[] | select(.body | contains("<!-- parent-needs-decomposition -->")) | .created_at] | first // ""' \
 		2>/dev/null) || nudge_created_at=""
 	[[ -n "$nudge_created_at" ]] || return 0
 
@@ -1253,9 +1263,14 @@ _post_parent_decomposition_escalation() {
 	# Idempotency check: skip if marker already present in any comment.
 	# Best-effort: on API failure, fall through to posting. A transient
 	# duplicate is harmless; missing an escalation entirely is worse.
+	# --paginate + --slurp ensures we read the FULL comment history; without
+	# it the default page size is 30 and the marker may be missed on long-
+	# running parents, causing duplicate comments. --slurp makes jq receive
+	# the page array stream as a single array-of-arrays which we flatten.
 	local existing=""
-	existing=$(gh api "repos/${slug}/issues/${parent_num}/comments" \
-		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
+	existing=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
+		--slurp \
+		--jq "[.[] | .[] | select(.body | contains(\"${marker}\"))] | length" \
 		2>/dev/null) || existing=""
 	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
 		return 1

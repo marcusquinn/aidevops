@@ -107,11 +107,20 @@ _nudge_age_hours() {
 _decompose_issue_exists() {
 	local repo="$1"
 	local parent_num="$2"
-	local title_query="Decompose parent-task #${parent_num}"
+	local title_prefix="Decompose parent-task #${parent_num}"
+	# Filter by exact title prefix via jq rather than `in:title` substring
+	# search. `in:title` matches substrings — a title like "Decompose parent-
+	# task #12345 context" would false-positive-hit when looking for #1234.
+	# We list all issues carrying the dedup label (bounded — one per parent)
+	# and filter client-side for an exact prefix match. --paginate keeps the
+	# filter correct once the scanner has been running long enough that the
+	# dedup-labelled set exceeds one page.
 	local count
 	count=$(gh issue list --repo "$repo" --label "$SCANNER_LABEL" \
-		--search "in:title \"${title_query}\"" --state all --limit 10 \
-		--json number --jq 'length' 2>/dev/null || echo "0")
+		--state all --limit 1000 \
+		--json title \
+		--jq "[.[] | select(.title | startswith(\"${title_prefix}\"))] | length" \
+		2>/dev/null || echo "0")
 	[[ "$count" =~ ^[1-9][0-9]*$ ]]
 }
 

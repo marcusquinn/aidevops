@@ -162,8 +162,8 @@ assert_grep_fixed \
 	"$SCANNER"
 
 assert_grep_fixed \
-	"6b: scanner dedup queries by title via in:title search" \
-	'in:title' \
+	"6b: scanner dedup filters by exact title prefix via jq startswith()" \
+	'startswith(' \
 	"$SCANNER"
 
 assert_grep_fixed \
