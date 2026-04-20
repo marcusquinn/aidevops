@@ -2,10 +2,15 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# test-pulse-routines-selector.sh — Regression tests for the two false-match
-# bugs fixed in pulse-routines.sh by t2175:
+# test-pulse-routines-selector.sh — Regression tests for routine selector bugs
+# fixed in pulse-routines.sh and routine-schedule-helper.sh:
 #
-# Bug 1 — t-prefix false match: the grep selector
+# History:
+#   t2160 — cron schedule extraction truncated at first space (fixed Apr 17)
+#   t2175 — two false-match bugs (fixed Apr 18):
+#   t2423 — Phase C metachar guard + Phase D end-to-end test (this PR)
+#
+# Bug 1 (t2175) — t-prefix false match: the grep selector
 #   '^\s*-\s*\[x\].*repeat:' matched any completed task whose description text
 #   contains the literal "repeat:" (e.g. t2160 quotes `repeat:([^[:space:]]+)`).
 #   Combined with the unanchored routine-ID regex (r[0-9]+), this caused r-IDs
@@ -13,9 +18,9 @@
 #   routine IDs and their neighbour text passed to the schedule parser.
 #   Observed error: ERROR: unrecognised schedule expression '([^[:space:]]+)`'
 #
-# Bug 2 — persistent unsupported: r912 in aidevops-routines/TODO.md carries
-#   repeat:persistent (launchd-supervised daemon). The schedule parser and the
-#   pulse evaluator both rejected this keyword.
+# Bug 2 (t2175) — persistent unsupported: r912 in aidevops-routines/TODO.md
+#   carries repeat:persistent (launchd-supervised daemon). The schedule parser
+#   and the pulse evaluator both rejected this keyword.
 #   Observed error: ERROR: unrecognised schedule expression 'persistent'
 #
 # Fixes verified here:
@@ -23,6 +28,7 @@
 #   2. Anchored routine-ID regex: ^[[:space:]]*-[[:space:]]\[x\][[:space:]]+(r[0-9]+)
 #   3. persistent short-circuit in pulse-routines.sh evaluator loop
 #   4. persistent handling in routine-schedule-helper.sh (cmd_is_due returns 1)
+#   5. (t2423) Phase C metachar guard in routine-schedule-helper.sh _parse_expression
 #
 # Cases:
 #   1. t-prefix with repeat: in description → selector finds 0 matches
@@ -31,6 +37,10 @@
 #   3. r-prefix with repeat:cron(*/2 * * * *) → selector finds 1 match; no parse error
 #   4. Mixed: t-prefix false-match line + two r-prefix routines → selector finds
 #      exactly 2 matches (only the r-prefixed entries)
+#   5. (t2423 Phase C) regex metachars directly passed to schedule helper → exit 2
+#      with distinct error message, no "unrecognised schedule expression"
+#   6. (t2423 Phase D) Full discovery simulation: mixed TODO with t-prefix false-match
+#      lines produces zero "unrecognised schedule expression" errors on stderr
 
 set -u
 
@@ -143,6 +153,68 @@ main() {
 		pass "Case 4: mixed TODO — 2 r-prefix routines matched, t-prefix excluded"
 	else
 		fail "Case 4: mixed TODO — 2 r-prefix routines matched" "expected 2 matches, got $count"
+	fi
+
+	# === Case 5 (t2423 Phase C): regex metachars passed directly to schedule helper ===
+	# Verifies that the Phase C guard in _parse_expression catches patterns like
+	# '([^[:space:]]+)`' before they hit the "unrecognised" fallback.
+	# The guard must:
+	#   a) exit 2 (distinct from normal parse error exit 1)
+	#   b) emit "regex metacharacters" in the error message
+	#   c) NOT emit "unrecognised schedule expression" (that would be false noise)
+	local meta_exit meta_stderr
+	meta_stderr=$("$SCHEDULE_HELPER" is-due '([^[:space:]]+)`' '0' 2>&1 >/dev/null)
+	meta_exit=$?
+	if [[ "$meta_exit" -eq 2 ]] && [[ "$meta_stderr" == *"regex metacharacters"* ]] && [[ "$meta_stderr" != *"unrecognised schedule expression"* ]]; then
+		pass "Case 5 (t2423 Phase C): metachar guard fires for regex pattern input"
+	else
+		fail "Case 5 (t2423 Phase C): metachar guard fires for regex pattern input" \
+			"exit=$meta_exit stderr='$meta_stderr'"
+	fi
+
+	# === Case 6 (t2423 Phase D): end-to-end discovery produces zero schedule errors ===
+	# Simulates the full pulse-routines discovery path using a TODO.md that contains:
+	#   - A t-prefix task quoting a repeat: regex (the original t2175 false-match trigger)
+	#   - A t2423 task that mentions the regex guard
+	#   - Two valid r-prefix routines (cron + persistent)
+	# The simulation pipes each matched line through the same extraction regex used
+	# by pulse-routines.sh and calls routine-schedule-helper.sh is-due for each.
+	# The test passes if zero "unrecognised schedule expression" errors appear on stderr.
+	_make_todo "$tmpdir" \
+		"- [x] t2160 fix: \`repeat:([^[:space:]]+)\` (r901, r902) ref:GH#19465" \
+		"- [x] t2423 guard: routine-schedule-helper.sh regex metachar guard" \
+		"- [x] r901 Supervisor pulse repeat:cron(*/2 * * * *) ~0s agent:Build+" \
+		"- [x] r912 Dashboard server repeat:persistent ~0s run:server/index.ts"
+
+	# This is the regex used in pulse-routines.sh to extract the repeat: value.
+	# Store in a variable (not inline) so bash doesn't misparse the literal ')'.
+	local re_repeat='repeat:(cron\([^)]*\)|[^[:space:]]+)'
+	local e2e_errors=0
+	local e2e_stderr=""
+	while IFS= read -r line; do
+		local repeat_expr=""
+		if [[ "$line" =~ $re_repeat ]]; then
+			repeat_expr="${BASH_REMATCH[1]}"
+		else
+			continue
+		fi
+		# Skip persistent — pulse-routines.sh skips before calling is-due.
+		if [[ "$repeat_expr" == "persistent" ]]; then
+			continue
+		fi
+		local _ise_out
+		_ise_out=$("$SCHEDULE_HELPER" is-due "$repeat_expr" "0" 2>&1 >/dev/null)
+		if [[ "$_ise_out" == *"unrecognised schedule expression"* ]]; then
+			e2e_errors=$((e2e_errors + 1))
+			e2e_stderr="${e2e_stderr}|${repeat_expr}: ${_ise_out}"
+		fi
+	done < <(grep -E "$SELECTOR" "${tmpdir}/TODO.md" 2>/dev/null || true)
+
+	if [[ "$e2e_errors" -eq 0 ]]; then
+		pass "Case 6 (t2423 Phase D): full discovery path — zero unrecognised schedule errors"
+	else
+		fail "Case 6 (t2423 Phase D): full discovery path — zero unrecognised schedule errors" \
+			"got $e2e_errors error(s): $e2e_stderr"
 	fi
 
 	# === Summary ===

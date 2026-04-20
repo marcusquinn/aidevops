@@ -28,7 +28,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - [x] r001 Weekly SEO rankings export repeat:weekly(mon@09:00) ~30m run:custom/scripts/seo-export.sh
 - [x] r002 Daily health check repeat:daily(@06:00) ~2m run:custom/scripts/health-check.sh
 - [ ] r003 Monthly content calendar review repeat:monthly(1@09:00) ~15m agent:Content
-- [x] r004 Nightly repo triage repeat:cron(15 2 \* \* \*) ~20m agent:Build+
+- [x] r004 Nightly repo triage repeat:cron(15 2 * * *) ~20m agent:Build+
 - [x] r005 Daily worktree cleanup repeat:daily(@03:00) ~5m run:scripts/worktree-helper.sh clean --auto --force-merged
 - [x] r006 Hourly stub-title issue scanner repeat:cron(15 * * * *) ~2m run:custom/scripts/r-stub-title-scan.sh
 ```

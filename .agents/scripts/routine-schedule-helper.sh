@@ -129,6 +129,30 @@ _current_dom() {
 _parse_expression() {
 	local expr="$1"
 
+	# Phase C defensive guard (t2423): detect regex metacharacters that indicate
+	# a caller has passed a pattern string instead of a schedule expression.
+	# Observed: pulse-routines.sh grep selector matched t-prefix task descriptions
+	# containing `repeat:([^[:space:]]+)` and the capture group was passed here.
+	#
+	# Valid schedule expressions only contain: letters, digits, ( ) @ : * / - , space.
+	# Regex-specific characters NOT used in any valid schedule: [ ] ^ $ \ { } + | ? .
+	# Note: ( and ) are intentionally excluded from the guard — they appear in all
+	# schedule types: daily(@...), cron(...), weekly(...), monthly(...).
+	#
+	# Bash 3.2 compat: use a variable to hold the pattern to avoid inline-regex
+	# parsing issues with character class brackets in [[ =~ ]].
+	local _metachar_re='[][^$\{}+|?.]'
+	if [[ "$expr" =~ $_metachar_re ]]; then
+		printf '%s\n' "ERROR: schedule expression '$expr' contains regex metacharacters — caller likely passed a pattern instead of a match (t2423 guard)" >&2
+		# Print caller stack for actionable diagnosis. FUNCNAME/BASH_SOURCE/BASH_LINENO
+		# are standard bash arrays available in bash 3.2+.
+		local _i
+		for ((_i = 1; _i < ${#FUNCNAME[@]}; _i++)); do
+			printf '  at %s (%s:%s)\n' "${FUNCNAME[$_i]:-?}" "${BASH_SOURCE[$_i]:-?}" "${BASH_LINENO[$((_i - 1))]:-?}" >&2
+		done
+		return 2
+	fi
+
 	if [[ "$expr" =~ ^daily\(@([0-9]{1,2}):([0-9]{2})\)$ ]]; then
 		local hour="${BASH_REMATCH[1]}"
 		local minute="${BASH_REMATCH[2]}"
@@ -166,6 +190,16 @@ _parse_expression() {
 			printf '%s\n' "ERROR: cron expression must have 5 fields, got $field_count" >&2
 			return 1
 		fi
+		# Warn about escaped asterisks (\*) that won't match as wildcards.
+		# In TODO.md, authors sometimes write cron(\* \* \*) for Markdown rendering,
+		# but the backslash is literal in bash and _cron_field_matches sees "\*" not "*".
+		local _field
+		for _field in "${_cron_fields[@]}"; do
+			if [[ "$_field" == '\*' ]]; then
+				printf '%s\n' "WARNING: cron field '\\*' (escaped asterisk) does not match as wildcard — use '*' in repeat: expressions (t2423)" >&2
+				break
+			fi
+		done
 		printf 'cron %s' "$cron_expr"
 		return 0
 	fi
