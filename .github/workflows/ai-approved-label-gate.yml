@@ -1,0 +1,173 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# AI-Approved Label Gate (t2448)
+#
+# Enforces admin/maintain-only application of the `ai-approved` label on issues
+# and pull requests. When a non-admin applies the label, this workflow reverses
+# the change and posts a one-time notice explaining why.
+#
+# Why this exists
+# ---------------
+# The `ai-approved` label authorises AI agents (e.g. @opencode) to act on an
+# issue. In the framework's canonical setup it's treated as a maintainer-only
+# authorization signal (see .agents/workflows/review-issue-pr.md line 149 —
+# "Maintainer approval" column). However, GitHub's native permission model
+# bundles label management under `triage`, so any triage-level collaborator
+# could apply the label and authorise AI agent processing.
+#
+# GitHub rulesets don't support per-label ACLs (they cover branches/tags/
+# commits, not labels). Workflow-based enforcement IS the equivalent
+# mechanism — post-hoc actor check with automated reversal.
+#
+# Allowlist
+# ---------
+# 1. `github-actions[bot]` — covers any future framework automation that
+#    legitimately applies the label (e.g. a setup helper seeding labels,
+#    or an audit workflow re-confirming approval after content edits).
+# 2. Repository owner — has unambiguous repo authority; cannot be a forger.
+# 3. Users with `admin` or `maintain` permission — GitHub's built-in
+#    high-trust roles. These users already have override on most other
+#    repo settings; label ACL is consistent with their role.
+#
+# Users with `write`, `triage`, or lower permissions are blocked. The label
+# is reversed and a one-time notice comment explains the gate.
+#
+# Model
+# -----
+# Modeled on maintainer-gate.yml Job 5 (protect-origin-worker-label, lines
+# 710-793). Key differences:
+# - Guards only the `labeled` event (removing `ai-approved` is always safe —
+#   it withdraws AI authorization, which is restrictive, not permissive).
+# - Covers BOTH issues and PRs (opencode-agent.yml gates only issues today,
+#   but defense in depth for future workflows that might consume the label
+#   on PRs).
+# - Adds a permission-level check via the collaborators API, in addition to
+#   the bot/owner allowlist.
+#
+# Rollback
+# --------
+# To disable: delete this file or rename with `.disabled` suffix. The label
+# itself remains fully functional — only the enforcement is removed.
+
+name: AI-Approved Label Gate
+
+on:
+  issues:
+    types: [labeled]
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  enforce-admin-only:
+    name: Enforce admin-only on ai-approved
+    # t2231: canonical fast-fail gate pattern — short-circuit when the label
+    # is anything other than `ai-approved`. The workflow only triggers on
+    # `labeled` events, so `github.event.action` is always 'labeled'; the
+    # guard is written in canonical form for consistency with other gates
+    # and to satisfy the t2229 workflow-cascade linter.
+    if: >-
+      github.event.action != 'labeled' ||
+      github.event.label.name == 'ai-approved'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    concurrency:
+      group: ai-approved-gate-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Check actor permission and reverse if not admin
+        env:
+          TARGET_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          TARGET_KIND: ${{ github.event_name == 'issues' && 'issue' || 'pr' }}
+          ACTOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "ai-approved labeled on $TARGET_KIND #$TARGET_NUMBER by $ACTOR (repo owner: $REPO_OWNER)"
+
+          # =====================================================================
+          # ALLOWLIST CHECK 1: GitHub Actions bot
+          # =====================================================================
+          # Covers any framework automation that legitimately applies the label.
+          # Currently no workflow auto-applies `ai-approved`, but reserving the
+          # bot exemption keeps the gate composable with future automation.
+          if [[ "$ACTOR" == "github-actions[bot]" ]] || [[ "$ACTOR" == "github-actions" ]]; then
+            echo "ALLOWED: GitHub Actions bot — ai-approved application accepted"
+            exit 0
+          fi
+
+          # =====================================================================
+          # ALLOWLIST CHECK 2: Repository owner
+          # =====================================================================
+          # The owner has unambiguous repo authority and cannot be a "forger".
+          # On personal repos, the owner is the only high-trust actor. On org
+          # repos, the owner is the org that owns the repo; org admins with
+          # `admin` permission on the repo are caught by Check 3 below.
+          if [[ -n "$REPO_OWNER" && "$ACTOR" == "$REPO_OWNER" ]]; then
+            echo "ALLOWED: repository owner ($ACTOR) — ai-approved application accepted"
+            exit 0
+          fi
+
+          # =====================================================================
+          # ALLOWLIST CHECK 3: admin or maintain permission
+          # =====================================================================
+          # GitHub's collaborator-permission API returns the effective role:
+          # admin | maintain | write | triage | read | none.
+          # Admin and maintain are the two high-trust roles that already have
+          # override powers on most repo settings. Including them in the
+          # allowlist keeps this gate consistent with GitHub's own permission
+          # model. Write/triage/read/none are blocked — write includes external
+          # contributors with push access, who should not be able to unilaterally
+          # authorise AI agents on content they authored.
+          PERM=$(gh api "repos/$REPO/collaborators/$ACTOR/permission" --jq '.permission' 2>/dev/null || echo "none")
+          echo "Actor $ACTOR has permission: $PERM on $REPO"
+
+          if [[ "$PERM" == "admin" || "$PERM" == "maintain" ]]; then
+            echo "ALLOWED: $ACTOR has '$PERM' permission — ai-approved application accepted"
+            exit 0
+          fi
+
+          # =====================================================================
+          # DENIED: reverse the label application and post a one-time notice
+          # =====================================================================
+          echo "DENIED: $ACTOR has '$PERM' permission (admin or maintain required) — removing label"
+
+          if [[ "$TARGET_KIND" == "issue" ]]; then
+            gh issue edit "$TARGET_NUMBER" --repo "$REPO" --remove-label "ai-approved"
+          else
+            gh pr edit "$TARGET_NUMBER" --repo "$REPO" --remove-label "ai-approved"
+          fi
+
+          # Dedup: check for existing notice via marker. Covers re-application
+          # attempts (same actor, same issue) without spamming the comment thread.
+          EXISTING=$(gh api "repos/$REPO/issues/$TARGET_NUMBER/comments" \
+            --jq "[.[] | select(.body | test(\"ai-approved-gate-notice\"))] | length" 2>/dev/null || echo "0")
+
+          if [[ "$EXISTING" == "0" ]]; then
+            # Assemble notice via printf to avoid heredoc/YAML indent conflicts.
+            NOTICE_BODY=$(printf '%s\n' \
+              "<!-- ai-approved-gate-notice -->" \
+              "The \`ai-approved\` label was removed automatically." \
+              "" \
+              "This label authorises AI agents (e.g. \`@opencode\`) to act on this ${TARGET_KIND} and may only be applied by users with \`admin\` or \`maintain\` permission on this repository." \
+              "" \
+              "Requested by @${ACTOR} (permission: \`${PERM}\`). A repository admin or maintainer can re-apply the label after reviewing this ${TARGET_KIND} for safety." \
+              "" \
+              "*Gate: \`ai-approved-label-gate.yml\` (t2448)*")
+
+            if [[ "$TARGET_KIND" == "issue" ]]; then
+              gh issue comment "$TARGET_NUMBER" --repo "$REPO" --body "$NOTICE_BODY"
+            else
+              gh pr comment "$TARGET_NUMBER" --repo "$REPO" --body "$NOTICE_BODY"
+            fi
+          fi
+
+          echo "ai-approved application by $ACTOR reversed on $TARGET_KIND #$TARGET_NUMBER"
