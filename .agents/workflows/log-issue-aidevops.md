@@ -22,6 +22,45 @@ Log an issue with the aidevops framework to GitHub.
 
 All issues from non-collaborators are gated behind `needs-maintainer-review` — a maintainer must approve before the pipeline picks them up. This command produces higher-quality reports than the web form because it gathers diagnostics, checks duplicates, and validates before submission.
 
+## Before Composing
+
+**Enumerate every manual workaround you applied in the current session.** Each is a candidate fix for a systemic problem:
+
+- File the highest-ROI workaround as the primary issue.
+- File the rest as sibling issues with `See-also: #<this-issue>` cross-references.
+- Add a `## Workarounds Applied` section to the primary issue body listing all workarounds.
+
+**Workaround examples and their fix routes:**
+
+| Workaround applied | Likely systemic fix |
+|---|---|
+| `gh issue edit --remove-assignee` after `#auto-dispatch` filing | t2157/t2218 bug — auto-assign should skip `auto-dispatch` label |
+| Applied `complexity-bump-ok` label to bypass a false-positive gate | Gate needs refinement for specific false-positive class |
+| `sudo aidevops approve` to unblock auto-approved issue stuck in NMR | NMR classification logic has a gap |
+| Manually ran `pre-edit-check.sh` because hook didn't fire | Hook installation or detection issue |
+
+## Pre-composition Checks (MANDATORY)
+
+Before composing any framework-bug report, run these 5 checks. They are shared with t2409 (`workflows/brief.md` "Pre-composition checks") — referenced here by pointer, not duplicated.
+
+1. **Memory recall**: `memory-helper.sh recall --query "<symptom-keywords>" --limit 5` — surface accumulated lessons before re-diagnosing a known issue. A lesson that says "same error, fixed in t2108" saves 30+ minutes.
+
+2. **Discovery pass (t2046)**: Check if the bug was already fixed:
+
+   ```bash
+   git log --since="1 week ago" --oneline -- <suspect-files>
+   gh pr list --state merged --search "<keywords>" --limit 5
+   gh pr list --state open --search "<keywords>" --limit 5
+   ```
+
+   If a recent commit touches the exact file/function you're investigating, verify the bug still reproduces on HEAD before filing. Stale symptoms from a pre-deploy state (see `prompts/build.txt` section 10) are not bugs — close the investigation.
+
+3. **File:line verification**: For every file reference in the brief, run `git ls-files <path>` or `sed -n "<line>p" <path>` to confirm the reference exists and the content matches the claim. Phantom line refs force the worker to spend the first hour re-locating the code (GH#17832-17835).
+
+4. **Tier disqualifier check**: Framework bugs are usually `tier:standard`. Cross-check the draft brief against `reference/task-taxonomy.md` "Tier Assignment Validation" disqualifiers before assigning `tier:simple`. Default to `tier:standard` when uncertain.
+
+5. **Self-assignment awareness**: If filing via `gh_create_issue` with the `auto-dispatch` label, plan to `gh issue edit N --remove-assignee <user>` immediately after — the wrapper currently self-assigns (t2406/#19991). Alternatively, omit `auto-dispatch` until ready to hand off.
+
 ## Workflow
 
 ### Step 1: Gather Diagnostics
@@ -40,6 +79,38 @@ Ask the user:
 3. Steps to reproduce (if known)?
 
 Use any provided argument as the title starting point. Review session context for commands, errors, and intent.
+
+### Step 2.5: Evidence Attribution and Reproducer (framework bugs only)
+
+For bugs with an observable failure mode, the observing session has a live reproducer context that vanishes at session end. Capture it now:
+
+```bash
+~/.aidevops/agents/scripts/log-issue-helper.sh prompt-reproducer
+```
+
+This outputs the section template. Collect and include in the issue body:
+
+1. **Symptom**: exact command that exhibited the bug + full terminal output
+2. **Expected**: what should have happened
+3. **Causal code**: `git blame <file> -L <line>,<line>` output or commit SHA suspected to have introduced the regression
+4. **Call-site sweep**: `rg "<function-or-pattern>" .agents/scripts/` to enumerate all affected locations
+
+Store the collected data under a `## Reproducer` section in the issue body (included in the compose template in Step 4).
+
+A brief filed without a Reproducer section forces the worker to spend 30-60 min reconstructing the failure mode from scratch — the exact time cost described in GH#20008.
+
+### Step 2.6: Workaround Enumeration
+
+Before composing, enumerate every manual workaround you applied during the current session that relates to this bug. For each workaround:
+
+- What was the workaround command or action?
+- Does the workaround reveal a gap that should be a separate fix?
+- Can it be automated so no future session needs it?
+
+**For each workaround that has a clear systemic fix:**
+
+- File it as a separate issue with `See-also: #<this-issue>` in its body, OR
+- Add it to the `## Siblings` section of the current brief
 
 ### Step 3: Check for Duplicates
 
@@ -89,20 +160,79 @@ If the proposal doesn't survive these questions, discuss before filing — it ma
 
 ### Step 4: Compose the Issue
 
+For framework bugs, use this expanded template that includes Evidence Attribution and Reproducer sections:
+
 ```markdown
 ## Description
+
 {problem}
 
 ## Expected Behavior
+
 {what should have happened}
 
+## Reproducer
+
+**Symptom command**:
+
+```
+{exact command that exhibited the bug}
+```
+
+**Actual output**:
+
+```
+{full terminal output}
+```
+
+**Expected output**:
+
+{what should have happened}
+
+**Causal code** (if identified):
+
+```bash
+{git blame output or commit SHA}
+```
+
 ## Steps to Reproduce
+
 1. {step}
 
+## Workarounds Applied
+
+{list each workaround used during the observing session}
+
 ## Environment
+
 {diagnostics output}
 
 ## Additional Context
+
+{errors, session context}
+```
+
+For non-bug reports (enhancements, questions), use the shorter template without Reproducer and Workarounds sections:
+
+```markdown
+## Description
+
+{problem or request}
+
+## Expected Behavior
+
+{what should happen}
+
+## Steps to Reproduce
+
+1. {step, if applicable}
+
+## Environment
+
+{diagnostics output}
+
+## Additional Context
+
 {errors, session context}
 ```
 

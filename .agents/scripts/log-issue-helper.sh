@@ -179,6 +179,92 @@ search_issues() {
 		--limit 10 \
 		--json number,title,state,url \
 		--jq '.[] | "#\(.number) [\(.state)] \(.title)\n   \(.url)"'
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Reproducer Prompt (t2410)
+# Outputs the section template the agent uses to prompt the user for
+# reproducer evidence before drafting a framework-bug report.
+# -----------------------------------------------------------------------------
+
+prompt_reproducer() {
+	cat <<'EOF'
+## Reproducer
+
+Please provide the following evidence for the framework bug. The session context
+that captured this failure will be gone after this conversation ends.
+
+**Symptom command** (paste the exact command you ran that demonstrated the bug):
+
+```
+<paste command here>
+```
+
+**Actual output** (paste what happened — include any error messages or unexpected behaviour):
+
+```
+<paste terminal output here>
+```
+
+**Expected output** (what should have happened instead):
+
+```
+<describe what you expected>
+```
+
+**Causal code** (optional — if you identified the file/line or commit that introduced this):
+
+```bash
+git blame <file> -L <line>,<line>
+# or: paste the commit SHA suspected to be the regression
+```
+
+**Call-site sweep** (optional — to enumerate all affected locations):
+
+```bash
+rg "<function-or-pattern>" .agents/scripts/
+```
+
+EOF
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Brief Validator (t2410)
+# Checks if an issue body contains the required sections for a framework-bug
+# brief. Returns 0 if valid, 1 if sections are missing.
+#
+# Usage: validate_brief <body-text-or-file>
+#   - Pass a filename if the body is in a file
+#   - Pass body text directly via stdin when called as: validate_brief -
+# -----------------------------------------------------------------------------
+
+validate_brief_has_reproducer() {
+	local body="$1"
+	local missing_sections=()
+
+	# Read from file if body is a file path
+	if [[ -f "$body" ]]; then
+		body=$(cat "$body")
+	fi
+
+	# Check for required sections
+	if ! echo "$body" | grep -qi "## Reproducer"; then
+		missing_sections+=("## Reproducer")
+	fi
+
+	if [[ ${#missing_sections[@]} -eq 0 ]]; then
+		echo "OK: Brief contains all required sections"
+		return 0
+	else
+		echo "ERROR: Brief is missing required sections: ${missing_sections[*]}" >&2
+		echo "Framework-bug briefs MUST include a ## Reproducer section with:" >&2
+		echo "  - Symptom command + actual output" >&2
+		echo "  - Expected output" >&2
+		echo "  - (optional) Causal code / commit SHA" >&2
+		return 1
+	fi
 }
 
 # -----------------------------------------------------------------------------
@@ -203,6 +289,20 @@ main() {
 		fi
 		search_issues "$query"
 		;;
+	prompt-reproducer)
+		# Output the reproducer section template for the agent to show the user
+		prompt_reproducer
+		;;
+	validate-brief)
+		# Validate that a brief body contains the required Reproducer section
+		local body_or_file="${2:-}"
+		if [[ -z "$body_or_file" ]]; then
+			echo "Usage: log-issue-helper.sh validate-brief <file-path-or-body-text>" >&2
+			echo "Example: log-issue-helper.sh validate-brief issue-body.md" >&2
+			return 1
+		fi
+		validate_brief_has_reproducer "$body_or_file"
+		;;
 	help | --help | -h)
 		cat <<EOF
 aidevops Issue Logger Helper
@@ -210,15 +310,19 @@ aidevops Issue Logger Helper
 Usage: log-issue-helper.sh [command]
 
 Commands:
-  diagnostics    Gather system and aidevops diagnostic info (default)
-  check-auth     Verify GitHub CLI authentication
-  search "query" Search existing issues for duplicates
-  help           Show this help message
+  diagnostics            Gather system and aidevops diagnostic info (default)
+  check-auth             Verify GitHub CLI authentication
+  search "query"         Search existing issues for duplicates
+  prompt-reproducer      Output the reproducer section template for framework bugs
+  validate-brief <file>  Validate that a brief body contains required sections
+  help                   Show this help message
 
 Examples:
   log-issue-helper.sh diagnostics
   log-issue-helper.sh check-auth
   log-issue-helper.sh search "update check"
+  log-issue-helper.sh prompt-reproducer
+  log-issue-helper.sh validate-brief /tmp/issue-body.md
 EOF
 		;;
 	*)
@@ -227,6 +331,7 @@ EOF
 		return 1
 		;;
 	esac
+	return 0
 }
 
 main "$@"
