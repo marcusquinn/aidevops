@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.80] - 2026-04-20
+
+### Added
+
+- cherry-pick-first guidance in conflict-feedback template (t2426) (#20056)
+- batch prefetch via org-level gh search to reduce GraphQL consumption (GH#19963) (#20051)
+
+### Changed
+
+- Maintenance: mark t2422 complete (pr:#20054 completed:2026-04-20) [skip ci]
+- structured cross-runner dispatch coordination (#20054)
+- Maintenance: update simplification state registry
+- fix complexity-guard baseline to use origin/HEAD not @{u} (#20052)
+
 ## [3.8.79] - 2026-04-20
 
 ### Added
