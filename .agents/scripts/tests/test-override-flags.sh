@@ -176,6 +176,9 @@ print_info() { printf '[INFO] %s\n' "$*" >>"$INFO_LOG"; return 0; }
 print_warning() { printf '[WARNING] %s\n' "$*" >>"$INFO_LOG"; return 0; }
 print_error() { printf '[ERROR] %s\n' "$*" >>"$INFO_LOG"; return 0; }
 export -f print_info print_warning print_error
+find_project_root() { echo "$TMP"; }
+detect_repo_slug() { echo "test/test"; }
+export -f find_project_root detect_repo_slug
 
 # Test 1a: FORCE_ENRICH=true logs the bypass
 reset_log
@@ -219,7 +222,7 @@ _result=$(GITHUB_ACTIONS="" FORCE_PUSH=false cmd_push "" 2>&1)
 if log_contains "Bulk push skipped" || printf '%s' "$_result" | grep -q "Bulk push skipped"; then
 	pass "FORCE_PUSH=false correctly blocks bulk push outside CI"
 else
-	pass "FORCE_PUSH=false: bulk push CI gate applies (may differ on CI)"
+	fail "FORCE_PUSH=false should block bulk push outside CI"
 fi
 
 # Test 2b: FORCE_PUSH=true — logs bypass
@@ -252,7 +255,7 @@ _result=$(FORCE_CLOSE=false cmd_close "t9999" 2>&1) || true
 if log_contains "no merged PR or verified:" || printf '%s' "$_result" | grep -q "no merged PR"; then
 	pass "FORCE_CLOSE=false correctly blocks close without evidence"
 else
-	pass "FORCE_CLOSE=false: evidence gate applies (may vary in test context)"
+	fail "FORCE_CLOSE=false should block close without evidence"
 fi
 
 # Test 3b: FORCE_CLOSE=true — logs bypass
