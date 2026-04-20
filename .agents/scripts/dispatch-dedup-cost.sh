@@ -98,11 +98,21 @@ _sum_issue_token_spend() {
 		return 1
 	fi
 
-	# Extract all comment bodies as a single stream
+	# Extract comment bodies, excluding interactive-session signature footers.
+	# Interactive footers are maintainer triage/review activity that should
+	# NOT count toward the per-issue worker cost budget — including them
+	# produces false-positive circuit-breaker trips every time a maintainer
+	# comments on an active issue (t2425 / GH#20047). Comments without either
+	# marker (historical or non-standard footers) are kept: worker is the
+	# fail-open default, matching the function's existing fail-open posture.
 	local bodies
-	bodies=$(printf '%s' "$comments_json" | jq -r '.[].body // empty' 2>/dev/null) || return 1
+	bodies=$(printf '%s' "$comments_json" | jq -r '
+		.[]
+		| select((.body // "") | contains("with the user in an interactive session") | not)
+		| .body // empty
+	' 2>/dev/null) || return 1
 	if [[ -z "$bodies" ]]; then
-		# No comments yet — zero spend, zero attempts (fail-open via 0|0 not 1)
+		# No countable comments — zero spend, zero attempts (fail-open via 0|0 not 1)
 		printf '0|0'
 		return 0
 	fi
