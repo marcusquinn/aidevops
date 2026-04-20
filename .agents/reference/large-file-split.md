@@ -121,30 +121,26 @@ target file. Those functions stay put.
 
 ### 4.1 Nesting-depth scanner
 
-`scan_dir_nesting_depth` at `complexity-regression-helper.sh:225-256` is a
-global `elif`-counting AWK, not a real nesting metric:
+**Status (GH#20105):** The AWK regex scanner has been replaced by a
+`shfmt --to-json` AST walker (`scanners/nesting-depth.sh`). The four
+false-positive classes documented below are now resolved by construction.
+The `complexity-bump-ok` override for nesting-depth false positives should
+no longer be needed for file splits. The override procedure remains valid
+for the other complexity metrics (function-complexity, file-size, bash32-compat).
 
-```awk
-/[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; ... }
-/[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
-```
+**Previous false positives (historical reference):**
+The prior AWK scanner used regex pattern matching that matched `elif` as
+`if`, missed `done <<<`/`done |` closers, counted prose keywords, and
+never reset between functions. These are no longer relevant -- the shfmt
+AST walker computes per-function depth correctly.
 
-The open-regex matches `elif` because `elif` contains the literal substring
-`if` preceded by optional whitespace. Each `elif` increments `depth` but
-has no corresponding close, so `if/elif/elif/fi` opens +3 but only closes -1.
-Every `elif` chain inflates the counter permanently.
-
-**Evidence**: the pre-split `headless-runtime-lib.sh` (2107 lines) scored
-`max_depth=83` -- physically impossible; bash has no code path that nests
-83 levels deep.
-
-**Override procedure**:
+**Override procedure (still valid for non-nesting metrics):**
 
 1. Apply the `complexity-bump-ok` label to the PR.
 2. Add a `## Complexity Bump Justification` section to the PR body with:
-   - The scanner evidence (file:line ref showing the `elif` pattern)
+   - The scanner evidence (file:line ref showing the identity-key artifact)
    - The measurement (`base=N, head=M, new=K`)
-   - Explanation that the new violations are identity-key artifacts, not real nesting increases.
+   - Explanation that the new violations are identity-key artifacts, not real increases.
 
 **Worker self-apply (t2370):** Workers dispatched against file-split or
 simplification issues may self-apply the `complexity-bump-ok` label. The
@@ -262,23 +258,16 @@ cannot be statically followed without `-x`).
 new violations solely because the `(file, 'NEST')` identity key changes when
 code moves to freshly-named files. The metric is not real nesting depth.
 
-**Evidence that the scanner is not measuring real nesting:**
+**Note (GH#20105):** The nesting-depth scanner now uses `shfmt --to-json`
+AST walking with per-function reset. The false-positive evidence below applied
+to the old AWK regex scanner and may no longer be needed for nesting-depth
+violations. If you still see nesting-depth regressions on file splits, they
+reflect real nesting changes. For other metrics (function-complexity,
+file-size, bash32-compat), the identity-key justification below still applies.
 
-- `scan_dir_nesting_depth` in `complexity-regression-helper.sh:225-256` is a
-  single global AWK counter that increments on any line matching
-  `/[[:space:]]*(if|for|while|until|case)[[:space:]]/` and decrements on
-  `fi|done|esac`. It has no function scoping.
-- The open-regex also matches the literal string `if` in `elif`. Each `elif`
-  chain inflates the counter permanently.
-- `origin/main`'s current `<original-file>` scans as **max_depth=<N>** --
-  physically impossible; bash has no code path that nests <N> levels deep.
-- Per-function nesting is unchanged. The `function-complexity` metric confirms
-  `base=<N> head=<N> new=0`.
-
-**Pre-existing debt moved, not introduced:** all the `elif`-chain patterns
-that trip the scanner were already in the <N>-line file. The split relocates
-them, it does not create them. Apply `complexity-bump-ok` per the documented
-override procedure.
+**Pre-existing debt moved, not introduced:** identity-key violations from
+file splits are artifacts of code relocation, not new complexity. Apply
+`complexity-bump-ok` per the documented override procedure.
 
 ## Related
 

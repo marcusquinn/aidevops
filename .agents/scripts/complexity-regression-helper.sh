@@ -217,11 +217,13 @@ scan_dir_function_complexity() {
 # ---------------------------------------------------------------------------
 # scan_dir_nesting_depth <dir> [<out-file>]
 #
-# Shell files with global max nesting depth >8. Output: <file>\tNEST\t<depth>.
-# Identity key: (file, 'NEST'). (t2171)
+# Shell files with per-function max nesting depth >8. Output: <file>\tNEST\t<depth>.
+# Identity key: (file, 'NEST'). (t2171, rewritten GH#20105)
 #
-# Uses the same global-counter AWK pattern as code-quality.yml:502-508 — it
-# does NOT reset depth at function boundaries, matching the existing CI gate.
+# Uses `scanners/nesting-depth.sh` (shfmt AST walker) for correct depth
+# measurement with per-function reset and no false positives from elif chains,
+# prose keywords, `done <<<`, or heredoc bodies. Falls back to AWK when shfmt
+# is unavailable.
 # ---------------------------------------------------------------------------
 scan_dir_nesting_depth() {
 	local _dir="$1"
@@ -237,18 +239,34 @@ scan_dir_nesting_depth() {
 	local _result_file
 	_result_file=$(_open_result_file "$_out")
 
+	# Locate the scanner: same directory as this script, then PATH
+	local _scanner=""
+	local _script_dir
+	_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	if [ -x "${_script_dir}/scanners/nesting-depth.sh" ]; then
+		_scanner="${_script_dir}/scanners/nesting-depth.sh"
+	elif command -v nesting-depth.sh >/dev/null 2>&1; then
+		_scanner="nesting-depth.sh"
+	fi
+
 	local _file _rel_file _max_depth
 	while IFS= read -r _file; do
 		[ -n "$_file" ] || continue
 		[ -f "$_file" ] || continue
 		_rel_file="${_file#"${_dir}/"}"
-		_max_depth=$(awk '
-			BEGIN { depth=0; max_depth=0 }
-			/^[[:space:]]*#/ { next }
-			/[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if(depth>max_depth) max_depth=depth }
-			/[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
-			END { print max_depth }
-		' "$_file" 2>/dev/null || echo 0)
+
+		if [ -n "$_scanner" ]; then
+			_max_depth=$("$_scanner" "$_file" 2>/dev/null) || _max_depth=0
+		else
+			# Inline AWK fallback when scanner script is missing
+			_max_depth=$(awk '
+				BEGIN { depth=0; max_depth=0 }
+				/^[[:space:]]*#/ { next }
+				/[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if(depth>max_depth) max_depth=depth }
+				/[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
+				END { print max_depth }
+			' "$_file" 2>/dev/null || echo 0)
+		fi
 
 		if [ "${_max_depth:-0}" -gt 8 ] 2>/dev/null; then
 			printf '%s\tNEST\t%s\n' "$_rel_file" "$_max_depth" >>"$_result_file"
