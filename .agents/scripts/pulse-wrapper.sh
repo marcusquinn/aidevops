@@ -554,6 +554,14 @@ _PULSE_HEALTH_IDLE_REPO_SKIPS=0 # GH#18984 (t2098): repos skipped due to cache-h
 _PULSE_HEALTH_BATCH_SEARCH_CALLS=0 # GH#19963: Search API calls made by batch prefetch
 _PULSE_HEALTH_BATCH_CACHE_HITS=0   # GH#19963: per-repo batch cache hits (avoided GraphQL calls)
 
+# t2433/GH#20071: Cycle-scoped repo refresh sentinel.
+# Keyed by repo_path; set to "1" once the repo has been pulled this cycle.
+# Prevents multiple git fetch+pull calls for the same repo within one
+# dispatch cycle (dispatch loop + triage re-evaluation can both touch the
+# same repo). Bash 4+ associative array — safe because shared-constants.sh
+# re-execs this script under modern bash when invoked with bash 3.2.
+declare -A _PULSE_REFRESHED_THIS_CYCLE=()
+
 # Validate complexity scan configuration (defined above, validated here)
 COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 900 300)
 COMPLEXITY_LLM_SWEEP_INTERVAL=$(_validate_int COMPLEXITY_LLM_SWEEP_INTERVAL "$COMPLEXITY_LLM_SWEEP_INTERVAL" 21600 3600)
@@ -613,6 +621,59 @@ mkdir -p "$PULSE_DIR"
 # check_session_count: now provided by worker-lifecycle-common.sh (sourced above).
 # Removed from pulse-wrapper.sh to eliminate the duplicate. The shared version
 # returns the count; callers handle warning logs independently.
+
+#######################################
+# t2433/GH#20071: Refresh a repo from remote before the large-file gate
+# measures it. Without this, stale local checkouts (post-split-PR) cause
+# the gate to fire on pre-split line counts, creating spurious file-size-debt
+# issues every cycle until a worker dispatch triggers a pull independently.
+#
+# Idempotent within a process: uses _PULSE_REFRESHED_THIS_CYCLE (associative
+# array declared at module scope) as a cycle-scoped sentinel keyed by
+# repo_path. The first call for a given path fetches + fast-forwards;
+# subsequent calls in the same process are no-ops. The array is inherited
+# empty by every subshell (dispatch subshell, run_stage_with_timeout fork)
+# so each independent context starts fresh — this is intentional: each
+# context needs at most one pull per repo.
+#
+# Uses --ff-only to avoid catastrophic rebase conflicts in the pulse checkout.
+# Uses git fetch before pull so the local is always in sync with origin/HEAD.
+#
+# GH#17584 context preserved: the original motivation for pulling before
+# worker dispatch (workers close issues as "Invalid — file does not exist"
+# on stale checkouts) is covered here at the EARLIER point — before any
+# gate evaluation — rather than the later worker-launch point.
+#
+# Arguments:
+#   $1 - repo_path: absolute path to the git working tree to refresh
+# Returns: always 0 (failures are logged but never fatal — callers proceed
+#   with current checkout, same as the previous git pull || { warn; } pattern)
+#######################################
+_pulse_refresh_repo() {
+	local repo_path="$1"
+	[[ -n "$repo_path" ]] || return 0
+
+	# Sentinel: already refreshed this repo in this process context.
+	if [[ "${_PULSE_REFRESHED_THIS_CYCLE[$repo_path]+_}" ]]; then
+		return 0
+	fi
+	# Mark immediately so concurrent callers in the same process don't double-pull.
+	_PULSE_REFRESHED_THIS_CYCLE[$repo_path]=1
+
+	if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _pulse_refresh_repo: ${repo_path} is not a git work-tree — skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	git -C "$repo_path" fetch --quiet origin >>"$LOGFILE" 2>&1 || {
+		echo "[pulse-wrapper] _pulse_refresh_repo: git fetch failed for ${repo_path} — proceeding with current checkout" >>"$LOGFILE"
+		return 0
+	}
+	git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 || {
+		echo "[pulse-wrapper] _pulse_refresh_repo: git pull --ff-only failed for ${repo_path} (diverged branch?) — proceeding with current checkout" >>"$LOGFILE"
+	}
+	return 0
+}
 
 run_pulse() {
 	local underfilled_mode="${1:-0}"
@@ -1045,6 +1106,7 @@ _pulse_execute_self_check() {
 		_dispatch_conflict_fix_worker
 		run_canonical_maintenance
 		dirty_pr_sweep_all_repos
+		_pulse_refresh_repo
 	)
 	for _sc_fn in "${_sc_expected_fns[@]}"; do
 		if ! declare -F "$_sc_fn" >/dev/null 2>&1; then

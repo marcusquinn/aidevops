@@ -434,6 +434,12 @@ _dff_process_candidate() {
 	model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
 	pulse_dispatch_debug_log "#${issue_number}: model_override=${model_override:-<auto>} — calling dispatch_with_dedup"
 
+	# t2433/GH#20071: Refresh the repo before the large-file gate (inside
+	# dispatch_with_dedup → _dispatch_dedup_check_layers → _issue_targets_large_files)
+	# measures file sizes. Sentinel prevents multiple pulls for the same repo
+	# within a single dispatch_deterministic_fill_floor subshell execution.
+	_pulse_refresh_repo "$repo_path"
+
 	# GH#18804 follow-up #3: isolate dispatch_with_dedup in an explicit
 	# subshell. PR #18823 added entry/exit logging that proved the silent
 	# abort happens INSIDE dispatch_with_dedup — even with set +e wrapping

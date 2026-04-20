@@ -604,6 +604,15 @@ _reevaluate_simplification_labels() {
 	local total_cleared=0
 	while IFS='|' read -r slug rpath; do
 		[[ -n "$slug" && -n "$rpath" ]] || continue
+
+		# t2433/GH#20071: Pull repo to latest remote state before measuring
+		# file sizes. Without this, a stale local copy causes
+		# _issue_targets_large_files to use pre-split line counts, keeping
+		# needs-simplification labels on issues that have already been resolved.
+		# Sentinel in _pulse_refresh_repo prevents redundant pulls if both
+		# the dispatch loop and triage loop hit the same repo in one cycle.
+		_pulse_refresh_repo "$rpath"
+
 		local issues_json
 		issues_json=$(gh issue list --repo "$slug" --state open \
 			--label "needs-simplification" \

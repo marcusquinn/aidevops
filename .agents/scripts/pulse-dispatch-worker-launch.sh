@@ -528,15 +528,14 @@ _dispatch_launch_worker() {
 	# t1894/t1934: Lock issue and linked PRs during worker execution
 	lock_issue_for_worker "$issue_number" "$repo_slug"
 
-	# GH#17584: Ensure the repo is on the latest remote commit before
-	# launching the worker. Without this, workers on stale checkouts
-	# close issues as "Invalid — file does not exist" when the target
-	# file was added in a recent commit they haven't pulled.
-	if git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 || {
-			echo "[dispatch_with_dedup] Warning: git pull failed for ${repo_path} — proceeding with current checkout" >>"$LOGFILE"
-		}
-	fi
+	# GH#17584 / t2433: The git pull that was here has been moved earlier in
+	# the dispatch path to _pulse_refresh_repo (pulse-wrapper.sh), which is
+	# called once per (repo, cycle) before any gate evaluation — including the
+	# large-file gate at pulse-dispatch-core.sh:867. Moving it earlier ensures
+	# the large-file simplification gate measures the post-split line count,
+	# preventing false-positive file-size-debt issues after a split PR merges.
+	# The pull still happens before the worker starts; it now also happens before
+	# the gate that decides whether to dispatch at all. See GH#20071.
 
 	_dlw_precreate_worktree "$issue_number" "$repo_path"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH"
