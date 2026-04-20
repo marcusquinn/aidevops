@@ -9,6 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+source "${SCRIPT_DIR}/shared-claim-lifecycle.sh"
 
 readonly SCRIPT_DIR
 readonly STATE_DIR=".agents/loop-state"
@@ -1319,6 +1320,19 @@ cmd_merge() {
 	_retarget_stacked_children_interactive "$pr_number" "$repo"
 
 	_merge_execute "$pr_number" "$repo" "$merge_method" "$has_admin" "$has_auto" || return 1
+
+	# t2429 (GH#20067): Auto-release interactive claim on merge — parity with
+	# pulse-merge.sh. Extract the linked issue from the PR body (same pattern as
+	# _merge_unlock_resources) and call the shared release helper. Best-effort;
+	# failures are logged but never block the merge completion path.
+	local _linked_issue_for_release=""
+	_linked_issue_for_release=$(gh pr view "$pr_number" --repo "$repo" --json body \
+		--jq '.body' 2>/dev/null |
+		grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
+		grep -oE '[0-9]+' | head -1) || _linked_issue_for_release=""
+	if [[ -n "$_linked_issue_for_release" ]]; then
+		release_interactive_claim_on_merge "$pr_number" "$repo" "$_linked_issue_for_release" || true
+	fi
 
 	_merge_unlock_resources "$pr_number" "$repo"
 
