@@ -663,8 +663,7 @@ _build_health_issue_body() {
 	local sys_load_5m="${24}"
 	local sys_memory="${25}"
 	local sys_procs="${26}"
-	local runner_role="${27}"
-	local worker_success_rate_24h="${28}" worker_success_rate_7d="${29}"
+	local runner_role="${27}" worker_success_rate_24h="${28}" worker_success_rate_7d="${29}"
 	local worker_total_runs_24h="${30}" worker_total_runs_7d="${31}"
 	local _worker_rate_section; _worker_rate_section=$(_format_worker_rate_section \
 		"$worker_success_rate_24h" "$worker_success_rate_7d" \
