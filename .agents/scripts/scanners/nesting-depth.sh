@@ -16,9 +16,16 @@
 # with a warning on stderr.
 #
 # Usage:
-#   nesting-depth.sh <file>          Print max nesting depth (integer)
-#   nesting-depth.sh --check <file>  Exit 1 if depth > threshold (default 8)
-#   nesting-depth.sh --version       Print version
+#   nesting-depth.sh <file>               Print max nesting depth (integer)
+#   nesting-depth.sh --check <file>       Exit 1 if depth > threshold (default 8)
+#   nesting-depth.sh --batch-stdin        Read newline-separated paths from stdin;
+#                                         output <path>\t<depth> lines in input order
+#   nesting-depth.sh --batch <file>...    Scan listed files; output <path>\t<depth>
+#                                         lines in argument order
+#   nesting-depth.sh --version            Print version
+#
+# Batch modes use parallel background jobs (capped at 8 workers) and preserve
+# input order via per-position tempfiles. Useful for whole-repo scans.
 #
 # Environment:
 #   NESTING_DEPTH_THRESHOLD  Override the --check threshold (default: 8)
@@ -197,6 +204,95 @@ _nd_scan_awk() {
 }
 
 # ---------------------------------------------------------------------------
+# _nd_scan_batch_paths <mode> [<paths...>]
+#
+# Scan multiple files in parallel and emit <path>\t<depth> lines preserving
+# input order. mode=stdin reads newline-separated paths from stdin; mode=args
+# uses the remaining positional arguments.
+#
+# Parallelism: background jobs capped at _ncpu (sysctl hw.ncpu / nproc, max 8).
+# Order preservation: each path is assigned an index; results written to
+# per-index tempfiles and emitted in ascending index order after all jobs finish.
+# ---------------------------------------------------------------------------
+_nd_scan_batch_paths() {
+	local _mode="$1"
+	shift  # remaining args are file paths when mode=args
+
+	# Determine worker count (cap at 8)
+	local _ncpu
+	_ncpu=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+	if [ "$_ncpu" -gt 8 ]; then _ncpu=8; fi
+
+	# Temp directory for indexed path/result files
+	local _tmpdir
+	_tmpdir=$(mktemp -d) || { _nd_die "mktemp failed for batch mode"; }
+
+	# Collect paths into numbered temp files (avoids array append for bash 3.2)
+	local _idx=0
+	if [ "$_mode" = "stdin" ]; then
+		while IFS= read -r _p; do
+			[ -n "$_p" ] || continue
+			printf '%s' "$_p" >"$_tmpdir/p.$_idx"
+			_idx=$((_idx + 1))
+		done
+	else
+		for _a in "$@"; do
+			[ -n "$_a" ] || continue
+			printf '%s' "$_a" >"$_tmpdir/p.$_idx"
+			_idx=$((_idx + 1))
+		done
+	fi
+
+	local _total="$_idx"
+
+	if [ "$_total" -eq 0 ]; then
+		rm -rf "$_tmpdir"
+		return 0
+	fi
+
+	# Scan files in parallel: launch background jobs, throttle to _ncpu at a time
+	local _running=0
+	_idx=0
+	while [ "$_idx" -lt "$_total" ]; do
+		local _pfile
+		_pfile=$(cat "$_tmpdir/p.$_idx")
+		local _rfile="$_tmpdir/r.$_idx"
+		(
+			local _d=0
+			if _nd_shfmt_available && _nd_jq_available; then
+				_d=$(_nd_scan_shfmt "$_pfile" 2>/dev/null) || _d=0
+			else
+				_d=$(_nd_scan_awk "$_pfile" 2>/dev/null) || _d=0
+			fi
+			printf '%s' "${_d:-0}" >"$_rfile"
+		) &
+		_running=$((_running + 1))
+		if [ "$_running" -ge "$_ncpu" ]; then
+			wait
+			_running=0
+		fi
+		_idx=$((_idx + 1))
+	done
+	wait  # wait for any remaining background jobs
+
+	# Emit results in input order: <path>\t<depth>
+	_idx=0
+	while [ "$_idx" -lt "$_total" ]; do
+		local _pfile
+		_pfile=$(cat "$_tmpdir/p.$_idx")
+		local _depth=0
+		if [ -f "$_tmpdir/r.$_idx" ]; then
+			_depth=$(cat "$_tmpdir/r.$_idx")
+		fi
+		printf '%s\t%s\n' "$_pfile" "${_depth:-0}"
+		_idx=$((_idx + 1))
+	done
+
+	rm -rf "$_tmpdir"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 _nd_main() {
@@ -213,6 +309,15 @@ _nd_main() {
 				_mode="check"
 				_i=$((_i + 1))
 				;;
+			--batch-stdin)
+				_mode="batch-stdin"
+				_i=$((_i + 1))
+				;;
+			--batch)
+				_mode="batch"
+				_i=$((_i + 1))
+				break  # remaining args are file paths
+				;;
 			--version)
 				printf '%s\n' "$_ND_VERSION"
 				return 0
@@ -223,7 +328,7 @@ _nd_main() {
 				_i=$((_i + 1))
 				;;
 			-h | --help)
-				sed -n '5,24p' "$0" | sed 's/^# \{0,1\}//'
+				sed -n '5,32p' "$0" | sed 's/^# \{0,1\}//'
 				return 0
 				;;
 			-*)
@@ -236,6 +341,24 @@ _nd_main() {
 		esac
 	done
 
+	# Batch modes: read paths from stdin or remaining args
+	if [ "$_mode" = "batch-stdin" ]; then
+		_nd_scan_batch_paths stdin
+		return $?
+	fi
+
+	if [ "$_mode" = "batch" ]; then
+		# _i is already past the --batch flag; remaining args are files
+		local _batch_files=()
+		while [ "$_i" -lt "${#_all_args[@]}" ]; do
+			_batch_files+=("${_all_args[$_i]}")
+			_i=$((_i + 1))
+		done
+		_nd_scan_batch_paths args "${_batch_files[@]}"
+		return $?
+	fi
+
+	# Single-file scan (scan or check mode)
 	if [ -z "$_file" ]; then
 		_nd_die "usage: nesting-depth.sh [--check] <file>"
 	fi

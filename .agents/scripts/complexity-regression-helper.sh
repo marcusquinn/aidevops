@@ -249,29 +249,51 @@ scan_dir_nesting_depth() {
 		_scanner="nesting-depth.sh"
 	fi
 
-	local _file _rel_file _max_depth
-	while IFS= read -r _file; do
-		[ -n "$_file" ] || continue
-		[ -f "$_file" ] || continue
-		_rel_file="${_file#"${_dir}/"}"
+	# Probe batch-stdin support: empty stdin returns exit 0 on a capable scanner
+	local _has_batch=0
+	if [ -n "$_scanner" ] && "$_scanner" --batch-stdin </dev/null >/dev/null 2>&1; then
+		_has_batch=1
+	fi
 
-		if [ -n "$_scanner" ]; then
-			_max_depth=$("$_scanner" "$_file" 2>/dev/null) || _max_depth=0
-		else
-			# Inline AWK fallback when scanner script is missing
-			_max_depth=$(awk '
-				BEGIN { depth=0; max_depth=0 }
-				/^[[:space:]]*#/ { next }
-				/[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if(depth>max_depth) max_depth=depth }
-				/[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
-				END { print max_depth }
-			' "$_file" 2>/dev/null || echo 0)
-		fi
+	if [ "$_has_batch" = "1" ]; then
+		# Batch mode (GH#20128): pipe all paths at once; scanner uses parallel
+		# background jobs internally, reducing whole-repo scan time ~75s → ~15s.
+		# Output format: <abs-path>\t<depth>
+		local _file _depth _rel_file
+		while IFS=$'\t' read -r _file _depth; do
+			[ -n "$_file" ] || continue
+			[ -f "$_file" ] || continue
+			_rel_file="${_file#"${_dir}/"}"
+			if [ "${_depth:-0}" -gt 8 ] 2>/dev/null; then
+				printf '%s\tNEST\t%s\n' "$_rel_file" "$_depth" >>"$_result_file"
+			fi
+		done < <(printf '%s\n' "$_sh_files" | "$_scanner" --batch-stdin 2>/dev/null)
+	else
+		# Serial fallback: per-file invocation (used when scanner is old or missing)
+		local _file _rel_file _max_depth
+		while IFS= read -r _file; do
+			[ -n "$_file" ] || continue
+			[ -f "$_file" ] || continue
+			_rel_file="${_file#"${_dir}/"}"
 
-		if [ "${_max_depth:-0}" -gt 8 ] 2>/dev/null; then
-			printf '%s\tNEST\t%s\n' "$_rel_file" "$_max_depth" >>"$_result_file"
-		fi
-	done <<<"$_sh_files"
+			if [ -n "$_scanner" ]; then
+				_max_depth=$("$_scanner" "$_file" 2>/dev/null) || _max_depth=0
+			else
+				# Inline AWK fallback when scanner script is missing
+				_max_depth=$(awk '
+					BEGIN { depth=0; max_depth=0 }
+					/^[[:space:]]*#/ { next }
+					/[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if(depth>max_depth) max_depth=depth }
+					/[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
+					END { print max_depth }
+				' "$_file" 2>/dev/null || echo 0)
+			fi
+
+			if [ "${_max_depth:-0}" -gt 8 ] 2>/dev/null; then
+				printf '%s\tNEST\t%s\n' "$_rel_file" "$_max_depth" >>"$_result_file"
+			fi
+		done <<<"$_sh_files"
+	fi
 
 	return 0
 }
