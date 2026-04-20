@@ -346,31 +346,28 @@ _gh_wrapper_auto_sig() {
 # Also accepts an explicit --todo-task-id tNNN flag (callers that know the ID).
 # Returns the task ID (e.g., "t2436") or empty string on stdout. Non-blocking.
 _gh_wrapper_extract_task_id_from_title() {
-	local i=0 todo_task_id="" title_task_id=""
-	local -a _args=("$@")
-	while [[ $i -lt ${#_args[@]} ]]; do
-		case "${_args[$i]}" in
-		--todo-task-id)
-			((i++)) || true
-			[[ $i -lt ${#_args[@]} ]] && todo_task_id="${_args[$i]:-}"
-			;;
-		--title)
-			((i++)) || true
-			if [[ $i -lt ${#_args[@]} && "${_args[$i]:-}" =~ ^(t[0-9]+): ]]; then
-				title_task_id="${BASH_REMATCH[1]}"
-			fi
-			;;
-		--title=*)
-			local _tval="${_args[$i]#--title=}"
-			if [[ "$_tval" =~ ^(t[0-9]+): ]]; then
-				title_task_id="${BASH_REMATCH[1]}"
-			fi
-			;;
-		esac
-		((i++)) || true
+	local todo_task_id="" title_task_id="" _prev="" _a
+	for _a in "$@"; do
+		_gh_wrapper_extract_task_id_from_title_step \
+			"$_a" "$_prev" todo_task_id title_task_id
+		_prev="$_a"
 	done
-	# Explicit flag wins over title auto-detection
 	echo "${todo_task_id:-$title_task_id}"
+	return 0
+}
+
+# Helper for _gh_wrapper_extract_task_id_from_title: process one arg/prev pair.
+# Updates nameref vars todo_task_id and title_task_id (bash 4.3+ nameref).
+_gh_wrapper_extract_task_id_from_title_step() {
+	local _cur="$1" _prev="$2"
+	local -n _t2436_todo="$3" _t2436_title="$4"
+	if [[ "$_prev" == "--todo-task-id" ]]; then
+		_t2436_todo="$_cur"
+	elif [[ "$_prev" == "--title" && "$_cur" =~ ^(t[0-9]+): ]]; then
+		_t2436_title="${BASH_REMATCH[1]}"
+	elif [[ "$_cur" =~ ^--title=(t[0-9]+): ]]; then
+		_t2436_title="${BASH_REMATCH[1]}"
+	fi
 	return 0
 }
 
