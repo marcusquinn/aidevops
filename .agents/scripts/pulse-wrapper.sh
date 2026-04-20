@@ -358,6 +358,9 @@ GH_FAILURE_SYSTEMIC_THRESHOLD="${GH_FAILURE_SYSTEMIC_THRESHOLD:-3}"             
 GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                                                    # Max failed workflow runs to sample for signatures per pulse
 FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                                               # Timeout for FOSS contribution scan prefetch (t1702)
 FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                                            # Max FOSS contribution workers per pulse cycle (t1702)
+PULSE_BATCH_PREFETCH_ENABLED="${PULSE_BATCH_PREFETCH_ENABLED:-1}"                                          # GH#19963: Enable batch prefetch via org-level gh search (L3 cache layer). Set to 0 for safe rollback.
+PULSE_BATCH_PREFETCH_CACHE_DIR="${PULSE_BATCH_PREFETCH_CACHE_DIR:-${HOME}/.aidevops/logs/batch-prefetch}"  # GH#19963: Directory for batch prefetch per-slug cache files
+PULSE_BATCH_SEARCH_LIMIT="${PULSE_BATCH_SEARCH_LIMIT:-200}"                                                # GH#19963: Max results per gh search call (Search API --limit cap)
 
 # Per-issue retry state (t1888, GH#2076, GH#17384)
 #
@@ -548,6 +551,8 @@ _PULSE_HEALTH_PRS_CLOSED_CONFLICTING=0
 _PULSE_HEALTH_STALLED_KILLED=0
 _PULSE_HEALTH_PREFETCH_ERRORS=0
 _PULSE_HEALTH_IDLE_REPO_SKIPS=0 # GH#18984 (t2098): repos skipped due to cache-hit idle detection
+_PULSE_HEALTH_BATCH_SEARCH_CALLS=0 # GH#19963: Search API calls made by batch prefetch
+_PULSE_HEALTH_BATCH_CACHE_HITS=0   # GH#19963: per-repo batch cache hits (avoided GraphQL calls)
 
 # Validate complexity scan configuration (defined above, validated here)
 COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 900 300)

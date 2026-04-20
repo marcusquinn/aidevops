@@ -193,30 +193,47 @@ _prefetch_repo_prs() {
 	local pr_json="" pr_err
 	pr_err=$(mktemp)
 
-	# Delta fetch: try merging recent changes into cache (GH#15286)
-	PREFETCH_PR_SWEEP_MODE="$sweep_mode"
-	PREFETCH_PR_RESULT=""
-	if [[ "$sweep_mode" == "delta" ]]; then
-		_prefetch_prs_try_delta "$slug" "$cache_entry" "$pr_err"
-		sweep_mode="$PREFETCH_PR_SWEEP_MODE"
-		pr_json="$PREFETCH_PR_RESULT"
+	# GH#19963 L3: Check batch prefetch cache before per-repo API calls.
+	# Execution order: idle skip (L2, handled by caller) → batch cache (L3) → delta/full (L4/L5)
+	local _batch_helper="${SCRIPT_DIR}/pulse-batch-prefetch-helper.sh"
+	local _used_batch_cache=false
+	if [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" == "1" && -x "$_batch_helper" ]]; then
+		local _batch_prs
+		_batch_prs=$("$_batch_helper" read-cache --kind prs --slug "$slug" 2>/dev/null) || _batch_prs=""
+		if [[ -n "$_batch_prs" && "$_batch_prs" != "[]" && "$_batch_prs" != "null" ]]; then
+			pr_json="$_batch_prs"
+			_used_batch_cache=true
+			echo "[pulse-wrapper] _prefetch_repo_prs: using batch cache for ${slug}" >>"$LOGFILE"
+			_PULSE_HEALTH_BATCH_CACHE_HITS=$((_PULSE_HEALTH_BATCH_CACHE_HITS + 1))
+		fi
 	fi
 
-	# Full fetch: either requested directly or delta fell back
-	if [[ "$sweep_mode" == "full" ]]; then
-		pr_json=$(gh pr list --repo "$slug" --state open \
-			--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
-			--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || pr_json=""
+	if [[ "$_used_batch_cache" == "false" ]]; then
+		# Delta fetch: try merging recent changes into cache (GH#15286)
+		PREFETCH_PR_SWEEP_MODE="$sweep_mode"
+		PREFETCH_PR_RESULT=""
+		if [[ "$sweep_mode" == "delta" ]]; then
+			_prefetch_prs_try_delta "$slug" "$cache_entry" "$pr_err"
+			sweep_mode="$PREFETCH_PR_SWEEP_MODE"
+			pr_json="$PREFETCH_PR_RESULT"
+		fi
 
-		if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
-			local err_msg
-			err_msg=$(cat "$pr_err" 2>/dev/null || echo "unknown error")
-			# GH#18979 (t2097): classify rate-limit errors and flag the cycle
-			if _pulse_gh_err_is_rate_limit "$pr_err"; then
-				_pulse_mark_rate_limited "_prefetch_repo_prs:${slug}"
+		# Full fetch: either requested directly or delta fell back
+		if [[ "$sweep_mode" == "full" ]]; then
+			pr_json=$(gh pr list --repo "$slug" --state open \
+				--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
+				--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || pr_json=""
+
+			if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+				local err_msg
+				err_msg=$(cat "$pr_err" 2>/dev/null || echo "unknown error")
+				# GH#18979 (t2097): classify rate-limit errors and flag the cycle
+				if _pulse_gh_err_is_rate_limit "$pr_err"; then
+					_pulse_mark_rate_limited "_prefetch_repo_prs:${slug}"
+				fi
+				echo "[pulse-wrapper] _prefetch_repo_prs: gh pr list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
+				pr_json="[]"
 			fi
-			echo "[pulse-wrapper] _prefetch_repo_prs: gh pr list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
-			pr_json="[]"
 		fi
 	fi
 	rm -f "$pr_err"

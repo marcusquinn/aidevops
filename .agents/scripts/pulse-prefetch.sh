@@ -133,30 +133,47 @@ _prefetch_repo_issues() {
 	local issue_json="" issue_err
 	issue_err=$(mktemp)
 
-	# Delta fetch: try merging recent changes into cache (GH#15286)
-	PREFETCH_ISSUE_SWEEP_MODE="$sweep_mode"
-	PREFETCH_ISSUE_RESULT=""
-	if [[ "$sweep_mode" == "delta" ]]; then
-		_prefetch_issues_try_delta "$slug" "$cache_entry" "$issue_err"
-		sweep_mode="$PREFETCH_ISSUE_SWEEP_MODE"
-		issue_json="$PREFETCH_ISSUE_RESULT"
+	# GH#19963 L3: Check batch prefetch cache before per-repo API calls.
+	# Execution order: idle skip (L2, handled by caller) → batch cache (L3) → delta/full (L4/L5)
+	local _batch_helper="${SCRIPT_DIR}/pulse-batch-prefetch-helper.sh"
+	local _used_batch_cache=false
+	if [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" == "1" && -x "$_batch_helper" ]]; then
+		local _batch_issues
+		_batch_issues=$("$_batch_helper" read-cache --kind issues --slug "$slug" 2>/dev/null) || _batch_issues=""
+		if [[ -n "$_batch_issues" && "$_batch_issues" != "[]" && "$_batch_issues" != "null" ]]; then
+			issue_json="$_batch_issues"
+			_used_batch_cache=true
+			echo "[pulse-wrapper] _prefetch_repo_issues: using batch cache for ${slug}" >>"$LOGFILE"
+			_PULSE_HEALTH_BATCH_CACHE_HITS=$((_PULSE_HEALTH_BATCH_CACHE_HITS + 1))
+		fi
 	fi
 
-	# Full fetch: either requested directly or delta fell back
-	if [[ "$sweep_mode" == "full" ]]; then
-		issue_json=$(gh issue list --repo "$slug" --state open \
-			--json number,title,labels,updatedAt,assignees \
-			--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || issue_json=""
+	if [[ "$_used_batch_cache" == "false" ]]; then
+		# Delta fetch: try merging recent changes into cache (GH#15286)
+		PREFETCH_ISSUE_SWEEP_MODE="$sweep_mode"
+		PREFETCH_ISSUE_RESULT=""
+		if [[ "$sweep_mode" == "delta" ]]; then
+			_prefetch_issues_try_delta "$slug" "$cache_entry" "$issue_err"
+			sweep_mode="$PREFETCH_ISSUE_SWEEP_MODE"
+			issue_json="$PREFETCH_ISSUE_RESULT"
+		fi
 
-		if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
-			local issue_err_msg
-			issue_err_msg=$(cat "$issue_err" 2>/dev/null || echo "unknown error")
-			# GH#18979 (t2097): detect rate-limit exhaustion
-			if _pulse_gh_err_is_rate_limit "$issue_err"; then
-				_pulse_mark_rate_limited "_prefetch_repo_issues:${slug}"
+		# Full fetch: either requested directly or delta fell back
+		if [[ "$sweep_mode" == "full" ]]; then
+			issue_json=$(gh issue list --repo "$slug" --state open \
+				--json number,title,labels,updatedAt,assignees \
+				--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || issue_json=""
+
+			if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
+				local issue_err_msg
+				issue_err_msg=$(cat "$issue_err" 2>/dev/null || echo "unknown error")
+				# GH#18979 (t2097): detect rate-limit exhaustion
+				if _pulse_gh_err_is_rate_limit "$issue_err"; then
+					_pulse_mark_rate_limited "_prefetch_repo_issues:${slug}"
+				fi
+				echo "[pulse-wrapper] _prefetch_repo_issues: gh issue list FAILED for ${slug}: ${issue_err_msg}" >>"$LOGFILE"
+				issue_json="[]"
 			fi
-			echo "[pulse-wrapper] _prefetch_repo_issues: gh issue list FAILED for ${slug}: ${issue_err_msg}" >>"$LOGFILE"
-			issue_json="[]"
 		fi
 	fi
 	rm -f "$issue_err"
@@ -196,6 +213,36 @@ _prefetch_repo_issues() {
 		echo "$sweep_tracked_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)]"'
 		echo ""
 	fi
+	return 0
+}
+
+#######################################
+# GH#19963: Run batch prefetch via org-level gh search (L3 cache layer).
+# Run BEFORE parallel per-repo fetches. Individual repos consult the
+# batch cache and skip their own gh calls on cache hit.
+# Called from prefetch_state.
+#######################################
+_prefetch_batch_refresh() {
+	local _batch_helper="${SCRIPT_DIR}/pulse-batch-prefetch-helper.sh"
+	if [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" != "1" || ! -x "$_batch_helper" ]]; then
+		return 0
+	fi
+	local _batch_output
+	_batch_output=$("$_batch_helper" refresh 2>/dev/null) || true
+	# Parse counters for health instrumentation
+	local _batch_search_calls=0 _batch_cache_writes=0
+	if [[ -n "$_batch_output" ]]; then
+		local _line
+		while IFS= read -r _line; do
+			case "$_line" in
+			search_calls=*)  _batch_search_calls="${_line#search_calls=}" ;;
+			cache_writes=*)  _batch_cache_writes="${_line#cache_writes=}" ;;
+			esac
+		done <<<"$_batch_output"
+	fi
+	_PULSE_HEALTH_BATCH_SEARCH_CALLS=$((_PULSE_HEALTH_BATCH_SEARCH_CALLS + _batch_search_calls))
+	_PULSE_HEALTH_BATCH_CACHE_HITS=$((_PULSE_HEALTH_BATCH_CACHE_HITS + _batch_cache_writes))
+	echo "[pulse-wrapper] Batch prefetch: search_calls=${_batch_search_calls} cache_writes=${_batch_cache_writes}" >>"$LOGFILE"
 	return 0
 }
 
@@ -254,6 +301,9 @@ prefetch_state() {
 		echo "No pulse-enabled repos in schedule window in repos.json" >"$STATE_FILE"
 		return 1
 	fi
+
+	# GH#19963: Batch prefetch via org-level gh search (L3 cache layer).
+	_prefetch_batch_refresh
 
 	# Temp dir for parallel fetches
 	local tmpdir

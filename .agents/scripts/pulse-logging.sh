@@ -280,7 +280,9 @@ write_pulse_health_file() {
   "prefetch_errors": ${_PULSE_HEALTH_PREFETCH_ERRORS},
   "stalled_workers_killed": ${_PULSE_HEALTH_STALLED_KILLED},
   "models_backed_off": ${models_backed_off},
-  "idle_repo_skips": ${_PULSE_HEALTH_IDLE_REPO_SKIPS:-0}
+  "idle_repo_skips": ${_PULSE_HEALTH_IDLE_REPO_SKIPS:-0},
+  "batch_search_calls": ${_PULSE_HEALTH_BATCH_SEARCH_CALLS:-0},
+  "batch_cache_hits": ${_PULSE_HEALTH_BATCH_CACHE_HITS:-0}
 }
 EOF
 
@@ -290,6 +292,6 @@ EOF
 		return 0
 	}
 
-	echo "[pulse-wrapper] pulse-health.json written: workers=${workers_active}/${workers_max} merged=${_PULSE_HEALTH_PRS_MERGED} closed_conflicting=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING} dispatched=${issues_dispatched} stalled_killed=${_PULSE_HEALTH_STALLED_KILLED} backed_off=${models_backed_off} idle_skips=${_PULSE_HEALTH_IDLE_REPO_SKIPS:-0}" >>"$LOGFILE"
+	echo "[pulse-wrapper] pulse-health.json written: workers=${workers_active}/${workers_max} merged=${_PULSE_HEALTH_PRS_MERGED} closed_conflicting=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING} dispatched=${issues_dispatched} stalled_killed=${_PULSE_HEALTH_STALLED_KILLED} backed_off=${models_backed_off} idle_skips=${_PULSE_HEALTH_IDLE_REPO_SKIPS:-0} batch_search=${_PULSE_HEALTH_BATCH_SEARCH_CALLS:-0} batch_hits=${_PULSE_HEALTH_BATCH_CACHE_HITS:-0}" >>"$LOGFILE"
 	return 0
 }
