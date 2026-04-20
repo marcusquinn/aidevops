@@ -246,6 +246,177 @@ else
 fi
 
 # =============================================================================
+# Class E: Pre-flight block validation (t2409)
+# =============================================================================
+
+printf '\n%sClass E: Pre-flight block validation (t2409 — verify-brief-helper.sh)%s\n' "$TEST_BLUE" "$TEST_NC"
+
+VB_HELPER="${SCRIPT_DIR}/../verify-brief-helper.sh"
+
+if [[ ! -f "$VB_HELPER" ]]; then
+	printf 'test harness cannot find %s — skipping Class E\n' "$VB_HELPER" >&2
+else
+
+# Test E1: brief missing Pre-flight block is rejected
+cat >"$TMP/brief-no-preflight.md" <<'BRIEF'
+# t9999: Test task
+
+## Origin
+
+- **Created:** 2026-04-20
+
+## What
+
+Test deliverable.
+
+## How (Approach)
+
+### Files to Modify
+
+- `EDIT: src/foo.sh:10-20` — fix bug
+
+## Acceptance Criteria
+
+- [ ] Bug is fixed
+BRIEF
+
+output=$(bash "$VB_HELPER" check-preflight "$TMP/brief-no-preflight.md" 2>&1)
+rc=$?
+
+if [[ $rc -ne 0 ]]; then
+	pass "E1 brief without ## Pre-flight is rejected"
+else
+	fail "E1 missing Pre-flight rejection" "expected rc!=0, got rc=0; output: $output"
+fi
+
+# Test E2: brief with unchecked Pre-flight boxes is rejected
+cat >"$TMP/brief-unchecked-preflight.md" <<'BRIEF'
+# t9999: Test task
+
+## Pre-flight (auto-populated by briefing workflow)
+
+- [ ] Memory recall: `brief workflow` → 2 hits — reviewed relevant patterns
+- [x] Discovery pass: 0 commits / 0 merged PRs / 0 open PRs touch target files in last 48h
+- [x] File refs verified: 1 refs checked, all present at HEAD
+- [x] Tier: `tier:standard` — disqualifier check clean (2 files, judgment needed)
+
+## Origin
+
+- **Created:** 2026-04-20
+BRIEF
+
+output=$(bash "$VB_HELPER" check-preflight "$TMP/brief-unchecked-preflight.md" 2>&1)
+rc=$?
+
+if [[ $rc -ne 0 ]]; then
+	pass "E2 brief with unchecked Pre-flight boxes is rejected"
+else
+	fail "E2 unchecked Pre-flight boxes" "expected rc!=0, got rc=0; output: $output"
+fi
+
+# Test E3: brief with template placeholders in Pre-flight is rejected
+cat >"$TMP/brief-placeholder-preflight.md" <<'BRIEF'
+# t9999: Test task
+
+## Pre-flight (auto-populated by briefing workflow)
+
+- [x] Memory recall: `<query>` → `<N>` hits — `<one-line skim summary or "no relevant lessons">`
+- [x] Discovery pass: `<N>` commits / `<N>` merged PRs / `<N>` open PRs touch target files in last 48h
+- [x] File refs verified: `<N>` refs checked, all present at HEAD
+- [x] Tier: `<tier>` — disqualifier check clean (`<1-line rationale>`)
+
+## Origin
+
+- **Created:** 2026-04-20
+BRIEF
+
+output=$(bash "$VB_HELPER" check-preflight "$TMP/brief-placeholder-preflight.md" 2>&1)
+rc=$?
+
+if [[ $rc -ne 0 ]]; then
+	pass "E3 brief with template placeholders in Pre-flight is rejected"
+else
+	fail "E3 template placeholder rejection" "expected rc!=0, got rc=0; output: $output"
+fi
+
+# Test E4: brief with fully populated Pre-flight passes
+cat >"$TMP/brief-good-preflight.md" <<'BRIEF'
+# t9999: Test task
+
+## Pre-flight (auto-populated by briefing workflow)
+
+- [x] Memory recall: `brief workflow` → 0 hits — no relevant lessons
+- [x] Discovery pass: 0 commits / 0 merged PRs / 0 open PRs touch target files in last 48h
+- [x] File refs verified: 2 refs checked, all present at HEAD
+- [x] Tier: `tier:standard` — disqualifier check clean (3 files, judgment needed)
+
+## Origin
+
+- **Created:** 2026-04-20
+BRIEF
+
+output=$(bash "$VB_HELPER" check-preflight "$TMP/brief-good-preflight.md" 2>&1)
+rc=$?
+
+if [[ $rc -eq 0 ]]; then
+	pass "E4 brief with fully populated Pre-flight passes"
+else
+	fail "E4 valid Pre-flight acceptance" "expected rc=0, got rc=$rc; output: $output"
+fi
+
+# Test E5: tier:simple with >2 files in Worker Guidance is flagged by verify-brief.sh
+# (This tests the acceptance criteria verify block pattern, not Pre-flight directly)
+cat >"$TMP/brief-mistiered.md" <<'BRIEF'
+# t9999: Test task
+
+## Pre-flight (auto-populated by briefing workflow)
+
+- [x] Memory recall: `test` → 0 hits — no relevant lessons
+- [x] Discovery pass: 0 commits / 0 merged PRs / 0 open PRs touch target files in last 48h
+- [x] File refs verified: 3 refs checked, all present at HEAD
+- [x] Tier: `tier:simple` — disqualifier check clean (single file edit)
+
+## Origin
+
+- **Created:** 2026-04-20
+
+## How (Approach)
+
+### Files to Modify
+
+- `EDIT: src/a.sh:10-20` — fix bug
+- `EDIT: src/b.sh:30-40` — fix related bug
+- `EDIT: src/c.sh:50-60` — fix another bug
+
+## Acceptance Criteria
+
+- [ ] All bugs fixed
+BRIEF
+
+# E5: verify that the Pre-flight block passes even though the tier may be wrong
+# (Pre-flight validates format, not semantic correctness of tier choice)
+output=$(bash "$VB_HELPER" check-preflight "$TMP/brief-mistiered.md" 2>&1)
+rc=$?
+
+if [[ $rc -eq 0 ]]; then
+	pass "E5 Pre-flight validates format not semantic tier correctness"
+else
+	fail "E5 Pre-flight format-only validation" "expected rc=0, got rc=$rc; output: $output"
+fi
+
+# Test E6: check-preflight with missing argument exits non-zero
+output=$(bash "$VB_HELPER" check-preflight 2>&1)
+rc=$?
+
+if [[ $rc -ne 0 ]]; then
+	pass "E6 check-preflight without argument exits non-zero"
+else
+	fail "E6 missing argument" "expected rc!=0, got rc=0"
+fi
+
+fi  # end VB_HELPER existence check
+
+# =============================================================================
 # Summary
 # =============================================================================
 

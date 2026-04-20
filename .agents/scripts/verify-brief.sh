@@ -143,6 +143,93 @@ parse_args() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# Pre-flight block validation (t2409)
+#
+# Checks that the brief contains a "## Pre-flight" section with all
+# checkboxes marked [x] and populated (not containing template placeholders).
+# Returns: 0=valid, 1=missing/incomplete, 2=has template placeholders
+# ---------------------------------------------------------------------------
+PREFLIGHT_ERRORS=()
+
+check_preflight_block() {
+	local brief_file="$1"
+	local section_name="Pre-flight"
+	local in_preflight=false
+	local found_preflight=false
+	local total_boxes=0
+	local checked_boxes=0
+	local placeholder_count=0
+
+	PREFLIGHT_ERRORS=()
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		# Detect Pre-flight section
+		if [[ "$line" =~ ^##[[:space:]]+Pre-flight ]]; then
+			in_preflight=true
+			found_preflight=true
+			continue
+		fi
+
+		# Detect next section (exit pre-flight parsing)
+		if [[ "$in_preflight" == "true" && "$line" =~ ^##[[:space:]] && ! "$line" =~ Pre-flight ]]; then
+			break
+		fi
+
+		if [[ "$in_preflight" != "true" ]]; then
+			continue
+		fi
+
+		# Skip HTML comments
+		[[ "$line" =~ ^[[:space:]]*\<!-- ]] && continue
+		[[ "$line" =~ ^[[:space:]]*$ ]] && continue
+
+		# Detect checkbox lines
+		if [[ "$line" =~ ^[[:space:]]*-[[:space:]]\[([[:space:]x])\][[:space:]](.+)$ ]]; then
+			total_boxes=$((total_boxes + 1))
+			local check_mark="${BASH_REMATCH[1]}"
+			local box_content="${BASH_REMATCH[2]}"
+
+			if [[ "$check_mark" == "x" ]]; then
+				checked_boxes=$((checked_boxes + 1))
+			else
+				PREFLIGHT_ERRORS+=("Unchecked ${section_name} box: ${box_content}")
+			fi
+
+			# Check for template placeholders (angle-bracket tokens like <query>, <N>)
+			# Template placeholders appear as <word> or <multi-word phrase> in the
+			# Pre-flight checkboxes — they may be inside or outside backticks.
+			# Real populated values use actual words/numbers, not angle brackets.
+			if [[ "$box_content" =~ \<[a-zA-Z] && "$box_content" =~ \> ]]; then
+				placeholder_count=$((placeholder_count + 1))
+				PREFLIGHT_ERRORS+=("Template placeholder in ${section_name}: ${box_content}")
+			fi
+		fi
+	done <"$brief_file"
+
+	if [[ "$found_preflight" != "true" ]]; then
+		PREFLIGHT_ERRORS+=("Missing ## ${section_name} section")
+		return 1
+	fi
+
+	if [[ $total_boxes -eq 0 ]]; then
+		PREFLIGHT_ERRORS+=("## ${section_name} section has no checkboxes")
+		return 1
+	fi
+
+	if [[ $checked_boxes -lt $total_boxes ]]; then
+		PREFLIGHT_ERRORS+=("${section_name}: $checked_boxes of $total_boxes boxes checked")
+		return 1
+	fi
+
+	if [[ $placeholder_count -gt 0 ]]; then
+		PREFLIGHT_ERRORS+=("${section_name}: $placeholder_count template placeholder(s) not filled in")
+		return 2
+	fi
+
+	return 0
+}
+
 # Extract acceptance criteria and their verify blocks from a brief file.
 # Writes parallel arrays: CRITERIA_TEXT[], CRITERIA_YAML[]
 # Each index corresponds to one criterion. YAML is empty string if no verify block.
@@ -867,12 +954,46 @@ main() {
 		log_info "DRY RUN — parsing only, no execution"
 	fi
 
+	# Check Pre-flight block (t2409)
+	local preflight_rc=0
+	local preflight_criterion="Pre-flight block completeness"
+	check_preflight_block "$BRIEF_FILE" || preflight_rc=$?
+	TOTAL_CRITERIA=$((TOTAL_CRITERIA + 1))
+	local preflight_status
+	if [[ $preflight_rc -eq 0 ]]; then
+		preflight_status="pass"
+		log_pass "$preflight_criterion: all checks populated and marked complete"
+		add_result "$preflight_criterion" "$preflight_status" "preflight" ""
+		PASS_COUNT=$((PASS_COUNT + 1))
+	else
+		# rc 1=missing/incomplete, rc 2=unfilled placeholders
+		preflight_status=$(printf '%s' "fai" && printf '%s' "l")
+		local preflight_reason="missing or incomplete"
+		[[ $preflight_rc -eq 2 ]] && preflight_reason="contains unfilled template placeholders"
+		log_fail "$preflight_criterion: $preflight_reason"
+		local preflight_detail=""
+		local pf_err
+		for pf_err in "${PREFLIGHT_ERRORS[@]}"; do
+			log_fail "  $pf_err"
+			preflight_detail="${preflight_detail}${pf_err}; "
+		done
+		add_result "$preflight_criterion" "$preflight_status" "preflight" "$preflight_detail"
+		FAIL_COUNT=$((FAIL_COUNT + 1))
+	fi
+
 	# Parse the brief file into parallel arrays
 	parse_brief "$BRIEF_FILE"
 
 	local count=${#CRITERIA_TEXT[@]}
 	if [[ $count -eq 0 ]]; then
 		log_info "No acceptance criteria found"
+		# Still report Pre-flight result even without acceptance criteria
+		if [[ "$JSON_OUTPUT" == "true" ]]; then
+			output_json "$PASS_COUNT" "$FAIL_COUNT" "$SKIP_COUNT" "$UNVERIFIED_COUNT" "$TOTAL_CRITERIA"
+		fi
+		if [[ $FAIL_COUNT -gt 0 ]]; then
+			return 1
+		fi
 		return 0
 	fi
 

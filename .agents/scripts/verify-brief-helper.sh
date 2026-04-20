@@ -25,9 +25,10 @@ _usage() {
 Usage: verify-brief-helper.sh <command> [brief-path]
 
 Commands:
-  verify <path>   Run all method:bash verify blocks from the brief
-  list   <path>   List verify blocks without executing
-  help             Show this help
+  verify          <path>   Run all method:bash verify blocks from the brief
+  list            <path>   List verify blocks without executing
+  check-preflight <path>   Validate Pre-flight block is present and populated (t2409)
+  help                     Show this help
 EOF
 	return 0
 }
@@ -245,6 +246,101 @@ _cmd_verify() {
 }
 
 # ---------------------------------------------------------------------------
+# Pre-flight validation (t2409)
+# ---------------------------------------------------------------------------
+
+_cmd_check_preflight() {
+	local brief_path="$1"
+
+	if [[ ! -f "$brief_path" ]]; then
+		_log "ERROR" "File not found: $brief_path"
+		return 2
+	fi
+
+	local in_preflight=0
+	local found_preflight=0
+	local total_boxes=0
+	local checked_boxes=0
+	local placeholder_boxes=0
+	local errors=""
+
+	while IFS= read -r line; do
+		# Detect Pre-flight section
+		if echo "$line" | grep -qE '^##[[:space:]]+Pre-flight'; then
+			in_preflight=1
+			found_preflight=1
+			continue
+		fi
+
+		# Detect next section
+		if [[ $in_preflight -eq 1 ]] && echo "$line" | grep -qE '^##[[:space:]]' && ! echo "$line" | grep -qE 'Pre-flight'; then
+			break
+		fi
+
+		[[ $in_preflight -eq 0 ]] && continue
+
+		# Skip HTML comments and blank lines
+		echo "$line" | grep -qE '^\s*<!--' && continue
+		[[ -z "$line" ]] && continue
+
+		# Detect checkbox lines: - [ ] or - [x]
+		if echo "$line" | grep -qE '^\s*-\s+\[[[:space:]x]\]'; then
+			total_boxes=$((total_boxes + 1))
+
+			if echo "$line" | grep -qE '^\s*-\s+\[x\]'; then
+				checked_boxes=$((checked_boxes + 1))
+			else
+				local box_text
+				box_text=$(echo "$line" | sed 's/^\s*-\s\[[[:space:]x]\]\s*//')
+				errors="${errors}UNCHECKED: ${box_text}\n"
+			fi
+
+			# Check for unfilled template placeholders (angle-bracket tokens like <query>, <N>)
+			# Template placeholders appear as <word> or <multi-word phrase> — they
+			# may be inside or outside backticks, both count as unfilled.
+			if echo "$line" | grep -qE '<[a-zA-Z].*>'; then
+				placeholder_boxes=$((placeholder_boxes + 1))
+				local box_text
+				box_text=$(echo "$line" | sed 's/^\s*-\s\[[[:space:]x]\]\s*//')
+				errors="${errors}PLACEHOLDER: ${box_text}\n"
+			fi
+		fi
+	done <"$brief_path"
+
+	# Report results
+	if [[ $found_preflight -eq 0 ]]; then
+		printf 'FAIL  Missing ## Pre-flight section\n'
+		return 1
+	fi
+
+	if [[ $total_boxes -eq 0 ]]; then
+		printf 'FAIL  ## Pre-flight section has no checkboxes\n'
+		return 1
+	fi
+
+	if [[ -n "$errors" ]]; then
+		printf '%b' "$errors"
+	fi
+
+	printf '\n--- Pre-flight Summary ---\n'
+	printf 'Total: %d  Checked: %d  Unchecked: %d  Placeholders: %d\n' \
+		"$total_boxes" "$checked_boxes" "$((total_boxes - checked_boxes))" "$placeholder_boxes"
+
+	if [[ $checked_boxes -lt $total_boxes ]]; then
+		printf 'FAIL  %d of %d Pre-flight boxes unchecked\n' "$((total_boxes - checked_boxes))" "$total_boxes"
+		return 1
+	fi
+
+	if [[ $placeholder_boxes -gt 0 ]]; then
+		printf 'FAIL  %d Pre-flight box(es) contain unfilled template placeholders\n' "$placeholder_boxes"
+		return 1
+	fi
+
+	printf 'PASS  All %d Pre-flight boxes checked and populated\n' "$total_boxes"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -266,6 +362,14 @@ main() {
 			return 2
 		fi
 		_cmd_list "$1"
+		;;
+	check-preflight)
+		if [[ $# -lt 1 ]]; then
+			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh check-preflight <path>"
+			return 2
+		fi
+		local preflight_path="$1"
+		_cmd_check_preflight "$preflight_path"
 		;;
 	help | --help | -h)
 		_usage
