@@ -237,7 +237,7 @@ _close_duplicate_groups() {
 			# Strip 'persistent' before closing so issue-sync.yml 'Reopen Persistent Issues'
 			# job does not reopen the duplicate (GH#20326). That job blocks USER-initiated
 			# closes, not programmatic dedup. Idempotent: no-op if label not present.
-			run_gh issue edit "$close_num" --repo "$repo" --remove-label persistent 2>/dev/null || true
+			run_gh issue edit "$close_num" --repo "$repo" --remove-label persistent || true
 			run_gh issue close "$close_num" --repo "$repo" --comment "$comment" \
 				|| log_warn "    close failed for #${close_num}"
 		done <<<"$close_list"

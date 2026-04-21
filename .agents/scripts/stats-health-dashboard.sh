@@ -136,6 +136,20 @@ _try_cached_health_issue_lookup() {
 }
 
 #######################################
+# Strip the 'persistent' label from a health issue before closing it,
+# preventing issue-sync.yml 'Reopen Persistent Issues' from reopening
+# programmatic dedup closes (GH#20326). Idempotent: no-op if not present.
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+_strip_persistent_label_before_close() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	gh issue edit "$issue_number" --repo "$repo_slug" --remove-label persistent 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Close all duplicate health issues (all but the first) from a jq array.
 # Arguments: label_results_json keep_number repo_slug runner_role
 _close_health_issue_duplicates() {
@@ -150,10 +164,7 @@ _close_health_issue_duplicates() {
 	while IFS= read -r dup_num; do
 		[[ -z "$dup_num" ]] && continue
 		[[ "$runner_role" == "supervisor" ]] && _unpin_health_issue "$dup_num" "$repo_slug"
-		# Strip 'persistent' before closing so issue-sync.yml 'Reopen Persistent Issues'
-		# job does not reopen the duplicate. That job is designed to block USER-initiated
-		# closes, not programmatic dedup. Idempotent: no-op if label not present.
-		gh issue edit "$dup_num" --repo "$repo_slug" --remove-label persistent 2>/dev/null || true
+		_strip_persistent_label_before_close "$dup_num" "$repo_slug"
 		gh issue close "$dup_num" --repo "$repo_slug" \
 			--comment "Closing duplicate ${runner_role} health issue — superseded by #${keep_number}." 2>/dev/null || true
 	done <<<"$dup_numbers"
@@ -463,10 +474,7 @@ _periodic_health_issue_dedup() {
 			# Duplicate supervisor issues CAN be pinned in pathological
 			# cases (stale pin from a pre-rate-limit canonical).
 			_unpin_health_issue "$dup_num" "$repo_slug"
-			# Strip 'persistent' before closing so issue-sync.yml 'Reopen Persistent Issues'
-			# job does not reopen the duplicate (GH#20326). That job blocks USER-initiated
-			# closes, not programmatic dedup. Idempotent: no-op if label not present.
-			gh issue edit "$dup_num" --repo "$repo_slug" --remove-label persistent 2>/dev/null || true
+			_strip_persistent_label_before_close "$dup_num" "$repo_slug"
 			gh issue close "$dup_num" --repo "$repo_slug" \
 				--comment "Closing duplicate ${runner_role} health issue — superseded by #${current_issue} (t2687 periodic dedup). Root cause likely a past GraphQL rate-limit window; see GH#20301." 2>/dev/null || true
 			echo "[stats] Health issue: periodic dedup closed #${dup_num} in ${repo_slug} (kept #${current_issue})" >>"${LOGFILE:-/dev/null}"
