@@ -27,9 +27,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 HOOKS_DIR="$HOME/.aidevops/hooks"
 HOOK_SCRIPT="$HOOKS_DIR/git_safety_guard.py"
 POST_HOOK_SCRIPT="$HOOKS_DIR/mcp_task_post_hook.py"
+CREDENTIAL_SCRUB_SCRIPT="$HOOKS_DIR/credential-transcript-scrub.py"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 HOOK_COMMAND="\$HOME/.aidevops/hooks/git_safety_guard.py"
 POST_HOOK_COMMAND="\$HOME/.aidevops/hooks/mcp_task_post_hook.py"
+CREDENTIAL_SCRUB_COMMAND="\$HOME/.aidevops/hooks/credential-transcript-scrub.py"
 
 # gh-wrapper-guard pre-push hook (t2113)
 GH_WRAPPER_GUARD_MARKER="# aidevops-gh-wrapper-guard"
@@ -471,6 +473,8 @@ install_hook() {
 	source_hook=$(find_source_hook) || return 1
 	local source_post_hook
 	source_post_hook=$(find_source_hook "mcp_task_post_hook.py") || return 1
+	local source_credential_scrub_hook
+	source_credential_scrub_hook=$(find_source_hook "credential-transcript-scrub.py") || return 1
 
 	# Pre-install validator dry-run (t2226): abort if validators fail HEAD state
 	_dry_run_validators "$source_hook" "$force_install" || return 1
@@ -485,6 +489,9 @@ install_hook() {
 	cp "$source_post_hook" "$POST_HOOK_SCRIPT"
 	chmod +x "$POST_HOOK_SCRIPT"
 	print_success "Installed $POST_HOOK_SCRIPT"
+	cp "$source_credential_scrub_hook" "$CREDENTIAL_SCRUB_SCRIPT"
+	chmod +x "$CREDENTIAL_SCRUB_SCRIPT"
+	print_success "Installed $CREDENTIAL_SCRUB_SCRIPT"
 
 	# Configure Claude Code settings.json
 	configure_claude_settings || return 1
@@ -544,6 +551,15 @@ settings = {
                         'command': '$POST_HOOK_COMMAND'
                     }
                 ]
+            },
+            {
+                'matcher': '.*',
+                'hooks': [
+                    {
+                        'type': 'command',
+                        'command': '$CREDENTIAL_SCRUB_COMMAND'
+                    }
+                ]
             }
         ]
     }
@@ -577,12 +593,15 @@ for h in hooks.get('PreToolUse', []):
             has_pre = True
 
 has_post = False
+has_scrub = False
 for h in hooks.get('PostToolUse', []):
     for sub in h.get('hooks', []):
         if 'mcp_task_post_hook' in sub.get('command', ''):
             has_post = True
+        if 'credential-transcript-scrub' in sub.get('command', ''):
+            has_scrub = True
 
-if has_pre and has_post:
+if has_pre and has_post and has_scrub:
     sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
@@ -627,15 +646,28 @@ post_hook_entry = {
     ]
 }
 
+credential_scrub_entry = {
+    'matcher': '.*',
+    'hooks': [
+        {
+            'type': 'command',
+            'command': '$CREDENTIAL_SCRUB_COMMAND'
+        }
+    ]
+}
+
 if 'PreToolUse' not in settings['hooks']:
     settings['hooks']['PreToolUse'] = [hook_entry]
 elif not has_hook(settings['hooks']['PreToolUse'], 'git_safety_guard'):
     settings['hooks']['PreToolUse'].append(hook_entry)
 
 if 'PostToolUse' not in settings['hooks']:
-    settings['hooks']['PostToolUse'] = [post_hook_entry]
-elif not has_hook(settings['hooks']['PostToolUse'], 'mcp_task_post_hook'):
-    settings['hooks']['PostToolUse'].append(post_hook_entry)
+    settings['hooks']['PostToolUse'] = [post_hook_entry, credential_scrub_entry]
+else:
+    if not has_hook(settings['hooks']['PostToolUse'], 'mcp_task_post_hook'):
+        settings['hooks']['PostToolUse'].append(post_hook_entry)
+    if not has_hook(settings['hooks']['PostToolUse'], 'credential-transcript-scrub'):
+        settings['hooks']['PostToolUse'].append(credential_scrub_entry)
 
 path = '$CLAUDE_SETTINGS'
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
@@ -669,6 +701,12 @@ uninstall_hook() {
 	else
 		print_info "Post hook script not found (already removed)"
 	fi
+	if [[ -f "$CREDENTIAL_SCRUB_SCRIPT" ]]; then
+		rm "$CREDENTIAL_SCRUB_SCRIPT"
+		print_success "Removed $CREDENTIAL_SCRUB_SCRIPT"
+	else
+		print_info "Credential scrub hook not found (already removed)"
+	fi
 
 	# Remove from Claude settings
 	if [[ -f "$CLAUDE_SETTINGS" ]]; then
@@ -696,7 +734,7 @@ post_hooks = settings.get('hooks', {}).get('PostToolUse', [])
 post_filtered = []
 for h in post_hooks:
     sub_hooks = h.get('hooks', [])
-    sub_filtered = [s for s in sub_hooks if 'mcp_task_post_hook' not in s.get('command', '')]
+    sub_filtered = [s for s in sub_hooks if 'mcp_task_post_hook' not in s.get('command', '') and 'credential-transcript-scrub' not in s.get('command', '')]
     if sub_filtered:
         h['hooks'] = sub_filtered
         post_filtered.append(h)
@@ -800,6 +838,34 @@ _check_status_gh_wrapper_guard() {
 	return 0
 }
 
+_check_status_credential_scrub_hook() {
+	if [[ -f "$CREDENTIAL_SCRUB_SCRIPT" ]] && [[ -x "$CREDENTIAL_SCRUB_SCRIPT" ]]; then
+		print_success "credential-transcript-scrub: $CREDENTIAL_SCRUB_SCRIPT"
+	elif [[ -f "$CREDENTIAL_SCRUB_SCRIPT" ]]; then
+		print_warning "credential-transcript-scrub: installed but not executable"
+		return 1
+	else
+		print_warning "credential-transcript-scrub: not installed (run: install-hooks-helper.sh install)"
+		return 1
+	fi
+	if [[ -f "$CLAUDE_SETTINGS" ]] && python3 -c "
+import json, sys
+with open('$CLAUDE_SETTINGS') as f:
+    d = json.load(f)
+for h in d.get('hooks', {}).get('PostToolUse', []):
+    for sub in h.get('hooks', []):
+        if 'credential-transcript-scrub' in sub.get('command', ''):
+            sys.exit(0)
+sys.exit(1)
+" 2>/dev/null; then
+		print_success "  PostToolUse registration: present"
+	else
+		print_warning "  PostToolUse registration: missing (run: install-hooks-helper.sh install)"
+		return 1
+	fi
+	return 0
+}
+
 _check_status_precommit_hook() {
 	local common_dir pc_hook_path
 	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
@@ -843,6 +909,11 @@ check_status() {
 	_check_status_hook_script || all_ok=false
 	_check_status_python || all_ok=false
 	_check_status_claude_settings || all_ok=false
+
+	echo ""
+	echo "Credential Transcript Scrub Hook (GH#20207)"
+	echo "--------------------------------------------"
+	_check_status_credential_scrub_hook || all_ok=false
 
 	echo ""
 	echo "GH Wrapper Guard (pre-push)"

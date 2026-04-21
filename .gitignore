@@ -57,7 +57,9 @@ authorized_keys
 !.agents/scripts/tests/test-secret-helper.sh
 !.agents/scripts/tests/test-credential-sanitizer.sh
 !.agents/scripts/tests/test-credential-emission-guard.sh
+!.agents/scripts/tests/test-credential-transcript-scrub.sh
 !.agents/hooks/credential-emission-pre-push.sh
+!.agents/hooks/credential-transcript-scrub.py
 
 # Exception for secret handling reference doc (guidance, not actual secrets)
 !.agents/reference/secret-handling.md
