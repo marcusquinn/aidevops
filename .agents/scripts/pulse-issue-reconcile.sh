@@ -1124,22 +1124,25 @@ _post_parent_decomposition_nudge() {
 	local max_nudge_count="${MAX_PARENT_NUDGE_COUNT:-3}"
 
 	# Idempotency check: skip if marker already present in any comment.
-	# --paginate + --slurp ensures we read the FULL comment history; without
-	# it the default page size is 30 and the marker may be missed on long-
-	# running parents, causing duplicate comments. --slurp makes jq receive
-	# the page array stream as a single array-of-arrays which we flatten.
 	#
-	# GH#20219: changed from fail-open to fail-CLOSED. The original design
-	# fell through to posting on API failure ("better than missing the nudge").
-	# In practice, transient API errors caused EVERY pulse cycle from EVERY
-	# runner to post a new nudge — 19+ comments in 6h on #20161. The nudge
-	# is advisory (not safety-critical), so missing one cycle is harmless;
-	# posting 19 duplicates is not.
+	# t2572 + GH#20219: the original --slurp+--jq query was rejected by `gh
+	# api` ("the --slurp option is not supported with --jq or --template"),
+	# silently returning empty and defeating the dedup check — every pulse
+	# cycle posted a fresh nudge (23 on #20001, 19+ on #20161, 4 on
+	# awardsapp#2546 from two runners in minutes).
+	#
+	# Fix (t2572): streaming --paginate + --jq (no --slurp). Per-page jq
+	# emits matching .id values; wc -l counts across all pages.
+	#
+	# Defence-in-depth (GH#20219): fail-CLOSED on API error (skip the cycle
+	# rather than post) + MAX_PARENT_NUDGE_COUNT cap bounds total nudges
+	# even if the dedup query somehow returns 0 on a populated thread. The
+	# nudge is advisory, not safety-critical; missing a cycle is harmless,
+	# duplicating is not.
 	local existing=""
 	existing=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
-		--slurp \
-		--jq "[.[] | .[] | select(.body | contains(\"${marker}\"))] | length" \
-		2>/dev/null) || existing=""
+		--jq ".[] | select(.body | contains(\"${marker}\")) | .id" \
+		2>/dev/null | wc -l | tr -d ' ') || existing=""
 
 	# Fail-closed: if we cannot determine the count, skip this cycle.
 	if [[ ! "$existing" =~ ^[0-9]+$ ]]; then
@@ -1219,15 +1222,14 @@ _compute_parent_nudge_age_hours() {
 
 	[[ -n "$slug" && "$parent_num" =~ ^[0-9]+$ ]] || return 0
 
-	# --paginate + --slurp: same rationale as the idempotency checks above.
-	# The nudge marker may live on page 2+ for long-running parents; without
-	# pagination the age check would always return empty for them and the
-	# 7-day escalation gate would never fire.
+	# t2572: streaming pattern — --paginate + --jq (no --slurp, which `gh api`
+	# rejects). Per-page jq emits matching .created_at values; `head -n1`
+	# yields the first match across all pages (chronological order = oldest,
+	# which is what the 7-day escalation gate wants).
 	local nudge_created_at
 	nudge_created_at=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
-		--slurp \
-		--jq '[.[] | .[] | select(.body | contains("<!-- parent-needs-decomposition -->")) | .created_at] | first // ""' \
-		2>/dev/null) || nudge_created_at=""
+		--jq '.[] | select(.body | contains("<!-- parent-needs-decomposition -->")) | .created_at' \
+		2>/dev/null | head -n1) || nudge_created_at=""
 	[[ -n "$nudge_created_at" ]] || return 0
 
 	# Convert ISO-8601 to epoch. macOS `date` needs -j -f; GNU `date` uses -d.
@@ -1287,12 +1289,14 @@ _post_parent_decomposition_escalation() {
 	# Escalation is rarer than nudging but the same TOCTOU race applies in
 	# multi-runner fleets. Fail-closed: if we cannot determine the count,
 	# skip this cycle (escalation is advisory, not safety-critical).
+	#
+	# t2572: streaming --paginate + --jq (no --slurp — gh api rejects the
+	# combination). See _post_parent_decomposition_nudge for the full story.
 	local max_escalation_count="${MAX_PARENT_ESCALATION_COUNT:-2}"
 	local existing=""
 	existing=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
-		--slurp \
-		--jq "[.[] | .[] | select(.body | contains(\"${marker}\"))] | length" \
-		2>/dev/null) || existing=""
+		--jq ".[] | select(.body | contains(\"${marker}\")) | .id" \
+		2>/dev/null | wc -l | tr -d ' ') || existing=""
 	if [[ ! "$existing" =~ ^[0-9]+$ ]]; then
 		echo "[pulse-wrapper] Escalation dedup: API/jq failure for #${parent_num} in ${slug} — skipping (fail-closed, GH#20219)" >>"$LOGFILE"
 		return 1
