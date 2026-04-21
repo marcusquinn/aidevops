@@ -780,7 +780,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
-- [ ] t2686 fix: quality-debt NMR trap — broaden trust bar (admin collaborators) + extend NMR sig detector to recognise source:review-feedback marker/label so auto_approve_maintainer_issues can clear NMR applied by quality-feedback-helper.sh. Stranded 10 issues on awardsapp/awardsapp (#2572-#2578, #2583-#2585) authored by alex-solovyev (admin). Aligns with pulse-merge t2411/t2449 trust bar. #bugfix #pulse #quality-debt ~2h ref:GH#20299 #auto-dispatch #interactive started:2026-04-21
+- [x] t2686 fix: quality-debt NMR trap — broaden trust bar (admin collaborators) + extend NMR sig detector to recognise source:review-feedback marker/label so auto_approve_maintainer_issues can clear NMR applied by quality-feedback-helper.sh. Stranded 10 issues on awardsapp/awardsapp (#2572-#2578, #2583-#2585) authored by alex-solovyev (admin). Aligns with pulse-merge t2411/t2449 trust bar. #bugfix #pulse #quality-debt ~2h ref:GH#20299 #auto-dispatch #interactive started:2026-04-21 pr:#20304 completed:2026-04-21
 
 - [x] t1543 feat: OAuth multi-account pool plugin for provider credential rotation — add pool module to opencode-aidevops plugin enabling multiple Anthropic OAuth accounts with automatic rotation on rate limits (429). Uses existing plugin auth hook + custom fetch wrapper. Includes /model-accounts-pool tool for account management. #feature #plugin #auth ~4h ref:GH#5243 started:2026-03-19 pr:#5244 completed:2026-03-19
 
