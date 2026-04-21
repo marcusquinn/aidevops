@@ -809,36 +809,36 @@ validate_repo_root_files() {
 # Single script, mode selected by HOOK_MODE env var or $(basename "$0").
 
 main_pre_commit() {
-	echo -e "${BLUE}Pre-commit Quality Validation${NC}"
-	echo -e "${BLUE}================================${NC}"
+	echo -e "${BLUE}Pre-commit Quality Validation${NC}" >&2
+	echo -e "${BLUE}================================${NC}" >&2
 
 	# Always run TODO.md validation (even if no shell files changed)
 	validate_duplicate_task_ids || {
 		print_error "Commit rejected: duplicate task IDs"
 		exit 1
 	}
-	echo ""
+	echo "" >&2
 
 	validate_task_counter_monotonic || {
 		print_error "Commit rejected: .task-counter regression"
 		exit 1
 	}
-	echo ""
+	echo "" >&2
 
 	validate_todo_completions || true
-	echo ""
+	echo "" >&2
 
 	validate_parent_subtask_blocking || {
 		print_error "Commit rejected: parent tasks with open subtasks"
 		exit 1
 	}
-	echo ""
+	echo "" >&2
 
 	validate_repo_root_files || {
 		print_error "Commit rejected: new repo root files not in allowlist"
 		exit 1
 	}
-	echo ""
+	echo "" >&2
 
 	# Get modified shell files
 	local modified_files=()
@@ -853,23 +853,23 @@ main_pre_commit() {
 	fi
 
 	print_info "Checking ${#modified_files[@]} modified shell files:"
-	printf '  %s\n' "${modified_files[@]}"
-	echo ""
+	printf '  %s\n' "${modified_files[@]}" >&2
+	echo "" >&2
 
 	local total_violations=0
 
 	# Run local validation checks (fast — no network calls)
 	validate_return_statements "${modified_files[@]}" || ((total_violations += $?))
-	echo ""
+	echo "" >&2
 
 	validate_positional_parameters "${modified_files[@]}" || ((total_violations += $?))
-	echo ""
+	echo "" >&2
 
 	validate_string_literals "${modified_files[@]}" || ((total_violations += $?))
-	echo ""
+	echo "" >&2
 
 	run_shellcheck "${modified_files[@]}" || ((total_violations += $?))
-	echo ""
+	echo "" >&2
 
 	# Final decision
 	if [[ $total_violations -eq 0 ]]; then
@@ -877,13 +877,13 @@ main_pre_commit() {
 		return 0
 	else
 		print_error "Quality violations detected ($total_violations total)"
-		echo ""
+		echo "" >&2
 		print_info "To fix issues automatically, run:"
 		print_info "  ./.agents/scripts/quality-fix.sh"
-		echo ""
+		echo "" >&2
 		print_info "To check current status, run:"
 		print_info "  ./.agents/scripts/linters-local.sh"
-		echo ""
+		echo "" >&2
 		print_info "To bypass this check (not recommended), use:"
 		print_info "  git commit --no-verify"
 
@@ -892,16 +892,16 @@ main_pre_commit() {
 }
 
 main_pre_push() {
-	echo -e "${BLUE}Pre-push Quality Validation${NC}"
-	echo -e "${BLUE}================================${NC}"
+	echo -e "${BLUE}Pre-push Quality Validation${NC}" >&2
+	echo -e "${BLUE}================================${NC}" >&2
 
 	local total_violations=0
 
 	check_secrets || ((total_violations += $?))
-	echo ""
+	echo "" >&2
 
 	check_quality_standards
-	echo ""
+	echo "" >&2
 
 	# Optional CodeRabbit CLI review (if available)
 	if [[ -f ".agents/scripts/coderabbit-cli.sh" ]] && command -v coderabbit &>/dev/null; then
@@ -911,7 +911,7 @@ main_pre_push() {
 		else
 			print_info "CodeRabbit CLI review skipped (setup required)"
 		fi
-		echo ""
+		echo "" >&2
 	fi
 
 	# Final decision
@@ -920,7 +920,7 @@ main_pre_push() {
 		return 0
 	else
 		print_error "Quality violations detected ($total_violations total)"
-		echo ""
+		echo "" >&2
 		print_info "To bypass this check (not recommended), use:"
 		print_info "  git push --no-verify"
 

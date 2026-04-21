@@ -1442,9 +1442,9 @@ _clean_scan_merged() {
 				merge_type=$(_clean_classify_worktree "$worktree_path" "$worktree_branch" "$default_br" "$remote_unknown" "$merged_prs" "$open_prs" "$force_merged" "$closed_prs")
 				if [[ -n "$merge_type" ]]; then
 					found_any=true
-					echo -e "  ${YELLOW}$worktree_branch${NC} ($merge_type)"
-					echo "    $worktree_path"
-					echo ""
+					echo -e "  ${YELLOW}$worktree_branch${NC} ($merge_type)" >&2
+					echo "    $worktree_path" >&2
+					echo "" >&2
 				fi
 			fi
 			worktree_path=""
@@ -1489,8 +1489,8 @@ _clean_remove_merged() {
 					if worktree_has_changes "$worktree_path" && [[ "$force_merged" == "true" ]]; then
 						use_force=true
 					fi
-					echo -e "${BLUE}Removing $worktree_branch...${NC}"
-					# Clean up heavy reproducible directories first to speed up removal
+				echo -e "${BLUE}Removing $worktree_branch...${NC}" >&2
+				# Clean up heavy reproducible directories first to speed up removal
 					# (node_modules, .next, .turbo can have 100k+ files — rm -rf is faster than trash)
 					rm -rf "$worktree_path/node_modules" 2>/dev/null || true
 					rm -rf "$worktree_path/.next" 2>/dev/null || true
@@ -1511,9 +1511,9 @@ _clean_remove_merged() {
 							removed=true
 						fi
 					fi
-					if [[ "$removed" != "true" ]]; then
-						echo -e "${RED}Failed to remove $worktree_branch - may have uncommitted changes${NC}"
-					else
+				if [[ "$removed" != "true" ]]; then
+					echo -e "${RED}Failed to remove $worktree_branch - may have uncommitted changes${NC}" >&2
+				else
 						# Unregister ownership (t189)
 						unregister_worktree "$worktree_path"
 						# Localdev integration (t1224.8): auto-remove branch route
@@ -1611,8 +1611,8 @@ cmd_clean() {
 		return 1
 	fi
 
-	echo -e "${BOLD}Checking for worktrees with merged branches...${NC}"
-	echo ""
+	echo -e "${BOLD}Checking for worktrees with merged branches...${NC}" >&2
+	echo "" >&2
 
 	local default_branch
 	default_branch=$(get_default_branch)
@@ -1637,7 +1637,7 @@ cmd_clean() {
 
 	# First pass: scan and display merged worktrees
 	if ! _clean_scan_merged "$default_branch" "$main_worktree_path" "$remote_state_unknown" "$merged_pr_branches" "$open_pr_branches" "$force_merged" "$closed_pr_branches"; then
-		echo -e "${GREEN}No merged worktrees to clean up${NC}"
+		echo -e "${GREEN}No merged worktrees to clean up${NC}" >&2
 		return 0
 	fi
 
@@ -1645,17 +1645,17 @@ cmd_clean() {
 	if [[ "$auto_mode" == "true" ]]; then
 		response="y"
 	else
-		echo ""
-		echo -e "${YELLOW}Remove these worktrees? [y/N]${NC}"
+		echo "" >&2
+		echo -e "${YELLOW}Remove these worktrees? [y/N]${NC}" >&2
 		read -r response
 	fi
 
 	if [[ "$response" =~ ^[Yy]$ ]]; then
 		# Second pass: remove merged worktrees
 		_clean_remove_merged "$default_branch" "$main_worktree_path" "$remote_state_unknown" "$merged_pr_branches" "$open_pr_branches" "$force_merged" "$closed_pr_branches"
-		echo -e "${GREEN}Cleanup complete${NC}"
+		echo -e "${GREEN}Cleanup complete${NC}" >&2
 	else
-		echo "Cancelled"
+		echo "Cancelled" >&2
 	fi
 
 	return 0
