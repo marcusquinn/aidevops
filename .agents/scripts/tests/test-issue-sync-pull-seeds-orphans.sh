@@ -151,7 +151,7 @@ malformed_line=$(grep -E '^\- \[ \] ' "$todo_d" | grep -v t0001 || echo "")
 check "$ok" "(d) malformed title — no spurious entry seeded" "got: '$malformed_line'"
 rm -f "$todo_d"
 
-# ─── (e) parent-task label → #parent tag, no #auto-dispatch ─────────────────
+# ─── (e) parent-task label maps to #parent tag ──────────────────────────────
 
 todo_e=$(make_todo)
 # Issue has both parent-task and auto-dispatch labels

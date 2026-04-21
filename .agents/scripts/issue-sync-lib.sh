@@ -1558,7 +1558,7 @@ detect_parent_task_id() {
 #   Empty string if no mappable labels.
 _labels_json_to_tags() {
 	local labels_json="$1"
-	[[ -z "$labels_json" || "$labels_json" == "null" || "$labels_json" == "[]" ]] && return 0
+	[[ -z "$labels_json" || "$labels_json" == "[]" ]] && return 0
 
 	local names
 	names=$(printf '%s' "$labels_json" | jq -r '.[].name' 2>/dev/null || echo "")
@@ -1587,7 +1587,7 @@ _labels_json_to_tags() {
 
 	[[ -z "$tags" ]] && return 0
 	# Sort deterministically (stable) so test assertions are not order-sensitive
-	printf '%s' "$tags" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//'
+	printf '%s' "$tags" | tr ' ' '\n' | sort -u | paste -sd ' ' -
 	return 0
 }
 
