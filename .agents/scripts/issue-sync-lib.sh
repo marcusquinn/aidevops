@@ -756,7 +756,7 @@ _post_parent_task_no_markers_warning() {
 	# combine --slurp with --jq (gh api rejects). Stream per-page and count.
 	existing=$(gh api --paginate "repos/${slug}/issues/${issue_num}/comments" \
 		--jq ".[] | select(.body | contains(\"${marker}\")) | .id" \
-		2>/dev/null | wc -l | tr -d ' ') || existing=""
+		| wc -l | tr -d ' ') || existing=""
 	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
 		return 1
 	fi
