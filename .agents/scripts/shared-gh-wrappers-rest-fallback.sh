@@ -705,11 +705,20 @@ _rest_issue_list() {
 
 	local _query="state=${state}&per_page=${limit}"
 	if [[ ${#labels[@]} -gt 0 ]]; then
-		local _labels_csv
-		_labels_csv=$(IFS=','; printf '%s' "${labels[*]}")
-		_query="${_query}&labels=${_labels_csv}"
+		local _labels_encoded=""
+		local _label
+		for _label in "${labels[@]}"; do
+			local _enc
+			_enc=$(jq -rn --arg v "$_label" '$v | @uri')
+			_labels_encoded="${_labels_encoded:+${_labels_encoded}%2C}${_enc}"
+		done
+		_query="${_query}&labels=${_labels_encoded}"
 	fi
-	[[ -n "$assignee" ]] && _query="${_query}&assignee=${assignee}"
+	if [[ -n "$assignee" ]]; then
+		local _assignee_encoded
+		_assignee_encoded=$(jq -rn --arg v "$assignee" '$v | @uri')
+		_query="${_query}&assignee=${_assignee_encoded}"
+	fi
 
 	local _path="/repos/${repo}/issues?${_query}"
 	if [[ -n "$jq_expr" ]]; then
