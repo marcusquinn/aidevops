@@ -271,8 +271,9 @@ _cas_fetch_and_pin() {
 	# network I/O.  index.lock contention is caught by the wall-clock timeout
 	# in allocate_online().  Pass via -c so git actually reads them (env vars
 	# GIT_HTTP_LOW_SPEED_LIMIT/TIME are not recognised by git).
+	# GH#20208: redirect stdout to /dev/null (see _cas_build_and_push for details).
 	if ! git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH"; then
+		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null; then
 		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}"
 	fi
 
@@ -290,7 +291,7 @@ _cas_fetch_and_pin() {
 		local bootstrap_result
 		bootstrap_result=$(bootstrap_remote_counter "$repo_path") || true
 		git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-			fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" || true
+			fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
 		pinned_sha=$(git rev-parse "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null) || {
 			log_error "BOOTSTRAP_COUNTER_FAILED: cannot resolve ref after bootstrap"
 			return 1
@@ -339,16 +340,23 @@ _cas_build_and_push() {
 	# networks.  index.lock contention is caught by the wall-clock timeout in
 	# allocate_online().  Pass via -c so git actually reads them (env vars
 	# GIT_HTTP_LOW_SPEED_LIMIT/TIME are not recognised by git).
+	#
+	# GH#20208: redirect stdout to /dev/null. `git push -q` suppresses git's
+	# own progress output, but it does NOT suppress stdout from any pre-push
+	# hooks that git invokes. When _cas_build_and_push runs inside a command
+	# substitution (allocate_counter_cas → $(...)), any hook stdout bleeds
+	# into the captured result and poisons downstream arithmetic parsing.
+	# Hook stderr stays visible for error diagnosis.
 	if ! git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-		push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}"; then
+		push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null; then
 		log_warn "Push failed (conflict — another session claimed an ID)"
 		git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-			fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" || true
+			fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
 		return 2
 	fi
 
 	git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" || true
+		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
 	return 0
 }
 
