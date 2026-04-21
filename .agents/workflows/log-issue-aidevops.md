@@ -114,11 +114,15 @@ Before composing, enumerate every manual workaround you applied during the curre
 
 ### Step 3: Check for Duplicates
 
+**3a — Keyword search (catches semantic duplicates):**
+
 ```bash
 gh issue list -R marcusquinn/aidevops --state all --search "KEYWORDS" --limit 10
 ```
 
 If duplicates found, present them and ask: add comment to existing / create new / review first.
+
+> **Note on indexing lag:** GitHub's search index has a 2–10 second lag after an issue is created. This step catches semantic matches in existing issues but cannot detect an identical issue filed seconds ago in the same session. The deterministic fingerprint check at Step 5.5 closes that gap — do not skip it.
 
 ### Step 3.5: Customization Routing
 
@@ -240,6 +244,30 @@ For non-bug reports (enhancements, questions), use the shorter template without 
 
 Show the user: title, body preview, label. Offer: create / edit title / edit description / cancel.
 
+### Step 5.5: Fingerprint Pre-Check (deterministic dedup)
+
+Before creating the issue, run a fingerprint check against this session and prior sessions.
+This check is not subject to GitHub's search index lag — it reads a local state file.
+
+```bash
+~/.aidevops/agents/scripts/log-issue-helper.sh check-fingerprint "EXACT_TITLE" "EXACT_BODY"
+```
+
+Replace `EXACT_TITLE` and `EXACT_BODY` with the title and body from Step 4/5.
+
+**If output is `OK`**: proceed to Step 6.
+
+**If output starts with `DUPLICATE:NNN:SECONDS`** (e.g., `DUPLICATE:20312:8`):
+- **Do NOT create a new issue.** The body hash matches issue #NNN filed NNN seconds ago.
+- Inform the user: "Issue #NNN was already filed NNN seconds ago with an identical body."
+- Offer the user:
+  1. View the existing issue: `gh issue view NNN -R marcusquinn/aidevops`
+  2. Add a comment to the existing issue (if new information has emerged)
+  3. Proceed with a new issue only if the user explicitly confirms a different scope is intended
+
+This step is **MANDATORY** — it is the primary guard against the indexing-lag race window
+documented in GH#20322. Do not skip it even if Step 3 returned no results.
+
 ### Step 6: Create the Issue
 
 ```bash
@@ -251,6 +279,22 @@ EOF
 )" \
   --label "LABEL"
 ```
+
+### Step 6.5: Record Fingerprint
+
+After a successful `gh issue create`, extract the issue number from the URL and record the fingerprint
+so future sessions can detect this as a duplicate:
+
+```bash
+# Extract issue number from the URL (e.g., https://github.com/marcusquinn/aidevops/issues/20312 → 20312)
+ISSUE_NUMBER=<number from created issue URL>
+~/.aidevops/agents/scripts/log-issue-helper.sh record-fingerprint "EXACT_TITLE" "EXACT_BODY" "$ISSUE_NUMBER"
+```
+
+This writes to `~/.aidevops/state/log-issue-fingerprints.jsonl`. On transient failures where
+`gh issue create` may have succeeded server-side, re-running the command will be caught by the
+Step 5.5 fingerprint check within the dedup window (default: 120 seconds, configurable via
+`LOG_ISSUE_DEDUP_WINDOW_SECONDS`).
 
 ### Step 7: Confirm Success
 
