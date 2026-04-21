@@ -285,18 +285,11 @@ _create_health_issue() {
 	# caller has AIDEVOPS_HEADLESS set (defense-in-depth; stats-wrapper.sh
 	# already exports AIDEVOPS_HEADLESS=true, but this guards test contexts
 	# and any future invocation path that bypasses that wrapper).
-	local _saved_session_origin="${AIDEVOPS_SESSION_ORIGIN:-__unset__}"
-	export AIDEVOPS_SESSION_ORIGIN=worker
 	local health_issue_number
-	health_issue_number=$(gh_create_issue --repo "$repo_slug" \
+	health_issue_number=$(AIDEVOPS_SESSION_ORIGIN=worker gh_create_issue --repo "$repo_slug" \
 		--title "${runner_prefix} starting..." \
 		--body "$health_body" \
 		--label "$role_label" --label "$runner_user" --label "source:health-dashboard" --label "persistent" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
-	if [[ "$_saved_session_origin" == "__unset__" ]]; then
-		unset AIDEVOPS_SESSION_ORIGIN
-	else
-		export AIDEVOPS_SESSION_ORIGIN="$_saved_session_origin"
-	fi
 
 	if [[ -z "$health_issue_number" ]]; then
 		echo "[stats] Health issue: could not create for ${repo_slug}" >>"$LOGFILE"
