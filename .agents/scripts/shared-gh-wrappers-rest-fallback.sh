@@ -411,6 +411,47 @@ _gh_rest_compute_target_set() {
 }
 
 #######################################
+# _gh_pr_autodetect_head
+# Returns the current git branch name for use as --head when omitted.
+# Returns empty string when in detached HEAD state or outside a git repo.
+# Emits an [INFO] log line when auto-detect fires.
+#######################################
+_gh_pr_autodetect_head() {
+	local _branch
+	_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+	if [[ -n "$_branch" && "$_branch" != "HEAD" ]]; then
+		print_info "gh-wrapper: auto-detected --head=${_branch}"
+		printf '%s\n' "$_branch"
+	fi
+	return 0
+}
+
+#######################################
+# _gh_pr_autodetect_base <repo>
+# Returns the repository's default branch for use as --base when omitted.
+# Resolution order:
+#   1. gh api /repos/{repo} --jq .default_branch (REST, no GraphQL cost)
+#   2. git symbolic-ref refs/remotes/origin/HEAD
+#   3. "main" (final fallback)
+# Emits an [INFO] log line when auto-detect fires.
+#######################################
+_gh_pr_autodetect_base() {
+	local _repo="${1:-}"
+	local _base=""
+	if [[ -n "$_repo" ]]; then
+		_base=$(gh api "/repos/${_repo}" --jq '.default_branch' 2>/dev/null)
+	fi
+	if [[ -z "$_base" ]]; then
+		_base=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+			| sed 's@^refs/remotes/origin/@@')
+	fi
+	[[ -z "$_base" ]] && _base="main"
+	print_info "gh-wrapper: auto-detected --base=${_base}"
+	printf '%s\n' "$_base"
+	return 0
+}
+
+#######################################
 # _gh_pr_create_rest: POST /repos/{owner}/{repo}/pulls.
 # Parses gh-style args (--head, --base, --title, --body, --body-file, --draft,
 # --label) into a REST payload. Labels are applied via a separate
@@ -418,11 +459,13 @@ _gh_rest_compute_target_set() {
 # GitHub pulls endpoint does not accept a labels field at creation time.
 # Emits the PR html_url on stdout, mirroring `gh pr create`. Returns underlying
 # gh api exit code.
+# When --head or --base are omitted, auto-detects from git HEAD / repo
+# default branch respectively (see _gh_pr_autodetect_head/base above).
 #######################################
 _gh_pr_create_rest() {
 	local title=""
 	local head=""
-	local base="main"
+	local base=""
 	local body=""
 	local body_file=""
 	local repo=""
@@ -462,8 +505,14 @@ _gh_pr_create_rest() {
 		return 1
 	fi
 	if [[ -z "$head" ]]; then
-		printf '_gh_pr_create_rest: --head is required\n' >&2
-		return 1
+		head=$(_gh_pr_autodetect_head)
+		if [[ -z "$head" ]]; then
+			printf '_gh_pr_create_rest: --head is required\n' >&2
+			return 1
+		fi
+	fi
+	if [[ -z "$base" ]]; then
+		base=$(_gh_pr_autodetect_base "$repo")
 	fi
 
 	local tmp_body="" tmp_body_owned=0

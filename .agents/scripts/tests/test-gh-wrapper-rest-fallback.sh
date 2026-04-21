@@ -42,6 +42,8 @@
 #  15. gh_create_pr falls back to REST when primary fails AND exhausted
 #  16. gh_create_pr does NOT fall back when primary succeeds
 #  17. gh_create_pr does NOT fall back when primary fails but graphql healthy
+#  18. _gh_pr_create_rest auto-detects --head from git HEAD when omitted
+#  19. _gh_pr_create_rest auto-detects --base from repo default_branch via REST
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -135,6 +137,13 @@ gh() {
 	if [[ "$1" == "api" && "$2" =~ ^/repos/.+/issues/[0-9]+$ ]]; then
 		# Return pre-canned labels/assignees from env for label delta tests
 		printf '%s\n' "${STUB_CURRENT_LABELS:-bug}"
+		return 0
+	fi
+
+	# gh api /repos/{owner}/{repo} (GET, no -X, no /issues suffix) — default branch lookup
+	# STUB_REPO_DEFAULT_BRANCH controls the returned value (default: main).
+	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+$ ]]; then
+		printf '%s\n' "${STUB_REPO_DEFAULT_BRANCH:-main}"
 		return 0
 	fi
 
@@ -526,6 +535,45 @@ fi
 
 unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
+
+# =============================================================================
+# Test 18: _gh_pr_create_rest auto-detects --head from git HEAD when omitted
+# Verifies that omitting --head causes the current branch to be used as head.
+# =============================================================================
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+: >"$GH_CALLS"
+_gh_pr_create_rest \
+	--repo "owner/repo" \
+	--title "t9999: auto-head test" \
+	--base "main" \
+	--body "auto-detect head body" >/dev/null 2>&1 || true
+
+if [[ -n "$CURRENT_BRANCH" ]] && grep -qE "head=${CURRENT_BRANCH}" "$GH_CALLS" 2>/dev/null; then
+	pass "_gh_pr_create_rest auto-detects --head from git HEAD when omitted"
+else
+	fail "_gh_pr_create_rest auto-detects --head from git HEAD when omitted" \
+		"expected head=${CURRENT_BRANCH} in calls; GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+# =============================================================================
+# Test 19: _gh_pr_create_rest auto-detects --base from repo default_branch
+# Uses STUB_REPO_DEFAULT_BRANCH=develop to verify REST resolution path.
+# =============================================================================
+: >"$GH_CALLS"
+export STUB_REPO_DEFAULT_BRANCH="develop"
+_gh_pr_create_rest \
+	--repo "owner/repo" \
+	--title "t9999: auto-base test" \
+	--head "feature/t9999-auto-base" \
+	--body "auto-detect base body" >/dev/null 2>&1 || true
+
+if grep -qE "base=develop" "$GH_CALLS" 2>/dev/null; then
+	pass "_gh_pr_create_rest auto-detects --base from repo default_branch via REST"
+else
+	fail "_gh_pr_create_rest auto-detects --base from repo default_branch via REST" \
+		"expected base=develop in calls; GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_REPO_DEFAULT_BRANCH
 
 # =============================================================================
 # Summary
