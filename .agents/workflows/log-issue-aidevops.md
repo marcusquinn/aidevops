@@ -34,10 +34,10 @@ All issues from non-collaborators are gated behind `needs-maintainer-review` —
 
 | Workaround applied | Likely systemic fix |
 |---|---|
-| `gh issue edit --remove-assignee` after `#auto-dispatch` filing | t2157/t2218 bug — auto-assign should skip `auto-dispatch` label |
 | Applied `complexity-bump-ok` label to bypass a false-positive gate | Gate needs refinement for specific false-positive class |
 | `sudo aidevops approve` to unblock auto-approved issue stuck in NMR | NMR classification logic has a gap |
 | Manually ran `pre-edit-check.sh` because hook didn't fire | Hook installation or detection issue |
+| `gh pr edit --base main` after an `origin:interactive` PR stacked on a feature branch | Stacked-PR retarget logic needs extending to grandchildren |
 
 ## Pre-composition Checks (MANDATORY)
 
