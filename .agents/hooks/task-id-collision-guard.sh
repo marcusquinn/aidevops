@@ -192,6 +192,42 @@ _branch_has_claim() {
 }
 
 # ---------------------------------------------------------------------------
+# Check whether a given t-ID has a matching claim commit anywhere in the
+# repo history (git log --all). This catches t-IDs that were claimed in
+# prior merged PRs and are now being referenced in prose (e.g., "the t2574
+# REST fallback covers..."). The claim commit subject must match
+# `chore: claim tNNN[..tMMM] [nonce]` (single or range form).
+#
+# Returns 0 if a claim commit is found, 1 otherwise.
+# ---------------------------------------------------------------------------
+_repo_has_claim() {
+	local tid="${1:-}"
+	local num
+	num=$(printf '%s' "$tid" | tr -d 't')
+	if ! [[ "$num" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+	# Look for an exact single-ID claim first.
+	if git log --all --format='%s' 2>/dev/null |
+		grep -qE "^chore: claim t0*${num}( |\$|\\[)"; then
+		return 0
+	fi
+	# Look for a range claim that covers num: chore: claim tA..tB
+	local line low high
+	while IFS= read -r line; do
+		# Extract tA and tB from "chore: claim t00A..t00B [nonce]"
+		if [[ "$line" =~ ^chore:\ claim\ t0*([0-9]+)\.\.t0*([0-9]+) ]]; then
+			low="${BASH_REMATCH[1]}"
+			high="${BASH_REMATCH[2]}"
+			if ((10#$num >= 10#$low && 10#$num <= 10#$high)); then
+				return 0
+			fi
+		fi
+	done < <(git log --all --format='%s' 2>/dev/null)
+	return 1
+}
+
+# ---------------------------------------------------------------------------
 # Extract all tNNN references from text.
 # Outputs one per line.
 # ---------------------------------------------------------------------------
@@ -350,15 +386,22 @@ _check_message() {
 			# Phase 1 (t2567 / GH#20001): reuse-without-claim detection.
 			# A t-ID ≤ counter exists globally, but must be claimed on THIS
 			# branch. If no matching `chore: claim tNNN` commit is found on
-			# merge-base..HEAD, fall through to the linked-issue check so the
-			# worker can still authorise via `Resolves/Closes/Fixes/Ref/For
-			# #NNN` (matching issue title). If neither claim commit nor
-			# linked issue confirms, this becomes a violation (reuse).
+			# merge-base..HEAD, check if it was claimed anywhere in repo history
+			# (git log --all) — this handles cross-references to prior merged PRs.
+			# If repo-wide claim exists, allow it. Otherwise, fall through to the
+			# linked-issue check so the worker can still authorise via
+			# `Resolves/Closes/Fixes/Ref/For #NNN` (matching issue title).
+			# If neither claim commit nor linked issue confirms, this becomes a
+			# violation (reuse).
 			if _branch_has_claim "$tid"; then
 				_debug "$tid claimed on this branch — allowed"
 				continue
 			fi
-			_debug "$tid ≤ counter but no branch claim — verifying via linked issues"
+			if _repo_has_claim "$tid"; then
+				_debug "$tid claimed in repo history — allowed (cross-reference)"
+				continue
+			fi
+			_debug "$tid ≤ counter but no branch/repo claim — verifying via linked issues"
 			local verify_rc
 			_verify_tid_via_issues "$tid" "$closing_issues"
 			verify_rc=$?
@@ -366,7 +409,7 @@ _check_message() {
 				return 2
 			fi
 			if [[ "$verify_rc" -eq 1 ]]; then
-				violations="${violations}  ${tid} — ≤ counter ${counter}, but no 'chore: claim ${tid}' commit on this branch and no linked issue title contains ${tid}\n"
+				violations="${violations}  ${tid} — ≤ counter ${counter}, but no 'chore: claim ${tid}' commit on this branch, in repo history, or linked issue title\n"
 			fi
 			continue
 		fi

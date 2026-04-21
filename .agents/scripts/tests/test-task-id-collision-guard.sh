@@ -718,10 +718,81 @@ test_check_pr_allows_pr_title_tid_confirmed_via_body() {
 }
 
 # ---------------------------------------------------------------------------
+# Test case 15: Allow t-ID ≤ counter when claimed in repo history (GH#20291)
+# Scenario: PR body contains prose reference to a t-ID that was claimed in
+# a prior merged PR. The guard should allow it via repo-wide claim lookup.
+# ---------------------------------------------------------------------------
+test_repo_wide_claim_in_prose() {
+	local name="case-15: allow t-ID ≤ counter when claimed in repo history (prose reference)"
+	# Counter = 100; t50 ≤ counter but claimed in prior merged commit.
+	# PR body contains prose "the t50 REST fallback covers..." — should allow.
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	# Create a temporary git repo with a prior merged claim commit
+	local base_repo="${tmpdir}/base"
+	mkdir -p "$base_repo"
+	git -C "$base_repo" init -q
+	git -C "$base_repo" config user.email "test@test.local"
+	git -C "$base_repo" config user.name "Test"
+	git -C "$base_repo" config commit.gpgsign false
+	git -C "$base_repo" config tag.gpgsign false
+	printf '100' >"${base_repo}/.task-counter"
+	git -C "$base_repo" add .task-counter
+	git -C "$base_repo" commit -q -m "init"
+
+	# Create a work repo with a prior merged claim commit on main
+	local work_repo="${tmpdir}/work"
+	git -C "$base_repo" clone -q . "$work_repo"
+	git -C "$work_repo" config user.email "test@test.local"
+	git -C "$work_repo" config user.name "Test"
+	git -C "$work_repo" config commit.gpgsign false
+	git -C "$work_repo" config tag.gpgsign false
+
+	# Add a prior claim commit on main (simulating a merged PR)
+	touch "${work_repo}/t50-marker.txt"
+	git -C "$work_repo" add "t50-marker.txt"
+	git -C "$work_repo" commit -q -m "chore: claim t50 [prior-merge]"
+	git -C "$work_repo" push -q origin main
+
+	# Create a feature branch for the new PR
+	git -C "$work_repo" checkout -q -b feature/t51-new-feature
+	touch "${work_repo}/feature.txt"
+	git -C "$work_repo" add "feature.txt"
+	git -C "$work_repo" commit -q -m "feat: add new feature"
+
+	# Create a commit message with prose reference to t50 (claimed in prior merge)
+	local msg_file="${tmpdir}/msg.txt"
+	cat >"$msg_file" <<'EOF'
+feat: implement feature
+
+The t50 REST fallback covers GraphQL exhaustion scenarios.
+This feature builds on that foundation.
+EOF
+
+	# Run the guard in the feature branch context
+	local rc
+	(
+		cd "$work_repo" || exit 1
+		TASK_ID_GUARD_DEBUG=0 bash "$GUARD" "$msg_file"
+	)
+	rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 0 (t50 claimed in repo history), got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 main() {
-	printf 'Running task-id-collision-guard tests...\n\n'
+	printf 'Running ta[redacted-credential] tests...\n\n'
 
 	test_rejects_invented_tid
 	test_allows_claimed_tid
@@ -737,6 +808,7 @@ main() {
 	test_ref_keyword_without_matching_title
 	test_check_pr_rejects_invented_tid_in_title
 	test_check_pr_allows_pr_title_tid_confirmed_via_body
+	test_repo_wide_claim_in_prose
 
 	printf '\n'
 	printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"
