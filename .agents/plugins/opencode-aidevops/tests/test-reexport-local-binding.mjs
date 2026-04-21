@@ -39,6 +39,60 @@ function parseNames(block) {
 }
 
 /**
+ * Match all `^import/export { … } from "…"` blocks of a given kind and
+ * accumulate the destructured identifiers plus the byte ranges they occupy.
+ * @param {string} src
+ * @param {RegExp} re
+ * @param {Set<string>} identifiersOut
+ * @param {Array<[number, number]>} rangesOut
+ */
+function collectDestructuredFromBlocks(src, re, identifiersOut, rangesOut) {
+  for (const m of src.matchAll(re)) {
+    parseNames(m[1]).forEach((id) => identifiersOut.add(id));
+    rangesOut.push([m.index, m.index + m[0].length]);
+  }
+}
+
+/**
+ * True if `pos` falls inside any of the recorded import/export block ranges.
+ * @param {number} pos
+ * @param {Array<[number, number]>} ranges
+ */
+function positionIsInsideBlock(pos, ranges) {
+  return ranges.some(([start, end]) => pos >= start && pos < end);
+}
+
+/**
+ * True if the line containing byte offset `pos` begins with a comment marker
+ * (`//` or `*`). Cheap line-scoped check to skip prose mentions.
+ * @param {string} src
+ * @param {number} pos
+ */
+function positionIsOnCommentLine(src, pos) {
+  const lineStart = src.lastIndexOf("\n", pos) + 1;
+  const lineEnd = src.indexOf("\n", pos);
+  const line = src.slice(lineStart, lineEnd === -1 ? src.length : lineEnd);
+  return /^\s*(\/\/|\*)/.test(line);
+}
+
+/**
+ * True if `id` appears in `src` outside any of the given import/export block
+ * ranges and outside any comment line.
+ * @param {string} src
+ * @param {string} id
+ * @param {Array<[number, number]>} blockRanges
+ */
+function identifierHasLocalUse(src, id, blockRanges) {
+  const idRe = new RegExp(`\\b${id}\\b`, "g");
+  for (const m of src.matchAll(idRe)) {
+    if (positionIsInsideBlock(m.index, blockRanges)) continue;
+    if (positionIsOnCommentLine(src, m.index)) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
  * Return identifiers that are re-exported via `export { … } from "./mod"`
  * but are also used in non-import/non-export positions in the same file
  * without a corresponding `import { … }` declaration.
@@ -57,43 +111,17 @@ function findReExportLocalUseViolations(filePath) {
   const reExportRe = /^export\s*\{([^}]+)\}\s*from\s*["'][^"']+["'];?\s*$/gm;
   const importRe = /^import\s*\{([^}]+)\}\s*from\s*["'][^"']+["'];?\s*$/gm;
 
-  // Collect re-exports + occupied byte ranges in one pass.
   const reExported = new Set();
-  const blockRanges = [];
-  for (const m of src.matchAll(reExportRe)) {
-    parseNames(m[1]).forEach((id) => reExported.add(id));
-    blockRanges.push([m.index, m.index + m[0].length]);
-  }
-  if (reExported.size === 0) return [];
-
   const imported = new Set();
-  for (const m of src.matchAll(importRe)) {
-    parseNames(m[1]).forEach((id) => imported.add(id));
-    blockRanges.push([m.index, m.index + m[0].length]);
-  }
+  const blockRanges = [];
 
-  const isInsideImportExportBlock = (pos) =>
-    blockRanges.some(([start, end]) => pos >= start && pos < end);
+  collectDestructuredFromBlocks(src, reExportRe, reExported, blockRanges);
+  if (reExported.size === 0) return [];
+  collectDestructuredFromBlocks(src, importRe, imported, blockRanges);
 
-  const violations = [];
-  for (const id of reExported) {
-    if (imported.has(id)) continue;
-    const idRe = new RegExp(`\\b${id}\\b`, "g");
-    let usedLocally = false;
-    for (const m of src.matchAll(idRe)) {
-      if (isInsideImportExportBlock(m.index)) continue;
-      // Skip comment lines: the most common false positive is a // or *
-      // that references the identifier in prose. Cheap line-scoped check.
-      const lineStart = src.lastIndexOf("\n", m.index) + 1;
-      const lineEnd = src.indexOf("\n", m.index);
-      const line = src.slice(lineStart, lineEnd === -1 ? src.length : lineEnd);
-      if (/^\s*(\/\/|\*)/.test(line)) continue;
-      usedLocally = true;
-      break;
-    }
-    if (usedLocally) violations.push(id);
-  }
-  return violations;
+  return [...reExported].filter(
+    (id) => !imported.has(id) && identifierHasLocalUse(src, id, blockRanges),
+  );
 }
 
 // Files known to use the re-export pattern — extend when new ones land.
