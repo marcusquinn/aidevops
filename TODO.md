@@ -2889,3 +2889,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2716 sonar cleanup: remove unused locals (S1481) in top 5 heaviest files #framework #quality-debt ref:GH#20376
 
 - [ ] t2717 fix: replace misleading 'high/critical' aggregate label in quality-sweep dashboard with per-severity breakdown #framework #quality-debt ref:GH#20384
+
+- [ ] t2718 Audit local -n nameref reachability for 6 files (zsh-source compatibility) #auto-dispatch #bug ref:GH#20303 ref:GH#20392
+
+- [ ] t2719 Fix setup/_tools.sh local -n nameref usages for zsh-source compatibility #auto-dispatch #bug ref:GH#20303 ref:GH#20393
