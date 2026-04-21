@@ -66,6 +66,11 @@ check_tool_updates() {
 	return 0
 }
 
+# Module-level global for linux PIM tool check/install (bash 3.2 / zsh compatible).
+# Replaces local -n namerefs which are unsupported in bash 3.2 and zsh.
+# See t2719 / GH#20393 and the canonical pattern in shared-gh-wrappers.sh (t2688).
+_SETUP_TOOLS_LINUX_MISSING=()
+
 # macOS PIM: Calendar/Contacts/Notes use osascript; Reminders needs remindctl
 _setup_pim_tools_macos() {
 	print_success "Calendar: uses Calendar.app via osascript (no install needed)"
@@ -90,41 +95,44 @@ _setup_pim_tools_macos() {
 	return 0
 }
 
-# Linux PIM: detect missing tools and populate missing[] array
-# Sets missing array in caller scope via nameref-compatible output
+# Linux PIM: detect missing tools and populate _SETUP_TOOLS_LINUX_MISSING.
+# Resets the module global on entry; callers read _SETUP_TOOLS_LINUX_MISSING
+# after this call. No arguments required.
+# Bash 3.2 / zsh compatible — does NOT use local -n namerefs (t2719).
 _setup_pim_tools_linux_check() {
-	local -n _missing_ref="$1"
+	_SETUP_TOOLS_LINUX_MISSING=()
 
 	if ! command -v todo >/dev/null 2>&1; then
-		_missing_ref+=("todoman")
+		_SETUP_TOOLS_LINUX_MISSING+=("todoman")
 	else
 		print_success "Reminders: todoman installed"
 	fi
 
 	if ! command -v khal >/dev/null 2>&1; then
-		_missing_ref+=("khal")
+		_SETUP_TOOLS_LINUX_MISSING+=("khal")
 	else
 		print_success "Calendar: khal installed"
 	fi
 
 	if ! command -v khard >/dev/null 2>&1; then
-		_missing_ref+=("khard")
+		_SETUP_TOOLS_LINUX_MISSING+=("khard")
 	else
 		print_success "Contacts: khard installed"
 	fi
 
 	if ! command -v vdirsyncer >/dev/null 2>&1; then
-		_missing_ref+=("vdirsyncer")
+		_SETUP_TOOLS_LINUX_MISSING+=("vdirsyncer")
 	else
 		print_success "CalDAV/CardDAV sync: vdirsyncer installed"
 	fi
 	return 0
 }
 
-# Linux PIM: install nb (notes) and any missing tools via pipx or brew
+# Linux PIM: install nb (notes) and any missing tools via pipx or brew.
+# Reads _SETUP_TOOLS_LINUX_MISSING populated by _setup_pim_tools_linux_check.
+# No arguments required.
+# Bash 3.2 / zsh compatible — does NOT use local -n namerefs (t2719).
 _setup_pim_tools_linux_install() {
-	local -n _missing_install_ref="$1"
-
 	# Notes: nb (not in pipx — brew or direct install)
 	if ! command -v nb >/dev/null 2>&1; then
 		print_info "Notes: nb not installed"
@@ -139,20 +147,20 @@ _setup_pim_tools_linux_install() {
 		print_success "Notes: nb installed"
 	fi
 
-	if [[ ${#_missing_install_ref[@]} -eq 0 ]]; then
+	if [[ ${#_SETUP_TOOLS_LINUX_MISSING[@]} -eq 0 ]]; then
 		return 0
 	fi
 
 	local pkg_list
-	pkg_list="$(printf '%s ' "${_missing_install_ref[@]}")"
+	pkg_list="$(printf '%s ' "${_SETUP_TOOLS_LINUX_MISSING[@]}")"
 	print_info "Installing missing PIM tools: ${pkg_list}"
 	if command -v pipx >/dev/null 2>&1; then
 		local pkg
-		for pkg in "${_missing_install_ref[@]}"; do
+		for pkg in "${_SETUP_TOOLS_LINUX_MISSING[@]}"; do
 			pipx install "$pkg" 2>&1 || print_warning "Failed to install ${pkg}"
 		done
 	elif command -v brew >/dev/null 2>&1; then
-		brew install "${_missing_install_ref[@]}" 2>&1 || print_warning "Some PIM tools failed to install"
+		brew install "${_SETUP_TOOLS_LINUX_MISSING[@]}" 2>&1 || print_warning "Some PIM tools failed to install"
 	else
 		print_warning "Install manually with pipx or brew: ${pkg_list}"
 	fi
@@ -184,9 +192,8 @@ setup_pim_tools() {
 	if [[ "$os" == "Darwin" ]]; then
 		_setup_pim_tools_macos
 	else
-		local missing=()
-		_setup_pim_tools_linux_check missing
-		_setup_pim_tools_linux_install missing
+		_setup_pim_tools_linux_check
+		_setup_pim_tools_linux_install
 		_setup_pim_tools_linux_configs
 	fi
 
