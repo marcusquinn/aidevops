@@ -564,9 +564,19 @@ _create_quality_debt_issues() {
 		return 0
 	fi
 
-	# GH#17916: Determine if the source PR was authored by the repo maintainer.
-	# Maintainer-authored quality-debt skips the approval gate — the maintainer
-	# implicitly approves it by merging their own PR. External PRs keep the gate.
+	# GH#17916 (t2686): Determine if the source PR was authored by someone trusted
+	# enough to skip the NMR approval gate. Maintainer-equivalent trust = the PR
+	# author has admin or maintain permission on the repo. The maintainer
+	# implicitly approved the content by merging it; co-admins have the same
+	# trust bar that pulse-merge.sh auto-merge already uses (t2411 criterion 2,
+	# t2449 criterion 2). External/contributor PRs keep the gate.
+	#
+	# Two-stage check:
+	#   1. Fast path: repos.json .maintainer string match or slug-owner fallback.
+	#      Avoids a gh api call on solo-maintainer repos (the common case).
+	#   2. Collaborator-permission probe: gh api repos/{slug}/collaborators/{user}/permission.
+	#      Accepts permission ∈ {admin, maintain}. Fail-closed on API errors —
+	#      an unreachable API is not a trust signal; default to applying NMR.
 	local is_maintainer_pr="false"
 	local pr_author=""
 	pr_author=$(gh pr view "$pr_num" --repo "$repo_slug" --json author --jq '.author.login' 2>/dev/null || echo "")
@@ -582,6 +592,15 @@ _create_quality_debt_issues() {
 		[[ -z "$maintainer" ]] && maintainer="${repo_slug%%/*}"
 		if [[ "$pr_author" == "$maintainer" ]]; then
 			is_maintainer_pr="true"
+		else
+			# Stage 2: collaborator permission probe. Accepts admin or maintain.
+			local collab_permission=""
+			collab_permission=$(gh api "repos/${repo_slug}/collaborators/${pr_author}/permission" \
+				--jq '.permission // empty' 2>/dev/null || echo "")
+			if [[ "$collab_permission" == "admin" || "$collab_permission" == "maintain" ]]; then
+				is_maintainer_pr="true"
+				echo "[quality-feedback] PR #${pr_num} author ${pr_author} has ${collab_permission} permission on ${repo_slug} — treating as maintainer-equivalent (t2686)" >&2
+			fi
 		fi
 	fi
 

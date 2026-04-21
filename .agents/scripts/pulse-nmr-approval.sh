@@ -265,9 +265,11 @@ issue_has_required_approval() {
 # creation defaults. See t2386 brief and `prompts/build.txt`
 # "Cryptographic issue/PR approval" for the split semantics.
 #
-# Creation-default signatures detected:
-#   - <!-- source:review-scanner            — GH#18538 scanner default NMR (comment marker)
-#   - review-followup / source:review-scanner labels on issue itself
+# Creation-default signatures detected (t2686 extended set):
+#   - source:review-scanner                 — GH#18538 post-merge-review-scanner.sh (comment marker)
+#   - source:review-feedback                — quality-feedback-helper.sh (comment marker)
+#   - quality-feedback-helper.sh            — quality-feedback-helper.sh (comment body marker)
+#   - review-followup / source:review-scanner / source:review-feedback labels on issue itself
 #
 # Args:
 #   $1 - issue_num  : GitHub issue number
@@ -291,9 +293,14 @@ _nmr_application_has_automation_signature() {
 	# comment.created_at ≤ label_at + 60s (lower bound covers the API
 	# latency race where the comment posts before the label API call
 	# completes).
+	#
+	# Markers matched (t2686 extended set):
+	#   - source:review-scanner     — post-merge-review-scanner.sh (GH#18538)
+	#   - source:review-feedback    — quality-feedback-helper.sh scan-merged
+	#   - quality-feedback-helper.sh — approval-instructions comment body
 	local has_signature
 	has_signature=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate \
-		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"source:review-scanner\"))] | length" \
+		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"source:review-scanner|source:review-feedback|quality-feedback-helper\\\\.sh\"))] | length" \
 		2>/dev/null) || has_signature=0
 	[[ "$has_signature" =~ ^[0-9]+$ ]] || has_signature=0
 
@@ -301,15 +308,18 @@ _nmr_application_has_automation_signature() {
 		return 0
 	fi
 
-	# Also accept: the issue itself carries review-followup or
-	# source:review-scanner labels (bot-generated cleanup from
-	# post-merge-review-scanner.sh, GH#18538). These issues apply NMR at
-	# creation via the scanner's SCANNER_NEEDS_REVIEW=true default, which
-	# does not necessarily emit a post-label comment marker. The label
-	# presence itself is the creation-default signature.
+	# Also accept: the issue itself carries a scanner provenance label
+	# (bot-generated cleanup). These issues apply NMR at creation via the
+	# scanner default, which does not necessarily emit a post-label comment
+	# marker. The label presence itself is the creation-default signature.
+	#
+	# Labels matched (t2686 extended set):
+	#   - review-followup           — post-merge-review-scanner.sh (GH#18538)
+	#   - source:review-scanner     — post-merge-review-scanner.sh
+	#   - source:review-feedback    — quality-feedback-helper.sh scan-merged
 	local has_bot_label
 	has_bot_label=$(gh api "repos/${slug}/issues/${issue_num}" \
-		--jq '[.labels[].name] | map(select(. == "review-followup" or . == "source:review-scanner")) | length' \
+		--jq '[.labels[].name] | map(select(. == "review-followup" or . == "source:review-scanner" or . == "source:review-feedback")) | length' \
 		2>/dev/null) || has_bot_label=0
 	[[ "$has_bot_label" =~ ^[0-9]+$ ]] || has_bot_label=0
 
