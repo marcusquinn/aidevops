@@ -768,6 +768,14 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t2694 bump pulse-wrapper canary test timeout from 30s to 60s — two `timeout 30` → `timeout 60` substitutions in `.agents/scripts/tests/test-pulse-wrapper-canary.sh` (Tests 1 & 2). Addresses CI flake that hit PR #20318 and the t2685 main merge with exit 124 after Test 1 passed. #bug #framework #auto-dispatch ref:GH#20321
 
+- [ ] t2687 fix health-dashboard dedup: preserve cache on gh query errors and add periodic dedup scan to prevent duplicate supervisor/contributor health issues under GraphQL rate-limit pressure — surgical fix for the 2026-04-21 incident where asymmetric t2574 REST fallback (CREATE-side only) caused 19 duplicate `[Supervisor:*]` issues across 7 repos. Layer 1 (rc-aware lookups + `__QUERY_FAILED__` sentinel) + Layer 2 (1h periodic dedup on cache hits) + migration script. Layers 3 (framework-wide REST fallback for read paths) and 4 (pulse-level rate-limit circuit breaker) deferred as follow-ups. #bug #framework #interactive ref:GH#20301
+
+- [ ] t2689 Extend t2574 REST fallback to `gh issue view` / `gh issue list` reads — framework-wide Layer 3 of defence-in-depth after t2687 (Layer 1) and t2574 (CREATE/EDIT-only writes). Mirror the existing `gh_issue_edit_safe` pattern in `shared-gh-wrappers.sh` + `shared-gh-wrappers-rest-fallback.sh`. Opportunistically migrate other `gh issue view`/`list` callers. #auto-dispatch #bug #framework ~3h ref:GH#20309
+
+- [ ] t2690 Pulse-level GraphQL rate-limit circuit breaker — proactive complement to t2574/t2687/t2689 reactive fallbacks. Pause worker dispatch when `gh api rate_limit` GraphQL remaining ≤ `AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD` (default 5%). Counter in `pulse-stats.json`. Design questions in issue body. #auto-dispatch #feat #framework model:opus ~4h ref:GH#20310
+
+- [ ] t2691 Root-cause why `origin:worker` was missing on health-dashboard issue #20298 — triggering symptom that led to GH#20301. Suspected cause (H1): REST fallback in `shared-gh-wrappers-rest-fallback.sh` does not apply auto-detected origin label because REST path uses a separate `POST /issues/{N}/labels` step that may fail silently. Validate before fixing. #auto-dispatch #bug #framework ~1h ref:GH#20311
+
 ## In Progress
 
 - [x] t1543 feat: OAuth multi-account pool plugin for provider credential rotation — add pool module to opencode-aidevops plugin enabling multiple Anthropic OAuth accounts with automatic rotation on rate limits (429). Uses existing plugin auth hook + custom fetch wrapper. Includes /model-accounts-pool tool for account management. #feature #plugin #auth ~4h ref:GH#5243 started:2026-03-19 pr:#5244 completed:2026-03-19
