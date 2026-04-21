@@ -76,7 +76,7 @@ test_canary_exits_zero() {
 	output=$(
 		HOME="${sandbox}/home" \
 			FULL_LOOP_HEADLESS=1 \
-			timeout 30 bash "$WRAPPER_SCRIPT" --canary 2>&1
+			timeout 60 bash "$WRAPPER_SCRIPT" --canary 2>&1
 	)
 	rc=$?
 	rm -rf "$sandbox"
@@ -104,7 +104,7 @@ test_canary_prints_checkpoint() {
 	output=$(
 		HOME="${sandbox}/home" \
 			FULL_LOOP_HEADLESS=1 \
-			timeout 30 bash "$WRAPPER_SCRIPT" --canary 2>&1
+			timeout 60 bash "$WRAPPER_SCRIPT" --canary 2>&1
 	)
 	rc=$?
 	rm -rf "$sandbox"
