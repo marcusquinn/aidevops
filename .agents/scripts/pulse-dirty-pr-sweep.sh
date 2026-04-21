@@ -11,18 +11,18 @@
 #                 strategy, force-push, post documentation comment.
 #   Auto-close  : PR > 7d old AND no human commits in 3d AND no
 #                 `do-not-close` label → close with a "superseded" comment.
-#   Escalate    : PR has non-TODO.md conflicts and doesn't meet auto-close
-#                 criteria → post a one-time maintainer-review nudge comment
-#                 (no destructive action).
+#   Notify      : PR has non-TODO.md conflicts and doesn't meet auto-close
+#                 criteria → post a one-time informational comment
+#                 (no label applied, no dispatch, no merge block).
 #
 # Safety gates:
-#   - Never rebases PRs with non-TODO.md conflicts (always escalate instead).
+#   - Never rebases PRs with non-TODO.md conflicts (always notify instead).
 #   - Never auto-closes PRs tagged `do-not-close` OR linked to an OPEN issue
 #     that has the `parent-task` label.
-#   - Escalates `origin:interactive` PRs only when the body contains no
+#   - Notifies for `origin:interactive` PRs only when the body contains no
 #     recognised issue reference (`For #NNN`, `Ref #NNN`, or a closing
 #     keyword). Referenced PRs flow through the normal age/idle close
-#     heuristic like any other PR (t2708). True orphans still escalate.
+#     heuristic like any other PR (t2708). True orphans still notify.
 #   - Idempotency: per-PR actions logged to a state file with timestamp;
 #     re-running within 30 min (action cooldown) is a no-op for each PR.
 #   - Dry-run: DRY_RUN=1 env var (or `--dry-run` CLI flag) prints would-be
@@ -86,7 +86,7 @@ DIRTY_PR_SWEEP_STATE_FILE="${DIRTY_PR_SWEEP_STATE_FILE:-${HOME}/.aidevops/.agent
 
 # The audit-log-helper's event-type allowlist is closed. `operation.verify`
 # is the closest fit for "pulse took a verified deterministic action".
-# Detail keys disambiguate the op (rebase|close|escalate|skip).
+# Detail keys disambiguate the op (rebase|close|notify|skip).
 readonly _DIRTY_PR_AUDIT_EVENT="operation.verify"
 
 # Canonical action names — used as case labels, state-file keys, and audit
@@ -94,11 +94,11 @@ readonly _DIRTY_PR_AUDIT_EVENT="operation.verify"
 # (pre-commit "repeated string literals" ratchet).
 readonly _DIRTY_ACTION_REBASE="rebase"
 readonly _DIRTY_ACTION_CLOSE="close"
-readonly _DIRTY_ACTION_ESCALATE="escalate"
+readonly _DIRTY_ACTION_NOTIFY="notify"
 readonly _DIRTY_ACTION_SKIP="skip"
 
 # Comment markers for idempotency when scanning PR comment history.
-readonly _DIRTY_PR_ESCALATE_MARKER="<!-- pulse-dirty-pr-escalate -->"
+readonly _DIRTY_PR_NOTIFY_MARKER="<!-- pulse-dirty-pr-escalate -->"  # string preserved for comment-history dedup continuity
 readonly _DIRTY_PR_REBASE_MARKER="<!-- pulse-dirty-pr-rebase -->"
 readonly _DIRTY_PR_CLOSE_MARKER="<!-- pulse-dirty-pr-close -->"
 
@@ -380,7 +380,7 @@ _dps_consider_close() {
 # -----------------------------------------------------------------------------
 #
 # Given a PR JSON object (from `gh pr list`), classify the action:
-#   rebase | close | escalate | skip
+#   rebase | close | notify | skip
 #
 # The JSON must include: number, mergeStateStatus, createdAt, updatedAt,
 # author.login, labels[].name, headRefName, baseRefName.
@@ -392,7 +392,7 @@ _dps_consider_close() {
 #   $4 - self_login (the runner's GitHub login — maintainers)
 #
 # Output (stdout): one line of the form "ACTION|REASON"
-#   ACTION in {rebase, close, escalate, skip}
+#   ACTION in {rebase, close, notify, skip}
 #   REASON is a short human-readable phrase.
 _dirty_pr_classify() {
 	local pr_json="$1"
@@ -447,22 +447,22 @@ _dirty_pr_classify() {
 		return 0
 	fi
 
-	# Label-based escalation takes precedence over close.
+	# Label-based notify takes precedence over close.
 	if [[ "$has_do_not_close" -eq 1 ]]; then
-		printf '%s|do-not-close-label' "$_DIRTY_ACTION_ESCALATE"
+		printf '%s|do-not-close-label' "$_DIRTY_ACTION_NOTIFY"
 		return 0
 	fi
 	if [[ "$has_parent_task" -eq 1 ]]; then
-		printf '%s|parent-task-label' "$_DIRTY_ACTION_ESCALATE"
+		printf '%s|parent-task-label' "$_DIRTY_ACTION_NOTIFY"
 		return 0
 	fi
-	# origin:interactive PRs: escalate only if the body has no recognised
+	# origin:interactive PRs: notify only if the body has no recognised
 	# issue reference (true orphan). PRs with "For #NNN", "Ref #NNN", or any
 	# closing keyword reference a tracked issue and should flow through the
 	# normal age/idle close heuristic like any other PR (t2708).
 	if [[ "$has_interactive" -eq 1 ]]; then
 		if ! _dps_pr_body_has_issue_reference "$body"; then
-			printf '%s|origin-interactive-orphan' "$_DIRTY_ACTION_ESCALATE"
+			printf '%s|origin-interactive-orphan' "$_DIRTY_ACTION_NOTIFY"
 			return 0
 		fi
 		# Has a reference — fall through to age-based close check.
@@ -476,7 +476,7 @@ _dirty_pr_classify() {
 		return 0
 	fi
 
-	printf '%s|dirty-not-auto-resolvable' "$_DIRTY_ACTION_ESCALATE"
+	printf '%s|dirty-not-auto-resolvable' "$_DIRTY_ACTION_NOTIFY"
 	return 0
 }
 
@@ -521,7 +521,8 @@ ${body}"
 }
 
 # Rebase action: attempt `git rebase origin/main -X union` in an ephemeral
-# worktree and force-push. If anything fails, abort cleanly and escalate.
+# worktree and force-push. If anything fails, abort cleanly and return 1
+# (the PR remains DIRTY for re-classification on the next cycle).
 _dirty_pr_action_rebase() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -639,8 +640,8 @@ _dirty_pr_action_close() {
 		linked_state=$(gh issue view "$linked" --repo "$repo_slug" --json state --jq '.state // empty' 2>/dev/null) || linked_state=""
 		linked_labels=$(gh issue view "$linked" --repo "$repo_slug" --json labels --jq '[.labels[].name] | .[]' 2>/dev/null | tr '[:upper:]' '[:lower:]') || linked_labels=""
 		if [[ "$linked_state" == "OPEN" ]] && printf '%s' "$linked_labels" | grep -qx 'parent-task'; then
-			_dps_log "PR #$pr_number ($repo_slug): close skipped — linked issue #$linked is open parent-task"
-			_dirty_pr_action_escalate "$pr_number" "$repo_slug" "parent-task-linked"
+		_dps_log "PR #$pr_number ($repo_slug): close skipped — linked issue #$linked is open parent-task"
+		_dirty_pr_action_notify "$pr_number" "$repo_slug" "parent-task-linked"
 			return 0
 		fi
 	fi
@@ -679,16 +680,18 @@ _Triggered by \`pulse-dirty-pr-sweep.sh\` (t2350 / GH#19948)._"
 	return 1
 }
 
-# Escalate action: post a nudge comment once (idempotent via marker) so a
-# human can review. No destructive action.
-_dirty_pr_action_escalate() {
+# Notify action: post an informational comment once (idempotent via marker).
+# This does NOT block merge, does NOT apply a label, does NOT dispatch a worker.
+# It only posts an idempotent comment. For a real escalation (maintainer review
+# required), use `needs-maintainer-review` labelling via `set_issue_status` instead.
+_dirty_pr_action_notify() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local reason="${3:-dirty-not-auto-resolvable}"
 
 	local key="${repo_slug}#${pr_number}"
 	if _dps_recently_actioned "$key"; then
-		_dps_log "PR #$pr_number ($repo_slug): escalate skipped — cooldown active"
+		_dps_log "PR #$pr_number ($repo_slug): notify skipped — cooldown active"
 		return 0
 	fi
 
@@ -707,15 +710,15 @@ This comment is posted once per cooldown window (${DIRTY_PR_SWEEP_ACTION_COOLDOW
 _Triggered by \`pulse-dirty-pr-sweep.sh\` (t2350 / GH#19948)._"
 
 	if _dps_is_dry_run; then
-		_dps_log "DRY-RUN: would escalate PR #$pr_number ($repo_slug) reason=$reason"
-		_dps_record_audit "$_DIRTY_ACTION_ESCALATE" "$repo_slug" "$pr_number" "dry-run:$reason"
+		_dps_log "DRY-RUN: would notify PR #$pr_number ($repo_slug) reason=$reason"
+		_dps_record_audit "$_DIRTY_ACTION_NOTIFY" "$repo_slug" "$pr_number" "dry-run:$reason"
 		return 0
 	fi
 
-	_dps_post_comment_if_new "$pr_number" "$repo_slug" "$_DIRTY_PR_ESCALATE_MARKER" "$comment_body" || true
-	_dps_state_record_action "$key" "$_DIRTY_ACTION_ESCALATE"
-	_dps_record_audit "$_DIRTY_ACTION_ESCALATE" "$repo_slug" "$pr_number" "ok:$reason"
-	_dps_log "PR #$pr_number ($repo_slug): escalated ($reason)"
+	_dps_post_comment_if_new "$pr_number" "$repo_slug" "$_DIRTY_PR_NOTIFY_MARKER" "$comment_body" || true
+	_dps_state_record_action "$key" "$_DIRTY_ACTION_NOTIFY"
+	_dps_record_audit "$_DIRTY_ACTION_NOTIFY" "$repo_slug" "$pr_number" "ok:$reason"
+	_dps_log "PR #$pr_number ($repo_slug): notified ($reason)"
 	return 0
 }
 
@@ -793,9 +796,9 @@ _dirty_pr_sweep_for_repo() {
 			"$_DIRTY_ACTION_CLOSE")
 				_dirty_pr_action_close "$pr_number" "$repo_slug" || true
 				;;
-			"$_DIRTY_ACTION_ESCALATE")
-				_dirty_pr_action_escalate "$pr_number" "$repo_slug" "$reason" || true
-				;;
+		"$_DIRTY_ACTION_NOTIFY")
+			_dirty_pr_action_notify "$pr_number" "$repo_slug" "$reason" || true
+			;;
 			"$_DIRTY_ACTION_SKIP")
 				:
 				;;
@@ -833,7 +836,7 @@ dirty_pr_sweep_all_repos() {
 	local self_login=""
 	self_login=$(gh api user --jq '.login // empty' 2>/dev/null) || self_login=""
 
-	local total_rebased=0 total_closed=0 total_escalated=0
+	local total_rebased=0 total_closed=0 total_notified=0
 
 	while IFS='|' read -r repo_slug repo_path; do
 		[[ -n "$repo_slug" ]] || continue
@@ -852,7 +855,7 @@ dirty_pr_sweep_all_repos() {
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$repos_json" 2>/dev/null)
 
 	_dirty_pr_sweep_mark_run
-	_dps_log "sweep complete: rebased=${total_rebased} closed=${total_closed} escalated=${total_escalated}"
+	_dps_log "sweep complete: rebased=${total_rebased} closed=${total_closed} notified=${total_notified}"
 	return 0
 }
 

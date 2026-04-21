@@ -11,11 +11,11 @@
 #                      conflicts → classify returns "rebase|todo-only-conflict".
 #   2. Close path    — old PR (> 7d), idle (> 3d), no opt-out label
 #                      → classify returns "close|stale-and-idle".
-#   3. Escalate path — young PR with non-TODO conflicts → classify returns
-#                      "escalate|..." (never rebase or close).
-#   4. Opt-out       — `do-not-close` label forces escalate, never close.
-#   5. Opt-out       — `parent-task` label forces escalate, never close.
-#   6. Opt-out       — `origin:interactive` label forces escalate, never close.
+#   3. Notify path   — young PR with non-TODO conflicts → classify returns
+#                      "notify|..." (never rebase or close).
+#   4. Opt-out       — `do-not-close` label forces notify, never close.
+#   5. Opt-out       — `parent-task` label forces notify, never close.
+#   6. Opt-out       — `origin:interactive` label forces notify, never close.
 #   7. Idempotency   — a recorded action within the cooldown window is
 #                      honoured (classify still returns a decision, but the
 #                      action helper short-circuits on _dps_recently_actioned).
@@ -176,7 +176,7 @@ case "$decision" in
 esac
 
 # =============================================================================
-# Test 3: escalate path — non-TODO conflicts
+# Test 3: notify path — non-TODO conflicts
 # =============================================================================
 
 # Build a repo where a non-TODO file conflicts
@@ -211,8 +211,8 @@ PR_CODE_CONFLICT=$(mkpr 300 "DIRTY" \
 
 decision=$(_dirty_pr_classify "$PR_CODE_CONFLICT" "test/repo" "$REPO_ROOT" "marcusquinn")
 case "$decision" in
-	escalate\|*) print_result "escalate path: non-TODO conflicts → escalate (no rebase)" 0 ;;
-	*) print_result "escalate path: non-TODO conflicts → escalate (no rebase)" 1 "got: $decision" ;;
+	notify\|*) print_result "notify path: non-TODO conflicts → notify (no rebase)" 0 ;;
+	*) print_result "notify path: non-TODO conflicts → notify (no rebase)" 1 "got: $decision" ;;
 esac
 
 # =============================================================================
@@ -228,9 +228,9 @@ PR_OPTOUT=$(mkpr 400 "DIRTY" \
 
 decision=$(_dirty_pr_classify "$PR_OPTOUT" "test/repo" "" "marcusquinn")
 case "$decision" in
-	escalate\|do-not-close-label) print_result "opt-out: do-not-close label → escalate" 0 ;;
-	close\|*) print_result "opt-out: do-not-close label → escalate" 1 "got: $decision (should NOT be close)" ;;
-	*) print_result "opt-out: do-not-close label → escalate" 1 "got: $decision" ;;
+	notify\|do-not-close-label) print_result "opt-out: do-not-close label → notify" 0 ;;
+	close\|*) print_result "opt-out: do-not-close label → notify" 1 "got: $decision (should NOT be close)" ;;
+	*) print_result "opt-out: do-not-close label → notify" 1 "got: $decision" ;;
 esac
 
 # =============================================================================
@@ -246,15 +246,15 @@ PR_PARENT=$(mkpr 500 "DIRTY" \
 
 decision=$(_dirty_pr_classify "$PR_PARENT" "test/repo" "" "marcusquinn")
 case "$decision" in
-	escalate\|parent-task-label) print_result "opt-out: parent-task label → escalate (no rebase)" 0 ;;
-	rebase\|*) print_result "opt-out: parent-task label → escalate (no rebase)" 1 "got: $decision (must NOT rebase)" ;;
-	close\|*) print_result "opt-out: parent-task label → escalate (no rebase)" 1 "got: $decision (must NOT close)" ;;
-	*) print_result "opt-out: parent-task label → escalate (no rebase)" 1 "got: $decision" ;;
+	notify\|parent-task-label) print_result "opt-out: parent-task label → notify (no rebase)" 0 ;;
+	rebase\|*) print_result "opt-out: parent-task label → notify (no rebase)" 1 "got: $decision (must NOT rebase)" ;;
+	close\|*) print_result "opt-out: parent-task label → notify (no rebase)" 1 "got: $decision (must NOT close)" ;;
+	*) print_result "opt-out: parent-task label → notify (no rebase)" 1 "got: $decision" ;;
 esac
 
 # =============================================================================
-# Test 6: origin:interactive WITHOUT issue reference → escalate (orphan)
-#         After t2708 the label alone no longer forces escalate — the body must
+# Test 6: origin:interactive WITHOUT issue reference → notify (orphan)
+#         After t2708 the label alone no longer forces notify — the body must
 #         also lack any recognised issue reference.
 # =============================================================================
 
@@ -268,9 +268,9 @@ PR_INTERACTIVE_ORPHAN=$(mkpr 600 "DIRTY" \
 
 decision=$(_dirty_pr_classify "$PR_INTERACTIVE_ORPHAN" "test/repo" "" "marcusquinn")
 case "$decision" in
-	escalate\|origin-interactive-orphan) print_result "t2708: origin:interactive orphan → escalate with orphan reason" 0 ;;
-	close\|*) print_result "t2708: origin:interactive orphan → escalate with orphan reason" 1 "got: $decision (must NOT close when body has no ref)" ;;
-	*) print_result "t2708: origin:interactive orphan → escalate with orphan reason" 1 "got: $decision" ;;
+	notify\|origin-interactive-orphan) print_result "t2708: origin:interactive orphan → notify with orphan reason" 0 ;;
+	close\|*) print_result "t2708: origin:interactive orphan → notify with orphan reason" 1 "got: $decision (must NOT close when body has no ref)" ;;
+	*) print_result "t2708: origin:interactive orphan → notify with orphan reason" 1 "got: $decision" ;;
 esac
 
 # =============================================================================
@@ -290,7 +290,7 @@ PR_INTERACTIVE_RESOLVES=$(mkpr 610 "DIRTY" \
 decision=$(_dirty_pr_classify "$PR_INTERACTIVE_RESOLVES" "test/repo" "" "marcusquinn")
 case "$decision" in
 	close\|stale-and-idle) print_result "t2708: origin:interactive + Resolves #NNN → falls through to close" 0 ;;
-	escalate\|*) print_result "t2708: origin:interactive + Resolves #NNN → falls through to close" 1 "got: $decision (must NOT escalate when body has reference)" ;;
+	notify\|*) print_result "t2708: origin:interactive + Resolves #NNN → falls through to close" 1 "got: $decision (must NOT notify when body has reference)" ;;
 	*) print_result "t2708: origin:interactive + Resolves #NNN → falls through to close" 1 "got: $decision" ;;
 esac
 
@@ -311,7 +311,7 @@ PR_INTERACTIVE_FOR=$(mkpr 620 "DIRTY" \
 decision=$(_dirty_pr_classify "$PR_INTERACTIVE_FOR" "test/repo" "" "marcusquinn")
 case "$decision" in
 	close\|stale-and-idle) print_result "t2708: origin:interactive + For #NNN → falls through to close" 0 ;;
-	escalate\|*) print_result "t2708: origin:interactive + For #NNN → falls through to close" 1 "got: $decision (must NOT escalate when body has For #NNN)" ;;
+	notify\|*) print_result "t2708: origin:interactive + For #NNN → falls through to close" 1 "got: $decision (must NOT notify when body has For #NNN)" ;;
 	*) print_result "t2708: origin:interactive + For #NNN → falls through to close" 1 "got: $decision" ;;
 esac
 
@@ -330,14 +330,14 @@ PR_INTERACTIVE_REF=$(mkpr 630 "DIRTY" \
 decision=$(_dirty_pr_classify "$PR_INTERACTIVE_REF" "test/repo" "" "marcusquinn")
 case "$decision" in
 	close\|stale-and-idle) print_result "t2708: origin:interactive + Ref #NNN → falls through to close" 0 ;;
-	escalate\|*) print_result "t2708: origin:interactive + Ref #NNN → falls through to close" 1 "got: $decision (must NOT escalate when body has Ref #NNN)" ;;
+	notify\|*) print_result "t2708: origin:interactive + Ref #NNN → falls through to close" 1 "got: $decision (must NOT notify when body has Ref #NNN)" ;;
 	*) print_result "t2708: origin:interactive + Ref #NNN → falls through to close" 1 "got: $decision" ;;
 esac
 
 # =============================================================================
 # Test 6d: parent-task label still takes precedence over the narrowed rule.
 #          Even if an interactive PR has a valid reference, the parent-task
-#          label must still force escalate (line 423-425 precedence, t1986).
+#          label must still force notify (line 423-425 precedence, t1986).
 # =============================================================================
 
 PR_INTERACTIVE_PARENT=$(mkpr 640 "DIRTY" \
@@ -350,8 +350,8 @@ PR_INTERACTIVE_PARENT=$(mkpr 640 "DIRTY" \
 
 decision=$(_dirty_pr_classify "$PR_INTERACTIVE_PARENT" "test/repo" "" "marcusquinn")
 case "$decision" in
-	escalate\|parent-task-label) print_result "t2708: parent-task precedence preserved over narrowed rule" 0 ;;
-	*) print_result "t2708: parent-task precedence preserved over narrowed rule" 1 "got: $decision (must still escalate with parent-task-label reason)" ;;
+	notify\|parent-task-label) print_result "t2708: parent-task precedence preserved over narrowed rule" 0 ;;
+	*) print_result "t2708: parent-task precedence preserved over narrowed rule" 1 "got: $decision (must still notify with parent-task-label reason)" ;;
 esac
 
 # =============================================================================
