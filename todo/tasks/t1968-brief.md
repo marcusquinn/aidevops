@@ -139,9 +139,9 @@ Integrating into `setup.sh` makes the guarantee durable: every `aidevops update`
 ```bash
 shellcheck .agents/scripts/setup/_privacy_guard.sh
 # End-to-end: wipe the hook from one repo, run setup, confirm it re-installed
-rm -f ~/Git/awardsapp/.git/hooks/pre-push
+rm -f ~/Git/webapp/.git/hooks/pre-push
 bash setup.sh --non-interactive 2>&1 | grep "Privacy guard"
-test -f ~/Git/awardsapp/.git/hooks/pre-push && echo "PASS"
+test -f ~/Git/webapp/.git/hooks/pre-push && echo "PASS"
 # Opt-out
 AIDEVOPS_PRIVACY_GUARD=false bash setup.sh --non-interactive 2>&1 | grep "opted out"
 ```

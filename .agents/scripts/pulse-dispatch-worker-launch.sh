@@ -422,7 +422,7 @@ _dlw_nohup_launch() {
 # this comment — but workers could crash before posting, leaving no
 # persistent signal. Without this signal, Layer 5 (has_dispatch_comment)
 # had nothing to find, and the issue would be re-dispatched every pulse
-# cycle. Evidence: awardsapp #2051 accumulated 29 DISPATCH_CLAIM comments
+# cycle. Evidence: webapp #2051 accumulated 29 DISPATCH_CLAIM comments
 # over 6 hours because workers kept dying before posting.
 #
 # Claim comment retention (GH#17503): claim comments are NEVER deleted —

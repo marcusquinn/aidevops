@@ -13,8 +13,8 @@
 
 - **Created:** 2026-04-20
 - **Session:** opencode interactive
-- **Created by:** ai-interactive (during user request to upgrade planning templates on awardsapp + propertyservicesdirectory.com)
-- **Conversation context:** User asked to upgrade 2 projects flagged by `aidevops update` (outdated planning templates). First run on awardsapp silently dropped 141 `[x]` completed tasks from `## Done` (extraction only covers `## Backlog`). Restored from `.bak` before proceeding. Fixing the bug before re-running the upgrades.
+- **Created by:** ai-interactive (during user request to upgrade planning templates on webapp + propertyservicesdirectory.com)
+- **Conversation context:** User asked to upgrade 2 projects flagged by `aidevops update` (outdated planning templates). First run on webapp silently dropped 141 `[x]` completed tasks from `## Done` (extraction only covers `## Backlog`). Restored from `.bak` before proceeding. Fixing the bug before re-running the upgrades.
 
 ## What
 
@@ -22,7 +22,7 @@
 
 ## Why
 
-Reproduced 2026-04-20: `aidevops upgrade-planning --force` on awardsapp silently dropped 141 completed tasks from `## Done` (57 Backlog + 141 Done = 198 total → 57 only after upgrade). Completed-task rows carry `actual:` session time and `est:` breakdowns that only live in TODO.md — GitHub issues don't store these fields, so the audit trail is NOT reconstructable. Data was recovered from `.bak` before the working tree was committed, but the silent loss is the critical defect: any user following the recommended upgrade flow loses every task outside Backlog.
+Reproduced 2026-04-20: `aidevops upgrade-planning --force` on webapp silently dropped 141 completed tasks from `## Done` (57 Backlog + 141 Done = 198 total → 57 only after upgrade). Completed-task rows carry `actual:` session time and `est:` breakdowns that only live in TODO.md — GitHub issues don't store these fields, so the audit trail is NOT reconstructable. Data was recovered from `.bak` before the working tree was committed, but the silent loss is the critical defect: any user following the recommended upgrade flow loses every task outside Backlog.
 
 Adjacent prior fixes in the same function: GH#17804 (Format placeholder leakage), GH#17806 (### subsection preservation inside Backlog). Neither addressed cross-section extraction.
 
@@ -71,7 +71,7 @@ Leaf issue — use `Resolves #20077` in PR body.
    - Invokes the upgrade against a temp file.
    - Asserts every real task survives in its matching new-template section.
    - Asserts Format placeholders (tXXX/tYYY/tZZZ) are NOT promoted to real sections.
-3. End-to-end: run `aidevops upgrade-planning --force` in `/Users/marcusquinn/Git/awardsapp` (local only, don't commit). Task count must match pre-upgrade (198). Revert the test run afterwards.
+3. End-to-end: run `aidevops upgrade-planning --force` in `/Users/marcusquinn/Git/webapp` (local only, don't commit). Task count must match pre-upgrade (198). Revert the test run afterwards.
 
 ## Acceptance
 
@@ -80,7 +80,7 @@ Leaf issue — use `Resolves #20077` in PR body.
 - [ ] `## Format` placeholders and `tXXX`-style template IDs are still filtered out.
 - [ ] New regression test covers all 6 sections plus Format-filter preservation.
 - [ ] `shellcheck aidevops.sh` clean.
-- [ ] Local end-to-end on awardsapp: `grep -cE '^- \[[ x-]\] t[0-9]' TODO.md` before == after (198).
+- [ ] Local end-to-end on webapp: `grep -cE '^- \[[ x-]\] t[0-9]' TODO.md` before == after (198).
 
 ## Out of Scope
 

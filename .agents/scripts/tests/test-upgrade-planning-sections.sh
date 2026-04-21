@@ -8,7 +8,7 @@
 #
 # Bug being regression-tested: prior to t2434, _upgrade_todo extracted tasks
 # only from "## Backlog" and silently dropped the other 5 sections into
-# TODO.md.bak. On awardsapp (2026-04-20) this ate 141 completed "[x]" rows —
+# TODO.md.bak. On webapp (2026-04-20) this ate 141 completed "[x]" rows —
 # audit-trail data NOT reconstructable from GitHub.
 #
 # Pattern modelled on tests/test-init-scope.sh:

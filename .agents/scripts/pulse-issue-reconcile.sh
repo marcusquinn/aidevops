@@ -1129,7 +1129,7 @@ _post_parent_decomposition_nudge() {
 	# api` ("the --slurp option is not supported with --jq or --template"),
 	# silently returning empty and defeating the dedup check — every pulse
 	# cycle posted a fresh nudge (23 on #20001, 19+ on #20161, 4 on
-	# awardsapp#2546 from two runners in minutes).
+	# webapp#2546 from two runners in minutes).
 	#
 	# Fix (t2572): streaming --paginate + --jq (no --slurp). Per-page jq
 	# emits matching .id values; wc -l counts across all pages.

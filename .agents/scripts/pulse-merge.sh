@@ -1253,7 +1253,7 @@ _process_single_ready_pr() {
 	# shift left. reviewDecision is routinely "" (empty string, which jq //
 	# does NOT catch — it only triggers on null/false). The field shift
 	# caused pr_author to receive the PR title, breaking the collaborator
-	# check and blocking ALL merges across every repo (GH#awardsapp).
+	# check and blocking ALL merges across every repo (observed downstream).
 	local _RS=$'\x1e'
 	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title < <(
 		printf '%s' "$pr_obj" | jq -r \

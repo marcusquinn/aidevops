@@ -15,7 +15,7 @@
 #
 # Observed impact: 22 identical nudge comments on a single parent-task issue
 # across ~30h from two pulse runners (aidevops#20001). 4 identical comments
-# on awardsapp#2546 from two runners within minutes.
+# on webapp#2546 from two runners within minutes.
 #
 # Fix: replace `--slurp --jq` with streaming `--paginate | --jq | wc -l`
 # pattern. --paginate alone concatenates per-page responses; --jq applies

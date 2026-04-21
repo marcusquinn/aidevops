@@ -6,9 +6,9 @@
 
 - **Created:** 2026-04-15
 - **Session:** claude-code:interactive
-- **Created by:** ai-interactive (same awardsapp investigation as t2112)
+- **Created by:** ai-interactive (same webapp investigation as t2112)
 - **Parent task:** none
-- **Conversation context:** The wrapper-use rule in `prompts/build.txt` → "Origin labelling (MANDATORY)" is advisory. It relies on the model reading and following a system prompt rule. Discovery for t2112 found that six awardsapp issues were created with bare `gh issue create`, bypassing the wrapper and arriving unlabelled. Inside the framework itself, an `rg 'gh issue create' .agents/scripts/` found multiple ad-hoc usages that weren't migrated when `gh_create_issue` was introduced. The operator asked for this to move from advisory to systemic — a CI gate plus an optional local pre-push hook so the rule is enforced at push time instead of discovered later via unlabelled issues in production repos.
+- **Conversation context:** The wrapper-use rule in `prompts/build.txt` → "Origin labelling (MANDATORY)" is advisory. It relies on the model reading and following a system prompt rule. Discovery for t2112 found that six webapp issues were created with bare `gh issue create`, bypassing the wrapper and arriving unlabelled. Inside the framework itself, an `rg 'gh issue create' .agents/scripts/` found multiple ad-hoc usages that weren't migrated when `gh_create_issue` was introduced. The operator asked for this to move from advisory to systemic — a CI gate plus an optional local pre-push hook so the rule is enforced at push time instead of discovered later via unlabelled issues in production repos.
 
 ## What
 

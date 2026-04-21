@@ -10,7 +10,7 @@
 # the label is also applied by worker BLOCKED exits, watchdog thrash
 # kills, terminal-blocker detection, and manual human holds. Removing it
 # in those cases discarded worker/watchdog evidence and wasted cycles on
-# guaranteed re-BLOCKED dispatches (awardsapp#2273).
+# guaranteed re-BLOCKED dispatches (webapp#2273).
 #
 # t2031 added two checks:
 #   (a) Body defer/hold marker detection at cache build time.

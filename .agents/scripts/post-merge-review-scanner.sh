@@ -103,7 +103,7 @@ BOT_RE="coderabbitai|gemini-code-assist|claude-review|gpt-review"
 ACT_RE="should|consider|fix|change|update|refactor|missing|add"
 # NOOP_RE matches review bodies that are LGTM/no-feedback statements even when
 # they incidentally contain ACT_RE keywords. The canonical false-positive pattern
-# (awardsapp/awardsapp#2349, Gemini on PR #2308): bot writes a PR description
+# (webapp#2349, Gemini on PR #2308): bot writes a PR description
 # containing "refactors" (matches ACT_RE "refactor"), then concludes with "I have
 # no feedback to provide." — the entire body is a description + LGTM, not an
 # actionable suggestion. NOOP_RE is applied as a deny-list in
@@ -283,7 +283,7 @@ fetch_inline_comments_md() {
 #     Applied before ACT_RE to catch Gemini's "PR description + I have no
 #     feedback to provide." pattern, where the description accidentally
 #     contains ACT_RE keywords (e.g. "refactors") even though the review
-#     is a LGTM. See awardsapp/awardsapp#2349 for the canonical false-positive.
+#     is a LGTM. See webapp#2349 for the canonical false-positive.
 #   - Body must contain at least one ACT_RE keyword (cheap noise filter
 #     against "LGTM"/"Reviewed" acks).
 #

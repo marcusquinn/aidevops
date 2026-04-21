@@ -12,7 +12,7 @@ mode: subagent
 - **Session:** Claude Code:interactive
 - **Created by:** marcusquinn (ai-interactive, triage of real-world dispatch waste)
 - **Parent task:** none
-- **Conversation context:** awardsapp#2273 (`t222: Build MCP server adapter`) was correctly marked `status:blocked` by a worker on 2026-04-11 after the worker exited BLOCKED with evidence that cited THREE reasons: (1) open `blocked-by:t215,t219,t220` chain, (2) the issue body's explicit defer gate ("Defer until Phase 1-6 are working end-to-end @alexey"), and (3) missing implementation context. On 2026-04-13 the pulse's `refresh_blocked_status_from_graph` removed `status:blocked` and re-queued the issue — because it saw the `blocked-by:` chain had resolved (all three blockers closed). The pulse then dispatched workers that had to exit BLOCKED again, wasting cycles. Root cause: the dep-graph refresh assumes any `status:blocked` label means "blocked because of open deps", but the label is also applied by worker BLOCKED exits, watchdog thrash kills, terminal-blocker detection, and manual human holds — none of which are resolved by closing the dep chain.
+- **Conversation context:** webapp#2273 (`t222: Build MCP server adapter`) was correctly marked `status:blocked` by a worker on 2026-04-11 after the worker exited BLOCKED with evidence that cited THREE reasons: (1) open `blocked-by:t215,t219,t220` chain, (2) the issue body's explicit defer gate ("Defer until Phase 1-6 are working end-to-end @alexey"), and (3) missing implementation context. On 2026-04-13 the pulse's `refresh_blocked_status_from_graph` removed `status:blocked` and re-queued the issue — because it saw the `blocked-by:` chain had resolved (all three blockers closed). The pulse then dispatched workers that had to exit BLOCKED again, wasting cycles. Root cause: the dep-graph refresh assumes any `status:blocked` label means "blocked because of open deps", but the label is also applied by worker BLOCKED exits, watchdog thrash kills, terminal-blocker detection, and manual human holds — none of which are resolved by closing the dep chain.
 
 ## What
 
@@ -25,7 +25,7 @@ When either signal is present, the refresh logs the skip reason and leaves the l
 
 ## Why
 
-The current behaviour silently discards evidence written by workers and watchdogs. In the awardsapp#2273 case:
+The current behaviour silently discards evidence written by workers and watchdogs. In the webapp#2273 case:
 
 - A worker spent tokens collecting evidence, wrote a structured BLOCKED comment, and correctly applied `status:blocked`.
 - Two days later the dep chain happened to resolve for unrelated reasons.
@@ -214,7 +214,7 @@ jq '.repos[].blocked_by // {} | to_entries[] | {num: .key, has_defer: .value.has
 - `.agents/scripts/pulse-dep-graph.sh:55-174` — `build_dependency_graph_cache` (where defer flags are computed).
 - `.agents/scripts/pulse-dispatch-core.sh:1425-1465` — `_apply_terminal_blocker` (one of the non-dep labellers we need to respect).
 - `.agents/scripts/worker-watchdog.sh:867-938` — thrash-kill `status:blocked` label path.
-- awardsapp#2273 — the real-world case this fix addresses.
+- webapp#2273 — the real-world case this fix addresses.
 
 ## Dependencies
 

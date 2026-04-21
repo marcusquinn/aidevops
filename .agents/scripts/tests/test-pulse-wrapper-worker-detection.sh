@@ -771,8 +771,8 @@ test_build_ranked_dispatch_candidates_json_scores_candidates() {
       "maintainer": "marcusquinn"
     },
     {
-      "slug": "awardsapp/awardsapp",
-      "path": "/tmp/awardsapp",
+      "slug": "webapp",
+      "path": "/tmp/webapp",
       "pulse": true,
       "priority": "product",
       "maintainer": "marcusquinn"
@@ -790,9 +790,9 @@ JSON
 				]'
 				return 0
 			fi
-			if [[ "${4:-}" == "awardsapp/awardsapp" ]]; then
+			if [[ "${4:-}" == "webapp" ]]; then
 				printf '%s\n' '[
-				  {"number":8001,"title":"product simplification","url":"https://github.com/awardsapp/awardsapp/issues/8001","updatedAt":"2026-03-31T00:02:00Z","assignees":[],"labels":[{"name":"function-complexity-debt"}]}
+				  {"number":8001,"title":"product simplification","url":"webapp#8001","updatedAt":"2026-03-31T00:02:00Z","assignees":[],"labels":[{"name":"function-complexity-debt"}]}
 				]'
 				return 0
 			fi
@@ -895,8 +895,8 @@ test_build_ranked_dispatch_candidates_json_respects_schedule_gate() {
       "priority": "tooling"
     },
     {
-      "slug": "awardsapp/awardsapp",
-      "path": "/tmp/awardsapp",
+      "slug": "webapp",
+      "path": "/tmp/webapp",
       "pulse": true,
       "priority": "product"
     }
@@ -913,8 +913,8 @@ JSON
 				printf '%s\n' '[{"number":9201,"title":"allowed","url":"https://github.com/marcusquinn/aidevops/issues/9201","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"bug"}]}]'
 				return 0
 			fi
-			if [[ "${4:-}" == "awardsapp/awardsapp" ]]; then
-				printf '%s\n' '[{"number":9202,"title":"blocked by schedule","url":"https://github.com/awardsapp/awardsapp/issues/9202","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"bug"}]}]'
+			if [[ "${4:-}" == "webapp" ]]; then
+				printf '%s\n' '[{"number":9202,"title":"blocked by schedule","url":"webapp#9202","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"bug"}]}]'
 				return 0
 			fi
 		fi

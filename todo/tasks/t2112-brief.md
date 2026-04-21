@@ -6,9 +6,9 @@
 
 - **Created:** 2026-04-15
 - **Session:** claude-code:interactive
-- **Created by:** ai-interactive (operator investigated `awardsapp/awardsapp#2395..#2400`)
+- **Created by:** ai-interactive (operator investigated `webapp#2395..#2400`)
 - **Parent task:** none
-- **Conversation context:** Six child issues on awardsapp (`t325.2` through `t325.7`) were created with aidevops-shaped bodies (`Brief:` + `## Files` + `## Verification`) but zero labels — no `origin:*`, no `tier:*`, no tag labels, no parent-child link to `#2385`. Investigation confirmed they bypassed `issue-sync-helper.sh` entirely (no "Synced from TODO.md" footer, no signature footer, no matching `TODO.md` entry). Almost certainly a hand-crafted `gh issue create` call by alex's AI session. Alex's parent `#2385` went through the proper sync path and is correctly labelled — only the children are unblessed. Under the current framework, the pulse's reconcile passes (`normalize_active_issue_assignments`, `close_issues_with_merged_prs`, `reconcile_stale_done_issues`) never look at labelless issues and never apply backfill; label application happens only during `cmd_push` (new issue creation) and `cmd_enrich` (keyed on `TODO.md` entries with `ref:GH#NNN`). Anything that bypasses both is permanently invisible to the enrichment pipeline.
+- **Conversation context:** Six child issues on webapp (`t325.2` through `t325.7`) were created with aidevops-shaped bodies (`Brief:` + `## Files` + `## Verification`) but zero labels — no `origin:*`, no `tier:*`, no tag labels, no parent-child link to `#2385`. Investigation confirmed they bypassed `issue-sync-helper.sh` entirely (no "Synced from TODO.md" footer, no signature footer, no matching `TODO.md` entry). Almost certainly a hand-crafted `gh issue create` call by alex's AI session. Alex's parent `#2385` went through the proper sync path and is correctly labelled — only the children are unblessed. Under the current framework, the pulse's reconcile passes (`normalize_active_issue_assignments`, `close_issues_with_merged_prs`, `reconcile_stale_done_issues`) never look at labelless issues and never apply backfill; label application happens only during `cmd_push` (new issue creation) and `cmd_enrich` (keyed on `TODO.md` entries with `ref:GH#NNN`). Anything that bypasses both is permanently invisible to the enrichment pipeline.
 
 ## What
 

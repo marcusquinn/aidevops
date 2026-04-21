@@ -180,10 +180,10 @@ test_has_open_pr_detects_task_id_fallback() {
 	# contain a closing-keyword reference to our specific issue number.
 	# Bare "#NNN" body references are no longer sufficient (GH#18641).
 	# Body must be included in the pr list JSON (no separate gh pr view call).
-	set_gh_fixtures 'marcusquinn/aidevops|merged|t063.1 in:title|[{"number":1059,"body":"Closes #9999. The awardsapp duplicate-dispatch guard."}]'
+	set_gh_fixtures 'marcusquinn/aidevops|merged|t063.1 in:title|[{"number":1059,"body":"Closes #9999. The webapp duplicate-dispatch guard."}]'
 
 	local output=""
-	if output=$("$HELPER_SCRIPT" has-open-pr 9999 marcusquinn/aidevops 't063.1: fix awardsapp duplicate PR dispatch'); then
+	if output=$("$HELPER_SCRIPT" has-open-pr 9999 marcusquinn/aidevops 't063.1: fix webapp duplicate PR dispatch'); then
 		case "$output" in
 		*'merged PR #1059 found by task id t063.1 in title'*)
 			print_result "has-open-pr detects merged PR via task-id fallback" 0
