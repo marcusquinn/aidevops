@@ -258,37 +258,58 @@ HOOK_HEADER
 }
 
 #######################################
-# cmd_install — install or refresh guard(s)
+# _cmd_install_parse_guard_args — parse --guard <name> from "$@".
+# Prints the guard filter on stdout; returns 1 on argument error.
 #######################################
-cmd_install() {
-	local _guard_filter="all"
+_cmd_install_parse_guard_args() {
+	local _filter="all"
 	while [[ $# -gt 0 ]]; do
-		local _opt="$1"
-		case "$_opt" in
+		local _arg="$1"
+		case "$_arg" in
 		--guard)
 			[[ $# -ge 2 ]] || { print_error "missing value for --guard"; return 1; }
 			local _val="$2"
-			_guard_filter="$_val"
+			_filter="$_val"
 			shift 2
 			;;
-		*) print_error "install: unknown argument: $_opt"; return 1 ;;
+		*) print_error "install: unknown argument: $_arg"; return 1 ;;
 		esac
 	done
+	printf '%s' "$_filter"
+	return 0
+}
+
+#######################################
+# _cmd_install_check_unmanaged — refuse to overwrite a non-aidevops hook.
+# Args: _hook_path
+# Returns 1 if the hook exists and is NOT managed by aidevops.
+#######################################
+_cmd_install_check_unmanaged() {
+	local _hook_path="$1"
+	[[ ! -f "$_hook_path" ]] && return 0
+	_hook_is_managed "$_hook_path" && return 0
+	print_error "existing pre-push hook at $_hook_path is NOT managed by aidevops"
+	print_error "Refusing to overwrite. To chain manually, add each guard to your hook:"
+	local _gh
+	for _gh in "privacy-guard-pre-push.sh" "complexity-regression-pre-push.sh" \
+	           "scope-guard-pre-push.sh" "credential-emission-pre-push.sh"; do
+		# shellcheck disable=SC2016
+		print_error '  ${REPO}/.agents/hooks/'"$_gh"' "$@" < /dev/stdin'
+	done
+	return 1
+}
+
+#######################################
+# cmd_install — install or refresh guard(s)
+#######################################
+cmd_install() {
+	local _guard_filter
+	_guard_filter=$(_cmd_install_parse_guard_args "$@") || return 1
 
 	local _hook_path
 	_hook_path=$(_hook_path) || return 1
 
-	# Refuse to overwrite unmanaged hooks
-	if [[ -f "$_hook_path" ]] && ! _hook_is_managed "$_hook_path"; then
-		print_error "existing pre-push hook at $_hook_path is NOT managed by aidevops"
-		print_error "Refusing to overwrite. To chain manually, add each guard to your hook:"
-		local _gh
-		for _gh in "privacy-guard-pre-push.sh" "complexity-regression-pre-push.sh" "scope-guard-pre-push.sh" "credential-emission-pre-push.sh"; do
-			# shellcheck disable=SC2016
-			print_error '  ${REPO}/.agents/hooks/'"$_gh"' "$@" < /dev/stdin'
-		done
-		return 1
-	fi
+	_cmd_install_check_unmanaged "$_hook_path" || return 1
 
 	# Determine which guards are currently in the hook
 	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0
