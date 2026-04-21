@@ -960,20 +960,71 @@ check_prompt_guard_patterns() {
 		return 1
 	fi
 
-	# Check staleness (>30 days old)
-	local file_age_days=0
+	# Check staleness (>30 days since last confirmed refresh).
+	# Three-level fallback chain (GH#20312 / Option B):
+	#  1. ~/.aidevops/.deployed-sha mtime  — written after every successful deploy;
+	#     measures "time since we last confirmed the install is current", not upstream
+	#     release cadence. rsync -a preserves source mtime, so the yaml file mtime
+	#     keeps measuring the upstream commit date, not the local refresh date.
+	#  2. git log commit date from the canonical repo, if present  — measures when
+	#     upstream last changed the patterns file.  Falls back to this on installs
+	#     that pre-date the .deployed-sha stamp (t2156).
+	#  3. Deployed file mtime  — current behaviour; preserved for alt install paths
+	#     (Homebrew, .deb, airgapped tarballs) that have neither a stamp nor a repo.
+	local now
+	now=$(date +%s)
+	local ref_epoch=0
+	local ref_source="file mtime"
+
+	# Determine stat mtime flag once — avoids repeating the "Darwin" literal
+	# (ratchet gate triggers at ≥3 occurrences per file; Darwin already appears
+	# twice in this file in other check functions).
+	local stat_flag
 	if [[ "$(uname)" == "Darwin" ]]; then
-		local file_mod
-		file_mod=$(stat -f %m "$yaml_file" || echo "0")
-		local now
-		now=$(date +%s)
-		file_age_days=$(((now - file_mod) / 86400))
+		stat_flag="-f %m"
 	else
-		file_age_days=$((($(date +%s) - $(stat -c %Y "$yaml_file" || echo "0")) / 86400))
+		stat_flag="-c %Y"
+	fi
+
+	# Level 1: .deployed-sha stamp mtime
+	local deployed_sha_file="${HOME}/.aidevops/.deployed-sha"
+	if [[ -f "$deployed_sha_file" ]]; then
+		local stamp_mtime
+		# shellcheck disable=SC2086
+		stamp_mtime=$(stat $stat_flag "$deployed_sha_file" 2>/dev/null || echo "0")
+		if [[ "$stamp_mtime" -gt 0 ]]; then
+			ref_epoch="$stamp_mtime"
+			ref_source="deploy stamp"
+		fi
+	fi
+
+	# Level 2: upstream git commit date (only if stamp was not found)
+	if [[ "$ref_epoch" -eq 0 ]]; then
+		local framework_repo="${HOME}/Git/aidevops"
+		if [[ -d "${framework_repo}/.git" ]]; then
+			local git_epoch
+			git_epoch=$(git -C "$framework_repo" log -1 --format=%ct -- \
+				.agents/configs/prompt-injection-patterns.yaml 2>/dev/null || echo "0")
+			if [[ "$git_epoch" -gt 0 ]]; then
+				ref_epoch="$git_epoch"
+				ref_source="upstream commit"
+			fi
+		fi
+	fi
+
+	# Level 3: deployed file mtime (fallback — preserves prior behaviour)
+	if [[ "$ref_epoch" -eq 0 ]]; then
+		# shellcheck disable=SC2086
+		ref_epoch=$(stat $stat_flag "$yaml_file" 2>/dev/null || echo "0")
+	fi
+
+	local file_age_days=0
+	if [[ "$ref_epoch" -gt 0 ]]; then
+		file_age_days=$(((now - ref_epoch) / 86400))
 	fi
 
 	if [[ "$file_age_days" -gt 30 ]]; then
-		CHECK_LABEL="$label: ${file_age_days}d old (>30d)"
+		CHECK_LABEL="$label: ${file_age_days}d old (>30d, ref: ${ref_source})"
 		CHECK_FIX="Run: aidevops update"
 		return 1
 	fi
