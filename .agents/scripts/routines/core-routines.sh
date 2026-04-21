@@ -27,7 +27,7 @@ r908|x|Profile README update|repeat:cron(0 * * * *)|~30s|scripts/profile-readme-
 r909|x|Screen time snapshot|repeat:cron(0 */6 * * *)|~10s|scripts/screen-time-helper.sh snapshot|script
 r910|x|Skills sync — refresh agent skills|repeat:cron(*/5 * * * *)|~15s|bin/aidevops-skills-sync|script
 r911|x|OAuth token refresh|repeat:cron(*/30 * * * *)|~10s|scripts/oauth-pool-helper.sh refresh|script
-r912|x|Dashboard server|repeat:persistent|~0s|server/index.ts|service
+r912| |Dashboard server|repeat:persistent|~0s|server/index.ts|service
 r913|x|Weekly opencode DB maintenance|repeat:weekly(sun@04:00)|~2m|scripts/opencode-db-maintenance-helper.sh auto|script
 r914|x|Repo aidevops health — bump stale .aidevops.json, detect drift|repeat:daily(@03:30)|~2m|scripts/repo-aidevops-health-helper.sh run|script
 ENTRIES
