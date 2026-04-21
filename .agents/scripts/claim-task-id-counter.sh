@@ -86,6 +86,76 @@ _append_claim_audit_log() {
 }
 
 # =============================================================================
+# Machine-local mutex for CAS serialisation (Phase 2 / t2568 / GH#20001)
+# =============================================================================
+# macOS has no flock(1); use atomic mkdir as the lock primitive.
+# Pattern mirrors pulse-instance-lock.sh (see reference/bash-fd-locking.md).
+#
+# Lock path: ~/.aidevops/locks/claim-task-id.<remote>.<branch>.lock/
+# Shared across repos on the same host so local runners serialise on the
+# same remote/branch — they are contending for the same .task-counter anyway.
+#
+# Bounded wait: poll for up to CAS_LOCAL_LOCK_TIMEOUT_S (default 10s).
+# If the timeout elapses, fall through UNLOCKED — the git push is still the
+# authoritative CAS gate and must never be blocked by the local mutex.
+# =============================================================================
+
+CAS_LOCAL_LOCK_DIR="${CAS_LOCAL_LOCK_DIR:-${HOME}/.aidevops/locks}"
+CAS_LOCAL_LOCK_TIMEOUT_S="${CAS_LOCAL_LOCK_TIMEOUT_S:-10}"
+
+# Return the path of the lock directory for the current remote+branch pair.
+_cas_local_lock_path() {
+	local safe_remote safe_branch
+	safe_remote=$(printf '%s' "${REMOTE_NAME:-origin}" | tr -c 'A-Za-z0-9._-' '_')
+	safe_branch=$(printf '%s' "${COUNTER_BRANCH:-main}" | tr -c 'A-Za-z0-9._-' '_')
+	printf '%s/claim-task-id.%s.%s.lock' "$CAS_LOCAL_LOCK_DIR" "$safe_remote" "$safe_branch"
+	return 0
+}
+
+# Attempt to acquire the local mutex within CAS_LOCAL_LOCK_TIMEOUT_S seconds.
+# Returns: 0 — lock acquired, 1 — timeout elapsed (proceed unlocked).
+# Stale-lock reclaim: if pid file points at a dead process the lock is cleared
+# and acquisition is retried (mirrors pulse-instance-lock.sh pattern).
+_cas_acquire_local_lock() {
+	local lock_dir
+	lock_dir=$(_cas_local_lock_path)
+	mkdir -p "$CAS_LOCAL_LOCK_DIR" 2>/dev/null || true
+
+	local deadline
+	deadline=$(( $(date +%s) + CAS_LOCAL_LOCK_TIMEOUT_S ))
+
+	while (( $(date +%s) < deadline )); do
+		if mkdir "$lock_dir" 2>/dev/null; then
+			printf '%s' "${BASHPID:-$$}" > "${lock_dir}/pid" 2>/dev/null || true
+			return 0
+		fi
+
+		# Stale-lock reclaim: if pid file points at a dead process, remove
+		# the lock dir and retry the mkdir on the next loop iteration.
+		local lock_pid=""
+		if [[ -r "${lock_dir}/pid" ]]; then
+			lock_pid=$(cat "${lock_dir}/pid" 2>/dev/null || true)
+		fi
+		if [[ -n "$lock_pid" ]] && [[ "$lock_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+			rm -rf "$lock_dir" 2>/dev/null || true
+			continue
+		fi
+
+		sleep 0.25
+	done
+
+	return 1
+}
+
+# Release the local mutex unconditionally.
+_cas_release_local_lock() {
+	local lock_dir
+	lock_dir=$(_cas_local_lock_path)
+	rm -rf "$lock_dir" 2>/dev/null || true
+	return 0
+}
+
+# =============================================================================
 # Counter Reads
 # =============================================================================
 
@@ -448,6 +518,10 @@ allocate_counter_cas() {
 # git fetch/push can take several seconds due to index.lock waits; without
 # a wall-clock cap the loop could run for 180s+ (30 retries × 6s each).
 # The backoff is capped at 2.0s to keep retries tight within the budget.
+#
+# Phase 2 (t2568 / GH#20001): machine-local mutex wraps the retry loop to
+# serialise concurrent agents on the same host.  Lock acquisition failure is
+# non-fatal — the git push remains the authoritative CAS gate.
 allocate_online() {
 	local repo_path="$1"
 	local count="$2"
@@ -455,6 +529,20 @@ allocate_online() {
 	local first_id=""
 	local start_epoch
 	start_epoch=$(date +%s)
+
+	# Phase 2 (t2568 / GH#20001): machine-local mutex.
+	# Acquire before entering the retry loop so local runners serialise at the
+	# fetch→read→build→push boundary.  Fail-open: if lock times out, log a
+	# warning and proceed unlocked — the git push is still the CAS authority.
+	local _have_local_lock=0
+	if _cas_acquire_local_lock; then
+		_have_local_lock=1
+	else
+		log_warn "Could not acquire local CAS mutex within ${CAS_LOCAL_LOCK_TIMEOUT_S}s — proceeding unlocked (git push remains authoritative)"
+	fi
+
+	# shellcheck disable=SC2064  # intentional: flag captured at definition time
+	trap "[[ \${_have_local_lock:-0} -eq 1 ]] && _cas_release_local_lock; trap - RETURN" RETURN
 
 	while [[ $attempt -lt $CAS_MAX_RETRIES ]]; do
 		# GH#20137: wall-clock timeout — abort if we've exceeded CAS_WALL_TIMEOUT_S
