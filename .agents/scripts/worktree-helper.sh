@@ -732,6 +732,98 @@ _print_worktree_add_success() {
 	return 0
 }
 
+# t2701: Resolve a path to absolute canonical form (resolves symlinks in parent
+# via `pwd -P`, handles relative and missing leaf components).
+# Prints absolute path on stdout. Always returns 0 — best-effort.
+_worktree_resolve_abs_path() {
+	local input="$1"
+	local parent base abs_parent
+	parent="$(dirname -- "$input")"
+	base="$(basename -- "$input")"
+	if abs_parent="$(cd "$parent" 2>/dev/null && pwd -P)"; then
+		if [[ "$base" = "." ]]; then
+			printf '%s\n' "$abs_parent"
+		else
+			printf '%s/%s\n' "$abs_parent" "$base"
+		fi
+	else
+		# Parent does not exist — naive join (best-effort absolute form)
+		case "$input" in
+			/*) printf '%s\n' "$input" ;;
+			*)  printf '%s/%s\n' "$(pwd)" "$input" ;;
+		esac
+	fi
+	return 0
+}
+
+# t2701: Assert that the requested worktree path is not inside the canonical
+# repo working tree. Aborts with a mentoring error on containment.
+#
+# The helper's `add <branch> [path]` signature does not mirror git's own
+# `git worktree add -b <branch> <path> [<base>]` — our second positional is a
+# filesystem PATH, not a base branch. Users passing `main` thinking it's a
+# base branch silently create a worktree at $CWD/main, nested inside the
+# canonical repo (state confusion, cleanup-script blast radius, pull/merge
+# inconsistency). This guard rejects that input with a mentoring error.
+#
+# Env override: AIDEVOPS_WORKTREE_ALLOW_NESTED=1 bypasses the check for rare
+# legitimate cases (test fixtures, documented intent).
+_cmd_add_assert_path_outside_repo() {
+	local path="$1"
+	local branch="$2"
+
+	if [[ "${AIDEVOPS_WORKTREE_ALLOW_NESTED:-0}" = "1" ]]; then
+		return 0
+	fi
+
+	local abs_path abs_repo repo_root
+	abs_path="$(_worktree_resolve_abs_path "$path")"
+	repo_root="$(get_repo_root)"
+	if [[ -z "$repo_root" ]]; then
+		# Not in a repo — cmd_add has its own "not in a git repo" check; defer.
+		return 0
+	fi
+	abs_repo="$(cd "$repo_root" && pwd -P)"
+
+	# Containment: abs_path equals repo root OR starts with "$abs_repo/".
+	# The trailing '/' on abs_path handles the "equals" case cleanly.
+	case "$abs_path/" in
+		"$abs_repo"/*) : ;;  # nested
+		*)             return 0 ;;  # outside repo, allowed
+	esac
+
+	# Mentoring error to stderr
+	local parent_dir repo_name slug suggested_path
+	parent_dir="$(dirname -- "$abs_repo")"
+	repo_name="$(basename -- "$abs_repo")"
+	slug="$(echo "$branch" | tr '/' '-' | tr '[:upper:]' '[:lower:]')"
+	suggested_path="${parent_dir}/${repo_name}-${slug}"
+
+	{
+		echo -e "${RED}Error: Worktree path '$path' resolves to '$abs_path',${NC}"
+		echo -e "${RED}which is inside the canonical repo working tree ('$abs_repo').${NC}"
+		echo ""
+		echo "Worktrees must live outside the canonical repo to prevent git state"
+		echo "confusion (cleanup scripts, git status ambiguity, pull/merge blast radius)."
+		echo ""
+		echo "If you meant to branch off 'main' (or another base branch), note that"
+		echo "the 'path' argument is a FILESYSTEM PATH, not a base branch. Options:"
+		echo ""
+		echo "  - Omit [path] for auto-generated sibling path:"
+		echo "      worktree-helper.sh add $branch"
+		echo ""
+		echo "  - Pass an explicit path OUTSIDE the repo:"
+		echo "      worktree-helper.sh add $branch $suggested_path"
+		echo ""
+		echo "The created worktree branches from HEAD automatically; you do not"
+		echo "need to specify a base branch."
+		echo ""
+		echo "(Override: AIDEVOPS_WORKTREE_ALLOW_NESTED=1 — use only with a documented"
+		echo "reason for a nested worktree.)"
+	} >&2
+	return 1
+}
+
 # Parse cmd_add arguments: positional (branch, path) + optional --issue NNN.
 # Sets global _ADD_BRANCH, _ADD_PATH, _ADD_ISSUE. Returns 1 on parse error.
 # Extracted from cmd_add (t2260) to keep function bodies under 100 lines.
@@ -819,6 +911,12 @@ cmd_add() {
 	if [[ -z "$path" ]]; then
 		path=$(generate_worktree_path "$branch")
 	fi
+
+	# t2701: Reject user-supplied paths that resolve inside the canonical repo.
+	# Catches the common footgun of passing a base-branch name as the path arg
+	# (e.g. `add feature/foo main` creating $CWD/main nested inside the repo).
+	# Auto-generated paths are siblings of the repo, so this is a no-op for them.
+	_cmd_add_assert_path_outside_repo "$path" "$branch" || return 1
 
 	# Check if path already exists
 	if [[ -d "$path" ]]; then
