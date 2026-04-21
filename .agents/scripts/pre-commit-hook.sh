@@ -723,6 +723,7 @@ _init_root_file_allowlist() {
 		"package.json" "bun.lock" "requirements.txt" "requirements-lock.txt"
 		# Scripts
 		"setup.sh" "aidevops.sh"
+		"aidevops-repos.sh" "aidevops-init.sh" "aidevops-plugins.sh"
 		# Tool configs
 		"sonar-project.properties" "repomix.config.json" "repomix-instruction.md"
 		# Test scripts (temporary - should be moved to .agents/scripts/)

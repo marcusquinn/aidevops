@@ -57,6 +57,9 @@
   "files": [
     "bin/",
     "aidevops.sh",
+    "aidevops-repos.sh",
+    "aidevops-init.sh",
+    "aidevops-plugins.sh",
     "setup.sh",
     "setup-modules/",
     "VERSION",
