@@ -17,6 +17,75 @@ import { enrichActiveSpan, detectTaskId, detectSessionOrigin } from "./otel-enri
 export { scanForSecrets } from "./quality-logging.mjs";
 
 // ---------------------------------------------------------------------------
+// Credential transcript scrub (GH#20207, Layer 4 of t2458)
+// Mirrors shared-constants.sh scrub_credentials regex.
+// Applied in handleToolAfter to redact tokens before they reach the model
+// or are persisted to the SQLite transcript store.
+// ---------------------------------------------------------------------------
+
+const CREDENTIAL_PATTERN =
+  /(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
+
+const REDACTION_TOKEN = "[redacted-credential]";
+
+/**
+ * Scrub known credential token prefixes from a string value.
+ * @param {string} text
+ * @returns {{ scrubbed: string, count: number }}
+ */
+function scrubCredentials(text) {
+  let count = 0;
+  const scrubbed = text.replace(CREDENTIAL_PATTERN, () => {
+    count++;
+    return REDACTION_TOKEN;
+  });
+  return { scrubbed, count };
+}
+
+/**
+ * Recursively scrub credentials from any JSON-serialisable value.
+ * @param {unknown} value
+ * @returns {{ value: unknown, count: number }}
+ */
+function scrubValue(value) {
+  if (typeof value === "string") {
+    const { scrubbed, count } = scrubCredentials(value);
+    return { value: scrubbed, count };
+  }
+  if (Array.isArray(value)) {
+    let total = 0;
+    const result = value.map((item) => {
+      const { value: v, count } = scrubValue(item);
+      total += count;
+      return v;
+    });
+    return { value: result, count: total };
+  }
+  if (value !== null && typeof value === "object") {
+    let total = 0;
+    const result = {};
+    for (const [k, v] of Object.entries(value)) {
+      const { value: scrubbed, count } = scrubValue(v);
+      result[k] = scrubbed;
+      total += count;
+    }
+    return { value: result, count: total };
+  }
+  return { value, count: 0 };
+}
+
+/**
+ * Scrub credentials from tool output. Returns the sanitised output and a
+ * boolean indicating whether any redaction occurred.
+ * @param {unknown} output
+ * @returns {{ output: unknown, redacted: boolean }}
+ */
+function scrubToolOutput(output) {
+  const { value, count } = scrubValue(output);
+  return { output: value, redacted: count > 0 };
+}
+
+// ---------------------------------------------------------------------------
 // Tool classification helpers
 // ---------------------------------------------------------------------------
 
@@ -201,6 +270,19 @@ function handleToolBefore(ctx, log, input, output) {
  */
 function handleToolAfter(ctx, log, scriptsDir, input, output) {
   const toolName = input.tool || "";
+
+  // GH#20207 (t2458 Layer 4): scrub credentials from tool output before
+  // persisting to the SQLite transcript store or sending to the model.
+  // Applies to all tools — credentials can arrive via user scripts, third-party
+  // CLIs, or runtime error backtraces, not just framework helpers.
+  const rawOutput = output.output;
+  if (rawOutput !== undefined) {
+    const { output: scrubbedOutput, redacted } = scrubToolOutput(rawOutput);
+    if (redacted) {
+      output.output = scrubbedOutput;
+      log("WARN", `[credential-scrub] redacted credential token(s) from ${toolName} output`);
+    }
+  }
 
   if (isBashTool(toolName)) {
     trackBashOperation(ctx, output.title || "", output.output || "");
