@@ -2875,3 +2875,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2709 shared-gh-wrappers.sh: make REST-fallback source path resolution cross-shell (bash + zsh) #auto-dispatch ref:GH#20357
 
 - [ ] t2710 t2705 child: analyse _dps_consider_rebase gating that blocks otherwise-rebaseable DIRTY PRs #parent ref:GH#20361
+
+- [ ] t2711 t2705 child: analyse pulse-merge auto-merge + dirty-pr-sweep timing interactions #parent ref:GH#20368
