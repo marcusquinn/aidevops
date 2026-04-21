@@ -42,6 +42,8 @@
 #  15. gh_create_pr falls back to REST when primary fails AND exhausted
 #  16. gh_create_pr does NOT fall back when primary succeeds
 #  17. gh_create_pr does NOT fall back when primary fails but graphql healthy
+#  18. _gh_pr_create_rest without --head auto-detects head from current git branch
+#  19. _gh_pr_create_rest without --base auto-detects base from repo default_branch
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -128,6 +130,12 @@ gh() {
 	# gh api user - always returns testuser (for _gh_wrapper_auto_assignee)
 	if [[ "$1" == "api" && "$2" == "user" ]]; then
 		printf '"testuser"\n'
+		return 0
+	fi
+
+	# gh api /repos/owner/repo (repo metadata - for default_branch detection)
+	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+$ ]]; then
+		printf '%s\n' "${STUB_DEFAULT_BRANCH:-main}"
 		return 0
 	fi
 
@@ -526,6 +534,58 @@ fi
 
 unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
+
+# =============================================================================
+# Test 18: _gh_pr_create_rest without --head auto-detects from current branch
+# The test suite runs inside a git repo, so git rev-parse --abbrev-ref HEAD
+# returns the active branch name. We capture it first for the assertion.
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+_EXPECTED_HEAD=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+
+_gh_pr_create_rest \
+	--repo "owner/repo" \
+	--title "t2704: auto-detect head test" \
+	--base "main" \
+	--body "head auto-detect" >/dev/null 2>&1 || true
+
+if [[ -n "$_EXPECTED_HEAD" ]] &&
+	grep -qF "head=${_EXPECTED_HEAD}" "$GH_CALLS" 2>/dev/null &&
+	grep -qE 'auto-detected --head=' "$GH_INFO_OUTPUT" 2>/dev/null; then
+	pass "_gh_pr_create_rest auto-detects --head from current branch (${_EXPECTED_HEAD})"
+else
+	fail "_gh_pr_create_rest auto-detects --head from current branch" \
+		"expected head=${_EXPECTED_HEAD:-<empty>} | GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+unset _EXPECTED_HEAD
+
+# =============================================================================
+# Test 19: _gh_pr_create_rest without --base auto-detects from repo default_branch
+# Stub returns STUB_DEFAULT_BRANCH (set to "develop" to distinguish from "main"
+# literal fallback — verifies the REST path was taken, not just the hardcoded
+# default).
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_DEFAULT_BRANCH="develop"
+
+_gh_pr_create_rest \
+	--repo "owner/repo" \
+	--title "t2704: auto-detect base test" \
+	--head "feature/t2704-base-detect" \
+	--body "base auto-detect" >/dev/null 2>&1 || true
+
+if grep -qE 'base=develop' "$GH_CALLS" 2>/dev/null &&
+	grep -qE 'auto-detected --base=develop' "$GH_INFO_OUTPUT" 2>/dev/null; then
+	pass "_gh_pr_create_rest auto-detects --base from repo default_branch (develop)"
+else
+	fail "_gh_pr_create_rest auto-detects --base from repo default_branch" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+unset STUB_DEFAULT_BRANCH
 
 # =============================================================================
 # Summary

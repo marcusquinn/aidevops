@@ -422,7 +422,8 @@ _gh_rest_compute_target_set() {
 _gh_pr_create_rest() {
 	local title=""
 	local head=""
-	local base="main"
+	local base=""
+	local has_base=0
 	local body=""
 	local body_file=""
 	local repo=""
@@ -440,8 +441,8 @@ _gh_pr_create_rest() {
 		--title=*) title="${_arg#--title=}"; shift ;;
 		--head) head="${2:-}"; shift 2 ;;
 		--head=*) head="${_arg#--head=}"; shift ;;
-		--base) base="${2:-}"; shift 2 ;;
-		--base=*) base="${_arg#--base=}"; shift ;;
+		--base) base="${2:-}"; has_base=1; shift 2 ;;
+		--base=*) base="${_arg#--base=}"; has_base=1; shift ;;
 		--body) body="${2:-}"; has_body=1; shift 2 ;;
 		--body=*) body="${_arg#--body=}"; has_body=1; shift ;;
 		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
@@ -462,8 +463,33 @@ _gh_pr_create_rest() {
 		return 1
 	fi
 	if [[ -z "$head" ]]; then
-		printf '_gh_pr_create_rest: --head is required\n' >&2
-		return 1
+		# Auto-detect from current git branch (mirrors gh pr create behaviour).
+		head=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+		if [[ -n "$head" ]]; then
+			print_info "gh-wrapper: auto-detected --head=${head}"
+		else
+			printf '_gh_pr_create_rest: --head is required\n' >&2
+			return 1
+		fi
+	fi
+	if [[ $has_base -eq 0 || -z "$base" ]]; then
+		# Auto-detect repo default branch. Resolution order:
+		#   1. REST /repos/{owner}/{repo} .default_branch (no GraphQL cost)
+		#   2. git symbolic-ref refs/remotes/origin/HEAD
+		#   3. literal "main"
+		local _detected_base=""
+		if [[ -n "$repo" ]]; then
+			_detected_base=$(gh api "/repos/${repo}" --jq '.default_branch' 2>/dev/null || true)
+		fi
+		if [[ -z "$_detected_base" ]]; then
+			_detected_base=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+				| sed 's@^refs/remotes/origin/@@' || true)
+		fi
+		if [[ -z "$_detected_base" ]]; then
+			_detected_base="main"
+		fi
+		base="$_detected_base"
+		print_info "gh-wrapper: auto-detected --base=${base}"
 	fi
 
 	local tmp_body="" tmp_body_owned=0
