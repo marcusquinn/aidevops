@@ -148,6 +148,50 @@ _find_merge_base() {
 }
 
 # ---------------------------------------------------------------------------
+# Check whether a given t-ID has a matching claim commit on the current
+# branch between merge-base and HEAD. The claim commit subject must match
+# `chore: claim tNNN[..tMMM] [nonce]` (single or range form — see
+# allocate_counter_cas in claim-task-id.sh lines 684-689).
+#
+# Returns 0 if a claim commit is found, 1 otherwise.
+# ---------------------------------------------------------------------------
+_branch_has_claim() {
+	local tid="${1:-}"
+	local base
+	base=$(_find_merge_base)
+	if [[ -z "$base" ]]; then
+		_debug "merge-base empty — cannot verify branch claim, allowing"
+		return 0
+	fi
+	# Match single claim: "chore: claim t001 [nonce]"
+	# Match range claim:  "chore: claim t001..t003 [nonce]"
+	# Use git log with %s (subject) and grep for the tid as word.
+	local num
+	num=$(printf '%s' "$tid" | tr -d 't')
+	if ! [[ "$num" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+	# Look for an exact single-ID claim first.
+	if git log --format='%s' "${base}..HEAD" 2>/dev/null |
+		grep -qE "^chore: claim t0*${num}( |\$|\\[)"; then
+		return 0
+	fi
+	# Look for a range claim that covers num: chore: claim tA..tB
+	local line low high
+	while IFS= read -r line; do
+		# Extract tA and tB from "chore: claim t00A..t00B [nonce]"
+		if [[ "$line" =~ ^chore:\ claim\ t0*([0-9]+)\.\.t0*([0-9]+) ]]; then
+			low="${BASH_REMATCH[1]}"
+			high="${BASH_REMATCH[2]}"
+			if ((10#$num >= 10#$low && 10#$num <= 10#$high)); then
+				return 0
+			fi
+		fi
+	done < <(git log --format='%s' "${base}..HEAD" 2>/dev/null)
+	return 1
+}
+
+# ---------------------------------------------------------------------------
 # Extract all tNNN references from text.
 # Outputs one per line.
 # ---------------------------------------------------------------------------
@@ -235,7 +279,7 @@ _verify_tid_via_issues() {
 _report_violations() {
 	local violations="${1:-}"
 	local subject="${2:-<unknown>}"
-	printf '\n[task-id-guard][BLOCK] Commit subject references invented task ID(s):\n\n' >&2
+	printf '\n[task-id-guard][BLOCK] Commit subject references invented or unclaimed task ID(s):\n\n' >&2
 	printf '  Subject: %s\n\n' "$subject" >&2
 	printf '%b\n' "$violations" >&2
 	printf '  To fix:\n' >&2
@@ -303,7 +347,27 @@ _check_message() {
 		# bash's octal parser. Same root cause as the _compute_counter_seed bug
 		# in claim-task-id.sh — both fixed in this PR (GH#19620).
 		if ((10#$num <= 10#$counter)); then
-			_debug "$tid ≤ counter ($counter) — allowed"
+			# Phase 1 (t2567 / GH#20001): reuse-without-claim detection.
+			# A t-ID ≤ counter exists globally, but must be claimed on THIS
+			# branch. If no matching `chore: claim tNNN` commit is found on
+			# merge-base..HEAD, fall through to the linked-issue check so the
+			# worker can still authorise via `Resolves/Closes/Fixes/Ref/For
+			# #NNN` (matching issue title). If neither claim commit nor
+			# linked issue confirms, this becomes a violation (reuse).
+			if _branch_has_claim "$tid"; then
+				_debug "$tid claimed on this branch — allowed"
+				continue
+			fi
+			_debug "$tid ≤ counter but no branch claim — verifying via linked issues"
+			local verify_rc
+			_verify_tid_via_issues "$tid" "$closing_issues"
+			verify_rc=$?
+			if [[ "$verify_rc" -eq 2 ]]; then
+				return 2
+			fi
+			if [[ "$verify_rc" -eq 1 ]]; then
+				violations="${violations}  ${tid} — ≤ counter ${counter}, but no 'chore: claim ${tid}' commit on this branch and no linked issue title contains ${tid}\n"
+			fi
 			continue
 		fi
 		_debug "$tid ($num) > counter ($counter) — suspicious, checking linked issues"
