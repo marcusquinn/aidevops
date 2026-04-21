@@ -633,7 +633,11 @@ print('UNKNOWN')
 #
 # Arguments:
 #   $1 - repo path
-# Output: pipe-delimited "sonar_section|sweep_gate_status|sweep_total_issues|sweep_high_critical"
+# Output: pipe-delimited
+#   "sonar_section|sweep_gate_status|sweep_total_issues|sweep_high_critical|sweep_sev_inline"
+# t2717: sweep_sev_inline is a single-line per-severity summary for the
+# dashboard (e.g., "0 BLOCKER · 0 CRITICAL · 98 MAJOR · 196 MINOR · 0 INFO").
+# Empty on early-return paths where no SonarCloud data was fetched.
 #######################################
 _sweep_sonarcloud() {
 	local repo_path="$1"
@@ -642,9 +646,10 @@ _sweep_sonarcloud() {
 	local sweep_gate_status="UNKNOWN"
 	local sweep_total_issues=0
 	local sweep_high_critical=0
+	local sweep_sev_inline=""
 
 	[[ -f "${repo_path}/sonar-project.properties" ]] || {
-		printf '%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+		printf '%s|%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" "$sweep_sev_inline"
 		return 0
 	}
 
@@ -654,7 +659,7 @@ _sweep_sonarcloud() {
 	org_key=$(grep '^sonar.organization=' "${repo_path}/sonar-project.properties" 2>/dev/null | cut -d= -f2)
 
 	if [[ -z "$project_key" || -z "$org_key" ]]; then
-		printf '%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+		printf '%s|%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" "$sweep_sev_inline"
 		return 0
 	fi
 
@@ -663,7 +668,7 @@ _sweep_sonarcloud() {
 	encoded_project_key=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$project_key" 2>/dev/null) || encoded_project_key=""
 	if [[ -z "$encoded_project_key" ]]; then
 		echo "[stats] Failed to URL-encode project_key — skipping SonarCloud" >&2
-		printf '%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+		printf '%s|%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" "$sweep_sev_inline"
 		return 0
 	fi
 
@@ -700,21 +705,25 @@ ${conditions}
 	fi
 
 	# Fetch open issues summary with rule-level breakdown for targeted fixes
-	local issues_section total_issues high_critical_count
+	# t2717: parse the 4-field return (total|hc|sev_inline|md).
+	local issues_section total_issues high_critical_count sev_inline
 	issues_section=$(_sweep_sonarcloud_issues "$encoded_project_key")
 	total_issues="${issues_section%%|*}"
 	local issues_remainder="${issues_section#*|}"
 	high_critical_count="${issues_remainder%%|*}"
+	issues_remainder="${issues_remainder#*|}"
+	sev_inline="${issues_remainder%%|*}"
 	local issues_md="${issues_remainder#*|}"
 	[[ "$total_issues" =~ ^[0-9]+$ ]] || total_issues=0
 	[[ "$high_critical_count" =~ ^[0-9]+$ ]] || high_critical_count=0
 	sweep_total_issues="$total_issues"
 	sweep_high_critical="$high_critical_count"
+	sweep_sev_inline="$sev_inline"
 	if [[ -n "$issues_md" ]]; then
 		sonar_section="${sonar_section}${issues_md}"
 	fi
 
-	printf '%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+	printf '%s|%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" "$sweep_sev_inline"
 	return 0
 }
 
@@ -723,7 +732,14 @@ ${conditions}
 #
 # Arguments:
 #   $1 - encoded_project_key
-# Output: "total_issues|high_critical_count|issues_md"
+# Output: "total_issues|high_critical_count|sev_inline|issues_md"
+#
+# t2717: sev_inline is a single-line per-severity string for the dashboard
+# (e.g., "0 BLOCKER · 0 CRITICAL · 98 MAJOR · 196 MINOR · 0 INFO"). Replaces
+# the misleading '(N high/critical)' aggregate label, which counted MAJOR
+# (a CODE_SMELL severity in SonarCloud's taxonomy) alongside BLOCKER and
+# CRITICAL. high_critical_count is retained on the wire for back-compat
+# with the state-file schema and downstream test fixtures.
 #######################################
 _sweep_sonarcloud_issues() {
 	local encoded_project_key="$1"
@@ -733,27 +749,40 @@ _sweep_sonarcloud_issues() {
 		"https://sonarcloud.io/api/issues/search?componentKeys=${encoded_project_key}&statuses=OPEN,CONFIRMED,REOPENED&ps=1&facets=severities,types,rules" || echo "")
 
 	if [[ -z "$sonar_issues" ]] || ! echo "$sonar_issues" | jq -e '.total' &>/dev/null; then
-		printf '%s|%s|%s' "0" "0" ""
+		printf '%s|%s|%s|%s' "0" "0" "0 BLOCKER · 0 CRITICAL · 0 MAJOR · 0 MINOR · 0 INFO" ""
 		return 0
 	fi
 
-	# Single jq pass: extract total, high/critical count, severity breakdown, type breakdown, and top rules
+	# Single jq pass: extract total, high/critical count, per-severity inline
+	# summary (t2717), severity breakdown, and type breakdown.
 	local issues_data
+	# Bind $sev_values once (t2717) so the "severities" facet selector is not
+	# repeated — avoids tripping the repeated-string-literal ratchet in the
+	# pre-commit hook and makes the per-severity derivations explicit.
 	issues_data=$(echo "$sonar_issues" | jq -r '
 		(.total // 0) as $total |
-		([.facets[]? | select(.property == "severities") | .values[]? | select(.val == "MAJOR" or .val == "CRITICAL" or .val == "BLOCKER") | .count] | add // 0) as $hc |
-		([.facets[]? | select(.property == "severities") | .values[]? | "  - \(.val): \(.count)"] | join("\n")) as $sev |
+		([.facets[]? | select(.property == "severities") | .values[]?]) as $sev_values |
+		([$sev_values[] | select(.val == "MAJOR" or .val == "CRITICAL" or .val == "BLOCKER") | .count] | add // 0) as $hc |
+		($sev_values | map({key: .val, value: .count}) | from_entries) as $sev_map |
+		"\(($sev_map.BLOCKER // 0)) BLOCKER · \(($sev_map.CRITICAL // 0)) CRITICAL · \(($sev_map.MAJOR // 0)) MAJOR · \(($sev_map.MINOR // 0)) MINOR · \(($sev_map.INFO // 0)) INFO" as $sev_inline |
+		([$sev_values[] | "  - \(.val): \(.count)"] | join("\n")) as $sev |
 		([.facets[]? | select(.property == "types") | .values[]? | "  - \(.val): \(.count)"] | join("\n")) as $typ |
-		"\($total)|\($hc)|\($sev)|\($typ)"
-	') || issues_data="0|0||"
+		"\($total)|\($hc)|\($sev_inline)|\($sev)|\($typ)"
+	') || issues_data="0|0|0 BLOCKER · 0 CRITICAL · 0 MAJOR · 0 MINOR · 0 INFO||"
 	local total_issues="${issues_data%%|*}"
 	local remainder="${issues_data#*|}"
 	local high_critical_count="${remainder%%|*}"
+	remainder="${remainder#*|}"
+	local sev_inline="${remainder%%|*}"
 	remainder="${remainder#*|}"
 	local severity_breakdown="${remainder%%|*}"
 	local type_breakdown="${remainder#*|}"
 	[[ "$total_issues" =~ ^[0-9]+$ ]] || total_issues=0
 	[[ "$high_critical_count" =~ ^[0-9]+$ ]] || high_critical_count=0
+	# t2717: sev_inline is a presentation string — sanitize it the same way
+	# the breakdown strings are sanitized so stray markdown tokens in the
+	# SonarCloud facet values can't break the dashboard table.
+	sev_inline=$(_sanitize_markdown "$sev_inline")
 	severity_breakdown=$(_sanitize_markdown "$severity_breakdown")
 	type_breakdown=$(_sanitize_markdown "$type_breakdown")
 
@@ -781,7 +810,7 @@ ${rules_breakdown}
 "
 	fi
 
-	printf '%s|%s|%s' "$total_issues" "$high_critical_count" "$issues_md"
+	printf '%s|%s|%s|%s' "$total_issues" "$high_critical_count" "$sev_inline" "$issues_md"
 	return 0
 }
 
@@ -1084,6 +1113,7 @@ _run_sweep_tools() {
 	local sweep_gate_status="UNKNOWN"
 	local sweep_total_issues=0
 	local sweep_high_critical=0
+	local sweep_sev_inline=""
 
 	# t2066: capture previous smell count BEFORE running the sweep so we can
 	# render a delta (trend indicator) in the dashboard. The state file is
@@ -1129,7 +1159,17 @@ _run_sweep_tools() {
 		sweep_gate_status="${sonar_remainder%%|*}"
 		sonar_remainder="${sonar_remainder#*|}"
 		sweep_total_issues="${sonar_remainder%%|*}"
-		sweep_high_critical="${sonar_remainder#*|}"
+		sonar_remainder="${sonar_remainder#*|}"
+		sweep_high_critical="${sonar_remainder%%|*}"
+		# t2717: sweep_sev_inline is the 5th field (per-severity summary).
+		# An old sweep binary may still emit 4 fields; in that case
+		# sonar_remainder has no remaining '|' and #*| returns unchanged,
+		# so sev_inline falls back to high_critical — detect and blank.
+		if [[ "$sonar_remainder" == *"|"* ]]; then
+			sweep_sev_inline="${sonar_remainder#*|}"
+		else
+			sweep_sev_inline=""
+		fi
 		[[ -n "$sonar_section" ]] && tool_count=$((tool_count + 1))
 	fi
 
@@ -1164,6 +1204,9 @@ _run_sweep_tools() {
 	printf '%s' "$sweep_gate_status" >"${sections_dir}/sweep_gate_status"
 	printf '%s' "$sweep_total_issues" >"${sections_dir}/sweep_total_issues"
 	printf '%s' "$sweep_high_critical" >"${sections_dir}/sweep_high_critical"
+	# t2717: per-severity inline summary for the dashboard (replaces the
+	# misleading '(N high/critical)' aggregate on line rendering).
+	printf '%s' "$sweep_sev_inline" >"${sections_dir}/sweep_sev_inline"
 	printf '%s' "$codacy_section" >"${sections_dir}/codacy"
 	printf '%s' "$coderabbit_section" >"${sections_dir}/coderabbit"
 	printf '%s' "$review_scan_section" >"${sections_dir}/review_scan"
@@ -1198,6 +1241,7 @@ _quality_sweep_for_repo() {
 	local tool_count shellcheck_section qlty_section qlty_smell_count qlty_grade
 	local qlty_smell_delta qlty_smell_count_prev
 	local sonar_section sweep_gate_status sweep_total_issues sweep_high_critical
+	local sweep_sev_inline
 	local codacy_section coderabbit_section review_scan_section
 	tool_count=$(cat "${sections_dir}/tool_count" 2>/dev/null || echo 0)
 	shellcheck_section=$(cat "${sections_dir}/shellcheck" 2>/dev/null || echo "")
@@ -1211,6 +1255,10 @@ _quality_sweep_for_repo() {
 	sweep_gate_status=$(cat "${sections_dir}/sweep_gate_status" 2>/dev/null || echo UNKNOWN)
 	sweep_total_issues=$(cat "${sections_dir}/sweep_total_issues" 2>/dev/null || echo 0)
 	sweep_high_critical=$(cat "${sections_dir}/sweep_high_critical" 2>/dev/null || echo 0)
+	# t2717: per-severity inline summary for the dashboard. Optional; empty
+	# string on early-return paths or if the sections file is missing (e.g.,
+	# when a stale sections_dir predates this field).
+	sweep_sev_inline=$(cat "${sections_dir}/sweep_sev_inline" 2>/dev/null || echo "")
 	codacy_section=$(cat "${sections_dir}/codacy" 2>/dev/null || echo "")
 	coderabbit_section=$(cat "${sections_dir}/coderabbit" 2>/dev/null || echo "")
 	review_scan_section=$(cat "${sections_dir}/review_scan" 2>/dev/null || echo "")
@@ -1222,10 +1270,12 @@ _quality_sweep_for_repo() {
 	fi
 
 	# Update issue body dashboard first (best-effort — comment is secondary)
+	# t2717: pass sweep_sev_inline so the dashboard can render the per-
+	# severity breakdown in place of the misleading 'high/critical' aggregate.
 	_update_quality_issue_body "$repo_slug" "$issue_number" \
 		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
 		"$now_iso" "$tool_count" "$qlty_smell_count" "$qlty_grade" \
-		"$qlty_smell_delta" "$qlty_smell_count_prev"
+		"$qlty_smell_delta" "$qlty_smell_count_prev" "$sweep_sev_inline"
 
 	# Post daily comment with full findings
 	local comment_body
@@ -1786,7 +1836,7 @@ _gather_quality_issue_stats() {
 #   $4  - badge_indicator
 #   $5  - gate_status
 #   $6  - total_issues
-#   $7  - high_critical
+#   $7  - high_critical (retained for back-compat; not displayed per t2717)
 #   $8  - qlty_grade
 #   $9  - qlty_smell_count
 #   $10 - debt_open
@@ -1798,6 +1848,9 @@ _gather_quality_issue_stats() {
 #   $16 - bot_coverage_section
 #   $17 - qlty_smell_delta (signed int; positive = regression)
 #   $18 - qlty_smell_count_prev (previous sweep's smell count; 0 = first run)
+#   $19 - sev_inline (t2717; per-severity inline summary, e.g.,
+#        "0 BLOCKER · 0 CRITICAL · 98 MAJOR · 196 MINOR · 0 INFO";
+#        empty string falls back to legacy high_critical rendering)
 # Output: body markdown to stdout
 #######################################
 _build_quality_issue_body() {
@@ -1819,6 +1872,7 @@ _build_quality_issue_body() {
 	local bot_coverage_section="${16}"
 	local qlty_smell_delta="${17:-0}"
 	local qlty_smell_count_prev="${18:-0}"
+	local sev_inline="${19:-}"
 
 	# t2066: render smell-count trend indicator. The arrow is a simple
 	# visual cue; the signed value is authoritative. First-run case (prev=0,
@@ -1836,6 +1890,20 @@ _build_quality_issue_body() {
 		smell_trend="↑ +${qlty_smell_delta} (regressed)"
 	fi
 
+	# t2717: prefer the per-severity inline summary (BLOCKER · CRITICAL ·
+	# MAJOR · MINOR · INFO) over the legacy '(N high/critical)' aggregate.
+	# The legacy label was misleading because it summed MAJOR (a
+	# CODE_SMELL severity in SonarCloud's taxonomy) with the true high
+	# severities (BLOCKER, CRITICAL). Fall back to the legacy label only
+	# when sev_inline is empty (e.g., first sweep after upgrade, or an
+	# early-return path where no SonarCloud data was fetched).
+	local sonar_issues_detail
+	if [[ -n "$sev_inline" ]]; then
+		sonar_issues_detail="${total_issues} (${sev_inline})"
+	else
+		sonar_issues_detail="${total_issues} (${high_critical} high/critical)"
+	fi
+
 	cat <<BODY
 ## Code Audit Routines
 
@@ -1849,7 +1917,7 @@ _build_quality_issue_body() {
 | Metric | Value |
 | --- | --- |
 | SonarCloud gate | ${gate_status} |
-| SonarCloud issues | ${total_issues} (${high_critical} high/critical) |
+| SonarCloud issues | ${sonar_issues_detail} |
 | Qlty grade (local, from smell count) | ${qlty_grade} |
 | Qlty smells | ${qlty_smell_count} ${smell_trend} |
 
@@ -1925,13 +1993,17 @@ _update_quality_issue_title() {
 #   $2  - issue number
 #   $3  - gate status (OK/ERROR/WARN/UNKNOWN)
 #   $4  - total SonarCloud issues
-#   $5  - high/critical count
+#   $5  - high/critical count (MAJOR+CRITICAL+BLOCKER aggregate; retained
+#        for state-file back-compat, no longer displayed directly per t2717)
 #   $6  - sweep timestamp (ISO)
 #   $7  - tool count
 #   $8  - qlty smell count (optional)
 #   $9  - qlty grade (optional)
 #   $10 - qlty smell delta (optional, t2066; signed int)
 #   $11 - qlty smell count previous (optional, t2066; 0 = first run)
+#   $12 - sev_inline (optional, t2717; per-severity inline summary string,
+#        e.g., "0 BLOCKER · 0 CRITICAL · 98 MAJOR · 196 MINOR · 0 INFO";
+#        empty on first-run / pre-t2717 state reads)
 #######################################
 _update_quality_issue_body() {
 	local repo_slug="$1"
@@ -1945,6 +2017,7 @@ _update_quality_issue_body() {
 	local qlty_grade="${9:-UNKNOWN}"
 	local qlty_smell_delta="${10:-0}"
 	local qlty_smell_count_prev="${11:-0}"
+	local sev_inline="${12:-}"
 
 	# Sanitize inputs to single-line values — prevents multi-line tool output
 	# (e.g., ShellCheck findings) from leaking into the dashboard table.
@@ -1955,6 +2028,9 @@ _update_quality_issue_body() {
 	qlty_smell_count="${qlty_smell_count%%$'\n'*}"
 	qlty_smell_delta="${qlty_smell_delta%%$'\n'*}"
 	qlty_smell_count_prev="${qlty_smell_count_prev%%$'\n'*}"
+	# t2717: sev_inline must stay single-line too — stray newlines would
+	# break the dashboard table row.
+	sev_inline="${sev_inline%%$'\n'*}"
 	# Validate numeric fields — fall back to 0 if corrupted
 	[[ "$total_issues" =~ ^[0-9]+$ ]] || total_issues=0
 	[[ "$high_critical" =~ ^[0-9]+$ ]] || high_critical=0
@@ -1991,7 +2067,7 @@ _update_quality_issue_body() {
 		"$qlty_grade" "$qlty_smell_count" \
 		"$debt_open" "$debt_closed" "$simplified_count" "$debt_resolution_pct" \
 		"$prs_scanned_lifetime" "$issues_created_lifetime" "$bot_coverage_section" \
-		"$qlty_smell_delta" "$qlty_smell_count_prev")
+		"$qlty_smell_delta" "$qlty_smell_count_prev" "$sev_inline")
 
 	# Update issue body — redirect stderr to log for debugging on failure
 	local edit_stderr
