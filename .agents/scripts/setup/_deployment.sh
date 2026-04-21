@@ -84,6 +84,8 @@ deploy_aidevops_agents() {
 	# Set permissions on scripts and bin shims
 	chmod +x "${target_dir}/scripts/"*.sh 2>/dev/null || true
 	chmod +x "${target_dir}/bin/"* 2>/dev/null || true
+	# t2685: sig-enforcing gh shim (no .sh extension so it's found as `gh` on PATH)
+	[[ -f "${target_dir}/scripts/gh" ]] && chmod +x "${target_dir}/scripts/gh" 2>/dev/null || true
 
 	# t2199: Symlink bin shims into ~/.aidevops/bin/ for PATH discoverability.
 	# ~/.aidevops/bin/ is already on PATH (managed by setup.sh shell-env).

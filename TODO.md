@@ -760,6 +760,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t2578 pulse-wrapper: detect and break stale mkdir lock after crashed/killed instance — `pkill + nohup` restart leaves old lock in place, new instances log "Another pulse instance holds the mkdir lock ... exiting immediately" and stall the queue. Needs liveness-check + reclaim (model on dispatch-dedup-helper.sh claim-stamp pattern). Discovered during t2574 live-verification (3 concurrent PIDs observed). #bug #auto-dispatch #framework ref:GH#20260 pr:#20263 completed:2026-04-21
 
+- [ ] t2685 harden gh signature-footer enforcement: add `.agents/scripts/gh` PATH shim (auto-injects sig on `--body`/`--body-file` for gh issue/pr comment/create) + tighten `quality-hooks.mjs::checkSignatureFooterGate` with marker-based detection + transparent repair + mentoring throw on unparseable bodies. Prompted by awardsapp#2546 hallucinated footer incident 2026-04-21. See `todo/tasks/t2685-brief.md`. #bug #priority:high #framework #interactive ref:GH#20306
+
 ## In Progress
 
 - [x] t1543 feat: OAuth multi-account pool plugin for provider credential rotation — add pool module to opencode-aidevops plugin enabling multiple Anthropic OAuth accounts with automatic rotation on rate limits (429). Uses existing plugin auth hook + custom fetch wrapper. Includes /model-accounts-pool tool for account management. #feature #plugin #auth ~4h ref:GH#5243 started:2026-03-19 pr:#5244 completed:2026-03-19

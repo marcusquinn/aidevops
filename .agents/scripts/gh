@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# =============================================================================
+# gh shim — auto-inject signature footer on write commands (t2685)
+# =============================================================================
+#
+# Intercepts `gh issue comment|create` and `gh pr comment|create`, calls
+# gh-signature-helper.sh footer, and appends the footer to --body / --body-file
+# when the canonical HTML marker `<!-- aidevops:sig -->` is missing. Every
+# other gh subcommand is passed straight through with minimal overhead.
+#
+# Why this exists
+# ---------------
+# The shell-level wrappers in shared-gh-wrappers.sh (gh_issue_comment,
+# gh_create_issue, gh_create_pr, gh_pr_comment) auto-inject the signature —
+# but ONLY when callers invoke them by name. Raw `gh issue comment …` from
+# an opencode Bash tool call, a shell script, or an interactive terminal
+# bypasses them entirely, because the shell wrapper is a function name, not
+# a binary on PATH. This shim closes that gap: it sits on PATH before the
+# real `gh` binary, so every gh invocation — no matter the caller — goes
+# through sig enforcement.
+#
+# Design principles
+# -----------------
+#   1. Fast path: non-write subcommands pay a single case-match then exec.
+#   2. Fail-open: if anything goes wrong (missing helper, sourcing failure,
+#      malformed args), exec the real gh without modification. A broken
+#      shim must never break `gh` for the user.
+#   3. Recursion guard: if the shim somehow re-enters (subprocess inherits
+#      PATH), the second invocation short-circuits to the real gh.
+#   4. Single source of truth: uses the same marker (`<!-- aidevops:sig -->`)
+#      as _gh_wrapper_auto_sig in shared-gh-wrappers.sh for idempotent dedup.
+#
+# Bypass
+# ------
+#   AIDEVOPS_GH_SHIM_DISABLE=1 gh …   # skip shim, exec real gh directly
+#
+# Related
+# -------
+#   .agents/plugins/opencode-aidevops/quality-hooks.mjs — JS-side enforcement
+#   .agents/prompts/build.txt section 8 — prompt-level rule
+#   .agents/scripts/shared-gh-wrappers.sh _gh_wrapper_auto_sig — reference impl
+# =============================================================================
+
+_SHIM_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || _SHIM_DIR=""
+
+# -----------------------------------------------------------------------------
+# Locate the REAL gh binary, excluding our own shim directory from PATH lookup
+# so we never recurse into ourselves even if PATH is unusual.
+# -----------------------------------------------------------------------------
+_find_real_gh() {
+	local p
+	local IFS=:
+	for p in $PATH; do
+		[[ -n "$_SHIM_DIR" && "$p" == "$_SHIM_DIR" ]] && continue
+		[[ -x "$p/gh" ]] || continue
+		printf '%s\n' "$p/gh"
+		return 0
+	done
+	# Fallback: well-known install locations
+	for p in /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh; do
+		[[ -x "$p" ]] && {
+			printf '%s\n' "$p"
+			return 0
+		}
+	done
+	return 1
+}
+
+# -----------------------------------------------------------------------------
+# Fast pass-through for non-intercepted subcommands.
+# Every gh invocation pays this case-match plus one exec.
+# -----------------------------------------------------------------------------
+case "${1:-}:${2:-}" in
+issue:comment | issue:create | pr:create | pr:comment) ;;
+*)
+	_real_gh="$(_find_real_gh)" || {
+		echo "[aidevops] gh shim: real gh binary not found on PATH" >&2
+		exit 127
+	}
+	exec "$_real_gh" "$@"
+	;;
+esac
+
+# -----------------------------------------------------------------------------
+# Emergency bypass — matches the escape hatch documented in build.txt.
+# -----------------------------------------------------------------------------
+if [[ "${AIDEVOPS_GH_SHIM_DISABLE:-0}" == "1" ]]; then
+	_real_gh="$(_find_real_gh)" || {
+		echo "[aidevops] gh shim: real gh binary not found on PATH" >&2
+		exit 127
+	}
+	exec "$_real_gh" "$@"
+fi
+
+# -----------------------------------------------------------------------------
+# Recursion guard. If a subprocess somehow re-invokes us (e.g., PATH inherited
+# by a child that also has us first), short-circuit to the real gh.
+# -----------------------------------------------------------------------------
+if [[ -n "${_AIDEVOPS_GH_SHIM_ACTIVE:-}" ]]; then
+	_real_gh="$(_find_real_gh)" || exit 127
+	exec "$_real_gh" "$@"
+fi
+export _AIDEVOPS_GH_SHIM_ACTIVE=1
+
+REAL_GH="$(_find_real_gh)" || {
+	echo "[aidevops] gh shim: real gh binary not found; aborting" >&2
+	exit 127
+}
+
+# -----------------------------------------------------------------------------
+# Locate signature helper.
+# -----------------------------------------------------------------------------
+SIG_HELPER=""
+for _cand in \
+	"$_SHIM_DIR/gh-signature-helper.sh" \
+	"$HOME/.aidevops/agents/scripts/gh-signature-helper.sh"; do
+	if [[ -x "$_cand" ]]; then
+		SIG_HELPER="$_cand"
+		break
+	fi
+done
+
+if [[ -z "$SIG_HELPER" ]]; then
+	# No helper available — fail-open: exec real gh unchanged.
+	exec "$REAL_GH" "$@"
+fi
+
+# -----------------------------------------------------------------------------
+# Scan args for --body / --body-file and inject signature if missing.
+# Mirrors _gh_wrapper_auto_sig in shared-gh-wrappers.sh. Marker-based dedup
+# means idempotent: running the shim twice on the same args is a no-op.
+# -----------------------------------------------------------------------------
+
+_modified_args=("$@")
+_i=0
+_body_idx=-1
+_body_val=""
+_body_eq=0
+_body_file_idx=-1
+_body_file_val=""
+_body_file_eq=0
+
+while [[ $_i -lt ${#_modified_args[@]} ]]; do
+	case "${_modified_args[_i]}" in
+	--body)
+		_body_idx=$_i
+		_body_val="${_modified_args[_i + 1]:-}"
+		_body_eq=0
+		;;
+	--body=*)
+		_body_idx=$_i
+		_body_val="${_modified_args[_i]#--body=}"
+		_body_eq=1
+		;;
+	--body-file)
+		_body_file_idx=$_i
+		_body_file_val="${_modified_args[_i + 1]:-}"
+		_body_file_eq=0
+		;;
+	--body-file=*)
+		_body_file_idx=$_i
+		_body_file_val="${_modified_args[_i]#--body-file=}"
+		_body_file_eq=1
+		;;
+	esac
+	_i=$((_i + 1))
+done
+
+# --- --body case -------------------------------------------------------------
+if [[ $_body_idx -ge 0 && -n "$_body_val" ]]; then
+	if [[ "$_body_val" != *"<!-- aidevops:sig -->"* ]]; then
+		_sig_footer=$("$SIG_HELPER" footer --body "$_body_val" 2>/dev/null || echo "")
+		if [[ -n "$_sig_footer" ]]; then
+			_new_body="${_body_val}${_sig_footer}"
+			if [[ $_body_eq -eq 1 ]]; then
+				_modified_args[_body_idx]="--body=${_new_body}"
+			else
+				_modified_args[_body_idx + 1]="$_new_body"
+			fi
+		fi
+	fi
+fi
+
+# --- --body-file case --------------------------------------------------------
+if [[ $_body_file_idx -ge 0 && -n "$_body_file_val" && -f "$_body_file_val" ]]; then
+	if ! grep -q "<!-- aidevops:sig -->" "$_body_file_val" 2>/dev/null; then
+		_file_content=$(<"$_body_file_val") || _file_content=""
+		_sig_footer=$("$SIG_HELPER" footer --body "$_file_content" 2>/dev/null || echo "")
+		if [[ -n "$_sig_footer" ]]; then
+			printf '%s' "$_sig_footer" >>"$_body_file_val" || true
+		fi
+	fi
+fi
+
+exec "$REAL_GH" "${_modified_args[@]}"

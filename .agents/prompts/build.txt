@@ -366,11 +366,31 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 # teaches nothing; "timed out after 73K tokens reading files without implementing —
 # issue body lacks file paths, add Worker Guidance section" mentors the next attempt.
 
-# 8. Signature footer hallucination (observed: model composes inline, gets runtime/version wrong)
+# 8. Signature footer hallucination (observed: model composes inline, gets runtime/version wrong — t2685)
 - NEVER compose signature footers inline. ALWAYS call `gh-signature-helper.sh footer --model <model-id>`.
 - The helper auto-detects runtime, version, tokens, and session time. Manual composition gets these wrong.
-- Every `gh issue create`, `gh issue comment`, and `gh pr create` body MUST end with the helper's output.
+- Every `gh issue create`, `gh issue comment`, `gh pr create`, and `gh pr comment` body MUST end with the helper's output.
 - Pass `--issue OWNER/REPO#NUM` on comments to existing issues. Pass `--solved` on closing comments.
+- Correct form (good): `gh issue comment 123 --repo owner/repo --body "..body..$(gh-signature-helper.sh footer)"`
+- Correct form (good, body file): `gh-signature-helper.sh footer >> "$BODY_FILE" && gh issue comment 123 --repo owner/repo --body-file "$BODY_FILE"`
+- ANTI-PATTERN (blocked by t2685 enforcement): composing a human-readable signature inline like
+  `--body "... — interactive cleanup from marcusquinn runtime."` or
+  `--body "... [aidevops.sh](https://aidevops.sh) some prose ..."`.
+  The literal string "aidevops.sh" is NOT sufficient evidence of a valid footer — only the canonical
+  HTML marker `<!-- aidevops:sig -->` emitted by `gh-signature-helper.sh footer` counts. Hallucinated
+  footers strip the required runtime/version/model/token/duration metadata that the marker carries.
+- Two enforcement layers will catch unsigned gh writes:
+  (a) `.agents/scripts/gh` PATH shim — transparently injects sig on `--body` / `--body-file` args
+      before exec'ing the real `gh`. Active whenever `~/.aidevops/agents/scripts/` is first in PATH
+      (default for aidevops-installed shells). Bypass: `AIDEVOPS_GH_SHIM_DISABLE=1`.
+  (b) `.agents/plugins/opencode-aidevops/quality-hooks.mjs::checkSignatureFooterGate` — runs on every
+      Bash tool call inside opencode; repairs the command in place when parseable, blocks (throws)
+      otherwise with a mentoring error message.
+- Workers/scripts that source `shared-gh-wrappers.sh` should call `gh_issue_comment`, `gh_create_issue`,
+  `gh_pr_comment`, or `gh_create_pr` by name — these already auto-inject via `_gh_wrapper_auto_sig`.
+- If the plugin hook blocks your command with a parse-failure, the fix is ALWAYS to add the helper
+  call explicitly — never to work around with `AIDEVOPS_GH_SHIM_DISABLE=1`, which only defeats layer
+  (a) and leaves the audit trail inconsistent.
 #
 # 8a. Signature footer skip when reading (token waste prevention)
 # When reading GitHub issue/PR threads (`gh issue view`, `gh pr view`, `gh api`),
