@@ -213,15 +213,19 @@ _file_in_scope() {
 # Mirrors the approach in complexity-regression-pre-push.sh (GH#20045).
 # ---------------------------------------------------------------------------
 _compute_baseline() {
-	local _remote="${1:-origin}"
+	local _remote
+	_remote="${1:-origin}"
 	local default_remote_head
 	local baseline
 	default_remote_head=$(git symbolic-ref "refs/remotes/$_remote/HEAD" 2>/dev/null \
 		| sed "s@^refs/remotes/$_remote/@@")
 	if [[ -z "$default_remote_head" ]]; then
-		for candidate in "$_remote/main" "$_remote/master"; do
-			git rev-parse --verify "$candidate" >/dev/null 2>&1 \
-				&& { default_remote_head="$candidate"; break; }
+		local candidate
+		for candidate in "$_remote/main" "$_remote/master" "HEAD"; do
+			if git rev-parse --verify "$candidate" >/dev/null 2>&1; then
+				default_remote_head="$candidate"
+				break
+			fi
 		done
 	fi
 	if [[ -z "$default_remote_head" ]]; then
@@ -237,7 +241,7 @@ _compute_baseline() {
 		baseline="$default_remote_head"
 	fi
 	printf '%s\n' "$baseline"
-	return 0
+	return $rc
 }
 
 # ---------------------------------------------------------------------------
