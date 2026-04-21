@@ -362,6 +362,23 @@ jobs:
       # Security: This job uses pull_request_target to get write permissions for
       # fork PRs. It only checks out ref:main (base branch), never fork code.
       # Event metadata (PR title, body, number) is used for issue hygiene only.
+
+      # t2166 / t2696: visibility check mirroring the other three jobs.
+      # Ensures the warning/notice emits unconditionally on every merged PR,
+      # not just when the downstream TODO.md proof-log path actually runs
+      # (which is skipped by range-syntax titles and planning-only PR bodies).
+      - name: Check SYNC_PAT visibility (t2166)
+        env:
+          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
+            echo "::warning::SYNC_PAT secret is not set — TODO.md auto-sync push will be rejected by branch protection (GH006)."
+            echo "::warning::Fix: gh secret set SYNC_PAT --repo ${REPO} --body \"<FINE_GRAINED_PAT>\" (Contents: Read and write)"
+          else
+            echo "::notice::SYNC_PAT present — TODO.md push will use PAT"
+          fi
+
       - name: Extract task ID and collect linked issues
         id: extract
         env:
