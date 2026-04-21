@@ -16,6 +16,9 @@
 #   test_recent_commit_closes_issue_blocked        — recent commit closes this issue → exit 5
 #   test_recent_commit_ref_not_blocked             — Ref #NNN commit (not closing keyword) → exit 0
 #   test_recent_commit_different_issue_not_blocked — recent commit closes a different issue → exit 0
+#   test_parent_task_label_blocked                 — parent-task label → exit 6 (GH#20219)
+#   test_meta_label_blocked                        — meta label → exit 6 (GH#20219)
+#   test_parent_task_prefetched_json_blocked        — parent-task via ISSUE_META_JSON → exit 6 (GH#20219)
 
 set -euo pipefail
 
@@ -437,6 +440,59 @@ test_recent_commit_different_issue_not_blocked() {
 	return 0
 }
 
+# Test 13 (GH#20219 Factor 3): parent-task label → exit 6
+test_parent_task_label_blocked() {
+	setup_test_env
+
+	create_gh_stub "OPEN" "parent-task" "" "[]"
+
+	local rc=0
+	"$HELPER_SCRIPT" check 20161 "owner/repo" >/dev/null 2>&1 || rc=$?
+
+	local fail=0
+	[[ "$rc" -eq 6 ]] || fail=1
+	print_result "test_parent_task_label_blocked (GH#20219)" "$fail" "expected exit 6, got ${rc}"
+
+	teardown_test_env
+	return 0
+}
+
+# Test 14 (GH#20219 Factor 3): meta label → exit 6
+test_meta_label_blocked() {
+	setup_test_env
+
+	create_gh_stub "OPEN" "meta" "" "[]"
+
+	local rc=0
+	"$HELPER_SCRIPT" check 20161 "owner/repo" >/dev/null 2>&1 || rc=$?
+
+	local fail=0
+	[[ "$rc" -eq 6 ]] || fail=1
+	print_result "test_meta_label_blocked (GH#20219)" "$fail" "expected exit 6, got ${rc}"
+
+	teardown_test_env
+	return 0
+}
+
+# Test 15 (GH#20219 Factor 3): parent-task via ISSUE_META_JSON → exit 6
+test_parent_task_prefetched_json_blocked() {
+	setup_test_env
+
+	# The pre-fetched JSON path should also catch parent-task.
+	create_gh_stub "OPEN" "" "" "[]"
+
+	local rc=0
+	ISSUE_META_JSON='{"state":"OPEN","labels":[{"name":"parent-task"},{"name":"tier:thinking"}],"closedAt":""}' \
+		"$HELPER_SCRIPT" check 20161 "owner/repo" >/dev/null 2>&1 || rc=$?
+
+	local fail=0
+	[[ "$rc" -eq 6 ]] || fail=1
+	print_result "test_parent_task_prefetched_json_blocked (GH#20219)" "$fail" "expected exit 6, got ${rc}"
+
+	teardown_test_env
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -461,6 +517,9 @@ main() {
 	test_recent_commit_closes_issue_blocked
 	test_recent_commit_ref_not_blocked
 	test_recent_commit_different_issue_not_blocked
+	test_parent_task_label_blocked
+	test_meta_label_blocked
+	test_parent_task_prefetched_json_blocked
 
 	echo ""
 	echo "---"
