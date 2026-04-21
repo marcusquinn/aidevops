@@ -1,0 +1,171 @@
+name: Planning PR Keyword Check
+
+# Guard for the markdown foot-gun rule (t2452 / prompts/build.txt "Traceability").
+#
+# A PR that only touches planning files (todo/tasks/*-brief.md, todo/*.md)
+# must use "For #NNN" or "Ref #NNN" in its body, NOT closing keywords
+# (Closes/Resolves/Fixes). Using a closing keyword on a brief-only PR
+# auto-closes the implementation issue on merge — before the actual code
+# is written.
+#
+# Incident that motivated this check: PR #20185 enhanced todo/tasks/t2449-brief.md
+# and used "Resolves #20164" in its body. GitHub auto-closed issue #20164 on merge,
+# even though no implementation had shipped. The TODO.md entry was incorrectly
+# marked [x] completed.
+#
+# This workflow catches brief-enhancement PRs that use closing keywords, blocking
+# them from merging until the keyword is changed to "For #NNN" or "Ref #NNN".
+#
+# Exit behaviour:
+#   PASS — PR touches non-planning files OR uses no closing keywords
+#   WARN — PR is planning-only but uses closing keywords (default)
+#   FAIL — same, but in --strict mode (enabled by default in CI)
+#
+# Opt-out: apply the `allow-planning-close` label to the PR for the rare case
+# where a planning PR legitimately needs to close an issue (e.g. cancelling a task).
+#
+# See also:
+#   .github/workflows/parent-task-keyword-check.yml — sister check for parent-task issues
+#   prompts/build.txt "Traceability" — markdown foot-gun rule (t2204)
+#   .agents/AGENTS.md "Traceability (MANDATORY)"
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, ready_for_review]
+    paths:
+      - 'todo/tasks/*-brief.md'
+      - 'todo/**'
+
+jobs:
+  planning-pr-keyword-check:
+    name: Planning PR Keyword Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: planning-pr-keyword-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      pull-requests: read
+      issues: read
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 2
+
+      - name: Check for planning-only PR with closing keywords
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          set -euo pipefail
+
+          echo "Planning PR Keyword Check — PR #${PR_NUMBER}"
+
+          # Opt-out: allow-planning-close label (rare: cancelling a task, etc.)
+          if echo "$PR_LABELS" | grep -q '"allow-planning-close"'; then
+            echo "allow-planning-close label present — skipping check"
+            exit 0
+          fi
+
+          # -----------------------------------------------------------------------
+          # Determine if this is a planning-only PR.
+          # A PR is planning-only if ALL changed files fall under:
+          #   - todo/tasks/*-brief.md
+          #   - todo/**
+          #   - TODO.md
+          # Any file outside these paths makes the PR a code/implementation PR
+          # (in which case closing keywords are expected and correct).
+          # -----------------------------------------------------------------------
+          echo "Detecting changed files..."
+
+          # List all files changed in this PR (base vs head)
+          CHANGED_FILES=$(git diff --name-only HEAD~1..HEAD 2>/dev/null || \
+                          git diff --name-only "$(git merge-base HEAD origin/main 2>/dev/null || echo HEAD~1)"..HEAD 2>/dev/null || \
+                          true)
+
+          if [[ -z "$CHANGED_FILES" ]]; then
+            echo "Could not determine changed files — skipping check (fail-open)"
+            exit 0
+          fi
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          # Check if every changed file is a planning file
+          NON_PLANNING_COUNT=0
+          while IFS= read -r filepath; do
+            [[ -z "$filepath" ]] && continue
+            case "$filepath" in
+              TODO.md|todo/*|todo/**) ;;  # planning file — OK
+              *) NON_PLANNING_COUNT=$((NON_PLANNING_COUNT + 1)) ;;
+            esac
+          done <<< "$CHANGED_FILES"
+
+          if [[ "$NON_PLANNING_COUNT" -gt 0 ]]; then
+            echo "PR touches $NON_PLANNING_COUNT non-planning file(s) — closing keywords are expected."
+            echo "PASS: Not a planning-only PR."
+            exit 0
+          fi
+
+          echo "This is a planning-only PR (all changed files are under todo/ or TODO.md)."
+
+          # -----------------------------------------------------------------------
+          # Check PR body for closing keywords.
+          # Uses the same regex as pulse-merge.sh::_extract_linked_issue so the
+          # detection is consistent with what GitHub and the pulse act on.
+          #
+          # Regex must NOT match:
+          #   "For #123"   — planning reference (correct)
+          #   "Ref #123"   — planning reference (correct)
+          # Regex MUST match:
+          #   "Closes #123"
+          #   "Resolves #123"
+          #   "Fixes #123"
+          #   case-insensitive variants
+          # -----------------------------------------------------------------------
+
+          # Strip markdown code fences and inline code spans to avoid false
+          # positives from documentation examples inside backticks.
+          STRIPPED_BODY=$(printf '%s\n' "$PR_BODY" | \
+            awk 'BEGIN{in_fence=0} /^[[:space:]]*```/{in_fence = !in_fence; next} !in_fence' | \
+            sed 's/`[^`]*`//g')
+
+          CLOSING_MATCHES=$(printf '%s\n' "$STRIPPED_BODY" | \
+            grep -oiE "(Closes|Resolves|Fixes)[[:space:]]+(([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)?#[0-9]+)" || true)
+
+          if [[ -z "$CLOSING_MATCHES" ]]; then
+            echo "PASS: No closing keywords found in PR body."
+            exit 0
+          fi
+
+          # Violations found — planning-only PR with closing keywords
+          echo ""
+          echo "FAIL: This planning-only PR uses closing keyword(s) that will auto-close"
+          echo "      the linked implementation issue(s) on merge:"
+          echo ""
+          echo "$CLOSING_MATCHES" | while IFS= read -r match; do
+            echo "  • $match"
+          done
+          echo ""
+          echo "Foot-gun rule (prompts/build.txt 'Traceability'):"
+          echo "  A PR that only touches todo/tasks/*.md or TODO.md is a planning PR."
+          echo "  Planning PRs MUST use 'For #NNN' or 'Ref #NNN' — NOT Closes/Resolves/Fixes."
+          echo "  Using a closing keyword on a planning PR auto-closes the implementation"
+          echo "  issue before any code has shipped, corrupting the audit trail."
+          echo ""
+          echo "Fix: Replace 'Resolves #NNN' / 'Closes #NNN' / 'Fixes #NNN' with"
+          echo "     'For #NNN' or 'Ref #NNN' in the PR body."
+          echo ""
+          echo "Opt-out (rare): apply the 'allow-planning-close' label to the PR"
+          echo "  when the intent is genuinely to close the issue (e.g. task cancellation)."
+          echo ""
+          echo "Incident reference: PR #20185 used 'Resolves #20164' for a brief-only"
+          echo "  change, auto-closing the t2449 implementation issue before any code"
+          echo "  shipped. Tracked as t2452 / GH#20194."
+          exit 1
