@@ -74,8 +74,10 @@ source "${TEST_SCRIPTS_DIR}/pulse-dirty-pr-sweep.sh" || {
 # _dirty_pr_classify reads from `gh pr list`.
 # Args: $1=number $2=mss $3=createdAt $4=updatedAt $5=author $6=headRef
 #       $7=labels_json (e.g. '["origin:worker"]' or '[]')
+#       $8=body (optional; defaults to empty string)
 mkpr() {
 	local n="$1" mss="$2" created="$3" updated="$4" author="$5" head="$6" labels_json="$7"
+	local body="${8:-}"
 	local tmpfile
 	tmpfile=$(mktemp)
 	local labels_array
@@ -88,8 +90,9 @@ mkpr() {
 		--arg author "$author" \
 		--arg head "$head" \
 		--argjson labels "$labels_array" \
+		--arg body "$body" \
 		'{number:$n, mergeStateStatus:$mss, createdAt:$created, updatedAt:$updated,
-			author:{login:$author}, labels:$labels, headRefName:$head, baseRefName:"main"}' \
+			author:{login:$author}, labels:$labels, headRefName:$head, baseRefName:"main", body:$body}' \
 		>"$tmpfile"
 	cat "$tmpfile"
 	rm -f "$tmpfile"
@@ -250,21 +253,105 @@ case "$decision" in
 esac
 
 # =============================================================================
-# Test 6: origin:interactive never auto-closes
+# Test 6: origin:interactive WITHOUT issue reference → escalate (orphan)
+#         After t2708 the label alone no longer forces escalate — the body must
+#         also lack any recognised issue reference.
 # =============================================================================
 
-PR_INTERACTIVE=$(mkpr 600 "DIRTY" \
+PR_INTERACTIVE_ORPHAN=$(mkpr 600 "DIRTY" \
 	"$(iso_n_seconds_ago $((10 * 86400)))" \
 	"$(iso_n_seconds_ago $((5 * 86400)))" \
 	"marcusquinn" \
 	"feature/baz" \
-	'["origin:interactive"]')
+	'["origin:interactive"]' \
+	"Some PR description with no issue reference at all.")
 
-decision=$(_dirty_pr_classify "$PR_INTERACTIVE" "test/repo" "" "marcusquinn")
+decision=$(_dirty_pr_classify "$PR_INTERACTIVE_ORPHAN" "test/repo" "" "marcusquinn")
 case "$decision" in
-	escalate\|*) print_result "opt-out: origin:interactive → escalate (never close)" 0 ;;
-	close\|*) print_result "opt-out: origin:interactive → escalate (never close)" 1 "got: $decision (must NOT close)" ;;
-	*) print_result "opt-out: origin:interactive → escalate (never close)" 1 "got: $decision" ;;
+	escalate\|origin-interactive-orphan) print_result "t2708: origin:interactive orphan → escalate with orphan reason" 0 ;;
+	close\|*) print_result "t2708: origin:interactive orphan → escalate with orphan reason" 1 "got: $decision (must NOT close when body has no ref)" ;;
+	*) print_result "t2708: origin:interactive orphan → escalate with orphan reason" 1 "got: $decision" ;;
+esac
+
+# =============================================================================
+# Test 6a: origin:interactive WITH `Resolves #NNN` → falls through to close
+#          (t2708) A stale+idle interactive PR that references an issue via a
+#          closing keyword should be closable like any other PR.
+# =============================================================================
+
+PR_INTERACTIVE_RESOLVES=$(mkpr 610 "DIRTY" \
+	"$(iso_n_seconds_ago $((10 * 86400)))" \
+	"$(iso_n_seconds_ago $((5 * 86400)))" \
+	"marcusquinn" \
+	"feature/baz-resolves" \
+	'["origin:interactive"]' \
+	"This PR implements the fix. Resolves #12345.")
+
+decision=$(_dirty_pr_classify "$PR_INTERACTIVE_RESOLVES" "test/repo" "" "marcusquinn")
+case "$decision" in
+	close\|stale-and-idle) print_result "t2708: origin:interactive + Resolves #NNN → falls through to close" 0 ;;
+	escalate\|*) print_result "t2708: origin:interactive + Resolves #NNN → falls through to close" 1 "got: $decision (must NOT escalate when body has reference)" ;;
+	*) print_result "t2708: origin:interactive + Resolves #NNN → falls through to close" 1 "got: $decision" ;;
+esac
+
+# =============================================================================
+# Test 6b: origin:interactive WITH `For #NNN` (non-closing reference)
+#          → falls through to close. This is the canonical planning-PR pattern
+#          documented in prompts/build.txt "Parent-task PR keyword rule".
+# =============================================================================
+
+PR_INTERACTIVE_FOR=$(mkpr 620 "DIRTY" \
+	"$(iso_n_seconds_ago $((10 * 86400)))" \
+	"$(iso_n_seconds_ago $((5 * 86400)))" \
+	"marcusquinn" \
+	"feature/baz-for" \
+	'["origin:interactive"]' \
+	"Phase 1 implementation. For #12345.")
+
+decision=$(_dirty_pr_classify "$PR_INTERACTIVE_FOR" "test/repo" "" "marcusquinn")
+case "$decision" in
+	close\|stale-and-idle) print_result "t2708: origin:interactive + For #NNN → falls through to close" 0 ;;
+	escalate\|*) print_result "t2708: origin:interactive + For #NNN → falls through to close" 1 "got: $decision (must NOT escalate when body has For #NNN)" ;;
+	*) print_result "t2708: origin:interactive + For #NNN → falls through to close" 1 "got: $decision" ;;
+esac
+
+# =============================================================================
+# Test 6c: origin:interactive WITH `Ref #NNN` → falls through to close
+# =============================================================================
+
+PR_INTERACTIVE_REF=$(mkpr 630 "DIRTY" \
+	"$(iso_n_seconds_ago $((10 * 86400)))" \
+	"$(iso_n_seconds_ago $((5 * 86400)))" \
+	"marcusquinn" \
+	"feature/baz-ref" \
+	'["origin:interactive"]' \
+	"Investigation notes. Ref #12345.")
+
+decision=$(_dirty_pr_classify "$PR_INTERACTIVE_REF" "test/repo" "" "marcusquinn")
+case "$decision" in
+	close\|stale-and-idle) print_result "t2708: origin:interactive + Ref #NNN → falls through to close" 0 ;;
+	escalate\|*) print_result "t2708: origin:interactive + Ref #NNN → falls through to close" 1 "got: $decision (must NOT escalate when body has Ref #NNN)" ;;
+	*) print_result "t2708: origin:interactive + Ref #NNN → falls through to close" 1 "got: $decision" ;;
+esac
+
+# =============================================================================
+# Test 6d: parent-task label still takes precedence over the narrowed rule.
+#          Even if an interactive PR has a valid reference, the parent-task
+#          label must still force escalate (line 423-425 precedence, t1986).
+# =============================================================================
+
+PR_INTERACTIVE_PARENT=$(mkpr 640 "DIRTY" \
+	"$(iso_n_seconds_ago $((10 * 86400)))" \
+	"$(iso_n_seconds_ago $((5 * 86400)))" \
+	"marcusquinn" \
+	"feature/baz-parent" \
+	'["origin:interactive", "parent-task"]' \
+	"Parent planning PR. Resolves #12345.")
+
+decision=$(_dirty_pr_classify "$PR_INTERACTIVE_PARENT" "test/repo" "" "marcusquinn")
+case "$decision" in
+	escalate\|parent-task-label) print_result "t2708: parent-task precedence preserved over narrowed rule" 0 ;;
+	*) print_result "t2708: parent-task precedence preserved over narrowed rule" 1 "got: $decision (must still escalate with parent-task-label reason)" ;;
 esac
 
 # =============================================================================

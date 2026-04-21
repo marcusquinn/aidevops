@@ -19,7 +19,10 @@
 #   - Never rebases PRs with non-TODO.md conflicts (always escalate instead).
 #   - Never auto-closes PRs tagged `do-not-close` OR linked to an OPEN issue
 #     that has the `parent-task` label.
-#   - Never auto-closes PRs tagged `origin:interactive` (author was active).
+#   - Escalates `origin:interactive` PRs only when the body contains no
+#     recognised issue reference (`For #NNN`, `Ref #NNN`, or a closing
+#     keyword). Referenced PRs flow through the normal age/idle close
+#     heuristic like any other PR (t2708). True orphans still escalate.
 #   - Idempotency: per-PR actions logged to a state file with timestamp;
 #     re-running within 30 min (action cooldown) is a no-op for each PR.
 #   - Dry-run: DRY_RUN=1 env var (or `--dry-run` CLI flag) prints would-be
@@ -304,6 +307,34 @@ _dps_labels_has() {
 	printf '%s' "$labels" | grep -qx "$target"
 }
 
+# Check whether a PR body contains a recognised issue reference (t2708).
+#
+# Recognises three reference patterns, matching the conventions documented in
+# `prompts/build.txt` ("Parent-task PR keyword rule") and the closing-keyword
+# regex used by `_extract_linked_issue` in pulse-merge.sh:
+#
+#   - Closing keywords: `(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#NNN` (case-
+#     insensitive). These auto-close the linked issue when the PR merges.
+#   - `For #NNN` (case-insensitive) — canonical planning-PR non-closing marker.
+#   - `Ref #NNN` (case-insensitive) — alternate non-closing reference.
+#
+# Returns 0 if any pattern matches, 1 otherwise. Accepts the body as argument.
+# Empty body returns 1.
+_dps_pr_body_has_issue_reference() {
+	local body="$1"
+	[[ -n "$body" ]] || return 1
+	# Closing keywords — same regex pulse-merge.sh:_extract_linked_issue uses.
+	if printf '%s' "$body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+' >/dev/null 2>&1; then
+		return 0
+	fi
+	# Non-closing references: "For #NNN" or "Ref #NNN" (word boundary on the
+	# keyword so "before #NNN" and "reference #NNN" don't false-match).
+	if printf '%s' "$body" | grep -ioE '(^|[^[:alnum:]])(for|ref)[[:space:]]+#[0-9]+' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
 # Decide whether a rebase path is structurally eligible (young + author-ok +
 # not parent-task). Output on stdout: "rebase|todo-only-conflict" if yes,
 # empty string if no. The caller uses a non-empty return to short-circuit.
@@ -369,13 +400,14 @@ _dirty_pr_classify() {
 	local repo_path="$3"
 	local self_login="$4"
 
-	local pr_number mss created updated author head_ref
+	local pr_number mss created updated author head_ref body
 	pr_number=$(printf '%s' "$pr_json" | jq -r '.number // empty')
 	mss=$(printf '%s' "$pr_json" | jq -r '.mergeStateStatus // empty')
 	created=$(printf '%s' "$pr_json" | jq -r '.createdAt // empty')
 	updated=$(printf '%s' "$pr_json" | jq -r '.updatedAt // empty')
 	author=$(printf '%s' "$pr_json" | jq -r '.author.login // empty')
 	head_ref=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
+	body=$(printf '%s' "$pr_json" | jq -r '.body // empty')
 
 	if [[ -z "$pr_number" ]]; then
 		printf '%s|invalid-pr-json' "$_DIRTY_ACTION_SKIP"
@@ -424,9 +456,16 @@ _dirty_pr_classify() {
 		printf '%s|parent-task-label' "$_DIRTY_ACTION_ESCALATE"
 		return 0
 	fi
+	# origin:interactive PRs: escalate only if the body has no recognised
+	# issue reference (true orphan). PRs with "For #NNN", "Ref #NNN", or any
+	# closing keyword reference a tracked issue and should flow through the
+	# normal age/idle close heuristic like any other PR (t2708).
 	if [[ "$has_interactive" -eq 1 ]]; then
-		printf '%s|origin-interactive-no-close' "$_DIRTY_ACTION_ESCALATE"
-		return 0
+		if ! _dps_pr_body_has_issue_reference "$body"; then
+			printf '%s|origin-interactive-orphan' "$_DIRTY_ACTION_ESCALATE"
+			return 0
+		fi
+		# Has a reference — fall through to age-based close check.
 	fi
 
 	# Age-based close.
@@ -713,7 +752,7 @@ _dirty_pr_sweep_for_repo() {
 	local list_json err_file
 	err_file=$(mktemp) || err_file=/dev/null
 	list_json=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,mergeStateStatus,createdAt,updatedAt,author,labels,headRefName,baseRefName \
+		--json number,mergeStateStatus,createdAt,updatedAt,author,labels,headRefName,baseRefName,body \
 		--limit "$DIRTY_PR_SWEEP_BATCH_LIMIT" 2>"$err_file") || list_json="[]"
 	[[ -z "$list_json" || "$list_json" == "null" ]] && list_json="[]"
 	rm -f "$err_file" 2>/dev/null || true
