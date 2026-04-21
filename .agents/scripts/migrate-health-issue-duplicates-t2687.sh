@@ -234,6 +234,10 @@ _close_duplicate_groups() {
 			[[ -z "$close_num" ]] && continue
 			local comment="Closing duplicate ${role} health issue — superseded by #${keep}. Root cause: GraphQL rate-limit window on 2026-04-21 (t2574 REST fallback covered CREATE but not READ paths). See GH#20301 for the systemic fix."
 			_unpin_duplicate_issue "$close_num" "$repo"
+			# Strip 'persistent' before closing so issue-sync.yml 'Reopen Persistent Issues'
+			# job does not reopen the duplicate (GH#20326). That job blocks USER-initiated
+			# closes, not programmatic dedup. Idempotent: no-op if label not present.
+			run_gh issue edit "$close_num" --repo "$repo" --remove-label persistent 2>/dev/null || true
 			run_gh issue close "$close_num" --repo "$repo" --comment "$comment" \
 				|| log_warn "    close failed for #${close_num}"
 		done <<<"$close_list"
