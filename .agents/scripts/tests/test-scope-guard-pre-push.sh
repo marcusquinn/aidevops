@@ -9,7 +9,7 @@
 #   2. Out-of-scope push (rebase-introduced creep) → blocked (exit 1)
 #   3. SCOPE_GUARD_DISABLE=1 → bypass allowed (exit 0)
 #   4. Missing brief → fail-open (exit 0)
-#   5. Brief without ## Files Scope section → fail-open (exit 0)
+#   5. Brief without ## Files Scope section → fail-closed (exit 1) — config error
 #   6. Branch with no task ID → fail-open (exit 0)
 #
 # Root cause being guarded: GH#19808 / t2264 — rebasing introduced
@@ -88,7 +88,14 @@ _fail() {
 repo_setup() {
 	local _task_id="${1:-t9999}"
 	local _repo
-	_repo=$(mktemp -d)
+	# Create inside TEST_TMP so the EXIT trap `rm -rf "$TEST_TMP"` handles
+	# cleanup on any exit path.  We intentionally do NOT use the
+	# `_save_cleanup_scope` / `trap '_run_cleanups' RETURN` / `push_cleanup`
+	# pattern here because repo_setup is a factory function: it returns the
+	# path to the caller, which means the RETURN trap would delete the
+	# directory before the caller can use it.  Placing repos inside TEST_TMP
+	# achieves the same "cleanup on any exit path" goal without that race.
+	_repo=$(mktemp -d "${TEST_TMP}/repo.XXXXXX")
 
 	(
 		cd "$_repo" || exit 1
@@ -277,9 +284,14 @@ printf '\n[4] Missing brief → fail-open\n'
 }
 
 # ---------------------------------------------------------------------------
-# Test 5: Brief without ## Files Scope section → fail-open (exit 0)
+# Test 5: Brief without ## Files Scope section → fail-closed (exit 1)
+#
+# Design note: a brief without a ## Files Scope section is a configuration
+# error, not a missing-brief case.  The hook treats it as fail-closed so that
+# partial briefs don't silently bypass the scope guard.  Contrast with the
+# missing-brief case (Test 4), which fails open.
 # ---------------------------------------------------------------------------
-printf '\n[5] Brief without ## Files Scope → fail-open\n'
+printf '\n[5] Brief without ## Files Scope → fail-closed (config error)\n'
 {
 	read -r repo base_sha <<< "$(repo_setup t9999)"
 
@@ -290,16 +302,16 @@ printf '\n[5] Brief without ## Files Scope → fail-open\n'
 	git -C "$repo" add "${repo}/todo/tasks/t9999-brief.md"
 	git -C "$repo" commit -q -m "brief without Files Scope"
 
-	# Commit an out-of-scope file — should still pass because no scope declared.
+	# Commit any file — hook should block because brief is misconfigured.
 	printf 'any file\n' > "${repo}/anywhere.sh"
 	git -C "$repo" add "${repo}/anywhere.sh"
 	git -C "$repo" commit -q -m "add file"
 
-	if invoke_hook "$repo" "$base_sha"; then
-		_pass "brief without ## Files Scope → fail-open (exit 0)"
+	if ! invoke_hook "$repo" "$base_sha"; then
+		_pass "brief without ## Files Scope → fail-closed (exit 1)"
 	else
-		_fail "brief without ## Files Scope → fail-open (exit 0)" \
-			"hook blocked when it should fail-open"
+		_fail "brief without ## Files Scope → fail-closed (exit 1)" \
+			"hook should have blocked (configuration error — missing scope declaration)"
 	fi
 }
 
