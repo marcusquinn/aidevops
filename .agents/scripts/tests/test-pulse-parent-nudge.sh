@@ -107,15 +107,15 @@ assert_grep_fixed \
 # --- Idempotency check ---
 
 assert_grep \
-	"3: helper queries existing comments via gh api for idempotency" \
-	'gh api "repos/\$\{slug\}/issues/\$\{parent_num\}/comments"' \
+	"3: helper queries existing comments via gh api --paginate for idempotency" \
+	'gh api --paginate "repos/\$\{slug\}/issues/\$\{parent_num\}/comments"' \
 	"$TARGET"
 
 # --- Comment posting ---
 
 assert_grep \
-	"4: helper posts via gh issue comment" \
-	'gh issue comment "\$parent_num" --repo "\$slug"' \
+	"4: helper posts via gh_issue_comment wrapper" \
+	'gh_issue_comment "\$parent_num" --repo "\$slug"' \
 	"$TARGET"
 
 # --- Reconcile function counter ---
