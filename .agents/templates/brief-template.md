@@ -210,7 +210,7 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
 {Command(s) to confirm the implementation works — e.g., shellcheck, grep, test run}
 ```
 
-## Files Scope
+### Files Scope
 
 <!-- Declares the file paths this task is allowed to modify.
      The scope-guard pre-push hook (scope-guard-pre-push.sh) reads this list

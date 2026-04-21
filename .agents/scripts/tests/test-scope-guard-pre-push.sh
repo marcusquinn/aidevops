@@ -277,29 +277,64 @@ printf '\n[4] Missing brief → fail-open\n'
 }
 
 # ---------------------------------------------------------------------------
-# Test 5: Brief without ## Files Scope section → fail-open (exit 0)
+# Test 5: Brief without Files Scope section → fail-closed (exit 1)
+# A brief that exists but declares no Files Scope section is a config error.
 # ---------------------------------------------------------------------------
-printf '\n[5] Brief without ## Files Scope → fail-open\n'
+printf '\n[5] Brief without Files Scope → fail-closed\n'
 {
 	read -r repo base_sha <<< "$(repo_setup t9999)"
 
-	# Create a brief without any ## Files Scope section.
+	# Create a brief without any Files Scope section.
 	mkdir -p "${repo}/todo/tasks"
 	printf '# t9999 brief\n\n## What\n\nNo scope section.\n' \
 		> "${repo}/todo/tasks/t9999-brief.md"
 	git -C "$repo" add "${repo}/todo/tasks/t9999-brief.md"
 	git -C "$repo" commit -q -m "brief without Files Scope"
 
-	# Commit an out-of-scope file — should still pass because no scope declared.
+	# Commit an out-of-scope file.
 	printf 'any file\n' > "${repo}/anywhere.sh"
 	git -C "$repo" add "${repo}/anywhere.sh"
 	git -C "$repo" commit -q -m "add file"
 
 	if invoke_hook "$repo" "$base_sha"; then
-		_pass "brief without ## Files Scope → fail-open (exit 0)"
+		_fail "brief without Files Scope → fail-closed (exit 1)" \
+			"hook allowed when it should fail-closed (missing Files Scope is a config error)"
 	else
-		_fail "brief without ## Files Scope → fail-open (exit 0)" \
-			"hook blocked when it should fail-open"
+		_pass "brief without Files Scope → fail-closed (exit 1)"
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# Test 6a: Brief with ### Files Scope (level-3 heading, new template) → in-scope push allowed
+# ---------------------------------------------------------------------------
+printf '\n[6a] Brief with ### Files Scope heading → in-scope push allowed\n'
+{
+	read -r repo base_sha <<< "$(repo_setup t9999)"
+
+	# Create a brief using the new ### Files Scope heading (level-3, nested under ## How).
+	mkdir -p "${repo}/todo/tasks"
+	{
+		printf '# t9999 brief\n\n'
+		printf '## How\n\n'
+		printf '### Files Scope\n\n'
+		printf -- '- .agents/hooks/scope-guard-pre-push.sh\n'
+		printf -- '- todo/tasks/t9999-brief.md\n'
+		printf '\n## Acceptance\n\nTest passes.\n'
+	} > "${repo}/todo/tasks/t9999-brief.md"
+	git -C "$repo" add "${repo}/todo/tasks/t9999-brief.md"
+	git -C "$repo" commit -q -m "add brief with ### Files Scope"
+
+	# Commit a file that IS in scope.
+	mkdir -p "${repo}/.agents/hooks"
+	printf 'in-scope content\n' > "${repo}/.agents/hooks/scope-guard-pre-push.sh"
+	git -C "$repo" add "${repo}/.agents/hooks/scope-guard-pre-push.sh"
+	git -C "$repo" commit -q -m "add in-scope file"
+
+	if invoke_hook "$repo" "$base_sha"; then
+		_pass "### Files Scope heading: in-scope file push is allowed"
+	else
+		_fail "### Files Scope heading: in-scope file push is allowed" \
+			"hook blocked when it should allow"
 	fi
 }
 

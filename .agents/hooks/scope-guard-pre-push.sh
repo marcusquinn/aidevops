@@ -5,7 +5,7 @@
 # scope-guard-pre-push.sh — git pre-push hook (t2445).
 #
 # Blocks a push if the diff contains files outside the brief's declared
-# ## Files Scope section. Prevents silent rebase-introduced scope creep
+# ## Files Scope (or ### Files Scope) section. Prevents silent rebase-introduced scope creep
 # (root cause of GH#19808 / t2264).
 #
 # Install: see .agents/scripts/install-pre-push-guards.sh
@@ -27,8 +27,8 @@
 #   - brief file not found for this task
 #
 # Fail-closed cases (exit 1 with error):
-#   - brief exists but has no ## Files Scope section (configuration error)
-#   - brief has ## Files Scope section but it is empty (no patterns declared)
+#   - brief exists but has no ## Files Scope or ### Files Scope section (configuration error)
+#   - brief has a Files Scope section but it is empty (no patterns declared)
 
 set -u
 
@@ -121,9 +121,10 @@ fi
 _dbg "brief: $BRIEF_FILE"
 
 # ---------------------------------------------------------------------------
-# Parse the ## Files Scope section from the brief.
-# Reads every line between the first occurrence of "## Files Scope" and the
-# next level-2 heading ("## "), then filters for "- " prefixed lines.
+# Parse the Files Scope section from the brief.
+# Reads every line between the first occurrence of "## Files Scope" or
+# "### Files Scope" and the next level-2 heading ("## "), then filters
+# for "- " prefixed lines.
 # Strips the leading "- " and any surrounding backticks to get raw patterns.
 # ---------------------------------------------------------------------------
 _parse_files_scope() {
@@ -133,7 +134,7 @@ _parse_files_scope() {
 	local _line
 
 	while IFS= read -r _line; do
-		if [[ "$_line" =~ ^##[[:space:]]+Files[[:space:]]+Scope ]]; then
+		if [[ "$_line" =~ ^##[#]?[[:space:]]+Files[[:space:]]+Scope ]]; then
 			_in_section=1
 			_found_section=1
 			continue
@@ -173,16 +174,16 @@ if [[ $parse_rc -eq 0 ]] && [[ -n "$_raw_scope" ]]; then
 	done <<< "$_raw_scope"
 fi
 
-if ! grep -q "^## Files Scope" "$BRIEF_FILE" 2>/dev/null; then
-	_log ERROR "brief exists but has no '## Files Scope' section — fail-closed"
-	_log ERROR "  add a '## Files Scope' section to $BRIEF_FILE listing the files this task may modify"
+if ! grep -qE "^##[#]? Files Scope" "$BRIEF_FILE" 2>/dev/null; then
+	_log ERROR "brief exists but has no 'Files Scope' section — fail-closed"
+	_log ERROR "  add a '## Files Scope' or '### Files Scope' section to $BRIEF_FILE listing the files this task may modify"
 	_log ERROR "  or bypass with: SCOPE_GUARD_DISABLE=1 git push ..."
 	exit 1
 fi
 
 if [[ "${#SCOPE_PATTERNS[@]}" -eq 0 ]]; then
-	_log ERROR "'## Files Scope' section exists but has no entries — fail-closed"
-	_log ERROR "  add file paths (one per '- ' line) to the '## Files Scope' section of $BRIEF_FILE"
+	_log ERROR "'Files Scope' section exists but has no entries — fail-closed"
+	_log ERROR "  add file paths (one per '- ' line) to the 'Files Scope' section of $BRIEF_FILE"
 	_log ERROR "  or bypass with: SCOPE_GUARD_DISABLE=1 git push ..."
 	exit 1
 fi
@@ -321,7 +322,7 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
 		printf '\n' >&2
 		printf '  Remediation options:\n' >&2
 		printf '    1. Revert the out-of-scope changes (they may be stale rebase artefacts).\n' >&2
-		printf '    2. Add the file path to the ## Files Scope section of %s.\n' "$BRIEF_FILE" >&2
+		printf '    2. Add the file path to the Files Scope section of %s.\n' "$BRIEF_FILE" >&2
 		printf '    3. Bypass (document the reason): SCOPE_GUARD_DISABLE=1 git push ...\n' >&2
 		printf '    4. Bypass (no audit trail):      git push --no-verify\n' >&2
 		printf '\n' >&2
