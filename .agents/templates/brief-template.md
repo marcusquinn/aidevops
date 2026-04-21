@@ -217,7 +217,20 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
      and blocks pushes that include files outside the declared scope,
      preventing accidental scope-leak during rebase or implementation drift.
      Glob patterns are supported (e.g., `.agents/hooks/*.sh`).
-     One path or glob pattern per `- ` line. -->
+     One path or glob pattern per `- ` line.
+
+     CRITICAL RULES:
+     1. Paths MUST be relative to the repository root (e.g., `.agents/hooks/foo.sh`,
+        NOT `~/Git/aidevops/.agents/hooks/foo.sh` or `./hooks/foo.sh`).
+        Technical reason: scope-guard-pre-push.sh resolves all declared paths against
+        the repository root via `git rev-parse --show-toplevel`. Paths not anchored to
+        the root will silently fail to match — the guard will not fire and unintended
+        files can pass through without review.
+     2. Do NOT use overly-permissive globs (e.g., `**/*` or `*.sh` without a prefix).
+        Overly-broad scope declarations create a path traversal risk: files outside
+        the intended scope may be committed and pushed without triggering a block,
+        undermining the entire guard. Declare the narrowest scope that covers the
+        intended changes. -->
 
 - `{path/to/file-or-glob}`
 
