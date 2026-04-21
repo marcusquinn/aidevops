@@ -758,7 +758,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t2577 pulse-batch-prefetch: remove unsupported `reviewDecision` JSON field from `gh search prs` calls (three sites: pulse-batch-prefetch-helper.sh:156,167,269) — `gh search prs` is REST-only and does not expose reviewDecision, causing "Unknown JSON field" errors and errors=4 per prefetch cycle. Discovered during t2574 live-verification. #bug #auto-dispatch #framework ref:GH#20259
 
-- [ ] t2578 pulse-wrapper: detect and break stale mkdir lock after crashed/killed instance — `pkill + nohup` restart leaves old lock in place, new instances log "Another pulse instance holds the mkdir lock ... exiting immediately" and stall the queue. Needs liveness-check + reclaim (model on dispatch-dedup-helper.sh claim-stamp pattern). Discovered during t2574 live-verification (3 concurrent PIDs observed). #bug #auto-dispatch #framework ref:GH#20260
+- [x] t2578 pulse-wrapper: detect and break stale mkdir lock after crashed/killed instance — `pkill + nohup` restart leaves old lock in place, new instances log "Another pulse instance holds the mkdir lock ... exiting immediately" and stall the queue. Needs liveness-check + reclaim (model on dispatch-dedup-helper.sh claim-stamp pattern). Discovered during t2574 live-verification (3 concurrent PIDs observed). #bug #auto-dispatch #framework ref:GH#20260 pr:#20263 completed:2026-04-21
 
 ## In Progress
 
