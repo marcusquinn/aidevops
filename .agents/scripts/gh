@@ -156,7 +156,7 @@ _shim_api_is_write_endpoint() {
 			continue
 			;;
 		--method=*) method="${a#--method=}" ;;
-		-f | -F | --jq | -H | --header | --input | --template | --cache | --hostname)
+		-f | --field | -F | --raw-field | --jq | -H | --header | --input | --template | --cache | --hostname | --preview)
 			i=$((i + 2))
 			continue
 			;;
@@ -169,9 +169,10 @@ _shim_api_is_write_endpoint() {
 	done
 	[[ "$method" != "POST" && "$method" != "PATCH" ]] && return 1
 	local npath="${path#/}"
-	[[ "$npath" =~ ^repos/[^/]+/[^/]+/issues$ ]] && return 0
-	[[ "$npath" =~ ^repos/[^/]+/[^/]+/issues/[0-9]+/comments$ ]] && return 0
-	[[ "$npath" =~ ^repos/[^/]+/[^/]+/pulls$ ]] && return 0
+	[[ "$npath" =~ ^repos/[^/]+/[^/]+/issues(/[0-9]+)?(\?.*)?$ ]] && return 0
+	[[ "$npath" =~ ^repos/[^/]+/[^/]+/issues(/[0-9]+/comments|/comments/[0-9]+)(\?.*)?$ ]] && return 0
+	[[ "$npath" =~ ^repos/[^/]+/[^/]+/pulls(/[0-9]+)?(\?.*)?$ ]] && return 0
+	[[ "$npath" =~ ^repos/[^/]+/[^/]+/pulls(/[0-9]+/comments|/comments/[0-9]+)(\?.*)?$ ]] && return 0
 	return 1
 }
 
@@ -182,11 +183,12 @@ _shim_api_is_write_endpoint() {
 # _modified_args in place. Fail-open on any error.
 # -----------------------------------------------------------------------------
 _shim_api_inject_body_sig() {
-	local i=0 a _next _bfile _bval _footer
+	local i=0 a _next _kv _bfile _bval _footer
 	while [[ $i -lt ${#_modified_args[@]} ]]; do
 		a="${_modified_args[$i]}"
 		case "$a" in
-		-f | -F)
+		-f | -F | --field | --raw-field)
+			# Separate-arg form: -f body=value / --field body=value
 			_next="${_modified_args[i + 1]:-}"
 			case "$_next" in
 			body=@*)
@@ -209,6 +211,41 @@ _shim_api_inject_body_sig() {
 			esac
 			i=$((i + 2))
 			continue
+			;;
+		-f* | -F* | --field=* | --raw-field=*)
+			# Attached form: -fbody=value / -Fbody=@file / --field=body=value / --raw-field=body=@file
+			case "$a" in
+			-f*)           _kv="${a#-f}" ;;
+			-F*)           _kv="${a#-F}" ;;
+			--field=*)     _kv="${a#--field=}" ;;
+			--raw-field=*) _kv="${a#--raw-field=}" ;;
+			esac
+			case "$_kv" in
+			body=@*)
+				_bfile="${_kv#body=@}"
+				if [[ -f "$_bfile" ]] && ! grep -q "<!-- aidevops:sig -->" "$_bfile" 2>/dev/null; then
+					_footer=$("$SIG_HELPER" footer 2>/dev/null) || true
+					[[ -n "$_footer" ]] && printf '%s' "$_footer" >>"$_bfile" || true
+				fi
+				;;
+			body=*)
+				_bval="${_kv#body=}"
+				if [[ "$_bval" != *"<!-- aidevops:sig -->"* ]]; then
+					_footer=$("$SIG_HELPER" footer --body "$_bval" 2>/dev/null) || {
+						i=$((i + 1))
+						continue
+					}
+					if [[ -n "$_footer" ]]; then
+						case "$a" in
+						-f*)           _modified_args[$i]="-fbody=${_bval}${_footer}" ;;
+						-F*)           _modified_args[$i]="-Fbody=${_bval}${_footer}" ;;
+						--field=*)     _modified_args[$i]="--field=body=${_bval}${_footer}" ;;
+						--raw-field=*) _modified_args[$i]="--raw-field=body=${_bval}${_footer}" ;;
+						esac
+					fi
+				fi
+				;;
+			esac
 			;;
 		esac
 		i=$((i + 1))
