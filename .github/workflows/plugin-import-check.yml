@@ -54,3 +54,17 @@ jobs:
             exit 1
           fi
           echo "All plugin imports resolve successfully."
+
+      - name: Run plugin tests
+        # Load-time import resolution (above) cannot catch ReferenceErrors at
+        # call time — e.g. `export { X } from "./Y"` is re-export only and
+        # doesn't create a local binding, so a module that also *calls* X
+        # internally loads fine but throws at runtime. The tests/ directory
+        # exercises these paths; keep them green to prevent regressions.
+        run: |
+          set -euo pipefail
+          for plugin_dir in .agents/plugins/*/; do
+            [ -d "${plugin_dir}tests" ] || continue
+            echo "Running tests under: ${plugin_dir}tests"
+            node --test "${plugin_dir}tests/"
+          done

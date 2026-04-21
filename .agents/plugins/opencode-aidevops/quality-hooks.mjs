@@ -111,8 +111,21 @@ function isBashTool(tool) {
 // Signature footer gate (GH#12805, t1755, t2685)
 // ---------------------------------------------------------------------------
 // Implementation extracted to quality-hooks-signature.mjs (t2685) to keep
-// this module below the qlty file-complexity ratchet. Re-exports preserve
-// the existing public API so callers and tests don't have to change imports.
+// this module below the qlty file-complexity ratchet. We import + export
+// rather than using `export { … } from "./module"` because the latter is a
+// re-export only and does NOT create a local binding — `checkSignatureFooterGate`
+// is called locally at handleToolAfter below, so it must be imported into
+// this module's scope. See GH hotfix: re-export-only form broke all Bash
+// tool calls with `ReferenceError: checkSignatureFooterGate is not defined`.
+
+import {
+  SIG_MARKER,
+  isGhWriteCommand,
+  isMachineProtocolCommand,
+  hasTrustedSignatureSignal,
+  tryRepairSignature,
+  checkSignatureFooterGate,
+} from "./quality-hooks-signature.mjs";
 
 export {
   SIG_MARKER,
@@ -121,7 +134,7 @@ export {
   hasTrustedSignatureSignal,
   tryRepairSignature,
   checkSignatureFooterGate,
-} from "./quality-hooks-signature.mjs";
+};
 
 // ---------------------------------------------------------------------------
 // Pattern tracking
