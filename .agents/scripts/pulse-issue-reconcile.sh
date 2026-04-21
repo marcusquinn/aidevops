@@ -1065,10 +1065,10 @@ _extract_children_from_prose() {
 	# results via sort -u. Anchors `(^|[^a-zA-Z0-9_])` and `([^a-zA-Z0-9_]|$)`
 	# prevent matches inside words (e.g. "hashtracks" or "#Nfiled").
 	local patterns=(
-		'([Pp]hase[[:space:]]+[0-9]+[^#]*#[0-9]+)'
-		'([Ff]iled[[:space:]]+as[[:space:]]*#[0-9]+)'
-		'([Tt]racks[[:space:]]+#[0-9]+)'
-		'([Bb]locked[[:space:]]-?[[:space:]]*by[[:space:]]*:?[[:space:]]*#[0-9]+)'
+		'(^|[^a-zA-Z0-9_])([Pp]hase[[:space:]]+[0-9]+[^#]*#[0-9]+)'
+		'(^|[^a-zA-Z0-9_])([Ff]iled[[:space:]]+as[[:space:]]*#[0-9]+)'
+		'(^|[^a-zA-Z0-9_])([Tt]racks[[:space:]]+#[0-9]+)'
+		'(^|[^a-zA-Z0-9_])([Bb]locked[[:space:]]-?[[:space:]]*by[[:space:]]*:?[[:space:]]*#[0-9]+)'
 	)
 
 	local all_matches=""
