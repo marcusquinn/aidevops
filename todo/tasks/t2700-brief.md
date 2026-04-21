@@ -136,6 +136,8 @@ tail -50 ~/.aidevops/logs/pulse-wrapper.log | grep -E "routine r(902|906|910):"
 - `.agents/scripts/routines/core-routines.sh`
 - `.agents/scripts/tests/test-pulse-routines-cron-extraction.sh`
 - `todo/tasks/t2700-brief.md`
+- `todo/tasks/t2702-brief.md`
+- `todo/tasks/t2703-brief.md`
 - `TODO.md`
 
 ## Acceptance Criteria
