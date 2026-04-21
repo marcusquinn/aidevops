@@ -1317,24 +1317,41 @@ _cmd_check_stale_agent_redeploy() {
 		return 0
 	fi
 
-	# VERSION matches but scripts may still differ — a script fix merged without
-	# a version bump leaves the deployed copy stale until setup.sh is run manually.
-	# Detect this by comparing SHA-256 of a sentinel script that is frequently
-	# patched (gh-failure-miner-helper.sh). If it drifts, re-deploy all agents.
+	# t2706: VERSION matches but scripts may still differ — a script fix merged
+	# without a version bump leaves the deployed copy stale until setup.sh is
+	# run manually. Previous implementation checked SHA-256 of a single sentinel
+	# file (gh-failure-miner-helper.sh); that missed drift in any OTHER file
+	# (e.g., PR #20323 fixed pulse-batch-prefetch-helper.sh — sentinel was blind
+	# to it, and the pulse kept hitting the bug for ~14h while VERSION matched).
+	# Replacement: compare the canonical HEAD SHA against ~/.aidevops/.deployed-sha
+	# (written by setup-modules/agent-deploy.sh on every successful deploy).
+	# Docs-only drift (reference/, *.md) is intentionally skipped — no runtime
+	# impact and redeploying for docs wastes cycles.
 	# GH#4727: Codacy not_collected false-positive recurred because the fix in
 	# PR #4704 was not deployed to ~/.aidevops/ before the next pulse cycle.
-	local sentinel_repo="$INSTALL_DIR/.agents/scripts/gh-failure-miner-helper.sh"
-	local sentinel_deployed="$HOME/.aidevops/agents/scripts/gh-failure-miner-helper.sh"
-	if [[ -f "$sentinel_repo" && -f "$sentinel_deployed" ]]; then
-		local hash_repo hash_deployed
-		hash_repo=$(sha256sum "$sentinel_repo" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$sentinel_repo" 2>/dev/null | awk '{print $1}' || echo "")
-		hash_deployed=$(sha256sum "$sentinel_deployed" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$sentinel_deployed" 2>/dev/null | awk '{print $1}' || echo "")
-		if [[ -n "$hash_repo" && -n "$hash_deployed" && "$hash_repo" != "$hash_deployed" ]]; then
-			log_warn "Script drift detected (sentinel hash mismatch at v$current) — re-deploying agents..."
-			if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
-				log_info "Agents re-deployed after script drift (v$current)"
-			else
-				log_error "setup.sh failed during script-drift re-deploy (exit code: $?)"
+	local stamp_file="$HOME/.aidevops/.deployed-sha"
+	if [[ -f "$stamp_file" && -d "$INSTALL_DIR/.git" ]]; then
+		local deployed_sha head_sha
+		deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
+		head_sha=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null) || head_sha=""
+		if [[ -n "$deployed_sha" && -n "$head_sha" && "$deployed_sha" != "$head_sha" ]]; then
+			local changed_files has_code_drift=0
+			changed_files=$(git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$head_sha" 2>/dev/null) || changed_files=""
+			while IFS= read -r filepath; do
+				case "$filepath" in
+				.agents/scripts/* | .agents/agents/* | .agents/workflows/* | .agents/prompts/* | .agents/hooks/*)
+					has_code_drift=1
+					break
+					;;
+				esac
+			done <<<"$changed_files"
+			if [[ "$has_code_drift" -eq 1 ]]; then
+				log_warn "Script drift detected (${deployed_sha:0:7}→${head_sha:0:7} at v$current) — re-deploying agents..."
+				if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
+					log_info "Agents re-deployed after script drift (${deployed_sha:0:7}→${head_sha:0:7})"
+				else
+					log_error "setup.sh failed during script-drift re-deploy (exit code: $?)"
+				fi
 			fi
 		fi
 	fi
