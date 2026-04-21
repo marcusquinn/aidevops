@@ -101,8 +101,8 @@ is_graphql_budget_sufficient() {
 	fi
 
 	local remaining limit
-	remaining=$(printf '%s' "$rate_json" | jq -r '.resources.graphql.remaining // empty' 2>/dev/null) || remaining=""
-	limit=$(printf '%s' "$rate_json" | jq -r '.resources.graphql.limit // empty' 2>/dev/null) || limit=""
+	remaining=$(printf '%s' "$rate_json" | jq -r '.resources.graphql.remaining // ""') || remaining=""
+	limit=$(printf '%s' "$rate_json" | jq -r '.resources.graphql.limit // ""') || limit=""
 
 	if [[ ! "$remaining" =~ ^[0-9]+$ ]] || [[ ! "$limit" =~ ^[0-9]+$ ]]; then
 		echo "${_CB_RL_LOG_PREFIX} WARNING: could not parse GraphQL rate-limit response (remaining='${remaining}', limit='${limit}') — proceeding (fail-open)" >>"$LOGFILE"
@@ -203,9 +203,9 @@ _circuit_breaker_status() {
 	fi
 
 	local remaining limit reset_epoch
-	remaining=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.remaining // \"${_CB_RL_UNKNOWN}\"" 2>/dev/null) || remaining="$_CB_RL_UNKNOWN"
-	limit=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.limit // \"${_CB_RL_UNKNOWN}\"" 2>/dev/null) || limit="$_CB_RL_UNKNOWN"
-	reset_epoch=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.reset // \"${_CB_RL_UNKNOWN}\"" 2>/dev/null) || reset_epoch="$_CB_RL_UNKNOWN"
+	remaining=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.remaining // \"${_CB_RL_UNKNOWN}\"") || remaining="$_CB_RL_UNKNOWN"
+	limit=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.limit // \"${_CB_RL_UNKNOWN}\"") || limit="$_CB_RL_UNKNOWN"
+	reset_epoch=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.reset // \"${_CB_RL_UNKNOWN}\"") || reset_epoch="$_CB_RL_UNKNOWN"
 
 	local reset_human="$_CB_RL_UNKNOWN"
 	if [[ "$reset_epoch" =~ ^[0-9]+$ ]]; then
