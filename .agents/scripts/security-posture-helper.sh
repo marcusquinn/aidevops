@@ -1000,7 +1000,7 @@ check_prompt_guard_patterns() {
 
 	# Level 2: upstream git commit date (only if stamp was not found)
 	if [[ "$ref_epoch" -eq 0 ]]; then
-		local framework_repo="${HOME}/Git/aidevops"
+		local framework_repo="${AIDEVOPS_FRAMEWORK_REPO:-${HOME}/Git/aidevops}"
 		if [[ -d "${framework_repo}/.git" ]]; then
 			local git_epoch
 			git_epoch=$(git -C "$framework_repo" log -1 --format=%ct -- \
@@ -1020,7 +1020,7 @@ check_prompt_guard_patterns() {
 
 	local file_age_days=0
 	if [[ "$ref_epoch" -gt 0 ]]; then
-		file_age_days=$(((now - ref_epoch) / 86400))
+		file_age_days=$(( (now - ${ref_epoch:-0}) / 86400 ))
 	fi
 
 	if [[ "$file_age_days" -gt 30 ]]; then
