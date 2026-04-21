@@ -53,6 +53,38 @@ _format_task_range() {
 	printf 't%03d..t%03d' "$first_num" "$last_num"
 }
 
+# ---------------------------------------------------------------------------
+# Append a structured audit log line for a successful CAS claim.
+# Format: ISO8601 \t pid \t session_id \t tNNN \t attempt \t elapsed_s
+# (tab-separated so later tooling can parse without quoting concerns.)
+# Log file: ~/.aidevops/logs/task-claim.log (created on first append).
+#
+# Phase 3 (t2569 / GH#20001): forensics for CAS-race or reuse incidents.
+# ---------------------------------------------------------------------------
+_append_claim_audit_log() {
+	local first_id="${1:-}"
+	local attempt="${2:-1}"
+	local elapsed="${3:-0}"
+
+	[[ -z "$first_id" ]] && return 0
+
+	local log_dir="${HOME}/.aidevops/logs"
+	local log_file="${log_dir}/task-claim.log"
+
+	mkdir -p "$log_dir" 2>/dev/null || return 0
+
+	local ts pid sid tid
+	ts=$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+	pid="${BASHPID:-$$}"
+	sid="${AIDEVOPS_SESSION_ID:-${Claude_SESSION_ID:-${OPENCODE_SESSION_ID:-unknown}}}"
+	tid=$(printf 't%03d' "$first_id")
+
+	# Tab-separated; single append is atomic on POSIX filesystems for short writes.
+	printf '%s\t%s\t%s\t%s\t%s\t%ss\n' \
+		"$ts" "$pid" "$sid" "$tid" "$attempt" "$elapsed" >> "$log_file" 2>/dev/null || true
+	return 0
+}
+
 # =============================================================================
 # Counter Reads
 # =============================================================================
@@ -455,6 +487,8 @@ allocate_online() {
 		0)
 			# go for it — CAS succeeded on this attempt
 			log_success "Claimed $(printf 't%03d' "$first_id") (attempt ${attempt}, ${elapsed}s)"
+			# Phase 3 (t2569 / GH#20001): structured audit log.
+			_append_claim_audit_log "$first_id" "$attempt" "$elapsed"
 			echo "$first_id"
 			return 0
 			;;
