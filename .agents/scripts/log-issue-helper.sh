@@ -207,7 +207,7 @@ _log_issue_dedup_window() {
 _compute_issue_fingerprint() {
 	local title="$1"
 	local body="$2"
-	local input="${title}${body}"
+	local input="${title}|${body}"
 	local hash=""
 
 	if command -v shasum &>/dev/null; then
@@ -249,23 +249,17 @@ check_recent_filing() {
 	local cutoff
 	cutoff=$(( now - dedup_window ))
 
-	local line hash issue_num filed_epoch age
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		hash=$(printf '%s' "$line" | grep -oE '"hash":"[a-f0-9]+"' | cut -d'"' -f4 || true)
-		issue_num=$(printf '%s' "$line" | grep -oE '"issue":[0-9]+' | grep -oE '[0-9]+' || true)
-		filed_epoch=$(printf '%s' "$line" | grep -oE '"filed_epoch":[0-9]+' | grep -oE '[0-9]+' || true)
+	local match filed_epoch issue_num age
+	match=$(grep -F "\"hash\":\"$fingerprint\"" "$fp_file" | tail -n 1 || true)
 
-		[[ -z "$hash" ]] && continue
-		[[ -z "$issue_num" ]] && continue
-		[[ -z "$filed_epoch" ]] && continue
-
-		if [[ "$hash" == "$fingerprint" ]] && [[ "$filed_epoch" -gt "$cutoff" ]]; then
+	if [[ -n "$match" ]]; then
+		read -r filed_epoch issue_num < <(sed -E 's/.*"issue":([0-9]+).*"filed_epoch":([0-9]+).*/\2 \1/' <<< "$match" || true)
+		if [[ "$filed_epoch" =~ ^[0-9]+$ ]] && [[ "$filed_epoch" -gt "$cutoff" ]]; then
 			age=$(( now - filed_epoch ))
 			echo "DUPLICATE:${issue_num}:${age}"
 			return 1
 		fi
-	done < "$fp_file"
+	fi
 
 	echo "OK"
 	return 0
@@ -291,6 +285,8 @@ record_filing() {
 	now=$(date +%s)
 	local iso_ts
 	iso_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown")
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || issue_number=0
 
 	printf '{"hash":"%s","issue":%s,"filed_at":"%s","filed_epoch":%s}\n' \
 		"$fingerprint" "$issue_number" "$iso_ts" "$now" >> "$fp_file"
