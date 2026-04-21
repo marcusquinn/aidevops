@@ -133,6 +133,22 @@ If you need to fold bot nits into the same PR, use ONE of:
 
 The "pulse never auto-closes `origin:interactive` PRs" rule (above) applies to AUTO-CLOSE (abandoning stale incremental PRs on the same task ID), NOT to auto-merge of green PRs. These are separate pulse actions.
 
+**Auto-merge timing (t2449) — `origin:worker` (worker-briefed)**: `pulse-merge.sh` also auto-merges `origin:worker` PRs when the underlying issue was **maintainer-briefed** (filed by `OWNER`/`MEMBER`). This is the symmetric counterpart to the `origin:interactive` auto-merge gate — the trust chain is equivalent: maintainer brief + worker implementation + CI verification + no human objection. ALL of the following criteria must hold:
+
+1. PR carries the `origin:worker` label.
+2. Linked issue (via `Resolves #NNN` / `Closes #NNN` / `Fixes #NNN`) was authored by a user with `OWNER` or `MEMBER` association.
+3. Linked issue never carried `needs-maintainer-review` OR NMR was cleared via **cryptographic** approval (`sudo aidevops approve issue N`), not via `auto_approve_maintainer_issues`.
+4. All required status checks PASS or SKIPPED.
+5. No `CHANGES_REQUESTED` review from any reviewer with non-bot association.
+6. PR is **not a draft**.
+7. PR does **not** carry the `hold-for-review` label.
+8. PR passes `review-bot-gate` (existing t2123/t2139 mechanism — bots settled beyond `min_edit_lag_seconds`).
+9. PR does **not** carry `origin:worker-takeover` (takeover PRs follow normal review flow).
+
+Feature flag: `AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE` (default `1`=on). Set to `0` to fall back to manual-merge-only for `origin:worker` PRs. Audit log: `[pulse-merge] auto-merged origin:worker (worker-briefed) PR #N (author=<login>, linked_issue=#M)`. Test coverage: `.agents/scripts/tests/test-pulse-merge-worker-briefed.sh` (10 cases).
+
+The **critical security gate** is criterion 3: the NMR crypto-vs-auto distinction. `auto_approve_maintainer_issues` runs as the pulse's own GitHub token — if auto-approval were accepted as NMR clearance, any review-scanner issue could auto-spawn a worker AND auto-merge without human touch (closed loop). Cryptographic approval (`sudo aidevops approve issue N`) requires the maintainer's root-protected SSH key, which workers cannot access — this is the only reliable human-in-the-loop signal.
+
 **`origin:interactive` also skips pulse dispatch (GH#18352)**: When an issue carries `origin:interactive` AND has any human assignee, the pulse's deterministic dedup guard (`dispatch-dedup-helper.sh is-assigned`) treats the assignee as blocking — even if that assignee is the repo owner or maintainer, and regardless of the current `status:*` label. This closes the race where an interactive session claimed a task via `claim-task-id.sh` (applying `status:claimed` + owner assignment) and the pulse dispatched a duplicate worker before the session could open its PR. The full active lifecycle is now recognised: `status:queued`, `status:in-progress`, `status:in-review`, and `status:claimed` all keep owner/maintainer assignees in the blocking set.
 
 **Implementing a `#auto-dispatch` task interactively (MANDATORY):** When you decide to implement a `#auto-dispatch` task in the current interactive session instead of queuing it for a worker, you MUST call `interactive-session-helper.sh claim <N> <slug>` IMMEDIATELY — before writing any code or creating a worktree. Without this, the pulse will dispatch a duplicate worker within seconds of the issue being created (the `auto-dispatch` tag triggers dispatch on the next pulse cycle). The claim applies `status:in-review` + self-assignment, which blocks dispatch regardless of the runner's login. Skipping this step is the root cause of wasted worker sessions on interactively-implemented tasks (GH#18956). If you cannot call the claim helper at task creation time, remove `#auto-dispatch` from the TODO entry and re-add it only when you are ready to hand off to a worker.
