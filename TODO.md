@@ -2879,3 +2879,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2711 t2705 child: analyse pulse-merge auto-merge + dirty-pr-sweep timing interactions #parent ref:GH#20368
 
 - [ ] t2712 t2705 child: rename 'escalate' action to 'notify' (or add docstring clarification) #auto-dispatch ref:GH#20370
+
+- [ ] t2713 large-file-gate: skip when brief cites line ranges for every targeted large file #auto-dispatch #bug #enhancement #framework ref:GH#20371
