@@ -744,13 +744,13 @@ _worktree_resolve_abs_path() {
 		if [[ "$base" = "." ]]; then
 			printf '%s\n' "$abs_parent"
 		else
-			printf '%s/%s\n' "$abs_parent" "$base"
+			printf '%s/%s\n' "${abs_parent%/}" "$base"
 		fi
 	else
 		# Parent does not exist — naive join (best-effort absolute form)
 		case "$input" in
 			/*) printf '%s\n' "$input" ;;
-			*)  printf '%s/%s\n' "$(pwd)" "$input" ;;
+			*)  printf '%s/%s\n' "$(pwd -P)" "$input" ;;
 		esac
 	fi
 	return 0
