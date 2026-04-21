@@ -51,20 +51,23 @@ _gh_should_fallback_to_rest() {
 
 #######################################
 # Internal: If first arg looks like a GitHub issue URL, extract the repo slug
-# and issue number, placing them in _repo and _num (caller's local vars via
-# nameref). Otherwise leave them unchanged.
-# Args: $1=url_or_num $2=_repo_var $3=_num_var
+# and issue number. Returns via stdout on two lines (repo, then num) so we
+# stay bash 3.2-compatible (nameref `local -n` is bash 4.3+).
+# Caller pattern:  { read -r repo; read -r num; } < <(_gh_rest_normalize_issue_ref "$ref" "$repo")
+# If the ref is a bare number, the first line is the current repo arg unchanged.
+# Args: $1=url_or_num $2=current_repo_value (empty OK)
 #######################################
 _gh_rest_normalize_issue_ref() {
 	local raw="$1"
-	local -n _repo_ref="$2"
-	local -n _num_ref="$3"
+	local repo="${2:-}"
+	local num=""
 	if [[ "$raw" =~ ^https?://github\.com/([^/]+/[^/]+)/(issues|pull)/([0-9]+) ]]; then
-		[[ -z "$_repo_ref" ]] && _repo_ref="${BASH_REMATCH[1]}"
-		_num_ref="${BASH_REMATCH[3]}"
+		[[ -z "$repo" ]] && repo="${BASH_REMATCH[1]}"
+		num="${BASH_REMATCH[3]}"
 	else
-		_num_ref="$raw"
+		num="$raw"
 	fi
+	printf '%s\n%s\n' "$repo" "$num"
 	return 0
 }
 
@@ -184,7 +187,7 @@ _gh_issue_comment_rest() {
 	done
 
 	local num=""
-	_gh_rest_normalize_issue_ref "$num_or_url" repo num
+	{ read -r repo; read -r num; } < <(_gh_rest_normalize_issue_ref "$num_or_url" "$repo")
 
 	if [[ -z "$repo" || -z "$num" ]]; then
 		printf '_gh_issue_comment_rest: issue number and --repo are required\n' >&2
@@ -241,11 +244,7 @@ _gh_issue_edit_rest() {
 	local milestone=""
 	local state=""
 	local has_title=0 has_body=0 has_milestone=0 has_state=0
-	local -a add_labels=()
-	local -a rm_labels=()
-	local -a add_assignees=()
-	local -a rm_assignees=()
-	local -a _toks=()
+	local -a add_labels=() rm_labels=() add_assignees=() rm_assignees=() _toks=()
 
 	local _first="${1:-}"
 	if [[ $# -gt 0 && "$_first" != --* ]]; then
@@ -281,7 +280,7 @@ _gh_issue_edit_rest() {
 	done
 
 	local num=""
-	_gh_rest_normalize_issue_ref "$num_or_url" repo num
+	{ read -r repo; read -r num; } < <(_gh_rest_normalize_issue_ref "$num_or_url" "$repo")
 
 	if [[ -z "$repo" || -z "$num" ]]; then
 		printf '_gh_issue_edit_rest: issue number and --repo are required\n' >&2
@@ -311,28 +310,21 @@ _gh_issue_edit_rest() {
 		api_args+=(-F "$(_gh_rest_body_file_arg "$tmp_body")")
 	fi
 
-	# Labels and assignees: REST requires full arrays. Fetch current, apply
-	# deltas, append -f 'field[]=value' args. Delegated to a shared helper.
-	local _current _target _elem
+	# Labels and assignees: REST requires full arrays. Delegated to
+	# _gh_rest_print_patch_array_flags; see that helper for the state-fetch
+	# and delta-application logic.
+	local _flag _val
 	if [[ ${#add_labels[@]} -gt 0 || ${#rm_labels[@]} -gt 0 ]]; then
-		_current=$(gh api "$_issue_path" \
-			--jq '.labels[].name' 2>/dev/null) || _current=""
-		_target=$(_gh_rest_compute_target_set "$_current" \
-			"$(printf '%s\n' "${add_labels[@]}")" \
-			"$(printf '%s\n' "${rm_labels[@]}")")
-		while IFS= read -r _elem; do
-			[[ -n "$_elem" ]] && api_args+=(-f "labels[]=${_elem}")
-		done <<<"$_target"
+		while IFS=$'\t' read -r _flag _val; do
+			api_args+=("$_flag" "$_val")
+		done < <(_gh_rest_print_patch_array_flags "$_issue_path" "labels" ".labels[].name" \
+			"$(printf '%s\n' "${add_labels[@]}")" "$(printf '%s\n' "${rm_labels[@]}")")
 	fi
 	if [[ ${#add_assignees[@]} -gt 0 || ${#rm_assignees[@]} -gt 0 ]]; then
-		_current=$(gh api "$_issue_path" \
-			--jq '.assignees[].login' 2>/dev/null) || _current=""
-		_target=$(_gh_rest_compute_target_set "$_current" \
-			"$(printf '%s\n' "${add_assignees[@]}")" \
-			"$(printf '%s\n' "${rm_assignees[@]}")")
-		while IFS= read -r _elem; do
-			[[ -n "$_elem" ]] && api_args+=(-f "assignees[]=${_elem}")
-		done <<<"$_target"
+		while IFS=$'\t' read -r _flag _val; do
+			api_args+=("$_flag" "$_val")
+		done < <(_gh_rest_print_patch_array_flags "$_issue_path" "assignees" ".assignees[].login" \
+			"$(printf '%s\n' "${add_assignees[@]}")" "$(printf '%s\n' "${rm_assignees[@]}")")
 	fi
 
 	gh api "${api_args[@]}" >/dev/null 2>&1
@@ -341,6 +333,31 @@ _gh_issue_edit_rest() {
 	[[ $tmp_body_owned -eq 1 && -f "$tmp_body" ]] && rm -f "$tmp_body"
 
 	return $rc
+}
+
+#######################################
+# Print -f flags for a PATCH array field (labels or assignees) given the
+# current state (fetched via REST) and add/remove deltas. Output is one
+# tab-separated `-f\tfield[]=value` pair per line; caller reads with
+# `IFS=$'\t' read -r k v` and appends both to the api_args array.
+# Factored out of _gh_issue_edit_rest so that function stays under the
+# 100-line complexity gate.
+#
+# Args: $1=issue_path  $2=field_name  $3=jq_expr  $4=adds_nl  $5=rms_nl
+#######################################
+_gh_rest_print_patch_array_flags() {
+	local issue_path="$1"
+	local field="$2"
+	local jq_expr="$3"
+	local adds="$4"
+	local rms="$5"
+	local _current _target _elem
+	_current=$(gh api "$issue_path" --jq "$jq_expr" 2>/dev/null) || _current=""
+	_target=$(_gh_rest_compute_target_set "$_current" "$adds" "$rms")
+	while IFS= read -r _elem; do
+		[[ -n "$_elem" ]] && printf -- '-f\t%s[]=%s\n' "$field" "$_elem"
+	done <<<"$_target"
+	return 0
 }
 
 #######################################
