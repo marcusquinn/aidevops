@@ -488,8 +488,9 @@ See also `reference/pre-commit-hooks.md` for the full playbook and `prompts/buil
 
 **Pulse restart after deploying pulse script fixes (MANDATORY):**
 - Bash processes load `source` files at startup only. Deploying updated `.sh` files to `~/.aidevops/agents/scripts/` does NOT affect a running pulse — it keeps using the old code in memory. This caused a multi-hour outage where v3.8.41 fixes were deployed but the pulse kept blocking issues with stale logic.
-- After deploying fixes to any sourced pulse script (`pulse-*.sh`, `dispatch-dedup-*.sh`, `headless-runtime-*.sh`, `worker-lifecycle-common.sh`, `pulse-nmr-approval.sh`), restart the pulse: `pkill -f "(^|/)pulse-wrapper\.sh( |$)" || true; sleep 3; nohup ~/.aidevops/agents/scripts/pulse-wrapper.sh >> ~/.aidevops/logs/pulse-wrapper.log 2>&1 &`
-- `setup.sh` and `aidevops update` handle this automatically via `_restart_pulse_if_running`. Interactive sessions deploying hotfixes via `cp` must restart manually.
+- **`aidevops update` and `setup.sh` now handle this automatically (t2579).** Both invoke `pulse-lifecycle-helper.sh restart-if-running` at the end of their flow, which terminates every pulse instance (SIGTERM → SIGKILL escalation) and starts a fresh one. Opt out with `AIDEVOPS_SKIP_PULSE_RESTART=1` (for active debugging sessions).
+- **For interactive hot-deploys (direct `cp` into `~/.aidevops/agents/scripts/`):** the automatic restart doesn't fire because neither `aidevops update` nor `setup.sh` ran. Use the helper directly: `~/.aidevops/agents/scripts/pulse-lifecycle-helper.sh restart-if-running`. Fallback (same effect): `pkill -f "(^|/)pulse-wrapper\.sh( |$)" || true; sleep 3; nohup ~/.aidevops/agents/scripts/pulse-wrapper.sh >> ~/.aidevops/logs/pulse-wrapper.log 2>&1 &`.
+- Helper subcommands: `is-running | status | start | stop | restart | restart-if-running`. The `restart-if-running` flavour no-ops when pulse isn't running (won't spuriously start it).
 
 # Quality Standards
 - ShellCheck zero violations. `local var="$1"` pattern. Explicit returns.

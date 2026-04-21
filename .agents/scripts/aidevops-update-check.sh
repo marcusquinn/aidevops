@@ -417,29 +417,25 @@ _hotfix_auto_apply() {
 		return 0
 	fi
 
-	# Pull latest and redeploy
+	# Pull latest and redeploy. setup.sh now calls pulse-lifecycle-helper.sh
+	# at the end of its main() (t2579), so the restart happens automatically
+	# when setup redeploys scripts. The auto_restart_pulse arg is honoured
+	# by setting AIDEVOPS_SKIP_PULSE_RESTART when false.
+	local _skip_env=""
+	if [[ "$auto_restart_pulse" != "true" ]]; then
+		_skip_env="AIDEVOPS_SKIP_PULSE_RESTART=1"
+	fi
+
 	(
 		cd "$framework_repo" || exit 1
 		git pull --ff-only origin main >/dev/null 2>&1
 		if [[ -x "$setup_script" ]]; then
-			bash "$setup_script" --non-interactive >/dev/null 2>&1
+			# shellcheck disable=SC2086  # intentional env-var prefix expansion
+			env $_skip_env bash "$setup_script" --non-interactive >/dev/null 2>&1
 		fi
 	) &
 	local hotfix_pid=$!
 	wait "$hotfix_pid" 2>/dev/null || true
-
-	# Restart pulse if configured
-	if [[ "$auto_restart_pulse" == "true" ]]; then
-		local pulse_pattern="(^|/)pulse-wrapper\\.sh( |\$)"
-		if pgrep -f "$pulse_pattern" >/dev/null 2>&1; then
-			pkill -f "$pulse_pattern" 2>/dev/null || true
-			sleep 3
-			local pulse_script="${agents_dir}/agents/scripts/pulse-wrapper.sh"
-			if [[ -x "$pulse_script" ]]; then
-				nohup "$pulse_script" >>"${agents_dir}/logs/pulse-wrapper.log" 2>&1 &
-			fi
-		fi
-	fi
 	return 0
 }
 
