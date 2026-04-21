@@ -36,6 +36,12 @@
 [[ -n "${_SHARED_GH_WRAPPERS_LOADED:-}" ]] && return 0
 _SHARED_GH_WRAPPERS_LOADED=1
 
+# t2574: REST fallback for GraphQL-exhausted gh issue wrappers (GH#20243).
+# Provides _gh_should_fallback_to_rest and _gh_issue_{create,comment,edit}_rest.
+_SHARED_GH_WRAPPERS_DIR="${BASH_SOURCE[0]%/*}"
+# shellcheck source=shared-gh-wrappers-rest-fallback.sh
+source "${_SHARED_GH_WRAPPERS_DIR}/shared-gh-wrappers-rest-fallback.sh"
+
 # =============================================================================
 # GitHub Token Workflow Scope Check (t1540)
 # =============================================================================
@@ -492,6 +498,11 @@ gh_create_issue() {
 			if [[ -n "$auto_assignee" ]]; then
 				issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" --label "$origin_label" --assignee "$auto_assignee")
 				local rc=$?
+				if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+					print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
+					issue_output=$(_gh_issue_create_rest "$@" "${_todo_label_args[@]}" --label "$origin_label" --assignee "$auto_assignee")
+					rc=$?
+				fi
 				echo "$issue_output"
 				[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
 				return $rc
@@ -501,6 +512,11 @@ gh_create_issue() {
 
 	issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" --label "$origin_label")
 	local rc=$?
+	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
+		issue_output=$(_gh_issue_create_rest "$@" "${_todo_label_args[@]}" --label "$origin_label")
+		rc=$?
+	fi
 	echo "$issue_output"
 	[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
 	return $rc
@@ -617,7 +633,13 @@ gh_issue_comment() {
 	_gh_wrapper_auto_sig "$@"
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 	gh issue comment "$@"
-	return $?
+	local rc=$?
+	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue comment"
+		_gh_issue_comment_rest "$@"
+		rc=$?
+	fi
+	return $rc
 }
 
 gh_pr_comment() {
@@ -983,6 +1005,11 @@ gh_issue_edit_safe() {
 	_before="$(_gh_audit_fetch_issue_state_json "$_num" "$_repo")"
 	gh issue edit "$@"
 	local _exit=$?
+	if [[ $_exit -ne 0 ]] && _gh_should_fallback_to_rest; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue edit"
+		_gh_issue_edit_rest "$@"
+		_exit=$?
+	fi
 	_after="$(_gh_audit_fetch_issue_state_json "$_num" "$_repo")"
 	_gh_audit_record_op "issue_edit" "$_repo" "$_num" "$_before" "$_after" \
 		"${BASH_SOURCE[1]:-}" "${FUNCNAME[1]:-}" "${BASH_LINENO[0]:-0}"
@@ -1425,4 +1452,11 @@ set_issue_status() {
 	_flags+=("$@")
 
 	gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
+	local _rc=$?
+	if [[ $_rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for set_issue_status"
+		_gh_issue_edit_rest "$issue_num" --repo "$repo_slug" "${_flags[@]}"
+		_rc=$?
+	fi
+	return $_rc
 }
