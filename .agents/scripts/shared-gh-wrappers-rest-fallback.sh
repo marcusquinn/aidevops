@@ -45,6 +45,33 @@ _gh_rest_body_file_arg() {
 }
 
 #######################################
+# Append the aidevops signature footer to a body file if not already present.
+# Used by REST fallback write translators to ensure every GitHub write carries
+# the canonical <!-- aidevops:sig --> audit marker (t2707).
+#
+# Fail-open: a missing helper or write error must never break the write call.
+#
+# Args: $1=body_file_path
+# Returns: 0 always
+#######################################
+_rest_fallback_append_sig() {
+	local body_file="$1"
+	[[ -f "$body_file" ]] || return 0
+	grep -q "<!-- aidevops:sig -->" "$body_file" 2>/dev/null && return 0
+	local helper="" _cand
+	for _cand in \
+		"${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" \
+		"$(dirname "${BASH_SOURCE[0]:-$0}")/gh-signature-helper.sh"; do
+		[[ -x "$_cand" ]] && { helper="$_cand"; break; }
+	done
+	[[ -z "$helper" ]] && return 0
+	local footer
+	footer=$("$helper" footer 2>/dev/null) || return 0
+	[[ -n "$footer" ]] && printf '%s' "$footer" >>"$body_file" || true
+	return 0
+}
+
+#######################################
 # Return 0 (true) when GraphQL rate limit remaining is <= threshold.
 # `gh api rate_limit` is a free endpoint (does not count against quotas).
 # Fail-safe: if the response is unparseable (network error, gh auth missing),
@@ -137,6 +164,7 @@ _gh_issue_create_rest() {
 			printf '%s' "$body" >"$tmp_body"
 		fi
 	fi
+	[[ -n "$tmp_body" ]] && _rest_fallback_append_sig "$tmp_body"
 
 	local -a api_args=(-X POST "/repos/${repo}/issues" -f "title=${title}")
 	[[ -n "$tmp_body" ]] && api_args+=(-F "$(_gh_rest_body_file_arg "$tmp_body")")
@@ -219,6 +247,7 @@ _gh_issue_comment_rest() {
 		tmp_body_owned=1
 		printf '%s' "$body" >"$tmp_body"
 	fi
+	_rest_fallback_append_sig "$tmp_body"
 
 	local out rc
 	out=$(gh api -X POST "/repos/${repo}/issues/${num}/comments" \
@@ -476,6 +505,7 @@ _gh_pr_create_rest() {
 			printf '%s' "$body" >"$tmp_body"
 		fi
 	fi
+	[[ -n "$tmp_body" ]] && _rest_fallback_append_sig "$tmp_body"
 
 	local -a api_args=(-X POST "/repos/${repo}/pulls"
 		-f "title=$title"

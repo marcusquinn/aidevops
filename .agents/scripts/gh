@@ -74,6 +74,10 @@ _find_real_gh() {
 # -----------------------------------------------------------------------------
 case "${1:-}:${2:-}" in
 issue:comment | issue:create | pr:create | pr:comment) ;;
+api:*)
+	# `gh api` subcommand — needs further analysis for POST/PATCH write endpoints.
+	# Falls through to the api-specific handling block below.
+	;;
 *)
 	_real_gh="$(_find_real_gh)" || {
 		echo "[aidevops] gh shim: real gh binary not found on PATH" >&2
@@ -128,12 +132,111 @@ if [[ -z "$SIG_HELPER" ]]; then
 fi
 
 # -----------------------------------------------------------------------------
+# _shim_api_is_write_endpoint
+# Returns 0 (true) when the current _modified_args array represents a
+# POST or PATCH to an issue, issue-comment, or PR REST endpoint.
+# Recognises: /repos/*/issues  /repos/*/issues/N/comments  /repos/*/pulls
+# Leaves GET, DELETE, and non-content endpoints (e.g. /labels PATCH) untouched.
+# -----------------------------------------------------------------------------
+_shim_api_is_write_endpoint() {
+	local method="" path="" i a
+	i=0
+	while [[ $i -lt ${#_modified_args[@]} ]]; do
+		a="${_modified_args[$i]}"
+		case "$a" in
+		-X)
+			method="${_modified_args[i + 1]:-}"
+			i=$((i + 2))
+			continue
+			;;
+		-X*) method="${a#-X}" ;;
+		--method)
+			method="${_modified_args[i + 1]:-}"
+			i=$((i + 2))
+			continue
+			;;
+		--method=*) method="${a#--method=}" ;;
+		-f | -F | --jq | -H | --header | --input | --template | --cache | --hostname)
+			i=$((i + 2))
+			continue
+			;;
+		api) ;;
+		/repos/* | repos/*) [[ -z "$path" ]] && path="$a" ;;
+		-*) ;;
+		*) [[ -z "$path" ]] && path="$a" ;;
+		esac
+		i=$((i + 1))
+	done
+	[[ "$method" != "POST" && "$method" != "PATCH" ]] && return 1
+	local npath="${path#/}"
+	[[ "$npath" =~ ^repos/[^/]+/[^/]+/issues$ ]] && return 0
+	[[ "$npath" =~ ^repos/[^/]+/[^/]+/issues/[0-9]+/comments$ ]] && return 0
+	[[ "$npath" =~ ^repos/[^/]+/[^/]+/pulls$ ]] && return 0
+	return 1
+}
+
+# -----------------------------------------------------------------------------
+# _shim_api_inject_body_sig
+# Scans _modified_args for -f/-F body=@<file> or body=<inline> arguments
+# and injects the sig footer (idempotent via marker check). Mutates
+# _modified_args in place. Fail-open on any error.
+# -----------------------------------------------------------------------------
+_shim_api_inject_body_sig() {
+	local i=0 a _next _bfile _bval _footer
+	while [[ $i -lt ${#_modified_args[@]} ]]; do
+		a="${_modified_args[$i]}"
+		case "$a" in
+		-f | -F)
+			_next="${_modified_args[i + 1]:-}"
+			case "$_next" in
+			body=@*)
+				_bfile="${_next#body=@}"
+				if [[ -f "$_bfile" ]] && ! grep -q "<!-- aidevops:sig -->" "$_bfile" 2>/dev/null; then
+					_footer=$("$SIG_HELPER" footer 2>/dev/null) || true
+					[[ -n "$_footer" ]] && printf '%s' "$_footer" >>"$_bfile" || true
+				fi
+				;;
+			body=*)
+				_bval="${_next#body=}"
+				if [[ "$_bval" != *"<!-- aidevops:sig -->"* ]]; then
+					_footer=$("$SIG_HELPER" footer --body "$_bval" 2>/dev/null) || {
+						i=$((i + 2))
+						continue
+					}
+					[[ -n "$_footer" ]] && _modified_args[i + 1]="body=${_bval}${_footer}"
+				fi
+				;;
+			esac
+			i=$((i + 2))
+			continue
+			;;
+		esac
+		i=$((i + 1))
+	done
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Initialise the mutable args array used by all injection code below.
+# -----------------------------------------------------------------------------
+_modified_args=("$@")
+
+# -----------------------------------------------------------------------------
+# Handle `gh api` subcommand: intercept write calls to content endpoints.
+# Non-targeted api calls pass straight through after this block.
+# -----------------------------------------------------------------------------
+if [[ "${1:-}" == "api" ]]; then
+	if _shim_api_is_write_endpoint; then
+		_shim_api_inject_body_sig
+	fi
+	exec "$REAL_GH" "${_modified_args[@]}"
+fi
+
+# -----------------------------------------------------------------------------
 # Scan args for --body / --body-file and inject signature if missing.
 # Mirrors _gh_wrapper_auto_sig in shared-gh-wrappers.sh. Marker-based dedup
 # means idempotent: running the shim twice on the same args is a no-op.
 # -----------------------------------------------------------------------------
-
-_modified_args=("$@")
 _i=0
 _body_idx=-1
 _body_val=""
