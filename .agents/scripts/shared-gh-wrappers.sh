@@ -351,28 +351,38 @@ _gh_wrapper_auto_sig() {
 # t2436: Extract the tNNN task ID from a --title "tNNN: ..." argument.
 # Also accepts an explicit --todo-task-id tNNN flag (callers that know the ID).
 # Returns the task ID (e.g., "t2436") or empty string on stdout. Non-blocking.
+#
+# t2688: Uses module-level globals instead of `local -n` namerefs for
+# compatibility with bash 3.2 AND zsh. Namerefs (bash 4.3+) fail with
+# `local:2: bad option: -n` under zsh, and are unavailable on macOS system
+# bash 3.2 in the rare case the re-exec guard in shared-constants.sh cannot
+# fire (e.g., file sourced directly into a zsh interactive shell via a
+# user's .zshrc chain). Canonical pattern: task-brief-helper.sh:643,757.
 _gh_wrapper_extract_task_id_from_title() {
-	local todo_task_id="" title_task_id="" _prev="" _a
+	# Reset the module-level globals before each call.
+	_GH_WRAPPER_EXTRACT_TODO=""
+	_GH_WRAPPER_EXTRACT_TITLE=""
+	local _prev="" _a
 	for _a in "$@"; do
-		_gh_wrapper_extract_task_id_from_title_step \
-			"$_a" "$_prev" todo_task_id title_task_id
+		_gh_wrapper_extract_task_id_from_title_step "$_a" "$_prev"
 		_prev="$_a"
 	done
-	echo "${todo_task_id:-$title_task_id}"
+	echo "${_GH_WRAPPER_EXTRACT_TODO:-$_GH_WRAPPER_EXTRACT_TITLE}"
 	return 0
 }
 
 # Helper for _gh_wrapper_extract_task_id_from_title: process one arg/prev pair.
-# Updates nameref vars todo_task_id and title_task_id (bash 4.3+ nameref).
+# Writes to module-level globals _GH_WRAPPER_EXTRACT_TODO and
+# _GH_WRAPPER_EXTRACT_TITLE. The caller initialises both globals to ""
+# before the loop. Bash 3.2 / zsh compatible (no nameref / no `local -n`).
 _gh_wrapper_extract_task_id_from_title_step() {
 	local _cur="$1" _prev="$2"
-	local -n _t2436_todo="$3" _t2436_title="$4"
 	if [[ "$_prev" == "--todo-task-id" ]]; then
-		_t2436_todo="$_cur"
+		_GH_WRAPPER_EXTRACT_TODO="$_cur"
 	elif [[ "$_prev" == "--title" && "$_cur" =~ ^(t[0-9]+): ]]; then
-		_t2436_title="${BASH_REMATCH[1]}"
+		_GH_WRAPPER_EXTRACT_TITLE="${BASH_REMATCH[1]}"
 	elif [[ "$_cur" =~ ^--title=(t[0-9]+): ]]; then
-		_t2436_title="${BASH_REMATCH[1]}"
+		_GH_WRAPPER_EXTRACT_TITLE="${BASH_REMATCH[1]}"
 	fi
 	return 0
 }
