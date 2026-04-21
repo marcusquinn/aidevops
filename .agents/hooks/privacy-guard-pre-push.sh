@@ -110,17 +110,25 @@ while IFS=' ' read -r _lr _ls _rr _rs; do
 done
 
 # Determine default remote branch once for merge-base fallback (GH#20177).
-# Mirrors the pattern in complexity-regression-pre-push.sh:_compute_baseline.
-# Priority: origin/HEAD (repo-configured) → origin/main → origin/master → HEAD.
-_default_remote_head=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
-	| sed 's@^refs/remotes/origin/@origin/@')
-if [[ -z "$_default_remote_head" ]]; then
-	for _candidate in origin/main origin/master; do
-		git rev-parse --verify "$_candidate" >/dev/null 2>&1 \
-			&& { _default_remote_head="$_candidate"; break; }
-	done
+# Uses the actual remote name (not hardcoded 'origin') to support non-standard
+# remote names (e.g., 'upstream'). Leaves empty when unknown so line 139
+# triggers a full scan — safer than falling back to HEAD, which may produce an
+# empty diff and silently bypass the privacy guard (GH#20225).
+# Priority: remote/HEAD (repo-configured) → remote/main → remote/master.
+_default_remote_head=""
+if [[ -n "$remote_name" ]]; then
+	_default_remote_head=$(git symbolic-ref --short "refs/remotes/${remote_name}/HEAD" 2>/dev/null)
+	if [[ -z "$_default_remote_head" ]]; then
+		for _candidate in "${remote_name}/main" "${remote_name}/master"; do
+			git rev-parse --verify "$_candidate" >/dev/null 2>&1
+			_status=$?
+			if [[ $_status -eq 0 ]]; then
+				_default_remote_head="$_candidate"
+				break
+			fi
+		done
+	fi
 fi
-[[ -z "$_default_remote_head" ]] && _default_remote_head="HEAD"
 
 _watchlist_present=0
 for _ref_entry in "${_all_refs[@]}"; do
