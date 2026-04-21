@@ -7486,15 +7486,15 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-04-21T13:07:53Z",
-      "hash": "63c9f9c60ac143cc481ea786a34c5ca3d7d51d2e",
-      "passes": 74,
+      "at": "2026-04-21T16:31:51Z",
+      "hash": "4f81188bd5fdd474c1a4654d7044f85ce9337c8a",
+      "passes": 75,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-04-21T13:07:53Z",
-      "hash": "1461715752b6bb92bca2f31c50fd97fb093ee5bc",
-      "passes": 95,
+      "at": "2026-04-21T16:31:51Z",
+      "hash": "c9d2852953e0307c13a46064df0fb34dd800c21b",
+      "passes": 96,
       "pr": 19029
     },
     "setup-modules/agent-deploy.sh": {
@@ -7504,9 +7504,9 @@
       "pr": 19203
     },
     "setup.sh": {
-      "at": "2026-04-21T12:06:52Z",
-      "hash": "a84c5330c50d2ef0a20aa37d1d412fc29c03c311",
-      "passes": 92,
+      "at": "2026-04-21T16:31:51Z",
+      "hash": "f7770ea25158c21922fe0da3771adbd04bca9796",
+      "passes": 93,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
