@@ -32,6 +32,16 @@
 [[ -n "${_PULSE_CANONICAL_MAINTENANCE_LOADED:-}" ]] && return 0
 _PULSE_CANONICAL_MAINTENANCE_LOADED=1
 
+# Source canonical-guard-helper.sh for assert_git_available / is_registered_canonical
+# (t2559 Layer 3 — fail-loud when git is missing from PATH before any cleanup).
+# Guard missing-file so older deployments that lack the helper fail open.
+_PULSE_CM_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || _PULSE_CM_SCRIPT_DIR=""
+if [[ -n "$_PULSE_CM_SCRIPT_DIR" && -f "$_PULSE_CM_SCRIPT_DIR/canonical-guard-helper.sh" ]]; then
+	# shellcheck source=/dev/null
+	source "$_PULSE_CM_SCRIPT_DIR/canonical-guard-helper.sh"
+fi
+unset _PULSE_CM_SCRIPT_DIR
+
 # ---------------------------------------------------------------------------
 # _canonical_maintenance_run_with_timeout
 #
@@ -286,7 +296,14 @@ _stale_worktree_sweep_single_repo() {
 	local before_count=0
 	before_count=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | grep -c "$_wt_prefix" || echo "0")
 
-	if ! _canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" "$worktree_helper" clean --auto --force-merged 2>/dev/null; then
+	# t2559: redirect worktree-helper.sh clean stdout to the logfile. Previously
+	# the colored "Checking for worktrees..." banner and "Removing ..." table
+	# leaked into the captured output of this function, concatenated with the
+	# `printf '%d' "$removed"` at the end, and poisoned the caller's arithmetic
+	# (see _stale_worktree_sweep). That was the ANSI-bleed half of the 2026-04-20
+	# canonical-trash incident. Route output to the logfile instead of /dev/null
+	# so operators can still diagnose sweep failures.
+	if ! _canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" "$worktree_helper" clean --auto --force-merged >>"${LOGFILE:-/dev/null}" 2>&1; then
 		echo "[pulse-canonical-maintenance] Worktree sweep timed out for ${repo_path}" >>"${LOGFILE:-/dev/null}"
 		printf '0'
 		return 0
@@ -294,7 +311,15 @@ _stale_worktree_sweep_single_repo() {
 
 	local after_count=0
 	after_count=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | grep -c "$_wt_prefix" || echo "0")
+	# Sanitise both sides of the arithmetic — either git output or grep -c can
+	# return unexpected strings under hostile conditions; without this guard a
+	# malformed count would crash the pulse with set -e.
+	before_count="${before_count//[^0-9]/}"
+	after_count="${after_count//[^0-9]/}"
+	before_count="${before_count:-0}"
+	after_count="${after_count:-0}"
 	local removed=$((before_count - after_count))
+	[[ "$removed" -lt 0 ]] && removed=0
 	if [[ "$removed" -gt 0 ]]; then
 		echo "[pulse-canonical-maintenance] Swept ${removed} worktrees for ${repo_path}" >>"${LOGFILE:-/dev/null}"
 		_canonical_maintenance_audit_log "canonical-maintenance: swept ${removed} worktrees for ${repo_path}"
@@ -316,6 +341,18 @@ _stale_worktree_sweep() {
 	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	[[ -f "$repos_json" ]] && command -v jq &>/dev/null || return 0
 
+	# t2559 Layer 3: fail-loud if git is missing from PATH. Without git,
+	# `git worktree list` returns empty, which the downstream guard in
+	# worktree-helper.sh cmd_clean used to reduce to "!= empty" (always
+	# true) and would trash canonical. Belt-and-braces here in case the
+	# helper-level guards are bypassed.
+	if command -v assert_git_available >/dev/null 2>&1; then
+		if ! assert_git_available; then
+			echo "[pulse-canonical-maintenance] refusing stale worktree sweep — git not in PATH" >>"${LOGFILE:-/dev/null}"
+			return 0
+		fi
+	fi
+
 	local worktree_helper="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}/worktree-helper.sh"
 	if [[ ! -x "$worktree_helper" ]]; then
 		echo "[pulse-canonical-maintenance] worktree-helper.sh not found or not executable" >>"${LOGFILE:-/dev/null}"
@@ -331,6 +368,12 @@ _stale_worktree_sweep() {
 		[[ ! -d "$repo_path/.git" ]] && continue
 		local removed=0
 		removed=$(_stale_worktree_sweep_single_repo "$repo_path" "$dry_run" "$worktree_helper")
+		# t2559 defense-in-depth: sanitise the captured count before arithmetic.
+		# Even with the stdout fix in _stale_worktree_sweep_single_repo, guard
+		# against future regressions where stray text might leak into $removed.
+		# A non-numeric value here previously crashed the pulse with set -e.
+		removed="${removed//[^0-9]/}"
+		removed="${removed:-0}"
 		sweep_count=$((sweep_count + removed))
 	done
 

@@ -48,6 +48,17 @@
 [[ -n "${_PULSE_CLEANUP_LOADED:-}" ]] && return 0
 _PULSE_CLEANUP_LOADED=1
 
+# t2559: canonical-guard-helper.sh provides is_registered_canonical and
+# assert_git_available, used by _trash_or_remove and
+# _cleanup_merged_prs_for_all_repos below. Guarded missing-file so older
+# deployments fail open.
+_PULSE_CLEANUP_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || _PULSE_CLEANUP_SCRIPT_DIR=""
+if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/canonical-guard-helper.sh" ]]; then
+	# shellcheck source=/dev/null
+	source "$_PULSE_CLEANUP_SCRIPT_DIR/canonical-guard-helper.sh"
+fi
+unset _PULSE_CLEANUP_SCRIPT_DIR
+
 #######################################
 # Move a path to system trash before permanent deletion (GH#19042).
 # Mirrors worktree-helper.sh trash_path() so Pass 2 orphan cleanup gets
@@ -55,11 +66,24 @@ _PULSE_CLEANUP_LOADED=1
 # Prefers: trash CLI (macOS Homebrew), gio trash (Linux), rm -rf fallback.
 # Args: $1=path to trash
 # Returns 0 on success, 1 on failure.
+#
+# t2559 Layer 2: refuses to trash a path registered as a canonical
+# repository in ~/.config/aidevops/repos.json.
 #######################################
 _trash_or_remove() {
 	local target="$1"
 	[[ -z "$target" ]] && return 1
 	[[ ! -e "$target" ]] && return 0
+
+	# t2559: never trash a registered canonical repository. Mirrors the
+	# guard added to worktree-helper.sh trash_path(). Defence-in-depth
+	# at every entry point that can invoke rm/trash on a derived path.
+	if command -v is_registered_canonical >/dev/null 2>&1; then
+		if is_registered_canonical "$target"; then
+			echo "[pulse-cleanup] REFUSED: '$target' is a registered canonical repository — will not trash" >>"${LOGFILE:-/dev/null}"
+			return 1
+		fi
+	fi
 
 	if command -v trash >/dev/null 2>&1; then
 		trash "$target" 2>/dev/null && return 0
@@ -84,6 +108,19 @@ _trash_or_remove() {
 # worktree-helper.sh ownership registry, t189).
 #######################################
 _cleanup_merged_prs_for_all_repos() {
+	# t2559 Layer 3: fail-loud when git is missing from PATH. This runs before
+	# we invoke worktree-helper.sh clean across every repo — if git isn't
+	# available, the helper's worktree-list derivation returns empty, and the
+	# downstream "don't touch main" guard collapses. Belt-and-braces here
+	# even though cmd_clean has its own Layer 3 check.
+	if command -v assert_git_available >/dev/null 2>&1; then
+		if ! assert_git_available; then
+			echo "[pulse-cleanup] refusing merged-PR worktree cleanup — git not in PATH" >>"${LOGFILE:-/dev/null}"
+			echo 0
+			return 0
+		fi
+	fi
+
 	local helper="${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
 	if [[ ! -x "$helper" ]]; then
 		echo 0
