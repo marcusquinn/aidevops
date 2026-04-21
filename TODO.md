@@ -2870,7 +2870,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2705 diagnose pulse-merge.sh auto-merge gap for origin:interactive PRs #parent ref:GH#20338
 
-- [ ] t2708 pulse-dirty-pr-sweep: narrow origin-interactive-no-close rule to true orphans #auto-dispatch ref:GH#20355
+- [x] t2708 pulse-dirty-pr-sweep: narrow origin-interactive-no-close rule to true orphans #auto-dispatch ref:GH#20355 pr:#20356 completed:2026-04-21
 
 - [ ] t2709 shared-gh-wrappers.sh: make REST-fallback source path resolution cross-shell (bash + zsh) #auto-dispatch ref:GH#20357
 
