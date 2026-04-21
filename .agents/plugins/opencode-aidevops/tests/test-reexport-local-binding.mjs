@@ -19,7 +19,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -124,13 +124,14 @@ function findReExportLocalUseViolations(filePath) {
   );
 }
 
-// Files known to use the re-export pattern — extend when new ones land.
-const CANDIDATES = [
-  "quality-hooks.mjs",
-  "google-proxy.mjs",
-  "oauth-pool.mjs",
-  "agent-loader.mjs",
-];
+// Auto-discover all plugin .mjs files except the entry point (index.mjs).
+// Rationale: hardcoded lists silently miss new files that ship with the
+// re-export-only-used-locally bug pattern. t2697 closes that gap by scanning
+// the plugin directory on every test run. `index.mjs` is excluded because it
+// is a pure re-export barrel — the pattern this test flags is legitimate there.
+const CANDIDATES = readdirSync(pluginDir)
+  .filter((name) => name.endsWith(".mjs") && name !== "index.mjs")
+  .sort();
 
 for (const name of CANDIDATES) {
   test(`${name}: re-exported identifiers used locally are also imported`, () => {

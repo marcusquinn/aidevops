@@ -776,6 +776,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t2691 Root-cause why `origin:worker` was missing on health-dashboard issue #20298 — triggering symptom that led to GH#20301. Suspected cause (H1): REST fallback in `shared-gh-wrappers-rest-fallback.sh` does not apply auto-detected origin label because REST path uses a separate `POST /issues/{N}/labels` step that may fail silently. Validate before fixing. #auto-dispatch #bug #framework ~1h ref:GH#20311
 
+- [ ] t2697 Harden plugin re-export regression test to auto-discover all plugin .mjs files — replace hardcoded 4-file CANDIDATES list with `readdirSync` auto-discovery (excluding `index.mjs`) in `.agents/plugins/opencode-aidevops/tests/test-reexport-local-binding.mjs`. Closes the gap where new plugin files silently bypass the v3.8.91 regression test (4 of 47 files covered → 46 of 47). #auto-dispatch #bug #framework ~15m ref:GH#20325
+
 ## In Progress
 
 - [x] t1543 feat: OAuth multi-account pool plugin for provider credential rotation — add pool module to opencode-aidevops plugin enabling multiple Anthropic OAuth accounts with automatic rotation on rate limits (429). Uses existing plugin auth hook + custom fetch wrapper. Includes /model-accounts-pool tool for account management. #feature #plugin #auth ~4h ref:GH#5243 started:2026-03-19 pr:#5244 completed:2026-03-19
