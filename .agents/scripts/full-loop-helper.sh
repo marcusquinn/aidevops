@@ -883,6 +883,62 @@ _validate_worker_claim() {
 	return 0
 }
 
+# _derive_pr_title_prefix: choose tNNN (preferred) or GH#NNN (fallback) for
+# the auto-derived PR title, based on whether TODO.md has an entry whose
+# ref:GH# tag matches the issue number.
+#
+# Why (t2720): issue-sync.yml's PR-merge job auto-completes TODO entries by
+# extracting a task_id from the merged PR title (regex anchored on ^tNNN).
+# When commit-and-pr falls back to "GH#NNN:" titles, the extractor returns
+# empty and the TODO line is silently left on `[ ]` even though the PR
+# merged and SYNC_PAT is present. Preferring tNNN closes that gap.
+#
+# Args:
+#   $1 - issue_number (required; empty yields "GH#" fallback)
+#   $2 - todo_file (optional; defaults to <repo-root>/TODO.md)
+# Outputs:
+#   tNNN     when TODO.md has a matching entry
+#   GH#NNN   otherwise (missing file, no match, or unset issue number)
+# Returns: 0 always (callers inline the stdout).
+_derive_pr_title_prefix() {
+	local issue_number="${1:-}"
+	local todo_file="${2:-}"
+
+	if [[ -z "$issue_number" ]]; then
+		printf 'GH#\n'
+		return 0
+	fi
+
+	if [[ -z "$todo_file" ]]; then
+		local repo_root=""
+		repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+		if [[ -n "$repo_root" ]]; then
+			todo_file="${repo_root}/TODO.md"
+		fi
+	fi
+
+	if [[ -z "$todo_file" || ! -f "$todo_file" ]]; then
+		printf 'GH#%s\n' "$issue_number"
+		return 0
+	fi
+
+	# Match "- [ ] tNNN ... ref:GH#<issue_number>" with a non-digit or EOL
+	# boundary after the number so ref:GH#123 doesn't match ref:GH#12345.
+	local task_id=""
+	task_id=$(grep -E "^- \[[ x]\] t[0-9]+ .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file" 2>/dev/null \
+		| head -1 \
+		| grep -oE '^- \[[ x]\] t[0-9]+' \
+		| grep -oE 't[0-9]+$' \
+		|| true)
+
+	if [[ -n "$task_id" ]]; then
+		printf '%s\n' "$task_id"
+	else
+		printf 'GH#%s\n' "$issue_number"
+	fi
+	return 0
+}
+
 # Create the PR and print the PR number to stdout.
 # Arguments: repo, pr_title, pr_body, origin_label; extra_labels passed as remaining args.
 # Returns 1 on failure.
@@ -982,9 +1038,10 @@ cmd_commit_and_pr() {
 	_stage_and_commit "$commit_message" || return 1
 	_rebase_and_push "$branch" "$skip_hooks" || return 1
 
-	# Build PR metadata
+	# Build PR metadata (t2720: prefer tNNN from TODO.md so issue-sync's
+	# PR-merge auto-completion regex can extract a task_id and flip [ ] → [x])
 	if [[ -z "$pr_title" ]]; then
-		pr_title="GH#${issue_number}: ${commit_message}"
+		pr_title="$(_derive_pr_title_prefix "$issue_number"): ${commit_message}"
 	fi
 
 	local origin_label="origin:interactive"
