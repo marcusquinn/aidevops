@@ -195,102 +195,34 @@ export function hasTrustedSignatureSignal(cmd) {
  * @param {Function} log
  * @returns {string | null}
  */
-export function tryRepairSignature(cmd, scriptsDir, log) {
-  const helperPath = join(scriptsDir, "gh-signature-helper.sh");
-  if (!existsSync(helperPath)) {
-    log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
-    return null;
-  }
-
-  // Refuse to rewrite commands whose body comes from a heredoc or process
-  // substitution. Parsing these safely in JS is non-trivial and the caller
-  // almost certainly meant to invoke the helper explicitly — blocking
-  // forces them to add a `$(gh-signature-helper.sh footer)` tail.
-  if (/--body(?:-file)?\s*=?\s*(?:<<-?\s*['"]?\w+|<\()/.test(cmd)) {
-    log("WARN", "Command uses heredoc/process-substitution for body; refusing auto-repair");
-    return null;
-  }
-  // Refuse if the body contains command substitution ($(...) or backticks).
-  // Our --body "..." regex is non-recursive and can misparse nested quotes
-  // inside $( ). The safer path is to throw so the caller explicitly
-  // invokes the helper — which would short-circuit via hasTrustedSignatureSignal
-  // and never reach this function.
+/**
+ * Check if the command uses unparseable body syntax (heredoc, process
+ * substitution, or command substitution in the body argument). These forms
+ * are too dynamic to rewrite safely and the caller should use the helper
+ * explicitly. Returns true if unparseable.
+ * @param {string} cmd
+ * @returns {boolean}
+ */
+function _hasUnparseableBody(cmd) {
+  // Heredoc / process substitution
+  if (/--body(?:-file)?\s*=?\s*(?:<<-?\s*['"]?\w+|<\()/.test(cmd)) return true;
+  // Command substitution inside --body value
   const bodyStart = cmd.search(/--body(?:-file)?(?:=|\s)/);
-  if (bodyStart !== -1) {
-    const afterBody = cmd.slice(bodyStart);
-    if (afterBody.includes("$(") || /`[^`]*`/.test(afterBody)) {
-      log("WARN", "Command substitution in --body; refusing auto-repair (t2685)");
-      return null;
-    }
-  }
+  if (bodyStart === -1) return false;
+  const afterBody = cmd.slice(bodyStart);
+  return afterBody.includes("$(") || /`[^`]*`/.test(afterBody);
+}
 
-  // --- --body-file path case -----------------------------------------------
-  // Filesystem-side repair: read the file, generate sig, append if missing.
-  // The file path may be bare (./body.md), quoted, or =-joined.
-  const bodyFileMatch = cmd.match(
-    /--body-file(?:=(['"]?)([^\s'"]+)\1|\s+(['"]?)([^\s'"]+)\3)/,
-  );
-  if (bodyFileMatch) {
-    const filePath = bodyFileMatch[2] || bodyFileMatch[4];
-    try {
-      const current = readFileSync(filePath, "utf-8");
-      if (current.includes(SIG_MARKER)) {
-        return cmd; // already signed — no-op
-      }
-      const sig = execSync(
-        `"${helperPath}" footer --body "$(cat ${JSON.stringify(filePath)})"`,
-        {
-          encoding: "utf-8",
-          timeout: 5000,
-          stdio: ["pipe", "pipe", "pipe"],
-          shell: "/bin/bash",
-        },
-      );
-      if (!sig || !sig.includes(SIG_MARKER)) {
-        log("WARN", "gh-signature-helper output missing marker; refusing to inject");
-        return null;
-      }
-      appendFileSync(filePath, sig);
-      log("INFO", `Auto-appended signature footer to body-file ${filePath} (t2685)`);
-      return cmd;
-    } catch (e) {
-      log("WARN", `Could not repair --body-file ${filePath}: ${e.message}`);
-      return null;
-    }
-  }
-
-  // --- --body "value" case -------------------------------------------------
-  // Command-side repair: rewrite the --body arg to include the sig.
-  // Match common forms. Anything else falls through to the block path.
-  const bodyPatterns = [
-    { re: /--body\s+"((?:[^"\\]|\\.)*)"/, quote: '"' },
-    { re: /--body\s+'((?:[^'\\]|\\.)*)'/, quote: "'" },
-    { re: /--body=(['"])((?:(?!\1).)*)\1/, quote: null },
-  ];
-
-  let match = null;
-  let bodyValue = null;
-  let quote = null;
-  for (const pat of bodyPatterns) {
-    const m = cmd.match(pat.re);
-    if (m) {
-      match = m;
-      if (pat.quote !== null) {
-        bodyValue = m[1];
-        quote = pat.quote;
-      } else {
-        quote = m[1];
-        bodyValue = m[2];
-      }
-      break;
-    }
-  }
-
-  if (!match) {
-    log("WARN", "Could not parse --body argument; refusing auto-repair");
-    return null;
-  }
-
+/**
+ * Generate a signature footer by invoking gh-signature-helper.sh synchronously.
+ * Returns the footer string on success, or null on any failure (missing
+ * helper, helper error, output missing marker).
+ * @param {string} helperPath
+ * @param {string} bodyValue - body text passed to --body arg of helper
+ * @param {Function} log
+ * @returns {string | null}
+ */
+function _generateSignature(helperPath, bodyValue, log) {
   try {
     const sig = execSync(`"${helperPath}" footer --body ${JSON.stringify(bodyValue)}`, {
       encoding: "utf-8",
@@ -302,22 +234,112 @@ export function tryRepairSignature(cmd, scriptsDir, log) {
       log("WARN", "gh-signature-helper output missing marker; refusing to inject");
       return null;
     }
-    // Escape any quote chars in the sig that match our delimiter.
-    // Simple approach: if sig contains a raw instance of our quote char,
-    // we refuse and let the block path educate the caller.
-    if (sig.includes(quote)) {
-      log("WARN", `Signature contains delimiter quote ${quote}; cannot safely rewrite --body`);
-      return null;
-    }
-    const fullMatch = match[0];
-    // Insert the sig before the closing quote of the original arg.
-    const newArg = fullMatch.slice(0, -1) + sig + quote;
-    log("INFO", `Auto-appended signature footer to --body arg (t2685)`);
-    return cmd.replace(fullMatch, newArg);
+    return sig;
   } catch (e) {
-    log("WARN", `Repair --body failed: ${e.message}`);
+    log("WARN", `gh-signature-helper invocation failed: ${e.message}`);
     return null;
   }
+}
+
+/**
+ * Repair a `--body-file PATH` form by appending the signature footer to the
+ * referenced file if missing. Returns the unchanged cmd on success, or null
+ * on failure (file unreadable, sig generation error).
+ * @param {string} cmd
+ * @param {string} filePath
+ * @param {string} helperPath
+ * @param {Function} log
+ * @returns {string | null}
+ */
+function _repairBodyFile(cmd, filePath, helperPath, log) {
+  try {
+    const current = readFileSync(filePath, "utf-8");
+    if (current.includes(SIG_MARKER)) return cmd; // already signed
+    const sig = _generateSignature(helperPath, current, log);
+    if (sig === null) return null;
+    appendFileSync(filePath, sig);
+    log("INFO", `Auto-appended signature footer to body-file ${filePath} (t2685)`);
+    return cmd;
+  } catch (e) {
+    log("WARN", `Could not repair --body-file ${filePath}: ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * Match the `--body "value"` / `--body 'value'` / `--body=QUOTED` forms.
+ * Returns { match, bodyValue, quote } on the first match, or null.
+ * @param {string} cmd
+ * @returns {{ match: RegExpMatchArray, bodyValue: string, quote: string } | null}
+ */
+function _matchBodyArg(cmd) {
+  const patterns = [
+    { re: /--body\s+"((?:[^"\\]|\\.)*)"/, quote: '"' },
+    { re: /--body\s+'((?:[^'\\]|\\.)*)'/, quote: "'" },
+    { re: /--body=(['"])((?:(?!\1).)*)\1/, quote: null },
+  ];
+  for (const pat of patterns) {
+    const m = cmd.match(pat.re);
+    if (!m) continue;
+    const quote = pat.quote !== null ? pat.quote : m[1];
+    const bodyValue = pat.quote !== null ? m[1] : m[2];
+    return { match: m, bodyValue, quote };
+  }
+  return null;
+}
+
+/**
+ * Repair a `--body "VALUE"` form by rewriting the command with sig-augmented
+ * body. Returns the repaired command string, or null on failure.
+ * @param {string} cmd
+ * @param {{ match: RegExpMatchArray, bodyValue: string, quote: string }} parsed
+ * @param {string} helperPath
+ * @param {Function} log
+ * @returns {string | null}
+ */
+function _repairBodyArg(cmd, parsed, helperPath, log) {
+  const { match, bodyValue, quote } = parsed;
+  const sig = _generateSignature(helperPath, bodyValue, log);
+  if (sig === null) return null;
+  // If sig contains our delimiter quote, rewrite would break escaping —
+  // let the block path force explicit helper invocation.
+  if (sig.includes(quote)) {
+    log("WARN", `Signature contains delimiter quote ${quote}; cannot safely rewrite --body`);
+    return null;
+  }
+  const fullMatch = match[0];
+  const newArg = fullMatch.slice(0, -1) + sig + quote;
+  log("INFO", `Auto-appended signature footer to --body arg (t2685)`);
+  return cmd.replace(fullMatch, newArg);
+}
+
+export function tryRepairSignature(cmd, scriptsDir, log) {
+  const helperPath = join(scriptsDir, "gh-signature-helper.sh");
+  if (!existsSync(helperPath)) {
+    log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
+    return null;
+  }
+  if (_hasUnparseableBody(cmd)) {
+    log("WARN", "Command has unparseable body (heredoc/command-sub); refusing auto-repair (t2685)");
+    return null;
+  }
+
+  // --body-file PATH form: filesystem-side repair.
+  const bodyFileMatch = cmd.match(
+    /--body-file(?:=(['"]?)([^\s'"]+)\1|\s+(['"]?)([^\s'"]+)\3)/,
+  );
+  if (bodyFileMatch) {
+    const filePath = bodyFileMatch[2] || bodyFileMatch[4];
+    return _repairBodyFile(cmd, filePath, helperPath, log);
+  }
+
+  // --body VALUE form: command-side repair.
+  const parsed = _matchBodyArg(cmd);
+  if (!parsed) {
+    log("WARN", "Could not parse --body argument; refusing auto-repair");
+    return null;
+  }
+  return _repairBodyArg(cmd, parsed, helperPath, log);
 }
 
 /**
