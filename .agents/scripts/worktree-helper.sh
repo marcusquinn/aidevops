@@ -1540,6 +1540,57 @@ _clean_remove_merged() {
 #   - Grace period: worktrees younger than WORKTREE_CLEAN_GRACE_HOURS (default 4h) are skipped
 #   - Open PR check: worktrees with an open PR are skipped (active work in progress)
 #   - Zero-commit + dirty check: branch with 0 commits ahead AND dirty files = in-progress, not merged
+# t2559: preflight guard for cmd_clean. Combines L1 (empty-derivation),
+# L2 (sane main-worktree-path), and L3 (git-in-PATH) into a single entry point.
+# On success, prints the validated main_worktree_path to stdout and returns 0.
+# On any failure, prints the reason to stderr and returns 1 so cmd_clean can
+# refuse to touch any filesystem state.
+#
+# Extracted to keep cmd_clean body under the 100-line complexity threshold
+# while preserving all four defensive layers from the 2026-04-20 incident.
+_clean_preflight_main_worktree() {
+	# L3: refuse to run cleanup at all if git is missing from PATH.
+	# Without git, the worktree-list derivation below returns empty, and the
+	# downstream `[[ "$worktree_path" != "$main_wt_path" ]]` guard reduces to
+	# "!= empty" — always true for real paths — and canonical gets swept.
+	if command -v assert_git_available >/dev/null 2>&1; then
+		if ! assert_git_available; then
+			echo -e "${RED}Refusing worktree cleanup — git not in PATH${NC}" >&2
+			return 1
+		fi
+	fi
+
+	# L1: derive main worktree path from porcelain; fail loud on empty output.
+	# The first entry in `git worktree list --porcelain` is always the main
+	# worktree. Avoid piping through head — with set -o pipefail and many
+	# worktrees, head closes the pipe early → git SIGPIPE (exit 141) →
+	# pipefail → set -e abort.
+	local _porcelain main_worktree_path
+	_porcelain=$(git worktree list --porcelain)
+	if [[ -z "$_porcelain" ]]; then
+		echo -e "${RED}FATAL: 'git worktree list --porcelain' returned empty — refusing cleanup${NC}" >&2
+		return 1
+	fi
+	main_worktree_path="${_porcelain%%$'\n'*}"           # first line
+	main_worktree_path="${main_worktree_path#worktree }" # strip prefix
+
+	# L2: validate the extracted path is sane (non-empty, absolute) before
+	# handing it to cleanup loops as the "never trash this" anchor.
+	if command -v assert_main_worktree_sane >/dev/null 2>&1; then
+		if ! assert_main_worktree_sane "$main_worktree_path"; then
+			echo -e "${RED}Refusing worktree cleanup — main_worktree_path derivation is not sane${NC}" >&2
+			return 1
+		fi
+	elif [[ -z "$main_worktree_path" || "${main_worktree_path:0:1}" != "/" ]]; then
+		# Fallback when canonical-guard-helper is missing: still refuse to run.
+		echo -e "${RED}FATAL: derived main_worktree_path is empty or non-absolute: '$main_worktree_path'${NC}" >&2
+		return 1
+	fi
+
+	printf '%s\n' "$main_worktree_path"
+	return 0
+}
+
 cmd_clean() {
 	local auto_mode=false
 	local force_merged=false
@@ -1552,16 +1603,12 @@ cmd_clean() {
 		shift
 	done
 
-	# t2559 Layer 3: refuse to run cleanup at all if git is missing from PATH.
-	# Without git, the worktree-list derivation below returns empty, and the
-	# downstream `[[ "$worktree_path" != "$main_wt_path" ]]` guard reduces to
-	# "!= empty" — always true for real paths — and canonical gets swept.
-	# This was the primary trigger for the 2026-04-20 canonical-trash incident.
-	if command -v assert_git_available >/dev/null 2>&1; then
-		if ! assert_git_available; then
-			echo -e "${RED}Refusing worktree cleanup — git not in PATH${NC}" >&2
-			return 1
-		fi
+	# t2559: run the combined L1+L2+L3 preflight. On any refusal, bail before
+	# touching filesystem state. This is the primary defence against the
+	# 2026-04-20 canonical-trash incident (see _clean_preflight_main_worktree).
+	local main_worktree_path
+	if ! main_worktree_path=$(_clean_preflight_main_worktree); then
+		return 1
 	fi
 
 	echo -e "${BOLD}Checking for worktrees with merged branches...${NC}"
@@ -1569,39 +1616,6 @@ cmd_clean() {
 
 	local default_branch
 	default_branch=$(get_default_branch)
-
-	# Identify the main worktree path — must never be cleaned up.
-	# The first entry in `git worktree list --porcelain` is always the main worktree.
-	# NOTE: avoid piping through head — with set -o pipefail and many worktrees,
-	# head closes the pipe early → git SIGPIPE (exit 141) → pipefail → set -e abort.
-	local _porcelain main_worktree_path
-	_porcelain=$(git worktree list --porcelain)
-
-	# t2559 Layer 1: fail loud if the derivation yielded empty or malformed
-	# output. The 2026-04-20 incident came from this exact derivation returning
-	# "" for $main_worktree_path, which turned the downstream "never touch main"
-	# guard into a no-op. Empty porcelain means either git failed silently, no
-	# worktrees are registered, or the first line doesn't start with "worktree "
-	# — all abnormal conditions from cleanup's perspective. Refuse to proceed.
-	if [[ -z "$_porcelain" ]]; then
-		echo -e "${RED}FATAL: 'git worktree list --porcelain' returned empty — refusing cleanup${NC}" >&2
-		return 1
-	fi
-	main_worktree_path="${_porcelain%%$'\n'*}"           # first line
-	main_worktree_path="${main_worktree_path#worktree }" # strip prefix
-
-	# t2559 Layer 2: validate the extracted path is sane (non-empty, absolute)
-	# before handing it to cleanup loops as the "never trash this" anchor.
-	if command -v assert_main_worktree_sane >/dev/null 2>&1; then
-		if ! assert_main_worktree_sane "$main_worktree_path"; then
-			echo -e "${RED}Refusing worktree cleanup — main_worktree_path derivation is not sane${NC}" >&2
-			return 1
-		fi
-	elif [[ -z "$main_worktree_path" || "${main_worktree_path:0:1}" != "/" ]]; then
-		# Fallback when canonical-guard-helper is missing: still refuse to run.
-		echo -e "${RED}FATAL: derived main_worktree_path is empty or non-absolute: '$main_worktree_path'${NC}" >&2
-		return 1
-	fi
 
 	# Fetch to get current remote branch state (detects deleted branches)
 	# Prune all remotes, not just origin (GH#3797)
