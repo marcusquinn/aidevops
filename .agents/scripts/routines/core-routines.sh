@@ -17,11 +17,11 @@
 get_core_routine_entries() {
 	cat <<'ENTRIES'
 r901|x|Supervisor pulse — dispatch tasks across repos|repeat:cron(*/2 * * * *)|~1m|scripts/pulse-wrapper.sh|script
-r902|x|Auto-update — check for framework updates|repeat:cron(*/10 * * * *)|~30s|bin/aidevops-auto-update check|script
+r902|x|Auto-update — check for framework updates|repeat:cron(*/10 * * * *)|~30s|bin/aidevops-auto-update|script
 r903|x|Process guard — kill runaway processes|repeat:cron(*/1 * * * *)|~5s|scripts/process-guard-helper.sh kill-runaways|script
 r904|x|Worker watchdog — monitor headless workers|repeat:cron(*/2 * * * *)|~10s|scripts/worker-watchdog.sh --check|script
 r905|x|Memory pressure monitor|repeat:cron(*/1 * * * *)|~5s|scripts/memory-pressure-monitor.sh|script
-r906|x|Repo sync — pull latest across repos|repeat:daily(@19:00)|~5m|bin/aidevops-repo-sync check|script
+r906|x|Repo sync — pull latest across repos|repeat:daily(@19:00)|~5m|bin/aidevops-repo-sync|script
 r907|x|Contribution watch — monitor FOSS activity|repeat:cron(0 * * * *)|~30s|scripts/contribution-watch-helper.sh scan|script
 r908|x|Profile README update|repeat:cron(0 * * * *)|~30s|scripts/profile-readme-helper.sh update|script
 r909|x|Screen time snapshot|repeat:cron(0 */6 * * *)|~10s|scripts/screen-time-helper.sh snapshot|script
@@ -185,7 +185,7 @@ active sessions.
 | Frequency | Every 10 minutes |
 | Type | script |
 | Expected duration | ~30 seconds (check only), ~2 minutes (when updating) |
-| Script | \`bin/aidevops-auto-update check\` |
+| Script | \`bin/aidevops-auto-update\` (wraps \`aidevops auto-update check\`) |
 $(_scheduler_row "$os" 600 "com.aidevops.aidevops-auto-update" "sh.aidevops.auto-update")
 
 ## What it does
@@ -389,7 +389,7 @@ Runs at 19:00 local time to sync before overnight pulse operations.
 | Frequency | Daily at 19:00 |
 | Type | script |
 | Expected duration | ~5 minutes (depends on repo count) |
-| Script | \`bin/aidevops-repo-sync check\` |
+| Script | \`bin/aidevops-repo-sync\` (wraps \`aidevops repo-sync check\`) |
 $(_scheduler_row_calendar "$os" "StartCalendarInterval: Hour=19, Minute=0" "sh.aidevops.repo-sync" "sh.aidevops.repo-sync")
 
 ## What it does
@@ -549,7 +549,7 @@ full setup run.
 | Frequency | Every 5 minutes |
 | Type | script |
 | Expected duration | ~15 seconds |
-| Script | \`bin/aidevops-skills-sync\` |
+| Script | \`bin/aidevops-skills-sync\` (wraps \`aidevops skill generate\`) |
 $(_scheduler_row "$os" 300 "sh.aidevops.skills-sync" "sh.aidevops.skills-sync")
 
 ## What it does

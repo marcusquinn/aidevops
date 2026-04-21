@@ -86,7 +86,7 @@ test_cron_single_field() {
 }
 
 test_daily_no_spaces() {
-	local line="- [x] r906 Repo sync — pull latest across repos repeat:daily(@19:00) ~5m run:bin/aidevops-repo-sync check"
+	local line="- [x] r906 Repo sync — pull latest across repos repeat:daily(@19:00) ~5m run:bin/aidevops-repo-sync"
 	local got
 	got=$(extract_repeat_expr "$line")
 	assert_eq "daily(@19:00): non-cron schedule unchanged" \
