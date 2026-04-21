@@ -53,6 +53,9 @@
 #   - _handle_post_merge_actions
 #   - _process_single_ready_pr
 #   - _is_collaborator_author
+#   - _is_owner_or_member_author
+#   - _check_interactive_pr_gates            (t2411)
+#   - _attempt_worker_briefed_auto_merge     (t2449)
 #   - _extract_linked_issue
 #   - _extract_merge_summary
 #
@@ -63,6 +66,19 @@
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_MERGE_LOADED:-}" ]] && return 0
 _PULSE_MERGE_LOADED=1
+
+# Comma-delimited label pattern constant — avoids matching "origin:worker-takeover"
+# when checking for "origin:worker" in comma-joined label strings. (t2449)
+_OW_LABEL_PAT=",origin:worker,"
+
+# Build issue API path from repo slug and issue number. Module-level helper
+# avoids repeating the path literal across multiple function scopes.
+_pm_issue_api() {
+	local slug="$1"
+	local issue_num="$2"
+	printf 'repos/%s/issues/%s' "$slug" "$issue_num"
+	return 0
+}
 
 # Source shared claim-lifecycle helpers (t2429). The _release_interactive_claim_on_merge
 # function was extracted to shared-claim-lifecycle.sh so that both pulse-merge.sh and
@@ -870,7 +886,7 @@ _route_pr_to_fix_worker() {
 	fi
 
 	# Worker-origin PRs: dispatch directly
-	if [[ ",${pr_labels}," == *",origin:worker,"* ]] \
+	if [[ ",${pr_labels}," == *"${_OW_LABEL_PAT}"* ]] \
 		|| [[ ",${pr_labels}," == *",origin:worker-takeover,"* ]]; then
 		case "$kind" in
 			review)   _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
@@ -976,13 +992,15 @@ _check_pr_merge_gates() {
 	# merge pass. The approval marker is the source of truth; NMR label
 	# is the transient symptom of the CI workflow fighting the pulse.
 	if [[ -n "$linked_issue" ]]; then
+		local _li_api
+		_li_api=$(_pm_issue_api "$repo_slug" "$linked_issue")
 		local issue_labels
-		issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
+		issue_labels=$(gh api "${_li_api}" \
 			--jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
 		if [[ "$issue_labels" == *"needs-maintainer-review"* ]]; then
 			# Check if approval marker exists — if so, NMR is transient
 			local _has_approval_marker
-			_has_approval_marker=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments" \
+			_has_approval_marker=$(gh api "${_li_api}/comments" \
 				--jq '[.[].body | select(contains("aidevops-signed-approval"))] | length' \
 				2>/dev/null) || _has_approval_marker=0
 			if [[ "$_has_approval_marker" -gt 0 ]]; then
@@ -1026,6 +1044,20 @@ _check_pr_merge_gates() {
 		| jq -r '.isDraft // false' 2>/dev/null) || _oi_is_draft="false"
 	if [[ "$_oi_labels_str" == *"origin:interactive"* ]]; then
 		if ! _check_interactive_pr_gates "$pr_number" "$repo_slug" "$_oi_labels_str" "$_oi_is_draft"; then
+			return 1
+		fi
+	fi
+
+	# ── origin:worker worker-briefed gates (t2449) ──
+	# Symmetric to the origin:interactive auto-merge gate (t2411). When a
+	# worker PR is backed by a maintainer-briefed issue (OWNER/MEMBER author),
+	# the trust chain is equivalent to an interactive session. This gate
+	# validates the additional criteria beyond the general gates.
+	#
+	# Uses comma-delimited matching: ",origin:worker," does NOT match
+	# ",origin:worker-takeover," (substring-safe).
+	if [[ ",${_oi_labels_str}," == *"${_OW_LABEL_PAT}"* ]]; then
+		if ! _attempt_worker_briefed_auto_merge "$pr_number" "$repo_slug" "$_oi_labels_str" "$_oi_is_draft" "$linked_issue"; then
 			return 1
 		fi
 	fi
@@ -1110,8 +1142,10 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 		#   - SKIP the `gh issue close` call.
 		#   - SKIP fast_fail_reset and unlock (both tied to closing).
 		local _parent_task_guard=0
+		local _pm_li_api
+		_pm_li_api=$(_pm_issue_api "$repo_slug" "$linked_issue")
 		local _linked_labels
-		_linked_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
+		_linked_labels=$(gh api "${_pm_li_api}" \
 			--jq '[.labels[].name] | join(",")' 2>/dev/null) || _linked_labels=""
 		if [[ ",${_linked_labels}," == *",parent-task,"* ]]; then
 			_parent_task_guard=1
@@ -1120,7 +1154,7 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 
 		# Dedup guard: skip if closing comment for this PR already exists (GH#18098).
 		local _dedup_count
-		_dedup_count=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments" \
+		_dedup_count=$(gh api "${_pm_li_api}/comments" \
 			2>/dev/null | jq --arg prnum "PR #${pr_number}" \
 			'[.[] | select(.body | contains($prnum))] | length' 2>/dev/null) || _dedup_count=0
 		[[ "$_dedup_count" =~ ^[0-9]+$ ]] || _dedup_count=0
@@ -1354,6 +1388,10 @@ _process_single_ready_pr() {
 				&& _ipr_role="owner-or-member" || true
 			echo "[pulse-merge] auto-merged origin:interactive PR #${pr_number} (author=${pr_author}, role=${_ipr_role})" >>"$LOGFILE"
 		fi
+		# t2449: emit audit log for origin:worker worker-briefed auto-merges
+		if [[ ",${_ipr_labels}," == *"${_OW_LABEL_PAT}"* ]]; then
+			echo "[pulse-merge] auto-merged origin:worker (worker-briefed) PR #${pr_number} (author=${pr_author}, linked_issue=#${linked_issue:-unknown})" >>"$LOGFILE"
+		fi
 		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary"
 		return 0
 	else
@@ -1431,6 +1469,111 @@ _check_interactive_pr_gates() {
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — origin:interactive PR has hold-for-review opt-out label (t2411)" >>"$LOGFILE"
 		return 1
 	fi
+	return 0
+}
+
+#######################################
+# Check origin:worker worker-briefed auto-merge gates (t2449).
+#
+# Sibling to _check_interactive_pr_gates — validates that an origin:worker
+# PR is eligible for auto-merge based on the maintainer-briefed trust chain.
+# Called from _check_pr_merge_gates when the PR carries origin:worker.
+#
+# The trust-chain equivalence argument: if the underlying issue was filed by
+# the repo OWNER/MEMBER, the worker faithfully implemented, CI confirms
+# correctness, and no human reviewer objected, the trust chain is equivalent
+# to (or stronger than) an origin:interactive auto-merge.
+#
+# Nine criteria (see GH#20204):
+#   1. PR carries origin:worker label (caller pre-checks)
+#   2. Linked issue authored by OWNER or MEMBER
+#   3. NMR never applied OR cleared via cryptographic approval (not auto-approval)
+#   4. All required status checks PASS/SKIPPED (checked by general gates)
+#   5. No CHANGES_REQUESTED from human reviewers (checked by general gates)
+#   6. PR is not a draft
+#   7. No hold-for-review label
+#   8. Passes review-bot-gate (checked by general gates)
+#   9. No origin:worker-takeover label (caller pre-checks)
+#
+# Feature flag: AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE (default: 1=on, 0=off)
+# When OFF, all origin:worker PRs fall back to manual merge only.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=labels_str (comma-separated),
+#       $4=is_draft, $5=linked_issue
+# Returns: 0=all gates pass (eligible for auto-merge), 1=blocked
+#######################################
+_attempt_worker_briefed_auto_merge() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local labels_str="$3"
+	local is_draft="$4"
+	local linked_issue="$5"
+
+	# Feature flag — when OFF, all origin:worker PRs fall back to manual merge
+	if [[ "${AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE:-1}" == "0" ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: disabled by AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=0 for PR #${pr_number} in ${repo_slug} (t2449)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Gate: not a draft
+	if [[ "$is_draft" == "true" ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — draft PR not eligible (t2449)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Gate: no hold-for-review opt-out label
+	if [[ ",${labels_str}," == *",hold-for-review,"* ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — hold-for-review label (t2449)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Gate: must have a linked issue (the "brief" in "maintainer-briefed")
+	if [[ -z "$linked_issue" ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — no linked issue (t2449)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Gate: linked issue author is OWNER or MEMBER (maintainer-briefed)
+	# Reuse the issue API base path for both the author-association and NMR checks.
+	local _issue_api
+	_issue_api=$(_pm_issue_api "$repo_slug" "$linked_issue")
+	local issue_author_assoc
+	issue_author_assoc=$(gh api "${_issue_api}" \
+		--jq '.author_association // ""' 2>/dev/null) || issue_author_assoc=""
+	if [[ "$issue_author_assoc" != "OWNER" && "$issue_author_assoc" != "MEMBER" ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) (t2449)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Gate: NMR crypto-vs-auto approval check.
+	# If NMR was ever applied to the linked issue, it must have been cleared
+	# via cryptographic approval (sudo aidevops approve issue N), NOT via
+	# auto_approve_maintainer_issues. Auto-approval runs as the pulse's own
+	# GitHub token — accepting it here would create a closed loop with zero
+	# human touchpoints (scanner → issue → dispatch → worker → PR → merge).
+	#
+	# Detection: check comment markers. The crypto-approval flow writes
+	# "aidevops:approval-signature:" in the comment body. The auto-approval
+	# flow writes "auto-approved-maintainer-issue". Both are extracted in a
+	# single API call for efficiency.
+	local _nmr_markers
+	_nmr_markers=$(gh api "${_issue_api}/comments" --jq '
+		[
+			(any(.[].body | strings; contains("aidevops:approval-signature:"))),
+			(any(.[].body | strings; contains("auto-approved-maintainer-issue")))
+		] | @tsv
+	' 2>/dev/null) || _nmr_markers="false	false"
+
+	local _has_crypto _has_auto
+	read -r _has_crypto _has_auto <<< "$_nmr_markers"
+
+	if [[ "$_has_auto" == "true" && "$_has_crypto" != "true" ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} NMR was auto-approved only (no crypto clearance) (t2449)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# All gates pass — eligible for worker-briefed auto-merge
+	echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} passed all gates (issue #${linked_issue}, author_assoc=${issue_author_assoc}) (t2449)" >>"$LOGFILE"
 	return 0
 }
 

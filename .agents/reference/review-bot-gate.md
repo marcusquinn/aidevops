@@ -54,3 +54,13 @@ When a review bot comments with a suggestion that isn't a correctness issue in t
 PR #19712 (t2209) Gemini review suggested extending the duplicate-ID regex to cover declined tasks and routine IDs. This is additive (broader coverage), not a correctness fix for the PR's shipped behaviour. Filed as t2222 / #19723.
 
 See also: `prompts/build.txt` §"Review Bot Gate (t1382)" for the authoritative rule and rationale.
+
+## Composition with auto-merge paths
+
+The review bot gate runs as the FINAL gate in `_check_pr_merge_gates` — after both the `origin:interactive` (t2411) and `origin:worker` worker-briefed (t2449) gates. This means:
+
+- **`origin:interactive` PRs**: must pass draft/hold-for-review checks AND the review bot gate before auto-merge.
+- **`origin:worker` PRs (maintainer-briefed, t2449)**: must pass the worker-briefed gates (issue-author-association, NMR crypto-vs-auto, draft, hold-for-review, no worker-takeover) AND the review bot gate before auto-merge. The `min_edit_lag_seconds` mechanism (t2139) ensures bot comments have settled before the merge fires — this prevents merging during CodeRabbit's two-phase placeholder window.
+- **All other PRs**: the review bot gate is still the last check before merge.
+
+The bot gate is NOT bypassed by either auto-merge path — it composes with them as a mandatory final check. The `hold-for-review` label blocks both auto-merge paths independently of the bot gate.
