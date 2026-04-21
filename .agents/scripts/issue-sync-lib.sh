@@ -1542,3 +1542,104 @@ detect_parent_task_id() {
 	fi
 	return 0
 }
+
+# =============================================================================
+# t2698: Orphan TODO seeding helpers
+# =============================================================================
+
+# Convert a GitHub labels JSON array to space-separated #tag tokens.
+# Skips system/operational labels (tier:*, status:*, origin:*, source:*, etc.).
+# Applies reverse mapping where needed (e.g. parent-task → #parent).
+#
+# Arguments:
+#   $1 - JSON array of label objects, e.g. [{"name":"enhancement"},...]
+# Prints:
+#   Space-separated sorted #tag tokens, e.g. "#auto-dispatch #enhancement"
+#   Empty string if no mappable labels.
+_labels_json_to_tags() {
+	local labels_json="$1"
+	[[ -z "$labels_json" || "$labels_json" == "null" || "$labels_json" == "[]" ]] && return 0
+
+	local names
+	names=$(printf '%s' "$labels_json" | jq -r '.[].name' 2>/dev/null || echo "")
+	[[ -z "$names" ]] && return 0
+
+	local tags="" label tag
+	while IFS= read -r label; do
+		[[ -z "$label" ]] && continue
+
+		# Skip system/operational labels — not part of TODO source-of-truth
+		case "$label" in
+			tier:* | status:* | origin:* | source:* | needs-* | priority:*) continue ;;
+			hold-for-review | no-auto-dispatch | no-takeover) continue ;;
+			coderabbit-nits-ok | new-file-smell-ok | complexity-bump-ok) continue ;;
+			workflow-cascade-ok | ratchet-bump) continue ;;
+		esac
+
+		# Reverse map known label → canonical TODO tag
+		tag="$label"
+		case "$label" in
+			parent-task) tag="parent" ;;
+		esac
+
+		tags="${tags:+$tags }#${tag}"
+	done <<< "$names"
+
+	[[ -z "$tags" ]] && return 0
+	# Sort deterministically (stable) so test assertions are not order-sensitive
+	printf '%s' "$tags" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//'
+	return 0
+}
+
+# Seed a new TODO.md entry for an open orphan GitHub issue.
+# Idempotent: no-ops if any entry for the task_id already exists.
+# Dry-run aware: emits "would seed: ..." to stderr and returns 0 without writing.
+#
+# Arguments:
+#   $1 - issue_num    (e.g. 20327)
+#   $2 - task_id      (e.g. t2698)
+#   $3 - title_raw    (full issue title, e.g. "t2698: enhance ...")
+#   $4 - labels_json  (JSON array of label objects from gh issue list)
+#   $5 - todo_file    (path to TODO.md)
+#   $6 - dry_run      ("true" or "")
+# Returns:
+#   0 = seeded (or dry-run would-seed)
+#   1 = skipped (already exists or malformed)
+_seed_orphan_todo_line() {
+	local num="$1" task_id="$2" title_raw="$3" labels_json="$4"
+	local todo_file="$5" dry_run="${6:-}"
+
+	# Guard: empty task_id cannot produce a valid TODO line
+	[[ -z "$task_id" ]] && return 1
+
+	# Idempotency check: skip if any entry for this task_id already exists
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} "; then
+		{ log_verbose "ORPHAN already seeded: $task_id (ref:GH#$num) — skipping" || true; }
+		return 1
+	fi
+
+	# Strip the task_id prefix from title (e.g. "t2698: enhance ..." → "enhance ...")
+	local title_body
+	title_body=$(printf '%s' "$title_raw" | sed "s|^${task_id}:[[:space:]]*||")
+
+	# Build space-separated #tag tokens from labels
+	local tags_str=""
+	tags_str=$(_labels_json_to_tags "$labels_json" || true)
+
+	# Compose the TODO line
+	local todo_line="- [ ] ${task_id} ${title_body}"
+	[[ -n "$tags_str" ]] && todo_line="${todo_line} ${tags_str}"
+	todo_line="${todo_line} ref:GH#${num}"
+
+	if [[ "$dry_run" == "true" ]]; then
+		printf 'would seed: %s\n' "$todo_line" >&2
+		return 0
+	fi
+
+	# Append after the last non-empty line (chronological tail)
+	printf '\n%s\n' "$todo_line" >> "$todo_file"
+	print_success "Seeded orphan TODO: $todo_line"
+	return 0
+}

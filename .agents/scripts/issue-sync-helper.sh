@@ -116,7 +116,7 @@ _build_title() {
 gh_list_issues() {
 	local repo="$1" state="$2" limit="$3"
 	gh issue list --repo "$repo" --state "$state" --limit "$limit" \
-		--json number,title,assignees,state 2>/dev/null || echo "[]"
+		--json number,title,assignees,state,labels 2>/dev/null || echo "[]"
 }
 
 _gh_edit_labels() {
@@ -1311,6 +1311,7 @@ cmd_pull() {
 	print_info "Pulling issue refs from GitHub ($repo) to TODO.md..."
 
 	local synced=0 orphan_open=0 orphan_closed=0 assignee_synced=0 orphan_list=""
+	local orphan_seeded=0 orphan_skipped=0
 	local state
 	for state in open closed; do
 		local json
@@ -1328,7 +1329,15 @@ cmd_pull() {
 			if ! grep -qE "^\s*- \[.\] ${tid_ere} .*ref:GH#${num}" "$todo_file" 2>/dev/null; then
 				if ! grep -qE "^\s*- \[.\] ${tid_ere} " "$todo_file" 2>/dev/null; then
 					if [[ "$state" == "open" ]]; then
-						print_warning "ORPHAN: #$num ($tid: $title) — no TODO.md entry"
+						# t2698: seed a TODO.md entry for the open orphan
+						local labels_json
+						labels_json=$(echo "$issue_line" | jq -r '.labels // []' 2>/dev/null || echo "[]")
+						if _seed_orphan_todo_line "$num" "$tid" "$title" "$labels_json" "$todo_file" "${DRY_RUN:-}"; then
+							orphan_seeded=$((orphan_seeded + 1))
+						else
+							print_warning "ORPHAN: #$num ($tid: $title) — already in TODO.md"
+							orphan_skipped=$((orphan_skipped + 1))
+						fi
 						orphan_open=$((orphan_open + 1))
 						orphan_list="${orphan_list:+$orphan_list, }#$num ($tid)"
 					else orphan_closed=$((orphan_closed + 1)); fi
@@ -1385,8 +1394,9 @@ cmd_pull() {
 		done < <(echo "$json" | jq -c '.[]' 2>/dev/null || true)
 	done
 
-	printf "\n=== Pull Summary ===\nRefs synced: %d | Assignees: %d | Orphans open: %d closed: %d\n" \
-		"$synced" "$assignee_synced" "$orphan_open" "$orphan_closed"
+	printf "\n=== Pull Summary ===\nRefs synced: %d | Assignees: %d | Orphans seeded: %d | Orphans skipped: %d\n" \
+		"$synced" "$assignee_synced" "$orphan_seeded" "$orphan_skipped"
+	printf "Orphans open: %d closed: %d\n" "$orphan_open" "$orphan_closed"
 	[[ $orphan_open -gt 0 ]] && print_warning "Open orphans: $orphan_list"
 	[[ $synced -eq 0 && $assignee_synced -eq 0 && $orphan_open -eq 0 ]] && print_success "TODO.md refs up to date"
 }
