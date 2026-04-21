@@ -282,9 +282,9 @@ Plain-text embeddings lose signature blocks, stamps, tables, and redaction boxes
 | Single-vector (default) | Baseline | Baseline | Text-dominant docs |
 | ColBERT late interaction | +15-30% on phrase/token-level lookups | ~10x (token-per-vector) | Legal discovery, precision-critical lookups |
 | ModernVBERT / visual transformer | Captures table cells, signatures, redaction boxes | ~10-15x | Forms, financial filings, stamped PDFs |
-| Muvera FDE compression | ColBERT recall, ~3x storage reduction | ~3x vs single-vector | ColBERT at production scale |
+| Muvera FDE compression | ColBERT recall, ~3x reduction vs ColBERT | ~3x vs single-vector | ColBERT at production scale |
 
-**Muvera** (Fixed-Dimensional Encoding) compresses multivectors into a single fixed-size vector while preserving late-interaction recall within ~1-2% at ~3x storage reduction vs single-vector. This makes ColBERT-scale retrieval feasible at production cost by eliminating most of the ~10x storage premium over single-vector models.
+**Muvera** (Fixed-Dimensional Encoding) compresses multivectors into a single fixed-size vector while preserving late-interaction recall within ~1-2% at ~3x storage cost vs single-vector. This makes ColBERT-scale retrieval feasible at production cost by eliminating most of the ~10x storage premium over single-vector models.
 
 **When to pay the cost**: Legal discovery, financial filings, and forms-heavy corpora where signatures, stamps, or table structure determine the correct answer. Text-dominant corpora (plain contracts, statutes, meeting notes) get negligible recall gain and should stay on single-vector.
 
