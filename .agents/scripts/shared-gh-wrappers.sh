@@ -14,6 +14,7 @@
 #   - Origin-label-aware gh create wrappers (gh_create_issue, gh_create_pr)
 #   - Comment wrappers (gh_issue_comment, gh_pr_comment)
 #   - Safe edit wrappers (gh_issue_edit_safe, gh_pr_edit_safe)
+#   - Read wrappers with REST fallback (gh_issue_view, gh_issue_list) [t2689]
 #   - Origin label mutual exclusion (set_origin_label, ensure_origin_labels_exist)
 #   - Issue status label state machine (set_issue_status, ensure_status_labels_exist)
 #
@@ -37,7 +38,9 @@
 _SHARED_GH_WRAPPERS_LOADED=1
 
 # t2574: REST fallback for GraphQL-exhausted gh issue wrappers (GH#20243).
-# Provides _gh_should_fallback_to_rest and _gh_issue_{create,comment,edit}_rest.
+# t2689: Extended to READ paths — _rest_issue_view, _rest_issue_list.
+# Provides _gh_should_fallback_to_rest, _gh_issue_{create,comment,edit}_rest,
+# _gh_pr_create_rest, _rest_issue_view, _rest_issue_list.
 _SHARED_GH_WRAPPERS_DIR="${BASH_SOURCE[0]%/*}"
 # shellcheck source=shared-gh-wrappers-rest-fallback.sh
 source "${_SHARED_GH_WRAPPERS_DIR}/shared-gh-wrappers-rest-fallback.sh"
@@ -1478,4 +1481,53 @@ set_issue_status() {
 		_rc=$?
 	fi
 	return $_rc
+}
+
+#######################################
+# gh_issue_view — drop-in replacement for gh issue view.  (t2689)
+# Falls back to REST (`gh api GET /repos/{owner}/{repo}/issues/{N}`) when the
+# primary call fails AND GraphQL is exhausted, so callers keep working during
+# rate-limit windows. All arguments are forwarded unchanged to gh issue view.
+#
+#   gh_issue_view 42 --repo owner/repo --json state --jq '.state'
+#   gh_issue_view 42 --repo owner/repo --json title,body,labels,assignees
+#
+# Returns the exit code of whichever path succeeded (or the REST path's code
+# when both paths ran).
+#######################################
+gh_issue_view() {
+	local _first_num="${1:-}"
+	gh issue view "$@"
+	local rc=$?
+	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue view #${_first_num}"
+		_rest_issue_view "$@"
+		rc=$?
+	fi
+	return $rc
+}
+
+#######################################
+# gh_issue_list — drop-in replacement for gh issue list.  (t2689)
+# Falls back to REST (`gh api GET /repos/{owner}/{repo}/issues`) when the
+# primary call fails AND GraphQL is exhausted. Supports --state, --label
+# (multiple), --assignee, --limit, --json, --jq. The --search flag is
+# accepted but silently skipped in the REST path (not supported by the
+# /repos/.../issues endpoint).
+#
+#   gh_issue_list --repo owner/repo --state open --label bug --json number,title
+#   gh_issue_list --repo owner/repo --state open --limit 500 --json number --jq length
+#
+# Returns the exit code of whichever path succeeded (or the REST path's code
+# when both paths ran).
+#######################################
+gh_issue_list() {
+	gh issue list "$@"
+	local rc=$?
+	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue list"
+		_rest_issue_list "$@"
+		rc=$?
+	fi
+	return $rc
 }

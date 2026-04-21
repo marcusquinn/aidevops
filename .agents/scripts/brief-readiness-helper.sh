@@ -133,7 +133,7 @@ _fetch_issue_body() {
 	local slug="${_fib_args[1]}"
 
 	local body
-	body=$(gh issue view "$issue_number" --repo "$slug" --json body --jq '.body' 2>/dev/null) || {
+	body=$(gh_issue_view "$issue_number" --repo "$slug" --json body --jq '.body' 2>/dev/null) || {
 		log_error "Failed to fetch issue #${issue_number} from ${slug}"
 		return 1
 	}
@@ -240,7 +240,7 @@ cmd_stub() {
 
 	# Fetch issue title for the heading
 	local issue_title=""
-	issue_title=$(gh issue view "$issue_number" --repo "$slug" --json title --jq '.title' 2>/dev/null) || true
+	issue_title=$(gh_issue_view "$issue_number" --repo "$slug" --json title --jq '.title' 2>/dev/null) || true
 	issue_title="${issue_title:-${task_id}}"
 
 	cat >"$brief_path" <<EOF

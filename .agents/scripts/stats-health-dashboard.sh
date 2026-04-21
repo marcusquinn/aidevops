@@ -52,7 +52,7 @@ _list_health_issues_by_role_label() {
 	local runner_user="$3"
 	local role_display="$4"
 
-	gh issue list --repo "$repo_slug" \
+	gh_issue_list --repo "$repo_slug" \
 		--label "$role_label" --label "$runner_user" \
 		--state open --json number,title \
 		--jq "[.[] | select(.title | startswith(\"[${role_display}:\"))] | sort_by(.number) | reverse"
@@ -108,7 +108,7 @@ _try_cached_health_issue_lookup() {
 	[[ -z "$cached_number" ]] && return 0
 
 	local issue_state rc=0
-	issue_state=$(gh issue view "$cached_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null) || rc=$?
+	issue_state=$(gh_issue_view "$cached_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null) || rc=$?
 
 	if [[ $rc -ne 0 ]]; then
 		# Query failed (rate limit, network, API 5xx). Preserve cache and return
@@ -163,7 +163,7 @@ _try_title_health_issue_fallback() {
 	local runner_prefix="$1" repo_slug="$2" runner_user="$3" role_label="$4" role_display="$5"
 
 	local title_result rc=0
-	title_result=$(gh issue list --repo "$repo_slug" \
+	title_result=$(gh_issue_list --repo "$repo_slug" \
 		--search "in:title ${runner_prefix}" \
 		--state open --json number,title \
 		--jq "[.[] | select(.title | startswith(\"${runner_prefix}\"))][0].number" 2>/dev/null) || rc=$?
@@ -292,7 +292,7 @@ _create_health_issue() {
 	# reserved for maintainer dashboards and the quality review issue.
 	if [[ "$runner_role" == "supervisor" ]]; then
 		local node_id
-		node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+		node_id=$(gh_issue_view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
 		if [[ -n "$node_id" ]]; then
 			gh api graphql -f query="
 				mutation {
@@ -628,11 +628,11 @@ _gather_health_stats() {
 	# Open issues — assigned to this runner (actionable) vs total.
 	# --limit 500: gh defaults to 30, which undercounts for active repos.
 	local assigned_issue_count
-	assigned_issue_count=$(gh issue list --repo "$repo_slug" --state open \
+	assigned_issue_count=$(gh_issue_list --repo "$repo_slug" --state open \
 		--assignee "$runner_user" --limit 500 \
 		--json number --jq 'length' 2>/dev/null || echo "0")
 	local total_issue_count
-	total_issue_count=$(gh issue list --repo "$repo_slug" --state open \
+	total_issue_count=$(gh_issue_list --repo "$repo_slug" --state open \
 		--limit 500 \
 		--json number,labels --jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review")) | not)] | length' 2>/dev/null || echo "0")
 
@@ -1000,7 +1000,7 @@ _update_health_issue_title() {
 
 	local current_title=""
 	local view_output
-	view_output=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>&1)
+	view_output=$(gh_issue_view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>&1)
 	local view_exit_code=$?
 	if [[ $view_exit_code -eq 0 ]]; then
 		current_title="$view_output"
@@ -1226,7 +1226,7 @@ _ensure_health_issue_pinned() {
 	_cleanup_stale_pinned_issues "$repo_slug" "$runner_user"
 
 	local active_node_id
-	active_node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" \
+	active_node_id=$(gh_issue_view "$health_issue_number" --repo "$repo_slug" \
 		--json id --jq '.id' 2>/dev/null || echo "")
 	if [[ -n "$active_node_id" ]]; then
 		gh api graphql -f query="
@@ -1307,7 +1307,7 @@ _check_health_issue_activity_guard() {
 	local guard_pr_count guard_assigned_count guard_worker_count
 	guard_pr_count=$(gh pr list --repo "$repo_slug" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
-	guard_assigned_count=$(gh issue list --repo "$repo_slug" \
+	guard_assigned_count=$(gh_issue_list --repo "$repo_slug" \
 		--assignee "$runner_user" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
 
@@ -1482,7 +1482,7 @@ _unpin_health_issue() {
 	[[ -z "$issue_number" || -z "$repo_slug" ]] && return 0
 
 	local issue_node_id
-	issue_node_id=$(gh issue view "$issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+	issue_node_id=$(gh_issue_view "$issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
 	[[ -z "$issue_node_id" ]] && return 0
 
 	gh api graphql -f query="

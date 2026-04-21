@@ -2,15 +2,24 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
-# Shared GitHub CLI Wrappers -- REST Fallback (t2574, GH#20243)
+# Shared GitHub CLI Wrappers -- REST Fallback (t2574, GH#20243; t2689)
 # =============================================================================
-# When gh's native `gh issue create|comment|edit` commands fail and GraphQL
-# quota is exhausted (remaining <= threshold), these translators retry the
-# operation via `gh api` REST endpoints, which run against GitHub's separate
-# 5000/hour core REST budget.
+# When gh's native `gh issue create|comment|edit|view|list` commands fail and
+# GraphQL quota is exhausted (remaining <= threshold), these translators retry
+# via `gh api` REST endpoints, which run against GitHub's separate 5000/hour
+# core REST budget.
 #
 # Detection: _gh_should_fallback_to_rest -- consults gh api rate_limit.
-# Translators: _gh_issue_create_rest, _gh_issue_comment_rest, _gh_issue_edit_rest.
+# Write translators (t2574): _gh_issue_create_rest, _gh_issue_comment_rest,
+#   _gh_issue_edit_rest, _gh_pr_create_rest.
+# Read translators (t2689): _rest_issue_view, _rest_issue_list.
+#
+# Note on field mapping (_rest_issue_view): `gh issue view --json id` returns
+# the GraphQL node_id (e.g. I_kgDO...). The REST endpoint stores this in the
+# `node_id` field, not `id`. Callers that need the node_id for GraphQL mutations
+# should note that those mutations will also fail during GraphQL exhaustion, so
+# the discrepancy is benign in practice. All other fields (state, title, body,
+# labels, assignees, createdAt) map directly between gh and REST responses.
 #
 # Loaded by shared-gh-wrappers.sh. Do not source directly.
 #
@@ -502,4 +511,132 @@ _gh_pr_create_rest() {
 		fi
 	fi
 	return 0
+}
+
+#######################################
+# _rest_issue_view: GET /repos/{owner}/{repo}/issues/{N}.  (t2689)
+# Parses gh-style args (positional number or URL, --repo, --json, --jq)
+# and returns the issue JSON or a jq-filtered value. Mirrors `gh issue view`.
+#
+# The --json FIELDS flag is accepted for interface parity but ignored — the
+# REST endpoint always returns the full issue object. Use --jq to extract
+# specific fields. Field names align with `gh issue view --json` for all
+# common fields (state, title, body, labels, assignees, createdAt).
+# Exception: `id` maps to the numeric issue id in REST, not the GraphQL
+# node_id — see the file header for the benign impact of this discrepancy.
+#
+# Returns the underlying gh api exit code.
+#######################################
+_rest_issue_view() {
+	local num_or_url=""
+	local repo=""
+	local jq_expr=""
+
+	local _first="${1:-}"
+	if [[ $# -gt 0 && "$_first" != --* ]]; then
+		num_or_url="$_first"
+		shift
+	fi
+
+	while [[ $# -gt 0 ]]; do
+		local _arg="$1"
+		case "$_arg" in
+		--repo) repo="${2:-}"; shift 2 ;;
+		--repo=*) repo="${_arg#--repo=}"; shift ;;
+		--json) shift 2 ;;
+		--json=*) shift ;;
+		--jq) jq_expr="${2:-}"; shift 2 ;;
+		--jq=*) jq_expr="${_arg#--jq=}"; shift ;;
+		*) shift ;;
+		esac
+	done
+
+	local num=""
+	{ read -r repo; read -r num; } < <(_gh_rest_normalize_issue_ref "$num_or_url" "$repo")
+
+	if [[ -z "$repo" || -z "$num" ]]; then
+		printf '_rest_issue_view: issue number and --repo are required\n' >&2
+		return 1
+	fi
+	if [[ ! "$num" =~ ^[0-9]+$ ]]; then
+		printf '_rest_issue_view: invalid issue number: %s\n' "$num" >&2
+		return 1
+	fi
+
+	local _path="/repos/${repo}/issues/${num}"
+	if [[ -n "$jq_expr" ]]; then
+		gh api "$_path" --jq "$jq_expr"
+	else
+		gh api "$_path"
+	fi
+	return $?
+}
+
+#######################################
+# _rest_issue_list: GET /repos/{owner}/{repo}/issues.  (t2689)
+# Parses gh-style args (--repo, --state, --label, --assignee, --limit,
+# --json, --jq) and returns a JSON array or jq-filtered output.
+# Mirrors `gh issue list` for state/label/assignee filtering.
+#
+# Multiple --label flags are collected and joined into a comma-separated
+# `?labels=` query parameter (GitHub REST AND semantics — same as gh CLI).
+# The --search flag is not supported by this REST translator and is silently
+# skipped; callers that require full-text search semantics must use the
+# GraphQL / Search API path. --json FIELDS is accepted for parity but
+# ignored (the REST endpoint returns the full object; use --jq to select).
+#
+# Returns the underlying gh api exit code.
+#######################################
+_rest_issue_list() {
+	local repo=""
+	local state="open"
+	local limit=30
+	local jq_expr=""
+	local assignee=""
+	local -a labels=()
+	local -a _toks=()
+
+	while [[ $# -gt 0 ]]; do
+		local _arg="$1"
+		case "$_arg" in
+		--repo) repo="${2:-}"; shift 2 ;;
+		--repo=*) repo="${_arg#--repo=}"; shift ;;
+		--state) state="${2:-}"; shift 2 ;;
+		--state=*) state="${_arg#--state=}"; shift ;;
+		--label) IFS=',' read -ra _toks <<<"${2:-}"; labels+=("${_toks[@]}"); shift 2 ;;
+		--label=*) IFS=',' read -ra _toks <<<"${_arg#--label=}"; labels+=("${_toks[@]}"); shift ;;
+		--assignee) assignee="${2:-}"; shift 2 ;;
+		--assignee=*) assignee="${_arg#--assignee=}"; shift ;;
+		--limit) limit="${2:-}"; shift 2 ;;
+		--limit=*) limit="${_arg#--limit=}"; shift ;;
+		--json) shift 2 ;;
+		--json=*) shift ;;
+		--jq) jq_expr="${2:-}"; shift 2 ;;
+		--jq=*) jq_expr="${_arg#--jq=}"; shift ;;
+		--search) shift 2 ;;
+		--search=*) shift ;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$repo" ]]; then
+		printf '_rest_issue_list: --repo is required\n' >&2
+		return 1
+	fi
+
+	local _query="state=${state}&per_page=${limit}"
+	if [[ ${#labels[@]} -gt 0 ]]; then
+		local _labels_csv
+		_labels_csv=$(IFS=','; printf '%s' "${labels[*]}")
+		_query="${_query}&labels=${_labels_csv}"
+	fi
+	[[ -n "$assignee" ]] && _query="${_query}&assignee=${assignee}"
+
+	local _path="/repos/${repo}/issues?${_query}"
+	if [[ -n "$jq_expr" ]]; then
+		gh api "$_path" --jq "$jq_expr"
+	else
+		gh api "$_path"
+	fi
+	return $?
 }
