@@ -324,7 +324,7 @@ _resolve_stale_threshold() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local _issue_meta_json _meta_rc=0
-	_issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+	_issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json labels,createdAt 2>/dev/null) || _meta_rc=$?
 
 	local is_interactive='false'

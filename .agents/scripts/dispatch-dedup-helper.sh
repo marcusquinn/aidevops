@@ -844,7 +844,7 @@ is_assigned() {
 		# t2436: include createdAt for the hydration window check (Approach B safety net).
 		# Existing callers that pass ISSUE_META_JSON without createdAt will skip that
 		# check (fail-open), which is correct — the primary fix is label sync at creation.
-		issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 			--json state,assignees,labels,createdAt 2>/dev/null) || gh_rc=$?
 	fi
 
