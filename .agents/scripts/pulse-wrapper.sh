@@ -340,6 +340,8 @@ PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                       
 PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"                                            # Open issue list window for pulse prompt payload (keep compact)
 PULSE_PREFETCH_CACHE_FILE="${PULSE_PREFETCH_CACHE_FILE:-${HOME}/.aidevops/logs/pulse-prefetch-cache.json}" # Delta prefetch state cache (GH#15286)
 PULSE_RATE_LIMIT_FLAG="${PULSE_RATE_LIMIT_FLAG:-${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}"   # GH#18979: set by prefetch on detected GraphQL rate-limit exhaustion; checked by _preflight_prefetch_and_scope to abort cycle cleanly
+AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD="${AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD:-0.05}"              # t2690: Fraction of GraphQL budget below which the rate-limit circuit breaker trips (default 5% = 250/5000). Set to 0 to disable.
+export AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD
 PULSE_PREFETCH_FULL_SWEEP_INTERVAL="${PULSE_PREFETCH_FULL_SWEEP_INTERVAL:-14400}"                          # Full sweep interval in seconds (default 4h) (GH#15286, GH#18979: reduced from 24h to prevent stale-cache drift on active repos)
 PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                                                  # Open PR sample size for runnable-candidate counting
 PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                                           # Open issue sample size for runnable-candidate counting

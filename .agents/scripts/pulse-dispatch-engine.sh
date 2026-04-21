@@ -37,6 +37,13 @@
 [[ -n "${_PULSE_DISPATCH_ENGINE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_ENGINE_LOADED=1
 
+# t2690: Source rate-limit circuit breaker (proactive dispatch pause on GraphQL exhaustion).
+# shellcheck source=pulse-rate-limit-circuit-breaker.sh
+if [[ -f "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-rate-limit-circuit-breaker.sh" ]]; then
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-rate-limit-circuit-breaker.sh"
+fi
+
 # t1959: Module-level variable to communicate launch failure reason to callers.
 # Set by check_worker_launch before each return 1; read by dispatch loop for
 # per-round no_worker_process tracking and canary cache invalidation.
@@ -225,6 +232,19 @@ _dff_compute_capacity() {
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor skipped: stop flag present" >>"$LOGFILE"
 		return 1
+	fi
+
+	# t2690: Proactive rate-limit circuit breaker — pause dispatch when GraphQL
+	# budget is nearly exhausted. One cheap API call (free endpoint) prevents
+	# spawning workers that would fail at step 1 and burn $0.05-$0.25 each.
+	if declare -F is_graphql_budget_sufficient >/dev/null 2>&1; then
+		local _cb_rc=0
+		is_graphql_budget_sufficient || _cb_rc=$?
+		if [[ "$_cb_rc" -eq 1 ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor skipped: GraphQL rate-limit circuit breaker tripped (t2690)" >>"$LOGFILE"
+			return 1
+		fi
+		# _cb_rc == 2 means API error — fail-open, proceed with dispatch.
 	fi
 
 	local max_workers active_workers available_slots
