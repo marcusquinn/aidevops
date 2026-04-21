@@ -33,6 +33,16 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+# t2559: canonical-guard-helper.sh provides is_registered_canonical,
+# assert_git_available, assert_main_worktree_sane. Sourced after
+# shared-constants.sh so its fallback colour vars are available if this
+# module is loaded standalone. Guarded in case older deployments lack
+# the helper — sourcing errors fail open (guards become no-ops).
+if [[ -f "${SCRIPT_DIR}/canonical-guard-helper.sh" ]]; then
+	# shellcheck source=/dev/null
+	source "${SCRIPT_DIR}/canonical-guard-helper.sh"
+fi
+
 set -euo pipefail
 
 [[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
@@ -451,10 +461,27 @@ worktree_has_changes() {
 # Prefers: trash (CLI utility, e.g. installed via Homebrew), gio trash (Linux), rm -rf fallback.
 # Args: $1=path to trash
 # Returns 0 on success, 1 on failure.
+#
+# t2559 Layer 2: refuses to trash a path registered as a canonical
+# repository in ~/.config/aidevops/repos.json. This is the last-line
+# defence against the 2026-04-20 incident where an empty main_worktree_path
+# derivation caused cmd_clean to sweep canonical alongside orphan worktrees.
 trash_path() {
 	local target="$1"
 	[[ -z "$target" ]] && return 1
 	[[ ! -e "$target" ]] && return 0 # Already gone — not an error
+
+	# t2559: never trash a registered canonical repository, no matter how
+	# we got here. Fail-safe: on ambiguity (unresolvable path, malformed
+	# repos.json, jq missing) the helper returns 0 for empty candidates
+	# and 1 for most other "cannot confirm" cases; only a positive match
+	# blocks. See canonical-guard-helper.sh for the full semantics.
+	if command -v is_registered_canonical >/dev/null 2>&1; then
+		if is_registered_canonical "$target"; then
+			echo -e "${RED}REFUSED: '$target' is a registered canonical repository — will not trash${NC}" >&2
+			return 1
+		fi
+	fi
 
 	if command -v trash >/dev/null 2>&1; then
 		trash "$target" 2>/dev/null && return 0
@@ -1525,6 +1552,18 @@ cmd_clean() {
 		shift
 	done
 
+	# t2559 Layer 3: refuse to run cleanup at all if git is missing from PATH.
+	# Without git, the worktree-list derivation below returns empty, and the
+	# downstream `[[ "$worktree_path" != "$main_wt_path" ]]` guard reduces to
+	# "!= empty" — always true for real paths — and canonical gets swept.
+	# This was the primary trigger for the 2026-04-20 canonical-trash incident.
+	if command -v assert_git_available >/dev/null 2>&1; then
+		if ! assert_git_available; then
+			echo -e "${RED}Refusing worktree cleanup — git not in PATH${NC}" >&2
+			return 1
+		fi
+	fi
+
 	echo -e "${BOLD}Checking for worktrees with merged branches...${NC}"
 	echo ""
 
@@ -1537,8 +1576,32 @@ cmd_clean() {
 	# head closes the pipe early → git SIGPIPE (exit 141) → pipefail → set -e abort.
 	local _porcelain main_worktree_path
 	_porcelain=$(git worktree list --porcelain)
+
+	# t2559 Layer 1: fail loud if the derivation yielded empty or malformed
+	# output. The 2026-04-20 incident came from this exact derivation returning
+	# "" for $main_worktree_path, which turned the downstream "never touch main"
+	# guard into a no-op. Empty porcelain means either git failed silently, no
+	# worktrees are registered, or the first line doesn't start with "worktree "
+	# — all abnormal conditions from cleanup's perspective. Refuse to proceed.
+	if [[ -z "$_porcelain" ]]; then
+		echo -e "${RED}FATAL: 'git worktree list --porcelain' returned empty — refusing cleanup${NC}" >&2
+		return 1
+	fi
 	main_worktree_path="${_porcelain%%$'\n'*}"           # first line
 	main_worktree_path="${main_worktree_path#worktree }" # strip prefix
+
+	# t2559 Layer 2: validate the extracted path is sane (non-empty, absolute)
+	# before handing it to cleanup loops as the "never trash this" anchor.
+	if command -v assert_main_worktree_sane >/dev/null 2>&1; then
+		if ! assert_main_worktree_sane "$main_worktree_path"; then
+			echo -e "${RED}Refusing worktree cleanup — main_worktree_path derivation is not sane${NC}" >&2
+			return 1
+		fi
+	elif [[ -z "$main_worktree_path" || "${main_worktree_path:0:1}" != "/" ]]; then
+		# Fallback when canonical-guard-helper is missing: still refuse to run.
+		echo -e "${RED}FATAL: derived main_worktree_path is empty or non-absolute: '$main_worktree_path'${NC}" >&2
+		return 1
+	fi
 
 	# Fetch to get current remote branch state (detects deleted branches)
 	# Prune all remotes, not just origin (GH#3797)
