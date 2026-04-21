@@ -776,7 +776,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t2691 Root-cause why `origin:worker` was missing on health-dashboard issue #20298 — triggering symptom that led to GH#20301. Suspected cause (H1): REST fallback in `shared-gh-wrappers-rest-fallback.sh` does not apply auto-detected origin label because REST path uses a separate `POST /issues/{N}/labels` step that may fail silently. Validate before fixing. #auto-dispatch #bug #framework ~1h ref:GH#20311
 
-- [ ] t2697 Harden plugin re-export regression test to auto-discover all plugin .mjs files — replace hardcoded 4-file CANDIDATES list with `readdirSync` auto-discovery (excluding `index.mjs`) in `.agents/plugins/opencode-aidevops/tests/test-reexport-local-binding.mjs`. Closes the gap where new plugin files silently bypass the v3.8.91 regression test (4 of 47 files covered → 46 of 47). #auto-dispatch #bug #framework ~15m ref:GH#20325
+- [x] t2697 Harden plugin re-export regression test to auto-discover all plugin .mjs files — replace hardcoded 4-file CANDIDATES list with `readdirSync` auto-discovery (excluding `index.mjs`) in `.agents/plugins/opencode-aidevops/tests/test-reexport-local-binding.mjs`. Closes the gap where new plugin files silently bypass the v3.8.91 regression test (4 of 47 files covered → 46 of 47). #auto-dispatch #bug #framework ~15m ref:GH#20325 pr:#20328 completed:2026-04-21
 
 ## In Progress
 
