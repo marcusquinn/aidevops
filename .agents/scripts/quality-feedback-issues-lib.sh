@@ -548,6 +548,71 @@ _create_or_append_file_issue() {
 	return $?
 }
 
+# _is_maintainer_equivalent_author: GH#17916 (t2686)
+#
+# Determines whether a PR author should be treated as maintainer-equivalent
+# for the purpose of skipping the NMR approval gate on quality-debt issues.
+# Extracted from _create_quality_debt_issues for unit-testability (t2686).
+#
+# Trust bar matches pulse-merge.sh auto-merge (t2411 criterion 2,
+# t2449 criterion 2): repo maintainer OR a collaborator with admin/maintain
+# permission. The maintainer implicitly approves merged content; co-admins
+# have the same institutional trust and merging it is itself an approval act.
+# External/contributor PRs do NOT qualify and keep the gate.
+#
+# Two-stage check:
+#   1. Fast path: repos.json .maintainer string match or slug-owner fallback.
+#      Avoids a gh api call on solo-maintainer repos (the common case).
+#   2. Collaborator-permission probe:
+#      gh api repos/{slug}/collaborators/{user}/permission.
+#      Accepts permission ∈ {admin, maintain}. Fail-closed on API errors
+#      (404, 403, network failure) — an unreachable API is not a trust
+#      signal; default to NOT maintainer-equivalent so NMR still applies.
+#
+# Args:
+#   $1 - pr_author : GitHub login of the PR author (may be empty)
+#   $2 - repo_slug : owner/repo (e.g. awardsapp/awardsapp)
+#
+# Returns:
+#   0 if author is maintainer-equivalent (skip NMR gate)
+#   1 otherwise (apply NMR gate)
+#
+# Environment:
+#   REPOS_JSON — path to repos.json (defaults to ~/.config/aidevops/repos.json)
+_is_maintainer_equivalent_author() {
+	local pr_author="$1"
+	local repo_slug="$2"
+
+	if [[ -z "$pr_author" || -z "$repo_slug" ]]; then
+		return 1
+	fi
+
+	# Stage 1: maintainer fast-path.
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local maintainer=""
+	if [[ -f "$repos_json" ]]; then
+		maintainer=$(jq -r --arg slug "$repo_slug" \
+			'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
+			"$repos_json" 2>/dev/null || echo "")
+	fi
+	# Fallback: slug owner (first part before /)
+	[[ -z "$maintainer" ]] && maintainer="${repo_slug%%/*}"
+	if [[ "$pr_author" == "$maintainer" ]]; then
+		return 0
+	fi
+
+	# Stage 2: collaborator permission probe. Accepts admin or maintain.
+	local collab_permission=""
+	collab_permission=$(gh api "repos/${repo_slug}/collaborators/${pr_author}/permission" \
+		--jq '.permission // empty' 2>/dev/null || echo "")
+	if [[ "$collab_permission" == "admin" || "$collab_permission" == "maintain" ]]; then
+		echo "[quality-feedback] author ${pr_author} has ${collab_permission} permission on ${repo_slug} — treating as maintainer-equivalent (t2686)" >&2
+		return 0
+	fi
+
+	return 1
+}
+
 _create_quality_debt_issues() {
 	local repo_slug="$1"
 	local pr_num="$2"
@@ -564,44 +629,15 @@ _create_quality_debt_issues() {
 		return 0
 	fi
 
-	# GH#17916 (t2686): Determine if the source PR was authored by someone trusted
-	# enough to skip the NMR approval gate. Maintainer-equivalent trust = the PR
-	# author has admin or maintain permission on the repo. The maintainer
-	# implicitly approved the content by merging it; co-admins have the same
-	# trust bar that pulse-merge.sh auto-merge already uses (t2411 criterion 2,
-	# t2449 criterion 2). External/contributor PRs keep the gate.
-	#
-	# Two-stage check:
-	#   1. Fast path: repos.json .maintainer string match or slug-owner fallback.
-	#      Avoids a gh api call on solo-maintainer repos (the common case).
-	#   2. Collaborator-permission probe: gh api repos/{slug}/collaborators/{user}/permission.
-	#      Accepts permission ∈ {admin, maintain}. Fail-closed on API errors —
-	#      an unreachable API is not a trust signal; default to applying NMR.
+	# GH#17916 (t2686): Determine if the source PR was authored by someone
+	# trusted enough to skip the NMR approval gate. Delegated to
+	# _is_maintainer_equivalent_author — see that helper's docstring for the
+	# full trust-bar rationale and two-stage check.
 	local is_maintainer_pr="false"
 	local pr_author=""
 	pr_author=$(gh pr view "$pr_num" --repo "$repo_slug" --json author --jq '.author.login' 2>/dev/null || echo "")
-	if [[ -n "$pr_author" ]]; then
-		local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-		local maintainer=""
-		if [[ -f "$repos_json" ]]; then
-			maintainer=$(jq -r --arg slug "$repo_slug" \
-				'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
-				"$repos_json" 2>/dev/null || echo "")
-		fi
-		# Fallback: slug owner (first part before /)
-		[[ -z "$maintainer" ]] && maintainer="${repo_slug%%/*}"
-		if [[ "$pr_author" == "$maintainer" ]]; then
-			is_maintainer_pr="true"
-		else
-			# Stage 2: collaborator permission probe. Accepts admin or maintain.
-			local collab_permission=""
-			collab_permission=$(gh api "repos/${repo_slug}/collaborators/${pr_author}/permission" \
-				--jq '.permission // empty' 2>/dev/null || echo "")
-			if [[ "$collab_permission" == "admin" || "$collab_permission" == "maintain" ]]; then
-				is_maintainer_pr="true"
-				echo "[quality-feedback] PR #${pr_num} author ${pr_author} has ${collab_permission} permission on ${repo_slug} — treating as maintainer-equivalent (t2686)" >&2
-			fi
-		fi
+	if _is_maintainer_equivalent_author "$pr_author" "$repo_slug"; then
+		is_maintainer_pr="true"
 	fi
 
 	# Ensure labels exist (quality-debt + source + priority labels for dispatch ordering, t1413)

@@ -762,6 +762,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
+- [ ] t2686 fix: quality-debt NMR trap — broaden trust bar (admin collaborators) + extend NMR sig detector to recognise source:review-feedback marker/label so auto_approve_maintainer_issues can clear NMR applied by quality-feedback-helper.sh. Stranded 10 issues on awardsapp/awardsapp (#2572-#2578, #2583-#2585) authored by alex-solovyev (admin). Aligns with pulse-merge t2411/t2449 trust bar. #bugfix #pulse #quality-debt ~2h ref:GH#20299 #auto-dispatch #interactive started:2026-04-21
+
 - [x] t1543 feat: OAuth multi-account pool plugin for provider credential rotation — add pool module to opencode-aidevops plugin enabling multiple Anthropic OAuth accounts with automatic rotation on rate limits (429). Uses existing plugin auth hook + custom fetch wrapper. Includes /model-accounts-pool tool for account management. #feature #plugin #auth ~4h ref:GH#5243 started:2026-03-19 pr:#5244 completed:2026-03-19
 
 - [x] t1410 fix review-bot-gate status fallback: CodeRabbit context mismatch — any_bot_has_success_status() greps for 'coderabbitai' but CodeRabbit posts commit status with context 'CodeRabbit'. Grep doesn't match, fallback never triggers, gate fails on rate-limited PRs. Fix: use 'coderabbit' prefix match. After fix, re-run Wait for AI Review Bots on PRs #2989 and #2979. #bugfix #ci ~30m ref:GH#3007 logged:2026-03-06 pr:#3008 completed:2026-03-06
