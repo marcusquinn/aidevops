@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.91] - 2026-04-21
+
+### Changed
+
+- Maintenance: mark t2693 complete (pr:#20320)
+- Maintenance: update simplification state registry
+- fix re-export-only breaking local binding in plugin modules (#20320)
+
 ## [3.8.90] - 2026-04-21
 
 ### Changed
