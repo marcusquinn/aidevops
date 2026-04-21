@@ -114,7 +114,7 @@ _handle_existing_lock() {
 		fi
 
 		# Lock owner is genuinely alive and within time limits
-		echo "[pulse-wrapper] Another pulse instance holds the mkdir lock (PID ${lock_pid}, age ${lock_age}s) — exiting immediately (GH#4513)" >>"$WRAPPER_LOGFILE"
+		echo "[pulse-wrapper] Another pulse instance holds the mkdir lock (PID ${lock_pid}, age ${lock_age}s, LOCKDIR=${LOCKDIR}) — exiting immediately (GH#4513)" >>"$WRAPPER_LOGFILE"
 		return 1
 	fi
 
@@ -174,6 +174,14 @@ acquire_instance_lock() {
 # stale-lock detection in acquire_instance_lock() handles that case.
 #
 # Safe to call multiple times (idempotent).
+#
+# GH#20260: two-layer safety prevents removing another instance's lock
+# after a voluntary pre-LLM release:
+#   1. _LOCK_OWNED=false is set BEFORE the rm so the EXIT trap is a
+#      guaranteed no-op when called after the voluntary release.
+#   2. PID ownership is verified against LOCKDIR/pid — if another
+#      instance acquired the lock between the voluntary release and the
+#      EXIT trap, its PID will differ from $$ and we skip the removal.
 #######################################
 release_instance_lock() {
 	# GH#18264: only release the lock when this process actually acquired it.
@@ -181,9 +189,29 @@ release_instance_lock() {
 	# This prevents the EXIT trap from removing LOCKDIR when the lock was
 	# never acquired (e.g., another instance was already running).
 	[[ "$_LOCK_OWNED" == "true" ]] || return 0
+
+	# GH#20260: Reset _LOCK_OWNED BEFORE the rm so the EXIT trap is a
+	# guaranteed no-op after a voluntary pre-LLM release (run_cycle line
+	# ~1327). Without this reset, a second call from the EXIT trap would
+	# see _LOCK_OWNED=true and remove a LOCKDIR now owned by a new instance.
+	_LOCK_OWNED=false
+
+	# GH#20260: Verify PID ownership before removing — between a voluntary
+	# release and process exit, another instance may have acquired LOCKDIR.
+	# Only remove if LOCKDIR/pid still contains our own PID ($$).
+	local _lock_pid_file="${LOCKDIR}/pid"
+	if [[ -f "$_lock_pid_file" ]]; then
+		local _current_lock_pid
+		_current_lock_pid=$(cat "$_lock_pid_file" 2>/dev/null || echo "")
+		if [[ -n "$_current_lock_pid" ]] && [[ "$_current_lock_pid" != "$$" ]]; then
+			echo "[pulse-wrapper] release_instance_lock: LOCKDIR reacquired by PID ${_current_lock_pid} — skipping removal (PID $$ already released) (GH#20260)" >>"$WRAPPER_LOGFILE"
+			return 0
+		fi
+	fi
+
 	rm -rf "$LOCKDIR" 2>/dev/null || true
 	return 0
-} # nice — idempotent cleanup
+}
 
 #######################################
 # Handle SETUP sentinel in PID file (GH#5627, extracted from check_dedup)

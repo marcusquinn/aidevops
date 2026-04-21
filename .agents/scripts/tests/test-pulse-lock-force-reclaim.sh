@@ -298,13 +298,93 @@ test_env_override_adjusts_ceiling() {
 }
 
 #######################################
+# Test 6: Double-release — voluntary pre-LLM release followed by EXIT trap
+# must NOT remove a LOCKDIR reacquired by a new instance (GH#20260).
+#
+# Scenario that the original code got wrong:
+#   1. Pulse A acquires lock (_LOCK_OWNED=true, LOCKDIR/pid=$A_PID)
+#   2. Pulse A voluntarily releases before LLM: release_instance_lock()
+#      → LOCKDIR removed, but OLD CODE left _LOCK_OWNED=true
+#   3. Pulse B acquires lock (LOCKDIR/pid=$B_PID)
+#   4. Pulse A's EXIT trap fires: release_instance_lock()
+#      → OLD CODE: _LOCK_OWNED=true → rm -rf LOCKDIR (B's lock removed!)
+#      → NEW CODE: _LOCK_OWNED=false (reset in step 2) → early return
+#
+# This test simulates step 4 by directly setting _LOCK_OWNED=true and
+# planting a LOCKDIR owned by a different PID, then calling
+# release_instance_lock() and asserting the LOCKDIR is preserved.
+#######################################
+test_double_release_preserves_new_owner() {
+	reset_state
+
+	# Plant a LOCKDIR owned by a "foreign" PID (not $$)
+	# Use a PID known to be dead to avoid any ps side-effects
+	local foreign_pid=999988
+	while ps -p "$foreign_pid" >/dev/null 2>&1; do
+		foreign_pid=$((foreign_pid + 1))
+	done
+	mkdir -p "$LOCKDIR"
+	echo "$foreign_pid" >"${LOCKDIR}/pid"
+
+	# Force _LOCK_OWNED=true to simulate the bug state (voluntary release
+	# did not reset it — as the OLD code would leave it)
+	_LOCK_OWNED=true
+
+	# Call release_instance_lock as the EXIT trap would
+	release_instance_lock
+
+	# With the GH#20260 fix the LOCKDIR must still exist — we did NOT own it
+	if [[ -d "$LOCKDIR" ]]; then
+		print_result "double-release: LOCKDIR owned by foreign PID preserved" 0
+	else
+		print_result "double-release: LOCKDIR owned by foreign PID preserved" 1 \
+			"EXIT trap incorrectly removed another instance's lock"
+	fi
+
+	# _LOCK_OWNED must be false regardless
+	assert_equals "double-release: _LOCK_OWNED reset to false" "false" "$_LOCK_OWNED"
+
+	if grep -q "reacquired by PID" "$WRAPPER_LOGFILE" 2>/dev/null; then
+		print_result "double-release: skip-removal logged" 0
+	else
+		print_result "double-release: skip-removal logged" 1 "no skip-removal log line found"
+	fi
+	return 0
+}
+
+#######################################
+# Test 7: Legitimate self-release — when LOCKDIR/pid matches $$,
+# release_instance_lock DOES remove it (normal exit path).
+#######################################
+test_self_release_removes_own_lock() {
+	reset_state
+
+	acquire_instance_lock >/dev/null
+
+	local pid_before
+	pid_before=$(cat "${LOCKDIR}/pid" 2>/dev/null || echo "")
+	assert_equals "self-release setup: PID file contains \$\$" "$$" "$pid_before"
+
+	release_instance_lock
+
+	if [[ ! -d "$LOCKDIR" ]]; then
+		print_result "self-release: LOCKDIR removed" 0
+	else
+		print_result "self-release: LOCKDIR removed" 1 "LOCKDIR still exists after self-release"
+	fi
+
+	assert_equals "self-release: _LOCK_OWNED reset to false" "false" "$_LOCK_OWNED"
+	return 0
+}
+
+#######################################
 # Main
 #######################################
 main() {
 	setup_sandbox
 
 	echo ""
-	echo "=== Pulse Lock Force-Reclaim Tests (GH#20025) ==="
+	echo "=== Pulse Lock Force-Reclaim Tests (GH#20025 + GH#20260) ==="
 	echo ""
 
 	test_live_owner_within_ceiling
@@ -312,6 +392,8 @@ main() {
 	test_alive_but_stale_owner
 	test_pid_reused_by_unrelated
 	test_env_override_adjusts_ceiling
+	test_double_release_preserves_new_owner
+	test_self_release_removes_own_lock
 
 	teardown_sandbox
 
