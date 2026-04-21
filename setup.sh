@@ -1294,6 +1294,15 @@ main() {
 
 	_setup_post_setup_steps "$_os"
 
+	# t2579: restart pulse if running, so newly-deployed scripts take effect.
+	# No-op if pulse is not running, or if AIDEVOPS_SKIP_PULSE_RESTART=1.
+	# Uses the deployed helper (not the repo-local one) so the restart runs
+	# against the agents directory setup.sh just populated.
+	local _pulse_helper="${HOME}/.aidevops/agents/scripts/pulse-lifecycle-helper.sh"
+	if [[ -x "$_pulse_helper" ]]; then
+		"$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
+	fi
+
 	# GH#18492 / t2026: completion sentinel. Must be the last output of a
 	# successful run — any silent early-termination will leave this absent
 	# from the log. Consumed by .agents/scripts/verify-setup-log.sh and
