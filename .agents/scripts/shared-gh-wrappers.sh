@@ -41,9 +41,24 @@ _SHARED_GH_WRAPPERS_LOADED=1
 # t2689: Extended to READ paths — _rest_issue_view, _rest_issue_list.
 # Provides _gh_should_fallback_to_rest, _gh_issue_{create,comment,edit}_rest,
 # _gh_pr_create_rest, _rest_issue_view, _rest_issue_list.
-_SHARED_GH_WRAPPERS_DIR="${BASH_SOURCE[0]%/*}"
-# shellcheck source=shared-gh-wrappers-rest-fallback.sh
-source "${_SHARED_GH_WRAPPERS_DIR}/shared-gh-wrappers-rest-fallback.sh"
+# Resolve own directory across bash (BASH_SOURCE) and zsh (%x prompt flag).
+# Prefer SCRIPT_DIR when already set (the common path — shared-constants.sh
+# sets it before sourcing us). Silently skip the REST fallback when the
+# sibling file is not locatable; the primary GraphQL path keeps working.
+_SHARED_GH_WRAPPERS_DIR="${SCRIPT_DIR:-}"
+if [[ -z "$_SHARED_GH_WRAPPERS_DIR" ]]; then
+	if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+		_SHARED_GH_WRAPPERS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || _SHARED_GH_WRAPPERS_DIR=""
+	elif [[ -n "${ZSH_VERSION:-}" ]]; then
+		# zsh: %x prompt flag expands to the current script path when sourced
+		# shellcheck disable=SC2296
+		_SHARED_GH_WRAPPERS_DIR="$(cd "$(dirname "${(%):-%x}")" 2>/dev/null && pwd)" || _SHARED_GH_WRAPPERS_DIR=""
+	fi
+fi
+if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-rest-fallback.sh" ]]; then
+	# shellcheck source=shared-gh-wrappers-rest-fallback.sh
+	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-rest-fallback.sh"
+fi
 
 # =============================================================================
 # GitHub Token Workflow Scope Check (t1540)
