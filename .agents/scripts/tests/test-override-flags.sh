@@ -178,7 +178,7 @@ print_error() { printf '[ERROR] %s\n' "$*" >>"$INFO_LOG"; return 0; }
 export -f print_info print_warning print_error
 find_project_root() { echo "$TMP"; }
 detect_repo_slug() { echo "test/test"; }
-export -f find_project_root detect_repo_slug
+export TMP INFO_LOG; export -f find_project_root detect_repo_slug
 
 # Test 1a: FORCE_ENRICH=true logs the bypass
 reset_log
