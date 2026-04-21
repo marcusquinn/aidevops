@@ -2887,3 +2887,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2715 docs: retire t2218 stale gap notes (AGENTS.md + log-issue-aidevops.md) and close orphan TODO entry #documentation #framework ref:GH#20373
 
 - [ ] t2716 sonar cleanup: remove unused locals (S1481) in top 5 heaviest files #framework #quality-debt ref:GH#20376
+
+- [ ] t2717 fix: replace misleading 'high/critical' aggregate label in quality-sweep dashboard with per-severity breakdown #framework #quality-debt ref:GH#20384
