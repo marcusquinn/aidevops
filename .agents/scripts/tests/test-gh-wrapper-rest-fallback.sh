@@ -4,9 +4,9 @@
 #
 # test-gh-wrapper-rest-fallback.sh — t2574 / GH#20243 regression guard.
 #
-# Asserts that `gh issue *` wrappers in shared-gh-wrappers.sh fall back to
-# REST API (`gh api -X POST|PATCH /repos/...`) when:
-#   1. the primary `gh issue *` call fails, AND
+# Asserts that `gh issue *` and `gh pr create` wrappers in shared-gh-wrappers.sh
+# fall back to REST API (`gh api -X POST|PATCH /repos/...`) when:
+#   1. the primary `gh issue *` / `gh pr create` call fails, AND
 #   2. `gh api rate_limit --jq .resources.graphql.remaining` returns <= 10.
 #
 # Production failure (2026-04-21 ~01:00 UTC on marcusquinn/aidevops):
@@ -15,6 +15,9 @@
 #   endpoints continued to work because the core REST budget (5000/hour)
 #   is separate from GraphQL. Workers had no escape hatch — interactive
 #   operators pivoted manually; dispatched workers crashed at step 1.
+#
+# t2579 addendum: gh_create_pr also hit GraphQL exhaustion during PR creation.
+# Fix (t2580): extend REST fallback to gh_create_pr via _gh_pr_create_rest.
 #
 # Fix (t2574): add _gh_should_fallback_to_rest + _gh_issue_*_rest helpers
 # in shared-gh-wrappers-rest-fallback.sh; wrap the 4 entry points
@@ -33,6 +36,12 @@
 #   9. gh_issue_comment falls back to REST when gh fails AND graphql exhausted
 #  10. gh_issue_comment does NOT fall back when gh succeeds
 #  11. gh_issue_comment does NOT fall back when gh fails but graphql healthy
+#  12. _gh_pr_create_rest translates --title/--head/--base → POST /repos/.../pulls
+#  13. _gh_pr_create_rest uses -F body=@file for body
+#  14. _gh_pr_create_rest applies labels via POST /repos/.../issues/{N}/labels
+#  15. gh_create_pr falls back to REST when primary fails AND exhausted
+#  16. gh_create_pr does NOT fall back when primary succeeds
+#  17. gh_create_pr does NOT fall back when primary fails but graphql healthy
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -151,7 +160,17 @@ gh() {
 		return 0
 	fi
 
-	# gh label create - silent success
+	# gh pr create - the primary path for PR creation
+	if [[ "$1" == "pr" && "$2" == "create" ]]; then
+		if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
+			printf 'primary stub forced failure (rate limit)\n' >&2
+			return 1
+		fi
+		printf 'https://github.com/owner/repo/pull/9100\n'
+		return 0
+	fi
+
+	# gh label create / gh pr ready / other - silent success
 	return 0
 }
 export -f gh
@@ -356,6 +375,152 @@ if grep -qE '^issue comment 7777' "$GH_CALLS" 2>/dev/null &&
 	pass "gh_issue_comment does NOT fall back when primary fails but healthy"
 else
 	fail "gh_issue_comment does NOT fall back when primary fails but healthy" \
+		"GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+unset STUB_PRIMARY_FAIL
+export STUB_RATE_LIMIT_REMAINING=5000
+
+# =============================================================================
+# Test 12: _gh_pr_create_rest → POST /repos/.../pulls with correct args
+# =============================================================================
+: >"$GH_CALLS"
+_gh_pr_create_rest \
+	--repo "owner/repo" \
+	--title "t9993: test PR create" \
+	--head "feature/t9993-test" \
+	--base "main" \
+	--body "PR body" >/dev/null 2>&1 || true
+
+if grep -qE '^api.*-X POST.*/repos/owner/repo/pulls' "$GH_CALLS" 2>/dev/null &&
+	grep -qE 'title=t9993: test PR create' "$GH_CALLS" 2>/dev/null &&
+	grep -qE 'head=feature/t9993-test' "$GH_CALLS" 2>/dev/null &&
+	grep -qE 'base=main' "$GH_CALLS" 2>/dev/null; then
+	pass "_gh_pr_create_rest translates to POST /repos/.../pulls with head/base/title"
+else
+	fail "_gh_pr_create_rest translates to POST /repos/.../pulls with head/base/title" \
+		"GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+# =============================================================================
+# Test 13: _gh_pr_create_rest uses -F body=@file for body
+# =============================================================================
+: >"$GH_CALLS"
+_gh_pr_create_rest \
+	--repo "owner/repo" \
+	--title "t9994: body file test" \
+	--head "feature/t9994-body" \
+	--base "main" \
+	--body "line1
+line2
+line3" >/dev/null 2>&1 || true
+
+if grep -qE 'body=@/.*aidevops-gh-rest-body' "$GH_CALLS" 2>/dev/null; then
+	pass "_gh_pr_create_rest uses -F body=@tmpfile for body"
+else
+	fail "_gh_pr_create_rest uses -F body=@tmpfile for body" \
+		"GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+# =============================================================================
+# Test 14: _gh_pr_create_rest applies labels via POST /repos/.../issues/{N}/labels
+# The stub returns https://github.com/owner/repo/issues/9999 for REST calls,
+# so label call should target issues/9999/labels.
+# =============================================================================
+: >"$GH_CALLS"
+_gh_pr_create_rest \
+	--repo "owner/repo" \
+	--title "t9995: label test" \
+	--head "feature/t9995-labels" \
+	--base "main" \
+	--label "origin:worker,auto-dispatch" >/dev/null 2>&1 || true
+
+if grep -qE '^api.*-X POST.*/repos/owner/repo/issues/[0-9]+/labels' "$GH_CALLS" 2>/dev/null &&
+	grep -qE 'labels\[\]=origin:worker' "$GH_CALLS" 2>/dev/null &&
+	grep -qE 'labels\[\]=auto-dispatch' "$GH_CALLS" 2>/dev/null; then
+	pass "_gh_pr_create_rest applies labels via POST /issues/{N}/labels"
+else
+	fail "_gh_pr_create_rest applies labels via POST /issues/{N}/labels" \
+		"GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+# =============================================================================
+# Test 15: gh_create_pr → falls back to REST when primary fails AND exhausted
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_PRIMARY_FAIL=1
+export STUB_RATE_LIMIT_REMAINING=0
+
+gh_create_pr \
+	--repo "owner/repo" \
+	--title "t9996: fallback test" \
+	--head "feature/t9996-fallback" \
+	--base "main" \
+	--body "fallback body" >/dev/null 2>&1 || true
+
+# Verify: primary was called AND rate_limit was checked AND REST was called
+if grep -qE '^pr create' "$GH_CALLS" 2>/dev/null &&
+	grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
+	grep -qE '^api.*-X POST.*/repos/owner/repo/pulls' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_create_pr falls back to REST when primary fails AND exhausted"
+else
+	fail "gh_create_pr falls back to REST when primary fails AND exhausted" \
+		"GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+if grep -qE 'GraphQL exhausted.*falling back to REST' "$GH_INFO_OUTPUT" 2>/dev/null; then
+	pass "gh_create_pr emits fallback log line"
+else
+	fail "gh_create_pr emits fallback log line" \
+		"INFO log: $(cat "$GH_INFO_OUTPUT")"
+fi
+
+unset STUB_PRIMARY_FAIL
+export STUB_RATE_LIMIT_REMAINING=5000
+
+# =============================================================================
+# Test 16: gh_create_pr → does NOT fall back when primary succeeds
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+
+gh_create_pr \
+	--repo "owner/repo" \
+	--title "t9997: success test" \
+	--head "feature/t9997-success" \
+	--base "main" \
+	--body "success body" >/dev/null 2>&1 || true
+
+if grep -qE '^pr create' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api.*-X POST.*/repos/owner/repo/pulls' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_create_pr does NOT fall back when primary succeeds"
+else
+	fail "gh_create_pr does NOT fall back when primary succeeds" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# =============================================================================
+# Test 17: gh_create_pr → does NOT fall back when primary fails but healthy
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_PRIMARY_FAIL=1
+export STUB_RATE_LIMIT_REMAINING=5000
+
+gh_create_pr \
+	--repo "owner/repo" \
+	--title "t9998: healthy fail test" \
+	--head "feature/t9998-healthy" \
+	--base "main" \
+	--body "healthy fail" >/dev/null 2>&1 || true
+
+if grep -qE '^pr create' "$GH_CALLS" 2>/dev/null &&
+	grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api.*-X POST.*/repos/owner/repo/pulls' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_create_pr does NOT fall back when primary fails but healthy"
+else
+	fail "gh_create_pr does NOT fall back when primary fails but healthy" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
