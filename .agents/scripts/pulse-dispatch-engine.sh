@@ -1257,12 +1257,18 @@ _run_preflight_stages() {
 	# _preflight_daily_scans() group with a shared 600s budget — a slow
 	# complexity_scan (200-340s) would starve downstream scanners
 	# (auto_decomposer, post_merge, dedup) from ever running.
-	run_stage_with_timeout "complexity_scan" "$_pflt_timeout" run_weekly_complexity_scan || true
-	run_stage_with_timeout "coderabbit_review" "$_pflt_timeout" run_daily_codebase_review || true
-	run_stage_with_timeout "post_merge_scanner" "$_pflt_timeout" _run_post_merge_review_scanner || true
-	run_stage_with_timeout "auto_decomposer_scanner" "$_pflt_timeout" _run_auto_decomposer_scanner || true
-	run_stage_with_timeout "dedup_cleanup" "$_pflt_timeout" run_simplification_dedup_cleanup || true
-	run_stage_with_timeout "fast_fail_prune_expired" "$_pflt_timeout" fast_fail_prune_expired || true
+	run_stage_with_timeout "complexity_scan" "$_pflt_timeout" \
+		run_weekly_complexity_scan || true
+	run_stage_with_timeout "coderabbit_review" "$_pflt_timeout" \
+		run_daily_codebase_review || true
+	run_stage_with_timeout "post_merge_scanner" "$_pflt_timeout" \
+		_run_post_merge_review_scanner || true
+	run_stage_with_timeout "auto_decomposer_scanner" "$_pflt_timeout" \
+		_run_auto_decomposer_scanner || true
+	run_stage_with_timeout "dedup_cleanup" "$_pflt_timeout" \
+		run_simplification_dedup_cleanup || true
+	run_stage_with_timeout "fast_fail_prune_expired" "$_pflt_timeout" \
+		fast_fail_prune_expired || true
 	run_stage_with_timeout "preflight_ownership_reconcile" "$_pflt_timeout" \
 		_preflight_ownership_reconcile || true
 	# prefetch_and_scope is the only preflight stage whose failure aborts
