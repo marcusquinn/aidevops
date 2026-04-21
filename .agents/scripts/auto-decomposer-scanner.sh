@@ -4,11 +4,13 @@
 # auto-decomposer-scanner.sh — Dispatch workers to decompose stale parent-tasks
 #
 # Finds `parent-task` labeled issues where the
-# `<!-- parent-needs-decomposition -->` nudge has been sitting unanswered
-# for ≥SCANNER_NUDGE_AGE_HOURS (default 24h). For each such parent, files
-# a worker-ready `tier:thinking` issue asking the dispatched worker to
-# read the parent, identify phases/components, and create child
-# implementation issues.
+# `<!-- parent-needs-decomposition -->` nudge has aged without a human
+# response. Two thresholds govern when the scanner fires (t2573):
+#   - Fresh parents (0 non-nudge comments): ≥SCANNER_FRESH_PARENT_HOURS (default 6h)
+#   - Aged parents (≥1 non-nudge comments): ≥SCANNER_NUDGE_AGE_HOURS (default 24h)
+# For each qualifying parent, files a worker-ready `tier:thinking` issue
+# asking the dispatched worker to read the parent, identify phases/components,
+# and create child implementation issues.
 #
 # Why this exists (t2442):
 #   Before t2442, `pulse-issue-reconcile.sh` would detect a parent-task
@@ -45,11 +47,15 @@
 #   auto-decomposer-scanner.sh {scan|dry-run|help} [REPO]
 #
 # Env:
-#   SCANNER_NUDGE_AGE_HOURS       (default 24)  — minimum nudge age in hours
+#   SCANNER_NUDGE_AGE_HOURS       (default 24)  — minimum nudge age for aged parents (≥1 non-nudge comment)
+#   SCANNER_FRESH_PARENT_HOURS    (default 6)   — minimum nudge age for fresh parents (0 non-nudge comments)
 #   SCANNER_MAX_ISSUES            (default 3)   — cap per-repo decompose issues per run
 #   SCANNER_PARENT_LIST_LIMIT     (default 100) — max parent-task issues to list
+#   AUTO_DECOMPOSER_INTERVAL      (default 604800) — seconds before re-filing the same parent (7 days)
+#   AUTO_DECOMPOSER_PARENT_STATE  (default ~/.aidevops/logs/auto-decomposer-parent-state.json) — per-parent state file
 #
 # t2442: https://github.com/marcusquinn/aidevops/issues/20139
+# t2573: https://github.com/marcusquinn/aidevops/issues/20242
 
 set -euo pipefail
 
@@ -58,11 +64,82 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
 
 SCANNER_NUDGE_AGE_HOURS="${SCANNER_NUDGE_AGE_HOURS:-24}"
+SCANNER_FRESH_PARENT_HOURS="${SCANNER_FRESH_PARENT_HOURS:-6}"
 SCANNER_MAX_ISSUES="${SCANNER_MAX_ISSUES:-3}"
 SCANNER_PARENT_LIST_LIMIT="${SCANNER_PARENT_LIST_LIMIT:-100}"
 SCANNER_LABEL="source:auto-decomposer"
+# Per-parent re-file interval: inherited from pulse-wrapper.sh export or defaulted here.
+AUTO_DECOMPOSER_INTERVAL="${AUTO_DECOMPOSER_INTERVAL:-604800}"
+AUTO_DECOMPOSER_PARENT_STATE="${AUTO_DECOMPOSER_PARENT_STATE:-${HOME}/.aidevops/logs/auto-decomposer-parent-state.json}"
 
 log() { echo "[auto-decomposer] $*" >&2; }
+
+# Count comments on an issue that are NOT the <!-- parent-needs-decomposition -->
+# nudge. A count of 0 means the parent is "fresh" (only automated nudge comments,
+# no human or other-bot activity). Fresh parents use SCANNER_FRESH_PARENT_HOURS
+# instead of SCANNER_NUDGE_AGE_HOURS as the eligibility threshold.
+#
+# Exit codes:
+#   0 — always (caller inspects the printed value)
+_count_non_nudge_comments() {
+	local repo="$1"
+	local issue_num="$2"
+	local count
+	count=$(gh api --paginate "repos/${repo}/issues/${issue_num}/comments" \
+		--jq '[.[] | select(.body | contains("<!-- parent-needs-decomposition -->") | not)] | length' \
+		2>/dev/null || echo "0")
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	printf '%s' "$count"
+	return 0
+}
+
+# Read the epoch at which this parent last had a decompose issue filed.
+# Returns "0" if the state file does not exist or the parent is not recorded.
+#
+# Exit codes:
+#   0 — always (caller inspects the printed value)
+_read_parent_last_filed() {
+	local repo="$1"
+	local parent_num="$2"
+	local key="${repo}#${parent_num}"
+	if [[ ! -f "$AUTO_DECOMPOSER_PARENT_STATE" ]]; then
+		printf '0'
+		return 0
+	fi
+	local epoch
+	epoch=$(jq -r --arg k "$key" '.[$k] // 0' "$AUTO_DECOMPOSER_PARENT_STATE" 2>/dev/null || echo "0")
+	[[ "$epoch" =~ ^[0-9]+$ ]] || epoch=0
+	printf '%s' "$epoch"
+	return 0
+}
+
+# Update the per-parent state file atomically (write-then-rename).
+# The state file is a JSON object mapping "<slug>#<issue>" to last-filed epoch.
+#
+# Exit codes:
+#   0 — always
+_update_parent_state() {
+	local repo="$1"
+	local parent_num="$2"
+	local epoch="$3"
+	local key="${repo}#${parent_num}"
+	local state_dir
+	state_dir=$(dirname "$AUTO_DECOMPOSER_PARENT_STATE")
+	mkdir -p "$state_dir" 2>/dev/null || true
+	local existing="{}"
+	if [[ -f "$AUTO_DECOMPOSER_PARENT_STATE" ]]; then
+		existing=$(cat "$AUTO_DECOMPOSER_PARENT_STATE" 2>/dev/null || echo "{}")
+		[[ "$existing" =~ ^\{ ]] || existing="{}"
+	fi
+	local tmp
+	tmp=$(mktemp "${state_dir}/.auto-decomposer-state.XXXXXX")
+	printf '%s' "$existing" | jq --arg k "$key" --argjson v "$epoch" '.[$k] = $v' >"$tmp" 2>/dev/null || {
+		rm -f "$tmp"
+		return 0
+	}
+	mv "$tmp" "$AUTO_DECOMPOSER_PARENT_STATE"
+	return 0
+}
 
 # Compute the age in hours of the first `<!-- parent-needs-decomposition -->`
 # nudge comment on a parent issue. Prints the age on stdout (empty string
@@ -227,7 +304,7 @@ _create_decompose_issue() {
 	local body
 	body=$(_build_decompose_body "$repo" "$parent_num" "$parent_title")
 
-	if [[ "$dry_run" == "true" ]]; then
+	if [[ "$dry_run" == true ]]; then
 		log "[DRY-RUN] Would create: ${title}"
 		log "[DRY-RUN] Body length: ${#body} chars"
 		return 0
@@ -255,7 +332,7 @@ _create_decompose_issue() {
 do_scan() {
 	local repo="$1"
 	local dry_run="$2"
-	log "Scanning ${repo} for stale parent-tasks (nudge ≥${SCANNER_NUDGE_AGE_HOURS}h)"
+	log "Scanning ${repo} for stale parent-tasks (fresh: ≥${SCANNER_FRESH_PARENT_HOURS}h, aged: ≥${SCANNER_NUDGE_AGE_HOURS}h)"
 
 	local parents_json
 	parents_json=$(gh issue list --repo "$repo" --label "parent-task" \
@@ -266,7 +343,10 @@ do_scan() {
 		return 0
 	fi
 
-	local issues_created=0 total_seen=0 skipped_no_nudge=0 skipped_too_young=0 skipped_existing=0
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	local issues_created=0 total_seen=0 skipped_no_nudge=0 skipped_too_young=0 skipped_existing=0 skipped_refiled=0
 	while IFS=$'\t' read -r parent_num parent_title; do
 		[[ -z "$parent_num" ]] && continue
 		total_seen=$((total_seen + 1))
@@ -281,6 +361,19 @@ do_scan() {
 			continue
 		fi
 
+		# Per-parent re-file gate: skip if filed within AUTO_DECOMPOSER_INTERVAL.
+		local last_filed
+		last_filed=$(_read_parent_last_filed "$repo" "$parent_num")
+		if [[ "$last_filed" -gt 0 ]]; then
+			local elapsed_since_filed=$(( now_epoch - last_filed ))
+			if [[ "$elapsed_since_filed" -lt "$AUTO_DECOMPOSER_INTERVAL" ]]; then
+				local days_remaining=$(( (AUTO_DECOMPOSER_INTERVAL - elapsed_since_filed) / 86400 ))
+				log "parent #${parent_num}: re-file suppressed (filed $((elapsed_since_filed / 86400))d ago, gate ${days_remaining}d remaining)"
+				skipped_refiled=$((skipped_refiled + 1))
+				continue
+			fi
+		fi
+
 		local hours
 		hours=$(_nudge_age_hours "$repo" "$parent_num")
 		if [[ -z "$hours" ]]; then
@@ -288,18 +381,37 @@ do_scan() {
 			skipped_no_nudge=$((skipped_no_nudge + 1))
 			continue
 		fi
-		if [[ "$hours" -lt "$SCANNER_NUDGE_AGE_HOURS" ]]; then
-			log "parent #${parent_num}: nudge ${hours}h old (threshold ${SCANNER_NUDGE_AGE_HOURS}h), skip"
+
+		# Determine eligibility threshold based on whether the parent is fresh.
+		# A fresh parent has 0 non-nudge comments — no human or other-bot activity
+		# beyond the automated nudge. Fresh parents get a shorter threshold (6h
+		# default) because waiting 24h on a pristine issue is unnecessarily slow.
+		local non_nudge_count
+		non_nudge_count=$(_count_non_nudge_comments "$repo" "$parent_num")
+		local threshold="$SCANNER_NUDGE_AGE_HOURS"
+		local parent_kind="aged"
+		if [[ "$non_nudge_count" -eq 0 ]]; then
+			threshold="$SCANNER_FRESH_PARENT_HOURS"
+			parent_kind="fresh"
+		fi
+
+		if [[ "$hours" -lt "$threshold" ]]; then
+			log "parent #${parent_num}: ${parent_kind} nudge ${hours}h old (threshold ${threshold}h), skip"
 			skipped_too_young=$((skipped_too_young + 1))
 			continue
 		fi
 
-		log "parent #${parent_num}: nudge ${hours}h old, filing decompose issue"
+		log "parent #${parent_num}: ${parent_kind} nudge ${hours}h old (threshold ${threshold}h), filing decompose issue"
 		_create_decompose_issue "$repo" "$parent_num" "$parent_title" "$dry_run"
 		issues_created=$((issues_created + 1))
+
+		# Record the filing time in the per-parent state file (skip for dry-run).
+		if [[ "$dry_run" != true ]]; then
+			_update_parent_state "$repo" "$parent_num" "$now_epoch"
+		fi
 	done < <(printf '%s' "$parents_json" | jq -r '.[] | "\(.number)\t\(.title)"')
 
-	log "Scan done. Parents seen: ${total_seen}, created: ${issues_created}, skipped(existing): ${skipped_existing}, skipped(no-nudge): ${skipped_no_nudge}, skipped(too-young): ${skipped_too_young}"
+	log "Scan done. Parents seen: ${total_seen}, created: ${issues_created}, skipped(existing): ${skipped_existing}, skipped(no-nudge): ${skipped_no_nudge}, skipped(too-young): ${skipped_too_young}, skipped(re-file gate): ${skipped_refiled}"
 	return 0
 }
 
@@ -318,25 +430,29 @@ main() {
 		fi
 	fi
 	case "$command" in
-	scan) do_scan "$repo" "false" ;;
-	dry-run) do_scan "$repo" "true" ;;
+	scan) do_scan "$repo" false ;;
+	dry-run) do_scan "$repo" true ;;
 	-h | --help | help)
 		cat <<EOF
 Usage: $(basename "$0") {scan|dry-run|help} [REPO]
 
   scan      Scan open parent-task issues; file worker-ready decompose
-            issues for parents whose nudge is ≥SCANNER_NUDGE_AGE_HOURS
-            old. Dedupes via title + source:auto-decomposer label.
-  dry-run   Same as scan but logs what would be created.
+            issues for parents whose nudge has aged past the threshold.
+            Dedupes via title + source:auto-decomposer label. Per-parent
+            state prevents re-filing the same parent within 7 days.
+  dry-run   Same as scan but logs what would be created (no state writes).
   help      This message.
 
 Env vars:
-  SCANNER_NUDGE_AGE_HOURS    (default 24)   Minimum nudge age in hours
-  SCANNER_MAX_ISSUES         (default 3)    Cap per-repo decompose issues per run
-  SCANNER_PARENT_LIST_LIMIT  (default 100)  Max parent-task issues to list
+  SCANNER_NUDGE_AGE_HOURS    (default 24)      Minimum nudge age (hours) for aged parents (≥1 non-nudge comment)
+  SCANNER_FRESH_PARENT_HOURS (default 6)       Minimum nudge age (hours) for fresh parents (0 non-nudge comments)
+  SCANNER_MAX_ISSUES         (default 3)       Cap per-repo decompose issues per run
+  SCANNER_PARENT_LIST_LIMIT  (default 100)     Max parent-task issues to list
+  AUTO_DECOMPOSER_INTERVAL   (default 604800)  Seconds before re-filing the same parent (7 days)
+  AUTO_DECOMPOSER_PARENT_STATE                 Path to per-parent state file (JSON)
 
-t2442: closes the parent-task dispatch black hole by dispatching a
-worker to do the decomposition 24h after the advisory nudge is ignored.
+t2442: closes the parent-task dispatch black hole.
+t2573: per-parent gating, fresh-parent 6h threshold, no global run gate.
 EOF
 		;;
 	*)

@@ -266,10 +266,10 @@ _run_post_merge_review_scanner() {
 }
 
 #######################################
-# Daily auto-decomposer scanner (t2442).
+# Per-cycle auto-decomposer scanner (t2442, tightened t2573).
 #
 # Scans pulse-enabled (maintainer-role) repos for parent-task issues
-# whose <!-- parent-needs-decomposition --> nudge has aged ≥24h without
+# whose <!-- parent-needs-decomposition --> nudge has aged without
 # a human response, and files worker-ready tier:thinking issues asking
 # the dispatched worker to decompose the parent into child issues.
 #
@@ -280,26 +280,13 @@ _run_post_merge_review_scanner() {
 #
 # Idempotent via auto-decomposer-scanner.sh's title + source:auto-decomposer
 # label dedup — re-runs skip parents that already have a decompose issue
-# in any state.
-#
-# Time-gated to run at most once per AUTO_DECOMPOSER_INTERVAL (default 24h).
+# in any state. Per-parent state file (AUTO_DECOMPOSER_PARENT_STATE)
+# prevents re-filing the same parent within AUTO_DECOMPOSER_INTERVAL
+# (default 7 days). t2573 removed the global 24h run gate to allow
+# scanning every pulse cycle and clearing multiple parents per day.
 # Reference pattern: _run_post_merge_review_scanner.
 #######################################
 _run_auto_decomposer_scanner() {
-	local now_epoch
-	now_epoch=$(date +%s)
-
-	# Time gate: skip if last run was within the interval
-	if [[ -f "$AUTO_DECOMPOSER_LAST_RUN" ]]; then
-		local last_run
-		last_run=$(cat "$AUTO_DECOMPOSER_LAST_RUN" 2>/dev/null || echo "0")
-		[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
-		local elapsed=$((now_epoch - last_run))
-		if [[ "$elapsed" -lt "$AUTO_DECOMPOSER_INTERVAL" ]]; then
-			return 0
-		fi
-	fi
-
 	local scanner="${SCRIPT_DIR}/auto-decomposer-scanner.sh"
 	if [[ ! -x "$scanner" ]]; then
 		echo "[pulse-wrapper] Auto-decomposer: helper not found or not executable: $scanner" >>"$LOGFILE"
@@ -332,8 +319,7 @@ _run_auto_decomposer_scanner() {
 		echo "[pulse-wrapper] Auto-decomposer: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"$LOGFILE"
 	fi
 
-	printf '%s\n' "$now_epoch" >"$AUTO_DECOMPOSER_LAST_RUN"
-	echo "[pulse-wrapper] Auto-decomposer: completed ${total_repos} repo(s), next run in ~$((AUTO_DECOMPOSER_INTERVAL / 3600))h" >>"$LOGFILE"
+	echo "[pulse-wrapper] Auto-decomposer: completed ${total_repos} repo(s) (per-parent re-file gate: $((AUTO_DECOMPOSER_INTERVAL / 86400))d)" >>"$LOGFILE"
 	return 0
 }
 

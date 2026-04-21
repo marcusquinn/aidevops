@@ -10,9 +10,9 @@
 #   1. auto-decomposer-scanner.sh is executable and shellcheck-clean
 #   2. help subcommand prints the usage block with all three subcommands
 #   3. Scanner is wired into pulse-simplification.sh via _run_auto_decomposer_scanner
-#   4. Wrapper respects AUTO_DECOMPOSER_INTERVAL time gate (last-run file path)
+#   4. Wrapper uses per-parent contributor-role filter (t2573: no global last-run gate)
 #   5. Wrapper is registered in pulse-dispatch-engine.sh via run_stage_with_timeout
-#   6. Constants AUTO_DECOMPOSER_LAST_RUN / AUTO_DECOMPOSER_INTERVAL exist in pulse-wrapper.sh
+#   6. Constants AUTO_DECOMPOSER_INTERVAL / AUTO_DECOMPOSER_PARENT_STATE exist in pulse-wrapper.sh
 #   7. Scanner uses worker-ready body template (5+ of 7 t2417 headings)
 #   8. Scanner dedupes via title + source:auto-decomposer label
 #   9. Scanner generator marker is pre-dispatch-validator friendly
@@ -196,12 +196,12 @@ assert_grep \
 	"$WRAPPER"
 
 assert_grep_fixed \
-	"9: wrapper uses AUTO_DECOMPOSER_LAST_RUN time gate" \
-	'AUTO_DECOMPOSER_LAST_RUN' \
+	"9: wrapper does NOT use global AUTO_DECOMPOSER_LAST_RUN gate (t2573 removed it)" \
+	'get_repo_role_by_slug' \
 	"$WRAPPER"
 
 assert_grep_fixed \
-	"10: wrapper uses AUTO_DECOMPOSER_INTERVAL time gate" \
+	"10: wrapper references AUTO_DECOMPOSER_INTERVAL (per-parent re-file interval)" \
 	'AUTO_DECOMPOSER_INTERVAL' \
 	"$WRAPPER"
 
@@ -220,13 +220,13 @@ assert_grep \
 # --- Constants in pulse-wrapper.sh bootstrap ---
 
 assert_grep \
-	"13a: AUTO_DECOMPOSER_LAST_RUN constant defined in pulse-wrapper" \
-	'^AUTO_DECOMPOSER_LAST_RUN="\$\{HOME\}/\.aidevops/logs/auto-decomposer-last-run"' \
+	"13a: AUTO_DECOMPOSER_PARENT_STATE constant defined in pulse-wrapper (t2573)" \
+	'^AUTO_DECOMPOSER_PARENT_STATE=' \
 	"$BOOTSTRAP"
 
 assert_grep \
-	"13b: AUTO_DECOMPOSER_INTERVAL constant defined with env override" \
-	'^AUTO_DECOMPOSER_INTERVAL="\$\{AUTO_DECOMPOSER_INTERVAL:-[0-9]+\}"' \
+	"13b: AUTO_DECOMPOSER_INTERVAL constant defined with 604800 default (7d per-parent gate, t2573)" \
+	'^AUTO_DECOMPOSER_INTERVAL="\$\{AUTO_DECOMPOSER_INTERVAL:-604800\}"' \
 	"$BOOTSTRAP"
 
 assert_grep \
