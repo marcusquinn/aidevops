@@ -118,6 +118,36 @@ FORCE_VACUUM_SIZE_MB=0 VACUUM_FREELIST_THRESHOLD=0.0 \
 - `~/.aidevops/.agent-workspace/work/opencode-maintenance/maintenance.log`
   — append-only history
 
+## Project ID drift — /sessions loses history
+
+**Symptom:** The TUI `/sessions` picker shows only the current session (or a handful of recent ones), not the full history. Closing and reopening opencode does not help.
+
+**Cause:** Opencode identifies git-tracked projects by a **git commit SHA** stored in `session.project_id`. The `/sessions` picker filters by the *current* session's `project_id`. When opencode regenerates this SHA (binary update, rebase, or certain git reference events), prior sessions orphan onto the old `project_id` and disappear from the picker. They are NOT deleted.
+
+**Diagnose:** Close opencode TUI first, then inspect the DB:
+
+```bash
+# List project_ids seen for a given repo directory, ordered by session count
+sqlite3 ~/.local/share/opencode/opencode.db \
+  "SELECT project_id, COUNT(*) FROM session
+    WHERE directory='/absolute/path/to/repo'
+    GROUP BY project_id ORDER BY 2 DESC;"
+```
+
+If two or more project_ids appear, the one with the highest count is the orphaned history; the one the TUI currently uses is whichever matches a new session (usually lower count).
+
+**Fix:** Remap orphaned sessions to the current project_id. Close the opencode TUI first to avoid WAL lock contention:
+
+```bash
+# Replace OLD_SHA and NEW_SHA with the actual values from the diagnose step
+sqlite3 ~/.local/share/opencode/opencode.db \
+  "UPDATE session SET project_id='NEW_SHA' WHERE project_id='OLD_SHA';"
+```
+
+Reopen the TUI — `/sessions` now shows the full history.
+
+**Archive DB:** `opencode-archive.db` is not read by the TUI regardless of `project_id`. No remap is needed there unless you are restoring archived sessions (in which case apply the same remap to the archive DB before running `opencode-db-archive.sh restore`).
+
 ## Related upstream issues
 
 - [anomalyco/opencode#21215](https://github.com/anomalyco/opencode/issues/21215) — concurrent sessions crash with SQLITE_BUSY
