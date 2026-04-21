@@ -2865,3 +2865,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
   - [x] t1665.6 Add Codex, Cursor, Droid runtime entries + fix Codex Docker MCP — P0: fix broken MCP_DOCKER in ~/.codex/config.toml (docker mcp unavailable on OrbStack). Add setup_codex_cli(), setup_droid_cli(). Deploy aidevops MCPs to Codex TOML + Cursor JSON. Deploy instructions.md/AGENTS.md per runtime. Wire into setup.sh. #enhancement #bugfix #auto-dispatch ~2h model:sonnet ref:GH#6537 logged:2026-03-26 completed:2026-04-03
 
 - [ ] t1904 fix: stat stdout pollution and WAL pragma leak in opencode-db-archive.sh — stat -f '%z' at line 147 uses macOS-only syntax; on Linux stdout pollution causes arithmetic failure under set -u. PRAGMA journal_mode=WAL at line 255 leaks 'wal' to stdout. Fix: replace stat || chain with uname-conditional block (follow document-creation-helper.sh:72-79); move PRAGMA out of heredoc into separate suppressed sqlite3 call. #bugfix #auto-dispatch ~0.5h model:haiku ref:GH#17683 logged:2026-04-07
+
+- [ ] t2707 extend signature-footer enforcement to gh api POST/PATCH on issues|pulls|comments endpoints #auto-dispatch #bug #framework ref:GH#20350
+
+- [ ] t2705 diagnose pulse-merge.sh auto-merge gap for origin:interactive PRs #parent ref:GH#20338
