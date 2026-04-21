@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# Routine r902 wrapper — invokes `aidevops auto-update check`.
+#
+# Why this wrapper exists (GH#20315, t2700):
+# pulse-routines.sh resolves `run:bin/aidevops-auto-update` against
+# ${HOME}/.aidevops/agents/ and executes the resulting path as a single
+# quoted argv. Embedding `check` in the run: field makes the path include
+# a literal space, so the `-x` executability check and exec both fail.
+# Hardcoding the CLI subcommand inside this wrapper keeps the routine
+# entry single-token. Pairs with r902 in
+# .agents/scripts/routines/core-routines.sh.
+
+set -euo pipefail
+
+# Ensure `aidevops` CLI is discoverable when launched via cron/launchd, which
+# start children with a minimal PATH (typically /usr/bin:/bin). setup.sh
+# symlinks the CLI to either /usr/local/bin or ${HOME}/.local/bin (see
+# install_aidevops_cli in setup-modules/config.sh), so both are prepended.
+PATH="/usr/local/bin:${HOME}/.local/bin:${PATH}"
+
+if ! command -v aidevops >/dev/null 2>&1; then
+	echo "[aidevops-auto-update] aidevops CLI not found in PATH. Install via setup.sh or npm install -g aidevops." >&2
+	exit 1
+fi
+
+exec aidevops auto-update check "$@"

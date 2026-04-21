@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# Routine r910 wrapper — invokes `aidevops skill generate`.
+#
+# Why this wrapper exists (GH#20315, t2700):
+# pulse-routines.sh resolves `run:bin/aidevops-skills-sync` against
+# ${HOME}/.aidevops/agents/, but the wrapper file did not exist under
+# .agents/bin/ (only gh_create_issue and gh_create_pr were shipped), so
+# the `-x` executability check at pulse-routines.sh:110 failed every run.
+# This wrapper fills that gap. Pairs with r910 in
+# .agents/scripts/routines/core-routines.sh.
+#
+# Why `skill generate` (not `skill update`):
+# r910 regenerates SKILL.md stubs for cross-tool discovery from local
+# agent files (see the describe_r910 function — "Regenerates SKILL.md
+# files if source agents changed", "Lightweight — only processes changed
+# files"). That is exactly what `aidevops skill generate` does. `skill
+# update` pulls upstream changes to imported skills (network operation,
+# heavier) and does not match the lightweight local regeneration the
+# routine describes.
+
+set -euo pipefail
+
+# Ensure `aidevops` CLI is discoverable when launched via cron/launchd, which
+# start children with a minimal PATH (typically /usr/bin:/bin). setup.sh
+# symlinks the CLI to either /usr/local/bin or ${HOME}/.local/bin (see
+# install_aidevops_cli in setup-modules/config.sh), so both are prepended.
+PATH="/usr/local/bin:${HOME}/.local/bin:${PATH}"
+
+if ! command -v aidevops >/dev/null 2>&1; then
+	echo "[aidevops-skills-sync] aidevops CLI not found in PATH. Install via setup.sh or npm install -g aidevops." >&2
+	exit 1
+fi
+
+exec aidevops skill generate "$@"
