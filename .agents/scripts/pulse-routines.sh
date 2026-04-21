@@ -105,16 +105,27 @@ _routine_execute() {
 	local status="success"
 
 	if [[ -n "$run_script" ]]; then
-		# Script-only dispatch — zero LLM tokens
-		local script_path="${agents_dir}/${run_script}"
+		# Script-only dispatch — zero LLM tokens.
+		# Split run_script into the executable path and optional space-separated
+		# arguments (e.g. "scripts/process-guard-helper.sh kill-runaways" becomes
+		# script_path=".../process-guard-helper.sh" script_args=("kill-runaways")).
+		# Using an array avoids word-splitting issues and safely passes args.
+		local run_parts=()
+		IFS=' ' read -r -a run_parts <<< "$run_script"
+		local script_path="${agents_dir}/${run_parts[0]}"
+		local script_args=("${run_parts[@]:1}")
 		if [[ ! -x "$script_path" ]]; then
 			echo "[pulse-wrapper] routine ${routine_id}: script not found or not executable: ${script_path}" >>"$LOGFILE"
 			_routine_update_state "$routine_id" "failure"
 			return 1
 		fi
-		echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path}" >>"$LOGFILE"
+		if [[ ${#script_args[@]} -gt 0 ]]; then
+			echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path} ${script_args[*]}" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path}" >>"$LOGFILE"
+		fi
 		local exit_code=0
-		"$script_path" >>"$LOGFILE" 2>&1 || exit_code=$?
+		"$script_path" "${script_args[@]}" >>"$LOGFILE" 2>&1 || exit_code=$?
 		if [[ "$exit_code" -ne 0 ]]; then
 			status="failure"
 			echo "[pulse-wrapper] routine ${routine_id}: script exited with code ${exit_code}" >>"$LOGFILE"
@@ -231,10 +242,23 @@ evaluate_routines() {
 				continue
 			fi
 
-			# Extract optional run: field
+			# Extract optional run: field — captures script path and any trailing
+			# space-separated argument tokens. Field keywords (agent:, repeat:,
+			# started:, blocked-by:) always contain a colon, so we stop as soon as
+			# we encounter a token with a colon embedded.
 			local run_script=""
 			if [[ "$line" =~ run:([^[:space:]]+) ]]; then
 				run_script="${BASH_REMATCH[1]}"
+				# Append optional argument tokens that follow the script path.
+				# Stop when a token contains ':' (field keyword) or starts with '#'.
+				local _run_rest="${line#*run:"${run_script}"}"
+				local _arg_token
+				while [[ "$_run_rest" =~ ^[[:space:]]+([^[:space:]]+)(.*)$ ]]; do
+					_arg_token="${BASH_REMATCH[1]}"
+					[[ "$_arg_token" == *:* || "$_arg_token" == "#"* || "$_arg_token" == "~"* || "$_arg_token" == "@"* ]] && break
+					run_script="${run_script} ${_arg_token}"
+					_run_rest="${BASH_REMATCH[2]}"
+				done
 			fi
 
 			# Extract optional agent: field
