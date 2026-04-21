@@ -15,10 +15,13 @@
 # Checks run in order (cheap to expensive):
 #   1. CLOSED state — issue.state == CLOSED → abort (exit 2)
 #   2. Status labels — status:done or status:resolved → abort (exit 3)
-#   3. Recent PR merge — linked PR merged in last 5 min → abort (exit 4)
+#   3. Recent PR merge — linked PR merged in last 5 min �� abort (exit 4)
 #   4. Recent closing commit — commit on default branch within last ~10 min
 #      with a GitHub closing keyword (close/fix/resolve) referencing this
 #      issue → abort (exit 5). Ref/For commits are NOT closing references.
+#   5. Parent-task label — parent-task or meta label → abort (exit 6).
+#      Defence-in-depth for dispatch-dedup-helper.sh Layer 6 parent guard.
+#      (GH#20219 Factor 3)
 #
 # Exit codes (returned by the `check` subcommand):
 #   0  — eligible; dispatch proceeds
@@ -26,6 +29,7 @@
 #   3  — issue has status:done or status:resolved label
 #   4  — linked PR merged in recent window (5 min by default)
 #   5  — recent closing commit on default branch (10 min by default)
+#   6  — parent-task or meta label present (unconditional dispatch block)
 #   20 — API error; caller should fail-open (dispatch proceeds with warning)
 #
 # Usage (standalone):
@@ -184,6 +188,7 @@ _check_recent_commit_closes_issue() {
 #   3  — status:done or status:resolved label
 #   4  — recent linked PR merge
 #   5  — recent closing commit on default branch
+#   6  — parent-task or meta label (unconditional dispatch block, GH#20219)
 #   20 — API error (fail-open: caller should proceed with dispatch + warning)
 #######################################
 is_issue_eligible_for_dispatch() {
@@ -228,6 +233,17 @@ is_issue_eligible_for_dispatch() {
 	if printf ',%s,' "$labels" | grep -qE ',(status:done|status:resolved),'; then
 		_eligibility_record_abort "$issue_number" "$repo_slug" "label=${labels}" "3"
 		return 3
+	fi
+
+	# Gate 2b (GH#20219 Factor 3): Parent-task / meta unconditional dispatch block.
+	# Defence-in-depth — the canonical guard is dispatch-dedup-helper.sh Layer 6
+	# (_is_assigned_check_parent_task). Adding it here catches parent-task issues
+	# even if the dedup helper is missing, has a jq failure, or the dispatch path
+	# somehow bypasses check_dispatch_dedup. Closes Factor 3 of the #20161
+	# incident where a parent-task issue with no assignee was dispatched.
+	if printf ',%s,' "$labels" | grep -qE ',(parent-task|meta),'; then
+		_eligibility_record_abort "$issue_number" "$repo_slug" "parent-task label present (GH#20219)" "6"
+		return 6
 	fi
 
 	# --- Gate 3: Recent linked-PR merge check (one extra gh call) ---
@@ -319,6 +335,7 @@ _main() {
 			echo "  3  — status:done or status:resolved label"
 			echo "  4  — recent linked PR merge"
 			echo "  5  — recent closing commit on default branch"
+			echo "  6  — parent-task or meta label (unconditional block)"
 			echo "  20 — API error (fail-open)"
 			echo ""
 			echo "Environment:"

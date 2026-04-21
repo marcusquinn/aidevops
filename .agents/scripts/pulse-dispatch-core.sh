@@ -810,7 +810,15 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 
-	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("on hold") or index("blocked"))' >/dev/null 2>&1; then
+	# GH#20219: parent-task / meta added here as defence-in-depth. The
+	# canonical parent-task guard is in dispatch-dedup-helper.sh Layer 6
+	# (_is_assigned_check_parent_task), but adding it to the early management-
+	# label block ensures it fires even if Layer 6 is somehow bypassed (e.g.
+	# dedup_helper missing, jq failure in the helper, or a direct-dispatch
+	# code path that skips check_dispatch_dedup). This closes Factor 1 of
+	# the #20161 incident where a parent-task issue was dispatched despite
+	# the label being continuously present.
+	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("on hold") or index("blocked") or index("parent-task") or index("meta"))' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
 		return 1
 	fi
@@ -899,6 +907,8 @@ _dispatch_dedup_check_layers() {
 #   2  — CLOSED state; abort
 #   3  — status:done/resolved label; abort
 #   4  — linked PR merged in recent window; abort
+#   5  — recent closing commit on default branch; abort
+#   6  — parent-task or meta label; abort (GH#20219)
 #   20 — gh API error; fail-open (proceed with warning)
 #
 # Args:

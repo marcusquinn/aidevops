@@ -1115,20 +1115,43 @@ _post_parent_decomposition_nudge() {
 
 	local marker='<!-- parent-needs-decomposition -->'
 
+	# GH#20219 Factor 2: max-nudge cap. Concurrent pulse runners can race
+	# the idempotency check (both read 0 markers, both post). A hard cap
+	# bounds the damage: if MAX_PARENT_NUDGE_COUNT nudges already exist,
+	# stop posting regardless of race timing. Default 3 — enough to surface
+	# the nudge to a maintainer, bounded enough to prevent the 19-comment
+	# spam observed on #20161.
+	local max_nudge_count="${MAX_PARENT_NUDGE_COUNT:-3}"
+
 	# Idempotency check: skip if marker already present in any comment.
-	# Best-effort — if the API fails we fall through to posting, which
-	# is better than missing the nudge entirely. A one-time duplicate
-	# on a transient API error is harmless.
 	# --paginate + --slurp ensures we read the FULL comment history; without
 	# it the default page size is 30 and the marker may be missed on long-
 	# running parents, causing duplicate comments. --slurp makes jq receive
 	# the page array stream as a single array-of-arrays which we flatten.
+	#
+	# GH#20219: changed from fail-open to fail-CLOSED. The original design
+	# fell through to posting on API failure ("better than missing the nudge").
+	# In practice, transient API errors caused EVERY pulse cycle from EVERY
+	# runner to post a new nudge — 19+ comments in 6h on #20161. The nudge
+	# is advisory (not safety-critical), so missing one cycle is harmless;
+	# posting 19 duplicates is not.
 	local existing=""
 	existing=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
 		--slurp \
 		--jq "[.[] | .[] | select(.body | contains(\"${marker}\"))] | length" \
 		2>/dev/null) || existing=""
-	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
+
+	# Fail-closed: if we cannot determine the count, skip this cycle.
+	if [[ ! "$existing" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] Nudge dedup: API/jq failure for #${parent_num} in ${slug} — skipping nudge (fail-closed, GH#20219)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Block if any nudge already exists OR if count exceeds the cap.
+	if [[ "$existing" -ge 1 ]]; then
+		if [[ "$existing" -ge "$max_nudge_count" ]]; then
+			echo "[pulse-wrapper] Nudge dedup: #${parent_num} in ${slug} has ${existing} nudges (cap=${max_nudge_count}) — suppressing (GH#20219)" >>"$LOGFILE"
+		fi
 		return 1
 	fi
 
@@ -1260,19 +1283,24 @@ _post_parent_decomposition_escalation() {
 
 	local marker='<!-- parent-needs-decomposition-escalated -->'
 
-	# Idempotency check: skip if marker already present in any comment.
-	# Best-effort: on API failure, fall through to posting. A transient
-	# duplicate is harmless; missing an escalation entirely is worse.
-	# --paginate + --slurp ensures we read the FULL comment history; without
-	# it the default page size is 30 and the marker may be missed on long-
-	# running parents, causing duplicate comments. --slurp makes jq receive
-	# the page array stream as a single array-of-arrays which we flatten.
+	# GH#20219 Factor 2: fail-closed + max-count cap (same pattern as nudge).
+	# Escalation is rarer than nudging but the same TOCTOU race applies in
+	# multi-runner fleets. Fail-closed: if we cannot determine the count,
+	# skip this cycle (escalation is advisory, not safety-critical).
+	local max_escalation_count="${MAX_PARENT_ESCALATION_COUNT:-2}"
 	local existing=""
 	existing=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
 		--slurp \
 		--jq "[.[] | .[] | select(.body | contains(\"${marker}\"))] | length" \
 		2>/dev/null) || existing=""
-	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
+	if [[ ! "$existing" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] Escalation dedup: API/jq failure for #${parent_num} in ${slug} — skipping (fail-closed, GH#20219)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "$existing" -ge 1 ]]; then
+		if [[ "$existing" -ge "$max_escalation_count" ]]; then
+			echo "[pulse-wrapper] Escalation dedup: #${parent_num} in ${slug} has ${existing} escalations (cap=${max_escalation_count}) — suppressing (GH#20219)" >>"$LOGFILE"
+		fi
 		return 1
 	fi
 
