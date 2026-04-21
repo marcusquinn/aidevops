@@ -70,10 +70,16 @@ fail() {
 # Run the guard with a message file and a mock counter.
 # Sets up a temporary git repo to provide a merge base with .task-counter = N.
 # Returns the exit code of the guard.
+#
+# Optional 4th arg: space-separated list of t-IDs to pre-claim on the work
+# branch via "chore: claim tNNN [test-nonce]" commits. Phase 1 (t2567) requires
+# a branch claim commit for t-IDs ≤ counter that lack a Resolves footer. Pass
+# the t-IDs referenced in the commit message so the guard allows them.
 _run_with_counter() {
 	local msg="${1:-}"
 	local counter_val="${2:-10}"
 	local gh_available="${3:-no}" # "yes" or "no"
+	local claim_ids="${4:-}"      # optional space-sep t-IDs to pre-claim on branch
 
 	local tmpdir
 	tmpdir=$(mktemp -d)
@@ -100,7 +106,17 @@ _run_with_counter() {
 	git -C "$work_repo" config commit.gpgsign false
 	git -C "$work_repo" config tag.gpgsign false
 
-	# Add a commit so HEAD != merge-base
+	# Add claim commits for any t-IDs that need branch-level authorisation
+	# (Phase 1 / t2567: claim-task-id.sh makes claim commits on the feature
+	# branch, so the guard finds them in merge-base..HEAD).
+	local claim_id
+	for claim_id in $claim_ids; do
+		printf 'claim-marker' >"${work_repo}/${claim_id}-claim.txt"
+		git -C "$work_repo" add "${claim_id}-claim.txt"
+		git -C "$work_repo" commit -q -m "chore: claim ${claim_id} [test-nonce]"
+	done
+
+	# Add a commit so HEAD != merge-base (even when no claim IDs provided)
 	printf 'change' >"${work_repo}/change.txt"
 	git -C "$work_repo" add change.txt
 	git -C "$work_repo" commit -q -m "wip"
@@ -149,13 +165,16 @@ test_rejects_invented_tid() {
 }
 
 # ---------------------------------------------------------------------------
-# Case 2: Allow — t-ID ≤ counter (claimed)
+# Case 2: Allow — t-ID ≤ counter, with branch claim commit (Phase 1 t2567)
 # ---------------------------------------------------------------------------
 test_allows_claimed_tid() {
-	local name="case-2: allows claimed t-ID ≤ counter"
+	local name="case-2: allows claimed t-ID ≤ counter when branch has claim commit"
 	local msg="feat(foo): implement t50 feature"
 	local rc
-	_run_with_counter "$msg" "100"
+	# Pass "t50" as the 4th arg so _run_with_counter adds "chore: claim t50 [...]"
+	# to the work branch before the "wip" commit. Phase 1 requires this to allow
+	# a t-ID ≤ counter without a Resolves footer.
+	_run_with_counter "$msg" "100" "no" "t50"
 	rc=$?
 	if [[ "$rc" -eq 0 ]]; then
 		pass "$name"
@@ -296,18 +315,22 @@ test_check_pr_mode() {
 }
 
 # ---------------------------------------------------------------------------
-# Case 8: Allow — stale-worktree scenario (GH#19054)
+# Case 8: Allow — stale-worktree scenario (GH#19054) with Phase 1 branch claims
 #
 # Simulates the observed failure:
 #   1. Worktree created at main tip X (counter=10)
-#   2. Two more claims pushed to origin/main → counter=12
+#   2. Worker claims t11 and t12 ON ITS OWN BRANCH (via claim-task-id.sh), which
+#      in the real framework adds "chore: claim tNNN [nonce]" commits to the branch.
+#      This is consistent with how claim-task-id.sh operates on feature branches
+#      (as visible in this repo's git log: the CAS commits land on the feature branch).
 #   3. Commit in the worktree references t11 and t12
 #
-# With the OLD guard: merge-base=X → counter=10 → t11,t12 > 10 → BLOCK (wrong)
-# With the NEW guard: _resolve_current_counter reads origin/main → 12 → ALLOW (correct)
+# With the OLD counter-only guard: merge-base=X → counter=10 → t11,t12 > 10 → BLOCK
+# With the stale-worktree fix (GH#19054): _resolve_current_counter reads HEAD (12) → ALLOW
+# With Phase 1 (t2567): branch claim commits for t11,t12 are found → ALLOW
 # ---------------------------------------------------------------------------
 test_stale_worktree_scenario() {
-	local name="case-8: allows t-IDs claimed after worktree creation (stale-worktree)"
+	local name="case-8: allows t-IDs claimed on feature branch (stale-worktree with Phase 1)"
 
 	local tmpdir
 	tmpdir=$(mktemp -d)
@@ -339,23 +362,26 @@ test_stale_worktree_scenario() {
 	git -C "$work_repo" add impl.txt
 	git -C "$work_repo" commit -q -m "wip: implementation placeholder"
 
-	# Simulate two more claim-task-id.sh runs on origin/main (counter → 11 → 12)
-	printf '11' >"${base_repo}/.task-counter"
-	git -C "$base_repo" add .task-counter
-	git -C "$base_repo" commit -q -m "chore: claim t11 — counter=11"
-	printf '12' >"${base_repo}/.task-counter"
-	git -C "$base_repo" add .task-counter
-	git -C "$base_repo" commit -q -m "chore: claim t12 — counter=12"
+	# Simulate claim-task-id.sh runs ON THE FEATURE BRANCH (counter → 11 → 12).
+	# In the real framework, workers run claim-task-id.sh in their worktree, which
+	# appends the CAS claim commit to the current branch (not to origin/main).
+	# This allows _branch_has_claim() to find t11 and t12 in merge-base..HEAD.
+	printf '11' >"${work_repo}/.task-counter"
+	git -C "$work_repo" add .task-counter
+	git -C "$work_repo" commit -q -m "chore: claim t11 [test-nonce]"
+	printf '12' >"${work_repo}/.task-counter"
+	git -C "$work_repo" add .task-counter
+	git -C "$work_repo" commit -q -m "chore: claim t12 [test-nonce]"
 
-	# Fetch so work_repo's origin/main reflects counter=12
-	git -C "$work_repo" fetch -q origin 2>/dev/null
-
-	# Write a commit message referencing t11 and t12 (both legitimately claimed)
-	local msg="feat(t2109): implement stale-worktree fix t11 t12"
+	# Write a commit message referencing t11 and t12 (both legitimately claimed on branch).
+	# NOTE: the old message referenced t2109 which is a real framework task ID — using
+	# it here would trigger Phase 1 for t2109 (no branch claim for t2109 in the test repo).
+	# Keep the message to only reference t-IDs that have claim commits on this branch.
+	local msg="feat: implement stale-worktree fix for t11 t12"
 	local msg_file="${tmpdir}/COMMIT_EDITMSG"
 	printf '%s' "$msg" >"$msg_file"
 
-	# Stub gh to fail — guard must rely on counter comparison alone
+	# Stub gh to fail — guard must rely on branch claim + counter comparison
 	local fake_bin="${tmpdir}/bin"
 	mkdir -p "$fake_bin"
 	printf '#!/usr/bin/env bash\nexit 1\n' >"${fake_bin}/gh"
@@ -370,7 +396,7 @@ test_stale_worktree_scenario() {
 	if [[ "$rc" -eq 0 ]]; then
 		pass "$name"
 	else
-		fail "$name" "expected exit 0 (t11,t12 ≤ origin/main counter 12), got $rc"
+		fail "$name" "expected exit 0 (t11,t12 ≤ counter 12 and branch claims found), got $rc"
 	fi
 	return 0
 }
@@ -385,9 +411,10 @@ test_octal_trap_leading_zero_counter() {
 	# [[ "$val" -gt "$best" ]] which triggers bash's octal parser on the
 	# second comparison iteration (when $best is already "09").
 	# After the fix: ((10#$val > 10#$best)) forces decimal, so 9 ≤ 9 → allowed.
+	# Phase 1 (t2567): also requires "chore: claim t9 [...]" on the branch.
 	local msg="feat: implement GH#19667 t9"
 	local rc
-	_run_with_counter "$msg" "09"
+	_run_with_counter "$msg" "09" "no" "t9"
 	rc=$?
 	if [[ "$rc" -eq 0 ]]; then
 		pass "$name"
