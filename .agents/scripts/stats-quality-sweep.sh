@@ -1150,26 +1150,16 @@ _run_sweep_tools() {
 		qlty_smell_delta=$((qlty_smell_count - prev_qlty_smells))
 	fi
 
+	# Parse _sweep_sonarcloud's 5-field pipe-separated return. sonar_section
+	# is the only multi-line field, so strip it with ${..%%|*} (works on
+	# newlines) and IFS-split the single-line remainder into the 4 scalars.
+	# read(1) fills missing fields as empty, providing 4-field back-compat.
 	local sonar_section=""
 	local sonar_raw
 	sonar_raw=$(_sweep_sonarcloud "$repo_path")
 	if [[ -n "$sonar_raw" ]]; then
 		sonar_section="${sonar_raw%%|*}"
-		local sonar_remainder="${sonar_raw#*|}"
-		sweep_gate_status="${sonar_remainder%%|*}"
-		sonar_remainder="${sonar_remainder#*|}"
-		sweep_total_issues="${sonar_remainder%%|*}"
-		sonar_remainder="${sonar_remainder#*|}"
-		sweep_high_critical="${sonar_remainder%%|*}"
-		# t2717: sweep_sev_inline is the 5th field (per-severity summary).
-		# An old sweep binary may still emit 4 fields; in that case
-		# sonar_remainder has no remaining '|' and #*| returns unchanged,
-		# so sev_inline falls back to high_critical — detect and blank.
-		if [[ "$sonar_remainder" == *"|"* ]]; then
-			sweep_sev_inline="${sonar_remainder#*|}"
-		else
-			sweep_sev_inline=""
-		fi
+		IFS='|' read -r sweep_gate_status sweep_total_issues sweep_high_critical sweep_sev_inline <<<"${sonar_raw#*|}"
 		[[ -n "$sonar_section" ]] && tool_count=$((tool_count + 1))
 	fi
 
