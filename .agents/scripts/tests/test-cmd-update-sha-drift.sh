@@ -147,7 +147,22 @@ git -C "$SANDBOX_REPO" add -A
 git -C "$SANDBOX_REPO" commit -qm "update docs" 2>/dev/null
 HEAD_WITH_DOCS_SHA=$(git -C "$SANDBOX_REPO" rev-parse HEAD)
 
-if [[ -z "$DEPLOYED_SHA" || -z "$HEAD_SHA" || -z "$HEAD_WITH_DOCS_SHA" ]]; then
+# Add a setup.sh-only drift commit (per Gemini feedback on PR #20342:
+# setup.sh drift must trigger redeploy because it controls what gets deployed).
+printf '#!/usr/bin/env bash\necho setup v2\n' >"$SANDBOX_REPO/setup.sh"
+git -C "$SANDBOX_REPO" add -A
+git -C "$SANDBOX_REPO" commit -qm "update setup.sh" 2>/dev/null
+HEAD_WITH_SETUP_DRIFT_SHA=$(git -C "$SANDBOX_REPO" rev-parse HEAD)
+
+# Add an aidevops.sh-only drift commit (per Gemini feedback on PR #20342:
+# aidevops.sh is the deployed CLI entry point, drift must trigger redeploy).
+printf '#!/usr/bin/env bash\necho aidevops v2\n' >"$SANDBOX_REPO/aidevops.sh"
+git -C "$SANDBOX_REPO" add -A
+git -C "$SANDBOX_REPO" commit -qm "update aidevops.sh" 2>/dev/null
+HEAD_WITH_AIDEVOPS_DRIFT_SHA=$(git -C "$SANDBOX_REPO" rev-parse HEAD)
+
+if [[ -z "$DEPLOYED_SHA" || -z "$HEAD_SHA" || -z "$HEAD_WITH_DOCS_SHA" ||
+	-z "$HEAD_WITH_SETUP_DRIFT_SHA" || -z "$HEAD_WITH_AIDEVOPS_DRIFT_SHA" ]]; then
 	printf '%sSETUP FAILED%s sandbox repo SHAs empty\n' "$TEST_RED" "$TEST_RESET"
 	exit 1
 fi
@@ -180,6 +195,8 @@ run_cmd_update_stamp_branch() {
 	# Inline stamp check mirroring the t2706 addition in aidevops.sh cmd_update.
 	# This is a structural copy, not a source reference, because the logic lives
 	# inside a much larger function that is not safely sourceable.
+	# Pattern updated per Gemini code-review on PR #20342 to match aidevops.sh
+	# and auto-update-helper.sh (path filter + grep -q . + expanded path list).
 	HOME="$SANDBOX_HOME" bash -c '
 		set +e
 		INSTALL_DIR="'"$SANDBOX_REPO"'"
@@ -188,16 +205,12 @@ run_cmd_update_stamp_branch() {
 		if [[ -f "$stamp_file" ]]; then
 			deployed_sha=$(tr -d "[:space:]" <"$stamp_file" 2>/dev/null) || deployed_sha=""
 			if [[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]]; then
-				changed_files=$(git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" 2>/dev/null)
 				has_code_drift=0
-				while IFS= read -r filepath; do
-					case "$filepath" in
-					.agents/scripts/* | .agents/agents/* | .agents/workflows/* | .agents/prompts/* | .agents/hooks/*)
-						has_code_drift=1
-						break
-						;;
-					esac
-				done <<<"$changed_files"
+				if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- \
+					.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ \
+					setup.sh setup-modules/ aidevops.sh 2>/dev/null | grep -q .; then
+					has_code_drift=1
+				fi
 				if [[ "$has_code_drift" -eq 1 ]]; then
 					bash "$INSTALL_DIR/setup.sh" --non-interactive >/dev/null 2>&1
 				fi
@@ -249,6 +262,28 @@ if [[ "$(count_setup_calls)" -eq 0 ]]; then
 else
 	print_result "no-op when drift is docs-only" 1 \
 		"(setup.sh was called — docs-only drift should skip)"
+fi
+
+# Test 10: stamp lags HEAD with setup.sh drift → setup.sh fires
+# (Gemini PR #20342 feedback: setup.sh changes must trigger redeploy.)
+rm -f "$SETUP_CALLS_LOG"
+run_cmd_update_stamp_branch "$HEAD_WITH_DOCS_SHA" "$HEAD_WITH_SETUP_DRIFT_SHA"
+if [[ "$(count_setup_calls)" -eq 1 ]]; then
+	print_result "setup.sh fires when setup.sh itself drifts" 0
+else
+	print_result "setup.sh fires when setup.sh itself drifts" 1 \
+		"(expected 1 call, got $(count_setup_calls))"
+fi
+
+# Test 11: stamp lags HEAD with aidevops.sh drift → setup.sh fires
+# (Gemini PR #20342 feedback: aidevops.sh is deployed, drift must trigger redeploy.)
+rm -f "$SETUP_CALLS_LOG"
+run_cmd_update_stamp_branch "$HEAD_WITH_SETUP_DRIFT_SHA" "$HEAD_WITH_AIDEVOPS_DRIFT_SHA"
+if [[ "$(count_setup_calls)" -eq 1 ]]; then
+	print_result "setup.sh fires when aidevops.sh drifts" 0
+else
+	print_result "setup.sh fires when aidevops.sh drifts" 1 \
+		"(expected 1 call, got $(count_setup_calls))"
 fi
 
 # ---------------------------------------------------------------------------

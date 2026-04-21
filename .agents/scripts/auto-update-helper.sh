@@ -1335,16 +1335,16 @@ _cmd_check_stale_agent_redeploy() {
 		deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
 		head_sha=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null) || head_sha=""
 		if [[ -n "$deployed_sha" && -n "$head_sha" && "$deployed_sha" != "$head_sha" ]]; then
-			local changed_files has_code_drift=0
-			changed_files=$(git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$head_sha" 2>/dev/null) || changed_files=""
-			while IFS= read -r filepath; do
-				case "$filepath" in
-				.agents/scripts/* | .agents/agents/* | .agents/workflows/* | .agents/prompts/* | .agents/hooks/*)
-					has_code_drift=1
-					break
-					;;
-				esac
-			done <<<"$changed_files"
+			local has_code_drift=0
+			# Per Gemini code-review on PR #20342: use git's path filter +
+			# `grep -q .` to detect drift across the full set of deploy-affecting
+			# paths (not just .agents/ subdirs — also setup.sh, setup-modules/,
+			# and aidevops.sh itself, which are deployed/sourced by setup).
+			if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$head_sha" -- \
+				.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ \
+				setup.sh setup-modules/ aidevops.sh 2>/dev/null | grep -q .; then
+				has_code_drift=1
+			fi
 			if [[ "$has_code_drift" -eq 1 ]]; then
 				log_warn "Script drift detected (${deployed_sha:0:7}→${head_sha:0:7} at v$current) — re-deploying agents..."
 				if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
