@@ -1240,7 +1240,7 @@ GITATTRSEOF
 		echo "Your init commit is in the worktree above. To continue:"
 		echo "  cd $WORKTREE_PATH"
 		echo "  git push -u origin ${worktree_branch}"
-		echo "  gh pr create --fill"
+		echo "  gh pr create --fill" # aidevops-allow: raw-gh-wrapper
 		echo ""
 	fi
 	echo "Next steps:"
