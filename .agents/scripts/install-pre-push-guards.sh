@@ -258,6 +258,71 @@ HOOK_HEADER
 }
 
 #######################################
+# _resolve_install_guards — detect current guards, apply filter, merge, verify sources.
+# Args: _hook_path _guard_filter
+# Outputs to stdout: "INC_P INC_C INC_S INC_CR INSTALLED_LIST"
+#   INC_* are 0|1 for each guard; INSTALLED_LIST is space-separated guard names.
+# Warnings for missing sources are written to stderr (not captured by caller).
+# Returns 1 on unknown guard filter; 0 otherwise.
+#######################################
+_resolve_install_guards() {
+	local _hp="$1"
+	local _filter="$2"
+
+	# Detect currently-installed guards
+	local _cur_p=0 _cur_c=0 _cur_s=0 _cur_cr=0
+	if [[ -f "$_hp" ]]; then
+		grep -q "$HOOK_MARKER_PRIVACY"    "$_hp" 2>/dev/null && _cur_p=1
+		grep -q "$HOOK_MARKER_COMPLEXITY" "$_hp" 2>/dev/null && _cur_c=1
+		grep -q "$HOOK_MARKER_SCOPE"      "$_hp" 2>/dev/null && _cur_s=1
+		grep -q "$HOOK_MARKER_CREDENTIAL" "$_hp" 2>/dev/null && _cur_cr=1
+	fi
+
+	# Resolve which guards are wanted by the filter
+	local _want_p=0 _want_c=0 _want_s=0 _want_cr=0
+	case "$_filter" in
+	all)        _want_p=1; _want_c=1; _want_s=1; _want_cr=1 ;;
+	privacy)    _want_p=1 ;;
+	complexity) _want_c=1 ;;
+	scope)      _want_s=1 ;;
+	credential) _want_cr=1 ;;
+	*)
+		print_error "unknown guard: $_filter (valid: all, privacy, complexity, scope, credential)"
+		return 1
+		;;
+	esac
+
+	# Merge: keep existing + add requested
+	local _inc_p=0 _inc_c=0 _inc_s=0 _inc_cr=0
+	[[ "$_cur_p"  -eq 1 || "$_want_p"  -eq 1 ]] && _inc_p=1
+	[[ "$_cur_c"  -eq 1 || "$_want_c"  -eq 1 ]] && _inc_c=1
+	[[ "$_cur_s"  -eq 1 || "$_want_s"  -eq 1 ]] && _inc_s=1
+	[[ "$_cur_cr" -eq 1 || "$_want_cr" -eq 1 ]] && _inc_cr=1
+
+	# Verify sources; warn and omit guards with missing sources
+	local _list=""
+	if [[ "$_inc_p" -eq 1 ]]; then
+		if _find_hook_src privacy >/dev/null 2>&1; then _list="${_list}privacy "; else
+			print_warning "privacy hook source not found — omitting privacy guard"; _inc_p=0; fi
+	fi
+	if [[ "$_inc_c" -eq 1 ]]; then
+		if _find_hook_src complexity >/dev/null 2>&1; then _list="${_list}complexity "; else
+			print_warning "complexity hook source not found — omitting complexity guard"; _inc_c=0; fi
+	fi
+	if [[ "$_inc_s" -eq 1 ]]; then
+		if _find_hook_src scope >/dev/null 2>&1; then _list="${_list}scope "; else
+			print_warning "scope hook source not found — omitting scope guard"; _inc_s=0; fi
+	fi
+	if [[ "$_inc_cr" -eq 1 ]]; then
+		if _find_hook_src credential >/dev/null 2>&1; then _list="${_list}credential "; else
+			print_warning "credential hook source not found — omitting credential guard"; _inc_cr=0; fi
+	fi
+
+	printf '%d %d %d %d %s\n' "$_inc_p" "$_inc_c" "$_inc_s" "$_inc_cr" "${_list% }"
+	return 0
+}
+
+#######################################
 # cmd_install — install or refresh guard(s)
 #######################################
 cmd_install() {
@@ -290,70 +355,11 @@ cmd_install() {
 		return 1
 	fi
 
-	# Determine which guards are currently in the hook
-	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0
-	if [[ -f "$_hook_path" ]]; then
-		grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _cur_privacy=1
-		grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _cur_complexity=1
-		grep -q "$HOOK_MARKER_SCOPE" "$_hook_path" 2>/dev/null && _cur_scope=1
-		grep -q "$HOOK_MARKER_CREDENTIAL" "$_hook_path" 2>/dev/null && _cur_credential=1
-	fi
-
-	# Determine which guards to add based on filter
-	local _want_privacy=0 _want_complexity=0 _want_scope=0 _want_credential=0
-	case "$_guard_filter" in
-	all)        _want_privacy=1; _want_complexity=1; _want_scope=1; _want_credential=1 ;;
-	privacy)    _want_privacy=1 ;;
-	complexity) _want_complexity=1 ;;
-	scope)      _want_scope=1 ;;
-	credential) _want_credential=1 ;;
-	*)
-		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential)"
-		return 1
-		;;
-	esac
-
-	# Merge: keep existing + add requested
-	local _inc_privacy=0 _inc_complexity=0 _inc_scope=0 _inc_credential=0
-	[[ "$_cur_privacy" -eq 1 || "$_want_privacy" -eq 1 ]] && _inc_privacy=1
-	[[ "$_cur_complexity" -eq 1 || "$_want_complexity" -eq 1 ]] && _inc_complexity=1
-	[[ "$_cur_scope" -eq 1 || "$_want_scope" -eq 1 ]] && _inc_scope=1
-	[[ "$_cur_credential" -eq 1 || "$_want_credential" -eq 1 ]] && _inc_credential=1
-
-	# Verify sources exist; warn and omit guards whose source is missing
-	local _installed_list=""
-	if [[ "$_inc_privacy" -eq 1 ]]; then
-		if _find_hook_src privacy >/dev/null 2>&1; then
-			_installed_list="${_installed_list}privacy "
-		else
-			print_warning "privacy hook source not found — omitting privacy guard"
-			_inc_privacy=0
-		fi
-	fi
-	if [[ "$_inc_complexity" -eq 1 ]]; then
-		if _find_hook_src complexity >/dev/null 2>&1; then
-			_installed_list="${_installed_list}complexity "
-		else
-			print_warning "complexity hook source not found — omitting complexity guard"
-			_inc_complexity=0
-		fi
-	fi
-	if [[ "$_inc_scope" -eq 1 ]]; then
-		if _find_hook_src scope >/dev/null 2>&1; then
-			_installed_list="${_installed_list}scope "
-		else
-			print_warning "scope hook source not found — omitting scope guard"
-			_inc_scope=0
-		fi
-	fi
-	if [[ "$_inc_credential" -eq 1 ]]; then
-		if _find_hook_src credential >/dev/null 2>&1; then
-			_installed_list="${_installed_list}credential "
-		else
-			print_warning "credential hook source not found — omitting credential guard"
-			_inc_credential=0
-		fi
-	fi
+	# Resolve which guards to install (detect current + apply filter + verify sources)
+	local _flags
+	_flags=$(_resolve_install_guards "$_hook_path" "$_guard_filter") || return 1
+	local _inc_privacy _inc_complexity _inc_scope _inc_credential _installed_list
+	read -r _inc_privacy _inc_complexity _inc_scope _inc_credential _installed_list <<< "$_flags"
 
 	if [[ "$_inc_privacy" -eq 0 && "$_inc_complexity" -eq 0 && "$_inc_scope" -eq 0 && "$_inc_credential" -eq 0 ]]; then
 		print_warning "no guards to install (sources not found)"
