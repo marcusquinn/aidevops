@@ -15,7 +15,7 @@
 - **Session:** opencode:interactive (marcusquinn)
 - **Created by:** ai-interactive
 - **Parent task:** —
-- **Conversation context:** While cleaning 443 duplicate nudge comments from awardsapp after the v3.8.88 dedup fix, the agent posted a hallucinated signature footer (human-readable prose containing `aidevops.sh` but none of the runtime/version/model/token metadata that `gh-signature-helper.sh` emits). Investigation showed the plugin hook accepted any command string containing `aidevops.sh` as sufficient evidence of a valid footer, and raw `gh` on PATH bypasses the shell wrappers entirely. Both gaps allow hallucinated footers through.
+- **Conversation context:** While cleaning 443 duplicate nudge comments from webapp after the v3.8.88 dedup fix, the agent posted a hallucinated signature footer (human-readable prose containing `aidevops.sh` but none of the runtime/version/model/token metadata that `gh-signature-helper.sh` emits). Investigation showed the plugin hook accepted any command string containing `aidevops.sh` as sufficient evidence of a valid footer, and raw `gh` on PATH bypasses the shell wrappers entirely. Both gaps allow hallucinated footers through.
 
 ## What
 
@@ -131,7 +131,7 @@ Expected: all green; 12 shim tests, 32 signature-gate tests, 30 wrapper tests (n
 
 ### Canonical failure
 
-2026-04-21 cleanup session on awardsapp#2546 posted body: `"Successfully removed 75 duplicate \`<!-- parent-needs-decomposition -->\` nudge comments on this issue, retaining only the earliest legitimate one...\n\n— interactive cleanup from marcusquinn runtime."`
+2026-04-21 cleanup session on webapp#2546 posted body: `"Successfully removed 75 duplicate \`<!-- parent-needs-decomposition -->\` nudge comments on this issue, retaining only the earliest legitimate one...\n\n— interactive cleanup from marcusquinn runtime."`
 
 The literal `aidevops.sh` was nowhere; but the footer's absence was not detected because the prose was short enough that the hook didn't recognise it as a gh write without a sig — the prior hook's `cmd.includes("aidevops.sh")` logic happened to be the ONLY check, and this body didn't even contain that string. Under the t2685 hook, the command is either repaired transparently or blocked with an instructive error.
 

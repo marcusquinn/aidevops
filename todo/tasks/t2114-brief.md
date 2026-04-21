@@ -6,9 +6,9 @@
 
 - **Created:** 2026-04-15
 - **Session:** claude-code:interactive
-- **Created by:** ai-interactive (same awardsapp investigation as t2112)
+- **Created by:** ai-interactive (same webapp investigation as t2112)
 - **Parent task:** none
-- **Conversation context:** `issue-sync-helper.sh relationships` already syncs blocked-by and sub-issue hierarchy to GitHub — but it keys off `TODO.md` entries with `ref:GH#NNN`. An issue created outside the aidevops machinery (no TODO entry, no brief, no sync path) is invisible to this command even if its body clearly declares `Parent: tNNN` or dot-notation in the title. GH#18735 already added the `_gh_auto_link_sub_issue` hook to `gh_create_issue`, but only new issues created through that wrapper benefit — bare `gh issue create` still slips through. Existing labelless / unlinked issues on awardsapp (`t325.2` .. `t325.7` → parent `t325` / `#2385`) are the concrete backfill case; the same pattern will recur whenever a session bypasses the wrapper.
+- **Conversation context:** `issue-sync-helper.sh relationships` already syncs blocked-by and sub-issue hierarchy to GitHub — but it keys off `TODO.md` entries with `ref:GH#NNN`. An issue created outside the aidevops machinery (no TODO entry, no brief, no sync path) is invisible to this command even if its body clearly declares `Parent: tNNN` or dot-notation in the title. GH#18735 already added the `_gh_auto_link_sub_issue` hook to `gh_create_issue`, but only new issues created through that wrapper benefit — bare `gh issue create` still slips through. Existing labelless / unlinked issues on webapp (`t325.2` .. `t325.7` → parent `t325` / `#2385`) are the concrete backfill case; the same pattern will recur whenever a session bypasses the wrapper.
 
 ## What
 
@@ -26,7 +26,7 @@ New subcommand `issue-sync-helper.sh backfill-sub-issues [--repo SLUG] [--issue 
 
 ## Why
 
-The existing `cmd_relationships` is the TODO-driven entry point. `_gh_auto_link_sub_issue` is the wrapper-driven entry point. Neither handles the "issue already exists, no TODO, wrapper bypassed" case — which is exactly the awardsapp backfill we need to run.
+The existing `cmd_relationships` is the TODO-driven entry point. `_gh_auto_link_sub_issue` is the wrapper-driven entry point. Neither handles the "issue already exists, no TODO, wrapper bypassed" case — which is exactly the webapp backfill we need to run.
 
 Having a dedicated subcommand also makes it easy to invoke from `pulse-issue-reconcile.sh reconcile_labelless_aidevops_issues` (t2112) as a targeted one-issue call, closing the loop: reconcile detects the labelless child, calls `backfill-sub-issues --issue N`, parent-child link appears.
 
@@ -84,7 +84,7 @@ shellcheck .agents/scripts/issue-sync-helper.sh
 bash .agents/scripts/tests/test-backfill-sub-issues.sh
 
 # Real-world smoke test (after PR merges):
-issue-sync-helper.sh backfill-sub-issues --repo awardsapp/awardsapp --dry-run
+issue-sync-helper.sh backfill-sub-issues --repo webapp --dry-run
 # Expected: dry-run plan linking #2395..#2400 as sub-issues of #2385
 ```
 

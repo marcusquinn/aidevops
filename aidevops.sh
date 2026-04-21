@@ -769,7 +769,7 @@ _extract_todo_section() {
 
 # t2434: Filter stdin, removing only the literal Format-block placeholder IDs
 # (tXXX, tYYY, tZZZ). Real-world repos have historic IDs that don't follow the
-# strict t<digits> shape (e.g. "t059b", "t043-merge" from awardsapp) — we must
+# strict t<digits> shape (e.g. "t059b", "t043-merge" from webapp) — we must
 # preserve those. A blocklist is safer than an allowlist here: extraction
 # already skips the Format section, so the filter is a secondary guard rather
 # than primary validation.

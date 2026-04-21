@@ -139,15 +139,15 @@ test_partial_label_name_does_not_match() {
 	return 0
 }
 
-# Regression case representing the exact awardsapp #2294 scenario:
+# Regression case representing the exact webapp #2294 scenario:
 # real issue labels from the stuck queue.
-test_awardsapp_2294_scenario() {
+test_webapp_2294_scenario() {
 	local meta='{"number":2294,"labels":[{"name":"auto-dispatch"},{"name":"origin:worker"},{"name":"origin:interactive"},{"name":"review-followup"},{"name":"source:review-scanner"}]}'
 	if _is_bot_generated_cleanup_issue "$meta"; then
-		print_result "awardsapp #2294 label set triggers exemption" 0
+		print_result "webapp #2294 label set triggers exemption" 0
 		return 0
 	fi
-	print_result "awardsapp #2294 label set triggers exemption" 1 \
+	print_result "webapp #2294 label set triggers exemption" 1 \
 		"Expected exit 0: this is the exact stuck-queue scenario Fix 3a addresses"
 	return 0
 }
@@ -166,7 +166,7 @@ main() {
 	test_empty_meta_json
 	test_invalid_meta_json
 	test_partial_label_name_does_not_match
-	test_awardsapp_2294_scenario
+	test_webapp_2294_scenario
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

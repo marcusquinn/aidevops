@@ -476,7 +476,7 @@ _refresh_try_unblock_issue() {
 # issues whose block origin is clearly non-dep (body defer gate, worker
 # BLOCKED exit, watchdog kill, terminal blocker, human hold). The old
 # behaviour — blindly unblocking on dep resolution — wasted worker
-# budget on guaranteed-re-BLOCKED dispatches (awardsapp#2273).
+# budget on guaranteed-re-BLOCKED dispatches (webapp#2273).
 #
 # Returns: 0 always (non-fatal)
 #######################################
