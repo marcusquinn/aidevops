@@ -1542,3 +1542,167 @@ detect_parent_task_id() {
 	fi
 	return 0
 }
+
+# =============================================================================
+# t2698: Orphan TODO seeding helpers
+# =============================================================================
+
+# _orphan_insert_todo_line TODO_FILE LINE
+# Appends LINE at the end of the ## Backlog section (just before the next
+# heading), or at EOF when no Backlog section exists.
+# Mirrors _insert_todo_line from claim-task-id-issue.sh — kept here so
+# issue-sync-lib.sh stays self-contained (does not source claim-task-id).
+_orphan_insert_todo_line() {
+	local todo_file="$1"
+	local todo_line="$2"
+
+	local backlog_start
+	backlog_start=$(grep -nE '^## Backlog[[:space:]]*$' "$todo_file" 2>/dev/null \
+		| head -1 | cut -d: -f1 || true)
+
+	local tmp
+	tmp=$(mktemp)
+	if [[ -n "$backlog_start" ]]; then
+		local next_heading
+		next_heading=$(awk -v s="$backlog_start" \
+			'NR > s && /^## / {print NR; exit}' "$todo_file" 2>/dev/null || true)
+		if [[ -z "$next_heading" ]]; then
+			# Backlog is the last section — insert before trailing blank lines.
+			awk -v line="$todo_line" '
+				{ lines[NR] = $0 }
+				END {
+					last = NR
+					while (last > 0 && lines[last] == "") last--
+					for (i = 1; i <= last; i++) print lines[i]
+					print line
+					for (i = last + 1; i <= NR; i++) print lines[i]
+				}
+			' "$todo_file" >"$tmp"
+		else
+			# Insert just before the next heading.
+			awk -v nh="$next_heading" -v line="$todo_line" '
+				NR == nh { print line; print "" }
+				{ print }
+			' "$todo_file" >"$tmp"
+		fi
+	else
+		# No Backlog section — append at EOF.
+		cat "$todo_file" >"$tmp"
+		printf '\n%s\n' "$todo_line" >>"$tmp"
+	fi
+
+	if [[ -s "$tmp" ]]; then
+		mv "$tmp" "$todo_file"
+	else
+		rm -f "$tmp"
+	fi
+	return 0
+}
+
+# _seed_orphan_todo_line TASK_ID ISSUE_TITLE LABELS_JSON ISSUE_NUM TODO_FILE DRY_RUN
+#
+# t2698: Seeds a `- [ ]` entry in TODO.md for an open orphan GitHub issue.
+# An "orphan" is an open issue whose task ID is not yet in TODO.md.
+# Called by cmd_pull in issue-sync-helper.sh after orphan detection confirms
+# no matching line exists.
+#
+# Arguments:
+#   $1 - task_id      (e.g. "t2698")
+#   $2 - issue_title  (full title, e.g. "t2698: enhance issue-sync-helper.sh …")
+#   $3 - labels_json  (JSON array of label objects: '[{"name":"enhancement"},…]')
+#   $4 - issue_num    (e.g. "20327")
+#   $5 - todo_file    (path to TODO.md)
+#   $6 - dry_run      (pass "true" to suppress writes; default is non-dry-run)
+#
+# Returns:
+#   0  seeded (or dry-run would-seed message emitted to stderr)
+#   1  skipped (pre-condition not met: empty args, file missing, entry exists)
+#
+# Side effects (non-dry-run only):
+#   Appends `- [ ] {task_id} {desc} {#tags} ref:GH#{issue_num}` to the
+#   ## Backlog section of TODO.md (or EOF if no Backlog heading).
+#
+# Edge cases honoured:
+#   - parent-task label present → emits #parent tag, suppresses #auto-dispatch
+#   - Labels with status:*, tier:*, origin:*, dispatched:*, implemented:*,
+#     aidevops:*, source:* prefixes are skipped (not source-of-truth in TODO.md)
+#   - Labels sorted alphabetically so output is deterministic in tests
+#   - Idempotent: returns 1 without writing when entry already exists
+_seed_orphan_todo_line() {
+	local task_id="$1"
+	local issue_title="$2"
+	local labels_json="$3"
+	local issue_num="$4"
+	local todo_file="$5"
+	local dry_run="${6:-}"
+
+	[[ -z "$task_id" || -z "$issue_num" || -z "$todo_file" ]] && return 1
+	[[ ! -f "$todo_file" ]] && return 1
+
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+
+	# Idempotency: if any entry (open or closed) already exists, skip.
+	if grep -qE "^[[:space:]]*- \[.\] ${task_id_ere}( |$)" "$todo_file" 2>/dev/null; then
+		return 1
+	fi
+
+	# Build clean description: strip leading task-ID prefix "tNNN: " or "GH#NNN: ".
+	local clean_desc
+	clean_desc=$(printf '%s' "$issue_title" \
+		| sed -E 's/^t[0-9]+(\.[0-9]+)*:[[:space:]]*//' \
+		| sed -E 's/^GH#[0-9]+:[[:space:]]*//' \
+		| tr '\n\t' '  ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+	[[ -z "$clean_desc" ]] && clean_desc="(no description)"
+
+	# Check if parent-task label is present — suppresses auto-dispatch tag.
+	local has_parent_task=""
+	if printf '%s' "${labels_json:-[]}" | grep -q '"parent-task"' 2>/dev/null; then
+		has_parent_task="1"
+	fi
+
+	# Reverse-map GitHub labels to TODO.md tags.
+	# Labels are sorted alphabetically for deterministic output.
+	local tags_str=""
+	local label_names
+	label_names=$(printf '%s' "${labels_json:-[]}" \
+		| jq -r '.[].name' 2>/dev/null | sort || true)
+	local label
+	while IFS= read -r label; do
+		[[ -z "$label" ]] && continue
+		case "$label" in
+		# Skip labels that are derived server-side — not source-of-truth in TODO.md.
+		status:* | tier:* | origin:* | dispatched:* | implemented:* | aidevops:* | source:*)
+			continue ;;
+		# auto-dispatch: suppress when parent-task is present (parents are never dispatched).
+		auto-dispatch)
+			[[ -n "$has_parent_task" ]] && continue
+			tags_str="${tags_str:+${tags_str} }#auto-dispatch" ;;
+		# Forward-mapped labels: use canonical reverse form.
+		bug)           tags_str="${tags_str:+${tags_str} }#bug" ;;
+		enhancement)   tags_str="${tags_str:+${tags_str} }#feat" ;;
+		quality)       tags_str="${tags_str:+${tags_str} }#quality" ;;
+		git)           tags_str="${tags_str:+${tags_str} }#git" ;;
+		documentation) tags_str="${tags_str:+${tags_str} }#docs" ;;
+		parent-task)   tags_str="${tags_str:+${tags_str} }#parent" ;;
+		# Pass-through: use label name directly as tag.
+		*)             tags_str="${tags_str:+${tags_str} }#${label}" ;;
+		esac
+	done <<< "$label_names"
+
+	# Build the TODO line.
+	local todo_line="- [ ] ${task_id} ${clean_desc}"
+	[[ -n "$tags_str" ]] && todo_line="${todo_line} ${tags_str}"
+	todo_line="${todo_line} ref:GH#${issue_num}"
+
+	# Dry-run: emit proposed line to stderr and return success.
+	if [[ "$dry_run" == "true" ]]; then
+		printf 'would seed: %s\n' "$todo_line" >&2
+		return 0
+	fi
+
+	# Write: insert at end of Backlog section (or EOF).
+	_orphan_insert_todo_line "$todo_file" "$todo_line"
+	log_verbose "t2698: seeded TODO entry for ${task_id} (ref:GH#${issue_num})"
+	return 0
+}

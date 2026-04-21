@@ -116,7 +116,7 @@ _build_title() {
 gh_list_issues() {
 	local repo="$1" state="$2" limit="$3"
 	gh issue list --repo "$repo" --state "$state" --limit "$limit" \
-		--json number,title,assignees,state 2>/dev/null || echo "[]"
+		--json number,title,assignees,state,labels 2>/dev/null || echo "[]"
 }
 
 _gh_edit_labels() {
@@ -1311,6 +1311,7 @@ cmd_pull() {
 	print_info "Pulling issue refs from GitHub ($repo) to TODO.md..."
 
 	local synced=0 orphan_open=0 orphan_closed=0 assignee_synced=0 orphan_list=""
+	local orphan_seeded=0 orphan_skipped=0
 	local state
 	for state in open closed; do
 		local json
@@ -1320,7 +1321,14 @@ cmd_pull() {
 			num=$(echo "$issue_line" | jq -r '.number' 2>/dev/null || echo "")
 			title=$(echo "$issue_line" | jq -r '.title' 2>/dev/null || echo "")
 			tid=$(echo "$title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
-			[[ -z "$tid" ]] && continue
+			# t2698: log open issues with no parseable task-ID prefix and skip.
+			if [[ -z "$tid" ]]; then
+				if [[ "$state" == "open" ]]; then
+					log_verbose "ORPHAN (no task ID): #${num} — title has no tNNN: prefix, skipping"
+					orphan_skipped=$((orphan_skipped + 1))
+				fi
+				continue
+			fi
 			local tid_ere
 			tid_ere=$(_escape_ere "$tid")
 
@@ -1328,10 +1336,27 @@ cmd_pull() {
 			if ! grep -qE "^\s*- \[.\] ${tid_ere} .*ref:GH#${num}" "$todo_file" 2>/dev/null; then
 				if ! grep -qE "^\s*- \[.\] ${tid_ere} " "$todo_file" 2>/dev/null; then
 					if [[ "$state" == "open" ]]; then
-						print_warning "ORPHAN: #$num ($tid: $title) — no TODO.md entry"
+						# t2698: seed a TODO.md entry for this open orphan.
+						local labels_json
+						labels_json=$(echo "$issue_line" | jq -c '.labels // []' 2>/dev/null || echo "[]")
+						if _seed_orphan_todo_line \
+								"$tid" "$title" "$labels_json" "$num" "$todo_file" \
+								"${DRY_RUN:-false}"; then
+							if [[ "${DRY_RUN:-false}" == "true" ]]; then
+								print_info "[DRY-RUN] Would seed TODO entry for $tid (ref:GH#$num)"
+							else
+								print_success "Seeded TODO entry for $tid (ref:GH#$num)"
+							fi
+							orphan_seeded=$((orphan_seeded + 1))
+						else
+							print_warning "ORPHAN: #$num ($tid: $title) — no TODO.md entry (seed skipped)"
+							orphan_skipped=$((orphan_skipped + 1))
+						fi
 						orphan_open=$((orphan_open + 1))
 						orphan_list="${orphan_list:+$orphan_list, }#$num ($tid)"
-					else orphan_closed=$((orphan_closed + 1)); fi
+					else
+						orphan_closed=$((orphan_closed + 1))
+					fi
 					continue
 				fi
 				if [[ "$DRY_RUN" == "true" ]]; then
@@ -1385,9 +1410,11 @@ cmd_pull() {
 		done < <(echo "$json" | jq -c '.[]' 2>/dev/null || true)
 	done
 
-	printf "\n=== Pull Summary ===\nRefs synced: %d | Assignees: %d | Orphans open: %d closed: %d\n" \
-		"$synced" "$assignee_synced" "$orphan_open" "$orphan_closed"
-	[[ $orphan_open -gt 0 ]] && print_warning "Open orphans: $orphan_list"
+	# t2698: updated summary includes seeded/skipped counts for orphans.
+	printf "\n=== Pull Summary ===\nRefs synced: %d | Assignees: %d | Orphans seeded: %d skipped: %d\nOrphans open: %d closed: %d\n" \
+		"$synced" "$assignee_synced" "$orphan_seeded" "$orphan_skipped" \
+		"$orphan_open" "$orphan_closed"
+	[[ $orphan_open -gt 0 ]] && print_warning "Open orphans (total): $orphan_list"
 	[[ $synced -eq 0 && $assignee_synced -eq 0 && $orphan_open -eq 0 ]] && print_success "TODO.md refs up to date"
 }
 
