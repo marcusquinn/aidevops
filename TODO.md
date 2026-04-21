@@ -2893,3 +2893,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2718 Audit local -n nameref reachability for 6 files (zsh-source compatibility) #auto-dispatch #bug ref:GH#20303 ref:GH#20392
 
 - [ ] t2719 Fix setup/_tools.sh local -n nameref usages for zsh-source compatibility #auto-dispatch #bug ref:GH#20303 ref:GH#20393
+
+- [ ] t2720 commit-and-pr: prefer tNNN over GH#N in auto-derived PR title so issue-sync auto-completion fires #auto-dispatch #bug #framework ref:GH#20395
