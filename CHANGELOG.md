@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.87] - 2026-04-21
+
+### Changed
+
+- Maintenance: mark t2660 complete (pr:#20218 completed:2026-04-21) [skip ci]
+- route operational narration to stderr (#20218)
+- fix(claim-task-id): append TODO entry after verified issue creation to prevent orphans (#20213)
+- file narration-hygiene task (#20214)
+- Maintenance: mark t2559 complete (pr:#20209 completed:2026-04-21) [skip ci]
+- harden worktree cleanup against empty main_worktree_path (#20209)
+- integrate scope guard into install-pre-push-guards.sh (#20199)
+- Maintenance: mark t2450 complete (pr:#20200 completed:2026-04-21) [skip ci]
+- gate labelless-backfill on authorAssociation (#20200)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- review followup GH#20176 — pagination + word-boundary anchors (#20198)
+
 ## [3.8.86] - 2026-04-21
 
 ### Changed
