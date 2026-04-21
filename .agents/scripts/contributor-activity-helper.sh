@@ -44,6 +44,11 @@
 
 set -euo pipefail
 
+# t2458: source sanitize_url / scrub_credentials from shared-constants.sh.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck source=shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 # Distinct exit code for partial results (rate limit exhaustion mid-run).
 # Callers can distinguish "complete success" (0) from "valid but truncated" (75)
 # from "error" (1). 75 = EX_TEMPFAIL from sysexits.h — a temporary failure
@@ -1283,7 +1288,8 @@ _person_stats_get_slug() {
 	local slug
 	slug=$(echo "$remote_url" | sed -E 's#.*github\.com[:/]##; s/\.git$//')
 	if [[ -z "$slug" || "$slug" == "$remote_url" ]]; then
-		echo "Error: could not extract repo slug from $remote_url" >&2
+		# t2458: sanitize_url strips embedded credentials from remote URLs.
+		echo "Error: could not extract repo slug from $(sanitize_url "$remote_url")" >&2
 		return 1
 	fi
 	echo "$slug"

@@ -1566,7 +1566,8 @@ _main_output_results() {
 		local remote_url
 		remote_url=$(cd "$REPO_PATH" && git remote get-url "$REMOTE_NAME" 2>/dev/null | sed 's/\.git$//' || echo "")
 		if [[ -n "$remote_url" ]]; then
-			echo "issue_url=${remote_url}/issues/${first_issue_num}"
+			# t2458: sanitize_url strips embedded credentials (e.g., https://gho_…@…)
+			echo "issue_url=$(sanitize_url "$remote_url")/issues/${first_issue_num}"
 		fi
 		# Output refs for all issues in batch (new — for callers that parse all output)
 		if [[ "$ALLOC_COUNT" -gt 1 ]]; then

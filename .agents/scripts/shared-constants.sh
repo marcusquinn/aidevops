@@ -270,6 +270,51 @@ readonly TASK_RECONCILIATION_TERMINAL_STATES_SQL="'complete', 'deployed', 'verif
 readonly TASK_SIBLING_NON_ACTIVE_STATES_SQL="'verified','cancelled','deployed','complete','failed','blocked','queued'"
 
 # =============================================================================
+# Credential Sanitization (t2458)
+# =============================================================================
+# Defense against credential-bearing text leaking into stdout/stderr/logs.
+# The primary leak vector is `git remote get-url origin` when the remote URL
+# embeds a token (e.g., https://gho_ABC...@github.com/owner/repo.git) — any
+# helper that echoes $remote_url emits the token to the transcript, where it
+# may be captured by session loggers, sent upstream to model providers, or
+# surface in pasted bug reports.
+#
+# Two layers:
+#   scrub_credentials  — strips known token prefixes (sk-, ghp_, gho_, ghs_,
+#                        ghu_, github_pat_, glpat-, xoxb-, xoxp-) from any
+#                        text passed to it. Pure regex, no network.
+#   sanitize_url       — strips the `user:pass@` or `token@` authority from
+#                        URL-shaped strings, THEN pipes through
+#                        scrub_credentials to catch tokens embedded elsewhere
+#                        in the URL (query params, path segments).
+#
+# Always prefer sanitize_url for anything derived from `git remote get-url`,
+# `git config remote.*.url`, or user-supplied remote URLs. Use
+# scrub_credentials for arbitrary log lines or error messages where a URL
+# is not the only possible leak source.
+#
+# Usage:
+#   echo "Remote: $(sanitize_url "$remote_url")"
+#   log_error "fetch failed: $(scrub_credentials "$error_output")"
+
+scrub_credentials() {
+	local text="$1"
+	printf '%s' "$text" | sed -E 's/(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/[redacted-credential]/g'
+	return 0
+}
+
+sanitize_url() {
+	local url="$1"
+	local stripped
+	# Strip credential authority component: scheme://user:pass@host -> scheme://host
+	# Matches any scheme (http, https, git, ssh, etc.), any chars up to @.
+	stripped=$(printf '%s' "$url" | sed -E 's|^([a-zA-Z][a-zA-Z0-9+.-]*://)[^@/]+@|\1|')
+	# Second pass: catch tokens embedded elsewhere (query params, fragments).
+	scrub_credentials "$stripped"
+	return 0
+}
+
+# =============================================================================
 # Portable timeout function (macOS + Linux)
 # =============================================================================
 # macOS has no native `timeout` command. This function provides a portable

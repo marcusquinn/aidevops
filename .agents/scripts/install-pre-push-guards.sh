@@ -2,19 +2,22 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# install-pre-push-guards.sh — Install aidevops git pre-push hooks (t2198).
+# install-pre-push-guards.sh — Install aidevops git pre-push hooks (t2198, t2446, t2458).
 #
-# Manages three pre-push guards in the current repository:
+# Manages four pre-push guards in the current repository:
 #   - privacy-guard      blocks pushes leaking private repo slugs
 #   - complexity-guard   blocks pushes introducing complexity regressions
 #   - scope-guard        blocks pushes touching files outside the brief's Files Scope
+#   - credential-guard   blocks pushes emitting unsanitised remote URLs (t2458)
 #
 # Usage:
 #   install-pre-push-guards.sh install [--guard <name>]
-#         Install (or refresh) guard(s). --guard: privacy|complexity|scope|all (default: all)
+#         Install (or refresh) guard(s).
+#         --guard: privacy|complexity|scope|credential|all (default: all)
 #
 #   install-pre-push-guards.sh uninstall [--guard <name>]
-#         Remove guard entry/entries. --guard: privacy|complexity|scope|all (default: all)
+#         Remove guard entry/entries.
+#         --guard: privacy|complexity|scope|credential|all (default: all)
 #
 #   install-pre-push-guards.sh status
 #         Report which guards are present and their hook source locations.
@@ -28,6 +31,7 @@
 #   PRIVACY_GUARD_DISABLE=1       skip privacy check for this push
 #   COMPLEXITY_GUARD_DISABLE=1    skip complexity check for this push
 #   SCOPE_GUARD_DISABLE=1         skip scope check for this push
+#   CREDENTIAL_GUARD_DISABLE=1    skip credential check for this push
 #   git push --no-verify          skip all hooks
 
 set -euo pipefail
@@ -65,10 +69,12 @@ HOOK_MARKER_MANAGED="# aidevops-pre-push-guards"
 HOOK_MARKER_PRIVACY="# guard:privacy"
 HOOK_MARKER_COMPLEXITY="# guard:complexity"
 HOOK_MARKER_SCOPE="# guard:scope"
+HOOK_MARKER_CREDENTIAL="# guard:credential"
 
 DEPLOYED_PRIVACY_HOOK="$HOME/.aidevops/agents/hooks/privacy-guard-pre-push.sh"
 DEPLOYED_COMPLEXITY_HOOK="$HOME/.aidevops/agents/hooks/complexity-regression-pre-push.sh"
 DEPLOYED_SCOPE_HOOK="$HOME/.aidevops/agents/hooks/scope-guard-pre-push.sh"
+DEPLOYED_CREDENTIAL_HOOK="$HOME/.aidevops/agents/hooks/credential-emission-pre-push.sh"
 
 #######################################
 # Resolve the script's own directory (symlink-safe).
@@ -106,6 +112,10 @@ _find_hook_src() {
 	scope)
 		_repo_hook="${_sd}/../hooks/scope-guard-pre-push.sh"
 		_deployed_hook="$DEPLOYED_SCOPE_HOOK"
+		;;
+	credential)
+		_repo_hook="${_sd}/../hooks/credential-emission-pre-push.sh"
+		_deployed_hook="$DEPLOYED_CREDENTIAL_HOOK"
 		;;
 	*)
 		print_error "_find_hook_src: unknown guard: $_guard"
@@ -195,7 +205,7 @@ GUARD_BLOCK
 
 #######################################
 # Write (or rewrite) the dispatcher hook.
-# Args: _hook_path _inc_privacy(0|1) _inc_complexity(0|1) _inc_scope(0|1)
+# Args: _hook_path _inc_privacy _inc_complexity _inc_scope _inc_credential (0|1 each)
 #
 # The generated script reads all stdin once, then pipes it to each
 # installed guard hook. Each guard receives (remote_name, remote_url)
@@ -206,6 +216,7 @@ _write_dispatcher() {
 	local _inc_privacy="$2"
 	local _inc_complexity="$3"
 	local _inc_scope="${4:-0}"
+	local _inc_credential="${5:-0}"
 
 	mkdir -p "$(dirname "$_hook_path")"
 
@@ -216,7 +227,8 @@ _write_dispatcher() {
 # Managed by .agents/scripts/install-pre-push-guards.sh — do not edit.
 # Chains installed aidevops pre-push guards in order.
 # Bypass all:  git push --no-verify
-# Bypass each: PRIVACY_GUARD_DISABLE=1  or  COMPLEXITY_GUARD_DISABLE=1  or  SCOPE_GUARD_DISABLE=1
+# Bypass each: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1,
+#              SCOPE_GUARD_DISABLE=1, or CREDENTIAL_GUARD_DISABLE=1
 
 set -u
 
@@ -235,6 +247,8 @@ HOOK_HEADER
 		"complexity" ".agents/hooks/complexity-regression-pre-push.sh" "$DEPLOYED_COMPLEXITY_HOOK"
 	[[ "$_inc_scope" -eq 1 ]] && _append_guard_block "$_hook_path" \
 		"scope" ".agents/hooks/scope-guard-pre-push.sh" "$DEPLOYED_SCOPE_HOOK"
+	[[ "$_inc_credential" -eq 1 ]] && _append_guard_block "$_hook_path" \
+		"credential" ".agents/hooks/credential-emission-pre-push.sh" "$DEPLOYED_CREDENTIAL_HOOK"
 
 	# Single-quoted to write literal $-vars into the generated script (not expand here)
 	# shellcheck disable=SC2016
@@ -269,7 +283,7 @@ cmd_install() {
 		print_error "existing pre-push hook at $_hook_path is NOT managed by aidevops"
 		print_error "Refusing to overwrite. To chain manually, add each guard to your hook:"
 		local _gh
-		for _gh in "privacy-guard-pre-push.sh" "complexity-regression-pre-push.sh" "scope-guard-pre-push.sh"; do
+		for _gh in "privacy-guard-pre-push.sh" "complexity-regression-pre-push.sh" "scope-guard-pre-push.sh" "credential-emission-pre-push.sh"; do
 			# shellcheck disable=SC2016
 			print_error '  ${REPO}/.agents/hooks/'"$_gh"' "$@" < /dev/stdin'
 		done
@@ -277,31 +291,34 @@ cmd_install() {
 	fi
 
 	# Determine which guards are currently in the hook
-	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0
+	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0
 	if [[ -f "$_hook_path" ]]; then
 		grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _cur_privacy=1
 		grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _cur_complexity=1
 		grep -q "$HOOK_MARKER_SCOPE" "$_hook_path" 2>/dev/null && _cur_scope=1
+		grep -q "$HOOK_MARKER_CREDENTIAL" "$_hook_path" 2>/dev/null && _cur_credential=1
 	fi
 
 	# Determine which guards to add based on filter
-	local _want_privacy=0 _want_complexity=0 _want_scope=0
+	local _want_privacy=0 _want_complexity=0 _want_scope=0 _want_credential=0
 	case "$_guard_filter" in
-	all)        _want_privacy=1; _want_complexity=1; _want_scope=1 ;;
+	all)        _want_privacy=1; _want_complexity=1; _want_scope=1; _want_credential=1 ;;
 	privacy)    _want_privacy=1 ;;
 	complexity) _want_complexity=1 ;;
 	scope)      _want_scope=1 ;;
+	credential) _want_credential=1 ;;
 	*)
-		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope)"
+		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential)"
 		return 1
 		;;
 	esac
 
 	# Merge: keep existing + add requested
-	local _inc_privacy=0 _inc_complexity=0 _inc_scope=0
+	local _inc_privacy=0 _inc_complexity=0 _inc_scope=0 _inc_credential=0
 	[[ "$_cur_privacy" -eq 1 || "$_want_privacy" -eq 1 ]] && _inc_privacy=1
 	[[ "$_cur_complexity" -eq 1 || "$_want_complexity" -eq 1 ]] && _inc_complexity=1
 	[[ "$_cur_scope" -eq 1 || "$_want_scope" -eq 1 ]] && _inc_scope=1
+	[[ "$_cur_credential" -eq 1 || "$_want_credential" -eq 1 ]] && _inc_credential=1
 
 	# Verify sources exist; warn and omit guards whose source is missing
 	local _installed_list=""
@@ -329,17 +346,25 @@ cmd_install() {
 			_inc_scope=0
 		fi
 	fi
+	if [[ "$_inc_credential" -eq 1 ]]; then
+		if _find_hook_src credential >/dev/null 2>&1; then
+			_installed_list="${_installed_list}credential "
+		else
+			print_warning "credential hook source not found — omitting credential guard"
+			_inc_credential=0
+		fi
+	fi
 
-	if [[ "$_inc_privacy" -eq 0 && "$_inc_complexity" -eq 0 && "$_inc_scope" -eq 0 ]]; then
+	if [[ "$_inc_privacy" -eq 0 && "$_inc_complexity" -eq 0 && "$_inc_scope" -eq 0 && "$_inc_credential" -eq 0 ]]; then
 		print_warning "no guards to install (sources not found)"
 		return 0
 	fi
 
-	_write_dispatcher "$_hook_path" "$_inc_privacy" "$_inc_complexity" "$_inc_scope"
+	_write_dispatcher "$_hook_path" "$_inc_privacy" "$_inc_complexity" "$_inc_scope" "$_inc_credential"
 	print_success "installed pre-push guards: ${_installed_list% }"
 	print_info "hook: $_hook_path"
 	print_info "bypass all: git push --no-verify"
-	print_info "bypass individual: PRIVACY_GUARD_DISABLE=1 or COMPLEXITY_GUARD_DISABLE=1 or SCOPE_GUARD_DISABLE=1"
+	print_info "bypass individual: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1, SCOPE_GUARD_DISABLE=1, or CREDENTIAL_GUARD_DISABLE=1"
 	return 0
 }
 
@@ -381,26 +406,28 @@ cmd_uninstall() {
 	fi
 
 	# Remove one guard: read current state, rebuild without the removed guard
-	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0
+	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0
 	grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _cur_privacy=1
 	grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _cur_complexity=1
 	grep -q "$HOOK_MARKER_SCOPE" "$_hook_path" 2>/dev/null && _cur_scope=1
+	grep -q "$HOOK_MARKER_CREDENTIAL" "$_hook_path" 2>/dev/null && _cur_credential=1
 
 	case "$_guard_filter" in
 	privacy)    _cur_privacy=0 ;;
 	complexity) _cur_complexity=0 ;;
 	scope)      _cur_scope=0 ;;
+	credential) _cur_credential=0 ;;
 	*)
 		print_error "unknown guard: $_guard_filter"
 		return 1
 		;;
 	esac
 
-	if [[ "$_cur_privacy" -eq 0 && "$_cur_complexity" -eq 0 && "$_cur_scope" -eq 0 ]]; then
+	if [[ "$_cur_privacy" -eq 0 && "$_cur_complexity" -eq 0 && "$_cur_scope" -eq 0 && "$_cur_credential" -eq 0 ]]; then
 		rm -f "$_hook_path"
 		print_success "removed last guard — hook deleted"
 	else
-		_write_dispatcher "$_hook_path" "$_cur_privacy" "$_cur_complexity" "$_cur_scope"
+		_write_dispatcher "$_hook_path" "$_cur_privacy" "$_cur_complexity" "$_cur_scope" "$_cur_credential"
 		print_success "removed $_guard_filter guard from hook"
 	fi
 	return 0
@@ -427,45 +454,36 @@ cmd_status() {
 	printf 'pre-push hook: installed (aidevops managed)\n'
 	printf '  path: %s\n' "$_hook_path"
 
-	local _has_privacy=0 _has_complexity=0 _has_scope=0
+	local _has_privacy=0 _has_complexity=0 _has_scope=0 _has_credential=0
 	grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _has_privacy=1
 	grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _has_complexity=1
 	grep -q "$HOOK_MARKER_SCOPE" "$_hook_path" 2>/dev/null && _has_scope=1
+	grep -q "$HOOK_MARKER_CREDENTIAL" "$_hook_path" 2>/dev/null && _has_credential=1
 
-	if [[ "$_has_privacy" -eq 1 ]]; then
+	_status_report_guard "privacy"    "$_has_privacy"
+	_status_report_guard "complexity" "$_has_complexity"
+	_status_report_guard "scope"      "$_has_scope"
+	_status_report_guard "credential" "$_has_credential"
+	return 0
+}
+
+#######################################
+# _status_report_guard — print one guard's status line.
+# Args: guard_name has_flag(0|1)
+#######################################
+_status_report_guard() {
+	local _name="$1"
+	local _has="$2"
+	if [[ "$_has" -eq 1 ]]; then
 		local _src=""
-		_src=$(_find_hook_src privacy 2>/dev/null || true)
+		_src=$(_find_hook_src "$_name" 2>/dev/null || true)
 		if [[ -n "$_src" ]]; then
-			printf '  guard privacy:    ENABLED  (%s)\n' "$_src"
+			printf '  guard %-10s ENABLED  (%s)\n' "$_name:" "$_src"
 		else
-			printf '  guard privacy:    ENABLED  (source not found — will fail-open)\n'
+			printf '  guard %-10s ENABLED  (source not found — will fail-open)\n' "$_name:"
 		fi
 	else
-		printf '  guard privacy:    not installed\n'
-	fi
-
-	if [[ "$_has_complexity" -eq 1 ]]; then
-		local _src=""
-		_src=$(_find_hook_src complexity 2>/dev/null || true)
-		if [[ -n "$_src" ]]; then
-			printf '  guard complexity: ENABLED  (%s)\n' "$_src"
-		else
-			printf '  guard complexity: ENABLED  (source not found — will fail-open)\n'
-		fi
-	else
-		printf '  guard complexity: not installed\n'
-	fi
-
-	if [[ "$_has_scope" -eq 1 ]]; then
-		local _src=""
-		_src=$(_find_hook_src scope 2>/dev/null || true)
-		if [[ -n "$_src" ]]; then
-			printf '  guard scope:      ENABLED  (%s)\n' "$_src"
-		else
-			printf '  guard scope:      ENABLED  (source not found — will fail-open)\n'
-		fi
-	else
-		printf '  guard scope:      not installed\n'
+		printf '  guard %-10s not installed\n' "$_name:"
 	fi
 	return 0
 }

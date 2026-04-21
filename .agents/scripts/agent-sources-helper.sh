@@ -439,7 +439,8 @@ cmd_status() {
 
 		echo "  ${name}:"
 		echo "    Path:        ${path/#${HOME}/~}"
-		[[ -n "${remote_url}" ]] && echo "    Remote:      ${remote_url}"
+		# t2458: sanitize_url strips embedded credentials from remote URLs.
+		[[ -n "${remote_url}" ]] && echo "    Remote:      $(sanitize_url "${remote_url}")"
 		echo "    Last synced: ${synced:-never}"
 
 		# Check if path exists

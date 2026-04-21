@@ -250,7 +250,8 @@ cmd_check() {
 	fi
 
 	echo "Repository: $repo_path"
-	echo "Remote URL: $remote_url"
+	# t2458: sanitize_url strips embedded credentials from remote URLs.
+	echo "Remote URL: $(sanitize_url "$remote_url")"
 	echo "Platform:   $remote_type"
 	echo ""
 
@@ -272,7 +273,8 @@ cmd_check() {
 		;;
 	*)
 		print_warning "Unknown git platform"
-		echo "  Remote URL: $remote_url"
+		# t2458: sanitize_url strips embedded credentials from remote URLs.
+		echo "  Remote URL: $(sanitize_url "$remote_url")"
 		;;
 	esac
 	return 0
