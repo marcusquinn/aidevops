@@ -10,6 +10,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.88] - 2026-04-21
+
+### Added
+
+- revert t2449 false-completion + add planning-pr keyword CI guard (#20238)
+
+### Changed
+
+- auto-restart pulse on aidevops update and setup.sh (#20289)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2570 complete (pr:#20285 completed:2026-04-21) [skip ci]
+- add empty-compare-scanner.sh to detect derived-var comparison foot-gun (#20285)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2449 complete (pr:#20283 completed:2026-04-21) [skip ci]
+- symmetric auto-merge for maintainer-briefed origin:worker PRs (#20283)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2564 complete (pr:#20279 completed:2026-04-21) [skip ci]
+- docs(opencode): document project_id drift and /sessions session visibility recovery (#20279)
+- correct Files Scope heading level to ### in brief template (#20280)
+- update test-pulse-parent-nudge.sh tests 3 & 4 to match current gh api patterns (#20282)
+- reduce cmd_install complexity by extracting arg-parse and hook-reject helpers (#20277)
+- fix cleanup and fail-closed assertion in test-scope-guard-pre-push.sh (#20270)
+- reformat daily scan stages to multi-line style in _run_preflight_stages (#20271)
+- export TMP and INFO_LOG vars alongside stub functions in test-override-flags.sh (#20276)
+- remove 2>/dev/null from gh api idempotency check in issue-sync-lib.sh (#20275)
+- fix _decompose_issue_exists to use --paginate and jq --arg (#20274)
+- fix ambiguous Muvera storage comparison language in vector-search.md (#20272)
+- Documentation: condense Files Scope field entry and convert Worker-ready heuristic to list item in AGENTS.md (#20269)
+- add mkdir-based local mutex around claim-task-id CAS loop (#20262)
+- harden collision guard with branch-claim detection (Phase 1 of GH#20001)
+- add transcript-side credential scrub (t2458 Layer 4) (#20266)
+- Maintenance: update simplification state registry
+- tighten auto-decomposer gating: per-parent interval + 6h fresh-parent threshold (#20264)
+- Maintenance: mark t2578 complete (pr:#20263 completed:2026-04-21) [skip ci]
+- fix release_instance_lock double-release removing new owner's lock (#20263)
+- remove unsupported reviewDecision field from gh search prs calls (#20261)
+- fix privacy-guard remote name hardcoding and HEAD fallback bypass (#20256)
+- add structured audit log for CAS claims (#20257)
+- Maintenance: sync t2576 from pulse + add t2577, t2578 follow-up entries
+- Maintenance: update simplification state registry
+- add REST fallback for GraphQL-exhausted gh issue wrappers (#20255)
+- clarify Files Scope requires repository-root-relative paths with traversal risk warning (#20251)
+- fix _compute_baseline — separate local, add HEAD fallback, propagate exit code (#20253)
+- Maintenance: update simplification state registry
+- fix gh api --slurp --jq anti-pattern causing duplicate parent-decomposition nudge comments (#20249)
+- add TODO entry for opencode project_id drift docs (#20232)
+- isolate CAS push/fetch stdout from pre-push hook narration (#20248)
+- Maintenance: update simplification state registry
+- Maintenance: file t2559 follow-ups — empty-compare scanner (t2570) + dated cleanup (t2571) (#20245)
+- split claim-task-id.sh into counter and issue sub-libraries (#20247)
+- Maintenance: mark t2458 complete (pr:#20210 completed:2026-04-21) [skip ci]
+- prevent credential-bearing URLs in helper output (#20210)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- fail-closed when brief exists but lacks Files Scope section (#20252)
+- dispatch safety bypass + nudge loop on parent-task issues (3 factors) (#20246)
+
 ## [3.8.87] - 2026-04-21
 
 ### Changed
