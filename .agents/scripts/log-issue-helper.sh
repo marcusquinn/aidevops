@@ -182,6 +182,123 @@ search_issues() {
 	return 0
 }
 
+# =============================================================================
+# Issue Fingerprint Deduplication (GH#20322)
+# =============================================================================
+# Prevents duplicate filings from the same or subsequent sessions within a
+# configurable time window.
+#
+# State file: ~/.aidevops/state/log-issue-fingerprints.jsonl
+# Each line:  {"hash":"<sha256>","issue":<number>,"filed_at":"<ISO8601>","filed_epoch":<epoch>}
+#
+# Env var:    LOG_ISSUE_DEDUP_WINDOW_SECONDS  (default: 120)
+# =============================================================================
+
+_log_issue_fingerprint_file() {
+	echo "${HOME}/.aidevops/state/log-issue-fingerprints.jsonl"
+	return 0
+}
+
+_log_issue_dedup_window() {
+	echo "${LOG_ISSUE_DEDUP_WINDOW_SECONDS:-120}"
+	return 0
+}
+
+_compute_issue_fingerprint() {
+	local title="$1"
+	local body="$2"
+	local input="${title}${body}"
+	local hash=""
+
+	if command -v shasum &>/dev/null; then
+		hash=$(printf '%s' "$input" | shasum -a 256 | awk '{print $1}')
+	elif command -v sha256sum &>/dev/null; then
+		hash=$(printf '%s' "$input" | sha256sum | awk '{print $1}')
+	elif command -v openssl &>/dev/null; then
+		hash=$(printf '%s' "$input" | openssl dgst -sha256 | awk '{print $NF}')
+	else
+		# Fallback: cksum — not cryptographic but sufficient for dedup within a session
+		hash=$(printf '%s' "$input" | cksum | awk '{print $1}')
+	fi
+
+	echo "$hash"
+	return 0
+}
+
+# check_recent_filing <title> <body>
+# Exits 0 and prints "OK" if no duplicate is found within the dedup window.
+# Exits 1 and prints "DUPLICATE:<issue_number>:<seconds_ago>" if a match is found.
+check_recent_filing() {
+	local title="$1"
+	local body="$2"
+	local fp_file
+	fp_file=$(_log_issue_fingerprint_file)
+	local dedup_window
+	dedup_window=$(_log_issue_dedup_window)
+
+	if [[ ! -f "$fp_file" ]]; then
+		echo "OK"
+		return 0
+	fi
+
+	local fingerprint
+	fingerprint=$(_compute_issue_fingerprint "$title" "$body")
+
+	local now
+	now=$(date +%s)
+	local cutoff
+	cutoff=$(( now - dedup_window ))
+
+	local line hash issue_num filed_epoch age
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		hash=$(printf '%s' "$line" | grep -oE '"hash":"[a-f0-9]+"' | cut -d'"' -f4 || true)
+		issue_num=$(printf '%s' "$line" | grep -oE '"issue":[0-9]+' | grep -oE '[0-9]+' || true)
+		filed_epoch=$(printf '%s' "$line" | grep -oE '"filed_epoch":[0-9]+' | grep -oE '[0-9]+' || true)
+
+		[[ -z "$hash" ]] && continue
+		[[ -z "$issue_num" ]] && continue
+		[[ -z "$filed_epoch" ]] && continue
+
+		if [[ "$hash" == "$fingerprint" ]] && [[ "$filed_epoch" -gt "$cutoff" ]]; then
+			age=$(( now - filed_epoch ))
+			echo "DUPLICATE:${issue_num}:${age}"
+			return 1
+		fi
+	done < "$fp_file"
+
+	echo "OK"
+	return 0
+}
+
+# record_filing <title> <body> <issue_number>
+# Appends a fingerprint record to the state file.
+record_filing() {
+	local title="$1"
+	local body="$2"
+	local issue_number="$3"
+
+	local fp_file
+	fp_file=$(_log_issue_fingerprint_file)
+	local state_dir
+	state_dir=$(dirname "$fp_file")
+	mkdir -p "$state_dir"
+
+	local fingerprint
+	fingerprint=$(_compute_issue_fingerprint "$title" "$body")
+
+	local now
+	now=$(date +%s)
+	local iso_ts
+	iso_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown")
+
+	printf '{"hash":"%s","issue":%s,"filed_at":"%s","filed_epoch":%s}\n' \
+		"$fingerprint" "$issue_number" "$iso_ts" "$now" >> "$fp_file"
+
+	echo "[INFO] Fingerprint recorded for issue #${issue_number} in ${fp_file}"
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Reproducer Prompt (t2410)
 # Outputs the section template the agent uses to prompt the user for
@@ -303,6 +420,28 @@ main() {
 		fi
 		validate_brief_has_reproducer "$body_or_file"
 		;;
+	check-fingerprint)
+		# Check if an identical issue was filed within the dedup window.
+		# Prints "OK" (exit 0) or "DUPLICATE:<number>:<seconds_ago>" (exit 1).
+		local title="${2:-}"
+		local body="${3:-}"
+		if [[ -z "$title" ]]; then
+			echo "Usage: log-issue-helper.sh check-fingerprint \"title\" \"body\"" >&2
+			return 1
+		fi
+		check_recent_filing "$title" "$body"
+		;;
+	record-fingerprint)
+		# Record a fingerprint after a successful issue creation.
+		local title="${2:-}"
+		local body="${3:-}"
+		local issue_number="${4:-}"
+		if [[ -z "$title" ]] || [[ -z "$issue_number" ]]; then
+			echo "Usage: log-issue-helper.sh record-fingerprint \"title\" \"body\" \"issue_number\"" >&2
+			return 1
+		fi
+		record_filing "$title" "$body" "$issue_number"
+		;;
 	help | --help | -h)
 		cat <<EOF
 aidevops Issue Logger Helper
@@ -310,12 +449,14 @@ aidevops Issue Logger Helper
 Usage: log-issue-helper.sh [command]
 
 Commands:
-  diagnostics            Gather system and aidevops diagnostic info (default)
-  check-auth             Verify GitHub CLI authentication
-  search "query"         Search existing issues for duplicates
-  prompt-reproducer      Output the reproducer section template for framework bugs
-  validate-brief <file>  Validate that a brief body contains required sections
-  help                   Show this help message
+  diagnostics                          Gather system and aidevops diagnostic info (default)
+  check-auth                           Verify GitHub CLI authentication
+  search "query"                       Search existing issues for duplicates
+  prompt-reproducer                    Output the reproducer section template for framework bugs
+  validate-brief <file>                Validate that a brief body contains required sections
+  check-fingerprint "title" "body"     Dedup check: prints OK or DUPLICATE:<num>:<secs_ago>
+  record-fingerprint "title" "body" N  Record fingerprint after issue #N was created
+  help                                 Show this help message
 
 Examples:
   log-issue-helper.sh diagnostics
@@ -323,6 +464,8 @@ Examples:
   log-issue-helper.sh search "update check"
   log-issue-helper.sh prompt-reproducer
   log-issue-helper.sh validate-brief /tmp/issue-body.md
+  log-issue-helper.sh check-fingerprint "bug: foo" "\$body_text"
+  log-issue-helper.sh record-fingerprint "bug: foo" "\$body_text" 20312
 EOF
 		;;
 	*)
