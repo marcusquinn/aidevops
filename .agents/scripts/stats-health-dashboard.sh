@@ -90,6 +90,101 @@ _list_health_issues_by_role_label() {
 # Output: issue number to stdout, or empty string (confirmed-not-found),
 #         or "__QUERY_FAILED__" (caller must skip creation this cycle).
 #######################################
+# Validate a cached health-issue number: check it still exists and is OPEN.
+# Returns (via stdout):
+#   - the cached number if still valid
+#   - empty if the cache entry points to a CLOSED issue (caller should re-resolve)
+#   - $_HEALTH_QUERY_FAILED_SENTINEL if `gh issue view` failed (rate-limit/network)
+# Side effects: removes the cache file on CLOSED state, unpins on CLOSED supervisor.
+_try_cached_health_issue_lookup() {
+	local health_issue_file="$1"
+	local repo_slug="$2"
+	local runner_role="$3"
+
+	[[ ! -f "$health_issue_file" ]] && return 0  # empty stdout
+
+	local cached_number
+	cached_number=$(cat "$health_issue_file" 2>/dev/null || echo "")
+	[[ -z "$cached_number" ]] && return 0
+
+	local issue_state rc=0
+	issue_state=$(gh issue view "$cached_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null) || rc=$?
+
+	if [[ $rc -ne 0 ]]; then
+		# Query failed (rate limit, network, API 5xx). Preserve cache and return
+		# it — caller still points to a valid-as-far-as-we-know issue.
+		echo "[stats] Health issue: cache validation failed for #${cached_number} in ${repo_slug} (rc=${rc}) — preserving cache" >>"${LOGFILE:-/dev/null}"
+		echo "$cached_number"
+		return 0
+	fi
+
+	if [[ "$issue_state" == "CLOSED" ]]; then
+		[[ "$runner_role" == "supervisor" ]] && _unpin_health_issue "$cached_number" "$repo_slug"
+		rm -f "$health_issue_file" 2>/dev/null || true
+		return 0  # empty → caller re-resolves
+	fi
+
+	if [[ "$issue_state" != "OPEN" ]]; then
+		# Unexpected state (empty, unknown enum). Preserve cache defensively.
+		echo "[stats] Health issue: unexpected state '${issue_state}' for #${cached_number} in ${repo_slug} — preserving cache" >>"${LOGFILE:-/dev/null}"
+		echo "$cached_number"
+		return 0
+	fi
+
+	echo "$cached_number"
+	return 0
+}
+
+#######################################
+# Close all duplicate health issues (all but the first) from a jq array.
+# Arguments: label_results_json keep_number repo_slug runner_role
+_close_health_issue_duplicates() {
+	local label_results="$1" keep_number="$2" repo_slug="$3" runner_role="$4"
+
+	local dup_count
+	dup_count=$(printf '%s' "$label_results" | jq 'length' 2>/dev/null || echo "0")
+	[[ "${dup_count:-0}" -le 1 ]] && return 0
+
+	local dup_numbers
+	dup_numbers=$(printf '%s' "$label_results" | jq -r '.[1:][].number' 2>/dev/null || echo "")
+	while IFS= read -r dup_num; do
+		[[ -z "$dup_num" ]] && continue
+		[[ "$runner_role" == "supervisor" ]] && _unpin_health_issue "$dup_num" "$repo_slug"
+		gh issue close "$dup_num" --repo "$repo_slug" \
+			--comment "Closing duplicate ${runner_role} health issue — superseded by #${keep_number}." 2>/dev/null || true
+	done <<<"$dup_numbers"
+	return 0
+}
+
+#######################################
+# Title-based fallback lookup with label backfill.
+# Returns issue number if found, empty if not, $_HEALTH_QUERY_FAILED_SENTINEL on failure.
+_try_title_health_issue_fallback() {
+	local runner_prefix="$1" repo_slug="$2" runner_user="$3" role_label="$4" role_display="$5"
+
+	local title_result rc=0
+	title_result=$(gh issue list --repo "$repo_slug" \
+		--search "in:title ${runner_prefix}" \
+		--state open --json number,title \
+		--jq "[.[] | select(.title | startswith(\"${runner_prefix}\"))][0].number" 2>/dev/null) || rc=$?
+
+	if [[ $rc -ne 0 ]]; then
+		echo "[stats] Health issue: title lookup failed for ${runner_prefix} in ${repo_slug} (rc=${rc}) — abstaining this cycle" >>"${LOGFILE:-/dev/null}"
+		echo "$_HEALTH_QUERY_FAILED_SENTINEL"
+		return 0
+	fi
+
+	local health_issue_number="${title_result:-}"
+	if [[ -n "$health_issue_number" ]]; then
+		gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
+			--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
+		gh issue edit "$health_issue_number" --repo "$repo_slug" \
+			--add-label "$role_label" --add-label "$runner_user" 2>/dev/null || true
+	fi
+	echo "$health_issue_number"
+	return 0
+}
+
 _find_health_issue() {
 	local repo_slug="$1"
 	local runner_user="$2"
@@ -99,48 +194,20 @@ _find_health_issue() {
 	local role_display="$6"
 	local health_issue_file="$7"
 
-	local health_issue_number=""
-	local rc=0
+	local health_issue_number
+	health_issue_number=$(_try_cached_health_issue_lookup "$health_issue_file" "$repo_slug" "$runner_role")
 
-	# Try cached issue number first
-	if [[ -f "$health_issue_file" ]]; then
-		health_issue_number=$(cat "$health_issue_file" 2>/dev/null || echo "")
+	# Sentinel from cache lookup is defensive only; current behaviour preserves
+	# the cached number on error, but downstream checks still need it to pass
+	# through. Short-circuit on sentinel.
+	if [[ "$health_issue_number" == "$_HEALTH_QUERY_FAILED_SENTINEL" ]]; then
+		echo "$_HEALTH_QUERY_FAILED_SENTINEL"
+		return 0
 	fi
 
-	# Validate cached issue still exists and is open
-	if [[ -n "$health_issue_number" ]]; then
-		local issue_state
-		rc=0
-		issue_state=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null) || rc=$?
-
-		if [[ $rc -ne 0 ]]; then
-			# Query failed (rate limit, network, API 5xx). Preserve cache
-			# and skip the label/title dedup scans to reduce API pressure
-			# while the upstream issue is being resolved.
-			echo "[stats] Health issue: cache validation failed for #${health_issue_number} in ${repo_slug} (rc=${rc}) — preserving cache" >>"${LOGFILE:-/dev/null}"
-			echo "$health_issue_number"
-			return 0
-		fi
-
-		if [[ "$issue_state" == "CLOSED" ]]; then
-			if [[ "$runner_role" == "supervisor" ]]; then
-				_unpin_health_issue "$health_issue_number" "$repo_slug"
-			fi
-			health_issue_number=""
-			rm -f "$health_issue_file" 2>/dev/null || true
-		elif [[ "$issue_state" != "OPEN" ]]; then
-			# Unexpected state (empty, unknown enum). Preserve cache defensively —
-			# GitHub only returns OPEN/CLOSED under normal conditions.
-			echo "[stats] Health issue: unexpected state '${issue_state}' for #${health_issue_number} in ${repo_slug} — preserving cache" >>"${LOGFILE:-/dev/null}"
-			echo "$health_issue_number"
-			return 0
-		fi
-	fi
-
-	# Search by labels (more reliable than title search)
+	# Search by labels (more reliable than title search) if cache gave nothing.
 	if [[ -z "$health_issue_number" ]]; then
-		local label_results
-		rc=0
+		local label_results rc=0
 		label_results=$(_list_health_issues_by_role_label \
 			"$repo_slug" "$role_label" "$runner_user" "$role_display" 2>/dev/null) || rc=$?
 
@@ -152,52 +219,15 @@ _find_health_issue() {
 			return 0
 		fi
 
-		# Normalize to empty array on empty/malformed output (defensive default
-		# only — rc=0 here means the command succeeded).
 		label_results="${label_results:-[]}"
-
 		health_issue_number=$(printf '%s' "$label_results" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
-
-		# Dedup: close all but the newest
-		local dup_count
-		dup_count=$(printf '%s' "$label_results" | jq 'length' 2>/dev/null || echo "0")
-		if [[ "${dup_count:-0}" -gt 1 ]]; then
-			local dup_numbers
-			dup_numbers=$(printf '%s' "$label_results" | jq -r '.[1:][].number' 2>/dev/null || echo "")
-			while IFS= read -r dup_num; do
-				[[ -z "$dup_num" ]] && continue
-				if [[ "$runner_role" == "supervisor" ]]; then
-					_unpin_health_issue "$dup_num" "$repo_slug"
-				fi
-				gh issue close "$dup_num" --repo "$repo_slug" \
-					--comment "Closing duplicate ${runner_role} health issue — superseded by #${health_issue_number}." 2>/dev/null || true
-			done <<<"$dup_numbers"
-		fi
+		_close_health_issue_duplicates "$label_results" "$health_issue_number" "$repo_slug" "$runner_role"
 	fi
 
-	# Fallback: title-based search with label backfill
+	# Fallback: title-based search with label backfill.
 	if [[ -z "$health_issue_number" ]]; then
-		local title_result
-		rc=0
-		title_result=$(gh issue list --repo "$repo_slug" \
-			--search "in:title ${runner_prefix}" \
-			--state open --json number,title \
-			--jq "[.[] | select(.title | startswith(\"${runner_prefix}\"))][0].number" 2>/dev/null) || rc=$?
-
-		if [[ $rc -ne 0 ]]; then
-			echo "[stats] Health issue: title lookup failed for ${runner_prefix} in ${repo_slug} (rc=${rc}) — abstaining this cycle" >>"${LOGFILE:-/dev/null}"
-			echo "$_HEALTH_QUERY_FAILED_SENTINEL"
-			return 0
-		fi
-
-		health_issue_number="${title_result:-}"
-
-		if [[ -n "$health_issue_number" ]]; then
-			gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
-				--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
-			gh issue edit "$health_issue_number" --repo "$repo_slug" \
-				--add-label "$role_label" --add-label "$runner_user" 2>/dev/null || true
-		fi
+		health_issue_number=$(_try_title_health_issue_fallback \
+			"$runner_prefix" "$repo_slug" "$runner_user" "$role_label" "$role_display")
 	fi
 
 	echo "$health_issue_number"
@@ -1264,6 +1294,37 @@ _extract_body_counts() {
 #   $5 - cross-repo person stats markdown (pre-computed by update_health_issues)
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
+# t2687: extracted activity guard — returns 0 to proceed, 1 to skip.
+# Only runs when the cached health-issue file is absent (would create a new one).
+_check_health_issue_activity_guard() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local runner_user="$3"
+	local health_issue_file="$4"
+
+	[[ -f "$health_issue_file" ]] && return 0
+
+	local guard_pr_count guard_assigned_count guard_worker_count
+	guard_pr_count=$(gh pr list --repo "$repo_slug" --state open \
+		--json number --jq 'length' 2>/dev/null || echo "0")
+	guard_assigned_count=$(gh issue list --repo "$repo_slug" \
+		--assignee "$runner_user" --state open \
+		--json number --jq 'length' 2>/dev/null || echo "0")
+
+	local _guard_fields=()
+	while IFS= read -r -d '' _gf; do
+		_guard_fields+=("$_gf")
+	done < <(_scan_active_workers "${repo_path:-}")
+	guard_worker_count="${_guard_fields[1]:-0}"
+
+	if [[ "${guard_pr_count:-0}" -eq 0 && "${guard_assigned_count:-0}" -eq 0 && "${guard_worker_count:-0}" -eq 0 ]]; then
+		echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, issues, or workers" \
+			>>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+	return 0
+}
+
 _update_health_issue_for_repo() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -1289,29 +1350,8 @@ _update_health_issue_for_repo() {
 	local health_issue_file="${cache_dir}/health-issue-${runner_user}-${role_label}-${slug_safe}"
 	mkdir -p "$cache_dir"
 
-	# Guard: skip health issue creation for repos with no activity (GH#15959).
-	# Only applies when no cached issue exists (i.e. this would CREATE a new one).
-	# Existing health issues are still updated normally so the dashboard shows idle state.
-	if [[ ! -f "$health_issue_file" ]]; then
-		local guard_pr_count guard_assigned_count guard_worker_output guard_worker_count
-		guard_pr_count=$(gh pr list --repo "$repo_slug" --state open \
-			--json number --jq 'length' 2>/dev/null || echo "0")
-		guard_assigned_count=$(gh issue list --repo "$repo_slug" \
-			--assignee "$runner_user" --state open \
-			--json number --jq 'length' 2>/dev/null || echo "0")
-		# Parse NUL-delimited output: workers_md\0worker_count\0
-		local _guard_fields=()
-		while IFS= read -r -d '' _gf; do
-			_guard_fields+=("$_gf")
-		done < <(_scan_active_workers "${repo_path:-}")
-		local guard_worker_count="${_guard_fields[1]:-0}"
-
-		if [[ "${guard_pr_count:-0}" -eq 0 && "${guard_assigned_count:-0}" -eq 0 && "${guard_worker_count:-0}" -eq 0 ]]; then
-			echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, issues, or workers" \
-				>>"${LOGFILE:-/dev/null}"
-			return 0
-		fi
-	fi
+	_check_health_issue_activity_guard \
+		"$repo_slug" "$repo_path" "$runner_user" "$health_issue_file" || return 0
 
 	local health_issue_number
 	health_issue_number=$(_resolve_health_issue_number \

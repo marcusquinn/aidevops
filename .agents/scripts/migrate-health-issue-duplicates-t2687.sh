@@ -169,6 +169,78 @@ has_label() {
 	return $?
 }
 
+_backfill_origin_worker_labels() {
+	# Backfill origin:worker on every health-dashboard issue missing it
+	# (independent from dedup — even the kept issue might be missing it).
+	local enriched="$1"
+	local repo="$2"
+	local line
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		local num labels
+		num=$(printf '%s' "$line" | jq -r '.number')
+		labels=$(printf '%s' "$line" | jq -c '.labels')
+		if ! has_label "$labels" "origin:worker"; then
+			local flags=(--add-label "origin:worker")
+			# Mutual exclusion (.agents/AGENTS.md "Origin label mutual exclusion").
+			if has_label "$labels" "origin:interactive"; then
+				flags+=(--remove-label "origin:interactive")
+			fi
+			if has_label "$labels" "origin:worker-takeover"; then
+				flags+=(--remove-label "origin:worker-takeover")
+			fi
+			log_info "  backfill origin:worker on #${num} (${repo})"
+			run_gh issue edit "$num" --repo "$repo" "${flags[@]}" \
+				|| log_warn "    origin:worker backfill failed for #${num}"
+		fi
+	done < <(printf '%s' "$enriched")
+	return 0
+}
+
+_unpin_duplicate_issue() {
+	local close_num="$1"
+	local repo="$2"
+	if ((DRY_RUN)); then
+		log_dry "gh api graphql unpinIssue issueId=<node_id_for_#${close_num}>"
+		return 0
+	fi
+	local node_id
+	node_id=$(gh issue view "$close_num" --repo "$repo" --json id --jq '.id' 2>/dev/null || echo "")
+	[[ -z "$node_id" ]] && return 0
+	gh api graphql -f query="
+		mutation {
+			unpinIssue(input: {issueId: \"${node_id}\"}) {
+				issue { number }
+			}
+		}" >/dev/null 2>&1 || true
+	return 0
+}
+
+_close_duplicate_groups() {
+	local groups_summary="$1"
+	local repo="$2"
+	local grp
+	while IFS= read -r grp; do
+		[[ -z "$grp" ]] && continue
+		local role user keep close_list
+		role=$(printf '%s' "$grp" | jq -r '.role')
+		user=$(printf '%s' "$grp" | jq -r '.user')
+		keep=$(printf '%s' "$grp" | jq -r '.issues[0].number')
+		close_list=$(printf '%s' "$grp" | jq -r '.issues[1:] | .[].number')
+		log_info "  dedup group role=${role} user=${user}: keep #${keep}, close $(echo "$close_list" | wc -w | tr -d ' ')"
+
+		local close_num
+		while IFS= read -r close_num; do
+			[[ -z "$close_num" ]] && continue
+			local comment="Closing duplicate ${role} health issue — superseded by #${keep}. Root cause: GraphQL rate-limit window on 2026-04-21 (t2574 REST fallback covered CREATE but not READ paths). See GH#20301 for the systemic fix."
+			_unpin_duplicate_issue "$close_num" "$repo"
+			run_gh issue close "$close_num" --repo "$repo" --comment "$comment" \
+				|| log_warn "    close failed for #${close_num}"
+		done <<<"$close_list"
+	done <<<"$groups_summary"
+	return 0
+}
+
 process_repo() {
 	local slug="$1"
 	log_info "Scanning ${slug}"
@@ -208,29 +280,7 @@ process_repo() {
 		)
 	}')
 
-	# Backfill origin:worker on every health-dashboard issue missing it
-	# (independent from dedup — even the kept issue might be missing it).
-	local line
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		local num labels
-		num=$(printf '%s' "$line" | jq -r '.number')
-		labels=$(printf '%s' "$line" | jq -c '.labels')
-		if ! has_label "$labels" "origin:worker"; then
-			local flags=(--add-label "origin:worker")
-			# Remove sibling origin labels (mutual exclusion per
-			# .agents/AGENTS.md "Origin label mutual exclusion").
-			if has_label "$labels" "origin:interactive"; then
-				flags+=(--remove-label "origin:interactive")
-			fi
-			if has_label "$labels" "origin:worker-takeover"; then
-				flags+=(--remove-label "origin:worker-takeover")
-			fi
-			log_info "  backfill origin:worker on #${num} (${slug})"
-			run_gh issue edit "$num" --repo "$slug" "${flags[@]}" \
-				|| log_warn "    origin:worker backfill failed for #${num}"
-		fi
-	done < <(printf '%s' "$enriched")
+	_backfill_origin_worker_labels "$enriched" "$slug"
 
 	# Group by (role, user). For each group with >1 members, keep the
 	# newest by createdAt and close the rest.
@@ -247,40 +297,7 @@ process_repo() {
 		return 0
 	fi
 
-	local grp
-	while IFS= read -r grp; do
-		[[ -z "$grp" ]] && continue
-		local role user keep close_list
-		role=$(printf '%s' "$grp" | jq -r '.role')
-		user=$(printf '%s' "$grp" | jq -r '.user')
-		keep=$(printf '%s' "$grp" | jq -r '.issues[0].number')
-		close_list=$(printf '%s' "$grp" | jq -r '.issues[1:] | .[].number')
-		log_info "  dedup group role=${role} user=${user}: keep #${keep}, close $(echo "$close_list" | wc -w | tr -d ' ')"
-
-		local close_num
-		while IFS= read -r close_num; do
-			[[ -z "$close_num" ]] && continue
-			local comment="Closing duplicate ${role} health issue — superseded by #${keep}. Root cause: GraphQL rate-limit window on 2026-04-21 (t2574 REST fallback covered CREATE but not READ paths). See GH#20301 for the systemic fix."
-			# Best-effort unpin (no-op for unpinned/contributor issues).
-			if ((DRY_RUN)); then
-				log_dry "gh api graphql unpinIssue issueId=<node_id_for_#${close_num}>"
-			else
-				local node_id
-				node_id=$(gh issue view "$close_num" --repo "$slug" --json id --jq '.id' 2>/dev/null || echo "")
-				if [[ -n "$node_id" ]]; then
-					gh api graphql -f query="
-						mutation {
-							unpinIssue(input: {issueId: \"${node_id}\"}) {
-								issue { number }
-							}
-						}" >/dev/null 2>&1 || true
-				fi
-			fi
-			run_gh issue close "$close_num" --repo "$slug" --comment "$comment" \
-				|| log_warn "    close failed for #${close_num}"
-		done <<<"$close_list"
-	done <<<"$groups_summary"
-
+	_close_duplicate_groups "$groups_summary" "$slug"
 	return 0
 }
 
