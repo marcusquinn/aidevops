@@ -153,3 +153,63 @@ When workers are failing systemically:
 6. **Pulse log**: `tail -30 ~/.aidevops/logs/pulse.log` — dedup blocked? backoff? claim errors?
 7. **Issue comments**: check for `CLAIM_RELEASED` / `DISPATCH_CLAIM` comment loops
 8. **Review gate**: `review-bot-gate-helper.sh check <PR>` — `WAITING` means bot is blocking merge
+
+## Pulse Decision Correlation
+
+When a PR doesn't auto-merge (or merges unexpectedly), use `pulse-diagnose-helper.sh` to
+correlate pulse.log entries with the PR's GitHub state:
+
+```bash
+pulse-diagnose-helper.sh pr <N> --repo <owner/repo>
+```
+
+The helper reads `~/.aidevops/logs/pulse.log` (and rotated companions), filters lines
+mentioning the PR, classifies each against a 60+ rule inventory, and cross-references
+`gh pr view` metadata to produce a chronological report.
+
+### Worked example
+
+```text
+$ pulse-diagnose-helper.sh pr 20329 --repo marcusquinn/aidevops
+
+PR #20329 (marcusquinn, CLOSED 2026-04-21T18:01:09Z, merged=no)
+  Title: t2710: fix dirty-pr-sweep
+  Created: 2026-04-20T09:00:00Z  Review: CHANGES_REQUESTED  MergeState: DIRTY
+
+  2026-04-20T10:00:00Z  pulse-wrapper.sh                pw-merge-skip-changes-requested
+              Merge pass skipped — review decision is CHANGES_REQUESTED
+              source: pulse-wrapper.sh:968
+
+  2026-04-21T17:45:03Z  pulse-dirty-pr-sweep.sh         dps-classify
+              Dirty PR sweep classification decision
+              source: pulse-dirty-pr-sweep.sh:788
+
+  2026-04-21T17:45:04Z  pulse-dirty-pr-sweep.sh         dps-notify
+              Dirty PR notification posted
+              source: pulse-dirty-pr-sweep.sh:721
+
+Summary:
+  Total pulse events: 3
+  Last pulse decision: dps-notify
+  Outcome: PR was closed without merge.
+```
+
+Each event line shows: timestamp, source script, rule ID, human description, and the
+exact `script:line` of the rule that produced the log entry. Use `--verbose` to see raw
+log lines alongside classifications. Use `--json` for programmatic consumption.
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `pr <N> [--repo <slug>] [--verbose] [--json]` | Diagnose pulse behaviour for PR #N |
+| `rules [--json]` | List the full rule inventory (60+ entries) |
+| `help` | Show usage |
+
+### Limitations
+
+- Read-only diagnostic — does not change pulse behaviour.
+- Covers PR merge/sweep decisions only. Issue-lifecycle (dispatch, NMR, parent-task)
+  is a candidate follow-up (`pulse-diagnose-helper.sh issue <N>`).
+- Log lines without timestamps are sorted lexically (best effort).
+- Rotated `.gz` logs require `zcat` to be available.
