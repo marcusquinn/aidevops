@@ -28,7 +28,24 @@
 import { join } from "path";
 import { getAccounts, ensureValidToken, patchAccount } from "./oauth-pool.mjs";
 import { jsonResponse, textResponse } from "./response-helpers.mjs";
-export { buildGoogleProviderModels, registerGoogleProvider, persistGoogleProvider, discoverGoogleModels } from "./google-proxy-config.mjs";
+// Import + export: `export { … } from "./module"` is re-export only and
+// does NOT create a local binding. discoverGoogleModels and
+// persistGoogleProvider are both called locally below (see lines ~300 and
+// ~338), so they must be imported into this module's scope. Same class of
+// bug as the quality-hooks.mjs hotfix.
+import {
+  buildGoogleProviderModels,
+  registerGoogleProvider,
+  persistGoogleProvider,
+  discoverGoogleModels,
+} from "./google-proxy-config.mjs";
+
+export {
+  buildGoogleProviderModels,
+  registerGoogleProvider,
+  persistGoogleProvider,
+  discoverGoogleModels,
+};
 
 // ---------------------------------------------------------------------------
 // Constants

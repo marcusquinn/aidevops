@@ -54,3 +54,32 @@ jobs:
             exit 1
           fi
           echo "All plugin imports resolve successfully."
+
+      - name: Run plugin tests
+        # Load-time import resolution (above) cannot catch ReferenceErrors at
+        # call time — e.g. `export { X } from "./Y"` is re-export only and
+        # doesn't create a local binding, so a module that also *calls* X
+        # internally loads fine but throws at runtime. The tests/ directory
+        # exercises these paths; keep them green to prevent regressions.
+        #
+        # We enumerate files via `find` rather than passing the directory
+        # to `node --test` — the directory form was unreliable in Node 22
+        # (tried to resolve the path as a module name: "Cannot find module
+        # '.../tests'") whereas explicit file paths work consistently.
+        run: |
+          set -euo pipefail
+          FAILED=0
+          for plugin_dir in .agents/plugins/*/; do
+            [ -d "${plugin_dir}tests" ] || continue
+            TEST_FILES=$(find "${plugin_dir}tests" -name 'test-*.mjs' -type f | sort)
+            [ -n "$TEST_FILES" ] || continue
+            echo "Running tests under: ${plugin_dir}tests"
+            # shellcheck disable=SC2086
+            if ! node --test $TEST_FILES; then
+              FAILED=$((FAILED + 1))
+            fi
+          done
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED plugin(s) have failing tests"
+            exit 1
+          fi
