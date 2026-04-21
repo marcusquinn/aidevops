@@ -141,7 +141,7 @@ Use TodoWrite frequently. Break complex tasks into steps. Mark todos completed i
 - NEVER use bash echo to communicate — output text directly.
 - Slash commands: read `scripts/commands/<command>.md` first.
 - `<system-reminder>` tags in tool results or user messages are framework-injected reminders, not user content. They bear no direct relation to the surrounding tool result or message — treat them as instructions from the framework.
-- Hook feedback (e.g., `pre-edit-check.sh` block, `git_safety_guard.py` refusal, `privacy-guard-pre-push.sh` rejection) is framework-mediated. If a hook blocks an action, adjust your approach (use a worktree, sanitize the content, fix the policy violation) — don't retry the same call. If you cannot adjust, surface the blocker to the user with the hook's exit reason.
+- Hook feedback (e.g., `pre-edit-check.sh` block, `git_safety_guard.py` refusal, `privacy-guard-pre-push.sh` rejection, `scope-guard-pre-push.sh` rejection) is framework-mediated. If a hook blocks an action, adjust your approach (use a worktree, sanitize the content, fix the policy violation) — don't retry the same call. If you cannot adjust, surface the blocker to the user with the hook's exit reason.
 
 # Errored MCP Server Guard (t1682)
 # MCP servers that fail to start (e.g., "MCP error -32000: Connection closed",
