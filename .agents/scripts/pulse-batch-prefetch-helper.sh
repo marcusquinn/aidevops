@@ -153,7 +153,10 @@ _normalize_search_to_prefetch_schema() {
 			from_entries
 		' 2>/dev/null
 	else
-		# PRs: preserve headRefName if available
+		# PRs: normalize to prefetch schema.
+		# Note: headRefName is NOT available from gh search prs (Search API
+		# returns issue-shaped results). Consumers needing branch names must
+		# fetch lazily via `gh pr view <N> --json headRefName`.
 		jq '
 			group_by(.repository.nameWithOwner) |
 			map({
@@ -164,7 +167,6 @@ _normalize_search_to_prefetch_schema() {
 					labels: (.labels // []),
 					updatedAt: .updatedAt,
 					assignees: (.assignees // []),
-					headRefName: (.headRefName // null),
 					createdAt: (.createdAt // null),
 					author: (.author // null)
 				}]
@@ -265,7 +267,7 @@ _refresh_owner_prs() {
 	local pr_json=""
 	pr_json=$(gh search prs --owner "$owner" --state open \
 		--limit "$BATCH_SEARCH_LIMIT" \
-		--json number,title,labels,updatedAt,assignees,repository,headRefName,createdAt,author 2>"$pr_err") || pr_json=""
+		--json number,title,labels,updatedAt,assignees,repository,createdAt,author 2>"$pr_err") || pr_json=""
 	_OWNER_SEARCH_CALLS=$((_OWNER_SEARCH_CALLS + 1))
 
 	if [[ -z "$pr_json" || "$pr_json" == "$_JSON_NULL" ]]; then
