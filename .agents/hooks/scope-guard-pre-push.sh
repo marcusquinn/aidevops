@@ -23,9 +23,12 @@
 #   SCOPE_GUARD_DEBUG=1    — verbose stderr trace
 #
 # Fail-open cases (exit 0 with warning):
-#   - brief file not found for this task
-#   - brief has no ## Files Scope section
 #   - branch name does not encode a task ID
+#   - brief file not found for this task
+#
+# Fail-closed cases (exit 1 with error):
+#   - brief exists but has no ## Files Scope section (configuration error)
+#   - brief has ## Files Scope section but it is empty (no patterns declared)
 
 set -u
 
@@ -155,7 +158,7 @@ _parse_files_scope() {
 		fi
 	done < "$_brief"
 
-	# Return non-zero if section not found, so caller can fail-open
+	# Return non-zero if section not found, so caller can fail-closed
 	[[ "$_found_section" -eq 1 ]]
 	return $?
 }
@@ -171,13 +174,17 @@ if [[ $parse_rc -eq 0 ]] && [[ -n "$_raw_scope" ]]; then
 fi
 
 if ! grep -q "^## Files Scope" "$BRIEF_FILE" 2>/dev/null; then
-	_log WARN "brief has no '## Files Scope' section — fail-open"
-	exit 0
+	_log ERROR "brief exists but has no '## Files Scope' section — fail-closed"
+	_log ERROR "  add a '## Files Scope' section to $BRIEF_FILE listing the files this task may modify"
+	_log ERROR "  or bypass with: SCOPE_GUARD_DISABLE=1 git push ..."
+	exit 1
 fi
 
 if [[ "${#SCOPE_PATTERNS[@]}" -eq 0 ]]; then
-	_log WARN "## Files Scope section is empty — fail-open"
-	exit 0
+	_log ERROR "'## Files Scope' section exists but has no entries — fail-closed"
+	_log ERROR "  add file paths (one per '- ' line) to the '## Files Scope' section of $BRIEF_FILE"
+	_log ERROR "  or bypass with: SCOPE_GUARD_DISABLE=1 git push ..."
+	exit 1
 fi
 
 if [[ "${SCOPE_GUARD_DEBUG:-0}" == "1" ]]; then
