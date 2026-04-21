@@ -1,0 +1,125 @@
+name: Planning PR Keyword Check
+
+# t2452: CI guard against planning-only PRs using closing keywords.
+#
+# When a PR touches ONLY planning files (TODO.md, todo/**, PLANS.md) and the
+# PR body contains closing keywords (Closes/Resolves/Fixes #NNN), GitHub's
+# auto-close machinery fires on merge — marking the referenced issue done even
+# though no implementation was shipped. This is the markdown foot-gun
+# documented in prompts/build.txt §Traceability.
+#
+# Incident: PR #20185 was a brief-only PR that used "Resolves #20164", which
+# auto-closed the implementation issue and marked t2449 complete in TODO.md
+# despite the actual implementation being unshipped.
+#
+# Exit behavior:
+#   PASS — PR touches code files, OR planning-only PR uses For/Ref (not closing keywords)
+#   FAIL — planning-only PR body contains closing keywords
+#
+# Override: apply the `allow-planning-close` label to intentionally close an
+# issue from a planning-only PR (e.g., closing a superseded planning issue).
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, ready_for_review]
+
+jobs:
+  planning-pr-keyword-check:
+    name: Planning PR Keyword Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: planning-pr-keyword-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      pull-requests: read
+      contents: read
+
+    steps:
+      - name: Check for closing keywords in planning-only PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # --- Override: allow-planning-close label ---
+          if echo "$PR_LABELS" | grep -q '"allow-planning-close"'; then
+            echo "allow-planning-close label present — skipping check"
+            exit 0
+          fi
+
+          echo "Checking PR #${PR_NUMBER} for planning-only closing keywords..."
+
+          # --- Get list of changed files ---
+          CHANGED_FILES=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json files --jq '.files[].path')
+
+          if [[ -z "$CHANGED_FILES" ]]; then
+            echo "PASS: No files changed in PR"
+            exit 0
+          fi
+
+          # --- Check if ALL changed files are planning paths ---
+          # Planning paths: TODO.md, todo/**, PLANS.md, todo/tasks/*.md
+          NON_PLANNING_FILES=""
+          while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            case "$file" in
+              TODO.md|PLANS.md)
+                # Known planning file — skip
+                ;;
+              todo/*)
+                # Anything under todo/ is planning — skip
+                ;;
+              *)
+                # Non-planning file found
+                NON_PLANNING_FILES="${NON_PLANNING_FILES}${file}\n"
+                ;;
+            esac
+          done <<< "$CHANGED_FILES"
+
+          if [[ -n "$NON_PLANNING_FILES" ]]; then
+            echo "PASS: PR contains non-planning files — closing keywords are allowed"
+            echo "Non-planning files:"
+            printf '%b' "$NON_PLANNING_FILES"
+            exit 0
+          fi
+
+          echo "PR touches only planning files:"
+          echo "$CHANGED_FILES"
+
+          # --- Scan PR body for closing keywords ---
+          # Match the same regex used by GitHub and pulse-merge.sh::_extract_linked_issue
+          CLOSING_MATCHES=$(printf '%s' "$PR_BODY" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+' || true)
+
+          if [[ -z "$CLOSING_MATCHES" ]]; then
+            echo "PASS: No closing keywords found in PR body"
+            exit 0
+          fi
+
+          # --- FAIL: planning-only PR with closing keywords ---
+          echo ""
+          echo "FAIL: This PR touches ONLY planning files but uses closing keywords"
+          echo "      in the PR body that will auto-close the referenced issue(s) on merge."
+          echo ""
+          echo "Closing keywords found:"
+          echo "$CLOSING_MATCHES"
+          echo ""
+          echo "Planning files changed:"
+          echo "$CHANGED_FILES"
+          echo ""
+          echo "Fix: Replace closing keywords with 'For #NNN' or 'Ref #NNN'."
+          echo "     Planning-only PRs (TODO.md, todo/**, PLANS.md) must NOT use"
+          echo "     Closes/Resolves/Fixes because the referenced issue tracks"
+          echo "     implementation work that has not been shipped in this PR."
+          echo ""
+          echo "     See: prompts/build.txt §Traceability — 'Markdown formatting"
+          echo "     is INVISIBLE to the extraction regex.'"
+          echo ""
+          echo "Override: If you intentionally want to close an issue from a"
+          echo "     planning-only PR (e.g., superseding a planning issue), apply"
+          echo "     the 'allow-planning-close' label."
+          exit 1
