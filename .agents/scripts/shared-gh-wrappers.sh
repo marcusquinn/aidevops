@@ -617,7 +617,16 @@ gh_create_pr() {
 	_gh_wrapper_auto_sig "$@"
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 
-	gh pr create "$@" --label "$origin_label"
+	local pr_output rc
+	pr_output=$(gh pr create "$@" --label "$origin_label")
+	rc=$?
+	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr create"
+		pr_output=$(_gh_pr_create_rest "$@" --label "$origin_label")
+		rc=$?
+	fi
+	printf '%s\n' "$pr_output"
+	return $rc
 }
 
 # t2393: auto-append signature footer on all `gh issue comment` posts.

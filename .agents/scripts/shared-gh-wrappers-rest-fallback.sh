@@ -400,3 +400,106 @@ _gh_rest_compute_target_set() {
 	for elem in "${target[@]}"; do printf '%s\n' "$elem"; done
 	return 0
 }
+
+#######################################
+# _gh_pr_create_rest: POST /repos/{owner}/{repo}/pulls.
+# Parses gh-style args (--head, --base, --title, --body, --body-file, --draft,
+# --label) into a REST payload. Labels are applied via a separate
+# POST /repos/{owner}/{repo}/issues/{pr_number}/labels call because the
+# GitHub pulls endpoint does not accept a labels field at creation time.
+# Emits the PR html_url on stdout, mirroring `gh pr create`. Returns underlying
+# gh api exit code.
+#######################################
+_gh_pr_create_rest() {
+	local title=""
+	local head=""
+	local base="main"
+	local body=""
+	local body_file=""
+	local repo=""
+	local draft=0
+	local has_body=0
+	local -a labels=()
+	local -a _toks=()
+
+	while [[ $# -gt 0 ]]; do
+		local _arg="$1"
+		case "$_arg" in
+		--repo) repo="${2:-}"; shift 2 ;;
+		--repo=*) repo="${_arg#--repo=}"; shift ;;
+		--title) title="${2:-}"; shift 2 ;;
+		--title=*) title="${_arg#--title=}"; shift ;;
+		--head) head="${2:-}"; shift 2 ;;
+		--head=*) head="${_arg#--head=}"; shift ;;
+		--base) base="${2:-}"; shift 2 ;;
+		--base=*) base="${_arg#--base=}"; shift ;;
+		--body) body="${2:-}"; has_body=1; shift 2 ;;
+		--body=*) body="${_arg#--body=}"; has_body=1; shift ;;
+		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
+		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
+		--draft) draft=1; shift ;;
+		--label) IFS=',' read -ra _toks <<<"${2:-}"; labels+=("${_toks[@]}"); shift 2 ;;
+		--label=*) IFS=',' read -ra _toks <<<"${_arg#--label=}"; labels+=("${_toks[@]}"); shift ;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$repo" ]]; then
+		printf '_gh_pr_create_rest: --repo is required\n' >&2
+		return 1
+	fi
+	if [[ -z "$title" ]]; then
+		printf '_gh_pr_create_rest: --title is required\n' >&2
+		return 1
+	fi
+	if [[ -z "$head" ]]; then
+		printf '_gh_pr_create_rest: --head is required\n' >&2
+		return 1
+	fi
+
+	local tmp_body="" tmp_body_owned=0
+	if [[ $has_body -eq 1 ]]; then
+		if [[ -n "$body_file" ]]; then
+			tmp_body="$body_file"
+		else
+			tmp_body=$(mktemp -t aidevops-gh-rest-body.XXXXXX) || return 1
+			tmp_body_owned=1
+			printf '%s' "$body" >"$tmp_body"
+		fi
+	fi
+
+	local -a api_args=(-X POST "/repos/${repo}/pulls"
+		-f "title=$title"
+		-f "head=$head"
+		-f "base=$base")
+	[[ -n "$tmp_body" ]] && api_args+=(-F "$(_gh_rest_body_file_arg "$tmp_body")")
+	[[ $draft -eq 1 ]] && api_args+=(-F "draft=true")
+
+	local html_url rc
+	html_url=$(gh api "${api_args[@]}" --jq '.html_url' 2>&1)
+	rc=$?
+
+	[[ $tmp_body_owned -eq 1 && -f "$tmp_body" ]] && rm -f "$tmp_body"
+
+	if [[ $rc -ne 0 ]]; then
+		printf '%s\n' "$html_url" >&2
+		return $rc
+	fi
+
+	printf '%s\n' "$html_url"
+
+	# PRs share GitHub's issues label endpoint — apply labels if any.
+	if [[ ${#labels[@]} -gt 0 ]]; then
+		local pr_number
+		pr_number=$(printf '%s' "$html_url" | grep -oE '[0-9]+$' || true)
+		if [[ -n "$pr_number" ]]; then
+			local -a label_args=(-X POST "/repos/${repo}/issues/${pr_number}/labels")
+			local _lbl
+			for _lbl in "${labels[@]}"; do
+				[[ -n "$_lbl" ]] && label_args+=(-f "labels[]=${_lbl}")
+			done
+			gh api "${label_args[@]}" >/dev/null 2>&1 || true
+		fi
+	fi
+	return 0
+}
