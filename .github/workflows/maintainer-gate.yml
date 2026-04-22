@@ -804,75 +804,75 @@ jobs:
       issues: write
 
     steps:
-       - name: Enforce bot-only origin:worker label (GH#18197, widened for repo owner GH#18684, collaborators GH#20311)
-         env:
-           ISSUE_NUMBER: ${{ github.event.issue.number }}
-           ACTION: ${{ github.event.action }}
-           ACTOR: ${{ github.actor }}
-           REPO: ${{ github.repository }}
-           REPO_OWNER: ${{ github.repository_owner }}
-           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-         run: |
-           echo "origin:worker label $ACTION on issue #$ISSUE_NUMBER by $ACTOR (repo owner: $REPO_OWNER)"
+      - name: Enforce bot-only origin:worker label (GH#18197, widened for repo owner GH#18684, collaborators GH#20311)
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ACTION: ${{ github.event.action }}
+          ACTOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "origin:worker label $ACTION on issue #$ISSUE_NUMBER by $ACTOR (repo owner: $REPO_OWNER)"
 
-           # ALLOWLIST: who may add or remove origin:worker.
-           #
-           # 1. github-actions[bot] — the original allowlist from GH#18197.
-           #    Covers server-side CI workflows that label issues (e.g.
-           #    issue-triage-gate.yml assigning origin:worker to non-
-           #    maintainer-authored issues).
-           #
-           # 2. The repository owner — added by GH#18670. The aidevops
-           #    pulse runs on the maintainer's local machine authenticated
-           #    as the owner's personal token, not as github-actions[bot].
-           #    When the pulse creates issues via gh_create_issue under
-           #    AIDEVOPS_HEADLESS=true, it correctly applies origin:worker
-           #    — but this server-side protection was stripping the label
-           #    on every application because the actor was the owner, not
-           #    the bot. The owner has unambiguous repo authority and
-           #    cannot be a "forger". Adding the repo owner to the
-           #    allowlist restores the intent of the protection: block
-           #    external contributors from forging origin:worker to bypass
-           #    the assignee gate, while allowing the legitimate automation
-           #    pipeline (which runs as the owner) to apply it.
-           #
-           # 3. Collaborators with write/admin/maintain permission —
-           #    added by GH#20311 (t2691). Multi-runner aidevops setups
-           #    authenticate secondary pulse instances as collaborator
-           #    accounts (e.g. alex-solovyev). These runners execute
-           #    stats-wrapper.sh → update_health_issues →
-           #    _create_health_issue → gh_create_issue with
-           #    AIDEVOPS_HEADLESS=true, which correctly applies
-           #    origin:worker. However, the server-side check was
-           #    stripping the label because the actor (the collaborator
-           #    account) was not in the allowlist. Root-cause evidence:
-           #    issue #20298 timeline — origin:worker applied by
-           #    alex-solovyev at 13:17:56Z, removed by github-actions[bot]
-           #    at 13:18:03Z (7 seconds later). Collaborators with write
-           #    access are trusted automation operators; they cannot forge
-           #    dispatch gates any more than the repo owner can.
-           #    CONTRIBUTOR/FIRST_TIME_CONTRIBUTOR/NONE actors remain
-           #    blocked — the external-contributor forge guarantee from
-           #    GH#18197 is preserved.
-           if [[ "$ACTOR" == "github-actions[bot]" ]] || [[ "$ACTOR" == "github-actions" ]]; then
-             echo "ALLOWED: GitHub Actions bot — origin:worker label change accepted"
-             exit 0
-           fi
-           if [[ -n "$REPO_OWNER" && "$ACTOR" == "$REPO_OWNER" ]]; then
-             echo "ALLOWED: repository owner ($ACTOR) — origin:worker label change accepted (GH#18684)"
-             exit 0
-           fi
-           # t2691/GH#20311: Check if the actor is a collaborator with write
-           # access. The /collaborators/{username}/permission endpoint returns
-           # the user's effective permission level. Non-collaborators (external
-           # contributors) return permission=none or HTTP 404; both map to
-           # "none" via the fallback. write/admin/maintain = trusted runner.
-           ACTOR_PERM=$(gh api "repos/${REPO}/collaborators/${ACTOR}/permission" \
-             --jq '.permission // "none"' 2>/dev/null || echo "none")
-           if [[ "$ACTOR_PERM" == "write" || "$ACTOR_PERM" == "admin" || "$ACTOR_PERM" == "maintain" ]]; then
-             echo "ALLOWED: collaborator $ACTOR (permission=$ACTOR_PERM) — origin:worker label change accepted (t2691, GH#20311)"
-             exit 0
-           fi
+          # ALLOWLIST: who may add or remove origin:worker.
+          #
+          # 1. github-actions[bot] — the original allowlist from GH#18197.
+          #    Covers server-side CI workflows that label issues (e.g.
+          #    issue-triage-gate.yml assigning origin:worker to non-
+          #    maintainer-authored issues).
+          #
+          # 2. The repository owner — added by GH#18670. The aidevops
+          #    pulse runs on the maintainer's local machine authenticated
+          #    as the owner's personal token, not as github-actions[bot].
+          #    When the pulse creates issues via gh_create_issue under
+          #    AIDEVOPS_HEADLESS=true, it correctly applies origin:worker
+          #    — but this server-side protection was stripping the label
+          #    on every application because the actor was the owner, not
+          #    the bot. The owner has unambiguous repo authority and
+          #    cannot be a "forger". Adding the repo owner to the
+          #    allowlist restores the intent of the protection: block
+          #    external contributors from forging origin:worker to bypass
+          #    the assignee gate, while allowing the legitimate automation
+          #    pipeline (which runs as the owner) to apply it.
+          #
+          # 3. Collaborators with write/admin/maintain permission —
+          #    added by GH#20311 (t2691). Multi-runner aidevops setups
+          #    authenticate secondary pulse instances as collaborator
+          #    accounts (e.g. alex-solovyev). These runners execute
+          #    stats-wrapper.sh → update_health_issues →
+          #    _create_health_issue → gh_create_issue with
+          #    AIDEVOPS_HEADLESS=true, which correctly applies
+          #    origin:worker. However, the server-side check was
+          #    stripping the label because the actor (the collaborator
+          #    account) was not in the allowlist. Root-cause evidence:
+          #    issue #20298 timeline — origin:worker applied by
+          #    alex-solovyev at 13:17:56Z, removed by github-actions[bot]
+          #    at 13:18:03Z (7 seconds later). Collaborators with write
+          #    access are trusted automation operators; they cannot forge
+          #    dispatch gates any more than the repo owner can.
+          #    CONTRIBUTOR/FIRST_TIME_CONTRIBUTOR/NONE actors remain
+          #    blocked — the external-contributor forge guarantee from
+          #    GH#18197 is preserved.
+          if [[ "$ACTOR" == "github-actions[bot]" ]] || [[ "$ACTOR" == "github-actions" ]]; then
+            echo "ALLOWED: GitHub Actions bot — origin:worker label change accepted"
+            exit 0
+          fi
+          if [[ -n "$REPO_OWNER" && "$ACTOR" == "$REPO_OWNER" ]]; then
+            echo "ALLOWED: repository owner ($ACTOR) — origin:worker label change accepted (GH#18684)"
+            exit 0
+          fi
+          # t2691/GH#20311: Check if the actor is a collaborator with write
+          # access. The /collaborators/{username}/permission endpoint returns
+          # the user's effective permission level. Non-collaborators (external
+          # contributors) return permission=none or HTTP 404; both map to
+          # "none" via the fallback. write/admin/maintain = trusted runner.
+          ACTOR_PERM=$(gh api "repos/${REPO}/collaborators/${ACTOR}/permission" \
+            --jq '.permission // "none"' 2>/dev/null || echo "none")
+          if [[ "$ACTOR_PERM" == "write" || "$ACTOR_PERM" == "admin" || "$ACTOR_PERM" == "maintain" ]]; then
+            echo "ALLOWED: collaborator $ACTOR (permission=$ACTOR_PERM) — origin:worker label change accepted (t2691, GH#20311)"
+            exit 0
+          fi
 
           echo "DENIED: $ACTOR is not in the allowlist — reversing origin:worker label $ACTION"
 
