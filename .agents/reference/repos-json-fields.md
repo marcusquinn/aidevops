@@ -82,6 +82,8 @@ Auto-inferred when absent: `local_only`/no-remote → `minimal`; others → `sta
 
 Resolution order (per field independently): per-tool > per-repo > env var (`REVIEW_GATE_RATE_LIMIT_BEHAVIOR` / `REVIEW_BOT_MIN_EDIT_LAG_SECONDS`) > hard default.
 
+CLI: `aidevops review-gate --help` — configure `rate_limit_behavior` without hand-editing JSON.
+
 ## Platform Integration
 
 | Field | Values | Description |
