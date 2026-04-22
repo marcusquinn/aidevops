@@ -43,6 +43,24 @@ worktree-helper.sh add feature/x  # Fallback
 - Safety hooks block destructive commands (`git reset --hard`, `rm -rf`). Verify with `install-hooks.sh --test`. See `workflows/git-workflow.md` "Destructive Command Safety Hooks".
 - Full docs: `workflows/git-workflow.md`, `tools/git/worktrunk.md`.
 
+## Idle Interactive PR Handover (t2189)
+
+When an `origin:interactive` PR sits >24h with a failing required check, a conflict, or an idle review, and the human session has demonstrably ended — no active `status:*` label on the linked issue AND no live claim stamp in `$CLAIM_STAMP_DIR` — the deterministic merge pass:
+
+1. Applies the `origin:worker-takeover` label
+2. Posts a one-time handover comment (`<!-- pulse-interactive-handover -->`)
+3. Routes the PR through the CI-fix / conflict-fix / review-fix worker pipelines
+
+`origin:interactive` stays in place for audit trail.
+
+**Opting out:** apply `no-takeover` label to keep the PR out of the pipeline.
+
+**Reclaiming an already-handed-over PR:** remove `origin:worker-takeover`, then `interactive-session-helper.sh claim <N> <slug>` on the linked issue.
+
+Env controls:
+- `AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=off|detect|enforce` (default `detect` — logs `would-handover` without acting). Flip to `enforce` after 2-3 pulse cycles of clean `detect` telemetry.
+- `AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS` (default 24)
+
 ## Browser Automation
 
 - Use a browser proactively for dev-server verification, form testing, deployment checks, and frontend debugging.
