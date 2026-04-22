@@ -34,10 +34,12 @@
 //   variant escalates (error overrides warning, warning overrides info) and
 //   all lines remain visible in the body.
 //
-// Toast-only filters (t2728): lines matching `You are running in <app>.`
-// are filtered in classifyLines() so they don't enter any toast bucket.
-// The runtime-identity line is useful as session prose for the model but
-// would clutter the toast — the cache file still captures it verbatim.
+// Toast filters: UPDATE_AVAILABLE|<...> and AUTO_UPDATE_ENABLED are the
+// only lines suppressed — those are machine-readable sentinels. The
+// runtime-identity line (`You are running in <app>. Global config: ...`)
+// WAS suppressed from the toast by t2728 but restored by t2731 after
+// user feedback that seeing the config path at session start is valuable.
+// See also t2730 for the parallel AGENTS.md prose (model-only surface).
 //
 // Diagnostics: set AIDEVOPS_PLUGIN_DEBUG=1 to trace every handler invocation
 // and each toast emission (including failures). Without DEBUG the handler
@@ -123,15 +125,6 @@ function classifyLines(output) {
     // Skip UPDATE_AVAILABLE| sentinel lines — those are machine-readable
     // markers consumed by the model greeting, not human banner text.
     if (line.startsWith("UPDATE_AVAILABLE|") || line === "AUTO_UPDATE_ENABLED") {
-      continue;
-    }
-
-    // Skip the runtime-identity line (t2728). "You are running in <app>.
-    // Global config: ..." is useful as session prose for the model but
-    // clutters the toast — the user already knows which app they launched.
-    // cacheGreeting(output) writes the raw output, so non-Bash agents still
-    // see the line via ~/.aidevops/cache/session-greeting.txt.
-    if (line.startsWith("You are running in ")) {
       continue;
     }
 
