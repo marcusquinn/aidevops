@@ -7486,9 +7486,9 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-04-22T04:32:56Z",
-      "hash": "398be6cb70a0c2dea7749158e5ff98816d7d9233",
-      "passes": 84,
+      "at": "2026-04-22T06:37:24Z",
+      "hash": "ed1b95b6625698037e926368e9f56295c3b59c0d",
+      "passes": 85,
       "pr": 15490
     },
     "aidevops.sh": {
@@ -7717,6 +7717,36 @@
       "hash": "8cd1496ba47e9d9aab51c70d25d0c091fbb35c4d",
       "at": "2026-04-22T02:40:59Z",
       "pr": 20413,
+      "passes": 1
+    },
+    ".agents/reference/parent-task-lifecycle.md": {
+      "hash": "f5095e0fd1caf6155532b727c3be332b113bd788",
+      "at": "2026-04-22T06:37:24Z",
+      "pr": 20443,
+      "passes": 1
+    },
+    ".agents/reference/auto-merge.md": {
+      "hash": "b4a0af6b7514271a14a4d9317321642a5aa19b59",
+      "at": "2026-04-22T06:37:24Z",
+      "pr": 20442,
+      "passes": 1
+    },
+    ".agents/reference/auto-dispatch.md": {
+      "hash": "d88b930d7311719ebbfebe2618f73a72eae0b095",
+      "at": "2026-04-22T06:37:24Z",
+      "pr": 20441,
+      "passes": 1
+    },
+    ".agents/reference/repos-json-fields.md": {
+      "hash": "02db77702d36f50ef908d4c7856e46e510cfa875",
+      "at": "2026-04-22T06:37:24Z",
+      "pr": 20440,
+      "passes": 1
+    },
+    ".agents/reference/progressive-disclosure.md": {
+      "hash": "99f542cafff9f7f04688752a0dd142b0542ed0ad",
+      "at": "2026-04-22T06:37:24Z",
+      "pr": 20439,
       "passes": 1
     }
   },
