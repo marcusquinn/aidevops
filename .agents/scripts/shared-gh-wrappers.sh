@@ -548,19 +548,57 @@ gh_create_issue() {
 	return $rc
 }
 
+# Resolve a tNNN task ID to its GitHub issue number via title prefix search.
+# Used by both detection methods in _gh_auto_link_sub_issue. Echoes the issue
+# number on stdout, empty string if not found. Non-blocking.
+_gh_resolve_task_id_to_issue() {
+	local tid="$1"
+	local repo="$2"
+	[[ -z "$tid" || -z "$repo" ]] && return 0
+	gh issue list --repo "$repo" --state all \
+		--search "${tid}: in:title" --json number,title --limit 5 2>/dev/null |
+		jq -r --arg prefix "${tid}: " \
+			'.[] | select(.title | startswith($prefix)) | .number // ""' 2>/dev/null |
+		head -1
+	return 0
+}
+
+# Parse a `Parent:` line from an issue body and resolve to an issue number.
+# Accepts plain, bold-markdown (`**Parent:**`), and backtick-quoted variants.
+# Supports `#NNN`, `GH#NNN`, `tNNN` ref forms. `tNNN` resolves via
+# `_gh_resolve_task_id_to_issue`. Echoes the issue number on stdout, empty
+# string if no parent ref found. Non-blocking.
+_gh_parse_parent_from_body() {
+	local body="$1"
+	local repo="$2"
+	[[ -z "$body" ]] && return 0
+	local parent_ref
+	# shellcheck disable=SC2016  # sed pattern contains literal `*` and backticks
+	parent_ref=$(printf '%s\n' "$body" |
+		sed -nE 's/^[[:space:]]*\**Parent:\**[[:space:]]*`?(t[0-9]+|GH#[0-9]+|#[0-9]+)`?.*/\1/p' |
+		head -1 || true)
+	[[ -z "$parent_ref" ]] && return 0
+	if [[ "$parent_ref" =~ ^#([0-9]+)$ ]]; then
+		echo "${BASH_REMATCH[1]}"
+	elif [[ "$parent_ref" =~ ^GH#([0-9]+)$ ]]; then
+		echo "${BASH_REMATCH[1]}"
+	elif [[ "$parent_ref" =~ ^(t[0-9]+)$ ]]; then
+		_gh_resolve_task_id_to_issue "${BASH_REMATCH[1]}" "$repo"
+	fi
+	return 0
+}
+
 # GH#18735 + GH#20473 (t2738): auto-link newly created issues as sub-issues of
 # their parent at create-time. Two detection methods, in order of preference:
 #
-#   1. Dot-notation in title — `tNNN.M:` / `tNNN.M.K:` → parent is `tNNN` (or
-#      the dotted prefix one level up). Original behaviour.
+#   1. Dot-notation in title — `tNNN.M:` / `tNNN.M.K:` → parent is the dotted
+#      prefix one level up. Original behaviour.
 #
-#   2. `Parent:` line in body — plain, bold-markdown, or backtick-quoted:
-#        Parent: #500            → linked directly to #500
-#        Parent: GH#501          → linked directly to #501
-#        Parent: tNNN            → resolved via `gh issue list --search`
-#        **Parent:** `tNNN`      → bold-markdown + backtick variant
-#      Mirrors method 2 of `_detect_parent_from_gh_state` so the detection
-#      shape stays consistent across create-time and backfill-time paths.
+#   2. `Parent:` line in body — plain, bold-markdown, or backtick-quoted.
+#      Supports `#NNN`, `GH#NNN`, `tNNN` refs. Delegates parsing to
+#      `_gh_parse_parent_from_body`. Mirrors method 2 of
+#      `_detect_parent_from_gh_state` so the detection shape stays consistent
+#      across create-time and backfill-time paths.
 #
 # Non-blocking — every detection / resolution step returns silently on failure
 # so issue creation is never affected.
@@ -575,9 +613,10 @@ _gh_auto_link_sub_issue() {
 
 	# Extract --title, --repo, and --body (or --body-file) from the original args.
 	# Consolidated positional access: read $1/$2 into locals once at top of loop,
-	# then reference locals in case arms. Keeps ratchet happy and matches shell
-	# style guide ("local var=\"$1\" — never use $1 directly in function bodies").
-	local title="" repo="" body=""
+	# then reference locals in case arms. Matches shell style guide.
+	local title=""
+	local repo=""
+	local body=""
 	local _arg _next _bf
 	while [[ $# -gt 0 ]]; do
 		_arg="$1"
@@ -628,41 +667,17 @@ _gh_auto_link_sub_issue() {
 	local owner="${repo%%/*}" name="${repo##*/}"
 	local parent_num=""
 
-	# --- Method 1: dot-notation in title ---
+	# Method 1: dot-notation in title
 	if [[ "$title" =~ ^(t[0-9]+\.[0-9]+[a-z]?) ]]; then
-		local child_task_id="${BASH_REMATCH[1]}"
-		local parent_task_id="${child_task_id%.*}"
-		if [[ -n "$parent_task_id" && "$parent_task_id" != "$child_task_id" ]]; then
-			parent_num=$(gh issue list --repo "$repo" --state all \
-				--search "${parent_task_id}: in:title" --json number,title --limit 5 2>/dev/null |
-				jq -r --arg prefix "${parent_task_id}: " \
-					'.[] | select(.title | startswith($prefix)) | .number // ""' 2>/dev/null |
-				head -1)
+		local _cid="${BASH_REMATCH[1]}"
+		local _pid="${_cid%.*}"
+		if [[ -n "$_pid" && "$_pid" != "$_cid" ]]; then
+			parent_num=$(_gh_resolve_task_id_to_issue "$_pid" "$repo")
 		fi
 	fi
 
-	# --- Method 2: `Parent:` line in body (only if method 1 did not resolve) ---
-	if [[ -z "$parent_num" && -n "$body" ]]; then
-		local parent_ref
-		# shellcheck disable=SC2016  # sed pattern contains literal `*` and backticks
-		parent_ref=$(printf '%s\n' "$body" |
-			sed -nE 's/^[[:space:]]*\**Parent:\**[[:space:]]*`?(t[0-9]+|GH#[0-9]+|#[0-9]+)`?.*/\1/p' |
-			head -1 || true)
-		if [[ -n "$parent_ref" ]]; then
-			if [[ "$parent_ref" =~ ^#([0-9]+)$ ]]; then
-				parent_num="${BASH_REMATCH[1]}"
-			elif [[ "$parent_ref" =~ ^GH#([0-9]+)$ ]]; then
-				parent_num="${BASH_REMATCH[1]}"
-			elif [[ "$parent_ref" =~ ^(t[0-9]+)$ ]]; then
-				local _ptid="${BASH_REMATCH[1]}"
-				parent_num=$(gh issue list --repo "$repo" --state all \
-					--search "${_ptid}: in:title" --json number,title --limit 5 2>/dev/null |
-					jq -r --arg prefix "${_ptid}: " \
-						'.[] | select(.title | startswith($prefix)) | .number // ""' 2>/dev/null |
-					head -1)
-			fi
-		fi
-	fi
+	# Method 2: `Parent:` line in body (only if method 1 did not resolve)
+	[[ -z "$parent_num" ]] && parent_num=$(_gh_parse_parent_from_body "$body" "$repo")
 
 	[[ -z "$parent_num" ]] && return 0
 
