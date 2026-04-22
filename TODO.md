@@ -2944,3 +2944,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2743 Fix shared-gh-wrappers REST fallback to work in zsh (drops labels+assignees silently) #auto-dispatch #framework ref:GH#20480
 
 - [ ] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure #framework #pulse ref:GH#20482
+
+- [ ] t2745 Add pre-push guard to catch duplicate TODO entries from issue-sync orphan seed #auto-dispatch #framework ref:GH#20484
