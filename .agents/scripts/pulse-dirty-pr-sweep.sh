@@ -73,10 +73,11 @@ DIRTY_PR_SWEEP_INTERVAL="${DIRTY_PR_SWEEP_INTERVAL:-1800}"       # 30 min
 DIRTY_PR_SWEEP_ACTION_COOLDOWN="${DIRTY_PR_SWEEP_ACTION_COOLDOWN:-1800}" # 30 min per-PR
 
 # Eligibility windows (seconds).
-DIRTY_PR_REBASE_MAX_AGE="${DIRTY_PR_REBASE_MAX_AGE:-172800}"     # 48h
-DIRTY_PR_CLOSE_MIN_AGE="${DIRTY_PR_CLOSE_MIN_AGE:-604800}"       # 7d
-DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE="${DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE:-1209600}" # 14d for origin:interactive + referenced (t2711 Q2)
-DIRTY_PR_CLOSE_IDLE_HUMAN="${DIRTY_PR_CLOSE_IDLE_HUMAN:-259200}" # 3d since last human push
+DIRTY_PR_REBASE_MAX_AGE="${DIRTY_PR_REBASE_MAX_AGE:-172800}"                               # 48h — code conflicts
+DIRTY_PR_REBASE_PLANNING_MAX_AGE="${DIRTY_PR_REBASE_PLANNING_MAX_AGE:-604800}"             # 7d  — planning-only conflicts
+DIRTY_PR_CLOSE_MIN_AGE="${DIRTY_PR_CLOSE_MIN_AGE:-604800}"                                 # 7d
+DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE="${DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE:-1209600}"       # 14d for origin:interactive + referenced (t2711 Q2)
+DIRTY_PR_CLOSE_IDLE_HUMAN="${DIRTY_PR_CLOSE_IDLE_HUMAN:-259200}"                           # 3d since last human push
 
 # Max PRs processed per sweep per repo (safety rail — a single run should
 # never thrash hundreds of PRs).
@@ -338,18 +339,23 @@ _dps_pr_body_has_issue_reference() {
 	return 1
 }
 
-# Decide whether a rebase path is structurally eligible (young + author-ok +
-# not parent-task). Output on stdout: "rebase|planning-only-conflict" if yes,
+# Decide whether a rebase path is structurally eligible (author-ok +
+# not parent-task + within age window for the conflict scope).
+# Output on stdout: "rebase|planning-only-conflict" if yes,
 # empty string if no. The caller uses a non-empty return to short-circuit.
 # Planning files (TODO.md, todo/**, README.md) match the headless planning
 # allowlist from pre-edit-check.sh:is_main_allowlisted_path.
+#
+# Two-tier age gate:
+#   planning-only conflicts (TODO.md, todo/**, README.md) → DIRTY_PR_REBASE_PLANNING_MAX_AGE (7d)
+#   non-planning conflicts                                 → DIRTY_PR_REBASE_MAX_AGE (48h) guard
 #
 # Args: $1=age $2=rebase_author_ok $3=has_parent_task $4=repo_path $5=head_ref
 _dps_consider_rebase() {
 	local age="$1" rebase_author_ok="$2" has_parent_task="$3"
 	local repo_path="$4" head_ref="$5"
 
-	[[ "$age" -lt "$DIRTY_PR_REBASE_MAX_AGE" ]] || return 0
+	# Author and label gates are age-independent — check them first.
 	[[ "$rebase_author_ok" -eq 1 ]] || return 0
 	[[ "$has_parent_task" -eq 0 ]] || return 0
 	[[ -n "$repo_path" && -d "$repo_path" ]] || return 0
@@ -357,10 +363,22 @@ _dps_consider_rebase() {
 	local conflicts non_planning
 	conflicts=$(_dps_conflicting_files "$repo_path" "$head_ref" "origin/main" 2>/dev/null) || conflicts=""
 	[[ -n "$conflicts" ]] || return 0
-	non_planning=$(printf '%s\n' "$conflicts" | grep -vx 'TODO.md' | grep -v '^todo/' | grep -vx 'README.md' | grep -v '^\s*$' || true)
+
+	# Strip planning-only files: TODO.md, todo/**, README.md.
+	non_planning=$(printf '%s\n' "$conflicts" \
+		| grep -vx 'TODO.md' \
+		| grep -v '^todo/' \
+		| grep -vx 'README.md' \
+		| grep -v '^\s*$' || true)
+
 	if [[ -z "$non_planning" ]]; then
+		# Planning-only conflict — use extended age window.
+		[[ "$age" -lt "$DIRTY_PR_REBASE_PLANNING_MAX_AGE" ]] || return 0
 		printf '%s|planning-only-conflict' "$_DIRTY_ACTION_REBASE"
 	fi
+	# Non-planning conflicts: currently no rebase path.
+	# Age guard kept here as a future extension point when mixed-conflict
+	# rebase is added: [[ "$age" -lt "$DIRTY_PR_REBASE_MAX_AGE" ]] || return 0
 	return 0
 }
 
@@ -892,12 +910,13 @@ Options:
 
 Environment:
   DRY_RUN=1                          Same as --dry-run.
-  DIRTY_PR_SWEEP_INTERVAL=1800       Outer cycle gate (seconds).
-  DIRTY_PR_SWEEP_ACTION_COOLDOWN=1800  Per-PR action cooldown (seconds).
-  DIRTY_PR_REBASE_MAX_AGE=172800     Rebase eligibility ceiling (seconds).
-  DIRTY_PR_CLOSE_MIN_AGE=604800      Close eligibility floor (seconds).
-  DIRTY_PR_CLOSE_IDLE_HUMAN=259200   Close idleness floor (seconds).
-  DIRTY_PR_SWEEP_BATCH_LIMIT=30      Max PRs per repo per run.
+  DIRTY_PR_SWEEP_INTERVAL=1800           Outer cycle gate (seconds).
+  DIRTY_PR_SWEEP_ACTION_COOLDOWN=1800    Per-PR action cooldown (seconds).
+  DIRTY_PR_REBASE_MAX_AGE=172800         Rebase ceiling for code conflicts (seconds, 48h).
+  DIRTY_PR_REBASE_PLANNING_MAX_AGE=604800  Rebase ceiling for planning-only conflicts (seconds, 7d).
+  DIRTY_PR_CLOSE_MIN_AGE=604800          Close eligibility floor (seconds).
+  DIRTY_PR_CLOSE_IDLE_HUMAN=259200       Close idleness floor (seconds).
+  DIRTY_PR_SWEEP_BATCH_LIMIT=30          Max PRs per repo per run.
 
 Examples:
   pulse-dirty-pr-sweep.sh --dry-run
