@@ -646,24 +646,24 @@ _gh_auto_link_sub_issue() {
 		case "$_arg" in
 		--title)
 			title="$_next"
-			shift
+			[[ $# -gt 0 ]] && shift
 			;;
 		--title=*) title="${_arg#--title=}" ;;
 		--repo)
 			repo="$_next"
-			shift
+			[[ $# -gt 0 ]] && shift
 			;;
 		--repo=*) repo="${_arg#--repo=}" ;;
 		--body)
 			body="$_next"
-			shift
+			[[ $# -gt 0 ]] && shift
 			;;
 		--body=*) body="${_arg#--body=}" ;;
 		--body-file)
 			if [[ -n "$_next" && -r "$_next" ]]; then
 				body=$(<"$_next")
 			fi
-			shift
+			[[ $# -gt 0 ]] && shift
 			;;
 		--body-file=*)
 			_bf="${_arg#--body-file=}"
