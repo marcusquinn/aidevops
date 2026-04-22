@@ -617,6 +617,14 @@ create_issue() {
 			--description "Requires human triage before worker dispatch" \
 			--color "B60205" || true
 		label_list="${label_list},needs-maintainer-review"
+	else
+		# GH#20530 (t2748): scanner-emitted issues are dispatchable by default.
+		# Without auto-dispatch + tier:standard, pulse cannot pick them up and
+		# they sit unworked indefinitely (observed: 9 issues stalled when
+		# this branch was missing — backfilled manually as one-shot remediation).
+		# NMR'd issues skip this branch — NMR auto-approval (pulse-nmr-approval.sh)
+		# adds auto-dispatch on clear, so we don't double-apply here.
+		label_list="${label_list},auto-dispatch,tier:standard"
 	fi
 
 	local body_with_sig
