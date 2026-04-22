@@ -354,7 +354,7 @@ Advisories delivered via `aidevops update`; shown in session greeting until dism
 
 **Cross-repo privacy:** NEVER include private repo names in TODO.md task descriptions, issue titles, or comments on public repos. Use generic references like "a managed private repo" or "cross-repo project". The issue-sync-helper.sh has automated sanitization, but prevention at the source is the primary defense.
 
-**Client-side pre-push guards (t1965, t2198):** Three opt-in `pre-push` hooks: **privacy** (blocks private repo slugs in public commits), **complexity** (blocks new violations of function/nesting/file size limits), **scope** (blocks out-of-scope file changes per brief `Files Scope`). Install: `install-pre-push-guards.sh install`. Bypass all: `git push --no-verify`. Full detail and individual bypass flags: `reference/pre-push-guards.md`.
+**Client-side pre-push guards (t1965, t2198, t2745):** Four opt-in `pre-push` hooks: **privacy** (blocks private repo slugs in public commits), **complexity** (blocks new violations of function/nesting/file size limits), **scope** (blocks out-of-scope file changes per brief `Files Scope`), **dup-todo** (blocks pushes where `TODO.md` has duplicate task-ID checkbox lines). Install: `install-pre-push-guards.sh install`. Bypass all: `git push --no-verify`. Full detail and individual bypass flags: `reference/pre-push-guards.md`.
 
 ## Working Directories
 

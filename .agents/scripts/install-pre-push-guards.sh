@@ -2,22 +2,23 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# install-pre-push-guards.sh — Install aidevops git pre-push hooks (t2198, t2446, t2458).
+# install-pre-push-guards.sh — Install aidevops git pre-push hooks (t2198, t2446, t2458, t2745).
 #
-# Manages four pre-push guards in the current repository:
+# Manages five pre-push guards in the current repository:
 #   - privacy-guard      blocks pushes leaking private repo slugs
 #   - complexity-guard   blocks pushes introducing complexity regressions
 #   - scope-guard        blocks pushes touching files outside the brief's Files Scope
 #   - credential-guard   blocks pushes emitting unsanitised remote URLs (t2458)
+#   - dup-todo-guard     blocks pushes where TODO.md has duplicate task-ID checkbox lines (t2745)
 #
 # Usage:
 #   install-pre-push-guards.sh install [--guard <name>]
 #         Install (or refresh) guard(s).
-#         --guard: privacy|complexity|scope|credential|all (default: all)
+#         --guard: privacy|complexity|scope|credential|dup-todo|all (default: all)
 #
 #   install-pre-push-guards.sh uninstall [--guard <name>]
 #         Remove guard entry/entries.
-#         --guard: privacy|complexity|scope|credential|all (default: all)
+#         --guard: privacy|complexity|scope|credential|dup-todo|all (default: all)
 #
 #   install-pre-push-guards.sh status
 #         Report which guards are present and their hook source locations.
@@ -28,11 +29,12 @@
 # Existing hooks NOT managed by aidevops are refused and left untouched.
 #
 # Runtime bypass per-guard:
-#   PRIVACY_GUARD_DISABLE=1       skip privacy check for this push
-#   COMPLEXITY_GUARD_DISABLE=1    skip complexity check for this push
-#   SCOPE_GUARD_DISABLE=1         skip scope check for this push
-#   CREDENTIAL_GUARD_DISABLE=1    skip credential check for this push
-#   git push --no-verify          skip all hooks
+#   PRIVACY_GUARD_DISABLE=1          skip privacy check for this push
+#   COMPLEXITY_GUARD_DISABLE=1       skip complexity check for this push
+#   SCOPE_GUARD_DISABLE=1            skip scope check for this push
+#   CREDENTIAL_GUARD_DISABLE=1       skip credential check for this push
+#   AIDEVOPS_SKIP_DUP_TODO_GUARD=1   skip duplicate TODO check for this push
+#   git push --no-verify             skip all hooks
 
 set -euo pipefail
 
@@ -70,11 +72,13 @@ HOOK_MARKER_PRIVACY="# guard:privacy"
 HOOK_MARKER_COMPLEXITY="# guard:complexity"
 HOOK_MARKER_SCOPE="# guard:scope"
 HOOK_MARKER_CREDENTIAL="# guard:credential"
+HOOK_MARKER_DUP_TODO="# guard:dup-todo"
 
 DEPLOYED_PRIVACY_HOOK="$HOME/.aidevops/agents/hooks/privacy-guard-pre-push.sh"
 DEPLOYED_COMPLEXITY_HOOK="$HOME/.aidevops/agents/hooks/complexity-regression-pre-push.sh"
 DEPLOYED_SCOPE_HOOK="$HOME/.aidevops/agents/hooks/scope-guard-pre-push.sh"
 DEPLOYED_CREDENTIAL_HOOK="$HOME/.aidevops/agents/hooks/credential-emission-pre-push.sh"
+DEPLOYED_DUP_TODO_HOOK="$HOME/.aidevops/agents/hooks/pre-push-dup-todo-guard.sh"
 
 #######################################
 # Resolve the script's own directory (symlink-safe).
@@ -116,6 +120,10 @@ _find_hook_src() {
 	credential)
 		_repo_hook="${_sd}/../hooks/credential-emission-pre-push.sh"
 		_deployed_hook="$DEPLOYED_CREDENTIAL_HOOK"
+		;;
+	dup-todo)
+		_repo_hook="${_sd}/../hooks/pre-push-dup-todo-guard.sh"
+		_deployed_hook="$DEPLOYED_DUP_TODO_HOOK"
 		;;
 	*)
 		print_error "_find_hook_src: unknown guard: $_guard"
@@ -205,7 +213,7 @@ GUARD_BLOCK
 
 #######################################
 # Write (or rewrite) the dispatcher hook.
-# Args: _hook_path _inc_privacy _inc_complexity _inc_scope _inc_credential (0|1 each)
+# Args: _hook_path _inc_privacy _inc_complexity _inc_scope _inc_credential _inc_dup_todo (0|1 each)
 #
 # The generated script reads all stdin once, then pipes it to each
 # installed guard hook. Each guard receives (remote_name, remote_url)
@@ -217,6 +225,7 @@ _write_dispatcher() {
 	local _inc_complexity="$3"
 	local _inc_scope="${4:-0}"
 	local _inc_credential="${5:-0}"
+	local _inc_dup_todo="${6:-0}"
 
 	mkdir -p "$(dirname "$_hook_path")"
 
@@ -228,7 +237,8 @@ _write_dispatcher() {
 # Chains installed aidevops pre-push guards in order.
 # Bypass all:  git push --no-verify
 # Bypass each: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1,
-#              SCOPE_GUARD_DISABLE=1, or CREDENTIAL_GUARD_DISABLE=1
+#              SCOPE_GUARD_DISABLE=1, CREDENTIAL_GUARD_DISABLE=1,
+#              or AIDEVOPS_SKIP_DUP_TODO_GUARD=1
 
 set -u
 
@@ -249,6 +259,8 @@ HOOK_HEADER
 		"scope" ".agents/hooks/scope-guard-pre-push.sh" "$DEPLOYED_SCOPE_HOOK"
 	[[ "$_inc_credential" -eq 1 ]] && _append_guard_block "$_hook_path" \
 		"credential" ".agents/hooks/credential-emission-pre-push.sh" "$DEPLOYED_CREDENTIAL_HOOK"
+	[[ "$_inc_dup_todo" -eq 1 ]] && _append_guard_block "$_hook_path" \
+		"dup-todo" ".agents/hooks/pre-push-dup-todo-guard.sh" "$DEPLOYED_DUP_TODO_HOOK"
 
 	# Single-quoted to write literal $-vars into the generated script (not expand here)
 	# shellcheck disable=SC2016
@@ -291,7 +303,7 @@ _install_reject_unmanaged_hook() {
 	print_error "existing pre-push hook at $_hook_path is NOT managed by aidevops"
 	print_error "Refusing to overwrite. To chain manually, add each guard to your hook:"
 	local _gh
-	for _gh in "privacy-guard-pre-push.sh" "complexity-regression-pre-push.sh" "scope-guard-pre-push.sh" "credential-emission-pre-push.sh"; do
+	for _gh in "privacy-guard-pre-push.sh" "complexity-regression-pre-push.sh" "scope-guard-pre-push.sh" "credential-emission-pre-push.sh" "pre-push-dup-todo-guard.sh"; do
 		# shellcheck disable=SC2016
 		print_error '  ${REPO}/.agents/hooks/'"$_gh"' "$@" < /dev/stdin'
 	done
@@ -311,34 +323,37 @@ cmd_install() {
 	_install_reject_unmanaged_hook "$_hook_path" || return 1
 
 	# Determine which guards are currently in the hook
-	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0
+	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0 _cur_dup_todo=0
 	if [[ -f "$_hook_path" ]]; then
 		grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _cur_privacy=1
 		grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _cur_complexity=1
 		grep -q "$HOOK_MARKER_SCOPE" "$_hook_path" 2>/dev/null && _cur_scope=1
 		grep -q "$HOOK_MARKER_CREDENTIAL" "$_hook_path" 2>/dev/null && _cur_credential=1
+		grep -q "$HOOK_MARKER_DUP_TODO" "$_hook_path" 2>/dev/null && _cur_dup_todo=1
 	fi
 
 	# Determine which guards to add based on filter
-	local _want_privacy=0 _want_complexity=0 _want_scope=0 _want_credential=0
+	local _want_privacy=0 _want_complexity=0 _want_scope=0 _want_credential=0 _want_dup_todo=0
 	case "$_guard_filter" in
-	all)        _want_privacy=1; _want_complexity=1; _want_scope=1; _want_credential=1 ;;
+	all)        _want_privacy=1; _want_complexity=1; _want_scope=1; _want_credential=1; _want_dup_todo=1 ;;
 	privacy)    _want_privacy=1 ;;
 	complexity) _want_complexity=1 ;;
 	scope)      _want_scope=1 ;;
 	credential) _want_credential=1 ;;
+	dup-todo)   _want_dup_todo=1 ;;
 	*)
-		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential)"
+		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential, dup-todo)"
 		return 1
 		;;
 	esac
 
 	# Merge: keep existing + add requested
-	local _inc_privacy=0 _inc_complexity=0 _inc_scope=0 _inc_credential=0
+	local _inc_privacy=0 _inc_complexity=0 _inc_scope=0 _inc_credential=0 _inc_dup_todo=0
 	[[ "$_cur_privacy" -eq 1 || "$_want_privacy" -eq 1 ]] && _inc_privacy=1
 	[[ "$_cur_complexity" -eq 1 || "$_want_complexity" -eq 1 ]] && _inc_complexity=1
 	[[ "$_cur_scope" -eq 1 || "$_want_scope" -eq 1 ]] && _inc_scope=1
 	[[ "$_cur_credential" -eq 1 || "$_want_credential" -eq 1 ]] && _inc_credential=1
+	[[ "$_cur_dup_todo" -eq 1 || "$_want_dup_todo" -eq 1 ]] && _inc_dup_todo=1
 
 	# Verify sources exist; warn and omit guards whose source is missing
 	local _installed_list=""
@@ -374,17 +389,25 @@ cmd_install() {
 			_inc_credential=0
 		fi
 	fi
+	if [[ "$_inc_dup_todo" -eq 1 ]]; then
+		if _find_hook_src dup-todo >/dev/null 2>&1; then
+			_installed_list="${_installed_list}dup-todo "
+		else
+			print_warning "dup-todo hook source not found — omitting dup-todo guard"
+			_inc_dup_todo=0
+		fi
+	fi
 
-	if [[ "$_inc_privacy" -eq 0 && "$_inc_complexity" -eq 0 && "$_inc_scope" -eq 0 && "$_inc_credential" -eq 0 ]]; then
+	if [[ "$_inc_privacy" -eq 0 && "$_inc_complexity" -eq 0 && "$_inc_scope" -eq 0 && "$_inc_credential" -eq 0 && "$_inc_dup_todo" -eq 0 ]]; then
 		print_warning "no guards to install (sources not found)"
 		return 0
 	fi
 
-	_write_dispatcher "$_hook_path" "$_inc_privacy" "$_inc_complexity" "$_inc_scope" "$_inc_credential"
+	_write_dispatcher "$_hook_path" "$_inc_privacy" "$_inc_complexity" "$_inc_scope" "$_inc_credential" "$_inc_dup_todo"
 	print_success "installed pre-push guards: ${_installed_list% }"
 	print_info "hook: $_hook_path"
 	print_info "bypass all: git push --no-verify"
-	print_info "bypass individual: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1, SCOPE_GUARD_DISABLE=1, or CREDENTIAL_GUARD_DISABLE=1"
+	print_info "bypass individual: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1, SCOPE_GUARD_DISABLE=1, CREDENTIAL_GUARD_DISABLE=1, or AIDEVOPS_SKIP_DUP_TODO_GUARD=1"
 	return 0
 }
 
@@ -426,28 +449,30 @@ cmd_uninstall() {
 	fi
 
 	# Remove one guard: read current state, rebuild without the removed guard
-	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0
+	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0 _cur_dup_todo=0
 	grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _cur_privacy=1
 	grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _cur_complexity=1
 	grep -q "$HOOK_MARKER_SCOPE" "$_hook_path" 2>/dev/null && _cur_scope=1
 	grep -q "$HOOK_MARKER_CREDENTIAL" "$_hook_path" 2>/dev/null && _cur_credential=1
+	grep -q "$HOOK_MARKER_DUP_TODO" "$_hook_path" 2>/dev/null && _cur_dup_todo=1
 
 	case "$_guard_filter" in
 	privacy)    _cur_privacy=0 ;;
 	complexity) _cur_complexity=0 ;;
 	scope)      _cur_scope=0 ;;
 	credential) _cur_credential=0 ;;
+	dup-todo)   _cur_dup_todo=0 ;;
 	*)
 		print_error "unknown guard: $_guard_filter"
 		return 1
 		;;
 	esac
 
-	if [[ "$_cur_privacy" -eq 0 && "$_cur_complexity" -eq 0 && "$_cur_scope" -eq 0 && "$_cur_credential" -eq 0 ]]; then
+	if [[ "$_cur_privacy" -eq 0 && "$_cur_complexity" -eq 0 && "$_cur_scope" -eq 0 && "$_cur_credential" -eq 0 && "$_cur_dup_todo" -eq 0 ]]; then
 		rm -f "$_hook_path"
 		print_success "removed last guard — hook deleted"
 	else
-		_write_dispatcher "$_hook_path" "$_cur_privacy" "$_cur_complexity" "$_cur_scope" "$_cur_credential"
+		_write_dispatcher "$_hook_path" "$_cur_privacy" "$_cur_complexity" "$_cur_scope" "$_cur_credential" "$_cur_dup_todo"
 		print_success "removed $_guard_filter guard from hook"
 	fi
 	return 0
@@ -474,16 +499,18 @@ cmd_status() {
 	printf 'pre-push hook: installed (aidevops managed)\n'
 	printf '  path: %s\n' "$_hook_path"
 
-	local _has_privacy=0 _has_complexity=0 _has_scope=0 _has_credential=0
+	local _has_privacy=0 _has_complexity=0 _has_scope=0 _has_credential=0 _has_dup_todo=0
 	grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _has_privacy=1
 	grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _has_complexity=1
 	grep -q "$HOOK_MARKER_SCOPE" "$_hook_path" 2>/dev/null && _has_scope=1
 	grep -q "$HOOK_MARKER_CREDENTIAL" "$_hook_path" 2>/dev/null && _has_credential=1
+	grep -q "$HOOK_MARKER_DUP_TODO" "$_hook_path" 2>/dev/null && _has_dup_todo=1
 
 	_status_report_guard "privacy"    "$_has_privacy"
 	_status_report_guard "complexity" "$_has_complexity"
 	_status_report_guard "scope"      "$_has_scope"
 	_status_report_guard "credential" "$_has_credential"
+	_status_report_guard "dup-todo"   "$_has_dup_todo"
 	return 0
 }
 

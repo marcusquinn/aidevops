@@ -1,9 +1,9 @@
-# Pre-Push Guards Reference (t1965, t2198)
+# Pre-Push Guards Reference (t1965, t2198, t2745)
 
-Three opt-in `pre-push` hooks block common mistakes before they hit CI.
+Four opt-in `pre-push` hooks block common mistakes before they hit CI.
 
 Install all: `install-pre-push-guards.sh install`
-Install individual: `install-pre-push-guards.sh --guard privacy|complexity|scope`
+Install individual: `install-pre-push-guards.sh --guard privacy|complexity|scope|credential|dup-todo`
 Status: `install-pre-push-guards.sh status`
 Bypass all: `git push --no-verify`
 
@@ -45,3 +45,18 @@ Reads the brief file for the current branch's task ID and enforces the declared 
 - Bypass: `SCOPE_GUARD_DISABLE=1 git push ...`
 - **Fail-open** when: branch name has no task ID, or no brief file exists
 - **Fail-closed** when: brief exists but has no `Files Scope` section or the section is empty — this is a configuration error that must be fixed before pushing
+
+## Duplicate TODO Guard
+
+**File:** `.agents/hooks/pre-push-dup-todo-guard.sh`
+
+Blocks pushes when the pushed commit's `TODO.md` contains two or more checkbox lines with the same task ID (t2745). Root cause: `_seed_orphan_todo_line` in `issue-sync-lib.sh` appends a minimal entry for an issue that already has a rich planning-PR entry. After `git rebase main`, both entries coexist with no merge conflict (different line numbers). This hook catches the duplicate at push time, before it reaches the remote.
+
+Detection pattern: `^- \[.\] tNNN ` — anchored to checkbox-and-task-ID prefix. Description-only mentions of a task ID (e.g., `See t2743 for context`) are not flagged.
+
+Fix: `grep -n "^- \[.\] tNNN " TODO.md` to find both entries, remove the minimal (orphan-seeded) one, amend, and push again.
+
+- Bypass (warning logged to stderr): `AIDEVOPS_SKIP_DUP_TODO_GUARD=1 git push ...`
+- Bypass all hooks: `git push --no-verify` (no warning)
+- **Fail-open** when: `TODO.md` is absent from the pushed commit, or `git show` fails
+- Test harness: `.agents/scripts/tests/test-pre-push-dup-todo-guard.sh`
