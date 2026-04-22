@@ -38,6 +38,43 @@ function detectCliVersion(binaries, fallback) {
 const DETECTED_CLAUDE_VERSION = detectCliVersion(["claude"], FALLBACK_CLAUDE_VERSION);
 const DETECTED_OPENCODE_VERSION = detectCliVersion(["opencode", "oc"], FALLBACK_OPENCODE_VERSION);
 
+/**
+ * Auto-detect the @anthropic-ai/sdk package version embedded in the Claude CLI.
+ * This is the value the real CLI sends as X-Stainless-Package-Version.
+ * Falls back to a recent known version if detection fails.
+ */
+function detectStainlessPackageVersion() {
+  const FALLBACK = "0.208.0";
+  try {
+    const { readFileSync } = require("fs");
+    const { join } = require("path");
+    const binPath = execFileSync("which", ["claude"], { timeout: 3000, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    // Resolve symlinks to find the actual binary/package
+    const resolved = require("fs").realpathSync(binPath);
+    // Check for package.json in the parent node_modules
+    const pkgDir = resolved.replace(/\/bin\/claude(\.exe)?$/, "");
+    try {
+      const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf-8"));
+      const sdkVer = pkg.dependencies?.["@anthropic-ai/sdk"]?.replace(/[\^~>=<]*/g, "");
+      if (sdkVer && /^\d+\.\d+\.\d+/.test(sdkVer)) return sdkVer;
+    } catch { /* not a node package */ }
+    // For Bun binaries: extract version strings and find 0.2xx.x pattern
+    const { execFileSync: ef } = require("child_process");
+    const strings = ef("strings", [resolved], { timeout: 10000, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+    const versions = [...strings.matchAll(/"(0\.\d{2,3}\.\d+)"/g)].map(m => m[1]);
+    // Find the highest 0.2xx.x version (the SDK version is typically the highest)
+    const sdkVersions = versions.filter(v => /^0\.(1\d{2}|2\d{2})\.\d+$/.test(v)).sort((a, b) => {
+      const [, aMin, aPat] = a.match(/^0\.(\d+)\.(\d+)$/);
+      const [, bMin, bPat] = b.match(/^0\.(\d+)\.(\d+)$/);
+      return (+bMin - +aMin) || (+bPat - +aPat);
+    });
+    if (sdkVersions.length > 0) return sdkVersions[0];
+  } catch { /* detection failed */ }
+  return FALLBACK;
+}
+
+export const DETECTED_STAINLESS_PACKAGE_VERSION = detectStainlessPackageVersion();
+
 export const ANTHROPIC_USER_AGENT = `claude-cli/${DETECTED_CLAUDE_VERSION} (external, cli)`;
 export const OPENCODE_USER_AGENT = `opencode/${DETECTED_OPENCODE_VERSION}`;
 
