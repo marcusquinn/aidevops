@@ -336,8 +336,10 @@ _dps_pr_body_has_issue_reference() {
 }
 
 # Decide whether a rebase path is structurally eligible (young + author-ok +
-# not parent-task). Output on stdout: "rebase|todo-only-conflict" if yes,
+# not parent-task). Output on stdout: "rebase|planning-only-conflict" if yes,
 # empty string if no. The caller uses a non-empty return to short-circuit.
+# Planning files (TODO.md, todo/**, README.md) match the headless planning
+# allowlist from pre-edit-check.sh:is_main_allowlisted_path.
 #
 # Args: $1=age $2=rebase_author_ok $3=has_parent_task $4=repo_path $5=head_ref
 _dps_consider_rebase() {
@@ -349,12 +351,12 @@ _dps_consider_rebase() {
 	[[ "$has_parent_task" -eq 0 ]] || return 0
 	[[ -n "$repo_path" && -d "$repo_path" ]] || return 0
 
-	local conflicts non_todo
+	local conflicts non_planning
 	conflicts=$(_dps_conflicting_files "$repo_path" "$head_ref" "origin/main" 2>/dev/null) || conflicts=""
 	[[ -n "$conflicts" ]] || return 0
-	non_todo=$(printf '%s\n' "$conflicts" | grep -vx 'TODO.md' | grep -v '^\s*$' || true)
-	if [[ -z "$non_todo" ]]; then
-		printf '%s|todo-only-conflict' "$_DIRTY_ACTION_REBASE"
+	non_planning=$(printf '%s\n' "$conflicts" | grep -vx 'TODO.md' | grep -v '^todo/' | grep -vx 'README.md' | grep -v '^\s*$' || true)
+	if [[ -z "$non_planning" ]]; then
+		printf '%s|planning-only-conflict' "$_DIRTY_ACTION_REBASE"
 	fi
 	return 0
 }
