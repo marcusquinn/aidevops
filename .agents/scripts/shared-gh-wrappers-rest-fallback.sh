@@ -118,13 +118,20 @@ _gh_split_csv() {
 # Fail-safe: if the response is unparseable (network error, gh auth missing),
 # return 1 (false) so the caller sees the original error rather than triggering
 # an unnecessary REST retry that may also fail.
+#
+# Optional arg: $1=pre-computed remaining count (integer string).
+# When provided, skips the `gh api rate_limit` call — callers that already
+# know the current rate-limit state (e.g. after fetching it once for a loop)
+# can pass it to avoid redundant I/O.
 #######################################
 _gh_should_fallback_to_rest() {
 	# Test/CI override: set _GH_SHOULD_FALLBACK_OVERRIDE=1 to force true without
 	# requiring a real rate-limit state. Use in unit tests and manual smoke runs.
 	[[ "${_GH_SHOULD_FALLBACK_OVERRIDE:-0}" == "1" ]] && return 0
-	local remaining
-	remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null)
+	local remaining="${1:-}"
+	if [[ -z "$remaining" ]]; then
+		remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null)
+	fi
 	[[ "$remaining" =~ ^[0-9]+$ ]] || return 1
 	[[ "$remaining" -le "$_GH_REST_FALLBACK_THRESHOLD" ]]
 }
