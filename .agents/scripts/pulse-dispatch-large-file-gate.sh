@@ -27,6 +27,11 @@ _PULSE_DISPATCH_LARGE_FILE_GATE_LOADED=1
 # data files (.json/.yaml/.yml/.toml/.xml/.csv) which are config, not code.
 _LFG_SKIP_PATTERN='(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|Cargo\.lock|Gemfile\.lock|poetry\.lock|simplification-state\.json|\.min\.(js|css)$|\.json$|\.yaml$|\.yml$|\.toml$|\.xml$|\.csv$)'
 
+# t2713: Module-level return variable for _large_file_gate_check_surgical_brief.
+# Holds a comma-separated list of exempted file basenames when the surgical-brief
+# exemption fires; reset to "" at the start of each call.
+_LFG_SURGICAL_EXEMPTED_FILES=""
+
 #######################################
 # Label-based early-exit precheck for the large-file gate.
 # Handles GH#18042 self-simplification auto-clear, force_recheck bypass,
@@ -641,6 +646,88 @@ _large_file_gate_clear_stale_label() {
 }
 
 #######################################
+# t2713: Surgical-brief exemption precheck for the large-file gate.
+# When the issue title encodes a task ID (^tNNN:) and the task's brief
+# cites an explicit line range for EVERY path returned by
+# _large_file_gate_extract_paths, the edits are surgical and do not
+# require whole-file context budget. Returns 0 (exemption applies) when
+# all paths are covered; returns 1 otherwise.
+#
+# Sets module-level global _LFG_SURGICAL_EXEMPTED_FILES to a comma-separated
+# list of exempted file basenames when returning 0.
+#
+# Three accepted line-range forms in the brief (any one form per file counts):
+#   a) basename:NNN-NNN            (direct citation, e.g. "auto-update-helper.sh:1320-1345")
+#   b) basename ... (line NNN-NNN) (narrative parenthetical)
+#   c) basename ... LNNN-LNNN      (GitHub URL / notebook-style)
+#
+# Conservative fail-open: missing task ID, missing brief, or unmatched
+# path all fall through to the normal per-target evaluation loop.
+#
+# Arguments:
+#   $1 - issue_title  (e.g. "t2706: fix deployed-sha drift")
+#   $2 - all_paths    (newline-separated, from _large_file_gate_extract_paths)
+#   $3 - repo_path    (absolute path to the repo checkout)
+# Exit codes:
+#   0 - exemption applies (all paths have ≥1 line-range ref in brief)
+#   1 - no exemption (no task ID, brief missing, empty paths, ≥1 uncovered)
+#######################################
+_large_file_gate_check_surgical_brief() {
+	local issue_title="$1"
+	local all_paths="$2"
+	local repo_path="$3"
+
+	_LFG_SURGICAL_EXEMPTED_FILES=""
+
+	# 1. Extract task ID from issue title (must begin with tNNN:).
+	local task_id=""
+	if [[ "$issue_title" =~ ^(t[0-9]+): ]]; then
+		task_id="${BASH_REMATCH[1]}"
+	fi
+	[[ -n "$task_id" ]] || return 1
+
+	# 2. Locate the task brief — fall through conservatively when missing.
+	local brief_path="${repo_path}/todo/tasks/${task_id}-brief.md"
+	[[ -f "$brief_path" ]] || return 1
+
+	# 3. For each extracted path, verify ≥1 line-range reference exists in the
+	#    brief. ALL paths must be covered for the exemption to fire.
+	local covered_all=true
+	local covered_files=""
+	local raw_target
+	while IFS= read -r raw_target; do
+		[[ -z "$raw_target" ]] && continue
+
+		# Strip any line qualifier already embedded in the extracted path
+		# (mirrors the stripping in _large_file_gate_evaluate_target).
+		local fpath="$raw_target"
+		if [[ "$raw_target" =~ ^(.+):([0-9]+(-[0-9]+)?)$ ]]; then
+			fpath="${BASH_REMATCH[1]}"
+		fi
+		local bname
+		bname=$(basename "$fpath")
+
+		# Pattern a: basename:NNN-NNN (most common — "Relevant Files" sections)
+		# Pattern b: basename ... (line NNN-NNN) (narrative parenthetical in prose)
+		# Pattern c: basename ... LNNN-LNNN (GitHub URL / notebook reference)
+		if grep -qE "${bname}:[0-9]+-[0-9]+" "$brief_path" 2>/dev/null ||
+			grep -qE "${bname}.*\(lines?[[:space:]]+[0-9]+-[0-9]+\)" "$brief_path" 2>/dev/null ||
+			grep -qE "${bname}.*L[0-9]+-L?[0-9]+" "$brief_path" 2>/dev/null; then
+			covered_files="${covered_files}${bname}, "
+		else
+			covered_all=false
+			break
+		fi
+	done <<<"$all_paths"
+
+	if [[ "$covered_all" == true && -n "$covered_files" ]]; then
+		_LFG_SURGICAL_EXEMPTED_FILES="${covered_files%, }"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Thin orchestrator for the large-file gate. Delegates label precheck,
 # path extraction, per-target evaluation, gate application, and stale-label
 # cleanup to the `_large_file_gate_*` helpers above. Byte-for-byte
@@ -698,6 +785,18 @@ _issue_targets_large_files() {
 		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
 			_large_file_gate_clear_stale_label "$issue_number" "$repo_slug"
 		fi
+		return 1
+	fi
+
+	# t2713: Surgical-brief exemption — check before the per-target evaluation
+	# loop. If the issue title has a task ID and the linked brief cites line
+	# ranges for every extracted path, dispatch proceeds without a split.
+	local _surgical_title=""
+	_surgical_title=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json title --jq '.title // ""' 2>/dev/null) || _surgical_title=""
+	if _large_file_gate_check_surgical_brief \
+		"$_surgical_title" "$all_paths" "$repo_path"; then
+		echo "[pulse-wrapper] Large-file gate EXEMPTED for #${issue_number} (${repo_slug}): surgical brief with line ranges for ${_LFG_SURGICAL_EXEMPTED_FILES}" >>"$LOGFILE"
 		return 1
 	fi
 
