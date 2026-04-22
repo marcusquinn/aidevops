@@ -2896,7 +2896,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2719 Fix setup/_tools.sh local -n nameref usages for zsh-source compatibility #auto-dispatch #bug ref:GH#20303 ref:GH#20393
 
-- [ ] t2720 commit-and-pr: prefer tNNN over GH#N in auto-derived PR title so issue-sync auto-completion fires #auto-dispatch #bug #framework ref:GH#20395
+- [x] t2720 commit-and-pr: prefer tNNN over GH#N in auto-derived PR title so issue-sync auto-completion fires #auto-dispatch #bug #framework ref:GH#20395 pr:#20400 completed:2026-04-22
 
 - [ ] t2721 remove auto-dispatch label and make dispatch the default behaviour #parent ref:GH#20402
 
