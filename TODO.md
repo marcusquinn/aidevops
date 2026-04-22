@@ -2948,3 +2948,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure #framework #pulse ref:GH#20482 pr:#20483 completed:2026-04-22
 
 - [x] t2745 Add pre-push guard to catch duplicate TODO entries from issue-sync orphan seed #auto-dispatch #framework ref:GH#20484 pr:#20499 completed:2026-04-22
+
+- [ ] t2746 preserve worker assignee on merged PR for audit-trail visibility in issues list #framework ref:GH#20520
