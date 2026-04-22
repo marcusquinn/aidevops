@@ -10,6 +10,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.93] - 2026-04-22
+
+### Added
+
+- split compare-models-helper.sh into focused sub-libraries (#20416)
+
+### Changed
+
+- Maintenance: sync ref:GH#20433 to TODO.md [skip ci]
+- Maintenance: mark t2726 complete (pr:#20430 completed:2026-04-22) [skip ci]
+- compress build.txt and AGENTS.md via progressive disclosure (#20430)
+- Maintenance: mark t2727 complete (pr:#20432 completed:2026-04-22) [skip ci]
+- consolidate greeting toasts into single emit (#20432)
+- Maintenance: sync ref:GH#20431 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: mark t2725 complete (pr:#20424 completed:2026-04-22) [skip ci]
+- fix toast greeting update-check timeout (5s -> 15s) (#20424)
+- Maintenance: sync ref:GH#20429 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20423 to TODO.md [skip ci]
+- Maintenance: mark t2713 complete (pr:#20422 completed:2026-04-22) [skip ci]
+- large-file gate exemption for surgical briefs with line ranges (#20422)
+- Maintenance: mark t2720 complete (pr:#20400 completed:2026-04-22) [skip ci]
+- Maintenance: mark t2724 complete (pr:#20420 completed:2026-04-22) [skip ci]
+- route session-start framework status to TUI toasts (#20420)
+- reduce cmd_pr() complexity in pulse-diagnose-helper.sh (#20421)
+- split auto-update-helper.sh into orchestrator + freshness sub-library (#20407)
+- Refactor: split document-creation-helper.sh into 3 focused modules (#20417)
+- Maintenance: sync ref:GH#20412 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20410 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- prefer tNNN over GH#N in auto-derived PR title (t2720) (#20400)
+
 ## [3.8.92] - 2026-04-22
 
 ### Added
