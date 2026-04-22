@@ -49,6 +49,7 @@ export { GOOGLE_HEALTH_CHECK_URL } from "./oauth-pool-constants.mjs";
 // Token endpoint
 export {
   ANTHROPIC_USER_AGENT, OPENCODE_USER_AGENT, getAnthropicUserAgent,
+  DETECTED_STAINLESS_PACKAGE_VERSION,
   fetchTokenEndpoint, fetchOpenAITokenEndpoint, fetchGoogleTokenEndpoint,
   getEndpointCooldownValue, resetEndpointCooldown,
 } from "./oauth-pool-token-endpoint.mjs";

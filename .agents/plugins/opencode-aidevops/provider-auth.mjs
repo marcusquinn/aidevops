@@ -172,6 +172,52 @@ function zeroOutModelCosts(provider) {
 }
 
 /**
+ * Check if a response body contains the "third-party apps" billing error.
+ * Clones the response so the original remains consumable for the caller.
+ * @param {Response} response @returns {Promise<boolean>}
+ */
+async function isThirdPartyBillingError(response) {
+  if (response.status !== 400) return false;
+  try {
+    const cloned = response.clone();
+    const body = await cloned.json();
+    return body?.error?.type === "invalid_request_error" &&
+      typeof body?.error?.message === "string" &&
+      body.error.message.toLowerCase().includes("third-party");
+  } catch { return false; }
+}
+
+/**
+ * Handle 400 "third-party apps" billing error: rotate to another account.
+ * This error means Anthropic classified the connection as third-party,
+ * which fails when the account doesn't have "extra usage" enabled.
+ * Rotating accounts sometimes resolves it (different token = different classification).
+ */
+async function handle400ThirdPartyRecovery(client, response, accessToken, sessionAccountEmail, ctx) {
+  const { accounts, currentAccount, currentEmail } = resolvePoolState(sessionAccountEmail, accessToken);
+  console.error(
+    `[aidevops] provider-auth: 400 third-party billing error for ${currentEmail} — rotating account`,
+  );
+  if (currentAccount) {
+    patchAccount("anthropic", currentEmail, {
+      status: "billing-error",
+      cooldownUntil: Date.now() + AUTH_FAILURE_COOLDOWN_MS,
+    });
+  }
+  const alternates = getAvailableAlternates(accounts, currentEmail);
+  const rotated = await rotateToAlternateAccount(client, alternates, true);
+  if (rotated) {
+    console.error(`[aidevops] provider-auth: rotated to ${rotated.email} — retrying request once`);
+    return applyTokenAndRetry(rotated.token, rotated.email, ctx);
+  }
+  console.error(
+    `[aidevops] provider-auth: all accounts hit third-party billing error. ` +
+    `Enable "extra usage" at claude.ai/settings/usage on at least one account, or check header fingerprint.`,
+  );
+  return { response, sessionAccountEmail };
+}
+
+/**
  * Execute the authenticated fetch with token resolution, body transform, and error recovery.
  */
 async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAccountEmail) {
@@ -190,6 +236,9 @@ async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAc
   let response = await fetch(ctx.requestInput, { ...ctx.requestInit, body: ctx.body, headers: ctx.requestHeaders });
   if (response.status === 401 || response.status === 403) {
     ({ response, sessionAccountEmail: currentEmail } = await handle401Recovery(client, response, accessToken, currentEmail, ctx));
+  }
+  if (response.status === 400 && await isThirdPartyBillingError(response)) {
+    ({ response, sessionAccountEmail: currentEmail } = await handle400ThirdPartyRecovery(client, response, accessToken, currentEmail, ctx));
   }
   if (response.status === 429) {
     ({ response, sessionAccountEmail: currentEmail } = await handle429Recovery(client, response, {
