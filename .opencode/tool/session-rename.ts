@@ -2,10 +2,7 @@ import { tool } from "@opencode-ai/plugin"
 import { Database } from "bun:sqlite"
 import { homedir } from "os"
 import { join } from "path"
-import { isDefaultBranchTitle, isTitleOverwritable } from "./session-rename-guards"
-
-// Re-export so the tool file stays the canonical import site.
-export { isDefaultBranchTitle, isTitleOverwritable }
+import { isDefaultBranchTitle, isTitleOverwritable } from "../lib/session-rename-guards"
 
 /**
  * Resolve the OpenCode SQLite database path.
@@ -59,7 +56,7 @@ function renameSession(sessionID: string, title: string): { success: boolean; me
  * meaningful existing titles. Returns structured outcome so the caller
  * (tool export) can format user-facing text.
  */
-export function syncSessionWithBranch(
+function syncSessionWithBranch(
   sessionID: string,
   branch: string,
 ): { outcome: "renamed" | "skipped" | "error"; message: string } {

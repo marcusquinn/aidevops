@@ -21,7 +21,7 @@ import { join } from "node:path";
 // plugin runtime. session-rename.ts re-exports these symbols for callers
 // that already import from it.
 const { isDefaultBranchTitle, isTitleOverwritable } = await import(
-  "../../../.opencode/tool/session-rename-guards.ts"
+  "../../../.opencode/lib/session-rename-guards.ts"
 );
 
 let pass = 0;
