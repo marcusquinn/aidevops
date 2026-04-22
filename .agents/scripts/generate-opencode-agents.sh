@@ -42,6 +42,8 @@ mkdir -p "$OPENCODE_AGENT_DIR"
 cat >"$OPENCODE_CONFIG_DIR/AGENTS.md" <<'EOF'
 Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 
+**Runtime**: You are running in OpenCode. Global config: `~/.config/opencode/opencode.json`.
+
 ## aidevops Framework Status
 
 The opencode-aidevops plugin renders session-start framework status (version, environment, security advisories, pulse health, contribution count) as TUI toasts at session creation via `client.tui.showToast()`. Raw output is cached at `~/.aidevops/cache/session-greeting.txt`.
