@@ -17,6 +17,7 @@
 #   - _routine_last_run_epoch
 #   - _routine_update_state
 #   - _routine_execute
+#   - _routine_parse_line
 #   - evaluate_routines
 #
 # This is a pure move from pulse-wrapper.sh. The function bodies are
@@ -176,6 +177,92 @@ _routine_execute() {
 	return 0
 }
 
+# Module-scope variables set by _routine_parse_line (prefixed to avoid collision).
+# These are intentionally module-scope rather than nameref — avoids bash 4.3+ requirement
+# for the re-exec guard fallback path, and matches the existing pattern in pulse-wrapper.sh.
+_RPL_ID=""
+_RPL_REPEAT=""
+_RPL_RUN=""
+_RPL_AGENT=""
+_RPL_DESC=""
+
+#######################################
+# Parse a single routine TODO line into its component fields.
+#
+# Extracts routine_id, repeat expression, run script, agent name, and
+# description from a TODO.md routine line. Sets module-scope variables
+# (_RPL_ID, _RPL_REPEAT, _RPL_RUN, _RPL_AGENT, _RPL_DESC) on success.
+#
+# Arguments: $1 - a TODO.md line matching the routine pattern
+# Returns: 0 if the line was successfully parsed, 1 if it should be skipped
+#######################################
+_routine_parse_line() {
+	local line="$1"
+	_RPL_ID=""
+	_RPL_REPEAT=""
+	_RPL_RUN=""
+	_RPL_AGENT=""
+	_RPL_DESC=""
+
+	# Skip disabled routines ([ ] prefix)
+	[[ "$line" =~ ^[[:space:]]*-[[:space:]]\[x\] ]] || return 1
+
+	# Extract routine ID (rNNN) — anchored to immediately after [x] so that
+	# r-prefixed IDs mentioned in task descriptions cannot produce a false match.
+	if [[ "$line" =~ ^[[:space:]]*-[[:space:]]\[x\][[:space:]]+(r[0-9]+) ]]; then
+		_RPL_ID="${BASH_REMATCH[1]}"
+	else
+		return 1
+	fi
+
+	# Extract repeat: field
+	# Use a variable to hold the regex so bash does not misparse the
+	# literal ')' inside the character class [^)] as the closing '))'
+	# of the [[ ]] compound.  The alternation handles cron(min hr …)
+	# which contains spaces inside the parentheses — a plain
+	# [^[:space:]]+ regex truncates at the first space (bug t2160).
+	local _re_repeat='repeat:(cron\([^)]*\)|[^[:space:]]+)'
+	if [[ "$line" =~ $_re_repeat ]]; then
+		_RPL_REPEAT="${BASH_REMATCH[1]}"
+	else
+		return 1
+	fi
+
+	# Persistent: lifecycle-managed externally (launchd/systemd/supervisor).
+	# The pulse never schedules these — skip silently (bug t2175).
+	if [[ "$_RPL_REPEAT" == "persistent" ]]; then
+		return 1
+	fi
+
+	# Extract optional run: field — captures script path and any trailing
+	# space-separated argument tokens. Field keywords (agent:, repeat:,
+	# started:, blocked-by:) always contain a colon, so we stop as soon as
+	# we encounter a token with a colon embedded.
+	if [[ "$line" =~ run:([^[:space:]]+) ]]; then
+		_RPL_RUN="${BASH_REMATCH[1]}"
+		# Append optional argument tokens that follow the script path.
+		# Stop when a token contains ':' (field keyword) or starts with '#'.
+		local _run_rest="${line#*run:"${_RPL_RUN}"}"
+		local _arg_token
+		while [[ "$_run_rest" =~ ^[[:space:]]+([^[:space:]]+)(.*)$ ]]; do
+			_arg_token="${BASH_REMATCH[1]}"
+			[[ "$_arg_token" == *:* || "$_arg_token" == "#"* || "$_arg_token" == "~"* || "$_arg_token" == "@"* ]] && break
+			_RPL_RUN="${_RPL_RUN} ${_arg_token}"
+			_run_rest="${BASH_REMATCH[2]}"
+		done
+	fi
+
+	# Extract optional agent: field
+	if [[ "$line" =~ agent:([^[:space:]]+) ]]; then
+		_RPL_AGENT="${BASH_REMATCH[1]}"
+	fi
+
+	# Extract description (text between ID and first field tag)
+	_RPL_DESC=$(printf '%s' "$line" | sed -E 's/^.*\[x\][[:space:]]*(r[0-9]+)[[:space:]]*//' | sed -E 's/[[:space:]]*(repeat:|run:|agent:|#|~|@|started:|blocked-by:).*//')
+
+	return 0
+}
+
 #######################################
 # Evaluate routines across all pulse-enabled repos
 #
@@ -200,84 +287,24 @@ evaluate_routines() {
 	while IFS='|' read -r _routine_slug repo_path; do
 		[[ -z "$repo_path" ]] && continue
 		local todo_file="${repo_path}/TODO.md"
-		if [[ ! -f "$todo_file" ]]; then
-			continue
-		fi
+		[[ -f "$todo_file" ]] || continue
 
 		# Extract enabled routine lines: [x] rNNN ... repeat:EXPR
-		# Pattern: - [x] rNNN description repeat:expression [run:script] [agent:name]
 		# Selector requires r[0-9]+ immediately after [x] to prevent t-prefix task
 		# descriptions that mention repeat: from false-matching (bug t2175).
 		local line
 		while IFS= read -r line; do
-			# Skip disabled routines ([ ] prefix)
-			[[ "$line" =~ ^[[:space:]]*-[[:space:]]\[x\] ]] || continue
-
-			# Extract routine ID (rNNN) — anchored to immediately after [x] so that
-			# r-prefixed IDs mentioned in task descriptions cannot produce a false match.
-			local routine_id=""
-			if [[ "$line" =~ ^[[:space:]]*-[[:space:]]\[x\][[:space:]]+(r[0-9]+) ]]; then
-				routine_id="${BASH_REMATCH[1]}"
-			else
+			if ! _routine_parse_line "$line"; then
 				continue
 			fi
-
-			# Extract repeat: field
-			# Use a variable to hold the regex so bash does not misparse the
-			# literal ')' inside the character class [^)] as the closing '))'
-			# of the [[ ]] compound.  The alternation handles cron(min hr …)
-			# which contains spaces inside the parentheses — a plain
-			# [^[:space:]]+ regex truncates at the first space (bug t2160).
-			local repeat_expr=""
-			local _re_repeat='repeat:(cron\([^)]*\)|[^[:space:]]+)'
-			if [[ "$line" =~ $_re_repeat ]]; then
-				repeat_expr="${BASH_REMATCH[1]}"
-			else
-				continue
-			fi
-
-			# Persistent: lifecycle-managed externally (launchd/systemd/supervisor).
-			# The pulse never schedules these — skip silently (bug t2175).
-			if [[ "$repeat_expr" == "persistent" ]]; then
-				continue
-			fi
-
-			# Extract optional run: field — captures script path and any trailing
-			# space-separated argument tokens. Field keywords (agent:, repeat:,
-			# started:, blocked-by:) always contain a colon, so we stop as soon as
-			# we encounter a token with a colon embedded.
-			local run_script=""
-			if [[ "$line" =~ run:([^[:space:]]+) ]]; then
-				run_script="${BASH_REMATCH[1]}"
-				# Append optional argument tokens that follow the script path.
-				# Stop when a token contains ':' (field keyword) or starts with '#'.
-				local _run_rest="${line#*run:"${run_script}"}"
-				local _arg_token
-				while [[ "$_run_rest" =~ ^[[:space:]]+([^[:space:]]+)(.*)$ ]]; do
-					_arg_token="${BASH_REMATCH[1]}"
-					[[ "$_arg_token" == *:* || "$_arg_token" == "#"* || "$_arg_token" == "~"* || "$_arg_token" == "@"* ]] && break
-					run_script="${run_script} ${_arg_token}"
-					_run_rest="${BASH_REMATCH[2]}"
-				done
-			fi
-
-			# Extract optional agent: field
-			local agent_name=""
-			if [[ "$line" =~ agent:([^[:space:]]+) ]]; then
-				agent_name="${BASH_REMATCH[1]}"
-			fi
-
-			# Extract description (text between ID and first field tag)
-			local description=""
-			description=$(printf '%s' "$line" | sed -E 's/^.*\[x\][[:space:]]*(r[0-9]+)[[:space:]]*//' | sed -E 's/[[:space:]]*(repeat:|run:|agent:|#|~|@|started:|blocked-by:).*//')
 
 			# Check if due
 			local last_epoch
-			last_epoch=$(_routine_last_run_epoch "$routine_id")
+			last_epoch=$(_routine_last_run_epoch "$_RPL_ID")
 
-			if "$ROUTINE_SCHEDULE_HELPER" is-due "$repeat_expr" "$last_epoch"; then
-				echo "[pulse-wrapper] routine ${routine_id} is due (expr=${repeat_expr}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
-				_routine_execute "$routine_id" "$description" "$run_script" "$agent_name" "$repo_path"
+			if "$ROUTINE_SCHEDULE_HELPER" is-due "$_RPL_REPEAT" "$last_epoch"; then
+				echo "[pulse-wrapper] routine ${_RPL_ID} is due (expr=${_RPL_REPEAT}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
+				_routine_execute "$_RPL_ID" "$_RPL_DESC" "$_RPL_RUN" "$_RPL_AGENT" "$repo_path"
 				routines_dispatched=$((routines_dispatched + 1))
 			fi
 		done < <(grep -E '^\s*-\s*\[x\][[:space:]]+r[0-9]+[[:space:]].*repeat:' "$todo_file" 2>/dev/null || true)
