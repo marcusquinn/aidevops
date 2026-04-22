@@ -164,8 +164,11 @@ _gh_issue_create_rest() {
 	local repo=""
 	local milestone=""
 	local has_body=0
-	local -a labels=()
-	local -a assignees=()
+	local -a labels
+	local -a assignees
+	labels=()
+	assignees=()
+	local _tok
 
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
@@ -178,10 +181,10 @@ _gh_issue_create_rest() {
 		--body=*) body="${_arg#--body=}"; has_body=1; shift ;;
 		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
 		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
-		--label) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--label=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
-		--assignee) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--assignee=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--assignee=}"); shift ;;
+		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
+		--assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--assignee=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--assignee=}"); shift ;;
 		--milestone) milestone="${2:-}"; shift 2 ;;
 		--milestone=*) milestone="${_arg#--milestone=}"; shift ;;
 		*) shift ;;
@@ -325,7 +328,15 @@ _gh_issue_edit_rest() {
 	local milestone=""
 	local state=""
 	local has_title=0 has_body=0 has_milestone=0 has_state=0
-	local -a add_labels=() rm_labels=() add_assignees=() rm_assignees=()
+	local -a add_labels
+	local -a rm_labels
+	local -a add_assignees
+	local -a rm_assignees
+	add_labels=()
+	rm_labels=()
+	add_assignees=()
+	rm_assignees=()
+	local _tok
 
 	local _first="${1:-}"
 	if [[ $# -gt 0 && "$_first" != --* ]]; then
@@ -344,14 +355,14 @@ _gh_issue_edit_rest() {
 		--body=*) body="${_arg#--body=}"; has_body=1; shift ;;
 		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
 		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
-		--add-label) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--add-label=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--add-label=}"); shift ;;
-		--remove-label) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--remove-label=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--remove-label=}"); shift ;;
-		--add-assignee) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--add-assignee=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--add-assignee=}"); shift ;;
-		--remove-assignee) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--remove-assignee=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--remove-assignee=}"); shift ;;
+		--add-label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--add-label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--add-label=}"); shift ;;
+		--remove-label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--remove-label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--remove-label=}"); shift ;;
+		--add-assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--add-assignee=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--add-assignee=}"); shift ;;
+		--remove-assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--remove-assignee=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--remove-assignee=}"); shift ;;
 		--milestone) milestone="${2:-}"; has_milestone=1; shift 2 ;;
 		--milestone=*) milestone="${_arg#--milestone=}"; has_milestone=1; shift ;;
 		--state) state="${2:-}"; has_state=1; shift 2 ;;
@@ -543,7 +554,9 @@ _gh_pr_create_rest() {
 	local repo=""
 	local draft=0
 	local has_body=0
-	local -a labels=()
+	local -a labels
+	labels=()
+	local _tok
 
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
@@ -561,8 +574,8 @@ _gh_pr_create_rest() {
 		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
 		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
 		--draft) draft=1; shift ;;
-		--label) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--label=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
+		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
 		*) shift ;;
 		esac
 	done
@@ -714,7 +727,9 @@ _rest_issue_list() {
 	local limit=30
 	local jq_expr=""
 	local assignee=""
-	local -a labels=()
+	local -a labels
+	labels=()
+	local _tok
 
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
@@ -723,8 +738,8 @@ _rest_issue_list() {
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
 		--state) state="${2:-}"; shift 2 ;;
 		--state=*) state="${_arg#--state=}"; shift ;;
-		--label) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--label=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
+		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
 		--assignee) assignee="${2:-}"; shift 2 ;;
 		--assignee=*) assignee="${_arg#--assignee=}"; shift ;;
 		--limit) limit="${2:-}"; shift 2 ;;
