@@ -288,9 +288,9 @@
       "pr": 11812
     },
     ".agents/commands/AGENTS.md": {
-      "at": "2026-04-21T22:32:56Z",
-      "hash": "9e3f9acc343dca1ee14cd82ed2426e1e64a27304",
-      "passes": 45,
+      "at": "2026-04-22T01:14:39Z",
+      "hash": "d843428bd132b22d3d2dd52c4774c3fbd8497106",
+      "passes": 46,
       "pr": 18117
     },
     ".agents/commands/aidevops-automate.md": {
@@ -1802,9 +1802,9 @@
       "pr": "pending"
     },
     ".agents/reference/worker-diagnostics.md": {
-      "at": "2026-04-19T00:33:18Z",
-      "hash": "0d5675e8769ba21c2822b7195968066c0d2ceaf3",
-      "passes": 3,
+      "at": "2026-04-22T01:14:45Z",
+      "hash": "d1f3033b45114703fbb40eccf901763c34083e97",
+      "passes": 4,
       "pr": 17659
     },
     ".agents/research.md": {
@@ -7486,15 +7486,15 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-04-21T22:33:26Z",
-      "hash": "8816353aba9699aeed45852ff4a738f76c1ae8bb",
-      "passes": 80,
+      "at": "2026-04-22T01:15:10Z",
+      "hash": "9d68d9901ed7bd3f94589f33f27e35703d97205d",
+      "passes": 81,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-04-21T19:33:26Z",
-      "hash": "98a37d560a1fe47c273a39e377a2694d5085a150",
-      "passes": 98,
+      "at": "2026-04-22T01:15:10Z",
+      "hash": "187703abf62af3d4992265ab90c262672ebefb13",
+      "passes": 99,
       "pr": 19029
     },
     "setup-modules/agent-deploy.sh": {
@@ -7504,9 +7504,9 @@
       "pr": 19203
     },
     "setup.sh": {
-      "at": "2026-04-21T19:33:26Z",
-      "hash": "7989560ec1fea5c18e1968771a2532170c97772c",
-      "passes": 95,
+      "at": "2026-04-22T01:15:10Z",
+      "hash": "1148244fe40e64affa6eed6c1f10e730b5a5e8f9",
+      "passes": 96,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
