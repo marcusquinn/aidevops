@@ -21,8 +21,10 @@
 #     to an OPEN issue that has the `parent-task` label.
 #   - Notifies for `origin:interactive` PRs only when the body contains no
 #     recognised issue reference (`For #NNN`, `Ref #NNN`, or a closing
-#     keyword). Referenced PRs flow through the normal age/idle close
-#     heuristic like any other PR (t2708). True orphans still notify.
+#     keyword). Referenced PRs use an extended 14d close window
+#     (DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE, default 1209600s) instead of the
+#     normal 7d; beyond that window they fall through to the standard
+#     age/idle close heuristic (t2708, t2711 Q2). True orphans still notify.
 #   - Idempotency: per-PR actions logged to a state file with timestamp;
 #     re-running within 30 min (action cooldown) is a no-op for each PR.
 #   - Dry-run: DRY_RUN=1 env var (or `--dry-run` CLI flag) prints would-be
@@ -73,6 +75,7 @@ DIRTY_PR_SWEEP_ACTION_COOLDOWN="${DIRTY_PR_SWEEP_ACTION_COOLDOWN:-1800}" # 30 mi
 # Eligibility windows (seconds).
 DIRTY_PR_REBASE_MAX_AGE="${DIRTY_PR_REBASE_MAX_AGE:-172800}"     # 48h
 DIRTY_PR_CLOSE_MIN_AGE="${DIRTY_PR_CLOSE_MIN_AGE:-604800}"       # 7d
+DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE="${DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE:-1209600}" # 14d for origin:interactive + referenced (t2711 Q2)
 DIRTY_PR_CLOSE_IDLE_HUMAN="${DIRTY_PR_CLOSE_IDLE_HUMAN:-259200}" # 3d since last human push
 
 # Max PRs processed per sweep per repo (safety rail — a single run should
@@ -472,7 +475,12 @@ _dirty_pr_classify() {
 			printf '%s|origin-interactive-orphan' "$_DIRTY_ACTION_NOTIFY"
 			return 0
 		fi
-		# Has a reference — fall through to age-based close check.
+		# Has a reference — use extended close window for interactive PRs (t2711 Q2).
+		if [[ "$age" -le "$DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE" ]]; then
+			printf '%s|origin-interactive-referenced-within-extended-window' "$_DIRTY_ACTION_NOTIFY"
+			return 0
+		fi
+		# Beyond extended window — fall through to normal age-based close.
 	fi
 
 	# Age-based close.

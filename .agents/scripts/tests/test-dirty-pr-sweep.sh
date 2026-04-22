@@ -274,9 +274,9 @@ case "$decision" in
 esac
 
 # =============================================================================
-# Test 6a: origin:interactive WITH `Resolves #NNN` → falls through to close
-#          (t2708) A stale+idle interactive PR that references an issue via a
-#          closing keyword should be closable like any other PR.
+# Test 6a: origin:interactive WITH `Resolves #NNN` + 10d old → notify
+#          (t2711 Q2) Within the 14d extended window, referenced interactive
+#          PRs get notify, not close.
 # =============================================================================
 
 PR_INTERACTIVE_RESOLVES=$(mkpr 610 "DIRTY" \
@@ -289,15 +289,15 @@ PR_INTERACTIVE_RESOLVES=$(mkpr 610 "DIRTY" \
 
 decision=$(_dirty_pr_classify "$PR_INTERACTIVE_RESOLVES" "test/repo" "" "marcusquinn")
 case "$decision" in
-	close\|stale-and-idle) print_result "t2708: origin:interactive + Resolves #NNN → falls through to close" 0 ;;
-	notify\|*) print_result "t2708: origin:interactive + Resolves #NNN → falls through to close" 1 "got: $decision (must NOT notify when body has reference)" ;;
-	*) print_result "t2708: origin:interactive + Resolves #NNN → falls through to close" 1 "got: $decision" ;;
+	notify\|origin-interactive-referenced-within-extended-window) print_result "t2711: origin:interactive + Resolves #NNN + 10d → notify (within 14d window)" 0 ;;
+	close\|*) print_result "t2711: origin:interactive + Resolves #NNN + 10d → notify (within 14d window)" 1 "got: $decision (must NOT close within 14d window)" ;;
+	*) print_result "t2711: origin:interactive + Resolves #NNN + 10d → notify (within 14d window)" 1 "got: $decision" ;;
 esac
 
 # =============================================================================
-# Test 6b: origin:interactive WITH `For #NNN` (non-closing reference)
-#          → falls through to close. This is the canonical planning-PR pattern
-#          documented in prompts/build.txt "Parent-task PR keyword rule".
+# Test 6b: origin:interactive WITH `For #NNN` + 10d old → notify
+#          (t2711 Q2) Within the 14d extended window. Planning-PR pattern from
+#          prompts/build.txt "Parent-task PR keyword rule".
 # =============================================================================
 
 PR_INTERACTIVE_FOR=$(mkpr 620 "DIRTY" \
@@ -310,13 +310,14 @@ PR_INTERACTIVE_FOR=$(mkpr 620 "DIRTY" \
 
 decision=$(_dirty_pr_classify "$PR_INTERACTIVE_FOR" "test/repo" "" "marcusquinn")
 case "$decision" in
-	close\|stale-and-idle) print_result "t2708: origin:interactive + For #NNN → falls through to close" 0 ;;
-	notify\|*) print_result "t2708: origin:interactive + For #NNN → falls through to close" 1 "got: $decision (must NOT notify when body has For #NNN)" ;;
-	*) print_result "t2708: origin:interactive + For #NNN → falls through to close" 1 "got: $decision" ;;
+	notify\|origin-interactive-referenced-within-extended-window) print_result "t2711: origin:interactive + For #NNN + 10d → notify (within 14d window)" 0 ;;
+	close\|*) print_result "t2711: origin:interactive + For #NNN + 10d → notify (within 14d window)" 1 "got: $decision (must NOT close within 14d window)" ;;
+	*) print_result "t2711: origin:interactive + For #NNN + 10d → notify (within 14d window)" 1 "got: $decision" ;;
 esac
 
 # =============================================================================
-# Test 6c: origin:interactive WITH `Ref #NNN` → falls through to close
+# Test 6c: origin:interactive WITH `Ref #NNN` + 10d old → notify
+#          (t2711 Q2) Within the 14d extended window.
 # =============================================================================
 
 PR_INTERACTIVE_REF=$(mkpr 630 "DIRTY" \
@@ -329,9 +330,75 @@ PR_INTERACTIVE_REF=$(mkpr 630 "DIRTY" \
 
 decision=$(_dirty_pr_classify "$PR_INTERACTIVE_REF" "test/repo" "" "marcusquinn")
 case "$decision" in
-	close\|stale-and-idle) print_result "t2708: origin:interactive + Ref #NNN → falls through to close" 0 ;;
-	notify\|*) print_result "t2708: origin:interactive + Ref #NNN → falls through to close" 1 "got: $decision (must NOT notify when body has Ref #NNN)" ;;
-	*) print_result "t2708: origin:interactive + Ref #NNN → falls through to close" 1 "got: $decision" ;;
+	notify\|origin-interactive-referenced-within-extended-window) print_result "t2711: origin:interactive + Ref #NNN + 10d → notify (within 14d window)" 0 ;;
+	close\|*) print_result "t2711: origin:interactive + Ref #NNN + 10d → notify (within 14d window)" 1 "got: $decision (must NOT close within 14d window)" ;;
+	*) print_result "t2711: origin:interactive + Ref #NNN + 10d → notify (within 14d window)" 1 "got: $decision" ;;
+esac
+
+# =============================================================================
+# Test 6d-pre: origin:interactive + reference + 8d old → notify (AC1 t2711 Q2)
+#              8d is within the 14d extended window — must not close.
+# =============================================================================
+
+PR_INTERACTIVE_8D=$(mkpr 635 "DIRTY" \
+	"$(iso_n_seconds_ago $((8 * 86400)))" \
+	"$(iso_n_seconds_ago $((4 * 86400)))" \
+	"marcusquinn" \
+	"feature/baz-8d" \
+	'["origin:interactive"]' \
+	"Implementing the plan. For #99999.")
+
+decision=$(_dirty_pr_classify "$PR_INTERACTIVE_8D" "test/repo" "" "marcusquinn")
+case "$decision" in
+	notify\|origin-interactive-referenced-within-extended-window) print_result "t2711 AC1: origin:interactive + ref + 8d old → notify (within 14d window)" 0 ;;
+	close\|*) print_result "t2711 AC1: origin:interactive + ref + 8d old → notify (within 14d window)" 1 "got: $decision (must NOT close within 14d window)" ;;
+	*) print_result "t2711 AC1: origin:interactive + ref + 8d old → notify (within 14d window)" 1 "got: $decision" ;;
+esac
+
+# =============================================================================
+# Test 6d-post: origin:interactive + reference + 15d old → close (AC2 t2711 Q2)
+#               15d exceeds the 14d extended window — should fall through to
+#               the normal age/idle close heuristic.
+#               Use DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE override to 1d so the
+#               test is deterministic regardless of real wall-clock time.
+# =============================================================================
+
+DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE=86400  # override to 1d for this test
+PR_INTERACTIVE_15D=$(mkpr 636 "DIRTY" \
+	"$(iso_n_seconds_ago $((15 * 86400)))" \
+	"$(iso_n_seconds_ago $((10 * 86400)))" \
+	"marcusquinn" \
+	"feature/baz-15d" \
+	'["origin:interactive"]' \
+	"Implementing the plan. For #99999.")
+
+decision=$(_dirty_pr_classify "$PR_INTERACTIVE_15D" "test/repo" "" "marcusquinn")
+DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE=1209600  # restore default
+case "$decision" in
+	close\|stale-and-idle) print_result "t2711 AC2: origin:interactive + ref + beyond extended window → close" 0 ;;
+	notify\|*) print_result "t2711 AC2: origin:interactive + ref + beyond extended window → close" 1 "got: $decision (must close beyond 14d window when stale+idle)" ;;
+	*) print_result "t2711 AC2: origin:interactive + ref + beyond extended window → close" 1 "got: $decision" ;;
+esac
+
+# =============================================================================
+# Test 6d-noninteractive: non-interactive PR still uses 7d threshold (AC3 t2711)
+#                         An origin:worker PR at 10d old should still close —
+#                         it does not get the extended 14d window.
+# =============================================================================
+
+PR_WORKER_10D=$(mkpr 637 "DIRTY" \
+	"$(iso_n_seconds_ago $((10 * 86400)))" \
+	"$(iso_n_seconds_ago $((5 * 86400)))" \
+	"some-external-user" \
+	"feature/worker-10d" \
+	'["origin:worker"]' \
+	"Some worker PR. Resolves #88888.")
+
+decision=$(_dirty_pr_classify "$PR_WORKER_10D" "test/repo" "" "marcusquinn")
+case "$decision" in
+	close\|stale-and-idle) print_result "t2711 AC3: non-interactive PR at 10d → close (7d threshold unaffected)" 0 ;;
+	notify\|*) print_result "t2711 AC3: non-interactive PR at 10d → close (7d threshold unaffected)" 1 "got: $decision (non-interactive must still close at 7d+)" ;;
+	*) print_result "t2711 AC3: non-interactive PR at 10d → close (7d threshold unaffected)" 1 "got: $decision" ;;
 esac
 
 # =============================================================================
