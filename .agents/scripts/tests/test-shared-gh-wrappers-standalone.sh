@@ -87,9 +87,12 @@ printf '%sRunning shared-gh-wrappers standalone-source tests (GH#20486)%s\n' \
 # =============================================================================
 printf '\n=== bash standalone source tests ===\n'
 
-bash_stderr=$(bash -c "source '${WRAPPERS_FILE}'" 2>&1 >/dev/null || true)
-
-if printf '%s\n' "$bash_stderr" | grep -q 'command not found'; then
+bash_stderr=$(LC_ALL=C bash -c 'source "$1"' -- "${WRAPPERS_FILE}" 2>&1 >/dev/null)
+bash_exit=$?
+if [[ $bash_exit -ne 0 ]] && [[ -n "$bash_stderr" ]] && ! printf '%s\n' "$bash_stderr" | grep -q 'command not found'; then
+	fail "1: bash standalone source emits no 'command not found'" \
+		"execution failed: $bash_stderr"
+elif printf '%s\n' "$bash_stderr" | grep -q 'command not found'; then
 	fail "1: bash standalone source emits no 'command not found'" \
 		"stderr: $bash_stderr"
 else
@@ -166,15 +169,15 @@ fi
 if [[ -f "$CONSTANTS_FILE" ]]; then
 	bash_canonical=$(bash -c "
 source '${CONSTANTS_FILE}' 2>/dev/null
-# Capture type before sourcing wrappers
-before_type=\$(type print_info 2>/dev/null | head -1)
+# Capture full function definition before sourcing wrappers
+before_def=\$(declare -f print_info)
 source '${WRAPPERS_FILE}' 2>/dev/null
-after_type=\$(type print_info 2>/dev/null | head -1)
-# Both should refer to a function; the name should be the same
-if [[ \"\$before_type\" == \"\$after_type\" ]]; then
+after_def=\$(declare -f print_info)
+# Both should be identical if the stub did not override the canonical
+if [[ \"\$before_def\" == \"\$after_def\" ]]; then
     printf 'CONSISTENT\n'
 else
-    printf 'CHANGED: before=%s after=%s\n' \"\$before_type\" \"\$after_type\"
+    printf 'CHANGED: definition was modified\n'
 fi
 " 2>&1)
 	if [[ "$bash_canonical" == *"CONSISTENT"* ]]; then
@@ -198,8 +201,12 @@ if ! command -v zsh >/dev/null 2>&1; then
 	skip "8: zsh: all major wrapper functions defined after standalone sourcing" "zsh not installed"
 else
 	# Test 6: zsh — standalone source emits no 'command not found' stderr
-	zsh_stderr=$(zsh -c "source '${WRAPPERS_FILE}'" 2>&1 >/dev/null || true)
-	if printf '%s\n' "$zsh_stderr" | grep -q 'command not found'; then
+	zsh_stderr=$(LC_ALL=C zsh -c 'source "$1"' -- "${WRAPPERS_FILE}" 2>&1 >/dev/null)
+	zsh_exit=$?
+	if [[ $zsh_exit -ne 0 ]] && [[ -n "$zsh_stderr" ]] && ! printf '%s\n' "$zsh_stderr" | grep -q 'command not found'; then
+		fail "6: zsh standalone source emits no 'command not found'" \
+			"execution failed: $zsh_stderr"
+	elif printf '%s\n' "$zsh_stderr" | grep -q 'command not found'; then
 		fail "6: zsh standalone source emits no 'command not found'" \
 			"stderr: $zsh_stderr"
 	else
