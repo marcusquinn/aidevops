@@ -2933,7 +2933,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2737 multi-runtime version freshness for framework status greeting #parent ref:GH#20471
 
-- [ ] t2738 extend _gh_auto_link_sub_issue to honour 'Parent:' line at create-time ref:GH#20473
+- [x] t2738 extend _gh_auto_link_sub_issue to honour 'Parent:' line at create-time ref:GH#20473 pr:#20474 completed:2026-04-22
 
 - [ ] t2739 extend REST fallback to sub-issue backfill node-ID resolution (Gap B) ref:GH#20475
 
