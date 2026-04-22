@@ -87,6 +87,11 @@ _pm_issue_api() {
 _PULSE_MERGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_PULSE_MERGE_DIR}/shared-claim-lifecycle.sh"
 
+# Source shared phase-filing helpers (t2740). auto_file_next_phase is called
+# from _handle_post_merge_actions to auto-file the next phase child issue
+# when a phase child PR merges for a parent-task issue.
+source "${_PULSE_MERGE_DIR}/shared-phase-filing.sh"
+
 #######################################
 # Check and flag external-contributor PRs (t1391)
 #
@@ -1178,6 +1183,15 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 	# Handles the "when a PR they opened merges" release trigger from AGENTS.md
 	# so the agent does not have to remember to call release after every merge.
 	_release_interactive_claim_on_merge "$pr_number" "$repo_slug" "$linked_issue"
+
+	# Sequential phase auto-filing (t2740 — Gap C): when a phase child PR
+	# merges and its linked child issue is closed, inspect the parent-task
+	# issue's ## Phases section and auto-file the next phase. Only fires
+	# when AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE=1. Best-effort — failures
+	# are logged but do not block the merge completion path.
+	if [[ -n "$linked_issue" && "${_parent_task_guard:-0}" -eq 0 ]]; then
+		auto_file_next_phase "$linked_issue" "$repo_slug" || true
+	fi
 	return 0
 }
 
