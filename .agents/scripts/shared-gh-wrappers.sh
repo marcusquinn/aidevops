@@ -37,17 +37,38 @@
 [[ -n "${_SHARED_GH_WRAPPERS_LOADED:-}" ]] && return 0
 _SHARED_GH_WRAPPERS_LOADED=1
 
+# Minimal stub fallbacks for print_info / print_warning.
+# shared-constants.sh defines the real implementations; later sourcing
+# overrides these stubs transparently. Prevents 'command not found: print_info'
+# when shared-gh-wrappers.sh is sourced standalone from a zsh interactive
+# session that has not already sourced shared-constants.sh.
+# `command -v` works in bash 3.2+, zsh 5+, and BusyBox ash.
+if ! command -v print_info >/dev/null 2>&1; then
+	print_info() { printf '[INFO] %s\n' "$*" >&2; return 0; }
+fi
+if ! command -v print_warning >/dev/null 2>&1; then
+	print_warning() { printf '[WARN] %s\n' "$*" >&2; return 0; }
+fi
+
 # t2574: REST fallback for GraphQL-exhausted gh issue wrappers (GH#20243).
 # t2689: Extended to READ paths — _rest_issue_view, _rest_issue_list.
+# t2743: Fixed CSV tokenisation for zsh compat (replaced read -ra with _gh_split_csv).
 # Provides _gh_should_fallback_to_rest, _gh_issue_{create,comment,edit}_rest,
 # _gh_pr_create_rest, _rest_issue_view, _rest_issue_list.
+#
 # Resolve own directory cross-shell (bash + zsh).
-# Priority: (1) BASH_SOURCE[0] under bash; (2) _SC_SELF set by shared-constants.sh
-# before sourcing us — both bash and zsh populate it correctly via ${0:-}, and it
-# points to shared-constants.sh which lives in the same directory as the REST
-# fallback; (3) absent both, silently skip — the primary GraphQL path still works.
+# Priority: (1) BASH_SOURCE[0] under bash (or zsh with BASH_SOURCE emulation);
+#           (2) zsh: $0 is the sourced file path when `source /abs/path` is used
+#               (confirmed: $0 is set to the file path inside sourced files in zsh,
+#               unlike bash where $0 is the shell executable name);
+#           (3) _SC_SELF set by shared-constants.sh before sourcing us;
+#           (4) absent all three, silently skip — the primary GraphQL path still works.
 if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
 	_SHARED_GH_WRAPPERS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || _SHARED_GH_WRAPPERS_DIR=""
+elif [[ -n "${ZSH_VERSION:-}" && -f "${0:-}" ]]; then
+	# zsh without BASH_SOURCE emulation: $0 is the sourced file path.
+	# Guard: -f ensures $0 is a real file (rules out '-zsh' interactive shell name).
+	_SHARED_GH_WRAPPERS_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || _SHARED_GH_WRAPPERS_DIR=""
 elif [[ -n "${_SC_SELF:-}" ]]; then
 	_SHARED_GH_WRAPPERS_DIR="${_SC_SELF%/*}"
 else

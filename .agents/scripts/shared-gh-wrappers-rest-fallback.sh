@@ -80,6 +80,39 @@ _rest_fallback_append_sig() {
 }
 
 #######################################
+# _gh_split_csv: portable CSV tokeniser. Emits one token per line to stdout.
+#
+# Works in bash 3.2+, zsh 5+, and BusyBox ash — uses POSIX parameter
+# expansion only. Does NOT use:
+#   - `read -ra arr` (bash-only; zsh emits "bad option: -a")
+#   - `read -A arr` (zsh-only; bash emits "invalid option")
+#   - `mapfile`/`readarray` (bash 4.4+ only)
+#   - `${(f)var}` (zsh-only array expansion)
+#
+# Args: $1=csv_string $2=delimiter (default: comma)
+# Returns: 0 always
+#
+# Usage:
+#   while IFS= read -r _tok; do
+#       [[ -n "$_tok" ]] && arr+=("$_tok")
+#   done < <(_gh_split_csv "a,b,c")
+#######################################
+_gh_split_csv() {
+	local _str="$1"
+	local _delim="${2:-,}"
+	while [[ -n "$_str" ]]; do
+		if [[ "$_str" == *"$_delim"* ]]; then
+			printf '%s\n' "${_str%%"$_delim"*}"
+			_str="${_str#*"$_delim"}"
+		else
+			printf '%s\n' "$_str"
+			_str=""
+		fi
+	done
+	return 0
+}
+
+#######################################
 # Return 0 (true) when GraphQL rate limit remaining is <= threshold.
 # `gh api rate_limit` is a free endpoint (does not count against quotas).
 # Fail-safe: if the response is unparseable (network error, gh auth missing),
@@ -130,7 +163,6 @@ _gh_issue_create_rest() {
 	local has_body=0
 	local -a labels=()
 	local -a assignees=()
-	local -a _toks=()
 
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
@@ -143,10 +175,10 @@ _gh_issue_create_rest() {
 		--body=*) body="${_arg#--body=}"; has_body=1; shift ;;
 		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
 		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
-		--label) IFS=',' read -ra _toks <<<"${2:-}"; labels+=("${_toks[@]}"); shift 2 ;;
-		--label=*) IFS=',' read -ra _toks <<<"${_arg#--label=}"; labels+=("${_toks[@]}"); shift ;;
-		--assignee) IFS=',' read -ra _toks <<<"${2:-}"; assignees+=("${_toks[@]}"); shift 2 ;;
-		--assignee=*) IFS=',' read -ra _toks <<<"${_arg#--assignee=}"; assignees+=("${_toks[@]}"); shift ;;
+		--label) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--label=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
+		--assignee) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--assignee=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--assignee=}"); shift ;;
 		--milestone) milestone="${2:-}"; shift 2 ;;
 		--milestone=*) milestone="${_arg#--milestone=}"; shift ;;
 		*) shift ;;
@@ -290,7 +322,7 @@ _gh_issue_edit_rest() {
 	local milestone=""
 	local state=""
 	local has_title=0 has_body=0 has_milestone=0 has_state=0
-	local -a add_labels=() rm_labels=() add_assignees=() rm_assignees=() _toks=()
+	local -a add_labels=() rm_labels=() add_assignees=() rm_assignees=()
 
 	local _first="${1:-}"
 	if [[ $# -gt 0 && "$_first" != --* ]]; then
@@ -309,14 +341,14 @@ _gh_issue_edit_rest() {
 		--body=*) body="${_arg#--body=}"; has_body=1; shift ;;
 		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
 		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
-		--add-label) IFS=',' read -ra _toks <<<"${2:-}"; add_labels+=("${_toks[@]}"); shift 2 ;;
-		--add-label=*) IFS=',' read -ra _toks <<<"${_arg#--add-label=}"; add_labels+=("${_toks[@]}"); shift ;;
-		--remove-label) IFS=',' read -ra _toks <<<"${2:-}"; rm_labels+=("${_toks[@]}"); shift 2 ;;
-		--remove-label=*) IFS=',' read -ra _toks <<<"${_arg#--remove-label=}"; rm_labels+=("${_toks[@]}"); shift ;;
-		--add-assignee) IFS=',' read -ra _toks <<<"${2:-}"; add_assignees+=("${_toks[@]}"); shift 2 ;;
-		--add-assignee=*) IFS=',' read -ra _toks <<<"${_arg#--add-assignee=}"; add_assignees+=("${_toks[@]}"); shift ;;
-		--remove-assignee) IFS=',' read -ra _toks <<<"${2:-}"; rm_assignees+=("${_toks[@]}"); shift 2 ;;
-		--remove-assignee=*) IFS=',' read -ra _toks <<<"${_arg#--remove-assignee=}"; rm_assignees+=("${_toks[@]}"); shift ;;
+		--add-label) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--add-label=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--add-label=}"); shift ;;
+		--remove-label) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--remove-label=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--remove-label=}"); shift ;;
+		--add-assignee) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--add-assignee=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--add-assignee=}"); shift ;;
+		--remove-assignee) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--remove-assignee=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--remove-assignee=}"); shift ;;
 		--milestone) milestone="${2:-}"; has_milestone=1; shift 2 ;;
 		--milestone=*) milestone="${_arg#--milestone=}"; has_milestone=1; shift ;;
 		--state) state="${2:-}"; has_state=1; shift 2 ;;
@@ -509,7 +541,6 @@ _gh_pr_create_rest() {
 	local draft=0
 	local has_body=0
 	local -a labels=()
-	local -a _toks=()
 
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
@@ -527,8 +558,8 @@ _gh_pr_create_rest() {
 		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
 		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
 		--draft) draft=1; shift ;;
-		--label) IFS=',' read -ra _toks <<<"${2:-}"; labels+=("${_toks[@]}"); shift 2 ;;
-		--label=*) IFS=',' read -ra _toks <<<"${_arg#--label=}"; labels+=("${_toks[@]}"); shift ;;
+		--label) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--label=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
 		*) shift ;;
 		esac
 	done
@@ -681,7 +712,6 @@ _rest_issue_list() {
 	local jq_expr=""
 	local assignee=""
 	local -a labels=()
-	local -a _toks=()
 
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
@@ -690,8 +720,8 @@ _rest_issue_list() {
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
 		--state) state="${2:-}"; shift 2 ;;
 		--state=*) state="${_arg#--state=}"; shift ;;
-		--label) IFS=',' read -ra _toks <<<"${2:-}"; labels+=("${_toks[@]}"); shift 2 ;;
-		--label=*) IFS=',' read -ra _toks <<<"${_arg#--label=}"; labels+=("${_toks[@]}"); shift ;;
+		--label) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--label=*) local _tok; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
 		--assignee) assignee="${2:-}"; shift 2 ;;
 		--assignee=*) assignee="${_arg#--assignee=}"; shift ;;
 		--limit) limit="${2:-}"; shift 2 ;;
