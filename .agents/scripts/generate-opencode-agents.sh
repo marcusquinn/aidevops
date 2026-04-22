@@ -44,12 +44,13 @@ Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 
 ## aidevops Framework Status
 
-**On interactive conversation start** (skip this section entirely for headless/command sessions like `/pulse`, `/full-loop`, etc.):
-1. If you have Bash tool: Run `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh --interactive`
-2. If no Bash tool: Read `~/.aidevops/cache/session-greeting.txt` (cached by agents with Bash) and greet with: "Hi!\n\n{content of file}.\n\nWhat would you like to work on?". If the file doesn't exist, read `~/.aidevops/agents/VERSION` to get the `{version}` and greet with: "Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"
-3. Then respond to the user's actual message
+The opencode-aidevops plugin renders session-start framework status (version, environment, security advisories, pulse health, contribution count) as TUI toasts at session creation via `client.tui.showToast()`. Raw output is cached at `~/.aidevops/cache/session-greeting.txt`.
 
-If you ran the update check script (step 1) and the output starts with `UPDATE_AVAILABLE|` (e.g., `UPDATE_AVAILABLE|2.41.1|2.41.2|OpenCode`), inform user: "Update available (current → latest). Run `aidevops update` in a terminal session to update, or type `!aidevops update` below and hit Enter." If the output also contains a line `AUTO_UPDATE_ENABLED`, replace the manual update instruction with: "Auto-update is enabled and will apply this within ~10 minutes." This check does not apply when falling back to reading the cache or VERSION file (step 2).
+Do not re-run `aidevops-update-check.sh` or repeat toast content as a greeting — the user has already seen it. Respond directly to the user's message.
+
+**Fallback for agents without a Bash tool** (the plugin only fires toasts when the host runtime exposes the TUI — subagents may not see them): read `~/.aidevops/cache/session-greeting.txt` if it exists; otherwise read `~/.aidevops/agents/VERSION` for `{version}` and greet with `"Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"`.
+
+**Update available prompt**: the raw cached output may begin with `UPDATE_AVAILABLE|<current>|<latest>|<runtime>`. When present, inform the user: "Update available (current → latest). Run `aidevops update` in a terminal session, or type `!aidevops update` below and hit Enter." If the cached output also contains `AUTO_UPDATE_ENABLED`, replace the manual instruction with: "Auto-update is enabled and will apply this within ~10 minutes."
 
 ## Pre-Edit Git Check
 

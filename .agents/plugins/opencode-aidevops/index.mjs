@@ -34,6 +34,7 @@ import { createQualityHooks } from "./quality-hooks.mjs";
 import { createShellEnvHook } from "./shell-env.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
+import { createGreetingHandler } from "./greeting.mjs";
 
 // Existing modules
 import { createTools } from "./tools.mjs";
@@ -220,6 +221,15 @@ export async function AidevopsPlugin({ directory, client }) {
     intentField: INTENT_FIELD,
   });
 
+  // Greeting handler (t2724) — emits session-start framework status as
+  // TUI toasts via client.tui.showToast(). Fires once per plugin init on
+  // the first session.created event. See greeting.mjs for classification
+  // and variant rules.
+  const greetingHandler = createGreetingHandler({
+    scriptsDir: SCRIPTS_DIR,
+    client,
+  });
+
   return {
     // Config: agent index, MCP registration, OAuth pool injection
     config: async (config) => {
@@ -245,8 +255,19 @@ export async function AidevopsPlugin({ directory, client }) {
     "experimental.chat.messages.transform": messagesTransformHook,
     "experimental.text.complete": textCompleteHook,
 
-    // LLM observability
-    event: async (input) => handleEvent(input),
+    // LLM observability + session-start toast greeting (t2724).
+    // Both run on every event; greeting self-gates to session.created.
+    event: async (input) => {
+      // Fire both in parallel — neither depends on the other's result.
+      await Promise.all([
+        handleEvent(input),
+        greetingHandler(input).catch((err) => {
+          if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+            console.error(`[aidevops] greeting handler error: ${err.message}`);
+          }
+        }),
+      ]);
+    },
 
     // OAuth multi-account pool + provider auth
     auth: (() => {
