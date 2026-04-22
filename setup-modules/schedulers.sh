@@ -601,10 +601,10 @@ _install_pulse_launchd() {
 	# Resolve interval for the user-facing message (matches what the plist contains).
 	local _interval_sec _interval_label
 	_interval_sec=$(_read_pulse_interval_seconds)
-	if [[ "$_interval_sec" -lt 60 ]]; then
-		_interval_label="${_interval_sec}s"
-	else
+	if (( _interval_sec % 60 == 0 )); then
 		_interval_label="$((_interval_sec / 60)) min"
+	else
+		_interval_label="${_interval_sec}s"
 	fi
 
 	# shell-portability: ignore next — _install_pulse_launchd is macOS-only (launchd)
