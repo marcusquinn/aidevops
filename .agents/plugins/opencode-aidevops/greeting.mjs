@@ -48,7 +48,13 @@ const FALLBACK_WINDOW_MS = 30000;
 
 /**
  * Run the update-check script and return its stdout (trimmed), or "" on failure.
- * Uses a short timeout — we never want a hung greeting to block plugin init.
+ *
+ * Timeout 15s (t2725): the script itself produces output in ~1-2s, but forks
+ * background children (provenance notify, deploy drift check) that inherit
+ * stdout. Node's execSync waits for all inherited FDs to close, so total
+ * observed wallclock is 5-8s on a typical macOS system. 15s gives headroom
+ * for slower hardware; a timeout just means no toasts this session — the
+ * handler is async, so nothing else blocks.
  *
  * @param {string} scriptsDir
  * @returns {string}
@@ -58,7 +64,7 @@ function runUpdateCheck(scriptsDir) {
   try {
     return execSync(`bash ${JSON.stringify(script)} --interactive`, {
       encoding: "utf-8",
-      timeout: 5000,
+      timeout: 15000,
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
   } catch (err) {
