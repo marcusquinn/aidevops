@@ -19,14 +19,20 @@
 // so non-Bash agents can read it without re-running the script (t2724 phase 2
 // template change points agents at this file).
 //
-// Toast grouping (single-pass, cheap):
-//   - info    : version + env lines                         (8s)
-//   - success : "Security: all protections active"          (5s)
-//   - warning : pulse-stalled / external contribution lines (15s)
-//   - error   : [SECURITY ADVISORY] lines                   (30s)
-//
-// If a category has no matching lines, no toast for it is emitted. A
-// user with a clean environment sees one info toast and one success toast.
+// Toast model (t2727 consolidation):
+//   OpenCode's TUI renders one toast at a time — each client.tui.showToast()
+//   call replaces the previous before the user can read it. So we classify
+//   lines into severity buckets (error, warning, info, success) but emit a
+//   SINGLE consolidated toast whose variant follows the highest severity
+//   present and whose message preserves severity ordering:
+//     error   (30s) : [SECURITY ADVISORY] / [ERROR] lines
+//     warning (15s) : pulse-stalled / external contribution / [WARN] lines
+//     info     (8s) : version + env lines
+//     success  (5s) : "Security: all protections active"
+//   A user with a clean environment sees one info/success-tinted toast with
+//   the version+env+security-active lines. With any advisory or warning, the
+//   variant escalates (error overrides warning, warning overrides info) and
+//   all lines remain visible in the body.
 //
 // Diagnostics: set AIDEVOPS_PLUGIN_DEBUG=1 to trace every handler invocation
 // and each toast emission (including failures). Without DEBUG the handler
@@ -137,51 +143,53 @@ function classifyLines(output) {
 }
 
 /**
- * Build toast bodies from classified lines, skipping empty categories.
+ * Consolidate classified lines into a single toast body.
+ *
+ * OpenCode's TUI renders one toast at a time — each new client.tui.showToast()
+ * call replaces the previous one before the user can read it (t2727, observed
+ * after PR #20424 deployed: end user saw only the final "success" toast of the
+ * original four-emit sequence). So we collapse the four-category Phase 1
+ * design into a single emit that preserves severity ordering in the message
+ * body.
+ *
+ * Variant follows the highest severity present (error > warning > info >
+ * success); duration follows the variant's existing mapping (30s/15s/8s/5s).
+ * Returns null when all buckets are empty so the caller can skip the emit.
  *
  * @param {{ info: string[], success: string[], warning: string[], error: string[] }} buckets
- * @returns {Array<{ title: string, message: string, variant: "info"|"success"|"warning"|"error", duration: number }>}
+ * @returns {{ title: string, message: string, variant: "info"|"success"|"warning"|"error", duration: number } | null}
  */
-function buildToasts(buckets) {
-  const toasts = [];
+function buildToast(buckets) {
+  const lines = [
+    ...buckets.error,
+    ...buckets.warning,
+    ...buckets.info,
+    ...buckets.success,
+  ];
 
+  if (lines.length === 0) return null;
+
+  let variant, duration;
   if (buckets.error.length > 0) {
-    toasts.push({
-      title: "aidevops — attention required",
-      message: buckets.error.join("\n"),
-      variant: "error",
-      duration: 30000,
-    });
+    variant = "error";
+    duration = 30000;
+  } else if (buckets.warning.length > 0) {
+    variant = "warning";
+    duration = 15000;
+  } else if (buckets.info.length > 0) {
+    variant = "info";
+    duration = 8000;
+  } else {
+    variant = "success";
+    duration = 5000;
   }
 
-  if (buckets.warning.length > 0) {
-    toasts.push({
-      title: "aidevops",
-      message: buckets.warning.join("\n"),
-      variant: "warning",
-      duration: 15000,
-    });
-  }
-
-  if (buckets.info.length > 0) {
-    toasts.push({
-      title: "aidevops",
-      message: buckets.info.join("\n"),
-      variant: "info",
-      duration: 8000,
-    });
-  }
-
-  if (buckets.success.length > 0) {
-    toasts.push({
-      title: "aidevops",
-      message: buckets.success.join("\n"),
-      variant: "success",
-      duration: 5000,
-    });
-  }
-
-  return toasts;
+  return {
+    title: "aidevops",
+    message: lines.join("\n"),
+    variant,
+    duration,
+  };
 }
 
 /**
@@ -223,17 +231,21 @@ async function runGreeting(scriptsDir, client) {
   cacheGreeting(output);
 
   const buckets = classifyLines(output);
-  const toasts = buildToasts(buckets);
+  const toast = buildToast(buckets);
 
   if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
-    console.error(`[aidevops] greeting: built ${toasts.length} toasts (info=${buckets.info.length}, success=${buckets.success.length}, warning=${buckets.warning.length}, error=${buckets.error.length})`);
+    const bucketCounts = `info=${buckets.info.length}, success=${buckets.success.length}, warning=${buckets.warning.length}, error=${buckets.error.length}`;
+    if (toast) {
+      console.error(`[aidevops] greeting: built 1 toast (variant=${toast.variant}, ${bucketCounts})`);
+    } else {
+      console.error(`[aidevops] greeting: no lines to show (${bucketCounts})`);
+    }
   }
 
-  // Emit sequentially so the ordering (error → warning → info → success)
-  // is preserved in the TUI toast stack. Per-toast errors are swallowed
-  // so one bad emit doesn't prevent later ones.
-  for (const body of toasts) {
-    await emitToast(client, body);
+  // t2727: single emit. OpenCode's TUI replaces any existing toast on each
+  // showToast() call, so multiple emits race and only the last one is seen.
+  if (toast) {
+    await emitToast(client, toast);
   }
 }
 
