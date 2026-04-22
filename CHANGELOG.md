@@ -10,6 +10,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.92] - 2026-04-22
+
+### Added
+
+- add pulse-diagnose-helper.sh for PR merge decision correlation (#20397)
+- add pulse-level GraphQL rate-limit circuit breaker (t2690) (#20349)
+
+### Changed
+
+- fix third-party billing detection by redistributing system prompt (#20406)
+- Maintenance: mark t2706 complete (pr:#20342 completed:2026-04-21) [skip ci]
+- redeploy on .deployed-sha drift, not just VERSION/sentinel (#20342)
+- Maintenance: sync ref:GH#20402 to TODO.md [skip ci]
+- decompose parent #20303 into 2 children (audit + fix) (#20394)
+- Maintenance: mark t2709 complete (pr:#20396 completed:2026-04-21) [skip ci]
+- fix REST-fallback source path resolution for zsh (use _SC_SELF) (#20396)
+- Maintenance: sync ref:GH#20395 to TODO.md [skip ci]
+- Maintenance: add TODO entries for t2718 (audit) and t2719 (fix) — children of #20303
+- Maintenance: update simplification state registry
+- Maintenance: mark t2715 complete (pr:#20374 completed:2026-04-21) [skip ci]
+- retire stale t2218 gap notes and close orphan TODO entry (#20374)
+- simplify AIDEVOPS_SESSION_ORIGIN assignment in health dashboard (#20381)
+- fix _worktree_resolve_abs_path double-slash and pwd vs pwd -P inconsistency (#20383)
+- Maintenance: mark t2712 complete (pr:#20389 completed:2026-04-21) [skip ci]
+- rename _DIRTY_ACTION_ESCALATE to _DIRTY_ACTION_NOTIFY in pulse-dirty-pr-sweep.sh (#20389)
+- replace misleading 'high/critical' aggregate with per-severity inline summary (BLOCKER · CRITICAL · MAJOR · MINOR · INFO) (#20387)
+- URL-encode labels and assignee in _rest_issue_list query params (#20386)
+- Maintenance: sync ref:GH#20384 to TODO.md [skip ci]
+- use AIDEVOPS_FRAMEWORK_REPO env var and defensive arithmetic in staleness check (#20378)
+- Maintenance: sync ref:GH#20376 to TODO.md [skip ci]
+- Maintenance: mark t2708 complete (pr:#20356 completed:2026-04-21) [skip ci]
+- narrow pulse-dirty-pr-sweep origin-interactive rule to true orphans (#20356)
+- Maintenance: sync ref:GH#20373 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20372 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20371 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20370 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20368 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20361 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20357 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#20355 to TODO.md [skip ci]
+- Maintenance: mark t2707 complete (pr:#20352 completed:2026-04-21) [skip ci]
+- extend sig-footer enforcement to gh api POST/PATCH on issue/comment/PR endpoints (#20352)
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#20327 to TODO.md [skip ci]
+- seed TODO.md entries for open orphan GitHub issues in pull (#20354)
+- auto-detect --head/--base in _gh_pr_create_rest REST fallback (#20353)
+- Maintenance: update simplification state registry
+- fix prompt-guard staleness check to use deploy stamp mtime (#20351)
+- Maintenance: update simplification state registry
+- fix origin:worker stripped from health issues created by collaborator runners (#20346)
+- add body-hash fingerprint dedup to /log-issue-aidevops (#20345)
+- disable r912 dashboard routine (#20344)
+- Maintenance: mark t2700 complete (pr:#20334 completed:2026-04-21) [skip ci]
+- redirect broken routine run: fields to aidevops CLI via bin/ wrapper shims (#20334)
+- block worktree creation at paths nested inside repo (#20336)
+- extend REST fallback to gh issue view/list read paths (#20332)
+- brief orphan TODO seeding, seed missing t2696 entry (#20329)
+- bump pulse-wrapper canary test timeout from 30s to 60s (#20330)
+- Maintenance: mark t2686 complete (pr:#20304 completed:2026-04-21) [skip ci]
+- broaden quality-debt trust bar + extend NMR sig detector (#20304)
+- Maintenance: mark t2697 complete (pr:#20328 completed:2026-04-21) [skip ci]
+- auto-discover plugin .mjs files in re-export regression test (#20328)
+- Maintenance: mark t2687 complete (pr:#20308 completed:2026-04-21) [skip ci]
+- fix health-dashboard dedup under GraphQL rate-limit pressure (#20308)
+
+### Fixed
+
+- replace local -n namerefs with module-globals in setup/_tools.sh for bash 3.2/zsh compat (t2719) (#20403)
+- remove jq stderr suppression and use // "" fallback in circuit breaker (#20380)
+- address gemini review feedback on log-issue fingerprint dedup (#20382)
+- PATH security + array dispatch for run: fields with args (#20390)
+- remove redundant stderr redirect and extract helper function (#20385)
+- extend gh shim api endpoint detection and field flag handling (#20379)
+- address review-followup items from PR #20354 (#20377)
+- strip persistent label before dedup close to prevent issue-sync reopen (#20333)
+- drop unsupported headRefName from gh search prs (#20323)
+
 ## [3.8.91] - 2026-04-21
 
 ### Changed
