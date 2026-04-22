@@ -305,32 +305,45 @@ _jq_field() {
 }
 
 # =============================================================================
-# Subcommands
+# Subcommands — cmd_pr helpers
+#
+# Module-level state shared between cmd_pr sub-functions. Reset by
+# _cmd_pr_parse_args at the start of each cmd_pr invocation.
 # =============================================================================
 
-cmd_pr() {
-	local pr_number=""
-	local repo_slug=""
-	local verbose=0
-	local json_output=0
-	local logfile_override=""
+_CMD_PR_NUMBER=""
+_CMD_PR_REPO_SLUG=""
+_CMD_PR_VERBOSE=0
+_CMD_PR_JSON_OUTPUT=0
+_CMD_PR_LOGFILE_OVERRIDE=""
+_CMD_PR_EVENTS=()
+_CMD_PR_EVENT_COUNT=0
+
+# Parse cmd_pr CLI arguments into _CMD_PR_* module globals.
+# Returns 1 on validation error.
+_cmd_pr_parse_args() {
+	_CMD_PR_NUMBER=""
+	_CMD_PR_REPO_SLUG=""
+	_CMD_PR_VERBOSE=0
+	_CMD_PR_JSON_OUTPUT=0
+	_CMD_PR_LOGFILE_OVERRIDE=""
 
 	while [[ $# -gt 0 ]]; do
 		case "${1}" in
 			--repo)
-				repo_slug="${2:-}"
+				_CMD_PR_REPO_SLUG="${2:-}"
 				shift 2
 				;;
 			--verbose)
-				verbose=1
+				_CMD_PR_VERBOSE=1
 				shift
 				;;
 			--json)
-				json_output=1
+				_CMD_PR_JSON_OUTPUT=1
 				shift
 				;;
 			--logfile)
-				logfile_override="${2:-}"
+				_CMD_PR_LOGFILE_OVERRIDE="${2:-}"
 				shift 2
 				;;
 			-*)
@@ -338,87 +351,71 @@ cmd_pr() {
 				return 1
 				;;
 			*)
-				if [[ -z "$pr_number" ]]; then
-					pr_number="${1}"
+				if [[ -z "$_CMD_PR_NUMBER" ]]; then
+					_CMD_PR_NUMBER="${1}"
 				fi
 				shift
 				;;
 		esac
 	done
 
-	if [[ -z "$pr_number" ]]; then
+	if [[ -z "$_CMD_PR_NUMBER" ]]; then
 		print_error "usage: pulse-diagnose-helper.sh pr <N> [--repo <slug>] [--verbose] [--json]"
 		return 1
 	fi
 
 	# Default repo slug: try git remote
-	if [[ -z "$repo_slug" ]]; then
-		repo_slug=$(git remote get-url origin 2>/dev/null | sed -E 's|.*github\.com[:/]||; s|\.git$||' || true)
-		if [[ -z "$repo_slug" ]]; then
+	if [[ -z "$_CMD_PR_REPO_SLUG" ]]; then
+		_CMD_PR_REPO_SLUG=$(git remote get-url origin 2>/dev/null | sed -E 's|.*github\.com[:/]||; s|\.git$||' || true)
+		if [[ -z "$_CMD_PR_REPO_SLUG" ]]; then
 			print_error "could not determine repo slug — pass --repo <owner/repo>"
 			return 1
 		fi
 	fi
+	return 0
+}
 
-	local logfile logdir
-	logfile=$(_resolve_logfile "$logfile_override")
-	logdir=$(_resolve_logdir)
+# Classify log lines into the _CMD_PR_EVENTS array and set _CMD_PR_EVENT_COUNT.
+# Args: $1=log_lines  $2=verbose (0|1)
+_cmd_pr_build_events() {
+	local log_lines="$1"
+	local verbose="$2"
+	_CMD_PR_EVENTS=()
+	_CMD_PR_EVENT_COUNT=0
 
-	# --- Collect log lines ---
-	local log_lines
-	log_lines=$(_collect_pr_log_lines "$pr_number" "$logfile" "$logdir")
+	[[ -z "$log_lines" ]] && return 0
 
-	# --- Fetch PR metadata ---
-	local pr_json
-	pr_json=$(_fetch_pr_metadata "$pr_number" "$repo_slug")
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		local ts classification
+		ts=$(_extract_timestamp "$line")
+		classification=$(_classify_log_line "$line")
 
-	local pr_author pr_state pr_merged_at pr_closed_at pr_created_at pr_title pr_review_decision pr_mss
-	pr_author=$(_jq_field "$pr_json" ".author.login" "$_UNKNOWN")
-	pr_state=$(_jq_field "$pr_json" ".state" "$_UNKNOWN")
-	pr_merged_at=$(_jq_field "$pr_json" ".mergedAt" "")
-	pr_closed_at=$(_jq_field "$pr_json" ".closedAt" "")
-	pr_created_at=$(_jq_field "$pr_json" ".createdAt" "")
-	pr_title=$(_jq_field "$pr_json" ".title" "")
-	pr_review_decision=$(_jq_field "$pr_json" ".reviewDecision" "")
-	pr_mss=$(_jq_field "$pr_json" ".mergeStateStatus" "")
+		local rule_id script line_range description
+		IFS='|' read -r rule_id script line_range description <<< "$classification"
 
-	local merged_flag="no"
-	[[ -n "$pr_merged_at" ]] && merged_flag="yes"
+		_CMD_PR_EVENTS+=("${ts}|${rule_id}|${script}|${line_range}|${description}")
+		_CMD_PR_EVENT_COUNT=$((_CMD_PR_EVENT_COUNT + 1))
 
-	# --- Classify log lines ---
-	local events=()
-	local event_count=0
+		if [[ "$verbose" -eq 1 ]]; then
+			_CMD_PR_EVENTS+=("  RAW: ${line}")
+		fi
+	done <<< "$log_lines"
+	return 0
+}
 
-	if [[ -n "$log_lines" ]]; then
-		while IFS= read -r line; do
-			[[ -z "$line" ]] && continue
-			local ts classification
-			ts=$(_extract_timestamp "$line")
-			classification=$(_classify_log_line "$line")
+# Render the human-readable PR correlation report.
+# Args: pr_number author state closed_at merged_flag pr_merged_at pr_title
+#       pr_created_at pr_review_decision pr_mss event_count [events...]
+_render_pr_text() {
+	local pr_number="$1" author="$2" state="$3" closed_at="${4:-}"
+	local merged_flag="$5" pr_merged_at="${6:-}" pr_title="${7:-}"
+	local pr_created_at="${8:-}" pr_review_decision="${9:-}" pr_mss="${10:-}"
+	local event_count="${11}"
+	shift 11
 
-			local rule_id script line_range description
-			IFS='|' read -r rule_id script line_range description <<< "$classification"
-
-			events+=("${ts}|${rule_id}|${script}|${line_range}|${description}")
-			event_count=$((event_count + 1))
-
-			if [[ "$verbose" -eq 1 ]]; then
-				events+=("  RAW: ${line}")
-			fi
-		done <<< "$log_lines"
-	fi
-
-	# --- Output ---
-	if [[ "$json_output" -eq 1 ]]; then
-		_render_json "$pr_number" "$repo_slug" "$pr_author" "$pr_state" "$merged_flag" \
-			"$pr_created_at" "$pr_closed_at" "$pr_merged_at" "$pr_title" \
-			"$pr_review_decision" "$pr_mss" "$event_count" "${events[@]+"${events[@]}"}"
-		return 0
-	fi
-
-	# Pretty-print header
 	printf '\nPR #%s (%s, %s %s, merged=%s)\n' \
-		"$pr_number" "$pr_author" "$pr_state" "${pr_closed_at:-ongoing}" "$merged_flag"
+		"$pr_number" "$author" "$state" "${closed_at:-ongoing}" "$merged_flag"
 	if [[ -n "$pr_title" ]]; then
 		printf '  Title: %s\n' "$pr_title"
 	fi
@@ -435,9 +432,9 @@ cmd_pr() {
 		return 0
 	fi
 
-	# Print events
 	local last_rule_id=""
-	for entry in "${events[@]}"; do
+	local entry
+	for entry in "$@"; do
 		if [[ "$entry" == "  RAW: "* ]]; then
 			printf '%b%s%b\n' "$CYAN" "$entry" "$NC"
 			continue
@@ -456,20 +453,18 @@ cmd_pr() {
 		last_rule_id="$rule_id"
 	done
 
-	# Summary
 	printf 'Summary:\n'
 	printf '  Total pulse events: %d\n' "$event_count"
 
-	# Determine last meaningful decision
 	if [[ -n "$last_rule_id" && "$last_rule_id" != "unclassified" ]]; then
 		printf '  Last pulse decision: %s\n' "$last_rule_id"
 	fi
 
 	if [[ -n "$pr_merged_at" ]]; then
-		# Check if pulse did the merge
 		local pulse_merged=0
-		for entry in "${events[@]}"; do
-			if [[ "$entry" == *"pw-merged"* || "$entry" == *"pm-auto-merge"* ]]; then
+		local e
+		for e in "$@"; do
+			if [[ "$e" == *"pw-merged"* || "$e" == *"pm-auto-merge"* ]]; then
 				pulse_merged=1
 				break
 			fi
@@ -479,12 +474,59 @@ cmd_pr() {
 		else
 			printf '  Outcome: PR was merged, but not by the pulse (admin-bypass or manual merge).\n'
 		fi
-	elif [[ "$pr_state" == "CLOSED" ]]; then
+	elif [[ "$state" == "CLOSED" ]]; then
 		printf '  Outcome: PR was closed without merge.\n'
 	else
 		printf '  Outcome: PR is still open.\n'
 	fi
 	printf '\n'
+	return 0
+}
+
+# =============================================================================
+# Subcommands
+# =============================================================================
+
+cmd_pr() {
+	_cmd_pr_parse_args "$@" || return 1
+
+	local logfile logdir
+	logfile=$(_resolve_logfile "$_CMD_PR_LOGFILE_OVERRIDE")
+	logdir=$(_resolve_logdir)
+
+	local log_lines
+	log_lines=$(_collect_pr_log_lines "$_CMD_PR_NUMBER" "$logfile" "$logdir")
+
+	local pr_json
+	pr_json=$(_fetch_pr_metadata "$_CMD_PR_NUMBER" "$_CMD_PR_REPO_SLUG")
+
+	local pr_author pr_state pr_merged_at pr_closed_at pr_created_at pr_title pr_review_decision pr_mss
+	pr_author=$(_jq_field "$pr_json" ".author.login" "$_UNKNOWN")
+	pr_state=$(_jq_field "$pr_json" ".state" "$_UNKNOWN")
+	pr_merged_at=$(_jq_field "$pr_json" ".mergedAt" "")
+	pr_closed_at=$(_jq_field "$pr_json" ".closedAt" "")
+	pr_created_at=$(_jq_field "$pr_json" ".createdAt" "")
+	pr_title=$(_jq_field "$pr_json" ".title" "")
+	pr_review_decision=$(_jq_field "$pr_json" ".reviewDecision" "")
+	pr_mss=$(_jq_field "$pr_json" ".mergeStateStatus" "")
+
+	local merged_flag="no"
+	[[ -n "$pr_merged_at" ]] && merged_flag="yes"
+
+	_cmd_pr_build_events "$log_lines" "$_CMD_PR_VERBOSE"
+
+	if [[ "$_CMD_PR_JSON_OUTPUT" -eq 1 ]]; then
+		_render_json "$_CMD_PR_NUMBER" "$_CMD_PR_REPO_SLUG" "$pr_author" "$pr_state" "$merged_flag" \
+			"$pr_created_at" "$pr_closed_at" "$pr_merged_at" "$pr_title" \
+			"$pr_review_decision" "$pr_mss" "$_CMD_PR_EVENT_COUNT" \
+			"${_CMD_PR_EVENTS[@]+"${_CMD_PR_EVENTS[@]}"}"
+		return 0
+	fi
+
+	_render_pr_text "$_CMD_PR_NUMBER" "$pr_author" "$pr_state" "$pr_closed_at" \
+		"$merged_flag" "$pr_merged_at" "$pr_title" "$pr_created_at" \
+		"$pr_review_decision" "$pr_mss" "$_CMD_PR_EVENT_COUNT" \
+		"${_CMD_PR_EVENTS[@]+"${_CMD_PR_EVENTS[@]}"}"
 	return 0
 }
 
