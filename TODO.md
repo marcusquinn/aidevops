@@ -2901,3 +2901,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2721 remove auto-dispatch label and make dispatch the default behaviour #parent ref:GH#20402
 
 - [ ] t2722 Phase 1 inventory of auto-dispatch references ref:GH#20410
+
+- [ ] t2724 route session-start framework status to TUI toast instead of message context ref:GH#20412
