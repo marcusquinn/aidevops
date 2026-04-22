@@ -266,9 +266,9 @@ test_size_cap_truncation() {
 # which is never reached by origin:interactive PRs).
 #
 # t2438 / GH#20060: _close_conflicting_pr was decomposed into an
-# orchestrator plus six helpers:
-#   - _close_conflicting_pr_check_interactive_guard  (origin:interactive
-#     check; called as Gate 1)
+# orchestrator plus helpers:
+#   - _close_conflicting_pr_check_ownership_guard    (origin:interactive
+#     + contributor check; called as Gate 1; renamed GH#20485)
 #   - _close_conflicting_pr_comment_not_landed       (contains the
 #     _carry_forward_pr_diff call; only called on the "not landed" branch)
 # The structural invariants are asserted on the orchestrator's call
@@ -280,7 +280,7 @@ test_origin_interactive_skip_static() {
 		/^_close_conflicting_pr\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
 	guard_src=$(awk '
-		/^_close_conflicting_pr_check_interactive_guard\(\) \{/,/^}$/ { print }
+		/^_close_conflicting_pr_check_ownership_guard\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
 	not_landed_src=$(awk '
 		/^_close_conflicting_pr_comment_not_landed\(\) \{/,/^}$/ { print }
@@ -293,7 +293,7 @@ test_origin_interactive_skip_static() {
 	fi
 	if [[ -z "$guard_src" ]]; then
 		print_result "origin:interactive skip: guard helper extractable" 1 \
-			"Could not extract _close_conflicting_pr_check_interactive_guard from $MERGE_SCRIPT"
+			"Could not extract _close_conflicting_pr_check_ownership_guard from $MERGE_SCRIPT"
 		return 0
 	fi
 	if [[ -z "$not_landed_src" ]]; then
@@ -305,7 +305,7 @@ test_origin_interactive_skip_static() {
 	# The guard helper must contain the origin:interactive check itself
 	if ! printf '%s' "$guard_src" | grep -q 'origin:interactive'; then
 		print_result "origin:interactive skip: guard contains label check" 1 \
-			"_close_conflicting_pr_check_interactive_guard missing origin:interactive check"
+			"_close_conflicting_pr_check_ownership_guard missing origin:interactive check"
 		return 0
 	fi
 
@@ -321,7 +321,7 @@ test_origin_interactive_skip_static() {
 	# carry-forward" invariant through the decomposition.
 	local guard_pos not_landed_pos
 	guard_pos=$(printf '%s\n' "$orch_src" |
-		grep -n '_close_conflicting_pr_check_interactive_guard' |
+		grep -n '_close_conflicting_pr_check_ownership_guard' |
 		head -1 | cut -d: -f1)
 	not_landed_pos=$(printf '%s\n' "$orch_src" |
 		grep -n '_close_conflicting_pr_comment_not_landed' |
@@ -329,7 +329,7 @@ test_origin_interactive_skip_static() {
 
 	if [[ -z "$guard_pos" ]]; then
 		print_result "origin:interactive skip: orchestrator calls guard" 1 \
-			"Orchestrator missing _close_conflicting_pr_check_interactive_guard call"
+			"Orchestrator missing _close_conflicting_pr_check_ownership_guard call"
 		return 0
 	fi
 	if [[ -z "$not_landed_pos" ]]; then
