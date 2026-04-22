@@ -33,7 +33,7 @@
 #   COMPLEXITY_GUARD_DISABLE=1       skip complexity check for this push
 #   SCOPE_GUARD_DISABLE=1            skip scope check for this push
 #   CREDENTIAL_GUARD_DISABLE=1       skip credential check for this push
-#   AIDEVOPS_SKIP_DUP_TODO_GUARD=1   skip duplicate TODO check for this push
+#   DUP_TODO_GUARD_DISABLE=1          skip duplicate TODO check for this push
 #   git push --no-verify             skip all hooks
 
 set -euo pipefail
@@ -238,7 +238,7 @@ _write_dispatcher() {
 # Bypass all:  git push --no-verify
 # Bypass each: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1,
 #              SCOPE_GUARD_DISABLE=1, CREDENTIAL_GUARD_DISABLE=1,
-#              or AIDEVOPS_SKIP_DUP_TODO_GUARD=1
+#              or DUP_TODO_GUARD_DISABLE=1
 
 set -u
 
@@ -407,7 +407,7 @@ cmd_install() {
 	print_success "installed pre-push guards: ${_installed_list% }"
 	print_info "hook: $_hook_path"
 	print_info "bypass all: git push --no-verify"
-	print_info "bypass individual: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1, SCOPE_GUARD_DISABLE=1, CREDENTIAL_GUARD_DISABLE=1, or AIDEVOPS_SKIP_DUP_TODO_GUARD=1"
+	print_info "bypass individual: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1, SCOPE_GUARD_DISABLE=1, CREDENTIAL_GUARD_DISABLE=1, or DUP_TODO_GUARD_DISABLE=1"
 	return 0
 }
 
