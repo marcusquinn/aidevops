@@ -2931,3 +2931,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2736 trim OpenCode first-response greeting to concise one-line #bug #framework #interactive ref:GH#20469 pr:#20470 completed:2026-04-22
 
 - [ ] t2737 multi-runtime version freshness for framework status greeting #parent ref:GH#20471
+
+- [ ] t2738 extend _gh_auto_link_sub_issue to honour 'Parent:' line at create-time ref:GH#20473
