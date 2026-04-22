@@ -136,6 +136,8 @@ setup_repo_with_todo_conflict() {
 		printf '# base\nmain-side\n' >TODO.md
 		git add TODO.md && git commit -qm "main: add main-side"
 		git update-ref refs/remotes/origin/main main
+		# Set origin/HEAD so _dps_get_default_branch can resolve "main".
+		git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 		# Feature branch diverges from the base commit.
 		git checkout -qb feature/todo-conflict HEAD~1
 		printf '# base\nfeature-side\n' >TODO.md
@@ -194,6 +196,8 @@ setup_repo_with_nontodo_conflict() {
 		printf 'main-side-code\n' >src.sh
 		git add src.sh && git commit -qm "main: modify"
 		git update-ref refs/remotes/origin/main main
+		# Set origin/HEAD so _dps_get_default_branch can resolve "main".
+		git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 		git checkout -qb feature/code-conflict HEAD~1
 		printf 'feature-side-code\n' >src.sh
 		git add src.sh && git commit -qm "feature: modify"

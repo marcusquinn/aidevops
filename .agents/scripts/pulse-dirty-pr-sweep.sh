@@ -137,6 +137,29 @@ _dps_now_epoch() {
 	date +%s
 }
 
+# ---------------------------------------------------------------------------
+# _dps_get_default_branch
+#
+# Detect the default remote branch for a repo by reading the remote HEAD
+# symbolic ref. Avoids hardcoding "main" and prevents
+# `fatal: ambiguous argument 'origin/main'` errors on repos that use a
+# different default branch (master, develop, etc.) or that have not had
+# `git remote set-head origin --auto` run.
+#
+# Arguments: $1 - repo_path (absolute path to a git checkout)
+# Outputs: branch name (e.g. "main", "master") on stdout
+# Returns: 0 on success, 1 if the remote HEAD symbolic ref is not set
+#          (caller should skip rather than assume a branch name)
+# ---------------------------------------------------------------------------
+_dps_get_default_branch() {
+	local repo_path="$1"
+	local default_ref
+	default_ref=$(git -C "$repo_path" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null) || return 1
+	[[ -n "$default_ref" ]] || return 1
+	printf '%s\n' "${default_ref#origin/}"
+	return 0
+}
+
 # Convert ISO8601 timestamp → epoch seconds. Returns "0" on parse error.
 # Bash 3.2 compatible (macOS default).
 _dps_iso_to_epoch() {
@@ -360,8 +383,17 @@ _dps_consider_rebase() {
 	[[ "$has_parent_task" -eq 0 ]] || return 0
 	[[ -n "$repo_path" && -d "$repo_path" ]] || return 0
 
+	# Detect the default branch dynamically to avoid `fatal: ambiguous argument
+	# 'origin/main'` on repos that use master, develop, or have no fetched HEAD.
+	local default_branch base_ref
+	if ! default_branch=$(_dps_get_default_branch "$repo_path"); then
+		_dps_log "Consider-rebase: skipping ${repo_path} — no origin/HEAD set (run 'git remote set-head origin --auto')"
+		return 0
+	fi
+	base_ref="origin/${default_branch}"
+
 	local conflicts non_planning
-	conflicts=$(_dps_conflicting_files "$repo_path" "$head_ref" "origin/main" 2>/dev/null) || conflicts=""
+	conflicts=$(_dps_conflicting_files "$repo_path" "$head_ref" "$base_ref" 2>/dev/null) || conflicts=""
 	[[ -n "$conflicts" ]] || return 0
 
 	# Strip planning-only files: TODO.md, todo/**, README.md.
@@ -580,6 +612,14 @@ _dirty_pr_action_rebase() {
 		return 1
 	fi
 
+	# Detect the default branch — skip rather than assume "main" to avoid
+	# `fatal: ambiguous argument 'origin/main'` on non-main repos.
+	local default_branch
+	if ! default_branch=$(_dps_get_default_branch "$repo_path"); then
+		_dps_log "PR #$pr_number ($repo_slug): rebase skipped — no origin/HEAD set (run 'git remote set-head origin --auto')"
+		return 1
+	fi
+
 	# Ephemeral worktree for this rebase attempt. We use a throwaway directory
 	# under /tmp so we never interfere with real worktrees or the user's
 	# active branches. Cleanup is always attempted.
@@ -592,8 +632,8 @@ _dirty_pr_action_rebase() {
 	ephemeral_branch_ts=$(date +%s)
 	local ephemeral_branch="dirty-pr-sweep/pr-${pr_number}-${ephemeral_branch_ts}"
 
-	# Refresh origin/main and origin/<head_ref> before anything else.
-	git -C "$repo_path" fetch --quiet origin "main:refs/remotes/origin/main" 2>/dev/null || true
+	# Refresh origin/<default_branch> and origin/<head_ref> before anything else.
+	git -C "$repo_path" fetch --quiet origin "${default_branch}:refs/remotes/origin/${default_branch}" 2>/dev/null || true
 	git -C "$repo_path" fetch --quiet origin "${head_ref}:refs/remotes/origin/${head_ref}" 2>/dev/null || {
 		_dps_log "PR #$pr_number ($repo_slug): fetch of origin/${head_ref} failed — skipping rebase"
 		rm -rf "$ephemeral" 2>/dev/null || true
@@ -607,7 +647,7 @@ _dirty_pr_action_rebase() {
 	fi
 
 	local rebase_ok=1
-	if git -C "$ephemeral" rebase -X union origin/main >/dev/null 2>&1; then
+	if git -C "$ephemeral" rebase -X union "origin/${default_branch}" >/dev/null 2>&1; then
 		rebase_ok=0
 	else
 		git -C "$ephemeral" rebase --abort >/dev/null 2>&1 || true
@@ -634,7 +674,7 @@ _dirty_pr_action_rebase() {
 	fi
 
 	local comment_body
-	comment_body="**Auto-rebase**: this PR was DIRTY with only \`TODO.md\` conflicting, so the pulse rebased it onto \`origin/main\` with the \`union\` merge strategy and force-pushed.
+	comment_body="**Auto-rebase**: this PR was DIRTY with only \`TODO.md\` conflicting, so the pulse rebased it onto \`origin/${default_branch}\` with the \`union\` merge strategy and force-pushed.
 
 - If CI now passes, the merge pass will take it from here.
 - If this rebase was wrong, revert with \`git push --force-with-lease origin ${head_ref}\` from your local copy.
@@ -729,12 +769,12 @@ _dirty_pr_action_notify() {
 	fi
 
 	local comment_body
-	comment_body="**Maintainer review needed**: this PR is \`DIRTY\` (merge conflicts with \`main\`) and does not meet the auto-rebase or auto-close criteria.
+	comment_body="**Maintainer review needed**: this PR is \`DIRTY\` (merge conflicts with the default branch) and does not meet the auto-rebase or auto-close criteria.
 
 Reason: \`${reason}\`
 
 Options:
-- Rebase manually: \`git fetch origin && git rebase origin/main\` (or \`--strategy-option=union\` when TODO.md is the culprit).
+- Rebase manually: \`git fetch origin && git rebase origin/\$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's|origin/||')\` (or \`--strategy-option=union\` when TODO.md is the culprit).
 - Close as superseded: \`gh pr close ${pr_number} --delete-branch\`.
 - Opt out of future sweeps: add the \`do-not-close\` label.
 
