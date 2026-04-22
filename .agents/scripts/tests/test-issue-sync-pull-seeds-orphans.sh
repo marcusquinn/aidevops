@@ -14,7 +14,7 @@
 #   (b) closed orphan is NOT seeded (handled by caller; lib skips none)
 #   (c) duplicate-run is a no-op (idempotency)
 #   (d) malformed title (no tNNN: prefix) — no task_id → caller skips
-#   (e) parent-task label → #parent tag, no #auto-dispatch
+#   (e) parent-task label → #parent tag (auto-dispatch maps independently)
 #   (f) dry-run emits "would seed" to stderr, TODO.md unchanged
 #   (g) missing task ID → seeding skipped with log
 set -euo pipefail
