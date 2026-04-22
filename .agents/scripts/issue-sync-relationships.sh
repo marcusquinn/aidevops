@@ -103,7 +103,7 @@ _cached_node_id() {
 	# Uses the same core-pool 5000/hr budget that the t2574 write-path fallbacks use.
 	if _gh_should_fallback_to_rest; then
 		local rest_nid
-		rest_nid=$(gh api "/repos/${repo}/issues/${num}" --jq '.node_id' 2>/dev/null || echo "")
+		rest_nid=$(gh api "/repos/${repo}/issues/${num}" --jq '.node_id // ""' || echo "")
 		if [[ -n "$rest_nid" ]]; then
 			echo "${num}=${rest_nid}" >>"$_NODE_ID_CACHE_FILE"
 			echo "$rest_nid"
@@ -937,7 +937,20 @@ cmd_backfill_sub_issues() {
 
 	print_info "Backfilling sub-issue links for $total issue(s) in $repo"
 
-	local linked=0 skipped=0 rate_limited=0 processed=0
+	# Initialise the node-ID cache in the parent process so all subshells inherit
+	# the same _NODE_ID_CACHE_FILE and _NODE_ID_RATE_LIMITED_FILE paths.
+	# Without this, each _cached_node_id() subshell creates its own temp file and
+	# cache hits between issues are lost.
+	_init_node_id_cache
+
+	local linked
+	local skipped
+	local rate_limited
+	local processed
+	linked=0
+	skipped=0
+	rate_limited=0
+	processed=0
 	local _num result meta _title _body _has_parent _pcount
 	for _num in "${issue_numbers[@]}"; do
 		processed=$((processed + 1))
