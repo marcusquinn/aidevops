@@ -67,7 +67,29 @@ CANONICAL_MAINTENANCE_CADENCE="${CANONICAL_MAINTENANCE_CADENCE:-1800}"       # 3
 CANONICAL_MAINTENANCE_LAST_RUN="${CANONICAL_MAINTENANCE_LAST_RUN:-${HOME}/.aidevops/.agent-workspace/pulse-canonical-maintenance-last-run}"
 CANONICAL_MAINTENANCE_TIMEOUT="${CANONICAL_MAINTENANCE_TIMEOUT:-60}"         # 60s per-repo hard timeout
 CANONICAL_MAINTENANCE_CLAIM_STAMP_DIR="${CANONICAL_MAINTENANCE_CLAIM_STAMP_DIR:-${HOME}/.aidevops/.agent-workspace/interactive-claims}"
-CANONICAL_MAINTENANCE_DEFAULT_BRANCH="${CANONICAL_MAINTENANCE_DEFAULT_BRANCH:-main}"  # fallback when symbolic-ref fails
+
+# ---------------------------------------------------------------------------
+# _get_default_branch_for_repo
+#
+# Detect the default remote branch for a repo by reading the remote HEAD
+# symbolic ref. This avoids hardcoding "main" and prevents
+# `fatal: ambiguous argument 'origin/main'` errors on repos that use a
+# different default branch (master, develop, etc.) or that have not had
+# `git remote set-head origin --auto` run.
+#
+# Arguments: $1 - repo_path (absolute path to a git checkout)
+# Outputs: branch name (e.g. "main", "master") on stdout
+# Returns: 0 on success, 1 if the remote HEAD symbolic ref is not set
+#          (caller should skip and log instead of assuming a branch name)
+# ---------------------------------------------------------------------------
+_get_default_branch_for_repo() {
+	local repo_path="$1"
+	local default_ref
+	default_ref=$(git -C "$repo_path" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null) || return 1
+	[[ -n "$default_ref" ]] || return 1
+	printf '%s\n' "${default_ref#origin/}"
+	return 0
+}
 
 # ---------------------------------------------------------------------------
 # _canonical_maintenance_check_cadence
@@ -169,10 +191,16 @@ _canonical_ff_should_skip_repo() {
 		return 0
 	fi
 
-	# Skip if not on the default branch
+	# Skip if remote HEAD is not set — we cannot determine the default branch
+	# safely, so skip rather than assume "main" and risk a fatal: ambiguous
+	# argument error if origin/main does not exist in this repo.
 	local main_branch
-	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="$CANONICAL_MAINTENANCE_DEFAULT_BRANCH"
-	[[ -z "$main_branch" ]] && main_branch="$CANONICAL_MAINTENANCE_DEFAULT_BRANCH"
+	if ! main_branch=$(_get_default_branch_for_repo "$repo_path"); then
+		echo "[pulse-canonical-maintenance] Skipping ${repo_path} — no origin/HEAD set (run 'git remote set-head origin --auto')" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+
+	# Skip if not on the default branch
 	local current_branch
 	current_branch=$(git -C "$repo_path" branch --show-current 2>/dev/null) || current_branch=""
 	if [[ "$current_branch" != "$main_branch" ]]; then
@@ -195,10 +223,12 @@ _canonical_ff_single_repo() {
 	local repo_path="$1"
 	local dry_run="$2"
 
-	# Determine default branch
+	# Determine default branch — skip rather than assume if origin/HEAD is not set.
 	local main_branch
-	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="$CANONICAL_MAINTENANCE_DEFAULT_BRANCH"
-	[[ -z "$main_branch" ]] && main_branch="$CANONICAL_MAINTENANCE_DEFAULT_BRANCH"
+	if ! main_branch=$(_get_default_branch_for_repo "$repo_path"); then
+		echo "[pulse-canonical-maintenance] Skipping ${repo_path} — no origin/HEAD set" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
 
 	# Fetch origin
 	if [[ "$dry_run" == "1" ]]; then
@@ -208,6 +238,13 @@ _canonical_ff_single_repo() {
 			echo "[pulse-canonical-maintenance] Fetch failed/timed out for ${repo_path}" >>"${LOGFILE:-/dev/null}"
 			return 1
 		}
+		# Verify the remote ref exists after fetch — guard against repos where
+		# origin/<branch> was never fetched or the remote branch was renamed.
+		# Without this, rev-list below emits `fatal: ambiguous argument` to stderr.
+		if ! git -C "$repo_path" rev-parse --verify "origin/${main_branch}" >/dev/null 2>&1; then
+			echo "[pulse-canonical-maintenance] Skipping ${repo_path} — origin/${main_branch} not found after fetch" >>"${LOGFILE:-/dev/null}"
+			return 1
+		fi
 	fi
 
 	# Check commits behind
