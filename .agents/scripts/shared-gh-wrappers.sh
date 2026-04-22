@@ -548,49 +548,75 @@ gh_create_issue() {
 	return $rc
 }
 
-# GH#18735: auto-link newly created issues as sub-issues of their parent
-# when the title matches tNNN.M (dot-notation subtask pattern).
-# Non-blocking — errors are silently ignored so issue creation is never affected.
+# GH#18735 + GH#20473 (t2738): auto-link newly created issues as sub-issues of
+# their parent at create-time. Two detection methods, in order of preference:
+#
+#   1. Dot-notation in title — `tNNN.M:` / `tNNN.M.K:` → parent is `tNNN` (or
+#      the dotted prefix one level up). Original behaviour.
+#
+#   2. `Parent:` line in body — plain, bold-markdown, or backtick-quoted:
+#        Parent: #500            → linked directly to #500
+#        Parent: GH#501          → linked directly to #501
+#        Parent: tNNN            → resolved via `gh issue list --search`
+#        **Parent:** `tNNN`      → bold-markdown + backtick variant
+#      Mirrors method 2 of `_detect_parent_from_gh_state` so the detection
+#      shape stays consistent across create-time and backfill-time paths.
+#
+# Non-blocking — every detection / resolution step returns silently on failure
+# so issue creation is never affected.
+#
 # Arguments:
 #   $1 - issue URL output from gh issue create
-#   $2... - original args passed to gh issue create (to extract --title and --repo)
+#   $2... - original args passed to gh issue create (to extract
+#           --title, --repo, --body, --body-file and their `=` variants)
 _gh_auto_link_sub_issue() {
 	local issue_url="$1"
 	shift
 
-	# Extract --title from the original args
-	local title="" repo=""
+	# Extract --title, --repo, and --body (or --body-file) from the original args.
+	# Consolidated positional access: read $1/$2 into locals once at top of loop,
+	# then reference locals in case arms. Keeps ratchet happy and matches shell
+	# style guide ("local var=\"$1\" — never use $1 directly in function bodies").
+	local title="" repo="" body=""
+	local _arg _next _bf
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		_arg="$1"
+		_next="${2:-}"
+		shift
+		case "$_arg" in
 		--title)
-			title="${2:-}"
+			title="$_next"
 			shift
 			;;
-		--title=*) title="${1#--title=}" ;;
+		--title=*) title="${_arg#--title=}" ;;
 		--repo)
-			repo="${2:-}"
+			repo="$_next"
 			shift
 			;;
-		--repo=*) repo="${1#--repo=}" ;;
+		--repo=*) repo="${_arg#--repo=}" ;;
+		--body)
+			body="$_next"
+			shift
+			;;
+		--body=*) body="${_arg#--body=}" ;;
+		--body-file)
+			if [[ -n "$_next" && -r "$_next" ]]; then
+				body=$(<"$_next")
+			fi
+			shift
+			;;
+		--body-file=*)
+			_bf="${_arg#--body-file=}"
+			if [[ -n "$_bf" && -r "$_bf" ]]; then
+				body=$(<"$_bf")
+			fi
+			;;
 		*) ;;
 		esac
-		shift
 	done
 	[[ -z "$title" ]] && return 0
 
-	# Check if title starts with a dot-notation task ID (tNNN.M)
-	local child_task_id=""
-	if [[ "$title" =~ ^(t[0-9]+\.[0-9]+[a-z]?) ]]; then
-		child_task_id="${BASH_REMATCH[1]}"
-	else
-		return 0
-	fi
-
-	# Derive the parent task ID (strip last .segment)
-	local parent_task_id="${child_task_id%.*}"
-	[[ -z "$parent_task_id" || "$parent_task_id" == "$child_task_id" ]] && return 0
-
-	# Extract the child issue number from the URL
+	# Extract the child issue number from the URL — both detection methods need it.
 	local child_num
 	child_num=$(echo "$issue_url" | grep -oE '[0-9]+$' || echo "")
 	[[ -z "$child_num" ]] && return 0
@@ -600,14 +626,44 @@ _gh_auto_link_sub_issue() {
 	[[ -z "$repo" ]] && return 0
 
 	local owner="${repo%%/*}" name="${repo##*/}"
+	local parent_num=""
 
-	# Find the parent issue by searching for the task ID prefix in the title
-	local parent_num
-	parent_num=$(gh issue list --repo "$repo" --state all \
-		--search "${parent_task_id}: in:title" --json number,title --limit 5 2>/dev/null |
-		jq -r --arg prefix "${parent_task_id}: " \
-			'.[] | select(.title | startswith($prefix)) | .number // ""' 2>/dev/null |
-		head -1)
+	# --- Method 1: dot-notation in title ---
+	if [[ "$title" =~ ^(t[0-9]+\.[0-9]+[a-z]?) ]]; then
+		local child_task_id="${BASH_REMATCH[1]}"
+		local parent_task_id="${child_task_id%.*}"
+		if [[ -n "$parent_task_id" && "$parent_task_id" != "$child_task_id" ]]; then
+			parent_num=$(gh issue list --repo "$repo" --state all \
+				--search "${parent_task_id}: in:title" --json number,title --limit 5 2>/dev/null |
+				jq -r --arg prefix "${parent_task_id}: " \
+					'.[] | select(.title | startswith($prefix)) | .number // ""' 2>/dev/null |
+				head -1)
+		fi
+	fi
+
+	# --- Method 2: `Parent:` line in body (only if method 1 did not resolve) ---
+	if [[ -z "$parent_num" && -n "$body" ]]; then
+		local parent_ref
+		# shellcheck disable=SC2016  # sed pattern contains literal `*` and backticks
+		parent_ref=$(printf '%s\n' "$body" |
+			sed -nE 's/^[[:space:]]*\**Parent:\**[[:space:]]*`?(t[0-9]+|GH#[0-9]+|#[0-9]+)`?.*/\1/p' |
+			head -1 || true)
+		if [[ -n "$parent_ref" ]]; then
+			if [[ "$parent_ref" =~ ^#([0-9]+)$ ]]; then
+				parent_num="${BASH_REMATCH[1]}"
+			elif [[ "$parent_ref" =~ ^GH#([0-9]+)$ ]]; then
+				parent_num="${BASH_REMATCH[1]}"
+			elif [[ "$parent_ref" =~ ^(t[0-9]+)$ ]]; then
+				local _ptid="${BASH_REMATCH[1]}"
+				parent_num=$(gh issue list --repo "$repo" --state all \
+					--search "${_ptid}: in:title" --json number,title --limit 5 2>/dev/null |
+					jq -r --arg prefix "${_ptid}: " \
+						'.[] | select(.title | startswith($prefix)) | .number // ""' 2>/dev/null |
+					head -1)
+			fi
+		fi
+	fi
+
 	[[ -z "$parent_num" ]] && return 0
 
 	# Resolve both to node IDs and link
