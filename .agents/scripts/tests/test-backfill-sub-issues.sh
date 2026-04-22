@@ -171,12 +171,37 @@ if [[ "$cmd1" == "api" && "$cmd2" == "graphql" ]]; then
 			exit 0
 		fi
 		if [[ "$arg" == *"issue(number"* ]]; then
-			# resolve_gh_node_id query
+			# resolve_gh_node_id query — fail when _GH_GRAPHQL_NODE_FAIL=1 is set
+			if [[ "${_GH_GRAPHQL_NODE_FAIL:-0}" == "1" ]]; then
+				printf '\n'
+				exit 0
+			fi
 			printf '%s\n' 'NODE_STUB_ID'
 			exit 0
 		fi
 	done
 	printf '%s\n' '{}'
+	exit 0
+fi
+
+# gh api rate_limit → used by _gh_should_fallback_to_rest
+if [[ "$cmd1" == "api" && "$cmd2" == "rate_limit" ]]; then
+	printf '%s\n' '{"resources":{"graphql":{"remaining":5000}}}'
+	exit 0
+fi
+
+# gh api /repos/.../issues/NNN → REST node_id fallback (t2739)
+# Returns {"node_id":"..."} when GH_REST_NODE_<num> env var is set.
+if [[ "$cmd1" == "api" && "$cmd2" =~ ^/repos/ ]]; then
+	num=$(basename "$cmd2")
+	var="GH_REST_NODE_${num}"
+	payload="${!var:-}"
+	if [[ -n "$payload" ]]; then
+		_emit "$payload" "$@"
+		exit 0
+	fi
+	# No fixture: return empty body (REST also failed)
+	printf '\n'
 	exit 0
 fi
 
@@ -219,13 +244,15 @@ _init_cmd() {
 	return 0
 }
 
-# Pre-initialize node ID cache to prevent EXIT trap chaining.
-# _init_node_id_cache's trap chains the parent's EXIT trap into subshells;
-# on bash 5.x, subshells inherit EXIT traps, so when $(cmd | tail -1) exits,
-# the chained trap fires and deletes $TMP prematurely. Pre-initializing the
-# cache file skips the trap setup entirely (the guard checks -z).
+# Pre-initialize node ID cache and rate-limited flag file to prevent EXIT trap
+# chaining. _init_node_id_cache's trap chains the parent's EXIT trap into
+# subshells; on bash 5.x, subshells inherit EXIT traps, so when $(cmd | tail -1)
+# exits, the chained trap fires and deletes $TMP prematurely. Pre-initializing
+# skips the trap setup entirely (both guards check -z before creating files).
 _NODE_ID_CACHE_FILE="${TMP}/node_cache"
 : >"$_NODE_ID_CACHE_FILE"
+_NODE_ID_RATE_LIMITED_FILE="${TMP}/rate_limited_flag"
+: >"$_NODE_ID_RATE_LIMITED_FILE"
 
 printf '%sRunning backfill-sub-issues tests (t2114)%s\n' "$TEST_BLUE" "$TEST_NC"
 
@@ -545,6 +572,83 @@ else
 	fail "child-side detection still works through pre-fetch routing (regression)" \
 		"missing addSubIssue in gh.log: $(tr '\n' '|' <"$GH_LOG" | head -c 200)"
 fi
+
+# =============================================================================
+# Class D: REST fallback for node-ID resolution (t2739)
+# =============================================================================
+# Tests 21–22 exercise the new REST path in _cached_node_id.
+# Strategy:
+#   - Override the resolve_gh_node_id bash function to return empty, simulating
+#     GraphQL budget exhaustion without needing stub-level plumbing.
+#   - Set _GH_SHOULD_FALLBACK_OVERRIDE=1 so _gh_should_fallback_to_rest
+#     returns true without needing a real rate-limit state.
+#   - For test 21: GH_REST_NODE_<num> fixtures supply node IDs via REST
+#     → link succeeds (addSubIssue mutation fires).
+#   - For test 22: no REST fixtures → both paths fail → RATE_LIMITED emitted
+#     and Rate-limited: 1 appears in the summary.
+
+printf '\n%sRunning REST fallback tests (t2739)%s\n' "$TEST_BLUE" "$TEST_NC"
+
+# Issue #400: child that maps to parent #100 via dot-notation (t1873.2 fixture)
+# Use the same parent/child fixture as test 9/10 (#200 → parent #100) so the
+# parent-detection logic is already proven; only node resolution changes.
+export GH_ISSUE_400_JSON='{"title":"t1873.2: child of 1873","body":"REST fallback child","labels":[]}'
+# Override resolve_gh_node_id to return empty (simulating GraphQL exhaustion).
+# The real function is in issue-sync-lib.sh; bash function override works here.
+resolve_gh_node_id() { echo ""; return 0; }
+export _GH_SHOULD_FALLBACK_OVERRIDE=1
+
+# ---- Test 21: REST fallback fires, link succeeds ----
+# Provide REST node_id for both child (#400) and parent (#100).
+export GH_REST_NODE_400='{"node_id":"REST_CHILD_NODE"}'
+export GH_REST_NODE_100='{"node_id":"REST_PARENT_NODE"}'
+# Clear node cache so it doesn't serve stale GraphQL-resolved entries.
+: >"$_NODE_ID_CACHE_FILE"
+
+: >"$GH_LOG"
+cmd_backfill_sub_issues --issue 400 >"${TMP}/out.21" 2>&1 || true
+
+if grep -q 'addSubIssue' "$GH_LOG"; then
+	pass "REST fallback: link succeeds when GraphQL exhausted but REST returns node_id"
+else
+	fail "REST fallback: link succeeds when GraphQL exhausted but REST returns node_id" \
+		"missing addSubIssue in gh.log: $(tr '\n' '|' <"$GH_LOG" | head -c 300)"
+fi
+
+# ---- Test 22: RATE_LIMITED emitted when both GraphQL and REST fail ----
+# Remove REST fixtures so the stub returns empty for /repos/.../issues/NNN.
+unset GH_REST_NODE_400 GH_REST_NODE_100
+: >"$_NODE_ID_CACHE_FILE"
+
+: >"$GH_LOG"
+cmd_backfill_sub_issues --issue 400 >"${TMP}/out.22" 2>&1 || true
+
+if grep -q 'Rate-limited: 1' "${TMP}/out.22"; then
+	if ! grep -q 'addSubIssue' "$GH_LOG"; then
+		pass "RATE_LIMITED emitted distinctly when both GraphQL and REST fail"
+	else
+		fail "RATE_LIMITED emitted distinctly when both GraphQL and REST fail" \
+			"unexpected addSubIssue in gh.log"
+	fi
+else
+	fail "RATE_LIMITED emitted distinctly when both GraphQL and REST fail" \
+		"missing 'Rate-limited: 1' in output: $(tr '\n' '|' <"${TMP}/out.22" | head -c 300)"
+fi
+
+# Restore normal behaviour for any future tests.
+unset _GH_SHOULD_FALLBACK_OVERRIDE
+unset _GH_GRAPHQL_NODE_FAIL
+resolve_gh_node_id() {
+	local issue_number="$1" repo="$2"
+	local owner="${repo%%/*}" name="${repo##*/}"
+	local node_id
+	node_id=$(gh api graphql \
+		-f query='query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){issue(number:$num){id}}}' \
+		-f owner="$owner" -f name="$name" -F num="$issue_number" \
+		--jq '.data.repository.issue.id' 2>/dev/null || echo "")
+	echo "$node_id"
+	return 0
+}
 
 # =============================================================================
 # Summary

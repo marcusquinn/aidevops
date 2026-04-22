@@ -87,6 +87,9 @@ _rest_fallback_append_sig() {
 # an unnecessary REST retry that may also fail.
 #######################################
 _gh_should_fallback_to_rest() {
+	# Test/CI override: set _GH_SHOULD_FALLBACK_OVERRIDE=1 to force true without
+	# requiring a real rate-limit state. Use in unit tests and manual smoke runs.
+	[[ "${_GH_SHOULD_FALLBACK_OVERRIDE:-0}" == "1" ]] && return 0
 	local remaining
 	remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null)
 	[[ "$remaining" =~ ^[0-9]+$ ]] || return 1

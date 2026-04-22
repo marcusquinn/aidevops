@@ -45,22 +45,42 @@ _ISSUE_SYNC_RELATIONSHIPS_LOADED=1
 # Format: one "number=node_id" per line. Populated by _cached_node_id().
 _NODE_ID_CACHE_FILE=""
 
+# Rate-limited flag file: written by _cached_node_id when GraphQL is exhausted
+# AND the REST fallback also fails. Uses a file (not a bash variable) so that
+# the signal survives bash subshell boundaries — callers invoke _cached_node_id
+# via $() which spawns a subshell, so bash variable writes inside would be lost.
+# Callers check via _node_id_was_rate_limited. Reset to empty at each call.
+_NODE_ID_RATE_LIMITED_FILE=""
+
 _init_node_id_cache() {
 	if [[ -z "$_NODE_ID_CACHE_FILE" ]]; then
 		_NODE_ID_CACHE_FILE=$(mktemp "${TMPDIR:-/tmp}/aidevops-node-cache.XXXXXX")
+		_NODE_ID_RATE_LIMITED_FILE=$(mktemp "${TMPDIR:-/tmp}/aidevops-ratelimited.XXXXXX")
 		# Chain onto any existing EXIT trap rather than replacing it.
 		local _prev_trap
 		_prev_trap=$(trap -p EXIT | sed -E "s/^trap -- '(.*)' EXIT$/\1/")
 		# shellcheck disable=SC2064
-		trap "rm -f '$_NODE_ID_CACHE_FILE'${_prev_trap:+; $_prev_trap}" EXIT
+		trap "rm -f '$_NODE_ID_CACHE_FILE' '$_NODE_ID_RATE_LIMITED_FILE'${_prev_trap:+; $_prev_trap}" EXIT
 	fi
 	return 0
+}
+
+# Return 0 (true) if the most recent _cached_node_id call was rate-limited.
+# Reads the flag file written by the subshell — bash variables set inside $()
+# are discarded when the subshell exits, but file writes persist.
+_node_id_was_rate_limited() {
+	[[ -n "${_NODE_ID_RATE_LIMITED_FILE:-}" ]] && \
+		[[ "$(cat "$_NODE_ID_RATE_LIMITED_FILE" 2>/dev/null)" == "1" ]]
+	return $?
 }
 
 _cached_node_id() {
 	local num="$1" repo="$2"
 	[[ -z "$num" ]] && return 0
 	_init_node_id_cache
+	# Reset the rate-limited flag for this resolution. Runs inside the subshell
+	# spawned by callers' $() — the file truncation IS visible to the parent.
+	[[ -n "$_NODE_ID_RATE_LIMITED_FILE" ]] && : >"$_NODE_ID_RATE_LIMITED_FILE"
 
 	# Check cache file
 	local cached
@@ -75,6 +95,22 @@ _cached_node_id() {
 	if [[ -n "$nid" ]]; then
 		echo "${num}=${nid}" >>"$_NODE_ID_CACHE_FILE"
 		echo "$nid"
+		return 0
+	fi
+
+	# GraphQL returned empty. If rate-limited, try REST path (t2739).
+	# REST: GET /repos/{owner}/{repo}/issues/{number} → .node_id
+	# Uses the same core-pool 5000/hr budget that the t2574 write-path fallbacks use.
+	if _gh_should_fallback_to_rest; then
+		local rest_nid
+		rest_nid=$(gh api "/repos/${repo}/issues/${num}" --jq '.node_id' 2>/dev/null || echo "")
+		if [[ -n "$rest_nid" ]]; then
+			echo "${num}=${rest_nid}" >>"$_NODE_ID_CACHE_FILE"
+			echo "$rest_nid"
+			return 0
+		fi
+		# Both GraphQL and REST failed — write flag so callers can emit RATE_LIMITED.
+		[[ -n "$_NODE_ID_RATE_LIMITED_FILE" ]] && echo "1" >"$_NODE_ID_RATE_LIMITED_FILE"
 	fi
 	return 0
 }
@@ -655,12 +691,18 @@ _backfill_one_issue() {
 		return 0
 	fi
 
-	local child_node parent_node
+	local child_node parent_node _rate_limited=0
 	child_node=$(_cached_node_id "$num" "$repo")
+	_node_id_was_rate_limited && _rate_limited=1
 	parent_node=$(_cached_node_id "$parent_num" "$repo")
+	_node_id_was_rate_limited && _rate_limited=1
 	if [[ -z "$child_node" || -z "$parent_node" ]]; then
 		log_verbose "#$num: could not resolve node IDs for $num / $parent_num"
-		echo "SKIPPED $num"
+		if [[ "$_rate_limited" == "1" ]]; then
+			echo "RATE_LIMITED $num"
+		else
+			echo "SKIPPED $num"
+		fi
 		return 0
 	fi
 
@@ -795,8 +837,13 @@ _backfill_parent_children() {
 		if [[ -z "$parent_node" ]]; then
 			parent_node=$(_cached_node_id "$num" "$repo")
 			if [[ -z "$parent_node" ]]; then
-				log_verbose "#$num: could not resolve parent node ID"
-				echo "${_skip_tag} $num:0"
+				if _node_id_was_rate_limited; then
+					log_verbose "#$num: parent node ID resolution hit rate limit"
+					echo "PARENT_RATE_LIMITED $num:0"
+				else
+					log_verbose "#$num: could not resolve parent node ID"
+					echo "${_skip_tag} $num:0"
+				fi
 				return 0
 			fi
 		fi
@@ -890,7 +937,7 @@ cmd_backfill_sub_issues() {
 
 	print_info "Backfilling sub-issue links for $total issue(s) in $repo"
 
-	local linked=0 skipped=0 processed=0
+	local linked=0 skipped=0 rate_limited=0 processed=0
 	local _num result meta _title _body _has_parent _pcount
 	for _num in "${issue_numbers[@]}"; do
 		processed=$((processed + 1))
@@ -920,12 +967,16 @@ cmd_backfill_sub_issues() {
 			_pcount="${result##*:}"
 			linked=$((linked + _pcount))
 			;;
+		# RATE_LIMITED / PARENT_RATE_LIMITED: node ID could not be resolved due to
+		# GraphQL exhaustion and REST also failing. Counted separately so callers
+		# (pulse t2112 reconciler) can re-enqueue rather than treating as permanent.
+		RATE_LIMITED*|PARENT_RATE_LIMITED*) rate_limited=$((rate_limited + 1)) ;;
 		*) skipped=$((skipped + 1)) ;;
 		esac
 	done
 	[[ $total -gt 25 ]] && printf "\n" >&2
 
-	printf "\n=== Backfill Sub-Issues ===\nLinked: %d | Skipped: %d | Issues processed: %d\n" \
-		"$linked" "$skipped" "$total"
+	printf "\n=== Backfill Sub-Issues ===\nLinked: %d | Skipped: %d | Rate-limited: %d | Issues processed: %d\n" \
+		"$linked" "$skipped" "$rate_limited" "$total"
 	return 0
 }
