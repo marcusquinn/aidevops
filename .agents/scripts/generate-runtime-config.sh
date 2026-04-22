@@ -128,24 +128,45 @@ _generate_agents_opencode() {
 
 	mkdir -p "$opencode_agent_dir"
 
-	# Deploy AGENTS.md with version check
+	# Deploy AGENTS.md with concise greeting template (t2736)
+	# The opencode-aidevops plugin already renders full framework status as a
+	# session-start toast; the model must NOT re-run aidevops-update-check.sh
+	# or dump toast content into the chat. Greeting is a one-liner sourced
+	# from the pre-populated cache file.
 	cat >"$opencode_config_dir/AGENTS.md" <<'AGENTSEOF'
 Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 
+**Runtime**: You are running in OpenCode. Global config: `~/.config/opencode/opencode.json`.
+
 ## aidevops Framework Status
 
-**On interactive conversation start** (skip this section entirely for headless/command sessions like `/pulse`, `/full-loop`, etc.):
-1. If you have Bash tool: Run `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh --interactive`
-2. If no Bash tool: Read `~/.aidevops/cache/session-greeting.txt` (cached by agents with Bash) and greet with: "Hi!\n\n{content of file}.\n\nWhat would you like to work on?". If the file doesn't exist, read `~/.aidevops/agents/VERSION` to get the `{version}` and greet with: "Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"
-3. Then respond to the user's actual message
+The opencode-aidevops plugin renders session-start framework status (versions,
+security posture, advisories, update hints) as a TUI toast before your first
+turn. Raw output is cached at `~/.aidevops/cache/session-greeting.txt`. The
+user has already seen it — do NOT re-run `aidevops-update-check.sh` and do
+NOT repeat toast content in the chat.
 
-If you ran the update check script (step 1) and the output starts with `UPDATE_AVAILABLE|` (e.g., `UPDATE_AVAILABLE|2.41.1|2.41.2|OpenCode`), inform user: "Update available (current → latest). Run `aidevops update` in a terminal session to update, or type `!aidevops update` below and hit Enter." If the output also contains a line `AUTO_UPDATE_ENABLED`, replace the manual update instruction with: "Auto-update is enabled and will apply this within ~10 minutes." This check does not apply when falling back to reading the cache or VERSION file (step 2).
+**On interactive conversation start** (skip for headless sessions like `/pulse`, `/full-loop`):
+
+1. Read line 1 of `~/.aidevops/cache/session-greeting.txt`. Format: `aidevops v{X} running in OpenCode v{Y} | ...`. Extract `{X}` and `{Y}`.
+2. Greet with exactly this template — no extra prose, no status dump:
+
+       Hi!
+
+       We're running aidevops v{X} in OpenCode v{Y}.
+
+       What would you like to work on?
+
+3. If the cache file is missing, read `~/.aidevops/agents/VERSION` for `{X}` and greet: "Hi!\n\nWe're running aidevops v{X}.\n\nWhat would you like to work on?"
+4. Then respond to the user's actual message.
+
+If the user later asks about aidevops updates, direct them to run `aidevops update` in a terminal session (or type `!aidevops update` below). Do not announce updates unprompted — the toast already did.
 
 ## Pre-Edit Git Check
 
 Only for agents with Edit/Write/Bash tools. See ~/.aidevops/agents/AGENTS.md for workflow.
 AGENTSEOF
-	print_success "Updated AGENTS.md with version check"
+	print_success "Updated AGENTS.md with concise greeting template (t2736)"
 
 	# Remove legacy agent files
 	local legacy_files=(
