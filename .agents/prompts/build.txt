@@ -88,33 +88,21 @@ Before non-trivial tasks, restate: (1) actual goal, (2) constraints that must ho
 - Conversation-end loop scan: before declaring completion or moving to the next task, scan back over the full conversation for: (1) unfulfilled user commitments, (2) unnotified external parties, and (3) requests displaced by troubleshooting or corrections. Internal task creation does not close external loops.
 
 # Pre-implementation discovery (t2046 — MANDATORY before any non-trivial code change)
-# Autonomous coders tend to treat the codebase as frozen at the moment they read
-# it, when in fact other work may have landed since the prompt was loaded. Run
-# this discovery pass before writing code — it is the implementer-side mirror of
-# the Section 0 check that `workflows/review-issue-pr.md` already mandates for
-# reviewers.
+# Treat the codebase as a living system. Other work may have landed since the prompt
+# loaded. Run ONE discovery pass before writing code — check for duplicates first.
 - Before starting work on any issue or writing code, run ONE discovery pass for already-landed duplicates and in-flight collisions:
   - `git log --since="<issue-age + 2h>" --oneline -- <target-files>` — surfaces commits on the exact files you intend to modify, with authors and subject lines that often contain the keywords of the bug you are about to fix.
   - `gh pr list --state merged --search "<keywords>" --limit 5` — surfaces recently-merged PRs that reference the same problem space.
   - `gh pr list --state open --search "<keywords>" --limit 5` — surfaces in-flight work on the same files so you can coordinate instead of collide.
-- Cost: seconds. Value: catches duplicate fixes before you spend 30+ minutes writing one. The cost ratio of a duplicate PR (task ID burn, worktree, brief, commit, push, issue, PR, close comment) vs a one-line `git log` query is asymmetric — skipping the check is never the cheap option.
+- Cost: seconds. Value: catches duplicate fixes before you spend 30+ min writing one.
 - If the discovery pass surfaces a prior landed fix on the exact file/symbol you intended to change, STOP and verify whether the bug is still reproducible against the new code before continuing. Often the fix is already in place and the issue is stale — close it with a link to the prior commit instead of duplicating work.
-- For `source:conflict-feedback` reroutes (pulse-merge closed a prior PR with conflicts and rerouted context to the linked issue), cherry-pick-first before rewriting. The prior PR's head commit is reachable via `gh pr view <N> --json headRefOid` for ≥30 days after close; `git fetch origin pull/<N>/head` + `git cherry-pick <sha>` onto a fresh branch off current `main` is usually 10x cheaper than rewriting and the cherry-pick's conflict output maps the actual semantic overlap. Rewriting from scratch is only correct when the prior approach was rejected in review — check the old PR's comments for `CHANGES_REQUESTED` before assuming.
+- For `source:conflict-feedback` reroutes (pulse-merge closed a prior PR with conflicts): cherry-pick-first before rewriting. `gh pr view <N> --json headRefOid` + `git fetch origin pull/<N>/head` + `git cherry-pick <sha>` is 10x cheaper than rewriting. Rewrite only when prior approach had `CHANGES_REQUESTED`.
 - Treat the codebase as a living system, not a frozen snapshot. Other agents and humans are working concurrently; your discovery pass is how you find them.
 
 # Memory recall (MANDATORY — t2050)
-# The aidevops memory system (SQLite FTS5 at ~/.aidevops/.agent-workspace/memory/)
-# accumulates cross-session lessons from every prior session that stored one.
-# These lessons are invisible unless queried. A session that skips memory recall
-# is structurally blind to every mistake the framework has already learned from —
-# it WILL repeat them. Framework lessons exist precisely because the model alone
-# doesn't remember. Treat memory the same way you treat git log: check it, don't
-# rely on recall.
-#
-# This rule is NON-OPTIONAL and applies to every interactive session and every
-# headless task dispatch. "I didn't think this task needed it" is not a valid
-# opt-out — the cost is one command, the value is avoiding 30+ minute token burns
-# on work the framework has already learned how to do better.
+# Cross-session lessons are invisible unless queried — a session that skips recall
+# WILL repeat recorded mistakes. One command cost; 30+ minute token-burn avoided.
+# NON-OPTIONAL for all interactive sessions and headless dispatch.
 - Before starting non-trivial work (any code change, PR review, debugging session, or design decision), run ONE targeted memory query:
   - `memory-helper.sh recall --query "<1-3 keyword phrase matching your task>" --limit 5`
   - Example queries: `"flock pulse lock"`, `"shellcheck bash32 compat"`, `"worktree cleanup"`, `"PR merge gate"`, `"issue triage"`.
@@ -274,29 +262,15 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
   explicitly when creating PRs in an interactive session.
 
 # Interactive issue ownership (MANDATORY — AI-driven, t2056)
-# When an interactive session engages with a GitHub issue — by opening a
-# worktree for it, claiming a new task, or because the user identifies an
-# existing issue to work on ("let me fix #18700", "what's going on with this
-# one", pasted issue URL, PR/issue view) — you MUST immediately call:
-#
+# When an interactive session engages with a GitHub issue — opening a worktree,
+# claiming a task, or user identifies one — you MUST IMMEDIATELY call:
 #   interactive-session-helper.sh claim <N> <slug>
+# Applies status:in-review + self-assign + crash-recovery stamp. No worker will
+# dispatch while set. Do NOT assume origin:interactive alone is enough.
 #
-# This applies `status:in-review`, self-assigns the current `gh` user, and
-# writes a crash-recovery stamp. The pulse's dispatch-dedup guard already
-# treats `status:in-review` as an active claim — no worker will be dispatched
-# while the label is set. This is the ONLY mandatory, unavoidable protocol
-# for blocking parallel pulse dispatch on an issue you are working on
-# interactively. Do not skip it; do not assume `origin:interactive` alone is
-# enough (it only marks creation-time origin, not active session ownership).
-#
-# SCOPE LIMITATION (GH#19861): `claim` blocks the pulse's DISPATCH path
-# only. It does NOT block the enrich path (which may overwrite issue
-# title/body/labels), the completion-sweep path (which may strip status
-# labels), or any other non-dispatch pulse operation. If you are
-# investigating a pulse bug or need maximum insulation from all pulse
-# modifications, use `interactive-session-helper.sh lockdown <N> <slug>`
-# instead — it applies `no-auto-dispatch` + `status:in-review` +
-# self-assignment + conversation lock + audit comment.
+# SCOPE LIMITATION (GH#19861): `claim` blocks dispatch path ONLY — not enrich,
+# completion-sweep, or other pulse paths. For full insulation, use `lockdown`
+# instead: no-auto-dispatch + status:in-review + conversation lock + audit comment.
 - Release is YOUR responsibility, not the user's. When the user signals
   completion ("ship it", "I'm done", "moving on", "let a worker take over"),
   or when they switch to a different issue, call
@@ -429,12 +403,9 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 - From issue threads, focus on: the issue body (implementation context), and any comments containing code suggestions or error reports.
 
 # 10. Stale-symptom investigations (runtime debugging, t2036)
-# When investigating pulse, agent, or worker behaviour from logs,
-# timeouts, or failed dispatches, the DEPLOYED copy at
-# `~/.aidevops/agents/scripts/<file>` may differ from source at
-# `~/Git/aidevops/.agents/scripts/<file>`. The pulse executes the
-# deployed copy; reading source-as-truth can waste hours on a bug
-# that was already fixed before the symptoms occurred.
+# The DEPLOYED copy at `~/.aidevops/agents/scripts/<file>` may differ from source
+# at `~/Git/aidevops/.agents/scripts/<file>`. Pulse executes the deployed copy —
+# reading source-as-truth when debugging runtime symptoms wastes hours.
 - Before reading source for runtime investigation: compare deployed mtime to source commit:
   `ls -la ~/.aidevops/agents/scripts/<file>` vs
   `git -C ~/Git/aidevops log -1 --format='%ai' -- .agents/scripts/<file>`.
@@ -452,16 +423,10 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
   implementation.
 
 # 11. Attribution before verification (t2204 — MANDATORY before publishing blame)
-# When an incident appears to match a bug described in TODO.md, an open issue,
-# or a recent commit message, READ the cited function body before publishing an
-# attribution. Symptom-level pattern match is a hypothesis, not a diagnosis.
-# Published attribution compounds the error: it lands as noise on the issue
-# thread, trains the next session to trust pattern-matching over code-reading,
-# and requires a correction comment to retract. Canonical failure: t2190
-# session attributed an auto-close to the t2108 bug in a public comment;
-# t2108's fix had merged 3 days earlier and was working correctly — the close
-# fired because the publishing session's own PR body contained the literal
-# closing keyword (see the markdown foot-gun bullet in "Traceability" above).
+# When an incident appears to match a bug in TODO.md or recent commits, READ the
+# cited function body before publishing attribution. Symptom-level pattern match is
+# a hypothesis. Published wrong attribution creates noise and trains future sessions
+# to trust pattern-matching over code-reading. (Canonical failure: t2190/t2108.)
 - "This looks like t<NNN>" is a hypothesis. It belongs in your notes.
 - "This was caused by t<NNN>" is a diagnosis. It belongs in a public comment
   (gh issue comment, gh pr comment, issue close body, escalation report) ONLY
@@ -507,10 +472,7 @@ See also `reference/pre-commit-hooks.md` for the full playbook and `prompts/buil
 - If trash is unavailable, falls back to permanent `git worktree remove`.
 
 **Pulse restart after deploying pulse script fixes (MANDATORY):**
-- Bash processes load `source` files at startup only. Deploying updated `.sh` files to `~/.aidevops/agents/scripts/` does NOT affect a running pulse — it keeps using the old code in memory. This caused a multi-hour outage where v3.8.41 fixes were deployed but the pulse kept blocking issues with stale logic.
-- **`aidevops update` and `setup.sh` now handle this automatically (t2579).** Both invoke `pulse-lifecycle-helper.sh restart-if-running` at the end of their flow, which terminates every pulse instance (SIGTERM → SIGKILL escalation) and starts a fresh one. Opt out with `AIDEVOPS_SKIP_PULSE_RESTART=1` (for active debugging sessions).
-- **For interactive hot-deploys (direct `cp` into `~/.aidevops/agents/scripts/`):** the automatic restart doesn't fire because neither `aidevops update` nor `setup.sh` ran. Use the helper directly: `~/.aidevops/agents/scripts/pulse-lifecycle-helper.sh restart-if-running`. Fallback (same effect): `pkill -f "(^|/)pulse-wrapper\.sh( |$)" || true; sleep 3; nohup ~/.aidevops/agents/scripts/pulse-wrapper.sh >> ~/.aidevops/logs/pulse-wrapper.log 2>&1 &`.
-- Helper subcommands: `is-running | status | start | stop | restart | restart-if-running`. The `restart-if-running` flavour no-ops when pulse isn't running (won't spuriously start it).
+- `aidevops update` and `setup.sh` auto-restart the pulse (t2579). For manual hot-deploys (`cp` to `~/.aidevops/agents/scripts/`), restart manually: `pulse-lifecycle-helper.sh restart-if-running`. Fallback: `pkill -f "(^|/)pulse-wrapper\.sh( |$)" || true; sleep 3; nohup ~/.aidevops/agents/scripts/pulse-wrapper.sh >> ~/.aidevops/logs/pulse-wrapper.log 2>&1 &`. Subcommands: `is-running | status | start | stop | restart | restart-if-running`.
 
 # Quality Standards
 - ShellCheck zero violations. `local var="$1"` pattern. Explicit returns.

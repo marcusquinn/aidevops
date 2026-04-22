@@ -154,6 +154,19 @@ When workers are failing systemically:
 7. **Issue comments**: check for `CLAIM_RELEASED` / `DISPATCH_CLAIM` comment loops
 8. **Review gate**: `review-bot-gate-helper.sh check <PR>` — `WAITING` means bot is blocking merge
 
+## Pre-Dispatch Eligibility Gate (t2424)
+
+Runs after all dedup/claim/validator layers pass, before the worker spawns. Catches issues that are already resolved:
+- CLOSED state
+- `status:done` or `status:resolved` label
+- Linked PR merged in the last 5 minutes (window: `AIDEVOPS_PREDISPATCH_RECENT_MERGE_WINDOW`, default 300s)
+
+Behaviour: fail-open on API errors (logs warning, dispatch proceeds). Each abort increments `pre_dispatch_aborts` in `~/.aidevops/logs/pulse-stats.json` (visible via `aidevops status`).
+
+Emergency bypass: `AIDEVOPS_SKIP_PREDISPATCH_ELIGIBILITY=1`
+
+Test coverage: `.agents/scripts/tests/test-pre-dispatch-eligibility.sh`
+
 ## Pulse Decision Correlation
 
 When a PR doesn't auto-merge (or merges unexpectedly), use `pulse-diagnose-helper.sh` to
