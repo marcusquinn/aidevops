@@ -269,9 +269,9 @@ Headless workers failing, stalling, or stuck in dispatch loops: `reference/worke
 
 **Pre-dispatch eligibility gate (t2424):** Catches already-resolved issues (CLOSED, `status:done`/`status:resolved`, linked PR merged in last 5 min) before spawning a worker. Fail-open on API errors. Bypass: `AIDEVOPS_SKIP_PREDISPATCH_ELIGIBILITY=1`. Full detail and env controls: `reference/worker-diagnostics.md`.
 
-**GraphQL rate-limit protection (t2574):** `shared-gh-wrappers.sh` auto-retries via REST API when GraphQL remaining ≤ 10 points, preventing worker crashes during exhaustion windows. Covers `gh_create_issue`, `gh_create_pr`, `gh_issue_comment`, `gh_issue_edit_safe`, `set_issue_status`. Threshold: `AIDEVOPS_GH_REST_FALLBACK_THRESHOLD`.
+**GraphQL rate-limit protection (t2574, t2744):** `shared-gh-wrappers.sh` auto-routes via REST API when GraphQL remaining ≤ 1000 points, splitting load across the separate 5000/hr REST core pool while GraphQL still has reserve for ops without REST equivalents. Covers `gh_create_issue`, `gh_create_pr`, `gh_issue_comment`, `gh_issue_edit_safe`, `set_issue_status`, plus issue read paths via t2689. Env: `AIDEVOPS_GH_REST_FALLBACK_THRESHOLD` (default 1000; previously 10 — was reactive, now proactive).
 
-**Pulse circuit breaker (t2690):** Pauses ALL worker dispatch when GraphQL budget < 5% (250/5000 points), preventing cascade failures. Auto-resets when budget recovers. Counter: `pulse_dispatch_circuit_broken` in `pulse-stats.json`. Env: `AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD` (default 0.05), `AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1` (emergency bypass).
+**Pulse circuit breaker (t2690, t2744):** Pauses ALL worker dispatch when GraphQL budget < 30% (1500/5000 points), preserving headroom for in-flight reads instead of letting them fail. Auto-resets when budget recovers. Counter: `pulse_dispatch_circuit_broken` in `pulse-stats.json`. Env: `AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD` (default 0.30; previously 0.05 — fired only after 95% of budget was spent), `AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1` (emergency bypass).
 
 **Pulse decision correlation (t2714):** `pulse-diagnose-helper.sh pr <N> [--repo <slug>]` explains what the pulse did on any PR and why, classified against a 60+ rule inventory. Use `--verbose` for raw log lines, `--json` for programmatic output. Full detail: `reference/worker-diagnostics.md`.
 

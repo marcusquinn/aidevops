@@ -9,6 +9,11 @@
 # Keep pulse workers alive long enough for opus-tier dispatches.
 PULSE_STALE_THRESHOLD_SECONDS=1800
 
+# Cron expression: top of every hour. Shared by stats-wrapper,
+# contribution-watch, and profile-readme schedulers — keep DRY so a
+# future cadence shift only touches one place.
+CRON_HOURLY="0 * * * *"
+
 # Resolve the modern bash binary path for use in launchd ProgramArguments.
 # Launchd bypasses the shebang when ProgramArguments specifies an explicit
 # interpreter, so we must resolve the path at plist generation time.
@@ -263,12 +268,14 @@ PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
 }
 
 # Read supervisor.pulse_interval_seconds from settings.json.
-# Falls back to 120 if the file is missing, the key is absent, or jq is unavailable.
+# Falls back to 180 if the file is missing, the key is absent, or jq is unavailable.
 # Clamps to the validated range [30, 3600].
 # GH#18018: previously this was hardcoded as "120" in _install_supervisor_pulse.
+# t2744: default raised 120 → 180 to reduce GraphQL pressure (33% fewer cycles)
+#        on multi-repo setups where per-cycle cost chronically exceeds 5000/hr.
 _read_pulse_interval_seconds() {
 	local _settings_file="$HOME/.config/aidevops/settings.json"
-	local _interval=120
+	local _interval=180
 
 	if command -v jq >/dev/null 2>&1 && [[ -f "$_settings_file" ]]; then
 		local _raw
@@ -495,6 +502,13 @@ _build_pulse_headless_env_xml() {
 # Generate the full pulse launchd plist XML content.
 # Args: $1=pulse_label, $2=wrapper_script, $3=opencode_bin
 # Prints the complete plist XML to stdout.
+#
+# StartInterval is read from supervisor.pulse_interval_seconds in
+# settings.json via _read_pulse_interval_seconds (default 180 — t2744).
+# Previously this was hardcoded as 120, meaning macOS users could not
+# tune the pulse cadence via settings (Linux/cron path always honoured
+# the setting). The hardcoding is now removed; the macOS path matches
+# the Linux path's behaviour.
 _generate_pulse_plist_content() {
 	local pulse_label="$1"
 	local wrapper_script="$2"
@@ -519,6 +533,11 @@ _generate_pulse_plist_content() {
 	local _xml_bash_bin
 	_xml_bash_bin=$(_xml_escape "$(_resolve_modern_bash)")
 
+	# Resolve the configured pulse interval (settings.json, with default).
+	# Already validated to [30, 3600] inside _read_pulse_interval_seconds.
+	local _pulse_interval_sec
+	_pulse_interval_sec=$(_read_pulse_interval_seconds)
+
 	cat <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -532,7 +551,7 @@ _generate_pulse_plist_content() {
 		<string>${_xml_wrapper_script}</string>
 	</array>
 	<key>StartInterval</key>
-	<integer>120</integer>
+	<integer>${_pulse_interval_sec}</integer>
 	<key>StandardOutPath</key>
 	<string>${_xml_home}/.aidevops/logs/pulse-wrapper.log</string>
 	<key>StandardErrorPath</key>
@@ -579,12 +598,21 @@ _install_pulse_launchd() {
 	# Write the plist (always regenerated to pick up config changes)
 	_generate_pulse_plist_content "$pulse_label" "$wrapper_script" "$opencode_bin" >"$pulse_plist"
 
+	# Resolve interval for the user-facing message (matches what the plist contains).
+	local _interval_sec _interval_label
+	_interval_sec=$(_read_pulse_interval_seconds)
+	if [[ "$_interval_sec" -lt 60 ]]; then
+		_interval_label="${_interval_sec}s"
+	else
+		_interval_label="$((_interval_sec / 60)) min"
+	fi
+
 	# shell-portability: ignore next — _install_pulse_launchd is macOS-only (launchd)
 	if launchctl load "$pulse_plist"; then
 		if [[ "$_pulse_installed" == "true" ]]; then
-			print_info "Supervisor pulse updated (launchd config regenerated)"
+			print_info "Supervisor pulse updated (launchd config regenerated, every ${_interval_label})"
 		else
-			print_info "Supervisor pulse enabled (launchd, every 2 min)"
+			print_info "Supervisor pulse enabled (launchd, every ${_interval_label})"
 		fi
 	else
 		print_warning "Failed to load supervisor pulse LaunchAgent"
@@ -940,7 +968,10 @@ _uninstall_pulse() {
 # Setup stats-wrapper scheduler — runs quality sweep and health issue updates
 # separately from the pulse (t1429). Only installed when the supervisor
 # pulse is enabled (stats are useless without it).
-# macOS: launchd plist (every 15 min) | Linux: systemd timer or cron (every 15 min)
+# macOS: launchd plist (hourly) | Linux: systemd timer or cron (hourly)
+# t2744: interval raised from 15 min → hourly. Stats UI is not realtime,
+# the four-times-an-hour cadence drove ~200-400 GraphQL points/hr of pure
+# overhead on multi-repo setups.
 setup_stats_wrapper() {
 	local _pulse_lower="$1"
 	# Use effective pulse state (PULSE_ENABLED) if available; fall back to consent string.
@@ -974,7 +1005,7 @@ setup_stats_wrapper() {
 		<string>${_xml_stats_script}</string>
 	</array>
 	<key>StartInterval</key>
-	<integer>900</integer>
+	<integer>3600</integer>
 	<key>StandardOutPath</key>
 	<string>${_xml_stats_home}/.aidevops/logs/stats.log</string>
 	<key>StandardErrorPath</key>
@@ -995,7 +1026,7 @@ setup_stats_wrapper() {
 PLIST
 			)
 			if _launchd_install_if_changed "$stats_label" "$stats_plist" "$stats_plist_content"; then
-				print_info "Stats wrapper enabled (launchd, every 15 min)"
+				print_info "Stats wrapper enabled (launchd, every hour)"
 			else
 				print_warning "Failed to load stats wrapper LaunchAgent"
 			fi
@@ -1003,12 +1034,12 @@ PLIST
 			_install_scheduler_linux \
 				"$stats_systemd" \
 				"aidevops: stats-wrapper" \
-				"*/15 * * * *" \
+				"$CRON_HOURLY" \
 				"\"${stats_script}\"" \
-				"900" \
+				"3600" \
 				"$stats_log" \
 				"" \
-				"Stats wrapper enabled (every 15 min)" \
+				"Stats wrapper enabled (every hour)" \
 				"Failed to install stats wrapper scheduler" \
 				"true" \
 				"false"
@@ -1503,7 +1534,7 @@ _install_cw_linux() {
 	_install_scheduler_linux \
 		"$cw_systemd" \
 		"aidevops: contribution-watch" \
-		"0 * * * *" \
+		"$CRON_HOURLY" \
 		"\"${cw_script}\" scan" \
 		"3600" \
 		"${_cw_log_dir}/contribution-watch.log" \
@@ -1670,7 +1701,7 @@ _install_profile_readme_scheduler() {
 	_install_scheduler_linux \
 		"$pr_systemd" \
 		"aidevops: profile-readme-update" \
-		"0 * * * *" \
+		"$CRON_HOURLY" \
 		"\"${pr_script}\" update" \
 		"3600" \
 		"$pr_log" \

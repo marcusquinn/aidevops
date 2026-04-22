@@ -105,7 +105,7 @@ Supervisor, dispatch, and autonomous operation settings.
 
 | Key | Type | Default | Env Override | Description |
 |-----|------|---------|-------------|-------------|
-| `orchestration.supervisor_pulse` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable the autonomous supervisor pulse. Dispatches workers, merges PRs, evaluates results every 2 minutes. |
+| `orchestration.supervisor_pulse` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable the autonomous supervisor pulse. Dispatches workers, merges PRs, evaluates results every 3 minutes (configurable via `supervisor.pulse_interval_seconds`). |
 | `orchestration.repo_sync` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily `git pull --ff-only` on clean repos in `repos.json`. |
 
 ### safety
@@ -414,7 +414,7 @@ These keys exist only in `settings.json` (no `config.jsonc` equivalent):
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `supervisor.pulse_interval_seconds` | number | `120` | Seconds between pulse cycles. Range: 30-3600. |
+| `supervisor.pulse_interval_seconds` | number | `180` | Seconds between pulse cycles. Range: 30-3600. Default raised from 120 in t2744 to reduce GraphQL pressure. |
 | `supervisor.stale_threshold_seconds` | number | `1800` | Seconds before a worker is considered stale/stuck. |
 | `supervisor.circuit_breaker_max_failures` | number | `3` | Consecutive failures before circuit breaker pauses dispatch. |
 | `supervisor.strategic_review_hours` | number | `4` | Hours between opus-tier strategic reviews of queue health. |

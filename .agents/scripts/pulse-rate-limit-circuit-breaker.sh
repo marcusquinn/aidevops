@@ -22,8 +22,13 @@
 #
 # Environment overrides:
 #   AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD — fraction of total budget below
-#     which the breaker trips (default 0.05 = 5% = 250/5000). Set to 0 to
-#     disable entirely.
+#     which the breaker trips (default 0.30 = 30% = 1500/5000). Set to 0 to
+#     disable entirely. Tuned for proactive headroom preservation (t2744):
+#     the original 0.05 fired only after 95% of budget was already burned,
+#     by which point in-flight reads (issue list, pr view) were already
+#     failing with RATE_LIMIT_EXHAUSTED. Tripping at 30% keeps a reserve
+#     for ops without REST equivalents (some GraphQL-only mutations) and
+#     gives the next pulse cycle room to recover gracefully.
 #   AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1 — emergency bypass (dispatch proceeds
 #     unconditionally, logged)
 #
@@ -84,7 +89,7 @@ is_graphql_budget_sufficient() {
 		return 0
 	fi
 
-	local threshold="${AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD:-0.05}"
+	local threshold="${AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD:-0.30}"
 
 	# Disabled if threshold is explicitly 0 (any zero representation).
 	if awk -v t="$threshold" 'BEGIN { exit (t + 0 == 0) ? 0 : 1 }' 2>/dev/null; then
@@ -187,7 +192,7 @@ _circuit_breaker_status() {
 		return 0
 	fi
 
-	local threshold="${AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD:-0.05}"
+	local threshold="${AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD:-0.30}"
 	if awk -v t="$threshold" 'BEGIN { exit (t + 0 == 0) ? 0 : 1 }' 2>/dev/null; then
 		printf 'DISABLED: threshold=0\n'
 		return 0
@@ -266,7 +271,7 @@ _main() {
 			echo "  pulse-rate-limit-circuit-breaker.sh status   # human-readable status line"
 			echo ""
 			echo "Environment:"
-			echo "  AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD  fraction threshold (default 0.05 = 5%)"
+			echo "  AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD  fraction threshold (default 0.30 = 30%)"
 			echo "  AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1     emergency bypass"
 			return 0
 			;;

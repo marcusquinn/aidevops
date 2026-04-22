@@ -14,7 +14,7 @@ Reference for diagnosing headless worker failures. Workers are OpenCode instance
 ## Worker Lifecycle
 
 ```text
-Pulse cycle (every 2 min)
+Pulse cycle (every 3 min, configurable)
   → Version guard (enforce OPENCODE_PINNED_VERSION)
   → Canary smoke test (cached 30 min)
   → dispatch_with_dedup (claim + dedup check)

@@ -31,7 +31,7 @@
 | Key | Type | Default | Env Var | Description |
 |-----|------|---------|---------|-------------|
 | `supervisor.pulse_enabled` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable pulse scheduler — dispatches workers every `pulse_interval_seconds`. |
-| `supervisor.pulse_interval_seconds` | number | `120` | -- | Seconds between pulse cycles (30–3600). |
+| `supervisor.pulse_interval_seconds` | number | `180` | -- | Seconds between pulse cycles (30–3600). Default raised from 120 in t2744 to reduce GraphQL pressure. |
 | `supervisor.stale_threshold_seconds` | number | `1800` | -- | Seconds before a worker is considered stuck. |
 | `supervisor.circuit_breaker_max_failures` | number | `3` | -- | Consecutive failures before dispatch pauses. |
 | `supervisor.strategic_review_hours` | number | `4` | -- | Hours between opus-tier queue health reviews. |

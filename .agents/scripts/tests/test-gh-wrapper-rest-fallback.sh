@@ -107,6 +107,15 @@ export -f print_info print_warning print_error print_success log_verbose
 export AIDEVOPS_SESSION_ORIGIN=interactive
 export AIDEVOPS_SESSION_USER=testuser
 
+# Lock REST fallback threshold to 10 for the boundary tests below.
+# The default value (1000 since t2744) is intentionally high to enable
+# proactive REST routing under load, but these tests verify the
+# function's *logic* (fallback-when-remaining-≤-threshold) — not the
+# default value itself. Setting the env var BEFORE the source bakes
+# the value into _GH_REST_FALLBACK_THRESHOLD inside
+# shared-gh-wrappers-rest-fallback.sh.
+export AIDEVOPS_GH_REST_FALLBACK_THRESHOLD=10
+
 # shellcheck source=../shared-constants.sh
 source "${SCRIPTS_DIR}/shared-constants.sh" >/dev/null 2>&1 || true
 

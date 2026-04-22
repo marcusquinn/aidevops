@@ -112,3 +112,7 @@ bash -n setup-modules/schedulers.sh
 
 - This is the first phase of broader GraphQL optimisation work. Tiers 2 and 3 (consolidating repeated `gh issue list` calls in `pulse-issue-reconcile.sh` / `pulse-triage.sh`, ETag/conditional requests, multi-token rotation) are separate follow-up tasks.
 - `origin:interactive` — implementing in current session.
+
+<!-- aidevops:sig -->
+---
+[aidevops.sh](https://aidevops.sh) v3.8.94 plugin for [OpenCode](https://opencode.ai) v1.14.20 with claude-opus-4-7 spent 46m and 33,397 tokens on this with the user in an interactive session.

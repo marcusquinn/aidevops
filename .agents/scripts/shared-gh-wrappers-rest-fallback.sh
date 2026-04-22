@@ -29,9 +29,17 @@
 [[ -n "${_SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED:-}" ]] && return 0
 _SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED=1
 
-# Threshold below which we consider GraphQL exhausted.
+# Threshold below which we route reads/writes through REST instead of GraphQL.
 # Env override: AIDEVOPS_GH_REST_FALLBACK_THRESHOLD
-_GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-10}"
+#
+# Tuning rationale (t2744): the original default of 10 only engaged after
+# 99.8% of the GraphQL budget was already spent — by which point in-flight
+# operations were already failing. Raising to 1000 (20% remaining) routes
+# read-heavy traffic through the separate 5000/hr REST core pool while
+# GraphQL still has reserve for ops without REST equivalents (a small set
+# of GraphQL-only mutations). Splitting load across pools roughly doubles
+# effective capacity in steady state.
+_GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-1000}"
 
 #######################################
 # Build the `-F` value for `gh api` that uploads a file's contents as the

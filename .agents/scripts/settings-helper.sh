@@ -62,7 +62,7 @@ _generate_defaults() {
   },
   "supervisor": {
     "pulse_enabled": true,
-    "pulse_interval_seconds": 120,
+    "pulse_interval_seconds": 180,
     "stale_threshold_seconds": 1800,
     "circuit_breaker_max_failures": 3,
     "strategic_review_hours": 4,
@@ -508,7 +508,7 @@ SETTINGS KEYS (dot-notation):
     auto_update.openclaw_auto_update     OpenClaw auto-update (default: true)
     auto_update.openclaw_freshness_hours Hours between OpenClaw checks (default: 24)
     supervisor.pulse_enabled             Supervisor pulse on/off (default: true)
-    supervisor.pulse_interval_seconds    Pulse interval (default: 120)
+    supervisor.pulse_interval_seconds    Pulse interval (default: 180)
     supervisor.stale_threshold_seconds   Stale worker threshold (default: 1800)
     supervisor.circuit_breaker_max_failures  Max failures before pause (default: 3)
     supervisor.strategic_review_hours    Hours between strategic reviews (default: 4)
