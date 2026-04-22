@@ -10,6 +10,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.94] - 2026-04-22
+
+### Added
+
+- respect hold-for-review label in dirty-pr-sweep close decisions (#20462)
+- SonarCloud S1481/S1066/S100 false-positive inventory and classification (#20460)
+
+### Changed
+
+- file parent task for multi-runtime version freshness in greeting (#20472)
+- Maintenance: sync ref:GH#20471 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: mark t2736 complete (pr:#20470 completed:2026-04-22) [skip ci]
+- trim OpenCode first-response greeting to concise one-line (#20470)
+- Maintenance: sync ref:GH#20469 to TODO.md [skip ci]
+- extend rebase age window for planning-only conflicts in dirty-pr-sweep (#20468)
+- extend dirty-pr-sweep close window to 14d for origin:interactive referenced PRs (#20465)
+- widen _dps_consider_rebase conflict allowlist to match planning allowlist
+- Maintenance: mark t2734 complete (pr:#20461 completed:2026-04-22) [skip ci]
+- add SonarCloud exemption inventory (docs/sonar-exemptions.md) (#20461)
+- Maintenance: mark t2732 complete (pr:#20460 completed:2026-04-22) [skip ci]
+- Maintenance: mark t2733 complete (pr:#20459 completed:2026-04-22) [skip ci]
+- t2733: add SonarCloud S1481/S1066/S100 config-level rule exclusions (#20459)
+- decompose parent-task #20401 into SonarCloud rule-tuning children (#20456)
+- Maintenance: sync ref:GH#20455 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20454 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20453 to TODO.md [skip ci]
+- fix misleading coverage matrix comment in test-issue-sync-pull-seeds-orphans.sh (#20451)
+- Maintenance: mark t2729 complete (pr:#20452 completed:2026-04-22) [skip ci]
+- fire greeting update-check async so session.created handler returns immediately (#20452)
+- remove 5 redundant session-rename tool schema leaks (#20435)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2731 complete (pr:#20447 completed:2026-04-22) [skip ci]
+- unfilter runtime-identity line from opencode toast (#20447)
+- Maintenance: sync ref:GH#20446 to TODO.md [skip ci]
+- Maintenance: mark t2730 complete (pr:#20438 completed:2026-04-22) [skip ci]
+- restore runtime-identity line in generated opencode AGENTS.md (#20438)
+- Maintenance: sync ref:GH#20437 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#20436 to TODO.md [skip ci]
+- Maintenance: mark t2728 complete (pr:#20434 completed:2026-04-22) [skip ci]
+- toast UX polish — strip runtime-identity, add aidevops contributions subcommand, backtick commands (#20434)
+
 ## [3.8.93] - 2026-04-22
 
 ### Added
