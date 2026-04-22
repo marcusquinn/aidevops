@@ -269,6 +269,133 @@ _update_parent_phases_section() {
 }
 
 #######################################
+# Identify which phase number a merged child issue belongs to.
+# First tries matching by child reference in phases data.
+# Falls back to matching by phase number in the child issue's title.
+#
+# Args: $1=child_issue, $2=repo_slug, $3=phases (tab-separated phase lines)
+# Output: phase number on stdout (empty if not found)
+# Returns: 0 always
+#######################################
+_identify_merged_phase() {
+	local child_issue="$1"
+	local repo_slug="$2"
+	local phases="$3"
+	local child_api="repos/${repo_slug}/issues/${child_issue}"
+	local merged_phase_num=""
+
+	# Try matching by child_ref recorded in phases data
+	while IFS=$'\t' read -r p_num p_desc p_marker p_child; do
+		if [[ "$p_child" == "$child_issue" ]]; then
+			merged_phase_num="$p_num"
+			break
+		fi
+	done <<< "$phases"
+
+	if [[ -z "$merged_phase_num" ]]; then
+		# Child issue not found in any phase line — may be a non-phase child
+		# or the parent's ## Phases section was not updated with the child ref.
+		# Fallback: match by phase number in the child issue's title.
+		local child_title
+		child_title=$(gh api "$child_api" \
+			--jq '.title // ""' 2>/dev/null) || child_title=""
+		if [[ -n "$child_title" ]]; then
+			local title_phase_num
+			title_phase_num=$(printf '%s' "$child_title" \
+				| grep -ioE '[Pp]hase[[:space:]]+[0-9]+' \
+				| grep -oE '[0-9]+' \
+				| head -1)
+			if [[ -n "$title_phase_num" ]]; then
+				merged_phase_num="$title_phase_num"
+				_phase_log "Child #${child_issue}: matched Phase ${merged_phase_num} via title '${child_title}'"
+			fi
+		fi
+	fi
+
+	printf '%s' "$merged_phase_num"
+	return 0
+}
+
+#######################################
+# Build and create a new phase child issue on GitHub.
+# Handles issue body generation, signature footer appending, and issue creation.
+#
+# Args: $1=parent_issue, $2=parent_title, $3=phase_num, $4=phase_desc, $5=repo_slug
+# Output: new issue URL on stdout (empty on failure)
+# Returns: 0 always
+#######################################
+_create_phase_child_issue() {
+	local parent_issue="$1"
+	local parent_title="$2"
+	local phase_num="$3"
+	local phase_desc="$4"
+	local repo_slug="$5"
+	local _log="${LOGFILE:-/dev/null}"
+
+	local issue_body
+	issue_body=$(_build_phase_child_body \
+		"$parent_issue" "$parent_title" "$phase_num" "$phase_desc" "$repo_slug")
+
+	# Append signature footer
+	local _phase_sig=""
+	local _sig_helper="${AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/gh-signature-helper.sh"
+	if [[ -x "$_sig_helper" ]]; then
+		_phase_sig=$("$_sig_helper" footer --no-session --tokens 0 \
+			--session-type routine 2>/dev/null || true)
+	fi
+
+	local issue_title="Phase ${phase_num} of #${parent_issue}: ${phase_desc}"
+	local issue_labels="auto-dispatch,tier:standard,origin:worker"
+	local new_issue_url
+
+	# gh_create_issue is always available via shared-constants.sh (sourced
+	# by pulse-wrapper.sh before this module). Handles origin labelling
+	# and signature injection automatically.
+	new_issue_url=$(gh_create_issue --repo "$repo_slug" \
+		--title "$issue_title" \
+		--label "$issue_labels" \
+		--body "${issue_body}${_phase_sig}" 2>>"$_log")
+
+	printf '%s' "${new_issue_url:-}"
+	return 0
+}
+
+#######################################
+# Post phase-transition notifications after a new child issue is filed.
+# Updates the parent issue's ## Phases section with the new child reference
+# and posts a completion notification comment on the parent.
+#
+# Args: $1=parent_issue, $2=repo_slug, $3=next_phase_num, $4=new_issue_num,
+#       $5=merged_phase_num, $6=child_issue, $7=next_desc
+# Returns: 0 always
+#######################################
+_post_phase_transition_notifications() {
+	local parent_issue="$1"
+	local repo_slug="$2"
+	local next_phase_num="$3"
+	local new_issue_num="$4"
+	local merged_phase_num="$5"
+	local child_issue="$6"
+	local next_desc="$7"
+	local _log="${LOGFILE:-/dev/null}"
+
+	# Update parent's ## Phases section with the new child reference
+	_update_parent_phases_section \
+		"$parent_issue" "$repo_slug" "$next_phase_num" "$new_issue_num"
+
+	# Post a notification comment on the parent issue
+	local notify_comment="Phase ${merged_phase_num} completed (child #${child_issue} merged). Auto-filed Phase ${next_phase_num} as #${new_issue_num}: ${next_desc}
+
+_Sequential phase auto-filing by \`shared-phase-filing.sh\` (t2740)._"
+
+	# gh_issue_comment is always available via shared-constants.sh
+	gh_issue_comment "$parent_issue" --repo "$repo_slug" \
+		--body "$notify_comment" 2>>"$_log" || true
+
+	return 0
+}
+
+#######################################
 # Main entry point: auto-file the next phase for a parent-task issue
 # after a child phase PR merges.
 #
@@ -290,7 +417,6 @@ auto_file_next_phase() {
 	local child_issue="$1"
 	local repo_slug="$2"
 	local _log="${LOGFILE:-/dev/null}"
-	local child_api="repos/${repo_slug}/issues/${child_issue}"
 
 	# Guard 1: feature flag
 	if [[ "${AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE:-0}" != "1" ]]; then
@@ -327,38 +453,13 @@ auto_file_next_phase() {
 		return 0
 	fi
 
-	# Find which phase the merged child corresponds to.
-	# Look for a phase line where child_ref matches child_issue.
-	local merged_phase_num=""
-	while IFS=$'\t' read -r p_num p_desc p_marker p_child; do
-		if [[ "$p_child" == "$child_issue" ]]; then
-			merged_phase_num="$p_num"
-			break
-		fi
-	done <<< "$phases"
-
-	if [[ -z "$merged_phase_num" ]]; then
-		# Child issue not found in any phase line — may be a non-phase child
-		# or the parent's ## Phases section was not updated with the child ref.
-		# Try matching by child issue title containing "Phase N".
-		local child_title
-		child_title=$(gh api "$child_api" \
-			--jq '.title // ""' 2>/dev/null) || child_title=""
-		if [[ -n "$child_title" ]]; then
-			local title_phase_num
-			title_phase_num=$(printf '%s' "$child_title" | grep -ioE '[Pp]hase[[:space:]]+[0-9]+' | grep -oE '[0-9]+' | head -1)
-			if [[ -n "$title_phase_num" ]]; then
-				merged_phase_num="$title_phase_num"
-				_phase_log "Child #${child_issue}: matched Phase ${merged_phase_num} via title '${child_title}'"
-			fi
-		fi
-	fi
-
+	# Identify which phase the merged child corresponds to
+	local merged_phase_num
+	merged_phase_num=$(_identify_merged_phase "$child_issue" "$repo_slug" "$phases")
 	if [[ -z "$merged_phase_num" ]]; then
 		_phase_log "Child #${child_issue}: cannot determine which phase it belongs to in parent #${parent_issue}, skip"
 		return 0
 	fi
-
 	_phase_log "Child #${child_issue}: corresponds to Phase ${merged_phase_num} of parent #${parent_issue}"
 
 	# Find the next phase (N+1)
@@ -384,73 +485,30 @@ auto_file_next_phase() {
 		return 0
 	fi
 
-	# Guard: dedup — next phase must not already have a child issue
+	# Guard: dedup — ## Phases child_ref check is the primary mechanism
 	if [[ -n "$next_child" ]]; then
 		_phase_log "Parent #${parent_issue}: Phase ${next_phase_num} already has child #${next_child} — skip"
 		return 0
 	fi
 
-	# Dedup: check if an issue already exists with this phase title
-	local dedup_title="Phase ${next_phase_num}"
-	local existing_count
-	existing_count=$(gh issue list --repo "$repo_slug" --state all \
-		--search "Phase ${next_phase_num} in:title" --limit 20 \
-		--json title,number \
-		| jq --arg parent "$parent_issue" --arg pnum "$next_phase_num" \
-		'[.[] | select(.title | test("Phase " + $pnum + "[^0-9]"; "i")) | select(.title | test("#" + $parent + "|" + $parent; "i") or true)] | length' \
-		2>/dev/null) || existing_count=0
-	# Narrow dedup: look for issues referencing both this parent and this phase
-	# This is best-effort; the ## Phases child_ref check above is the primary dedup.
-
 	_phase_log "Filing Phase ${next_phase_num} ('${next_desc}') for parent #${parent_issue}"
 
-	# Build issue body
-	local issue_body
-	issue_body=$(_build_phase_child_body "$parent_issue" "$parent_title" "$next_phase_num" "$next_desc" "$repo_slug")
-
-	# Append signature footer
-	local _phase_sig=""
-	local _sig_helper="${AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/gh-signature-helper.sh"
-	if [[ -x "$_sig_helper" ]]; then
-		_phase_sig=$("$_sig_helper" footer --no-session --tokens 0 \
-			--session-type routine 2>/dev/null || true)
-	fi
-
-	# Create the issue
-	local issue_title="Phase ${next_phase_num} of #${parent_issue}: ${next_desc}"
-	local issue_labels="auto-dispatch,tier:standard,origin:worker"
+	# Build and create the new phase child issue
 	local new_issue_url
-
-	# gh_create_issue is always available via shared-constants.sh (sourced
-	# by pulse-wrapper.sh before this module). It handles origin labelling
-	# and signature injection automatically.
-	new_issue_url=$(gh_create_issue --repo "$repo_slug" \
-		--title "$issue_title" \
-		--label "$issue_labels" \
-		--body "${issue_body}${_phase_sig}" 2>>"$_log")
-
+	new_issue_url=$(_create_phase_child_issue \
+		"$parent_issue" "$parent_title" "$next_phase_num" "$next_desc" "$repo_slug")
 	if [[ -z "$new_issue_url" ]]; then
 		_phase_log "Failed to create Phase ${next_phase_num} issue for parent #${parent_issue}"
 		return 0
 	fi
 
 	# Extract issue number from URL
-	local new_issue_num
-	new_issue_num=$(printf '%s' "$new_issue_url" | grep -oE '[0-9]+$')
-
+	local new_issue_num; new_issue_num=$(printf '%s' "$new_issue_url" | grep -oE '[0-9]+$')
 	_phase_log "Filed Phase ${next_phase_num} as #${new_issue_num} for parent #${parent_issue}"
 
-	# Update parent's ## Phases section with the new child reference
-	_update_parent_phases_section "$parent_issue" "$repo_slug" "$next_phase_num" "$new_issue_num"
-
-	# Post a notification comment on the parent issue
-	local notify_comment="Phase ${merged_phase_num} completed (child #${child_issue} merged). Auto-filed Phase ${next_phase_num} as #${new_issue_num}: ${next_desc}
-
-_Sequential phase auto-filing by \`shared-phase-filing.sh\` (t2740)._"
-
-	# gh_issue_comment is always available via shared-constants.sh
-	gh_issue_comment "$parent_issue" --repo "$repo_slug" \
-		--body "$notify_comment" 2>>"$_log" || true
-
+	# Update parent section and post completion notification
+	_post_phase_transition_notifications \
+		"$parent_issue" "$repo_slug" "$next_phase_num" "$new_issue_num" \
+		"$merged_phase_num" "$child_issue" "$next_desc"
 	return 0
 }
