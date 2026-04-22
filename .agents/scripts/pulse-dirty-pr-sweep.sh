@@ -17,8 +17,8 @@
 #
 # Safety gates:
 #   - Never rebases PRs with non-TODO.md conflicts (always notify instead).
-#   - Never auto-closes PRs tagged `do-not-close` OR linked to an OPEN issue
-#     that has the `parent-task` label.
+#   - Never auto-closes PRs tagged `do-not-close`, `hold-for-review`, OR linked
+#     to an OPEN issue that has the `parent-task` label.
 #   - Notifies for `origin:interactive` PRs only when the body contains no
 #     recognised issue reference (`For #NNN`, `Ref #NNN`, or a closing
 #     keyword). Referenced PRs flow through the normal age/idle close
@@ -425,9 +425,10 @@ _dirty_pr_classify() {
 	updated_epoch=$(_dps_iso_to_epoch "$updated")
 	age=$((now - created_epoch))
 
-	local has_do_not_close=0 has_parent_task=0 has_interactive=0 has_worker_origin=0
+	local has_do_not_close=0 has_parent_task=0 has_interactive=0 has_worker_origin=0 has_hold_for_review=0
 	_dps_labels_has "$labels" "do-not-close" && has_do_not_close=1
 	_dps_labels_has "$labels" "parent-task" && has_parent_task=1
+	_dps_labels_has "$labels" "hold-for-review" && has_hold_for_review=1
 	_dps_labels_has "$labels" "origin:interactive" && has_interactive=1
 	_dps_labels_has "$labels" "origin:worker" && has_worker_origin=1
 	_dps_labels_has "$labels" "origin:worker-takeover" && has_worker_origin=1
@@ -454,6 +455,10 @@ _dirty_pr_classify() {
 	fi
 	if [[ "$has_parent_task" -eq 1 ]]; then
 		printf '%s|parent-task-label' "$_DIRTY_ACTION_NOTIFY"
+		return 0
+	fi
+	if [[ "$has_hold_for_review" -eq 1 ]]; then
+		printf '%s|hold-for-review-label' "$_DIRTY_ACTION_NOTIFY"
 		return 0
 	fi
 	# origin:interactive PRs: notify only if the body has no recognised
