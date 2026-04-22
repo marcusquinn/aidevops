@@ -74,10 +74,16 @@ AUTO_DECOMPOSER_PARENT_STATE="${AUTO_DECOMPOSER_PARENT_STATE:-${HOME}/.aidevops/
 
 log() { echo "[auto-decomposer] $*" >&2; }
 
+# Known review-bot logins — these accounts post mechanical review comments
+# (not a human-engagement signal). Extend as needed when new review bots
+# are adopted.
+readonly REVIEW_BOT_LOGINS_JQ_FILTER='["coderabbitai", "coderabbitai[bot]", "sonarcloud[bot]", "sonarqubecloud[bot]", "codacy-production[bot]", "github-actions[bot]", "gemini-code-assist[bot]", "qodo-merge-pro[bot]", "codefactor-io", "socket-security[bot]"]'
+
 # Count comments on an issue that are NOT the <!-- parent-needs-decomposition -->
-# nudge. A count of 0 means the parent is "fresh" (only automated nudge comments,
-# no human or other-bot activity). Fresh parents use SCANNER_FRESH_PARENT_HOURS
-# instead of SCANNER_NUDGE_AGE_HOURS as the eligibility threshold.
+# nudge AND NOT authored by a known review bot. A count of 0 means the parent is
+# "fresh" (only automated nudge comments and bot activity, no human engagement).
+# Fresh parents use SCANNER_FRESH_PARENT_HOURS instead of SCANNER_NUDGE_AGE_HOURS
+# as the eligibility threshold.
 #
 # Exit codes:
 #   0 — always (caller inspects the printed value)
@@ -85,8 +91,14 @@ _count_non_nudge_comments() {
 	local repo="$1"
 	local issue_num="$2"
 	local count
+	# Exclude both the nudge marker AND any comment authored by a known
+	# review bot. The comparison is against user.login (lowercased) to
+	# absorb the "[bot]" suffix variations.
 	count=$(gh api --paginate "repos/${repo}/issues/${issue_num}/comments" \
-		--jq '[.[] | select(.body | contains("<!-- parent-needs-decomposition -->") | not)] | length' \
+		--jq "[.[] | select(
+			(.body | contains(\"<!-- parent-needs-decomposition -->\") | not) and
+			(.user.login as \$login | ${REVIEW_BOT_LOGINS_JQ_FILTER} | index(\$login) | not)
+		)] | length" \
 		2>/dev/null || echo "0")
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 	printf '%s' "$count"
