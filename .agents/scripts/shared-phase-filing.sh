@@ -145,8 +145,10 @@ _parse_phases_section() {
 			# Extract phase number
 			phase_num=$(printf '%s' "$line" | grep -oE '[Pp]hase[[:space:]]+[0-9]+' | grep -oE '[0-9]+')
 
-			# Extract description: text after "Phase N" separator (- or :) up to first [
-			description=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+[0-9]+[[:space:]]*[-:][[:space:]]*//' | sed -E 's/[[:space:]]*\[.*//')
+			# Extract description: text after "Phase N" separator (- or :) up to
+			# known marker brackets. Only strip [auto-fire:...] and [requires-decision]
+			# so descriptions containing brackets (e.g. "Fix [bug] in X") are preserved.
+			description=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+[0-9]+[[:space:]]*[-:][[:space:]]*//' | sed -E 's/[[:space:]]*\[(auto-fire|requires-decision)[^]]*\].*//' | sed -E 's/[[:space:]]*#[0-9]+[[:space:]]*$//')
 
 			# Determine marker
 			if printf '%s' "$line" | grep -qiF '[auto-fire:on-prior-merge]'; then
@@ -157,16 +159,10 @@ _parse_phases_section() {
 				marker="none"
 			fi
 
-			# Extract child issue reference (#NNNN not inside a marker bracket)
-			# Look for standalone #NNNN outside of [...]
-			child_ref=$(printf '%s' "$line" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | head -1)
-			# But skip if the #NNNN is inside a marker (unlikely but guard)
-			# Simple approach: if #NNNN appears after a ], it's a child ref
-			# If it only appears inside [...], it's not. For now, accept any #NNNN
-			# that is NOT the phase number itself.
-			if [[ "$child_ref" == "$phase_num" ]]; then
-				child_ref=""
-			fi
+			# Extract child issue reference: the last #NNNN on the line.
+			# Child refs appear after marker brackets so tail -1 selects correctly
+			# even when the description also contains issue references.
+			child_ref=$(printf '%s' "$line" | grep -oE '#[0-9]+' | tail -1 | grep -oE '[0-9]+')
 
 			printf '%s\t%s\t%s\t%s\n' "$phase_num" "$description" "$marker" "$child_ref"
 		fi
@@ -255,7 +251,7 @@ _update_parent_phases_section() {
 	# and appends the child ref only if it's not already present.
 	local updated_body
 	updated_body=$(printf '%s' "$parent_body" | sed -E "/^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+${phase_num}([^0-9]|$)/ {
-		/#${child_issue_num}/!s/[[:space:]]*$/ #${child_issue_num}/
+		/#${child_issue_num}([^0-9]|$)/!s/[[:space:]]*$/ #${child_issue_num}/
 	}")
 
 	# Only update if the body actually changed
@@ -442,6 +438,7 @@ auto_file_next_phase() {
 	local parent_body parent_title _parent_json
 	_parent_json=$(gh api "$parent_api" \
 		--jq '{body: (.body // ""), title: (.title // "")}' 2>/dev/null) || _parent_json=""
+	[[ -n "$_parent_json" ]] || return 0
 	parent_body=$(printf '%s' "$_parent_json" | jq -r '.body // ""')
 	parent_title=$(printf '%s' "$_parent_json" | jq -r '.title // ""')
 
