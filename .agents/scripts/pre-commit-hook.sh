@@ -805,6 +805,50 @@ validate_repo_root_files() {
 	return 0
 }
 
+# --- Workflow YAML validation (GH#20489) ---
+# Run lint-workflows-helper.sh on staged .github/workflows/*.yml files.
+# Catches YAML parse errors and actionlint semantic errors before they ship
+# and silently break framework-wide CI gates (root cause: t2691 / PR #20311).
+#
+# Tool priority (handled inside the helper): actionlint > yamllint > python3 yaml.
+# Missing binary: helper warns and exits 0 (degrade gracefully, never block).
+
+check_workflow_files() {
+	# Detect staged workflow files without shelling into the helper first —
+	# avoids an extra process when no workflow files are staged.
+	local staged_workflows
+	staged_workflows=$(git diff --cached --name-only --diff-filter=ACM \
+		| grep -E '^\.github/workflows/[^/]+\.ya?ml$' || true)
+
+	if [[ -z "$staged_workflows" ]]; then
+		return 0
+	fi
+
+	print_info "Checking staged GitHub Actions workflow files..."
+
+	# Locate the helper: prefer repo source (worktree), fall back to deployed copy.
+	local helper_path="${SCRIPT_DIR}/lint-workflows-helper.sh"
+	if [[ ! -f "$helper_path" ]]; then
+		helper_path="$HOME/.aidevops/agents/scripts/lint-workflows-helper.sh"
+	fi
+
+	if [[ ! -f "$helper_path" ]]; then
+		print_warning "lint-workflows-helper.sh not found — skipping workflow YAML check"
+		return 0
+	fi
+
+	# Pass --staged so the helper reads exactly the same staged file list.
+	if bash "$helper_path" --staged; then
+		return 0
+	fi
+
+	# Helper returned non-zero: YAML errors found.
+	print_error "Commit blocked: workflow YAML error(s) detected."
+	print_info "Fix the issues above, then retry commit."
+	print_info "Bypass (not recommended): git commit --no-verify"
+	return 1
+}
+
 # --- Split hook entry points (t2207) ---
 # pre-commit: fast local checks only (target <5s)
 # pre-push:   slower network-dependent checks (secretlint, SonarCloud, CodeRabbit)
@@ -838,6 +882,11 @@ main_pre_commit() {
 
 	validate_repo_root_files || {
 		print_error "Commit rejected: new repo root files not in allowlist"
+		exit 1
+	}
+	echo "" >&2
+
+	check_workflow_files || {
 		exit 1
 	}
 	echo "" >&2
