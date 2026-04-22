@@ -1382,6 +1382,7 @@ _help_commands() {
 	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
 	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
 	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
+	echo "  contributions      External contributions inbox (bare: status | seed/scan/stop/restart/install/uninstall)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
@@ -1750,6 +1751,12 @@ main() {
 	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
 	approve) _dispatch_helper "approval-helper.sh" "approval-helper.sh" "$@" ;;
 	signing) _dispatch_helper "signing-setup.sh" "signing-setup.sh" "$@" ;;
+	contributions | contrib)
+		# Bare `aidevops contributions` defaults to status (most common use).
+		# Other subcommands (seed, scan, stop, restart, install, uninstall) forward verbatim.
+		[[ $# -eq 0 ]] && set -- status
+		_dispatch_helper "contribution-watch-helper.sh" "contribution-watch-helper.sh" "$@"
+		;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;
 	init-routines) _dispatch_helper "init-routines-helper.sh" "init-routines-helper.sh" "$@" ;;

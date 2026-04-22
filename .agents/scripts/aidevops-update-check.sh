@@ -346,7 +346,7 @@ _check_advisories() {
 		first_line=$(head -1 "$advisory_file" | sed 's/^[[:space:]]*//')
 		if [[ -n "$first_line" ]]; then
 			local entry
-			entry=$(printf '%s Run in your terminal: aidevops security | Dismiss: aidevops security dismiss %s' "$first_line" "$adv_id")
+			entry=$(printf "%s Run in your terminal: \`aidevops security\` | Dismiss: \`aidevops security dismiss %s\`" "$first_line" "$adv_id")
 			if [[ -n "$advisories_output" ]]; then
 				advisories_output=$(printf '%s\n%s' "$advisories_output" "$entry")
 			else
@@ -388,7 +388,7 @@ _check_contribution_watch() {
 	' "$cw_state" 2>/dev/null) || cw_count=0
 
 	if [[ "${cw_count:-0}" -gt 0 ]]; then
-		contribution_watch="${cw_count} external contribution(s) need your reply (run contribution-watch-helper.sh status to see them)."
+		contribution_watch="${cw_count} external contribution(s) need your reply (run \`aidevops contributions\` to see them)."
 	fi
 
 	echo "$contribution_watch"
