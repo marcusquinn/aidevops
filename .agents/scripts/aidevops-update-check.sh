@@ -609,7 +609,9 @@ _check_script_drift() {
 	fi
 
 	echo "Script drift detected (${deployed_sha:0:7}→${current_sha:0:7}). Redeploying in background..."
-	(bash "$setup_script" --non-interactive >/dev/null 2>&1) &
+	# t2729 (Option B): redirect at subshell level so the background process
+	# never holds the parent's stdout FD open for synchronous callers.
+	(bash "$setup_script" --non-interactive) >/dev/null 2>&1 &
 
 	return 0
 }
@@ -765,11 +767,13 @@ _check_origin() {
 	local origin_hash
 	origin_hash=$(printf '%s' "$remote_url" | shasum -a 256 2>/dev/null | cut -d' ' -f1 || echo "unknown")
 
-	# Background fire-and-forget — never blocks startup, never fails visibly
+	# Background fire-and-forget — never blocks startup, never fails visibly.
+	# t2729 (Option B): redirect at subshell level so this background process
+	# does not hold the parent's stdout FD open for synchronous callers.
 	(curl --proto '=https' -fsSL -X POST "$canary_endpoint" \
 		-H "Content-Type: application/json" \
 		-d "{\"h\":\"${origin_hash}\",\"v\":\"${framework_version}\"}" \
-		-m 3 >/dev/null 2>&1 || true) &
+		-m 3 || true) >/dev/null 2>&1 &
 
 	echo "$origin_notice"
 	return 0

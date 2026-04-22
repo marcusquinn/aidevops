@@ -41,15 +41,29 @@
 // user feedback that seeing the config path at session start is valuable.
 // See also t2730 for the parallel AGENTS.md prose (model-only surface).
 //
+// Async model (t2729):
+//   The update-check script spawns background children (provenance notify,
+//   deploy drift check) that inherit stdout. With execSync, Node waits for
+//   all inherited FDs to close — 5-8s wallclock on typical macOS hardware.
+//   The fix: fire execAsync and return from the handler immediately; emit
+//   the toast inside the promise's .then() callback whenever the subprocess
+//   finishes. The session.created handler resolves in <1ms; the toast appears
+//   5-15s later (same content, same variant, just deferred).
+//   With AIDEVOPS_PLUGIN_DEBUG=1, the trace log shows handler-completed
+//   BEFORE emitToast-* — the reversed ordering confirms async delivery.
+//
 // Diagnostics: set AIDEVOPS_PLUGIN_DEBUG=1 to trace every handler invocation
 // and each toast emission (including failures). Without DEBUG the handler
 // is silent on success — only actual errors reach stderr.
 // ---------------------------------------------------------------------------
 
-import { execSync } from "child_process";
+import { exec } from "child_process";
+import { promisify } from "util";
 import { mkdirSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
+
+const execAsync = promisify(exec);
 
 const CACHE_DIR = join(homedir(), ".aidevops", "cache");
 const CACHE_FILE = join(CACHE_DIR, "session-greeting.txt");
@@ -60,32 +74,57 @@ const CACHE_FILE = join(CACHE_DIR, "session-greeting.txt");
 const FALLBACK_WINDOW_MS = 30000;
 
 /**
- * Run the update-check script and return its stdout (trimmed), or "" on failure.
+ * Run the update-check script asynchronously and deliver results via callback.
  *
- * Timeout 15s (t2725): the script itself produces output in ~1-2s, but forks
- * background children (provenance notify, deploy drift check) that inherit
- * stdout. Node's execSync waits for all inherited FDs to close, so total
- * observed wallclock is 5-8s on a typical macOS system. 15s gives headroom
- * for slower hardware; a timeout just means no toasts this session — the
- * handler is async, so nothing else blocks.
+ * t2729: replaced execSync with execAsync so the caller returns immediately
+ * and the toast is emitted inside the promise's .then() callback whenever the
+ * subprocess finishes. Node no longer waits for background children
+ * (provenance notify, deploy drift check) to close their inherited stdout FDs.
+ *
+ * Timeout 15s (t2725) is preserved as a fallback governing the fire-and-forget
+ * tail rather than the handler return time.
  *
  * @param {string} scriptsDir
- * @returns {string}
+ * @param {any} client
  */
-function runUpdateCheck(scriptsDir) {
+function runGreetingAsync(scriptsDir, client) {
   const script = join(scriptsDir, "aidevops-update-check.sh");
-  try {
-    return execSync(`bash ${JSON.stringify(script)} --interactive`, {
-      encoding: "utf-8",
-      timeout: 15000,
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-  } catch (err) {
-    if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
-      console.error(`[aidevops] greeting: update-check failed: ${err.message}`);
-    }
-    return "";
-  }
+  execAsync(`bash ${JSON.stringify(script)} --interactive`, {
+    timeout: 15000,
+  })
+    .then(({ stdout }) => {
+      const output = stdout ? stdout.trim() : "";
+      if (!output) {
+        if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+          console.error("[aidevops] greeting: update-check returned empty, skipping toasts");
+        }
+        return;
+      }
+
+      cacheGreeting(output);
+
+      const buckets = classifyLines(output);
+      const toast = buildToast(buckets);
+
+      if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+        const bucketCounts = `info=${buckets.info.length}, success=${buckets.success.length}, warning=${buckets.warning.length}, error=${buckets.error.length}`;
+        if (toast) {
+          console.error(`[aidevops] greeting: built 1 toast (variant=${toast.variant}, ${bucketCounts})`);
+        } else {
+          console.error(`[aidevops] greeting: no lines to show (${bucketCounts})`);
+        }
+      }
+
+      if (toast) {
+        emitToast(client, toast);
+      }
+    })
+    .catch((err) => {
+      if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+        console.error(`[aidevops] greeting: update-check failed: ${err.message}`);
+      }
+    });
+  // Returns here — handler can resolve before the subprocess finishes.
 }
 
 /**
@@ -220,41 +259,11 @@ async function emitToast(client, body) {
   }
 }
 
-/**
- * Run the full greeting flow: update-check → cache → classify → toasts.
- *
- * @param {string} scriptsDir
- * @param {any} client
- */
-async function runGreeting(scriptsDir, client) {
-  const output = runUpdateCheck(scriptsDir);
-  if (!output) {
-    if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
-      console.error("[aidevops] greeting: update-check returned empty, skipping toasts");
-    }
-    return;
-  }
-
-  cacheGreeting(output);
-
-  const buckets = classifyLines(output);
-  const toast = buildToast(buckets);
-
-  if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
-    const bucketCounts = `info=${buckets.info.length}, success=${buckets.success.length}, warning=${buckets.warning.length}, error=${buckets.error.length}`;
-    if (toast) {
-      console.error(`[aidevops] greeting: built 1 toast (variant=${toast.variant}, ${bucketCounts})`);
-    } else {
-      console.error(`[aidevops] greeting: no lines to show (${bucketCounts})`);
-    }
-  }
-
-  // t2727: single emit. OpenCode's TUI replaces any existing toast on each
-  // showToast() call, so multiple emits race and only the last one is seen.
-  if (toast) {
-    await emitToast(client, toast);
-  }
-}
+// runGreeting is superseded by runGreetingAsync (t2729). The async variant
+// fires the update-check subprocess and returns immediately; all downstream
+// work (cache write, classify, toast emit) runs inside the promise chain.
+// The caller MUST NOT await runGreetingAsync — doing so would restore the
+// blocking behaviour this change is meant to fix.
 
 /**
  * Create a handler that fires the greeting once per plugin init. The
@@ -294,6 +303,12 @@ export function createGreetingHandler({ scriptsDir, client }) {
       console.error(`[aidevops] greeting: triggered (mode=${mode}, type=${event.type})`);
     }
 
-    await runGreeting(scriptsDir, client);
+    // t2729: fire-and-forget — do NOT await. The handler resolves immediately;
+    // the toast arrives whenever the subprocess finishes (typically 5-15s later).
+    runGreetingAsync(scriptsDir, client);
+
+    if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+      console.error("[aidevops] greeting: handler-completed");
+    }
   };
 }
