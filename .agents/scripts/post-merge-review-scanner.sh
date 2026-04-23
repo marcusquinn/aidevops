@@ -611,7 +611,11 @@ create_issue() {
 	# produces origin:worker. The hardcoding is a source-of-truth
 	# assertion: this scanner is by definition pulse-only output and
 	# should never ship origin:interactive regardless of caller context.
-	local label_list="$SCANNER_LABEL,source:review-scanner,origin:worker"
+	# GH#20631: tier:standard belongs in base labels — NMR'd issues also need
+	# a tier label so the dispatcher can pick them up after NMR auto-approval
+	# clears needs-maintainer-review and adds auto-dispatch. Without it,
+	# approved issues have auto-dispatch but no tier:*, leaving them stalled.
+	local label_list="$SCANNER_LABEL,source:review-scanner,origin:worker,tier:standard"
 	if [[ "$SCANNER_NEEDS_REVIEW" == "true" ]]; then
 		gh label create "needs-maintainer-review" --repo "$repo" \
 			--description "Requires human triage before worker dispatch" \
@@ -619,12 +623,11 @@ create_issue() {
 		label_list="${label_list},needs-maintainer-review"
 	else
 		# GH#20530 (t2748): scanner-emitted issues are dispatchable by default.
-		# Without auto-dispatch + tier:standard, pulse cannot pick them up and
-		# they sit unworked indefinitely (observed: 9 issues stalled when
-		# this branch was missing — backfilled manually as one-shot remediation).
+		# Without auto-dispatch, pulse cannot pick them up and they sit unworked
+		# indefinitely (observed: 9 issues stalled when this branch was missing).
 		# NMR'd issues skip this branch — NMR auto-approval (pulse-nmr-approval.sh)
 		# adds auto-dispatch on clear, so we don't double-apply here.
-		label_list="${label_list},auto-dispatch,tier:standard"
+		label_list="${label_list},auto-dispatch"
 	fi
 
 	local body_with_sig
