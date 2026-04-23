@@ -875,11 +875,10 @@ _execute_run_attempt() {
 	# The mismatch caused the guard to reject every legitimate dispatch, creating
 	# a claim→reject→release→reclaim loop. dispatch_with_dedup is the authoritative
 	# dedup layer; a second check here adds no safety and causes false rejections.
-	if [[ "$role" == "worker" && "$session_key" == issue-* ]]; then
-		local _claim_repo_slug=""
-		_claim_repo_slug=$(git -C "$work_dir" remote get-url origin 2>/dev/null | sed -E 's|.*github\.com[:/]||; s|\.git$||' || true)
-		export DISPATCH_REPO_SLUG="${_claim_repo_slug}"
-	fi
+	# GH#20542: DISPATCH_REPO_SLUG export moved to _cmd_run_prepare (called
+	# before the EXIT trap is armed) so _release_dispatch_claim always has a
+	# non-empty slug. The role+session_key guard here is no longer needed —
+	# _cmd_run_prepare sets the slug for all roles unconditionally.
 
 	local output_file exit_code_file exit_code
 	local start_ms end_ms duration_ms
@@ -1124,6 +1123,18 @@ _cmd_run_prepare() {
 	local session_key="$1"
 	local work_dir="$2"
 
+	# GH#20542: Export DISPATCH_REPO_SLUG BEFORE arming the EXIT trap so
+	# _release_dispatch_claim always has a non-empty slug, even when the
+	# process exits between prepare and _execute_run_attempt (e.g. under
+	# set -euo pipefail). Role-agnostic: the git extraction is cheap and
+	# _release_dispatch_claim silently no-ops when issue_number is absent.
+	local _prepare_repo_slug=""
+	_prepare_repo_slug=$(git -C "$work_dir" remote get-url origin 2>/dev/null \
+		| sed -E 's|.*github\.com[:/]||; s|\.git$||' || true)
+	if [[ -n "$_prepare_repo_slug" ]]; then
+		export DISPATCH_REPO_SLUG="$_prepare_repo_slug"
+	fi
+
 	# GH#6538: Acquire a session-key lock to prevent duplicate workers.
 	# The pulse (or any caller) may dispatch the same session-key twice in
 	# rapid succession — before the first worker appears in process lists.
@@ -1241,7 +1252,6 @@ cmd_run() {
 	# GH#17549: Version guard — runs on EVERY dispatch (not cached).
 	# Something keeps upgrading opencode to 1.3.17 between canary checks.
 	_enforce_opencode_version_pin
-
 	# GH#17549: Canary smoke test — verify OpenCode can start and complete
 	# an API call before committing to a full worker dispatch. Runs BEFORE
 	# _cmd_run_prepare so a canary failure never posts a dispatch claim or
@@ -1256,6 +1266,10 @@ cmd_run() {
 		prompt=$(append_worker_headless_contract "$prompt")
 	fi
 
+	# GH#20542: DISPATCH_REPO_SLUG is now exported in _cmd_run_prepare (before
+	# the EXIT trap is armed) so it is always available to _release_dispatch_claim.
+	# _cmd_run_prepare is called immediately below; the export no longer needs to
+	# live in _execute_run_attempt (which runs after the trap is already set).
 	local prepare_exit=0
 	_cmd_run_prepare "$session_key" "$work_dir" || prepare_exit=$?
 	if [[ "$prepare_exit" -eq 2 ]]; then
