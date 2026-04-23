@@ -638,17 +638,31 @@ jobs:
               continue
             fi
 
-            # Count remaining unchecked items in the issue body
+            # Count items in the issue body. t2751 fix: the previous pattern
+            #   count=$(echo "$body" | grep -cE '...' || echo "0")
+            # was a classic bash command-substitution bug — grep -c prints "0"
+            # AND exits 1 on no-match, so `|| echo "0"` stacks a second "0" into
+            # the captured stdout. Result: count="0\n0" rendered as two lines
+            # (see the "Progress: **0\n0 done, 0\n0 remaining**" nudge on
+            # #20402). Pattern also noted in progressive-load-check.sh:87.
+            # Fix: `|| true` satisfies set -e without stacking output, and the
+            # numeric-guard catches any non-integer leakage.
             PARENT_BODY=$(gh api "repos/${REPO}/issues/${PARENT_NUM}" --jq '.body // ""' 2>/dev/null || echo "")
-            UNCHECKED_COUNT=$(echo "$PARENT_BODY" | grep -cE '^\s*- \[ \]' || echo "0")
-            CHECKED_COUNT=$(echo "$PARENT_BODY" | grep -cE '^\s*- \[x\]' || echo "0")
+            UNCHECKED_COUNT=$(printf '%s\n' "$PARENT_BODY" | grep -cE '^[[:space:]]*- \[ \]' || true)
+            CHECKED_COUNT=$(printf '%s\n' "$PARENT_BODY" | grep -cE '^[[:space:]]*- \[x\]' || true)
+            [[ "$UNCHECKED_COUNT" =~ ^[0-9]+$ ]] || UNCHECKED_COUNT=0
+            [[ "$CHECKED_COUNT" =~ ^[0-9]+$ ]] || CHECKED_COUNT=0
 
-            if [[ "$UNCHECKED_COUNT" -eq 0 ]]; then
-              echo "All phases checked in #$PARENT_NUM — no nudge needed (may be ready to close)"
-              continue
-            fi
+            # t2751 — also recognise narrative `**Phase N —**` bold-heading
+            # format. Parents filed before the t2740 auto-file contract (e.g.
+            # #20402) use this form and produce zero checkbox counts. Without
+            # this branch the nudge either stayed silent or emitted the
+            # misleading "0\n0 done, 0\n0 remaining" line.
+            NARRATIVE_PHASE_COUNT=$(printf '%s\n' "$PARENT_BODY" | grep -cE '^\*\*[Pp]hase[[:space:]]+[0-9]+' || true)
+            [[ "$NARRATIVE_PHASE_COUNT" =~ ^[0-9]+$ ]] || NARRATIVE_PHASE_COUNT=0
 
-            # Check if we already posted a nudge for this PR
+            # Check if we already posted a nudge for this PR (shared dedup for
+            # both checkbox and narrative-format nudges — same marker)
             EXISTING_NUDGE=$(gh api "repos/${REPO}/issues/${PARENT_NUM}/comments" \
               --jq "[.[] | select(.body | test(\"phase-nudge-pr-${PR_NUMBER}\"))] | length" 2>/dev/null || echo "0")
 
@@ -657,10 +671,48 @@ jobs:
               continue
             fi
 
-            # Extract the unchecked items for context
-            REMAINING_ITEMS=$(echo "$PARENT_BODY" | grep -E '^\s*- \[ \]' | sed 's/^[[:space:]]*/  /' | head -10 || true)
+            # Narrative-format path: no checkboxes at all, but bold-heading
+            # phases present → parent body is in pre-contract form.
+            if [[ "$UNCHECKED_COUNT" -eq 0 && "$CHECKED_COUNT" -eq 0 ]]; then
+              if [[ "$NARRATIVE_PHASE_COUNT" -gt 0 ]]; then
+                NARRATIVE_HINT_BODY="<!-- phase-nudge-pr-${PR_NUMBER} -->
+          ### Phase merged — parent uses narrative phase format
 
-            # Post the nudge
+          PR #${PR_NUMBER} (\`${PR_TITLE}\`) merged and references this parent, but the \`## Phases\` section uses narrative \`**Phase N — ...**\` bold-heading format rather than the canonical list form that phase-auto-filing (t2740, \`shared-phase-filing.sh\`) scans.
+
+          **Detected:** ${NARRATIVE_PHASE_COUNT} narrative phase heading(s).
+
+          **To enable auto-progression,** rewrite the \`## Phases\` section in list form, e.g.:
+
+          \`\`\`markdown
+          ## Phases
+
+          - Phase 1 - Inventory [auto-fire:on-prior-merge] #20410
+          - Phase 2 - Formalise opt-out vocabulary [auto-fire:on-prior-merge]
+          - Phase 3 - ...
+          \`\`\`
+
+          Until converted, phase children must be filed manually. This one-shot nudge is emitted per merged PR so the stuck state stays visible."
+                if gh issue comment "$PARENT_NUM" --repo "$REPO" --body "$NARRATIVE_HINT_BODY" 2>/dev/null; then
+                  echo "Posted narrative-format hint nudge on #$PARENT_NUM (${NARRATIVE_PHASE_COUNT} narrative phases detected)"
+                else
+                  echo "Warning: could not post narrative-format hint nudge on #$PARENT_NUM"
+                fi
+                continue
+              fi
+              echo "No checkbox or narrative phases found in #$PARENT_NUM — no nudge needed"
+              continue
+            fi
+
+            if [[ "$UNCHECKED_COUNT" -eq 0 ]]; then
+              echo "All phases checked in #$PARENT_NUM — no nudge needed (may be ready to close)"
+              continue
+            fi
+
+            # Extract the unchecked items for context
+            REMAINING_ITEMS=$(printf '%s\n' "$PARENT_BODY" | grep -E '^[[:space:]]*- \[ \]' | sed 's/^[[:space:]]*/  /' | head -10 || true)
+
+            # Post the checkbox-form nudge
             NUDGE_BODY="<!-- phase-nudge-pr-${PR_NUMBER} -->
           ### Phase merged — ${UNCHECKED_COUNT} remaining
 
