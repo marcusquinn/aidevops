@@ -352,29 +352,20 @@ _gh_issue_edit_rest() {
 	fi
 
 	while [[ $# -gt 0 ]]; do
-		local _arg="$1"
+		local _arg="$1" _v=""
+		[[ "$_arg" == *=* ]] && { _v="${_arg#*=}"; _arg="${_arg%%=*}"; shift; } || { _v="${2:-}"; shift 2; }
 		case "$_arg" in
-		--repo) repo="${2:-}"; shift 2 ;;
-		--repo=*) repo="${_arg#--repo=}"; shift ;;
-		--title) title="${2:-}"; has_title=1; shift 2 ;;
-		--title=*) title="${_arg#--title=}"; has_title=1; shift ;;
-		--body) body="${2:-}"; has_body=1; shift 2 ;;
-		--body=*) body="${_arg#--body=}"; has_body=1; shift ;;
-		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
-		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
-		--add-label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--add-label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--add-label=}"); shift ;;
-		--remove-label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--remove-label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--remove-label=}"); shift ;;
-		--add-assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--add-assignee=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--add-assignee=}"); shift ;;
-		--remove-assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--remove-assignee=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--remove-assignee=}"); shift ;;
-		--milestone) milestone="${2:-}"; has_milestone=1; shift 2 ;;
-		--milestone=*) milestone="${_arg#--milestone=}"; has_milestone=1; shift ;;
-		--state) state="${2:-}"; has_state=1; shift 2 ;;
-		--state=*) state="${_arg#--state=}"; has_state=1; shift ;;
-		*) shift ;;
+		--repo)            repo="$_v" ;;
+		--title)           title="$_v"; has_title=1 ;;
+		--body)            body="$_v"; has_body=1 ;;
+		--body-file)       body_file="$_v"; has_body=1 ;;
+		--add-label)       while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_labels+=("$_tok"); done < <(_gh_split_csv "$_v") ;;
+		--remove-label)    while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_labels+=("$_tok"); done < <(_gh_split_csv "$_v") ;;
+		--add-assignee)    while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_assignees+=("$_tok"); done < <(_gh_split_csv "$_v") ;;
+		--remove-assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_assignees+=("$_tok"); done < <(_gh_split_csv "$_v") ;;
+		--milestone)       milestone="$_v"; has_milestone=1 ;;
+		--state)           state="$_v"; has_state=1 ;;
+		*) : ;;
 		esac
 	done
 
