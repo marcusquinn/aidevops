@@ -2958,3 +2958,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2755 robust parent-task phase-lifecycle automation (B/C/D of t2751 systemic fix) #parent ref:GH#20559
 
 - [ ] t2767 commit-and-pr: partial-success recovery — PR created but post-create steps skipped on transient GraphQL error ref:GH#20634
+
+- [ ] t2768 pulse: consolidate circuit breaker threshold into single conf file #auto-dispatch #framework #pulse ref:GH#20638
