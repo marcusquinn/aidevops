@@ -86,6 +86,13 @@ NON_REVIEW_PATTERNS=(
 # Backwards-compat alias for any callers/tests still referencing the old name.
 RATE_LIMIT_PATTERNS=("${NON_REVIEW_PATTERNS[@]}")
 
+# Bots that post a Phase 1 placeholder and later edit it with real review content.
+# For these, age-derived settlement is unreliable — require edit-observed settlement.
+# GH#20550: Option A' — two-phase bot list avoids per-repo config duplication.
+# NOTE: no `readonly` — bash 3.2 scopes readonly arrays function-local when
+# declared via `source` inside a function (see load_helper_functions in tests).
+TWO_PHASE_BOTS=("coderabbitai")
+
 SKIP_LABEL="skip-review-gate"
 
 # GH#3827: Grace period for rate-limited bots. If bots posted rate-limit
@@ -185,6 +192,19 @@ _get_min_edit_lag() {
 	return 0
 }
 
+_is_two_phase_bot() {
+	# GH#20550: Return 0 if bot_login is in the TWO_PHASE_BOTS list.
+	# Two-phase bots post a Phase 1 placeholder and later edit it with real content.
+	# For these bots, age-derived settlement is unreliable — only edit-observed
+	# settlement (edit_delta > 0) is authoritative.
+	local bot_login="$1"
+	local b
+	for b in "${TWO_PHASE_BOTS[@]}"; do
+		[[ "$bot_login" == "$b" ]] && return 0
+	done
+	return 1
+}
+
 _to_epoch() {
 	# Cross-platform ISO-8601 → epoch (macOS BSD date vs GNU date). Returns 0
 	# on parse failure so callers can detect "unknown" and behave conservatively.
@@ -203,16 +223,29 @@ _to_epoch() {
 
 _comment_is_settled() {
 	# t2139: A comment is "settled" (final form, safe to classify as a real
-	# review) if EITHER:
+	# review) depending on bot type:
+	#
+	# Two-phase bots (e.g. coderabbitai — see TWO_PHASE_BOTS):
+	#   Require edit-observed settlement only (edit_delta > 0). Age-derived
+	#   fallback is disabled — Phase 1 placeholders aged past min_lag would
+	#   otherwise false-positive as settled real reviews. GH#20550.
+	#
+	# Non-two-phase bots (OR semantics — existing behaviour):
+	#   Settled if EITHER:
 	#   (a) it has been edited (updated_at >= created_at + min_lag), OR
 	#   (b) it is old enough that the bot would have edited by now
 	#       (now - created_at >= min_lag).
+	#
 	# If timestamps are missing/unparseable (older API responses, network
 	# issues), be conservative: treat as settled — better to PASS the gate
 	# than block forever on missing data.
+	#
+	# $4 (bot_login) is optional for backward-compatibility. Callers that omit
+	# it fall through to non-two-phase OR semantics (preserves old behaviour).
 	local created_at="$1"
 	local updated_at="$2"
 	local min_lag="$3"
+	local bot_login="${4:-}"
 
 	# Missing inputs → conservative pass.
 	[[ -z "$created_at" ]] && return 0
@@ -229,6 +262,14 @@ _comment_is_settled() {
 	local edit_delta=$((updated_epoch - created_epoch))
 	local age=$((now_epoch - created_epoch))
 
+	if _is_two_phase_bot "$bot_login"; then
+		# Phase 2 edit is authoritative; Phase 1 placeholder is not a real
+		# review regardless of age. Any positive edit_delta means Phase 2 landed.
+		[[ "$edit_delta" -gt 0 ]] && return 0
+		return 1
+	fi
+
+	# Non-two-phase bots: preserve existing OR semantics.
 	if [[ "$edit_delta" -ge "$min_lag" ]] || [[ "$age" -ge "$min_lag" ]]; then
 		return 0
 	fi
@@ -377,7 +418,7 @@ bot_has_real_review() {
 			# Phase 2: must be settled. If not, this is likely a placeholder
 			# (e.g., CodeRabbit Phase 1) — wait for it to settle before
 			# classifying as a real review.
-			if ! _comment_is_settled "$created_at" "$updated_at" "$min_lag"; then
+			if ! _comment_is_settled "$created_at" "$updated_at" "$min_lag" "$bot_login"; then
 				continue
 			fi
 			return 0
@@ -623,7 +664,7 @@ _classify_bot_state() {
 				saw_non_review=1
 				continue
 			fi
-			if _comment_is_settled "$created_at" "$updated_at" "$min_lag"; then
+			if _comment_is_settled "$created_at" "$updated_at" "$min_lag" "$bot_login"; then
 				echo "real-review"
 				return 0
 			fi

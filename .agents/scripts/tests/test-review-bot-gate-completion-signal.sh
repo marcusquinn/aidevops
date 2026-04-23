@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-review-bot-gate-completion-signal.sh — Regression tests for t2139 (GH#19251)
+#   Extended with two-phase bot support tests — GH#20550
 #
 # Verifies that bot_has_real_review() requires a positive completion signal
 # and rejects:
@@ -15,6 +16,12 @@
 #   6. Comments edited > min_lag after creation (Phase 2 settled)
 #   7. Comments older than min_lag (no edit needed — bot had time to finish)
 #   8. Real review content with no non-review-pattern match
+#
+# Two-phase bot tests (GH#20550):
+#   9.  coderabbitai aged-in unedited (age=120s) → NOT settled (age branch suppressed)
+#  10.  coderabbitai with any edit (edit_delta=5s) → settled regardless of min_lag
+#  11.  Unknown bot login → falls through to OR semantics (non-two-phase)
+#  12.  env min_lag override still respected for non-two-phase bots
 #
 # Plus unit tests on _comment_is_settled, is_non_review_comment, and
 # _get_min_edit_lag direct invocations (no gh stubbing needed).
@@ -265,6 +272,74 @@ test_settled_unparseable_timestamps_conservative_pass() {
 	return 0
 }
 
+# ---------- Unit tests: two-phase bot settled check (GH#20550) ----------
+
+test_two_phase_bot_aged_unedited_not_settled() {
+	# coderabbitai aged 120s, never edited (edit_delta=0) → NOT settled.
+	# Age-derived OR branch must be suppressed for two-phase bots.
+	local now created
+	now=$(date +%s)
+	created=$(TZ=UTC date -u -r "$((now - 120))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+		date -u -d "@$((now - 120))" +"%Y-%m-%dT%H:%M:%SZ")
+	if ! _comment_is_settled "$created" "$created" 30 "coderabbitai"; then
+		print_result "two-phase bot: aged unedited coderabbitai → not settled" 0
+	else
+		print_result "two-phase bot: aged unedited coderabbitai → not settled" 1 \
+			"expected NOT settled (Phase 1 placeholder aged past min_lag should not pass)"
+	fi
+	return 0
+}
+
+test_two_phase_bot_any_edit_settled() {
+	# coderabbitai with edit_delta=5s → settled regardless of age or min_lag.
+	# Any positive edit_delta is Phase 2 — authoritative.
+	local now created updated
+	now=$(date +%s)
+	created=$(TZ=UTC date -u -r "$((now - 10))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+		date -u -d "@$((now - 10))" +"%Y-%m-%dT%H:%M:%SZ")
+	updated=$(TZ=UTC date -u -r "$((now - 5))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+		date -u -d "@$((now - 5))" +"%Y-%m-%dT%H:%M:%SZ")
+	if _comment_is_settled "$created" "$updated" 30 "coderabbitai"; then
+		print_result "two-phase bot: any edit on coderabbitai → settled" 0
+	else
+		print_result "two-phase bot: any edit on coderabbitai → settled" 1 \
+			"expected settled (edit_delta=5s is Phase 2 — authoritative regardless of min_lag)"
+	fi
+	return 0
+}
+
+test_two_phase_bot_unknown_login_or_semantics() {
+	# An unknown bot login → falls through to non-two-phase OR semantics.
+	# Age=120s >= min_lag=30 → settled (same as test_settled_old_unedited_accepted).
+	local now created
+	now=$(date +%s)
+	created=$(TZ=UTC date -u -r "$((now - 120))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+		date -u -d "@$((now - 120))" +"%Y-%m-%dT%H:%M:%SZ")
+	if _comment_is_settled "$created" "$created" 30 "gemini-code-assist"; then
+		print_result "two-phase bot: unknown bot login falls through to OR semantics" 0
+	else
+		print_result "two-phase bot: unknown bot login falls through to OR semantics" 1 \
+			"expected settled via age-derived branch for non-two-phase bot"
+	fi
+	return 0
+}
+
+test_two_phase_bot_env_override_non_two_phase() {
+	# REVIEW_BOT_MIN_EDIT_LAG_SECONDS env override is respected for non-two-phase bots.
+	# Set min_lag=120, age=60 → NOT settled for a non-two-phase bot.
+	local now created
+	now=$(date +%s)
+	created=$(TZ=UTC date -u -r "$((now - 60))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+		date -u -d "@$((now - 60))" +"%Y-%m-%dT%H:%M:%SZ")
+	if ! _comment_is_settled "$created" "$created" 120 "gemini-code-assist"; then
+		print_result "two-phase bot: env min_lag=120 respected for non-two-phase bot (age=60)" 0
+	else
+		print_result "two-phase bot: env min_lag=120 respected for non-two-phase bot (age=60)" 1 \
+			"expected NOT settled (age=60 < min_lag=120 for non-two-phase bot)"
+	fi
+	return 0
+}
+
 # ---------- Unit tests: per-tool / per-repo lag resolution ----------
 
 test_get_min_edit_lag_per_tool() {
@@ -345,6 +420,13 @@ main() {
 	test_settled_edit_delta_over_min_lag_accepted
 	test_settled_missing_timestamps_conservative_pass
 	test_settled_unparseable_timestamps_conservative_pass
+
+	echo ""
+	echo "=== Two-phase bot settled check (GH#20550) ==="
+	test_two_phase_bot_aged_unedited_not_settled
+	test_two_phase_bot_any_edit_settled
+	test_two_phase_bot_unknown_login_or_semantics
+	test_two_phase_bot_env_override_non_two_phase
 
 	echo ""
 	echo "=== Min-edit-lag resolver ==="
