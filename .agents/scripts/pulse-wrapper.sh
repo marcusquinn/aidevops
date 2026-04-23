@@ -336,6 +336,7 @@ PULSE_LAUNCH_SETTLE_BATCH_MAX="${PULSE_LAUNCH_SETTLE_BATCH_MAX:-5}"             
 PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                                                      # 10 min cap per pre-run stage (cleanup/prefetch)
 PULSE_STAGE_TIMINGS_LOG="${PULSE_STAGE_TIMINGS_LOG:-${HOME}/.aidevops/logs/pulse-stage-timings.log}"       # Structured TSV stage timing log (GH#20025)
 PULSE_LOCK_MAX_AGE_S="${AIDEVOPS_PULSE_LOCK_MAX_AGE_S:-1800}"                                              # Force-reclaim mkdir lock after this age in seconds (GH#20025)
+PULSE_MIN_INTERVAL_S="${AIDEVOPS_PULSE_MIN_INTERVAL_S:-90}"                                                # Entry-point rate-limit: skip cycle if last run was less than this many seconds ago (GH#20578)
 PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                                                  # Open PR list window per repo for pre-fetched state
 PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"                                            # Open issue list window for pulse prompt payload (keep compact)
 PULSE_PREFETCH_CACHE_FILE="${PULSE_PREFETCH_CACHE_FILE:-${HOME}/.aidevops/logs/pulse-prefetch-cache.json}" # Delta prefetch state cache (GH#15286)
@@ -1533,6 +1534,32 @@ main() {
 			echo "[pulse-wrapper] Pulse already running (PID: ${_ir_first_pid}), skipping" >>"$WRAPPER_LOGFILE"
 			return 0
 		fi
+	fi
+
+	# GH#20578: Entry-point rate-limit cooldown. Short-circuit BEFORE the
+	# mkdir instance lock to eliminate unnecessary lock contention from
+	# redundant scheduler invocations (launchd ThrottleInterval edge cases,
+	# manual restarts). A single stat-equivalent read is the entire cost of
+	# a rate-limited invocation instead of mkdir attempt + stale-lock check
+	# + PID file read. --canary and --dry-run bypass (diagnostic modes).
+	if [[ "${PULSE_DRY_RUN:-0}" != "1" && "${PULSE_CANARY_MODE:-0}" != "1" ]]; then
+		local _rl_ts_file="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
+		local _rl_now
+		local _rl_last
+		local _rl_elapsed
+		_rl_now=$(date +%s)
+		_rl_last=0
+		if [[ -f "$_rl_ts_file" ]]; then
+			read -r _rl_last < "$_rl_ts_file" || _rl_last=0
+			# Treat corrupt/non-numeric content as 0 (stale) — continue normally
+			[[ "$_rl_last" =~ ^[0-9]+$ ]] || _rl_last=0
+		fi
+		_rl_elapsed=$(( _rl_now - _rl_last ))
+		if (( _rl_elapsed < PULSE_MIN_INTERVAL_S )); then
+			echo "[pulse-wrapper] Rate-limited: last run ${_rl_elapsed}s ago < ${PULSE_MIN_INTERVAL_S}s threshold — skipping cycle (GH#20578)" >>"$WRAPPER_LOGFILE"
+			return 0
+		fi
+		printf '%s\n' "$_rl_now" > "$_rl_ts_file" || true
 	fi
 
 	# GH#4513: Acquire exclusive instance lock FIRST — before any other
