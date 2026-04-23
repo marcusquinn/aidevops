@@ -821,6 +821,14 @@ _adaptive_launch_settle_wait() {
 # Dispatches deterministic fill floor, then waits adaptively based on
 # how many workers were launched so they can appear in process lists
 # before the next worker count.
+#
+# t2749: Two-phase fill floor. Phase 1 is the existing candidate loop.
+# Phase 2 fires when _dispatch_issue_consolidation created a new child
+# during Phase 1 (detected via a per-cycle sentinel file). The child is
+# not in Phase 1's candidate list (enumeration ran before the loop), so
+# Phase 2 re-enumerates and dispatches it in the same cycle. Without
+# Phase 2, the child waits a minimum of one additional pulse cycle
+# (3–7 min stable; 10–20 min when wrapper cycles are unstable).
 #######################################
 apply_deterministic_fill_floor() {
 	if [[ -f "$STOP_FLAG" ]]; then
@@ -833,6 +841,31 @@ apply_deterministic_fill_floor() {
 	[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
 
 	_adaptive_launch_settle_wait "$fill_dispatched" "fill floor"
+
+	# t2749: Phase 2 — re-enumerate when consolidation created a child during
+	# Phase 1. The sentinel is written by _dispatch_issue_consolidation in
+	# pulse-triage.sh. Named with $$ (top-level PID) so it is cycle-scoped.
+	# Consume it before checking worker slots to prevent double Phase 2 when
+	# apply_deterministic_fill_floor is called again in the same cycle
+	# (early dispatch pass + main fill floor both invoke this function).
+	local _p2_sentinel="${HOME}/.aidevops/cache/pulse-cycle-$$-consolidation-fired"
+	if [[ -f "$_p2_sentinel" && ! -f "$STOP_FLAG" ]]; then
+		rm -f "$_p2_sentinel" 2>/dev/null || true
+		local _p2_active _p2_max
+		_p2_active=$(count_active_workers)
+		_p2_max=$(get_max_workers_target)
+		[[ "$_p2_active" =~ ^[0-9]+$ ]] || _p2_active=0
+		[[ "$_p2_max" =~ ^[0-9]+$ ]] || _p2_max=1
+		if [[ "$_p2_active" -lt "$_p2_max" ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor Phase 2: consolidation child created during Phase 1 (active=${_p2_active}, max=${_p2_max}) — re-enumerating candidates (t2749)" >>"$LOGFILE"
+			local fill_dispatched_p2
+			fill_dispatched_p2=$(dispatch_deterministic_fill_floor) || fill_dispatched_p2=0
+			[[ "$fill_dispatched_p2" =~ ^[0-9]+$ ]] || fill_dispatched_p2=0
+			_adaptive_launch_settle_wait "$fill_dispatched_p2" "fill floor phase 2"
+		else
+			echo "[pulse-wrapper] Deterministic fill floor Phase 2: consolidation child created but slots full (active=${_p2_active}, max=${_p2_max}) — skipping (t2749)" >>"$LOGFILE"
+		fi
+	fi
 	return 0
 }
 
