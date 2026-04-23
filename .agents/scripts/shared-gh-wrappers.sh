@@ -777,6 +777,27 @@ gh_create_pr() {
 	return $rc
 }
 
+# t2767: Partial-success recovery for gh pr create.
+# When gh pr create returns non-zero, GitHub may have successfully created the
+# PR but a follow-up update call (label application, body normalisation, etc.)
+# failed with a transient GraphQL error. This helper checks whether a PR already
+# exists for the given branch in the repo, returning its URL if found.
+#
+# Usage: recovered_url=$(_gh_recover_pr_if_exists "$branch" "$repo")
+# Returns: PR URL (HTTPS) or empty string. Always exits 0 (fail-open).
+#
+# Callers must treat a non-empty return value as the PR URL to continue with
+# and log a recovery warning so operators know a transient error occurred.
+_gh_recover_pr_if_exists() {
+	local branch="$1" repo="${2:-}"
+	[[ -z "$branch" ]] && return 0
+	local url_candidate=""
+	url_candidate=$(gh pr list --head "$branch" ${repo:+--repo "$repo"} --state open \
+		--json number,url --jq '.[0].url // empty' 2>/dev/null || true)
+	printf '%s\n' "${url_candidate:-}"
+	return 0
+}
+
 # t2393: auto-append signature footer on all `gh issue comment` posts.
 # Thin wrapper mirroring gh_create_issue/gh_create_pr — invokes
 # _gh_wrapper_auto_sig on --body/--body-file before delegating to the
