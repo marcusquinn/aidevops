@@ -48,8 +48,9 @@ SCRIPT_NAME=$(basename "$0")
 
 # The anti-pattern. Matches `grep -c ... || echo "N"` where N is 0-9.
 # Captures the shape: grep -c, optional args that don't include a pipe, ||,
-# optional whitespace, echo, optional whitespace, quoted integer.
-readonly ANTI_PATTERN='grep -c[^|]*\|\|[[:space:]]*echo[[:space:]]*"[0-9]+"'
+# optional whitespace, echo, optional whitespace, optionally quoted integer.
+# Handles double-quoted ("0"), single-quoted ('0'), and unquoted (0) forms.
+readonly ANTI_PATTERN="grep -c[^|]*\\|\\|[[:space:]]*echo[[:space:]]*[\"']?[0-9]+[\"']?"
 
 # ── helpers ──────────────────────────────────────────────────────────
 
@@ -100,16 +101,12 @@ scan_file() {
 	fi
 
 	# grep -nE prints line numbers; we post-format for the CI report.
-	# Use a temp file because pipes mask exit codes under `set -u`.
-	local _tmp
-	_tmp=$(mktemp)
-	if grep -nE "$ANTI_PATTERN" "$_file" >"$_tmp" 2>/dev/null; then
-		while IFS=: read -r _line_num _content; do
-			printf '%s:%s: counter-stacking: %s\n' "$_file" "$_line_num" "$(_trim "$_content")"
-			_violations=$((_violations + 1))
-		done <"$_tmp"
-	fi
-	rm -f "$_tmp"
+	# Process substitution avoids temp-file disk I/O while keeping the
+	# while-loop in the current shell (unlike a pipe, which would fork).
+	while IFS=: read -r _line_num _content; do
+		printf '%s:%s: counter-stacking: %s\n' "$_file" "$_line_num" "$(_trim "$_content")"
+		_violations=$((_violations + 1))
+	done < <(grep -nE "$ANTI_PATTERN" "$_file" 2>/dev/null)
 
 	if [[ "$_violations" -gt 0 ]]; then
 		return 1
