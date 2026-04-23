@@ -136,7 +136,9 @@ _start() {
 	fi
 
 	mkdir -p "${_PULSE_LOG%/*}"
-	nohup "$_PULSE_SCRIPT" >>"$_PULSE_LOG" 2>&1 &
+	# GH#20580: set AIDEVOPS_PULSE_SOURCE so pulse-wrapper.sh records this
+	# invocation as "lifecycle-helper" in its invocation_sources counter.
+	AIDEVOPS_PULSE_SOURCE=lifecycle-helper nohup "$_PULSE_SCRIPT" >>"$_PULSE_LOG" 2>&1 &
 	disown 2>/dev/null || true
 
 	# Give nohup a moment to fork and let pulse-wrapper emit its startup banner.

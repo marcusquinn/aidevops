@@ -1491,6 +1491,79 @@ _pulse_setup_canary_mode() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# _detect_invocation_source (GH#20580)
+#
+# Detects how pulse-wrapper.sh was invoked. Writes the detected source into
+# the caller-scoped variable named by the first argument (default:
+# _invocation_source). Order: most-specific check first.
+#
+# Sources:
+#   lifecycle-helper  AIDEVOPS_PULSE_SOURCE=lifecycle-helper (set by _start())
+#   launchd           PPID=1 or parent command contains "launchd"
+#   cron              parent command contains "cron"
+#   manual            stdin is a TTY or PULSE_MANUAL=1
+#   unknown           none of the above
+# ---------------------------------------------------------------------------
+_detect_invocation_source() {
+	local _parent_cmd
+	_parent_cmd=$(ps -p "$PPID" -o comm= 2>/dev/null || printf 'unknown')
+
+	if [[ "${AIDEVOPS_PULSE_SOURCE:-}" == "lifecycle-helper" ]]; then
+		_invocation_source="lifecycle-helper"
+	elif [[ "$PPID" -eq 1 ]] || [[ "$_parent_cmd" == *"launchd"* ]]; then
+		_invocation_source="launchd"
+	elif [[ "$_parent_cmd" == *"cron"* ]]; then
+		_invocation_source="cron"
+	elif [[ "${PULSE_MANUAL:-0}" == "1" ]] || [[ -t 0 ]]; then
+		_invocation_source="manual"
+	else
+		_invocation_source="unknown"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _record_invocation_source (GH#20580)
+#
+# Logs the invocation source to the pulse log and increments the per-source
+# integer counter in pulse-stats.json under the top-level
+# "invocation_sources" object, e.g.:
+#   {"counters":{...},"invocation_sources":{"launchd":5,"manual":1,...}}
+#
+# Args:
+#   $1 - invocation source string (launchd/cron/manual/lifecycle-helper/unknown)
+#
+# Non-fatal: any jq or file failure is ignored — never blocks the pulse.
+# ---------------------------------------------------------------------------
+_record_invocation_source() {
+	local source="${1:-unknown}"
+	local stats_file="${PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
+	local log_dest="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
+
+	# Log entry (ISO-8601 UTC to match pulse-logging.sh conventions)
+	local _ts _pcmd
+	_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf 'unknown')
+	_pcmd=$(ps -p "$PPID" -o comm= 2>/dev/null || printf 'unknown')
+	printf '[%s] pulse-wrapper invoked: pid=%d ppid=%d source=%s parent_cmd=%s\n' \
+		"$_ts" "$$" "$PPID" "$source" "$_pcmd" \
+		>>"$log_dest" 2>/dev/null || true
+
+	# Increment invocation_sources.{source} as a plain integer counter.
+	# Uses tmp-file + mv for atomicity (same pattern as pulse_stats_increment).
+	local _dir _tmp
+	_dir="$(dirname "$stats_file")"
+	[[ -d "$_dir" ]] || mkdir -p "$_dir" 2>/dev/null || return 0
+	[[ -f "$stats_file" ]] || printf '{"counters":{}}\n' >"$stats_file" 2>/dev/null || return 0
+
+	_tmp=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-src-XXXXXX.json") || return 0
+	jq --arg src "$source" \
+		'.invocation_sources[$src] = ((.invocation_sources[$src] // 0) + 1)' \
+		"$stats_file" >"$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
+	mv "$_tmp" "$stats_file" 2>/dev/null || rm -f "$_tmp"
+	return 0
+}
+
 main() {
 	# GH#18670: declare this process as headless BEFORE anything else runs
 	# so every child shell stage sees AIDEVOPS_HEADLESS and
@@ -1520,6 +1593,12 @@ main() {
 	[[ "$_sc_rc" -ne 2 ]] && return "$_sc_rc"
 	_pulse_setup_dry_run_mode "$@"
 	_pulse_setup_canary_mode "$@"
+
+	# GH#20580: Detect and record invocation source before acquiring the lock
+	# so every invocation — including those that fail the lock — is counted.
+	local _invocation_source="unknown"
+	_detect_invocation_source
+	_record_invocation_source "$_invocation_source"
 
 	# GH#20579: Is-running short-circuit — exit 0 immediately before attempting
 	# mkdir lock acquisition when a pulse process is already alive. Eliminates
