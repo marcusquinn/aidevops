@@ -943,13 +943,16 @@ _derive_pr_title_prefix() {
 # Arguments: repo, pr_title, pr_body, origin_label; extra_labels passed as remaining args.
 # Returns 1 on failure.
 # t2115: Uses gh_create_pr wrapper (shared-constants.sh) for origin label + signature auto-append.
+# t2767: Implements partial-success recovery — when gh_create_pr exits non-zero but a PR
+# already exists for the current branch (GitHub created it but a follow-up update failed),
+# we recover and continue instead of bailing out.
 _create_pr() {
 	local repo="$1" pr_title="$2" pr_body="$3" origin_label="$4"
 	shift 4
 	local -a extra_labels=("$@")
 
 	print_info "Creating PR..."
-	local pr_url=""
+	local pr_url="" rc=0
 	# t2115: gh_create_pr auto-appends origin label and signature footer.
 	# The explicit --label "$origin_label" is kept for backward compat (GitHub deduplicates).
 	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body "$pr_body" --label "$origin_label")
@@ -957,10 +960,26 @@ _create_pr() {
 		pr_cmd+=(--label "$lbl")
 	done
 
-	pr_url=$("${pr_cmd[@]}" 2>&1) || {
-		print_error "PR creation failed: ${pr_url}"
-		return 1
-	}
+	pr_url=$("${pr_cmd[@]}" 2>&1) || rc=$?
+
+	if [[ $rc -ne 0 ]]; then
+		# t2767: Partial-success recovery.
+		# gh pr create (via gh_create_pr) can return non-zero even when GitHub already
+		# created the PR — this happens when a follow-up GraphQL mutation (body update,
+		# label application) succeeds on GitHub's backend but the subsequent API response
+		# fails with a transient error (e.g. "Something went wrong while executing your query").
+		# Before treating this as a hard failure, check whether the PR now exists.
+		local current_branch="" recovered_url=""
+		current_branch=$(git branch --show-current 2>/dev/null || echo "")
+		recovered_url=$(_gh_recover_pr_if_exists "$current_branch" "$repo" 2>/dev/null || echo "")
+		if [[ -n "$recovered_url" ]]; then
+			print_info "PR creation command returned non-zero but PR exists — recovering (t2767): ${recovered_url}"
+			pr_url="$recovered_url"
+		else
+			print_error "PR creation failed: ${pr_url}"
+			return 1
+		fi
+	fi
 
 	local pr_number=""
 	pr_number=$(printf '%s' "$pr_url" | grep -oE '[0-9]+$' || echo "")
@@ -977,9 +996,25 @@ _create_pr() {
 # Post the MERGE_SUMMARY comment on the PR (full-loop step 4.2.1).
 # Arguments: pr_number, repo, issue_number, summary_what, files_changed,
 #            summary_testing, summary_decisions
+# t2767: Idempotent — skips posting if MERGE_SUMMARY comment already exists.
+# This handles the partial-success recovery case where commit-and-pr was
+# interrupted after posting the comment but before returning the PR number.
 _post_merge_summary() {
 	local pr_number="$1" repo="$2" issue_number="$3" summary_what="$4"
 	local files_changed="$5" summary_testing="$6" summary_decisions="$7"
+
+	# t2767: Check if MERGE_SUMMARY comment already exists before posting.
+	# Uses PR timeline comments endpoint (issues endpoint covers PR comments).
+	# Counter safety: validate result is a number before comparing (t2763).
+	local _existing_count=0
+	local _tmp_count=""
+	_tmp_count=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
+		--jq '[.[] | select(.body | test("MERGE_SUMMARY"))] | length' 2>/dev/null || true)
+	[[ "$_tmp_count" =~ ^[0-9]+$ ]] && _existing_count="$_tmp_count"
+	if [[ "$_existing_count" -gt 0 ]]; then
+		print_info "Merge summary comment already exists on PR #${pr_number} — skipping duplicate (t2767)"
+		return 0
+	fi
 
 	local merge_summary="<!-- MERGE_SUMMARY -->
 ## Completion Summary
