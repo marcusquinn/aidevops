@@ -508,6 +508,28 @@ print_info() {
 	return $?
 }
 
+# Safely count lines matching a pattern. Avoids grep -c's exit-1-on-no-match
+# behaviour, which causes `count=$(grep -c … || echo 0)` to produce "0\n0"
+# on the zero-match path (grep outputs its count, then || echo appends "0").
+# Usage:
+#   count=$(safe_grep_count [grep-args...])
+#   count=$(printf '%s\n' "$data" | safe_grep_count 'needle')
+#   count=$(safe_grep_count -E '^pattern' file)
+# Always prints a single non-negative integer on a single line.
+# Returns 0 (never propagates grep's exit-1-on-no-match).
+# See: reference/shell-style-guide.md § Counter Safety (grep -c)
+# See: GH#20402 (incident), GH#20581 (bug class), GH#20594 (this helper)
+safe_grep_count() {
+	local _result
+	_result=$(grep -c "$@" 2>/dev/null || true)
+	if [[ "$_result" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$_result"
+	else
+		printf '0\n'
+	fi
+	return 0
+}
+
 # =============================================================================
 # Shared Logging Functions (issue #2411)
 # =============================================================================

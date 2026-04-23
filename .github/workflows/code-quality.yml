@@ -1086,3 +1086,22 @@ jobs:
         echo "::error::New biome lint violations introduced in this PR."
         echo "Fix the violations, or add the 'lint-baseline-ok' label to override."
         exit 1
+
+  counter-stack-check:
+    # t2763: ratchet gate for grep -c counter-stacking anti-pattern.
+    # grep -c exits 1 on zero matches; chaining it with "|| echo N" stacks
+    # both outputs into the same variable ("0\n0"). This gate blocks new
+    # violations without explicit baseline update (ratchet semantics, t2228).
+    # See: GH#20402 (incident), GH#20581 (bug class), GH#20594 (this gate).
+    name: Counter-Stack Check (grep -c safety)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+    - name: Run counter-stack-check
+      run: |
+        set -euo pipefail
+        bash .agents/scripts/counter-stack-check.sh

@@ -94,6 +94,72 @@ readonly TEST_RESET=$'\033[0m'
 
 Non-canonical colors (`MAGENTA`, `GRAY`, `BOLD`, `DIM`) → declare locally with Pattern B. New canonicals → add to `shared-constants.sh` first.
 
+## Counter Safety (grep -c)
+
+### Banned pattern
+
+```bash
+# WRONG — grep -c exits 1 on zero matches, causing the || fallback to fire,
+# which produces "0\n0" (grep output + echo output stacked on the same variable).
+count=$(grep -c 'pattern' file || echo "0")
+count=$(grep -c 'pattern' file 2>/dev/null || echo "0")
+```
+
+**Why it breaks:** `grep -c` exits with code 1 when it finds zero matches (POSIX
+behaviour). The `|| echo "0"` fallback is intended as a zero-fallback, but it fires
+even when `grep -c` successfully printed `0`. The shell captures both the `grep -c`
+output (`0`) **and** the `echo "0"` output (`0`) into the same variable, producing
+the string `"0\n0"`. When that string is used in arithmetic (`$((count + 1))`) or
+comparison, the shell throws an error or silently truncates.
+
+Canonical incident: parent issue #20402 rendered `Progress: **0\n0 done, 0\n0 remaining**`
+in GitHub comments before PR #20573 patched that one site. An `rg` sweep found
+80+ additional latent sites. Gate filed as t2763.
+
+### Canonical fix — use `safe_grep_count()`
+
+```bash
+# CORRECT — always emits a single non-negative integer
+source .agents/scripts/shared-constants.sh
+count=$(safe_grep_count 'pattern' file)
+count=$(printf '%s\n' "$data" | safe_grep_count 'pattern')
+count=$(safe_grep_count -E '^[a-z]+$' <<<$'foo\n123\nbar')
+```
+
+`safe_grep_count` is defined in `.agents/scripts/shared-constants.sh` and wraps
+`grep -c "$@" 2>/dev/null || true`, then validates the result is a digit string
+before printing. Guaranteed to print a single non-negative integer.
+
+### Inline fallback (when shared-constants.sh is not available)
+
+For YAML workflows, bootstrap scripts, or one-shot helpers that cannot source
+`shared-constants.sh`:
+
+```bash
+count=$(grep -c 'pattern' file 2>/dev/null || true)
+[[ "$count" =~ ^[0-9]+$ ]] || count=0
+```
+
+This is safe because `|| true` prevents the exit-1 from propagating, and the
+`=~ ^[0-9]+$` guard ensures `count` is always a clean integer.
+
+### Enforcement
+
+- **CI gate**: `.agents/scripts/counter-stack-check.sh` runs in `.github/workflows/code-quality.yml`
+  as `counter-stack-check` (ratchet semantics, t2228 — blocks only on regression above baseline).
+- **Pre-commit**: advisory dry-run in `.agents/scripts/pre-commit-hook.sh` warns
+  on staged files containing the pattern.
+- **Baseline**: `.agents/configs/counter-stack-baseline.txt` tracks 81 pre-existing
+  violations (Phase 2, GH#20581, will sweep them). New violations above the baseline
+  fail CI.
+
+### Cross-references
+
+- **Originating incident**: #20402 (stuck pulse, parent-issue phase-nudge output corruption)
+- **Bug class audit**: #20581 (t2762, parent — 80-site enumeration across 34 files)
+- **This gate**: #20594 (t2763, Phase 1 — gate-first, then sweep)
+- **Canonical correct implementation**: `.agents/scripts/progressive-load-check.sh:80-97`
+
 ## Migration checklist
 
 1. Identify current pattern (plain, readonly, include-guard, or prefixed).

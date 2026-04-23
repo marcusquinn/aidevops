@@ -951,6 +951,24 @@ main_pre_commit() {
 	run_shellcheck "${modified_files[@]}" || ((total_violations += $?))
 	echo "" >&2
 
+	# t2763: counter-stack ratchet check (grep -c safety).
+	# Run in dry-run mode so it never blocks the commit — CI enforces the ratchet.
+	# Advisory only: warns if any staged file contains the anti-pattern.
+	if command -v rg &>/dev/null; then
+		local _csc_script="${SCRIPT_DIR}/counter-stack-check.sh"
+		if [[ -x "$_csc_script" ]]; then
+			local _staged_paths=()
+			local _f
+			for _f in "${modified_files[@]}"; do
+				_staged_paths+=("$_f")
+			done
+			if [[ ${#_staged_paths[@]} -gt 0 ]]; then
+				bash "$_csc_script" --dry-run --paths "${_staged_paths[@]}" >&2 || true
+			fi
+		fi
+	fi
+	echo "" >&2
+
 	# Final decision
 	if [[ $total_violations -eq 0 ]]; then
 		print_success "Pre-commit checks passed."
