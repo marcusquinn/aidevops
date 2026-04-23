@@ -10,6 +10,9 @@ configs/*.json
 # Allow agent directory to be committed
 !.agents/
 
+# User-owned plist env override working file (gitignored; template: .agents/configs/plist-env-overrides.json.txt)
+.agents/configs/plist-env-overrides.json
+
 # Password files and credentials
 *.password
 *_password
