@@ -88,6 +88,27 @@ _RT_BINARY=(
 	"qwen"     # qwen
 )
 
+# --- Version commands (CLI command to extract version string) ---
+# Each entry is a shell command fragment (eval'd at lookup time).
+# Use "" for runtimes with no known CLI version command (GUI-only apps,
+# editor extensions, or runtimes whose version is only accessible via their UI).
+_RT_VERSION_CMD=(
+	"opencode --version 2>/dev/null | head -1" # opencode
+	"claude --version 2>/dev/null | head -1"   # claude-code
+	"codex --version 2>/dev/null | head -1"    # codex
+	""                                         # cursor (GUI app, no CLI version)
+	"droid --version 2>/dev/null | head -1"    # droid
+	"gemini --version 2>/dev/null | head -1"   # gemini-cli
+	""                                         # windsurf (GUI app, no CLI version)
+	""                                         # continue (editor extension, no CLI)
+	"kilo --version 2>/dev/null | head -1"     # kilo
+	""                                         # kiro (GUI app, no CLI version)
+	"aider --version 2>/dev/null | head -1"    # aider
+	"amp --version 2>/dev/null | head -1"      # amp
+	"kimi --version 2>/dev/null | head -1"     # kimi
+	"qwen --version 2>/dev/null | head -1"     # qwen
+)
+
 # --- Display names (human-readable) ---
 _RT_DISPLAY_NAME=(
 	"OpenCode"    # opencode
@@ -518,6 +539,21 @@ rt_display_name() {
 	return 0
 }
 
+rt_version() {
+	local id="$1"
+	local idx
+	idx=$(_rt_index "$id") || return 1
+	local cmd="${_RT_VERSION_CMD[$idx]}"
+	if [[ -z "$cmd" ]]; then
+		echo "unknown"
+		return 0
+	fi
+	local ver
+	ver=$(eval "$cmd" 2>/dev/null) || ver="unknown"
+	echo "${ver:-unknown}"
+	return 0
+}
+
 rt_config_path() {
 	local id="$1"
 	local idx
@@ -907,6 +943,7 @@ rt_validate_registry() {
 	local errors=0
 	local arrays=(
 		"_RT_BINARY"
+		"_RT_VERSION_CMD"
 		"_RT_DISPLAY_NAME"
 		"_RT_CONFIG_PATH"
 		"_RT_CONFIG_FORMAT"

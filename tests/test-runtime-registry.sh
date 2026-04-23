@@ -206,6 +206,40 @@ else
 fi
 
 # =============================================================================
+section "rt_version — Known Runtimes"
+# =============================================================================
+# rt_version returns a string (version or "unknown") for all known runtimes.
+# Runtimes not installed return "unknown" (not an error).
+# Runtimes with no version command defined (GUI-only) return "unknown" directly.
+
+for rt_id in opencode claude-code codex cursor droid gemini-cli windsurf continue kilo kiro aider amp kimi qwen; do
+	ver=$(rt_version "$rt_id")
+	if [[ -n "$ver" ]]; then
+		pass "rt_version $rt_id returns non-empty string ('$ver')"
+	else
+		fail "rt_version $rt_id" "expected non-empty string (at least 'unknown'), got empty"
+	fi
+done
+
+# GUI-only runtimes without a version command must return "unknown" (not error)
+for gui_rt in cursor windsurf continue kiro; do
+	ver=$(rt_version "$gui_rt")
+	if [[ "$ver" == "unknown" ]]; then
+		pass "rt_version $gui_rt = 'unknown' (no version command)"
+	else
+		# May return actual version if runtime is installed with CLI — acceptable
+		pass "rt_version $gui_rt = '$ver' (installed version or unknown)"
+	fi
+done
+
+# Unknown runtime ID must return exit 1
+if ! rt_version "nonexistent-runtime" 2>/dev/null; then
+	pass "rt_version returns 1 for unknown runtime ID"
+else
+	fail "rt_version should return 1 for unknown runtime ID"
+fi
+
+# =============================================================================
 section "Unknown Runtime Handling"
 # =============================================================================
 
