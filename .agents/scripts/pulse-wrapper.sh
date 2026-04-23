@@ -1564,6 +1564,16 @@ main() {
 	local _cycle_start_epoch
 	_cycle_start_epoch=$(date +%s)
 
+	# t2749: Defence-in-depth — clean up any stale Phase 2 consolidation
+	# sentinels from a previous cycle before preflight stages run. With
+	# PID-scoped naming (pulse-cycle-$$-consolidation-fired) a different
+	# PID produces a different filename, so stale files from a crash can
+	# only exist when the OS reuses the same PID. This glob sweep is the
+	# safety net for that rare case. Runs after lock acquisition so only
+	# one process sweeps at a time.
+	# shellcheck disable=SC2086,SC2015
+	rm -f "${HOME}/.aidevops/cache/pulse-cycle-"*"-consolidation-fired" 2>/dev/null || true
+
 	# Phase 0 (t1963): --dry-run short-circuits here. Bootstrap, sourcing,
 	# config validation, lock acquisition, session gate, dedup guard, and
 	# log rotation have all run cleanly by this point — that is the Phase 0

@@ -1449,6 +1449,13 @@ _dispatch_issue_consolidation() {
 
 	# Flag parent and post the idempotent pointer comment.
 	_post_consolidation_dispatch_comment "$issue_number" "$repo_slug" "$child_num" "$authors_csv"
+	# t2749: Signal to apply_deterministic_fill_floor that a consolidation child
+	# was created this cycle. The sentinel triggers a Phase 2 re-enumeration so
+	# the child is dispatched in the same cycle without waiting for the next pulse
+	# cycle (3–7 min latency when wrapper cycles are stable; 10–20 min when unstable).
+	# Named with $$ (top-level PID) so each pulse run has a unique sentinel file.
+	mkdir -p "${HOME}/.aidevops/cache" 2>/dev/null || true
+	touch "${HOME}/.aidevops/cache/pulse-cycle-$$-consolidation-fired" 2>/dev/null || true
 	# t2151: release the lock — the child now exists on GitHub and
 	# `_consolidation_child_exists` will block subsequent dispatches on
 	# its own, making the lock unnecessary past this point.
