@@ -14,6 +14,8 @@
 #   - _dlw_setup_worker_log
 #   - _dlw_resolve_tier_and_model
 #   - _dlw_precreate_worktree
+#   - _dlw_prewarm_opencode_db
+#   - _dlw_exec_detached
 #   - _dlw_nohup_launch
 #   - _dlw_post_launch_hooks
 #   - _dispatch_launch_worker
@@ -336,11 +338,92 @@ _dlw_precreate_worktree() {
 }
 
 #######################################
+# Pre-warm OpenCode DB to trigger migration + skill-dedup BEFORE nohup
+# launch (t2758). Per-worker DB isolation (GH#17549) means each worker
+# hits cold-start fresh — every isolated DB must run the one-time SQLite
+# migration + 12-skill-dedup on first opencode invocation. That takes
+# 10-20s and creates a vulnerability window where signals can kill the
+# worker before a session is created. Running opencode --version against
+# the pre-created isolated dir completes migration outside the timed
+# dispatch window. The pre-warmed dir is passed to headless-runtime-helper.sh
+# via AIDEVOPS_WORKER_PREWARM_DIR so it is reused instead of a fresh mktemp.
+# Warm-up failure is non-fatal: dispatch continues unmodified (headless-
+# runtime-helper.sh falls back to its normal mktemp path).
+#
+# Sets module-level global:
+#   _DLW_PREWARM_DIR — absolute path on success, empty on failure/skip
+#
+# Arguments: worker_log (path to append lifecycle messages)
+#######################################
+_dlw_prewarm_opencode_db() {
+	local worker_log="$1"
+	_DLW_PREWARM_DIR=""
+
+	command -v opencode >/dev/null 2>&1 || return 0
+
+	_DLW_PREWARM_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-worker-auth.XXXXXX") || { _DLW_PREWARM_DIR=""; return 0; }
+	mkdir -p "${_DLW_PREWARM_DIR}/opencode"
+	{
+		echo "[lifecycle] opencode_warm_start pid=$$"
+		if XDG_DATA_HOME="$_DLW_PREWARM_DIR" timeout 30 opencode --version >/dev/null 2>&1; then
+			echo "[lifecycle] opencode_warm_done pid=$$"
+		else
+			echo "[lifecycle] WARN opencode warm-up failed or timed out — fallback to cold-start pid=$$"
+			rm -rf "$_DLW_PREWARM_DIR" 2>/dev/null || true
+			_DLW_PREWARM_DIR=""
+		fi
+	} >>"$worker_log" 2>&1
+	return 0
+}
+
+#######################################
+# Execute a worker command via setsid + nohup, detaching it from the
+# pulse's process group (t2757). Without setsid, workers inherit pulse's
+# PGID. Any PG-scoped signal (launchd unload, pkill -PGRP, restart chain)
+# kills in-flight workers. setsid creates a new session, so pulse signals
+# cannot propagate.
+#
+# macOS ships /usr/bin/setsid on recent versions (12+). Older macOS or
+# systems without setsid fall back to nohup-only with a log warning.
+#
+# Arguments:
+#   $1 - worker_log (path for stdout/stderr redirection)
+#   $2 - issue_number (for log messages)
+#   $3... - the worker command to execute
+# Stdout: worker PID
+#######################################
+_dlw_exec_detached() {
+	local worker_log="$1"
+	local issue_number="$2"
+	shift 2
+
+	local worker_pid
+	if command -v setsid >/dev/null 2>&1; then
+		setsid nohup "$@" </dev/null >>"$worker_log" 2>&1 &
+		worker_pid="$!"
+		# Log the detached PGID for diagnostics (should differ from pulse PGID)
+		local worker_pgid pulse_pgid
+		worker_pgid=$(ps -o pgid= -p "$worker_pid" 2>/dev/null | tr -d ' ') || worker_pgid="unknown"
+		pulse_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ') || pulse_pgid="unknown"
+		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid)" >>"$LOGFILE"
+	else
+		echo "[dispatch_worker_launch] Warning: setsid not found — worker will share pulse's PGID; install util-linux (Linux) or upgrade macOS 12+ for signal isolation" >>"$LOGFILE"
+		nohup "$@" </dev/null >>"$worker_log" 2>&1 &
+		worker_pid="$!"
+	fi
+	printf '%s\n' "$worker_pid"
+	return 0
+}
+
+#######################################
 # Build the worker command and launch it via `nohup` (GH#17549).
 # launchd runs pulse-wrapper with StartInterval=120s. When the wrapper
 # exits after its dispatch cycle, bash sends SIGHUP to background jobs.
 # `nohup` makes the worker immune to SIGHUP so it survives the parent's
 # exit. The EXIT trap only releases the instance lock (no child killing).
+#
+# Delegates pre-warm to _dlw_prewarm_opencode_db and process-group
+# detachment to _dlw_exec_detached.
 #
 # Arguments:
 #   $1  - issue_number
@@ -373,34 +456,9 @@ _dlw_nohup_launch() {
 	# Workers no longer need to call session-rename — the title is set at dispatch.
 	local worker_title="${issue_title:-${dispatch_title}}"
 
-	# t2758: Pre-warm OpenCode DB to trigger migration + skill-dedup BEFORE
-	# nohup launch. Per-worker DB isolation (GH#17549) means each worker hits
-	# cold-start fresh — every isolated DB must run the one-time SQLite
-	# migration + 12-skill-dedup on first opencode invocation. That takes
-	# 10-20s and creates a vulnerability window where signals can kill the
-	# worker before a session is created. Running opencode --version against
-	# the pre-created isolated dir completes migration outside the timed
-	# dispatch window. The pre-warmed dir is passed to headless-runtime-helper.sh
-	# via AIDEVOPS_WORKER_PREWARM_DIR so it is reused instead of a fresh mktemp.
-	# Warm-up failure is non-fatal: dispatch continues unmodified (headless-
-	# runtime-helper.sh falls back to its normal mktemp path).
-	local worker_prewarm_dir=""
-	if command -v opencode >/dev/null 2>&1; then
-		worker_prewarm_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-worker-auth.XXXXXX") || worker_prewarm_dir=""
-		if [[ -n "$worker_prewarm_dir" ]]; then
-			mkdir -p "${worker_prewarm_dir}/opencode"
-			{
-				echo "[lifecycle] opencode_warm_start pid=$$"
-				if XDG_DATA_HOME="$worker_prewarm_dir" timeout 30 opencode --version >/dev/null 2>&1; then
-					echo "[lifecycle] opencode_warm_done pid=$$"
-				else
-					echo "[lifecycle] WARN opencode warm-up failed or timed out — fallback to cold-start pid=$$"
-					rm -rf "$worker_prewarm_dir" 2>/dev/null || true
-					worker_prewarm_dir=""
-				fi
-			} >>"$worker_log" 2>&1
-		fi
-	fi
+	# t2758: Pre-warm OpenCode DB before launch (extracted to helper)
+	_dlw_prewarm_opencode_db "$worker_log"
+	local worker_prewarm_dir="$_DLW_PREWARM_DIR"
 
 	# Launch worker — headless-runtime-helper.sh handles model selection
 	# when no --model is specified. Its choose_model() uses the routing
@@ -435,28 +493,9 @@ _dlw_nohup_launch() {
 	if [[ -n "$selected_model" ]]; then
 		worker_cmd+=(--model "$selected_model")
 	fi
-	# Detach worker into its own process group (t2757).
-	# Without setsid, workers inherit pulse's PGID. Any PG-scoped signal
-	# (launchd unload, pkill -PGRP, restart chain) kills in-flight workers.
-	# setsid creates a new session, so pulse signals cannot propagate.
-	#
-	# macOS ships /usr/bin/setsid on recent versions (12+). Older macOS or
-	# systems without setsid fall back to nohup-only with a log warning.
-	local worker_pid
-	if command -v setsid >/dev/null 2>&1; then
-		setsid nohup "${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
-		worker_pid="$!"
-		# Log the detached PGID for diagnostics (should differ from pulse PGID)
-		local worker_pgid pulse_pgid
-		worker_pgid=$(ps -o pgid= -p "$worker_pid" 2>/dev/null | tr -d ' ') || worker_pgid="unknown"
-		pulse_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ') || pulse_pgid="unknown"
-		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid)" >>"$LOGFILE"
-	else
-		echo "[dispatch_worker_launch] Warning: setsid not found — worker will share pulse's PGID; install util-linux (Linux) or upgrade macOS 12+ for signal isolation" >>"$LOGFILE"
-		nohup "${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
-		worker_pid="$!"
-	fi
-	printf '%s\n' "$worker_pid"
+
+	# t2757: Detach worker via setsid (extracted to helper)
+	_dlw_exec_detached "$worker_log" "$issue_number" "${worker_cmd[@]}"
 	return 0
 }
 
