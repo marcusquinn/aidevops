@@ -541,6 +541,19 @@ _invoke_opencode() {
 	# the worker PID is gone, but kill it explicitly to be safe.
 	if [[ -n "$watchdog_pid" ]]; then
 		kill "$watchdog_pid" 2>/dev/null || true
+		# Timeout the wait to prevent indefinite blocking if watchdog is stuck
+		# on a network call (gh api for kill comment/unlock)
+		local _watchdog_wait_start _watchdog_wait_elapsed
+		_watchdog_wait_start=$(date +%s)
+		while kill -0 "$watchdog_pid" 2>/dev/null; do
+			_watchdog_wait_elapsed=$(( $(date +%s) - _watchdog_wait_start ))
+			if [[ "$_watchdog_wait_elapsed" -gt 30 ]]; then
+				print_warning "[lifecycle] watchdog_wait_timeout pid=$watchdog_pid elapsed=${_watchdog_wait_elapsed}s — sending SIGKILL"
+				kill -9 "$watchdog_pid" 2>/dev/null || true
+				break
+			fi
+			sleep 1
+		done
 		wait "$watchdog_pid" 2>/dev/null || true
 	fi
 	print_info "[lifecycle] watchdog_cleaned pid=$watchdog_pid"
