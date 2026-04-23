@@ -21,8 +21,9 @@
 #   9. Provider-aware pulse sessions via headless-runtime-helper.sh
 #  10. Per-issue fast-fail counter skips issues with repeated launch deaths (t1888)
 #
-# Lifecycle: launchd fires every 120s. If a pulse is still running, the
-# dedup check skips. run_pulse() has an internal watchdog that polls every
+# Lifecycle: launchd fires every 180s (StartInterval in the supervisor-pulse
+# plist). If a pulse is still running, the dedup check skips.
+# run_pulse() has an internal watchdog that polls every
 # 60s and checks three conditions:
 #   a) Wall-clock timeout: kills if elapsed > PULSE_STALE_THRESHOLD (60 min)
 #   b) Idle detection: kills if CPU usage stays below PULSE_IDLE_CPU_THRESHOLD
@@ -61,7 +62,7 @@
 #   blocklist. flock was removed entirely in GH#18668 (Path A) — see
 #   reference/bash-fd-locking.md for the full rationale and policy.
 #
-# Called by launchd every 120s via the supervisor-pulse plist.
+# Called by launchd every 180s via the supervisor-pulse plist.
 
 set -euo pipefail
 

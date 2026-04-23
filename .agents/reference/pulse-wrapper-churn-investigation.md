@@ -141,3 +141,33 @@ common cases (rapid re-invocation and overlapping cycles).
   original plan is **not needed** — only one scheduler exists. The three remaining
   fix children (#20578, #20579, #20580) address the voluntary-release churn pattern,
   not a multi-scheduler problem.
+
+## Resolution (2026-04-23)
+
+Consolidated issue: [#20592](https://github.com/marcusquinn/aidevops/issues/20592)
+
+All four child issues have been resolved and their PRs merged:
+
+| Issue | PR | Merged | Summary |
+|-------|----|--------|---------|
+| [#20577](https://github.com/marcusquinn/aidevops/issues/20577) | [#20589](https://github.com/marcusquinn/aidevops/pull/20589) | 2026-04-23 | Investigation report (this file) |
+| [#20578](https://github.com/marcusquinn/aidevops/issues/20578) | [#20588](https://github.com/marcusquinn/aidevops/pull/20588) | 2026-04-23 | Entry-point rate-limit cooldown (`PULSE_MIN_INTERVAL_S`, default 90s) |
+| [#20579](https://github.com/marcusquinn/aidevops/issues/20579) | [#20584](https://github.com/marcusquinn/aidevops/pull/20584) | 2026-04-23 | Is-running short-circuit via `pgrep` before mkdir lock |
+| [#20580](https://github.com/marcusquinn/aidevops/issues/20580) | [#20586](https://github.com/marcusquinn/aidevops/pull/20586) | 2026-04-23 | Invocation-source logging and `pulse-stats.json` counters |
+
+### Verdict
+
+**Original hypothesis (multiple schedulers causing churn): rejected.**
+Only one direct scheduler exists (`com.aidevops.aidevops-supervisor-pulse`, launchd, 180s).
+
+**Root cause:** The 4-PID / 15-minute pattern is normal behaviour from the voluntary pre-LLM lock release at `pulse-wrapper.sh:1329`. Successive launchd firings acquire the lock after the previous invocation voluntarily releases it. The 11.9% lock rejection rate (477/4021 over 42 days) is within design parameters.
+
+**Fixes shipped:** Three defence-in-depth measures now reduce unnecessary lock contention:
+
+1. **Rate-limit** (#20578) — skips cycle if last run was <90s ago (single `stat` call)
+2. **Is-running check** (#20579) — skips if another pulse PID is alive (`pgrep`, before mkdir)
+3. **Source logging** (#20580) — per-source invocation counters for future monitoring
+
+**Scheduler consolidation (Child A) not needed** — confirmed only one scheduler.
+
+**Stale comment fix:** `pulse-wrapper.sh` header comment corrected from "120s" to "180s" to match the deployed plist `StartInterval=180`.
