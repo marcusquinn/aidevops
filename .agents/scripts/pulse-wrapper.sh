@@ -1531,14 +1531,28 @@ main() {
 	# mkdir lock acquisition when a pulse process is already alive. Eliminates
 	# lock contention for the common launchd-fires-while-running case.
 	# Bypassed in --canary and --dry-run modes — they need the full code path.
+	#
+	# GH#20613: Replaced pgrep-based check with LOCKDIR existence check.
+	# pgrep -f matches ANY process whose command line contains "pulse-wrapper.sh"
+	# including parent bash -c wrappers from Claude Code, OpenCode, and systemd
+	# ExecStart. These false positives caused 17+ hour outages. The LOCKDIR
+	# is the authoritative ownership signal — if it exists and the owner PID
+	# is alive, a real pulse cycle is running. _handle_existing_lock() in
+	# acquire_instance_lock() handles all edge cases (dead owner, PID reuse,
+	# age-based force-reclaim).
 	if [[ "${PULSE_CANARY_MODE:-0}" != "1" && "${PULSE_DRY_RUN:-0}" != "1" ]]; then
-		local _ir_pids
-		_ir_pids=$(pgrep -f "(^|/)pulse-wrapper\\.sh( |\$)" 2>/dev/null | grep -v "^$$\$" || true)
-		if [[ -n "$_ir_pids" ]]; then
-			local _ir_first_pid
-			_ir_first_pid=$(printf '%s\n' "$_ir_pids" | awk 'NR==1')
-			echo "[pulse-wrapper] Pulse already running (PID: ${_ir_first_pid}), skipping" >>"$WRAPPER_LOGFILE"
-			return 0
+		if [[ -d "$LOCKDIR" ]]; then
+			local _ir_lock_pid=""
+			if [[ -f "${LOCKDIR}/pid" ]]; then
+				_ir_lock_pid=$(cat "${LOCKDIR}/pid" 2>/dev/null || echo "")
+			fi
+			if [[ -n "$_ir_lock_pid" ]] && [[ "$_ir_lock_pid" =~ ^[0-9]+$ ]] && \
+			   [[ "$_ir_lock_pid" != "$$" ]] && ps -p "$_ir_lock_pid" >/dev/null 2>&1; then
+				echo "[pulse-wrapper] Pulse already running (PID: ${_ir_lock_pid}, lockdir owner), skipping" >>"$WRAPPER_LOGFILE"
+				return 0
+			fi
+			# Lock exists but owner is dead/self — fall through to acquire_instance_lock
+			# which handles stale-lock cleanup via _handle_existing_lock()
 		fi
 	fi
 
