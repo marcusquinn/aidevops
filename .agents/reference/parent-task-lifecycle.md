@@ -28,13 +28,15 @@ Narrow patterns only: `Phase N ... #NNNN`, `filed as #NNNN`, `tracks #NNNN`, `Bl
 
 For each open parent-task with 0 children and an eligible nudge, it files a fresh `tier:thinking` worker issue with generator marker `<!-- aidevops:generator=auto-decompose -->`.
 
-Age thresholds:
-- **Fresh parents** (0 non-nudge comments): ≥`SCANNER_FRESH_PARENT_HOURS` (default 6h)
-- **Aged parents** (≥1 non-nudge comments): ≥`SCANNER_NUDGE_AGE_HOURS` (default 24h)
+Age thresholds (AI-throughput defaults — GH#20532):
+- **Fresh parents** (0 non-nudge comments): ≥`SCANNER_FRESH_PARENT_HOURS` (default 0h — fires immediately once nudge exists)
+- **Aged parents** (≥1 non-nudge comments): ≥`SCANNER_NUDGE_AGE_HOURS` (default 0h — fires immediately once nudge exists)
 
-Per-parent state file (`AUTO_DECOMPOSER_PARENT_STATE`) prevents re-filing the same parent within `AUTO_DECOMPOSER_INTERVAL` (default 7 days). The worker's job: read the parent, propose a decomposition plan as children, and stop. Dedup via `source:auto-decomposer` label.
+The comparison is `age_hours >= threshold_hours` (`-lt` guard), so threshold=0 fires for any nudge age including same-cycle (0h). Override via env var to restore a delay.
 
-Constants in `pulse-wrapper.sh`: `AUTO_DECOMPOSER_INTERVAL` (7 days), `AUTO_DECOMPOSER_PARENT_STATE`. Maintainer-only (skips `role: contributor` repos).
+Per-parent state file (`AUTO_DECOMPOSER_PARENT_STATE`) prevents re-filing the same parent within `AUTO_DECOMPOSER_INTERVAL` (default 1 day / 86400s). The worker's job: read the parent, propose a decomposition plan as children, and stop. Dedup via `source:auto-decomposer` label.
+
+Constants in `pulse-wrapper.sh`: `AUTO_DECOMPOSER_INTERVAL`, `AUTO_DECOMPOSER_PARENT_STATE`. Maintainer-only (skips `role: contributor` repos).
 
 ### 5. 7-Day NMR Escalation (Fix #4)
 

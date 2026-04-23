@@ -10,8 +10,8 @@
 #   1. Global AUTO_DECOMPOSER_LAST_RUN gate removed from pulse-simplification.sh
 #   2. Scanner runs every pulse cycle (no global throttle in wrapper)
 #   3. Per-parent state file constants exist (AUTO_DECOMPOSER_PARENT_STATE)
-#   4. AUTO_DECOMPOSER_INTERVAL repurposed as per-parent re-file interval (7 days)
-#   5. SCANNER_FRESH_PARENT_HOURS env var present in scanner (default 6)
+#   4. AUTO_DECOMPOSER_INTERVAL repurposed as per-parent re-file interval (1 day, GH#20532)
+#   5. SCANNER_FRESH_PARENT_HOURS env var present in scanner (default 0, GH#20532)
 #   6. Fresh-parent threshold logic present in do_scan()
 #   7. Per-parent state read/write helpers present (_read_parent_last_filed, _update_parent_state)
 #   8. Non-nudge comment counter present (_count_non_nudge_comments)
@@ -135,7 +135,7 @@ assert_not_grep_fixed \
 	'AUTO_DECOMPOSER_LAST_RUN' \
 	"$BOOTSTRAP"
 
-# --- 4. AUTO_DECOMPOSER_INTERVAL repurposed as per-parent re-file interval ---
+# --- 4. AUTO_DECOMPOSER_INTERVAL per-parent re-file interval (1 day default, GH#20532) ---
 
 assert_grep \
 	"4a: AUTO_DECOMPOSER_INTERVAL default is 604800 (7 days) in pulse-wrapper" \
@@ -148,15 +148,15 @@ assert_grep \
 	"$BOOTSTRAP"
 
 assert_grep \
-	"4c: AUTO_DECOMPOSER_INTERVAL default 604800 in scanner" \
-	'AUTO_DECOMPOSER_INTERVAL.*604800' \
+	"4c: AUTO_DECOMPOSER_INTERVAL default 86400 (1 day) in scanner" \
+	'AUTO_DECOMPOSER_INTERVAL.*86400' \
 	"$SCANNER"
 
 # --- 5. SCANNER_FRESH_PARENT_HOURS in scanner ---
 
 assert_grep \
-	"5a: SCANNER_FRESH_PARENT_HOURS env var defined in scanner (default 6)" \
-	'SCANNER_FRESH_PARENT_HOURS.*:-6' \
+	"5a: SCANNER_FRESH_PARENT_HOURS env var defined in scanner (default 0 — immediate)" \
+	'SCANNER_FRESH_PARENT_HOURS.*:-0' \
 	"$SCANNER"
 
 # --- 6. Fresh-parent threshold logic in do_scan ---
@@ -202,7 +202,7 @@ assert_grep \
 
 assert_grep_fixed \
 	"8b: counter filters OUT nudge comments" \
-	'parent-needs-decomposition -->") | not' \
+	'parent-needs-decomposition -->\") | not' \
 	"$SCANNER"
 
 # --- 9. Re-file gate check in do_scan ---
