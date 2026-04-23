@@ -2957,7 +2957,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2751 fix phase-nudge grep -c counter stacking '0\n0' on parent-task issues ref:GH#20555
 
-- [ ] t2750 Move cleanup_worktrees to async background job to stop blocking pulse cycles #auto-dispatch #bug #framework #pulse ref:GH#20554
+- [x] t2750 Move cleanup_worktrees to async background job to stop blocking pulse cycles #auto-dispatch #bug #framework #pulse ref:GH#20554 pr:#20569 completed:2026-04-23
 
 - [ ] t2754 Phase 2 of #20402: formalise opt-out vocabulary ref:GH#20558
 
