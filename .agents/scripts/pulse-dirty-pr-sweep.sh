@@ -633,9 +633,9 @@ _dirty_pr_action_rebase() {
 	local ephemeral_branch="dirty-pr-sweep/pr-${pr_number}-${ephemeral_branch_ts}"
 
 	# Refresh origin/<default_branch> and origin/<head_ref> before anything else.
-	git -C "$repo_path" fetch --quiet origin "${default_branch}:refs/remotes/origin/${default_branch}" 2>/dev/null || {
+	git -C "$repo_path" fetch --quiet origin "${default_branch}:refs/remotes/origin/${default_branch}" || {
 		_dps_log "PR #$pr_number ($repo_slug): fetch of origin/${default_branch} failed — skipping rebase"
-		rm -rf "$ephemeral" 2>/dev/null || true
+		rm -rf "$ephemeral" || true
 		return 1
 	}
 	git -C "$repo_path" fetch --quiet origin "${head_ref}:refs/remotes/origin/${head_ref}" 2>/dev/null || {
