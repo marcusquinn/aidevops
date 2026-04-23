@@ -65,11 +65,13 @@ Add `#auto-dispatch` only when ALL inclusion criteria pass and NO exclusion crit
 
 | Include (ALL required) | Exclude (ANY blocks) |
 |------------------------|----------------------|
-| Clear fix/feature with specific files or patterns | Requires credentials, accounts, or purchases |
+| Clear fix/feature with specific files or patterns | Requires credentials, accounts, or purchases (`needs-credentials` label) |
 | Bounded scope (~1h or less) | Is a `#plan` needing decomposition first |
 | No design decisions requiring user preference | Requires hardware or external service setup |
 | Verification is automatable (tests, ShellCheck, syntax, browser) | Description says "investigate"/"evaluate" without clear deliverable |
 | | Has `blocked-by:` dependencies on incomplete tasks |
+
+Full canonical dispatch-blocker label set (labels + claim-states + validator-states): `reference/dispatch-blockers.md`.
 
 ## Saving Work
 

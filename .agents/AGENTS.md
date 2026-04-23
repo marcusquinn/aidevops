@@ -100,7 +100,7 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 ### Auto-Dispatch and Completion
 
 **Auto-dispatch default**: Always add `#auto-dispatch` unless an exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging".
-- **Exclusions**: Needs credentials, decomposition, or user preference.
+- **Exclusions**: Needs credentials, decomposition, or user preference. Canonical blocker label set: `reference/dispatch-blockers.md`.
 - **Quality gate**: 2+ acceptance criteria, file references in How section, clear deliverable in What section.
 - **Interactive workflow**: Add `assignee:` before pushing if working interactively.
 
