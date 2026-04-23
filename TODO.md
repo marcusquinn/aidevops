@@ -2963,7 +2963,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2753 research: Investigate pulse-wrapper invocation churn and dedup improvements #framework #parent #pulse #research ref:GH#20557
 
-- [ ] t2752 Add pulse-diagnose-helper.sh cycle-health subcommand for pulse stability observability #auto-dispatch #enhancement #framework #observability #pulse ref:GH#20556
+- [x] t2752 Add pulse-diagnose-helper.sh cycle-health subcommand for pulse stability observability #auto-dispatch #enhancement #framework #observability #pulse ref:GH#20556 pr:#20593 completed:2026-04-23
 
 - [ ] t2755 robust parent-task phase-lifecycle automation (B/C/D of t2751 systemic fix) #parent ref:GH#20559
 
