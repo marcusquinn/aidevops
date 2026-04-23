@@ -462,27 +462,14 @@ test_sentinel_path_pattern_in_source() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 8: _dispatch_issue_consolidation writes sentinel on success
-#
-# Sources pulse-triage.sh with a minimal gh stub and the lock override so
-# the full dispatch path runs and creates the sentinel file. Verifies that
-# the sentinel at pulse-cycle-$$-consolidation-fired exists after a
-# successful _dispatch_issue_consolidation call.
+# Shared helper: create the gh stub binary used by test_dispatch_writes_sentinel.
 # ---------------------------------------------------------------------------
 
-test_dispatch_writes_sentinel() {
-	local tmp; tmp=$(mktemp -d -t t2749-sentinel.XXXXXX)
-	local fake_home="${tmp}/home"
-	mkdir -p "${fake_home}/.aidevops/cache" "${fake_home}/.aidevops/logs"
-	local gh_log="${tmp}/gh.log"
-	: >"$gh_log"
-
-	# gh stub: handles all expected calls.
-	local stub_bin="${tmp}/bin"
+_create_sentinel_test_stub() {
+	local stub_bin="$1"
+	local gh_log="$2"
 	mkdir -p "$stub_bin"
-	# Export gh_log for use inside the stub.
-	local _GH_LOG_PATH="$gh_log"
-	export _GH_LOG_PATH
+	export _GH_LOG_PATH="$gh_log"
 	cat >"${stub_bin}/gh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${_GH_LOG_PATH:-/dev/null}"
@@ -513,6 +500,27 @@ esac
 exit 0
 STUB
 	chmod +x "${stub_bin}/gh"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 8: _dispatch_issue_consolidation writes sentinel on success
+#
+# Sources pulse-triage.sh with a minimal gh stub and the lock override so
+# the full dispatch path runs and creates the sentinel file. Verifies that
+# the sentinel at pulse-cycle-$$-consolidation-fired exists after a
+# successful _dispatch_issue_consolidation call.
+# ---------------------------------------------------------------------------
+
+test_dispatch_writes_sentinel() {
+	local tmp; tmp=$(mktemp -d -t t2749-sentinel.XXXXXX)
+	local fake_home="${tmp}/home"
+	mkdir -p "${fake_home}/.aidevops/cache" "${fake_home}/.aidevops/logs"
+	local gh_log="${tmp}/gh.log"
+	: >"$gh_log"
+
+	local stub_bin="${tmp}/bin"
+	_create_sentinel_test_stub "$stub_bin" "$gh_log"
 
 	local prev_path="$PATH"
 	export PATH="${stub_bin}:${PATH}"
@@ -535,14 +543,12 @@ STUB
 	# Lock override: bypass gh api user call in _consolidation_lock_self_login.
 	export CONSOLIDATION_LOCK_SELF_LOGIN_OVERRIDE="testrunner"
 
-	# gh stub env vars for view/list/comments.
 	export GH_ISSUE_VIEW_TITLE="Test parent title"
 	export GH_ISSUE_VIEW_BODY="Parent body text for testing."
 	export GH_ISSUE_VIEW_LABELS="bug,tier:standard"
 	export GH_ISSUE_LIST_CHILD_JSON="[]"
 	export GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
 	export GH_PR_LIST_RESOLVING_JSON="[]"
-	# Two long comments (>50 chars) to satisfy the threshold.
 	local long_body="Detailed review comment with enough characters to clear the minimum length threshold for consolidation."
 	export GH_API_COMMENTS_JSON
 	GH_API_COMMENTS_JSON=$(printf '[
@@ -550,9 +556,7 @@ STUB
   {"user": {"login": "bob",   "type": "User"}, "created_at": "2026-01-01T01:00:00Z", "body": "%s"}
 ]' "$long_body" "$long_body")
 
-	# Clear the triage module load guard before sourcing.
 	unset _PULSE_TRIAGE_LOADED
-
 	# shellcheck disable=SC1091
 	source "${REPO_ROOT}/.agents/scripts/pulse-triage.sh" || {
 		printf 'ERROR: failed to source pulse-triage.sh\n' >&2

@@ -1365,25 +1365,15 @@ _dispatch_issue_consolidation() {
 	# Ensure labels exist on this repo up front. Idempotent (--force).
 	_ensure_consolidation_labels "$repo_slug"
 
-	# t2161: Safety net — skip dispatch if an open PR with a closing keyword
-	# already resolves this parent. Mirrors the same guard in
-	# _issue_needs_consolidation; checked here too because the dispatch path
-	# is reachable from contributor runners on stale code where the gate
-	# may have been satisfied at flag time but a fix PR landed since.
-	# (Note: _backfill_stale_consolidation_labels has called the gate since
-	# t2144/A2. This defence-in-depth remains for cross-runner version drift.)
-	# Cheaper than _consolidation_child_exists (one PR search vs two issue
-	# searches + label read) so it runs first.
+	# t2161: skip if a resolving PR already exists — defence-in-depth vs
+	# cross-runner version drift; cheaper than child_exists, runs first.
 	if _consolidation_resolving_pr_exists "$issue_number" "$repo_slug"; then
 		echo "[pulse-wrapper] Consolidation: in-flight resolving PR exists for #${issue_number} in ${repo_slug}; skipping dispatch (t2161)" >>"$LOGFILE"
 		return 0
 	fi
 
-	# Dedup: if an open consolidation-task already references this parent,
-	# just ensure the parent is flagged and return. Do NOT create a duplicate.
-	# t2151: _consolidation_child_exists also returns 0 when the lock label
-	# is present, so a competing runner's in-flight creation blocks us here
-	# before we ever touch the acquire path.
+	# Dedup: child already exists (t2151: lock label also returns 0, blocking
+	# competing runners before they reach the acquire path).
 	if _consolidation_child_exists "$issue_number" "$repo_slug"; then
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--add-label "needs-consolidation" 2>/dev/null || true
@@ -1391,10 +1381,8 @@ _dispatch_issue_consolidation() {
 		return 0
 	fi
 
-	# t2151: acquire the cross-runner advisory lock before any state changes
-	# that would be expensive or visible to cause a partial-state race.
-	# If we don't win the lock, another runner will create the child; we
-	# just need to flag the parent as needing consolidation and return.
+	# t2151: acquire advisory lock before any visible state changes;
+	# if we lose, flag the parent and yield.
 	if ! _consolidation_lock_acquire "$issue_number" "$repo_slug"; then
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--add-label "needs-consolidation" 2>/dev/null || true
