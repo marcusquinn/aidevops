@@ -524,6 +524,12 @@ print_info() {
 # code with `|| true`, and guards the result with a regex to guarantee a
 # single integer on a single line.
 #
+# NOTE: Designed for single-file or stdin use. With multiple file arguments,
+# grep -c outputs "filename:count" per file, which fails the integer regex
+# and returns 0. The -h flag is passed defensively to suppress filename
+# prefixes, but multi-line output (from multiple files) still falls through
+# to the 0 fallback. For multi-file counting, call once per file.
+#
 # Usage:
 #   count=$(safe_grep_count -E '^pat' file.txt)
 #   count=$(printf '%s\n' "$data" | safe_grep_count 'needle')
@@ -533,7 +539,7 @@ print_info() {
 # idiom in CI. See also `reference/shell-style-guide.md` § Counter Safety.
 safe_grep_count() {
 	local _result
-	_result=$(grep -c "$@" 2>/dev/null || true)
+	_result=$(grep -h -c "$@" 2>/dev/null || true)
 	if [[ "$_result" =~ ^[0-9]+$ ]]; then
 		printf '%s\n' "$_result"
 	else
