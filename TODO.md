@@ -2970,3 +2970,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2756 investigate systemic no_work worker stall cluster (201 issues, 4 repos) #parent ref:GH#20560
 
 - [ ] t2757 pulse-dispatch-worker-launch.sh: detach workers via setsid to survive pulse restart #auto-dispatch #bug #framework #pulse ref:GH#20561
+
+- [ ] t2758 pulse-dispatch-worker-launch.sh: pre-warm opencode DB per-worker to shorten cold-start vulnerability window #auto-dispatch #bug #framework #pulse ref:GH#20562
