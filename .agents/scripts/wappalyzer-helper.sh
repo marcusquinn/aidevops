@@ -159,7 +159,7 @@ cache_get() {
 	if [[ -f "$cache_file" ]]; then
 		# Check if cache is less than 7 days old
 		local cache_age
-		cache_age=$(($(date +%s) - $(stat -f %m "$cache_file" 2>/dev/null || stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
+		cache_age=$(($(date +%s) - $(_file_mtime_epoch "$cache_file")))
 
 		if [[ $cache_age -lt 604800 ]]; then
 			cat "$cache_file"

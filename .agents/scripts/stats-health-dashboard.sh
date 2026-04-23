@@ -428,7 +428,7 @@ _periodic_health_issue_dedup() {
 	# Throttle: skip if last scan was recent
 	if [[ -f "$state_file" ]]; then
 		local last_scan_epoch now_epoch elapsed
-		last_scan_epoch=$(stat -f %m "$state_file" 2>/dev/null || stat -c %Y "$state_file" 2>/dev/null || echo 0)
+		last_scan_epoch=$(_file_mtime_epoch "$state_file")
 		now_epoch=$(date +%s)
 		elapsed=$((now_epoch - last_scan_epoch))
 		if [[ $elapsed -lt $interval ]]; then

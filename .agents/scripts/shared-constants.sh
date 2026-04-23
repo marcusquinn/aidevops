@@ -662,6 +662,20 @@ ${text}
 }
 
 # =============================================================================
+# Portable file mtime (macOS vs GNU/Linux)
+# GNU stat uses -c %Y; BSD stat uses -f %m. On Linux, `stat -f %m` does NOT
+# fail — it prints filesystem info (exit 0), capturing garbage into variables.
+# GNU-first order is mandatory.  See GH#20615.
+# Usage: epoch=$(_file_mtime_epoch "/path/to/file")
+# Returns: modification time as epoch seconds, or 0 if file missing / error.
+# =============================================================================
+
+_file_mtime_epoch() {
+	local file_path="$1"
+	stat -c %Y "$file_path" 2>/dev/null || stat -f %m "$file_path" 2>/dev/null || echo 0
+}
+
+# =============================================================================
 # Stderr Logging Utilities
 # =============================================================================
 # Replace blanket 2>/dev/null with targeted stderr handling.

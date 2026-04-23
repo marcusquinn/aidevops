@@ -329,9 +329,9 @@ reset_stubs
 state_file="${HOME}/.aidevops/logs/health-dedup-last-scan-alice-supervisor-owner-repo"
 touch -t 202001010000 "$state_file"  # stale
 stub_gh_for "issue list --repo ${REPO} --label supervisor --label alice" "" 4
-orig_mtime=$(stat -f %m "$state_file" 2>/dev/null || stat -c %Y "$state_file" 2>/dev/null)
+orig_mtime=$(stat -c %Y "$state_file" 2>/dev/null || stat -f %m "$state_file" 2>/dev/null)
 _periodic_health_issue_dedup "$REPO" "$RUNNER_USER" "$RUNNER_ROLE" "$ROLE_LABEL" "$ROLE_DISPLAY" "42"
-new_mtime=$(stat -f %m "$state_file" 2>/dev/null || stat -c %Y "$state_file" 2>/dev/null)
+new_mtime=$(stat -c %Y "$state_file" 2>/dev/null || stat -f %m "$state_file" 2>/dev/null)
 if [[ "$orig_mtime" == "$new_mtime" ]]; then
 	pass "state file mtime unchanged after list failure (retry next cycle)"
 else
@@ -351,7 +351,7 @@ else
 	fail "periodic dedup closes older duplicate" "no close for 42 in: $(cat "$GH_CALLS")"
 fi
 # State file should be touched to "now" — verify it's newer than the stale mtime
-new_mtime=$(stat -f %m "$state_file" 2>/dev/null || stat -c %Y "$state_file" 2>/dev/null)
+new_mtime=$(stat -c %Y "$state_file" 2>/dev/null || stat -f %m "$state_file" 2>/dev/null)
 now=$(date +%s)
 if ((now - new_mtime < 60)); then
 	pass "state file touched after successful dedup (within last 60s)"

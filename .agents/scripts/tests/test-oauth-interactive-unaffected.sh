@@ -139,7 +139,7 @@ chmod +x "$TMP/bin/oauth-pool-helper.sh"
 
 # Hash the shared file before rotation.
 sha_before=$(shasum -a 256 "$TMP/shared/opencode/auth.json" | awk '{print $1}')
-mtime_before=$(stat -f %m "$TMP/shared/opencode/auth.json" 2>/dev/null || stat -c %Y "$TMP/shared/opencode/auth.json" 2>/dev/null || echo 0)
+mtime_before=$(stat -c %Y "$TMP/shared/opencode/auth.json" 2>/dev/null || stat -f %m "$TMP/shared/opencode/auth.json" 2>/dev/null || echo 0)
 
 # --- Execute rotation with XDG pointing at isolated -------------------------
 
@@ -163,7 +163,7 @@ fi
 # --- Test 2: shared file mtime unchanged -----------------------------------
 
 sleep 1 # ensure any errant mtime bump would be visible
-mtime_after=$(stat -f %m "$TMP/shared/opencode/auth.json" 2>/dev/null || stat -c %Y "$TMP/shared/opencode/auth.json" 2>/dev/null || echo 0)
+mtime_after=$(stat -c %Y "$TMP/shared/opencode/auth.json" 2>/dev/null || stat -f %m "$TMP/shared/opencode/auth.json" 2>/dev/null || echo 0)
 if [[ "$mtime_before" == "$mtime_after" ]]; then
 	pass "shared auth.json mtime unchanged (mtime=$mtime_before)"
 else
