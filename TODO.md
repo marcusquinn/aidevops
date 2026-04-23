@@ -2979,4 +2979,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2761 root-cause stalled headless-runtime-helper.sh outer wrappers (Child 1 of #20560) #auto-dispatch ref:GH#20575
 
-- [ ] t2762 systemic sweep — grep -c counter-stacking bug + recurrence guard #parent ref:GH#20581
+- [x] t2762 systemic sweep — grep -c counter-stacking bug + recurrence guard #parent ref:GH#20581 pr:#20591 completed:2026-04-23
