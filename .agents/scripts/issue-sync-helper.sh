@@ -1216,7 +1216,7 @@ _enrich_process_task() {
 	# sync-on-push 10-minute cap. Forwarding pre-fetched state collapses the
 	# per-task read cost to one call and lets each helper skip writes whose
 	# target value already matches.
-	local _state_json current_title="" current_body="" current_labels_csv=""
+	local _state_json="" current_title="" current_body="" current_labels_csv=""
 	# GH#20129: use batch-prefetched JSON when available to avoid per-task API
 	# calls. ENRICH_PREFETCH_FILE is set by cmd_enrich before the loop via
 	# _enrich_prefetch_issues_map. The prefetch includes all fields needed:

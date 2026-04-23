@@ -2544,9 +2544,9 @@
       "pr": 15916
     },
     ".agents/scripts/shared-constants.sh": {
-      "at": "2026-04-22T23:56:55Z",
-      "hash": "8a03b8f8e70a61bda90e2d4cc41999b14310ecd6",
-      "passes": 20,
+      "at": "2026-04-23T23:17:00Z",
+      "hash": "30b46728d9b1dd3d13e673860c43a4f9b8e68236",
+      "passes": 21,
       "pr": 18847
     },
     ".agents/scripts/stats-functions.sh": {
@@ -7486,9 +7486,9 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-04-23T21:03:24Z",
-      "hash": "5fa000f90be603deae873480ef3bbedb178c8a4c",
-      "passes": 92,
+      "at": "2026-04-23T23:19:53Z",
+      "hash": "57a63b74a85455e876fe331cd7dad4931dad56df",
+      "passes": 93,
       "pr": 15490
     },
     "aidevops.sh": {
@@ -7576,10 +7576,10 @@
       "passes": 1
     },
     ".agents/reference/shell-style-guide.md": {
-      "hash": "a611a5a02dbd5e29c9813543ef3546f1414608fe",
-      "at": "2026-04-16T21:58:05Z",
+      "hash": "0a2560bc09c5304973263f831563e4add4c13ab3",
+      "at": "2026-04-23T23:16:35Z",
       "pr": 19321,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/tests/test-consolidation-multi-runner.sh": {
       "hash": "a13a53c49a0bb67c640682bee85ec6eca8c9338a",
