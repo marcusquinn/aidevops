@@ -821,6 +821,14 @@ _adaptive_launch_settle_wait() {
 # Dispatches deterministic fill floor, then waits adaptively based on
 # how many workers were launched so they can appear in process lists
 # before the next worker count.
+#
+# t2749: Two-phase fill floor. Phase 1 is the existing candidate loop.
+# Phase 2 fires when _dispatch_issue_consolidation created a new child
+# during Phase 1 (detected via a per-cycle sentinel file). The child is
+# not in Phase 1's candidate list (enumeration ran before the loop), so
+# Phase 2 re-enumerates and dispatches it in the same cycle. Without
+# Phase 2, the child waits a minimum of one additional pulse cycle
+# (3–7 min stable; 10–20 min when wrapper cycles are unstable).
 #######################################
 apply_deterministic_fill_floor() {
 	if [[ -f "$STOP_FLAG" ]]; then
@@ -833,6 +841,31 @@ apply_deterministic_fill_floor() {
 	[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
 
 	_adaptive_launch_settle_wait "$fill_dispatched" "fill floor"
+
+	# t2749: Phase 2 — re-enumerate when consolidation created a child during
+	# Phase 1. The sentinel is written by _dispatch_issue_consolidation in
+	# pulse-triage.sh. Named with $$ (top-level PID) so it is cycle-scoped.
+	# Consume it before checking worker slots to prevent double Phase 2 when
+	# apply_deterministic_fill_floor is called again in the same cycle
+	# (early dispatch pass + main fill floor both invoke this function).
+	local _p2_sentinel="${HOME}/.aidevops/cache/pulse-cycle-$$-consolidation-fired"
+	if [[ -f "$_p2_sentinel" && ! -f "$STOP_FLAG" ]]; then
+		rm -f "$_p2_sentinel" 2>/dev/null || true
+		local _p2_active _p2_max
+		_p2_active=$(count_active_workers)
+		_p2_max=$(get_max_workers_target)
+		[[ "$_p2_active" =~ ^[0-9]+$ ]] || _p2_active=0
+		[[ "$_p2_max" =~ ^[0-9]+$ ]] || _p2_max=1
+		if [[ "$_p2_active" -lt "$_p2_max" ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor Phase 2: consolidation child created during Phase 1 (active=${_p2_active}, max=${_p2_max}) — re-enumerating candidates (t2749)" >>"$LOGFILE"
+			local fill_dispatched_p2
+			fill_dispatched_p2=$(dispatch_deterministic_fill_floor) || fill_dispatched_p2=0
+			[[ "$fill_dispatched_p2" =~ ^[0-9]+$ ]] || fill_dispatched_p2=0
+			_adaptive_launch_settle_wait "$fill_dispatched_p2" "fill floor phase 2"
+		else
+			echo "[pulse-wrapper] Deterministic fill floor Phase 2: consolidation child created but slots full (active=${_p2_active}, max=${_p2_max}) — skipping (t2749)" >>"$LOGFILE"
+		fi
+	fi
 	return 0
 }
 
@@ -1068,10 +1101,21 @@ _preflight_cleanup_and_ledger() {
 	run_stage_with_timeout "cleanup_orphans" "$PRE_RUN_STAGE_TIMEOUT" cleanup_orphans || true
 	run_stage_with_timeout "cleanup_stale_opencode" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stale_opencode || true
 	run_stage_with_timeout "cleanup_stalled_workers" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stalled_workers || true
-	# GH#18979: Worktree cleanup is non-critical and can hang on per-worktree
-	# gh API calls across many repos. Use a short timeout (60s) so a slow
-	# cleanup doesn't block prefetch/dispatch. Missed cleanup catches up next cycle.
-	run_stage_with_timeout "cleanup_worktrees" 60 cleanup_worktrees || true
+	# GH#20554: Worktree cleanup is moved to an async background job so a slow
+	# cleanup (20+ worktrees × 2-5s gh API calls each) never hits a hard timeout
+	# and blocks the pulse cycle. The helper enforces a single-runner lock and
+	# a cadence gate (CLEANUP_WORKTREES_ASYNC_CADENCE_MIN, default 10 min) so
+	# concurrent pulse invocations do not spawn duplicate cleanup processes.
+	# Progress and last-run timestamp: ~/.aidevops/logs/cleanup_worktrees.*
+	local _cleanup_async_helper="${SCRIPT_DIR}/cleanup-worktrees-async-helper.sh"
+	if [[ -x "$_cleanup_async_helper" ]]; then
+		nohup "$_cleanup_async_helper" \
+			>>"${HOME}/.aidevops/logs/cleanup_worktrees.log" 2>&1 &
+		disown $! 2>/dev/null || true
+	else
+		# Fallback: synchronous with short timeout (old GH#18979 behaviour)
+		run_stage_with_timeout "cleanup_worktrees" 60 cleanup_worktrees || true
+	fi
 	run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
 
 	# GH#17549: Archive old OpenCode sessions to keep the active DB small.

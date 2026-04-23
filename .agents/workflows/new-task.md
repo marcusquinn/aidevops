@@ -105,7 +105,7 @@ Run `task-decompose-helper.sh classify "{title}"` if available. Skip with `--no-
 
 `#{origin}`: `#interactive` (user present) or `#worker` (headless). Detect via `detect_session_origin` from `shared-constants.sh`. Maps to `origin:interactive` / `origin:worker` GitHub labels on issue sync.
 
-**Auto-dispatch:** Only add `#auto-dispatch` if brief has: (1) 2+ acceptance criteria beyond "tests pass"/"lint clean", (2) non-empty "How" with file references, (3) clear deliverable in "What".
+**Auto-dispatch:** Only add `#auto-dispatch` if brief has: (1) 2+ acceptance criteria beyond "tests pass"/"lint clean", (2) non-empty "How" with file references, (3) clear deliverable in "What". Canonical dispatch-blocker labels: `reference/dispatch-blockers.md`.
 
 ### Step 5: Label, Commit, Push
 

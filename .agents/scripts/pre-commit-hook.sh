@@ -267,11 +267,32 @@ validate_positional_parameters() {
 # so the patterns are defined once. Keeps validate_string_literals from
 # dogfooding itself (4× repeated literal regexes in-source).
 # Reads content on stdin, prints "<count>" of distinct literals repeated ≥3×.
+#
+# The sed pre-strip pass removes shell variable references before the literal
+# extraction regex runs. Without it, the span between two adjacent quoted
+# shell-argument tokens — e.g. the " repo=" in `local tid="$1" repo="$2"` —
+# is captured as a 6-char "literal" using the closing " of "$1" and the
+# opening " of "$2" as outer quotes. The existing `^"\$` exclusion only
+# rejects literals that START with "$", not inter-argument spans. (GH#20505)
+#
+# Sed patterns (ERE, -E works on both BSD and GNU sed):
+#   "\$[A-Za-z_][A-Za-z0-9_]*"   → "$var", "$name", "$_private"
+#   "\$\{[^}]*\}"                 → "${var}", "${var:-default}", "${#var}"
+#   "\$@"                         → special array-expansion token
+#   "\$[0-9*#?$!-]"               → "$1", "$*", "$#", "$?", "$$", "$!", "$-"
+#
+# POSIX note: [[:space:]] replaces \s in grep to ensure BSD grep compatibility.
 _count_repeated_literals() {
 	local _ext_literal='"[^"]{4,}"'
 	local _ext_numeric='^"[0-9]+\.?[0-9]*"$'
 	local _ext_varref='^"\$'
-	grep -v '^\s*#' |
+	grep -v '^[[:space:]]*#' |
+		sed -E '
+			s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
+			s/"\$\{[^}]*\}"//g
+			s/"\$@"//g
+			s/"\$[0-9*#?$!-]"//g
+		' |
 		grep -oE "$_ext_literal" |
 		grep -vE "$_ext_numeric" |
 		grep -vE "$_ext_varref" |
@@ -280,11 +301,19 @@ _count_repeated_literals() {
 }
 
 # Same pipeline but prints the top-3 "count: literal" display form.
+# Applies the same sed pre-strip as _count_repeated_literals so that display
+# output matches the counter — no phantom truncated literals like `4x: "`.
 _show_repeated_literals() {
 	local _ext_literal='"[^"]{4,}"'
 	local _ext_numeric='^"[0-9]+\.?[0-9]*"$'
 	local _ext_varref='^"\$'
-	grep -v '^\s*#' |
+	grep -v '^[[:space:]]*#' |
+		sed -E '
+			s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
+			s/"\$\{[^}]*\}"//g
+			s/"\$@"//g
+			s/"\$[0-9*#?$!-]"//g
+		' |
 		grep -oE "$_ext_literal" |
 		grep -vE "$_ext_numeric" |
 		grep -vE "$_ext_varref" |

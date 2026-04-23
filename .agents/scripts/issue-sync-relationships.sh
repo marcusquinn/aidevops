@@ -103,7 +103,7 @@ _cached_node_id() {
 	# Uses the same core-pool 5000/hr budget that the t2574 write-path fallbacks use.
 	if _gh_should_fallback_to_rest; then
 		local rest_nid
-		rest_nid=$(gh api "/repos/${repo}/issues/${num}" --jq '.node_id' 2>/dev/null || echo "")
+		rest_nid=$(gh api "/repos/${repo}/issues/${num}" --jq '.node_id // ""' || echo "")
 		if [[ -n "$rest_nid" ]]; then
 			echo "${num}=${rest_nid}" >>"$_NODE_ID_CACHE_FILE"
 			echo "$rest_nid"
@@ -869,75 +869,93 @@ _backfill_parent_children() {
 	return 0
 }
 
-# Backfill sub-issue parent-child links for issues in the current repo.
-# Detects parents from title/body only — no TODO.md or brief file required.
-#
-# Usage:
-#   cmd_backfill_sub_issues [--issue N]
-#
-# Without --issue, enumerates open issues in the repo (up to 500) and attempts
-# to link each one to its parent. With --issue, operates on a single issue —
-# this is the entry point used by the t2112 reconciler for one-issue backfill.
-cmd_backfill_sub_issues() {
-	local target_issue=""
+# Parse the --issue flag from cmd_backfill_sub_issues arguments.
+# Prints the target issue number to stdout (empty string if not supplied).
+# Returns 1 on parse error.
+_backfill_parse_target_issue() {
+	local _arg
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		_arg="$1"
+		case "$_arg" in
 		--issue)
 			if [[ -z "${2:-}" ]]; then
 				print_error "backfill-sub-issues: --issue requires an issue number"
 				return 1
 			fi
-			target_issue="$2"
-			shift 2
+			printf '%s' "$2"
+			return 0
 			;;
 		*)
 			shift
 			;;
 		esac
 	done
+	printf ''
+	return 0
+}
 
-	_init_cmd || return 1
-	local repo="$_CMD_REPO"
+# Fetch the list of open issue numbers for a repo, or return a single number.
+# Usage: _backfill_fetch_issue_numbers <target_issue> <repo>
+# Prints one number per line to stdout; returns 1 on gh failure.
+_backfill_fetch_issue_numbers() {
+	local target_issue="$1"
+	local repo="$2"
 
-	local issue_numbers=()
 	if [[ -n "$target_issue" ]]; then
-		issue_numbers=("$target_issue")
-	else
-		# Fail fast on gh errors. Previously an auth/network failure turned
-		# into `[]` and the run reported "No issues to backfill" — success
-		# with no work done, which silently skipped every real candidate
-		# and made the pulse t2112 reconcile path believe it had already
-		# backfilled an unblessed issue. Any non-zero exit now aborts the
-		# command with a clear error and propagates the gh stderr.
-		local list_json list_err list_rc
-		list_err=$(mktemp) || {
-			print_error "backfill-sub-issues: mktemp failed"
-			return 1
-		}
-		list_json=$(gh issue list --repo "$repo" --state open --limit 500 \
-			--json number 2>"$list_err")
-		list_rc=$?
-		if [[ "$list_rc" -ne 0 ]]; then
-			print_error "backfill-sub-issues: gh issue list failed for $repo (rc=${list_rc})"
-			sed 's/^/  /' "$list_err" >&2 || true
-			rm -f "$list_err"
-			return 1
-		fi
-		rm -f "$list_err"
-		while IFS= read -r _num; do
-			[[ -n "$_num" ]] && issue_numbers+=("$_num")
-		done < <(printf '%s' "$list_json" | jq -r '.[].number' 2>/dev/null || true)
-	fi
-
-	local total="${#issue_numbers[@]}"
-	if [[ $total -eq 0 ]]; then
-		print_info "No issues to backfill in $repo"
+		printf '%s\n' "$target_issue"
 		return 0
 	fi
 
+	# Fail fast on gh errors. Previously an auth/network failure turned
+	# into `[]` and the run reported "No issues to backfill" — success
+	# with no work done, which silently skipped every real candidate
+	# and made the pulse t2112 reconcile path believe it had already
+	# backfilled an unblessed issue. Any non-zero exit now aborts the
+	# command with a clear error and propagates the gh stderr.
+	local list_json list_err list_rc
+	list_err=$(mktemp) || {
+		print_error "backfill-sub-issues: mktemp failed"
+		return 1
+	}
+	list_json=$(gh issue list --repo "$repo" --state open --limit 500 \
+		--json number 2>"$list_err")
+	list_rc=$?
+	if [[ "$list_rc" -ne 0 ]]; then
+		print_error "backfill-sub-issues: gh issue list failed for $repo (rc=${list_rc})"
+		sed 's/^/  /' "$list_err" >&2 || true
+		rm -f "$list_err"
+		return 1
+	fi
+	rm -f "$list_err"
+	printf '%s' "$list_json" | jq -r '.[].number' 2>/dev/null || true
+	return 0
+}
+
+# Process a list of issue numbers, linking sub-issue relationships.
+# Usage: _backfill_process_loop <repo> <issue_numbers_array_name>
+# Prints a summary line and returns 0.
+_backfill_process_loop() {
+	local repo="$1"
+	shift
+	local issue_numbers=("$@")
+	local total="${#issue_numbers[@]}"
+
 	print_info "Backfilling sub-issue links for $total issue(s) in $repo"
 
-	local linked=0 skipped=0 rate_limited=0 processed=0
+	# Initialise the node-ID cache in the parent process so all subshells inherit
+	# the same _NODE_ID_CACHE_FILE and _NODE_ID_RATE_LIMITED_FILE paths.
+	# Without this, each _cached_node_id() subshell creates its own temp file and
+	# cache hits between issues are lost.
+	_init_node_id_cache
+
+	local linked
+	local skipped
+	local rate_limited
+	local processed
+	linked=0
+	skipped=0
+	rate_limited=0
+	processed=0
 	local _num result meta _title _body _has_parent _pcount
 	for _num in "${issue_numbers[@]}"; do
 		processed=$((processed + 1))
@@ -963,14 +981,14 @@ cmd_backfill_sub_issues() {
 		case "$result" in
 		LINKED*) linked=$((linked + 1)) ;;
 		DRY*) linked=$((linked + 1)) ;;
-		PARENT_LINKED*|PARENT_DRY*)
+		PARENT_LINKED* | PARENT_DRY*)
 			_pcount="${result##*:}"
 			linked=$((linked + _pcount))
 			;;
 		# RATE_LIMITED / PARENT_RATE_LIMITED: node ID could not be resolved due to
 		# GraphQL exhaustion and REST also failing. Counted separately so callers
 		# (pulse t2112 reconciler) can re-enqueue rather than treating as permanent.
-		RATE_LIMITED*|PARENT_RATE_LIMITED*) rate_limited=$((rate_limited + 1)) ;;
+		RATE_LIMITED* | PARENT_RATE_LIMITED*) rate_limited=$((rate_limited + 1)) ;;
 		*) skipped=$((skipped + 1)) ;;
 		esac
 	done
@@ -978,5 +996,36 @@ cmd_backfill_sub_issues() {
 
 	printf "\n=== Backfill Sub-Issues ===\nLinked: %d | Skipped: %d | Rate-limited: %d | Issues processed: %d\n" \
 		"$linked" "$skipped" "$rate_limited" "$total"
+	return 0
+}
+
+# Backfill sub-issue parent-child links for issues in the current repo.
+# Detects parents from title/body only — no TODO.md or brief file required.
+#
+# Usage:
+#   cmd_backfill_sub_issues [--issue N]
+#
+# Without --issue, enumerates open issues in the repo (up to 500) and attempts
+# to link each one to its parent. With --issue, operates on a single issue —
+# this is the entry point used by the t2112 reconciler for one-issue backfill.
+cmd_backfill_sub_issues() {
+	local target_issue
+	target_issue=$(_backfill_parse_target_issue "$@") || return 1
+
+	_init_cmd || return 1
+	local repo="$_CMD_REPO"
+
+	local issue_numbers=()
+	while IFS= read -r _n; do
+		[[ -n "$_n" ]] && issue_numbers+=("$_n")
+	done < <(_backfill_fetch_issue_numbers "$target_issue" "$repo") || return 1
+
+	local total="${#issue_numbers[@]}"
+	if [[ $total -eq 0 ]]; then
+		print_info "No issues to backfill in $repo"
+		return 0
+	fi
+
+	_backfill_process_loop "$repo" "${issue_numbers[@]}"
 	return 0
 }

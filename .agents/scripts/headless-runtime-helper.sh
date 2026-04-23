@@ -411,7 +411,15 @@ _invoke_opencode() {
 	# The isolated dir is per-PID and cleaned up after the worker exits.
 	local isolated_data_dir=""
 	if [[ "${AIDEVOPS_HEADLESS_AUTH_ISOLATION:-1}" == "1" ]]; then
-		isolated_data_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-worker-auth.XXXXXX")
+		# t2758: Reuse pre-warmed isolated DB dir if the dispatcher already ran
+		# opencode --version against it to trigger migration + skill-dedup.
+		# Falls back to a fresh mktemp when pre-warming was skipped or failed.
+		if [[ -n "${AIDEVOPS_WORKER_PREWARM_DIR:-}" && -d "${AIDEVOPS_WORKER_PREWARM_DIR:-}" ]]; then
+			isolated_data_dir="$AIDEVOPS_WORKER_PREWARM_DIR"
+			print_info "[lifecycle] opencode_warm_done dir=$isolated_data_dir (reusing pre-warmed dir) pid=$$"
+		else
+			isolated_data_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-worker-auth.XXXXXX")
+		fi
 		mkdir -p "${isolated_data_dir}/opencode"
 		# Copy the current auth.json so the worker has valid tokens at startup
 		if [[ -f "$OPENCODE_AUTH_FILE" ]]; then
@@ -424,6 +432,10 @@ _invoke_opencode() {
 		# silently kills streaming connections — workers stall at step_start
 		# with zero API errors. Session stats are sacrificed for reliability.
 		export XDG_DATA_HOME="$isolated_data_dir"
+		# GH#20564: Expose isolated DB path to exit trap classifier so
+		# classify_worker_exit can check for sessions even when the EXIT trap
+		# fires while _invoke_opencode is still waiting for the worker.
+		_WORKER_ISOLATED_DB_PATH="${isolated_data_dir}/opencode/opencode.db"
 		print_info "[lifecycle] db_isolated dir=$isolated_data_dir pid=$$"
 
 		# t2249: Pre-dispatch OAuth pool check. If the account copied into the
@@ -541,6 +553,19 @@ _invoke_opencode() {
 	# the worker PID is gone, but kill it explicitly to be safe.
 	if [[ -n "$watchdog_pid" ]]; then
 		kill "$watchdog_pid" 2>/dev/null || true
+		# Timeout the wait to prevent indefinite blocking if watchdog is stuck
+		# on a network call (gh api for kill comment/unlock)
+		local _watchdog_wait_start _watchdog_wait_elapsed
+		_watchdog_wait_start=$(date +%s)
+		while kill -0 "$watchdog_pid" 2>/dev/null; do
+			_watchdog_wait_elapsed=$(( $(date +%s) - _watchdog_wait_start ))
+			if [[ "$_watchdog_wait_elapsed" -gt 30 ]]; then
+				print_warning "[lifecycle] watchdog_wait_timeout pid=$watchdog_pid elapsed=${_watchdog_wait_elapsed}s — sending SIGKILL"
+				kill -9 "$watchdog_pid" 2>/dev/null || true
+				break
+			fi
+			sleep 1
+		done
 		wait "$watchdog_pid" 2>/dev/null || true
 	fi
 	print_info "[lifecycle] watchdog_cleaned pid=$watchdog_pid"
@@ -555,6 +580,9 @@ _invoke_opencode() {
 		fi
 		rm -rf "$isolated_data_dir" 2>/dev/null || true
 		unset XDG_DATA_HOME
+		# GH#20564: Clear isolated DB path after cleanup so exit trap
+		# classifier falls back to shared DB if EXIT fires post-cleanup.
+		_WORKER_ISOLATED_DB_PATH=""
 		print_info "[lifecycle] db_cleanup dir=$isolated_data_dir pid=$$"
 	fi
 
@@ -875,11 +903,10 @@ _execute_run_attempt() {
 	# The mismatch caused the guard to reject every legitimate dispatch, creating
 	# a claim→reject→release→reclaim loop. dispatch_with_dedup is the authoritative
 	# dedup layer; a second check here adds no safety and causes false rejections.
-	if [[ "$role" == "worker" && "$session_key" == issue-* ]]; then
-		local _claim_repo_slug=""
-		_claim_repo_slug=$(git -C "$work_dir" remote get-url origin 2>/dev/null | sed -E 's|.*github\.com[:/]||; s|\.git$||' || true)
-		export DISPATCH_REPO_SLUG="${_claim_repo_slug}"
-	fi
+	# GH#20542: DISPATCH_REPO_SLUG export moved to _cmd_run_prepare (called
+	# before the EXIT trap is armed) so _release_dispatch_claim always has a
+	# non-empty slug. The role+session_key guard here is no longer needed —
+	# _cmd_run_prepare sets the slug for all roles unconditionally.
 
 	local output_file exit_code_file exit_code
 	local start_ms end_ms duration_ms
@@ -1124,6 +1151,18 @@ _cmd_run_prepare() {
 	local session_key="$1"
 	local work_dir="$2"
 
+	# GH#20542: Export DISPATCH_REPO_SLUG BEFORE arming the EXIT trap so
+	# _release_dispatch_claim always has a non-empty slug, even when the
+	# process exits between prepare and _execute_run_attempt (e.g. under
+	# set -euo pipefail). Role-agnostic: the git extraction is cheap and
+	# _release_dispatch_claim silently no-ops when issue_number is absent.
+	local _prepare_repo_slug=""
+	_prepare_repo_slug=$(git -C "$work_dir" remote get-url origin 2>/dev/null \
+		| sed -E 's|.*github\.com[:/]||; s|\.git$||' || true)
+	if [[ -n "$_prepare_repo_slug" ]]; then
+		export DISPATCH_REPO_SLUG="$_prepare_repo_slug"
+	fi
+
 	# GH#6538: Acquire a session-key lock to prevent duplicate workers.
 	# The pulse (or any caller) may dispatch the same session-key twice in
 	# rapid succession — before the first worker appears in process lists.
@@ -1132,8 +1171,18 @@ _cmd_run_prepare() {
 	if ! _acquire_session_lock "$session_key"; then
 		return 2
 	fi
+	# GH#20564: Use _exit_trap_handler to classify the exit reason
+	# (crash_during_startup / crash_during_execution / signal_killed:<N> / clean)
+	# instead of emitting a fixed 'process_exit' reason for all abnormal exits.
+	# SC2064: session_key is intentionally baked in at trap-set time.
 	# shellcheck disable=SC2064
-	trap "_release_dispatch_claim '$session_key' 'process_exit'; _release_session_lock '$session_key'; _update_dispatch_ledger '$session_key' 'fail'" EXIT
+	trap "_exit_trap_handler '$session_key'" EXIT
+
+	# GH#20564: Record worker start time in milliseconds for exit trap classifier.
+	# classify_worker_exit uses this to distinguish crash_during_startup (no
+	# session created since start) from crash_during_execution (session found).
+	# Uses the same python3 ms-epoch pattern as _execute_run_attempt metrics.
+	_WORKER_START_EPOCH_MS=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
 
 	# GH#6696: Register this dispatch in the in-flight ledger so the pulse
 	# can detect workers that haven't created PRs yet. The ledger bridges
@@ -1241,7 +1290,6 @@ cmd_run() {
 	# GH#17549: Version guard — runs on EVERY dispatch (not cached).
 	# Something keeps upgrading opencode to 1.3.17 between canary checks.
 	_enforce_opencode_version_pin
-
 	# GH#17549: Canary smoke test — verify OpenCode can start and complete
 	# an API call before committing to a full worker dispatch. Runs BEFORE
 	# _cmd_run_prepare so a canary failure never posts a dispatch claim or
@@ -1256,6 +1304,10 @@ cmd_run() {
 		prompt=$(append_worker_headless_contract "$prompt")
 	fi
 
+	# GH#20542: DISPATCH_REPO_SLUG is now exported in _cmd_run_prepare (before
+	# the EXIT trap is armed) so it is always available to _release_dispatch_claim.
+	# _cmd_run_prepare is called immediately below; the export no longer needs to
+	# live in _execute_run_attempt (which runs after the trap is already set).
 	local prepare_exit=0
 	_cmd_run_prepare "$session_key" "$work_dir" || prepare_exit=$?
 	if [[ "$prepare_exit" -eq 2 ]]; then

@@ -21,8 +21,9 @@
 #   9. Provider-aware pulse sessions via headless-runtime-helper.sh
 #  10. Per-issue fast-fail counter skips issues with repeated launch deaths (t1888)
 #
-# Lifecycle: launchd fires every 120s. If a pulse is still running, the
-# dedup check skips. run_pulse() has an internal watchdog that polls every
+# Lifecycle: launchd fires every 180s (StartInterval in the supervisor-pulse
+# plist). If a pulse is still running, the dedup check skips.
+# run_pulse() has an internal watchdog that polls every
 # 60s and checks three conditions:
 #   a) Wall-clock timeout: kills if elapsed > PULSE_STALE_THRESHOLD (60 min)
 #   b) Idle detection: kills if CPU usage stays below PULSE_IDLE_CPU_THRESHOLD
@@ -61,7 +62,7 @@
 #   blocklist. flock was removed entirely in GH#18668 (Path A) — see
 #   reference/bash-fd-locking.md for the full rationale and policy.
 #
-# Called by launchd every 120s via the supervisor-pulse plist.
+# Called by launchd every 180s via the supervisor-pulse plist.
 
 set -euo pipefail
 
@@ -336,6 +337,7 @@ PULSE_LAUNCH_SETTLE_BATCH_MAX="${PULSE_LAUNCH_SETTLE_BATCH_MAX:-5}"             
 PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                                                      # 10 min cap per pre-run stage (cleanup/prefetch)
 PULSE_STAGE_TIMINGS_LOG="${PULSE_STAGE_TIMINGS_LOG:-${HOME}/.aidevops/logs/pulse-stage-timings.log}"       # Structured TSV stage timing log (GH#20025)
 PULSE_LOCK_MAX_AGE_S="${AIDEVOPS_PULSE_LOCK_MAX_AGE_S:-1800}"                                              # Force-reclaim mkdir lock after this age in seconds (GH#20025)
+PULSE_MIN_INTERVAL_S="${AIDEVOPS_PULSE_MIN_INTERVAL_S:-90}"                                                # Entry-point rate-limit: skip cycle if last run was less than this many seconds ago (GH#20578)
 PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                                                  # Open PR list window per repo for pre-fetched state
 PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"                                            # Open issue list window for pulse prompt payload (keep compact)
 PULSE_PREFETCH_CACHE_FILE="${PULSE_PREFETCH_CACHE_FILE:-${HOME}/.aidevops/logs/pulse-prefetch-cache.json}" # Delta prefetch state cache (GH#15286)
@@ -1490,6 +1492,79 @@ _pulse_setup_canary_mode() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# _detect_invocation_source (GH#20580)
+#
+# Detects how pulse-wrapper.sh was invoked. Writes the detected source into
+# the caller-scoped variable named by the first argument (default:
+# _invocation_source). Order: most-specific check first.
+#
+# Sources:
+#   lifecycle-helper  AIDEVOPS_PULSE_SOURCE=lifecycle-helper (set by _start())
+#   launchd           PPID=1 or parent command contains "launchd"
+#   cron              parent command contains "cron"
+#   manual            stdin is a TTY or PULSE_MANUAL=1
+#   unknown           none of the above
+# ---------------------------------------------------------------------------
+_detect_invocation_source() {
+	local _parent_cmd
+	_parent_cmd=$(ps -p "$PPID" -o comm= 2>/dev/null || printf 'unknown')
+
+	if [[ "${AIDEVOPS_PULSE_SOURCE:-}" == "lifecycle-helper" ]]; then
+		_invocation_source="lifecycle-helper"
+	elif [[ "$PPID" -eq 1 ]] || [[ "$_parent_cmd" == *"launchd"* ]]; then
+		_invocation_source="launchd"
+	elif [[ "$_parent_cmd" == *"cron"* ]]; then
+		_invocation_source="cron"
+	elif [[ "${PULSE_MANUAL:-0}" == "1" ]] || [[ -t 0 ]]; then
+		_invocation_source="manual"
+	else
+		_invocation_source="unknown"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _record_invocation_source (GH#20580)
+#
+# Logs the invocation source to the pulse log and increments the per-source
+# integer counter in pulse-stats.json under the top-level
+# "invocation_sources" object, e.g.:
+#   {"counters":{...},"invocation_sources":{"launchd":5,"manual":1,...}}
+#
+# Args:
+#   $1 - invocation source string (launchd/cron/manual/lifecycle-helper/unknown)
+#
+# Non-fatal: any jq or file failure is ignored — never blocks the pulse.
+# ---------------------------------------------------------------------------
+_record_invocation_source() {
+	local source="${1:-unknown}"
+	local stats_file="${PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
+	local log_dest="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
+
+	# Log entry (ISO-8601 UTC to match pulse-logging.sh conventions)
+	local _ts _pcmd
+	_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf 'unknown')
+	_pcmd=$(ps -p "$PPID" -o comm= 2>/dev/null || printf 'unknown')
+	printf '[%s] pulse-wrapper invoked: pid=%d ppid=%d source=%s parent_cmd=%s\n' \
+		"$_ts" "$$" "$PPID" "$source" "$_pcmd" \
+		>>"$log_dest" 2>/dev/null || true
+
+	# Increment invocation_sources.{source} as a plain integer counter.
+	# Uses tmp-file + mv for atomicity (same pattern as pulse_stats_increment).
+	local _dir _tmp
+	_dir="$(dirname "$stats_file")"
+	[[ -d "$_dir" ]] || mkdir -p "$_dir" 2>/dev/null || return 0
+	[[ -f "$stats_file" ]] || printf '{"counters":{}}\n' >"$stats_file" 2>/dev/null || return 0
+
+	_tmp=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-src-XXXXXX.json") || return 0
+	jq --arg src "$source" \
+		'.invocation_sources[$src] = ((.invocation_sources[$src] // 0) + 1)' \
+		"$stats_file" >"$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
+	mv "$_tmp" "$stats_file" 2>/dev/null || rm -f "$_tmp"
+	return 0
+}
+
 main() {
 	# GH#18670: declare this process as headless BEFORE anything else runs
 	# so every child shell stage sees AIDEVOPS_HEADLESS and
@@ -1519,6 +1594,53 @@ main() {
 	[[ "$_sc_rc" -ne 2 ]] && return "$_sc_rc"
 	_pulse_setup_dry_run_mode "$@"
 	_pulse_setup_canary_mode "$@"
+
+	# GH#20580: Detect and record invocation source before acquiring the lock
+	# so every invocation — including those that fail the lock — is counted.
+	local _invocation_source="unknown"
+	_detect_invocation_source
+	_record_invocation_source "$_invocation_source"
+
+	# GH#20579: Is-running short-circuit — exit 0 immediately before attempting
+	# mkdir lock acquisition when a pulse process is already alive. Eliminates
+	# lock contention for the common launchd-fires-while-running case.
+	# Bypassed in --canary and --dry-run modes — they need the full code path.
+	if [[ "${PULSE_CANARY_MODE:-0}" != "1" && "${PULSE_DRY_RUN:-0}" != "1" ]]; then
+		local _ir_pids
+		_ir_pids=$(pgrep -f "(^|/)pulse-wrapper\\.sh( |\$)" 2>/dev/null | grep -v "^$$\$" || true)
+		if [[ -n "$_ir_pids" ]]; then
+			local _ir_first_pid
+			_ir_first_pid=$(printf '%s\n' "$_ir_pids" | awk 'NR==1')
+			echo "[pulse-wrapper] Pulse already running (PID: ${_ir_first_pid}), skipping" >>"$WRAPPER_LOGFILE"
+			return 0
+		fi
+	fi
+
+	# GH#20578: Entry-point rate-limit cooldown. Short-circuit BEFORE the
+	# mkdir instance lock to eliminate unnecessary lock contention from
+	# redundant scheduler invocations (launchd ThrottleInterval edge cases,
+	# manual restarts). A single stat-equivalent read is the entire cost of
+	# a rate-limited invocation instead of mkdir attempt + stale-lock check
+	# + PID file read. --canary and --dry-run bypass (diagnostic modes).
+	if [[ "${PULSE_DRY_RUN:-0}" != "1" && "${PULSE_CANARY_MODE:-0}" != "1" ]]; then
+		local _rl_ts_file="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
+		local _rl_now
+		local _rl_last
+		local _rl_elapsed
+		_rl_now=$(date +%s)
+		_rl_last=0
+		if [[ -f "$_rl_ts_file" ]]; then
+			read -r _rl_last < "$_rl_ts_file" || _rl_last=0
+			# Treat corrupt/non-numeric content as 0 (stale) — continue normally
+			[[ "$_rl_last" =~ ^[0-9]+$ ]] || _rl_last=0
+		fi
+		_rl_elapsed=$(( _rl_now - _rl_last ))
+		if (( _rl_elapsed < PULSE_MIN_INTERVAL_S )); then
+			echo "[pulse-wrapper] Rate-limited: last run ${_rl_elapsed}s ago < ${PULSE_MIN_INTERVAL_S}s threshold — skipping cycle (GH#20578)" >>"$WRAPPER_LOGFILE"
+			return 0
+		fi
+		printf '%s\n' "$_rl_now" > "$_rl_ts_file" || true
+	fi
 
 	# GH#4513: Acquire exclusive instance lock FIRST — before any other
 	# check. Uses mkdir atomicity as the ONLY primitive (POSIX-guaranteed,
@@ -1563,6 +1685,16 @@ main() {
 	# Record cycle start for append_cycle_index duration tracking (t1886)
 	local _cycle_start_epoch
 	_cycle_start_epoch=$(date +%s)
+
+	# t2749: Defence-in-depth — clean up any stale Phase 2 consolidation
+	# sentinels from a previous cycle before preflight stages run. With
+	# PID-scoped naming (pulse-cycle-$$-consolidation-fired) a different
+	# PID produces a different filename, so stale files from a crash can
+	# only exist when the OS reuses the same PID. This glob sweep is the
+	# safety net for that rare case. Runs after lock acquisition so only
+	# one process sweeps at a time.
+	# shellcheck disable=SC2086,SC2015
+	rm -f "${HOME}/.aidevops/cache/pulse-cycle-"*"-consolidation-fired" 2>/dev/null || true
 
 	# Phase 0 (t1963): --dry-run short-circuits here. Bootstrap, sourcing,
 	# config validation, lock acquisition, session gate, dedup guard, and

@@ -4,14 +4,16 @@
 #
 # test-pre-push-dup-todo-guard.sh — Unit tests for pre-push-dup-todo-guard.sh (t2745).
 #
-# Tests 7 fixtures:
+# Tests 9 fixtures:
 #   1. Clean TODO.md (no duplicates)               → exit 0
 #   2. Single duplicate (t2743 twice)              → exit 1, cites lines
 #   3. Multiple duplicates (t2743 AND t2742)       → exit 1, cites both IDs
 #   4. Completed + open pair (- [x] + - [ ] same) → exit 1
 #   5. Pseudo-duplicate (task ID in description)   → exit 0
-#   6. AIDEVOPS_SKIP_DUP_TODO_GUARD=1              → exit 0, warning to stderr
+#   6. DUP_TODO_GUARD_DISABLE=1                    → exit 0, warning to stderr
 #   7. --no-verify bypass documentation            → informational (git-level bypass)
+#   8. Hierarchical ID duplicate (t1271.1 twice)   → exit 1, cites lines
+#   9. Indented subtask duplicate                  → exit 1, cites lines
 #
 # Usage: bash .agents/scripts/tests/test-pre-push-dup-todo-guard.sh
 # Exit 0 = all tests passed. Exit 1 = one or more tests failed.
@@ -276,7 +278,7 @@ test_pseudo_duplicate_in_description() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 6: AIDEVOPS_SKIP_DUP_TODO_GUARD=1 → exit 0 even with duplicates; warning to stderr
+# Test 6: DUP_TODO_GUARD_DISABLE=1 → exit 0 even with duplicates; warning to stderr
 # ---------------------------------------------------------------------------
 test_bypass_env_var() {
 	local _name="test_6_bypass_env_var"
@@ -294,7 +296,7 @@ test_bypass_env_var() {
 
 	# Capture both stdout and stderr; run with bypass env var
 	local _stderr
-	_stderr=$(AIDEVOPS_SKIP_DUP_TODO_GUARD=1 bash "$HOOK" origin "https://github.com/test/repo" \
+	_stderr=$(DUP_TODO_GUARD_DISABLE=1 bash "$HOOK" origin "https://github.com/test/repo" \
 		<<<"refs/heads/test ${_sha} refs/heads/main 0000000000000000000000000000000000000000" \
 		2>&1 1>/dev/null)
 	local _rc=$?
@@ -339,6 +341,85 @@ test_no_verify_documentation() {
 }
 
 # ---------------------------------------------------------------------------
+# Test 8: hierarchical task ID duplicate (t1271.1 twice) → exit 1, cites lines
+# ---------------------------------------------------------------------------
+test_hierarchical_id_duplicate() {
+	local _name="test_8_hierarchical_id_duplicate"
+	_setup_git_repo || { _fail "$_name" "git repo setup failed"; return 0; }
+
+	local _content
+	_content="## Tasks
+- [ ] t1271 Parent task ref:GH#2001
+  - [x] t1271.1 First sub-entry ref:GH#2005
+
+## Backlog
+  - [ ] t1271.1 Second sub-entry ref:GH#2005"
+
+	local _sha
+	_sha=$(_commit_todo "$_content")
+
+	local _stdout _stderr
+	_stdout=$(bash "$HOOK" origin "https://github.com/test/repo" \
+		<<<"refs/heads/test ${_sha} refs/heads/main 0000000000000000000000000000000000000000" \
+		2>/dev/null)
+	_stderr=$(bash "$HOOK" origin "https://github.com/test/repo" \
+		<<<"refs/heads/test ${_sha} refs/heads/main 0000000000000000000000000000000000000000" \
+		2>&1 1>/dev/null)
+	local _rc=$?
+
+	_teardown_git_repo
+
+	if [[ "$_rc" -ne 1 ]]; then
+		_fail "$_name" "expected exit 1 (hierarchical duplicate t1271.1), got exit $_rc"
+		return 0
+	fi
+	if ! printf '%s\n' "$_stderr" | grep -q "t1271.1"; then
+		_fail "$_name" "expected t1271.1 cited in stderr; stderr: $_stderr"
+		return 0
+	fi
+	_pass "$_name"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 9: indented subtask duplicate → exit 1, cites lines
+# ---------------------------------------------------------------------------
+test_indented_subtask_duplicate() {
+	local _name="test_9_indented_subtask_duplicate"
+	_setup_git_repo || { _fail "$_name" "git repo setup failed"; return 0; }
+
+	local _content
+	_content="## Tasks
+- [ ] t1678 Parent task ref:GH#6821
+  - [ ] t1678.1 First occurrence ref:GH#6821
+
+## Backlog
+  - [ ] t1678.1 Second occurrence ref:GH#6821"
+
+	local _sha
+	_sha=$(_commit_todo "$_content")
+
+	local _stderr
+	_stderr=$(bash "$HOOK" origin "https://github.com/test/repo" \
+		<<<"refs/heads/test ${_sha} refs/heads/main 0000000000000000000000000000000000000000" \
+		2>&1 1>/dev/null)
+	local _rc=$?
+
+	_teardown_git_repo
+
+	if [[ "$_rc" -ne 1 ]]; then
+		_fail "$_name" "expected exit 1 (indented duplicate t1678.1), got exit $_rc"
+		return 0
+	fi
+	if ! printf '%s\n' "$_stderr" | grep -q "t1678.1"; then
+		_fail "$_name" "expected t1678.1 cited in stderr; stderr: $_stderr"
+		return 0
+	fi
+	_pass "$_name"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 main() {
@@ -351,6 +432,8 @@ main() {
 	test_pseudo_duplicate_in_description
 	test_bypass_env_var
 	test_no_verify_documentation
+	test_hierarchical_id_duplicate
+	test_indented_subtask_duplicate
 
 	printf '\n'
 	printf 'Results: %d passed, %d failed\n' "$_TESTS_PASSED" "$_TESTS_FAILED"

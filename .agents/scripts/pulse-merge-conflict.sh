@@ -20,12 +20,17 @@
 #
 # Functions in this module (in source order):
 #   - _post_rebase_nudge_on_interactive_conflicting   (GH#18650 Fix 4)
+#   - _post_rebase_nudge_on_contributor_conflicting   (GH#20485)
 #   - _interactive_pr_is_stale                        (t2189)
 #   - _interactive_pr_trigger_handover                (t2189)
 #   - _is_planning_path_for_overlap                   (GH#18815)
 #   - _verify_pr_overlaps_commit                      (GH#18815)
 #   - _post_rebase_nudge_on_worker_conflicting        (GH#18815)
-#   - _close_conflicting_pr                           (GH#17574 + GH#18815)
+#   - _close_conflicting_pr_check_ownership_guard     (GH#20485, replaces _check_interactive_guard)
+#   - _close_conflicting_pr_classify_landed           (t2438)
+#   - _close_conflicting_pr_comment_landed            (t2438)
+#   - _close_conflicting_pr_comment_not_landed        (t2438)
+#   - _close_conflicting_pr                           (GH#17574 + GH#18815 + GH#20485)
 #   - _carry_forward_pr_diff                          (t2118)
 #
 # All functions fail-open: missing helpers, API errors, or malformed
@@ -102,6 +107,70 @@ Or use the GitHub web UI's *Update branch* button if the conflicts are trivial e
 Every pulse cycle the deterministic merge pass evaluates open PRs and auto-closes \`CONFLICTING\` ones that have no clear owner. \`origin:interactive\` PRs are explicitly protected from that path, which is correct for active maintainer work but left them to rot silently in the queue. This nudge is posted exactly once per PR so the stuck state surfaces in your inbox. If the PR still conflicts after you think you've rebased, the nudge will NOT repeat — re-check manually via \`gh pr view ${pr_number}\`.
 
 <sub>Posted automatically by \`pulse-merge-conflict.sh\` (GH#18650 / Fix 4 of the 2026-04-13 dispatch-unblocker pass).</sub>"
+
+	_gh_idempotent_comment "$pr_number" "$repo_slug" "$marker" "$nudge_body" "pr" || true
+	return 0
+}
+
+#######################################
+# GH#20485: Post a one-time rebase nudge on a conflicting contributor PR
+# that the deterministic merge pass has left open because the pulse does
+# not own the work.
+#
+# Rationale: the merge pass must never auto-close work it didn't create.
+# For contributor PRs (non-bot author, no origin:worker / origin:interactive
+# label), the correct action is: leave the PR open and post a visible signal
+# so the contributor knows their branch needs rebasing. Without this nudge
+# the stuck state would be invisible in the contributor's inbox.
+#
+# Idempotent via _gh_idempotent_comment marker — posted once per PR lifetime.
+# Fail-open: missing helpers or API errors never block the merge pass.
+#
+# Args:
+#   $1 - pr_number
+#   $2 - repo_slug (owner/repo)
+#######################################
+_post_rebase_nudge_on_contributor_conflicting() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
+
+	if ! declare -F _gh_idempotent_comment >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _post_rebase_nudge_on_contributor_conflicting: _gh_idempotent_comment not defined — skipping nudge for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	local head_branch
+	head_branch=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json headRefName --jq '.headRefName' 2>/dev/null) || head_branch="<branch>"
+	[[ -n "$head_branch" ]] || head_branch="<branch>"
+
+	local marker="<!-- pulse-rebase-nudge-contributor -->"
+	local nudge_body
+	nudge_body="${marker}
+## Rebase needed — branch has diverged from \`main\`
+
+This PR has merge conflicts against \`main\`. The pulse merge pass does not auto-close contributor PRs (GH#20485) — this PR is kept open so your work is not lost.
+
+### To resolve
+
+From a terminal:
+
+\`\`\`bash
+git fetch origin
+git rebase origin/main
+# resolve any conflicts, then:
+git push --force-with-lease
+\`\`\`
+
+Or use the GitHub web UI's *Update branch* button if the conflicts are trivial enough for GitHub's web merger.
+
+### Why you're seeing this
+
+Every pulse cycle the deterministic merge pass evaluates open PRs with merge conflicts. Contributor PRs (without \`origin:worker\` or \`origin:interactive\` labels) are always left open — the pulse will not close work it did not create. This nudge is posted once per PR to surface the conflict state in your notifications. If the PR still conflicts after rebasing, re-check manually via \`gh pr view ${pr_number}\`.
+
+<sub>Posted automatically by \`pulse-merge-conflict.sh\` (GH#20485).</sub>"
 
 	_gh_idempotent_comment "$pr_number" "$repo_slug" "$marker" "$nudge_body" "pr" || true
 	return 0
@@ -541,55 +610,87 @@ _find_task_id_match_on_main() {
 }
 
 #######################################
-# Gate 1 of _close_conflicting_pr: origin:interactive protection.
+# Gate 1 of _close_conflicting_pr: ownership protection.
 #
-# Fetches the PR's labels with fail-CLOSED semantics. If the label
-# fetch fails, or if origin:interactive is present, the caller must
-# NOT close the PR.
+# Enforces the invariant "the pulse only auto-closes PRs it owns".
+# A PR is owned by the pulse when it carries origin:worker or
+# origin:worker-takeover. PRs that are interactive-session work
+# (origin:interactive) or external-contributor work (non-bot author,
+# no pulse origin label) must never be auto-closed.
 #
-# GH#18285 post-mortem: origin:interactive PRs are created during
-# maintainer sessions. The task-ID-on-main heuristic produces false
-# positives when multiple PRs share a task ID (incremental work on
-# the same issue). Maintainers decide what is redundant — the pulse
-# must not auto-close their work.
+# Fetches labels + author + authorAssociation with fail-CLOSED semantics.
+# If the metadata fetch fails, the caller must NOT close the PR.
 #
-# t2383 Fix 3: fail CLOSED on label read failure — if we can't read
-# labels, we might be about to close a protected origin:interactive
-# PR. Also use `grep -Fxq` (exact line match) not `grep -q`
-# (substring) so labels like "origin:interactive-fork" don't
+# GH#18285: origin:interactive PRs are maintainer session work — pulse
+# must not auto-close them.
+# GH#20485: external contributor PRs carry neither origin:worker nor
+# origin:interactive — the old guard fell through to close them, which
+# destroys contributor work. The fix extends the guard to the full
+# "only close PRs the pulse owns" invariant.
+#
+# t2383 Fix 3: fail CLOSED on metadata fetch failure. Use grep -Fxq
+# (exact line match) so labels like "origin:interactive-fork" don't
 # false-match "origin:interactive".
 #
 # Args: $1 = pr_number, $2 = repo_slug
 # Returns:
-#   0 — caller must return 0 without closing (fetch failed or
-#       origin:interactive)
-#   1 — safe to proceed with close logic
-# Side effects: posts rebase nudge via
-#   _post_rebase_nudge_on_interactive_conflicting on origin:interactive
+#   0 — caller must return 0 without closing (fetch failed, or PR is
+#       protected: origin:interactive or external contributor)
+#   1 — safe to proceed with close logic (pulse owns this PR)
+# Side effects:
+#   Posts _post_rebase_nudge_on_interactive_conflicting for interactive PRs.
+#   Posts _post_rebase_nudge_on_contributor_conflicting for contributor PRs.
 #######################################
-_close_conflicting_pr_check_interactive_guard() {
+_close_conflicting_pr_check_ownership_guard() {
 	local pr_number="$1"
 	local repo_slug="$2"
 
-	local pr_labels label_fetch_rc
-	label_fetch_rc=0
-	pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json labels --jq '.labels[].name' 2>/dev/null) || label_fetch_rc=$?
-	if [[ $label_fetch_rc -ne 0 ]]; then
-		echo "[pulse-wrapper] _close_conflicting_pr: failed to fetch labels for PR #${pr_number} in ${repo_slug} (exit ${label_fetch_rc}) — skipping close to protect potential origin:interactive PR (t2383)" >>"$LOGFILE"
+	# Fetch labels + author metadata in one call. Fail CLOSED if the
+	# fetch fails — if we can't determine ownership, do nothing.
+	local pr_meta meta_fetch_rc
+	meta_fetch_rc=0
+	pr_meta=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json labels,author,authorAssociation 2>/dev/null) || meta_fetch_rc=$?
+	if [[ $meta_fetch_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] _close_conflicting_pr: failed to fetch metadata for PR #${pr_number} in ${repo_slug} (exit ${meta_fetch_rc}) — skipping close to protect potential origin:interactive or contributor PR (t2383, GH#20485)" >>"$LOGFILE"
 		return 0
 	fi
+
+	local pr_labels
+	pr_labels=$(printf '%s' "$pr_meta" | jq -r '.labels[].name' 2>/dev/null) || pr_labels=""
+
+	# Guard 1: origin:interactive — never auto-close maintainer session work.
+	# GH#18285 + GH#18650 Fix 4: post a one-time rebase nudge so the
+	# maintainer has a visible signal that their CONFLICTING PR needs
+	# manual attention.
 	if printf '%s\n' "$pr_labels" | grep -Fxq 'origin:interactive'; then
 		echo "[pulse-wrapper] Deterministic merge: skipping auto-close of origin:interactive PR #${pr_number} — maintainer session work is never auto-closed" >>"$LOGFILE"
-		# GH#18650 (Fix 4): post a one-time rebase nudge so the
-		# maintainer has a visible signal that their CONFLICTING PR
-		# needs manual attention. Without this, interactive
-		# CONFLICTING PRs rot silently — the pulse log keeps skipping
-		# them every cycle but the maintainer never sees the signal.
 		_post_rebase_nudge_on_interactive_conflicting "$pr_number" "$repo_slug"
 		return 0
 	fi
-	return 1
+
+	# Guard 2: origin:worker or origin:worker-takeover — pulse owns these
+	# PRs; close is safe and correct.
+	if printf '%s\n' "$pr_labels" | grep -Fxq 'origin:worker' ||
+		printf '%s\n' "$pr_labels" | grep -Fxq 'origin:worker-takeover'; then
+		return 1
+	fi
+
+	# Guard 3: bot authors (login ends with "[bot]") — no human contributor
+	# is losing work. Close is safe.
+	local author_login
+	author_login=$(printf '%s' "$pr_meta" | jq -r '.author.login // ""' 2>/dev/null) || author_login=""
+	if [[ "$author_login" == *'[bot]' ]]; then
+		return 1
+	fi
+
+	# Guard 4: non-bot author with no pulse origin label — this is an
+	# external contributor PR. The pulse never auto-closes work it didn't
+	# create. Leave the PR open and post a rebase nudge so the contributor
+	# has a visible signal. (GH#20485)
+	echo "[pulse-wrapper] Deterministic merge: skipping auto-close of PR #${pr_number} in ${repo_slug} — non-bot author @${author_login} without pulse origin label; contributor work is never auto-closed (GH#20485)" >>"$LOGFILE"
+	_post_rebase_nudge_on_contributor_conflicting "$pr_number" "$repo_slug"
+	return 0
 }
 
 #######################################
@@ -751,6 +852,10 @@ _Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
 # lookup failure, the PR is left open and a one-time rebase nudge
 # is posted.
 #
+# GH#20485: External contributor PRs (non-bot author, no pulse origin
+# label) are now protected by the ownership guard (Gate 1). The pulse
+# must not auto-close work it didn't create.
+#
 # t2438 / GH#20060: decomposed into helpers to keep this function
 # under the 100-line function-complexity threshold. The orchestrator
 # below is a thin driver — each gate is its own helper so the
@@ -763,10 +868,12 @@ _close_conflicting_pr() {
 	local repo_slug="$2"
 	local pr_title="$3"
 
-	# Gate 1: origin:interactive protection (with fail-CLOSED label
-	# fetch). Returns 0 (action taken / skipped) means the caller
-	# must NOT close this PR.
-	if _close_conflicting_pr_check_interactive_guard "$pr_number" "$repo_slug"; then
+	# Gate 1: ownership protection — only auto-close PRs the pulse owns.
+	# Protects: origin:interactive (maintainer session work),
+	#           non-bot PRs without origin:worker (external contributors).
+	# Returns 0 (action taken / skipped) means the caller must NOT close.
+	# GH#18285, GH#20485
+	if _close_conflicting_pr_check_ownership_guard "$pr_number" "$repo_slug"; then
 		return 0
 	fi
 

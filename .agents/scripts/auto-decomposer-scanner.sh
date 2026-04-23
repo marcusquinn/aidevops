@@ -47,11 +47,11 @@
 #   auto-decomposer-scanner.sh {scan|dry-run|help} [REPO]
 #
 # Env:
-#   SCANNER_NUDGE_AGE_HOURS       (default 24)  — minimum nudge age for aged parents (≥1 non-nudge comment)
-#   SCANNER_FRESH_PARENT_HOURS    (default 6)   — minimum nudge age for fresh parents (0 non-nudge comments)
+#   SCANNER_NUDGE_AGE_HOURS       (default 0)   — minimum nudge age for aged parents (≥1 non-nudge comment); 0 = fire immediately
+#   SCANNER_FRESH_PARENT_HOURS    (default 0)   — minimum nudge age for fresh parents (0 non-nudge comments); 0 = fire immediately
 #   SCANNER_MAX_ISSUES            (default 3)   — cap per-repo decompose issues per run
 #   SCANNER_PARENT_LIST_LIMIT     (default 100) — max parent-task issues to list
-#   AUTO_DECOMPOSER_INTERVAL      (default 604800) — seconds before re-filing the same parent (7 days)
+#   AUTO_DECOMPOSER_INTERVAL      (default 86400) — seconds before re-filing the same parent (1 day)
 #   AUTO_DECOMPOSER_PARENT_STATE  (default ~/.aidevops/logs/auto-decomposer-parent-state.json) — per-parent state file
 #
 # t2442: https://github.com/marcusquinn/aidevops/issues/20139
@@ -63,21 +63,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=shared-constants.sh
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
 
-SCANNER_NUDGE_AGE_HOURS="${SCANNER_NUDGE_AGE_HOURS:-24}"
-SCANNER_FRESH_PARENT_HOURS="${SCANNER_FRESH_PARENT_HOURS:-6}"
+SCANNER_NUDGE_AGE_HOURS="${SCANNER_NUDGE_AGE_HOURS:-0}"
+SCANNER_FRESH_PARENT_HOURS="${SCANNER_FRESH_PARENT_HOURS:-0}"
 SCANNER_MAX_ISSUES="${SCANNER_MAX_ISSUES:-3}"
 SCANNER_PARENT_LIST_LIMIT="${SCANNER_PARENT_LIST_LIMIT:-100}"
 SCANNER_LABEL="source:auto-decomposer"
 # Per-parent re-file interval: inherited from pulse-wrapper.sh export or defaulted here.
-AUTO_DECOMPOSER_INTERVAL="${AUTO_DECOMPOSER_INTERVAL:-604800}"
+AUTO_DECOMPOSER_INTERVAL="${AUTO_DECOMPOSER_INTERVAL:-86400}"
 AUTO_DECOMPOSER_PARENT_STATE="${AUTO_DECOMPOSER_PARENT_STATE:-${HOME}/.aidevops/logs/auto-decomposer-parent-state.json}"
 
 log() { echo "[auto-decomposer] $*" >&2; }
 
+# Known review-bot logins — these accounts post mechanical review comments
+# (not a human-engagement signal). Extend as needed when new review bots
+# are adopted.
+readonly REVIEW_BOT_LOGINS_JQ_FILTER='["coderabbitai", "coderabbitai[bot]", "sonarcloud[bot]", "sonarqubecloud[bot]", "codacy-production[bot]", "github-actions[bot]", "gemini-code-assist[bot]", "qodo-merge-pro[bot]", "codefactor-io", "socket-security[bot]"]'
+
 # Count comments on an issue that are NOT the <!-- parent-needs-decomposition -->
-# nudge. A count of 0 means the parent is "fresh" (only automated nudge comments,
-# no human or other-bot activity). Fresh parents use SCANNER_FRESH_PARENT_HOURS
-# instead of SCANNER_NUDGE_AGE_HOURS as the eligibility threshold.
+# nudge AND NOT authored by a known review bot. A count of 0 means the parent is
+# "fresh" (only automated nudge comments and bot activity, no human engagement).
+# Fresh parents use SCANNER_FRESH_PARENT_HOURS instead of SCANNER_NUDGE_AGE_HOURS
+# as the eligibility threshold.
 #
 # Exit codes:
 #   0 — always (caller inspects the printed value)
@@ -85,8 +91,14 @@ _count_non_nudge_comments() {
 	local repo="$1"
 	local issue_num="$2"
 	local count
+	# Exclude both the nudge marker AND any comment authored by a known
+	# review bot. The comparison is against user.login (lowercased) to
+	# absorb the "[bot]" suffix variations.
 	count=$(gh api --paginate "repos/${repo}/issues/${issue_num}/comments" \
-		--jq '[.[] | select(.body | contains("<!-- parent-needs-decomposition -->") | not)] | length' \
+		--jq "[.[] | select(
+			(.body | contains(\"<!-- parent-needs-decomposition -->\") | not) and
+			(.user.login as \$login | ${REVIEW_BOT_LOGINS_JQ_FILTER} | index(\$login) | not)
+		)] | length" \
 		2>/dev/null || echo "0")
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 	printf '%s' "$count"
@@ -443,15 +455,16 @@ Usage: $(basename "$0") {scan|dry-run|help} [REPO]
   help      This message.
 
 Env vars:
-  SCANNER_NUDGE_AGE_HOURS    (default 24)      Minimum nudge age (hours) for aged parents (≥1 non-nudge comment)
-  SCANNER_FRESH_PARENT_HOURS (default 6)       Minimum nudge age (hours) for fresh parents (0 non-nudge comments)
+  SCANNER_NUDGE_AGE_HOURS    (default 0)       Minimum nudge age (hours) for aged parents (≥1 non-nudge comment); 0 = immediate
+  SCANNER_FRESH_PARENT_HOURS (default 0)       Minimum nudge age (hours) for fresh parents (0 non-nudge comments); 0 = immediate
   SCANNER_MAX_ISSUES         (default 3)       Cap per-repo decompose issues per run
   SCANNER_PARENT_LIST_LIMIT  (default 100)     Max parent-task issues to list
-  AUTO_DECOMPOSER_INTERVAL   (default 604800)  Seconds before re-filing the same parent (7 days)
+  AUTO_DECOMPOSER_INTERVAL   (default 86400)   Seconds before re-filing the same parent (1 day)
   AUTO_DECOMPOSER_PARENT_STATE                 Path to per-parent state file (JSON)
 
 t2442: closes the parent-task dispatch black hole.
-t2573: per-parent gating, fresh-parent 6h threshold, no global run gate.
+t2573: per-parent gating, fresh-parent threshold, no global run gate.
+GH#20532: zero-delay thresholds + 1-day re-file for AI-throughput mode.
 EOF
 		;;
 	*)

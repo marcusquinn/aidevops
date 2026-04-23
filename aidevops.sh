@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.8.94
+# Version: 3.8.95
 
 set -euo pipefail
 
@@ -1384,10 +1384,12 @@ _help_commands() {
 	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
 	echo "  contributions      External contributions inbox (bare: status | seed/scan/stop/restart/install/uninstall)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
+	echo "  review-gate <cmd>  Configure review_gate.rate_limit_behavior (list/set/unset)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
 	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
 	echo "  tabby <cmd>        Manage Tabby terminal profiles (sync/status/zshrc/help)"
+	echo "  parent-status <N>  Show decomposition state of parent-task issue #N (alias: ps)"
 	echo "  detect             Find and register aidevops projects"
 	echo "  uninstall          Remove aidevops from your system"
 	echo "  version            Show version information"
@@ -1748,6 +1750,7 @@ main() {
 	model-accounts-pool | map) _dispatch_helper "oauth-pool-helper.sh" "oauth-pool-helper.sh" "$@" ;;
 	client-format) _cmd_client_format "$@" ;;
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
+	review-gate | review_gate) _dispatch_helper "review-gate-config-helper.sh" "review-gate-config-helper.sh" "$@" ;;
 	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
 	approve) _dispatch_helper "approval-helper.sh" "approval-helper.sh" "$@" ;;
 	signing) _dispatch_helper "signing-setup.sh" "signing-setup.sh" "$@" ;;
@@ -1760,6 +1763,7 @@ main() {
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;
 	init-routines) _dispatch_helper "init-routines-helper.sh" "init-routines-helper.sh" "$@" ;;
+	parent-status | ps) _dispatch_helper "parent-status-helper.sh" "parent-status-helper.sh" "$@" ;;
 	config | configure) _dispatch_config "$@" ;;
 	uninstall | remove) cmd_uninstall ;;
 	version | v | -v | --version) cmd_version ;;

@@ -630,6 +630,380 @@ cmd_rules() {
 	return 0
 }
 
+# =============================================================================
+# Subcommands — cycle_health (t2752)
+#
+# Provides a concise summary of pulse-cycle stability by parsing
+# pulse-stage-timings.log and pulse-wrapper.log.
+#
+# Log format (pulse-stage-timings.log):
+#   timestamp \t stage_name \t duration_secs \t exit_code \t pid
+#
+# "Fill-floor" proxy: the stage preflight_early_dispatch with exit_code=0
+# corresponds to a cycle that successfully reached worker dispatch.
+# =============================================================================
+
+_CMD_CH_WINDOW_SECS=3600
+_CMD_CH_JSON_OUTPUT=0
+_CMD_CH_VERBOSE=0
+_CH_DEGRADED="DEGRADED"
+
+# Convert a window string (1h, 24h, 7d, 30m, or raw integer) to seconds.
+_ch_parse_window_secs() {
+	local raw="$1"
+	case "$raw" in
+		*m) printf '%d' "$(( ${raw%m} * 60 ))" ;;
+		*h) printf '%d' "$(( ${raw%h} * 3600 ))" ;;
+		*d) printf '%d' "$(( ${raw%d} * 86400 ))" ;;
+		'') printf '%d' 3600 ;;
+		*)  printf '%d' "$raw" ;;
+	esac
+	return 0
+}
+
+# Compute ISO 8601 UTC cutoff timestamp (window_secs ago from now).
+# Tries macOS date -v syntax first; falls back to GNU date -d.
+_ch_cutoff_ts() {
+	local window_secs="$1"
+	local ts
+	if ts=$(date -u -v"-${window_secs}S" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null); then
+		printf '%s' "$ts"
+		return 0
+	fi
+	local now_epoch
+	now_epoch=$(date '+%s' 2>/dev/null) || now_epoch=0
+	if ts=$(date -u -d "@$(( now_epoch - window_secs ))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null); then
+		printf '%s' "$ts"
+		return 0
+	fi
+	printf '1970-01-01T00:00:00Z'
+	return 0
+}
+
+# Convert an ISO 8601 UTC timestamp to a human "Xm ago" string.
+_ch_ts_ago() {
+	local ts="$1"
+	[[ -z "$ts" ]] && { printf 'never'; return 0; }
+	local ts_epoch now_epoch diff
+	ts_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts" '+%s' 2>/dev/null) ||
+		ts_epoch=$(date -u -d "$ts" '+%s' 2>/dev/null) || { printf '%s' "$ts"; return 0; }
+	now_epoch=$(date '+%s' 2>/dev/null) || { printf '%s' "$ts"; return 0; }
+	diff=$(( now_epoch - ts_epoch ))
+	if [[ "$diff" -lt 60 ]]; then
+		printf '%ds ago' "$diff"
+	elif [[ "$diff" -lt 3600 ]]; then
+		printf '%dm ago' "$(( diff / 60 ))"
+	elif [[ "$diff" -lt 86400 ]]; then
+		printf '%dh ago' "$(( diff / 3600 ))"
+	else
+		printf '%dd ago' "$(( diff / 86400 ))"
+	fi
+	return 0
+}
+
+_cmd_cycle_health_parse_args() {
+	_CMD_CH_WINDOW_SECS=3600
+	_CMD_CH_JSON_OUTPUT=0
+	_CMD_CH_VERBOSE=0
+
+	while [[ $# -gt 0 ]]; do
+		case "${1}" in
+			--window)
+				local raw="${2:-1h}"
+				shift 2
+				_CMD_CH_WINDOW_SECS=$(_ch_parse_window_secs "$raw")
+				;;
+			--json)
+				_CMD_CH_JSON_OUTPUT=1
+				shift
+				;;
+			--verbose)
+				_CMD_CH_VERBOSE=1
+				shift
+				;;
+			-*)
+				print_error "unknown option: ${1}"
+				return 1
+				;;
+			*)
+				shift
+				;;
+		esac
+	done
+	return 0
+}
+
+# Parse pulse-stage-timings.log within the window and emit per-stage stats.
+# Output TSV: stage runs timeouts p50_secs p95_secs last_ok_ts degraded
+_ch_stage_stats() {
+	local timings_file="$1"
+	local cutoff_ts="$2"
+
+	[[ -f "$timings_file" ]] || return 0
+
+	awk -v cutoff="$cutoff_ts" '
+	{
+		nf=split($0, f, "\t")
+		if (nf < 5 || f[1] < cutoff) next
+		ts=f[1]; stage=f[2]; dur=f[3]+0; rc=f[4]+0
+		cnt[stage]++
+		if (rc==124) to[stage]++
+		if (rc==0 && ts > last_ok[stage]) last_ok[stage]=ts
+		n=cnt[stage]; d[stage,n]=dur
+	}
+	END {
+		for (stage in cnt) {
+			n=cnt[stage]
+			for (i=2;i<=n;i++) {
+				key=d[stage,i]; j=i-1
+				while (j>=1 && d[stage,j]>key) {
+					d[stage,j+1]=d[stage,j]; j--
+				}
+				d[stage,j+1]=key
+			}
+			p50_i=int(n*0.50)+1; if(p50_i>n)p50_i=n
+			p95_i=int(n*0.95)+1; if(p95_i>n)p95_i=n
+			t=(to[stage]+0)
+			deg=(n>0 && (t/n)>0.50) ? "DEGRADED" : "ok"
+			printf "%s\t%d\t%d\t%d\t%d\t%s\t%s\n", \
+				stage, n, t, d[stage,p50_i], d[stage,p95_i], \
+				(last_ok[stage]?last_ok[stage]:""), deg
+		}
+	}' "$timings_file" 2>/dev/null | sort -t"	" -k1,1
+	return 0
+}
+
+# Compute cycle-level summary stats from pulse-stage-timings.log.
+# Output: key=value lines (cycles_started, fill_floor_cycles, cycles_since_ff, last_ff_ts)
+_ch_cycle_stats() {
+	local timings_file="$1"
+	local cutoff_ts="$2"
+
+	if [[ ! -f "$timings_file" ]]; then
+		printf 'cycles_started=0\nfill_floor_cycles=0\ncycles_since_ff=0\nlast_ff_ts=\n'
+		return 0
+	fi
+
+	awk -v cutoff="$cutoff_ts" '
+	{
+		nf=split($0, f, "\t")
+		if (nf < 5 || f[1] < cutoff) next
+		ts=f[1]; stage=f[2]; rc=f[4]+0; pid=f[5]
+		pids[pid]=1
+		if (!pid_first[pid] || ts < pid_first[pid]) pid_first[pid]=ts
+		if (stage=="preflight_early_dispatch" && rc==0) {
+			ff[pid]=1
+			if (ts > last_ff_ts) { last_ff_ts=ts; last_ff_pid=pid }
+		}
+	}
+	END {
+		total=0; ff_count=0; since_ff=0
+		for (pid in pids) total++
+		for (pid in ff) ff_count++
+		if (last_ff_ts) {
+			for (pid in pids) {
+				if (!(pid in ff) && pid_first[pid]>last_ff_ts) since_ff++
+			}
+		} else {
+			since_ff=total
+		}
+		printf "cycles_started=%d\nfill_floor_cycles=%d\ncycles_since_ff=%d\nlast_ff_ts=%s\n", \
+			total, ff_count, since_ff, last_ff_ts
+	}' "$timings_file" 2>/dev/null
+	return 0
+}
+
+# Parse pulse-wrapper.log for instance-lock churn (all-time).
+# Output: key=value lines (acquired, exited_early, churn_pct)
+_ch_wrapper_churn() {
+	local wrapper_log="$1"
+
+	if [[ ! -f "$wrapper_log" ]]; then
+		printf 'acquired=0\nexited_early=0\nchurn_pct=0\n'
+		return 0
+	fi
+
+	local acquired exited_early total churn_pct
+	acquired=$(grep -c 'Instance lock acquired via mkdir' "$wrapper_log" 2>/dev/null) || acquired=0
+	exited_early=$(grep -c 'Another pulse instance holds the mkdir lock' "$wrapper_log" 2>/dev/null) || exited_early=0
+	total=$(( acquired + exited_early ))
+	if [[ "$total" -gt 0 ]]; then
+		churn_pct=$(( exited_early * 100 / total ))
+	else
+		churn_pct=0
+	fi
+	printf 'acquired=%d\nexited_early=%d\nchurn_pct=%d\n' "$acquired" "$exited_early" "$churn_pct"
+	return 0
+}
+
+# Render the human-readable cycle health report.
+# Args: window_label cutoff_ts cycle_kv_str churn_kv_str stage_tsv stats_json_or_empty
+_ch_render_text() {
+	local window_label="$1"
+	local cutoff_ts="$2"
+	local cycle_kv="$3"
+	local churn_kv="$4"
+	local stage_tsv="$5"
+
+	# Parse cycle key-value pairs
+	local cycles_started=0 fill_floor_cycles=0 cycles_since_ff=0 last_ff_ts=""
+	while IFS='=' read -r key val; do
+		case "$key" in
+			cycles_started)     cycles_started="$val" ;;
+			fill_floor_cycles)  fill_floor_cycles="$val" ;;
+			cycles_since_ff)    cycles_since_ff="$val" ;;
+			last_ff_ts)         last_ff_ts="$val" ;;
+		esac
+	done <<< "$cycle_kv"
+
+	# Parse churn key-value pairs
+	local acquired=0 exited_early=0 churn_pct=0
+	while IFS='=' read -r key val; do
+		case "$key" in
+			acquired)     acquired="$val" ;;
+			exited_early) exited_early="$val" ;;
+			churn_pct)    churn_pct="$val" ;;
+		esac
+	done <<< "$churn_kv"
+
+	printf '\nPulse Cycle Health — last %s (cutoff: %s)\n\n' "$window_label" "$cutoff_ts"
+
+	# Stage table
+	if [[ -z "$stage_tsv" ]]; then
+		printf '  No stage timing data in window (log missing or empty).\n'
+	else
+		printf '%-38s %5s %8s %5s %5s  %s\n' "Stage" "Runs" "Timeouts" "p50s" "p95s" "Last OK"
+		printf '%s\n' "$(printf '%.0s-' {1..80})"
+		while IFS=$'\t' read -r stage runs timeouts p50 p95 last_ok degraded; do
+			[[ -z "$stage" ]] && continue
+			local ago marker=""
+			ago=$(_ch_ts_ago "$last_ok")
+			[[ "$degraded" == "$_CH_DEGRADED" ]] && marker=" [DEGRADED]"
+			printf '%-38s %5d %8d %5d %5d  %s%b%s%b\n' \
+				"${stage}" "$runs" "$timeouts" "$p50" "$p95" \
+				"$ago" "$YELLOW" "$marker" "$NC"
+		done <<< "$stage_tsv"
+		printf '\n'
+	fi
+
+	# Cycle summary
+	printf 'Cycle summary (last %s):\n' "$window_label"
+	printf '  Cycles started:              %d\n' "$cycles_started"
+	printf '  Cycles reached dispatch:     %d\n' "$fill_floor_cycles"
+	printf '  Cycles since last dispatch:  %d\n' "$cycles_since_ff"
+	if [[ -n "$last_ff_ts" ]]; then
+		local ff_ago
+		ff_ago=$(_ch_ts_ago "$last_ff_ts")
+		printf '  Last dispatch cycle:         %s (%s)\n' "$last_ff_ts" "$ff_ago"
+	else
+		printf '  Last dispatch cycle:         none in window\n'
+	fi
+
+	# Wrapper churn
+	local total_wrappers=$(( acquired + exited_early ))
+	printf '\nWrapper churn (all time):\n'
+	printf '  Acquired lock: %d   Exited early: %d   Churn: %d%% (%d/%d)\n' \
+		"$acquired" "$exited_early" "$churn_pct" "$exited_early" "$total_wrappers"
+	printf '\n'
+	return 0
+}
+
+# Render JSON cycle health output.
+_ch_render_json() {
+	local window_secs="$1"
+	local cutoff_ts="$2"
+	local cycle_kv="$3"
+	local churn_kv="$4"
+	local stage_tsv="$5"
+
+	local cycles_started=0 fill_floor_cycles=0 cycles_since_ff=0 last_ff_ts=""
+	while IFS='=' read -r key val; do
+		case "$key" in
+			cycles_started)     cycles_started="$val" ;;
+			fill_floor_cycles)  fill_floor_cycles="$val" ;;
+			cycles_since_ff)    cycles_since_ff="$val" ;;
+			last_ff_ts)         last_ff_ts="$val" ;;
+		esac
+	done <<< "$cycle_kv"
+
+	local acquired=0 exited_early=0 churn_pct=0
+	while IFS='=' read -r key val; do
+		case "$key" in
+			acquired)     acquired="$val" ;;
+			exited_early) exited_early="$val" ;;
+			churn_pct)    churn_pct="$val" ;;
+		esac
+	done <<< "$churn_kv"
+
+	printf '{\n'
+	_json_num_field "window_secs"            "$window_secs"
+	_json_str_field "cutoff_ts"              "$cutoff_ts"
+	_json_num_field "cycles_started"         "$cycles_started"
+	_json_num_field "fill_floor_cycles"      "$fill_floor_cycles"
+	_json_num_field "cycles_since_fill_floor" "$cycles_since_ff"
+	_json_str_field "last_fill_floor_ts"     "$last_ff_ts"
+	_json_num_field "wrapper_acquired"       "$acquired"
+	_json_num_field "wrapper_exited_early"   "$exited_early"
+	_json_num_field "wrapper_churn_pct"      "$churn_pct"
+	printf '  "stages": [\n'
+
+	local first=1
+	while IFS=$'\t' read -r stage runs timeouts p50 p95 last_ok degraded; do
+		[[ -z "$stage" ]] && continue
+		local deg_bool="false"
+		[[ "$degraded" == "$_CH_DEGRADED" ]] && deg_bool="true"
+		[[ "$first" -eq 0 ]] && printf ',\n'
+		first=0
+		printf '    {"stage": "%s", "runs": %s, "timeouts": %s, "p50_secs": %s, "p95_secs": %s, "last_ok_ts": "%s", "degraded": %s}' \
+			"$stage" "$runs" "$timeouts" "$p50" "$p95" "$last_ok" "$deg_bool"
+	done <<< "$stage_tsv"
+
+	printf '\n  ]\n'
+	printf '}\n'
+	return 0
+}
+
+cmd_cycle_health() {
+	_cmd_cycle_health_parse_args "$@" || return 1
+
+	local cutoff_ts
+	cutoff_ts=$(_ch_cutoff_ts "$_CMD_CH_WINDOW_SECS")
+
+	local logdir
+	logdir=$(_resolve_logdir)
+	local timings_file="${logdir}/pulse-stage-timings.log"
+	local wrapper_log="${logdir}/pulse-wrapper.log"
+
+	# Allow env overrides for tests
+	timings_file="${PULSE_DIAGNOSE_TIMINGS_FILE:-$timings_file}"
+	wrapper_log="${PULSE_DIAGNOSE_WRAPPER_LOG:-$wrapper_log}"
+
+	# Compute window label for display (convert secs back to human)
+	local window_label
+	if [[ "$_CMD_CH_WINDOW_SECS" -ge 86400 ]]; then
+		window_label="$(( _CMD_CH_WINDOW_SECS / 86400 ))d"
+	elif [[ "$_CMD_CH_WINDOW_SECS" -ge 3600 ]]; then
+		window_label="$(( _CMD_CH_WINDOW_SECS / 3600 ))h"
+	else
+		window_label="$(( _CMD_CH_WINDOW_SECS / 60 ))m"
+	fi
+
+	local stage_tsv cycle_kv churn_kv
+	stage_tsv=$(_ch_stage_stats "$timings_file" "$cutoff_ts")
+	cycle_kv=$(_ch_cycle_stats "$timings_file" "$cutoff_ts")
+	churn_kv=$(_ch_wrapper_churn "$wrapper_log")
+
+	if [[ "$_CMD_CH_JSON_OUTPUT" -eq 1 ]]; then
+		_ch_render_json "$_CMD_CH_WINDOW_SECS" "$cutoff_ts" \
+			"$cycle_kv" "$churn_kv" "$stage_tsv"
+		return 0
+	fi
+
+	_ch_render_text "$window_label" "$cutoff_ts" \
+		"$cycle_kv" "$churn_kv" "$stage_tsv"
+	return 0
+}
+
 cmd_help() {
 	cat <<'USAGE'
 pulse-diagnose-helper.sh — correlate pulse.log events with PR merge decisions
@@ -643,17 +1017,26 @@ COMMANDS:
 
   rules [--json]     List the full rule inventory
 
+  cycle-health [options]   Summarise pulse-cycle stability
+    --window <W>     Time window: 30m, 1h, 6h, 24h, 7d (default: 1h)
+    --json           Machine-readable JSON output
+    --verbose        (reserved for future use)
+
   help               Show this message
 
 ENVIRONMENT:
-  PULSE_DIAGNOSE_LOGFILE    Override pulse.log path
-  PULSE_DIAGNOSE_GH_OFFLINE Set to 1 to skip gh API calls (test mode)
-  PULSE_DIAGNOSE_LOGDIR     Override log directory for rotated logs
+  PULSE_DIAGNOSE_LOGFILE        Override pulse.log path
+  PULSE_DIAGNOSE_GH_OFFLINE     Set to 1 to skip gh API calls (test mode)
+  PULSE_DIAGNOSE_LOGDIR         Override log directory for rotated logs
+  PULSE_DIAGNOSE_TIMINGS_FILE   Override pulse-stage-timings.log path
+  PULSE_DIAGNOSE_WRAPPER_LOG    Override pulse-wrapper.log path
 
 EXAMPLES:
   pulse-diagnose-helper.sh pr 20329 --repo marcusquinn/aidevops
   pulse-diagnose-helper.sh pr 20336 --verbose
   pulse-diagnose-helper.sh rules --json
+  pulse-diagnose-helper.sh cycle-health
+  pulse-diagnose-helper.sh cycle-health --window 24h --json
 USAGE
 	return 0
 }
@@ -667,8 +1050,9 @@ main() {
 	shift 2>/dev/null || true
 
 	case "$cmd" in
-		pr)       cmd_pr "$@" ;;
-		rules)    cmd_rules "$@" ;;
+		pr)            cmd_pr "$@" ;;
+		rules)         cmd_rules "$@" ;;
+		cycle-health)  cmd_cycle_health "$@" ;;
 		help|-h|--help) cmd_help ;;
 		*)
 			print_error "unknown command: $cmd"

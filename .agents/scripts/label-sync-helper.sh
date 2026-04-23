@@ -106,6 +106,9 @@ DISPATCH_LABELS=(
 # --- aidevops System Labels ---
 SYSTEM_LABELS=(
 	"auto-dispatch|0E8A16|Eligible for automated worker dispatch"
+	"no-auto-dispatch|EDEDED|Opt-out: block all auto-dispatch on this issue"
+	"hold-for-review|E99695|Opt-out: block auto-merge — hold PR for maintainer review"
+	"needs-credentials|FBCA04|Opt-out: block auto-dispatch — requires credentials or account access"
 	"ai-approved|0E8A16|Issue approved for AI agent processing"
 	"persistent|FBCA04|Persistent issue — do not close"
 	"supervisor|1D76DB|Supervisor health dashboard"

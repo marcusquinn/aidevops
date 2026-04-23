@@ -272,10 +272,12 @@ _is_protected_label() {
 	# Exact-match protected labels
 	# GH#19856: added no-auto-dispatch and no-takeover — these are coordination
 	# signals set by explicit user/session action and must survive enrich.
+	# t2754: added hold-for-review and needs-credentials — canonical dispatch-blockers.
 	case "$lbl" in
 	persistent | needs-maintainer-review | not-planned | duplicate | wontfix | \
 		already-fixed | "good first issue" | "help wanted" | \
 		parent-task | meta | auto-dispatch | no-auto-dispatch | no-takeover | \
+		hold-for-review | needs-credentials | \
 		consolidation-in-progress | coderabbit-nits-ok | ratchet-bump | \
 		new-file-smell-ok)
 		return 0

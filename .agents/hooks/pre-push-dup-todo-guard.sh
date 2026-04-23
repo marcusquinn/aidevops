@@ -24,8 +24,8 @@
 # Exit 0 = allow push. Exit 1 = block push.
 #
 # Environment:
-#   AIDEVOPS_SKIP_DUP_TODO_GUARD=1  — bypass for this invocation (logs warning to stderr)
-#   AIDEVOPS_DUP_TODO_GUARD_DEBUG=1 — verbose stderr trace
+#   DUP_TODO_GUARD_DISABLE=1  — bypass for this invocation (logs warning to stderr)
+#   DUP_TODO_GUARD_DEBUG=1    — verbose stderr trace
 #
 # Fail-open cases (exit 0 with warning):
 #   - TODO.md does not exist in the pushed commit
@@ -49,13 +49,13 @@ _log() {
 
 _dbg() {
 	local _msg="$1"
-	[[ "${AIDEVOPS_DUP_TODO_GUARD_DEBUG:-0}" == "1" ]] || return 0
+	[[ "${DUP_TODO_GUARD_DEBUG:-0}" == "1" ]] || return 0
 	_log DEBUG "$_msg"
 	return 0
 }
 
-if [[ "${AIDEVOPS_SKIP_DUP_TODO_GUARD:-0}" == "1" ]]; then
-	_log WARN "AIDEVOPS_SKIP_DUP_TODO_GUARD=1 — bypassing duplicate TODO check (audit trail: override active)"
+if [[ "${DUP_TODO_GUARD_DISABLE:-0}" == "1" ]]; then
+	_log WARN "DUP_TODO_GUARD_DISABLE=1 — bypassing duplicate TODO check (audit trail: override active)"
 	exit 0
 fi
 
@@ -90,12 +90,13 @@ while IFS=' ' read -r _local_ref _local_sha _remote_ref _remote_sha; do
 	}
 
 	# Extract task IDs from checkbox lines only.
-	# Pattern: ^- [x] tNNN<space> — anchored to avoid matching prose that
-	# mentions a task ID in a description or comment.
+	# Pattern: ^[whitespace]*- [x] tNNN[.N]*<space|EOL> — supports indented
+	# subtasks and hierarchical IDs (e.g., t1271.1). Anchored to checkbox-and-
+	# task-ID prefix to avoid matching prose that mentions a task ID.
 	# BSD sed and GNU sed both support \1 backreference in basic RE.
 	_task_ids=$(printf '%s\n' "$_todo_content" \
-		| grep -E '^- \[.\] t[0-9]+[[:space:]]' \
-		| sed 's/^- \[.\] \(t[0-9]*\)[[:space:]].*/\1/')
+		| grep -E '^[[:space:]]*- \[.\] t[0-9]+(\.[0-9]+)*([[:space:]]|$)' \
+		| sed 's/^[[:space:]]*- \[.\] \(t[0-9][0-9.]*\).*/\1/')
 
 	if [[ -z "$_task_ids" ]]; then
 		_dbg "no task IDs extracted from TODO.md in ${_local_sha}"
@@ -118,8 +119,10 @@ while IFS=' ' read -r _local_ref _local_sha _remote_ref _remote_sha; do
 		[[ -z "$_dup_id" ]] && continue
 		# Find line numbers of the duplicate entries (1-indexed, matching the
 		# checkbox-and-ID anchor so description-only mentions are excluded).
+		# Dots in the task ID must be escaped for ERE to prevent false positives.
+		_dup_id_esc=$(printf '%s' "$_dup_id" | sed 's/\./\\./g')
 		_line_nums=$(printf '%s\n' "$_todo_content" \
-			| grep -n "^- \[.\] ${_dup_id}[[:space:]]" \
+			| grep -nE '^[[:space:]]*- \[.\] '"${_dup_id_esc}"'([[:space:]]|$)' \
 			| cut -d: -f1 \
 			| tr '\n' ',' \
 			| sed 's/,$//')
@@ -130,7 +133,7 @@ while IFS=' ' read -r _local_ref _local_sha _remote_ref _remote_sha; do
 	printf '  Fix: remove the duplicate entry from TODO.md, amend the commit,\n' >&2
 	printf '       and push again.\n' >&2
 	printf '  Check: grep -n "^- \\[.\\] tNNN " TODO.md\n' >&2
-	printf '  Bypass (warning logged): AIDEVOPS_SKIP_DUP_TODO_GUARD=1 git push\n' >&2
+	printf '  Bypass (warning logged): DUP_TODO_GUARD_DISABLE=1 git push\n' >&2
 	printf '  Bypass all hooks:        git push --no-verify\n\n' >&2
 done
 

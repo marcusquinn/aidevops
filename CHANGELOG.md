@@ -10,6 +10,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.95] - 2026-04-23
+
+### Added
+
+- add 'labeled' trigger to maintainer-gate.yml pull_request_target (#20502)
+- add sequential phase auto-filing for parent-task issues (t2740) (#20492)
+
+### Changed
+
+- Maintenance: sync ref:GH#20556 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20554 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20553 to TODO.md [skip ci]
+- auto-decomposer zero-delay thresholds + 1-day re-file interval (#20551)
+- Maintenance: update simplification state registry
+- migrate review-bot-gate CI to delegate to helper (t2139 settlement fix) (#20547)
+- fix local variable style in rest-fallback (separate decl from assignment, hoist _tok) (#20545)
+- fix pulse-batch-prefetch GraphQL exhaustion detection and add REST fallback (#20544)
+- exclude review-bot logins from _count_non_nudge_comments (#20543)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2748 complete (pr:#20533 completed:2026-04-22) [skip ci]
+- fix(scanner): emit auto-dispatch + tier:standard on review-followup issues (#20533)
+- fix dup-todo guard regex for indented/hierarchical IDs + rename bypass var (#20529)
+- fix node-ID null guard, parent-process cache init, and rest-fallback optional arg (#20536)
+- complete POSIX regex replacement doc in t2742 TODO entry (#20539)
+- guard inner shift in _gh_auto_link_sub_issue arg parser against $#=0 (#20540)
+- fix shared-phase-filing: description brackets, child_ref tail-1, dedup regex anchor, _parent_json guard (#20531)
+- Maintenance: sync ref:GH#20530 to TODO.md [skip ci]
+- add aidevops review-gate CLI for configuring rate_limit_behavior (#20527)
+- harden standalone-source tests — LC_ALL=C, safer path arg, declare -f (#20528)
+- Maintenance: mark t2746 complete (pr:#20525 completed:2026-04-22) [skip ci]
+- preserve worker assignee on merged linked PRs for audit trail (#20525)
+- Maintenance: mark t2741 complete (pr:#20526 completed:2026-04-22) [skip ci]
+- add aidevops parent-status CLI helper for decomposition inspection (#20526)
+- fix string-literal ratchet false positive on adjacent quoted shell args (#20522)
+- Refactor: split cmd_backfill_sub_issues into focused helpers (GH#20497) (#20519)
+- protect contributor PRs from auto-close on merge conflicts (#20521)
+- Maintenance: sync ref:GH#20520 to TODO.md [skip ci]
+- add actionlint pre-commit check for .github/workflows/*.yml (#20506)
+- reduce auto_file_next_phase complexity by extracting 3 helper functions (#20503)
+- Maintenance: update simplification state registry
+- suppress fatal: ambiguous argument origin/main via default-branch detection (#20500)
+- add standalone-source regression test for shared-gh-wrappers.sh (#20498)
+- Maintenance: mark t2745 complete (pr:#20499 completed:2026-04-22) [skip ci]
+- add pre-push guard to catch duplicate TODO entries from issue-sync orphan seed (#20499)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2740 complete (pr:#20492 completed:2026-04-22) [skip ci]
+- Maintenance: mark t2743 complete (pr:#20490 completed:2026-04-22) [skip ci]
+- fix shared-gh-wrappers REST fallback for zsh compat (drops labels+assignees) (#20490)
+- Maintenance: mark t2739 complete (pr:#20491 completed:2026-04-22) [skip ci]
+- extend REST fallback to sub-issue backfill node-ID resolution (Gap B) (#20491)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2744 complete (pr:#20483 completed:2026-04-22) [skip ci]
+- raise GraphQL throttle defaults and reduce pulse/stats pressure (#20483)
+- Maintenance: sync ref:GH#20484 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20482 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20480 to TODO.md [skip ci]
+- Maintenance: mark t2738 complete (pr:#20474 completed:2026-04-22) [skip ci]
+- extend _gh_auto_link_sub_issue to detect Parent: line at create-time (#20474)
+- Maintenance: mark t2742 complete (pr:#20479 completed:2026-04-22) [skip ci]
+- brief + TODO entry for string-literal ratchet regex false-positive fix (#20479)
+- Maintenance: sync ref:GH#20477 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20476 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20475 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20473 to TODO.md [skip ci]
+- Maintenance: mark t2722 complete (pr:#20415 completed:2026-04-22) [skip ci]
+- Phase 1 inventory of auto-dispatch references (#20415)
+
+### Fixed
+
+- export DISPATCH_REPO_SLUG before EXIT trap in _cmd_run_prepare (#20546)
+- accurate interval label for non-multiples of 60 in launchd setup (#20537)
+
 ## [3.8.94] - 2026-04-22
 
 ### Added

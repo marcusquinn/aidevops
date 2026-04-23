@@ -16,9 +16,9 @@
 # worker PR the moment its exit trap fires — the PR opens, the trap clears
 # the assignee, and the gate fires on the next PR push or issue-update event.
 #
-# Sibling: test-clear-active-status-on-release-no-pr.sh covers the complement
-# (no open linked PR → assignee + all four active labels removed, preserving
-# the pre-t2451 behaviour byte-for-byte).
+# Siblings:
+#   test-clear-active-status-on-release-preserves-merged-pr.sh (MERGED PR, t2746)
+#   test-clear-active-status-on-release-no-pr.sh               (no PR — pre-t2451)
 #
 # NOTE: not using `set -e` — assertions capture non-zero exits.
 
@@ -121,7 +121,7 @@ assert_not_grep() {
 # Case 1: Resolves #N in body → preserve assignee + in-review
 # -------------------------------------------------------------------
 reset_stub
-printf '[{"number":20188,"body":"Some description.\\n\\nResolves #20156"}]' >"$GH_PR_LIST_JSON"
+printf '[{"number":20188,"state":"OPEN","body":"Some description.\\n\\nResolves #20156"}]' >"$GH_PR_LIST_JSON"
 clear_active_status_on_release 20156 owner/repo alice
 assert_grep "remove-label status:queued" "removes queued when PR open"
 assert_grep "remove-label status:claimed" "removes claimed when PR open"
@@ -133,7 +133,7 @@ assert_not_grep "remove-assignee" "preserves assignee when PR open (Resolves)"
 # Case 2: Fixes #N in body → preserve assignee + in-review
 # -------------------------------------------------------------------
 reset_stub
-printf '[{"number":99,"body":"Fixes #20156 and adds coverage."}]' >"$GH_PR_LIST_JSON"
+printf '[{"number":99,"state":"OPEN","body":"Fixes #20156 and adds coverage."}]' >"$GH_PR_LIST_JSON"
 clear_active_status_on_release 20156 owner/repo alice
 assert_not_grep "remove-label status:in-review" "preserves in-review when PR open (Fixes)"
 assert_not_grep "remove-assignee" "preserves assignee when PR open (Fixes)"
@@ -142,7 +142,7 @@ assert_not_grep "remove-assignee" "preserves assignee when PR open (Fixes)"
 # Case 3: Closes #N in body → preserve assignee + in-review
 # -------------------------------------------------------------------
 reset_stub
-printf '[{"number":42,"body":"closes #20156"}]' >"$GH_PR_LIST_JSON"
+printf '[{"number":42,"state":"OPEN","body":"closes #20156"}]' >"$GH_PR_LIST_JSON"
 clear_active_status_on_release 20156 owner/repo alice
 assert_not_grep "remove-label status:in-review" "preserves in-review when PR open (closes, lowercase)"
 assert_not_grep "remove-assignee" "preserves assignee when PR open (closes, lowercase)"
@@ -151,7 +151,7 @@ assert_not_grep "remove-assignee" "preserves assignee when PR open (closes, lowe
 # Case 4: Case-insensitive keyword matching (RESOLVES, FIXES, CLOSES)
 # -------------------------------------------------------------------
 reset_stub
-printf '[{"number":7,"body":"RESOLVES #20156"}]' >"$GH_PR_LIST_JSON"
+printf '[{"number":7,"state":"OPEN","body":"RESOLVES #20156"}]' >"$GH_PR_LIST_JSON"
 clear_active_status_on_release 20156 owner/repo alice
 assert_not_grep "remove-assignee" "case-insensitive RESOLVES preserves assignee"
 
@@ -160,7 +160,7 @@ assert_not_grep "remove-assignee" "case-insensitive RESOLVES preserves assignee"
 #         still preserves in-review
 # -------------------------------------------------------------------
 reset_stub
-printf '[{"number":7,"body":"Resolves #20156"}]' >"$GH_PR_LIST_JSON"
+printf '[{"number":7,"state":"OPEN","body":"Resolves #20156"}]' >"$GH_PR_LIST_JSON"
 clear_active_status_on_release 20156 owner/repo ""
 assert_not_grep "remove-assignee" "no assignee call when worker_login empty"
 assert_not_grep "remove-label status:in-review" "preserves in-review with empty worker_login"
@@ -171,13 +171,13 @@ assert_grep "remove-label status:queued" "still removes queued with empty worker
 #         it's a planning link, not a closing keyword
 # -------------------------------------------------------------------
 reset_stub
-printf '[{"number":7,"body":"For #20156 tracking"}]' >"$GH_PR_LIST_JSON"
+printf '[{"number":7,"state":"OPEN","body":"For #20156 tracking"}]' >"$GH_PR_LIST_JSON"
 clear_active_status_on_release 20156 owner/repo alice
 assert_grep "remove-assignee alice" "For #N does NOT trigger preserve (planning keyword)"
 assert_grep "remove-label status:in-review" "For #N does NOT preserve in-review (planning keyword)"
 
 reset_stub
-printf '[{"number":7,"body":"Ref #20156"}]' >"$GH_PR_LIST_JSON"
+printf '[{"number":7,"state":"OPEN","body":"Ref #20156"}]' >"$GH_PR_LIST_JSON"
 clear_active_status_on_release 20156 owner/repo alice
 assert_grep "remove-assignee alice" "Ref #N does NOT trigger preserve (planning keyword)"
 
@@ -185,7 +185,7 @@ assert_grep "remove-assignee alice" "Ref #N does NOT trigger preserve (planning 
 # Case 7: Different issue number in body → does NOT match target
 # -------------------------------------------------------------------
 reset_stub
-printf '[{"number":7,"body":"Resolves #99999"}]' >"$GH_PR_LIST_JSON"
+printf '[{"number":7,"state":"OPEN","body":"Resolves #99999"}]' >"$GH_PR_LIST_JSON"
 clear_active_status_on_release 20156 owner/repo alice
 assert_grep "remove-assignee alice" "unrelated issue number does not preserve"
 

@@ -313,6 +313,179 @@ fi
 export PATH="$_original_path"
 
 # =============================================================================
+# Part 8 — pulse-batch-prefetch: _is_search_rate_limited detects GraphQL patterns
+# =============================================================================
+# Test that the updated grep pattern in _is_search_rate_limited correctly matches
+# GraphQL exhaustion errors observed in production (2026-04-22 17:36-18:45 UTC).
+BATCH_PREFETCH_SCRIPT="${TEST_SCRIPTS_DIR}/../pulse-batch-prefetch-helper.sh"
+
+_rl_err=$(mktemp)
+
+# 8a: GraphQL exhaustion pattern — the exact string from production logs
+printf 'GraphQL: API rate limit already exceeded for user ID 99999\n' >"$_rl_err"
+if (
+	set +e
+	# shellcheck source=/dev/null
+	source "$BATCH_PREFETCH_SCRIPT" >/dev/null 2>&1 || true
+	_is_search_rate_limited "$_rl_err"
+) 2>/dev/null; then
+	print_result "_is_search_rate_limited detects 'GraphQL: API rate limit already exceeded'" 0
+else
+	print_result "_is_search_rate_limited detects 'GraphQL: API rate limit already exceeded'" 1 "(pattern not matched)"
+fi
+
+# 8b: Alternate GraphQL pattern without "already"
+printf 'GraphQL: API rate limit exceeded for user ID 99999\n' >"$_rl_err"
+if (
+	set +e
+	# shellcheck source=/dev/null
+	source "$BATCH_PREFETCH_SCRIPT" >/dev/null 2>&1 || true
+	_is_search_rate_limited "$_rl_err"
+) 2>/dev/null; then
+	print_result "_is_search_rate_limited detects 'GraphQL: API rate limit exceeded' (no 'already')" 0
+else
+	print_result "_is_search_rate_limited detects 'GraphQL: API rate limit exceeded' (no 'already')" 1 "(pattern not matched)"
+fi
+
+# 8c: "API rate limit exceeded for user" alternate GitHub phrasing
+printf 'API rate limit exceeded for user ID 99999\n' >"$_rl_err"
+if (
+	set +e
+	# shellcheck source=/dev/null
+	source "$BATCH_PREFETCH_SCRIPT" >/dev/null 2>&1 || true
+	_is_search_rate_limited "$_rl_err"
+) 2>/dev/null; then
+	print_result "_is_search_rate_limited detects 'API rate limit exceeded for user'" 0
+else
+	print_result "_is_search_rate_limited detects 'API rate limit exceeded for user'" 1 "(pattern not matched)"
+fi
+
+# 8d: Existing "Search rate limit exceeded" pattern still matches
+printf 'Search rate limit exceeded\n' >"$_rl_err"
+if (
+	set +e
+	# shellcheck source=/dev/null
+	source "$BATCH_PREFETCH_SCRIPT" >/dev/null 2>&1 || true
+	_is_search_rate_limited "$_rl_err"
+) 2>/dev/null; then
+	print_result "_is_search_rate_limited still detects 'Search rate limit exceeded' (existing pattern)" 0
+else
+	print_result "_is_search_rate_limited still detects 'Search rate limit exceeded' (existing pattern)" 1 "(existing pattern broken)"
+fi
+
+# 8e: Generic network error does NOT match (no false positives)
+printf 'error: network timeout connecting to api.github.com\n' >"$_rl_err"
+if ! (
+	set +e
+	# shellcheck source=/dev/null
+	source "$BATCH_PREFETCH_SCRIPT" >/dev/null 2>&1 || true
+	_is_search_rate_limited "$_rl_err"
+) 2>/dev/null; then
+	print_result "_is_search_rate_limited does NOT match generic network errors (no false positives)" 0
+else
+	print_result "_is_search_rate_limited does NOT match generic network errors (no false positives)" 1 "(false positive on network error)"
+fi
+
+rm -f "$_rl_err" 2>/dev/null || true
+
+# =============================================================================
+# Part 9 — pulse-batch-prefetch: REST fallback writes per-slug caches
+# =============================================================================
+# Verify that when gh search issues/prs fails with a GraphQL exhaustion error,
+# the helper falls back to gh api REST (/repos/{slug}/issues, /repos/{slug}/pulls)
+# and writes the per-slug cache files.
+STUB_DIR_REST="${TEST_ROOT}/bin-rest-fallback"
+mkdir -p "$STUB_DIR_REST"
+
+# Stub repos.json with one pulse-enabled repo
+STUB_REPOS_JSON="${TEST_ROOT}/repos-rest-test.json"
+cat >"$STUB_REPOS_JSON" <<'REPOSJSON'
+{"initialized_repos":[{"slug":"testowner/testrepo","pulse":true,"local_only":false}],"git_parent_dirs":[]}
+REPOSJSON
+
+# Stub gh: search commands fail with GraphQL exhaustion, REST succeeds
+cat >"${STUB_DIR_REST}/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+# gh search → simulate GraphQL exhaustion
+if [[ "$1" == "search" ]]; then
+	printf 'GraphQL: API rate limit already exceeded for user ID 99999\n' >&2
+	exit 1
+fi
+# gh api repos/{slug}/issues → simulate REST success
+if [[ "$1" == "api" && "$2" == *"/issues"* ]]; then
+	printf '[{"number":42,"title":"Test Issue","labels":[],"updated_at":"2026-04-22T17:00:00Z","assignees":[]}]\n'
+	exit 0
+fi
+# gh api repos/{slug}/pulls → simulate REST success
+if [[ "$1" == "api" && "$2" == *"/pulls"* ]]; then
+	printf '[{"number":7,"title":"Test PR","labels":[],"updated_at":"2026-04-22T17:00:00Z","assignees":[],"created_at":"2026-04-22T16:00:00Z","user":{"login":"testuser"}}]\n'
+	exit 0
+fi
+exit 1
+GHSTUB
+chmod +x "${STUB_DIR_REST}/gh"
+
+BATCH_CACHE_DIR_TEST="${TEST_ROOT}/batch-cache-rest"
+mkdir -p "$BATCH_CACHE_DIR_TEST"
+
+set +e
+PATH="${STUB_DIR_REST}:${PATH}" \
+	REPOS_JSON="$STUB_REPOS_JSON" \
+	PULSE_BATCH_PREFETCH_CACHE_DIR="$BATCH_CACHE_DIR_TEST" \
+	LOGFILE="/dev/null" \
+	bash "$BATCH_PREFETCH_SCRIPT" refresh >/dev/null 2>&1
+set -e
+
+# Verify issues cache was written
+_issues_cache="${BATCH_CACHE_DIR_TEST}/issues-testowner__testrepo.json"
+if [[ -f "$_issues_cache" ]]; then
+	print_result "REST fallback: issues cache written when GraphQL exhausted (GH#20534)" 0
+else
+	print_result "REST fallback: issues cache written when GraphQL exhausted (GH#20534)" 1 "(cache not found: ${_issues_cache})"
+fi
+
+# Verify issues cache has items and correct schema
+if [[ -f "$_issues_cache" ]]; then
+	_item_count=$(jq '.items | length' "$_issues_cache" 2>/dev/null || echo 0)
+	if [[ "$_item_count" -ge 1 ]]; then
+		print_result "REST fallback: issues cache has items (count=${_item_count})" 0
+	else
+		print_result "REST fallback: issues cache has items" 1 "(items count=${_item_count})"
+	fi
+	_first_number=$(jq '.items[0].number' "$_issues_cache" 2>/dev/null || echo "null")
+	_has_updated_at=$(jq '.items[0] | has("updatedAt")' "$_issues_cache" 2>/dev/null || echo "false")
+	if [[ "$_first_number" == "42" && "$_has_updated_at" == "true" ]]; then
+		print_result "REST fallback: issues cache schema has updatedAt field (not updated_at)" 0
+	else
+		print_result "REST fallback: issues cache schema has updatedAt field (not updated_at)" 1 "(number=${_first_number} updatedAt=${_has_updated_at})"
+	fi
+fi
+
+# Verify PRs cache was written
+_prs_cache="${BATCH_CACHE_DIR_TEST}/prs-testowner__testrepo.json"
+if [[ -f "$_prs_cache" ]]; then
+	print_result "REST fallback: PRs cache written when GraphQL exhausted (GH#20534)" 0
+else
+	print_result "REST fallback: PRs cache written when GraphQL exhausted (GH#20534)" 1 "(cache not found: ${_prs_cache})"
+fi
+
+# Verify PRs cache has items and correct schema (author field from REST user.login)
+if [[ -f "$_prs_cache" ]]; then
+	_pr_count=$(jq '.items | length' "$_prs_cache" 2>/dev/null || echo 0)
+	if [[ "$_pr_count" -ge 1 ]]; then
+		print_result "REST fallback: PRs cache has items (count=${_pr_count})" 0
+	else
+		print_result "REST fallback: PRs cache has items" 1 "(items count=${_pr_count})"
+	fi
+	_pr_author=$(jq -r '.items[0].author.login // "null"' "$_prs_cache" 2>/dev/null || echo "null")
+	if [[ "$_pr_author" == "testuser" ]]; then
+		print_result "REST fallback: PRs cache author.login mapped from REST user.login" 0
+	else
+		print_result "REST fallback: PRs cache author.login mapped from REST user.login" 1 "(author.login='${_pr_author}', expected 'testuser')"
+	fi
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo ""

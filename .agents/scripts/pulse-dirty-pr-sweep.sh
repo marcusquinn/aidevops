@@ -7,7 +7,7 @@
 # actions based on age, content, and conflict scope:
 #
 #   Auto-rebase : PR < 48h old AND maintainer/worker-owned AND only TODO.md
-#                 is conflicting → rebase onto origin/main with union merge
+#                 is conflicting → rebase onto origin/<default_branch> with union merge
 #                 strategy, force-push, post documentation comment.
 #   Auto-close  : PR > 7d old AND no human commits in 3d AND no
 #                 `do-not-close` label → close with a "superseded" comment.
@@ -633,7 +633,11 @@ _dirty_pr_action_rebase() {
 	local ephemeral_branch="dirty-pr-sweep/pr-${pr_number}-${ephemeral_branch_ts}"
 
 	# Refresh origin/<default_branch> and origin/<head_ref> before anything else.
-	git -C "$repo_path" fetch --quiet origin "${default_branch}:refs/remotes/origin/${default_branch}" 2>/dev/null || true
+	git -C "$repo_path" fetch --quiet origin "${default_branch}:refs/remotes/origin/${default_branch}" || {
+		_dps_log "PR #$pr_number ($repo_slug): fetch of origin/${default_branch} failed — skipping rebase"
+		rm -rf "$ephemeral" || true
+		return 1
+	}
 	git -C "$repo_path" fetch --quiet origin "${head_ref}:refs/remotes/origin/${head_ref}" 2>/dev/null || {
 		_dps_log "PR #$pr_number ($repo_slug): fetch of origin/${head_ref} failed — skipping rebase"
 		rm -rf "$ephemeral" 2>/dev/null || true

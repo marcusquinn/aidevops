@@ -104,7 +104,7 @@ if [[ "\$1" == "pr" && "\$2" == "close" ]]; then
 	exit 0
 fi
 
-if [[ "\$1" == "pr" && "\$2" == "view" ]]; then
+	if [[ "\$1" == "pr" && "\$2" == "view" ]]; then
 	# Find the --json field name to know which response to emit.
 	field=""
 	args=("\$@")
@@ -121,6 +121,19 @@ if [[ "\$1" == "pr" && "\$2" == "view" ]]; then
 		labels)
 			response="\${TEST_ROOT}/pr-labels.txt"
 			if [[ -f "\$response" ]]; then cat "\$response"; fi
+			exit 0
+			;;
+		"labels,author,authorAssociation")
+			# GH#20485: _close_conflicting_pr_check_ownership_guard fetches
+			# labels + author metadata in one call. Return pr-meta.json if
+			# present; fall back to a default that simulates a worker PR
+			# (origin:worker label, bot author) so existing tests are unaffected.
+			response="\${TEST_ROOT}/pr-meta.json"
+			if [[ -f "\$response" ]]; then
+				cat "\$response"
+			else
+				echo '{"labels":[{"name":"origin:worker"}],"author":{"login":"aidevops-worker[bot]"},"authorAssociation":"NONE"}'
+			fi
 			exit 0
 			;;
 		files)
@@ -183,12 +196,13 @@ load_functions_under_test() {
 
 	# Extract these functions in order:
 	#   _post_rebase_nudge_on_interactive_conflicting (label-fetch fail path)
+	#   _post_rebase_nudge_on_contributor_conflicting (GH#20485)
 	#   _is_planning_path_for_overlap
 	#   _verify_pr_overlaps_commit
 	#   _post_rebase_nudge_on_worker_conflicting
 	#   _parse_squash_merge_pr                         (t2438)
 	#   _find_task_id_match_on_main                    (t2438)
-	#   _close_conflicting_pr_check_interactive_guard  (t2438)
+	#   _close_conflicting_pr_check_ownership_guard    (GH#20485, replaces _check_interactive_guard)
 	#   _close_conflicting_pr_classify_landed          (t2438)
 	#   _close_conflicting_pr_comment_landed           (t2438)
 	#   _close_conflicting_pr_comment_not_landed       (t2438)
@@ -196,12 +210,13 @@ load_functions_under_test() {
 	# Each definition uses tab-indented bodies with a column-0 "}" closer.
 	awk '
 		/^_post_rebase_nudge_on_interactive_conflicting\(\) \{$/ { fn=1 }
-		/^_is_planning_path_for_overlap\(\) \{$/                 { fn=1 }
+		/^_post_rebase_nudge_on_contributor_conflicting\(\) \{$/  { fn=1 }
+		/^_is_planning_path_for_overlap\(\) \{$/                  { fn=1 }
 		/^_verify_pr_overlaps_commit\(\) \{$/                     { fn=1 }
 		/^_post_rebase_nudge_on_worker_conflicting\(\) \{$/       { fn=1 }
 		/^_parse_squash_merge_pr\(\) \{$/                         { fn=1 }
 		/^_find_task_id_match_on_main\(\) \{$/                    { fn=1 }
-		/^_close_conflicting_pr_check_interactive_guard\(\) \{$/  { fn=1 }
+		/^_close_conflicting_pr_check_ownership_guard\(\) \{$/    { fn=1 }
 		/^_close_conflicting_pr_classify_landed\(\) \{$/          { fn=1 }
 		/^_close_conflicting_pr_comment_landed\(\) \{$/           { fn=1 }
 		/^_close_conflicting_pr_comment_not_landed\(\) \{$/       { fn=1 }
@@ -225,16 +240,28 @@ STUB_EOF
 }
 
 # Helper to write per-test response files.
+# Optional 4th arg: pr-meta JSON for _close_conflicting_pr_check_ownership_guard.
+# Default simulates a worker-origin PR (origin:worker label, bot author) so
+# existing tests that expect closes are unaffected by GH#20485.
 set_responses() {
 	local commits_json="$1"
 	local commit_files="$2"
 	local pr_files="$3"
+	local pr_meta_json="${4:-}"
 	printf '%s' "$commits_json" >"${TEST_ROOT}/commits.json"
 	printf '%s' "$commit_files" >"${TEST_ROOT}/commit-files.txt"
 	printf '%s' "$pr_files" >"${TEST_ROOT}/pr-files.txt"
 	# Default empty labels (no origin:interactive)
 	: >"${TEST_ROOT}/pr-labels.txt"
 	echo "feature/test" >"${TEST_ROOT}/pr-branch.txt"
+	# GH#20485: ownership guard metadata. Default = worker-origin bot PR
+	# so existing close-path tests still proceed to the close logic.
+	if [[ -n "$pr_meta_json" ]]; then
+		printf '%s' "$pr_meta_json" >"${TEST_ROOT}/pr-meta.json"
+	else
+		printf '%s' '{"labels":[{"name":"origin:worker"}],"author":{"login":"aidevops-worker[bot]"},"authorAssociation":"NONE"}' \
+			>"${TEST_ROOT}/pr-meta.json"
+	fi
 	return 0
 }
 
@@ -475,6 +502,247 @@ test_no_close_when_pr_files_lookup_fails() {
 	return 0
 }
 
+# ── GH#20485: External contributor PR protection ──
+
+# GH#20485: Non-bot author with no origin label → skip close, post nudge.
+test_no_close_for_external_contributor_pr() {
+	setup_sandbox
+	# No task-ID match on main, so the flow reaches Gate 1. PR has no origin
+	# label and a human contributor author — must NOT be closed.
+	set_responses \
+		'[{"sha":"abc1234567890abcdef","subject":"chore: unrelated commit"},{"sha":"def4567890abcdef","subject":"feat: also unrelated"}]' \
+		'.agents/scripts/pulse-merge-conflict.sh' \
+		'.agents/scripts/pulse-merge-conflict.sh' \
+		'{"labels":[],"author":{"login":"superdav42"},"authorAssociation":"CONTRIBUTOR"}'
+
+	load_functions_under_test
+
+	# Stub _gh_idempotent_comment so we can detect the nudge post attempt
+	_gh_idempotent_comment() { return 0; }
+
+	_close_conflicting_pr "20485" "marcusquinn/aidevops" \
+		"superdav42: my feature"
+
+	local result=0
+	# Must NOT have called gh pr close (captured comment file is empty)
+	if [[ -s "$CAPTURED_COMMENT_FILE" ]]; then
+		result=1
+	fi
+	# Must have logged the contributor protection
+	if ! grep -q "GH#20485" "$LOGFILE"; then
+		result=1
+	fi
+	if ! grep -q "superdav42" "$LOGFILE"; then
+		result=1
+	fi
+
+	print_result "GH#20485: external contributor PR left open (no close)" \
+		"$result" \
+		"captured-comment=$(cat "$CAPTURED_COMMENT_FILE" | head -c 100); log=$(head -5 "$LOGFILE")"
+	teardown_sandbox
+	return 0
+}
+
+# GH#20485: origin:worker label present → proceed with close (pulse owns it).
+test_close_for_worker_origin_pr() {
+	setup_sandbox
+	# No commit match, worker PR → should close.
+	set_responses \
+		'[{"sha":"abc1234567890abcdef","subject":"chore: unrelated commit"}]' \
+		'.agents/scripts/pulse-merge-conflict.sh' \
+		'.agents/scripts/pulse-merge-conflict.sh' \
+		'{"labels":[{"name":"origin:worker"}],"author":{"login":"superdav42"},"authorAssociation":"CONTRIBUTOR"}'
+
+	load_functions_under_test
+
+	_close_conflicting_pr "20486" "marcusquinn/aidevops" \
+		"t9999: worker-created PR"
+
+	local result=0
+	# origin:worker → guard returns 1 → close proceeds
+	if [[ ! -s "$CAPTURED_COMMENT_FILE" ]]; then
+		result=1
+	fi
+	if ! grep -q "merge conflicts" "$(cat "$CAPTURED_COMMENT_FILE" 2>/dev/null || true)" 2>/dev/null; then
+		# check the comment has the expected text
+		local body
+		body=$(cat "$CAPTURED_COMMENT_FILE" 2>/dev/null || true)
+		if ! printf '%s' "$body" | grep -q "merge conflicts"; then
+			result=1
+		fi
+	fi
+
+	print_result "GH#20485: origin:worker PR is still closed on conflicts" \
+		"$result" \
+		"captured=$(cat "$CAPTURED_COMMENT_FILE" | head -c 150)"
+	teardown_sandbox
+	return 0
+}
+
+# GH#20485: origin:worker-takeover label → proceed with close (ownership transferred).
+test_close_for_worker_takeover_pr() {
+	setup_sandbox
+	set_responses \
+		'[{"sha":"abc1234567890abcdef","subject":"chore: unrelated commit"}]' \
+		'.agents/scripts/pulse-merge-conflict.sh' \
+		'.agents/scripts/pulse-merge-conflict.sh' \
+		'{"labels":[{"name":"origin:worker-takeover"},{"name":"origin:interactive"}],"author":{"login":"marcusquinn"},"authorAssociation":"OWNER"}'
+
+	load_functions_under_test
+
+	_close_conflicting_pr "20487" "marcusquinn/aidevops" \
+		"t9999: worker-takeover PR"
+
+	local result=0
+	# origin:worker-takeover → guard returns 1 → close proceeds
+	# (even though origin:interactive is also present; worker-takeover takes precedence
+	# over interactive in the guard because worker-takeover is checked first)
+	# Actually: interactive is checked FIRST and returns 0 (skip). Test expects no-close.
+	# Correction: origin:interactive guard fires first → no close.
+	# This tests that origin:worker-takeover WITHOUT origin:interactive → close.
+
+	teardown_sandbox
+
+	# Re-run without origin:interactive
+	setup_sandbox
+	set_responses \
+		'[{"sha":"abc1234567890abcdef","subject":"chore: unrelated commit"}]' \
+		'.agents/scripts/pulse-merge-conflict.sh' \
+		'.agents/scripts/pulse-merge-conflict.sh' \
+		'{"labels":[{"name":"origin:worker-takeover"}],"author":{"login":"superdav42"},"authorAssociation":"CONTRIBUTOR"}'
+
+	load_functions_under_test
+
+	_close_conflicting_pr "20488" "marcusquinn/aidevops" \
+		"t9999: worker-takeover PR"
+
+	if [[ ! -s "$CAPTURED_COMMENT_FILE" ]]; then
+		result=1
+	fi
+
+	print_result "GH#20485: origin:worker-takeover PR is closed on conflicts" \
+		"$result" \
+		"captured=$(cat "$CAPTURED_COMMENT_FILE" | head -c 150)"
+	teardown_sandbox
+	return 0
+}
+
+# GH#20485: bot author with no origin label → proceed with close (no human loses work).
+test_close_for_bot_author_no_label_pr() {
+	setup_sandbox
+	set_responses \
+		'[{"sha":"abc1234567890abcdef","subject":"chore: unrelated commit"}]' \
+		'.agents/scripts/pulse-merge-conflict.sh' \
+		'.agents/scripts/pulse-merge-conflict.sh' \
+		'{"labels":[],"author":{"login":"dependabot[bot]"},"authorAssociation":"NONE"}'
+
+	load_functions_under_test
+
+	_close_conflicting_pr "20489" "marcusquinn/aidevops" \
+		"chore: dependabot update"
+
+	local result=0
+	if [[ ! -s "$CAPTURED_COMMENT_FILE" ]]; then
+		result=1
+	fi
+
+	print_result "GH#20485: bot-author PR with no origin label is still closed" \
+		"$result" \
+		"captured=$(cat "$CAPTURED_COMMENT_FILE" | head -c 150)"
+	teardown_sandbox
+	return 0
+}
+
+# GH#20485: metadata fetch failure → fail CLOSED → no close.
+test_no_close_on_metadata_fetch_failure() {
+	# Simulate gh pr view returning non-zero for labels,author,authorAssociation
+	local tmp_sandbox
+	tmp_sandbox=$(mktemp -d)
+	local stub_dir="${tmp_sandbox}/stubs"
+	local captured="${tmp_sandbox}/captured.txt"
+	local log_file="${tmp_sandbox}/pulse.log"
+	mkdir -p "$stub_dir"
+	: >"$captured"
+	: >"$log_file"
+
+	# Write a stub that fails on the metadata fetch
+	cat >"${stub_dir}/gh" <<STUB_EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "pr" && "\$2" == "view" ]]; then
+  field=""
+  args=("\$@")
+  i=2
+  while [[ \$i -lt \${#args[@]} ]]; do
+    if [[ "\${args[\$i]}" == "--json" ]]; then
+      j=\$((i + 1))
+      field="\${args[\$j]}"
+      break
+    fi
+    i=\$((i + 1))
+  done
+  if [[ "\$field" == "labels,author,authorAssociation" ]]; then
+    exit 1
+  fi
+fi
+exit 0
+STUB_EOF
+	chmod +x "${stub_dir}/gh"
+
+	local old_path="$PATH"
+	export PATH="${stub_dir}:${PATH}"
+	export LOGFILE="$log_file"
+
+	# Source functions from the real script
+	local repo_root
+	repo_root=$(cd "$(dirname "$0")/../../.." && pwd)
+	local src="${repo_root}/.agents/scripts/pulse-merge-conflict.sh"
+	local tmp_fn="${tmp_sandbox}/funcs.sh"
+	awk '
+		/^_post_rebase_nudge_on_interactive_conflicting\(\) \{$/ { fn=1 }
+		/^_post_rebase_nudge_on_contributor_conflicting\(\) \{$/  { fn=1 }
+		/^_is_planning_path_for_overlap\(\) \{$/                  { fn=1 }
+		/^_verify_pr_overlaps_commit\(\) \{$/                     { fn=1 }
+		/^_post_rebase_nudge_on_worker_conflicting\(\) \{$/       { fn=1 }
+		/^_parse_squash_merge_pr\(\) \{$/                         { fn=1 }
+		/^_find_task_id_match_on_main\(\) \{$/                    { fn=1 }
+		/^_close_conflicting_pr_check_ownership_guard\(\) \{$/    { fn=1 }
+		/^_close_conflicting_pr_classify_landed\(\) \{$/          { fn=1 }
+		/^_close_conflicting_pr_comment_landed\(\) \{$/           { fn=1 }
+		/^_close_conflicting_pr_comment_not_landed\(\) \{$/       { fn=1 }
+		/^_close_conflicting_pr\(\) \{$/                          { fn=1 }
+		fn { print }
+		fn && /^\}$/ { fn=0 }
+	' "$src" >"$tmp_fn"
+	cat >>"$tmp_fn" <<'STUB_EOF'
+_carry_forward_pr_diff() { return 0; }
+_extract_linked_issue() { return 0; }
+STUB_EOF
+	# shellcheck source=/dev/null
+	source "$tmp_fn"
+
+	_close_conflicting_pr "99999" "marcusquinn/aidevops" "t9999: metadata-fail test"
+
+	local result=0
+	if [[ -s "$captured" ]]; then
+		result=1
+	fi
+	if ! grep -q "failed to fetch metadata" "$log_file"; then
+		result=1
+	fi
+
+	export PATH="$old_path"
+	rm -rf "$tmp_sandbox"
+
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$result" -eq 0 ]]; then
+		printf '%bPASS%b %s\n' "$TEST_GREEN" "$TEST_RESET" "GH#20485: metadata fetch failure leaves PR open (fail-CLOSED)"
+	else
+		printf '%bFAIL%b %s\n' "$TEST_RED" "$TEST_RESET" "GH#20485: metadata fetch failure leaves PR open (fail-CLOSED)"
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	return 0
+}
+
 # ── Run all tests ──
 
 test_wording_with_squash_merge_pr_number
@@ -484,6 +752,11 @@ test_no_close_when_matching_commit_only_touches_planning_files
 test_close_when_matching_commit_overlaps_implementation_files
 test_no_close_when_commit_files_lookup_fails
 test_no_close_when_pr_files_lookup_fails
+test_no_close_for_external_contributor_pr
+test_close_for_worker_origin_pr
+test_close_for_worker_takeover_pr
+test_close_for_bot_author_no_label_pr
+test_no_close_on_metadata_fetch_failure
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
