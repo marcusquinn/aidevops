@@ -1,0 +1,142 @@
+name: Counter-Stack Check
+
+# t2763: CI lint gate that detects the grep -c counter-stacking bug class.
+# Scans only PR-changed .sh and .yml files (diff-scoped — Option A) so existing
+# violations on main don't block. Phase 2 sweep (t2762) will clear them.
+#
+# Bug class: `count=$(... grep -c 'pat' ... || echo "N")` produces multi-line
+# "0\nN" output on zero-match path because grep -c exits 1. Canonical failure:
+# parent issue #20402 rendered "Progress: **0\n0 done**".
+#
+# Violations posted as a PR comment linking to the style guide.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.agents/scripts/**/*.sh'
+      - '.agents/hooks/**/*.sh'
+      - '.github/workflows/**/*.yml'
+      - '.github/workflows/**/*.yaml'
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Counter-Stack Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed shell + workflow files
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- \
+            '.agents/scripts/**/*.sh' \
+            '.agents/hooks/**/*.sh' \
+            '.github/workflows/**/*.yml' \
+            '.github/workflows/**/*.yaml' || true)
+          if [ -z "$changed" ]; then
+            echo "No counter-stack-scannable files changed."
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf 'Changed files:\n%s\n' "$changed"
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$changed" > /tmp/changed-cs-files.txt
+
+      - name: Run counter-stack check
+        if: steps.changed.outputs.has_files == 'true'
+        id: scan
+        run: |
+          set +e
+          files=$(tr '\n' ' ' < /tmp/changed-cs-files.txt)
+          # shellcheck disable=SC2086
+          output=$(bash .agents/scripts/counter-stack-check.sh --scan-files $files 2>&1)
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$output"
+          printf '%s\n' "$output" > /tmp/counter-stack-report.txt
+
+      - name: Post PR comment on failure
+        if: steps.changed.outputs.has_files == 'true' && steps.scan.outputs.exit_code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          report=$(cat /tmp/counter-stack-report.txt)
+          marker="<!-- counter-stack-check -->"
+          body=$(cat <<EOF
+          ${marker}
+          ## Counter-Stacking Violations (grep -c safety)
+
+          The following files introduce or modify \`grep -c … || echo "N"\` patterns
+          that produce multi-line output on the zero-match path (see
+          [style guide](.agents/reference/shell-style-guide.md#counter-safety-grep--c)
+          and canonical failure #20402):
+
+          \`\`\`
+          ${report}
+          \`\`\`
+
+          **Fix:** Source \`shared-constants.sh\` and use \`safe_grep_count\`:
+
+          \`\`\`bash
+          count=\$(safe_grep_count 'pat' file)
+          \`\`\`
+
+          Or, in YAML workflow steps and bootstrap scripts that cannot source
+          \`shared-constants.sh\`, use the inline guard form:
+
+          \`\`\`bash
+          count=\$(grep -c 'pat' file 2>/dev/null || true)
+          [[ "\$count" =~ ^[0-9]+\$ ]] || count=0
+          \`\`\`
+
+          Run \`counter-stack-check.sh --fix-hint\` for remediation snippets.
+          EOF
+          )
+
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body="$body" >/dev/null 2>&1 || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body" \
+              >/dev/null 2>&1 || true
+          fi
+
+      - name: Enforce gate
+        if: steps.changed.outputs.has_files == 'true'
+        env:
+          EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          if [ "${EXIT_CODE:-0}" = "0" ]; then
+            echo "Counter-stack check: clean."
+            exit 0
+          fi
+          if [ "$EXIT_CODE" = "1" ]; then
+            echo "::error::Counter-stack violations found. See PR comment for details."
+            exit 1
+          fi
+          echo "::error::Counter-stack check failed with unexpected exit code: $EXIT_CODE"
+          exit 1
