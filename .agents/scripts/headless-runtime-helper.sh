@@ -424,6 +424,10 @@ _invoke_opencode() {
 		# silently kills streaming connections — workers stall at step_start
 		# with zero API errors. Session stats are sacrificed for reliability.
 		export XDG_DATA_HOME="$isolated_data_dir"
+		# GH#20564: Expose isolated DB path to exit trap classifier so
+		# classify_worker_exit can check for sessions even when the EXIT trap
+		# fires while _invoke_opencode is still waiting for the worker.
+		_WORKER_ISOLATED_DB_PATH="${isolated_data_dir}/opencode/opencode.db"
 		print_info "[lifecycle] db_isolated dir=$isolated_data_dir pid=$$"
 
 		# t2249: Pre-dispatch OAuth pool check. If the account copied into the
@@ -555,6 +559,9 @@ _invoke_opencode() {
 		fi
 		rm -rf "$isolated_data_dir" 2>/dev/null || true
 		unset XDG_DATA_HOME
+		# GH#20564: Clear isolated DB path after cleanup so exit trap
+		# classifier falls back to shared DB if EXIT fires post-cleanup.
+		_WORKER_ISOLATED_DB_PATH=""
 		print_info "[lifecycle] db_cleanup dir=$isolated_data_dir pid=$$"
 	fi
 
@@ -1143,8 +1150,18 @@ _cmd_run_prepare() {
 	if ! _acquire_session_lock "$session_key"; then
 		return 2
 	fi
+	# GH#20564: Use _exit_trap_handler to classify the exit reason
+	# (crash_during_startup / crash_during_execution / signal_killed:<N> / clean)
+	# instead of emitting a fixed 'process_exit' reason for all abnormal exits.
+	# SC2064: session_key is intentionally baked in at trap-set time.
 	# shellcheck disable=SC2064
-	trap "_release_dispatch_claim '$session_key' 'process_exit'; _release_session_lock '$session_key'; _update_dispatch_ledger '$session_key' 'fail'" EXIT
+	trap "_exit_trap_handler '$session_key'" EXIT
+
+	# GH#20564: Record worker start time in milliseconds for exit trap classifier.
+	# classify_worker_exit uses this to distinguish crash_during_startup (no
+	# session created since start) from crash_during_execution (session found).
+	# Uses the same python3 ms-epoch pattern as _execute_run_attempt metrics.
+	_WORKER_START_EPOCH_MS=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
 
 	# GH#6696: Register this dispatch in the in-flight ledger so the pulse
 	# can detect workers that haven't created PRs yet. The ledger bridges

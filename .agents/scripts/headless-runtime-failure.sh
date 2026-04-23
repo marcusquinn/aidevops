@@ -29,6 +29,12 @@
 [[ -n "${_HEADLESS_RUNTIME_FAILURE_LOADED:-}" ]] && return 0
 readonly _HEADLESS_RUNTIME_FAILURE_LOADED=1
 
+# Fallback exit reason — backward-compatible value used when classify_worker_exit
+# cannot determine the actual cause (missing sqlite3, corrupt DB, unexpected format).
+# Recognised by dispatch-dedup-helper.sh: any CLAIM_RELEASED is treated as
+# authoritative regardless of reason value.
+readonly _HRFF_FALLBACK_EXIT="process_exit"
+
 #######################################
 # Release a dispatch claim by posting a CLAIM_RELEASED comment.
 # The dedup guard recognises this and allows immediate re-dispatch
@@ -37,10 +43,14 @@ readonly _HEADLESS_RUNTIME_FAILURE_LOADED=1
 # Args:
 #   $1 = session_key (contains issue number and repo slug)
 #   $2 = reason (logged in the comment for debugging)
+#   $3 = exit_code (optional — included in comment when provided by exit trap)
+#   $4 = session_count (optional — session_count from worker DB for exit trap)
 #######################################
 _release_dispatch_claim() {
 	local session_key="$1"
 	local reason="${2:-worker_failed}"
+	local exit_code_arg="${3:-}"
+	local session_count_arg="${4:-}"
 
 	# Extract issue number and repo slug from session key
 	# Format: pulse-{login}-{repo}-{issue} or similar
@@ -57,6 +67,12 @@ _release_dispatch_claim() {
 
 	local comment_body
 	comment_body="CLAIM_RELEASED reason=${reason} runner=$(whoami) ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	if [[ -n "$exit_code_arg" ]]; then
+		comment_body="${comment_body} exit=${exit_code_arg}"
+	fi
+	if [[ -n "$session_count_arg" ]]; then
+		comment_body="${comment_body} session_count=${session_count_arg}"
+	fi
 
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--method POST \
@@ -77,6 +93,144 @@ _release_dispatch_claim() {
 		clear_active_status_on_release "$issue_number" "$repo_slug" "$(whoami)" \
 			|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
 	fi
+	return 0
+}
+
+#######################################
+# Classify worker termination reason for CLAIM_RELEASED audit lines.
+# Called from _exit_trap_handler before posting the claim release.
+#
+# Args:
+#   $1 = wait_status  (bash exit status; >128 means signal N = wait_status - 128)
+#   $2 = start_epoch_ms (milliseconds epoch when worker was prepared; 0 = unknown)
+#
+# Globals (optional, set by _invoke_opencode / _cmd_run_prepare):
+#   _WORKER_ISOLATED_DB_PATH  — path to isolated worker opencode.db (if active)
+#
+# Returns classification string via stdout:
+#   "clean"                   — exit status 0 (unexpected in EXIT trap context)
+#   "signal_killed:<signum>"  — received signal N (wait_status > 128)
+#   "crash_during_startup"    — non-zero exit, no OpenCode session found in DB
+#   "crash_during_execution"  — non-zero exit, session(s) present in worker DB
+#   "process_exit"            — fallback when classifier cannot determine reason
+#
+# Exit: always 0
+#######################################
+classify_worker_exit() {
+	local wait_status="$1"
+	local start_epoch_ms="${2:-0}"
+
+	# Signal detection: bash encodes signal N as exit status 128+N
+	if [[ "$wait_status" =~ ^[0-9]+$ ]] && (( wait_status > 128 )); then
+		printf '%s' "signal_killed:$((wait_status - 128))"
+		return 0
+	fi
+
+	# Clean exit (unusual in EXIT trap context — trap is normally cleared on success)
+	if [[ "$wait_status" == "0" ]]; then
+		printf '%s' "clean"
+		return 0
+	fi
+
+	# Session creation check: count sessions created since worker started.
+	# Primary: isolated worker DB (still present when EXIT fires during _invoke_opencode).
+	# Fallback: shared DB (~/.local/share/opencode/opencode.db) after merge completes.
+	local session_count=0
+	local shared_db_path="${HOME}/.local/share/opencode/opencode.db"
+	local isolated_db="${_WORKER_ISOLATED_DB_PATH:-}"
+	local active_db=""
+
+	if [[ -n "$isolated_db" && -f "$isolated_db" ]]; then
+		active_db="$isolated_db"
+	elif [[ -f "$shared_db_path" ]]; then
+		active_db="$shared_db_path"
+	fi
+
+	if ! command -v sqlite3 >/dev/null 2>&1 || [[ -z "$active_db" ]]; then
+		# sqlite3 unavailable or no DB found — cannot classify by session
+		print_warning "[exit-classifier] sqlite3 unavailable or DB missing (isolated=${isolated_db:-none} shared=${shared_db_path}) — using ${_HRFF_FALLBACK_EXIT} fallback"
+		printf '%s' "$_HRFF_FALLBACK_EXIT"
+		return 0
+	fi
+
+	local query=""
+	if [[ "$start_epoch_ms" =~ ^[0-9]+$ ]] && (( start_epoch_ms > 0 )); then
+		# Count sessions created at or after worker start time (ms epoch)
+		query="SELECT count(*) FROM session WHERE time_created >= ${start_epoch_ms}"
+	else
+		# No start time: count all sessions (crude fallback — may over-count)
+		query="SELECT count(*) FROM session"
+	fi
+
+	local raw_count=""
+	raw_count=$(sqlite3 "$active_db" "$query" 2>/dev/null) || raw_count=""
+
+	if [[ ! "$raw_count" =~ ^[0-9]+$ ]]; then
+		# sqlite3 returned non-numeric output (e.g. error or corrupt DB)
+		print_warning "[exit-classifier] sqlite3 query failed for ${active_db} — using ${_HRFF_FALLBACK_EXIT} fallback"
+		printf '%s' "$_HRFF_FALLBACK_EXIT"
+		return 0
+	fi
+	session_count="$raw_count"
+
+	if (( session_count == 0 )); then
+		printf '%s' "crash_during_startup"
+	else
+		printf '%s' "crash_during_execution"
+	fi
+	return 0
+}
+
+#######################################
+# EXIT trap handler — classify worker termination and post CLAIM_RELEASED.
+# Replaces the inline 'process_exit' reason in the EXIT trap with a
+# classified reason from classify_worker_exit. Falls back to process_exit
+# if classification fails, preserving backward compatibility.
+#
+# Args:
+#   $1 = session_key (baked in at trap-set time via SC2064-disabled trap)
+#
+# Globals consumed:
+#   _WORKER_START_EPOCH_MS   — ms epoch set by _cmd_run_prepare
+#   _WORKER_ISOLATED_DB_PATH — isolated DB path set by _invoke_opencode
+#######################################
+_exit_trap_handler() {
+	local session_key="$1"
+	# Capture exit status immediately — any subsequent command will overwrite $?
+	local exit_status=$?
+
+	local reason="$_HRFF_FALLBACK_EXIT"
+	local session_count=0
+
+	if declare -F classify_worker_exit >/dev/null 2>&1; then
+		local _start_ms="${_WORKER_START_EPOCH_MS:-0}"
+		local _classified=""
+		_classified=$(classify_worker_exit "$exit_status" "$_start_ms" 2>/dev/null) || true
+		if [[ -n "$_classified" ]]; then
+			reason="$_classified"
+		else
+			print_warning "[exit-trap] classify_worker_exit returned empty — using process_exit fallback"
+		fi
+
+		# Re-read session count for the enriched comment (best-effort)
+		local _db="${_WORKER_ISOLATED_DB_PATH:-}"
+		local _shared="${HOME}/.local/share/opencode/opencode.db"
+		[[ -z "$_db" || ! -f "$_db" ]] && _db="$_shared"
+		if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$_db" && "$_start_ms" =~ ^[0-9]+$ ]] && (( _start_ms > 0 )); then
+			local _cnt=""
+			_cnt=$(sqlite3 "$_db" \
+				"SELECT count(*) FROM session WHERE time_created >= ${_start_ms}" \
+				2>/dev/null) || _cnt=""
+			[[ "$_cnt" =~ ^[0-9]+$ ]] && session_count="$_cnt"
+		fi
+	else
+		print_warning "[exit-trap] classify_worker_exit not available — using process_exit fallback"
+	fi
+
+	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count"
+	_release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"
+	_release_session_lock "$session_key"
+	_update_dispatch_ledger "$session_key" "fail"
 	return 0
 }
 
