@@ -1608,18 +1608,35 @@ main() {
 	_detect_invocation_source
 	_record_invocation_source "$_invocation_source"
 
-	# GH#20579: Is-running short-circuit — exit 0 immediately before attempting
+	# GH#20611: Is-running short-circuit — exit 0 immediately before attempting
 	# mkdir lock acquisition when a pulse process is already alive. Eliminates
 	# lock contention for the common launchd-fires-while-running case.
-	# Bypassed in --canary and --dry-run modes — they need the full code path.
+	#
+	# Reads the PID file that acquire_instance_lock writes (LOCKDIR/pid) and
+	# verifies liveness with `kill -0`. POSIX, identical on macOS and Linux.
+	#
+	# Replaces the GH#20579 pgrep+pipe approach which had a 100% false-positive
+	# rate on Linux: bash's `$(pgrep | grep)` subshell transiently inherited
+	# the parent script's argv, so `pgrep -f pulse-wrapper.sh` matched its own
+	# subshell PIDs that `grep -v "^$$\$"` couldn't filter (different PIDs).
+	# macOS doesn't expose argv this way for transient subshells, which is why
+	# the bug was Linux-only and missed in PR #20584's testing. See GH#20611.
+	#
+	# Biased toward false negatives: missing PID file, malformed PID, or
+	# apparently-dead owner all DEFER to acquire_instance_lock rather than try
+	# to reclaim here. The lock has its own stale + PID-reuse handling
+	# (_handle_existing_lock at pulse-instance-lock.sh). This short-circuit
+	# is an optimization, not a replacement.
+	#
+	# Bypassed in --canary and --dry-run: those modes exercise the full path.
 	if [[ "${PULSE_CANARY_MODE:-0}" != "1" && "${PULSE_DRY_RUN:-0}" != "1" ]]; then
-		local _ir_pids
-		_ir_pids=$(pgrep -f "(^|/)pulse-wrapper\\.sh( |\$)" 2>/dev/null | grep -v "^$$\$" || true)
-		if [[ -n "$_ir_pids" ]]; then
-			local _ir_first_pid
-			_ir_first_pid=$(printf '%s\n' "$_ir_pids" | awk 'NR==1')
-			echo "[pulse-wrapper] Pulse already running (PID: ${_ir_first_pid}), skipping" >>"$WRAPPER_LOGFILE"
-			return 0
+		if [[ -f "${LOCKDIR}/pid" ]]; then
+			local _ir_pid
+			_ir_pid=$(cat "${LOCKDIR}/pid" 2>/dev/null || true)
+			if [[ "$_ir_pid" =~ ^[0-9]+$ ]] && [[ "$_ir_pid" != "$$" ]] && kill -0 "$_ir_pid" 2>/dev/null; then
+				echo "[pulse-wrapper] Pulse already running (PID: ${_ir_pid}), skipping" >>"$WRAPPER_LOGFILE"
+				return 0
+			fi
 		fi
 	fi
 
