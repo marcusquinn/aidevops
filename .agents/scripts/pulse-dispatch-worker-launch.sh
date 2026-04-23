@@ -373,6 +373,35 @@ _dlw_nohup_launch() {
 	# Workers no longer need to call session-rename — the title is set at dispatch.
 	local worker_title="${issue_title:-${dispatch_title}}"
 
+	# t2758: Pre-warm OpenCode DB to trigger migration + skill-dedup BEFORE
+	# nohup launch. Per-worker DB isolation (GH#17549) means each worker hits
+	# cold-start fresh — every isolated DB must run the one-time SQLite
+	# migration + 12-skill-dedup on first opencode invocation. That takes
+	# 10-20s and creates a vulnerability window where signals can kill the
+	# worker before a session is created. Running opencode --version against
+	# the pre-created isolated dir completes migration outside the timed
+	# dispatch window. The pre-warmed dir is passed to headless-runtime-helper.sh
+	# via AIDEVOPS_WORKER_PREWARM_DIR so it is reused instead of a fresh mktemp.
+	# Warm-up failure is non-fatal: dispatch continues unmodified (headless-
+	# runtime-helper.sh falls back to its normal mktemp path).
+	local worker_prewarm_dir=""
+	if command -v opencode >/dev/null 2>&1; then
+		worker_prewarm_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-worker-auth.XXXXXX") || worker_prewarm_dir=""
+		if [[ -n "$worker_prewarm_dir" ]]; then
+			mkdir -p "${worker_prewarm_dir}/opencode"
+			{
+				echo "[lifecycle] opencode_warm_start pid=$$"
+				if XDG_DATA_HOME="$worker_prewarm_dir" timeout 30 opencode --version >/dev/null 2>&1; then
+					echo "[lifecycle] opencode_warm_done pid=$$"
+				else
+					echo "[lifecycle] WARN opencode warm-up failed or timed out — fallback to cold-start pid=$$"
+					rm -rf "$worker_prewarm_dir" 2>/dev/null || true
+					worker_prewarm_dir=""
+				fi
+			} >>"$worker_log" 2>&1
+		fi
+	fi
+
 	# Launch worker — headless-runtime-helper.sh handles model selection
 	# when no --model is specified. Its choose_model() uses the routing
 	# table/local override, then checks backoff/auth and rotates providers.
@@ -388,6 +417,11 @@ _dlw_nohup_launch() {
 			WORKER_WORKTREE_PATH="$worker_worktree_path"
 			WORKER_WORKTREE_BRANCH="$worker_worktree_branch"
 		)
+	fi
+	# t2758: Pass pre-warmed DB dir to headless-runtime-helper.sh so it
+	# reuses the already-migrated isolated dir instead of creating a fresh one.
+	if [[ -n "$worker_prewarm_dir" ]]; then
+		worker_cmd+=(AIDEVOPS_WORKER_PREWARM_DIR="$worker_prewarm_dir")
 	fi
 	worker_cmd+=(
 		"$HEADLESS_RUNTIME_HELPER" run
