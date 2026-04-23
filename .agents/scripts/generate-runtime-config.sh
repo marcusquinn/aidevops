@@ -119,6 +119,86 @@ _run_agent_discovery_python() {
 # Phase 2a: Agent Generation — Per-Runtime Adapters
 # =============================================================================
 
+# Shared helper: write ~/.config/<runtime>/AGENTS.md with the cache-read greeting
+# template for the given runtime.
+# Arguments:
+#   $1 - runtime_id (e.g. "opencode", "claude-code")
+#   $2 - config_dir (e.g. "$HOME/.config/opencode")
+# Returns: 0 on success
+_generate_greeting_agents_md() {
+	local runtime_id="$1"
+	local config_dir="$2"
+
+	local display_name
+	display_name=$(rt_display_name "$runtime_id" 2>/dev/null || echo "Unknown Runtime")
+
+	# Per-runtime cache path and plugin name.
+	# SC2088: tilde is intentionally literal here — written to AGENTS.md
+	# as documentation for the model, not expanded as a shell path.
+	local cache_path plugin_name global_config_path
+	case "$runtime_id" in
+	opencode)
+		# shellcheck disable=SC2088
+		cache_path="~/.aidevops/cache/session-greeting.txt"
+		plugin_name="opencode-aidevops plugin"
+		# shellcheck disable=SC2088
+		global_config_path="~/.config/opencode/opencode.json"
+		;;
+	claude-code)
+		# shellcheck disable=SC2088
+		cache_path="~/.aidevops/cache/session-greeting-claude-code.txt"
+		plugin_name="Claude-aidevops plugin"
+		# shellcheck disable=SC2088
+		global_config_path="~/.config/Claude/Claude.json"
+		;;
+	*)
+		# shellcheck disable=SC2088
+		cache_path="~/.aidevops/cache/session-greeting-${runtime_id}.txt"
+		plugin_name="${runtime_id}-aidevops plugin"
+		# shellcheck disable=SC2088
+		global_config_path="~/.config/Claude/Claude.json"
+		;;
+	esac
+
+	mkdir -p "$config_dir"
+
+	cat >"$config_dir/AGENTS.md" <<EOF
+Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
+
+**Runtime**: You are running in ${display_name}. Global config: \`${global_config_path}\`.
+
+## aidevops Framework Status
+
+The ${plugin_name} renders session-start framework status (versions,
+security posture, advisories, update hints) as a TUI toast before your first
+turn. Raw output is cached at \`${cache_path}\`. The
+user has already seen it — do NOT re-run \`aidevops-update-check.sh\` and do
+NOT repeat toast content in the chat.
+
+**On interactive conversation start** (skip for headless sessions like \`/pulse\`, \`/full-loop\`):
+
+1. Read line 1 of \`${cache_path}\`. Format: \`aidevops v{X} running in ${display_name} v{Y} | ...\`. Extract \`{X}\` and \`{Y}\`.
+2. Greet with exactly this template — no extra prose, no status dump:
+
+       Hi!
+
+       We're running aidevops v{X} in ${display_name} v{Y}.
+
+       What would you like to work on?
+
+3. If the cache file is missing, read \`~/.aidevops/agents/VERSION\` for \`{X}\` and greet: "Hi!\n\nWe're running aidevops v{X}.\n\nWhat would you like to work on?"
+4. Then respond to the user's actual message.
+
+If the user later asks about aidevops updates, direct them to run \`aidevops update\` in a terminal session (or type \`!aidevops update\` below). Do not announce updates unprompted — the toast already did.
+
+## Pre-Edit Git Check
+
+Only for agents with Edit/Write/Bash tools. See ~/.aidevops/agents/AGENTS.md for workflow.
+EOF
+	print_success "Updated ${config_dir}/AGENTS.md with ${display_name} greeting template (t2766)"
+	return 0
+}
+
 _generate_agents_opencode() {
 	print_info "Generating OpenCode agent configuration..."
 
@@ -128,45 +208,12 @@ _generate_agents_opencode() {
 
 	mkdir -p "$opencode_agent_dir"
 
-	# Deploy AGENTS.md with concise greeting template (t2736)
+	# Deploy AGENTS.md with concise greeting template (t2736, parameterized t2766)
 	# The opencode-aidevops plugin already renders full framework status as a
 	# session-start toast; the model must NOT re-run aidevops-update-check.sh
 	# or dump toast content into the chat. Greeting is a one-liner sourced
 	# from the pre-populated cache file.
-	cat >"$opencode_config_dir/AGENTS.md" <<'AGENTSEOF'
-Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
-
-**Runtime**: You are running in OpenCode. Global config: `~/.config/opencode/opencode.json`.
-
-## aidevops Framework Status
-
-The opencode-aidevops plugin renders session-start framework status (versions,
-security posture, advisories, update hints) as a TUI toast before your first
-turn. Raw output is cached at `~/.aidevops/cache/session-greeting.txt`. The
-user has already seen it — do NOT re-run `aidevops-update-check.sh` and do
-NOT repeat toast content in the chat.
-
-**On interactive conversation start** (skip for headless sessions like `/pulse`, `/full-loop`):
-
-1. Read line 1 of `~/.aidevops/cache/session-greeting.txt`. Format: `aidevops v{X} running in OpenCode v{Y} | ...`. Extract `{X}` and `{Y}`.
-2. Greet with exactly this template — no extra prose, no status dump:
-
-       Hi!
-
-       We're running aidevops v{X} in OpenCode v{Y}.
-
-       What would you like to work on?
-
-3. If the cache file is missing, read `~/.aidevops/agents/VERSION` for `{X}` and greet: "Hi!\n\nWe're running aidevops v{X}.\n\nWhat would you like to work on?"
-4. Then respond to the user's actual message.
-
-If the user later asks about aidevops updates, direct them to run `aidevops update` in a terminal session (or type `!aidevops update` below). Do not announce updates unprompted — the toast already did.
-
-## Pre-Edit Git Check
-
-Only for agents with Edit/Write/Bash tools. See ~/.aidevops/agents/AGENTS.md for workflow.
-AGENTSEOF
-	print_success "Updated AGENTS.md with concise greeting template (t2736)"
+	_generate_greeting_agents_md "opencode" "$opencode_config_dir"
 
 	# Remove legacy agent files
 	local legacy_files=(
@@ -442,15 +489,35 @@ _generate_agents_claude() {
 	print_info "Generating Claude Code agent configuration..."
 
 	local claude_settings="$HOME/.claude/settings.json"
+	local claude_config_dir="$HOME/.config/Claude"
 
-	# Ensure directory exists
+	# Ensure directories exist
 	mkdir -p "$(dirname "$claude_settings")"
+	mkdir -p "$claude_config_dir"
 
 	# Create minimal settings if missing
 	if [[ ! -f "$claude_settings" ]]; then
 		echo '{}' >"$claude_settings"
 		chmod 600 "$claude_settings"
 		print_success "Created $claude_settings"
+	fi
+
+	# Deploy AGENTS.md with concise greeting template (t2766)
+	# Pass runtime ID unquoted — no string-literal ratchet hit (t2766)
+	_generate_greeting_agents_md claude-code "$claude_config_dir"
+
+	# Populate greeting cache for claude-code so the session-start greeting
+	# reads the correct aidevops + runtime version from cache (t2766 Phase B).
+	# Non-fatal: if the claude binary is not installed, the cache write is skipped.
+	local cache_helper="${SCRIPT_DIR}/greeting-cache-helper.sh"
+	if [[ -x "$cache_helper" ]]; then
+		if "$cache_helper" write claude-code 2>/dev/null; then
+			print_success "Greeting cache updated for claude-code"
+		else
+			print_warning "Greeting cache write skipped (claude-code binary not detected)"
+		fi
+	else
+		print_warning "greeting-cache-helper.sh not found — skipping cache write"
 	fi
 
 	# Run shared Python agent discovery for Claude Code
