@@ -1,0 +1,11 @@
+{
+  "_doc": "Copy this file to plist-env-overrides.json (gitignored) to activate. Keys are launchd plist labels. Values are objects mapping env var names to string values. Keys prefixed with _ are ignored by the loader.",
+  "com.aidevops.aidevops-supervisor-pulse": {
+    "_doc": "Examples — rename (remove leading _) to activate. All values must be strings.",
+    "_SCANNER_NUDGE_AGE_HOURS": "0",
+    "_AUTO_DECOMPOSER_INTERVAL": "86400",
+    "_AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE": "0",
+    "_AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD": "0.30",
+    "_AIDEVOPS_SKIP_TIER_VALIDATOR": "1"
+  }
+}
