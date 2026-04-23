@@ -609,6 +609,41 @@ _gh_parse_parent_from_body() {
 	return 0
 }
 
+# Internal: detect the parent issue number using two ordered methods.
+# Method 1: dot-notation in title (tNNN.M: → parent tNNN).
+# Method 2: `Parent:` line in body — delegates to _gh_parse_parent_from_body.
+# This consolidates the shared detection shape so _gh_auto_link_sub_issue does
+# not mix inline Method-1 logic with a helper-delegated Method 2.
+#
+# Echoes the parent issue number on stdout, empty string if no parent found.
+# Non-blocking — every detection / resolution step returns silently on failure.
+#
+# Arguments:
+#   $1 - issue title
+#   $2 - issue body
+#   $3 - repo slug (owner/repo)
+_gh_detect_parent_issue() {
+	local title="$1"
+	local body="$2"
+	local repo="$3"
+	local parent_num=""
+
+	# Method 1: dot-notation in title
+	if [[ "$title" =~ ^(t[0-9]+\.[0-9]+[a-z]?) ]]; then
+		local _cid="${BASH_REMATCH[1]}"
+		local _pid="${_cid%.*}"
+		if [[ -n "$_pid" && "$_pid" != "$_cid" ]]; then
+			parent_num=$(_gh_resolve_task_id_to_issue "$_pid" "$repo")
+		fi
+	fi
+
+	# Method 2: `Parent:` line in body (only if method 1 did not resolve)
+	[[ -z "$parent_num" ]] && parent_num=$(_gh_parse_parent_from_body "$body" "$repo")
+
+	echo "$parent_num"
+	return 0
+}
+
 # GH#18735 + GH#20473 (t2738): auto-link newly created issues as sub-issues of
 # their parent at create-time. Two detection methods, in order of preference:
 #
@@ -633,45 +668,50 @@ _gh_auto_link_sub_issue() {
 	shift
 
 	# Extract --title, --repo, and --body (or --body-file) from the original args.
-	# Consolidated positional access: read $1/$2 into locals once at top of loop,
-	# then reference locals in case arms. Matches shell style guide.
+	# Whitelist-based parsing: only flags listed here consume the next positional
+	# argument. Unknown flags (--assignee, --label, --project, …) are shifted
+	# without consuming their value, so a flag value that happens to look like
+	# --title or --repo is never mis-identified as one of our targets.
+	# _a/_v capture $1/$2 into locals before use, satisfying the positional-param
+	# style rule; shift-2 then consumes both the flag and its value atomically.
 	local title=""
 	local repo=""
 	local body=""
-	local _arg _next _bf
+	local _a _v _bf
 	while [[ $# -gt 0 ]]; do
-		_arg="$1"
-		_next="${2:-}"
-		shift
-		case "$_arg" in
+		_a="$1"
+		_v="${2:-}"
+		case "$_a" in
 		--title)
-			title="$_next"
-			[[ $# -gt 0 ]] && shift
+			if [[ $# -gt 1 ]]; then title="$_v"; shift 2; else shift; fi
 			;;
-		--title=*) title="${_arg#--title=}" ;;
+		--title=*)
+			title="${_a#--title=}"; shift
+			;;
 		--repo)
-			repo="$_next"
-			[[ $# -gt 0 ]] && shift
+			if [[ $# -gt 1 ]]; then repo="$_v"; shift 2; else shift; fi
 			;;
-		--repo=*) repo="${_arg#--repo=}" ;;
+		--repo=*)
+			repo="${_a#--repo=}"; shift
+			;;
 		--body)
-			body="$_next"
-			[[ $# -gt 0 ]] && shift
+			if [[ $# -gt 1 ]]; then body="$_v"; shift 2; else shift; fi
 			;;
-		--body=*) body="${_arg#--body=}" ;;
+		--body=*)
+			body="${_a#--body=}"; shift
+			;;
 		--body-file)
-			if [[ -n "$_next" && -r "$_next" ]]; then
-				body=$(<"$_next")
-			fi
-			[[ $# -gt 0 ]] && shift
+			if [[ $# -gt 1 && -r "$_v" ]]; then body=$(<"$_v"); fi
+			if [[ $# -gt 1 ]]; then shift 2; else shift; fi
 			;;
 		--body-file=*)
-			_bf="${_arg#--body-file=}"
-			if [[ -n "$_bf" && -r "$_bf" ]]; then
-				body=$(<"$_bf")
-			fi
+			_bf="${_a#--body-file=}"
+			if [[ -n "$_bf" && -r "$_bf" ]]; then body=$(<"$_bf"); fi
+			shift
 			;;
-		*) ;;
+		*)
+			shift
+			;;
 		esac
 	done
 	[[ -z "$title" ]] && return 0
@@ -686,20 +726,10 @@ _gh_auto_link_sub_issue() {
 	[[ -z "$repo" ]] && return 0
 
 	local owner="${repo%%/*}" name="${repo##*/}"
-	local parent_num=""
 
-	# Method 1: dot-notation in title
-	if [[ "$title" =~ ^(t[0-9]+\.[0-9]+[a-z]?) ]]; then
-		local _cid="${BASH_REMATCH[1]}"
-		local _pid="${_cid%.*}"
-		if [[ -n "$_pid" && "$_pid" != "$_cid" ]]; then
-			parent_num=$(_gh_resolve_task_id_to_issue "$_pid" "$repo")
-		fi
-	fi
-
-	# Method 2: `Parent:` line in body (only if method 1 did not resolve)
-	[[ -z "$parent_num" ]] && parent_num=$(_gh_parse_parent_from_body "$body" "$repo")
-
+	# Detect parent using both methods (dot-notation title, then Parent: body line).
+	local parent_num
+	parent_num=$(_gh_detect_parent_issue "$title" "$body" "$repo")
 	[[ -z "$parent_num" ]] && return 0
 
 	# Resolve both to node IDs and link
