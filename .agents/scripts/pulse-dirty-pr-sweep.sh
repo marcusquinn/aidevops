@@ -585,40 +585,15 @@ ${body}"
 	return 1
 }
 
-# Rebase action: attempt `git rebase origin/main -X union` in an ephemeral
-# worktree and force-push. If anything fails, abort cleanly and return 1
-# (the PR remains DIRTY for re-classification on the next cycle).
-_dirty_pr_action_rebase() {
+# Perform the actual rebase in an ephemeral worktree.
+# Creates a throwaway worktree, fetches refs, rebases with union strategy,
+# force-pushes, and cleans up. Returns 0 on success, 1 on any failure.
+_dps_rebase_in_ephemeral() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local repo_path="$3"
 	local head_ref="$4"
-
-	local key="${repo_slug}#${pr_number}"
-
-	if _dps_recently_actioned "$key"; then
-		_dps_log "PR #$pr_number ($repo_slug): rebase skipped — cooldown active"
-		return 0
-	fi
-
-	if _dps_is_dry_run; then
-		_dps_log "DRY-RUN: would rebase PR #$pr_number ($repo_slug) branch=$head_ref"
-		_dps_record_audit "$_DIRTY_ACTION_REBASE" "$repo_slug" "$pr_number" "dry-run"
-		return 0
-	fi
-
-	if [[ -z "$repo_path" || ! -d "$repo_path/.git" && ! -f "$repo_path/.git" ]]; then
-		_dps_log "PR #$pr_number ($repo_slug): rebase skipped — repo_path unavailable"
-		return 1
-	fi
-
-	# Detect the default branch — skip rather than assume "main" to avoid
-	# `fatal: ambiguous argument 'origin/main'` on non-main repos.
-	local default_branch
-	if ! default_branch=$(_dps_get_default_branch "$repo_path"); then
-		_dps_log "PR #$pr_number ($repo_slug): rebase skipped — no origin/HEAD set (run 'git remote set-head origin --auto')"
-		return 1
-	fi
+	local default_branch="$5"
 
 	# Ephemeral worktree for this rebase attempt. We use a throwaway directory
 	# under /tmp so we never interfere with real worktrees or the user's
@@ -673,9 +648,19 @@ _dirty_pr_action_rebase() {
 	rm -rf "$ephemeral" 2>/dev/null || true
 
 	if [[ "$rebase_ok" -ne 0 ]]; then
-		_dps_record_audit "$_DIRTY_ACTION_REBASE" "$repo_slug" "$pr_number" "failed"
 		return 1
 	fi
+	return 0
+}
+
+# Post a documentation comment after a successful auto-rebase and record
+# the action/audit trail entries.
+_dps_rebase_post_comment() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local head_ref="$3"
+	local default_branch="$4"
+	local key="$5"
 
 	local comment_body
 	comment_body="**Auto-rebase**: this PR was DIRTY with only \`TODO.md\` conflicting, so the pulse rebased it onto \`origin/${default_branch}\` with the \`union\` merge strategy and force-pushed.
@@ -690,6 +675,52 @@ _Triggered by \`pulse-dirty-pr-sweep.sh\` (t2350 / GH#19948). Action cooldown: $
 	_dps_state_record_action "$key" "$_DIRTY_ACTION_REBASE"
 	_dps_record_audit "$_DIRTY_ACTION_REBASE" "$repo_slug" "$pr_number" "ok"
 	_dps_log "PR #$pr_number ($repo_slug): rebased + pushed"
+	return 0
+}
+
+# Rebase action: attempt `git rebase origin/<default_branch> -X union` in an
+# ephemeral worktree and force-push. If anything fails, abort cleanly and
+# return 1 (the PR remains DIRTY for re-classification on the next cycle).
+# Delegates the ephemeral-worktree work to _dps_rebase_in_ephemeral() and
+# success-comment posting to _dps_rebase_post_comment().
+_dirty_pr_action_rebase() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+	local head_ref="$4"
+
+	local key="${repo_slug}#${pr_number}"
+
+	if _dps_recently_actioned "$key"; then
+		_dps_log "PR #$pr_number ($repo_slug): rebase skipped — cooldown active"
+		return 0
+	fi
+
+	if _dps_is_dry_run; then
+		_dps_log "DRY-RUN: would rebase PR #$pr_number ($repo_slug) branch=$head_ref"
+		_dps_record_audit "$_DIRTY_ACTION_REBASE" "$repo_slug" "$pr_number" "dry-run"
+		return 0
+	fi
+
+	if [[ -z "$repo_path" || ! -d "$repo_path/.git" && ! -f "$repo_path/.git" ]]; then
+		_dps_log "PR #$pr_number ($repo_slug): rebase skipped — repo_path unavailable"
+		return 1
+	fi
+
+	# Detect the default branch — skip rather than assume "main" to avoid
+	# `fatal: ambiguous argument 'origin/main'` on non-main repos.
+	local default_branch
+	if ! default_branch=$(_dps_get_default_branch "$repo_path"); then
+		_dps_log "PR #$pr_number ($repo_slug): rebase skipped — no origin/HEAD set (run 'git remote set-head origin --auto')"
+		return 1
+	fi
+
+	if ! _dps_rebase_in_ephemeral "$pr_number" "$repo_slug" "$repo_path" "$head_ref" "$default_branch"; then
+		_dps_record_audit "$_DIRTY_ACTION_REBASE" "$repo_slug" "$pr_number" "failed"
+		return 1
+	fi
+
+	_dps_rebase_post_comment "$pr_number" "$repo_slug" "$head_ref" "$default_branch" "$key"
 	return 0
 }
 
