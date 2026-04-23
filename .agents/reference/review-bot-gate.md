@@ -8,10 +8,16 @@ etc.) to post their reviews. PRs merged before bots post lose security findings.
 
 ## Enforcement Layers
 
-1. **CI**: `.github/workflows/review-bot-gate.yml` — required status check
+1. **CI**: `.github/workflows/review-bot-gate.yml` — required status check. Delegates
+   to `review-bot-gate-helper.sh check` (vendored from marcusquinn/aidevops). Applies
+   the t2139 settlement check, which defeats CodeRabbit's two-phase placeholder pattern.
+   Re-triggers on `issue_comment:edited` so Phase 2 edits clear the gate automatically.
 2. **Pulse merge path**: `pulse-wrapper.sh` line 8243 — `review-bot-gate-helper.sh check` before merge (code-enforced since GH#17490)
 3. **Worker merge path**: `full-loop-helper.sh merge` — `review-bot-gate-helper.sh wait` before merge (code-enforced since GH#17541)
 4. **Branch protection**: add `review-bot-gate` as required check per repo
+
+All layers share the same `review-bot-gate-helper.sh` implementation — the settlement
+check and rate-limit behaviour are consistent across CI and in-agent merge paths (GH#20493).
 
 ## Merge Commands
 
@@ -29,7 +35,7 @@ Workers MUST use `full-loop-helper.sh merge` — direct `gh pr merge` bypasses t
 - If the PR has `skip-review-gate` label, bypass the gate (for docs-only PRs or repos without bots).
 - In headless mode: if still WAITING after timeout, proceed but log a warning. The CI required check is the hard gate.
 - ALWAYS read bot reviews before merging. Address critical/security findings; note non-critical suggestions for follow-up.
-- PASS_RATE_LIMITED means bots are rate-limited but the PR exceeded the grace period (default 4h). Safe to merge — bot reviews will arrive later and can be addressed in follow-up PRs. Use `request-retry` to trigger a re-review once rate limits clear.
+- PASS_RATE_LIMITED means bots are rate-limited and `rate_limit_behavior=pass` (default). Safe to merge — bot reviews will arrive later and can be addressed in follow-up PRs. Use `request-retry` to trigger a re-review once rate limits clear. External-contributor PRs are exempt: rate-limit grace is always disabled for them.
 - When many PRs are rate-limited simultaneously, use `request-retry` on the highest-priority PRs first. Stagger retries to avoid re-triggering rate limits.
 
 ## Additive suggestion decision tree

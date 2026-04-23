@@ -1,14 +1,23 @@
 name: Review Bot Gate
 
-# Blocks merge until AI code review bots have posted their reviews.
-# Process gap: PRs were merged before CodeRabbit/Gemini posted findings,
-# losing security-relevant feedback. This workflow polls for bot reviews
-# and only passes when at least one configured bot has reviewed.
+# Blocks merge until AI code review bots have posted a real, settled review.
+# All gate logic delegates to the vendored review-bot-gate-helper.sh, which
+# includes the t2139 settlement check that defeats CodeRabbit's two-phase
+# placeholder-then-edit posting pattern.
 #
 # To enforce: add "review-bot-gate" as a required status check in
 # GitHub branch protection settings for each repo.
 #
+# Rate-limit behaviour is controlled by `review_gate.rate_limit_behavior` in
+# ~/.config/aidevops/repos.json. Default: "pass" (merge proceeds when bots
+# are rate-limited — rely on daily code audit for coverage). Users who want
+# to block merge until bots come off rate-limit can set:
+#   "review_gate": { "rate_limit_behavior": "wait" }
+# Per-tool overrides are also supported. See:
+# .agents/reference/repos-json-fields.md "review_gate" field.
+#
 # t1382: https://github.com/marcusquinn/aidevops/issues/2735
+# GH#20493: Migrate from inline gate logic to helper (t2139 settlement fix)
 
 on:
   pull_request:
@@ -16,7 +25,10 @@ on:
   pull_request_review:
     types: [submitted]
   issue_comment:
-    types: [created]
+    # edited re-triggers when CodeRabbit finalises its Phase 1 placeholder (t2139).
+    # Without this trigger, the settlement check would only fire on new comments,
+    # not on the Phase 2 edit that makes the placeholder a real review.
+    types: [created, edited]
 
 # Do NOT cancel in-progress runs. When cancel-in-progress was true, the initial
 # pull_request:opened run was cancelled by the issue_comment:created event (fired
@@ -61,6 +73,16 @@ jobs:
       statuses: read
 
     steps:
+      - name: Checkout aidevops helper
+        # Vendor the helper from the framework repo so GitHub-hosted runners
+        # (which don't have ~/.aidevops/) can call review-bot-gate-helper.sh.
+        # Pinned to a SHA that includes the t2139 settlement fix (PR #19309).
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          ref: 73b664a8d7417e0da4a076eb80ef72609188399e
+          path: .aidevops-helper
+
       - name: Check for AI review bot activity
         id: check
         env:
@@ -70,297 +92,50 @@ jobs:
         run: |
           echo "Checking PR #${PR_NUMBER} for AI review bot activity..."
 
-          # Known review bot patterns (case-insensitive matching on login).
-          # Add new bots here as they are configured.
-          # NOTE: This list differs from the job-level if-condition which also
-          # excludes github-actions[bot] and dependabot[bot]. Those bots are
-          # excluded from triggering this workflow but are NOT code review bots
-          # whose reviews we wait for.
-          KNOWN_BOTS=(
-            "coderabbitai"
-            "gemini-code-assist[bot]"
-            "augment-code[bot]"
-            "augmentcode[bot]"
-            "copilot[bot]"
-          )
-
-          # Patterns indicating rate-limit/quota notices (not real reviews).
-          # GH#2980: bots post these when rate-limited — must not count as reviews.
-          RATE_LIMIT_PATTERNS=(
-            "rate limit exceeded"
-            "rate limited by coderabbit"
-            "daily quota limit"
-            "reached your daily quota"
-            "Please wait up to 24 hours"
-            "has exceeded the limit for the number of"
-          )
-
-          # Minimum wait time (seconds) after PR creation before we check
-          # Gives bots time to start their analysis
-          MIN_WAIT_SECONDS=120
-
-          # GH#3827: Grace period for rate-limited bots. If bots posted
-          # rate-limit notices but the PR has been open longer than this,
-          # pass the gate with a warning instead of blocking indefinitely.
-          # Default: 4 hours (14400s). Prevents systemic rate-limiting from
-          # blocking all PRs when many are opened in a short window.
-          #
-          # GH#17671 post-mortem: external-contributor PRs must NOT benefit
-          # from grace — they require a real code review before merge.
-          RATE_LIMIT_GRACE_SECONDS=14400
-
-          # Check if this is an external contributor PR
+          # Check if this is an external contributor PR.
+          # GH#17671: external-contributor PRs require real bot reviews;
+          # rate-limit grace is disabled — they cannot merge on rate-limit-only.
           IS_EXTERNAL_PR=false
-          PR_LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+          PR_LABELS=$(gh pr view "${PR_NUMBER}" --repo "${REPO}" \
             --json labels --jq '.labels[].name' 2>/dev/null || true)
-          if echo "$PR_LABELS" | grep -q 'external-contributor'; then
+          if echo "${PR_LABELS}" | grep -q 'external-contributor'; then
             IS_EXTERNAL_PR=true
-            echo "External contributor PR detected — rate-limit grace and skip-review-gate DISABLED"
+            echo "External contributor PR detected — rate-limit grace DISABLED"
+            # Override to 'wait': prevents the default PASS_RATE_LIMITED shortcut.
+            export REVIEW_GATE_RATE_LIMIT_BEHAVIOR=wait
+          fi
+          echo "is_external_pr=${IS_EXTERNAL_PR}" >> "${GITHUB_OUTPUT}"
+
+          # Invoke the vendored helper. All gate logic lives in the helper:
+          #   - t2139 settlement check (defeats CodeRabbit two-phase placeholder)
+          #   - KNOWN_BOTS and NON_REVIEW_PATTERNS (including "Review failed/skipped")
+          #   - any_bot_has_success_status (status check fallback, GH#3005)
+          #   - rate-limit behaviour (configurable via repos.json or env var)
+          # Output values: PASS / PASS_RATE_LIMITED / WAITING / SKIP
+          # Exit codes:    0 = PASS/PASS_RATE_LIMITED/SKIP  1 = WAITING  2 = error
+          HELPER="${GITHUB_WORKSPACE}/.aidevops-helper/.agents/scripts/review-bot-gate-helper.sh"
+          RESULT=""
+          HELPER_EXIT=0
+          RESULT=$(bash "${HELPER}" check "${PR_NUMBER}" "${REPO}") || HELPER_EXIT=$?
+
+          echo ""
+          echo "Helper result: ${RESULT:-<empty>} (exit: ${HELPER_EXIT})"
+
+          # GH#17671 post-mortem: external-contributor PRs cannot use the
+          # skip-review-gate label. The helper honours SKIP without knowing
+          # about external-contributor — override here at the workflow layer.
+          if [[ "${RESULT}" == "SKIP" && "${IS_EXTERNAL_PR}" == "true" ]]; then
+            echo "SKIP overridden: external-contributor PRs cannot use skip-review-gate."
+            RESULT="WAITING"
+            HELPER_EXIT=1
           fi
 
-          # Get PR creation time
-          PR_CREATED=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
-            --json createdAt -q '.createdAt')
-          PR_CREATED_EPOCH=$(date -d "$PR_CREATED" +%s 2>/dev/null || \
-            date -j -f "%Y-%m-%dT%H:%M:%SZ" "$PR_CREATED" +%s 2>/dev/null || \
-            echo "0")
-          NOW_EPOCH=$(date +%s)
-          ELAPSED=$((NOW_EPOCH - PR_CREATED_EPOCH))
-
-          echo "PR created: ${PR_CREATED} (${ELAPSED}s ago)"
-
-          if [[ "$ELAPSED" -lt "$MIN_WAIT_SECONDS" ]]; then
-            echo "::warning::PR is only ${ELAPSED}s old (minimum ${MIN_WAIT_SECONDS}s). Review bots may not have posted yet."
-          fi
-
-          # Helper: check if a comment body is a rate-limit notice
-          is_rate_limit_comment() {
-            local body="$1"
-            for pattern in "${RATE_LIMIT_PATTERNS[@]}"; do
-              if echo "$body" | grep -qi "$pattern"; then
-                return 0
-              fi
-            done
-            return 1
-          }
-
-          # Helper: check if a bot has at least one real review (not rate-limited)
-          # Uses jq to select comments by bot login and extract bodies.
-          # Base64-encodes each body so multi-line content stays on one line.
-          bot_has_real_review() {
-            local bot_base="$1"
-            local jq_filter
-            jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_base}\")) | .body | @base64"
-
-            local source encoded_bodies encoded body
-            for source in \
-              "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-              "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              "repos/${REPO}/pulls/${PR_NUMBER}/comments"; do
-
-              encoded_bodies=$(gh api "$source" --paginate --jq "$jq_filter" 2>/dev/null || echo "")
-              if [[ -n "$encoded_bodies" ]]; then
-                while IFS= read -r encoded; do
-                  [[ -z "$encoded" ]] && continue
-                  body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
-                  [[ -z "$body" ]] && continue
-                  if ! is_rate_limit_comment "$body"; then
-                    return 0
-                  fi
-                done <<< "$encoded_bodies"
-              fi
-            done
-            return 1
-          }
-
-          # Helper: check if any bot posted a SUCCESS commit status check.
-          # GH#3005: When bots are rate-limited in comments but still post a
-          # formal GitHub status check, treat the PR as reviewed.
-          # GH#3007: The status context name may differ from the bot login.
-          # E.g., bot login "coderabbitai" but status context "CodeRabbit".
-          # Match bidirectionally: bot_base starts with context OR context
-          # starts with bot_base (case-insensitive). This handles both
-          # "coderabbitai" matching "coderabbit" and vice versa.
-          # Uses the PR head SHA to query commit statuses.
-          any_bot_has_success_status() {
-            local head_sha
-            head_sha=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
-              --json headRefOid -q '.headRefOid' 2>/dev/null || echo "")
-            if [[ -z "$head_sha" ]]; then
-              return 1
-            fi
-
-            # Get the combined status (singular endpoint = latest per-context state)
-            # and check-runs unconditionally, then merge both streams.
-            # GH#3007: /status (singular) returns the latest state per context,
-            # avoiding stale-success matches from /statuses (plural, full history).
-            # Pagination ensures we don't miss contexts when >30 statuses exist.
-            local statuses check_runs
-            statuses=$(gh api "repos/${REPO}/commits/${head_sha}/status?per_page=100" \
-              --paginate --jq '.statuses[] | select(.state == "success") | .context' \
-              2>/dev/null || echo "")
-            check_runs=$(gh api "repos/${REPO}/commits/${head_sha}/check-runs?per_page=100" \
-              --paginate --jq '.check_runs[] | select(.conclusion == "success") | .name' \
-              2>/dev/null || echo "")
-            statuses=$(printf '%s\n%s\n' "$statuses" "$check_runs" | grep -v '^$' || true)
-
-            if [[ -z "$statuses" ]]; then
-              return 1
-            fi
-
-            local statuses_lower
-            statuses_lower=$(echo "$statuses" | tr '[:upper:]' '[:lower:]')
-
-            # Check if any known bot has a success status.
-            # GH#3007: Match bidirectionally — the status context may be a
-            # prefix of the bot login (e.g., "coderabbit" vs "coderabbitai")
-            # or the bot login may be a prefix of the context.
-            local bot bot_base ctx
-            for bot in "${KNOWN_BOTS[@]}"; do
-              bot_base=$(echo "$bot" | tr '[:upper:]' '[:lower:]' | sed 's/\[bot\]$//')
-              while IFS= read -r ctx; do
-                [[ -z "$ctx" ]] && continue
-                # Bidirectional prefix match: either string starts with the other
-                if [[ "$bot_base" == "$ctx"* ]] || [[ "$ctx" == "$bot_base"* ]]; then
-                  echo "Bot '${bot}' has SUCCESS status check on commit ${head_sha:0:8} (context: '${ctx}')"
-                  return 0
-                fi
-              done <<< "$statuses_lower"
-            done
-            return 1
-          }
-
-          # Check PR reviews (formal GitHub reviews from bots)
-          echo ""
-          echo "=== Checking PR reviews ==="
-          REVIEWS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-            --paginate --jq '.[].user.login' 2>/dev/null || echo "")
-
-          # Check PR comments (some bots post as issue comments, not reviews)
-          echo "=== Checking PR comments ==="
-          COMMENTS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-            --paginate --jq '.[].user.login' 2>/dev/null || echo "")
-
-          # Check review comments (inline code comments)
-          echo "=== Checking review comments ==="
-          REVIEW_COMMENTS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
-            --paginate --jq '.[].user.login' 2>/dev/null || echo "")
-
-          # Combine all commenters
-          ALL_COMMENTERS=$(echo -e "${REVIEWS}\n${COMMENTS}\n${REVIEW_COMMENTS}" | \
-            sort -u | tr '[:upper:]' '[:lower:]')
-
-          echo ""
-          echo "All commenters found:"
-          echo "$ALL_COMMENTERS" | grep -v '^$' | sed 's/^/  - /'
-
-          # Check which known bots have posted REAL reviews (not rate-limit notices)
-          # GH#2980: bots posting rate-limit notices were incorrectly counted as reviews
-          FOUND_BOTS=""
-          MISSING_BOTS=""
-          RATE_LIMITED_BOTS=""
-
-          for bot in "${KNOWN_BOTS[@]}"; do
-            # Use grep pattern matching (bot patterns may contain [bot] suffix)
-            bot_lower=$(echo "$bot" | tr '[:upper:]' '[:lower:]')
-            # Strip [bot] for matching since GitHub may or may not include it
-            bot_base=$(echo "$bot_lower" | sed 's/\[bot\]$//')
-
-            if echo "$ALL_COMMENTERS" | grep -qi "$bot_base"; then
-              # Bot commented — verify it's a real review, not a rate-limit notice
-              if bot_has_real_review "$bot_base"; then
-                FOUND_BOTS="${FOUND_BOTS}${bot} "
-                echo "FOUND (real review): ${bot}"
-              else
-                RATE_LIMITED_BOTS="${RATE_LIMITED_BOTS}${bot} "
-                echo "FOUND (rate-limited, not a real review): ${bot}"
-              fi
-            else
-              MISSING_BOTS="${MISSING_BOTS}${bot} "
-              echo "MISSING: ${bot}"
-            fi
-          done
-
-          echo ""
-          echo "Found bots (real reviews): ${FOUND_BOTS:-none}"
-          echo "Rate-limited bots: ${RATE_LIMITED_BOTS:-none}"
-          echo "Missing bots: ${MISSING_BOTS:-none}"
-
-          # Gate logic: require at least ONE known bot to have posted a REAL review
-          # This is intentionally lenient — not all repos have all bots.
-          # The goal is to catch the case where NO bots have actually reviewed.
-          #
-          # Race condition fix: on pull_request events (opened/synchronize/reopened),
-          # the workflow fires before bots have had time to analyze. If no bots are
-          # found and the PR is young, pass with a "pending" note — the check will
-          # re-run when a bot posts via pull_request_review or issue_comment triggers.
-          # Only hard-fail when the PR is old enough that bots should have posted.
-          if [[ -n "$FOUND_BOTS" ]]; then
-            echo ""
-            echo "PASS: At least one AI review bot has posted a real review."
-            echo "gate_passed=true" >> "$GITHUB_OUTPUT"
-            echo "found_bots=${FOUND_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "status_fallback=false" >> "$GITHUB_OUTPUT"
-          elif [[ -n "$RATE_LIMITED_BOTS" ]] && any_bot_has_success_status; then
-            # GH#3005: All bots are rate-limited in comments, but at least one
-            # posted a SUCCESS commit status check. The bot completed its analysis
-            # even though the comment was a rate-limit notice. Treat as reviewed.
-            echo ""
-            echo "PASS (status check fallback): Bots are rate-limited but posted SUCCESS status checks."
-            echo "gate_passed=true" >> "$GITHUB_OUTPUT"
-            echo "found_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "status_fallback=true" >> "$GITHUB_OUTPUT"
-          elif [[ -n "$RATE_LIMITED_BOTS" ]] && [[ "$ELAPSED" -ge "$RATE_LIMIT_GRACE_SECONDS" ]] && [[ "$IS_EXTERNAL_PR" != "true" ]]; then
-            # GH#3827: Rate-limit grace period exceeded. Bots posted rate-limit
-            # notices (proving they're configured) but the PR has been open long
-            # enough that blocking further provides no value. Pass with a warning.
-            # GH#17671 post-mortem: NEVER apply grace to external-contributor PRs.
-            GRACE_HOURS=$((RATE_LIMIT_GRACE_SECONDS / 3600))
-            AGE_HOURS=$((ELAPSED / 3600))
-            echo ""
-            echo "PASS (rate-limit grace): PR is ${AGE_HOURS}h old (threshold: ${GRACE_HOURS}h)."
-            echo "Bots are rate-limited but grace period exceeded. Passing gate."
-            echo "Bot reviews will be addressed post-merge if needed."
-            echo "gate_passed=true" >> "$GITHUB_OUTPUT"
-            echo "found_bots=" >> "$GITHUB_OUTPUT"
-            echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "status_fallback=false" >> "$GITHUB_OUTPUT"
-            echo "rate_limit_grace=true" >> "$GITHUB_OUTPUT"
-          elif [[ "$ELAPSED" -lt "$MIN_WAIT_SECONDS" ]]; then
-            echo ""
-            echo "PASS (pending): PR is ${ELAPSED}s old (< ${MIN_WAIT_SECONDS}s minimum)."
-            echo "Bots have not posted yet but the PR is too young to enforce the gate."
-            echo "This check will re-run when a bot posts a review or comment."
-            echo "gate_passed=true" >> "$GITHUB_OUTPUT"
-            echo "found_bots=" >> "$GITHUB_OUTPUT"
-            echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "status_fallback=false" >> "$GITHUB_OUTPUT"
+          if [[ "${HELPER_EXIT}" -eq 0 ]]; then
+            echo "gate_passed=true" >> "${GITHUB_OUTPUT}"
           else
-            echo ""
-            if [[ -n "$RATE_LIMITED_BOTS" ]]; then
-              echo "WAITING: Bots posted rate-limit notices only (not real reviews): ${RATE_LIMITED_BOTS}"
-              echo "No SUCCESS status checks found as fallback."
-            else
-              echo "WAITING: No AI review bots have posted yet."
-            fi
-            echo "This check will re-run when a bot posts a review or comment."
-            echo ""
-            echo "Expected bots: ${KNOWN_BOTS[*]}"
-            echo ""
-            echo "If no bots are configured, add 'skip-review-gate' label"
-            echo "to the PR to bypass this check."
-            echo "gate_passed=false" >> "$GITHUB_OUTPUT"
-            echo "found_bots=" >> "$GITHUB_OUTPUT"
-            echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
-            echo "status_fallback=false" >> "$GITHUB_OUTPUT"
+            echo "gate_passed=false" >> "${GITHUB_OUTPUT}"
           fi
+          echo "result=${RESULT}" >> "${GITHUB_OUTPUT}"
 
       - name: Check for skip label
         id: skip
@@ -369,114 +144,75 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           REPO: ${{ github.repository }}
+          IS_EXTERNAL_PR: ${{ steps.check.outputs.is_external_pr }}
         run: |
-          LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+          LABELS=$(gh pr view "${PR_NUMBER}" --repo "${REPO}" \
             --json labels -q '.labels[].name' 2>/dev/null || echo "")
 
           # GH#17671 post-mortem: external-contributor PRs cannot skip the
           # review gate. The skip label is only for internal PRs where bots
           # are genuinely not configured.
-          if echo "$LABELS" | grep -q "external-contributor"; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+          if [[ "${IS_EXTERNAL_PR}" == "true" ]]; then
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
             echo "DENY: external-contributor PR cannot use skip-review-gate label."
-          elif echo "$LABELS" | grep -q "skip-review-gate"; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif echo "${LABELS}" | grep -q "skip-review-gate"; then
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
             echo "SKIP: 'skip-review-gate' label found — bypassing review bot gate."
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Gate result
         if: steps.check.outputs.gate_passed != 'true' && steps.skip.outputs.skip != 'true'
         env:
-          RATE_LIMITED_BOTS: ${{ steps.check.outputs.rate_limited_bots }}
-          MISSING_BOTS: ${{ steps.check.outputs.missing_bots }}
+          RESULT: ${{ steps.check.outputs.result }}
         run: |
-          if [[ -n "$RATE_LIMITED_BOTS" ]]; then
-            echo "::error::Review bots posted rate-limit notices only — no real reviews or SUCCESS status checks."
-            echo ""
-            echo "Rate-limited bots: ${RATE_LIMITED_BOTS}"
-            echo ""
-            echo "The bots are rate-limited and did not perform actual code review."
-            echo "No SUCCESS commit status checks were found as fallback."
+          if [[ "${RESULT}" == "WAITING" || -z "${RESULT}" ]]; then
+            echo "::error::No AI review bots have posted a real, settled review on this PR yet."
           else
-            echo "::error::No AI review bots have posted on this PR yet."
+            echo "::error::Review bot gate blocked (helper result: ${RESULT})."
           fi
           echo ""
           echo "This PR cannot be merged until at least one AI code review bot"
-          echo "(CodeRabbit, Gemini Code Assist, etc.) has posted a real review"
-          echo "or a SUCCESS commit status check."
+          echo "(CodeRabbit, Gemini Code Assist, etc.) has posted a real review."
           echo ""
           echo "What to do:"
           echo "  1. Wait a few minutes for bots to complete their analysis"
-          echo "  2. This check re-runs automatically when a bot posts"
+          echo "  2. This check re-runs automatically when a bot posts or edits a comment"
           echo "  3. If no bots are configured, add 'skip-review-gate' label"
-          echo ""
-          echo "Missing bots: ${MISSING_BOTS}"
           exit 1
 
       - name: Summary
         if: always()
         env:
           GATE_PASSED: ${{ steps.check.outputs.gate_passed }}
-          STATUS_FALLBACK: ${{ steps.check.outputs.status_fallback }}
-          RATE_LIMIT_GRACE: ${{ steps.check.outputs.rate_limit_grace }}
-          FOUND_BOTS: ${{ steps.check.outputs.found_bots }}
-          MISSING_BOTS: ${{ steps.check.outputs.missing_bots }}
-          RATE_LIMITED_BOTS: ${{ steps.check.outputs.rate_limited_bots }}
+          RESULT: ${{ steps.check.outputs.result }}
           SKIP_GATE: ${{ steps.skip.outputs.skip }}
         run: |
           {
             echo "## Review Bot Gate"
             echo ""
-            if [[ "$GATE_PASSED" == "true" && "$STATUS_FALLBACK" == "true" ]]; then
-              echo "**Status**: PASSED (status check fallback)"
+            if [[ "${GATE_PASSED}" == "true" && "${RESULT}" == "PASS_RATE_LIMITED" ]]; then
+              echo "**Status**: PASSED (rate-limit grace)"
               echo ""
-              echo "Bots posted rate-limit notices but have SUCCESS commit status checks."
-              echo "The bots completed their analysis — treating as reviewed. (GH#3005)"
-              echo ""
-              echo "**Bots with SUCCESS status**: ${FOUND_BOTS}"
-              if [[ -n "$MISSING_BOTS" ]]; then
-                echo ""
-                echo "**Bots not yet reviewed**: ${MISSING_BOTS}"
-              fi
-            elif [[ "$GATE_PASSED" == "true" && "$RATE_LIMIT_GRACE" == "true" ]]; then
-              echo "**Status**: PASSED (rate-limit grace period)"
-              echo ""
-              echo "Bots are rate-limited and the PR has been open longer than the"
-              echo "grace period threshold. Passing to prevent indefinite blockage. (GH#3827)"
-              echo ""
-              echo "**Rate-limited bots**: ${RATE_LIMITED_BOTS}"
+              echo "Bots are rate-limited (tried but capacity-constrained). Passing"
+              echo "gate — configured to pass on rate limit (rate_limit_behavior=pass)."
               echo ""
               echo "Bot reviews will be addressed post-merge if needed."
-            elif [[ "$GATE_PASSED" == "true" && -n "$FOUND_BOTS" ]]; then
+            elif [[ "${GATE_PASSED}" == "true" && "${RESULT}" == "SKIP" ]]; then
+              echo "**Status**: SKIPPED (skip-review-gate label)"
+            elif [[ "${GATE_PASSED}" == "true" ]]; then
               echo "**Status**: PASSED"
               echo ""
-              echo "**Bots that reviewed**: ${FOUND_BOTS}"
-              if [[ -n "$RATE_LIMITED_BOTS" ]]; then
-                echo ""
-                echo "**Bots rate-limited (not counted)**: ${RATE_LIMITED_BOTS}"
-              fi
-              if [[ -n "$MISSING_BOTS" ]]; then
-                echo ""
-                echo "**Bots not yet reviewed**: ${MISSING_BOTS}"
-              fi
-            elif [[ "$GATE_PASSED" == "true" ]]; then
-              echo "**Status**: PASSED (pending bot reviews)"
-              echo ""
-              echo "PR is too young to enforce the gate. Bots will re-trigger this"
-              echo "check when they post their reviews."
-            elif [[ "$SKIP_GATE" == "true" ]]; then
+              echo "At least one AI review bot has posted a real, settled review."
+            elif [[ "${SKIP_GATE}" == "true" ]]; then
               echo "**Status**: SKIPPED (skip-review-gate label)"
             else
               echo "**Status**: WAITING"
               echo ""
-              if [[ -n "$RATE_LIMITED_BOTS" ]]; then
-                echo "Bots posted rate-limit notices only (not real reviews):"
-                echo "${RATE_LIMITED_BOTS}"
-                echo ""
-              fi
               echo "No real AI review bot feedback yet. This check will re-run"
-              echo "automatically when a bot posts a review or comment."
+              echo "automatically when a bot posts or edits a review or comment."
+              echo ""
+              echo "If no bots are configured, add 'skip-review-gate' label to bypass."
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >> "${GITHUB_STEP_SUMMARY}"
