@@ -388,6 +388,44 @@ setup_shell_linting_tools() {
 	return 0
 }
 
+setup_setsid_advisory() {
+	# setsid is required to detach pulse workers into their own process group
+	# (t2757, GH#20561). Without it, workers inherit pulse's PGID and are
+	# killed by any PG-scoped signal (launchd unload, restart chain).
+	#
+	# Linux: setsid ships with util-linux (present on all mainstream distros).
+	# macOS: available from macOS 12+ at /usr/bin/setsid. Older versions need
+	#        util-linux via Homebrew (brew install util-linux).
+	if command -v setsid >/dev/null 2>&1; then
+		local setsid_path
+		setsid_path="$(command -v setsid)"
+		print_success "setsid found at $setsid_path (worker process-group isolation enabled)"
+		return 0
+	fi
+
+	# setsid missing — emit an advisory; it's a quality-of-life improvement,
+	# not a hard requirement (pulse falls back to nohup-only).
+	print_warning "setsid not found — pulse workers will share the pulse process group"
+	echo "  Impact: a pulse restart or launchd unload may kill in-flight workers"
+	echo "  (GH#20561 / t2757: worker survived 3/4 dispatches without setsid isolation)"
+	echo ""
+	if [[ "$(uname)" == "Darwin" ]]; then
+		if command -v brew >/dev/null 2>&1; then
+			echo "  Install: brew install util-linux"
+		else
+			echo "  Install Homebrew first, then: brew install util-linux"
+			echo "  Or upgrade to macOS 12+ where /usr/bin/setsid ships by default"
+		fi
+	else
+		echo "  Install: sudo apt install util-linux  # Debian/Ubuntu"
+		echo "           sudo dnf install util-linux  # Fedora/RHEL"
+		echo "           sudo pacman -S util-linux    # Arch"
+	fi
+	echo ""
+
+	return 0
+}
+
 setup_shellcheck_wrapper() {
 	# Replace the real shellcheck binary with our wrapper script to prevent
 	# --external-sources from causing exponential memory growth (GH#2915).

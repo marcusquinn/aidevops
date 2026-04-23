@@ -401,8 +401,28 @@ _dlw_nohup_launch() {
 	if [[ -n "$selected_model" ]]; then
 		worker_cmd+=(--model "$selected_model")
 	fi
-	nohup "${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
-	printf '%s\n' "$!"
+	# Detach worker into its own process group (t2757).
+	# Without setsid, workers inherit pulse's PGID. Any PG-scoped signal
+	# (launchd unload, pkill -PGRP, restart chain) kills in-flight workers.
+	# setsid creates a new session, so pulse signals cannot propagate.
+	#
+	# macOS ships /usr/bin/setsid on recent versions (12+). Older macOS or
+	# systems without setsid fall back to nohup-only with a log warning.
+	local worker_pid
+	if command -v setsid >/dev/null 2>&1; then
+		setsid nohup "${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
+		worker_pid="$!"
+		# Log the detached PGID for diagnostics (should differ from pulse PGID)
+		local worker_pgid pulse_pgid
+		worker_pgid=$(ps -o pgid= -p "$worker_pid" 2>/dev/null | tr -d ' ') || worker_pgid="unknown"
+		pulse_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ') || pulse_pgid="unknown"
+		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid)" >>"$LOGFILE"
+	else
+		echo "[dispatch_worker_launch] Warning: setsid not found — worker will share pulse's PGID; install util-linux (Linux) or upgrade macOS 12+ for signal isolation" >>"$LOGFILE"
+		nohup "${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
+		worker_pid="$!"
+	fi
+	printf '%s\n' "$worker_pid"
 	return 0
 }
 
