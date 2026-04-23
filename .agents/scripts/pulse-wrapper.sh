@@ -1369,10 +1369,19 @@ _pulse_maybe_run_llm_supervisor() {
 		# Use a separate LLM lock so only one LLM session runs at a time,
 		# without blocking the deterministic 2-min cycle.
 		local llm_lockdir="${LOCKDIR}.llm"
+		local _llm_lock_acquired=false
+
 		if mkdir "$llm_lockdir" 2>/dev/null; then
+			_llm_lock_acquired=true
+		elif _handle_stale_llm_lock "$llm_lockdir"; then
+			# GH#20613: stale lock reclaimed — we now own it
+			_llm_lock_acquired=true
+		fi
+
+		if [[ "$_llm_lock_acquired" == "true" ]]; then
 			echo "$$" >"${llm_lockdir}/pid" 2>/dev/null || true
 			# shellcheck disable=SC2064
-			trap "rm -rf '$llm_lockdir' 2>/dev/null" EXIT
+			trap "rm -rf '$llm_lockdir' 2>/dev/null; release_instance_lock" EXIT
 
 			local underfill_output
 			underfill_output=$(_compute_initial_underfill)
@@ -1390,8 +1399,6 @@ _pulse_maybe_run_llm_supervisor() {
 			date +%s >"${PULSE_DIR}/last_llm_run_epoch"
 			_run_early_exit_recycle_loop "$pulse_duration"
 			rm -rf "$llm_lockdir" 2>/dev/null || true
-		else
-			echo "[pulse-wrapper] LLM session already running (lock held) — skipping" >>"$LOGFILE"
 		fi
 	fi
 	return 0

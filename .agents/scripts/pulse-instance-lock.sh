@@ -133,6 +133,73 @@ _handle_existing_lock() {
 }
 
 #######################################
+# Handle stale LLM session lockdir (GH#20613)
+#
+# The LLM lockdir (LOCKDIR.llm) gates LLM dispatch so only one session
+# runs at a time without blocking the deterministic 2-min cycle. Unlike
+# the main instance lock, it had no stale-lock detection — a process
+# killed mid-LLM-session (SIGKILL, OOM, crash) left a stale lockdir
+# that permanently blocked all subsequent LLM dispatch. Observed: 6-day
+# outage, 876 blocked invocations, manual rm -rf required to recover.
+#
+# Three-tier detection mirroring _handle_existing_lock():
+#   1. No valid PID → corrupt/stale, clear immediately
+#   2. Owner PID dead → stale from SIGKILL/OOM, clear
+#   3. Owner alive but age > PULSE_LOCK_MAX_AGE_S → hung, kill + clear
+#
+# Arguments:
+#   $1 — path to the LLM lockdir
+# Returns: 0 if lock was reclaimed and re-acquired, 1 otherwise
+#######################################
+_handle_stale_llm_lock() {
+	local lockdir="$1"
+	local lock_pid=""
+	if [[ -f "${lockdir}/pid" ]]; then
+		lock_pid=$(cat "${lockdir}/pid" 2>/dev/null || echo "")
+	fi
+
+	if [[ -z "$lock_pid" ]] || [[ ! "$lock_pid" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] Stale LLM lockdir detected (no valid PID) — clearing (GH#20613)" >>"$LOGFILE"
+		rm -rf "$lockdir" 2>/dev/null || true
+		if mkdir "$lockdir" 2>/dev/null; then return 0; fi
+		echo "[pulse-wrapper] Lost LLM lock race after stale-lock clear — skipping" >>"$LOGFILE"
+		return 1
+	fi
+
+	if ! ps -p "$lock_pid" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Stale LLM lockdir detected (owner PID ${lock_pid} is dead) — clearing (GH#20613)" >>"$LOGFILE"
+		rm -rf "$lockdir" 2>/dev/null || true
+		if mkdir "$lockdir" 2>/dev/null; then return 0; fi
+		echo "[pulse-wrapper] Lost LLM lock race after stale-lock clear — skipping" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Owner is alive — check age-based ceiling
+	local lock_age=0
+	local lock_mtime
+	lock_mtime=$(stat -c '%Y' "$lockdir" 2>/dev/null || echo "0")
+	if [[ "$lock_mtime" -gt 0 ]]; then
+		lock_age=$(( $(date +%s) - lock_mtime ))
+	fi
+	local max_age="${PULSE_LOCK_MAX_AGE_S:-1800}"
+	if [[ "$lock_age" -gt "$max_age" ]]; then
+		echo "[pulse-wrapper] FORCE-RECLAIMED stale LLM lockdir (owner PID ${lock_pid}, age ${lock_age}s > ceiling ${max_age}s) — killing hung owner (GH#20613)" >>"$LOGFILE"
+		kill "$lock_pid" 2>/dev/null || true
+		sleep 2
+		if kill -0 "$lock_pid" 2>/dev/null; then
+			kill -9 "$lock_pid" 2>/dev/null || true
+		fi
+		rm -rf "$lockdir" 2>/dev/null || true
+		if mkdir "$lockdir" 2>/dev/null; then return 0; fi
+		echo "[pulse-wrapper] Lost LLM lock race after force-reclaim — skipping" >>"$LOGFILE"
+		return 1
+	fi
+
+	echo "[pulse-wrapper] LLM session already running (lock held by PID ${lock_pid}, age ${lock_age}s) — skipping" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
 # Acquire an exclusive instance lock using mkdir atomicity (GH#4513)
 #
 # mkdir is the ONLY lock primitive. flock was removed in GH#18668 after
