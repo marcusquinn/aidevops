@@ -2974,3 +2974,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2758 pulse-dispatch-worker-launch.sh: pre-warm opencode DB per-worker to shorten cold-start vulnerability window #auto-dispatch #bug #framework #pulse ref:GH#20562
 
 - [ ] t2759 setup-modules/schedulers.sh: preserve user env overrides in generated plists across framework updates #auto-dispatch #enhancement #framework ref:GH#20563
+
+- [ ] t2760 headless-runtime-helper.sh: classify worker exit reason (crash_during_startup / signal_killed / crash_during_execution / clean) in EXIT trap #auto-dispatch #enhancement #framework #observability #pulse ref:GH#20564
