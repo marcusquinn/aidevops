@@ -82,7 +82,7 @@ extract_block() {
 		in_block {
 			print
 			# Count "if [[" openings (one per line in the block)
-			n_if = gsub(/[[:space:]]if[[:space:]]\[\[/, "&")
+			n_if = gsub(/(^|[[:space:]])if[[:space:]]\[\[/, "&")
 			depth += n_if
 			# Count standalone "fi" lines (start of line, optional tabs/spaces)
 			if ($0 ~ /^[[:space:]]*fi[[:space:]]*$/) {
