@@ -28,7 +28,7 @@ Topic/context: $ARGUMENTS
 
 ## Step 1b: Dispatch Tags (MANDATORY)
 
-**`#auto-dispatch`** — Add when ALL true: clear description with specific files/patterns, ≤2h scope, no credentials/purchases needed, no user-preference design decisions, automatable verification. **Default to `#auto-dispatch`** — omit only when a specific exclusion applies. Full criteria: `workflows/plans.md` "Auto-Dispatch Tagging".
+**`#auto-dispatch`** — Add when ALL true: clear description with specific files/patterns, ≤2h scope, no credentials/purchases needed, no user-preference design decisions, automatable verification. **Default to `#auto-dispatch`** — omit only when a specific exclusion applies. Full criteria: `workflows/plans.md` "Auto-Dispatch Tagging". Canonical blocker labels: `reference/dispatch-blockers.md`.
 
 **`#plan`** — Add when decomposition needed before implementation (multi-phase, >2h, research/design).
 
