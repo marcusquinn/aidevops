@@ -94,6 +94,69 @@ readonly TEST_RESET=$'\033[0m'
 
 Non-canonical colors (`MAGENTA`, `GRAY`, `BOLD`, `DIM`) → declare locally with Pattern B. New canonicals → add to `shared-constants.sh` first.
 
+## Counter Safety (grep -c)
+
+**`grep -c` outputs its count to stdout AND exits 1 when there are zero matches.** The widespread idiom below therefore appends `echo`'s output to grep's own `0`, producing a multi-line string `"0\n0"` on the zero-match path:
+
+```bash
+# BANNED — produces "0\n0" when pattern is absent
+count=$(grep -c 'pat' file 2>/dev/null || echo "0")
+```
+
+Canonical failure modes:
+
+- Output corruption when interpolated into text (parent #20402 rendered `Progress: **0\n0 done, 0\n0 remaining**`)
+- Broken numeric comparisons — `[[ "$count" -eq 0 ]]` raises a runtime error under `set -e` on non-integer strings
+- Broken arithmetic — `$((count + 1))` is a syntax error
+- Silent plural/singular bugs — `printf '%d files\n' "$count"` prints only the first integer
+
+### Allowed pattern — `safe_grep_count` (preferred)
+
+Scripts that source `shared-constants.sh` should use the helper:
+
+```bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=shared-constants.sh
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+
+count=$(safe_grep_count 'pat' file)
+count=$(printf '%s\n' "$data" | safe_grep_count 'needle')
+count=$(safe_grep_count -E '^[a-z]+$' file)
+```
+
+All `grep` flags pass through (`-E`, `-i`, `-F`, etc.). The helper always prints a single integer on a single line, including when the file does not exist or the pattern has zero matches.
+
+### Allowed pattern — inline fallback
+
+YAML workflow steps, bootstrap scripts, and standalone CLIs that cannot source `shared-constants.sh` use the inline form:
+
+```bash
+count=$(grep -c 'pat' file 2>/dev/null || true)
+[[ "$count" =~ ^[0-9]+$ ]] || count=0
+```
+
+`|| true` catches grep's zero-match exit 1; the regex guard collapses any unexpected output (multi-line, empty, non-numeric) to `0`.
+
+### Enforcement
+
+- CI gate: `.github/workflows/counter-stack-check.yml` (diff-scoped — scans only PR-changed `.sh` / `.yml` files).
+- Local check: `.agents/scripts/counter-stack-check.sh --scan-all`.
+- Remediation snippets: `.agents/scripts/counter-stack-check.sh --fix-hint`.
+
+**Test fixtures** that must contain the anti-pattern as a literal (e.g. `counter-stack-check.sh` itself, test files that verify the gate fires) add this directive in the first 20 lines:
+
+```bash
+# counter-stack-check:disable
+```
+
+The scanner skips any file with that directive.
+
+### Originating incident
+
+- PR [#20573](https://github.com/marcusquinn/aidevops/pull/20573) — Fix A for `.github/workflows/issue-sync.yml` phase-nudge visible corruption
+- Parent issue #20581 (t2762) — systemic sweep and prevention
+- Canonical reference implementation: `.agents/scripts/progressive-load-check.sh:80-97` (pre-existing correct counter usage)
+
 ## Migration checklist
 
 1. Identify current pattern (plain, readonly, include-guard, or prefixed).

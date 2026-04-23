@@ -509,6 +509,40 @@ print_info() {
 }
 
 # =============================================================================
+# Counter Safety Helper (t2763)
+# =============================================================================
+# safe_grep_count — count lines matching a pattern without the stacking bug.
+#
+# `grep -c` outputs the count to stdout AND exits 1 when there are zero
+# matches. The common idiom `count=$(grep -c 'pat' file || echo "0")`
+# therefore appends "0" to grep's own "0" on the zero-match path, producing
+# a multi-line string "0\n0" that breaks arithmetic, comparisons, and text
+# interpolation. Canonical failure: parent #20402 rendered
+# "Progress: **0\n0 done**".
+#
+# This helper passes all arguments through to grep -c, catches its exit
+# code with `|| true`, and guards the result with a regex to guarantee a
+# single integer on a single line.
+#
+# Usage:
+#   count=$(safe_grep_count -E '^pat' file.txt)
+#   count=$(printf '%s\n' "$data" | safe_grep_count 'needle')
+#   count=$(safe_grep_count 'nope' /does-not-exist)   # prints 0, no error
+#
+# Enforcement: `.agents/scripts/counter-stack-check.sh` flags the unsafe
+# idiom in CI. See also `reference/shell-style-guide.md` § Counter Safety.
+safe_grep_count() {
+	local _result
+	_result=$(grep -c "$@" 2>/dev/null || true)
+	if [[ "$_result" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$_result"
+	else
+		printf '0\n'
+	fi
+	return 0
+}
+
+# =============================================================================
 # Shared Logging Functions (issue #2411)
 # =============================================================================
 # Consolidated log_info/log_error/log_success/log_warn to eliminate duplication
