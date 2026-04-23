@@ -2962,3 +2962,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2768 pulse: consolidate circuit breaker threshold into single conf file #auto-dispatch #framework #pulse ref:GH#20638
 
 - [ ] t2769 pulse: per-issue no_work circuit breaker (Child 2 of #20560) #auto-dispatch #bug #framework #pulse ref:GH#20639
+
+- [ ] t2770 pulse: cross-issue no_work rate circuit breaker (Child 3 of #20560) #auto-dispatch #bug #framework #pulse ref:GH#20640
