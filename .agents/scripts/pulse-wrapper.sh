@@ -1599,6 +1599,21 @@ main() {
 	_detect_invocation_source
 	_record_invocation_source "$_invocation_source"
 
+	# GH#20579: Is-running short-circuit — exit 0 immediately before attempting
+	# mkdir lock acquisition when a pulse process is already alive. Eliminates
+	# lock contention for the common launchd-fires-while-running case.
+	# Bypassed in --canary and --dry-run modes — they need the full code path.
+	if [[ "${PULSE_CANARY_MODE:-0}" != "1" && "${PULSE_DRY_RUN:-0}" != "1" ]]; then
+		local _ir_pids
+		_ir_pids=$(pgrep -f "(^|/)pulse-wrapper\\.sh( |\$)" 2>/dev/null | grep -v "^$$\$" || true)
+		if [[ -n "$_ir_pids" ]]; then
+			local _ir_first_pid
+			_ir_first_pid=$(printf '%s\n' "$_ir_pids" | awk 'NR==1')
+			echo "[pulse-wrapper] Pulse already running (PID: ${_ir_first_pid}), skipping" >>"$WRAPPER_LOGFILE"
+			return 0
+		fi
+	fi
+
 	# GH#4513: Acquire exclusive instance lock FIRST — before any other
 	# check. Uses mkdir atomicity as the ONLY primitive (POSIX-guaranteed,
 	# works identically on macOS APFS/HFS+ and Linux ext4/btrfs/xfs).

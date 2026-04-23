@@ -2955,12 +2955,28 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2749 Dispatch consolidation children same-cycle via Phase 2 fill-floor pass #auto-dispatch #bug #framework #pulse ref:GH#20553
 
-- [ ] t2751 fix phase-nudge grep -c counter stacking '0\n0' on parent-task issues ref:GH#20555
+- [x] t2751 fix phase-nudge grep -c counter stacking '0\n0' on parent-task issues ref:GH#20555 pr:#20573 completed:2026-04-23
 
-- [ ] t2750 Move cleanup_worktrees to async background job to stop blocking pulse cycles #auto-dispatch #bug #framework #pulse ref:GH#20554
+- [x] t2750 Move cleanup_worktrees to async background job to stop blocking pulse cycles #auto-dispatch #bug #framework #pulse ref:GH#20554 pr:#20569 completed:2026-04-23
 
 - [ ] t2754 Phase 2 of #20402: formalise opt-out vocabulary ref:GH#20558
 
 - [ ] t2753 research: Investigate pulse-wrapper invocation churn and dedup improvements #framework #parent #pulse #research ref:GH#20557
 
 - [ ] t2752 Add pulse-diagnose-helper.sh cycle-health subcommand for pulse stability observability #auto-dispatch #enhancement #framework #observability #pulse ref:GH#20556
+
+- [ ] t2755 robust parent-task phase-lifecycle automation (B/C/D of t2751 systemic fix) #parent ref:GH#20559
+
+- [ ] t2756 investigate systemic no_work worker stall cluster (201 issues, 4 repos) #parent ref:GH#20560
+
+- [x] t2757 pulse-dispatch-worker-launch.sh: detach workers via setsid to survive pulse restart #auto-dispatch #bug #framework #pulse ref:GH#20561 pr:#20568 completed:2026-04-23
+
+- [x] t2758 pulse-dispatch-worker-launch.sh: pre-warm opencode DB per-worker to shorten cold-start vulnerability window #auto-dispatch #bug #framework #pulse ref:GH#20562 pr:#20570 completed:2026-04-23
+
+- [x] t2759 setup-modules/schedulers.sh: preserve user env overrides in generated plists across framework updates #auto-dispatch #enhancement #framework ref:GH#20563 pr:#20574 completed:2026-04-23
+
+- [ ] t2760 headless-runtime-helper.sh: classify worker exit reason (crash_during_startup / signal_killed / crash_during_execution / clean) in EXIT trap #auto-dispatch #enhancement #framework #observability #pulse ref:GH#20564
+
+- [ ] t2761 root-cause stalled headless-runtime-helper.sh outer wrappers (Child 1 of #20560) #auto-dispatch ref:GH#20575
+
+- [ ] t2762 systemic sweep — grep -c counter-stacking bug + recurrence guard #parent ref:GH#20581

@@ -319,6 +319,78 @@ test_get_min_edit_lag_unknown_repo_default() {
 	return 0
 }
 
+# ---------- Unit tests: two-phase bot behaviour (GH#20550) ----------
+
+test_two_phase_coderabbitai_aged_unedited_not_settled() {
+	# Two-phase bot: coderabbitai, created 120s ago but never edited (edit_delta=0).
+	# Age alone is NOT sufficient for coderabbitai — requires edit_delta > 0.
+	local now created
+	now=$(date +%s)
+	created=$(TZ=UTC date -u -r "$((now - 120))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+		date -u -d "@$((now - 120))" +"%Y-%m-%dT%H:%M:%SZ")
+	if ! _comment_is_settled "$created" "$created" 30 "coderabbitai"; then
+		print_result "two-phase: coderabbitai aged-unedited NOT settled (age alone insufficient)" 0
+	else
+		print_result "two-phase: coderabbitai aged-unedited NOT settled (age alone insufficient)" 1 \
+			"created=${created} — expected NOT settled; age-derived branch must be skipped for coderabbitai"
+	fi
+	return 0
+}
+
+test_two_phase_coderabbitai_any_edit_settled() {
+	# Two-phase bot: coderabbitai, created 10s ago, edited 5s ago (edit_delta=5).
+	# Any positive edit_delta is authoritative for coderabbitai — settled immediately.
+	# Under non-two-phase OR semantics this same input is NOT settled
+	# (edit_delta=5 < min_lag=30 AND age=10 < min_lag=30).
+	local now created updated
+	now=$(date +%s)
+	created=$(TZ=UTC date -u -r "$((now - 10))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+		date -u -d "@$((now - 10))" +"%Y-%m-%dT%H:%M:%SZ")
+	updated=$(TZ=UTC date -u -r "$((now - 5))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+		date -u -d "@$((now - 5))" +"%Y-%m-%dT%H:%M:%SZ")
+	if _comment_is_settled "$created" "$updated" 30 "coderabbitai"; then
+		print_result "two-phase: coderabbitai edit_delta=5 settled (any positive edit is authoritative)" 0
+	else
+		print_result "two-phase: coderabbitai edit_delta=5 settled (any positive edit is authoritative)" 1 \
+			"created=${created} updated=${updated} — expected settled; edit_delta > 0 should pass for coderabbitai"
+	fi
+	return 0
+}
+
+test_two_phase_unknown_bot_or_semantics_preserved() {
+	# Non-two-phase bot with unknown login: aged 120s, never edited.
+	# Should settle by age — OR semantics preserved for non-two-phase bots.
+	local now created
+	now=$(date +%s)
+	created=$(TZ=UTC date -u -r "$((now - 120))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+		date -u -d "@$((now - 120))" +"%Y-%m-%dT%H:%M:%SZ")
+	if _comment_is_settled "$created" "$created" 30 "gemini-code-assist"; then
+		print_result "non-two-phase: unknown bot aged-unedited settled by age (OR semantics preserved)" 0
+	else
+		print_result "non-two-phase: unknown bot aged-unedited settled by age (OR semantics preserved)" 1 \
+			"created=${created} — expected settled by age for gemini-code-assist (non-two-phase)"
+	fi
+	return 0
+}
+
+test_two_phase_env_override_respected_non_two_phase() {
+	# Non-two-phase bot: pass min_lag=60 (representing env override), age=40s.
+	# age=40 < min_lag=60 and no edit → NOT settled.
+	# Confirms env-derived min_lag is still applied for non-two-phase bots
+	# (the two-phase path does not interfere with OR semantics + larger lag).
+	local now created
+	now=$(date +%s)
+	created=$(TZ=UTC date -u -r "$((now - 40))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+		date -u -d "@$((now - 40))" +"%Y-%m-%dT%H:%M:%SZ")
+	if ! _comment_is_settled "$created" "$created" 60 "gemini-code-assist"; then
+		print_result "non-two-phase: env min_lag=60, age=40 → NOT settled (override respected)" 0
+	else
+		print_result "non-two-phase: env min_lag=60, age=40 → NOT settled (override respected)" 1 \
+			"created=${created} — expected NOT settled; age=40 is below min_lag=60"
+	fi
+	return 0
+}
+
 # ---------- Run ----------
 
 main() {
@@ -352,6 +424,13 @@ main() {
 	test_get_min_edit_lag_per_repo
 	test_get_min_edit_lag_global_default
 	test_get_min_edit_lag_unknown_repo_default
+
+	echo ""
+	echo "=== Two-phase bot behaviour (GH#20550) ==="
+	test_two_phase_coderabbitai_aged_unedited_not_settled
+	test_two_phase_coderabbitai_any_edit_settled
+	test_two_phase_unknown_bot_or_semantics_preserved
+	test_two_phase_env_override_respected_non_two_phase
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}, failed: ${TESTS_FAILED}"

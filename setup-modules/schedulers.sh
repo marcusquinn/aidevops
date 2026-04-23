@@ -499,6 +499,90 @@ _build_pulse_headless_env_xml() {
 	return 0
 }
 
+# Read user-owned plist env override file and emit XML key/string pairs
+# for the matching label's env vars. Keys prefixed with _ are skipped
+# (used as comments in the JSON template).
+#
+# Args: $1=plist_label (e.g. "com.aidevops.aidevops-supervisor-pulse")
+#       $2=override_file (absolute path; default ~/.agents/configs/plist-env-overrides.json)
+#       $3=indent (string to prepend each line; default "\t\t")
+#
+# Returns 0 on success (including empty result when label not found).
+# Prints WARN to stderr and returns 0 when file is present but malformed.
+# Emits nothing when file is absent.
+_build_plist_env_overrides_xml() {
+	local _label="$1"
+	local _override_file="${2:-$HOME/.aidevops/agents/configs/plist-env-overrides.json}"
+	local _indent="${3:-		}"
+
+	# Missing file is the normal case (user has not created the override file yet)
+	[[ -f "$_override_file" ]] || return 0
+
+	# Require jq — without it we cannot parse JSON safely
+	if ! command -v jq >/dev/null 2>&1; then
+		echo "[schedulers] WARN: jq not found; skipping plist-env-overrides.json injection" >&2
+		return 0
+	fi
+
+	# Validate JSON
+	if ! jq empty "$_override_file" 2>/dev/null; then
+		echo "[schedulers] WARN: plist-env-overrides.json is malformed; skipping injection (file: $_override_file)" >&2
+		return 0
+	fi
+
+	# Extract key=value pairs for the matching label; skip _ prefixed keys
+	local _pairs
+	_pairs=$(jq -r --arg label "$_label" '
+		.[$label] // {} |
+		to_entries[] |
+		select(.key | startswith("_") | not) |
+		"\(.key)=\(.value)"
+	' "$_override_file" 2>/dev/null) || return 0
+
+	[[ -z "$_pairs" ]] && return 0
+
+	local _line _key _val _xml_key _xml_val
+	while IFS= read -r _line; do
+		[[ -z "$_line" ]] && continue
+		_key="${_line%%=*}"
+		_val="${_line#*=}"
+		_xml_key=$(_xml_escape "$_key")
+		_xml_val=$(_xml_escape "$_val")
+		printf '%s<key>%s</key>\n%s<string>%s</string>\n' \
+			"$_indent" "$_xml_key" "$_indent" "$_xml_val"
+	done <<<"$_pairs"
+
+	return 0
+}
+
+# Log which env var overrides were injected from plist-env-overrides.json for a label.
+# Prints to stdout (setup.sh output). No-op when file absent or label not found.
+# Args: $1=plist_label, $2=override_file (optional)
+_log_plist_env_overrides() {
+	local _label="$1"
+	local _override_file="${2:-$HOME/.aidevops/agents/configs/plist-env-overrides.json}"
+
+	[[ -f "$_override_file" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	jq empty "$_override_file" 2>/dev/null || return 0
+
+	local _keys
+	_keys=$(jq -r --arg label "$_label" '
+		.[$label] // {} |
+		keys[] |
+		select(startswith("_") | not)
+	' "$_override_file" 2>/dev/null) || return 0
+
+	[[ -z "$_keys" ]] && return 0
+
+	local _count
+	_count=$(echo "$_keys" | wc -l | tr -d ' ')
+	local _keys_inline
+	_keys_inline=$(echo "$_keys" | tr '\n' ' ' | sed 's/ $//')
+	print_info "  plist-env-overrides: injected ${_count} var(s) into ${_label}: ${_keys_inline}"
+	return 0
+}
+
 # Generate the full pulse launchd plist XML content.
 # Args: $1=pulse_label, $2=wrapper_script, $3=opencode_bin
 # Prints the complete plist XML to stdout.
@@ -538,6 +622,12 @@ _generate_pulse_plist_content() {
 	local _pulse_interval_sec
 	_pulse_interval_sec=$(_read_pulse_interval_seconds)
 
+	# Inject user-owned plist env overrides (GH#20563 / t2759).
+	# Reads ~/.aidevops/agents/configs/plist-env-overrides.json when present.
+	# Missing file or label not found → emits nothing (no-op, safe default).
+	local _env_overrides_xml
+	_env_overrides_xml=$(_build_plist_env_overrides_xml "$pulse_label")
+
 	cat <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -569,7 +659,7 @@ _generate_pulse_plist_content() {
 		<key>PULSE_STALE_THRESHOLD</key>
 		<string>${PULSE_STALE_THRESHOLD_SECONDS}</string>
 		${_headless_xml_env}
-	</dict>
+${_env_overrides_xml}	</dict>
 	<key>SoftResourceLimits</key>
 	<dict>
 		<key>NumberOfFiles</key>
@@ -614,6 +704,8 @@ _install_pulse_launchd() {
 		else
 			print_info "Supervisor pulse enabled (launchd, every ${_interval_label})"
 		fi
+		# Log any user-provided env var overrides that were injected (GH#20563 / t2759)
+		_log_plist_env_overrides "$pulse_label"
 	else
 		print_warning "Failed to load supervisor pulse LaunchAgent"
 	fi

@@ -1068,10 +1068,21 @@ _preflight_cleanup_and_ledger() {
 	run_stage_with_timeout "cleanup_orphans" "$PRE_RUN_STAGE_TIMEOUT" cleanup_orphans || true
 	run_stage_with_timeout "cleanup_stale_opencode" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stale_opencode || true
 	run_stage_with_timeout "cleanup_stalled_workers" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stalled_workers || true
-	# GH#18979: Worktree cleanup is non-critical and can hang on per-worktree
-	# gh API calls across many repos. Use a short timeout (60s) so a slow
-	# cleanup doesn't block prefetch/dispatch. Missed cleanup catches up next cycle.
-	run_stage_with_timeout "cleanup_worktrees" 60 cleanup_worktrees || true
+	# GH#20554: Worktree cleanup is moved to an async background job so a slow
+	# cleanup (20+ worktrees × 2-5s gh API calls each) never hits a hard timeout
+	# and blocks the pulse cycle. The helper enforces a single-runner lock and
+	# a cadence gate (CLEANUP_WORKTREES_ASYNC_CADENCE_MIN, default 10 min) so
+	# concurrent pulse invocations do not spawn duplicate cleanup processes.
+	# Progress and last-run timestamp: ~/.aidevops/logs/cleanup_worktrees.*
+	local _cleanup_async_helper="${SCRIPT_DIR}/cleanup-worktrees-async-helper.sh"
+	if [[ -x "$_cleanup_async_helper" ]]; then
+		nohup "$_cleanup_async_helper" \
+			>>"${HOME}/.aidevops/logs/cleanup_worktrees.log" 2>&1 &
+		disown $! 2>/dev/null || true
+	else
+		# Fallback: synchronous with short timeout (old GH#18979 behaviour)
+		run_stage_with_timeout "cleanup_worktrees" 60 cleanup_worktrees || true
+	fi
 	run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
 
 	# GH#17549: Archive old OpenCode sessions to keep the active DB small.

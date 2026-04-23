@@ -411,7 +411,15 @@ _invoke_opencode() {
 	# The isolated dir is per-PID and cleaned up after the worker exits.
 	local isolated_data_dir=""
 	if [[ "${AIDEVOPS_HEADLESS_AUTH_ISOLATION:-1}" == "1" ]]; then
-		isolated_data_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-worker-auth.XXXXXX")
+		# t2758: Reuse pre-warmed isolated DB dir if the dispatcher already ran
+		# opencode --version against it to trigger migration + skill-dedup.
+		# Falls back to a fresh mktemp when pre-warming was skipped or failed.
+		if [[ -n "${AIDEVOPS_WORKER_PREWARM_DIR:-}" && -d "${AIDEVOPS_WORKER_PREWARM_DIR:-}" ]]; then
+			isolated_data_dir="$AIDEVOPS_WORKER_PREWARM_DIR"
+			print_info "[lifecycle] opencode_warm_done dir=$isolated_data_dir (reusing pre-warmed dir) pid=$$"
+		else
+			isolated_data_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-worker-auth.XXXXXX")
+		fi
 		mkdir -p "${isolated_data_dir}/opencode"
 		# Copy the current auth.json so the worker has valid tokens at startup
 		if [[ -f "$OPENCODE_AUTH_FILE" ]]; then
