@@ -7,7 +7,7 @@
 # actions based on age, content, and conflict scope:
 #
 #   Auto-rebase : PR < 48h old AND maintainer/worker-owned AND only TODO.md
-#                 is conflicting → rebase onto origin/main with union merge
+#                 is conflicting → rebase onto origin/<default_branch> with union merge
 #                 strategy, force-push, post documentation comment.
 #   Auto-close  : PR > 7d old AND no human commits in 3d AND no
 #                 `do-not-close` label → close with a "superseded" comment.
