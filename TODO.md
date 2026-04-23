@@ -2948,3 +2948,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure #framework #pulse ref:GH#20482 pr:#20483 completed:2026-04-22
 
 - [x] t2745 Add pre-push guard to catch duplicate TODO entries from issue-sync orphan seed #auto-dispatch #framework ref:GH#20484 pr:#20499 completed:2026-04-22
+
+- [ ] t2763 phase 1 of t2762 — safe_grep_count helper + counter-stack ratchet guard #auto-dispatch ref:GH#20594
+
+- [ ] t2762 systemic sweep — grep -c counter-stacking bug + recurrence guard #parent ref:GH#20581
+
+- [ ] t2756 investigate systemic no_work worker stall cluster (201 issues, 4 repos) #parent ref:GH#20560
+
+- [ ] t2755 robust parent-task phase-lifecycle automation (B/C/D of t2751 systemic fix) #parent ref:GH#20559
