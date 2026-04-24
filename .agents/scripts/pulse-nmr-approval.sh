@@ -345,9 +345,8 @@ _nmr_application_has_automation_signature() {
 			| jq -r '.created_at // ""' 2>/dev/null) || issue_created_at=""
 		if [[ -n "$issue_created_at" && -n "$label_at" ]]; then
 			local nmr_creation_gap
-			nmr_creation_gap=$(jq -n --arg c "$issue_created_at" --arg l "$label_at" \
-				'(($l | fromdateiso8601) - ($c | fromdateiso8601)) | if . < 0 then (0 - .) else . end | floor' \
-				2>/dev/null) || nmr_creation_gap=999999
+		nmr_creation_gap=$(jq -n --arg c "$issue_created_at" --arg l "$label_at" \
+			'(($l | fromdateiso8601) - ($c | fromdateiso8601)) | abs | floor') || nmr_creation_gap=999999
 			[[ "$nmr_creation_gap" =~ ^[0-9]+$ ]] || nmr_creation_gap=999999
 			if (( nmr_creation_gap <= 300 )); then
 				return 0
