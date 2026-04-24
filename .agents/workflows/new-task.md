@@ -89,7 +89,7 @@ Every task MUST have a brief at `todo/tasks/{task_id}-brief.md`. Use `templates/
 **Complexity Impact (t2803):** When the task edits an existing shell function, ask:
 1. "What function(s) will grow? What is the current line count?"
 2. "How many lines will be added?"
-3. "Is projected total > 80 lines?" → If yes: plan extract-helpers refactor first.
+3. "Is projected total > 80 lines?" → If yes: add warning. If > 100 lines: plan extract-helpers refactor first to avoid dispatch failures from complexity gates.
 
 Fill in the `### Complexity Impact` subsection in the brief (see `templates/brief-template.md`). This prevents the class of failure where workers blindly grow a function past the 100-line `function-complexity` gate and dispatch 7+ times. If the task only creates new files/functions, delete the Complexity Impact section.
 

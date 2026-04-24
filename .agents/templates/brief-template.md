@@ -261,10 +261,10 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
      - file-size: 1500 lines (shell) — flag when file is approaching the limit
 
      Decision rule:
-     - Current < 50% of threshold AND growth < 20 lines → no action, delete section.
-     - Current 50–80% of threshold → add a warning; note in steps to watch growth.
-     - Current > 80% of threshold OR projected post-change > 100 lines →
-       MANDATORY: plan extract-helpers refactor first. List helpers below.
+     - Projected post-change < 80 lines → no action, delete section.
+     - Projected post-change 80-100 lines → add a warning; note in steps to watch growth.
+     - Projected post-change > 100 lines →
+       MANDATORY: plan extract-helpers refactor first (prevents dispatch failures). List helpers below.
        Model on `reference/large-file-split.md` §2, GH#20496 / PR #20503. -->
 
 - **Target function:** `{function_name}` in `{file}`
