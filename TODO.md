@@ -3034,3 +3034,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2802 worktree-helper.sh add: explicitly base new branches on origin/<default> to prevent scope-leak PRs ref:GH#20737
 
 - [ ] t2803 brief-template: add Complexity Impact section to prevent function-complexity gate surprises #auto-dispatch ref:GH#20738
+
+- [ ] t2804 pulse: diagnose launch_recovery:no_worker_process dispatch stalls (#20702 evidence) #parent ref:GH#20740
