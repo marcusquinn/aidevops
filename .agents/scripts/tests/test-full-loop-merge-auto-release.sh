@@ -105,17 +105,26 @@ cp "$FAKE_ISC" "${AGENTS_DIR}/scripts/interactive-session-helper.sh"
 export AGENTS_DIR
 
 # =============================================================================
-# gh stub — returns controlled label output for pr view --json labels
+# gh stub — returns controlled label/body output for pr view queries
 # =============================================================================
 GH_CALLS="${TMP}/gh_calls.log"
 # The labels variable is set per-test to control what labels are returned.
 GH_LABELS_RESPONSE=""
+# The body variable is set per-test to control what PR body is returned.
+# Used by the permissive Ref/For fallback path in Guard 1 (t2811/GH#20757).
+GH_BODY_RESPONSE=""
 
 gh() {
 	printf '%s\n' "$*" >>"${GH_CALLS}"
 	if [[ "$1" == "pr" && "$2" == "view" ]]; then
-		# Return labels for --json labels --jq ... query
-		printf '%s\n' "$GH_LABELS_RESPONSE"
+		# Differentiate body vs labels query so tests can control both.
+		# The permissive fallback in Guard 1 calls --json body; the label
+		# fetch in Guard 2 calls --json labels. (t2811)
+		if [[ "$*" == *"--json body"* ]]; then
+			printf '%s\n' "$GH_BODY_RESPONSE"
+		else
+			printf '%s\n' "$GH_LABELS_RESPONSE"
+		fi
 		return 0
 	fi
 	return 0
@@ -191,29 +200,36 @@ else
 fi
 
 # =============================================================================
-# Test 3 — No-op: linked_issue empty → stamp untouched, no API calls
+# Test 3 — No-op: linked_issue empty AND body empty → stamp untouched,
+#           release NOT called.
+# Note: with the t2811 permissive fallback, one gh pr view --json body call
+# IS made to attempt the Ref/For extraction. The assertion here is that
+# release is not called (not that zero API calls are made) — the body fetch
+# is expected. The stamp and release-not-called assertions remain the key
+# guards for the no-op contract.
 # =============================================================================
 : >"$GH_CALLS"
 : >"$RELEASE_CALLS"
 : >"$LOGFILE"
 STAMP="${CLAIM_STAMP_DIR}/marcusquinn-aidevops-8803.json"
 printf '{"pid":1234}\n' >"$STAMP"
+GH_BODY_RESPONSE=""
 GH_LABELS_RESPONSE="origin:interactive,tier:standard"
 
 release_interactive_claim_on_merge "52" "marcusquinn/aidevops" ""
 
 if [[ -f "$STAMP" ]]; then
-	pass "empty linked_issue → stamp untouched"
+	pass "empty linked_issue + empty body → stamp untouched"
 else
-	fail "empty linked_issue → stamp untouched" \
-		"stamp was removed when linked_issue was empty"
+	fail "empty linked_issue + empty body → stamp untouched" \
+		"stamp was removed when linked_issue and body were both empty"
 fi
 
-if [[ ! -s "$GH_CALLS" ]]; then
-	pass "empty linked_issue → no gh API calls made"
+if ! grep -q "release" "$RELEASE_CALLS" 2>/dev/null; then
+	pass "empty linked_issue + empty body → release NOT called"
 else
-	fail "empty linked_issue → no gh API calls made" \
-		"gh was called when linked_issue was empty: $(cat "$GH_CALLS" 2>/dev/null)"
+	fail "empty linked_issue + empty body → release NOT called" \
+		"release was called when neither linked_issue nor body had a reference"
 fi
 
 # =============================================================================
@@ -281,6 +297,90 @@ if [[ ! -f "$STAMP" ]]; then
 else
 	fail "backward compat: stamp file removed by underscore-prefixed alias" \
 		"stamp file still exists: $STAMP"
+fi
+
+# =============================================================================
+# Test 7 — Ref keyword fallback (t2811): linked_issue empty, body has Ref #NNN
+#           → Guard 1 permissive extraction fires → release called
+# =============================================================================
+: >"$GH_CALLS"
+: >"$RELEASE_CALLS"
+: >"$LOGFILE"
+STAMP="${CLAIM_STAMP_DIR}/marcusquinn-aidevops-8807.json"
+printf '{"pid":1234}\n' >"$STAMP"
+GH_BODY_RESPONSE="Planning pass for t2809. Ref #8807 — keeps issue open until all phases merge."
+GH_LABELS_RESPONSE="origin:interactive,tier:standard"
+
+release_interactive_claim_on_merge "60" "marcusquinn/aidevops" ""
+
+if grep -q "release 8807 marcusquinn/aidevops" "$RELEASE_CALLS" 2>/dev/null; then
+	pass "Ref keyword fallback: release called for empty linked_issue with Ref #NNN in body"
+else
+	fail "Ref keyword fallback: release called for empty linked_issue with Ref #NNN in body" \
+		"expected 'release 8807 marcusquinn/aidevops' in release calls — got: $(cat "$RELEASE_CALLS" 2>/dev/null || printf '(empty)')"
+fi
+
+if [[ ! -f "$STAMP" ]]; then
+	pass "Ref keyword fallback: stamp file removed by release"
+else
+	fail "Ref keyword fallback: stamp file removed by release" \
+		"stamp file still exists: $STAMP"
+fi
+
+# =============================================================================
+# Test 8 — For keyword fallback (t2811): linked_issue empty, body has For #NNN
+#           → Guard 1 permissive extraction fires → release called
+# =============================================================================
+: >"$GH_CALLS"
+: >"$RELEASE_CALLS"
+: >"$LOGFILE"
+STAMP="${CLAIM_STAMP_DIR}/marcusquinn-aidevops-8808.json"
+printf '{"pid":1234}\n' >"$STAMP"
+GH_BODY_RESPONSE="For #8808 — planning-only PR per parent-task keyword rule."
+GH_LABELS_RESPONSE="origin:interactive,tier:standard"
+
+release_interactive_claim_on_merge "61" "marcusquinn/aidevops" ""
+
+if grep -q "release 8808 marcusquinn/aidevops" "$RELEASE_CALLS" 2>/dev/null; then
+	pass "For keyword fallback: release called for empty linked_issue with For #NNN in body"
+else
+	fail "For keyword fallback: release called for empty linked_issue with For #NNN in body" \
+		"expected 'release 8808 marcusquinn/aidevops' in release calls — got: $(cat "$RELEASE_CALLS" 2>/dev/null || printf '(empty)')"
+fi
+
+if [[ ! -f "$STAMP" ]]; then
+	pass "For keyword fallback: stamp file removed by release"
+else
+	fail "For keyword fallback: stamp file removed by release" \
+		"stamp file still exists: $STAMP"
+fi
+
+# =============================================================================
+# Test 9 — No-op: linked_issue empty AND PR body has no issue reference
+#           → Guard 1 permissive fallback finds nothing → still short-circuits
+# =============================================================================
+: >"$GH_CALLS"
+: >"$RELEASE_CALLS"
+: >"$LOGFILE"
+STAMP="${CLAIM_STAMP_DIR}/marcusquinn-aidevops-8809.json"
+printf '{"pid":1234}\n' >"$STAMP"
+GH_BODY_RESPONSE="This PR has no issue reference in the body at all."
+GH_LABELS_RESPONSE="origin:interactive,tier:standard"
+
+release_interactive_claim_on_merge "62" "marcusquinn/aidevops" ""
+
+if [[ -f "$STAMP" ]]; then
+	pass "no body issue ref → stamp untouched"
+else
+	fail "no body issue ref → stamp untouched" \
+		"stamp was removed when body had no issue reference"
+fi
+
+if ! grep -q "release" "$RELEASE_CALLS" 2>/dev/null; then
+	pass "no body issue ref → release NOT called"
+else
+	fail "no body issue ref → release NOT called" \
+		"release was called when body had no issue reference"
 fi
 
 # =============================================================================
