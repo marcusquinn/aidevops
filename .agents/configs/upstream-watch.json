@@ -68,11 +68,11 @@
     },
     {
       "name": "cloudron-packaging-community",
-      "url": "https://forgejo.wanderingmonster.dev/root/cloudron-packaging",
+      "url": "https://forgejo.wanderingmonster.dev/WanderingMonster/cloudron-packaging",
       "source_type": "forgejo",
       "description": "Community Cloudron packaging assessment toolkit by LoudLemur/OrcVole",
       "relevance": "Source of the two-axis scoring rubric, verified base image inventory, and assessment patterns we adopted. New commits may add assessed apps, refine scoring, or update base image findings.",
-      "check_command": "curl -s 'https://forgejo.wanderingmonster.dev/api/v1/repos/root/cloudron-packaging/commits?limit=1' | jq -r '(.[0].sha // \"\")'",
+      "check_command": "curl -s 'https://forgejo.wanderingmonster.dev/api/v1/repos/WanderingMonster/cloudron-packaging/commits?limit=1' | jq -r '(.[0].sha // \"\")'",
       "affects": [".agents/tools/deployment/cloudron-app-packaging.md"],
       "last_seen_commit": "047e4b07ce362f484a0c5a9854b14a1a5ecf1b48",
       "added_at": "2026-03-19"
