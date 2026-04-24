@@ -51,6 +51,7 @@ AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 CONFIG_FILE="${AGENTS_DIR}/configs/upstream-watch.json"
 STATE_FILE="${HOME}/.aidevops/cache/upstream-watch-state.json"
 LOGFILE="${HOME}/.aidevops/logs/upstream-watch.log"
+UPSTREAM_WATCH_LABEL="$UPSTREAM_WATCH_LABEL"
 
 # Logging prefix for shared log_* functions
 # shellcheck disable=SC2034
@@ -235,6 +236,237 @@ _write_config() {
 #######################################
 _now_iso() {
 	date -u +%Y-%m-%dT%H:%M:%SZ
+	return 0
+}
+
+# =============================================================================
+# GitHub issue filing (t2810)
+# =============================================================================
+
+#######################################
+# Look up the local aidevops repo slug for issue filing
+# Outputs: owner/repo slug string
+# Returns: 0 always
+#######################################
+_get_aidevops_slug() {
+	local slug=""
+	if [[ -f "${HOME}/.config/aidevops/repos.json" ]]; then
+		slug=$(jq -r '.initialized_repos[] | select(.is_framework_dir == true) | .slug' \
+			"${HOME}/.config/aidevops/repos.json" 2>/dev/null | head -1) || slug=""
+	fi
+	[[ -z "$slug" ]] && slug="marcusquinn/aidevops"
+	printf '%s' "$slug"
+	return 0
+}
+
+#######################################
+# File a GitHub issue when an upstream update is detected (0→1 transition).
+# Deduplicates by searching for open issues with the same title prefix.
+# If a matching open issue exists and the upstream has advanced further,
+# the existing issue body is updated instead of creating a duplicate.
+#
+# Arguments:
+#   $1 - slug_or_name  (upstream repo slug or non-GitHub entry name)
+#   $2 - kind          (release|commit|update)
+#   $3 - old_value     (previous version/commit, may be empty)
+#   $4 - new_value     (new version/commit)
+#   $5 - entry_json    (config entry JSON for relevance, affects, etc.)
+# Returns: 0 on success or gh offline, 1 on unexpected error
+#######################################
+_file_upstream_update_issue() {
+	local slug_or_name="$1"
+	local kind="$2"
+	local old_value="$3"
+	local new_value="$4"
+	local entry_json="$5"
+
+	# Bail if gh is not available (offline mode — don't break the check loop)
+	if ! command -v gh &>/dev/null || ! gh auth status &>/dev/null; then
+		_log_warn "gh unavailable — skipping issue filing for ${slug_or_name}"
+		return 0
+	fi
+
+	local aidevops_slug
+	aidevops_slug=$(_get_aidevops_slug)
+
+	local new_value_short="${new_value:0:12}"
+	local title_prefix="upstream: ${slug_or_name} ${kind}"
+	local title="${title_prefix} → ${new_value_short} (review adoption)"
+
+	# --- Dedup: check for existing open issue ---
+	local existing_number=""
+	existing_number=$(gh issue list --repo "$aidevops_slug" --state open \
+		--label "$UPSTREAM_WATCH_LABEL" \
+		--search "in:title upstream: ${slug_or_name}" \
+		--json number --jq '.[0].number // empty' 2>/dev/null) || existing_number=""
+
+	# Extract relevance and affects from config entry
+	local relevance=""
+	local affects=""
+	local upstream_url=""
+	if [[ -n "$entry_json" ]]; then
+		relevance=$(printf '%s' "$entry_json" | jq -r '.relevance // ""' 2>/dev/null) || relevance=""
+		affects=$(printf '%s' "$entry_json" | jq -r '.affects // [] | .[]' 2>/dev/null) || affects=""
+		# For GitHub repos, construct the compare URL
+		local entry_slug=""
+		entry_slug=$(printf '%s' "$entry_json" | jq -r '.slug // ""' 2>/dev/null) || entry_slug=""
+		if [[ -n "$entry_slug" ]]; then
+			upstream_url="https://github.com/${entry_slug}"
+		else
+			upstream_url=$(printf '%s' "$entry_json" | jq -r '.url // ""' 2>/dev/null) || upstream_url=""
+		fi
+	fi
+
+	# Build compare URL if both old and new values are available
+	local compare_url=""
+	if [[ -n "$old_value" && -n "$upstream_url" && "$upstream_url" == *"github.com"* ]]; then
+		compare_url="${upstream_url}/compare/${old_value}...${new_value_short}"
+	fi
+
+	# Build affects section
+	local affects_section="See relevance text above."
+	if [[ -n "$affects" ]]; then
+		affects_section=""
+		while IFS= read -r af; do
+			[[ -n "$af" ]] && affects_section="${affects_section}\n- \`${af}\`"
+		done <<<"$affects"
+	fi
+
+	local old_display="${old_value:-none}"
+
+	# Compose issue body
+	local body
+	body=$(cat <<ISSUEEOF
+## Summary
+
+${relevance:-Upstream repo monitored for relevant changes.}
+
+## What Changed
+
+| Field | Value |
+|-------|-------|
+| Upstream | \`${slug_or_name}\` |
+| Kind | ${kind} |
+| Previous | \`${old_display}\` |
+| Current | \`${new_value_short}\` |
+$(if [[ -n "$compare_url" ]]; then echo "| Compare | [view diff](${compare_url}) |"; fi)
+
+## Affects
+
+$(printf '%b' "$affects_section")
+
+## Action
+
+1. Review the upstream changes${compare_url:+ at the [compare link](${compare_url})}
+2. Determine if adoption is needed (new feature, bug fix, security patch)
+3. If adopting: create a PR with the relevant changes
+4. Mark as reviewed: \`upstream-watch-helper.sh ack ${slug_or_name}\`
+
+<!-- aidevops:generator=upstream-watch upstream_slug=${slug_or_name} -->
+<!-- upstream-watch:slug=${slug_or_name} -->
+ISSUEEOF
+	)
+
+	# Append signature footer
+	local sig_footer=""
+	if [[ -x "${SCRIPT_DIR}/gh-signature-helper.sh" ]]; then
+		sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer 2>/dev/null || true)
+	fi
+	[[ -n "$sig_footer" ]] && body="${body}
+
+${sig_footer}"
+
+	if [[ -n "$existing_number" ]]; then
+		# Update existing issue title and body if upstream advanced further
+		_log_info "Updating existing issue #${existing_number} for ${slug_or_name}"
+		gh_issue_edit_safe "$existing_number" --repo "$aidevops_slug" \
+			--title "$title" --body "$body" >/dev/null 2>&1 || {
+			_log_warn "Failed to update issue #${existing_number} for ${slug_or_name}"
+			return 0
+		}
+		echo -e "  ${BLUE}Updated issue #${existing_number}${NC}"
+	else
+		# Create new issue
+		_log_info "Filing issue for upstream update: ${slug_or_name} ${kind} → ${new_value_short}"
+		local issue_url=""
+		issue_url=$(gh_create_issue --repo "$aidevops_slug" \
+			--title "$title" \
+			--label "$UPSTREAM_WATCH_LABEL" \
+			--label "auto-dispatch" \
+			--label "tier:standard" \
+			--label "origin:worker" \
+			--body "$body" 2>/dev/null) || {
+			_log_warn "Failed to file issue for ${slug_or_name} — will retry next cycle"
+			return 0
+		}
+		if [[ -n "$issue_url" ]]; then
+			_log_info "Filed issue: ${issue_url}"
+			echo -e "  ${BLUE}Filed issue: ${issue_url}${NC}"
+		fi
+	fi
+	return 0
+}
+
+#######################################
+# Close the open upstream-watch issue for a given slug/name on ack.
+# Searches for open issues with the source:upstream-watch label and
+# matching title, then posts an ack comment and closes.
+#
+# Arguments:
+#   $1 - slug_or_name  (upstream repo slug or non-GitHub entry name)
+#   $2 - note          (optional user-supplied note for the close comment)
+# Returns: 0 always (offline/failure is non-fatal)
+#######################################
+_close_upstream_update_issue() {
+	local slug_or_name="$1"
+	local note="${2:-}"
+
+	# Bail if gh is not available
+	if ! command -v gh &>/dev/null || ! gh auth status &>/dev/null; then
+		_log_warn "gh unavailable — skipping issue close for ${slug_or_name}"
+		return 0
+	fi
+
+	local aidevops_slug
+	aidevops_slug=$(_get_aidevops_slug)
+
+	# Find matching open issue
+	local issue_number=""
+	issue_number=$(gh issue list --repo "$aidevops_slug" --state open \
+		--label "$UPSTREAM_WATCH_LABEL" \
+		--search "in:title upstream: ${slug_or_name}" \
+		--json number --jq '.[0].number // empty' 2>/dev/null) || issue_number=""
+
+	if [[ -z "$issue_number" ]]; then
+		_log_info "No open upstream-watch issue found for ${slug_or_name} — nothing to close"
+		return 0
+	fi
+
+	# Build ack comment
+	local comment_body="> Acked by user."
+	if [[ -n "$note" ]]; then
+		comment_body="> Acked by user. Adoption: ${note}"
+	fi
+
+	# Append signature footer
+	local sig_footer=""
+	if [[ -x "${SCRIPT_DIR}/gh-signature-helper.sh" ]]; then
+		sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer --issue "${aidevops_slug}#${issue_number}" --solved 2>/dev/null || true)
+	fi
+	[[ -n "$sig_footer" ]] && comment_body="${comment_body}
+
+${sig_footer}"
+
+	# Post comment and close
+	gh_issue_comment "$issue_number" --repo "$aidevops_slug" --body "$comment_body" >/dev/null 2>&1 || {
+		_log_warn "Failed to post ack comment on issue #${issue_number}"
+	}
+	gh issue close "$issue_number" --repo "$aidevops_slug" --reason "completed" >/dev/null 2>&1 || {
+		_log_warn "Failed to close issue #${issue_number}"
+	}
+
+	_log_info "Closed upstream-watch issue #${issue_number} for ${slug_or_name}"
+	echo -e "  ${GREEN}Closed issue #${issue_number}${NC}"
 	return 0
 }
 
@@ -471,9 +703,10 @@ _check_single_github_repo() {
 	relevance=$(echo "$config" | jq -r --arg slug "$slug" '.repos[] | select(.slug == $slug) | .relevance // ""')
 
 	# Get last-seen state
-	local last_release_seen last_commit_seen
+	local last_release_seen last_commit_seen updates_pending_before
 	last_release_seen=$(echo "$_check_state" | jq -r --arg slug "$slug" '.repos[$slug].last_release_seen // ""')
 	last_commit_seen=$(echo "$_check_state" | jq -r --arg slug "$slug" '.repos[$slug].last_commit_seen // ""')
+	updates_pending_before=$(echo "$_check_state" | jq -r --arg slug "$slug" '.repos[$slug].updates_pending // 0')
 
 	# --- Check releases ---
 	local latest_release_tag="" latest_release_name="" latest_release_date=""
@@ -545,9 +778,26 @@ _check_single_github_repo() {
 	# Update last_checked and updates_pending (but NOT last_release_seen or last_commit_seen — those require explicit ack)
 	# Skip state update if probes failed to avoid masking errors as "up to date"
 	if [[ "$probe_failed" != true ]]; then
+		local new_pending
+		new_pending=$([[ "$has_new_release" == true || "$has_new_commits" == true ]] && echo 1 || echo 0)
 		_check_state=$(echo "$_check_state" | jq --arg slug "$slug" --arg now "$now" \
-			--argjson pending "$([[ "$has_new_release" == true || "$has_new_commits" == true ]] && echo 1 || echo 0)" \
+			--argjson pending "$new_pending" \
 			'.repos[$slug].last_checked = $now | .repos[$slug].updates_pending = $pending')
+
+		# File GitHub issue on 0→1 transition (t2810)
+		if [[ "$updates_pending_before" != "1" && "$new_pending" == "1" ]]; then
+			local update_kind="commit"
+			local update_old="$last_commit_seen"
+			local update_new="${latest_commit:0:7}"
+			if [[ "$has_new_release" == true ]]; then
+				update_kind="release"
+				update_old="$last_release_seen"
+				update_new="$latest_release_tag"
+			fi
+			local config_entry
+			config_entry=$(echo "$config" | jq --arg slug "$slug" '.repos[] | select(.slug == $slug)')
+			_file_upstream_update_issue "$slug" "$update_kind" "$update_old" "$update_new" "$config_entry"
+		fi
 	else
 		_check_had_probe_failure=true
 	fi
@@ -594,8 +844,9 @@ _check_non_github_upstreams() {
 		fi
 
 		# Get last-seen state
-		local last_seen_value
+		local last_seen_value ng_updates_pending_before
 		last_seen_value=$(echo "$_check_state" | jq -r --arg name "$entry_name" '.non_github[$name].last_seen // ""')
+		ng_updates_pending_before=$(echo "$_check_state" | jq -r --arg name "$entry_name" '.non_github[$name].updates_pending // 0')
 
 		# Run the check command (curl + jq) in a subshell for isolation
 		# Note: check_command comes from a committed config file, not user input
@@ -642,10 +893,17 @@ _check_non_github_upstreams() {
 
 		# Update state (but not last_seen — that requires explicit ack)
 		if [[ "$probe_failed" != true ]]; then
+			local ng_new_pending
+			ng_new_pending=$([[ "$has_update" == true ]] && echo 1 || echo 0)
 			_check_state=$(echo "$_check_state" | jq --arg name "$entry_name" --arg now "$now" \
 				--arg current "$current_value" \
-				--argjson pending "$([[ "$has_update" == true ]] && echo 1 || echo 0)" \
+				--argjson pending "$ng_new_pending" \
 				'.non_github[$name].last_checked = $now | .non_github[$name].current_value = $current | .non_github[$name].updates_pending = $pending')
+
+			# File GitHub issue on 0→1 transition (t2810)
+			if [[ "$ng_updates_pending_before" != "1" && "$ng_new_pending" == "1" ]]; then
+				_file_upstream_update_issue "$entry_name" "update" "$last_seen_value" "$current_value" "$entry_json"
+			fi
 		else
 			_check_had_probe_failure=true
 		fi
@@ -870,11 +1128,14 @@ _show_commit_diff() {
 # Acknowledge the latest release/commit for a watched repo
 # Updates last_release_seen and last_commit_seen to current, clears
 # updates_pending. Validates slug against config watchlist first.
+# Also closes any matching upstream-watch GitHub issue (t2810).
 # Arguments:
-#   $1 - Repository slug (owner/repo)
+#   $1 - Repository slug (owner/repo) or non-GitHub upstream name
+#   $2 - Optional note for the close comment (e.g. "adopted in PR #123")
 #######################################
 cmd_ack() {
 	local slug="$1"
+	local note="${2:-}"
 
 	if [[ -z "$slug" ]]; then
 		echo -e "${RED}Error: Repository slug or upstream name required${NC}" >&2
@@ -914,6 +1175,9 @@ cmd_ack() {
 
 		echo -e "${GREEN}Acknowledged: ${slug} at ${current_value:-unknown}${NC}"
 		_log_info "Acknowledged non-GitHub upstream: ${slug} at ${current_value:-unknown}"
+
+		# Close matching GitHub issue (t2810)
+		_close_upstream_update_issue "$slug" "$note"
 		return 0
 	fi
 
@@ -940,6 +1204,9 @@ cmd_ack() {
 
 	echo -e "${GREEN}Acknowledged: ${slug} at ${latest_tag:-commit ${latest_commit:0:7}}${NC}"
 	_log_info "Acknowledged: ${slug} at ${latest_tag:-${latest_commit:0:7}}"
+
+	# Close matching GitHub issue (t2810)
+	_close_upstream_update_issue "$slug" "$note"
 	return 0
 }
 
@@ -1049,7 +1316,7 @@ COMMANDS:
     remove <owner/repo>                     Remove a repo from the watchlist
     check [--verbose]                       Check all repos for new releases/commits
     check <owner/repo>                      Check a specific repo
-    ack <owner/repo>                        Mark latest release as seen
+    ack <owner/repo> [--note "..."]          Mark latest release as seen
     status                                  Show all watched repos and their state
     help                                    Show this help
 
@@ -1064,6 +1331,7 @@ EXAMPLES:
 
     # After reviewing, acknowledge the update
     upstream-watch-helper.sh ack vercel-labs/portless
+    upstream-watch-helper.sh ack vercel-labs/portless --note "adopted in PR #123"
 
     # See what we're watching
     upstream-watch-helper.sh status
@@ -1084,9 +1352,12 @@ NON-GITHUB UPSTREAMS:
 
 INTEGRATION:
     The pulse can call 'upstream-watch-helper.sh check' to surface
-    updates during supervisor sweeps. New releases appear as
-    informational items for human review. Both GitHub repos and
-    non-GitHub upstreams are checked in a single pass.
+    updates during supervisor sweeps. When an update is detected
+    (updates_pending transitions 0→1), a GitHub issue is filed
+    automatically with labels source:upstream-watch, auto-dispatch,
+    tier:standard. The 'ack' command closes the matching issue.
+    Both GitHub repos and non-GitHub upstreams are checked in a
+    single pass.
 
     Skill imports (skill-sources.json) are tracked separately by
     add-skill-helper.sh. This tool is for repos we haven't imported
@@ -1155,7 +1426,28 @@ main() {
 		VERBOSE="$verbose" cmd_check "$target"
 		;;
 	ack | acknowledge)
-		cmd_ack "${1:-}"
+		local ack_slug=""
+		local ack_note=""
+		while [[ $# -gt 0 ]]; do
+			local _ack_cur="$1"
+			shift
+			case "$_ack_cur" in
+			--note)
+				if [[ $# -ge 1 ]]; then
+					local _note_val="$1"
+					ack_note="$_note_val"
+					shift
+				else
+					echo -e "${RED}Error: --note requires a value${NC}" >&2
+					return 1
+				fi
+				;;
+			*)
+				[[ -z "$ack_slug" ]] && ack_slug="$_ack_cur"
+				;;
+			esac
+		done
+		cmd_ack "$ack_slug" "$ack_note"
 		;;
 	status | list)
 		cmd_status

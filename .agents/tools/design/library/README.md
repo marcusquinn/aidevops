@@ -3,7 +3,9 @@
 
 # Design Library
 
-AI-readable design system examples for inspiration and reference. Each `DESIGN.md` file follows the [Google Stitch DESIGN.md format](https://stitch.withgoogle.com/docs/design-md/format/) with 9 sections capturing a complete visual design system.
+AI-readable design system examples for inspiration and reference. Each `DESIGN.md` file follows the [Google Labs DESIGN.md spec v0.1.0](https://github.com/google-labs-code/design.md) with YAML front matter design tokens and canonical 8-section Markdown (plus aidevops extensions in sections 9-10).
+
+**Format compliance:** Style archetypes ship spec-compliant YAML-enabled `DESIGN.md` files. Validate with `npx @google/design.md lint <path>`. Brand examples are being migrated incrementally — see GH#20750 for tracking.
 
 ## Structure
 
@@ -81,6 +83,7 @@ The brand DESIGN.md examples in `brands/` are extracted from publicly visible CS
 ## Related
 
 - `tools/design/design-md.md` -- DESIGN.md format specification and workflows
+- [google-labs-code/design.md](https://github.com/google-labs-code/design.md) -- Upstream spec (v0.1.0, format version: alpha)
 - `tools/design/brand-identity.md` -- Strategic brand identity (upstream input)
 - `tools/design/colour-palette.md` -- Palette generation and spinning
 - `tools/design/ui-ux-inspiration.md` -- URL study extraction workflow
