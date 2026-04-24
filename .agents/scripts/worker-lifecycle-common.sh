@@ -831,7 +831,7 @@ _log_no_work_skip_escalation() {
 	if [[ "$failure_count" -ge "$nmr_threshold" ]]; then
 		local nmr_marker='cost-circuit-breaker:no_work_loop'
 		local existing_nmr=""
-		existing_nmr=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		existing_nmr=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate \
 			--jq "[.[] | select(.body | contains(\"${nmr_marker}\"))] | length" \
 			2>/dev/null) || existing_nmr=""
 		if [[ "$existing_nmr" =~ ^[1-9][0-9]*$ ]]; then
