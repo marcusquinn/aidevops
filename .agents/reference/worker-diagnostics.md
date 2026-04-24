@@ -103,14 +103,13 @@ CLAIM_RELEASED reason=launch_recovery:no_worker_process runner=<login> ts=<ISO>
 
 **Observed pattern (2026-04-20 to 2026-04-24 data, t2812)**:
 - Occurs in **time-correlated clusters**, not random transients. A single runner experiences 30+ failures across many issues within a 2–4 hour window, then recovers.
-- **Self-heals**: cascade tier escalation (tier:standard → tier:thinking after 2 consecutive failures) resolves the issue at the next dispatch cycle. 63/65 affected issues in the observed window resolved within the same day.
 - **Runner-specific**: 82% of events attributed to one runner (`alex-solovyev`), 17% to the other (`marcusquinn`). Likely reflects resource constraints on the failing runner at time of cluster.
 - **Cross-repo**: affects all pulse-enabled repos simultaneously (observed in `marcusquinn/aidevops` ~112 events, `awardsapp/awardsapp` ~130 events in 5-day window).
 
 **Mitigation already in place**:
 - After 3 consecutive `no_worker_process` failures in a round, the canary cache is invalidated — next dispatch re-runs the canary to detect broken runtimes.
-- After 2 consecutive failures per issue, cascade escalation to `tier:thinking` triggers automatically.
-- `fast_fail_record` increments the per-issue failure counter for backoff.
+- `fast_fail_record` increments the per-issue failure counter for backoff and applies NMR after `NO_WORK_NMR_THRESHOLD` (default 3) failures — the per-issue no_work circuit breaker (t2769).
+- **t2815**: `no_worker_process` and `cli_usage_output` are classified as `crash_type="no_work"` — tier escalation is **skipped** (same tier, retry). These are infra failures; a more expensive model cannot fix a process that never spawned.
 
 **Diagnostic**:
 
@@ -236,14 +235,19 @@ model connectivity only — it does not test the full worker exec chain (sandbox
 plugin loading). A canary pass does not guarantee the worker's OpenCode will succeed.
 However, the more impactful failure mode is the canary FAILING (Path 1), not passing-then-failing.
 
-**(d) Cascade escalation fires on missing worker as if coding failure — CONFIRMED**
+**(d) Cascade escalation fires on missing worker as if coding failure — FIXED (t2815)**
 
-`recover_failed_launch_state` (pulse-cleanup.sh:806) calls `fast_fail_record` with the
-`no_worker_process` failure reason. This increments the per-issue failure counter that
-drives cascade tier escalation. The cascade does not distinguish "worker never spawned"
-from "worker spawned and failed during execution". This is a correct observation but
-**not a root cause** — it's a symptom-recovery mechanism that happens to work by
-introducing delay and model rotation.
+`recover_failed_launch_state` (pulse-cleanup.sh:806) calls `fast_fail_record` which drives
+cascade tier escalation. Prior to t2815, neither `no_worker_process` nor `cli_usage_output`
+passed `crash_type="no_work"`, so `escalate_issue_tier` treated them as coding failures and
+upgraded to `tier:thinking` after the threshold. This wasted opus dispatch cycles on
+infrastructure problems that model capability cannot address.
+
+**Fix**: `pulse-dispatch-engine.sh` now passes `crash_type="no_work"` for both
+`no_worker_process` and `cli_usage_output` failures. `escalate_issue_tier` already had a
+short-circuit for `crash_type=="no_work"` (t2387) — it posts a diagnostic comment and
+returns without tier change. The per-issue no_work circuit breaker (t2769) still applies
+`needs-maintainer-review` after `NO_WORK_NMR_THRESHOLD` (default 3) consecutive failures.
 
 #### Diagnostic gap (the core infrastructure finding)
 
@@ -298,7 +302,7 @@ The pulse has no visibility into WHY a worker exited early. The gaps:
 | PRs created but not merged | `review-bot-gate-helper.sh check <PR>` | Review bot rate-limited (passes immediately since v3.6.136) |
 | Claim/release loop | Comment history on issue | Stale claims, guard rejections — recreate issue with clean context |
 | Watchdog doesn't fire | `ps aux \| grep watchdog` | Watchdog process died with subshell |
-| `CLAIM_RELEASED reason=launch_recovery:no_worker_process` on multiple issues | `grep "no active worker process" ~/.aidevops/logs/pulse-wrapper.log` | Cluster failure on one runner — self-heals via cascade escalation; check system load |
+| `CLAIM_RELEASED reason=launch_recovery:no_worker_process` on multiple issues | `grep "no active worker process" ~/.aidevops/logs/pulse-wrapper.log` | Cluster failure on one runner — self-heals at same tier (no cascade escalation since t2815); check system load, auth tokens, canary cache |
 
 ## Proving Workers Are Doing Real Work
 

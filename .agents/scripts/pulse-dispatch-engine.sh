@@ -96,10 +96,14 @@ check_worker_launch() {
 			local candidate
 			for candidate in "${log_candidates[@]}"; do
 				if [[ -f "$candidate" ]] && rg -q '^opencode run \[message\.\.\]|^run opencode with a message|^Options:' "$candidate"; then
-					recover_failed_launch_state "$issue_number" "$repo_slug" "cli_usage_output"
-					echo "[pulse-wrapper] Launch validation failed for issue #${issue_number} (${repo_slug}) — CLI usage output detected in ${candidate}" >>"$LOGFILE"
-					_PULSE_LAST_LAUNCH_FAILURE="cli_usage_output"
-					return 1
+				# t2815: cli_usage_output is an infra failure (CLI arg error, wrong
+				# binary, environment misconfiguration). Pass crash_type="no_work" so
+				# escalate_issue_tier short-circuits instead of cascading to tier:thinking.
+				# A more expensive model cannot fix a CLI invocation error.
+				recover_failed_launch_state "$issue_number" "$repo_slug" "cli_usage_output" "no_work"
+				echo "[pulse-wrapper] Launch validation failed for issue #${issue_number} (${repo_slug}) — CLI usage output detected in ${candidate}" >>"$LOGFILE"
+				_PULSE_LAST_LAUNCH_FAILURE="cli_usage_output"
+				return 1
 				fi
 			done
 			# Launch confirmed — do NOT reset fast-fail counter here.
@@ -114,7 +118,11 @@ check_worker_launch() {
 		elapsed=$((elapsed + poll_seconds))
 	done
 
-	recover_failed_launch_state "$issue_number" "$repo_slug" "no_worker_process"
+	# t2815: no_worker_process is an infra failure (worker never spawned — canary
+	# failure, session lock collision, FD exhaustion, auth expiry). Pass
+	# crash_type="no_work" so escalate_issue_tier short-circuits and does NOT
+	# cascade to tier:thinking. The problem is infrastructure, not model capability.
+	recover_failed_launch_state "$issue_number" "$repo_slug" "no_worker_process" "no_work"
 	echo "[pulse-wrapper] Launch validation failed for issue #${issue_number} (${repo_slug}) — no active worker process within ${grace_seconds}s" >>"$LOGFILE"
 	_PULSE_LAST_LAUNCH_FAILURE="no_worker_process"
 	return 1

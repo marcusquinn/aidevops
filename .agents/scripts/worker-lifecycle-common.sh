@@ -895,11 +895,15 @@ _Per-issue no_work circuit breaker (t2769). The \`${nmr_marker}\` marker is reco
 	local comment_body="${marker}
 ## Tier Escalation Skipped: Infrastructure Failure (no_work)
 
-**Trigger:** ${failure_count} worker failure(s) classified as \`no_work\` — the worker exited during setup without reading any target files.
+**Trigger:** ${failure_count} worker failure(s) classified as \`no_work\` — the worker never spawned or exited during runtime setup without reading any target files.
 **Action:** Tier escalation **skipped**. The issue stays at its current tier so the next retry can succeed cheaply once the infrastructure issue resolves.
 **Reason:** ${safe_reason}
 
-**Why no cascade:** \`no_work\` means the worker never engaged with the brief — it crashed during runtime setup (FD exhaustion, plugin init failure, branch naming race, auth refresh race). A more expensive model cannot fix an infrastructure problem it never reached. Cascading to \`tier:thinking\` would burn opus tokens on a problem sonnet (or haiku) will handle once the infra clears.
+**Why no cascade:** \`no_work\` means the worker never engaged with the brief. This includes:
+- Worker process never spawned (\`no_worker_process\`: canary failure, session lock collision, FD exhaustion, auth expiry, CLI invocation error)
+- Worker exited during runtime setup before reading any target files (\`no_work\`: plugin init failure, branch naming race, auth refresh race)
+
+A more expensive model cannot fix an infrastructure problem it never reached. Cascading to \`tier:thinking\` would burn opus tokens on a problem sonnet (or haiku) will handle once the infra clears.
 
 After ${nmr_threshold} consecutive \`no_work\` failures the per-issue no_work circuit breaker (t2769) applies \`needs-maintainer-review\` with a \`cost-circuit-breaker:no_work_loop\` marker that \`_nmr_application_is_circuit_breaker_trip\` (t2386) recognises, so auto-approval correctly preserves NMR.
 
