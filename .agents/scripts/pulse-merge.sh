@@ -854,29 +854,22 @@ _attempt_pr_ci_rebase_retry() {
 	local pr_number="$1"
 	local repo_slug="$2"
 
-	# Check if the PR is behind its base branch. If already up-to-date,
-	# the CI failure is genuinely from the PR's own code — skip rebase.
-	local _behind_count _behind_exit
-	_behind_count=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json 'baseRefName,headRefOid' --template '{{.baseRefName}}' 2>/dev/null)
-	_behind_exit=$?
-
+	# Fetch baseRefName and headRefOid in a single gh pr view call.
 	# Use the commits-behind count from the REST compare endpoint —
 	# gh pr view doesn't expose behindBy directly. Fall back to attempting
 	# the update-branch call and letting GitHub decide.
-	local _base_branch="$_behind_count"
-	if [[ $_behind_exit -eq 0 && -n "$_base_branch" ]]; then
-		local _head_oid
-		_head_oid=$(gh pr view "$pr_number" --repo "$repo_slug" \
-			--json headRefOid --jq '.headRefOid' 2>/dev/null) || _head_oid=""
-		if [[ -n "$_head_oid" ]]; then
-			local _compare_behind
-			_compare_behind=$(gh api "repos/${repo_slug}/compare/${_base_branch}...${_head_oid}" \
-				--jq '.behind_by' 2>/dev/null) || _compare_behind=""
-			if [[ "$_compare_behind" == "0" ]]; then
-				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: already up-to-date with ${_base_branch}, skipping CI-drift rebase (t2805)" >>"$LOGFILE"
-				return 1
-			fi
+	local _pr_info _base_branch _head_oid
+	_pr_info=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json baseRefName,headRefOid --jq '(.baseRefName // "") + " " + (.headRefOid // "")' 2>/dev/null) || _pr_info=""
+	read -r _base_branch _head_oid <<< "$_pr_info"
+
+	if [[ -n "$_base_branch" && -n "$_head_oid" ]]; then
+		local _compare_behind
+		_compare_behind=$(gh api "repos/${repo_slug}/compare/${_base_branch}...${_head_oid}" \
+			--jq '.behind_by' 2>/dev/null) || _compare_behind=""
+		if [[ "$_compare_behind" == "0" ]]; then
+			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: already up-to-date with ${_base_branch}, skipping CI-drift rebase (t2805)" >>"$LOGFILE"
+			return 1
 		fi
 	fi
 
