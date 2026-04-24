@@ -384,6 +384,75 @@ else
 fi
 
 # =============================================================================
+# Test 10 — Early-return pre-guard (GH#20791): pr_labels provided without
+#            origin:interactive → return 0 immediately, no gh API calls at all.
+#            Verifies the optimization that skips the expensive body fetch when
+#            the caller already knows the PR is not origin:interactive.
+# =============================================================================
+: >"$GH_CALLS"
+: >"$RELEASE_CALLS"
+: >"$LOGFILE"
+STAMP="${CLAIM_STAMP_DIR}/marcusquinn-aidevops-8810.json"
+printf '{"pid":1234}\n' >"$STAMP"
+# Set body so that if the body IS fetched, linked_issue would be extracted
+GH_BODY_RESPONSE="For #8810 — planning-only PR."
+GH_LABELS_RESPONSE="origin:worker,tier:standard"
+
+# Pass pr_labels as 4th argument — caller already knows it's not interactive
+release_interactive_claim_on_merge "63" "marcusquinn/aidevops" "" "origin:worker,tier:standard"
+
+if [[ -f "$STAMP" ]]; then
+	pass "pre-guard: pr_labels provided without origin:interactive → stamp untouched"
+else
+	fail "pre-guard: pr_labels provided without origin:interactive → stamp untouched" \
+		"stamp was removed when caller-provided pr_labels lacked origin:interactive"
+fi
+
+if [[ ! -s "$GH_CALLS" ]]; then
+	pass "pre-guard: pr_labels provided without origin:interactive → no gh API calls made"
+else
+	fail "pre-guard: pr_labels provided without origin:interactive → no gh API calls made" \
+		"gh was called even though pr_labels already indicated non-interactive: $(cat "$GH_CALLS")"
+fi
+
+if ! grep -q "release" "$RELEASE_CALLS" 2>/dev/null; then
+	pass "pre-guard: release NOT called when pr_labels lacks origin:interactive"
+else
+	fail "pre-guard: release NOT called when pr_labels lacks origin:interactive" \
+		"release was called when pr_labels lacked origin:interactive"
+fi
+
+# =============================================================================
+# Test 11 — Word-boundary false-positive prevention (GH#20791):
+#            "prefix #NNN" body text should NOT extract NNN via the "fix"
+#            keyword. Without \b, "fix" at the tail of "prefix" followed by
+#            whitespace+#number would produce a false match.
+# =============================================================================
+: >"$GH_CALLS"
+: >"$RELEASE_CALLS"
+: >"$LOGFILE"
+STAMP="${CLAIM_STAMP_DIR}/marcusquinn-aidevops-8811.json"
+printf '{"pid":1234}\n' >"$STAMP"
+GH_BODY_RESPONSE="Update the prefix #8811 to include the new format."
+GH_LABELS_RESPONSE="origin:interactive,tier:standard"
+
+release_interactive_claim_on_merge "65" "marcusquinn/aidevops" ""
+
+if [[ -f "$STAMP" ]]; then
+	pass "word-boundary: 'fix' inside 'prefix' → stamp untouched (no false match)"
+else
+	fail "word-boundary: 'fix' inside 'prefix' → stamp untouched (no false match)" \
+		"stamp was removed due to false 'fix' match inside 'prefix #8811'"
+fi
+
+if ! grep -q "release" "$RELEASE_CALLS" 2>/dev/null; then
+	pass "word-boundary: release NOT called due to false 'fix' in 'prefix'"
+else
+	fail "word-boundary: release NOT called due to false 'fix' in 'prefix'" \
+		"release was called from false 'fix' match inside 'prefix'"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo
