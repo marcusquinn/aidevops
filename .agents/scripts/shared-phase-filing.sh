@@ -15,8 +15,8 @@
 #       Best-effort; failures are logged but never propagate.
 #
 # Feature flag:
-#   AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE=0|1 (default 0)
-#   When 0, auto_file_next_phase is a no-op. Set to 1 to enable.
+#   AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE=0|1 (default 1, ON since t2787)
+#   When 0, auto_file_next_phase is a no-op. Defaults to 1 (enabled).
 #
 # Phase line format in parent issue body's ## Phases section:
 #   - Phase <N> - <description> [auto-fire:on-prior-merge] [#<child_issue>]
