@@ -365,23 +365,22 @@ _build_conflict_feedback_section() {
 	# scope-leaked branch is expensive and usually fails the same way
 	# the first attempt did. Surface the signal upfront so the worker
 	# rebuilds from the issue body instead of chasing a ghost diff.
+	#
+	# Build as plain quoted string (not heredoc-in-$()) so bash 3.2 accepts it.
 	local scope_leak_warning=""
 	if [[ -n "$pr_file_count" ]] && [[ "$pr_file_count" =~ ^[0-9]+$ ]] && ((pr_file_count > 20)); then
-		scope_leak_warning=$(cat <<-WARN
-			> ⚠ **Scope-leak signal**: the prior PR touched **${pr_file_count} files**. For most
-			> conflict-feedback loops the touch-count should be 1-5. A high count usually means
-			> the prior worker's branch was created off a stale canonical HEAD (not \`origin/${default_branch}\`),
-			> so the diff = "everything ${default_branch} has that the stale base doesn't" + the actual fix.
-			>
-			> **If the file list below looks unrelated to the original issue scope, skip the
-			> cherry-pick entirely** and rebuild from the issue body onto a fresh branch explicitly
-			> based on \`origin/${default_branch}\`. Cherry-picking a scope-leaked branch will fail
-			> the same way — that is why the prior attempt was closed.
-			>
-			> Framework fix in-flight: t2802 makes \`worktree-helper.sh add\` base new branches
-			> on \`origin/<default>\` explicitly instead of inheriting canonical HEAD.
-		WARN
-		)
+		scope_leak_warning="> ⚠ **Scope-leak signal**: the prior PR touched **${pr_file_count} files**. For most
+> conflict-feedback loops the touch-count should be 1-5. A high count usually means
+> the prior worker's branch was created off a stale canonical HEAD (not \`origin/${default_branch}\`),
+> so the diff = \"everything ${default_branch} has that the stale base doesn't\" + the actual fix.
+>
+> **If the file list below looks unrelated to the original issue scope, skip the
+> cherry-pick entirely** and rebuild from the issue body onto a fresh branch explicitly
+> based on \`origin/${default_branch}\`. Cherry-picking a scope-leaked branch will fail
+> the same way — that is why the prior attempt was closed.
+>
+> Framework fix in-flight: t2802 makes \`worktree-helper.sh add\` base new branches
+> on \`origin/<default>\` explicitly instead of inheriting canonical HEAD."
 	fi
 
 	# Build scope-warning block separately to avoid interpolating empty lines.

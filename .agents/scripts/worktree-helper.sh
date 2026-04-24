@@ -940,6 +940,51 @@ _resolve_worktree_base_ref() {
 	return 0
 }
 
+# Create the underlying git worktree for cmd_add (extracted t2802 to keep
+# cmd_add under 100 lines per the function-complexity gate). Handles both
+# existing-branch checkout and new-branch creation with explicit base ref.
+#
+# Args:
+#   $1 - branch name
+#   $2 - worktree path (already resolved + validated by caller)
+#   $3 - explicit base ref for new-branch path (may be empty)
+# Returns: 0 on success, 1 on handle_stale_remote_branch rejection.
+_cmd_add_create_worktree() {
+	local _branch="$1"
+	local _path="$2"
+	local _explicit_base="$3"
+
+	if branch_exists "$_branch"; then
+		echo -e "${BLUE}Creating worktree for existing branch '$_branch'...${NC}"
+		git worktree add "$_path" "$_branch"
+		return 0
+	fi
+
+	# Branch doesn't exist locally — check for stale remote ref (t1060)
+	handle_stale_remote_branch "$_branch" || return 1
+
+	# t2802: explicitly base new branches on origin/<default> (or --base REF)
+	# to prevent scope-leak PRs when canonical HEAD is stale. Canonical
+	# failure: awardsapp#2716 (PR #2733, 100-file diff for a 2-line fix).
+	local _base_ref
+	_base_ref=$(_resolve_worktree_base_ref "$_explicit_base")
+	if [[ -n "$_base_ref" ]]; then
+		echo -e "${BLUE}Creating worktree with new branch '$_branch' based on '$_base_ref'...${NC}"
+		git worktree add -b "$_branch" "$_path" "$_base_ref"
+		return 0
+	fi
+
+	# No remote default and no local default resolved. Surface the
+	# degradation loudly — the resulting branch will be based on the
+	# canonical's current HEAD which may be stale or unrelated.
+	echo -e "${YELLOW}Warning: could not resolve origin/<default> or a local default branch.${NC}" >&2
+	echo -e "${YELLOW}  Falling back to canonical HEAD. If this creates an oversized PR,${NC}" >&2
+	echo -e "${YELLOW}  re-create the worktree with '--base <ref>' or set AIDEVOPS_WORKTREE_BASE.${NC}" >&2
+	echo -e "${BLUE}Creating worktree with new branch '$_branch' (base: HEAD)...${NC}"
+	git worktree add -b "$_branch" "$_path"
+	return 0
+}
+
 cmd_add() {
 	_parse_cmd_add_args "$@" || return 1
 	local branch="$_ADD_BRANCH"
@@ -994,35 +1039,8 @@ cmd_add() {
 		return 1
 	fi
 
-	# Create worktree
-	if branch_exists "$branch"; then
-		# Branch exists, check it out
-		echo -e "${BLUE}Creating worktree for existing branch '$branch'...${NC}"
-		git worktree add "$path" "$branch"
-	else
-		# Branch doesn't exist locally — check for stale remote ref (t1060)
-		handle_stale_remote_branch "$branch" || return 1
-
-		# t2802: explicitly base new branches on origin/<default> (or --base REF)
-		# to prevent scope-leak PRs when canonical HEAD is stale. See
-		# _resolve_worktree_base_ref for precedence. Canonical failure:
-		# awardsapp#2716 (PR #2733, 100-file diff for a 2-line fix).
-		local _base_ref
-		_base_ref=$(_resolve_worktree_base_ref "$explicit_base")
-		if [[ -n "$_base_ref" ]]; then
-			echo -e "${BLUE}Creating worktree with new branch '$branch' based on '$_base_ref'...${NC}"
-			git worktree add -b "$branch" "$path" "$_base_ref"
-		else
-			# No remote default and no local default resolved. Surface the
-			# degradation loudly — the resulting branch will be based on the
-			# canonical's current HEAD which may be stale or unrelated.
-			echo -e "${YELLOW}Warning: could not resolve origin/<default> or a local default branch.${NC}" >&2
-			echo -e "${YELLOW}  Falling back to canonical HEAD. If this creates an oversized PR,${NC}" >&2
-			echo -e "${YELLOW}  re-create the worktree with '--base <ref>' or set AIDEVOPS_WORKTREE_BASE.${NC}" >&2
-			echo -e "${BLUE}Creating worktree with new branch '$branch' (base: HEAD)...${NC}"
-			git worktree add -b "$branch" "$path"
-		fi
-	fi
+	# Create worktree (existing branch → simple checkout; new branch → base-ref dance).
+	_cmd_add_create_worktree "$branch" "$path" "$explicit_base" || return 1
 
 	# Register ownership (t189)
 	register_worktree "$path" "$branch"
