@@ -3020,3 +3020,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2794 t2789: test-no-duplicates-2 #auto-dispatch ref:GH#20717
 
 - [ ] t2796 worker_complete emitted on zero-output exit — classify as worker_noop to trigger cascade #auto-dispatch #bug #framework ref:GH#20721
+
+- [ ] t2797 backfill status:available on auto-dispatch issues missing status labels (pre-t2789 heal) #auto-dispatch #bug #framework ref:GH#20728
