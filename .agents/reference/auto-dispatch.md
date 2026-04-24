@@ -86,6 +86,8 @@ Without it, the workflow posts a remediation comment containing both the root-ca
 
 **Currently active for:** `marcusquinn/aidevops` (verified end-to-end 2026-04-19). Other registered repos still emit the t2166 warning until set per-repo — visible via `aidevops security check`.
 
+**Detector scope (t2806, GH#20745):** `aidevops security check` detects the need for SYNC_PAT under both classic branch-protection rules AND repository rulesets. Repos migrated to the modern rulesets API (Settings → Rules → Rulesets) return 404 on the legacy `/branches/{branch}/protection` endpoint but carry protection via `/repos/{slug}/rulesets`; the detector now falls back to the rulesets path when the classic endpoint reports "not protected". See `security-posture-helper.sh::_branch_is_rulesets_protected`.
+
 **Known false-positive (pending t2252):** the auto-completion path may mis-mark planning-only PRs (those using `Ref #NNN` / `For #NNN` without closing keywords) as `status:done` on merge — tracked as GH#19782.
 
 ## Reusable-Workflow Architecture (t2770)

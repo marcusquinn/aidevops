@@ -2,19 +2,24 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# test-sync-pat-detection.sh — t2374 regression guard.
+# test-sync-pat-detection.sh — t2374 / t2806 regression guard.
 #
 # Verifies check_sync_pat() in security-posture-helper.sh correctly detects
 # repos that need SYNC_PAT but don't have it set, and skips repos where
-# SYNC_PAT is not needed.
+# SYNC_PAT is not needed — across BOTH classic branch-protection and
+# repository-rulesets (t2806) protection mechanisms.
 #
-# Six test cases:
-#   1. Has issue-sync.yml + branch protection + NO SYNC_PAT → emits advisory
-#   2. Has issue-sync.yml + branch protection + HAS SYNC_PAT → no advisory (pass)
+# Test cases:
+#   1. issue-sync.yml + classic protection + NO SYNC_PAT → emits advisory
+#   2. issue-sync.yml + classic protection + HAS SYNC_PAT → no advisory
 #   3. No issue-sync.yml → no advisory (irrelevant)
-#   4. No branch protection requiring reviews → no advisory (not needed)
+#   4. No protection (classic or rulesets) → no advisory
 #   5. Dismissed advisory → skip silently
 #   6. Stale advisory cleaned up when SYNC_PAT set
+#   7. issue-sync.yml + rulesets-only (pull_request) + NO SYNC_PAT → emits advisory (t2806)
+#   8. issue-sync.yml + rulesets-only (required_status_checks) + NO SYNC_PAT → emits advisory (t2806)
+#   9. issue-sync.yml + rulesets-only (no relevant rules) → no advisory
+#  10. issue-sync.yml + both classic + rulesets + NO SYNC_PAT → classic wins, emits advisory
 #
 # Stub strategy: a single configurable gh() stub dispatches based on
 # STUB_* variables set per test. This avoids redefining gh() 6 times
@@ -75,6 +80,20 @@ readonly ISSUE_SYNC_RESPONSE='{"name":"issue-sync.yml"}'
 readonly PROTECTION_WITH_REVIEWS='{"required_pull_request_reviews":{"required_approving_review_count":1}}'
 readonly GH_API_SYNC_PATTERN="contents/.github/workflows/issue-sync.yml"
 readonly GH_API_PROT_PATTERN="/protection"
+readonly GH_API_RULESETS_LIST_PATTERN="/rulesets"
+
+# Rulesets fixtures (t2806)
+readonly RULESETS_LIST_WITH_ACTIVE='[{"id":1000,"enforcement":"active"}]'
+readonly RULESETS_LIST_EMPTY='[]'
+
+# Active ruleset on default branch with pull_request rule
+readonly RULESET_DETAIL_PULL_REQUEST='{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request"},{"type":"non_fast_forward"}]}'
+# Active ruleset on default branch with required_status_checks only
+readonly RULESET_DETAIL_STATUS_CHECKS='{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"required_status_checks"},{"type":"deletion"}]}'
+# Active ruleset on default branch with no relevant protection rules
+readonly RULESET_DETAIL_NO_RELEVANT='{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"non_fast_forward"},{"type":"deletion"}]}'
+# Active ruleset NOT matching default branch
+readonly RULESET_DETAIL_OTHER_BRANCH='{"conditions":{"ref_name":{"include":["refs/heads/feature"]}},"rules":[{"type":"pull_request"}]}'
 
 # =============================================================================
 # Configurable stub variables (set per test case)
@@ -82,6 +101,8 @@ readonly GH_API_PROT_PATTERN="/protection"
 STUB_HAS_ISSUE_SYNC="true"     # "true" = API returns 200, "false" = API returns 1
 STUB_PROTECTION_RESPONSE=""     # JSON response from /protection, empty = no protection
 STUB_SECRET_RESPONSE=""         # Output from gh secret list, empty = no SYNC_PAT
+STUB_RULESETS_LIST=""           # JSON response for /rulesets list endpoint
+STUB_RULESET_DETAIL=""          # JSON response for /rulesets/{id} detail endpoint
 
 # Single shared gh stub — dispatches based on STUB_* variables
 gh() {
@@ -105,6 +126,20 @@ gh() {
 			fi
 			echo "Branch not protected"
 			return 1
+		elif [[ "$url" == *"/rulesets/"* ]]; then
+			# Individual ruleset detail endpoint
+			if [[ -n "$STUB_RULESET_DETAIL" ]]; then
+				echo "$STUB_RULESET_DETAIL"
+				return 0
+			fi
+			return 1
+		elif [[ "$url" == *"$GH_API_RULESETS_LIST_PATTERN" ]]; then
+			# List rulesets endpoint (suffix match)
+			if [[ -n "$STUB_RULESETS_LIST" ]]; then
+				echo "$STUB_RULESETS_LIST"
+				return 0
+			fi
+			return 1
 		fi
 		return 1
 		;;
@@ -126,13 +161,10 @@ git() {
 	command git "$@"
 }
 
-# Stub jq for protection JSON parsing
+# Stub jq: delegate to real jq so rulesets detail parsing works end-to-end.
+# For protection JSON parsing (classic path), real jq also works correctly
+# against the fixture, so no special-casing is needed.
 jq() {
-	local args=("$@")
-	if [[ "${args[*]}" == *"required_approving_review_count"* ]]; then
-		echo "1"
-		return 0
-	fi
 	command jq "$@"
 }
 
@@ -203,8 +235,11 @@ resolve_slug() {
 	return 0
 }
 
-# Extract function bodies from the helper (check_sync_pat + its sub-functions)
+# Extract function bodies from the helper (check_sync_pat + its sub-functions).
+# Order matters: _branch_is_rulesets_protected is called by _check_sync_pat_need
+# (t2806), so it must be defined first.
 eval "$(sed -n '/^_emit_sync_pat_advisory()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper.sh")"
+eval "$(sed -n '/^_branch_is_rulesets_protected()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper.sh")"
 eval "$(sed -n '/^_check_sync_pat_need()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper.sh")"
 eval "$(sed -n '/^check_sync_pat()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper.sh")"
 
@@ -216,6 +251,10 @@ SEVERITY_WARNING="warning"
 SEVERITY_INFO="info"
 SEVERITY_PASS="pass"
 CAT_SYNC_PAT="sync_pat"
+
+# Global result variable (t2806). _check_sync_pat_need writes here instead
+# of using stdout capture, which was broken by print_pass stdout output.
+SYNC_PAT_NEED_RESULT=""
 
 # =============================================================================
 # Helper to reset state between tests
@@ -233,6 +272,10 @@ reset_state() {
 	STUB_HAS_ISSUE_SYNC="true"
 	STUB_PROTECTION_RESPONSE="$PROTECTION_WITH_REVIEWS"
 	STUB_SECRET_RESPONSE=""
+	# Rulesets defaults to "no rulesets" (t2806). Individual tests that
+	# exercise the rulesets path set STUB_RULESETS_LIST and STUB_RULESET_DETAIL.
+	STUB_RULESETS_LIST=""
+	STUB_RULESET_DETAIL=""
 	return 0
 }
 
@@ -365,6 +408,114 @@ if [[ ! -f "$ADVISORY_PATH" ]]; then
 	pass "Stale advisory cleaned up after SYNC_PAT set"
 else
 	fail "Stale advisory NOT cleaned up"
+fi
+
+# =============================================================================
+# Test 7 (t2806): Rulesets-only protection with pull_request rule — emits advisory
+# =============================================================================
+printf '\n%sTest 7 (t2806): Rulesets-only protection (pull_request) — should advise%s\n' "$TEST_BLUE" "$TEST_NC"
+reset_state
+STUB_PROTECTION_RESPONSE=""  # Classic API returns 404
+STUB_RULESETS_LIST="$RULESETS_LIST_WITH_ACTIVE"
+STUB_RULESET_DETAIL="$RULESET_DETAIL_PULL_REQUEST"
+STUB_SECRET_RESPONSE=""
+
+check_sync_pat "$FAKE_REPO"
+
+if [[ -f "$ADVISORY_PATH" ]]; then
+	pass "Advisory fired for rulesets-protected repo (pull_request rule)"
+else
+	fail "Advisory NOT fired for rulesets-protected repo" "Log: $(cat "$OUTPUT_LOG")"
+fi
+
+if [[ -f "$ADVISORY_PATH" ]] && grep -q "rulesets-based" "$ADVISORY_PATH" 2>/dev/null; then
+	pass "Advisory mentions rulesets-based protection"
+else
+	fail "Advisory missing rulesets-based description"
+fi
+
+# =============================================================================
+# Test 8 (t2806): Rulesets-only with required_status_checks — emits advisory
+# =============================================================================
+printf '\n%sTest 8 (t2806): Rulesets-only (required_status_checks) — should advise%s\n' "$TEST_BLUE" "$TEST_NC"
+reset_state
+STUB_PROTECTION_RESPONSE=""
+STUB_RULESETS_LIST="$RULESETS_LIST_WITH_ACTIVE"
+STUB_RULESET_DETAIL="$RULESET_DETAIL_STATUS_CHECKS"
+STUB_SECRET_RESPONSE=""
+
+check_sync_pat "$FAKE_REPO"
+
+if [[ -f "$ADVISORY_PATH" ]]; then
+	pass "Advisory fired for rulesets with required_status_checks (awardsapp/develop case)"
+else
+	fail "Advisory NOT fired for status-checks rulesets" "Log: $(cat "$OUTPUT_LOG")"
+fi
+
+# =============================================================================
+# Test 9 (t2806): Rulesets-only with no relevant rules — no advisory
+# =============================================================================
+printf '\n%sTest 9 (t2806): Rulesets with only deletion/non_fast_forward — no advisory%s\n' "$TEST_BLUE" "$TEST_NC"
+reset_state
+STUB_PROTECTION_RESPONSE=""
+STUB_RULESETS_LIST="$RULESETS_LIST_WITH_ACTIVE"
+STUB_RULESET_DETAIL="$RULESET_DETAIL_NO_RELEVANT"
+STUB_SECRET_RESPONSE=""
+
+check_sync_pat "$FAKE_REPO"
+
+if [[ ! -f "$ADVISORY_PATH" ]]; then
+	pass "No advisory when rulesets have no meaningful protection rules"
+else
+	fail "Advisory fired for rulesets with no review/check rules"
+fi
+
+if grep -q '\[PASS\].*No branch protection' "$OUTPUT_LOG" 2>/dev/null; then
+	pass "PASS message emitted when only deletion/non_fast_forward rules present"
+else
+	fail "Expected pass message for non-protective rulesets" "Log: $(cat "$OUTPUT_LOG")"
+fi
+
+# =============================================================================
+# Test 10 (t2806): Both classic and rulesets — classic path wins, emits advisory
+# =============================================================================
+printf '\n%sTest 10 (t2806): Both classic + rulesets protection — classic takes precedence%s\n' "$TEST_BLUE" "$TEST_NC"
+reset_state
+STUB_PROTECTION_RESPONSE="$PROTECTION_WITH_REVIEWS"
+STUB_RULESETS_LIST="$RULESETS_LIST_WITH_ACTIVE"
+STUB_RULESET_DETAIL="$RULESET_DETAIL_PULL_REQUEST"
+STUB_SECRET_RESPONSE=""
+
+check_sync_pat "$FAKE_REPO"
+
+if [[ -f "$ADVISORY_PATH" ]]; then
+	pass "Advisory fired when both classic and rulesets present"
+else
+	fail "Advisory NOT fired for dual-protection repo"
+fi
+
+if [[ -f "$ADVISORY_PATH" ]] && grep -q "requiring.*approving review" "$ADVISORY_PATH" 2>/dev/null; then
+	pass "Classic protection description wins when both exist"
+else
+	fail "Classic description missing — rulesets path may have taken precedence" "Advisory: $(cat "$ADVISORY_PATH" 2>/dev/null || echo "<missing>")"
+fi
+
+# =============================================================================
+# Test 11 (t2806): Rulesets targeting a non-default branch — no advisory
+# =============================================================================
+printf '\n%sTest 11 (t2806): Ruleset targeting feature/ branch, not default — no advisory%s\n' "$TEST_BLUE" "$TEST_NC"
+reset_state
+STUB_PROTECTION_RESPONSE=""
+STUB_RULESETS_LIST="$RULESETS_LIST_WITH_ACTIVE"
+STUB_RULESET_DETAIL="$RULESET_DETAIL_OTHER_BRANCH"
+STUB_SECRET_RESPONSE=""
+
+check_sync_pat "$FAKE_REPO"
+
+if [[ ! -f "$ADVISORY_PATH" ]]; then
+	pass "No advisory when rulesets target non-default branch"
+else
+	fail "Advisory fired despite rulesets not matching default branch"
 fi
 
 # =============================================================================

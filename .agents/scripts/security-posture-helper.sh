@@ -617,12 +617,15 @@ check_repo_security() {
 # Phase 7: SYNC_PAT detection helpers (t2374)
 
 # Emit a SYNC_PAT advisory file for a repo that needs it.
-# Usage: _emit_sync_pat_advisory <slug> <slug_sanitised> <advisory_file> <required_reviews>
+# Usage: _emit_sync_pat_advisory <slug> <slug_sanitised> <advisory_file> <protection_desc>
+# protection_desc is a human-readable description of the detected protection,
+# e.g. "requiring 1 approving review(s)" (classic) or "rulesets-based
+# protection" (t2806, rulesets path).
 _emit_sync_pat_advisory() {
 	local slug="$1"
 	local slug_sanitised="$2"
 	local advisory_file="$3"
-	local required_reviews="$4"
+	local protection_desc="$4"
 
 	local advisory_dir
 	advisory_dir="$(dirname "$advisory_file")"
@@ -631,9 +634,10 @@ _emit_sync_pat_advisory() {
 	cat >"$advisory_file" <<ADVISORY_EOF
 [ADVISORY] SYNC_PAT not set for ${slug}
 
-This repo uses issue-sync.yml + branch protection requiring ${required_reviews} approving review(s).
+This repo uses issue-sync.yml and has protection on the default branch
+(${protection_desc}).
 Without SYNC_PAT, TODO.md auto-completion silently fails on PR merge
-(github-actions[bot] cannot push to a branch-protected default branch).
+(github-actions[bot] cannot push to a protected default branch).
 
 To fix (run in a separate terminal, NOT in AI chat):
 
@@ -659,49 +663,139 @@ ADVISORY_EOF
 	return 0
 }
 
+# Check whether the default branch is protected via repository rulesets
+# (the modern replacement for classic branch-protection rules, see t2806).
+# Returns 0 if any active ruleset targets the default branch with a
+# meaningful protection rule; 1 otherwise (including API errors).
+# Usage: _branch_is_rulesets_protected <slug> <default_branch>
+#
+# Fail-open: empty/errored rulesets API returns 1 (not protected). A
+# false negative here loses the advisory; a false positive just results
+# in an advisory the user can dismiss. Per t2806, we prefer the former
+# because classic detection already covers the review-requiring cases.
+_branch_is_rulesets_protected() {
+	local slug="$1"
+	local default_branch="$2"
+
+	local rulesets_json
+	rulesets_json=$(gh api "repos/${slug}/rulesets" 2>/dev/null) || return 1
+	[[ -z "$rulesets_json" || "$rulesets_json" == "[]" ]] && return 1
+
+	# Extract active ruleset IDs (enforcement == "active")
+	local active_ids
+	active_ids=$(echo "$rulesets_json" | jq -r '.[] | select(.enforcement == "active") | .id' 2>/dev/null) || return 1
+	[[ -z "$active_ids" ]] && return 1
+
+	local id detail include_patterns rule_types
+	while IFS= read -r id; do
+		[[ -z "$id" ]] && continue
+		detail=$(gh api "repos/${slug}/rulesets/${id}" 2>/dev/null) || continue
+
+		# Include patterns can be specific refs ("refs/heads/main") or
+		# GitHub wildcards ("~DEFAULT_BRANCH", "~ALL").
+		include_patterns=$(echo "$detail" | jq -r '.conditions.ref_name.include // [] | .[]' 2>/dev/null) || continue
+
+		local matches_default="no"
+		while IFS= read -r pattern; do
+			[[ -z "$pattern" ]] && continue
+			case "$pattern" in
+			"refs/heads/${default_branch}" | "~DEFAULT_BRANCH" | "~ALL" | "refs/heads/*")
+				matches_default="yes"
+				break
+				;;
+			esac
+		done <<<"$include_patterns"
+
+		[[ "$matches_default" == "yes" ]] || continue
+
+		# Protection signals: pull_request review requirement OR
+		# required_status_checks. Either blocks direct bot pushes via
+		# the PR-required or checks-required gate, and is a strong
+		# signal that SYNC_PAT is needed downstream (t2449 author
+		# association chain, t2806).
+		rule_types=$(echo "$detail" | jq -r '.rules[].type' 2>/dev/null) || continue
+		if echo "$rule_types" | grep -qE '^(pull_request|required_status_checks)$'; then
+			return 0
+		fi
+	done <<<"$active_ids"
+
+	return 1
+}
+
 # Check whether a repo requires SYNC_PAT based on workflow + branch protection.
-# Returns via stdout: "needed" | "not_needed" | "skip"
+# Writes result to global SYNC_PAT_NEED_RESULT: "needed:<desc>" | "not_needed".
 # Side effect: prints findings and cleans stale advisories.
+#
+# NOTE (t2806): earlier versions returned the result via stdout capture
+# (`$()`), which was broken because `print_pass` / `add_finding` also
+# write to stdout — the captured result included ANSI-wrapped "[PASS]"
+# lines and the equality check against "not_needed" failed. Using a
+# dedicated global eliminates the capture conflict entirely.
+#
 # Usage: _check_sync_pat_need <repo_path> <slug> <advisory_file>
 _check_sync_pat_need() {
 	local repo_path="$1"
 	local slug="$2"
 	local advisory_file="$3"
 
+	SYNC_PAT_NEED_RESULT=""
+
 	# Step 1: Does the repo use issue-sync.yml?
 	if ! gh api "repos/${slug}/contents/.github/workflows/issue-sync.yml" &>/dev/null 2>&1; then
 		print_pass "No issue-sync.yml — SYNC_PAT not needed for $slug"
 		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No issue-sync.yml in $slug"
 		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
-		echo "not_needed"
+		SYNC_PAT_NEED_RESULT="not_needed"
 		return 0
 	fi
 
-	# Step 2: Does the repo have branch protection requiring PR reviews?
+	# Step 2: Does the repo have branch protection?
 	local default_branch
 	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || true
 	default_branch="${default_branch:-main}"
 
+	# Step 2a: Classic branch-protection endpoint (legacy path).
 	local protection_json
 	protection_json=$(gh api "repos/${slug}/branches/${default_branch}/protection" 2>/dev/null) || true
 
-	if [[ -z "$protection_json" || "$protection_json" == *"Not Found"* || "$protection_json" == *"Branch not protected"* ]]; then
+	local protected_kind="none"
+	local protection_desc=""
+
+	if [[ -n "$protection_json" && "$protection_json" != *"Not Found"* && "$protection_json" != *"Branch not protected"* ]]; then
+		protected_kind="classic"
+	elif _branch_is_rulesets_protected "$slug" "$default_branch"; then
+		# Step 2b: Rulesets-based protection (t2806). Modern repos
+		# return 404 on the classic endpoint but carry rulesets via
+		# /repos/{slug}/rulesets — the legacy detector silently
+		# skipped these. See GH#20745.
+		protected_kind="rulesets"
+		protection_desc="rulesets-based protection"
+	fi
+
+	if [[ "$protected_kind" == "none" ]]; then
 		print_pass "No branch protection — SYNC_PAT not needed for $slug"
 		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No branch protection in $slug"
 		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
-		echo "not_needed"
+		SYNC_PAT_NEED_RESULT="not_needed"
 		return 0
 	fi
 
-	local required_reviews
-	required_reviews=$(echo "$protection_json" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null) || required_reviews="0"
+	# For classic protection, keep the required_reviews -eq 0 optimisation.
+	# For rulesets, we assume reviews are effectively required — the
+	# rulesets API shape doesn't expose a simple "0 approvals" state, and
+	# a false positive here only produces an advisory the user can dismiss.
+	if [[ "$protected_kind" == "classic" ]]; then
+		local required_reviews
+		required_reviews=$(echo "$protection_json" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null) || required_reviews="0"
 
-	if [[ "$required_reviews" -eq 0 ]]; then
-		print_pass "PR reviews not required — SYNC_PAT not needed for $slug"
-		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No review requirement in $slug"
-		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
-		echo "not_needed"
-		return 0
+		if [[ "$required_reviews" -eq 0 ]]; then
+			print_pass "PR reviews not required — SYNC_PAT not needed for $slug"
+			add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No review requirement in $slug"
+			[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+			SYNC_PAT_NEED_RESULT="not_needed"
+			return 0
+		fi
+		protection_desc="requiring ${required_reviews} approving review(s)"
 	fi
 
 	# Step 3: Is SYNC_PAT set?
@@ -712,12 +806,12 @@ _check_sync_pat_need() {
 		print_pass "SYNC_PAT is set for $slug"
 		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "SYNC_PAT set for $slug"
 		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
-		echo "not_needed"
+		SYNC_PAT_NEED_RESULT="not_needed"
 		return 0
 	fi
 
-	# Needs SYNC_PAT — return the required_reviews count for advisory
-	echo "needed:${required_reviews}"
+	# Needs SYNC_PAT — return the protection description for the advisory
+	SYNC_PAT_NEED_RESULT="needed:${protection_desc}"
 	return 0
 }
 
@@ -764,22 +858,25 @@ check_sync_pat() {
 		return 0
 	fi
 
-	# Check need via helper
-	local need_result
-	need_result=$(_check_sync_pat_need "$repo_path" "$slug" "$advisory_file")
+	# Check need via helper. Result is written to SYNC_PAT_NEED_RESULT — NOT
+	# returned via stdout, because `print_pass` / `add_finding` inside the
+	# helper also write to stdout and would pollute a `$()` capture (t2806).
+	_check_sync_pat_need "$repo_path" "$slug" "$advisory_file"
 
-	if [[ "$need_result" == "not_needed" ]]; then
+	if [[ "$SYNC_PAT_NEED_RESULT" == "not_needed" ]]; then
 		return 0
 	fi
 
-	# Extract required_reviews count from "needed:<N>" result
-	local required_reviews
-	required_reviews="${need_result#needed:}"
+	# Extract protection description from "needed:<description>" result.
+	# For classic protection this is e.g. "requiring 1 approving review(s)";
+	# for rulesets-based protection (t2806) it is "rulesets-based protection".
+	local protection_desc
+	protection_desc="${SYNC_PAT_NEED_RESULT#needed:}"
 
 	print_warn "SYNC_PAT not set for $slug — TODO.md auto-completion will silently fail on PR merge"
 	add_finding "$SEVERITY_WARNING" "$CAT_SYNC_PAT" "SYNC_PAT not set for $slug"
 
-	_emit_sync_pat_advisory "$slug" "$slug_sanitised" "$advisory_file" "$required_reviews"
+	_emit_sync_pat_advisory "$slug" "$slug_sanitised" "$advisory_file" "$protection_desc"
 
 	return 0
 }
