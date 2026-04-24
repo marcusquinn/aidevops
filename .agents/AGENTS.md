@@ -103,6 +103,7 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 - **Exclusions**: Needs credentials, decomposition, or user preference. Canonical blocker label set: `reference/dispatch-blockers.md`.
 - **Quality gate**: 2+ acceptance criteria, file references in How section, clear deliverable in What section.
 - **Interactive workflow**: Add `assignee:` before pushing if working interactively.
+- **Server-side safety net (t2798)**: `.github/workflows/apply-status-available-default.yml` applies `status:available` to issues that carry `auto-dispatch` but have no `status:*` label — catches bypass-path creations (bare `gh issue create`, web UI) that skip `claim-task-id.sh`.
 
 **Session origin labels**: Issues and PRs are automatically tagged with `origin:worker` (headless/pulse dispatch) or `origin:interactive` (user session). Applied by `claim-task-id.sh`, `issue-sync-helper.sh`, and `pulse-wrapper.sh`. In TODO.md, use `#worker` or `#interactive` tags to set origin explicitly; these map to the corresponding labels on push.
 
