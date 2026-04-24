@@ -3046,3 +3046,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2809 Update t1305 plan file — #14740 now closed-stale, PR #14741 is sole live upstream ref #chore #cleanup #plan ref:GH#20753
 
 - [ ] t2810 upstream-watch: file GitHub issues on detected updates ref:GH#20755
+
+- [ ] t2811 Release interactive claim on Ref/For-keyword planning PR merges (claim-stamp leak) #auto-dispatch #bug #chore #framework ref:GH#20757
