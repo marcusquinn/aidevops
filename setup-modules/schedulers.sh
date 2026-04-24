@@ -344,12 +344,12 @@ _install_supervisor_pulse() {
 	_pulse_interval_sec=$(_read_pulse_interval_seconds)
 	local _pulse_cron_schedule
 	_pulse_cron_schedule=$(_seconds_to_cron_schedule "$_pulse_interval_sec")
-	# Build a human-readable interval label: show seconds when < 60s, minutes otherwise
+	# Build a human-readable interval label: show minutes for exact multiples of 60, seconds otherwise
 	local _pulse_interval_label
-	if [[ "$_pulse_interval_sec" -lt 60 ]]; then
-		_pulse_interval_label="${_pulse_interval_sec}s"
+	if (( _pulse_interval_sec % 60 == 0 )); then
+		_pulse_interval_label="$((_pulse_interval_sec / 60)) min"
 	else
-		_pulse_interval_label="$((_pulse_interval_sec / 60))min"
+		_pulse_interval_label="${_pulse_interval_sec}s"
 	fi
 
 	local _pulse_timeout_sec=$((PULSE_STALE_THRESHOLD_SECONDS + 60))
