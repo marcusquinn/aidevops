@@ -10,6 +10,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.10.2] - 2026-04-24
+
+### Added
+
+- per-issue rate_limit backoff gate in dispatch engine (#20691)
+
+### Changed
+
+- Maintenance: sync ref:GH#20717 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20715 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20714 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20713 to TODO.md [skip ci]
+- Maintenance: mark t2787 complete (pr:#20712 completed:2026-04-24) [skip ci]
+- flip AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE default to 1 + docs sweep (#20712)
+- Maintenance: mark t2780 complete (pr:#20710 completed:2026-04-24) [skip ci]
+- fix sync/check-workflows for non-main default branches (#20710)
+- Maintenance: sync ref:GH#20660 to TODO.md [skip ci]
+- decompose parent-task #20559 into 3 phase children (#20706)
+- Maintenance: mark t2775 complete (pr:#20709 completed:2026-04-24) [skip ci]
+- pulse: per-repo pulse_interval throttle for contributor-role repos (#20709)
+- Maintenance: sync ref:GH#20704 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20703 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: mark t2782 complete (pr:#20701 completed:2026-04-24) [skip ci]
+- cap watchdog_stall_continue duration and count per session (#20701)
+- Maintenance: update simplification state registry
+- split worker-watchdog.sh into 5 focused sub-libraries (#20696)
+- Maintenance: update simplification state registry
+- fix sed escaping, checkout -B idempotency, and commit guard in sync-workflows-helper.sh (#20695)
+- Maintenance: mark t2783 complete (pr:#20693 completed:2026-04-24) [skip ci]
+- pulse: post remediation comment when maintainer removes NMR label without crypto approval (#20693)
+- Maintenance: mark t2770 complete (pr:#20690 completed:2026-04-24) [skip ci]
+- Maintenance: mark t2781 complete (pr:#20691 completed:2026-04-24) [skip ci]
+- pulse: cross-issue no_work rate circuit breaker (#20690)
+- Maintenance: mark t2772 complete (pr:#20692 completed:2026-04-24) [skip ci]
+- route pulse-*.sh gh reads through REST-fallback wrappers (#20692)
+- Maintenance: mark t2784 complete (pr:#20689 completed:2026-04-24) [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- address Gemini review feedback on pulse-issue-reconcile.sh (GH#20675) (#20694)
+- upstream-watch cloudron-packaging-community URL (root→WanderingMonster) (#20689)
+- add --paginate to gh api comments call in no_work circuit breaker (#20687)
+
 ## [3.10.1] - 2026-04-24
 
 ### Changed
