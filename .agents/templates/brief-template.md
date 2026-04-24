@@ -238,6 +238,46 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
 2. {Next step with code skeleton if applicable}
 3. {Final step — e.g., "Run `shellcheck` on new file, verify hook fires with test harness"}
 
+### Complexity Impact
+
+<!-- MANDATORY for tasks that modify existing functions in shell scripts.
+     Delete this section only when the task creates new files or new functions
+     exclusively — no edits to existing function bodies.
+
+     Purpose: flag upfront when adding code to an existing function is likely to
+     trip the function-complexity, nesting-depth, or file-size regression gates.
+     When projected growth pushes a function past ~80% of the threshold, plan an
+     extract-helpers refactor BEFORE writing the new logic.
+
+     Canonical failure class (t2803): 8 workers on GH#20702 all hit the Complexity
+     Analysis wall on `_parse_phases_section` because the brief said "add an elif
+     branch" without mentioning the 100-line function-complexity gate or the
+     extract-helpers precedent (GH#20496 / PR #20503). Every worker copied the same
+     shape and got the same red build. See `reference/large-file-split.md §0`.
+
+     Gate thresholds (complexity-regression-helper.sh):
+     - function-complexity: 100 lines — flag when current + growth > 80 lines
+     - nesting-depth: 4 levels — flag when adding deeply nested if/case/while blocks
+     - file-size: 1500 lines (shell) — flag when file is approaching the limit
+
+     Decision rule:
+     - Current < 50% of threshold AND growth < 20 lines → no action, delete section.
+     - Current 50–80% of threshold → add a warning; note in steps to watch growth.
+     - Current > 80% of threshold OR projected post-change > 100 lines →
+       MANDATORY: plan extract-helpers refactor first. List helpers below.
+       Model on `reference/large-file-split.md` §2, GH#20496 / PR #20503. -->
+
+- **Target function:** `{function_name}` in `{file}`
+- **Current line count:** {N} lines (threshold: 100 lines for function-complexity)
+- **Estimated growth:** +{N} lines
+- **Projected post-change:** {N} lines ({N}% of threshold)
+- **Action required:** {None — delete this section | Watch — monitor during review | Extract helpers first}
+
+{If "Extract helpers first": list the helpers to extract with approximate line counts.
+Worker MUST extract before adding new logic. Example:
+`_parse_phase_markers()` (~25 lines), `_validate_phase_entry()` (~15 lines) extracted
+from `_parse_phases_section` — then add new logic to the slimmed parent function.}
+
 ### Verification
 
 ```bash

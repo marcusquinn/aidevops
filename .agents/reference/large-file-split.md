@@ -7,6 +7,52 @@ Consolidated from six prior worker attempts on GH#19699, each of which re-discov
 the same framework lessons from scratch. This document exists so the next worker
 arrives already knowing the answer.
 
+## 0. Briefing Checklist for Function-Modifying Tasks (t2803)
+
+**Read this before writing any brief that grows an existing shell function.**
+
+Canonical failure: issue #20702 / PR #20705 + 7 subsequent dispatch attempts all hit
+the same Complexity Analysis wall on `_parse_phases_section`. The function was already
+~60 lines; the brief said "add an elif branch" without mentioning the 100-line
+`function-complexity` threshold or the extract-helpers precedent (GH#20496 / PR #20503).
+Every worker copied the same shape and got the same red build. Eventually PR #20736
+resolved it by extracting four helpers — an approach that takes ~10 minutes to design
+but workers couldn't discover from the brief.
+
+**Gate thresholds** (enforced by `complexity-regression-helper.sh` / `code-quality.yml`):
+
+| Metric | Threshold | Identity key |
+|--------|-----------|-------------|
+| `function-complexity` | 100 lines | `(file, fname)` |
+| `nesting-depth` | 4 levels deep | `(file, 'NEST')` |
+| `file-size` | 1500 lines (shell) | `(file)` |
+
+**Decision rule for brief authors:**
+
+1. Locate the target function: `grep -n "^{function_name}()" {file}` and count its lines.
+2. Estimate lines added by this task.
+3. Apply the rule:
+
+| Projected post-change | Required action |
+|----------------------|----------------|
+| < 80 lines | No action — delete the `### Complexity Impact` section from the brief |
+| 80–100 lines | Warning — add `### Complexity Impact` section, note the risk, monitor during review |
+| > 100 lines | **Mandatory** — plan extract-helpers refactor first, list the helpers to extract in `### Complexity Impact` |
+
+**Brief requirement:** include the `### Complexity Impact` subsection (from
+`templates/brief-template.md`) in every brief that modifies an existing function body.
+Workers dispatched without this context cannot detect the impending gate failure.
+
+**Extract-helpers pattern:** see section 2 of this document for the canonical
+orchestrator + sub-library pattern. For function-internal extracts (not file splits),
+create new private helper functions in the same file: `_parse_<feature>()`, `_validate_<feature>()`, etc.
+The extract-helpers approach from GH#20496 / PR #20503 is the proven model for the same
+file pattern. Workers reading this section + the issue body should be able to design the
+extract plan without re-discovering it from scratch.
+
+**Override procedure** (when growth is unavoidable): apply `complexity-bump-ok` label
+to the PR with a `## Complexity Bump Justification` section. See section 4 of this doc.
+
 ## 1. When to Use This
 
 Use this playbook when:
