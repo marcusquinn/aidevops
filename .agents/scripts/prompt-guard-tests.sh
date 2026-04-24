@@ -396,7 +396,7 @@ _cmd_test_yaml_loading() {
 	# Test YAML loading with a temporary YAML file (pure-bash parser — no yq/python3 needed)
 	# Format: category-keyed blocks with severity as list item start trigger
 	local tmp_yaml
-	tmp_yaml=$(mktemp /tmp/pg-test-XXXXXX.yaml)
+	tmp_yaml=$(mktemp "${TMPDIR:-/tmp}/pg-test-XXXXXX")
 	cat >"$tmp_yaml" <<'YAML_EOF'
 yaml_test:
   - severity: "HIGH"

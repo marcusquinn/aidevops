@@ -105,7 +105,7 @@ _pg_load_yaml_patterns() {
 		if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*severity:[[:space:]]*\"?([A-Z]+)\"?$ ]]; then
 			# Emit previous pattern if complete
 			if [[ -n "$severity" && -n "$pattern" && -n "$current_category" ]]; then
-				patterns+="${severity}|${current_category}|${description}|${pattern}"$'\n'
+				patterns+="${severity}|${current_category}|$(_pg_sanitize_delimited "$description")|${pattern}"$'\n'
 			fi
 			severity="${BASH_REMATCH[1]}"
 			description=""
@@ -134,7 +134,7 @@ _pg_load_yaml_patterns() {
 
 	# Emit last pattern
 	if [[ -n "$severity" && -n "$pattern" && -n "$current_category" ]]; then
-		patterns+="${severity}|${current_category}|${description}|${pattern}"$'\n'
+		patterns+="${severity}|${current_category}|$(_pg_sanitize_delimited "$description")|${pattern}"$'\n'
 	fi
 
 	if [[ -z "$patterns" ]]; then
