@@ -369,6 +369,297 @@ test_log_message_on_trip() {
 }
 
 # =============================================================================
+# Part 2: no_work rate circuit breaker (t2770, GH#20640)
+#
+# Tests is_no_work_rate_acceptable() from pulse-wrapper.sh.
+# The function is extracted via awk to avoid sourcing the entire
+# pulse-wrapper.sh (which triggers jitter, module sources, etc.).
+# Stub strategy: write fake pulse.log lines containing "crash_type=no_work"
+# to control the observed event count.
+# =============================================================================
+
+# Extract is_no_work_rate_acceptable from pulse-wrapper.sh using brace-counting awk.
+_NW_FUNC_DEF="$(awk '
+    /^is_no_work_rate_acceptable\(\) \{/ { depth=1; print; next }
+    depth > 0 {
+        for (i=1; i<=length($0); i++) {
+            c = substr($0,i,1)
+            if (c=="{") depth++
+            else if (c=="}") depth--
+        }
+        print
+        if (depth==0) exit
+    }
+' "${SCRIPTS_DIR}/pulse-wrapper.sh")"
+
+if [[ -z "$_NW_FUNC_DEF" ]]; then
+	printf '  %sSKIP%s no_work breaker tests: could not extract is_no_work_rate_acceptable from pulse-wrapper.sh\n' \
+		"$TEST_RED" "$TEST_NC"
+else
+	# shellcheck disable=SC2317
+	eval "$_NW_FUNC_DEF"
+
+	# Separate sandbox for no_work tests.
+	NW_TMP=$(mktemp -d -t t2770.XXXXXX)
+	trap 'rm -rf "$NW_TMP"' EXIT
+
+	NW_HOME="${NW_TMP}/home"
+	NW_LOGFILE="${NW_TMP}/pulse.log"
+	mkdir -p "${NW_HOME}/.aidevops/logs"
+
+	NW_STATE_FILE="${NW_HOME}/.aidevops/logs/pulse-no-work-breaker.state"
+
+	# Stub pulse_stats_increment for no_work counter tracking.
+	NW_STATS_FILE="${NW_TMP}/nw-stats.log"
+	# shellcheck disable=SC2317
+	pulse_stats_increment() {
+		local counter_name="$1"
+		printf '%s\n' "$counter_name" >>"$NW_STATS_FILE"
+		return 0
+	}
+
+	# Write N no_work lines to the fake pulse.log.
+	write_nw_log_lines() {
+		local count="$1"
+		local i=0
+		while [[ "$i" -lt "$count" ]]; do
+			printf '[pulse-wrapper] fast_fail_record: #%s (repo/repo) failure_backoff reason=stale_timeout crash_type=no_work\n' "$i" >>"$NW_LOGFILE"
+			i=$((i + 1))
+		done
+		return 0
+	}
+
+	reset_nw_state() {
+		: >"$NW_LOGFILE"
+		rm -f "$NW_STATE_FILE"
+		: >"$NW_STATS_FILE"
+		unset AIDEVOPS_SKIP_NO_WORK_BREAKER 2>/dev/null || true
+		export HOME="$NW_HOME"
+		export LOGFILE="$NW_LOGFILE"
+		export NO_WORK_WINDOW_SECS=600
+		export NO_WORK_WINDOW_MAX=10
+		unset AIDEVOPS_NO_WORK_WINDOW_SECS 2>/dev/null || true
+		unset AIDEVOPS_NO_WORK_WINDOW_MAX 2>/dev/null || true
+		return 0
+	}
+
+	printf '\ntest-rate-limit-circuit-breaker.sh (t2770 — no_work rate breaker)\n'
+	printf '====================================================================\n'
+
+	# --- NW Test 1: Passes when no no_work events present ---
+	test_nw_passes_with_no_events() {
+		reset_nw_state
+		local rc=0
+		is_no_work_rate_acceptable || rc=$?
+		if [[ "$rc" -eq 0 ]]; then
+			pass "no_work breaker: passes when log has zero no_work events"
+		else
+			fail "no_work breaker: should pass with zero events (rc=$rc)"
+		fi
+		return 0
+	}
+
+	# --- NW Test 2: Passes when below threshold ---
+	test_nw_passes_below_threshold() {
+		reset_nw_state
+		write_nw_log_lines 5  # 5 events, max=10 → should pass
+		# First call to establish state baseline.
+		local rc=0
+		is_no_work_rate_acceptable || rc=$?
+		if [[ "$rc" -eq 0 ]]; then
+			pass "no_work breaker: passes when 5 events below max=10"
+		else
+			fail "no_work breaker: should pass with 5 events, max=10 (rc=$rc)"
+		fi
+		return 0
+	}
+
+	# --- NW Test 3: Trips when threshold reached (exactly max events) ---
+	test_nw_trips_at_threshold() {
+		reset_nw_state
+		write_nw_log_lines 10  # 10 events, max=10 → should trip
+		local rc=0
+		is_no_work_rate_acceptable || rc=$?
+		if [[ "$rc" -eq 1 ]]; then
+			pass "no_work breaker: trips when exactly max=10 events in window"
+		else
+			fail "no_work breaker: should trip at max=10 events (rc=$rc)"
+		fi
+		return 0
+	}
+
+	# --- NW Test 4: Trips when above threshold (11 events) ---
+	test_nw_trips_above_threshold() {
+		reset_nw_state
+		write_nw_log_lines 11  # 11 events, max=10 → should trip
+		local rc=0
+		is_no_work_rate_acceptable || rc=$?
+		if [[ "$rc" -eq 1 ]]; then
+			pass "no_work breaker: trips when 11 events exceed max=10"
+		else
+			fail "no_work breaker: should trip with 11 events, max=10 (rc=$rc)"
+		fi
+		return 0
+	}
+
+	# --- NW Test 5: Emergency bypass ---
+	test_nw_emergency_bypass() {
+		reset_nw_state
+		write_nw_log_lines 50  # Far above threshold
+		export AIDEVOPS_SKIP_NO_WORK_BREAKER=1
+		local rc=0
+		is_no_work_rate_acceptable || rc=$?
+		if [[ "$rc" -eq 0 ]]; then
+			pass "no_work breaker: emergency bypass allows dispatch (rc=0)"
+		else
+			fail "no_work breaker: emergency bypass should allow dispatch (rc=$rc)"
+		fi
+		return 0
+	}
+
+	# --- NW Test 6: Disabled when max=0 ---
+	test_nw_disabled_at_zero_max() {
+		reset_nw_state
+		export NO_WORK_WINDOW_MAX=0
+		write_nw_log_lines 100  # Far above disabled threshold
+		local rc=0
+		is_no_work_rate_acceptable || rc=$?
+		if [[ "$rc" -eq 0 ]]; then
+			pass "no_work breaker: disabled when NO_WORK_WINDOW_MAX=0"
+		else
+			fail "no_work breaker: should be disabled when max=0 (rc=$rc)"
+		fi
+		return 0
+	}
+
+	# --- NW Test 7: Counter increments on trip ---
+	test_nw_counter_increments_on_trip() {
+		reset_nw_state
+		write_nw_log_lines 11
+		is_no_work_rate_acceptable || true
+		local count
+		count=$(grep -c "^pulse_dispatch_no_work_breaker_tripped$" "$NW_STATS_FILE" 2>/dev/null) || count=0
+		if [[ "$count" -eq 1 ]]; then
+			pass "no_work breaker: pulse_dispatch_no_work_breaker_tripped counter incremented"
+		else
+			fail "no_work breaker: counter should increment once on trip (got $count)"
+		fi
+		return 0
+	}
+
+	# --- NW Test 8: Counter does NOT increment when passing ---
+	test_nw_counter_no_increment_on_pass() {
+		reset_nw_state
+		write_nw_log_lines 3
+		is_no_work_rate_acceptable || true
+		local count
+		count=$(grep -c "^pulse_dispatch_no_work_breaker_tripped$" "$NW_STATS_FILE" 2>/dev/null) || count=0
+		if [[ "$count" -eq 0 ]]; then
+			pass "no_work breaker: counter not incremented when passing"
+		else
+			fail "no_work breaker: counter should not increment on pass (got $count)"
+		fi
+		return 0
+	}
+
+	# --- NW Test 9: State file written on check ---
+	test_nw_state_file_written() {
+		reset_nw_state
+		write_nw_log_lines 3
+		is_no_work_rate_acceptable || true
+		if [[ -f "$NW_STATE_FILE" ]]; then
+			pass "no_work breaker: state file written after check"
+		else
+			fail "no_work breaker: state file should be written after check"
+		fi
+		return 0
+	}
+
+	# --- NW Test 10: Log message on trip ---
+	test_nw_log_message_on_trip() {
+		reset_nw_state
+		write_nw_log_lines 11
+		is_no_work_rate_acceptable || true
+		if grep -q "no_work rate circuit breaker TRIPPED" "$NW_LOGFILE" 2>/dev/null; then
+			pass "no_work breaker: TRIPPED log message emitted"
+		else
+			fail "no_work breaker: should emit 'no_work rate circuit breaker TRIPPED' log message"
+		fi
+		return 0
+	}
+
+	# --- NW Test 11: Custom threshold via env var ---
+	test_nw_custom_max_env_var() {
+		reset_nw_state
+		export AIDEVOPS_NO_WORK_WINDOW_MAX=5
+		write_nw_log_lines 5
+		local rc=0
+		is_no_work_rate_acceptable || rc=$?
+		if [[ "$rc" -eq 1 ]]; then
+			pass "no_work breaker: AIDEVOPS_NO_WORK_WINDOW_MAX=5 trips at 5 events"
+		else
+			fail "no_work breaker: should trip at AIDEVOPS_NO_WORK_WINDOW_MAX=5 (rc=$rc)"
+		fi
+		return 0
+	}
+
+	# --- NW Test 12: Window pruning — old events don't count ---
+	test_nw_window_pruning() {
+		reset_nw_state
+		export NO_WORK_WINDOW_SECS=1  # 1 second window
+		write_nw_log_lines 11  # 11 events — enough to trip at max=10
+		# First call: establish state with 11 events in window.
+		is_no_work_rate_acceptable || true
+		# Wait for window to expire.
+		sleep 2
+		# Second call: all events should be pruned (outside the 1s window).
+		# No new events since last check → should pass.
+		local rc=0
+		is_no_work_rate_acceptable || rc=$?
+		if [[ "$rc" -eq 0 ]]; then
+			pass "no_work breaker: old events pruned after window expires"
+		else
+			fail "no_work breaker: should pass after window expires (rc=$rc)"
+		fi
+		return 0
+	}
+
+	# Save outer sandbox state before no_work tests modify HOME/LOGFILE.
+	_NW_SAVE_HOME="$HOME"
+	_NW_SAVE_LOGFILE="$LOGFILE"
+	_NW_SAVE_STATS_FILE="$STATS_COUNTER_FILE"
+
+	test_nw_passes_with_no_events
+	test_nw_passes_below_threshold
+	test_nw_trips_at_threshold
+	test_nw_trips_above_threshold
+	test_nw_emergency_bypass
+	test_nw_disabled_at_zero_max
+	test_nw_counter_increments_on_trip
+	test_nw_counter_no_increment_on_pass
+	test_nw_state_file_written
+	test_nw_log_message_on_trip
+	test_nw_custom_max_env_var
+	test_nw_window_pruning
+
+	# Restore outer sandbox state for GraphQL breaker tests that follow.
+	export HOME="$_NW_SAVE_HOME"
+	export LOGFILE="$_NW_SAVE_LOGFILE"
+	# Restore the original pulse_stats_increment (reads from $STATS_COUNTER_FILE).
+	# shellcheck disable=SC2317
+	pulse_stats_increment() {
+		local counter_name="$1"
+		printf '%s\n' "$counter_name" >>"$_NW_SAVE_STATS_FILE"
+		return 0
+	}
+	# Restore the circuit-breaker state file path (in outer HOME).
+	rm -f "${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state" 2>/dev/null || true
+	# Restore GraphQL threshold to test default (0.05).
+	export AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD="0.05"
+	unset AIDEVOPS_SKIP_NO_WORK_BREAKER NO_WORK_WINDOW_SECS NO_WORK_WINDOW_MAX 2>/dev/null || true
+fi  # end: no_work breaker tests
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 test_breaker_trips_below_threshold
