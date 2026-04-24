@@ -3027,7 +3027,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2800 claim-task-id: pre-flight validate --labels to prevent claimed-ID orphans when issue creation fails #auto-dispatch #bug ref:GH#20734
 
-- [ ] t2801 signature-footer hook: false positives on heredoc bodies and quoted-arg matches push operators toward bypass #auto-dispatch #bug ref:GH#20735
+- [x] t2801 signature-footer hook: false positives on heredoc bodies and quoted-arg matches push operators toward bypass #auto-dispatch #bug ref:GH#20735 pr:#20739 completed:2026-04-24
 
 - [ ] t2802 worktree-helper.sh add: explicitly base new branches on origin/<default> to prevent scope-leak PRs ref:GH#20737
 
