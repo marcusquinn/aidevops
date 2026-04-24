@@ -556,6 +556,12 @@ _check_nmr_approval_gate() {
 
 	if ! issue_has_required_approval "$issue_number" "$repo_slug" "$known_ever_nmr"; then
 		echo "[pulse-wrapper] dispatch_with_dedup: BLOCKED #${issue_number} in ${repo_slug} — requires cryptographic approval (ever-NMR)" >>"$LOGFILE"
+		# GH#20682: when the NMR label is absent (human removed it) but the
+		# ever-NMR block still fires, post a one-shot remediation comment so
+		# the maintainer knows why dispatch is still skipped and what to do.
+		if [[ "$known_ever_nmr" != 'true' ]]; then
+			notify_ever_nmr_without_approval "$issue_number" "$repo_slug"
+		fi
 		return 0
 	fi
 	return 1
