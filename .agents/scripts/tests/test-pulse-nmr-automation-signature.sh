@@ -241,8 +241,10 @@ test_signature_ignores_marker_outside_window() {
 test_signature_detects_review_followup_label_fallback() {
 	# No adjacent comment — but the issue has review-followup label,
 	# indicating bot-generated cleanup (GH#18538 default-NMR path).
+	# GH#20758: created_at must be within 300s of label_at for the
+	# co-temporality guard to pass.
 	set_comments '[]'
-	set_issue_meta '{"labels":[{"name":"review-followup"},{"name":"auto-dispatch"}]}'
+	set_issue_meta '{"labels":[{"name":"review-followup"},{"name":"auto-dispatch"}],"created_at":"2026-04-13T04:29:10Z"}'
 	if _nmr_application_has_automation_signature 18539 marcusquinn/aidevops "2026-04-13T04:29:13Z"; then
 		print_result "signature detects review-followup label as implicit default" 0
 		return 0
@@ -252,8 +254,9 @@ test_signature_detects_review_followup_label_fallback() {
 }
 
 test_signature_detects_source_review_scanner_label_fallback() {
+	# GH#20758: created_at within 300s of label_at for co-temporality.
 	set_comments '[]'
-	set_issue_meta '{"labels":[{"name":"source:review-scanner"}]}'
+	set_issue_meta '{"labels":[{"name":"source:review-scanner"}],"created_at":"2026-04-13T06:39:20Z"}'
 	if _nmr_application_has_automation_signature 18621 marcusquinn/aidevops "2026-04-13T06:39:22Z"; then
 		print_result "signature detects source:review-scanner label as implicit default" 0
 		return 0
@@ -266,8 +269,9 @@ test_signature_detects_source_review_feedback_label_fallback() {
 	# t2686: quality-feedback-helper.sh emits source:review-feedback label,
 	# NOT source:review-scanner. Before the fix the sig detector missed
 	# this label entirely, stranding 10 issues on awardsapp/awardsapp.
+	# GH#20758: created_at within 300s of label_at for co-temporality.
 	set_comments '[]'
-	set_issue_meta '{"labels":[{"name":"quality-debt"},{"name":"source:review-feedback"},{"name":"priority:high"}]}'
+	set_issue_meta '{"labels":[{"name":"quality-debt"},{"name":"source:review-feedback"},{"name":"priority:high"}],"created_at":"2026-04-21T01:49:30Z"}'
 	if _nmr_application_has_automation_signature 2572 awardsapp/awardsapp "2026-04-21T01:49:36Z"; then
 		print_result "signature detects source:review-feedback label (t2686)" 0
 		return 0
@@ -448,9 +452,10 @@ test_19756_loop_prevention_breaker_trip_preserves_nmr() {
 test_scanner_default_still_auto_approves() {
 	# Positive control: creation defaults still get auto-approved so
 	# scanner-filed issues can enter dispatch normally.
+	# GH#20758: created_at within 300s of NMR label event for co-temporality.
 	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"marcusquinn"},"created_at":"2026-04-19T05:00:00Z"}]'
 	set_comments '[]'
-	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"source:review-scanner"}]}'
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"source:review-scanner"}],"created_at":"2026-04-19T04:59:55Z"}'
 	if _nmr_applied_by_maintainer 18539 marcusquinn/aidevops marcusquinn; then
 		print_result "scanner-default issue still auto-approves (no regression)" 1 \
 			"Expected exit 1 — creation-default signature should allow auto-approve"

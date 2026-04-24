@@ -312,20 +312,49 @@ _nmr_application_has_automation_signature() {
 	# Also accept: the issue itself carries a scanner provenance label
 	# (bot-generated cleanup). These issues apply NMR at creation via the
 	# scanner default, which does not necessarily emit a post-label comment
-	# marker. The label presence itself is the creation-default signature.
+	# marker.
+	#
+	# GH#20758: Co-temporality guard — scanner labels persist for the life
+	# of the issue, so a label-only match without timing verification
+	# misclassifies later NMR events (manual holds, breaker trips) as
+	# creation defaults. Only match when NMR was applied within 300s of
+	# issue creation. This closes the ever-NMR trap for scanner-labelled
+	# issues that subsequently trip a circuit breaker.
 	#
 	# Labels matched (t2686 extended set):
 	#   - review-followup           — post-merge-review-scanner.sh (GH#18538)
 	#   - source:review-scanner     — post-merge-review-scanner.sh
 	#   - source:review-feedback    — quality-feedback-helper.sh scan-merged
-	local has_bot_label
-	has_bot_label=$(gh api "repos/${slug}/issues/${issue_num}" \
-		--jq '[.labels[].name] | map(select(. == "review-followup" or . == "source:review-scanner" or . == "source:review-feedback")) | length' \
-		2>/dev/null) || has_bot_label=0
+	local issue_meta_json
+	issue_meta_json=$(gh api "repos/${slug}/issues/${issue_num}" 2>/dev/null) || issue_meta_json=""
+
+	local has_bot_label=0
+	if [[ -n "$issue_meta_json" ]]; then
+		has_bot_label=$(printf '%s' "$issue_meta_json" \
+			| jq '[.labels[].name] | map(select(. == "review-followup" or . == "source:review-scanner" or . == "source:review-feedback")) | length' \
+			2>/dev/null) || has_bot_label=0
+	fi
 	[[ "$has_bot_label" =~ ^[0-9]+$ ]] || has_bot_label=0
 
 	if [[ "$has_bot_label" -gt 0 ]]; then
-		return 0
+		# Co-temporality check: NMR must have been applied within 300s of
+		# issue creation to classify as a creation default. Later NMR events
+		# on the same issue are either manual holds or breaker trips.
+		local issue_created_at
+		issue_created_at=$(printf '%s' "$issue_meta_json" \
+			| jq -r '.created_at // ""' 2>/dev/null) || issue_created_at=""
+		if [[ -n "$issue_created_at" && -n "$label_at" ]]; then
+			local nmr_creation_gap
+			nmr_creation_gap=$(jq -n --arg c "$issue_created_at" --arg l "$label_at" \
+				'(($l | fromdateiso8601) - ($c | fromdateiso8601)) | if . < 0 then (0 - .) else . end | floor' \
+				2>/dev/null) || nmr_creation_gap=999999
+			[[ "$nmr_creation_gap" =~ ^[0-9]+$ ]] || nmr_creation_gap=999999
+			if (( nmr_creation_gap <= 300 )); then
+				return 0
+			fi
+		fi
+		# Scanner label present but NMR applied far from creation — not a
+		# creation default. Fall through to return 1.
 	fi
 
 	return 1
@@ -442,13 +471,20 @@ _nmr_applied_by_maintainer() {
 	#      see it was a breaker trip, not a manual hold.
 	#   3. No signature → genuine manual hold, return 0.
 	if [[ -n "$nmr_at" ]]; then
+		# GH#20758: Circuit-breaker check FIRST — a co-temporal breaker
+		# marker is a stronger signal than label persistence. Scanner-
+		# labelled issues that trip a breaker MUST preserve NMR regardless
+		# of creation provenance. The prior order (automation-signature
+		# first) let the label-based branch of _nmr_application_has_
+		# automation_signature short-circuit the breaker check because
+		# scanner labels persist for the issue's lifetime.
+		if _nmr_application_is_circuit_breaker_trip "$issue_num" "$slug" "$nmr_at"; then
+			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — circuit breaker tripped — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num}' (t2386/GH#20758)" >>"$LOGFILE"
+			return 0
+		fi
 		if _nmr_application_has_automation_signature "$issue_num" "$slug" "$nmr_at"; then
 			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — actor=${maintainer} but creation-default signature detected — classifying as automation-applied (GH#18671)" >>"$LOGFILE"
 			return 1
-		fi
-		if _nmr_application_is_circuit_breaker_trip "$issue_num" "$slug" "$nmr_at"; then
-			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — circuit breaker tripped — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num}' (t2386)" >>"$LOGFILE"
-			return 0
 		fi
 	fi
 
