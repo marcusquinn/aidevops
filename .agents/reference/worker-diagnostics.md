@@ -287,6 +287,102 @@ The pulse has no visibility into WHY a worker exited early. The gaps:
    60 seconds on canary runs that will all fail for the same reason. The batch throttle
    (pulse-dispatch-engine.sh:559) partially addresses this but only after 80% failure ratio.
 
+### Phase 3 fix (t2814) — diagnostic capture + negative canary cache
+
+Phase 3 lands the two highest-leverage Phase 2 recommendations: **read the worker log
+during recovery** (closes the diagnostic gap end-to-end) and **negative canary cache**
+(prevents `no_worker_process` clusters during transient API outages). Recommendations 2 (spawn-time
+exit monitoring) and 3 (close inherited FDs before exec) are deferred to a follow-up phase
+since both require deeper changes to `_dlw_exec_detached` and have less immediate impact
+than closing the diagnostic gap.
+
+#### What changed
+
+**`pulse-cleanup.sh` — `_capture_worker_log_diagnostics()`** (new helper)
+
+Reads `tail -n 40 /tmp/pulse-${safe_slug}-${issue}.log` and classifies the failure into
+one of seven sub-reasons:
+
+| Sub-reason | Match pattern | Phase 2 path |
+|------------|---------------|--------------|
+| `canary_failed` | "Canary test FAILED" | Path 1 (PRIMARY) |
+| `lock_collision` | "session lock collision" / "_acquire_session_lock" | Path 3 |
+| `model_selection_failed` | "choose_model failed" / "no providers" / "all providers in backoff" | Path 2 |
+| `opencode_version_mismatch` | "version pin" / "version mismatch" | (rare) |
+| `crash_during_startup` | "unbound variable" / "command not found" / "syntax error" | (rare) |
+| `no_log` | log missing or empty | (process never wrote) |
+| `unknown` | log present, no marker matched | (fallback) |
+
+The full 4 KiB tail is also appended to `$LOGFILE` (the pulse log) so post-mortem
+investigation has the raw evidence even after `/tmp` rotation.
+
+**`pulse-cleanup.sh` — `_post_launch_recovery_claim_released()` (extended)**
+
+The `CLAIM_RELEASED` audit comment now embeds the sub-reason and a 200-char summary:
+
+```
+CLAIM_RELEASED reason=launch_recovery:no_worker_process runner=alex-solovyev ts=2026-04-25T01:23:45Z diag=canary_failed diag_summary="Canary test FAILED (exit=124, model=anthropic/claude-sonnet-4-6, opencode=1.14.24, timeout=60s)"
+```
+
+This turns every `no_worker_process` event into a one-line diagnosis. Cross-runner peers
+parse it for failure-mode awareness; humans grep for it during incident review.
+
+**`pulse-cleanup.sh` — `recover_failed_launch_state` (modified)**
+
+When `failure_reason="no_worker_process"`, the recovery path now:
+
+1. Calls `_capture_worker_log_diagnostics` to classify.
+2. Embeds the sub-reason in `CLAIM_RELEASED` (audit trail).
+3. Records the colon-suffixed form `no_worker_process:canary_failed` in `fast_fail_record`
+   instead of the generic bucket. This is the **Phase 4 contract** — the upcoming cascade
+   classifier branches on this sub-reason to distinguish infrastructure failures (canary,
+   lock collision, version mismatch) from worker-coding failures, which avoids triggering
+   tier escalation on infrastructure problems that won't resolve by changing the model.
+
+**`headless-runtime-lib.sh` — negative canary cache**
+
+`_run_canary_test` now reads/writes a `${STATE_DIR}/canary-last-fail` file with a
+`CANARY_NEG_CACHE_TTL_SECONDS` (default 90s) TTL. When the canary fails, the timestamp
+is persisted; subsequent canary calls within the TTL short-circuit with `return 1`
+instead of re-running the API call. The cache is cleared atomically when the canary
+recovers (CANARY_OK observed). This breaks the "consecutive dispatches each burning
+60s on the same failing API call" pattern that drove the `no_worker_process` clusters
+identified in Phase 1.
+
+#### Regression test
+
+`.agents/scripts/tests/test-launch-recovery-diagnostics.sh` exercises:
+
+- All 7 sub-reason classifications (canary, lock collision, model selection,
+  opencode version, bash crash, no log, unknown).
+- `CLAIM_RELEASED` accepts the new diag args.
+- `recover_failed_launch_state` produces the colon-suffixed `recorded_reason`.
+- Negative canary cache constant defined; read+write+clear paths wired.
+- Negative cache TTL gating logic (50s short-circuits within 90s TTL; 120s
+  expires past it).
+- `recover_failed_launch_state` stays under the 100-line function-complexity gate
+  (the Phase 3 changes were absorbed via three new helpers — `_lr_finalise_ledger_entry`,
+  `_lr_classify_no_worker_failure`, `_lr_apply_post_recovery_records`).
+- All 7 sub-reasons appear as printf'd literals (Phase 4 cascade contract).
+
+Run: `bash .agents/scripts/tests/test-launch-recovery-diagnostics.sh`.
+
+#### Verification commands
+
+After deploy, watch the next dispatch failure for the new diagnostic line:
+
+```bash
+gh issue view <issue> --repo <slug> --comments | grep "CLAIM_RELEASED.*diag="
+grep "worker log tail for" ~/.aidevops/logs/pulse.log
+```
+
+For negative cache hits during an API outage:
+
+```bash
+grep "Canary negative cache active" ~/.aidevops/logs/pulse.log
+ls -la ~/.aidevops/.agent-workspace/headless-runtime/canary-last-fail
+```
+
 ## Diagnostic Quick Reference
 
 | Symptom | Check | Likely cause |

@@ -364,6 +364,12 @@ jobs:
         bash .agents/scripts/tests/test-pulse-wrapper-canary.sh
         echo "Pulse wrapper canary test passed"
 
+    - name: Launch Recovery Diagnostics (t2814)
+      run: |
+        echo "Running launch-recovery diagnostics regression test (Phase 3 fix for no_worker_process)..."
+        bash .agents/scripts/tests/test-launch-recovery-diagnostics.sh
+        echo "Launch recovery diagnostics test passed"
+
     - name: Bash Expansion Pattern Guard (GH#19966)
       run: |
         # Guard against the ${N:-{}} expansion bug: bash reads "${2:-{}" as the

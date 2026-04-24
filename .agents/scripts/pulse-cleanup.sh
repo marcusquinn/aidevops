@@ -703,6 +703,113 @@ reap_zombie_workers() {
 #   $3 - failure reason string (for logs)
 #######################################
 
+# t2814 helper: capture worker-log tail for launch-failure diagnostics.
+#
+# Phase 2 (t2813) identified the core diagnostic gap: when a worker fails to
+# spawn or exits before `check_worker_launch` observes it, the pulse has no
+# visibility into WHY. The worker log at /tmp/pulse-${safe_slug}-${issue}.log
+# captures stdout/stderr from the nohup'd process but was never read during
+# recovery — so every `no_worker_process` event was logged with the same
+# generic reason and the actual failure (canary timeout, lock collision,
+# auth failure, model selection) was lost.
+#
+# This helper:
+#   1. Reads up to 20 lines from the worker log tail (last few KB only).
+#   2. Classifies the first matching failure pattern into a sub-reason so
+#      callers can route on the actual cause (canary_failed, lock_collision,
+#      model_selection_failed, etc.) instead of the bucket reason.
+#   3. Returns the classification on stdout. The full tail is written to
+#      $LOGFILE so post-mortem investigation has the raw evidence.
+#
+# Output format (single line, tab-separated):
+#   <sub_reason>\t<short_summary>
+#
+# Where sub_reason is one of:
+#   canary_failed             — canary test failed (auth/model/network/timeout)
+#   lock_collision            — _acquire_session_lock saw a live duplicate
+#   model_selection_failed    — choose_model returned non-zero
+#   opencode_version_mismatch — version pin enforcement aborted
+#   crash_during_startup      — bash error / unbound var / unexpected exit
+#   no_log                    — log missing or empty (process never wrote)
+#   unknown                   — log present but no recognised pattern
+#
+# Returns 0 always (best-effort diagnostic).
+_capture_worker_log_diagnostics() {
+	local repo_slug="$1"
+	local issue_number="$2"
+
+	local safe_slug worker_log
+	safe_slug=$(printf '%s' "$repo_slug" | tr '/:' '--')
+	worker_log="/tmp/pulse-${safe_slug}-${issue_number}.log"
+
+	if [[ ! -s "$worker_log" ]]; then
+		printf 'no_log\tworker log missing or empty at %s\n' "$worker_log"
+		return 0
+	fi
+
+	# Capture up to 4 KiB of the tail to LOGFILE so the full evidence is
+	# preserved in the persistent pulse log (worker logs in /tmp may be
+	# rotated/cleared between recovery and post-mortem).
+	{
+		printf '\n[pulse-wrapper] === worker log tail for #%s (%s) ===\n' \
+			"$issue_number" "$repo_slug"
+		tail -c 4096 "$worker_log" 2>/dev/null || true
+		printf '\n[pulse-wrapper] === end worker log tail for #%s ===\n' "$issue_number"
+	} >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+
+	# Classify by scanning the tail for known failure markers. Order matters:
+	# more specific patterns first. `tail -n 40` is the diagnostic window.
+	local tail_text
+	tail_text=$(tail -n 40 "$worker_log" 2>/dev/null || printf '')
+	if [[ -z "$tail_text" ]]; then
+		printf 'no_log\tworker log unreadable\n'
+		return 0
+	fi
+
+	# Pattern 1: canary failure (Phase 2 Path 1 — the dominant cause).
+	if printf '%s' "$tail_text" | grep -q "Canary test FAILED"; then
+		local first_canary_line
+		first_canary_line=$(printf '%s' "$tail_text" | grep -m1 "Canary test FAILED")
+		printf 'canary_failed\t%s\n' "${first_canary_line:0:240}"
+		return 0
+	fi
+
+	# Pattern 2: session lock collision (Phase 2 Path 3).
+	if printf '%s' "$tail_text" | grep -qE "(session lock collision|already running|_acquire_session_lock.*collision)"; then
+		printf 'lock_collision\tprior worker session still alive\n'
+		return 0
+	fi
+
+	# Pattern 3: model selection / routing failures (Phase 2 Path 2).
+	if printf '%s' "$tail_text" | grep -qE "(choose_model.*failed|no providers available|all providers in backoff|model routing.*empty)"; then
+		local model_line
+		model_line=$(printf '%s' "$tail_text" | grep -m1 -E "(choose_model|providers|model routing)")
+		printf 'model_selection_failed\t%s\n' "${model_line:0:240}"
+		return 0
+	fi
+
+	# Pattern 4: opencode version pin enforcement (rare but visible).
+	if printf '%s' "$tail_text" | grep -qE "(version pin|version mismatch|opencode version.*expected)"; then
+		printf 'opencode_version_mismatch\tversion pin enforcement aborted startup\n'
+		return 0
+	fi
+
+	# Pattern 5: bash crash / unbound var / set -e exit.
+	if printf '%s' "$tail_text" | grep -qE "(unbound variable|command not found|: line [0-9]+:|syntax error)"; then
+		local crash_line
+		crash_line=$(printf '%s' "$tail_text" | grep -m1 -E "(unbound variable|command not found|: line [0-9]+:|syntax error)")
+		printf 'crash_during_startup\t%s\n' "${crash_line:0:240}"
+		return 0
+	fi
+
+	# Default: log present but no recognised marker. Surface the last
+	# non-empty line so the CLAIM_RELEASED comment still carries a hint.
+	local last_line
+	last_line=$(printf '%s' "$tail_text" | grep -v '^[[:space:]]*$' | tail -n 1)
+	printf 'unknown\t%s\n' "${last_line:0:240}"
+	return 0
+}
+
 # t2394 helper: post CLAIM_RELEASED so cross-runner dedup immediately re-opens
 # the issue for dispatch instead of waiting for the 30-min DISPATCH_CLAIM TTL
 # to expire. Without this, a fast-failing worker leaves a stale claim comment
@@ -712,16 +819,105 @@ reap_zombie_workers() {
 # worker-activity-watchdog.sh:222 and headless-runtime-failure.sh:59 — those
 # paths already post CLAIM_RELEASED; the launch-failure recovery path was the
 # missing coverage.
+#
+# t2814 (Phase 3): diag_subreason is appended to the audit comment so peers
+# and post-mortem reviewers can see WHY a worker failed without paging into
+# /tmp logs that may have been rotated. Empty diag_subreason is omitted.
 _post_launch_recovery_claim_released() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local self_login="$3"
 	local failure_reason="$4"
+	local diag_subreason="${5:-}"
+	local diag_summary="${6:-}"
+
+	local body
+	body="CLAIM_RELEASED reason=launch_recovery:${failure_reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	if [[ -n "$diag_subreason" ]]; then
+		body+=" diag=${diag_subreason}"
+		if [[ -n "$diag_summary" ]]; then
+			# Truncate to keep CLAIM_RELEASED parseable; sanitise newlines
+			# and tabs so the single-line invariant is preserved.
+			local sanitised
+			sanitised=$(printf '%s' "$diag_summary" | tr '\n\t' '  ' | head -c 200)
+			body+=" diag_summary=\"${sanitised}\""
+		fi
+	fi
 
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--method POST \
-		--field body="CLAIM_RELEASED reason=launch_recovery:${failure_reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		--field body="$body" \
 		>/dev/null 2>&1 || true
+	return 0
+}
+
+# t2814 helper: mark in-flight dispatch-ledger entry as failed.
+# Best-effort — silent on missing ledger or session key.
+_lr_finalise_ledger_entry() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+
+	[[ -x "$ledger_helper" ]] || return 0
+
+	local ledger_entry session_key
+	ledger_entry=$("$ledger_helper" check-issue --issue "$issue_number" --repo "$repo_slug" 2>/dev/null || true)
+	session_key=$(printf '%s' "$ledger_entry" | jq -r '.session_key // ""' 2>/dev/null)
+	if [[ -n "$session_key" ]]; then
+		"$ledger_helper" fail --session-key "$session_key" >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
+# t2814 helper: capture diagnostic tail when failure_reason is no_worker_process.
+# Sets two caller-provided file descriptors (stdout: subreason\tsummary).
+# Returns 0 always; empty output indicates nothing to classify.
+_lr_classify_no_worker_failure() {
+	local failure_reason="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+
+	[[ "$failure_reason" == "no_worker_process" ]] || return 0
+	_capture_worker_log_diagnostics "$repo_slug" "$issue_number" 2>/dev/null || true
+	return 0
+}
+
+# t2814 helper: emit the post-recovery records (CLAIM_RELEASED, unlock,
+# fast-fail, circuit-breaker) once the issue state has been reset. Splitting
+# this from the orchestrator keeps recover_failed_launch_state under the
+# 100-line function-complexity gate (t2803).
+_lr_apply_post_recovery_records() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local failure_reason="$4"
+	local crash_type="$5"
+	local diag_subreason="$6"
+	local diag_summary="$7"
+
+	# t2394: invalidate stale cross-runner claims immediately.
+	_post_launch_recovery_claim_released "$issue_number" "$repo_slug" "$self_login" \
+		"$failure_reason" "$diag_subreason" "$diag_summary"
+
+	# t1934: unlock issue and linked PRs (locked at dispatch time).
+	unlock_issue_after_worker "$issue_number" "$repo_slug"
+
+	# t2814: prefer classified sub-reason for cascade routing (Phase 4 input).
+	local recorded_reason="$failure_reason"
+	if [[ -n "$diag_subreason" && "$diag_subreason" != "unknown" && "$diag_subreason" != "no_log" ]]; then
+		recorded_reason="${failure_reason}:${diag_subreason}"
+	fi
+	fast_fail_record "$issue_number" "$repo_slug" "$recorded_reason" "anthropic" "$crash_type" || true
+
+	# t1959: wire global circuit breaker for launch-class failures only.
+	case "$failure_reason" in
+	no_worker_process | cli_usage_output)
+		local cb_helper="${SCRIPT_DIR}/circuit-breaker-helper.sh"
+		if [[ -x "$cb_helper" ]]; then
+			"$cb_helper" record-failure "${repo_slug}#${issue_number}" "$failure_reason" >/dev/null 2>&1 || true
+		fi
+		;;
+	esac
 	return 0
 }
 
@@ -735,17 +931,7 @@ recover_failed_launch_state() {
 		return 0
 	fi
 
-	# Mark in-flight ledger entry as failed even if GitHub claim edits never stuck.
-	local ledger_helper
-	ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
-	if [[ -x "$ledger_helper" ]]; then
-		local ledger_entry session_key
-		ledger_entry=$("$ledger_helper" check-issue --issue "$issue_number" --repo "$repo_slug" 2>/dev/null || true)
-		session_key=$(printf '%s' "$ledger_entry" | jq -r '.session_key // ""' 2>/dev/null)
-		if [[ -n "$session_key" ]]; then
-			"$ledger_helper" fail --session-key "$session_key" >/dev/null 2>&1 || true
-		fi
-	fi
+	_lr_finalise_ledger_entry "$issue_number" "$repo_slug"
 
 	# For no-worker failures, skip cleanup if a late-started worker appears.
 	# For cli_usage_output failures, always continue to clear stale claim state.
@@ -765,9 +951,7 @@ recover_failed_launch_state() {
 
 	local issue_meta_json
 	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" --json state,labels,assignees 2>/dev/null) || issue_meta_json=""
-	if [[ -z "$issue_meta_json" ]]; then
-		return 0
-	fi
+	[[ -n "$issue_meta_json" ]] || return 0
 
 	local issue_state assigned_to_self has_queued is_blocked
 	issue_state=$(echo "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null)
@@ -783,9 +967,7 @@ recover_failed_launch_state() {
 		return 0
 	fi
 
-	# t2033: atomic transitions via set_issue_status. The blocked branch
-	# preserves status:blocked (target = "blocked"); the normal branch
-	# transitions to status:available.
+	# t2033: atomic transitions via set_issue_status.
 	if [[ "$is_blocked" == "true" ]]; then
 		set_issue_status "$issue_number" "$repo_slug" "blocked" \
 			--remove-assignee "$self_login" >/dev/null 2>&1 || true
@@ -794,32 +976,18 @@ recover_failed_launch_state() {
 			--remove-assignee "$self_login" >/dev/null 2>&1 || true
 	fi
 
-	# t2394: Invalidate stale cross-runner claims immediately (see helper below).
-	_post_launch_recovery_claim_released "$issue_number" "$repo_slug" "$self_login" "$failure_reason"
+	# t2814 (Phase 3): capture worker-log diagnostics for no_worker_process.
+	local diag_subreason="" diag_summary="" diag_pair=""
+	diag_pair=$(_lr_classify_no_worker_failure "$failure_reason" "$repo_slug" "$issue_number")
+	if [[ -n "$diag_pair" ]]; then
+		diag_subreason=$(printf '%s' "$diag_pair" | cut -f1)
+		diag_summary=$(printf '%s' "$diag_pair" | cut -f2-)
+	fi
 
-	# t1934: Unlock issue and linked PRs (locked at dispatch time)
-	unlock_issue_after_worker "$issue_number" "$repo_slug"
+	_lr_apply_post_recovery_records "$issue_number" "$repo_slug" "$self_login" \
+		"$failure_reason" "$crash_type" "$diag_subreason" "$diag_summary"
 
-	# Record the launch failure in the fast-fail counter (t1888)
-	# Pass crash_type through to fast_fail_record → escalate_issue_tier
-	# for crash-type-aware escalation (overwhelmed = immediate, no_work = default)
-	fast_fail_record "$issue_number" "$repo_slug" "$failure_reason" "anthropic" "$crash_type" || true
-
-	# t1959: Wire global circuit breaker for launch-class failures only.
-	# Stale timeouts and in-execution failures have their own per-issue backoff
-	# and should not trip a global halt. Only true launch failures signal
-	# systemic runtime breakage. Recovery happens via record-success on PR merge
-	# or issue close (already wired in supervisor) — NEVER reset on launch success.
-	case "$failure_reason" in
-	no_worker_process | cli_usage_output)
-		local cb_helper="${SCRIPT_DIR}/circuit-breaker-helper.sh"
-		if [[ -x "$cb_helper" ]]; then
-			"$cb_helper" record-failure "${repo_slug}#${issue_number}" "$failure_reason" >/dev/null 2>&1 || true
-		fi
-		;;
-	esac
-
-	echo "[pulse-wrapper] Launch recovery reset #${issue_number} (${repo_slug}) after ${failure_reason} crash_type=${crash_type:-unclassified}: removed self assignee + status:queued" >>"$LOGFILE"
+	echo "[pulse-wrapper] Launch recovery reset #${issue_number} (${repo_slug}) after ${failure_reason} crash_type=${crash_type:-unclassified} diag=${diag_subreason:-none}: removed self assignee + status:queued" >>"$LOGFILE"
 	return 0
 }
 
