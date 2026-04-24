@@ -216,6 +216,54 @@ EXIT_9=$?
 _assert_exit "unknown option → exit 2" 2 "$EXIT_9"
 _assert_contains "unknown option error message" "$OUT_9" "unknown option"
 
+# ─── Test 10: apply-mode rewrites branches: [main] → [develop] for develop-branch repos ───
+# Strategy: create a local git repo with develop as default branch + a local bare
+# remote so push succeeds. Run --apply; verify the committed workflow has
+# `branches: [develop]` even though the canonical template ships `branches: [main]`.
+# Note: _sync_open_pr will fail (gh_create_pr unavailable) but _sync_write_commit_push
+# will have already committed the file to the feature branch before that.
+TMPDIR_10="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_10"
+# Local bare remote so `git push` succeeds.
+BARE_10="$TMPDIR_10/bare.git"
+git init --bare -q "$BARE_10" 2>/dev/null
+git -C "$BARE_10" symbolic-ref HEAD refs/heads/develop 2>/dev/null
+REPO_10="$TMPDIR_10/repo-develop"
+mkdir -p "$REPO_10/.github/workflows"
+git -C "$REPO_10" init -q 2>/dev/null
+git -C "$REPO_10" config user.email test@example.com
+git -C "$REPO_10" config user.name Test
+# Disable commit signing — test repos don't need signed commits and
+# the global gpg/ssh key may be passphrase-protected (causing commit failure).
+git -C "$REPO_10" config commit.gpgsign false
+git -C "$REPO_10" config tag.gpgsign false
+# Set initial branch to develop before the first commit (works on all git versions).
+git -C "$REPO_10" symbolic-ref HEAD refs/heads/develop 2>/dev/null
+# Legacy workflow to trigger NEEDS-MIGRATION classification.
+printf '%s\n' "$LEGACY_CONTENT" >"$REPO_10/.github/workflows/issue-sync.yml"
+git -C "$REPO_10" add -A >/dev/null
+git -C "$REPO_10" commit -q -m "initial"
+git -C "$REPO_10" remote add origin "$BARE_10" 2>/dev/null
+git -C "$REPO_10" push -q origin develop 2>/dev/null
+# Set refs/remotes/origin/HEAD so _sync_preflight resolves develop as default.
+git -C "$REPO_10" fetch -q origin 2>/dev/null
+git -C "$REPO_10" remote set-head origin develop 2>/dev/null
+_write_repos_json "$TMPDIR_10" "{\"initialized_repos\":[{\"path\":\"$REPO_10\",\"slug\":\"owner/repo-develop\"}]}"
+SYNC_BRANCH_10="chore/workflow-sync-$(date +%Y%m%d)"
+HOME="$TMPDIR_10" bash "$HELPER" --apply 2>/dev/null || true
+# Verify the committed file on the feature branch has branches: [develop].
+WF_BRANCHES_10=$(git -C "$REPO_10" show "${SYNC_BRANCH_10}:.github/workflows/issue-sync.yml" 2>/dev/null \
+	| grep -E "^\s+branches:" | head -1 || true)
+if [[ "$WF_BRANCHES_10" == *"[develop]"* ]]; then
+	printf '%sPASS%s apply-mode writes branches: [develop] for develop-branch repo\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s apply-mode writes branches: [develop] for develop-branch repo\n' "$RED" "$NC"
+	printf '       got: %s\n' "$WF_BRANCHES_10"
+	((_FAIL++))
+fi
+rm -rf "$TMPDIR_10"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 printf '\n'
 if [[ "$_FAIL" -eq 0 ]]; then

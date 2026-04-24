@@ -73,6 +73,9 @@ readonly _STATUS_FAILED="FAILED"
 readonly _CLASS_DRIFTED='DRIFTED/CALLER'
 readonly _CLASS_NEEDS_MIGRATION='NEEDS-MIGRATION'
 
+# Canonical default branch name used in the template and as preflight fallback.
+readonly _BRANCH_DEFAULT_NAME="main"
+
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 _die() {
@@ -176,6 +179,23 @@ _render_template_with_ref() {
 	_ref_escaped=$(printf '%s' "$_ref" | sed 's/[&|]/\\&/g')
 	# Template ships with `@main` by default; rewrite to target ref.
 	sed -E 's|(uses:[[:space:]]*marcusquinn/aidevops/.github/workflows/[^@]+)@[^[:space:]]+|\1'"$_ref_escaped"'|' "$_template"
+	return 0
+}
+
+# Rewrite `branches: [main]` → `branches: [<default_branch>]` in caller YAML content.
+# No-op when default branch is `main`. Emits rewritten content on stdout.
+# Used after preflight resolves the downstream default branch.
+_rewrite_content_branch_filter() {
+	local _content="$1"
+	local _branch="$2"
+	if [[ "$_branch" == "$_BRANCH_DEFAULT_NAME" ]]; then
+		printf '%s\n' "$_content"
+		return 0
+	fi
+	local _branch_escaped
+	_branch_escaped=$(printf '%s' "$_branch" | sed 's/[&|/]/\\&/g')
+	printf '%s\n' "$_content" | \
+		sed -E "s|^([[:space:]]+branches:) \[${_BRANCH_DEFAULT_NAME}\]$|\1 [${_branch_escaped}]|"
 	return 0
 }
 
@@ -303,7 +323,7 @@ _sync_preflight() {
 	fi
 	local _default_branch
 	_default_branch=$(git -C "$_path" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
-	[[ -z "$_default_branch" ]] && _default_branch="main"
+	[[ -z "$_default_branch" ]] && _default_branch="$_BRANCH_DEFAULT_NAME"
 	if ! git -C "$_path" diff-index --quiet HEAD -- 2>/dev/null; then
 		printf '%s\t%s\t%s\tworking tree not clean; skipping\n' "$_slug" "$_status" "$_STATUS_SKIPPED"
 		return 2
@@ -427,6 +447,11 @@ _sync_one_repo() {
 		return 1
 	fi
 	local _default_branch="$_PREFLIGHT_DEFAULT_BRANCH"
+
+	# Rewrite branch filter to match downstream default branch (e.g. develop → develop).
+	if [[ "$_default_branch" != "$_BRANCH_DEFAULT_NAME" ]]; then
+		_target_content=$(_rewrite_content_branch_filter "$_target_content" "$_default_branch")
+	fi
 
 	if ! _sync_write_commit_push \
 		"$_slug" "$_path" "$_status" "$_branch_name" \

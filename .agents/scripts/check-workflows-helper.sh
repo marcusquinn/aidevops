@@ -119,9 +119,14 @@ _classify_workflow() {
 	if grep -qE "uses:\s*marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml@" "$_wf"; then
 		# It's a caller. Compare against canonical, normalising the @ref so that
 		# `@main` vs `@v3.9.0` doesn't count as drift (intentional pinning is OK).
+		# Also normalise the push-trigger branch filter so a repo with
+		# `branches: [develop]` installed by sync-workflows is not flagged as
+		# drift — the branch name reflects the downstream default, not the template.
 		local _wf_norm _canon_norm
-		_wf_norm=$(sed -E 's|(marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml)@[^[:space:]]+|\1@REF|g' "$_wf")
-		_canon_norm=$(sed -E 's|(marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml)@[^[:space:]]+|\1@REF|g' "$_canon")
+		_wf_norm=$(sed -E 's|(marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml)@[^[:space:]]+|\1@REF|g' "$_wf" \
+			| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|')
+		_canon_norm=$(sed -E 's|(marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml)@[^[:space:]]+|\1@REF|g' "$_canon" \
+			| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|')
 
 		if [[ "$_wf_norm" == "$_canon_norm" ]]; then
 			printf 'CURRENT/CALLER\n'
