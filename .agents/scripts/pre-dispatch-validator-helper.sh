@@ -58,6 +58,7 @@ _register_validators() {
 	_VALIDATOR_REGISTRY["ratchet-down"]="_validator_ratchet_down"
 	_VALIDATOR_REGISTRY["large-file-simplification-gate"]="_validator_large_file_simplification_gate"
 	_VALIDATOR_REGISTRY["function-complexity-gate"]="_validator_function_complexity_gate"
+	_VALIDATOR_REGISTRY["upstream-watch"]="_validator_upstream_watch"
 	return 0
 }
 
@@ -213,6 +214,58 @@ _validator_function_complexity_gate() {
 }
 
 # ---------------------------------------------------------------------------
+# Upstream-watch validator (t2810)
+#
+# Re-checks the upstream-watch state file. If the upstream slug has
+# updates_pending == 0, the user has already acked and the issue premise
+# is falsified.
+#
+# Expects UPSTREAM_SLUG to be set by cmd_validate() after parsing the
+# generator marker attributes.
+# ---------------------------------------------------------------------------
+_validator_upstream_watch() {
+	local slug="$1"
+
+	if [[ -z "${UPSTREAM_SLUG:-}" ]]; then
+		_log "WARN" "upstream-watch validator: no upstream_slug attribute found in generator marker"
+		return 20
+	fi
+
+	local state_file="${AIDEVOPS_UPSTREAM_WATCH_STATE:-${HOME}/.aidevops/cache/upstream-watch-state.json}"
+	if [[ ! -f "$state_file" ]]; then
+		_log "WARN" "upstream-watch validator: state file not found at ${state_file}"
+		return 20
+	fi
+
+	# Check updates_pending for both GitHub repos and non-GitHub upstreams
+	local pending_github pending_nongithub
+	pending_github=$(jq -r --arg name "$UPSTREAM_SLUG" '.repos[$name].updates_pending // -1' "$state_file" 2>/dev/null) || pending_github="-1"
+	pending_nongithub=$(jq -r --arg name "$UPSTREAM_SLUG" '.non_github[$name].updates_pending // -1' "$state_file" 2>/dev/null) || pending_nongithub="-1"
+
+	# Determine which store has the entry
+	local pending="-1"
+	if [[ "$pending_github" != "-1" ]]; then
+		pending="$pending_github"
+	elif [[ "$pending_nongithub" != "-1" ]]; then
+		pending="$pending_nongithub"
+	fi
+
+	if [[ "$pending" == "0" ]]; then
+		_log "INFO" "upstream-watch validator: ${UPSTREAM_SLUG} has updates_pending=0 — premise falsified (already acked)"
+		VALIDATOR_RATIONALE="Upstream \`${UPSTREAM_SLUG}\` has \`updates_pending: 0\` (already acknowledged). Premise falsified. Not dispatching."
+		return 10
+	fi
+
+	if [[ "$pending" == "-1" ]]; then
+		_log "WARN" "upstream-watch validator: ${UPSTREAM_SLUG} not found in state file — validator error"
+		return 20
+	fi
+
+	_log "INFO" "upstream-watch validator: ${UPSTREAM_SLUG} has updates_pending=${pending} — premise holds"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Compose and post the falsified-premise closure comment, then close the issue.
 # ---------------------------------------------------------------------------
 _close_with_rationale() {
@@ -299,9 +352,10 @@ cmd_validate() {
 		return 0
 	fi
 
-	# Extract optional attributes: cited_file and threshold
+	# Extract optional attributes: cited_file, threshold, upstream_slug
 	CITED_FILE=$(printf '%s' "$generator_line" | grep -oE 'cited_file=[^ >]+' | sed 's/cited_file=//' 2>/dev/null) || CITED_FILE=""
 	CITED_THRESHOLD=$(printf '%s' "$generator_line" | grep -oE 'threshold=[0-9]+' | sed 's/threshold=//' 2>/dev/null) || CITED_THRESHOLD=""
+	UPSTREAM_SLUG=$(printf '%s' "$generator_line" | grep -oE 'upstream_slug=[^ >]+' | sed 's/upstream_slug=//' 2>/dev/null) || UPSTREAM_SLUG=""
 
 	_log "INFO" "#${issue_number}: generator=${generator} cited_file=${CITED_FILE:-<none>} threshold=${CITED_THRESHOLD:-<none>}"
 
