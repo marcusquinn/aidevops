@@ -52,7 +52,7 @@ Subagent write restrictions: on `main`/`master`, **headless subagents** may writ
 
 ## Quick Reference
 
-- **CLI**: `aidevops [init|update|status|repos|skills|features]`
+- **CLI**: `aidevops [init|update|status|repos|skills|features|check-workflows]`
 - **Scripts**: `~/.aidevops/agents/scripts/[service]-helper.sh [command] [account] [target]`
 - **Scripts (editing)**: `~/.aidevops/agents/scripts/` is a **deployed copy** — edits there are overwritten by `aidevops update` (every ~10 min). For personal scripts, use `~/.aidevops/agents/custom/scripts/` (survives updates). To fix framework scripts, edit `~/Git/aidevops/.agents/scripts/<name>.sh` and run `setup.sh --non-interactive`. See `reference/customization.md`.
 - **Secrets**: `aidevops secret` (gopass preferred) or `~/.config/aidevops/credentials.sh` (600 perms)
@@ -244,6 +244,8 @@ Background and infinite-loop root cause (t2386): `reference/auto-merge.md` (NMR 
 **Workflow Cascade Vulnerability Lint (t2229):** `.github/workflows/workflow-cascade-lint.yml` flags PRs that modify workflows containing the cascade-vulnerable combination: label-like event types (`labeled`, `unlabeled`, `assigned`, etc.) + `cancel-in-progress: true` + no mitigation (`paths-ignore` or event-action guard). See t2220 for the failure mode (15 cancelled runs in ~2s). Helper: `.agents/scripts/workflow-cascade-lint.sh` (supports `--dry-run` for local checks). Override: apply `workflow-cascade-ok` label AND add a `## Workflow Cascade Justification` section to the PR body.
 
 **Reusable-workflow architecture (t2770):** Framework workflows that need to run identically across many repos (starting with `issue-sync.yml`) are shipped as **reusable workflows** (`on: workflow_call:`). Downstream repos carry a ~45-line caller YAML (`.github/workflows/<name>.yml`) that `uses: marcusquinn/aidevops/.github/workflows/<name>-reusable.yml@<ref>` and declares its own triggers. Framework shell scripts are fetched at runtime via a secondary `actions/checkout` — downstream repos need **zero** `.agents/scripts/` files. Canonical caller templates live at `.agents/templates/workflows/`. Pinning options: `@main` (auto-update, default), `@v3.9.0` (stability), `@<sha>` (exact). Full architecture, migration guide, and pinning tradeoffs: `reference/reusable-workflows.md`.
+
+**Workflow drift detector (t2778):** `aidevops check-workflows` iterates `~/.config/aidevops/repos.json` and classifies each repo's `.github/workflows/issue-sync.yml` against the canonical caller template at `.agents/templates/workflows/issue-sync-caller.yml`. Classifications: `CURRENT/CALLER`, `CURRENT/SELF-CALLER`, `DRIFTED/CALLER`, `NEEDS-MIGRATION`, `NO-WORKFLOW`, `LOCAL-ONLY`, `NO-TEMPLATE`. Exit code 1 if any repo is `DRIFTED/CALLER` or `NEEDS-MIGRATION` (suitable for CI gates). Flags: `--repo OWNER/REPO`, `--json`, `--verbose`. Phase 2 (`aidevops sync-workflows --apply`) will migrate/refresh callers based on this classification.
 
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 

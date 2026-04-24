@@ -1743,6 +1743,7 @@ main() {
 	sources | agent-sources) _dispatch_helper "agent-sources-helper.sh" "agent-sources-helper.sh" "$@" ;;
 	plugin | plugins) cmd_plugin "$@" ;;
 	pulse) _dispatch_helper "pulse-session-helper.sh" "pulse-session-helper.sh" "$@" ;;
+	check-workflows | workflows) _dispatch_helper "check-workflows-helper.sh" "check-workflows-helper.sh" "$@" ;;
 	security) _cmd_security "$@" ;;
 	doctor | doc) _dispatch_helper "doctor-helper.sh" "doctor-helper.sh" "$@" ;;
 	detect | scan) cmd_detect ;;
