@@ -1,0 +1,52 @@
+name: Review Bot Gate
+
+# Managed by aidevops framework.
+# Upstream logic lives in: marcusquinn/aidevops/.github/workflows/review-bot-gate-reusable.yml
+# This caller is tiny on purpose — all the logic is centralised upstream.
+# Update this caller only to change the trigger filters below. For logic fixes,
+# run `aidevops update` to get the latest framework version; your caller will
+# pick up the change automatically (if pinned to @main) or on the next version
+# bump + resync (if pinned to @v3.9.0 style).
+#
+# To manage this file:
+#   aidevops check-workflows       # detect drift vs canonical template
+#   aidevops sync-workflows        # preview resync plan
+#   aidevops sync-workflows --apply
+#
+# To enforce: add "review-bot-gate" as a required status check in
+# GitHub branch protection settings for each repo.
+#
+# Rate-limit behaviour: controlled by `review_gate.rate_limit_behavior` in
+# ~/.config/aidevops/repos.json. Default: "pass" (merge proceeds when bots
+# are rate-limited). Set "wait" to block merge until bots come off rate-limit.
+# See: .agents/reference/repos-json-fields.md "review_gate" field.
+#
+# Pinning options:
+#   @main           ← auto-update; what this template uses by default
+#   @v3.9.0         ← pin to a specific aidevops version for stability
+#                     (bump via aidevops sync-workflows after upgrades)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted]
+  issue_comment:
+    # edited re-triggers when CodeRabbit finalises its Phase 1 placeholder (t2139).
+    # Without this trigger, the settlement check only fires on new comments, not
+    # on the Phase 2 edit that makes the placeholder a real review.
+    types: [created, edited]
+
+# Do NOT cancel in-progress runs. When cancel-in-progress was true, the initial
+# pull_request:opened run was cancelled by the issue_comment:created event (fired
+# when a bot posted). The cancelled run left a permanent stale CANCELLED check on
+# the PR, making mergeStateStatus UNSTABLE even though the re-triggered run passed.
+# With cancel-in-progress: false, both runs complete. GH#2973.
+concurrency:
+  group: review-bot-gate-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    uses: marcusquinn/aidevops/.github/workflows/review-bot-gate-reusable.yml@main
+    secrets: inherit

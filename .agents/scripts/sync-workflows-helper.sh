@@ -7,7 +7,11 @@
 # Phase 2 of workflow drift elimination (t2779, GH#20649).
 # Partner to check-workflows-helper.sh (Phase 1, t2778). Reads classifications
 # from the detector and, per repo, either installs or refreshes the canonical
-# caller template at `.github/workflows/issue-sync.yml`.
+# caller template at `.github/workflows/<name>.yml`.
+#
+# Currently managed workflows (synced by default):
+#   - issue-sync.yml         (template: issue-sync-caller.yml)
+#   - review-bot-gate.yml    (template: review-bot-gate-caller.yml, GH#20727)
 #
 # Default mode is --dry-run. Pass --apply to actually write, commit, push, and
 # open a PR in each target repo.
@@ -61,7 +65,14 @@ _C_NC=$'\033[0m'
 
 readonly REPOS_JSON="$HOME/.config/aidevops/repos.json"
 readonly CHECK_HELPER="$SELF_DIR/check-workflows-helper.sh"
-readonly WORKFLOW_PATH=".github/workflows/issue-sync.yml"
+
+# Known managed workflows — each entry is workflow_file:template_file.
+# Mirrors _KNOWN_WORKFLOWS in check-workflows-helper.sh.
+# GH#20727: review-bot-gate added.
+readonly _SYNC_KNOWN_WORKFLOWS=(
+	"issue-sync.yml:issue-sync-caller.yml"
+	"review-bot-gate.yml:review-bot-gate-caller.yml"
+)
 
 # Output mode constants.
 readonly _STATUS_SKIPPED="SKIPPED"
@@ -102,27 +113,28 @@ _usage() {
 
 sync-workflows-helper.sh — resync drifted framework workflows (t2779, GH#20649)
 
-Reads classifications from check-workflows-helper.sh and, per repo, installs
-(NEEDS-MIGRATION) or refreshes (DRIFTED/CALLER) the canonical caller template
-at `.github/workflows/issue-sync.yml`.
+Reads classifications from check-workflows-helper.sh and, per repo × workflow,
+installs (NEEDS-MIGRATION) or refreshes (DRIFTED/CALLER) the canonical caller
+template. Managed workflows: issue-sync.yml, review-bot-gate.yml (GH#20727).
 
 Default is --dry-run. Pass --apply to write, commit, push, and open PRs.
 
 Usage:
-  sync-workflows-helper.sh [--apply] [--repo OWNER/REPO] [--force-ref]
-                           [--ref REF] [--branch NAME] [--json]
+  sync-workflows-helper.sh [--apply] [--repo OWNER/REPO] [--workflow NAME]
+                           [--force-ref] [--ref REF] [--branch NAME] [--json]
   sync-workflows-helper.sh --help
 
 Options:
-  --apply         Actually perform the migration. Without this, only prints
-                  what would happen (dry-run is the default for safety).
-  --repo SLUG     Limit to a single repo. Example: --repo owner/repo.
-  --force-ref     Overwrite existing @ref pinning with the template's default.
-                  Without this, existing pins (@v3.9.0, @<sha>) are preserved.
-  --ref REF       Explicit @ref for new installs (default: @main).
-  --branch NAME   Branch name prefix (default: chore/workflow-sync-YYYYMMDD).
-  --json          Emit one JSON object per repo describing the outcome.
-  -h, --help      Show this help.
+  --apply           Actually perform the migration. Without this, only prints
+                    what would happen (dry-run is the default for safety).
+  --repo SLUG       Limit to a single repo. Example: --repo owner/repo.
+  --workflow NAME   Limit to a single workflow (issue-sync or review-bot-gate).
+  --force-ref       Overwrite existing @ref pinning with the template's default.
+                    Without this, existing pins (@v3.9.0, @<sha>) are preserved.
+  --ref REF         Explicit @ref for new installs (default: @main).
+  --branch NAME     Branch name prefix (default: chore/workflow-sync-YYYYMMDD).
+  --json            Emit one JSON object per repo × workflow describing outcome.
+  -h, --help        Show this help.
 
 Exit codes:
   0  no work needed OR all targets succeeded
@@ -130,11 +142,11 @@ Exit codes:
   2  config error
 
 Examples:
-  # See what would happen across all repos:
+  # See what would happen across all repos (all workflows):
   sync-workflows-helper.sh
 
-  # Migrate one specific repo:
-  sync-workflows-helper.sh --apply --repo wpallstars/awardsapp
+  # Migrate review-bot-gate only for one repo:
+  sync-workflows-helper.sh --apply --repo wpallstars/awardsapp --workflow review-bot-gate
 
   # Migrate all drifted/needs-migration repos, pin to v3.9.0:
   sync-workflows-helper.sh --apply --ref @v3.9.0
@@ -145,10 +157,13 @@ EOF
 
 # ─── Template Resolution ────────────────────────────────────────────────────
 
+# _resolve_canonical_template <template_filename>
+# e.g. _resolve_canonical_template "review-bot-gate-caller.yml"
 _resolve_canonical_template() {
+	local _template_filename="$1"
 	local _candidates=(
-		"$HOME/.aidevops/agents/templates/workflows/issue-sync-caller.yml"
-		"$SELF_DIR/../templates/workflows/issue-sync-caller.yml"
+		"$HOME/.aidevops/agents/templates/workflows/${_template_filename}"
+		"$SELF_DIR/../templates/workflows/${_template_filename}"
 	)
 	local _path
 	for _path in "${_candidates[@]}"; do
@@ -202,11 +217,14 @@ _rewrite_content_branch_filter() {
 # ─── Classification Ingestion ───────────────────────────────────────────────
 
 # Invoke check-workflows-helper.sh --json and filter to actionable rows.
-# Emits TSV: slug\tpath\tstatus\tref_pin
+# Emits TSV: slug\tpath\tstatus\tworkflow
+# _list_actionable_repos <filter_slug> [filter_workflow]
 _list_actionable_repos() {
 	local _filter_slug="$1"
+	local _filter_workflow="${2:-}"
 	local _check_args=(--json)
 	[[ -n "$_filter_slug" ]] && _check_args+=(--repo "$_filter_slug")
+	[[ -n "$_filter_workflow" ]] && _check_args+=(--workflow "$_filter_workflow")
 
 	# check-workflows-helper.sh exits 1 when actionable rows exist — that is
 	# precisely when we have work to do. Capture output regardless of exit.
@@ -216,58 +234,61 @@ _list_actionable_repos() {
 		return 1
 	fi
 
-	# Filter to DRIFTED/CALLER and NEEDS-MIGRATION; carry slug, path, classification.
+	# Filter to DRIFTED/CALLER and NEEDS-MIGRATION; carry slug, path,
+	# classification, and workflow name so _process_rows can pick the right
+	# template for each (repo × workflow) combination.
 	# --arg makes the bash constants visible to jq without interpolation hacks.
 	printf '%s\n' "$_json" | jq -r \
 		--arg drifted "$_CLASS_DRIFTED" \
 		--arg needs "$_CLASS_NEEDS_MIGRATION" \
 		'select((.classification == $drifted) or (.classification == $needs))
-			| [.slug, .path, .classification, ""] | @tsv' 2>/dev/null
+			| [.slug, .path, .classification, (.workflow // "")] | @tsv' 2>/dev/null
 	return 0
 }
 
 # ─── Message Formatters ─────────────────────────────────────────────────────
 # Bash 3.2-safe multi-line body builders (no heredoc inside $()).
 
-# _format_commit_body <status> <ref>
+# _format_commit_body <status> <ref> <workflow_path>
 # shellcheck disable=SC2016  # backticks are intentional markdown literals
 _format_commit_body() {
 	local _status="$1"
 	local _ref="$2"
-	printf 'Resync `%s` to the canonical aidevops caller template.\n\n' "$WORKFLOW_PATH"
+	local _workflow_path="$3"
+	printf 'Resync `%s` to the canonical aidevops caller template.\n\n' "$_workflow_path"
 	printf 'Classification before: %s\n' "$_status"
 	printf 'Ref: %s\n\n' "$_ref"
-	printf 'This migrates/refreshes the workflow to the reusable-workflow pattern\n'
-	printf 'introduced in aidevops v3.9.0. The caller now delegates all logic to\n'
-	printf '`marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml`,\n'
+	printf 'This migrates/refreshes the workflow to the reusable-workflow pattern.\n'
+	printf 'The caller now delegates all logic to the aidevops reusable workflow,\n'
 	printf 'eliminating drift between this repo and the framework canonical version.\n\n'
 	printf 'Generated by: aidevops sync-workflows --apply (t2779, GH#20649)\n'
 	return 0
 }
 
-# _format_pr_body <status> <ref>
+# _format_pr_body <status> <ref> <workflow_path>
 # shellcheck disable=SC2016  # backticks are intentional markdown literals
 _format_pr_body() {
 	local _status="$1"
 	local _ref="$2"
+	local _workflow_path="$3"
 	printf '## Summary\n\n'
-	printf 'Resync `%s` to the canonical aidevops caller template\n' "$WORKFLOW_PATH"
-	printf '(v3.9.0+, reusable-workflow pattern).\n\n'
+	printf 'Resync `%s` to the canonical aidevops caller template\n' "$_workflow_path"
+	printf '(reusable-workflow pattern, GH#20649 + GH#20727).\n\n'
 	printf '**Classification before**: `%s`\n' "$_status"
 	printf '**Ref**: `%s`\n\n' "$_ref"
 	printf '## Why\n\n'
-	printf 'The aidevops framework migrated `issue-sync.yml` from a full-copy workflow\n'
-	printf 'to a reusable-workflow pattern in v3.9.0. Downstream repos now carry a ~45-line\n'
-	printf 'caller that delegates to `marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml`.\n\n'
+	printf 'The aidevops framework ships managed GitHub Actions workflows as reusable\n'
+	printf 'workflows. Downstream repos carry ~45-line callers that delegate all logic\n'
+	printf 'to `marcusquinn/aidevops/.github/workflows/*-reusable.yml`.\n\n'
 	printf 'This PR brings this repo in line with the canonical template, eliminating\n'
 	printf 'drift and unblocking automatic updates when the framework evolves.\n\n'
 	printf '## How to verify\n\n'
-	printf 'After merge, the next `TODO.md` push should trigger issue-sync using the\n'
-	printf 'reusable workflow. Framework shell scripts are fetched at runtime via a\n'
-	printf 'secondary checkout — no `.agents/scripts/` files are needed in this repo.\n\n'
+	printf 'After merge, trigger an event matching the workflow triggers. Framework\n'
+	printf 'scripts are fetched at runtime via a secondary checkout — no\n'
+	printf '`.agents/scripts/` files are needed in this repo.\n\n'
 	printf '## Rollback\n\n'
-	printf 'If issue-sync breaks, revert this PR. The previous workflow is preserved in\n'
-	printf 'git history at the parent commit.\n\n'
+	printf 'If the workflow breaks, revert this PR. The previous workflow is preserved\n'
+	printf 'in git history at the parent commit.\n\n'
 	printf 'Generated by: `aidevops sync-workflows --apply` (t2779, GH#20649).\n'
 	return 0
 }
@@ -293,15 +314,16 @@ _resolve_effective_ref() {
 	return 0
 }
 
-# _sync_dryrun_emit <slug> <status> <effective_ref>
+# _sync_dryrun_emit <slug> <status> <effective_ref> [workflow_relpath]
 _sync_dryrun_emit() {
 	local _slug="$1"
 	local _status="$2"
 	local _effective_ref="$3"
+	local _workflow_relpath="${4:-.github/workflows/issue-sync.yml}"
 	local _action="install"
 	[[ "$_status" == "$_CLASS_DRIFTED" ]] && _action="refresh"
 	printf '%s\t%s\t%s\t%s → %s at ref %s\n' \
-		"$_slug" "$_status" "$_STATUS_PLANNED" "$_action" "$WORKFLOW_PATH" "$_effective_ref"
+		"$_slug" "$_status" "$_STATUS_PLANNED" "$_action" "$_workflow_relpath" "$_effective_ref"
 	return 0
 }
 
@@ -339,7 +361,7 @@ _sync_preflight() {
 	return 0
 }
 
-# _sync_write_commit_push <slug> <path> <status> <branch> <default_branch> <effective_ref> <content>
+# _sync_write_commit_push <slug> <path> <status> <branch> <default_branch> <effective_ref> <content> [workflow_relpath]
 _sync_write_commit_push() {
 	local _slug="$1"
 	local _path="$2"
@@ -348,7 +370,8 @@ _sync_write_commit_push() {
 	local _default_branch="$5"
 	local _effective_ref="$6"
 	local _target_content="$7"
-	local _workflow="$_path/$WORKFLOW_PATH"
+	local _workflow_relpath="${8:-.github/workflows/issue-sync.yml}"
+	local _workflow="$_path/$_workflow_relpath"
 
 	if ! git -C "$_path" pull --ff-only origin "$_default_branch" >/dev/null 2>&1; then
 		_warn "$_slug: pull --ff-only failed, attempting without"
@@ -359,10 +382,10 @@ _sync_write_commit_push() {
 	fi
 	mkdir -p "$_path/.github/workflows"
 	printf '%s\n' "$_target_content" >"$_workflow"
-	git -C "$_path" add "$WORKFLOW_PATH" >/dev/null 2>&1
+	git -C "$_path" add "$_workflow_relpath" >/dev/null 2>&1
 	local _commit_subject="chore: resync framework workflow ($_status → CURRENT/CALLER)"
 	local _commit_body
-	_commit_body=$(_format_commit_body "$_status" "$_effective_ref")
+	_commit_body=$(_format_commit_body "$_status" "$_effective_ref" "$_workflow_relpath")
 	if ! git -C "$_path" diff --cached --quiet; then
 		if ! git -C "$_path" commit -q -m "$_commit_subject" -m "$_commit_body"; then
 			printf '%s\t%s\t%s\tgit commit failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
@@ -378,7 +401,7 @@ _sync_write_commit_push() {
 	return 0
 }
 
-# _sync_open_pr <slug> <path> <status> <branch> <default_branch> <effective_ref>
+# _sync_open_pr <slug> <path> <status> <branch> <default_branch> <effective_ref> [workflow_relpath]
 _sync_open_pr() {
 	local _slug="$1"
 	local _path="$2"
@@ -386,6 +409,7 @@ _sync_open_pr() {
 	local _branch_name="$4"
 	local _default_branch="$5"
 	local _effective_ref="$6"
+	local _workflow_relpath="${7:-.github/workflows/issue-sync.yml}"
 
 	if ! command -v gh_create_pr >/dev/null 2>&1; then
 		printf '%s\t%s\t%s\tgh_create_pr unavailable — source shared-gh-wrappers.sh\n' \
@@ -394,7 +418,7 @@ _sync_open_pr() {
 	fi
 	local _pr_title="chore: resync framework workflow to aidevops canonical caller"
 	local _pr_body
-	_pr_body=$(_format_pr_body "$_status" "$_effective_ref")
+	_pr_body=$(_format_pr_body "$_status" "$_effective_ref" "$_workflow_relpath")
 	local _pr_url
 	if ! _pr_url=$(gh_create_pr \
 		--repo "$_slug" \
@@ -410,8 +434,9 @@ _sync_open_pr() {
 	return 0
 }
 
-# _sync_one_repo <slug> <path> <status> <template_path> <target_ref> <force_ref> <branch_name> <apply>
+# _sync_one_repo <slug> <path> <status> <template_path> <target_ref> <force_ref> <branch_name> <apply> <workflow_relpath>
 # Emits a single-line summary; returns 0 on success, 1 on failure.
+# workflow_relpath — path relative to repo root e.g. .github/workflows/review-bot-gate.yml
 _sync_one_repo() {
 	local _slug="$1"
 	local _path="$2"
@@ -421,8 +446,9 @@ _sync_one_repo() {
 	local _force_ref="$6"
 	local _branch_name="$7"
 	local _apply="$8"
+	local _workflow_relpath="${9:-.github/workflows/issue-sync.yml}"
 
-	local _workflow="$_path/$WORKFLOW_PATH"
+	local _workflow="$_path/$_workflow_relpath"
 	local _effective_ref
 	_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")
 
@@ -455,13 +481,13 @@ _sync_one_repo() {
 
 	if ! _sync_write_commit_push \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
-		"$_default_branch" "$_effective_ref" "$_target_content"; then
+		"$_default_branch" "$_effective_ref" "$_target_content" "$_workflow_relpath"; then
 		return 1
 	fi
 
 	_sync_open_pr \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
-		"$_default_branch" "$_effective_ref"
+		"$_default_branch" "$_effective_ref" "$_workflow_relpath"
 	return $?
 }
 
@@ -473,6 +499,7 @@ _sync_one_repo() {
 _parse_args() {
 	_OPT_APPLY=0
 	_OPT_FILTER_SLUG=""
+	_OPT_FILTER_WORKFLOW=""
 	_OPT_FORCE_REF=0
 	_OPT_TARGET_REF="@main"
 	_OPT_BRANCH_NAME=""
@@ -482,6 +509,7 @@ _parse_args() {
 		case "$_opt" in
 		--apply) _OPT_APPLY=1; shift ;;
 		--repo) _OPT_FILTER_SLUG="${2:-}"; shift 2 || _die "--repo requires an argument" ;;
+		--workflow) _OPT_FILTER_WORKFLOW="${2:-}"; shift 2 || _die "--workflow requires an argument" ;;
 		--force-ref) _OPT_FORCE_REF=1; shift ;;
 		--ref)
 			_OPT_TARGET_REF="${2:-}"
@@ -523,23 +551,36 @@ _print_result_row() {
 	return 0
 }
 
-# _process_rows <tsv> <template> → iterates, calls _sync_one_repo, emits rows.
+# _process_rows <tsv> → iterates, resolves per-workflow template, calls _sync_one_repo.
+# TSV columns: slug\tpath\tstatus\tworkflow_name
 # Returns the number of failures (0 if all ok).
 _process_rows() {
 	local _tsv="$1"
-	local _template="$2"
 	local _any_failed=0
-	local _slug _path _status _ref_pin
-	while IFS=$'\t' read -r _slug _path _status _ref_pin; do
+	local _slug _path _status _workflow_name
+	while IFS=$'\t' read -r _slug _path _status _workflow_name; do
 		[[ -z "$_slug" ]] && continue
 		# Never touch aidevops itself (defence in depth; Phase 1 also emits
 		# CURRENT/SELF-CALLER).
 		[[ "$_slug" == "marcusquinn/aidevops" ]] && continue
 
+		# Resolve the template for this workflow.
+		# _workflow_name is the short name (e.g. "issue-sync" or "review-bot-gate").
+		# Map it to the template filename.
+		local _workflow_file="${_workflow_name}.yml"
+		local _template_file="${_workflow_name}-caller.yml"
+		local _workflow_relpath=".github/workflows/${_workflow_file}"
+		local _template=""
+		if ! _template=$(_resolve_canonical_template "$_template_file"); then
+			_warn "$_slug: cannot resolve template for workflow '${_workflow_name}' — skipping"
+			continue
+		fi
+
 		local _result
 		if _result=$(_sync_one_repo \
 			"$_slug" "$_path" "$_status" "$_template" \
-			"$_OPT_TARGET_REF" "$_OPT_FORCE_REF" "$_OPT_BRANCH_NAME" "$_OPT_APPLY"); then
+			"$_OPT_TARGET_REF" "$_OPT_FORCE_REF" "$_OPT_BRANCH_NAME" "$_OPT_APPLY" \
+			"$_workflow_relpath"); then
 			:
 		else
 			_any_failed=1
@@ -586,20 +627,16 @@ main() {
 	command -v jq >/dev/null 2>&1 || _die "jq required — install via Homebrew/apt"
 	[[ -x "$CHECK_HELPER" ]] || _die "check-workflows-helper.sh not found or not executable at $CHECK_HELPER"
 
-	local _template
-	if ! _template=$(_resolve_canonical_template); then
-		_die "canonical template issue-sync-caller.yml not found — check aidevops installation"
-	fi
 	if [[ -z "$_OPT_BRANCH_NAME" ]]; then
 		_OPT_BRANCH_NAME="chore/workflow-sync-$(date +%Y%m%d)"
 	fi
 
 	local _tsv
-	if ! _tsv=$(_list_actionable_repos "$_OPT_FILTER_SLUG"); then
+	if ! _tsv=$(_list_actionable_repos "$_OPT_FILTER_SLUG" "$_OPT_FILTER_WORKFLOW"); then
 		_die "check-workflows-helper.sh failed — cannot classify repos"
 	fi
 	if [[ -z "$_tsv" ]]; then
-		_info "no actionable repos (all CURRENT or NO-WORKFLOW)."
+		_info "no actionable repos/workflows (all CURRENT or NO-WORKFLOW)."
 		return 0
 	fi
 
@@ -609,7 +646,7 @@ main() {
 
 	_print_header_footer "header" "$_OPT_APPLY"
 	local _any_failed=0
-	_process_rows "$_tsv" "$_template" || _any_failed=1
+	_process_rows "$_tsv" || _any_failed=1
 	_print_header_footer "footer" "$_OPT_APPLY"
 
 	return "$_any_failed"
