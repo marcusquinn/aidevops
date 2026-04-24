@@ -593,6 +593,12 @@ log_warn() {
 	return 0
 }
 
+# Alias for log_warn — callers using the more explicit name are supported
+log_warning() {
+	log_warn "$@"
+	return 0
+}
+
 # Validate required parameter
 validate_required_param() {
 	local param_name="$1"
