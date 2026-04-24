@@ -243,6 +243,8 @@ Background and infinite-loop root cause (t2386): `reference/auto-merge.md` (NMR 
 
 **Workflow Cascade Vulnerability Lint (t2229):** `.github/workflows/workflow-cascade-lint.yml` flags PRs that modify workflows containing the cascade-vulnerable combination: label-like event types (`labeled`, `unlabeled`, `assigned`, etc.) + `cancel-in-progress: true` + no mitigation (`paths-ignore` or event-action guard). See t2220 for the failure mode (15 cancelled runs in ~2s). Helper: `.agents/scripts/workflow-cascade-lint.sh` (supports `--dry-run` for local checks). Override: apply `workflow-cascade-ok` label AND add a `## Workflow Cascade Justification` section to the PR body.
 
+**Reusable-workflow architecture (t2770):** Framework workflows that need to run identically across many repos (starting with `issue-sync.yml`) are shipped as **reusable workflows** (`on: workflow_call:`). Downstream repos carry a ~45-line caller YAML (`.github/workflows/<name>.yml`) that `uses: marcusquinn/aidevops/.github/workflows/<name>-reusable.yml@<ref>` and declares its own triggers. Framework shell scripts are fetched at runtime via a secondary `actions/checkout` — downstream repos need **zero** `.agents/scripts/` files. Canonical caller templates live at `.agents/templates/workflows/`. Pinning options: `@main` (auto-update, default), `@v3.9.0` (stability), `@<sha>` (exact). Full architecture, migration guide, and pinning tradeoffs: `reference/reusable-workflows.md`.
+
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 
 ---

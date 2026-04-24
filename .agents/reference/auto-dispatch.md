@@ -76,14 +76,20 @@ Create a fine-grained PAT in GitHub UI: `Settings → Developer settings → Per
 gh secret set SYNC_PAT --repo <owner>/<repo> --body "<PAT>"
 ```
 
-`SYNC_PAT` is per-repo — every repo using `issue-sync.yml` needs it set independently.
+`SYNC_PAT` is per-repo — every repo using `issue-sync.yml` needs it set independently. The requirement is unchanged under the reusable-workflow model (t2770): `secrets: inherit` in the caller grants the reusable workflow access to the caller's secrets, so the PAT still has to exist in each downstream repo.
 
 Once set, the job log reads: `SYNC_PAT present — TODO.md push will use PAT`.
 
-Without it, the workflow posts a remediation comment containing both the root-cause fix and the `task-complete-helper.sh` immediate workaround.
+Without it, the workflow posts a remediation comment containing both the root-cause fix and the `ta[redacted-credential].sh` immediate workaround.
 
 **t2166** extended the fallback to all four jobs and promotes the missing-secret signal to `::warning::` so operators see it on every run.
 
 **Currently active for:** `marcusquinn/aidevops` (verified end-to-end 2026-04-19). Other registered repos still emit the t2166 warning until set per-repo — visible via `aidevops security check`.
 
 **Known false-positive (pending t2252):** the auto-completion path may mis-mark planning-only PRs (those using `Ref #NNN` / `For #NNN` without closing keywords) as `status:done` on merge — tracked as GH#19782.
+
+## Reusable-Workflow Architecture (t2770)
+
+Since v3.9.0, `issue-sync.yml` is a **reusable workflow** — downstream repos ship a ~45-line caller YAML that `uses:` the reusable workflow from `marcusquinn/aidevops`. This eliminates YAML drift (the canonical cause of GH#20637-class incidents where downstream copies went stale) and removes the need for downstream repos to carry `.agents/scripts/` — framework scripts are fetched at runtime via a secondary `actions/checkout` step.
+
+Full architecture, pinning strategies, migration guide: `reference/reusable-workflows.md`.

@@ -1,0 +1,52 @@
+name: Issue Sync - Bi-directional TODO.md ↔ GitHub Issues
+
+# Managed by aidevops framework.
+# Upstream logic lives in: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml
+# This caller is tiny on purpose — all the logic is centralised upstream.
+# Update this caller only to change the trigger filters below. For logic fixes,
+# run `aidevops update` to get the latest framework version; your caller will
+# pick up the change automatically (if pinned to @main) or on the next version
+# bump + resync (if pinned to @v3.9.0 style).
+#
+# To manage this file:
+#   aidevops check-workflows       # detect drift vs canonical template
+#   aidevops sync-workflows        # preview resync plan
+#   aidevops sync-workflows --apply
+#
+# Pinning options:
+#   @main           ← auto-update; what this template uses by default
+#   @v3.9.0         ← pin to a specific aidevops version for stability
+#                     (bump via aidevops sync-workflows after upgrades)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'TODO.md'
+      - 'todo/PLANS.md'
+      - 'todo/tasks/**'
+  pull_request:
+    types: [closed]
+  issues:
+    types: [opened, closed]
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Sync command to run'
+        required: true
+        default: 'status'
+        type: choice
+        options:
+          - status
+          - pull
+          - push
+          - close
+          - reconcile
+          - enrich
+
+jobs:
+  sync:
+    uses: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main
+    secrets: inherit
+    with:
+      command: ${{ inputs.command || '' }}
