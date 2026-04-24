@@ -5,6 +5,7 @@
     "_SCANNER_NUDGE_AGE_HOURS": "0",
     "_AUTO_DECOMPOSER_INTERVAL": "86400",
     "_AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE": "0",
+    "_AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD_doc": "Canonical default is 0.30, defined in .agents/configs/pulse-rate-limit.conf (GH#20638). Override here only if you need a value different from that canonical default. launchd plists cannot source conf files at plist-parse time, so an override must be set explicitly.",
     "_AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD": "0.30",
     "_AIDEVOPS_SKIP_TIER_VALIDATOR": "1"
   }
