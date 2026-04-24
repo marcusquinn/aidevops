@@ -93,12 +93,16 @@ _usage() {
 
 # ─── Classification ─────────────────────────────────────────────────────────
 
-# _classify_workflow <workflow-file> <canonical-template>
+# _classify_workflow <workflow-file> <canonical-template> [<canon-norm>]
 # Prints the classification string on stdout.
 # Returns 0 always; status is carried via the emitted string.
+# The optional third argument is a pre-computed normalised form of the
+# canonical template (loop-invariant); when provided, the inner sed call is
+# skipped, avoiding redundant work for each repo in the iteration loop.
 _classify_workflow() {
 	local _wf="$1"
 	local _canon="$2"
+	local _canon_norm_pre="${3:-}"
 
 	if [[ ! -f "$_wf" ]]; then
 		printf 'NO-WORKFLOW\n'
@@ -125,8 +129,14 @@ _classify_workflow() {
 		local _wf_norm _canon_norm
 		_wf_norm=$(sed -E 's|(marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml)@[^[:space:]]+|\1@REF|g' "$_wf" \
 			| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|')
-		_canon_norm=$(sed -E 's|(marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml)@[^[:space:]]+|\1@REF|g' "$_canon" \
-			| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|')
+		# Use pre-computed canon_norm when available (caller hoist); fall back to
+		# computing it here so the function remains usable in isolation.
+		if [[ -n "$_canon_norm_pre" ]]; then
+			_canon_norm="$_canon_norm_pre"
+		else
+			_canon_norm=$(sed -E 's|(marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml)@[^[:space:]]+|\1@REF|g' "$_canon" \
+				| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|')
+		fi
 
 		if [[ "$_wf_norm" == "$_canon_norm" ]]; then
 			printf 'CURRENT/CALLER\n'
@@ -145,26 +155,6 @@ _classify_workflow() {
 	# All three are equivalently "legacy patterns to be replaced by a caller".
 	printf 'NEEDS-MIGRATION\n'
 	return 0
-}
-
-# _is_failure_classification <classification>
-# Returns 0 if the classification should cause a non-zero exit.
-_is_failure_classification() {
-	local _c="$1"
-	case "$_c" in
-	DRIFTED/CALLER | NEEDS-MIGRATION) return 0 ;;
-	*) return 1 ;;
-	esac
-}
-
-# _is_current_classification <classification>
-# Returns 0 if the classification counts as "up-to-date".
-_is_current_classification() {
-	local _c="$1"
-	case "$_c" in
-	CURRENT/CALLER | CURRENT/SELF-CALLER) return 0 ;;
-	*) return 1 ;;
-	esac
 }
 
 # ─── Repo iteration ─────────────────────────────────────────────────────────
@@ -303,6 +293,7 @@ _classify_row() {
 	local _path="$1"
 	local _local_only_flag="$2"
 	local _canonical="$3"
+	local _canon_norm="${4:-}"
 
 	if [[ "$_local_only_flag" == "true" ]]; then
 		printf 'LOCAL-ONLY\t\n'
@@ -325,7 +316,7 @@ _classify_row() {
 	fi
 
 	local _class
-	_class=$(_classify_workflow "$_wf" "$_canonical")
+	_class=$(_classify_workflow "$_wf" "$_canonical" "$_canon_norm")
 	local _note=""
 	case "$_class" in
 	NEEDS-MIGRATION)
@@ -347,13 +338,21 @@ _process_rows() {
 	local _any_failure=0
 	local _total=0 _current=0 _drifted=0 _needs_mig=0 _no_wf=0 _local_only=0 _no_template=0
 
+	# Pre-compute the loop-invariant normalisation of the canonical template
+	# once here rather than inside _classify_workflow on every repo iteration.
+	local _canon_norm=""
+	if [[ -n "$_canonical" ]]; then
+		_canon_norm=$(sed -E 's|(marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml)@[^[:space:]]+|\1@REF|g' "$_canonical" \
+			| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|')
+	fi
+
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
 		printf '\n  %-40s %-16s %s\n' "REPO" "STATUS" "NOTE"
 		printf '  %s\n' "$(printf '%.0s─' {1..78})"
 	fi
 
 	local _rows
-	_rows=$(_iterate_repos)
+	_rows=$(_iterate_repos) || exit $?
 
 	local _path _local_only_flag _slug
 	while IFS=$'\t' read -r _path _local_only_flag _slug; do
@@ -365,7 +364,7 @@ _process_rows() {
 		_path="${_path/#\~/$HOME}"
 
 		local _class _note
-		IFS=$'\t' read -r _class _note < <(_classify_row "$_path" "$_local_only_flag" "$_canonical")
+		IFS=$'\t' read -r _class _note < <(_classify_row "$_path" "$_local_only_flag" "$_canonical" "$_canon_norm")
 
 		case "$_class" in
 		LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;
