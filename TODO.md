@@ -2986,4 +2986,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2776 pulse: consolidate reconcile sub-stages into single-pass iterator (Phase 4 of #20622) #auto-dispatch #framework #pulse ref:GH#20661
 - [x] t2777 refactor framework workflows to reusable-workflow pattern (Phase 3 of workflow drift elimination) #interactive #framework ref:GH#20662 pr:#20664 completed:2026-04-24
 - [x] t2778 aidevops check-workflows: drift detector across registered repos (Phase 1 of workflow drift elimination) #interactive #framework ref:GH#20648 pr:#20666 completed:2026-04-24
+- [ ] t2779 aidevops sync-workflows: opt-in resync for drifted framework workflows (Phase 2 of workflow drift elimination) #interactive #framework ref:GH#20649
 
