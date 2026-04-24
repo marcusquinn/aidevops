@@ -149,20 +149,45 @@ test_no_raw_gh_issue_list_outside_fallback() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 6: Cache reads present in all 5 sub-stages
+# Test 6: Single-pass orchestrator consolidates cache reads (t2776)
 # ---------------------------------------------------------------------------
-test_cache_reads_in_all_stages() {
-	# safe_grep_count inline pattern (t2763): grep -c exits 1 on no-match, producing "0\n0"
-	# with || echo 0. Use the guard form instead.
+test_single_pass_cache_consolidation() {
+	# After t2776, reconcile_issues_single_pass holds ONE cache-read call
+	# covering all five sub-stages. The five legacy functions keep their own
+	# call sites for standalone/test use. We verify:
+	#   a) reconcile_issues_single_pass is defined
+	#   b) _read_cache_issues_for_slug is still present (≥2: definition + single-pass)
+	#   c) The five _should_* predicates are defined
+
+	# (a) single-pass function defined
+	local sp_count
+	sp_count=$(grep -c '^reconcile_issues_single_pass()' "${RECONCILE_SH}" 2>/dev/null || true)
+	[[ "$sp_count" =~ ^[0-9]+$ ]] || sp_count=0
+	if [[ "$sp_count" -ge 1 ]]; then
+		_pass "single-pass: reconcile_issues_single_pass defined"
+	else
+		_fail "single-pass: reconcile_issues_single_pass NOT found"
+	fi
+
+	# (b) cache helper still present
 	local cache_read_count
 	cache_read_count=$(grep -c '_read_cache_issues_for_slug' "${RECONCILE_SH}" 2>/dev/null || true)
 	[[ "$cache_read_count" =~ ^[0-9]+$ ]] || cache_read_count=0
-
-	# Expect: 1 definition + 5 call sites = 6+ matches
-	if [[ "$cache_read_count" -ge 6 ]]; then
-		_pass "cache-reads: _read_cache_issues_for_slug found ${cache_read_count} times (definition + 5 sub-stages)"
+	if [[ "$cache_read_count" -ge 2 ]]; then
+		_pass "single-pass: _read_cache_issues_for_slug found ${cache_read_count} times (definition + call sites)"
 	else
-		_fail "cache-reads: expected ≥6 matches, got ${cache_read_count}"
+		_fail "single-pass: expected ≥2 _read_cache_issues_for_slug matches, got ${cache_read_count}"
+	fi
+
+	# (c) all five _should_* predicates defined
+	local pred_count
+	pred_count=$(grep -c '^_should_ciw()\|^_should_rsd()\|^_should_oimp()\|^_should_cpt()\|^_should_lia()' \
+		"${RECONCILE_SH}" 2>/dev/null || true)
+	[[ "$pred_count" =~ ^[0-9]+$ ]] || pred_count=0
+	if [[ "$pred_count" -eq 5 ]]; then
+		_pass "single-pass: all 5 _should_* predicates defined"
+	else
+		_fail "single-pass: expected 5 _should_* predicates, found ${pred_count}"
 	fi
 	return 0
 }
@@ -190,6 +215,97 @@ test_body_in_prefetch_fetch() {
 }
 
 # ---------------------------------------------------------------------------
+# Test 8: _should_* predicates (t2776)
+# ---------------------------------------------------------------------------
+test_should_predicates() {
+	# Source just the predicate functions from RECONCILE_SH in a subshell.
+	# We extract the five _should_* function definitions then call each.
+
+	# Extract all five predicate definitions (stop before the first _action_* helper)
+	local pred_defs
+	pred_defs=$(sed -n '/^_should_ciw()/,/^_action_ciw_single()/p' "${RECONCILE_SH}" | \
+		grep -v '^_action_ciw_single()' || true)
+
+	# Run predicate checks in one subshell
+	local result
+	result=$(bash -c "
+		${pred_defs}
+
+		# _should_ciw: true for status:available, false otherwise
+		_should_ciw 'origin:worker,status:available' && echo 'ciw:1' || echo 'ciw:0'
+		_should_ciw 'origin:worker,status:done'      && echo 'ciw-done:1' || echo 'ciw-done:0'
+
+		# _should_rsd: true for status:done
+		_should_rsd 'status:done,tier:standard' && echo 'rsd:1' || echo 'rsd:0'
+		_should_rsd 'status:available'          && echo 'rsd-avail:1' || echo 'rsd-avail:0'
+
+		# _should_oimp: false if issue is in parent_task_nums list
+		_should_oimp '42' '41
+42
+43' && echo 'oimp-parent:1' || echo 'oimp-parent:0'
+		_should_oimp '99' '41
+42' && echo 'oimp-nonparent:1' || echo 'oimp-nonparent:0'
+
+		# _should_cpt: true for parent-task
+		_should_cpt 'parent-task,origin:worker' && echo 'cpt:1' || echo 'cpt:0'
+		_should_cpt 'status:available'          && echo 'cpt-noparent:1' || echo 'cpt-noparent:0'
+
+		# _should_lia: true for tNNN: title + no aidevops labels
+		_should_lia 't1234: fix something' '' && echo 'lia:1' || echo 'lia:0'
+		_should_lia 'GH#567: fix' ''          && echo 'lia-gh:1' || echo 'lia-gh:0'
+		_should_lia 't1234: fix' 'origin:worker' && echo 'lia-labeled:1' || echo 'lia-labeled:0'
+		_should_lia 'not a task title' ''     && echo 'lia-badtitle:1' || echo 'lia-badtitle:0'
+	" 2>/dev/null)
+
+	local all_ok=1
+
+	# Check each expected result
+	if ! printf '%s\n' "$result" | grep -qx 'ciw:1';         then _fail "_should_ciw: status:available should return 0"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'ciw-done:0';    then _fail "_should_ciw: status:done should return 1"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'rsd:1';         then _fail "_should_rsd: status:done should return 0"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'rsd-avail:0';   then _fail "_should_rsd: status:available should return 1"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'oimp-parent:0'; then _fail "_should_oimp: parent-task issue should return 1"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'oimp-nonparent:1'; then _fail "_should_oimp: non-parent issue should return 0"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'cpt:1';         then _fail "_should_cpt: parent-task should return 0"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'cpt-noparent:0'; then _fail "_should_cpt: no parent-task should return 1"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'lia:1';         then _fail "_should_lia: tNNN: title + no labels should return 0"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'lia-gh:1';      then _fail "_should_lia: GH#NNN: title + no labels should return 0"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'lia-labeled:0'; then _fail "_should_lia: labeled issue should return 1"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'lia-badtitle:0'; then _fail "_should_lia: non-task title should return 1"; all_ok=0; fi
+
+	[[ "$all_ok" == "1" ]] && _pass "_should_* predicates: all 12 cases correct"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 9: reconcile_issues_single_pass wired in pulse-dispatch-engine.sh
+# ---------------------------------------------------------------------------
+test_single_pass_wired_in_engine() {
+	local engine_sh="${SCRIPT_DIR}/../pulse-dispatch-engine.sh"
+	if [[ ! -f "$engine_sh" ]]; then
+		_pass "single-pass engine wiring: pulse-dispatch-engine.sh not found (skip)"
+		return 0
+	fi
+
+	# Verify the single-pass is called (not the five legacy functions)
+	local sp_calls legacy_calls
+	sp_calls=$(grep -c 'reconcile_issues_single_pass' "$engine_sh" 2>/dev/null || true)
+	[[ "$sp_calls" =~ ^[0-9]+$ ]] || sp_calls=0
+
+	# Legacy functions should NOT be direct run_stage_with_timeout targets anymore
+	legacy_calls=$(grep -E 'run_stage_with_timeout.*(close_issues_with_merged_prs|reconcile_stale_done_issues|reconcile_open_issues_with_merged_prs|reconcile_completed_parent_tasks|reconcile_labelless_aidevops_issues)' \
+		"$engine_sh" 2>/dev/null | grep -vc '^\s*#' || true)
+	[[ "$legacy_calls" =~ ^[0-9]+$ ]] || legacy_calls=0
+
+	if [[ "$sp_calls" -ge 1 && "$legacy_calls" -eq 0 ]]; then
+		_pass "single-pass engine: wired in pulse-dispatch-engine.sh (sp_calls=${sp_calls}, legacy_direct=${legacy_calls})"
+	else
+		_fail "single-pass engine: sp_calls=${sp_calls}, legacy_direct=${legacy_calls} (expected sp≥1, legacy=0)"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 test_cache_miss_no_file
@@ -197,8 +313,10 @@ test_cache_miss_no_slug
 test_cache_stale
 test_cache_hit_fresh
 test_no_raw_gh_issue_list_outside_fallback
-test_cache_reads_in_all_stages
+test_single_pass_cache_consolidation
 test_body_in_prefetch_fetch
+test_should_predicates
+test_single_pass_wired_in_engine
 
 echo ""
 echo "Results: ${pass} passed, ${fail} failed"
