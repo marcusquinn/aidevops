@@ -1,0 +1,1363 @@
+name: Issue Sync (reusable) - Bi-directional TODO.md ↔ GitHub Issues
+
+# Reusable workflow — call via a thin caller YAML in each repo.
+# See: .github/workflows/templates/issue-sync-caller.yml
+# See: .agents/reference/reusable-workflows.md
+#
+# The caller declares the triggers (push/issues/pull_request/workflow_dispatch)
+# and the job `if: github.event_name == '...'` guards below fire accordingly.
+# Framework scripts are fetched at runtime via a secondary checkout — callers
+# don't need .agents/scripts/ checked in.
+
+on:
+  workflow_call:
+    inputs:
+      command:
+        description: 'Sync command (pass-through from workflow_dispatch inputs)'
+        required: false
+        type: string
+        default: ''
+      aidevops_ref:
+        description: 'aidevops ref to fetch framework scripts from (main, or a version tag like v3.9.0)'
+        required: false
+        type: string
+        default: 'main'
+    secrets:
+      SYNC_PAT:
+        required: false
+        description: 'Fine-grained PAT with Contents:read/write, bypasses branch protection on TODO.md push'
+
+jobs:
+  sync-on-push:
+    name: Sync TODO.md → GitHub Issues
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # t2165: bumped 10 → 20 as an independent safety net alongside the
+    # issue-sync-helper.sh enrich optimisation. At ~145 open ref:GH# tasks the
+    # pre-t2165 helper needed ~18 min and the 10-min cap cancelled the
+    # downstream TODO.md push step (run 24544622121 on the t2162 merge was
+    # the trigger). Post-t2165 the steady-state cost is ~3-4 min, but the
+    # bump gives headroom for cold-cache runs and large backlog days.
+    timeout-minutes: 20
+    concurrency:
+      group: issue-sync-push-${{ github.ref }}
+      cancel-in-progress: false  # GH#15234 Fix 3: false prevents orphaned issues from cancelled runs
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - name: Check commit author
+        id: check-author
+        env:
+          COMMIT_AUTHOR: ${{ github.event.head_commit.author.name }}
+        run: |
+          # Prevent infinite loops: skip if this commit was made by GitHub Actions
+          # Note: COMMIT_AUTHOR passed via env to prevent shell injection from
+          # untrusted input (backticks, $() etc in author names)
+          if [[ "$COMMIT_AUTHOR" == "GitHub Actions" ]] || [[ "$COMMIT_AUTHOR" == "github-actions[bot]" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipping: commit was made by GitHub Actions (loop prevention)"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # t2166: emit a visible warning when SYNC_PAT is unset so operators
+      # see on every run — not just after GH006 — that TODO.md push will
+      # fall back to GITHUB_TOKEN and be rejected by branch protection.
+      - name: Check SYNC_PAT visibility (t2166)
+        if: steps.check-author.outputs.skip != 'true'
+        env:
+          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
+            echo "::warning::SYNC_PAT secret is not set — TODO.md auto-sync push will be rejected by branch protection (GH006)."
+            echo "::warning::Fix: gh secret set SYNC_PAT --repo ${REPO} --body \"<FINE_GRAINED_PAT>\" (Contents: Read and write)"
+            echo "::warning::See todo/tasks/t2166-brief.md for the SYNC_PAT setup walkthrough."
+          else
+            echo "::notice::SYNC_PAT present — TODO.md push will use PAT (bypasses branch protection via enforce_admins:false)"
+          fi
+
+      - name: Checkout
+        if: steps.check-author.outputs.skip != 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+          # t2166: prefer SYNC_PAT so `git push` of TODO.md updates bypasses
+          # branch protection via enforce_admins:false. Falls back to
+          # GITHUB_TOKEN when unset — push will still hit GH006, but the
+          # t2166 warning step above flags the cause.
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Checkout aidevops framework scripts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          path: __aidevops
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          fetch-depth: 1
+
+      - name: Configure Git
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Close issues for completed tasks
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          chmod +x __aidevops/.agents/scripts/issue-sync-helper.sh
+          chmod +x __aidevops/.agents/scripts/shared-constants.sh
+          echo "=== Closing issues for completed tasks ==="
+          bash __aidevops/.agents/scripts/issue-sync-helper.sh close --verbose || true
+        env:
+          # t2166: SYNC_PAT || GITHUB_TOKEN so any downstream push inside the
+          # helper also gets PAT auth when available.
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Push new tasks as issues
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          echo "=== Creating issues for new tasks ==="
+          bash __aidevops/.agents/scripts/issue-sync-helper.sh push --verbose || true
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          # t1984: override origin detection and assignee target so issues
+          # created from human-triggered TODO.md pushes get origin:interactive
+          # and are assigned to the human pusher, not github-actions[bot].
+          # `check-author` upstream already filters out bot-authored commits,
+          # so by this step the push is guaranteed human (or a non-[bot] actor).
+          AIDEVOPS_SESSION_ORIGIN: ${{ endsWith(github.actor, '[bot]') && 'worker' || 'interactive' }}
+          AIDEVOPS_SESSION_USER: ${{ endsWith(github.actor, '[bot]') && '' || github.actor }}
+
+      - name: Enrich plan-linked issues
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          echo "=== Enriching plan-linked issues ==="
+          bash __aidevops/.agents/scripts/issue-sync-helper.sh enrich --verbose || true
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Pull any missing refs back to TODO.md
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          echo "=== Pulling issue refs to TODO.md ==="
+          bash __aidevops/.agents/scripts/issue-sync-helper.sh pull --verbose || true
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push TODO.md updates
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          if git diff --quiet TODO.md 2>/dev/null; then
+            echo "No TODO.md changes to commit"
+          else
+            git add TODO.md
+            git commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]"
+            # Retry loop for concurrent pushes
+            for i in 1 2 3; do
+              echo "Push attempt $i..."
+              git pull --rebase origin main || true
+              if git push; then
+                echo "Push succeeded on attempt $i"
+                exit 0
+              fi
+              echo "Push failed, retrying..."
+              sleep $((i * 3))
+            done
+            echo "All push attempts failed"
+            exit 1
+          fi
+
+      - name: Show sync status
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          bash __aidevops/.agents/scripts/issue-sync-helper.sh status || true
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+  sync-on-issue:
+    name: Sync GitHub Issue → TODO.md
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: issue-sync-issue-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: write
+      issues: read
+
+    steps:
+      - name: Check issue title format
+        id: check-issue
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          # Note: ISSUE_TITLE passed via env to prevent shell injection from
+          # untrusted input (backticks in titles cause `command not found` errors)
+          if echo "$ISSUE_TITLE" | grep -qE '^t[0-9]+'; then
+            echo "sync=true" >> "$GITHUB_OUTPUT"
+            TASK_ID=$(echo "$ISSUE_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*')
+            echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
+            echo "Issue #$ISSUE_NUMBER matches task $TASK_ID"
+          else
+            echo "sync=false" >> "$GITHUB_OUTPUT"
+            echo "Issue #$ISSUE_NUMBER does not have t-number prefix, skipping"
+          fi
+
+      # t2166: SYNC_PAT visibility — this job also pushes TODO.md updates
+      # on every issue-opened/closed event, so it hits the same GH006 when
+      # SYNC_PAT is unset. Warn explicitly before doing any work.
+      - name: Check SYNC_PAT visibility (t2166)
+        if: steps.check-issue.outputs.sync == 'true'
+        env:
+          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
+            echo "::warning::SYNC_PAT secret is not set — TODO.md auto-sync push will be rejected by branch protection (GH006)."
+            echo "::warning::Fix: gh secret set SYNC_PAT --repo ${REPO} --body \"<FINE_GRAINED_PAT>\" (Contents: Read and write)"
+          else
+            echo "::notice::SYNC_PAT present — TODO.md push will use PAT"
+          fi
+
+      - name: Checkout
+        if: steps.check-issue.outputs.sync == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+          # t2166: prefer SYNC_PAT to bypass branch protection on push.
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Checkout aidevops framework scripts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          path: __aidevops
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          fetch-depth: 1
+
+      - name: Configure Git
+        if: steps.check-issue.outputs.sync == 'true'
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Sync issue ref to TODO.md
+        if: steps.check-issue.outputs.sync == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          TASK_ID: ${{ steps.check-issue.outputs.task_id }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          chmod +x __aidevops/.agents/scripts/issue-sync-helper.sh
+          chmod +x __aidevops/.agents/scripts/shared-constants.sh
+          echo "=== New issue opened: ${TASK_ID} (#${ISSUE_NUMBER}) ==="
+          bash __aidevops/.agents/scripts/issue-sync-helper.sh pull --verbose || true
+
+      - name: Commit and push TODO.md updates
+        if: steps.check-issue.outputs.sync == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          if git diff --quiet TODO.md 2>/dev/null; then
+            echo "No TODO.md changes to commit"
+          else
+            git add TODO.md
+            git commit -m "chore: sync ref:GH#${ISSUE_NUMBER} to TODO.md [skip ci]"
+            for i in 1 2 3; do
+              echo "Push attempt $i..."
+              git pull --rebase origin main || true
+              if git push; then
+                echo "Push succeeded on attempt $i"
+                exit 0
+              fi
+              sleep $((i * 3))
+            done
+            echo "All push attempts failed"
+            exit 1
+          fi
+
+  manual-sync:
+    name: Manual Sync
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: issue-sync-manual
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      # t2166: SYNC_PAT visibility for manual dispatch runs too.
+      - name: Check SYNC_PAT visibility (t2166)
+        env:
+          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
+            echo "::warning::SYNC_PAT secret is not set — any TODO.md push from this manual run will be rejected by branch protection (GH006)."
+            echo "::warning::Fix: gh secret set SYNC_PAT --repo ${REPO} --body \"<FINE_GRAINED_PAT>\" (Contents: Read and write)"
+          else
+            echo "::notice::SYNC_PAT present — TODO.md push will use PAT"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+          # t2166: prefer SYNC_PAT to bypass branch protection on push.
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Checkout aidevops framework scripts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          path: __aidevops
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          fetch-depth: 1
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Run sync command
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          SYNC_COMMAND: ${{ inputs.command }}
+        run: |
+          chmod +x __aidevops/.agents/scripts/issue-sync-helper.sh
+          chmod +x __aidevops/.agents/scripts/shared-constants.sh
+          echo "=== Running: issue-sync-helper.sh $SYNC_COMMAND ==="
+          bash __aidevops/.agents/scripts/issue-sync-helper.sh "$SYNC_COMMAND" --verbose
+
+      - name: Commit and push TODO.md updates
+        if: inputs.command == 'pull' || inputs.command == 'push'
+        env:
+          SYNC_COMMAND: ${{ inputs.command }}
+        run: |
+          if git diff --quiet TODO.md 2>/dev/null; then
+            echo "No TODO.md changes to commit"
+          else
+            git add TODO.md
+            git commit -m "chore: manual issue sync ($SYNC_COMMAND) [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase origin main || true
+              if git push; then
+                exit 0
+              fi
+              sleep $((i * 3))
+            done
+            exit 1
+          fi
+
+  # =========================================================================
+  # t1339: Sync issue hygiene on PR merge
+  # =========================================================================
+  # When a PR merges to main, this job:
+  #   1. Extracts task ID from PR title (tNNN: ... pattern)
+  #   2. Finds linked issues (from PR body Closes/Fixes/Resolves #NNN, or by task ID)
+  #   3. Posts a closing comment with PR link
+  #   4. Applies status:done label, removes stale status labels
+  #   5. Updates TODO.md with pr:#NNN proof-log and marks task [x]
+  #
+  # This ensures all closing paths (interactive, worker, pulse) get the same
+  # hygiene treatment — previously only the TODO.md push path ran issue-sync.
+  sync-on-pr-merge:
+    name: Sync Issue Hygiene on PR Merge
+    if: (github.event_name == 'pull_request_target' || github.event_name == 'pull_request') && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: issue-sync-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      # Security: This job uses pull_request_target to get write permissions for
+      # fork PRs. It only checks out ref:main (base branch), never fork code.
+      # Event metadata (PR title, body, number) is used for issue hygiene only.
+
+      # t2166 / t2696: visibility check mirroring the other three jobs.
+      # Ensures the warning/notice emits unconditionally on every merged PR,
+      # not just when the downstream TODO.md proof-log path actually runs
+      # (which is skipped by range-syntax titles and planning-only PR bodies).
+      - name: Check SYNC_PAT visibility (t2166)
+        env:
+          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
+            echo "::warning::SYNC_PAT secret is not set — TODO.md auto-sync push will be rejected by branch protection (GH006)."
+            echo "::warning::Fix: gh secret set SYNC_PAT --repo ${REPO} --body \"<FINE_GRAINED_PAT>\" (Contents: Read and write)"
+          else
+            echo "::notice::SYNC_PAT present — TODO.md push will use PAT"
+          fi
+
+      - name: Extract task ID and collect linked issues
+        id: extract
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Extract task ID from PR title (e.g., "t1329: Cross-review judge pipeline")
+          TASK_ID=""
+          if echo "$PR_TITLE" | grep -qE '^t[0-9]+'; then
+            TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*')
+          fi
+          echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
+
+          # Collect linked issue numbers from PR body (Closes #NNN, Fixes #NNN, Resolves #NNN)
+          LINKED_ISSUES=""
+          if [[ -n "$PR_BODY" ]]; then
+            LINKED_ISSUES=$(echo "$PR_BODY" | grep -oiE '(closes?|fixes?|resolves?)[[:space:]]*#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+          fi
+          echo "linked_issues=$LINKED_ISSUES" >> "$GITHUB_OUTPUT"
+
+          # t2219: Collect 'For #NNN' and 'Ref #NNN' references (planning convention t2046)
+          # These are explicit signals that the PR is NOT closing the referenced issue.
+          FOR_REF_ISSUES=""
+          if [[ -n "$PR_BODY" ]]; then
+            FOR_REF_ISSUES=$(echo "$PR_BODY" | grep -oiE '(for|ref)[[:space:]]*#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+          fi
+          echo "for_ref_issues=$FOR_REF_ISSUES" >> "$GITHUB_OUTPUT"
+
+          # t2391 / GH#19825: Detect range-syntax PR titles (tNNN..tNNN or
+          # tNNN, tNNN). These signal multi-task planning PRs — the pulse's
+          # auto-complete would match only the first task ID and mark it [x]
+          # which is always wrong. Downstream steps consume this flag and
+          # skip auto-complete regardless of body keywords (belt-and-braces
+          # per issue Case D: body `Closes #NNN` + range-syntax title must
+          # still skip TODO update).
+          RANGE_SYNTAX=""
+          if echo "$PR_TITLE" | grep -qE '^t[0-9]+\.\.t[0-9]+'; then
+            RANGE_SYNTAX="true"
+          elif echo "$PR_TITLE" | grep -qE '^t[0-9]+,[[:space:]]*t[0-9]+'; then
+            RANGE_SYNTAX="true"
+          fi
+          echo "range_syntax=$RANGE_SYNTAX" >> "$GITHUB_OUTPUT"
+
+          # Determine if we have anything to process
+          if [[ -n "$TASK_ID" || -n "$LINKED_ISSUES" ]]; then
+            echo "has_work=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_work=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "PR #$PR_NUMBER: task_id=$TASK_ID linked_issues=$LINKED_ISSUES for_ref_issues=$FOR_REF_ISSUES range_syntax=$RANGE_SYNTAX"
+
+      - name: Find issue by task ID (fallback)
+        id: find-issue
+        if: steps.extract.outputs.has_work == 'true' && steps.extract.outputs.task_id != ''
+        env:
+          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          FOR_REF_ISSUES: ${{ steps.extract.outputs.for_ref_issues }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # If no explicit Closes #NNN in PR body, search for the issue by task ID in title.
+          # t2137: skip title-fallback matches on parent-task issues. Explicit
+          # Closes/Fixes/Resolves is respected (either a legitimate terminal-phase
+          # close or a maintainer override); title-matching alone is too weak a
+          # signal to flip a parent's status:done — it fires on every planning PR
+          # whose title shares the parent's task ID prefix (t2046 For/Ref
+          # convention makes this the common case).
+          if [[ -z "$LINKED_ISSUES" ]]; then
+            FOUND=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 \
+              | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty')
+            if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
+              # t2137: probe parent-task label before accepting the fallback match.
+              FOUND_LABELS=$(gh api "repos/${REPO}/issues/${FOUND}" --jq '[.labels[].name] | join(" ")' 2>/dev/null || echo "")
+              if echo "$FOUND_LABELS" | grep -qw "parent-task"; then
+                echo "found_issues=" >> "$GITHUB_OUTPUT"
+                echo "Found issue #$FOUND for task $TASK_ID is a parent-task — skipping title-fallback hygiene (use explicit Closes #NNN on the terminal-phase PR to close a parent)"
+              # t2219: skip title-fallback when the issue was explicitly referenced
+              # via 'For #NNN' or 'Ref #NNN' in the PR body. The t2046 planning
+              # convention says these references mean "this PR does NOT close that
+              # issue" — extend the same semantics to status:done auto-application.
+              elif [[ " $FOR_REF_ISSUES " == *" $FOUND "* ]]; then
+                echo "found_issues=" >> "$GITHUB_OUTPUT"
+                echo "Found issue #$FOUND for task $TASK_ID is referenced via For/Ref in PR body — skipping title-fallback hygiene (t2219)"
+              else
+                echo "found_issues=$FOUND" >> "$GITHUB_OUTPUT"
+                echo "Found issue #$FOUND for task $TASK_ID"
+              fi
+            else
+              echo "found_issues=" >> "$GITHUB_OUTPUT"
+              echo "No issue found for task $TASK_ID"
+            fi
+          else
+            echo "found_issues=" >> "$GITHUB_OUTPUT"
+            echo "Using linked issues from PR body: $LINKED_ISSUES"
+          fi
+
+      - name: Apply closing hygiene to linked issues
+        if: steps.extract.outputs.has_work == 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          FOUND_ISSUES: ${{ steps.find-issue.outputs.found_issues }}
+          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Merge all issue numbers (from PR body + fallback search)
+          ALL_ISSUES="$LINKED_ISSUES $FOUND_ISSUES"
+          ALL_ISSUES=$(echo "$ALL_ISSUES" | tr ' ' '\n' | sort -u | { grep -v '^$' || true; } | tr '\n' ' ')
+
+          if [[ -z "$ALL_ISSUES" ]]; then
+            echo "No linked issues found — skipping closing hygiene"
+            exit 0
+          fi
+
+          echo "Processing issues: $ALL_ISSUES"
+
+          COMMENT_FAILED=0
+          REJECTION_LABELS="invalid not-planned wontfix duplicate"
+          for ISSUE_NUM in $ALL_ISSUES; do
+            echo "--- Issue #$ISSUE_NUM ---"
+
+            # Fetch issue labels to detect rejection state
+            ISSUE_LABELS=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" --jq '[.labels[].name] | join(" ")' 2>/dev/null || echo "")
+            IS_REJECTED=false
+            REJECTION_MATCH=""
+            for RLABEL in $REJECTION_LABELS; do
+              if echo "$ISSUE_LABELS" | grep -qw "$RLABEL"; then
+                IS_REJECTED=true
+                REJECTION_MATCH="$RLABEL"
+                break
+              fi
+            done
+
+            if [[ "$IS_REJECTED" == "true" ]]; then
+              echo "Issue #$ISSUE_NUM has rejection label '$REJECTION_MATCH' — using 'Referenced by' instead of 'Completed via'"
+            fi
+
+            # Post closing comment if none exists from this PR
+            # Check for both "Completed via" and "Referenced by" variants to avoid duplicates
+            EXISTING_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
+              --jq "[.[] | select(.body | test(\"(Completed via|Referenced by).*PR #${PR_NUMBER}\"))] | length" 2>/dev/null || echo "0")
+
+            if [[ "$EXISTING_COMMENT" == "0" ]]; then
+              TASK_REF=""
+              if [[ -n "$TASK_ID" ]]; then
+                TASK_REF=" Task $TASK_ID"
+              fi
+
+              # Choose comment text based on rejection state
+              if [[ "$IS_REJECTED" == "true" ]]; then
+                COMMENT_BODY="Referenced by [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
+              else
+                COMMENT_BODY="Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
+              fi
+
+              # Check if issue is locked before attempting to comment (locked issues reject comments with exit 1)
+              IS_LOCKED=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" --jq '.locked' 2>/dev/null || echo "false")
+              if [[ "$IS_LOCKED" == "true" ]]; then
+                echo "Issue #$ISSUE_NUM is locked — skipping closing comment (labels will still be updated)"
+              elif gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "$COMMENT_BODY"; then
+                echo "Posted closing comment on #$ISSUE_NUM"
+              else
+                echo "Warning: failed to post closing comment on #$ISSUE_NUM (issue may have been locked concurrently)"
+                COMMENT_FAILED=1
+              fi
+            else
+              echo "Closing comment already exists on #$ISSUE_NUM"
+            fi
+
+            # Skip status:done and stale label cleanup for rejected issues —
+            # they are already in a terminal state and status:done would be misleading
+            if [[ "$IS_REJECTED" == "true" ]]; then
+              echo "Skipping status:done on #$ISSUE_NUM — has rejection label: $REJECTION_MATCH"
+              continue
+            fi
+
+            # Apply status:done label atomically (create if needed).
+            # t2137: collapse add+remove into a single `gh issue edit` call so the
+            # labeled/unlabeled events are emitted together. The previous
+            # implementation issued 1 add + 7 remove calls in sequence (8
+            # round-trips over ~5s observed), which violated the t2040 atomicity
+            # contract and left a race window where the reconciler's
+            # label-invariant pass could see two status labels and pick the wrong
+            # survivor. The bash helper `_mark_issue_done` was fixed in t2040;
+            # this closes the drifted workflow copy.
+            gh label create "status:done" --color "6F42C1" --description "Task is complete" --repo "$REPO" --force 2>/dev/null || true
+            gh issue edit "$ISSUE_NUM" --repo "$REPO" \
+              --add-label "status:done" \
+              --remove-label "status:available" \
+              --remove-label "status:queued" \
+              --remove-label "status:claimed" \
+              --remove-label "status:in-review" \
+              --remove-label "status:in-progress" \
+              --remove-label "status:blocked" \
+              --remove-label "status:verify-failed" \
+              2>/dev/null || true
+
+            echo "Updated labels on #$ISSUE_NUM atomically (added status:done, removed stale in one edit)"
+          done
+
+          if [[ "$COMMENT_FAILED" -eq 1 ]]; then
+            echo "Warning: one or more closing comments could not be posted (see above). Label updates completed."
+          fi
+
+      # ---------------------------------------------------------------
+      # Parent-task phase nudge (GH#18768 systemic fix)
+      # When a PR references a parent-task issue via "For #NNN" or
+      # "Ref #NNN", post a nudge comment on the parent listing remaining
+      # unchecked phases. This closes the gap where Phase N merges but
+      # nobody files the Phase N+1 child issue.
+      # ---------------------------------------------------------------
+      - name: Nudge parent-task issues with remaining phases
+        if: steps.extract.outputs.has_work == 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Extract "For #NNN" and "Ref #NNN" references (parent-task keywords)
+          # These are used instead of Closes/Fixes/Resolves for parent issues
+          PARENT_REFS=""
+          if [[ -n "$PR_BODY" ]]; then
+            PARENT_REFS=$(echo "$PR_BODY" | grep -oiE '(For|Ref)[[:space:]]+#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+          fi
+
+          if [[ -z "$PARENT_REFS" ]]; then
+            echo "No For/Ref parent references found — skipping parent nudge"
+            exit 0
+          fi
+
+          echo "Parent references found: $PARENT_REFS"
+
+          for PARENT_NUM in $PARENT_REFS; do
+            echo "--- Checking parent #$PARENT_NUM ---"
+
+            # Verify it has the parent-task label
+            HAS_PARENT_LABEL=$(gh api "repos/${REPO}/issues/${PARENT_NUM}" \
+              --jq '[.labels[].name] | if index("parent-task") then "true" else "false" end' 2>/dev/null || echo "false")
+
+            if [[ "$HAS_PARENT_LABEL" != "true" ]]; then
+              echo "Issue #$PARENT_NUM does not have parent-task label — skipping"
+              continue
+            fi
+
+            # Check issue is still open
+            PARENT_STATE=$(gh api "repos/${REPO}/issues/${PARENT_NUM}" --jq '.state' 2>/dev/null || echo "")
+            if [[ "$PARENT_STATE" != "open" ]]; then
+              echo "Issue #$PARENT_NUM is not open — skipping"
+              continue
+            fi
+
+            # Count items in the issue body. t2751 fix: the previous pattern
+            #   count=$(echo "$body" | grep -cE '...' || echo "0")
+            # was a classic bash command-substitution bug — grep -c prints "0"
+            # AND exits 1 on no-match, so `|| echo "0"` stacks a second "0" into
+            # the captured stdout. Result: count="0\n0" rendered as two lines
+            # (see the "Progress: **0\n0 done, 0\n0 remaining**" nudge on
+            # #20402). Pattern also noted in progressive-load-check.sh:87.
+            # Fix: `|| true` satisfies set -e without stacking output, and the
+            # numeric-guard catches any non-integer leakage.
+            PARENT_BODY=$(gh api "repos/${REPO}/issues/${PARENT_NUM}" --jq '.body // ""' 2>/dev/null || echo "")
+            UNCHECKED_COUNT=$(printf '%s\n' "$PARENT_BODY" | grep -cE '^[[:space:]]*- \[ \]' || true)
+            CHECKED_COUNT=$(printf '%s\n' "$PARENT_BODY" | grep -cE '^[[:space:]]*- \[x\]' || true)
+            [[ "$UNCHECKED_COUNT" =~ ^[0-9]+$ ]] || UNCHECKED_COUNT=0
+            [[ "$CHECKED_COUNT" =~ ^[0-9]+$ ]] || CHECKED_COUNT=0
+
+            # t2751 — also recognise narrative `**Phase N —**` bold-heading
+            # format. Parents filed before the t2740 auto-file contract (e.g.
+            # #20402) use this form and produce zero checkbox counts. Without
+            # this branch the nudge either stayed silent or emitted the
+            # misleading "0\n0 done, 0\n0 remaining" line.
+            NARRATIVE_PHASE_COUNT=$(printf '%s\n' "$PARENT_BODY" | grep -cE '^\*\*[Pp]hase[[:space:]]+[0-9]+' || true)
+            [[ "$NARRATIVE_PHASE_COUNT" =~ ^[0-9]+$ ]] || NARRATIVE_PHASE_COUNT=0
+
+            # Check if we already posted a nudge for this PR (shared dedup for
+            # both checkbox and narrative-format nudges — same marker)
+            EXISTING_NUDGE=$(gh api "repos/${REPO}/issues/${PARENT_NUM}/comments" \
+              --jq "[.[] | select(.body | test(\"phase-nudge-pr-${PR_NUMBER}\"))] | length" 2>/dev/null || echo "0")
+
+            if [[ "$EXISTING_NUDGE" != "0" ]]; then
+              echo "Nudge already posted on #$PARENT_NUM for PR #$PR_NUMBER — skipping"
+              continue
+            fi
+
+            # Narrative-format path: no checkboxes at all, but bold-heading
+            # phases present → parent body is in pre-contract form.
+            if [[ "$UNCHECKED_COUNT" -eq 0 && "$CHECKED_COUNT" -eq 0 ]]; then
+              if [[ "$NARRATIVE_PHASE_COUNT" -gt 0 ]]; then
+                NARRATIVE_HINT_BODY="<!-- phase-nudge-pr-${PR_NUMBER} -->
+          ### Phase merged — parent uses narrative phase format
+
+          PR #${PR_NUMBER} (\`${PR_TITLE}\`) merged and references this parent, but the \`## Phases\` section uses narrative \`**Phase N — ...**\` bold-heading format rather than the canonical list form that phase-auto-filing (t2740, \`shared-phase-filing.sh\`) scans.
+
+          **Detected:** ${NARRATIVE_PHASE_COUNT} narrative phase heading(s).
+
+          **To enable auto-progression,** rewrite the \`## Phases\` section in list form, e.g.:
+
+          \`\`\`markdown
+          ## Phases
+
+          - Phase 1 - Inventory [auto-fire:on-prior-merge] #20410
+          - Phase 2 - Formalise opt-out vocabulary [auto-fire:on-prior-merge]
+          - Phase 3 - ...
+          \`\`\`
+
+          Until converted, phase children must be filed manually. This one-shot nudge is emitted per merged PR so the stuck state stays visible."
+                if gh issue comment "$PARENT_NUM" --repo "$REPO" --body "$NARRATIVE_HINT_BODY" 2>/dev/null; then
+                  echo "Posted narrative-format hint nudge on #$PARENT_NUM (${NARRATIVE_PHASE_COUNT} narrative phases detected)"
+                else
+                  echo "Warning: could not post narrative-format hint nudge on #$PARENT_NUM"
+                fi
+                continue
+              fi
+              echo "No checkbox or narrative phases found in #$PARENT_NUM — no nudge needed"
+              continue
+            fi
+
+            if [[ "$UNCHECKED_COUNT" -eq 0 ]]; then
+              echo "All phases checked in #$PARENT_NUM — no nudge needed (may be ready to close)"
+              continue
+            fi
+
+            # Extract the unchecked items for context
+            REMAINING_ITEMS=$(printf '%s\n' "$PARENT_BODY" | grep -E '^[[:space:]]*- \[ \]' | sed 's/^[[:space:]]*/  /' | head -10 || true)
+
+            # Post the checkbox-form nudge
+            NUDGE_BODY="<!-- phase-nudge-pr-${PR_NUMBER} -->
+          ### Phase merged — ${UNCHECKED_COUNT} remaining
+
+          PR #${PR_NUMBER} (\`${PR_TITLE}\`) merged. Progress: **${CHECKED_COUNT} done, ${UNCHECKED_COUNT} remaining**.
+
+          Remaining items:
+          ${REMAINING_ITEMS}
+
+          **Next step:** file the next phase child issue (see decomposition plan in this issue's body)."
+
+            if gh issue comment "$PARENT_NUM" --repo "$REPO" --body "$NUDGE_BODY" 2>/dev/null; then
+              echo "Posted phase nudge on #$PARENT_NUM (${UNCHECKED_COUNT} phases remaining)"
+            else
+              echo "Warning: could not post nudge on #$PARENT_NUM"
+            fi
+          done
+
+      - name: Checkout repo for TODO.md update
+        if: steps.extract.outputs.task_id != ''
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          fetch-depth: 1
+          # t2048: prefer SYNC_PAT (fine-grained PAT scoped to this repo,
+          # Contents: Read and write) to bypass branch protection via
+          # enforce_admins:false. Falls back to GITHUB_TOKEN when the secret
+          # is unset, which routes to the t2029/t2034 loud-failure path.
+          # See todo/tasks/t2038-brief.md Decision section for rationale.
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Checkout aidevops framework scripts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          path: __aidevops
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          fetch-depth: 1
+
+      - name: Update TODO.md proof-log
+        if: steps.extract.outputs.task_id != ''
+        env:
+          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # GH#19782 / t2252: pass For/Ref and closing-keyword issue lists
+          # so the proof-log step can distinguish planning-only PRs from
+          # implementation PRs. Planning PRs (For/Ref only, no Closes/Fixes/
+          # Resolves) must NOT mark the TODO entry [x] — the task's
+          # implementation work is not complete.
+          LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          FOR_REF_ISSUES: ${{ steps.extract.outputs.for_ref_issues }}
+          # t2391 / GH#19825: range-syntax PR titles (tNNN..tNNN or
+          # tNNN, tNNN) signal multi-task planning PRs and must skip the
+          # TODO auto-complete entirely, even if the body contains closing
+          # keywords. See the guard at the top of the run block.
+          RANGE_SYNTAX: ${{ steps.extract.outputs.range_syntax }}
+          # t2034: gh CLI needs GH_TOKEN explicitly — without it, the t2029
+          # `gh pr comment` fallback (posted when the TODO.md push is rejected
+          # by branch protection) silently fails because gh has no auth.
+          # Verified observation: t2029's own merge run hit the t2029 fallback
+          # branch correctly but the comment never landed because gh ran
+          # without GH_TOKEN and printed nothing visible (gh's silent failure
+          # mode on missing auth).
+          # t2048: prefer SYNC_PAT for the push so branch protection bypass
+          # works via enforce_admins:false. Still falls back to GITHUB_TOKEN
+          # for the gh CLI call even when SYNC_PAT is unset — the PR comment
+          # is always useful to post regardless of which token did the push.
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          # t2048: expose secret presence as a boolean-ish env var. GitHub
+          # hides secret values from logs, but ${{ secrets.SYNC_PAT != '' }}
+          # evaluates to 'true' or 'false' at workflow-compile time and is
+          # safe to log.
+          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          # t2391 / GH#19825: Skip TODO.md proof-log for range-syntax titled PRs.
+          # Titles like `t2259..t2264: plan …` or `t2259, t2260: plan …` signal
+          # multi-task planning PRs. The auto-complete regex only captures the
+          # FIRST task ID, so marking it [x] is always wrong — the other tasks
+          # in the range never had implementation code shipped. This guard
+          # fires regardless of body keywords (belt-and-braces per issue Case D:
+          # even if the body contains `Closes #NNN`, the range-syntax title
+          # wins). The title-fallback path in `Find issue by task ID` (line 403)
+          # is separately gated by For/Ref (t2219) and parent-task (t2137);
+          # its status:done behaviour is out of scope for this guard.
+          if [[ "${RANGE_SYNTAX:-}" == "true" ]]; then
+            echo "::notice::PR title uses range-syntax (tNNN..tNNN or tNNN, tNNN) — skipping TODO.md proof-log (planning-only multi-task PR, GH#19825)"
+            exit 0
+          fi
+
+          # GH#19782 / t2252: Skip TODO.md proof-log for planning-only PRs.
+          # When the PR body uses only For/Ref references (t2046 planning
+          # convention) without any closing keywords (Closes/Fixes/Resolves),
+          # the PR is a planning reference — the task's implementation work
+          # is not complete. Marking the TODO entry [x] here would:
+          #   (a) falsely declare the task done in TODO.md
+          #   (b) trigger sync-on-push → issue-sync-helper.sh close on the
+          #       next TODO.md push cycle, applying status:done to the issue
+          # The title-fallback path (issue status:done) was separately fixed
+          # in t2219 (PR #19820). This guard closes the TODO.md path.
+          if [[ -z "${LINKED_ISSUES:-}" ]] && [[ -n "${FOR_REF_ISSUES:-}" ]]; then
+            echo "::notice::PR body uses For/Ref references only (no closing keywords) — skipping TODO.md proof-log (planning-only PR, GH#19782)"
+            exit 0
+          fi
+
+          # t2048: log which credential path is active so operators can tell
+          # at a glance whether the PAT is wired up. t2166 promoted the
+          # unset-secret log from ::notice:: to ::warning:: so the missing
+          # secret surfaces in the GH Actions run summary, not just the
+          # step output.
+          if [[ -n "${SYNC_PAT_PRESENT:-}" ]]; then
+            echo "::notice::Using SYNC_PAT for push (t2048 path)"
+          else
+            echo "::warning::SYNC_PAT not set — falling back to GITHUB_TOKEN, which will be rejected by branch protection (GH006). Fix: gh secret set SYNC_PAT --repo ${GITHUB_REPOSITORY:-REPO} --body \"<FINE_GRAINED_PAT>\" (Contents: Read and write)"
+          fi
+
+          TODAY=$(date +%Y-%m-%d)
+          PROOF="pr:#${PR_NUMBER} completed:${TODAY}"
+
+          # Check if task exists as unchecked in TODO.md
+          if ! grep -qE "^[[:space:]]*- \[ \] ${TASK_ID} " TODO.md; then
+            echo "Task $TASK_ID not found as unchecked in TODO.md — skipping proof-log"
+            # May already be [x], or may not exist in this repo's TODO.md
+            exit 0
+          fi
+
+          # Check if already marked complete with this PR
+          if grep -qE "^[[:space:]]*- \[x\] ${TASK_ID} .*pr:#${PR_NUMBER}" TODO.md; then
+            echo "Task $TASK_ID already has proof-log for PR #${PR_NUMBER}"
+            exit 0
+          fi
+
+          # Mark complete: [ ] -> [x], append proof-log
+          sed -i -E "s/^([[:space:]]*- )\[ \] (${TASK_ID} .*)\$/\1[x] \2 ${PROOF}/" TODO.md
+
+          # Verify the change was made
+          if ! grep -qE "^[[:space:]]*- \[x\] ${TASK_ID} .*pr:#${PR_NUMBER}" TODO.md; then
+            echo "::warning::Failed to update TODO.md for $TASK_ID — sed pattern did not match"
+            exit 0
+          fi
+
+          echo "Marked $TASK_ID complete with proof-log: $PROOF"
+
+          # Commit and push
+          git add TODO.md
+          git commit -m "chore: mark $TASK_ID complete ($PROOF) [skip ci]"
+
+          # t2029: track success explicitly so a silent branch-protection
+          # rejection becomes a loud failure. Without this, GH006 rejections
+          # are hidden inside the retry loop and the workflow reports overall
+          # success even though TODO.md was never pushed — which is exactly
+          # how this workflow broke silently for ~3 weeks before t2029.
+          PUSH_SUCCEEDED=false
+          for i in 1 2 3; do
+            echo "Push attempt $i..."
+            git pull --rebase origin main || true
+            if git push; then
+              echo "Push succeeded on attempt $i"
+              PUSH_SUCCEEDED=true
+              break
+            fi
+            sleep $((i * 3))
+          done
+
+          if [[ "$PUSH_SUCCEEDED" != "true" ]]; then
+            # t2029: branch protection on personal-account repos cannot
+            # bypass required_pull_request_reviews for github-actions[bot]
+            # (HTTP 500 on the classic-protection PATCH bypass API,
+            # confirmed 2026-04-13). Make the failure loud and post a
+            # PR comment. See todo/tasks/t2029-brief.md + t2166-brief.md.
+            # t2166: the comment now leads with the root-cause fix
+            # (create SYNC_PAT) rather than the symptom workaround
+            # (task-complete-helper.sh), so maintainers can close the
+            # gap in 30s instead of papering over each merge.
+            echo "::error::Failed to push TODO.md update after 3 attempts — branch protection blocked token $([ -n "${SYNC_PAT_PRESENT:-}" ] && echo "SYNC_PAT" || echo "GITHUB_TOKEN fallback")"
+            echo "::error::Root cause fix: gh secret set SYNC_PAT --repo ${GITHUB_REPOSITORY} --body \"<PAT>\" (Contents: Read and write)"
+            echo "::error::Workaround: task-complete-helper.sh $TASK_ID --pr $PR_NUMBER"
+
+            if [[ -n "${SYNC_PAT_PRESENT:-}" ]]; then
+              CAUSE_LINE="The \`SYNC_PAT\` secret is set, but the PAT lacks branch-protection bypass. Confirm the fine-grained PAT is scoped to \`${GITHUB_REPOSITORY}\` with \`Contents: Read and write\`, and that the repo admin has \`Do not allow bypassing the above settings\` disabled (classic protection) or added the PAT owner to the ruleset bypass list."
+              FIX_BLOCK="**Fix (maintainer):** verify the \`SYNC_PAT\` PAT scope and branch-protection bypass settings."
+            else
+              CAUSE_LINE="The \`SYNC_PAT\` repo secret is not set, so the workflow fell back to \`GITHUB_TOKEN\`. \`GITHUB_TOKEN\` cannot bypass \`required_approving_review_count\` on this repo's classic branch protection (\`bypass_pull_request_allowances\` is unsupported on personal-account plans — HTTP 500, confirmed 2026-04-13)."
+              FIX_BLOCK="**Root-cause fix (maintainer, ~30s):** create a fine-grained PAT with \`Contents: Read and write\` scoped to this repo, then run:
+
+          \`\`\`bash
+          gh secret set SYNC_PAT --repo ${GITHUB_REPOSITORY} --body \"<FINE_GRAINED_PAT>\"
+          \`\`\`
+
+          Next \`TODO.md\` push will use the PAT and complete the round-trip. Code path: \`sync-on-pr-merge\` + \`sync-on-push\` + \`sync-on-issue\` + \`manual-sync\` (t2048, t2166)."
+            fi
+
+            COMMENT_BODY="### TODO.md auto-completion blocked
+
+          The \`sync-on-pr-merge\` workflow tried to mark \`$TASK_ID\` complete in \`TODO.md\` with proof-log \`$PROOF\`, but the push was rejected by branch protection (GH006).
+
+          **Cause:** ${CAUSE_LINE}
+
+          ${FIX_BLOCK}
+
+          **Immediate workaround (until the secret is fixed):** run locally to complete the audit trail for this PR only:
+
+          \`\`\`bash
+          ~/.aidevops/agents/scripts/task-complete-helper.sh $TASK_ID --pr $PR_NUMBER --testing-level self-assessed
+          \`\`\`
+
+          Context: t2048 (PR #18677) landed the \`SYNC_PAT || GITHUB_TOKEN\` fallback code. t2166 extended it to \`sync-on-push\`/\`sync-on-issue\`/\`manual-sync\` and added visibility warnings. The operational secret still has to be created by the repo maintainer — this comment is that cue.
+
+          <!-- t2029:auto-complete-blocked -->"
+
+            gh pr comment "$PR_NUMBER" --body "$COMMENT_BODY" 2>/dev/null || \
+              echo "::warning::Also failed to post PR comment — run the workaround command above and set SYNC_PAT"
+
+            exit 1
+          fi
+
+      - name: Sync PLANS.md status from TODO.md completions
+        if: steps.extract.outputs.task_id != ''
+        env:
+          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # When a task is marked complete in TODO.md, check if it belongs to
+          # a plan in PLANS.md and update that plan's status if all its tasks
+          # are now complete. Plans are institutional memory — they stay in
+          # PLANS.md marked as Completed, never removed.
+
+          if [[ ! -f "todo/PLANS.md" ]] || [[ ! -f "TODO.md" ]]; then
+            echo "PLANS.md or TODO.md not found — skipping plan sync"
+            exit 0
+          fi
+
+          PLANS_CHANGED=false
+
+          # Find all plans that reference this task ID
+          # Plans reference tasks as: **TODO:** t1234 or **TODO:** t1234, t1235
+          PLAN_LINES=$(grep -n "^\*\*TODO:\*\*.*${TASK_ID}" todo/PLANS.md | cut -d: -f1 || true)
+
+          if [[ -z "$PLAN_LINES" ]]; then
+            echo "Task $TASK_ID not referenced in any PLANS.md plan — skipping"
+            exit 0
+          fi
+
+          echo "Task $TASK_ID found in PLANS.md at line(s): $PLAN_LINES"
+
+          for TODO_LINE in $PLAN_LINES; do
+            # Extract all task IDs from this plan's TODO line
+            TODO_CONTENT=$(sed -n "${TODO_LINE}p" todo/PLANS.md)
+            PLAN_TASKS=$(echo "$TODO_CONTENT" | grep -oE 't[0-9]+(\.[0-9]+)*' | sort -u)
+
+            if [[ -z "$PLAN_TASKS" ]]; then
+              echo "No task IDs found on line $TODO_LINE — skipping"
+              continue
+            fi
+
+            echo "Plan tasks: $PLAN_TASKS"
+
+            # Check if ALL tasks in this plan are complete in TODO.md
+            ALL_DONE=true
+            for PTASK in $PLAN_TASKS; do
+              if grep -qE "^[[:space:]]*- \[ \] ${PTASK}( |$)" TODO.md; then
+                echo "Task $PTASK is still open — plan not complete"
+                ALL_DONE=false
+                break
+              fi
+              # Also check if the task exists at all (might be a subtask range)
+              if ! grep -qE "^[[:space:]]*- \[.\] ${PTASK}( |$)" TODO.md; then
+                echo "Task $PTASK not found in TODO.md — assuming complete (may be subtask)"
+              fi
+            done
+
+            if [[ "$ALL_DONE" != "true" ]]; then
+              continue
+            fi
+
+            # Find the plan's Status line (within 5 lines above the TODO line)
+            STATUS_LINE=""
+            for OFFSET in 1 2 3 4 5; do
+              CHECK_LINE=$((TODO_LINE - OFFSET))
+              if [[ "$CHECK_LINE" -lt 1 ]]; then break; fi
+              LINE_CONTENT=$(sed -n "${CHECK_LINE}p" todo/PLANS.md)
+              if echo "$LINE_CONTENT" | grep -q '^\*\*Status:\*\*'; then
+                STATUS_LINE="$CHECK_LINE"
+                break
+              fi
+            done
+
+            if [[ -z "$STATUS_LINE" ]]; then
+              echo "Could not find Status line for plan near line $TODO_LINE — skipping"
+              continue
+            fi
+
+            CURRENT_STATUS=$(sed -n "${STATUS_LINE}p" todo/PLANS.md)
+            echo "Current status (line $STATUS_LINE): $CURRENT_STATUS"
+
+            # Skip if already completed
+            if echo "$CURRENT_STATUS" | grep -qi 'Completed'; then
+              echo "Plan already marked Completed — skipping"
+              continue
+            fi
+
+            # Update status to Completed
+            sed -i "${STATUS_LINE}s/\*\*Status:\*\*.*/\*\*Status:\*\* Completed/" todo/PLANS.md
+
+            # Add PR reference to the TODO line if not already present
+            if ! grep -q "PR.*#${PR_NUMBER}" todo/PLANS.md | head -1; then
+              # Find if there's already a **PR:** line after the TODO line
+              PR_LINE=""
+              for OFFSET in 1 2 3; do
+                CHECK_LINE=$((TODO_LINE + OFFSET))
+                LINE_CONTENT=$(sed -n "${CHECK_LINE}p" todo/PLANS.md)
+                if echo "$LINE_CONTENT" | grep -q '^\*\*PR'; then
+                  PR_LINE="$CHECK_LINE"
+                  break
+                fi
+                # Stop if we hit another field or section
+                if echo "$LINE_CONTENT" | grep -qE '^\*\*|^###'; then
+                  break
+                fi
+              done
+
+              if [[ -z "$PR_LINE" ]]; then
+                # Insert a PR line after the TODO line
+                sed -i "${TODO_LINE}a\\**PR:** #${PR_NUMBER}" todo/PLANS.md
+              fi
+            fi
+
+            PLANS_CHANGED=true
+            echo "Updated plan status to Completed (line $STATUS_LINE)"
+          done
+
+          if [[ "$PLANS_CHANGED" == "true" ]]; then
+            git add todo/PLANS.md
+            if git diff --cached --quiet todo/PLANS.md 2>/dev/null; then
+              echo "No PLANS.md changes to commit"
+            else
+              git commit -m "chore: sync PLANS.md status for $TASK_ID (PR #${PR_NUMBER}) [skip ci]"
+              for i in 1 2 3; do
+                echo "Push attempt $i..."
+                git pull --rebase origin main || true
+                if git push; then
+                  echo "PLANS.md sync pushed on attempt $i"
+                  break
+                fi
+                sleep $((i * 3))
+              done
+            fi
+          fi
+
+  # =========================================================================
+  # t1339: Apply conventional-commit labels to PRs
+  # t3851: Fixed — uses pull_request_target for fork PR write permissions
+  # t3862: Added GH#NNNN: prefix stripping, graceful permission failure
+  # =========================================================================
+  # Parses the PR title prefix (feat:, fix:, docs:, etc.) and applies
+  # the corresponding GitHub label. Runs on PR open and title edit.
+  # Uses pull_request_target (not pull_request) so the GITHUB_TOKEN has
+  # write access even for PRs from forks.
+  # Strips task ID prefixes (t1234:, GH#1234:) before extracting the type.
+  label-pr:
+    name: Label PR from Conventional Commit
+    if: >-
+      (github.event_name == 'pull_request_target' || github.event_name == 'pull_request') &&
+      github.event.pull_request.merged != true &&
+      (github.event.action == 'opened' || github.event.action == 'edited')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      # Security: This job uses pull_request_target to get write permissions for
+      # fork PRs. It ONLY reads event metadata (PR title, number) — it never
+      # checks out or executes code from the PR head branch.
+      - name: Apply label from PR title prefix
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Extract conventional commit prefix from PR title
+          # Supports: feat, fix, docs, refactor, chore, perf, test, ci, build, style
+          # Also supports task-prefixed titles: "t1234: feat: ..." or "GH#1234: Fix ..."
+          TITLE="$PR_TITLE"
+
+          # Strip task ID prefixes if present:
+          #   - "t1234: " or "t1234.5: " (internal task IDs)
+          #   - "GH#1234: " (GitHub issue references)
+          TITLE=$(echo "$TITLE" | sed -E 's/^(t[0-9]+(\.[0-9]+)*|GH#[0-9]+):[[:space:]]*//')
+
+          # Extract the conventional commit type (case-insensitive)
+          # Matches "feat:", "fix:", "Fix ", "Add ", etc. — colon or space after prefix
+          PREFIX=$(echo "$TITLE" | grep -oiE '^(feat|fix|docs|refactor|chore|perf|test|ci|build|style|hotfix|bugfix|add|update|enhance)[:(! ]' | sed 's/[:(! ]$//' | tr '[:upper:]' '[:lower:]' || true)
+
+          if [[ -z "$PREFIX" ]]; then
+            echo "No conventional commit prefix found in: $PR_TITLE"
+            exit 0
+          fi
+
+          # Map prefix to GitHub label
+          case "$PREFIX" in
+            feat|add)          LABEL="enhancement" ;;
+            fix|bugfix|hotfix) LABEL="bug" ;;
+            docs)              LABEL="documentation" ;;
+            refactor)          LABEL="refactor" ;;
+            chore)             LABEL="chore" ;;
+            perf)              LABEL="performance" ;;
+            test)              LABEL="testing" ;;
+            ci|build)          LABEL="ci" ;;
+            style)             LABEL="style" ;;
+            update|enhance)    LABEL="enhancement" ;;
+            *)                 LABEL="" ;;
+          esac
+
+          if [[ -n "$LABEL" ]]; then
+            # Create label if it doesn't exist (idempotent)
+            gh label create "$LABEL" --repo "$REPO" --force 2>/dev/null || true
+            # Apply label — graceful failure if token lacks write permissions
+            # (e.g., stale runs from before pull_request_target migration)
+            if ! gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "$LABEL" 2>&1; then
+              echo "::warning::Could not apply label '$LABEL' to PR #$PR_NUMBER (insufficient permissions). Re-run this check to pick up the latest workflow permissions."
+              exit 0
+            fi
+            echo "Applied label '$LABEL' to PR #$PR_NUMBER (prefix: $PREFIX)"
+          fi
+
+  check-issue-link:
+    name: Check PR-Issue Linkage
+    if: >-
+      (github.event_name == 'pull_request_target' || github.event_name == 'pull_request') &&
+      github.event.pull_request.merged != true &&
+      (github.event.action == 'opened' || github.event.action == 'edited')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: write
+
+    steps:
+      # Security: This job uses pull_request_target to get write permissions for
+      # fork PRs. It ONLY reads event metadata (PR title, body, number) — it never
+      # checks out or executes code from the PR head branch.
+      - name: Check for issue reference in PR body
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Skip PRs that don't need issue linkage
+          if echo "$PR_TITLE" | grep -qiE '^(chore\(release\)|release:)'; then
+            echo "Release PR — issue link not required"
+            exit 0
+          fi
+
+          # Check for GitHub closing keywords or ref:GH# pattern
+          if echo "$PR_BODY" | grep -qiE '(closes|fixes|resolves)[[:space:]]+#[0-9]+'; then
+            echo "PR body contains issue closing keyword"
+            exit 0
+          fi
+
+          if echo "$PR_BODY" | grep -qE 'ref:GH#[0-9]+'; then
+            echo "PR body contains ref:GH# reference"
+            exit 0
+          fi
+
+          # Check if a task ID or GH# reference in the title has a matching open issue
+          TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
+          GH_REF=$(echo "$PR_TITLE" | grep -oE '^GH#[0-9]+' | sed 's/GH#//' || true)
+          if [[ -n "$GH_REF" ]]; then
+            # GH#NNNN: prefix directly references the issue number
+            ISSUE_NUM="$GH_REF"
+          elif [[ -n "$TASK_ID" ]]; then
+            ISSUE_NUM=$(gh issue list --repo "$REPO" --state open --search "${TASK_ID}:" --json number --jq '.[0].number' 2>/dev/null || true)
+          else
+            ISSUE_NUM=""
+          fi
+          if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
+            echo "::warning::PR references issue #$ISSUE_NUM but no closing keyword in body. Add 'Closes #$ISSUE_NUM' to the PR body for automatic linkage."
+            # Post a one-time comment (check if we already commented)
+            # Graceful failure if token lacks write permissions
+            EXISTING=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments --jq '[.comments[] | select(.body | contains("issue-link-check"))] | length' 2>/dev/null || echo "0")
+            if [[ "$EXISTING" == "0" ]]; then
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- issue-link-check -->
+          **Missing issue link.** This PR references issue #$ISSUE_NUM, but the PR body doesn't contain a closing keyword.
+
+          Add \`Closes #$ISSUE_NUM\` to the PR description so GitHub auto-links and auto-closes the issue on merge." 2>/dev/null || echo "::warning::Could not post comment (insufficient permissions)"
+            fi
+            exit 0
+          fi
+
+          echo "No issue reference found — this is acceptable for chore/docs PRs without tracked issues"
+
+  guard-persistent-issues:
+    name: Reopen Persistent Issues
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      issues: write
+
+    steps:
+      - name: Reopen if persistent label
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if echo "$ISSUE_LABELS" | grep -q 'persistent'; then
+            gh issue reopen "$ISSUE_NUMBER" --repo "$REPO" \
+              --comment "Auto-reopened: this issue has the \`persistent\` label and should not be closed. If closure was intentional, remove the \`persistent\` label first."
+            # Remove status:done if it was added
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label "status:done" 2>/dev/null || true
+            echo "Reopened persistent issue #$ISSUE_NUMBER"
+          else
+            echo "Issue #$ISSUE_NUMBER is not persistent — closure allowed"
+          fi
+
+  label-closure-reason:
+    name: Label Issue Closure Reason
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      issues: write
+
+    steps:
+      - name: Apply closure reason label
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Fetch state_reason from the API (not available in event payload)
+          STATE_REASON=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '.state_reason // "completed"' 2>/dev/null || echo "completed")
+          echo "Issue #$ISSUE_NUMBER closed with reason: $STATE_REASON"
+
+          # Skip if already closed by a merged PR (sync-on-pr-merge handles those)
+          if echo "$ISSUE_LABELS" | grep -q 'status:done'; then
+            echo "Issue already has status:done — closed by merged PR, skipping"
+            exit 0
+          fi
+
+          # Determine label based on state_reason and existing labels
+          LABEL=""
+          case "$STATE_REASON" in
+            not_planned)
+              # Check if already labelled with a specific reason
+              if echo "$ISSUE_LABELS" | grep -q 'duplicate'; then
+                echo "Already labelled as duplicate"
+                LABEL=""
+              elif echo "$ISSUE_LABELS" | grep -q 'wontfix'; then
+                echo "Already labelled as wontfix"
+                LABEL=""
+              else
+                # Check closing comment for hints about the reason
+                LAST_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+                  --jq 'last | .body // ""' 2>/dev/null || echo "")
+
+                if echo "$LAST_COMMENT" | grep -qiE 'duplicate|dupe|already exists'; then
+                  LABEL="duplicate"
+                elif echo "$LAST_COMMENT" | grep -qiE 'already.*(fixed|resolved|done|merged|implemented)'; then
+                  LABEL="already-fixed"
+                elif echo "$LAST_COMMENT" | grep -qiE 'wontfix|won'\''t fix|will not'; then
+                  LABEL="wontfix"
+                else
+                  LABEL="not-planned"
+                fi
+              fi
+              ;;
+            completed)
+              # Completed but no status:done = closed manually without a PR
+              # Check if there's a linked merged PR
+              LINKED_PR=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/timeline" \
+                --jq '[.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.state == "closed")] | length' 2>/dev/null || echo "0")
+              if [[ "$LINKED_PR" == "0" ]]; then
+                # Check closing comment for already-fixed hints
+                LAST_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+                  --jq 'last | .body // ""' 2>/dev/null || echo "")
+                if echo "$LAST_COMMENT" | grep -qiE 'already.*(fixed|resolved|done|merged|implemented)'; then
+                  LABEL="already-fixed"
+                fi
+                # Otherwise leave unlabelled — could be manually verified as done
+              fi
+              ;;
+          esac
+
+          if [[ -n "$LABEL" ]]; then
+            # Ensure label exists
+            gh label create "$LABEL" --repo "$REPO" --force \
+              --description "$(
+                case "$LABEL" in
+                  duplicate)     echo "This issue or pull request already exists" ;;
+                  not-planned)   echo "Closed without implementation — not planned" ;;
+                  already-fixed) echo "Already fixed by another change" ;;
+                  wontfix)       echo "This will not be worked on" ;;
+                esac
+              )" \
+              --color "$(
+                case "$LABEL" in
+                  duplicate)     echo "cfd3d7" ;;
+                  not-planned)   echo "ffffff" ;;
+                  already-fixed) echo "e4e669" ;;
+                  wontfix)       echo "ffffff" ;;
+                esac
+              )" 2>/dev/null || true
+
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "$LABEL" 2>/dev/null || true
+            echo "Applied label '$LABEL' to issue #$ISSUE_NUMBER"
+          else
+            echo "No closure reason label needed for issue #$ISSUE_NUMBER"
+          fi
