@@ -152,8 +152,11 @@ test_no_raw_gh_issue_list_outside_fallback() {
 # Test 6: Cache reads present in all 5 sub-stages
 # ---------------------------------------------------------------------------
 test_cache_reads_in_all_stages() {
+	# safe_grep_count inline pattern (t2763): grep -c exits 1 on no-match, producing "0\n0"
+	# with || echo 0. Use the guard form instead.
 	local cache_read_count
-	cache_read_count=$(grep -c '_read_cache_issues_for_slug' "${RECONCILE_SH}" 2>/dev/null || echo 0)
+	cache_read_count=$(grep -c '_read_cache_issues_for_slug' "${RECONCILE_SH}" 2>/dev/null || true)
+	[[ "$cache_read_count" =~ ^[0-9]+$ ]] || cache_read_count=0
 
 	# Expect: 1 definition + 5 call sites = 6+ matches
 	if [[ "$cache_read_count" -ge 6 ]]; then
@@ -171,9 +174,12 @@ test_body_in_prefetch_fetch() {
 	local prefetch_sh="${SCRIPT_DIR}/../pulse-prefetch.sh"
 	local prefetch_fetch_sh="${SCRIPT_DIR}/../pulse-prefetch-fetch.sh"
 
+	# safe_grep_count inline pattern (t2763): use guard form, not || echo 0.
 	local full_has_body delta_has_body
-	full_has_body=$(grep -c 'number,title,labels,updatedAt,assignees,body' "${prefetch_sh}" 2>/dev/null || echo 0)
-	delta_has_body=$(grep -c 'number,title,labels,updatedAt,assignees,body' "${prefetch_fetch_sh}" 2>/dev/null || echo 0)
+	full_has_body=$(grep -c 'number,title,labels,updatedAt,assignees,body' "${prefetch_sh}" 2>/dev/null || true)
+	[[ "$full_has_body" =~ ^[0-9]+$ ]] || full_has_body=0
+	delta_has_body=$(grep -c 'number,title,labels,updatedAt,assignees,body' "${prefetch_fetch_sh}" 2>/dev/null || true)
+	[[ "$delta_has_body" =~ ^[0-9]+$ ]] || delta_has_body=0
 
 	if [[ "$full_has_body" -ge 1 ]] && [[ "$delta_has_body" -ge 1 ]]; then
 		_pass "body-in-prefetch: body field present in both full and delta fetches"
