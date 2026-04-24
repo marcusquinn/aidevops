@@ -3041,7 +3041,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2807 align design-md agent with google-labs DESIGN.md spec v0.1.0 ref:GH#20747 pr:#20749 completed:2026-04-24
 
-- [ ] t2808 migrate tools/design/library examples to DESIGN.md spec v0.1.0 format ref:GH#20750
+- [x] t2808 migrate tools/design/library examples to DESIGN.md spec v0.1.0 format ref:GH#20750 pr:#20783 completed:2026-04-24
 
 - [ ] t2809 Update t1305 plan file — #14740 now closed-stale, PR #14741 is sole live upstream ref #chore #cleanup #plan ref:GH#20753
 
