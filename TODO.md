@@ -3029,7 +3029,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2801 signature-footer hook: false positives on heredoc bodies and quoted-arg matches push operators toward bypass #auto-dispatch #bug ref:GH#20735 pr:#20739 completed:2026-04-24
 
-- [ ] t2802 worktree-helper.sh add: explicitly base new branches on origin/<default> to prevent scope-leak PRs ref:GH#20737
+- [x] t2802 worktree-helper.sh add: explicitly base new branches on origin/<default> to prevent scope-leak PRs ref:GH#20737 pr:#20742 completed:2026-04-24
 
 - [ ] t2803 brief-template: add Complexity Impact section to prevent function-complexity gate surprises #auto-dispatch ref:GH#20738
 
