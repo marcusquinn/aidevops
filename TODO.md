@@ -3021,7 +3021,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2797 backfill status:available on auto-dispatch issues missing status labels (pre-t2789 heal) #auto-dispatch #bug #framework ref:GH#20728 pr:#20733 completed:2026-04-24
 
-- [ ] t2798 catch status:available default leak on bypass-path issue creation (defence-in-depth for t2789) #auto-dispatch #bug #framework ref:GH#20730
+- [x] t2798 catch status:available default leak on bypass-path issue creation (defence-in-depth for t2789) #auto-dispatch #bug #framework ref:GH#20730 pr:#20759 completed:2026-04-24
 
 - [ ] t2799 review-bot-gate-helper: rename RATE_LIMIT_PATTERNS alias and split rate-limit vs non-review pattern sets #refactor ref:GH#20732
 
