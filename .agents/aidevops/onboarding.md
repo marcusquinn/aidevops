@@ -32,6 +32,22 @@ Hand-fix: `"tools": {}` (not `[]`), `"type": "local"|"remote"`, `"tool_name": tr
 3. **Capture work type** (web-dev, devops, seo, wordpress, other): `onboarding-helper.sh save-work-type devops`
 4. **Show status**: `onboarding-helper.sh status`
 5. **Guide service-by-service setup**: purpose → credential source → setup command → verification
+6. **Per-repo platform setup**: after `gh auth login` succeeds, mention `/setup-git` for per-repo secrets (SYNC_PAT for issue-sync, etc.) — see "Scope" note below.
+
+## Scope: Per-Account vs Per-Repo
+
+`/onboarding` (this wizard) handles **per-account** setup — credentials and tooling that apply globally to a user or workstation:
+
+- Auth tokens stored in `~/.config/aidevops/credentials.sh` or `gopass` (one set of values, used everywhere)
+- Platform CLI logins: `gh auth login`, `glab auth login`, `tea login` (one auth per platform per account)
+- AI assistant API keys, hosting tokens, SEO service credentials
+
+`/setup-git` handles **per-repo** platform configuration — secrets that must be set on each individual remote repo:
+
+- `SYNC_PAT` (GitHub Actions secret used by `issue-sync.yml` to push TODO.md auto-completion past branch protection)
+- Future: GitLab CI variables, Gitea Actions secrets, Bitbucket Pipelines variables — same model, different platform UIs
+
+The two workflows compose: `/onboarding` first (you need `gh` to be authenticated before any per-repo helper can run), `/setup-git` second (run when new repos are registered or when SYNC_PAT advisories appear in the session greeting toast).
 
 ## Service Catalog
 

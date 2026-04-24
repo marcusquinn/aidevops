@@ -333,6 +333,19 @@ _check_advisories() {
 		return 0
 	fi
 
+	# t2816: prepend a single aggregated [WARN] line for setup debt so the
+	# OpenCode plugin classifier (greeting.mjs) escalates the toast variant
+	# to warning when there is non-zero debt. The per-repo [ADVISORY] lines
+	# below remain as info-tier follow-up detail.
+	local setup_debt_helper="$SCRIPT_DIR/setup-debt-helper.sh"
+	if [[ -x "$setup_debt_helper" ]]; then
+		local debt_line
+		debt_line=$("$setup_debt_helper" summary --format=toast 2>/dev/null) || debt_line=""
+		if [[ -n "$debt_line" ]]; then
+			advisories_output="$debt_line"
+		fi
+	fi
+
 	local advisory_file
 	for advisory_file in "$advisories_dir"/*.advisory; do
 		[[ -f "$advisory_file" ]] || continue

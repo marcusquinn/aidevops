@@ -141,7 +141,7 @@ Use for: decomposition epics, roadmap trackers, research summaries. **Do not use
 
 Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-DD`. Use `task-complete-helper.sh`. Every completed task must link to its verification evidence — work without an audit trail is unverifiable and may be reverted.
 
-**Known limitation — issue-sync TODO auto-completion (t2029 → t2166):** `issue-sync.yml` cannot auto-push to `main` without `SYNC_PAT` (fine-grained PAT, Contents: Read and write). Set: `gh secret set SYNC_PAT --repo <owner>/<repo> --body "<PAT>"`. Without it, the workflow posts a remediation comment with `task-complete-helper.sh` workaround. `SYNC_PAT` is per-repo. Full setup and known false-positive (t2252): `reference/auto-dispatch.md`.
+**Known limitation — issue-sync TODO auto-completion (t2029 → t2166):** `issue-sync.yml` cannot auto-push to `main` without `SYNC_PAT` (fine-grained PAT, Contents: Read and write). **Guided fix:** run `/setup-git` in your AI assistant — it walks all affected repos with pre-filled token-creation URLs (see `reference/sync-pat-platforms.md`). Manual fix per repo: create the PAT, then `gh secret set SYNC_PAT --repo <owner>/<repo>` (interactive prompt, NOT `--body` which leaks to shell history). Without SYNC_PAT, the workflow posts a remediation comment with a `task-complete-helper.sh` workaround. `SYNC_PAT` is per-repo. Full setup and known false-positive (t2252): `reference/auto-dispatch.md`.
 
 Code changes need worktree + PR. Workers NEVER edit TODO.md.
 
@@ -165,7 +165,7 @@ Use `/routine` to design, dry-run, and schedule these definitions. Reference: `.
 
 **Cross-repo awareness**: The supervisor manages tasks across all repos in `~/.config/aidevops/repos.json` where `pulse: true`. Each repo entry has a `slug` field (`owner/repo`) — ALWAYS use this for `gh` commands, never guess org names. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each pulse-enabled repo to get the full picture. Repos with `"local_only": true` have no GitHub remote — skip `gh` operations on them. Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`), not just `~/Git/<name>`.
 
-**Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats).
+**Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats). After registering, run `/setup-git` to apply per-repo platform secrets (currently `SYNC_PAT` for GitHub, with GitLab/Gitea/Bitbucket coming) — see `reference/sync-pat-platforms.md`.
 
 **repos.json structure (CRITICAL):** The file is `{"initialized_repos": [...], "git_parent_dirs": [...]}`. New repo entries MUST be appended inside the `initialized_repos` array — NEVER as top-level keys. After ANY write, validate: `jq . ~/.config/aidevops/repos.json > /dev/null`. A malformed file silently breaks the pulse for ALL repos.
 

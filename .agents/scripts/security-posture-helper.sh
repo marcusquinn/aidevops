@@ -639,12 +639,14 @@ This repo uses issue-sync.yml and has protection on the default branch
 Without SYNC_PAT, TODO.md auto-completion silently fails on PR merge
 (github-actions[bot] cannot push to a protected default branch).
 
-To fix (run in a separate terminal, NOT in AI chat):
+For a guided fix across all affected repos, run \`/setup-git\` in
+your AI assistant (OpenCode or Claude Code). It walks you through
+each repo with the correct pre-filled token-creation URL.
 
-1. Create a fine-grained PAT in GitHub UI:
-   Settings > Developer settings > Personal access tokens > Fine-grained
-   > Only selected repositories > ${slug}
-   > Contents: Read and write
+To fix this single repo manually (run in a separate terminal, NOT in AI chat):
+
+1. Create a fine-grained PAT (pre-filled URL):
+   https://github.com/settings/personal-access-tokens/new?name=aidevops-sync-pat&description=SYNC_PAT+for+aidevops+TODO+auto-completion&expires_in=none&target_name=${slug}&permissions=contents:write,metadata:read
 
 2. Set the secret:
    gh secret set SYNC_PAT --repo ${slug}
