@@ -429,6 +429,9 @@ CHILD_RUNTIME_LIMIT="${CHILD_RUNTIME_LIMIT:-1800}"            # 30 min default �
 SHELLCHECK_RSS_LIMIT_KB="${SHELLCHECK_RSS_LIMIT_KB:-1048576}" # 1 GB — ShellCheck-specific (lower due to exponential expansion)
 SHELLCHECK_RUNTIME_LIMIT="${SHELLCHECK_RUNTIME_LIMIT:-300}"   # 5 min — ShellCheck-specific
 SESSION_COUNT_WARN="${SESSION_COUNT_WARN:-5}"                 # Warn when >N concurrent sessions detected
+# GH#20681: Per-session watchdog stall caps passed to headless-runtime-helper.sh workers.
+WORKER_STALL_CONTINUE_MAX="${WORKER_STALL_CONTINUE_MAX:-3}"        # max stall-continue events before hard-kill
+WORKER_STALL_CUMULATIVE_MAX_S="${WORKER_STALL_CUMULATIVE_MAX_S:-1800}" # max cumulative stall time (s)
 
 # Validate numeric configuration (uses _validate_int from worker-lifecycle-common.sh)
 PULSE_STALE_THRESHOLD=$(_validate_int PULSE_STALE_THRESHOLD "$PULSE_STALE_THRESHOLD" 3600)
@@ -488,6 +491,10 @@ SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS
 SHELLCHECK_RUNTIME_LIMIT=$(_validate_int SHELLCHECK_RUNTIME_LIMIT "$SHELLCHECK_RUNTIME_LIMIT" 300 1)
 SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 5 1)
 EVER_NMR_NEGATIVE_CACHE_TTL_SECS=$(_validate_int EVER_NMR_NEGATIVE_CACHE_TTL_SECS "$EVER_NMR_NEGATIVE_CACHE_TTL_SECS" 300 0)
+# GH#20681: Per-session stall caps validated here so pulse exports sane values to workers.
+WORKER_STALL_CONTINUE_MAX=$(_validate_int WORKER_STALL_CONTINUE_MAX "$WORKER_STALL_CONTINUE_MAX" 3 1)
+WORKER_STALL_CUMULATIVE_MAX_S=$(_validate_int WORKER_STALL_CUMULATIVE_MAX_S "$WORKER_STALL_CUMULATIVE_MAX_S" 1800 60)
+export WORKER_STALL_CONTINUE_MAX WORKER_STALL_CUMULATIVE_MAX_S
 
 # _sanitize_markdown and _sanitize_log_field provided by worker-lifecycle-common.sh
 

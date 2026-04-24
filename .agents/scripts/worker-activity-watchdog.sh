@@ -169,9 +169,11 @@ _kill_worker() {
 
 	# Kill child processes first (pipeline members: opencode, tee),
 	# then the subshell itself. pkill -P walks the process tree by PPID.
+	# GH#20681: SIGTERM → 10s grace → SIGKILL (raised from 2s to give the
+	# runtime a chance to flush buffers and release locks cleanly).
 	pkill -P "$WORKER_PID" 2>/dev/null || true
 	kill "$WORKER_PID" 2>/dev/null || true
-	sleep 2
+	sleep 10
 	# Force kill if still alive
 	pkill -9 -P "$WORKER_PID" 2>/dev/null || true
 	kill -9 "$WORKER_PID" 2>/dev/null || true

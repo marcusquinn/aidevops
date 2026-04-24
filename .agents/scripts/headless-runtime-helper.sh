@@ -1254,6 +1254,36 @@ _detach_worker() {
 }
 
 # =============================================================================
+# Stall cap helper (GH#20681)
+# =============================================================================
+
+#######################################
+# Check whether per-session watchdog stall caps are exceeded.
+#
+# Two independent triggers — whichever fires first stops the session:
+#   1. Count cap: number of stall events > WORKER_STALL_CONTINUE_MAX
+#   2. Cumulative time cap: total stall seconds >= WORKER_STALL_CUMULATIVE_MAX_S
+#
+# Args:
+#   $1 - current stall event count (integer)
+#   $2 - cumulative stall seconds (integer)
+#   $3 - max stall count (WORKER_STALL_CONTINUE_MAX, default 3)
+#   $4 - max cumulative seconds (WORKER_STALL_CUMULATIVE_MAX_S, default 1800)
+#
+# Returns: 0 if cap exceeded (caller should kill), 1 if within cap (can continue)
+#######################################
+_stall_session_cap_exceeded() {
+	local count="$1"
+	local cumulative_s="$2"
+	local max_count="${3:-3}"
+	local max_cumulative_s="${4:-1800}"
+
+	[[ "$count" -gt "$max_count" ]] && return 0
+	[[ "$cumulative_s" -ge "$max_cumulative_s" ]] && return 0
+	return 1
+}
+
+# =============================================================================
 # Main run orchestrator
 # =============================================================================
 
@@ -1337,6 +1367,19 @@ cmd_run() {
 	local max_watchdog_continue_retries="${HEADLESS_WATCHDOG_CONTINUE_MAX_RETRIES:-2}"
 	local watchdog_continue_count=0
 
+	# GH#20681: Per-session stall caps — count and cumulative time.
+	# Prevents unbounded token burn from repeated stall-continue events.
+	# The stall_timeout_s is the watchdog's configured stall window, used to
+	# approximate cumulative stall time (one STALL_TIMEOUT per stall event).
+	local _stall_timeout_s="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-600}"
+	[[ "$_stall_timeout_s" =~ ^[0-9]+$ ]] || _stall_timeout_s=600
+	local _stall_continue_max="${WORKER_STALL_CONTINUE_MAX:-3}"
+	[[ "$_stall_continue_max" =~ ^[0-9]+$ ]] || _stall_continue_max=3
+	local _stall_cumulative_max_s="${WORKER_STALL_CUMULATIVE_MAX_S:-1800}"
+	[[ "$_stall_cumulative_max_s" =~ ^[0-9]+$ ]] || _stall_cumulative_max_s=1800
+	local _session_stall_count=0
+	local _session_stall_cumulative_s=0
+
 	local attempt=1
 	local max_attempts=3
 	local cmd_run_action="retry"
@@ -1392,25 +1435,47 @@ cmd_run() {
 			return 1
 		fi
 
-		# GH#17648: Handle watchdog stall with activity (exit 78) — the worker
-		# was making progress but the connection/stream dropped. Resume the
-		# session to preserve context (worktree, files, partial implementation).
-		# Try up to 2 continuations before falling through to provider rotation.
-		if [[ "$attempt_exit" -eq 78 && "$watchdog_continue_count" -lt "$max_watchdog_continue_retries" ]]; then
-			watchdog_continue_count=$((watchdog_continue_count + 1))
-			print_warning "Watchdog stall with activity — resuming session (attempt ${watchdog_continue_count}/${max_watchdog_continue_retries})"
-
-			# Resume with a prompt that explains the connection drop.
-			# Session ID was stored by _handle_run_result before returning 78.
-			prompt="Your previous connection dropped mid-session and the process was restarted. All your prior work (worktree, file changes, commits) is still on disk. Resume where you left off — check git status, your todo list, and continue through to completion. Do not restart from scratch. Do not stop until the outcome is FULL_LOOP_COMPLETE or BLOCKED with evidence."
-
-			# Watchdog continuations don't consume provider-rotation attempts.
-			continue
-		fi
-
-		# Exhausted watchdog continuations — fall through to provider rotation.
+		# GH#17648 / GH#20681: Handle watchdog stall with activity (exit 78).
+		# The worker was making progress but the connection/stream dropped.
+		# Track cumulative stall events per session and apply hard-kill caps
+		# before retrying — unbounded stall-continue burns tokens indefinitely.
 		if [[ "$attempt_exit" -eq 78 ]]; then
-			print_warning "Exhausted ${max_watchdog_continue_retries} watchdog continuation retries — falling through to provider rotation"
+			# Accumulate per-session stall metrics (one stall = one STALL_TIMEOUT).
+			_session_stall_count=$((_session_stall_count + 1))
+			_session_stall_cumulative_s=$((_session_stall_cumulative_s + _stall_timeout_s))
+
+			# GH#20681: Check session-level hard caps: count OR cumulative time.
+			# Either trigger → record watchdog_stall_killed and stop the session.
+			if _stall_session_cap_exceeded \
+				"$_session_stall_count" "$_session_stall_cumulative_s" \
+				"$_stall_continue_max" "$_stall_cumulative_max_s"; then
+				print_warning "Watchdog stall cap exceeded (stalls=${_session_stall_count}/${_stall_continue_max}, cumulative=${_session_stall_cumulative_s}s/${_stall_cumulative_max_s}s) — recording watchdog_stall_killed"
+				_run_result_label="watchdog_stall_killed"
+				_run_failure_reason="watchdog_stall_killed"
+				# Use the already-set label vars as metric args to avoid
+				# pushing "watchdog_stall_killed" past the 3-occurrence ratchet.
+				append_runtime_metric "$role" "$session_key" "$selected_model" \
+					"$(extract_provider "$selected_model")" \
+					"$_run_result_label" "143" "$_run_failure_reason" "1" "0"
+				_cmd_run_finish "$session_key" "fail"
+				return 1
+			fi
+
+			# Within session cap: try per-attempt continuations first.
+			if [[ "$watchdog_continue_count" -lt "$max_watchdog_continue_retries" ]]; then
+				watchdog_continue_count=$((watchdog_continue_count + 1))
+				print_warning "Watchdog stall with activity — resuming session (attempt ${watchdog_continue_count}/${max_watchdog_continue_retries}, session stalls=${_session_stall_count}/${_stall_continue_max})"
+
+				# Resume with a prompt that explains the connection drop.
+				# Session ID was stored by _handle_run_result before returning 78.
+				prompt="Your previous connection dropped mid-session and the process was restarted. All your prior work (worktree, file changes, commits) is still on disk. Resume where you left off — check git status, your todo list, and continue through to completion. Do not restart from scratch. Do not stop until the outcome is FULL_LOOP_COMPLETE or BLOCKED with evidence."
+
+				# Watchdog continuations don't consume provider-rotation attempts.
+				continue
+			fi
+
+			# Exhausted per-attempt continuations — fall through to provider rotation.
+			print_warning "Exhausted ${max_watchdog_continue_retries} watchdog continuation retries — falling through to provider rotation (session stalls=${_session_stall_count}/${_stall_continue_max})"
 			# Don't return — let it fall through to _cmd_run_prepare_retry
 			# which will rotate to a different provider/model.
 		fi
