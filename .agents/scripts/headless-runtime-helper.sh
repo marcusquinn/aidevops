@@ -1081,9 +1081,93 @@ cmd_metrics() {
 # Run lifecycle — prepare, finish, retry, detach
 # =============================================================================
 
+#######################################
+# Detect whether a worker produced any tangible output.
+#
+# Checks three independent signals. Returns 0 (true — has output) if ANY
+# signal is present; returns 1 (false — zero output) only when ALL are absent.
+#
+# Args:
+#   $1 - session_key (e.g. "issue-20721")
+#   $2 - work_dir    (worktree root; must be a git repo)
+#
+# Signals checked (in order of cheapness):
+#   1. Commits on feature branch beyond remote default branch
+#      (git rev-list --count origin/main..HEAD > 0; falls back to origin/master)
+#   2. Branch pushed to remote
+#      (git ls-remote origin refs/heads/<branch> is non-empty)
+#   3. PR linked to this issue via gh
+#      (gh pr list --search "<issue_number>" returns at least one result)
+#
+# Design principle — fail-open: every check that errors (no remote, no gh,
+# detached HEAD, network failure) returns 0 so false-negatives are impossible.
+# Only a confirmed absence of all three signals triggers a noop classification.
+#######################################
+_worker_produced_output() {
+	local session_key="$1"
+	local work_dir="$2"
+
+	# Only applies to worker sessions (issue-* key pattern)
+	if [[ "$session_key" != issue-* ]]; then
+		return 0
+	fi
+
+	# Bail if work_dir is not a valid git repo — fail-open
+	if [[ -z "$work_dir" ]] || ! git -C "$work_dir" rev-parse --git-dir >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# Signal 1a: commits on feature branch beyond origin/main
+	local commit_count=0
+	commit_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
+	[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count=0
+	if [[ "$commit_count" -gt 0 ]]; then
+		return 0
+	fi
+
+	# Signal 1b: fallback for origin/master default branch
+	commit_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
+	[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count=0
+	if [[ "$commit_count" -gt 0 ]]; then
+		return 0
+	fi
+
+	# Signal 2: branch pushed to remote
+	local branch_name=""
+	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	if [[ -n "$branch_name" && "$branch_name" != "HEAD" ]]; then
+		local remote_ref=""
+		remote_ref=$(git -C "$work_dir" ls-remote origin "refs/heads/$branch_name" 2>/dev/null || true)
+		if [[ -n "$remote_ref" ]]; then
+			return 0
+		fi
+	fi
+
+	# Signal 3: PR linked to this issue (requires gh and DISPATCH_REPO_SLUG)
+	local issue_number=""
+	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	if [[ -n "$issue_number" && -n "$repo_slug" ]]; then
+		local pr_count=0
+		pr_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" \
+			--json number --jq 'length' 2>/dev/null || true)
+		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+		if [[ "$pr_count" -gt 0 ]]; then
+			return 0
+		fi
+	fi
+
+	# All three signals absent — worker produced no tangible output
+	return 1
+}
+
 _cmd_run_finish() {
 	local session_key="$1"
 	local ledger_status="$2"
+	# work_dir is optional ($3). When present and ledger_status != "fail",
+	# _worker_produced_output() checks for tangible output to distinguish
+	# a genuine success from a silent no-op exit (GH#20721).
+	local work_dir="${3:-}"
 
 	# Release the dispatch claim so the issue is immediately available for
 	# re-dispatch (next 2-min pulse cycle) instead of waiting for the
@@ -1133,12 +1217,32 @@ _cmd_run_finish() {
 		# loop if available, otherwise defaults to "worker_failed".
 		_report_failure_to_fast_fail "$session_key" "${_run_failure_reason:-worker_failed}" "$crash_type"
 	else
-		# Success path: post CLAIM_RELEASED with reason=worker_complete so
-		# the audit trail on the issue thread shows the full lifecycle
-		# (DISPATCH_CLAIM → CLAIM_RELEASED) even when no PR was created.
-		# Non-fatal if the API call fails — the pulse will eventually GC
-		# the claim via the TTL path.
-		_release_dispatch_claim "$session_key" "worker_complete"
+		# GH#20721: Distinguish genuine success from silent no-op exit.
+		# A worker that exits 0 with no commits, no pushed branch, and no PR
+		# is NOT a success — it is a silent failure that the audit trail
+		# previously misclassified as worker_complete, suppressing fast-fail
+		# and tier escalation.
+		#
+		# When work_dir is provided, check for tangible output. Absent all
+		# three signals: emit worker_noop and increment fast-fail so cascade
+		# dispatch fires on the next pulse cycle.
+		#
+		# _worker_produced_output is fail-open (returns 0) when signals cannot
+		# be evaluated (no git repo, no gh, no remote), so false-negatives
+		# (legit work misclassified as noop) are impossible — only confirmed
+		# absence of output triggers the noop path.
+		if [[ -n "$work_dir" ]] && ! _worker_produced_output "$session_key" "$work_dir"; then
+			print_info "[lifecycle] worker_noop session=$session_key — zero commits, no pushed branch, no PR"
+			_release_dispatch_claim "$session_key" "worker_noop"
+			_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "no_work"
+		else
+			# Success path: post CLAIM_RELEASED with reason=worker_complete so
+			# the audit trail on the issue thread shows the full lifecycle
+			# (DISPATCH_CLAIM → CLAIM_RELEASED) even when no PR was created.
+			# Non-fatal if the API call fails — the pulse will eventually GC
+			# the claim via the TTL path.
+			_release_dispatch_claim "$session_key" "worker_complete"
+		fi
 	fi
 
 	_update_dispatch_ledger "$session_key" "$ledger_status"
@@ -1404,7 +1508,8 @@ cmd_run() {
 		fi
 
 		if [[ "$attempt_exit" -eq 0 ]]; then
-			_cmd_run_finish "$session_key" "complete"
+			# GH#20721: Pass work_dir so _cmd_run_finish can detect no-op exits.
+			_cmd_run_finish "$session_key" "complete" "$work_dir"
 			return 0
 		fi
 
