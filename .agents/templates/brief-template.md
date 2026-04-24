@@ -114,6 +114,40 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
 {If this task is for a `parent-task`-labeled issue, confirm: PR body will use `For #NNN`, not `Resolves`.}
 {If leaf task: use `Resolves #NNN` as normal — delete this section or leave it blank.}
 
+## Phases
+
+<!-- For `parent-task`-labeled issues only. Delete this section for leaf tasks.
+
+     The sequential phase auto-file mechanism (t2740) is ON by default since t2787.
+     It reads phase declarations from the parent-task issue body and auto-files the
+     next phase as a child issue once the prior phase's PR merges.
+
+     Override to disable: AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE=0
+
+     **List format (preferred — auto-fire works out of the box):**
+
+       - Phase 1 - description [auto-fire:on-prior-merge]
+       - Phase 2 - description [auto-fire:on-prior-merge]
+       - Phase 3 - description
+
+     **Narrative bold-heading format (for prose-style decomposition plans):**
+
+       **Phase 1 — description [auto-fire:on-prior-merge]**
+       Detailed implementation notes...
+
+       **Phase 2 — description**
+       Detailed implementation notes...
+
+     Available markers:
+     - `[auto-fire:on-prior-merge]` — file this phase when the prior phase PR merges (recommended)
+     - `[auto-fire:on]` — file immediately (no wait for prior merge)
+     - No marker — not auto-filed unless `<!-- phase-auto-fire:on -->` appears in the issue body
+
+     The close guard (t2755 Phase 2) prevents premature parent closure while any declared
+     phase is still unfiled or open. -->
+
+{Delete this section for leaf tasks. For parent tasks, list phases here.}
+
 <!-- HEADING LOCK (t2063): the `## How` heading below must remain exactly
      "## How" (optionally with " (Approach)" suffix). The subsection headings
      MUST be exactly "### Files to Modify", "### Implementation Steps", and

@@ -49,8 +49,9 @@
 [[ -n "${_SHARED_PHASE_FILING_LOADED:-}" ]] && return 0
 _SHARED_PHASE_FILING_LOADED=1
 
-# Feature flag: default OFF for initial rollout.
-AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE="${AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE:-0}"
+# Feature flag: default ON since Phase 1 (parser) and Phase 2 (close guard) landed (t2787).
+# Override: AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE=0 to disable.
+AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE="${AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE:-1}"
 
 _phase_log() {
 	local _log="${LOGFILE:-/dev/null}"

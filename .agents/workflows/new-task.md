@@ -97,6 +97,27 @@ Run `task-decompose-helper.sh classify "{title}"` if available. Skip with `--no-
 - **Atomic (default):** Proceed to Step 4.
 - **Composite:** Present decomposition tree. If approved: allocate `{task_id}.N` IDs via `claim-task-id.sh`, create brief per subtask, add `blocked-by:` edges, mark parent `status:blocked`. Each subtask brief must (1) reference parent, (2) inherit parent context, (3) include supervisor session ID, (4) set `blocked-by:` from `depends_on`. `batch_strategy` (depth-first/breadth-first) informs pulse dispatch ordering.
 
+### Step 3.6: Declare Phases for Parent Tasks
+
+If the task is tagged `#parent`, add a `## Phases` section to the issue body (and the brief). The sequential phase auto-file mechanism (t2740) is **on by default** — it files the next phase automatically when the prior phase PR merges.
+
+**Canonical list format (preferred):**
+
+```
+- Phase 1 - description [auto-fire:on-prior-merge]
+- Phase 2 - description [auto-fire:on-prior-merge]
+- Phase 3 - description
+```
+
+**Narrative bold-heading format:**
+
+```
+**Phase 1 — description [auto-fire:on-prior-merge]**
+Implementation notes...
+```
+
+Narrative phases without a per-phase marker are NOT auto-filed unless `<!-- phase-auto-fire:on -->` appears in the issue body. Full format reference and marker options: `reference/parent-task-lifecycle.md` § Sequential Phase Auto-File.
+
 ### Step 4: Add to TODO.md
 
 ```markdown

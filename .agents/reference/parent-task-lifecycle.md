@@ -55,6 +55,49 @@ Env override: `PARENT_DECOMPOSITION_ESCALATION_HOURS` (default 168). Capped at `
 
 `.agents/scripts/tests/test-parent-prose-child-detection.sh`, `test-parent-task-application-warn.sh`, `test-parent-decomposition-escalation.sh`, `test-auto-decomposer-scanner.sh`, `test-auto-decomposer-per-parent-gate.sh` (84+ structural assertions total).
 
+## Sequential Phase Auto-File (t2740, enabled by default since t2787)
+
+The sequential phase auto-file mechanism reads phase declarations from the parent-task issue body and files the **next unfiled phase** as a child issue automatically once the prior phase's PR merges.
+
+**Feature flag:** `AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE` — defaults to `1` (ON) since t2787. Set to `0` to disable.
+
+### Canonical Phase Formats
+
+Two formats are supported. Both are parsed by `_extract_sequential_phases` in `shared-phase-filing.sh`.
+
+**List format (preferred — auto-fire enabled by default):**
+
+```
+- Phase 1 - description [auto-fire:on-prior-merge]
+- Phase 2 - description [auto-fire:on-prior-merge]
+- Phase 3 - description
+```
+
+**Narrative bold-heading format (for prose-style decomposition plans):**
+
+```
+**Phase 1 — description [auto-fire:on-prior-merge]**
+Detailed implementation notes for Phase 1...
+
+**Phase 2 — description**
+Detailed implementation notes for Phase 2...
+```
+
+### Auto-Fire Markers
+
+| Marker | Behaviour |
+|--------|-----------|
+| `[auto-fire:on-prior-merge]` | File this phase when the prior phase PR merges (recommended) |
+| `[auto-fire:on]` | File immediately — no wait for prior merge |
+| *(no marker — list format)* | Filed in sequence (same as `on-prior-merge`) |
+| *(no marker — narrative format)* | NOT auto-filed unless `<!-- phase-auto-fire:on -->` appears in the issue body |
+
+The `<!-- phase-auto-fire:on -->` HTML comment is the opt-in for narrative phases without per-phase markers. It applies the `on-prior-merge` behaviour to every unmarked narrative phase in the issue.
+
+### Close Guard
+
+The close guard (t2755 Phase 2) prevents premature parent-task closure while any declared phase is still unfiled or open. If a PR uses a closing keyword (`Closes #NNN`) on a parent-task issue that still has pending phases, the merge is accepted but the issue is re-opened with an explanatory comment.
+
 ## Use Cases
 
 **Use `#parent` for:** decomposition epics with child implementation tasks, roadmap trackers, research summaries that spawn separate work items, any investigation or "think-before-acting" issue.
