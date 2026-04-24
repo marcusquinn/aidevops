@@ -73,7 +73,7 @@ _read_cache_issues_for_slug() {
 	# Read issues array for this slug
 	local issues
 	issues=$(jq -e --arg slug "$slug" '.[$slug].issues // empty' "$cache_file" 2>/dev/null) || return 1
-	[[ -n "$issues" && "$issues" != "null" ]] || return 1
+	[[ -n "$issues" ]] || return 1
 
 	printf '%s' "$issues"
 	return 0
@@ -958,6 +958,13 @@ reconcile_open_issues_with_merged_prs() {
 		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
 		[[ "$issue_count" -gt 0 ]] || continue
 
+		# Pre-extract parent-task issue numbers in one jq pass to avoid spawning
+		# jq once per loop iteration (GH#20675: Gemini review feedback on PR #20667).
+		local parent_task_nums
+		parent_task_nums=$(printf '%s' "$issues_json" | \
+			jq -r '.[] | select((.labels // []) | map(.name) | index("parent-task") != null) | .number' \
+			2>/dev/null) || parent_task_nums=""
+
 		local i=0
 		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" ]]; do
 			local issue_num
@@ -991,13 +998,8 @@ reconcile_open_issues_with_merged_prs() {
 			fi
 
 			# Skip parent-task issues (closing a parent from a child PR is wrong).
-			# t2773: read labels from issues_json (already fetched from cache or
-			# gh_issue_list with --json labels) — eliminates a per-issue gh api call.
-			local issue_labels
-			issue_labels=$(printf '%s' "$issues_json" | \
-				jq -r --argjson idx "$((i - 1))" '.[$idx].labels // [] | map(.name) | join(",")' \
-				2>/dev/null) || issue_labels=""
-			if [[ "$issue_labels" == *"parent-task"* ]]; then
+			# Labels pre-extracted above in a single jq pass (GH#20675).
+			if [[ -n "$parent_task_nums" ]] && printf '%s\n' "$parent_task_nums" | grep -qx "$issue_num"; then
 				continue
 			fi
 
