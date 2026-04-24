@@ -64,7 +64,7 @@ _prefetch_prs_try_delta() {
 	fi
 
 	local delta_json=""
-	delta_json=$(gh pr list --repo "$slug" --state open \
+	delta_json=$(gh_pr_list --repo "$slug" --state open \
 		--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
 		--search "updated:>=${last_prefetch}" \
 		--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || delta_json=""
@@ -113,7 +113,7 @@ _prefetch_prs_enrich_checks() {
 	local checks_err
 	checks_err=$(mktemp)
 	local checks_json=""
-	checks_json=$(gh pr list --repo "$slug" --state open \
+	checks_json=$(gh_pr_list --repo "$slug" --state open \
 		--json number,statusCheckRollup \
 		--limit "$checks_limit" 2>"$checks_err") || checks_json=""
 
@@ -220,7 +220,7 @@ _prefetch_repo_prs() {
 
 		# Full fetch: either requested directly or delta fell back
 		if [[ "$sweep_mode" == "full" ]]; then
-			pr_json=$(gh pr list --repo "$slug" --state open \
+			pr_json=$(gh_pr_list --repo "$slug" --state open \
 				--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
 				--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || pr_json=""
 
@@ -231,7 +231,7 @@ _prefetch_repo_prs() {
 				if _pulse_gh_err_is_rate_limit "$pr_err"; then
 					_pulse_mark_rate_limited "_prefetch_repo_prs:${slug}"
 				fi
-				echo "[pulse-wrapper] _prefetch_repo_prs: gh pr list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
+				echo "[pulse-wrapper] _prefetch_repo_prs: gh_pr_list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
 				pr_json="[]"
 			fi
 		fi
@@ -274,7 +274,7 @@ _prefetch_repo_daily_cap() {
 	today_utc=$(date -u +%Y-%m-%d)
 	local daily_cap_json daily_cap_err
 	daily_cap_err=$(mktemp)
-	daily_cap_json=$(gh pr list --repo "$slug" --state all \
+	daily_cap_json=$(gh_pr_list --repo "$slug" --state all \
 		--json createdAt --limit 200 2>"$daily_cap_err") || daily_cap_json="[]"
 	if [[ -z "$daily_cap_json" || "$daily_cap_json" == "null" ]]; then
 		local _daily_cap_err_msg
@@ -283,7 +283,7 @@ _prefetch_repo_daily_cap() {
 		if _pulse_gh_err_is_rate_limit "$daily_cap_err"; then
 			_pulse_mark_rate_limited "_prefetch_repo_daily_cap:${slug}"
 		fi
-		echo "[pulse-wrapper] _prefetch_repo_daily_cap: gh pr list FAILED for ${slug}: ${_daily_cap_err_msg}" >>"$LOGFILE"
+		echo "[pulse-wrapper] _prefetch_repo_daily_cap: gh_pr_list FAILED for ${slug}: ${_daily_cap_err_msg}" >>"$LOGFILE"
 		daily_cap_json="[]"
 	fi
 	rm -f "$daily_cap_err"
@@ -335,7 +335,7 @@ _prefetch_issues_try_delta() {
 	fi
 
 	local delta_json=""
-	delta_json=$(gh issue list --repo "$slug" --state open \
+	delta_json=$(gh_issue_list --repo "$slug" --state open \
 		--json number,title,labels,updatedAt,assignees,body \
 		--search "updated:>=${last_prefetch}" \
 		--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || delta_json=""

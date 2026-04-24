@@ -725,9 +725,9 @@ _should_run_llm_supervisor() {
 	while IFS='|' read -r slug _; do
 		[[ -n "$slug" ]] || continue
 		local ic pc
-		ic=$(gh issue list --repo "$slug" --state open --json number,labels --limit 500 \
+		ic=$(gh_issue_list --repo "$slug" --state open --json number,labels --limit 500 \
 			--jq '[.[] | select(.labels | map(.name) | (index("persistent")) | not)] | length' 2>/dev/null) || ic=0
-		pc=$(gh pr list --repo "$slug" --state open --json number --jq 'length' --limit 200 2>/dev/null) || pc=0
+		pc=$(gh_pr_list --repo "$slug" --state open --json number --jq 'length' --limit 200 2>/dev/null) || pc=0
 		[[ "$ic" =~ ^[0-9]+$ ]] || ic=0
 		[[ "$pc" =~ ^[0-9]+$ ]] || pc=0
 		current_issues=$((current_issues + ic))

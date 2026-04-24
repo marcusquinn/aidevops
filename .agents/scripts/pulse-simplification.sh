@@ -427,7 +427,7 @@ _complexity_llm_sweep_due() {
 	# If every open function-complexity-debt issue (excluding sweep meta-issues) has
 	# status:queued or status:in-progress, the pipeline is working — no sweep needed.
 	local dispatched_count
-	dispatched_count=$(gh issue list --repo "$aidevops_slug" \
+	dispatched_count=$(gh_issue_list --repo "$aidevops_slug" \
 		--label "function-complexity-debt" --state open \
 		--json number,title,labels --jq '
 		[.[] | select(.title | test("stalled|LLM sweep") | not)] |
@@ -436,7 +436,7 @@ _complexity_llm_sweep_due() {
 			[.[] | select(.labels | map(.name) | (index("status:queued") or index("status:in-progress")))] | length
 		end' 2>/dev/null) || dispatched_count=""
 	local actionable_count
-	actionable_count=$(gh issue list --repo "$aidevops_slug" \
+	actionable_count=$(gh_issue_list --repo "$aidevops_slug" \
 		--label "function-complexity-debt" --state open \
 		--json number,title --jq '[.[] | select(.title | test("stalled|LLM sweep") | not)] | length' 2>/dev/null) || actionable_count=""
 	if [[ "$actionable_count" =~ ^[0-9]+$ && "$dispatched_count" =~ ^[0-9]+$ && "$actionable_count" -gt 0 && "$dispatched_count" -ge "$actionable_count" ]]; then
@@ -461,7 +461,7 @@ _complexity_run_llm_sweep() {
 	# Dedup: check if an open sweep issue already exists (t1855).
 	# Both sweep code paths use different title patterns — check both.
 	local sweep_exists
-	sweep_exists=$(gh issue list --repo "$aidevops_slug" \
+	sweep_exists=$(gh_issue_list --repo "$aidevops_slug" \
 		--label "function-complexity-debt" --state open \
 		--search "in:title \"simplification debt stalled\"" \
 		--json number --jq 'length' 2>/dev/null) || sweep_exists="0"
@@ -747,7 +747,7 @@ _complexity_scan_has_existing_issue() {
 	# Server-side search by file path in title — accurate across all issues,
 	# not limited by --limit pagination. The file path is always in the title.
 	local match_count
-	match_count=$(gh issue list --repo "$repo_slug" \
+	match_count=$(gh_issue_list --repo "$repo_slug" \
 		--label "function-complexity-debt" --state open \
 		--search "in:title \"$issue_key\"" \
 		--json number --jq 'length' 2>/dev/null) || match_count="0"
@@ -757,7 +757,7 @@ _complexity_scan_has_existing_issue() {
 
 	# Fallback: search in issue body for the structured **File:** field.
 	# This catches issues where the title format differs (e.g., Qlty issues).
-	match_count=$(gh issue list --repo "$repo_slug" \
+	match_count=$(gh_issue_list --repo "$repo_slug" \
 		--label "function-complexity-debt" --state open \
 		--search "\"$issue_key\" in:body" \
 		--json number --jq 'length' 2>/dev/null) || match_count="0"
@@ -786,7 +786,7 @@ _complexity_scan_close_duplicate_issues_by_title() {
 	local issue_title="$2"
 
 	local issue_numbers=""
-	if ! issue_numbers=$(T="$issue_title" gh issue list --repo "$repo_slug" \
+	if ! issue_numbers=$(T="$issue_title" gh_issue_list --repo "$repo_slug" \
 		--label "function-complexity-debt" --state open \
 		--search "in:title \"${issue_title}\"" \
 		--limit 100 --json number,title \
@@ -1346,7 +1346,7 @@ run_simplification_dedup_cleanup() {
 		# file path from title via jq regex, group by path, and collect all but the
 		# last (newest) issue number from each group as duplicates to close.
 		local dupe_numbers
-		dupe_numbers=$(gh issue list --repo "$slug" \
+		dupe_numbers=$(gh_issue_list --repo "$slug" \
 			--label "function-complexity-debt" --state open \
 			--limit 500 --json number,title \
 			--jq '
@@ -1727,7 +1727,7 @@ _complexity_scan_sweep_check() {
 		echo "[pulse-wrapper] LLM sweep triggered: ${sweep_result}" >>"$LOGFILE"
 		# Create a one-off issue for the LLM sweep if none exists (t1855: check both title patterns)
 		local sweep_issue_exists
-		sweep_issue_exists=$(gh issue list --repo "$aidevops_slug" \
+		sweep_issue_exists=$(gh_issue_list --repo "$aidevops_slug" \
 			--label "function-complexity-debt" --state open \
 			--search "in:title \"simplification debt stalled\" OR in:title \"LLM complexity sweep\"" \
 			--json number --jq 'length' 2>/dev/null) || sweep_issue_exists="0"

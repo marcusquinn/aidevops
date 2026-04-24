@@ -53,11 +53,11 @@ _fetch_queue_metrics() {
 
 		local pr_json pr_qm_err
 		pr_qm_err=$(mktemp)
-		pr_json=$(gh pr list --repo "$slug" --state open --json reviewDecision,statusCheckRollup --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_qm_err") || pr_json="[]"
+		pr_json=$(gh_pr_list --repo "$slug" --state open --json reviewDecision,statusCheckRollup --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_qm_err") || pr_json="[]"
 		if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 			local _pr_qm_err_msg
 			_pr_qm_err_msg=$(cat "$pr_qm_err" 2>/dev/null || echo "unknown error")
-			echo "[pulse-wrapper] _fetch_queue_metrics: gh pr list FAILED for ${slug}: ${_pr_qm_err_msg}" >>"$LOGFILE"
+			echo "[pulse-wrapper] _fetch_queue_metrics: gh_pr_list FAILED for ${slug}: ${_pr_qm_err_msg}" >>"$LOGFILE"
 			pr_json="[]"
 		fi
 		rm -f "$pr_qm_err"
@@ -68,11 +68,11 @@ _fetch_queue_metrics() {
 
 		local issue_json repo_issue_total issue_qm_err
 		issue_qm_err=$(mktemp)
-		issue_json=$(gh issue list --repo "$slug" --state open --json number --limit "$PULSE_RUNNABLE_ISSUE_LIMIT" 2>"$issue_qm_err") || issue_json="[]"
+		issue_json=$(gh_issue_list --repo "$slug" --state open --json number --limit "$PULSE_RUNNABLE_ISSUE_LIMIT" 2>"$issue_qm_err") || issue_json="[]"
 		if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
 			local _issue_qm_err_msg
 			_issue_qm_err_msg=$(cat "$issue_qm_err" 2>/dev/null || echo "unknown error")
-			echo "[pulse-wrapper] _fetch_queue_metrics: gh issue list FAILED for ${slug}: ${_issue_qm_err_msg}" >>"$LOGFILE"
+			echo "[pulse-wrapper] _fetch_queue_metrics: gh_issue_list FAILED for ${slug}: ${_issue_qm_err_msg}" >>"$LOGFILE"
 			issue_json="[]"
 		fi
 		rm -f "$issue_qm_err"

@@ -613,13 +613,13 @@ _merge_ready_prs_for_repo() {
 	# Fetch open PRs — lightweight call without statusCheckRollup (GH#15060 lesson)
 	local pr_json pr_merge_err
 	pr_merge_err=$(mktemp)
-	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+	pr_json=$(gh_pr_list --repo "$repo_slug" --state open \
 		--json number,mergeable,reviewDecision,author,title \
 		--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json="[]"
 	if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 		local _pr_merge_err_msg
 		_pr_merge_err_msg=$(cat "$pr_merge_err" 2>/dev/null || echo "unknown error")
-		echo "[pulse-wrapper] _process_merge_batch: gh pr list FAILED for ${repo_slug}: ${_pr_merge_err_msg}" >>"$LOGFILE"
+		echo "[pulse-wrapper] _process_merge_batch: gh_pr_list FAILED for ${repo_slug}: ${_pr_merge_err_msg}" >>"$LOGFILE"
 		pr_json="[]"
 	fi
 	rm -f "$pr_merge_err"
@@ -1219,7 +1219,7 @@ _retarget_stacked_children() {
 	fi
 
 	local children
-	children=$(gh pr list --repo "$repo_slug" --base "$parent_head_ref" --state open --json number -q '.[].number' 2>/dev/null) || children=""
+	children=$(gh_pr_list --repo "$repo_slug" --base "$parent_head_ref" --state open --json number -q '.[].number' 2>/dev/null) || children=""
 	if [[ -z "$children" ]]; then
 		return 0
 	fi

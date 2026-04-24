@@ -148,7 +148,7 @@ _dep_graph_process_issue_json() {
 _dep_graph_build_repo_data() {
 	local slug="$1"
 	local issues_json
-	issues_json=$(gh issue list --repo "$slug" --state open --limit 200 \
+	issues_json=$(gh_issue_list --repo "$slug" --state open --limit 200 \
 		--json number,title,body,labels 2>/dev/null) || issues_json='[]'
 
 	# Single jq pass: extract all fields, apply regex, build accumulator.
@@ -670,7 +670,7 @@ _blocked_by_check_task_id() {
 
 	# Live API fallback: search for an open issue with this task ID in the title
 	local blocker_state
-	blocker_state=$(gh issue list --repo "$repo_slug" --state open \
+	blocker_state=$(gh_issue_list --repo "$repo_slug" --state open \
 		--search "t${task_id} in:title" --json number,state --jq '.[0].state // ""' 2>/dev/null) || blocker_state=""
 	if [[ "$blocker_state" == "OPEN" ]]; then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"

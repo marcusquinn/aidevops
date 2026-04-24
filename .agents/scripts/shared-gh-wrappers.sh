@@ -14,7 +14,7 @@
 #   - Origin-label-aware gh create wrappers (gh_create_issue, gh_create_pr)
 #   - Comment wrappers (gh_issue_comment, gh_pr_comment)
 #   - Safe edit wrappers (gh_issue_edit_safe, gh_pr_edit_safe)
-#   - Read wrappers with REST fallback (gh_issue_view, gh_issue_list) [t2689]
+#   - Read wrappers with REST fallback (gh_issue_view, gh_issue_list, gh_pr_list) [t2689, t2772]
 #   - Origin label mutual exclusion (set_origin_label, ensure_origin_labels_exist)
 #   - Issue status label state machine (set_issue_status, ensure_status_labels_exist)
 #
@@ -1658,6 +1658,31 @@ gh_issue_view() {
 	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue view #${_first_num}"
 		_rest_issue_view "$@"
+		rc=$?
+	fi
+	return $rc
+}
+
+#######################################
+# gh_pr_list — drop-in replacement for gh pr list.  (t2772)
+# Falls back to REST (`gh api GET /repos/{owner}/{repo}/pulls`) when the
+# primary call fails AND GraphQL is exhausted. Supports --state, --head,
+# --base, --limit, --json, --jq, -q. The --search flag is accepted but
+# silently skipped in the REST path (not supported by the /repos/.../pulls
+# endpoint). --json FIELDS is accepted for parity but ignored in REST path.
+#
+#   gh_pr_list --repo owner/repo --state open --json number,title
+#   gh_pr_list --repo owner/repo --state open --limit 200 --json number --jq 'length'
+#
+# Returns the exit code of whichever path succeeded (or the REST path's code
+# when both paths ran).
+#######################################
+gh_pr_list() {
+	gh pr list "$@"
+	local rc=$?
+	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr list"
+		_rest_pr_list "$@"
 		rc=$?
 	fi
 	return $rc

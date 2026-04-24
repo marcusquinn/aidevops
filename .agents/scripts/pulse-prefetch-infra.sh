@@ -237,10 +237,10 @@ _compute_repo_state_fingerprint() {
 
 	local issues_json prs_json
 	local issues_ok=false prs_ok=false
-	issues_json=$(gh issue list --repo "$slug" --state open \
+	issues_json=$(gh_issue_list --repo "$slug" --state open \
 		--json number,labels,assignees,updatedAt \
 		--limit "$limit" 2>/dev/null) && issues_ok=true
-	prs_json=$(gh pr list --repo "$slug" --state open \
+	prs_json=$(gh_pr_list --repo "$slug" --state open \
 		--json number,labels,assignees,reviewDecision,mergeable,updatedAt \
 		--limit "$limit" 2>/dev/null) && prs_ok=true
 
@@ -324,7 +324,7 @@ _verify_repo_state_unchanged() {
 
 	# Issue-side verification
 	local changed_json count
-	changed_json=$(gh issue list --repo "$slug" --state open \
+	changed_json=$(gh_issue_list --repo "$slug" --state open \
 		--search "updated:>${last_pass_iso}" \
 		--json number --limit "$verif_limit" 2>/dev/null) || return 1
 	[[ -n "$changed_json" && "$changed_json" != "null" ]] || return 1
@@ -333,7 +333,7 @@ _verify_repo_state_unchanged() {
 	[[ "$count" -eq 0 ]] || return 1
 
 	# PR-side verification — same bound, same fail-closed semantics
-	changed_json=$(gh pr list --repo "$slug" --state open \
+	changed_json=$(gh_pr_list --repo "$slug" --state open \
 		--search "updated:>${last_pass_iso}" \
 		--json number --limit "$verif_limit" 2>/dev/null) || return 1
 	[[ -n "$changed_json" && "$changed_json" != "null" ]] || return 1

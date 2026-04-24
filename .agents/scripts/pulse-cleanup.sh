@@ -293,7 +293,7 @@ _evaluate_worktree_removal() {
 		local has_open_pr=false
 		if [[ -n "$repo_slug_age" && -n "$wt_branch_age" ]]; then
 			local open_pr_count
-			open_pr_count=$(gh pr list --repo "$repo_slug_age" --head "$wt_branch_age" --state open --limit 1 2>/dev/null | wc -l | tr -d ' ') || open_pr_count=0
+			open_pr_count=$(gh_pr_list --repo "$repo_slug_age" --head "$wt_branch_age" --state open --limit 1 2>/dev/null | wc -l | tr -d ' ') || open_pr_count=0
 			[[ "$open_pr_count" -gt 0 ]] && has_open_pr=true
 		fi
 		if [[ "$has_open_pr" == "false" ]]; then
@@ -313,7 +313,7 @@ _evaluate_worktree_removal() {
 		local has_pr=false
 		if [[ -n "$repo_slug_age" && -n "$wt_branch_age" ]]; then
 			local pr_count
-			pr_count=$(gh pr list --repo "$repo_slug_age" --head "$wt_branch_age" --state all --limit 1 2>/dev/null | wc -l | tr -d ' ') || pr_count=0
+			pr_count=$(gh_pr_list --repo "$repo_slug_age" --head "$wt_branch_age" --state all --limit 1 2>/dev/null | wc -l | tr -d ' ') || pr_count=0
 			[[ "$pr_count" -gt 0 ]] && has_pr=true
 		fi
 		if [[ "$has_pr" == "false" ]]; then

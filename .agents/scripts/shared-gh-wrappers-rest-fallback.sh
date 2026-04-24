@@ -12,7 +12,7 @@
 # Detection: _gh_should_fallback_to_rest -- consults gh api rate_limit.
 # Write translators (t2574): _gh_issue_create_rest, _gh_issue_comment_rest,
 #   _gh_issue_edit_rest, _gh_pr_create_rest.
-# Read translators (t2689): _rest_issue_view, _rest_issue_list.
+# Read translators (t2689, t2772): _rest_issue_view, _rest_issue_list, _rest_pr_list.
 #
 # Note on field mapping (_rest_issue_view): `gh issue view --json id` returns
 # the GraphQL node_id (e.g. I_kgDO...). The REST endpoint stores this in the
@@ -696,6 +696,76 @@ _rest_issue_view() {
 	fi
 
 	local _path="/repos/${repo}/issues/${num}"
+	if [[ -n "$jq_expr" ]]; then
+		gh api "$_path" --jq "$jq_expr"
+	else
+		gh api "$_path"
+	fi
+	return $?
+}
+
+#######################################
+# _rest_pr_list: GET /repos/{owner}/{repo}/pulls.  (t2772)
+# Parses gh-style args (--repo, --state, --head, --base, --limit,
+# --json, --jq, -q) and returns a JSON array or jq-filtered output.
+# Mirrors `gh pr list` for state/head/base filtering.
+#
+# The --search flag is not supported and is silently skipped.
+# --json FIELDS is accepted for parity but ignored (the REST endpoint
+# returns the full object; use --jq/-q to select).
+#
+# Returns the underlying gh api exit code.
+#######################################
+_rest_pr_list() {
+	local repo=""
+	local state="open"
+	local limit=30
+	local jq_expr=""
+	local head_branch=""
+	local base_branch=""
+
+	while [[ $# -gt 0 ]]; do
+		local _arg="$1"
+		case "$_arg" in
+		--repo) repo="${2:-}"; shift 2 ;;
+		--repo=*) repo="${_arg#--repo=}"; shift ;;
+		--state) state="${2:-}"; shift 2 ;;
+		--state=*) state="${_arg#--state=}"; shift ;;
+		--head) head_branch="${2:-}"; shift 2 ;;
+		--head=*) head_branch="${_arg#--head=}"; shift ;;
+		--base) base_branch="${2:-}"; shift 2 ;;
+		--base=*) base_branch="${_arg#--base=}"; shift ;;
+		--limit) limit="${2:-}"; shift 2 ;;
+		--limit=*) limit="${_arg#--limit=}"; shift ;;
+		--json) shift 2 ;;
+		--json=*) shift ;;
+		--jq) jq_expr="${2:-}"; shift 2 ;;
+		--jq=*) jq_expr="${_arg#--jq=}"; shift ;;
+		-q) jq_expr="${2:-}"; shift 2 ;;
+		--search) shift 2 ;;
+		--search=*) shift ;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$repo" ]]; then
+		printf '_rest_pr_list: --repo is required\n' >&2
+		return 1
+	fi
+
+	local _query="state=${state}&per_page=${limit}"
+	if [[ -n "$head_branch" ]]; then
+		local _head_encoded
+		_head_encoded=$(jq -rn --arg v "$head_branch" '$v | @uri')
+		_query="${_query}&head=${_head_encoded}"
+	fi
+	if [[ -n "$base_branch" ]]; then
+		local _base_encoded
+		_base_encoded=$(jq -rn --arg v "$base_branch" '$v | @uri')
+		_query="${_query}&base=${_base_encoded}"
+	fi
+
+	local _path="/repos/${repo}/pulls?${_query}"
 	if [[ -n "$jq_expr" ]]; then
 		gh api "$_path" --jq "$jq_expr"
 	else

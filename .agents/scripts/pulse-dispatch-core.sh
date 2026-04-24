@@ -224,7 +224,7 @@ _lock_linked_prs() {
 	local reason="${3:-resolved}"
 
 	local pr_numbers
-	pr_numbers=$(gh pr list --repo "$slug" --state open \
+	pr_numbers=$(gh_pr_list --repo "$slug" --state open \
 		--json number,title --jq \
 		"[.[] | select(.title | test(\"(GH)?#${issue_num}([^0-9]|$)\"))] | .[].number" \
 		--limit 5 2>/dev/null) || pr_numbers=""
@@ -269,7 +269,7 @@ _unlock_linked_prs() {
 	local slug="$2"
 
 	local pr_numbers
-	pr_numbers=$(gh pr list --repo "$slug" --state open \
+	pr_numbers=$(gh_pr_list --repo "$slug" --state open \
 		--json number,title --jq \
 		"[.[] | select(.title | test(\"(GH)?#${issue_num}([^0-9]|$)\"))] | .[].number" \
 		--limit 5 2>/dev/null) || pr_numbers=""
