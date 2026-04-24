@@ -23,6 +23,7 @@
 #   - issue_was_ever_nmr
 #   - issue_has_required_approval
 #   - _nmr_applied_by_maintainer
+#   - notify_ever_nmr_without_approval
 #   - auto_approve_maintainer_issues
 #
 # This is a pure move from pulse-wrapper.sh. The function bodies are
@@ -450,6 +451,92 @@ _nmr_applied_by_maintainer() {
 			return 0
 		fi
 	fi
+
+	return 0
+}
+
+#######################################
+# Post a one-shot remediation comment when a maintainer manually removes
+# the needs-maintainer-review label but the ever-NMR history flag is still
+# set and no cryptographic approval exists (GH#20682).
+#
+# Without this, pulse silently skips dispatch with:
+#   [pulse-wrapper] dispatch_with_dedup: BLOCKED #N — requires cryptographic
+#   approval (ever-NMR)
+# ...and the maintainer has no user-facing signal that cryptographic approval
+# is still required. This function posts an explanatory comment exactly once.
+#
+# Detection logic (all four conditions must hold):
+#   1. Label needs-maintainer-review is absent (label was removed by human)
+#   2. ever-NMR history is set (issue_was_ever_nmr returns true)
+#   3. No cryptographic approval comment exists (approval-helper verify != VERIFIED)
+#   4. No prior <!-- ever-nmr-remediation --> marker exists (idempotency guard)
+#
+# Arguments:
+#   $1 - issue_number  : GitHub issue number
+#   $2 - repo_slug     : owner/repo
+#
+# Returns: 0 always (fail-open — a missed comment is better than a broken
+#          dispatch loop).
+#######################################
+notify_ever_nmr_without_approval() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 0
+
+	# Condition 1: label must be absent. Callers that have already determined
+	# the label is absent pass us; callers can also call us directly and we
+	# verify here.
+	local has_nmr_label
+	has_nmr_label=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
+		--jq '.labels | map(.name) | index("needs-maintainer-review") != null' \
+		2>/dev/null) || has_nmr_label="false"
+	if [[ "$has_nmr_label" == "true" ]]; then
+		# Label still present — no remediation needed, block is visible to user.
+		return 0
+	fi
+
+	# Condition 2: issue must have ever-NMR history (timeline check via cache).
+	if ! issue_was_ever_nmr "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+
+	# Condition 3: no cryptographic approval exists.
+	# Delegate to issue_has_required_approval with known_status="true" (ever-NMR
+	# confirmed above) so that only the approval helper is consulted, short-
+	# circuiting the redundant timeline API call for ever-NMR provenance.
+	if issue_has_required_approval "$issue_number" "$repo_slug" "true"; then
+		# Approved — block will clear on next dispatch cycle.
+		return 0
+	fi
+
+	# Condition 4: idempotency guard — never post twice.
+	local already_notified
+	already_notified=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate \
+		--jq '[.[] | select(.body | test("ever-nmr-remediation"))] | length' \
+		2>/dev/null) || already_notified=0
+	[[ "$already_notified" =~ ^[0-9]+$ ]] || already_notified=0
+	if [[ "$already_notified" -gt 0 ]]; then
+		echo "[pulse-wrapper] notify_ever_nmr_without_approval: #${issue_number} in ${repo_slug} — remediation comment already posted, skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	# All four conditions met — post the remediation comment.
+	echo "[pulse-wrapper] notify_ever_nmr_without_approval: #${issue_number} in ${repo_slug} — posting ever-NMR remediation comment (GH#20682)" >>"$LOGFILE"
+
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
+		--body "<!-- ever-nmr-remediation -->
+> Label \`needs-maintainer-review\` was removed, but the \`ever-NMR\` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:
+>
+> \`\`\`
+> sudo aidevops approve issue ${issue_number}
+> \`\`\`
+>
+> This gate cannot be bypassed by label manipulation (security design — see \`reference/auto-merge.md\` NMR section)." \
+		2>/dev/null || {
+		echo "[pulse-wrapper] notify_ever_nmr_without_approval: #${issue_number} in ${repo_slug} — failed to post remediation comment" >>"$LOGFILE"
+	}
 
 	return 0
 }
