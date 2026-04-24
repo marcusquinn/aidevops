@@ -2988,3 +2988,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2778 aidevops check-workflows: drift detector across registered repos (Phase 1 of workflow drift elimination) #interactive #framework ref:GH#20648 pr:#20666 completed:2026-04-24
 - [x] t2779 aidevops sync-workflows: opt-in resync for drifted framework workflows (Phase 2 of workflow drift elimination) #interactive #framework ref:GH#20649 pr:#20673 completed:2026-04-24
 
+
+- [ ] t2780 sync-workflows-helper: rewrite on.push.branches filter to match downstream default branch #auto-dispatch #framework ref:GH#20674
