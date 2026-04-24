@@ -48,6 +48,7 @@
 #   - _resolve_pr_mergeable_status
 #   - _pulse_merge_dismiss_coderabbit_nits      (t2179)
 #   - _pr_required_checks_pass
+#   - _attempt_pr_ci_rebase_retry            (t2805)
 #   - _check_pr_merge_gates
 #   - _release_interactive_claim_on_merge  (t2413, extracted to shared-claim-lifecycle.sh in t2429)
 #   - _handle_post_merge_actions
@@ -829,6 +830,72 @@ _pr_required_checks_pass() {
 }
 
 #######################################
+# Attempt to rebase a MERGEABLE PR with failing CI before routing to a
+# fix-worker. When a PR is behind its base branch, failing CI is often
+# caused by base-drift (e.g. a pre-existing test failure fixed in a
+# later commit to the base branch), not by the PR's own code.
+#
+# This mirrors the t2116 update-branch path for CONFLICTING PRs: try
+# the cheap server-side fast-forward first, and only spawn an expensive
+# fix-worker session if the rebase doesn't help.
+#
+# Returns 0 if update-branch succeeded (caller should skip fix-worker
+# routing and let the next pulse cycle re-check CI on the rebased HEAD).
+# Returns 1 if the PR is already up-to-date with its base or if
+# update-branch failed (caller should fall through to fix-worker routing).
+#
+# Rate-limit: one call per PR per merge cycle — same as t2116.
+# No retry within the same cycle; the next pulse cycle retries if needed.
+#
+# Args: $1=pr_number, $2=repo_slug
+# t2805
+#######################################
+_attempt_pr_ci_rebase_retry() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	# Check if the PR is behind its base branch. If already up-to-date,
+	# the CI failure is genuinely from the PR's own code — skip rebase.
+	local _behind_count _behind_exit
+	_behind_count=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json 'baseRefName,headRefOid' --template '{{.baseRefName}}' 2>/dev/null)
+	_behind_exit=$?
+
+	# Use the commits-behind count from the REST compare endpoint —
+	# gh pr view doesn't expose behindBy directly. Fall back to attempting
+	# the update-branch call and letting GitHub decide.
+	local _base_branch="$_behind_count"
+	if [[ $_behind_exit -eq 0 && -n "$_base_branch" ]]; then
+		local _head_oid
+		_head_oid=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			--json headRefOid --jq '.headRefOid' 2>/dev/null) || _head_oid=""
+		if [[ -n "$_head_oid" ]]; then
+			local _compare_behind
+			_compare_behind=$(gh api "repos/${repo_slug}/compare/${_base_branch}...${_head_oid}" \
+				--jq '.behind_by' 2>/dev/null) || _compare_behind=""
+			if [[ "$_compare_behind" == "0" ]]; then
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: already up-to-date with ${_base_branch}, skipping CI-drift rebase (t2805)" >>"$LOGFILE"
+				return 1
+			fi
+		fi
+	fi
+
+	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: attempting CI-drift rebase via update-branch (t2805)" >>"$LOGFILE"
+
+	local _ub_output _ub_exit
+	_ub_output=$(gh pr update-branch "$pr_number" --repo "$repo_slug" 2>&1)
+	_ub_exit=$?
+
+	if [[ $_ub_exit -eq 0 ]]; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift rebase succeeded via update-branch, deferring to next cycle (t2805)" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift rebase failed (update-branch exit ${_ub_exit}), falling through to fix-worker routing (t2805): ${_ub_output}" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
 # Route a PR to the appropriate fix worker based on origin label and kind.
 #
 # Consolidates the shared routing pattern used by the review, conflict, and CI
@@ -1352,6 +1419,13 @@ _process_single_ready_pr() {
 	# then routed through the same pipeline — human session must be gone
 	# (no status, no claim stamp, >24h idle) for handover to fire.
 	if ! _pr_required_checks_pass "$pr_number" "$repo_slug"; then
+		# t2805: try cheap rebase first if PR is behind base — pre-existing
+		# failures in unrelated tests are often fixed by base advancement.
+		# If rebase succeeds, skip fix-worker routing — next pulse cycle
+		# will re-check CI on the rebased HEAD.
+		if _attempt_pr_ci_rebase_retry "$pr_number" "$repo_slug"; then
+			return 1
+		fi
 		# CI failure: route to fix worker if applicable (t2203: consolidated).
 		local _ci_linked_issue
 		_ci_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
