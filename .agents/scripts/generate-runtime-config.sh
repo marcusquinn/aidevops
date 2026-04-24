@@ -156,7 +156,7 @@ _generate_greeting_agents_md() {
 		cache_path="~/.aidevops/cache/session-greeting-${runtime_id}.txt"
 		plugin_name="${runtime_id}-aidevops plugin"
 		# shellcheck disable=SC2088
-		global_config_path="~/.config/Claude/Claude.json"
+		global_config_path="~/.config/${runtime_id}/${runtime_id}.json"
 		;;
 	esac
 
