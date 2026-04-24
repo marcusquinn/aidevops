@@ -3048,3 +3048,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2810 upstream-watch: file GitHub issues on detected updates ref:GH#20755
 
 - [x] t2811 Release interactive claim on Ref/For-keyword planning PR merges (claim-stamp leak) #auto-dispatch #bug #chore #framework ref:GH#20757 pr:#20760 completed:2026-04-24
+
+- [ ] t2812 Phase 1: collect and classify launch_recovery:no_worker_process events from pulse logs #auto-dispatch #investigation #pulse ref:GH#20763
+
+- [ ] t2813 Phase 2: identify root cause of no_worker_process dispatch failures #investigation #pulse blocked-by:t2812 ref:GH#20764
+
+- [ ] t2814 Phase 3: fix no_worker_process root cause and add regression tests #bug #pulse blocked-by:t2813 ref:GH#20765
+
+- [ ] t2815 Phase 4: prevent cascade tier escalation on infra failures #auto-dispatch #enhancement #pulse blocked-by:t2814 ref:GH#20766
