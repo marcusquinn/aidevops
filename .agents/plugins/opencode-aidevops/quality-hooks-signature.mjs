@@ -40,17 +40,92 @@ import { join } from "path";
 export const SIG_MARKER = "<!-- aidevops:sig -->";
 
 /**
+ * Strip heredoc body lines from a multi-line command string.
+ * Lines inside <<MARKER ... MARKER blocks are removed so that prose
+ * inside a heredoc body cannot trigger false-positive gh-write detection
+ * (GH#20735 Failure 1).
+ *
+ * Handles: <<TAG  <<-TAG  <<'TAG'  <<"TAG"
+ * Single-heredoc only; nested / multiple heredocs on one line are rare
+ * and handled conservatively (opener line is kept, body stripped).
+ * @param {string} cmd
+ * @returns {string} cmd with heredoc body lines removed
+ */
+function _stripHeredocBodies(cmd) {
+  const lines = cmd.split("\n");
+  const result = [];
+  let terminator = null;
+  for (const line of lines) {
+    if (terminator !== null) {
+      // Inside a heredoc — check for the terminator (possibly indented for <<-)
+      if (line.trim() === terminator) {
+        terminator = null;
+      }
+      // Skip this line regardless (heredoc body or terminator itself)
+      continue;
+    }
+    // Detect a heredoc opener: <<[-] with optional quotes around the tag
+    const m = line.match(/<<-?\s*['"]?(\w+)['"]?/);
+    if (m) {
+      terminator = m[1];
+    }
+    result.push(line);
+  }
+  return result.join("\n");
+}
+
+/**
+ * Strip balanced single and double quoted strings from a shell line.
+ * Replaces quoted content with empty quotes so that `gh …` tokens embedded
+ * inside quoted arguments of other tools (rg, grep, memory-helper.sh …)
+ * are invisible to the command-boundary check (GH#20735 Failures 2 & 3).
+ *
+ * Double quotes are stripped first (with basic escape handling), then
+ * single quotes (no escapes inside single quotes in POSIX shell).
+ * @param {string} line
+ * @returns {string}
+ */
+function _stripQuotedStrings(line) {
+  // Remove double-quoted strings (handles \" inside)
+  const withoutDouble = line.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+  // Remove single-quoted strings (no escapes possible inside)
+  return withoutDouble.replace(/'[^']*'/g, "''");
+}
+
+/**
  * Decide whether a given bash command is a gh write that needs sig enforcement.
+ *
+ * Three-layer false-positive prevention (GH#20735):
+ *   1. Heredoc stripping — removes lines inside <<TAG…TAG so prose in a
+ *      heredoc body cannot match (Failure 1).
+ *   2. Quoted-string stripping — replaces content inside balanced quotes
+ *      with empty quotes, hiding `gh …` tokens inside string arguments of
+ *      unrelated tools like `rg "gh issue create"` (Failures 2 & 3).
+ *   3. Command-boundary anchor — requires `gh` to be at a shell command
+ *      start: beginning of the trimmed line, or immediately after one of
+ *      ; & | ( ` $( — preventing matches mid-argument after plain whitespace.
+ *
  * @param {string} cmd - Raw bash command string (may be multi-line)
  * @returns {boolean}
  */
 export function isGhWriteCommand(cmd) {
-  const ghWritePattern = /\bgh\s+(pr\s+(create|comment)|issue\s+(create|comment))\b/;
-  return cmd.split("\n").some((line) => {
+  // Layer 3 pattern: gh must start a command segment.
+  // Boundaries: start-of-trimmed-line (^), semicolon, ampersand (covers &&),
+  // pipe (covers ||), open-paren (subshell / command-sub), backtick, literal $(.
+  const ghWritePattern =
+    /(^|[;&|(`]|\$\()\s*gh\s+(pr\s+(create|comment)|issue\s+(create|comment))\b/;
+
+  // Layer 1: strip heredoc bodies from the full command string first
+  const noHeredoc = _stripHeredocBodies(cmd);
+
+  return noHeredoc.split("\n").some((line) => {
     const trimmed = line.trim();
     if (trimmed.startsWith("#")) return false;
     if (/\bgit\s+commit\b/.test(trimmed)) return false;
-    return ghWritePattern.test(trimmed);
+    // Layer 2: strip quoted strings so embedded gh tokens are invisible
+    const unquoted = _stripQuotedStrings(trimmed);
+    // Layer 3: require a command-boundary anchor before gh
+    return ghWritePattern.test(unquoted);
   });
 }
 

@@ -97,6 +97,70 @@ gh issue comment 1 --body "x"
 echo done`;
     assert.equal(isGhWriteCommand(cmd), true);
   });
+
+  // GH#20735 — false-positive regression tests
+  // These cases must NOT be treated as gh write commands.
+
+  test("FP1: heredoc body containing gh issue create prose → ALLOW", () => {
+    const cmd = `cat > /tmp/body.md <<'BODY'\nsome prose about gh issue create invocations\nBODY`;
+    assert.equal(isGhWriteCommand(cmd), false);
+  });
+
+  test("FP1: multi-line heredoc body with gh issue create line → ALLOW", () => {
+    const cmd = [
+      "cat > /tmp/body.md <<'EOF'",
+      "gh issue create --title X --body Y",
+      "EOF",
+    ].join("\n");
+    assert.equal(isGhWriteCommand(cmd), false);
+  });
+
+  test("FP2: memory-helper.sh --content quoting gh issue create → ALLOW", () => {
+    const cmd =
+      'memory-helper.sh store --content "the gh create step fails on label validation"';
+    assert.equal(isGhWriteCommand(cmd), false);
+  });
+
+  test("FP2: any non-gh tool with quoted gh issue create arg → ALLOW", () => {
+    assert.equal(
+      isGhWriteCommand('echo "to file a comment, run gh issue comment N"'),
+      false,
+    );
+  });
+
+  test("FP3: rg pattern containing gh issue create → ALLOW", () => {
+    assert.equal(isGhWriteCommand('rg "gh issue create" src/'), false);
+  });
+
+  test("FP3: grep pattern containing gh pr create → ALLOW", () => {
+    assert.equal(
+      isGhWriteCommand('grep -n "gh pr create" --include="*.md"'),
+      false,
+    );
+  });
+
+  // Legitimate chained gh invocations must still be detected.
+
+  test("chained: foo && gh issue create → BLOCK", () => {
+    assert.equal(
+      isGhWriteCommand('foo && gh issue create --title X --body Y'),
+      true,
+    );
+  });
+
+  test("command substitution: $(gh issue comment N) → BLOCK", () => {
+    assert.equal(
+      isGhWriteCommand('result=$(gh issue comment 123 --body "x")'),
+      true,
+    );
+  });
+
+  test("semicolon chain: setup; gh pr create → BLOCK", () => {
+    assert.equal(
+      isGhWriteCommand('git add .; gh pr create --title t --body b'),
+      true,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
