@@ -1,153 +1,286 @@
+---
+version: alpha
+name: {Project Name}
+description: {one-line description of the design system}
+colors:
+  # Canonical palette (required: primary; recommended: secondary, tertiary, neutral, surface, on-surface, error)
+  primary: "#{hex}"
+  secondary: "#{hex}"
+  tertiary: "#{hex}"
+  neutral: "#{hex}"
+  surface: "#{hex}"
+  on-surface: "#{hex}"
+  error: "#{hex}"
+typography:
+  # Recommended levels: headline-display, headline-lg, headline-md, body-lg, body-md, body-sm, label-lg, label-md, label-sm
+  headline-display:
+    fontFamily: {family}
+    fontSize: {size}
+    fontWeight: 700
+    lineHeight: 1.1
+    letterSpacing: -0.02em
+  headline-lg:
+    fontFamily: {family}
+    fontSize: 32px
+    fontWeight: 600
+    lineHeight: 1.2
+  body-md:
+    fontFamily: {family}
+    fontSize: 16px
+    fontWeight: 400
+    lineHeight: 1.5
+  label-md:
+    fontFamily: {family}
+    fontSize: 14px
+    fontWeight: 500
+    lineHeight: 1.4
+rounded:
+  none: 0
+  sm: 4px
+  md: 8px
+  lg: 16px
+  xl: 24px
+  full: 9999px
+spacing:
+  unit: 8px
+  xs: 4px
+  sm: 8px
+  md: 16px
+  lg: 32px
+  xl: 64px
+  gutter: 24px
+  margin: 32px
+components:
+  button-primary:
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.surface}"
+    typography: "{typography.label-md}"
+    rounded: "{rounded.md}"
+    padding: 12px 24px
+  button-primary-hover:
+    backgroundColor: "{colors.secondary}"
+  button-secondary:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.primary}"
+    typography: "{typography.label-md}"
+    rounded: "{rounded.md}"
+    padding: 12px 24px
+  input-default:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.on-surface}"
+    typography: "{typography.body-md}"
+    rounded: "{rounded.sm}"
+    padding: 12px 16px
+  card:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.on-surface}"
+    rounded: "{rounded.lg}"
+    padding: 24px
+---
+
+<!--
+DESIGN.md — AI-readable design system document
+Format: google-labs-code/design.md v0.1.0 (format version: alpha)
+Spec: https://github.com/google-labs-code/design.md/blob/main/docs/spec.md
+Validate: npx @google/design.md lint DESIGN.md
+Template source: aidevops `templates/DESIGN.md.template`
+
+Sections 1-8 are the normative spec order.
+Sections 9-10 are aidevops-specific extensions (unknown sections are preserved per spec).
+-->
+
 # Design System: {Project Name}
 
-## 1. Visual Theme & Atmosphere
+## 1. Overview
 
-<!-- Describe the overall mood, aesthetic direction, and what makes this design distinctive. -->
-<!-- Include key characteristics as a bullet list with exact values. -->
-<!-- Reference: tools/design/library/ for brand examples and style archetypes. -->
+<!-- Also known as "Brand & Style" or "Visual Theme". -->
+<!-- Holistic description of the product's look and feel. Define brand personality, target audience, -->
+<!-- and the emotional response the UI should evoke. This is foundational context for high-level -->
+<!-- stylistic decisions when a specific rule or token isn't explicitly defined. -->
+
+**Mood**: {playful | professional | editorial | luxurious | technical | …}
+**Density**: {spacious | balanced | dense}
+**Atmosphere**: {one sentence capturing the feel}
 
 **Key Characteristics:**
-- {characteristic with value}
 
-## 2. Colour Palette & Roles
+- {characteristic with concrete reference}
+- {characteristic with concrete reference}
 
-<!-- Every colour needs: semantic name, hex value, and functional role. -->
-<!-- Use tools/design/colour-palette.md to generate and spin palettes. -->
+## 2. Colors
 
-### Primary Brand
-- **Primary** (`#{hex}`): {usage}
-- **Secondary** (`#{hex}`): {usage}
+<!-- Define the color palettes. The `primary` palette is required; others are conventionally named -->
+<!-- `secondary`, `tertiary`, `neutral`. Prose may use descriptive color names (e.g. "Boston Clay") -->
+<!-- that correspond to token names (e.g. `tertiary`). Tokens are normative; prose provides context. -->
 
-### Accent Colours
-- **Accent** (`#{hex}`): {usage}
+The palette is rooted in {describe: high-contrast neutrals, warm earth tones, cool modernist, etc.} with {one | two | …} accent colour(s) driving interaction.
 
-### Text Colours
-- **Text Primary** (`#{hex}`): {usage}
-- **Text Secondary** (`#{hex}`): {usage}
+- **Primary (`#{hex}`)**: {role and usage — e.g. headlines, core text, primary actions}
+- **Secondary (`#{hex}`)**: {role — e.g. borders, captions, metadata}
+- **Tertiary (`#{hex}`)**: {role — e.g. accent, CTAs, highlights}
+- **Neutral (`#{hex}`)**: {role — e.g. backgrounds, surfaces}
+- **Surface (`#{hex}`)**: {role — e.g. cards, panels}
+- **On-surface (`#{hex}`)**: {role — e.g. text on surface}
+- **Error (`#{hex}`)**: {role — e.g. destructive, error states}
 
-### Surface & Background
-- **Background** (`#{hex}`): {usage}
-- **Surface** (`#{hex}`): {usage}
+## 3. Typography
 
-### Semantic
-- **Success** (`#{hex}`): {usage}
-- **Warning** (`#{hex}`): {usage}
-- **Error** (`#{hex}`): {usage}
+<!-- Define typography levels. Most design systems have 9-15 levels. Common categories: -->
+<!-- headline, display, body, label, caption. Each may have small/medium/large variants. -->
 
-### Shadows
-- **Card Shadow** (`{value}`): {usage}
+The typography strategy uses **{font-family-primary}** for {body/headlines/both} and **{font-family-secondary}** for {purpose}.
 
-## 3. Typography Rules
-
-### Font Families
-- **Heading**: {font family}
-- **Body**: {font family}
-- **Monospace**: {font family}
+- **Headlines**: Set in {family weight} to establish {tone}.
+- **Body**: {family} at {size} ensures {quality — e.g. contemporary professionalism, long-form readability}.
+- **Labels**: {family} for {technical data / UI elements}. {key treatment — e.g. uppercase with generous letter spacing}.
 
 ### Hierarchy
 
-| Role | Font | Size | Weight | Line Height | Letter Spacing | Notes |
-|------|------|------|--------|-------------|----------------|-------|
-| Display | | | | | | |
-| Heading 1 | | | | | | |
-| Heading 2 | | | | | | |
-| Heading 3 | | | | | | |
-| Body | | 16px | 400 | 1.50 | normal | |
-| Body Small | | 14px | 400 | 1.43 | normal | |
-| Caption | | 12px | 500 | 1.33 | normal | |
-| Button | | 14px | 600 | 1.14 | normal | |
-| Code | | 14px | 400 | 1.50 | normal | |
+| Role | Token | Font | Size | Weight | Line Height | Letter Spacing | Notes |
+|------|-------|------|------|--------|-------------|----------------|-------|
+| Display | `headline-display` | | | 700 | 1.1 | -0.02em | |
+| Heading 1 | `headline-lg` | | 32px | 600 | 1.2 | | |
+| Heading 2 | `headline-md` | | 24px | 500 | 1.3 | | |
+| Body Large | `body-lg` | | 18px | 400 | 1.6 | | |
+| Body | `body-md` | | 16px | 400 | 1.5 | | |
+| Body Small | `body-sm` | | 14px | 400 | 1.5 | | |
+| Label | `label-md` | | 14px | 500 | 1.4 | | |
+| Label Small | `label-sm` | | 12px | 600 | 1.33 | 0.05em | Caps |
 
-### Principles
-- {typography principle}
+## 4. Layout
 
-## 4. Component Stylings
+<!-- Also known as "Layout & Spacing". -->
+<!-- Describe the layout and spacing strategy. Grid-based, margin-based, or dynamic. -->
+
+The layout follows a **{Fluid Grid | Fixed-Max-Width Grid | Asymmetric | Liquid Glass}** model with a **{value}px** spacing scale ({mention half-step if used, e.g. "with a 4px half-step for micro-adjustments"}).
+
+### Spacing Scale
+
+| Token | Value | Use |
+|-------|-------|-----|
+| `xs` | 4px | Micro-adjustments |
+| `sm` | 8px | Tight spacing |
+| `md` | 16px | Default gap |
+| `lg` | 32px | Section spacing |
+| `xl` | 64px | Major divisions |
+| `gutter` | 24px | Column gutters |
+| `margin` | 32px | Page margins |
+
+### Grid & Container
+
+- **Max content width**: {value}
+- **Columns**: {value}
+- **Gutter**: `{spacing.gutter}`
+- **Container padding**: `{spacing.margin}`
+
+### Whitespace Philosophy
+
+{describe the spacing approach — e.g. "Components are grouped using containment principles, where related items are housed in cards with generous internal padding (24px) to emphasize the soft, approachable nature of the brand."}
+
+## 5. Elevation & Depth
+
+<!-- How visual hierarchy is conveyed. If elevation is used, define styling (spread, blur, color). -->
+<!-- For flat designs, explain alternative methods (borders, color contrast, tonal layers). -->
+
+Depth is achieved through **{shadows | tonal layers | borders | flat contrast}**.
+
+| Level | Treatment | Use |
+|-------|-----------|-----|
+| Flat (0) | No elevation | Default surfaces |
+| Raised (1) | `{shadow value}` | Cards, dropdowns |
+| Elevated (2) | `{shadow value}` | Modals, popovers |
+| Overlay (3) | `{shadow value}` | Tooltips, notifications |
+
+## 6. Shapes
+
+<!-- Describe how visual elements are shaped. Corner radius strategy. -->
+
+The shape language is defined by **{Architectural Sharpness | Soft Modernism | Pill Interaction | …}**. {describe corner-radius approach}.
+
+### Rounded Scale
+
+| Token | Value | Use |
+|-------|-------|-----|
+| `none` | 0 | Sharp corners, data tables |
+| `sm` | 4px | Inputs, badges, tags |
+| `md` | 8px | Buttons, cards |
+| `lg` | 16px | Panels, modals, dialogs |
+| `xl` | 24px | Heroes, feature cards |
+| `full` | 9999px | Pills, avatars, circular buttons |
+
+## 7. Components
+
+<!-- Style guidance for component atoms. Use YAML `components:` in front matter for token references. -->
+<!-- Prose below documents interactive states, behaviour, and anti-patterns for each component. -->
 
 ### Buttons
 
-**Primary**
-- Background: `#{hex}`
-- Text: `#{hex}`
-- Border: {value}
-- Radius: {value}
-- Padding: {value}
-- Hover: {description}
-- Focus: {description}
+**Primary** (`{components.button-primary}`)
+
+- States: Default → Hover (`{components.button-primary-hover}`) → Active → Focus → Disabled
+- Focus ring: {description}
 - Disabled: {description}
 
-**Secondary**
-- {specs}
+**Secondary** (`{components.button-secondary}`)
 
-**Ghost/Outline**
-- {specs}
+- {specs beyond tokens}
+
+**Ghost / Outline**
+
+- Background: transparent
+- Border: {value}
+- Hover: {description}
 
 ### Inputs
 
-**Text Input**
-- Background: `#{hex}`
-- Border: {value}
-- Radius: {value}
-- Padding: {value}
+**Text Input** (`{components.input-default}`)
+
 - Focus: {description}
-- Error: {description}
+- Error: {description — reference `{colors.error}`}
+- Disabled: {description}
 
 ### Links
+
 - Default: {colour + decoration}
 - Hover: {colour + decoration}
 - Visited: {colour + decoration}
 
 ### Cards & Containers
-- Background: {value}
-- Radius: {value}
-- Shadow: {value}
-- Padding: {value}
+
+**Card** (`{components.card}`)
+
+- Shadow: {reference §5}
+- Content spacing: {value}
 
 ### Navigation
-- {nav style description}
 
-## 5. Layout Principles
+{nav style description — fixed/sticky, transparent/opaque, backdrop-filter usage if glass style}
 
-### Spacing Scale
-- Base unit: {value, e.g. 8px}
-- Scale: {values, e.g. 4, 8, 12, 16, 24, 32, 48, 64}
+## 8. Do's and Don'ts
 
-### Grid & Container
-- Max content width: {value}
-- Columns: {value}
-- Gutter: {value}
-- Container padding: {value}
-
-### Whitespace Philosophy
-- {description of spacing approach}
-
-### Border Radius Scale
-| Size | Value | Use |
-|------|-------|-----|
-| Small | | Inputs, badges |
-| Medium | | Buttons, cards |
-| Large | | Modals, panels |
-| Full | 9999px | Pills, avatars |
-
-## 6. Depth & Elevation
-
-| Level | Treatment | Use |
-|-------|-----------|-----|
-| Flat (0) | No shadow | Default surfaces |
-| Raised (1) | {shadow value} | Cards, dropdowns |
-| Elevated (2) | {shadow value} | Modals, popovers |
-| Overlay (3) | {shadow value} | Tooltips, notifications |
-
-## 7. Do's and Don'ts
+<!-- Practical guidelines and common pitfalls. These act as guardrails when creating designs. -->
 
 **Do:**
-- {guideline}
-- {guideline}
+
+- Use `{colors.primary}` only for the single most important action per screen
+- Maintain WCAG AA contrast ratios (4.5:1 for normal text, 3:1 for large text)
+- {project-specific guideline}
 
 **Don't:**
-- {anti-pattern}
-- {anti-pattern}
 
-## 8. Responsive Behaviour
+- Mix sharp (`{rounded.none}`) and rounded (`{rounded.lg}`) corners in the same view
+- Use more than two font weights on a single screen
+- {project-specific anti-pattern}
+
+---
+
+<!-- Sections 9-10 below are aidevops-specific extensions. The Google Labs DESIGN.md spec preserves -->
+<!-- unknown sections per its "Consumer Behavior for Unknown Content" rule. -->
+
+## 9. Responsive Behaviour
+
+<!-- aidevops extension: breakpoints, touch targets, collapsing strategy. -->
+<!-- Preserved per spec's unknown-section rule. -->
 
 ### Breakpoints
 
@@ -159,30 +292,39 @@
 | Wide | > 1440px | Max-width contained |
 
 ### Touch Targets
+
 - Minimum: 44x44px (iOS) / 48x48dp (Android)
 
 ### Mobile Rules
+
 - {mobile-specific behaviour}
 
-## 9. Agent Prompt Guide
+## 10. Agent Prompt Guide
 
-### Quick Colour Reference
+<!-- aidevops extension: quick reference and ready-to-use prompts for coding agents. -->
+<!-- Preserved per spec's unknown-section rule. -->
 
-| Token | Value | Use |
-|-------|-------|-----|
-| --bg-primary | #{hex} | Page background |
-| --bg-surface | #{hex} | Card/panel background |
-| --text-primary | #{hex} | Main text |
-| --text-secondary | #{hex} | Muted text |
-| --accent | #{hex} | CTAs, links, highlights |
-| --border | #{hex} | Borders, dividers |
+### Quick Token Reference
+
+Primary tokens a coding agent reaches for most often:
+
+| Use | Token | Value |
+|-----|-------|-------|
+| Page background | `{colors.neutral}` | `#{hex}` |
+| Card/panel background | `{colors.surface}` | `#{hex}` |
+| Main text | `{colors.primary}` | `#{hex}` |
+| Muted text | `{colors.secondary}` | `#{hex}` |
+| CTAs, highlights | `{colors.tertiary}` | `#{hex}` |
+| Default body | `{typography.body-md}` | — |
+| Primary action | `{components.button-primary}` | — |
 
 ### Ready-to-Use Prompts
+
 - "Build a hero section": {specific instructions referencing tokens above}
-- "Build a feature grid": {specific instructions}
+- "Build a feature grid": {specific instructions — e.g. "3 cards using `{components.card}`, `{typography.headline-md}` for titles, `{spacing.lg}` between cards"}
 - "Build a pricing table": {specific instructions}
 
 <!--
 Generated by AI DevOps (https://aidevops.sh)
-DESIGN.md format: https://stitch.withgoogle.com/docs/design-md/overview
+DESIGN.md spec: https://github.com/google-labs-code/design.md
 -->
