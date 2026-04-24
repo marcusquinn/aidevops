@@ -338,7 +338,7 @@ _run_extractor() {
 			log "#${issue_num}: failed to file Phase ${phase_num} child, aborting"
 			return 1
 		}
-		new_issue_num=$(printf '%s' "$new_issue_url" | grep -oE '[0-9]+$')
+		new_issue_num="${new_issue_url##*/}"
 		log "#${issue_num}: filed Phase ${phase_num} as #${new_issue_num}: ${phase_heading}"
 		filed_count=$((filed_count + 1))
 		child_lines="${child_lines}- #${new_issue_num} — Phase ${phase_num}: ${phase_heading}
@@ -355,9 +355,12 @@ _run_extractor() {
 	local updated_body
 	local child_lines_trimmed="${child_lines%$'\n'}"
 	updated_body=$(_append_children_section "$parent_body" "$child_lines_trimmed")
-	gh_issue_edit_safe "$issue_num" --repo "$repo_slug" \
-		--body "$updated_body" 2>/dev/null || true
-	log "#${issue_num}: updated ## Children section with ${filed_count} phase(s)"
+	if gh_issue_edit_safe "$issue_num" --repo "$repo_slug" \
+		--body "$updated_body"; then
+		log "#${issue_num}: updated ## Children section with ${filed_count} phase(s)"
+	else
+		log "#${issue_num}: failed to update ## Children section"
+	fi
 	return 0
 }
 
