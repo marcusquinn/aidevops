@@ -34,7 +34,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AUTO_UPDATE_SCRIPT="${REPO_ROOT}/.agents/scripts/auto-update-helper.sh"
+# check_launchd_plist_drift moved to auto-update-freshness-lib.sh when
+# auto-update-helper.sh was split in GH#20343.
+AUTO_UPDATE_SCRIPT="${REPO_ROOT}/.agents/scripts/auto-update-freshness-lib.sh"
 HEADLESS_SCRIPT="${REPO_ROOT}/.agents/scripts/headless-runtime-helper.sh"
 LIFECYCLE_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common.sh"
 SCHEDULERS_SCRIPT="${REPO_ROOT}/setup-modules/schedulers.sh"
@@ -383,6 +385,128 @@ test_log_no_work_skip_escalation_helper_exists() {
 }
 
 # -----------------------------------------------------------------
+# Part B2 — t2769 no_work circuit breaker structural tests
+# -----------------------------------------------------------------
+# These are code-analysis assertions (no live GH calls). They verify
+# that the t2769 circuit breaker wiring is correct by inspecting the
+# source text of the two files it touches.
+
+NMR_APPROVAL_SCRIPT="${NMR_APPROVAL_SCRIPT:-$(dirname "$LIFECYCLE_SCRIPT")/pulse-nmr-approval.sh}"
+
+test_no_work_circuit_breaker_threshold_guard() {
+	# _log_no_work_skip_escalation must reference NO_WORK_NMR_THRESHOLD
+	# and apply needs-maintainer-review when the threshold is reached.
+
+	# Assertion 1: NO_WORK_NMR_THRESHOLD is referenced in the function body.
+	local fn_src
+	fn_src=$(awk '/^_log_no_work_skip_escalation\(\) \{/,/^\}/' "$LIFECYCLE_SCRIPT" 2>/dev/null)
+	if [[ -z "$fn_src" ]]; then
+		print_result "t2769: no_work circuit breaker threshold guard" 1 \
+			"_log_no_work_skip_escalation not found in $LIFECYCLE_SCRIPT"
+		return 0
+	fi
+
+	if ! printf '%s\n' "$fn_src" | grep -q 'NO_WORK_NMR_THRESHOLD'; then
+		print_result "t2769: no_work circuit breaker threshold guard" 1 \
+			"NO_WORK_NMR_THRESHOLD not referenced in _log_no_work_skip_escalation"
+		return 0
+	fi
+
+	# Assertion 2: the function applies needs-maintainer-review.
+	if ! printf '%s\n' "$fn_src" | grep -q 'needs-maintainer-review'; then
+		print_result "t2769: no_work circuit breaker threshold guard" 1 \
+			"needs-maintainer-review label not applied in _log_no_work_skip_escalation"
+		return 0
+	fi
+
+	# Assertion 3: the NMR path appears BEFORE the below-threshold diagnostic path
+	# (threshold check is the first branch; diagnostic is the fallthrough).
+	local nmr_line diag_line
+	nmr_line=$(printf '%s\n' "$fn_src" | grep -n 'needs-maintainer-review' | head -1 | cut -d: -f1)
+	diag_line=$(printf '%s\n' "$fn_src" | grep -n 'no-work-escalation-skip' | head -1 | cut -d: -f1)
+	if [[ -z "$nmr_line" || -z "$diag_line" ]]; then
+		print_result "t2769: no_work circuit breaker threshold guard" 1 \
+			"could not locate both NMR line (${nmr_line}) and diagnostic line (${diag_line})"
+		return 0
+	fi
+	if [[ "$nmr_line" -ge "$diag_line" ]]; then
+		print_result "t2769: no_work circuit breaker threshold guard" 1 \
+			"NMR path (${nmr_line}) must appear before diagnostic path (${diag_line})"
+		return 0
+	fi
+
+	print_result "t2769: no_work circuit breaker threshold guard" 0
+	return 0
+}
+
+test_no_work_circuit_breaker_marker_posted() {
+	# The NMR path must post a comment containing the
+	# cost-circuit-breaker:no_work_loop marker so that
+	# _nmr_application_is_circuit_breaker_trip can detect it.
+
+	local fn_src
+	fn_src=$(awk '/^_log_no_work_skip_escalation\(\) \{/,/^\}/' "$LIFECYCLE_SCRIPT" 2>/dev/null)
+	if [[ -z "$fn_src" ]]; then
+		print_result "t2769: no_work circuit breaker marker posted" 1 \
+			"_log_no_work_skip_escalation not found"
+		return 0
+	fi
+
+	if ! printf '%s\n' "$fn_src" | grep -q 'cost-circuit-breaker:no_work_loop'; then
+		print_result "t2769: no_work circuit breaker marker posted" 1 \
+			"marker 'cost-circuit-breaker:no_work_loop' not found in function body"
+		return 0
+	fi
+
+	print_result "t2769: no_work circuit breaker marker posted" 0
+	return 0
+}
+
+test_nmr_approval_recognises_no_work_loop_marker() {
+	# _nmr_application_is_circuit_breaker_trip in pulse-nmr-approval.sh must
+	# include cost-circuit-breaker:no_work_loop in its regex so that
+	# auto-approval preserves NMR (t2386 split semantics).
+
+	if [[ ! -f "$NMR_APPROVAL_SCRIPT" ]]; then
+		print_result "t2769: nmr-approval recognises no_work_loop marker" 1 \
+			"pulse-nmr-approval.sh not found at $NMR_APPROVAL_SCRIPT"
+		return 0
+	fi
+
+	local fn_src
+	fn_src=$(awk '/^_nmr_application_is_circuit_breaker_trip\(\) \{/,/^\}/' "$NMR_APPROVAL_SCRIPT" 2>/dev/null)
+	if [[ -z "$fn_src" ]]; then
+		print_result "t2769: nmr-approval recognises no_work_loop marker" 1 \
+			"_nmr_application_is_circuit_breaker_trip not found in $NMR_APPROVAL_SCRIPT"
+		return 0
+	fi
+
+	if ! printf '%s\n' "$fn_src" | grep -q 'cost-circuit-breaker:no_work_loop'; then
+		print_result "t2769: nmr-approval recognises no_work_loop marker" 1 \
+			"marker 'cost-circuit-breaker:no_work_loop' not in recognition regex"
+		return 0
+	fi
+
+	print_result "t2769: nmr-approval recognises no_work_loop marker" 0
+	return 0
+}
+
+test_no_work_false_claim_comment_removed() {
+	# The aspirational comment that falsely claimed cost-circuit-breaker-helper.sh
+	# would apply NMR must no longer be present in worker-lifecycle-common.sh.
+	# Acceptance criterion 3 from GH#20639.
+
+	if grep -q 'cost-circuit-breaker-helper\.sh' "$LIFECYCLE_SCRIPT"; then
+		print_result "t2769: false claim comment removed (AC3)" 1 \
+			"'cost-circuit-breaker-helper.sh' still referenced in $LIFECYCLE_SCRIPT"
+		return 0
+	fi
+
+	print_result "t2769: false claim comment removed (AC3)" 0
+	return 0
+}
+
+# -----------------------------------------------------------------
 # Part C — _preserve_no_activity_output tests
 # -----------------------------------------------------------------
 
@@ -531,6 +655,12 @@ main() {
 	test_escalate_skips_body_gate_on_no_work
 	test_escalate_skips_tier_cascade_on_no_work
 	test_log_no_work_skip_escalation_helper_exists
+
+	# Part B2: t2769 no_work circuit breaker structural assertions
+	test_no_work_circuit_breaker_threshold_guard
+	test_no_work_circuit_breaker_marker_posted
+	test_nmr_approval_recognises_no_work_loop_marker
+	test_no_work_false_claim_comment_removed
 
 	# Part C: preserve tests — clean out any pollution from Part A first
 	rm -rf "${HOME}/.aidevops/logs/worker-no-activity" 2>/dev/null || true

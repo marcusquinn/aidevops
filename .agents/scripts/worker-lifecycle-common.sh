@@ -822,6 +822,56 @@ _log_no_work_skip_escalation() {
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
 
+	local nmr_threshold="${NO_WORK_NMR_THRESHOLD:-3}"
+
+	# Circuit-breaker path (t2769): when failure_count reaches the threshold,
+	# apply needs-maintainer-review with a marker that
+	# _nmr_application_is_circuit_breaker_trip recognises, so auto-approval
+	# preserves NMR (t2386 split semantics).
+	if [[ "$failure_count" -ge "$nmr_threshold" ]]; then
+		local nmr_marker='cost-circuit-breaker:no_work_loop'
+		local existing_nmr=""
+		existing_nmr=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+			--jq "[.[] | select(.body | contains(\"${nmr_marker}\"))] | length" \
+			2>/dev/null) || existing_nmr=""
+		if [[ "$existing_nmr" =~ ^[1-9][0-9]*$ ]]; then
+			printf '[worker-lifecycle][t2769] no_work NMR circuit breaker already applied for #%s (%s, count=%s)\n' \
+				"$issue_number" "$repo_slug" "$failure_count" >&2 || true
+			return 0
+		fi
+
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--add-label "needs-maintainer-review" 2>/dev/null || true
+
+		local safe_reason
+		safe_reason=$(_sanitize_markdown "$reason")
+
+		gh_issue_comment "$issue_number" --repo "$repo_slug" \
+			--body "<!-- ${nmr_marker} -->
+## no_work Circuit Breaker Fired (t2769)
+
+**Trigger:** ${failure_count} consecutive worker failure(s) classified as \`no_work\` (threshold: ${nmr_threshold}).
+**Action:** Applied \`needs-maintainer-review\`. Further automated dispatch is suspended.
+**Last failure reason:** ${safe_reason}
+
+**Why this class of failure does not cascade tiers:** \`no_work\` means the worker crashed during runtime setup before reading any target files (FD exhaustion, plugin init failure, auth refresh race). A more expensive model cannot fix an infrastructure problem it never reached.
+
+**Possible causes:**
+- Brief not yet merged or branch missing at dispatch time
+- Auth token stale or missing
+- Plugin init crash (FD exhaustion, env pollution)
+- Branch naming race at dispatch time
+
+Remove \`needs-maintainer-review\` after investigating the root cause to re-enable dispatch.
+
+_Per-issue no_work circuit breaker (t2769). The \`${nmr_marker}\` marker is recognised by \`_nmr_application_is_circuit_breaker_trip\` in \`pulse-nmr-approval.sh\` (t2386 split semantics: auto-approval preserves NMR)._" 2>/dev/null || true
+
+		printf '[worker-lifecycle][t2769] no_work NMR circuit breaker fired for #%s (%s, count=%s)\n' \
+			"$issue_number" "$repo_slug" "$failure_count" >&2 || true
+		return 0
+	fi
+
+	# Below threshold: idempotent diagnostic comment (existing t2387 behaviour).
 	local marker='<!-- no-work-escalation-skip -->'
 
 	# Idempotency check: skip if a prior comment already carries the marker.
@@ -851,7 +901,7 @@ _log_no_work_skip_escalation() {
 
 **Why no cascade:** \`no_work\` means the worker never engaged with the brief — it crashed during runtime setup (FD exhaustion, plugin init failure, branch naming race, auth refresh race). A more expensive model cannot fix an infrastructure problem it never reached. Cascading to \`tier:thinking\` would burn opus tokens on a problem sonnet (or haiku) will handle once the infra clears.
 
-If \`no_work\` crashes continue, the existing circuit breakers (\`cost-circuit-breaker-helper.sh\`, \`dispatch-dedup-stale.sh\`, stale-recovery) will apply \`needs-maintainer-review\` on their own thresholds with markers that \`_nmr_application_is_circuit_breaker_trip\` (t2386) recognises, so auto-approval will correctly preserve the NMR.
+After ${nmr_threshold} consecutive \`no_work\` failures the per-issue no_work circuit breaker (t2769) applies \`needs-maintainer-review\` with a \`cost-circuit-breaker:no_work_loop\` marker that \`_nmr_application_is_circuit_breaker_trip\` (t2386) recognises, so auto-approval correctly preserves NMR.
 
 _Automated by \`escalate_issue_tier()\` no_work skip (t2387) in worker-lifecycle-common.sh_"
 
@@ -896,6 +946,7 @@ _Automated by \`escalate_issue_tier()\` no_work skip (t2387) in worker-lifecycle
 #######################################
 ESCALATION_FAILURE_THRESHOLD="${ESCALATION_FAILURE_THRESHOLD:-2}"
 ESCALATION_OVERWHELMED_THRESHOLD="${ESCALATION_OVERWHELMED_THRESHOLD:-1}"
+NO_WORK_NMR_THRESHOLD="${NO_WORK_NMR_THRESHOLD:-3}"
 
 escalate_issue_tier() {
 	local issue_number="$1"

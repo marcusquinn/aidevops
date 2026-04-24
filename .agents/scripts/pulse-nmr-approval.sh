@@ -345,6 +345,7 @@ _nmr_application_has_automation_signature() {
 # Breaker-trip signatures detected:
 #   - <!-- stale-recovery-tick:escalated   — t2008 stale recovery (retry limit)
 #   - <!-- cost-circuit-breaker:fired      — t2007 cost circuit breaker (budget)
+#   - <!-- cost-circuit-breaker:no_work_loop — t2769 per-issue no_work breaker
 #   - <!-- circuit-breaker-escalated       — legacy fast-fail alias
 #
 # Args:
@@ -364,12 +365,13 @@ _nmr_application_is_circuit_breaker_trip() {
 	[[ -n "$issue_num" && -n "$slug" && -n "$label_at" ]] || return 1
 
 	# Same ±60s window as _nmr_application_has_automation_signature —
-	# breaker helpers (dispatch-dedup-stale.sh, dispatch-dedup-cost.sh)
-	# post the marker comment immediately after applying the NMR label,
+	# breaker helpers (dispatch-dedup-stale.sh, dispatch-dedup-cost.sh,
+	# and the t2769 no_work breaker in worker-lifecycle-common.sh) post
+	# the marker comment immediately after applying the NMR label,
 	# so the two events are always co-temporal.
 	local has_breaker_trip
 	has_breaker_trip=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate \
-		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"stale-recovery-tick:escalated|cost-circuit-breaker:fired|circuit-breaker-escalated\"))] | length" \
+		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|circuit-breaker-escalated\"))] | length" \
 		2>/dev/null) || has_breaker_trip=0
 	[[ "$has_breaker_trip" =~ ^[0-9]+$ ]] || has_breaker_trip=0
 
