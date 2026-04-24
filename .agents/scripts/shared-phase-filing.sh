@@ -52,6 +52,12 @@ _SHARED_PHASE_FILING_LOADED=1
 # Feature flag: default OFF for initial rollout.
 AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE="${AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE:-0}"
 
+# Phase marker constants — single source of truth for marker string values
+# used in _parse_phases_section and auto_file_next_phase.
+_PHASE_MARKER_AUTO_FIRE="auto-fire"
+_PHASE_MARKER_REQUIRES_DECISION="requires-decision"
+_PHASE_MARKER_NONE="none"
+
 _phase_log() {
 	local _log="${LOGFILE:-/dev/null}"
 	echo "[phase-filing] $*" >>"$_log"
@@ -123,6 +129,15 @@ _parse_phases_section() {
 	local body="$1"
 	[[ -n "$body" ]] || return 0
 
+	# Check for global opt-in marker that flips ALL narrative bold-heading
+	# phases to auto-fire. This allows a parent body with many phases to opt
+	# into sequential auto-filing without tagging every individual line.
+	# Applies only to bold-heading form; list-form markers are always explicit.
+	local _global_auto_fire="$_PHASE_MARKER_NONE"
+	if printf '%s' "$body" | grep -qF '<!-- phase-auto-fire:on -->'; then
+		_global_auto_fire="$_PHASE_MARKER_AUTO_FIRE"
+	fi
+
 	# Extract the ## Phases section: everything between "## Phases" and the
 	# next ## heading (or end of string). Use awk for multi-line extraction.
 	local phases_block
@@ -133,12 +148,14 @@ _parse_phases_section() {
 	')
 	[[ -n "$phases_block" ]] || return 0
 
-	# Parse each phase line. Format:
-	#   - Phase <N> - <description> [auto-fire:on-prior-merge] [#<child>]
-	#   - Phase <N>: <description> [requires-decision]
-	# We are flexible with separators (-, :, whitespace).
+	# Parse each phase line. Supported formats:
+	#   List form:  - Phase <N> - <description> [auto-fire:on-prior-merge] [#<child>]
+	#               - Phase <N>: <description> [requires-decision]
+	#   Bold form:  **Phase <N> — <description> [auto-fire:on-prior-merge]** [#<child>]
+	#               **Phase <N> - <description>**
+	# Separators are flexible (em-dash, en-dash, hyphen, colon, whitespace).
 	printf '%s\n' "$phases_block" | while IFS= read -r line; do
-		# Match lines starting with "- Phase <N>"
+		# Match lines starting with "- Phase <N>" (list form)
 		if printf '%s' "$line" | grep -qE '^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+[0-9]+'; then
 			local phase_num description marker child_ref
 
@@ -160,11 +177,11 @@ _parse_phases_section() {
 
 			# Determine marker
 			if printf '%s' "$line" | grep -qiF '[auto-fire:on-prior-merge]'; then
-				marker="auto-fire"
+				marker="$_PHASE_MARKER_AUTO_FIRE"
 			elif printf '%s' "$line" | grep -qiF '[requires-decision]'; then
-				marker="requires-decision"
+				marker="$_PHASE_MARKER_REQUIRES_DECISION"
 			else
-				marker="none"
+				marker="$_PHASE_MARKER_NONE"
 			fi
 
 			# Extract child issue reference: a trailing bare #NNNN at end of line.
@@ -173,6 +190,47 @@ _parse_phases_section() {
 			# no child ref is actually present. Child refs are stored as " #NNN"
 			# at end of line by _update_parent_phases_section.
 			child_ref=$(printf '%s' "$line" | sed -nE 's/.*#([0-9]+)[[:space:]]*$/\1/p')
+
+			printf '%s\t%s\t%s\t%s\n' "$phase_num" "$description" "$marker" "$child_ref"
+
+		# Match bold-heading form: **Phase <N> — description [marker]** [#child]
+		# Common in hand-authored issue bodies; invisible to the list-form parser.
+		elif printf '%s' "$line" | grep -qE '^\*\*[Pp]hase[[:space:]]+[0-9]+'; then
+			local phase_num description marker child_ref
+
+			# Extract phase number from **Phase N...
+			phase_num=$(printf '%s' "$line" | grep -oE '\*\*[Pp]hase[[:space:]]+[0-9]+' | grep -oE '[0-9]+')
+
+			# Extract description for bold-heading form:
+			# 1. Strip **Phase N + trailing spaces (the leading anchor)
+			# 2. Strip all leading non-alnum chars (separator: em-dash, hyphen,
+			#    colon, surrounding whitespace — all are non-alnum)
+			# 3. Strip trailing child ref (#NNN), closing **, and marker brackets
+			#    in that order (same safety-order rationale as list form above).
+			# Strip closing ** before the child-ref check to handle both:
+			#   **Phase N — desc** #NNN  (child ref outside the bold span)
+			#   **Phase N — desc #NNN**  (child ref inside the bold span)
+			description=$(printf '%s' "$line" \
+				| sed -E 's/^\*\*[Pp]hase[[:space:]]+[0-9]+[[:space:]]*//' \
+				| sed -E 's/^[^[:alnum:]]*//' \
+				| sed -E 's/[[:space:]]*#[0-9]+[[:space:]]*$//;s/\*\*[[:space:]]*$//;s/[[:space:]]*\[(auto-fire|requires-decision)[^]]*\][[:space:]]*$//')
+
+			# Determine marker: explicit inline marker > global opt-in > default none.
+			# Conservative default for bold-heading narrative form is 'none' unless
+			# <!-- phase-auto-fire:on --> is present in the parent body.
+			if printf '%s' "$line" | grep -qiF '[auto-fire:on-prior-merge]'; then
+				marker="$_PHASE_MARKER_AUTO_FIRE"
+			elif printf '%s' "$line" | grep -qiF '[requires-decision]'; then
+				marker="$_PHASE_MARKER_REQUIRES_DECISION"
+			else
+				marker="$_global_auto_fire"
+			fi
+
+			# Extract child ref: strip closing ** first so trailing #NNN is found
+			# regardless of whether it appears inside or outside the bold span.
+			child_ref=$(printf '%s' "$line" \
+				| sed -E 's/\*\*[[:space:]]*$//' \
+				| sed -nE 's/.*#([0-9]+)[[:space:]]*$/\1/p')
 
 			printf '%s\t%s\t%s\t%s\n' "$phase_num" "$description" "$marker" "$child_ref"
 		fi
@@ -487,7 +545,7 @@ auto_file_next_phase() {
 	fi
 
 	# Guard: next phase must be opted in
-	if [[ "$next_marker" != "auto-fire" ]]; then
+	if [[ "$next_marker" != "$_PHASE_MARKER_AUTO_FIRE" ]]; then
 		_phase_log "Parent #${parent_issue}: Phase ${next_phase_num} marker is '${next_marker}', not auto-fire — skip"
 		return 0
 	fi
