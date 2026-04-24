@@ -9,6 +9,11 @@ permissions:
 
 jobs:
   apply-default:
+    # Event-action guard: only run on issue open or when auto-dispatch label is added
+    # (mitigates cascade vulnerability from labeled + cancel-in-progress)
+    if: >-
+      github.event.action == 'opened' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'auto-dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 2
     concurrency:
