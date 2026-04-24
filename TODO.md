@@ -2994,3 +2994,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2781 pulse: worker retry-with-backoff on repeated rate_limit failures #auto-dispatch #bug #framework #pulse ref:GH#20680
 
 - [ ] t2782 worker: cap watchdog_stall_continue duration and count per session #auto-dispatch #bug #framework ref:GH#20681
+
+- [ ] t2784 upstream-watch: fix or remove cloudron-packaging-community check (consistent WARN noise) #auto-dispatch #bug #framework ref:GH#20683
+
+- [ ] t2783 pulse: post remediation comment when maintainer manually removes NMR label (ever-NMR block) #auto-dispatch #enhancement #framework #pulse ref:GH#20682
