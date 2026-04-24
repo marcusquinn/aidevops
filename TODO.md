@@ -3025,7 +3025,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2799 review-bot-gate-helper: rename RATE_LIMIT_PATTERNS alias and split rate-limit vs non-review pattern sets #refactor ref:GH#20732
 
-- [ ] t2800 claim-task-id: pre-flight validate --labels to prevent claimed-ID orphans when issue creation fails #auto-dispatch #bug ref:GH#20734
+- [x] t2800 claim-task-id: pre-flight validate --labels to prevent claimed-ID orphans when issue creation fails #auto-dispatch #bug ref:GH#20734 pr:#20744 completed:2026-04-24
 
 - [x] t2801 signature-footer hook: false positives on heredoc bodies and quoted-arg matches push operators toward bypass #auto-dispatch #bug ref:GH#20735 pr:#20739 completed:2026-04-24
 
