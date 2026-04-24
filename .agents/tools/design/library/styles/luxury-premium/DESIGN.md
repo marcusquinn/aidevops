@@ -1,13 +1,128 @@
+---
+version: alpha
+name: Luxury Premium
+description: Exclusive, cinematic design system for luxury automotive, high-end real estate, premium hospitality, fine jewellery, and couture fashion
+colors:
+  primary: "#FFFFFF"
+  secondary: "rgba(255, 255, 255, 0.5)"
+  tertiary: "#c9a96e"
+  neutral: "#000000"
+  surface: "#0a0a0a"
+  on-surface: "rgba(255, 255, 255, 0.75)"
+  error: "#f87171"
+typography:
+  headline-display:
+    fontFamily: "'Cormorant Garamond', Garamond, 'Times New Roman', 'Noto Serif', serif"
+    fontSize: 80px
+    fontWeight: 300
+    lineHeight: 1.05
+    letterSpacing: 0.02em
+  headline-lg:
+    fontFamily: "'Cormorant Garamond', Garamond, 'Times New Roman', 'Noto Serif', serif"
+    fontSize: 56px
+    fontWeight: 300
+    lineHeight: 1.1
+    letterSpacing: 0.015em
+  headline-md:
+    fontFamily: "'Cormorant Garamond', Garamond, 'Times New Roman', 'Noto Serif', serif"
+    fontSize: 40px
+    fontWeight: 300
+    lineHeight: 1.15
+    letterSpacing: 0.01em
+  body-lg:
+    fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontSize: 15px
+    fontWeight: 300
+    lineHeight: 1.7
+    letterSpacing: 0.02em
+  body-md:
+    fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontSize: 15px
+    fontWeight: 300
+    lineHeight: 1.7
+    letterSpacing: 0.02em
+  body-sm:
+    fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontSize: 13px
+    fontWeight: 300
+    lineHeight: 1.6
+    letterSpacing: 0.03em
+  label-md:
+    fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontSize: 11px
+    fontWeight: 400
+    lineHeight: 1.4
+    letterSpacing: 0.1em
+  label-sm:
+    fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    fontSize: 11px
+    fontWeight: 400
+    lineHeight: 1.4
+    letterSpacing: 0.1em
+rounded:
+  none: 0px
+  sm: 2px
+  md: 0px
+  lg: 0px
+  xl: 0px
+  full: 9999px
+spacing:
+  unit: 8px
+  xs: 4px
+  sm: 8px
+  md: 16px
+  lg: 32px
+  xl: 80px
+  gutter: 32px
+  margin: 64px
+components:
+  button-primary:
+    backgroundColor: "{colors.tertiary}"
+    textColor: "{colors.neutral}"
+    typography: "{typography.label-md}"
+    rounded: "{rounded.none}"
+    padding: 16px 48px
+  button-primary-hover:
+    backgroundColor: "#d4b87a"
+  button-secondary:
+    backgroundColor: transparent
+    textColor: "{colors.primary}"
+    typography: "{typography.label-md}"
+    rounded: "{rounded.none}"
+    border: "1px solid rgba(255, 255, 255, 0.3)"
+    padding: 16px 48px
+  input-default:
+    backgroundColor: "#111111"
+    textColor: "{colors.primary}"
+    typography: "{typography.body-md}"
+    rounded: "{rounded.none}"
+    padding: 14px 16px
+    border: "1px solid rgba(255, 255, 255, 0.1)"
+  card:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.on-surface}"
+    rounded: "{rounded.none}"
+    padding: 32px
+    border: "1px solid rgba(255, 255, 255, 0.06)"
+---
+
+<!--
+DESIGN.md — AI-readable design system document
+Format: google-labs-code/design.md v0.1.0 (format version: alpha)
+Spec: https://github.com/google-labs-code/design.md/blob/main/docs/spec.md
+Validate: npx @google/design.md lint DESIGN.md
+-->
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Design System: Luxury Premium
 
-## 1. Visual Theme & Atmosphere
+## 1. Overview
 
 Exclusivity, craftsmanship, quiet confidence. Serves luxury automotive, high-end real estate, premium hospitality, fine jewellery, couture fashion. Restraint over embellishment throughout.
 
-Near-black backgrounds create a cinematic stage for photography. Palette: black, near-black, white, single champagne gold accent. Ultra-light serif headings at large scale; body text small and secondary to imagery. Density extremely low — blackspace dominates. Transitions slow and cinematic (400–600ms).
+Near-black backgrounds create a cinematic stage for photography. Palette: black, near-black, white, single champagne gold accent. Ultra-light serif headings at large scale; body text small and secondary to imagery. Density extremely low — blackspace dominates. Transitions slow and cinematic (400-600ms).
 
 **Key characteristics:**
 - **Mood:** Exclusive, cinematic, restrained, aspirational
@@ -15,11 +130,11 @@ Near-black backgrounds create a cinematic stage for photography. Palette: black,
 - **Accent colour:** Champagne gold `#c9a96e`
 - **Text colour:** White `#FFFFFF` with `rgba(255,255,255,0.7)` for secondary
 - **Border treatment:** 1px `rgba(255,255,255,0.1)` — barely visible
-- **Animation:** Slow, cinematic — 400–600ms ease, fade-ins, parallax
+- **Animation:** Slow, cinematic — 400-600ms ease, fade-ins, parallax
 - **Imagery style:** Full-bleed, art-directed, high-contrast, minimal post-processing
 - **Overall density:** Very low — massive negative space, few elements per viewport
 
-## 2. Colour Palette & Roles
+## 2. Colors
 
 ### Core Dark
 
@@ -69,7 +184,7 @@ Near-black backgrounds create a cinematic stage for photography. Palette: black,
 | Error | `#f87171` | Errors, destructive actions |
 | Info | `#c9a96e` | Informational — uses gold accent |
 
-## 3. Typography Rules
+## 3. Typography
 
 **Font families:**
 - **Headings:** `"Cormorant Garamond", Garamond, "Times New Roman", "Noto Serif", serif`
@@ -97,7 +212,72 @@ Near-black backgrounds create a cinematic stage for photography. Palette: black,
 - Body text is intentionally smaller than web defaults (15px) — content is secondary to imagery
 - Avoid weight 700+ unless for rare emphasis — heaviness contradicts the luxury feel
 
-## 4. Component Stylings
+## 4. Layout
+
+### Spacing Scale
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--space-1` | 4px | Inline micro-spacing |
+| `--space-2` | 8px | Icon gaps, tight pairs |
+| `--space-3` | 16px | Component internal spacing |
+| `--space-4` | 24px | Card content padding |
+| `--space-5` | 32px | Card padding, navigation gaps |
+| `--space-6` | 48px | Section internal padding |
+| `--space-7` | 80px | Section separation |
+| `--space-8` | 120px | Major section breaks |
+| `--space-9` | 160px | Hero padding, dramatic spacing |
+| `--space-10` | 240px | Full viewport breathing room |
+
+### Grid
+
+- 12-column grid, 32px gutter
+- Asymmetric layouts encouraged (e.g., 5/7, 4/8, 3/9 splits)
+- Full-bleed images are a primary layout tool
+- Content often occupies only 50-60% of the viewport width
+
+### Container Widths
+
+| Breakpoint | Container | Behaviour |
+|-----------|-----------|-----------|
+| >=1440px | 1400px | Centred, generous side margins |
+| 1024-1439px | 100% | 64px side padding |
+| 768-1023px | 100% | 48px side padding |
+| <768px | 100% | 24px side padding |
+
+### Whitespace Philosophy
+
+Negative space is the primary design material. Sections: 80-160px blackspace separation. Content in narrow columns; content-to-space ratio 30:70 or 20:80. Spatial generosity distinguishes luxury from merely dark themes.
+
+## 5. Elevation & Depth
+
+| Level | Name | CSS Box-Shadow | Usage |
+|-------|------|---------------|-------|
+| 0 | Flat | `none` | Default — most elements |
+| 1 | Subtle | `0 2px 8px rgba(0, 0, 0, 0.3)` | Floating navigation (scrolled) |
+| 2 | Elevated | `0 8px 32px rgba(0, 0, 0, 0.4)` | Image lightbox, overlays |
+| 3 | Cinematic | `0 24px 64px rgba(0, 0, 0, 0.6)` | Modal dialogs |
+
+**Elevation principles:**
+- Shadows are nearly invisible on dark backgrounds — use border-light or background contrast instead
+- Depth is primarily communicated through `backdrop-filter: blur()` and layered opacity
+- Glass effect: `background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(16px)`
+- Modal backdrop: `rgba(0, 0, 0, 0.7)` — very dark, cinematic
+- Avoid box-shadow as a primary depth cue — it reads as cheap on dark interfaces
+
+## 6. Shapes
+
+The shape language is defined by **Architectural Sharpness**. Sharp edges throughout — rounded corners are antithetical to the luxury aesthetic.
+
+### Rounded Scale
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `none` | 0px | Buttons, inputs, cards — the default |
+| `sm` | 2px | Rare — small interactive elements only |
+| `full` | 9999px | Avatars only (if used at all) |
+
+## 7. Components
 
 ### Buttons
 
@@ -117,10 +297,10 @@ text-transform: uppercase
 cursor: pointer
 transition: all 400ms ease
 
-:hover    → background: #d4b87a
-:active   → background: #b08d50
-:focus    → outline: 1px solid #c9a96e; outline-offset: 4px
-:disabled → background: #333333; color: #666666; cursor: not-allowed
+:hover    -> background: #d4b87a
+:active   -> background: #b08d50
+:focus    -> outline: 1px solid #c9a96e; outline-offset: 4px
+:disabled -> background: #333333; color: #666666; cursor: not-allowed
 ```
 
 **Secondary Button:**
@@ -137,9 +317,9 @@ letter-spacing: 0.15em
 text-transform: uppercase
 transition: all 400ms ease
 
-:hover    → border-color: #FFFFFF; color: #FFFFFF
-:active   → background: rgba(255, 255, 255, 0.05)
-:disabled → border-color: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.3)
+:hover    -> border-color: #FFFFFF; color: #FFFFFF
+:active   -> background: rgba(255, 255, 255, 0.05)
+:disabled -> border-color: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.3)
 ```
 
 **Ghost Button (text link):**
@@ -156,8 +336,8 @@ text-transform: uppercase
 border-bottom: 1px solid rgba(201, 169, 110, 0.3)
 transition: all 400ms ease
 
-:hover    → border-bottom-color: #c9a96e
-:active   → color: #b08d50
+:hover    -> border-bottom-color: #c9a96e
+:active   -> color: #b08d50
 ```
 
 ### Inputs
@@ -174,11 +354,11 @@ color: #FFFFFF
 letter-spacing: 0.02em
 transition: border-color 400ms ease
 
-:hover       → border-color: rgba(255, 255, 255, 0.2)
-:focus       → border-color: #c9a96e; box-shadow: none
-:error       → border-color: #f87171
-::placeholder → color: rgba(255, 255, 255, 0.3)
-:disabled    → background: #0a0a0a; color: rgba(255, 255, 255, 0.2)
+:hover       -> border-color: rgba(255, 255, 255, 0.2)
+:focus       -> border-color: #c9a96e; box-shadow: none
+:error       -> border-color: #f87171
+::placeholder -> color: rgba(255, 255, 255, 0.3)
+:disabled    -> background: #0a0a0a; color: rgba(255, 255, 255, 0.2)
 ```
 
 **Labels:** 11px, weight 400, uppercase, letter-spacing 0.1em, colour `rgba(255,255,255,0.5)`, margin-bottom 8px.
@@ -192,8 +372,8 @@ font-weight: 300
 letter-spacing: 0.02em
 transition: color 400ms ease
 
-:hover  → color: #d4b87a
-:active → color: #b08d50
+:hover  -> color: #d4b87a
+:active -> color: #b08d50
 ```
 
 Navigation links (uppercase):
@@ -204,8 +384,8 @@ font-size: 12px
 letter-spacing: 0.15em
 text-transform: uppercase
 
-:hover  → color: #FFFFFF
-:active → color: #c9a96e
+:hover  -> color: #FFFFFF
+:active -> color: #c9a96e
 ```
 
 ### Cards
@@ -222,7 +402,7 @@ Image section: full-width, aspect 3:4 or 16:9
 Content section: padding 32px
 
 Interactive cards:
-:hover → border-color: rgba(255, 255, 255, 0.12); transform: translateY(-4px)
+:hover -> border-color: rgba(255, 255, 255, 0.12); transform: translateY(-4px)
 ```
 
 ### Navigation
@@ -251,81 +431,18 @@ Nav links:
   letter-spacing: 0.15em
   text-transform: uppercase
   color: rgba(255, 255, 255, 0.6)
-  :hover  → color: #FFFFFF
-  :active → color: #c9a96e
+  :hover  -> color: #FFFFFF
+  :active -> color: #c9a96e
 ```
 
-## 5. Layout Principles
-
-### Spacing Scale
-
-| Token | Value | Usage |
-|-------|-------|-------|
-| `--space-1` | 4px | Inline micro-spacing |
-| `--space-2` | 8px | Icon gaps, tight pairs |
-| `--space-3` | 16px | Component internal spacing |
-| `--space-4` | 24px | Card content padding |
-| `--space-5` | 32px | Card padding, navigation gaps |
-| `--space-6` | 48px | Section internal padding |
-| `--space-7` | 80px | Section separation |
-| `--space-8` | 120px | Major section breaks |
-| `--space-9` | 160px | Hero padding, dramatic spacing |
-| `--space-10` | 240px | Full viewport breathing room |
-
-### Grid
-
-- 12-column grid, 32px gutter
-- Asymmetric layouts encouraged (e.g., 5/7, 4/8, 3/9 splits)
-- Full-bleed images are a primary layout tool
-- Content often occupies only 50–60% of the viewport width
-
-### Container Widths
-
-| Breakpoint | Container | Behaviour |
-|-----------|-----------|-----------|
-| ≥1440px | 1400px | Centred, generous side margins |
-| 1024–1439px | 100% | 64px side padding |
-| 768–1023px | 100% | 48px side padding |
-| <768px | 100% | 24px side padding |
-
-### Whitespace Philosophy
-
-Negative space is the primary design material. Sections: 80–160px blackspace separation. Content in narrow columns; content-to-space ratio 30:70 or 20:80. Spatial generosity distinguishes luxury from merely dark themes.
-
-### Border-Radius Scale
-
-| Token | Value | Usage |
-|-------|-------|-------|
-| `--radius-none` | 0px | Buttons, inputs, cards — the default |
-| `--radius-sm` | 2px | Rare — small interactive elements only |
-| `--radius-full` | 9999px | Avatars only (if used at all) |
-
-Sharp edges throughout. Rounded corners are antithetical to the luxury aesthetic.
-
-## 6. Depth & Elevation
-
-| Level | Name | CSS Box-Shadow | Usage |
-|-------|------|---------------|-------|
-| 0 | Flat | `none` | Default — most elements |
-| 1 | Subtle | `0 2px 8px rgba(0, 0, 0, 0.3)` | Floating navigation (scrolled) |
-| 2 | Elevated | `0 8px 32px rgba(0, 0, 0, 0.4)` | Image lightbox, overlays |
-| 3 | Cinematic | `0 24px 64px rgba(0, 0, 0, 0.6)` | Modal dialogs |
-
-**Elevation principles:**
-- Shadows are nearly invisible on dark backgrounds — use border-light or background contrast instead
-- Depth is primarily communicated through `backdrop-filter: blur()` and layered opacity
-- Glass effect: `background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(16px)`
-- Modal backdrop: `rgba(0, 0, 0, 0.7)` — very dark, cinematic
-- Avoid box-shadow as a primary depth cue — it reads as cheap on dark interfaces
-
-## 7. Do's and Don'ts
+## 8. Do's and Don'ts
 
 ### Do's
 
 1. **Do** use massive negative space — content should occupy less than half the viewport on desktop
 2. **Do** keep headings at weight 300 (light) for the refined, luxury feel
 3. **Do** use full-bleed, high-quality photography as the primary storytelling device
-4. **Do** animate slowly and smoothly — 400–600ms transitions, ease timing
+4. **Do** animate slowly and smoothly — 400-600ms transitions, ease timing
 5. **Do** use uppercase sparingly and with generous letter-spacing (0.1em+) for labels and nav
 6. **Do** maintain sharp corners (0px radius) on all rectangular elements
 7. **Do** use the gold accent only for primary interactive elements — never decoratively
@@ -344,20 +461,25 @@ Sharp edges throughout. Rounded corners are antithetical to the luxury aesthetic
 9. **Don't** place body text below 13px — legibility on dark backgrounds requires adequate size
 10. **Don't** use emoji, playful icons, or informal language — tone is always elevated
 
-## 8. Responsive Behaviour
+---
+
+<!-- Sections 9-10 below are aidevops-specific extensions. The Google Labs DESIGN.md spec preserves -->
+<!-- unknown sections per its "Consumer Behavior for Unknown Content" rule. -->
+
+## 9. Responsive Behaviour
 
 ### Breakpoints
 
 | Name | Range | Columns | Gutter | Container Padding |
 |------|-------|---------|--------|-------------------|
-| Mobile | 0–767px | 4 | 16px | 24px |
-| Tablet | 768–1023px | 8 | 24px | 48px |
-| Desktop | 1024–1439px | 12 | 32px | 64px |
-| Wide | ≥1440px | 12 | 32px | auto (centred 1400px) |
+| Mobile | 0-767px | 4 | 16px | 24px |
+| Tablet | 768-1023px | 8 | 24px | 48px |
+| Desktop | 1024-1439px | 12 | 32px | 64px |
+| Wide | >=1440px | 12 | 32px | auto (centred 1400px) |
 
 ### Touch Targets
 
-- Minimum tap target: 48×48px
+- Minimum tap target: 48x48px
 - Navigation links: generous vertical padding (16px minimum)
 - Buttons: full-width on mobile with 16px vertical padding
 
@@ -365,16 +487,16 @@ Sharp edges throughout. Rounded corners are antithetical to the luxury aesthetic
 
 - Navigation: full-screen overlay with centred vertical link stack, large text (20px)
 - Hero images: full viewport height maintained; text overlay adjusts
-- Typography: Display → 40px, H1 → 32px, H2 → 28px, Body remains 15px
+- Typography: Display -> 40px, H1 -> 32px, H2 -> 28px, Body remains 15px
 - Grid: single column on mobile; asymmetric layouts collapse to stacked
-- Spacing reduces proportionally: 160px → 80px, 80px → 48px, 48px → 32px
+- Spacing reduces proportionally: 160px -> 80px, 80px -> 48px, 48px -> 32px
 - Gallery: single-column vertical scroll, full-width images
 - Video backgrounds: replaced with static key-frame image on mobile
 - Navigation overlay: `background: rgba(0, 0, 0, 0.95)` with centred vertical text menu
 - Horizontal scrolling: only for curated image galleries with snap scrolling
 - Gold accent elements remain visible — do not hide or mute on mobile
 
-## 9. Agent Prompt Guide
+## 10. Agent Prompt Guide
 
 ### Quick Colour Reference
 
@@ -407,6 +529,5 @@ Sharp edges throughout. Rounded corners are antithetical to the luxury aesthetic
 
 <!--
 Style archetype by AI DevOps (https://aidevops.sh)
-DESIGN.md format: https://stitch.withgoogle.com/docs/design-md/overview
-Not based on any specific brand. Use as a starting point for your project.
+DESIGN.md spec: https://github.com/google-labs-code/design.md
 -->
