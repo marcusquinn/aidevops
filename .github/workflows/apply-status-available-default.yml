@@ -1,0 +1,56 @@
+name: Apply status:available Default
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  issues: write
+
+jobs:
+  apply-default:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    concurrency:
+      group: apply-status-default-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Apply status:available if missing on auto-dispatch issues
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const labels = (issue.labels || []).map(l => l.name);
+
+            // Gate 1: must have auto-dispatch
+            if (!labels.includes('auto-dispatch')) {
+              console.log(`Issue #${issue.number} lacks auto-dispatch — skipping`);
+              return;
+            }
+
+            // Gate 2: already has a status label — skip
+            if (labels.some(l => l.startsWith('status:'))) {
+              console.log(`Issue #${issue.number} already has a status:* label — skipping`);
+              return;
+            }
+
+            // Gate 3: excluded label classes (these issue types manage their own lifecycle)
+            const excluded = [
+              'parent-task',
+              'persistent',
+              'consolidation-task',
+              'routine-tracking',
+              'no-auto-dispatch'
+            ];
+            if (labels.some(l => excluded.includes(l))) {
+              console.log(`Issue #${issue.number} has an excluded label — skipping`);
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              labels: ['status:available']
+            });
+            console.log(`Applied status:available to #${issue.number}`);
