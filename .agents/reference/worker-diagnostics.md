@@ -133,6 +133,160 @@ uptime
 
 **When to escalate to Phase 2 analysis**: If clusters recur with the same runner >3 times per day, or if the cascade escalation to `tier:thinking` fails to resolve the issue, investigate runtime-level causes (resource exhaustion, auth token expiry, network drop) on the failing runner.
 
+### Root Cause Analysis (Phase 2 — t2813)
+
+**Root cause class**: Worker process exits before `check_worker_launch` observes it. Not a
+single bug but a **class of early-exit paths** in the worker startup sequence, combined with
+a **diagnostic gap** that prevents the pulse from determining WHY the worker exited.
+
+#### Dispatch → spawn → detection chain
+
+The chain has three stages with a critical timing dependency between them:
+
+1. **Dispatch stage** (pulse-dispatch-engine.sh:519–522 subshell):
+   - `dispatch_with_dedup` → 9-layer dedup check → `_dispatch_launch_worker`
+   - `_dlw_exec_detached` (pulse-dispatch-worker-launch.sh:395–418): launches worker via
+     `setsid nohup env ... headless-runtime-helper.sh run ... &` — returns immediately with `$!` PID.
+   - `_dlw_post_launch_hooks` (pulse-dispatch-worker-launch.sh:535–580): **sleeps 8 seconds**
+     (stagger delay), posts dispatch comment. Total subshell time: ~15–20s.
+
+2. **Worker startup** (headless-runtime-helper.sh `cmd_run`, runs in parallel after nohup):
+   - Arg parsing, `choose_model` (~instant)
+   - `_enforce_opencode_version_pin` (headless-runtime-lib.sh:808–831, ~1–2s)
+   - `_run_canary_test` (headless-runtime-lib.sh:833–951): instant if cached, up to 60s if
+     running fresh. **If canary fails → process exits immediately** (return 1 at line 950).
+   - `_acquire_session_lock` (headless-runtime-lib.sh:733–767): **if lock collision → exit 0**
+     (returns 2, which `cmd_run` treats as clean exit at line 1447–1448).
+   - `_execute_run_attempt` → `_invoke_opencode` → actual OpenCode binary.
+
+3. **Detection stage** (pulse-dispatch-engine.sh:534):
+   - `check_worker_launch` polls `has_worker_for_repo_issue` every 2s for up to 35s
+     (`PULSE_LAUNCH_GRACE_SECONDS`).
+   - `has_worker_for_repo_issue` (pulse-dispatch-core.sh:113–165) → `list_active_worker_processes`
+     (worker-lifecycle-common.sh:730–747) → `ps axwwo pid,stat,etime,command | awk -f
+     list_active_workers.awk`.
+   - Awk matches: `headless-runtime-helper.sh` + `run` + `--role worker` + `/full-loop`.
+
+#### Why workers disappear before detection
+
+The 8-second stagger delay inside the dispatch subshell (step 1) means `check_worker_launch`
+starts polling ~15–20 seconds after the worker was nohup'd. If the worker exits within those
+first 15–20 seconds (e.g., canary failure at 8s, model selection failure at 1s), the process
+is already dead by the time the first poll runs. All 17 subsequent polls (every 2s for 35s)
+find nothing → `no_worker_process`.
+
+#### Identified early-exit paths (ranked by likelihood)
+
+**Path 1 — Canary test failure (PRIMARY)**: `headless-runtime-lib.sh:833–951`
+- When the canary test runs a fresh OpenCode invocation (not cached), and the API call
+  fails (auth token expired, rate limit, provider outage), the canary returns 1.
+  `cmd_run` (headless-runtime-helper.sh:1432–1434) exits immediately.
+- **Why it matches Phase 1 clusters**: Each runner has its own auth tokens (isolated via
+  `XDG_DATA_HOME`). Auth token expiry affects one runner at a time. The canary cache
+  (30-min TTL) means: a passed canary protects subsequent dispatches, but a failed canary
+  has **no negative cache** — each dispatch attempt re-runs it.
+- **Why cascade escalation "works"**: The escalation delay (~5–10 min) allows time for
+  tokens to refresh. Different tier → different model → potentially different API
+  key/provider. The delay alone is often sufficient for recovery.
+
+**Path 2 — Model selection failure**: `headless-runtime-helper.sh:1418–1422`
+- `choose_model` returns non-zero → `cmd_run` calls `_cmd_run_finish` and exits.
+  Caused by: all providers in backoff, model routing table empty, config corruption.
+
+**Path 3 — Session lock collision**: `headless-runtime-lib.sh:742–757`
+- If a previous dispatch's lock file exists with a PID that `_is_process_alive_and_matches`
+  considers alive (PID reuse on macOS — mitigated by t2421 argv hash, but not eliminated),
+  the worker exits cleanly (exit 0, invisible to fast-fail counters).
+
+**Path 4 — File descriptor exhaustion (SUSPECTED but unconfirmed)**:
+- `_dlw_exec_detached` (pulse-dispatch-worker-launch.sh:402) launches the worker via
+  `setsid nohup ... &`. The `setsid` creates a new session but does NOT close inherited
+  file descriptors. If the pulse process has accumulated many open FDs (from GitHub API
+  calls, log files, temp files), the worker inherits them and may hit `EMFILE` when
+  trying to open new connections.
+- This would explain runner-specific clusters (FD accumulation depends on runner's pulse
+  uptime and workload) and self-healing (pulse restart resets FDs).
+- **Cannot confirm without data**: FD counts were not logged during the observed clusters.
+
+#### Investigation candidates assessment
+
+**(a) Worker launch script exits 0 without spawning — CONFIRMED (Path 3)**
+
+`headless-runtime-helper.sh` CAN exit 0 without spawning a worker when
+`_acquire_session_lock` detects a lock collision (headless-runtime-lib.sh:753, return 1
+→ `cmd_run:1447` `prepare_exit=2` → `return 0`). The nohup wrapper `_dlw_exec_detached`
+always returns 0 (line 417), so `dispatch_with_dedup` returns 0 regardless of what happens
+inside the worker process — the "dispatch succeeded" signal is emitted before the worker
+has finished starting.
+
+**(b) Spawn races with dedup guard — RULED OUT by design**
+
+The 7-layer dedup chain (`check_dispatch_dedup`, pulse-dispatch-core.sh:172–188) and the
+per-session-key lock file (`_acquire_session_lock`, headless-runtime-lib.sh:733) together
+prevent duplicate spawns. No code path was found that bypasses both layers. The session
+lock is acquired inside the worker process (not the dispatcher), which means a race between
+two workers for the same session key would be caught by the lock.
+
+**(c) Canary check passes but exec into runtime silently fails — PARTIALLY CONFIRMED**
+
+The canary test uses a SEPARATE OpenCode invocation with its own isolated DB dir
+(headless-runtime-lib.sh:884–891). The worker process uses a DIFFERENT isolated DB dir
+(headless-runtime-helper.sh:421). Both copy the same `auth.json`, but the canary validates
+model connectivity only — it does not test the full worker exec chain (sandbox, worktree,
+plugin loading). A canary pass does not guarantee the worker's OpenCode will succeed.
+However, the more impactful failure mode is the canary FAILING (Path 1), not passing-then-failing.
+
+**(d) Cascade escalation fires on missing worker as if coding failure — CONFIRMED**
+
+`recover_failed_launch_state` (pulse-cleanup.sh:806) calls `fast_fail_record` with the
+`no_worker_process` failure reason. This increments the per-issue failure counter that
+drives cascade tier escalation. The cascade does not distinguish "worker never spawned"
+from "worker spawned and failed during execution". This is a correct observation but
+**not a root cause** — it's a symptom-recovery mechanism that happens to work by
+introducing delay and model rotation.
+
+#### Diagnostic gap (the core infrastructure finding)
+
+The pulse has no visibility into WHY a worker exited early. The gaps:
+
+1. **Worker log exists but is not read during recovery**: `_dlw_setup_worker_log` creates
+   `/tmp/pulse-${safe_slug}-${issue_number}.log`. The nohup'd process writes to this log
+   (stdout/stderr). But `recover_failed_launch_state` (pulse-cleanup.sh:728) never reads
+   it — the exit reason is lost.
+
+2. **Canary output is discarded**: The canary test writes diagnostics to a temp file
+   (headless-runtime-lib.sh:850) and logs the last 20 lines to stderr (line 948). This
+   output goes to the worker log (via nohup stderr redirection), but again, nobody reads
+   the worker log during recovery.
+
+3. **`check_worker_launch` discards its own output**: Line 534 in pulse-dispatch-engine.sh:
+   `check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1`. The launch check's
+   diagnostic messages (including the specific failure reason) are thrown away.
+
+4. **No spawn-time exit code capture**: `_dlw_exec_detached` captures `$!` (nohup PID) but
+   never waits for it or checks its exit code. The dispatch subshell exits before the worker
+   does. When the worker dies, its exit code is reaped by init (PID 1) and lost.
+
+#### Recommended Phase 3 fix targets
+
+1. **Read worker log tail during recovery**: In `recover_failed_launch_state`
+   (pulse-cleanup.sh), after confirming the worker is gone, read the last 20 lines of the
+   worker log and include them in the `CLAIM_RELEASED` comment and `$LOGFILE` entry. This
+   turns every `no_worker_process` event into a diagnosed failure.
+
+2. **Add spawn-time exit monitoring**: After `_dlw_exec_detached` returns, start a
+   lightweight background monitor that waits for the nohup'd PID (or its child, since
+   `setsid` may fork) and logs the exit code. This captures fast failures synchronously.
+
+3. **Close inherited FDs before exec**: In `_dlw_exec_detached`, close FDs >2 before
+   the `setsid nohup` invocation to prevent FD leak from the pulse into workers:
+   `for fd in /proc/self/fd/*; do fd_num=${fd##*/}; [[ $fd_num -gt 2 ]] && exec {fd_num}>&-; done`
+
+4. **Negative canary cache with short TTL**: When the canary fails, cache the failure for
+   60–120 seconds. This prevents N consecutive dispatch attempts from each spending up to
+   60 seconds on canary runs that will all fail for the same reason. The batch throttle
+   (pulse-dispatch-engine.sh:559) partially addresses this but only after 80% failure ratio.
+
 ## Diagnostic Quick Reference
 
 | Symptom | Check | Likely cause |
